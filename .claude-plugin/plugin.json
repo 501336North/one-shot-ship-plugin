@@ -1,0 +1,13 @@
+{
+  "name": "oss",
+  "description": "One Shot Ship - Ship with confidence. Every single time. Complete development voyage with naval-themed commands.",
+  "version": "1.0.0",
+  "author": {
+    "name": "One Shot Ship",
+    "email": "contact@one-shot-ship.dev"
+  },
+  "homepage": "https://one-shot-ship.onrender.com",
+  "repository": "https://github.com/501336North/one-shot-ship-plugin",
+  "license": "MIT",
+  "keywords": ["tdd", "workflow", "development", "testing", "deployment", "naval"]
+}

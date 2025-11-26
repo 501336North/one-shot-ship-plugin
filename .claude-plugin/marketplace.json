@@ -1,0 +1,23 @@
+{
+  "name": "one-shot-ship-marketplace",
+  "owner": {
+    "name": "One Shot Ship",
+    "email": "contact@one-shot-ship.dev"
+  },
+  "metadata": {
+    "description": "Production-ready development workflows with battle-tested patterns for world-class software delivery.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "oss",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/501336North/one-shot-ship-plugin.git"
+      },
+      "description": "Ship with confidence. Every single time. Complete development voyage: read-the-winds -> plot-the-course -> set-sail -> dock-ship.",
+      "version": "1.0.0",
+      "strict": true
+    }
+  ]
+}
