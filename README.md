@@ -163,7 +163,7 @@ Your subscription has expired. Renew at https://one-shot-ship.onrender.com/prici
 
 ## Support
 
-- Website: https://one-shot-ship.onrender.com
+- Website: https://www.oneshotship.com
 - Issues: https://github.com/501336North/one-shot-ship-plugin/issues
 
 ---
