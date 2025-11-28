@@ -30,7 +30,7 @@ Then:
 
 ### Step 2: Get Your API Key
 
-1. Register at https://one-shot-ship.onrender.com (7-day free trial)
+1. Register at https://www.oneshotship.com (7-day free trial)
 2. Copy your API key from the dashboard
 
 ### Step 3: Configure
@@ -130,7 +130,7 @@ All commands use the `/oss:command-name` format.
 | **Free Trial** | 7 days | Unlimited commands |
 | **Pro** | $39/mo | Unlimited commands, priority support |
 
-Start your free trial at https://one-shot-ship.onrender.com
+Start your free trial at https://www.oneshotship.com
 
 ---
 
@@ -157,7 +157,7 @@ Configure your API key in `~/.oss/config.json`
 Your API key is invalid. Check `~/.oss/config.json` or get a new key from the dashboard.
 
 ### "FORBIDDEN"
-Your subscription has expired. Renew at https://one-shot-ship.onrender.com/pricing
+Your subscription has expired. Renew at https://www.oneshotship.com/pricing
 
 ---
 
