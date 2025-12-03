@@ -1,0 +1,34 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "./hooks/oss-context-inject.sh"
+      }
+    ],
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "./hooks/oss-session-start.sh"
+      }
+    ],
+    "PreCompact": [
+      {
+        "type": "command",
+        "command": "./hooks/oss-session-end.sh"
+      }
+    ],
+    "Notification": [
+      {
+        "type": "command",
+        "command": "./hooks/oss-notification.sh"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "./hooks/oss-stop.sh"
+      }
+    ]
+  }
+}

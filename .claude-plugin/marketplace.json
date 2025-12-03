@@ -1,0 +1,19 @@
+{
+  "name": "one-shot-ship-plugin",
+  "owner": {
+    "name": "One Shot Ship",
+    "email": "hello@oneshotship.com"
+  },
+  "plugins": [
+    {
+      "name": "oss",
+      "version": "1.0.0",
+      "description": "Ship with confidence. Every time. Complete development lifecycle from idea to production.",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/501336North/one-shot-ship-plugin.git"
+      },
+      "strict": false
+    }
+  ]
+}
