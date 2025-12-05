@@ -58,10 +58,10 @@ World-class development workflows for Claude Code. Ship software with confidence
 Configure audio cues for hands-free development:
 
 ```bash
-/oss:audio on       # Enable audio
-/oss:audio off      # Disable audio
-/oss:audio voice    # Use voice ("Ready", "Done")
-/oss:audio sound    # Use system sounds
+/oss-audio on       # Enable audio
+/oss-audio off      # Disable audio
+/oss-audio voice    # Use voice ("Ready", "Done")
+/oss-audio sound    # Use system sounds
 ```
 
 ## Pricing
