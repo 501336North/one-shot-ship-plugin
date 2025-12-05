@@ -68,7 +68,7 @@ Configure audio cues for hands-free development:
 
 - **Free Trial**: 7 days unlimited
 - **Pro**: $39/mo unlimited
-- **Team**: $99/mo (up to 10 members)
+- **Enterprise**: Custom pricing (contact us)
 
 [View pricing](https://www.oneshotship.com/pricing)
 
