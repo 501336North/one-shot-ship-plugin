@@ -1,7 +1,7 @@
 {
   "name": "oss",
   "description": "Ship with confidence. Every time. Complete development lifecycle from idea to production.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": {
     "name": "One Shot Ship",
     "email": "hello@oneshotship.com"
@@ -13,6 +13,9 @@
     "workflow",
     "development",
     "deployment",
-    "productivity"
-  ]
+    "productivity",
+    "agents",
+    "tdd"
+  ],
+  "agents": "../agents/"
 }
