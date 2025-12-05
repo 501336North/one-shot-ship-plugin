@@ -75,7 +75,7 @@ Configure audio cues for hands-free development:
 ## Support
 
 - Website: [oneshotship.com](https://www.oneshotship.com)
-- Email: support@oneshotship.com
+- Email: hello@oneshotship.com
 
 ## License
 
