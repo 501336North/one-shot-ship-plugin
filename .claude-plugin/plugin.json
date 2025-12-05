@@ -16,6 +16,5 @@
     "productivity",
     "agents",
     "tdd"
-  ],
-  "agents": "../agents/"
+  ]
 }
