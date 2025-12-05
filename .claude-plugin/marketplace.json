@@ -1,0 +1,17 @@
+{
+  "name": "one-shot-ship-plugin",
+  "owner": "501336north",
+  "description": "Production-ready development workflows for Claude Code",
+  "version": "1.0.0",
+  "homepage": "https://www.oneshotship.com",
+  "plugins": [
+    {
+      "name": "oss",
+      "source": "https://github.com/501336north/one-shot-ship-plugin",
+      "description": "Ship with confidence. Every time. Complete development lifecycle from idea to production.",
+      "version": "1.1.0",
+      "author": "One Shot Ship",
+      "license": "MIT"
+    }
+  ]
+}
