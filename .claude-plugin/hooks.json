@@ -1,16 +1,34 @@
 {
-  "description": "One Shot Ship plugin hooks for context persistence",
+  "description": "One Shot Ship plugin hooks for context persistence and notifications",
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-context-inject.sh"
+      }
+    ],
     "SessionStart": [
       {
         "type": "command",
-        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/reload-context.sh"
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-session-start.sh"
       }
     ],
     "PreCompact": [
       {
         "type": "command",
-        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/save-context.sh"
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-session-end.sh"
+      }
+    ],
+    "Notification": [
+      {
+        "type": "command",
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-notification.sh"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-stop.sh"
       }
     ]
   }
