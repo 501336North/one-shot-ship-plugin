@@ -26,7 +26,19 @@ No API key found. Run: /oss:login
 Register at https://www.oneshotship.com
 ```
 
-## Step 2: Fetch Prompt from API
+## Step 2: Fetch IRON LAWS (MANDATORY)
+
+Before executing, fetch and review the IRON LAWS:
+```
+URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/shared/iron-laws
+Method: GET
+Headers:
+  Authorization: Bearer {apiKey}
+```
+
+**All 5 IRON LAWS must be followed. Self-correct any violations before proceeding.**
+
+## Step 3: Fetch Prompt from API
 
 ```
 URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/workflows/ship
@@ -35,7 +47,7 @@ Headers:
   Authorization: Bearer {apiKey}
 ```
 
-## Step 3: Execute the Fetched Prompt
+## Step 4: Execute the Fetched Prompt
 
 The prompt orchestrates the full shipping workflow:
 

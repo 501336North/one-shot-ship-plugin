@@ -44,7 +44,19 @@ No API key found. Run: /oss:login
 Register at https://www.oneshotship.com
 ```
 
-## Step 2: Fetch Prompt from API
+## Step 2: Fetch IRON LAWS (MANDATORY)
+
+Before executing, fetch and review the IRON LAWS:
+```
+URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/shared/iron-laws
+Method: GET
+Headers:
+  Authorization: Bearer {apiKey}
+```
+
+**All 5 IRON LAWS must be followed. Self-correct any violations before proceeding.**
+
+## Step 3: Fetch Prompt from API
 
 ```
 URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/workflows/build
@@ -53,13 +65,28 @@ Headers:
   Authorization: Bearer {apiKey}
 ```
 
-## Step 3: Execute the Fetched Prompt
+## Step 4: Execute the Fetched Prompt
 
 The prompt enforces TDD discipline:
 - Loads plan from `dev/active/{feature}/PLAN.md`
 - Executes each task with RED-GREEN-REFACTOR
 - Updates progress as tasks complete
 - Reports any blockers or issues
+
+## Command Chain (per task)
+
+For EACH task in the plan, use these commands:
+```
+/oss:red       → Write failing test (mock collaborators)
+    ↓
+/oss:green    → Write minimal code to pass
+    ↓
+/oss:refactor → Clean up while green
+```
+
+After all tasks complete:
+1. `/oss:integration` - Validate mock/reality alignment
+2. `/oss:ship` - Quality gates + PR + merge
 
 ## Error Handling
 

@@ -84,7 +84,19 @@ No API key found. Run: /oss:login
 Register at https://www.oneshotship.com
 ```
 
-## Step 3: Fetch Prompt from API
+## Step 3: Fetch IRON LAWS (MANDATORY)
+
+Before executing, fetch and review the IRON LAWS:
+```
+URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/shared/iron-laws
+Method: GET
+Headers:
+  Authorization: Bearer {apiKey}
+```
+
+**All 5 IRON LAWS must be followed. Self-correct any violations before proceeding.**
+
+## Step 4: Fetch Prompt from API
 
 ```
 URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/workflows/ideate
@@ -93,9 +105,18 @@ Headers:
   Authorization: Bearer {apiKey}
 ```
 
-## Step 4: Execute the Fetched Prompt
+## Step 5: Execute the Fetched Prompt
 
 Execute the prompt returned by the API to guide the user through ideation.
+
+## Command Chain (after ideation complete)
+
+After ideation is complete, execute these commands in sequence:
+1. `/oss:requirements` - Extract user stories, acceptance criteria
+2. `/oss:api-design` - Design API contracts (if applicable)
+3. `/oss:data-model` - Design database schema (if applicable)
+4. `/oss:adr` - Record architecture decisions
+5. `/oss:plan` - Create TDD implementation plan
 
 ## Error Handling
 
