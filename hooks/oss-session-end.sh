@@ -22,7 +22,7 @@ TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 # Save context to file
 cat > ~/.oss/session-context.md << EOF
 ## Restored Session Context
-_Saved: $TIMESTAMP_
+_Saved: ${TIMESTAMP}_
 
 **Repository:** $REPO_NAME
 **Branch:** $BRANCH
