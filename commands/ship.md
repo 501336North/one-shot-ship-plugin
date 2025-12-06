@@ -68,6 +68,24 @@ The prompt orchestrates the full shipping workflow:
 - Push to remote
 - Create pull request
 
+## Git Command Best Practices
+
+**IMPORTANT:** Use plain `git` commands when in the project working directory.
+
+```bash
+# ✅ CORRECT - Use plain git (single approval)
+git status
+git add .
+git commit -m "feat: message"
+git push -u origin branch-name
+
+# ❌ AVOID - Using -C flag (requires approval each time)
+git -C /full/path/to/repo status
+git -C /full/path/to/repo push
+```
+
+The working directory is already set to your project. Using `-C` with full paths creates unique command strings that each require separate approval in Claude Code.
+
 ### Optional: Auto-Merge
 With `--merge` flag:
 - Wait for CI checks
