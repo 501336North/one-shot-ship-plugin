@@ -1,7 +1,7 @@
 #!/bin/bash
 # OSS Session Start Hook
 # Triggered on: SessionStart
-# Checks subscription and displays welcome (no proprietary content)
+# Checks subscription, restores context, and displays welcome
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/oss-config.sh" 2>/dev/null || true
@@ -44,33 +44,38 @@ PROJECT_NAME="${CLAUDE_PROJECT_DIR##*/}"
 case "$SUBSCRIPTION_STATUS" in
     "active"|"trial")
         echo "OSS: Ready ($SUBSCRIPTION_STATUS)"
-        # Visual notification
-        if [[ "$(uname)" == "Darwin" ]] && command -v terminal-notifier &>/dev/null; then
-            terminal-notifier -title "🚀 OSS Session Started" -subtitle "$PROJECT_NAME" \
-                -message "Status: $SUBSCRIPTION_STATUS" -sound default &
-        fi
         ;;
     "expired")
         echo "OSS: Subscription expired. Upgrade at https://www.oneshotship.com/pricing"
-        if [[ "$(uname)" == "Darwin" ]] && command -v terminal-notifier &>/dev/null; then
-            terminal-notifier -title "⚠️ OSS Subscription Expired" -subtitle "$PROJECT_NAME" \
-                -message "Upgrade at oneshotship.com/pricing" -sound Basso &
-        fi
         ;;
     *)
         # Don't block on network issues - just continue
         echo "OSS: Ready"
-        if [[ "$(uname)" == "Darwin" ]] && command -v terminal-notifier &>/dev/null; then
-            terminal-notifier -title "🚀 OSS Session Started" -subtitle "$PROJECT_NAME" \
-                -message "Ready to ship!" -sound default &
-        fi
         ;;
 esac
 
 # Restore previous session context if available
 if [[ -f ~/.oss/session-context.md ]]; then
+    # Get context info for notification
+    CONTEXT_FILE=~/.oss/session-context.md
+    SAVED_LINE=$(grep "^_Saved:" "$CONTEXT_FILE" 2>/dev/null | head -1)
+    BRANCH_LINE=$(grep "^\*\*Branch:\*\*" "$CONTEXT_FILE" 2>/dev/null | head -1)
+    BRANCH=$(echo "$BRANCH_LINE" | sed 's/\*\*Branch:\*\* //')
+
     echo ""
     echo "Previous session context restored."
+
+    # Visual notification for context restore
+    if [[ "$(uname)" == "Darwin" ]] && command -v terminal-notifier &>/dev/null; then
+        terminal-notifier -title "🔄 Context Restored" -subtitle "$PROJECT_NAME" \
+            -message "Branch: ${BRANCH:-unknown}" -sound default &
+    fi
+else
+    # No saved context - fresh start notification
+    if [[ "$(uname)" == "Darwin" ]] && command -v terminal-notifier &>/dev/null; then
+        terminal-notifier -title "🆕 Fresh Session" -subtitle "$PROJECT_NAME" \
+            -message "No previous context found" -sound default &
+    fi
 fi
 
 exit 0
