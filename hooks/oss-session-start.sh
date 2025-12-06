@@ -65,16 +65,16 @@ if [[ -f ~/.oss/session-context.md ]]; then
     echo ""
     echo "Previous session context restored."
 
-    # Visual notification for context restore
+    # Visual notification for context restore (sync - must complete before exit)
     if [[ "$(uname)" == "Darwin" ]] && command -v terminal-notifier &>/dev/null; then
         terminal-notifier -title "🔄 Context Restored" -subtitle "$PROJECT_NAME" \
-            -message "Branch: ${BRANCH:-unknown}" -sound default &
+            -message "Branch: ${BRANCH:-unknown}" -sound default
     fi
 else
-    # No saved context - fresh start notification
+    # No saved context - fresh start notification (sync - must complete before exit)
     if [[ "$(uname)" == "Darwin" ]] && command -v terminal-notifier &>/dev/null; then
         terminal-notifier -title "🆕 Fresh Session" -subtitle "$PROJECT_NAME" \
-            -message "No previous context found" -sound default &
+            -message "No previous context found" -sound default
     fi
 fi
 

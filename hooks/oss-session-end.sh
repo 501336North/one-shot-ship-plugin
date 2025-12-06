@@ -44,10 +44,10 @@ $UNCOMMITTED
 EOF
 fi
 
-# Visual notification (macOS)
+# Visual notification (macOS) - sync, must complete before exit
 if [[ "$(uname)" == "Darwin" ]] && command -v terminal-notifier &>/dev/null; then
     terminal-notifier -title "💾 OSS Context Saved" -subtitle "$REPO_NAME" \
-        -message "Branch: $BRANCH • $UNCOMMITTED_COUNT uncommitted" -sound default &
+        -message "Branch: $BRANCH • $UNCOMMITTED_COUNT uncommitted" -sound default
 fi
 
 exit 0
