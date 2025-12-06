@@ -54,6 +54,40 @@ case "$SUBSCRIPTION_STATUS" in
         ;;
 esac
 
+# --- Watcher Management (US-001) ---
+# Spawn watcher process if not already running (singleton pattern)
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
+PROJECT_OSS_DIR="${CLAUDE_PROJECT_DIR:-.}/.oss"
+WATCHER_PID_FILE="$PROJECT_OSS_DIR/watcher.pid"
+WATCHER_SCRIPT="$PLUGIN_ROOT/watcher/dist/index.js"
+
+# Ensure project .oss directory exists
+mkdir -p "$PROJECT_OSS_DIR"
+
+# Check if watcher is already running
+if [[ -f "$WATCHER_PID_FILE" ]]; then
+    WATCHER_PID=$(cat "$WATCHER_PID_FILE" 2>/dev/null)
+    if [[ -n "$WATCHER_PID" ]] && ps -p "$WATCHER_PID" > /dev/null 2>&1; then
+        echo "OSS: Watcher running (PID: $WATCHER_PID)"
+    else
+        # Stale PID file - clean up
+        rm -f "$WATCHER_PID_FILE"
+        if [[ -f "$WATCHER_SCRIPT" ]]; then
+            # Start new watcher
+            cd "$PROJECT_OSS_DIR/.." && node "$WATCHER_SCRIPT" &
+            echo $! > "$WATCHER_PID_FILE"
+            echo "OSS: Watcher started (PID: $!)"
+        fi
+    fi
+else
+    if [[ -f "$WATCHER_SCRIPT" ]]; then
+        # Start watcher
+        cd "$PROJECT_OSS_DIR/.." && node "$WATCHER_SCRIPT" &
+        echo $! > "$WATCHER_PID_FILE"
+        echo "OSS: Watcher started (PID: $!)"
+    fi
+fi
+
 # Restore previous session context if available
 if [[ -f ~/.oss/session-context.md ]]; then
     # Get context info for notification
