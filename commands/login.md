@@ -37,6 +37,38 @@ The command will:
 3. Verify key by calling: `curl -H "Authorization: Bearer YOUR_KEY" https://one-shot-ship-api.onrender.com/api/v1/subscription/status`
 4. Display subscription status (trial, active, expired)
 
+## Step 4: Sync CLAUDE.md (Automatic)
+
+After successful authentication, the command automatically syncs project guidelines:
+
+1. **Fetch template from API:**
+   ```
+   GET https://one-shot-ship-api.onrender.com/api/v1/prompts/claude-md
+   Headers:
+     Authorization: Bearer {apiKey}
+   ```
+
+2. **Check if CLAUDE.md exists in current directory:**
+   ```bash
+   test -f CLAUDE.md && echo "EXISTS" || echo "MISSING"
+   ```
+
+3. **If MISSING:** Create new CLAUDE.md with the fetched OSS Dev Workflow guidelines
+
+4. **If EXISTS:**
+   - Check if it contains `# OSS Dev Workflow` section
+   - If no OSS section: Append the fetched content with a separator
+   - If OSS section exists: Replace it with fresh version from API
+
+**What gets synced:**
+- London TDD methodology rules
+- Agent delegation table (which agents to use for what)
+- All available `/oss:` commands reference
+- Git workflow (Agent Git Flow) guidelines
+- Quality standards
+
+**Note:** This only syncs guidelines, NOT proprietary prompts. The actual workflow logic stays on the API.
+
 ## Example Usage
 
 ```bash
