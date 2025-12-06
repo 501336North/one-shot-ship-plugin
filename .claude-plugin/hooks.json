@@ -1,0 +1,17 @@
+{
+  "description": "One Shot Ship plugin hooks for context persistence",
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/reload-context.sh"
+      }
+    ],
+    "PreCompact": [
+      {
+        "type": "command",
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/save-context.sh"
+      }
+    ]
+  }
+}

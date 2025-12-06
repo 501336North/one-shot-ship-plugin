@@ -17,18 +17,5 @@
     "agents",
     "tdd"
   ],
-  "hooks": {
-    "SessionStart": [
-      {
-        "type": "command",
-        "command": "./hooks/reload-context.sh"
-      }
-    ],
-    "PreCompact": [
-      {
-        "type": "command",
-        "command": "./hooks/save-context.sh"
-      }
-    ]
-  }
+  "hooks": "./hooks.json"
 }
