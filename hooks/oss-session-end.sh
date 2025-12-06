@@ -16,6 +16,7 @@ BRANCH=$(git branch --show-current 2>/dev/null || echo "detached")
 REPO_NAME=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" || echo "unknown")
 LAST_COMMITS=$(git log -3 --oneline 2>/dev/null || echo "none")
 UNCOMMITTED=$(git status -s 2>/dev/null || echo "")
+UNCOMMITTED_COUNT=$(echo "$UNCOMMITTED" | grep -c . || echo "0")
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
 # Save context to file
@@ -41,6 +42,12 @@ if [[ -n "$UNCOMMITTED" ]]; then
 $UNCOMMITTED
 \`\`\`
 EOF
+fi
+
+# Visual notification (macOS)
+if [[ "$(uname)" == "Darwin" ]] && command -v terminal-notifier &>/dev/null; then
+    terminal-notifier -title "💾 OSS Context Saved" -subtitle "$REPO_NAME" \
+        -message "Branch: $BRANCH • $UNCOMMITTED_COUNT uncommitted" -sound default &
 fi
 
 exit 0
