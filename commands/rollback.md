@@ -19,7 +19,25 @@ Emergency rollback to previous version with comprehensive safety checks and reco
 cat ~/.oss/config.json 2>/dev/null | grep apiKey
 ```
 
-## Step 2: Fetch Prompt from API
+If no API key found:
+```
+No API key found. Run: /oss:login
+Register at https://www.oneshotship.com
+```
+
+## Step 2: Fetch IRON LAWS (MANDATORY)
+
+Before executing, fetch and review the IRON LAWS:
+```
+URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/shared/iron-laws
+Method: GET
+Headers:
+  Authorization: Bearer {apiKey}
+```
+
+**All 5 IRON LAWS must be followed. Self-correct any violations before proceeding.**
+
+## Step 3: Fetch Prompt from API
 
 ```
 URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/workflows/rollback
@@ -35,6 +53,24 @@ The prompt handles:
 - Database migration rollback (if needed)
 - Service redeployment
 - Health check verification
+
+## Command Chain
+
+```
+/oss:incident    → Declare incident, assess severity
+    ↓
+/oss:rollback    → Emergency rollback (YOU ARE HERE)
+    ↓
+/oss:monitor     → Verify service restored
+    │
+    └── After stabilization:
+        /oss:build → TDD fix development
+            ↓
+            /oss:ship → Ship proper fix
+```
+
+**Previous**: `/oss:incident` (critical issue declared)
+**Next**: `/oss:monitor` (verify recovery)
 
 ## Example Usage
 

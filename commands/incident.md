@@ -19,7 +19,25 @@ Incident response protocol for production emergencies with blameless postmortem.
 cat ~/.oss/config.json 2>/dev/null | grep apiKey
 ```
 
-## Step 2: Fetch Prompt from API
+If no API key found:
+```
+No API key found. Run: /oss:login
+Register at https://www.oneshotship.com
+```
+
+## Step 2: Fetch IRON LAWS (MANDATORY)
+
+Before executing, fetch and review the IRON LAWS:
+```
+URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/shared/iron-laws
+Method: GET
+Headers:
+  Authorization: Bearer {apiKey}
+```
+
+**All 5 IRON LAWS must be followed. Self-correct any violations before proceeding.**
+
+## Step 3: Fetch Prompt from API
 
 ```
 URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/workflows/incident
@@ -36,6 +54,27 @@ The prompt guides:
 - Mitigation steps
 - Communication templates
 - Postmortem creation
+
+## Command Chain
+
+```
+/oss:monitor     → Detect production issues
+    ↓
+/oss:incident    → Declare and respond (YOU ARE HERE)
+    │
+    ├── If rollback needed:
+    │   /oss:rollback  → Emergency rollback
+    │       ↓
+    │       /oss:monitor  → Verify recovery
+    │
+    └── If hotfix needed:
+        /oss:build → TDD hotfix
+            ↓
+            /oss:ship → Ship hotfix
+```
+
+**Previous**: `/oss:monitor` (issue detected)
+**Next**: `/oss:rollback` (if critical) or `/oss:build` (for hotfix)
 
 ## Example Usage
 
