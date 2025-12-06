@@ -1,33 +1,34 @@
 {
+  "description": "One Shot Ship plugin hooks for context persistence and notifications",
   "hooks": {
     "UserPromptSubmit": [
       {
         "type": "command",
-        "command": "./hooks/oss-context-inject.sh"
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-context-inject.sh"
       }
     ],
     "SessionStart": [
       {
         "type": "command",
-        "command": "./hooks/oss-session-start.sh"
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-session-start.sh"
       }
     ],
     "PreCompact": [
       {
         "type": "command",
-        "command": "./hooks/oss-session-end.sh"
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-session-end.sh"
       }
     ],
     "Notification": [
       {
         "type": "command",
-        "command": "./hooks/oss-notification.sh"
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-notification.sh"
       }
     ],
     "Stop": [
       {
         "type": "command",
-        "command": "./hooks/oss-stop.sh"
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-stop.sh"
       }
     ]
   }
