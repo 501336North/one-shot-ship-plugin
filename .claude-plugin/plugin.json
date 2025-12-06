@@ -17,5 +17,5 @@
     "agents",
     "tdd"
   ],
-  "hooks": "../hooks/hooks.json"
+  "hooks": "./hooks.json"
 }
