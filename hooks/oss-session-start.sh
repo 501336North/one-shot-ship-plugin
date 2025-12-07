@@ -55,7 +55,9 @@ case "$SUBSCRIPTION_STATUS" in
 esac
 
 # --- SwiftBar Launch (if installed) ---
-# Launch SwiftBar for menu bar status display before starting watcher
+# Launch SwiftBar for menu bar status display during active Claude Code session
+# SwiftBar will be quit when session ends (see oss-session-end.sh)
+# This prevents toolbar clutter when no session is active
 if [[ "$(uname)" == "Darwin" ]] && [[ -d "/Applications/SwiftBar.app" ]]; then
     if ! pgrep -x "SwiftBar" > /dev/null 2>&1; then
         open -a SwiftBar &>/dev/null &

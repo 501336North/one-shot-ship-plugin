@@ -59,4 +59,12 @@ if [[ -f "$MENUBAR_CLI" ]]; then
     node "$MENUBAR_CLI" setSupervisor idle 2>/dev/null || true
 fi
 
+# --- SwiftBar Quit (session ending) ---
+# Quit SwiftBar when Claude Code session ends - no point showing workflow status
+# when there's no active session to run commands
+if [[ "$(uname)" == "Darwin" ]] && pgrep -x "SwiftBar" > /dev/null 2>&1; then
+    # Gracefully quit SwiftBar
+    osascript -e 'tell application "SwiftBar" to quit' 2>/dev/null || killall SwiftBar 2>/dev/null || true
+fi
+
 exit 0
