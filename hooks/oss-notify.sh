@@ -23,9 +23,6 @@ PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
 COPY_CLI="$PLUGIN_ROOT/watcher/dist/cli/get-copy.js"
 MENUBAR_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-menubar.js"
 
-# OSS Notifier path (installed by /oss:login - no sudo needed)
-OSS_NOTIFIER_APP="$HOME/.oss/oss-notify.app/Contents/MacOS/oss-notify"
-
 # =============================================================================
 # Parse arguments
 # =============================================================================
@@ -42,8 +39,9 @@ if [[ "${1:-}" == "--workflow" ]]; then
     USE_COPY_SERVICE=true
     COPY_TYPE="workflow"
     COPY_ARGS=("${@:2}")
-    # Map command events to priorities
+    # Map command events to priorities and icons
     # NOTE: start is HIGH so users see when commands begin (per verbosity=important)
+    CMD="${2:-}"
     EVENT="${3:-start}"
     case "$EVENT" in
         task_complete) PRIORITY="low" ;;
@@ -196,23 +194,17 @@ fi
 
 case "$STYLE" in
     "visual")
-        # Try OSS Notifier first (bundled with plugin), then terminal-notifier, then osascript
-        if [[ -x "$OSS_NOTIFIER_APP" ]]; then
-            # OSS Notifier - custom native macOS notifications
-            if [[ -n "$SUBTITLE" ]]; then
-                "$OSS_NOTIFIER_APP" --title "$TITLE" --subtitle "$SUBTITLE" --message "$MESSAGE" &>/dev/null || true
-            else
-                "$OSS_NOTIFIER_APP" --title "$TITLE" --message "$MESSAGE" &>/dev/null || true
-            fi
-        elif command -v terminal-notifier &>/dev/null; then
-            # terminal-notifier fallback
-            if [[ -n "$SUBTITLE" ]]; then
-                terminal-notifier -title "$TITLE" -subtitle "$SUBTITLE" -message "$MESSAGE" -sound default &>/dev/null || true
-            else
-                terminal-notifier -title "$TITLE" -message "$MESSAGE" -sound default &>/dev/null || true
-            fi
+        # OSS icon for notification branding
+        OSS_ICON_PNG="$HOME/.oss/notification-icon.png"
+
+        # Use terminal-notifier (requires: brew install terminal-notifier)
+        if command -v terminal-notifier &>/dev/null; then
+            TN_ARGS=(-title "$TITLE" -message "$MESSAGE" -sound default)
+            [[ -n "$SUBTITLE" ]] && TN_ARGS+=(-subtitle "$SUBTITLE")
+            [[ -f "$OSS_ICON_PNG" ]] && TN_ARGS+=(-appIcon "$OSS_ICON_PNG")
+            terminal-notifier "${TN_ARGS[@]}" &>/dev/null || true
         else
-            # osascript fallback (no subtitle support)
+            # osascript fallback (no subtitle or icon support)
             osascript -e "display notification \"$MESSAGE\" with title \"$TITLE\"" &>/dev/null || true
         fi
         ;;

@@ -69,11 +69,32 @@ After successful authentication, the command automatically syncs project guideli
 
 **Note:** This only syncs guidelines, NOT proprietary prompts. The actual workflow logic stays on the API.
 
-## Step 5: Install Modern Notification Tools (First Login Only)
+## Step 5: Install Notification Tools (First Login Only)
 
 After successful authentication, install tools if not already present:
 
-1. **Check and install SwiftBar (menu bar status):**
+1. **Check and install terminal-notifier (for macOS notifications):**
+   ```bash
+   if ! command -v terminal-notifier &>/dev/null; then
+       echo "Installing terminal-notifier for macOS notifications..."
+       brew install terminal-notifier
+   fi
+   ```
+
+2. **Create OSS notification icon:**
+   ```bash
+   mkdir -p ~/.oss
+   # Create a simple blue circle icon for OSS notifications
+   OSS_ICON_PNG="$HOME/.oss/notification-icon.png"
+   if [ ! -f "$OSS_ICON_PNG" ]; then
+       # Download or create the OSS icon
+       curl -sL "https://www.oneshotship.com/icon.png" -o "$OSS_ICON_PNG" 2>/dev/null || \
+       sips -s format png "$CLAUDE_PLUGIN_ROOT/assets/icon.png" --out "$OSS_ICON_PNG" 2>/dev/null || \
+       echo "Note: Could not create notification icon. Notifications will work without branding."
+   fi
+   ```
+
+3. **Check and install SwiftBar (menu bar status):**
    ```bash
    if ! [ -d "/Applications/SwiftBar.app" ]; then
        echo "Installing SwiftBar for workflow status display..."
@@ -81,7 +102,7 @@ After successful authentication, install tools if not already present:
    fi
    ```
 
-2. **Configure SwiftBar plugins directory (before first launch):**
+4. **Configure SwiftBar plugins directory (before first launch):**
    ```bash
    SWIFTBAR_PLUGINS="${HOME}/Library/Application Support/SwiftBar/Plugins"
    mkdir -p "$SWIFTBAR_PLUGINS"
@@ -90,28 +111,18 @@ After successful authentication, install tools if not already present:
    defaults write com.ameba.SwiftBar PluginDirectory -string "$SWIFTBAR_PLUGINS"
    ```
 
-3. **Copy OSS SwiftBar plugin:**
+5. **Copy OSS SwiftBar plugin:**
    ```bash
    cp "$CLAUDE_PLUGIN_ROOT/swiftbar/oss-workflow.1s.sh" "$SWIFTBAR_PLUGINS/"
    chmod +x "$SWIFTBAR_PLUGINS/oss-workflow.1s.sh"
    ```
 
-4. **Install OSS Notifier (bundled with plugin, no sudo needed):**
-   ```bash
-   OSS_NOTIFIER_DEST="$HOME/.oss/oss-notify.app"
-   if [ ! -d "$OSS_NOTIFIER_DEST" ]; then
-       echo "Installing OSS Notifier for macOS notifications..."
-       cp -R "$CLAUDE_PLUGIN_ROOT/notifier/oss-notify.app" "$HOME/.oss/"
-       chmod +x "$HOME/.oss/oss-notify.app/Contents/MacOS/oss-notify"
-   fi
-   ```
-
-5. **Initialize menu bar state:**
+6. **Initialize menu bar state:**
    ```bash
    node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/update-menubar.js" init
    ```
 
-6. **Launch SwiftBar (if not already running):**
+7. **Launch SwiftBar (if not already running):**
    ```bash
    if ! pgrep -x "SwiftBar" > /dev/null; then
        echo "Starting SwiftBar..."
@@ -120,7 +131,7 @@ After successful authentication, install tools if not already present:
    fi
    ```
 
-7. **Verify SwiftBar is running:**
+8. **Verify SwiftBar is running:**
    ```bash
    if pgrep -x "SwiftBar" > /dev/null; then
        echo "SwiftBar is running. Look for 🤖 in your menu bar!"
@@ -130,11 +141,11 @@ After successful authentication, install tools if not already present:
    ```
 
 **What gets installed:**
+- **terminal-notifier** - Reliable macOS notifications with custom icon support
 - **SwiftBar** - Shows 🤖 idle / 🤖✓ BUILD / 🤖⚡ intervening in menu bar
-- **OSS Notifier** - Custom native macOS notifications (bundled with plugin, no sudo needed)
 - **OSS Plugin** - SwiftBar plugin that reads ~/.oss/workflow-state.json
 
-**Skip this step** if both tools are already installed and running.
+**Skip this step** if tools are already installed and running.
 
 ## Step 6: Configure Notifications (First Login Only)
 
@@ -175,9 +186,9 @@ After tools are installed, if `~/.oss/settings.json` does NOT exist:
    ```bash
    case "$STYLE" in
        "visual")
-           "$HOME/.oss/oss-notify.app/Contents/MacOS/oss-notify" \
-               --title "Welcome to OSS!" \
-               --message "Notifications configured"
+           terminal-notifier -title "Welcome to OSS!" \
+               -message "Notifications configured" \
+               -appIcon "$HOME/.oss/notification-icon.png"
            ;;
        "audio")
            say -v "$VOICE" "Welcome to OSS Dev Workflow!"
