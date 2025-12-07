@@ -6,7 +6,7 @@
 
 export type Priority = 'critical' | 'high' | 'medium' | 'low';
 
-export type MonitorSource = 'log-monitor' | 'test-monitor' | 'git-monitor' | 'manual';
+export type MonitorSource = 'log-monitor' | 'test-monitor' | 'git-monitor' | 'iron-law-monitor' | 'manual';
 
 export type AnomalyType =
   // Log anomalies
@@ -53,6 +53,11 @@ export interface TaskContext {
   // LLM analysis
   analysis?: string;
   confidence?: number;
+
+  // IRON LAW context
+  law?: number;
+  type?: string;
+  message?: string;
 }
 
 export interface Task {
