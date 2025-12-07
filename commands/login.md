@@ -69,6 +69,67 @@ After successful authentication, the command automatically syncs project guideli
 
 **Note:** This only syncs guidelines, NOT proprietary prompts. The actual workflow logic stays on the API.
 
+## Step 5: Configure Notifications (First Login Only)
+
+After successful authentication, if `~/.oss/settings.json` does NOT exist:
+
+1. **Prompt for notification preference:**
+   ```json
+   {
+     "question": "How would you like to be notified about workflow progress?",
+     "header": "Notifications",
+     "options": [
+       {"label": "Visual", "description": "macOS notification center (recommended)"},
+       {"label": "Audio", "description": "Spoken messages using text-to-speech"},
+       {"label": "Sound", "description": "System sounds (Glass, Ping, etc.)"},
+       {"label": "None", "description": "Silent mode - no notifications"}
+     ],
+     "multiSelect": false
+   }
+   ```
+
+2. **Save settings to `~/.oss/settings.json`:**
+   ```bash
+   mkdir -p ~/.oss
+   cat > ~/.oss/settings.json << EOF
+   {
+     "notifications": {
+       "style": "$STYLE",
+       "voice": "Samantha",
+       "sound": "Glass",
+       "verbosity": "important"
+     },
+     "version": 1
+   }
+   EOF
+   ```
+
+3. **Show preview notification:**
+   ```bash
+   case "$STYLE" in
+       "visual")
+           terminal-notifier -title "Welcome to OSS!" -message "Notifications configured" -sound default
+           ;;
+       "audio")
+           say -v Samantha "Welcome to OSS Dev Workflow!"
+           ;;
+       "sound")
+           afplay "/System/Library/Sounds/Glass.aiff"
+           ;;
+       "none")
+           echo "Notifications disabled. You can change this with /oss:settings"
+           ;;
+   esac
+   ```
+
+4. **Confirm:**
+   ```
+   Notifications configured: $STYLE
+   Change anytime with /oss:settings
+   ```
+
+**Skip this step** if `~/.oss/settings.json` already exists (returning user).
+
 ## Example Usage
 
 ```bash

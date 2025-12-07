@@ -56,7 +56,13 @@ Headers:
 
 **All 5 IRON LAWS must be followed. Self-correct any violations before proceeding.**
 
-## Step 3: Fetch Prompt from API
+## Step 3: Send Start Notification
+
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Building" "Starting TDD implementation..." "low"
+```
+
+## Step 4: Fetch Prompt from API
 
 ```
 URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/workflows/build
@@ -65,13 +71,30 @@ Headers:
   Authorization: Bearer {apiKey}
 ```
 
-## Step 4: Execute the Fetched Prompt
+## Step 5: Execute the Fetched Prompt
 
 The prompt enforces TDD discipline:
 - Loads plan from `dev/active/{feature}/PLAN.md`
 - Executes each task with RED-GREEN-REFACTOR
 - Updates progress as tasks complete
 - Reports any blockers or issues
+
+## Step 6: Send Task Completion Notifications
+
+After each task completes:
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Task Complete" "Task {n} of {total} done" "low"
+```
+
+After all tasks complete:
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Build Complete" "All tasks done. Ready for /oss:ship" "high"
+```
+
+If build fails:
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Build Failed" "Task failed. Check logs for details" "critical"
+```
 
 ## Command Chain (per task)
 

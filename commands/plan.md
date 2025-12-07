@@ -37,7 +37,13 @@ Headers:
 
 **All 5 IRON LAWS must be followed. Self-correct any violations before proceeding.**
 
-## Step 3: Fetch Prompt from API
+## Step 3: Send Start Notification
+
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Creating Plan" "Designing TDD implementation plan..." "low"
+```
+
+## Step 4: Fetch Prompt from API
 
 ```
 URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/workflows/plan
@@ -46,13 +52,25 @@ Headers:
   Authorization: Bearer {apiKey}
 ```
 
-## Step 4: Execute the Fetched Prompt
+## Step 5: Execute the Fetched Prompt
 
 The prompt guides creation of a TDD plan with:
 - Phased implementation approach
 - Test-first methodology for every task
 - Clear acceptance criteria
 - Dependency mapping
+
+## Step 6: Send Completion Notification
+
+After plan is complete:
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Plan Ready" "TDD plan created. Ready for /oss:build" "high"
+```
+
+If planning fails:
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Planning Failed" "Unable to create plan" "critical"
+```
 
 ## Command Chain (after planning complete)
 
