@@ -8,11 +8,12 @@ Complete finalization workflow - quality check, docs, commit, PR, and optional m
 
 ## What This Command Does
 
-1. **Runs quality checks** - Tests, lint, build
-2. **Updates documentation** - Ensures docs are current
-3. **Creates commit** - Proper conventional commit message
-4. **Opens PR** - With comprehensive description
-5. **Auto-merges** - Optional with `--merge` flag
+1. **Parallel agent quality gates** - Code review, performance audit, security audit (3 agents in parallel)
+2. **Runs tests & build** - `npm test` and `npm run build`
+3. **Updates documentation** - Ensures docs are current
+4. **Creates commit** - Proper conventional commit message
+5. **Opens PR** - With comprehensive description
+6. **Auto-merges** - Optional with `--merge` flag
 
 ## Step 1: Check Authentication
 
@@ -59,10 +60,105 @@ Headers:
 
 The prompt orchestrates the full shipping workflow:
 
-### Quality Checks
-- Run test suite
-- Run linter
-- Run build
+### Quality Checks (Parallelized Agent Delegation)
+
+**MANDATORY: Launch these 4 specialized agents IN PARALLEL using the Task tool.**
+
+All agents must complete successfully before proceeding to git operations.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    PARALLEL QUALITY GATES                            │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                       │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐       │
+│  │ code-reviewer   │  │ performance-    │  │ security-       │       │
+│  │                 │  │ auditor         │  │ auditor         │       │
+│  │ • Code quality  │  │ • Performance   │  │ • OWASP Top 10  │       │
+│  │ • Test coverage │  │ • Memory leaks  │  │ • Dependency    │       │
+│  │ • Best practices│  │ • Bundle size   │  │   vulnerabilities│      │
+│  │ • Type safety   │  │ • Query perf    │  │ • Secret leaks  │       │
+│  └────────┬────────┘  └────────┬────────┘  └────────┬────────┘       │
+│           │                    │                    │                 │
+│           ▼                    ▼                    ▼                 │
+│  ┌─────────────────────────────────────────────────────────────┐     │
+│  │                     AGGREGATE RESULTS                        │     │
+│  │  All 3 agents must report: ✅ PASS or provide fixes         │     │
+│  └─────────────────────────────────────────────────────────────┘     │
+│                                                                       │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Agent 1: Code Reviewer** (`subagent_type: code-reviewer`)
+```
+Prompt: "Review the staged changes for this PR. Check:
+1. Code correctness and logic errors
+2. Test coverage for new/changed code
+3. TypeScript type safety (no 'any' types)
+4. Best practices and coding standards
+5. Potential bugs or edge cases
+
+Report format:
+- PASS: All checks passed
+- FAIL: [List specific issues that must be fixed]
+
+Focus on the changes in: [list staged files]"
+```
+
+**Agent 2: Performance Auditor** (`subagent_type: performance-auditor`)
+```
+Prompt: "Audit the staged changes for performance issues. Check:
+1. N+1 query patterns in database operations
+2. Memory leaks or unbounded growth
+3. Bundle size impact (new dependencies)
+4. Algorithmic complexity (O(n²) or worse)
+5. Missing caching opportunities
+
+Report format:
+- PASS: No performance regressions detected
+- WARN: [Non-blocking suggestions]
+- FAIL: [Critical issues that must be fixed]
+
+Focus on the changes in: [list staged files]"
+```
+
+**Agent 3: Security Auditor** (`subagent_type: security-auditor`)
+```
+Prompt: "Security audit the staged changes. Check:
+1. OWASP Top 10 vulnerabilities (XSS, injection, etc.)
+2. Hardcoded secrets or API keys
+3. Dependency vulnerabilities (npm audit)
+4. Input validation and sanitization
+5. Authentication/authorization issues
+
+Report format:
+- PASS: No security issues found
+- FAIL: [Critical vulnerabilities that must be fixed]
+
+Focus on the changes in: [list staged files]"
+```
+
+**Execution Pattern:**
+```typescript
+// Launch all 3 agents in parallel (single message with multiple Task tool calls)
+const results = await Promise.all([
+  Task({ subagent_type: 'code-reviewer', prompt: '...' }),
+  Task({ subagent_type: 'performance-auditor', prompt: '...' }),
+  Task({ subagent_type: 'security-auditor', prompt: '...' })
+]);
+
+// Aggregate results
+const allPassed = results.every(r => r.status === 'PASS');
+if (!allPassed) {
+  // Report failures and STOP - do not proceed to git operations
+  notify('ship', 'failed', { blocker: 'Quality gates failed' });
+  return;
+}
+```
+
+**After all agents pass, also run:**
+- `npm test` - Full test suite
+- `npm run build` - Build verification
 - All must pass before proceeding
 
 ### Documentation
@@ -106,7 +202,7 @@ With `--merge` flag:
 
 After quality checks pass:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ship quality_passed '{"checks": ["lint", "types", "tests"]}'
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ship quality_passed '{"checks": ["code-review", "performance", "security", "tests", "build"]}'
 ```
 
 After PR is created:
@@ -166,5 +262,14 @@ Quality checks failed. Fix issues before shipping:
 
 - `--merge` - Auto-merge PR when CI passes
 - `--message <msg>` - Custom commit message (overrides auto-generated)
-- `--no-checks` - Skip quality checks (not recommended)
+- `--quick` - Skip agent-based quality gates, only run `npm test` and `npm run build`
+- `--no-checks` - Skip ALL quality checks (not recommended, use for hotfixes only)
 - `--draft` - Create draft PR instead of ready for review
+
+### Quality Check Modes
+
+| Flag | Agents | Tests | Build | Use Case |
+|------|--------|-------|-------|----------|
+| (default) | ✅ code-reviewer, performance-auditor, security-auditor | ✅ | ✅ | Standard shipping |
+| `--quick` | ❌ | ✅ | ✅ | Fast iteration, trusted changes |
+| `--no-checks` | ❌ | ❌ | ❌ | Emergency hotfixes only |
