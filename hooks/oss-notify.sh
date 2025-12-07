@@ -21,6 +21,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
 COPY_CLI="$PLUGIN_ROOT/watcher/dist/cli/get-copy.js"
+MENUBAR_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-menubar.js"
+
+# Jamf Notifier path (installed by /oss:login)
+NOTIFIER_APP="/Applications/Utilities/Notifier.app/Contents/MacOS/Notifier"
 
 # =============================================================================
 # Parse arguments
@@ -144,18 +148,71 @@ esac
 [[ "$STYLE" == "none" ]] && exit 0
 
 # =============================================================================
+# Update menu bar state (for SwiftBar)
+# =============================================================================
+
+if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
+    WORKFLOW_CMD="${COPY_ARGS[0]:-}"
+    WORKFLOW_EVENT="${COPY_ARGS[1]:-}"
+    WORKFLOW_CONTEXT="${COPY_ARGS[2]:-'{}'}"
+
+    # Update menu bar state based on workflow event
+    if [[ -f "$MENUBAR_CLI" ]]; then
+        case "$WORKFLOW_EVENT" in
+            start)
+                node "$MENUBAR_CLI" setActiveStep "$WORKFLOW_CMD" 2>/dev/null || true
+                node "$MENUBAR_CLI" setSupervisor watching 2>/dev/null || true
+                ;;
+            complete|merged)
+                node "$MENUBAR_CLI" completeStep "$WORKFLOW_CMD" 2>/dev/null || true
+                ;;
+            failed)
+                node "$MENUBAR_CLI" setSupervisor intervening 2>/dev/null || true
+                ;;
+            task_complete)
+                # Extract progress from context
+                if command -v jq &>/dev/null; then
+                    CURRENT=$(echo "$WORKFLOW_CONTEXT" | jq -r '.current // ""' 2>/dev/null)
+                    TOTAL=$(echo "$WORKFLOW_CONTEXT" | jq -r '.total // ""' 2>/dev/null)
+                    TASK_NAME=$(echo "$WORKFLOW_CONTEXT" | jq -r '.taskName // ""' 2>/dev/null)
+                    TDD_PHASE=$(echo "$WORKFLOW_CONTEXT" | jq -r '.tddPhase // ""' 2>/dev/null)
+
+                    if [[ -n "$TDD_PHASE" && "$TDD_PHASE" != "null" ]]; then
+                        node "$MENUBAR_CLI" setTddPhase "$TDD_PHASE" 2>/dev/null || true
+                    fi
+
+                    if [[ -n "$CURRENT" && "$CURRENT" != "null" ]]; then
+                        node "$MENUBAR_CLI" setProgress "{\"progress\": \"$CURRENT/$TOTAL\", \"currentTask\": \"$TASK_NAME\"}" 2>/dev/null || true
+                    fi
+                fi
+                ;;
+        esac
+    fi
+fi
+
+# =============================================================================
 # Dispatch notification
 # =============================================================================
 
 case "$STYLE" in
     "visual")
-        if command -v terminal-notifier &>/dev/null; then
+        # Try Jamf Notifier first (modern UI), then terminal-notifier, then osascript
+        if [[ -x "$NOTIFIER_APP" ]]; then
+            # Jamf Notifier - modern macOS notifications
+            if [[ -n "$SUBTITLE" ]]; then
+                "$NOTIFIER_APP" --type banner --title "$TITLE" --subtitle "$SUBTITLE" --message "$MESSAGE" --sound default &>/dev/null || true
+            else
+                "$NOTIFIER_APP" --type banner --title "$TITLE" --message "$MESSAGE" --sound default &>/dev/null || true
+            fi
+        elif command -v terminal-notifier &>/dev/null; then
+            # terminal-notifier fallback
             if [[ -n "$SUBTITLE" ]]; then
                 terminal-notifier -title "$TITLE" -subtitle "$SUBTITLE" -message "$MESSAGE" -sound default &>/dev/null || true
             else
                 terminal-notifier -title "$TITLE" -message "$MESSAGE" -sound default &>/dev/null || true
             fi
         else
+            # osascript fallback (no subtitle support)
             osascript -e "display notification \"$MESSAGE\" with title \"$TITLE\"" &>/dev/null || true
         fi
         ;;
