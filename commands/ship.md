@@ -40,8 +40,10 @@ Headers:
 
 ## Step 3: Send Start Notification
 
+**You MUST execute this notification command before proceeding.**
+
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Shipping" "Running quality checks..." "low"
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ship start '{}'
 ```
 
 ## Step 4: Fetch Prompt from API
@@ -100,24 +102,26 @@ With `--merge` flag:
 
 ## Step 6: Send Completion Notifications
 
+**You MUST execute the appropriate notification commands at each stage.**
+
 After quality checks pass:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Quality Passed" "All checks passed" "high"
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ship quality_passed '{"checks": ["lint", "types", "tests"]}'
 ```
 
 After PR is created:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "PR Created" "PR #{number} ready for review" "high"
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ship pr_created '{"prNumber": {PR_NUM}, "prTitle": "{PR_TITLE}"}'
 ```
 
 After PR is merged (with `--merge` flag):
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Shipped!" "PR merged successfully" "high"
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ship merged '{"branch": "{BRANCH}", "prNumber": {PR_NUM}}'
 ```
 
 If shipping fails:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Ship Failed" "Check quality gates or CI status" "critical"
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ship failed '{"blocker": "{REASON}"}'
 ```
 
 ## Error Handling

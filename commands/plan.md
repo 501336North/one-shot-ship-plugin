@@ -39,8 +39,10 @@ Headers:
 
 ## Step 3: Send Start Notification
 
+**You MUST execute this notification command before proceeding.**
+
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Creating Plan" "Designing TDD implementation plan..." "low"
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow plan start '{}'
 ```
 
 ## Step 4: Fetch Prompt from API
@@ -62,14 +64,16 @@ The prompt guides creation of a TDD plan with:
 
 ## Step 6: Send Completion Notification
 
+**You MUST execute the appropriate notification command.**
+
 After plan is complete:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Plan Ready" "TDD plan created. Ready for /oss:build" "high"
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow plan complete '{"taskCount": {TASK_COUNT}, "phases": {PHASE_COUNT}}'
 ```
 
 If planning fails:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Planning Failed" "Unable to create plan" "critical"
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow plan failed '{}'
 ```
 
 ## Command Chain (after planning complete)

@@ -98,9 +98,10 @@ Headers:
 
 ## Step 4: Send Start Notification
 
-Notify user that ideation is starting:
+**You MUST execute this notification command before proceeding.**
+
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Starting Ideation" "Extracting requirements..." "low"
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ideate start '{"idea": "{USER_IDEA}"}'
 ```
 
 ## Step 5: Fetch Prompt from API
@@ -118,14 +119,16 @@ Execute the prompt returned by the API to guide the user through ideation.
 
 ## Step 7: Send Completion Notification
 
+**You MUST execute the appropriate notification command.**
+
 After ideation is complete:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Design Complete" "Requirements extracted. Ready for /oss:plan" "high"
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ideate complete '{"requirementsCount": {COUNT}}'
 ```
 
 If ideation fails:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Ideation Failed" "Unable to complete ideation" "critical"
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ideate failed '{"reason": "{REASON}"}'
 ```
 
 ## Command Chain (after ideation complete)
