@@ -40,9 +40,15 @@ export interface WorkflowContext {
     chainState?: {
         ideate?: 'pending' | 'active' | 'done';
         plan?: 'pending' | 'active' | 'done';
-        build?: 'pending' | 'active' | 'done';
+        acceptance?: 'pending' | 'active' | 'done';
+        red?: 'pending' | 'active' | 'done';
+        green?: 'pending' | 'active' | 'done';
+        refactor?: 'pending' | 'active' | 'done';
+        integration?: 'pending' | 'active' | 'done';
         ship?: 'pending' | 'active' | 'done';
     };
+    tddPhase?: 'red' | 'green' | 'refactor';
+    supervisor?: 'watching' | 'intervening' | 'idle';
 }
 export interface IssueContext {
     toolName?: string;
@@ -66,14 +72,15 @@ export declare class NotificationCopyService {
      */
     getWorkflowCopy(command: WorkflowCommand, event: WorkflowEvent, context: WorkflowContext): Copy;
     /**
-     * Generate subtitle showing workflow chain state
-     * Example: "ideate ✓  plan ✓  BUILD  →  ship"
+     * Generate subtitle showing full London TDD workflow chain
+     * Full chain: ideate → plan → acceptance → red → green → refactor → integration → ship
+     * With supervisor indicator: 👁 (watching) or ⚡ (intervening)
      */
     private generateChainSubtitle;
     /**
-     * Derive chain state from current command and event
+     * Derive full chain state from command, event, and TDD phase
      */
-    private deriveChainState;
+    private deriveFullChainState;
     /**
      * Get copy for issue/intervention events
      */

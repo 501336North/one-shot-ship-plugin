@@ -62,13 +62,21 @@ export interface WorkflowContext {
   prTitle?: string;
   branch?: string;
   blocker?: string;
-  // Chain state for subtitle
+  // Chain state for subtitle (full London TDD chain)
   chainState?: {
     ideate?: 'pending' | 'active' | 'done';
     plan?: 'pending' | 'active' | 'done';
-    build?: 'pending' | 'active' | 'done';
+    acceptance?: 'pending' | 'active' | 'done';
+    red?: 'pending' | 'active' | 'done';
+    green?: 'pending' | 'active' | 'done';
+    refactor?: 'pending' | 'active' | 'done';
+    integration?: 'pending' | 'active' | 'done';
     ship?: 'pending' | 'active' | 'done';
   };
+  // TDD phase within build (red/green/refactor)
+  tddPhase?: 'red' | 'green' | 'refactor';
+  // Supervisor status
+  supervisor?: 'watching' | 'intervening' | 'idle';
 }
 
 export interface IssueContext {
@@ -262,7 +270,7 @@ export class NotificationCopyService {
     message = this.interpolate(message, context as Record<string, unknown>);
 
     // Generate subtitle showing chain state
-    const subtitle = this.generateChainSubtitle(command, event, context.chainState);
+    const subtitle = this.generateChainSubtitle(command, event, context);
 
     return {
       title,
@@ -272,58 +280,144 @@ export class NotificationCopyService {
   }
 
   /**
-   * Generate subtitle showing workflow chain state
-   * Example: "ideate ✓  plan ✓  BUILD  →  ship"
+   * Generate subtitle showing full London TDD workflow chain
+   * Full chain: ideate → plan → acceptance → red → green → refactor → integration → ship
+   * With supervisor indicator: 👁 (watching) or ⚡ (intervening)
    */
   private generateChainSubtitle(
     command: WorkflowCommand,
     event: WorkflowEvent,
-    chainState?: WorkflowContext['chainState']
+    context: WorkflowContext
   ): string {
-    const commands: WorkflowCommand[] = ['ideate', 'plan', 'build', 'ship'];
+    // Full London TDD chain
+    type ChainStep =
+      | 'ideate'
+      | 'plan'
+      | 'acceptance'
+      | 'red'
+      | 'green'
+      | 'refactor'
+      | 'integration'
+      | 'ship';
+    const fullChain: ChainStep[] = [
+      'ideate',
+      'plan',
+      'acceptance',
+      'red',
+      'green',
+      'refactor',
+      'integration',
+      'ship',
+    ];
 
-    // If chainState is provided, use it; otherwise derive from current command/event
-    const state = chainState || this.deriveChainState(command, event);
+    // Derive or use provided chain state
+    const state = context.chainState || this.deriveFullChainState(command, event, context.tddPhase);
 
-    const parts = commands.map((cmd) => {
-      const cmdState = state[cmd];
-      if (cmdState === 'done') {
-        return `${cmd} ✓`;
-      } else if (cmdState === 'active') {
-        return cmd.toUpperCase();
+    const parts = fullChain.map((step) => {
+      const stepState = state[step];
+      if (stepState === 'done') {
+        return `${step}✓`;
+      } else if (stepState === 'active') {
+        return step.toUpperCase();
       } else {
-        return cmd;
+        return step;
       }
     });
 
-    // Join with arrows between steps
-    return parts.join('  →  ');
+    // Build subtitle with chain
+    let subtitle = parts.join(' → ');
+
+    // Add supervisor indicator (robot with status)
+    if (context.supervisor === 'watching') {
+      subtitle = `🤖✓ ${subtitle}`;
+    } else if (context.supervisor === 'intervening') {
+      subtitle = `🤖⚡ ${subtitle}`;
+    } else if (context.supervisor === 'idle') {
+      subtitle = `🤖✗ ${subtitle}`;
+    }
+
+    return subtitle;
   }
 
   /**
-   * Derive chain state from current command and event
+   * Derive full chain state from command, event, and TDD phase
    */
-  private deriveChainState(
+  private deriveFullChainState(
     command: WorkflowCommand,
-    event: WorkflowEvent
+    event: WorkflowEvent,
+    tddPhase?: 'red' | 'green' | 'refactor'
   ): NonNullable<WorkflowContext['chainState']> {
-    const commands: WorkflowCommand[] = ['ideate', 'plan', 'build', 'ship'];
-    const currentIndex = commands.indexOf(command);
+    // Map our 4 commands to positions in the full chain
+    // ideate=0, plan=1, build spans acceptance(2) through integration(6), ship=7
+    const commandToStartIndex: Record<WorkflowCommand, number> = {
+      ideate: 0,
+      plan: 1,
+      build: 2, // acceptance is first step of build
+      ship: 7,
+    };
+
+    const currentIndex = commandToStartIndex[command];
+    const isComplete = event === 'complete' || event === 'merged';
 
     const state: NonNullable<WorkflowContext['chainState']> = {};
 
-    for (let i = 0; i < commands.length; i++) {
-      const cmd = commands[i];
-      if (i < currentIndex) {
-        // Previous commands are done
-        state[cmd] = 'done';
-      } else if (i === currentIndex) {
-        // Current command: active if in progress, done if complete
-        state[cmd] = event === 'complete' || event === 'merged' ? 'done' : 'active';
+    // For build command, handle the sub-phases
+    if (command === 'build') {
+      // Everything before build is done
+      state.ideate = 'done';
+      state.plan = 'done';
+
+      if (isComplete) {
+        // Build complete = all build sub-phases done
+        state.acceptance = 'done';
+        state.red = 'done';
+        state.green = 'done';
+        state.refactor = 'done';
+        state.integration = 'done';
+        state.ship = 'pending';
       } else {
-        // Future commands are pending
-        state[cmd] = 'pending';
+        // Determine which build sub-phase is active based on tddPhase
+        const tddPhases = ['acceptance', 'red', 'green', 'refactor', 'integration'] as const;
+        const activePhaseIndex = tddPhase
+          ? tddPhases.indexOf(tddPhase as (typeof tddPhases)[number])
+          : 0;
+
+        tddPhases.forEach((phase, i) => {
+          if (i < activePhaseIndex) {
+            state[phase] = 'done';
+          } else if (i === activePhaseIndex) {
+            state[phase] = 'active';
+          } else {
+            state[phase] = 'pending';
+          }
+        });
+        state.ship = 'pending';
       }
+    } else {
+      // For ideate, plan, ship - simpler logic
+      const fullChain = [
+        'ideate',
+        'plan',
+        'acceptance',
+        'red',
+        'green',
+        'refactor',
+        'integration',
+        'ship',
+      ] as const;
+
+      fullChain.forEach((step, i) => {
+        if (i < currentIndex) {
+          state[step] = 'done';
+        } else if (i === currentIndex) {
+          state[step] = isComplete ? 'done' : 'active';
+        } else if (i <= 6 && currentIndex > 1 && currentIndex < 7) {
+          // If we're past plan but before ship, build phases are done
+          state[step] = 'done';
+        } else {
+          state[step] = 'pending';
+        }
+      });
     }
 
     return state;

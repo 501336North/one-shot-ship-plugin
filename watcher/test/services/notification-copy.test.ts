@@ -334,14 +334,16 @@ describe('NotificationCopyService', () => {
   // Chain subtitle
   // ==========================================================================
 
-  describe('Chain Subtitle', () => {
+  describe('Chain Subtitle - Full London TDD Chain', () => {
     /**
-     * @behavior Ideate start shows ideate as active in chain
+     * @behavior Ideate start shows ideate as active in full chain
      * @acceptance-criteria AC-COPY.27
      */
-    test('ideate start shows IDEATE active in subtitle', () => {
+    test('ideate start shows IDEATE active in full chain subtitle', () => {
       const copy = service.getWorkflowCopy('ideate', 'start', { idea: 'auth' });
-      expect(copy.subtitle).toBe('IDEATE  →  plan  →  build  →  ship');
+      expect(copy.subtitle).toBe(
+        'IDEATE → plan → acceptance → red → green → refactor → integration → ship'
+      );
     });
 
     /**
@@ -350,7 +352,9 @@ describe('NotificationCopyService', () => {
      */
     test('ideate complete shows ideate done in subtitle', () => {
       const copy = service.getWorkflowCopy('ideate', 'complete', { requirementsCount: 5 });
-      expect(copy.subtitle).toBe('ideate ✓  →  plan  →  build  →  ship');
+      expect(copy.subtitle).toBe(
+        'ideate✓ → plan → acceptance → red → green → refactor → integration → ship'
+      );
     });
 
     /**
@@ -359,34 +363,121 @@ describe('NotificationCopyService', () => {
      */
     test('plan start shows ideate done, plan active in subtitle', () => {
       const copy = service.getWorkflowCopy('plan', 'start', {});
-      expect(copy.subtitle).toBe('ideate ✓  →  PLAN  →  build  →  ship');
+      expect(copy.subtitle).toBe(
+        'ideate✓ → PLAN → acceptance → red → green → refactor → integration → ship'
+      );
     });
 
     /**
-     * @behavior Build in progress shows build active
+     * @behavior Build start shows acceptance phase active
      * @acceptance-criteria AC-COPY.30
      */
-    test('build task_complete shows build active in subtitle', () => {
+    test('build start shows acceptance phase active', () => {
+      const copy = service.getWorkflowCopy('build', 'start', { totalTasks: 12 });
+      expect(copy.subtitle).toBe(
+        'ideate✓ → plan✓ → ACCEPTANCE → red → green → refactor → integration → ship'
+      );
+    });
+
+    /**
+     * @behavior Build with tddPhase=red shows red phase active
+     * @acceptance-criteria AC-COPY.31
+     */
+    test('build with tddPhase=red shows red phase active', () => {
       const copy = service.getWorkflowCopy('build', 'task_complete', {
         current: 3,
         total: 8,
         taskName: 'auth',
+        tddPhase: 'red',
       });
-      expect(copy.subtitle).toBe('ideate ✓  →  plan ✓  →  BUILD  →  ship');
+      expect(copy.subtitle).toBe(
+        'ideate✓ → plan✓ → acceptance✓ → RED → green → refactor → integration → ship'
+      );
+    });
+
+    /**
+     * @behavior Build with tddPhase=green shows green phase active
+     * @acceptance-criteria AC-COPY.32
+     */
+    test('build with tddPhase=green shows green phase active', () => {
+      const copy = service.getWorkflowCopy('build', 'task_complete', {
+        current: 5,
+        total: 8,
+        taskName: 'auth impl',
+        tddPhase: 'green',
+      });
+      expect(copy.subtitle).toBe(
+        'ideate✓ → plan✓ → acceptance✓ → red✓ → GREEN → refactor → integration → ship'
+      );
+    });
+
+    /**
+     * @behavior Build complete shows all build phases done
+     * @acceptance-criteria AC-COPY.33
+     */
+    test('build complete shows all build phases done', () => {
+      const copy = service.getWorkflowCopy('build', 'complete', {
+        testsPass: 47,
+        duration: '4m 32s',
+      });
+      expect(copy.subtitle).toBe(
+        'ideate✓ → plan✓ → acceptance✓ → red✓ → green✓ → refactor✓ → integration✓ → ship'
+      );
     });
 
     /**
      * @behavior Ship merged shows all done
-     * @acceptance-criteria AC-COPY.31
+     * @acceptance-criteria AC-COPY.34
      */
     test('ship merged shows all done in subtitle', () => {
       const copy = service.getWorkflowCopy('ship', 'merged', { branch: 'feat/auth' });
-      expect(copy.subtitle).toBe('ideate ✓  →  plan ✓  →  build ✓  →  ship ✓');
+      expect(copy.subtitle).toBe(
+        'ideate✓ → plan✓ → acceptance✓ → red✓ → green✓ → refactor✓ → integration✓ → ship✓'
+      );
     });
 
     /**
-     * @behavior Custom chain state overrides default
-     * @acceptance-criteria AC-COPY.32
+     * @behavior Supervisor watching shows robot with checkmark
+     * @acceptance-criteria AC-COPY.35
+     */
+    test('supervisor watching shows robot with checkmark', () => {
+      const copy = service.getWorkflowCopy('build', 'start', {
+        totalTasks: 12,
+        supervisor: 'watching',
+      });
+      expect(copy.subtitle).toMatch(/^🤖✓ /);
+    });
+
+    /**
+     * @behavior Supervisor intervening shows robot with lightning
+     * @acceptance-criteria AC-COPY.36
+     */
+    test('supervisor intervening shows robot with lightning', () => {
+      const copy = service.getWorkflowCopy('build', 'task_complete', {
+        current: 3,
+        total: 8,
+        taskName: 'auth',
+        tddPhase: 'red',
+        supervisor: 'intervening',
+      });
+      expect(copy.subtitle).toMatch(/^🤖⚡ /);
+    });
+
+    /**
+     * @behavior Supervisor idle shows robot with X
+     * @acceptance-criteria AC-COPY.38
+     */
+    test('supervisor idle shows robot with X', () => {
+      const copy = service.getWorkflowCopy('build', 'start', {
+        totalTasks: 12,
+        supervisor: 'idle',
+      });
+      expect(copy.subtitle).toMatch(/^🤖✗ /);
+    });
+
+    /**
+     * @behavior Custom chainState overrides derived state
+     * @acceptance-criteria AC-COPY.37
      */
     test('custom chainState overrides derived state', () => {
       const copy = service.getWorkflowCopy('build', 'start', {
@@ -394,11 +485,17 @@ describe('NotificationCopyService', () => {
         chainState: {
           ideate: 'done',
           plan: 'done',
-          build: 'active',
+          acceptance: 'done',
+          red: 'active',
+          green: 'pending',
+          refactor: 'pending',
+          integration: 'pending',
           ship: 'pending',
         },
       });
-      expect(copy.subtitle).toBe('ideate ✓  →  plan ✓  →  BUILD  →  ship');
+      expect(copy.subtitle).toBe(
+        'ideate✓ → plan✓ → acceptance✓ → RED → green → refactor → integration → ship'
+      );
     });
   });
 
