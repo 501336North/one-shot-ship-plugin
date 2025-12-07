@@ -31,6 +31,7 @@ COPY_TYPE=""
 COPY_ARGS=()
 TITLE=""
 MESSAGE=""
+SUBTITLE=""
 PRIORITY="high"
 
 if [[ "${1:-}" == "--workflow" ]]; then
@@ -73,10 +74,12 @@ if [[ "$USE_COPY_SERVICE" == true ]] && [[ -f "$COPY_CLI" ]]; then
     if command -v jq &>/dev/null; then
         TITLE=$(echo "$COPY_JSON" | jq -r '.title // "OSS"')
         MESSAGE=$(echo "$COPY_JSON" | jq -r '.message // ""')
+        SUBTITLE=$(echo "$COPY_JSON" | jq -r '.subtitle // ""')
     else
         # Fallback parsing
         TITLE=$(echo "$COPY_JSON" | grep -o '"title":"[^"]*"' | cut -d'"' -f4 || echo "OSS")
         MESSAGE=$(echo "$COPY_JSON" | grep -o '"message":"[^"]*"' | cut -d'"' -f4 || echo "")
+        SUBTITLE=$(echo "$COPY_JSON" | grep -o '"subtitle":"[^"]*"' | cut -d'"' -f4 || echo "")
     fi
 elif [[ "$USE_COPY_SERVICE" == true ]]; then
     # Copy service not available, use defaults
@@ -147,7 +150,11 @@ esac
 case "$STYLE" in
     "visual")
         if command -v terminal-notifier &>/dev/null; then
-            terminal-notifier -title "$TITLE" -message "$MESSAGE" -sound default &>/dev/null || true
+            if [[ -n "$SUBTITLE" ]]; then
+                terminal-notifier -title "$TITLE" -subtitle "$SUBTITLE" -message "$MESSAGE" -sound default &>/dev/null || true
+            else
+                terminal-notifier -title "$TITLE" -message "$MESSAGE" -sound default &>/dev/null || true
+            fi
         else
             osascript -e "display notification \"$MESSAGE\" with title \"$TITLE\"" &>/dev/null || true
         fi

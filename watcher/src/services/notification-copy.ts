@@ -34,6 +34,7 @@ export type IssueType =
 export interface Copy {
   title: string;
   message: string;
+  subtitle?: string;
 }
 
 export interface SessionContext {
@@ -61,6 +62,13 @@ export interface WorkflowContext {
   prTitle?: string;
   branch?: string;
   blocker?: string;
+  // Chain state for subtitle
+  chainState?: {
+    ideate?: 'pending' | 'active' | 'done';
+    plan?: 'pending' | 'active' | 'done';
+    build?: 'pending' | 'active' | 'done';
+    ship?: 'pending' | 'active' | 'done';
+  };
 }
 
 export interface IssueContext {
@@ -253,10 +261,72 @@ export class NotificationCopyService {
     title = this.interpolate(title, context as Record<string, unknown>);
     message = this.interpolate(message, context as Record<string, unknown>);
 
+    // Generate subtitle showing chain state
+    const subtitle = this.generateChainSubtitle(command, event, context.chainState);
+
     return {
       title,
       message,
+      subtitle,
     };
+  }
+
+  /**
+   * Generate subtitle showing workflow chain state
+   * Example: "ideate ✓  plan ✓  BUILD  →  ship"
+   */
+  private generateChainSubtitle(
+    command: WorkflowCommand,
+    event: WorkflowEvent,
+    chainState?: WorkflowContext['chainState']
+  ): string {
+    const commands: WorkflowCommand[] = ['ideate', 'plan', 'build', 'ship'];
+
+    // If chainState is provided, use it; otherwise derive from current command/event
+    const state = chainState || this.deriveChainState(command, event);
+
+    const parts = commands.map((cmd) => {
+      const cmdState = state[cmd];
+      if (cmdState === 'done') {
+        return `${cmd} ✓`;
+      } else if (cmdState === 'active') {
+        return cmd.toUpperCase();
+      } else {
+        return cmd;
+      }
+    });
+
+    // Join with arrows between steps
+    return parts.join('  →  ');
+  }
+
+  /**
+   * Derive chain state from current command and event
+   */
+  private deriveChainState(
+    command: WorkflowCommand,
+    event: WorkflowEvent
+  ): NonNullable<WorkflowContext['chainState']> {
+    const commands: WorkflowCommand[] = ['ideate', 'plan', 'build', 'ship'];
+    const currentIndex = commands.indexOf(command);
+
+    const state: NonNullable<WorkflowContext['chainState']> = {};
+
+    for (let i = 0; i < commands.length; i++) {
+      const cmd = commands[i];
+      if (i < currentIndex) {
+        // Previous commands are done
+        state[cmd] = 'done';
+      } else if (i === currentIndex) {
+        // Current command: active if in progress, done if complete
+        state[cmd] = event === 'complete' || event === 'merged' ? 'done' : 'active';
+      } else {
+        // Future commands are pending
+        state[cmd] = 'pending';
+      }
+    }
+
+    return state;
   }
 
   /**

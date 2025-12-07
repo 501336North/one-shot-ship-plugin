@@ -11,6 +11,7 @@ export type IssueType = 'loop_detected' | 'tdd_violation' | 'regression' | 'phas
 export interface Copy {
     title: string;
     message: string;
+    subtitle?: string;
 }
 export interface SessionContext {
     branch?: string;
@@ -36,6 +37,12 @@ export interface WorkflowContext {
     prTitle?: string;
     branch?: string;
     blocker?: string;
+    chainState?: {
+        ideate?: 'pending' | 'active' | 'done';
+        plan?: 'pending' | 'active' | 'done';
+        build?: 'pending' | 'active' | 'done';
+        ship?: 'pending' | 'active' | 'done';
+    };
 }
 export interface IssueContext {
     toolName?: string;
@@ -58,6 +65,15 @@ export declare class NotificationCopyService {
      * Get copy for workflow command events
      */
     getWorkflowCopy(command: WorkflowCommand, event: WorkflowEvent, context: WorkflowContext): Copy;
+    /**
+     * Generate subtitle showing workflow chain state
+     * Example: "ideate ✓  plan ✓  BUILD  →  ship"
+     */
+    private generateChainSubtitle;
+    /**
+     * Derive chain state from current command and event
+     */
+    private deriveChainState;
     /**
      * Get copy for issue/intervention events
      */

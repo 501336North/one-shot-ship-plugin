@@ -166,10 +166,60 @@ export class NotificationCopyService {
         }
         title = this.interpolate(title, context);
         message = this.interpolate(message, context);
+        // Generate subtitle showing chain state
+        const subtitle = this.generateChainSubtitle(command, event, context.chainState);
         return {
             title,
             message,
+            subtitle,
         };
+    }
+    /**
+     * Generate subtitle showing workflow chain state
+     * Example: "ideate ✓  plan ✓  BUILD  →  ship"
+     */
+    generateChainSubtitle(command, event, chainState) {
+        const commands = ['ideate', 'plan', 'build', 'ship'];
+        // If chainState is provided, use it; otherwise derive from current command/event
+        const state = chainState || this.deriveChainState(command, event);
+        const parts = commands.map((cmd) => {
+            const cmdState = state[cmd];
+            if (cmdState === 'done') {
+                return `${cmd} ✓`;
+            }
+            else if (cmdState === 'active') {
+                return cmd.toUpperCase();
+            }
+            else {
+                return cmd;
+            }
+        });
+        // Join with arrows between steps
+        return parts.join('  →  ');
+    }
+    /**
+     * Derive chain state from current command and event
+     */
+    deriveChainState(command, event) {
+        const commands = ['ideate', 'plan', 'build', 'ship'];
+        const currentIndex = commands.indexOf(command);
+        const state = {};
+        for (let i = 0; i < commands.length; i++) {
+            const cmd = commands[i];
+            if (i < currentIndex) {
+                // Previous commands are done
+                state[cmd] = 'done';
+            }
+            else if (i === currentIndex) {
+                // Current command: active if in progress, done if complete
+                state[cmd] = event === 'complete' || event === 'merged' ? 'done' : 'active';
+            }
+            else {
+                // Future commands are pending
+                state[cmd] = 'pending';
+            }
+        }
+        return state;
     }
     /**
      * Get copy for issue/intervention events

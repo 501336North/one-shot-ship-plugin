@@ -331,6 +331,78 @@ describe('NotificationCopyService', () => {
   });
 
   // ==========================================================================
+  // Chain subtitle
+  // ==========================================================================
+
+  describe('Chain Subtitle', () => {
+    /**
+     * @behavior Ideate start shows ideate as active in chain
+     * @acceptance-criteria AC-COPY.27
+     */
+    test('ideate start shows IDEATE active in subtitle', () => {
+      const copy = service.getWorkflowCopy('ideate', 'start', { idea: 'auth' });
+      expect(copy.subtitle).toBe('IDEATE  →  plan  →  build  →  ship');
+    });
+
+    /**
+     * @behavior Ideate complete shows ideate done in chain
+     * @acceptance-criteria AC-COPY.28
+     */
+    test('ideate complete shows ideate done in subtitle', () => {
+      const copy = service.getWorkflowCopy('ideate', 'complete', { requirementsCount: 5 });
+      expect(copy.subtitle).toBe('ideate ✓  →  plan  →  build  →  ship');
+    });
+
+    /**
+     * @behavior Plan start shows ideate done, plan active
+     * @acceptance-criteria AC-COPY.29
+     */
+    test('plan start shows ideate done, plan active in subtitle', () => {
+      const copy = service.getWorkflowCopy('plan', 'start', {});
+      expect(copy.subtitle).toBe('ideate ✓  →  PLAN  →  build  →  ship');
+    });
+
+    /**
+     * @behavior Build in progress shows build active
+     * @acceptance-criteria AC-COPY.30
+     */
+    test('build task_complete shows build active in subtitle', () => {
+      const copy = service.getWorkflowCopy('build', 'task_complete', {
+        current: 3,
+        total: 8,
+        taskName: 'auth',
+      });
+      expect(copy.subtitle).toBe('ideate ✓  →  plan ✓  →  BUILD  →  ship');
+    });
+
+    /**
+     * @behavior Ship merged shows all done
+     * @acceptance-criteria AC-COPY.31
+     */
+    test('ship merged shows all done in subtitle', () => {
+      const copy = service.getWorkflowCopy('ship', 'merged', { branch: 'feat/auth' });
+      expect(copy.subtitle).toBe('ideate ✓  →  plan ✓  →  build ✓  →  ship ✓');
+    });
+
+    /**
+     * @behavior Custom chain state overrides default
+     * @acceptance-criteria AC-COPY.32
+     */
+    test('custom chainState overrides derived state', () => {
+      const copy = service.getWorkflowCopy('build', 'start', {
+        totalTasks: 8,
+        chainState: {
+          ideate: 'done',
+          plan: 'done',
+          build: 'active',
+          ship: 'pending',
+        },
+      });
+      expect(copy.subtitle).toBe('ideate ✓  →  plan ✓  →  BUILD  →  ship');
+    });
+  });
+
+  // ==========================================================================
   // Quality validation
   // ==========================================================================
 
