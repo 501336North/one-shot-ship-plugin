@@ -59,8 +59,10 @@ Headers:
 ## Step 3: Send Start Notification
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Building" "Starting TDD implementation..." "low"
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow build start '{"totalTasks": {TASK_COUNT}}'
 ```
+
+**You MUST execute this notification command before proceeding.**
 
 ## Step 4: Fetch Prompt from API
 
@@ -81,19 +83,21 @@ The prompt enforces TDD discipline:
 
 ## Step 6: Send Task Completion Notifications
 
+**You MUST execute these notification commands at the appropriate moments.**
+
 After each task completes:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Task Complete" "Task {n} of {total} done" "low"
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow build task_complete '{"current": {N}, "total": {TOTAL}, "taskName": "{TASK_NAME}"}'
 ```
 
 After all tasks complete:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Build Complete" "All tasks done. Ready for /oss:ship" "high"
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow build complete '{"testsPass": {TEST_COUNT}, "duration": "{DURATION}"}'
 ```
 
 If build fails:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Build Failed" "Task failed. Check logs for details" "critical"
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow build failed '{"failedTest": "{TEST_FILE}:{LINE}"}'
 ```
 
 ## Command Chain (per task)
