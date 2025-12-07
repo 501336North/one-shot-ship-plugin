@@ -54,15 +54,30 @@ case "$SUBSCRIPTION_STATUS" in
         ;;
 esac
 
+# --- SwiftBar Launch (if installed) ---
+# Launch SwiftBar for menu bar status display before starting watcher
+if [[ "$(uname)" == "Darwin" ]] && [[ -d "/Applications/SwiftBar.app" ]]; then
+    if ! pgrep -x "SwiftBar" > /dev/null 2>&1; then
+        open -a SwiftBar &>/dev/null &
+    fi
+fi
+
 # --- Watcher Management (US-001) ---
 # Spawn watcher process if not already running (singleton pattern)
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
 PROJECT_OSS_DIR="${CLAUDE_PROJECT_DIR:-.}/.oss"
 WATCHER_PID_FILE="$PROJECT_OSS_DIR/watcher.pid"
 WATCHER_SCRIPT="$PLUGIN_ROOT/watcher/dist/index.js"
+MENUBAR_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-menubar.js"
 
 # Ensure project .oss directory exists
 mkdir -p "$PROJECT_OSS_DIR"
+
+# Initialize menu bar state (for SwiftBar)
+if [[ -f "$MENUBAR_CLI" ]]; then
+    node "$MENUBAR_CLI" init 2>/dev/null || true
+    node "$MENUBAR_CLI" setSupervisor watching 2>/dev/null || true
+fi
 
 # Check if watcher is already running
 if [[ -f "$WATCHER_PID_FILE" ]]; then

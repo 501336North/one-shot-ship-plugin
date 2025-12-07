@@ -46,10 +46,17 @@ fi
 
 # Visual notification via unified oss-notify.sh (supports Jamf Notifier + terminal-notifier)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
 NOTIFY_SCRIPT="$SCRIPT_DIR/oss-notify.sh"
+MENUBAR_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-menubar.js"
 
 if [[ -x "$NOTIFY_SCRIPT" ]]; then
     "$NOTIFY_SCRIPT" --session context_saved "{\"project\": \"$REPO_NAME\", \"branch\": \"$BRANCH\", \"uncommitted\": \"$UNCOMMITTED_COUNT\"}"
+fi
+
+# Update menu bar state to idle (session ending)
+if [[ -f "$MENUBAR_CLI" ]]; then
+    node "$MENUBAR_CLI" setSupervisor idle 2>/dev/null || true
 fi
 
 exit 0
