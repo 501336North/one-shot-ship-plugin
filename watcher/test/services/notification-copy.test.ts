@@ -2,7 +2,7 @@
  * NotificationCopyService Tests
  *
  * @behavior Notification copy is generated from templates with context
- * @acceptance-criteria AC-COPY.1 through AC-COPY.15
+ * @acceptance-criteria AC-COPY.1 through AC-COPY.28
  */
 
 import { describe, test, expect, beforeEach } from 'vitest';
@@ -21,71 +21,44 @@ describe('NotificationCopyService', () => {
   });
 
   // ==========================================================================
-  // Phase 1.1: Core service functionality
+  // Session copy
   // ==========================================================================
 
   describe('getSessionCopy', () => {
     /**
-     * @behavior Session copy returns branded title and contextual message
+     * @behavior Context restored shows branch and age
      * @acceptance-criteria AC-COPY.1
      */
-    test('returns "Charting Course" for context_restored with branch', () => {
-      const copy = service.getSessionCopy('context_restored', { branch: 'feat/auth' });
-      expect(copy.title).toBe('Charting Course');
+    test('returns "Resumed" for context_restored with branch', () => {
+      const copy = service.getSessionCopy('context_restored', { branch: 'feat/auth', age: '2h ago' });
+      expect(copy.title).toBe('Resumed');
       expect(copy.message).toContain('feat/auth');
+      expect(copy.message).toContain('2h ago');
     });
 
     /**
-     * @behavior Fresh session is welcoming
+     * @behavior Fresh session shows project name
      * @acceptance-criteria AC-COPY.2
      */
-    test('returns "New Voyage" for fresh_session', () => {
+    test('returns "Ready" for fresh_session', () => {
       const copy = service.getSessionCopy('fresh_session', { project: 'my-app' });
-      expect(copy.title).toBe('New Voyage');
+      expect(copy.title).toBe('Ready');
       expect(copy.message).toContain('my-app');
     });
 
     /**
-     * @behavior Session end confirms save
+     * @behavior Session end shows branch and pending count
      * @acceptance-criteria AC-COPY.3
      */
-    test('returns "Anchored" for session_end with uncommitted count', () => {
+    test('returns "Saved" for session_end with uncommitted count', () => {
       const copy = service.getSessionCopy('session_end', { uncommitted: 3, branch: 'main' });
-      expect(copy.title).toBe('Anchored');
+      expect(copy.title).toBe('Saved');
       expect(copy.message).toContain('3');
     });
-  });
 
-  // ==========================================================================
-  // Phase 1.2: Session templates with edge cases
-  // ==========================================================================
-
-  describe('Session Copy Templates', () => {
     /**
-     * @behavior Context restored includes age when available
+     * @behavior Session end shows clean when no uncommitted
      * @acceptance-criteria AC-COPY.4
-     */
-    test('context_restored includes age when available', () => {
-      const copy = service.getSessionCopy('context_restored', {
-        branch: 'main',
-        age: '2h ago',
-      });
-      expect(copy.message).toMatch(/2h ago/);
-    });
-
-    /**
-     * @behavior Fresh session handles missing project gracefully
-     * @acceptance-criteria AC-COPY.5
-     */
-    test('fresh_session is welcoming for new users', () => {
-      const copy = service.getSessionCopy('fresh_session', { project: 'untitled' });
-      expect(copy.message).not.toContain('undefined');
-      expect(copy.title).toBe('New Voyage');
-    });
-
-    /**
-     * @behavior Session end shows clean state when no uncommitted
-     * @acceptance-criteria AC-COPY.6
      */
     test('session_end shows clean state when no uncommitted changes', () => {
       const copy = service.getSessionCopy('session_end', {
@@ -97,274 +70,274 @@ describe('NotificationCopyService', () => {
   });
 
   // ==========================================================================
-  // Phase 2.1: Ideate command copy
+  // Ideate copy
   // ==========================================================================
 
   describe('Ideate Copy', () => {
     /**
-     * @behavior Ideate start shows feature being explored
-     * @acceptance-criteria AC-COPY.7
+     * @behavior Ideate start shows the idea
+     * @acceptance-criteria AC-COPY.5
      */
-    test('start shows feature being explored', () => {
+    test('start shows the idea being explored', () => {
       const copy = service.getWorkflowCopy('ideate', 'start', {
         idea: 'user dashboard',
       });
-      expect(copy.title).toBe('Charting Course');
+      expect(copy.title).toBe('Ideating');
       expect(copy.message).toContain('user dashboard');
     });
 
     /**
-     * @behavior Ideate complete celebrates with next step
-     * @acceptance-criteria AC-COPY.8
+     * @behavior Ideate complete shows arrow to next step
+     * @acceptance-criteria AC-COPY.6
      */
-    test('complete celebrates with next step', () => {
+    test('complete shows arrow to Plan with requirements count', () => {
       const copy = service.getWorkflowCopy('ideate', 'complete', {
         requirementsCount: 5,
       });
-      expect(copy.title).toBe('Course Plotted');
+      expect(copy.title).toBe('→ Plan');
       expect(copy.message).toMatch(/5 requirements/);
     });
 
     /**
-     * @behavior Ideate failed is honest but encouraging
-     * @acceptance-criteria AC-COPY.9
+     * @behavior Ideate failed shows reason
+     * @acceptance-criteria AC-COPY.7
      */
-    test('failed is honest but encouraging', () => {
+    test('failed shows the reason', () => {
       const copy = service.getWorkflowCopy('ideate', 'failed', {
         reason: 'API timeout',
       });
-      expect(copy.title).toBe('Off Course');
-      expect(copy.message).not.toContain('Error');
+      expect(copy.title).toBe('Ideate Failed');
+      expect(copy.message).toContain('API timeout');
     });
   });
 
   // ==========================================================================
-  // Phase 2.2: Plan command copy
+  // Plan copy
   // ==========================================================================
 
   describe('Plan Copy', () => {
     /**
      * @behavior Plan start shows planning action
-     * @acceptance-criteria AC-COPY.10
+     * @acceptance-criteria AC-COPY.8
      */
     test('start shows planning action', () => {
       const copy = service.getWorkflowCopy('plan', 'start', {});
-      expect(copy.title).toBe('Drawing Maps');
+      expect(copy.title).toBe('Planning');
       expect(copy.message).toContain('TDD');
     });
 
     /**
-     * @behavior Plan complete shows task count and next step
-     * @acceptance-criteria AC-COPY.11
+     * @behavior Plan complete shows arrow to Build with task count
+     * @acceptance-criteria AC-COPY.9
      */
-    test('complete shows task count and next step', () => {
+    test('complete shows arrow to Build with task count', () => {
       const copy = service.getWorkflowCopy('plan', 'complete', {
         taskCount: 12,
         phases: 3,
       });
-      expect(copy.title).toBe('Maps Ready');
+      expect(copy.title).toBe('→ Build');
       expect(copy.message).toMatch(/12 tasks/);
     });
 
     /**
-     * @behavior Plan failed suggests recovery
-     * @acceptance-criteria AC-COPY.12
+     * @behavior Plan failed is direct
+     * @acceptance-criteria AC-COPY.10
      */
-    test('failed suggests recovery', () => {
+    test('failed is direct', () => {
       const copy = service.getWorkflowCopy('plan', 'failed', {});
-      expect(copy.title).toBe('Compass Spinning');
+      expect(copy.title).toBe('Plan Failed');
     });
   });
 
   // ==========================================================================
-  // Phase 2.3: Build command copy
+  // Build copy
   // ==========================================================================
 
   describe('Build Copy', () => {
     /**
-     * @behavior Build start shows construction beginning
-     * @acceptance-criteria AC-COPY.13
+     * @behavior Build start shows task count
+     * @acceptance-criteria AC-COPY.11
      */
-    test('start shows construction beginning', () => {
+    test('start shows task count', () => {
       const copy = service.getWorkflowCopy('build', 'start', {
         totalTasks: 8,
       });
-      expect(copy.title).toBe('Raising Sails');
+      expect(copy.title).toBe('Building');
       expect(copy.message).toContain('8');
     });
 
     /**
-     * @behavior Build task complete shows progress fraction
-     * @acceptance-criteria AC-COPY.14
+     * @behavior Build task complete shows progress
+     * @acceptance-criteria AC-COPY.12
      */
-    test('task_complete shows progress fraction', () => {
+    test('task_complete shows progress in title', () => {
       const copy = service.getWorkflowCopy('build', 'task_complete', {
         current: 3,
         total: 8,
         taskName: 'auth service',
       });
-      expect(copy.title).toBe('Knot Tied');
-      expect(copy.message).toMatch(/3.*8/);
+      expect(copy.title).toBe('3/8');
+      expect(copy.message).toContain('auth service');
     });
 
     /**
-     * @behavior Build complete celebrates all tests passing
-     * @acceptance-criteria AC-COPY.15
+     * @behavior Build complete shows arrow to Ship with test count
+     * @acceptance-criteria AC-COPY.13
      */
-    test('complete celebrates all tests passing', () => {
+    test('complete shows arrow to Ship with test count', () => {
       const copy = service.getWorkflowCopy('build', 'complete', {
         testsPass: 47,
         duration: '4m 32s',
       });
-      expect(copy.title).toBe('Ship Shape');
-      expect(copy.message).toMatch(/47.*green/i);
+      expect(copy.title).toBe('→ Ship');
+      expect(copy.message).toMatch(/47 tests/);
     });
 
     /**
-     * @behavior Build failed identifies the broken test
-     * @acceptance-criteria AC-COPY.16
+     * @behavior Build failed shows the failed test
+     * @acceptance-criteria AC-COPY.14
      */
-    test('failed identifies the broken test', () => {
+    test('failed shows the failed test', () => {
       const copy = service.getWorkflowCopy('build', 'failed', {
         failedTest: 'auth.test.ts:42',
       });
-      expect(copy.title).toBe('Man Overboard');
+      expect(copy.title).toBe('Build Failed');
       expect(copy.message).toContain('auth.test.ts');
     });
   });
 
   // ==========================================================================
-  // Phase 2.4: Ship command copy
+  // Ship copy
   // ==========================================================================
 
   describe('Ship Copy', () => {
     /**
-     * @behavior Ship start shows quality check beginning
-     * @acceptance-criteria AC-COPY.17
+     * @behavior Ship start shows quality checks
+     * @acceptance-criteria AC-COPY.15
      */
-    test('start shows quality check beginning', () => {
+    test('start shows quality checks', () => {
       const copy = service.getWorkflowCopy('ship', 'start', {});
-      expect(copy.title).toBe('Final Check');
-      expect(copy.message).toContain('quality');
+      expect(copy.title).toBe('Shipping');
+      expect(copy.message).toContain('Quality');
     });
 
     /**
-     * @behavior Ship quality passed is satisfying
-     * @acceptance-criteria AC-COPY.18
+     * @behavior Ship quality passed shows gate count
+     * @acceptance-criteria AC-COPY.16
      */
-    test('quality_passed is satisfying', () => {
+    test('quality_passed shows gate count', () => {
       const copy = service.getWorkflowCopy('ship', 'quality_passed', {
         checks: ['lint', 'types', 'tests'],
       });
-      expect(copy.title).toBe('All Clear');
-      expect(copy.message).toMatch(/3 checks/);
+      expect(copy.title).toBe('Checks Passed');
+      expect(copy.message).toMatch(/3 gates/);
     });
 
     /**
-     * @behavior Ship PR created shows PR number and title
-     * @acceptance-criteria AC-COPY.19
+     * @behavior Ship PR created shows PR number in title
+     * @acceptance-criteria AC-COPY.17
      */
-    test('pr_created shows PR number and title', () => {
+    test('pr_created shows PR number in title', () => {
       const copy = service.getWorkflowCopy('ship', 'pr_created', {
         prNumber: 42,
         prTitle: 'Add user auth',
       });
-      expect(copy.title).toBe('Ready to Launch');
-      expect(copy.message).toContain('#42');
+      expect(copy.title).toBe('PR #42');
+      expect(copy.message).toContain('Add user auth');
     });
 
     /**
-     * @behavior Ship merged is celebratory
-     * @acceptance-criteria AC-COPY.20
+     * @behavior Ship merged shows branch arrow to main
+     * @acceptance-criteria AC-COPY.18
      */
-    test('merged is celebratory', () => {
+    test('merged shows branch arrow to main', () => {
       const copy = service.getWorkflowCopy('ship', 'merged', {
         branch: 'feat/auth',
         prNumber: 42,
       });
-      expect(copy.title).toBe('Land Ho!');
-      expect(copy.message).toContain('merged');
+      expect(copy.title).toBe('Shipped');
+      expect(copy.message).toContain('→ main');
     });
 
     /**
-     * @behavior Ship failed explains what blocked
-     * @acceptance-criteria AC-COPY.21
+     * @behavior Ship failed shows blocker
+     * @acceptance-criteria AC-COPY.19
      */
-    test('failed explains what blocked', () => {
+    test('failed shows the blocker', () => {
       const copy = service.getWorkflowCopy('ship', 'failed', {
         blocker: 'CI failed',
       });
-      expect(copy.title).toBe('Stuck in Port');
-      expect(copy.message).toContain('CI');
+      expect(copy.title).toBe('Ship Failed');
+      expect(copy.message).toContain('CI failed');
     });
   });
 
   // ==========================================================================
-  // Phase 3.1: Issue/Intervention copy
+  // Issue copy
   // ==========================================================================
 
   describe('Issue Copy', () => {
     /**
-     * @behavior Loop detected is urgent but helpful
-     * @acceptance-criteria AC-COPY.22
+     * @behavior Loop detected shows tool and count
+     * @acceptance-criteria AC-COPY.20
      */
-    test('loop_detected is urgent but helpful', () => {
+    test('loop_detected shows tool and iteration count', () => {
       const copy = service.getIssueCopy('loop_detected', {
         toolName: 'Grep',
         iterations: 7,
       });
-      expect(copy.title).toBe('Caught in Whirlpool');
+      expect(copy.title).toBe('Loop');
       expect(copy.message).toContain('Grep');
       expect(copy.message).toContain('7');
     });
 
     /**
-     * @behavior TDD violation is educational
-     * @acceptance-criteria AC-COPY.23
+     * @behavior TDD violation is direct
+     * @acceptance-criteria AC-COPY.21
      */
-    test('tdd_violation is educational', () => {
+    test('tdd_violation is direct', () => {
       const copy = service.getIssueCopy('tdd_violation', {
         violation: 'code before test',
       });
-      expect(copy.title).toBe('Wrong Heading');
-      expect(copy.message).toContain('RED');
+      expect(copy.title).toBe('TDD Violation');
+      expect(copy.message).toContain('Test first');
     });
 
     /**
-     * @behavior Regression shows what broke
-     * @acceptance-criteria AC-COPY.24
+     * @behavior Regression shows count
+     * @acceptance-criteria AC-COPY.22
      */
-    test('regression shows what broke', () => {
+    test('regression shows test count', () => {
       const copy = service.getIssueCopy('regression', {
         failedTests: 3,
         previouslyPassing: true,
       });
-      expect(copy.title).toBe('Taking on Water');
+      expect(copy.title).toBe('Regression');
       expect(copy.message).toMatch(/3.*broke/);
     });
 
     /**
-     * @behavior Phase stuck suggests action
-     * @acceptance-criteria AC-COPY.25
+     * @behavior Phase stuck shows phase and duration
+     * @acceptance-criteria AC-COPY.23
      */
-    test('phase_stuck suggests action', () => {
+    test('phase_stuck shows phase and duration', () => {
       const copy = service.getIssueCopy('phase_stuck', {
         phase: 'GREEN',
         duration: '5m',
       });
-      expect(copy.title).toBe('Becalmed');
+      expect(copy.title).toBe('Stuck');
       expect(copy.message).toContain('GREEN');
     });
   });
 
   // ==========================================================================
-  // Phase 5.1: Quality validation
+  // Quality validation
   // ==========================================================================
 
   describe('Copy Quality Validation', () => {
     /**
      * @behavior All titles are under 20 characters
-     * @acceptance-criteria AC-COPY.26
+     * @acceptance-criteria AC-COPY.24
      */
     test('all titles are under 20 characters', () => {
       const allTitles = service.getAllTitles();
@@ -374,27 +347,28 @@ describe('NotificationCopyService', () => {
     });
 
     /**
-     * @behavior No copy contains corporate-speak words
-     * @acceptance-criteria AC-COPY.27
+     * @behavior Workflow chain is visible through arrows
+     * @acceptance-criteria AC-COPY.25
      */
-    test('no copy contains "Error" or "Failed" words', () => {
-      const allMessages = service.getAllMessages();
-      allMessages.forEach((msg) => {
-        expect(msg).not.toMatch(/\bError\b/);
-        expect(msg).not.toMatch(/\bFailed\b/);
-      });
+    test('complete events show arrow to next command', () => {
+      const ideateComplete = service.getWorkflowCopy('ideate', 'complete', { requirementsCount: 5 });
+      const planComplete = service.getWorkflowCopy('plan', 'complete', { taskCount: 10, phases: 2 });
+      const buildComplete = service.getWorkflowCopy('build', 'complete', { testsPass: 50, duration: '2s' });
+
+      expect(ideateComplete.title).toBe('→ Plan');
+      expect(planComplete.title).toBe('→ Build');
+      expect(buildComplete.title).toBe('→ Ship');
     });
 
     /**
-     * @behavior Workflow flows produce distinct notifications
-     * @acceptance-criteria AC-COPY.28
+     * @behavior Start and complete titles are distinct
+     * @acceptance-criteria AC-COPY.26
      */
-    test('full ideate workflow produces correct notifications', () => {
+    test('start and complete produce distinct notifications', () => {
       const start = service.getWorkflowCopy('ideate', 'start', { idea: 'auth' });
       const complete = service.getWorkflowCopy('ideate', 'complete', { requirementsCount: 5 });
 
       expect(start.title).not.toBe(complete.title);
-      expect(complete.message).toContain('/oss:plan');
     });
   });
 });

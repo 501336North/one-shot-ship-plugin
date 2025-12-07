@@ -82,15 +82,15 @@ export interface IssueContext {
 
 const SESSION_TEMPLATES: Record<SessionEvent, { title: string; message: string }> = {
   context_restored: {
-    title: 'Charting Course',
-    message: 'Resuming {branch} • {age}',
+    title: 'Resumed',
+    message: '{branch} • {age}',
   },
   fresh_session: {
-    title: 'New Voyage',
-    message: 'Ready to sail in {project}',
+    title: 'Ready',
+    message: '{project}',
   },
   session_end: {
-    title: 'Anchored',
+    title: 'Saved',
     message: '{branch} • {uncommittedText}',
   },
 };
@@ -98,102 +98,102 @@ const SESSION_TEMPLATES: Record<SessionEvent, { title: string; message: string }
 const WORKFLOW_TEMPLATES: Record<WorkflowCommand, Record<string, { title: string; message: string }>> = {
   ideate: {
     start: {
-      title: 'Charting Course',
-      message: 'Exploring "{idea}"...',
+      title: 'Ideating',
+      message: '"{idea}"',
     },
     complete: {
-      title: 'Course Plotted',
-      message: '{requirementsCount} requirements mapped. /oss:plan next',
+      title: '→ Plan',
+      message: '{requirementsCount} requirements extracted',
     },
     failed: {
-      title: 'Off Course',
-      message: 'Navigation issue. Retry?',
+      title: 'Ideate Failed',
+      message: '{reason}',
     },
   },
   plan: {
     start: {
-      title: 'Drawing Maps',
-      message: 'Architecting TDD plan...',
+      title: 'Planning',
+      message: 'Designing TDD approach',
     },
     complete: {
-      title: 'Maps Ready',
-      message: '{taskCount} tasks in {phases} phases',
+      title: '→ Build',
+      message: '{taskCount} tasks • {phases} phases',
     },
     failed: {
-      title: 'Compass Spinning',
-      message: 'Planning blocked. Check reqs',
+      title: 'Plan Failed',
+      message: 'Check requirements',
     },
   },
   build: {
     start: {
-      title: 'Raising Sails',
-      message: 'Building {totalTasks} tasks...',
+      title: 'Building',
+      message: '{totalTasks} tasks',
     },
     task_complete: {
-      title: 'Knot Tied',
-      message: '{current}/{total}: {taskName}',
+      title: '{current}/{total}',
+      message: '{taskName}',
     },
     complete: {
-      title: 'Ship Shape',
-      message: '{testsPass} tests green in {duration}',
+      title: '→ Ship',
+      message: '{testsPass} tests • {duration}',
     },
     failed: {
-      title: 'Man Overboard',
-      message: '{failedTest} needs rescue',
+      title: 'Build Failed',
+      message: '{failedTest}',
     },
   },
   ship: {
     start: {
-      title: 'Final Check',
-      message: 'Running quality gates...',
+      title: 'Shipping',
+      message: 'Quality checks',
     },
     quality_passed: {
-      title: 'All Clear',
-      message: '{checksCount} checks passed',
+      title: 'Checks Passed',
+      message: '{checksCount} gates',
     },
     pr_created: {
-      title: 'Ready to Launch',
-      message: 'PR #{prNumber}: {prTitle}',
+      title: 'PR #{prNumber}',
+      message: '{prTitle}',
     },
     merged: {
-      title: 'Land Ho!',
-      message: '{branch} merged to main',
+      title: 'Shipped',
+      message: '{branch} → main',
     },
     failed: {
-      title: 'Stuck in Port',
-      message: '{blocker} blocking',
+      title: 'Ship Failed',
+      message: '{blocker}',
     },
   },
 };
 
 const ISSUE_TEMPLATES: Record<IssueType, { title: string; message: string }> = {
   loop_detected: {
-    title: 'Caught in Whirlpool',
-    message: '{toolName} spinning ({iterations}x)',
+    title: 'Loop',
+    message: '{toolName} × {iterations}',
   },
   tdd_violation: {
-    title: 'Wrong Heading',
-    message: 'RED first, then GREEN',
+    title: 'TDD Violation',
+    message: 'Test first',
   },
   regression: {
-    title: 'Taking on Water',
+    title: 'Regression',
     message: '{failedTests} tests broke',
   },
   phase_stuck: {
-    title: 'Becalmed',
-    message: '{phase} stalled {duration}',
+    title: 'Stuck',
+    message: '{phase} • {duration}',
   },
   chain_broken: {
-    title: 'Lost Bearings',
+    title: 'Chain Broken',
     message: 'Run {prereq} first',
   },
   explicit_failure: {
-    title: 'Rough Seas',
-    message: '{error} encountered',
+    title: 'Failed',
+    message: '{error}',
   },
   agent_failed: {
-    title: 'Crew Down',
-    message: '{agent} needs help',
+    title: 'Agent Failed',
+    message: '{agent}',
   },
 };
 
@@ -243,16 +243,18 @@ export class NotificationCopyService {
     }
 
     let message = template.message;
+    let title = template.title;
 
     // Handle special cases
     if (event === 'quality_passed' && context.checks) {
       message = message.replace('{checksCount}', String(context.checks.length));
     }
 
+    title = this.interpolate(title, context as Record<string, unknown>);
     message = this.interpolate(message, context as Record<string, unknown>);
 
     return {
-      title: template.title,
+      title,
       message,
     };
   }
