@@ -23,8 +23,8 @@ PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
 COPY_CLI="$PLUGIN_ROOT/watcher/dist/cli/get-copy.js"
 MENUBAR_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-menubar.js"
 
-# Jamf Notifier path (installed by /oss:login)
-NOTIFIER_APP="/Applications/Utilities/Notifier.app/Contents/MacOS/Notifier"
+# OSS Notifier path (installed by /oss:login - no sudo needed)
+OSS_NOTIFIER_APP="$HOME/.oss/oss-notify.app/Contents/MacOS/oss-notify"
 
 # =============================================================================
 # Parse arguments
@@ -196,13 +196,13 @@ fi
 
 case "$STYLE" in
     "visual")
-        # Try Jamf Notifier first (modern UI), then terminal-notifier, then osascript
-        if [[ -x "$NOTIFIER_APP" ]]; then
-            # Jamf Notifier - modern macOS notifications
+        # Try OSS Notifier first (bundled with plugin), then terminal-notifier, then osascript
+        if [[ -x "$OSS_NOTIFIER_APP" ]]; then
+            # OSS Notifier - custom native macOS notifications
             if [[ -n "$SUBTITLE" ]]; then
-                "$NOTIFIER_APP" --type banner --title "$TITLE" --subtitle "$SUBTITLE" --message "$MESSAGE" --sound default &>/dev/null || true
+                "$OSS_NOTIFIER_APP" --title "$TITLE" --subtitle "$SUBTITLE" --message "$MESSAGE" &>/dev/null || true
             else
-                "$NOTIFIER_APP" --type banner --title "$TITLE" --message "$MESSAGE" --sound default &>/dev/null || true
+                "$OSS_NOTIFIER_APP" --title "$TITLE" --message "$MESSAGE" &>/dev/null || true
             fi
         elif command -v terminal-notifier &>/dev/null; then
             # terminal-notifier fallback

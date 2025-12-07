@@ -96,17 +96,13 @@ After successful authentication, install tools if not already present:
    chmod +x "$SWIFTBAR_PLUGINS/oss-workflow.1s.sh"
    ```
 
-4. **Check and install Jamf Notifier (modern notifications):**
+4. **Install OSS Notifier (bundled with plugin, no sudo needed):**
    ```bash
-   NOTIFIER_APP="/Applications/Utilities/Notifier.app"
-   if [ ! -d "$NOTIFIER_APP" ]; then
-       echo "Installing Jamf Notifier for modern macOS notifications..."
-       # Download latest release
-       NOTIFIER_URL="https://github.com/jamf/Notifier/releases/download/3.1/Notifier-3.1.pkg"
-       NOTIFIER_PKG="/tmp/Notifier.pkg"
-       curl -L -o "$NOTIFIER_PKG" "$NOTIFIER_URL"
-       sudo installer -pkg "$NOTIFIER_PKG" -target /
-       rm "$NOTIFIER_PKG"
+   OSS_NOTIFIER_DEST="$HOME/.oss/oss-notify.app"
+   if [ ! -d "$OSS_NOTIFIER_DEST" ]; then
+       echo "Installing OSS Notifier for macOS notifications..."
+       cp -R "$CLAUDE_PLUGIN_ROOT/notifier/oss-notify.app" "$HOME/.oss/"
+       chmod +x "$HOME/.oss/oss-notify.app/Contents/MacOS/oss-notify"
    fi
    ```
 
@@ -135,7 +131,7 @@ After successful authentication, install tools if not already present:
 
 **What gets installed:**
 - **SwiftBar** - Shows 🤖 idle / 🤖✓ BUILD / 🤖⚡ intervening in menu bar
-- **Jamf Notifier** - Modern native macOS notifications (UserNotifications framework)
+- **OSS Notifier** - Custom native macOS notifications (bundled with plugin, no sudo needed)
 - **OSS Plugin** - SwiftBar plugin that reads ~/.oss/workflow-state.json
 
 **Skip this step** if both tools are already installed and running.
@@ -179,8 +175,7 @@ After tools are installed, if `~/.oss/settings.json` does NOT exist:
    ```bash
    case "$STYLE" in
        "visual")
-           /Applications/Utilities/Notifier.app/Contents/MacOS/Notifier \
-               --type banner \
+           "$HOME/.oss/oss-notify.app/Contents/MacOS/oss-notify" \
                --title "Welcome to OSS!" \
                --message "Notifications configured"
            ;;
