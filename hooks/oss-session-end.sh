@@ -44,10 +44,12 @@ $UNCOMMITTED
 EOF
 fi
 
-# Visual notification (macOS) - sync, must complete before exit
-if [[ "$(uname)" == "Darwin" ]] && command -v terminal-notifier &>/dev/null; then
-    terminal-notifier -title "💾 OSS Context Saved" -subtitle "$REPO_NAME" \
-        -message "Branch: $BRANCH • $UNCOMMITTED_COUNT uncommitted" -sound default
+# Visual notification via unified oss-notify.sh (supports Jamf Notifier + terminal-notifier)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NOTIFY_SCRIPT="$SCRIPT_DIR/oss-notify.sh"
+
+if [[ -x "$NOTIFY_SCRIPT" ]]; then
+    "$NOTIFY_SCRIPT" --session context_saved "{\"project\": \"$REPO_NAME\", \"branch\": \"$BRANCH\", \"uncommitted\": \"$UNCOMMITTED_COUNT\"}"
 fi
 
 exit 0

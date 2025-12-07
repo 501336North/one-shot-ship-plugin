@@ -9,7 +9,7 @@
 // Types
 // =============================================================================
 
-export type SessionEvent = 'context_restored' | 'fresh_session' | 'session_end';
+export type SessionEvent = 'context_restored' | 'fresh_session' | 'fresh_start' | 'session_end' | 'context_saved';
 
 export type WorkflowCommand = 'ideate' | 'plan' | 'build' | 'ship';
 
@@ -105,7 +105,15 @@ const SESSION_TEMPLATES: Record<SessionEvent, { title: string; message: string }
     title: 'Ready',
     message: '{project}',
   },
+  fresh_start: {
+    title: 'Ready',
+    message: '{project}',
+  },
   session_end: {
+    title: 'Saved',
+    message: '{branch} • {uncommittedText}',
+  },
+  context_saved: {
     title: 'Saved',
     message: '{branch} • {uncommittedText}',
   },
@@ -229,8 +237,8 @@ export class NotificationCopyService {
 
     let message = template.message;
 
-    // Handle session_end specially for uncommitted count
-    if (event === 'session_end') {
+    // Handle session_end/context_saved specially for uncommitted count
+    if (event === 'session_end' || event === 'context_saved') {
       const uncommitted = context.uncommitted ?? 0;
       const uncommittedText = uncommitted === 0 ? 'clean' : `${uncommitted} pending`;
       message = message.replace('{uncommittedText}', uncommittedText);

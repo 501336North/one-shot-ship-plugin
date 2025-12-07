@@ -4,7 +4,7 @@
  * @behavior Generates branded, contextual notification messages
  * @acceptance-criteria AC-COPY.1 through AC-COPY.28
  */
-export type SessionEvent = 'context_restored' | 'fresh_session' | 'session_end';
+export type SessionEvent = 'context_restored' | 'fresh_session' | 'fresh_start' | 'session_end' | 'context_saved';
 export type WorkflowCommand = 'ideate' | 'plan' | 'build' | 'ship';
 export type WorkflowEvent = 'start' | 'complete' | 'failed' | 'task_complete' | 'quality_passed' | 'pr_created' | 'merged';
 export type IssueType = 'loop_detected' | 'tdd_violation' | 'regression' | 'phase_stuck' | 'chain_broken' | 'explicit_failure' | 'agent_failed';

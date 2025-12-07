@@ -16,7 +16,15 @@ const SESSION_TEMPLATES = {
         title: 'Ready',
         message: '{project}',
     },
+    fresh_start: {
+        title: 'Ready',
+        message: '{project}',
+    },
     session_end: {
+        title: 'Saved',
+        message: '{branch} • {uncommittedText}',
+    },
+    context_saved: {
         title: 'Saved',
         message: '{branch} • {uncommittedText}',
     },
@@ -134,8 +142,8 @@ export class NotificationCopyService {
             return { title: 'OSS', message: 'Session event' };
         }
         let message = template.message;
-        // Handle session_end specially for uncommitted count
-        if (event === 'session_end') {
+        // Handle session_end/context_saved specially for uncommitted count
+        if (event === 'session_end' || event === 'context_saved') {
             const uncommitted = context.uncommitted ?? 0;
             const uncommittedText = uncommitted === 0 ? 'clean' : `${uncommitted} pending`;
             message = message.replace('{uncommittedText}', uncommittedText);
