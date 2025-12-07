@@ -69,70 +69,9 @@ After successful authentication, the command automatically syncs project guideli
 
 **Note:** This only syncs guidelines, NOT proprietary prompts. The actual workflow logic stays on the API.
 
-## Step 5: Configure Notifications (First Login Only)
+## Step 5: Install Modern Notification Tools (First Login Only)
 
-After successful authentication, if `~/.oss/settings.json` does NOT exist:
-
-1. **Prompt for notification preference:**
-   ```json
-   {
-     "question": "How would you like to be notified about workflow progress?",
-     "header": "Notifications",
-     "options": [
-       {"label": "Visual", "description": "macOS notification center (recommended)"},
-       {"label": "Audio", "description": "Spoken messages using text-to-speech"},
-       {"label": "Sound", "description": "System sounds (Glass, Ping, etc.)"},
-       {"label": "None", "description": "Silent mode - no notifications"}
-     ],
-     "multiSelect": false
-   }
-   ```
-
-2. **Save settings to `~/.oss/settings.json`:**
-   ```bash
-   mkdir -p ~/.oss
-   cat > ~/.oss/settings.json << EOF
-   {
-     "notifications": {
-       "style": "$STYLE",
-       "voice": "Samantha",
-       "sound": "Glass",
-       "verbosity": "important"
-     },
-     "version": 1
-   }
-   EOF
-   ```
-
-3. **Show preview notification:**
-   ```bash
-   case "$STYLE" in
-       "visual")
-           terminal-notifier -title "Welcome to OSS!" -message "Notifications configured" -sound default
-           ;;
-       "audio")
-           say -v Samantha "Welcome to OSS Dev Workflow!"
-           ;;
-       "sound")
-           afplay "/System/Library/Sounds/Glass.aiff"
-           ;;
-       "none")
-           echo "Notifications disabled. You can change this with /oss:settings"
-           ;;
-   esac
-   ```
-
-4. **Confirm:**
-   ```
-   Notifications configured: $STYLE
-   Change anytime with /oss:settings
-   ```
-
-**Skip this step** if `~/.oss/settings.json` already exists (returning user).
-
-## Step 6: Install Modern Notification Tools (First Login Only)
-
-After successful authentication, if tools are not already installed:
+After successful authentication, install tools if not already present:
 
 1. **Check and install SwiftBar (menu bar status):**
    ```bash
@@ -182,6 +121,71 @@ After successful authentication, if tools are not already installed:
 - **OSS Plugin** - SwiftBar plugin that reads ~/.oss/workflow-state.json
 
 **Skip this step** if both tools are already installed.
+
+## Step 6: Configure Notifications (First Login Only)
+
+After tools are installed, if `~/.oss/settings.json` does NOT exist:
+
+1. **Prompt for notification preference:**
+   ```json
+   {
+     "question": "How would you like to be notified about workflow progress?",
+     "header": "Notifications",
+     "options": [
+       {"label": "Visual", "description": "macOS notification center (recommended)"},
+       {"label": "Audio", "description": "Spoken messages using text-to-speech"},
+       {"label": "Sound", "description": "System sounds (Glass, Ping, etc.)"},
+       {"label": "None", "description": "Silent mode - no notifications"}
+     ],
+     "multiSelect": false
+   }
+   ```
+
+2. **Save settings to `~/.oss/settings.json`:**
+   ```bash
+   mkdir -p ~/.oss
+   cat > ~/.oss/settings.json << EOF
+   {
+     "notifications": {
+       "style": "$STYLE",
+       "voice": "Samantha",
+       "sound": "Glass",
+       "verbosity": "important"
+     },
+     "version": 1
+   }
+   EOF
+   ```
+
+3. **Show preview notification (respects user's choice):**
+   ```bash
+   case "$STYLE" in
+       "visual")
+           /Applications/Utilities/Notifier.app/Contents/MacOS/Notifier \
+               --type banner \
+               --title "Welcome to OSS!" \
+               --message "Notifications configured"
+           ;;
+       "audio")
+           say -v "$VOICE" "Welcome to OSS Dev Workflow!"
+           ;;
+       "sound")
+           afplay "/System/Library/Sounds/$SOUND.aiff"
+           ;;
+       "none")
+           echo "Notifications disabled. You can change this with /oss:settings"
+           ;;
+   esac
+   ```
+   Note: `$VOICE` and `$SOUND` come from saved settings (default: Samantha, Glass)
+
+4. **Confirm:**
+   ```
+   Notifications configured: $STYLE
+   Change anytime with /oss:settings
+   ```
+
+**Skip this step** if `~/.oss/settings.json` already exists (returning user).
 
 ## Example Usage
 
