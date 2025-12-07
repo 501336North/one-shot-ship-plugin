@@ -75,21 +75,28 @@ After successful authentication, install tools if not already present:
 
 1. **Check and install SwiftBar (menu bar status):**
    ```bash
-   if ! command -v swiftbar &>/dev/null && ! [ -d "/Applications/SwiftBar.app" ]; then
+   if ! [ -d "/Applications/SwiftBar.app" ]; then
        echo "Installing SwiftBar for workflow status display..."
        brew install --cask swiftbar
    fi
    ```
 
-2. **Copy SwiftBar plugin:**
+2. **Configure SwiftBar plugins directory (before first launch):**
    ```bash
    SWIFTBAR_PLUGINS="${HOME}/Library/Application Support/SwiftBar/Plugins"
    mkdir -p "$SWIFTBAR_PLUGINS"
+
+   # Pre-configure SwiftBar to use our plugins directory (avoids first-launch prompt)
+   defaults write com.ameba.SwiftBar PluginDirectory -string "$SWIFTBAR_PLUGINS"
+   ```
+
+3. **Copy OSS SwiftBar plugin:**
+   ```bash
    cp "$CLAUDE_PLUGIN_ROOT/swiftbar/oss-workflow.1s.sh" "$SWIFTBAR_PLUGINS/"
    chmod +x "$SWIFTBAR_PLUGINS/oss-workflow.1s.sh"
    ```
 
-3. **Check and install Jamf Notifier (modern notifications):**
+4. **Check and install Jamf Notifier (modern notifications):**
    ```bash
    NOTIFIER_APP="/Applications/Utilities/Notifier.app"
    if [ ! -d "$NOTIFIER_APP" ]; then
@@ -103,24 +110,35 @@ After successful authentication, install tools if not already present:
    fi
    ```
 
-4. **Initialize menu bar state:**
+5. **Initialize menu bar state:**
    ```bash
    node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/update-menubar.js" init
    ```
 
-5. **Prompt to launch SwiftBar:**
+6. **Launch SwiftBar (if not already running):**
+   ```bash
+   if ! pgrep -x "SwiftBar" > /dev/null; then
+       echo "Starting SwiftBar..."
+       open -a SwiftBar
+       sleep 2  # Give it time to start and read the plugin
+   fi
    ```
-   SwiftBar installed! Launch it to see workflow status in your menu bar.
-   Open SwiftBar? [Y/n]
+
+7. **Verify SwiftBar is running:**
+   ```bash
+   if pgrep -x "SwiftBar" > /dev/null; then
+       echo "SwiftBar is running. Look for 🤖 in your menu bar!"
+   else
+       echo "Note: SwiftBar didn't start. You can launch it manually from Applications."
+   fi
    ```
-   If yes: `open -a SwiftBar`
 
 **What gets installed:**
-- **SwiftBar** - Shows 🤖✓ BUILD in menu bar with full chain dropdown
+- **SwiftBar** - Shows 🤖 idle / 🤖✓ BUILD / 🤖⚡ intervening in menu bar
 - **Jamf Notifier** - Modern native macOS notifications (UserNotifications framework)
 - **OSS Plugin** - SwiftBar plugin that reads ~/.oss/workflow-state.json
 
-**Skip this step** if both tools are already installed.
+**Skip this step** if both tools are already installed and running.
 
 ## Step 6: Configure Notifications (First Login Only)
 
