@@ -67,10 +67,37 @@ export interface NotificationPreferences {
 }
 
 /**
+ * Supervisor monitoring mode
+ * - always: Monitor for IRON LAW violations continuously
+ * - workflow-only: Only monitor during workflow commands
+ */
+export type SupervisorMode = 'always' | 'workflow-only';
+
+/**
+ * IRON LAW check toggles
+ */
+export interface IronLawCheckSettings {
+  tdd: boolean;
+  gitFlow: boolean;
+  agentDelegation: boolean;
+  devDocs: boolean;
+}
+
+/**
+ * Supervisor settings
+ */
+export interface SupervisorSettings {
+  mode: SupervisorMode;
+  ironLawChecks: IronLawCheckSettings;
+  checkIntervalMs: number;
+}
+
+/**
  * Settings file schema
  */
 export interface NotificationSettings {
   notifications: NotificationPreferences;
+  supervisor?: SupervisorSettings;
   version: number;
 }
 
@@ -85,10 +112,30 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
 };
 
 /**
+ * Default IRON LAW check settings (all enabled)
+ */
+export const DEFAULT_IRON_LAW_CHECKS: IronLawCheckSettings = {
+  tdd: true,
+  gitFlow: true,
+  agentDelegation: true,
+  devDocs: true,
+};
+
+/**
+ * Default supervisor settings - always monitoring
+ */
+export const DEFAULT_SUPERVISOR_SETTINGS: SupervisorSettings = {
+  mode: 'always',
+  ironLawChecks: DEFAULT_IRON_LAW_CHECKS,
+  checkIntervalMs: 5000,
+};
+
+/**
  * Default settings
  */
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   notifications: DEFAULT_NOTIFICATION_PREFERENCES,
+  supervisor: DEFAULT_SUPERVISOR_SETTINGS,
   version: 1,
 };
 

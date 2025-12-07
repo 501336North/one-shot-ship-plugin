@@ -130,6 +130,59 @@ After successful authentication, if `~/.oss/settings.json` does NOT exist:
 
 **Skip this step** if `~/.oss/settings.json` already exists (returning user).
 
+## Step 6: Install Modern Notification Tools (First Login Only)
+
+After successful authentication, if tools are not already installed:
+
+1. **Check and install SwiftBar (menu bar status):**
+   ```bash
+   if ! command -v swiftbar &>/dev/null && ! [ -d "/Applications/SwiftBar.app" ]; then
+       echo "Installing SwiftBar for workflow status display..."
+       brew install --cask swiftbar
+   fi
+   ```
+
+2. **Copy SwiftBar plugin:**
+   ```bash
+   SWIFTBAR_PLUGINS="${HOME}/Library/Application Support/SwiftBar/Plugins"
+   mkdir -p "$SWIFTBAR_PLUGINS"
+   cp "$CLAUDE_PLUGIN_ROOT/swiftbar/oss-workflow.1s.sh" "$SWIFTBAR_PLUGINS/"
+   chmod +x "$SWIFTBAR_PLUGINS/oss-workflow.1s.sh"
+   ```
+
+3. **Check and install Jamf Notifier (modern notifications):**
+   ```bash
+   NOTIFIER_APP="/Applications/Utilities/Notifier.app"
+   if [ ! -d "$NOTIFIER_APP" ]; then
+       echo "Installing Jamf Notifier for modern macOS notifications..."
+       # Download latest release
+       NOTIFIER_URL="https://github.com/jamf/Notifier/releases/download/3.1/Notifier-3.1.pkg"
+       NOTIFIER_PKG="/tmp/Notifier.pkg"
+       curl -L -o "$NOTIFIER_PKG" "$NOTIFIER_URL"
+       sudo installer -pkg "$NOTIFIER_PKG" -target /
+       rm "$NOTIFIER_PKG"
+   fi
+   ```
+
+4. **Initialize menu bar state:**
+   ```bash
+   node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/update-menubar.js" init
+   ```
+
+5. **Prompt to launch SwiftBar:**
+   ```
+   SwiftBar installed! Launch it to see workflow status in your menu bar.
+   Open SwiftBar? [Y/n]
+   ```
+   If yes: `open -a SwiftBar`
+
+**What gets installed:**
+- **SwiftBar** - Shows 🤖✓ BUILD in menu bar with full chain dropdown
+- **Jamf Notifier** - Modern native macOS notifications (UserNotifications framework)
+- **OSS Plugin** - SwiftBar plugin that reads ~/.oss/workflow-state.json
+
+**Skip this step** if both tools are already installed.
+
 ## Example Usage
 
 ```bash

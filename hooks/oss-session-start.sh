@@ -89,26 +89,25 @@ else
 fi
 
 # Restore previous session context if available
+NOTIFY_SCRIPT="$PLUGIN_ROOT/hooks/oss-notify.sh"
+
 if [[ -f ~/.oss/session-context.md ]]; then
     # Get context info for notification
     CONTEXT_FILE=~/.oss/session-context.md
-    SAVED_LINE=$(grep "^_Saved:" "$CONTEXT_FILE" 2>/dev/null | head -1)
     BRANCH_LINE=$(grep "^\*\*Branch:\*\*" "$CONTEXT_FILE" 2>/dev/null | head -1)
     BRANCH=$(echo "$BRANCH_LINE" | sed 's/\*\*Branch:\*\* //')
 
     echo ""
     echo "Previous session context restored."
 
-    # Visual notification for context restore (sync - must complete before exit)
-    if [[ "$(uname)" == "Darwin" ]] && command -v terminal-notifier &>/dev/null; then
-        terminal-notifier -title "🔄 Context Restored" -subtitle "$PROJECT_NAME" \
-            -message "Branch: ${BRANCH:-unknown}" -sound default
+    # Visual notification for context restore (via unified oss-notify.sh)
+    if [[ -x "$NOTIFY_SCRIPT" ]]; then
+        "$NOTIFY_SCRIPT" --session context_restored "{\"project\": \"$PROJECT_NAME\", \"branch\": \"${BRANCH:-unknown}\"}"
     fi
 else
-    # No saved context - fresh start notification (sync - must complete before exit)
-    if [[ "$(uname)" == "Darwin" ]] && command -v terminal-notifier &>/dev/null; then
-        terminal-notifier -title "🆕 Fresh Session" -subtitle "$PROJECT_NAME" \
-            -message "No previous context found" -sound default
+    # No saved context - fresh start notification (via unified oss-notify.sh)
+    if [[ -x "$NOTIFY_SCRIPT" ]]; then
+        "$NOTIFY_SCRIPT" --session fresh_start "{\"project\": \"$PROJECT_NAME\"}"
     fi
 fi
 

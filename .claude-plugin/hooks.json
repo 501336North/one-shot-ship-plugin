@@ -4,6 +4,10 @@
     "UserPromptSubmit": [
       {
         "type": "command",
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-iron-law-check.sh"
+      },
+      {
+        "type": "command",
         "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-context-inject.sh"
       }
     ],

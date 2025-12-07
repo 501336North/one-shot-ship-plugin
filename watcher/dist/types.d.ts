@@ -4,7 +4,7 @@
  * Based on DATA-MODEL.md specification
  */
 export type Priority = 'critical' | 'high' | 'medium' | 'low';
-export type MonitorSource = 'log-monitor' | 'test-monitor' | 'git-monitor' | 'manual';
+export type MonitorSource = 'log-monitor' | 'test-monitor' | 'git-monitor' | 'iron-law-monitor' | 'manual';
 export type AnomalyType = 'agent_error' | 'agent_loop' | 'agent_stuck' | 'exception' | 'test_failure' | 'test_flaky' | 'coverage_drop' | 'ci_failure' | 'pr_check_failed' | 'push_failed' | 'unusual_pattern' | 'recommended_investigation';
 export type TaskStatus = 'pending' | 'executing' | 'completed' | 'failed';
 export interface TaskContext {
@@ -23,6 +23,9 @@ export interface TaskContext {
     ci_url?: string;
     analysis?: string;
     confidence?: number;
+    law?: number;
+    type?: string;
+    message?: string;
 }
 export interface Task {
     id: string;

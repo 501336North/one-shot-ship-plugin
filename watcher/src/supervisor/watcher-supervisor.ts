@@ -14,6 +14,8 @@ import { WorkflowAnalyzer, WorkflowAnalysis } from '../analyzer/workflow-analyze
 import { InterventionGenerator, Intervention } from '../intervention/generator.js';
 import { QueueManager } from '../queue/manager.js';
 import { CreateTaskInput, AnomalyType } from '../types.js';
+import { IronLawMonitor, IronLawViolation } from '../services/iron-law-monitor.js';
+import { SettingsService } from '../services/settings.js';
 
 export interface SupervisorState {
   current_command?: string;
@@ -31,6 +33,13 @@ export interface SupervisorState {
 type AnalyzeCallback = (analysis: WorkflowAnalysis, entries: ParsedLogEntry[]) => void;
 type InterventionCallback = (intervention: Intervention) => void;
 type NotifyCallback = (title: string, message: string, sound?: string) => void;
+type IronLawCallback = (violations: IronLawViolation[]) => void;
+
+export interface WatcherSupervisorOptions {
+  ossDir: string;
+  projectDir?: string;
+  configDir?: string;
+}
 
 export class WatcherSupervisor {
   private readonly ossDir: string;
@@ -39,6 +48,8 @@ export class WatcherSupervisor {
   private readonly analyzer: WorkflowAnalyzer;
   private readonly interventionGenerator: InterventionGenerator;
   private readonly queueManager: QueueManager;
+  private readonly ironLawMonitor: IronLawMonitor;
+  private readonly settingsService: SettingsService;
 
   private running = false;
   private entries: ParsedLogEntry[] = [];
@@ -47,17 +58,30 @@ export class WatcherSupervisor {
   private analyzeCallbacks: AnalyzeCallback[] = [];
   private interventionCallbacks: InterventionCallback[] = [];
   private notifyCallbacks: NotifyCallback[] = [];
+  private ironLawCallbacks: IronLawCallback[] = [];
 
   // Track which issues we've already generated interventions for
   private processedIssueSignatures = new Set<string>();
 
-  constructor(ossDir: string, queueManager: QueueManager) {
+  // IRON LAW monitoring interval
+  private ironLawInterval: NodeJS.Timeout | null = null;
+
+  constructor(ossDir: string, queueManager: QueueManager, options?: Partial<WatcherSupervisorOptions>) {
     this.ossDir = ossDir;
     this.statePath = path.join(ossDir, 'workflow-state.json');
     this.logReader = new LogReader(ossDir);
     this.analyzer = new WorkflowAnalyzer();
     this.interventionGenerator = new InterventionGenerator();
     this.queueManager = queueManager;
+
+    // Initialize IRON LAW monitor
+    const projectDir = options?.projectDir || process.cwd();
+    const configDir = options?.configDir || path.join(process.env.HOME || '~', '.oss');
+    this.settingsService = new SettingsService(configDir);
+    this.ironLawMonitor = new IronLawMonitor({
+      projectDir,
+      stateFile: path.join(configDir, 'iron-law-state.json'),
+    });
 
     // Initialize state
     this.state = {
@@ -83,6 +107,81 @@ export class WatcherSupervisor {
 
     // Start tailing the log
     this.logReader.startTailing((entry) => this.handleEntry(entry));
+
+    // Start IRON LAW monitoring if mode is "always"
+    const supervisorSettings = this.settingsService.getSupervisorSettings();
+    if (supervisorSettings.mode === 'always') {
+      this.startIronLawMonitoring(supervisorSettings.checkIntervalMs);
+    }
+  }
+
+  /**
+   * Start IRON LAW monitoring on interval
+   */
+  private startIronLawMonitoring(intervalMs: number): void {
+    if (this.ironLawInterval) return;
+
+    this.ironLawInterval = setInterval(async () => {
+      await this.runIronLawChecks();
+    }, intervalMs);
+
+    // Run immediately on start
+    void this.runIronLawChecks();
+  }
+
+  /**
+   * Run IRON LAW checks and handle violations
+   */
+  private async runIronLawChecks(): Promise<void> {
+    try {
+      const violations = await this.ironLawMonitor.check();
+
+      // Notify iron law callbacks
+      if (violations.length > 0) {
+        for (const callback of this.ironLawCallbacks) {
+          callback(violations);
+        }
+
+        // Generate interventions for violations
+        for (const violation of violations) {
+          const signature = `iron_law:${violation.type}:${violation.message}`;
+          if (this.processedIssueSignatures.has(signature)) {
+            continue;
+          }
+
+          this.processedIssueSignatures.add(signature);
+
+          // Notify notification callbacks
+          for (const callback of this.notifyCallbacks) {
+            callback(
+              `IRON LAW #${violation.law}`,
+              violation.message,
+              'Basso' // Warning sound
+            );
+          }
+
+          // Add corrective action to queue
+          if (violation.correctiveAction) {
+            const taskInput: CreateTaskInput = {
+              priority: 'high',
+              source: 'iron-law-monitor',
+              anomaly_type: 'unusual_pattern',
+              prompt: violation.correctiveAction,
+              suggested_agent: 'general-purpose',
+              context: {
+                law: violation.law,
+                type: violation.type,
+                message: violation.message,
+              },
+            };
+
+            await this.queueManager.addTask(taskInput);
+          }
+        }
+      }
+    } catch {
+      // Ignore errors in IRON LAW checks
+    }
   }
 
   /**
@@ -91,6 +190,12 @@ export class WatcherSupervisor {
   async stop(): Promise<void> {
     if (!this.running) return;
     this.running = false;
+
+    // Stop IRON LAW monitoring
+    if (this.ironLawInterval) {
+      clearInterval(this.ironLawInterval);
+      this.ironLawInterval = null;
+    }
 
     this.logReader.stopTailing();
     await this.saveState();
@@ -129,6 +234,41 @@ export class WatcherSupervisor {
    */
   onNotify(callback: NotifyCallback): void {
     this.notifyCallbacks.push(callback);
+  }
+
+  /**
+   * Register callback for IRON LAW violation events
+   */
+  onIronLawViolation(callback: IronLawCallback): void {
+    this.ironLawCallbacks.push(callback);
+  }
+
+  /**
+   * Manually trigger IRON LAW check (for testing or on-demand)
+   */
+  async checkIronLaws(): Promise<IronLawViolation[]> {
+    return this.ironLawMonitor.check();
+  }
+
+  /**
+   * Track file change for TDD monitoring
+   */
+  trackFileChange(filePath: string, action: 'created' | 'modified' | 'deleted'): void {
+    this.ironLawMonitor.trackFileChange(filePath, action);
+  }
+
+  /**
+   * Track tool call for TDD order verification
+   */
+  trackToolCall(tool: string, filePath: string): void {
+    this.ironLawMonitor.trackToolCall(tool, filePath);
+  }
+
+  /**
+   * Set active feature for dev docs monitoring
+   */
+  setActiveFeature(featureName: string): void {
+    this.ironLawMonitor.setActiveFeature(featureName);
   }
 
   private async handleEntry(entry: ParsedLogEntry): Promise<void> {

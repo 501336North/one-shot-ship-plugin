@@ -11,11 +11,15 @@ import {
   NotificationSettings,
   NotificationStyle,
   Verbosity,
+  SupervisorMode,
+  SupervisorSettings,
   DEFAULT_NOTIFICATION_SETTINGS,
+  DEFAULT_SUPERVISOR_SETTINGS,
 } from '../types/notification.js';
 
 const VALID_STYLES: NotificationStyle[] = ['visual', 'audio', 'sound', 'none'];
 const VALID_VERBOSITIES: Verbosity[] = ['all', 'important', 'errors-only'];
+const VALID_SUPERVISOR_MODES: SupervisorMode[] = ['always', 'workflow-only'];
 
 export class SettingsService {
   private settings: NotificationSettings;
@@ -53,6 +57,10 @@ export class SettingsService {
   private deepCopyDefaults(): NotificationSettings {
     return {
       notifications: { ...DEFAULT_NOTIFICATION_SETTINGS.notifications },
+      supervisor: {
+        ...DEFAULT_SUPERVISOR_SETTINGS,
+        ironLawChecks: { ...DEFAULT_SUPERVISOR_SETTINGS.ironLawChecks },
+      },
       version: DEFAULT_NOTIFICATION_SETTINGS.version,
     };
   }
@@ -93,6 +101,37 @@ export class SettingsService {
 
     if (typeof p.version === 'number') {
       settings.version = p.version;
+    }
+
+    // Validate supervisor settings
+    const supervisor = p.supervisor as Record<string, unknown> | undefined;
+    if (supervisor && settings.supervisor) {
+      // Validate mode
+      if (VALID_SUPERVISOR_MODES.includes(supervisor.mode as SupervisorMode)) {
+        settings.supervisor.mode = supervisor.mode as SupervisorMode;
+      }
+
+      // Validate checkIntervalMs
+      if (typeof supervisor.checkIntervalMs === 'number' && supervisor.checkIntervalMs > 0) {
+        settings.supervisor.checkIntervalMs = supervisor.checkIntervalMs;
+      }
+
+      // Validate ironLawChecks
+      const checks = supervisor.ironLawChecks as Record<string, unknown> | undefined;
+      if (checks) {
+        if (typeof checks.tdd === 'boolean') {
+          settings.supervisor.ironLawChecks.tdd = checks.tdd;
+        }
+        if (typeof checks.gitFlow === 'boolean') {
+          settings.supervisor.ironLawChecks.gitFlow = checks.gitFlow;
+        }
+        if (typeof checks.agentDelegation === 'boolean') {
+          settings.supervisor.ironLawChecks.agentDelegation = checks.agentDelegation;
+        }
+        if (typeof checks.devDocs === 'boolean') {
+          settings.supervisor.ironLawChecks.devDocs = checks.devDocs;
+        }
+      }
     }
 
     return settings;
@@ -147,6 +186,47 @@ export class SettingsService {
    */
   setSound(sound: string): void {
     this.settings.notifications.sound = sound;
+  }
+
+  /**
+   * Get supervisor settings
+   */
+  getSupervisorSettings(): SupervisorSettings {
+    return this.settings.supervisor || DEFAULT_SUPERVISOR_SETTINGS;
+  }
+
+  /**
+   * Set supervisor monitoring mode
+   */
+  setSupervisorMode(mode: SupervisorMode): void {
+    if (VALID_SUPERVISOR_MODES.includes(mode)) {
+      if (!this.settings.supervisor) {
+        this.settings.supervisor = { ...DEFAULT_SUPERVISOR_SETTINGS };
+      }
+      this.settings.supervisor.mode = mode;
+    }
+  }
+
+  /**
+   * Set check interval
+   */
+  setCheckInterval(ms: number): void {
+    if (ms > 0) {
+      if (!this.settings.supervisor) {
+        this.settings.supervisor = { ...DEFAULT_SUPERVISOR_SETTINGS };
+      }
+      this.settings.supervisor.checkIntervalMs = ms;
+    }
+  }
+
+  /**
+   * Enable/disable specific IRON LAW check
+   */
+  setIronLawCheck(law: keyof SupervisorSettings['ironLawChecks'], enabled: boolean): void {
+    if (!this.settings.supervisor) {
+      this.settings.supervisor = { ...DEFAULT_SUPERVISOR_SETTINGS };
+    }
+    this.settings.supervisor.ironLawChecks[law] = enabled;
   }
 
   /**

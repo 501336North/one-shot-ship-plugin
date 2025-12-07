@@ -93,7 +93,7 @@ fi
 AGENT_REMINDER="├─ 📋 LAW #5: Remember to delegate specialized work to agents (Task tool)\n"
 
 # =============================================================================
-# Output results (only if there are violations)
+# Output results
 # =============================================================================
 if [[ -n "$VIOLATIONS" ]]; then
     echo ""
@@ -107,6 +107,14 @@ if [[ -n "$VIOLATIONS" ]]; then
     echo -e "$AGENT_REMINDER"
     echo ""
     echo "Address violations before proceeding with your task."
+    echo ""
+else
+    # Always show agent delegation reminder even when no violations
+    echo ""
+    echo "✅ IRON LAW PRE-CHECK PASSED"
+    echo -e "$PASSED"
+    echo -e "$AGENT_REMINDER"
+    echo "└─ 📝 LAW #6: Keep dev docs in sync (PROGRESS.md)"
     echo ""
 fi
 
