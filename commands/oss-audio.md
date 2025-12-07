@@ -1,9 +1,26 @@
 ---
 name: oss-audio
-description: Configure OSS audio notifications
+description: "[DEPRECATED] Use /oss:settings instead"
 ---
 
-# OSS Audio Configuration
+# OSS Audio Configuration (DEPRECATED)
+
+**This command has been deprecated.** Please use `/oss:settings` instead for full notification management.
+
+```
+/oss:settings
+```
+
+The new `/oss:settings` command provides:
+- Visual notifications (macOS Notification Center)
+- Audio notifications (text-to-speech)
+- Sound notifications (system sounds)
+- Verbosity control (all, important, errors-only)
+- Silent mode
+
+---
+
+## Legacy Documentation (for reference only)
 
 Manage audio cues for OSS Dev Workflow.
 

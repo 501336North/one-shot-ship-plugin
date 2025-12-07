@@ -38,7 +38,13 @@ Headers:
 
 **All 5 IRON LAWS must be followed. Self-correct any violations before proceeding.**
 
-## Step 3: Fetch Prompt from API
+## Step 3: Send Start Notification
+
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Shipping" "Running quality checks..." "low"
+```
+
+## Step 4: Fetch Prompt from API
 
 ```
 URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/workflows/ship
@@ -91,6 +97,28 @@ With `--merge` flag:
 - Wait for CI checks
 - Auto-merge when green
 - Delete feature branch
+
+## Step 6: Send Completion Notifications
+
+After quality checks pass:
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Quality Passed" "All checks passed" "high"
+```
+
+After PR is created:
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "PR Created" "PR #{number} ready for review" "high"
+```
+
+After PR is merged (with `--merge` flag):
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Shipped!" "PR merged successfully" "high"
+```
+
+If shipping fails:
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Ship Failed" "Check quality gates or CI status" "critical"
+```
 
 ## Error Handling
 

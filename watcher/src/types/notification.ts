@@ -1,0 +1,109 @@
+/**
+ * Notification System Type Definitions
+ *
+ * @behavior Notifications are dispatched based on user settings
+ * @acceptance-criteria AC-NOTIF.1 through AC-NOTIF.12
+ */
+
+/**
+ * Notification style options
+ * - visual: macOS notification center via terminal-notifier
+ * - audio: Text-to-speech via say command
+ * - sound: System sound via afplay
+ * - none: Silent mode
+ */
+export type NotificationStyle = 'visual' | 'audio' | 'sound' | 'none';
+
+/**
+ * Verbosity levels for filtering notifications
+ * - all: Show all notifications including low priority
+ * - important: Show high and critical priority only
+ * - errors-only: Show only critical priority (errors)
+ */
+export type Verbosity = 'all' | 'important' | 'errors-only';
+
+/**
+ * Priority levels for notification events
+ * - low: Informational (command start, agent spawn)
+ * - high: Success/important (command complete, PR created)
+ * - critical: Errors requiring attention (failures, loops)
+ */
+export type Priority = 'low' | 'high' | 'critical';
+
+/**
+ * Notification event types matching workflow moments
+ */
+export type NotificationEventType =
+  | 'COMMAND_START'
+  | 'COMMAND_COMPLETE'
+  | 'COMMAND_FAILED'
+  | 'AGENT_SPAWN'
+  | 'AGENT_COMPLETE'
+  | 'QUALITY_PASSED'
+  | 'PR_CREATED'
+  | 'PR_MERGED'
+  | 'LOOP_DETECTED'
+  | 'INTERVENTION';
+
+/**
+ * A notification event to be dispatched
+ */
+export interface NotificationEvent {
+  type: NotificationEventType;
+  title: string;
+  message: string;
+  priority: Priority;
+  data?: Record<string, unknown>;
+}
+
+/**
+ * User notification preferences
+ */
+export interface NotificationPreferences {
+  style: NotificationStyle;
+  voice: string;
+  sound: string;
+  verbosity: Verbosity;
+}
+
+/**
+ * Settings file schema
+ */
+export interface NotificationSettings {
+  notifications: NotificationPreferences;
+  version: number;
+}
+
+/**
+ * Default notification preferences
+ */
+export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
+  style: 'visual',
+  voice: 'Samantha',
+  sound: 'Glass',
+  verbosity: 'important',
+};
+
+/**
+ * Default settings
+ */
+export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
+  notifications: DEFAULT_NOTIFICATION_PREFERENCES,
+  version: 1,
+};
+
+/**
+ * Priority mapping for event types
+ */
+export const EVENT_TYPE_PRIORITIES: Record<NotificationEventType, Priority> = {
+  COMMAND_START: 'low',
+  COMMAND_COMPLETE: 'high',
+  COMMAND_FAILED: 'critical',
+  AGENT_SPAWN: 'low',
+  AGENT_COMPLETE: 'high',
+  QUALITY_PASSED: 'high',
+  PR_CREATED: 'high',
+  PR_MERGED: 'high',
+  LOOP_DETECTED: 'critical',
+  INTERVENTION: 'critical',
+};

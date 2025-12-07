@@ -96,7 +96,14 @@ Headers:
 
 **All 5 IRON LAWS must be followed. Self-correct any violations before proceeding.**
 
-## Step 4: Fetch Prompt from API
+## Step 4: Send Start Notification
+
+Notify user that ideation is starting:
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Starting Ideation" "Extracting requirements..." "low"
+```
+
+## Step 5: Fetch Prompt from API
 
 ```
 URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/workflows/ideate
@@ -105,9 +112,21 @@ Headers:
   Authorization: Bearer {apiKey}
 ```
 
-## Step 5: Execute the Fetched Prompt
+## Step 6: Execute the Fetched Prompt
 
 Execute the prompt returned by the API to guide the user through ideation.
+
+## Step 7: Send Completion Notification
+
+After ideation is complete:
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Design Complete" "Requirements extracted. Ready for /oss:plan" "high"
+```
+
+If ideation fails:
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh "Ideation Failed" "Unable to complete ideation" "critical"
+```
 
 ## Command Chain (after ideation complete)
 
