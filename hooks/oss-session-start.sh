@@ -9,6 +9,10 @@ source "$SCRIPT_DIR/oss-config.sh" 2>/dev/null || true
 # Ensure ~/.oss directory exists
 mkdir -p ~/.oss
 
+# Write current project path for SwiftBar to find the queue file
+# (SwiftBar runs outside Claude Code context so doesn't have CLAUDE_PROJECT_DIR)
+echo "${CLAUDE_PROJECT_DIR:-.}" > ~/.oss/current-project
+
 # Auto-install terminal-notifier if missing (macOS only)
 if [[ "$(uname)" == "Darwin" ]] && ! command -v terminal-notifier &>/dev/null; then
     if command -v brew &>/dev/null; then
@@ -71,6 +75,7 @@ PROJECT_OSS_DIR="${CLAUDE_PROJECT_DIR:-.}/.oss"
 WATCHER_PID_FILE="$PROJECT_OSS_DIR/watcher.pid"
 WATCHER_SCRIPT="$PLUGIN_ROOT/watcher/dist/index.js"
 MENUBAR_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-menubar.js"
+HEALTH_CHECK_CLI="$PLUGIN_ROOT/watcher/dist/cli/health-check.js"
 
 # Ensure project .oss directory exists
 mkdir -p "$PROJECT_OSS_DIR"
@@ -103,6 +108,24 @@ else
         echo $! > "$WATCHER_PID_FILE"
         echo "OSS: Watcher started (PID: $!)"
     fi
+fi
+
+# --- Health Check (Run tests on session start) ---
+# Run npm test to catch any pre-existing failures and queue them
+# This ensures the supervisor catches issues BEFORE work begins
+if [[ -f "$HEALTH_CHECK_CLI" ]] && [[ -f "package.json" ]]; then
+    echo "OSS: Running health check..."
+    # Run in background to not block session start, but still notify
+    (
+        cd "${CLAUDE_PROJECT_DIR:-.}"
+        node "$HEALTH_CHECK_CLI" 2>/dev/null
+        EXIT_CODE=$?
+        if [[ $EXIT_CODE -eq 0 ]]; then
+            echo "OSS: Health check passed"
+        elif [[ $EXIT_CODE -eq 1 ]]; then
+            echo "OSS: Health check found issues - check queue"
+        fi
+    ) &
 fi
 
 # Restore previous session context if available

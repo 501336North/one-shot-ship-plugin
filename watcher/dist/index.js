@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { execSync } from 'child_process';
 import { QueueManager } from './queue/manager.js';
 import { RuleEngine } from './detectors/rules.js';
 import { LogMonitor } from './monitors/log-monitor.js';
@@ -181,6 +182,101 @@ export class Watcher {
      */
     getGitMonitor() {
         return this.gitMonitor;
+    }
+    /**
+     * Run health check - execute npm test and queue any failures
+     * This should be called on session start to catch pre-existing issues
+     */
+    async runHealthCheck() {
+        this.log('Running health check...');
+        this.sendNotification('🔍 Health Check', 'Running npm test...', 'low');
+        try {
+            // Run npm test and capture output
+            const projectDir = path.dirname(this.ossDir);
+            const output = execSync('npm test 2>&1', {
+                cwd: projectDir,
+                timeout: 300000, // 5 minutes max
+                encoding: 'utf-8',
+                maxBuffer: 10 * 1024 * 1024, // 10MB
+            });
+            // Analyze output for failures
+            if (this.testMonitor) {
+                const result = await this.testMonitor.analyzeTestOutput(output);
+                if (result.hasFailures) {
+                    // Queue failing tests
+                    await this.testMonitor.reportFailure(result);
+                    const message = `${result.failedTests.length} test(s) failing`;
+                    this.log(`Health check failed: ${message}`);
+                    this.sendNotification('❌ Health Check Failed', message, 'critical');
+                    return {
+                        passed: false,
+                        failureCount: result.failedTests.length,
+                        message,
+                    };
+                }
+            }
+            this.log('Health check passed');
+            this.sendNotification('✅ Health Check Passed', 'All tests passing', 'high');
+            return {
+                passed: true,
+                failureCount: 0,
+                message: 'All tests passing',
+            };
+        }
+        catch (error) {
+            // Test command failed - likely test failures
+            const errorOutput = error instanceof Error && 'stdout' in error
+                ? error.stdout || ''
+                : '';
+            if (this.testMonitor && errorOutput) {
+                const result = await this.testMonitor.analyzeTestOutput(errorOutput);
+                if (result.hasFailures) {
+                    await this.testMonitor.reportFailure(result);
+                    const message = `${result.failedTests.length} test(s) failing`;
+                    this.log(`Health check failed: ${message}`);
+                    this.sendNotification('❌ Health Check Failed', message, 'critical');
+                    return {
+                        passed: false,
+                        failureCount: result.failedTests.length,
+                        message,
+                    };
+                }
+            }
+            // Generic failure
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            this.log(`Health check error: ${message}`);
+            this.sendNotification('⚠️ Health Check Error', 'Could not run tests', 'critical');
+            return {
+                passed: false,
+                failureCount: 0,
+                message: `Error: ${message}`,
+            };
+        }
+    }
+    /**
+     * Send a notification via oss-notify.sh or terminal-notifier
+     */
+    sendNotification(title, message, priority = 'high') {
+        try {
+            const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.dirname(this.ossDir);
+            const notifyScript = path.join(pluginRoot, 'hooks', 'oss-notify.sh');
+            if (fs.existsSync(notifyScript)) {
+                execSync(`"${notifyScript}" "${title}" "${message}" ${priority}`, {
+                    timeout: 5000,
+                    stdio: 'ignore',
+                });
+            }
+            else if (process.platform === 'darwin') {
+                // Fallback to terminal-notifier on macOS
+                execSync(`terminal-notifier -title "${title}" -message "${message}" -sound default`, {
+                    timeout: 5000,
+                    stdio: 'ignore',
+                });
+            }
+        }
+        catch {
+            // Ignore notification errors
+        }
     }
     /**
      * Write to log file with timestamp

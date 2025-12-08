@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { execSync } from 'child_process';
 import {
   Task,
   QueueFile,
@@ -9,6 +10,21 @@ import {
   CreateTaskInput,
   PRIORITY_ORDER,
 } from '../types.js';
+
+/**
+ * Queue event listener callback type
+ */
+export type QueueEventCallback = (event: QueueEvent) => void;
+
+/**
+ * Queue event for debugging/notifications
+ */
+export interface QueueEvent {
+  type: 'task_added' | 'task_removed' | 'task_completed' | 'task_failed' | 'queue_cleared';
+  task?: Task;
+  queueCount: number;
+  message: string;
+}
 
 /**
  * Queue Manager - Handles task persistence and ordering
@@ -21,13 +37,89 @@ export class QueueManager {
   private readonly expiredQueuePath: string;
   private queue: QueueFile;
   private readonly maxQueueSize: number;
+  private readonly ossDir: string;
+  private debugNotifications: boolean = true;
+  private eventListeners: QueueEventCallback[] = [];
 
   constructor(ossDir: string, maxQueueSize: number = 50) {
+    this.ossDir = ossDir;
     this.queuePath = path.join(ossDir, 'queue.json');
     this.failedQueuePath = path.join(ossDir, 'queue-failed.json');
     this.expiredQueuePath = path.join(ossDir, 'queue-expired.json');
     this.maxQueueSize = maxQueueSize;
     this.queue = this.createEmptyQueue();
+  }
+
+  /**
+   * Enable or disable debug notifications
+   */
+  setDebugNotifications(enabled: boolean): void {
+    this.debugNotifications = enabled;
+  }
+
+  /**
+   * Register an event listener for queue operations
+   */
+  addEventListener(callback: QueueEventCallback): void {
+    this.eventListeners.push(callback);
+  }
+
+  /**
+   * Remove an event listener
+   */
+  removeEventListener(callback: QueueEventCallback): void {
+    this.eventListeners = this.eventListeners.filter(cb => cb !== callback);
+  }
+
+  /**
+   * Emit a queue event to all listeners and send debug notification
+   */
+  private emitEvent(event: QueueEvent): void {
+    // Notify listeners
+    for (const listener of this.eventListeners) {
+      try {
+        listener(event);
+      } catch {
+        // Ignore listener errors
+      }
+    }
+
+    // Send debug notification if enabled
+    if (this.debugNotifications) {
+      this.sendDebugNotification(event);
+    }
+  }
+
+  /**
+   * Send a debug notification via terminal-notifier
+   */
+  private sendDebugNotification(event: QueueEvent): void {
+    try {
+      const title = `🤖 Queue: ${event.type.replace('_', ' ')}`;
+      const message = `${event.message} (${event.queueCount} pending)`;
+      const subtitle = event.task ? `${event.task.priority.toUpperCase()}: ${event.task.anomaly_type}` : '';
+
+      // Use the plugin's oss-notify.sh if available
+      const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.join(this.ossDir, '..');
+      const notifyScript = path.join(pluginRoot, 'hooks', 'oss-notify.sh');
+
+      if (fs.existsSync(notifyScript)) {
+        const subtitleArg = subtitle ? ` -subtitle "${subtitle}"` : '';
+        execSync(`"${notifyScript}" "${title}" "${message}" critical`, {
+          timeout: 5000,
+          stdio: 'ignore',
+        });
+      } else {
+        // Fallback to terminal-notifier directly
+        const subtitleArg = subtitle ? ` -subtitle "${subtitle}"` : '';
+        execSync(`terminal-notifier -title "${title}" -message "${message}"${subtitleArg} -sound default`, {
+          timeout: 5000,
+          stdio: 'ignore',
+        });
+      }
+    } catch {
+      // Ignore notification errors - don't break queue operations
+    }
   }
 
   /**
@@ -62,6 +154,16 @@ export class QueueManager {
     await this.enforceMaxSize();
 
     await this.persist();
+
+    // Emit event for debugging
+    const pendingCount = this.queue.tasks.filter(t => t.status === 'pending').length;
+    this.emitEvent({
+      type: 'task_added',
+      task,
+      queueCount: pendingCount,
+      message: `Added: ${task.anomaly_type}`,
+    });
+
     return task;
   }
 
@@ -90,6 +192,8 @@ export class QueueManager {
     }
 
     const task = this.queue.tasks[taskIndex];
+    const wasCompleted = task.status === 'completed';
+    const wasFailed = task.status === 'failed';
 
     // Auto-set completed_at when status changes to completed
     if (updates.status === 'completed' && task.status !== 'completed') {
@@ -98,14 +202,43 @@ export class QueueManager {
 
     this.queue.tasks[taskIndex] = { ...task, ...updates };
     await this.persist();
+
+    // Emit events for status changes
+    const pendingCount = this.queue.tasks.filter(t => t.status === 'pending').length;
+
+    if (updates.status === 'completed' && !wasCompleted) {
+      this.emitEvent({
+        type: 'task_completed',
+        task: this.queue.tasks[taskIndex],
+        queueCount: pendingCount,
+        message: `Completed: ${task.anomaly_type}`,
+      });
+    } else if (updates.status === 'failed' && !wasFailed) {
+      this.emitEvent({
+        type: 'task_failed',
+        task: this.queue.tasks[taskIndex],
+        queueCount: pendingCount,
+        message: `Failed: ${task.anomaly_type}`,
+      });
+    }
   }
 
   /**
    * Remove a task by ID
    */
   async removeTask(id: string): Promise<void> {
+    const task = this.queue.tasks.find(t => t.id === id);
     this.queue.tasks = this.queue.tasks.filter(t => t.id !== id);
     await this.persist();
+
+    // Emit event for debugging
+    const pendingCount = this.queue.tasks.filter(t => t.status === 'pending').length;
+    this.emitEvent({
+      type: 'task_removed',
+      task,
+      queueCount: pendingCount,
+      message: task ? `Removed: ${task.anomaly_type}` : 'Removed task',
+    });
   }
 
   /**
@@ -160,8 +293,18 @@ export class QueueManager {
    * Clear all tasks from the queue
    */
   async clear(): Promise<void> {
+    const previousCount = this.queue.tasks.length;
     this.queue.tasks = [];
     await this.persist();
+
+    // Emit event for debugging
+    if (previousCount > 0) {
+      this.emitEvent({
+        type: 'queue_cleared',
+        queueCount: 0,
+        message: `Cleared ${previousCount} task(s)`,
+      });
+    }
   }
 
   // Private methods

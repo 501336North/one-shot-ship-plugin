@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { execSync } from 'child_process';
 import { PRIORITY_ORDER, } from '../types.js';
 /**
  * Queue Manager - Handles task persistence and ordering
@@ -12,12 +13,83 @@ export class QueueManager {
     expiredQueuePath;
     queue;
     maxQueueSize;
+    ossDir;
+    debugNotifications = true;
+    eventListeners = [];
     constructor(ossDir, maxQueueSize = 50) {
+        this.ossDir = ossDir;
         this.queuePath = path.join(ossDir, 'queue.json');
         this.failedQueuePath = path.join(ossDir, 'queue-failed.json');
         this.expiredQueuePath = path.join(ossDir, 'queue-expired.json');
         this.maxQueueSize = maxQueueSize;
         this.queue = this.createEmptyQueue();
+    }
+    /**
+     * Enable or disable debug notifications
+     */
+    setDebugNotifications(enabled) {
+        this.debugNotifications = enabled;
+    }
+    /**
+     * Register an event listener for queue operations
+     */
+    addEventListener(callback) {
+        this.eventListeners.push(callback);
+    }
+    /**
+     * Remove an event listener
+     */
+    removeEventListener(callback) {
+        this.eventListeners = this.eventListeners.filter(cb => cb !== callback);
+    }
+    /**
+     * Emit a queue event to all listeners and send debug notification
+     */
+    emitEvent(event) {
+        // Notify listeners
+        for (const listener of this.eventListeners) {
+            try {
+                listener(event);
+            }
+            catch {
+                // Ignore listener errors
+            }
+        }
+        // Send debug notification if enabled
+        if (this.debugNotifications) {
+            this.sendDebugNotification(event);
+        }
+    }
+    /**
+     * Send a debug notification via terminal-notifier
+     */
+    sendDebugNotification(event) {
+        try {
+            const title = `🤖 Queue: ${event.type.replace('_', ' ')}`;
+            const message = `${event.message} (${event.queueCount} pending)`;
+            const subtitle = event.task ? `${event.task.priority.toUpperCase()}: ${event.task.anomaly_type}` : '';
+            // Use the plugin's oss-notify.sh if available
+            const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.join(this.ossDir, '..');
+            const notifyScript = path.join(pluginRoot, 'hooks', 'oss-notify.sh');
+            if (fs.existsSync(notifyScript)) {
+                const subtitleArg = subtitle ? ` -subtitle "${subtitle}"` : '';
+                execSync(`"${notifyScript}" "${title}" "${message}" critical`, {
+                    timeout: 5000,
+                    stdio: 'ignore',
+                });
+            }
+            else {
+                // Fallback to terminal-notifier directly
+                const subtitleArg = subtitle ? ` -subtitle "${subtitle}"` : '';
+                execSync(`terminal-notifier -title "${title}" -message "${message}"${subtitleArg} -sound default`, {
+                    timeout: 5000,
+                    stdio: 'ignore',
+                });
+            }
+        }
+        catch {
+            // Ignore notification errors - don't break queue operations
+        }
     }
     /**
      * Initialize the queue manager - load existing queue or create new one
@@ -48,6 +120,14 @@ export class QueueManager {
         // Enforce max queue size
         await this.enforceMaxSize();
         await this.persist();
+        // Emit event for debugging
+        const pendingCount = this.queue.tasks.filter(t => t.status === 'pending').length;
+        this.emitEvent({
+            type: 'task_added',
+            task,
+            queueCount: pendingCount,
+            message: `Added: ${task.anomaly_type}`,
+        });
         return task;
     }
     /**
@@ -72,19 +152,48 @@ export class QueueManager {
             throw new Error('Task not found');
         }
         const task = this.queue.tasks[taskIndex];
+        const wasCompleted = task.status === 'completed';
+        const wasFailed = task.status === 'failed';
         // Auto-set completed_at when status changes to completed
         if (updates.status === 'completed' && task.status !== 'completed') {
             updates.completed_at = new Date().toISOString();
         }
         this.queue.tasks[taskIndex] = { ...task, ...updates };
         await this.persist();
+        // Emit events for status changes
+        const pendingCount = this.queue.tasks.filter(t => t.status === 'pending').length;
+        if (updates.status === 'completed' && !wasCompleted) {
+            this.emitEvent({
+                type: 'task_completed',
+                task: this.queue.tasks[taskIndex],
+                queueCount: pendingCount,
+                message: `Completed: ${task.anomaly_type}`,
+            });
+        }
+        else if (updates.status === 'failed' && !wasFailed) {
+            this.emitEvent({
+                type: 'task_failed',
+                task: this.queue.tasks[taskIndex],
+                queueCount: pendingCount,
+                message: `Failed: ${task.anomaly_type}`,
+            });
+        }
     }
     /**
      * Remove a task by ID
      */
     async removeTask(id) {
+        const task = this.queue.tasks.find(t => t.id === id);
         this.queue.tasks = this.queue.tasks.filter(t => t.id !== id);
         await this.persist();
+        // Emit event for debugging
+        const pendingCount = this.queue.tasks.filter(t => t.status === 'pending').length;
+        this.emitEvent({
+            type: 'task_removed',
+            task,
+            queueCount: pendingCount,
+            message: task ? `Removed: ${task.anomaly_type}` : 'Removed task',
+        });
     }
     /**
      * Get count of pending tasks
@@ -131,8 +240,17 @@ export class QueueManager {
      * Clear all tasks from the queue
      */
     async clear() {
+        const previousCount = this.queue.tasks.length;
         this.queue.tasks = [];
         await this.persist();
+        // Emit event for debugging
+        if (previousCount > 0) {
+            this.emitEvent({
+                type: 'queue_cleared',
+                queueCount: 0,
+                message: `Cleared ${previousCount} task(s)`,
+            });
+        }
     }
     // Private methods
     createEmptyQueue() {

@@ -77,6 +77,19 @@ export declare class Watcher {
      */
     getGitMonitor(): GitMonitor | null;
     /**
+     * Run health check - execute npm test and queue any failures
+     * This should be called on session start to catch pre-existing issues
+     */
+    runHealthCheck(): Promise<{
+        passed: boolean;
+        failureCount: number;
+        message: string;
+    }>;
+    /**
+     * Send a notification via oss-notify.sh or terminal-notifier
+     */
+    private sendNotification;
+    /**
      * Write to log file with timestamp
      */
     private log;

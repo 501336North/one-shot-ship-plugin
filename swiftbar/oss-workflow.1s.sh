@@ -9,6 +9,23 @@
 
 STATE_FILE="${HOME}/.oss/workflow-state.json"
 
+# Queue file location - check multiple places since SwiftBar runs outside Claude Code context
+# Priority: 1) CLAUDE_PROJECT_DIR if set, 2) ~/.oss/current-project marker, 3) ~/.oss/queue.json
+QUEUE_FILE=""
+if [[ -n "$CLAUDE_PROJECT_DIR" && -f "$CLAUDE_PROJECT_DIR/.oss/queue.json" ]]; then
+    QUEUE_FILE="$CLAUDE_PROJECT_DIR/.oss/queue.json"
+elif [[ -f "${HOME}/.oss/current-project" ]]; then
+    # Read project path from marker file (set by session-start hook)
+    CURRENT_PROJECT=$(cat "${HOME}/.oss/current-project" 2>/dev/null)
+    if [[ -n "$CURRENT_PROJECT" && -f "$CURRENT_PROJECT/.oss/queue.json" ]]; then
+        QUEUE_FILE="$CURRENT_PROJECT/.oss/queue.json"
+    fi
+fi
+# Fallback to global queue if exists
+if [[ -z "$QUEUE_FILE" && -f "${HOME}/.oss/queue.json" ]]; then
+    QUEUE_FILE="${HOME}/.oss/queue.json"
+fi
+
 # =============================================================================
 # Read state file
 # =============================================================================
@@ -41,6 +58,14 @@ PROGRESS=$(jq -r '.progress // ""' "$STATE_FILE" 2>/dev/null)
 TESTS_PASS=$(jq -r '.testsPass // 0' "$STATE_FILE" 2>/dev/null)
 LAST_UPDATE=$(jq -r '.lastUpdate // ""' "$STATE_FILE" 2>/dev/null)
 
+# Read queue count (from project's .oss/queue.json)
+QUEUE_COUNT=0
+QUEUE_CRITICAL=0
+if [[ -f "$QUEUE_FILE" ]]; then
+    QUEUE_COUNT=$(jq '.tasks | map(select(.status == "pending")) | length' "$QUEUE_FILE" 2>/dev/null || echo "0")
+    QUEUE_CRITICAL=$(jq '.tasks | map(select(.status == "pending" and .priority == "critical")) | length' "$QUEUE_FILE" 2>/dev/null || echo "0")
+fi
+
 # Read chain state
 IDEATE_STATE=$(jq -r '.chainState.ideate // "pending"' "$STATE_FILE" 2>/dev/null)
 PLAN_STATE=$(jq -r '.chainState.plan // "pending"' "$STATE_FILE" 2>/dev/null)
@@ -67,14 +92,25 @@ case "$SUPERVISOR" in
         ;;
 esac
 
-# Show active step in menu bar if available
+# Build menu bar title
+TITLE="$ICON"
+
+# Show active step if available
 if [[ -n "$ACTIVE_STEP" && "$ACTIVE_STEP" != "null" ]]; then
-    # Convert to uppercase for display
     STEP_DISPLAY=$(echo "$ACTIVE_STEP" | tr '[:lower:]' '[:upper:]')
-    echo "$ICON $STEP_DISPLAY"
-else
-    echo "$ICON"
+    TITLE="$TITLE $STEP_DISPLAY"
 fi
+
+# Show queue count if there are pending tasks
+if [[ "$QUEUE_COUNT" -gt 0 ]]; then
+    if [[ "$QUEUE_CRITICAL" -gt 0 ]]; then
+        TITLE="$TITLE 🚨$QUEUE_COUNT"
+    else
+        TITLE="$TITLE 📋$QUEUE_COUNT"
+    fi
+fi
+
+echo "$TITLE"
 
 echo "---"
 
@@ -136,6 +172,31 @@ if [[ "$TESTS_PASS" != "0" && "$TESTS_PASS" != "null" ]]; then
 fi
 
 echo "---"
+
+# =============================================================================
+# Queue status
+# =============================================================================
+
+if [[ "$QUEUE_COUNT" -gt 0 ]]; then
+    if [[ "$QUEUE_CRITICAL" -gt 0 ]]; then
+        echo "Queue: $QUEUE_COUNT task(s) 🚨 | color=red"
+        echo "--$QUEUE_CRITICAL critical | color=red"
+    else
+        echo "Queue: $QUEUE_COUNT task(s) | color=orange"
+    fi
+
+    # Show first pending task preview
+    if [[ -f "$QUEUE_FILE" ]]; then
+        FIRST_TASK=$(jq -r '.tasks[] | select(.status == "pending") | "\(.priority | ascii_upcase): \(.anomaly_type)"' "$QUEUE_FILE" 2>/dev/null | head -1)
+        if [[ -n "$FIRST_TASK" ]]; then
+            echo "--Next: $FIRST_TASK | size=11 color=#888888"
+        fi
+    fi
+    echo "---"
+else
+    echo "Queue: Empty ✓ | color=green"
+    echo "---"
+fi
 
 # =============================================================================
 # Supervisor status
