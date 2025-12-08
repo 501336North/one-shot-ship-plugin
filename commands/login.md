@@ -37,37 +37,78 @@ The command will:
 3. Verify key by calling: `curl -H "Authorization: Bearer YOUR_KEY" https://one-shot-ship-api.onrender.com/api/v1/subscription/status`
 4. Display subscription status (trial, active, expired)
 
-## Step 4: Sync CLAUDE.md (Automatic)
+## Step 4: Sync CLAUDE.md with IRON LAWS (Automatic)
 
-After successful authentication, the command automatically syncs project guidelines:
+After successful authentication, the command automatically syncs project guidelines AND injects the IRON LAWS:
 
-1. **Fetch template from API:**
+### 4.1: Fetch Template and IRON LAWS from API
+
+1. **Fetch CLAUDE.md template:**
    ```
    GET https://one-shot-ship-api.onrender.com/api/v1/prompts/claude-md
    Headers:
      Authorization: Bearer {apiKey}
    ```
 
-2. **Check if CLAUDE.md exists in current directory:**
+2. **Fetch IRON LAWS (single source of truth):**
+   ```
+   GET https://one-shot-ship-api.onrender.com/api/v1/prompts/shared/iron-laws
+   Headers:
+     Authorization: Bearer {apiKey}
+   ```
+
+### 4.2: Merge IRON LAWS into Template
+
+After fetching both:
+
+1. **Find the IRON LAWS placeholder** in the template:
+   ```markdown
+   <!-- IRON LAWS will be injected here by /oss:login -->
+   ```
+
+2. **Replace the placeholder** with the full IRON LAWS content:
+   ```markdown
+   <!-- IRON LAWS START - Do not edit manually, updated by /oss:login -->
+
+   {IRON_LAWS_CONTENT}
+
+   <!-- IRON LAWS END -->
+   ```
+
+### 4.3: Update or Create CLAUDE.md
+
+1. **Check if CLAUDE.md exists in current directory:**
    ```bash
    test -f CLAUDE.md && echo "EXISTS" || echo "MISSING"
    ```
 
-3. **If MISSING:** Create new CLAUDE.md with the fetched OSS Dev Workflow guidelines
+2. **If MISSING:** Create new CLAUDE.md with the merged content (template + IRON LAWS)
 
-4. **If EXISTS:**
+3. **If EXISTS:**
    - Check if it contains `# OSS Dev Workflow` section
-   - If no OSS section: Append the fetched content with a separator
-   - If OSS section exists: Replace it with fresh version from API
+   - If no OSS section: Append the merged content with a separator
+   - If OSS section exists: Replace it with fresh version (template + IRON LAWS)
 
-**What gets synced:**
-- London TDD methodology rules
+### 4.4: What Gets Synced
+
+**From IRON LAWS (shared/iron-laws endpoint):**
+- IRON LAW #1: TDD (with MINIMAL emphasis in GREEN phase)
+- IRON LAW #2: Test Philosophy
+- IRON LAW #3: Loop Detection Protocol
+- IRON LAW #4: Agent Git Flow
+- IRON LAW #5: Agent Delegation
+- IRON LAW #6: Dev Docs Synchronization
+- PROHIBITED section
+- Pre-Command Check Summary
+
+**From Template (claude-md endpoint):**
+- London TDD methodology overview
 - Agent delegation table (which agents to use for what)
 - All available `/oss:` commands reference
-- Git workflow (Agent Git Flow) guidelines
+- Git workflow guidelines
 - Quality standards
 
-**Note:** This only syncs guidelines, NOT proprietary prompts. The actual workflow logic stays on the API.
+**Note:** IRON LAWS are the single source of truth. Every `/oss:login` pulls the latest version from the API.
 
 ## Step 5: Install Notification Tools (First Login Only)
 
