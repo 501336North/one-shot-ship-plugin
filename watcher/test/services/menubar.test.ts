@@ -253,4 +253,148 @@ describe('MenuBarService', () => {
       expect(updatedState.lastUpdate).not.toBe(initialTime);
     });
   });
+
+  // ==========================================================================
+  // TDD Loop Reset (Domino Chain)
+  // ==========================================================================
+
+  describe('TDD Loop Reset', () => {
+    /**
+     * @behavior Resets TDD phases when starting a new loop iteration
+     * @acceptance-criteria When refactor completes and there are more tasks,
+     *                     mock/green/refactor should reset to pending, red becomes active
+     */
+    test('resetTddCycle resets mock/green/refactor to pending, red to active', async () => {
+      await service.initialize();
+      await service.setActiveStep('build');
+      await service.setTddPhase('refactor');
+
+      // Simulate completing a TDD cycle and needing to start the next one
+      await service.resetTddCycle();
+
+      const state = await service.getState();
+      // Acceptance should still be done (we don't repeat acceptance tests each loop)
+      expect(state.chainState.acceptance).toBe('done');
+      // Red becomes active (we're starting the new cycle)
+      expect(state.chainState.red).toBe('active');
+      // Other TDD phases should be reset for next iteration
+      expect(state.chainState.mock).toBe('pending');
+      expect(state.chainState.green).toBe('pending');
+      expect(state.chainState.refactor).toBe('pending');
+      // Integration and ship should still be pending
+      expect(state.chainState.integration).toBe('pending');
+      expect(state.chainState.ship).toBe('pending');
+    });
+
+    /**
+     * @behavior TDD cycle counter increments on reset
+     * @acceptance-criteria Track which TDD iteration we're on
+     */
+    test('resetTddCycle increments cycle counter', async () => {
+      await service.initialize();
+      await service.setActiveStep('build');
+      await service.setTddPhase('refactor');
+
+      await service.resetTddCycle();
+
+      const state = await service.getState();
+      expect(state.tddCycle).toBe(2); // First cycle is 1, after reset is 2
+
+      await service.setTddPhase('refactor');
+      await service.resetTddCycle();
+
+      const state2 = await service.getState();
+      expect(state2.tddCycle).toBe(3);
+    });
+
+    /**
+     * @behavior Reset preserves progress info
+     * @acceptance-criteria Current task and test counts should persist
+     */
+    test('resetTddCycle preserves progress info', async () => {
+      await service.initialize();
+      await service.setActiveStep('build');
+      await service.setProgress({
+        currentTask: 'Task 5',
+        progress: '5/10',
+        testsPass: 50,
+      });
+      await service.setTddPhase('refactor');
+
+      await service.resetTddCycle();
+
+      const state = await service.getState();
+      expect(state.progress).toBe('5/10');
+      expect(state.testsPass).toBe(50);
+    });
+
+    /**
+     * @behavior Sets red as active after reset
+     * @acceptance-criteria After reset, red should be marked as active
+     */
+    test('resetTddCycle sets red as active', async () => {
+      await service.initialize();
+      await service.setActiveStep('build');
+      await service.setTddPhase('refactor');
+
+      await service.resetTddCycle();
+
+      const state = await service.getState();
+      expect(state.chainState.red).toBe('active');
+      expect(state.activeStep).toBe('red');
+    });
+  });
+
+  // ==========================================================================
+  // Extended Chain State (Discovery Chain)
+  // ==========================================================================
+
+  describe('Extended Chain State', () => {
+    /**
+     * @behavior Tracks discovery chain steps
+     * @acceptance-criteria requirements, api-design, data-model, adr should be tracked
+     */
+    test('tracks discovery chain steps', async () => {
+      await service.initialize();
+
+      await service.setActiveStep('requirements');
+
+      const state = await service.getState();
+      expect(state.chainState.ideate).toBe('done');
+      expect(state.chainState.requirements).toBe('active');
+      expect(state.chainState.apiDesign).toBe('pending');
+    });
+
+    /**
+     * @behavior Tracks mock phase in build chain
+     * @acceptance-criteria mock phase between red and green should be tracked
+     */
+    test('tracks mock phase in TDD cycle', async () => {
+      await service.initialize();
+      await service.setActiveStep('build');
+
+      await service.setTddPhase('mock');
+
+      const state = await service.getState();
+      expect(state.chainState.red).toBe('done');
+      expect(state.chainState.mock).toBe('active');
+      expect(state.chainState.green).toBe('pending');
+    });
+
+    /**
+     * @behavior Tracks contract phase in build chain
+     * @acceptance-criteria contract phase after integration should be tracked
+     */
+    test('tracks contract phase in build', async () => {
+      await service.initialize();
+      await service.setActiveStep('build');
+
+      await service.setTddPhase('contract');
+
+      const state = await service.getState();
+      expect(state.chainState.integration).toBe('done');
+      expect(state.chainState.contract).toBe('active');
+      expect(state.chainState.ship).toBe('pending');
+    });
+  });
 });

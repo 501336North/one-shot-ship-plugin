@@ -66,15 +66,30 @@ if [[ -f "$QUEUE_FILE" ]]; then
     QUEUE_CRITICAL=$(jq '.tasks | map(select(.status == "pending" and .priority == "critical")) | length' "$QUEUE_FILE" 2>/dev/null || echo "0")
 fi
 
-# Read chain state
+# Read chain state - Discovery Chain
 IDEATE_STATE=$(jq -r '.chainState.ideate // "pending"' "$STATE_FILE" 2>/dev/null)
+REQUIREMENTS_STATE=$(jq -r '.chainState.requirements // "pending"' "$STATE_FILE" 2>/dev/null)
+API_DESIGN_STATE=$(jq -r '.chainState.apiDesign // "pending"' "$STATE_FILE" 2>/dev/null)
+DATA_MODEL_STATE=$(jq -r '.chainState.dataModel // "pending"' "$STATE_FILE" 2>/dev/null)
+ADR_STATE=$(jq -r '.chainState.adr // "pending"' "$STATE_FILE" 2>/dev/null)
+
+# Read chain state - Planning Chain
 PLAN_STATE=$(jq -r '.chainState.plan // "pending"' "$STATE_FILE" 2>/dev/null)
 ACCEPTANCE_STATE=$(jq -r '.chainState.acceptance // "pending"' "$STATE_FILE" 2>/dev/null)
+
+# Read chain state - Build Chain (TDD Loop)
 RED_STATE=$(jq -r '.chainState.red // "pending"' "$STATE_FILE" 2>/dev/null)
+MOCK_STATE=$(jq -r '.chainState.mock // "pending"' "$STATE_FILE" 2>/dev/null)
 GREEN_STATE=$(jq -r '.chainState.green // "pending"' "$STATE_FILE" 2>/dev/null)
 REFACTOR_STATE=$(jq -r '.chainState.refactor // "pending"' "$STATE_FILE" 2>/dev/null)
 INTEGRATION_STATE=$(jq -r '.chainState.integration // "pending"' "$STATE_FILE" 2>/dev/null)
+CONTRACT_STATE=$(jq -r '.chainState.contract // "pending"' "$STATE_FILE" 2>/dev/null)
+
+# Read chain state - Ship Chain
 SHIP_STATE=$(jq -r '.chainState.ship // "pending"' "$STATE_FILE" 2>/dev/null)
+
+# Read TDD cycle counter
+TDD_CYCLE=$(jq -r '.tddCycle // 1' "$STATE_FILE" 2>/dev/null)
 
 # =============================================================================
 # Menu bar icon based on supervisor status
@@ -141,17 +156,42 @@ format_step() {
 
 echo "Workflow Chain | size=12 color=#888888"
 echo "---"
-format_step "ideate" "$IDEATE_STATE"
-format_step "plan" "$PLAN_STATE"
+
+# Discovery Chain
+echo "Discovery | size=11 color=#888888"
+format_step "  ideate" "$IDEATE_STATE"
+format_step "  requirements" "$REQUIREMENTS_STATE"
+format_step "  api-design" "$API_DESIGN_STATE"
+format_step "  data-model" "$DATA_MODEL_STATE"
+format_step "  adr" "$ADR_STATE"
+
 echo "---"
-echo "Build Phases | size=11 color=#888888"
+
+# Planning Chain
+echo "Planning | size=11 color=#888888"
+format_step "  plan" "$PLAN_STATE"
 format_step "  acceptance" "$ACCEPTANCE_STATE"
+
+echo "---"
+
+# Build Chain (TDD Loop)
+if [[ "$TDD_CYCLE" != "null" && "$TDD_CYCLE" -gt 1 ]]; then
+    echo "Build (TDD Cycle $TDD_CYCLE) | size=11 color=#888888"
+else
+    echo "Build (TDD) | size=11 color=#888888"
+fi
 format_step "  red" "$RED_STATE"
+format_step "  mock" "$MOCK_STATE"
 format_step "  green" "$GREEN_STATE"
 format_step "  refactor" "$REFACTOR_STATE"
 format_step "  integration" "$INTEGRATION_STATE"
+format_step "  contract" "$CONTRACT_STATE"
+
 echo "---"
-format_step "ship" "$SHIP_STATE"
+
+# Ship Chain
+echo "Ship | size=11 color=#888888"
+format_step "  ship" "$SHIP_STATE"
 
 echo "---"
 

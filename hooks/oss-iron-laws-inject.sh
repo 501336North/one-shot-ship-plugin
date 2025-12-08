@@ -1,9 +1,33 @@
 #!/bin/bash
+# ============================================================================
 # OSS IRON LAWS Injection Hook
+# ============================================================================
+#
+# STATUS: DEPRECATED - NOT IN USE
+#
+# This script is NO LONGER triggered by hooks.json.
+# Kept for reference only.
+#
+# WHY DEPRECATED:
+# - IRON LAWS are now injected into CLAUDE.md by /oss:login (single source of truth)
+# - Per-command injection was causing context pollution
+# - Claude reads CLAUDE.md at session start, making per-command injection redundant
+#
+# CURRENT BEHAVIOR:
+# - /oss:login injects IRON LAWS into project's CLAUDE.md
+# - Session start shows "IRON LAWS active" notification (oss-session-start.sh)
+# - No per-command injection needed
+#
+# TO RE-ENABLE (not recommended):
+# Add this to hooks.json under UserPromptSubmit:
+#   {"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-iron-laws-inject.sh"}
+#
+# ============================================================================
+#
+# ORIGINAL PURPOSE:
 # Triggered on: UserPromptSubmit (before each command)
 # Fetches IRON LAWS from API and injects into context
-#
-# This ensures every command has access to the latest IRON LAWS
+# This ensured every command had access to the latest IRON LAWS
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"

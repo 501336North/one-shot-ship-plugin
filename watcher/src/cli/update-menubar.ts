@@ -8,6 +8,7 @@
  *   node update-menubar.js completeStep <step>
  *   node update-menubar.js setSupervisor <status>
  *   node update-menubar.js setProgress '<json>'
+ *   node update-menubar.js resetTddCycle
  *   node update-menubar.js workflowComplete
  *   node update-menubar.js reset
  */
@@ -61,6 +62,12 @@ async function main() {
         const progress = JSON.parse(progressJson);
         await service.setProgress(progress);
         console.log('Progress updated');
+        break;
+      }
+
+      case 'resetTddCycle': {
+        await service.resetTddCycle();
+        console.log('TDD cycle reset - starting new iteration');
         break;
       }
 

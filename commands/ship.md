@@ -6,6 +6,18 @@ description: Quality check, commit, create PR, and optionally auto-merge
 
 Complete finalization workflow - quality check, docs, commit, PR, and optional merge.
 
+## Context Management
+
+> **🚦 Context Gate Active**
+>
+> If conversation history exceeds 20 turns, this command will be **blocked**.
+> You must either:
+> 1. Run `/clear` first, then re-run (recommended)
+> 2. Use `--force` flag to bypass: `/oss:ship --force`
+>
+> Why? Quality gates should run with unbiased perspective.
+> State is loaded from `dev/active/{feature}/` docs and git status.
+
 ## What This Command Does
 
 1. **Parallel agent quality gates** - Code review, performance audit, security audit (3 agents in parallel)

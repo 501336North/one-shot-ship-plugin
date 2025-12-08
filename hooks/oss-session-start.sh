@@ -47,16 +47,19 @@ PROJECT_NAME="${CLAUDE_PROJECT_DIR##*/}"
 # Display session start message
 case "$SUBSCRIPTION_STATUS" in
     "active"|"trial")
-        echo "OSS: Ready ($SUBSCRIPTION_STATUS)"
+        echo "OSS: Ready ($SUBSCRIPTION_STATUS) - IRON LAWS active"
         ;;
     "expired")
         echo "OSS: Subscription expired. Upgrade at https://www.oneshotship.com/pricing"
         ;;
     *)
         # Don't block on network issues - just continue
-        echo "OSS: Ready"
+        echo "OSS: Ready - IRON LAWS active"
         ;;
 esac
+
+# Clear iron-laws session marker (legacy cleanup)
+rm -f ~/.oss/iron-laws-session-notified 2>/dev/null
 
 # --- SwiftBar Launch (if installed) ---
 # Launch SwiftBar for menu bar status display during active Claude Code session

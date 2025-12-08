@@ -7,7 +7,17 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-export type ChainStep = 'ideate' | 'plan' | 'acceptance' | 'red' | 'green' | 'refactor' | 'integration' | 'ship' | 'build';
+// Discovery Chain: ideate → requirements → apiDesign → dataModel → adr
+// Planning Chain: plan → acceptance
+// Build Chain: red → mock → green → refactor (LOOP) → integration → contract
+// Ship Chain: ship
+export type ChainStep =
+  | 'ideate' | 'requirements' | 'apiDesign' | 'dataModel' | 'adr'  // Discovery
+  | 'plan' | 'acceptance'  // Planning
+  | 'red' | 'mock' | 'green' | 'refactor' | 'integration' | 'contract'  // Build
+  | 'ship'  // Ship
+  | 'build';  // Alias for TDD phases
+
 export type SupervisorStatus = 'watching' | 'intervening' | 'idle';
 export type StepStatus = 'pending' | 'active' | 'done';
 
@@ -15,18 +25,29 @@ export interface WorkflowState {
   supervisor: SupervisorStatus;
   activeStep: ChainStep | null;
   chainState: {
+    // Discovery Chain
     ideate: StepStatus;
+    requirements: StepStatus;
+    apiDesign: StepStatus;
+    dataModel: StepStatus;
+    adr: StepStatus;
+    // Planning Chain
     plan: StepStatus;
     acceptance: StepStatus;
+    // Build Chain (TDD Loop)
     red: StepStatus;
+    mock: StepStatus;
     green: StepStatus;
     refactor: StepStatus;
     integration: StepStatus;
+    contract: StepStatus;
+    // Ship Chain
     ship: StepStatus;
   };
   currentTask?: string;
   progress?: string;
   testsPass?: number;
+  tddCycle?: number;  // Track which TDD iteration we're on
   lastUpdate: string;
 }
 
@@ -36,8 +57,23 @@ export interface ProgressInfo {
   testsPass?: number;
 }
 
-const CHAIN_ORDER: ChainStep[] = ['ideate', 'plan', 'acceptance', 'red', 'green', 'refactor', 'integration', 'ship'];
-const BUILD_PHASES: ChainStep[] = ['acceptance', 'red', 'green', 'refactor', 'integration'];
+// Full chain order for sequential progression
+const CHAIN_ORDER: ChainStep[] = [
+  // Discovery Chain
+  'ideate', 'requirements', 'apiDesign', 'dataModel', 'adr',
+  // Planning Chain
+  'plan', 'acceptance',
+  // Build Chain
+  'red', 'mock', 'green', 'refactor', 'integration', 'contract',
+  // Ship Chain
+  'ship',
+];
+
+// Build phases for TDD cycle (acceptance is first, then TDD loop, then integration/contract)
+const BUILD_PHASES: ChainStep[] = ['acceptance', 'red', 'mock', 'green', 'refactor', 'integration', 'contract'];
+
+// TDD loop phases that reset when starting a new cycle
+const TDD_LOOP_PHASES: ChainStep[] = ['red', 'mock', 'green', 'refactor'];
 
 export class MenuBarService {
   private stateFilePath: string;
@@ -158,24 +194,44 @@ export class MenuBarService {
   }
 
   /**
+   * Resets TDD loop phases (red/mock/green/refactor) for next iteration
+   * Called when refactor completes and there are more tasks to do
+   */
+  async resetTddCycle(): Promise<void> {
+    const state = await this.getState();
+
+    // Reset TDD loop phases to pending
+    for (const phase of TDD_LOOP_PHASES) {
+      const phaseKey = phase as keyof WorkflowState['chainState'];
+      state.chainState[phaseKey] = 'pending';
+    }
+
+    // Set red as active (starting the new cycle)
+    state.chainState.red = 'active';
+    state.activeStep = 'red';
+
+    // Increment cycle counter
+    state.tddCycle = (state.tddCycle || 1) + 1;
+
+    await this.writeState(state);
+  }
+
+  /**
    * Marks all steps done, resets to idle
    */
   async workflowComplete(): Promise<void> {
     const state = await this.getState();
 
     // Mark all steps as done
-    state.chainState.ideate = 'done';
-    state.chainState.plan = 'done';
-    state.chainState.acceptance = 'done';
-    state.chainState.red = 'done';
-    state.chainState.green = 'done';
-    state.chainState.refactor = 'done';
-    state.chainState.integration = 'done';
-    state.chainState.ship = 'done';
+    for (const step of CHAIN_ORDER) {
+      const stepKey = step as keyof WorkflowState['chainState'];
+      state.chainState[stepKey] = 'done';
+    }
 
     // Reset to idle
     state.supervisor = 'idle';
     state.activeStep = null;
+    state.tddCycle = undefined;
 
     await this.writeState(state);
   }
@@ -223,15 +279,26 @@ export class MenuBarService {
       supervisor: 'idle',
       activeStep: null,
       chainState: {
+        // Discovery Chain
         ideate: 'pending',
+        requirements: 'pending',
+        apiDesign: 'pending',
+        dataModel: 'pending',
+        adr: 'pending',
+        // Planning Chain
         plan: 'pending',
         acceptance: 'pending',
+        // Build Chain (TDD Loop)
         red: 'pending',
+        mock: 'pending',
         green: 'pending',
         refactor: 'pending',
         integration: 'pending',
+        contract: 'pending',
+        // Ship Chain
         ship: 'pending',
       },
+      tddCycle: 1,
       lastUpdate: new Date().toISOString(),
     };
   }
