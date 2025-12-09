@@ -154,3 +154,28 @@ export const PRIORITY_ORDER: Record<Priority, number> = {
 
 // Task creation input (without auto-generated fields)
 export type CreateTaskInput = Omit<Task, 'id' | 'created_at' | 'status' | 'attempts' | 'completed_at' | 'error'>;
+
+// Healthcheck types
+export type CheckStatus = 'pass' | 'warn' | 'fail';
+export type OverallStatus = 'healthy' | 'warning' | 'critical';
+
+export interface CheckResult {
+  status: CheckStatus;
+  message: string;
+  details?: Record<string, any>;
+}
+
+export interface HealthReport {
+  timestamp: string;
+  overall_status: OverallStatus;
+  checks: {
+    logging: CheckResult;
+    dev_docs: CheckResult;
+    delegation: CheckResult;
+    queue: CheckResult;
+    archive: CheckResult;
+    quality_gates: CheckResult;
+    notifications: CheckResult;
+    git_safety: CheckResult;
+  };
+}

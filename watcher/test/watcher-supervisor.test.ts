@@ -203,4 +203,179 @@ describe('WatcherSupervisor', () => {
       expect(analyzeCount.mock.calls.length).toBeGreaterThan(0);
     });
   });
+
+  describe('healthcheck integration', () => {
+    /**
+     * @behavior Supervisor runs health checks periodically
+     * @acceptance-criteria AC-003.1
+     * @business-rule Proactive monitoring prevents issues
+     * @boundary Supervisor loop
+     */
+    it('should run healthchecks on configurable interval', async () => {
+      const mockHealthcheck = {
+        runChecks: vi.fn().mockResolvedValue({
+          timestamp: new Date().toISOString(),
+          overall_status: 'healthy',
+          checks: {
+            logging: { status: 'pass', message: 'OK' },
+            dev_docs: { status: 'pass', message: 'OK' },
+            delegation: { status: 'pass', message: 'OK' },
+            queue: { status: 'pass', message: 'OK' },
+            archive: { status: 'pass', message: 'OK' },
+            quality_gates: { status: 'pass', message: 'OK' },
+            notifications: { status: 'pass', message: 'OK' },
+            git_safety: { status: 'pass', message: 'OK' },
+          },
+        }),
+      };
+
+      const customSupervisor = new WatcherSupervisor(ossDir, queueManager, {
+        healthcheckService: mockHealthcheck,
+        healthcheckIntervalMs: 100, // Fast interval for testing
+      });
+
+      await customSupervisor.start();
+
+      // Wait for at least 2 healthcheck cycles
+      await new Promise((r) => setTimeout(r, 250));
+
+      await customSupervisor.stop();
+
+      // Should have run multiple times
+      expect(mockHealthcheck.runChecks).toHaveBeenCalled();
+      expect(mockHealthcheck.runChecks.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    /**
+     * @behavior Supervisor queues corrective actions for warnings
+     * @acceptance-criteria AC-003.1
+     * @business-rule Warnings trigger medium-priority tasks
+     * @boundary Supervisor -> QueueManager
+     */
+    it('should queue corrective action when check warns', async () => {
+      const mockHealthcheck = {
+        runChecks: vi.fn().mockResolvedValue({
+          timestamp: new Date().toISOString(),
+          overall_status: 'warning',
+          checks: {
+            logging: { status: 'pass', message: 'OK' },
+            dev_docs: { status: 'warn', message: 'PROGRESS.md stale (>1 hour)', details: { action: 'Update dev docs' } },
+            delegation: { status: 'pass', message: 'OK' },
+            queue: { status: 'pass', message: 'OK' },
+            archive: { status: 'pass', message: 'OK' },
+            quality_gates: { status: 'pass', message: 'OK' },
+            notifications: { status: 'pass', message: 'OK' },
+            git_safety: { status: 'pass', message: 'OK' },
+          },
+        }),
+      };
+
+      const customSupervisor = new WatcherSupervisor(ossDir, queueManager, {
+        healthcheckService: mockHealthcheck,
+        healthcheckIntervalMs: 100,
+      });
+
+      await customSupervisor.start();
+
+      // Wait for healthcheck to run
+      await new Promise((r) => setTimeout(r, 150));
+
+      await customSupervisor.stop();
+
+      // Check that a task was queued
+      const tasks = await queueManager.getTasks();
+      const devDocsTask = tasks.find((t) => t.context.type === 'dev_docs');
+      expect(devDocsTask).toBeDefined();
+      expect(devDocsTask?.priority).toBe('medium');
+    });
+
+    /**
+     * @behavior Supervisor sends notifications for critical issues
+     * @acceptance-criteria AC-003.1
+     * @business-rule Critical issues require immediate notification
+     * @boundary Supervisor -> Notification System
+     */
+    it('should notify user when critical issue detected', async () => {
+      const mockHealthcheck = {
+        runChecks: vi.fn().mockResolvedValue({
+          timestamp: new Date().toISOString(),
+          overall_status: 'critical',
+          checks: {
+            logging: { status: 'pass', message: 'OK' },
+            dev_docs: { status: 'pass', message: 'OK' },
+            delegation: { status: 'pass', message: 'OK' },
+            queue: { status: 'pass', message: 'OK' },
+            archive: { status: 'pass', message: 'OK' },
+            quality_gates: { status: 'pass', message: 'OK' },
+            notifications: { status: 'pass', message: 'OK' },
+            git_safety: { status: 'fail', message: 'Agent pushed to main branch!' },
+          },
+        }),
+      };
+
+      const customSupervisor = new WatcherSupervisor(ossDir, queueManager, {
+        healthcheckService: mockHealthcheck,
+        healthcheckIntervalMs: 100,
+      });
+
+      const notifyFn = vi.fn();
+      customSupervisor.onNotify(notifyFn);
+
+      await customSupervisor.start();
+
+      // Wait for healthcheck to run
+      await new Promise((r) => setTimeout(r, 150));
+
+      await customSupervisor.stop();
+
+      // Should have sent critical notification
+      expect(notifyFn).toHaveBeenCalled();
+      const [title, message] = notifyFn.mock.calls[0];
+      expect(title).toContain('Critical');
+      expect(title).toContain('Git Safety');
+    });
+
+    /**
+     * @behavior Supervisor deduplicates same issue notifications
+     * @acceptance-criteria AC-003.1
+     * @business-rule Don't spam user with duplicate notifications
+     * @boundary Supervisor notification logic
+     */
+    it('should deduplicate same issue notifications', async () => {
+      const mockHealthcheck = {
+        runChecks: vi.fn().mockResolvedValue({
+          timestamp: new Date().toISOString(),
+          overall_status: 'warning',
+          checks: {
+            logging: { status: 'pass', message: 'OK' },
+            dev_docs: { status: 'warn', message: 'PROGRESS.md stale (>1 hour)' },
+            delegation: { status: 'pass', message: 'OK' },
+            queue: { status: 'pass', message: 'OK' },
+            archive: { status: 'pass', message: 'OK' },
+            quality_gates: { status: 'pass', message: 'OK' },
+            notifications: { status: 'pass', message: 'OK' },
+            git_safety: { status: 'pass', message: 'OK' },
+          },
+        }),
+      };
+
+      const customSupervisor = new WatcherSupervisor(ossDir, queueManager, {
+        healthcheckService: mockHealthcheck,
+        healthcheckIntervalMs: 50, // Fast for testing
+      });
+
+      const notifyFn = vi.fn();
+      customSupervisor.onNotify(notifyFn);
+
+      await customSupervisor.start();
+
+      // Wait for multiple healthcheck cycles with same issue
+      await new Promise((r) => setTimeout(r, 200));
+
+      await customSupervisor.stop();
+
+      // Should only notify once for the same issue
+      expect(notifyFn).toHaveBeenCalledTimes(1);
+    });
+  });
 });

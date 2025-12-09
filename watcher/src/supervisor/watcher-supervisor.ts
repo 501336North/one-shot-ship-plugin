@@ -16,6 +16,8 @@ import { QueueManager } from '../queue/manager.js';
 import { CreateTaskInput, AnomalyType } from '../types.js';
 import { IronLawMonitor, IronLawViolation } from '../services/iron-law-monitor.js';
 import { SettingsService } from '../services/settings.js';
+import { HealthcheckService } from '../services/healthcheck.js';
+import { HealthReport } from '../types.js';
 
 export interface SupervisorState {
   current_command?: string;
@@ -39,6 +41,8 @@ export interface WatcherSupervisorOptions {
   ossDir: string;
   projectDir?: string;
   configDir?: string;
+  healthcheckService?: HealthcheckService;
+  healthcheckIntervalMs?: number;
 }
 
 export class WatcherSupervisor {
@@ -50,6 +54,8 @@ export class WatcherSupervisor {
   private readonly queueManager: QueueManager;
   private readonly ironLawMonitor: IronLawMonitor;
   private readonly settingsService: SettingsService;
+  private readonly healthcheckService?: HealthcheckService;
+  private readonly healthcheckIntervalMs: number;
 
   private running = false;
   private entries: ParsedLogEntry[] = [];
@@ -65,6 +71,12 @@ export class WatcherSupervisor {
 
   // IRON LAW monitoring interval
   private ironLawInterval: NodeJS.Timeout | null = null;
+
+  // Healthcheck monitoring interval
+  private healthcheckInterval: NodeJS.Timeout | null = null;
+
+  // Track notified healthcheck issues to deduplicate
+  private notifiedHealthcheckIssues = new Set<string>();
 
   constructor(ossDir: string, queueManager: QueueManager, options?: Partial<WatcherSupervisorOptions>) {
     this.ossDir = ossDir;
@@ -82,6 +94,10 @@ export class WatcherSupervisor {
       projectDir,
       stateFile: path.join(configDir, 'iron-law-state.json'),
     });
+
+    // Initialize healthcheck service
+    this.healthcheckService = options?.healthcheckService;
+    this.healthcheckIntervalMs = options?.healthcheckIntervalMs || 60000; // Default 1 minute
 
     // Initialize state
     this.state = {
@@ -113,6 +129,11 @@ export class WatcherSupervisor {
     if (supervisorSettings.mode === 'always') {
       this.startIronLawMonitoring(supervisorSettings.checkIntervalMs);
     }
+
+    // Start healthcheck monitoring if service provided
+    if (this.healthcheckService) {
+      this.startHealthcheckMonitoring();
+    }
   }
 
   /**
@@ -127,6 +148,127 @@ export class WatcherSupervisor {
 
     // Run immediately on start
     void this.runIronLawChecks();
+  }
+
+  /**
+   * Start healthcheck monitoring on interval
+   */
+  private startHealthcheckMonitoring(): void {
+    if (this.healthcheckInterval) return;
+
+    this.healthcheckInterval = setInterval(async () => {
+      await this.runHealthchecks();
+    }, this.healthcheckIntervalMs);
+
+    // Run immediately on start
+    void this.runHealthchecks();
+  }
+
+  /**
+   * Run healthchecks and handle issues
+   */
+  private async runHealthchecks(): Promise<void> {
+    if (!this.healthcheckService) return;
+
+    try {
+      const report: HealthReport = await this.healthcheckService.runChecks();
+
+      // Process each check result
+      for (const [checkName, result] of Object.entries(report.checks)) {
+        if (result.status === 'fail') {
+          await this.handleHealthcheckFailure(checkName, result);
+        } else if (result.status === 'warn') {
+          await this.handleHealthcheckWarning(checkName, result);
+        }
+      }
+    } catch {
+      // Ignore errors in healthcheck
+    }
+  }
+
+  /**
+   * Handle healthcheck failure (critical issue)
+   */
+  private async handleHealthcheckFailure(checkName: string, result: any): Promise<void> {
+    const signature = `healthcheck:${checkName}:${result.message}`;
+
+    // Deduplicate notifications
+    if (this.notifiedHealthcheckIssues.has(signature)) {
+      return;
+    }
+    this.notifiedHealthcheckIssues.add(signature);
+
+    // Send critical notification
+    for (const callback of this.notifyCallbacks) {
+      callback(
+        `Critical: ${this.formatCheckName(checkName)}`,
+        result.message,
+        'Basso' // Warning sound
+      );
+    }
+
+    // Queue corrective action if details include action
+    if (result.details?.action) {
+      const taskInput: CreateTaskInput = {
+        priority: 'high',
+        source: 'iron-law-monitor',
+        anomaly_type: 'unusual_pattern',
+        prompt: result.details.action,
+        suggested_agent: 'general-purpose',
+        context: {
+          type: checkName,
+          message: result.message,
+        },
+      };
+      await this.queueManager.addTask(taskInput);
+    }
+  }
+
+  /**
+   * Handle healthcheck warning
+   */
+  private async handleHealthcheckWarning(checkName: string, result: any): Promise<void> {
+    const signature = `healthcheck:${checkName}:${result.message}`;
+
+    // Deduplicate notifications
+    if (this.notifiedHealthcheckIssues.has(signature)) {
+      return;
+    }
+    this.notifiedHealthcheckIssues.add(signature);
+
+    // Send warning notification
+    for (const callback of this.notifyCallbacks) {
+      callback(
+        `Warning: ${this.formatCheckName(checkName)}`,
+        result.message,
+        'Funk' // Softer warning sound
+      );
+    }
+
+    // Queue corrective action
+    const action = result.details?.action || `Fix ${checkName} issue: ${result.message}`;
+    const taskInput: CreateTaskInput = {
+      priority: 'medium',
+      source: 'iron-law-monitor',
+      anomaly_type: 'unusual_pattern',
+      prompt: action,
+      suggested_agent: 'general-purpose',
+      context: {
+        type: checkName,
+        message: result.message,
+      },
+    };
+    await this.queueManager.addTask(taskInput);
+  }
+
+  /**
+   * Format check name for display
+   */
+  private formatCheckName(checkName: string): string {
+    return checkName
+      .split('_')
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
   }
 
   /**
@@ -195,6 +337,12 @@ export class WatcherSupervisor {
     if (this.ironLawInterval) {
       clearInterval(this.ironLawInterval);
       this.ironLawInterval = null;
+    }
+
+    // Stop healthcheck monitoring
+    if (this.healthcheckInterval) {
+      clearInterval(this.healthcheckInterval);
+      this.healthcheckInterval = null;
     }
 
     this.logReader.stopTailing();

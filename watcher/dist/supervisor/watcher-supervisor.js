@@ -22,6 +22,8 @@ export class WatcherSupervisor {
     queueManager;
     ironLawMonitor;
     settingsService;
+    healthcheckService;
+    healthcheckIntervalMs;
     running = false;
     entries = [];
     state;
@@ -33,6 +35,10 @@ export class WatcherSupervisor {
     processedIssueSignatures = new Set();
     // IRON LAW monitoring interval
     ironLawInterval = null;
+    // Healthcheck monitoring interval
+    healthcheckInterval = null;
+    // Track notified healthcheck issues to deduplicate
+    notifiedHealthcheckIssues = new Set();
     constructor(ossDir, queueManager, options) {
         this.ossDir = ossDir;
         this.statePath = path.join(ossDir, 'workflow-state.json');
@@ -48,6 +54,9 @@ export class WatcherSupervisor {
             projectDir,
             stateFile: path.join(configDir, 'iron-law-state.json'),
         });
+        // Initialize healthcheck service
+        this.healthcheckService = options?.healthcheckService;
+        this.healthcheckIntervalMs = options?.healthcheckIntervalMs || 60000; // Default 1 minute
         // Initialize state
         this.state = {
             chain_progress: {
@@ -75,6 +84,10 @@ export class WatcherSupervisor {
         if (supervisorSettings.mode === 'always') {
             this.startIronLawMonitoring(supervisorSettings.checkIntervalMs);
         }
+        // Start healthcheck monitoring if service provided
+        if (this.healthcheckService) {
+            this.startHealthcheckMonitoring();
+        }
     }
     /**
      * Start IRON LAW monitoring on interval
@@ -87,6 +100,110 @@ export class WatcherSupervisor {
         }, intervalMs);
         // Run immediately on start
         void this.runIronLawChecks();
+    }
+    /**
+     * Start healthcheck monitoring on interval
+     */
+    startHealthcheckMonitoring() {
+        if (this.healthcheckInterval)
+            return;
+        this.healthcheckInterval = setInterval(async () => {
+            await this.runHealthchecks();
+        }, this.healthcheckIntervalMs);
+        // Run immediately on start
+        void this.runHealthchecks();
+    }
+    /**
+     * Run healthchecks and handle issues
+     */
+    async runHealthchecks() {
+        if (!this.healthcheckService)
+            return;
+        try {
+            const report = await this.healthcheckService.runChecks();
+            // Process each check result
+            for (const [checkName, result] of Object.entries(report.checks)) {
+                if (result.status === 'fail') {
+                    await this.handleHealthcheckFailure(checkName, result);
+                }
+                else if (result.status === 'warn') {
+                    await this.handleHealthcheckWarning(checkName, result);
+                }
+            }
+        }
+        catch {
+            // Ignore errors in healthcheck
+        }
+    }
+    /**
+     * Handle healthcheck failure (critical issue)
+     */
+    async handleHealthcheckFailure(checkName, result) {
+        const signature = `healthcheck:${checkName}:${result.message}`;
+        // Deduplicate notifications
+        if (this.notifiedHealthcheckIssues.has(signature)) {
+            return;
+        }
+        this.notifiedHealthcheckIssues.add(signature);
+        // Send critical notification
+        for (const callback of this.notifyCallbacks) {
+            callback(`Critical: ${this.formatCheckName(checkName)}`, result.message, 'Basso' // Warning sound
+            );
+        }
+        // Queue corrective action if details include action
+        if (result.details?.action) {
+            const taskInput = {
+                priority: 'high',
+                source: 'iron-law-monitor',
+                anomaly_type: 'unusual_pattern',
+                prompt: result.details.action,
+                suggested_agent: 'general-purpose',
+                context: {
+                    type: checkName,
+                    message: result.message,
+                },
+            };
+            await this.queueManager.addTask(taskInput);
+        }
+    }
+    /**
+     * Handle healthcheck warning
+     */
+    async handleHealthcheckWarning(checkName, result) {
+        const signature = `healthcheck:${checkName}:${result.message}`;
+        // Deduplicate notifications
+        if (this.notifiedHealthcheckIssues.has(signature)) {
+            return;
+        }
+        this.notifiedHealthcheckIssues.add(signature);
+        // Send warning notification
+        for (const callback of this.notifyCallbacks) {
+            callback(`Warning: ${this.formatCheckName(checkName)}`, result.message, 'Funk' // Softer warning sound
+            );
+        }
+        // Queue corrective action
+        const action = result.details?.action || `Fix ${checkName} issue: ${result.message}`;
+        const taskInput = {
+            priority: 'medium',
+            source: 'iron-law-monitor',
+            anomaly_type: 'unusual_pattern',
+            prompt: action,
+            suggested_agent: 'general-purpose',
+            context: {
+                type: checkName,
+                message: result.message,
+            },
+        };
+        await this.queueManager.addTask(taskInput);
+    }
+    /**
+     * Format check name for display
+     */
+    formatCheckName(checkName) {
+        return checkName
+            .split('_')
+            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ');
     }
     /**
      * Run IRON LAW checks and handle violations
@@ -145,6 +262,11 @@ export class WatcherSupervisor {
         if (this.ironLawInterval) {
             clearInterval(this.ironLawInterval);
             this.ironLawInterval = null;
+        }
+        // Stop healthcheck monitoring
+        if (this.healthcheckInterval) {
+            clearInterval(this.healthcheckInterval);
+            this.healthcheckInterval = null;
         }
         this.logReader.stopTailing();
         await this.saveState();

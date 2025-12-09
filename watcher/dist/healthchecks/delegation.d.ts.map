@@ -1,0 +1,1 @@
+{"version":3,"file":"delegation.d.ts","sourceRoot":"","sources":["../../src/healthchecks/delegation.ts"],"names":[],"mappings":"AACA,OAAO,KAAK,EAAE,WAAW,EAAE,MAAM,aAAa,CAAC;AAE/C,UAAU,sBAAsB;IAC9B,cAAc,EAAE,MAAM,CAAC;IACvB,aAAa,CAAC,EAAE,OAAO,CAAC;CACzB;AAeD,wBAAsB,eAAe,CACnC,OAAO,EAAE,sBAAsB,GAC9B,OAAO,CAAC,WAAW,CAAC,CAyGtB"}

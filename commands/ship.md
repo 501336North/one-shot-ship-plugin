@@ -16,7 +16,7 @@ Complete finalization workflow - quality check, docs, commit, PR, and optional m
 > 2. Use `--force` flag to bypass: `/oss:ship --force`
 >
 > Why? Quality gates should run with unbiased perspective.
-> State is loaded from `dev/active/{feature}/` docs and git status.
+> State is loaded from `~/.oss/dev/active/{feature}/` docs and git status.
 
 ## What This Command Does
 
@@ -234,6 +234,8 @@ After PR is merged (with `--merge` flag):
 ```bash
 $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ship merged '{"branch": "{BRANCH}", "prNumber": {PR_NUM}}'
 ```
+
+> Note: IRON LAW compliance checklist is automatically logged on `complete` and `merged` events.
 
 If shipping fails:
 ```bash

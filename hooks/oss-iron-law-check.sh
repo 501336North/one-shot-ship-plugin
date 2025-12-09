@@ -14,6 +14,7 @@ fi
 VIOLATIONS=""
 PASSED=""
 CORRECTIONS=""
+VIOLATION_LAWS=""  # Track which law numbers are violated (e.g., "4,1,2")
 
 # =============================================================================
 # IRON LAW #4: Agent Git Flow - Check branch
@@ -24,6 +25,7 @@ if [[ "$BRANCH" == "main" || "$BRANCH" == "master" ]]; then
     VIOLATIONS="${VIOLATIONS}├─ ❌ LAW #4: On '$BRANCH' branch (should be feature branch)\n"
     CORRECTIONS="${CORRECTIONS}│  → Create feature branch before making changes\n"
     CORRECTIONS="${CORRECTIONS}│    git fetch origin main && git checkout -b feat/agent-<name> origin/main\n"
+    VIOLATION_LAWS="${VIOLATION_LAWS}4,"
 else
     PASSED="${PASSED}├─ ✅ LAW #4: On feature branch '$BRANCH'\n"
 fi
@@ -37,6 +39,7 @@ if [[ -f "package.json" ]]; then
 
     if [[ -n "$SKIPPED_FILES" ]]; then
         VIOLATIONS="${VIOLATIONS}├─ ❌ LAW #1: Found skipped/focused tests (.skip/.todo/.only)\n"
+        VIOLATION_LAWS="${VIOLATION_LAWS}1,"
         # List the specific files
         while IFS= read -r file; do
             if [[ -n "$file" ]]; then
@@ -68,6 +71,7 @@ if [[ -f "tsconfig.json" ]]; then
 
     if [[ -n "$ANY_FILES" ]]; then
         VIOLATIONS="${VIOLATIONS}├─ ❌ LAW #2: Found 'any' types in staged files\n"
+        VIOLATION_LAWS="${VIOLATION_LAWS}2,"
         echo -e "$ANY_FILES" | while IFS= read -r file; do
             if [[ -n "$file" ]]; then
                 CORRECTIONS="${CORRECTIONS}│  → Replace 'any' with proper types in: $file\n"
@@ -79,11 +83,12 @@ if [[ -f "tsconfig.json" ]]; then
 fi
 
 # =============================================================================
-# SETUP: Check for dev docs structure
+# SETUP: Check for dev docs structure (in ~/.oss/)
 # =============================================================================
-if [[ ! -d "dev/active" ]]; then
-    VIOLATIONS="${VIOLATIONS}├─ ❌ SETUP: Missing dev/active/ directory\n"
-    CORRECTIONS="${CORRECTIONS}│  → Create dev docs structure: mkdir -p dev/active dev/archive\n"
+if [[ ! -d "$HOME/.oss/dev/active" ]]; then
+    VIOLATIONS="${VIOLATIONS}├─ ❌ LAW #6: Missing ~/.oss/dev/active/ directory\n"
+    CORRECTIONS="${CORRECTIONS}│  → Create dev docs structure: mkdir -p ~/.oss/dev/active ~/.oss/dev/completed\n"
+    VIOLATION_LAWS="${VIOLATION_LAWS}6,"
 fi
 
 # =============================================================================
@@ -91,6 +96,30 @@ fi
 # =============================================================================
 # This is a reminder injected into the prompt, not a violation check
 AGENT_REMINDER="├─ 📋 LAW #5: Remember to delegate specialized work to agents (Task tool)\n"
+
+# =============================================================================
+# Persist results to log
+# =============================================================================
+# Determine plugin root for logging
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
+if [[ -z "$PLUGIN_ROOT" && -f "$HOME/.oss/plugin-root" ]]; then
+    PLUGIN_ROOT=$(cat "$HOME/.oss/plugin-root" 2>/dev/null)
+fi
+
+# Determine current command (default to "precheck" if not in a command context)
+CURRENT_CMD="${OSS_CURRENT_COMMAND:-precheck}"
+
+# Log the result if plugin root is available
+if [[ -n "$PLUGIN_ROOT" && -f "$PLUGIN_ROOT/hooks/oss-log.sh" ]]; then
+    # Remove trailing comma from violation laws
+    VIOLATION_LAWS="${VIOLATION_LAWS%,}"
+
+    if [[ -n "$VIOLATIONS" ]]; then
+        "$PLUGIN_ROOT/hooks/oss-log.sh" ironlaw "$CURRENT_CMD" "FAILED" "$VIOLATION_LAWS"
+    else
+        "$PLUGIN_ROOT/hooks/oss-log.sh" ironlaw "$CURRENT_CMD" "PASSED" ""
+    fi
+fi
 
 # =============================================================================
 # Output results

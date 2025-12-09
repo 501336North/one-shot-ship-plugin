@@ -12,6 +12,7 @@
 #   oss-log.sh agent <command> <agent> [task]    # Log agent delegation
 #   oss-log.sh ironlaw <command> <status> [violations] # Log IRON LAW check result
 #   oss-log.sh checklist <command>               # Log IRON LAW completion checklist
+#   oss-log.sh health <status> <details_json>    # Log health check results
 #   oss-log.sh read <command>                    # Read command log
 #   oss-log.sh path <command>                    # Get log file path
 #
@@ -508,6 +509,21 @@ case "$ACTION" in
         fi
         ;;
 
+    health)
+        # Log health check results
+        # Usage: oss-log.sh health <status> <details_json>
+        if [[ -z "$COMMAND" || -z "$ARG3" ]]; then
+            echo "Usage: oss-log.sh health <status> <details_json>" >&2
+            exit 1
+        fi
+        STATUS="$COMMAND"
+        DETAILS_JSON="$ARG3"
+
+        # Log to unified session log with structured format
+        TIMESTAMP=$(date '+%H:%M:%S')
+        echo "[$TIMESTAMP] [healthcheck] [HEALTH_CHECK] status=$STATUS details=$DETAILS_JSON" >> "$UNIFIED_LOG"
+        ;;
+
     health-check)
         # Run health check in current project (for SwiftBar)
         # Reads current project from ~/.oss/current-project
@@ -562,6 +578,7 @@ case "$ACTION" in
         echo "  progress <cmd> <n/m>    Log task progress" >&2
         echo "  ironlaw <cmd> <status>  Log IRON LAW check result" >&2
         echo "  checklist <cmd>         Log IRON LAW completion checklist" >&2
+        echo "  health <status> <json>  Log health check results" >&2
         echo "" >&2
         echo "Reading Commands:" >&2
         echo "  read <cmd>              Read command log" >&2

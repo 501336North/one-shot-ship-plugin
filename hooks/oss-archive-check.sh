@@ -18,8 +18,8 @@ set -euo pipefail
 
 DRY_RUN=false
 LIST_ONLY=false
-DEV_ACTIVE="dev/active"
-DEV_COMPLETED="dev/completed"
+DEV_ACTIVE="$HOME/.oss/dev/active"
+DEV_COMPLETED="$HOME/.oss/dev/completed"
 
 # Parse arguments
 for arg in "$@"; do
