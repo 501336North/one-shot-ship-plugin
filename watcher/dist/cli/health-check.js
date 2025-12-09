@@ -182,14 +182,33 @@ async function runHealthCheck(quiet = false, verbose = false) {
         const result = await testMonitor.analyzeTestOutput(output);
         // Run system health checks
         log(`🏥 Running system health checks...`, quiet, verbose);
+        // Paths: session logs are in .oss/, but dev docs are in project root
+        const projectRoot = process.cwd();
+        const devActivePath = path.join(projectRoot, 'dev', 'active');
+        // Try to detect current active feature from dev/active
+        let featurePath = '';
+        if (fs.existsSync(devActivePath)) {
+            const features = fs.readdirSync(devActivePath, { withFileTypes: true })
+                .filter(d => d.isDirectory())
+                .map(d => d.name);
+            if (features.length > 0) {
+                // Use most recently modified feature
+                const withMtime = features.map(f => ({
+                    name: f,
+                    mtime: fs.statSync(path.join(devActivePath, f)).mtime.getTime()
+                }));
+                withMtime.sort((a, b) => b.mtime - a.mtime);
+                featurePath = path.join(devActivePath, withMtime[0].name);
+            }
+        }
         const healthcheckService = new HealthcheckService({
             logReader: null,
             queueManager,
             fileSystem: null,
             sessionLogPath: path.join(ossDir, 'logs', 'current-session', 'session.log'),
             sessionActive: true,
-            featurePath: path.join(ossDir, 'dev', 'active', 'current-feature'),
-            devActivePath: path.join(ossDir, 'dev', 'active'),
+            featurePath,
+            devActivePath,
         });
         const healthReport = await healthcheckService.runChecks();
         // Display health report
