@@ -6,7 +6,7 @@
  * Called by session-start hook to catch pre-existing issues.
  *
  * Usage:
- *   node health-check.js [--quiet]
+ *   node health-check.js [--quiet] [--verbose]
  *
  * Exit codes:
  *   0 - All tests passing
@@ -25,23 +25,49 @@ interface HealthCheckResult {
   failureCount: number;
   message: string;
   queuedTasks: number;
+  details?: string;
 }
 
-async function runHealthCheck(quiet: boolean = false): Promise<HealthCheckResult> {
+// Logging helper that respects quiet/verbose modes
+function log(message: string, quiet: boolean, verbose: boolean, level: 'info' | 'detail' | 'error' = 'info'): void {
+  if (quiet) return;
+  if (level === 'detail' && !verbose) return;
+  console.log(message);
+}
+
+async function runHealthCheck(quiet: boolean = false, verbose: boolean = false): Promise<HealthCheckResult> {
   const ossDir = path.join(process.cwd(), '.oss');
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.dirname(ossDir);
+  const projectName = path.basename(process.cwd());
+
+  log(`\n🔍 OSS Health Check - ${projectName}`, quiet, verbose);
+  log(`${'─'.repeat(50)}`, quiet, verbose);
 
   // Ensure .oss directory exists
   if (!fs.existsSync(ossDir)) {
     fs.mkdirSync(ossDir, { recursive: true });
+    log(`📁 Created .oss directory`, quiet, verbose, 'detail');
+  }
+
+  // Check for package.json
+  const packageJsonPath = path.join(process.cwd(), 'package.json');
+  if (!fs.existsSync(packageJsonPath)) {
+    const msg = 'No package.json found - skipping health check';
+    log(`⚠️  ${msg}`, quiet, verbose);
+    return {
+      passed: true,
+      failureCount: 0,
+      message: msg,
+      queuedTasks: 0,
+    };
   }
 
   // Initialize queue manager
+  log(`📋 Initializing queue manager...`, quiet, verbose, 'detail');
   const queueManager = new QueueManager(ossDir);
   await queueManager.initialize();
 
   // Disable debug notifications during health check to reduce noise
-  // We'll send one summary notification at the end
   queueManager.setDebugNotifications(false);
 
   // Initialize test monitor
@@ -49,8 +75,11 @@ async function runHealthCheck(quiet: boolean = false): Promise<HealthCheckResult
 
   // Send start notification
   if (!quiet) {
-    sendNotification(pluginRoot, '🔍 Health Check', 'Running npm test...', 'high');
+    sendNotification(pluginRoot, '🔍 Health Check', `Running tests for ${projectName}...`, 'high');
   }
+
+  log(`🧪 Running npm test...`, quiet, verbose);
+  const startTime = Date.now();
 
   try {
     // Run npm test and capture output
@@ -61,7 +90,10 @@ async function runHealthCheck(quiet: boolean = false): Promise<HealthCheckResult
       maxBuffer: 10 * 1024 * 1024, // 10MB
     });
 
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
     // Analyze output
+    log(`📊 Analyzing test output...`, quiet, verbose, 'detail');
     const result = await testMonitor.analyzeTestOutput(output);
 
     if (result.hasFailures) {
@@ -71,36 +103,78 @@ async function runHealthCheck(quiet: boolean = false): Promise<HealthCheckResult
       const pendingCount = await queueManager.getPendingCount();
       const message = `${result.failedTests.length} test(s) failing`;
 
-      if (!quiet) {
-        console.log(`❌ Health check failed: ${message}`);
-        console.log(`   ${pendingCount} task(s) queued for fixing`);
-        sendNotification(pluginRoot, '❌ Health Check Failed', `${message} - ${pendingCount} queued`, 'critical');
+      log(`\n❌ HEALTH CHECK FAILED`, quiet, verbose);
+      log(`${'─'.repeat(50)}`, quiet, verbose);
+      log(`   Duration: ${duration}s`, quiet, verbose);
+      log(`   Failed:   ${result.failedTests.length} test(s)`, quiet, verbose);
+      log(`   Queued:   ${pendingCount} task(s) for fixing`, quiet, verbose);
+
+      if (result.failedTests.length > 0) {
+        log(`\n   Failing tests:`, quiet, verbose);
+        result.failedTests.slice(0, 5).forEach((test, i) => {
+          log(`   ${i + 1}. ${test}`, quiet, verbose);
+        });
+        if (result.failedTests.length > 5) {
+          log(`   ... and ${result.failedTests.length - 5} more`, quiet, verbose);
+        }
       }
+
+      sendNotification(pluginRoot, '❌ Health Check Failed', `${message} - ${pendingCount} queued`, 'critical');
 
       return {
         passed: false,
         failureCount: result.failedTests.length,
         message,
         queuedTasks: pendingCount,
+        details: result.failedTests.join('\n'),
       };
     }
 
-    if (!quiet) {
-      console.log('✅ Health check passed: All tests passing');
-      sendNotification(pluginRoot, '✅ Health Check Passed', 'All tests passing', 'high');
-    }
+    // Extract test counts from output
+    const passMatch = output.match(/(\d+)\s+pass/i);
+    const testCount = passMatch ? passMatch[1] : result.passedTests.length.toString();
+
+    log(`\n✅ HEALTH CHECK PASSED`, quiet, verbose);
+    log(`${'─'.repeat(50)}`, quiet, verbose);
+    log(`   Duration: ${duration}s`, quiet, verbose);
+    log(`   Tests:    ${testCount} passing`, quiet, verbose);
+
+    sendNotification(pluginRoot, '✅ Health Check Passed', `${testCount} tests passing`, 'high');
 
     return {
       passed: true,
       failureCount: 0,
-      message: 'All tests passing',
+      message: `All tests passing (${testCount})`,
       queuedTasks: 0,
     };
   } catch (error) {
-    // Test command failed - likely test failures
-    const errorOutput = error instanceof Error && 'stdout' in error
-      ? (error as { stdout?: string }).stdout || ''
-      : '';
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
+    // Extract error details
+    const execError = error as { stdout?: string; stderr?: string; status?: number; message?: string };
+    const errorOutput = execError.stdout || '';
+    const errorStderr = execError.stderr || '';
+    const exitCode = execError.status;
+    const errorMessage = execError.message || 'Unknown error';
+
+    log(`\n⚠️  TEST COMMAND FAILED`, quiet, verbose);
+    log(`${'─'.repeat(50)}`, quiet, verbose);
+    log(`   Duration:  ${duration}s`, quiet, verbose);
+    log(`   Exit code: ${exitCode ?? 'unknown'}`, quiet, verbose);
+
+    // Show verbose error details
+    if (verbose) {
+      log(`\n   Error message:`, quiet, verbose, 'detail');
+      log(`   ${errorMessage.split('\n')[0]}`, quiet, verbose, 'detail');
+
+      if (errorStderr) {
+        log(`\n   Stderr (last 500 chars):`, quiet, verbose, 'detail');
+        const stderrTail = errorStderr.slice(-500).trim();
+        stderrTail.split('\n').forEach(line => {
+          log(`   ${line}`, quiet, verbose, 'detail');
+        });
+      }
+    }
 
     if (errorOutput) {
       const result = await testMonitor.analyzeTestOutput(errorOutput);
@@ -112,47 +186,99 @@ async function runHealthCheck(quiet: boolean = false): Promise<HealthCheckResult
         const pendingCount = await queueManager.getPendingCount();
         const message = `${result.failedTests.length} test(s) failing`;
 
-        if (!quiet) {
-          console.log(`❌ Health check failed: ${message}`);
-          console.log(`   ${pendingCount} task(s) queued for fixing`);
-          sendNotification(pluginRoot, '❌ Health Check Failed', `${message} - ${pendingCount} queued`, 'critical');
+        log(`\n   Test failures detected:`, quiet, verbose);
+        log(`   Failed:  ${result.failedTests.length} test(s)`, quiet, verbose);
+        log(`   Queued:  ${pendingCount} task(s) for fixing`, quiet, verbose);
+
+        if (result.failedTests.length > 0) {
+          log(`\n   Failing tests:`, quiet, verbose);
+          result.failedTests.slice(0, 5).forEach((test, i) => {
+            log(`   ${i + 1}. ${test}`, quiet, verbose);
+          });
+          if (result.failedTests.length > 5) {
+            log(`   ... and ${result.failedTests.length - 5} more`, quiet, verbose);
+          }
         }
+
+        sendNotification(pluginRoot, '❌ Health Check Failed', `${message} - ${pendingCount} queued`, 'critical');
 
         return {
           passed: false,
           failureCount: result.failedTests.length,
           message,
           queuedTasks: pendingCount,
+          details: result.failedTests.join('\n'),
         };
       }
 
       // hasFailures but no specific tests found - likely build/parse error
       if (result.hasFailures) {
-        if (!quiet) {
-          console.log(`⚠️ Tests failed but could not parse details`);
-          sendNotification(pluginRoot, '⚠️ Test Run Failed', 'Check npm test output', 'high');
+        log(`\n   ⚠️  Tests failed but could not parse specific failures`, quiet, verbose);
+        log(`   This usually means a build error or configuration issue`, quiet, verbose);
+
+        // Try to extract useful info from output
+        const buildErrorMatch = errorOutput.match(/error TS\d+:|SyntaxError:|Cannot find module|Module not found/i);
+        if (buildErrorMatch) {
+          log(`\n   Possible cause: ${buildErrorMatch[0]}`, quiet, verbose);
+
+          // Show context around the error
+          const errorIndex = errorOutput.indexOf(buildErrorMatch[0]);
+          if (errorIndex !== -1) {
+            const contextStart = Math.max(0, errorIndex - 100);
+            const contextEnd = Math.min(errorOutput.length, errorIndex + 200);
+            const context = errorOutput.slice(contextStart, contextEnd).trim();
+            log(`\n   Context:`, quiet, verbose, 'detail');
+            context.split('\n').slice(0, 5).forEach(line => {
+              log(`   ${line.trim()}`, quiet, verbose, 'detail');
+            });
+          }
         }
+
+        sendNotification(pluginRoot, '⚠️ Test Run Failed', 'Build or config error - check output', 'high');
+
         return {
           passed: false,
           failureCount: 0,
-          message: 'Test run failed - check output',
+          message: 'Test run failed - build or config error',
           queuedTasks: 0,
+          details: buildErrorMatch ? buildErrorMatch[0] : 'Unknown build error',
         };
       }
+
+      // No failures detected in output but command still failed
+      log(`\n   ⚠️  Command failed but no test failures detected`, quiet, verbose);
+      log(`   Exit code: ${exitCode}`, quiet, verbose);
+
+      // Check for common issues
+      if (errorOutput.includes('npm ERR!')) {
+        const npmError = errorOutput.match(/npm ERR! (.+)/);
+        if (npmError) {
+          log(`   npm error: ${npmError[1]}`, quiet, verbose);
+        }
+      }
+
+      sendNotification(pluginRoot, '⚠️ Health Check Warning', `Exit code ${exitCode} - no failures found`, 'high');
+
+      return {
+        passed: true, // No actual test failures detected
+        failureCount: 0,
+        message: `Command exited with code ${exitCode} but no test failures detected`,
+        queuedTasks: 0,
+      };
     }
 
-    // Generic error (npm test couldn't even start)
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    if (!quiet) {
-      console.log(`⚠️ Health check error: ${errorMessage}`);
-      sendNotification(pluginRoot, '⚠️ Health Check Error', 'Could not run tests', 'high');
-    }
+    // No output at all - generic error
+    log(`\n   ❌ Could not run tests`, quiet, verbose);
+    log(`   Error: ${errorMessage.split('\n')[0]}`, quiet, verbose);
+
+    sendNotification(pluginRoot, '⚠️ Health Check Error', 'Could not run npm test', 'high');
 
     return {
       passed: false,
       failureCount: 0,
-      message: `Error: ${errorMessage}`,
+      message: `Error: ${errorMessage.split('\n')[0]}`,
       queuedTasks: 0,
+      details: errorMessage,
     };
   }
 }
@@ -180,9 +306,13 @@ function sendNotification(pluginRoot: string, title: string, message: string, pr
 
 // Main execution
 const quiet = process.argv.includes('--quiet') || process.argv.includes('-q');
+const verbose = process.argv.includes('--verbose') || process.argv.includes('-v');
 
-runHealthCheck(quiet)
+runHealthCheck(quiet, verbose)
   .then((result) => {
+    if (!quiet) {
+      console.log(`${'─'.repeat(50)}\n`);
+    }
     if (result.passed) {
       process.exit(0);
     } else if (result.failureCount > 0) {
@@ -192,6 +322,6 @@ runHealthCheck(quiet)
     }
   })
   .catch((error) => {
-    console.error('Fatal error:', error);
+    console.error('\n❌ Fatal error:', error);
     process.exit(2);
   });

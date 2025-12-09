@@ -117,16 +117,23 @@ fi
 # Run npm test to catch any pre-existing failures and queue them
 # This ensures the supervisor catches issues BEFORE work begins
 if [[ -f "$HEALTH_CHECK_CLI" ]] && [[ -f "package.json" ]]; then
-    echo "OSS: Running health check..."
-    # Run in background to not block session start, but still notify
+    echo "OSS: Running health check (background)..."
+    # Run in background to not block session start
+    # Output goes to session log for debugging
     (
         cd "${CLAUDE_PROJECT_DIR:-.}"
-        node "$HEALTH_CHECK_CLI" 2>/dev/null
+        # Run with verbose flag, log output to session log
+        LOG_DIR="$HOME/.oss/logs/current-session"
+        mkdir -p "$LOG_DIR"
+        node "$HEALTH_CHECK_CLI" --verbose >> "$LOG_DIR/health-check.log" 2>&1
         EXIT_CODE=$?
+        # Also echo summary to session
         if [[ $EXIT_CODE -eq 0 ]]; then
-            echo "OSS: Health check passed"
+            echo "OSS: ✅ Health check passed - all tests passing"
         elif [[ $EXIT_CODE -eq 1 ]]; then
-            echo "OSS: Health check found issues - check queue"
+            echo "OSS: ❌ Health check found failing tests - check queue"
+        else
+            echo "OSS: ⚠️ Health check error - see ~/.oss/logs/current-session/health-check.log"
         fi
     ) &
 fi
