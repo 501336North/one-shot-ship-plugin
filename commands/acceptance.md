@@ -4,6 +4,15 @@ description: Write acceptance tests at system boundaries (Outside-In first tests
 
 # /oss:acceptance - Write Acceptance Tests
 
+Write acceptance tests at system boundaries (Outside-In TDD).
+
+## What This Command Does
+
+1. **Identifies boundaries** - API endpoints, UI entry points
+2. **Writes acceptance test** - High-level user behavior test
+3. **Mocks collaborators** - Isolates system under test
+4. **Verifies failure** - Test must fail meaningfully
+
 ## Step 1: Check Authentication
 
 ```bash
@@ -16,7 +25,15 @@ No API key found. Run: /oss:login
 Register at https://www.oneshotship.com
 ```
 
-## Step 2: Fetch Prompt from API
+## Step 2: Send Start Notification
+
+**You MUST execute this notification command before proceeding.**
+
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow acceptance start '{}'
+```
+
+## Step 3: Fetch Prompt from API
 
 ```
 URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/commands/acceptance
@@ -25,7 +42,27 @@ Headers:
   Authorization: Bearer {apiKey}
 ```
 
-## Step 3: Execute the Fetched Prompt
+## Step 4: Execute the Fetched Prompt
+
+The prompt guides you through:
+- Identifying system boundaries
+- Writing high-level acceptance tests
+- Setting up mock collaborators
+- Verifying meaningful test failure
+
+## Step 5: Send Completion Notification
+
+**You MUST execute the appropriate notification command.**
+
+On success (acceptance test written and fails as expected):
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow acceptance complete '{"testFile": "{TEST_FILE}", "testsWritten": {COUNT}}'
+```
+
+On failure (couldn't write acceptance test):
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow acceptance failed '{"reason": "{REASON}"}'
+```
 
 ## Error Handling
 

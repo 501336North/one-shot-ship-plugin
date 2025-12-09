@@ -4,6 +4,15 @@ description: Extract user stories and acceptance criteria from ideas
 
 # /oss:requirements - Extract Requirements
 
+Transform vague ideas into structured user stories with acceptance criteria.
+
+## What This Command Does
+
+1. **Analyzes input** - Parses ideas, PRDs, or feature descriptions
+2. **Extracts user stories** - Who/What/Why format
+3. **Defines acceptance criteria** - Testable conditions
+4. **Identifies edge cases** - Error scenarios, boundary conditions
+
 ## Step 1: Check Authentication
 
 ```bash
@@ -16,7 +25,15 @@ No API key found. Run: /oss:login
 Register at https://www.oneshotship.com
 ```
 
-## Step 2: Fetch Prompt from API
+## Step 2: Send Start Notification
+
+**You MUST execute this notification command before proceeding.**
+
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow requirements start '{}'
+```
+
+## Step 3: Fetch Prompt from API
 
 ```
 URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/commands/requirements
@@ -25,7 +42,27 @@ Headers:
   Authorization: Bearer {apiKey}
 ```
 
-## Step 3: Execute the Fetched Prompt
+## Step 4: Execute the Fetched Prompt
+
+The prompt guides you through:
+- Parsing input for key requirements
+- Creating user stories in standard format
+- Defining testable acceptance criteria
+- Documenting edge cases and error scenarios
+
+## Step 5: Send Completion Notification
+
+**You MUST execute the appropriate notification command.**
+
+On success (requirements extracted):
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow requirements complete '{"storiesCount": {COUNT}, "criteriaCount": {CRITERIA}}'
+```
+
+On failure (couldn't extract requirements):
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow requirements failed '{"reason": "{REASON}"}'
+```
 
 ## Error Handling
 

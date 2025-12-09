@@ -6,6 +6,21 @@ description: Design API contracts before implementation (Outside-In starting poi
 
 Design API contracts as the starting point for Outside-In development.
 
+## What This Command Does
+
+1. **Defines endpoints** - RESTful or GraphQL contract
+2. **Specifies request/response** - Schema definitions
+3. **Documents errors** - Error codes and messages
+4. **Creates OpenAPI spec** - Machine-readable contract
+
+## Why API-First (Outside-In)
+
+Starting with API design:
+- Defines the system boundary clearly
+- Enables frontend/backend parallel work
+- Creates testable contract before implementation
+- Drives interface discovery through mocks
+
 ## Step 1: Check Authentication
 
 ```bash
@@ -18,7 +33,15 @@ No API key found. Run: /oss:login
 Register at https://www.oneshotship.com
 ```
 
-## Step 2: Fetch Prompt from API
+## Step 2: Send Start Notification
+
+**You MUST execute this notification command before proceeding.**
+
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow api-design start '{}'
+```
+
+## Step 3: Fetch Prompt from API
 
 ```
 URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/commands/api-design
@@ -27,7 +50,28 @@ Headers:
   Authorization: Bearer {apiKey}
 ```
 
-## Step 3: Execute the Fetched Prompt
+## Step 4: Execute the Fetched Prompt
+
+The prompt guides you through:
+- Identifying resources and operations
+- Designing RESTful endpoints
+- Defining request/response schemas
+- Documenting error responses
+- Generating OpenAPI specification
+
+## Step 5: Send Completion Notification
+
+**You MUST execute the appropriate notification command.**
+
+On success (API design complete):
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow api-design complete '{"endpointsDesigned": {COUNT}, "specFile": "{SPEC_FILE}"}'
+```
+
+On failure (couldn't complete API design):
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow api-design failed '{"reason": "{REASON}"}'
+```
 
 ## Error Handling
 

@@ -7,6 +7,84 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
 NOTIFY_SCRIPT="$PLUGIN_ROOT/hooks/oss-notify.sh"
+MENUBAR_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-menubar.js"
+LOG_SCRIPT="$PLUGIN_ROOT/hooks/oss-log.sh"
+
+# =============================================================================
+# Detect /oss:* commands and update SwiftBar workflow state
+# =============================================================================
+
+USER_INPUT="${CLAUDE_USER_INPUT:-$*}"
+
+# Check if this is an /oss: command
+if [[ "$USER_INPUT" == /oss:* ]]; then
+    # Extract command name (e.g., "ideate" from "/oss:ideate" or "/oss:ideate something")
+    OSS_CMD=$(echo "$USER_INPUT" | sed -E 's|^/oss:([a-z-]+).*|\1|')
+
+    # Map command to workflow step for menubar
+    case "$OSS_CMD" in
+        ideate)
+            WORKFLOW_STEP="ideate"
+            ;;
+        requirements)
+            WORKFLOW_STEP="requirements"
+            ;;
+        api-design)
+            WORKFLOW_STEP="apiDesign"
+            ;;
+        data-model)
+            WORKFLOW_STEP="dataModel"
+            ;;
+        adr)
+            WORKFLOW_STEP="adr"
+            ;;
+        plan)
+            WORKFLOW_STEP="plan"
+            ;;
+        acceptance)
+            WORKFLOW_STEP="acceptance"
+            ;;
+        red)
+            WORKFLOW_STEP="red"
+            ;;
+        mock)
+            WORKFLOW_STEP="mock"
+            ;;
+        green)
+            WORKFLOW_STEP="green"
+            ;;
+        refactor)
+            WORKFLOW_STEP="refactor"
+            ;;
+        integration)
+            WORKFLOW_STEP="integration"
+            ;;
+        contract)
+            WORKFLOW_STEP="contract"
+            ;;
+        build)
+            WORKFLOW_STEP="build"
+            ;;
+        ship)
+            WORKFLOW_STEP="ship"
+            ;;
+        *)
+            # Not a workflow step command (e.g., login, settings, queue)
+            WORKFLOW_STEP=""
+            ;;
+    esac
+
+    # Update menubar state if this is a workflow command
+    if [[ -n "$WORKFLOW_STEP" && -f "$MENUBAR_CLI" ]]; then
+        node "$MENUBAR_CLI" setActiveStep "$WORKFLOW_STEP" 2>/dev/null || true
+        node "$MENUBAR_CLI" setSupervisor watching 2>/dev/null || true
+    fi
+
+    # Initialize log file for this command
+    if [[ -x "$LOG_SCRIPT" ]]; then
+        "$LOG_SCRIPT" init "$OSS_CMD" 2>/dev/null || true
+    fi
+fi
 
 # Check for --no-queue flag in user's command
 if [[ "$*" == *"--no-queue"* ]]; then

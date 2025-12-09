@@ -39,7 +39,7 @@ function main() {
 
   const type = args[0];
 
-  let copy: { title: string; message: string };
+  let copy: { title: string; message: string; subtitle?: string };
 
   switch (type) {
     case 'session': {

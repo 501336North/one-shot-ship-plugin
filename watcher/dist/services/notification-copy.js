@@ -9,8 +9,8 @@
 // =============================================================================
 const SESSION_TEMPLATES = {
     context_restored: {
-        title: 'Resumed',
-        message: '{branch} • {age}',
+        title: 'Context Loaded',
+        message: 'Saved {saveDate}',
     },
     fresh_session: {
         title: 'Ready',
@@ -21,12 +21,12 @@ const SESSION_TEMPLATES = {
         message: '{project}',
     },
     session_end: {
-        title: 'Saved',
-        message: '{branch} • {uncommittedText}',
+        title: 'Context Persisted',
+        message: '{currentDate}',
     },
     context_saved: {
-        title: 'Saved',
-        message: '{branch} • {uncommittedText}',
+        title: 'Context Persisted',
+        message: '{currentDate}',
     },
 };
 const WORKFLOW_TEMPLATES = {
@@ -142,16 +142,33 @@ export class NotificationCopyService {
             return { title: 'OSS', message: 'Session event' };
         }
         let message = template.message;
-        // Handle session_end/context_saved specially for uncommitted count
+        let subtitle;
+        // Format uncommitted count text
+        const uncommitted = context.uncommitted ?? 0;
+        const uncommittedText = uncommitted === 0 ? 'clean' : `${uncommitted} uncommitted`;
+        // Handle context_saved/session_end - add current date and subtitle
         if (event === 'session_end' || event === 'context_saved') {
-            const uncommitted = context.uncommitted ?? 0;
-            const uncommittedText = uncommitted === 0 ? 'clean' : `${uncommitted} pending`;
-            message = message.replace('{uncommittedText}', uncommittedText);
+            // Add current date if not provided
+            const currentDate = context.currentDate || new Date().toLocaleDateString('en-US', {
+                month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+            });
+            message = message.replace('{currentDate}', currentDate);
+            // Subtitle shows branch and uncommitted count
+            subtitle = `[${context.branch || 'unknown'}] • ${uncommittedText}`;
+        }
+        // Handle context_restored - show save date and subtitle
+        if (event === 'context_restored') {
+            // Format save date nicely if provided
+            const saveDate = context.saveDate || 'unknown';
+            message = message.replace('{saveDate}', saveDate);
+            // Subtitle shows branch and uncommitted count
+            subtitle = `[${context.branch || 'unknown'}] • ${uncommittedText}`;
         }
         message = this.interpolate(message, context);
         return {
             title: template.title,
             message,
+            subtitle,
         };
     }
     /**

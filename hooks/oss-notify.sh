@@ -22,6 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
 COPY_CLI="$PLUGIN_ROOT/watcher/dist/cli/get-copy.js"
 MENUBAR_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-menubar.js"
+LOG_SCRIPT="$PLUGIN_ROOT/hooks/oss-log.sh"
 
 # =============================================================================
 # Parse arguments
@@ -153,6 +154,21 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
     WORKFLOW_CMD="${COPY_ARGS[0]:-}"
     WORKFLOW_EVENT="${COPY_ARGS[1]:-}"
     WORKFLOW_CONTEXT="${COPY_ARGS[2]:-'{}'}"
+
+    # Write to workflow log file
+    if [[ -x "$LOG_SCRIPT" && -n "$WORKFLOW_CMD" ]]; then
+        LOG_MSG="[$WORKFLOW_EVENT]"
+        if [[ -n "$WORKFLOW_CONTEXT" && "$WORKFLOW_CONTEXT" != "{}" ]]; then
+            # Extract key info from context for log
+            if command -v jq &>/dev/null; then
+                CONTEXT_SUMMARY=$(echo "$WORKFLOW_CONTEXT" | jq -r 'to_entries | map("\(.key)=\(.value)") | join(", ")' 2>/dev/null || echo "$WORKFLOW_CONTEXT")
+                LOG_MSG="$LOG_MSG $CONTEXT_SUMMARY"
+            else
+                LOG_MSG="$LOG_MSG $WORKFLOW_CONTEXT"
+            fi
+        fi
+        "$LOG_SCRIPT" write "$WORKFLOW_CMD" "$LOG_MSG" 2>/dev/null || true
+    fi
 
     # Update menu bar state based on workflow event
     if [[ -f "$MENUBAR_CLI" ]]; then

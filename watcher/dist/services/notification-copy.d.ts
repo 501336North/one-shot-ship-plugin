@@ -18,6 +18,8 @@ export interface SessionContext {
     age?: string;
     project?: string;
     uncommitted?: number;
+    saveDate?: string;
+    currentDate?: string;
 }
 export interface WorkflowContext {
     idea?: string;

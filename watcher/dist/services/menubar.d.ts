@@ -48,7 +48,7 @@ export declare class MenuBarService {
      */
     getState(): Promise<WorkflowState>;
     /**
-     * Sets active step, marks previous steps as done
+     * Sets active step, marks previous steps as done, future steps as pending
      */
     setActiveStep(step: ChainStep): Promise<void>;
     /**

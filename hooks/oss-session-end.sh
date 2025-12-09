@@ -51,7 +51,7 @@ NOTIFY_SCRIPT="$SCRIPT_DIR/oss-notify.sh"
 MENUBAR_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-menubar.js"
 
 if [[ -x "$NOTIFY_SCRIPT" ]]; then
-    "$NOTIFY_SCRIPT" --session context_saved "{\"project\": \"$REPO_NAME\", \"branch\": \"$BRANCH\", \"uncommitted\": \"$UNCOMMITTED_COUNT\"}"
+    "$NOTIFY_SCRIPT" --session context_saved "{\"project\": \"$REPO_NAME\", \"branch\": \"$BRANCH\", \"uncommitted\": $UNCOMMITTED_COUNT}"
 fi
 
 # Update menu bar state to idle (session ending)

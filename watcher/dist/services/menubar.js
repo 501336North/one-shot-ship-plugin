@@ -57,7 +57,7 @@ export class MenuBarService {
         }
     }
     /**
-     * Sets active step, marks previous steps as done
+     * Sets active step, marks previous steps as done, future steps as pending
      */
     async setActiveStep(step) {
         const state = await this.getState();
@@ -67,6 +67,14 @@ export class MenuBarService {
             state.chainState.ideate = 'done';
             state.chainState.plan = 'done';
             state.chainState.acceptance = 'active';
+            // Mark remaining build phases as pending
+            state.chainState.red = 'pending';
+            state.chainState.mock = 'pending';
+            state.chainState.green = 'pending';
+            state.chainState.refactor = 'pending';
+            state.chainState.integration = 'pending';
+            state.chainState.contract = 'pending';
+            state.chainState.ship = 'pending';
             await this.writeState(state);
             return;
         }
@@ -80,6 +88,11 @@ export class MenuBarService {
         state.activeStep = step;
         const chainKey = step;
         state.chainState[chainKey] = 'active';
+        // Mark all future steps as pending
+        for (let i = stepIndex + 1; i < CHAIN_ORDER.length; i++) {
+            const nextStep = CHAIN_ORDER[i];
+            state.chainState[nextStep] = 'pending';
+        }
         await this.writeState(state);
     }
     /**

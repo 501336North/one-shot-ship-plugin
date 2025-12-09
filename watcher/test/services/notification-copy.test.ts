@@ -26,14 +26,19 @@ describe('NotificationCopyService', () => {
 
   describe('getSessionCopy', () => {
     /**
-     * @behavior Context restored shows branch and age
+     * @behavior Context restored shows save date and branch in subtitle
      * @acceptance-criteria AC-COPY.1
      */
-    test('returns "Resumed" for context_restored with branch', () => {
-      const copy = service.getSessionCopy('context_restored', { branch: 'feat/auth', age: '2h ago' });
-      expect(copy.title).toBe('Resumed');
-      expect(copy.message).toContain('feat/auth');
-      expect(copy.message).toContain('2h ago');
+    test('returns "Context Loaded" for context_restored with branch and save date', () => {
+      const copy = service.getSessionCopy('context_restored', {
+        branch: 'feat/auth',
+        saveDate: '2025-12-09 11:54',
+        uncommitted: 3
+      });
+      expect(copy.title).toBe('Context Loaded');
+      expect(copy.message).toContain('2025-12-09 11:54');
+      expect(copy.subtitle).toContain('[feat/auth]');
+      expect(copy.subtitle).toContain('3 uncommitted');
     });
 
     /**
@@ -47,13 +52,14 @@ describe('NotificationCopyService', () => {
     });
 
     /**
-     * @behavior Session end shows branch and pending count
+     * @behavior Session end shows date and branch in subtitle
      * @acceptance-criteria AC-COPY.3
      */
-    test('returns "Saved" for session_end with uncommitted count', () => {
+    test('returns "Context Persisted" for session_end with uncommitted count', () => {
       const copy = service.getSessionCopy('session_end', { uncommitted: 3, branch: 'main' });
-      expect(copy.title).toBe('Saved');
-      expect(copy.message).toContain('3');
+      expect(copy.title).toBe('Context Persisted');
+      expect(copy.subtitle).toContain('[main]');
+      expect(copy.subtitle).toContain('3 uncommitted');
     });
 
     /**
@@ -65,7 +71,7 @@ describe('NotificationCopyService', () => {
         branch: 'feat/login',
         uncommitted: 0,
       });
-      expect(copy.message).toContain('clean');
+      expect(copy.subtitle).toContain('clean');
     });
   });
 

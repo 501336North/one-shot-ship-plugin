@@ -32,7 +32,15 @@ No API key found. Run: /oss:login
 Register at https://www.oneshotship.com
 ```
 
-## Step 2: Fetch Prompt from API
+## Step 2: Send Start Notification
+
+**You MUST execute this notification command before proceeding.**
+
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow refactor start '{}'
+```
+
+## Step 3: Fetch Prompt from API
 
 ```
 URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/commands/refactor
@@ -41,13 +49,27 @@ Headers:
   Authorization: Bearer {apiKey}
 ```
 
-## Step 3: Execute the Fetched Prompt
+## Step 4: Execute the Fetched Prompt
 
 The prompt guides you through:
 - Identifying refactoring opportunities
 - Applying safe transformations
 - Running tests continuously
 - Improving code quality metrics
+
+## Step 5: Send Completion Notification
+
+**You MUST execute the appropriate notification command.**
+
+On success (refactoring complete, tests green):
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow refactor complete '{"improvements": "{IMPROVEMENTS}"}'
+```
+
+On failure (tests broke during refactoring):
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow refactor failed '{"reason": "{REASON}"}'
+```
 
 ## Error Handling
 

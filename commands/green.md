@@ -32,7 +32,15 @@ No API key found. Run: /oss:login
 Register at https://www.oneshotship.com
 ```
 
-## Step 2: Fetch Prompt from API
+## Step 2: Send Start Notification
+
+**You MUST execute this notification command before proceeding.**
+
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow green start '{}'
+```
+
+## Step 3: Fetch Prompt from API
 
 ```
 URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/commands/green
@@ -41,13 +49,27 @@ Headers:
   Authorization: Bearer {apiKey}
 ```
 
-## Step 3: Execute the Fetched Prompt
+## Step 4: Execute the Fetched Prompt
 
 The prompt guides you through:
 - Analyzing the failing test
 - Understanding mock expectations
 - Writing minimal implementation
 - Running tests to confirm GREEN
+
+## Step 5: Send Completion Notification
+
+**You MUST execute the appropriate notification command.**
+
+On success (test passes):
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow green complete '{"testFile": "{TEST_FILE}", "linesAdded": {LINES}}'
+```
+
+On failure (couldn't make test pass):
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow green failed '{"reason": "{REASON}"}'
+```
 
 ## Error Handling
 

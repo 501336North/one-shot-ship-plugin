@@ -32,7 +32,15 @@ No API key found. Run: /oss:login
 Register at https://www.oneshotship.com
 ```
 
-## Step 2: Fetch Prompt from API
+## Step 2: Send Start Notification
+
+**You MUST execute this notification command before proceeding.**
+
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow mock start '{}'
+```
+
+## Step 3: Fetch Prompt from API
 
 ```
 URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/commands/mock
@@ -41,13 +49,27 @@ Headers:
   Authorization: Bearer {apiKey}
 ```
 
-## Step 3: Execute the Fetched Prompt
+## Step 4: Execute the Fetched Prompt
 
 The prompt guides you through:
 - Identifying interfaces to mock
 - Generating type-safe mocks
 - Adding verification support
 - Creating test fixtures
+
+## Step 5: Send Completion Notification
+
+**You MUST execute the appropriate notification command.**
+
+On success:
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow mock complete '{"mocksCreated": {COUNT}}'
+```
+
+On failure:
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow mock failed '{"reason": "{REASON}"}'
+```
 
 ## Error Handling
 

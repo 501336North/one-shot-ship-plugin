@@ -140,12 +140,18 @@ if [[ -f ~/.oss/session-context.md ]]; then
     BRANCH_LINE=$(grep "^\*\*Branch:\*\*" "$CONTEXT_FILE" 2>/dev/null | head -1)
     BRANCH=$(echo "$BRANCH_LINE" | sed 's/\*\*Branch:\*\* //')
 
+    # Parse save date from context file (format: _Saved: 2025-12-09 11:54:10_)
+    SAVE_DATE=$(grep "^_Saved:" "$CONTEXT_FILE" 2>/dev/null | sed 's/_Saved: //' | sed 's/_$//')
+
+    # Count uncommitted changes from current git status
+    UNCOMMITTED_COUNT=$(git status -s 2>/dev/null | grep -c . || echo "0")
+
     echo ""
     echo "Previous session context restored."
 
     # Visual notification for context restore (via unified oss-notify.sh)
     if [[ -x "$NOTIFY_SCRIPT" ]]; then
-        "$NOTIFY_SCRIPT" --session context_restored "{\"project\": \"$PROJECT_NAME\", \"branch\": \"${BRANCH:-unknown}\"}"
+        "$NOTIFY_SCRIPT" --session context_restored "{\"project\": \"$PROJECT_NAME\", \"branch\": \"${BRANCH:-unknown}\", \"saveDate\": \"${SAVE_DATE:-unknown}\", \"uncommitted\": $UNCOMMITTED_COUNT}"
     fi
 else
     # No saved context - fresh start notification (via unified oss-notify.sh)
