@@ -10,6 +10,8 @@
 #   oss-log.sh error <command> <error>           # Log error/exception
 #   oss-log.sh file <command> <action> <path>    # Log file operation
 #   oss-log.sh agent <command> <agent> [task]    # Log agent delegation
+#   oss-log.sh ironlaw <command> <status> [violations] # Log IRON LAW check result
+#   oss-log.sh checklist <command>               # Log IRON LAW completion checklist
 #   oss-log.sh read <command>                    # Read command log
 #   oss-log.sh path <command>                    # Get log file path
 #
@@ -246,6 +248,88 @@ case "$ACTION" in
         fi
         ;;
 
+    ironlaw)
+        # Log IRON LAW check results
+        # Supervisor uses this to track compliance history
+        # Format: [HH:MM:SS] [cmd] [IRON_LAW] PASSED|FAILED violations=[1,4]
+        if [[ -z "$COMMAND" || -z "$ARG3" ]]; then
+            echo "Usage: oss-log.sh ironlaw <command> <PASSED|FAILED> [violations]" >&2
+            exit 1
+        fi
+        STATUS="$ARG3"
+        VIOLATIONS="${ARG4:-}"
+        if [[ "$STATUS" == "FAILED" && -n "$VIOLATIONS" ]]; then
+            log_entry "$COMMAND" "IRON_LAW" "FAILED violations=[$VIOLATIONS]"
+        else
+            log_entry "$COMMAND" "IRON_LAW" "$STATUS"
+        fi
+        ;;
+
+    checklist)
+        # Log IRON LAW compliance checklist at command completion
+        # This creates a human-readable summary in the logs
+        if [[ -z "$COMMAND" ]]; then
+            echo "Usage: oss-log.sh checklist <command>" >&2
+            exit 1
+        fi
+        LOG_FILE="$CURRENT_SESSION/${COMMAND}.log"
+        TIMESTAMP=$(date '+%H:%M:%S')
+
+        # Gather current state for checklist
+        BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
+        ON_FEATURE=$([[ "$BRANCH" != "main" && "$BRANCH" != "master" ]] && echo "✓" || echo "✗")
+
+        # Check for skipped tests
+        SKIPPED_TESTS="✓"
+        if [[ -f "package.json" ]]; then
+            if grep -rql "\.skip\|\.todo\|\.only" --include="*.test.ts" --include="*.test.js" --exclude-dir=node_modules 2>/dev/null; then
+                SKIPPED_TESTS="✗"
+            fi
+        fi
+
+        # Check for any types in staged files
+        ANY_TYPES="✓"
+        if [[ -f "tsconfig.json" ]]; then
+            STAGED_TS=$(git diff --cached --name-only 2>/dev/null | grep -E "\.tsx?$" || true)
+            if [[ -n "$STAGED_TS" ]]; then
+                while IFS= read -r file; do
+                    if [[ -n "$file" && -f "$file" ]] && grep -q ": any" "$file" 2>/dev/null; then
+                        ANY_TYPES="✗"
+                        break
+                    fi
+                done <<< "$STAGED_TS"
+            fi
+        fi
+
+        # Check dev docs exist
+        DEV_DOCS=$([[ -d "dev/active" ]] && echo "✓" || echo "✗")
+
+        # Write checklist to command log
+        {
+            echo ""
+            echo "[$TIMESTAMP] ═══════════════════════════════════════════════════════"
+            echo "[$TIMESTAMP] IRON LAW COMPLIANCE CHECKLIST (/oss:$COMMAND complete)"
+            echo "[$TIMESTAMP] ═══════════════════════════════════════════════════════"
+            echo "[$TIMESTAMP]   [$ON_FEATURE] LAW #4: On feature branch ($BRANCH)"
+            echo "[$TIMESTAMP]   [$SKIPPED_TESTS] LAW #1: No skipped tests (.skip/.todo/.only)"
+            echo "[$TIMESTAMP]   [$ANY_TYPES] LAW #2: No 'any' types in staged files"
+            echo "[$TIMESTAMP]   [$DEV_DOCS] LAW #6: Dev docs structure exists"
+            echo "[$TIMESTAMP]   [?] LAW #3: No loops detected (runtime check)"
+            echo "[$TIMESTAMP]   [?] LAW #5: Agent delegation used (manual verification)"
+            echo "[$TIMESTAMP] ═══════════════════════════════════════════════════════"
+            echo ""
+        } >> "$LOG_FILE"
+
+        # Write summary to unified session log
+        PASS_COUNT=0
+        [[ "$ON_FEATURE" == "✓" ]] && ((PASS_COUNT++))
+        [[ "$SKIPPED_TESTS" == "✓" ]] && ((PASS_COUNT++))
+        [[ "$ANY_TYPES" == "✓" ]] && ((PASS_COUNT++))
+        [[ "$DEV_DOCS" == "✓" ]] && ((PASS_COUNT++))
+
+        echo "[$TIMESTAMP] [$COMMAND] [IRON_LAW] CHECKLIST: ${PASS_COUNT}/4 automated checks passed" >> "$UNIFIED_LOG"
+        ;;
+
     read)
         if [[ -z "$COMMAND" ]]; then
             echo "Usage: oss-log.sh read <command>" >&2
@@ -427,6 +511,7 @@ case "$ACTION" in
     health-check)
         # Run health check in current project (for SwiftBar)
         # Reads current project from ~/.oss/current-project
+        # Output written to health-check.log for SwiftBar status detection
         CURRENT_PROJECT=""
         if [[ -f "$HOME/.oss/current-project" ]]; then
             CURRENT_PROJECT=$(cat "$HOME/.oss/current-project" 2>/dev/null)
@@ -449,9 +534,17 @@ case "$ACTION" in
             exit 1
         fi
 
+        # Health check log file (SwiftBar reads this to determine status icon)
+        HC_LOG="$CURRENT_SESSION/health-check.log"
+
         echo "Running health check in: $CURRENT_PROJECT"
         echo "─────────────────────────────────────────"
-        cd "$CURRENT_PROJECT" && node "$HEALTH_CHECK_CLI" --verbose
+
+        # Run health check, capture output to both terminal and log file
+        cd "$CURRENT_PROJECT" && node "$HEALTH_CHECK_CLI" --verbose 2>&1 | tee "$HC_LOG"
+        HC_EXIT="${PIPESTATUS[0]}"
+
+        exit "$HC_EXIT"
         ;;
 
     *)
@@ -467,6 +560,8 @@ case "$ACTION" in
         echo "  file <cmd> <action>     Log file operation" >&2
         echo "  agent <cmd> <agent>     Log agent delegation" >&2
         echo "  progress <cmd> <n/m>    Log task progress" >&2
+        echo "  ironlaw <cmd> <status>  Log IRON LAW check result" >&2
+        echo "  checklist <cmd>         Log IRON LAW completion checklist" >&2
         echo "" >&2
         echo "Reading Commands:" >&2
         echo "  read <cmd>              Read command log" >&2
