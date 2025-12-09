@@ -320,17 +320,17 @@ if [[ -f "$HEALTH_CHECK_LOG" ]]; then
     HC_SIZE=$(du -h "$HEALTH_CHECK_LOG" | cut -f1)
     echo "$HC_STATUS Health Check ($HC_SIZE) | bash='open' param1=\"$HEALTH_CHECK_LOG\" terminal=false color=$HC_COLOR"
     echo "--View in Terminal | bash='cat' param1=\"$HEALTH_CHECK_LOG\" terminal=true"
-    if [[ -n "$CURRENT_PROJECT" && -d "$CURRENT_PROJECT" ]]; then
-        echo "--Run Health Check Now | bash='bash' param1='-c' param2='cd \"$CURRENT_PROJECT\" && node \"$HEALTH_CHECK_CLI\" --verbose' terminal=true refresh=true"
+    if [[ -n "$PLUGIN_ROOT" && -x "$OSS_LOG_SCRIPT" ]]; then
+        echo "--Run Health Check Now | bash='$OSS_LOG_SCRIPT' param1='health-check' terminal=true refresh=true"
     else
-        echo "--Run Health Check Now | color=#888888 (no active project)"
+        echo "--Run Health Check Now | color=#888888 (start session first)"
     fi
 else
     echo "🔍 Health Check (not run) | color=#888888"
-    if [[ -n "$CURRENT_PROJECT" && -d "$CURRENT_PROJECT" ]]; then
-        echo "--Run Health Check Now | bash='bash' param1='-c' param2='cd \"$CURRENT_PROJECT\" && node \"$HEALTH_CHECK_CLI\" --verbose' terminal=true refresh=true"
+    if [[ -n "$PLUGIN_ROOT" && -x "$OSS_LOG_SCRIPT" ]]; then
+        echo "--Run Health Check Now | bash='$OSS_LOG_SCRIPT' param1='health-check' terminal=true refresh=true"
     else
-        echo "--Run Health Check Now | color=#888888 (no active project)"
+        echo "--Run Health Check Now | color=#888888 (start session first)"
     fi
 fi
 

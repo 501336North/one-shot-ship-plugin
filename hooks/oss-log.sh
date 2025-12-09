@@ -424,6 +424,36 @@ case "$ACTION" in
         fi
         ;;
 
+    health-check)
+        # Run health check in current project (for SwiftBar)
+        # Reads current project from ~/.oss/current-project
+        CURRENT_PROJECT=""
+        if [[ -f "$HOME/.oss/current-project" ]]; then
+            CURRENT_PROJECT=$(cat "$HOME/.oss/current-project" 2>/dev/null)
+        fi
+
+        if [[ -z "$CURRENT_PROJECT" || ! -d "$CURRENT_PROJECT" ]]; then
+            echo "No active project. Start a Claude Code session first."
+            exit 1
+        fi
+
+        # Get plugin root for health check CLI
+        PLUGIN_ROOT=""
+        if [[ -f "$HOME/.oss/plugin-root" ]]; then
+            PLUGIN_ROOT=$(cat "$HOME/.oss/plugin-root" 2>/dev/null)
+        fi
+        HEALTH_CHECK_CLI="$PLUGIN_ROOT/watcher/dist/cli/health-check.js"
+
+        if [[ ! -f "$HEALTH_CHECK_CLI" ]]; then
+            echo "Health check CLI not found at: $HEALTH_CHECK_CLI"
+            exit 1
+        fi
+
+        echo "Running health check in: $CURRENT_PROJECT"
+        echo "─────────────────────────────────────────"
+        cd "$CURRENT_PROJECT" && node "$HEALTH_CHECK_CLI" --verbose
+        ;;
+
     *)
         echo "Usage: oss-log.sh <command> [args]" >&2
         echo "" >&2
