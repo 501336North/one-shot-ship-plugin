@@ -304,6 +304,18 @@ else
 fi
 
 echo "Open Settings | bash='open' param1=\"$HOME/.oss/settings.json\" terminal=false"
+
+# Log management submenu
+OSS_LOG="$HOME/.claude/plugins/cache/one-shot-ship-plugin/oss/1.2.0/hooks/oss-log.sh"
+TOTAL_LOG_SIZE=$(du -sh "$HOME/.oss/logs" 2>/dev/null | cut -f1 || echo "0")
+echo "Manage Logs ($TOTAL_LOG_SIZE)"
+echo "--📊 Log Status | bash='$OSS_LOG' param1='status' terminal=true"
+echo "--🔄 Rotate Session Log | bash='$OSS_LOG' param1='rotate' terminal=true refresh=true"
+echo "--🧹 Clean Old Logs | bash='$OSS_LOG' param1='clean' terminal=true refresh=true"
+echo "--📦 View Archives | bash='$OSS_LOG' param1='archives' terminal=true"
+echo "-----"
+echo "--⚠️ Purge All Logs | bash='$OSS_LOG' param1='purge' terminal=true color=red"
+
 echo "Reset Workflow | bash='node' param1='$MENUBAR_CLI' param2='reset' terminal=false refresh=true color=#888888"
 
 # Show last update time

@@ -21,9 +21,76 @@ set -euo pipefail
 LOG_BASE="${HOME}/.oss/logs"
 CURRENT_SESSION="${LOG_BASE}/current-session"
 UNIFIED_LOG="${CURRENT_SESSION}/session.log"
+ARCHIVE_DIR="${LOG_BASE}/archive"
+
+# Configuration (can be overridden via ~/.oss/settings.json)
+MAX_SESSION_SIZE_MB=10           # Max size of session.log before rotation
+MAX_COMMAND_LOG_SIZE_KB=500      # Max size of individual command logs
+MAX_ARCHIVE_COUNT=5              # Keep last N archived sessions
+MAX_ARCHIVE_AGE_DAYS=7           # Delete archives older than N days
 
 # Ensure directories exist
 mkdir -p "$CURRENT_SESSION"
+mkdir -p "$ARCHIVE_DIR"
+
+# Load settings if available
+if [[ -f "${HOME}/.oss/settings.json" ]] && command -v jq &>/dev/null; then
+    MAX_SESSION_SIZE_MB=$(jq -r '.logs.maxSessionSizeMB // 10' "${HOME}/.oss/settings.json" 2>/dev/null)
+    MAX_COMMAND_LOG_SIZE_KB=$(jq -r '.logs.maxCommandLogSizeKB // 500' "${HOME}/.oss/settings.json" 2>/dev/null)
+    MAX_ARCHIVE_COUNT=$(jq -r '.logs.maxArchiveCount // 5' "${HOME}/.oss/settings.json" 2>/dev/null)
+    MAX_ARCHIVE_AGE_DAYS=$(jq -r '.logs.maxArchiveAgeDays // 7' "${HOME}/.oss/settings.json" 2>/dev/null)
+fi
+
+# Helper: Check and rotate session log if too large
+check_session_size() {
+    if [[ -f "$UNIFIED_LOG" ]]; then
+        local size_kb=$(du -k "$UNIFIED_LOG" | cut -f1)
+        local max_kb=$((MAX_SESSION_SIZE_MB * 1024))
+        if [[ "$size_kb" -gt "$max_kb" ]]; then
+            rotate_session_log
+        fi
+    fi
+}
+
+# Helper: Rotate session log
+rotate_session_log() {
+    local timestamp=$(date '+%Y%m%d-%H%M%S')
+    local archive_name="session-${timestamp}.log"
+    mv "$UNIFIED_LOG" "${ARCHIVE_DIR}/${archive_name}"
+    # Compress the archive
+    gzip "${ARCHIVE_DIR}/${archive_name}" 2>/dev/null || true
+    # Start fresh
+    echo "[$(date '+%H:%M:%S')] [system] [INFO] Session log rotated (previous archived)" > "$UNIFIED_LOG"
+}
+
+# Helper: Check and truncate command log if too large
+check_command_log_size() {
+    local log_file="$1"
+    if [[ -f "$log_file" ]]; then
+        local size_kb=$(du -k "$log_file" | cut -f1)
+        if [[ "$size_kb" -gt "$MAX_COMMAND_LOG_SIZE_KB" ]]; then
+            # Keep last 1000 lines, prepend truncation notice
+            local temp_file=$(mktemp)
+            echo "═══════════════════════════════════════════════════════════════" > "$temp_file"
+            echo "  [Log truncated - kept last 1000 lines]" >> "$temp_file"
+            echo "═══════════════════════════════════════════════════════════════" >> "$temp_file"
+            tail -1000 "$log_file" >> "$temp_file"
+            mv "$temp_file" "$log_file"
+        fi
+    fi
+}
+
+# Helper: Clean old archives
+clean_old_archives() {
+    # Remove archives older than MAX_ARCHIVE_AGE_DAYS
+    find "$ARCHIVE_DIR" -name "session-*.log.gz" -mtime +${MAX_ARCHIVE_AGE_DAYS} -delete 2>/dev/null || true
+
+    # Keep only MAX_ARCHIVE_COUNT most recent archives
+    local archive_count=$(ls -1 "$ARCHIVE_DIR"/session-*.log.gz 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "$archive_count" -gt "$MAX_ARCHIVE_COUNT" ]]; then
+        ls -1t "$ARCHIVE_DIR"/session-*.log.gz 2>/dev/null | tail -n +$((MAX_ARCHIVE_COUNT + 1)) | xargs rm -f 2>/dev/null || true
+    fi
+}
 
 ACTION="${1:-}"
 COMMAND="${2:-}"
@@ -43,6 +110,12 @@ log_entry() {
 
     # Write to unified session log with command prefix
     echo "[$timestamp] [$cmd] [$type] $message" >> "$UNIFIED_LOG"
+
+    # Periodically check sizes (every ~100 writes based on random chance to avoid overhead)
+    if [[ $((RANDOM % 100)) -eq 0 ]]; then
+        check_session_size
+        check_command_log_size "$log_file"
+    fi
 }
 
 case "$ACTION" in
@@ -237,10 +310,124 @@ case "$ACTION" in
         echo "$UNIFIED_LOG"
         ;;
 
+    # ==========================================================================
+    # Log Management Commands
+    # ==========================================================================
+
+    status)
+        # Show log status and disk usage
+        echo "═══════════════════════════════════════════════════════════════"
+        echo "  OSS Log Status"
+        echo "═══════════════════════════════════════════════════════════════"
+        echo ""
+
+        # Current session
+        echo "Current Session:"
+        if [[ -d "$CURRENT_SESSION" ]]; then
+            local session_size=$(du -sh "$CURRENT_SESSION" 2>/dev/null | cut -f1)
+            local log_count=$(ls -1 "$CURRENT_SESSION"/*.log 2>/dev/null | wc -l | tr -d ' ')
+            echo "  Location: $CURRENT_SESSION"
+            echo "  Size: $session_size"
+            echo "  Log files: $log_count"
+            if [[ -f "$UNIFIED_LOG" ]]; then
+                local session_lines=$(wc -l < "$UNIFIED_LOG" | tr -d ' ')
+                local session_file_size=$(du -h "$UNIFIED_LOG" | cut -f1)
+                echo "  Session log: $session_file_size ($session_lines lines)"
+            fi
+        else
+            echo "  No active session"
+        fi
+        echo ""
+
+        # Archives
+        echo "Archives:"
+        if [[ -d "$ARCHIVE_DIR" ]]; then
+            local archive_size=$(du -sh "$ARCHIVE_DIR" 2>/dev/null | cut -f1)
+            local archive_count=$(ls -1 "$ARCHIVE_DIR"/*.gz 2>/dev/null | wc -l | tr -d ' ')
+            echo "  Location: $ARCHIVE_DIR"
+            echo "  Size: $archive_size"
+            echo "  Archived sessions: $archive_count"
+        else
+            echo "  No archives"
+        fi
+        echo ""
+
+        # Total
+        local total_size=$(du -sh "$LOG_BASE" 2>/dev/null | cut -f1)
+        echo "Total log usage: $total_size"
+        echo ""
+
+        # Settings
+        echo "Settings:"
+        echo "  Max session size: ${MAX_SESSION_SIZE_MB}MB"
+        echo "  Max command log: ${MAX_COMMAND_LOG_SIZE_KB}KB"
+        echo "  Max archives: $MAX_ARCHIVE_COUNT"
+        echo "  Archive retention: ${MAX_ARCHIVE_AGE_DAYS} days"
+        ;;
+
+    rotate)
+        # Force rotate session log
+        if [[ -f "$UNIFIED_LOG" ]]; then
+            rotate_session_log
+            echo "Session log rotated and archived."
+        else
+            echo "No session log to rotate."
+        fi
+        ;;
+
+    clean)
+        # Clean old archives and truncate large logs
+        echo "Cleaning logs..."
+
+        # Clean old archives
+        clean_old_archives
+        echo "  ✓ Old archives cleaned"
+
+        # Check and truncate large command logs
+        for logfile in "$CURRENT_SESSION"/*.log; do
+            if [[ -f "$logfile" && "$(basename "$logfile")" != "session.log" ]]; then
+                check_command_log_size "$logfile"
+            fi
+        done
+        echo "  ✓ Large command logs truncated"
+
+        # Check session log
+        check_session_size
+        echo "  ✓ Session log size checked"
+
+        echo "Done."
+        ;;
+
+    purge)
+        # Delete all logs (with confirmation)
+        if [[ "${ARG3:-}" == "--force" ]]; then
+            rm -rf "$CURRENT_SESSION"/*
+            rm -rf "$ARCHIVE_DIR"/*
+            mkdir -p "$CURRENT_SESSION"
+            echo "All logs purged."
+        else
+            echo "This will delete ALL logs (current session and archives)."
+            echo "To confirm, run: oss-log.sh purge --force"
+        fi
+        ;;
+
+    archives)
+        # List archived sessions
+        echo "Archived Sessions:"
+        if [[ -d "$ARCHIVE_DIR" ]]; then
+            ls -lh "$ARCHIVE_DIR"/*.gz 2>/dev/null | awk '{print "  " $9 " (" $5 ")"}'
+            if [[ $? -ne 0 ]]; then
+                echo "  No archives found"
+            fi
+        else
+            echo "  No archive directory"
+        fi
+        ;;
+
     *)
         echo "Usage: oss-log.sh <command> [args]" >&2
         echo "" >&2
-        echo "Commands:" >&2
+        echo "Logging Commands:" >&2
         echo "  init <cmd>              Initialize log for command" >&2
         echo "  write <cmd> <msg>       Write to command log" >&2
         echo "  phase <cmd> <phase>     Log TDD phase transition" >&2
@@ -250,13 +437,22 @@ case "$ACTION" in
         echo "  file <cmd> <action>     Log file operation" >&2
         echo "  agent <cmd> <agent>     Log agent delegation" >&2
         echo "  progress <cmd> <n/m>    Log task progress" >&2
+        echo "" >&2
+        echo "Reading Commands:" >&2
         echo "  read <cmd>              Read command log" >&2
         echo "  path <cmd>              Get command log path" >&2
         echo "  session                 Read unified session log" >&2
         echo "  tail                    Follow session log (real-time)" >&2
         echo "  session-path            Get session log path" >&2
         echo "  list                    List all logs" >&2
-        echo "  clear-session           Archive and start fresh" >&2
+        echo "" >&2
+        echo "Management Commands:" >&2
+        echo "  status                  Show log status and disk usage" >&2
+        echo "  rotate                  Force rotate session log" >&2
+        echo "  clean                   Clean old archives, truncate large logs" >&2
+        echo "  purge [--force]         Delete all logs" >&2
+        echo "  archives                List archived sessions" >&2
+        echo "  clear-session           Archive current and start fresh" >&2
         exit 1
         ;;
 esac
