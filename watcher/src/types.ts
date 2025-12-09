@@ -24,7 +24,11 @@ export type AnomalyType =
   | 'push_failed'
   // LLM-detected
   | 'unusual_pattern'
-  | 'recommended_investigation';
+  | 'recommended_investigation'
+  // IRON LAW anomalies
+  | 'iron_law_violation'
+  | 'iron_law_repeated'
+  | 'iron_law_ignored';
 
 export type TaskStatus = 'pending' | 'executing' | 'completed' | 'failed';
 

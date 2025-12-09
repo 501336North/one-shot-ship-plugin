@@ -29,6 +29,9 @@ const ISSUE_TO_AGENT = {
     abrupt_stop: 'debugger',
     partial_completion: 'debugger',
     abandoned_agent: 'debugger',
+    iron_law_violation: 'debugger',
+    iron_law_repeated: 'debugger',
+    iron_law_ignored: 'debugger',
 };
 // Human-readable issue type names
 const ISSUE_NAMES = {
@@ -48,6 +51,9 @@ const ISSUE_NAMES = {
     abrupt_stop: 'Abrupt Stop',
     partial_completion: 'Partial Completion',
     abandoned_agent: 'Abandoned Agent',
+    iron_law_violation: 'IRON LAW Violation',
+    iron_law_repeated: 'IRON LAW Repeated Violation',
+    iron_law_ignored: 'IRON LAW Violation Ignored',
 };
 export class InterventionGenerator {
     /**
@@ -96,7 +102,11 @@ export class InterventionGenerator {
      */
     createNotification(issue) {
         const title = `OSS: ${ISSUE_NAMES[issue.type]}`;
-        const message = issue.message;
+        let message = issue.message;
+        // For repeated violations, ensure "repeated" is in the message
+        if (issue.type === 'iron_law_repeated' && !message.toLowerCase().includes('repeated')) {
+            message = message.replace(/violated/, 'repeatedly violated');
+        }
         const sound = this.getSoundForConfidence(issue.confidence);
         return { title, message, sound };
     }
@@ -164,6 +174,12 @@ export class InterventionGenerator {
                 return 'Some phases completed but workflow did not finish. Resume from the stuck phase or investigate the blocker.';
             case 'abandoned_agent':
                 return 'An agent started but never completed. Check for timeouts, errors, or stuck processes.';
+            case 'iron_law_violation':
+                return 'IRON LAW violated. Delete code written without test and start with failing test first.';
+            case 'iron_law_repeated':
+                return 'IRON LAW repeatedly violated. Fetch IRON LAWS from API and place at top of context. Follow TDD strictly.';
+            case 'iron_law_ignored':
+                return 'IRON LAW violation not addressed. Stop current work and fix the violation immediately.';
             default:
                 return 'Investigate the issue and take appropriate corrective action.';
         }

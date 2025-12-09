@@ -205,6 +205,96 @@ describe('LogReader', () => {
     });
   });
 
+  describe('IRON_LAW_CHECK event support', () => {
+    /**
+     * @behavior LogReader can parse IRON_LAW_CHECK entries from workflow log
+     * @acceptance-criteria AC-IRON-LAW-001
+     * @business-rule IRON-LAW-LOGGING
+     * @boundary Log Parsing
+     */
+    it('should parse IRON_LAW_CHECK entry from log', async () => {
+      await logger.log({
+        cmd: 'build',
+        event: 'IRON_LAW_CHECK',
+        data: {
+          passed: false,
+          violations: [
+            { law: 4, message: 'On main branch, expected feature branch' }
+          ]
+        }
+      });
+
+      const entries = await reader.readAll();
+
+      expect(entries.length).toBe(1);
+      expect(entries[0].cmd).toBe('build');
+      expect(entries[0].event).toBe('IRON_LAW_CHECK');
+      expect(entries[0].data.passed).toBe(false);
+    });
+
+    /**
+     * @behavior LogReader can query for last IRON_LAW_CHECK event
+     * @acceptance-criteria AC-IRON-LAW-002
+     * @business-rule IRON-LAW-LOGGING
+     * @boundary Log Querying
+     */
+    it('should query for last IRON_LAW_CHECK event', async () => {
+      await logger.log({ cmd: 'build', event: 'START', data: {} });
+      await logger.log({
+        cmd: 'build',
+        event: 'IRON_LAW_CHECK',
+        data: {
+          passed: true,
+          violations: []
+        }
+      });
+      await logger.log({
+        cmd: 'build',
+        event: 'IRON_LAW_CHECK',
+        data: {
+          passed: false,
+          violations: [{ law: 1, message: 'Tests failing' }]
+        }
+      });
+
+      const entry = await reader.queryLast({ event: 'IRON_LAW_CHECK' });
+
+      expect(entry).not.toBeNull();
+      expect(entry?.event).toBe('IRON_LAW_CHECK');
+      expect(entry?.data.passed).toBe(false);
+      expect(entry?.data.violations).toHaveLength(1);
+    });
+
+    /**
+     * @behavior IRON_LAW_CHECK entry provides accessible violations data
+     * @acceptance-criteria AC-IRON-LAW-003
+     * @business-rule IRON-LAW-LOGGING
+     * @boundary Data Access
+     */
+    it('IRON_LAW_CHECK entry should have violations in data', async () => {
+      await logger.log({
+        cmd: 'ship',
+        event: 'IRON_LAW_CHECK',
+        data: {
+          passed: false,
+          violations: [
+            { law: 4, message: 'On main branch' },
+            { law: 1, message: 'Tests failing (2 of 10)' }
+          ]
+        }
+      });
+
+      const entry = await reader.queryLast({ event: 'IRON_LAW_CHECK' });
+
+      expect(entry).not.toBeNull();
+      expect(entry?.data.violations).toBeDefined();
+      expect(Array.isArray(entry?.data.violations)).toBe(true);
+      expect(entry?.data.violations).toHaveLength(2);
+      expect(entry?.data.violations[0].law).toBe(4);
+      expect(entry?.data.violations[1].law).toBe(1);
+    });
+  });
+
   describe('queryLast()', () => {
     it('finds last entry matching command', async () => {
       await logger.log({ cmd: 'ideate', event: 'START', data: {} });

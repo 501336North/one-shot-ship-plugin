@@ -90,6 +90,16 @@ export class WorkflowLogger {
     }
     getDescription(entry) {
         const data = entry.data;
+        // IRON_LAW_CHECK event
+        if (entry.event === 'IRON_LAW_CHECK') {
+            const passed = data.passed;
+            if (passed) {
+                return 'PRE-CHECK PASSED';
+            }
+            const violations = data.violations;
+            const count = violations?.length || 0;
+            return `PRE-CHECK FAILED: ${count} violation(s)`;
+        }
         // Agent events
         if (entry.agent || entry.event === 'AGENT_SPAWN' || entry.event === 'AGENT_COMPLETE') {
             const agentType = entry.agent?.type || data.agent_type;

@@ -4,7 +4,7 @@
  * Logs entries in hybrid format: JSON line + human-readable summary
  * Includes IRON LAW compliance checklist for every command/agent completion
  */
-export type WorkflowEvent = 'START' | 'PHASE_START' | 'PHASE_COMPLETE' | 'MILESTONE' | 'AGENT_SPAWN' | 'AGENT_COMPLETE' | 'COMPLETE' | 'FAILED';
+export type WorkflowEvent = 'START' | 'PHASE_START' | 'PHASE_COMPLETE' | 'MILESTONE' | 'AGENT_SPAWN' | 'AGENT_COMPLETE' | 'COMPLETE' | 'FAILED' | 'IRON_LAW_CHECK';
 export interface AgentInfo {
     type: string;
     id: string;

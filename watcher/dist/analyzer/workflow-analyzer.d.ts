@@ -7,7 +7,7 @@
  * - Hard stops (positive signals ceased): abrupt stops, partial completion, abandoned agents
  */
 import { ParsedLogEntry } from '../logger/log-reader.js';
-export type IssueType = 'loop_detected' | 'phase_stuck' | 'regression' | 'out_of_order' | 'chain_broken' | 'tdd_violation' | 'explicit_failure' | 'agent_failed' | 'silence' | 'missing_milestones' | 'declining_velocity' | 'incomplete_outputs' | 'agent_silence' | 'abrupt_stop' | 'partial_completion' | 'abandoned_agent';
+export type IssueType = 'loop_detected' | 'phase_stuck' | 'regression' | 'out_of_order' | 'chain_broken' | 'tdd_violation' | 'explicit_failure' | 'agent_failed' | 'silence' | 'missing_milestones' | 'declining_velocity' | 'incomplete_outputs' | 'agent_silence' | 'abrupt_stop' | 'partial_completion' | 'abandoned_agent' | 'iron_law_violation' | 'iron_law_repeated' | 'iron_law_ignored';
 export type HealthStatus = 'healthy' | 'warning' | 'critical';
 export type ChainStatus = 'pending' | 'in_progress' | 'complete' | 'failed';
 export interface WorkflowIssue {
@@ -56,6 +56,7 @@ export declare class WorkflowAnalyzer {
     private detectTddViolation;
     private detectExplicitFailures;
     private detectAgentFailures;
+    private detectIronLawViolations;
     private detectSilence;
     private detectMissingMilestones;
     private detectDecliningVelocity;

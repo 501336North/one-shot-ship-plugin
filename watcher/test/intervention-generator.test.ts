@@ -189,4 +189,105 @@ describe('InterventionGenerator', () => {
       expect(['Pop', 'default', undefined]).toContain(infoNotif.sound);
     });
   });
+
+  describe('IRON LAW violation handling', () => {
+    /**
+     * @behavior Watcher creates notification for IRON LAW violations
+     * @acceptance-criteria AC-006.13
+     * @boundary Notification
+     */
+    it('should create notification for iron_law_violation', () => {
+      const ironLawIssue = issue(
+        'iron_law_violation',
+        0.95,
+        'IRON LAW #1 violated: Code written before test',
+        { law_number: 1, violation_type: 'code_before_test' }
+      );
+
+      const notification = generator.createNotification(ironLawIssue);
+
+      expect(notification.title).toMatch(/IRON LAW/i);
+      expect(notification.message).toContain('IRON LAW #1');
+      expect(notification.message).toContain('Code written before test');
+    });
+
+    /**
+     * @behavior Watcher creates notification for repeated IRON LAW violations
+     * @acceptance-criteria AC-006.14
+     * @boundary Notification
+     */
+    it('should create notification for iron_law_repeated', () => {
+      const repeatedIssue = issue(
+        'iron_law_repeated',
+        0.98,
+        'IRON LAW #1 violated 3 times in this session',
+        { law_number: 1, repeat_count: 3 }
+      );
+
+      const notification = generator.createNotification(repeatedIssue);
+
+      expect(notification.title).toMatch(/IRON LAW/i);
+      expect(notification.message).toContain('3 times');
+      expect(notification.message).toContain('repeated');
+    });
+
+    /**
+     * @behavior Watcher maps IRON LAW violations to debugger agent
+     * @acceptance-criteria AC-006.15
+     * @boundary Agent Selection
+     */
+    it('should suggest debugger agent for iron_law_violation', () => {
+      const ironLawIssue = issue(
+        'iron_law_violation',
+        0.95,
+        'IRON LAW #2 violated: Tests not passing',
+        { law_number: 2 }
+      );
+
+      const intervention = generator.generate(ironLawIssue);
+
+      expect(intervention.queue_task).toBeDefined();
+      expect(intervention.queue_task!.agent_type).toBe('debugger');
+    });
+
+    /**
+     * @behavior Watcher provides corrective action for IRON LAW violations
+     * @acceptance-criteria AC-006.16
+     * @boundary Suggested Action
+     */
+    it('should provide corrective action for iron_law_violation', () => {
+      const ironLawIssue = issue(
+        'iron_law_violation',
+        0.95,
+        'IRON LAW #1 violated: Code written before test',
+        { law_number: 1 }
+      );
+
+      const prompt = generator.createPrompt(ironLawIssue);
+
+      expect(prompt).toMatch(/IRON LAW/i);
+      expect(prompt).toContain('Suggested Action');
+      expect(prompt).toMatch(/delete.*code|remove.*implementation|start.*with.*test/i);
+    });
+
+    /**
+     * @behavior Watcher handles ignored IRON LAW violations
+     * @acceptance-criteria AC-006.17
+     * @boundary Notification
+     */
+    it('should create notification for iron_law_ignored', () => {
+      const ignoredIssue = issue(
+        'iron_law_ignored',
+        0.99,
+        'IRON LAW violation not addressed after 5 minutes',
+        { law_number: 1, elapsed_ms: 300000 }
+      );
+
+      const notification = generator.createNotification(ignoredIssue);
+
+      expect(notification.title).toMatch(/IRON LAW/i);
+      expect(notification.message).toContain('not addressed');
+      expect(notification.sound).toBe('Basso'); // Critical alert
+    });
+  });
 });
