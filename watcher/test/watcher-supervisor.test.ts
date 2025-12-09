@@ -25,6 +25,23 @@ describe('WatcherSupervisor', () => {
     ossDir = path.join(testDir, '.oss');
     fs.mkdirSync(ossDir, { recursive: true });
 
+    // Create settings.json with supervisor mode set to workflow-only
+    // to prevent IRON LAW monitoring from interfering with tests
+    const settings = {
+      notifications: {
+        style: 'visual',
+        verbosity: 'important',
+        sound: { enabled: false, volume: 50 },
+      },
+      supervisor: {
+        mode: 'workflow-only', // Disable always-on IRON LAW monitoring
+        ironLawChecks: { tdd: true, testPhilosophy: true, gitFlow: true, agentDelegation: true, loopDetection: true, devDocs: true },
+        checkIntervalMs: 5000,
+      },
+      version: 1,
+    };
+    fs.writeFileSync(path.join(ossDir, 'settings.json'), JSON.stringify(settings, null, 2));
+
     queueManager = new QueueManager(ossDir);
     logger = new WorkflowLogger(ossDir);
     supervisor = new WatcherSupervisor(ossDir, queueManager);
@@ -316,6 +333,7 @@ describe('WatcherSupervisor', () => {
       const customSupervisor = new WatcherSupervisor(ossDir, queueManager, {
         healthcheckService: mockHealthcheck,
         healthcheckIntervalMs: 100,
+        configDir: ossDir, // Use test ossDir for settings (has workflow-only mode)
       });
 
       const notifyFn = vi.fn();
@@ -362,6 +380,7 @@ describe('WatcherSupervisor', () => {
       const customSupervisor = new WatcherSupervisor(ossDir, queueManager, {
         healthcheckService: mockHealthcheck,
         healthcheckIntervalMs: 50, // Fast for testing
+        configDir: ossDir, // Use test ossDir for settings (has workflow-only mode)
       });
 
       const notifyFn = vi.fn();
