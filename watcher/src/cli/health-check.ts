@@ -96,7 +96,9 @@ async function runHealthCheck(quiet: boolean = false, verbose: boolean = false):
     log(`📊 Analyzing test output...`, quiet, verbose, 'detail');
     const result = await testMonitor.analyzeTestOutput(output);
 
-    if (result.hasFailures) {
+    // Only treat as failure if we have actual test names
+    // This prevents false positives from build tool output
+    if (result.hasFailures && result.failedTests.length > 0) {
       // Queue failing tests
       await testMonitor.reportFailure(result);
 

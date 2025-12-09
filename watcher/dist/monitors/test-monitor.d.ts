@@ -39,6 +39,10 @@ export declare class TestMonitor {
     private readonly maxHistoryPerTest;
     constructor(queueManager: QueueManager, maxHistoryPerTest?: number);
     /**
+     * Check if a line looks like vitest output (not build tool output)
+     */
+    private isVitestLine;
+    /**
      * Analyze test output and extract results
      */
     analyzeTestOutput(output: string): Promise<TestResult>;

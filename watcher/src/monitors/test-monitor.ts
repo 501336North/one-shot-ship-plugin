@@ -51,6 +51,58 @@ export class TestMonitor {
   }
 
   /**
+   * Check if a line looks like vitest output (not build tool output)
+   */
+  private isVitestLine(line: string): boolean {
+    // Exclude common build tool outputs that use checkmarks
+    const excludePatterns = [
+      /Generated Prisma Client/i,
+      /Build success/i,
+      /Build start/i,
+      /cache hit/i,
+      /cache miss/i,
+      /Cleaning output/i,
+      /Installing/i,
+      /Compiled/i,
+      /Bundled/i,
+      /Created/i,
+      /Generating/i,
+      /Generated /i,    // Note: trailing space to be more specific
+      /Tip:/i,
+      /Start by/i,
+      /pris\.ly/i,
+      /https?:\/\//i,   // URLs
+      /@agentic\//,     // Turbo package prefixes like @agentic/database:build
+      /tsup/i,
+      /esbuild/i,
+      /webpack/i,
+      /rollup/i,
+      /vite(?!st)/i,    // vite but not vitest
+      /next\.js/i,
+      /Building entry/i,
+      /Using tsconfig/i,
+      /Target:/i,
+      /dist\//i,        // Output paths like dist/index.js
+      /\.d\.ts/i,       // Type definition files
+      /\.mjs/i,         // ES module files in build output
+      /node_modules/i,
+    ];
+
+    for (const pattern of excludePatterns) {
+      if (pattern.test(line)) {
+        return false;
+      }
+    }
+
+    // Vitest test file lines look like: ✓ test/file.test.ts (N tests)
+    // Vitest individual test lines are indented and may have timing
+    const isTestFileLine = /[✓✔✕×]\s+\S+\.test\.[tj]sx?\s+\(\d+\s+tests?\)/i.test(line);
+    const isIndentedTestLine = /^\s+[✓✔✕×]\s+.+/i.test(line);
+
+    return isTestFileLine || isIndentedTestLine;
+  }
+
+  /**
    * Analyze test output and extract results
    */
   async analyzeTestOutput(output: string): Promise<TestResult> {
@@ -62,7 +114,7 @@ export class TestMonitor {
       output,
     };
 
-    // Detect failures
+    // Detect failures from vitest FAIL pattern
     const failPattern = /FAIL\s+(\S+\.test\.[tj]sx?)/gi;
     const failMatch = output.match(failPattern);
     if (failMatch) {
@@ -74,27 +126,51 @@ export class TestMonitor {
       }
     }
 
-    // Extract failed test names (vitest pattern: ✕ test name)
-    const failedTestPattern = /[✕×]\s+(.+?)(?:\s+\(\d+\s*m?s\))?$/gm;
-    let match;
-    while ((match = failedTestPattern.exec(output)) !== null) {
-      result.hasFailures = true;
-      result.failedTests.push(match[1].trim());
-    }
+    // Process line by line to avoid false positives from build output
+    const lines = output.split('\n');
 
-    // Extract passed test names (vitest pattern: ✓ test name)
-    const passedTestPattern = /[✓✔]\s+(.+?)(?:\s+\(\d+\s*m?s\))?$/gm;
-    while ((match = passedTestPattern.exec(output)) !== null) {
-      result.passedTests.push(match[1].trim());
+    for (const line of lines) {
+      // Skip lines that aren't vitest output
+      if (!this.isVitestLine(line)) {
+        continue;
+      }
+
+      // Extract failed test names (vitest pattern: ✕ test name)
+      // Handles both "test name  123ms" and "test name (123ms)" formats
+      const failedMatch = line.match(/[✕×]\s+(.+?)(?:\s+\(?\d+\s*m?s\)?|\s*$)/);
+      if (failedMatch) {
+        result.hasFailures = true;
+        result.failedTests.push(failedMatch[1].trim());
+      }
+
+      // Extract passed test names (vitest pattern: ✓ test name)
+      // Only count individual test names, not file summaries
+      // Handles both "test name  123ms" and "test name (123ms)" formats
+      const passedMatch = line.match(/^\s+[✓✔]\s+(.+?)(?:\s+\(?\d+\s*m?s\)?|\s*$)/);
+      if (passedMatch) {
+        result.passedTests.push(passedMatch[1].trim());
+      }
     }
 
     result.totalTests = result.failedTests.length + result.passedTests.length;
 
-    // Also check summary lines
+    // Also check summary lines for authoritative count
     const summaryFailPattern = /(\d+)\s+failed/i;
     const summaryMatch = output.match(summaryFailPattern);
     if (summaryMatch && parseInt(summaryMatch[1], 10) > 0) {
       result.hasFailures = true;
+    }
+
+    // Trust summary over regex matching - vitest summary is authoritative
+    const summaryPassPattern = /Tests\s+(\d+)\s+passed/i;
+    const passMatch = output.match(summaryPassPattern);
+    if (passMatch) {
+      const summaryPassCount = parseInt(passMatch[1], 10);
+      // If summary says all passed and we detected no failures, trust it
+      if (summaryPassCount > 0 && !summaryMatch) {
+        result.hasFailures = false;
+        result.failedTests = [];
+      }
     }
 
     return result;
@@ -222,11 +298,13 @@ export class TestMonitor {
    * Report test failure
    */
   async reportFailure(testResult: TestResult): Promise<void> {
-    if (!testResult.hasFailures) {
+    // Only create a task if we have actual test failures with names
+    // Don't create phantom "Unknown test" tasks
+    if (!testResult.hasFailures || testResult.failedTests.length === 0) {
       return;
     }
 
-    const failedTestName = testResult.failedTests[0] || 'Unknown test';
+    const failedTestName = testResult.failedTests[0];
     const task: CreateTaskInput = {
       priority: 'high',
       source: 'test-monitor',

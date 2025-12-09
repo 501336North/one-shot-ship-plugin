@@ -6,7 +6,7 @@
  * Called by session-start hook to catch pre-existing issues.
  *
  * Usage:
- *   node health-check.js [--quiet]
+ *   node health-check.js [--quiet] [--verbose]
  *
  * Exit codes:
  *   0 - All tests passing

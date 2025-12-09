@@ -89,6 +89,69 @@ Tests:       1 failed, 5 passed, 6 total
 
       expect(result.testFile).toBe('test/queue.test.ts');
     });
+
+    it('should NOT detect false positives from build tool output', async () => {
+      // This is the actual turbo output that was causing false positives
+      const output = `
+> agentic-dev-workflow@1.0.0 test
+> turbo run test
+
+• Packages in scope: @agentic/api, @agentic/cli, @agentic/database, @agentic/web
+• Running test in 4 packages
+• Remote caching disabled
+@agentic/database:build: cache hit, replaying logs e8c7000a3fb356c2
+@agentic/database:build:
+@agentic/database:build: > @agentic/database@1.0.0 build
+@agentic/database:build: > prisma generate --schema=./prisma/schema.prisma
+@agentic/database:build:
+@agentic/database:build: Prisma schema loaded from prisma/schema.prisma
+@agentic/database:build:
+@agentic/database:build: ✔ Generated Prisma Client (v5.22.0) to ./../../node_modules/@prisma/client in 75ms
+@agentic/database:build:
+@agentic/cli:build: CJS ⚡️ Build success in 87ms
+@agentic/cli:build: ESM ⚡️ Build success in 88ms
+@agentic/cli:build: DTS ⚡️ Build success in 1675ms
+
+@agentic/cli:test:
+@agentic/cli:test:  RUN  v3.2.4 /Users/ysl/dev/AgenticDevWorkflow/packages/cli
+@agentic/cli:test:
+@agentic/cli:test:  ✓ test/config.test.ts (12 tests) 6ms
+@agentic/cli:test:  ✓ test/api-client.test.ts (9 tests) 364ms
+@agentic/cli:test:
+@agentic/cli:test:  Test Files  5 passed (5)
+@agentic/cli:test:       Tests  40 passed (40)
+
+ Tasks:    7 successful, 7 total
+`;
+      const result = await monitor.analyzeTestOutput(output);
+
+      // Should NOT detect failures
+      expect(result.hasFailures).toBe(false);
+      expect(result.failedTests.length).toBe(0);
+      // The Prisma checkmark should NOT be counted as a passed test
+      expect(result.passedTests).not.toContain('Generated Prisma Client (v5.22.0) to ./../../node_modules/@prisma/client in 75ms');
+    });
+
+    it('should correctly identify passed tests from clean vitest output', async () => {
+      // Clean vitest output without build noise
+      const output = `
+ RUN  v3.2.4 /project
+
+ ✓ test/config.test.ts (12 tests) 6ms
+   ✓ should load config correctly  2ms
+   ✓ should save config correctly  3ms
+ ✓ test/api.test.ts (5 tests) 10ms
+
+ Test Files  2 passed (2)
+      Tests  17 passed (17)
+`;
+      const result = await monitor.analyzeTestOutput(output);
+
+      expect(result.hasFailures).toBe(false);
+      // Should find the indented individual test names
+      expect(result.passedTests).toContain('should load config correctly');
+      expect(result.passedTests).toContain('should save config correctly');
+    });
   });
 
   // AC-003.2: Detects flaky tests (intermittent pass/fail)
