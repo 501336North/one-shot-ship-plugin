@@ -269,25 +269,38 @@ echo "---"
 
 echo "Refresh | refresh=true"
 
-# Logs submenu
+# Session Log - unified chronological view
 LOG_DIR="$HOME/.oss/logs/current-session"
+SESSION_LOG="$LOG_DIR/session.log"
+
+if [[ -f "$SESSION_LOG" ]]; then
+    SESSION_LINES=$(wc -l < "$SESSION_LOG" | tr -d ' ')
+    SESSION_SIZE=$(du -h "$SESSION_LOG" | cut -f1)
+    echo "📜 Session Log ($SESSION_LINES lines) | bash='open' param1=\"$SESSION_LOG\" terminal=false"
+    echo "--Tail in Terminal | bash='$HOME/.claude/plugins/cache/oss/hooks/oss-log.sh' param1='tail' terminal=true"
+else
+    echo "📜 Session Log (empty) | color=#888888"
+fi
+
+# Individual command logs submenu
 if [[ -d "$LOG_DIR" ]]; then
-    LOG_COUNT=$(ls -1 "$LOG_DIR"/*.log 2>/dev/null | wc -l | tr -d ' ')
+    # Count logs excluding session.log
+    LOG_COUNT=$(ls -1 "$LOG_DIR"/*.log 2>/dev/null | grep -v session.log | wc -l | tr -d ' ')
     if [[ "$LOG_COUNT" -gt 0 ]]; then
-        echo "View Logs ($LOG_COUNT) | bash='open' param1=\"$LOG_DIR\" terminal=false"
-        # Show individual log files as submenu items
+        echo "Command Logs ($LOG_COUNT) | bash='open' param1=\"$LOG_DIR\" terminal=false"
+        # Show individual log files as submenu items (exclude session.log)
         for logfile in "$LOG_DIR"/*.log; do
-            if [[ -f "$logfile" ]]; then
+            if [[ -f "$logfile" && "$(basename "$logfile")" != "session.log" ]]; then
                 logname=$(basename "$logfile" .log)
                 logsize=$(du -h "$logfile" | cut -f1)
                 echo "--$logname ($logsize) | bash='open' param1=\"$logfile\" terminal=false"
             fi
         done
     else
-        echo "View Logs (empty) | color=#888888"
+        echo "Command Logs (none) | color=#888888"
     fi
 else
-    echo "View Logs (no session) | color=#888888"
+    echo "Command Logs (no session) | color=#888888"
 fi
 
 echo "Open Settings | bash='open' param1=\"$HOME/.oss/settings.json\" terminal=false"

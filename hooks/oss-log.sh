@@ -20,6 +20,7 @@ set -euo pipefail
 
 LOG_BASE="${HOME}/.oss/logs"
 CURRENT_SESSION="${LOG_BASE}/current-session"
+UNIFIED_LOG="${CURRENT_SESSION}/session.log"
 
 # Ensure directories exist
 mkdir -p "$CURRENT_SESSION"
@@ -29,13 +30,19 @@ COMMAND="${2:-}"
 ARG3="${3:-}"
 ARG4="${4:-}"
 
-# Helper to write with consistent format
+# Helper to write with consistent format (writes to both command log AND unified session log)
 log_entry() {
     local cmd="$1"
     local type="$2"
     local message="$3"
+    local timestamp=$(date '+%H:%M:%S')
     local log_file="$CURRENT_SESSION/${cmd}.log"
-    echo "[$(date '+%H:%M:%S')] [$type] $message" >> "$log_file"
+
+    # Write to command-specific log
+    echo "[$timestamp] [$type] $message" >> "$log_file"
+
+    # Write to unified session log with command prefix
+    echo "[$timestamp] [$cmd] [$type] $message" >> "$UNIFIED_LOG"
 }
 
 case "$ACTION" in
@@ -45,16 +52,23 @@ case "$ACTION" in
             exit 1
         fi
         LOG_FILE="$CURRENT_SESSION/${COMMAND}.log"
-        # Create/clear log file with header
+        TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+
+        # Create/clear command log file with header
         {
             echo "═══════════════════════════════════════════════════════════════"
             echo "  OSS Command: /oss:${COMMAND}"
-            echo "  Started: $(date '+%Y-%m-%d %H:%M:%S')"
+            echo "  Started: $TIMESTAMP"
             echo "  Session: current-session"
             echo "  PID: $$"
             echo "═══════════════════════════════════════════════════════════════"
             echo ""
         } > "$LOG_FILE"
+
+        # Also log to unified session log
+        echo "" >> "$UNIFIED_LOG"
+        echo "[$(date '+%H:%M:%S')] [$COMMAND] [INIT] ════════ /oss:$COMMAND started ════════" >> "$UNIFIED_LOG"
+
         echo "$LOG_FILE"
         ;;
 
@@ -64,8 +78,10 @@ case "$ACTION" in
             exit 1
         fi
         LOG_FILE="$CURRENT_SESSION/${COMMAND}.log"
-        # Append timestamped message
-        echo "[$(date '+%H:%M:%S')] $ARG3" >> "$LOG_FILE"
+        TIMESTAMP=$(date '+%H:%M:%S')
+        # Append timestamped message to both logs
+        echo "[$TIMESTAMP] $ARG3" >> "$LOG_FILE"
+        echo "[$TIMESTAMP] [$COMMAND] $ARG3" >> "$UNIFIED_LOG"
         ;;
 
     phase)
@@ -197,8 +213,50 @@ case "$ACTION" in
         fi
         ;;
 
+    session)
+        # Read the unified session log
+        if [[ -f "$UNIFIED_LOG" ]]; then
+            cat "$UNIFIED_LOG"
+        else
+            echo "No session log found"
+        fi
+        ;;
+
+    tail)
+        # Follow the unified session log in real-time
+        if [[ ! -f "$UNIFIED_LOG" ]]; then
+            touch "$UNIFIED_LOG"
+        fi
+        echo "Following session log (Ctrl+C to stop)..."
+        echo "─────────────────────────────────────────"
+        tail -f "$UNIFIED_LOG"
+        ;;
+
+    session-path)
+        # Return path to unified session log
+        echo "$UNIFIED_LOG"
+        ;;
+
     *)
-        echo "Usage: oss-log.sh <init|write|read|path|clear-session|list> [args]" >&2
+        echo "Usage: oss-log.sh <command> [args]" >&2
+        echo "" >&2
+        echo "Commands:" >&2
+        echo "  init <cmd>              Initialize log for command" >&2
+        echo "  write <cmd> <msg>       Write to command log" >&2
+        echo "  phase <cmd> <phase>     Log TDD phase transition" >&2
+        echo "  tool <cmd> <tool>       Log tool call" >&2
+        echo "  test <cmd> <status>     Log test result" >&2
+        echo "  error <cmd> <error>     Log error" >&2
+        echo "  file <cmd> <action>     Log file operation" >&2
+        echo "  agent <cmd> <agent>     Log agent delegation" >&2
+        echo "  progress <cmd> <n/m>    Log task progress" >&2
+        echo "  read <cmd>              Read command log" >&2
+        echo "  path <cmd>              Get command log path" >&2
+        echo "  session                 Read unified session log" >&2
+        echo "  tail                    Follow session log (real-time)" >&2
+        echo "  session-path            Get session log path" >&2
+        echo "  list                    List all logs" >&2
+        echo "  clear-session           Archive and start fresh" >&2
         exit 1
         ;;
 esac
