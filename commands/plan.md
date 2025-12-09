@@ -37,7 +37,15 @@ No API key found. Run: /oss:login
 Register at https://www.oneshotship.com
 ```
 
-## Step 2: Fetch IRON LAWS (MANDATORY)
+## Step 2: Initialize Logging
+
+**You MUST initialize logging for supervisor visibility.**
+
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init plan
+```
+
+## Step 3: Fetch IRON LAWS (MANDATORY)
 
 Before executing, fetch and review the IRON LAWS:
 ```

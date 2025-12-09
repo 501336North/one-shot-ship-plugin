@@ -16,7 +16,15 @@ No API key found. Run: /oss:login
 Register at https://www.oneshotship.com
 ```
 
-## Step 2: Fetch Prompt from API
+## Step 2: Initialize Logging
+
+**You MUST initialize logging for supervisor visibility.**
+
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init load
+```
+
+## Step 3: Fetch Prompt from API
 
 ```
 URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/commands/load

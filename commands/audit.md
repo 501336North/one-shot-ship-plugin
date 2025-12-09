@@ -19,7 +19,21 @@ Security vulnerability scanning and penetration testing.
 cat ~/.oss/config.json 2>/dev/null | grep apiKey
 ```
 
-## Step 2: Fetch Prompt from API
+If no API key found:
+```
+No API key found. Run: /oss:login
+Register at https://www.oneshotship.com
+```
+
+## Step 2: Initialize Logging
+
+**You MUST initialize logging for supervisor visibility.**
+
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init audit
+```
+
+## Step 3: Fetch Prompt from API
 
 ```
 URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/workflows/audit

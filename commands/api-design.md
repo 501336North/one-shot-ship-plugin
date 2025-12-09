@@ -33,7 +33,15 @@ No API key found. Run: /oss:login
 Register at https://www.oneshotship.com
 ```
 
-## Step 2: Send Start Notification
+## Step 2: Initialize Logging
+
+**You MUST initialize logging for supervisor visibility.**
+
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init api-design
+```
+
+## Step 3: Send Start Notification
 
 **You MUST execute this notification command before proceeding.**
 

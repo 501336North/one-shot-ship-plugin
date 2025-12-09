@@ -32,7 +32,15 @@ No API key found. Run: /oss:login
 Register at https://www.oneshotship.com
 ```
 
-## Step 2: Send Start Notification
+## Step 2: Initialize Logging
+
+**You MUST initialize logging for supervisor visibility.**
+
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init red
+```
+
+## Step 3: Send Start Notification
 
 **You MUST execute this notification command before proceeding.**
 
@@ -40,7 +48,7 @@ Register at https://www.oneshotship.com
 $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow red start '{}'
 ```
 
-## Step 3: Fetch Prompt from API
+## Step 4: Fetch Prompt from API
 
 ```
 URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/commands/red
