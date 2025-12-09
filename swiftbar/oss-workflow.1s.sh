@@ -239,19 +239,25 @@ else
 fi
 
 # =============================================================================
-# Supervisor status
+# Supervisor status and controls
 # =============================================================================
+
+# Menubar CLI path
+MENUBAR_CLI="$HOME/.claude/plugins/cache/oss/watcher/dist/cli/update-menubar.js"
 
 echo "Supervisor | size=12 color=#888888"
 case "$SUPERVISOR" in
     "watching")
         echo "✓ Watching | color=green"
+        echo "--⏸ Pause Supervisor | bash='node' param1='$MENUBAR_CLI' param2='setSupervisor' param3='idle' terminal=false refresh=true"
         ;;
     "intervening")
         echo "⚡ Intervening | color=orange"
+        echo "--⏸ Pause Supervisor | bash='node' param1='$MENUBAR_CLI' param2='setSupervisor' param3='idle' terminal=false refresh=true"
         ;;
     *)
         echo "✗ Idle | color=#666666"
+        echo "--▶ Start Supervisor | bash='node' param1='$MENUBAR_CLI' param2='setSupervisor' param3='watching' terminal=false refresh=true"
         ;;
 esac
 
@@ -263,6 +269,7 @@ echo "---"
 
 echo "Refresh | refresh=true"
 echo "Open Settings | bash='open' param1=\"$HOME/.oss/settings.json\" terminal=false"
+echo "Reset Workflow | bash='node' param1='$MENUBAR_CLI' param2='reset' terminal=false refresh=true color=#888888"
 
 # Show last update time
 if [[ -n "$LAST_UPDATE" && "$LAST_UPDATE" != "null" ]]; then

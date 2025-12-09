@@ -71,6 +71,7 @@ export class Watcher {
 
     // Initialize components
     this.queueManager = new QueueManager(this.ossDir, this.config.max_queue_size);
+    this.queueManager.setDebugNotifications(true); // Enable notifications for production
     await this.queueManager.initialize();
 
     this.ruleEngine = new RuleEngine(this.config.loop_detection_threshold);

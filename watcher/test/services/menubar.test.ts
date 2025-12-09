@@ -162,6 +162,41 @@ describe('MenuBarService', () => {
       // All steps should be done
       expect(state.chainState.ship).toBe('done');
     });
+
+    /**
+     * @behavior Resets all state to defaults (for starting fresh workflow)
+     * @acceptance-criteria AC-MENUBAR.7a - When ship merged, entire workflow resets
+     */
+    test('reset returns all state to defaults', async () => {
+      await service.initialize();
+      // Set up a mid-workflow state
+      await service.setActiveStep('build');
+      await service.setTddPhase('green');
+      await service.setSupervisor('watching');
+      await service.setProgress({
+        currentTask: 'Some task',
+        progress: '5/10',
+        testsPass: 50,
+      });
+
+      await service.reset();
+
+      const state = await service.getState();
+      // All should be back to defaults
+      expect(state.supervisor).toBe('idle');
+      expect(state.activeStep).toBeNull();
+      expect(state.chainState.ideate).toBe('pending');
+      expect(state.chainState.plan).toBe('pending');
+      expect(state.chainState.acceptance).toBe('pending');
+      expect(state.chainState.red).toBe('pending');
+      expect(state.chainState.green).toBe('pending');
+      expect(state.chainState.ship).toBe('pending');
+      expect(state.tddCycle).toBe(1);
+      // Progress should be cleared
+      expect(state.currentTask).toBeUndefined();
+      expect(state.progress).toBeUndefined();
+      expect(state.testsPass).toBeUndefined();
+    });
   });
 
   // ==========================================================================

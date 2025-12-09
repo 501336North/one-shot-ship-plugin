@@ -14,7 +14,7 @@ export class QueueManager {
     queue;
     maxQueueSize;
     ossDir;
-    debugNotifications = true;
+    debugNotifications = false;
     eventListeners = [];
     constructor(ossDir, maxQueueSize = 50) {
         this.ossDir = ossDir;

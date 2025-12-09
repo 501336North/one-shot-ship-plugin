@@ -161,7 +161,15 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                 node "$MENUBAR_CLI" setActiveStep "$WORKFLOW_CMD" 2>/dev/null || true
                 node "$MENUBAR_CLI" setSupervisor watching 2>/dev/null || true
                 ;;
-            complete|merged)
+            merged)
+                # When ship merged, reset the entire workflow chain to start fresh
+                if [[ "$WORKFLOW_CMD" == "ship" ]]; then
+                    node "$MENUBAR_CLI" reset 2>/dev/null || true
+                else
+                    node "$MENUBAR_CLI" completeStep "$WORKFLOW_CMD" 2>/dev/null || true
+                fi
+                ;;
+            complete)
                 node "$MENUBAR_CLI" completeStep "$WORKFLOW_CMD" 2>/dev/null || true
                 ;;
             failed)

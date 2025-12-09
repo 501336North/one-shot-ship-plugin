@@ -38,7 +38,7 @@ export class QueueManager {
   private queue: QueueFile;
   private readonly maxQueueSize: number;
   private readonly ossDir: string;
-  private debugNotifications: boolean = true;
+  private debugNotifications: boolean = false;
   private eventListeners: QueueEventCallback[] = [];
 
   constructor(ossDir: string, maxQueueSize: number = 50) {
