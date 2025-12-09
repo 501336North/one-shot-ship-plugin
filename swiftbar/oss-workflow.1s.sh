@@ -272,6 +272,7 @@ echo "Refresh | refresh=true"
 # Session Log - unified chronological view
 LOG_DIR="$HOME/.oss/logs/current-session"
 SESSION_LOG="$LOG_DIR/session.log"
+HEALTH_CHECK_LOG="$LOG_DIR/health-check.log"
 
 if [[ -f "$SESSION_LOG" ]]; then
     SESSION_LINES=$(wc -l < "$SESSION_LOG" | tr -d ' ')
@@ -282,18 +283,44 @@ else
     echo "📜 Session Log (empty) | color=#888888"
 fi
 
+# Health Check Log - prominent access for debugging startup issues
+if [[ -f "$HEALTH_CHECK_LOG" ]]; then
+    # Check last line for result
+    LAST_LINE=$(tail -5 "$HEALTH_CHECK_LOG" | grep -E "PASSED|FAILED|ERROR" | tail -1)
+    if echo "$LAST_LINE" | grep -q "PASSED"; then
+        HC_STATUS="✅"
+        HC_COLOR="green"
+    elif echo "$LAST_LINE" | grep -q "FAILED"; then
+        HC_STATUS="❌"
+        HC_COLOR="red"
+    else
+        HC_STATUS="⚠️"
+        HC_COLOR="orange"
+    fi
+    HC_SIZE=$(du -h "$HEALTH_CHECK_LOG" | cut -f1)
+    echo "$HC_STATUS Health Check ($HC_SIZE) | bash='open' param1=\"$HEALTH_CHECK_LOG\" terminal=false color=$HC_COLOR"
+    echo "--View in Terminal | bash='cat' param1=\"$HEALTH_CHECK_LOG\" terminal=true"
+    echo "--Run Health Check Now | bash='node' param1=\"$HOME/.claude/plugins/cache/one-shot-ship-plugin/oss/1.2.0/watcher/dist/cli/health-check.js\" param2='--verbose' terminal=true refresh=true"
+else
+    echo "🔍 Health Check (not run) | color=#888888"
+    echo "--Run Health Check Now | bash='node' param1=\"$HOME/.claude/plugins/cache/one-shot-ship-plugin/oss/1.2.0/watcher/dist/cli/health-check.js\" param2='--verbose' terminal=true refresh=true"
+fi
+
 # Individual command logs submenu
 if [[ -d "$LOG_DIR" ]]; then
-    # Count logs excluding session.log
-    LOG_COUNT=$(ls -1 "$LOG_DIR"/*.log 2>/dev/null | grep -v session.log | wc -l | tr -d ' ')
+    # Count logs excluding session.log and health-check.log (shown separately)
+    LOG_COUNT=$(ls -1 "$LOG_DIR"/*.log 2>/dev/null | grep -v -E 'session\.log|health-check\.log' | wc -l | tr -d ' ')
     if [[ "$LOG_COUNT" -gt 0 ]]; then
         echo "Command Logs ($LOG_COUNT) | bash='open' param1=\"$LOG_DIR\" terminal=false"
-        # Show individual log files as submenu items (exclude session.log)
+        # Show individual log files as submenu items (exclude session.log and health-check.log)
         for logfile in "$LOG_DIR"/*.log; do
-            if [[ -f "$logfile" && "$(basename "$logfile")" != "session.log" ]]; then
-                logname=$(basename "$logfile" .log)
-                logsize=$(du -h "$logfile" | cut -f1)
-                echo "--$logname ($logsize) | bash='open' param1=\"$logfile\" terminal=false"
+            if [[ -f "$logfile" ]]; then
+                logname=$(basename "$logfile")
+                if [[ "$logname" != "session.log" && "$logname" != "health-check.log" ]]; then
+                    logname_short=$(basename "$logfile" .log)
+                    logsize=$(du -h "$logfile" | cut -f1)
+                    echo "--$logname_short ($logsize) | bash='open' param1=\"$logfile\" terminal=false"
+                fi
             fi
         done
     else
