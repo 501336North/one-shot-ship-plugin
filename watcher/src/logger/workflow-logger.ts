@@ -2,6 +2,7 @@
  * WorkflowLogger - Structured logging for OSS workflow chain
  *
  * Logs entries in hybrid format: JSON line + human-readable summary
+ * Includes IRON LAW compliance checklist for every command/agent completion
  */
 
 import * as fs from 'fs';
@@ -23,12 +24,25 @@ export interface AgentInfo {
   parent_cmd: string;
 }
 
+/**
+ * IRON LAW compliance checklist - tracked for each command/agent
+ */
+export interface IronLawChecklist {
+  law1_tdd: boolean;              // Tests written before code
+  law2_behavior_tests: boolean;   // Tests verify behavior, not implementation
+  law3_no_loops: boolean;         // No stuck processes or infinite loops
+  law4_feature_branch: boolean;   // On feature branch, not main
+  law5_delegation: boolean;       // Specialized agents used when appropriate
+  law6_docs_synced: boolean;      // Dev docs updated
+}
+
 export interface WorkflowLogEntry {
   cmd: string;
   phase?: string;
   event: WorkflowEvent;
   data: Record<string, unknown>;
   agent?: AgentInfo;
+  ironLaws?: IronLawChecklist;
 }
 
 interface StoredLogEntry extends WorkflowLogEntry {
@@ -71,13 +85,44 @@ export class WorkflowLogger {
       storedEntry.agent = entry.agent;
     }
 
+    if (entry.ironLaws) {
+      storedEntry.ironLaws = entry.ironLaws;
+    }
+
     const jsonLine = JSON.stringify(storedEntry);
     const humanLine = this.formatHumanSummary(storedEntry);
 
-    const content = `${jsonLine}\n${humanLine}\n`;
+    let content = `${jsonLine}\n${humanLine}\n`;
+
+    // Add IRON LAW checklist for COMPLETE and AGENT_COMPLETE events
+    if ((entry.event === 'COMPLETE' || entry.event === 'AGENT_COMPLETE') && entry.ironLaws) {
+      content += this.formatIronLawChecklist(entry.ironLaws);
+    }
 
     // Atomic append
     fs.appendFileSync(this.logPath, content);
+  }
+
+  /**
+   * Format IRON LAW compliance checklist for logging
+   */
+  private formatIronLawChecklist(checklist: IronLawChecklist): string {
+    const lines: string[] = [
+      '# IRON LAW COMPLIANCE:',
+      `#   [${checklist.law1_tdd ? '✓' : '✗'}] LAW #1: TDD - Tests written first`,
+      `#   [${checklist.law2_behavior_tests ? '✓' : '✗'}] LAW #2: Behavior tests (not implementation)`,
+      `#   [${checklist.law3_no_loops ? '✓' : '✗'}] LAW #3: No loops detected`,
+      `#   [${checklist.law4_feature_branch ? '✓' : '✗'}] LAW #4: On feature branch`,
+      `#   [${checklist.law5_delegation ? '✓' : '✗'}] LAW #5: Agent delegation used`,
+      `#   [${checklist.law6_docs_synced ? '✓' : '✗'}] LAW #6: Dev docs synced`,
+    ];
+
+    const passCount = Object.values(checklist).filter(Boolean).length;
+    const totalCount = Object.keys(checklist).length;
+    lines.push(`#   Result: ${passCount}/${totalCount} laws observed`);
+    lines.push('#');
+
+    return lines.join('\n') + '\n';
   }
 
   /**

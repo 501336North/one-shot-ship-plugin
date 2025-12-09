@@ -123,9 +123,10 @@ if [[ -f "$HEALTH_CHECK_CLI" ]] && [[ -f "package.json" ]]; then
     (
         cd "${CLAUDE_PROJECT_DIR:-.}"
         # Run with verbose flag, log output to session log
+        # Use > to overwrite (not >>) so stale results don't persist
         LOG_DIR="$HOME/.oss/logs/current-session"
         mkdir -p "$LOG_DIR"
-        node "$HEALTH_CHECK_CLI" --verbose >> "$LOG_DIR/health-check.log" 2>&1
+        node "$HEALTH_CHECK_CLI" --verbose > "$LOG_DIR/health-check.log" 2>&1
         EXIT_CODE=$?
         # Also echo summary to session
         if [[ $EXIT_CODE -eq 0 ]]; then

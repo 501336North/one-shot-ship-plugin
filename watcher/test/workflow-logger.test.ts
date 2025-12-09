@@ -244,4 +244,105 @@ describe('WorkflowLogger', () => {
       expect(humanLine).toContain('security-auditor');
     });
   });
+
+  describe('IRON LAW compliance checklist', () => {
+    it('includes IRON LAW checklist in COMPLETE events when provided', async () => {
+      await logger.log({
+        cmd: 'build',
+        event: 'COMPLETE',
+        data: { summary: 'Feature implemented' },
+        ironLaws: {
+          law1_tdd: true,
+          law2_behavior_tests: true,
+          law3_no_loops: true,
+          law4_feature_branch: true,
+          law5_delegation: true,
+          law6_docs_synced: false,
+        },
+      });
+
+      const content = fs.readFileSync(path.join(testDir, 'workflow.log'), 'utf-8');
+
+      // Should include IRON LAW COMPLIANCE section
+      expect(content).toContain('IRON LAW COMPLIANCE');
+      expect(content).toContain('[✓] LAW #1');
+      expect(content).toContain('[✓] LAW #2');
+      expect(content).toContain('[✓] LAW #3');
+      expect(content).toContain('[✓] LAW #4');
+      expect(content).toContain('[✓] LAW #5');
+      expect(content).toContain('[✗] LAW #6');
+      expect(content).toContain('5/6 laws observed');
+    });
+
+    it('includes IRON LAW checklist in AGENT_COMPLETE events when provided', async () => {
+      await logger.log({
+        cmd: 'plan',
+        event: 'AGENT_COMPLETE',
+        data: { agent_type: 'test-engineer' },
+        agent: {
+          type: 'test-engineer',
+          id: 'te-001',
+          parent_cmd: 'plan',
+        },
+        ironLaws: {
+          law1_tdd: true,
+          law2_behavior_tests: true,
+          law3_no_loops: true,
+          law4_feature_branch: false,
+          law5_delegation: true,
+          law6_docs_synced: true,
+        },
+      });
+
+      const content = fs.readFileSync(path.join(testDir, 'workflow.log'), 'utf-8');
+
+      expect(content).toContain('IRON LAW COMPLIANCE');
+      expect(content).toContain('5/6 laws observed');
+    });
+
+    it('stores ironLaws in JSON when provided', async () => {
+      await logger.log({
+        cmd: 'ship',
+        event: 'COMPLETE',
+        data: { summary: 'Shipped to production' },
+        ironLaws: {
+          law1_tdd: true,
+          law2_behavior_tests: true,
+          law3_no_loops: true,
+          law4_feature_branch: true,
+          law5_delegation: true,
+          law6_docs_synced: true,
+        },
+      });
+
+      const content = fs.readFileSync(path.join(testDir, 'workflow.log'), 'utf-8');
+      const jsonLine = content.trim().split('\n')[0];
+      const parsed = JSON.parse(jsonLine);
+
+      expect(parsed.ironLaws).toBeDefined();
+      expect(parsed.ironLaws.law1_tdd).toBe(true);
+      expect(parsed.ironLaws.law6_docs_synced).toBe(true);
+    });
+
+    it('does not include checklist for non-COMPLETE events', async () => {
+      await logger.log({
+        cmd: 'build',
+        event: 'START',
+        data: {},
+        ironLaws: {
+          law1_tdd: true,
+          law2_behavior_tests: true,
+          law3_no_loops: true,
+          law4_feature_branch: true,
+          law5_delegation: true,
+          law6_docs_synced: true,
+        },
+      });
+
+      const content = fs.readFileSync(path.join(testDir, 'workflow.log'), 'utf-8');
+
+      // Should NOT include checklist for START event
+      expect(content).not.toContain('IRON LAW COMPLIANCE');
+    });
+  });
 });

@@ -2,6 +2,7 @@
  * WorkflowLogger - Structured logging for OSS workflow chain
  *
  * Logs entries in hybrid format: JSON line + human-readable summary
+ * Includes IRON LAW compliance checklist for every command/agent completion
  */
 export type WorkflowEvent = 'START' | 'PHASE_START' | 'PHASE_COMPLETE' | 'MILESTONE' | 'AGENT_SPAWN' | 'AGENT_COMPLETE' | 'COMPLETE' | 'FAILED';
 export interface AgentInfo {
@@ -9,12 +10,24 @@ export interface AgentInfo {
     id: string;
     parent_cmd: string;
 }
+/**
+ * IRON LAW compliance checklist - tracked for each command/agent
+ */
+export interface IronLawChecklist {
+    law1_tdd: boolean;
+    law2_behavior_tests: boolean;
+    law3_no_loops: boolean;
+    law4_feature_branch: boolean;
+    law5_delegation: boolean;
+    law6_docs_synced: boolean;
+}
 export interface WorkflowLogEntry {
     cmd: string;
     phase?: string;
     event: WorkflowEvent;
     data: Record<string, unknown>;
     agent?: AgentInfo;
+    ironLaws?: IronLawChecklist;
 }
 export declare class WorkflowLogger {
     private readonly logPath;
@@ -26,6 +39,10 @@ export declare class WorkflowLogger {
      */
     log(entry: WorkflowLogEntry): Promise<void>;
     private doLog;
+    /**
+     * Format IRON LAW compliance checklist for logging
+     */
+    private formatIronLawChecklist;
     /**
      * Format human-readable summary line
      */

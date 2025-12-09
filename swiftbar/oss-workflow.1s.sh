@@ -292,12 +292,12 @@ fi
 HEALTH_CHECK_CLI="$HOME/.claude/plugins/cache/one-shot-ship-plugin/oss/1.2.0/watcher/dist/cli/health-check.js"
 
 if [[ -f "$HEALTH_CHECK_LOG" ]]; then
-    # Check last line for result
-    LAST_LINE=$(tail -5 "$HEALTH_CHECK_LOG" | grep -E "PASSED|FAILED|ERROR" | tail -1)
-    if echo "$LAST_LINE" | grep -q "PASSED"; then
+    # Check entire log for result (search whole file, not just tail)
+    # This handles logs of varying lengths
+    if grep -q "HEALTH CHECK PASSED" "$HEALTH_CHECK_LOG"; then
         HC_STATUS="✅"
         HC_COLOR="green"
-    elif echo "$LAST_LINE" | grep -q "FAILED"; then
+    elif grep -q "HEALTH CHECK FAILED" "$HEALTH_CHECK_LOG"; then
         HC_STATUS="❌"
         HC_COLOR="red"
     else
