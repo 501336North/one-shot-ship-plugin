@@ -145,6 +145,8 @@ After ideation is complete:
 $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ideate complete '{"requirementsCount": {COUNT}}'
 ```
 
+> Note: IRON LAW compliance checklist is automatically logged on `complete` events.
+
 If ideation fails:
 ```bash
 $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ideate failed '{"reason": "{REASON}"}'

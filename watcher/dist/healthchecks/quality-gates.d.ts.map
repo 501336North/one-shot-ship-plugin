@@ -1,0 +1,1 @@
+{"version":3,"file":"quality-gates.d.ts","sourceRoot":"","sources":["../../src/healthchecks/quality-gates.ts"],"names":[],"mappings":"AACA,OAAO,KAAK,EAAE,WAAW,EAAE,MAAM,UAAU,CAAC;AAE5C,UAAU,wBAAwB;IAChC,cAAc,EAAE,MAAM,CAAC;CACxB;AAgCD,wBAAsB,iBAAiB,CACrC,OAAO,EAAE,wBAAwB,GAChC,OAAO,CAAC,WAAW,CAAC,CAmGtB"}

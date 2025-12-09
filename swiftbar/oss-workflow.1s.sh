@@ -273,15 +273,82 @@ esac
 echo "---"
 
 # =============================================================================
+# Health indicators (from health-check.log)
+# =============================================================================
+
+echo "Health | size=12 color=#888888"
+
+LOG_DIR="$HOME/.oss/logs/current-session"
+HEALTH_CHECK_LOG="$LOG_DIR/health-check.log"
+
+if [[ -f "$HEALTH_CHECK_LOG" ]]; then
+    # Try to extract health check data from the log
+    # The log contains structured text, we'll parse the "Individual Checks:" section
+
+    # Function to parse check status from log line
+    parse_check_status() {
+        local check_name="$1"
+        local line=$(grep "^  - ${check_name}" "$HEALTH_CHECK_LOG" 2>/dev/null | head -1)
+        if [[ -n "$line" ]]; then
+            # Extract status and message from line format: "  - Label            pass | message"
+            # Remove label prefix, then extract status before pipe
+            local status=$(echo "$line" | sed 's/^  - [^:]*: *//' | sed 's/ *|.*//' | xargs)
+            local message=$(echo "$line" | cut -d'|' -f2- | xargs)
+
+            case "$status" in
+                "pass")
+                    echo "✅ ${check_name%:} | color=green"
+                    ;;
+                "warn")
+                    echo "⚠️  ${check_name%:} | color=orange"
+                    echo "--$message | size=10 color=#888888"
+                    ;;
+                "fail")
+                    echo "❌ ${check_name%:} | color=red"
+                    echo "--$message | size=10 color=#888888"
+                    ;;
+                *)
+                    echo "❓ ${check_name%:} | color=#666666"
+                    ;;
+            esac
+        else
+            echo "❓ ${check_name%:} | color=#666666"
+        fi
+    }
+
+    # Display all 8 health indicators
+    parse_check_status "Logging:"
+    parse_check_status "Dev Docs:"
+    parse_check_status "Delegation:"
+    parse_check_status "Queue:"
+    parse_check_status "Archive:"
+    parse_check_status "Quality Gates:"
+    parse_check_status "Notifications:"
+    parse_check_status "Git Safety:"
+
+    # Show overall status from the log
+    if grep -q "Overall Status: healthy" "$HEALTH_CHECK_LOG"; then
+        echo "--Overall: ✅ Healthy | color=green size=10"
+    elif grep -q "Overall Status: warning" "$HEALTH_CHECK_LOG"; then
+        echo "--Overall: ⚠️  Warning | color=orange size=10"
+    elif grep -q "Overall Status: critical" "$HEALTH_CHECK_LOG"; then
+        echo "--Overall: ❌ Critical | color=red size=10"
+    fi
+else
+    echo "No health data available | color=#666666"
+    echo "--Run health check to see indicators | size=10 color=#888888"
+fi
+
+echo "---"
+
+# =============================================================================
 # Actions
 # =============================================================================
 
 echo "Refresh | refresh=true"
 
 # Session Log - unified chronological view
-LOG_DIR="$HOME/.oss/logs/current-session"
 SESSION_LOG="$LOG_DIR/session.log"
-HEALTH_CHECK_LOG="$LOG_DIR/health-check.log"
 
 if [[ -f "$SESSION_LOG" ]]; then
     SESSION_LINES=$(wc -l < "$SESSION_LOG" | tr -d ' ')

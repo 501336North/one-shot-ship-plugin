@@ -19,6 +19,8 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 import { QueueManager } from '../queue/manager.js';
 import { TestMonitor } from '../monitors/test-monitor.js';
+import { HealthcheckService } from '../services/healthcheck.js';
+import { HealthReport, CheckStatus, OverallStatus } from '../types.js';
 
 interface HealthCheckResult {
   passed: boolean;
@@ -33,6 +35,131 @@ function log(message: string, quiet: boolean, verbose: boolean, level: 'info' | 
   if (quiet) return;
   if (level === 'detail' && !verbose) return;
   console.log(message);
+}
+
+/**
+ * Format status indicator with symbol and color
+ */
+export function formatStatusIndicator(status: CheckStatus): string {
+  switch (status) {
+    case 'pass':
+      return '✅';
+    case 'warn':
+      return '⚠️';
+    case 'fail':
+      return '❌';
+    default:
+      return '❓';
+  }
+}
+
+/**
+ * Format overall status summary
+ */
+export function formatOverallStatus(status: OverallStatus): string {
+  switch (status) {
+    case 'healthy':
+      return '✅ HEALTHY';
+    case 'warning':
+      return '⚠️  WARNING';
+    case 'critical':
+      return '❌ CRITICAL';
+    default:
+      return '❓ UNKNOWN';
+  }
+}
+
+/**
+ * Format a single check line with proper spacing
+ */
+function formatCheckLine(label: string, indicator: string, message: string, isLast: boolean = false): string {
+  const prefix = isLast ? '└─' : '├─';
+  return `   ${prefix} ${label.padEnd(15)} ${indicator} ${message}`;
+}
+
+/**
+ * Format health report for display
+ */
+export function formatHealthReport(report: HealthReport, verbose: boolean): string {
+  const lines: string[] = [];
+
+  lines.push('');
+  lines.push('📊 SYSTEM HEALTH CHECK');
+  lines.push('─'.repeat(50));
+  lines.push(`   Overall: ${formatOverallStatus(report.overall_status)}`);
+  lines.push('');
+
+  if (verbose) {
+    lines.push('   Individual Checks:');
+
+    const checks = [
+      { label: 'Logging:', check: report.checks.logging },
+      { label: 'Dev Docs:', check: report.checks.dev_docs },
+      { label: 'Delegation:', check: report.checks.delegation },
+      { label: 'Queue:', check: report.checks.queue },
+      { label: 'Archive:', check: report.checks.archive },
+      { label: 'Quality Gates:', check: report.checks.quality_gates },
+      { label: 'Notifications:', check: report.checks.notifications },
+      { label: 'Git Safety:', check: report.checks.git_safety },
+    ];
+
+    checks.forEach((item, index) => {
+      const isLast = index === checks.length - 1;
+      lines.push(formatCheckLine(
+        item.label,
+        formatStatusIndicator(item.check.status),
+        item.check.message,
+        isLast
+      ));
+    });
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Format a check result for log file
+ */
+function formatCheckForLog(label: string, status: CheckStatus, message: string): string {
+  return `  - ${label.padEnd(16)} ${status.padEnd(4)} | ${message}`;
+}
+
+/**
+ * Write health report to log file
+ */
+export function writeHealthReportLog(report: HealthReport, logsPath: string): void {
+  const logFile = path.join(logsPath, 'health-check.log');
+
+  const separator = '═'.repeat(60);
+  const lines = [
+    separator,
+    'HEALTH CHECK REPORT',
+    separator,
+    `Timestamp: ${report.timestamp}`,
+    `Overall Status: ${report.overall_status}`,
+    '',
+    'Individual Checks:',
+  ];
+
+  // Add all checks
+  const checkEntries = [
+    { label: 'Logging:', check: report.checks.logging },
+    { label: 'Dev Docs:', check: report.checks.dev_docs },
+    { label: 'Delegation:', check: report.checks.delegation },
+    { label: 'Queue:', check: report.checks.queue },
+    { label: 'Archive:', check: report.checks.archive },
+    { label: 'Quality Gates:', check: report.checks.quality_gates },
+    { label: 'Notifications:', check: report.checks.notifications },
+    { label: 'Git Safety:', check: report.checks.git_safety },
+  ];
+
+  checkEntries.forEach(entry => {
+    lines.push(formatCheckForLog(entry.label, entry.check.status, entry.check.message));
+  });
+
+  lines.push(separator, '');
+
+  fs.writeFileSync(logFile, lines.join('\n'), 'utf-8');
 }
 
 async function runHealthCheck(quiet: boolean = false, verbose: boolean = false): Promise<HealthCheckResult> {
@@ -95,6 +222,31 @@ async function runHealthCheck(quiet: boolean = false, verbose: boolean = false):
     // Analyze output
     log(`📊 Analyzing test output...`, quiet, verbose, 'detail');
     const result = await testMonitor.analyzeTestOutput(output);
+
+    // Run system health checks
+    log(`🏥 Running system health checks...`, quiet, verbose);
+    const healthcheckService = new HealthcheckService({
+      logReader: null,
+      queueManager,
+      fileSystem: null,
+      sessionLogPath: path.join(ossDir, 'logs', 'current-session', 'session.log'),
+      sessionActive: true,
+      featurePath: path.join(ossDir, 'dev', 'active', 'current-feature'),
+      devActivePath: path.join(ossDir, 'dev', 'active'),
+    });
+
+    const healthReport = await healthcheckService.runChecks();
+
+    // Display health report
+    const healthOutput = formatHealthReport(healthReport, verbose);
+    log(healthOutput, quiet, verbose);
+
+    // Write health report to log
+    const logsPath = path.join(ossDir, 'logs', 'current-session');
+    if (!fs.existsSync(logsPath)) {
+      fs.mkdirSync(logsPath, { recursive: true });
+    }
+    writeHealthReportLog(healthReport, logsPath);
 
     // Only treat as failure if we have actual test names
     // This prevents false positives from build tool output
@@ -306,24 +458,28 @@ function sendNotification(pluginRoot: string, title: string, message: string, pr
   }
 }
 
-// Main execution
-const quiet = process.argv.includes('--quiet') || process.argv.includes('-q');
-const verbose = process.argv.includes('--verbose') || process.argv.includes('-v');
+// Main execution - only run when called directly (not when imported)
+// Use import.meta.url check for ESM compatibility
+const isMainModule = import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('health-check.js');
+if (isMainModule) {
+  const quiet = process.argv.includes('--quiet') || process.argv.includes('-q');
+  const verbose = process.argv.includes('--verbose') || process.argv.includes('-v');
 
-runHealthCheck(quiet, verbose)
-  .then((result) => {
-    if (!quiet) {
-      console.log(`${'─'.repeat(50)}\n`);
-    }
-    if (result.passed) {
-      process.exit(0);
-    } else if (result.failureCount > 0) {
-      process.exit(1);
-    } else {
+  runHealthCheck(quiet, verbose)
+    .then((result) => {
+      if (!quiet) {
+        console.log(`${'─'.repeat(50)}\n`);
+      }
+      if (result.passed) {
+        process.exit(0);
+      } else if (result.failureCount > 0) {
+        process.exit(1);
+      } else {
+        process.exit(2);
+      }
+    })
+    .catch((error) => {
+      console.error('\n❌ Fatal error:', error);
       process.exit(2);
-    }
-  })
-  .catch((error) => {
-    console.error('\n❌ Fatal error:', error);
-    process.exit(2);
-  });
+    });
+}

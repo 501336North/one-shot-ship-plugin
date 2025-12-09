@@ -236,8 +236,10 @@ export class IronLawMonitor {
       return null;
     }
 
-    const progressPath = path.join(
-      this.projectDir,
+    // Dev docs are stored in ~/.oss/dev/active/ (project-agnostic)
+    const ossDevPath = path.join(
+      process.env.HOME || '~',
+      '.oss',
       'dev',
       'active',
       this.activeFeature,
@@ -245,14 +247,14 @@ export class IronLawMonitor {
     );
 
     try {
-      if (!fs.existsSync(progressPath)) {
+      if (!fs.existsSync(ossDevPath)) {
         return {
           law: 6,
           type: 'iron_law_docs',
           message: `Missing PROGRESS.md for ${this.activeFeature}`,
           detected: new Date().toISOString(),
           resolved: null,
-          correctiveAction: `Create dev/active/${this.activeFeature}/PROGRESS.md`,
+          correctiveAction: `Create ~/.oss/dev/active/${this.activeFeature}/PROGRESS.md`,
         };
       }
     } catch {

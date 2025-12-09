@@ -11,6 +11,7 @@ import { WorkflowAnalysis } from '../analyzer/workflow-analyzer.js';
 import { Intervention } from '../intervention/generator.js';
 import { QueueManager } from '../queue/manager.js';
 import { IronLawViolation } from '../services/iron-law-monitor.js';
+import { HealthcheckService } from '../services/healthcheck.js';
 export interface SupervisorState {
     current_command?: string;
     current_phase?: string;
@@ -31,6 +32,8 @@ export interface WatcherSupervisorOptions {
     ossDir: string;
     projectDir?: string;
     configDir?: string;
+    healthcheckService?: HealthcheckService;
+    healthcheckIntervalMs?: number;
 }
 export declare class WatcherSupervisor {
     private readonly ossDir;
@@ -41,6 +44,8 @@ export declare class WatcherSupervisor {
     private readonly queueManager;
     private readonly ironLawMonitor;
     private readonly settingsService;
+    private readonly healthcheckService?;
+    private readonly healthcheckIntervalMs;
     private running;
     private entries;
     private state;
@@ -50,6 +55,8 @@ export declare class WatcherSupervisor {
     private ironLawCallbacks;
     private processedIssueSignatures;
     private ironLawInterval;
+    private healthcheckInterval;
+    private notifiedHealthcheckIssues;
     constructor(ossDir: string, queueManager: QueueManager, options?: Partial<WatcherSupervisorOptions>);
     /**
      * Start monitoring workflow logs
@@ -59,6 +66,26 @@ export declare class WatcherSupervisor {
      * Start IRON LAW monitoring on interval
      */
     private startIronLawMonitoring;
+    /**
+     * Start healthcheck monitoring on interval
+     */
+    private startHealthcheckMonitoring;
+    /**
+     * Run healthchecks and handle issues
+     */
+    private runHealthchecks;
+    /**
+     * Handle healthcheck failure (critical issue)
+     */
+    private handleHealthcheckFailure;
+    /**
+     * Handle healthcheck warning
+     */
+    private handleHealthcheckWarning;
+    /**
+     * Format check name for display
+     */
+    private formatCheckName;
     /**
      * Run IRON LAW checks and handle violations
      */

@@ -184,9 +184,13 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                 else
                     node "$MENUBAR_CLI" completeStep "$WORKFLOW_CMD" 2>/dev/null || true
                 fi
+                # Log IRON LAW compliance checklist on merge
+                "$LOG_SCRIPT" checklist "$WORKFLOW_CMD" 2>/dev/null || true
                 ;;
             complete)
                 node "$MENUBAR_CLI" completeStep "$WORKFLOW_CMD" 2>/dev/null || true
+                # Log IRON LAW compliance checklist on command completion
+                "$LOG_SCRIPT" checklist "$WORKFLOW_CMD" 2>/dev/null || true
                 ;;
             failed)
                 node "$MENUBAR_CLI" setSupervisor intervening 2>/dev/null || true

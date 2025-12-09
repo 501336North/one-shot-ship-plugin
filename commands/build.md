@@ -18,7 +18,7 @@ Execute your implementation plan using strict Test-Driven Development (TDD).
 > **⚠️ Do NOT `/clear` between `/oss:red` → `/oss:green` → `/oss:refactor`.**
 > The TDD cycle requires context continuity to see the failing test.
 >
-> State is loaded from `dev/active/{feature}/PLAN.md` and `PROGRESS.md`.
+> State is loaded from `~/.oss/dev/active/{feature}/PLAN.md` and `PROGRESS.md`.
 
 ## What This Command Does
 
@@ -98,7 +98,7 @@ Headers:
 ## Step 5: Execute the Fetched Prompt
 
 The prompt enforces TDD discipline:
-- Loads plan from `dev/active/{feature}/PLAN.md`
+- Loads plan from `~/.oss/dev/active/{feature}/PLAN.md`
 - Executes each task with RED-GREEN-REFACTOR
 - Updates progress as tasks complete
 - Reports any blockers or issues
@@ -116,6 +116,8 @@ After all tasks complete:
 ```bash
 $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow build complete '{"testsPass": {TEST_COUNT}, "duration": "{DURATION}"}'
 ```
+
+> Note: IRON LAW compliance checklist is automatically logged on `complete` events.
 
 If build fails:
 ```bash

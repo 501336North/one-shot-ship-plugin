@@ -74,4 +74,25 @@ export interface WatcherConfig {
 export declare const DEFAULT_CONFIG: WatcherConfig;
 export declare const PRIORITY_ORDER: Record<Priority, number>;
 export type CreateTaskInput = Omit<Task, 'id' | 'created_at' | 'status' | 'attempts' | 'completed_at' | 'error'>;
+export type CheckStatus = 'pass' | 'warn' | 'fail';
+export type OverallStatus = 'healthy' | 'warning' | 'critical';
+export interface CheckResult {
+    status: CheckStatus;
+    message: string;
+    details?: Record<string, any>;
+}
+export interface HealthReport {
+    timestamp: string;
+    overall_status: OverallStatus;
+    checks: {
+        logging: CheckResult;
+        dev_docs: CheckResult;
+        delegation: CheckResult;
+        queue: CheckResult;
+        archive: CheckResult;
+        quality_gates: CheckResult;
+        notifications: CheckResult;
+        git_safety: CheckResult;
+    };
+}
 //# sourceMappingURL=types.d.ts.map
