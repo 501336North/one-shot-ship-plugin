@@ -268,6 +268,28 @@ echo "---"
 # =============================================================================
 
 echo "Refresh | refresh=true"
+
+# Logs submenu
+LOG_DIR="$HOME/.oss/logs/current-session"
+if [[ -d "$LOG_DIR" ]]; then
+    LOG_COUNT=$(ls -1 "$LOG_DIR"/*.log 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "$LOG_COUNT" -gt 0 ]]; then
+        echo "View Logs ($LOG_COUNT) | bash='open' param1=\"$LOG_DIR\" terminal=false"
+        # Show individual log files as submenu items
+        for logfile in "$LOG_DIR"/*.log; do
+            if [[ -f "$logfile" ]]; then
+                logname=$(basename "$logfile" .log)
+                logsize=$(du -h "$logfile" | cut -f1)
+                echo "--$logname ($logsize) | bash='open' param1=\"$logfile\" terminal=false"
+            fi
+        done
+    else
+        echo "View Logs (empty) | color=#888888"
+    fi
+else
+    echo "View Logs (no session) | color=#888888"
+fi
+
 echo "Open Settings | bash='open' param1=\"$HOME/.oss/settings.json\" terminal=false"
 echo "Reset Workflow | bash='node' param1='$MENUBAR_CLI' param2='reset' terminal=false refresh=true color=#888888"
 
