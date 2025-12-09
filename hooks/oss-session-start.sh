@@ -13,6 +13,11 @@ mkdir -p ~/.oss
 # (SwiftBar runs outside Claude Code context so doesn't have CLAUDE_PROJECT_DIR)
 echo "${CLAUDE_PROJECT_DIR:-.}" > ~/.oss/current-project
 
+# Write plugin root path for SwiftBar to find hooks/scripts
+# (SwiftBar doesn't have CLAUDE_PLUGIN_ROOT)
+SCRIPT_DIR_ABS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+echo "${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR_ABS/..}" > ~/.oss/plugin-root
+
 # Auto-install terminal-notifier if missing (macOS only)
 if [[ "$(uname)" == "Darwin" ]] && ! command -v terminal-notifier &>/dev/null; then
     if command -v brew &>/dev/null; then

@@ -242,8 +242,17 @@ fi
 # Supervisor status and controls
 # =============================================================================
 
-# Menubar CLI path
-MENUBAR_CLI="$HOME/.claude/plugins/cache/oss/watcher/dist/cli/update-menubar.js"
+# Get plugin root from marker file (set by session-start hook)
+# SwiftBar runs outside Claude Code context, so we can't use CLAUDE_PLUGIN_ROOT
+PLUGIN_ROOT=""
+if [[ -f "$HOME/.oss/plugin-root" ]]; then
+    PLUGIN_ROOT=$(cat "$HOME/.oss/plugin-root" 2>/dev/null)
+fi
+
+# CLI paths derived from plugin root
+MENUBAR_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-menubar.js"
+HEALTH_CHECK_CLI="$PLUGIN_ROOT/watcher/dist/cli/health-check.js"
+OSS_LOG_SCRIPT="$PLUGIN_ROOT/hooks/oss-log.sh"
 
 echo "Supervisor | size=12 color=#888888"
 case "$SUPERVISOR" in
@@ -278,7 +287,11 @@ if [[ -f "$SESSION_LOG" ]]; then
     SESSION_LINES=$(wc -l < "$SESSION_LOG" | tr -d ' ')
     SESSION_SIZE=$(du -h "$SESSION_LOG" | cut -f1)
     echo "📜 Session Log ($SESSION_LINES lines) | bash='open' param1=\"$SESSION_LOG\" terminal=false"
-    echo "--Tail in Terminal | bash='$HOME/.claude/plugins/cache/oss/hooks/oss-log.sh' param1='tail' terminal=true"
+    if [[ -n "$PLUGIN_ROOT" && -x "$OSS_LOG_SCRIPT" ]]; then
+        echo "--Tail in Terminal | bash='$OSS_LOG_SCRIPT' param1='tail' terminal=true"
+    else
+        echo "--Tail in Terminal | bash='tail' param1='-f' param2=\"$SESSION_LOG\" terminal=true"
+    fi
 else
     echo "📜 Session Log (empty) | color=#888888"
 fi
@@ -289,7 +302,7 @@ CURRENT_PROJECT=""
 if [[ -f "$HOME/.oss/current-project" ]]; then
     CURRENT_PROJECT=$(cat "$HOME/.oss/current-project" 2>/dev/null)
 fi
-HEALTH_CHECK_CLI="$HOME/.claude/plugins/cache/one-shot-ship-plugin/oss/1.2.0/watcher/dist/cli/health-check.js"
+# HEALTH_CHECK_CLI already defined above from PLUGIN_ROOT
 
 if [[ -f "$HEALTH_CHECK_LOG" ]]; then
     # Check entire log for result (search whole file, not just tail)
@@ -348,15 +361,19 @@ fi
 echo "Open Settings | bash='open' param1=\"$HOME/.oss/settings.json\" terminal=false"
 
 # Log management submenu
-OSS_LOG="$HOME/.claude/plugins/cache/one-shot-ship-plugin/oss/1.2.0/hooks/oss-log.sh"
+# OSS_LOG_SCRIPT already defined above from PLUGIN_ROOT
 TOTAL_LOG_SIZE=$(du -sh "$HOME/.oss/logs" 2>/dev/null | cut -f1 || echo "0")
 echo "Manage Logs ($TOTAL_LOG_SIZE)"
-echo "--📊 Log Status | bash='$OSS_LOG' param1='status' terminal=true"
-echo "--🔄 Rotate Session Log | bash='$OSS_LOG' param1='rotate' terminal=true refresh=true"
-echo "--🧹 Clean Old Logs | bash='$OSS_LOG' param1='clean' terminal=true refresh=true"
-echo "--📦 View Archives | bash='$OSS_LOG' param1='archives' terminal=true"
-echo "-----"
-echo "--⚠️ Purge All Logs | bash='$OSS_LOG' param1='purge' terminal=true color=red"
+if [[ -n "$PLUGIN_ROOT" && -x "$OSS_LOG_SCRIPT" ]]; then
+    echo "--📊 Log Status | bash='$OSS_LOG_SCRIPT' param1='status' terminal=true"
+    echo "--🔄 Rotate Session Log | bash='$OSS_LOG_SCRIPT' param1='rotate' terminal=true refresh=true"
+    echo "--🧹 Clean Old Logs | bash='$OSS_LOG_SCRIPT' param1='clean' terminal=true refresh=true"
+    echo "--📦 View Archives | bash='$OSS_LOG_SCRIPT' param1='archives' terminal=true"
+    echo "-----"
+    echo "--⚠️ Purge All Logs | bash='$OSS_LOG_SCRIPT' param1='purge' terminal=true color=red"
+else
+    echo "--Log tools unavailable (start session first) | color=#888888"
+fi
 
 echo "Reset Workflow | bash='node' param1='$MENUBAR_CLI' param2='reset' terminal=false refresh=true color=#888888"
 
