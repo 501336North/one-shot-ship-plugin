@@ -28,7 +28,11 @@ export type IssueType =
   // Hard stop detection
   | 'abrupt_stop'
   | 'partial_completion'
-  | 'abandoned_agent';
+  | 'abandoned_agent'
+  // IRON LAW violations
+  | 'iron_law_violation'
+  | 'iron_law_repeated'
+  | 'iron_law_ignored';
 
 export type HealthStatus = 'healthy' | 'warning' | 'critical';
 
@@ -122,6 +126,7 @@ export class WorkflowAnalyzer {
     this.detectTddViolation(entries, issues);
     this.detectExplicitFailures(entries, issues);
     this.detectAgentFailures(entries, issues);
+    this.detectIronLawViolations(entries, issues);
 
     // Detect positive signal erosion (absence of good)
     this.detectSilence(state, now, issues);
@@ -495,6 +500,41 @@ export class WorkflowAnalyzer {
     }
   }
 
+  private detectIronLawViolations(entries: ParsedLogEntry[], issues: WorkflowIssue[]): void {
+    const violationCounts: Map<number, number> = new Map();
+
+    for (const entry of entries) {
+      if (entry.event === 'IRON_LAW_CHECK') {
+        const violations = entry.data.violations as Array<{ law: number; message: string }>;
+        if (violations && violations.length > 0) {
+          for (const v of violations) {
+            // Track count
+            const count = (violationCounts.get(v.law) || 0) + 1;
+            violationCounts.set(v.law, count);
+
+            if (count >= 2) {
+              // Repeated violation
+              issues.push({
+                type: 'iron_law_repeated',
+                confidence: 0.95,
+                message: `IRON LAW #${v.law} violated ${count} times: ${v.message}`,
+                context: { law: v.law, message: v.message, count },
+              });
+            } else {
+              // First violation
+              issues.push({
+                type: 'iron_law_violation',
+                confidence: 0.95,
+                message: `IRON LAW #${v.law} violated: ${v.message}`,
+                context: { law: v.law, message: v.message },
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
   private detectSilence(state: ReturnType<typeof this.buildState>, now: Date, issues: WorkflowIssue[]): void {
     if (!state.lastActivityTime || state.commandComplete) return;
     // Need at least a command or phase active to detect silence
@@ -671,7 +711,7 @@ export class WorkflowAnalyzer {
     const hasCritical = issues.some(
       (i) =>
         i.confidence > 0.9 &&
-        ['explicit_failure', 'agent_failed', 'regression', 'tdd_violation', 'loop_detected'].includes(i.type)
+        ['explicit_failure', 'agent_failed', 'regression', 'tdd_violation', 'loop_detected', 'iron_law_violation', 'iron_law_repeated'].includes(i.type)
     );
 
     if (hasCritical) return 'critical';

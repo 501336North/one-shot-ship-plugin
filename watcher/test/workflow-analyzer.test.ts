@@ -489,4 +489,165 @@ describe('WorkflowAnalyzer', () => {
       expect(analysis.chain_progress.ship).toBe('pending');
     });
   });
+
+  describe('IRON LAW violation detection', () => {
+    /**
+     * @behavior Watcher detects IRON LAW violations from workflow logs
+     * @acceptance-criteria AC-005.17: Detect single IRON LAW violations
+     * @business-rule IRON-001: Track IRON LAW compliance
+     * @boundary Analyzer
+     */
+    it('IssueType should include iron_law_violation', () => {
+      // Type check - will fail if type doesn't exist
+      const issueType: IssueType = 'iron_law_violation';
+      expect(issueType).toBe('iron_law_violation');
+    });
+
+    /**
+     * @behavior Watcher detects repeated IRON LAW violations
+     * @acceptance-criteria AC-005.18: Detect repeated violations of same law
+     * @business-rule IRON-002: Escalate repeated violations
+     * @boundary Analyzer
+     */
+    it('IssueType should include iron_law_repeated', () => {
+      // Type check - will fail if type doesn't exist
+      const issueType: IssueType = 'iron_law_repeated';
+      expect(issueType).toBe('iron_law_repeated');
+    });
+
+    /**
+     * @behavior Watcher detects ignored IRON LAW violations
+     * @acceptance-criteria AC-005.19: Detect violations without correction
+     * @business-rule IRON-003: Flag violations ignored by agent
+     * @boundary Analyzer
+     */
+    it('IssueType should include iron_law_ignored', () => {
+      // Type check - will fail if type doesn't exist
+      const issueType: IssueType = 'iron_law_ignored';
+      expect(issueType).toBe('iron_law_ignored');
+    });
+
+    /**
+     * @behavior Watcher detects IRON LAW violations from IRON_LAW_CHECK events
+     * @acceptance-criteria AC-005.17: Parse IRON_LAW_CHECK entries
+     * @business-rule IRON-001: Single violation = high confidence issue
+     * @boundary Analyzer
+     */
+    it('should detect iron_law_violation from IRON_LAW_CHECK entry', () => {
+      const entries: ParsedLogEntry[] = [
+        entry('build', 'START'),
+        entry('build', 'IRON_LAW_CHECK', {
+          passed: false,
+          violations: [
+            { law: 4, message: 'On main branch, should be on feature branch' }
+          ]
+        }),
+      ];
+
+      const analysis = analyzer.analyze(entries);
+
+      const violation = analysis.issues.find((i) => i.type === 'iron_law_violation');
+      expect(violation).toBeDefined();
+      expect(violation?.type).toBe('iron_law_violation');
+    });
+
+    /**
+     * @behavior IRON LAW violations have high confidence (0.95)
+     * @acceptance-criteria AC-005.17: Explicit violations = high confidence
+     * @business-rule IRON-001: IRON_LAW_CHECK events are authoritative
+     * @boundary Analyzer
+     */
+    it('iron_law_violation should have high confidence (0.95)', () => {
+      const entries: ParsedLogEntry[] = [
+        entry('build', 'IRON_LAW_CHECK', {
+          passed: false,
+          violations: [
+            { law: 1, message: 'Code written before test' }
+          ]
+        }),
+      ];
+
+      const analysis = analyzer.analyze(entries);
+      const violation = analysis.issues.find((i) => i.type === 'iron_law_violation');
+
+      expect(violation?.confidence).toBe(0.95);
+    });
+
+    /**
+     * @behavior IRON LAW violation context includes law number and message
+     * @acceptance-criteria AC-005.17: Provide actionable context for violations
+     * @business-rule IRON-001: Include law # and violation details
+     * @boundary Analyzer
+     */
+    it('iron_law_violation context should include law number and message', () => {
+      const entries: ParsedLogEntry[] = [
+        entry('build', 'IRON_LAW_CHECK', {
+          passed: false,
+          violations: [
+            { law: 2, message: 'Mock internal module instead of external boundary' }
+          ]
+        }),
+      ];
+
+      const analysis = analyzer.analyze(entries);
+      const violation = analysis.issues.find((i) => i.type === 'iron_law_violation');
+
+      expect(violation?.context).toMatchObject({
+        law: 2,
+        message: 'Mock internal module instead of external boundary'
+      });
+    });
+
+    /**
+     * @behavior IRON LAW violations trigger critical health status
+     * @acceptance-criteria AC-005.20: iron_law_violation causes critical health
+     * @business-rule IRON-004: IRON LAW violations = critical priority
+     * @boundary Analyzer
+     */
+    it('iron_law_violation should trigger critical health status', () => {
+      const entries: ParsedLogEntry[] = [
+        entry('build', 'START'),
+        entry('build', 'IRON_LAW_CHECK', {
+          passed: false,
+          violations: [
+            { law: 4, message: 'On main branch, should be on feature branch' }
+          ]
+        }),
+      ];
+
+      const analysis = analyzer.analyze(entries);
+
+      expect(analysis.health).toBe('critical');
+    });
+
+    /**
+     * @behavior Repeated IRON LAW violations trigger critical health status
+     * @acceptance-criteria AC-005.21: iron_law_repeated causes critical health
+     * @business-rule IRON-005: Repeated violations = escalated critical priority
+     * @boundary Analyzer
+     */
+    it('iron_law_repeated should trigger critical health status', () => {
+      const entries: ParsedLogEntry[] = [
+        entry('build', 'START'),
+        entry('build', 'IRON_LAW_CHECK', {
+          passed: false,
+          violations: [
+            { law: 1, message: 'Code written before test' }
+          ]
+        }),
+        entry('build', 'IRON_LAW_CHECK', {
+          passed: false,
+          violations: [
+            { law: 1, message: 'Code written before test' }
+          ]
+        }),
+      ];
+
+      const analysis = analyzer.analyze(entries);
+
+      const repeated = analysis.issues.find((i) => i.type === 'iron_law_repeated');
+      expect(repeated).toBeDefined();
+      expect(analysis.health).toBe('critical');
+    });
+  });
 });

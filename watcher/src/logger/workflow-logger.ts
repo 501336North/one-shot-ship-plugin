@@ -16,7 +16,8 @@ export type WorkflowEvent =
   | 'AGENT_SPAWN'
   | 'AGENT_COMPLETE'
   | 'COMPLETE'
-  | 'FAILED';
+  | 'FAILED'
+  | 'IRON_LAW_CHECK';
 
 export interface AgentInfo {
   type: string;
@@ -154,6 +155,17 @@ export class WorkflowLogger {
 
   private getDescription(entry: StoredLogEntry): string {
     const data = entry.data;
+
+    // IRON_LAW_CHECK event
+    if (entry.event === 'IRON_LAW_CHECK') {
+      const passed = data.passed as boolean;
+      if (passed) {
+        return 'PRE-CHECK PASSED';
+      }
+      const violations = data.violations as Array<{ law: number; message: string }>;
+      const count = violations?.length || 0;
+      return `PRE-CHECK FAILED: ${count} violation(s)`;
+    }
 
     // Agent events
     if (entry.agent || entry.event === 'AGENT_SPAWN' || entry.event === 'AGENT_COMPLETE') {

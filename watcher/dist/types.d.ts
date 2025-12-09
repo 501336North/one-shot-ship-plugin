@@ -5,7 +5,7 @@
  */
 export type Priority = 'critical' | 'high' | 'medium' | 'low';
 export type MonitorSource = 'log-monitor' | 'test-monitor' | 'git-monitor' | 'iron-law-monitor' | 'manual';
-export type AnomalyType = 'agent_error' | 'agent_loop' | 'agent_stuck' | 'exception' | 'test_failure' | 'test_flaky' | 'coverage_drop' | 'ci_failure' | 'pr_check_failed' | 'push_failed' | 'unusual_pattern' | 'recommended_investigation';
+export type AnomalyType = 'agent_error' | 'agent_loop' | 'agent_stuck' | 'exception' | 'test_failure' | 'test_flaky' | 'coverage_drop' | 'ci_failure' | 'pr_check_failed' | 'push_failed' | 'unusual_pattern' | 'recommended_investigation' | 'iron_law_violation' | 'iron_law_repeated' | 'iron_law_ignored';
 export type TaskStatus = 'pending' | 'executing' | 'completed' | 'failed';
 export interface TaskContext {
     file?: string;
