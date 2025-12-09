@@ -284,6 +284,13 @@ else
 fi
 
 # Health Check Log - prominent access for debugging startup issues
+# Get current project for running health check
+CURRENT_PROJECT=""
+if [[ -f "$HOME/.oss/current-project" ]]; then
+    CURRENT_PROJECT=$(cat "$HOME/.oss/current-project" 2>/dev/null)
+fi
+HEALTH_CHECK_CLI="$HOME/.claude/plugins/cache/one-shot-ship-plugin/oss/1.2.0/watcher/dist/cli/health-check.js"
+
 if [[ -f "$HEALTH_CHECK_LOG" ]]; then
     # Check last line for result
     LAST_LINE=$(tail -5 "$HEALTH_CHECK_LOG" | grep -E "PASSED|FAILED|ERROR" | tail -1)
@@ -300,10 +307,18 @@ if [[ -f "$HEALTH_CHECK_LOG" ]]; then
     HC_SIZE=$(du -h "$HEALTH_CHECK_LOG" | cut -f1)
     echo "$HC_STATUS Health Check ($HC_SIZE) | bash='open' param1=\"$HEALTH_CHECK_LOG\" terminal=false color=$HC_COLOR"
     echo "--View in Terminal | bash='cat' param1=\"$HEALTH_CHECK_LOG\" terminal=true"
-    echo "--Run Health Check Now | bash='node' param1=\"$HOME/.claude/plugins/cache/one-shot-ship-plugin/oss/1.2.0/watcher/dist/cli/health-check.js\" param2='--verbose' terminal=true refresh=true"
+    if [[ -n "$CURRENT_PROJECT" && -d "$CURRENT_PROJECT" ]]; then
+        echo "--Run Health Check Now | bash='bash' param1='-c' param2='cd \"$CURRENT_PROJECT\" && node \"$HEALTH_CHECK_CLI\" --verbose' terminal=true refresh=true"
+    else
+        echo "--Run Health Check Now | color=#888888 (no active project)"
+    fi
 else
     echo "🔍 Health Check (not run) | color=#888888"
-    echo "--Run Health Check Now | bash='node' param1=\"$HOME/.claude/plugins/cache/one-shot-ship-plugin/oss/1.2.0/watcher/dist/cli/health-check.js\" param2='--verbose' terminal=true refresh=true"
+    if [[ -n "$CURRENT_PROJECT" && -d "$CURRENT_PROJECT" ]]; then
+        echo "--Run Health Check Now | bash='bash' param1='-c' param2='cd \"$CURRENT_PROJECT\" && node \"$HEALTH_CHECK_CLI\" --verbose' terminal=true refresh=true"
+    else
+        echo "--Run Health Check Now | color=#888888 (no active project)"
+    fi
 fi
 
 # Individual command logs submenu
