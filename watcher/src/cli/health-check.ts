@@ -105,7 +105,8 @@ async function runHealthCheck(quiet: boolean = false): Promise<HealthCheckResult
     if (errorOutput) {
       const result = await testMonitor.analyzeTestOutput(errorOutput);
 
-      if (result.hasFailures) {
+      // Only report specific failures if we actually found test names
+      if (result.hasFailures && result.failedTests.length > 0) {
         await testMonitor.reportFailure(result);
 
         const pendingCount = await queueManager.getPendingCount();
@@ -124,13 +125,27 @@ async function runHealthCheck(quiet: boolean = false): Promise<HealthCheckResult
           queuedTasks: pendingCount,
         };
       }
+
+      // hasFailures but no specific tests found - likely build/parse error
+      if (result.hasFailures) {
+        if (!quiet) {
+          console.log(`⚠️ Tests failed but could not parse details`);
+          sendNotification(pluginRoot, '⚠️ Test Run Failed', 'Check npm test output', 'high');
+        }
+        return {
+          passed: false,
+          failureCount: 0,
+          message: 'Test run failed - check output',
+          queuedTasks: 0,
+        };
+      }
     }
 
-    // Generic error
+    // Generic error (npm test couldn't even start)
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     if (!quiet) {
       console.log(`⚠️ Health check error: ${errorMessage}`);
-      sendNotification(pluginRoot, '⚠️ Health Check Error', 'Could not run tests', 'critical');
+      sendNotification(pluginRoot, '⚠️ Health Check Error', 'Could not run tests', 'high');
     }
 
     return {
