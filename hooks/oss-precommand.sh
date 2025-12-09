@@ -85,10 +85,11 @@ if [[ "$USER_INPUT" == /oss:* ]]; then
         "$LOG_SCRIPT" init "$OSS_CMD" 2>/dev/null || true
     fi
 
-    # Auto-archive completed features before /oss:plan or /oss:ship
+    # Auto-archive completed features before /oss:plan
     # This ensures dev/active/ stays clean and focused on current work
+    # Only on plan (not ship) - ship is for current feature, archive happens on next plan
     ARCHIVE_SCRIPT="$PLUGIN_ROOT/hooks/oss-archive-check.sh"
-    if [[ ("$OSS_CMD" == "plan" || "$OSS_CMD" == "ship") && -x "$ARCHIVE_SCRIPT" ]]; then
+    if [[ "$OSS_CMD" == "plan" && -x "$ARCHIVE_SCRIPT" ]]; then
         ARCHIVE_OUTPUT=$("$ARCHIVE_SCRIPT" 2>/dev/null)
         if [[ -n "$ARCHIVE_OUTPUT" && "$ARCHIVE_OUTPUT" != *"No completed"* ]]; then
             echo ""
