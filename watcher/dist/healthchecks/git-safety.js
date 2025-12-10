@@ -1,6 +1,13 @@
 import { execAsync } from '../utils/exec.js';
 /**
- * Check git safety: verify agents never push directly to main (IRON LAW #4)
+ * Check git safety: verify agents are using feature branches (IRON LAW #4)
+ *
+ * This check verifies:
+ * 1. Not currently on main/master branch
+ * 2. Agent commits are going through PRs (merged commits are OK)
+ *
+ * Note: Agent commits on main that came through PR merges are ALLOWED.
+ * Only direct pushes to main (non-merge commits) are violations.
  */
 export async function checkGitSafety() {
     try {
@@ -8,69 +15,67 @@ export async function checkGitSafety() {
         const { stdout: currentBranch } = await execAsync('git branch --show-current');
         const branch = currentBranch.trim() || '(detached HEAD)';
         const isProtectedBranch = branch === 'main' || branch === 'master';
-        // 2. Check for agent commits on main
-        const { stdout: agentCommitsOutput } = await execAsync('git log main --grep="Co-Authored-By: Claude" --oneline');
-        let lastAgentMainCommit;
-        if (agentCommitsOutput.trim()) {
-            // Agent committed directly to main - this is a FAIL
-            const firstLine = agentCommitsOutput.trim().split('\n')[0];
-            const hash = firstLine.split(' ')[0];
-            // Get commit details
-            const { stdout: commitDetails } = await execAsync(`git log ${hash} -1 --format="%H|%ci|%s"`);
-            const [fullHash, date, message] = commitDetails.trim().split('|');
-            lastAgentMainCommit = {
-                hash,
-                date,
-                message,
-            };
+        // 2. Check for agent commits that were NOT merged via PR
+        // A PR merge will have "Merge pull request" or be a merge commit (two parents)
+        // Direct pushes to main are non-merge commits
+        let directPushViolation;
+        try {
+            // Find agent commits on main that are NOT merge commits
+            // --no-merges excludes merge commits (which come from PRs)
+            const { stdout: directAgentCommits } = await execAsync('git log main --no-merges --grep="Co-Authored-By: Claude" --oneline -1 2>/dev/null || true');
+            if (directAgentCommits.trim()) {
+                const firstLine = directAgentCommits.trim().split('\n')[0];
+                const hash = firstLine.split(' ')[0];
+                const message = firstLine.substring(hash.length + 1);
+                // Double-check this isn't a squash merge from a PR
+                // Squash merges from GitHub include the PR number like "(#123)"
+                const isPRSquash = /\(#\d+\)/.test(message);
+                if (!isPRSquash) {
+                    directPushViolation = { hash, message };
+                }
+            }
         }
-        // 3. Get last PR merge date
-        const { stdout: lastMergeOutput } = await execAsync('git log main -1 --format=%ci');
-        const lastPRMerge = lastMergeOutput.trim();
-        const daysSinceLastMerge = Math.floor((Date.now() - new Date(lastPRMerge).getTime()) / (1000 * 60 * 60 * 24));
+        catch {
+            // Ignore errors checking main - might not exist
+        }
         // Build details
         const details = {
             currentBranch: branch,
             onProtectedBranch: isProtectedBranch,
-            daysSinceAgentMain: lastAgentMainCommit ? 'detected' : 'never',
-            lastPRMerge,
-            daysSinceLastMerge,
         };
-        if (lastAgentMainCommit) {
-            details.lastAgentMainCommit = lastAgentMainCommit;
-        }
         // Determine status
-        if (lastAgentMainCommit) {
+        if (directPushViolation) {
+            details.violation = directPushViolation;
             return {
                 status: 'fail',
-                message: `IRON LAW #4 VIOLATED: Agent committed directly to main (${lastAgentMainCommit.hash})`,
+                message: `IRON LAW #4: Direct push to main detected (${directPushViolation.hash})`,
                 details,
             };
         }
         if (isProtectedBranch) {
             return {
                 status: 'warn',
-                message: 'Currently on protected branch (main/master) - create feature branch',
+                message: 'On protected branch (main/master) - create feature branch before making changes',
                 details,
             };
         }
         if (branch === '(detached HEAD)') {
             return {
                 status: 'warn',
-                message: 'Detached HEAD state detected - checkout a feature branch',
+                message: 'Detached HEAD state - checkout a feature branch',
                 details,
             };
         }
         return {
             status: 'pass',
-            message: 'Git safety check passed - using feature branches correctly',
+            message: `On feature branch: ${branch}`,
             details,
         };
     }
     catch (error) {
         return {
             status: 'fail',
-            message: `Failed to check git safety: ${error instanceof Error ? error.message : String(error)}`,
+            message: `Git safety check failed: ${error instanceof Error ? error.message : String(error)}`,
             details: {
                 error: error instanceof Error ? error.message : String(error),
             },

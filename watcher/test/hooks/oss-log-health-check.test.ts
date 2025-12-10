@@ -125,12 +125,13 @@ describe('oss-log.sh health-check', () => {
     expect(fs.existsSync(healthCheckLog)).toBe(true);
 
     const logContent = fs.readFileSync(healthCheckLog, 'utf-8');
-    // Health check CLI outputs "HEALTH CHECK PASSED" or "HEALTH CHECK FAILED"
-    // or may contain other status indicators like "✅" or "❌"
+    // Health check CLI outputs "HEALTH CHECK PASSED" or "HEALTH CHECK FAILED" or "HEALTH CHECK WARNING"
+    // or may contain other status indicators like "✅" or "❌" or "⚠️"
     const hasPassedMarker = logContent.includes('HEALTH CHECK PASSED') || logContent.includes('✅');
     const hasFailedMarker = logContent.includes('HEALTH CHECK FAILED') || logContent.includes('❌') || logContent.includes('CRITICAL');
+    const hasWarningMarker = logContent.includes('HEALTH CHECK WARNING') || logContent.includes('⚠️');
 
-    expect(hasPassedMarker || hasFailedMarker).toBe(true);
+    expect(hasPassedMarker || hasFailedMarker || hasWarningMarker).toBe(true);
   });
 
   /**

@@ -64,15 +64,15 @@ if [ -f "$CONTEXT_FILE" ]; then
   echo "---"
 fi
 
-# Check for dev docs
-DEV_DOCS_DIR="$PROJECT_DIR/dev/active"
+# Check for dev docs in global ~/.oss/dev/active/
+DEV_DOCS_DIR="$HOME/.oss/dev/active"
 if [ -d "$DEV_DOCS_DIR" ] && [ -n "$(ls -A $DEV_DOCS_DIR 2>/dev/null)" ]; then
   echo ""
   echo "## Active Development Features"
   for FEATURE_DIR in "$DEV_DOCS_DIR"/*; do
     if [ -d "$FEATURE_DIR" ]; then
       FEATURE_NAME=$(basename "$FEATURE_DIR")
-      echo "- **$FEATURE_NAME**: dev/active/$FEATURE_NAME/"
+      echo "- **$FEATURE_NAME**: ~/.oss/dev/active/$FEATURE_NAME/"
     fi
   done
   echo ""

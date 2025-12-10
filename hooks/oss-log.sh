@@ -302,8 +302,8 @@ case "$ACTION" in
             fi
         fi
 
-        # Check dev docs exist
-        DEV_DOCS=$([[ -d "dev/active" ]] && echo "✓" || echo "✗")
+        # Check dev docs exist (global ~/.oss/dev/active)
+        DEV_DOCS=$([[ -d "$HOME/.oss/dev/active" ]] && echo "✓" || echo "✗")
 
         # Write checklist to command log
         {

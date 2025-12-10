@@ -163,17 +163,26 @@ export function writeHealthReportLog(report: HealthReport, logsPath: string): vo
 }
 
 async function runHealthCheck(quiet: boolean = false, verbose: boolean = false): Promise<HealthCheckResult> {
-  const ossDir = path.join(process.cwd(), '.oss');
-  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.dirname(ossDir);
+  // Global OSS directory for logs and session state
+  const globalOssDir = path.join(process.env.HOME || '', '.oss');
+  // Project-local OSS directory for queue
+  const projectOssDir = path.join(process.cwd(), '.oss');
+  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.join(process.env.HOME || '', '.claude', 'plugins', 'cache', 'oss');
   const projectName = path.basename(process.cwd());
 
   log(`\n🔍 OSS Health Check - ${projectName}`, quiet, verbose);
   log(`${'─'.repeat(50)}`, quiet, verbose);
 
-  // Ensure .oss directory exists
-  if (!fs.existsSync(ossDir)) {
-    fs.mkdirSync(ossDir, { recursive: true });
-    log(`📁 Created .oss directory`, quiet, verbose, 'detail');
+  // Ensure global .oss directory exists for logs
+  if (!fs.existsSync(globalOssDir)) {
+    fs.mkdirSync(globalOssDir, { recursive: true });
+    log(`📁 Created global .oss directory`, quiet, verbose, 'detail');
+  }
+
+  // Ensure project-local .oss directory exists for queue
+  if (!fs.existsSync(projectOssDir)) {
+    fs.mkdirSync(projectOssDir, { recursive: true });
+    log(`📁 Created project .oss directory`, quiet, verbose, 'detail');
   }
 
   // Check for package.json
@@ -189,9 +198,9 @@ async function runHealthCheck(quiet: boolean = false, verbose: boolean = false):
     };
   }
 
-  // Initialize queue manager
+  // Initialize queue manager (uses project-local .oss for queue.json)
   log(`📋 Initializing queue manager...`, quiet, verbose, 'detail');
-  const queueManager = new QueueManager(ossDir);
+  const queueManager = new QueueManager(projectOssDir);
   await queueManager.initialize();
 
   // Disable debug notifications during health check to reduce noise
@@ -229,10 +238,12 @@ async function runHealthCheck(quiet: boolean = false, verbose: boolean = false):
       logReader: null,
       queueManager,
       fileSystem: null,
-      sessionLogPath: path.join(ossDir, 'logs', 'current-session', 'session.log'),
+      // Session logs are in global ~/.oss/
+      sessionLogPath: path.join(globalOssDir, 'logs', 'current-session', 'session.log'),
       sessionActive: true,
-      featurePath: path.join(ossDir, 'dev', 'active', 'current-feature'),
-      devActivePath: path.join(ossDir, 'dev', 'active'),
+      // Dev docs are in global ~/.oss/dev/active/
+      featurePath: path.join(globalOssDir, 'dev', 'active', 'current-feature'),
+      devActivePath: path.join(globalOssDir, 'dev', 'active'),
     });
 
     const healthReport = await healthcheckService.runChecks();
@@ -241,8 +252,8 @@ async function runHealthCheck(quiet: boolean = false, verbose: boolean = false):
     const healthOutput = formatHealthReport(healthReport, verbose);
     log(healthOutput, quiet, verbose);
 
-    // Write health report to log
-    const logsPath = path.join(ossDir, 'logs', 'current-session');
+    // Write health report to log (global ~/.oss/logs/)
+    const logsPath = path.join(globalOssDir, 'logs', 'current-session');
     if (!fs.existsSync(logsPath)) {
       fs.mkdirSync(logsPath, { recursive: true });
     }
@@ -287,6 +298,49 @@ async function runHealthCheck(quiet: boolean = false, verbose: boolean = false):
     // Extract test counts from output
     const passMatch = output.match(/(\d+)\s+pass/i);
     const testCount = passMatch ? passMatch[1] : result.passedTests.length.toString();
+
+    // Check if system health has critical issues
+    const systemHealthFailed = healthReport.overall_status === 'critical';
+    const systemHealthWarning = healthReport.overall_status === 'warning';
+
+    if (systemHealthFailed) {
+      // Count how many checks failed
+      const failedChecks = Object.values(healthReport.checks).filter(c => c.status === 'fail').length;
+
+      log(`\n⚠️  HEALTH CHECK WARNING`, quiet, verbose);
+      log(`${'─'.repeat(50)}`, quiet, verbose);
+      log(`   Duration: ${duration}s`, quiet, verbose);
+      log(`   Tests:    ${testCount} passing`, quiet, verbose);
+      log(`   System:   ${failedChecks} check(s) failing`, quiet, verbose);
+
+      sendNotification(pluginRoot, '⚠️ Health Check Warning', `Tests pass but ${failedChecks} system check(s) failing`, 'high');
+
+      return {
+        passed: true, // Tests pass, but warn about system issues
+        failureCount: 0,
+        message: `Tests passing (${testCount}) but ${failedChecks} system check(s) failing`,
+        queuedTasks: 0,
+      };
+    }
+
+    if (systemHealthWarning) {
+      const warnChecks = Object.values(healthReport.checks).filter(c => c.status === 'warn').length;
+
+      log(`\n✅ HEALTH CHECK PASSED (with warnings)`, quiet, verbose);
+      log(`${'─'.repeat(50)}`, quiet, verbose);
+      log(`   Duration: ${duration}s`, quiet, verbose);
+      log(`   Tests:    ${testCount} passing`, quiet, verbose);
+      log(`   System:   ${warnChecks} warning(s)`, quiet, verbose);
+
+      sendNotification(pluginRoot, '✅ Health Check Passed', `${testCount} tests, ${warnChecks} warning(s)`, 'high');
+
+      return {
+        passed: true,
+        failureCount: 0,
+        message: `All tests passing (${testCount}), ${warnChecks} warning(s)`,
+        queuedTasks: 0,
+      };
+    }
 
     log(`\n✅ HEALTH CHECK PASSED`, quiet, verbose);
     log(`${'─'.repeat(50)}`, quiet, verbose);

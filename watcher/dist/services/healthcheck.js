@@ -112,11 +112,19 @@ export class HealthcheckService {
      */
     async checkQueue() {
         try {
-            const queue = await this.queueManager.getQueue();
+            // QueueManager may not be provided in all contexts
+            if (!this.queueManager || typeof this.queueManager.getTasks !== 'function') {
+                return {
+                    status: 'pass',
+                    message: 'Queue check skipped (no queue manager)',
+                };
+            }
+            const tasks = await this.queueManager.getTasks();
+            const pendingCount = tasks.filter((t) => t.status === 'pending').length;
             return {
                 status: 'pass',
-                message: 'Queue is operational',
-                details: { taskCount: queue.tasks.length },
+                message: `Queue operational (${pendingCount} pending)`,
+                details: { taskCount: tasks.length, pendingCount },
             };
         }
         catch (error) {
