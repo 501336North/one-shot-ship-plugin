@@ -11,18 +11,64 @@ export async function checkLogging(options) {
         const isStale = ageMs > STALE_THRESHOLD_MS;
         // Parse log entries to find types
         const entryTypes = new Set();
+        const workflowCommands = new Set();
+        const workflowEvents = new Set();
         const lines = logContent.split('\n');
+        // Workflow commands that indicate structured logging
+        const WORKFLOW_COMMANDS = [
+            'ideate',
+            'plan',
+            'build',
+            'ship',
+            'test',
+            'red',
+            'green',
+            'refactor',
+            'debug',
+            'review',
+            'integration',
+        ];
+        // Events that indicate meaningful workflow activity
+        const WORKFLOW_EVENTS = [
+            'start',
+            'complete',
+            'task_complete',
+            'INIT',
+            'IRON_LAW',
+            'PROGRESS',
+            'milestone',
+            'pr_created',
+            'merged',
+            'quality_passed',
+        ];
         for (const line of lines) {
-            // Match pattern: [timestamp] TYPE message
-            const match = line.match(/\[[\d\-:\s]+\]\s+([A-Z]+)\s+/);
-            if (match) {
-                entryTypes.add(match[1]);
+            // Match legacy pattern: [timestamp] TYPE message
+            const legacyMatch = line.match(/\[[\d\-:\s]+\]\s+([A-Z]+)\s+/);
+            if (legacyMatch) {
+                entryTypes.add(legacyMatch[1]);
+            }
+            // Match actual format: [timestamp] [command] [event] data
+            // e.g., [13:40:01] [ideate] [start] idea=...
+            const actualMatch = line.match(/\[[\d:]+\]\s+\[(\w+)\]\s+\[(\w+)\]/);
+            if (actualMatch) {
+                const command = actualMatch[1].toLowerCase();
+                const event = actualMatch[2];
+                if (WORKFLOW_COMMANDS.includes(command)) {
+                    workflowCommands.add(command);
+                }
+                if (WORKFLOW_EVENTS.includes(event)) {
+                    workflowEvents.add(event);
+                }
             }
         }
+        // Legacy check
         const hasPhaseEntries = entryTypes.has('PHASE');
         const hasToolEntries = entryTypes.has('TOOL');
         const hasTestEntries = entryTypes.has('TEST');
-        const hasStructuredEntries = hasPhaseEntries || hasToolEntries || hasTestEntries;
+        const hasLegacyStructuredEntries = hasPhaseEntries || hasToolEntries || hasTestEntries;
+        // Actual format check - has workflow commands with meaningful events
+        const hasWorkflowEntries = workflowCommands.size > 0 && workflowEvents.size > 0;
+        const hasStructuredEntries = hasLegacyStructuredEntries || hasWorkflowEntries;
         // Warn if stale during active session
         if (isStale && sessionActive) {
             return {
@@ -31,6 +77,9 @@ export async function checkLogging(options) {
                 details: {
                     hasPhaseEntries,
                     hasToolEntries,
+                    hasWorkflowEntries,
+                    workflowCommands: Array.from(workflowCommands),
+                    workflowEvents: Array.from(workflowEvents),
                     entryTypes: Array.from(entryTypes),
                 },
             };
@@ -39,10 +88,13 @@ export async function checkLogging(options) {
         if (!hasStructuredEntries) {
             return {
                 status: 'warn',
-                message: 'Session log has no structured entries (PHASE, TOOL, TEST)',
+                message: 'Session log has no structured entries (no workflow commands like ideate/plan/build/ship)',
                 details: {
                     hasPhaseEntries: false,
                     hasToolEntries: false,
+                    hasWorkflowEntries: false,
+                    workflowCommands: Array.from(workflowCommands),
+                    workflowEvents: Array.from(workflowEvents),
                     entryTypes: Array.from(entryTypes),
                 },
             };
@@ -50,10 +102,13 @@ export async function checkLogging(options) {
         // Pass
         return {
             status: 'pass',
-            message: 'Logging is operational with structured entries',
+            message: `Logging operational (${workflowCommands.size} commands, ${workflowEvents.size} events)`,
             details: {
                 hasPhaseEntries,
                 hasToolEntries,
+                hasWorkflowEntries,
+                workflowCommands: Array.from(workflowCommands),
+                workflowEvents: Array.from(workflowEvents),
                 entryTypes: Array.from(entryTypes),
             },
         };
