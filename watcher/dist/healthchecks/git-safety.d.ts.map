@@ -1,1 +1,1 @@
-{"version":3,"file":"git-safety.d.ts","sourceRoot":"","sources":["../../src/healthchecks/git-safety.ts"],"names":[],"mappings":"AACA,OAAO,KAAK,EAAE,WAAW,EAAE,MAAM,aAAa,CAAC;AAE/C;;;;;;;;;GASG;AACH,wBAAsB,cAAc,IAAI,OAAO,CAAC,WAAW,CAAC,CAoF3D"}
+{"version":3,"file":"git-safety.d.ts","sourceRoot":"","sources":["../../src/healthchecks/git-safety.ts"],"names":[],"mappings":"AACA,OAAO,KAAK,EAAE,WAAW,EAAE,MAAM,aAAa,CAAC;AAE/C;;;;;;;;;GASG;AACH,wBAAsB,cAAc,IAAI,OAAO,CAAC,WAAW,CAAC,CAyG3D"}

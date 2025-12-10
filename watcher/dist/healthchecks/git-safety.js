@@ -53,10 +53,28 @@ export async function checkGitSafety() {
             };
         }
         if (isProtectedBranch) {
+            // Get last agent PR merge date to main for more informative message
+            let lastAgentMerge = null;
+            try {
+                // Find the most recent agent commit that was properly merged via PR
+                const { stdout: lastMergedAgent } = await execAsync('git log main --grep="Co-Authored-By: Claude" --grep="(#" --all-match --format="%ar" -1 2>/dev/null || true');
+                if (lastMergedAgent.trim()) {
+                    lastAgentMerge = lastMergedAgent.trim();
+                }
+            }
+            catch {
+                // Ignore errors
+            }
+            const message = lastAgentMerge
+                ? `On main branch (last agent PR: ${lastAgentMerge})`
+                : 'On main branch - create feature branch before making changes';
             return {
-                status: 'warn',
-                message: 'On protected branch (main/master) - create feature branch before making changes',
-                details,
+                status: 'pass', // Changed from warn to pass - being on main is expected at session start
+                message,
+                details: {
+                    ...details,
+                    lastAgentMerge,
+                },
             };
         }
         if (branch === '(detached HEAD)') {

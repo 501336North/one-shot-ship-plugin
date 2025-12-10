@@ -524,6 +524,87 @@ case "$ACTION" in
         echo "[$TIMESTAMP] [healthcheck] [HEALTH_CHECK] status=$STATUS details=$DETAILS_JSON" >> "$UNIFIED_LOG"
         ;;
 
+    workflow)
+        # Manage workflow state (current feature, last step)
+        # Used by health checks to track workflow progression
+        # Usage:
+        #   oss-log.sh workflow get                    - Get current workflow state
+        #   oss-log.sh workflow set-feature <name>     - Set current feature
+        #   oss-log.sh workflow complete <step>        - Mark step as completed (ideate|plan|build|ship)
+        #   oss-log.sh workflow clear                  - Clear workflow state
+        SUBCOMMAND="${COMMAND:-}"
+        # Use separate file from menubar workflow-state.json
+        WORKFLOW_STATE_FILE="$HOME/.oss/health-workflow-state.json"
+
+        case "$SUBCOMMAND" in
+            get)
+                if [[ -f "$WORKFLOW_STATE_FILE" ]]; then
+                    cat "$WORKFLOW_STATE_FILE"
+                else
+                    echo '{"currentFeature":null,"lastCompletedStep":null,"lastStepTimestamp":null}'
+                fi
+                ;;
+            set-feature)
+                FEATURE_NAME="${ARG3:-}"
+                if [[ -z "$FEATURE_NAME" ]]; then
+                    echo "Usage: oss-log.sh workflow set-feature <name>" >&2
+                    exit 1
+                fi
+                # Create or update workflow state with new feature (clears step state)
+                cat > "$WORKFLOW_STATE_FILE" << EOF
+{
+  "currentFeature": "$FEATURE_NAME",
+  "lastCompletedStep": null,
+  "lastStepTimestamp": null
+}
+EOF
+                echo "Workflow: Set feature to '$FEATURE_NAME'"
+                ;;
+            complete)
+                STEP="${ARG3:-}"
+                if [[ ! "$STEP" =~ ^(ideate|plan|build|ship)$ ]]; then
+                    echo "Usage: oss-log.sh workflow complete <ideate|plan|build|ship>" >&2
+                    exit 1
+                fi
+                TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+                # Read current feature if exists
+                CURRENT_FEATURE="null"
+                if [[ -f "$WORKFLOW_STATE_FILE" ]]; then
+                    CURRENT_FEATURE=$(grep -o '"currentFeature"[[:space:]]*:[[:space:]]*"[^"]*"' "$WORKFLOW_STATE_FILE" 2>/dev/null | cut -d'"' -f4 || echo "")
+                    [[ -n "$CURRENT_FEATURE" ]] && CURRENT_FEATURE="\"$CURRENT_FEATURE\"" || CURRENT_FEATURE="null"
+                fi
+                cat > "$WORKFLOW_STATE_FILE" << EOF
+{
+  "currentFeature": $CURRENT_FEATURE,
+  "lastCompletedStep": "$STEP",
+  "lastStepTimestamp": "$TIMESTAMP"
+}
+EOF
+                echo "Workflow: Marked '$STEP' as completed at $TIMESTAMP"
+                ;;
+            clear)
+                cat > "$WORKFLOW_STATE_FILE" << EOF
+{
+  "currentFeature": null,
+  "lastCompletedStep": null,
+  "lastStepTimestamp": null
+}
+EOF
+                echo "Workflow: State cleared"
+                ;;
+            *)
+                echo "Usage: oss-log.sh workflow <get|set-feature|complete|clear>" >&2
+                echo "" >&2
+                echo "Commands:" >&2
+                echo "  get                    Get current workflow state (JSON)" >&2
+                echo "  set-feature <name>     Set current feature (clears step state)" >&2
+                echo "  complete <step>        Mark step as completed (ideate|plan|build|ship)" >&2
+                echo "  clear                  Clear all workflow state" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+
     health-check)
         # Run health check in current project (for SwiftBar)
         # Reads current project from ~/.oss/current-project
@@ -595,6 +676,12 @@ case "$ACTION" in
         echo "  purge [--force]         Delete all logs" >&2
         echo "  archives                List archived sessions" >&2
         echo "  clear-session           Archive current and start fresh" >&2
+        echo "" >&2
+        echo "Workflow State Commands:" >&2
+        echo "  workflow get            Get current workflow state (JSON)" >&2
+        echo "  workflow set-feature    Set current feature name" >&2
+        echo "  workflow complete       Mark step completed (ideate|plan|build|ship)" >&2
+        echo "  workflow clear          Clear workflow state" >&2
         exit 1
         ;;
 esac
