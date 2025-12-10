@@ -222,10 +222,9 @@ fi
 
 case "$STYLE" in
     "visual")
-        # OSS icon for notification branding
+        # Visual notification (system notification sound plays automatically)
         OSS_ICON_PNG="$HOME/.oss/notification-icon.png"
 
-        # Use terminal-notifier (requires: brew install terminal-notifier)
         if command -v terminal-notifier &>/dev/null; then
             TN_ARGS=(-title "$TITLE" -message "$MESSAGE" -sound default)
             [[ -n "$SUBTITLE" ]] && TN_ARGS+=(-subtitle "$SUBTITLE")
