@@ -18,6 +18,7 @@ import { checkDevDocs as checkFeatureDevDocs } from '../healthchecks/dev-docs.js
 import { checkDelegation as checkAgentDelegation } from '../healthchecks/delegation.js';
 import { checkArchive as checkFeatureArchive } from '../healthchecks/archive.js';
 import { checkGitSafety as checkGitSafetyImpl } from '../healthchecks/git-safety.js';
+import { WorkflowStateService } from './workflow-state.js';
 import { execSync } from 'child_process';
 
 interface HealthcheckDependencies {
@@ -28,6 +29,7 @@ interface HealthcheckDependencies {
   sessionActive?: boolean;
   featurePath?: string;
   devActivePath?: string;
+  workflowState?: WorkflowStateService;
 }
 
 export class HealthcheckService {
@@ -38,6 +40,7 @@ export class HealthcheckService {
   private sessionActive: boolean;
   private featurePath: string;
   private devActivePath: string;
+  private workflowState?: WorkflowStateService;
 
   constructor(deps: HealthcheckDependencies) {
     this.logReader = deps.logReader;
@@ -47,6 +50,7 @@ export class HealthcheckService {
     this.sessionActive = deps.sessionActive || false;
     this.featurePath = deps.featurePath || '';
     this.devActivePath = deps.devActivePath || 'dev/active';
+    this.workflowState = deps.workflowState;
   }
 
   /**
@@ -173,8 +177,26 @@ export class HealthcheckService {
   /**
    * Check 5: Archive - Completed features archived
    * Uses real implementation from healthchecks/archive.ts
+   *
+   * Only warns if workflow state indicates archiving should have happened:
+   * - Last step is 'plan' AND >24h since completion
+   * - If last step is 'ship', archiving is expected on next plan (no warning)
    */
   private async checkArchive(): Promise<CheckResult> {
+    // If workflow state says we shouldn't warn, return pass early
+    if (this.workflowState) {
+      const shouldWarn = await this.workflowState.shouldWarnAboutArchive();
+      if (!shouldWarn) {
+        return {
+          status: 'pass',
+          message: 'Archive check skipped (workflow state indicates archiving not expected yet)',
+          details: {
+            reason: 'Workflow state indicates ship just completed or plan not yet stale',
+          },
+        };
+      }
+    }
+
     return checkFeatureArchive({
       devActivePath: this.devActivePath,
     });

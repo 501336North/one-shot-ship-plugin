@@ -12,6 +12,7 @@
  * 8. Git Safety - Branch verification active
  */
 import { HealthReport } from '../types.js';
+import { WorkflowStateService } from './workflow-state.js';
 interface HealthcheckDependencies {
     logReader: any;
     queueManager: any;
@@ -20,6 +21,7 @@ interface HealthcheckDependencies {
     sessionActive?: boolean;
     featurePath?: string;
     devActivePath?: string;
+    workflowState?: WorkflowStateService;
 }
 export declare class HealthcheckService {
     private logReader;
@@ -29,6 +31,7 @@ export declare class HealthcheckService {
     private sessionActive;
     private featurePath;
     private devActivePath;
+    private workflowState?;
     constructor(deps: HealthcheckDependencies);
     /**
      * Run all 8 checks and return aggregated report
@@ -56,6 +59,10 @@ export declare class HealthcheckService {
     /**
      * Check 5: Archive - Completed features archived
      * Uses real implementation from healthchecks/archive.ts
+     *
+     * Only warns if workflow state indicates archiving should have happened:
+     * - Last step is 'plan' AND >24h since completion
+     * - If last step is 'ship', archiving is expected on next plan (no warning)
      */
     private checkArchive;
     /**

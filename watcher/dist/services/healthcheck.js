@@ -25,6 +25,7 @@ export class HealthcheckService {
     sessionActive;
     featurePath;
     devActivePath;
+    workflowState;
     constructor(deps) {
         this.logReader = deps.logReader;
         this.queueManager = deps.queueManager;
@@ -33,6 +34,7 @@ export class HealthcheckService {
         this.sessionActive = deps.sessionActive || false;
         this.featurePath = deps.featurePath || '';
         this.devActivePath = deps.devActivePath || 'dev/active';
+        this.workflowState = deps.workflowState;
     }
     /**
      * Run all 8 checks and return aggregated report
@@ -137,8 +139,25 @@ export class HealthcheckService {
     /**
      * Check 5: Archive - Completed features archived
      * Uses real implementation from healthchecks/archive.ts
+     *
+     * Only warns if workflow state indicates archiving should have happened:
+     * - Last step is 'plan' AND >24h since completion
+     * - If last step is 'ship', archiving is expected on next plan (no warning)
      */
     async checkArchive() {
+        // If workflow state says we shouldn't warn, return pass early
+        if (this.workflowState) {
+            const shouldWarn = await this.workflowState.shouldWarnAboutArchive();
+            if (!shouldWarn) {
+                return {
+                    status: 'pass',
+                    message: 'Archive check skipped (workflow state indicates archiving not expected yet)',
+                    details: {
+                        reason: 'Workflow state indicates ship just completed or plan not yet stale',
+                    },
+                };
+            }
+        }
         return checkFeatureArchive({
             devActivePath: this.devActivePath,
         });

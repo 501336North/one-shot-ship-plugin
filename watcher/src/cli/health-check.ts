@@ -20,6 +20,7 @@ import { execSync } from 'child_process';
 import { QueueManager } from '../queue/manager.js';
 import { TestMonitor } from '../monitors/test-monitor.js';
 import { HealthcheckService } from '../services/healthcheck.js';
+import { WorkflowStateService } from '../services/workflow-state.js';
 import { HealthReport, CheckStatus, OverallStatus } from '../types.js';
 
 interface HealthCheckResult {
@@ -234,6 +235,18 @@ async function runHealthCheck(quiet: boolean = false, verbose: boolean = false):
 
     // Run system health checks
     log(`🏥 Running system health checks...`, quiet, verbose);
+
+    // Get current feature from workflow state
+    const workflowState = new WorkflowStateService(globalOssDir);
+    await workflowState.initialize();
+    const state = await workflowState.getState();
+    const currentFeature = state.currentFeature;
+
+    // Determine feature path - only set if there's an active feature
+    const featurePath = currentFeature
+      ? path.join(globalOssDir, 'dev', 'active', currentFeature)
+      : '';
+
     const healthcheckService = new HealthcheckService({
       logReader: null,
       queueManager,
@@ -241,9 +254,10 @@ async function runHealthCheck(quiet: boolean = false, verbose: boolean = false):
       // Session logs are in global ~/.oss/
       sessionLogPath: path.join(globalOssDir, 'logs', 'current-session', 'session.log'),
       sessionActive: true,
-      // Dev docs are in global ~/.oss/dev/active/
-      featurePath: path.join(globalOssDir, 'dev', 'active', 'current-feature'),
+      // Dev docs are in global ~/.oss/dev/active/{currentFeature}/
+      featurePath,
       devActivePath: path.join(globalOssDir, 'dev', 'active'),
+      workflowState, // Pass workflow state for archive check
     });
 
     const healthReport = await healthcheckService.runChecks();

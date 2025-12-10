@@ -79,7 +79,7 @@ describe('GitSafetyHealthCheck', () => {
     expect(result.details?.violation).toBeUndefined();
   });
 
-  it('should warn if currently on main branch', async () => {
+  it('should pass with info when on main branch (expected at session start)', async () => {
     // Mock git branch --show-current
     mockExec.mockResolvedValueOnce({
       stdout: 'main\n',
@@ -92,15 +92,48 @@ describe('GitSafetyHealthCheck', () => {
       stderr: '',
     });
 
+    // Mock git log for last agent merge (no results)
+    mockExec.mockResolvedValueOnce({
+      stdout: '',
+      stderr: '',
+    });
+
     const result = await checkGitSafety();
 
-    expect(result.status).toBe('warn');
+    // Being on main is pass (expected at session start), not warn
+    expect(result.status).toBe('pass');
     expect(result.details?.onProtectedBranch).toBe(true);
-    expect(result.message).toContain('protected branch');
-    expect(result.message).toContain('create feature branch');
+    expect(result.message).toContain('main branch');
   });
 
-  it('should warn if currently on master branch', async () => {
+  it('should show last agent PR date when on main branch', async () => {
+    // Mock git branch --show-current
+    mockExec.mockResolvedValueOnce({
+      stdout: 'main\n',
+      stderr: '',
+    });
+
+    // Mock git log main --no-merges --grep="Co-Authored-By: Claude" --oneline -1
+    mockExec.mockResolvedValueOnce({
+      stdout: '',
+      stderr: '',
+    });
+
+    // Mock git log for last agent merge (has results)
+    mockExec.mockResolvedValueOnce({
+      stdout: '2 hours ago\n',
+      stderr: '',
+    });
+
+    const result = await checkGitSafety();
+
+    expect(result.status).toBe('pass');
+    expect(result.details?.onProtectedBranch).toBe(true);
+    expect(result.details?.lastAgentMerge).toBe('2 hours ago');
+    expect(result.message).toContain('last agent PR');
+  });
+
+  it('should pass with info when on master branch', async () => {
     // Mock git branch --show-current
     mockExec.mockResolvedValueOnce({
       stdout: 'master\n',
@@ -113,9 +146,15 @@ describe('GitSafetyHealthCheck', () => {
       stderr: '',
     });
 
+    // Mock git log for last agent merge (no results)
+    mockExec.mockResolvedValueOnce({
+      stdout: '',
+      stderr: '',
+    });
+
     const result = await checkGitSafety();
 
-    expect(result.status).toBe('warn');
+    expect(result.status).toBe('pass');
     expect(result.details?.onProtectedBranch).toBe(true);
   });
 
