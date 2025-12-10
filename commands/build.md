@@ -29,22 +29,60 @@ Execute your implementation plan using strict Test-Driven Development (TDD).
 
 ## The TDD Process (Enforced)
 
-For EVERY task:
+For EVERY task, you MUST follow this exact sequence with logging:
 
 ### RED Phase
-- Write the test FIRST
-- Run the test and confirm it FAILS
-- Document the failure message
+1. **Log RED start:**
+   ```bash
+   $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase build RED start
+   ```
+2. Write the test FIRST
+3. Run the test and confirm it FAILS
+4. Document the failure message
+5. **Log RED complete:**
+   ```bash
+   $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase build RED complete
+   $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh test build FAIL "{test_file}: {failure_message}"
+   ```
 
 ### GREEN Phase
-- Write MINIMAL code to pass the test
-- No extra features, no "while I'm here" changes
-- Run test and confirm it PASSES
+1. **Log GREEN start:**
+   ```bash
+   $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase build GREEN start
+   ```
+2. Write MINIMAL code to pass the test
+3. No extra features, no "while I'm here" changes
+4. Run test and confirm it PASSES
+5. **Log GREEN complete:**
+   ```bash
+   $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase build GREEN complete
+   $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh test build PASS "{test_file}"
+   ```
 
 ### REFACTOR Phase
-- Clean up code while keeping tests green
-- Remove duplication, improve names
-- Tests must stay passing
+1. **Log REFACTOR start:**
+   ```bash
+   $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase build REFACTOR start
+   ```
+2. Clean up code while keeping tests green
+3. Remove duplication, improve names
+4. Run tests - they MUST stay passing
+5. **Log REFACTOR complete:**
+   ```bash
+   $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase build REFACTOR complete
+   ```
+
+### Agent Delegation Logging
+When delegating to specialized agents (Task tool), you MUST log:
+```bash
+# Before spawning agent
+$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh agent build {agent_type} "starting: {task_description}"
+
+# After agent completes
+$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh agent build {agent_type} "completed: {result_summary}"
+```
+
+**CRITICAL**: Do NOT batch multiple TDD cycles into a single agent delegation. Each RED-GREEN-REFACTOR cycle must be logged individually.
 
 ## Step 1: Check Authentication
 
@@ -126,13 +164,41 @@ $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow build failed '{"failedTest": 
 
 ## Command Chain (per task)
 
-For EACH task in the plan, use these commands:
+For EACH task in the plan, execute the TDD cycle with full logging:
+
 ```
-/oss:red       → Write failing test (mock collaborators)
-    ↓
-/oss:green    → Write minimal code to pass
-    ↓
-/oss:refactor → Clean up while green
+┌─────────────────────────────────────────────────────────────────┐
+│ For EACH test in the task:                                      │
+├─────────────────────────────────────────────────────────────────┤
+│ 1. LOG: oss-log.sh phase build RED start                       │
+│ 2. Write the failing test                                       │
+│ 3. Run test - MUST FAIL                                        │
+│ 4. LOG: oss-log.sh phase build RED complete                    │
+│ 5. LOG: oss-log.sh test build FAIL "test.ts: error msg"        │
+├─────────────────────────────────────────────────────────────────┤
+│ 6. LOG: oss-log.sh phase build GREEN start                     │
+│ 7. Write MINIMAL code to pass                                   │
+│ 8. Run test - MUST PASS                                        │
+│ 9. LOG: oss-log.sh phase build GREEN complete                  │
+│ 10. LOG: oss-log.sh test build PASS "test.ts"                  │
+├─────────────────────────────────────────────────────────────────┤
+│ 11. LOG: oss-log.sh phase build REFACTOR start                 │
+│ 12. Clean up (if needed)                                        │
+│ 13. Run test - MUST STILL PASS                                 │
+│ 14. LOG: oss-log.sh phase build REFACTOR complete              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Expected log output for each TDD cycle:**
+```
+[HH:MM:SS] [PHASE] RED start
+[HH:MM:SS] [PHASE] RED complete
+[HH:MM:SS] [TEST] FAIL - test/foo.test.ts: expected X but got Y
+[HH:MM:SS] [PHASE] GREEN start
+[HH:MM:SS] [PHASE] GREEN complete
+[HH:MM:SS] [TEST] PASS - test/foo.test.ts
+[HH:MM:SS] [PHASE] REFACTOR start
+[HH:MM:SS] [PHASE] REFACTOR complete
 ```
 
 After all tasks complete:

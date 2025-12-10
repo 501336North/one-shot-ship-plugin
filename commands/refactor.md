@@ -32,12 +32,16 @@ No API key found. Run: /oss:login
 Register at https://www.oneshotship.com
 ```
 
-## Step 2: Initialize Logging
+## Step 2: Initialize Logging and Log Phase Start
 
-**You MUST initialize logging for supervisor visibility.**
+**You MUST initialize logging and log the REFACTOR phase start for supervisor visibility.**
 
 ```bash
+# Initialize command log
 $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init refactor
+
+# Log TDD phase start (MANDATORY)
+$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase refactor REFACTOR start
 ```
 
 ## Step 3: Send Start Notification
@@ -65,17 +69,23 @@ The prompt guides you through:
 - Running tests continuously
 - Improving code quality metrics
 
-## Step 5: Send Completion Notification
+## Step 5: Log Phase Complete and Send Notification
 
-**You MUST execute the appropriate notification command.**
+**You MUST log the phase completion AND send the notification.**
 
 On success (refactoring complete, tests green):
 ```bash
+# Log TDD phase complete (MANDATORY)
+$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase refactor REFACTOR complete
+$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh test refactor PASS "all tests still passing"
+
+# Send notification
 $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow refactor complete '{"improvements": "{IMPROVEMENTS}"}'
 ```
 
 On failure (tests broke during refactoring):
 ```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh error refactor "Tests broke during refactoring: {REASON}"
 $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow refactor failed '{"reason": "{REASON}"}'
 ```
 

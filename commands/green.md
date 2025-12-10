@@ -32,12 +32,16 @@ No API key found. Run: /oss:login
 Register at https://www.oneshotship.com
 ```
 
-## Step 2: Initialize Logging
+## Step 2: Initialize Logging and Log Phase Start
 
-**You MUST initialize logging for supervisor visibility.**
+**You MUST initialize logging and log the GREEN phase start for supervisor visibility.**
 
 ```bash
+# Initialize command log
 $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init green
+
+# Log TDD phase start (MANDATORY)
+$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase green GREEN start
 ```
 
 ## Step 3: Send Start Notification
@@ -65,17 +69,23 @@ The prompt guides you through:
 - Writing minimal implementation
 - Running tests to confirm GREEN
 
-## Step 5: Send Completion Notification
+## Step 5: Log Phase Complete and Send Notification
 
-**You MUST execute the appropriate notification command.**
+**You MUST log the phase completion AND send the notification.**
 
 On success (test passes):
 ```bash
+# Log TDD phase complete (MANDATORY)
+$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase green GREEN complete
+$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh test green PASS "{TEST_FILE}"
+
+# Send notification
 $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow green complete '{"testFile": "{TEST_FILE}", "linesAdded": {LINES}}'
 ```
 
 On failure (couldn't make test pass):
 ```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh error green "Failed to pass test: {REASON}"
 $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow green failed '{"reason": "{REASON}"}'
 ```
 

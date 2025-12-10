@@ -158,4 +158,96 @@ describe('LoggingHealthCheck', () => {
     expect(result.details?.hasPhaseEntries).toBe(false);
     expect(result.details?.hasToolEntries).toBe(false);
   });
+
+  /**
+   * @behavior Recognize actual workflow log format [timestamp] [command] [event]
+   * @acceptance-criteria AC-LOGGING-007: Logs with workflow commands (ideate/plan/build/ship) = pass
+   * @business-rule BR-LOGGING-007: Actual log format must be recognized
+   * @boundary Filesystem
+   */
+  it('should pass when session.log has workflow command entries', async () => {
+    // GIVEN - Log file with actual workflow format
+    const workflowLog = `
+[13:40:01] [ideate] [start] idea=Improve supervisor
+[13:46:16] [ideate] [complete] requirementsCount=7
+[13:47:47] [plan] [start]
+[13:56:53] [plan] [complete] taskCount=11, phases=6
+[14:01:24] [build] [start] totalTasks=11
+[14:03:42] [build] [task_complete] current=1, total=11
+`;
+    mockFs.readFile.mockResolvedValue(workflowLog);
+    mockFs.stat.mockResolvedValue({ mtime: new Date() });
+
+    // WHEN - Check logging health
+    const result = await checkLogging({ sessionLogPath });
+
+    // THEN - Should pass and recognize workflow entries
+    expect(result.status).toBe('pass');
+    expect(result.details?.hasWorkflowEntries).toBe(true);
+    expect(result.details?.workflowCommands).toEqual(
+      expect.arrayContaining(['ideate', 'plan', 'build'])
+    );
+    expect(result.details?.workflowEvents).toEqual(
+      expect.arrayContaining(['start', 'complete', 'task_complete'])
+    );
+  });
+
+  /**
+   * @behavior Recognize IRON_LAW entries in workflow logs
+   * @acceptance-criteria AC-LOGGING-008: IRON_LAW events indicate TDD compliance logging
+   * @business-rule BR-LOGGING-008: TDD compliance must be tracked
+   * @boundary Filesystem
+   */
+  it('should recognize IRON_LAW and other workflow events', async () => {
+    // GIVEN - Log file with IRON_LAW entries
+    const ironLawLog = `
+[15:47:50] [test] [IRON_LAW] PASSED
+[15:47:50] [test] [IRON_LAW] FAILED violations=[1,4]
+[15:48:07] [build] [PROGRESS] 1/5 - Phase 1
+[16:03:02] [ship] [quality_passed] checks=["tests","build"]
+[16:13:02] [ship] [pr_created] prNumber=17
+[16:13:25] [ship] [merged] branch=feat/agent-feature
+`;
+    mockFs.readFile.mockResolvedValue(ironLawLog);
+    mockFs.stat.mockResolvedValue({ mtime: new Date() });
+
+    // WHEN - Check logging health
+    const result = await checkLogging({ sessionLogPath });
+
+    // THEN - Should pass and recognize all event types
+    expect(result.status).toBe('pass');
+    expect(result.details?.hasWorkflowEntries).toBe(true);
+    expect(result.details?.workflowCommands).toEqual(
+      expect.arrayContaining(['test', 'build', 'ship'])
+    );
+    expect(result.details?.workflowEvents).toEqual(
+      expect.arrayContaining(['IRON_LAW', 'PROGRESS', 'quality_passed', 'pr_created', 'merged'])
+    );
+  });
+
+  /**
+   * @behavior Report workflow command count in pass message
+   * @acceptance-criteria AC-LOGGING-009: Pass message shows command/event counts
+   * @business-rule BR-LOGGING-009: Observability requires visibility into log contents
+   * @boundary Filesystem
+   */
+  it('should report command and event counts in pass message', async () => {
+    // GIVEN - Log with multiple workflow entries
+    const workflowLog = `
+[10:00:00] [ideate] [start] idea=Feature
+[10:01:00] [ideate] [complete] done
+[10:02:00] [plan] [start]
+[10:03:00] [plan] [complete] tasks=5
+`;
+    mockFs.readFile.mockResolvedValue(workflowLog);
+    mockFs.stat.mockResolvedValue({ mtime: new Date() });
+
+    // WHEN - Check logging health
+    const result = await checkLogging({ sessionLogPath });
+
+    // THEN - Message should contain counts
+    expect(result.status).toBe('pass');
+    expect(result.message).toMatch(/\d+ commands/);
+    expect(result.message).toMatch(/\d+ events/);
+  });
 });
