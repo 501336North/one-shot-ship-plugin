@@ -123,7 +123,9 @@ After successful authentication, install the decryption CLI for secure prompt de
    ```bash
    PLATFORM=$(uname -s)
    ARCH=$(uname -m)
-   CLI_URL="https://github.com/oneshotship/oss-decrypt/releases/latest/download/oss-decrypt-${PLATFORM}-${ARCH}"
+   # Map architecture: x86_64 -> x64, arm64 stays arm64
+   [[ "$ARCH" == "x86_64" ]] && ARCH="x64"
+   CLI_URL="https://github.com/501336North/AgenticDevWorkflow/releases/latest/download/oss-decrypt-${PLATFORM}-${ARCH}"
 
    echo "Downloading oss-decrypt CLI..."
    curl -sL "$CLI_URL" -o ~/.oss/bin/oss-decrypt
