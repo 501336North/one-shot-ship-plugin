@@ -236,7 +236,152 @@ After successful authentication, install tools if not already present:
 
 **Skip this step** if tools are already installed and running.
 
-## Step 7: Configure Notifications (First Login Only)
+## Step 7: Install Supervisor Daemon (First Login Only)
+
+After tools are installed, set up the supervisor daemon for process monitoring:
+
+1. **Build daemon package (if needed):**
+   ```bash
+   cd "$CLAUDE_PLUGIN_ROOT/daemon"
+   if [ ! -d "dist" ]; then
+       npm run build
+   fi
+   ```
+
+2. **Create launchd plist for daemon:**
+   ```bash
+   OSS_DIR="${HOME}/.oss"
+   PLIST_PATH="${HOME}/Library/LaunchAgents/com.oneshotship.daemon.plist"
+
+   if [ ! -f "$PLIST_PATH" ]; then
+       mkdir -p "$(dirname "$PLIST_PATH")"
+
+       cat > "$PLIST_PATH" << EOF
+   <?xml version="1.0" encoding="UTF-8"?>
+   <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+   <plist version="1.0">
+   <dict>
+       <key>Label</key>
+       <string>com.oneshotship.daemon</string>
+       <key>ProgramArguments</key>
+       <array>
+           <string>node</string>
+           <string>${CLAUDE_PLUGIN_ROOT}/daemon/bin/oss-daemon.js</string>
+           <string>start</string>
+       </array>
+       <key>WorkingDirectory</key>
+       <string>${OSS_DIR}</string>
+       <key>RunAtLoad</key>
+       <true/>
+       <key>KeepAlive</key>
+       <true/>
+       <key>StandardOutPath</key>
+       <string>${OSS_DIR}/daemon.log</string>
+       <key>StandardErrorPath</key>
+       <string>${OSS_DIR}/daemon.error.log</string>
+   </dict>
+   </plist>
+   EOF
+       echo "Created launchd plist at $PLIST_PATH"
+   fi
+   ```
+
+3. **Load daemon service:**
+   ```bash
+   if ! launchctl list | grep -q "com.oneshotship.daemon"; then
+       launchctl load "$PLIST_PATH"
+       echo "OSS Daemon started"
+   fi
+   ```
+
+4. **Verify daemon is running:**
+   ```bash
+   if launchctl list | grep -q "com.oneshotship.daemon"; then
+       echo "Supervisor daemon is running"
+   else
+       echo "Note: Daemon didn't start. You can start it manually with: launchctl load $PLIST_PATH"
+   fi
+   ```
+
+**What the daemon does:**
+- Monitors for hung test processes (vitest, npm test, jest)
+- Kills processes that exceed timeout thresholds
+- Tracks system resource usage
+- Runs periodic health checks
+- Logs activity to ~/.oss/daemon.log
+
+**Skip this step** if daemon is already installed and running.
+
+## Step 8: Configure Claude Code Status Line (First Login Only)
+
+Set up the status line script to show TDD phase in Claude Code's terminal:
+
+1. **Create status line script:**
+   ```bash
+   STATUSLINE_SCRIPT="${HOME}/.oss/oss-statusline.sh"
+   if [ ! -f "$STATUSLINE_SCRIPT" ]; then
+       cp "$CLAUDE_PLUGIN_ROOT/hooks/oss-statusline.sh" "$STATUSLINE_SCRIPT"
+       chmod +x "$STATUSLINE_SCRIPT"
+       echo "Created status line script at $STATUSLINE_SCRIPT"
+   fi
+   ```
+
+2. **Initialize workflow state (if not exists):**
+   ```bash
+   WORKFLOW_FILE="${HOME}/.oss/workflow-state.json"
+   if [ ! -f "$WORKFLOW_FILE" ]; then
+       echo '{"supervisor": "idle", "currentCommand": null, "tddPhase": null}' > "$WORKFLOW_FILE"
+   fi
+   ```
+
+3. **Configure Claude Code settings (automatic):**
+   ```bash
+   CLAUDE_SETTINGS="${HOME}/.claude/settings.json"
+
+   # Read existing settings or create empty object
+   if [ -f "$CLAUDE_SETTINGS" ]; then
+       SETTINGS=$(cat "$CLAUDE_SETTINGS")
+   else
+       mkdir -p "${HOME}/.claude"
+       SETTINGS='{}'
+   fi
+
+   # Add statusLine configuration using jq
+   UPDATED=$(echo "$SETTINGS" | jq '. + {
+       "statusLine": {
+           "type": "command",
+           "command": "~/.oss/oss-statusline.sh",
+           "padding": 0
+       }
+   }')
+
+   echo "$UPDATED" > "$CLAUDE_SETTINGS"
+   echo "Configured Claude Code status line"
+   ```
+
+4. **Verify status line:**
+   ```bash
+   if [ -x "$STATUSLINE_SCRIPT" ]; then
+       echo "Status line script ready"
+       echo "When TDD phase is active, you'll see: [Claude] 🔴 RED 3/8"
+   fi
+   ```
+
+**What the status line shows:**
+```
+[Opus] ProjectName | 🌿 feat/my-feature | 🔴 RED ✓
+```
+- **[Model]** - Current Claude model
+- **ProjectName** - Current directory name
+- **🌿 branch** - Feature branch (main shown without emoji)
+- **🔴 RED / 🟢 GREEN / 🔵 REFACTOR** - TDD phase
+- **🤖 command** - Active workflow command (when no TDD phase)
+- **✓** - Supervisor watching
+- **⚡** - Supervisor intervening
+
+**Skip this step** if status line is already configured.
+
+## Step 9: Configure Notifications (First Login Only)
 
 After tools are installed, if `~/.oss/settings.json` does NOT exist:
 
