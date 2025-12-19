@@ -123,14 +123,13 @@ Headers:
 $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ideate start '{"idea": "{USER_IDEA}"}'
 ```
 
-## Step 5: Fetch Prompt from API
+## Step 5: Fetch and Decrypt Prompt
 
+```bash
+~/.oss/bin/oss-decrypt --type workflows --name ideate
 ```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/workflows/ideate
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
-```
+
+The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
 ## Step 6: Execute the Fetched Prompt
 

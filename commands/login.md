@@ -110,7 +110,53 @@ After fetching both:
 
 **Note:** IRON LAWS are the single source of truth. Every `/oss:login` pulls the latest version from the API.
 
-## Step 5: Install Notification Tools (First Login Only)
+## Step 5: Install Decryption CLI (First Login Only)
+
+After successful authentication, install the decryption CLI for secure prompt delivery:
+
+1. **Create bin directory:**
+   ```bash
+   mkdir -p ~/.oss/bin
+   ```
+
+2. **Download CLI binary for your platform:**
+   ```bash
+   PLATFORM=$(uname -s)
+   ARCH=$(uname -m)
+   CLI_URL="https://github.com/oneshotship/oss-decrypt/releases/latest/download/oss-decrypt-${PLATFORM}-${ARCH}"
+
+   echo "Downloading oss-decrypt CLI..."
+   curl -sL "$CLI_URL" -o ~/.oss/bin/oss-decrypt
+   chmod +x ~/.oss/bin/oss-decrypt
+   ```
+
+3. **Setup credentials (requires valid API key):**
+   ```bash
+   ~/.oss/bin/oss-decrypt --setup
+   ```
+
+   This fetches your encryption credentials from the API and stores them securely:
+   - `userId` - Your user ID for key derivation
+   - `hardwareId` - Device-specific identifier
+   - `salt` - Unique salt for key derivation
+
+4. **Verify installation:**
+   ```bash
+   if [ -x ~/.oss/bin/oss-decrypt ]; then
+       echo "CLI installed successfully"
+       ~/.oss/bin/oss-decrypt --version
+   else
+       echo "Warning: CLI installation failed. Prompts will fall back to direct API fetch."
+   fi
+   ```
+
+**What gets installed:**
+- **~/.oss/bin/oss-decrypt** - CLI binary for decrypting prompts locally
+- **~/.oss/credentials.enc** - Encrypted credential storage
+
+**Skip this step** if CLI is already installed and working.
+
+## Step 6: Install Notification Tools (First Login Only)
 
 After successful authentication, install tools if not already present:
 
@@ -188,7 +234,7 @@ After successful authentication, install tools if not already present:
 
 **Skip this step** if tools are already installed and running.
 
-## Step 6: Configure Notifications (First Login Only)
+## Step 7: Configure Notifications (First Login Only)
 
 After tools are installed, if `~/.oss/settings.json` does NOT exist:
 

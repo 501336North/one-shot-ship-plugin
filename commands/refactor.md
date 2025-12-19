@@ -52,14 +52,13 @@ $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase refactor REFACTOR start
 $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow refactor start '{}'
 ```
 
-## Step 3: Fetch Prompt from API
+## Step 3: Fetch and Decrypt Prompt
 
+```bash
+~/.oss/bin/oss-decrypt --type commands --name refactor
 ```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/commands/refactor
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
-```
+
+The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
 ## Step 4: Execute the Fetched Prompt
 
