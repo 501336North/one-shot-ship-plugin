@@ -24,14 +24,13 @@ Register at https://www.oneshotship.com
 $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init review
 ```
 
-## Step 3: Fetch Prompt from API
+## Step 3: Fetch and Decrypt Prompt
 
+```bash
+~/.oss/bin/oss-decrypt --type commands --name review
 ```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/commands/review
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
-```
+
+The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
 ## Step 3: Execute the Fetched Prompt
 

@@ -65,14 +65,13 @@ Headers:
 $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow debug start '{"bug": "{DESCRIPTION}"}'
 ```
 
-## Step 5: Fetch Prompt from API
+## Step 5: Fetch and Decrypt Prompt
 
+```bash
+~/.oss/bin/oss-decrypt --type commands --name debug
 ```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/commands/debug
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
-```
+
+The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
 ## Step 6: Execute the Fetched Prompt
 
