@@ -21,7 +21,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
 COPY_CLI="$PLUGIN_ROOT/watcher/dist/cli/get-copy.js"
-MENUBAR_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-menubar.js"
+WORKFLOW_STATE_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js"
 LOG_SCRIPT="$PLUGIN_ROOT/hooks/oss-log.sh"
 
 # =============================================================================
@@ -147,7 +147,7 @@ esac
 [[ "$STYLE" == "none" ]] && exit 0
 
 # =============================================================================
-# Update menu bar state (for SwiftBar)
+# Update workflow state (for Claude Code status line)
 # =============================================================================
 
 if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
@@ -170,30 +170,30 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
         "$LOG_SCRIPT" write "$WORKFLOW_CMD" "$LOG_MSG" 2>/dev/null || true
     fi
 
-    # Update menu bar state based on workflow event
-    if [[ -f "$MENUBAR_CLI" ]]; then
+    # Update workflow state based on workflow event
+    if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
         case "$WORKFLOW_EVENT" in
             start)
-                node "$MENUBAR_CLI" setActiveStep "$WORKFLOW_CMD" 2>/dev/null || true
-                node "$MENUBAR_CLI" setSupervisor watching 2>/dev/null || true
+                node "$WORKFLOW_STATE_CLI" setActiveStep "$WORKFLOW_CMD" 2>/dev/null || true
+                node "$WORKFLOW_STATE_CLI" setSupervisor watching 2>/dev/null || true
                 ;;
             merged)
                 # When ship merged, reset the entire workflow chain to start fresh
                 if [[ "$WORKFLOW_CMD" == "ship" ]]; then
-                    node "$MENUBAR_CLI" reset 2>/dev/null || true
+                    node "$WORKFLOW_STATE_CLI" reset 2>/dev/null || true
                 else
-                    node "$MENUBAR_CLI" completeStep "$WORKFLOW_CMD" 2>/dev/null || true
+                    node "$WORKFLOW_STATE_CLI" completeStep "$WORKFLOW_CMD" 2>/dev/null || true
                 fi
                 # Log IRON LAW compliance checklist on merge
                 "$LOG_SCRIPT" checklist "$WORKFLOW_CMD" 2>/dev/null || true
                 ;;
             complete)
-                node "$MENUBAR_CLI" completeStep "$WORKFLOW_CMD" 2>/dev/null || true
+                node "$WORKFLOW_STATE_CLI" completeStep "$WORKFLOW_CMD" 2>/dev/null || true
                 # Log IRON LAW compliance checklist on command completion
                 "$LOG_SCRIPT" checklist "$WORKFLOW_CMD" 2>/dev/null || true
                 ;;
             failed)
-                node "$MENUBAR_CLI" setSupervisor intervening 2>/dev/null || true
+                node "$WORKFLOW_STATE_CLI" setSupervisor intervening 2>/dev/null || true
                 ;;
             task_complete)
                 # Extract progress from context
@@ -204,11 +204,11 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                     TDD_PHASE=$(echo "$WORKFLOW_CONTEXT" | jq -r '.tddPhase // ""' 2>/dev/null)
 
                     if [[ -n "$TDD_PHASE" && "$TDD_PHASE" != "null" ]]; then
-                        node "$MENUBAR_CLI" setTddPhase "$TDD_PHASE" 2>/dev/null || true
+                        node "$WORKFLOW_STATE_CLI" setTddPhase "$TDD_PHASE" 2>/dev/null || true
                     fi
 
                     if [[ -n "$CURRENT" && "$CURRENT" != "null" ]]; then
-                        node "$MENUBAR_CLI" setProgress "{\"progress\": \"$CURRENT/$TOTAL\", \"currentTask\": \"$TASK_NAME\"}" 2>/dev/null || true
+                        node "$WORKFLOW_STATE_CLI" setProgress "{\"progress\": \"$CURRENT/$TOTAL\", \"currentTask\": \"$TASK_NAME\"}" 2>/dev/null || true
                     fi
                 fi
                 ;;

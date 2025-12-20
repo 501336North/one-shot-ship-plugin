@@ -9,15 +9,6 @@ source "$SCRIPT_DIR/oss-config.sh" 2>/dev/null || true
 # Ensure ~/.oss directory exists
 mkdir -p ~/.oss
 
-# Write current project path for SwiftBar to find the queue file
-# (SwiftBar runs outside Claude Code context so doesn't have CLAUDE_PROJECT_DIR)
-echo "${CLAUDE_PROJECT_DIR:-.}" > ~/.oss/current-project
-
-# Write plugin root path for SwiftBar to find hooks/scripts
-# (SwiftBar doesn't have CLAUDE_PLUGIN_ROOT)
-SCRIPT_DIR_ABS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-echo "${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR_ABS/..}" > ~/.oss/plugin-root
-
 # Auto-install terminal-notifier if missing (macOS only)
 if [[ "$(uname)" == "Darwin" ]] && ! command -v terminal-notifier &>/dev/null; then
     if command -v brew &>/dev/null; then
@@ -66,32 +57,22 @@ esac
 # Clear iron-laws session marker (legacy cleanup)
 rm -f ~/.oss/iron-laws-session-notified 2>/dev/null
 
-# --- SwiftBar Launch (if installed) ---
-# Launch SwiftBar for menu bar status display during active Claude Code session
-# SwiftBar will be quit when session ends (see oss-session-end.sh)
-# This prevents toolbar clutter when no session is active
-if [[ "$(uname)" == "Darwin" ]] && [[ -d "/Applications/SwiftBar.app" ]]; then
-    if ! pgrep -x "SwiftBar" > /dev/null 2>&1; then
-        open -a SwiftBar &>/dev/null &
-    fi
-fi
-
 # --- Watcher Management (US-001) ---
 # Spawn watcher process if not already running (singleton pattern)
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
 PROJECT_OSS_DIR="${CLAUDE_PROJECT_DIR:-.}/.oss"
 WATCHER_PID_FILE="$PROJECT_OSS_DIR/watcher.pid"
 WATCHER_SCRIPT="$PLUGIN_ROOT/watcher/dist/index.js"
-MENUBAR_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-menubar.js"
+WORKFLOW_STATE_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js"
 HEALTH_CHECK_CLI="$PLUGIN_ROOT/watcher/dist/cli/health-check.js"
 
 # Ensure project .oss directory exists
 mkdir -p "$PROJECT_OSS_DIR"
 
-# Initialize menu bar state (for SwiftBar)
-if [[ -f "$MENUBAR_CLI" ]]; then
-    node "$MENUBAR_CLI" init 2>/dev/null || true
-    node "$MENUBAR_CLI" setSupervisor watching 2>/dev/null || true
+# Initialize workflow state (for Claude Code status line)
+if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
+    node "$WORKFLOW_STATE_CLI" init 2>/dev/null || true
+    node "$WORKFLOW_STATE_CLI" setSupervisor watching 2>/dev/null || true
 fi
 
 # Check if watcher is already running

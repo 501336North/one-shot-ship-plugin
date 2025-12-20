@@ -50,12 +50,12 @@ OSS Dev Workflow follows the **BYOCCA Model** (Bring Your Own Claude Code Accoun
 │  └──────────────────────────────────────────────────────────────────────┘   │
 │                                                                              │
 │  ┌──────────────────┐  ┌──────────────────┐  ┌────────────────────────┐    │
-│  │ ~/.oss/          │  │ dev/active/      │  │ SwiftBar Menu          │    │
+│  │ ~/.oss/          │  │ dev/active/      │  │ Claude Code Status     │    │
 │  │                  │  │                  │  │                        │    │
-│  │ config.json      │  │ {feature}/       │  │ Workflow status        │    │
-│  │ logs/            │  │   PLAN.md        │  │ Health check           │    │
-│  │ queue.json       │  │   PROGRESS.md    │  │ Command logs           │    │
-│  │ current-project  │  │   DESIGN.md      │  │                        │    │
+│  │ config.json      │  │ {feature}/       │  │ [Model] Dir | 🔴 RED   │    │
+│  │ logs/            │  │   PLAN.md        │  │ 3/8 | 🌿 branch ✓      │    │
+│  │ queue.json       │  │   PROGRESS.md    │  │                        │    │
+│  │ workflow-state   │  │   DESIGN.md      │  │                        │    │
 │  └──────────────────┘  └──────────────────┘  └────────────────────────┘    │
 │                                                                              │
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
@@ -123,7 +123,7 @@ OSS Dev Workflow follows the **BYOCCA Model** (Bring Your Own Claude Code Accoun
 | **Command Execution** | User → Claude Code → Plugin → API (fetch prompt) → Agent executes |
 | **Authentication** | Plugin → API → Database → returns API key |
 | **Subscription Check** | Plugin → API → Stripe → allow/deny |
-| **Notifications** | Agent → Plugin hooks → SwiftBar/terminal-notifier |
+| **Notifications** | Agent → Plugin hooks → terminal-notifier/Claude Code status |
 | **Supervisor Monitoring** | Watcher → Log files → Queue → Anomaly detection → Intervention |
 | **Git Operations** | Agent → local git → GitHub API (gh cli) |
 
@@ -156,14 +156,14 @@ OSS Dev Workflow follows the **BYOCCA Model** (Bring Your Own Claude Code Accoun
 │   │   ├── services/
 │   │   │   ├── log-parser.ts       # Parse Claude Code output
 │   │   │   ├── notification-copy.ts # Nautical-themed messages
-│   │   │   └── menubar.ts          # SwiftBar state management
+│   │   │   └── workflow-state.ts   # Workflow state management
 │   │   └── cli/
 │   │       ├── get-copy.js         # Get notification copy
-│   │       └── update-menubar.js   # Update SwiftBar state
+│   │       └── update-workflow-state.js  # Update workflow state
 │   └── dist/                       # Compiled output
 │
-└── swiftbar/           # macOS menu bar integration
-    └── oss-workflow.1s.sh  # SwiftBar plugin script
+└── hooks/              # See hooks/ section above
+    └── oss-statusline.sh  # Claude Code status line script
 ```
 
 ### Local State Files
@@ -171,7 +171,7 @@ OSS Dev Workflow follows the **BYOCCA Model** (Bring Your Own Claude Code Accoun
 ```
 ~/.oss/
 ├── config.json         # API key, user settings
-├── current-project     # Active project path
+├── workflow-state.json # Workflow state for status line
 ├── queue.json          # Task queue for supervisor
 └── logs/
     └── current-session/
@@ -290,7 +290,7 @@ UsageEvents
 
 ### Channels
 1. **terminal-notifier** - macOS native notifications
-2. **SwiftBar** - Menu bar status display
+2. **Claude Code status line** - Workflow status display
 3. **Telegram** - Admin alerts (optional)
 
 ### Message Types

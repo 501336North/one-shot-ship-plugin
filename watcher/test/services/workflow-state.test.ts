@@ -1,262 +1,435 @@
 /**
  * WorkflowStateService Tests
  *
- * @behavior Track workflow step progression (ideate → plan → build → ship)
- * @acceptance-criteria
- *   - AC-001: Track current feature name
- *   - AC-002: Track last completed workflow step
- *   - AC-003: Track timestamp of last step completion
- *   - AC-004: Persist state to ~/.oss/workflow-state.json
- *   - AC-005: Provide state for health check decisions
- * @boundary Service
+ * @behavior Manages workflow state for status line display
+ * @acceptance-criteria AC-WORKFLOW-STATE.1 through AC-WORKFLOW-STATE.12
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { promises as fs } from 'fs';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import * as fs from 'fs';
 import * as path from 'path';
-import { WorkflowStateService, WorkflowStep, WorkflowState } from '../../src/services/workflow-state.js';
+import * as os from 'os';
+
+// Will implement after tests
+import {
+  WorkflowStateService,
+  WorkflowState,
+  ChainStep,
+  SupervisorStatus,
+} from '../../src/services/workflow-state.js';
 
 describe('WorkflowStateService', () => {
-  const testDir = '/tmp/oss-workflow-state-test';
-  const stateFile = path.join(testDir, 'health-workflow-state.json');
   let service: WorkflowStateService;
+  let tempDir: string;
+  let stateFilePath: string;
 
-  beforeEach(async () => {
-    // Clean up test directory
-    await fs.rm(testDir, { recursive: true, force: true });
-    await fs.mkdir(testDir, { recursive: true });
-    service = new WorkflowStateService(testDir);
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-workflow-state-test-'));
+    stateFilePath = path.join(tempDir, 'workflow-state.json');
+    service = new WorkflowStateService(stateFilePath);
   });
 
-  afterEach(async () => {
-    await fs.rm(testDir, { recursive: true, force: true });
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  describe('initialization', () => {
+  // ==========================================================================
+  // State file management
+  // ==========================================================================
+
+  describe('State File Management', () => {
     /**
-     * @behavior Service initializes with empty state if no state file exists
+     * @behavior Creates state file with default values when none exists
+     * @acceptance-criteria AC-MENUBAR.1
      */
-    it('should initialize with empty state when no file exists', async () => {
+    test('initializes state file with defaults', async () => {
       await service.initialize();
-      const state = await service.getState();
 
-      expect(state).toBeDefined();
-      expect(state.currentFeature).toBeNull();
-      expect(state.lastCompletedStep).toBeNull();
-      expect(state.lastStepTimestamp).toBeNull();
+      expect(fs.existsSync(stateFilePath)).toBe(true);
+      const state = JSON.parse(fs.readFileSync(stateFilePath, 'utf-8'));
+      expect(state.supervisor).toBe('idle');
+      expect(state.activeStep).toBeNull();
     });
 
     /**
-     * @behavior Service loads existing state from file
+     * @behavior Reads existing state file correctly
+     * @acceptance-criteria AC-MENUBAR.2
      */
-    it('should load existing state from file', async () => {
+    test('reads existing state file', async () => {
       const existingState: WorkflowState = {
-        currentFeature: 'my-feature',
-        lastCompletedStep: 'build',
-        lastStepTimestamp: '2025-12-10T10:00:00Z',
+        supervisor: 'watching',
+        activeStep: 'build',
+        chainState: {
+          ideate: 'done',
+          plan: 'done',
+          acceptance: 'active',
+          red: 'pending',
+          green: 'pending',
+          refactor: 'pending',
+          integration: 'pending',
+          ship: 'pending',
+        },
+        lastUpdate: new Date().toISOString(),
       };
-      await fs.writeFile(stateFile, JSON.stringify(existingState, null, 2));
+      fs.writeFileSync(stateFilePath, JSON.stringify(existingState));
 
-      await service.initialize();
       const state = await service.getState();
 
-      expect(state.currentFeature).toBe('my-feature');
-      expect(state.lastCompletedStep).toBe('build');
-      expect(state.lastStepTimestamp).toBe('2025-12-10T10:00:00Z');
+      expect(state.supervisor).toBe('watching');
+      expect(state.activeStep).toBe('build');
+    });
+
+    /**
+     * @behavior Returns default state when file is corrupted
+     * @acceptance-criteria AC-MENUBAR.3
+     */
+    test('returns default state when file is corrupted', async () => {
+      fs.writeFileSync(stateFilePath, 'not valid json{{{');
+
+      const state = await service.getState();
+
+      expect(state.supervisor).toBe('idle');
+      expect(state.activeStep).toBeNull();
     });
   });
 
-  describe('setCurrentFeature', () => {
+  // ==========================================================================
+  // Chain state updates
+  // ==========================================================================
+
+  describe('Chain State Updates', () => {
     /**
-     * @behavior Can set the current feature being worked on
+     * @behavior Updates active step correctly
+     * @acceptance-criteria AC-MENUBAR.4
      */
-    it('should set and persist current feature', async () => {
+    test('updates active step and marks previous as done', async () => {
       await service.initialize();
-      await service.setCurrentFeature('new-feature');
+
+      await service.setActiveStep('plan');
 
       const state = await service.getState();
-      expect(state.currentFeature).toBe('new-feature');
-
-      // Verify persisted
-      const fileContent = await fs.readFile(stateFile, 'utf-8');
-      const persisted = JSON.parse(fileContent);
-      expect(persisted.currentFeature).toBe('new-feature');
+      expect(state.activeStep).toBe('plan');
+      expect(state.chainState.ideate).toBe('done');
+      expect(state.chainState.plan).toBe('active');
+      expect(state.chainState.acceptance).toBe('pending');
     });
 
     /**
-     * @behavior Setting feature clears last step (starting fresh)
+     * @behavior Sets TDD phase within build
+     * @acceptance-criteria AC-MENUBAR.5
      */
-    it('should clear last step when setting new feature', async () => {
+    test('sets TDD phase within build', async () => {
       await service.initialize();
-      await service.completeStep('build');
-      await service.setCurrentFeature('new-feature');
+      await service.setActiveStep('build');
+
+      await service.setTddPhase('green');
 
       const state = await service.getState();
-      expect(state.currentFeature).toBe('new-feature');
-      expect(state.lastCompletedStep).toBeNull();
-      expect(state.lastStepTimestamp).toBeNull();
+      expect(state.chainState.acceptance).toBe('done');
+      expect(state.chainState.red).toBe('done');
+      expect(state.chainState.green).toBe('active');
+      expect(state.chainState.refactor).toBe('pending');
     });
-  });
 
-  describe('completeStep', () => {
     /**
-     * @behavior Records step completion with timestamp
+     * @behavior Marks step as complete
+     * @acceptance-criteria AC-MENUBAR.6
      */
-    it('should record step completion with timestamp', async () => {
-      vi.useFakeTimers();
-      vi.setSystemTime(new Date('2025-12-10T12:00:00Z'));
-
+    test('marks step as complete', async () => {
       await service.initialize();
-      await service.setCurrentFeature('test-feature');
+      await service.setActiveStep('ideate');
+
       await service.completeStep('ideate');
 
       const state = await service.getState();
-      expect(state.lastCompletedStep).toBe('ideate');
-      expect(state.lastStepTimestamp).toBe('2025-12-10T12:00:00.000Z');
-
-      vi.useRealTimers();
+      expect(state.chainState.ideate).toBe('done');
+      expect(state.activeStep).toBeNull();
     });
 
     /**
-     * @behavior Validates workflow step values
+     * @behavior Clears state on workflow complete
+     * @acceptance-criteria AC-MENUBAR.7
      */
-    it('should only accept valid workflow steps', async () => {
+    test('clears state on workflow complete', async () => {
       await service.initialize();
-      await service.setCurrentFeature('test-feature');
+      await service.setActiveStep('ship');
 
-      // Valid steps
-      await expect(service.completeStep('ideate')).resolves.not.toThrow();
-      await expect(service.completeStep('plan')).resolves.not.toThrow();
-      await expect(service.completeStep('build')).resolves.not.toThrow();
-      await expect(service.completeStep('ship')).resolves.not.toThrow();
-
-      // Invalid step
-      await expect(service.completeStep('invalid' as WorkflowStep)).rejects.toThrow();
-    });
-
-    /**
-     * @behavior Persists to file after each step completion
-     */
-    it('should persist state to file', async () => {
-      await service.initialize();
-      await service.setCurrentFeature('persist-test');
-      await service.completeStep('plan');
-
-      const fileContent = await fs.readFile(stateFile, 'utf-8');
-      const persisted = JSON.parse(fileContent);
-      expect(persisted.lastCompletedStep).toBe('plan');
-    });
-  });
-
-  describe('clearState', () => {
-    /**
-     * @behavior Clears all workflow state
-     */
-    it('should clear all state', async () => {
-      await service.initialize();
-      await service.setCurrentFeature('feature');
-      await service.completeStep('build');
-      await service.clearState();
+      await service.workflowComplete();
 
       const state = await service.getState();
-      expect(state.currentFeature).toBeNull();
-      expect(state.lastCompletedStep).toBeNull();
-      expect(state.lastStepTimestamp).toBeNull();
+      expect(state.supervisor).toBe('idle');
+      expect(state.activeStep).toBeNull();
+      // All steps should be done
+      expect(state.chainState.ship).toBe('done');
+    });
+
+    /**
+     * @behavior Resets all state to defaults (for starting fresh workflow)
+     * @acceptance-criteria AC-MENUBAR.7a - When ship merged, entire workflow resets
+     */
+    test('reset returns all state to defaults', async () => {
+      await service.initialize();
+      // Set up a mid-workflow state
+      await service.setActiveStep('build');
+      await service.setTddPhase('green');
+      await service.setSupervisor('watching');
+      await service.setProgress({
+        currentTask: 'Some task',
+        progress: '5/10',
+        testsPass: 50,
+      });
+
+      await service.reset();
+
+      const state = await service.getState();
+      // All should be back to defaults
+      expect(state.supervisor).toBe('idle');
+      expect(state.activeStep).toBeNull();
+      expect(state.chainState.ideate).toBe('pending');
+      expect(state.chainState.plan).toBe('pending');
+      expect(state.chainState.acceptance).toBe('pending');
+      expect(state.chainState.red).toBe('pending');
+      expect(state.chainState.green).toBe('pending');
+      expect(state.chainState.ship).toBe('pending');
+      expect(state.tddCycle).toBe(1);
+      // Progress should be cleared
+      expect(state.currentTask).toBeUndefined();
+      expect(state.progress).toBeUndefined();
+      expect(state.testsPass).toBeUndefined();
     });
   });
 
-  describe('getStepAge', () => {
+  // ==========================================================================
+  // Supervisor status
+  // ==========================================================================
+
+  describe('Supervisor Status', () => {
     /**
-     * @behavior Returns age of last step in hours
+     * @behavior Sets supervisor to watching
+     * @acceptance-criteria AC-MENUBAR.8
      */
-    it('should return age of last step in hours', async () => {
-      vi.useFakeTimers();
-
-      // Set step completed 25 hours ago
-      const stepTime = new Date('2025-12-09T10:00:00Z');
-      vi.setSystemTime(stepTime);
-
+    test('sets supervisor to watching', async () => {
       await service.initialize();
-      await service.setCurrentFeature('test');
-      await service.completeStep('ship');
 
-      // Now check 25 hours later
-      vi.setSystemTime(new Date('2025-12-10T11:00:00Z'));
-      const ageHours = await service.getStepAgeHours();
+      await service.setSupervisor('watching');
 
-      expect(ageHours).toBe(25);
-
-      vi.useRealTimers();
+      const state = await service.getState();
+      expect(state.supervisor).toBe('watching');
     });
 
     /**
-     * @behavior Returns null if no step completed
+     * @behavior Sets supervisor to intervening
+     * @acceptance-criteria AC-MENUBAR.9
      */
-    it('should return null if no step completed', async () => {
+    test('sets supervisor to intervening', async () => {
       await service.initialize();
-      const ageHours = await service.getStepAgeHours();
-      expect(ageHours).toBeNull();
+
+      await service.setSupervisor('intervening');
+
+      const state = await service.getState();
+      expect(state.supervisor).toBe('intervening');
+    });
+
+    /**
+     * @behavior Sets supervisor to idle
+     * @acceptance-criteria AC-MENUBAR.10
+     */
+    test('sets supervisor to idle', async () => {
+      await service.initialize();
+      await service.setSupervisor('watching');
+
+      await service.setSupervisor('idle');
+
+      const state = await service.getState();
+      expect(state.supervisor).toBe('idle');
     });
   });
 
-  describe('shouldWarnAboutArchive', () => {
-    /**
-     * @behavior Returns false if last step is ship (archiving expected on next plan)
-     */
-    it('should not warn if last step is ship', async () => {
-      await service.initialize();
-      await service.setCurrentFeature('completed-feature');
-      await service.completeStep('ship');
+  // ==========================================================================
+  // Progress tracking
+  // ==========================================================================
 
-      const shouldWarn = await service.shouldWarnAboutArchive();
-      expect(shouldWarn).toBe(false);
+  describe('Progress Tracking', () => {
+    /**
+     * @behavior Updates current task
+     * @acceptance-criteria AC-MENUBAR.11
+     */
+    test('updates current task and progress', async () => {
+      await service.initialize();
+      await service.setActiveStep('build');
+
+      await service.setProgress({
+        currentTask: 'Implementing auth service',
+        progress: '3/8',
+        testsPass: 47,
+      });
+
+      const state = await service.getState();
+      expect(state.currentTask).toBe('Implementing auth service');
+      expect(state.progress).toBe('3/8');
+      expect(state.testsPass).toBe(47);
     });
 
     /**
-     * @behavior Returns false if last step is plan and <24h old
+     * @behavior Updates lastUpdate timestamp on every change
+     * @acceptance-criteria AC-MENUBAR.12
      */
-    it('should not warn if last step is plan and recent', async () => {
-      vi.useFakeTimers();
-      vi.setSystemTime(new Date('2025-12-10T12:00:00Z'));
-
+    test('updates lastUpdate timestamp on every change', async () => {
       await service.initialize();
-      await service.setCurrentFeature('feature');
-      await service.completeStep('plan');
+      const initialState = await service.getState();
+      const initialTime = initialState.lastUpdate;
 
-      // Check 12 hours later (still under 24h)
-      vi.setSystemTime(new Date('2025-12-11T00:00:00Z'));
-      const shouldWarn = await service.shouldWarnAboutArchive();
-      expect(shouldWarn).toBe(false);
+      // Wait a bit to ensure different timestamp
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
-      vi.useRealTimers();
+      await service.setSupervisor('watching');
+      const updatedState = await service.getState();
+
+      expect(updatedState.lastUpdate).not.toBe(initialTime);
+    });
+  });
+
+  // ==========================================================================
+  // TDD Loop Reset (Domino Chain)
+  // ==========================================================================
+
+  describe('TDD Loop Reset', () => {
+    /**
+     * @behavior Resets TDD phases when starting a new loop iteration
+     * @acceptance-criteria When refactor completes and there are more tasks,
+     *                     mock/green/refactor should reset to pending, red becomes active
+     */
+    test('resetTddCycle resets mock/green/refactor to pending, red to active', async () => {
+      await service.initialize();
+      await service.setActiveStep('build');
+      await service.setTddPhase('refactor');
+
+      // Simulate completing a TDD cycle and needing to start the next one
+      await service.resetTddCycle();
+
+      const state = await service.getState();
+      // Acceptance should still be done (we don't repeat acceptance tests each loop)
+      expect(state.chainState.acceptance).toBe('done');
+      // Red becomes active (we're starting the new cycle)
+      expect(state.chainState.red).toBe('active');
+      // Other TDD phases should be reset for next iteration
+      expect(state.chainState.mock).toBe('pending');
+      expect(state.chainState.green).toBe('pending');
+      expect(state.chainState.refactor).toBe('pending');
+      // Integration and ship should still be pending
+      expect(state.chainState.integration).toBe('pending');
+      expect(state.chainState.ship).toBe('pending');
     });
 
     /**
-     * @behavior Returns true if last step is plan and >24h old
+     * @behavior TDD cycle counter increments on reset
+     * @acceptance-criteria Track which TDD iteration we're on
      */
-    it('should warn if last step is plan and >24h old', async () => {
-      vi.useFakeTimers();
-      vi.setSystemTime(new Date('2025-12-09T10:00:00Z'));
-
+    test('resetTddCycle increments cycle counter', async () => {
       await service.initialize();
-      await service.setCurrentFeature('stale-feature');
-      await service.completeStep('plan');
+      await service.setActiveStep('build');
+      await service.setTddPhase('refactor');
 
-      // Check 25 hours later
-      vi.setSystemTime(new Date('2025-12-10T11:00:00Z'));
-      const shouldWarn = await service.shouldWarnAboutArchive();
-      expect(shouldWarn).toBe(true);
+      await service.resetTddCycle();
 
-      vi.useRealTimers();
+      const state = await service.getState();
+      expect(state.tddCycle).toBe(2); // First cycle is 1, after reset is 2
+
+      await service.setTddPhase('refactor');
+      await service.resetTddCycle();
+
+      const state2 = await service.getState();
+      expect(state2.tddCycle).toBe(3);
     });
 
     /**
-     * @behavior Returns false if no workflow state
+     * @behavior Reset preserves progress info
+     * @acceptance-criteria Current task and test counts should persist
      */
-    it('should not warn if no workflow state', async () => {
+    test('resetTddCycle preserves progress info', async () => {
       await service.initialize();
-      const shouldWarn = await service.shouldWarnAboutArchive();
-      expect(shouldWarn).toBe(false);
+      await service.setActiveStep('build');
+      await service.setProgress({
+        currentTask: 'Task 5',
+        progress: '5/10',
+        testsPass: 50,
+      });
+      await service.setTddPhase('refactor');
+
+      await service.resetTddCycle();
+
+      const state = await service.getState();
+      expect(state.progress).toBe('5/10');
+      expect(state.testsPass).toBe(50);
+    });
+
+    /**
+     * @behavior Sets red as active after reset
+     * @acceptance-criteria After reset, red should be marked as active
+     */
+    test('resetTddCycle sets red as active', async () => {
+      await service.initialize();
+      await service.setActiveStep('build');
+      await service.setTddPhase('refactor');
+
+      await service.resetTddCycle();
+
+      const state = await service.getState();
+      expect(state.chainState.red).toBe('active');
+      expect(state.activeStep).toBe('red');
+    });
+  });
+
+  // ==========================================================================
+  // Extended Chain State (Discovery Chain)
+  // ==========================================================================
+
+  describe('Extended Chain State', () => {
+    /**
+     * @behavior Tracks discovery chain steps
+     * @acceptance-criteria requirements, api-design, data-model, adr should be tracked
+     */
+    test('tracks discovery chain steps', async () => {
+      await service.initialize();
+
+      await service.setActiveStep('requirements');
+
+      const state = await service.getState();
+      expect(state.chainState.ideate).toBe('done');
+      expect(state.chainState.requirements).toBe('active');
+      expect(state.chainState.apiDesign).toBe('pending');
+    });
+
+    /**
+     * @behavior Tracks mock phase in build chain
+     * @acceptance-criteria mock phase between red and green should be tracked
+     */
+    test('tracks mock phase in TDD cycle', async () => {
+      await service.initialize();
+      await service.setActiveStep('build');
+
+      await service.setTddPhase('mock');
+
+      const state = await service.getState();
+      expect(state.chainState.red).toBe('done');
+      expect(state.chainState.mock).toBe('active');
+      expect(state.chainState.green).toBe('pending');
+    });
+
+    /**
+     * @behavior Tracks contract phase in build chain
+     * @acceptance-criteria contract phase after integration should be tracked
+     */
+    test('tracks contract phase in build', async () => {
+      await service.initialize();
+      await service.setActiveStep('build');
+
+      await service.setTddPhase('contract');
+
+      const state = await service.getState();
+      expect(state.chainState.integration).toBe('done');
+      expect(state.chainState.contract).toBe('active');
+      expect(state.chainState.ship).toBe('pending');
     });
   });
 });
