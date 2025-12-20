@@ -122,4 +122,116 @@ describe('OssDaemon Core', () => {
       expect(daemon.isRunning()).toBe(false);
     });
   });
+
+  /**
+   * @behavior Daemon runs a monitoring loop periodically
+   * @acceptance-criteria AC-DAEMON-002
+   * @business-rule DAEMON-002 - Supervisor must continuously monitor
+   * @boundary Timer/Interval
+   */
+  describe('Monitoring Run Loop', () => {
+    it('should start a monitoring loop that runs periodically', async () => {
+      // Use a shorter interval for testing
+      const fastConfig: DaemonConfig = {
+        ...config,
+        checkIntervalMs: 100, // 100ms for fast test
+      };
+      const fastDaemon = new OssDaemon(fastConfig);
+
+      await fastDaemon.start();
+
+      expect(fastDaemon.isRunning()).toBe(true);
+
+      // Wait for at least 2 ticks
+      await new Promise(r => setTimeout(r, 250));
+
+      expect(fastDaemon.getTickCount()).toBeGreaterThan(0);
+
+      await fastDaemon.stop();
+    });
+
+    it('should stop the monitoring loop on stop()', async () => {
+      const fastConfig: DaemonConfig = {
+        ...config,
+        checkIntervalMs: 100,
+      };
+      const fastDaemon = new OssDaemon(fastConfig);
+
+      await fastDaemon.start();
+      const tickCountBefore = fastDaemon.getTickCount();
+
+      await fastDaemon.stop();
+
+      // Wait to ensure no more ticks happen
+      await new Promise(r => setTimeout(r, 200));
+
+      const tickCountAfter = fastDaemon.getTickCount();
+      expect(tickCountAfter).toBe(tickCountBefore);
+      expect(fastDaemon.isRunning()).toBe(false);
+    });
+
+    /**
+     * @behavior Daemon writes heartbeat to workflow-state.json
+     * @acceptance-criteria AC-DAEMON-003
+     * @business-rule DAEMON-003 - Status line must know daemon is alive
+     */
+    it('should write heartbeat timestamp to workflow-state.json', async () => {
+      const fastConfig: DaemonConfig = {
+        ...config,
+        checkIntervalMs: 100,
+      };
+      const fastDaemon = new OssDaemon(fastConfig);
+
+      await fastDaemon.start();
+
+      // Wait for at least one tick
+      await new Promise(r => setTimeout(r, 150));
+
+      const statePath = path.join(testDir, 'workflow-state.json');
+      const stateContent = await fs.readFile(statePath, 'utf-8');
+      const state = JSON.parse(stateContent);
+
+      expect(state.daemonHeartbeat).toBeDefined();
+      expect(Date.now() - new Date(state.daemonHeartbeat).getTime()).toBeLessThan(2000);
+
+      await fastDaemon.stop();
+    });
+  });
+
+  /**
+   * @behavior Daemon prioritizes issues by severity
+   * @acceptance-criteria AC-DAEMON-012
+   * @business-rule DAEMON-012 - Critical issues must be shown first
+   */
+  describe('Issue Prioritization', () => {
+    it('should report highest priority issue (error > warning > info)', () => {
+      const issues = [
+        { type: 'stale_phase', severity: 'info' as const, message: 'Info' },
+        { type: 'hung_process', severity: 'warning' as const, message: 'Warning' },
+        { type: 'branch_violation', severity: 'error' as const, message: 'Error' }
+      ];
+
+      const topIssue = OssDaemon.prioritizeIssues(issues);
+
+      expect(topIssue?.severity).toBe('error');
+      expect(topIssue?.type).toBe('branch_violation');
+    });
+
+    it('should return null for empty issues array', () => {
+      const topIssue = OssDaemon.prioritizeIssues([]);
+
+      expect(topIssue).toBeNull();
+    });
+
+    it('should return first issue when all same severity', () => {
+      const issues = [
+        { type: 'issue1', severity: 'warning' as const, message: 'First' },
+        { type: 'issue2', severity: 'warning' as const, message: 'Second' }
+      ];
+
+      const topIssue = OssDaemon.prioritizeIssues(issues);
+
+      expect(topIssue?.type).toBe('issue1');
+    });
+  });
 });

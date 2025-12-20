@@ -34,6 +34,7 @@ export class DaemonCli {
     config;
     daemon;
     launchd;
+    stopResolver = null;
     constructor(config) {
         this.config = config;
         this.daemon = new OssDaemon({
@@ -164,16 +165,30 @@ export class DaemonCli {
         }
         try {
             await this.daemon.start();
-            return {
-                success: true,
-                output: 'Daemon started',
-                exitCode: 0
-            };
+            if (flags.daemonize) {
+                // In daemonize mode, return immediately
+                return {
+                    success: true,
+                    output: 'Daemon started',
+                    exitCode: 0
+                };
+            }
+            // In foreground mode, keep process alive until stopped
+            return new Promise((resolve) => {
+                this.stopResolver = () => {
+                    resolve({
+                        success: true,
+                        output: 'Daemon stopped',
+                        exitCode: 0
+                    });
+                };
+            });
         }
         catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
             return {
                 success: false,
-                output: `Failed to start daemon: ${error.message}`,
+                output: `Failed to start daemon: ${message}`,
                 exitCode: 1
             };
         }
@@ -184,6 +199,11 @@ export class DaemonCli {
     async stopCommand() {
         try {
             await this.daemon.stop();
+            // If in foreground mode, resolve the pending start promise
+            if (this.stopResolver) {
+                this.stopResolver();
+                this.stopResolver = null;
+            }
             return {
                 success: true,
                 output: 'Daemon stopped',
@@ -191,9 +211,10 @@ export class DaemonCli {
             };
         }
         catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
             return {
                 success: false,
-                output: `Failed to stop daemon: ${error.message}`,
+                output: `Failed to stop daemon: ${message}`,
                 exitCode: 1
             };
         }
@@ -211,9 +232,10 @@ export class DaemonCli {
             };
         }
         catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
             return {
                 success: false,
-                output: `Failed to install: ${error.message}`,
+                output: `Failed to install: ${message}`,
                 exitCode: 1
             };
         }
@@ -231,9 +253,10 @@ export class DaemonCli {
             };
         }
         catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
             return {
                 success: false,
-                output: `Failed to uninstall: ${error.message}`,
+                output: `Failed to uninstall: ${message}`,
                 exitCode: 1
             };
         }

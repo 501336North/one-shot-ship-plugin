@@ -7,6 +7,7 @@
  * - Track system resource usage
  * - Send notifications on issues
  */
+import { Issue } from './state-manager.js';
 export interface DaemonConfig {
     ossDir: string;
     checkIntervalMs: number;
@@ -16,8 +17,11 @@ export declare class OssDaemon {
     private config;
     private pidFile;
     private logFile;
+    private stateFile;
     private running;
     private pendingOperations;
+    private interval;
+    private tickCount;
     constructor(config: DaemonConfig);
     /**
      * Start the daemon
@@ -32,6 +36,18 @@ export declare class OssDaemon {
      */
     isRunning(): boolean;
     /**
+     * Get the number of monitoring ticks that have occurred
+     */
+    getTickCount(): number;
+    /**
+     * Single tick of the monitoring loop
+     */
+    private tick;
+    /**
+     * Update heartbeat in workflow-state.json
+     */
+    private updateHeartbeat;
+    /**
      * Log activity to daemon.log
      */
     log(message: string): Promise<void>;
@@ -39,5 +55,10 @@ export declare class OssDaemon {
      * Check if another daemon instance is running
      */
     private isDaemonRunning;
+    /**
+     * Prioritize issues by severity (error > warning > info)
+     * Returns the highest priority issue, or null if empty
+     */
+    static prioritizeIssues(issues: Issue[]): Issue | null;
 }
 //# sourceMappingURL=daemon.d.ts.map

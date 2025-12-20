@@ -10,6 +10,14 @@
 
 import { promises as fs } from 'fs';
 import * as path from 'path';
+import { Issue, IssueSeverity } from './state-manager.js';
+
+// Priority order for severity levels
+const SEVERITY_PRIORITY: Record<IssueSeverity, number> = {
+  error: 3,
+  warning: 2,
+  info: 1
+};
 
 export interface DaemonConfig {
   ossDir: string;
@@ -21,13 +29,17 @@ export class OssDaemon {
   private config: DaemonConfig;
   private pidFile: string;
   private logFile: string;
+  private stateFile: string;
   private running: boolean = false;
   private pendingOperations: Promise<void>[] = [];
+  private interval: ReturnType<typeof setInterval> | null = null;
+  private tickCount: number = 0;
 
   constructor(config: DaemonConfig) {
     this.config = config;
     this.pidFile = path.join(config.ossDir, 'daemon.pid');
     this.logFile = path.join(config.ossDir, 'daemon.log');
+    this.stateFile = path.join(config.ossDir, 'workflow-state.json');
   }
 
   /**
@@ -46,6 +58,10 @@ export class OssDaemon {
     await fs.writeFile(this.pidFile, String(process.pid));
 
     this.running = true;
+
+    // Start the monitoring loop
+    this.interval = setInterval(() => this.tick(), this.config.checkIntervalMs);
+
     await this.log('Daemon started');
   }
 
@@ -55,6 +71,12 @@ export class OssDaemon {
   async stop(): Promise<void> {
     if (!this.running) {
       return;
+    }
+
+    // Stop the monitoring loop
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
     }
 
     // Wait for pending operations
@@ -77,6 +99,44 @@ export class OssDaemon {
    */
   isRunning(): boolean {
     return this.running;
+  }
+
+  /**
+   * Get the number of monitoring ticks that have occurred
+   */
+  getTickCount(): number {
+    return this.tickCount;
+  }
+
+  /**
+   * Single tick of the monitoring loop
+   */
+  private tick(): void {
+    this.tickCount++;
+    this.updateHeartbeat().catch(() => {
+      // Ignore heartbeat write errors
+    });
+  }
+
+  /**
+   * Update heartbeat in workflow-state.json
+   */
+  private async updateHeartbeat(): Promise<void> {
+    let state: Record<string, unknown> = {};
+
+    // Read existing state if present
+    try {
+      const content = await fs.readFile(this.stateFile, 'utf-8');
+      state = JSON.parse(content);
+    } catch {
+      // File doesn't exist or is invalid, use empty object
+    }
+
+    // Update heartbeat
+    state.daemonHeartbeat = new Date().toISOString();
+
+    // Write back
+    await fs.writeFile(this.stateFile, JSON.stringify(state, null, 2));
   }
 
   /**
@@ -120,5 +180,22 @@ export class OssDaemon {
       // PID file doesn't exist
       return false;
     }
+  }
+
+  /**
+   * Prioritize issues by severity (error > warning > info)
+   * Returns the highest priority issue, or null if empty
+   */
+  static prioritizeIssues(issues: Issue[]): Issue | null {
+    if (issues.length === 0) {
+      return null;
+    }
+
+    return issues.reduce((highest, current) => {
+      const currentPriority = SEVERITY_PRIORITY[current.severity] || 0;
+      const highestPriority = SEVERITY_PRIORITY[highest.severity] || 0;
+
+      return currentPriority > highestPriority ? current : highest;
+    }, issues[0]);
   }
 }
