@@ -5,9 +5,12 @@
 # Naming: oss-workflow.1s.sh = refreshes every 1 second
 # Install: Copy to ~/Library/Application Support/SwiftBar/Plugins/
 #
-# Reads state from: ~/.oss/workflow-state.json
+# Reads state from:
+#   - ~/.oss/workflow-state.json (workflow chain state)
+#   - ~/.oss/status-line.json (TDD phase display: 🔴 RED, 🟢 GREEN, 🔵 REFACTOR)
 
 STATE_FILE="${HOME}/.oss/workflow-state.json"
+STATUS_LINE_FILE="${HOME}/.oss/status-line.json"
 
 # Queue file location - check multiple places since SwiftBar runs outside Claude Code context
 # Priority: 1) CLAUDE_PROJECT_DIR if set, 2) ~/.oss/current-project marker, 3) ~/.oss/queue.json
@@ -57,6 +60,14 @@ CURRENT_TASK=$(jq -r '.currentTask // ""' "$STATE_FILE" 2>/dev/null)
 PROGRESS=$(jq -r '.progress // ""' "$STATE_FILE" 2>/dev/null)
 TESTS_PASS=$(jq -r '.testsPass // 0' "$STATE_FILE" 2>/dev/null)
 LAST_UPDATE=$(jq -r '.lastUpdate // ""' "$STATE_FILE" 2>/dev/null)
+
+# Read status-line.json for TDD phase display (from StatusLineService)
+TDD_PHASE=""
+TDD_TASK=""
+if [[ -f "$STATUS_LINE_FILE" ]]; then
+    TDD_PHASE=$(jq -r '.phase // ""' "$STATUS_LINE_FILE" 2>/dev/null)
+    TDD_TASK=$(jq -r '.task // ""' "$STATUS_LINE_FILE" 2>/dev/null)
+fi
 
 # Read queue count (from project's .oss/queue.json)
 QUEUE_COUNT=0
@@ -110,8 +121,25 @@ esac
 # Build menu bar title
 TITLE="$ICON"
 
-# Show active step if available
-if [[ -n "$ACTIVE_STEP" && "$ACTIVE_STEP" != "null" ]]; then
+# Show TDD phase with colored emoji (from status-line.json)
+if [[ -n "$TDD_PHASE" && "$TDD_PHASE" != "null" ]]; then
+    case "$TDD_PHASE" in
+        "RED")
+            TITLE="$TITLE 🔴 RED"
+            ;;
+        "GREEN")
+            TITLE="$TITLE 🟢 GREEN"
+            ;;
+        "REFACTOR")
+            TITLE="$TITLE 🔵 REFACTOR"
+            ;;
+    esac
+    # Add task progress if available
+    if [[ -n "$TDD_TASK" && "$TDD_TASK" != "null" ]]; then
+        TITLE="$TITLE $TDD_TASK"
+    fi
+# Fallback to active step if no TDD phase
+elif [[ -n "$ACTIVE_STEP" && "$ACTIVE_STEP" != "null" ]]; then
     STEP_DISPLAY=$(echo "$ACTIVE_STEP" | tr '[:lower:]' '[:upper:]')
     TITLE="$TITLE $STEP_DISPLAY"
 fi

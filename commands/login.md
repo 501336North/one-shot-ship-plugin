@@ -238,7 +238,17 @@ After successful authentication, install tools if not already present:
 
 ## Step 7: Install Supervisor Daemon (First Login Only)
 
-After tools are installed, set up the supervisor daemon for process monitoring:
+After tools are installed, set up the supervisor daemon for process monitoring.
+
+**First, check if daemon is included in this plugin version:**
+```bash
+if [ ! -d "$CLAUDE_PLUGIN_ROOT/daemon" ]; then
+    echo "Daemon not included in current plugin version. Skipping daemon setup."
+    # Skip to Step 8
+fi
+```
+
+**If daemon directory exists, proceed with setup:**
 
 1. **Build daemon package (if needed):**
    ```bash
