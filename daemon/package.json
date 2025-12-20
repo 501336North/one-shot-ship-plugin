@@ -1,0 +1,21 @@
+{
+  "name": "oss-daemon",
+  "version": "1.0.0",
+  "description": "OSS Supervisor Daemon - Process monitoring and health checks",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "oss-daemon": "./bin/oss-daemon.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.6.0"
+  }
+}
