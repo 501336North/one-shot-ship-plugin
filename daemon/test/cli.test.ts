@@ -119,4 +119,43 @@ describe('DaemonCli', () => {
       expect(cmd.action).toBe('uninstall');
     });
   });
+
+  /**
+   * @behavior CLI keeps process alive in foreground mode
+   * @acceptance-criteria AC-DAEMON-008
+   * @business-rule DAEMON-008 - Foreground mode must stay running until signaled
+   */
+  describe('Foreground Mode', () => {
+    it('should return a promise that stays pending in foreground mode', async () => {
+      // Execute start in foreground mode (no --daemonize)
+      const startPromise = cli.execute(['start']);
+
+      // The promise should not resolve immediately
+      const timeoutPromise = new Promise<string>((resolve) => {
+        setTimeout(() => resolve('timeout'), 200);
+      });
+
+      // Race between start and timeout - timeout should win
+      const result = await Promise.race([
+        startPromise.then(() => 'resolved'),
+        timeoutPromise
+      ]);
+
+      expect(result).toBe('timeout');
+
+      // Clean up by stopping
+      await cli.execute(['stop']);
+    });
+
+    it('should return immediately in daemonize mode', async () => {
+      // Execute start in daemonize mode
+      const result = await cli.execute(['start', '--daemonize']);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain('started');
+
+      // Clean up
+      await cli.execute(['stop']);
+    });
+  });
 });

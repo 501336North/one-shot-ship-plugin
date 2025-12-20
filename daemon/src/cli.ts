@@ -58,6 +58,7 @@ export class DaemonCli {
   private config: CliConfig;
   private daemon: OssDaemon;
   private launchd: LaunchdService;
+  private stopResolver: (() => void) | null = null;
 
   constructor(config: CliConfig) {
     this.config = config;
@@ -206,15 +207,31 @@ export class DaemonCli {
 
     try {
       await this.daemon.start();
-      return {
-        success: true,
-        output: 'Daemon started',
-        exitCode: 0
-      };
-    } catch (error: any) {
+
+      if (flags.daemonize) {
+        // In daemonize mode, return immediately
+        return {
+          success: true,
+          output: 'Daemon started',
+          exitCode: 0
+        };
+      }
+
+      // In foreground mode, keep process alive until stopped
+      return new Promise<CliResult>((resolve) => {
+        this.stopResolver = () => {
+          resolve({
+            success: true,
+            output: 'Daemon stopped',
+            exitCode: 0
+          });
+        };
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
       return {
         success: false,
-        output: `Failed to start daemon: ${error.message}`,
+        output: `Failed to start daemon: ${message}`,
         exitCode: 1
       };
     }
@@ -226,15 +243,23 @@ export class DaemonCli {
   private async stopCommand(): Promise<CliResult> {
     try {
       await this.daemon.stop();
+
+      // If in foreground mode, resolve the pending start promise
+      if (this.stopResolver) {
+        this.stopResolver();
+        this.stopResolver = null;
+      }
+
       return {
         success: true,
         output: 'Daemon stopped',
         exitCode: 0
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
       return {
         success: false,
-        output: `Failed to stop daemon: ${error.message}`,
+        output: `Failed to stop daemon: ${message}`,
         exitCode: 1
       };
     }
@@ -251,10 +276,11 @@ export class DaemonCli {
         output: `Installed to ${plistPath}\nRun: launchctl load ${plistPath}`,
         exitCode: 0
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
       return {
         success: false,
-        output: `Failed to install: ${error.message}`,
+        output: `Failed to install: ${message}`,
         exitCode: 1
       };
     }
@@ -271,10 +297,11 @@ export class DaemonCli {
         output: 'Uninstalled launchd service',
         exitCode: 0
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
       return {
         success: false,
-        output: `Failed to uninstall: ${error.message}`,
+        output: `Failed to uninstall: ${message}`,
         exitCode: 1
       };
     }

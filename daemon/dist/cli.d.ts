@@ -24,6 +24,7 @@ export declare class DaemonCli {
     private config;
     private daemon;
     private launchd;
+    private stopResolver;
     constructor(config: CliConfig);
     /**
      * Parse command-line arguments
