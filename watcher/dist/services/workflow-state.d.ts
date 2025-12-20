@@ -1,62 +1,107 @@
 /**
- * WorkflowStateService - Track workflow step progression
+ * WorkflowStateService - Manages workflow state for status line display
  *
- * Tracks the current workflow state to enable smarter health checks:
- * - Current feature being worked on
- * - Last completed workflow step (ideate → plan → build → ship)
- * - Timestamp of last step completion
- *
- * State is persisted to ~/.oss/workflow-state.json
+ * @behavior Manages a JSON state file that the status line script reads to display workflow progress
  */
-export type WorkflowStep = 'ideate' | 'plan' | 'build' | 'ship';
+export type ChainStep = 'ideate' | 'requirements' | 'apiDesign' | 'dataModel' | 'adr' | 'plan' | 'acceptance' | 'red' | 'mock' | 'green' | 'refactor' | 'integration' | 'contract' | 'ship' | 'build';
+export type SupervisorStatus = 'watching' | 'intervening' | 'idle';
+export type StepStatus = 'pending' | 'active' | 'done';
 export interface WorkflowState {
-    currentFeature: string | null;
-    lastCompletedStep: WorkflowStep | null;
-    lastStepTimestamp: string | null;
+    supervisor: SupervisorStatus;
+    activeStep: ChainStep | null;
+    chainState: {
+        ideate: StepStatus;
+        requirements: StepStatus;
+        apiDesign: StepStatus;
+        dataModel: StepStatus;
+        adr: StepStatus;
+        plan: StepStatus;
+        acceptance: StepStatus;
+        red: StepStatus;
+        mock: StepStatus;
+        green: StepStatus;
+        refactor: StepStatus;
+        integration: StepStatus;
+        contract: StepStatus;
+        ship: StepStatus;
+    };
+    currentTask?: string;
+    progress?: string;
+    testsPass?: number;
+    tddCycle?: number;
+    currentFeature?: string;
+    lastCompletedStep?: string;
+    lastStepTimestamp?: string;
+    lastUpdate: string;
+}
+export interface ProgressInfo {
+    currentTask?: string;
+    progress?: string;
+    testsPass?: number;
 }
 export declare class WorkflowStateService {
-    private ossDir;
-    private stateFile;
-    private state;
-    constructor(ossDir?: string);
+    private stateFilePath;
+    constructor(stateFilePath?: string);
     /**
-     * Initialize service by loading existing state (if any)
+     * Creates state file with default values if it doesn't exist
      */
     initialize(): Promise<void>;
     /**
-     * Get current workflow state
+     * Returns current state (or defaults if file corrupted)
      */
     getState(): Promise<WorkflowState>;
     /**
-     * Set the current feature being worked on
-     * Clears previous step state (starting fresh on new feature)
+     * Sets active step, marks previous steps as done, future steps as pending
      */
-    setCurrentFeature(featureName: string): Promise<void>;
+    setActiveStep(step: ChainStep): Promise<void>;
     /**
-     * Record completion of a workflow step
+     * Sets TDD phase within build (acceptance/red/green/refactor/integration)
      */
-    completeStep(step: WorkflowStep): Promise<void>;
+    setTddPhase(phase: ChainStep): Promise<void>;
     /**
-     * Clear all workflow state
+     * Marks step as done
      */
-    clearState(): Promise<void>;
+    completeStep(step: ChainStep): Promise<void>;
     /**
-     * Get age of last completed step in hours
-     * Returns null if no step has been completed
+     * Resets TDD loop phases (red/mock/green/refactor) for next iteration
+     * Called when refactor completes and there are more tasks to do
      */
-    getStepAgeHours(): Promise<number | null>;
+    resetTddCycle(): Promise<void>;
     /**
-     * Determine if archive check should warn about unarchived features
+     * Marks all steps done, resets to idle
+     */
+    workflowComplete(): Promise<void>;
+    /**
+     * Updates supervisor status
+     */
+    setSupervisor(status: SupervisorStatus): Promise<void>;
+    /**
+     * Updates currentTask, progress, testsPass
+     */
+    setProgress(info: ProgressInfo): Promise<void>;
+    /**
+     * Resets to defaults
+     */
+    reset(): Promise<void>;
+    /**
+     * Determines if we should warn about archive based on workflow state
      *
-     * Logic:
-     * - If last step is 'ship' → don't warn (archiving expected on next plan)
-     * - If last step is 'plan' and >24h old → warn (plan should have archived)
-     * - Otherwise → don't warn
+     * Returns true if:
+     * - Last step is 'plan' AND >24h since completion (should have been archived)
+     *
+     * Returns false if:
+     * - Last step is 'ship' (archiving expected on next plan)
+     * - No completed step yet
+     * - Step completed within last 24h
      */
     shouldWarnAboutArchive(): Promise<boolean>;
     /**
-     * Persist state to file
+     * Returns default state
      */
-    private persist;
+    private getDefaultState;
+    /**
+     * Writes state to file with updated timestamp
+     */
+    private writeState;
 }
 //# sourceMappingURL=workflow-state.d.ts.map

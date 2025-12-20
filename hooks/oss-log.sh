@@ -533,7 +533,7 @@ case "$ACTION" in
         #   oss-log.sh workflow complete <step>        - Mark step as completed (ideate|plan|build|ship)
         #   oss-log.sh workflow clear                  - Clear workflow state
         SUBCOMMAND="${COMMAND:-}"
-        # Use separate file from menubar workflow-state.json
+        # Use separate file from main workflow-state.json (used by status line)
         WORKFLOW_STATE_FILE="$HOME/.oss/health-workflow-state.json"
 
         case "$SUBCOMMAND" in
@@ -606,9 +606,9 @@ EOF
         ;;
 
     health-check)
-        # Run health check in current project (for SwiftBar)
+        # Run health check in current project
         # Reads current project from ~/.oss/current-project
-        # Output written to health-check.log for SwiftBar status detection
+        # Output written to health-check.log for status detection
         CURRENT_PROJECT=""
         if [[ -f "$HOME/.oss/current-project" ]]; then
             CURRENT_PROJECT=$(cat "$HOME/.oss/current-project" 2>/dev/null)
@@ -631,7 +631,7 @@ EOF
             exit 1
         fi
 
-        # Health check log file (SwiftBar reads this to determine status icon)
+        # Health check log file (used for status detection)
         HC_LOG="$CURRENT_SESSION/health-check.log"
 
         echo "Running health check in: $CURRENT_PROJECT"

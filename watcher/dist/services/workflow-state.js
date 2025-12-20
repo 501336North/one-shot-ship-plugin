@@ -1,121 +1,269 @@
 /**
- * WorkflowStateService - Track workflow step progression
+ * WorkflowStateService - Manages workflow state for status line display
  *
- * Tracks the current workflow state to enable smarter health checks:
- * - Current feature being worked on
- * - Last completed workflow step (ideate → plan → build → ship)
- * - Timestamp of last step completion
- *
- * State is persisted to ~/.oss/workflow-state.json
+ * @behavior Manages a JSON state file that the status line script reads to display workflow progress
  */
-import { promises as fs } from 'fs';
+import * as fs from 'fs';
 import * as path from 'path';
-const VALID_STEPS = ['ideate', 'plan', 'build', 'ship'];
-const DEFAULT_STATE = {
-    currentFeature: null,
-    lastCompletedStep: null,
-    lastStepTimestamp: null,
-};
+// Full chain order for sequential progression
+const CHAIN_ORDER = [
+    // Discovery Chain
+    'ideate', 'requirements', 'apiDesign', 'dataModel', 'adr',
+    // Planning Chain
+    'plan', 'acceptance',
+    // Build Chain
+    'red', 'mock', 'green', 'refactor', 'integration', 'contract',
+    // Ship Chain
+    'ship',
+];
+// Build phases for TDD cycle (acceptance is first, then TDD loop, then integration/contract)
+const BUILD_PHASES = ['acceptance', 'red', 'mock', 'green', 'refactor', 'integration', 'contract'];
+// TDD loop phases that reset when starting a new cycle
+const TDD_LOOP_PHASES = ['red', 'mock', 'green', 'refactor'];
 export class WorkflowStateService {
-    ossDir;
-    stateFile;
-    state = { ...DEFAULT_STATE };
-    constructor(ossDir = `${process.env.HOME}/.oss`) {
-        this.ossDir = ossDir;
-        // Use a separate file from menubar workflow-state.json
-        this.stateFile = path.join(ossDir, 'health-workflow-state.json');
+    stateFilePath;
+    constructor(stateFilePath) {
+        this.stateFilePath = stateFilePath || path.join(process.env.HOME || '~', '.oss', 'workflow-state.json');
     }
     /**
-     * Initialize service by loading existing state (if any)
+     * Creates state file with default values if it doesn't exist
      */
     async initialize() {
-        try {
-            const content = await fs.readFile(this.stateFile, 'utf-8');
-            this.state = JSON.parse(content);
+        const defaultState = this.getDefaultState();
+        // Ensure directory exists
+        const dir = path.dirname(this.stateFilePath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
         }
-        catch {
-            // No existing state file, use defaults
-            this.state = { ...DEFAULT_STATE };
+        // Only write if file doesn't exist
+        if (!fs.existsSync(this.stateFilePath)) {
+            await this.writeState(defaultState);
         }
     }
     /**
-     * Get current workflow state
+     * Returns current state (or defaults if file corrupted)
      */
     async getState() {
-        return { ...this.state };
+        try {
+            if (!fs.existsSync(this.stateFilePath)) {
+                return this.getDefaultState();
+            }
+            const contents = fs.readFileSync(this.stateFilePath, 'utf-8');
+            return JSON.parse(contents);
+        }
+        catch (error) {
+            // File corrupted or doesn't exist - return defaults
+            return this.getDefaultState();
+        }
     }
     /**
-     * Set the current feature being worked on
-     * Clears previous step state (starting fresh on new feature)
+     * Sets active step, marks previous steps as done, future steps as pending
      */
-    async setCurrentFeature(featureName) {
-        this.state.currentFeature = featureName;
-        this.state.lastCompletedStep = null;
-        this.state.lastStepTimestamp = null;
-        await this.persist();
+    async setActiveStep(step) {
+        const state = await this.getState();
+        // Special handling for 'build' - it's an alias for the TDD phases
+        if (step === 'build') {
+            state.activeStep = 'build';
+            state.chainState.ideate = 'done';
+            state.chainState.plan = 'done';
+            state.chainState.acceptance = 'active';
+            // Mark remaining build phases as pending
+            state.chainState.red = 'pending';
+            state.chainState.mock = 'pending';
+            state.chainState.green = 'pending';
+            state.chainState.refactor = 'pending';
+            state.chainState.integration = 'pending';
+            state.chainState.contract = 'pending';
+            state.chainState.ship = 'pending';
+            await this.writeState(state);
+            return;
+        }
+        const stepIndex = CHAIN_ORDER.indexOf(step);
+        // Mark all previous steps as done
+        for (let i = 0; i < stepIndex; i++) {
+            const prevStep = CHAIN_ORDER[i];
+            state.chainState[prevStep] = 'done';
+        }
+        // Mark current step as active
+        state.activeStep = step;
+        const chainKey = step;
+        state.chainState[chainKey] = 'active';
+        // Mark all future steps as pending
+        for (let i = stepIndex + 1; i < CHAIN_ORDER.length; i++) {
+            const nextStep = CHAIN_ORDER[i];
+            state.chainState[nextStep] = 'pending';
+        }
+        await this.writeState(state);
     }
     /**
-     * Record completion of a workflow step
+     * Sets TDD phase within build (acceptance/red/green/refactor/integration)
+     */
+    async setTddPhase(phase) {
+        const state = await this.getState();
+        // Ideate and plan should be done
+        state.chainState.ideate = 'done';
+        state.chainState.plan = 'done';
+        const phaseIndex = BUILD_PHASES.indexOf(phase);
+        // Mark all previous build phases as done
+        for (let i = 0; i < phaseIndex; i++) {
+            const prevPhase = BUILD_PHASES[i];
+            state.chainState[prevPhase] = 'done';
+        }
+        // Mark current phase as active
+        const phaseKey = phase;
+        state.chainState[phaseKey] = 'active';
+        // Mark phases after current as pending
+        for (let i = phaseIndex + 1; i < BUILD_PHASES.length; i++) {
+            const nextPhase = BUILD_PHASES[i];
+            state.chainState[nextPhase] = 'pending';
+        }
+        await this.writeState(state);
+    }
+    /**
+     * Marks step as done
      */
     async completeStep(step) {
-        if (!VALID_STEPS.includes(step)) {
-            throw new Error(`Invalid workflow step: ${step}. Must be one of: ${VALID_STEPS.join(', ')}`);
-        }
-        this.state.lastCompletedStep = step;
-        this.state.lastStepTimestamp = new Date().toISOString();
-        await this.persist();
+        const state = await this.getState();
+        const chainKey = step;
+        state.chainState[chainKey] = 'done';
+        state.activeStep = null;
+        await this.writeState(state);
     }
     /**
-     * Clear all workflow state
+     * Resets TDD loop phases (red/mock/green/refactor) for next iteration
+     * Called when refactor completes and there are more tasks to do
      */
-    async clearState() {
-        this.state = { ...DEFAULT_STATE };
-        await this.persist();
-    }
-    /**
-     * Get age of last completed step in hours
-     * Returns null if no step has been completed
-     */
-    async getStepAgeHours() {
-        if (!this.state.lastStepTimestamp) {
-            return null;
+    async resetTddCycle() {
+        const state = await this.getState();
+        // Reset TDD loop phases to pending
+        for (const phase of TDD_LOOP_PHASES) {
+            const phaseKey = phase;
+            state.chainState[phaseKey] = 'pending';
         }
-        const stepTime = new Date(this.state.lastStepTimestamp).getTime();
-        const now = Date.now();
-        const ageMs = now - stepTime;
-        return Math.floor(ageMs / (1000 * 60 * 60));
+        // Set red as active (starting the new cycle)
+        state.chainState.red = 'active';
+        state.activeStep = 'red';
+        // Increment cycle counter
+        state.tddCycle = (state.tddCycle || 1) + 1;
+        await this.writeState(state);
     }
     /**
-     * Determine if archive check should warn about unarchived features
+     * Marks all steps done, resets to idle
+     */
+    async workflowComplete() {
+        const state = await this.getState();
+        // Mark all steps as done
+        for (const step of CHAIN_ORDER) {
+            const stepKey = step;
+            state.chainState[stepKey] = 'done';
+        }
+        // Reset to idle
+        state.supervisor = 'idle';
+        state.activeStep = null;
+        state.tddCycle = undefined;
+        await this.writeState(state);
+    }
+    /**
+     * Updates supervisor status
+     */
+    async setSupervisor(status) {
+        const state = await this.getState();
+        state.supervisor = status;
+        await this.writeState(state);
+    }
+    /**
+     * Updates currentTask, progress, testsPass
+     */
+    async setProgress(info) {
+        const state = await this.getState();
+        if (info.currentTask !== undefined) {
+            state.currentTask = info.currentTask;
+        }
+        if (info.progress !== undefined) {
+            state.progress = info.progress;
+        }
+        if (info.testsPass !== undefined) {
+            state.testsPass = info.testsPass;
+        }
+        await this.writeState(state);
+    }
+    /**
+     * Resets to defaults
+     */
+    async reset() {
+        await this.writeState(this.getDefaultState());
+    }
+    /**
+     * Determines if we should warn about archive based on workflow state
      *
-     * Logic:
-     * - If last step is 'ship' → don't warn (archiving expected on next plan)
-     * - If last step is 'plan' and >24h old → warn (plan should have archived)
-     * - Otherwise → don't warn
+     * Returns true if:
+     * - Last step is 'plan' AND >24h since completion (should have been archived)
+     *
+     * Returns false if:
+     * - Last step is 'ship' (archiving expected on next plan)
+     * - No completed step yet
+     * - Step completed within last 24h
      */
     async shouldWarnAboutArchive() {
-        // No workflow state → don't warn
-        if (!this.state.lastCompletedStep) {
+        const state = await this.getState();
+        // No completed step - don't warn
+        if (!state.lastCompletedStep || !state.lastStepTimestamp) {
             return false;
         }
-        // Just shipped → don't warn (archiving happens on next plan)
-        if (this.state.lastCompletedStep === 'ship') {
+        // Ship just completed - archiving happens on next plan
+        if (state.lastCompletedStep === 'ship') {
             return false;
         }
-        // Plan was run but didn't archive → only warn if >24h
-        if (this.state.lastCompletedStep === 'plan') {
-            const ageHours = await this.getStepAgeHours();
-            return ageHours !== null && ageHours > 24;
+        // Check if plan completed more than 24h ago
+        if (state.lastCompletedStep === 'plan') {
+            const completedAt = new Date(state.lastStepTimestamp);
+            const now = new Date();
+            const hoursSinceComplete = (now.getTime() - completedAt.getTime()) / (1000 * 60 * 60);
+            return hoursSinceComplete > 24;
         }
-        // Other steps (ideate, build) → don't warn
         return false;
     }
     /**
-     * Persist state to file
+     * Returns default state
      */
-    async persist() {
-        await fs.mkdir(this.ossDir, { recursive: true });
-        await fs.writeFile(this.stateFile, JSON.stringify(this.state, null, 2));
+    getDefaultState() {
+        return {
+            supervisor: 'idle',
+            activeStep: null,
+            chainState: {
+                // Discovery Chain
+                ideate: 'pending',
+                requirements: 'pending',
+                apiDesign: 'pending',
+                dataModel: 'pending',
+                adr: 'pending',
+                // Planning Chain
+                plan: 'pending',
+                acceptance: 'pending',
+                // Build Chain (TDD Loop)
+                red: 'pending',
+                mock: 'pending',
+                green: 'pending',
+                refactor: 'pending',
+                integration: 'pending',
+                contract: 'pending',
+                // Ship Chain
+                ship: 'pending',
+            },
+            tddCycle: 1,
+            lastUpdate: new Date().toISOString(),
+        };
+    }
+    /**
+     * Writes state to file with updated timestamp
+     */
+    async writeState(state) {
+        state.lastUpdate = new Date().toISOString();
+        const dir = path.dirname(this.stateFilePath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        fs.writeFileSync(this.stateFilePath, JSON.stringify(state, null, 2));
     }
 }
 //# sourceMappingURL=workflow-state.js.map

@@ -36,6 +36,7 @@ if [[ -f "$WORKFLOW_FILE" ]]; then
     CURRENT_CMD=$(jq -r '.currentCommand // .activeStep // ""' "$WORKFLOW_FILE" 2>/dev/null)
     TDD_PHASE=$(jq -r '.tddPhase // ""' "$WORKFLOW_FILE" 2>/dev/null)
     SUPERVISOR=$(jq -r '.supervisor // ""' "$WORKFLOW_FILE" 2>/dev/null)
+    PROGRESS=$(jq -r '.progress // ""' "$WORKFLOW_FILE" 2>/dev/null)
 
     # Format TDD phase with colored emoji
     if [[ -n "$TDD_PHASE" && "$TDD_PHASE" != "null" ]]; then
@@ -53,6 +54,10 @@ if [[ -f "$WORKFLOW_FILE" ]]; then
                 PHASE_DISPLAY="$TDD_PHASE"
                 ;;
         esac
+        # Add progress if available
+        if [[ -n "$PROGRESS" && "$PROGRESS" != "null" ]]; then
+            PHASE_DISPLAY="$PHASE_DISPLAY $PROGRESS"
+        fi
         OSS_STATUS=" | $PHASE_DISPLAY"
     elif [[ -n "$CURRENT_CMD" && "$CURRENT_CMD" != "null" ]]; then
         OSS_STATUS=" | 🤖 $CURRENT_CMD"
@@ -63,6 +68,23 @@ if [[ -f "$WORKFLOW_FILE" ]]; then
         OSS_STATUS="$OSS_STATUS ⚡"
     elif [[ "$SUPERVISOR" == "watching" ]]; then
         OSS_STATUS="$OSS_STATUS ✓"
+    fi
+fi
+
+# Check queue.json for pending tasks
+QUEUE_FILE="${HOME}/.oss/queue.json"
+QUEUE_DISPLAY=""
+
+if [[ -f "$QUEUE_FILE" ]]; then
+    # Count pending tasks
+    PENDING_COUNT=$(jq '[.tasks[] | select(.status == "pending")] | length' "$QUEUE_FILE" 2>/dev/null)
+    # Count critical pending tasks
+    CRITICAL_COUNT=$(jq '[.tasks[] | select(.status == "pending" and .priority == "critical")] | length' "$QUEUE_FILE" 2>/dev/null)
+
+    if [[ -n "$CRITICAL_COUNT" && "$CRITICAL_COUNT" != "null" && "$CRITICAL_COUNT" -gt 0 ]]; then
+        QUEUE_DISPLAY=" 🚨$CRITICAL_COUNT"
+    elif [[ -n "$PENDING_COUNT" && "$PENDING_COUNT" != "null" && "$PENDING_COUNT" -gt 0 ]]; then
+        QUEUE_DISPLAY=" 📋$PENDING_COUNT"
     fi
 fi
 
@@ -79,4 +101,4 @@ if git rev-parse --git-dir > /dev/null 2>&1; then
     fi
 fi
 
-echo "[$MODEL] $CURRENT_DIR$GIT_BRANCH$OSS_STATUS"
+echo "[$MODEL] $CURRENT_DIR$GIT_BRANCH$OSS_STATUS$QUEUE_DISPLAY"

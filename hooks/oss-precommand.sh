@@ -7,11 +7,11 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
 NOTIFY_SCRIPT="$PLUGIN_ROOT/hooks/oss-notify.sh"
-MENUBAR_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-menubar.js"
+WORKFLOW_STATE_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js"
 LOG_SCRIPT="$PLUGIN_ROOT/hooks/oss-log.sh"
 
 # =============================================================================
-# Detect /oss:* commands and update SwiftBar workflow state
+# Detect /oss:* commands and update workflow state (for Claude Code status line)
 # =============================================================================
 
 USER_INPUT="${CLAUDE_USER_INPUT:-$*}"
@@ -21,7 +21,7 @@ if [[ "$USER_INPUT" == /oss:* ]]; then
     # Extract command name (e.g., "ideate" from "/oss:ideate" or "/oss:ideate something")
     OSS_CMD=$(echo "$USER_INPUT" | sed -E 's|^/oss:([a-z-]+).*|\1|')
 
-    # Map command to workflow step for menubar
+    # Map command to workflow step for status line
     case "$OSS_CMD" in
         ideate)
             WORKFLOW_STEP="ideate"
@@ -74,10 +74,10 @@ if [[ "$USER_INPUT" == /oss:* ]]; then
             ;;
     esac
 
-    # Update menubar state if this is a workflow command
-    if [[ -n "$WORKFLOW_STEP" && -f "$MENUBAR_CLI" ]]; then
-        node "$MENUBAR_CLI" setActiveStep "$WORKFLOW_STEP" 2>/dev/null || true
-        node "$MENUBAR_CLI" setSupervisor watching 2>/dev/null || true
+    # Update workflow state if this is a workflow command
+    if [[ -n "$WORKFLOW_STEP" && -f "$WORKFLOW_STATE_CLI" ]]; then
+        node "$WORKFLOW_STATE_CLI" setActiveStep "$WORKFLOW_STEP" 2>/dev/null || true
+        node "$WORKFLOW_STATE_CLI" setSupervisor watching 2>/dev/null || true
     fi
 
     # Initialize log file for this command

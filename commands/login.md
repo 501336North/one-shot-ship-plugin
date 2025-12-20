@@ -183,56 +183,34 @@ After successful authentication, install tools if not already present:
    fi
    ```
 
-3. **Check and install SwiftBar (menu bar status):**
+3. **Configure Claude Code status line:**
    ```bash
-   if ! [ -d "/Applications/SwiftBar.app" ]; then
-       echo "Installing SwiftBar for workflow status display..."
-       brew install --cask swiftbar
-   fi
+   # Copy status line script
+   cp "$CLAUDE_PLUGIN_ROOT/hooks/oss-statusline.sh" "$HOME/.oss/"
+   chmod +x "$HOME/.oss/oss-statusline.sh"
+
+   # Configure Claude Code to use it (user must do this manually via UI or settings)
+   echo "Status line script installed at ~/.oss/oss-statusline.sh"
+   echo "To enable: Claude Code Settings > Status Line > Command: ~/.oss/oss-statusline.sh"
    ```
 
-4. **Configure SwiftBar plugins directory (before first launch):**
+4. **Initialize workflow state:**
    ```bash
-   SWIFTBAR_PLUGINS="${HOME}/Library/Application Support/SwiftBar/Plugins"
-   mkdir -p "$SWIFTBAR_PLUGINS"
-
-   # Pre-configure SwiftBar to use our plugins directory (avoids first-launch prompt)
-   defaults write com.ameba.SwiftBar PluginDirectory -string "$SWIFTBAR_PLUGINS"
+   node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js" init
    ```
 
-5. **Copy OSS SwiftBar plugin:**
+5. **Verify status line script exists:**
    ```bash
-   cp "$CLAUDE_PLUGIN_ROOT/swiftbar/oss-workflow.1s.sh" "$SWIFTBAR_PLUGINS/"
-   chmod +x "$SWIFTBAR_PLUGINS/oss-workflow.1s.sh"
-   ```
-
-6. **Initialize menu bar state:**
-   ```bash
-   node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/update-menubar.js" init
-   ```
-
-7. **Launch SwiftBar (if not already running):**
-   ```bash
-   if ! pgrep -x "SwiftBar" > /dev/null; then
-       echo "Starting SwiftBar..."
-       open -a SwiftBar
-       sleep 2  # Give it time to start and read the plugin
-   fi
-   ```
-
-8. **Verify SwiftBar is running:**
-   ```bash
-   if pgrep -x "SwiftBar" > /dev/null; then
-       echo "SwiftBar is running. Look for 🤖 in your menu bar!"
+   if [ -x "$HOME/.oss/oss-statusline.sh" ]; then
+       echo "Status line script installed successfully!"
    else
-       echo "Note: SwiftBar didn't start. You can launch it manually from Applications."
+       echo "Note: Status line script not found. Workflow status will not be displayed."
    fi
    ```
 
 **What gets installed:**
 - **terminal-notifier** - Reliable macOS notifications with custom icon support
-- **SwiftBar** - Shows 🤖 idle / 🤖✓ BUILD / 🤖⚡ intervening in menu bar
-- **OSS Plugin** - SwiftBar plugin that reads ~/.oss/workflow-state.json
+- **Status line script** - Shows workflow phase, progress, and supervisor status in Claude Code
 
 **Skip this step** if tools are already installed and running.
 

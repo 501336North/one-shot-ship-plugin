@@ -48,23 +48,15 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
 NOTIFY_SCRIPT="$SCRIPT_DIR/oss-notify.sh"
-MENUBAR_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-menubar.js"
+WORKFLOW_STATE_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js"
 
 if [[ -x "$NOTIFY_SCRIPT" ]]; then
     "$NOTIFY_SCRIPT" --session context_saved "{\"project\": \"$REPO_NAME\", \"branch\": \"$BRANCH\", \"uncommitted\": $UNCOMMITTED_COUNT}"
 fi
 
-# Update menu bar state to idle (session ending)
-if [[ -f "$MENUBAR_CLI" ]]; then
-    node "$MENUBAR_CLI" setSupervisor idle 2>/dev/null || true
-fi
-
-# --- SwiftBar Quit (session ending) ---
-# Quit SwiftBar when Claude Code session ends - no point showing workflow status
-# when there's no active session to run commands
-if [[ "$(uname)" == "Darwin" ]] && pgrep -x "SwiftBar" > /dev/null 2>&1; then
-    # Gracefully quit SwiftBar
-    osascript -e 'tell application "SwiftBar" to quit' 2>/dev/null || killall SwiftBar 2>/dev/null || true
+# Update workflow state to idle (session ending)
+if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
+    node "$WORKFLOW_STATE_CLI" setSupervisor idle 2>/dev/null || true
 fi
 
 exit 0
