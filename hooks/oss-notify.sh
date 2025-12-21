@@ -232,6 +232,10 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "session" ]]; then
         case "$SESSION_EVENT" in
             context_restored|fresh_start)
                 node "$WORKFLOW_STATE_CLI" setSupervisor watching 2>/dev/null || true
+                # Set the session message so it appears in status line
+                if [[ -n "$MESSAGE" && "$MESSAGE" != "" ]]; then
+                    node "$WORKFLOW_STATE_CLI" setMessage "$MESSAGE" 2>/dev/null || true
+                fi
                 ;;
             context_saved)
                 node "$WORKFLOW_STATE_CLI" setSupervisor idle 2>/dev/null || true
