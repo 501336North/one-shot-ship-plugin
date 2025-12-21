@@ -432,4 +432,77 @@ describe('WorkflowStateService', () => {
       expect(state.chainState.ship).toBe('pending');
     });
   });
+
+  // ==========================================================================
+  // Status Line Integration (tddPhase field)
+  // ==========================================================================
+
+  describe('Status Line Integration', () => {
+    /**
+     * @behavior setTddPhase also sets tddPhase field for status line
+     * @acceptance-criteria oss-statusline.sh reads tddPhase field, so setTddPhase must set it
+     * @business-rule Status line displays current TDD phase
+     * @boundary WorkflowStateService → workflow-state.json → oss-statusline.sh
+     */
+    test('setTddPhase sets tddPhase field for status line display', async () => {
+      await service.initialize();
+      await service.setActiveStep('build');
+
+      await service.setTddPhase('red');
+
+      const state = await service.getState();
+      expect(state.tddPhase).toBe('red');
+    });
+
+    /**
+     * @behavior setTddPhase updates tddPhase when phase changes
+     * @acceptance-criteria tddPhase field reflects current TDD phase
+     */
+    test('setTddPhase updates tddPhase field when phase changes', async () => {
+      await service.initialize();
+      await service.setActiveStep('build');
+
+      await service.setTddPhase('red');
+      let state = await service.getState();
+      expect(state.tddPhase).toBe('red');
+
+      await service.setTddPhase('green');
+      state = await service.getState();
+      expect(state.tddPhase).toBe('green');
+
+      await service.setTddPhase('refactor');
+      state = await service.getState();
+      expect(state.tddPhase).toBe('refactor');
+    });
+
+    /**
+     * @behavior workflowComplete clears tddPhase field
+     * @acceptance-criteria Status line should not show stale TDD phase after workflow completes
+     */
+    test('workflowComplete clears tddPhase field', async () => {
+      await service.initialize();
+      await service.setActiveStep('build');
+      await service.setTddPhase('green');
+
+      await service.workflowComplete();
+
+      const state = await service.getState();
+      expect(state.tddPhase).toBeUndefined();
+    });
+
+    /**
+     * @behavior reset clears tddPhase field
+     * @acceptance-criteria Status line should not show stale TDD phase after reset
+     */
+    test('reset clears tddPhase field', async () => {
+      await service.initialize();
+      await service.setActiveStep('build');
+      await service.setTddPhase('red');
+
+      await service.reset();
+
+      const state = await service.getState();
+      expect(state.tddPhase).toBeUndefined();
+    });
+  });
 });

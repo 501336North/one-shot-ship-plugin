@@ -215,6 +215,36 @@ case "$ACTION" in
         PHASE="$ARG3"
         STATUS="${ARG4:-start}"
         log_entry "$COMMAND" "PHASE" "$PHASE $STATUS"
+
+        # Update workflow-state.json for status line display
+        # Only update on "start" events for TDD phases (RED, GREEN, REFACTOR)
+        if [[ "$STATUS" == "start" ]]; then
+            PHASE_LOWER=$(echo "$PHASE" | tr '[:upper:]' '[:lower:]')
+            if [[ "$PHASE_LOWER" =~ ^(red|green|refactor)$ ]]; then
+                # Get project directory for --project-dir flag
+                PROJECT_DIR=""
+                if [[ -f "$HOME/.oss/current-project" ]]; then
+                    PROJECT_DIR=$(cat "$HOME/.oss/current-project" 2>/dev/null | tr -d '[:space:]')
+                fi
+
+                # Find update-workflow-state.js CLI (version-agnostic lookup)
+                UPDATE_CLI=""
+                if [[ -n "$CLAUDE_PLUGIN_ROOT" && -f "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js" ]]; then
+                    UPDATE_CLI="$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js"
+                else
+                    # Find latest installed version (version-agnostic)
+                    UPDATE_CLI=$(find "$HOME/.claude/plugins/cache/one-shot-ship-plugin" -name "update-workflow-state.js" -path "*/watcher/dist/cli/*" -type f 2>/dev/null | head -1)
+                fi
+
+                if [[ -n "$UPDATE_CLI" ]]; then
+                    if [[ -n "$PROJECT_DIR" && -d "$PROJECT_DIR/.oss" ]]; then
+                        node "$UPDATE_CLI" --project-dir "$PROJECT_DIR" setTddPhase "$PHASE_LOWER" 2>/dev/null &
+                    else
+                        node "$UPDATE_CLI" setTddPhase "$PHASE_LOWER" 2>/dev/null &
+                    fi
+                fi
+            fi
+        fi
         ;;
 
     tool)
@@ -277,6 +307,52 @@ case "$ACTION" in
         AGENT="$ARG3"
         TASK="${ARG4:-spawned}"
         log_entry "$COMMAND" "AGENT" "$AGENT: $TASK"
+
+        # Update workflow-state.json for status line display
+        # Detect "starting:" or "completed:" patterns in task message
+        # Get project directory for --project-dir flag
+        PROJECT_DIR=""
+        if [[ -f "$HOME/.oss/current-project" ]]; then
+            PROJECT_DIR=$(cat "$HOME/.oss/current-project" 2>/dev/null | tr -d '[:space:]')
+        fi
+
+        # Find update-workflow-state.js CLI (version-agnostic lookup)
+        UPDATE_CLI=""
+        if [[ -n "$CLAUDE_PLUGIN_ROOT" && -f "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js" ]]; then
+            UPDATE_CLI="$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js"
+        else
+            # Find latest installed version (version-agnostic)
+            UPDATE_CLI=$(find "$HOME/.claude/plugins/cache/one-shot-ship-plugin" -name "update-workflow-state.js" -path "*/watcher/dist/cli/*" -type f 2>/dev/null | head -1)
+        fi
+
+        if [[ -n "$UPDATE_CLI" ]]; then
+            # Extract task description from message (after "starting:" or "completed:")
+            TASK_DESC=""
+            if [[ "$TASK" =~ starting:\ *(.+) ]]; then
+                TASK_DESC="${BASH_REMATCH[1]}"
+                # Validate task description (provide default if empty after regex match)
+                [[ -z "$TASK_DESC" ]] && TASK_DESC="(no task description)"
+                # Set active agent and supervisor to intervening (sequentially to avoid race)
+                # Use jq for safe JSON construction (prevents injection)
+                AGENT_JSON=$(jq -n --arg type "$AGENT" --arg task "$TASK_DESC" '{type: $type, task: $task}')
+                if [[ -n "$PROJECT_DIR" && -d "$PROJECT_DIR/.oss" ]]; then
+                    (node "$UPDATE_CLI" --project-dir "$PROJECT_DIR" setSupervisor intervening 2>/dev/null && \
+                     node "$UPDATE_CLI" --project-dir "$PROJECT_DIR" setActiveAgent "$AGENT_JSON" 2>/dev/null) &
+                else
+                    (node "$UPDATE_CLI" setSupervisor intervening 2>/dev/null && \
+                     node "$UPDATE_CLI" setActiveAgent "$AGENT_JSON" 2>/dev/null) &
+                fi
+            elif [[ "$TASK" =~ completed:\ * ]]; then
+                # Clear active agent and set supervisor to watching (sequentially to avoid race)
+                if [[ -n "$PROJECT_DIR" && -d "$PROJECT_DIR/.oss" ]]; then
+                    (node "$UPDATE_CLI" --project-dir "$PROJECT_DIR" clearActiveAgent 2>/dev/null && \
+                     node "$UPDATE_CLI" --project-dir "$PROJECT_DIR" setSupervisor watching 2>/dev/null) &
+                else
+                    (node "$UPDATE_CLI" clearActiveAgent 2>/dev/null && \
+                     node "$UPDATE_CLI" setSupervisor watching 2>/dev/null) &
+                fi
+            fi
+        fi
         ;;
 
     progress)
