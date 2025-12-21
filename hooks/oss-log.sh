@@ -21,6 +21,51 @@
 
 set -euo pipefail
 
+# Security: Validate project path to prevent path traversal attacks
+# Returns validated canonical path or empty string if invalid
+validate_project_path() {
+    local project_path="$1"
+
+    # Reject empty paths
+    [[ -z "$project_path" ]] && return 1
+
+    # Must be absolute path
+    [[ "$project_path" != /* ]] && return 1
+
+    # Canonicalize with realpath (resolves symlinks)
+    local canonical
+    canonical=$(realpath "$project_path" 2>/dev/null) || return 1
+    [[ -z "$canonical" ]] && return 1
+
+    # Must be a directory
+    [[ ! -d "$canonical" ]] && return 1
+
+    # Security: Must be within $HOME or user's temp directory
+    local home_resolved
+    home_resolved=$(realpath "$HOME" 2>/dev/null) || return 1
+
+    # Check if in home
+    local in_home=false
+    [[ "$canonical" == "$home_resolved" || "$canonical" == "$home_resolved"/* ]] && in_home=true
+
+    # Check if in temp directory (for tests)
+    local in_tmp=false
+    if [[ -n "$TMPDIR" ]]; then
+        local tmp_resolved
+        tmp_resolved=$(realpath "$TMPDIR" 2>/dev/null) || true
+        [[ -n "$tmp_resolved" && ("$canonical" == "$tmp_resolved" || "$canonical" == "$tmp_resolved"/*) ]] && in_tmp=true
+    fi
+    # Also check /private/tmp and /private/var/folders (macOS temp locations)
+    [[ "$canonical" == /private/tmp/* || "$canonical" == /private/var/folders/* ]] && in_tmp=true
+
+    if [[ "$in_home" == "false" && "$in_tmp" == "false" ]]; then
+        return 1
+    fi
+
+    echo "$canonical"
+    return 0
+}
+
 LOG_BASE="${HOME}/.oss/logs"
 CURRENT_SESSION="${LOG_BASE}/current-session"
 UNIFIED_LOG="${CURRENT_SESSION}/session.log"
@@ -534,7 +579,17 @@ case "$ACTION" in
         #   oss-log.sh workflow clear                  - Clear workflow state
         SUBCOMMAND="${COMMAND:-}"
         # Use separate file from main workflow-state.json (used by status line)
-        WORKFLOW_STATE_FILE="$HOME/.oss/health-workflow-state.json"
+        # Use project-local health state if available (with security validation)
+        RAW_PROJECT=$(cat ~/.oss/current-project 2>/dev/null | tr -d '[:space:]')
+        CURRENT_PROJECT=""
+        if [[ -n "$RAW_PROJECT" ]]; then
+            CURRENT_PROJECT=$(validate_project_path "$RAW_PROJECT") || CURRENT_PROJECT=""
+        fi
+        if [[ -n "$CURRENT_PROJECT" && -d "$CURRENT_PROJECT/.oss" ]]; then
+            WORKFLOW_STATE_FILE="$CURRENT_PROJECT/.oss/health-workflow-state.json"
+        else
+            WORKFLOW_STATE_FILE="$HOME/.oss/health-workflow-state.json"
+        fi
 
         case "$SUBCOMMAND" in
             get)

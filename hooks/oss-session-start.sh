@@ -6,8 +6,9 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/oss-config.sh" 2>/dev/null || true
 
-# Ensure ~/.oss directory exists
+# Ensure ~/.oss directory exists with secure permissions
 mkdir -p ~/.oss
+chmod 700 ~/.oss  # Only owner can access
 
 # Auto-install terminal-notifier if missing (macOS only)
 if [[ "$(uname)" == "Darwin" ]] && ! command -v terminal-notifier &>/dev/null; then
@@ -68,6 +69,13 @@ HEALTH_CHECK_CLI="$PLUGIN_ROOT/watcher/dist/cli/health-check.js"
 
 # Ensure project .oss directory exists
 mkdir -p "$PROJECT_OSS_DIR"
+
+# Write current project path for multi-project support
+# Other hooks/scripts read this to know which project is active
+if [[ -n "$CLAUDE_PROJECT_DIR" ]]; then
+    echo "$CLAUDE_PROJECT_DIR" > ~/.oss/current-project
+    chmod 600 ~/.oss/current-project  # Only owner can read/write
+fi
 
 # Initialize workflow state (for Claude Code status line)
 if [[ -f "$WORKFLOW_STATE_CLI" ]]; then

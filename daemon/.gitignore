@@ -1,1 +1,4 @@
 node_modules/
+
+# Project-level OSS state (workflow state, queue, watcher pid)
+.oss/
