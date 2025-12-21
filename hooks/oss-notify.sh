@@ -214,10 +214,14 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                 ;;
         esac
     fi
+
+    # Workflow notifications ONLY update the status line - do NOT send terminal-notifier
+    # "Ready" and "Done" notifications use oss-notification.sh and oss-stop.sh instead
+    exit 0
 fi
 
 # =============================================================================
-# Dispatch notification
+# Dispatch notification (only for non-workflow notifications)
 # =============================================================================
 
 case "$STYLE" in
