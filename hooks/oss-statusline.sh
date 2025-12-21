@@ -124,6 +124,9 @@ if [[ -f "$WORKFLOW_FILE" ]]; then
     PROGRESS=$(jq -r '.progress // ""' "$WORKFLOW_FILE" 2>/dev/null)
     CURRENT_TASK=$(jq -r '.currentTask // ""' "$WORKFLOW_FILE" 2>/dev/null)
 
+    # Read active agent info (for delegated agent work)
+    ACTIVE_AGENT_TYPE=$(jq -r '.activeAgent.type // ""' "$WORKFLOW_FILE" 2>/dev/null)
+
     # Check for daemon-reported issues
     ISSUE_TYPE=$(jq -r '.issue.type // ""' "$WORKFLOW_FILE" 2>/dev/null)
     ISSUE_MSG=$(jq -r '.issue.message // ""' "$WORKFLOW_FILE" 2>/dev/null)
@@ -180,6 +183,11 @@ if [[ -f "$WORKFLOW_FILE" ]]; then
         OSS_STATUS="$OSS_STATUS ⚡"
     elif [[ "$SUPERVISOR" == "watching" ]]; then
         OSS_STATUS="$OSS_STATUS ✓"
+    fi
+
+    # Add active agent display (when delegated work is happening)
+    if [[ -n "$ACTIVE_AGENT_TYPE" && "$ACTIVE_AGENT_TYPE" != "null" ]]; then
+        OSS_STATUS="$OSS_STATUS 🤖 $ACTIVE_AGENT_TYPE"
     fi
 fi
 

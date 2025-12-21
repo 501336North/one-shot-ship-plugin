@@ -21,6 +21,12 @@ export type ChainStep =
 export type SupervisorStatus = 'watching' | 'intervening' | 'idle';
 export type StepStatus = 'pending' | 'active' | 'done';
 
+export interface ActiveAgent {
+  type: string;  // Agent type (e.g., 'react-specialist', 'typescript-pro')
+  task: string;  // Current task description
+  startedAt: string;  // ISO timestamp when agent was spawned
+}
+
 export interface WorkflowState {
   supervisor: SupervisorStatus;
   activeStep: ChainStep | null;
@@ -44,6 +50,8 @@ export interface WorkflowState {
     // Ship Chain
     ship: StepStatus;
   };
+  activeAgent?: ActiveAgent;  // Currently executing agent (for status line)
+  tddPhase?: string;  // Current TDD phase for status line display (red/green/refactor)
   currentTask?: string;
   progress?: string;
   testsPass?: number;
@@ -194,6 +202,11 @@ export class WorkflowStateService {
       state.chainState[nextPhase] = 'pending';
     }
 
+    // Set tddPhase field for status line display (red/green/refactor only)
+    if (phase === 'red' || phase === 'green' || phase === 'refactor') {
+      state.tddPhase = phase;
+    }
+
     await this.writeState(state);
   }
 
@@ -249,6 +262,7 @@ export class WorkflowStateService {
     state.supervisor = 'idle';
     state.activeStep = null;
     state.tddCycle = undefined;
+    state.tddPhase = undefined;  // Clear TDD phase for status line
 
     await this.writeState(state);
   }
@@ -286,6 +300,28 @@ export class WorkflowStateService {
    */
   async reset(): Promise<void> {
     await this.writeState(this.getDefaultState());
+  }
+
+  /**
+   * Sets active agent for status line display
+   */
+  async setActiveAgent(info: { type: string; task: string }): Promise<void> {
+    const state = await this.getState();
+    state.activeAgent = {
+      type: info.type,
+      task: info.task,
+      startedAt: new Date().toISOString(),
+    };
+    await this.writeState(state);
+  }
+
+  /**
+   * Clears active agent when agent completes
+   */
+  async clearActiveAgent(): Promise<void> {
+    const state = await this.getState();
+    delete state.activeAgent;
+    await this.writeState(state);
   }
 
   /**

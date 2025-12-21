@@ -188,6 +188,20 @@ async function main() {
         break;
       }
 
+      case 'setActiveAgent': {
+        const agentJson = args[1] || '{}';
+        const agent = JSON.parse(agentJson);
+        await service.setActiveAgent(agent);
+        console.log(`Active agent set: ${agent.type}`);
+        break;
+      }
+
+      case 'clearActiveAgent': {
+        await service.clearActiveAgent();
+        console.log('Active agent cleared');
+        break;
+      }
+
       default:
         console.error(`Unknown command: ${command}`);
         process.exit(1);

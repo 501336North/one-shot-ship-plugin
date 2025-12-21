@@ -274,6 +274,90 @@ describe('oss-statusline.sh - Project State Reading', () => {
     });
   });
 
+  describe('Active Agent Display', () => {
+    /**
+     * @behavior Status line displays activeAgent when agent is executing
+     * @acceptance-criteria Status line shows agent type and task when activeAgent is set
+     * @business-rule Users should see which agent is currently working
+     * @boundary Shell script (oss-statusline.sh) → workflow-state.json.activeAgent
+     */
+    it('should display activeAgent type when agent is executing', () => {
+      // GIVEN: Workflow state has an active agent
+      const projectState = {
+        tddPhase: 'green',
+        supervisor: 'intervening',
+        activeAgent: {
+          type: 'react-specialist',
+          task: 'UserProfile component',
+          startedAt: new Date().toISOString()
+        }
+      };
+      fs.writeFileSync(projectWorkflowFile, JSON.stringify(projectState));
+      fs.writeFileSync(currentProjectFile, testProjectDir);
+
+      // WHEN: Running statusline script
+      const input = JSON.stringify({
+        model: { display_name: 'Claude' },
+        workspace: { current_dir: testProjectDir }
+      });
+
+      let output = '';
+      try {
+        output = execSync(`echo '${input}' | bash "${statuslineScript}"`, {
+          timeout: 5000,
+          encoding: 'utf-8',
+          cwd: testProjectDir,
+        });
+      } catch (error) {
+        const execError = error as { stdout?: string; stderr?: string };
+        output = execError.stdout || '';
+      }
+
+      // THEN: Output should show the agent type
+      expect(output).toContain('react-specialist');
+    });
+
+    /**
+     * @behavior Status line shows intervening indicator with active agent
+     * @acceptance-criteria Status line shows ⚡ when supervisor is intervening
+     */
+    it('should show intervening indicator when agent is active', () => {
+      // GIVEN: Workflow state has active agent and supervisor is intervening
+      const projectState = {
+        tddPhase: 'green',
+        supervisor: 'intervening',
+        activeAgent: {
+          type: 'typescript-pro',
+          task: 'Fix types',
+          startedAt: new Date().toISOString()
+        }
+      };
+      fs.writeFileSync(projectWorkflowFile, JSON.stringify(projectState));
+      fs.writeFileSync(currentProjectFile, testProjectDir);
+
+      // WHEN: Running statusline script
+      const input = JSON.stringify({
+        model: { display_name: 'Claude' },
+        workspace: { current_dir: testProjectDir }
+      });
+
+      let output = '';
+      try {
+        output = execSync(`echo '${input}' | bash "${statuslineScript}"`, {
+          timeout: 5000,
+          encoding: 'utf-8',
+          cwd: testProjectDir,
+        });
+      } catch (error) {
+        const execError = error as { stdout?: string; stderr?: string };
+        output = execError.stdout || '';
+      }
+
+      // THEN: Output should show ⚡ indicator for intervening
+      expect(output).toContain('⚡');
+    });
+  });
+
   describe('Queue reading', () => {
     /**
      * @behavior Status line reads queue from project .oss/ when current-project set

@@ -6,6 +6,11 @@
 export type ChainStep = 'ideate' | 'requirements' | 'apiDesign' | 'dataModel' | 'adr' | 'plan' | 'acceptance' | 'red' | 'mock' | 'green' | 'refactor' | 'integration' | 'contract' | 'ship' | 'build';
 export type SupervisorStatus = 'watching' | 'intervening' | 'idle';
 export type StepStatus = 'pending' | 'active' | 'done';
+export interface ActiveAgent {
+    type: string;
+    task: string;
+    startedAt: string;
+}
 export interface WorkflowState {
     supervisor: SupervisorStatus;
     activeStep: ChainStep | null;
@@ -25,6 +30,8 @@ export interface WorkflowState {
         contract: StepStatus;
         ship: StepStatus;
     };
+    activeAgent?: ActiveAgent;
+    tddPhase?: string;
     currentTask?: string;
     progress?: string;
     testsPass?: number;
@@ -83,6 +90,17 @@ export declare class WorkflowStateService {
      * Resets to defaults
      */
     reset(): Promise<void>;
+    /**
+     * Sets active agent for status line display
+     */
+    setActiveAgent(info: {
+        type: string;
+        task: string;
+    }): Promise<void>;
+    /**
+     * Clears active agent when agent completes
+     */
+    clearActiveAgent(): Promise<void>;
     /**
      * Determines if we should warn about archive based on workflow state
      *

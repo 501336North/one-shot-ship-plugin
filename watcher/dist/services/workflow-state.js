@@ -117,6 +117,10 @@ export class WorkflowStateService {
             const nextPhase = BUILD_PHASES[i];
             state.chainState[nextPhase] = 'pending';
         }
+        // Set tddPhase field for status line display (red/green/refactor only)
+        if (phase === 'red' || phase === 'green' || phase === 'refactor') {
+            state.tddPhase = phase;
+        }
         await this.writeState(state);
     }
     /**
@@ -161,6 +165,7 @@ export class WorkflowStateService {
         state.supervisor = 'idle';
         state.activeStep = null;
         state.tddCycle = undefined;
+        state.tddPhase = undefined; // Clear TDD phase for status line
         await this.writeState(state);
     }
     /**
@@ -192,6 +197,26 @@ export class WorkflowStateService {
      */
     async reset() {
         await this.writeState(this.getDefaultState());
+    }
+    /**
+     * Sets active agent for status line display
+     */
+    async setActiveAgent(info) {
+        const state = await this.getState();
+        state.activeAgent = {
+            type: info.type,
+            task: info.task,
+            startedAt: new Date().toISOString(),
+        };
+        await this.writeState(state);
+    }
+    /**
+     * Clears active agent when agent completes
+     */
+    async clearActiveAgent() {
+        const state = await this.getState();
+        delete state.activeAgent;
+        await this.writeState(state);
     }
     /**
      * Determines if we should warn about archive based on workflow state
