@@ -41,15 +41,15 @@ Register at https://www.oneshotship.com
 $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init contract
 ```
 
-## Step 3: Send Start Notification
+## Step 3: Update Status Line (Start)
 
-**You MUST execute this notification command before proceeding.**
+**You MUST update the workflow status before proceeding.**
 
 ```bash
 $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow contract start '{}'
 ```
 
-## Step 3: Fetch Prompt from API
+## Step 4: Fetch Prompt from API
 
 ```
 URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/commands/contract
@@ -58,7 +58,7 @@ Headers:
   Authorization: Bearer {apiKey}
 ```
 
-## Step 4: Execute the Fetched Prompt
+## Step 5: Execute the Fetched Prompt
 
 The prompt guides you through:
 - Defining consumer contracts
@@ -66,9 +66,9 @@ The prompt guides you through:
 - Verifying provider compliance
 - Handling contract failures
 
-## Step 5: Send Completion Notification
+## Step 6: Update Status Line (Completion)
 
-**You MUST execute the appropriate notification command.**
+**You MUST update the workflow status on completion.**
 
 On success (contracts verified):
 ```bash

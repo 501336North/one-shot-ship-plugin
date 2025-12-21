@@ -58,15 +58,15 @@ Headers:
 
 **All IRON LAW violations must be self-corrected before proceeding.**
 
-## Step 3: Send Start Notification
+## Step 4: Update Status Line (Start)
 
 ```bash
 $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow iterate start '{}'
 ```
 
-**You MUST execute this notification command before proceeding.**
+**You MUST update the workflow status before proceeding.**
 
-## Step 4: Fetch Prompt from API
+## Step 5: Fetch Prompt from API
 
 ```
 URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/workflows/iterate
@@ -75,7 +75,7 @@ Headers:
   Authorization: Bearer {apiKey}
 ```
 
-## Step 5: Execute the Fetched Prompt
+## Step 6: Execute the Fetched Prompt
 
 The prompt will guide you through:
 - Loading context from dev docs
@@ -83,9 +83,9 @@ The prompt will guide you through:
 - Scope assessment
 - Creating ITERATIONS.md with delta tasks
 
-## Step 6: Send Completion Notifications
+## Step 7: Update Status Line (Completion)
 
-**You MUST execute these notification commands at the appropriate moments.**
+**You MUST update the workflow status on completion.**
 
 After iteration plan is complete:
 ```bash

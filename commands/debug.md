@@ -57,9 +57,9 @@ Headers:
 
 **All 5 IRON LAWS must be followed. Self-correct any violations before proceeding.**
 
-## Step 4: Send Start Notification
+## Step 4: Update Status Line (Start)
 
-**You MUST execute this notification command before proceeding.**
+**You MUST update the workflow status before proceeding.**
 
 ```bash
 $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow debug start '{"bug": "{DESCRIPTION}"}'
@@ -82,9 +82,9 @@ The prompt guides the debugging workflow:
 - Write reproduction test (TDD RED phase)
 - Create DEBUG.md and update PROGRESS.md
 
-## Step 6: Send Milestone Notifications
+## Step 7: Update Status Line (Milestones)
 
-**You MUST execute these notification commands at the appropriate moments.**
+**You MUST update the workflow status at key milestones.**
 
 After root cause found:
 ```bash
