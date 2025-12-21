@@ -166,6 +166,7 @@ export class WorkflowStateService {
         state.activeStep = null;
         state.tddCycle = undefined;
         state.tddPhase = undefined; // Clear TDD phase for status line
+        delete state.message; // Clear message for status line
         await this.writeState(state);
     }
     /**
@@ -216,6 +217,22 @@ export class WorkflowStateService {
     async clearActiveAgent() {
         const state = await this.getState();
         delete state.activeAgent;
+        await this.writeState(state);
+    }
+    /**
+     * Sets message for status line display (workflow/session events)
+     */
+    async setMessage(message) {
+        const state = await this.getState();
+        state.message = message;
+        await this.writeState(state);
+    }
+    /**
+     * Clears message from status line
+     */
+    async clearMessage() {
+        const state = await this.getState();
+        delete state.message;
         await this.writeState(state);
     }
     /**

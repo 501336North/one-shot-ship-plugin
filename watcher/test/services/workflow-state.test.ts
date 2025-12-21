@@ -505,4 +505,66 @@ describe('WorkflowStateService', () => {
       expect(state.tddPhase).toBeUndefined();
     });
   });
+
+  // ==========================================================================
+  // Message field (for workflow/session events in status line)
+  // ==========================================================================
+
+  describe('Message Field', () => {
+    /**
+     * @behavior setMessage sets the message field for status line display
+     * @acceptance-criteria AC-STATUS-MSG.1
+     * @business-rule Users should see workflow event messages in status line
+     */
+    test('setMessage sets the message field', async () => {
+      await service.initialize();
+
+      await service.setMessage('Ideating');
+
+      const state = await service.getState();
+      expect(state.message).toBe('Ideating');
+    });
+
+    /**
+     * @behavior clearMessage removes the message field
+     * @acceptance-criteria AC-STATUS-MSG.2
+     */
+    test('clearMessage removes the message field', async () => {
+      await service.initialize();
+      await service.setMessage('Building 3/10');
+
+      await service.clearMessage();
+
+      const state = await service.getState();
+      expect(state.message).toBeUndefined();
+    });
+
+    /**
+     * @behavior workflowComplete clears message field
+     * @acceptance-criteria AC-STATUS-MSG.3
+     */
+    test('workflowComplete clears message field', async () => {
+      await service.initialize();
+      await service.setMessage('Shipping');
+
+      await service.workflowComplete();
+
+      const state = await service.getState();
+      expect(state.message).toBeUndefined();
+    });
+
+    /**
+     * @behavior reset clears message field
+     * @acceptance-criteria AC-STATUS-MSG.4
+     */
+    test('reset clears message field', async () => {
+      await service.initialize();
+      await service.setMessage('Planning');
+
+      await service.reset();
+
+      const state = await service.getState();
+      expect(state.message).toBeUndefined();
+    });
+  });
 });

@@ -32,6 +32,7 @@ export interface WorkflowState {
     };
     activeAgent?: ActiveAgent;
     tddPhase?: string;
+    message?: string;
     currentTask?: string;
     progress?: string;
     testsPass?: number;
@@ -101,6 +102,14 @@ export declare class WorkflowStateService {
      * Clears active agent when agent completes
      */
     clearActiveAgent(): Promise<void>;
+    /**
+     * Sets message for status line display (workflow/session events)
+     */
+    setMessage(message: string): Promise<void>;
+    /**
+     * Clears message from status line
+     */
+    clearMessage(): Promise<void>;
     /**
      * Determines if we should warn about archive based on workflow state
      *

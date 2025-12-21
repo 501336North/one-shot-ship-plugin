@@ -406,4 +406,373 @@ describe('oss-statusline.sh - Project State Reading', () => {
       expect(output).toContain('🚨2');
     });
   });
+
+  describe('Health-first ordering', () => {
+    /**
+     * @behavior Status line shows health indicator at the very beginning
+     * @acceptance-criteria Health indicator (✅ or ⛔ LAW#X) appears BEFORE [Model]
+     * @business-rule Health is the most important at-a-glance information
+     * @boundary Shell script (oss-statusline.sh)
+     */
+    it('should show health indicator at the beginning of the status line', () => {
+      // GIVEN: Project has workflow state (no violations, so health should be ✅)
+      const projectState = {
+        tddPhase: 'green',
+        supervisor: 'watching',
+        currentCommand: 'build'
+      };
+      fs.writeFileSync(projectWorkflowFile, JSON.stringify(projectState));
+      fs.writeFileSync(currentProjectFile, testProjectDir);
+
+      // AND: No iron law violations (so health is ✅)
+      const ironLawFile = path.join(ossDir, 'iron-law-state.json');
+      if (fs.existsSync(ironLawFile)) {
+        fs.unlinkSync(ironLawFile);
+      }
+
+      // WHEN: Running statusline script
+      const input = JSON.stringify({
+        model: { display_name: 'Claude' },
+        workspace: { current_dir: testProjectDir }
+      });
+
+      let output = '';
+      try {
+        output = execSync(`echo '${input}' | bash "${statuslineScript}"`, {
+          timeout: 5000,
+          encoding: 'utf-8',
+          cwd: testProjectDir,
+        });
+      } catch (error) {
+        const execError = error as { stdout?: string; stderr?: string };
+        output = execError.stdout || '';
+      }
+
+      // THEN: Output should START with health indicator, not [Model]
+      // Target format: ✅ [Model] Dir | ...
+      // Current format: [Model] Dir | ... ✅ ...
+      expect(output.trim()).toMatch(/^✅/);
+    });
+
+    /**
+     * @behavior Status line shows IRON LAW violation at beginning when active
+     * @acceptance-criteria When IRON LAW is violated, ⛔ LAW#X appears BEFORE [Model]
+     */
+    it('should show IRON LAW violation at the beginning when active', () => {
+      // GIVEN: Project has workflow state
+      const projectState = {
+        tddPhase: 'green',
+        supervisor: 'watching',
+        currentCommand: 'build'
+      };
+      fs.writeFileSync(projectWorkflowFile, JSON.stringify(projectState));
+      fs.writeFileSync(currentProjectFile, testProjectDir);
+
+      // AND: There is an active IRON LAW violation
+      const ironLawFile = path.join(ossDir, 'iron-law-state.json');
+      const ironLawState = {
+        violations: [
+          { law: '4', type: 'main_branch', detected: new Date().toISOString(), resolved: null }
+        ]
+      };
+      fs.writeFileSync(ironLawFile, JSON.stringify(ironLawState));
+
+      // WHEN: Running statusline script
+      const input = JSON.stringify({
+        model: { display_name: 'Claude' },
+        workspace: { current_dir: testProjectDir }
+      });
+
+      let output = '';
+      try {
+        output = execSync(`echo '${input}' | bash "${statuslineScript}"`, {
+          timeout: 5000,
+          encoding: 'utf-8',
+          cwd: testProjectDir,
+        });
+      } catch (error) {
+        const execError = error as { stdout?: string; stderr?: string };
+        output = execError.stdout || '';
+      }
+
+      // THEN: Output should START with violation indicator
+      expect(output.trim()).toMatch(/^⛔ LAW#4/);
+
+      // Cleanup
+      if (fs.existsSync(ironLawFile)) {
+        fs.unlinkSync(ironLawFile);
+      }
+    });
+  });
+
+  describe('Enhanced queue display', () => {
+    /**
+     * @behavior Status line shows queue count AND top task name
+     * @acceptance-criteria Format: 📋3: Implement auth (not just 📋3)
+     * @business-rule Users should see what's next in queue at a glance
+     * @boundary Shell script (oss-statusline.sh)
+     */
+    it('should show queue count and top task description', () => {
+      // GIVEN: Project has 3 pending tasks in queue
+      const projectQueue = {
+        tasks: [
+          { status: 'pending', priority: 'normal', description: 'Implement auth' },
+          { status: 'pending', priority: 'normal', description: 'Add validation' },
+          { status: 'pending', priority: 'normal', description: 'Write tests' }
+        ]
+      };
+      fs.writeFileSync(projectQueueFile, JSON.stringify(projectQueue));
+      fs.writeFileSync(projectWorkflowFile, JSON.stringify({ tddPhase: 'green' }));
+      fs.writeFileSync(currentProjectFile, testProjectDir);
+
+      // WHEN: Running statusline script
+      const input = JSON.stringify({
+        model: { display_name: 'Claude' },
+        workspace: { current_dir: testProjectDir }
+      });
+
+      let output = '';
+      try {
+        output = execSync(`echo '${input}' | bash "${statuslineScript}"`, {
+          timeout: 5000,
+          encoding: 'utf-8',
+          cwd: testProjectDir,
+        });
+      } catch (error) {
+        const execError = error as { stdout?: string; stderr?: string };
+        output = execError.stdout || '';
+      }
+
+      // THEN: Output should show count AND description: "📋3: Implement auth"
+      expect(output).toContain('📋3: Implement auth');
+    });
+
+    /**
+     * @behavior Critical queue shows count AND top task name
+     * @acceptance-criteria Format: 🚨2: Fix security bug (not just 🚨2)
+     */
+    it('should show critical queue count and top task description', () => {
+      // GIVEN: Project has 2 critical tasks in queue
+      const projectQueue = {
+        tasks: [
+          { status: 'pending', priority: 'critical', description: 'Fix security bug' },
+          { status: 'pending', priority: 'critical', description: 'Patch auth' }
+        ]
+      };
+      fs.writeFileSync(projectQueueFile, JSON.stringify(projectQueue));
+      fs.writeFileSync(projectWorkflowFile, JSON.stringify({ tddPhase: 'green' }));
+      fs.writeFileSync(currentProjectFile, testProjectDir);
+
+      // WHEN: Running statusline script
+      const input = JSON.stringify({
+        model: { display_name: 'Claude' },
+        workspace: { current_dir: testProjectDir }
+      });
+
+      let output = '';
+      try {
+        output = execSync(`echo '${input}' | bash "${statuslineScript}"`, {
+          timeout: 5000,
+          encoding: 'utf-8',
+          cwd: testProjectDir,
+        });
+      } catch (error) {
+        const execError = error as { stdout?: string; stderr?: string };
+        output = execError.stdout || '';
+      }
+
+      // THEN: Output should show count AND description: "🚨2: Fix security bug"
+      expect(output).toContain('🚨2: Fix security bug');
+    });
+
+    /**
+     * @behavior Long task descriptions should be truncated
+     * @acceptance-criteria Task names >20 chars are truncated with ellipsis
+     */
+    it('should truncate long task descriptions', () => {
+      // GIVEN: Project has a task with a very long description
+      const projectQueue = {
+        tasks: [
+          { status: 'pending', priority: 'normal', description: 'Implement the entire user authentication and authorization system with OAuth2' }
+        ]
+      };
+      fs.writeFileSync(projectQueueFile, JSON.stringify(projectQueue));
+      fs.writeFileSync(projectWorkflowFile, JSON.stringify({ tddPhase: 'green' }));
+      fs.writeFileSync(currentProjectFile, testProjectDir);
+
+      // WHEN: Running statusline script
+      const input = JSON.stringify({
+        model: { display_name: 'Claude' },
+        workspace: { current_dir: testProjectDir }
+      });
+
+      let output = '';
+      try {
+        output = execSync(`echo '${input}' | bash "${statuslineScript}"`, {
+          timeout: 5000,
+          encoding: 'utf-8',
+          cwd: testProjectDir,
+        });
+      } catch (error) {
+        const execError = error as { stdout?: string; stderr?: string };
+        output = execError.stdout || '';
+      }
+
+      // THEN: Task name should be truncated (not contain the full description)
+      expect(output).not.toContain('OAuth2');
+      // And should contain a truncated version with ellipsis
+      expect(output).toMatch(/📋1: Implement the entire.{0,5}\.{3}/);
+    });
+  });
+
+  describe('Message display', () => {
+    /**
+     * @behavior Status line shows message at end when set in workflow state
+     * @acceptance-criteria Format: ... | 📣 Ideating
+     * @business-rule Users should see workflow/session messages in status line
+     * @boundary Shell script (oss-statusline.sh)
+     */
+    it('should display message at end of status line', () => {
+      // GIVEN: Workflow state has a message set
+      const projectState = {
+        tddPhase: 'green',
+        supervisor: 'watching',
+        message: 'Building 3/10'
+      };
+      fs.writeFileSync(projectWorkflowFile, JSON.stringify(projectState));
+      fs.writeFileSync(currentProjectFile, testProjectDir);
+
+      // WHEN: Running statusline script
+      const input = JSON.stringify({
+        model: { display_name: 'Claude' },
+        workspace: { current_dir: testProjectDir }
+      });
+
+      let output = '';
+      try {
+        output = execSync(`echo '${input}' | bash "${statuslineScript}"`, {
+          timeout: 5000,
+          encoding: 'utf-8',
+          cwd: testProjectDir,
+        });
+      } catch (error) {
+        const execError = error as { stdout?: string; stderr?: string };
+        output = execError.stdout || '';
+      }
+
+      // THEN: Output should contain the message with emoji prefix
+      expect(output).toContain('📣 Building 3/10');
+    });
+
+    /**
+     * @behavior Status line shows no message when not set
+     * @acceptance-criteria No 📣 section when message is empty/undefined
+     */
+    it('should not show message section when message is not set', () => {
+      // GIVEN: Workflow state has no message
+      const projectState = {
+        tddPhase: 'green',
+        supervisor: 'watching'
+      };
+      fs.writeFileSync(projectWorkflowFile, JSON.stringify(projectState));
+      fs.writeFileSync(currentProjectFile, testProjectDir);
+
+      // WHEN: Running statusline script
+      const input = JSON.stringify({
+        model: { display_name: 'Claude' },
+        workspace: { current_dir: testProjectDir }
+      });
+
+      let output = '';
+      try {
+        output = execSync(`echo '${input}' | bash "${statuslineScript}"`, {
+          timeout: 5000,
+          encoding: 'utf-8',
+          cwd: testProjectDir,
+        });
+      } catch (error) {
+        const execError = error as { stdout?: string; stderr?: string };
+        output = execError.stdout || '';
+      }
+
+      // THEN: Output should NOT contain message emoji
+      expect(output).not.toContain('📣');
+    });
+  });
+
+  describe('Idle supervisor display', () => {
+    /**
+     * @behavior Status line shows 💾 when supervisor is idle
+     * @acceptance-criteria 💾 indicator shown when supervisor is 'idle'
+     * @business-rule Users should see when context is saved/session idle
+     * @boundary Shell script (oss-statusline.sh)
+     */
+    it('should display 💾 when supervisor is idle', () => {
+      // GIVEN: Workflow state has supervisor set to idle
+      const projectState = {
+        tddPhase: null,
+        supervisor: 'idle',
+        currentCommand: null
+      };
+      fs.writeFileSync(projectWorkflowFile, JSON.stringify(projectState));
+      fs.writeFileSync(currentProjectFile, testProjectDir);
+
+      // WHEN: Running statusline script
+      const input = JSON.stringify({
+        model: { display_name: 'Claude' },
+        workspace: { current_dir: testProjectDir }
+      });
+
+      let output = '';
+      try {
+        output = execSync(`echo '${input}' | bash "${statuslineScript}"`, {
+          timeout: 5000,
+          encoding: 'utf-8',
+          cwd: testProjectDir,
+        });
+      } catch (error) {
+        const execError = error as { stdout?: string; stderr?: string };
+        output = execError.stdout || '';
+      }
+
+      // THEN: Output should contain 💾 indicator
+      expect(output).toContain('💾');
+    });
+
+    /**
+     * @behavior Status line shows ✓ when supervisor is watching (not idle)
+     * @acceptance-criteria ✓ indicator shown when supervisor is 'watching'
+     */
+    it('should display ✓ when supervisor is watching', () => {
+      // GIVEN: Workflow state has supervisor set to watching
+      const projectState = {
+        tddPhase: 'green',
+        supervisor: 'watching'
+      };
+      fs.writeFileSync(projectWorkflowFile, JSON.stringify(projectState));
+      fs.writeFileSync(currentProjectFile, testProjectDir);
+
+      // WHEN: Running statusline script
+      const input = JSON.stringify({
+        model: { display_name: 'Claude' },
+        workspace: { current_dir: testProjectDir }
+      });
+
+      let output = '';
+      try {
+        output = execSync(`echo '${input}' | bash "${statuslineScript}"`, {
+          timeout: 5000,
+          encoding: 'utf-8',
+          cwd: testProjectDir,
+        });
+      } catch (error) {
+        const execError = error as { stdout?: string; stderr?: string };
+        output = execError.stdout || '';
+      }
+
+      // THEN: Output should contain ✓ indicator (not 💾)
+      expect(output).toContain('✓');
+      expect(output).not.toContain('💾');
+    });
+  });
 });

@@ -127,6 +127,9 @@ if [[ -f "$WORKFLOW_FILE" ]]; then
     # Read active agent info (for delegated agent work)
     ACTIVE_AGENT_TYPE=$(jq -r '.activeAgent.type // ""' "$WORKFLOW_FILE" 2>/dev/null)
 
+    # Read message for status line display
+    MESSAGE=$(jq -r '.message // ""' "$WORKFLOW_FILE" 2>/dev/null)
+
     # Check for daemon-reported issues
     ISSUE_TYPE=$(jq -r '.issue.type // ""' "$WORKFLOW_FILE" 2>/dev/null)
     ISSUE_MSG=$(jq -r '.issue.message // ""' "$WORKFLOW_FILE" 2>/dev/null)
@@ -183,6 +186,8 @@ if [[ -f "$WORKFLOW_FILE" ]]; then
         OSS_STATUS="$OSS_STATUS ⚡"
     elif [[ "$SUPERVISOR" == "watching" ]]; then
         OSS_STATUS="$OSS_STATUS ✓"
+    elif [[ "$SUPERVISOR" == "idle" ]]; then
+        OSS_STATUS="$OSS_STATUS 💾"
     fi
 
     # Add active agent display (when delegated work is happening)
@@ -207,10 +212,28 @@ if [[ -f "$QUEUE_FILE" ]]; then
     PENDING_COUNT=$(jq '[.tasks[] | select(.status == "pending")] | length' "$QUEUE_FILE" 2>/dev/null)
 
     if [[ -n "$CRITICAL_COUNT" && "$CRITICAL_COUNT" != "null" && "$CRITICAL_COUNT" -gt 0 ]]; then
-        QUEUE_DISPLAY=" 🚨$CRITICAL_COUNT"
+        # Get first critical task description
+        TOP_TASK=$(jq -r '[.tasks[] | select(.status == "pending" and .priority == "critical")][0].description // ""' "$QUEUE_FILE" 2>/dev/null)
+        # Truncate to 20 chars with ellipsis if needed
+        if [[ ${#TOP_TASK} -gt 20 ]]; then
+            TOP_TASK="${TOP_TASK:0:20}..."
+        fi
+        QUEUE_DISPLAY=" 🚨$CRITICAL_COUNT: $TOP_TASK"
     elif [[ -n "$PENDING_COUNT" && "$PENDING_COUNT" != "null" && "$PENDING_COUNT" -gt 0 ]]; then
-        QUEUE_DISPLAY=" 📋$PENDING_COUNT"
+        # Get first pending task description
+        TOP_TASK=$(jq -r '[.tasks[] | select(.status == "pending")][0].description // ""' "$QUEUE_FILE" 2>/dev/null)
+        # Truncate to 20 chars with ellipsis if needed
+        if [[ ${#TOP_TASK} -gt 20 ]]; then
+            TOP_TASK="${TOP_TASK:0:20}..."
+        fi
+        QUEUE_DISPLAY=" 📋$PENDING_COUNT: $TOP_TASK"
     fi
+fi
+
+# === MESSAGE DISPLAY ===
+MESSAGE_DISPLAY=""
+if [[ -n "$MESSAGE" && "$MESSAGE" != "null" && "$MESSAGE" != "" ]]; then
+    MESSAGE_DISPLAY=" 📣 $MESSAGE"
 fi
 
 # === GIT BRANCH ===
@@ -228,5 +251,5 @@ if git rev-parse --git-dir > /dev/null 2>&1; then
 fi
 
 # === OUTPUT ===
-# Format: [Model] Dir | Branch | OSS Health | TDD Phase Progress Supervisor | Issue
-echo "[$MODEL] $CURRENT_DIR$GIT_BRANCH | $OSS_HEALTH$OSS_STATUS$ISSUE_DISPLAY$QUEUE_DISPLAY"
+# Format: OSS Health [Model] Dir | Branch | TDD Phase Progress Supervisor | Issue | Queue | Message
+echo "$OSS_HEALTH [$MODEL] $CURRENT_DIR$GIT_BRANCH$OSS_STATUS$ISSUE_DISPLAY$QUEUE_DISPLAY$MESSAGE_DISPLAY"
