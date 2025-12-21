@@ -18,8 +18,7 @@ set -euo pipefail
 
 DRY_RUN=false
 LIST_ONLY=false
-DEV_ACTIVE="$HOME/.oss/dev/active"
-DEV_COMPLETED="$HOME/.oss/dev/completed"
+PROJECT_DIR=""
 
 # Parse arguments
 for arg in "$@"; do
@@ -30,12 +29,47 @@ for arg in "$@"; do
         --list)
             LIST_ONLY=true
             ;;
+        --project-dir=*)
+            PROJECT_DIR="${arg#*=}"
+            ;;
     esac
 done
 
+# Get project directory from current-project if not specified
+if [[ -z "$PROJECT_DIR" ]]; then
+    if [[ -f "$HOME/.oss/current-project" ]]; then
+        PROJECT_DIR=$(cat "$HOME/.oss/current-project" 2>/dev/null | tr -d '[:space:]')
+    fi
+fi
+
+# Resolve dev docs path with project-local priority
+# Priority: 1) Project .oss/dev/, 2) Project dev/, 3) Global ~/.oss/dev/
+resolve_dev_docs_path() {
+    local project_dir="$1"
+
+    # Priority 1: Project .oss/dev/
+    if [[ -n "$project_dir" && -d "$project_dir/.oss/dev/active" ]]; then
+        echo "$project_dir/.oss/dev"
+        return
+    fi
+
+    # Priority 2: Project dev/ (backward compatibility)
+    if [[ -n "$project_dir" && -d "$project_dir/dev/active" ]]; then
+        echo "$project_dir/dev"
+        return
+    fi
+
+    # Priority 3: Global ~/.oss/dev/
+    echo "$HOME/.oss/dev"
+}
+
+DEV_DOCS_BASE=$(resolve_dev_docs_path "$PROJECT_DIR")
+DEV_ACTIVE="$DEV_DOCS_BASE/active"
+DEV_COMPLETED="$DEV_DOCS_BASE/completed"
+
 # Check if dev/active exists
 if [[ ! -d "$DEV_ACTIVE" ]]; then
-    echo "No dev/active/ directory found"
+    echo "No dev/active/ directory found at $DEV_ACTIVE"
     exit 0
 fi
 

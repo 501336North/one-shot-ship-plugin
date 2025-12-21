@@ -16,7 +16,7 @@ Create a comprehensive TDD implementation plan for your feature or project.
 > 2. Use `--force` flag to bypass: `/oss:plan --force`
 >
 > Why? Fresh context = CLAUDE.md (with IRON LAWS) as primary guidance = deterministic results.
-> State is loaded from `~/.oss/dev/active/{feature}/` docs, not conversation history.
+> State is loaded from `.oss/dev/active/{feature}/` (project-local) or `~/.oss/dev/active/{feature}/` (fallback).
 
 ## What This Command Does
 
@@ -132,7 +132,7 @@ API temporarily unavailable. Contact support@oneshotship.com
 
 ## Output
 
-Creates a structured plan in `~/.oss/dev/active/{feature-name}/PLAN.md` with:
+Creates a structured plan in `.oss/dev/active/{feature-name}/PLAN.md` (project-local) with:
 - Phase breakdown
 - Individual tasks with test requirements
 - Acceptance criteria

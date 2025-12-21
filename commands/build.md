@@ -18,7 +18,7 @@ Execute your implementation plan using strict Test-Driven Development (TDD).
 > **⚠️ Do NOT `/clear` between `/oss:red` → `/oss:green` → `/oss:refactor`.**
 > The TDD cycle requires context continuity to see the failing test.
 >
-> State is loaded from `~/.oss/dev/active/{feature}/PLAN.md` and `PROGRESS.md`.
+> State is loaded from `.oss/dev/active/{feature}/` (project-local) or `~/.oss/dev/active/{feature}/` (fallback).
 
 ## What This Command Does
 
@@ -135,7 +135,7 @@ The CLI fetches the encrypted prompt from the API and decrypts it locally using 
 ## Step 5: Execute the Fetched Prompt
 
 The prompt enforces TDD discipline:
-- Loads plan from `~/.oss/dev/active/{feature}/PLAN.md`
+- Loads plan from `.oss/dev/active/{feature}/PLAN.md` (project-local or global fallback)
 - Executes each task with RED-GREEN-REFACTOR
 - Updates progress as tasks complete
 - Reports any blockers or issues

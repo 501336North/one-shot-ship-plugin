@@ -63,6 +63,11 @@ export declare class IronLawMonitor {
     private checkGitBranch;
     private checkTdd;
     private checkDevDocs;
+    /**
+     * Get dev docs path with project-local priority.
+     * Priority: 1) .oss/dev/, 2) dev/, 3) ~/.oss/dev/
+     */
+    private getDevDocsPath;
     private isSourceFile;
     private isTestFile;
     private getTestFileForSource;

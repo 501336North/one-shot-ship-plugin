@@ -162,17 +162,22 @@ export class IronLawMonitor {
         if (!this.activeFeature) {
             return null;
         }
-        // Dev docs are stored in ~/.oss/dev/active/ (project-agnostic)
-        const ossDevPath = path.join(process.env.HOME || '~', '.oss', 'dev', 'active', this.activeFeature, 'PROGRESS.md');
+        // Dev docs path with project-local priority
+        // Priority: 1) .oss/dev/, 2) dev/, 3) ~/.oss/dev/
+        const devDocsPath = this.getDevDocsPath();
+        const progressPath = path.join(devDocsPath, 'active', this.activeFeature, 'PROGRESS.md');
         try {
-            if (!fs.existsSync(ossDevPath)) {
+            if (!fs.existsSync(progressPath)) {
+                const relativePath = devDocsPath.startsWith(this.projectDir)
+                    ? path.relative(this.projectDir, devDocsPath)
+                    : devDocsPath;
                 return {
                     law: 6,
                     type: 'iron_law_docs',
                     message: `Missing PROGRESS.md for ${this.activeFeature}`,
                     detected: new Date().toISOString(),
                     resolved: null,
-                    correctiveAction: `Create ~/.oss/dev/active/${this.activeFeature}/PROGRESS.md`,
+                    correctiveAction: `Create ${relativePath}/active/${this.activeFeature}/PROGRESS.md`,
                 };
             }
         }
@@ -180,6 +185,24 @@ export class IronLawMonitor {
             // Can't check - no violation
         }
         return null;
+    }
+    /**
+     * Get dev docs path with project-local priority.
+     * Priority: 1) .oss/dev/, 2) dev/, 3) ~/.oss/dev/
+     */
+    getDevDocsPath() {
+        // Priority 1: Project .oss/dev/
+        const projectOssDev = path.join(this.projectDir, '.oss', 'dev');
+        if (fs.existsSync(path.join(projectOssDev, 'active'))) {
+            return projectOssDev;
+        }
+        // Priority 2: Project dev/ (backward compatibility)
+        const projectDev = path.join(this.projectDir, 'dev');
+        if (fs.existsSync(path.join(projectDev, 'active'))) {
+            return projectDev;
+        }
+        // Priority 3: Global ~/.oss/dev/
+        return path.join(process.env.HOME || '~', '.oss', 'dev');
     }
     // ===========================================================================
     // Helper Methods

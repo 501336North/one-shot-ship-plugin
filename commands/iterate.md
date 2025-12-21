@@ -15,7 +15,7 @@ Iterate on working features when they don't match original intent or when scope 
 > 1. Run `/clear` first, then re-run (recommended)
 > 2. Use `--force` flag to bypass: `/oss:iterate --force`
 >
-> State is loaded from `~/.oss/dev/active/{feature}/` docs.
+> State is loaded from `.oss/dev/active/{feature}/` (project-local) or `~/.oss/dev/active/{feature}/` (fallback).
 
 ## What This Command Does
 
