@@ -64,15 +64,30 @@ if [ -f "$CONTEXT_FILE" ]; then
   echo "---"
 fi
 
-# Check for dev docs in global ~/.oss/dev/active/
-DEV_DOCS_DIR="$HOME/.oss/dev/active"
-if [ -d "$DEV_DOCS_DIR" ] && [ -n "$(ls -A $DEV_DOCS_DIR 2>/dev/null)" ]; then
+# Check for dev docs with project-local priority
+# Priority: 1) ./.oss/dev/active/, 2) ./dev/active/, 3) ~/.oss/dev/active/
+PROJECT_DIR=$(pwd)
+DEV_DOCS_DIR=""
+DEV_DOCS_DISPLAY=""
+
+if [ -d "$PROJECT_DIR/.oss/dev/active" ] && [ -n "$(ls -A "$PROJECT_DIR/.oss/dev/active" 2>/dev/null)" ]; then
+  DEV_DOCS_DIR="$PROJECT_DIR/.oss/dev/active"
+  DEV_DOCS_DISPLAY=".oss/dev/active"
+elif [ -d "$PROJECT_DIR/dev/active" ] && [ -n "$(ls -A "$PROJECT_DIR/dev/active" 2>/dev/null)" ]; then
+  DEV_DOCS_DIR="$PROJECT_DIR/dev/active"
+  DEV_DOCS_DISPLAY="dev/active"
+elif [ -d "$HOME/.oss/dev/active" ] && [ -n "$(ls -A "$HOME/.oss/dev/active" 2>/dev/null)" ]; then
+  DEV_DOCS_DIR="$HOME/.oss/dev/active"
+  DEV_DOCS_DISPLAY="~/.oss/dev/active"
+fi
+
+if [ -n "$DEV_DOCS_DIR" ]; then
   echo ""
   echo "## Active Development Features"
   for FEATURE_DIR in "$DEV_DOCS_DIR"/*; do
     if [ -d "$FEATURE_DIR" ]; then
       FEATURE_NAME=$(basename "$FEATURE_DIR")
-      echo "- **$FEATURE_NAME**: ~/.oss/dev/active/$FEATURE_NAME/"
+      echo "- **$FEATURE_NAME**: $DEV_DOCS_DISPLAY/$FEATURE_NAME/"
     fi
   done
   echo ""

@@ -196,9 +196,22 @@ async function runHealthCheck(quiet = false, verbose = false) {
         await workflowState.initialize();
         const state = await workflowState.getState();
         const currentFeature = state.currentFeature;
+        // Resolve dev docs path with project-local priority
+        // Priority: 1) ./.oss/dev/, 2) ./dev/, 3) ~/.oss/dev/
+        const projectDir = process.cwd();
+        let devDocsBase;
+        if (fs.existsSync(path.join(projectDir, '.oss', 'dev', 'active'))) {
+            devDocsBase = path.join(projectDir, '.oss', 'dev');
+        }
+        else if (fs.existsSync(path.join(projectDir, 'dev', 'active'))) {
+            devDocsBase = path.join(projectDir, 'dev');
+        }
+        else {
+            devDocsBase = path.join(globalOssDir, 'dev');
+        }
         // Determine feature path - only set if there's an active feature
         const featurePath = currentFeature
-            ? path.join(globalOssDir, 'dev', 'active', currentFeature)
+            ? path.join(devDocsBase, 'active', currentFeature)
             : '';
         const healthcheckService = new HealthcheckService({
             logReader: null,
@@ -207,9 +220,9 @@ async function runHealthCheck(quiet = false, verbose = false) {
             // Session logs are in global ~/.oss/
             sessionLogPath: path.join(globalOssDir, 'logs', 'current-session', 'session.log'),
             sessionActive: true,
-            // Dev docs are in global ~/.oss/dev/active/{currentFeature}/
+            // Dev docs (project-local or global fallback)
             featurePath,
-            devActivePath: path.join(globalOssDir, 'dev', 'active'),
+            devActivePath: path.join(devDocsBase, 'active'),
             workflowState, // Pass workflow state for archive check
         });
         const healthReport = await healthcheckService.runChecks();

@@ -347,8 +347,14 @@ case "$ACTION" in
             fi
         fi
 
-        # Check dev docs exist (global ~/.oss/dev/active)
-        DEV_DOCS=$([[ -d "$HOME/.oss/dev/active" ]] && echo "✓" || echo "✗")
+        # Check dev docs exist (project-local or global)
+        # Priority: 1) ./.oss/dev/active, 2) ./dev/active, 3) ~/.oss/dev/active
+        PROJECT_DIR=$(pwd)
+        if [[ -d "$PROJECT_DIR/.oss/dev/active" || -d "$PROJECT_DIR/dev/active" || -d "$HOME/.oss/dev/active" ]]; then
+            DEV_DOCS="✓"
+        else
+            DEV_DOCS="✗"
+        fi
 
         # Write checklist to command log
         {

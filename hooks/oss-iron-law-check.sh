@@ -83,12 +83,27 @@ if [[ -f "tsconfig.json" ]]; then
 fi
 
 # =============================================================================
-# SETUP: Check for dev docs structure (in ~/.oss/)
+# SETUP: Check for dev docs structure (project-local or global)
 # =============================================================================
-if [[ ! -d "$HOME/.oss/dev/active" ]]; then
-    VIOLATIONS="${VIOLATIONS}├─ ❌ LAW #6: Missing ~/.oss/dev/active/ directory\n"
-    CORRECTIONS="${CORRECTIONS}│  → Create dev docs structure: mkdir -p ~/.oss/dev/active ~/.oss/dev/completed\n"
+# Resolve dev docs path with project-local priority
+# Priority: 1) Project .oss/dev/, 2) Project dev/, 3) Global ~/.oss/dev/
+PROJECT_DIR=$(pwd)
+DEV_DOCS_PATH=""
+
+if [[ -d "$PROJECT_DIR/.oss/dev/active" ]]; then
+    DEV_DOCS_PATH="$PROJECT_DIR/.oss/dev"
+elif [[ -d "$PROJECT_DIR/dev/active" ]]; then
+    DEV_DOCS_PATH="$PROJECT_DIR/dev"
+elif [[ -d "$HOME/.oss/dev/active" ]]; then
+    DEV_DOCS_PATH="$HOME/.oss/dev"
+fi
+
+if [[ -z "$DEV_DOCS_PATH" ]]; then
+    VIOLATIONS="${VIOLATIONS}├─ ❌ LAW #6: Missing dev/active/ directory (checked ./.oss/dev/, ./dev/, ~/.oss/dev/)\n"
+    CORRECTIONS="${CORRECTIONS}│  → Create dev docs: mkdir -p .oss/dev/active .oss/dev/completed\n"
     VIOLATION_LAWS="${VIOLATION_LAWS}6,"
+else
+    PASSED="${PASSED}├─ ✅ LAW #6: Dev docs found at $DEV_DOCS_PATH\n"
 fi
 
 # =============================================================================

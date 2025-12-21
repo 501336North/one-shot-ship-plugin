@@ -16,7 +16,7 @@ Complete finalization workflow - quality check, docs, commit, PR, and optional m
 > 2. Use `--force` flag to bypass: `/oss:ship --force`
 >
 > Why? Quality gates should run with unbiased perspective.
-> State is loaded from `~/.oss/dev/active/{feature}/` docs and git status.
+> State is loaded from `.oss/dev/active/{feature}/` (project-local) or `~/.oss/dev/active/{feature}/` (fallback).
 
 ## What This Command Does
 
