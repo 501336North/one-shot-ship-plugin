@@ -96,6 +96,47 @@ describe('Session Hooks - Project Tracking', () => {
     });
 
     /**
+     * @behavior Session start copies status line script to ~/.oss/
+     * @acceptance-criteria After session start, ~/.oss/oss-statusline.sh matches plugin version
+     */
+    it('should copy status line script to ~/.oss/', () => {
+      const statusLineTarget = path.join(ossDir, 'oss-statusline.sh');
+      const statusLineSource = path.join(hooksDir, 'oss-statusline.sh');
+
+      // GIVEN: Status line script exists in plugin hooks
+      expect(fs.existsSync(statusLineSource)).toBe(true);
+
+      // Clear any existing status line in ~/.oss to verify it gets copied
+      if (fs.existsSync(statusLineTarget)) {
+        fs.unlinkSync(statusLineTarget);
+      }
+
+      // WHEN: Running session start
+      try {
+        execSync(`bash "${sessionStartScript}"`, {
+          timeout: 30000,
+          encoding: 'utf-8',
+          env: {
+            ...process.env,
+            CLAUDE_PROJECT_DIR: testProjectDir,
+            CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..'),
+          },
+          cwd: testProjectDir,
+        });
+      } catch {
+        // Ignore exit code
+      }
+
+      // THEN: Status line script should exist in ~/.oss/
+      expect(fs.existsSync(statusLineTarget)).toBe(true);
+
+      // THEN: Content should match the plugin version
+      const sourceContent = fs.readFileSync(statusLineSource, 'utf-8');
+      const targetContent = fs.readFileSync(statusLineTarget, 'utf-8');
+      expect(targetContent).toBe(sourceContent);
+    });
+
+    /**
      * @behavior Session start overwrites existing current-project
      * @acceptance-criteria New session in different project updates the file
      */

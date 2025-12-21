@@ -10,6 +10,13 @@ source "$SCRIPT_DIR/oss-config.sh" 2>/dev/null || true
 mkdir -p ~/.oss
 chmod 700 ~/.oss  # Only owner can access
 
+# Update status line script from plugin (ensures latest version)
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(dirname "$SCRIPT_DIR")}"
+if [[ -f "$PLUGIN_ROOT/hooks/oss-statusline.sh" ]]; then
+    cp "$PLUGIN_ROOT/hooks/oss-statusline.sh" ~/.oss/oss-statusline.sh
+    chmod +x ~/.oss/oss-statusline.sh
+fi
+
 # Check for API key configuration
 CONFIG_FILE=~/.oss/config.json
 if [[ ! -f "$CONFIG_FILE" ]]; then
@@ -53,7 +60,7 @@ rm -f ~/.oss/iron-laws-session-notified 2>/dev/null
 
 # --- Watcher Management (US-001) ---
 # Spawn watcher process if not already running (singleton pattern)
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
+# PLUGIN_ROOT already set above
 PROJECT_OSS_DIR="${CLAUDE_PROJECT_DIR:-.}/.oss"
 WATCHER_PID_FILE="$PROJECT_OSS_DIR/watcher.pid"
 WATCHER_SCRIPT="$PLUGIN_ROOT/watcher/dist/index.js"
