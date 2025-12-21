@@ -16,6 +16,51 @@
 # Input: Claude Code provides JSON context via stdin
 # Output: Single line status text
 
+# Security: Validate project path to prevent path traversal attacks
+# Returns validated canonical path or empty string if invalid
+validate_project_path() {
+    local project_path="$1"
+
+    # Reject empty paths
+    [[ -z "$project_path" ]] && return 1
+
+    # Must be absolute path
+    [[ "$project_path" != /* ]] && return 1
+
+    # Canonicalize with realpath (resolves symlinks)
+    local canonical
+    canonical=$(realpath "$project_path" 2>/dev/null) || return 1
+    [[ -z "$canonical" ]] && return 1
+
+    # Must be a directory
+    [[ ! -d "$canonical" ]] && return 1
+
+    # Security: Must be within $HOME or user's temp directory
+    local home_resolved
+    home_resolved=$(realpath "$HOME" 2>/dev/null) || return 1
+
+    # Check if in home
+    local in_home=false
+    [[ "$canonical" == "$home_resolved" || "$canonical" == "$home_resolved"/* ]] && in_home=true
+
+    # Check if in temp directory (for tests)
+    local in_tmp=false
+    if [[ -n "$TMPDIR" ]]; then
+        local tmp_resolved
+        tmp_resolved=$(realpath "$TMPDIR" 2>/dev/null) || true
+        [[ -n "$tmp_resolved" && ("$canonical" == "$tmp_resolved" || "$canonical" == "$tmp_resolved"/*) ]] && in_tmp=true
+    fi
+    # Also check /private/tmp and /private/var/folders (macOS temp locations)
+    [[ "$canonical" == /private/tmp/* || "$canonical" == /private/var/folders/* ]] && in_tmp=true
+
+    if [[ "$in_home" == "false" && "$in_tmp" == "false" ]]; then
+        return 1
+    fi
+
+    echo "$canonical"
+    return 0
+}
+
 # Read Claude Code context from stdin
 INPUT=$(cat)
 
@@ -47,7 +92,20 @@ fi
 # === WORKFLOW STATUS ===
 OSS_STATUS=""
 ISSUE_DISPLAY=""
-WORKFLOW_FILE="${HOME}/.oss/workflow-state.json"
+
+# Read current project (set by session-start) and validate for security
+RAW_PROJECT=$(cat ~/.oss/current-project 2>/dev/null | tr -d '[:space:]')
+CURRENT_PROJECT=""
+if [[ -n "$RAW_PROJECT" ]]; then
+    CURRENT_PROJECT=$(validate_project_path "$RAW_PROJECT") || CURRENT_PROJECT=""
+fi
+
+# Use project-local state if available, otherwise fall back to global
+if [[ -n "$CURRENT_PROJECT" && -f "$CURRENT_PROJECT/.oss/workflow-state.json" ]]; then
+    WORKFLOW_FILE="$CURRENT_PROJECT/.oss/workflow-state.json"
+else
+    WORKFLOW_FILE="${HOME}/.oss/workflow-state.json"
+fi
 
 if [[ -f "$WORKFLOW_FILE" ]]; then
     CURRENT_CMD=$(jq -r '.currentCommand // .activeStep // ""' "$WORKFLOW_FILE" 2>/dev/null)
@@ -116,7 +174,12 @@ if [[ -f "$WORKFLOW_FILE" ]]; then
 fi
 
 # === QUEUE STATUS ===
-QUEUE_FILE="${HOME}/.oss/queue.json"
+# Use project-local queue if available
+if [[ -n "$CURRENT_PROJECT" && -f "$CURRENT_PROJECT/.oss/queue.json" ]]; then
+    QUEUE_FILE="$CURRENT_PROJECT/.oss/queue.json"
+else
+    QUEUE_FILE="${HOME}/.oss/queue.json"
+fi
 QUEUE_DISPLAY=""
 
 if [[ -f "$QUEUE_FILE" ]]; then

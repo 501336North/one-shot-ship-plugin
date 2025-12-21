@@ -59,4 +59,8 @@ if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
     node "$WORKFLOW_STATE_CLI" setSupervisor idle 2>/dev/null || true
 fi
 
+# Clear current project pointer (session is ending)
+# Use empty string instead of rm to avoid race conditions
+echo "" > ~/.oss/current-project
+
 exit 0
