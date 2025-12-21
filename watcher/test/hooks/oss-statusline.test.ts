@@ -205,6 +205,75 @@ describe('oss-statusline.sh - Project State Reading', () => {
     });
   });
 
+  describe('Multi-session isolation (race condition fix)', () => {
+    /**
+     * @behavior Status line uses workspace.current_dir from stdin, ignores ~/.oss/current-project
+     * @acceptance-criteria When current-project points to Project B, but stdin says Project A,
+     *                      status line should show Project A's state (not Project B's)
+     * @business-rule Multi-session support requires each session to use its own project context
+     * @boundary Shell script (oss-statusline.sh)
+     */
+    it('should use workspace.current_dir from stdin, NOT ~/.oss/current-project', () => {
+      // GIVEN: Two projects with different TDD phases
+      const projectADir = path.join(os.tmpdir(), `oss-project-A-${Date.now()}`);
+      const projectBDir = path.join(os.tmpdir(), `oss-project-B-${Date.now()}`);
+
+      // Create both project directories
+      fs.mkdirSync(path.join(projectADir, '.oss'), { recursive: true });
+      fs.mkdirSync(path.join(projectBDir, '.oss'), { recursive: true });
+
+      // Project A has RED phase
+      fs.writeFileSync(
+        path.join(projectADir, '.oss', 'workflow-state.json'),
+        JSON.stringify({ tddPhase: 'red', currentCommand: 'build' })
+      );
+
+      // Project B has GREEN phase
+      fs.writeFileSync(
+        path.join(projectBDir, '.oss', 'workflow-state.json'),
+        JSON.stringify({ tddPhase: 'green', currentCommand: 'plan' })
+      );
+
+      // Initialize git repos for branch detection
+      try {
+        execSync('git init && git checkout -b feat/a', { cwd: projectADir, stdio: 'ignore' });
+        execSync('git init && git checkout -b feat/b', { cwd: projectBDir, stdio: 'ignore' });
+      } catch {
+        // Git init might fail
+      }
+
+      // CRITICAL: ~/.oss/current-project points to Project B (simulating another session)
+      fs.writeFileSync(currentProjectFile, projectBDir);
+
+      // WHEN: Running statusline with stdin saying we're in Project A
+      const input = JSON.stringify({
+        model: { display_name: 'Claude' },
+        workspace: { current_dir: projectADir }  // <-- This is the truth for THIS session
+      });
+
+      let output = '';
+      try {
+        output = execSync(`echo '${input}' | bash "${statuslineScript}"`, {
+          timeout: 5000,
+          encoding: 'utf-8',
+          cwd: projectADir,
+        });
+      } catch (error) {
+        const execError = error as { stdout?: string; stderr?: string };
+        output = execError.stdout || '';
+      }
+
+      // THEN: Output should show RED (Project A), NOT GREEN (Project B)
+      // This proves we're using stdin's workspace.current_dir, not ~/.oss/current-project
+      expect(output).toContain('RED');
+      expect(output).not.toContain('GREEN');
+
+      // Cleanup
+      fs.rmSync(projectADir, { recursive: true, force: true });
+      fs.rmSync(projectBDir, { recursive: true, force: true });
+    });
+  });
+
   describe('Queue reading', () => {
     /**
      * @behavior Status line reads queue from project .oss/ when current-project set

@@ -71,7 +71,9 @@ if ! command -v jq &>/dev/null; then
 fi
 
 MODEL=$(echo "$INPUT" | jq -r '.model.display_name // "Claude"')
-CURRENT_DIR=$(echo "$INPUT" | jq -r '.workspace.current_dir // "." | gsub(".*/"; "")')
+# Extract full path for project detection, basename for display
+WORKSPACE_DIR=$(echo "$INPUT" | jq -r '.workspace.current_dir // ""')
+CURRENT_DIR=$(echo "$WORKSPACE_DIR" | sed 's|.*/||')
 
 # === OSS HEALTH STATUS ===
 # Check for active IRON LAW violations
@@ -93,11 +95,19 @@ fi
 OSS_STATUS=""
 ISSUE_DISPLAY=""
 
-# Read current project (set by session-start) and validate for security
-RAW_PROJECT=$(cat ~/.oss/current-project 2>/dev/null | tr -d '[:space:]')
+# Get project directory - prefer stdin (multi-session safe) over ~/.oss/current-project
+# Priority: 1) workspace.current_dir from stdin, 2) ~/.oss/current-project (legacy fallback)
 CURRENT_PROJECT=""
-if [[ -n "$RAW_PROJECT" ]]; then
-    CURRENT_PROJECT=$(validate_project_path "$RAW_PROJECT") || CURRENT_PROJECT=""
+if [[ -n "$WORKSPACE_DIR" ]]; then
+    # Use workspace dir from Claude Code stdin (multi-session safe)
+    CURRENT_PROJECT=$(validate_project_path "$WORKSPACE_DIR") || CURRENT_PROJECT=""
+fi
+if [[ -z "$CURRENT_PROJECT" ]]; then
+    # Fallback to ~/.oss/current-project (legacy, not multi-session safe)
+    RAW_PROJECT=$(cat ~/.oss/current-project 2>/dev/null | tr -d '[:space:]')
+    if [[ -n "$RAW_PROJECT" ]]; then
+        CURRENT_PROJECT=$(validate_project_path "$RAW_PROJECT") || CURRENT_PROJECT=""
+    fi
 fi
 
 # Use project-local state if available, otherwise fall back to global
