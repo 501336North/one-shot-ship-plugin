@@ -81,8 +81,8 @@ fi
 if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
     node "$WORKFLOW_STATE_CLI" init 2>/dev/null || true
     node "$WORKFLOW_STATE_CLI" setSupervisor watching 2>/dev/null || true
-    # Clear any stale message from previous session (will be set fresh below)
-    node "$WORKFLOW_STATE_CLI" clearMessage 2>/dev/null || true
+    # Clear any stale notification from previous session (fresh one set below)
+    node "$WORKFLOW_STATE_CLI" clearNotification 2>/dev/null || true
 fi
 
 # Check if watcher is already running

@@ -637,15 +637,19 @@ describe('oss-statusline.sh - Project State Reading', () => {
     /**
      * @behavior Status line shows message at end when set in workflow state
      * @acceptance-criteria Format: ... | 📣 Ideating
-     * @business-rule Users should see workflow/session messages in status line
+     * @business-rule Users should see non-sticky notifications in status line
      * @boundary Shell script (oss-statusline.sh)
      */
-    it('should display message at end of status line', () => {
-      // GIVEN: Workflow state has a message set
+    it('should display notification at end of status line (non-expired)', () => {
+      // GIVEN: Workflow state has a notification set with future expiry
+      const futureExpiry = new Date(Date.now() + 10000).toISOString();
       const projectState = {
         tddPhase: 'green',
         supervisor: 'watching',
-        message: 'Building 3/10'
+        notification: {
+          message: 'Building 3/10',
+          expiresAt: futureExpiry
+        }
       };
       fs.writeFileSync(projectWorkflowFile, JSON.stringify(projectState));
       fs.writeFileSync(currentProjectFile, testProjectDir);
@@ -668,7 +672,7 @@ describe('oss-statusline.sh - Project State Reading', () => {
         output = execError.stdout || '';
       }
 
-      // THEN: Output should contain the message with emoji prefix
+      // THEN: Output should contain the notification with emoji prefix
       expect(output).toContain('📣 Building 3/10');
     });
 
@@ -710,12 +714,12 @@ describe('oss-statusline.sh - Project State Reading', () => {
 
   describe('Idle supervisor display', () => {
     /**
-     * @behavior Status line shows 💾 when supervisor is idle
-     * @acceptance-criteria 💾 indicator shown when supervisor is 'idle'
-     * @business-rule Users should see when context is saved/session idle
+     * @behavior Status line shows nothing for idle supervisor (no redundant indicators)
+     * @acceptance-criteria No supervisor indicator when 'idle' - redundancy removed
+     * @business-rule Idle state is indicated by notification "Saved X ago" instead
      * @boundary Shell script (oss-statusline.sh)
      */
-    it('should display 💾 when supervisor is idle', () => {
+    it('should NOT display 💾 when supervisor is idle (redundancy removed)', () => {
       // GIVEN: Workflow state has supervisor set to idle
       const projectState = {
         tddPhase: null,
@@ -743,8 +747,8 @@ describe('oss-statusline.sh - Project State Reading', () => {
         output = execError.stdout || '';
       }
 
-      // THEN: Output should contain 💾 indicator
-      expect(output).toContain('💾');
+      // THEN: Output should NOT contain 💾 indicator (removed as redundant)
+      expect(output).not.toContain('💾');
     });
 
     /**

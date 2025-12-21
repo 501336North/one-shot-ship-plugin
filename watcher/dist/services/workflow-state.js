@@ -177,6 +177,7 @@ export class WorkflowStateService {
         state.tddCycle = undefined;
         state.tddPhase = undefined; // Clear TDD phase for status line
         delete state.message; // Clear message for status line
+        delete state.notification; // Clear notification for status line
         await this.writeState(state);
     }
     /**
@@ -309,9 +310,11 @@ export class WorkflowStateService {
     }
     /**
      * Returns default state
+     * Note: version starts at 0 and gets incremented to 1 on first write
      */
     getDefaultState() {
         return {
+            version: 0, // Will be incremented to 1 on first write
             supervisor: 'idle',
             activeStep: null,
             chainState: {
@@ -339,15 +342,47 @@ export class WorkflowStateService {
         };
     }
     /**
-     * Writes state to file with updated timestamp
+     * Writes state to file with updated timestamp and incremented version
      */
     async writeState(state) {
         state.lastUpdate = new Date().toISOString();
+        state.version = (state.version ?? 0) + 1;
         const dir = path.dirname(this.stateFilePath);
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
         fs.writeFileSync(this.stateFilePath, JSON.stringify(state, null, 2));
+    }
+    /**
+     * Sets notification with TTL (non-sticky, auto-expires)
+     * @param message - Notification message
+     * @param ttlSeconds - Time to live in seconds (default 10)
+     */
+    async setNotification(message, ttlSeconds = 10) {
+        const state = await this.getState();
+        const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+        state.notification = { message, expiresAt };
+        await this.writeState(state);
+    }
+    /**
+     * Clears notification immediately
+     */
+    async clearNotification() {
+        const state = await this.getState();
+        delete state.notification;
+        await this.writeState(state);
+    }
+    /**
+     * Checks if notification is expired or doesn't exist
+     * @returns true if expired or no notification exists
+     */
+    async isNotificationExpired() {
+        const state = await this.getState();
+        if (!state.notification) {
+            return true;
+        }
+        const expiresAt = new Date(state.notification.expiresAt).getTime();
+        return Date.now() > expiresAt;
     }
 }
 //# sourceMappingURL=workflow-state.js.map
