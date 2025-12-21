@@ -161,7 +161,7 @@ describe('NotificationService', () => {
   });
 
   describe('notification dispatch', () => {
-    it('should generate visual notification command', () => {
+    it('should generate visual notification command using setMessage', () => {
       fs.writeFileSync(
         settingsPath,
         JSON.stringify({ notifications: { style: 'visual', verbosity: 'all' } })
@@ -176,8 +176,8 @@ describe('NotificationService', () => {
       };
 
       const command = service.getNotifyCommand(event);
-      expect(command).toContain('terminal-notifier');
-      expect(command).toContain('Build Complete');
+      // Visual notifications now use setMessage for status line
+      expect(command).toContain('setMessage');
       expect(command).toContain('24 tests passing');
     });
 

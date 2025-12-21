@@ -186,6 +186,28 @@ async function main() {
                 console.log('Message cleared');
                 break;
             }
+            case 'setCurrentCommand': {
+                const cmd = args[1] || '';
+                await service.setCurrentCommand(cmd);
+                console.log(`Current command set to: ${cmd}`);
+                break;
+            }
+            case 'clearCurrentCommand': {
+                await service.clearCurrentCommand();
+                console.log('Current command cleared');
+                break;
+            }
+            case 'setNextCommand': {
+                const cmd = args[1] || '';
+                await service.setNextCommand(cmd);
+                console.log(`Next command set to: ${cmd}`);
+                break;
+            }
+            case 'clearNextCommand': {
+                await service.clearNextCommand();
+                console.log('Next command cleared');
+                break;
+            }
             default:
                 console.error(`Unknown command: ${command}`);
                 process.exit(1);

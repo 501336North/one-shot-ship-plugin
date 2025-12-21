@@ -76,20 +76,14 @@ WORKSPACE_DIR=$(echo "$INPUT" | jq -r '.workspace.current_dir // ""')
 CURRENT_DIR=$(echo "$WORKSPACE_DIR" | sed 's|.*/||')
 
 # === OSS HEALTH STATUS ===
-# Check for active IRON LAW violations
+# Check for active IRON LAW violations DYNAMICALLY
+# LAW#4: Agent must never be on main/master branch
 OSS_HEALTH="✅"  # Default: all good
+
+# We'll check LAW#4 dynamically after determining the project directory
+# Other violations can still come from the state file
 IRON_LAW_FILE="${HOME}/.oss/iron-law-state.json"
-
-if [[ -f "$IRON_LAW_FILE" ]]; then
-    # Check for unresolved violations (detected but not resolved, or resolved is null)
-    ACTIVE_VIOLATIONS=$(jq '[.violations[] | select(.resolved == null or .resolved == "null")] | length' "$IRON_LAW_FILE" 2>/dev/null)
-
-    if [[ -n "$ACTIVE_VIOLATIONS" && "$ACTIVE_VIOLATIONS" != "null" && "$ACTIVE_VIOLATIONS" -gt 0 ]]; then
-        # Get the first active violation's law number
-        VIOLATED_LAW=$(jq -r '[.violations[] | select(.resolved == null or .resolved == "null")][0].law // ""' "$IRON_LAW_FILE" 2>/dev/null)
-        OSS_HEALTH="⛔ LAW#$VIOLATED_LAW"
-    fi
-fi
+ACTIVE_LAW4_VIOLATION=false  # Will be set later after git check
 
 # === WORKFLOW STATUS ===
 OSS_STATUS=""
@@ -130,6 +124,9 @@ if [[ -f "$WORKFLOW_FILE" ]]; then
     # Read message for status line display
     MESSAGE=$(jq -r '.message // ""' "$WORKFLOW_FILE" 2>/dev/null)
 
+    # Read nextCommand for workflow progression display
+    NEXT_CMD=$(jq -r '.nextCommand // ""' "$WORKFLOW_FILE" 2>/dev/null)
+
     # Check for daemon-reported issues
     ISSUE_TYPE=$(jq -r '.issue.type // ""' "$WORKFLOW_FILE" 2>/dev/null)
     ISSUE_MSG=$(jq -r '.issue.message // ""' "$WORKFLOW_FILE" 2>/dev/null)
@@ -152,17 +149,25 @@ if [[ -f "$WORKFLOW_FILE" ]]; then
         esac
     fi
 
-    # Format TDD phase with colored emoji
-    if [[ -n "$TDD_PHASE" && "$TDD_PHASE" != "null" ]]; then
+    # Format workflow/TDD display
+    # Priority: currentCommand → nextCommand > TDD phase > currentCommand alone
+    if [[ -n "$CURRENT_CMD" && "$CURRENT_CMD" != "null" && -n "$NEXT_CMD" && "$NEXT_CMD" != "null" ]]; then
+        # Both current and next: show "plan → build" format
+        OSS_STATUS=" | $CURRENT_CMD → $NEXT_CMD"
+    elif [[ -n "$NEXT_CMD" && "$NEXT_CMD" != "null" && ( -z "$CURRENT_CMD" || "$CURRENT_CMD" == "null" ) ]]; then
+        # Only next command: show "→ ideate" format (fresh start)
+        OSS_STATUS=" | → $NEXT_CMD"
+    elif [[ -n "$TDD_PHASE" && "$TDD_PHASE" != "null" ]]; then
+        # TDD phase display - emoji only for compact status line
         case "$TDD_PHASE" in
             "red"|"RED")
-                PHASE_DISPLAY="🔴 RED"
+                PHASE_DISPLAY="🔴"
                 ;;
             "green"|"GREEN")
-                PHASE_DISPLAY="🟢 GREEN"
+                PHASE_DISPLAY="🟢"
                 ;;
             "refactor"|"REFACTOR")
-                PHASE_DISPLAY="🔵 REFACTOR"
+                PHASE_DISPLAY="🔄"
                 ;;
             *)
                 PHASE_DISPLAY="$TDD_PHASE"
@@ -174,7 +179,8 @@ if [[ -f "$WORKFLOW_FILE" ]]; then
         fi
         OSS_STATUS=" | $PHASE_DISPLAY"
     elif [[ -n "$CURRENT_CMD" && "$CURRENT_CMD" != "null" ]]; then
-        OSS_STATUS=" | 🤖 $CURRENT_CMD"
+        # Only current command (no next, e.g., during ship)
+        OSS_STATUS=" | $CURRENT_CMD"
         # Add progress if available
         if [[ -n "$PROGRESS" && "$PROGRESS" != "null" ]]; then
             OSS_STATUS="$OSS_STATUS $PROGRESS"
@@ -237,16 +243,39 @@ if [[ -n "$MESSAGE" && "$MESSAGE" != "null" && "$MESSAGE" != "" ]]; then
 fi
 
 # === GIT BRANCH ===
+# Use workspace.current_dir from stdin for git commands (multi-session safe)
 GIT_BRANCH=""
-if git rev-parse --git-dir > /dev/null 2>&1; then
-    BRANCH=$(git branch --show-current 2>/dev/null)
+GIT_DIR_FOR_CHECK="."
+if [[ -n "$CURRENT_PROJECT" ]]; then
+    GIT_DIR_FOR_CHECK="$CURRENT_PROJECT"
+fi
+
+if git -C "$GIT_DIR_FOR_CHECK" rev-parse --git-dir > /dev/null 2>&1; then
+    BRANCH=$(git -C "$GIT_DIR_FOR_CHECK" branch --show-current 2>/dev/null)
     if [[ -n "$BRANCH" ]]; then
         if [[ "$BRANCH" == "master" || "$BRANCH" == "main" ]]; then
             # On main/master - show warning if OSS is active
             GIT_BRANCH=" | ⚠️ $BRANCH"
+            # LAW#4 violation: agent is on protected branch
+            ACTIVE_LAW4_VIOLATION=true
         else
             GIT_BRANCH=" | 🌿 $BRANCH"
         fi
+    fi
+fi
+
+# === FINALIZE HEALTH STATUS ===
+# Set OSS_HEALTH based on dynamic violations (LAW#4 from branch check)
+# AND any other violations from state file (non-LAW#4)
+if [[ "$ACTIVE_LAW4_VIOLATION" == "true" ]]; then
+    OSS_HEALTH="⛔ LAW#4"
+elif [[ -f "$IRON_LAW_FILE" ]]; then
+    # Check for other unresolved violations (not LAW#4, since we check that dynamically)
+    # Note: .law can be number or string, so compare both ways
+    OTHER_VIOLATIONS=$(jq '[.violations[] | select(.resolved == null or .resolved == "null") | select(.law != 4 and .law != "4")] | length' "$IRON_LAW_FILE" 2>/dev/null)
+    if [[ -n "$OTHER_VIOLATIONS" && "$OTHER_VIOLATIONS" != "null" && "$OTHER_VIOLATIONS" -gt 0 ]]; then
+        VIOLATED_LAW=$(jq -r '[.violations[] | select(.resolved == null or .resolved == "null") | select(.law != 4 and .law != "4")][0].law // ""' "$IRON_LAW_FILE" 2>/dev/null)
+        OSS_HEALTH="⛔ LAW#$VIOLATED_LAW"
     fi
 fi
 
