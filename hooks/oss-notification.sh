@@ -36,15 +36,12 @@ fi
 
 case "$STYLE" in
     "visual")
-        # Visual notification (system notification sound plays automatically)
-        OSS_ICON_PNG="$HOME/.oss/notification-icon.png"
-
-        if command -v terminal-notifier &>/dev/null; then
-            TN_ARGS=(-title "OSS" -message "Ready" -sound default)
-            [[ -f "$OSS_ICON_PNG" ]] && TN_ARGS+=(-appIcon "$OSS_ICON_PNG")
-            terminal-notifier "${TN_ARGS[@]}" &>/dev/null || true
-        else
-            osascript -e 'display notification "Ready" with title "OSS"' &>/dev/null || true
+        # Visual notification - update status line message
+        # The status line is the primary visual feedback mechanism
+        PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
+        WORKFLOW_STATE_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js"
+        if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
+            node "$WORKFLOW_STATE_CLI" setMessage "Ready" 2>/dev/null || true
         fi
         ;;
     "audio")
