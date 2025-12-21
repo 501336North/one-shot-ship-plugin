@@ -41,15 +41,15 @@ Register at https://www.oneshotship.com
 $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init integration
 ```
 
-## Step 3: Send Start Notification
+## Step 3: Update Status Line (Start)
 
-**You MUST execute this notification command before proceeding.**
+**You MUST update the workflow status before proceeding.**
 
 ```bash
 $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow integration start '{}'
 ```
 
-## Step 3: Fetch and Decrypt Prompt
+## Step 4: Fetch and Decrypt Prompt
 
 ```bash
 ~/.oss/bin/oss-decrypt --type commands --name integration
@@ -57,7 +57,7 @@ $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow integration start '{}'
 
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
-## Step 4: Execute the Fetched Prompt
+## Step 5: Execute the Fetched Prompt
 
 The prompt guides you through:
 - Reviewing unit test mocks
@@ -65,9 +65,9 @@ The prompt guides you through:
 - Running integration test suite
 - Fixing mock/reality mismatches
 
-## Step 5: Send Completion Notification
+## Step 6: Update Status Line (Completion)
 
-**You MUST execute the appropriate notification command.**
+**You MUST update the workflow status on completion.**
 
 On success (integration tests pass):
 ```bash

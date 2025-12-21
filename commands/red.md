@@ -44,9 +44,9 @@ $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init red
 $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase red RED start
 ```
 
-## Step 3: Send Start Notification
+## Step 3: Update Status Line (Start)
 
-**You MUST execute this notification command before proceeding.**
+**You MUST update the workflow status before proceeding.**
 
 ```bash
 $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow red start '{}'
@@ -60,7 +60,7 @@ $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow red start '{}'
 
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
-## Step 4: Execute the Fetched Prompt
+## Step 5: Execute the Fetched Prompt
 
 The prompt guides you through:
 - Understanding the feature requirement
@@ -69,9 +69,9 @@ The prompt guides you through:
 - Writing the failing test
 - Verifying meaningful failure
 
-## Step 5: Log Phase Complete and Send Notification
+## Step 6: Log Phase Complete and Update Status Line
 
-**You MUST log the phase completion AND send the notification.**
+**You MUST log the phase completion AND update the workflow status.**
 
 On success (test written and fails as expected):
 ```bash
@@ -79,7 +79,7 @@ On success (test written and fails as expected):
 $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase red RED complete
 $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh test red FAIL "{TEST_FILE}: {FAILURE_MSG}"
 
-# Send notification
+# Update status line
 $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow red complete '{"testFile": "{TEST_FILE}", "failureMessage": "{FAILURE_MSG}"}'
 ```
 

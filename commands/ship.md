@@ -59,15 +59,15 @@ Headers:
 
 **All 5 IRON LAWS must be followed. Self-correct any violations before proceeding.**
 
-## Step 3: Send Start Notification
+## Step 4: Update Status Line (Start)
 
-**You MUST execute this notification command before proceeding.**
+**You MUST update the workflow status before proceeding.**
 
 ```bash
 $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ship start '{}'
 ```
 
-## Step 4: Fetch and Decrypt Prompt
+## Step 5: Fetch and Decrypt Prompt
 
 ```bash
 ~/.oss/bin/oss-decrypt --type workflows --name ship
@@ -75,7 +75,7 @@ $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ship start '{}'
 
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
-## Step 4: Execute the Fetched Prompt
+## Step 6: Execute the Fetched Prompt
 
 The prompt orchestrates the full shipping workflow:
 
@@ -215,9 +215,9 @@ With `--merge` flag:
 - Auto-merge when green
 - Delete feature branch
 
-## Step 6: Send Completion Notifications
+## Step 7: Update Status Line (Progress)
 
-**You MUST execute the appropriate notification commands at each stage.**
+**You MUST update the workflow status at each stage.**
 
 After quality checks pass:
 ```bash

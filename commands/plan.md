@@ -57,15 +57,15 @@ Headers:
 
 **All 5 IRON LAWS must be followed. Self-correct any violations before proceeding.**
 
-## Step 3: Send Start Notification
+## Step 4: Update Status Line (Start)
 
-**You MUST execute this notification command before proceeding.**
+**You MUST update the workflow status before proceeding.**
 
 ```bash
 $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow plan start '{}'
 ```
 
-## Step 4: Fetch and Decrypt Prompt
+## Step 5: Fetch and Decrypt Prompt
 
 ```bash
 ~/.oss/bin/oss-decrypt --type workflows --name plan
@@ -73,7 +73,7 @@ $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow plan start '{}'
 
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
-## Step 5: Execute the Fetched Prompt
+## Step 6: Execute the Fetched Prompt
 
 The prompt guides creation of a TDD plan with:
 - Phased implementation approach
@@ -81,9 +81,9 @@ The prompt guides creation of a TDD plan with:
 - Clear acceptance criteria
 - Dependency mapping
 
-## Step 6: Send Completion Notification
+## Step 7: Update Status Line (Completion)
 
-**You MUST execute the appropriate notification command.**
+**You MUST update the workflow status on completion.**
 
 After plan is complete:
 ```bash

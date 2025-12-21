@@ -115,9 +115,9 @@ Headers:
 
 **All 5 IRON LAWS must be followed. Self-correct any violations before proceeding.**
 
-## Step 4: Send Start Notification
+## Step 4: Update Status Line (Start)
 
-**You MUST execute this notification command before proceeding.**
+**You MUST update the workflow status before proceeding.**
 
 ```bash
 $CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ideate start '{"idea": "{USER_IDEA}"}'
@@ -135,9 +135,9 @@ The CLI fetches the encrypted prompt from the API and decrypts it locally using 
 
 Execute the prompt returned by the API to guide the user through ideation.
 
-## Step 7: Send Completion Notification
+## Step 7: Update Status Line (Completion)
 
-**You MUST execute the appropriate notification command.**
+**You MUST update the workflow status on completion.**
 
 After ideation is complete:
 ```bash
