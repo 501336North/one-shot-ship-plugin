@@ -216,29 +216,73 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
     fi
 
     # Workflow notifications ONLY update the status line - do NOT send terminal-notifier
-    # "Ready" and "Done" notifications use oss-notification.sh and oss-stop.sh instead
     exit 0
 fi
 
 # =============================================================================
-# Dispatch notification (only for non-workflow notifications)
+# Handle session notifications (update workflow state for status line)
+# =============================================================================
+
+if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "session" ]]; then
+    SESSION_EVENT="${COPY_ARGS[0]:-}"
+    SESSION_CONTEXT="${COPY_ARGS[1]:-'{}'}"
+
+    # Update workflow state for session events
+    if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
+        case "$SESSION_EVENT" in
+            context_restored|fresh_start)
+                node "$WORKFLOW_STATE_CLI" setSupervisor watching 2>/dev/null || true
+                ;;
+            context_saved)
+                node "$WORKFLOW_STATE_CLI" setSupervisor idle 2>/dev/null || true
+                ;;
+        esac
+    fi
+
+    # Write to log file for session events
+    if [[ -x "$LOG_SCRIPT" && -n "$SESSION_EVENT" ]]; then
+        "$LOG_SCRIPT" write "session" "[$SESSION_EVENT] $SESSION_CONTEXT" 2>/dev/null || true
+    fi
+
+    # Session notifications ONLY update the status line - no terminal-notifier
+    exit 0
+fi
+
+# =============================================================================
+# Handle issue notifications (update workflow state for status line)
+# =============================================================================
+
+if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "issue" ]]; then
+    ISSUE_TYPE="${COPY_ARGS[0]:-}"
+    ISSUE_CONTEXT="${COPY_ARGS[1]:-'{}'}"
+
+    # Update workflow state to show issue in status line
+    if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
+        node "$WORKFLOW_STATE_CLI" setSupervisor intervening 2>/dev/null || true
+        # Extract message from context if available
+        if command -v jq &>/dev/null; then
+            ISSUE_MSG=$(echo "$ISSUE_CONTEXT" | jq -r '.message // ""' 2>/dev/null)
+            if [[ -n "$ISSUE_MSG" && "$ISSUE_MSG" != "null" ]]; then
+                node "$WORKFLOW_STATE_CLI" setIssue "$ISSUE_TYPE" "$ISSUE_MSG" 2>/dev/null || true
+            fi
+        fi
+    fi
+
+    # Write to log file for issue events
+    if [[ -x "$LOG_SCRIPT" && -n "$ISSUE_TYPE" ]]; then
+        "$LOG_SCRIPT" write "issue" "[$ISSUE_TYPE] $ISSUE_CONTEXT" 2>/dev/null || true
+    fi
+
+    # Issue notifications ONLY update the status line - no terminal-notifier
+    exit 0
+fi
+
+# =============================================================================
+# Direct notifications (legacy - only used for explicit title/message calls)
+# These are for backward compatibility with direct script invocation
 # =============================================================================
 
 case "$STYLE" in
-    "visual")
-        # Visual notification (system notification sound plays automatically)
-        OSS_ICON_PNG="$HOME/.oss/notification-icon.png"
-
-        if command -v terminal-notifier &>/dev/null; then
-            TN_ARGS=(-title "$TITLE" -message "$MESSAGE" -sound default)
-            [[ -n "$SUBTITLE" ]] && TN_ARGS+=(-subtitle "$SUBTITLE")
-            [[ -f "$OSS_ICON_PNG" ]] && TN_ARGS+=(-appIcon "$OSS_ICON_PNG")
-            terminal-notifier "${TN_ARGS[@]}" &>/dev/null || true
-        else
-            # osascript fallback (no subtitle or icon support)
-            osascript -e "display notification \"$MESSAGE\" with title \"$TITLE\"" &>/dev/null || true
-        fi
-        ;;
     "audio")
         if command -v say &>/dev/null; then
             say -v "$VOICE" "$MESSAGE" &>/dev/null || true
@@ -250,6 +294,7 @@ case "$STYLE" in
             afplay "$SOUND_FILE" &>/dev/null || true
         fi
         ;;
+    # "visual" and other styles - no-op, status line handles this
 esac
 
 exit 0

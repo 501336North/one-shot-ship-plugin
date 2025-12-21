@@ -44,7 +44,7 @@ $UNCOMMITTED
 EOF
 fi
 
-# Visual notification via unified oss-notify.sh (supports Jamf Notifier + terminal-notifier)
+# Update workflow state for Claude Code status line
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
 NOTIFY_SCRIPT="$SCRIPT_DIR/oss-notify.sh"
