@@ -97,12 +97,12 @@ export class NotificationService {
   getNotifyCommand(event: NotificationEvent): string {
     const { style, voice, sound } = this.settings.notifications;
 
-    // Strip emojis from title for terminal-notifier (they render poorly)
-    const cleanTitle = event.title.replace(/[\u{1F300}-\u{1F9FF}]/gu, '').trim();
-
     switch (style) {
       case 'visual':
-        return `terminal-notifier -title "${this.escapeShell(cleanTitle)}" -message "${this.escapeShell(event.message)}" -sound default`;
+        // Use status line message instead of terminal-notifier
+        // The status line is the primary visual feedback mechanism
+        const cli = path.join(process.env.CLAUDE_PLUGIN_ROOT || '', 'watcher', 'dist', 'cli', 'update-workflow-state.js');
+        return `node "${cli}" setMessage "${this.escapeShell(event.message)}"`;
 
       case 'audio':
         return `say -v ${voice} "${this.escapeShell(event.message)}"`;
@@ -110,6 +110,7 @@ export class NotificationService {
       case 'sound':
         return `afplay "/System/Library/Sounds/${sound}.aiff"`;
 
+      case 'muted':
       case 'none':
         return '';
 

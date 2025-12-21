@@ -120,9 +120,9 @@ describe('E2E: TDD Phase Status Line Integration', () => {
 
   /**
    * @behavior Full E2E: oss-log.sh phase → workflow-state.json → status line
-   * @acceptance-criteria Running oss-log.sh phase RED start results in status line showing 🔴 RED
+   * @acceptance-criteria Running oss-log.sh phase RED start results in status line showing 🔴
    */
-  it('should show RED phase in status line after oss-log.sh phase RED start', async () => {
+  it('should show RED phase emoji in status line after oss-log.sh phase RED start', async () => {
     // GIVEN: A project with .oss directory
 
     // WHEN: Running oss-log.sh with phase RED start
@@ -135,34 +135,38 @@ describe('E2E: TDD Phase Status Line Integration', () => {
     // AND: Running status line script
     const output = runStatusLine();
 
-    // THEN: Status line should show RED phase
-    expect(output).toContain('🔴 RED');
+    // THEN: Status line should show RED phase emoji
+    expect(output).toContain('🔴');
+    // Note: Emoji-only display (no "RED" text)
   });
 
   /**
-   * @behavior Full E2E: Phase transitions show in status line
-   * @acceptance-criteria RED → GREEN → REFACTOR cycle reflected in status line
+   * @behavior Full E2E: Phase transitions show in status line (emoji-only)
+   * @acceptance-criteria RED → GREEN → REFACTOR cycle reflected as emojis in status line
    */
-  it('should show phase transitions in status line', async () => {
+  it('should show phase transition emojis in status line', async () => {
     // GIVEN: Project starts with RED phase
     runLogCommand('phase build RED start');
     await waitForState();
 
     let output = runStatusLine();
-    expect(output).toContain('🔴 RED');
+    expect(output).toContain('🔴');
+    // Emoji-only display
 
     // WHEN: Transitioning to GREEN
     runLogCommand('phase build GREEN start');
     await new Promise(resolve => setTimeout(resolve, 200)); // Wait for update
 
     output = runStatusLine();
-    expect(output).toContain('🟢 GREEN');
+    expect(output).toContain('🟢');
+    // Emoji-only display
 
     // WHEN: Transitioning to REFACTOR
     runLogCommand('phase build REFACTOR start');
     await new Promise(resolve => setTimeout(resolve, 200)); // Wait for update
 
     output = runStatusLine();
-    expect(output).toContain('🔵 REFACTOR');
+    expect(output).toContain('🔄');
+    // Emoji-only display (changed from 🔵 to 🔄)
   });
 });

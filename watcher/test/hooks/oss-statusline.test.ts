@@ -78,7 +78,7 @@ describe('oss-statusline.sh - Project State Reading', () => {
   describe('Workflow state reading', () => {
     /**
      * @behavior Status line reads TDD phase from project .oss/ when current-project set
-     * @acceptance-criteria Output contains project-specific TDD phase (RED)
+     * @acceptance-criteria Output contains project-specific TDD phase emoji (🔴)
      */
     it('should read workflow state from project .oss/ when current-project set', () => {
       // GIVEN: Project has RED TDD phase in its .oss/workflow-state.json
@@ -118,14 +118,15 @@ describe('oss-statusline.sh - Project State Reading', () => {
         output = execError.stdout || '';
       }
 
-      // THEN: Output should show RED (from project) not GREEN (from global)
-      expect(output).toContain('RED');
-      expect(output).not.toContain('GREEN');
+      // THEN: Output should show 🔴 (from project) not 🟢 (from global)
+      // Note: Emoji-only display (no "RED"/"GREEN" text)
+      expect(output).toContain('🔴');
+      expect(output).not.toContain('🟢');
     });
 
     /**
      * @behavior Status line falls back to global when no current-project set
-     * @acceptance-criteria Output uses global state when current-project is empty
+     * @acceptance-criteria Output uses global state emoji when current-project is empty
      */
     it('should fall back to global state when current-project is empty', () => {
       // GIVEN: Global state has GREEN TDD phase
@@ -157,13 +158,14 @@ describe('oss-statusline.sh - Project State Reading', () => {
         output = execError.stdout || '';
       }
 
-      // THEN: Output should show GREEN (from global)
-      expect(output).toContain('GREEN');
+      // THEN: Output should show 🟢 (from global)
+      // Note: Emoji-only display
+      expect(output).toContain('🟢');
     });
 
     /**
      * @behavior Status line falls back to global when project has no .oss/ state
-     * @acceptance-criteria Output uses global state when project .oss/ missing
+     * @acceptance-criteria Output uses global state emoji when project .oss/ missing
      */
     it('should fall back to global state when project has no workflow state', () => {
       // GIVEN: Global state has GREEN TDD phase
@@ -200,8 +202,9 @@ describe('oss-statusline.sh - Project State Reading', () => {
         output = execError.stdout || '';
       }
 
-      // THEN: Output should show GREEN (from global fallback)
-      expect(output).toContain('GREEN');
+      // THEN: Output should show 🟢 (from global fallback)
+      // Note: Emoji-only display
+      expect(output).toContain('🟢');
     });
   });
 
@@ -263,10 +266,11 @@ describe('oss-statusline.sh - Project State Reading', () => {
         output = execError.stdout || '';
       }
 
-      // THEN: Output should show RED (Project A), NOT GREEN (Project B)
+      // THEN: Output should show 🔴 (Project A), NOT 🟢 (Project B)
       // This proves we're using stdin's workspace.current_dir, not ~/.oss/current-project
-      expect(output).toContain('RED');
-      expect(output).not.toContain('GREEN');
+      // Note: Emoji-only display (no "RED"/"GREEN" text)
+      expect(output).toContain('🔴');
+      expect(output).not.toContain('🟢');
 
       // Cleanup
       fs.rmSync(projectADir, { recursive: true, force: true });
@@ -455,32 +459,38 @@ describe('oss-statusline.sh - Project State Reading', () => {
     });
 
     /**
-     * @behavior Status line shows IRON LAW violation at beginning when active
-     * @acceptance-criteria When IRON LAW is violated, ⛔ LAW#X appears BEFORE [Model]
+     * @behavior Status line shows IRON LAW#4 violation when actually on main/master branch
+     * @acceptance-criteria When on main branch, ⛔ LAW#4 appears BEFORE [Model]
+     * @note LAW#4 is now checked DYNAMICALLY from git branch, not from state file
      */
-    it('should show IRON LAW violation at the beginning when active', () => {
-      // GIVEN: Project has workflow state
+    it('should show IRON LAW#4 violation when on main branch', () => {
+      // GIVEN: Project is on main branch (LAW#4 violation)
+      const law4ProjectDir = path.join(os.tmpdir(), `oss-law4-test-${Date.now()}`);
+      fs.mkdirSync(path.join(law4ProjectDir, '.oss'), { recursive: true });
+
+      // Initialize git repo on main branch
+      try {
+        execSync('git init', { cwd: law4ProjectDir, stdio: 'ignore' });
+        execSync('git config user.email "test@example.com"', { cwd: law4ProjectDir, stdio: 'ignore' });
+        execSync('git config user.name "Test User"', { cwd: law4ProjectDir, stdio: 'ignore' });
+        // Stay on main/master (default after git init)
+      } catch {
+        // Git might fail in some environments
+      }
+
+      const law4WorkflowFile = path.join(law4ProjectDir, '.oss', 'workflow-state.json');
       const projectState = {
         tddPhase: 'green',
         supervisor: 'watching',
         currentCommand: 'build'
       };
-      fs.writeFileSync(projectWorkflowFile, JSON.stringify(projectState));
-      fs.writeFileSync(currentProjectFile, testProjectDir);
-
-      // AND: There is an active IRON LAW violation
-      const ironLawFile = path.join(ossDir, 'iron-law-state.json');
-      const ironLawState = {
-        violations: [
-          { law: '4', type: 'main_branch', detected: new Date().toISOString(), resolved: null }
-        ]
-      };
-      fs.writeFileSync(ironLawFile, JSON.stringify(ironLawState));
+      fs.writeFileSync(law4WorkflowFile, JSON.stringify(projectState));
+      fs.writeFileSync(currentProjectFile, law4ProjectDir);
 
       // WHEN: Running statusline script
       const input = JSON.stringify({
         model: { display_name: 'Claude' },
-        workspace: { current_dir: testProjectDir }
+        workspace: { current_dir: law4ProjectDir }
       });
 
       let output = '';
@@ -488,20 +498,18 @@ describe('oss-statusline.sh - Project State Reading', () => {
         output = execSync(`echo '${input}' | bash "${statuslineScript}"`, {
           timeout: 5000,
           encoding: 'utf-8',
-          cwd: testProjectDir,
+          cwd: law4ProjectDir,
         });
       } catch (error) {
         const execError = error as { stdout?: string; stderr?: string };
         output = execError.stdout || '';
       }
 
-      // THEN: Output should START with violation indicator
+      // THEN: Output should START with violation indicator (LAW#4 for main branch)
       expect(output.trim()).toMatch(/^⛔ LAW#4/);
 
       // Cleanup
-      if (fs.existsSync(ironLawFile)) {
-        fs.unlinkSync(ironLawFile);
-      }
+      fs.rmSync(law4ProjectDir, { recursive: true, force: true });
     });
   });
 

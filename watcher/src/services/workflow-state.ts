@@ -30,6 +30,8 @@ export interface ActiveAgent {
 export interface WorkflowState {
   supervisor: SupervisorStatus;
   activeStep: ChainStep | null;
+  currentCommand?: string;  // Currently executing command (ideate/plan/build/ship)
+  nextCommand?: string | null;  // Next recommended command
   chainState: {
     // Discovery Chain
     ideate: StepStatus;
@@ -212,7 +214,7 @@ export class WorkflowStateService {
   }
 
   /**
-   * Marks step as done
+   * Marks step as done and sets nextCommand based on workflow progression
    */
   async completeStep(step: ChainStep): Promise<void> {
     const state = await this.getState();
@@ -220,6 +222,17 @@ export class WorkflowStateService {
     const chainKey = step as keyof WorkflowState['chainState'];
     state.chainState[chainKey] = 'done';
     state.activeStep = null;
+
+    // Set nextCommand based on which step was completed
+    const NEXT_COMMAND_MAP: Record<string, string | null> = {
+      ideate: 'plan',
+      plan: 'build',
+      build: 'ship',
+      ship: null,
+    };
+    if (step in NEXT_COMMAND_MAP) {
+      state.nextCommand = NEXT_COMMAND_MAP[step];
+    }
 
     await this.writeState(state);
   }
@@ -341,6 +354,42 @@ export class WorkflowStateService {
   async clearMessage(): Promise<void> {
     const state = await this.getState();
     delete state.message;
+    await this.writeState(state);
+  }
+
+  /**
+   * Sets currentCommand for status line display
+   */
+  async setCurrentCommand(command: string): Promise<void> {
+    const state = await this.getState();
+    state.currentCommand = command;
+    await this.writeState(state);
+  }
+
+  /**
+   * Clears currentCommand from state
+   */
+  async clearCurrentCommand(): Promise<void> {
+    const state = await this.getState();
+    delete state.currentCommand;
+    await this.writeState(state);
+  }
+
+  /**
+   * Sets nextCommand for status line display
+   */
+  async setNextCommand(command: string): Promise<void> {
+    const state = await this.getState();
+    state.nextCommand = command;
+    await this.writeState(state);
+  }
+
+  /**
+   * Clears nextCommand (sets to null)
+   */
+  async clearNextCommand(): Promise<void> {
+    const state = await this.getState();
+    state.nextCommand = null;
     await this.writeState(state);
   }
 

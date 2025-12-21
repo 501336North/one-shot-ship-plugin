@@ -7,12 +7,13 @@
 
 /**
  * Notification style options
- * - visual: macOS notification center via terminal-notifier
+ * - visual: Status line message (primary feedback mechanism)
  * - audio: Text-to-speech via say command
  * - sound: System sound via afplay
- * - none: Silent mode
+ * - muted: Silent mode (no notifications)
+ * - none: Same as muted (legacy)
  */
-export type NotificationStyle = 'visual' | 'audio' | 'sound' | 'none';
+export type NotificationStyle = 'visual' | 'audio' | 'sound' | 'muted' | 'none';
 
 /**
  * Verbosity levels for filtering notifications

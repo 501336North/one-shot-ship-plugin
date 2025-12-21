@@ -14,6 +14,8 @@ export interface ActiveAgent {
 export interface WorkflowState {
     supervisor: SupervisorStatus;
     activeStep: ChainStep | null;
+    currentCommand?: string;
+    nextCommand?: string | null;
     chainState: {
         ideate: StepStatus;
         requirements: StepStatus;
@@ -67,7 +69,7 @@ export declare class WorkflowStateService {
      */
     setTddPhase(phase: ChainStep): Promise<void>;
     /**
-     * Marks step as done
+     * Marks step as done and sets nextCommand based on workflow progression
      */
     completeStep(step: ChainStep): Promise<void>;
     /**
@@ -110,6 +112,22 @@ export declare class WorkflowStateService {
      * Clears message from status line
      */
     clearMessage(): Promise<void>;
+    /**
+     * Sets currentCommand for status line display
+     */
+    setCurrentCommand(command: string): Promise<void>;
+    /**
+     * Clears currentCommand from state
+     */
+    clearCurrentCommand(): Promise<void>;
+    /**
+     * Sets nextCommand for status line display
+     */
+    setNextCommand(command: string): Promise<void>;
+    /**
+     * Clears nextCommand (sets to null)
+     */
+    clearNextCommand(): Promise<void>;
     /**
      * Determines if we should warn about archive based on workflow state
      *

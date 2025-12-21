@@ -124,13 +124,23 @@ export class WorkflowStateService {
         await this.writeState(state);
     }
     /**
-     * Marks step as done
+     * Marks step as done and sets nextCommand based on workflow progression
      */
     async completeStep(step) {
         const state = await this.getState();
         const chainKey = step;
         state.chainState[chainKey] = 'done';
         state.activeStep = null;
+        // Set nextCommand based on which step was completed
+        const NEXT_COMMAND_MAP = {
+            ideate: 'plan',
+            plan: 'build',
+            build: 'ship',
+            ship: null,
+        };
+        if (step in NEXT_COMMAND_MAP) {
+            state.nextCommand = NEXT_COMMAND_MAP[step];
+        }
         await this.writeState(state);
     }
     /**
@@ -233,6 +243,38 @@ export class WorkflowStateService {
     async clearMessage() {
         const state = await this.getState();
         delete state.message;
+        await this.writeState(state);
+    }
+    /**
+     * Sets currentCommand for status line display
+     */
+    async setCurrentCommand(command) {
+        const state = await this.getState();
+        state.currentCommand = command;
+        await this.writeState(state);
+    }
+    /**
+     * Clears currentCommand from state
+     */
+    async clearCurrentCommand() {
+        const state = await this.getState();
+        delete state.currentCommand;
+        await this.writeState(state);
+    }
+    /**
+     * Sets nextCommand for status line display
+     */
+    async setNextCommand(command) {
+        const state = await this.getState();
+        state.nextCommand = command;
+        await this.writeState(state);
+    }
+    /**
+     * Clears nextCommand (sets to null)
+     */
+    async clearNextCommand() {
+        const state = await this.getState();
+        state.nextCommand = null;
         await this.writeState(state);
     }
     /**
