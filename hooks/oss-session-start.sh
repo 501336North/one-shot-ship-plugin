@@ -10,13 +10,6 @@ source "$SCRIPT_DIR/oss-config.sh" 2>/dev/null || true
 mkdir -p ~/.oss
 chmod 700 ~/.oss  # Only owner can access
 
-# Auto-install terminal-notifier if missing (macOS only)
-if [[ "$(uname)" == "Darwin" ]] && ! command -v terminal-notifier &>/dev/null; then
-    if command -v brew &>/dev/null; then
-        brew install terminal-notifier &>/dev/null &
-    fi
-fi
-
 # Check for API key configuration
 CONFIG_FILE=~/.oss/config.json
 if [[ ! -f "$CONFIG_FILE" ]]; then
