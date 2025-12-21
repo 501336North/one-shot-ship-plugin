@@ -81,6 +81,8 @@ fi
 if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
     node "$WORKFLOW_STATE_CLI" init 2>/dev/null || true
     node "$WORKFLOW_STATE_CLI" setSupervisor watching 2>/dev/null || true
+    # Clear any stale message from previous session (will be set fresh below)
+    node "$WORKFLOW_STATE_CLI" clearMessage 2>/dev/null || true
 fi
 
 # Check if watcher is already running
@@ -143,7 +145,35 @@ if [[ -f ~/.oss/session-context.md ]]; then
     BRANCH=$(echo "$BRANCH_LINE" | sed 's/\*\*Branch:\*\* //')
 
     # Parse save date from context file (format: _Saved: 2025-12-09 11:54:10_)
-    SAVE_DATE=$(grep "^_Saved:" "$CONTEXT_FILE" 2>/dev/null | sed 's/_Saved: //' | sed 's/_$//')
+    SAVE_DATE_RAW=$(grep "^_Saved:" "$CONTEXT_FILE" 2>/dev/null | sed 's/_Saved: //' | sed 's/_$//')
+
+    # Calculate human-friendly "X ago" format
+    SAVE_DATE="unknown"
+    if [[ -n "$SAVE_DATE_RAW" ]]; then
+        # Convert save date to epoch (macOS vs Linux)
+        if [[ "$(uname)" == "Darwin" ]]; then
+            SAVE_EPOCH=$(date -j -f "%Y-%m-%d %H:%M:%S" "$SAVE_DATE_RAW" "+%s" 2>/dev/null || echo "0")
+        else
+            SAVE_EPOCH=$(date -d "$SAVE_DATE_RAW" "+%s" 2>/dev/null || echo "0")
+        fi
+        NOW_EPOCH=$(date "+%s")
+
+        if [[ "$SAVE_EPOCH" != "0" ]]; then
+            DIFF_SECS=$((NOW_EPOCH - SAVE_EPOCH))
+            if [[ $DIFF_SECS -lt 60 ]]; then
+                SAVE_DATE="just now"
+            elif [[ $DIFF_SECS -lt 3600 ]]; then
+                MINS=$((DIFF_SECS / 60))
+                SAVE_DATE="${MINS}m ago"
+            elif [[ $DIFF_SECS -lt 86400 ]]; then
+                HOURS=$((DIFF_SECS / 3600))
+                SAVE_DATE="${HOURS}h ago"
+            else
+                DAYS=$((DIFF_SECS / 86400))
+                SAVE_DATE="${DAYS}d ago"
+            fi
+        fi
+    fi
 
     # Count uncommitted changes from current git status
     UNCOMMITTED_COUNT=$(git status -s 2>/dev/null | grep -c . || echo "0")
@@ -153,7 +183,7 @@ if [[ -f ~/.oss/session-context.md ]]; then
 
     # Visual notification for context restore (via unified oss-notify.sh)
     if [[ -x "$NOTIFY_SCRIPT" ]]; then
-        "$NOTIFY_SCRIPT" --session context_restored "{\"project\": \"$PROJECT_NAME\", \"branch\": \"${BRANCH:-unknown}\", \"saveDate\": \"${SAVE_DATE:-unknown}\", \"uncommitted\": $UNCOMMITTED_COUNT}"
+        "$NOTIFY_SCRIPT" --session context_restored "{\"project\": \"$PROJECT_NAME\", \"branch\": \"${BRANCH:-unknown}\", \"saveDate\": \"${SAVE_DATE}\", \"uncommitted\": $UNCOMMITTED_COUNT}"
     fi
 else
     # No saved context - fresh start notification (via unified oss-notify.sh)
