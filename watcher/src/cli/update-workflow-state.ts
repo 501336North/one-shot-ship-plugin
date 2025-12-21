@@ -202,6 +202,19 @@ async function main() {
         break;
       }
 
+      case 'setMessage': {
+        const message = args[1] || '';
+        await service.setMessage(message);
+        console.log(`Message set: ${message}`);
+        break;
+      }
+
+      case 'clearMessage': {
+        await service.clearMessage();
+        console.log('Message cleared');
+        break;
+      }
+
       default:
         console.error(`Unknown command: ${command}`);
         process.exit(1);
