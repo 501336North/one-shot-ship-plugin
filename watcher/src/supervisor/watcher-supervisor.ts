@@ -17,7 +17,7 @@ import { CreateTaskInput, AnomalyType } from '../types.js';
 import { IronLawMonitor, IronLawViolation } from '../services/iron-law-monitor.js';
 import { SettingsService } from '../services/settings.js';
 import { HealthcheckService } from '../services/healthcheck.js';
-import { HealthReport } from '../types.js';
+import { HealthReport, CheckResult } from '../types.js';
 
 export interface SupervisorState {
   current_command?: string;
@@ -189,7 +189,7 @@ export class WatcherSupervisor {
   /**
    * Handle healthcheck failure (critical issue)
    */
-  private async handleHealthcheckFailure(checkName: string, result: any): Promise<void> {
+  private async handleHealthcheckFailure(checkName: string, result: CheckResult): Promise<void> {
     const signature = `healthcheck:${checkName}:${result.message}`;
 
     // Deduplicate notifications
@@ -208,12 +208,13 @@ export class WatcherSupervisor {
     }
 
     // Queue corrective action if details include action
-    if (result.details?.action) {
+    const action = result.details?.action;
+    if (typeof action === 'string') {
       const taskInput: CreateTaskInput = {
         priority: 'high',
         source: 'iron-law-monitor',
         anomaly_type: 'unusual_pattern',
-        prompt: result.details.action,
+        prompt: action,
         suggested_agent: 'general-purpose',
         context: {
           type: checkName,
@@ -227,7 +228,7 @@ export class WatcherSupervisor {
   /**
    * Handle healthcheck warning
    */
-  private async handleHealthcheckWarning(checkName: string, result: any): Promise<void> {
+  private async handleHealthcheckWarning(checkName: string, result: CheckResult): Promise<void> {
     const signature = `healthcheck:${checkName}:${result.message}`;
 
     // Deduplicate notifications
@@ -246,7 +247,8 @@ export class WatcherSupervisor {
     }
 
     // Queue corrective action
-    const action = result.details?.action || `Fix ${checkName} issue: ${result.message}`;
+    const detailAction = result.details?.action;
+    const action = typeof detailAction === 'string' ? detailAction : `Fix ${checkName} issue: ${result.message}`;
     const taskInput: CreateTaskInput = {
       priority: 'medium',
       source: 'iron-law-monitor',

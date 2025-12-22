@@ -12,7 +12,7 @@
  * 8. Git Safety - Branch verification active
  */
 
-import { HealthReport, CheckResult, CheckStatus, OverallStatus } from '../types.js';
+import { HealthReport, CheckResult, OverallStatus } from '../types.js';
 import { checkLogging as checkSessionLogging } from '../healthchecks/logging.js';
 import { checkDevDocs as checkFeatureDevDocs } from '../healthchecks/dev-docs.js';
 import { checkDelegation as checkAgentDelegation } from '../healthchecks/delegation.js';
@@ -21,10 +21,31 @@ import { checkGitSafety as checkGitSafetyImpl } from '../healthchecks/git-safety
 import { WorkflowStateService } from './workflow-state.js';
 import { execSync } from 'child_process';
 
+/** Task with status for queue checks */
+interface QueueTask {
+  status: string;
+}
+
+/** Queue manager interface for healthcheck dependency injection */
+interface QueueManagerInterface {
+  getTasks(): Promise<QueueTask[]>;
+}
+
+/** Log reader interface (reserved for future use) */
+interface LogReaderInterface {
+  read?(): Promise<string[]>;
+}
+
+/** File system interface (reserved for future use) */
+interface FileSystemInterface {
+  exists?(path: string): boolean;
+  read?(path: string): string;
+}
+
 interface HealthcheckDependencies {
-  logReader: any;
-  queueManager: any;
-  fileSystem: any;
+  logReader?: LogReaderInterface | null;
+  queueManager?: QueueManagerInterface | null;
+  fileSystem?: FileSystemInterface | null;
   sessionLogPath?: string;
   sessionActive?: boolean;
   featurePath?: string;
@@ -33,9 +54,9 @@ interface HealthcheckDependencies {
 }
 
 export class HealthcheckService {
-  private logReader: any;
-  private queueManager: any;
-  private fileSystem: any;
+  private logReader?: LogReaderInterface | null;
+  private queueManager?: QueueManagerInterface | null;
+  private fileSystem?: FileSystemInterface | null;
   private sessionLogPath: string;
   private sessionActive: boolean;
   private featurePath: string;
@@ -159,7 +180,7 @@ export class HealthcheckService {
       }
 
       const tasks = await this.queueManager.getTasks();
-      const pendingCount = tasks.filter((t: { status: string }) => t.status === 'pending').length;
+      const pendingCount = tasks.filter((t) => t.status === 'pending').length;
 
       return {
         status: 'pass',
