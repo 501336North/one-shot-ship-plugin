@@ -15,6 +15,15 @@ export interface Notification {
     message: string;
     expiresAt: string;
 }
+export interface QueueSummary {
+    pendingCount: number;
+    criticalCount: number;
+    topTask?: string;
+}
+export interface HealthStatus {
+    status: 'healthy' | 'violation';
+    violatedLaw?: number;
+}
 export interface WorkflowState {
     version: number;
     supervisor: SupervisorStatus;
@@ -22,6 +31,7 @@ export interface WorkflowState {
     currentCommand?: string;
     nextCommand?: string | null;
     notification?: Notification;
+    sessionId?: string;
     chainState: {
         ideate: StepStatus;
         requirements: StepStatus;
@@ -39,6 +49,8 @@ export interface WorkflowState {
         ship: StepStatus;
     };
     activeAgent?: ActiveAgent;
+    queueSummary?: QueueSummary;
+    health?: HealthStatus;
     tddPhase?: string;
     message?: string;
     currentTask?: string;
@@ -170,5 +182,43 @@ export declare class WorkflowStateService {
      * @returns true if expired or no notification exists
      */
     isNotificationExpired(): Promise<boolean>;
+    /**
+     * Sets queue summary for status line display (consolidated from queue.json)
+     */
+    setQueueSummary(summary: QueueSummary): Promise<void>;
+    /**
+     * Clears queue summary from state
+     */
+    clearQueueSummary(): Promise<void>;
+    /**
+     * Sets health status for status line display (consolidated from iron-law-state.json)
+     */
+    setHealth(health: HealthStatus): Promise<void>;
+    /**
+     * Clears health status from state
+     */
+    clearHealth(): Promise<void>;
+    /**
+     * Clears progress, currentTask, and testsPass fields
+     * Used to clear stale workflow progress on session start
+     */
+    clearProgress(): Promise<void>;
+    /**
+     * Prepares state for a new session by clearing stale workflow data
+     * Preserves chainState for historical reference
+     * Sets supervisor to 'watching' for active session
+     */
+    prepareForNewSession(): Promise<void>;
+    /**
+     * Sets session ID for staleness detection
+     * @param sessionId - Unique session identifier (typically UUID)
+     */
+    setSessionId(sessionId: string): Promise<void>;
+    /**
+     * Checks if the provided session ID matches the current session
+     * @param sessionId - Session ID to check
+     * @returns true if session IDs match, false otherwise
+     */
+    isCurrentSession(sessionId: string): Promise<boolean>;
 }
 //# sourceMappingURL=workflow-state.d.ts.map
