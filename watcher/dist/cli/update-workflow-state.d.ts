@@ -13,6 +13,9 @@
  *   node update-workflow-state.js reset
  *   node update-workflow-state.js setNotification <message> [ttlSeconds]
  *   node update-workflow-state.js clearNotification
+ *   node update-workflow-state.js clearProgress
+ *   node update-workflow-state.js prepareForNewSession
+ *   node update-workflow-state.js setSessionId <sessionId>
  */
 export {};
 //# sourceMappingURL=update-workflow-state.d.ts.map

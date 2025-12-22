@@ -867,4 +867,160 @@ describe('WorkflowStateService', () => {
       expect(state.health).toBeUndefined();
     });
   });
+
+  // ==========================================================================
+  // Session State Clearing (Fix stale "ship 2/9" issue)
+  // ==========================================================================
+
+  describe('Session State Clearing', () => {
+    /**
+     * @behavior clearProgress removes progress, currentTask, and testsPass fields
+     * @acceptance-criteria AC-SESSION.1
+     * @business-rule Fresh sessions should not show stale progress from previous workflows
+     */
+    test('clearProgress removes progress, currentTask, and testsPass fields', async () => {
+      await service.initialize();
+      await service.setProgress({ progress: '2/9', currentTask: 'Building tests', testsPass: 42 });
+
+      // Verify fields were set
+      let state = await service.getState();
+      expect(state.progress).toBe('2/9');
+      expect(state.currentTask).toBe('Building tests');
+      expect(state.testsPass).toBe(42);
+
+      await service.clearProgress();
+
+      state = await service.getState();
+      expect(state.progress).toBeUndefined();
+      expect(state.currentTask).toBeUndefined();
+      expect(state.testsPass).toBeUndefined();
+    });
+
+    /**
+     * @behavior prepareForNewSession clears all stale workflow data but preserves chainState
+     * @acceptance-criteria AC-SESSION.2
+     * @business-rule Session start should clear transient data but preserve historical reference
+     */
+    test('prepareForNewSession clears stale data but preserves chainState', async () => {
+      await service.initialize();
+
+      // Set up stale workflow data
+      await service.setProgress({ progress: '5/10', currentTask: 'Old task', testsPass: 100 });
+      await service.setActiveStep('build');
+      await service.setTddPhase('green');
+      await service.setMessage('Stale message');
+      await service.setNotification('Stale notification', 60);
+
+      // Verify chainState has some history
+      let state = await service.getState();
+      expect(state.chainState.ideate).toBe('done');
+      expect(state.chainState.plan).toBe('done');
+
+      await service.prepareForNewSession();
+
+      state = await service.getState();
+
+      // These should be cleared
+      expect(state.progress).toBeUndefined();
+      expect(state.currentTask).toBeUndefined();
+      expect(state.testsPass).toBeUndefined();
+      expect(state.activeStep).toBeNull();
+      expect(state.message).toBeUndefined();
+      expect(state.notification).toBeUndefined();
+      expect(state.tddPhase).toBeUndefined();
+      expect(state.currentCommand).toBeUndefined();
+
+      // chainState should be preserved
+      expect(state.chainState.ideate).toBe('done');
+      expect(state.chainState.plan).toBe('done');
+    });
+
+    /**
+     * @behavior prepareForNewSession preserves supervisor as watching
+     * @acceptance-criteria AC-SESSION.3
+     * @business-rule Session start sets supervisor to watching (session is active)
+     */
+    test('prepareForNewSession sets supervisor to watching', async () => {
+      await service.initialize();
+      await service.setSupervisor('intervening');
+
+      await service.prepareForNewSession();
+
+      const state = await service.getState();
+      expect(state.supervisor).toBe('watching');
+    });
+  });
+
+  // ==========================================================================
+  // Session ID Tracking (Detect cross-session staleness)
+  // ==========================================================================
+
+  describe('Session ID Tracking', () => {
+    /**
+     * @behavior setSessionId stores session ID in state
+     * @acceptance-criteria AC-SESSIONID.1
+     * @business-rule Each session gets a unique ID for staleness detection
+     */
+    test('setSessionId stores session ID in state', async () => {
+      await service.initialize();
+
+      await service.setSessionId('abc-123-def');
+
+      const state = await service.getState();
+      expect(state.sessionId).toBe('abc-123-def');
+    });
+
+    /**
+     * @behavior isCurrentSession returns true for matching session ID
+     * @acceptance-criteria AC-SESSIONID.2
+     */
+    test('isCurrentSession returns true for matching ID', async () => {
+      await service.initialize();
+      await service.setSessionId('current-session-id');
+
+      const isCurrent = await service.isCurrentSession('current-session-id');
+
+      expect(isCurrent).toBe(true);
+    });
+
+    /**
+     * @behavior isCurrentSession returns false for different session ID
+     * @acceptance-criteria AC-SESSIONID.3
+     * @business-rule Stale sessions should be detected
+     */
+    test('isCurrentSession returns false for different ID', async () => {
+      await service.initialize();
+      await service.setSessionId('current-session-id');
+
+      const isCurrent = await service.isCurrentSession('stale-session-id');
+
+      expect(isCurrent).toBe(false);
+    });
+
+    /**
+     * @behavior isCurrentSession returns false when no session ID is set
+     * @acceptance-criteria AC-SESSIONID.4
+     */
+    test('isCurrentSession returns false when no session ID set', async () => {
+      await service.initialize();
+
+      const isCurrent = await service.isCurrentSession('any-session-id');
+
+      expect(isCurrent).toBe(false);
+    });
+
+    /**
+     * @behavior prepareForNewSession clears session ID (new session gets new ID)
+     * @acceptance-criteria AC-SESSIONID.5
+     */
+    test('prepareForNewSession clears session ID', async () => {
+      await service.initialize();
+      await service.setSessionId('old-session-id');
+
+      await service.prepareForNewSession();
+
+      const state = await service.getState();
+      expect(state.sessionId).toBeUndefined();
+    });
+  });
 });

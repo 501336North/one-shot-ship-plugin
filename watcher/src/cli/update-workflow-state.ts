@@ -13,6 +13,9 @@
  *   node update-workflow-state.js reset
  *   node update-workflow-state.js setNotification <message> [ttlSeconds]
  *   node update-workflow-state.js clearNotification
+ *   node update-workflow-state.js clearProgress
+ *   node update-workflow-state.js prepareForNewSession
+ *   node update-workflow-state.js setSessionId <sessionId>
  */
 
 import * as fs from 'fs';
@@ -254,6 +257,25 @@ async function main() {
       case 'clearNotification': {
         await service.clearNotification();
         console.log('Notification cleared');
+        break;
+      }
+
+      case 'clearProgress': {
+        await service.clearProgress();
+        console.log('Progress cleared');
+        break;
+      }
+
+      case 'prepareForNewSession': {
+        await service.prepareForNewSession();
+        console.log('Session state prepared');
+        break;
+      }
+
+      case 'setSessionId': {
+        const sessionId = args[1] || '';
+        await service.setSessionId(sessionId);
+        console.log(`Session ID set: ${sessionId}`);
         break;
       }
 

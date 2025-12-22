@@ -384,5 +384,88 @@ export class WorkflowStateService {
         const expiresAt = new Date(state.notification.expiresAt).getTime();
         return Date.now() > expiresAt;
     }
+    /**
+     * Sets queue summary for status line display (consolidated from queue.json)
+     */
+    async setQueueSummary(summary) {
+        const state = await this.getState();
+        state.queueSummary = summary;
+        await this.writeState(state);
+    }
+    /**
+     * Clears queue summary from state
+     */
+    async clearQueueSummary() {
+        const state = await this.getState();
+        delete state.queueSummary;
+        await this.writeState(state);
+    }
+    /**
+     * Sets health status for status line display (consolidated from iron-law-state.json)
+     */
+    async setHealth(health) {
+        const state = await this.getState();
+        state.health = health;
+        await this.writeState(state);
+    }
+    /**
+     * Clears health status from state
+     */
+    async clearHealth() {
+        const state = await this.getState();
+        delete state.health;
+        await this.writeState(state);
+    }
+    /**
+     * Clears progress, currentTask, and testsPass fields
+     * Used to clear stale workflow progress on session start
+     */
+    async clearProgress() {
+        const state = await this.getState();
+        delete state.progress;
+        delete state.currentTask;
+        delete state.testsPass;
+        await this.writeState(state);
+    }
+    /**
+     * Prepares state for a new session by clearing stale workflow data
+     * Preserves chainState for historical reference
+     * Sets supervisor to 'watching' for active session
+     */
+    async prepareForNewSession() {
+        const state = await this.getState();
+        // Clear stale workflow data
+        delete state.progress;
+        delete state.currentTask;
+        delete state.testsPass;
+        delete state.message;
+        delete state.notification;
+        delete state.tddPhase;
+        delete state.currentCommand;
+        delete state.sessionId;
+        state.activeStep = null;
+        // Set supervisor to watching for active session
+        state.supervisor = 'watching';
+        // chainState is preserved for historical reference
+        await this.writeState(state);
+    }
+    /**
+     * Sets session ID for staleness detection
+     * @param sessionId - Unique session identifier (typically UUID)
+     */
+    async setSessionId(sessionId) {
+        const state = await this.getState();
+        state.sessionId = sessionId;
+        await this.writeState(state);
+    }
+    /**
+     * Checks if the provided session ID matches the current session
+     * @param sessionId - Session ID to check
+     * @returns true if session IDs match, false otherwise
+     */
+    async isCurrentSession(sessionId) {
+        const state = await this.getState();
+        return state.sessionId === sessionId;
+    }
 }
 //# sourceMappingURL=workflow-state.js.map

@@ -78,11 +78,14 @@ if [[ -n "$CLAUDE_PROJECT_DIR" ]]; then
 fi
 
 # Initialize workflow state (for Claude Code status line)
+# prepareForNewSession clears stale workflow data (progress, currentTask, notifications)
+# while preserving chainState history and setting supervisor to 'watching'
 if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
     node "$WORKFLOW_STATE_CLI" init 2>/dev/null || true
-    node "$WORKFLOW_STATE_CLI" setSupervisor watching 2>/dev/null || true
-    # Clear any stale notification from previous session (fresh one set below)
-    node "$WORKFLOW_STATE_CLI" clearNotification 2>/dev/null || true
+    node "$WORKFLOW_STATE_CLI" prepareForNewSession 2>/dev/null || true
+    # Generate unique session ID for staleness detection
+    SESSION_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "session-$(date +%s)")
+    node "$WORKFLOW_STATE_CLI" setSessionId "$SESSION_ID" 2>/dev/null || true
 fi
 
 # Check if watcher is already running
