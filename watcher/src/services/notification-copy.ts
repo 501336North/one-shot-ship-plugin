@@ -258,8 +258,12 @@ export class NotificationCopyService {
     // Handle context_restored - show save date and subtitle
     if (event === 'context_restored') {
       // Format save date nicely if provided
-      const saveDate = context.saveDate || 'unknown';
-      message = message.replace('{saveDate}', saveDate);
+      // Never show "Saved unknown" - fallback to "Context restored"
+      if (context.saveDate && context.saveDate !== 'unknown' && context.saveDate !== '') {
+        message = `Saved ${context.saveDate}`;
+      } else {
+        message = 'Context restored';
+      }
       // Subtitle shows branch and uncommitted count
       subtitle = `[${context.branch || 'unknown'}] • ${uncommittedText}`;
     }

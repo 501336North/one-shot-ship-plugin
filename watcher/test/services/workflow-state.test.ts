@@ -750,4 +750,121 @@ describe('WorkflowStateService', () => {
       expect(stateAfter.version).toBe(1);
     });
   });
+
+  // ==========================================================================
+  // Queue Summary (Task 2.1 - consolidate queue info into workflow-state)
+  // ==========================================================================
+
+  describe('Queue Summary', () => {
+    /**
+     * @behavior Sets queue summary with pending and critical counts
+     * @acceptance-criteria AC-STATUS-QUEUE.1
+     * @business-rule Status line reads consolidated state (no queue.json)
+     */
+    test('setQueueSummary stores pending and critical counts', async () => {
+      await service.initialize();
+
+      await service.setQueueSummary({ pendingCount: 5, criticalCount: 2 });
+
+      const state = await service.getState();
+      expect(state.queueSummary).toBeDefined();
+      expect(state.queueSummary?.pendingCount).toBe(5);
+      expect(state.queueSummary?.criticalCount).toBe(2);
+    });
+
+    /**
+     * @behavior Queue summary includes top task description
+     * @acceptance-criteria AC-STATUS-QUEUE.2
+     */
+    test('setQueueSummary stores top task description', async () => {
+      await service.initialize();
+
+      await service.setQueueSummary({
+        pendingCount: 3,
+        criticalCount: 0,
+        topTask: 'Fix failing tests',
+      });
+
+      const state = await service.getState();
+      expect(state.queueSummary?.topTask).toBe('Fix failing tests');
+    });
+
+    /**
+     * @behavior Clear queue summary removes from state
+     * @acceptance-criteria AC-STATUS-QUEUE.3
+     */
+    test('clearQueueSummary removes queue summary from state', async () => {
+      await service.initialize();
+      await service.setQueueSummary({ pendingCount: 5, criticalCount: 1 });
+
+      await service.clearQueueSummary();
+
+      const state = await service.getState();
+      expect(state.queueSummary).toBeUndefined();
+    });
+
+    /**
+     * @behavior Zero counts means no queue items
+     * @acceptance-criteria AC-STATUS-QUEUE.4
+     */
+    test('setQueueSummary with zero counts is valid', async () => {
+      await service.initialize();
+
+      await service.setQueueSummary({ pendingCount: 0, criticalCount: 0 });
+
+      const state = await service.getState();
+      expect(state.queueSummary).toBeDefined();
+      expect(state.queueSummary?.pendingCount).toBe(0);
+      expect(state.queueSummary?.criticalCount).toBe(0);
+    });
+  });
+
+  // ==========================================================================
+  // Health Status (Task 2.2 - consolidate IRON LAW violations into workflow-state)
+  // ==========================================================================
+
+  describe('Health Status', () => {
+    /**
+     * @behavior Sets health status for status line display
+     * @acceptance-criteria AC-STATUS-HEALTH.1
+     * @business-rule Status line reads consolidated state (no iron-law-state.json)
+     */
+    test('setHealth stores health status as healthy', async () => {
+      await service.initialize();
+
+      await service.setHealth({ status: 'healthy' });
+
+      const state = await service.getState();
+      expect(state.health).toBeDefined();
+      expect(state.health?.status).toBe('healthy');
+    });
+
+    /**
+     * @behavior Health status includes violated law number
+     * @acceptance-criteria AC-STATUS-HEALTH.2
+     */
+    test('setHealth stores violated law number', async () => {
+      await service.initialize();
+
+      await service.setHealth({ status: 'violation', violatedLaw: 4 });
+
+      const state = await service.getState();
+      expect(state.health?.status).toBe('violation');
+      expect(state.health?.violatedLaw).toBe(4);
+    });
+
+    /**
+     * @behavior Clear health status removes from state
+     * @acceptance-criteria AC-STATUS-HEALTH.3
+     */
+    test('clearHealth removes health from state', async () => {
+      await service.initialize();
+      await service.setHealth({ status: 'violation', violatedLaw: 4 });
+
+      await service.clearHealth();
+
+      const state = await service.getState();
+      expect(state.health).toBeUndefined();
+    });
+  });
 });

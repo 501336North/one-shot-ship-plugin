@@ -127,7 +127,13 @@ describe('Claude Code Status Line', () => {
   describe('Queue Count Display', () => {
     const queueFile = path.join(testOssDir, 'queue.json');
 
-    it('should show 📋N when queue has N pending tasks', async () => {
+    it('should show 📋N when queue has N pending tasks during active workflow', async () => {
+      // Must have an active workflow to show non-critical queue
+      await fs.writeFile(workflowStateFile, JSON.stringify({
+        tddPhase: 'green',
+        currentCommand: 'build',
+        supervisor: 'watching'
+      }));
       await fs.writeFile(queueFile, JSON.stringify({
         version: '1.0',
         updated_at: new Date().toISOString(),
@@ -173,12 +179,17 @@ describe('Claude Code Status Line', () => {
   });
 
   describe('No Active Status', () => {
-    it('should show model only when no workflow-state.json exists', async () => {
+    it('should show minimal display (health + branch) when no workflow-state.json exists', async () => {
       // Don't create workflow-state.json
+      // With minimal idle display, model is NOT shown (by design)
 
       const output = runStatusLine({ model: { display_name: 'Sonnet' } });
 
-      expect(output).toContain('Sonnet');
+      // Minimal idle display: health + branch (no model)
+      expect(output).toContain('✅');
+      expect(output).toContain('🌿');
+      // Model is NOT shown in idle state (by design - reduces noise)
+      expect(output).not.toContain('Sonnet');
       // Should not crash
       expect(output).toBeDefined();
     });

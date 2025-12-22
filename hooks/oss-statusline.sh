@@ -340,6 +340,25 @@ compute_notification() {
 }
 
 # =============================================================================
+# Detect if in idle state (no active workflow)
+# =============================================================================
+is_idle_state() {
+    local current_cmd active_agent tdd_phase
+
+    current_cmd=$(echo "$STATE" | jq -r '.currentCommand // .activeStep // ""' 2>/dev/null)
+    active_agent=$(echo "$STATE" | jq -r '.activeAgent.type // ""' 2>/dev/null)
+    tdd_phase=$(echo "$STATE" | jq -r '.tddPhase // ""' 2>/dev/null)
+
+    # Idle = no current command AND no active agent AND no TDD phase
+    if [[ (-z "$current_cmd" || "$current_cmd" == "null") && \
+          (-z "$active_agent" || "$active_agent" == "null") && \
+          (-z "$tdd_phase" || "$tdd_phase" == "null") ]]; then
+        return 0  # true - is idle
+    fi
+    return 1  # false - not idle
+}
+
+# =============================================================================
 # Build status line with proper separators
 # =============================================================================
 build_status_line() {
@@ -356,14 +375,27 @@ build_status_line() {
     queue=$(compute_queue)
     notification=$(compute_notification)
 
-    # Add non-empty sections
-    [[ -n "$health" ]] && sections+=("$health")
-    [[ -n "$model_project" ]] && sections+=("$model_project")
-    [[ -n "$branch" ]] && sections+=("$branch")
-    [[ -n "$workflow" ]] && sections+=("$workflow")
-    [[ -n "$supervisor" ]] && sections+=("$supervisor")
-    [[ -n "$queue" ]] && sections+=("$queue")
-    [[ -n "$notification" ]] && sections+=("$notification")
+    # Check if in idle state - show minimal display
+    if is_idle_state; then
+        # Minimal idle display: health | branch | → next (if available)
+        [[ -n "$health" ]] && sections+=("$health")
+        [[ -n "$branch" ]] && sections+=("$branch")
+        [[ -n "$workflow" ]] && sections+=("$workflow")  # Will be "→ next" or empty
+        # Still show critical queue alerts even in idle
+        if [[ -n "$queue" && "$queue" == *"🚨"* ]]; then
+            sections+=("$queue")
+        fi
+        [[ -n "$notification" ]] && sections+=("$notification")
+    else
+        # Full active display: health | [Model] project | branch | workflow | supervisor | queue | notification
+        [[ -n "$health" ]] && sections+=("$health")
+        [[ -n "$model_project" ]] && sections+=("$model_project")
+        [[ -n "$branch" ]] && sections+=("$branch")
+        [[ -n "$workflow" ]] && sections+=("$workflow")
+        [[ -n "$supervisor" ]] && sections+=("$supervisor")
+        [[ -n "$queue" ]] && sections+=("$queue")
+        [[ -n "$notification" ]] && sections+=("$notification")
+    fi
 
     # Join with " | "
     local result=""
