@@ -76,10 +76,15 @@ export declare const PRIORITY_ORDER: Record<Priority, number>;
 export type CreateTaskInput = Omit<Task, 'id' | 'created_at' | 'status' | 'attempts' | 'completed_at' | 'error'>;
 export type CheckStatus = 'pass' | 'warn' | 'fail';
 export type OverallStatus = 'healthy' | 'warning' | 'critical';
+/**
+ * CheckResultDetails - Typed details for health check results
+ * Uses Record<string, unknown> for flexibility while avoiding 'any'
+ */
+export type CheckResultDetails = Record<string, unknown>;
 export interface CheckResult {
     status: CheckStatus;
     message: string;
-    details?: Record<string, any>;
+    details?: CheckResultDetails;
 }
 export interface HealthReport {
     timestamp: string;

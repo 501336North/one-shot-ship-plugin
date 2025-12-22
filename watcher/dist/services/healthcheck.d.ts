@@ -13,10 +13,27 @@
  */
 import { HealthReport } from '../types.js';
 import { WorkflowStateService } from './workflow-state.js';
+/** Task with status for queue checks */
+interface QueueTask {
+    status: string;
+}
+/** Queue manager interface for healthcheck dependency injection */
+interface QueueManagerInterface {
+    getTasks(): Promise<QueueTask[]>;
+}
+/** Log reader interface (reserved for future use) */
+interface LogReaderInterface {
+    read?(): Promise<string[]>;
+}
+/** File system interface (reserved for future use) */
+interface FileSystemInterface {
+    exists?(path: string): boolean;
+    read?(path: string): string;
+}
 interface HealthcheckDependencies {
-    logReader: any;
-    queueManager: any;
-    fileSystem: any;
+    logReader?: LogReaderInterface | null;
+    queueManager?: QueueManagerInterface | null;
+    fileSystem?: FileSystemInterface | null;
     sessionLogPath?: string;
     sessionActive?: boolean;
     featurePath?: string;
@@ -24,9 +41,9 @@ interface HealthcheckDependencies {
     workflowState?: WorkflowStateService;
 }
 export declare class HealthcheckService {
-    private logReader;
-    private queueManager;
-    private fileSystem;
+    private logReader?;
+    private queueManager?;
+    private fileSystem?;
     private sessionLogPath;
     private sessionActive;
     private featurePath;

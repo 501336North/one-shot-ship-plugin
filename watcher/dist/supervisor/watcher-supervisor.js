@@ -151,12 +151,13 @@ export class WatcherSupervisor {
             );
         }
         // Queue corrective action if details include action
-        if (result.details?.action) {
+        const action = result.details?.action;
+        if (typeof action === 'string') {
             const taskInput = {
                 priority: 'high',
                 source: 'iron-law-monitor',
                 anomaly_type: 'unusual_pattern',
-                prompt: result.details.action,
+                prompt: action,
                 suggested_agent: 'general-purpose',
                 context: {
                     type: checkName,
@@ -182,7 +183,8 @@ export class WatcherSupervisor {
             );
         }
         // Queue corrective action
-        const action = result.details?.action || `Fix ${checkName} issue: ${result.message}`;
+        const detailAction = result.details?.action;
+        const action = typeof detailAction === 'string' ? detailAction : `Fix ${checkName} issue: ${result.message}`;
         const taskInput = {
             priority: 'medium',
             source: 'iron-law-monitor',
