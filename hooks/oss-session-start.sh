@@ -148,7 +148,8 @@ if [[ -f ~/.oss/session-context.md ]]; then
     SAVE_DATE_RAW=$(grep "^_Saved:" "$CONTEXT_FILE" 2>/dev/null | sed 's/_Saved: //' | sed 's/_$//')
 
     # Calculate human-friendly "X ago" format
-    SAVE_DATE="unknown"
+    # Initialize empty - notification-copy.ts handles gracefully (shows "Context restored")
+    SAVE_DATE=""
     if [[ -n "$SAVE_DATE_RAW" ]]; then
         # Convert save date to epoch (macOS vs Linux)
         if [[ "$(uname)" == "Darwin" ]]; then

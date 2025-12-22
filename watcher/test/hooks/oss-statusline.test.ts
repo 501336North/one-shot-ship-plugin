@@ -787,4 +787,129 @@ describe('oss-statusline.sh - Project State Reading', () => {
       expect(output).not.toContain('💾');
     });
   });
+
+  describe('Minimal idle state display', () => {
+    /**
+     * @behavior Idle state shows minimal info: health + branch + suggested next
+     * @acceptance-criteria When idle (no currentCommand, no activeAgent, no tddPhase),
+     *                      status line shows only: ✅ 🌿 branch → nextCommand
+     * @business-rule When user is not actively in a workflow, reduce noise
+     * @boundary Shell script (oss-statusline.sh)
+     */
+    it('should show minimal display in idle state: health + branch + next command', () => {
+      // GIVEN: Workflow state is idle (no active work)
+      const projectState = {
+        supervisor: 'idle',
+        nextCommand: 'plan'
+        // No currentCommand, no activeAgent, no tddPhase
+      };
+      fs.writeFileSync(projectWorkflowFile, JSON.stringify(projectState));
+      fs.writeFileSync(currentProjectFile, testProjectDir);
+
+      // WHEN: Running statusline script
+      const input = JSON.stringify({
+        model: { display_name: 'Claude' },
+        workspace: { current_dir: testProjectDir }
+      });
+
+      let output = '';
+      try {
+        output = execSync(`echo '${input}' | bash "${statuslineScript}"`, {
+          timeout: 5000,
+          encoding: 'utf-8',
+          cwd: testProjectDir,
+        });
+      } catch (error) {
+        const execError = error as { stdout?: string; stderr?: string };
+        output = execError.stdout || '';
+      }
+
+      // THEN: Output should be minimal
+      // Should contain: health (✅), branch (🌿 feat/test-branch), next command (→ plan)
+      expect(output).toContain('✅');
+      expect(output).toContain('🌿');
+      expect(output).toContain('→ plan');
+
+      // Should NOT contain: [Model] section (too noisy for idle)
+      expect(output).not.toContain('[Claude]');
+    });
+
+    /**
+     * @behavior Idle state without nextCommand shows just health + branch
+     * @acceptance-criteria When idle and no nextCommand, show: ✅ 🌿 branch
+     */
+    it('should show health + branch only when idle with no nextCommand', () => {
+      // GIVEN: Workflow state is idle with no nextCommand
+      const projectState = {
+        supervisor: 'idle'
+        // No currentCommand, no activeAgent, no tddPhase, no nextCommand
+      };
+      fs.writeFileSync(projectWorkflowFile, JSON.stringify(projectState));
+      fs.writeFileSync(currentProjectFile, testProjectDir);
+
+      // WHEN: Running statusline script
+      const input = JSON.stringify({
+        model: { display_name: 'Claude' },
+        workspace: { current_dir: testProjectDir }
+      });
+
+      let output = '';
+      try {
+        output = execSync(`echo '${input}' | bash "${statuslineScript}"`, {
+          timeout: 5000,
+          encoding: 'utf-8',
+          cwd: testProjectDir,
+        });
+      } catch (error) {
+        const execError = error as { stdout?: string; stderr?: string };
+        output = execError.stdout || '';
+      }
+
+      // THEN: Output should contain health and branch
+      expect(output).toContain('✅');
+      expect(output).toContain('🌿');
+      // Should NOT contain arrow (no nextCommand)
+      expect(output).not.toContain('→');
+      // Should NOT contain [Model] section
+      expect(output).not.toContain('[Claude]');
+    });
+
+    /**
+     * @behavior Active workflow shows full status (not minimal)
+     * @acceptance-criteria When currentCommand is set, show full status including [Model]
+     */
+    it('should show full status when in active workflow (not idle)', () => {
+      // GIVEN: Workflow state has active command
+      const projectState = {
+        supervisor: 'watching',
+        currentCommand: 'build',
+        tddPhase: 'red',
+        progress: '3/8'
+      };
+      fs.writeFileSync(projectWorkflowFile, JSON.stringify(projectState));
+      fs.writeFileSync(currentProjectFile, testProjectDir);
+
+      // WHEN: Running statusline script
+      const input = JSON.stringify({
+        model: { display_name: 'Claude' },
+        workspace: { current_dir: testProjectDir }
+      });
+
+      let output = '';
+      try {
+        output = execSync(`echo '${input}' | bash "${statuslineScript}"`, {
+          timeout: 5000,
+          encoding: 'utf-8',
+          cwd: testProjectDir,
+        });
+      } catch (error) {
+        const execError = error as { stdout?: string; stderr?: string };
+        output = execError.stdout || '';
+      }
+
+      // THEN: Output should show full status including [Model]
+      expect(output).toContain('[Claude]');
+      expect(output).toContain('🔴');
+    });
+  });
 });

@@ -73,6 +73,46 @@ describe('NotificationCopyService', () => {
       });
       expect(copy.subtitle).toContain('clean');
     });
+
+    /**
+     * @behavior Context restored with unknown saveDate shows graceful fallback
+     * @acceptance-criteria AC-COPY.39: Never show "Saved unknown" - fallback to "Context restored"
+     */
+    test('context_restored with saveDate="unknown" shows "Context restored" not "Saved unknown"', () => {
+      const copy = service.getSessionCopy('context_restored', {
+        branch: 'feat/auth',
+        saveDate: 'unknown',
+        uncommitted: 0,
+      });
+      expect(copy.message).toBe('Context restored');
+      expect(copy.message).not.toContain('unknown');
+    });
+
+    /**
+     * @behavior Context restored with empty saveDate shows graceful fallback
+     * @acceptance-criteria AC-COPY.40: Empty saveDate = "Context restored"
+     */
+    test('context_restored with empty saveDate shows "Context restored"', () => {
+      const copy = service.getSessionCopy('context_restored', {
+        branch: 'feat/auth',
+        saveDate: '',
+        uncommitted: 0,
+      });
+      expect(copy.message).toBe('Context restored');
+    });
+
+    /**
+     * @behavior Context restored with valid saveDate shows "Saved X"
+     * @acceptance-criteria AC-COPY.41: Valid saveDate = "Saved {date}"
+     */
+    test('context_restored with valid saveDate shows "Saved {date}"', () => {
+      const copy = service.getSessionCopy('context_restored', {
+        branch: 'feat/auth',
+        saveDate: '2h ago',
+        uncommitted: 3,
+      });
+      expect(copy.message).toBe('Saved 2h ago');
+    });
   });
 
   // ==========================================================================

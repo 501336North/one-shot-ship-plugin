@@ -123,11 +123,13 @@ fi
 # =============================================================================
 # Section 1: Health (IRON LAW violations)
 # =============================================================================
+# Priority: Check LAW#4 dynamically, then consolidated state, then iron-law-state.json
+# =============================================================================
 compute_health() {
     local health="✅"
     local law4_violation=false
 
-    # Check LAW#4 dynamically (must not be on main/master)
+    # Always check LAW#4 dynamically (must not be on main/master)
     if [[ -n "$CURRENT_PROJECT" ]]; then
         local branch
         branch=$(git -C "$CURRENT_PROJECT" branch --show-current 2>/dev/null)
@@ -138,14 +140,22 @@ compute_health() {
 
     if [[ "$law4_violation" == "true" ]]; then
         health="⛔ LAW#4"
-    elif [[ -f "$IRON_LAW_FILE" ]]; then
-        # Check for other unresolved violations
-        local other_violations
-        other_violations=$(jq '[.violations[] | select(.resolved == null or .resolved == "null") | select(.law != 4 and .law != "4")] | length' "$IRON_LAW_FILE" 2>/dev/null)
-        if [[ -n "$other_violations" && "$other_violations" != "null" && "$other_violations" -gt 0 ]]; then
-            local violated_law
-            violated_law=$(jq -r '[.violations[] | select(.resolved == null or .resolved == "null") | select(.law != 4 and .law != "4")][0].law // ""' "$IRON_LAW_FILE" 2>/dev/null)
+    else
+        # Try consolidated state first (health in workflow-state.json)
+        local health_status violated_law
+        health_status=$(echo "$STATE" | jq -r '.health.status // ""' 2>/dev/null)
+        violated_law=$(echo "$STATE" | jq -r '.health.violatedLaw // ""' 2>/dev/null)
+
+        if [[ "$health_status" == "violation" && -n "$violated_law" && "$violated_law" != "null" ]]; then
             health="⛔ LAW#$violated_law"
+        elif [[ -f "$IRON_LAW_FILE" ]]; then
+            # Fall back to iron-law-state.json (legacy/backup)
+            local other_violations
+            other_violations=$(jq '[.violations[] | select(.resolved == null or .resolved == "null") | select(.law != 4 and .law != "4")] | length' "$IRON_LAW_FILE" 2>/dev/null)
+            if [[ -n "$other_violations" && "$other_violations" != "null" && "$other_violations" -gt 0 ]]; then
+                violated_law=$(jq -r '[.violations[] | select(.resolved == null or .resolved == "null") | select(.law != 4 and .law != "4")][0].law // ""' "$IRON_LAW_FILE" 2>/dev/null)
+                health="⛔ LAW#$violated_law"
+            fi
         fi
     fi
 
@@ -186,23 +196,29 @@ compute_branch() {
 }
 
 # =============================================================================
-# Section 4: Workflow (command/agent/TDD phase)
+# Section 4: Workflow (command + TDD phase + progress)
+# =============================================================================
+# Priority order for workflow display:
+#   1. TDD phase with progress (🔴 3/8) - most specific, shows current work
+#   2. Current command with progress (build 3/8) - active command
+#   3. Command flow (build → ship) - shows transition
+#   4. Next command suggestion (→ plan) - idle hint
+#
+# Format examples:
+#   During TDD:     🔴 3/8
+#   During build:   build 5/10
+#   Transition:     build → ship
+#   Idle:           → plan
 # =============================================================================
 compute_workflow() {
-    local current_cmd next_cmd tdd_phase progress active_agent
+    local current_cmd next_cmd tdd_phase progress
 
     current_cmd=$(echo "$STATE" | jq -r '.currentCommand // .activeStep // ""' 2>/dev/null)
     next_cmd=$(echo "$STATE" | jq -r '.nextCommand // ""' 2>/dev/null)
     tdd_phase=$(echo "$STATE" | jq -r '.tddPhase // ""' 2>/dev/null)
     progress=$(echo "$STATE" | jq -r '.progress // ""' 2>/dev/null)
-    active_agent=$(echo "$STATE" | jq -r '.activeAgent.type // ""' 2>/dev/null)
 
-    # Priority: active agent > TDD phase > command flow
-    if [[ -n "$active_agent" && "$active_agent" != "null" ]]; then
-        echo "🤖 $active_agent"
-        return
-    fi
-
+    # Priority 1: TDD phase (most specific - shows RED/GREEN/REFACTOR)
     if [[ -n "$tdd_phase" && "$tdd_phase" != "null" ]]; then
         local phase_emoji
         case "$tdd_phase" in
@@ -219,22 +235,38 @@ compute_workflow() {
         return
     fi
 
-    if [[ -n "$current_cmd" && "$current_cmd" != "null" && -n "$next_cmd" && "$next_cmd" != "null" ]]; then
-        echo "$current_cmd → $next_cmd"
+    # Priority 2: Current command with progress
+    if [[ -n "$current_cmd" && "$current_cmd" != "null" ]]; then
+        if [[ -n "$progress" && "$progress" != "null" ]]; then
+            echo "$current_cmd $progress"
+        elif [[ -n "$next_cmd" && "$next_cmd" != "null" ]]; then
+            echo "$current_cmd → $next_cmd"
+        else
+            echo "$current_cmd"
+        fi
         return
     fi
 
+    # Priority 3: Next command suggestion (idle state)
     if [[ -n "$next_cmd" && "$next_cmd" != "null" ]]; then
         echo "→ $next_cmd"
         return
     fi
 
-    if [[ -n "$current_cmd" && "$current_cmd" != "null" ]]; then
-        if [[ -n "$progress" && "$progress" != "null" ]]; then
-            echo "$current_cmd $progress"
-        else
-            echo "$current_cmd"
-        fi
+    echo ""
+}
+
+# =============================================================================
+# Section 4b: Active Agent (separate from workflow for flexibility)
+# =============================================================================
+# Shows delegated work: 🤖 react-specialist
+# =============================================================================
+compute_agent() {
+    local active_agent
+    active_agent=$(echo "$STATE" | jq -r '.activeAgent.type // ""' 2>/dev/null)
+
+    if [[ -n "$active_agent" && "$active_agent" != "null" ]]; then
+        echo "🤖 $active_agent"
         return
     fi
 
@@ -259,35 +291,55 @@ compute_supervisor() {
 # =============================================================================
 # Section 6: Queue (only if count > 0)
 # =============================================================================
+# Priority: Read from consolidated workflow-state.json first, fall back to queue.json
+# =============================================================================
 compute_queue() {
-    if [[ ! -f "$QUEUE_FILE" ]]; then
-        echo ""
-        return
-    fi
-
     local critical_count pending_count top_task
 
-    critical_count=$(jq '[.tasks[] | select(.status == "pending" and .priority == "critical")] | length' "$QUEUE_FILE" 2>/dev/null)
-    pending_count=$(jq '[.tasks[] | select(.status == "pending")] | length' "$QUEUE_FILE" 2>/dev/null)
+    # Try consolidated state first (queueSummary in workflow-state.json)
+    critical_count=$(echo "$STATE" | jq -r '.queueSummary.criticalCount // ""' 2>/dev/null)
+    pending_count=$(echo "$STATE" | jq -r '.queueSummary.pendingCount // ""' 2>/dev/null)
+    top_task=$(echo "$STATE" | jq -r '.queueSummary.topTask // ""' 2>/dev/null)
 
+    # If consolidated state has data, use it
     if [[ -n "$critical_count" && "$critical_count" != "null" && "$critical_count" -gt 0 ]]; then
-        top_task=$(jq -r '[.tasks[] | select(.status == "pending" and .priority == "critical")][0].description // ""' "$QUEUE_FILE" 2>/dev/null)
-        # Truncate to 20 chars
-        if [[ ${#top_task} -gt 20 ]]; then
+        if [[ -n "$top_task" && "$top_task" != "null" && ${#top_task} -gt 20 ]]; then
             top_task="${top_task:0:20}..."
         fi
-        echo "🚨$critical_count: $top_task"
+        echo "🚨$critical_count: ${top_task:-}"
         return
     fi
 
     if [[ -n "$pending_count" && "$pending_count" != "null" && "$pending_count" -gt 0 ]]; then
-        top_task=$(jq -r '[.tasks[] | select(.status == "pending")][0].description // ""' "$QUEUE_FILE" 2>/dev/null)
-        # Truncate to 20 chars
-        if [[ ${#top_task} -gt 20 ]]; then
+        if [[ -n "$top_task" && "$top_task" != "null" && ${#top_task} -gt 20 ]]; then
             top_task="${top_task:0:20}..."
         fi
-        echo "📋$pending_count: $top_task"
+        echo "📋$pending_count: ${top_task:-}"
         return
+    fi
+
+    # Fall back to queue.json file (legacy/backup)
+    if [[ -f "$QUEUE_FILE" ]]; then
+        critical_count=$(jq '[.tasks[] | select(.status == "pending" and .priority == "critical")] | length' "$QUEUE_FILE" 2>/dev/null)
+        pending_count=$(jq '[.tasks[] | select(.status == "pending")] | length' "$QUEUE_FILE" 2>/dev/null)
+
+        if [[ -n "$critical_count" && "$critical_count" != "null" && "$critical_count" -gt 0 ]]; then
+            top_task=$(jq -r '[.tasks[] | select(.status == "pending" and .priority == "critical")][0].description // ""' "$QUEUE_FILE" 2>/dev/null)
+            if [[ ${#top_task} -gt 20 ]]; then
+                top_task="${top_task:0:20}..."
+            fi
+            echo "🚨$critical_count: $top_task"
+            return
+        fi
+
+        if [[ -n "$pending_count" && "$pending_count" != "null" && "$pending_count" -gt 0 ]]; then
+            top_task=$(jq -r '[.tasks[] | select(.status == "pending")][0].description // ""' "$QUEUE_FILE" 2>/dev/null)
+            if [[ ${#top_task} -gt 20 ]]; then
+                top_task="${top_task:0:20}..."
+            fi
+            echo "📋$pending_count: $top_task"
+            return
+        fi
     fi
 
     echo ""
@@ -340,30 +392,70 @@ compute_notification() {
 }
 
 # =============================================================================
+# Detect if in idle state (no active workflow)
+# =============================================================================
+is_idle_state() {
+    local current_cmd active_agent tdd_phase
+
+    current_cmd=$(echo "$STATE" | jq -r '.currentCommand // .activeStep // ""' 2>/dev/null)
+    active_agent=$(echo "$STATE" | jq -r '.activeAgent.type // ""' 2>/dev/null)
+    tdd_phase=$(echo "$STATE" | jq -r '.tddPhase // ""' 2>/dev/null)
+
+    # Idle = no current command AND no active agent AND no TDD phase
+    if [[ (-z "$current_cmd" || "$current_cmd" == "null") && \
+          (-z "$active_agent" || "$active_agent" == "null") && \
+          (-z "$tdd_phase" || "$tdd_phase" == "null") ]]; then
+        return 0  # true - is idle
+    fi
+    return 1  # false - not idle
+}
+
+# =============================================================================
 # Build status line with proper separators
+# =============================================================================
+# Section order (full active display):
+#   health | [Model] project | branch | workflow | agent | supervisor | queue | notification
+#
+# Section order (minimal idle display):
+#   health | branch | → next | 🚨 critical queue (if any) | notification
 # =============================================================================
 build_status_line() {
     local sections=()
 
     # Compute each section
-    local health model_project branch workflow supervisor queue notification
+    local health model_project branch workflow agent supervisor queue notification
 
     health=$(compute_health)
     model_project=$(compute_model_project)
     branch=$(compute_branch)
     workflow=$(compute_workflow)
+    agent=$(compute_agent)
     supervisor=$(compute_supervisor)
     queue=$(compute_queue)
     notification=$(compute_notification)
 
-    # Add non-empty sections
-    [[ -n "$health" ]] && sections+=("$health")
-    [[ -n "$model_project" ]] && sections+=("$model_project")
-    [[ -n "$branch" ]] && sections+=("$branch")
-    [[ -n "$workflow" ]] && sections+=("$workflow")
-    [[ -n "$supervisor" ]] && sections+=("$supervisor")
-    [[ -n "$queue" ]] && sections+=("$queue")
-    [[ -n "$notification" ]] && sections+=("$notification")
+    # Check if in idle state - show minimal display
+    if is_idle_state; then
+        # Minimal idle display: health | branch | → next (if available)
+        [[ -n "$health" ]] && sections+=("$health")
+        [[ -n "$branch" ]] && sections+=("$branch")
+        [[ -n "$workflow" ]] && sections+=("$workflow")  # Will be "→ next" or empty
+        # Still show critical queue alerts even in idle
+        if [[ -n "$queue" && "$queue" == *"🚨"* ]]; then
+            sections+=("$queue")
+        fi
+        [[ -n "$notification" ]] && sections+=("$notification")
+    else
+        # Full active display: health | [Model] project | branch | workflow | agent | supervisor | queue | notification
+        [[ -n "$health" ]] && sections+=("$health")
+        [[ -n "$model_project" ]] && sections+=("$model_project")
+        [[ -n "$branch" ]] && sections+=("$branch")
+        [[ -n "$workflow" ]] && sections+=("$workflow")
+        [[ -n "$agent" ]] && sections+=("$agent")
+        [[ -n "$supervisor" ]] && sections+=("$supervisor")
+        [[ -n "$queue" ]] && sections+=("$queue")
+        [[ -n "$notification" ]] && sections+=("$notification")
+    fi
 
     # Join with " | "
     local result=""

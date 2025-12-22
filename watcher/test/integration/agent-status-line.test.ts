@@ -165,7 +165,14 @@ describe('E2E: Agent Status Line Integration', () => {
    * @acceptance-criteria Agent appears on start, disappears on complete
    */
   it('should clear agent from status line when agent completes', async () => {
-    // GIVEN: An active agent
+    // GIVEN: An active workflow (required to show supervisor status)
+    fs.writeFileSync(workflowStateFile, JSON.stringify({
+      currentCommand: 'build',
+      tddPhase: 'green',
+      supervisor: 'watching'
+    }));
+
+    // AND: An active agent
     runLogCommand('agent build typescript-pro "starting: Fix type errors"');
     await waitForAgent();
 

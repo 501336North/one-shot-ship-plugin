@@ -32,6 +32,17 @@ export interface Notification {
   expiresAt: string;  // ISO timestamp when notification expires (auto-clear)
 }
 
+export interface QueueSummary {
+  pendingCount: number;  // Total pending tasks
+  criticalCount: number;  // Critical priority tasks
+  topTask?: string;  // Description of highest priority task
+}
+
+export interface HealthStatus {
+  status: 'healthy' | 'violation';  // Overall health status
+  violatedLaw?: number;  // Which IRON LAW is violated (if any)
+}
+
 export interface WorkflowState {
   version: number;  // Incremented on every state change for atomic updates
   supervisor: SupervisorStatus;
@@ -60,6 +71,8 @@ export interface WorkflowState {
     ship: StepStatus;
   };
   activeAgent?: ActiveAgent;  // Currently executing agent (for status line)
+  queueSummary?: QueueSummary;  // Queue counts for status line (consolidated from queue.json)
+  health?: HealthStatus;  // IRON LAW health status (consolidated from iron-law-state.json)
   tddPhase?: string;  // Current TDD phase for status line display (red/green/refactor)
   message?: string;  // Workflow/session message for status line display
   currentTask?: string;
@@ -517,5 +530,41 @@ export class WorkflowStateService {
     }
     const expiresAt = new Date(state.notification.expiresAt).getTime();
     return Date.now() > expiresAt;
+  }
+
+  /**
+   * Sets queue summary for status line display (consolidated from queue.json)
+   */
+  async setQueueSummary(summary: QueueSummary): Promise<void> {
+    const state = await this.getState();
+    state.queueSummary = summary;
+    await this.writeState(state);
+  }
+
+  /**
+   * Clears queue summary from state
+   */
+  async clearQueueSummary(): Promise<void> {
+    const state = await this.getState();
+    delete state.queueSummary;
+    await this.writeState(state);
+  }
+
+  /**
+   * Sets health status for status line display (consolidated from iron-law-state.json)
+   */
+  async setHealth(health: HealthStatus): Promise<void> {
+    const state = await this.getState();
+    state.health = health;
+    await this.writeState(state);
+  }
+
+  /**
+   * Clears health status from state
+   */
+  async clearHealth(): Promise<void> {
+    const state = await this.getState();
+    delete state.health;
+    await this.writeState(state);
   }
 }
