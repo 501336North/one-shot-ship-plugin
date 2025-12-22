@@ -27,11 +27,18 @@ export interface ActiveAgent {
   startedAt: string;  // ISO timestamp when agent was spawned
 }
 
+export interface Notification {
+  message: string;  // Notification message text
+  expiresAt: string;  // ISO timestamp when notification expires (auto-clear)
+}
+
 export interface WorkflowState {
+  version: number;  // Incremented on every state change for atomic updates
   supervisor: SupervisorStatus;
   activeStep: ChainStep | null;
   currentCommand?: string;  // Currently executing command (ideate/plan/build/ship)
   nextCommand?: string | null;  // Next recommended command
+  notification?: Notification;  // Non-sticky notification with auto-expiry
   chainState: {
     // Discovery Chain
     ideate: StepStatus;
@@ -278,6 +285,7 @@ export class WorkflowStateService {
     state.tddCycle = undefined;
     state.tddPhase = undefined;  // Clear TDD phase for status line
     delete state.message;  // Clear message for status line
+    delete state.notification;  // Clear notification for status line
 
     await this.writeState(state);
   }
@@ -430,9 +438,11 @@ export class WorkflowStateService {
 
   /**
    * Returns default state
+   * Note: version starts at 0 and gets incremented to 1 on first write
    */
   private getDefaultState(): WorkflowState {
     return {
+      version: 0,  // Will be incremented to 1 on first write
       supervisor: 'idle',
       activeStep: null,
       chainState: {
@@ -461,10 +471,11 @@ export class WorkflowStateService {
   }
 
   /**
-   * Writes state to file with updated timestamp
+   * Writes state to file with updated timestamp and incremented version
    */
   private async writeState(state: WorkflowState): Promise<void> {
     state.lastUpdate = new Date().toISOString();
+    state.version = (state.version ?? 0) + 1;
 
     const dir = path.dirname(this.stateFilePath);
     if (!fs.existsSync(dir)) {
@@ -472,5 +483,39 @@ export class WorkflowStateService {
     }
 
     fs.writeFileSync(this.stateFilePath, JSON.stringify(state, null, 2));
+  }
+
+  /**
+   * Sets notification with TTL (non-sticky, auto-expires)
+   * @param message - Notification message
+   * @param ttlSeconds - Time to live in seconds (default 10)
+   */
+  async setNotification(message: string, ttlSeconds: number = 10): Promise<void> {
+    const state = await this.getState();
+    const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+    state.notification = { message, expiresAt };
+    await this.writeState(state);
+  }
+
+  /**
+   * Clears notification immediately
+   */
+  async clearNotification(): Promise<void> {
+    const state = await this.getState();
+    delete state.notification;
+    await this.writeState(state);
+  }
+
+  /**
+   * Checks if notification is expired or doesn't exist
+   * @returns true if expired or no notification exists
+   */
+  async isNotificationExpired(): Promise<boolean> {
+    const state = await this.getState();
+    if (!state.notification) {
+      return true;
+    }
+    const expiresAt = new Date(state.notification.expiresAt).getTime();
+    return Date.now() > expiresAt;
   }
 }

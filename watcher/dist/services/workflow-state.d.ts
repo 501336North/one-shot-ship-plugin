@@ -11,11 +11,17 @@ export interface ActiveAgent {
     task: string;
     startedAt: string;
 }
+export interface Notification {
+    message: string;
+    expiresAt: string;
+}
 export interface WorkflowState {
+    version: number;
     supervisor: SupervisorStatus;
     activeStep: ChainStep | null;
     currentCommand?: string;
     nextCommand?: string | null;
+    notification?: Notification;
     chainState: {
         ideate: StepStatus;
         requirements: StepStatus;
@@ -142,11 +148,27 @@ export declare class WorkflowStateService {
     shouldWarnAboutArchive(): Promise<boolean>;
     /**
      * Returns default state
+     * Note: version starts at 0 and gets incremented to 1 on first write
      */
     private getDefaultState;
     /**
-     * Writes state to file with updated timestamp
+     * Writes state to file with updated timestamp and incremented version
      */
     private writeState;
+    /**
+     * Sets notification with TTL (non-sticky, auto-expires)
+     * @param message - Notification message
+     * @param ttlSeconds - Time to live in seconds (default 10)
+     */
+    setNotification(message: string, ttlSeconds?: number): Promise<void>;
+    /**
+     * Clears notification immediately
+     */
+    clearNotification(): Promise<void>;
+    /**
+     * Checks if notification is expired or doesn't exist
+     * @returns true if expired or no notification exists
+     */
+    isNotificationExpired(): Promise<boolean>;
 }
 //# sourceMappingURL=workflow-state.d.ts.map

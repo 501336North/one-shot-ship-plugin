@@ -36,12 +36,12 @@ fi
 
 case "$STYLE" in
     "visual")
-        # Visual notification - update status line message
+        # Visual notification - update status line with non-sticky notification
         # The status line is the primary visual feedback mechanism
         PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
         WORKFLOW_STATE_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js"
         if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
-            node "$WORKFLOW_STATE_CLI" setMessage "Ready" 2>/dev/null || true
+            node "$WORKFLOW_STATE_CLI" setNotification "Ready" 10 2>/dev/null || true
         fi
         ;;
     "audio")

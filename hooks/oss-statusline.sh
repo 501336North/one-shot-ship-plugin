@@ -1,8 +1,11 @@
 #!/bin/bash
 # OSS Dev Workflow - Claude Code Status Line Script
 #
-# Shows workflow status in Claude Code status line.
-# Reads from ~/.oss/*.json files (written by workflow commands and hooks)
+# Displays workflow status in Claude Code status line with clear section separation.
+# Each section is independent and separated by " | ".
+#
+# Section Layout:
+#   Health | [Model] Project | Branch | Workflow | Supervisor | Queue | Notification
 #
 # Usage: Configure in .claude/settings.json:
 #   {
@@ -14,10 +17,11 @@
 #   }
 #
 # Input: Claude Code provides JSON context via stdin
-# Output: Single line status text
+# Output: Single line status text with sections separated by " | "
 
+# =============================================================================
 # Security: Validate project path to prevent path traversal attacks
-# Returns validated canonical path or empty string if invalid
+# =============================================================================
 validate_project_path() {
     local project_path="$1"
 
@@ -61,224 +65,322 @@ validate_project_path() {
     return 0
 }
 
+# =============================================================================
+# Read input and setup
+# =============================================================================
+
 # Read Claude Code context from stdin
 INPUT=$(cat)
 
-# Extract model name and directory using jq
+# Check for jq dependency
 if ! command -v jq &>/dev/null; then
     echo "[jq required]"
     exit 0
 fi
 
+# Extract model name and directory using jq
 MODEL=$(echo "$INPUT" | jq -r '.model.display_name // "Claude"')
-# Extract full path for project detection, basename for display
 WORKSPACE_DIR=$(echo "$INPUT" | jq -r '.workspace.current_dir // ""')
-CURRENT_DIR=$(echo "$WORKSPACE_DIR" | sed 's|.*/||')
+PROJECT_NAME=$(basename "$WORKSPACE_DIR" 2>/dev/null || echo "")
 
-# === OSS HEALTH STATUS ===
-# Check for active IRON LAW violations DYNAMICALLY
-# LAW#4: Agent must never be on main/master branch
-OSS_HEALTH="✅"  # Default: all good
-
-# We'll check LAW#4 dynamically after determining the project directory
-# Other violations can still come from the state file
-IRON_LAW_FILE="${HOME}/.oss/iron-law-state.json"
-ACTIVE_LAW4_VIOLATION=false  # Will be set later after git check
-
-# === WORKFLOW STATUS ===
-OSS_STATUS=""
-ISSUE_DISPLAY=""
-
-# Get project directory - prefer stdin (multi-session safe) over ~/.oss/current-project
-# Priority: 1) workspace.current_dir from stdin, 2) ~/.oss/current-project (legacy fallback)
+# Determine project directory for state files
 CURRENT_PROJECT=""
 if [[ -n "$WORKSPACE_DIR" ]]; then
-    # Use workspace dir from Claude Code stdin (multi-session safe)
     CURRENT_PROJECT=$(validate_project_path "$WORKSPACE_DIR") || CURRENT_PROJECT=""
 fi
 if [[ -z "$CURRENT_PROJECT" ]]; then
-    # Fallback to ~/.oss/current-project (legacy, not multi-session safe)
+    # Fallback to ~/.oss/current-project (legacy)
     RAW_PROJECT=$(cat ~/.oss/current-project 2>/dev/null | tr -d '[:space:]')
     if [[ -n "$RAW_PROJECT" ]]; then
         CURRENT_PROJECT=$(validate_project_path "$RAW_PROJECT") || CURRENT_PROJECT=""
     fi
 fi
 
-# Use project-local state if available, otherwise fall back to global
+# Determine state file locations
 if [[ -n "$CURRENT_PROJECT" && -f "$CURRENT_PROJECT/.oss/workflow-state.json" ]]; then
     WORKFLOW_FILE="$CURRENT_PROJECT/.oss/workflow-state.json"
 else
     WORKFLOW_FILE="${HOME}/.oss/workflow-state.json"
 fi
 
-if [[ -f "$WORKFLOW_FILE" ]]; then
-    CURRENT_CMD=$(jq -r '.currentCommand // .activeStep // ""' "$WORKFLOW_FILE" 2>/dev/null)
-    TDD_PHASE=$(jq -r '.tddPhase // ""' "$WORKFLOW_FILE" 2>/dev/null)
-    SUPERVISOR=$(jq -r '.supervisor // ""' "$WORKFLOW_FILE" 2>/dev/null)
-    PROGRESS=$(jq -r '.progress // ""' "$WORKFLOW_FILE" 2>/dev/null)
-    CURRENT_TASK=$(jq -r '.currentTask // ""' "$WORKFLOW_FILE" 2>/dev/null)
-
-    # Read active agent info (for delegated agent work)
-    ACTIVE_AGENT_TYPE=$(jq -r '.activeAgent.type // ""' "$WORKFLOW_FILE" 2>/dev/null)
-
-    # Read message for status line display
-    MESSAGE=$(jq -r '.message // ""' "$WORKFLOW_FILE" 2>/dev/null)
-
-    # Read nextCommand for workflow progression display
-    NEXT_CMD=$(jq -r '.nextCommand // ""' "$WORKFLOW_FILE" 2>/dev/null)
-
-    # Check for daemon-reported issues
-    ISSUE_TYPE=$(jq -r '.issue.type // ""' "$WORKFLOW_FILE" 2>/dev/null)
-    ISSUE_MSG=$(jq -r '.issue.message // ""' "$WORKFLOW_FILE" 2>/dev/null)
-    ISSUE_SEVERITY=$(jq -r '.issue.severity // ""' "$WORKFLOW_FILE" 2>/dev/null)
-
-    if [[ -n "$ISSUE_TYPE" && "$ISSUE_TYPE" != "null" && "$ISSUE_TYPE" != "" ]]; then
-        case "$ISSUE_SEVERITY" in
-            "error")
-                ISSUE_DISPLAY=" | ⛔ $ISSUE_MSG"
-                ;;
-            "warning")
-                ISSUE_DISPLAY=" | ⚠️ $ISSUE_MSG"
-                ;;
-            "info")
-                ISSUE_DISPLAY=" | ℹ️ $ISSUE_MSG"
-                ;;
-            *)
-                ISSUE_DISPLAY=" | $ISSUE_MSG"
-                ;;
-        esac
-    fi
-
-    # Format workflow/TDD display
-    # Priority: currentCommand → nextCommand > TDD phase > currentCommand alone
-    if [[ -n "$CURRENT_CMD" && "$CURRENT_CMD" != "null" && -n "$NEXT_CMD" && "$NEXT_CMD" != "null" ]]; then
-        # Both current and next: show "plan → build" format
-        OSS_STATUS=" | $CURRENT_CMD → $NEXT_CMD"
-    elif [[ -n "$NEXT_CMD" && "$NEXT_CMD" != "null" && ( -z "$CURRENT_CMD" || "$CURRENT_CMD" == "null" ) ]]; then
-        # Only next command: show "→ ideate" format (fresh start)
-        OSS_STATUS=" | → $NEXT_CMD"
-    elif [[ -n "$TDD_PHASE" && "$TDD_PHASE" != "null" ]]; then
-        # TDD phase display - emoji only for compact status line
-        case "$TDD_PHASE" in
-            "red"|"RED")
-                PHASE_DISPLAY="🔴"
-                ;;
-            "green"|"GREEN")
-                PHASE_DISPLAY="🟢"
-                ;;
-            "refactor"|"REFACTOR")
-                PHASE_DISPLAY="🔄"
-                ;;
-            *)
-                PHASE_DISPLAY="$TDD_PHASE"
-                ;;
-        esac
-        # Add progress if available
-        if [[ -n "$PROGRESS" && "$PROGRESS" != "null" ]]; then
-            PHASE_DISPLAY="$PHASE_DISPLAY $PROGRESS"
-        fi
-        OSS_STATUS=" | $PHASE_DISPLAY"
-    elif [[ -n "$CURRENT_CMD" && "$CURRENT_CMD" != "null" ]]; then
-        # Only current command (no next, e.g., during ship)
-        OSS_STATUS=" | $CURRENT_CMD"
-        # Add progress if available
-        if [[ -n "$PROGRESS" && "$PROGRESS" != "null" ]]; then
-            OSS_STATUS="$OSS_STATUS $PROGRESS"
-        fi
-    fi
-
-    # Add supervisor status indicator
-    if [[ "$SUPERVISOR" == "intervening" ]]; then
-        OSS_STATUS="$OSS_STATUS ⚡"
-    elif [[ "$SUPERVISOR" == "watching" ]]; then
-        OSS_STATUS="$OSS_STATUS ✓"
-    elif [[ "$SUPERVISOR" == "idle" ]]; then
-        OSS_STATUS="$OSS_STATUS 💾"
-    fi
-
-    # Add active agent display (when delegated work is happening)
-    if [[ -n "$ACTIVE_AGENT_TYPE" && "$ACTIVE_AGENT_TYPE" != "null" ]]; then
-        OSS_STATUS="$OSS_STATUS 🤖 $ACTIVE_AGENT_TYPE"
-    fi
-fi
-
-# === QUEUE STATUS ===
-# Use project-local queue if available
 if [[ -n "$CURRENT_PROJECT" && -f "$CURRENT_PROJECT/.oss/queue.json" ]]; then
     QUEUE_FILE="$CURRENT_PROJECT/.oss/queue.json"
 else
     QUEUE_FILE="${HOME}/.oss/queue.json"
 fi
-QUEUE_DISPLAY=""
 
-if [[ -f "$QUEUE_FILE" ]]; then
-    # Count critical pending tasks
-    CRITICAL_COUNT=$(jq '[.tasks[] | select(.status == "pending" and .priority == "critical")] | length' "$QUEUE_FILE" 2>/dev/null)
-    # Count all pending tasks
-    PENDING_COUNT=$(jq '[.tasks[] | select(.status == "pending")] | length' "$QUEUE_FILE" 2>/dev/null)
+IRON_LAW_FILE="${HOME}/.oss/iron-law-state.json"
 
-    if [[ -n "$CRITICAL_COUNT" && "$CRITICAL_COUNT" != "null" && "$CRITICAL_COUNT" -gt 0 ]]; then
-        # Get first critical task description
-        TOP_TASK=$(jq -r '[.tasks[] | select(.status == "pending" and .priority == "critical")][0].description // ""' "$QUEUE_FILE" 2>/dev/null)
-        # Truncate to 20 chars with ellipsis if needed
-        if [[ ${#TOP_TASK} -gt 20 ]]; then
-            TOP_TASK="${TOP_TASK:0:20}..."
+# =============================================================================
+# Read state once (atomic read for consistency)
+# =============================================================================
+
+STATE="{}"
+if [[ -f "$WORKFLOW_FILE" ]]; then
+    STATE=$(cat "$WORKFLOW_FILE" 2>/dev/null || echo '{}')
+fi
+
+# =============================================================================
+# Section 1: Health (IRON LAW violations)
+# =============================================================================
+compute_health() {
+    local health="✅"
+    local law4_violation=false
+
+    # Check LAW#4 dynamically (must not be on main/master)
+    if [[ -n "$CURRENT_PROJECT" ]]; then
+        local branch
+        branch=$(git -C "$CURRENT_PROJECT" branch --show-current 2>/dev/null)
+        if [[ "$branch" == "main" || "$branch" == "master" ]]; then
+            law4_violation=true
         fi
-        QUEUE_DISPLAY=" 🚨$CRITICAL_COUNT: $TOP_TASK"
-    elif [[ -n "$PENDING_COUNT" && "$PENDING_COUNT" != "null" && "$PENDING_COUNT" -gt 0 ]]; then
-        # Get first pending task description
-        TOP_TASK=$(jq -r '[.tasks[] | select(.status == "pending")][0].description // ""' "$QUEUE_FILE" 2>/dev/null)
-        # Truncate to 20 chars with ellipsis if needed
-        if [[ ${#TOP_TASK} -gt 20 ]]; then
-            TOP_TASK="${TOP_TASK:0:20}..."
-        fi
-        QUEUE_DISPLAY=" 📋$PENDING_COUNT: $TOP_TASK"
     fi
-fi
 
-# === MESSAGE DISPLAY ===
-MESSAGE_DISPLAY=""
-if [[ -n "$MESSAGE" && "$MESSAGE" != "null" && "$MESSAGE" != "" ]]; then
-    MESSAGE_DISPLAY=" 📣 $MESSAGE"
-fi
+    if [[ "$law4_violation" == "true" ]]; then
+        health="⛔ LAW#4"
+    elif [[ -f "$IRON_LAW_FILE" ]]; then
+        # Check for other unresolved violations
+        local other_violations
+        other_violations=$(jq '[.violations[] | select(.resolved == null or .resolved == "null") | select(.law != 4 and .law != "4")] | length' "$IRON_LAW_FILE" 2>/dev/null)
+        if [[ -n "$other_violations" && "$other_violations" != "null" && "$other_violations" -gt 0 ]]; then
+            local violated_law
+            violated_law=$(jq -r '[.violations[] | select(.resolved == null or .resolved == "null") | select(.law != 4 and .law != "4")][0].law // ""' "$IRON_LAW_FILE" 2>/dev/null)
+            health="⛔ LAW#$violated_law"
+        fi
+    fi
 
-# === GIT BRANCH ===
-# Use workspace.current_dir from stdin for git commands (multi-session safe)
-GIT_BRANCH=""
-GIT_DIR_FOR_CHECK="."
-if [[ -n "$CURRENT_PROJECT" ]]; then
-    GIT_DIR_FOR_CHECK="$CURRENT_PROJECT"
-fi
+    echo "$health"
+}
 
-if git -C "$GIT_DIR_FOR_CHECK" rev-parse --git-dir > /dev/null 2>&1; then
-    BRANCH=$(git -C "$GIT_DIR_FOR_CHECK" branch --show-current 2>/dev/null)
-    if [[ -n "$BRANCH" ]]; then
-        if [[ "$BRANCH" == "master" || "$BRANCH" == "main" ]]; then
-            # On main/master - show warning if OSS is active
-            GIT_BRANCH=" | ⚠️ $BRANCH"
-            # LAW#4 violation: agent is on protected branch
-            ACTIVE_LAW4_VIOLATION=true
+# =============================================================================
+# Section 2: Model + Project
+# =============================================================================
+compute_model_project() {
+    echo "[$MODEL] $PROJECT_NAME"
+}
+
+# =============================================================================
+# Section 3: Git Branch
+# =============================================================================
+compute_branch() {
+    local branch=""
+    local git_dir="."
+
+    if [[ -n "$CURRENT_PROJECT" ]]; then
+        git_dir="$CURRENT_PROJECT"
+    fi
+
+    if git -C "$git_dir" rev-parse --git-dir > /dev/null 2>&1; then
+        branch=$(git -C "$git_dir" branch --show-current 2>/dev/null)
+        if [[ -n "$branch" ]]; then
+            if [[ "$branch" == "master" || "$branch" == "main" ]]; then
+                echo "⚠️ $branch"
+            else
+                echo "🌿 $branch"
+            fi
+            return
+        fi
+    fi
+
+    echo ""
+}
+
+# =============================================================================
+# Section 4: Workflow (command/agent/TDD phase)
+# =============================================================================
+compute_workflow() {
+    local current_cmd next_cmd tdd_phase progress active_agent
+
+    current_cmd=$(echo "$STATE" | jq -r '.currentCommand // .activeStep // ""' 2>/dev/null)
+    next_cmd=$(echo "$STATE" | jq -r '.nextCommand // ""' 2>/dev/null)
+    tdd_phase=$(echo "$STATE" | jq -r '.tddPhase // ""' 2>/dev/null)
+    progress=$(echo "$STATE" | jq -r '.progress // ""' 2>/dev/null)
+    active_agent=$(echo "$STATE" | jq -r '.activeAgent.type // ""' 2>/dev/null)
+
+    # Priority: active agent > TDD phase > command flow
+    if [[ -n "$active_agent" && "$active_agent" != "null" ]]; then
+        echo "🤖 $active_agent"
+        return
+    fi
+
+    if [[ -n "$tdd_phase" && "$tdd_phase" != "null" ]]; then
+        local phase_emoji
+        case "$tdd_phase" in
+            "red"|"RED") phase_emoji="🔴" ;;
+            "green"|"GREEN") phase_emoji="🟢" ;;
+            "refactor"|"REFACTOR") phase_emoji="🔄" ;;
+            *) phase_emoji="$tdd_phase" ;;
+        esac
+        if [[ -n "$progress" && "$progress" != "null" ]]; then
+            echo "$phase_emoji $progress"
         else
-            GIT_BRANCH=" | 🌿 $BRANCH"
+            echo "$phase_emoji"
         fi
+        return
     fi
-fi
 
-# === FINALIZE HEALTH STATUS ===
-# Set OSS_HEALTH based on dynamic violations (LAW#4 from branch check)
-# AND any other violations from state file (non-LAW#4)
-if [[ "$ACTIVE_LAW4_VIOLATION" == "true" ]]; then
-    OSS_HEALTH="⛔ LAW#4"
-elif [[ -f "$IRON_LAW_FILE" ]]; then
-    # Check for other unresolved violations (not LAW#4, since we check that dynamically)
-    # Note: .law can be number or string, so compare both ways
-    OTHER_VIOLATIONS=$(jq '[.violations[] | select(.resolved == null or .resolved == "null") | select(.law != 4 and .law != "4")] | length' "$IRON_LAW_FILE" 2>/dev/null)
-    if [[ -n "$OTHER_VIOLATIONS" && "$OTHER_VIOLATIONS" != "null" && "$OTHER_VIOLATIONS" -gt 0 ]]; then
-        VIOLATED_LAW=$(jq -r '[.violations[] | select(.resolved == null or .resolved == "null") | select(.law != 4 and .law != "4")][0].law // ""' "$IRON_LAW_FILE" 2>/dev/null)
-        OSS_HEALTH="⛔ LAW#$VIOLATED_LAW"
+    if [[ -n "$current_cmd" && "$current_cmd" != "null" && -n "$next_cmd" && "$next_cmd" != "null" ]]; then
+        echo "$current_cmd → $next_cmd"
+        return
     fi
-fi
 
-# === OUTPUT ===
-# Format: OSS Health [Model] Dir | Branch | TDD Phase Progress Supervisor | Issue | Queue | Message
-echo "$OSS_HEALTH [$MODEL] $CURRENT_DIR$GIT_BRANCH$OSS_STATUS$ISSUE_DISPLAY$QUEUE_DISPLAY$MESSAGE_DISPLAY"
+    if [[ -n "$next_cmd" && "$next_cmd" != "null" ]]; then
+        echo "→ $next_cmd"
+        return
+    fi
+
+    if [[ -n "$current_cmd" && "$current_cmd" != "null" ]]; then
+        if [[ -n "$progress" && "$progress" != "null" ]]; then
+            echo "$current_cmd $progress"
+        else
+            echo "$current_cmd"
+        fi
+        return
+    fi
+
+    echo ""
+}
+
+# =============================================================================
+# Section 5: Supervisor status
+# =============================================================================
+compute_supervisor() {
+    local supervisor
+    supervisor=$(echo "$STATE" | jq -r '.supervisor // ""' 2>/dev/null)
+
+    case "$supervisor" in
+        "intervening") echo "⚡" ;;
+        "watching") echo "✓" ;;
+        "idle") echo "" ;;  # Don't show anything when idle
+        *) echo "" ;;
+    esac
+}
+
+# =============================================================================
+# Section 6: Queue (only if count > 0)
+# =============================================================================
+compute_queue() {
+    if [[ ! -f "$QUEUE_FILE" ]]; then
+        echo ""
+        return
+    fi
+
+    local critical_count pending_count top_task
+
+    critical_count=$(jq '[.tasks[] | select(.status == "pending" and .priority == "critical")] | length' "$QUEUE_FILE" 2>/dev/null)
+    pending_count=$(jq '[.tasks[] | select(.status == "pending")] | length' "$QUEUE_FILE" 2>/dev/null)
+
+    if [[ -n "$critical_count" && "$critical_count" != "null" && "$critical_count" -gt 0 ]]; then
+        top_task=$(jq -r '[.tasks[] | select(.status == "pending" and .priority == "critical")][0].description // ""' "$QUEUE_FILE" 2>/dev/null)
+        # Truncate to 20 chars
+        if [[ ${#top_task} -gt 20 ]]; then
+            top_task="${top_task:0:20}..."
+        fi
+        echo "🚨$critical_count: $top_task"
+        return
+    fi
+
+    if [[ -n "$pending_count" && "$pending_count" != "null" && "$pending_count" -gt 0 ]]; then
+        top_task=$(jq -r '[.tasks[] | select(.status == "pending")][0].description // ""' "$QUEUE_FILE" 2>/dev/null)
+        # Truncate to 20 chars
+        if [[ ${#top_task} -gt 20 ]]; then
+            top_task="${top_task:0:20}..."
+        fi
+        echo "📋$pending_count: $top_task"
+        return
+    fi
+
+    echo ""
+}
+
+# =============================================================================
+# Section 7: Notification (non-sticky, auto-clears after expiry)
+# =============================================================================
+compute_notification() {
+    local notification_msg expires_at
+
+    notification_msg=$(echo "$STATE" | jq -r '.notification.message // ""' 2>/dev/null)
+    expires_at=$(echo "$STATE" | jq -r '.notification.expiresAt // ""' 2>/dev/null)
+
+    if [[ -z "$notification_msg" || "$notification_msg" == "null" ]]; then
+        echo ""
+        return
+    fi
+
+    if [[ -z "$expires_at" || "$expires_at" == "null" ]]; then
+        echo ""
+        return
+    fi
+
+    # Check if expired
+    local expires_epoch now_epoch
+
+    # Convert ISO timestamp to epoch
+    # Note: JavaScript generates UTC timestamps ending with 'Z' (Zulu time)
+    # We must parse them as UTC, not local time
+    if [[ "$(uname)" == "Darwin" ]]; then
+        # macOS: Use -u flag to interpret input as UTC (not local time)
+        # Strip milliseconds and Z suffix: "2025-12-21T18:50:11.166Z" -> "2025-12-21T18:50:11"
+        local timestamp_clean="${expires_at%%.*}"
+        expires_epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "$timestamp_clean" "+%s" 2>/dev/null || echo "0")
+    else
+        # Linux: date -d handles ISO timestamps with Z suffix correctly
+        expires_epoch=$(date -d "$expires_at" "+%s" 2>/dev/null || echo "0")
+    fi
+
+    now_epoch=$(date "+%s")
+
+    if [[ "$expires_epoch" -le "$now_epoch" ]]; then
+        # Expired - don't display
+        echo ""
+        return
+    fi
+
+    echo "📣 $notification_msg"
+}
+
+# =============================================================================
+# Build status line with proper separators
+# =============================================================================
+build_status_line() {
+    local sections=()
+
+    # Compute each section
+    local health model_project branch workflow supervisor queue notification
+
+    health=$(compute_health)
+    model_project=$(compute_model_project)
+    branch=$(compute_branch)
+    workflow=$(compute_workflow)
+    supervisor=$(compute_supervisor)
+    queue=$(compute_queue)
+    notification=$(compute_notification)
+
+    # Add non-empty sections
+    [[ -n "$health" ]] && sections+=("$health")
+    [[ -n "$model_project" ]] && sections+=("$model_project")
+    [[ -n "$branch" ]] && sections+=("$branch")
+    [[ -n "$workflow" ]] && sections+=("$workflow")
+    [[ -n "$supervisor" ]] && sections+=("$supervisor")
+    [[ -n "$queue" ]] && sections+=("$queue")
+    [[ -n "$notification" ]] && sections+=("$notification")
+
+    # Join with " | "
+    local result=""
+    local first=true
+    for section in "${sections[@]}"; do
+        if [[ "$first" == "true" ]]; then
+            result="$section"
+            first=false
+        else
+            result="$result | $section"
+        fi
+    done
+
+    echo "$result"
+}
+
+# =============================================================================
+# Output
+# =============================================================================
+build_status_line

@@ -11,6 +11,8 @@
  *   node update-workflow-state.js resetTddCycle
  *   node update-workflow-state.js workflowComplete
  *   node update-workflow-state.js reset
+ *   node update-workflow-state.js setNotification <message> [ttlSeconds]
+ *   node update-workflow-state.js clearNotification
  */
 export {};
 //# sourceMappingURL=update-workflow-state.d.ts.map

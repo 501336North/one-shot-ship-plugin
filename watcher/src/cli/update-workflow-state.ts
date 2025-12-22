@@ -11,6 +11,8 @@
  *   node update-workflow-state.js resetTddCycle
  *   node update-workflow-state.js workflowComplete
  *   node update-workflow-state.js reset
+ *   node update-workflow-state.js setNotification <message> [ttlSeconds]
+ *   node update-workflow-state.js clearNotification
  */
 
 import * as fs from 'fs';
@@ -238,6 +240,20 @@ async function main() {
       case 'clearNextCommand': {
         await service.clearNextCommand();
         console.log('Next command cleared');
+        break;
+      }
+
+      case 'setNotification': {
+        const message = args[1] || '';
+        const ttlSeconds = args[2] ? parseInt(args[2], 10) : 10;
+        await service.setNotification(message, ttlSeconds);
+        console.log(`Notification set: ${message} (expires in ${ttlSeconds}s)`);
+        break;
+      }
+
+      case 'clearNotification': {
+        await service.clearNotification();
+        console.log('Notification cleared');
         break;
       }
 

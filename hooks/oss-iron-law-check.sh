@@ -113,13 +113,33 @@ fi
 AGENT_REMINDER="├─ 📋 LAW #5: Remember to delegate specialized work to agents (Task tool)\n"
 
 # =============================================================================
-# Persist results to log
+# Update workflow state for status line (detect /oss:* commands)
 # =============================================================================
-# Determine plugin root for logging
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 if [[ -z "$PLUGIN_ROOT" && -f "$HOME/.oss/plugin-root" ]]; then
     PLUGIN_ROOT=$(cat "$HOME/.oss/plugin-root" 2>/dev/null)
 fi
+
+USER_INPUT="${CLAUDE_USER_INPUT:-}"
+WORKFLOW_STATE_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js"
+
+# Detect /oss:* commands and update currentCommand for status line
+if [[ "$USER_INPUT" == /oss:* && -f "$WORKFLOW_STATE_CLI" ]]; then
+    # Extract command name (e.g., "build" from "/oss:build something")
+    OSS_CMD=$(echo "$USER_INPUT" | sed -E 's|^/oss:([a-z-]+).*|\1|')
+
+    # Only update for workflow commands (not utility commands like login, queue)
+    case "$OSS_CMD" in
+        ideate|requirements|api-design|data-model|adr|plan|acceptance|red|mock|green|refactor|integration|contract|build|ship|review|debug|iterate)
+            node "$WORKFLOW_STATE_CLI" setCurrentCommand "$OSS_CMD" 2>/dev/null || true
+            node "$WORKFLOW_STATE_CLI" setSupervisor watching 2>/dev/null || true
+            ;;
+    esac
+fi
+
+# =============================================================================
+# Persist results to log
+# =============================================================================
 
 # Determine current command (default to "precheck" if not in a command context)
 CURRENT_CMD="${OSS_CURRENT_COMMAND:-precheck}"

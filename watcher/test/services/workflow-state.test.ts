@@ -567,4 +567,187 @@ describe('WorkflowStateService', () => {
       expect(state.message).toBeUndefined();
     });
   });
+
+  // ==========================================================================
+  // Notification field (non-sticky messages with TTL)
+  // ==========================================================================
+
+  describe('Notification Field (Non-Sticky)', () => {
+    /**
+     * @behavior setNotification sets message with expiry timestamp
+     * @acceptance-criteria AC-NOTIFY.1
+     * @business-rule Notifications auto-clear after TTL (default 10s)
+     */
+    test('setNotification sets message and expiresAt', async () => {
+      await service.initialize();
+      const beforeSet = Date.now();
+
+      await service.setNotification('Context restored');
+
+      const state = await service.getState();
+      expect(state.notification).toBeDefined();
+      expect(state.notification?.message).toBe('Context restored');
+      expect(state.notification?.expiresAt).toBeDefined();
+
+      // expiresAt should be ~10s in the future (default TTL)
+      const expiresAt = new Date(state.notification!.expiresAt).getTime();
+      expect(expiresAt).toBeGreaterThan(beforeSet + 9000); // At least 9s from now
+      expect(expiresAt).toBeLessThan(beforeSet + 11000); // At most 11s from now
+    });
+
+    /**
+     * @behavior setNotification accepts custom TTL
+     * @acceptance-criteria AC-NOTIFY.2
+     * @business-rule TTL can be customized per notification
+     */
+    test('setNotification accepts custom TTL', async () => {
+      await service.initialize();
+      const beforeSet = Date.now();
+
+      await service.setNotification('Quick message', 5);
+
+      const state = await service.getState();
+      const expiresAt = new Date(state.notification!.expiresAt).getTime();
+      expect(expiresAt).toBeGreaterThan(beforeSet + 4000); // At least 4s
+      expect(expiresAt).toBeLessThan(beforeSet + 6000); // At most 6s
+    });
+
+    /**
+     * @behavior clearNotification removes notification field
+     * @acceptance-criteria AC-NOTIFY.3
+     */
+    test('clearNotification removes notification', async () => {
+      await service.initialize();
+      await service.setNotification('Temporary');
+
+      await service.clearNotification();
+
+      const state = await service.getState();
+      expect(state.notification).toBeUndefined();
+    });
+
+    /**
+     * @behavior reset clears notification field
+     * @acceptance-criteria AC-NOTIFY.4
+     */
+    test('reset clears notification', async () => {
+      await service.initialize();
+      await service.setNotification('Will be cleared');
+
+      await service.reset();
+
+      const state = await service.getState();
+      expect(state.notification).toBeUndefined();
+    });
+
+    /**
+     * @behavior workflowComplete clears notification field
+     * @acceptance-criteria AC-NOTIFY.5
+     */
+    test('workflowComplete clears notification', async () => {
+      await service.initialize();
+      await service.setNotification('Shipping complete');
+
+      await service.workflowComplete();
+
+      const state = await service.getState();
+      expect(state.notification).toBeUndefined();
+    });
+
+    /**
+     * @behavior isNotificationExpired returns true for expired notifications
+     * @acceptance-criteria AC-NOTIFY.6
+     * @business-rule Status line should check expiry before displaying
+     */
+    test('isNotificationExpired returns true for expired', async () => {
+      await service.initialize();
+      // Set notification with 0s TTL (immediately expired)
+      await service.setNotification('Expired', 0);
+
+      // Wait a tiny bit to ensure expiry
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const isExpired = await service.isNotificationExpired();
+      expect(isExpired).toBe(true);
+    });
+
+    /**
+     * @behavior isNotificationExpired returns false for active notifications
+     * @acceptance-criteria AC-NOTIFY.7
+     */
+    test('isNotificationExpired returns false for active', async () => {
+      await service.initialize();
+      await service.setNotification('Active', 10);
+
+      const isExpired = await service.isNotificationExpired();
+      expect(isExpired).toBe(false);
+    });
+
+    /**
+     * @behavior isNotificationExpired returns true when no notification exists
+     * @acceptance-criteria AC-NOTIFY.8
+     */
+    test('isNotificationExpired returns true when none exists', async () => {
+      await service.initialize();
+
+      const isExpired = await service.isNotificationExpired();
+      expect(isExpired).toBe(true);
+    });
+  });
+
+  // ==========================================================================
+  // Version counter (atomic updates)
+  // ==========================================================================
+
+  describe('Version Counter', () => {
+    /**
+     * @behavior version increments on every state change
+     * @acceptance-criteria AC-VERSION.1
+     * @business-rule Status line uses version to detect stale reads
+     */
+    test('version increments on state changes', async () => {
+      await service.initialize();
+      const state1 = await service.getState();
+      const version1 = state1.version ?? 0;
+
+      await service.setSupervisor('watching');
+      const state2 = await service.getState();
+      const version2 = state2.version ?? 0;
+
+      await service.setNotification('Test');
+      const state3 = await service.getState();
+      const version3 = state3.version ?? 0;
+
+      expect(version2).toBeGreaterThan(version1);
+      expect(version3).toBeGreaterThan(version2);
+    });
+
+    /**
+     * @behavior version starts at 1 on initialize
+     * @acceptance-criteria AC-VERSION.2
+     */
+    test('version starts at 1', async () => {
+      await service.initialize();
+
+      const state = await service.getState();
+      expect(state.version).toBe(1);
+    });
+
+    /**
+     * @behavior reset resets version to 1
+     * @acceptance-criteria AC-VERSION.3
+     */
+    test('reset resets version to 1', async () => {
+      await service.initialize();
+      await service.setSupervisor('watching');
+      await service.setSupervisor('intervening');
+      const stateBefore = await service.getState();
+      expect(stateBefore.version).toBeGreaterThan(1);
+
+      await service.reset();
+
+      const stateAfter = await service.getState();
+      expect(stateAfter.version).toBe(1);
+    });
+  });
 });
