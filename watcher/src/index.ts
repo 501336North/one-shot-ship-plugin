@@ -308,7 +308,8 @@ export class Watcher {
   }
 
   /**
-   * Send a notification via oss-notify.sh or terminal-notifier
+   * Send a notification via oss-notify.sh or status line CLI
+   * All runtime notifications use the status line as the visual notification mechanism
    */
   private sendNotification(title: string, message: string, priority: 'low' | 'high' | 'critical' = 'high'): void {
     try {
@@ -320,12 +321,16 @@ export class Watcher {
           timeout: 5000,
           stdio: 'ignore',
         });
-      } else if (process.platform === 'darwin') {
-        // Fallback to terminal-notifier on macOS
-        execSync(`terminal-notifier -title "${title}" -message "${message}" -sound default`, {
-          timeout: 5000,
-          stdio: 'ignore',
-        });
+      } else {
+        // Fallback to status line CLI - status line is the only visual notification method
+        const cliPath = path.join(pluginRoot, 'watcher', 'dist', 'cli', 'update-workflow-state.js');
+        if (fs.existsSync(cliPath)) {
+          execSync(`node "${cliPath}" setMessage "${title}: ${message}"`, {
+            timeout: 5000,
+            stdio: 'ignore',
+          });
+        }
+        // If neither available, silently fail - no visual notification
       }
     } catch {
       // Ignore notification errors

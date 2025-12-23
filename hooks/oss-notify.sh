@@ -258,7 +258,23 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "session" ]]; then
         "$LOG_SCRIPT" write "session" "[$SESSION_EVENT] $SESSION_CONTEXT" 2>/dev/null || true
     fi
 
-    # Session notifications ONLY update the status line - no terminal-notifier
+    # Session START events get terminal-notifier for "Ready" feedback
+    # This is one of two allowed exceptions (Ready and Done) because
+    # the status line may not be visible at session boundaries
+    if [[ "$SESSION_EVENT" == "context_restored" || "$SESSION_EVENT" == "fresh_start" ]]; then
+        # Extract project name from context
+        PROJECT_NAME=""
+        if command -v jq &>/dev/null; then
+            PROJECT_NAME=$(echo "$SESSION_CONTEXT" | jq -r '.project // ""' 2>/dev/null)
+        fi
+        [[ -z "$PROJECT_NAME" || "$PROJECT_NAME" == "null" ]] && PROJECT_NAME="OSS"
+
+        # Send "Ready" notification via terminal-notifier (macOS only)
+        if [[ "$(uname)" == "Darwin" ]] && command -v terminal-notifier &>/dev/null; then
+            terminal-notifier -title "OSS Ready" -message "$PROJECT_NAME session started" -sound Glass &>/dev/null || true
+        fi
+    fi
+
     exit 0
 fi
 

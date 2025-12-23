@@ -86,7 +86,8 @@ export declare class Watcher {
         message: string;
     }>;
     /**
-     * Send a notification via oss-notify.sh or terminal-notifier
+     * Send a notification via oss-notify.sh or status line CLI
+     * All runtime notifications use the status line as the visual notification mechanism
      */
     private sendNotification;
     /**

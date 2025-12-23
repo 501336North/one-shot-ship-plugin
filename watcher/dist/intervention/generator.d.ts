@@ -35,7 +35,7 @@ export declare class InterventionGenerator {
      */
     createPrompt(issue: WorkflowIssue): string;
     /**
-     * Create a notification for terminal-notifier
+     * Create a notification for the status line
      */
     createNotification(issue: WorkflowIssue): Notification;
     private determineResponseType;
