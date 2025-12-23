@@ -385,7 +385,13 @@ describe('PRTaskExecutor', () => {
       expect(sha).toBe('abc1234');
     });
 
-    it('should include Co-Authored-By trailer', async () => {
+    it('should use temp file for commit message (security)', async () => {
+      /**
+       * @behavior Commit messages are written to temp files to avoid shell injection
+       * @acceptance-criteria Uses git commit -F instead of -m
+       * @business-rule Security: no user input in shell commands
+       * @boundary git
+       */
       // GIVEN - Changes staged
       let commitCommand = '';
       mockExec.mockImplementation((cmd: string, callback: unknown) => {
@@ -406,8 +412,10 @@ describe('PRTaskExecutor', () => {
         summary: 'Fix the bug',
       });
 
-      // THEN - Should include co-author
-      expect(commitCommand).toContain('Co-Authored-By');
+      // THEN - Should use -F flag (temp file) instead of -m (inline message)
+      expect(commitCommand).toContain('git commit -F');
+      // Verify it's NOT using -m flag for inline message
+      expect(commitCommand).not.toMatch(/git commit -m/);
     });
 
     it('should push to PR branch (not main)', async () => {

@@ -27,17 +27,17 @@ if [[ ! -f "$CLI" ]]; then
     exit 0  # Don't fail hooks - graceful degradation
 fi
 
-# Build project dir flag if specified
-PROJECT_FLAG=""
+# Build project dir flags array (safe expansion)
+PROJECT_FLAGS=()
 if [[ -n "$PROJECT_DIR" ]]; then
-    PROJECT_FLAG="--project-dir $PROJECT_DIR"
+    PROJECT_FLAGS+=("--project-dir" "$PROJECT_DIR")
 fi
 
 case "$EVENT" in
   pre)
     # Command is starting
-    node "$CLI" $PROJECT_FLAG setCurrentCommand "$COMMAND" 2>/dev/null
-    node "$CLI" $PROJECT_FLAG setSupervisor watching 2>/dev/null
+    node "$CLI" "${PROJECT_FLAGS[@]}" setCurrentCommand "$COMMAND" 2>/dev/null
+    node "$CLI" "${PROJECT_FLAGS[@]}" setSupervisor watching 2>/dev/null
     ;;
 
   post)
@@ -51,13 +51,13 @@ case "$EVENT" in
     esac
 
     if [[ -n "$NEXT" ]]; then
-      node "$CLI" $PROJECT_FLAG setNextCommand "$NEXT" 2>/dev/null
+      node "$CLI" "${PROJECT_FLAGS[@]}" setNextCommand "$NEXT" 2>/dev/null
     else
-      node "$CLI" $PROJECT_FLAG clearNextCommand 2>/dev/null
+      node "$CLI" "${PROJECT_FLAGS[@]}" clearNextCommand 2>/dev/null
     fi
 
     # Clear currentCommand since command is done
-    node "$CLI" $PROJECT_FLAG clearCurrentCommand 2>/dev/null
+    node "$CLI" "${PROJECT_FLAGS[@]}" clearCurrentCommand 2>/dev/null
     ;;
 
   *)

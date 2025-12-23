@@ -20,6 +20,15 @@ export interface AgentsConfig {
 const EMPTY_CONFIG: AgentsConfig = { agents: {} };
 
 /**
+ * Validate agent name (alphanumeric, hyphens, underscores only)
+ */
+function validateAgentName(name: string): void {
+  if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+    throw new Error(`Invalid agent name: ${name}`);
+  }
+}
+
+/**
  * Check if a file exists
  */
 async function fileExists(filePath: string): Promise<boolean> {
@@ -96,6 +105,7 @@ export function mergeConfigs(
  * Get merged config for a specific agent
  */
 export async function getAgentConfig(agentName: string): Promise<AgentConfig> {
+  validateAgentName(agentName);
   const globalConfig = await loadGlobalConfig();
   const projectConfig = await loadProjectConfig();
   const merged = mergeConfigs(globalConfig, projectConfig);
@@ -111,6 +121,7 @@ export async function saveAgentConfig(
   agentName: string,
   updates: Partial<AgentConfig>
 ): Promise<void> {
+  validateAgentName(agentName);
   const projectPath = path.join(process.cwd(), '.oss', 'agents.json');
 
   // Load existing project config

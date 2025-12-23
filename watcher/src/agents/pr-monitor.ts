@@ -41,6 +41,16 @@ export interface PRTask {
  * Polls GitHub for open PRs, fetches review comments,
  * and queues tasks for change request comments.
  */
+/**
+ * Maximum number of tasks that can be queued
+ */
+const MAX_QUEUE_SIZE = 100;
+
+/**
+ * Maximum comment body length to process (prevents DoS)
+ */
+const MAX_COMMENT_LENGTH = 10000;
+
 export class PRMonitorAgent implements BackgroundAgent {
   readonly metadata = METADATA;
 
@@ -83,9 +93,15 @@ export class PRMonitorAgent implements BackgroundAgent {
     // Fetch all open PRs
     const prs = await this.githubClient.getOpenPRs();
 
-    // For each PR, fetch comments and check for unprocessed ones
-    for (const pr of prs) {
-      const comments = await this.githubClient.getPRReviewComments(pr.number);
+    // Fetch comments for all PRs in parallel (fixes N+1 pattern)
+    const commentsPerPR = await Promise.all(
+      prs.map((pr) => this.githubClient.getPRReviewComments(pr.number))
+    );
+
+    // Process comments from all PRs
+    for (let i = 0; i < prs.length; i++) {
+      const pr = prs[i];
+      const comments = commentsPerPR[i];
 
       for (const comment of comments) {
         // Skip already processed comments
@@ -115,7 +131,7 @@ export class PRMonitorAgent implements BackgroundAgent {
       '🤖 Addressing this comment. Will push a fix shortly.'
     );
 
-    // Queue the task
+    // Queue the task (with size limit to prevent unbounded growth)
     const task: PRTask = {
       prNumber: pr.number,
       branch: pr.branch,
@@ -125,6 +141,11 @@ export class PRMonitorAgent implements BackgroundAgent {
       commentBody: comment.body,
       suggestedAgent: this.determineSuggestedAgent(comment),
     };
+
+    // Evict oldest task if queue is full (FIFO)
+    if (this.queuedTasks.length >= MAX_QUEUE_SIZE) {
+      this.queuedTasks.shift();
+    }
     this.queuedTasks.push(task);
 
     // Mark comment as processed
@@ -138,6 +159,11 @@ export class PRMonitorAgent implements BackgroundAgent {
    * Check if a comment is a change request
    */
   isChangeRequest(comment: Comment): boolean {
+    // Reject overly long comments (prevents DoS)
+    if (comment.body.length > MAX_COMMENT_LENGTH) {
+      return false;
+    }
+
     const body = comment.body.toLowerCase();
 
     // Approval patterns - not change requests
@@ -199,6 +225,20 @@ export class PRMonitorAgent implements BackgroundAgent {
    */
   getQueuedTasks(): PRTask[] {
     return [...this.queuedTasks];
+  }
+
+  /**
+   * Dequeue a task (removes and returns first task in queue)
+   */
+  dequeueTask(): PRTask | undefined {
+    return this.queuedTasks.shift();
+  }
+
+  /**
+   * Clear all queued tasks
+   */
+  clearQueue(): void {
+    this.queuedTasks = [];
   }
 
   /**

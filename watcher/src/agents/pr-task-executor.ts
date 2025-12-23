@@ -7,6 +7,10 @@
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { promises as fs } from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { validateBranchName, validatePRNumber, validateCommentId } from './github-client';
 
 const execAsync = promisify(exec);
 
@@ -106,6 +110,7 @@ export class PRTaskExecutor {
    * Checkout a branch, fetching if necessary
    */
   async checkoutBranch(branch: string): Promise<void> {
+    validateBranchName(branch);
     try {
       await this.execGit(`git checkout ${branch}`);
     } catch (error) {
@@ -123,6 +128,7 @@ export class PRTaskExecutor {
    * Fetch a branch from remote
    */
   async fetchBranch(branch: string): Promise<void> {
+    validateBranchName(branch);
     await this.execGit(`git fetch origin ${branch}`);
   }
 
@@ -130,6 +136,7 @@ export class PRTaskExecutor {
    * Pull latest changes for a branch
    */
   async pullLatest(branch: string): Promise<void> {
+    validateBranchName(branch);
     await this.execGit(`git pull origin ${branch}`);
   }
 
@@ -212,8 +219,13 @@ export class PRTaskExecutor {
 
   /**
    * Create commit with message
+   * Uses a temp file to avoid shell injection via commit message
    */
   async createCommit(context: CommitContext): Promise<string> {
+    // Validate inputs
+    validatePRNumber(context.prNumber);
+    validateCommentId(context.commentId);
+
     const message = `fix: Address PR #${context.prNumber} comment
 
 ${context.summary}
@@ -222,14 +234,26 @@ Addresses comment: ${context.commentId}
 
 Co-Authored-By: Claude <noreply@anthropic.com>`;
 
-    await this.execGit(`git commit -m "${message.replace(/"/g, '\\"')}"`);
-    return this.getCommitSha();
+    // Write message to temp file to avoid shell escaping issues
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'commit-msg-'));
+    const msgFile = path.join(tmpDir, 'message.txt');
+    try {
+      await fs.writeFile(msgFile, message, 'utf-8');
+      await this.execGit(`git commit -F "${msgFile}"`);
+      return this.getCommitSha();
+    } finally {
+      // Clean up temp file
+      await fs.rm(tmpDir, { recursive: true }).catch(() => {
+        // Ignore cleanup errors
+      });
+    }
   }
 
   /**
    * Push to branch
    */
   async pushToBranch(branch: string): Promise<void> {
+    validateBranchName(branch);
     // Safety: Never push to main/master
     if (branch === 'main' || branch === 'master') {
       throw new Error('Cannot push directly to main/master branch');
