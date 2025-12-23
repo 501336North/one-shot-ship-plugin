@@ -517,6 +517,10 @@ async function runHealthCheck(quiet: boolean = false, verbose: boolean = false):
   }
 }
 
+/**
+ * Send a notification via oss-notify.sh or status line CLI
+ * All health check notifications use the status line as the visual notification mechanism
+ */
 function sendNotification(pluginRoot: string, title: string, message: string, priority: string): void {
   try {
     const notifyScript = path.join(pluginRoot, 'hooks', 'oss-notify.sh');
@@ -527,11 +531,15 @@ function sendNotification(pluginRoot: string, title: string, message: string, pr
         stdio: 'ignore',
       });
     } else {
-      // Fallback to terminal-notifier
-      execSync(`terminal-notifier -title "${title}" -message "${message}" -sound default`, {
-        timeout: 5000,
-        stdio: 'ignore',
-      });
+      // Fallback to status line CLI - status line is the only visual notification method
+      const cliPath = path.join(pluginRoot, 'watcher', 'dist', 'cli', 'update-workflow-state.js');
+      if (fs.existsSync(cliPath)) {
+        execSync(`node "${cliPath}" setMessage "${title}: ${message}"`, {
+          timeout: 5000,
+          stdio: 'ignore',
+        });
+      }
+      // If neither available, silently fail - no visual notification
     }
   } catch {
     // Ignore notification errors

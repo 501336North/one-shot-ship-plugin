@@ -44,7 +44,8 @@ export declare class QueueManager {
      */
     private emitEvent;
     /**
-     * Send a debug notification via terminal-notifier
+     * Send a debug notification via oss-notify.sh or status line CLI
+     * All queue notifications use the status line as the visual notification mechanism
      */
     private sendDebugNotification;
     /**

@@ -91,31 +91,33 @@ export class QueueManager {
   }
 
   /**
-   * Send a debug notification via terminal-notifier
+   * Send a debug notification via oss-notify.sh or status line CLI
+   * All queue notifications use the status line as the visual notification mechanism
    */
   private sendDebugNotification(event: QueueEvent): void {
     try {
       const title = `🤖 Queue: ${event.type.replace('_', ' ')}`;
       const message = `${event.message} (${event.queueCount} pending)`;
-      const subtitle = event.task ? `${event.task.priority.toUpperCase()}: ${event.task.anomaly_type}` : '';
 
       // Use the plugin's oss-notify.sh if available
       const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.join(this.ossDir, '..');
       const notifyScript = path.join(pluginRoot, 'hooks', 'oss-notify.sh');
 
       if (fs.existsSync(notifyScript)) {
-        const subtitleArg = subtitle ? ` -subtitle "${subtitle}"` : '';
         execSync(`"${notifyScript}" "${title}" "${message}" critical`, {
           timeout: 5000,
           stdio: 'ignore',
         });
       } else {
-        // Fallback to terminal-notifier directly
-        const subtitleArg = subtitle ? ` -subtitle "${subtitle}"` : '';
-        execSync(`terminal-notifier -title "${title}" -message "${message}"${subtitleArg} -sound default`, {
-          timeout: 5000,
-          stdio: 'ignore',
-        });
+        // Fallback to status line CLI - status line is the only visual notification method
+        const cliPath = path.join(pluginRoot, 'watcher', 'dist', 'cli', 'update-workflow-state.js');
+        if (fs.existsSync(cliPath)) {
+          execSync(`node "${cliPath}" setMessage "${title}: ${message}"`, {
+            timeout: 5000,
+            stdio: 'ignore',
+          });
+        }
+        // If neither available, silently fail - no visual notification
       }
     } catch {
       // Ignore notification errors - don't break queue operations

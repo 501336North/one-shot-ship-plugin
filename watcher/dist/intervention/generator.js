@@ -98,7 +98,7 @@ export class InterventionGenerator {
         return sections.join('\n');
     }
     /**
-     * Create a notification for terminal-notifier
+     * Create a notification for the status line
      */
     createNotification(issue) {
         const title = `OSS: ${ISSUE_NAMES[issue.type]}`;

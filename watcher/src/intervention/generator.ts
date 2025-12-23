@@ -137,7 +137,7 @@ export class InterventionGenerator {
   }
 
   /**
-   * Create a notification for terminal-notifier
+   * Create a notification for the status line
    */
   createNotification(issue: WorkflowIssue): Notification {
     const title = `OSS: ${ISSUE_NAMES[issue.type]}`;
