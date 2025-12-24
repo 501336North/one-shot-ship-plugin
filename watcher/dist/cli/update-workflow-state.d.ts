@@ -16,6 +16,9 @@
  *   node update-workflow-state.js clearProgress
  *   node update-workflow-state.js prepareForNewSession
  *   node update-workflow-state.js setSessionId <sessionId>
+ *   node update-workflow-state.js setLastCommand <command>
+ *   node update-workflow-state.js clearLastCommand
+ *   node update-workflow-state.js setWorkflowComplete <true|false>
  */
 export {};
 //# sourceMappingURL=update-workflow-state.d.ts.map

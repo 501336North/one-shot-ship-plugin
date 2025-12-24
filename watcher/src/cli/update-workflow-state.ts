@@ -16,6 +16,9 @@
  *   node update-workflow-state.js clearProgress
  *   node update-workflow-state.js prepareForNewSession
  *   node update-workflow-state.js setSessionId <sessionId>
+ *   node update-workflow-state.js setLastCommand <command>
+ *   node update-workflow-state.js clearLastCommand
+ *   node update-workflow-state.js setWorkflowComplete <true|false>
  */
 
 import * as fs from 'fs';
@@ -276,6 +279,26 @@ async function main() {
         const sessionId = args[1] || '';
         await service.setSessionId(sessionId);
         console.log(`Session ID set: ${sessionId}`);
+        break;
+      }
+
+      case 'setLastCommand': {
+        const cmd = args[1] || '';
+        await service.setLastCommand(cmd);
+        console.log(`Last command set to: ${cmd}`);
+        break;
+      }
+
+      case 'clearLastCommand': {
+        await service.clearLastCommand();
+        console.log('Last command cleared');
+        break;
+      }
+
+      case 'setWorkflowComplete': {
+        const complete = args[1] === 'true';
+        await service.setWorkflowComplete(complete);
+        console.log(`Workflow complete set to: ${complete}`);
         break;
       }
 

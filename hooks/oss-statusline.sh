@@ -211,12 +211,20 @@ compute_branch() {
 #   Idle:           → plan
 # =============================================================================
 compute_workflow() {
-    local current_cmd next_cmd tdd_phase progress
+    local current_cmd next_cmd tdd_phase progress last_cmd workflow_complete
 
     current_cmd=$(echo "$STATE" | jq -r '.currentCommand // .activeStep // ""' 2>/dev/null)
     next_cmd=$(echo "$STATE" | jq -r '.nextCommand // ""' 2>/dev/null)
+    last_cmd=$(echo "$STATE" | jq -r '.lastCommand // ""' 2>/dev/null)
+    workflow_complete=$(echo "$STATE" | jq -r '.workflowComplete // ""' 2>/dev/null)
     tdd_phase=$(echo "$STATE" | jq -r '.tddPhase // ""' 2>/dev/null)
     progress=$(echo "$STATE" | jq -r '.progress // ""' 2>/dev/null)
+
+    # Priority 0: Check if workflow is complete (show "→ DONE")
+    if [[ "$workflow_complete" == "true" ]]; then
+        echo "→ DONE"
+        return
+    fi
 
     # Priority 1: TDD phase (most specific - shows RED/GREEN/REFACTOR)
     if [[ -n "$tdd_phase" && "$tdd_phase" != "null" ]]; then
@@ -239,7 +247,8 @@ compute_workflow() {
     if [[ -n "$current_cmd" && "$current_cmd" != "null" ]]; then
         if [[ -n "$progress" && "$progress" != "null" ]]; then
             echo "$current_cmd $progress"
-        elif [[ -n "$next_cmd" && "$next_cmd" != "null" ]]; then
+        elif [[ -n "$next_cmd" && "$next_cmd" != "null" && "$next_cmd" != "$current_cmd" ]]; then
+            # Only show arrow if next is different from current
             echo "$current_cmd → $next_cmd"
         else
             echo "$current_cmd"
@@ -247,7 +256,17 @@ compute_workflow() {
         return
     fi
 
-    # Priority 3: Next command suggestion (idle state)
+    # Priority 3: lastCommand → nextCommand (shows completed → next)
+    if [[ -n "$last_cmd" && "$last_cmd" != "null" ]]; then
+        if [[ -n "$next_cmd" && "$next_cmd" != "null" ]]; then
+            echo "$last_cmd → $next_cmd"
+        else
+            echo "$last_cmd ✓"  # Completed, no next step
+        fi
+        return
+    fi
+
+    # Priority 4: Next command suggestion (idle state with no history)
     if [[ -n "$next_cmd" && "$next_cmd" != "null" ]]; then
         echo "→ $next_cmd"
         return
@@ -434,10 +453,11 @@ build_status_line() {
     queue=$(compute_queue)
     notification=$(compute_notification)
 
-    # Check if in idle state - show minimal display
+    # Check if in idle state - show minimal display but always include Model+Project
     if is_idle_state; then
-        # Minimal idle display: health | branch | → next (if available)
+        # Minimal idle display: health | [Model] project | branch | → next (if available)
         [[ -n "$health" ]] && sections+=("$health")
+        [[ -n "$model_project" ]] && sections+=("$model_project")  # Always show Model+Project
         [[ -n "$branch" ]] && sections+=("$branch")
         [[ -n "$workflow" ]] && sections+=("$workflow")  # Will be "→ next" or empty
         # Still show critical queue alerts even in idle

@@ -61,6 +61,8 @@ export class WorkflowStateService {
      */
     async setActiveStep(step) {
         const state = await this.getState();
+        // Clear workflowComplete when new work starts
+        delete state.workflowComplete;
         // Special handling for 'build' - it's an alias for the TDD phases
         if (step === 'build') {
             state.activeStep = 'build';
@@ -466,6 +468,38 @@ export class WorkflowStateService {
     async isCurrentSession(sessionId) {
         const state = await this.getState();
         return state.sessionId === sessionId;
+    }
+    /**
+     * Sets lastCommand for status line display (last completed command)
+     * @param command - The command name (e.g., 'plan', 'build', 'ship')
+     */
+    async setLastCommand(command) {
+        const state = await this.getState();
+        state.lastCommand = command;
+        await this.writeState(state);
+    }
+    /**
+     * Clears lastCommand from state
+     */
+    async clearLastCommand() {
+        const state = await this.getState();
+        delete state.lastCommand;
+        await this.writeState(state);
+    }
+    /**
+     * Sets workflowComplete flag for status line display
+     * When true, status line shows "→ DONE" instead of next command
+     * @param complete - Whether the workflow is complete
+     */
+    async setWorkflowComplete(complete) {
+        const state = await this.getState();
+        if (complete) {
+            state.workflowComplete = true;
+        }
+        else {
+            delete state.workflowComplete;
+        }
+        await this.writeState(state);
     }
 }
 //# sourceMappingURL=workflow-state.js.map
