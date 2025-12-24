@@ -43,6 +43,12 @@ case "$STYLE" in
         if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
             node "$WORKFLOW_STATE_CLI" setNotification "Ready" 10 2>/dev/null || true
         fi
+
+        # ALSO show terminal-notifier popup so user knows Claude needs input
+        # Uses "Funk" sound for OSS brand recognition (Ready = funky groove)
+        if command -v terminal-notifier &>/dev/null; then
+            terminal-notifier -title "OSS" -message "Ready" -sound "Funk" &>/dev/null &
+        fi
         ;;
     "audio")
         # Voice announcement
