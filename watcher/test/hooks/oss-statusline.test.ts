@@ -824,21 +824,19 @@ describe('oss-statusline.sh - Project State Reading', () => {
         output = execError.stdout || '';
       }
 
-      // THEN: Output should be minimal
-      // Should contain: health (✅), branch (🌿 feat/test-branch), next command (→ plan)
+      // THEN: Output should contain key sections
+      // Should contain: health (✅), [Model] project, branch (🌿 feat/test-branch), next command (→ plan)
       expect(output).toContain('✅');
+      expect(output).toContain('[Claude]');  // Model always shown (including idle)
       expect(output).toContain('🌿');
       expect(output).toContain('→ plan');
-
-      // Should NOT contain: [Model] section (too noisy for idle)
-      expect(output).not.toContain('[Claude]');
     });
 
     /**
-     * @behavior Idle state without nextCommand shows just health + branch
-     * @acceptance-criteria When idle and no nextCommand, show: ✅ 🌿 branch
+     * @behavior Idle state without nextCommand shows health + Model + branch
+     * @acceptance-criteria When idle and no nextCommand, show: ✅ [Model] project 🌿 branch
      */
-    it('should show health + branch only when idle with no nextCommand', () => {
+    it('should show health + Model + branch when idle with no nextCommand', () => {
       // GIVEN: Workflow state is idle with no nextCommand
       const projectState = {
         supervisor: 'idle'
@@ -865,13 +863,12 @@ describe('oss-statusline.sh - Project State Reading', () => {
         output = execError.stdout || '';
       }
 
-      // THEN: Output should contain health and branch
+      // THEN: Output should contain health, Model, and branch
       expect(output).toContain('✅');
+      expect(output).toContain('[Claude]');  // Model always shown (including idle)
       expect(output).toContain('🌿');
       // Should NOT contain arrow (no nextCommand)
       expect(output).not.toContain('→');
-      // Should NOT contain [Model] section
-      expect(output).not.toContain('[Claude]');
     });
 
     /**

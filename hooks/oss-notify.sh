@@ -191,12 +191,18 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                 node "$WORKFLOW_STATE_CLI" completeStep "$WORKFLOW_CMD" 2>/dev/null || true
                 # Clear currentCommand since it's done
                 node "$WORKFLOW_STATE_CLI" clearCurrentCommand 2>/dev/null || true
+                # Set lastCommand for status line display (shows last_cmd → next_cmd)
+                node "$WORKFLOW_STATE_CLI" setLastCommand "$WORKFLOW_CMD" 2>/dev/null || true
                 # Set nextCommand based on workflow progression
                 case "$WORKFLOW_CMD" in
                     ideate) node "$WORKFLOW_STATE_CLI" setNextCommand "plan" 2>/dev/null || true ;;
                     plan) node "$WORKFLOW_STATE_CLI" setNextCommand "build" 2>/dev/null || true ;;
                     build) node "$WORKFLOW_STATE_CLI" setNextCommand "ship" 2>/dev/null || true ;;
-                    ship) node "$WORKFLOW_STATE_CLI" clearNextCommand 2>/dev/null || true ;;
+                    ship)
+                        node "$WORKFLOW_STATE_CLI" clearNextCommand 2>/dev/null || true
+                        # Set workflowComplete flag for status line to show "→ DONE"
+                        node "$WORKFLOW_STATE_CLI" setWorkflowComplete true 2>/dev/null || true
+                        ;;
                     *) ;; # Non-chain commands don't affect nextCommand
                 esac
                 # Log IRON LAW compliance checklist on command completion

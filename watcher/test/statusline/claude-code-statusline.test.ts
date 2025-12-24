@@ -185,13 +185,13 @@ describe('Claude Code Status Line', () => {
 
       const output = runStatusLine({ model: { display_name: 'Sonnet' } });
 
-      // Minimal idle display: health + branch (no model)
+      // Idle display always includes Model: health + [Model] project + branch
       expect(output).toContain('✅');
       // Branch display depends on git context - either 🌿 for feature branch or ⚠️ for main/master
       // Since test workspace may not be a git repo, branch falls back to current execution context
       expect(output.includes('🌿') || output.includes('⚠️')).toBe(true);
-      // Model is NOT shown in idle state (by design - reduces noise)
-      expect(output).not.toContain('Sonnet');
+      // Model IS now shown in idle state (user wants context always visible)
+      expect(output).toContain('Sonnet');
       // Should not crash
       expect(output).toBeDefined();
     });

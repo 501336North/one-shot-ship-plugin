@@ -60,6 +60,8 @@ export interface WorkflowState {
     currentFeature?: string;
     lastCompletedStep?: string;
     lastStepTimestamp?: string;
+    lastCommand?: string;
+    workflowComplete?: boolean;
     lastUpdate: string;
 }
 export interface ProgressInfo {
@@ -220,5 +222,20 @@ export declare class WorkflowStateService {
      * @returns true if session IDs match, false otherwise
      */
     isCurrentSession(sessionId: string): Promise<boolean>;
+    /**
+     * Sets lastCommand for status line display (last completed command)
+     * @param command - The command name (e.g., 'plan', 'build', 'ship')
+     */
+    setLastCommand(command: string): Promise<void>;
+    /**
+     * Clears lastCommand from state
+     */
+    clearLastCommand(): Promise<void>;
+    /**
+     * Sets workflowComplete flag for status line display
+     * When true, status line shows "→ DONE" instead of next command
+     * @param complete - Whether the workflow is complete
+     */
+    setWorkflowComplete(complete: boolean): Promise<void>;
 }
 //# sourceMappingURL=workflow-state.d.ts.map
