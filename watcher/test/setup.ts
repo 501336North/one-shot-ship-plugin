@@ -41,9 +41,14 @@ beforeAll(() => {
   }
 });
 
-// Note: We do NOT clear current-project here globally because some tests
-// specifically test that file's behavior. Tests that need clean state
-// should manage it themselves in their own beforeEach/afterEach hooks.
+// Kill any stray watcher processes before EACH test to prevent interference
+beforeEach(() => {
+  try {
+    execSync('pkill -f "watcher/dist/index.js" 2>/dev/null || true', { stdio: 'ignore' });
+  } catch {
+    // Ignore
+  }
+});
 
 // Kill any watchers that may have been spawned during tests
 afterAll(() => {

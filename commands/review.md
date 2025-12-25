@@ -24,7 +24,15 @@ Register at https://www.oneshotship.com
 $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init review
 ```
 
-## Step 3: Fetch and Decrypt Prompt
+## Step 3: Update Status Line (Start)
+
+**You MUST update the workflow status before proceeding.**
+
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow review start '{}'
+```
+
+## Step 4: Fetch and Decrypt Prompt
 
 ```bash
 ~/.oss/bin/oss-decrypt --type commands --name review
@@ -32,7 +40,23 @@ $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init review
 
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
-## Step 3: Execute the Fetched Prompt
+## Step 5: Execute the Fetched Prompt
+
+Execute the code review prompt.
+
+## Step 6: Update Status Line (Completion)
+
+**You MUST update the workflow status on completion.**
+
+On success:
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow review complete '{}'
+```
+
+On failure:
+```bash
+$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow review failed '{"error": "{ERROR_MESSAGE}"}'
+```
 
 ## Error Handling
 

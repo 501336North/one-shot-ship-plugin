@@ -17,12 +17,25 @@ describe('Session Hooks - Project Tracking', () => {
   const sessionEndScript = path.join(hooksDir, 'oss-session-end.sh');
   const ossDir = path.join(os.homedir(), '.oss');
   const currentProjectFile = path.join(ossDir, 'current-project');
-  const testProjectDir = path.join(os.tmpdir(), `oss-test-project-${Date.now()}`);
+
+  // Use unique test ID per test to avoid cross-test pollution
+  let testProjectDir: string;
 
   // Save original state
   let originalCurrentProject: string | null = null;
 
   beforeEach(() => {
+    // Generate unique test directory per test (not per describe block)
+    const uniqueId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    testProjectDir = path.join(os.tmpdir(), `oss-test-project-${uniqueId}`);
+
+    // Kill any stray background processes that might interfere
+    try {
+      execSync('pkill -f "watcher/dist/index.js" 2>/dev/null || true', { stdio: 'ignore' });
+    } catch {
+      // Ignore - no processes to kill
+    }
+
     // Save original current-project if it exists
     if (fs.existsSync(currentProjectFile)) {
       originalCurrentProject = fs.readFileSync(currentProjectFile, 'utf-8');
@@ -43,7 +56,7 @@ describe('Session Hooks - Project Tracking', () => {
     // Ensure ~/.oss exists
     fs.mkdirSync(ossDir, { recursive: true });
 
-    // Clear current-project file
+    // Clear current-project file to start fresh
     if (fs.existsSync(currentProjectFile)) {
       fs.unlinkSync(currentProjectFile);
     }
