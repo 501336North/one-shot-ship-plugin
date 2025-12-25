@@ -370,6 +370,95 @@ case "$ACTION" in
         fi
         ;;
 
+    hook)
+        # Log hook execution for supervisor visibility
+        # Usage: oss-log.sh hook <hook_name> <event> [details]
+        # Events: START, COMPLETE, FAILED
+        if [[ -z "$COMMAND" || -z "$ARG3" ]]; then
+            echo "Usage: oss-log.sh hook <hook_name> <START|COMPLETE|FAILED> [details]" >&2
+            exit 1
+        fi
+        HOOK_NAME="$COMMAND"
+        EVENT="$ARG3"
+        DETAILS="${ARG4:-}"
+        TIMESTAMP=$(date '+%H:%M:%S')
+
+        # Write directly to session log (hooks don't have their own log file)
+        if [[ -n "$DETAILS" ]]; then
+            echo "[$TIMESTAMP] [hook] [$EVENT] $HOOK_NAME $DETAILS" >> "$UNIFIED_LOG"
+        else
+            echo "[$TIMESTAMP] [hook] [$EVENT] $HOOK_NAME" >> "$UNIFIED_LOG"
+        fi
+        ;;
+
+    milestone)
+        # Log command milestones for supervisor visibility
+        # Usage: oss-log.sh milestone <command> <milestone_name> <description>
+        if [[ -z "$COMMAND" || -z "$ARG3" ]]; then
+            echo "Usage: oss-log.sh milestone <command> <milestone_name> <description>" >&2
+            exit 1
+        fi
+        CMD="$COMMAND"
+        MILESTONE_NAME="$ARG3"
+        DESCRIPTION="${ARG4:-}"
+        log_entry "$CMD" "MILESTONE" "$MILESTONE_NAME: $DESCRIPTION"
+        ;;
+
+    skill)
+        # Log skill execution for supervisor visibility
+        # Usage: oss-log.sh skill <skill_name> <event> [details]
+        # Events: START, COMPLETE, FAILED
+        if [[ -z "$COMMAND" || -z "$ARG3" ]]; then
+            echo "Usage: oss-log.sh skill <skill_name> <START|COMPLETE|FAILED> [details]" >&2
+            exit 1
+        fi
+        SKILL_NAME="$COMMAND"
+        EVENT="$ARG3"
+        DETAILS="${ARG4:-}"
+        TIMESTAMP=$(date '+%H:%M:%S')
+
+        # Write directly to session log (skills share format with hooks)
+        if [[ -n "$DETAILS" ]]; then
+            echo "[$TIMESTAMP] [skill] [$EVENT] $SKILL_NAME $DETAILS" >> "$UNIFIED_LOG"
+        else
+            echo "[$TIMESTAMP] [skill] [$EVENT] $SKILL_NAME" >> "$UNIFIED_LOG"
+        fi
+        ;;
+
+    recovery)
+        # Log error recovery attempts for supervisor visibility
+        # Usage: oss-log.sh recovery <command> <message> [details]
+        if [[ -z "$COMMAND" || -z "$ARG3" ]]; then
+            echo "Usage: oss-log.sh recovery <command> <message> [details]" >&2
+            exit 1
+        fi
+        CMD="$COMMAND"
+        MESSAGE="$ARG3"
+        DETAILS="${ARG4:-}"
+        if [[ -n "$DETAILS" ]]; then
+            log_entry "$CMD" "RECOVERY" "$MESSAGE $DETAILS"
+        else
+            log_entry "$CMD" "RECOVERY" "$MESSAGE"
+        fi
+        ;;
+
+    timeout)
+        # Log timeout/hung process detection for supervisor visibility
+        # Usage: oss-log.sh timeout <command> <message> [details]
+        if [[ -z "$COMMAND" || -z "$ARG3" ]]; then
+            echo "Usage: oss-log.sh timeout <command> <message> [details]" >&2
+            exit 1
+        fi
+        CMD="$COMMAND"
+        MESSAGE="$ARG3"
+        DETAILS="${ARG4:-}"
+        if [[ -n "$DETAILS" ]]; then
+            log_entry "$CMD" "TIMEOUT" "$MESSAGE $DETAILS"
+        else
+            log_entry "$CMD" "TIMEOUT" "$MESSAGE"
+        fi
+        ;;
+
     ironlaw)
         # Log IRON LAW check results
         # Supervisor uses this to track compliance history
@@ -794,6 +883,11 @@ EOF
         echo "  file <cmd> <action>     Log file operation" >&2
         echo "  agent <cmd> <agent>     Log agent delegation" >&2
         echo "  progress <cmd> <n/m>    Log task progress" >&2
+        echo "  hook <name> <event>     Log hook execution (START|COMPLETE|FAILED)" >&2
+        echo "  milestone <cmd> <name>  Log command milestone" >&2
+        echo "  skill <name> <event>    Log skill execution (START|COMPLETE|FAILED)" >&2
+        echo "  recovery <cmd> <msg>    Log error recovery attempt" >&2
+        echo "  timeout <cmd> <msg>     Log timeout/hung process" >&2
         echo "  ironlaw <cmd> <status>  Log IRON LAW check result" >&2
         echo "  checklist <cmd>         Log IRON LAW completion checklist" >&2
         echo "  health <status> <json>  Log health check results" >&2

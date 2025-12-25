@@ -10,6 +10,12 @@ source "$SCRIPT_DIR/oss-config.sh" 2>/dev/null || true
 mkdir -p ~/.oss
 chmod 700 ~/.oss  # Only owner can access
 
+# --- Session Logging (for supervisor visibility) ---
+LOG_SCRIPT="$SCRIPT_DIR/oss-log.sh"
+if [[ -x "$LOG_SCRIPT" ]]; then
+    "$LOG_SCRIPT" hook oss-session-start START
+fi
+
 # Update status line script from plugin (ensures latest version)
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(dirname "$SCRIPT_DIR")}"
 if [[ -f "$PLUGIN_ROOT/hooks/oss-statusline.sh" ]]; then
@@ -76,6 +82,15 @@ if [[ -n "$CLAUDE_PROJECT_DIR" ]]; then
     echo "$CLAUDE_PROJECT_DIR" > ~/.oss/current-project
     chmod 600 ~/.oss/current-project  # Only owner can read/write
 fi
+
+# Get git branch for session logging
+CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
+
+# Log session START event with project metadata
+TIMESTAMP=$(date '+%H:%M:%S')
+SESSION_LOG="$HOME/.oss/logs/current-session/session.log"
+mkdir -p "$(dirname "$SESSION_LOG")"
+echo "[$TIMESTAMP] [session] [START] project=$PROJECT_NAME branch=$CURRENT_BRANCH" >> "$SESSION_LOG"
 
 # Initialize workflow state (for Claude Code status line)
 # prepareForNewSession clears stale workflow data (progress, currentTask, notifications)
@@ -194,6 +209,11 @@ else
     if [[ -x "$NOTIFY_SCRIPT" ]]; then
         "$NOTIFY_SCRIPT" --session fresh_start "{\"project\": \"$PROJECT_NAME\"}"
     fi
+fi
+
+# Log hook COMPLETE
+if [[ -x "$LOG_SCRIPT" ]]; then
+    "$LOG_SCRIPT" hook oss-session-start COMPLETE
 fi
 
 exit 0

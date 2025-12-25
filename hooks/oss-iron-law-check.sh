@@ -5,8 +5,19 @@
 #
 # Enforcement Mode: Announce + Auto-Correct (no user confirmation required)
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOG_SCRIPT="$SCRIPT_DIR/oss-log.sh"
+
+# --- Hook Logging (for supervisor visibility) ---
+if [[ -x "$LOG_SCRIPT" ]]; then
+    "$LOG_SCRIPT" hook oss-iron-law-check START
+fi
+
 # Only run in git repositories
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    if [[ -x "$LOG_SCRIPT" ]]; then
+        "$LOG_SCRIPT" hook oss-iron-law-check COMPLETE
+    fi
     exit 0
 fi
 
@@ -180,6 +191,11 @@ else
     echo -e "$AGENT_REMINDER"
     echo "└─ 📝 LAW #6: Keep dev docs in sync (PROGRESS.md)"
     echo ""
+fi
+
+# Log hook COMPLETE
+if [[ -x "$LOG_SCRIPT" ]]; then
+    "$LOG_SCRIPT" hook oss-iron-law-check COMPLETE
 fi
 
 exit 0

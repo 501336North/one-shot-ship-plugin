@@ -3,8 +3,16 @@
 # Triggered on: PreCompact (before context compaction)
 # Saves local context for restoration (no proprietary content)
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Ensure ~/.oss directory exists
 mkdir -p ~/.oss
+
+# --- Session Logging (for supervisor visibility) ---
+LOG_SCRIPT="$SCRIPT_DIR/oss-log.sh"
+if [[ -x "$LOG_SCRIPT" ]]; then
+    "$LOG_SCRIPT" hook oss-session-end START
+fi
 
 # Only save context in git repositories
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -45,7 +53,6 @@ EOF
 fi
 
 # Update workflow state for Claude Code status line
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
 NOTIFY_SCRIPT="$SCRIPT_DIR/oss-notify.sh"
 WORKFLOW_STATE_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js"
@@ -57,6 +64,17 @@ fi
 # Update workflow state to idle (session ending)
 if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
     node "$WORKFLOW_STATE_CLI" setSupervisor idle 2>/dev/null || true
+fi
+
+# Log session END event
+SESSION_LOG="$HOME/.oss/logs/current-session/session.log"
+mkdir -p "$(dirname "$SESSION_LOG")"
+TIMESTAMP=$(date '+%H:%M:%S')
+echo "[$TIMESTAMP] [session] [END] project=$REPO_NAME branch=$BRANCH uncommitted=$UNCOMMITTED_COUNT" >> "$SESSION_LOG"
+
+# Log hook COMPLETE
+if [[ -x "$LOG_SCRIPT" ]]; then
+    "$LOG_SCRIPT" hook oss-session-end COMPLETE
 fi
 
 # Clear current project pointer (session is ending)

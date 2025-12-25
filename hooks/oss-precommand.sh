@@ -10,6 +10,11 @@ NOTIFY_SCRIPT="$PLUGIN_ROOT/hooks/oss-notify.sh"
 WORKFLOW_STATE_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js"
 LOG_SCRIPT="$PLUGIN_ROOT/hooks/oss-log.sh"
 
+# --- Hook Logging (for supervisor visibility) ---
+if [[ -x "$LOG_SCRIPT" ]]; then
+    "$LOG_SCRIPT" hook oss-precommand START
+fi
+
 # =============================================================================
 # Detect /oss:* commands and update workflow state (for Claude Code status line)
 # =============================================================================
@@ -102,6 +107,9 @@ fi
 
 # Check for --no-queue flag in user's command
 if [[ "$*" == *"--no-queue"* ]]; then
+    if [[ -x "$LOG_SCRIPT" ]]; then
+        "$LOG_SCRIPT" hook oss-precommand COMPLETE
+    fi
     exit 0
 fi
 
@@ -122,6 +130,9 @@ fi
 # Check if queue file exists
 QUEUE_FILE="$OSS_DIR/queue.json"
 if [[ ! -f "$QUEUE_FILE" ]]; then
+    if [[ -x "$LOG_SCRIPT" ]]; then
+        "$LOG_SCRIPT" hook oss-precommand COMPLETE
+    fi
     exit 0
 fi
 
@@ -138,6 +149,9 @@ else
 fi
 
 if [[ "$TASK_COUNT" == "0" ]] || [[ -z "$TASK_COUNT" ]]; then
+    if [[ -x "$LOG_SCRIPT" ]]; then
+        "$LOG_SCRIPT" hook oss-precommand COMPLETE
+    fi
     exit 0
 fi
 
@@ -183,6 +197,11 @@ else
             echo "OSS: Next task: $FIRST_TASK..."
         fi
     fi
+fi
+
+# Log hook COMPLETE
+if [[ -x "$LOG_SCRIPT" ]]; then
+    "$LOG_SCRIPT" hook oss-precommand COMPLETE
 fi
 
 exit 0
