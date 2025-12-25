@@ -103,7 +103,19 @@ function getStateFilePath(args: string[]): { stateFilePath: string | undefined; 
     return { stateFilePath: undefined, remainingArgs };
   }
 
-  // If no --project-dir, check current-project file
+  // Priority 1: CLAUDE_PROJECT_DIR env var (for tests and automation)
+  const envProjectDir = process.env.CLAUDE_PROJECT_DIR;
+  if (envProjectDir) {
+    const validatedPath = validateProjectPath(envProjectDir);
+    if (validatedPath) {
+      return {
+        stateFilePath: path.join(validatedPath, '.oss', 'workflow-state.json'),
+        remainingArgs: args,
+      };
+    }
+  }
+
+  // Priority 2: current-project file (for interactive sessions)
   const currentProjectPath = path.join(process.env.HOME || '', '.oss', 'current-project');
   try {
     const projectDir = fs.readFileSync(currentProjectPath, 'utf-8').trim();

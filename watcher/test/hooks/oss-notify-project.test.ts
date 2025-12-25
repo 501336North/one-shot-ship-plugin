@@ -66,13 +66,14 @@ describe('oss-notify.sh - Project State Updates', () => {
 
     // WHEN: Running notify script with workflow start
     try {
+      // Delete CLAUDE_PROJECT_DIR so CLI uses current-project file
+      const env = { ...process.env, CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..') };
+      delete env.CLAUDE_PROJECT_DIR;
+
       execSync(`bash "${notifyScript}" --workflow build start '{}'`, {
         timeout: 10000,
         encoding: 'utf-8',
-        env: {
-          ...process.env,
-          CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..'),
-        },
+        env,
       });
     } catch {
       // Ignore exit code, we care about state file
@@ -100,13 +101,14 @@ describe('oss-notify.sh - Project State Updates', () => {
 
     // WHEN: Running notify script with task_complete
     try {
+      // Delete CLAUDE_PROJECT_DIR so CLI uses current-project file
+      const env = { ...process.env, CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..') };
+      delete env.CLAUDE_PROJECT_DIR;
+
       execSync(`bash "${notifyScript}" --workflow build task_complete '{"current": 3, "total": 10, "taskName": "Test task"}'`, {
         timeout: 10000,
         encoding: 'utf-8',
-        env: {
-          ...process.env,
-          CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..'),
-        },
+        env,
       });
     } catch {
       // Ignore exit code

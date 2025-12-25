@@ -23,6 +23,14 @@ if [[ -f "$PLUGIN_ROOT/hooks/oss-statusline.sh" ]]; then
     chmod +x ~/.oss/oss-statusline.sh
 fi
 
+# Write current project path EARLY for multi-project support
+# This must happen before config checks so other hooks can read it
+# Other hooks/scripts read this to know which project is active
+if [[ -n "$CLAUDE_PROJECT_DIR" ]]; then
+    echo "$CLAUDE_PROJECT_DIR" > ~/.oss/current-project
+    chmod 600 ~/.oss/current-project  # Only owner can read/write
+fi
+
 # Check for API key configuration
 CONFIG_FILE=~/.oss/config.json
 if [[ ! -f "$CONFIG_FILE" ]]; then
@@ -76,13 +84,6 @@ HEALTH_CHECK_CLI="$PLUGIN_ROOT/watcher/dist/cli/health-check.js"
 # Ensure project .oss directory exists
 mkdir -p "$PROJECT_OSS_DIR"
 
-# Write current project path for multi-project support
-# Other hooks/scripts read this to know which project is active
-if [[ -n "$CLAUDE_PROJECT_DIR" ]]; then
-    echo "$CLAUDE_PROJECT_DIR" > ~/.oss/current-project
-    chmod 600 ~/.oss/current-project  # Only owner can read/write
-fi
-
 # Get git branch for session logging
 CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 
@@ -104,26 +105,29 @@ if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
 fi
 
 # Check if watcher is already running
-if [[ -f "$WATCHER_PID_FILE" ]]; then
-    WATCHER_PID=$(cat "$WATCHER_PID_FILE" 2>/dev/null)
-    if [[ -n "$WATCHER_PID" ]] && ps -p "$WATCHER_PID" > /dev/null 2>&1; then
-        echo "OSS: Watcher running (PID: $WATCHER_PID)"
+# OSS_SKIP_WATCHER=1 can be set in test environments to skip watcher spawning
+if [[ "${OSS_SKIP_WATCHER:-}" != "1" ]]; then
+    if [[ -f "$WATCHER_PID_FILE" ]]; then
+        WATCHER_PID=$(cat "$WATCHER_PID_FILE" 2>/dev/null)
+        if [[ -n "$WATCHER_PID" ]] && ps -p "$WATCHER_PID" > /dev/null 2>&1; then
+            echo "OSS: Watcher running (PID: $WATCHER_PID)"
+        else
+            # Stale PID file - clean up
+            rm -f "$WATCHER_PID_FILE"
+            if [[ -f "$WATCHER_SCRIPT" ]]; then
+                # Start new watcher
+                cd "$PROJECT_OSS_DIR/.." && node "$WATCHER_SCRIPT" &
+                echo $! > "$WATCHER_PID_FILE"
+                echo "OSS: Watcher started (PID: $!)"
+            fi
+        fi
     else
-        # Stale PID file - clean up
-        rm -f "$WATCHER_PID_FILE"
         if [[ -f "$WATCHER_SCRIPT" ]]; then
-            # Start new watcher
+            # Start watcher
             cd "$PROJECT_OSS_DIR/.." && node "$WATCHER_SCRIPT" &
             echo $! > "$WATCHER_PID_FILE"
             echo "OSS: Watcher started (PID: $!)"
         fi
-    fi
-else
-    if [[ -f "$WATCHER_SCRIPT" ]]; then
-        # Start watcher
-        cd "$PROJECT_OSS_DIR/.." && node "$WATCHER_SCRIPT" &
-        echo $! > "$WATCHER_PID_FILE"
-        echo "OSS: Watcher started (PID: $!)"
     fi
 fi
 

@@ -16,17 +16,33 @@ describe('oss-context-gate.sh logging', () => {
   const ossDir = path.join(os.homedir(), '.oss');
   const logsDir = path.join(ossDir, 'logs', 'current-session');
   const sessionLog = path.join(logsDir, 'session.log');
+  const currentProjectFile = path.join(ossDir, 'current-project');
 
   let originalSessionLog: string | null = null;
+  let originalCurrentProject: string | null = null;
 
   beforeEach(() => {
     fs.mkdirSync(logsDir, { recursive: true });
+
+    // Save and clear current-project to ensure global log path
+    if (fs.existsSync(currentProjectFile)) {
+      originalCurrentProject = fs.readFileSync(currentProjectFile, 'utf-8');
+    }
+    fs.writeFileSync(currentProjectFile, '');
+
     if (fs.existsSync(sessionLog)) {
       originalSessionLog = fs.readFileSync(sessionLog, 'utf-8');
     }
   });
 
   afterEach(() => {
+    // Restore original current-project
+    if (originalCurrentProject !== null) {
+      fs.writeFileSync(currentProjectFile, originalCurrentProject);
+    } else if (fs.existsSync(currentProjectFile)) {
+      fs.writeFileSync(currentProjectFile, '');
+    }
+
     if (originalSessionLog !== null) {
       fs.writeFileSync(sessionLog, originalSessionLog);
     }
@@ -69,12 +85,21 @@ describe('oss-precommand.sh logging', () => {
   const ossDir = path.join(os.homedir(), '.oss');
   const logsDir = path.join(ossDir, 'logs', 'current-session');
   const sessionLog = path.join(logsDir, 'session.log');
+  const currentProjectFile = path.join(ossDir, 'current-project');
   const testProjectDir = path.join(os.tmpdir(), `oss-test-project-${Date.now()}`);
 
   let originalSessionLog: string | null = null;
+  let originalCurrentProject: string | null = null;
 
   beforeEach(() => {
     fs.mkdirSync(logsDir, { recursive: true });
+
+    // Save and clear current-project to ensure global log path
+    if (fs.existsSync(currentProjectFile)) {
+      originalCurrentProject = fs.readFileSync(currentProjectFile, 'utf-8');
+    }
+    fs.writeFileSync(currentProjectFile, '');
+
     if (fs.existsSync(sessionLog)) {
       originalSessionLog = fs.readFileSync(sessionLog, 'utf-8');
     }
@@ -82,6 +107,13 @@ describe('oss-precommand.sh logging', () => {
   });
 
   afterEach(() => {
+    // Restore original current-project
+    if (originalCurrentProject !== null) {
+      fs.writeFileSync(currentProjectFile, originalCurrentProject);
+    } else if (fs.existsSync(currentProjectFile)) {
+      fs.writeFileSync(currentProjectFile, '');
+    }
+
     if (originalSessionLog !== null) {
       fs.writeFileSync(sessionLog, originalSessionLog);
     }
@@ -106,7 +138,8 @@ describe('oss-precommand.sh logging', () => {
         env: {
           ...process.env,
           CLAUDE_PLUGIN_ROOT: path.join(__dirname, '../../..'),
-          CLAUDE_PROJECT_DIR: testProjectDir,
+          // Clear CLAUDE_PROJECT_DIR to ensure global log path for testing
+          CLAUDE_PROJECT_DIR: '',
         },
         timeout: 5000,
       });
@@ -128,12 +161,21 @@ describe('oss-iron-law-check.sh logging', () => {
   const ossDir = path.join(os.homedir(), '.oss');
   const logsDir = path.join(ossDir, 'logs', 'current-session');
   const sessionLog = path.join(logsDir, 'session.log');
+  const currentProjectFile = path.join(ossDir, 'current-project');
   const testProjectDir = path.join(os.tmpdir(), `oss-test-project-${Date.now()}`);
 
   let originalSessionLog: string | null = null;
+  let originalCurrentProject: string | null = null;
 
   beforeEach(() => {
     fs.mkdirSync(logsDir, { recursive: true });
+
+    // Save and clear current-project to ensure global log path
+    if (fs.existsSync(currentProjectFile)) {
+      originalCurrentProject = fs.readFileSync(currentProjectFile, 'utf-8');
+    }
+    fs.writeFileSync(currentProjectFile, '');
+
     if (fs.existsSync(sessionLog)) {
       originalSessionLog = fs.readFileSync(sessionLog, 'utf-8');
     }
@@ -148,6 +190,13 @@ describe('oss-iron-law-check.sh logging', () => {
   });
 
   afterEach(() => {
+    // Restore original current-project
+    if (originalCurrentProject !== null) {
+      fs.writeFileSync(currentProjectFile, originalCurrentProject);
+    } else if (fs.existsSync(currentProjectFile)) {
+      fs.writeFileSync(currentProjectFile, '');
+    }
+
     if (originalSessionLog !== null) {
       fs.writeFileSync(sessionLog, originalSessionLog);
     }
@@ -193,12 +242,21 @@ describe('oss-context-inject.sh logging', () => {
   const ossDir = path.join(os.homedir(), '.oss');
   const logsDir = path.join(ossDir, 'logs', 'current-session');
   const sessionLog = path.join(logsDir, 'session.log');
+  const currentProjectFile = path.join(ossDir, 'current-project');
   const testProjectDir = path.join(os.tmpdir(), `oss-test-project-${Date.now()}`);
 
   let originalSessionLog: string | null = null;
+  let originalCurrentProject: string | null = null;
 
   beforeEach(() => {
     fs.mkdirSync(logsDir, { recursive: true });
+
+    // Save and clear current-project to ensure global log path
+    if (fs.existsSync(currentProjectFile)) {
+      originalCurrentProject = fs.readFileSync(currentProjectFile, 'utf-8');
+    }
+    fs.writeFileSync(currentProjectFile, '');
+
     if (fs.existsSync(sessionLog)) {
       originalSessionLog = fs.readFileSync(sessionLog, 'utf-8');
     }
@@ -213,6 +271,13 @@ describe('oss-context-inject.sh logging', () => {
   });
 
   afterEach(() => {
+    // Restore original current-project
+    if (originalCurrentProject !== null) {
+      fs.writeFileSync(currentProjectFile, originalCurrentProject);
+    } else if (fs.existsSync(currentProjectFile)) {
+      fs.writeFileSync(currentProjectFile, '');
+    }
+
     if (originalSessionLog !== null) {
       fs.writeFileSync(sessionLog, originalSessionLog);
     }

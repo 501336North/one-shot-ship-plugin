@@ -5,9 +5,22 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['test/**/*.test.ts'],
-    // Run test FILES sequentially to avoid race conditions on shared ~/.oss/ state
-    // Tests within each file can still run in parallel
+    // Global setup file ensures clean state before each test
+    setupFiles: ['./test/setup.ts'],
+    // CRITICAL: Force single-threaded execution to avoid race conditions
+    // Tests share global state like ~/.oss/current-project
+    pool: 'forks',
+    poolOptions: {
+      forks: {
+        singleFork: true,
+      },
+    },
+    // Run test FILES sequentially
     fileParallelism: false,
+    // Run tests within each file sequentially
+    sequence: {
+      concurrent: false,
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

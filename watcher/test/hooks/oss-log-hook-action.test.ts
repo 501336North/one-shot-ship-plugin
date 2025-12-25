@@ -16,13 +16,21 @@ describe('oss-log.sh hook action', () => {
   const ossDir = path.join(os.homedir(), '.oss');
   const logsDir = path.join(ossDir, 'logs', 'current-session');
   const sessionLog = path.join(logsDir, 'session.log');
+  const currentProjectFile = path.join(ossDir, 'current-project');
 
-  // Save original session log content
+  // Save original state
   let originalSessionLog: string | null = null;
+  let originalCurrentProject: string | null = null;
 
   beforeEach(() => {
     // Ensure logs directory exists
     fs.mkdirSync(logsDir, { recursive: true });
+
+    // Save and clear current-project to ensure global log path
+    if (fs.existsSync(currentProjectFile)) {
+      originalCurrentProject = fs.readFileSync(currentProjectFile, 'utf-8');
+    }
+    fs.writeFileSync(currentProjectFile, '');
 
     // Save original session log if exists
     if (fs.existsSync(sessionLog)) {
@@ -31,6 +39,13 @@ describe('oss-log.sh hook action', () => {
   });
 
   afterEach(() => {
+    // Restore original current-project
+    if (originalCurrentProject !== null) {
+      fs.writeFileSync(currentProjectFile, originalCurrentProject);
+    } else if (fs.existsSync(currentProjectFile)) {
+      fs.writeFileSync(currentProjectFile, '');
+    }
+
     // Restore original session log
     if (originalSessionLog !== null) {
       fs.writeFileSync(sessionLog, originalSessionLog);
@@ -50,6 +65,10 @@ describe('oss-log.sh hook action', () => {
     // WHEN: Running oss-log.sh hook SessionStart START
     execSync(`bash "${ossLogScript}" hook SessionStart START`, {
       encoding: 'utf-8',
+      env: {
+        ...process.env,
+        CLAUDE_PROJECT_DIR: '', // Clear to ensure global log path
+      },
     });
 
     // THEN: Session log should contain the hook START entry
@@ -73,6 +92,10 @@ describe('oss-log.sh hook action', () => {
     // WHEN: Running oss-log.sh hook oss-precommand COMPLETE
     execSync(`bash "${ossLogScript}" hook oss-precommand COMPLETE`, {
       encoding: 'utf-8',
+      env: {
+        ...process.env,
+        CLAUDE_PROJECT_DIR: '', // Clear to ensure global log path
+      },
     });
 
     // THEN: Session log should contain the hook COMPLETE entry
@@ -95,6 +118,10 @@ describe('oss-log.sh hook action', () => {
     // WHEN: Running oss-log.sh hook oss-iron-law-check FAILED "Violation detected"
     execSync(`bash "${ossLogScript}" hook oss-iron-law-check FAILED "Violation detected"`, {
       encoding: 'utf-8',
+      env: {
+        ...process.env,
+        CLAUDE_PROJECT_DIR: '', // Clear to ensure global log path
+      },
     });
 
     // THEN: Session log should contain the hook FAILED entry with reason
@@ -117,6 +144,10 @@ describe('oss-log.sh hook action', () => {
       execSync(`bash "${ossLogScript}" hook`, {
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          CLAUDE_PROJECT_DIR: '', // Clear to ensure global log path
+        },
       });
     } catch (error) {
       const execError = error as { stderr?: string };
@@ -141,6 +172,10 @@ describe('oss-log.sh hook action', () => {
       execSync(`bash "${ossLogScript}" hook SessionStart`, {
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          CLAUDE_PROJECT_DIR: '', // Clear to ensure global log path
+        },
       });
     } catch (error) {
       const execError = error as { stderr?: string };

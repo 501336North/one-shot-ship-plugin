@@ -66,7 +66,34 @@ validate_project_path() {
     return 0
 }
 
-LOG_BASE="${HOME}/.oss/logs"
+# Get log base directory - project-local first, global fallback
+# Priority: 1) CLAUDE_PROJECT_DIR (env var), 2) ~/.oss/current-project, 3) ~/.oss/logs (global)
+get_log_base() {
+    local project_dir=""
+
+    # CLAUDE_PROJECT_DIR takes priority (explicit env var for tests/automation)
+    if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
+        project_dir="$CLAUDE_PROJECT_DIR"
+    # Fall back to current-project file for interactive sessions
+    elif [[ -f "$HOME/.oss/current-project" ]]; then
+        project_dir=$(cat "$HOME/.oss/current-project" 2>/dev/null | tr -d '[:space:]')
+    fi
+
+    # Validate and use project-local if valid
+    if [[ -n "$project_dir" ]]; then
+        local validated_path
+        validated_path=$(validate_project_path "$project_dir") || validated_path=""
+        if [[ -n "$validated_path" ]]; then
+            echo "$validated_path/.oss/logs"
+            return 0
+        fi
+    fi
+
+    # Fallback to global
+    echo "$HOME/.oss/logs"
+}
+
+LOG_BASE=$(get_log_base)
 CURRENT_SESSION="${LOG_BASE}/current-session"
 UNIFIED_LOG="${CURRENT_SESSION}/session.log"
 ARCHIVE_DIR="${LOG_BASE}/archive"

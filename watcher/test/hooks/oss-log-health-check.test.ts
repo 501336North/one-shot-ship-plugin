@@ -91,6 +91,10 @@ describe('oss-log.sh health-check', () => {
       execSync(`bash "${ossLogScript}" health-check`, {
         timeout: 60000,
         encoding: 'utf-8',
+        env: {
+          ...process.env,
+          CLAUDE_PLUGIN_ROOT: path.join(__dirname, '../../..'),
+        },
       });
     } catch {
       // Command may exit with non-zero for various reasons, we care about the log file
@@ -110,21 +114,31 @@ describe('oss-log.sh health-check', () => {
    */
   it('should contain PASSED or FAILED marker in log file', () => {
     // GIVEN: A project with tests
+    // Note: Health check log location depends on get_log_base() which uses current-project
+    // The health check writes to {log_base}/current-session/health-check.log
+    // Since we set current-project to testProjectDir, logs go there
+    const projectHealthCheckLog = path.join(testProjectDir, '.oss', 'logs', 'current-session', 'health-check.log');
+    fs.mkdirSync(path.dirname(projectHealthCheckLog), { recursive: true });
 
     // WHEN: Running health check
     try {
       execSync(`bash "${ossLogScript}" health-check`, {
         timeout: 60000,
         encoding: 'utf-8',
+        env: {
+          ...process.env,
+          CLAUDE_PLUGIN_ROOT: path.join(__dirname, '../../..'),
+        },
       });
     } catch {
       // Ignore exit code
     }
 
-    // THEN: Log file should contain a status marker
-    expect(fs.existsSync(healthCheckLog)).toBe(true);
+    // THEN: Log file should contain a status marker (check both locations)
+    const logFileToCheck = fs.existsSync(projectHealthCheckLog) ? projectHealthCheckLog : healthCheckLog;
+    expect(fs.existsSync(logFileToCheck)).toBe(true);
 
-    const logContent = fs.readFileSync(healthCheckLog, 'utf-8');
+    const logContent = fs.readFileSync(logFileToCheck, 'utf-8');
     // Health check CLI outputs "HEALTH CHECK PASSED" or "HEALTH CHECK FAILED" or "HEALTH CHECK WARNING"
     // or may contain other status indicators like "✅" or "❌" or "⚠️"
     const hasPassedMarker = logContent.includes('HEALTH CHECK PASSED') || logContent.includes('✅');
@@ -149,6 +163,10 @@ describe('oss-log.sh health-check', () => {
       execSync(`bash "${ossLogScript}" health-check`, {
         timeout: 60000,
         encoding: 'utf-8',
+        env: {
+          ...process.env,
+          CLAUDE_PLUGIN_ROOT: path.join(__dirname, '../../..'),
+        },
       });
       exitCode = 0;
     } catch (error) {
@@ -178,19 +196,28 @@ describe('oss-log.sh health-check', () => {
       })
     );
 
+    // Note: Health check log goes to project-local location
+    const projectHealthCheckLog = path.join(testProjectDir, '.oss', 'logs', 'current-session', 'health-check.log');
+    fs.mkdirSync(path.dirname(projectHealthCheckLog), { recursive: true });
+
     // WHEN: Running health check (may pass or fail based on CLI analysis)
     try {
       execSync(`bash "${ossLogScript}" health-check`, {
         timeout: 60000,
         encoding: 'utf-8',
+        env: {
+          ...process.env,
+          CLAUDE_PLUGIN_ROOT: path.join(__dirname, '../../..'),
+        },
       });
     } catch {
       // Exit code varies based on health check CLI analysis
     }
 
-    // THEN: Log file should still be written
-    expect(fs.existsSync(healthCheckLog)).toBe(true);
-    const logContent = fs.readFileSync(healthCheckLog, 'utf-8');
+    // THEN: Log file should still be written (check both locations)
+    const logFileToCheck = fs.existsSync(projectHealthCheckLog) ? projectHealthCheckLog : healthCheckLog;
+    expect(fs.existsSync(logFileToCheck)).toBe(true);
+    const logContent = fs.readFileSync(logFileToCheck, 'utf-8');
     expect(logContent.length).toBeGreaterThan(0);
   });
 });

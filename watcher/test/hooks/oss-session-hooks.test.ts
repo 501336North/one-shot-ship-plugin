@@ -17,19 +17,18 @@ describe('Session Hooks - Project Tracking', () => {
   const sessionEndScript = path.join(hooksDir, 'oss-session-end.sh');
   const ossDir = path.join(os.homedir(), '.oss');
   const currentProjectFile = path.join(ossDir, 'current-project');
-  const testProjectDir = path.join(os.tmpdir(), `oss-test-project-${Date.now()}`);
 
-  // Save original state
+  let testProjectDir: string;
   let originalCurrentProject: string | null = null;
 
   beforeEach(() => {
+    // Each test gets its own isolated directory
+    testProjectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-test-project-'));
+
     // Save original current-project if it exists
     if (fs.existsSync(currentProjectFile)) {
       originalCurrentProject = fs.readFileSync(currentProjectFile, 'utf-8');
     }
-
-    // Create test project directory with minimal git setup
-    fs.mkdirSync(testProjectDir, { recursive: true });
 
     // Initialize as git repo (required by session-end.sh)
     try {
@@ -43,7 +42,7 @@ describe('Session Hooks - Project Tracking', () => {
     // Ensure ~/.oss exists
     fs.mkdirSync(ossDir, { recursive: true });
 
-    // Clear current-project file
+    // Clear current-project file to start fresh
     if (fs.existsSync(currentProjectFile)) {
       fs.unlinkSync(currentProjectFile);
     }
@@ -81,12 +80,12 @@ describe('Session Hooks - Project Tracking', () => {
             ...process.env,
             CLAUDE_PROJECT_DIR: testProjectDir,
             CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..'),
+            OSS_SKIP_WATCHER: '1',
           },
           cwd: testProjectDir,
         });
       } catch {
-        // Script may exit non-zero for various reasons (missing config, etc.)
-        // We only care about the current-project file
+        // Script may exit non-zero for various reasons
       }
 
       // THEN: current-project file should contain the project path
@@ -120,6 +119,7 @@ describe('Session Hooks - Project Tracking', () => {
             ...process.env,
             CLAUDE_PROJECT_DIR: testProjectDir,
             CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..'),
+            OSS_SKIP_WATCHER: '1',
           },
           cwd: testProjectDir,
         });
@@ -154,6 +154,7 @@ describe('Session Hooks - Project Tracking', () => {
             ...process.env,
             CLAUDE_PROJECT_DIR: testProjectDir,
             CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..'),
+            OSS_SKIP_WATCHER: '1',
           },
           cwd: testProjectDir,
         });

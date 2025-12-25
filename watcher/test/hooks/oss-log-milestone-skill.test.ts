@@ -16,17 +16,33 @@ describe('oss-log.sh milestone action', () => {
   const ossDir = path.join(os.homedir(), '.oss');
   const logsDir = path.join(ossDir, 'logs', 'current-session');
   const sessionLog = path.join(logsDir, 'session.log');
+  const currentProjectFile = path.join(ossDir, 'current-project');
 
   let originalSessionLog: string | null = null;
+  let originalCurrentProject: string | null = null;
 
   beforeEach(() => {
     fs.mkdirSync(logsDir, { recursive: true });
+
+    // Save and clear current-project to ensure global log path
+    if (fs.existsSync(currentProjectFile)) {
+      originalCurrentProject = fs.readFileSync(currentProjectFile, 'utf-8');
+    }
+    fs.writeFileSync(currentProjectFile, '');
+
     if (fs.existsSync(sessionLog)) {
       originalSessionLog = fs.readFileSync(sessionLog, 'utf-8');
     }
   });
 
   afterEach(() => {
+    // Restore original current-project
+    if (originalCurrentProject !== null) {
+      fs.writeFileSync(currentProjectFile, originalCurrentProject);
+    } else if (fs.existsSync(currentProjectFile)) {
+      fs.writeFileSync(currentProjectFile, '');
+    }
+
     if (originalSessionLog !== null) {
       fs.writeFileSync(sessionLog, originalSessionLog);
     }
@@ -43,6 +59,10 @@ describe('oss-log.sh milestone action', () => {
 
     execSync(`bash "${ossLogScript}" milestone plan archive_check "Checked for features to archive"`, {
       encoding: 'utf-8',
+      env: {
+        ...process.env,
+        CLAUDE_PROJECT_DIR: '', // Clear to ensure global log path
+      },
     });
 
     const logContent = fs.readFileSync(sessionLog, 'utf-8');
@@ -61,6 +81,10 @@ describe('oss-log.sh milestone action', () => {
       execSync(`bash "${ossLogScript}" milestone`, {
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          CLAUDE_PROJECT_DIR: '', // Clear to ensure global log path
+        },
       });
     } catch (error) {
       const execError = error as { stderr?: string };
@@ -81,6 +105,10 @@ describe('oss-log.sh milestone action', () => {
       execSync(`bash "${ossLogScript}" milestone plan`, {
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          CLAUDE_PROJECT_DIR: '', // Clear to ensure global log path
+        },
       });
     } catch (error) {
       const execError = error as { stderr?: string };
@@ -96,17 +124,33 @@ describe('oss-log.sh skill action', () => {
   const ossDir = path.join(os.homedir(), '.oss');
   const logsDir = path.join(ossDir, 'logs', 'current-session');
   const sessionLog = path.join(logsDir, 'session.log');
+  const currentProjectFile = path.join(ossDir, 'current-project');
 
   let originalSessionLog: string | null = null;
+  let originalCurrentProject: string | null = null;
 
   beforeEach(() => {
     fs.mkdirSync(logsDir, { recursive: true });
+
+    // Save and clear current-project to ensure global log path
+    if (fs.existsSync(currentProjectFile)) {
+      originalCurrentProject = fs.readFileSync(currentProjectFile, 'utf-8');
+    }
+    fs.writeFileSync(currentProjectFile, '');
+
     if (fs.existsSync(sessionLog)) {
       originalSessionLog = fs.readFileSync(sessionLog, 'utf-8');
     }
   });
 
   afterEach(() => {
+    // Restore original current-project
+    if (originalCurrentProject !== null) {
+      fs.writeFileSync(currentProjectFile, originalCurrentProject);
+    } else if (fs.existsSync(currentProjectFile)) {
+      fs.writeFileSync(currentProjectFile, '');
+    }
+
     if (originalSessionLog !== null) {
       fs.writeFileSync(sessionLog, originalSessionLog);
     }
@@ -123,6 +167,10 @@ describe('oss-log.sh skill action', () => {
 
     execSync(`bash "${ossLogScript}" skill create-dev-docs START "feature=auth-module"`, {
       encoding: 'utf-8',
+      env: {
+        ...process.env,
+        CLAUDE_PROJECT_DIR: '', // Clear to ensure global log path
+      },
     });
 
     const logContent = fs.readFileSync(sessionLog, 'utf-8');
@@ -142,6 +190,10 @@ describe('oss-log.sh skill action', () => {
 
     execSync(`bash "${ossLogScript}" skill create-dev-docs COMPLETE "files_created=3"`, {
       encoding: 'utf-8',
+      env: {
+        ...process.env,
+        CLAUDE_PROJECT_DIR: '', // Clear to ensure global log path
+      },
     });
 
     const logContent = fs.readFileSync(sessionLog, 'utf-8');
@@ -161,6 +213,10 @@ describe('oss-log.sh skill action', () => {
 
     execSync(`bash "${ossLogScript}" skill build FAILED "Test compilation failed"`, {
       encoding: 'utf-8',
+      env: {
+        ...process.env,
+        CLAUDE_PROJECT_DIR: '', // Clear to ensure global log path
+      },
     });
 
     const logContent = fs.readFileSync(sessionLog, 'utf-8');
@@ -179,6 +235,10 @@ describe('oss-log.sh skill action', () => {
       execSync(`bash "${ossLogScript}" skill`, {
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          CLAUDE_PROJECT_DIR: '', // Clear to ensure global log path
+        },
       });
     } catch (error) {
       const execError = error as { stderr?: string };
@@ -199,6 +259,10 @@ describe('oss-log.sh skill action', () => {
       execSync(`bash "${ossLogScript}" skill create-dev-docs`, {
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          CLAUDE_PROJECT_DIR: '', // Clear to ensure global log path
+        },
       });
     } catch (error) {
       const execError = error as { stderr?: string };
