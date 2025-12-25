@@ -16,17 +16,33 @@ describe('oss-log.sh recovery action', () => {
   const ossDir = path.join(os.homedir(), '.oss');
   const logsDir = path.join(ossDir, 'logs', 'current-session');
   const sessionLog = path.join(logsDir, 'session.log');
+  const currentProjectFile = path.join(ossDir, 'current-project');
 
   let originalSessionLog: string | null = null;
+  let originalCurrentProject: string | null = null;
 
   beforeEach(() => {
     fs.mkdirSync(logsDir, { recursive: true });
+
+    // Save and clear current-project to ensure global log path
+    if (fs.existsSync(currentProjectFile)) {
+      originalCurrentProject = fs.readFileSync(currentProjectFile, 'utf-8');
+    }
+    fs.writeFileSync(currentProjectFile, '');
+
     if (fs.existsSync(sessionLog)) {
       originalSessionLog = fs.readFileSync(sessionLog, 'utf-8');
     }
   });
 
   afterEach(() => {
+    // Restore original current-project
+    if (originalCurrentProject !== null) {
+      fs.writeFileSync(currentProjectFile, originalCurrentProject);
+    } else if (fs.existsSync(currentProjectFile)) {
+      fs.writeFileSync(currentProjectFile, '');
+    }
+
     if (originalSessionLog !== null) {
       fs.writeFileSync(sessionLog, originalSessionLog);
     }
@@ -96,17 +112,33 @@ describe('oss-log.sh timeout action', () => {
   const ossDir = path.join(os.homedir(), '.oss');
   const logsDir = path.join(ossDir, 'logs', 'current-session');
   const sessionLog = path.join(logsDir, 'session.log');
+  const currentProjectFile = path.join(ossDir, 'current-project');
 
   let originalSessionLog: string | null = null;
+  let originalCurrentProject: string | null = null;
 
   beforeEach(() => {
     fs.mkdirSync(logsDir, { recursive: true });
+
+    // Save and clear current-project to ensure global log path
+    if (fs.existsSync(currentProjectFile)) {
+      originalCurrentProject = fs.readFileSync(currentProjectFile, 'utf-8');
+    }
+    fs.writeFileSync(currentProjectFile, '');
+
     if (fs.existsSync(sessionLog)) {
       originalSessionLog = fs.readFileSync(sessionLog, 'utf-8');
     }
   });
 
   afterEach(() => {
+    // Restore original current-project
+    if (originalCurrentProject !== null) {
+      fs.writeFileSync(currentProjectFile, originalCurrentProject);
+    } else if (fs.existsSync(currentProjectFile)) {
+      fs.writeFileSync(currentProjectFile, '');
+    }
+
     if (originalSessionLog !== null) {
       fs.writeFileSync(sessionLog, originalSessionLog);
     }

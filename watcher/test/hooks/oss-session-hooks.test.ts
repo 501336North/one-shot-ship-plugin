@@ -81,6 +81,7 @@ describe('Session Hooks - Project Tracking', () => {
             ...process.env,
             CLAUDE_PROJECT_DIR: testProjectDir,
             CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..'),
+            OSS_SKIP_WATCHER: '1', // Prevent watcher from spawning during tests
           },
           cwd: testProjectDir,
         });
@@ -120,6 +121,7 @@ describe('Session Hooks - Project Tracking', () => {
             ...process.env,
             CLAUDE_PROJECT_DIR: testProjectDir,
             CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..'),
+            OSS_SKIP_WATCHER: '1', // Prevent watcher from spawning during tests
           },
           cwd: testProjectDir,
         });
@@ -154,6 +156,7 @@ describe('Session Hooks - Project Tracking', () => {
             ...process.env,
             CLAUDE_PROJECT_DIR: testProjectDir,
             CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..'),
+            OSS_SKIP_WATCHER: '1', // Prevent watcher from spawning during tests
           },
           cwd: testProjectDir,
         });

@@ -24,7 +24,12 @@ BRANCH=$(git branch --show-current 2>/dev/null || echo "detached")
 REPO_NAME=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" || echo "unknown")
 LAST_COMMITS=$(git log -3 --oneline 2>/dev/null || echo "none")
 UNCOMMITTED=$(git status -s 2>/dev/null || echo "")
-UNCOMMITTED_COUNT=$(echo "$UNCOMMITTED" | grep -c . || echo "0")
+# Count non-empty lines (handle empty string correctly to avoid newline issues)
+if [[ -z "$UNCOMMITTED" ]]; then
+    UNCOMMITTED_COUNT=0
+else
+    UNCOMMITTED_COUNT=$(echo "$UNCOMMITTED" | wc -l | tr -d ' ')
+fi
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
 # Save context to file
