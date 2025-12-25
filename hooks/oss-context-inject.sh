@@ -3,8 +3,19 @@
 # Triggered on: UserPromptSubmit
 # Injects local git context into Claude's view (no proprietary content)
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOG_SCRIPT="$SCRIPT_DIR/oss-log.sh"
+
+# --- Hook Logging (for supervisor visibility) ---
+if [[ -x "$LOG_SCRIPT" ]]; then
+    "$LOG_SCRIPT" hook oss-context-inject START
+fi
+
 # Only run in git repositories
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    if [[ -x "$LOG_SCRIPT" ]]; then
+        "$LOG_SCRIPT" hook oss-context-inject COMPLETE
+    fi
     exit 0
 fi
 
@@ -39,5 +50,10 @@ if [[ -n "$SESSION_CONTEXT" ]]; then
 fi
 
 echo "---"
+
+# Log hook COMPLETE
+if [[ -x "$LOG_SCRIPT" ]]; then
+    "$LOG_SCRIPT" hook oss-context-inject COMPLETE
+fi
 
 exit 0

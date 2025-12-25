@@ -22,6 +22,14 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# --- Hook Logging (for supervisor visibility) ---
+LOG_SCRIPT="$SCRIPT_DIR/oss-log.sh"
+if [[ -x "$LOG_SCRIPT" ]]; then
+    "$LOG_SCRIPT" hook oss-context-gate START
+fi
+
 # Read input from stdin
 input=$(cat)
 
@@ -32,6 +40,9 @@ transcript_path=$(echo "$input" | jq -r '.transcript_path // ""')
 # Only check major workflow commands
 if ! echo "$prompt" | grep -qE "^/oss:(ideate|plan|build|ship)"; then
     # Not a major command, allow through
+    if [[ -x "$LOG_SCRIPT" ]]; then
+        "$LOG_SCRIPT" hook oss-context-gate COMPLETE
+    fi
     exit 0
 fi
 
@@ -42,6 +53,9 @@ if echo "$prompt" | grep -qE "\-\-force"; then
     echo "⚠️ **--force detected**: Proceeding with existing context."
     echo "For best results, consider \`/clear\` next time."
     echo ""
+    if [[ -x "$LOG_SCRIPT" ]]; then
+        "$LOG_SCRIPT" hook oss-context-gate COMPLETE
+    fi
     exit 0
 fi
 
@@ -50,6 +64,9 @@ if [[ -f "$transcript_path" ]]; then
     line_count=$(wc -l < "$transcript_path" | tr -d ' ')
 else
     # No transcript = fresh context, allow through
+    if [[ -x "$LOG_SCRIPT" ]]; then
+        "$LOG_SCRIPT" hook oss-context-gate COMPLETE
+    fi
     exit 0
 fi
 
@@ -68,4 +85,8 @@ EOF
 fi
 
 # Context is light, allow through
+# Log hook COMPLETE
+if [[ -x "$LOG_SCRIPT" ]]; then
+    "$LOG_SCRIPT" hook oss-context-gate COMPLETE
+fi
 exit 0
