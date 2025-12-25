@@ -69,16 +69,17 @@ describe('oss-session-start.sh logging', () => {
 
     // WHEN: Running oss-session-start.sh (with minimal env to avoid API calls)
     try {
+      // Delete CLAUDE_PROJECT_DIR to ensure global log path for testing
+      const env = {
+        ...process.env,
+        CLAUDE_PLUGIN_ROOT: path.join(__dirname, '../../..'),
+        OSS_SKIP_WATCHER: '1', // Prevent watcher from spawning during tests
+      };
+      delete env.CLAUDE_PROJECT_DIR;
+
       execSync(`bash "${ossSessionStartScript}"`, {
         encoding: 'utf-8',
-        env: {
-          ...process.env,
-          // Clear CLAUDE_PROJECT_DIR to ensure global log path for testing
-          CLAUDE_PROJECT_DIR: '',
-          CLAUDE_PLUGIN_ROOT: path.join(__dirname, '../../..'),
-          OSS_SKIP_WATCHER: '1', // Prevent watcher from spawning during tests
-          // Skip API call by not having valid config
-        },
+        env,
         timeout: 10000,
       });
     } catch {
@@ -209,16 +210,18 @@ describe('oss-session-end.sh logging', () => {
 
     // WHEN: Running oss-session-end.sh (must run from git repo)
     try {
+      // Delete CLAUDE_PROJECT_DIR to ensure global log path for testing
+      const env = {
+        ...process.env,
+        CLAUDE_PLUGIN_ROOT: path.join(__dirname, '../../..'),
+        OSS_SKIP_WATCHER: '1', // Prevent watcher from spawning during tests
+      };
+      delete env.CLAUDE_PROJECT_DIR;
+
       execSync(`bash "${ossSessionEndScript}"`, {
         encoding: 'utf-8',
         cwd: testProjectDir, // Run from project dir so git commands work
-        env: {
-          ...process.env,
-          // Clear CLAUDE_PROJECT_DIR to ensure global log path for testing
-          CLAUDE_PROJECT_DIR: '',
-          CLAUDE_PLUGIN_ROOT: path.join(__dirname, '../../..'),
-          OSS_SKIP_WATCHER: '1', // Prevent watcher from spawning during tests
-        },
+        env,
         timeout: 10000,
       });
     } catch {

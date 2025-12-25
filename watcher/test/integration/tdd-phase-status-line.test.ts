@@ -15,40 +15,20 @@ describe('E2E: TDD Phase Status Line Integration', () => {
   const hooksDir = path.join(__dirname, '../../../hooks');
   const logScript = path.join(hooksDir, 'oss-log.sh');
   const statuslineScript = path.join(hooksDir, 'oss-statusline.sh');
-  const ossDir = path.join(os.homedir(), '.oss');
-  const currentProjectFile = path.join(ossDir, 'current-project');
 
-  // Use unique test ID per test to avoid cross-test pollution
   let testProjectDir: string;
   let projectOssDir: string;
   let logsDir: string;
   let workflowStateFile: string;
 
-  // Save original state
-  let originalCurrentProject: string | null = null;
-
   beforeEach(() => {
-    // Generate unique test directory per test (not per describe block)
-    const uniqueId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    testProjectDir = path.join(os.tmpdir(), `oss-e2e-tdd-${uniqueId}`);
+    // Each test gets its own isolated directory
+    testProjectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-e2e-tdd-'));
     projectOssDir = path.join(testProjectDir, '.oss');
     logsDir = path.join(projectOssDir, 'logs', 'current-session');
     workflowStateFile = path.join(projectOssDir, 'workflow-state.json');
 
-    // Kill any stray background processes that might interfere
-    try {
-      execSync('pkill -f "watcher/dist/index.js" 2>/dev/null || true', { stdio: 'ignore' });
-    } catch {
-      // Ignore - no processes to kill
-    }
-
-    // Save original current-project
-    if (fs.existsSync(currentProjectFile)) {
-      originalCurrentProject = fs.readFileSync(currentProjectFile, 'utf-8');
-    }
-
-    // Create test project directory with .oss structure
-    fs.mkdirSync(projectOssDir, { recursive: true });
+    // Create .oss structure
     fs.mkdirSync(logsDir, { recursive: true });
 
     // Initialize git repo for status line branch detection
@@ -60,20 +40,10 @@ describe('E2E: TDD Phase Status Line Integration', () => {
     } catch {
       // Git init might fail in some environments
     }
-
-    // Set current-project to point to test project
-    fs.writeFileSync(currentProjectFile, testProjectDir);
   });
 
   afterEach(() => {
-    // Restore original current-project
-    if (originalCurrentProject !== null) {
-      fs.writeFileSync(currentProjectFile, originalCurrentProject);
-    } else if (fs.existsSync(currentProjectFile)) {
-      fs.unlinkSync(currentProjectFile);
-    }
-
-    // Clean up test project
+    // Clean up test directory
     if (fs.existsSync(testProjectDir)) {
       fs.rmSync(testProjectDir, { recursive: true, force: true });
     }
@@ -87,6 +57,7 @@ describe('E2E: TDD Phase Status Line Integration', () => {
         cwd: testProjectDir,
         env: {
           ...process.env,
+          CLAUDE_PROJECT_DIR: testProjectDir,  // Use env var, not global file
           CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..'),
           HOME: os.homedir(),
         },
@@ -108,6 +79,10 @@ describe('E2E: TDD Phase Status Line Integration', () => {
         timeout: 5000,
         encoding: 'utf-8',
         cwd: testProjectDir,
+        env: {
+          ...process.env,
+          CLAUDE_PROJECT_DIR: testProjectDir,  // Use env var, not global file
+        },
       });
     } catch (error: unknown) {
       const execError = error as { stdout?: string; stderr?: string };
@@ -115,11 +90,8 @@ describe('E2E: TDD Phase Status Line Integration', () => {
     }
   };
 
-  // Wait for workflow state to be updated (increased timeout for background process completion)
-  const waitForState = async (maxMs = 5000): Promise<boolean> => {
-    // Give background processes time to start
-    await new Promise(resolve => setTimeout(resolve, 500));
-
+  // Wait for workflow state to be updated
+  const waitForState = async (maxMs = 2000): Promise<boolean> => {
     const start = Date.now();
     while (Date.now() - start < maxMs) {
       if (fs.existsSync(workflowStateFile)) {
@@ -132,7 +104,7 @@ describe('E2E: TDD Phase Status Line Integration', () => {
           // File might be partially written
         }
       }
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 50));
     }
     return false;
   };
@@ -142,8 +114,6 @@ describe('E2E: TDD Phase Status Line Integration', () => {
    * @acceptance-criteria Running oss-log.sh phase RED start results in status line showing 🔴
    */
   it('should show RED phase emoji in status line after oss-log.sh phase RED start', async () => {
-    // GIVEN: A project with .oss directory
-
     // WHEN: Running oss-log.sh with phase RED start
     runLogCommand('phase build RED start');
 
@@ -156,7 +126,6 @@ describe('E2E: TDD Phase Status Line Integration', () => {
 
     // THEN: Status line should show RED phase emoji
     expect(output).toContain('🔴');
-    // Note: Emoji-only display (no "RED" text)
   });
 
   /**
@@ -170,22 +139,19 @@ describe('E2E: TDD Phase Status Line Integration', () => {
 
     let output = runStatusLine();
     expect(output).toContain('🔴');
-    // Emoji-only display
 
     // WHEN: Transitioning to GREEN
     runLogCommand('phase build GREEN start');
-    await new Promise(resolve => setTimeout(resolve, 500)); // Wait for update
+    await new Promise(resolve => setTimeout(resolve, 100)); // Brief wait for update
 
     output = runStatusLine();
     expect(output).toContain('🟢');
-    // Emoji-only display
 
     // WHEN: Transitioning to REFACTOR
     runLogCommand('phase build REFACTOR start');
-    await new Promise(resolve => setTimeout(resolve, 500)); // Wait for update
+    await new Promise(resolve => setTimeout(resolve, 100)); // Brief wait for update
 
     output = runStatusLine();
     expect(output).toContain('🔄');
-    // Emoji-only display (changed from 🔵 to 🔄)
   });
 });

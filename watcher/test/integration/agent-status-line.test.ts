@@ -15,40 +15,20 @@ describe('E2E: Agent Status Line Integration', () => {
   const hooksDir = path.join(__dirname, '../../../hooks');
   const logScript = path.join(hooksDir, 'oss-log.sh');
   const statuslineScript = path.join(hooksDir, 'oss-statusline.sh');
-  const ossDir = path.join(os.homedir(), '.oss');
-  const currentProjectFile = path.join(ossDir, 'current-project');
 
-  // Use unique test ID per test to avoid cross-test pollution
   let testProjectDir: string;
   let projectOssDir: string;
   let logsDir: string;
   let workflowStateFile: string;
 
-  // Save original state
-  let originalCurrentProject: string | null = null;
-
   beforeEach(() => {
-    // Generate unique test directory per test (not per describe block)
-    const uniqueId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    testProjectDir = path.join(os.tmpdir(), `oss-e2e-agent-${uniqueId}`);
+    // Each test gets its own isolated directory
+    testProjectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-e2e-agent-'));
     projectOssDir = path.join(testProjectDir, '.oss');
     logsDir = path.join(projectOssDir, 'logs', 'current-session');
     workflowStateFile = path.join(projectOssDir, 'workflow-state.json');
 
-    // Kill any stray background processes that might interfere
-    try {
-      execSync('pkill -f "watcher/dist/index.js" 2>/dev/null || true', { stdio: 'ignore' });
-    } catch {
-      // Ignore - no processes to kill
-    }
-
-    // Save original current-project
-    if (fs.existsSync(currentProjectFile)) {
-      originalCurrentProject = fs.readFileSync(currentProjectFile, 'utf-8');
-    }
-
-    // Create test project directory with .oss structure
-    fs.mkdirSync(projectOssDir, { recursive: true });
+    // Create .oss structure
     fs.mkdirSync(logsDir, { recursive: true });
 
     // Initialize git repo for status line branch detection
@@ -60,20 +40,10 @@ describe('E2E: Agent Status Line Integration', () => {
     } catch {
       // Git init might fail in some environments
     }
-
-    // Set current-project to point to test project
-    fs.writeFileSync(currentProjectFile, testProjectDir);
   });
 
   afterEach(() => {
-    // Restore original current-project
-    if (originalCurrentProject !== null) {
-      fs.writeFileSync(currentProjectFile, originalCurrentProject);
-    } else if (fs.existsSync(currentProjectFile)) {
-      fs.unlinkSync(currentProjectFile);
-    }
-
-    // Clean up test project
+    // Clean up test directory
     if (fs.existsSync(testProjectDir)) {
       fs.rmSync(testProjectDir, { recursive: true, force: true });
     }
@@ -87,6 +57,7 @@ describe('E2E: Agent Status Line Integration', () => {
         cwd: testProjectDir,
         env: {
           ...process.env,
+          CLAUDE_PROJECT_DIR: testProjectDir,  // Use env var, not global file
           CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..'),
           HOME: os.homedir(),
         },
@@ -108,6 +79,10 @@ describe('E2E: Agent Status Line Integration', () => {
         timeout: 5000,
         encoding: 'utf-8',
         cwd: testProjectDir,
+        env: {
+          ...process.env,
+          CLAUDE_PROJECT_DIR: testProjectDir,  // Use env var, not global file
+        },
       });
     } catch (error: unknown) {
       const execError = error as { stdout?: string; stderr?: string };
@@ -115,11 +90,8 @@ describe('E2E: Agent Status Line Integration', () => {
     }
   };
 
-  // Wait for agent to appear in workflow state (increased timeout for background process completion)
-  const waitForAgent = async (maxMs = 5000): Promise<boolean> => {
-    // Give background processes time to start
-    await new Promise(resolve => setTimeout(resolve, 500));
-
+  // Wait for agent to appear in workflow state
+  const waitForAgent = async (maxMs = 2000): Promise<boolean> => {
     const start = Date.now();
     while (Date.now() - start < maxMs) {
       if (fs.existsSync(workflowStateFile)) {
@@ -132,16 +104,13 @@ describe('E2E: Agent Status Line Integration', () => {
           // File might be partially written
         }
       }
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 50));
     }
     return false;
   };
 
-  // Wait for agent to be cleared from workflow state (increased timeout for background process completion)
-  const waitForAgentCleared = async (maxMs = 5000): Promise<boolean> => {
-    // Give background processes time to start
-    await new Promise(resolve => setTimeout(resolve, 500));
-
+  // Wait for agent to be cleared from workflow state
+  const waitForAgentCleared = async (maxMs = 2000): Promise<boolean> => {
     const start = Date.now();
     while (Date.now() - start < maxMs) {
       if (fs.existsSync(workflowStateFile)) {
@@ -154,7 +123,7 @@ describe('E2E: Agent Status Line Integration', () => {
           // File might be partially written
         }
       }
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 50));
     }
     return false;
   };
@@ -164,8 +133,6 @@ describe('E2E: Agent Status Line Integration', () => {
    * @acceptance-criteria Running oss-log.sh agent with "starting:" shows agent in status line
    */
   it('should show agent in status line when agent starts', async () => {
-    // GIVEN: A project with .oss directory
-
     // WHEN: Running oss-log.sh with agent command containing "starting:"
     runLogCommand('agent build react-specialist "starting: UserProfile component"');
 

@@ -67,18 +67,16 @@ validate_project_path() {
 }
 
 # Get log base directory - project-local first, global fallback
-# Priority: 1) ~/.oss/current-project, 2) CLAUDE_PROJECT_DIR, 3) ~/.oss/logs (global)
+# Priority: 1) CLAUDE_PROJECT_DIR (env var), 2) ~/.oss/current-project, 3) ~/.oss/logs (global)
 get_log_base() {
     local project_dir=""
 
-    # Try to get project directory from current-project file
-    if [[ -f "$HOME/.oss/current-project" ]]; then
-        project_dir=$(cat "$HOME/.oss/current-project" 2>/dev/null | tr -d '[:space:]')
-    fi
-
-    # Fall back to CLAUDE_PROJECT_DIR if available
-    if [[ -z "$project_dir" && -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
+    # CLAUDE_PROJECT_DIR takes priority (explicit env var for tests/automation)
+    if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
         project_dir="$CLAUDE_PROJECT_DIR"
+    # Fall back to current-project file for interactive sessions
+    elif [[ -f "$HOME/.oss/current-project" ]]; then
+        project_dir=$(cat "$HOME/.oss/current-project" 2>/dev/null | tr -d '[:space:]')
     fi
 
     # Validate and use project-local if valid

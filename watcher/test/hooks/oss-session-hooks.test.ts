@@ -18,31 +18,17 @@ describe('Session Hooks - Project Tracking', () => {
   const ossDir = path.join(os.homedir(), '.oss');
   const currentProjectFile = path.join(ossDir, 'current-project');
 
-  // Use unique test ID per test to avoid cross-test pollution
   let testProjectDir: string;
-
-  // Save original state
   let originalCurrentProject: string | null = null;
 
   beforeEach(() => {
-    // Generate unique test directory per test (not per describe block)
-    const uniqueId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    testProjectDir = path.join(os.tmpdir(), `oss-test-project-${uniqueId}`);
-
-    // Kill any stray background processes that might interfere
-    try {
-      execSync('pkill -f "watcher/dist/index.js" 2>/dev/null || true', { stdio: 'ignore' });
-    } catch {
-      // Ignore - no processes to kill
-    }
+    // Each test gets its own isolated directory
+    testProjectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-test-project-'));
 
     // Save original current-project if it exists
     if (fs.existsSync(currentProjectFile)) {
       originalCurrentProject = fs.readFileSync(currentProjectFile, 'utf-8');
     }
-
-    // Create test project directory with minimal git setup
-    fs.mkdirSync(testProjectDir, { recursive: true });
 
     // Initialize as git repo (required by session-end.sh)
     try {
@@ -94,13 +80,12 @@ describe('Session Hooks - Project Tracking', () => {
             ...process.env,
             CLAUDE_PROJECT_DIR: testProjectDir,
             CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..'),
-            OSS_SKIP_WATCHER: '1', // Prevent watcher from spawning during tests
+            OSS_SKIP_WATCHER: '1',
           },
           cwd: testProjectDir,
         });
       } catch {
-        // Script may exit non-zero for various reasons (missing config, etc.)
-        // We only care about the current-project file
+        // Script may exit non-zero for various reasons
       }
 
       // THEN: current-project file should contain the project path
@@ -134,7 +119,7 @@ describe('Session Hooks - Project Tracking', () => {
             ...process.env,
             CLAUDE_PROJECT_DIR: testProjectDir,
             CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..'),
-            OSS_SKIP_WATCHER: '1', // Prevent watcher from spawning during tests
+            OSS_SKIP_WATCHER: '1',
           },
           cwd: testProjectDir,
         });
@@ -169,7 +154,7 @@ describe('Session Hooks - Project Tracking', () => {
             ...process.env,
             CLAUDE_PROJECT_DIR: testProjectDir,
             CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..'),
-            OSS_SKIP_WATCHER: '1', // Prevent watcher from spawning during tests
+            OSS_SKIP_WATCHER: '1',
           },
           cwd: testProjectDir,
         });

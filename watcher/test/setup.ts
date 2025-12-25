@@ -41,15 +41,6 @@ beforeAll(() => {
   }
 });
 
-// Kill any stray watcher processes before EACH test to prevent interference
-beforeEach(() => {
-  try {
-    execSync('pkill -f "watcher/dist/index.js" 2>/dev/null || true', { stdio: 'ignore' });
-  } catch {
-    // Ignore
-  }
-});
-
 // Kill any watchers that may have been spawned during tests
 afterAll(() => {
   try {
