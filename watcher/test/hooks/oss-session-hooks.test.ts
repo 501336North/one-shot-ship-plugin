@@ -72,6 +72,7 @@ describe('Session Hooks - Project Tracking', () => {
       expect(fs.existsSync(currentProjectFile)).toBe(false);
 
       // WHEN: Running session start with CLAUDE_PROJECT_DIR set
+      // Use OSS_SKIP_HEALTH_CHECK to prevent background jobs from interfering
       try {
         execSync(`bash "${sessionStartScript}"`, {
           timeout: 30000,
@@ -81,12 +82,16 @@ describe('Session Hooks - Project Tracking', () => {
             CLAUDE_PROJECT_DIR: testProjectDir,
             CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..'),
             OSS_SKIP_WATCHER: '1',
+            OSS_SKIP_HEALTH_CHECK: '1',
           },
           cwd: testProjectDir,
         });
       } catch {
         // Script may exit non-zero for various reasons
       }
+
+      // Wait briefly for file to be written (script has background operations)
+      execSync('sleep 0.2', { stdio: 'ignore' });
 
       // THEN: current-project file should contain the project path
       expect(fs.existsSync(currentProjectFile)).toBe(true);
@@ -146,6 +151,7 @@ describe('Session Hooks - Project Tracking', () => {
       fs.writeFileSync(currentProjectFile, oldProject);
 
       // WHEN: Running session start with new CLAUDE_PROJECT_DIR
+      // Use OSS_SKIP_HEALTH_CHECK to prevent background jobs from interfering
       try {
         execSync(`bash "${sessionStartScript}"`, {
           timeout: 30000,
@@ -155,12 +161,16 @@ describe('Session Hooks - Project Tracking', () => {
             CLAUDE_PROJECT_DIR: testProjectDir,
             CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..'),
             OSS_SKIP_WATCHER: '1',
+            OSS_SKIP_HEALTH_CHECK: '1',
           },
           cwd: testProjectDir,
         });
       } catch {
         // Ignore exit code
       }
+
+      // Wait briefly for file to be written
+      execSync('sleep 0.2', { stdio: 'ignore' });
 
       // THEN: current-project should have new path
       const projectPath = fs.readFileSync(currentProjectFile, 'utf-8').trim();

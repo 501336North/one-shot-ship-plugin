@@ -1,0 +1,99 @@
+/**
+ * Prompt Cache Service
+ *
+ * Caches decrypted prompts locally to reduce command startup latency.
+ * Target: <10ms cache hit vs 500ms+ API fetch.
+ */
+
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+
+interface CachedPrompt {
+  content: string;
+  version: string;
+  cachedAt: number;
+  expiresAt: number;
+}
+
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const DEFAULT_VERSION = '1.4.0';
+
+export class PromptCache {
+  private cacheDir: string;
+  private currentVersion: string;
+
+  constructor(version: string = DEFAULT_VERSION) {
+    this.cacheDir = path.join(os.homedir(), '.oss', 'cache', 'prompts');
+    this.currentVersion = version;
+  }
+
+  /**
+   * Get a cached prompt if valid (not expired, version matches)
+   */
+  getCachedPrompt(type: string, name: string): string | null {
+    const cachePath = this.getCachePath(type, name);
+
+    if (!fs.existsSync(cachePath)) {
+      return null;
+    }
+
+    try {
+      const cached: CachedPrompt = JSON.parse(
+        fs.readFileSync(cachePath, 'utf-8')
+      );
+
+      // Check if expired
+      if (Date.now() > cached.expiresAt) {
+        return null;
+      }
+
+      // Check if version matches
+      if (cached.version !== this.currentVersion) {
+        return null;
+      }
+
+      return cached.content;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Cache a prompt for future use
+   */
+  setCachedPrompt(type: string, name: string, content: string): void {
+    const cachePath = this.getCachePath(type, name);
+    const cacheDir = path.dirname(cachePath);
+
+    // Create cache directory if needed
+    if (!fs.existsSync(cacheDir)) {
+      fs.mkdirSync(cacheDir, { recursive: true });
+    }
+
+    const cached: CachedPrompt = {
+      content,
+      version: this.currentVersion,
+      cachedAt: Date.now(),
+      expiresAt: Date.now() + CACHE_TTL_MS,
+    };
+
+    fs.writeFileSync(cachePath, JSON.stringify(cached, null, 2));
+  }
+
+  /**
+   * Clear all cached prompts
+   */
+  clearCache(): void {
+    if (fs.existsSync(this.cacheDir)) {
+      fs.rmSync(this.cacheDir, { recursive: true, force: true });
+    }
+  }
+
+  /**
+   * Get the cache file path for a prompt
+   */
+  private getCachePath(type: string, name: string): string {
+    return path.join(this.cacheDir, type, `${name}.json`);
+  }
+}

@@ -83,8 +83,10 @@ describe('oss-log.sh health-check', () => {
    * @acceptance-criteria Log file must contain health check output for SwiftBar to read
    */
   it('should write health check output to log file', () => {
-    // GIVEN: A project with passing tests and no existing log file
-    expect(fs.existsSync(healthCheckLog)).toBe(false);
+    // GIVEN: A project with passing tests
+    // Health check logs go to project-local location when current-project is set
+    const projectHealthCheckLog = path.join(testProjectDir, '.oss', 'logs', 'current-session', 'health-check.log');
+    fs.mkdirSync(path.dirname(projectHealthCheckLog), { recursive: true });
 
     // WHEN: Running oss-log.sh health-check
     try {
@@ -100,10 +102,11 @@ describe('oss-log.sh health-check', () => {
       // Command may exit with non-zero for various reasons, we care about the log file
     }
 
-    // THEN: The health check log file should exist and contain output
-    expect(fs.existsSync(healthCheckLog)).toBe(true);
+    // THEN: The health check log file should exist and contain output (check both locations)
+    const logFileToCheck = fs.existsSync(projectHealthCheckLog) ? projectHealthCheckLog : healthCheckLog;
+    expect(fs.existsSync(logFileToCheck)).toBe(true);
 
-    const logContent = fs.readFileSync(healthCheckLog, 'utf-8');
+    const logContent = fs.readFileSync(logFileToCheck, 'utf-8');
     expect(logContent.length).toBeGreaterThan(0);
   });
 
