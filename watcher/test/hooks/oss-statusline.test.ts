@@ -69,10 +69,30 @@ describe('oss-statusline.sh - Project State Reading', () => {
       fs.writeFileSync(globalQueueFile, originalGlobalQueue);
     }
 
-    // Clean up test project
-    if (fs.existsSync(testProjectDir)) {
-      fs.rmSync(testProjectDir, { recursive: true, force: true });
-    }
+    // Clean up test project with retry for race conditions
+    const cleanupWithRetry = (dir: string, retries = 3) => {
+      for (let i = 0; i < retries; i++) {
+        try {
+          if (fs.existsSync(dir)) {
+            fs.rmSync(dir, { recursive: true, force: true });
+          }
+          return;
+        } catch (err) {
+          if (i === retries - 1) {
+            // Last retry, ignore error
+            console.warn(`Warning: Could not clean up ${dir}: ${err}`);
+          } else {
+            // Wait briefly before retry
+            const waitMs = 100 * (i + 1);
+            const start = Date.now();
+            while (Date.now() - start < waitMs) {
+              // Busy wait
+            }
+          }
+        }
+      }
+    };
+    cleanupWithRetry(testProjectDir);
   });
 
   describe('Workflow state reading', () => {

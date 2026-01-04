@@ -134,7 +134,8 @@ fi
 # --- Health Check (Run tests on session start) ---
 # Run npm test to catch any pre-existing failures and queue them
 # This ensures the supervisor catches issues BEFORE work begins
-if [[ -f "$HEALTH_CHECK_CLI" ]] && [[ -f "package.json" ]]; then
+# OSS_SKIP_HEALTH_CHECK=1 can be set in test environments to skip health check
+if [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]] && [[ -f "$HEALTH_CHECK_CLI" ]] && [[ -f "package.json" ]]; then
     echo "OSS: Running health check (background)..."
     # Run in background to not block session start
     # Output goes to session log for debugging
