@@ -62,6 +62,7 @@ interface LatencyMetrics {
 
 const DEFAULT_AUTH_CACHE_TTL = 60000; // 1 minute
 const DEFAULT_IRON_LAWS_CACHE_TTL = 300000; // 5 minutes
+const MAX_STARTUP_TIMES = 100; // Cap startup times array to prevent unbounded growth
 
 export class StartupOptimizer {
   private authCacheTtl: number;
@@ -189,6 +190,11 @@ export class StartupOptimizer {
     ]);
 
     const totalTime = Date.now() - start;
+
+    // Cap array to prevent unbounded growth
+    if (this.startupTimes.length >= MAX_STARTUP_TIMES) {
+      this.startupTimes.shift();
+    }
     this.startupTimes.push(totalTime);
 
     return {
