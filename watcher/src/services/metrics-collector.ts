@@ -326,18 +326,28 @@ export class MetricsCollector {
   }
 
   /**
-   * Load metrics from disk
+   * Load metrics from disk and prune data older than retention period
    */
   load(): void {
     try {
       if (fs.existsSync(this.metricsFile)) {
         const content = fs.readFileSync(this.metricsFile, 'utf-8');
         this.data = JSON.parse(content);
+        this.pruneOldData();
       }
     } catch {
       // If file is corrupt, start fresh
       this.data = { sessions: [], tddPhases: [], lastUpdated: new Date().toISOString() };
     }
+  }
+
+  /**
+   * Prune sessions and TDD phases older than retention period
+   */
+  private pruneOldData(): void {
+    const cutoffTime = Date.now() - (this.retentionDays * 24 * 60 * 60 * 1000);
+    this.data.sessions = this.data.sessions.filter(s => s.startTime >= cutoffTime);
+    this.data.tddPhases = this.data.tddPhases.filter(p => p.startTime >= cutoffTime);
   }
 
   /**
