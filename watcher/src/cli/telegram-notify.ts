@@ -137,14 +137,14 @@ export async function sendTelegramNotification(
     });
 
     if (!response.ok) {
-      const error = await response.json();
+      const error = await response.json() as { description?: string };
       return {
         success: false,
         error: `Telegram API error: ${error.description || response.status}`,
       };
     }
 
-    const data = await response.json();
+    const data = await response.json() as { result: { message_id: number } };
     return {
       success: true,
       messageId: data.result.message_id,
@@ -194,7 +194,7 @@ export async function waitForCallback(
 
       if (!response.ok) continue;
 
-      const data = await response.json();
+      const data = await response.json() as { result?: Array<{ update_id: number; callback_query?: { id: string; message?: { message_id: number }; data?: string } }> };
       const updates = data.result || [];
 
       for (const update of updates) {
@@ -224,7 +224,7 @@ export async function waitForCallback(
             }),
           });
 
-          return callbackQuery.data;
+          return callbackQuery.data ?? null;
         }
       }
     } catch {

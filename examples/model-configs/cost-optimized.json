@@ -1,0 +1,24 @@
+{
+  "description": "Cost-optimized configuration using free and cheap models",
+  "models": {
+    "default": "ollama/llama3.2",
+    "agents": {
+      "oss:code-reviewer": "ollama/qwen2.5-coder",
+      "oss:test-engineer": "ollama/codellama",
+      "oss:debugger": "ollama/codellama",
+      "oss:refactoring-specialist": "ollama/qwen2.5-coder"
+    },
+    "commands": {
+      "oss:plan": "openrouter/meta-llama/llama-3.2-3b:free",
+      "oss:build": "ollama/codellama",
+      "oss:ship": "ollama/llama3.2",
+      "oss:review": "ollama/qwen2.5-coder"
+    }
+  },
+  "notes": [
+    "Requires Ollama installed locally (https://ollama.ai)",
+    "Run: ollama pull llama3.2 qwen2.5-coder codellama",
+    "Uses OpenRouter free tier for planning",
+    "Best for: developers wanting to minimize costs"
+  ]
+}

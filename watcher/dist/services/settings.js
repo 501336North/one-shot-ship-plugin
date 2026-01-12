@@ -8,6 +8,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { DEFAULT_NOTIFICATION_SETTINGS, DEFAULT_SUPERVISOR_SETTINGS, } from '../types/notification.js';
 import { DEFAULT_TELEGRAM_CONFIG } from '../types/telegram.js';
+import { DEFAULT_MODEL_SETTINGS, } from '../types/model-settings.js';
+/**
+ * Environment variable names for API keys
+ */
+const ENV_VAR_NAMES = {
+    openrouter: 'OPENROUTER_API_KEY',
+    openai: 'OPENAI_API_KEY',
+    gemini: 'GEMINI_API_KEY',
+};
 const VALID_STYLES = ['visual', 'audio', 'sound', 'none'];
 const VALID_VERBOSITIES = ['all', 'important', 'errors-only'];
 const VALID_SUPERVISOR_MODES = ['always', 'workflow-only'];
@@ -15,10 +24,14 @@ export class SettingsService {
     settings;
     settingsPath;
     configDir;
+    modelSettings;
+    apiKeys;
     constructor(configDir) {
         this.configDir = configDir;
         this.settingsPath = path.join(configDir, 'settings.json');
         this.settings = this.loadSettings();
+        this.modelSettings = this.loadModelSettings();
+        this.apiKeys = this.loadApiKeys();
     }
     /**
      * Load settings from settings.json, falling back to defaults
@@ -50,6 +63,58 @@ export class SettingsService {
             telegram: { ...DEFAULT_TELEGRAM_CONFIG },
             version: DEFAULT_NOTIFICATION_SETTINGS.version,
         };
+    }
+    /**
+     * Load model settings from settings.json
+     */
+    loadModelSettings() {
+        try {
+            if (fs.existsSync(this.settingsPath)) {
+                const content = fs.readFileSync(this.settingsPath, 'utf-8');
+                const parsed = JSON.parse(content);
+                if (parsed.models && typeof parsed.models === 'object') {
+                    return {
+                        default: parsed.models.default || DEFAULT_MODEL_SETTINGS.default,
+                        fallbackEnabled: typeof parsed.models.fallbackEnabled === 'boolean'
+                            ? parsed.models.fallbackEnabled
+                            : DEFAULT_MODEL_SETTINGS.fallbackEnabled,
+                        agents: parsed.models.agents || {},
+                        commands: parsed.models.commands || {},
+                        skills: parsed.models.skills || {},
+                        hooks: parsed.models.hooks || {},
+                    };
+                }
+            }
+        }
+        catch {
+            // Fall through to defaults on any error
+        }
+        return {
+            default: DEFAULT_MODEL_SETTINGS.default,
+            fallbackEnabled: DEFAULT_MODEL_SETTINGS.fallbackEnabled,
+            agents: {},
+            commands: {},
+            skills: {},
+            hooks: {},
+        };
+    }
+    /**
+     * Load API keys from settings.json
+     */
+    loadApiKeys() {
+        try {
+            if (fs.existsSync(this.settingsPath)) {
+                const content = fs.readFileSync(this.settingsPath, 'utf-8');
+                const parsed = JSON.parse(content);
+                if (parsed.apiKeys && typeof parsed.apiKeys === 'object') {
+                    return { ...parsed.apiKeys };
+                }
+            }
+        }
+        catch {
+            // Fall through to empty config on any error
+        }
+        return {};
     }
     /**
      * Validate parsed settings and merge with defaults
@@ -138,7 +203,13 @@ export class SettingsService {
         if (!fs.existsSync(this.configDir)) {
             fs.mkdirSync(this.configDir, { recursive: true });
         }
-        fs.writeFileSync(this.settingsPath, JSON.stringify(this.settings, null, 2));
+        // Combine all settings into one object
+        const allSettings = {
+            ...this.settings,
+            models: this.modelSettings,
+            apiKeys: this.apiKeys,
+        };
+        fs.writeFileSync(this.settingsPath, JSON.stringify(allSettings, null, 2));
     }
     /**
      * Set notification style
@@ -268,6 +339,87 @@ export class SettingsService {
         }
         catch {
             // Ignore migration errors
+        }
+    }
+    // ============================================
+    // Model Configuration Methods
+    // ============================================
+    /**
+     * Set model for a specific prompt type and name
+     *
+     * @param type - The prompt type (agent, command, skill, hook)
+     * @param name - The prompt name (e.g., 'oss:code-reviewer')
+     * @param model - The model identifier (e.g., 'ollama/codellama')
+     */
+    async setModelForPrompt(type, name, model) {
+        const typeKey = this.getModelTypeKey(type);
+        if (!this.modelSettings[typeKey]) {
+            this.modelSettings[typeKey] = {};
+        }
+        this.modelSettings[typeKey][name] = model;
+        this.save();
+    }
+    /**
+     * Get model for a specific prompt type and name
+     *
+     * @param type - The prompt type (agent, command, skill, hook)
+     * @param name - The prompt name (e.g., 'oss:code-reviewer')
+     * @returns The model identifier or undefined if not configured
+     */
+    async getModelForPrompt(type, name) {
+        const typeKey = this.getModelTypeKey(type);
+        return this.modelSettings[typeKey]?.[name];
+    }
+    /**
+     * Get all model configuration
+     *
+     * @returns The complete model settings
+     */
+    async getModelConfig() {
+        return { ...this.modelSettings };
+    }
+    /**
+     * Set API key for a provider
+     *
+     * @param provider - The provider name (openrouter, openai, gemini, ollama)
+     * @param key - The API key (or base URL for ollama)
+     */
+    async setApiKey(provider, key) {
+        this.apiKeys[provider] = key;
+        this.save();
+    }
+    /**
+     * Get API key for a provider
+     * Environment variables take precedence over stored keys.
+     *
+     * @param provider - The provider name (openrouter, openai, gemini, ollama)
+     * @returns The API key or undefined if not configured
+     */
+    async getApiKey(provider) {
+        // Check environment variable first (takes precedence)
+        const envVarName = ENV_VAR_NAMES[provider];
+        if (envVarName) {
+            const envValue = process.env[envVarName];
+            if (envValue) {
+                return envValue;
+            }
+        }
+        // Fall back to stored key
+        return this.apiKeys[provider];
+    }
+    /**
+     * Map prompt type to model settings key
+     */
+    getModelTypeKey(type) {
+        switch (type) {
+            case 'agent':
+                return 'agents';
+            case 'command':
+                return 'commands';
+            case 'skill':
+                return 'skills';
+            case 'hook':
+                return 'hooks';
         }
     }
 }

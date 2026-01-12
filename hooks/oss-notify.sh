@@ -22,6 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
 COPY_CLI="$PLUGIN_ROOT/watcher/dist/cli/get-copy.js"
 WORKFLOW_STATE_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js"
+TELEGRAM_CLI="$PLUGIN_ROOT/watcher/dist/cli/telegram-notify.js"
 LOG_SCRIPT="$PLUGIN_ROOT/hooks/oss-log.sh"
 
 # =============================================================================
@@ -231,7 +232,51 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
         esac
     fi
 
-    # Workflow notifications ONLY update the status line - do NOT send terminal-notifier
+    # Send Telegram notification for workflow events if CLI exists
+    if [[ -f "$TELEGRAM_CLI" ]] && [[ -n "$MESSAGE" ]]; then
+        # Build the notification message
+        TELEGRAM_MSG="/oss:$WORKFLOW_CMD $WORKFLOW_EVENT"
+
+        # Add context info for specific events
+        case "$WORKFLOW_EVENT" in
+            complete)
+                if command -v jq &>/dev/null; then
+                    TESTS=$(echo "$WORKFLOW_CONTEXT" | jq -r '.testsPass // ""' 2>/dev/null)
+                    DURATION=$(echo "$WORKFLOW_CONTEXT" | jq -r '.duration // ""' 2>/dev/null)
+                    if [[ -n "$TESTS" && "$TESTS" != "null" ]]; then
+                        TELEGRAM_MSG="$TELEGRAM_MSG - $TESTS tests passing"
+                    fi
+                    if [[ -n "$DURATION" && "$DURATION" != "null" ]]; then
+                        TELEGRAM_MSG="$TELEGRAM_MSG ($DURATION)"
+                    fi
+                fi
+                ;;
+            merged)
+                if command -v jq &>/dev/null; then
+                    PR_NUM=$(echo "$WORKFLOW_CONTEXT" | jq -r '.prNumber // ""' 2>/dev/null)
+                    BRANCH=$(echo "$WORKFLOW_CONTEXT" | jq -r '.branch // ""' 2>/dev/null)
+                    if [[ -n "$PR_NUM" && "$PR_NUM" != "null" ]]; then
+                        TELEGRAM_MSG="$TELEGRAM_MSG - PR #$PR_NUM merged"
+                    fi
+                    if [[ -n "$BRANCH" && "$BRANCH" != "null" ]]; then
+                        TELEGRAM_MSG="$TELEGRAM_MSG ($BRANCH)"
+                    fi
+                fi
+                ;;
+            failed)
+                if command -v jq &>/dev/null; then
+                    BLOCKER=$(echo "$WORKFLOW_CONTEXT" | jq -r '.blocker // ""' 2>/dev/null)
+                    if [[ -n "$BLOCKER" && "$BLOCKER" != "null" ]]; then
+                        TELEGRAM_MSG="$TELEGRAM_MSG - $BLOCKER"
+                    fi
+                fi
+                ;;
+        esac
+
+        # Call telegram-notify.js (ignore errors so workflow continues)
+        node "$TELEGRAM_CLI" --message "$TELEGRAM_MSG" 2>/dev/null || true
+    fi
+
     exit 0
 fi
 

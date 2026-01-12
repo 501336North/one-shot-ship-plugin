@@ -1,0 +1,24 @@
+{
+  "description": "Quality-focused configuration using best-in-class models",
+  "models": {
+    "default": "claude",
+    "agents": {
+      "oss:code-reviewer": "openai/gpt-4o",
+      "oss:security-auditor": "openai/o1",
+      "oss:backend-architect": "openai/o1",
+      "oss:test-engineer": "openai/gpt-4o"
+    },
+    "commands": {
+      "oss:plan": "openai/o1",
+      "oss:ideate": "openai/gpt-4o",
+      "oss:review": "openai/gpt-4o"
+    }
+  },
+  "notes": [
+    "Requires OpenAI API key (OPENAI_API_KEY)",
+    "Uses o1 for reasoning-heavy tasks (planning, architecture)",
+    "Uses GPT-4o for code review and general tasks",
+    "Falls back to Claude for all other tasks",
+    "Best for: critical projects where quality is paramount"
+  ]
+}
