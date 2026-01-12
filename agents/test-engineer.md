@@ -1,9 +1,35 @@
 ---
 name: test-engineer
 description: Testing specialist. Use for test design, test implementation, and test-driven development.
+model_routing: true
 ---
 
 # test-engineer Agent
+
+## Step 0: Model Routing Check
+
+**Check if a custom model is configured for this agent.**
+
+```bash
+AGENT_ID="oss:test-engineer"
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"
+MODEL_CHECK="$PLUGIN_ROOT/watcher/dist/cli/agent-model-check.js"
+
+if [[ -f "$MODEL_CHECK" ]]; then
+    ROUTING=$(node "$MODEL_CHECK" --agent "$AGENT_ID" 2>/dev/null || echo '{"useProxy":false}')
+    USE_PROXY=$(echo "$ROUTING" | jq -r '.useProxy // false' 2>/dev/null || echo "false")
+
+    if [[ "$USE_PROXY" == "true" ]]; then
+        MODEL=$(echo "$ROUTING" | jq -r '.model')
+        echo "Routing to custom model: $MODEL"
+        # Execute via model proxy instead of native Claude
+        # The proxy handles API transformation and provider routing
+    fi
+fi
+```
+
+If `useProxy` is true, the task will be executed via the configured model (e.g., Ollama, OpenRouter).
+If `useProxy` is false or check unavailable, proceed with native Claude execution below.
 
 ## Step 1: Check Authentication
 

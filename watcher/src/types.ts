@@ -52,6 +52,8 @@ export interface TaskContext {
   commit?: string;
   branch?: string;
   pr_number?: number;
+  pr_title?: string;
+  review_body?: string;
   ci_url?: string;
 
   // LLM analysis

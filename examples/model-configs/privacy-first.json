@@ -1,0 +1,28 @@
+{
+  "description": "Privacy-first configuration - all processing stays local or with trusted providers",
+  "models": {
+    "default": "ollama/llama3.2",
+    "agents": {
+      "oss:code-reviewer": "ollama/qwen2.5-coder",
+      "oss:security-auditor": "claude",
+      "oss:test-engineer": "ollama/codellama",
+      "oss:debugger": "ollama/codellama",
+      "oss:backend-architect": "claude",
+      "oss:refactoring-specialist": "ollama/qwen2.5-coder"
+    },
+    "commands": {
+      "oss:plan": "claude",
+      "oss:build": "ollama/codellama",
+      "oss:ship": "claude",
+      "oss:review": "ollama/qwen2.5-coder",
+      "oss:ideate": "claude"
+    }
+  },
+  "notes": [
+    "All routine work runs locally via Ollama (no data leaves your machine)",
+    "Only uses Claude (Anthropic) for complex reasoning tasks",
+    "Never routes to third-party providers (OpenRouter, OpenAI, Google)",
+    "Best for: sensitive codebases, compliance requirements, air-gapped dev",
+    "Requires Ollama installed with: ollama pull llama3.2 qwen2.5-coder codellama"
+  ]
+}

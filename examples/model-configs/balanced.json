@@ -1,0 +1,26 @@
+{
+  "description": "Balanced configuration - quality for critical tasks, cost-effective for routine work",
+  "models": {
+    "default": "claude",
+    "agents": {
+      "oss:code-reviewer": "openrouter/deepseek/deepseek-chat",
+      "oss:security-auditor": "claude",
+      "oss:test-engineer": "ollama/codellama",
+      "oss:debugger": "openrouter/deepseek/deepseek-coder",
+      "oss:refactoring-specialist": "ollama/qwen2.5-coder"
+    },
+    "commands": {
+      "oss:plan": "gemini/gemini-1.5-pro",
+      "oss:build": "ollama/codellama",
+      "oss:ship": "claude",
+      "oss:review": "openrouter/deepseek/deepseek-chat"
+    }
+  },
+  "notes": [
+    "Uses Claude for security-critical tasks (native, no data leaves local)",
+    "Uses Gemini for planning (good value for reasoning)",
+    "Uses DeepSeek via OpenRouter for code review (excellent code understanding)",
+    "Uses local Ollama for routine development tasks",
+    "Best for: teams wanting balance of quality and cost"
+  ]
+}

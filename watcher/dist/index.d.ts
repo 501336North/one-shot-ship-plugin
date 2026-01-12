@@ -2,6 +2,7 @@ import { QueueManager } from './queue/manager.js';
 import { LogMonitor } from './monitors/log-monitor.js';
 import { TestMonitor } from './monitors/test-monitor.js';
 import { GitMonitor } from './monitors/git-monitor.js';
+import { WebhookReceiver } from './services/webhook-receiver.js';
 import { WatcherConfig } from './types.js';
 /**
  * Watcher state enum
@@ -29,6 +30,7 @@ export declare class Watcher {
     private testMonitor;
     private gitMonitor;
     private llmAnalyzer;
+    private webhookReceiver;
     private config;
     constructor(ossDir: string, apiKey: string);
     /**
@@ -37,9 +39,17 @@ export declare class Watcher {
      */
     start(): Promise<boolean>;
     /**
+     * Initialize webhook receiver based on config
+     */
+    private initializeWebhookReceiver;
+    /**
      * Stop the watcher process
      */
     stop(): Promise<void>;
+    /**
+     * Get the webhook receiver (for hooks and testing)
+     */
+    getWebhookReceiver(): WebhookReceiver | null;
     /**
      * Get current watcher state
      */
@@ -101,5 +111,7 @@ export { LogMonitor } from './monitors/log-monitor.js';
 export { TestMonitor, TestResult } from './monitors/test-monitor.js';
 export { GitMonitor, CIStatus, PRCheckResult } from './monitors/git-monitor.js';
 export { LLMAnalyzer, LLMAnalysisResult } from './detectors/llm-analyzer.js';
+export { WebhookReceiver } from './services/webhook-receiver.js';
+export { WebhookConfig } from './config/webhook-config.js';
 export * from './types.js';
 //# sourceMappingURL=index.d.ts.map
