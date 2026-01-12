@@ -47,6 +47,26 @@ export interface BackgroundAgent {
     getStatus(): AgentStatus;
 }
 /**
+ * GitHub PR Review Webhook payload structure
+ */
+export interface GitHubReviewWebhook {
+    action: 'submitted' | 'edited' | 'dismissed';
+    review: {
+        state: 'approved' | 'changes_requested' | 'commented';
+        body: string;
+        user: {
+            login: string;
+        };
+    };
+    pull_request: {
+        number: number;
+        title: string;
+        head: {
+            ref: string;
+        };
+    };
+}
+/**
  * Type guard to check if an object implements BackgroundAgent
  */
 export declare function isBackgroundAgent(obj: unknown): obj is BackgroundAgent;

@@ -5,6 +5,7 @@
  * @acceptance-criteria AC-SETTINGS.1 through AC-SETTINGS.6
  */
 import { NotificationSettings, NotificationStyle, Verbosity, SupervisorMode, SupervisorSettings } from '../types/notification.js';
+import { TelegramConfig } from '../types/telegram.js';
 export declare class SettingsService {
     private settings;
     private settingsPath;
@@ -62,6 +63,18 @@ export declare class SettingsService {
      * Enable/disable specific IRON LAW check
      */
     setIronLawCheck(law: keyof SupervisorSettings['ironLawChecks'], enabled: boolean): void;
+    /**
+     * Get telegram configuration
+     */
+    getTelegram(): TelegramConfig;
+    /**
+     * Set telegram configuration
+     */
+    setTelegram(config: TelegramConfig): void;
+    /**
+     * Toggle telegram enabled state
+     */
+    setTelegramEnabled(enabled: boolean): void;
     /**
      * Migrate from old audio-config format
      */

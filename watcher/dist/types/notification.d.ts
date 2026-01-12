@@ -4,6 +4,7 @@
  * @behavior Notifications are dispatched based on user settings
  * @acceptance-criteria AC-NOTIF.1 through AC-NOTIF.12
  */
+import { TelegramConfig } from './telegram.js';
 /**
  * Notification style options
  * - visual: Status line message (primary feedback mechanism)
@@ -79,6 +80,7 @@ export interface SupervisorSettings {
 export interface NotificationSettings {
     notifications: NotificationPreferences;
     supervisor?: SupervisorSettings;
+    telegram?: TelegramConfig;
     version: number;
 }
 /**
