@@ -3,6 +3,19 @@
  *
  * Monitors GitHub PRs for review comments and queues remediation tasks.
  * Implements the BackgroundAgent interface for the agent registry.
+ *
+ * ## Two Operating Modes
+ *
+ * **Webhook Mode (Recommended):**
+ * - Real-time detection via GitHub webhooks
+ * - Requires `/oss:settings webhook setup`
+ * - Uses `processWebhook()` method
+ *
+ * **Polling Mode (Fallback):**
+ * - Periodic polling via `gh` CLI
+ * - Works without webhook configuration
+ * - Uses `poll()` method
+ * - Disabled automatically when webhooks are enabled
  */
 /**
  * Agent metadata
@@ -179,6 +192,31 @@ export class PRMonitorAgent {
      */
     clearQueue() {
         this.queuedTasks = [];
+    }
+    /**
+     * Process a GitHub webhook event for PR reviews
+     * Only queues tasks for 'changes_requested' reviews
+     */
+    async processWebhook(webhook) {
+        // Only process changes_requested reviews
+        if (webhook.review.state !== 'changes_requested') {
+            return;
+        }
+        // Create a synthetic comment from the review
+        const comment = {
+            id: `review-${webhook.pull_request.number}-${Date.now()}`,
+            body: webhook.review.body,
+            path: '', // Reviews don't have file paths
+            line: 0, // Reviews don't have line numbers
+        };
+        // Create PR context from webhook
+        const pr = {
+            number: webhook.pull_request.number,
+            title: webhook.pull_request.title,
+            branch: webhook.pull_request.head.ref,
+        };
+        // Reuse existing processChangeRequest logic
+        await this.processChangeRequest(pr, comment);
     }
     /**
      * Get current agent status

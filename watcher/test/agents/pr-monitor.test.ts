@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { PRMonitorAgent } from '../../src/agents/pr-monitor';
 import { PRMonitorState } from '../../src/agents/pr-monitor-state';
 import { GitHubClient } from '../../src/agents/github-client';
-import { isBackgroundAgent } from '../../src/agents/types';
+import { isBackgroundAgent, type GitHubReviewWebhook } from '../../src/agents/types';
 
 // Mock dependencies
 vi.mock('../../src/agents/pr-monitor-state');
@@ -284,6 +284,188 @@ describe('PRMonitorAgent', () => {
 
       // WHEN - We poll
       await agent.poll();
+
+      // THEN - Stats should be incremented
+      expect(mockState.incrementStat).toHaveBeenCalledWith('tasksQueued');
+    });
+  });
+
+  describe('processWebhook', () => {
+    /**
+     * @behavior Queues task for changes_requested reviews
+     */
+    it('should queue task for changes_requested reviews', async () => {
+      // GIVEN - A webhook payload with changes_requested review
+      const webhook: GitHubReviewWebhook = {
+        action: 'submitted',
+        review: {
+          state: 'changes_requested',
+          body: 'Please fix the type errors',
+          user: { login: 'reviewer' },
+        },
+        pull_request: {
+          number: 42,
+          title: 'Add new feature',
+          head: { ref: 'feat/new-feature' },
+        },
+      };
+
+      vi.mocked(mockClient.replyToComment).mockResolvedValue(undefined);
+      vi.mocked(mockState.isProcessed).mockReturnValue(false);
+
+      // WHEN - We process the webhook
+      await agent.processWebhook(webhook);
+
+      // THEN - Task should be queued
+      const tasks = agent.getQueuedTasks();
+      expect(tasks.length).toBe(1);
+      expect(tasks[0]).toMatchObject({
+        prNumber: 42,
+        branch: 'feat/new-feature',
+        commentBody: 'Please fix the type errors',
+      });
+    });
+
+    /**
+     * @behavior Ignores approved reviews (does not queue task)
+     */
+    it('should ignore approved reviews', async () => {
+      // GIVEN - A webhook payload with approved review
+      const webhook: GitHubReviewWebhook = {
+        action: 'submitted',
+        review: {
+          state: 'approved',
+          body: 'LGTM!',
+          user: { login: 'reviewer' },
+        },
+        pull_request: {
+          number: 42,
+          title: 'Add new feature',
+          head: { ref: 'feat/new-feature' },
+        },
+      };
+
+      // WHEN - We process the webhook
+      await agent.processWebhook(webhook);
+
+      // THEN - No task should be queued
+      const tasks = agent.getQueuedTasks();
+      expect(tasks.length).toBe(0);
+    });
+
+    /**
+     * @behavior Ignores commented reviews (does not queue task)
+     */
+    it('should ignore commented reviews', async () => {
+      // GIVEN - A webhook payload with comment-only review
+      const webhook: GitHubReviewWebhook = {
+        action: 'submitted',
+        review: {
+          state: 'commented',
+          body: 'Just a question',
+          user: { login: 'reviewer' },
+        },
+        pull_request: {
+          number: 42,
+          title: 'Add new feature',
+          head: { ref: 'feat/new-feature' },
+        },
+      };
+
+      // WHEN - We process the webhook
+      await agent.processWebhook(webhook);
+
+      // THEN - No task should be queued
+      const tasks = agent.getQueuedTasks();
+      expect(tasks.length).toBe(0);
+    });
+
+    /**
+     * @behavior Extracts PR number, branch, and review body from webhook
+     */
+    it('should extract PR context from webhook payload', async () => {
+      // GIVEN - A webhook with specific PR details
+      const webhook: GitHubReviewWebhook = {
+        action: 'submitted',
+        review: {
+          state: 'changes_requested',
+          body: 'Fix the performance issue in the loop',
+          user: { login: 'perf-reviewer' },
+        },
+        pull_request: {
+          number: 123,
+          title: 'Optimize data processing',
+          head: { ref: 'fix/perf-optimization' },
+        },
+      };
+
+      vi.mocked(mockClient.replyToComment).mockResolvedValue(undefined);
+      vi.mocked(mockState.isProcessed).mockReturnValue(false);
+
+      // WHEN - We process the webhook
+      await agent.processWebhook(webhook);
+
+      // THEN - Task should have correct PR context
+      const tasks = agent.getQueuedTasks();
+      expect(tasks[0].prNumber).toBe(123);
+      expect(tasks[0].branch).toBe('fix/perf-optimization');
+      expect(tasks[0].commentBody).toBe('Fix the performance issue in the loop');
+    });
+
+    /**
+     * @behavior Determines suggested agent from review body
+     */
+    it('should determine suggested agent from review body', async () => {
+      // GIVEN - A webhook mentioning performance
+      const webhook: GitHubReviewWebhook = {
+        action: 'submitted',
+        review: {
+          state: 'changes_requested',
+          body: 'Please optimize this for better performance',
+          user: { login: 'reviewer' },
+        },
+        pull_request: {
+          number: 42,
+          title: 'Feature',
+          head: { ref: 'feat/test' },
+        },
+      };
+
+      vi.mocked(mockClient.replyToComment).mockResolvedValue(undefined);
+      vi.mocked(mockState.isProcessed).mockReturnValue(false);
+
+      // WHEN - We process the webhook
+      await agent.processWebhook(webhook);
+
+      // THEN - Suggested agent should be performance-engineer
+      const tasks = agent.getQueuedTasks();
+      expect(tasks[0].suggestedAgent).toBe('performance-engineer');
+    });
+
+    /**
+     * @behavior Increments tasksQueued stat for changes_requested
+     */
+    it('should increment tasksQueued stat for changes_requested', async () => {
+      // GIVEN - A changes_requested webhook
+      const webhook: GitHubReviewWebhook = {
+        action: 'submitted',
+        review: {
+          state: 'changes_requested',
+          body: 'Fix this',
+          user: { login: 'reviewer' },
+        },
+        pull_request: {
+          number: 42,
+          title: 'Feature',
+          head: { ref: 'feat/test' },
+        },
+      };
+
+      vi.mocked(mockClient.replyToComment).mockResolvedValue(undefined);
+      vi.mocked(mockState.isProcessed).mockReturnValue(false);
+
+      // WHEN - We process the webhook
+      await agent.processWebhook(webhook);
 
       // THEN - Stats should be incremented
       expect(mockState.incrementStat).toHaveBeenCalledWith('tasksQueued');

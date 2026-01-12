@@ -16,6 +16,7 @@ import {
   DEFAULT_NOTIFICATION_SETTINGS,
   DEFAULT_SUPERVISOR_SETTINGS,
 } from '../types/notification.js';
+import { TelegramConfig, DEFAULT_TELEGRAM_CONFIG } from '../types/telegram.js';
 
 const VALID_STYLES: NotificationStyle[] = ['visual', 'audio', 'sound', 'none'];
 const VALID_VERBOSITIES: Verbosity[] = ['all', 'important', 'errors-only'];
@@ -61,6 +62,7 @@ export class SettingsService {
         ...DEFAULT_SUPERVISOR_SETTINGS,
         ironLawChecks: { ...DEFAULT_SUPERVISOR_SETTINGS.ironLawChecks },
       },
+      telegram: { ...DEFAULT_TELEGRAM_CONFIG },
       version: DEFAULT_NOTIFICATION_SETTINGS.version,
     };
   }
@@ -131,6 +133,20 @@ export class SettingsService {
         if (typeof checks.devDocs === 'boolean') {
           settings.supervisor.ironLawChecks.devDocs = checks.devDocs;
         }
+      }
+    }
+
+    // Validate telegram settings
+    const telegram = p.telegram as Record<string, unknown> | undefined;
+    if (telegram && settings.telegram) {
+      if (typeof telegram.enabled === 'boolean') {
+        settings.telegram.enabled = telegram.enabled;
+      }
+      if (typeof telegram.botToken === 'string') {
+        settings.telegram.botToken = telegram.botToken;
+      }
+      if (typeof telegram.chatId === 'string') {
+        settings.telegram.chatId = telegram.chatId;
       }
     }
 
@@ -227,6 +243,32 @@ export class SettingsService {
       this.settings.supervisor = { ...DEFAULT_SUPERVISOR_SETTINGS };
     }
     this.settings.supervisor.ironLawChecks[law] = enabled;
+  }
+
+  /**
+   * Get telegram configuration
+   */
+  getTelegram(): TelegramConfig {
+    return this.settings.telegram || { ...DEFAULT_TELEGRAM_CONFIG };
+  }
+
+  /**
+   * Set telegram configuration
+   */
+  setTelegram(config: TelegramConfig): void {
+    this.settings.telegram = { ...config };
+    this.save();
+  }
+
+  /**
+   * Toggle telegram enabled state
+   */
+  setTelegramEnabled(enabled: boolean): void {
+    if (!this.settings.telegram) {
+      this.settings.telegram = { ...DEFAULT_TELEGRAM_CONFIG };
+    }
+    this.settings.telegram.enabled = enabled;
+    this.save();
   }
 
   /**
