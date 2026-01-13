@@ -196,19 +196,47 @@ Set `STYLE="visual"` and continue.
 
 ### Step 4: Save Settings
 
-Write updated settings to `~/.oss/settings.json`:
+Write updated settings to `~/.oss/settings.json`.
+
+**CRITICAL: When style changes, update telegram.enabled accordingly:**
+- If style = "telegram" → set `telegram.enabled = true`
+- If style != "telegram" → set `telegram.enabled = false`
+
+This prevents the bug where changing style away from telegram still sends telegram notifications.
 
 ```bash
 mkdir -p ~/.oss
+
+# Determine telegram enabled state based on style
+if [[ "$STYLE" == "telegram" ]]; then
+    TELEGRAM_ENABLED="true"
+else
+    TELEGRAM_ENABLED="false"
+fi
+
+# Preserve existing telegram credentials if they exist
+EXISTING_BOT_TOKEN=$(jq -r '.telegram.botToken // empty' "$SETTINGS_FILE" 2>/dev/null)
+EXISTING_CHAT_ID=$(jq -r '.telegram.chatId // empty' "$SETTINGS_FILE" 2>/dev/null)
+TELEGRAM_CONFIGURED=$([ -n "$EXISTING_BOT_TOKEN" ] && echo "true" || echo "false")
+
 cat > ~/.oss/settings.json << EOF
 {
   "notifications": {
     "style": "$STYLE",
     "voice": "$VOICE",
     "sound": "$SOUND",
-    "verbosity": "$VERBOSITY"
+    "verbosity": "$VERBOSITY",
+    "telegram": {
+      "configured": $TELEGRAM_CONFIGURED,
+      "enabled": $TELEGRAM_ENABLED
+    }
   },
-  "version": 1
+  "version": 1,
+  "telegram": {
+    "enabled": $TELEGRAM_ENABLED,
+    "botToken": "${EXISTING_BOT_TOKEN:-}",
+    "chatId": "${EXISTING_CHAT_ID:-}"
+  }
 }
 EOF
 ```
