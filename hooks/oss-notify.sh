@@ -131,24 +131,26 @@ else
 fi
 
 # =============================================================================
-# Filter by verbosity
+# Filter by verbosity (only affects notifications, not state updates)
 # =============================================================================
 
+SKIP_NOTIFICATION=false
 case "$VERBOSITY" in
     "errors-only")
-        [[ "$PRIORITY" != "critical" ]] && exit 0
+        [[ "$PRIORITY" != "critical" ]] && SKIP_NOTIFICATION=true
         ;;
     "important")
-        [[ "$PRIORITY" == "low" ]] && exit 0
+        [[ "$PRIORITY" == "low" ]] && SKIP_NOTIFICATION=true
         ;;
     # "all" - allow everything through
 esac
 
-# Skip if style is none
-[[ "$STYLE" == "none" ]] && exit 0
+# Skip notification if style is none
+[[ "$STYLE" == "none" ]] && SKIP_NOTIFICATION=true
 
 # =============================================================================
 # Update workflow state (for Claude Code status line)
+# NOTE: This runs BEFORE notification filtering - state always updates
 # =============================================================================
 
 if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
@@ -233,7 +235,8 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
     fi
 
     # Send Telegram notification for workflow events if CLI exists
-    if [[ -f "$TELEGRAM_CLI" ]] && [[ -n "$MESSAGE" ]]; then
+    # (skip if notification is filtered by verbosity)
+    if [[ "$SKIP_NOTIFICATION" != true ]] && [[ -f "$TELEGRAM_CLI" ]] && [[ -n "$MESSAGE" ]]; then
         # Build the notification message
         TELEGRAM_MSG="/oss:$WORKFLOW_CMD $WORKFLOW_EVENT"
 
