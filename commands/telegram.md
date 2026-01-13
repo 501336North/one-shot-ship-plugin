@@ -2,6 +2,51 @@
 description: Manage Telegram notifications for OSS Dev Workflow
 ---
 
+## Help
+
+**Command:** `/oss:telegram`
+
+**Description:** Manage Telegram notifications for OSS Dev Workflow
+
+**Workflow Position:** any time - **TELEGRAM** notifications
+
+**Usage:**
+```bash
+/oss:telegram [SUBCOMMAND]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `SUBCOMMAND` | No | on, off, setup (default: show status) |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+
+**Examples:**
+```bash
+# Show status and configuration
+/oss:telegram
+
+# Enable notifications
+/oss:telegram on
+
+# Disable notifications
+/oss:telegram off
+
+# Configure bot token and chat ID
+/oss:telegram setup
+```
+
+**Related Commands:**
+- `/oss:settings` - General notification settings
+- `/oss:webhook` - GitHub webhook configuration
+- `/oss:login` - Configure API key
+
+---
+
 # /oss:telegram - Telegram Notifications
 
 Receive notifications on your phone when Claude Code needs input or completes tasks.

@@ -3,6 +3,50 @@ description: Multi-perspective code review (correctness, security, performance, 
 estimated_tokens: 3000-10000
 ---
 
+## Help
+
+**Command:** `/oss:review`
+
+**Description:** Multi-perspective code review (correctness, security, performance, maintainability)
+
+**Workflow Position:** build -> **REVIEW** -> ship
+
+**Usage:**
+```bash
+/oss:review [OPTIONS] [FILE_PATH]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `FILE_PATH` | No | Specific file or directory to review |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--focus` | | Focus area: security, performance, correctness, maintainability |
+
+**Examples:**
+```bash
+# Review all staged changes
+/oss:review
+
+# Review a specific file
+/oss:review src/services/auth.ts
+
+# Focus on security review
+/oss:review --focus security
+```
+
+**Related Commands:**
+- `/oss:build` - Build phase that precedes review
+- `/oss:ship` - Ship after review passes
+- `/oss:audit` - Deep security audit
+- `/oss:tech-debt` - Technical debt analysis
+
+---
+
 # /oss:review - Code Review
 
 ## Step 1: Check Authentication

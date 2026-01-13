@@ -2,6 +2,46 @@
 description: Extract user stories and acceptance criteria from ideas
 ---
 
+## Help
+
+**Command:** `/oss:requirements`
+
+**Description:** Extract user stories and acceptance criteria from ideas
+
+**Workflow Position:** ideate -> **REQUIREMENTS** -> api-design -> plan
+
+**Usage:**
+```bash
+/oss:requirements [OPTIONS] <IDEA>
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `IDEA` | Yes | The idea, PRD, or feature description to analyze |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--from` | | Read input from a file (e.g., prd.md) |
+
+**Examples:**
+```bash
+# Extract requirements from a text description
+/oss:requirements "users should be able to share files with each other"
+
+# Extract requirements from a PRD file
+/oss:requirements --from prd.md
+```
+
+**Related Commands:**
+- `/oss:ideate` - Transform vague ideas into concrete designs (precedes requirements)
+- `/oss:api-design` - Design API contracts from requirements
+- `/oss:plan` - Create TDD implementation plan from requirements
+
+---
+
 # /oss:requirements - Extract Requirements
 
 Transform vague ideas into structured user stories with acceptance criteria.

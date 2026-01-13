@@ -2,6 +2,59 @@
 description: Manage the background watcher agent
 ---
 
+## Help
+
+**Command:** `/oss:watcher`
+
+**Description:** Manage the background watcher agent
+
+**Workflow Position:** any time - **WATCHER** background agent
+
+**Usage:**
+```bash
+/oss:watcher [SUBCOMMAND] [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `SUBCOMMAND` | No | start, stop, restart, logs (default: show status) |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--logs` | | Show status with recent logs |
+| `--lines` | | Number of log lines to show (default: 20) |
+
+**Examples:**
+```bash
+# Show watcher status
+/oss:watcher
+
+# Show status with recent logs
+/oss:watcher --logs
+
+# Restart watcher
+/oss:watcher restart
+
+# Stop watcher
+/oss:watcher stop
+
+# Start watcher
+/oss:watcher start
+
+# View last 50 log lines
+/oss:watcher logs --lines 50
+```
+
+**Related Commands:**
+- `/oss:queue` - View and manage task queue
+- `/oss:legend` - Status line legend
+- `/oss:settings` - Configure notification preferences
+
+---
+
 # /oss:watcher - Watcher Management
 
 Control and monitor the background watcher agent that detects anomalies.

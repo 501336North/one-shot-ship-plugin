@@ -2,6 +2,47 @@
 description: Distributed tracing analysis with OpenTelemetry
 ---
 
+## Help
+
+**Command:** `/oss:trace`
+
+**Description:** Distributed tracing analysis with OpenTelemetry
+
+**Workflow Position:** any time - **TRACE** (distributed tracing)
+
+**Usage:**
+```bash
+/oss:trace [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | | All configuration via options |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--trace-id` | | Specific trace ID to analyze |
+| `--slow-spans` | | Find slow spans |
+
+**Examples:**
+```bash
+# Analyze a specific trace
+/oss:trace --trace-id abc123
+
+# Find slow spans
+/oss:trace --slow-spans
+```
+
+**Related Commands:**
+- `/oss:debug` - Debug issues found in traces
+- `/oss:monitor` - Production health monitoring
+- `/oss:bench` - Performance benchmarking
+
+---
+
 # /oss:trace - Distributed Tracing
 
 ## Step 1: Check Authentication

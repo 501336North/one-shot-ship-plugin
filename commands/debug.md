@@ -2,6 +2,49 @@
 description: Systematic debugging workflow
 ---
 
+## Help
+
+**Command:** `/oss:debug`
+
+**Description:** Systematic debugging workflow
+
+**Workflow Position:** any time - **DEBUG** workflow
+
+**Usage:**
+```bash
+/oss:debug [OPTIONS] [BUG_DESCRIPTION]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `BUG_DESCRIPTION` | No | Error message, description, or file reference |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+
+**Examples:**
+```bash
+# Debug with error message
+/oss:debug "TypeError: Cannot read property 'id' of undefined"
+
+# Debug with description
+/oss:debug "Login form shows wrong error message"
+
+# Interactive mode
+/oss:debug
+```
+
+**Related Commands:**
+- `/oss:build` - Build fix after debugging
+- `/oss:ship` - Ship the fix
+- `/oss:trace` - Distributed tracing analysis
+- `/oss:incident` - Incident response for production bugs
+
+---
+
 # /oss:debug - Debug Issues
 
 Investigate bugs and create TDD fix plans that integrate with the build workflow.

@@ -2,6 +2,56 @@
 description: View and manage the task queue
 ---
 
+## Help
+
+**Command:** `/oss:queue`
+
+**Description:** View and manage the task queue
+
+**Workflow Position:** any time - **QUEUE** management
+
+**Usage:**
+```bash
+/oss:queue [SUBCOMMAND] [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `SUBCOMMAND` | No | clear, remove, status (default: show queue) |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--verbose` | | Show full task details |
+| `--priority` | | Filter by priority level (low, medium, high, critical) |
+
+**Examples:**
+```bash
+# Show all pending tasks
+/oss:queue
+
+# Show queue with full details
+/oss:queue --verbose
+
+# Remove all tasks
+/oss:queue clear
+
+# Clear only low-priority tasks
+/oss:queue clear --priority low
+
+# Remove specific task by ID
+/oss:queue remove task-20251206-143022-a1b2
+```
+
+**Related Commands:**
+- `/oss:watcher` - Watcher agent management
+- `/oss:legend` - Status line legend
+- `/oss:build` - Execute queued tasks
+
+---
+
 # /oss:queue - Task Queue Management
 
 View and manage queued tasks detected by the watcher agent.

@@ -2,6 +2,50 @@
 description: Open source license compliance audit
 ---
 
+## Help
+
+**Command:** `/oss:license`
+
+**Description:** Open source license compliance audit
+
+**Workflow Position:** any time - **LICENSE** compliance
+
+**Usage:**
+```bash
+/oss:license [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | | All configuration via options |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--output` | | Output file for attribution (e.g., NOTICE.md) |
+| `--policy` | | Policy level: strict, standard, permissive |
+
+**Examples:**
+```bash
+# Run license audit
+/oss:license
+
+# Output attribution file
+/oss:license --output NOTICE.md
+
+# Strict policy checking
+/oss:license --policy strict
+```
+
+**Related Commands:**
+- `/oss:audit` - Security audit
+- `/oss:privacy` - Privacy compliance
+- `/oss:review` - Code review
+
+---
+
 # /oss:license - License Audit
 
 Open source license compliance audit.

@@ -2,6 +2,45 @@
 description: Configure API key for OSS Dev Workflow
 ---
 
+## Help
+
+**Command:** `/oss:login`
+
+**Description:** Configure API key for OSS Dev Workflow
+
+**Workflow Position:** **LOGIN** -> [any command]
+
+**Usage:**
+```bash
+/oss:login [API_KEY]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `API_KEY` | No | Your OSS API key (prompts if not provided) |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+
+**Examples:**
+```bash
+# Interactive login (prompts for API key)
+/oss:login
+
+# Direct login with API key
+/oss:login ak_xxxxx
+```
+
+**Related Commands:**
+- `/oss:status` - Check subscription status
+- `/oss:settings` - Configure notification preferences
+- `/oss:telegram` - Set up Telegram notifications
+
+---
+
 # /oss:login - Authenticate
 
 Configure your API key for OSS Dev Workflow access.

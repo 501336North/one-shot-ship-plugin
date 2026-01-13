@@ -2,6 +2,48 @@
 description: Design API contracts before implementation (Outside-In starting point)
 ---
 
+## Help
+
+**Command:** `/oss:api-design`
+
+**Description:** Design API contracts before implementation (Outside-In starting point)
+
+**Workflow Position:** ideate -> requirements -> **API-DESIGN** -> data-model -> plan
+
+**Usage:**
+```bash
+/oss:api-design [OPTIONS] <DESCRIPTION>
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `DESCRIPTION` | Yes | Description of the API endpoints to design |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--resource` | | Specify the resource name (e.g., users) |
+| `--operations` | | Specify operations (e.g., crud, read, write) |
+
+**Examples:**
+```bash
+# Design authentication endpoints
+/oss:api-design user authentication endpoints
+
+# Design CRUD operations for a resource
+/oss:api-design --resource users --operations crud
+```
+
+**Related Commands:**
+- `/oss:requirements` - Extract requirements before API design
+- `/oss:data-model` - Design data schemas after API design
+- `/oss:contract` - Create contract tests for the API
+- `/oss:acceptance` - Write acceptance tests for API endpoints
+
+---
+
 # /oss:api-design - Design API Contracts
 
 Design API contracts as the starting point for Outside-In development.

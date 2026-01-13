@@ -2,6 +2,47 @@
 description: Emergency rollback to previous version with safety checks
 ---
 
+## Help
+
+**Command:** `/oss:rollback`
+
+**Description:** Emergency rollback to previous version with safety checks
+
+**Workflow Position:** incident -> **ROLLBACK** -> deploy
+
+**Usage:**
+```bash
+/oss:rollback [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | | All configuration via options |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--to` | | Target version to rollback to (e.g., v1.2.3) |
+
+**Examples:**
+```bash
+# Rollback to last known good version
+/oss:rollback
+
+# Rollback to specific version
+/oss:rollback --to v1.2.3
+```
+
+**Related Commands:**
+- `/oss:incident` - Incident that triggers rollback
+- `/oss:monitor` - Verify recovery after rollback
+- `/oss:deploy` - Re-deploy after fix
+- `/oss:postmortem` - Analyze what went wrong
+
+---
+
 # /oss:rollback - Rollback the Ship
 
 Emergency rollback to previous version with comprehensive safety checks and recovery.

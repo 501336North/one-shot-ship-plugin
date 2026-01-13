@@ -2,6 +2,49 @@
 description: A/B testing and experimentation framework
 ---
 
+## Help
+
+**Command:** `/oss:experiment`
+
+**Description:** A/B testing and experimentation framework
+
+**Workflow Position:** any time - **EXPERIMENT** (A/B testing)
+
+**Usage:**
+```bash
+/oss:experiment [SUBCOMMAND] <EXPERIMENT_NAME>
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `SUBCOMMAND` | No | create, analyze, report |
+| `EXPERIMENT_NAME` | Yes | Name of the experiment |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+
+**Examples:**
+```bash
+# Create a new experiment
+/oss:experiment create checkout-flow
+
+# Analyze experiment results
+/oss:experiment analyze checkout-flow
+
+# Generate experiment report
+/oss:experiment report checkout-flow
+```
+
+**Related Commands:**
+- `/oss:feature-flag` - Feature flag management
+- `/oss:monitor` - Monitor experiment metrics
+- `/oss:deploy` - Deploy experiment variants
+
+---
+
 # /oss:experiment - A/B Testing
 
 A/B testing and experimentation framework.

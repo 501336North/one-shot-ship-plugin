@@ -3,6 +3,51 @@ name: oss
 description: Execute OSS Dev Workflow commands
 ---
 
+## Help
+
+**Command:** `/oss`
+
+**Description:** Execute OSS Dev Workflow commands
+
+**Workflow Position:** **OSS** (meta command)
+
+**Usage:**
+```bash
+/oss [SUBCOMMAND] [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `SUBCOMMAND` | No | ideate, plan, build, ship, deploy, monitor, etc. |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--merge` | | Auto-merge PR (for ship command) |
+
+**Examples:**
+```bash
+# Full development workflow
+/oss:ideate "add user authentication"
+/oss:plan "user dashboard"
+/oss:build
+/oss:ship --merge
+
+# Quick deployment
+/oss:deploy-staging
+/oss:test-waters
+/oss:deploy-production
+```
+
+**Related Commands:**
+- `/oss:login` - Configure API key
+- `/oss:status` - Check subscription status
+- `/oss:legend` - Status line legend
+
+---
+
 # OSS Dev Workflow Command
 
 World-class development workflows at your fingertips.

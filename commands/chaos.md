@@ -2,6 +2,52 @@
 description: Chaos engineering and resilience testing
 ---
 
+## Help
+
+**Command:** `/oss:chaos`
+
+**Description:** Chaos engineering and resilience testing
+
+**Workflow Position:** deploy -> **CHAOS** (chaos engineering)
+
+**Usage:**
+```bash
+/oss:chaos [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | | All configuration via options |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--experiment` | | Experiment type (e.g., network-partition) |
+| `--target` | | Target service for chaos experiment |
+| `--duration` | | Duration of experiment (e.g., 5m) |
+
+**Examples:**
+```bash
+# Run chaos engineering experiment
+/oss:chaos
+
+# Network partition experiment
+/oss:chaos --experiment network-partition
+
+# Target specific service for 5 minutes
+/oss:chaos --target api-service --duration 5m
+```
+
+**Related Commands:**
+- `/oss:deploy` - Deploy before chaos testing
+- `/oss:monitor` - Monitor during chaos experiments
+- `/oss:rollback` - Emergency rollback if needed
+- `/oss:incident` - Incident response for real issues
+
+---
+
 # /oss:chaos - Chaos Engineering
 
 Chaos engineering and resilience testing.

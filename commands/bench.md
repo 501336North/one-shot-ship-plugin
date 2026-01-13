@@ -2,6 +2,46 @@
 description: Performance benchmarking and load testing
 ---
 
+## Help
+
+**Command:** `/oss:bench`
+
+**Description:** Performance benchmarking and load testing
+
+**Workflow Position:** build -> **BENCH** (Performance) -> ship
+
+**Usage:**
+```bash
+/oss:bench [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | | All configuration via options |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--target` | | Specific endpoint or component to benchmark |
+
+**Examples:**
+```bash
+# Run all benchmarks
+/oss:bench
+
+# Benchmark a specific API endpoint
+/oss:bench --target api/users
+```
+
+**Related Commands:**
+- `/oss:load` - Load testing at scale with k6
+- `/oss:test` - Run comprehensive E2E tests
+- `/oss:monitor` - Monitor production performance
+
+---
+
 # /oss:bench - Performance Benchmark
 
 Performance benchmarking and load testing to stress test your application.

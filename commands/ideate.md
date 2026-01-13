@@ -3,6 +3,49 @@ description: Transform vague ideas into concrete, actionable designs through col
 estimated_tokens: 2000-8000
 ---
 
+## Help
+
+**Command:** `/oss:ideate`
+
+**Description:** Transform vague ideas into concrete, actionable designs through Socratic questioning.
+
+**Workflow Position:** **IDEATE** → plan → build → ship
+
+**Usage:**
+```bash
+/oss:ideate [OPTIONS] [IDEA]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `IDEA` | No | Initial idea or feature description to explore |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+
+**Examples:**
+```bash
+# Start ideation for a new feature
+/oss:ideate "user authentication system"
+
+# Ideate without a specific topic (will ask what you want to build)
+/oss:ideate
+
+# Show help
+/oss:ideate --help
+```
+
+**Related Commands:**
+- `/oss:requirements` - Extract user stories and acceptance criteria from ideation output
+- `/oss:plan` - Create TDD implementation plan from requirements
+- `/oss:api-design` - Design API contracts (if applicable)
+- `/oss:data-model` - Design database schema (if applicable)
+
+---
+
 # /oss:ideate - Extract Requirements
 
 Transform vague ideas into concrete, actionable designs through Socratic questioning.

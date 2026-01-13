@@ -2,6 +2,47 @@
 description: Monitor production health with real-time metrics and alerting
 ---
 
+## Help
+
+**Command:** `/oss:monitor`
+
+**Description:** Monitor production health with real-time metrics and alerting
+
+**Workflow Position:** deploy -> **MONITOR** -> incident
+
+**Usage:**
+```bash
+/oss:monitor [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | | All configuration via options |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--detailed` | | Show detailed metrics and logs |
+
+**Examples:**
+```bash
+# Monitor production health
+/oss:monitor
+
+# Show detailed metrics
+/oss:monitor --detailed
+```
+
+**Related Commands:**
+- `/oss:deploy` - Deploy before monitoring
+- `/oss:incident` - Respond to issues detected
+- `/oss:rollback` - Emergency rollback if critical issues
+- `/oss:trace` - Distributed tracing analysis
+
+---
+
 # /oss:monitor - Watch the Lighthouse
 
 Monitor production health with real-time metrics, error tracking, and alerting.

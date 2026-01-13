@@ -2,6 +2,49 @@
 description: Generate a TDD implementation plan with phased approach and test-first methodology
 ---
 
+## Help
+
+**Command:** `/oss:plan`
+
+**Description:** Create a comprehensive TDD implementation plan for your feature or project.
+
+**Workflow Position:** ideate → **PLAN** → build → ship
+
+**Usage:**
+```bash
+/oss:plan [OPTIONS] [FEATURE]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `FEATURE` | No | Feature or project to plan (uses ideation output if not specified) |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+
+**Examples:**
+```bash
+# Plan a specific feature
+/oss:plan "implement user dashboard"
+
+# Plan based on previous ideation
+/oss:plan
+
+# Show help
+/oss:plan --help
+```
+
+**Related Commands:**
+- `/oss:ideate` - Run before to transform ideas into requirements
+- `/oss:acceptance` - Write acceptance tests at system boundary FIRST
+- `/oss:build` - Execute TDD tasks from the plan
+- `/oss:adr` - Record architecture decisions made during planning
+
+---
+
 # /oss:plan - Generate Architecture
 
 Create a comprehensive TDD implementation plan for your feature or project.

@@ -2,6 +2,50 @@
 description: Validate that mocked interactions work in reality
 ---
 
+## Help
+
+**Command:** `/oss:integration`
+
+**Description:** Validate that mocked interactions work with real dependencies.
+
+**Workflow Position:** plan → acceptance → build: [ red → green → refactor ] → **INTEGRATION** → ship
+
+**Usage:**
+```bash
+/oss:integration [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | - | Reviews unit test mocks and validates against real dependencies |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--boundary` | `-b` | Focus on specific boundary: database, api, filesystem |
+
+**Examples:**
+```bash
+# Validate all mocked interactions
+/oss:integration
+
+# Focus on database interactions
+/oss:integration --boundary database
+
+# Show help
+/oss:integration --help
+```
+
+**Related Commands:**
+- `/oss:build` - Run before to complete TDD implementation
+- `/oss:mock` - Generated mocks to validate
+- `/oss:contract` - Consumer-driven contract testing
+- `/oss:ship` - Run after integration passes
+
+---
+
 # /oss:integration - Integration Tests
 
 Validate that mocked interactions work with real dependencies.

@@ -3,6 +3,56 @@ description: Execute TDD plans with strict RED-GREEN-REFACTOR discipline
 estimated_tokens: 5000-15000
 ---
 
+## Help
+
+**Command:** `/oss:build`
+
+**Description:** Execute your implementation plan using strict Test-Driven Development (TDD) with RED-GREEN-REFACTOR discipline.
+
+**Workflow Position:** ideate → plan → **BUILD** → ship
+
+**Usage:**
+```bash
+/oss:build [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | - | Loads plan from `.oss/dev/active/{feature}/PLAN.md` |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--phase` | `-p` | Execute a specific phase number (e.g., `--phase 2`) |
+| `--verbose` | `-v` | Enable verbose output with detailed logging |
+
+**Examples:**
+```bash
+# Execute the current plan
+/oss:build
+
+# Execute a specific phase
+/oss:build --phase 2
+
+# Execute with verbose output
+/oss:build --verbose
+
+# Show help
+/oss:build --help
+```
+
+**Related Commands:**
+- `/oss:plan` - Run before to create the implementation plan
+- `/oss:red` - Write failing test (granular TDD step)
+- `/oss:green` - Write minimal code to pass (granular TDD step)
+- `/oss:refactor` - Clean up code (granular TDD step)
+- `/oss:integration` - Validate mocks match reality after build
+- `/oss:ship` - Quality check, commit, and create PR after build
+
+---
+
 # /oss:build - Write the Code
 
 Execute your implementation plan using strict Test-Driven Development (TDD).

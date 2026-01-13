@@ -2,6 +2,47 @@
 description: Create Architecture Decision Records
 ---
 
+## Help
+
+**Command:** `/oss:adr`
+
+**Description:** Create Architecture Decision Records
+
+**Workflow Position:** any time - **ADR** (Architecture Decision Records)
+
+**Usage:**
+```bash
+/oss:adr [OPTIONS] <DECISION>
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `DECISION` | Yes | The architectural decision to document |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--title` | | Title for the ADR |
+| `--decision` | | The chosen approach |
+
+**Examples:**
+```bash
+# Create an ADR with a description
+/oss:adr "Use London TDD for all new development"
+
+# Create an ADR with explicit title and decision
+/oss:adr --title "Database selection" --decision "PostgreSQL"
+```
+
+**Related Commands:**
+- `/oss:api-design` - Document API design decisions
+- `/oss:data-model` - Document data model decisions
+- `/oss:plan` - Reference ADRs in implementation plans
+
+---
+
 # /oss:adr - Architecture Decision Records
 
 Document architectural decisions with context, options, and rationale.

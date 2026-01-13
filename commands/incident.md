@@ -2,6 +2,47 @@
 description: Incident response protocol for production emergencies
 ---
 
+## Help
+
+**Command:** `/oss:incident`
+
+**Description:** Incident response protocol for production emergencies
+
+**Workflow Position:** monitor -> **INCIDENT** -> rollback
+
+**Usage:**
+```bash
+/oss:incident [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | | All configuration via options |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--severity` | | Severity level: critical, high, medium, low |
+
+**Examples:**
+```bash
+# Start incident response
+/oss:incident
+
+# Declare critical incident
+/oss:incident --severity critical
+```
+
+**Related Commands:**
+- `/oss:monitor` - Detection before incident
+- `/oss:rollback` - Emergency rollback if needed
+- `/oss:postmortem` - Post-incident analysis
+- `/oss:debug` - Debug for hotfix development
+
+---
+
 # /oss:incident - Incident Response
 
 Incident response protocol for production emergencies with blameless postmortem.
