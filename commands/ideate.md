@@ -7,17 +7,6 @@ estimated_tokens: 2000-8000
 
 Transform vague ideas into concrete, actionable designs through Socratic questioning.
 
-## Context Management
-
-> **🚦 Context Gate Active**
->
-> If conversation history exceeds 20 turns, this command will be **blocked**.
-> You must either:
-> 1. Run `/clear` first, then re-run (recommended)
-> 2. Use `--force` flag to bypass: `/oss:ideate --force`
->
-> Why? Fresh context = CLAUDE.md (with IRON LAWS) as primary guidance = deterministic results.
-
 ## What This Command Does
 
 1. **Clarifies your idea** - Asks probing questions to understand what you really want

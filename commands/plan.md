@@ -6,18 +6,6 @@ description: Generate a TDD implementation plan with phased approach and test-fi
 
 Create a comprehensive TDD implementation plan for your feature or project.
 
-## Context Management
-
-> **🚦 Context Gate Active**
->
-> If conversation history exceeds 20 turns, this command will be **blocked**.
-> You must either:
-> 1. Run `/clear` first, then re-run (recommended)
-> 2. Use `--force` flag to bypass: `/oss:plan --force`
->
-> Why? Fresh context = CLAUDE.md (with IRON LAWS) as primary guidance = deterministic results.
-> State is loaded from `.oss/dev/active/{feature}/` (project-local) or `~/.oss/dev/active/{feature}/` (fallback).
-
 ## What This Command Does
 
 1. **Analyzes requirements** - Understands what needs to be built

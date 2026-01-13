@@ -4,10 +4,6 @@
     "UserPromptSubmit": [
       {
         "type": "command",
-        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-context-gate.sh"
-      },
-      {
-        "type": "command",
         "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-precommand.sh"
       },
       {

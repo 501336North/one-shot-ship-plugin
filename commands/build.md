@@ -7,20 +7,6 @@ estimated_tokens: 5000-15000
 
 Execute your implementation plan using strict Test-Driven Development (TDD).
 
-## Context Management
-
-> **🚦 Context Gate Active**
->
-> If conversation history exceeds 20 turns, this command will be **blocked**.
-> You must either:
-> 1. Run `/clear` first, then re-run (recommended)
-> 2. Use `--force` flag to bypass: `/oss:build --force`
->
-> **⚠️ Do NOT `/clear` between `/oss:red` → `/oss:green` → `/oss:refactor`.**
-> The TDD cycle requires context continuity to see the failing test.
->
-> State is loaded from `.oss/dev/active/{feature}/` (project-local) or `~/.oss/dev/active/{feature}/` (fallback).
-
 ## What This Command Does
 
 1. **Loads your plan** - Reads the implementation plan
