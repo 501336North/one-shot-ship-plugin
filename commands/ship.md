@@ -2,6 +2,60 @@
 description: Quality check, commit, create PR, and optionally auto-merge
 ---
 
+## Help
+
+**Command:** `/oss:ship`
+
+**Description:** Complete finalization workflow - quality check, commit, PR, and optional merge.
+
+**Workflow Position:** ideate → plan → build → **SHIP**
+
+**Usage:**
+```bash
+/oss:ship [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | - | Ships all staged changes from the current feature branch |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--merge` | `-m` | Auto-merge PR when CI passes |
+| `--message` | | Custom commit message (overrides auto-generated) |
+| `--quick` | `-q` | Skip agent-based quality gates, only run tests and build |
+| `--no-checks` | | Skip ALL quality checks (emergency hotfixes only) |
+| `--draft` | `-d` | Create draft PR instead of ready for review |
+
+**Examples:**
+```bash
+# Ship with manual merge (default)
+/oss:ship
+
+# Ship and auto-merge when CI passes
+/oss:ship --merge
+
+# Ship with custom commit message
+/oss:ship --message "feat: add user authentication"
+
+# Fast shipping (skip agent reviews)
+/oss:ship --quick
+
+# Show help
+/oss:ship --help
+```
+
+**Related Commands:**
+- `/oss:build` - Run before to complete TDD implementation
+- `/oss:review` - Multi-perspective code review (included in ship)
+- `/oss:stage` - Deploy to staging after ship
+- `/oss:deploy` - Deploy to production after staging validation
+
+---
+
 # /oss:ship - Push to GitHub
 
 Complete finalization workflow - quality check, docs, commit, PR, and optional merge.

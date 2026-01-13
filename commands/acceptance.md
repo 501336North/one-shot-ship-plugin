@@ -2,6 +2,50 @@
 description: Write acceptance tests at system boundaries (Outside-In first tests)
 ---
 
+## Help
+
+**Command:** `/oss:acceptance`
+
+**Description:** Write acceptance tests at system boundaries (Outside-In TDD).
+
+**Workflow Position:** plan → **ACCEPTANCE** → build: [ red → green → refactor ] → integration → ship
+
+**Usage:**
+```bash
+/oss:acceptance [OPTIONS] [FEATURE]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `FEATURE` | No | Feature to write acceptance test for |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--boundary` | `-b` | Specify boundary type: api, ui, cli |
+
+**Examples:**
+```bash
+# Write acceptance test for a feature
+/oss:acceptance "user login"
+
+# Specify boundary type
+/oss:acceptance "checkout flow" --boundary api
+
+# Show help
+/oss:acceptance --help
+```
+
+**Related Commands:**
+- `/oss:plan` - Run before to create implementation plan
+- `/oss:red` - Start the TDD cycle after acceptance test
+- `/oss:build` - Full TDD loop orchestrator
+- `/oss:requirements` - Extract user stories for acceptance criteria
+
+---
+
 # /oss:acceptance - Write Acceptance Tests
 
 Write acceptance tests at system boundaries (Outside-In TDD).

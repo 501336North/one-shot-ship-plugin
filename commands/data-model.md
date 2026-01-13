@@ -2,6 +2,46 @@
 description: Design data schemas and relationships
 ---
 
+## Help
+
+**Command:** `/oss:data-model`
+
+**Description:** Design data schemas and relationships
+
+**Workflow Position:** ideate -> requirements -> api-design -> **DATA-MODEL** -> plan
+
+**Usage:**
+```bash
+/oss:data-model [OPTIONS] <DESCRIPTION>
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `DESCRIPTION` | Yes | Description of the data model to design |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--entities` | | Comma-separated list of entity names |
+
+**Examples:**
+```bash
+# Design a data model for a system
+/oss:data-model user management system
+
+# Design specific entities
+/oss:data-model --entities User,Order,Product
+```
+
+**Related Commands:**
+- `/oss:api-design` - Design API contracts before data model
+- `/oss:plan` - Create TDD implementation plan
+- `/oss:adr` - Document data model decisions
+
+---
+
 # /oss:data-model - Design Data Model
 
 Design data schemas and entity relationships before implementation.

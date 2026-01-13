@@ -2,6 +2,56 @@
 description: Post-deployment smoke testing
 ---
 
+## Help
+
+**Command:** `/oss:smoke`
+
+**Description:** Post-deployment smoke testing
+
+**Workflow Position:** stage -> **SMOKE** -> deploy
+
+**Usage:**
+```bash
+/oss:smoke [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | | All configuration via options |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--env` | | Environment to test: staging, production |
+| `--url` | | URL to test against |
+| `--browser` | | Run browser-based smoke tests |
+| `--headless` | | Run browser tests in headless mode |
+
+**Examples:**
+```bash
+# Run API/CLI smoke tests
+/oss:smoke
+
+# Run smoke tests against production
+/oss:smoke --env production
+
+# Run browser smoke tests on staging
+/oss:smoke --url https://staging.example.com --browser
+
+# Run headless browser smoke tests
+/oss:smoke --url https://prod.example.com --browser --headless
+```
+
+**Related Commands:**
+- `/oss:stage` - Deploy to staging before smoke tests
+- `/oss:deploy` - Deploy to production after smoke tests pass
+- `/oss:test` - Run comprehensive E2E tests
+- `/oss:monitor` - Monitor production health
+
+---
+
 # /oss:smoke - Smoke Tests
 
 ## Step 1: Check Authentication

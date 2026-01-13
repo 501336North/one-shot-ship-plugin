@@ -2,6 +2,47 @@
 description: Deploy to production with canary rollout and monitoring
 ---
 
+## Help
+
+**Command:** `/oss:deploy`
+
+**Description:** Deploy to production with canary rollout and monitoring
+
+**Workflow Position:** stage -> smoke -> **DEPLOY** -> monitor
+
+**Usage:**
+```bash
+/oss:deploy [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | | All configuration via options |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--canary` | | Canary rollout percentage (e.g., 10%) |
+
+**Examples:**
+```bash
+# Deploy to production
+/oss:deploy
+
+# Deploy with 10% canary rollout
+/oss:deploy --canary 10%
+```
+
+**Related Commands:**
+- `/oss:stage` - Deploy to staging first
+- `/oss:smoke` - Run smoke tests before deploy
+- `/oss:monitor` - Watch production health after deploy
+- `/oss:rollback` - Emergency rollback if issues
+
+---
+
 # /oss:deploy - Deploy to Production
 
 Deploy to production with canary rollout and comprehensive monitoring.

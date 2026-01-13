@@ -2,6 +2,50 @@
 description: Feature flag implementation and management
 ---
 
+## Help
+
+**Command:** `/oss:feature-flag`
+
+**Description:** Feature flag implementation and management
+
+**Workflow Position:** any time - **FEATURE-FLAG** management
+
+**Usage:**
+```bash
+/oss:feature-flag [SUBCOMMAND] <FLAG_NAME> [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `SUBCOMMAND` | No | create, rollout, disable |
+| `FLAG_NAME` | Yes | Name of the feature flag |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--percent` | | Rollout percentage (e.g., 10) |
+
+**Examples:**
+```bash
+# Create a new feature flag
+/oss:feature-flag create new-checkout
+
+# Gradual rollout to 10% of users
+/oss:feature-flag rollout new-checkout --percent 10
+
+# Disable (kill switch) a feature flag
+/oss:feature-flag disable new-checkout
+```
+
+**Related Commands:**
+- `/oss:experiment` - A/B testing
+- `/oss:deploy` - Deploy with feature flags
+- `/oss:rollback` - Emergency rollback
+
+---
+
 # /oss:feature-flag - Feature Flags
 
 Feature flag implementation and management.

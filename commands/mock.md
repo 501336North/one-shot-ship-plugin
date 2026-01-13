@@ -2,6 +2,49 @@
 description: Generate type-safe mocks for collaborators (London TDD)
 ---
 
+## Help
+
+**Command:** `/oss:mock`
+
+**Description:** Create type-safe mocks for collaborators in London TDD.
+
+**Workflow Position:** plan → acceptance → build: [ red (uses **MOCK**) → green → refactor ] → integration → ship
+
+**Usage:**
+```bash
+/oss:mock [OPTIONS] [INTERFACE]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `INTERFACE` | No | Interface or class to mock |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--type` | `-t` | Mock type: stub, mock, spy, fake |
+
+**Examples:**
+```bash
+# Generate mock for a service
+/oss:mock UserRepository
+
+# Generate specific mock type
+/oss:mock UserRepository --type spy
+
+# Show help
+/oss:mock --help
+```
+
+**Related Commands:**
+- `/oss:red` - Uses mocks to design interfaces
+- `/oss:integration` - Validates mocks match real behavior
+- `/oss:contract` - Consumer-driven contract testing
+
+---
+
 # /oss:mock - Generate Mocks
 
 Create type-safe mocks for collaborators in London TDD.

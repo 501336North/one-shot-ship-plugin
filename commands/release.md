@@ -2,6 +2,49 @@
 description: Create a versioned release with changelog
 ---
 
+## Help
+
+**Command:** `/oss:release`
+
+**Description:** Create a versioned release with changelog
+
+**Workflow Position:** stage -> deploy -> **RELEASE** (versioned)
+
+**Usage:**
+```bash
+/oss:release [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | | All configuration via options |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--version` | | Version bump type: major, minor, patch |
+
+**Examples:**
+```bash
+# Create release with auto-detected version
+/oss:release
+
+# Create a patch release
+/oss:release --version patch
+
+# Create a minor release
+/oss:release --version minor
+```
+
+**Related Commands:**
+- `/oss:deploy` - Deploy before creating release
+- `/oss:monitor` - Monitor after release
+- `/oss:rollback` - Rollback if release has issues
+
+---
+
 # /oss:release - Create Release
 
 Create a versioned release with automated changelog generation.

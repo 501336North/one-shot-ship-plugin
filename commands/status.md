@@ -2,6 +2,42 @@
 description: Check your subscription status and usage
 ---
 
+## Help
+
+**Command:** `/oss:status`
+
+**Description:** Check your subscription status and usage
+
+**Workflow Position:** any time - **STATUS** check
+
+**Usage:**
+```bash
+/oss:status [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | | No arguments required |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+
+**Examples:**
+```bash
+# Check subscription status
+/oss:status
+```
+
+**Related Commands:**
+- `/oss:login` - Authenticate with API key
+- `/oss:settings` - Configure preferences
+- `/oss:models` - View model configuration and costs
+
+---
+
 # /oss:status - Check Status
 
 Check your One Shot Ship subscription status and usage statistics.

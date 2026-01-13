@@ -2,6 +2,50 @@
 description: Incident postmortem analysis and documentation
 ---
 
+## Help
+
+**Command:** `/oss:postmortem`
+
+**Description:** Incident postmortem analysis and documentation
+
+**Workflow Position:** incident -> resolution -> **POSTMORTEM**
+
+**Usage:**
+```bash
+/oss:postmortem [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | | All configuration via options |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--incident` | | Incident ID to analyze (e.g., INC-2024-001) |
+| `--template` | | Template to use (e.g., google-sre) |
+
+**Examples:**
+```bash
+# Start postmortem for recent incident
+/oss:postmortem
+
+# Postmortem for specific incident
+/oss:postmortem --incident INC-2024-001
+
+# Use Google SRE template
+/oss:postmortem --template google-sre
+```
+
+**Related Commands:**
+- `/oss:incident` - Incident response before postmortem
+- `/oss:adr` - Document decisions from postmortem
+- `/oss:retro` - Sprint retrospective
+
+---
+
 # /oss:postmortem - Incident Postmortem
 
 Incident postmortem analysis and blameless documentation.

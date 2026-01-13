@@ -2,6 +2,47 @@
 description: Run comprehensive E2E tests across critical user journeys
 ---
 
+## Help
+
+**Command:** `/oss:test`
+
+**Description:** Run comprehensive E2E tests across critical user journeys
+
+**Workflow Position:** build -> **TEST** -> ship
+
+**Usage:**
+```bash
+/oss:test [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | | All configuration via options |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--flow` | | Specific user flow to test (e.g., checkout) |
+
+**Examples:**
+```bash
+# Run all E2E tests
+/oss:test
+
+# Run tests for a specific user flow
+/oss:test --flow checkout
+```
+
+**Related Commands:**
+- `/oss:build` - Build phase that precedes testing
+- `/oss:ship` - Ship after tests pass
+- `/oss:smoke` - Post-deployment smoke testing
+- `/oss:integration` - Validate mocked interactions
+
+---
+
 # /oss:test - Run E2E Tests
 
 Run comprehensive E2E tests across critical user journeys.

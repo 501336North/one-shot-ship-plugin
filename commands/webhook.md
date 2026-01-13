@@ -2,6 +2,55 @@
 description: Configure GitHub webhook for PR review notifications
 ---
 
+## Help
+
+**Command:** `/oss:webhook`
+
+**Description:** Configure GitHub webhook for PR review notifications
+
+**Workflow Position:** any time - **WEBHOOK** setup
+
+**Usage:**
+```bash
+/oss:webhook [SUBCOMMAND]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `SUBCOMMAND` | No | setup, on, off (default: show status) |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--port` | | Custom port for webhook server (default: 3456) |
+
+**Examples:**
+```bash
+# Show current status
+/oss:webhook
+
+# Generate secret and configure
+/oss:webhook setup
+
+# Enable webhook server
+/oss:webhook on
+
+# Disable webhook server
+/oss:webhook off
+
+# Setup with custom port
+/oss:webhook setup --port 8080
+```
+
+**Related Commands:**
+- `/oss:telegram` - Telegram notifications
+- `/oss:settings` - General settings
+- `/oss:monitor` - Production monitoring with PR integration
+
+---
+
 # /oss:webhook - GitHub Webhook Configuration
 
 Receive notifications when GitHub PR reviews are submitted, enabling real-time response to review feedback.

@@ -2,6 +2,49 @@
 description: Write failing test first, design interfaces through mocks (London TDD RED phase)
 ---
 
+## Help
+
+**Command:** `/oss:red`
+
+**Description:** Start the London TDD cycle by writing a failing test that designs interfaces through mocks.
+
+**Workflow Position:** plan → acceptance → build: [ **RED** → green → refactor ] → integration → ship
+
+**Usage:**
+```bash
+/oss:red [OPTIONS] [BEHAVIOR]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `BEHAVIOR` | No | The behavior or feature to test |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+
+**Examples:**
+```bash
+# Start RED phase for a feature
+/oss:red user authentication
+
+# RED phase for specific behavior
+/oss:red "users can reset password via email"
+
+# RED phase for UI feature (generates Playwright test)
+/oss:red "user can submit contact form"
+```
+
+**Related Commands:**
+- `/oss:acceptance` - Write acceptance tests at system boundary FIRST
+- `/oss:green` - Next step: write minimal code to pass the test
+- `/oss:mock` - Generate type-safe mocks for collaborators
+- `/oss:build` - Full TDD loop orchestrator
+
+---
+
 # /oss:red - Write the Failing Test
 
 Start the London TDD cycle by writing a failing test that designs interfaces through mocks.

@@ -2,6 +2,46 @@
 description: Clean up code while keeping tests green (London TDD REFACTOR phase)
 ---
 
+## Help
+
+**Command:** `/oss:refactor`
+
+**Description:** Improve code quality while keeping all tests passing.
+
+**Workflow Position:** plan → acceptance → build: [ red → green → **REFACTOR** ] → integration → ship
+
+**Usage:**
+```bash
+/oss:refactor [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | - | Refactors the code from the current GREEN phase |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+
+**Examples:**
+```bash
+# Clean up code after GREEN phase
+/oss:refactor
+
+# Show help
+/oss:refactor --help
+```
+
+**Related Commands:**
+- `/oss:green` - Previous step: make the test pass
+- `/oss:red` - Next iteration: write next failing test
+- `/oss:build` - Full TDD loop orchestrator
+- `/oss:integration` - After build: validate mocks match reality
+
+---
+
 # /oss:refactor - Clean Up the Code
 
 Improve code quality while keeping all tests passing.

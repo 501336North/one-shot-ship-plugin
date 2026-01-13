@@ -2,6 +2,42 @@
 description: Display the status line legend and symbol meanings
 ---
 
+## Help
+
+**Command:** `/oss:legend`
+
+**Description:** Display the status line legend and symbol meanings
+
+**Workflow Position:** any time - **LEGEND** (status line help)
+
+**Usage:**
+```bash
+/oss:legend [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | | No arguments required |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+
+**Examples:**
+```bash
+# Display status line legend
+/oss:legend
+```
+
+**Related Commands:**
+- `/oss:watcher` - Watcher agent management
+- `/oss:queue` - Task queue management
+- `/oss:settings` - Configure notification preferences
+
+---
+
 # /oss:legend - Status Line Legend
 
 Display the complete legend for the OSS Dev Workflow status line.

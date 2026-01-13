@@ -2,6 +2,50 @@
 description: Cloud cost analysis and optimization
 ---
 
+## Help
+
+**Command:** `/oss:cost`
+
+**Description:** Cloud cost analysis and optimization
+
+**Workflow Position:** any time - **COST** analysis
+
+**Usage:**
+```bash
+/oss:cost [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | | All configuration via options |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--provider` | | Cloud provider (aws, gcp, azure) |
+| `--period` | | Time period (e.g., last-30-days) |
+
+**Examples:**
+```bash
+# Analyze cloud costs
+/oss:cost
+
+# Analyze AWS costs
+/oss:cost --provider aws
+
+# Analyze last 30 days
+/oss:cost --period last-30-days
+```
+
+**Related Commands:**
+- `/oss:monitor` - Monitor production health
+- `/oss:deploy` - Deploy infrastructure
+- `/oss:bench` - Performance benchmarking
+
+---
+
 # /oss:cost - Cost Analysis
 
 Cloud cost analysis and FinOps optimization.

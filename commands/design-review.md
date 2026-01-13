@@ -2,6 +2,49 @@
 description: UX/UI design review and heuristic evaluation
 ---
 
+## Help
+
+**Command:** `/oss:design-review`
+
+**Description:** UX/UI design review and heuristic evaluation
+
+**Workflow Position:** build -> **DESIGN-REVIEW** (UX/UI)
+
+**Usage:**
+```bash
+/oss:design-review [OPTIONS] [PATH]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `PATH` | No | Path to components to review |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--focus` | | Focus area (mobile, desktop, accessibility) |
+
+**Examples:**
+```bash
+# Run design review on entire project
+/oss:design-review
+
+# Review specific components
+/oss:design-review src/components/Dashboard/
+
+# Focus on mobile design
+/oss:design-review --focus mobile
+```
+
+**Related Commands:**
+- `/oss:a11y` - Accessibility audit
+- `/oss:review` - Code review
+- `/oss:build` - Build phase
+
+---
+
 # /oss:design-review - Design Review
 
 UX/UI design review and heuristic evaluation.

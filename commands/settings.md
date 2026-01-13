@@ -2,6 +2,48 @@
 description: Manage OSS notification and preference settings
 ---
 
+## Help
+
+**Command:** `/oss:settings`
+
+**Description:** Manage OSS notification and preference settings
+
+**Workflow Position:** any time - **SETTINGS** preferences
+
+**Usage:**
+```bash
+/oss:settings [SUBCOMMAND] [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `SUBCOMMAND` | No | show (default: interactive configuration) |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+
+**Examples:**
+```bash
+# Interactive configuration wizard
+/oss:settings
+
+# Display current settings (read-only)
+/oss:settings show
+
+# Show help
+/oss:settings --help
+```
+
+**Related Commands:**
+- `/oss:telegram` - Configure Telegram notifications
+- `/oss:login` - Configure API key
+- `/oss:models` - Configure model routing
+
+---
+
 # /oss:settings - Manage OSS Settings
 
 Display and modify OSS preferences including notifications, voices, and sounds.

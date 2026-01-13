@@ -2,6 +2,45 @@
 description: Write minimal code to pass tests (London TDD GREEN phase)
 ---
 
+## Help
+
+**Command:** `/oss:green`
+
+**Description:** Write the minimal implementation to make failing tests pass.
+
+**Workflow Position:** plan → acceptance → build: [ red → **GREEN** → refactor ] → integration → ship
+
+**Usage:**
+```bash
+/oss:green [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | - | Uses the failing test from the RED phase |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+
+**Examples:**
+```bash
+# Make the current failing test pass
+/oss:green
+
+# Show help
+/oss:green --help
+```
+
+**Related Commands:**
+- `/oss:red` - Previous step: write the failing test
+- `/oss:refactor` - Next step: clean up the code
+- `/oss:build` - Full TDD loop orchestrator
+
+---
+
 # /oss:green - Make the Test Pass
 
 Write the minimal implementation to make failing tests pass.

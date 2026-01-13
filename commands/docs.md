@@ -2,6 +2,45 @@
 description: Create development documentation structure for a feature
 ---
 
+## Help
+
+**Command:** `/oss:docs`
+
+**Description:** Create development documentation structure for a feature
+
+**Workflow Position:** any time - **DOCS** generation
+
+**Usage:**
+```bash
+/oss:docs [OPTIONS] <FEATURE_NAME>
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `FEATURE_NAME` | Yes | Name of the feature for documentation |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+
+**Examples:**
+```bash
+# Create docs for user authentication feature
+/oss:docs "user-authentication"
+
+# Create docs for payment integration
+/oss:docs "payment-integration"
+```
+
+**Related Commands:**
+- `/oss:plan` - Create TDD implementation plan
+- `/oss:ideate` - Transform ideas into designs
+- `/oss:adr` - Create Architecture Decision Records
+
+---
+
 # /oss:docs - Create Dev Docs
 
 Create a development documentation structure for feature branch + context preservation.

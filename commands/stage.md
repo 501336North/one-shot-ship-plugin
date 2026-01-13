@@ -2,6 +2,43 @@
 description: Deploy to staging environment with safety checks
 ---
 
+## Help
+
+**Command:** `/oss:stage`
+
+**Description:** Deploy to staging environment with safety checks
+
+**Workflow Position:** ship -> **STAGE** -> smoke -> deploy
+
+**Usage:**
+```bash
+/oss:stage [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | | All configuration via options |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+
+**Examples:**
+```bash
+# Deploy to staging environment
+/oss:stage
+```
+
+**Related Commands:**
+- `/oss:ship` - Quality check and PR before staging
+- `/oss:smoke` - Run smoke tests after staging
+- `/oss:deploy` - Deploy to production after staging approval
+- `/oss:load` - Run load tests on staging
+
+---
+
 # /oss:stage - Deploy to Staging
 
 Deploy to staging environment with safety checks and smoke tests.

@@ -2,6 +2,59 @@
 description: Configure per-prompt model routing and view cost tracking
 ---
 
+## Help
+
+**Command:** `/oss:models`
+
+**Description:** Configure per-prompt model routing and view cost tracking
+
+**Workflow Position:** any time - **MODELS** configuration
+
+**Usage:**
+```bash
+/oss:models [SUBCOMMAND] [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `SUBCOMMAND` | No | list, set, costs (default: show configuration) |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--provider` | | Filter by provider (ollama, openrouter, etc.) |
+| `--reset` | | Reset cost tracking |
+
+**Examples:**
+```bash
+# Show current model configuration
+/oss:models
+
+# List available models
+/oss:models list
+
+# List only Ollama models
+/oss:models list --provider ollama
+
+# Set model for an agent
+/oss:models set oss:code-reviewer ollama/codellama
+
+# Show session cost breakdown
+/oss:models costs
+
+# Reset cost tracking
+/oss:models costs --reset
+```
+
+**Related Commands:**
+- `/oss:status` - Check subscription status
+- `/oss:settings` - Configure preferences
+- `/oss:login` - Configure API key
+
+---
+
 # /oss:models - Per-Prompt Model Routing
 
 Configure which AI models are used for specific commands, agents, and skills. Track usage costs across providers.

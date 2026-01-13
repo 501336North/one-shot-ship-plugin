@@ -2,6 +2,50 @@
 description: GDPR/CCPA privacy compliance audit
 ---
 
+## Help
+
+**Command:** `/oss:privacy`
+
+**Description:** GDPR/CCPA privacy compliance audit
+
+**Workflow Position:** any time - **PRIVACY** (GDPR/CCPA)
+
+**Usage:**
+```bash
+/oss:privacy [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | | All configuration via options |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--regulation` | | Regulation to check (GDPR, CCPA) |
+| `--deep` | | Run deep analysis |
+
+**Examples:**
+```bash
+# Run privacy audit
+/oss:privacy
+
+# GDPR specific audit
+/oss:privacy --regulation GDPR
+
+# Deep privacy analysis
+/oss:privacy --deep
+```
+
+**Related Commands:**
+- `/oss:audit` - Security audit
+- `/oss:license` - License compliance
+- `/oss:review` - Code review
+
+---
+
 # /oss:privacy - Privacy Audit
 
 GDPR and CCPA privacy compliance audit.

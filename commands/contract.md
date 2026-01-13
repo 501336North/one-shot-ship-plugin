@@ -2,6 +2,48 @@
 description: Consumer-driven contract testing (Pact)
 ---
 
+## Help
+
+**Command:** `/oss:contract`
+
+**Description:** Consumer-driven contract testing (Pact)
+
+**Workflow Position:** build -> **CONTRACT** -> integration
+
+**Usage:**
+```bash
+/oss:contract [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | | All configuration via options |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--consumer` | | Consumer service name |
+| `--provider` | | Provider service name |
+| `--verify` | | Verify provider against contracts |
+
+**Examples:**
+```bash
+# Define contract between frontend and API
+/oss:contract --consumer frontend --provider api
+
+# Verify provider meets contracts
+/oss:contract --verify
+```
+
+**Related Commands:**
+- `/oss:api-design` - Design API contracts before testing
+- `/oss:integration` - Validate mocked interactions work in reality
+- `/oss:test` - Run comprehensive E2E tests
+
+---
+
 # /oss:contract - Contract Testing
 
 Consumer-driven contract testing to ensure service compatibility.

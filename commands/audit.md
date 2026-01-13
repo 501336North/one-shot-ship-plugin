@@ -2,6 +2,46 @@
 description: Security vulnerability scanning and penetration testing
 ---
 
+## Help
+
+**Command:** `/oss:audit`
+
+**Description:** Security vulnerability scanning and penetration testing
+
+**Workflow Position:** build -> **AUDIT** (Security) -> ship
+
+**Usage:**
+```bash
+/oss:audit [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | | All configuration via options |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--deep` | | Run deep security analysis |
+
+**Examples:**
+```bash
+# Run standard security audit
+/oss:audit
+
+# Run deep security analysis
+/oss:audit --deep
+```
+
+**Related Commands:**
+- `/oss:review` - Code review with security focus
+- `/oss:privacy` - GDPR/CCPA privacy compliance
+- `/oss:license` - Open source license compliance
+
+---
+
 # /oss:audit - Security Audit
 
 Security vulnerability scanning and penetration testing.

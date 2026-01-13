@@ -3,6 +3,41 @@ name: oss-audio
 description: "[DEPRECATED] Use /oss:settings instead"
 ---
 
+## Help
+
+**Command:** `/oss:oss-audio`
+
+**Description:** [DEPRECATED] Use /oss:settings instead
+
+**Workflow Position:** **[DEPRECATED]** - Use /oss:settings instead
+
+**Usage:**
+```bash
+/oss:settings              # Use this instead
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| N/A | | This command is deprecated |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+
+**Examples:**
+```bash
+# Use /oss:settings instead
+/oss:settings
+```
+
+**Related Commands:**
+- `/oss:settings` - Full notification management (recommended)
+- `/oss:telegram` - Telegram notifications
+
+---
+
 # OSS Audio Configuration (DEPRECATED)
 
 **This command has been deprecated.** Please use `/oss:settings` instead for full notification management.

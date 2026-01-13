@@ -2,6 +2,43 @@
 description: Refine working features when they don't match original intent or when scope has changed
 ---
 
+## Help
+
+**Command:** `/oss:iterate`
+
+**Description:** Refine working features when they don't match original intent or when scope has changed
+
+**Workflow Position:** build -> ship -> **ITERATE** (refinement loop)
+
+**Usage:**
+```bash
+/oss:iterate [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | | Loads context from feature's dev docs |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+
+**Examples:**
+```bash
+# Iterate on current feature (loads context from dev docs)
+/oss:iterate
+```
+
+**Related Commands:**
+- `/oss:build` - Execute tasks from iteration plan
+- `/oss:debug` - For bugs/errors (not feature mismatches)
+- `/oss:ideate` - For starting fresh with new ideas
+- `/oss:plan` - For creating new implementation plans
+
+---
+
 # /oss:iterate - Refine Features
 
 Iterate on working features when they don't match original intent or when scope has changed.

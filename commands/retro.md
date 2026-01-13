@@ -2,6 +2,50 @@
 description: Sprint retrospective facilitation
 ---
 
+## Help
+
+**Command:** `/oss:retro`
+
+**Description:** Sprint retrospective facilitation
+
+**Workflow Position:** any time - **RETRO** (sprint retrospective)
+
+**Usage:**
+```bash
+/oss:retro [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| None | | All configuration via options |
+
+**Options:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show this help message |
+| `--format` | | Retro format (mad-sad-glad, start-stop-continue) |
+| `--sprint` | | Sprint number to retrospect |
+
+**Examples:**
+```bash
+# Start retrospective
+/oss:retro
+
+# Use mad-sad-glad format
+/oss:retro --format mad-sad-glad
+
+# Retrospect specific sprint
+/oss:retro --sprint 42
+```
+
+**Related Commands:**
+- `/oss:postmortem` - Incident postmortem
+- `/oss:plan` - Plan next sprint
+- `/oss:tech-debt` - Technical debt analysis
+
+---
+
 # /oss:retro - Sprint Retrospective
 
 Sprint retrospective facilitation and action tracking.
