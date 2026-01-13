@@ -2,6 +2,7 @@
 name: test-engineer
 description: Testing specialist. Use for test design, test implementation, and test-driven development.
 model_routing: true
+context: fork
 ---
 
 # test-engineer Agent

@@ -1,5 +1,4 @@
 ---
-name: settings
 description: Manage OSS notification and preference settings
 ---
 
@@ -12,7 +11,58 @@ Display and modify OSS preferences including notifications, voices, and sounds.
 ```bash
 /oss:settings              # Show current settings interactively
 /oss:settings show         # Display current settings
+/oss:settings --help       # Display help and usage information
 ```
+
+## Step 0: Check for --help Flag
+
+If `--help` is passed, display usage information and exit:
+
+```
+/oss:settings - Manage OSS notification and preference settings
+
+USAGE:
+  /oss:settings              Show current settings interactively
+  /oss:settings show         Display current settings (read-only)
+  /oss:settings --help       Display this help message
+
+OPTIONS:
+  --help                     Show help and usage information
+
+NOTIFICATION STYLES:
+  visual     macOS Notification Center (terminal-notifier)
+  audio      Spoken messages using text-to-speech
+  sound      System sounds (Glass, Ping, etc.)
+  telegram   Telegram notifications + local backup
+  none       Silent mode - no notifications
+
+VERBOSITY LEVELS:
+  all          Every event (command start, agent spawn, etc.)
+  important    Success and failure events only (recommended)
+  errors-only  Only critical errors and failures
+
+VOICES (when style=audio):
+  Samantha   Female, American (default)
+  Daniel     Male, British
+  Karen      Female, Australian
+  Moira      Female, Irish
+
+SOUNDS (when style=sound):
+  Glass      Clear chime (default)
+  Ping       Simple ping
+  Purr       Soft purr
+  Pop        Pop sound
+
+SETTINGS FILE:
+  ~/.oss/settings.json
+
+EXAMPLES:
+  /oss:settings              # Interactive configuration wizard
+  /oss:settings show         # View current settings without changing
+  /oss:settings --help       # Show this help message
+```
+
+**If --help is detected, output the above and do not proceed with the interactive flow.**
 
 ## Implementation
 
@@ -59,6 +109,13 @@ To change settings, answer the questions below.
 Use `AskUserQuestion` tool to let user modify settings:
 
 **Question 1: Notification Style**
+
+First, check if Telegram is configured by reading `telegram.botToken` from settings:
+
+```bash
+TELEGRAM_CONFIGURED=$(jq -r '.telegram.botToken // empty' "$SETTINGS_FILE" 2>/dev/null)
+```
+
 ```json
 {
   "question": "How would you like to be notified?",
@@ -67,6 +124,7 @@ Use `AskUserQuestion` tool to let user modify settings:
     {"label": "Visual", "description": "macOS notification center (terminal-notifier)"},
     {"label": "Audio", "description": "Spoken messages using text-to-speech"},
     {"label": "Sound", "description": "System sounds (Glass, Ping, etc.)"},
+    {"label": "Telegram", "description": "Mobile notifications - requires setup first via /oss:telegram"},
     {"label": "None", "description": "Silent mode - no notifications"}
   ],
   "multiSelect": false
@@ -117,6 +175,25 @@ Use `AskUserQuestion` tool to let user modify settings:
 }
 ```
 
+### Step 3.5: Validate Telegram Selection
+
+**If user selects "Telegram" but it's not configured:**
+
+Check if `telegram.botToken` exists in settings. If NOT_CONFIGURED, show error and prompt to run setup:
+
+```
+Telegram is not configured yet.
+
+To set up Telegram notifications:
+1. Run: /oss:telegram setup
+2. Follow the setup wizard
+3. Then re-run /oss:settings to select Telegram
+
+For now, falling back to 'visual' style.
+```
+
+Set `STYLE="visual"` and continue.
+
 ### Step 4: Save Settings
 
 Write updated settings to `~/.oss/settings.json`:
@@ -151,6 +228,9 @@ case "$STYLE" in
         ;;
     "sound")
         afplay "/System/Library/Sounds/${SOUND}.aiff"
+        ;;
+    "telegram")
+        node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/telegram-notify.js" --message "OSS settings saved successfully!"
         ;;
     "none")
         echo "Notifications disabled. Settings saved."
@@ -193,10 +273,15 @@ If `~/.oss/audio-config` exists but `settings.json` does not:
 ```json
 {
   "notifications": {
-    "style": "visual" | "audio" | "sound" | "none",
+    "style": "visual" | "audio" | "sound" | "telegram" | "none",
     "voice": "Samantha" | "Daniel" | "Karen" | "Moira",
     "sound": "Glass" | "Ping" | "Purr" | "Pop",
     "verbosity": "all" | "important" | "errors-only"
+  },
+  "telegram": {
+    "enabled": true | false,
+    "botToken": "your-bot-token",
+    "chatId": "your-chat-id"
   },
   "version": 1
 }
@@ -210,6 +295,7 @@ If `~/.oss/audio-config` exists but `settings.json` does not:
 | visual | terminal-notifier | macOS Notification Center |
 | audio | say | Text-to-speech |
 | sound | afplay | System sounds |
+| telegram | telegram-notify.js | Mobile notifications (requires /oss:telegram setup) |
 | none | - | Silent mode |
 
 ### Verbosity Levels

@@ -294,3 +294,20 @@ Quality checks failed. Fix issues before shipping:
 | (default) | ✅ code-reviewer, performance-auditor, security-auditor | ✅ | ✅ | Standard shipping |
 | `--quick` | ❌ | ✅ | ✅ | Fast iteration, trusted changes |
 | `--no-checks` | ❌ | ❌ | ❌ | Emergency hotfixes only |
+
+## Permission Denied Fallback
+
+If permission is denied for `git push` or PR creation, your work is preserved:
+
+```
+⚠️ Permission denied for git push.
+
+PR prepared but not pushed. To complete manually:
+  git push -u origin {branch-name}
+  gh pr create --title "{title}" --body "{body}"
+
+Files staged and committed:
+  - [list of committed files]
+```
+
+Run the commands shown above to complete the shipping process manually.

@@ -1,5 +1,6 @@
 ---
 description: Transform vague ideas into concrete, actionable designs through collaborative questioning
+estimated_tokens: 2000-8000
 ---
 
 # /oss:ideate - Extract Requirements

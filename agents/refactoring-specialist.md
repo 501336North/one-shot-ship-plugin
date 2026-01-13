@@ -2,6 +2,7 @@
 name: refactoring-specialist
 description: Refactoring expert. Use for code refactoring, design pattern implementation, and code modernization.
 model_routing: true
+context: fork
 ---
 
 # refactoring-specialist Agent

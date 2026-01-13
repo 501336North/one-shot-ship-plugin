@@ -2,6 +2,7 @@
 name: debugger
 description: Expert debugger. Use for investigating bugs, tracing issues, analyzing stack traces, and root cause analysis.
 model_routing: true
+context: fork
 ---
 
 # debugger Agent

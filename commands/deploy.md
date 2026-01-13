@@ -80,6 +80,24 @@ The prompt handles:
 **Previous**: `/oss:stage` (staging validated)
 **Next**: `/oss:monitor` (watch production health)
 
+## Permission Denied Fallback
+
+If permission is denied for `kubectl` or deployment commands, your manifests are preserved:
+
+```
+⚠️ Permission denied for kubectl apply.
+
+Deployment manifests prepared. To deploy manually:
+  kubectl apply -f {manifest-path}
+  kubectl rollout status deployment/{name}
+
+Files created:
+  - deployment.yaml
+  - service.yaml
+```
+
+Run the commands shown above to complete the deployment manually.
+
 ## Example Usage
 
 ```bash

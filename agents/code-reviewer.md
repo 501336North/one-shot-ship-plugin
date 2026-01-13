@@ -2,6 +2,7 @@
 name: code-reviewer
 description: Expert code reviewer. Use for thorough code review, identifying bugs, security issues, and code quality improvements.
 model_routing: true
+context: fork
 ---
 
 # code-reviewer Agent

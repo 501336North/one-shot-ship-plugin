@@ -106,6 +106,28 @@ Subscription expired. Upgrade at: https://www.oneshotship.com/pricing
 API temporarily unavailable. Contact support@oneshotship.com
 ```
 
+## Playwright for UI Features
+
+When the feature involves web UI, scaffold a Playwright test in RED phase:
+
+**UI detection keywords**: page, form, button, click, modal, navigation, UI, frontend, dashboard, login
+
+**Generated test scaffold:**
+```typescript
+import { test, expect } from '@playwright/test';
+
+test.describe('Feature Name', () => {
+  test.skip('should [acceptance criteria]', async ({ page }) => {
+    // TODO: Implement test
+    // This test should FAIL until implementation is complete
+    await page.goto('/path');
+    await expect(page.locator('[data-testid="element"]')).toBeVisible();
+  });
+});
+```
+
+The `.skip` ensures the test is in RED phase (failing) until you implement the feature.
+
 ## Example Usage
 
 ```bash
@@ -114,4 +136,7 @@ API temporarily unavailable. Contact support@oneshotship.com
 
 # RED phase for specific behavior
 /oss:red "users can reset password via email"
+
+# RED phase for UI feature (generates Playwright test)
+/oss:red "user can submit contact form"
 ```

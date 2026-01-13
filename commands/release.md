@@ -77,6 +77,25 @@ The prompt handles:
 **Previous**: `/oss:deploy` (production deployed)
 **Next**: `/oss:monitor` (ongoing health monitoring)
 
+## Permission Denied Fallback
+
+If permission is denied for `npm publish` or release commands, your release is prepared:
+
+```
+⚠️ Permission denied for npm publish.
+
+Release package prepared. To publish manually:
+  npm publish
+  git push --tags
+
+Changelog generated:
+  - CHANGELOG.md updated
+  - Version bumped to {version}
+  - Git tag created: v{version}
+```
+
+Run the commands shown above to complete the release manually.
+
 ## Example Usage
 
 ```bash

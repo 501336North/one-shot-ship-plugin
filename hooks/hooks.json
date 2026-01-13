@@ -1,4 +1,15 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash($CLAUDE_PLUGIN_ROOT/hooks/*)",
+      "Bash(npm test)",
+      "Bash(npm run build)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(gh pr *)"
+    ]
+  },
   "hooks": {
     "UserPromptSubmit": [
       {

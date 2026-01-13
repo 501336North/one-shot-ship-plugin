@@ -52,6 +52,12 @@ Subscription expired. Upgrade at: https://www.oneshotship.com/pricing
 API temporarily unavailable. Contact support@oneshotship.com
 ```
 
+## Long-Running Operations
+
+> **Tip**: Load tests can run for extended periods (5+ minutes).
+> Press **Ctrl+B** to move this operation to the background.
+> You'll be notified when it completes and can continue other work.
+
 ## Example Usage
 
 ```bash
