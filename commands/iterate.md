@@ -6,17 +6,6 @@ description: Refine working features when they don't match original intent or wh
 
 Iterate on working features when they don't match original intent or when scope has changed.
 
-## Context Management
-
-> **Context Gate Active**
->
-> If conversation history exceeds 20 turns, this command will be **blocked**.
-> You must either:
-> 1. Run `/clear` first, then re-run (recommended)
-> 2. Use `--force` flag to bypass: `/oss:iterate --force`
->
-> State is loaded from `.oss/dev/active/{feature}/` (project-local) or `~/.oss/dev/active/{feature}/` (fallback).
-
 ## What This Command Does
 
 1. **Loads context** - Reads DESIGN.md, PLAN.md, PROGRESS.md from the feature directory

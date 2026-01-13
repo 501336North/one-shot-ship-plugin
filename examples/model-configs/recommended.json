@@ -1,0 +1,99 @@
+{
+  "description": "Recommended configuration - optimized for quality and cost based on prompt complexity analysis",
+  "providers": {
+    "ollama": {
+      "baseUrl": "http://localhost:11434"
+    }
+  },
+  "apiKeys": {
+    "openrouter": "",
+    "gemini": "",
+    "openai": ""
+  },
+  "models": {
+    "default": "claude",
+    "fallbackEnabled": true,
+
+    "commands": {
+      "oss:red": "openrouter/deepseek/deepseek-chat",
+      "oss:green": "openrouter/deepseek/deepseek-chat",
+      "oss:refactor": "openrouter/deepseek/deepseek-chat",
+      "oss:review": "openrouter/deepseek/deepseek-chat",
+      "oss:mock": "openrouter/deepseek/deepseek-chat",
+      "oss:acceptance": "openrouter/deepseek/deepseek-chat",
+      "oss:integration": "openrouter/deepseek/deepseek-chat",
+      "oss:contract": "openrouter/deepseek/deepseek-chat",
+      "oss:bench": "openrouter/deepseek/deepseek-chat",
+
+      "oss:requirements": "gemini/gemini-2.0-flash",
+      "oss:data-model": "gemini/gemini-2.0-flash",
+      "oss:adr": "gemini/gemini-2.0-flash",
+      "oss:release": "gemini/gemini-2.0-flash",
+      "oss:stage": "gemini/gemini-2.0-flash",
+      "oss:rollback": "gemini/gemini-2.0-flash",
+      "oss:monitor": "gemini/gemini-2.0-flash",
+      "oss:audit": "gemini/gemini-2.0-flash",
+      "oss:a11y": "gemini/gemini-2.0-flash",
+      "oss:cost": "gemini/gemini-2.0-flash",
+      "oss:docs": "gemini/gemini-2.0-flash",
+      "oss:test": "gemini/gemini-2.0-flash",
+
+      "oss:smoke": "ollama/qwen2.5-coder:7b",
+      "oss:load": "ollama/qwen2.5-coder:7b",
+      "oss:trace": "ollama/qwen2.5-coder:7b",
+
+      "oss:status": "ollama/llama3.2",
+      "oss:queue": "ollama/llama3.2",
+      "oss:legend": "ollama/llama3.2",
+      "oss:settings": "ollama/llama3.2",
+      "oss:models": "ollama/llama3.2"
+    },
+
+    "agents": {
+      "oss:typescript-pro": "openrouter/deepseek/deepseek-chat",
+      "oss:nextjs-developer": "openrouter/deepseek/deepseek-chat",
+      "oss:react-specialist": "openrouter/deepseek/deepseek-chat",
+      "oss:frontend-developer": "openrouter/deepseek/deepseek-chat",
+      "oss:golang-pro": "openrouter/deepseek/deepseek-chat",
+      "oss:python-pro": "openrouter/deepseek/deepseek-chat",
+      "oss:java-pro": "openrouter/deepseek/deepseek-chat",
+      "oss:ios-developer": "openrouter/deepseek/deepseek-chat",
+      "oss:swift-macos-expert": "openrouter/deepseek/deepseek-chat",
+      "oss:flutter-expert": "openrouter/deepseek/deepseek-chat",
+      "oss:visionos-developer": "openrouter/deepseek/deepseek-chat",
+      "oss:mobile-developer": "openrouter/deepseek/deepseek-chat",
+      "oss:graphql-architect": "openrouter/deepseek/deepseek-chat",
+      "oss:test-engineer": "openrouter/deepseek/deepseek-chat",
+      "oss:code-reviewer": "openrouter/deepseek/deepseek-chat",
+      "oss:debugger": "openrouter/deepseek/deepseek-chat",
+      "oss:refactoring-specialist": "openrouter/deepseek/deepseek-chat",
+      "oss:performance-engineer": "openrouter/deepseek/deepseek-chat",
+      "oss:database-optimizer": "openrouter/deepseek/deepseek-chat",
+
+      "oss:qa-expert": "gemini/gemini-2.0-flash",
+      "oss:docs-architect": "gemini/gemini-2.0-flash",
+      "oss:security-auditor": "gemini/gemini-2.0-flash",
+      "oss:seo-aeo-expert": "gemini/gemini-2.0-flash",
+      "oss:test-automator": "gemini/gemini-2.0-flash",
+      "oss:dependency-analyzer": "gemini/gemini-2.0-flash",
+      "oss:data-engineer": "gemini/gemini-2.0-flash",
+      "oss:performance-auditor": "gemini/gemini-2.0-flash",
+      "oss:database-admin": "gemini/gemini-2.0-flash",
+      "oss:release-manager": "gemini/gemini-2.0-flash",
+      "oss:n8n-automation-specialist": "gemini/gemini-2.0-flash",
+
+      "oss:deployment-engineer": "ollama/qwen2.5-coder:7b",
+      "oss:devops-troubleshooter": "ollama/qwen2.5-coder:7b",
+      "oss:git-workflow-manager": "ollama/llama3.2"
+    }
+  },
+  "notes": [
+    "Complex reasoning tasks (ideate, plan, build, ship, incident, debug) stay on Claude",
+    "Code-focused tasks route to DeepSeek via OpenRouter (~95% cheaper)",
+    "Documentation/analysis tasks route to Gemini Flash (~97% cheaper)",
+    "Simple utilities route to local Ollama models (free)",
+    "Fallback to Claude is enabled - if a provider fails, Claude handles it",
+    "Set apiKeys or use environment variables (OPENROUTER_API_KEY, GEMINI_API_KEY)",
+    "Configure ollama.baseUrl if not using default localhost:11434"
+  ]
+}

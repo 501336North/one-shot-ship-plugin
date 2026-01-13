@@ -6,18 +6,6 @@ description: Systematic debugging workflow
 
 Investigate bugs and create TDD fix plans that integrate with the build workflow.
 
-## Context Management
-
-> **🚦 Context Gate Active**
->
-> If conversation history exceeds 20 turns, this command will be **blocked**.
-> You must either:
-> 1. Run `/clear` first, then re-run (recommended)
-> 2. Use `--force` flag to bypass: `/oss:debug --force`
->
-> Why? Fresh context = CLAUDE.md (with IRON LAWS) as primary guidance = deterministic results.
-> State is loaded from `.oss/dev/active/{feature}/` (project-local) or created in `.oss/dev/active/bugfix-*/`.
-
 ## What This Command Does
 
 1. **Investigates** - Parses error/description, delegates to debugger agent
