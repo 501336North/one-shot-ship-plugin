@@ -4,6 +4,18 @@
     "UserPromptSubmit": [
       {
         "type": "command",
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-context-gate.sh"
+      },
+      {
+        "type": "command",
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-precommand.sh"
+      },
+      {
+        "type": "command",
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-iron-law-check.sh"
+      },
+      {
+        "type": "command",
         "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-context-inject.sh"
       }
     ],
@@ -14,6 +26,12 @@
       }
     ],
     "PreCompact": [
+      {
+        "type": "command",
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-session-end.sh"
+      }
+    ],
+    "SessionEnd": [
       {
         "type": "command",
         "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-session-end.sh"
