@@ -50,6 +50,12 @@ The prompt handles:
 - Stress testing
 - Performance regression detection
 
+## Long-Running Operations
+
+> **Tip**: Benchmarks can take several minutes to complete.
+> Press **Ctrl+B** to move this operation to the background.
+> You'll be notified when it completes and can continue other work.
+
 ## Example Usage
 
 ```bash

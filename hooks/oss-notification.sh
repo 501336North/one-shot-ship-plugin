@@ -63,6 +63,18 @@ case "$STYLE" in
             afplay "$SOUND_FILE" &>/dev/null &
         fi
         ;;
+    "telegram")
+        # Telegram notification
+        PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
+        TELEGRAM_HOOK="$PLUGIN_ROOT/hooks/oss-telegram.sh"
+        if [[ -f "$TELEGRAM_HOOK" ]]; then
+            "$TELEGRAM_HOOK" notify "Ready" &>/dev/null &
+        fi
+        # Also show local terminal-notifier as backup
+        if command -v terminal-notifier &>/dev/null; then
+            terminal-notifier -title "OSS" -message "Ready" -sound "Funk" &>/dev/null &
+        fi
+        ;;
 esac
 
 exit 0

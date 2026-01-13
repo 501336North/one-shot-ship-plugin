@@ -1,5 +1,6 @@
 ---
 description: Execute TDD plans with strict RED-GREEN-REFACTOR discipline
+estimated_tokens: 5000-15000
 ---
 
 # /oss:build - Write the Code
@@ -233,6 +234,12 @@ API temporarily unavailable. Contact support@oneshotship.com
 # Execute with verbose output
 /oss:build --verbose
 ```
+
+## Long-Running Operations
+
+> **Tip**: Multi-phase builds with many TDD cycles can take time.
+> Press **Ctrl+B** to move the build to the background.
+> You'll be notified when it completes and can continue other work.
 
 ## Quality Gates
 

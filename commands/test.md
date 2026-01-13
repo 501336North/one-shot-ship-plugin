@@ -42,13 +42,52 @@ Headers:
   Authorization: Bearer {apiKey}
 ```
 
-## Step 3: Execute the Fetched Prompt
+## Step 3: Detect Test Frameworks
+
+Before running tests, detect which frameworks are available:
+
+```bash
+# Detect Playwright
+PLAYWRIGHT_RESULT=$($CLAUDE_PLUGIN_ROOT/hooks/oss-detect-playwright.sh)
+HAS_PLAYWRIGHT=$(echo "$PLAYWRIGHT_RESULT" | jq -r '.detected')
+```
+
+## Step 4: Execute Tests
+
+### Unit/Integration Tests
+Run the primary test suite:
+```bash
+npm test
+```
+
+### Playwright E2E Tests (if detected)
+If Playwright is configured in the project:
+```bash
+npx playwright test --reporter=list
+```
+
+**Browser Coverage Reporting:**
+```
+Unit Tests: 50/50 passed
+E2E Tests:  12/12 passed
+├─ Chromium: ✓ 12 passed
+├─ Firefox:  ✓ 12 passed
+└─ WebKit:   ✓ 12 passed
+```
+
+## Step 5: Execute the Fetched Prompt
 
 The prompt handles:
 - User flow identification
 - Test generation
 - Test execution
 - Results reporting
+
+## Long-Running Operations
+
+> **Tip**: E2E tests can take several minutes to complete.
+> Press **Ctrl+B** to move this operation to the background.
+> You'll be notified when it completes and can continue other work.
 
 ## Example Usage
 

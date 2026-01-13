@@ -1,5 +1,6 @@
 ---
 description: Multi-perspective code review (correctness, security, performance, maintainability)
+estimated_tokens: 3000-10000
 ---
 
 # /oss:review - Code Review

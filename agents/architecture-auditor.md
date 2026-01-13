@@ -1,6 +1,7 @@
 ---
 name: architecture-auditor
 description: Software architecture specialist. Use for reviewing system design, architectural decisions, and code structure improvements.
+context: fork
 ---
 
 # architecture-auditor Agent

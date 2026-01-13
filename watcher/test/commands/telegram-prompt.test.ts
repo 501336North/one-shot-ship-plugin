@@ -18,7 +18,8 @@ describe('telegram.md command prompt', () => {
 
   it('should have correct frontmatter', () => {
     const content = fs.readFileSync(commandPath, 'utf-8');
-    expect(content).toContain('name: telegram');
+    // Command uses filename-based naming (telegram.md -> /oss:telegram)
+    // No explicit name: field needed - plugin namespace handles it
     expect(content).toContain('description:');
   });
 

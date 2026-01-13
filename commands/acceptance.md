@@ -88,6 +88,37 @@ Subscription expired. Upgrade at: https://www.oneshotship.com/pricing
 API temporarily unavailable. Contact support@oneshotship.com
 ```
 
+## Playwright for UI Acceptance Tests
+
+When the feature involves web UI, generate Playwright acceptance tests:
+
+**Detection keywords**: page, form, button, click, modal, navigation, UI, frontend
+
+**Generated test format (Given/When/Then):**
+```typescript
+import { test, expect } from '@playwright/test';
+
+test.describe('User Registration', () => {
+  test('should register new user with valid credentials', async ({ page }) => {
+    // Given I am on the registration page
+    await page.goto('/register');
+
+    // When I fill in valid credentials
+    await page.fill('[data-testid="email"]', 'test@example.com');
+    await page.fill('[data-testid="password"]', 'SecurePass123!');
+    await page.click('[data-testid="submit"]');
+
+    // Then I should see the dashboard
+    await expect(page).toHaveURL('/dashboard');
+  });
+});
+```
+
+**Best practices:**
+- Use `data-testid` selectors (resilient to CSS changes)
+- Follow Given/When/Then structure
+- One assertion per test
+
 ## Example Usage
 
 ```bash

@@ -1,5 +1,4 @@
 ---
-name: models
 description: Configure per-prompt model routing and view cost tracking
 ---
 
