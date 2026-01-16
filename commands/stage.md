@@ -67,7 +67,7 @@ Register at https://www.oneshotship.com
 **You MUST initialize logging for supervisor visibility.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init stage
+~/.oss/hooks/oss-log.sh init stage
 ```
 
 ## Step 3: Fetch IRON LAWS (MANDATORY)

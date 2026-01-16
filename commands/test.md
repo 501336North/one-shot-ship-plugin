@@ -71,7 +71,7 @@ Register at https://www.oneshotship.com
 **You MUST initialize logging for supervisor visibility.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init test
+~/.oss/hooks/oss-log.sh init test
 ```
 
 ## Step 3: Fetch Prompt from API
@@ -89,7 +89,7 @@ Before running tests, detect which frameworks are available:
 
 ```bash
 # Detect Playwright
-PLAYWRIGHT_RESULT=$($CLAUDE_PLUGIN_ROOT/hooks/oss-detect-playwright.sh)
+PLAYWRIGHT_RESULT=$(~/.oss/hooks/oss-detect-playwright.sh)
 HAS_PLAYWRIGHT=$(echo "$PLAYWRIGHT_RESULT" | jq -r '.detected')
 ```
 

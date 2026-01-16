@@ -70,7 +70,7 @@ Register at https://www.oneshotship.com
 **You MUST initialize logging for supervisor visibility.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init requirements
+~/.oss/hooks/oss-log.sh init requirements
 ```
 
 ## Step 3: Update Status Line (Start)
@@ -78,7 +78,7 @@ $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init requirements
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow requirements start '{}'
+~/.oss/hooks/oss-notify.sh --workflow requirements start '{}'
 ```
 
 ## Step 4: Fetch Prompt from API
@@ -104,12 +104,12 @@ The prompt guides you through:
 
 On success (requirements extracted):
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow requirements complete '{"storiesCount": {COUNT}, "criteriaCount": {CRITERIA}}'
+~/.oss/hooks/oss-notify.sh --workflow requirements complete '{"storiesCount": {COUNT}, "criteriaCount": {CRITERIA}}'
 ```
 
 On failure (couldn't extract requirements):
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow requirements failed '{"reason": "{REASON}"}'
+~/.oss/hooks/oss-notify.sh --workflow requirements failed '{"reason": "{REASON}"}'
 ```
 
 ## Error Handling

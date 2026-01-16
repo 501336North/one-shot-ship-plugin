@@ -87,7 +87,7 @@ Headers:
 ## Step 4: Update Status Line (Start)
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow iterate start '{}'
+~/.oss/hooks/oss-notify.sh --workflow iterate start '{}'
 ```
 
 **You MUST update the workflow status before proceeding.**
@@ -115,12 +115,12 @@ The prompt will guide you through:
 
 After iteration plan is complete:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow iterate complete '{"taskCount": {N}, "trigger": "{feature_mismatch|scope_change}"}'
+~/.oss/hooks/oss-notify.sh --workflow iterate complete '{"taskCount": {N}, "trigger": "{feature_mismatch|scope_change}"}'
 ```
 
 If iteration fails:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow iterate failed '{"reason": "{reason}"}'
+~/.oss/hooks/oss-notify.sh --workflow iterate failed '{"reason": "{reason}"}'
 ```
 
 ## Command Chain

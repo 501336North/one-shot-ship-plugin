@@ -77,10 +77,10 @@ Register at https://www.oneshotship.com
 
 ```bash
 # Initialize command log
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init green
+~/.oss/hooks/oss-log.sh init green
 
 # Log TDD phase start (MANDATORY)
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase green GREEN start
+~/.oss/hooks/oss-log.sh phase green GREEN start
 ```
 
 ## Step 3: Update Status Line (Start)
@@ -88,7 +88,7 @@ $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase green GREEN start
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow green start '{}'
+~/.oss/hooks/oss-notify.sh --workflow green start '{}'
 ```
 
 ## Step 4: Fetch and Decrypt Prompt
@@ -114,17 +114,17 @@ The prompt guides you through:
 On success (test passes):
 ```bash
 # Log TDD phase complete (MANDATORY)
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase green GREEN complete
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh test green PASS "{TEST_FILE}"
+~/.oss/hooks/oss-log.sh phase green GREEN complete
+~/.oss/hooks/oss-log.sh test green PASS "{TEST_FILE}"
 
 # Update status line
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow green complete '{"testFile": "{TEST_FILE}", "linesAdded": {LINES}}'
+~/.oss/hooks/oss-notify.sh --workflow green complete '{"testFile": "{TEST_FILE}", "linesAdded": {LINES}}'
 ```
 
 On failure (couldn't make test pass):
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh error green "Failed to pass test: {REASON}"
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow green failed '{"reason": "{REASON}"}'
+~/.oss/hooks/oss-log.sh error green "Failed to pass test: {REASON}"
+~/.oss/hooks/oss-notify.sh --workflow green failed '{"reason": "{REASON}"}'
 ```
 
 ## Error Handling

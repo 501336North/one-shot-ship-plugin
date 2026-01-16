@@ -81,10 +81,10 @@ Register at https://www.oneshotship.com
 
 ```bash
 # Initialize command log
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init red
+~/.oss/hooks/oss-log.sh init red
 
 # Log TDD phase start (MANDATORY)
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase red RED start
+~/.oss/hooks/oss-log.sh phase red RED start
 ```
 
 ## Step 3: Update Status Line (Start)
@@ -92,7 +92,7 @@ $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase red RED start
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow red start '{}'
+~/.oss/hooks/oss-notify.sh --workflow red start '{}'
 ```
 
 ## Step 4: Fetch and Decrypt Prompt
@@ -119,17 +119,17 @@ The prompt guides you through:
 On success (test written and fails as expected):
 ```bash
 # Log TDD phase complete (MANDATORY)
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase red RED complete
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh test red FAIL "{TEST_FILE}: {FAILURE_MSG}"
+~/.oss/hooks/oss-log.sh phase red RED complete
+~/.oss/hooks/oss-log.sh test red FAIL "{TEST_FILE}: {FAILURE_MSG}"
 
 # Update status line
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow red complete '{"testFile": "{TEST_FILE}", "failureMessage": "{FAILURE_MSG}"}'
+~/.oss/hooks/oss-notify.sh --workflow red complete '{"testFile": "{TEST_FILE}", "failureMessage": "{FAILURE_MSG}"}'
 ```
 
 On failure (couldn't write test):
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh error red "Failed to write test: {REASON}"
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow red failed '{"reason": "{REASON}"}'
+~/.oss/hooks/oss-log.sh error red "Failed to write test: {REASON}"
+~/.oss/hooks/oss-notify.sh --workflow red failed '{"reason": "{REASON}"}'
 ```
 
 ## Error Handling

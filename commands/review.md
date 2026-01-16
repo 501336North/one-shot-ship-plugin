@@ -66,7 +66,7 @@ Register at https://www.oneshotship.com
 **You MUST initialize logging for supervisor visibility.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init review
+~/.oss/hooks/oss-log.sh init review
 ```
 
 ## Step 3: Update Status Line (Start)
@@ -74,7 +74,7 @@ $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init review
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow review start '{}'
+~/.oss/hooks/oss-notify.sh --workflow review start '{}'
 ```
 
 ## Step 4: Fetch and Decrypt Prompt
@@ -95,12 +95,12 @@ Execute the code review prompt.
 
 On success:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow review complete '{}'
+~/.oss/hooks/oss-notify.sh --workflow review complete '{}'
 ```
 
 On failure:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow review failed '{"error": "{ERROR_MESSAGE}"}'
+~/.oss/hooks/oss-notify.sh --workflow review failed '{"error": "{ERROR_MESSAGE}"}'
 ```
 
 ## Error Handling

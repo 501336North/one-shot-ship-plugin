@@ -73,7 +73,7 @@ Register at https://www.oneshotship.com
 **You MUST initialize logging for supervisor visibility.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init debug
+~/.oss/hooks/oss-log.sh init debug
 ```
 
 ## Step 3: Fetch IRON LAWS (MANDATORY)
@@ -93,7 +93,7 @@ Headers:
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow debug start '{"bug": "{DESCRIPTION}"}'
+~/.oss/hooks/oss-notify.sh --workflow debug start '{"bug": "{DESCRIPTION}"}'
 ```
 
 ## Step 5: Fetch and Decrypt Prompt
@@ -119,24 +119,24 @@ The prompt guides the debugging workflow:
 
 After root cause found:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow debug milestone '{"phase": "investigate", "causes": {COUNT}}'
+~/.oss/hooks/oss-notify.sh --workflow debug milestone '{"phase": "investigate", "causes": {COUNT}}'
 ```
 
 After reproduction test written:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow debug milestone '{"phase": "reproduce", "test": "{TEST_PATH}", "status": "RED"}'
+~/.oss/hooks/oss-notify.sh --workflow debug milestone '{"phase": "reproduce", "test": "{TEST_PATH}", "status": "RED"}'
 ```
 
 After debug complete:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow debug complete '{"severity": "{SEVERITY}", "tasks": {TASK_COUNT}}'
+~/.oss/hooks/oss-notify.sh --workflow debug complete '{"severity": "{SEVERITY}", "tasks": {TASK_COUNT}}'
 ```
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.
 
 If debug fails:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow debug failed '{"reason": "{ERROR}"}'
+~/.oss/hooks/oss-notify.sh --workflow debug failed '{"reason": "{ERROR}"}'
 ```
 
 ## Command Chain

@@ -73,7 +73,7 @@ Register at https://www.oneshotship.com
 **You MUST initialize logging for supervisor visibility.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init plan
+~/.oss/hooks/oss-log.sh init plan
 ```
 
 ## Step 3: Fetch IRON LAWS (MANDATORY)
@@ -93,7 +93,7 @@ Headers:
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow plan start '{}'
+~/.oss/hooks/oss-notify.sh --workflow plan start '{}'
 ```
 
 ## Step 5: Fetch and Decrypt Prompt
@@ -118,14 +118,14 @@ The prompt guides creation of a TDD plan with:
 
 After plan is complete:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow plan complete '{"taskCount": {TASK_COUNT}, "phases": {PHASE_COUNT}}'
+~/.oss/hooks/oss-notify.sh --workflow plan complete '{"taskCount": {TASK_COUNT}, "phases": {PHASE_COUNT}}'
 ```
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.
 
 If planning fails:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow plan failed '{}'
+~/.oss/hooks/oss-notify.sh --workflow plan failed '{}'
 ```
 
 ## Command Chain (after planning complete)

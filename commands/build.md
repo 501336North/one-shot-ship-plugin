@@ -71,52 +71,52 @@ For EVERY task, you MUST follow this exact sequence with logging:
 ### RED Phase
 1. **Log RED start:**
    ```bash
-   $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase build RED start
+   ~/.oss/hooks/oss-log.sh phase build RED start
    ```
 2. Write the test FIRST
 3. Run the test and confirm it FAILS
 4. Document the failure message
 5. **Log RED complete:**
    ```bash
-   $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase build RED complete
-   $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh test build FAIL "{test_file}: {failure_message}"
+   ~/.oss/hooks/oss-log.sh phase build RED complete
+   ~/.oss/hooks/oss-log.sh test build FAIL "{test_file}: {failure_message}"
    ```
 
 ### GREEN Phase
 1. **Log GREEN start:**
    ```bash
-   $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase build GREEN start
+   ~/.oss/hooks/oss-log.sh phase build GREEN start
    ```
 2. Write MINIMAL code to pass the test
 3. No extra features, no "while I'm here" changes
 4. Run test and confirm it PASSES
 5. **Log GREEN complete:**
    ```bash
-   $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase build GREEN complete
-   $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh test build PASS "{test_file}"
+   ~/.oss/hooks/oss-log.sh phase build GREEN complete
+   ~/.oss/hooks/oss-log.sh test build PASS "{test_file}"
    ```
 
 ### REFACTOR Phase
 1. **Log REFACTOR start:**
    ```bash
-   $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase build REFACTOR start
+   ~/.oss/hooks/oss-log.sh phase build REFACTOR start
    ```
 2. Clean up code while keeping tests green
 3. Remove duplication, improve names
 4. Run tests - they MUST stay passing
 5. **Log REFACTOR complete:**
    ```bash
-   $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase build REFACTOR complete
+   ~/.oss/hooks/oss-log.sh phase build REFACTOR complete
    ```
 
 ### Agent Delegation Logging
 When delegating to specialized agents (Task tool), you MUST log:
 ```bash
 # Before spawning agent
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh agent build {agent_type} "starting: {task_description}"
+~/.oss/hooks/oss-log.sh agent build {agent_type} "starting: {task_description}"
 
 # After agent completes
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh agent build {agent_type} "completed: {result_summary}"
+~/.oss/hooks/oss-log.sh agent build {agent_type} "completed: {result_summary}"
 ```
 
 **CRITICAL**: Do NOT batch multiple TDD cycles into a single agent delegation. Each RED-GREEN-REFACTOR cycle must be logged individually.
@@ -138,7 +138,7 @@ Register at https://www.oneshotship.com
 **You MUST initialize logging for supervisor visibility.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init build
+~/.oss/hooks/oss-log.sh init build
 ```
 
 ## Step 3: Fetch IRON LAWS (MANDATORY)
@@ -156,7 +156,7 @@ Headers:
 ## Step 4: Update Status Line (Start)
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow build start '{"totalTasks": {TASK_COUNT}}'
+~/.oss/hooks/oss-notify.sh --workflow build start '{"totalTasks": {TASK_COUNT}}'
 ```
 
 **You MUST update the workflow status before proceeding.**
@@ -183,19 +183,19 @@ The prompt enforces TDD discipline:
 
 After each task completes:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow build task_complete '{"current": {N}, "total": {TOTAL}, "taskName": "{TASK_NAME}"}'
+~/.oss/hooks/oss-notify.sh --workflow build task_complete '{"current": {N}, "total": {TOTAL}, "taskName": "{TASK_NAME}"}'
 ```
 
 After all tasks complete:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow build complete '{"testsPass": {TEST_COUNT}, "duration": "{DURATION}"}'
+~/.oss/hooks/oss-notify.sh --workflow build complete '{"testsPass": {TEST_COUNT}, "duration": "{DURATION}"}'
 ```
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.
 
 If build fails:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow build failed '{"failedTest": "{TEST_FILE}:{LINE}"}'
+~/.oss/hooks/oss-notify.sh --workflow build failed '{"failedTest": "{TEST_FILE}:{LINE}"}'
 ```
 
 ## Command Chain (per task)

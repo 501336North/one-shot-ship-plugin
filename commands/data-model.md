@@ -78,7 +78,7 @@ Register at https://www.oneshotship.com
 **You MUST initialize logging for supervisor visibility.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init data-model
+~/.oss/hooks/oss-log.sh init data-model
 ```
 
 ## Step 3: Update Status Line (Start)
@@ -86,7 +86,7 @@ $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init data-model
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow data-model start '{}'
+~/.oss/hooks/oss-notify.sh --workflow data-model start '{}'
 ```
 
 ## Step 4: Fetch Prompt from API
@@ -113,12 +113,12 @@ The prompt guides you through:
 
 On success (data model designed):
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow data-model complete '{"entitiesDesigned": {COUNT}, "migrationsCreated": {MIGRATIONS}}'
+~/.oss/hooks/oss-notify.sh --workflow data-model complete '{"entitiesDesigned": {COUNT}, "migrationsCreated": {MIGRATIONS}}'
 ```
 
 On failure (couldn't complete data model):
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow data-model failed '{"reason": "{REASON}"}'
+~/.oss/hooks/oss-notify.sh --workflow data-model failed '{"reason": "{REASON}"}'
 ```
 
 ## Error Handling

@@ -80,7 +80,7 @@ Register at https://www.oneshotship.com
 **You MUST initialize logging for supervisor visibility.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init adr
+~/.oss/hooks/oss-log.sh init adr
 ```
 
 ## Step 3: Update Status Line (Start)
@@ -88,7 +88,7 @@ $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init adr
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow adr start '{}'
+~/.oss/hooks/oss-notify.sh --workflow adr start '{}'
 ```
 
 ## Step 4: Fetch Prompt from API
@@ -115,12 +115,12 @@ The prompt guides you through:
 
 On success (ADR created):
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow adr complete '{"adrNumber": {NUMBER}, "title": "{TITLE}"}'
+~/.oss/hooks/oss-notify.sh --workflow adr complete '{"adrNumber": {NUMBER}, "title": "{TITLE}"}'
 ```
 
 On failure (couldn't create ADR):
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow adr failed '{"reason": "{REASON}"}'
+~/.oss/hooks/oss-notify.sh --workflow adr failed '{"reason": "{REASON}"}'
 ```
 
 ## Error Handling

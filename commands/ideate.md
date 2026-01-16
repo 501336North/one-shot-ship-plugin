@@ -133,7 +133,7 @@ Register at https://www.oneshotship.com
 **You MUST initialize logging for supervisor visibility.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init ideate
+~/.oss/hooks/oss-log.sh init ideate
 ```
 
 ## Step 4: Fetch IRON LAWS (MANDATORY)
@@ -153,7 +153,7 @@ Headers:
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ideate start '{"idea": "{USER_IDEA}"}'
+~/.oss/hooks/oss-notify.sh --workflow ideate start '{"idea": "{USER_IDEA}"}'
 ```
 
 ## Step 5: Fetch and Decrypt Prompt
@@ -174,14 +174,14 @@ Execute the prompt returned by the API to guide the user through ideation.
 
 After ideation is complete:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ideate complete '{"requirementsCount": {COUNT}}'
+~/.oss/hooks/oss-notify.sh --workflow ideate complete '{"requirementsCount": {COUNT}}'
 ```
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.
 
 If ideation fails:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ideate failed '{"reason": "{REASON}"}'
+~/.oss/hooks/oss-notify.sh --workflow ideate failed '{"reason": "{REASON}"}'
 ```
 
 ## Command Chain (after ideation complete)
