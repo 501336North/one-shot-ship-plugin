@@ -74,7 +74,7 @@ Register at https://www.oneshotship.com
 **You MUST initialize logging for supervisor visibility.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init acceptance
+~/.oss/hooks/oss-log.sh init acceptance
 ```
 
 ## Step 3: Update Status Line (Start)
@@ -82,7 +82,7 @@ $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init acceptance
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow acceptance start '{}'
+~/.oss/hooks/oss-notify.sh --workflow acceptance start '{}'
 ```
 
 ## Step 4: Fetch and Decrypt Prompt
@@ -107,12 +107,12 @@ The prompt guides you through:
 
 On success (acceptance test written and fails as expected):
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow acceptance complete '{"testFile": "{TEST_FILE}", "testsWritten": {COUNT}}'
+~/.oss/hooks/oss-notify.sh --workflow acceptance complete '{"testFile": "{TEST_FILE}", "testsWritten": {COUNT}}'
 ```
 
 On failure (couldn't write acceptance test):
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow acceptance failed '{"reason": "{REASON}"}'
+~/.oss/hooks/oss-notify.sh --workflow acceptance failed '{"reason": "{REASON}"}'
 ```
 
 ## Error Handling

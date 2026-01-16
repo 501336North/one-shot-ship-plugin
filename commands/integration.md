@@ -82,7 +82,7 @@ Register at https://www.oneshotship.com
 **You MUST initialize logging for supervisor visibility.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init integration
+~/.oss/hooks/oss-log.sh init integration
 ```
 
 ## Step 3: Update Status Line (Start)
@@ -90,7 +90,7 @@ $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init integration
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow integration start '{}'
+~/.oss/hooks/oss-notify.sh --workflow integration start '{}'
 ```
 
 ## Step 4: Fetch and Decrypt Prompt
@@ -115,12 +115,12 @@ The prompt guides you through:
 
 On success (integration tests pass):
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow integration complete '{"testsPass": {COUNT}, "boundariesTested": "{BOUNDARIES}"}'
+~/.oss/hooks/oss-notify.sh --workflow integration complete '{"testsPass": {COUNT}, "boundariesTested": "{BOUNDARIES}"}'
 ```
 
 On failure (integration tests fail or mock mismatch found):
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow integration failed '{"reason": "{REASON}"}'
+~/.oss/hooks/oss-notify.sh --workflow integration failed '{"reason": "{REASON}"}'
 ```
 
 ## Error Handling

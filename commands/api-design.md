@@ -80,7 +80,7 @@ Register at https://www.oneshotship.com
 **You MUST initialize logging for supervisor visibility.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init api-design
+~/.oss/hooks/oss-log.sh init api-design
 ```
 
 ## Step 3: Update Status Line (Start)
@@ -88,7 +88,7 @@ $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init api-design
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow api-design start '{}'
+~/.oss/hooks/oss-notify.sh --workflow api-design start '{}'
 ```
 
 ## Step 4: Fetch Prompt from API
@@ -115,12 +115,12 @@ The prompt guides you through:
 
 On success (API design complete):
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow api-design complete '{"endpointsDesigned": {COUNT}, "specFile": "{SPEC_FILE}"}'
+~/.oss/hooks/oss-notify.sh --workflow api-design complete '{"endpointsDesigned": {COUNT}, "specFile": "{SPEC_FILE}"}'
 ```
 
 On failure (couldn't complete API design):
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow api-design failed '{"reason": "{REASON}"}'
+~/.oss/hooks/oss-notify.sh --workflow api-design failed '{"reason": "{REASON}"}'
 ```
 
 ## Error Handling

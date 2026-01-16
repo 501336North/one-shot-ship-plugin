@@ -225,7 +225,7 @@ After successful authentication, install tools if not already present:
 3. **Configure Claude Code status line:**
    ```bash
    # Copy status line script
-   cp "$CLAUDE_PLUGIN_ROOT/hooks/oss-statusline.sh" "$HOME/.oss/"
+   cp "~/.oss/hooks/oss-statusline.sh" "$HOME/.oss/"
    chmod +x "$HOME/.oss/oss-statusline.sh"
 
    # Configure Claude Code to use it (user must do this manually via UI or settings)
@@ -347,7 +347,7 @@ Set up the status line script to show TDD phase in Claude Code's terminal:
    ```bash
    STATUSLINE_SCRIPT="${HOME}/.oss/oss-statusline.sh"
    if [ ! -f "$STATUSLINE_SCRIPT" ]; then
-       cp "$CLAUDE_PLUGIN_ROOT/hooks/oss-statusline.sh" "$STATUSLINE_SCRIPT"
+       cp "~/.oss/hooks/oss-statusline.sh" "$STATUSLINE_SCRIPT"
        chmod +x "$STATUSLINE_SCRIPT"
        echo "Created status line script at $STATUSLINE_SCRIPT"
    fi

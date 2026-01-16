@@ -64,7 +64,7 @@ Register at https://www.oneshotship.com
 **You MUST initialize logging for supervisor visibility.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init load
+~/.oss/hooks/oss-log.sh init load
 ```
 
 ## Step 3: Fetch Prompt from API

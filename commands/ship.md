@@ -86,7 +86,7 @@ Register at https://www.oneshotship.com
 **You MUST initialize logging for supervisor visibility.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init ship
+~/.oss/hooks/oss-log.sh init ship
 ```
 
 ## Step 3: Fetch IRON LAWS (MANDATORY)
@@ -106,7 +106,7 @@ Headers:
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ship start '{}'
+~/.oss/hooks/oss-notify.sh --workflow ship start '{}'
 ```
 
 ## Step 5: Fetch and Decrypt Prompt
@@ -263,24 +263,24 @@ With `--merge` flag:
 
 After quality checks pass:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ship quality_passed '{"checks": ["code-review", "performance", "security", "tests", "build"]}'
+~/.oss/hooks/oss-notify.sh --workflow ship quality_passed '{"checks": ["code-review", "performance", "security", "tests", "build"]}'
 ```
 
 After PR is created:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ship pr_created '{"prNumber": {PR_NUM}, "prTitle": "{PR_TITLE}"}'
+~/.oss/hooks/oss-notify.sh --workflow ship pr_created '{"prNumber": {PR_NUM}, "prTitle": "{PR_TITLE}"}'
 ```
 
 After PR is merged (with `--merge` flag):
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ship merged '{"branch": "{BRANCH}", "prNumber": {PR_NUM}}'
+~/.oss/hooks/oss-notify.sh --workflow ship merged '{"branch": "{BRANCH}", "prNumber": {PR_NUM}}'
 ```
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` and `merged` events.
 
 If shipping fails:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow ship failed '{"blocker": "{REASON}"}'
+~/.oss/hooks/oss-notify.sh --workflow ship failed '{"blocker": "{REASON}"}'
 ```
 
 ## Error Handling

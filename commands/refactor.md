@@ -78,10 +78,10 @@ Register at https://www.oneshotship.com
 
 ```bash
 # Initialize command log
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init refactor
+~/.oss/hooks/oss-log.sh init refactor
 
 # Log TDD phase start (MANDATORY)
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase refactor REFACTOR start
+~/.oss/hooks/oss-log.sh phase refactor REFACTOR start
 ```
 
 ## Step 3: Update Status Line (Start)
@@ -89,7 +89,7 @@ $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase refactor REFACTOR start
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow refactor start '{}'
+~/.oss/hooks/oss-notify.sh --workflow refactor start '{}'
 ```
 
 ## Step 4: Fetch and Decrypt Prompt
@@ -115,17 +115,17 @@ The prompt guides you through:
 On success (refactoring complete, tests green):
 ```bash
 # Log TDD phase complete (MANDATORY)
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh phase refactor REFACTOR complete
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh test refactor PASS "all tests still passing"
+~/.oss/hooks/oss-log.sh phase refactor REFACTOR complete
+~/.oss/hooks/oss-log.sh test refactor PASS "all tests still passing"
 
 # Update status line
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow refactor complete '{"improvements": "{IMPROVEMENTS}"}'
+~/.oss/hooks/oss-notify.sh --workflow refactor complete '{"improvements": "{IMPROVEMENTS}"}'
 ```
 
 On failure (tests broke during refactoring):
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh error refactor "Tests broke during refactoring: {REASON}"
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow refactor failed '{"reason": "{REASON}"}'
+~/.oss/hooks/oss-log.sh error refactor "Tests broke during refactoring: {REASON}"
+~/.oss/hooks/oss-notify.sh --workflow refactor failed '{"reason": "{REASON}"}'
 ```
 
 ## Error Handling

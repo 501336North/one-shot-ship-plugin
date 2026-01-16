@@ -80,7 +80,7 @@ Register at https://www.oneshotship.com
 **You MUST initialize logging for supervisor visibility.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init mock
+~/.oss/hooks/oss-log.sh init mock
 ```
 
 ## Step 3: Update Status Line (Start)
@@ -88,7 +88,7 @@ $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init mock
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow mock start '{}'
+~/.oss/hooks/oss-notify.sh --workflow mock start '{}'
 ```
 
 ## Step 4: Fetch Prompt from API
@@ -114,12 +114,12 @@ The prompt guides you through:
 
 On success:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow mock complete '{"mocksCreated": {COUNT}}'
+~/.oss/hooks/oss-notify.sh --workflow mock complete '{"mocksCreated": {COUNT}}'
 ```
 
 On failure:
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow mock failed '{"reason": "{REASON}"}'
+~/.oss/hooks/oss-notify.sh --workflow mock failed '{"reason": "{REASON}"}'
 ```
 
 ## Error Handling

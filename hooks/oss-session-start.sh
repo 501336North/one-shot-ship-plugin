@@ -16,8 +16,31 @@ if [[ -x "$LOG_SCRIPT" ]]; then
     "$LOG_SCRIPT" hook oss-session-start START
 fi
 
-# Update status line script from plugin (ensures latest version)
+# Determine plugin root and persist it for skill/command scripts
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(dirname "$SCRIPT_DIR")}"
+
+# Persist plugin root path for skills/commands that run outside hook context
+# Skills executed by the model don't have CLAUDE_PLUGIN_ROOT set, so they read this file
+echo "$PLUGIN_ROOT" > ~/.oss/plugin-root
+chmod 600 ~/.oss/plugin-root
+
+# Copy frequently-used hooks to ~/.oss/hooks/ for reliable access from skills
+# This ensures skills can find these hooks without relying on CLAUDE_PLUGIN_ROOT
+mkdir -p ~/.oss/hooks
+HOOKS_TO_COPY=(
+    "oss-log.sh"
+    "oss-notify.sh"
+    "oss-statusline.sh"
+    "oss-detect-playwright.sh"
+)
+for hook in "${HOOKS_TO_COPY[@]}"; do
+    if [[ -f "$PLUGIN_ROOT/hooks/$hook" ]]; then
+        cp "$PLUGIN_ROOT/hooks/$hook" ~/.oss/hooks/
+        chmod +x ~/.oss/hooks/$hook
+    fi
+done
+
+# Also copy to legacy location for backwards compatibility
 if [[ -f "$PLUGIN_ROOT/hooks/oss-statusline.sh" ]]; then
     cp "$PLUGIN_ROOT/hooks/oss-statusline.sh" ~/.oss/oss-statusline.sh
     chmod +x ~/.oss/oss-statusline.sh

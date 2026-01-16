@@ -80,7 +80,7 @@ Register at https://www.oneshotship.com
 **You MUST initialize logging for supervisor visibility.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init contract
+~/.oss/hooks/oss-log.sh init contract
 ```
 
 ## Step 3: Update Status Line (Start)
@@ -88,7 +88,7 @@ $CLAUDE_PLUGIN_ROOT/hooks/oss-log.sh init contract
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow contract start '{}'
+~/.oss/hooks/oss-notify.sh --workflow contract start '{}'
 ```
 
 ## Step 4: Fetch Prompt from API
@@ -114,12 +114,12 @@ The prompt guides you through:
 
 On success (contracts verified):
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow contract complete '{"contractsVerified": {COUNT}, "consumers": "{CONSUMERS}"}'
+~/.oss/hooks/oss-notify.sh --workflow contract complete '{"contractsVerified": {COUNT}, "consumers": "{CONSUMERS}"}'
 ```
 
 On failure (contract verification failed):
 ```bash
-$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh --workflow contract failed '{"reason": "{REASON}"}'
+~/.oss/hooks/oss-notify.sh --workflow contract failed '{"reason": "{REASON}"}'
 ```
 
 ## Error Handling
