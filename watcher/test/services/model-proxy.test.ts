@@ -5,11 +5,13 @@
  * @acceptance-criteria AC-PROXY.1 through AC-PROXY.5
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import * as http from 'http';
 
 // These will be implemented
 import { ModelProxy } from '../../src/services/model-proxy.js';
+import type { Handler } from '../../src/services/handler-registry.js';
+import type { AnthropicRequest, AnthropicResponse } from '../../src/services/api-transformer.js';
 
 describe('ModelProxy', () => {
   let proxy: ModelProxy;
@@ -275,6 +277,375 @@ describe('ModelProxy', () => {
       await proxy.shutdown();
 
       expect(proxy.isRunning()).toBe(false);
+    });
+  });
+
+  // ============================================================================
+  // Phase 2: Wire ModelProxy to Handlers
+  // ============================================================================
+
+  describe('Phase 2 - Model String Constructor', () => {
+    /**
+     * @behavior ModelProxy accepts model string format (e.g., "ollama/codellama")
+     * @acceptance-criteria AC-PROXY.6
+     */
+    it('should accept model string (e.g., "ollama/codellama")', () => {
+      proxy = new ModelProxy({
+        model: 'ollama/codellama',
+      });
+
+      expect(proxy).toBeDefined();
+      expect(proxy.getModel()).toBe('codellama');
+    });
+
+    it('should parse provider from model string', () => {
+      proxy = new ModelProxy({
+        model: 'openrouter/anthropic/claude-3-haiku',
+        apiKey: 'test-key',
+      });
+
+      expect(proxy.getProvider()).toBe('openrouter');
+    });
+
+    it('should accept optional apiKey', () => {
+      proxy = new ModelProxy({
+        model: 'openrouter/deepseek/deepseek-chat',
+        apiKey: 'sk-or-test-key',
+      });
+
+      expect(proxy).toBeDefined();
+    });
+
+    it('should accept optional port (default 0 for auto-assign)', () => {
+      proxy = new ModelProxy({
+        model: 'ollama/llama2',
+        port: 3456,
+      });
+
+      expect(proxy).toBeDefined();
+    });
+  });
+
+  describe('Phase 2 - Handler Selection', () => {
+    /**
+     * @behavior ModelProxy selects correct handler based on provider
+     * @acceptance-criteria AC-PROXY.7
+     */
+    it('should select OllamaHandler for ollama/* models', () => {
+      proxy = new ModelProxy({
+        model: 'ollama/codellama',
+      });
+
+      expect(proxy.getHandlerType()).toBe('ollama');
+    });
+
+    it('should select OpenRouterHandler for openrouter/* models', () => {
+      proxy = new ModelProxy({
+        model: 'openrouter/deepseek/deepseek-chat',
+        apiKey: 'test-key',
+      });
+
+      expect(proxy.getHandlerType()).toBe('openrouter');
+    });
+
+    it('should extract model name from model string', () => {
+      // For ollama/codellama, model name is "codellama"
+      proxy = new ModelProxy({
+        model: 'ollama/codellama',
+      });
+      expect(proxy.getModel()).toBe('codellama');
+
+      // For openrouter/anthropic/claude-3-haiku, model name is "anthropic/claude-3-haiku"
+      const proxy2 = new ModelProxy({
+        model: 'openrouter/anthropic/claude-3-haiku',
+        apiKey: 'test-key',
+      });
+      expect(proxy2.getModel()).toBe('anthropic/claude-3-haiku');
+    });
+
+    it('should throw for unsupported provider', () => {
+      expect(() => {
+        new ModelProxy({
+          model: 'unsupported/some-model',
+        });
+      }).toThrow(/unsupported provider/i);
+    });
+  });
+
+  describe('Phase 2 - Request Forwarding', () => {
+    let mockHandler: Handler;
+    let mockResponse: AnthropicResponse;
+
+    beforeEach(() => {
+      mockResponse = {
+        id: 'msg_test123',
+        type: 'message',
+        role: 'assistant',
+        model: 'codellama',
+        content: [{ type: 'text', text: 'Hello from mock handler' }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 10, output_tokens: 5 },
+      };
+
+      mockHandler = {
+        handle: vi.fn().mockResolvedValue(mockResponse),
+      };
+    });
+
+    /**
+     * @behavior ModelProxy parses incoming Anthropic request and forwards to handler
+     * @acceptance-criteria AC-PROXY.8
+     */
+    it('should parse incoming Anthropic request', async () => {
+      proxy = new ModelProxy({
+        model: 'ollama/codellama',
+        _testHandler: mockHandler, // Inject mock handler for testing
+      });
+
+      await proxy.start();
+
+      const response = await makeRequest(proxy.getPort(), '/v1/messages', {
+        model: 'codellama',
+        messages: [{ role: 'user', content: 'Hello' }],
+        max_tokens: 100,
+      });
+
+      expect(response.status).toBe(200);
+      expect(mockHandler.handle).toHaveBeenCalled();
+    });
+
+    it('should forward to handler.handle()', async () => {
+      proxy = new ModelProxy({
+        model: 'ollama/codellama',
+        _testHandler: mockHandler,
+      });
+
+      await proxy.start();
+
+      await makeRequest(proxy.getPort(), '/v1/messages', {
+        model: 'codellama',
+        messages: [{ role: 'user', content: 'Test message' }],
+        max_tokens: 100,
+      });
+
+      expect(mockHandler.handle).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'codellama',
+          messages: [{ role: 'user', content: 'Test message' }],
+          max_tokens: 100,
+        })
+      );
+    });
+
+    it('should return handler response as JSON', async () => {
+      proxy = new ModelProxy({
+        model: 'ollama/codellama',
+        _testHandler: mockHandler,
+      });
+
+      await proxy.start();
+
+      const response = await makeRequest(proxy.getPort(), '/v1/messages', {
+        model: 'codellama',
+        messages: [{ role: 'user', content: 'Hello' }],
+        max_tokens: 100,
+      });
+
+      expect(response.status).toBe(200);
+      const body = response.body as AnthropicResponse;
+      expect(body.id).toBe('msg_test123');
+      expect(body.content[0]).toEqual({ type: 'text', text: 'Hello from mock handler' });
+    });
+
+    it('should handle handler errors gracefully', async () => {
+      const errorHandler: Handler = {
+        handle: vi.fn().mockRejectedValue(new Error('Handler failed')),
+      };
+
+      proxy = new ModelProxy({
+        model: 'ollama/codellama',
+        _testHandler: errorHandler,
+      });
+
+      await proxy.start();
+
+      const response = await makeRequest(proxy.getPort(), '/v1/messages', {
+        model: 'codellama',
+        messages: [{ role: 'user', content: 'Hello' }],
+        max_tokens: 100,
+      });
+
+      expect(response.status).toBe(500);
+      expect(response.body).toEqual(expect.objectContaining({
+        error: expect.stringContaining('Handler failed'),
+      }));
+    });
+
+    it('should set correct Content-Type header', async () => {
+      proxy = new ModelProxy({
+        model: 'ollama/codellama',
+        _testHandler: mockHandler,
+      });
+
+      await proxy.start();
+
+      // Using raw http request to check headers
+      const response = await new Promise<http.IncomingMessage>((resolve, reject) => {
+        const data = JSON.stringify({
+          model: 'codellama',
+          messages: [{ role: 'user', content: 'Hello' }],
+          max_tokens: 100,
+        });
+
+        const req = http.request(
+          {
+            hostname: '127.0.0.1',
+            port: proxy.getPort(),
+            path: '/v1/messages',
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(data),
+            },
+          },
+          resolve
+        );
+
+        req.on('error', reject);
+        req.write(data);
+        req.end();
+      });
+
+      expect(response.headers['content-type']).toBe('application/json');
+    });
+
+    it('should return 500 on handler failure', async () => {
+      const errorHandler: Handler = {
+        handle: vi.fn().mockRejectedValue(new Error('Connection refused')),
+      };
+
+      proxy = new ModelProxy({
+        model: 'ollama/codellama',
+        _testHandler: errorHandler,
+      });
+
+      await proxy.start();
+
+      const response = await makeRequest(proxy.getPort(), '/v1/messages', {
+        model: 'codellama',
+        messages: [{ role: 'user', content: 'Hello' }],
+        max_tokens: 100,
+      });
+
+      expect(response.status).toBe(500);
+    });
+  });
+
+  describe('Phase 2 - Health Check Endpoint', () => {
+    let mockHandler: Handler & { checkHealth?: () => Promise<boolean> };
+
+    beforeEach(() => {
+      mockHandler = {
+        handle: vi.fn().mockResolvedValue({}),
+        checkHealth: vi.fn().mockResolvedValue(true),
+      };
+    });
+
+    /**
+     * @behavior ModelProxy provides /health endpoint for monitoring
+     * @acceptance-criteria AC-PROXY.9
+     */
+    it('should respond to GET /health', async () => {
+      proxy = new ModelProxy({
+        model: 'ollama/codellama',
+        _testHandler: mockHandler,
+      });
+
+      await proxy.start();
+
+      const response = await makeRequest(proxy.getPort(), '/health', {}, 'GET');
+
+      expect(response.status).toBeDefined();
+    });
+
+    it('should return 200 when proxy is running', async () => {
+      proxy = new ModelProxy({
+        model: 'ollama/codellama',
+        _testHandler: mockHandler,
+      });
+
+      await proxy.start();
+
+      const response = await makeRequest(proxy.getPort(), '/health', {}, 'GET');
+
+      expect(response.status).toBe(200);
+    });
+
+    it('should include provider in health response', async () => {
+      proxy = new ModelProxy({
+        model: 'ollama/codellama',
+        _testHandler: mockHandler,
+      });
+
+      await proxy.start();
+
+      const response = await makeRequest(proxy.getPort(), '/health', {}, 'GET');
+
+      expect(response.body).toEqual(expect.objectContaining({
+        provider: 'ollama',
+      }));
+    });
+
+    it('should include model in health response', async () => {
+      proxy = new ModelProxy({
+        model: 'ollama/codellama',
+        _testHandler: mockHandler,
+      });
+
+      await proxy.start();
+
+      const response = await makeRequest(proxy.getPort(), '/health', {}, 'GET');
+
+      expect(response.body).toEqual(expect.objectContaining({
+        model: 'codellama',
+      }));
+    });
+
+    it('should check handler connectivity (Ollama)', async () => {
+      proxy = new ModelProxy({
+        model: 'ollama/codellama',
+        _testHandler: mockHandler,
+      });
+
+      await proxy.start();
+
+      const response = await makeRequest(proxy.getPort(), '/health', {}, 'GET');
+
+      expect(mockHandler.checkHealth).toHaveBeenCalled();
+      expect(response.body).toEqual(expect.objectContaining({
+        healthy: true,
+      }));
+    });
+
+    it('should return 503 if handler unhealthy', async () => {
+      const unhealthyHandler: Handler & { checkHealth?: () => Promise<boolean> } = {
+        handle: vi.fn().mockResolvedValue({}),
+        checkHealth: vi.fn().mockResolvedValue(false),
+      };
+
+      proxy = new ModelProxy({
+        model: 'ollama/codellama',
+        _testHandler: unhealthyHandler,
+      });
+
+      await proxy.start();
+
+      const response = await makeRequest(proxy.getPort(), '/health', {}, 'GET');
+
+      expect(response.status).toBe(503);
+      expect(response.body).toEqual(expect.objectContaining({
+        healthy: false,
+      }));
     });
   });
 });
