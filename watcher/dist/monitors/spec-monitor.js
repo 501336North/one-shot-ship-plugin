@@ -11,6 +11,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { findMatchingFile, findExtraFiles } from '../services/spec-reconciler/file-matcher.js';
 import { parseSpecFile } from '../services/spec-reconciler/parser.js';
+/** Maximum number of processed signatures to retain */
+const MAX_PROCESSED_SIGNATURES = 1000;
 /**
  * SpecMonitor - Monitors spec files for drift detection
  */
@@ -60,6 +62,32 @@ export class SpecMonitor {
         this.specCache.clear();
         this.lastScanTime = 0;
         this.processedSignatures.clear();
+    }
+    /**
+     * Add a processed signature and manage memory bounds.
+     * Clears oldest half when exceeding MAX_PROCESSED_SIGNATURES.
+     *
+     * @param signature - The signature to add
+     */
+    async addProcessedSignature(signature) {
+        this.processedSignatures.add(signature);
+        // Check if we need to clear oldest half
+        if (this.processedSignatures.size > MAX_PROCESSED_SIGNATURES) {
+            const entries = Array.from(this.processedSignatures);
+            const halfIndex = Math.floor(entries.length / 2);
+            const toRemove = entries.slice(0, halfIndex);
+            for (const sig of toRemove) {
+                this.processedSignatures.delete(sig);
+            }
+        }
+    }
+    /**
+     * Get the count of processed signatures.
+     *
+     * @returns The number of processed signatures
+     */
+    getProcessedSignaturesCount() {
+        return this.processedSignatures.size;
     }
     /**
      * Detect structural drift between spec components and implementation files.
@@ -185,17 +213,24 @@ export class SpecMonitor {
     }
     /**
      * Get metrics for a feature including coverage across all sections.
+     * Uses specCache first before parsing the file.
      *
      * @param feature - The feature name
      * @returns Feature metrics including coverage and drift count
      */
     async getFeatureMetrics(feature) {
         const specPath = this.getSpecPath(feature);
-        // Read and parse the spec file
+        // Check cache first
         let spec;
-        if (fs.existsSync(specPath)) {
+        if (this.specCache.has(feature)) {
+            spec = this.specCache.get(feature);
+        }
+        else if (fs.existsSync(specPath)) {
+            // Read and parse the spec file
             const content = await fs.promises.readFile(specPath, 'utf-8');
             spec = parseSpecFile(content, feature);
+            // Cache the parsed spec
+            this.specCache.set(feature, spec);
         }
         else {
             // Return empty metrics if no spec file exists

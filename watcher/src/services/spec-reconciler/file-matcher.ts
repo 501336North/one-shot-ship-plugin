@@ -13,6 +13,35 @@ import * as path from 'path';
 import { SpecItem } from './types.js';
 
 /**
+ * Interface for file list cache to avoid repeated directory traversals.
+ */
+export interface FileListCache {
+  getFiles(searchPath: string): Promise<string[]>;
+}
+
+/**
+ * Creates a file list cache for a reconciliation cycle.
+ * Caches file listings per search path to avoid repeated directory traversals.
+ *
+ * @returns A cache object with getFiles method
+ */
+export function createFileListCache(): FileListCache {
+  const cache = new Map<string, string[]>();
+
+  return {
+    async getFiles(searchPath: string): Promise<string[]> {
+      if (cache.has(searchPath)) {
+        return cache.get(searchPath)!;
+      }
+
+      const files = await findAllFiles(searchPath);
+      cache.set(searchPath, files);
+      return files;
+    },
+  };
+}
+
+/**
  * File extensions to search for (in order of preference).
  */
 const FILE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx'];
@@ -101,12 +130,16 @@ function shouldIgnorePath(filePath: string): boolean {
 
 /**
  * Recursively find all files in a directory.
+ * Uses parallel traversal for sibling directories.
  */
 async function findAllFiles(dir: string): Promise<string[]> {
   const files: string[] = [];
 
   try {
     const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+
+    // Separate files and directories
+    const directoryPromises: Promise<string[]>[] = [];
 
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
@@ -116,13 +149,21 @@ async function findAllFiles(dir: string): Promise<string[]> {
       }
 
       if (entry.isDirectory()) {
-        const subFiles = await findAllFiles(fullPath);
-        files.push(...subFiles);
+        // Queue directory traversal for parallel execution
+        directoryPromises.push(findAllFiles(fullPath));
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name);
         if (FILE_EXTENSIONS.includes(ext)) {
           files.push(fullPath);
         }
+      }
+    }
+
+    // Traverse all subdirectories in parallel
+    if (directoryPromises.length > 0) {
+      const subFileArrays = await Promise.all(directoryPromises);
+      for (const subFiles of subFileArrays) {
+        files.push(...subFiles);
       }
     }
   } catch {
@@ -137,14 +178,19 @@ async function findAllFiles(dir: string): Promise<string[]> {
  *
  * @param componentName - The component name to search for
  * @param searchPaths - Directories to search in
+ * @param cache - Optional file list cache for performance optimization
  * @returns The matching file path or null if not found
  */
-export async function findMatchingFile(componentName: string, searchPaths: string[]): Promise<string | null> {
+export async function findMatchingFile(
+  componentName: string,
+  searchPaths: string[],
+  cache?: FileListCache
+): Promise<string | null> {
   const nameVariations = normalizeComponentName(componentName);
   const foundFiles: Map<string, string> = new Map(); // basename -> fullPath
 
   for (const searchPath of searchPaths) {
-    const files = await findAllFiles(searchPath);
+    const files = cache ? await cache.getFiles(searchPath) : await findAllFiles(searchPath);
 
     for (const file of files) {
       if (shouldIgnorePath(file)) {
@@ -189,9 +235,14 @@ export async function findMatchingFile(componentName: string, searchPaths: strin
  *
  * @param specComponents - The components listed in the spec
  * @param searchPaths - Directories to search in
+ * @param cache - Optional file list cache for performance optimization
  * @returns Array of file paths not matching any spec component
  */
-export async function findExtraFiles(specComponents: SpecItem[], searchPaths: string[]): Promise<string[]> {
+export async function findExtraFiles(
+  specComponents: SpecItem[],
+  searchPaths: string[],
+  cache?: FileListCache
+): Promise<string[]> {
   const extras: string[] = [];
 
   // Get all name variations for spec components
@@ -204,7 +255,7 @@ export async function findExtraFiles(specComponents: SpecItem[], searchPaths: st
   }
 
   for (const searchPath of searchPaths) {
-    const files = await findAllFiles(searchPath);
+    const files = cache ? await cache.getFiles(searchPath) : await findAllFiles(searchPath);
 
     for (const file of files) {
       if (shouldIgnorePath(file)) {

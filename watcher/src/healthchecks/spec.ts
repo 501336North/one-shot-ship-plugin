@@ -102,27 +102,41 @@ export async function checkSpec(options: SpecHealthcheckOptions): Promise<CheckR
     };
   }
 
-  // Collect metrics for all features
+  // Collect metrics for all features in parallel
+  const results = await Promise.all(
+    activeFeatures.map(async (feature) => {
+      try {
+        const metrics = await specMonitor.getFeatureMetrics(feature);
+        const status = evaluateFeatureStatus(metrics);
+        return { feature, status, metrics, error: null as string | null };
+      } catch (error) {
+        return { feature, status: 'fail' as const, metrics: null as FeatureMetrics | null, error: (error as Error).message };
+      }
+    })
+  );
+
+  // Separate successful and failed results
   const featureStatuses: Array<{ feature: string; status: 'pass' | 'warn' | 'fail'; metrics: FeatureMetrics }> = [];
   const errors: string[] = [];
+  const errorFeatures: string[] = [];
 
-  for (const feature of activeFeatures) {
-    try {
-      const metrics = await specMonitor.getFeatureMetrics(feature);
-      const status = evaluateFeatureStatus(metrics);
-      featureStatuses.push({ feature, status, metrics });
-    } catch (error) {
-      errors.push(`${feature}: ${(error as Error).message}`);
+  for (const result of results) {
+    if (result.error) {
+      errors.push(`${result.feature}: ${result.error}`);
+      errorFeatures.push(result.feature);
+    } else if (result.metrics) {
+      featureStatuses.push({ feature: result.feature, status: result.status, metrics: result.metrics });
     }
   }
 
-  // If we had errors, fail
+  // If we had errors, fail (but still include all feature info)
   if (errors.length > 0) {
     return {
       status: 'fail',
       message: `Spec healthcheck error: ${errors.join(', ')}`,
       details: {
         errors,
+        failingFeatures: errorFeatures,
       },
     };
   }

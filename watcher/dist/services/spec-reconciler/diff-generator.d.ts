@@ -26,6 +26,23 @@ export declare function isFileInFeatureScope(filePath: string, _featureName: str
  */
 export declare function getRelatedFeature(filePath: string, activeFeatures: string[]): Promise<string | null>;
 /**
+ * Generates a unique key for a drift result.
+ * Used for O(n+m) set operations.
+ *
+ * @param drift - The drift result to generate a key for
+ * @returns A unique string key for the drift
+ */
+export declare function driftKey(drift: DriftResult): string;
+/**
+ * Find drifts that exist in the 'before' list but not the 'after' list.
+ * Uses O(n+m) algorithm with Set for efficient lookup.
+ *
+ * @param before - Array of drift results before the change
+ * @param after - Array of drift results after the change
+ * @returns Array of drifts that were resolved (in before but not in after)
+ */
+export declare function findDriftDifference(before: DriftResult[], after: DriftResult[]): DriftResult[];
+/**
  * Extended metrics type that includes drift details.
  */
 interface MetricsWithDrifts extends FeatureMetrics {

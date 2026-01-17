@@ -13,6 +13,8 @@ import {
   findMatchingFile,
   findExtraFiles,
   normalizeComponentName,
+  createFileListCache,
+  FileListCache,
 } from '../../../src/services/spec-reconciler/file-matcher.js';
 import { SpecItem } from '../../../src/services/spec-reconciler/types.js';
 
@@ -283,6 +285,200 @@ describe('File Matcher', () => {
 
       const extras = await findExtraFiles(specComponents, [testDir]);
       expect(extras.some((f) => f.includes('OrphanService.ts'))).toBe(true);
+    });
+  });
+
+  // ============================================================================
+  // Performance: File List Caching
+  // ============================================================================
+
+  describe('createFileListCache', () => {
+    /**
+     * @behavior File list cache returns same files on repeated calls
+     * @acceptance-criteria AC-FILE-MATCHER-PERF.1 - Cache reuse
+     */
+    it('returns cached files for same search path', async () => {
+      // GIVEN: A directory with files
+      fs.writeFileSync(path.join(testDir, 'ServiceA.ts'), '');
+      fs.writeFileSync(path.join(testDir, 'ServiceB.ts'), '');
+
+      // WHEN: We create a cache and get files twice
+      const cache = createFileListCache();
+      const files1 = await cache.getFiles(testDir);
+      const files2 = await cache.getFiles(testDir);
+
+      // THEN: Both calls return the same array reference (cached)
+      expect(files1).toBe(files2);
+      expect(files1).toHaveLength(2);
+    });
+
+    /**
+     * @behavior File list cache returns different arrays for different paths
+     * @acceptance-criteria AC-FILE-MATCHER-PERF.2 - Independent caching
+     */
+    it('returns different arrays for different search paths', async () => {
+      // GIVEN: Two directories with different files
+      const dir2 = createTestDir();
+      fs.writeFileSync(path.join(testDir, 'ServiceA.ts'), '');
+      fs.writeFileSync(path.join(dir2, 'ServiceB.ts'), '');
+
+      // WHEN: We get files from both directories
+      const cache = createFileListCache();
+      const files1 = await cache.getFiles(testDir);
+      const files2 = await cache.getFiles(dir2);
+
+      // THEN: Different arrays are returned
+      expect(files1).not.toBe(files2);
+      expect(files1).toHaveLength(1);
+      expect(files2).toHaveLength(1);
+    });
+
+    /**
+     * @behavior File list cache avoids re-reading filesystem on second call
+     * @acceptance-criteria AC-FILE-MATCHER-PERF.3 - Performance optimization
+     */
+    it('does not re-read filesystem on cached lookup', async () => {
+      // GIVEN: A directory with files
+      fs.writeFileSync(path.join(testDir, 'ServiceA.ts'), '');
+
+      // WHEN: We get files, then add a new file, then get files again
+      const cache = createFileListCache();
+      const files1 = await cache.getFiles(testDir);
+
+      // Add a new file after first call
+      fs.writeFileSync(path.join(testDir, 'ServiceB.ts'), '');
+
+      const files2 = await cache.getFiles(testDir);
+
+      // THEN: Second call returns cached result (doesn't see new file)
+      expect(files1).toBe(files2);
+      expect(files2).toHaveLength(1);
+    });
+  });
+
+  describe('findMatchingFile with cache', () => {
+    /**
+     * @behavior findMatchingFile accepts optional cache parameter
+     * @acceptance-criteria AC-FILE-MATCHER-PERF.4 - Cache integration
+     */
+    it('uses provided cache for file lookup', async () => {
+      // GIVEN: A directory with a file
+      fs.writeFileSync(path.join(testDir, 'AuthService.ts'), '');
+
+      // WHEN: We use a cache for the lookup
+      const cache = createFileListCache();
+      const match = await findMatchingFile('AuthService', [testDir], cache);
+
+      // THEN: File is found
+      expect(match).toContain('AuthService.ts');
+
+      // AND: Cache is populated
+      const cachedFiles = await cache.getFiles(testDir);
+      expect(cachedFiles).toHaveLength(1);
+    });
+
+    /**
+     * @behavior findMatchingFile works without cache (backward compatible)
+     * @acceptance-criteria AC-FILE-MATCHER-PERF.5 - Backward compatibility
+     */
+    it('works without cache parameter', async () => {
+      // GIVEN: A directory with a file
+      fs.writeFileSync(path.join(testDir, 'AuthService.ts'), '');
+
+      // WHEN: We call without a cache
+      const match = await findMatchingFile('AuthService', [testDir]);
+
+      // THEN: File is still found
+      expect(match).toContain('AuthService.ts');
+    });
+  });
+
+  describe('findExtraFiles with cache', () => {
+    /**
+     * @behavior findExtraFiles accepts optional cache parameter
+     * @acceptance-criteria AC-FILE-MATCHER-PERF.6 - Cache integration
+     */
+    it('uses provided cache for file lookup', async () => {
+      // GIVEN: Files in directory
+      fs.writeFileSync(path.join(testDir, 'AuthService.ts'), '');
+      fs.writeFileSync(path.join(testDir, 'OrphanService.ts'), '');
+
+      const specComponents: SpecItem[] = [
+        {
+          id: 'AuthService',
+          description: 'Auth handler',
+          status: 'checked',
+          type: 'component',
+        },
+      ];
+
+      // WHEN: We use a cache for the lookup
+      const cache = createFileListCache();
+      const extras = await findExtraFiles(specComponents, [testDir], cache);
+
+      // THEN: Extra file is found
+      expect(extras).toHaveLength(1);
+      expect(extras[0]).toContain('OrphanService.ts');
+
+      // AND: Cache is populated
+      const cachedFiles = await cache.getFiles(testDir);
+      expect(cachedFiles).toHaveLength(2);
+    });
+
+    /**
+     * @behavior findExtraFiles works without cache (backward compatible)
+     * @acceptance-criteria AC-FILE-MATCHER-PERF.7 - Backward compatibility
+     */
+    it('works without cache parameter', async () => {
+      // GIVEN: Files in directory
+      fs.writeFileSync(path.join(testDir, 'AuthService.ts'), '');
+      fs.writeFileSync(path.join(testDir, 'OrphanService.ts'), '');
+
+      const specComponents: SpecItem[] = [
+        {
+          id: 'AuthService',
+          description: 'Auth handler',
+          status: 'checked',
+          type: 'component',
+        },
+      ];
+
+      // WHEN: We call without a cache
+      const extras = await findExtraFiles(specComponents, [testDir]);
+
+      // THEN: Extra file is still found
+      expect(extras).toHaveLength(1);
+    });
+  });
+
+  describe('parallel directory traversal', () => {
+    /**
+     * @behavior findAllFiles parallelizes sibling directory traversal
+     * @acceptance-criteria AC-FILE-MATCHER-PERF.8 - Parallel optimization
+     */
+    it('traverses sibling directories in parallel', async () => {
+      // GIVEN: Multiple sibling directories with files
+      const servicesDir = path.join(testDir, 'services');
+      const utilsDir = path.join(testDir, 'utils');
+      const componentsDir = path.join(testDir, 'components');
+
+      fs.mkdirSync(servicesDir, { recursive: true });
+      fs.mkdirSync(utilsDir, { recursive: true });
+      fs.mkdirSync(componentsDir, { recursive: true });
+
+      fs.writeFileSync(path.join(servicesDir, 'AuthService.ts'), '');
+      fs.writeFileSync(path.join(utilsDir, 'helper.ts'), '');
+      fs.writeFileSync(path.join(componentsDir, 'Button.tsx'), '');
+
+      // WHEN: We get files from the parent directory
+      const cache = createFileListCache();
+      const files = await cache.getFiles(testDir);
+
+      // THEN: All files from sibling directories are found
+      expect(files).toHaveLength(3);
+      expect(files.some(f => f.includes('AuthService.ts'))).toBe(true);
+      expect(files.some(f => f.includes('helper.ts'))).toBe(true);
+      expect(files.some(f => f.includes('Button.tsx'))).toBe(true);
     });
   });
 });

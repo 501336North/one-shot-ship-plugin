@@ -754,4 +754,134 @@ describe('SpecMetricsService', () => {
       expect(saved.reconciliations.find((e) => e.feature === 'feature-0')).toBeUndefined();
     });
   });
+
+  // ============================================================================
+  // Performance: Metrics Caching
+  // ============================================================================
+
+  describe('metrics caching', () => {
+    /**
+     * @behavior loadMetrics returns cached value if available
+     * @acceptance-criteria AC-METRICS-PERF.1 - Cache on read
+     */
+    it('returns cached metrics on second load', async () => {
+      // GIVEN: A metrics file exists
+      const existingMetrics: SpecMetricsFile = {
+        version: '1.0',
+        updated_at: '2025-01-15T10:00:00.000Z',
+        features: {
+          'cached-feature': {
+            spec_path: '.oss/dev/active/cached-feature/SPEC.md',
+            coverage: {
+              components: { total: 5, implemented: 3, ratio: 0.6 },
+              criteria: { total: 10, implemented: 8, ratio: 0.8 },
+              behaviors: { total: 4, implemented: 4, ratio: 1.0 },
+            },
+            drift: {
+              current_count: 2,
+              types: [],
+            },
+            history: [],
+          },
+        },
+        reconciliations: [],
+        velocity: {
+          weekly_drift_avg: 0,
+          weekly_reconciliations: 0,
+          trend: 'stable',
+        },
+      };
+
+      const metricsPath = path.join(testDir, '.oss', 'spec-metrics.json');
+      fs.writeFileSync(metricsPath, JSON.stringify(existingMetrics, null, 2));
+
+      // WHEN: We load metrics twice
+      const result1 = await service.loadMetrics();
+
+      // Modify file after first load
+      existingMetrics.features['cached-feature'].drift.current_count = 999;
+      fs.writeFileSync(metricsPath, JSON.stringify(existingMetrics, null, 2));
+
+      const result2 = await service.loadMetrics();
+
+      // THEN: Second call returns cached value (doesn't see file change)
+      expect(result1.features['cached-feature'].drift.current_count).toBe(2);
+      expect(result2.features['cached-feature'].drift.current_count).toBe(2);
+    });
+
+    /**
+     * @behavior saveMetrics updates the cache
+     * @acceptance-criteria AC-METRICS-PERF.2 - Cache on write
+     */
+    it('updates cache when saving metrics', async () => {
+      // GIVEN: Initial metrics
+      const initial: SpecMetricsFile = {
+        version: '1.0',
+        updated_at: '2025-01-15T10:00:00.000Z',
+        features: {},
+        reconciliations: [],
+        velocity: {
+          weekly_drift_avg: 0,
+          weekly_reconciliations: 0,
+          trend: 'stable',
+        },
+      };
+
+      // WHEN: We save and then load
+      await service.saveMetrics(initial);
+
+      // Externally modify the file
+      const metricsPath = path.join(testDir, '.oss', 'spec-metrics.json');
+      const modified: SpecMetricsFile = {
+        ...initial,
+        version: '2.0', // Changed version
+      };
+      fs.writeFileSync(metricsPath, JSON.stringify(modified, null, 2));
+
+      // Load should return cached version (1.0), not the file version (2.0)
+      const loaded = await service.loadMetrics();
+
+      // THEN: Cached value is returned
+      expect(loaded.version).toBe('1.0');
+    });
+
+    /**
+     * @behavior invalidateCache forces reload from disk
+     * @acceptance-criteria AC-METRICS-PERF.3 - Cache invalidation
+     */
+    it('invalidateCache forces reload from disk', async () => {
+      // GIVEN: Cached metrics
+      const initial: SpecMetricsFile = {
+        version: '1.0',
+        updated_at: '2025-01-15T10:00:00.000Z',
+        features: {},
+        reconciliations: [],
+        velocity: {
+          weekly_drift_avg: 0,
+          weekly_reconciliations: 0,
+          trend: 'stable',
+        },
+      };
+
+      const metricsPath = path.join(testDir, '.oss', 'spec-metrics.json');
+      fs.writeFileSync(metricsPath, JSON.stringify(initial, null, 2));
+
+      // Load to populate cache
+      await service.loadMetrics();
+
+      // Externally modify the file
+      const modified: SpecMetricsFile = {
+        ...initial,
+        version: '2.0',
+      };
+      fs.writeFileSync(metricsPath, JSON.stringify(modified, null, 2));
+
+      // WHEN: We invalidate cache and reload
+      service.invalidateCache();
+      const loaded = await service.loadMetrics();
+
+      // THEN: Fresh data from disk is returned
+      expect(loaded.version).toBe('2.0');
+    });
+  });
 });

@@ -625,4 +625,134 @@ describe('SpecMonitor', () => {
       );
     });
   });
+
+  // ============================================================================
+  // Performance: processedSignatures Bounding
+  // ============================================================================
+
+  describe('processedSignatures bounding', () => {
+    /**
+     * @behavior Bounds processedSignatures to MAX_PROCESSED_SIGNATURES
+     * @acceptance-criteria AC-SPEC-MONITOR-PERF.1 - Memory management
+     */
+    it('clears oldest half when exceeding MAX_PROCESSED_SIGNATURES', async () => {
+      const monitor = new SpecMonitor(mockQueueManager as QueueManager, {
+        basePath: testDir,
+      });
+
+      // Add many signatures to exceed the limit (1000)
+      for (let i = 0; i < 1005; i++) {
+        await monitor.addProcessedSignature(`signature-${i}`);
+      }
+
+      // After exceeding limit, should have ~500 entries (cleared oldest half)
+      const count = monitor.getProcessedSignaturesCount();
+      expect(count).toBeLessThanOrEqual(505); // 1005 - 500 = 505
+      expect(count).toBeGreaterThan(0);
+    });
+
+    /**
+     * @behavior Does not clear signatures when under limit
+     * @acceptance-criteria AC-SPEC-MONITOR-PERF.2 - Normal operation
+     */
+    it('does not clear signatures when under limit', async () => {
+      const monitor = new SpecMonitor(mockQueueManager as QueueManager, {
+        basePath: testDir,
+      });
+
+      // Add signatures under the limit
+      for (let i = 0; i < 100; i++) {
+        await monitor.addProcessedSignature(`signature-${i}`);
+      }
+
+      // Should have all 100 signatures
+      const count = monitor.getProcessedSignaturesCount();
+      expect(count).toBe(100);
+    });
+  });
+
+  // ============================================================================
+  // Performance: specCache Usage in getFeatureMetrics
+  // ============================================================================
+
+  describe('specCache usage', () => {
+    /**
+     * @behavior Uses specCache before parsing file
+     * @acceptance-criteria AC-SPEC-MONITOR-PERF.3 - Cache first lookup
+     */
+    it('uses cached spec when available', async () => {
+      // Create feature directory with DESIGN.md
+      const featureDir = path.join(testDir, '.oss', 'dev', 'active', 'cached-feature');
+      fs.mkdirSync(featureDir, { recursive: true });
+
+      const specContent = `
+# Feature: Cached Feature
+
+<!-- spec:components -->
+- [x] ServiceA - First service
+- [ ] ServiceB - Second service
+<!-- /spec:components -->
+
+<!-- spec:criteria -->
+- [x] SC-001: First criterion
+<!-- /spec:criteria -->
+
+<!-- spec:behaviors -->
+- [x] Behavior one
+<!-- /spec:behaviors -->
+`;
+      fs.writeFileSync(path.join(featureDir, 'DESIGN.md'), specContent);
+
+      const monitor = new SpecMonitor(mockQueueManager as QueueManager, {
+        basePath: testDir,
+      });
+
+      // First call parses and caches
+      const metrics1 = await monitor.getFeatureMetrics('cached-feature');
+
+      // Modify the file after first call
+      fs.writeFileSync(path.join(featureDir, 'DESIGN.md'), specContent + '\n- [x] Extra item');
+
+      // Second call should use cache (same result)
+      const metrics2 = await monitor.getFeatureMetrics('cached-feature');
+
+      // Coverage should be the same (cached)
+      expect(metrics1.coverage.components.total).toBe(metrics2.coverage.components.total);
+    });
+
+    /**
+     * @behavior Parses file when not in cache
+     * @acceptance-criteria AC-SPEC-MONITOR-PERF.4 - Cache miss handling
+     */
+    it('parses file when not in cache', async () => {
+      // Create feature directory with DESIGN.md
+      const featureDir = path.join(testDir, '.oss', 'dev', 'active', 'new-feature');
+      fs.mkdirSync(featureDir, { recursive: true });
+
+      const specContent = `
+# Feature: New Feature
+
+<!-- spec:components -->
+- [x] NewService - New service
+<!-- /spec:components -->
+
+<!-- spec:criteria -->
+<!-- /spec:criteria -->
+
+<!-- spec:behaviors -->
+<!-- /spec:behaviors -->
+`;
+      fs.writeFileSync(path.join(featureDir, 'DESIGN.md'), specContent);
+
+      const monitor = new SpecMonitor(mockQueueManager as QueueManager, {
+        basePath: testDir,
+      });
+
+      // First call should parse the file
+      const metrics = await monitor.getFeatureMetrics('new-feature');
+
+      expect(metrics.coverage.components.total).toBe(1);
+      expect(metrics.coverage.components.implemented).toBe(1);
+    });
+  });
 });

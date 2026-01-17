@@ -69,26 +69,38 @@ export async function checkSpec(options) {
             },
         };
     }
-    // Collect metrics for all features
-    const featureStatuses = [];
-    const errors = [];
-    for (const feature of activeFeatures) {
+    // Collect metrics for all features in parallel
+    const results = await Promise.all(activeFeatures.map(async (feature) => {
         try {
             const metrics = await specMonitor.getFeatureMetrics(feature);
             const status = evaluateFeatureStatus(metrics);
-            featureStatuses.push({ feature, status, metrics });
+            return { feature, status, metrics, error: null };
         }
         catch (error) {
-            errors.push(`${feature}: ${error.message}`);
+            return { feature, status: 'fail', metrics: null, error: error.message };
+        }
+    }));
+    // Separate successful and failed results
+    const featureStatuses = [];
+    const errors = [];
+    const errorFeatures = [];
+    for (const result of results) {
+        if (result.error) {
+            errors.push(`${result.feature}: ${result.error}`);
+            errorFeatures.push(result.feature);
+        }
+        else if (result.metrics) {
+            featureStatuses.push({ feature: result.feature, status: result.status, metrics: result.metrics });
         }
     }
-    // If we had errors, fail
+    // If we had errors, fail (but still include all feature info)
     if (errors.length > 0) {
         return {
             status: 'fail',
             message: `Spec healthcheck error: ${errors.join(', ')}`,
             details: {
                 errors,
+                failingFeatures: errorFeatures,
             },
         };
     }

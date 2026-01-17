@@ -49,6 +49,7 @@ function createDefaultMetrics(): SpecMetricsFile {
  */
 export class SpecMetricsService {
   private readonly metricsPath: string;
+  private cachedMetrics: SpecMetricsFile | null = null;
 
   /**
    * Creates a new SpecMetricsService.
@@ -61,12 +62,19 @@ export class SpecMetricsService {
 
   /**
    * Loads metrics from disk.
+   * Returns cached value if available.
    * Returns default metrics if file does not exist.
    */
   async loadMetrics(): Promise<SpecMetricsFile> {
+    // Return cached value if available
+    if (this.cachedMetrics !== null) {
+      return this.cachedMetrics;
+    }
+
     try {
-      const content = fs.readFileSync(this.metricsPath, 'utf-8');
-      return JSON.parse(content) as SpecMetricsFile;
+      const content = await fs.promises.readFile(this.metricsPath, 'utf-8');
+      this.cachedMetrics = JSON.parse(content) as SpecMetricsFile;
+      return this.cachedMetrics;
     } catch {
       return createDefaultMetrics();
     }
@@ -75,6 +83,7 @@ export class SpecMetricsService {
   /**
    * Saves metrics to disk.
    * Updates the updated_at timestamp before saving.
+   * Updates the cache with the saved metrics.
    */
   async saveMetrics(metrics: SpecMetricsFile): Promise<void> {
     const updated = {
@@ -84,11 +93,19 @@ export class SpecMetricsService {
 
     // Ensure directory exists
     const dir = path.dirname(this.metricsPath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
+    await fs.promises.mkdir(dir, { recursive: true });
 
-    fs.writeFileSync(this.metricsPath, JSON.stringify(updated, null, 2));
+    await fs.promises.writeFile(this.metricsPath, JSON.stringify(updated, null, 2));
+
+    // Update cache
+    this.cachedMetrics = updated;
+  }
+
+  /**
+   * Invalidate the cache to force reload from disk on next load.
+   */
+  invalidateCache(): void {
+    this.cachedMetrics = null;
   }
 
   /**

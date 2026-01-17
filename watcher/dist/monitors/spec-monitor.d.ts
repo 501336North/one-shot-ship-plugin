@@ -41,6 +41,19 @@ export declare class SpecMonitor {
      */
     reset(): void;
     /**
+     * Add a processed signature and manage memory bounds.
+     * Clears oldest half when exceeding MAX_PROCESSED_SIGNATURES.
+     *
+     * @param signature - The signature to add
+     */
+    addProcessedSignature(signature: string): Promise<void>;
+    /**
+     * Get the count of processed signatures.
+     *
+     * @returns The number of processed signatures
+     */
+    getProcessedSignaturesCount(): number;
+    /**
      * Detect structural drift between spec components and implementation files.
      *
      * @param spec - The parsed specification
@@ -77,6 +90,7 @@ export declare class SpecMonitor {
     calculateCoverage(section: SpecSection): SpecCoverage;
     /**
      * Get metrics for a feature including coverage across all sections.
+     * Uses specCache first before parsing the file.
      *
      * @param feature - The feature name
      * @returns Feature metrics including coverage and drift count

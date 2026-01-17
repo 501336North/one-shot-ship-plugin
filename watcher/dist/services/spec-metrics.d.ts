@@ -13,6 +13,7 @@ import type { SpecMetricsFile, FeatureMetrics, VelocityMetrics, ReconciliationEn
  */
 export declare class SpecMetricsService {
     private readonly metricsPath;
+    private cachedMetrics;
     /**
      * Creates a new SpecMetricsService.
      * @param basePath - Base directory (defaults to cwd). Metrics stored at .oss/spec-metrics.json
@@ -20,14 +21,20 @@ export declare class SpecMetricsService {
     constructor(basePath?: string);
     /**
      * Loads metrics from disk.
+     * Returns cached value if available.
      * Returns default metrics if file does not exist.
      */
     loadMetrics(): Promise<SpecMetricsFile>;
     /**
      * Saves metrics to disk.
      * Updates the updated_at timestamp before saving.
+     * Updates the cache with the saved metrics.
      */
     saveMetrics(metrics: SpecMetricsFile): Promise<void>;
+    /**
+     * Invalidate the cache to force reload from disk on next load.
+     */
+    invalidateCache(): void;
     /**
      * Updates coverage for a feature and adds a history snapshot.
      * If an entry exists for today, it is replaced. History is limited to 90 entries.

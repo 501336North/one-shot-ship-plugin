@@ -10,6 +10,25 @@
 import * as fs from 'fs';
 import * as path from 'path';
 /**
+ * Creates a file list cache for a reconciliation cycle.
+ * Caches file listings per search path to avoid repeated directory traversals.
+ *
+ * @returns A cache object with getFiles method
+ */
+export function createFileListCache() {
+    const cache = new Map();
+    return {
+        async getFiles(searchPath) {
+            if (cache.has(searchPath)) {
+                return cache.get(searchPath);
+            }
+            const files = await findAllFiles(searchPath);
+            cache.set(searchPath, files);
+            return files;
+        },
+    };
+}
+/**
  * File extensions to search for (in order of preference).
  */
 const FILE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx'];
@@ -81,25 +100,35 @@ function shouldIgnorePath(filePath) {
 }
 /**
  * Recursively find all files in a directory.
+ * Uses parallel traversal for sibling directories.
  */
 async function findAllFiles(dir) {
     const files = [];
     try {
         const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+        // Separate files and directories
+        const directoryPromises = [];
         for (const entry of entries) {
             const fullPath = path.join(dir, entry.name);
             if (shouldIgnorePath(fullPath)) {
                 continue;
             }
             if (entry.isDirectory()) {
-                const subFiles = await findAllFiles(fullPath);
-                files.push(...subFiles);
+                // Queue directory traversal for parallel execution
+                directoryPromises.push(findAllFiles(fullPath));
             }
             else if (entry.isFile()) {
                 const ext = path.extname(entry.name);
                 if (FILE_EXTENSIONS.includes(ext)) {
                     files.push(fullPath);
                 }
+            }
+        }
+        // Traverse all subdirectories in parallel
+        if (directoryPromises.length > 0) {
+            const subFileArrays = await Promise.all(directoryPromises);
+            for (const subFiles of subFileArrays) {
+                files.push(...subFiles);
             }
         }
     }
@@ -113,13 +142,14 @@ async function findAllFiles(dir) {
  *
  * @param componentName - The component name to search for
  * @param searchPaths - Directories to search in
+ * @param cache - Optional file list cache for performance optimization
  * @returns The matching file path or null if not found
  */
-export async function findMatchingFile(componentName, searchPaths) {
+export async function findMatchingFile(componentName, searchPaths, cache) {
     const nameVariations = normalizeComponentName(componentName);
     const foundFiles = new Map(); // basename -> fullPath
     for (const searchPath of searchPaths) {
-        const files = await findAllFiles(searchPath);
+        const files = cache ? await cache.getFiles(searchPath) : await findAllFiles(searchPath);
         for (const file of files) {
             if (shouldIgnorePath(file)) {
                 continue;
@@ -157,9 +187,10 @@ export async function findMatchingFile(componentName, searchPaths) {
  *
  * @param specComponents - The components listed in the spec
  * @param searchPaths - Directories to search in
+ * @param cache - Optional file list cache for performance optimization
  * @returns Array of file paths not matching any spec component
  */
-export async function findExtraFiles(specComponents, searchPaths) {
+export async function findExtraFiles(specComponents, searchPaths, cache) {
     const extras = [];
     // Get all name variations for spec components
     const specNameVariations = new Set();
@@ -170,7 +201,7 @@ export async function findExtraFiles(specComponents, searchPaths) {
         }
     }
     for (const searchPath of searchPaths) {
-        const files = await findAllFiles(searchPath);
+        const files = cache ? await cache.getFiles(searchPath) : await findAllFiles(searchPath);
         for (const file of files) {
             if (shouldIgnorePath(file)) {
                 continue;

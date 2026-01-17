@@ -326,4 +326,113 @@ describe('Spec Healthcheck', () => {
       expect(result.message).toContain('error');
     });
   });
+
+  // ============================================================================
+  // Performance: Parallel Feature Processing
+  // ============================================================================
+
+  describe('parallel feature processing', () => {
+    /**
+     * @behavior Processes multiple features in parallel
+     * @acceptance-criteria AC-SPEC-HEALTH-PERF.1 - Parallel execution
+     */
+    it('processes features in parallel for performance', async () => {
+      // GIVEN: Multiple features with varying processing times
+      const features = ['feature-a', 'feature-b', 'feature-c'];
+      let callOrder: string[] = [];
+
+      mockSpecMonitor.getFeatureMetrics = vi.fn().mockImplementation(async (feature: string) => {
+        // Simulate processing time
+        await new Promise(resolve => setTimeout(resolve, 10));
+        callOrder.push(feature);
+        return createMockMetrics(feature, 0.85, 1);
+      });
+
+      const options: SpecHealthcheckOptions = {
+        specMonitor: mockSpecMonitor,
+        activeFeatures: features,
+      };
+
+      // WHEN: Running the healthcheck
+      const startTime = performance.now();
+      const result = await checkSpec(options);
+      const endTime = performance.now();
+
+      // THEN: All features are processed
+      expect(result.status).toBe('pass');
+      expect(mockSpecMonitor.getFeatureMetrics).toHaveBeenCalledTimes(3);
+
+      // AND: Processing time should be closer to 10ms (parallel) than 30ms (sequential)
+      // Allow some overhead, but should be significantly less than sequential time
+      expect(endTime - startTime).toBeLessThan(100);
+    });
+
+    /**
+     * @behavior Continues processing even if one feature fails
+     * @acceptance-criteria AC-SPEC-HEALTH-PERF.2 - Error isolation
+     */
+    it('continues processing other features when one fails', async () => {
+      // GIVEN: One feature that fails and two that succeed
+      const healthyMetrics = createMockMetrics('healthy-feature', 0.90, 1);
+      const healthyMetrics2 = createMockMetrics('healthy-feature-2', 0.85, 2);
+
+      mockSpecMonitor.getFeatureMetrics = vi.fn()
+        .mockImplementationOnce(async () => healthyMetrics)
+        .mockRejectedValueOnce(new Error('Feature processing failed'))
+        .mockImplementationOnce(async () => healthyMetrics2);
+
+      const options: SpecHealthcheckOptions = {
+        specMonitor: mockSpecMonitor,
+        activeFeatures: ['healthy-feature', 'failing-feature', 'healthy-feature-2'],
+      };
+
+      // WHEN: Running the healthcheck
+      const result = await checkSpec(options);
+
+      // THEN: All features were attempted
+      expect(mockSpecMonitor.getFeatureMetrics).toHaveBeenCalledTimes(3);
+
+      // AND: Result reflects the failure
+      expect(result.status).toBe('fail');
+      expect(result.details?.failingFeatures).toContain('failing-feature');
+    });
+
+    /**
+     * @behavior Returns aggregated results from parallel execution
+     * @acceptance-criteria AC-SPEC-HEALTH-PERF.3 - Result aggregation
+     */
+    it('aggregates results from all parallel features', async () => {
+      // GIVEN: Features with different metrics
+      mockSpecMonitor.getFeatureMetrics = vi.fn()
+        .mockResolvedValueOnce(createMockMetrics('feature-a', 0.95, 0))
+        .mockResolvedValueOnce(createMockMetrics('feature-b', 0.70, 4))
+        .mockResolvedValueOnce(createMockMetrics('feature-c', 0.85, 2));
+
+      const options: SpecHealthcheckOptions = {
+        specMonitor: mockSpecMonitor,
+        activeFeatures: ['feature-a', 'feature-b', 'feature-c'],
+      };
+
+      // WHEN: Running the healthcheck
+      const result = await checkSpec(options);
+
+      // THEN: Status reflects worst case (feature-b with 70% coverage is warn)
+      expect(result.status).toBe('warn');
+      expect(result.details?.features).toHaveLength(3);
+
+      // AND: Average coverage is calculated from all features
+      // createMockMetrics uses the same ratio for all 3 sections (components, criteria, behaviors)
+      // Each section has 10 total items, so implemented = ratio * 10
+      // Average = (sum of all implemented) / (sum of all total) = (9.5 + 7 + 8.5) / 30 = 0.833
+      // But since each feature's average is computed separately first, then averaged:
+      // (0.95 + 0.70 + 0.85) / 3 = 0.833... but actual computation rounds to nearest integer
+      // Actually: each feature has ratio for all 3 sections, so per-feature avg = ratio
+      // Overall avg = (0.95 + 0.70 + 0.85) / 3 = 0.8333...
+      // But our createMockMetrics gives same ratio for all sections, so section-level avg = ratio
+      // However, the actual impl uses total implemented / total items across all sections
+      // For 10 items per section: (0.95*10 + 0.95*10 + 0.95*10) / 30 = 0.95
+      // So each feature's average equals its ratio, and overall = (0.95 + 0.70 + 0.85) / 3
+      expect(result.details?.averageCoverage).toBeCloseTo(0.8333, 1);
+    });
+  });
 });

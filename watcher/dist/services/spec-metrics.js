@@ -36,6 +36,7 @@ function createDefaultMetrics() {
  */
 export class SpecMetricsService {
     metricsPath;
+    cachedMetrics = null;
     /**
      * Creates a new SpecMetricsService.
      * @param basePath - Base directory (defaults to cwd). Metrics stored at .oss/spec-metrics.json
@@ -46,12 +47,18 @@ export class SpecMetricsService {
     }
     /**
      * Loads metrics from disk.
+     * Returns cached value if available.
      * Returns default metrics if file does not exist.
      */
     async loadMetrics() {
+        // Return cached value if available
+        if (this.cachedMetrics !== null) {
+            return this.cachedMetrics;
+        }
         try {
-            const content = fs.readFileSync(this.metricsPath, 'utf-8');
-            return JSON.parse(content);
+            const content = await fs.promises.readFile(this.metricsPath, 'utf-8');
+            this.cachedMetrics = JSON.parse(content);
+            return this.cachedMetrics;
         }
         catch {
             return createDefaultMetrics();
@@ -60,6 +67,7 @@ export class SpecMetricsService {
     /**
      * Saves metrics to disk.
      * Updates the updated_at timestamp before saving.
+     * Updates the cache with the saved metrics.
      */
     async saveMetrics(metrics) {
         const updated = {
@@ -68,10 +76,16 @@ export class SpecMetricsService {
         };
         // Ensure directory exists
         const dir = path.dirname(this.metricsPath);
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-        }
-        fs.writeFileSync(this.metricsPath, JSON.stringify(updated, null, 2));
+        await fs.promises.mkdir(dir, { recursive: true });
+        await fs.promises.writeFile(this.metricsPath, JSON.stringify(updated, null, 2));
+        // Update cache
+        this.cachedMetrics = updated;
+    }
+    /**
+     * Invalidate the cache to force reload from disk on next load.
+     */
+    invalidateCache() {
+        this.cachedMetrics = null;
     }
     /**
      * Updates coverage for a feature and adds a history snapshot.

@@ -14,6 +14,8 @@ import {
   getRelatedFeature,
   generateCoverageDiff,
   logDiff,
+  findDriftDifference,
+  driftKey,
 } from '../../../src/services/spec-reconciler/diff-generator.js';
 import type {
   FeatureMetrics,
@@ -376,6 +378,184 @@ describe('Diff Generator', () => {
       expect(content).toContain('file1.ts');
       expect(content).toContain('file2.ts');
       expect(content).toContain('file3.ts');
+    });
+  });
+
+  // ============================================================================
+  // Performance: O(n+m) Diff Algorithm
+  // ============================================================================
+
+  describe('driftKey', () => {
+    /**
+     * @behavior Generates unique key for drift with specItem
+     * @acceptance-criteria AC-DIFF-PERF.1 - Key generation
+     */
+    it('generates key using type and specItem id', () => {
+      const drift: DriftResult = {
+        type: 'structural_missing',
+        confidence: 1.0,
+        description: 'Missing component',
+        specItem: {
+          id: 'AuthService',
+          description: 'Auth handler',
+          status: 'unchecked',
+          type: 'component',
+        },
+      };
+
+      const key = driftKey(drift);
+      expect(key).toBe('structural_missing:AuthService');
+    });
+
+    /**
+     * @behavior Generates unique key for drift with filePath
+     * @acceptance-criteria AC-DIFF-PERF.2 - Key generation for files
+     */
+    it('generates key using type and filePath', () => {
+      const drift: DriftResult = {
+        type: 'structural_extra',
+        confidence: 1.0,
+        description: 'Extra file',
+        filePath: 'src/orphan-service.ts',
+      };
+
+      const key = driftKey(drift);
+      expect(key).toBe('structural_extra:src/orphan-service.ts');
+    });
+
+    /**
+     * @behavior Generates key using description as fallback
+     * @acceptance-criteria AC-DIFF-PERF.3 - Key fallback
+     */
+    it('generates key using description as fallback', () => {
+      const drift: DriftResult = {
+        type: 'criteria_incomplete',
+        confidence: 0.8,
+        description: 'Some unique description',
+      };
+
+      const key = driftKey(drift);
+      expect(key).toBe('criteria_incomplete:Some unique description');
+    });
+  });
+
+  describe('findDriftDifference', () => {
+    /**
+     * @behavior Finds drifts in before but not in after
+     * @acceptance-criteria AC-DIFF-PERF.4 - Set difference
+     */
+    it('finds drifts present in before but not in after', () => {
+      const before: DriftResult[] = [
+        {
+          type: 'structural_missing',
+          confidence: 1.0,
+          description: 'Missing AuthService',
+          specItem: {
+            id: 'AuthService',
+            description: 'Auth handler',
+            status: 'unchecked',
+            type: 'component',
+          },
+        },
+        {
+          type: 'structural_missing',
+          confidence: 1.0,
+          description: 'Missing PaymentService',
+          specItem: {
+            id: 'PaymentService',
+            description: 'Payment handler',
+            status: 'unchecked',
+            type: 'component',
+          },
+        },
+      ];
+
+      const after: DriftResult[] = [
+        {
+          type: 'structural_missing',
+          confidence: 1.0,
+          description: 'Missing PaymentService',
+          specItem: {
+            id: 'PaymentService',
+            description: 'Payment handler',
+            status: 'unchecked',
+            type: 'component',
+          },
+        },
+      ];
+
+      const diff = findDriftDifference(before, after);
+
+      // AuthService was resolved (in before, not in after)
+      expect(diff).toHaveLength(1);
+      expect(diff[0].specItem?.id).toBe('AuthService');
+    });
+
+    /**
+     * @behavior Returns empty array when all drifts still exist
+     * @acceptance-criteria AC-DIFF-PERF.5 - No difference
+     */
+    it('returns empty array when all before drifts exist in after', () => {
+      const drift: DriftResult = {
+        type: 'structural_missing',
+        confidence: 1.0,
+        description: 'Missing component',
+        specItem: {
+          id: 'AuthService',
+          description: 'Auth handler',
+          status: 'unchecked',
+          type: 'component',
+        },
+      };
+
+      const before: DriftResult[] = [drift];
+      const after: DriftResult[] = [drift];
+
+      const diff = findDriftDifference(before, after);
+
+      expect(diff).toHaveLength(0);
+    });
+
+    /**
+     * @behavior Handles large arrays efficiently with O(n+m) complexity
+     * @acceptance-criteria AC-DIFF-PERF.6 - Performance
+     */
+    it('handles large arrays efficiently', () => {
+      // Create large arrays (1000 items each)
+      const before: DriftResult[] = Array.from({ length: 1000 }, (_, i) => ({
+        type: 'structural_missing' as const,
+        confidence: 1.0,
+        description: `Missing component ${i}`,
+        specItem: {
+          id: `Component${i}`,
+          description: `Component ${i}`,
+          status: 'unchecked' as const,
+          type: 'component' as const,
+        },
+      }));
+
+      // After: remove first 100, keep rest
+      const after: DriftResult[] = before.slice(100);
+
+      const startTime = performance.now();
+      const diff = findDriftDifference(before, after);
+      const endTime = performance.now();
+
+      // Should find 100 resolved drifts
+      expect(diff).toHaveLength(100);
+
+      // Should complete in reasonable time (< 100ms for O(n+m), would be much longer for O(n^2))
+      expect(endTime - startTime).toBeLessThan(100);
+    });
+
+    /**
+     * @behavior Handles empty arrays
+     * @acceptance-criteria AC-DIFF-PERF.7 - Edge case
+     */
+    it('handles empty arrays', () => {
+      expect(findDriftDifference([], [])).toHaveLength(0);
+      expect(findDriftDifference([], [{ type: 'structural_missing', confidence: 1.0, description: 'test' }])).toHaveLength(0);
+      expect(findDriftDifference([{ type: 'structural_missing', confidence: 1.0, description: 'test' }], [])).toHaveLength(1);
     });
   });
 });

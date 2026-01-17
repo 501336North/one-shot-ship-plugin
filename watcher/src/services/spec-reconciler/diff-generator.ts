@@ -99,24 +99,36 @@ function calculateAverageCoverage(coverage: {
 }
 
 /**
- * Find drifts that exist in one list but not the other.
+ * Generates a unique key for a drift result.
+ * Used for O(n+m) set operations.
+ *
+ * @param drift - The drift result to generate a key for
+ * @returns A unique string key for the drift
  */
-function findDriftDifference(before: DriftResult[], after: DriftResult[]): DriftResult[] {
-  return before.filter((beforeDrift) => {
-    return !after.some((afterDrift) => {
-      // Match by type and either specItem id or filePath
-      if (beforeDrift.type !== afterDrift.type) {
-        return false;
-      }
-      if (beforeDrift.specItem && afterDrift.specItem) {
-        return beforeDrift.specItem.id === afterDrift.specItem.id;
-      }
-      if (beforeDrift.filePath && afterDrift.filePath) {
-        return beforeDrift.filePath === afterDrift.filePath;
-      }
-      return beforeDrift.description === afterDrift.description;
-    });
-  });
+export function driftKey(drift: DriftResult): string {
+  if (drift.specItem) {
+    return `${drift.type}:${drift.specItem.id}`;
+  }
+  if (drift.filePath) {
+    return `${drift.type}:${drift.filePath}`;
+  }
+  return `${drift.type}:${drift.description}`;
+}
+
+/**
+ * Find drifts that exist in the 'before' list but not the 'after' list.
+ * Uses O(n+m) algorithm with Set for efficient lookup.
+ *
+ * @param before - Array of drift results before the change
+ * @param after - Array of drift results after the change
+ * @returns Array of drifts that were resolved (in before but not in after)
+ */
+export function findDriftDifference(before: DriftResult[], after: DriftResult[]): DriftResult[] {
+  // Build a Set of keys from 'after' array - O(m)
+  const afterKeys = new Set(after.map((d) => driftKey(d)));
+
+  // Filter 'before' to find ones not in 'after' - O(n)
+  return before.filter((d) => !afterKeys.has(driftKey(d)));
 }
 
 /**

@@ -9,6 +9,19 @@
  */
 import { SpecItem } from './types.js';
 /**
+ * Interface for file list cache to avoid repeated directory traversals.
+ */
+export interface FileListCache {
+    getFiles(searchPath: string): Promise<string[]>;
+}
+/**
+ * Creates a file list cache for a reconciliation cycle.
+ * Caches file listings per search path to avoid repeated directory traversals.
+ *
+ * @returns A cache object with getFiles method
+ */
+export declare function createFileListCache(): FileListCache;
+/**
  * Convert a string to different naming convention variations.
  *
  * @param name - The component name to normalize
@@ -20,15 +33,17 @@ export declare function normalizeComponentName(name: string): string[];
  *
  * @param componentName - The component name to search for
  * @param searchPaths - Directories to search in
+ * @param cache - Optional file list cache for performance optimization
  * @returns The matching file path or null if not found
  */
-export declare function findMatchingFile(componentName: string, searchPaths: string[]): Promise<string | null>;
+export declare function findMatchingFile(componentName: string, searchPaths: string[], cache?: FileListCache): Promise<string | null>;
 /**
  * Find files in the search paths that are not in the spec.
  *
  * @param specComponents - The components listed in the spec
  * @param searchPaths - Directories to search in
+ * @param cache - Optional file list cache for performance optimization
  * @returns Array of file paths not matching any spec component
  */
-export declare function findExtraFiles(specComponents: SpecItem[], searchPaths: string[]): Promise<string[]>;
+export declare function findExtraFiles(specComponents: SpecItem[], searchPaths: string[], cache?: FileListCache): Promise<string[]>;
 //# sourceMappingURL=file-matcher.d.ts.map
