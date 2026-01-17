@@ -60,3 +60,41 @@ export {
   type ClaimValidation,
   type ProviderClaimResult,
 } from './reporter.js';
+
+// Provider Integrations
+export {
+  ClaudeIntegration,
+  type ClaudeIntegrationConfig,
+  type ClaudeTaskResult,
+} from './claude-integration.js';
+
+export {
+  OllamaIntegration,
+  type OllamaIntegrationConfig,
+  type OllamaTaskResult,
+} from './ollama-integration.js';
+
+export {
+  OpenRouterIntegration,
+  type OpenRouterIntegrationConfig,
+  type OpenRouterTaskResult,
+} from './openrouter-integration.js';
+
+// Execution
+export {
+  BenchmarkExecutor,
+  type BenchmarkExecutorConfig,
+  type ExecutionResult,
+  type ProviderExecutionResult,
+  type ProviderSummary as ExecutorProviderSummary,
+  type BenchmarkSuiteResult,
+} from './execution.js';
+
+// Analysis
+export {
+  BenchmarkAnalyzer,
+  type AnalysisReport,
+  type ProviderAnalysis,
+  type ClaimVerdict,
+  type ProviderClaimResult as AnalysisProviderClaimResult,
+} from './analysis.js';
