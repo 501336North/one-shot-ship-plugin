@@ -45,9 +45,12 @@ describe('Context Gate Removal', () => {
       const hooksJson = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf-8'));
       const userPromptSubmitHooks = hooksJson.hooks?.UserPromptSubmit || [];
 
+      // hooks.json has nested structure: [{ hooks: [{ command: "..." }] }]
       const hasPrecommand = userPromptSubmitHooks.some(
-        (hook: { command?: string }) =>
-          hook.command?.includes('precommand')
+        (hookGroup: { hooks?: Array<{ command?: string }> }) =>
+          hookGroup.hooks?.some(
+            (hook: { command?: string }) => hook.command?.includes('precommand')
+          )
       );
 
       expect(hasPrecommand).toBe(true);
