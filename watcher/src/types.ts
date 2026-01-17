@@ -6,7 +6,7 @@
 
 export type Priority = 'critical' | 'high' | 'medium' | 'low';
 
-export type MonitorSource = 'log-monitor' | 'test-monitor' | 'git-monitor' | 'iron-law-monitor' | 'manual';
+export type MonitorSource = 'log-monitor' | 'test-monitor' | 'git-monitor' | 'iron-law-monitor' | 'spec-monitor' | 'manual';
 
 export type AnomalyType =
   // Log anomalies
@@ -28,7 +28,10 @@ export type AnomalyType =
   // IRON LAW anomalies
   | 'iron_law_violation'
   | 'iron_law_repeated'
-  | 'iron_law_ignored';
+  | 'iron_law_ignored'
+  // Spec drift anomalies
+  | 'spec_drift_structural'
+  | 'spec_drift_criteria';
 
 export type TaskStatus = 'pending' | 'executing' | 'completed' | 'failed';
 
@@ -64,6 +67,13 @@ export interface TaskContext {
   law?: number;
   type?: string;
   message?: string;
+
+  // Spec drift context
+  drift_type?: string;
+  spec_item_id?: string;
+  spec_item_description?: string;
+  feature?: string;
+  spec_path?: string;
 }
 
 export interface Task {

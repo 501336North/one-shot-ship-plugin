@@ -75,11 +75,8 @@ Register at https://www.oneshotship.com
 ## Step 2: Fetch IRON LAWS (MANDATORY)
 
 Before executing, fetch and review the IRON LAWS:
-```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/shared/iron-laws
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+```bash
+~/.oss/hooks/fetch-iron-laws.sh
 ```
 
 **All IRON LAW violations must be self-corrected before proceeding.**

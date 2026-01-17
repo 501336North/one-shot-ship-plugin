@@ -41,12 +41,13 @@ describe('Metrics Collector Service', () => {
       const collector = new MetricsCollector();
       collector.startSession();
 
-      // Simulate some work
-      await new Promise(resolve => setTimeout(resolve, 50));
+      // Simulate some work - use 60ms to account for timer precision variance
+      await new Promise(resolve => setTimeout(resolve, 60));
 
       collector.endSession();
 
       const metrics = collector.getSessionMetrics();
+      // Allow 10ms variance for timer precision (60ms - 10ms = 50ms minimum)
       expect(metrics.duration).toBeGreaterThanOrEqual(50);
     });
 
