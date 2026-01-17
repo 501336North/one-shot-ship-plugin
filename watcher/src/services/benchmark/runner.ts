@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { CostTracker } from '../cost-tracker.js';
 import type { BenchmarkTask, BenchmarkResult } from './types.js';
+import type { ProviderFactory, ProviderIntegration } from './provider-factory.js';
 
 /**
  * Configuration for a model provider
@@ -41,6 +42,8 @@ export interface BenchmarkRunnerConfig {
   timeout?: number;
   /** Directory to store benchmark results (default: ~/.oss/benchmarks) */
   outputDir?: string;
+  /** Optional ProviderFactory for routing tasks to appropriate integrations */
+  providerFactory?: ProviderFactory;
 }
 
 /**
@@ -109,6 +112,7 @@ export class BenchmarkRunner {
   private costTracker?: CostTracker;
   private timeout: number;
   private outputDir: string;
+  private providerFactory?: ProviderFactory;
 
   constructor(config: BenchmarkRunnerConfig) {
     this.providers = config.providers;
@@ -116,6 +120,7 @@ export class BenchmarkRunner {
     this.costTracker = config.costTracker;
     this.timeout = config.timeout ?? DEFAULT_TIMEOUT;
     this.outputDir = config.outputDir ?? DEFAULT_OUTPUT_DIR;
+    this.providerFactory = config.providerFactory;
   }
 
   /**
@@ -150,6 +155,26 @@ export class BenchmarkRunner {
    * Run a single task against a provider
    */
   async runTask(task: BenchmarkTask, provider: ProviderConfig): Promise<BenchmarkResult> {
+    // If a provider factory is available, use it to route to the appropriate integration
+    if (this.providerFactory) {
+      const integration = this.providerFactory.create(provider);
+      const result = await integration.executeTask(task);
+
+      // Record usage if cost tracker is available
+      if (this.costTracker) {
+        this.costTracker.recordUsage({
+          command: `benchmark:${task.id}`,
+          model: provider.model,
+          inputTokens: result.inputTokens,
+          outputTokens: result.outputTokens,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      return result;
+    }
+
+    // Fallback: Direct HTTP call (backward compatibility)
     const startTime = Date.now();
     const baseUrl = provider.baseUrl ?? 'https://api.anthropic.com';
 
