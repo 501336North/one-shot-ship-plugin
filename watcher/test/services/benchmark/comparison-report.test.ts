@@ -175,9 +175,9 @@ describe('Comparison Report Generator', () => {
     const generator = new ComparisonReportGenerator();
     const report = generator.generate(verdict, judgeResults, comparisons, tasks);
 
-    // THEN the report should show token counts
-    expect(report).toContain('100'); // input tokens
-    expect(report).toContain('200'); // total tokens (input + output)
+    // THEN the report should show token counts (output only for fair comparison)
+    expect(report).toContain('1000'); // baseline estimated tokens
+    expect(report).toContain('100'); // ollama output tokens
     expect(report).toContain('20'); // 20% ratio
   });
 

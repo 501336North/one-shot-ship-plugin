@@ -99,9 +99,9 @@ describe('Comparison Executor', () => {
     const executor = new ComparisonExecutor();
     const results = executor.execute(baselines, challenges);
 
-    // THEN token ratio should be challenger total / baseline estimated
-    // Ratio = (50 + 25) / 100 = 0.75 (75%)
-    expect(results[0].tokenRatio).toBeCloseTo(0.75, 2);
+    // THEN token ratio should be challenger OUTPUT only / baseline estimated
+    // Ratio = 25 / 100 = 0.25 (25%) - comparing output tokens only
+    expect(results[0].tokenRatio).toBeCloseTo(0.25, 2);
   });
 
   /**

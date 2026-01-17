@@ -29,10 +29,14 @@ export interface ComparisonResult {
  * This class takes sets of baseline (Claude) and challenger (Ollama) responses,
  * pairs them by task ID, and calculates the token efficiency ratio for each pair.
  *
- * Token ratio = (challenger.inputTokens + challenger.outputTokens) / baseline.estimatedTokens
+ * Token ratio = challenger.outputTokens / baseline.estimatedTokens
  *
- * A ratio < 1.0 means the challenger used fewer tokens than estimated for Claude.
- * Our target is <= 0.25 (25% of Claude's tokens).
+ * NOTE: We compare OUTPUT tokens only because:
+ * 1. Input tokens (prompt) are identical for both models
+ * 2. We don't have Claude's actual input token count (only estimated output)
+ * 3. Different tokenizers produce different input counts for the same text
+ *
+ * A ratio < 1.0 means the challenger produced fewer output tokens than Claude.
  */
 export class ComparisonExecutor {
   /**
@@ -60,10 +64,10 @@ export class ComparisonExecutor {
         continue;
       }
 
-      // Calculate token ratio
-      const challengerTotalTokens = challenger.inputTokens + challenger.outputTokens;
+      // Calculate token ratio (OUTPUT tokens only for fair comparison)
+      // Input tokens (prompt) are the same for both models, so we only compare output
       const tokenRatio = baseline.estimatedTokens > 0
-        ? challengerTotalTokens / baseline.estimatedTokens
+        ? challenger.outputTokens / baseline.estimatedTokens
         : 0;
 
       results.push({

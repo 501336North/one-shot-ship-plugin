@@ -68,8 +68,10 @@ export class ComparisonReportGenerator {
     if (judgeResults.taskResults.length > 0) {
       lines.push('## Task Breakdown');
       lines.push('');
-      lines.push('| Task ID | Name | Category | Score | Input Tokens | Output Tokens | Total | Ratio |');
-      lines.push('|---------|------|----------|-------|--------------|---------------|-------|-------|');
+      lines.push('*Note: Token ratio compares OUTPUT tokens only (apples-to-apples comparison)*');
+      lines.push('');
+      lines.push('| Task ID | Name | Category | Score | Claude Est. | Ollama Out | Ratio |');
+      lines.push('|---------|------|----------|-------|-------------|------------|-------|');
 
       // Index tasks and comparisons for lookup
       const taskMap = new Map<string, ComparisonTask>();
@@ -90,18 +92,16 @@ export class ComparisonReportGenerator {
         const category = task?.category ?? 'unknown';
         const score = result.judgeResult.weightedScore;
 
-        let inputTokens = '-';
-        let outputTokens = '-';
-        let totalTokens = '-';
+        let claudeTokens = '-';
+        let ollamaTokens = '-';
         let ratioStr = '-';
         if (comparison) {
-          inputTokens = String(comparison.challenger.inputTokens);
-          outputTokens = String(comparison.challenger.outputTokens);
-          totalTokens = String(comparison.challenger.inputTokens + comparison.challenger.outputTokens);
+          claudeTokens = String(comparison.baseline.estimatedTokens);
+          ollamaTokens = String(comparison.challenger.outputTokens);
           ratioStr = `${Math.round(comparison.tokenRatio * 100)}%`;
         }
 
-        lines.push(`| ${result.taskId} | ${taskName} | ${category} | ${score} | ${inputTokens} | ${outputTokens} | ${totalTokens} | ${ratioStr} |`);
+        lines.push(`| ${result.taskId} | ${taskName} | ${category} | ${score} | ${claudeTokens} | ${ollamaTokens} | ${ratioStr} |`);
       }
       lines.push('');
     }
