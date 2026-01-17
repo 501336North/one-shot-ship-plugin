@@ -98,3 +98,47 @@ export {
   type ClaimVerdict,
   type ProviderClaimResult as AnalysisProviderClaimResult,
 } from './analysis.js';
+
+// Comparison Tasks
+export {
+  COMPARISON_TASKS,
+  validateComparisonTask,
+  type ComparisonTask,
+  type ComparisonTaskCategory,
+} from './comparison-tasks.js';
+
+// Baseline Generator
+export {
+  BaselineGenerator,
+  type BaselineResponse,
+} from './baseline-generator.js';
+
+// Challenger Runner
+export {
+  ChallengerRunner,
+  type ChallengerRunnerConfig,
+  type ChallengerResponse,
+} from './challenger-runner.js';
+
+// Comparison Executor
+export {
+  ComparisonExecutor,
+  type ComparisonResult,
+} from './comparison-executor.js';
+
+// Quality Judge
+export {
+  QualityJudge,
+  type JudgeScore,
+  type JudgeResult,
+  type JudgeScorer,
+  type ScoringDimension,
+  type DimensionReasoning,
+} from './quality-judge.js';
+
+// Judge Executor
+export {
+  JudgeExecutor,
+  type JudgeResults,
+  type TaskJudgeResult,
+} from './judge-executor.js';

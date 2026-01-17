@@ -16,6 +16,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { BenchmarkRunner, ProviderConfig } from '../services/benchmark/runner.js';
+import { ProviderFactory } from '../services/benchmark/provider-factory.js';
 import { AutomatedEvaluator, EvaluationResult } from '../services/benchmark/evaluator.js';
 import { BenchmarkAnalyzer } from '../services/benchmark/analysis.js';
 import { STANDARD_TASKS } from '../services/benchmark/standard-tasks.js';
@@ -257,10 +258,12 @@ export async function executeValidateClaim(args: ValidateClaimArgs): Promise<str
     const providers = buildProviderConfigs(args.providers);
     const tasks = filterTasks(args.task);
 
-    // Create benchmark runner
+    // Create benchmark runner with provider factory for proper API routing
+    const providerFactory = new ProviderFactory();
     const runner = new BenchmarkRunner({
       providers,
       tasks,
+      providerFactory,
     });
 
     // Run benchmarks
