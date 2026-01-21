@@ -8,6 +8,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Ensure ~/.oss directory exists
 mkdir -p ~/.oss
 
+# Determine project .oss directory (project-local for context isolation)
+PROJECT_OSS_DIR="${CLAUDE_PROJECT_DIR:-.}/.oss"
+mkdir -p "$PROJECT_OSS_DIR"
+
 # --- Session Logging (for supervisor visibility) ---
 LOG_SCRIPT="$SCRIPT_DIR/oss-log.sh"
 if [[ -x "$LOG_SCRIPT" ]]; then
@@ -32,8 +36,8 @@ else
 fi
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
-# Save context to file
-cat > ~/.oss/session-context.md << EOF
+# Save context to project-local file (not global, for multi-project isolation)
+cat > "$PROJECT_OSS_DIR/session-context.md" << EOF
 ## Restored Session Context
 _Saved: ${TIMESTAMP}_
 
@@ -48,7 +52,7 @@ EOF
 
 # Add uncommitted changes if any
 if [[ -n "$UNCOMMITTED" ]]; then
-    cat >> ~/.oss/session-context.md << EOF
+    cat >> "$PROJECT_OSS_DIR/session-context.md" << EOF
 
 **Uncommitted changes:**
 \`\`\`
