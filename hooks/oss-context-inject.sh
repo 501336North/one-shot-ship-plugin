@@ -32,10 +32,13 @@ else
     CHANGE_STATUS="clean"
 fi
 
-# Check for saved session context
+# Check for saved session context (project-local first, for multi-project isolation)
 SESSION_CONTEXT=""
-if [[ -f ~/.oss/session-context.md ]]; then
-    SESSION_CONTEXT=$(cat ~/.oss/session-context.md 2>/dev/null)
+PROJECT_OSS_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}/.oss"
+PROJECT_CONTEXT_FILE="$PROJECT_OSS_DIR/session-context.md"
+
+if [[ -f "$PROJECT_CONTEXT_FILE" ]]; then
+    SESSION_CONTEXT=$(cat "$PROJECT_CONTEXT_FILE" 2>/dev/null)
 fi
 
 # Output context (Claude Code sees this via UserPromptSubmit hook stdout)

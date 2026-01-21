@@ -104,8 +104,37 @@ WATCHER_SCRIPT="$PLUGIN_ROOT/watcher/dist/index.js"
 WORKFLOW_STATE_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js"
 HEALTH_CHECK_CLI="$PLUGIN_ROOT/watcher/dist/cli/health-check.js"
 
-# Ensure project .oss directory exists
-mkdir -p "$PROJECT_OSS_DIR"
+# Ensure project .oss directory exists, and setup .gitignore on first creation
+GITIGNORE_FILE="${CLAUDE_PROJECT_DIR:-.}/.gitignore"
+
+if [[ ! -d "$PROJECT_OSS_DIR" ]]; then
+    # First time - create .oss folder
+    mkdir -p "$PROJECT_OSS_DIR"
+
+    # Setup .gitignore (only on first .oss creation)
+    OSS_GITIGNORE_MARKER="# OSS Dev Workflow (auto-added)"
+
+    if [[ -f "$GITIGNORE_FILE" ]]; then
+        # Check if .oss entries already exist
+        if ! grep -qE "^\.oss/\*$|^\.oss/$" "$GITIGNORE_FILE" 2>/dev/null; then
+            # Add OSS entries to existing .gitignore
+            echo "" >> "$GITIGNORE_FILE"
+            echo "$OSS_GITIGNORE_MARKER" >> "$GITIGNORE_FILE"
+            echo ".oss/*" >> "$GITIGNORE_FILE"
+            echo "!.oss/dev/" >> "$GITIGNORE_FILE"
+        fi
+    else
+        # Create new .gitignore with OSS entries
+        cat > "$GITIGNORE_FILE" << 'GITIGNORE_EOF'
+# OSS Dev Workflow (auto-added)
+.oss/*
+!.oss/dev/
+GITIGNORE_EOF
+    fi
+else
+    # .oss already exists - just ensure it's there
+    mkdir -p "$PROJECT_OSS_DIR"
+fi
 
 # Get git branch for session logging
 CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
@@ -181,12 +210,13 @@ if [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]] && [[ -f "$HEALTH_CHECK_CLI" ]] && 
     ) &
 fi
 
-# Restore previous session context if available
+# Restore previous session context if available (project-local first, for multi-project isolation)
 NOTIFY_SCRIPT="$PLUGIN_ROOT/hooks/oss-notify.sh"
+PROJECT_CONTEXT_FILE="$PROJECT_OSS_DIR/session-context.md"
 
-if [[ -f ~/.oss/session-context.md ]]; then
-    # Get context info for notification
-    CONTEXT_FILE=~/.oss/session-context.md
+if [[ -f "$PROJECT_CONTEXT_FILE" ]]; then
+    # Get context info for notification (from project-local)
+    CONTEXT_FILE="$PROJECT_CONTEXT_FILE"
     BRANCH_LINE=$(grep "^\*\*Branch:\*\*" "$CONTEXT_FILE" 2>/dev/null | head -1)
     BRANCH=$(echo "$BRANCH_LINE" | sed 's/\*\*Branch:\*\* //')
 
