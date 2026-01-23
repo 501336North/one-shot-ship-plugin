@@ -76,6 +76,28 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "tool == \"Edit\" && tool_input.file_path matches \"\\\\.(ts|tsx|js|jsx)$\"",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/post-edit-quality.sh"
+          }
+        ],
+        "description": "Quality checks after JS/TS edits (console.log, format, type-check)"
+      },
+      {
+        "matcher": "tool == \"Bash\"",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/post-bash-pr.sh"
+          }
+        ],
+        "description": "PR enhancement after gh pr create"
+      }
     ]
   }
 }
