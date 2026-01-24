@@ -3,7 +3,7 @@
 ## Current Phase: COMPLETE
 
 ## Planning Tasks (Complete)
-- [x] Analyze Claudish architecture and implementation
+- [x] Analyze alternative approach architecture and implementation
 - [x] Define provider priorities (OpenRouter, Ollama, OpenAI, Gemini)
 - [x] Design configuration precedence (CLI > User > Project > Frontmatter > Default)
 - [x] Design proxy lifecycle (on-demand per-invocation)
@@ -61,7 +61,7 @@
 
 ## Key Decisions
 1. Hybrid config: frontmatter + centralized + CLI override
-2. On-demand proxy lifecycle (matches Claudish)
+2. On-demand proxy lifecycle (matches alternative approach)
 3. All providers in v1 except A/B testing
 4. Per-command cost tracking
 

@@ -3,7 +3,6 @@
 **Feature**: OSS-native model routing system for per-prompt model selection
 **Status**: Design Complete
 **Created**: 2024-01-12
-**Inspired By**: [Claudish](https://github.com/MadAppGang/claudish)
 
 ---
 
@@ -65,7 +64,7 @@ Enable users to configure different AI models for each OSS prompt (agents, comma
 
 ### D3: Proxy Lifecycle
 
-**On-demand per-invocation** (matches Claudish):
+**On-demand per-invocation** (matches alternative approach):
 1. Command invoked with non-Claude model
 2. Start proxy server on available port
 3. Execute command through proxy
@@ -270,7 +269,7 @@ claude      → Same as default
 | File | Purpose |
 |------|---------|
 | `watcher/src/services/model-router.ts` | Config loading, model selection, precedence |
-| `watcher/src/services/model-proxy.ts` | HTTP proxy server (ported from Claudish) |
+| `watcher/src/services/model-proxy.ts` | HTTP proxy server (ported from alternative approach) |
 | `watcher/src/services/api-transformer.ts` | Anthropic ↔ OpenAI/Gemini translation |
 | `watcher/src/services/cost-tracker.ts` | Token counting, cost calculation |
 | `watcher/src/services/model-registry.ts` | Available models, pricing, capabilities |
@@ -446,7 +445,7 @@ async function executeWithModel(prompt: Prompt, model: string): Promise<Result> 
 ## Implementation Phases
 
 ### Phase 1: Core Infrastructure (Week 1)
-- [ ] Port Claudish proxy server
+- [ ] Port alternative approach proxy server
 - [ ] Implement API transformer (Anthropic ↔ OpenAI)
 - [ ] ModelRouter with config loading
 - [ ] Basic /oss:models command
