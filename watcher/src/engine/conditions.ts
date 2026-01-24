@@ -62,6 +62,46 @@ const UI_FILE_PATTERNS = [
 ];
 
 /**
+ * Patterns to detect CLI/command-line work in design documents
+ */
+const CLI_PATTERNS = [
+  /\bcli\b/i,
+  /\bcommand\s*line/i,
+  /\bsubcommand/i,
+  /\bargument\s*pars/i,
+  /\bflag\s*pars/i,
+  /\boption\s*pars/i,
+  /\b(yargs|commander|minimist|meow|oclif)\b/i,
+  /bin\//,
+  /\bstdout\b/i,
+  /\bstderr\b/i,
+  /\bterminal\b/i,
+  /\bshell\b/i,
+];
+
+/**
+ * Patterns to detect authentication/authorization work in design documents
+ */
+const AUTH_PATTERNS = [
+  /\bauthentication\b/i,
+  /\bauthorization\b/i,
+  /\blogin\b/i,
+  /\bsignup\b/i,
+  /\bsign[\s-]?in\b/i,
+  /\bpassword\b/i,
+  /\bjwt\b/i,
+  /\bsession\b/i,
+  /\boauth\b/i,
+  /\brbac\b/i,
+  /\bpermission/i,
+  /\brole[\s-]?based/i,
+  /\bcredential/i,
+  /\btoken\b/i,
+  /\bmfa\b/i,
+  /\b2fa\b/i,
+];
+
+/**
  * Built-in condition functions
  */
 const BUILT_IN_CONDITIONS: Record<string, ConditionFn> = {
@@ -110,6 +150,22 @@ const BUILT_IN_CONDITIONS: Record<string, ConditionFn> = {
       return false;
     }
     return !result.passed;
+  },
+
+  /**
+   * Returns true if design content mentions CLI/command-line work
+   */
+  has_cli_work: (context: WorkflowContext) => {
+    const content = context.designContent || '';
+    return CLI_PATTERNS.some((pattern) => pattern.test(content));
+  },
+
+  /**
+   * Returns true if design content mentions authentication/authorization work
+   */
+  has_auth_work: (context: WorkflowContext) => {
+    const content = context.designContent || '';
+    return AUTH_PATTERNS.some((pattern) => pattern.test(content));
   },
 };
 
