@@ -125,11 +125,23 @@ If planning fails:
 ~/.oss/hooks/oss-notify.sh --workflow plan failed '{}'
 ```
 
-## Command Chain (after planning complete)
+## Command Orchestration
 
-After the plan is approved, execute these commands in sequence:
-1. `/oss:acceptance` - Write acceptance tests at system boundary FIRST
-2. `/oss:build` - Execute TDD tasks (red → green → refactor)
+After this command completes, the workflow engine will:
+1. Evaluate conditions from your team's workflow config (fetched from the API)
+2. Execute the next commands in the chain based on those conditions
+3. Spawn any configured agents for additional processing
+4. Stop at checkpoints for human review (if configured)
+
+Your team's workflow config controls:
+- `chains_to`: Which commands run next (e.g., acceptance, build)
+- `agents`: Which agents to spawn for plan review
+- `checkpoint`: Whether to pause for human review (human/auto)
+
+Conditions like `has_api_work`, `has_db_work`, and `has_ui_work` are evaluated automatically
+based on the design content and changed files.
+
+To customize your workflow, visit the dashboard at https://www.oneshotship.com/dashboard/workflows
 
 ## Error Handling
 

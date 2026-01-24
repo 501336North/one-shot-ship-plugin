@@ -234,9 +234,23 @@ For EACH task in the plan, execute the TDD cycle with full logging:
 [HH:MM:SS] [PHASE] REFACTOR complete
 ```
 
-After all tasks complete:
-1. `/oss:integration` - Validate mock/reality alignment
-2. `/oss:ship` - Quality gates + PR + merge
+## Command Orchestration
+
+After this command completes, the workflow engine will:
+1. Evaluate conditions from your team's workflow config (fetched from the API)
+2. Execute the next commands in the chain based on those conditions
+3. Spawn any configured agents (e.g., code-simplifier, frontend-design)
+4. Stop at checkpoints for human review (if configured)
+
+Your team's workflow config controls:
+- `task_loop`: The TDD phases (red, green, refactor)
+- `chains_to`: Which commands run next (e.g., integration, ship)
+- `agents`: Which agents to spawn (configurable per team)
+- `checkpoint`: Whether to pause for human review (human/auto)
+
+Conditions like `has_ui_work` are evaluated automatically based on changed files.
+
+To customize your workflow, visit the dashboard at https://www.oneshotship.com/dashboard/workflows
 
 ## Error Handling
 

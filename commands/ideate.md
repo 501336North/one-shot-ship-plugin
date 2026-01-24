@@ -181,14 +181,23 @@ If ideation fails:
 ~/.oss/hooks/oss-notify.sh --workflow ideate failed '{"reason": "{REASON}"}'
 ```
 
-## Command Chain (after ideation complete)
+## Command Orchestration
 
-After ideation is complete, execute these commands in sequence:
-1. `/oss:requirements` - Extract user stories, acceptance criteria
-2. `/oss:api-design` - Design API contracts (if applicable)
-3. `/oss:data-model` - Design database schema (if applicable)
-4. `/oss:adr` - Record architecture decisions
-5. `/oss:plan` - Create TDD implementation plan
+After this command completes, the workflow engine will:
+1. Evaluate conditions from your team's workflow config (fetched from the API)
+2. Execute the next commands in the chain based on those conditions
+3. Spawn any configured agents for additional processing
+4. Stop at checkpoints for human review (if configured)
+
+Your team's workflow config controls:
+- `chains_to`: Which commands run next (e.g., requirements, api-design, data-model, adr)
+- `agents`: Which agents to spawn (e.g., code-simplifier, frontend-design)
+- `checkpoint`: Whether to pause for human review (human/auto)
+
+Conditions like `has_api_work`, `has_db_work`, and `has_ui_work` are evaluated automatically
+based on the design content and changed files.
+
+To customize your workflow, visit the dashboard at https://www.oneshotship.com/dashboard/workflows
 
 ## Error Handling
 

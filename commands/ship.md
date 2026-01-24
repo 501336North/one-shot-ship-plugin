@@ -118,101 +118,39 @@ The CLI fetches the encrypted prompt from the API and decrypts it locally using 
 
 The prompt orchestrates the full shipping workflow:
 
-### Quality Checks (Parallelized Agent Delegation)
+### Quality Checks (Configurable via workflow config)
 
-**MANDATORY: Launch these 4 specialized agents IN PARALLEL using the Task tool.**
+**Quality gates are now configurable per team via the dashboard.**
 
-All agents must complete successfully before proceeding to git operations.
+The workflow engine reads your team's `quality_gates` configuration (fetched from the API):
+- `parallel`: Whether to run agents in parallel (default: true)
+- `agents`: List of agents to spawn for quality checks
+- `all_must_pass`: Whether all agents must pass (default: true)
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    PARALLEL QUALITY GATES                            │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                       │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐       │
-│  │ code-reviewer   │  │ performance-    │  │ security-       │       │
-│  │                 │  │ auditor         │  │ auditor         │       │
-│  │ • Code quality  │  │ • Performance   │  │ • OWASP Top 10  │       │
-│  │ • Test coverage │  │ • Memory leaks  │  │ • Dependency    │       │
-│  │ • Best practices│  │ • Bundle size   │  │   vulnerabilities│      │
-│  │ • Type safety   │  │ • Query perf    │  │ • Secret leaks  │       │
-│  └────────┬────────┘  └────────┬────────┘  └────────┬────────┘       │
-│           │                    │                    │                 │
-│           ▼                    ▼                    ▼                 │
-│  ┌─────────────────────────────────────────────────────────────┐     │
-│  │                     AGGREGATE RESULTS                        │     │
-│  │  All 3 agents must report: ✅ PASS or provide fixes         │     │
-│  └─────────────────────────────────────────────────────────────┘     │
-│                                                                       │
-└─────────────────────────────────────────────────────────────────────┘
-```
+All configured agents must complete successfully before proceeding to git operations.
 
-**Agent 1: Code Reviewer** (`subagent_type: code-reviewer`)
-```
-Prompt: "Review the staged changes for this PR. Check:
-1. Code correctness and logic errors
-2. Test coverage for new/changed code
-3. TypeScript type safety (no 'any' types)
-4. Best practices and coding standards
-5. Potential bugs or edge cases
-
-Report format:
-- PASS: All checks passed
-- FAIL: [List specific issues that must be fixed]
-
-Focus on the changes in: [list staged files]"
-```
-
-**Agent 2: Performance Auditor** (`subagent_type: performance-auditor`)
-```
-Prompt: "Audit the staged changes for performance issues. Check:
-1. N+1 query patterns in database operations
-2. Memory leaks or unbounded growth
-3. Bundle size impact (new dependencies)
-4. Algorithmic complexity (O(n²) or worse)
-5. Missing caching opportunities
-
-Report format:
-- PASS: No performance regressions detected
-- WARN: [Non-blocking suggestions]
-- FAIL: [Critical issues that must be fixed]
-
-Focus on the changes in: [list staged files]"
-```
-
-**Agent 3: Security Auditor** (`subagent_type: security-auditor`)
-```
-Prompt: "Security audit the staged changes. Check:
-1. OWASP Top 10 vulnerabilities (XSS, injection, etc.)
-2. Hardcoded secrets or API keys
-3. Dependency vulnerabilities (npm audit)
-4. Input validation and sanitization
-5. Authentication/authorization issues
-
-Report format:
-- PASS: No security issues found
-- FAIL: [Critical vulnerabilities that must be fixed]
-
-Focus on the changes in: [list staged files]"
+**Default quality_gates configuration:**
+```json
+{
+  "quality_gates": {
+    "parallel": true,
+    "agents": ["code-reviewer", "performance-engineer", "security-auditor"],
+    "all_must_pass": true
+  }
+}
 ```
 
 **Execution Pattern:**
-```typescript
-// Launch all 3 agents in parallel (single message with multiple Task tool calls)
-const results = await Promise.all([
-  Task({ subagent_type: 'code-reviewer', prompt: '...' }),
-  Task({ subagent_type: 'performance-auditor', prompt: '...' }),
-  Task({ subagent_type: 'security-auditor', prompt: '...' })
-]);
+The workflow engine will:
+1. Fetch your team's workflow config from the API
+2. Spawn each agent in the `quality_gates.agents` list
+3. Run them in parallel if `parallel: true`
+4. Aggregate results and check `all_must_pass`
+5. Stop with failure if any required agent fails
 
-// Aggregate results
-const allPassed = results.every(r => r.status === 'PASS');
-if (!allPassed) {
-  // Report failures and STOP - do not proceed to git operations
-  notify('ship', 'failed', { blocker: 'Quality gates failed' });
-  return;
-}
-```
+To customize your quality gates, visit the dashboard at https://www.oneshotship.com/dashboard/workflows
+
+You can add agents, remove agents, or change whether all must pass.
 
 **After all agents pass, also run:**
 - `npm test` - Full test suite
@@ -279,6 +217,21 @@ If shipping fails:
 ```bash
 ~/.oss/hooks/oss-notify.sh --workflow ship failed '{"blocker": "{REASON}"}'
 ```
+
+## Command Orchestration
+
+After this command completes, the workflow engine will:
+1. Evaluate conditions from your team's workflow config (fetched from the API)
+2. Execute any chained commands (e.g., stage, deploy)
+3. Spawn configured agents for post-ship tasks
+4. Stop at checkpoints for human review (if configured)
+
+Your team's workflow config controls:
+- `quality_gates`: Which agents run for quality checks (configurable list)
+- `chains_to`: Which commands run after shipping (e.g., stage, deploy)
+- `checkpoint`: Whether to pause for human review (human/auto)
+
+To customize your workflow, visit the dashboard at https://www.oneshotship.com/dashboard/workflows
 
 ## Error Handling
 
