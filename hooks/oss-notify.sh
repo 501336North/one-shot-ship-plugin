@@ -179,26 +179,36 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
             start)
                 node "$WORKFLOW_STATE_CLI" setActiveStep "$WORKFLOW_CMD" 2>/dev/null || true
                 node "$WORKFLOW_STATE_CLI" setSupervisor watching 2>/dev/null || true
-                # Track usage analytics (runs in background to not block)
-                (
-                    CONFIG_FILE=~/.oss/config.json
-                    if [[ -f "$CONFIG_FILE" ]]; then
-                        if command -v jq &>/dev/null; then
-                            API_KEY=$(jq -r '.apiKey // ""' "$CONFIG_FILE" 2>/dev/null)
-                            API_URL=$(jq -r '.apiUrl // "https://one-shot-ship-api.onrender.com"' "$CONFIG_FILE" 2>/dev/null)
-                        else
-                            API_KEY=$(grep -o '"apiKey"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/')
-                            API_URL=$(grep -o '"apiUrl"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || echo "https://one-shot-ship-api.onrender.com")
-                        fi
-                        if [[ -n "$API_KEY" ]]; then
-                            curl -sS -X POST "${API_URL}/api/v1/analytics/track" \
-                                -H "Authorization: Bearer $API_KEY" \
-                                -H "Content-Type: application/json" \
-                                -d "{\"command\": \"$WORKFLOW_CMD\", \"promptType\": \"command\", \"promptName\": \"$WORKFLOW_CMD\"}" \
-                                >/dev/null 2>&1 || true
-                        fi
-                    fi
-                ) &
+                # Track usage analytics for commands that DON'T use oss-decrypt
+                # Commands using oss-decrypt are already tracked via the prompts API
+                case "$WORKFLOW_CMD" in
+                    # These commands use oss-decrypt and are already tracked
+                    ideate|plan|build|ship|red|green|refactor|review|acceptance|debug|integration)
+                        # Skip - already tracked via prompts API
+                        ;;
+                    *)
+                        # Track commands that don't fetch prompts (runs in background)
+                        (
+                            CONFIG_FILE=~/.oss/config.json
+                            if [[ -f "$CONFIG_FILE" ]]; then
+                                if command -v jq &>/dev/null; then
+                                    API_KEY=$(jq -r '.apiKey // ""' "$CONFIG_FILE" 2>/dev/null)
+                                    API_URL=$(jq -r '.apiUrl // "https://one-shot-ship-api.onrender.com"' "$CONFIG_FILE" 2>/dev/null)
+                                else
+                                    API_KEY=$(grep -o '"apiKey"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/')
+                                    API_URL=$(grep -o '"apiUrl"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || echo "https://one-shot-ship-api.onrender.com")
+                                fi
+                                if [[ -n "$API_KEY" ]]; then
+                                    curl -sS -X POST "${API_URL}/api/v1/analytics/track" \
+                                        -H "Authorization: Bearer $API_KEY" \
+                                        -H "Content-Type: application/json" \
+                                        -d "{\"command\": \"$WORKFLOW_CMD\", \"promptType\": \"command\", \"promptName\": \"$WORKFLOW_CMD\"}" \
+                                        >/dev/null 2>&1 || true
+                                fi
+                            fi
+                        ) &
+                        ;;
+                esac
                 ;;
             merged)
                 # When ship merged, reset the entire workflow chain to start fresh
