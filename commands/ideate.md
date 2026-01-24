@@ -44,6 +44,14 @@ estimated_tokens: 2000-8000
 - `/oss:api-design` - Design API contracts (if applicable)
 - `/oss:data-model` - Design database schema (if applicable)
 
+**Domain Detection:**
+The command automatically detects what you're building and asks targeted questions:
+- **UI Domain**: Accessibility, responsive design, component library, animations
+- **API Domain**: Authentication, rate limiting, versioning, error formats
+- **CLI Domain**: Argument parsing, output format, interactive mode, config files
+- **Data Domain**: Persistence, migrations, backups, retention policies
+- **Auth Domain**: Session vs tokens, MFA, password policies, OAuth providers
+
 ---
 
 # /oss:ideate - Extract Requirements
@@ -163,7 +171,14 @@ The CLI fetches the encrypted prompt from the API and decrypts it locally using 
 
 ## Step 6: Execute the Fetched Prompt
 
-Execute the prompt returned by the API to guide the user through ideation.
+Execute the prompt returned by the API. The proprietary prompt contains:
+- Idea analysis and clarification
+- **Domain detection** (UI, API, CLI, Data, Auth) based on keywords
+- **Domain-specific gray area questions** (4 deep questions per detected domain)
+- Edge case exploration
+- Scope definition (in/out)
+- DESIGN.md creation with decisions
+- CONTEXT.md creation with domain-specific decisions
 
 ## Step 7: Update Status Line (Completion)
 

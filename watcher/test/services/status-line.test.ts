@@ -9,7 +9,14 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 import { tmpdir } from 'os';
 
-import { StatusLineService, TDDPhase, SupervisorStatus } from '../../src/services/status-line.js';
+import {
+  StatusLineService,
+  TDDPhase,
+  SupervisorStatus,
+  ContextHealthLevel,
+  ContextHealthInfo,
+  calculateContextHealthLevel,
+} from '../../src/services/status-line.js';
 
 describe('StatusLineService', () => {
   const testDir = path.join(tmpdir(), `oss-status-test-${Date.now()}`);
@@ -103,6 +110,7 @@ describe('StatusLineService', () => {
         phase: 'GREEN',
         task: '5/10',
         supervisor: 'watching',
+        contextHealth: null,
       });
     });
 
@@ -164,6 +172,105 @@ describe('StatusLineService', () => {
       expect(state.phase).toBeNull();
       expect(state.task).toBeNull();
       expect(state.supervisor).toBeNull();
+    });
+  });
+
+  describe('Context Health', () => {
+    describe('setContextHealth', () => {
+      it('should persist context health info', async () => {
+        const healthInfo: ContextHealthInfo = {
+          level: 'healthy',
+          usagePercent: 25,
+          tokensUsed: 25000,
+          tokensTotal: 100000,
+        };
+
+        await service.setContextHealth(healthInfo);
+
+        const state = await service.getState();
+        expect(state.contextHealth).toEqual(healthInfo);
+      });
+
+      it('should persist context health with minimal info', async () => {
+        const healthInfo: ContextHealthInfo = {
+          level: 'warning',
+          usagePercent: 55,
+        };
+
+        await service.setContextHealth(healthInfo);
+
+        const state = await service.getState();
+        expect(state.contextHealth).toEqual(healthInfo);
+      });
+
+      it('should update context health when called multiple times', async () => {
+        await service.setContextHealth({ level: 'healthy', usagePercent: 30 });
+        await service.setContextHealth({ level: 'critical', usagePercent: 85 });
+
+        const state = await service.getState();
+        expect(state.contextHealth?.level).toBe('critical');
+        expect(state.contextHealth?.usagePercent).toBe(85);
+      });
+
+      it('should persist context health to file', async () => {
+        const healthInfo: ContextHealthInfo = {
+          level: 'warning',
+          usagePercent: 60,
+          tokensUsed: 60000,
+          tokensTotal: 100000,
+        };
+
+        await service.setContextHealth(healthInfo);
+
+        // Read file directly to verify persistence
+        const filePath = path.join(testDir, 'status-line.json');
+        const content = await fs.readFile(filePath, 'utf-8');
+        const fileState = JSON.parse(content);
+
+        expect(fileState.contextHealth).toEqual(healthInfo);
+      });
+    });
+
+    describe('default state', () => {
+      it('should have contextHealth as null in default state', async () => {
+        const freshService = new StatusLineService(testDir);
+        await freshService.initialize();
+
+        const state = await freshService.getState();
+        expect(state.contextHealth).toBeNull();
+      });
+    });
+
+    describe('clearState with contextHealth', () => {
+      it('should clear contextHealth when clearState is called', async () => {
+        await service.setContextHealth({ level: 'warning', usagePercent: 55 });
+        await service.clearState();
+
+        const state = await service.getState();
+        expect(state.contextHealth).toBeNull();
+      });
+    });
+  });
+
+  describe('calculateContextHealthLevel', () => {
+    it('should return healthy when usage is below 50%', () => {
+      expect(calculateContextHealthLevel(0)).toBe('healthy');
+      expect(calculateContextHealthLevel(25)).toBe('healthy');
+      expect(calculateContextHealthLevel(49)).toBe('healthy');
+      expect(calculateContextHealthLevel(49.9)).toBe('healthy');
+    });
+
+    it('should return warning when usage is 50% to below 70%', () => {
+      expect(calculateContextHealthLevel(50)).toBe('warning');
+      expect(calculateContextHealthLevel(55)).toBe('warning');
+      expect(calculateContextHealthLevel(69)).toBe('warning');
+      expect(calculateContextHealthLevel(69.9)).toBe('warning');
+    });
+
+    it('should return critical when usage is 70% or above', () => {
+      expect(calculateContextHealthLevel(70)).toBe('critical');
+      expect(calculateContextHealthLevel(85)).toBe('critical');
+      expect(calculateContextHealthLevel(100)).toBe('critical');
     });
   });
 });
