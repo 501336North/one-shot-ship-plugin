@@ -15,6 +15,9 @@ jobs:
           - os: macos-latest
             target: node18-macos-arm64
             artifact: oss-decrypt-Darwin-arm64
+          - os: macos-latest
+            target: node18-macos-x64
+            artifact: oss-decrypt-Darwin-x64
           - os: ubuntu-latest
             target: node18-linux-x64
             artifact: oss-decrypt-Linux-x64
@@ -70,6 +73,7 @@ jobs:
         with:
           files: |
             artifacts/oss-decrypt-Darwin-arm64/oss-decrypt-Darwin-arm64
+            artifacts/oss-decrypt-Darwin-x64/oss-decrypt-Darwin-x64
             artifacts/oss-decrypt-Linux-x64/oss-decrypt-Linux-x64
           generate_release_notes: true
         env:
