@@ -28,100 +28,210 @@ CORRECTIONS=""
 VIOLATION_LAWS=""  # Track which law numbers are violated (e.g., "4,1,2")
 
 # =============================================================================
+# Load Team-Specific IRON LAWS Configuration
+# =============================================================================
+TEAM_CONFIG=""
+FETCH_SCRIPT="$SCRIPT_DIR/oss-fetch-team-iron-laws.sh"
+
+if [[ -x "$FETCH_SCRIPT" ]]; then
+    TEAM_CONFIG=$("$FETCH_SCRIPT" 2>/dev/null || echo '{}')
+fi
+
+# Helper function to extract JSON values (works without jq)
+get_json_value() {
+    local json="$1"
+    local key="$2"
+    echo "$json" | grep -o "\"$key\"[[:space:]]*:[[:space:]]*[^,}]*" | sed 's/.*:[[:space:]]*//' | tr -d '"' | head -1
+}
+
+# Helper function to extract nested config value
+get_config_value() {
+    local json="$1"
+    local law="$2"
+    local field="$3"
+    # Extract the law section first, then the field
+    local law_section=$(echo "$json" | grep -o "\"$law\"[[:space:]]*:[[:space:]]*{[^}]*}" | head -1)
+    if [[ -n "$law_section" ]]; then
+        get_json_value "$law_section" "$field"
+    fi
+}
+
+# Helper function to extract array values (e.g., protectedBranches)
+get_config_array() {
+    local json="$1"
+    local law="$2"
+    local array_name="$3"
+    # Extract the config section with nested braces
+    local law_section=$(echo "$json" | grep -o "\"$law\"[[:space:]]*:[[:space:]]*{[^}]*\"config\"[[:space:]]*:[[:space:]]*{[^}]*}" | head -1)
+    if [[ -n "$law_section" ]]; then
+        echo "$law_section" | grep -o "\"$array_name\"[[:space:]]*:[[:space:]]*\[[^]]*\]" | sed 's/.*\[//' | sed 's/\].*//' | tr ',' '\n' | tr -d '"' | tr -d ' '
+    fi
+}
+
+# Check if a law is enabled (defaults to true if not specified)
+is_law_enabled() {
+    local law="$1"
+    local enabled=$(get_config_value "$TEAM_CONFIG" "$law" "enabled")
+    [[ "$enabled" != "false" ]]
+}
+
+# =============================================================================
 # IRON LAW #4: Agent Git Flow - Check branch
 # =============================================================================
-BRANCH=$(git branch --show-current 2>/dev/null || echo "detached")
+if is_law_enabled "law4_git_flow"; then
+    BRANCH=$(git branch --show-current 2>/dev/null || echo "detached")
 
-if [[ "$BRANCH" == "main" || "$BRANCH" == "master" ]]; then
-    VIOLATIONS="${VIOLATIONS}├─ ❌ LAW #4: On '$BRANCH' branch (should be feature branch)\n"
-    CORRECTIONS="${CORRECTIONS}│  → Create feature branch before making changes\n"
-    CORRECTIONS="${CORRECTIONS}│    git fetch origin main && git checkout -b feat/agent-<name> origin/main\n"
-    VIOLATION_LAWS="${VIOLATION_LAWS}4,"
+    # Get custom protected branches from team config (defaults: main, master)
+    PROTECTED_BRANCHES=$(get_config_array "$TEAM_CONFIG" "law4_git_flow" "protectedBranches")
+    if [[ -z "$PROTECTED_BRANCHES" ]]; then
+        PROTECTED_BRANCHES="main
+master"
+    fi
+
+    LAW4_VIOLATED=false
+    while IFS= read -r protected_branch; do
+        if [[ -n "$protected_branch" && "$BRANCH" == "$protected_branch" ]]; then
+            LAW4_VIOLATED=true
+            break
+        fi
+    done <<< "$PROTECTED_BRANCHES"
+
+    if [[ "$LAW4_VIOLATED" == "true" ]]; then
+        VIOLATIONS="${VIOLATIONS}├─ ❌ LAW #4: On protected branch '$BRANCH' (should be feature branch)\n"
+        CORRECTIONS="${CORRECTIONS}│  → Create feature branch before making changes\n"
+        CORRECTIONS="${CORRECTIONS}│    git fetch origin main && git checkout -b feat/agent-<name> origin/main\n"
+        VIOLATION_LAWS="${VIOLATION_LAWS}4,"
+    else
+        PASSED="${PASSED}├─ ✅ LAW #4: On feature branch '$BRANCH'\n"
+    fi
 else
-    PASSED="${PASSED}├─ ✅ LAW #4: On feature branch '$BRANCH'\n"
+    PASSED="${PASSED}├─ ⏭️  LAW #4: Disabled by team config\n"
 fi
 
 # =============================================================================
 # IRON LAW #1: TDD - Check for skipped/focused tests
 # =============================================================================
-if [[ -f "package.json" ]]; then
-    # Find skipped/focused tests (exclude node_modules)
-    SKIPPED_FILES=$(grep -rl "\.skip\|\.todo\|\.only" --include="*.test.ts" --include="*.test.js" --include="*.spec.ts" --include="*.spec.js" --exclude-dir=node_modules 2>/dev/null || true)
+if is_law_enabled "law1_tdd"; then
+    if [[ -f "package.json" ]]; then
+        # Find skipped/focused tests (exclude node_modules)
+        SKIPPED_FILES=$(grep -rl "\.skip\|\.todo\|\.only" --include="*.test.ts" --include="*.test.js" --include="*.spec.ts" --include="*.spec.js" --exclude-dir=node_modules 2>/dev/null || true)
 
-    if [[ -n "$SKIPPED_FILES" ]]; then
-        VIOLATIONS="${VIOLATIONS}├─ ❌ LAW #1: Found skipped/focused tests (.skip/.todo/.only)\n"
-        VIOLATION_LAWS="${VIOLATION_LAWS}1,"
-        # List the specific files
-        while IFS= read -r file; do
-            if [[ -n "$file" ]]; then
-                CORRECTIONS="${CORRECTIONS}│  → Remove .skip/.todo/.only from: $file\n"
-            fi
-        done <<< "$SKIPPED_FILES"
-    else
-        PASSED="${PASSED}├─ ✅ LAW #1: No skipped tests found\n"
+        if [[ -n "$SKIPPED_FILES" ]]; then
+            VIOLATIONS="${VIOLATIONS}├─ ❌ LAW #1: Found skipped/focused tests (.skip/.todo/.only)\n"
+            VIOLATION_LAWS="${VIOLATION_LAWS}1,"
+            # List the specific files
+            while IFS= read -r file; do
+                if [[ -n "$file" ]]; then
+                    CORRECTIONS="${CORRECTIONS}│  → Remove .skip/.todo/.only from: $file\n"
+                fi
+            done <<< "$SKIPPED_FILES"
+        else
+            PASSED="${PASSED}├─ ✅ LAW #1: No skipped tests found\n"
+        fi
     fi
+else
+    PASSED="${PASSED}├─ ⏭️  LAW #1: Disabled by team config\n"
 fi
 
 # =============================================================================
 # IRON LAW #2: Test Philosophy - Check for 'any' types in staged files
 # =============================================================================
-if [[ -f "tsconfig.json" ]]; then
-    # Only check staged TypeScript files for 'any' types
-    STAGED_TS=$(git diff --cached --name-only 2>/dev/null | grep -E "\.tsx?$" || true)
-    ANY_FILES=""
+if is_law_enabled "law2_behavior_tests"; then
+    if [[ -f "tsconfig.json" ]]; then
+        # Only check staged TypeScript files for 'any' types
+        STAGED_TS=$(git diff --cached --name-only 2>/dev/null | grep -E "\.tsx?$" || true)
+        ANY_FILES=""
 
-    if [[ -n "$STAGED_TS" ]]; then
-        while IFS= read -r file; do
-            if [[ -n "$file" && -f "$file" ]]; then
-                if grep -q ": any" "$file" 2>/dev/null; then
-                    ANY_FILES="${ANY_FILES}${file}\n"
+        if [[ -n "$STAGED_TS" ]]; then
+            while IFS= read -r file; do
+                if [[ -n "$file" && -f "$file" ]]; then
+                    if grep -q ": any" "$file" 2>/dev/null; then
+                        ANY_FILES="${ANY_FILES}${file}\n"
+                    fi
                 fi
-            fi
-        done <<< "$STAGED_TS"
+            done <<< "$STAGED_TS"
+        fi
+
+        if [[ -n "$ANY_FILES" ]]; then
+            VIOLATIONS="${VIOLATIONS}├─ ❌ LAW #2: Found 'any' types in staged files\n"
+            VIOLATION_LAWS="${VIOLATION_LAWS}2,"
+            echo -e "$ANY_FILES" | while IFS= read -r file; do
+                if [[ -n "$file" ]]; then
+                    CORRECTIONS="${CORRECTIONS}│  → Replace 'any' with proper types in: $file\n"
+                fi
+            done
+        else
+            PASSED="${PASSED}├─ ✅ LAW #2: No 'any' types in staged files\n"
+        fi
     fi
-
-    if [[ -n "$ANY_FILES" ]]; then
-        VIOLATIONS="${VIOLATIONS}├─ ❌ LAW #2: Found 'any' types in staged files\n"
-        VIOLATION_LAWS="${VIOLATION_LAWS}2,"
-        echo -e "$ANY_FILES" | while IFS= read -r file; do
-            if [[ -n "$file" ]]; then
-                CORRECTIONS="${CORRECTIONS}│  → Replace 'any' with proper types in: $file\n"
-            fi
-        done
-    else
-        PASSED="${PASSED}├─ ✅ LAW #2: No 'any' types in staged files\n"
-    fi
-fi
-
-# =============================================================================
-# SETUP: Check for dev docs structure (project-local or global)
-# =============================================================================
-# Resolve dev docs path with project-local priority
-# Priority: 1) Project .oss/dev/, 2) Project dev/, 3) Global ~/.oss/dev/
-PROJECT_DIR=$(pwd)
-DEV_DOCS_PATH=""
-
-if [[ -d "$PROJECT_DIR/.oss/dev/active" ]]; then
-    DEV_DOCS_PATH="$PROJECT_DIR/.oss/dev"
-elif [[ -d "$PROJECT_DIR/dev/active" ]]; then
-    DEV_DOCS_PATH="$PROJECT_DIR/dev"
-elif [[ -d "$HOME/.oss/dev/active" ]]; then
-    DEV_DOCS_PATH="$HOME/.oss/dev"
-fi
-
-if [[ -z "$DEV_DOCS_PATH" ]]; then
-    VIOLATIONS="${VIOLATIONS}├─ ❌ LAW #6: Missing dev/active/ directory (checked ./.oss/dev/, ./dev/, ~/.oss/dev/)\n"
-    CORRECTIONS="${CORRECTIONS}│  → Create dev docs: mkdir -p .oss/dev/active .oss/dev/completed\n"
-    VIOLATION_LAWS="${VIOLATION_LAWS}6,"
 else
-    PASSED="${PASSED}├─ ✅ LAW #6: Dev docs found at $DEV_DOCS_PATH\n"
+    PASSED="${PASSED}├─ ⏭️  LAW #2: Disabled by team config\n"
+fi
+
+# =============================================================================
+# IRON LAW #6: Dev Docs Structure - Check for required docs
+# =============================================================================
+if is_law_enabled "law6_dev_docs"; then
+    # Resolve dev docs path with project-local priority
+    # Priority: 1) Project .oss/dev/, 2) Project dev/, 3) Global ~/.oss/dev/
+    PROJECT_DIR=$(pwd)
+    DEV_DOCS_PATH=""
+
+    if [[ -d "$PROJECT_DIR/.oss/dev/active" ]]; then
+        DEV_DOCS_PATH="$PROJECT_DIR/.oss/dev"
+    elif [[ -d "$PROJECT_DIR/dev/active" ]]; then
+        DEV_DOCS_PATH="$PROJECT_DIR/dev"
+    elif [[ -d "$HOME/.oss/dev/active" ]]; then
+        DEV_DOCS_PATH="$HOME/.oss/dev"
+    fi
+
+    if [[ -z "$DEV_DOCS_PATH" ]]; then
+        VIOLATIONS="${VIOLATIONS}├─ ❌ LAW #6: Missing dev/active/ directory (checked ./.oss/dev/, ./dev/, ~/.oss/dev/)\n"
+        CORRECTIONS="${CORRECTIONS}│  → Create dev docs: mkdir -p .oss/dev/active .oss/dev/completed\n"
+        VIOLATION_LAWS="${VIOLATION_LAWS}6,"
+    else
+        PASSED="${PASSED}├─ ✅ LAW #6: Dev docs found at $DEV_DOCS_PATH\n"
+
+        # Check for required docs in active features (if any active features exist)
+        REQUIRED_DOCS=$(get_config_array "$TEAM_CONFIG" "law6_dev_docs" "requiredDocs")
+        if [[ -z "$REQUIRED_DOCS" ]]; then
+            REQUIRED_DOCS="PROGRESS.md"
+        fi
+
+        # Check each active feature for required docs
+        MISSING_DOCS=""
+        if [[ -d "$DEV_DOCS_PATH/active" ]]; then
+            for feature_dir in "$DEV_DOCS_PATH/active"/*/; do
+                if [[ -d "$feature_dir" ]]; then
+                    feature_name=$(basename "$feature_dir")
+                    while IFS= read -r required_doc; do
+                        if [[ -n "$required_doc" && ! -f "$feature_dir/$required_doc" ]]; then
+                            MISSING_DOCS="${MISSING_DOCS}│  → Missing $required_doc in $feature_name\n"
+                        fi
+                    done <<< "$REQUIRED_DOCS"
+                fi
+            done
+        fi
+
+        if [[ -n "$MISSING_DOCS" ]]; then
+            VIOLATIONS="${VIOLATIONS}├─ ❌ LAW #6: Missing required docs in active features\n"
+            CORRECTIONS="${CORRECTIONS}$MISSING_DOCS"
+            VIOLATION_LAWS="${VIOLATION_LAWS}6,"
+        fi
+    fi
+else
+    PASSED="${PASSED}├─ ⏭️  LAW #6: Disabled by team config\n"
 fi
 
 # =============================================================================
 # IRON LAW #5: Agent Delegation Reminder (informational only)
 # =============================================================================
 # This is a reminder injected into the prompt, not a violation check
-AGENT_REMINDER="├─ 📋 LAW #5: Remember to delegate specialized work to agents (Task tool)\n"
+if is_law_enabled "law5_agent_delegation"; then
+    AGENT_REMINDER="├─ 📋 LAW #5: Remember to delegate specialized work to agents (Task tool)\n"
+else
+    AGENT_REMINDER="├─ ⏭️  LAW #5: Disabled by team config\n"
+fi
 
 # =============================================================================
 # Update workflow state for status line (detect /oss:* commands)
