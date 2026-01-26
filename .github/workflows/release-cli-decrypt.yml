@@ -1,0 +1,76 @@
+name: Release CLI Decrypt
+
+on:
+  push:
+    tags:
+      - 'cli-decrypt-v*'
+
+jobs:
+  build:
+    name: Build binaries
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: node18-macos-arm64
+            artifact: oss-decrypt-Darwin-arm64
+          - os: ubuntu-latest
+            target: node18-linux-x64
+            artifact: oss-decrypt-Linux-x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: packages/cli-decrypt
+
+      - name: Build bundle
+        run: npm run build:bundle
+        working-directory: packages/cli-decrypt
+
+      - name: Install pkg globally
+        run: npm install -g pkg
+
+      - name: Build binary
+        run: pkg dist/oss-decrypt.cjs --target ${{ matrix.target }} --output dist/bin/${{ matrix.artifact }}
+        working-directory: packages/cli-decrypt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: packages/cli-decrypt/dist/bin/${{ matrix.artifact }}
+
+  release:
+    name: Create release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: ls -R artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/oss-decrypt-Darwin-arm64/oss-decrypt-Darwin-arm64
+            artifacts/oss-decrypt-Linux-x64/oss-decrypt-Linux-x64
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
