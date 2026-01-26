@@ -20,6 +20,27 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
+
+# =============================================================================
+# TIMEOUT WRAPPER - Prevents blocking on slow/hanging node calls
+# =============================================================================
+run_with_timeout() {
+    local timeout_secs="${1:-2}"
+    shift
+    if command -v gtimeout &>/dev/null; then
+        gtimeout "$timeout_secs" "$@" 2>/dev/null || true
+    elif command -v timeout &>/dev/null; then
+        timeout "$timeout_secs" "$@" 2>/dev/null || true
+    else
+        "$@" 2>/dev/null &
+        local pid=$!
+        (sleep "$timeout_secs" && kill -9 $pid 2>/dev/null) &
+        local killer=$!
+        wait $pid 2>/dev/null || true
+        kill $killer 2>/dev/null || true
+    fi
+}
+
 COPY_CLI="$PLUGIN_ROOT/watcher/dist/cli/get-copy.js"
 WORKFLOW_STATE_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js"
 TELEGRAM_CLI="$PLUGIN_ROOT/watcher/dist/cli/telegram-notify.js"
@@ -72,8 +93,8 @@ fi
 # =============================================================================
 
 if [[ "$USE_COPY_SERVICE" == true ]] && [[ -f "$COPY_CLI" ]]; then
-    # Call copy service CLI
-    COPY_JSON=$(node "$COPY_CLI" "$COPY_TYPE" "${COPY_ARGS[@]}" 2>/dev/null || echo '{}')
+    # Call copy service CLI (with timeout to prevent hanging)
+    COPY_JSON=$(run_with_timeout 3 node "$COPY_CLI" "$COPY_TYPE" "${COPY_ARGS[@]}" 2>/dev/null || echo '{}')
 
     if command -v jq &>/dev/null; then
         TITLE=$(echo "$COPY_JSON" | jq -r '.title // "OSS"')
@@ -321,18 +342,18 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "session" ]]; then
     SESSION_EVENT="${COPY_ARGS[0]:-}"
     SESSION_CONTEXT="${COPY_ARGS[1]:-'{}'}"
 
-    # Update workflow state for session events
+    # Update workflow state for session events (with timeout to prevent hanging)
     if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
         case "$SESSION_EVENT" in
             context_restored|fresh_start)
-                node "$WORKFLOW_STATE_CLI" setSupervisor watching 2>/dev/null || true
+                run_with_timeout 2 node "$WORKFLOW_STATE_CLI" setSupervisor watching
                 # Set non-sticky notification (auto-clears after 10 seconds)
                 if [[ -n "$MESSAGE" && "$MESSAGE" != "" ]]; then
-                    node "$WORKFLOW_STATE_CLI" setNotification "$MESSAGE" 10 2>/dev/null || true
+                    run_with_timeout 2 node "$WORKFLOW_STATE_CLI" setNotification "$MESSAGE" 10
                 fi
                 ;;
             context_saved)
-                node "$WORKFLOW_STATE_CLI" setSupervisor idle 2>/dev/null || true
+                run_with_timeout 2 node "$WORKFLOW_STATE_CLI" setSupervisor idle
                 ;;
         esac
     fi
