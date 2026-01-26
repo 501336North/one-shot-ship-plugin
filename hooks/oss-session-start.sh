@@ -6,6 +6,31 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/oss-config.sh" 2>/dev/null || true
 
+# =============================================================================
+# TIMEOUT WRAPPER - Prevents blocking on slow/hanging node calls
+# =============================================================================
+# Run command with timeout, fail silently if it takes too long
+# This prevents Claude Code from hanging on startup if node CLI calls are slow
+run_with_timeout() {
+    local timeout_secs="${1:-2}"
+    shift
+    if command -v gtimeout &>/dev/null; then
+        # macOS with coreutils installed
+        gtimeout "$timeout_secs" "$@" 2>/dev/null || true
+    elif command -v timeout &>/dev/null; then
+        # Linux or macOS with timeout available
+        timeout "$timeout_secs" "$@" 2>/dev/null || true
+    else
+        # Fallback: run with background + sleep + kill pattern
+        "$@" 2>/dev/null &
+        local pid=$!
+        (sleep "$timeout_secs" && kill -9 $pid 2>/dev/null) &
+        local killer=$!
+        wait $pid 2>/dev/null || true
+        kill $killer 2>/dev/null || true
+    fi
+}
+
 # Ensure ~/.oss directory exists with secure permissions
 mkdir -p ~/.oss
 chmod 700 ~/.oss  # Only owner can access
@@ -148,12 +173,13 @@ echo "[$TIMESTAMP] [session] [START] project=$PROJECT_NAME branch=$CURRENT_BRANC
 # Initialize workflow state (for Claude Code status line)
 # prepareForNewSession clears stale workflow data (progress, currentTask, notifications)
 # while preserving chainState history and setting supervisor to 'watching'
+# NOTE: All node calls use run_with_timeout to prevent blocking Claude Code startup
 if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
-    node "$WORKFLOW_STATE_CLI" init 2>/dev/null || true
-    node "$WORKFLOW_STATE_CLI" prepareForNewSession 2>/dev/null || true
+    run_with_timeout 2 node "$WORKFLOW_STATE_CLI" init
+    run_with_timeout 2 node "$WORKFLOW_STATE_CLI" prepareForNewSession
     # Generate unique session ID for staleness detection
     SESSION_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "session-$(date +%s)")
-    node "$WORKFLOW_STATE_CLI" setSessionId "$SESSION_ID" 2>/dev/null || true
+    run_with_timeout 2 node "$WORKFLOW_STATE_CLI" setSessionId "$SESSION_ID"
 fi
 
 # Check if watcher is already running
@@ -186,8 +212,9 @@ fi
 # --- Health Check (Run tests on session start) ---
 # Run npm test to catch any pre-existing failures and queue them
 # This ensures the supervisor catches issues BEFORE work begins
-# OSS_SKIP_HEALTH_CHECK=1 can be set in test environments to skip health check
-if [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]] && [[ -f "$HEALTH_CHECK_CLI" ]] && [[ -f "package.json" ]]; then
+# NOTE: Health check is OPT-IN to prevent startup delays on large projects
+# Set OSS_RUN_HEALTH_CHECK=1 to enable automatic health checks on session start
+if [[ "${OSS_RUN_HEALTH_CHECK:-}" == "1" ]] && [[ -f "$HEALTH_CHECK_CLI" ]] && [[ -f "package.json" ]]; then
     echo "OSS: Running health check (background)..."
     # Run in background to not block session start
     # Output goes to session log for debugging
@@ -259,13 +286,15 @@ if [[ -f "$PROJECT_CONTEXT_FILE" ]]; then
     echo "Previous session context restored."
 
     # Visual notification for context restore (via unified oss-notify.sh)
+    # NOTE: Backgrounded to prevent blocking Claude Code startup
     if [[ -x "$NOTIFY_SCRIPT" ]]; then
-        "$NOTIFY_SCRIPT" --session context_restored "{\"project\": \"$PROJECT_NAME\", \"branch\": \"${BRANCH:-unknown}\", \"saveDate\": \"${SAVE_DATE}\", \"uncommitted\": $UNCOMMITTED_COUNT}"
+        "$NOTIFY_SCRIPT" --session context_restored "{\"project\": \"$PROJECT_NAME\", \"branch\": \"${BRANCH:-unknown}\", \"saveDate\": \"${SAVE_DATE}\", \"uncommitted\": $UNCOMMITTED_COUNT}" &
     fi
 else
     # No saved context - fresh start notification (via unified oss-notify.sh)
+    # NOTE: Backgrounded to prevent blocking Claude Code startup
     if [[ -x "$NOTIFY_SCRIPT" ]]; then
-        "$NOTIFY_SCRIPT" --session fresh_start "{\"project\": \"$PROJECT_NAME\"}"
+        "$NOTIFY_SCRIPT" --session fresh_start "{\"project\": \"$PROJECT_NAME\"}" &
     fi
 fi
 
