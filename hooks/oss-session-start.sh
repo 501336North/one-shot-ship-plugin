@@ -57,6 +57,7 @@ HOOKS_TO_COPY=(
     "oss-notify.sh"
     "oss-statusline.sh"
     "oss-detect-playwright.sh"
+    "fetch-iron-laws.sh"
 )
 for hook in "${HOOKS_TO_COPY[@]}"; do
     if [[ -f "$PLUGIN_ROOT/hooks/$hook" ]]; then
