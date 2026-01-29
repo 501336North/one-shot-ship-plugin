@@ -1,8 +1,9 @@
 #!/bin/bash
-# oss-ask-telegram.sh - Send AskUserQuestion to Telegram
+# oss-ask-telegram.sh - Send AskUserQuestion to Telegram with SSE listener
 #
 # This hook fires BEFORE AskUserQuestion is displayed.
-# It sends the question to Telegram so users can see it on their phone.
+# It sends the question to Telegram AND starts an SSE listener to receive
+# answers back from Telegram (bidirectional flow).
 #
 # Input (stdin): JSON with tool_input containing questions array
 # Output: None (hook passes through)
@@ -12,6 +13,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SETTINGS_FILE=~/.oss/settings.json
 CONFIG_FILE=~/.oss/config.json
+PENDING_DIR=~/.oss/pending
+SSE_PID_FILE="$PENDING_DIR/sse-listener.pid"
 
 # Read input from stdin
 INPUT=$(cat)
@@ -60,9 +63,23 @@ if [[ -z "$FIRST_QUESTION" ]]; then
     exit 0
 fi
 
-# Send to API (fire and forget - don't block)
+# Create pending directory and store questionId for the answered hook
+mkdir -p "$PENDING_DIR"
+echo "$QUESTION_ID" > "$PENDING_DIR/current-question-id"
+
+# Kill any existing SSE listener from previous question
+if [[ -f "$SSE_PID_FILE" ]]; then
+    OLD_PID=$(cat "$SSE_PID_FILE" 2>/dev/null || echo "")
+    if [[ -n "$OLD_PID" ]] && kill -0 "$OLD_PID" 2>/dev/null; then
+        kill "$OLD_PID" 2>/dev/null || true
+    fi
+    rm -f "$SSE_PID_FILE"
+fi
+
+# Send question to API and start SSE listener in background
 {
-    curl -s -X POST "$API_URL/api/v1/telegram/question" \
+    # First, send the question
+    RESPONSE=$(curl -s -X POST "$API_URL/api/v1/telegram/question" \
         -H "Authorization: Bearer $API_KEY" \
         -H "Content-Type: application/json" \
         -d "$(jq -n \
@@ -76,10 +93,23 @@ fi
                 options: $opts,
                 multiSelect: $multi
             }')" \
-        2>/dev/null || true
+        2>/dev/null || echo '{"success":false}')
+
+    # If question was sent successfully, start SSE listener
+    if echo "$RESPONSE" | jq -e '.success == true' >/dev/null 2>&1; then
+        # Start SSE listener in background to receive Telegram answers
+        "$SCRIPT_DIR/sse-telegram-listener.sh" \
+            "$API_URL" \
+            "$API_KEY" \
+            "$QUESTION_ID" \
+            &
+
+        # Store SSE listener PID
+        echo $! > "$SSE_PID_FILE"
+    fi
 } &
 
-# Don't wait for curl - let it run in background
+# Don't wait for background processes - let them run
 # The question will still appear in terminal normally
 
 exit 0
