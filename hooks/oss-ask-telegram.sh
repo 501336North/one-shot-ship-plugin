@@ -15,6 +15,16 @@ SETTINGS_FILE=~/.oss/settings.json
 CONFIG_FILE=~/.oss/config.json
 PENDING_DIR=~/.oss/pending
 SSE_PID_FILE="$PENDING_DIR/sse-listener.pid"
+LOG_DIR=~/.oss/logs
+LOG_FILE="$LOG_DIR/telegram-hook.log"
+
+# Ensure log directory exists
+mkdir -p "$LOG_DIR"
+
+# Logging function
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [telegram-hook] $*" >> "$LOG_FILE"
+}
 
 # Read input from stdin
 INPUT=$(cat)
@@ -83,40 +93,49 @@ if [[ -f "$SSE_PID_FILE" ]]; then
     rm -f "$SSE_PID_FILE"
 fi
 
-# Send question to API and start SSE listener in background
-{
-    # First, send the question
-    RESPONSE=$(curl -s -X POST "$API_URL/api/v1/telegram/question" \
-        -H "Authorization: Bearer $API_KEY" \
-        -H "Content-Type: application/json" \
-        -d "$(jq -n \
-            --arg qid "$QUESTION_ID" \
-            --arg q "$FIRST_QUESTION" \
-            --argjson opts "$OPTIONS" \
-            --argjson multi "$MULTI_SELECT" \
-            '{
-                questionId: $qid,
-                question: $q,
-                options: $opts,
-                multiSelect: $multi
-            }')" \
-        2>/dev/null || echo '{"success":false}')
+# Send question to API synchronously (fast operation)
+log "Sending question to API: $QUESTION_ID"
 
-    # If question was sent successfully, start SSE listener
-    if echo "$RESPONSE" | jq -e '.success == true' >/dev/null 2>&1; then
-        # Start SSE listener in background to receive Telegram answers
-        "$SCRIPT_DIR/sse-telegram-listener.sh" \
-            "$API_URL" \
-            "$API_KEY" \
-            "$QUESTION_ID" \
-            &
+RESPONSE=$(curl -s -X POST "$API_URL/api/v1/telegram/question" \
+    -H "Authorization: Bearer $API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "$(jq -n \
+        --arg qid "$QUESTION_ID" \
+        --arg q "$FIRST_QUESTION" \
+        --argjson opts "$OPTIONS" \
+        --argjson multi "$MULTI_SELECT" \
+        '{
+            questionId: $qid,
+            question: $q,
+            options: $opts,
+            multiSelect: $multi
+        }')" \
+    2>/dev/null || echo '{"success":false}')
 
-        # Store SSE listener PID
-        echo $! > "$SSE_PID_FILE"
-    fi
-} &
+# If question was sent successfully, start SSE listener
+if echo "$RESPONSE" | jq -e '.success == true' >/dev/null 2>&1; then
+    log "Question sent successfully, starting SSE listener"
 
-# Don't wait for background processes - let them run
-# The question will still appear in terminal normally
+    # Start SSE listener with nohup to survive parent exit
+    # Use disown to fully detach from shell job control
+    # Redirect stdin from /dev/null to prevent blocking
+    # Redirect stdout/stderr to log file for debugging
+    nohup "$SCRIPT_DIR/sse-telegram-listener.sh" \
+        "$API_URL" \
+        "$API_KEY" \
+        "$QUESTION_ID" \
+        </dev/null \
+        >>"$LOG_DIR/sse-listener.log" 2>&1 &
+
+    SSE_PID=$!
+    echo "$SSE_PID" > "$SSE_PID_FILE"
+
+    # Fully detach the process from shell job control
+    disown "$SSE_PID" 2>/dev/null || true
+
+    log "SSE listener started with PID $SSE_PID"
+else
+    log "Failed to send question to API: $RESPONSE"
+fi
 
 exit 0
