@@ -16,13 +16,14 @@ CONFIG_FILE=~/.oss/config.json
 # Read input from stdin
 INPUT=$(cat)
 
-# Check if Telegram notifications are enabled
-if [[ ! -f "$SETTINGS_FILE" ]]; then
-    exit 0
-fi
-
-STYLE=$(jq -r '.notifications.style // "visual"' "$SETTINGS_FILE" 2>/dev/null || echo "visual")
-if [[ "$STYLE" != "telegram" ]]; then
+# Check if Telegram notifications are enabled (independent of notification style)
+# This allows users to have visual/audio notifications AND Telegram
+if [[ -f "$SETTINGS_FILE" ]]; then
+    TELEGRAM_ENABLED=$(jq -r '.telegram.enabled // false' "$SETTINGS_FILE" 2>/dev/null || echo "false")
+    if [[ "$TELEGRAM_ENABLED" != "true" ]]; then
+        exit 0
+    fi
+else
     exit 0
 fi
 
