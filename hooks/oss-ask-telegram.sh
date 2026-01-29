@@ -81,6 +81,10 @@ echo "$QUESTION_ID" > "$PENDING_DIR/current-question-id"
 # This allows Telegram answers to be injected directly into the terminal
 tty > "$PENDING_DIR/terminal-tty" 2>/dev/null || true
 
+# Store the terminal app name so SSE listener knows which app to activate
+# Common values: WarpTerminal, iTerm.app, Apple_Terminal, vscode, etc.
+echo "${TERM_PROGRAM:-Terminal}" > "$PENDING_DIR/terminal-app"
+
 # Store the question options so SSE listener can match them
 echo "$OPTIONS" > "$PENDING_DIR/question-options.json"
 
