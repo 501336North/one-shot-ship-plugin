@@ -6,7 +6,7 @@ description: Manage Telegram notifications for OSS Dev Workflow
 
 **Command:** `/oss:telegram`
 
-**Description:** Manage Telegram notifications for OSS Dev Workflow
+**Description:** Link your Telegram account to receive notifications when Claude needs your input.
 
 **Workflow Position:** any time - **TELEGRAM** notifications
 
@@ -18,7 +18,7 @@ description: Manage Telegram notifications for OSS Dev Workflow
 **Arguments:**
 | Argument | Required | Description |
 |----------|----------|-------------|
-| `SUBCOMMAND` | No | on, off, setup (default: show status) |
+| `SUBCOMMAND` | No | link, on, off, unlink, status (default: status) |
 
 **Options:**
 | Flag | Short | Description |
@@ -27,144 +27,228 @@ description: Manage Telegram notifications for OSS Dev Workflow
 
 **Examples:**
 ```bash
-# Show status and configuration
+# Show linking status
 /oss:telegram
 
-# Enable notifications
+# Link your Telegram account (shows magic link)
+/oss:telegram link
+
+# Enable notifications (after linking)
 /oss:telegram on
 
 # Disable notifications
 /oss:telegram off
 
-# Configure bot token and chat ID
-/oss:telegram setup
+# Unlink your Telegram account
+/oss:telegram unlink
 ```
 
 **Related Commands:**
 - `/oss:settings` - General notification settings
-- `/oss:webhook` - GitHub webhook configuration
 - `/oss:login` - Configure API key
 
 ---
 
 # /oss:telegram - Telegram Notifications
 
-Receive notifications on your phone when Claude Code needs input or completes tasks.
-
-## Usage
-
-```bash
-/oss:telegram              # Show status and configuration
-/oss:telegram on           # Enable notifications
-/oss:telegram off          # Disable notifications
-/oss:telegram setup        # Configure bot token and chat ID
-```
+Receive notifications on your phone when Claude Code needs your input. Answer questions from Telegram or from your terminal - whichever comes first.
 
 ## How It Works
 
-When enabled, you'll receive Telegram messages:
-- **Decision prompts** with inline buttons when Claude needs your input
-- **Completion notifications** when workflows finish
+1. **Link your account** - Click a magic link to connect @OSSDevWorkflowBot
+2. **Receive questions** - When Claude asks you something, get a Telegram message
+3. **Answer anywhere** - Reply via Telegram buttons OR from your terminal
+4. **First response wins** - No duplicate answers, no timeouts
 
-You can respond via Telegram buttons OR from your terminal - whichever comes first.
+## Implementation
 
-## Status Check
-
-Run the status CLI to check configuration:
-
-```bash
-node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/telegram-status.js"
-```
-
-**Output states:**
-- `NOT_CONFIGURED` - Bot token or chat ID missing
-- `OFF` - Configured but disabled
-- `ON` - Enabled and ready
-
-## Toggle On/Off
+### Step 0: Check Authentication
 
 ```bash
-# Enable
-node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/telegram-toggle.js" on
-
-# Disable
-node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/telegram-toggle.js" off
+API_KEY=$(cat ~/.oss/config.json 2>/dev/null | jq -r '.apiKey // empty')
+if [[ -z "$API_KEY" ]]; then
+    echo "Not authenticated. Run: /oss:login"
+    exit 1
+fi
+API_URL=$(cat ~/.oss/config.json 2>/dev/null | jq -r '.apiUrl // "https://api.oneshotship.com"')
 ```
 
-## Setup Instructions
-
-### Step 1: Create Your Bot
-
-1. Open Telegram and search for **@BotFather**
-2. Send `/newbot`
-3. Choose a name (e.g., "My OSS Notifications")
-4. Choose a username (must end in `bot`, e.g., `my_oss_bot`)
-5. Copy the **bot token** (looks like `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`)
-
-### Step 2: Get Your Chat ID
-
-1. Open your new bot in Telegram
-2. Send any message to it (e.g., "hello")
-3. Run the setup CLI:
+### Step 1: Parse Arguments
 
 ```bash
-node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/telegram-setup.js" --fetch-chat
+SUBCOMMAND="${1:-status}"
+case "$SUBCOMMAND" in
+    link|on|off|unlink|status|--help|-h)
+        ;;
+    *)
+        echo "Unknown subcommand: $SUBCOMMAND"
+        echo "Usage: /oss:telegram [link|on|off|unlink|status]"
+        exit 1
+        ;;
+esac
 ```
 
-### Step 3: Save Configuration
+### Step 2: Handle Subcommands
+
+#### status (default)
 
 ```bash
-# Save bot token
-node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/telegram-setup.js" --token "YOUR_BOT_TOKEN"
+# Get current status from API
+RESPONSE=$(curl -s -X GET "$API_URL/api/v1/telegram/status" \
+    -H "Authorization: Bearer $API_KEY" \
+    -H "Content-Type: application/json")
 
-# Validate configuration
-node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/telegram-setup.js" --validate
+LINKED=$(echo "$RESPONSE" | jq -r '.linked')
+CHAT_ID=$(echo "$RESPONSE" | jq -r '.chatId // "N/A"')
+NOTIFS_ENABLED=$(echo "$RESPONSE" | jq -r '.notificationsEnabled // false')
+
+if [[ "$LINKED" == "true" ]]; then
+    echo "Telegram Status"
+    echo "==============="
+    echo ""
+    echo "✅ Account linked"
+    echo "   Chat ID: $CHAT_ID"
+    echo "   Notifications: $([ "$NOTIFS_ENABLED" == "true" ] && echo "ON" || echo "OFF")"
+    echo ""
+    echo "Commands:"
+    echo "  /oss:telegram on      Enable notifications"
+    echo "  /oss:telegram off     Disable notifications"
+    echo "  /oss:telegram unlink  Remove Telegram link"
+else
+    echo "Telegram Status"
+    echo "==============="
+    echo ""
+    echo "❌ Not linked"
+    echo ""
+    echo "To link your Telegram account:"
+    echo "  /oss:telegram link"
+fi
 ```
 
-### Step 4: Enable Notifications
+#### link
 
 ```bash
-node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/telegram-toggle.js" on
+# Generate magic link
+RESPONSE=$(curl -s -X POST "$API_URL/api/v1/telegram/link" \
+    -H "Authorization: Bearer $API_KEY" \
+    -H "Content-Type: application/json")
+
+SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+if [[ "$SUCCESS" != "true" ]]; then
+    echo "Error: $(echo "$RESPONSE" | jq -r '.error')"
+    exit 1
+fi
+
+MAGIC_LINK=$(echo "$RESPONSE" | jq -r '.magicLink')
+EXPIRES_AT=$(echo "$RESPONSE" | jq -r '.expiresAt')
+
+echo "Link Your Telegram Account"
+echo "=========================="
+echo ""
+echo "1. Click this link on your phone:"
+echo ""
+echo "   $MAGIC_LINK"
+echo ""
+echo "2. Press START in Telegram"
+echo ""
+echo "⏱️  Link expires in 5 minutes"
+echo ""
+echo "Waiting for confirmation..."
+
+# Poll for linking completion (max 5 minutes)
+for i in {1..60}; do
+    sleep 5
+    STATUS=$(curl -s -X GET "$API_URL/api/v1/telegram/status" \
+        -H "Authorization: Bearer $API_KEY" \
+        -H "Content-Type: application/json")
+    LINKED=$(echo "$STATUS" | jq -r '.linked')
+    if [[ "$LINKED" == "true" ]]; then
+        echo ""
+        echo "✅ Telegram linked successfully!"
+        echo ""
+        echo "You'll now receive notifications when Claude needs your input."
+        echo "Toggle with: /oss:telegram on|off"
+        exit 0
+    fi
+done
+
+echo ""
+echo "⏱️  Link expired. Run /oss:telegram link to try again."
 ```
 
-## Configuration File
+#### on
 
-Settings are stored in `~/.oss/settings.json`:
+```bash
+# Enable notifications
+RESPONSE=$(curl -s -X PATCH "$API_URL/api/v1/telegram/notifications" \
+    -H "Authorization: Bearer $API_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"enabled": true}')
 
-```json
-{
-  "telegram": {
-    "enabled": false,
-    "botToken": "123456789:ABCdefGHIjklMNOpqrsTUVwxyz",
-    "chatId": "987654321"
-  }
-}
+SUCCESS=$(echo "$RESPONSE" | jq -r '.success // false')
+ERROR=$(echo "$RESPONSE" | jq -r '.error // empty')
+
+if [[ -n "$ERROR" ]]; then
+    echo "Error: $ERROR"
+    echo ""
+    echo "Link your account first: /oss:telegram link"
+    exit 1
+fi
+
+echo "✅ Telegram notifications enabled"
+echo ""
+echo "You'll receive messages when Claude needs your input."
 ```
 
-## Security Notes
+#### off
 
-- Your bot token stays local (only in `~/.oss/settings.json`)
-- Each user creates their own bot (no shared infrastructure)
-- No webhook exposure - uses long polling
-- Chat ID ensures messages only go to you
+```bash
+# Disable notifications
+RESPONSE=$(curl -s -X PATCH "$API_URL/api/v1/telegram/notifications" \
+    -H "Authorization: Bearer $API_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"enabled": false}')
+
+echo "✅ Telegram notifications disabled"
+echo ""
+echo "You won't receive Telegram messages. Terminal notifications still work."
+```
+
+#### unlink
+
+```bash
+# Unlink account
+RESPONSE=$(curl -s -X DELETE "$API_URL/api/v1/telegram/unlink" \
+    -H "Authorization: Bearer $API_KEY" \
+    -H "Content-Type: application/json")
+
+echo "✅ Telegram account unlinked"
+echo ""
+echo "To re-link: /oss:telegram link"
+```
+
+## Security
+
+- **No bot token needed** - You use our shared @OSSDevWorkflowBot
+- **Magic link expires** - 5-minute window prevents unauthorized linking
+- **Chat ID verified** - Only your Telegram account receives your messages
+- **First response wins** - Answer from Telegram or terminal, both work
 
 ## Troubleshooting
 
-### "NOT_CONFIGURED" Status
+### "Not linked" after clicking link
 
-Missing bot token or chat ID. Run:
-```bash
-/oss:telegram setup
-```
+1. Make sure you pressed START in Telegram
+2. The link may have expired - run `/oss:telegram link` again
+3. Check your internet connection
 
-### "Cannot send to chat" Error
+### Not receiving messages
 
-1. Make sure you've messaged your bot at least once
-2. Re-run `--fetch-chat` to get the correct chat ID
-3. Verify with `--validate`
+1. Check status: `/oss:telegram`
+2. Make sure notifications are ON
+3. Check Telegram notification settings on your phone
+4. Ensure the OSS bot isn't muted
 
-### Messages Not Arriving
+### "Telegram is not linked" error in /oss:settings
 
-1. Check that notifications are enabled: `/oss:telegram`
-2. Verify your bot is running (send a test message)
-3. Check Telegram app notification settings
+Run `/oss:telegram link` first, then select Telegram in settings.

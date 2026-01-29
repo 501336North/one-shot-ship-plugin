@@ -77,7 +77,29 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": "tool == \"AskUserQuestion\"",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-ask-telegram.sh"
+          }
+        ],
+        "description": "Send AskUserQuestion to Telegram for mobile notifications"
+      }
+    ],
     "PostToolUse": [
+      {
+        "matcher": "tool == \"AskUserQuestion\"",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-ask-telegram-answered.sh"
+          }
+        ],
+        "description": "Report terminal answer to API (first-response-wins)"
+      },
       {
         "matcher": "tool == \"Edit\" && tool_input.file_path matches \"\\\\.(ts|tsx|js|jsx)$\"",
         "hooks": [

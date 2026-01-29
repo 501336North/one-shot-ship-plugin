@@ -152,10 +152,20 @@ Use `AskUserQuestion` tool to let user modify settings:
 
 **Question 1: Notification Style**
 
-First, check if Telegram is configured by reading `telegram.botToken` from settings:
+First, check if Telegram is linked via API:
 
 ```bash
-TELEGRAM_CONFIGURED=$(jq -r '.telegram.botToken // empty' "$SETTINGS_FILE" 2>/dev/null)
+API_KEY=$(cat ~/.oss/config.json 2>/dev/null | jq -r '.apiKey // empty')
+API_URL=$(cat ~/.oss/config.json 2>/dev/null | jq -r '.apiUrl // "https://api.oneshotship.com"')
+
+if [[ -n "$API_KEY" ]]; then
+    TELEGRAM_STATUS=$(curl -s -X GET "$API_URL/api/v1/telegram/status" \
+        -H "Authorization: Bearer $API_KEY" \
+        -H "Content-Type: application/json")
+    TELEGRAM_LINKED=$(echo "$TELEGRAM_STATUS" | jq -r '.linked // false')
+else
+    TELEGRAM_LINKED="false"
+fi
 ```
 
 ```json
@@ -166,7 +176,7 @@ TELEGRAM_CONFIGURED=$(jq -r '.telegram.botToken // empty' "$SETTINGS_FILE" 2>/de
     {"label": "Visual", "description": "macOS notification center (terminal-notifier)"},
     {"label": "Audio", "description": "Spoken messages using text-to-speech"},
     {"label": "Sound", "description": "System sounds (Glass, Ping, etc.)"},
-    {"label": "Telegram", "description": "Mobile notifications - requires setup first via /oss:telegram"},
+    {"label": "Telegram", "description": "Mobile notifications - link account first via /oss:telegram link"},
     {"label": "None", "description": "Silent mode - no notifications"}
   ],
   "multiSelect": false
@@ -219,19 +229,24 @@ TELEGRAM_CONFIGURED=$(jq -r '.telegram.botToken // empty' "$SETTINGS_FILE" 2>/de
 
 ### Step 3.5: Validate Telegram Selection
 
-**If user selects "Telegram" but it's not configured:**
+**If user selects "Telegram" but it's not linked:**
 
-Check if `telegram.botToken` exists in settings. If NOT_CONFIGURED, show error and prompt to run setup:
+Check if Telegram is linked via API. If not linked, show error and prompt to link:
 
-```
-Telegram is not configured yet.
-
-To set up Telegram notifications:
-1. Run: /oss:telegram setup
-2. Follow the setup wizard
-3. Then re-run /oss:settings to select Telegram
-
-For now, falling back to 'visual' style.
+```bash
+if [[ "$STYLE" == "telegram" && "$TELEGRAM_LINKED" != "true" ]]; then
+    echo ""
+    echo "Telegram is not linked yet."
+    echo ""
+    echo "To link your Telegram account:"
+    echo "1. Run: /oss:telegram link"
+    echo "2. Click the magic link on your phone"
+    echo "3. Press START in Telegram"
+    echo "4. Then re-run /oss:settings to select Telegram"
+    echo ""
+    echo "For now, falling back to 'visual' style."
+    STYLE="visual"
+fi
 ```
 
 Set `STYLE="visual"` and continue.
@@ -240,11 +255,11 @@ Set `STYLE="visual"` and continue.
 
 Write updated settings to `~/.oss/settings.json`.
 
-**CRITICAL: When style changes, update telegram.enabled accordingly:**
-- If style = "telegram" → set `telegram.enabled = true`
-- If style != "telegram" → set `telegram.enabled = false`
+**CRITICAL: When style changes, sync telegram.enabled with the API:**
+- If style = "telegram" → call API to enable notifications
+- If style != "telegram" → call API to disable notifications
 
-This prevents the bug where changing style away from telegram still sends telegram notifications.
+This ensures the server-side state matches local settings.
 
 ```bash
 mkdir -p ~/.oss
@@ -256,10 +271,13 @@ else
     TELEGRAM_ENABLED="false"
 fi
 
-# Preserve existing telegram credentials if they exist
-EXISTING_BOT_TOKEN=$(jq -r '.telegram.botToken // empty' "$SETTINGS_FILE" 2>/dev/null)
-EXISTING_CHAT_ID=$(jq -r '.telegram.chatId // empty' "$SETTINGS_FILE" 2>/dev/null)
-TELEGRAM_CONFIGURED=$([ -n "$EXISTING_BOT_TOKEN" ] && echo "true" || echo "false")
+# Sync with API if authenticated and telegram is linked
+if [[ -n "$API_KEY" && "$TELEGRAM_LINKED" == "true" ]]; then
+    curl -s -X PATCH "$API_URL/api/v1/telegram/notifications" \
+        -H "Authorization: Bearer $API_KEY" \
+        -H "Content-Type: application/json" \
+        -d "{\"enabled\": $TELEGRAM_ENABLED}" > /dev/null
+fi
 
 cat > ~/.oss/settings.json << EOF
 {
@@ -269,16 +287,11 @@ cat > ~/.oss/settings.json << EOF
     "sound": "$SOUND",
     "verbosity": "$VERBOSITY",
     "telegram": {
-      "configured": $TELEGRAM_CONFIGURED,
+      "linked": $TELEGRAM_LINKED,
       "enabled": $TELEGRAM_ENABLED
     }
   },
-  "version": 1,
-  "telegram": {
-    "enabled": $TELEGRAM_ENABLED,
-    "botToken": "${EXISTING_BOT_TOKEN:-}",
-    "chatId": "${EXISTING_CHAT_ID:-}"
-  }
+  "version": 2
 }
 EOF
 ```
@@ -300,7 +313,8 @@ case "$STYLE" in
         afplay "/System/Library/Sounds/${SOUND}.aiff"
         ;;
     "telegram")
-        node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/telegram-notify.js" --message "OSS settings saved successfully!"
+        # Telegram test is handled by the API - just confirm
+        echo "📱 Telegram notifications enabled - you'll receive messages when Claude needs input"
         ;;
     "none")
         echo "Notifications disabled. Settings saved."
@@ -324,20 +338,6 @@ New Configuration:
 Your notifications are now configured!
 ```
 
-## Migration from oss-audio
-
-If `~/.oss/audio-config` exists but `settings.json` does not:
-
-1. Parse the old config file
-2. Map values to new format:
-   - `OSS_AUDIO_ENABLED=true` + `OSS_USE_VOICE=true` → `style: "audio"`
-   - `OSS_AUDIO_ENABLED=true` + `OSS_USE_VOICE=false` → `style: "sound"`
-   - `OSS_AUDIO_ENABLED=false` → `style: "none"`
-   - `OSS_VOICE` → `voice`
-   - `OSS_SOUND_SUCCESS` → `sound`
-3. Create `settings.json` with migrated values
-4. Inform user of migration
-
 ## Settings Schema
 
 ```json
@@ -346,16 +346,17 @@ If `~/.oss/audio-config` exists but `settings.json` does not:
     "style": "visual" | "audio" | "sound" | "telegram" | "none",
     "voice": "Samantha" | "Daniel" | "Karen" | "Moira",
     "sound": "Glass" | "Ping" | "Purr" | "Pop",
-    "verbosity": "all" | "important" | "errors-only"
+    "verbosity": "all" | "important" | "errors-only",
+    "telegram": {
+      "linked": true | false,
+      "enabled": true | false
+    }
   },
-  "telegram": {
-    "enabled": true | false,
-    "botToken": "your-bot-token",
-    "chatId": "your-chat-id"
-  },
-  "version": 1
+  "version": 2
 }
 ```
+
+**Note:** Telegram credentials (chatId) are stored server-side, not locally. Use `/oss:telegram` to manage linking.
 
 ## Available Options
 
@@ -365,7 +366,7 @@ If `~/.oss/audio-config` exists but `settings.json` does not:
 | visual | terminal-notifier | macOS Notification Center |
 | audio | say | Text-to-speech |
 | sound | afplay | System sounds |
-| telegram | telegram-notify.js | Mobile notifications (requires /oss:telegram setup) |
+| telegram | API + @OSSDevWorkflowBot | Mobile notifications (link via /oss:telegram link) |
 | none | - | Silent mode |
 
 ### Verbosity Levels
