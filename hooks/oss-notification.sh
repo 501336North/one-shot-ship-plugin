@@ -64,13 +64,15 @@ case "$STYLE" in
         fi
         ;;
     "telegram")
-        # Telegram notification
+        # Telegram style: Use local notifications only for "Ready" events
+        # AskUserQuestion prompts go to Telegram via PreToolUse hook (oss-ask-telegram.sh)
+        # "Ready" notifications stay local - sending them to Telegram would spam the user
         PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
-        TELEGRAM_HOOK="$PLUGIN_ROOT/hooks/oss-telegram.sh"
-        if [[ -f "$TELEGRAM_HOOK" ]]; then
-            "$TELEGRAM_HOOK" notify "Ready" &>/dev/null &
+        WORKFLOW_STATE_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js"
+        if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
+            node "$WORKFLOW_STATE_CLI" setNotification "Ready" 10 2>/dev/null || true
         fi
-        # Also show local terminal-notifier as backup
+        # Local popup notification (not sent to Telegram)
         if command -v terminal-notifier &>/dev/null; then
             terminal-notifier -title "OSS" -message "Ready" -sound "Funk" &>/dev/null &
         fi
