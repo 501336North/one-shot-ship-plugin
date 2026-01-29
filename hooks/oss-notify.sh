@@ -286,8 +286,13 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
     fi
 
     # Send Telegram notification for workflow events if CLI exists
-    # (skip if notification is filtered by verbosity)
-    if [[ "$SKIP_NOTIFICATION" != true ]] && [[ -f "$TELEGRAM_CLI" ]] && [[ -n "$MESSAGE" ]]; then
+    # (skip if notification is filtered by verbosity OR if notifications.telegram.enabled is false)
+    TELEGRAM_NOTIF_ENABLED="false"
+    if [[ -f "$SETTINGS_FILE" ]] && command -v jq &>/dev/null; then
+        TELEGRAM_NOTIF_ENABLED=$(jq -r '.notifications.telegram.enabled // false' "$SETTINGS_FILE" 2>/dev/null || echo "false")
+    fi
+
+    if [[ "$SKIP_NOTIFICATION" != true ]] && [[ "$TELEGRAM_NOTIF_ENABLED" == "true" ]] && [[ -f "$TELEGRAM_CLI" ]] && [[ -n "$MESSAGE" ]]; then
         # Build the notification message
         TELEGRAM_MSG="/oss:$WORKFLOW_CMD $WORKFLOW_EVENT"
 

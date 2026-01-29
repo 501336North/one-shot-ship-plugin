@@ -23,7 +23,20 @@ PENDING_DIR=~/.oss/pending
 ANSWER_FILE="$PENDING_DIR/telegram-answer.json"
 TTY_FILE="$PENDING_DIR/terminal-tty"
 OPTIONS_FILE="$PENDING_DIR/question-options.json"
+LOG_DIR=~/.oss/logs
+LOG_FILE="$LOG_DIR/sse-listener.log"
 SSE_TIMEOUT=300  # 5 minutes
+
+# Ensure directories exist
+mkdir -p "$PENDING_DIR" "$LOG_DIR"
+
+# Logging function
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [sse-listener] [$QUESTION_ID] $*" >> "$LOG_FILE"
+}
+
+log "Starting SSE listener"
+log "API URL: $API_URL"
 
 # SSE endpoint URL
 SSE_URL="$API_URL/api/v1/telegram/subscribe/$QUESTION_ID?token=$API_KEY"
@@ -41,6 +54,8 @@ inject_answer_to_terminal() {
     local answer="$1"
     local terminal_input=""
 
+    log "Attempting to inject answer to terminal: $answer"
+
     # Check if we have options to match against
     if [[ -f "$OPTIONS_FILE" ]]; then
         # Try to find matching option number
@@ -50,6 +65,7 @@ inject_answer_to_terminal() {
             if [[ "$option_label" == "$answer" ]]; then
                 # Found matching option, use 1-based index
                 terminal_input="$((i + 1))"
+                log "Matched option $((i + 1)): $option_label"
                 break
             fi
         done
@@ -62,11 +78,12 @@ inject_answer_to_terminal() {
         # "Other" is typically option count + 1
         # We'll just send the answer text and hope Claude handles it
         terminal_input="$answer"
+        log "No matching option found, using raw answer"
     fi
 
     # Use AppleScript to send keystrokes to the frontmost terminal
     # This works for Terminal.app, iTerm2, and other terminal applications
-    osascript <<EOF 2>/dev/null
+    if osascript <<EOF 2>/dev/null
 tell application "System Events"
     -- Small delay to ensure terminal is ready
     delay 0.1
@@ -76,99 +93,124 @@ tell application "System Events"
     keystroke return
 end tell
 EOF
+    then
+        log "Successfully injected answer to terminal"
+        return 0
+    else
+        log "Failed to inject answer to terminal"
+        return 1
+    fi
+}
 
-    return $?
+# Function to process an answer (common logic for answer_received and already_answered)
+process_answer() {
+    local json_data="$1"
+    local event_type="$2"
+
+    # Parse answer from JSON
+    local answer=$(echo "$json_data" | jq -r '.answer // empty' 2>/dev/null)
+    local answered_via=$(echo "$json_data" | jq -r '.answeredVia // "telegram"' 2>/dev/null)
+
+    if [[ -n "$answer" ]]; then
+        log "Received answer ($event_type): $answer (via $answered_via)"
+
+        # Write answer to file
+        jq -n \
+            --arg qid "$QUESTION_ID" \
+            --arg answer "$answer" \
+            --arg via "$answered_via" \
+            --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{
+                questionId: $qid,
+                answer: $answer,
+                answeredVia: $via,
+                receivedAt: $ts
+            }' > "$ANSWER_FILE"
+
+        log "Wrote answer to $ANSWER_FILE"
+
+        # Inject answer into terminal (if TTY is available)
+        if inject_answer_to_terminal "$answer"; then
+            show_notification "✅ $answer (injected to terminal)"
+        else
+            show_notification "$answer (answer in terminal manually)"
+        fi
+
+        return 0
+    else
+        log "No answer in JSON data"
+        return 1
+    fi
 }
 
 # Function to cleanup
 cleanup() {
+    log "Cleaning up SSE listener"
     rm -f "$PENDING_DIR/sse-listener.pid"
 }
 
 trap cleanup EXIT
 
+log "Connecting to SSE endpoint: $SSE_URL"
+
 # Connect to SSE endpoint and process events
 # Use --no-buffer to get events as they arrive
+# Store current event type as we parse lines
+CURRENT_EVENT=""
+
 curl -s --no-buffer \
     -H "Accept: text/event-stream" \
     -H "Cache-Control: no-cache" \
     --max-time $SSE_TIMEOUT \
     "$SSE_URL" 2>/dev/null | while IFS= read -r line; do
 
-    # SSE format: "event: <name>" followed by "data: <json>"
-    if [[ "$line" == "event: answer_received"* ]]; then
-        # Next line should be the data
-        read -r data_line
-        if [[ "$data_line" == "data: "* ]]; then
-            # Extract JSON data
-            JSON_DATA="${data_line#data: }"
+    # Remove carriage returns (SSE uses \r\n)
+    line="${line%$'\r'}"
 
-            # Parse answer from JSON
-            ANSWER=$(echo "$JSON_DATA" | jq -r '.answer // empty' 2>/dev/null)
-            ANSWERED_VIA=$(echo "$JSON_DATA" | jq -r '.answeredVia // "telegram"' 2>/dev/null)
+    # Skip empty lines (SSE event delimiter)
+    if [[ -z "$line" ]]; then
+        CURRENT_EVENT=""
+        continue
+    fi
 
-            if [[ -n "$ANSWER" ]]; then
-                # Write answer to file
-                mkdir -p "$PENDING_DIR"
-                jq -n \
-                    --arg qid "$QUESTION_ID" \
-                    --arg answer "$ANSWER" \
-                    --arg via "$ANSWERED_VIA" \
-                    --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-                    '{
-                        questionId: $qid,
-                        answer: $answer,
-                        answeredVia: $via,
-                        receivedAt: $ts
-                    }' > "$ANSWER_FILE"
+    # Handle SSE comments (heartbeats)
+    if [[ "$line" == ":"* ]]; then
+        log "Received heartbeat"
+        continue
+    fi
 
-                # Inject answer into terminal (if TTY is available)
-                if inject_answer_to_terminal "$ANSWER"; then
-                    show_notification "✅ $ANSWER (injected to terminal)"
-                else
-                    show_notification "$ANSWER (answer in terminal manually)"
+    # Parse event type
+    if [[ "$line" == "event: "* ]]; then
+        CURRENT_EVENT="${line#event: }"
+        log "Received event: $CURRENT_EVENT"
+        continue
+    fi
+
+    # Parse data
+    if [[ "$line" == "data: "* ]]; then
+        JSON_DATA="${line#data: }"
+
+        case "$CURRENT_EVENT" in
+            "connected")
+                log "Connected to SSE endpoint successfully"
+                ;;
+            "answer_received"|"already_answered")
+                if process_answer "$JSON_DATA" "$CURRENT_EVENT"; then
+                    log "Answer processed successfully, exiting"
+                    exit 0
                 fi
-
-                # Exit listener - our job is done
+                ;;
+            "timeout")
+                log "SSE connection timed out from server"
                 exit 0
-            fi
-        fi
-    elif [[ "$line" == "event: already_answered"* ]]; then
-        # Question was already answered before we connected
-        read -r data_line
-        if [[ "$data_line" == "data: "* ]]; then
-            JSON_DATA="${data_line#data: }"
-            ANSWER=$(echo "$JSON_DATA" | jq -r '.answer // empty' 2>/dev/null)
-
-            if [[ -n "$ANSWER" ]]; then
-                # Write answer to file
-                mkdir -p "$PENDING_DIR"
-                jq -n \
-                    --arg qid "$QUESTION_ID" \
-                    --arg answer "$ANSWER" \
-                    --arg via "telegram" \
-                    --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-                    '{
-                        questionId: $qid,
-                        answer: $answer,
-                        answeredVia: $via,
-                        receivedAt: $ts
-                    }' > "$ANSWER_FILE"
-
-                # Inject answer into terminal (if TTY is available)
-                if inject_answer_to_terminal "$ANSWER"; then
-                    show_notification "✅ $ANSWER (already answered, injected)"
-                else
-                    show_notification "$ANSWER (was already answered)"
-                fi
-                exit 0
-            fi
-        fi
-    elif [[ "$line" == "event: timeout"* ]]; then
-        # SSE connection timed out - that's OK, user probably answered in terminal
-        exit 0
+                ;;
+            *)
+                log "Unknown event type: $CURRENT_EVENT"
+                ;;
+        esac
     fi
 done
 
 # If we get here, the connection was closed or timed out
+log "SSE connection closed, exiting"
 exit 0
