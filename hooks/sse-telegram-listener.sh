@@ -23,6 +23,7 @@ PENDING_DIR=~/.oss/pending
 ANSWER_FILE="$PENDING_DIR/telegram-answer.json"
 TTY_FILE="$PENDING_DIR/terminal-tty"
 OPTIONS_FILE="$PENDING_DIR/question-options.json"
+TERMINAL_APP_FILE="$PENDING_DIR/terminal-app"
 LOG_DIR=~/.oss/logs
 LOG_FILE="$LOG_DIR/sse-listener.log"
 SSE_TIMEOUT=300  # 5 minutes
@@ -81,23 +82,59 @@ inject_answer_to_terminal() {
         log "No matching option found, using raw answer"
     fi
 
-    # Use AppleScript to send keystrokes to the frontmost terminal
-    # This works for Terminal.app, iTerm2, and other terminal applications
-    if osascript <<EOF 2>/dev/null
+    # Escape special characters for AppleScript
+    local escaped_input=$(echo "$terminal_input" | sed 's/\\/\\\\/g; s/"/\\"/g')
+
+    # Get the terminal app name (saved by oss-ask-telegram.sh)
+    local terminal_app="Terminal"
+    if [[ -f "$TERMINAL_APP_FILE" ]]; then
+        terminal_app=$(cat "$TERMINAL_APP_FILE" 2>/dev/null || echo "Terminal")
+    fi
+
+    # Map TERM_PROGRAM values to actual app names for AppleScript
+    case "$terminal_app" in
+        "WarpTerminal") terminal_app="Warp" ;;
+        "iTerm.app") terminal_app="iTerm" ;;
+        "Apple_Terminal") terminal_app="Terminal" ;;
+        "vscode") terminal_app="Visual Studio Code" ;;
+        *) ;; # Use as-is for others
+    esac
+
+    log "Activating terminal app: $terminal_app"
+
+    # Save current clipboard content
+    local old_clipboard=$(pbpaste 2>/dev/null || echo "")
+
+    # Copy answer to clipboard (without newline - we'll send Enter separately)
+    echo -n "$terminal_input" | pbcopy
+
+    # Use AppleScript to paste then press Enter
+    local applescript_result
+    applescript_result=$(osascript <<EOF 2>&1
+tell application "$terminal_app"
+    activate
+end tell
+-- Wait for app to fully come to foreground (important when switching from other apps)
+delay 1.0
 tell application "System Events"
-    -- Small delay to ensure terminal is ready
-    delay 0.1
-    -- Type the answer
-    keystroke "$terminal_input"
-    -- Press Enter
-    keystroke return
+    -- Paste from clipboard
+    keystroke "v" using command down
+    delay 0.3
+    -- Press Enter using key code (36 = Return key)
+    key code 36
 end tell
 EOF
-    then
+)
+
+    # Restore old clipboard after a delay (don't block)
+    (sleep 2 && echo -n "$old_clipboard" | pbcopy) &
+    local exit_code=$?
+
+    if [[ $exit_code -eq 0 ]]; then
         log "Successfully injected answer to terminal"
         return 0
     else
-        log "Failed to inject answer to terminal"
+        log "Failed to inject answer to terminal (exit=$exit_code): $applescript_result"
         return 1
     fi
 }
