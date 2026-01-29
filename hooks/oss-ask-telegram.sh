@@ -67,6 +67,13 @@ fi
 mkdir -p "$PENDING_DIR"
 echo "$QUESTION_ID" > "$PENDING_DIR/current-question-id"
 
+# Store the terminal TTY for the SSE listener to inject answers
+# This allows Telegram answers to be injected directly into the terminal
+tty > "$PENDING_DIR/terminal-tty" 2>/dev/null || true
+
+# Store the question options so SSE listener can match them
+echo "$OPTIONS" > "$PENDING_DIR/question-options.json"
+
 # Kill any existing SSE listener from previous question
 if [[ -f "$SSE_PID_FILE" ]]; then
     OLD_PID=$(cat "$SSE_PID_FILE" 2>/dev/null || echo "")
