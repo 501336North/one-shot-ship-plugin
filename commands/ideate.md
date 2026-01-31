@@ -153,7 +153,7 @@ Before executing, fetch and review the IRON LAWS:
 
 **All 5 IRON LAWS must be followed. Self-correct any violations before proceeding.**
 
-## Step 4: Update Status Line (Start)
+## Step 5: Update Status Line (Start)
 
 **You MUST update the workflow status before proceeding.**
 
@@ -161,7 +161,15 @@ Before executing, fetch and review the IRON LAWS:
 ~/.oss/hooks/oss-notify.sh --workflow ideate start '{"idea": "{USER_IDEA}"}'
 ```
 
-## Step 5: Fetch and Decrypt Prompt
+## Step 6: Ensure Decrypt CLI Installed
+
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install decrypt CLI. Run /oss:login for manual setup."; exit 1; }
+```
+
+This auto-installs the decrypt CLI if missing. Existing installations are unaffected.
+
+## Step 7: Fetch and Decrypt Prompt
 
 ```bash
 ~/.oss/bin/oss-decrypt --type workflows --name ideate
@@ -169,7 +177,7 @@ Before executing, fetch and review the IRON LAWS:
 
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
-## Step 6: Execute the Fetched Prompt
+## Step 8: Execute the Fetched Prompt
 
 Execute the prompt returned by the API. The proprietary prompt contains:
 - Idea analysis and clarification
@@ -180,7 +188,7 @@ Execute the prompt returned by the API. The proprietary prompt contains:
 - DESIGN.md creation with decisions
 - CONTEXT.md creation with domain-specific decisions
 
-## Step 7: Update Status Line (Completion)
+## Step 9: Update Status Line (Completion)
 
 **You MUST update the workflow status on completion.**
 

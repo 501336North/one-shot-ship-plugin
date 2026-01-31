@@ -162,7 +162,15 @@ Before executing, fetch and review the IRON LAWS:
 ~/.oss/hooks/oss-notify.sh --workflow quick start '{"description": "{TASK_DESCRIPTION}"}'
 ```
 
-## Step 5: Fetch and Decrypt Prompt
+## Step 5: Ensure Decrypt CLI Installed
+
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install decrypt CLI. Run /oss:login for manual setup."; exit 1; }
+```
+
+This auto-installs the decrypt CLI if missing. Existing installations are unaffected.
+
+## Step 6: Fetch and Decrypt Prompt
 
 ```bash
 ~/.oss/bin/oss-decrypt --type workflows --name quick
@@ -170,7 +178,7 @@ Before executing, fetch and review the IRON LAWS:
 
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
-## Step 6: Execute the Fetched Prompt
+## Step 7: Execute the Fetched Prompt
 
 Execute the prompt returned by the API. The proprietary prompt contains:
 - Task description parsing or prompting
@@ -182,7 +190,7 @@ Execute the prompt returned by the API. The proprietary prompt contains:
 - Summary generation
 - STATE.md update
 
-## Step 7: Update Status Line (Completion)
+## Step 8: Update Status Line (Completion)
 
 **You MUST update the workflow status on completion.**
 

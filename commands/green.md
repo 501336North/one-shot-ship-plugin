@@ -91,7 +91,15 @@ Register at https://www.oneshotship.com
 ~/.oss/hooks/oss-notify.sh --workflow green start '{}'
 ```
 
-## Step 4: Fetch and Decrypt Prompt
+## Step 4: Ensure Decrypt CLI Installed
+
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install decrypt CLI. Run /oss:login for manual setup."; exit 1; }
+```
+
+This auto-installs the decrypt CLI if missing. Existing installations are unaffected.
+
+## Step 5: Fetch and Decrypt Prompt
 
 ```bash
 ~/.oss/bin/oss-decrypt --type commands --name green
@@ -99,7 +107,7 @@ Register at https://www.oneshotship.com
 
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
-## Step 5: Execute the Fetched Prompt
+## Step 6: Execute the Fetched Prompt
 
 The prompt guides you through:
 - Analyzing the failing test
@@ -107,7 +115,7 @@ The prompt guides you through:
 - Writing minimal implementation
 - Running tests to confirm GREEN
 
-## Step 6: Log Phase Complete and Update Status Line
+## Step 7: Log Phase Complete and Update Status Line
 
 **You MUST log the phase completion AND update the workflow status.**
 
