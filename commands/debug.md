@@ -93,7 +93,15 @@ Before executing, fetch and review the IRON LAWS:
 ~/.oss/hooks/oss-notify.sh --workflow debug start '{"bug": "{DESCRIPTION}"}'
 ```
 
-## Step 5: Fetch and Decrypt Prompt
+## Step 5: Ensure Decrypt CLI Installed
+
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install decrypt CLI. Run /oss:login for manual setup."; exit 1; }
+```
+
+This auto-installs the decrypt CLI if missing. Existing installations are unaffected.
+
+## Step 6: Fetch and Decrypt Prompt
 
 ```bash
 ~/.oss/bin/oss-decrypt --type commands --name debug
@@ -101,7 +109,7 @@ Before executing, fetch and review the IRON LAWS:
 
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
-## Step 6: Execute the Fetched Prompt
+## Step 7: Execute the Fetched Prompt
 
 The prompt guides the debugging workflow:
 - Parse bug input (error, description, or file reference)
@@ -110,7 +118,7 @@ The prompt guides the debugging workflow:
 - Write reproduction test (TDD RED phase)
 - Create DEBUG.md and update PROGRESS.md
 
-## Step 7: Update Status Line (Milestones)
+## Step 8: Update Status Line (Milestones)
 
 **You MUST update the workflow status at key milestones.**
 

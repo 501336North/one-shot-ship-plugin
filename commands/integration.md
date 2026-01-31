@@ -93,7 +93,15 @@ Register at https://www.oneshotship.com
 ~/.oss/hooks/oss-notify.sh --workflow integration start '{}'
 ```
 
-## Step 4: Fetch and Decrypt Prompt
+## Step 4: Ensure Decrypt CLI Installed
+
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install decrypt CLI. Run /oss:login for manual setup."; exit 1; }
+```
+
+This auto-installs the decrypt CLI if missing. Existing installations are unaffected.
+
+## Step 5: Fetch and Decrypt Prompt
 
 ```bash
 ~/.oss/bin/oss-decrypt --type commands --name integration
@@ -101,7 +109,7 @@ Register at https://www.oneshotship.com
 
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
-## Step 5: Execute the Fetched Prompt
+## Step 6: Execute the Fetched Prompt
 
 The prompt guides you through:
 - Reviewing unit test mocks
@@ -109,7 +117,7 @@ The prompt guides you through:
 - Running integration test suite
 - Fixing mock/reality mismatches
 
-## Step 6: Update Status Line (Completion)
+## Step 7: Update Status Line (Completion)
 
 **You MUST update the workflow status on completion.**
 
