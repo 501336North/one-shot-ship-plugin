@@ -72,7 +72,15 @@ No API key found. Run: /oss:login
 Register at https://www.oneshotship.com
 ```
 
-## Step 2: Fetch IRON LAWS (MANDATORY)
+## Step 2: Initialize Logging
+
+**You MUST initialize logging for supervisor visibility.**
+
+```bash
+~/.oss/hooks/oss-log.sh init iterate
+```
+
+## Step 3: Fetch IRON LAWS (MANDATORY)
 
 Before executing, fetch and review the IRON LAWS:
 ```bash
@@ -83,22 +91,29 @@ Before executing, fetch and review the IRON LAWS:
 
 ## Step 4: Update Status Line (Start)
 
+**You MUST update the workflow status before proceeding.**
+
 ```bash
 ~/.oss/hooks/oss-notify.sh --workflow iterate start '{}'
 ```
 
-**You MUST update the workflow status before proceeding.**
+## Step 5: Ensure Decrypt CLI Installed
 
-## Step 5: Fetch Prompt from API
-
-```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/workflows/iterate
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install decrypt CLI. Run /oss:login for manual setup."; exit 1; }
 ```
 
-## Step 6: Execute the Fetched Prompt
+This auto-installs the decrypt CLI if missing. Existing installations are unaffected.
+
+## Step 6: Fetch and Decrypt Prompt
+
+```bash
+~/.oss/bin/oss-decrypt --type workflows --name iterate
+```
+
+The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
+
+## Step 7: Execute the Fetched Prompt
 
 The prompt will guide you through:
 - Loading context from dev docs
@@ -106,7 +121,7 @@ The prompt will guide you through:
 - Scope assessment
 - Creating ITERATIONS.md with delta tasks
 
-## Step 7: Update Status Line (Completion)
+## Step 8: Update Status Line (Completion)
 
 **You MUST update the workflow status on completion.**
 

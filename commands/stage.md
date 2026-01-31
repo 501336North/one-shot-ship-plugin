@@ -79,16 +79,31 @@ Before executing, fetch and review the IRON LAWS:
 
 **All 5 IRON LAWS must be followed. Self-correct any violations before proceeding.**
 
-## Step 3: Fetch Prompt from API
+## Step 4: Update Status Line (Start)
 
-```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/workflows/stage
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+**You MUST update the workflow status before proceeding.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow stage start '{}'
 ```
 
-## Step 3: Execute the Fetched Prompt
+## Step 5: Ensure Decrypt CLI Installed
+
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install decrypt CLI. Run /oss:login for manual setup."; exit 1; }
+```
+
+This auto-installs the decrypt CLI if missing. Existing installations are unaffected.
+
+## Step 6: Fetch and Decrypt Prompt
+
+```bash
+~/.oss/bin/oss-decrypt --type workflows --name stage
+```
+
+The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
+
+## Step 7: Execute the Fetched Prompt
 
 The prompt handles:
 - Pre-deployment verification

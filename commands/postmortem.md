@@ -78,16 +78,40 @@ Register at https://www.oneshotship.com
 ~/.oss/hooks/oss-log.sh init postmortem
 ```
 
-## Step 3: Fetch Prompt from API
+## Step 3: Fetch IRON LAWS (MANDATORY)
 
-```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/workflows/postmortem
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+Before executing, fetch and review the IRON LAWS:
+```bash
+~/.oss/hooks/fetch-iron-laws.sh
 ```
 
-## Step 4: Execute the Fetched Prompt
+**All 5 IRON LAWS must be followed. Self-correct any violations before proceeding.**
+
+## Step 4: Update Status Line (Start)
+
+**You MUST update the workflow status before proceeding.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow postmortem start '{}'
+```
+
+## Step 5: Ensure Decrypt CLI Installed
+
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install decrypt CLI. Run /oss:login for manual setup."; exit 1; }
+```
+
+This auto-installs the decrypt CLI if missing. Existing installations are unaffected.
+
+## Step 6: Fetch and Decrypt Prompt
+
+```bash
+~/.oss/bin/oss-decrypt --type workflows --name postmortem
+```
+
+The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
+
+## Step 7: Execute the Fetched Prompt
 
 The prompt handles:
 - Blameless postmortem facilitation
