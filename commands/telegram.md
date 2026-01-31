@@ -94,7 +94,7 @@ esac
 
 ```bash
 # Get current status from API
-RESPONSE=$(curl -s -X GET "$API_URL/api/v1/telegram/status" \
+RESPONSE=$(curl -s --http1.1 -X GET "$API_URL/api/v1/telegram/status" \
     -H "Authorization: Bearer $API_KEY" \
     -H "Content-Type: application/json")
 
@@ -129,7 +129,7 @@ fi
 
 ```bash
 # Generate magic link
-RESPONSE=$(curl -s -X POST "$API_URL/api/v1/telegram/link" \
+RESPONSE=$(curl -s --http1.1 -X POST "$API_URL/api/v1/telegram/link" \
     -H "Authorization: Bearer $API_KEY" \
     -H "Content-Type: application/json")
 
@@ -158,7 +158,7 @@ echo "Waiting for confirmation..."
 # Poll for linking completion (max 5 minutes)
 for i in {1..60}; do
     sleep 5
-    STATUS=$(curl -s -X GET "$API_URL/api/v1/telegram/status" \
+    STATUS=$(curl -s --http1.1 -X GET "$API_URL/api/v1/telegram/status" \
         -H "Authorization: Bearer $API_KEY" \
         -H "Content-Type: application/json")
     LINKED=$(echo "$STATUS" | jq -r '.linked')
@@ -180,7 +180,7 @@ echo "⏱️  Link expired. Run /oss:telegram link to try again."
 
 ```bash
 # Enable notifications
-RESPONSE=$(curl -s -X PATCH "$API_URL/api/v1/telegram/notifications" \
+RESPONSE=$(curl -s --http1.1 -X PATCH "$API_URL/api/v1/telegram/notifications" \
     -H "Authorization: Bearer $API_KEY" \
     -H "Content-Type: application/json" \
     -d '{"enabled": true}')
@@ -204,7 +204,7 @@ echo "You'll receive messages when Claude needs your input."
 
 ```bash
 # Disable notifications
-RESPONSE=$(curl -s -X PATCH "$API_URL/api/v1/telegram/notifications" \
+RESPONSE=$(curl -s --http1.1 -X PATCH "$API_URL/api/v1/telegram/notifications" \
     -H "Authorization: Bearer $API_KEY" \
     -H "Content-Type: application/json" \
     -d '{"enabled": false}')
@@ -218,7 +218,7 @@ echo "You won't receive Telegram messages. Terminal notifications still work."
 
 ```bash
 # Unlink account
-RESPONSE=$(curl -s -X DELETE "$API_URL/api/v1/telegram/unlink" \
+RESPONSE=$(curl -s --http1.1 -X DELETE "$API_URL/api/v1/telegram/unlink" \
     -H "Authorization: Bearer $API_KEY" \
     -H "Content-Type: application/json")
 

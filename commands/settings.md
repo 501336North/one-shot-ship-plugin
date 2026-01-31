@@ -159,7 +159,7 @@ API_KEY=$(cat ~/.oss/config.json 2>/dev/null | jq -r '.apiKey // empty')
 API_URL=$(cat ~/.oss/config.json 2>/dev/null | jq -r '.apiUrl // "https://api.oneshotship.com"')
 
 if [[ -n "$API_KEY" ]]; then
-    TELEGRAM_STATUS=$(curl -s -X GET "$API_URL/api/v1/telegram/status" \
+    TELEGRAM_STATUS=$(curl -s --http1.1 -X GET "$API_URL/api/v1/telegram/status" \
         -H "Authorization: Bearer $API_KEY" \
         -H "Content-Type: application/json")
     TELEGRAM_LINKED=$(echo "$TELEGRAM_STATUS" | jq -r '.linked // false')
@@ -273,7 +273,7 @@ fi
 
 # Sync with API if authenticated and telegram is linked
 if [[ -n "$API_KEY" && "$TELEGRAM_LINKED" == "true" ]]; then
-    curl -s -X PATCH "$API_URL/api/v1/telegram/notifications" \
+    curl -s --http1.1 -X PATCH "$API_URL/api/v1/telegram/notifications" \
         -H "Authorization: Bearer $API_KEY" \
         -H "Content-Type: application/json" \
         -d "{\"enabled\": $TELEGRAM_ENABLED}" > /dev/null
