@@ -1,7 +1,38 @@
 /**
  * API client for OSS Decrypt CLI
  * Fetches credentials and encrypted prompts from the OSS API
+ *
+ * SECURITY: On 401 responses, check for X-OSS-Clear-Cache header
+ * and clear local cache to prevent extracted prompts from persisting.
  */
+
+import { join } from 'path';
+import { homedir } from 'os';
+import { CacheService } from './cache.js';
+
+/**
+ * Get cache directory path
+ */
+function getCacheDir(): string {
+  const configDir = process.env.OSS_CONFIG_DIR || join(homedir(), '.oss');
+  return join(configDir, 'prompt-cache');
+}
+
+/**
+ * Check response for cache clear directive and execute if present
+ */
+async function handleCacheClearDirective(response: Response): Promise<void> {
+  const clearCache = response.headers.get('X-OSS-Clear-Cache');
+  if (clearCache === 'true') {
+    try {
+      const cache = new CacheService(getCacheDir());
+      await cache.clearAll();
+      console.error('[SECURITY] Local prompt cache cleared by server directive.');
+    } catch {
+      // Silently fail - cache may not exist
+    }
+  }
+}
 
 /**
  * Credentials response from the API
@@ -46,6 +77,9 @@ export async function fetchCredentials(
   });
 
   if (!response.ok) {
+    // SECURITY: Check for cache clear directive on auth failures
+    await handleCacheClearDirective(response);
+
     const error = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
       error?: string;
     };
@@ -90,6 +124,9 @@ export async function fetchEncryptedPrompt(
   });
 
   if (!response.ok) {
+    // SECURITY: Check for cache clear directive on any error (especially 401)
+    await handleCacheClearDirective(response);
+
     if (response.status === 404) {
       throw new Error('Prompt not found');
     }

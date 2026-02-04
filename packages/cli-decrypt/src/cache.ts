@@ -1,11 +1,26 @@
 /**
  * Local cache service for OSS Decrypt CLI
- * Caches decrypted prompts to eliminate repeated API calls
  *
- * Security:
- * - Cache files are stored with mode 0o600 (owner read/write only)
- * - Cache directory is created with mode 0o700 (owner only)
- * - Input validation prevents path traversal attacks
+ * ⚠️ SECURITY WARNING: DISK CACHING IS NOW DISABLED BY DEFAULT
+ *
+ * This module is retained only for the clearAll() functionality to clean up
+ * legacy cached prompts. New prompts are NOT cached to disk.
+ *
+ * Why caching was disabled:
+ * - Decrypted prompts were stored in plaintext JSON files
+ * - These files survived API key revocation
+ * - Malicious users could extract all prompts during trial period
+ * - Even with file permissions (0o600), content was readable by the user
+ *
+ * Current security model:
+ * - Prompts are fetched fresh from API on every command
+ * - API key revocation immediately stops access
+ * - No persistent plaintext files on user machines
+ *
+ * Historical security:
+ * - Cache files were stored with mode 0o600 (owner read/write only)
+ * - Cache directory was created with mode 0o700 (owner only)
+ * - Input validation prevented path traversal attacks
  */
 
 import { createHash } from 'crypto';

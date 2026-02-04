@@ -9,6 +9,7 @@ import { homedir } from 'os';
 import { fetchCredentials } from '../api-client.js';
 import { storeCredentials } from '../storage.js';
 import { getHardwareId } from '../hardware.js';
+import { CacheService } from '../cache.js';
 
 /**
  * Default API URL (can be overridden in config)
@@ -20,6 +21,13 @@ const DEFAULT_API_URL = 'https://one-shot-ship-api.onrender.com';
  */
 function getConfigDir(): string {
   return process.env.OSS_CONFIG_DIR || join(homedir(), '.oss');
+}
+
+/**
+ * Get cache directory path
+ */
+function getCacheDir(): string {
+  return join(getConfigDir(), 'prompt-cache');
 }
 
 /**
@@ -59,6 +67,11 @@ export async function setupCommand(): Promise<void> {
   // Generate hardware ID
   const hardwareId = getHardwareId();
 
+  // SECURITY: Clear any existing cached prompts before re-authentication
+  // This ensures old/potentially leaked prompts are removed
+  const cache = new CacheService(getCacheDir());
+  await cache.clearAll();
+
   // Fetch credentials from API
   const response = await fetchCredentials(apiKey, apiUrl, hardwareId);
 
@@ -71,4 +84,5 @@ export async function setupCommand(): Promise<void> {
   });
 
   console.log('Setup complete. Credentials stored securely.');
+  console.log('Note: Any previously cached prompts have been cleared for security.');
 }
