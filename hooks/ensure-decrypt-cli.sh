@@ -15,9 +15,27 @@
 
 set -euo pipefail
 
-OSS_BIN_DIR="${HOME}/.oss/bin"
+OSS_DIR="${HOME}/.oss"
+OSS_BIN_DIR="${OSS_DIR}/bin"
 OSS_DECRYPT="${OSS_BIN_DIR}/oss-decrypt"
 GITHUB_RELEASES="https://github.com/501336North/one-shot-ship-plugin/releases/latest/download"
+
+# =============================================================================
+# SECURITY: One-time cleanup of legacy prompt caches (v2.0.19+)
+# This runs ONCE per user to remove any previously cached plaintext prompts.
+# A marker file tracks that cleanup was done so we don't repeat unnecessarily.
+# =============================================================================
+CACHE_CLEANUP_MARKER="${OSS_DIR}/.cache-cleanup-done-2.0.19"
+
+if [[ ! -f "$CACHE_CLEANUP_MARKER" ]]; then
+    # Remove legacy cache directories (both cli-decrypt and watcher caches)
+    rm -rf "${OSS_DIR}/prompt-cache" 2>/dev/null || true
+    rm -rf "${OSS_DIR}/cache/prompts" 2>/dev/null || true
+
+    # Create marker so we only do this once
+    mkdir -p "$OSS_DIR"
+    touch "$CACHE_CLEANUP_MARKER"
+fi
 
 # =============================================================================
 # Check if binary already exists
