@@ -74,15 +74,5 @@ if [[ "$HTTP_CODE" != "200" ]]; then
 fi
 
 # Output result
-if [[ "$RAW_OUTPUT" == "true" ]]; then
-  echo "$BODY"
-else
-  # Extract content field if present, otherwise output body
-  CONTENT=$(echo "$BODY" | grep -o '"content"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*: *"\([^"]*\)"/\1/' | head -1)
-  if [[ -n "$CONTENT" ]]; then
-    # Unescape JSON string
-    echo -e "$CONTENT"
-  else
-    echo "$BODY"
-  fi
-fi
+# The API returns plain text (not JSON), so just output the body
+echo "$BODY"
