@@ -3,12 +3,40 @@
  * Fetches credentials from API and stores them locally
  */
 
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { fetchCredentials } from '../api-client.js';
 import { storeCredentials } from '../storage.js';
 import { getHardwareId } from '../hardware.js';
+import { CacheService } from '../cache.js';
+
+/**
+ * SECURITY: All known prompt cache directories
+ * Both cli-decrypt and watcher use different cache locations
+ */
+function getAllCacheDirectories(): string[] {
+  const configDir = process.env.OSS_CONFIG_DIR || join(homedir(), '.oss');
+  return [
+    join(configDir, 'prompt-cache'),       // cli-decrypt cache
+    join(configDir, 'cache', 'prompts'),   // watcher cache
+  ];
+}
+
+/**
+ * SECURITY: Clear all prompt cache directories
+ */
+function clearAllCacheDirectories(): void {
+  for (const cacheDir of getAllCacheDirectories()) {
+    try {
+      if (existsSync(cacheDir)) {
+        rmSync(cacheDir, { recursive: true, force: true });
+      }
+    } catch {
+      // Silently ignore - directory may not exist or already cleared
+    }
+  }
+}
 
 /**
  * Default API URL (can be overridden in config)
@@ -20,6 +48,13 @@ const DEFAULT_API_URL = 'https://one-shot-ship-api.onrender.com';
  */
 function getConfigDir(): string {
   return process.env.OSS_CONFIG_DIR || join(homedir(), '.oss');
+}
+
+/**
+ * Get cache directory path
+ */
+function getCacheDir(): string {
+  return join(getConfigDir(), 'prompt-cache');
 }
 
 /**
@@ -59,6 +94,11 @@ export async function setupCommand(): Promise<void> {
   // Generate hardware ID
   const hardwareId = getHardwareId();
 
+  // SECURITY: Clear ALL prompt cache directories before re-authentication
+  // This ensures old/potentially leaked prompts are removed from both
+  // cli-decrypt cache (~/.oss/prompt-cache) and watcher cache (~/.oss/cache/prompts)
+  clearAllCacheDirectories();
+
   // Fetch credentials from API
   const response = await fetchCredentials(apiKey, apiUrl, hardwareId);
 
@@ -71,4 +111,5 @@ export async function setupCommand(): Promise<void> {
   });
 
   console.log('Setup complete. Credentials stored securely.');
+  console.log('Note: Any previously cached prompts have been cleared for security.');
 }

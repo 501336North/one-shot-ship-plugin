@@ -1,7 +1,51 @@
 /**
  * API client for OSS Decrypt CLI
  * Fetches credentials and encrypted prompts from the OSS API
+ *
+ * SECURITY: On 401 responses, check for X-OSS-Clear-Cache header
+ * and clear local cache to prevent extracted prompts from persisting.
  */
+
+import { join } from 'path';
+import { homedir } from 'os';
+import { existsSync, rmSync } from 'fs';
+import { CacheService } from './cache.js';
+
+/**
+ * SECURITY: All known prompt cache directories
+ * Both cli-decrypt and watcher use different cache locations
+ */
+function getAllCacheDirectories(): string[] {
+  const configDir = process.env.OSS_CONFIG_DIR || join(homedir(), '.oss');
+  return [
+    join(configDir, 'prompt-cache'),       // cli-decrypt cache
+    join(configDir, 'cache', 'prompts'),   // watcher cache
+  ];
+}
+
+/**
+ * Check response for cache clear directive and execute if present
+ * SECURITY: Clears ALL known prompt cache directories
+ */
+async function handleCacheClearDirective(response: Response): Promise<void> {
+  const clearCache = response.headers.get('X-OSS-Clear-Cache');
+  if (clearCache === 'true') {
+    let clearedAny = false;
+    for (const cacheDir of getAllCacheDirectories()) {
+      try {
+        if (existsSync(cacheDir)) {
+          rmSync(cacheDir, { recursive: true, force: true });
+          clearedAny = true;
+        }
+      } catch {
+        // Silently fail - directory may not exist or already cleared
+      }
+    }
+    if (clearedAny) {
+      console.error('[SECURITY] Local prompt caches cleared by server directive.');
+    }
+  }
+}
 
 /**
  * Credentials response from the API
@@ -46,6 +90,9 @@ export async function fetchCredentials(
   });
 
   if (!response.ok) {
+    // SECURITY: Check for cache clear directive on auth failures
+    await handleCacheClearDirective(response);
+
     const error = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
       error?: string;
     };
@@ -90,6 +137,9 @@ export async function fetchEncryptedPrompt(
   });
 
   if (!response.ok) {
+    // SECURITY: Check for cache clear directive on any error (especially 401)
+    await handleCacheClearDirective(response);
+
     if (response.status === 404) {
       throw new Error('Prompt not found');
     }

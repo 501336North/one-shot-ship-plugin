@@ -19,8 +19,12 @@ const DEFAULT_API_URL = 'https://one-shot-ship-api.onrender.com';
 
 /**
  * Options for decrypt command
+ *
+ * SECURITY: Disk caching is DISABLED by default to prevent prompt extraction.
+ * Prompts only exist in memory during command execution.
  */
 export interface DecryptOptions {
+  /** @deprecated Disk caching is now disabled by default for security */
   noCache?: boolean;
   clearCache?: boolean;
 }
@@ -74,7 +78,17 @@ export async function decryptCommand(
   options: DecryptOptions = {}
 ): Promise<void> {
   const logger = new DebugLogger(debug);
-  const cache = new CacheService(getCacheDir());
+
+  // Handle clear cache option - cleans up any legacy cached prompts
+  // Only instantiate CacheService when actually clearing
+  if (options.clearCache) {
+    logger.log('CACHE', 'Clearing all cached prompts');
+    const cache = new CacheService(getCacheDir());
+    await cache.clearAll();
+    console.log('Cache cleared. All locally cached prompts have been removed.');
+    console.log('Note: Disk caching is now disabled by default for security.');
+    return;
+  }
 
   // Load credentials from storage
   logger.log('FETCH', 'Loading credentials from storage');
@@ -84,25 +98,12 @@ export async function decryptCommand(
     throw new Error('Credentials not found. Run setup first.');
   }
 
-  // Handle clear cache option
-  if (options.clearCache) {
-    logger.log('CACHE', 'Clearing all cached prompts');
-    await cache.clearAll();
-    console.log('Cache cleared.');
-    return;
-  }
-
-  // Check cache first (unless noCache is set)
-  if (!options.noCache) {
-    logger.log('CACHE', `Checking cache for ${type}/${name}`);
-    const cached = await cache.get(type, name, credentials.userId);
-    if (cached) {
-      logger.log('CACHE', 'Cache hit - returning cached content');
-      console.log(cached);
-      return;
-    }
-    logger.log('CACHE', 'Cache miss - fetching from API');
-  }
+  // SECURITY: Disk caching is DISABLED by default to prevent prompt extraction.
+  // Prompts are fetched fresh from API each time to ensure:
+  // 1. Revoked API keys immediately stop access
+  // 2. No plaintext prompts persist on disk
+  // 3. Subscription status is verified on every request
+  logger.log('SECURITY', 'Disk caching disabled - fetching fresh from API');
 
   const apiUrl = getApiUrl();
   logger.log('FETCH', `API URL: ${apiUrl}`);
@@ -143,11 +144,8 @@ export async function decryptCommand(
   );
   logger.log('DECRYPT', `Decryption completed in ${Date.now() - startDecrypt}ms`);
 
-  // Store in cache (unless noCache is set)
-  if (!options.noCache) {
-    logger.log('CACHE', 'Storing decrypted prompt in cache');
-    await cache.set(type, name, credentials.userId, plaintext);
-  }
+  // SECURITY: Do NOT cache decrypted prompts to disk.
+  // This prevents prompt extraction even after API key revocation.
 
   // Output to stdout
   console.log(plaintext);
