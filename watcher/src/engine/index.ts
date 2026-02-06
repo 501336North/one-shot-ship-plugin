@@ -25,3 +25,25 @@ export {
   setAgentSpawner,
   resetAgentSpawner,
 } from './agents.js';
+
+// Custom command executor
+export {
+  CustomCommandExecutor,
+  isCustomCommand,
+  parseCustomCommand,
+} from './custom-command-executor.js';
+export type {
+  CustomCommandExecutorConfig,
+  CustomCommandResponse,
+  CustomCommandResult,
+} from './custom-command-executor.js';
+
+// Workflow chain executor (includes custom command support)
+export { WorkflowChainExecutor } from './workflow-chain-executor.js';
+export type {
+  ChainStep,
+  ClassifiedStep,
+  StepExecutionResult,
+  ChainExecutionResult,
+  WorkflowContext,
+} from './workflow-chain-executor.js';
