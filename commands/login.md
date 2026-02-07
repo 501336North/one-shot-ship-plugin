@@ -24,6 +24,7 @@ description: Configure API key for OSS Dev Workflow
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--help` | `-h` | Show this help message |
+| `--key` | `-k` | Quick key update mode - validates and stores new key, skips all setup steps |
 
 **Examples:**
 ```bash
@@ -32,6 +33,9 @@ description: Configure API key for OSS Dev Workflow
 
 # Direct login with API key
 /oss:login ak_xxxxx
+
+# Quick key update after rotation (skips setup steps)
+/oss:login --key ak_new_key_here
 ```
 
 **Related Commands:**
@@ -48,6 +52,80 @@ Configure your API key for OSS Dev Workflow access.
 ## API Configuration
 
 **API Base URL:** `https://one-shot-ship-api.onrender.com`
+
+## Quick Key Update Mode (`--key`)
+
+**When the `--key` flag is provided**, run a streamlined flow that ONLY updates the API key. This is designed for use after key rotation from the dashboard.
+
+**Quick key update steps (Steps 1-3 only, skip Steps 4-9):**
+
+1. **Accept the new API key** from the `--key` argument:
+   ```bash
+   # Parse --key flag value
+   NEW_KEY="$KEY_ARG"
+   if [ -z "$NEW_KEY" ]; then
+       echo "Error: --key requires an API key value. Usage: /oss:login --key ak_xxxxx"
+       exit 1
+   fi
+   ```
+
+2. **Validate the key** against the API:
+   ```bash
+   RESPONSE=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $NEW_KEY" \
+       "https://one-shot-ship-api.onrender.com/api/v1/subscription/status")
+   HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+   BODY=$(echo "$RESPONSE" | head -1)
+
+   if [ "$HTTP_CODE" != "200" ]; then
+       echo "Error: Invalid API key. Get a valid key from https://www.oneshotship.com/dashboard"
+       exit 1
+   fi
+   ```
+
+3. **Update config** with the new key:
+   ```bash
+   mkdir -p ~/.oss
+   # Read existing config to preserve apiUrl and other settings
+   if [ -f ~/.oss/config.json ]; then
+       EXISTING=$(cat ~/.oss/config.json)
+       UPDATED=$(echo "$EXISTING" | jq --arg key "$NEW_KEY" '.apiKey = $key')
+   else
+       UPDATED=$(jq -n --arg key "$NEW_KEY" '{"apiKey": $key, "apiUrl": "https://one-shot-ship-api.onrender.com"}')
+   fi
+   echo "$UPDATED" > ~/.oss/config.json
+   ```
+
+4. **Clear cached credentials** so the decrypt CLI picks up the new key:
+   ```bash
+   if [ -f ~/.oss/credentials.enc ]; then
+       rm ~/.oss/credentials.enc
+       echo "Cleared cached credentials (will refresh on next command)"
+   fi
+   ```
+
+5. **Re-run decrypt CLI setup** to fetch new credentials for the rotated key:
+   ```bash
+   if [ -x ~/.oss/bin/oss-decrypt ]; then
+       ~/.oss/bin/oss-decrypt --setup
+       echo "Updated encryption credentials for new key"
+   fi
+   ```
+
+6. **Confirm success:**
+   ```bash
+   PLAN=$(echo "$BODY" | jq -r '.plan // "unknown"')
+   echo "API key updated successfully!"
+   echo "  Plan: $PLAN"
+   echo "  Config: ~/.oss/config.json"
+   echo ""
+   echo "All existing tools and settings preserved. Ready to use."
+   ```
+
+**Then STOP. Do NOT proceed to Steps 4-9 (CLAUDE.md sync, decrypt CLI install, notifications, daemon, status line, notification config).** These are only needed on first login, not key rotation.
+
+---
+
+## Full Login Flow (default, no --key flag)
 
 ## What This Command Does
 
