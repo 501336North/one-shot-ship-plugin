@@ -72,7 +72,12 @@ fi
 
 # Update workflow state to idle (session ending)
 if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
-    node "$WORKFLOW_STATE_CLI" setSupervisor idle 2>/dev/null || true
+    # Use --project-dir so state writes go to the project-local file
+    if [[ -n "${CLAUDE_PROJECT_DIR:-}" && -d "${CLAUDE_PROJECT_DIR}/.oss" ]]; then
+        node "$WORKFLOW_STATE_CLI" --project-dir "$CLAUDE_PROJECT_DIR" setSupervisor idle 2>/dev/null || true
+    else
+        node "$WORKFLOW_STATE_CLI" setSupervisor idle 2>/dev/null || true
+    fi
 fi
 
 # Log session END event

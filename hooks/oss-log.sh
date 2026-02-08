@@ -249,9 +249,15 @@ case "$ACTION" in
             PHASE_LOWER=$(echo "$PHASE" | tr '[:upper:]' '[:lower:]')
             if [[ "$PHASE_LOWER" =~ ^(red|green|refactor)$ ]]; then
                 # Get project directory for --project-dir flag
+                # Resolution: CLAUDE_PROJECT_DIR env → current-project file → git root
                 PROJECT_DIR=""
-                if [[ -f "$HOME/.oss/current-project" ]]; then
+                if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
+                    PROJECT_DIR="$CLAUDE_PROJECT_DIR"
+                elif [[ -f "$HOME/.oss/current-project" ]]; then
                     PROJECT_DIR=$(cat "$HOME/.oss/current-project" 2>/dev/null | tr -d '[:space:]')
+                fi
+                if [[ -z "$PROJECT_DIR" ]]; then
+                    PROJECT_DIR=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
                 fi
 
                 # Find update-workflow-state.js CLI (version-agnostic lookup)
@@ -265,9 +271,9 @@ case "$ACTION" in
 
                 if [[ -n "$UPDATE_CLI" ]]; then
                     if [[ -n "$PROJECT_DIR" && -d "$PROJECT_DIR/.oss" ]]; then
-                        node "$UPDATE_CLI" --project-dir "$PROJECT_DIR" setTddPhase "$PHASE_LOWER" 2>/dev/null &
+                        node "$UPDATE_CLI" --project-dir "$PROJECT_DIR" setTddPhase "$PHASE_LOWER" 2>/dev/null || true
                     else
-                        node "$UPDATE_CLI" setTddPhase "$PHASE_LOWER" 2>/dev/null &
+                        node "$UPDATE_CLI" setTddPhase "$PHASE_LOWER" 2>/dev/null || true
                     fi
                 fi
             fi
