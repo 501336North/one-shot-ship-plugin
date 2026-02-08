@@ -229,9 +229,21 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
         case "$WORKFLOW_EVENT" in
             start)
                 node "$WORKFLOW_STATE_CLI" setActiveStep "$WORKFLOW_CMD" 2>/dev/null || true
+                node "$WORKFLOW_STATE_CLI" setCurrentCommand "$WORKFLOW_CMD" 2>/dev/null || true
                 node "$WORKFLOW_STATE_CLI" setSupervisor watching 2>/dev/null || true
-                # Clear stale TDD phase when starting any command (fresh start)
+                # Clear stale state from previous workflow
                 node "$WORKFLOW_STATE_CLI" clearTddPhase 2>/dev/null || true
+                node "$WORKFLOW_STATE_CLI" clearLastCommand 2>/dev/null || true
+                node "$WORKFLOW_STATE_CLI" setWorkflowComplete false 2>/dev/null || true
+                node "$WORKFLOW_STATE_CLI" clearProgress 2>/dev/null || true
+                # Set nextCommand based on workflow chain position
+                case "$WORKFLOW_CMD" in
+                    ideate) node "$WORKFLOW_STATE_CLI" setNextCommand "plan" 2>/dev/null || true ;;
+                    plan)   node "$WORKFLOW_STATE_CLI" setNextCommand "build" 2>/dev/null || true ;;
+                    build)  node "$WORKFLOW_STATE_CLI" setNextCommand "ship" 2>/dev/null || true ;;
+                    ship)   node "$WORKFLOW_STATE_CLI" clearNextCommand 2>/dev/null || true ;;
+                    *)      ;; # Non-chain commands don't affect nextCommand
+                esac
                 # Track ALL command invocations via analytics API
                 # Note: oss-decrypt also tracks when prompts are fetched from API,
                 # but cached prompts bypass the API, so we track here as the source of truth
