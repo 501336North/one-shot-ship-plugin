@@ -41,10 +41,40 @@ run_with_timeout() {
     fi
 }
 
-COPY_CLI="$PLUGIN_ROOT/watcher/dist/cli/get-copy.js"
-WORKFLOW_STATE_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js"
-TELEGRAM_CLI="$PLUGIN_ROOT/watcher/dist/cli/telegram-notify.js"
+# =============================================================================
+# CLI PATH RESOLUTION - Version-agnostic lookup with plugin cache fallback
+# =============================================================================
+# Priority 1: CLAUDE_PLUGIN_ROOT (set by Claude Code hook system)
+# Priority 2: find in ~/.claude/plugins/cache/ (fallback for command prompts)
+resolve_cli() {
+    local cli_name="$1"
+    local cli_subpath="$2"
+    # Try PLUGIN_ROOT first
+    local direct_path="$PLUGIN_ROOT/$cli_subpath"
+    if [[ -f "$direct_path" ]]; then
+        echo "$direct_path"
+        return
+    fi
+    # Fallback: search plugin cache (version-agnostic)
+    local found
+    found=$(find "$HOME/.claude/plugins/cache/one-shot-ship-plugin" -name "$cli_name" -path "*/$cli_subpath" -type f 2>/dev/null | sort -V | tail -1)
+    if [[ -n "$found" ]]; then
+        echo "$found"
+        return
+    fi
+    # Last resort: return the direct path (will fail gracefully)
+    echo "$direct_path"
+}
+
+COPY_CLI="$(resolve_cli "get-copy.js" "watcher/dist/cli/get-copy.js")"
+WORKFLOW_STATE_CLI="$(resolve_cli "update-workflow-state.js" "watcher/dist/cli/update-workflow-state.js")"
+TELEGRAM_CLI="$(resolve_cli "telegram-notify.js" "watcher/dist/cli/telegram-notify.js")"
 LOG_SCRIPT="$PLUGIN_ROOT/hooks/oss-log.sh"
+# LOG_SCRIPT fallback: check plugin cache if not found at PLUGIN_ROOT
+if [[ ! -f "$LOG_SCRIPT" ]]; then
+    _found_log=$(find "$HOME/.claude/plugins/cache/one-shot-ship-plugin" -name "oss-log.sh" -path "*/hooks/*" -type f 2>/dev/null | sort -V | tail -1)
+    [[ -n "$_found_log" ]] && LOG_SCRIPT="$_found_log"
+fi
 
 # =============================================================================
 # Parse arguments
