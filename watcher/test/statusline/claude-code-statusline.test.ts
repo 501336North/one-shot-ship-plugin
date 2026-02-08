@@ -56,7 +56,7 @@ describe('Claude Code Status Line', () => {
   }
 
   describe('TDD Phase Display', () => {
-    it('should show 🔴 phase emoji in status line', async () => {
+    it('should show TDD: 🔴 with prefix in status line', async () => {
       await fs.writeFile(workflowStateFile, JSON.stringify({
         tddPhase: 'RED',
         progress: '3/8',
@@ -65,11 +65,10 @@ describe('Claude Code Status Line', () => {
 
       const output = runStatusLine();
 
-      expect(output).toContain('🔴');
-      // Emoji-only display (no "RED" text)
+      expect(output).toContain('TDD: 🔴');
     });
 
-    it('should show 🟢 phase emoji in status line', async () => {
+    it('should show TDD: 🟢 with prefix in status line', async () => {
       await fs.writeFile(workflowStateFile, JSON.stringify({
         tddPhase: 'GREEN',
         progress: '5/8',
@@ -78,11 +77,10 @@ describe('Claude Code Status Line', () => {
 
       const output = runStatusLine();
 
-      expect(output).toContain('🟢');
-      // Emoji-only display (no "GREEN" text)
+      expect(output).toContain('TDD: 🟢');
     });
 
-    it('should show 🔄 phase emoji in status line', async () => {
+    it('should show TDD: 🔄 with prefix in status line', async () => {
       await fs.writeFile(workflowStateFile, JSON.stringify({
         tddPhase: 'REFACTOR',
         progress: '7/8',
@@ -91,8 +89,7 @@ describe('Claude Code Status Line', () => {
 
       const output = runStatusLine();
 
-      expect(output).toContain('🔄');
-      // Emoji-only display (no "REFACTOR" text)
+      expect(output).toContain('TDD: 🔄');
     });
   });
 

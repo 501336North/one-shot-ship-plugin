@@ -162,6 +162,12 @@ async function main() {
         break;
       }
 
+      case 'clearTddPhase': {
+        await service.clearTddPhase();
+        console.log('TDD phase cleared');
+        break;
+      }
+
       case 'completeStep': {
         const step = args[1] as ChainStep;
         await service.completeStep(step);

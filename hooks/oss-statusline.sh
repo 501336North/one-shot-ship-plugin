@@ -226,7 +226,7 @@ compute_workflow() {
         return
     fi
 
-    # Priority 1: TDD phase (most specific - shows RED/GREEN/REFACTOR)
+    # Priority 1: TDD phase (most specific - shows TDD: RED/GREEN/REFACTOR)
     if [[ -n "$tdd_phase" && "$tdd_phase" != "null" ]]; then
         local phase_emoji
         case "$tdd_phase" in
@@ -236,9 +236,9 @@ compute_workflow() {
             *) phase_emoji="$tdd_phase" ;;
         esac
         if [[ -n "$progress" && "$progress" != "null" ]]; then
-            echo "$phase_emoji $progress"
+            echo "TDD: $phase_emoji $progress"
         else
-            echo "$phase_emoji"
+            echo "TDD: $phase_emoji"
         fi
         return
     fi

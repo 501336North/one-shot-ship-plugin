@@ -1023,4 +1023,37 @@ describe('WorkflowStateService', () => {
       expect(state.sessionId).toBeUndefined();
     });
   });
+
+  // ==========================================================================
+  // clearTddPhase
+  // ==========================================================================
+
+  describe('clearTddPhase', () => {
+    /**
+     * @behavior Clears tddPhase from state when it was previously set
+     * @acceptance-criteria AC-TDD-PHASE.1
+     */
+    test('removes tddPhase from state when it was set', async () => {
+      await service.initialize();
+      await service.setTddPhase('red');
+
+      await service.clearTddPhase();
+
+      const state = await service.getState();
+      expect(state.tddPhase).toBeUndefined();
+    });
+
+    /**
+     * @behavior clearTddPhase is a no-op when tddPhase was not set
+     * @acceptance-criteria AC-TDD-PHASE.2
+     */
+    test('is a no-op when tddPhase was not set', async () => {
+      await service.initialize();
+
+      await service.clearTddPhase();
+
+      const state = await service.getState();
+      expect(state.tddPhase).toBeUndefined();
+    });
+  });
 });
