@@ -69,6 +69,44 @@ resolve_cli() {
 COPY_CLI="$(resolve_cli "get-copy.js" "watcher/dist/cli/get-copy.js")"
 WORKFLOW_STATE_CLI="$(resolve_cli "update-workflow-state.js" "watcher/dist/cli/update-workflow-state.js")"
 TELEGRAM_CLI="$(resolve_cli "telegram-notify.js" "watcher/dist/cli/telegram-notify.js")"
+
+# =============================================================================
+# PROJECT DIRECTORY RESOLUTION - For multi-project workflow state isolation
+# =============================================================================
+# Resolve project directory so workflow state writes go to the correct
+# project-local file (not the global ~/.oss/workflow-state.json).
+# Resolution order: CLAUDE_PROJECT_DIR env → ~/.oss/current-project file → git root
+_OSS_PROJECT_DIR=""
+if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
+    _OSS_PROJECT_DIR="$CLAUDE_PROJECT_DIR"
+elif [[ -f "$HOME/.oss/current-project" ]]; then
+    _OSS_PROJECT_DIR=$(cat "$HOME/.oss/current-project" 2>/dev/null | tr -d '[:space:]')
+fi
+if [[ -z "$_OSS_PROJECT_DIR" ]]; then
+    _OSS_PROJECT_DIR=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+fi
+
+# Helper: call update-workflow-state.js with --project-dir when available
+# Usage: wf_state <command> [args...]
+wf_state() {
+    if [[ -n "$_OSS_PROJECT_DIR" && -d "$_OSS_PROJECT_DIR/.oss" ]]; then
+        node "$WORKFLOW_STATE_CLI" --project-dir "$_OSS_PROJECT_DIR" "$@"
+    else
+        node "$WORKFLOW_STATE_CLI" "$@"
+    fi
+}
+
+# Helper: call wf_state with timeout wrapper
+wf_state_timeout() {
+    local timeout_secs="$1"
+    shift
+    if [[ -n "$_OSS_PROJECT_DIR" && -d "$_OSS_PROJECT_DIR/.oss" ]]; then
+        run_with_timeout "$timeout_secs" node "$WORKFLOW_STATE_CLI" --project-dir "$_OSS_PROJECT_DIR" "$@"
+    else
+        run_with_timeout "$timeout_secs" node "$WORKFLOW_STATE_CLI" "$@"
+    fi
+}
+
 LOG_SCRIPT="$PLUGIN_ROOT/hooks/oss-log.sh"
 # LOG_SCRIPT fallback: check plugin cache if not found at PLUGIN_ROOT
 if [[ ! -f "$LOG_SCRIPT" ]]; then
@@ -228,20 +266,20 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
     if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
         case "$WORKFLOW_EVENT" in
             start)
-                node "$WORKFLOW_STATE_CLI" setActiveStep "$WORKFLOW_CMD" 2>/dev/null || true
-                node "$WORKFLOW_STATE_CLI" setCurrentCommand "$WORKFLOW_CMD" 2>/dev/null || true
-                node "$WORKFLOW_STATE_CLI" setSupervisor watching 2>/dev/null || true
+                wf_state setActiveStep "$WORKFLOW_CMD" 2>/dev/null || true
+                wf_state setCurrentCommand "$WORKFLOW_CMD" 2>/dev/null || true
+                wf_state setSupervisor watching 2>/dev/null || true
                 # Clear stale state from previous workflow
-                node "$WORKFLOW_STATE_CLI" clearTddPhase 2>/dev/null || true
-                node "$WORKFLOW_STATE_CLI" clearLastCommand 2>/dev/null || true
-                node "$WORKFLOW_STATE_CLI" setWorkflowComplete false 2>/dev/null || true
-                node "$WORKFLOW_STATE_CLI" clearProgress 2>/dev/null || true
+                wf_state clearTddPhase 2>/dev/null || true
+                wf_state clearLastCommand 2>/dev/null || true
+                wf_state setWorkflowComplete false 2>/dev/null || true
+                wf_state clearProgress 2>/dev/null || true
                 # Set nextCommand based on workflow chain position
                 case "$WORKFLOW_CMD" in
-                    ideate) node "$WORKFLOW_STATE_CLI" setNextCommand "plan" 2>/dev/null || true ;;
-                    plan)   node "$WORKFLOW_STATE_CLI" setNextCommand "build" 2>/dev/null || true ;;
-                    build)  node "$WORKFLOW_STATE_CLI" setNextCommand "ship" 2>/dev/null || true ;;
-                    ship)   node "$WORKFLOW_STATE_CLI" clearNextCommand 2>/dev/null || true ;;
+                    ideate) wf_state setNextCommand "plan" 2>/dev/null || true ;;
+                    plan)   wf_state setNextCommand "build" 2>/dev/null || true ;;
+                    build)  wf_state setNextCommand "ship" 2>/dev/null || true ;;
+                    ship)   wf_state clearNextCommand 2>/dev/null || true ;;
                     *)      ;; # Non-chain commands don't affect nextCommand
                 esac
                 # Track ALL command invocations via analytics API
@@ -270,30 +308,30 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
             merged)
                 # When ship merged, reset the entire workflow chain to start fresh
                 if [[ "$WORKFLOW_CMD" == "ship" ]]; then
-                    node "$WORKFLOW_STATE_CLI" reset 2>/dev/null || true
+                    wf_state reset 2>/dev/null || true
                 else
-                    node "$WORKFLOW_STATE_CLI" completeStep "$WORKFLOW_CMD" 2>/dev/null || true
+                    wf_state completeStep "$WORKFLOW_CMD" 2>/dev/null || true
                 fi
                 # Log IRON LAW compliance checklist on merge
                 "$LOG_SCRIPT" checklist "$WORKFLOW_CMD" 2>/dev/null || true
                 ;;
             complete)
-                node "$WORKFLOW_STATE_CLI" completeStep "$WORKFLOW_CMD" 2>/dev/null || true
+                wf_state completeStep "$WORKFLOW_CMD" 2>/dev/null || true
                 # Clear currentCommand since it's done
-                node "$WORKFLOW_STATE_CLI" clearCurrentCommand 2>/dev/null || true
+                wf_state clearCurrentCommand 2>/dev/null || true
                 # Clear TDD phase so it doesn't show stale indicator after build ends
-                node "$WORKFLOW_STATE_CLI" clearTddPhase 2>/dev/null || true
+                wf_state clearTddPhase 2>/dev/null || true
                 # Set lastCommand for status line display (shows last_cmd → next_cmd)
-                node "$WORKFLOW_STATE_CLI" setLastCommand "$WORKFLOW_CMD" 2>/dev/null || true
+                wf_state setLastCommand "$WORKFLOW_CMD" 2>/dev/null || true
                 # Set nextCommand based on workflow progression
                 case "$WORKFLOW_CMD" in
-                    ideate) node "$WORKFLOW_STATE_CLI" setNextCommand "plan" 2>/dev/null || true ;;
-                    plan) node "$WORKFLOW_STATE_CLI" setNextCommand "build" 2>/dev/null || true ;;
-                    build) node "$WORKFLOW_STATE_CLI" setNextCommand "ship" 2>/dev/null || true ;;
+                    ideate) wf_state setNextCommand "plan" 2>/dev/null || true ;;
+                    plan) wf_state setNextCommand "build" 2>/dev/null || true ;;
+                    build) wf_state setNextCommand "ship" 2>/dev/null || true ;;
                     ship)
-                        node "$WORKFLOW_STATE_CLI" clearNextCommand 2>/dev/null || true
+                        wf_state clearNextCommand 2>/dev/null || true
                         # Set workflowComplete flag for status line to show "→ DONE"
-                        node "$WORKFLOW_STATE_CLI" setWorkflowComplete true 2>/dev/null || true
+                        wf_state setWorkflowComplete true 2>/dev/null || true
                         ;;
                     *) ;; # Non-chain commands don't affect nextCommand
                 esac
@@ -301,7 +339,7 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                 "$LOG_SCRIPT" checklist "$WORKFLOW_CMD" 2>/dev/null || true
                 ;;
             failed)
-                node "$WORKFLOW_STATE_CLI" setSupervisor intervening 2>/dev/null || true
+                wf_state setSupervisor intervening 2>/dev/null || true
                 ;;
             task_complete)
                 # Extract progress from context
@@ -312,11 +350,11 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                     TDD_PHASE=$(echo "$WORKFLOW_CONTEXT" | jq -r '.tddPhase // ""' 2>/dev/null)
 
                     if [[ -n "$TDD_PHASE" && "$TDD_PHASE" != "null" ]]; then
-                        node "$WORKFLOW_STATE_CLI" setTddPhase "$TDD_PHASE" 2>/dev/null || true
+                        wf_state setTddPhase "$TDD_PHASE" 2>/dev/null || true
                     fi
 
                     if [[ -n "$CURRENT" && "$CURRENT" != "null" ]]; then
-                        node "$WORKFLOW_STATE_CLI" setProgress "{\"progress\": \"$CURRENT/$TOTAL\", \"currentTask\": \"$TASK_NAME\"}" 2>/dev/null || true
+                        wf_state setProgress "{\"progress\": \"$CURRENT/$TOTAL\", \"currentTask\": \"$TASK_NAME\"}" 2>/dev/null || true
                     fi
                 fi
                 ;;
@@ -389,14 +427,14 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "session" ]]; then
     if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
         case "$SESSION_EVENT" in
             context_restored|fresh_start)
-                run_with_timeout 2 node "$WORKFLOW_STATE_CLI" setSupervisor watching
+                wf_state_timeout 2 setSupervisor watching
                 # Set non-sticky notification (auto-clears after 10 seconds)
                 if [[ -n "$MESSAGE" && "$MESSAGE" != "" ]]; then
-                    run_with_timeout 2 node "$WORKFLOW_STATE_CLI" setNotification "$MESSAGE" 10
+                    wf_state_timeout 2 setNotification "$MESSAGE" 10
                 fi
                 ;;
             context_saved)
-                run_with_timeout 2 node "$WORKFLOW_STATE_CLI" setSupervisor idle
+                wf_state_timeout 2 setSupervisor idle
                 ;;
         esac
     fi
@@ -423,12 +461,12 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "issue" ]]; then
 
     # Update workflow state to show issue in status line
     if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
-        node "$WORKFLOW_STATE_CLI" setSupervisor intervening 2>/dev/null || true
+        wf_state setSupervisor intervening 2>/dev/null || true
         # Extract message from context if available
         if command -v jq &>/dev/null; then
             ISSUE_MSG=$(echo "$ISSUE_CONTEXT" | jq -r '.message // ""' 2>/dev/null)
             if [[ -n "$ISSUE_MSG" && "$ISSUE_MSG" != "null" ]]; then
-                node "$WORKFLOW_STATE_CLI" setIssue "$ISSUE_TYPE" "$ISSUE_MSG" 2>/dev/null || true
+                wf_state setIssue "$ISSUE_TYPE" "$ISSUE_MSG" 2>/dev/null || true
             fi
         fi
     fi

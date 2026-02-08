@@ -177,11 +177,16 @@ echo "[$TIMESTAMP] [session] [START] project=$PROJECT_NAME branch=$CURRENT_BRANC
 # while preserving chainState history and setting supervisor to 'watching'
 # NOTE: All node calls use run_with_timeout to prevent blocking Claude Code startup
 if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
-    run_with_timeout 2 node "$WORKFLOW_STATE_CLI" init
-    run_with_timeout 2 node "$WORKFLOW_STATE_CLI" prepareForNewSession
+    # Use --project-dir so state writes go to the project-local file
+    _WF_PROJECT_DIR_ARGS=()
+    if [[ -n "${CLAUDE_PROJECT_DIR:-}" && -d "${CLAUDE_PROJECT_DIR}/.oss" ]]; then
+        _WF_PROJECT_DIR_ARGS=(--project-dir "$CLAUDE_PROJECT_DIR")
+    fi
+    run_with_timeout 2 node "$WORKFLOW_STATE_CLI" "${_WF_PROJECT_DIR_ARGS[@]}" init
+    run_with_timeout 2 node "$WORKFLOW_STATE_CLI" "${_WF_PROJECT_DIR_ARGS[@]}" prepareForNewSession
     # Generate unique session ID for staleness detection
     SESSION_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "session-$(date +%s)")
-    run_with_timeout 2 node "$WORKFLOW_STATE_CLI" setSessionId "$SESSION_ID"
+    run_with_timeout 2 node "$WORKFLOW_STATE_CLI" "${_WF_PROJECT_DIR_ARGS[@]}" setSessionId "$SESSION_ID"
 fi
 
 # Check if watcher is already running

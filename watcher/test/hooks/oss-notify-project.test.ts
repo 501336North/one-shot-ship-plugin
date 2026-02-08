@@ -86,6 +86,47 @@ describe('oss-notify.sh - Project State Updates', () => {
   });
 
   /**
+   * @behavior oss-notify.sh does NOT write workflow state to global when project is set
+   * @acceptance-criteria Global ~/.oss/workflow-state.json version unchanged after project-scoped update
+   * @business-rule Status line reads project-local state, so writes must go there too
+   */
+  it('should NOT modify global workflow-state.json when current-project is set', () => {
+    // GIVEN: current-project points to test project
+    fs.writeFileSync(currentProjectFile, testProjectDir);
+
+    // AND: Global state has a known version
+    const globalStateBefore = fs.existsSync(globalWorkflowFile)
+      ? JSON.parse(fs.readFileSync(globalWorkflowFile, 'utf-8'))
+      : { version: 0 };
+    const globalVersionBefore = globalStateBefore.version ?? 0;
+
+    // WHEN: Running notify with workflow start (writes activeStep, currentCommand, etc.)
+    try {
+      const env = { ...process.env, CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..') };
+      delete env.CLAUDE_PROJECT_DIR;
+
+      execSync(`bash "${notifyScript}" --workflow build start '{}'`, {
+        timeout: 10000,
+        encoding: 'utf-8',
+        env,
+      });
+    } catch {
+      // Ignore exit code
+    }
+
+    // THEN: Global state version should NOT have changed
+    const globalStateAfter = fs.existsSync(globalWorkflowFile)
+      ? JSON.parse(fs.readFileSync(globalWorkflowFile, 'utf-8'))
+      : { version: 0 };
+    expect(globalStateAfter.version).toBe(globalVersionBefore);
+
+    // AND: Project-local state should have the update
+    expect(fs.existsSync(projectWorkflowFile)).toBe(true);
+    const projectState = JSON.parse(fs.readFileSync(projectWorkflowFile, 'utf-8'));
+    expect(projectState.activeStep).toBe('build');
+  });
+
+  /**
    * @behavior oss-notify.sh task_complete updates project progress
    * @acceptance-criteria progress written to project .oss/workflow-state.json
    */
