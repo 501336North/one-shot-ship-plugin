@@ -200,6 +200,8 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
             start)
                 node "$WORKFLOW_STATE_CLI" setActiveStep "$WORKFLOW_CMD" 2>/dev/null || true
                 node "$WORKFLOW_STATE_CLI" setSupervisor watching 2>/dev/null || true
+                # Clear stale TDD phase when starting any command (fresh start)
+                node "$WORKFLOW_STATE_CLI" clearTddPhase 2>/dev/null || true
                 # Track ALL command invocations via analytics API
                 # Note: oss-decrypt also tracks when prompts are fetched from API,
                 # but cached prompts bypass the API, so we track here as the source of truth
@@ -237,6 +239,8 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                 node "$WORKFLOW_STATE_CLI" completeStep "$WORKFLOW_CMD" 2>/dev/null || true
                 # Clear currentCommand since it's done
                 node "$WORKFLOW_STATE_CLI" clearCurrentCommand 2>/dev/null || true
+                # Clear TDD phase so it doesn't show stale indicator after build ends
+                node "$WORKFLOW_STATE_CLI" clearTddPhase 2>/dev/null || true
                 # Set lastCommand for status line display (shows last_cmd → next_cmd)
                 node "$WORKFLOW_STATE_CLI" setLastCommand "$WORKFLOW_CMD" 2>/dev/null || true
                 # Set nextCommand based on workflow progression
