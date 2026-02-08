@@ -220,9 +220,13 @@ compute_workflow() {
     tdd_phase=$(echo "$STATE" | jq -r '.tddPhase // ""' 2>/dev/null)
     progress=$(echo "$STATE" | jq -r '.progress // ""' 2>/dev/null)
 
-    # Priority 0: Check if workflow is complete (show "→ DONE")
+    # Priority 0: Check if workflow is complete (show "ship → DONE")
     if [[ "$workflow_complete" == "true" ]]; then
-        echo "→ DONE"
+        if [[ -n "$last_cmd" && "$last_cmd" != "null" ]]; then
+            echo "$last_cmd → DONE"
+        else
+            echo "→ DONE"
+        fi
         return
     fi
 

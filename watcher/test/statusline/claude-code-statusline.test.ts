@@ -175,6 +175,56 @@ describe('Claude Code Status Line', () => {
     });
   });
 
+  describe('Command Flow Display', () => {
+    it('should show "ship → DONE" when workflow is complete', async () => {
+      await fs.writeFile(workflowStateFile, JSON.stringify({
+        workflowComplete: true,
+        lastCommand: 'ship',
+        nextCommand: null,
+        supervisor: 'watching'
+      }));
+
+      const output = runStatusLine();
+
+      expect(output).toContain('ship → DONE');
+    });
+
+    it('should show "build → ship" after build completes', async () => {
+      await fs.writeFile(workflowStateFile, JSON.stringify({
+        lastCommand: 'build',
+        nextCommand: 'ship',
+        supervisor: 'watching'
+      }));
+
+      const output = runStatusLine();
+
+      expect(output).toContain('build → ship');
+    });
+
+    it('should show "plan → build" after plan completes', async () => {
+      await fs.writeFile(workflowStateFile, JSON.stringify({
+        lastCommand: 'plan',
+        nextCommand: 'build',
+        supervisor: 'watching'
+      }));
+
+      const output = runStatusLine();
+
+      expect(output).toContain('plan → build');
+    });
+
+    it('should show current command during execution', async () => {
+      await fs.writeFile(workflowStateFile, JSON.stringify({
+        currentCommand: 'ship',
+        supervisor: 'working'
+      }));
+
+      const output = runStatusLine();
+
+      expect(output).toContain('ship');
+    });
+  });
+
   describe('No Active Status', () => {
     it('should show minimal display (health + branch) when no workflow-state.json exists', async () => {
       // Don't create workflow-state.json
