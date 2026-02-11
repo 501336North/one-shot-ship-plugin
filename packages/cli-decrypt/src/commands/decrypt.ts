@@ -65,14 +65,14 @@ function getApiUrl(): string {
 /**
  * Decrypt a prompt and output to stdout
  *
- * @param type - Prompt type (commands, workflows, skills, agents, hooks)
+ * @param type - Prompt type (commands, workflows, skills, agents, hooks, custom)
  * @param name - Prompt name
  * @param debug - Enable debug output
  * @param options - Additional options (noCache, clearCache)
  * @throws Error if credentials not setup or decryption fails
  */
 export async function decryptCommand(
-  type: 'commands' | 'workflows' | 'skills' | 'agents' | 'hooks',
+  type: 'commands' | 'workflows' | 'skills' | 'agents' | 'hooks' | 'custom',
   name: string,
   debug = false,
   options: DecryptOptions = {}

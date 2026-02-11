@@ -48,6 +48,18 @@ describe('CLI Entry Point', () => {
     });
 
     /**
+     * @behavior CLI accepts custom type for team custom commands
+     * @acceptance-criteria AC-CUSTOM-TYPE-003
+     * @business-rule CUSTOM-003
+     * @boundary CLI Entry Point
+     */
+    it('should parse --type custom for team custom commands', () => {
+      const args = parseArgs(['--type', 'custom', '--name', 'review-code-standards']);
+      expect(args.type).toBe('custom');
+      expect(args.name).toBe('review-code-standards');
+    });
+
+    /**
      * @behavior Users can enable verbose debug output
      * @acceptance-criteria AC-DEBUG-001
      * @business-rule DEBUG-001

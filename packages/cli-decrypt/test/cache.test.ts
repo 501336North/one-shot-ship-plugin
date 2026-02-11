@@ -60,6 +60,16 @@ describe('Cache Storage', () => {
       expect(() => validateType('hooks')).not.toThrow();
     });
 
+    /**
+     * @behavior Custom command prompts can be fetched via decrypt CLI
+     * @acceptance-criteria AC-CUSTOM-TYPE-001
+     * @business-rule CUSTOM-001
+     * @boundary CLI Validation
+     */
+    it('should accept custom type for team custom commands', () => {
+      expect(() => validateType('custom')).not.toThrow();
+    });
+
     it('should reject invalid types', () => {
       expect(() => validateType('invalid')).toThrow('Invalid prompt type');
       expect(() => validateType('../etc')).toThrow('Invalid prompt type');

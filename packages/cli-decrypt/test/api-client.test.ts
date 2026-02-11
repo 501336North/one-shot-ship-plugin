@@ -55,6 +55,7 @@ describe('API Client', () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 401,
+        headers: new Headers(),
         json: async () => ({ error: 'Unauthorized' }),
       });
 
@@ -124,10 +125,36 @@ describe('API Client', () => {
       );
     });
 
+    /**
+     * @behavior Custom command prompts fetch from /api/v1/prompts/custom/:name
+     * @acceptance-criteria AC-CUSTOM-TYPE-002
+     * @business-rule CUSTOM-002
+     * @boundary CLI API Client
+     */
+    it('should fetch encrypted prompt from custom commands endpoint', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ encrypted: 'e', iv: 'i', authTag: 'a' }),
+      });
+
+      await fetchEncryptedPrompt(
+        'ak_test',
+        'https://api.example.com',
+        'custom',
+        'review-code-standards'
+      );
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://api.example.com/api/v1/prompts/custom/review-code-standards',
+        expect.anything()
+      );
+    });
+
     it('should throw on 404 (prompt not found)', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 404,
+        headers: new Headers(),
         json: async () => ({ error: 'Not found' }),
       });
 
@@ -140,6 +167,7 @@ describe('API Client', () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 401,
+        headers: new Headers(),
         json: async () => ({ error: 'Unauthorized' }),
       });
 

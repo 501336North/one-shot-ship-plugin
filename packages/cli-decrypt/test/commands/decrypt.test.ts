@@ -100,16 +100,16 @@ describe('Decrypt Command', () => {
      * @acceptance-criteria AC-CACHE-002
      * @boundary CLI
      */
-    it('should check cache before API call', async () => {
-      // First call populates cache
+    it('should always fetch from API since disk caching is disabled', async () => {
+      // First call fetches from API
       await decryptCommand('commands', 'plan');
       vi.mocked(apiClient.fetchEncryptedPrompt).mockClear();
 
-      // Second call should use cache, not API
+      // Second call should ALSO fetch from API (disk caching disabled for security)
       await decryptCommand('commands', 'plan');
 
-      // API should only be called once (not on second call)
-      expect(apiClient.fetchEncryptedPrompt).not.toHaveBeenCalled();
+      // API should be called on every invocation
+      expect(apiClient.fetchEncryptedPrompt).toHaveBeenCalledTimes(1);
     });
 
     it('should bypass cache with noCache option', async () => {

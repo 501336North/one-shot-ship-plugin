@@ -3,7 +3,7 @@
  * Provides formatted debug output with timestamps and redaction
  */
 
-export type DebugStep = 'FETCH' | 'DERIVE' | 'DECRYPT' | 'CACHE';
+export type DebugStep = 'FETCH' | 'DERIVE' | 'DECRYPT' | 'CACHE' | 'SECURITY';
 
 /**
  * Format a timestamp for debug output
