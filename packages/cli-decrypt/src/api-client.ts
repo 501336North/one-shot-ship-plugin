@@ -94,7 +94,7 @@ export async function fetchCredentials(
  *
  * @param apiKey - User's API key
  * @param apiUrl - Base API URL
- * @param type - Prompt type (commands, workflows, skills, agents, hooks)
+ * @param type - Prompt type (commands, workflows, skills, agents, hooks, custom)
  * @param name - Prompt name
  * @returns Encrypted prompt with iv and authTag
  * @throws Error if prompt not found or authentication fails
@@ -102,7 +102,7 @@ export async function fetchCredentials(
 export async function fetchEncryptedPrompt(
   apiKey: string,
   apiUrl: string,
-  type: 'commands' | 'workflows' | 'skills' | 'agents' | 'hooks',
+  type: 'commands' | 'workflows' | 'skills' | 'agents' | 'hooks' | 'custom',
   name: string
 ): Promise<EncryptedPromptResponse> {
   // Build URL based on type

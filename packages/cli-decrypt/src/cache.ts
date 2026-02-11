@@ -35,7 +35,7 @@ const DEFAULT_TTL_MS = 60 * 60 * 1000;
 /**
  * Allowed prompt types (runtime validation)
  */
-const ALLOWED_TYPES = ['commands', 'workflows', 'skills', 'agents', 'hooks'] as const;
+const ALLOWED_TYPES = ['commands', 'workflows', 'skills', 'agents', 'hooks', 'custom'] as const;
 export type PromptType = (typeof ALLOWED_TYPES)[number];
 
 /**

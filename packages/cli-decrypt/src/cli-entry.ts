@@ -17,7 +17,7 @@ export interface CliArgs {
   debug?: boolean;
   noCache?: boolean;
   clearCache?: boolean;
-  type?: 'commands' | 'workflows' | 'skills' | 'agents' | 'hooks';
+  type?: 'commands' | 'workflows' | 'skills' | 'agents' | 'hooks' | 'custom';
   name?: string;
 }
 
@@ -79,7 +79,7 @@ Usage:
 
 Options:
   --setup              Run initial setup (fetch credentials)
-  --type, -t <type>    Prompt type: commands, workflows, skills, agents, hooks
+  --type, -t <type>    Prompt type: commands, workflows, skills, agents, hooks, custom
   --name, -n <name>    Prompt name
   --debug, -d          Enable verbose debug output
   --no-cache           Bypass cache, always fetch from API
