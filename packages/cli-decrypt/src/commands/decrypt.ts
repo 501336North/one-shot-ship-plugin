@@ -6,7 +6,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { fetchEncryptedPrompt } from '../api-client.js';
+import { fetchEncryptedPrompt, fetchCustomPrompt } from '../api-client.js';
 import { retrieveCredentials } from '../storage.js';
 import { deriveKey, decrypt, userIdToLicenseId } from '../encryption.js';
 import { DebugLogger } from '../debug.js';
@@ -107,6 +107,16 @@ export async function decryptCommand(
 
   const apiUrl = getApiUrl();
   logger.log('FETCH', `API URL: ${apiUrl}`);
+
+  // Custom commands are NOT encrypted - fetch and output directly
+  if (type === 'custom') {
+    logger.log('FETCH', `Fetching custom command: ${name}`);
+    const startFetch = Date.now();
+    const customPrompt = await fetchCustomPrompt(credentials.apiKey, apiUrl, name);
+    logger.log('FETCH', `Custom command fetched in ${Date.now() - startFetch}ms`);
+    console.log(customPrompt.prompt);
+    return;
+  }
 
   // Fetch encrypted prompt from API
   logger.log('FETCH', `Fetching prompt: ${type}/${name}`);
