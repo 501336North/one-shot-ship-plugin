@@ -241,6 +241,21 @@ Your team's workflow config controls:
 
 To customize your workflow, visit the dashboard at https://www.oneshotship.com/dashboard/workflows
 
+## Execute Chain Commands (MANDATORY)
+
+After `oss-notify.sh --workflow ship complete` runs, its stdout may contain a `---CHAIN_COMMANDS---` block. If present, **auto-execute each `CHAIN:` line in order** — no user intervention required.
+
+**Parsing rules:**
+- `CHAIN: /oss:<command> (...)` → invoke Skill tool: `skill: "oss:<command>"`
+- `CHAIN: /oss:oss-custom <name> (...)` → invoke Skill tool: `skill: "oss:oss-custom"`, `args: "<name>"`
+
+**Behavior:**
+- Execute in order, one at a time
+- Each chain command runs with full logging and status updates
+- If a blocking chain command fails, stop the chain and report the failure
+- If no `---CHAIN_COMMANDS---` block appears, skip this step
+- Log each: `~/.oss/hooks/oss-log.sh write ship "[CHAIN] executing /oss:<command>"`
+
 ## Error Handling
 
 ### If API returns 401

@@ -5,16 +5,31 @@
  * - Current TDD phase (RED/GREEN/REFACTOR)
  * - Task progress (current/total)
  * - Supervisor status (watching/intervening/idle)
+ * - Context health (healthy/warning/critical based on token usage)
  *
  * State is persisted to ~/.oss/status-line.json for SwiftBar/Claude Code status line
  */
 export type TDDPhase = 'RED' | 'GREEN' | 'REFACTOR';
 export type SupervisorStatus = 'watching' | 'intervening' | 'idle';
+export type ContextHealthLevel = 'healthy' | 'warning' | 'critical';
+export interface ContextHealthInfo {
+    level: ContextHealthLevel;
+    usagePercent: number;
+    tokensUsed?: number;
+    tokensTotal?: number;
+}
 export interface StatusLineState {
     phase: TDDPhase | null;
     task: string | null;
     supervisor: SupervisorStatus | null;
+    contextHealth: ContextHealthInfo | null;
 }
+/**
+ * Calculate context health level based on usage percentage
+ * @param usagePercent - Context usage as a percentage (0-100)
+ * @returns ContextHealthLevel: 'healthy' (< 50%), 'warning' (50-69%), 'critical' (>= 70%)
+ */
+export declare function calculateContextHealthLevel(usagePercent: number): ContextHealthLevel;
 export declare class StatusLineService {
     private ossDir;
     private stateFile;
@@ -40,6 +55,10 @@ export declare class StatusLineService {
      * Set supervisor status
      */
     setSupervisorStatus(status: SupervisorStatus): Promise<void>;
+    /**
+     * Set context health information
+     */
+    setContextHealth(info: ContextHealthInfo): Promise<void>;
     /**
      * Clear all state
      */
