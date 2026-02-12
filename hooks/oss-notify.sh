@@ -69,7 +69,11 @@ resolve_cli() {
 COPY_CLI="$(resolve_cli "get-copy.js" "watcher/dist/cli/get-copy.js")"
 WORKFLOW_STATE_CLI="$(resolve_cli "update-workflow-state.js" "watcher/dist/cli/update-workflow-state.js")"
 TELEGRAM_CLI="$(resolve_cli "telegram-notify.js" "watcher/dist/cli/telegram-notify.js")"
-CHAIN_TRIGGER_CLI="$(resolve_cli "chain-trigger.js" "watcher/dist/cli/chain-trigger.js")"
+# Prefer bundled .cjs (standalone, no external imports) over .js (needs api/engine deps)
+CHAIN_TRIGGER_CLI="$(resolve_cli "chain-trigger.cjs" "watcher/dist/cli/chain-trigger.cjs")"
+if [[ ! -f "$CHAIN_TRIGGER_CLI" ]]; then
+    CHAIN_TRIGGER_CLI="$(resolve_cli "chain-trigger.js" "watcher/dist/cli/chain-trigger.js")"
+fi
 
 # =============================================================================
 # PROJECT DIRECTORY RESOLUTION - For multi-project workflow state isolation

@@ -183,7 +183,8 @@ async function main(): Promise<void> {
 }
 
 // Only run main when executed directly (not imported by tests)
-const isDirectExecution = process.argv[1]?.endsWith('chain-trigger.js');
+// Matches both .js (tsc) and .cjs (esbuild bundle) extensions
+const isDirectExecution = /chain-trigger\.(js|cjs)$/.test(process.argv[1] || '');
 if (isDirectExecution) {
   main().catch((error) => {
     console.error(`Chain trigger fatal error: ${error}`);

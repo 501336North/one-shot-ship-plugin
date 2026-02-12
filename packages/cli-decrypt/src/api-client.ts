@@ -53,6 +53,16 @@ export interface EncryptedPromptResponse {
 }
 
 /**
+ * Custom prompt response from the API (plaintext, not encrypted)
+ */
+export interface CustomPromptResponse {
+  prompt: string;
+  name: string;
+  displayName: string;
+  isBlocking: boolean;
+}
+
+/**
  * Fetch decryption credentials from the API
  *
  * @param apiKey - User's API key
@@ -140,4 +150,50 @@ export async function fetchEncryptedPrompt(
   }
 
   return response.json() as Promise<EncryptedPromptResponse>;
+}
+
+/**
+ * Fetch a custom prompt from the API (plaintext, not encrypted)
+ *
+ * Custom commands are user-defined and returned as plaintext from the API,
+ * bypassing the encryption/decryption pipeline entirely.
+ *
+ * @param apiKey - User's API key
+ * @param apiUrl - Base API URL
+ * @param name - Custom command name
+ * @returns Custom prompt with name, displayName, prompt content, and isBlocking flag
+ * @throws Error if prompt not found or authentication fails
+ */
+export async function fetchCustomPrompt(
+  apiKey: string,
+  apiUrl: string,
+  name: string
+): Promise<CustomPromptResponse> {
+  const endpoint = `${apiUrl}/api/v1/prompts/custom/${name}`;
+
+  const response = await fetch(endpoint, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    // SECURITY: Check for cache clear directive on any error (especially 401)
+    await handleCacheClearDirective(response);
+
+    if (response.status === 404) {
+      throw new Error('Prompt not found');
+    }
+    if (response.status === 401) {
+      throw new Error('Unauthorized');
+    }
+    const error = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
+      error?: string;
+    };
+    throw new Error(error.error || 'Request failed');
+  }
+
+  return response.json() as Promise<CustomPromptResponse>;
 }
