@@ -338,12 +338,13 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                 esac
                 # Log IRON LAW compliance checklist on command completion
                 "$LOG_SCRIPT" checklist "$WORKFLOW_CMD" 2>/dev/null || true
-                # Trigger custom command chains (background, non-blocking)
-                # H-3: Log to file for observability instead of /dev/null
+                # Output chain instructions for Claude to invoke as skills
+                # Runs synchronously so stdout (CHAIN: lines) is visible to Claude
+                # Stderr goes to log file for debugging
                 CHAIN_TRIGGER_LOG="$HOME/.oss/logs/chain-trigger.log"
                 mkdir -p "$(dirname "$CHAIN_TRIGGER_LOG")" 2>/dev/null
                 if [[ -f "$CHAIN_TRIGGER_CLI" ]]; then
-                    ( run_with_timeout 30 node "$CHAIN_TRIGGER_CLI" --workflow "$WORKFLOW_CMD" >> "$CHAIN_TRIGGER_LOG" 2>&1 || true ) &
+                    run_with_timeout 30 node "$CHAIN_TRIGGER_CLI" --workflow "$WORKFLOW_CMD" 2>> "$CHAIN_TRIGGER_LOG" || true
                 fi
                 ;;
             failed)

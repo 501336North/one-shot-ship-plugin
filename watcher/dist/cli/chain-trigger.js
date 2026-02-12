@@ -2,30 +2,27 @@
 /**
  * Chain Trigger CLI
  *
- * Executes custom command chains when a workflow command completes.
- * Called by oss-notify.sh on 'complete' events.
+ * Outputs structured chain instructions when a workflow command completes.
+ * Called by oss-notify.sh on 'complete' events. Claude reads the output
+ * and invokes each command as a skill.
  *
- * @behavior Fetches workflow config, executes team: prefixed commands via CustomCommandExecutor
- * @acceptance-criteria AC-CHAIN-TRIGGER.1 through AC-CHAIN-TRIGGER.7
+ * @behavior Fetches workflow config, outputs CHAIN: lines for Claude to invoke
+ * @acceptance-criteria AC-CHAIN-TRIGGER.1 through AC-CHAIN-TRIGGER.8
  *
  * Usage:
- *   node chain-trigger.js --workflow build    # Execute all team: chains for 'build'
- *   node chain-trigger.js --command my-cmd    # Execute a single custom command
+ *   node chain-trigger.js --workflow build    # Output chain instructions for 'build'
  *
  * Exit codes:
- *   0 - Success (or no custom commands to execute)
+ *   0 - Success (or no commands to output)
  *   1 - Failure
  */
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { CustomCommandExecutor, isCustomCommand, parseCustomCommand, } from '../engine/custom-command-executor.js';
 import { getCachedOrFetch } from '../api/workflow-config.js';
 const DEFAULT_API_URL = 'https://one-shot-ship-api.onrender.com';
-/** Maximum number of chain commands to execute (H-4: prevent runaway chains) */
+/** Maximum number of chain commands to output (H-4: prevent runaway chains) */
 export const MAX_CHAIN_COMMANDS = 10;
-/** Per-command timeout in ms (H-2: prevent resource exhaustion) */
-export const COMMAND_TIMEOUT_MS = 10000;
 /**
  * Read API credentials from config file
  *
@@ -65,71 +62,49 @@ export function readApiCredentials(configDir) {
     }
 }
 /**
- * Execute a single custom command
+ * Output structured chain instructions for a workflow's chains_to.
  *
- * @param commandName - The command name (without team: prefix)
- * @param credentials - API credentials
- * @returns Execution result
- */
-export async function executeSingleCommand(commandName, credentials) {
-    const executor = new CustomCommandExecutor({
-        apiKey: credentials.apiKey,
-        apiUrl: credentials.apiUrl,
-    });
-    const result = await executor.invokeCommand(commandName);
-    return { success: result.success, error: result.error };
-}
-/**
- * Execute all custom commands in a workflow's chains_to
+ * Prints CHAIN: lines to stdout so Claude can read them in the Bash tool
+ * result and invoke each command as a skill.
+ *
+ * For team:X commands → CHAIN: /oss:oss-custom X (always|condition: Y)
+ * For standard commands → CHAIN: /oss:X (always|condition: Y)
  *
  * @param workflowName - The workflow command name (e.g., 'build')
- * @param credentials - API credentials
- * @returns Chain execution result
+ * @param _credentials - API credentials (used for getCachedOrFetch auth)
+ * @returns Chain execution result with count of commands output
  */
-export async function executeChainForWorkflow(workflowName, credentials) {
+export async function executeChainForWorkflow(workflowName, _credentials) {
     try {
         const config = await getCachedOrFetch(workflowName);
         if (!config.chains_to || config.chains_to.length === 0) {
             return { executed: 0, skipped: 0, errors: [] };
         }
         let executed = 0;
-        let skipped = 0;
-        const errors = [];
-        const executor = new CustomCommandExecutor({
-            apiKey: credentials.apiKey,
-            apiUrl: credentials.apiUrl,
-        });
+        const lines = [];
         for (const step of config.chains_to) {
-            // H-4: Cap execution to prevent runaway chains from malicious config
+            // H-4: Cap output to prevent runaway chains from malicious config
             if (executed >= MAX_CHAIN_COMMANDS) {
                 break;
             }
-            if (!isCustomCommand(step.command)) {
-                skipped++;
-                continue;
+            const condition = step.always ? 'always' : step.condition ? `condition: ${step.condition}` : 'always';
+            if (step.command.startsWith('team:')) {
+                const cmdName = step.command.substring(5);
+                lines.push(`CHAIN: /oss:oss-custom ${cmdName} (${condition})`);
             }
-            const commandName = parseCustomCommand(step.command);
-            if (!commandName) {
-                skipped++;
-                continue;
+            else {
+                lines.push(`CHAIN: /oss:${step.command} (${condition})`);
             }
             executed++;
-            try {
-                // H-2: Per-command timeout prevents resource exhaustion
-                const timeoutPromise = new Promise((_, reject) => {
-                    setTimeout(() => reject(new Error(`timed out after ${COMMAND_TIMEOUT_MS}ms`)), COMMAND_TIMEOUT_MS);
-                });
-                await Promise.race([
-                    executor.invokeCommand(commandName),
-                    timeoutPromise,
-                ]);
-            }
-            catch (error) {
-                const msg = error instanceof Error ? error.message : 'Unknown error';
-                errors.push(`${commandName}: ${msg}`);
-            }
         }
-        return { executed, skipped, errors };
+        if (lines.length > 0) {
+            console.log('---CHAIN_COMMANDS---');
+            for (const line of lines) {
+                console.log(line);
+            }
+            console.log('---END_CHAIN_COMMANDS---');
+        }
+        return { executed, skipped: 0, errors: [] };
     }
     catch (error) {
         const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -142,7 +117,7 @@ export async function executeChainForWorkflow(workflowName, credentials) {
 async function main() {
     const args = process.argv.slice(2);
     if (args.length === 0) {
-        console.error('Usage: chain-trigger.js --workflow <cmd> | --command <name>');
+        console.error('Usage: chain-trigger.js --workflow <cmd>');
         process.exit(1);
     }
     const credentials = readApiCredentials();
@@ -158,22 +133,9 @@ async function main() {
             console.error(`Chain trigger error: ${result.error}`);
             process.exit(1);
         }
-        if (result.executed > 0) {
-            console.log(`Chain trigger: ${result.executed} custom command(s) executed, ${result.skipped} skipped`);
-        }
         process.exit(0);
     }
-    const cmdIndex = args.indexOf('--command');
-    if (cmdIndex !== -1 && args[cmdIndex + 1]) {
-        const commandName = args[cmdIndex + 1];
-        const result = await executeSingleCommand(commandName, credentials);
-        if (!result.success) {
-            console.error(`Command failed: ${result.error}`);
-            process.exit(1);
-        }
-        process.exit(0);
-    }
-    console.error('Usage: chain-trigger.js --workflow <cmd> | --command <name>');
+    console.error('Usage: chain-trigger.js --workflow <cmd>');
     process.exit(1);
 }
 // Only run main when executed directly (not imported by tests)
