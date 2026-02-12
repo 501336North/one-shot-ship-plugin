@@ -189,32 +189,12 @@ if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
     run_with_timeout 2 node "$WORKFLOW_STATE_CLI" "${_WF_PROJECT_DIR_ARGS[@]}" setSessionId "$SESSION_ID"
 fi
 
-# Check if watcher is already running
-# OSS_SKIP_WATCHER=1 can be set in test environments to skip watcher spawning
-if [[ "${OSS_SKIP_WATCHER:-}" != "1" ]]; then
-    if [[ -f "$WATCHER_PID_FILE" ]]; then
-        WATCHER_PID=$(cat "$WATCHER_PID_FILE" 2>/dev/null)
-        if [[ -n "$WATCHER_PID" ]] && ps -p "$WATCHER_PID" > /dev/null 2>&1; then
-            echo "OSS: Watcher running (PID: $WATCHER_PID)"
-        else
-            # Stale PID file - clean up
-            rm -f "$WATCHER_PID_FILE"
-            if [[ -f "$WATCHER_SCRIPT" ]]; then
-                # Start new watcher
-                cd "$PROJECT_OSS_DIR/.." && node "$WATCHER_SCRIPT" &
-                echo $! > "$WATCHER_PID_FILE"
-                echo "OSS: Watcher started (PID: $!)"
-            fi
-        fi
-    else
-        if [[ -f "$WATCHER_SCRIPT" ]]; then
-            # Start watcher
-            cd "$PROJECT_OSS_DIR/.." && node "$WATCHER_SCRIPT" &
-            echo $! > "$WATCHER_PID_FILE"
-            echo "OSS: Watcher started (PID: $!)"
-        fi
-    fi
-fi
+# Watcher daemon spawn removed - watcher/dist/index.js is a library module (exports
+# Watcher class with no main/event-loop), so spawning it as a background process
+# exits immediately and creates stale PID files. Chain execution is now handled by
+# oss-notify.sh via chain-trigger.js on complete events.
+# Clean up any stale PID files from previous versions.
+rm -f "$WATCHER_PID_FILE" 2>/dev/null
 
 # --- Health Check (Run tests on session start) ---
 # Run npm test to catch any pre-existing failures and queue them
