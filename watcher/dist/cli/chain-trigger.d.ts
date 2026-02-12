@@ -32,6 +32,10 @@ export interface ChainExecutionResult {
     errors: string[];
     error?: string;
 }
+/** Maximum number of chain commands to execute (H-4: prevent runaway chains) */
+export declare const MAX_CHAIN_COMMANDS = 10;
+/** Per-command timeout in ms (H-2: prevent resource exhaustion) */
+export declare const COMMAND_TIMEOUT_MS = 10000;
 /**
  * Read API credentials from config file
  *

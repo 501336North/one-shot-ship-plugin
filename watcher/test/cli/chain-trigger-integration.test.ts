@@ -39,17 +39,22 @@ describe('Chain Trigger Integration', () => {
     expect(triggerLine).toMatch(/&\s*$/);
   });
 
-  test('oss-notify.sh chain trigger should have error suppression', () => {
+  test('oss-notify.sh chain trigger should log output to file instead of /dev/null', () => {
     const hookPath = path.resolve(__dirname, '../../../hooks/oss-notify.sh');
     const content = fs.readFileSync(hookPath, 'utf8');
 
-    // Must have error suppression so hook never fails due to chain trigger
+    // H-3: Chain trigger output should go to a log file for observability,
+    // not swallowed by /dev/null. The hook must still not fail (|| true).
     const lines = content.split('\n');
     const triggerLine = lines.find(l => l.includes('CHAIN_TRIGGER_CLI') && l.includes('--workflow'));
     expect(triggerLine).toBeDefined();
-    // Pattern: 2>/dev/null || true
-    expect(triggerLine).toContain('2>/dev/null');
+
+    // Should redirect to a log file, NOT /dev/null
+    expect(triggerLine).not.toContain('2>/dev/null');
+    // Should still have error suppression for the hook
     expect(triggerLine).toContain('|| true');
+    // Should reference a log directory
+    expect(content).toContain('CHAIN_TRIGGER_LOG');
   });
 
   // ==========================================================================

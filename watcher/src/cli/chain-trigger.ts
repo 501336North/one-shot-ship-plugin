@@ -47,6 +47,12 @@ export interface ChainExecutionResult {
 
 const DEFAULT_API_URL = 'https://one-shot-ship-api.onrender.com';
 
+/** Maximum number of chain commands to execute (H-4: prevent runaway chains) */
+export const MAX_CHAIN_COMMANDS = 10;
+
+/** Per-command timeout in ms (H-2: prevent resource exhaustion) */
+export const COMMAND_TIMEOUT_MS = 10000;
+
 /**
  * Read API credentials from config file
  *
@@ -69,9 +75,20 @@ export function readApiCredentials(configDir?: string): ApiCredentials | null {
       return null;
     }
 
+    // M-2: Validate API URL protocol - reject non-HTTPS to prevent MitM
+    const apiUrl = config.apiUrl || DEFAULT_API_URL;
+    try {
+      const parsed = new URL(apiUrl);
+      if (parsed.protocol !== 'https:') {
+        return null;
+      }
+    } catch {
+      return null;
+    }
+
     return {
       apiKey: config.apiKey,
-      apiUrl: config.apiUrl || DEFAULT_API_URL,
+      apiUrl,
     };
   } catch {
     return null;
@@ -126,6 +143,11 @@ export async function executeChainForWorkflow(
     });
 
     for (const step of config.chains_to) {
+      // H-4: Cap execution to prevent runaway chains from malicious config
+      if (executed >= MAX_CHAIN_COMMANDS) {
+        break;
+      }
+
       if (!isCustomCommand(step.command)) {
         skipped++;
         continue;
@@ -140,7 +162,14 @@ export async function executeChainForWorkflow(
       executed++;
 
       try {
-        await executor.invokeCommand(commandName);
+        // H-2: Per-command timeout prevents resource exhaustion
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error(`timed out after ${COMMAND_TIMEOUT_MS}ms`)), COMMAND_TIMEOUT_MS);
+        });
+        await Promise.race([
+          executor.invokeCommand(commandName),
+          timeoutPromise,
+        ]);
       } catch (error) {
         const msg = error instanceof Error ? error.message : 'Unknown error';
         errors.push(`${commandName}: ${msg}`);
