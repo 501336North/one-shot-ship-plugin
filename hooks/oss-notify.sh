@@ -69,6 +69,7 @@ resolve_cli() {
 COPY_CLI="$(resolve_cli "get-copy.js" "watcher/dist/cli/get-copy.js")"
 WORKFLOW_STATE_CLI="$(resolve_cli "update-workflow-state.js" "watcher/dist/cli/update-workflow-state.js")"
 TELEGRAM_CLI="$(resolve_cli "telegram-notify.js" "watcher/dist/cli/telegram-notify.js")"
+CHAIN_TRIGGER_CLI="$(resolve_cli "chain-trigger.js" "watcher/dist/cli/chain-trigger.js")"
 
 # =============================================================================
 # PROJECT DIRECTORY RESOLUTION - For multi-project workflow state isolation
@@ -337,6 +338,11 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                 esac
                 # Log IRON LAW compliance checklist on command completion
                 "$LOG_SCRIPT" checklist "$WORKFLOW_CMD" 2>/dev/null || true
+                # Trigger custom command chains (background, non-blocking)
+                # Fetches workflow config, executes team: prefixed commands in chains_to
+                if [[ -f "$CHAIN_TRIGGER_CLI" ]]; then
+                    ( run_with_timeout 30 node "$CHAIN_TRIGGER_CLI" --workflow "$WORKFLOW_CMD" 2>/dev/null || true ) &
+                fi
                 ;;
             failed)
                 wf_state setSupervisor intervening 2>/dev/null || true
