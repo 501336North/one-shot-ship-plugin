@@ -143,6 +143,11 @@ async function main() {
                 console.log(`TDD phase set to: ${phase}`);
                 break;
             }
+            case 'clearTddPhase': {
+                await service.clearTddPhase();
+                console.log('TDD phase cleared');
+                break;
+            }
             case 'completeStep': {
                 const step = args[1];
                 await service.completeStep(step);

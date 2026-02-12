@@ -126,6 +126,14 @@ export class WorkflowStateService {
         await this.writeState(state);
     }
     /**
+     * Clears the TDD phase from workflow state (used when build completes)
+     */
+    async clearTddPhase() {
+        const state = await this.getState();
+        delete state.tddPhase;
+        await this.writeState(state);
+    }
+    /**
      * Marks step as done and sets nextCommand based on workflow progression
      */
     async completeStep(step) {

@@ -89,6 +89,10 @@ export declare class WorkflowStateService {
      */
     setTddPhase(phase: ChainStep): Promise<void>;
     /**
+     * Clears the TDD phase from workflow state (used when build completes)
+     */
+    clearTddPhase(): Promise<void>;
+    /**
      * Marks step as done and sets nextCommand based on workflow progression
      */
     completeStep(step: ChainStep): Promise<void>;
