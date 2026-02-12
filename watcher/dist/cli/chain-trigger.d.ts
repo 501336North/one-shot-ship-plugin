@@ -2,18 +2,18 @@
 /**
  * Chain Trigger CLI
  *
- * Executes custom command chains when a workflow command completes.
- * Called by oss-notify.sh on 'complete' events.
+ * Outputs structured chain instructions when a workflow command completes.
+ * Called by oss-notify.sh on 'complete' events. Claude reads the output
+ * and invokes each command as a skill.
  *
- * @behavior Fetches workflow config, executes team: prefixed commands via CustomCommandExecutor
- * @acceptance-criteria AC-CHAIN-TRIGGER.1 through AC-CHAIN-TRIGGER.7
+ * @behavior Fetches workflow config, outputs CHAIN: lines for Claude to invoke
+ * @acceptance-criteria AC-CHAIN-TRIGGER.1 through AC-CHAIN-TRIGGER.8
  *
  * Usage:
- *   node chain-trigger.js --workflow build    # Execute all team: chains for 'build'
- *   node chain-trigger.js --command my-cmd    # Execute a single custom command
+ *   node chain-trigger.js --workflow build    # Output chain instructions for 'build'
  *
  * Exit codes:
- *   0 - Success (or no custom commands to execute)
+ *   0 - Success (or no commands to output)
  *   1 - Failure
  */
 /**
@@ -24,7 +24,7 @@ export interface ApiCredentials {
     apiUrl: string;
 }
 /**
- * Result of executing a workflow chain
+ * Result of outputting chain instructions
  */
 export interface ChainExecutionResult {
     executed: number;
@@ -32,10 +32,8 @@ export interface ChainExecutionResult {
     errors: string[];
     error?: string;
 }
-/** Maximum number of chain commands to execute (H-4: prevent runaway chains) */
+/** Maximum number of chain commands to output (H-4: prevent runaway chains) */
 export declare const MAX_CHAIN_COMMANDS = 10;
-/** Per-command timeout in ms (H-2: prevent resource exhaustion) */
-export declare const COMMAND_TIMEOUT_MS = 10000;
 /**
  * Read API credentials from config file
  *
@@ -44,22 +42,17 @@ export declare const COMMAND_TIMEOUT_MS = 10000;
  */
 export declare function readApiCredentials(configDir?: string): ApiCredentials | null;
 /**
- * Execute a single custom command
+ * Output structured chain instructions for a workflow's chains_to.
  *
- * @param commandName - The command name (without team: prefix)
- * @param credentials - API credentials
- * @returns Execution result
- */
-export declare function executeSingleCommand(commandName: string, credentials: ApiCredentials): Promise<{
-    success: boolean;
-    error?: string;
-}>;
-/**
- * Execute all custom commands in a workflow's chains_to
+ * Prints CHAIN: lines to stdout so Claude can read them in the Bash tool
+ * result and invoke each command as a skill.
+ *
+ * For team:X commands → CHAIN: /oss:oss-custom X (always|condition: Y)
+ * For standard commands → CHAIN: /oss:X (always|condition: Y)
  *
  * @param workflowName - The workflow command name (e.g., 'build')
- * @param credentials - API credentials
- * @returns Chain execution result
+ * @param _credentials - API credentials (used for getCachedOrFetch auth)
+ * @returns Chain execution result with count of commands output
  */
-export declare function executeChainForWorkflow(workflowName: string, credentials: ApiCredentials): Promise<ChainExecutionResult>;
+export declare function executeChainForWorkflow(workflowName: string, _credentials: ApiCredentials): Promise<ChainExecutionResult>;
 //# sourceMappingURL=chain-trigger.d.ts.map

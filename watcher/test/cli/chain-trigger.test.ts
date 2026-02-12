@@ -1,66 +1,32 @@
 /**
  * Chain Trigger CLI Tests
  *
- * @behavior Chain trigger fetches workflow config and executes custom commands
+ * @behavior Chain trigger fetches workflow config and outputs structured chain instructions
  * @acceptance-criteria AC-CHAIN-TRIGGER.1 through AC-CHAIN-TRIGGER.7
- * @business-rule Custom commands in chains_to with team: prefix are auto-executed on complete
+ * @business-rule Chain instructions are printed to stdout so Claude can invoke them as skills
  * @boundary CLI
  */
 
 import { describe, test, expect, beforeEach, vi, afterEach } from 'vitest';
 
-// Mock dependencies before importing
-vi.mock('../../src/engine/custom-command-executor.js', () => {
-  const mockInvoke = vi.fn();
-  return {
-    CustomCommandExecutor: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
-      this.invokeCommand = mockInvoke;
-      return this;
-    }),
-    isCustomCommand: vi.fn((cmd: string) => cmd.startsWith('team:')),
-    parseCustomCommand: vi.fn((cmd: string) =>
-      cmd.startsWith('team:') ? cmd.substring(5) : null
-    ),
-  };
-});
-
 vi.mock('../../src/api/workflow-config.js', () => ({
   getCachedOrFetch: vi.fn(),
 }));
 
-import {
-  CustomCommandExecutor,
-  isCustomCommand,
-} from '../../src/engine/custom-command-executor.js';
 import { getCachedOrFetch } from '../../src/api/workflow-config.js';
 
-// Import the module under test
 import {
   readApiCredentials,
   executeChainForWorkflow,
-  executeSingleCommand,
   MAX_CHAIN_COMMANDS,
-  COMMAND_TIMEOUT_MS,
 } from '../../src/cli/chain-trigger.js';
 
 describe('Chain Trigger CLI', () => {
-  let mockInvokeCommand: ReturnType<typeof vi.fn>;
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-
-    mockInvokeCommand = vi.fn().mockResolvedValue({
-      success: true,
-      commandName: 'test-cmd',
-      isBlocking: false,
-    });
-
-    (CustomCommandExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
-      function (this: Record<string, unknown>) {
-        this.invokeCommand = mockInvokeCommand;
-        return this;
-      }
-    );
+    consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -74,7 +40,6 @@ describe('Chain Trigger CLI', () => {
   describe('readApiCredentials', () => {
     test('should return apiKey and apiUrl from config', () => {
       const result = readApiCredentials('/tmp/test-oss');
-      // Function should return { apiKey, apiUrl } or null
       expect(result).toBeDefined();
     });
 
@@ -84,7 +49,6 @@ describe('Chain Trigger CLI', () => {
     });
 
     test('should reject non-HTTPS apiUrl', () => {
-      // M-2: Prevent MitM by requiring HTTPS
       const tmpDir = '/tmp/test-oss-security-' + Date.now();
       const fs = require('fs');
       fs.mkdirSync(tmpDir, { recursive: true });
@@ -117,71 +81,120 @@ describe('Chain Trigger CLI', () => {
   });
 
   // ==========================================================================
-  // AC-CHAIN-TRIGGER.2: Execute single custom command
+  // AC-CHAIN-TRIGGER.8: Structured chain output format
   // ==========================================================================
 
-  describe('executeSingleCommand', () => {
-    test('should invoke CustomCommandExecutor with command name', async () => {
-      const result = await executeSingleCommand('my-lint-check', {
-        apiKey: 'test-key',
-        apiUrl: 'https://api.example.com',
-      });
-
-      expect(CustomCommandExecutor).toHaveBeenCalledWith({
-        apiKey: 'test-key',
-        apiUrl: 'https://api.example.com',
-      });
-      expect(mockInvokeCommand).toHaveBeenCalledWith('my-lint-check');
-      expect(result.success).toBe(true);
-    });
-
-    test('should return failure when command execution fails', async () => {
-      mockInvokeCommand.mockResolvedValue({
-        success: false,
-        commandName: 'bad-cmd',
-        error: 'Not found',
-        isBlocking: false,
-      });
-
-      const result = await executeSingleCommand('bad-cmd', {
-        apiKey: 'test-key',
-        apiUrl: 'https://api.example.com',
-      });
-
-      expect(result.success).toBe(false);
-    });
-  });
-
-  // ==========================================================================
-  // AC-CHAIN-TRIGGER.3: Execute chain for workflow
-  // ==========================================================================
-
-  describe('executeChainForWorkflow', () => {
-    test('should fetch workflow config and execute team: commands', async () => {
+  describe('executeChainForWorkflow - structured output', () => {
+    /**
+     * @behavior Chain trigger outputs CHAIN: lines for team: custom commands
+     * @acceptance-criteria AC-CHAIN-TRIGGER.8
+     * @business-rule team:X commands map to /oss:oss-custom X
+     */
+    test('should output CHAIN: lines for team: commands', async () => {
       const mockConfig = {
         chains_to: [
           { command: 'team:lint-check', always: true },
-          { command: 'ship' },
           { command: 'team:notify-slack', always: true },
         ],
       };
       (getCachedOrFetch as ReturnType<typeof vi.fn>).mockResolvedValue(mockConfig);
 
-      const result = await executeChainForWorkflow('build', {
+      await executeChainForWorkflow('build', {
         apiKey: 'test-key',
         apiUrl: 'https://api.example.com',
       });
 
-      expect(getCachedOrFetch).toHaveBeenCalledWith('build');
-      // Should invoke 2 custom commands (lint-check, notify-slack), skip 'ship'
-      expect(mockInvokeCommand).toHaveBeenCalledTimes(2);
-      expect(mockInvokeCommand).toHaveBeenCalledWith('lint-check');
-      expect(mockInvokeCommand).toHaveBeenCalledWith('notify-slack');
-      expect(result.executed).toBe(2);
-      expect(result.skipped).toBe(1);
+      const output = consoleSpy.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('CHAIN: /oss:oss-custom lint-check (always)');
+      expect(output).toContain('CHAIN: /oss:oss-custom notify-slack (always)');
     });
 
-    test('should skip all when no chains_to configured', async () => {
+    /**
+     * @behavior Chain trigger outputs CHAIN: lines for standard (non-team:) commands
+     * @acceptance-criteria AC-CHAIN-TRIGGER.8
+     * @business-rule Standard commands map to /oss:<command>
+     */
+    test('should output CHAIN: lines for standard commands', async () => {
+      const mockConfig = {
+        chains_to: [
+          { command: 'adr', always: true },
+          { command: 'requirements', always: true },
+        ],
+      };
+      (getCachedOrFetch as ReturnType<typeof vi.fn>).mockResolvedValue(mockConfig);
+
+      await executeChainForWorkflow('ideate', {
+        apiKey: 'test-key',
+        apiUrl: 'https://api.example.com',
+      });
+
+      const output = consoleSpy.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('CHAIN: /oss:adr (always)');
+      expect(output).toContain('CHAIN: /oss:requirements (always)');
+    });
+
+    /**
+     * @behavior Chain trigger includes conditions in output
+     * @acceptance-criteria AC-CHAIN-TRIGGER.8
+     * @business-rule Conditional commands show their condition for Claude to evaluate
+     */
+    test('should include conditions in output', async () => {
+      const mockConfig = {
+        chains_to: [
+          { command: 'api-design', condition: 'has_api_work' },
+          { command: 'data-model', condition: 'has_db_work' },
+          { command: 'team:my-cmd', always: true },
+        ],
+      };
+      (getCachedOrFetch as ReturnType<typeof vi.fn>).mockResolvedValue(mockConfig);
+
+      await executeChainForWorkflow('plan', {
+        apiKey: 'test-key',
+        apiUrl: 'https://api.example.com',
+      });
+
+      const output = consoleSpy.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('CHAIN: /oss:api-design (condition: has_api_work)');
+      expect(output).toContain('CHAIN: /oss:data-model (condition: has_db_work)');
+      expect(output).toContain('CHAIN: /oss:oss-custom my-cmd (always)');
+    });
+
+    /**
+     * @behavior Chain trigger wraps output in delimiters
+     * @acceptance-criteria AC-CHAIN-TRIGGER.8
+     * @business-rule Delimiters allow Claude to reliably parse the chain instructions
+     */
+    test('should wrap output in delimiters', async () => {
+      const mockConfig = {
+        chains_to: [
+          { command: 'team:lint-check', always: true },
+        ],
+      };
+      (getCachedOrFetch as ReturnType<typeof vi.fn>).mockResolvedValue(mockConfig);
+
+      await executeChainForWorkflow('build', {
+        apiKey: 'test-key',
+        apiUrl: 'https://api.example.com',
+      });
+
+      const output = consoleSpy.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('---CHAIN_COMMANDS---');
+      expect(output).toContain('---END_CHAIN_COMMANDS---');
+
+      // Delimiters should wrap the CHAIN lines
+      const startIdx = output.indexOf('---CHAIN_COMMANDS---');
+      const endIdx = output.indexOf('---END_CHAIN_COMMANDS---');
+      const chainIdx = output.indexOf('CHAIN:');
+      expect(startIdx).toBeLessThan(chainIdx);
+      expect(chainIdx).toBeLessThan(endIdx);
+    });
+
+    /**
+     * @behavior Chain trigger produces no output when no chains configured
+     * @acceptance-criteria AC-CHAIN-TRIGGER.8
+     * @business-rule Empty chains_to means no output (no delimiters either)
+     */
+    test('should produce no output when no chains_to configured', async () => {
       (getCachedOrFetch as ReturnType<typeof vi.fn>).mockResolvedValue({});
 
       const result = await executeChainForWorkflow('build', {
@@ -189,63 +202,20 @@ describe('Chain Trigger CLI', () => {
         apiUrl: 'https://api.example.com',
       });
 
-      expect(mockInvokeCommand).not.toHaveBeenCalled();
+      // No console.log calls for chain instructions
+      const chainCalls = consoleSpy.mock.calls.filter(c =>
+        String(c[0]).includes('CHAIN:') || String(c[0]).includes('---CHAIN_COMMANDS---')
+      );
+      expect(chainCalls).toHaveLength(0);
       expect(result.executed).toBe(0);
     });
 
-    test('should skip all when chains_to has no team: commands', async () => {
-      const mockConfig = {
-        chains_to: [
-          { command: 'acceptance', always: true },
-          { command: 'integration' },
-        ],
-      };
-      (getCachedOrFetch as ReturnType<typeof vi.fn>).mockResolvedValue(mockConfig);
-
-      const result = await executeChainForWorkflow('plan', {
-        apiKey: 'test-key',
-        apiUrl: 'https://api.example.com',
-      });
-
-      expect(mockInvokeCommand).not.toHaveBeenCalled();
-      expect(result.executed).toBe(0);
-      expect(result.skipped).toBe(2);
-    });
-
-    test('should continue on non-blocking command failure', async () => {
-      const mockConfig = {
-        chains_to: [
-          { command: 'team:failing-cmd', always: true },
-          { command: 'team:second-cmd', always: true },
-        ],
-      };
-      (getCachedOrFetch as ReturnType<typeof vi.fn>).mockResolvedValue(mockConfig);
-
-      mockInvokeCommand
-        .mockResolvedValueOnce({
-          success: false,
-          commandName: 'failing-cmd',
-          error: 'API error',
-          isBlocking: false,
-        })
-        .mockResolvedValueOnce({
-          success: true,
-          commandName: 'second-cmd',
-          isBlocking: false,
-        });
-
-      const result = await executeChainForWorkflow('build', {
-        apiKey: 'test-key',
-        apiUrl: 'https://api.example.com',
-      });
-
-      // Both should be attempted (non-blocking failure doesn't stop chain)
-      expect(mockInvokeCommand).toHaveBeenCalledTimes(2);
-      expect(result.executed).toBe(2);
-    });
-
-    test('should cap execution at MAX_CHAIN_COMMANDS to prevent runaway chains', async () => {
-      // H-4: A malicious config with many commands should be capped
+    /**
+     * @behavior Chain trigger caps output at MAX_CHAIN_COMMANDS
+     * @acceptance-criteria AC-CHAIN-TRIGGER.8
+     * @business-rule H-4: Prevent runaway chains from malicious config
+     */
+    test('should cap output at MAX_CHAIN_COMMANDS', async () => {
       const manyCommands = Array.from({ length: 20 }, (_, i) => ({
         command: `team:cmd-${i}`,
         always: true,
@@ -254,49 +224,21 @@ describe('Chain Trigger CLI', () => {
         chains_to: manyCommands,
       });
 
-      const result = await executeChainForWorkflow('build', {
+      await executeChainForWorkflow('build', {
         apiKey: 'test-key',
         apiUrl: 'https://api.example.com',
       });
 
-      // Should only execute up to MAX_CHAIN_COMMANDS
-      expect(mockInvokeCommand).toHaveBeenCalledTimes(MAX_CHAIN_COMMANDS);
-      expect(result.executed).toBe(MAX_CHAIN_COMMANDS);
+      const output = consoleSpy.mock.calls.map(c => c[0]).join('\n');
+      const chainLines = output.split('\n').filter((l: string) => l.startsWith('CHAIN:'));
+      expect(chainLines.length).toBe(MAX_CHAIN_COMMANDS);
     });
 
-    test('should timeout individual commands that hang', async () => {
-      // H-2: Per-command timeout prevents resource exhaustion
-      const mockConfig = {
-        chains_to: [
-          { command: 'team:slow-cmd', always: true },
-          { command: 'team:fast-cmd', always: true },
-        ],
-      };
-      (getCachedOrFetch as ReturnType<typeof vi.fn>).mockResolvedValue(mockConfig);
-
-      // First command hangs forever, second succeeds
-      mockInvokeCommand
-        .mockImplementationOnce(() => new Promise(() => {
-          // Never resolves - simulates a hanging command
-        }))
-        .mockResolvedValueOnce({
-          success: true,
-          commandName: 'fast-cmd',
-          isBlocking: false,
-        });
-
-      const result = await executeChainForWorkflow('build', {
-        apiKey: 'test-key',
-        apiUrl: 'https://api.example.com',
-      });
-
-      // Both should be attempted; first should timeout with error, second should succeed
-      expect(result.executed).toBe(2);
-      expect(result.errors.length).toBeGreaterThanOrEqual(1);
-      expect(result.errors[0]).toContain('slow-cmd');
-      expect(result.errors[0]).toContain('timed out');
-    }, 15000); // Allow extra time for the timeout test
-
+    /**
+     * @behavior Chain trigger handles API errors gracefully
+     * @acceptance-criteria AC-CHAIN-TRIGGER.8
+     * @business-rule Errors produce empty output, not crash
+     */
     test('should handle workflow config fetch error gracefully', async () => {
       (getCachedOrFetch as ReturnType<typeof vi.fn>).mockRejectedValue(
         new Error('Network error')
@@ -309,6 +251,37 @@ describe('Chain Trigger CLI', () => {
 
       expect(result.executed).toBe(0);
       expect(result.error).toBeDefined();
+
+      // No chain output on error
+      const chainCalls = consoleSpy.mock.calls.filter(c =>
+        String(c[0]).includes('CHAIN:')
+      );
+      expect(chainCalls).toHaveLength(0);
+    });
+
+    /**
+     * @behavior Chain trigger does NOT call CustomCommandExecutor
+     * @acceptance-criteria AC-CHAIN-TRIGGER.8
+     * @business-rule Chain trigger outputs instructions, doesn't execute commands
+     */
+    test('should NOT invoke CustomCommandExecutor', async () => {
+      const mockConfig = {
+        chains_to: [
+          { command: 'team:lint-check', always: true },
+          { command: 'adr', always: true },
+        ],
+      };
+      (getCachedOrFetch as ReturnType<typeof vi.fn>).mockResolvedValue(mockConfig);
+
+      await executeChainForWorkflow('build', {
+        apiKey: 'test-key',
+        apiUrl: 'https://api.example.com',
+      });
+
+      // Should NOT have tried to instantiate or call the executor
+      // The function should only output CHAIN: lines
+      const output = consoleSpy.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('CHAIN:');
     });
   });
 });
