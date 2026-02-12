@@ -34,11 +34,13 @@ import {
 } from '../../src/engine/custom-command-executor.js';
 import { getCachedOrFetch } from '../../src/api/workflow-config.js';
 
-// Import the module under test (will be created in GREEN phase)
+// Import the module under test
 import {
   readApiCredentials,
   executeChainForWorkflow,
   executeSingleCommand,
+  MAX_CHAIN_COMMANDS,
+  COMMAND_TIMEOUT_MS,
 } from '../../src/cli/chain-trigger.js';
 
 describe('Chain Trigger CLI', () => {
@@ -79,6 +81,38 @@ describe('Chain Trigger CLI', () => {
     test('should return null when config file is missing', () => {
       const result = readApiCredentials('/nonexistent/path');
       expect(result).toBeNull();
+    });
+
+    test('should reject non-HTTPS apiUrl', () => {
+      // M-2: Prevent MitM by requiring HTTPS
+      const tmpDir = '/tmp/test-oss-security-' + Date.now();
+      const fs = require('fs');
+      fs.mkdirSync(tmpDir, { recursive: true });
+      fs.writeFileSync(
+        tmpDir + '/config.json',
+        JSON.stringify({ apiKey: 'ak_testkey123', apiUrl: 'http://evil.com/api' })
+      );
+
+      const result = readApiCredentials(tmpDir);
+      expect(result).toBeNull();
+
+      fs.rmSync(tmpDir, { recursive: true });
+    });
+
+    test('should accept valid HTTPS apiUrl', () => {
+      const tmpDir = '/tmp/test-oss-security-https-' + Date.now();
+      const fs = require('fs');
+      fs.mkdirSync(tmpDir, { recursive: true });
+      fs.writeFileSync(
+        tmpDir + '/config.json',
+        JSON.stringify({ apiKey: 'ak_testkey123', apiUrl: 'https://api.example.com' })
+      );
+
+      const result = readApiCredentials(tmpDir);
+      expect(result).not.toBeNull();
+      expect(result!.apiUrl).toBe('https://api.example.com');
+
+      fs.rmSync(tmpDir, { recursive: true });
     });
   });
 
@@ -209,6 +243,59 @@ describe('Chain Trigger CLI', () => {
       expect(mockInvokeCommand).toHaveBeenCalledTimes(2);
       expect(result.executed).toBe(2);
     });
+
+    test('should cap execution at MAX_CHAIN_COMMANDS to prevent runaway chains', async () => {
+      // H-4: A malicious config with many commands should be capped
+      const manyCommands = Array.from({ length: 20 }, (_, i) => ({
+        command: `team:cmd-${i}`,
+        always: true,
+      }));
+      (getCachedOrFetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+        chains_to: manyCommands,
+      });
+
+      const result = await executeChainForWorkflow('build', {
+        apiKey: 'test-key',
+        apiUrl: 'https://api.example.com',
+      });
+
+      // Should only execute up to MAX_CHAIN_COMMANDS
+      expect(mockInvokeCommand).toHaveBeenCalledTimes(MAX_CHAIN_COMMANDS);
+      expect(result.executed).toBe(MAX_CHAIN_COMMANDS);
+    });
+
+    test('should timeout individual commands that hang', async () => {
+      // H-2: Per-command timeout prevents resource exhaustion
+      const mockConfig = {
+        chains_to: [
+          { command: 'team:slow-cmd', always: true },
+          { command: 'team:fast-cmd', always: true },
+        ],
+      };
+      (getCachedOrFetch as ReturnType<typeof vi.fn>).mockResolvedValue(mockConfig);
+
+      // First command hangs forever, second succeeds
+      mockInvokeCommand
+        .mockImplementationOnce(() => new Promise(() => {
+          // Never resolves - simulates a hanging command
+        }))
+        .mockResolvedValueOnce({
+          success: true,
+          commandName: 'fast-cmd',
+          isBlocking: false,
+        });
+
+      const result = await executeChainForWorkflow('build', {
+        apiKey: 'test-key',
+        apiUrl: 'https://api.example.com',
+      });
+
+      // Both should be attempted; first should timeout with error, second should succeed
+      expect(result.executed).toBe(2);
+      expect(result.errors.length).toBeGreaterThanOrEqual(1);
+      expect(result.errors[0]).toContain('slow-cmd');
+      expect(result.errors[0]).toContain('timed out');
+    }, 15000); // Allow extra time for the timeout test
 
     test('should handle workflow config fetch error gracefully', async () => {
       (getCachedOrFetch as ReturnType<typeof vi.fn>).mockRejectedValue(
