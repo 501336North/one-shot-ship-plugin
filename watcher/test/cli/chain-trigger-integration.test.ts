@@ -85,6 +85,8 @@ describe('Chain Trigger Integration', () => {
     expect(content).toContain('CHAIN_TRIGGER_LOG');
     // Should still have error suppression for the hook
     expect(triggerLine).toContain('|| true');
+    // Should reference a log directory
+    expect(content).toContain('CHAIN_TRIGGER_LOG');
   });
 
   // ==========================================================================
