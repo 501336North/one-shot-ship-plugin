@@ -47,11 +47,21 @@ jobs:
         run: pkg dist/oss-decrypt.cjs --target ${{ matrix.target }} --output dist/bin/${{ matrix.artifact }}
         working-directory: packages/cli-decrypt
 
-      - name: Upload artifact
+      - name: Generate SHA-256 checksum
+        run: shasum -a 256 dist/bin/${{ matrix.artifact }} > dist/bin/${{ matrix.artifact }}.sha256
+        working-directory: packages/cli-decrypt
+
+      - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: packages/cli-decrypt/dist/bin/${{ matrix.artifact }}
+
+      - name: Upload checksum artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}.sha256
+          path: packages/cli-decrypt/dist/bin/${{ matrix.artifact }}.sha256
 
   release:
     name: Create release
@@ -76,6 +86,9 @@ jobs:
             artifacts/oss-decrypt-Darwin-arm64/oss-decrypt-Darwin-arm64
             artifacts/oss-decrypt-Darwin-x64/oss-decrypt-Darwin-x64
             artifacts/oss-decrypt-Linux-x64/oss-decrypt-Linux-x64
+            artifacts/oss-decrypt-Darwin-arm64.sha256/oss-decrypt-Darwin-arm64.sha256
+            artifacts/oss-decrypt-Darwin-x64.sha256/oss-decrypt-Darwin-x64.sha256
+            artifacts/oss-decrypt-Linux-x64.sha256/oss-decrypt-Linux-x64.sha256
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

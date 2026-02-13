@@ -78,7 +78,7 @@ if [[ "$RAW_OUTPUT" == "true" ]]; then
   echo "$BODY"
 else
   # Extract content field if present, otherwise output body
-  CONTENT=$(echo "$BODY" | grep -o '"content"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*: *"\([^"]*\)"/\1/' | head -1)
+  CONTENT=$(echo "$BODY" | grep -o '"content"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*: *"\([^"]*\)"/\1/' | head -1 || true)
   if [[ -n "$CONTENT" ]]; then
     # Unescape JSON string
     echo -e "$CONTENT"
