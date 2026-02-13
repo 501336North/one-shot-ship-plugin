@@ -13,15 +13,20 @@ import { decryptCommand } from '../../src/commands/decrypt.js';
 import * as apiClient from '../../src/api-client.js';
 import * as storage from '../../src/storage.js';
 import * as encryption from '../../src/encryption.js';
+import * as manifestVerifier from '../../src/manifest-verifier.js';
+import * as integrityPipeline from '../../src/integrity-pipeline.js';
 
 // Mock modules
 vi.mock('../../src/api-client.js');
 vi.mock('../../src/storage.js');
 vi.mock('../../src/encryption.js');
+vi.mock('../../src/manifest-verifier.js');
+vi.mock('../../src/integrity-pipeline.js');
 
 describe('Decrypt Command', () => {
   const testDir = join(tmpdir(), 'oss-decrypt-decrypt-test-' + Date.now());
   let consoleSpy: ReturnType<typeof vi.spyOn>;
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.resetAllMocks();
@@ -48,10 +53,28 @@ describe('Decrypt Command', () => {
     });
     vi.mocked(encryption.deriveKey).mockReturnValue(Buffer.alloc(32));
     vi.mocked(encryption.decrypt).mockReturnValue('Decrypted prompt content!');
+
+    // Default: manifest fetch succeeds, signature valid, hash matches
+    vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue({
+      version: 1,
+      generatedAt: new Date().toISOString(),
+      algorithm: 'sha256',
+      signing: 'ed25519',
+      prompts: {},
+      signature: 'valid-sig',
+    });
+    vi.mocked(manifestVerifier.verifyManifestSignature).mockReturnValue(true);
+    vi.mocked(integrityPipeline.verifyDecryptedPrompt).mockResolvedValue({
+      verified: true,
+      skipped: false,
+    });
+
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(() => {
     consoleSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
     if (existsSync(testDir)) {
       rmSync(testDir, { recursive: true, force: true });
     }
@@ -121,6 +144,65 @@ describe('Decrypt Command', () => {
       await decryptCommand('commands', 'plan', false, { noCache: true });
 
       expect(apiClient.fetchEncryptedPrompt).toHaveBeenCalled();
+    });
+
+    it('should NOT output prompt when manifest signature verification fails', async () => {
+      vi.mocked(manifestVerifier.verifyManifestSignature).mockReturnValue(false);
+
+      await expect(decryptCommand('commands', 'plan')).rejects.toThrow('[SECURITY]');
+      expect(consoleSpy).not.toHaveBeenCalledWith('Decrypted prompt content!');
+    });
+
+    it('should NOT output prompt when prompt hash does not match manifest', async () => {
+      vi.mocked(integrityPipeline.verifyDecryptedPrompt).mockResolvedValue({
+        verified: false,
+        skipped: false,
+      });
+
+      await expect(decryptCommand('commands', 'plan')).rejects.toThrow('[SECURITY]');
+      expect(consoleSpy).not.toHaveBeenCalledWith('Decrypted prompt content!');
+    });
+
+    it('should output prompt when verification passes', async () => {
+      await decryptCommand('commands', 'plan');
+
+      expect(consoleSpy).toHaveBeenCalledWith('Decrypted prompt content!');
+    });
+
+    it('should output prompt when manifest is unavailable (graceful degradation)', async () => {
+      vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(null);
+
+      await decryptCommand('commands', 'plan');
+
+      expect(consoleSpy).toHaveBeenCalledWith('Decrypted prompt content!');
+    });
+
+    it('should output verification status messages to stderr', async () => {
+      await decryptCommand('commands', 'plan');
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('[verify]'));
+    });
+
+    it('should show success message when verification passes', async () => {
+      await decryptCommand('commands', 'plan');
+
+      const calls = consoleErrorSpy.mock.calls.map(c => c[0]);
+      expect(calls.some((msg: string) => msg.includes('valid') || msg.includes('verified'))).toBe(true);
+    });
+
+    it('should show failure message before throwing on signature failure', async () => {
+      vi.mocked(manifestVerifier.verifyManifestSignature).mockReturnValue(false);
+
+      await expect(decryptCommand('commands', 'plan')).rejects.toThrow('[SECURITY]');
+      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('FAILED'));
+    });
+
+    it('should show skip message when manifest unavailable', async () => {
+      vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(null);
+
+      await decryptCommand('commands', 'plan');
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('skipping'));
     });
   });
 });

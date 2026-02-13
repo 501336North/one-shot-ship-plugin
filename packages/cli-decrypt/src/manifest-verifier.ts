@@ -39,7 +39,12 @@ export function verifyManifestSignature(
     for (const key of sortedKeys) {
       sortedPrompts[key] = manifest.prompts[key];
     }
-    const data = JSON.stringify(sortedPrompts);
+    const data = JSON.stringify({
+      version: manifest.version,
+      algorithm: manifest.algorithm,
+      signing: manifest.signing,
+      prompts: sortedPrompts,
+    });
     const keyObj = crypto.createPublicKey({
       key: Buffer.from(publicKey, 'base64'),
       format: 'der',
