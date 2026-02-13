@@ -28,7 +28,12 @@ function createManifest(prompts: Record<string, { hash: string; size: number }>,
   const sortedKeys = Object.keys(prompts).sort();
   const sorted: Record<string, { hash: string; size: number }> = {};
   for (const key of sortedKeys) sorted[key] = prompts[key];
-  const data = JSON.stringify(sorted);
+  const data = JSON.stringify({
+    version: 1,
+    algorithm: 'sha256',
+    signing: 'ed25519',
+    prompts: sorted,
+  });
   const sig = crypto.sign(null, Buffer.from(data), crypto.createPrivateKey({
     key: privKey ? Buffer.from(privKey, 'base64') : keypair.privateKey,
     format: 'der',

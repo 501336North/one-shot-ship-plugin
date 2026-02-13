@@ -32,7 +32,12 @@ function createTestManifest(privateKey: string): SignedManifest {
   for (const key of sortedKeys) {
     sortedPrompts[key] = prompts[key];
   }
-  const data = JSON.stringify(sortedPrompts);
+  const data = JSON.stringify({
+    version: 1,
+    algorithm: 'sha256',
+    signing: 'ed25519',
+    prompts: sortedPrompts,
+  });
   const sig = crypto.sign(
     null,
     Buffer.from(data, 'utf8'),
@@ -76,6 +81,43 @@ describe('Manifest Signature Verifier', () => {
     const result = verifyManifestSignature(manifest, keypair2.publicKey);
 
     expect(result).toBe(false);
+  });
+
+  it('should reject signature when version field is tampered', () => {
+    const keypair = generateTestKeypair();
+    const manifest = createTestManifest(keypair.privateKey);
+    manifest.version = 999;
+
+    const result = verifyManifestSignature(manifest, keypair.publicKey);
+
+    expect(result).toBe(false);
+  });
+
+  it('should reject signature when algorithm field is tampered', () => {
+    const keypair = generateTestKeypair();
+    const manifest = createTestManifest(keypair.privateKey);
+    manifest.algorithm = 'md5';
+
+    const result = verifyManifestSignature(manifest, keypair.publicKey);
+
+    expect(result).toBe(false);
+  });
+
+  it('should reject signature when signing field is tampered', () => {
+    const keypair = generateTestKeypair();
+    const manifest = createTestManifest(keypair.privateKey);
+    manifest.signing = 'rsa';
+
+    const result = verifyManifestSignature(manifest, keypair.publicKey);
+
+    expect(result).toBe(false);
+  });
+
+  it('should produce a manifest verifiable by verifyManifestSignature', () => {
+    const keypair = generateTestKeypair();
+    const manifest = createTestManifest(keypair.privateKey);
+
+    expect(verifyManifestSignature(manifest, keypair.publicKey)).toBe(true);
   });
 
   describe('fetchManifest', () => {

@@ -11,7 +11,7 @@ import { retrieveCredentials } from '../storage.js';
 import { deriveKey, decrypt, userIdToLicenseId } from '../encryption.js';
 import { DebugLogger } from '../debug.js';
 import { CacheService } from '../cache.js';
-import { fetchManifest, verifyManifestSignature } from '../manifest-verifier.js';
+import { fetchManifest, verifyManifestSignature, type SignedManifest } from '../manifest-verifier.js';
 import { verifyDecryptedPrompt } from '../integrity-pipeline.js';
 
 /**
@@ -165,29 +165,40 @@ export async function decryptCommand(
   // SECURITY: Do NOT cache decrypted prompts to disk.
   // This prevents prompt extraction even after API key revocation.
 
-  // Output to stdout immediately — never delay prompt delivery
-  console.log(plaintext);
+  // Verify prompt integrity against signed manifest (BLOCKING)
+  // Verification runs BEFORE output — tampered prompts are never delivered.
+  console.error('[verify] Checking prompt integrity...');
 
-  // Verify prompt integrity against signed manifest (best-effort, non-blocking)
-  // This runs AFTER output so users are never delayed by verification.
-  // Uses a 3s timeout to avoid hanging on cold starts or network issues.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+  let manifest: SignedManifest | null = null;
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
-    const manifest = await fetchManifest(apiUrl, controller.signal);
-    clearTimeout(timeout);
-
-    if (manifest && !verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY)) {
-      logger.log('VERIFY', 'WARNING: Manifest signature invalid — skipping integrity check');
-    } else if (manifest) {
-      const integrity = await verifyDecryptedPrompt(plaintext, type, name, manifest);
-      if (!integrity.verified) {
-        console.error('[SECURITY] WARNING: Prompt integrity check FAILED — content may have been tampered with.');
-      } else if (!integrity.skipped) {
-        logger.log('VERIFY', 'Prompt integrity verified ✓');
-      }
-    }
+    manifest = await fetchManifest(apiUrl, controller.signal);
   } catch {
-    // Silently skip — verification is best-effort, never blocks execution
+    // Network failure — degrade gracefully
+  } finally {
+    clearTimeout(timeout);
   }
+
+  if (manifest) {
+    if (!verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY)) {
+      console.error('[verify] Manifest signature: FAILED — prompt blocked');
+      throw new Error('[SECURITY] Manifest signature verification FAILED. Prompt delivery blocked.');
+    }
+    console.error('[verify] Manifest signature: valid');
+
+    const integrity = await verifyDecryptedPrompt(plaintext, type, name, manifest);
+    if (!integrity.verified && !integrity.skipped) {
+      console.error('[verify] Prompt hash: FAILED — prompt blocked');
+      throw new Error('[SECURITY] Prompt integrity check FAILED. Content may have been tampered with.');
+    }
+    if (!integrity.skipped) {
+      console.error('[verify] Prompt hash: verified');
+    }
+  } else {
+    console.error('[verify] Manifest unavailable — skipping verification');
+  }
+
+  // Only output if verification passed (or was gracefully skipped)
+  console.log(plaintext);
 }
