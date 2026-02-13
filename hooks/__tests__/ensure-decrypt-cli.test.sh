@@ -4,10 +4,11 @@
 # Usage: ./ensure-decrypt-cli.test.sh
 #
 # Tests:
-# 1. Returns 0 when binary already exists
-# 2. Downloads and installs when binary missing
-# 3. Returns 1 and prints error when download fails
-# 4. Handles platform detection correctly
+# 1. Returns 0 when binary exists with current version
+# 2. Creates bin directory if missing
+# 3. Handles platform detection correctly
+# 4. Hook script exists and is executable
+# 5. Triggers update when binary version is outdated
 
 set -uo pipefail
 
@@ -48,18 +49,24 @@ fail() {
 }
 
 # =============================================================================
-# TEST 1: Returns 0 when binary exists and is executable
+# TEST 1: Returns 0 when binary exists with current version
 # =============================================================================
 test_binary_exists() {
-    local test_name="Returns 0 when binary exists and is executable"
+    local test_name="Returns 0 when binary exists with current version"
     ((TESTS_RUN++))
 
     setup_test_env
 
-    # Setup: Create existing binary
+    # Setup: Create mock binary that reports a valid version
     mkdir -p "$TEST_HOME/.oss/bin"
-    echo '#!/bin/bash' > "$TEST_HOME/.oss/bin/oss-decrypt"
-    echo 'echo "mock binary"' >> "$TEST_HOME/.oss/bin/oss-decrypt"
+    cat > "$TEST_HOME/.oss/bin/oss-decrypt" << 'MOCKEOF'
+#!/bin/bash
+if [[ "$1" == "--version" ]]; then
+    echo "oss-decrypt v1.1.0"
+else
+    echo "mock binary"
+fi
+MOCKEOF
     chmod +x "$TEST_HOME/.oss/bin/oss-decrypt"
 
     # Run hook
@@ -136,6 +143,41 @@ test_hook_exists() {
 }
 
 # =============================================================================
+# TEST 5: Triggers update when binary version is outdated
+# =============================================================================
+test_outdated_version_triggers_update() {
+    local test_name="Triggers update when binary version is outdated"
+    ((TESTS_RUN++))
+
+    setup_test_env
+
+    # Setup: Create mock binary that reports an old version
+    mkdir -p "$TEST_HOME/.oss/bin"
+    cat > "$TEST_HOME/.oss/bin/oss-decrypt" << 'MOCKEOF'
+#!/bin/bash
+if [[ "$1" == "--version" ]]; then
+    echo "oss-decrypt v1.0.0"
+else
+    echo "mock binary"
+fi
+MOCKEOF
+    chmod +x "$TEST_HOME/.oss/bin/oss-decrypt"
+
+    # Run hook - should detect outdated version and try to update
+    # (download will fail in test env, but we check the output message)
+    local result
+    result=$("$HOOK_SCRIPT" 2>&1) || true
+
+    teardown_test_env
+
+    if echo "$result" | grep -q "outdated"; then
+        pass "$test_name"
+    else
+        fail "$test_name" "output containing 'outdated'" "$result"
+    fi
+}
+
+# =============================================================================
 # Run all tests
 # =============================================================================
 echo "Running ensure-decrypt-cli.sh tests..."
@@ -145,6 +187,7 @@ test_hook_exists
 test_platform_detection
 test_binary_exists
 test_creates_bin_dir
+test_outdated_version_triggers_update
 
 echo ""
 echo "======================================="

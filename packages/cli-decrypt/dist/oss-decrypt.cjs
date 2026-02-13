@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/index.ts
-var VERSION = "1.0.0";
+var VERSION = "1.1.0";
 
 // src/commands/setup.ts
 var import_fs3 = require("fs");
@@ -485,8 +485,102 @@ var DebugLogger = class {
   }
 };
 
+// src/manifest-verifier.ts
+var import_crypto5 = __toESM(require("crypto"), 1);
+function verifyManifestSignature(manifest, publicKey) {
+  try {
+    const sortedKeys = Object.keys(manifest.prompts).sort();
+    const sortedPrompts = {};
+    for (const key of sortedKeys) {
+      sortedPrompts[key] = manifest.prompts[key];
+    }
+    const data = JSON.stringify({
+      version: manifest.version,
+      algorithm: manifest.algorithm,
+      signing: manifest.signing,
+      prompts: sortedPrompts
+    });
+    const keyObj = import_crypto5.default.createPublicKey({
+      key: Buffer.from(publicKey, "base64"),
+      format: "der",
+      type: "spki"
+    });
+    return import_crypto5.default.verify(
+      null,
+      Buffer.from(data, "utf8"),
+      keyObj,
+      Buffer.from(manifest.signature, "base64")
+    );
+  } catch {
+    return false;
+  }
+}
+async function fetchManifest(apiUrl, signal) {
+  try {
+    const response = await fetch(`${apiUrl}/api/v1/prompts/manifest`, {
+      method: "GET",
+      signal
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+// src/watermark.ts
+var HOMOGLYPH_MAP = {
+  "\u03BF": "o",
+  // Greek small letter omicron → ASCII 'o'
+  "\u0455": "s",
+  // Cyrillic small letter dze → ASCII 's'
+  "\u0435": "e"
+  // Cyrillic small letter ie → ASCII 'e'
+};
+function stripWatermark(content) {
+  let result = content;
+  for (const [homoglyph, ascii] of Object.entries(HOMOGLYPH_MAP)) {
+    result = result.replaceAll(homoglyph, ascii);
+  }
+  return result;
+}
+
+// src/prompt-integrity.ts
+var import_crypto6 = __toESM(require("crypto"), 1);
+function hashContent(content) {
+  return import_crypto6.default.createHash("sha256").update(content).digest("hex");
+}
+function verifyPromptHash(strippedContent, type, name, manifest) {
+  const key = `${type}/${name}`;
+  const entry = manifest.prompts[key];
+  if (!entry) {
+    return { valid: true, status: "not_in_manifest" };
+  }
+  const hash = hashContent(strippedContent);
+  if (hash === entry.hash) {
+    return { valid: true, status: "match" };
+  }
+  return { valid: false, status: "mismatch" };
+}
+
+// src/integrity-pipeline.ts
+async function verifyDecryptedPrompt(watermarkedContent, type, name, manifest) {
+  if (!manifest) {
+    return { verified: true, skipped: true };
+  }
+  const stripped = stripWatermark(watermarkedContent);
+  const result = verifyPromptHash(stripped, type, name, manifest);
+  if (result.status === "not_in_manifest") {
+    return { verified: true, skipped: true };
+  }
+  return { verified: result.valid, skipped: false };
+}
+
 // src/commands/decrypt.ts
 var DEFAULT_API_URL2 = "https://one-shot-ship-api.onrender.com";
+var MANIFEST_PUBLIC_KEY = "MCowBQYDK2VwAyEAAwFG32b8TuiVTxrDnXzNrb2v68YN5U9epLnZ3O7pQaI=";
 function getConfigDir3() {
   return process.env.OSS_CONFIG_DIR || (0, import_path5.join)((0, import_os5.homedir)(), ".oss");
 }
@@ -559,6 +653,33 @@ async function decryptCommand(type, name, debug = false, options = {}) {
     key
   );
   logger.log("DECRYPT", `Decryption completed in ${Date.now() - startDecrypt}ms`);
+  console.error("[verify] Checking prompt integrity...");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3e3);
+  let manifest = null;
+  try {
+    manifest = await fetchManifest(apiUrl, controller.signal);
+  } catch {
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (manifest) {
+    if (!verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY)) {
+      console.error("[verify] Manifest signature: FAILED \u2014 prompt blocked");
+      throw new Error("[SECURITY] Manifest signature verification FAILED. Prompt delivery blocked.");
+    }
+    console.error("[verify] Manifest signature: valid");
+    const integrity = await verifyDecryptedPrompt(plaintext, type, name, manifest);
+    if (!integrity.verified && !integrity.skipped) {
+      console.error("[verify] Prompt hash: FAILED \u2014 prompt blocked");
+      throw new Error("[SECURITY] Prompt integrity check FAILED. Content may have been tampered with.");
+    }
+    if (!integrity.skipped) {
+      console.error("[verify] Prompt hash: verified");
+    }
+  } else {
+    console.error("[verify] Manifest unavailable \u2014 skipping verification");
+  }
   console.log(plaintext);
 }
 
