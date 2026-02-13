@@ -119,6 +119,53 @@ if ! curl -sL "$DOWNLOAD_URL" -o "$OSS_DECRYPT"; then
     exit 1
 fi
 
+# =============================================================================
+# SECURITY: Verify binary SHA-256 checksum before execution
+# Download the .sha256 file and compare against the downloaded binary.
+# Fail closed: missing or mismatched checksum = reject the binary.
+# =============================================================================
+CHECKSUM_FILE=$(mktemp)
+if ! curl -sL "${DOWNLOAD_URL}.sha256" -o "$CHECKSUM_FILE"; then
+    echo "[verify] Binary checksum: FAILED — checksum file unavailable"
+    rm -f "$OSS_DECRYPT" "$CHECKSUM_FILE"
+    echo "Error: Could not download checksum file for verification."
+    echo "Please run /oss:login for manual installation."
+    exit 1
+fi
+
+# Extract expected hash from checksum file (format: "<hash>  <filename>")
+EXPECTED_HASH=$(head -n1 "$CHECKSUM_FILE" | awk '{print $1}')
+rm -f "$CHECKSUM_FILE"
+
+if [[ -z "$EXPECTED_HASH" || ${#EXPECTED_HASH} -ne 64 ]]; then
+    echo "[verify] Binary checksum: FAILED — invalid checksum format"
+    rm -f "$OSS_DECRYPT"
+    echo "Error: Checksum file has invalid format."
+    exit 1
+fi
+
+# Compute actual hash (cross-platform: shasum on macOS, sha256sum on Linux)
+if command -v shasum &>/dev/null; then
+    ACTUAL_HASH=$(shasum -a 256 "$OSS_DECRYPT" | awk '{print $1}')
+elif command -v sha256sum &>/dev/null; then
+    ACTUAL_HASH=$(sha256sum "$OSS_DECRYPT" | awk '{print $1}')
+else
+    echo "[verify] Binary checksum: FAILED — no hash command available"
+    rm -f "$OSS_DECRYPT"
+    echo "Error: Neither shasum nor sha256sum found."
+    exit 1
+fi
+
+if [[ "$ACTUAL_HASH" != "$EXPECTED_HASH" ]]; then
+    echo "[verify] Binary checksum: FAILED — mismatch (expected ${EXPECTED_HASH:0:12}..., got ${ACTUAL_HASH:0:12}...)"
+    rm -f "$OSS_DECRYPT"
+    echo "Error: Binary integrity check failed. The download may have been tampered with."
+    echo "Please run /oss:login for manual installation."
+    exit 1
+fi
+
+echo "[verify] Binary checksum: verified"
+
 # Make executable
 chmod +x "$OSS_DECRYPT"
 
