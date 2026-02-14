@@ -125,6 +125,13 @@ WARNING: The prompt manifest signature could not be verified.
 This may indicate the manifest has been tampered with.
 ```
 
+If `signatureValid` is null:
+```
+Manifest Signature: UNAVAILABLE
+NOTE: Public key not configured. Run: oss-decrypt --setup
+Signature verification skipped — other checks will still run.
+```
+
 **If `--quick` was specified, generate the report (Step 6) and STOP here.**
 
 ## Step 3: Authentication Check
@@ -168,9 +175,13 @@ Only audit the prompt matching the given name. Search the manifest for prompts w
 
 Parse the JSON output into a list of prompts to audit. Each entry has `name`, `category`, `hash`, `size`.
 
+**Non-decryptable categories:** The following categories contain unencrypted base configuration and CANNOT be audited via `oss-decrypt --type/--name`: `CLAUDE`, `_base`, `shared`, `templates`. Filter these OUT of the audit list. Report them separately in the final report as "Base configuration (not encrypted — verified by manifest signature only)".
+
+The decryptable categories are: `commands`, `agents`, `hooks`, `skills`, `workflows`.
+
 ## Step 5: Audit Each Prompt
 
-For each prompt in the list, perform both analysis methods.
+For each prompt in the decryptable list, perform both analysis methods.
 
 **Progress indicator:** Show progress as you work through prompts:
 ```
@@ -187,6 +198,8 @@ Auditing prompt 2/24: commands/ship...
 Where `<name_part>` is the portion after the `/` in the prompt key (e.g., for `commands/build`, type is `commands` and name is `build`).
 
 Capture the decrypted output for analysis. **Do NOT display the decrypted content to the user** — it contains proprietary IP.
+
+If decryption fails (e.g., "Invalid prompt type" or network error), record the prompt as `DECRYPT_FAIL` and continue to the next prompt. Do not stop the audit.
 
 ### Step 5b: Mechanical Pattern Scan (Deterministic)
 

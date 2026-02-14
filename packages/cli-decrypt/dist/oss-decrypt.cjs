@@ -23,8 +23,13 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
+// src/cli-entry.ts
+var import_fs5 = require("fs");
+var import_path6 = require("path");
+var import_os6 = require("os");
+
 // src/index.ts
-var VERSION = "1.1.0";
+var VERSION = "1.2.0";
 
 // src/commands/setup.ts
 var import_fs3 = require("fs");
@@ -534,10 +539,16 @@ async function fetchManifest(apiUrl, signal) {
 var HOMOGLYPH_MAP = {
   "\u03BF": "o",
   // Greek small letter omicron → ASCII 'o'
+  "\u039F": "O",
+  // Greek capital letter omicron → ASCII 'O'
   "\u0455": "s",
   // Cyrillic small letter dze → ASCII 's'
-  "\u0435": "e"
+  "\u0405": "S",
+  // Cyrillic capital letter dze → ASCII 'S'
+  "\u0435": "e",
   // Cyrillic small letter ie → ASCII 'e'
+  "\u0415": "E"
+  // Cyrillic capital letter ie → ASCII 'E'
 };
 function stripWatermark(content) {
   let result = content;
@@ -710,6 +721,15 @@ function parseArgs(args) {
       case "--clear-cache":
         result.clearCache = true;
         break;
+      case "--verify-manifest":
+        result.verifyManifest = true;
+        break;
+      case "--list-prompts":
+        result.listPrompts = true;
+        break;
+      case "--category":
+        result.category = args[++i];
+        break;
       case "--type":
       case "-t":
         result.type = args[++i];
@@ -729,6 +749,9 @@ OSS Decrypt CLI v${VERSION}
 Usage:
   oss-decrypt --setup              Fetch and store credentials
   oss-decrypt --type <type> --name <name>  Decrypt a prompt
+  oss-decrypt --verify-manifest    Verify prompt manifest signature
+  oss-decrypt --list-prompts       List all prompts in the manifest
+  oss-decrypt --list-prompts --category <cat>  List prompts filtered by category
 
 Options:
   --setup              Run initial setup (fetch credentials)
@@ -737,6 +760,9 @@ Options:
   --debug, -d          Enable verbose debug output
   --no-cache           Bypass cache, always fetch from API
   --clear-cache        Clear all cached prompts
+  --verify-manifest    Fetch and verify the signed prompt manifest
+  --list-prompts       List all prompts from the manifest
+  --category <cat>     Filter --list-prompts by category
   --help, -h           Show this help
   --version, -v        Show version
 
@@ -747,10 +773,67 @@ Examples:
   oss-decrypt --debug --type commands --name plan
   oss-decrypt --no-cache --type commands --name plan
   oss-decrypt --clear-cache
+  oss-decrypt --verify-manifest
+  oss-decrypt --list-prompts
+  oss-decrypt --list-prompts --category commands
 `);
 }
 function showVersion() {
   console.log(`oss-decrypt v${VERSION}`);
+}
+var MANIFEST_PUBLIC_KEY2 = "MCowBQYDK2VwAyEAAwFG32b8TuiVTxrDnXzNrb2v68YN5U9epLnZ3O7pQaI=";
+var DEFAULT_API_URL3 = "https://one-shot-ship-api.onrender.com";
+function getApiUrl2() {
+  const configPath = (0, import_path6.join)((0, import_os6.homedir)(), ".oss", "config.json");
+  if ((0, import_fs5.existsSync)(configPath)) {
+    try {
+      const config = JSON.parse((0, import_fs5.readFileSync)(configPath, "utf8"));
+      return config.apiUrl || DEFAULT_API_URL3;
+    } catch {
+    }
+  }
+  return DEFAULT_API_URL3;
+}
+async function verifyManifestCommand() {
+  const manifest = await fetchManifest(getApiUrl2());
+  if (manifest === null) {
+    console.log(JSON.stringify({ signatureValid: false, error: "Failed to fetch manifest" }));
+    process.exitCode = 1;
+    return;
+  }
+  const signatureValid = verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY2);
+  const categories = {};
+  for (const key of Object.keys(manifest.prompts)) {
+    const category = key.split("/")[0];
+    categories[category] = (categories[category] ?? 0) + 1;
+  }
+  const report = {
+    signatureValid,
+    promptCount: Object.keys(manifest.prompts).length,
+    generatedAt: manifest.generatedAt,
+    categories
+  };
+  console.log(JSON.stringify(report));
+  if (!signatureValid) {
+    process.exitCode = 1;
+  }
+}
+async function listPromptsCommand(category) {
+  const manifest = await fetchManifest(getApiUrl2());
+  if (manifest === null) {
+    console.log(JSON.stringify([]));
+    return;
+  }
+  let entries = Object.entries(manifest.prompts).map(([key, value]) => ({
+    name: key,
+    category: key.split("/")[0],
+    hash: value.hash,
+    size: value.size
+  }));
+  if (category) {
+    entries = entries.filter((entry) => entry.category === category);
+  }
+  console.log(JSON.stringify(entries));
 }
 async function runCli(args) {
   const parsed = parseArgs(args);
@@ -768,6 +851,14 @@ async function runCli(args) {
   }
   if (parsed.clearCache) {
     await decryptCommand("commands", "any", parsed.debug ?? false, { clearCache: true });
+    return;
+  }
+  if (parsed.verifyManifest) {
+    await verifyManifestCommand();
+    return;
+  }
+  if (parsed.listPrompts) {
+    await listPromptsCommand(parsed.category);
     return;
   }
   if (parsed.type && parsed.name) {
