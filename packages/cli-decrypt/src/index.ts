@@ -3,7 +3,7 @@
  * Local decryption tool for OSS Dev Workflow prompts
  */
 
-export const VERSION = '1.1.0';
+export const VERSION = '1.1.1';
 
 /**
  * Main entry point for programmatic use
