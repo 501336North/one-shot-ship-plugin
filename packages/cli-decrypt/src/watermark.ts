@@ -15,8 +15,11 @@
  */
 export const HOMOGLYPH_MAP: Record<string, string> = {
   '\u03BF': 'o', // Greek small letter omicron → ASCII 'o'
+  '\u039F': 'O', // Greek capital letter omicron → ASCII 'O'
   '\u0455': 's', // Cyrillic small letter dze → ASCII 's'
+  '\u0405': 'S', // Cyrillic capital letter dze → ASCII 'S'
   '\u0435': 'e', // Cyrillic small letter ie → ASCII 'e'
+  '\u0415': 'E', // Cyrillic capital letter ie → ASCII 'E'
 };
 
 /**
