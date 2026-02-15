@@ -26,6 +26,7 @@ estimated_tokens: 3000-10000
 |------|-------|-------------|
 | `--help` | `-h` | Show this help message |
 | `--focus` | | Focus area: security, performance, correctness, maintainability |
+| `--team` | | Enable Agent Teams mode for parallel multi-perspective review (Pro+ only) |
 
 **Examples:**
 ```bash
@@ -37,6 +38,9 @@ estimated_tokens: 3000-10000
 
 # Focus on security review
 /oss:review --focus security
+
+# Review with Agent Teams (parallel reviewers + debate)
+/oss:review --team
 ```
 
 **Related Commands:**
@@ -87,6 +91,12 @@ This auto-installs the decrypt CLI if missing. Existing installations are unaffe
 
 ## Step 5: Fetch and Decrypt Prompt
 
+If `--team` flag is present in the arguments:
+```bash
+~/.oss/bin/oss-decrypt --type commands --name review-team
+```
+
+Otherwise (default):
 ```bash
 ~/.oss/bin/oss-decrypt --type commands --name review
 ```

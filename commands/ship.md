@@ -29,6 +29,7 @@ description: Quality check, commit, create PR, and optionally auto-merge
 | `--quick` | `-q` | Skip agent-based quality gates, only run tests and build |
 | `--no-checks` | | Skip ALL quality checks (emergency hotfixes only) |
 | `--draft` | `-d` | Create draft PR instead of ready for review |
+| `--team` | | Enable Agent Teams mode for parallel quality gates with auto-fix (Pro+ only) |
 
 **Examples:**
 ```bash
@@ -43,6 +44,9 @@ description: Quality check, commit, create PR, and optionally auto-merge
 
 # Fast shipping (skip agent reviews)
 /oss:ship --quick
+
+# Ship with Agent Teams (parallel quality gates + auto-fix)
+/oss:ship --team
 
 # Show help
 /oss:ship --help
@@ -116,6 +120,12 @@ This auto-installs the decrypt CLI if missing. Existing installations are unaffe
 
 ## Step 6: Fetch and Decrypt Prompt
 
+If `--team` flag is present in the arguments:
+```bash
+~/.oss/bin/oss-decrypt --type workflows --name ship-team
+```
+
+Otherwise (default):
 ```bash
 ~/.oss/bin/oss-decrypt --type workflows --name ship
 ```
