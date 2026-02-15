@@ -27,6 +27,7 @@ estimated_tokens: 5000-15000
 | `--help` | `-h` | Show this help message |
 | `--phase` | `-p` | Execute a specific phase number (e.g., `--phase 2`) |
 | `--verbose` | `-v` | Enable verbose output with detailed logging |
+| `--team` | | Enable Agent Teams mode for parallel multi-agent execution (Pro+ only) |
 
 **Examples:**
 ```bash
@@ -38,6 +39,9 @@ estimated_tokens: 5000-15000
 
 # Execute with verbose output
 /oss:build --verbose
+
+# Execute with Agent Teams (parallel multi-agent)
+/oss:build --team
 
 # Show help
 /oss:build --help
@@ -168,6 +172,12 @@ This auto-installs the decrypt CLI if missing. Existing installations are unaffe
 
 ## Step 6: Fetch and Decrypt Prompt
 
+If `--team` flag is present in the arguments:
+```bash
+~/.oss/bin/oss-decrypt --type workflows --name build-team
+```
+
+Otherwise (default):
 ```bash
 ~/.oss/bin/oss-decrypt --type workflows --name build
 ```
