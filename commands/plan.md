@@ -24,6 +24,7 @@ description: Generate a TDD implementation plan with phased approach and test-fi
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--help` | `-h` | Show this help message |
+| `--team` | | Enable Agent Teams mode for parallel multi-agent execution (Pro+ only) |
 
 **Examples:**
 ```bash
@@ -32,6 +33,9 @@ description: Generate a TDD implementation plan with phased approach and test-fi
 
 # Plan based on previous ideation
 /oss:plan
+
+# Plan with Agent Teams parallel task markers
+/oss:plan --team
 
 # Show help
 /oss:plan --help
@@ -103,6 +107,12 @@ This auto-installs the decrypt CLI if missing. Existing installations are unaffe
 
 ## Step 6: Fetch and Decrypt Prompt
 
+If `--team` flag is present in the arguments:
+```bash
+~/.oss/bin/oss-decrypt --type workflows --name plan-team
+```
+
+Otherwise (default):
 ```bash
 ~/.oss/bin/oss-decrypt --type workflows --name plan
 ```
