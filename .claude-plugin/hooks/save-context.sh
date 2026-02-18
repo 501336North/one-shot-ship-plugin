@@ -45,8 +45,12 @@ if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
 
   TODOS=$(tail -100 "$TRANSCRIPT_PATH" | jq -s '
     [.[] | select(.message.content | type == "array") |
-     .message.content[]? | select(.type == "tool_use" and .name == "TodoWrite")] |
-    .[-1].input.todos // []
+     .message.content[]? | select(.type == "tool_use" and (.name == "TodoWrite" or .name == "TaskCreate" or .name == "TaskUpdate"))] |
+    if (map(select(.name == "TaskCreate")) | length) > 0 then
+      [.[] | select(.name == "TaskCreate") | {subject: .input.subject, status: "pending"}]
+    else
+      .[-1].input.todos // []
+    end
   ' 2>/dev/null || echo "[]")
 else
   RECENT_MESSAGES="[]"
