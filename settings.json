@@ -1,0 +1,27 @@
+{
+  "permissions": [
+    "Bash(git status*)",
+    "Bash(git add*)",
+    "Bash(git commit*)",
+    "Bash(git push*)",
+    "Bash(git branch*)",
+    "Bash(git checkout*)",
+    "Bash(git diff*)",
+    "Bash(git log*)",
+    "Bash(git fetch*)",
+    "Bash(git stash*)",
+    "Bash(git merge*)",
+    "Bash(git rev-parse*)",
+    "Bash(git show*)",
+    "Bash(npx vitest*)",
+    "Bash(npm test*)",
+    "Bash(npm run*)",
+    "Bash(node *)",
+    "Bash(cat ~/.oss/*)",
+    "Bash(mkdir -p .oss/*)",
+    "Bash(mkdir -p ~/.oss/*)",
+    "Bash(chmod *)",
+    "Bash(ls *)",
+    "Bash(pkill -9 -f vitest*)"
+  ]
+}

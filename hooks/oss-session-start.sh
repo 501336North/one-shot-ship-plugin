@@ -31,6 +31,12 @@ run_with_timeout() {
     fi
 }
 
+# Check for simple mode FIRST (if enabled, nothing else works)
+SIMPLE_CHECK_SCRIPT="$SCRIPT_DIR/oss-simple-mode-check.sh"
+if [[ -x "$SIMPLE_CHECK_SCRIPT" ]]; then
+    "$SIMPLE_CHECK_SCRIPT"
+fi
+
 # Ensure ~/.oss directory exists with secure permissions
 mkdir -p ~/.oss
 chmod 700 ~/.oss  # Only owner can access
@@ -79,6 +85,12 @@ fi
 if [[ -n "$CLAUDE_PROJECT_DIR" ]]; then
     echo "$CLAUDE_PROJECT_DIR" > ~/.oss/current-project
     chmod 600 ~/.oss/current-project  # Only owner can read/write
+fi
+
+# Check Claude Code version (non-blocking)
+VERSION_CHECK_SCRIPT="$SCRIPT_DIR/oss-version-check.sh"
+if [[ -x "$VERSION_CHECK_SCRIPT" ]]; then
+    run_with_timeout 2 "$VERSION_CHECK_SCRIPT"
 fi
 
 # Check for API key configuration
