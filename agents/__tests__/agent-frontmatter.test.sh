@@ -4,9 +4,9 @@
 # Usage: ./agent-frontmatter.test.sh
 #
 # Tests:
-# 1. code-reviewer should have background: true in frontmatter
-# 2. performance-auditor should have background: true in frontmatter
-# 3. security-auditor should have background: true in frontmatter
+# 1. code-reviewer should NOT have background: true (quality gate must block)
+# 2. performance-auditor should NOT have background: true (quality gate must block)
+# 3. security-auditor should NOT have background: true (quality gate must block)
 # 4. debugger should NOT have background: true (interactive agent)
 
 set -uo pipefail
@@ -47,13 +47,13 @@ get_frontmatter_value() {
 }
 
 # =============================================================================
-# TEST 1: code-reviewer should have background: true
+# TEST 1: code-reviewer should NOT have background: true (quality gate)
 #
-# @behavior Quality gate agents run in background to avoid blocking user
-# @acceptance-criteria code-reviewer.md frontmatter has background: true
+# @behavior Quality gate agents must block to enforce gates
+# @acceptance-criteria code-reviewer.md frontmatter does NOT have background: true
 # =============================================================================
-test_code_reviewer_background() {
-    local test_name="code-reviewer should have background: true in frontmatter"
+test_code_reviewer_not_background() {
+    local test_name="code-reviewer should NOT have background: true (quality gate)"
     ((TESTS_RUN++))
 
     local file="$AGENTS_DIR/code-reviewer.md"
@@ -65,21 +65,21 @@ test_code_reviewer_background() {
     local value
     value=$(get_frontmatter_value "$file" "background")
 
-    if [[ "$value" == "true" ]]; then
+    if [[ "$value" != "true" ]]; then
         pass "$test_name"
     else
-        fail "$test_name" "background: true" "background: '$value'"
+        fail "$test_name" "background NOT true" "background: '$value'"
     fi
 }
 
 # =============================================================================
-# TEST 2: performance-auditor should have background: true
+# TEST 2: performance-auditor should NOT have background: true (quality gate)
 #
-# @behavior Quality gate agents run in background to avoid blocking user
-# @acceptance-criteria performance-auditor.md frontmatter has background: true
+# @behavior Quality gate agents must block to enforce gates
+# @acceptance-criteria performance-auditor.md frontmatter does NOT have background: true
 # =============================================================================
-test_performance_auditor_background() {
-    local test_name="performance-auditor should have background: true in frontmatter"
+test_performance_auditor_not_background() {
+    local test_name="performance-auditor should NOT have background: true (quality gate)"
     ((TESTS_RUN++))
 
     local file="$AGENTS_DIR/performance-auditor.md"
@@ -91,21 +91,21 @@ test_performance_auditor_background() {
     local value
     value=$(get_frontmatter_value "$file" "background")
 
-    if [[ "$value" == "true" ]]; then
+    if [[ "$value" != "true" ]]; then
         pass "$test_name"
     else
-        fail "$test_name" "background: true" "background: '$value'"
+        fail "$test_name" "background NOT true" "background: '$value'"
     fi
 }
 
 # =============================================================================
-# TEST 3: security-auditor should have background: true
+# TEST 3: security-auditor should NOT have background: true (quality gate)
 #
-# @behavior Quality gate agents run in background to avoid blocking user
-# @acceptance-criteria security-auditor.md frontmatter has background: true
+# @behavior Quality gate agents must block to enforce gates
+# @acceptance-criteria security-auditor.md frontmatter does NOT have background: true
 # =============================================================================
-test_security_auditor_background() {
-    local test_name="security-auditor should have background: true in frontmatter"
+test_security_auditor_not_background() {
+    local test_name="security-auditor should NOT have background: true (quality gate)"
     ((TESTS_RUN++))
 
     local file="$AGENTS_DIR/security-auditor.md"
@@ -117,10 +117,10 @@ test_security_auditor_background() {
     local value
     value=$(get_frontmatter_value "$file" "background")
 
-    if [[ "$value" == "true" ]]; then
+    if [[ "$value" != "true" ]]; then
         pass "$test_name"
     else
-        fail "$test_name" "background: true" "background: '$value'"
+        fail "$test_name" "background NOT true" "background: '$value'"
     fi
 }
 
@@ -156,9 +156,9 @@ test_debugger_not_background() {
 echo "Running agent frontmatter tests..."
 echo "======================================="
 
-test_code_reviewer_background
-test_performance_auditor_background
-test_security_auditor_background
+test_code_reviewer_not_background
+test_performance_auditor_not_background
+test_security_auditor_not_background
 test_debugger_not_background
 
 echo ""
