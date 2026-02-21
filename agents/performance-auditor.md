@@ -1,6 +1,7 @@
 ---
 name: performance-auditor
 description: Performance audit specialist. Use for identifying performance bottlenecks and optimization opportunities.
+background: true
 ---
 
 # performance-auditor Agent

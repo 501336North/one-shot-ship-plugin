@@ -27,7 +27,7 @@ estimated_tokens: 5000-15000
 | `--help` | `-h` | Show this help message |
 | `--phase` | `-p` | Execute a specific phase number (e.g., `--phase 2`) |
 | `--verbose` | `-v` | Enable verbose output with detailed logging |
-| `--team` | | Enable Agent Teams mode for parallel multi-agent execution (Pro+ only) |
+| `--team` | | Enable Agent Teams mode for parallel multi-agent execution (Pro+ only). Uses `isolation: worktree` to give each agent its own git worktree, eliminating file conflicts. Falls back to shared directory on CC <v2.1.50. |
 
 **Examples:**
 ```bash
@@ -40,7 +40,7 @@ estimated_tokens: 5000-15000
 # Execute with verbose output
 /oss:build --verbose
 
-# Execute with Agent Teams (parallel multi-agent)
+# Execute with Agent Teams (parallel multi-agent, worktree isolation)
 /oss:build --team
 
 # Show help
