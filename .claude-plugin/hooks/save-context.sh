@@ -46,7 +46,11 @@ if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
   TODOS=$(tail -100 "$TRANSCRIPT_PATH" | jq -s '
     [.[] | select(.message.content | type == "array") |
      .message.content[]? | select(.type == "tool_use" and (.name == "TodoWrite" or .name == "TaskCreate" or .name == "TaskUpdate"))] |
-    if (map(select(.name == "TaskCreate")) | length) > 0 then
+    # If tasks are being actively managed (completions exist), Claude Code
+    # tracks them internally — don't persist stale copies that become stuck
+    if (map(select(.name == "TaskUpdate" and (.input.status == "completed" or .input.status == "deleted"))) | length) > 0 then
+      []
+    elif (map(select(.name == "TaskCreate")) | length) > 0 then
       [.[] | select(.name == "TaskCreate") | {subject: .input.subject, status: "pending"}]
     else
       .[-1].input.todos // []

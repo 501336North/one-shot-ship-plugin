@@ -2,7 +2,6 @@
 name: security-auditor
 description: Security specialist. Use for security audits, vulnerability assessment, and secure coding practices.
 model_routing: true
-background: true
 ---
 
 # security-auditor Agent
