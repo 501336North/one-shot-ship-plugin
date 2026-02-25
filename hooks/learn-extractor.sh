@@ -72,6 +72,8 @@ done
 # Directories
 LOGS_DIR="$PROJECT_ROOT/.oss/logs/current-session"
 SKILLS_DIR="$PROJECT_ROOT/.oss/skills/learned"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WRITE_LEARNING_SCRIPT="$SCRIPT_DIR/oss-write-learning.sh"
 
 log_verbose() {
     if [[ "$VERBOSE" == "true" ]]; then
@@ -209,6 +211,17 @@ When encountering similar error patterns in future sessions."
     else
         echo "$content" > "$pattern_file"
         echo "Created pattern file: $pattern_file"
+
+        # Also write to LEARNINGS.md for the two-tier learning system
+        if [[ -x "$WRITE_LEARNING_SCRIPT" ]]; then
+            "$WRITE_LEARNING_SCRIPT" \
+                --scope project \
+                --category "Pattern" \
+                --context "learn-extractor, $pattern_name" \
+                --learning "$error_text -> $resolution_text" \
+                --project-root "$PROJECT_ROOT" \
+                2>/dev/null || true
+        fi
     fi
 }
 

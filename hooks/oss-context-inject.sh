@@ -41,6 +41,25 @@ if [[ -f "$PROJECT_CONTEXT_FILE" ]]; then
     SESSION_CONTEXT=$(cat "$PROJECT_CONTEXT_FILE" 2>/dev/null)
 fi
 
+# Load LEARNINGS.md from both tiers (project-local and global)
+LEARNINGS_OUTPUT=""
+OSS_HOME_DIR="${OSS_HOME:-$HOME/.oss}"
+
+# Project learnings
+PROJECT_LEARNINGS="${CLAUDE_PROJECT_DIR:-$(pwd)}/LEARNINGS.md"
+if [[ -f "$PROJECT_LEARNINGS" ]]; then
+    LEARNINGS_OUTPUT+="$(head -50 "$PROJECT_LEARNINGS" 2>/dev/null)"
+fi
+
+# Global learnings
+GLOBAL_LEARNINGS="$OSS_HOME_DIR/LEARNINGS.md"
+if [[ -f "$GLOBAL_LEARNINGS" ]]; then
+    if [[ -n "$LEARNINGS_OUTPUT" ]]; then
+        LEARNINGS_OUTPUT+=$'\n\n'
+    fi
+    LEARNINGS_OUTPUT+="$(head -50 "$GLOBAL_LEARNINGS" 2>/dev/null)"
+fi
+
 # Output context (Claude Code sees this via UserPromptSubmit hook stdout)
 echo "---"
 echo "Branch: $BRANCH | Changes: $CHANGE_STATUS | Staged: $STAGED"
@@ -50,6 +69,13 @@ echo "Last: $LAST_COMMIT"
 if [[ -n "$SESSION_CONTEXT" ]]; then
     echo ""
     echo "$SESSION_CONTEXT"
+fi
+
+# Include learnings if available
+if [[ -n "$LEARNINGS_OUTPUT" ]]; then
+    echo ""
+    echo "## Learnings"
+    echo "$LEARNINGS_OUTPUT"
 fi
 
 echo "---"
