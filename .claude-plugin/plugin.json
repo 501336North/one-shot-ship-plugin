@@ -17,6 +17,5 @@
     "agents",
     "tdd"
   ],
-  "releaseNote": "update notifications and /oss:changelog",
   "hooks": "./hooks.json"
 }
