@@ -1,7 +1,7 @@
 {
   "name": "oss",
   "description": "Ship with confidence. Every time. Complete development lifecycle from idea to production.",
-  "version": "2.0.44",
+  "version": "2.0.45",
   "author": {
     "name": "One Shot Ship",
     "email": "hello@oneshotship.com"
@@ -17,5 +17,6 @@
     "agents",
     "tdd"
   ],
+  "releaseNote": "update notifications and /oss:changelog",
   "hooks": "./hooks.json"
 }

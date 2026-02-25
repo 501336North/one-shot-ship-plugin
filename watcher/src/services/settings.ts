@@ -179,6 +179,10 @@ export class SettingsService {
       if (typeof notifications.sound === 'string') {
         settings.notifications.sound = notifications.sound;
       }
+
+      if (typeof notifications.updates === 'boolean') {
+        settings.notifications.updates = notifications.updates;
+      }
     }
 
     if (typeof p.version === 'number') {

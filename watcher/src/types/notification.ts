@@ -67,6 +67,7 @@ export interface NotificationPreferences {
   voice: string;
   sound: string;
   verbosity: Verbosity;
+  updates: boolean;
 }
 
 /**
@@ -113,6 +114,7 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
   voice: 'Samantha',
   sound: 'Glass',
   verbosity: 'important',
+  updates: true,
 };
 
 /**

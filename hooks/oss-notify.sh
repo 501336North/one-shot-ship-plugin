@@ -445,6 +445,17 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "session" ]]; then
                 if [[ -n "$MESSAGE" && "$MESSAGE" != "" ]]; then
                     wf_state_timeout 2 setNotification "$MESSAGE" 10
                 fi
+                # Check for plugin/prompt updates (non-blocking, background)
+                if [[ -x "$SCRIPT_DIR/check-updates.sh" ]]; then
+                    (
+                        update_msg=$(run_with_timeout 3 "$SCRIPT_DIR/check-updates.sh" 2>/dev/null)
+                        if [[ -n "$update_msg" ]]; then
+                            # Wait for session notification to expire before showing update
+                            sleep 11
+                            wf_state_timeout 2 setNotification "$update_msg" 30
+                        fi
+                    ) &
+                fi
                 ;;
             context_saved)
                 wf_state_timeout 2 setSupervisor idle
