@@ -13,6 +13,8 @@ import { DebugLogger } from '../debug.js';
 import { CacheService } from '../cache.js';
 import { fetchManifest, verifyManifestSignature, type SignedManifest } from '../manifest-verifier.js';
 import { verifyDecryptedPrompt } from '../integrity-pipeline.js';
+import { readUpdateState, writeUpdateState } from '../update-state.js';
+import { detectPromptChange } from '../change-detection.js';
 
 /**
  * Default API URL (can be overridden in config)
@@ -197,6 +199,27 @@ export async function decryptCommand(
     }
   } else {
     console.error('[verify] Manifest unavailable — skipping verification');
+  }
+
+  // Detect prompt hash changes for update notifications
+  const manifestKey = `${type}/${name}`;
+  const currentHash = manifest?.prompts[manifestKey]?.hash ?? null;
+  const statePath = join(getConfigDir(), 'update-state.json');
+  const updateState = readUpdateState(statePath);
+  const detection = detectPromptChange(updateState, type, name, currentHash);
+
+  if (detection.changed) {
+    console.error(`[update] /oss:${name} prompt updated`);
+  }
+
+  if (Object.keys(detection.updatedSignatures).length > 0) {
+    writeUpdateState(statePath, {
+      ...updateState,
+      promptSignatures: {
+        ...updateState.promptSignatures,
+        ...detection.updatedSignatures,
+      },
+    });
   }
 
   // Only output if verification passed (or was gracefully skipped)

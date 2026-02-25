@@ -55,6 +55,7 @@ describe('SettingsService', () => {
           voice: 'Daniel',
           sound: 'Purr',
           verbosity: 'all',
+          updates: true,
         },
         version: 1,
       };
@@ -93,6 +94,7 @@ describe('SettingsService', () => {
           voice: 'Daniel',
           sound: 'Purr',
           verbosity: 'all',
+          updates: true,
         },
         version: 1,
       };
@@ -174,6 +176,39 @@ OSS_SOUND_ERROR=Basso`;
 
       expect(loaded.notifications.style).toBe('audio');
       expect(loaded.notifications.voice).toBe('Daniel');
+    });
+  });
+
+  describe('notifications.updates toggle', () => {
+    it('should default notifications.updates to true when not in settings', () => {
+      const testDir = createTestDir();
+
+      const service = new SettingsService(testDir);
+      const loaded = service.getSettings();
+
+      expect(loaded.notifications.updates).toBe(true);
+    });
+
+    it('should respect notifications.updates=false from settings', () => {
+      const testDir = createTestDir();
+      const settingsPath = path.join(testDir, 'settings.json');
+
+      const settings = {
+        notifications: {
+          style: 'visual',
+          voice: 'Samantha',
+          sound: 'Glass',
+          verbosity: 'important',
+          updates: false,
+        },
+        version: 1,
+      };
+      fs.writeFileSync(settingsPath, JSON.stringify(settings));
+
+      const service = new SettingsService(testDir);
+      const loaded = service.getSettings();
+
+      expect(loaded.notifications.updates).toBe(false);
     });
   });
 
