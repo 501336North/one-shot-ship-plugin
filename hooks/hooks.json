@@ -137,6 +137,17 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-auto-format.sh"
+          }
+        ]
+      }
     ]
   }
 }
