@@ -15,32 +15,16 @@ Transform vague ideas into concrete, actionable designs.
 test -f CLAUDE.md && echo "EXISTS" || echo "MISSING"
 ```
 
-**If MISSING, create minimal project configuration:**
+**If MISSING, fetch the full CLAUDE.md template from API and create it:**
 
-```bash
-cat > CLAUDE.md << 'EOF'
-# Project Development Guide
+1. Read API key from `~/.oss/config.json`
+2. Fetch template from API using WebFetch:
+   - Template: `${API_BASE}/api/v1/prompts/templates/claude-md` (with `Authorization: Bearer ${API_KEY}`)
+   - IRON LAWS: `${API_BASE}/api/v1/prompts/shared/iron-laws` (with `Authorization: Bearer ${API_KEY}`)
+3. Merge: Replace `<!-- IRON LAWS will be injected here by /oss:login -->` placeholder with fetched IRON LAWS wrapped in `<!-- IRON LAWS START -->` / `<!-- IRON LAWS END -->` markers
+4. Write the fully-formed CLAUDE.md to the project root
 
-This project uses OSS Dev Workflow for world-class software delivery.
-
-## Development Commands
-
-- `/oss ideate` - Design and plan features
-- `/oss plan` - Create TDD implementation plans
-- `/oss build` - Execute plans with TDD
-- `/oss ship` - Quality check, commit, PR
-
-## Quality Standards
-
-- All code changes require tests written FIRST
-- All tests must pass before commits
-- All PRs require CI checks to pass
-
----
-
-*Powered by [OSS Dev Workflow](https://www.oneshotship.com)*
-EOF
-```
+**If API fetch fails**, fall back to a minimal CLAUDE.md that directs the user to run `/oss:login`.
 
 ## Step 2: Check Authentication
 

@@ -73,55 +73,41 @@ Transform vague ideas into concrete, actionable designs through Socratic questio
 test -f CLAUDE.md && echo "EXISTS" || echo "MISSING"
 ```
 
-**If MISSING, create minimal project configuration:**
+**If MISSING, fetch the full CLAUDE.md template from API and create it:**
 
+1. Read API key from `~/.oss/config.json`
+2. Fetch template from API:
 ```bash
-cat > CLAUDE.md << 'EOF'
+API_KEY=$(cat ~/.oss/config.json 2>/dev/null | grep -o '"apiKey":"[^"]*"' | cut -d'"' -f4)
+API_BASE=$(cat ~/.oss/config.json 2>/dev/null | grep -o '"apiUrl":"[^"]*"' | cut -d'"' -f4)
+API_BASE=${API_BASE:-"https://one-shot-ship-api.onrender.com"}
+```
+3. Use WebFetch to fetch the CLAUDE.md template:
+```
+URL: ${API_BASE}/api/v1/prompts/templates/claude-md
+Headers: Authorization: Bearer ${API_KEY}
+```
+4. Use WebFetch to fetch the IRON LAWS:
+```
+URL: ${API_BASE}/api/v1/prompts/shared/iron-laws
+Headers: Authorization: Bearer ${API_KEY}
+```
+5. Merge: In the template content, replace the placeholder `<!-- IRON LAWS will be injected here by /oss:login -->` with the fetched IRON LAWS content wrapped in `<!-- IRON LAWS START -->` / `<!-- IRON LAWS END -->` markers
+6. Write the fully-formed CLAUDE.md to the project root
+
+**If API fetch fails** (no key, 401, network error), use the Write tool to create a minimal CLAUDE.md with this content:
+```
 # Project Development Guide
 
-This project uses OSS Dev Workflow for world-class software delivery.
+This project uses OSS Dev Workflow. Run `/oss:login` to set up the full project configuration with IRON LAWS and development standards.
 
-## Development Commands
-
-- `/oss:ideate` - Design and plan features
-- `/oss:plan` - Create TDD implementation plans
-- `/oss:build` - Execute plans with TDD
+## Quick Start
+- `/oss:ideate` - Design features
+- `/oss:plan` - Create TDD plans
+- `/oss:build` - Execute with TDD
 - `/oss:ship` - Quality check, commit, PR
 
-## Agent Delegation (MANDATORY)
-
-**ALWAYS delegate specialized work to the appropriate agent using the Task tool.**
-
-When implementing code, use these specialized agents:
-
-| Technology | Agent (`subagent_type`) |
-|------------|-------------------------|
-| React/Next.js | `nextjs-developer`, `react-specialist` |
-| TypeScript | `typescript-pro` |
-| Python | `python-pro` |
-| Go | `golang-pro` |
-| iOS/Swift | `ios-developer`, `swift-macos-expert` |
-| visionOS | `visionos-developer` |
-| Backend | `backend-architect` |
-| Database | `database-optimizer` |
-| Testing | `test-engineer`, `qa-expert` |
-| Security | `security-auditor` |
-| DevOps | `deployment-engineer` |
-| Code Review | `code-reviewer` |
-
-**Never write specialized code yourself when an agent exists for it.**
-
-## Quality Standards
-
-- All code changes require tests written FIRST (TDD)
-- All tests must pass before commits
-- All PRs require CI checks to pass
-- Delegate to specialized agents for domain expertise
-
----
-
-*Powered by [OSS Dev Workflow](https://www.oneshotship.com)*
-EOF
+*Run `/oss:login` to get the complete CLAUDE.md with IRON LAWS.*
 ```
 
 ## Step 2: Check Authentication
