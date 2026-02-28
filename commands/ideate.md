@@ -25,11 +25,18 @@ estimated_tokens: 2000-8000
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--help` | `-h` | Show this help message |
+| `--figma` | | Activate Figma design-reading mode. Optionally pass a Figma URL: `--figma "URL"` |
 
 **Examples:**
 ```bash
 # Start ideation for a new feature
 /oss:ideate "user authentication system"
+
+# Ideate with Figma designs
+/oss:ideate --figma "user dashboard"
+
+# Ideate with a specific Figma file URL
+/oss:ideate --figma "https://www.figma.com/file/abc123" "user dashboard"
 
 # Ideate without a specific topic (will ask what you want to build)
 /oss:ideate
@@ -157,6 +164,12 @@ This auto-installs the decrypt CLI if missing. Existing installations are unaffe
 
 ## Step 7: Fetch and Decrypt Prompt
 
+If `--figma` flag is present in the arguments:
+```bash
+~/.oss/bin/oss-decrypt --type workflows --name ideate-figma
+```
+
+Otherwise (default):
 ```bash
 ~/.oss/bin/oss-decrypt --type workflows --name ideate
 ```
@@ -173,6 +186,12 @@ Execute the prompt returned by the API. The proprietary prompt contains:
 - Scope definition (in/out)
 - DESIGN.md creation with decisions
 - CONTEXT.md creation with domain-specific decisions
+
+When `--figma` flag is active, the proprietary prompt additionally contains:
+- MCP pre-flight check and graceful fallback
+- Component and token extraction via figma-design-agent
+- Gap analysis at configurable thoroughness
+- Enriched DESIGN.md with Figma sections and metadata
 
 ## Step 9: Update Status Line (Completion)
 
