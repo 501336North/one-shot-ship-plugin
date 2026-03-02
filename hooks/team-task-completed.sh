@@ -26,6 +26,16 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     exit 0
 fi
 
+# Only run quality gates in team mode (worktree isolation)
+# --team flag uses isolation: "worktree", placing agents inside .claude/worktrees/
+TOPLEVEL=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+if [[ "$TOPLEVEL" != *".claude/worktrees/"* ]]; then
+    if [[ -x "$LOG_SCRIPT" ]]; then
+        "$LOG_SCRIPT" hook team-task-completed "SKIP: not in team mode (no worktree)"
+    fi
+    exit 0
+fi
+
 # Run tests to validate task completion
 TEST_OUTPUT=$(npx vitest run --reporter=verbose 2>&1)
 TEST_EXIT=$?
