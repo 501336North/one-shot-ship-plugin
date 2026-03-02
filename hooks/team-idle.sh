@@ -26,6 +26,16 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     exit 0
 fi
 
+# Only run in team mode (worktree isolation)
+# --team flag uses isolation: "worktree", placing agents inside .claude/worktrees/
+TOPLEVEL=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+if [[ "$TOPLEVEL" != *".claude/worktrees/"* ]]; then
+    if [[ -x "$LOG_SCRIPT" ]]; then
+        "$LOG_SCRIPT" hook team-idle "SKIP: not in team mode (no worktree)"
+    fi
+    exit 0
+fi
+
 # Check if PROGRESS.md exists and has pending tasks
 PROGRESS_FILE=""
 for dir in .oss/dev/active/*/; do
