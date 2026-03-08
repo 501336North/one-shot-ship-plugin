@@ -151,6 +151,40 @@ test_debugger_not_background() {
 }
 
 # =============================================================================
+# TEST 5: rust-pro should exist with valid frontmatter
+#
+# @behavior Agent wrapper must exist with correct name and description
+# @acceptance-criteria rust-pro.md exists with name: rust-pro and description containing "Rust"
+# =============================================================================
+test_rust_pro_frontmatter() {
+    local test_name="rust-pro should exist with valid frontmatter"
+    ((TESTS_RUN++))
+
+    local file="$AGENTS_DIR/rust-pro.md"
+    if [[ ! -f "$file" ]]; then
+        fail "$test_name" "file exists" "file not found: $file"
+        return
+    fi
+
+    local name_value
+    name_value=$(get_frontmatter_value "$file" "name")
+
+    if [[ "$name_value" != "rust-pro" ]]; then
+        fail "$test_name" "name: rust-pro" "name: '$name_value'"
+        return
+    fi
+
+    local desc_value
+    desc_value=$(get_frontmatter_value "$file" "description")
+
+    if [[ "$desc_value" == *"Rust"* ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "description contains 'Rust'" "description: '$desc_value'"
+    fi
+}
+
+# =============================================================================
 # Run all tests
 # =============================================================================
 echo "Running agent frontmatter tests..."
@@ -160,6 +194,7 @@ test_code_reviewer_not_background
 test_performance_auditor_not_background
 test_security_auditor_not_background
 test_debugger_not_background
+test_rust_pro_frontmatter
 
 echo ""
 echo "======================================="
