@@ -66,16 +66,9 @@ Register at https://www.oneshotship.com
 ~/.oss/hooks/oss-log.sh init custom
 ```
 
-## Step 3: Fetch IRON LAWS (MANDATORY)
+> Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
 
-Before executing, fetch and review the IRON LAWS:
-```bash
-~/.oss/hooks/fetch-iron-laws.sh
-```
-
-**All IRON LAWS must be followed. Self-correct any violations before proceeding.**
-
-## Step 4: Update Status Line (Start)
+## Step 3: Update Status Line (Start)
 
 **You MUST update the workflow status before proceeding.**
 
@@ -85,7 +78,7 @@ Before executing, fetch and review the IRON LAWS:
 
 Replace `{COMMAND_NAME}` with the actual custom command name (without `team:` prefix).
 
-## Step 5: Ensure Decrypt CLI Installed
+## Step 4: Ensure Decrypt CLI Installed
 
 ```bash
 ~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install decrypt CLI. Run /oss:login for manual setup."; exit 1; }
@@ -93,7 +86,7 @@ Replace `{COMMAND_NAME}` with the actual custom command name (without `team:` pr
 
 This auto-installs the decrypt CLI if missing. Existing installations are unaffected.
 
-## Step 6: Fetch Custom Command Prompt
+## Step 5: Fetch Custom Command Prompt
 
 Strip the `team:` prefix if present and fetch the custom command:
 
@@ -119,7 +112,7 @@ The endpoint returns:
 }
 ```
 
-## Step 7: Execute the Fetched Prompt
+## Step 6: Execute the Fetched Prompt
 
 Execute the prompt content returned by the API. The prompt will guide the workflow step.
 
@@ -127,7 +120,7 @@ Execute the prompt content returned by the API. The prompt will guide the workfl
 - If `isBlocking: true` and the command fails, stop the workflow chain
 - If `isBlocking: false`, log the result but continue the workflow
 
-## Step 8: Update Status Line (Completion)
+## Step 7: Update Status Line (Completion)
 
 **You MUST update the workflow status on completion.**
 

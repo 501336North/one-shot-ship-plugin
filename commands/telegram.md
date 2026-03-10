@@ -4,6 +4,8 @@ description: Manage Telegram notifications for OSS Dev Workflow
 
 ## Help
 
+> Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
+
 **Command:** `/oss:telegram`
 
 **Description:** Link your Telegram account to receive notifications when Claude needs your input.

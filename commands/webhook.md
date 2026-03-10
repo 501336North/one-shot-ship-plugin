@@ -115,7 +115,9 @@ Next Steps:
    - **Events**: Select **Let me select individual events** > check **Pull request reviews**
 4. Click **Add webhook**
 
-### Step 3: Expose Webhook (Optional)
+#> Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
+
+## Step 3: Expose Webhook (Optional)
 
 For GitHub to reach your local server, you need a public URL. Use cloudflared:
 

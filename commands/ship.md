@@ -93,16 +93,9 @@ Register at https://www.oneshotship.com
 ~/.oss/hooks/oss-log.sh init ship
 ```
 
-## Step 3: Fetch IRON LAWS (MANDATORY)
+> Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
 
-Before executing, fetch and review the IRON LAWS:
-```bash
-~/.oss/hooks/fetch-iron-laws.sh
-```
-
-**All 5 IRON LAWS must be followed. Self-correct any violations before proceeding.**
-
-## Step 4: Update Status Line (Start)
+## Step 3: Update Status Line (Start)
 
 **You MUST update the workflow status before proceeding.**
 
@@ -110,7 +103,7 @@ Before executing, fetch and review the IRON LAWS:
 ~/.oss/hooks/oss-notify.sh --workflow ship start '{}'
 ```
 
-## Step 5: Ensure Decrypt CLI Installed
+## Step 4: Ensure Decrypt CLI Installed
 
 ```bash
 ~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install decrypt CLI. Run /oss:login for manual setup."; exit 1; }
@@ -118,7 +111,7 @@ Before executing, fetch and review the IRON LAWS:
 
 This auto-installs the decrypt CLI if missing. Existing installations are unaffected.
 
-## Step 6: Fetch and Decrypt Prompt
+## Step 5: Fetch and Decrypt Prompt
 
 If `--team` flag is present in the arguments:
 ```bash
@@ -132,7 +125,7 @@ Otherwise (default):
 
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
-## Step 7: Execute the Fetched Prompt
+## Step 6: Execute the Fetched Prompt
 
 The prompt orchestrates the full shipping workflow:
 
@@ -210,7 +203,7 @@ With `--merge` flag:
 - Auto-merge when green
 - Delete feature branch
 
-## Step 8: Update Status Line (Progress)
+## Step 7: Update Status Line (Progress)
 
 **You MUST update the workflow status at each stage.**
 

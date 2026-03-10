@@ -85,6 +85,8 @@ Register at https://www.oneshotship.com
 ~/.oss/hooks/oss-log.sh init integration
 ```
 
+> Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
+
 ## Step 3: Update Status Line (Start)
 
 **You MUST update the workflow status before proceeding.**

@@ -90,6 +90,8 @@ Response:
 }
 ```
 
+> Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
+
 ## Step 3: Display Workflow List
 
 ```

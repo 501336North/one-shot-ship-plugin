@@ -134,6 +134,8 @@ Signature verification skipped — other checks will still run.
 
 **If `--quick` was specified, generate the report (Step 6) and STOP here.**
 
+> Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
+
 ## Step 3: Authentication Check
 
 Standard and Full tiers require authentication to decrypt prompts.

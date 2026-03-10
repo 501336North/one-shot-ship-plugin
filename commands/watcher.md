@@ -4,6 +4,8 @@ description: Manage the background watcher agent
 
 ## Help
 
+> Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
+
 **Command:** `/oss:watcher`
 
 **Description:** Manage the background watcher agent

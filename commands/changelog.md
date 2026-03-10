@@ -4,6 +4,8 @@ description: View what changed since your last session (plugin version, prompt u
 
 ## Help
 
+> Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
+
 **Command:** `/oss:changelog`
 
 **Description:** View what changed since your last session — plugin updates and prompt improvements.

@@ -63,8 +63,8 @@ HOOKS_TO_COPY=(
     "oss-notify.sh"
     "oss-statusline.sh"
     "oss-detect-playwright.sh"
-    "fetch-iron-laws.sh"
     "ensure-decrypt-cli.sh"
+    "oss-iron-laws-sync.sh"
 )
 for hook in "${HOOKS_TO_COPY[@]}"; do
     if [[ -f "$PLUGIN_ROOT/hooks/$hook" ]]; then
@@ -133,6 +133,12 @@ esac
 
 # Clear iron-laws session marker (legacy cleanup)
 rm -f ~/.oss/iron-laws-session-notified 2>/dev/null
+
+# Sync Iron Laws into CLAUDE.md (freshness check)
+IRON_LAWS_SYNC_SCRIPT="$PLUGIN_ROOT/hooks/oss-iron-laws-sync.sh"
+if [[ -x "$IRON_LAWS_SYNC_SCRIPT" ]]; then
+    CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}" "$IRON_LAWS_SYNC_SCRIPT" 2>/dev/null || true
+fi
 
 # --- Watcher Management (US-001) ---
 # Spawn watcher process if not already running (singleton pattern)

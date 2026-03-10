@@ -90,16 +90,9 @@ Register at https://www.oneshotship.com
 ~/.oss/hooks/oss-log.sh init onboard
 ```
 
-## Step 3: Fetch IRON LAWS (MANDATORY)
+> Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
 
-Before executing, fetch and review the IRON LAWS:
-```bash
-~/.oss/hooks/fetch-iron-laws.sh
-```
-
-**All 5 IRON LAWS must be followed. Self-correct any violations before proceeding.**
-
-## Step 4: Update Status Line (Start)
+## Step 3: Update Status Line (Start)
 
 **You MUST update the workflow status before proceeding.**
 
@@ -107,7 +100,7 @@ Before executing, fetch and review the IRON LAWS:
 ~/.oss/hooks/oss-notify.sh --workflow onboard start '{}'
 ```
 
-## Step 5: Check if Already Onboarded
+## Step 4: Check if Already Onboarded
 
 ```bash
 ~/.oss/hooks/oss-onboard-check.sh .
@@ -119,7 +112,7 @@ Project already onboarded. Use --force to regenerate documentation.
 Existing docs at: .oss/docs/
 ```
 
-## Step 6: Ensure Decrypt CLI Installed
+## Step 5: Ensure Decrypt CLI Installed
 
 ```bash
 ~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install decrypt CLI. Run /oss:login for manual setup."; exit 1; }
@@ -127,7 +120,7 @@ Existing docs at: .oss/docs/
 
 This auto-installs the decrypt CLI if missing. Existing installations are unaffected.
 
-## Step 7: Fetch and Decrypt Prompt
+## Step 6: Fetch and Decrypt Prompt
 
 ```bash
 ~/.oss/bin/oss-decrypt --type workflows --name onboard
@@ -135,7 +128,7 @@ This auto-installs the decrypt CLI if missing. Existing installations are unaffe
 
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
-## Step 8: Execute the Fetched Prompt
+## Step 7: Execute the Fetched Prompt
 
 The prompt guides codebase analysis with:
 - Project structure analysis
@@ -146,7 +139,7 @@ The prompt guides codebase analysis with:
 - API surface mapping
 - Test coverage assessment
 
-## Step 9: Update Status Line (Completion)
+## Step 8: Update Status Line (Completion)
 
 **You MUST update the workflow status on completion.**
 

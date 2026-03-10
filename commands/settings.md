@@ -146,7 +146,9 @@ Notifications:
 To change settings, answer the questions below.
 ```
 
-### Step 3: Prompt for Changes
+#> Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
+
+## Step 3: Prompt for Changes
 
 Use `AskUserQuestion` tool to let user modify settings:
 
