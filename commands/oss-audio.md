@@ -5,6 +5,8 @@ description: "[DEPRECATED] Use /oss:settings instead"
 
 ## Help
 
+> Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
+
 **Command:** `/oss:oss-audio`
 
 **Description:** [DEPRECATED] Use /oss:settings instead

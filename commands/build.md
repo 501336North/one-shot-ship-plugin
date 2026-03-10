@@ -145,16 +145,9 @@ Register at https://www.oneshotship.com
 ~/.oss/hooks/oss-log.sh init build
 ```
 
-## Step 3: Fetch IRON LAWS (MANDATORY)
+> Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
 
-Before executing, fetch and review the IRON LAWS:
-```bash
-~/.oss/hooks/fetch-iron-laws.sh
-```
-
-**All 5 IRON LAWS must be followed. Self-correct any violations before proceeding.**
-
-## Step 4: Update Status Line (Start)
+## Step 3: Update Status Line (Start)
 
 ```bash
 ~/.oss/hooks/oss-notify.sh --workflow build start '{"totalTasks": {TASK_COUNT}}'
@@ -162,7 +155,7 @@ Before executing, fetch and review the IRON LAWS:
 
 **You MUST update the workflow status before proceeding.**
 
-## Step 5: Ensure Decrypt CLI Installed
+## Step 4: Ensure Decrypt CLI Installed
 
 ```bash
 ~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install decrypt CLI. Run /oss:login for manual setup."; exit 1; }
@@ -170,7 +163,7 @@ Before executing, fetch and review the IRON LAWS:
 
 This auto-installs the decrypt CLI if missing. Existing installations are unaffected.
 
-## Step 6: Fetch and Decrypt Prompt
+## Step 5: Fetch and Decrypt Prompt
 
 If `--team` flag is present in the arguments:
 ```bash
@@ -184,7 +177,7 @@ Otherwise (default):
 
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
-## Step 7: Execute the Fetched Prompt
+## Step 6: Execute the Fetched Prompt
 
 The prompt enforces TDD discipline:
 - Loads plan from `.oss/dev/active/{feature}/PLAN.md` (project-local or global fallback)
@@ -192,7 +185,7 @@ The prompt enforces TDD discipline:
 - Updates progress as tasks complete
 - Reports any blockers or issues
 
-## Step 8: Update Status Line (Progress)
+## Step 7: Update Status Line (Progress)
 
 **You MUST update the workflow status at the appropriate moments.**
 
@@ -270,7 +263,7 @@ Conditions like `has_ui_work` are evaluated automatically based on changed files
 
 To customize your workflow, visit the dashboard at https://www.oneshotship.com/dashboard/workflows
 
-## Step 9: Execute Chain Commands (MANDATORY)
+## Step 8: Execute Chain Commands (MANDATORY)
 
 After `oss-notify.sh --workflow build complete` runs, its stdout may contain a `---CHAIN_COMMANDS---` block. If present, **auto-execute each `CHAIN:` line in order** — no user intervention required.
 

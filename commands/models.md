@@ -122,7 +122,9 @@ Provider API Keys:
   gemini:     ✗ not configured
 ```
 
-### Step 3: Subcommand Handling
+#> Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
+
+## Step 3: Subcommand Handling
 
 #### `/oss:models list`
 

@@ -5,6 +5,8 @@ description: Execute OSS Dev Workflow commands
 
 ## Help
 
+> Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
+
 **Command:** `/oss`
 
 **Description:** Execute OSS Dev Workflow commands

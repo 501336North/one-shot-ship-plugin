@@ -146,6 +146,8 @@ Enter your API key when prompted, or pass it directly:
 /oss:login YOUR_API_KEY
 ```
 
+> Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
+
 ## Step 3: Verification
 
 The command will:
@@ -167,9 +169,9 @@ After successful authentication, the command automatically syncs project guideli
      Authorization: Bearer {apiKey}
    ```
 
-2. **Fetch IRON LAWS (single source of truth):**
+2. **Sync IRON LAWS into CLAUDE.md (session-start freshness):**
    ```bash
-   ~/.oss/hooks/fetch-iron-laws.sh
+   ~/.oss/hooks/oss-iron-laws-sync.sh
    ```
 
 ### 4.2: Merge IRON LAWS into Template

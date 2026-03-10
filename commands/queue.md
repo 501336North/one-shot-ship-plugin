@@ -4,6 +4,8 @@ description: View and manage the task queue
 
 ## Help
 
+> Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
+
 **Command:** `/oss:queue`
 
 **Description:** View and manage the task queue

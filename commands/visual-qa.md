@@ -77,16 +77,9 @@ Register at https://www.oneshotship.com
 ~/.oss/hooks/oss-log.sh init visual-qa
 ```
 
-## Step 3: Fetch IRON LAWS (MANDATORY)
+> Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
 
-Before executing, fetch and review the IRON LAWS:
-```bash
-~/.oss/hooks/fetch-iron-laws.sh
-```
-
-**All 5 IRON LAWS must be followed. Self-correct any violations before proceeding.**
-
-## Step 4: Update Status Line (Start)
+## Step 3: Update Status Line (Start)
 
 **You MUST update the workflow status before proceeding.**
 
@@ -94,7 +87,7 @@ Before executing, fetch and review the IRON LAWS:
 ~/.oss/hooks/oss-notify.sh --workflow visual-qa start '{}'
 ```
 
-## Step 5: Ensure Decrypt CLI Installed
+## Step 4: Ensure Decrypt CLI Installed
 
 ```bash
 ~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install decrypt CLI. Run /oss:login for manual setup."; exit 1; }
@@ -102,7 +95,7 @@ Before executing, fetch and review the IRON LAWS:
 
 This auto-installs the decrypt CLI if missing. Existing installations are unaffected.
 
-## Step 6: Fetch and Decrypt Prompt
+## Step 5: Fetch and Decrypt Prompt
 
 ```bash
 ~/.oss/bin/oss-decrypt --type workflows --name visual-qa
@@ -110,7 +103,7 @@ This auto-installs the decrypt CLI if missing. Existing installations are unaffe
 
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
-## Step 7: Execute the Fetched Prompt
+## Step 6: Execute the Fetched Prompt
 
 Execute the prompt returned by the API. The proprietary prompt contains:
 - Figma context detection and validation
@@ -118,7 +111,7 @@ Execute the prompt returned by the API. The proprietary prompt contains:
 - VISUAL_QA.md report generation with discrepancies
 - Strictness enforcement (strict/standard/relaxed)
 
-## Step 8: Update Status Line (Completion)
+## Step 7: Update Status Line (Completion)
 
 **You MUST update the workflow status on completion.**
 
@@ -134,7 +127,7 @@ If visual QA fails:
 ~/.oss/hooks/oss-notify.sh --workflow visual-qa failed '{"reason": "{REASON}"}'
 ```
 
-## Step 9: Execute Chain Commands (MANDATORY)
+## Step 8: Execute Chain Commands (MANDATORY)
 
 After `oss-notify.sh --workflow visual-qa complete` runs, its stdout may contain a `---CHAIN_COMMANDS---` block. If present, **auto-execute each `CHAIN:` line in order** — no user intervention required.
 

@@ -83,16 +83,9 @@ Register at https://www.oneshotship.com
 ~/.oss/hooks/oss-log.sh init api-design
 ```
 
-## Step 3: Fetch IRON LAWS (MANDATORY)
+> Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
 
-Before executing, fetch and review the IRON LAWS:
-```bash
-~/.oss/hooks/fetch-iron-laws.sh
-```
-
-**All IRON LAW violations must be self-corrected before proceeding.**
-
-## Step 4: Update Status Line (Start)
+## Step 3: Update Status Line (Start)
 
 **You MUST update the workflow status before proceeding.**
 
@@ -100,7 +93,7 @@ Before executing, fetch and review the IRON LAWS:
 ~/.oss/hooks/oss-notify.sh --workflow api-design start '{}'
 ```
 
-## Step 5: Ensure Decrypt CLI Installed
+## Step 4: Ensure Decrypt CLI Installed
 
 ```bash
 ~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install decrypt CLI. Run /oss:login for manual setup."; exit 1; }
@@ -108,7 +101,7 @@ Before executing, fetch and review the IRON LAWS:
 
 This auto-installs the decrypt CLI if missing. Existing installations are unaffected.
 
-## Step 6: Fetch and Decrypt Prompt
+## Step 5: Fetch and Decrypt Prompt
 
 ```bash
 ~/.oss/bin/oss-decrypt --type commands --name api-design
@@ -116,7 +109,7 @@ This auto-installs the decrypt CLI if missing. Existing installations are unaffe
 
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
-## Step 7: Execute the Fetched Prompt
+## Step 6: Execute the Fetched Prompt
 
 The prompt guides you through:
 - Identifying resources and operations
@@ -125,7 +118,7 @@ The prompt guides you through:
 - Documenting error responses
 - Generating OpenAPI specification
 
-## Step 8: Update Status Line (Completion)
+## Step 7: Update Status Line (Completion)
 
 **You MUST update the workflow status on completion.**
 

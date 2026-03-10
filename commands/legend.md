@@ -4,6 +4,8 @@ description: Display the status line legend and symbol meanings
 
 ## Help
 
+> Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
+
 **Command:** `/oss:legend`
 
 **Description:** Display the status line legend and symbol meanings
