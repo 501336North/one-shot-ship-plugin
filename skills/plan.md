@@ -1,6 +1,7 @@
 ---
 name: plan
 description: Create TDD implementation plan with behavioral tests mapped to acceptance criteria
+model: opus
 ---
 
 # OSS Plan

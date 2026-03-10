@@ -1,5 +1,6 @@
 ---
 description: Configure per-prompt model routing and view cost tracking
+model: haiku
 ---
 
 ## Help
@@ -276,19 +277,51 @@ For API key input:
 
 ## Frontmatter Configuration
 
-Prompts can specify preferred models in frontmatter:
+### Native Claude Model (`model:`)
+
+Prompts specify which native Claude model to use via `model:` frontmatter:
 
 ```yaml
 ---
 name: code-reviewer
+model: opus
+---
+```
+
+Valid values: `opus`, `sonnet`, `haiku`. If omitted, inherits the parent model.
+
+**Three-tier strategy:**
+- `model: opus` — Force best reasoning (security, architecture, planning)
+- *(no field)* — Inherit parent model (most coding agents)
+- `model: haiku` — Fast and cheap (display, config, docs)
+
+### External Model Routing (`model_routing:`)
+
+Prompts can also enable routing to external providers via the proxy system:
+
+```yaml
+---
+name: code-reviewer
+model: opus
+model_routing: true
+---
+```
+
+- `model_routing: true` enables the Step 0 routing check
+- When an external model is configured (via config or CLI), it takes precedence over `model:`
+- When no external model is configured, `model:` controls which native Claude model is used
+- These two fields are independent and can coexist
+
+### Legacy Frontmatter
+
+```yaml
+---
 model: openrouter/deepseek/deepseek-chat
 model_fallback: true
 ---
-# Code Reviewer Prompt
 ```
 
-- `model`: Preferred model for this prompt
-- `model_fallback`: If true, fall back to Claude if model fails
+- `model_fallback`: If true, fall back to Claude if external model fails
 
 ## Environment Variables
 

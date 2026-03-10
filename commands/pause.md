@@ -1,5 +1,6 @@
 ---
 description: Save current work state for later resumption
+model: haiku
 estimated_tokens: 1500-3000
 ---
 

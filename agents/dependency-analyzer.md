@@ -1,6 +1,7 @@
 ---
 name: dependency-analyzer
 description: Dependency management specialist. Use for analyzing dependencies, resolving conflicts, and managing package updates.
+model: haiku
 ---
 
 # dependency-analyzer Agent

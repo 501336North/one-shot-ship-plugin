@@ -1,6 +1,7 @@
 ---
 name: oss
 description: Execute OSS Dev Workflow commands
+model: haiku
 ---
 
 ## Help

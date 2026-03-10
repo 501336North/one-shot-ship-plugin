@@ -1,6 +1,7 @@
 ---
 name: architecture-auditor
 description: Software architecture and design pattern specialist. Use PROACTIVELY when adding new features, refactoring code, or reviewing system design. MUST BE USED for architectural decisions and major code structure changes.
+model: opus
 ---
 
 # OSS Architecture Auditor Agent

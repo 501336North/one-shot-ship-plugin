@@ -1,5 +1,6 @@
 ---
 description: Generate a TDD implementation plan with phased approach and test-first methodology
+model: opus
 ---
 
 ## Help

@@ -1,6 +1,7 @@
 ---
 name: git-workflow-manager
 description: Git workflow specialist. Use for branching strategies, merge conflict resolution, and repository management.
+model: haiku
 ---
 
 # git-workflow-manager Agent

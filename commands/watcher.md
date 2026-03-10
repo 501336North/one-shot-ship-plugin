@@ -1,5 +1,6 @@
 ---
 description: Manage the background watcher agent
+model: haiku
 ---
 
 ## Help

@@ -1,6 +1,7 @@
 ---
 name: release
 description: Full production release workflow with version bumps and changelog. Use for releases.
+model: haiku
 ---
 
 # OSS Release

@@ -1,5 +1,6 @@
 ---
 description: Check your subscription status and usage
+model: haiku
 ---
 
 ## Help

@@ -1,6 +1,7 @@
 ---
 name: docs-architect
 description: Documentation specialist. Use for creating technical documentation, API docs, and developer guides.
+model: haiku
 ---
 
 # docs-architect Agent

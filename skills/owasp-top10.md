@@ -1,5 +1,6 @@
 ---
 description: OWASP Top 10 security prevention guide
+model: opus
 ---
 
 # OWASP Top 10 Skill

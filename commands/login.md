@@ -1,5 +1,6 @@
 ---
 description: Configure API key for OSS Dev Workflow
+model: haiku
 ---
 
 ## Help

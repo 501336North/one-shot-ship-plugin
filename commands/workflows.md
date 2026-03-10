@@ -1,5 +1,6 @@
 ---
 description: View and manage your team's workflow configuration
+model: haiku
 ---
 
 ## Help

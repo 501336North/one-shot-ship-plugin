@@ -1,6 +1,7 @@
 ---
 name: create-dev-docs
 description: Setup feature branch and development documentation structure
+model: haiku
 ---
 
 # OSS Create Dev Docs

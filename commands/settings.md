@@ -1,5 +1,6 @@
 ---
 description: Manage OSS notification and preference settings
+model: haiku
 ---
 
 ## Help

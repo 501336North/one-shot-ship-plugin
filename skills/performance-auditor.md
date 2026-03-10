@@ -1,6 +1,7 @@
 ---
 name: performance-auditor
 description: Performance optimization specialist focusing on speed, efficiency, and resource usage. Use PROACTIVELY for code handling large datasets, complex algorithms, or user-facing performance. MUST BE USED before deploying performance-critical features.
+model: opus
 ---
 
 # OSS Performance Auditor Agent

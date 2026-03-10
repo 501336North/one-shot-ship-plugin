@@ -1,5 +1,6 @@
 ---
 description: Incident postmortem analysis and documentation
+model: opus
 ---
 
 ## Help

@@ -1,5 +1,6 @@
 ---
 description: Manage Telegram notifications for OSS Dev Workflow
+model: haiku
 ---
 
 ## Help

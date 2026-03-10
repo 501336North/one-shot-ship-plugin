@@ -1,6 +1,7 @@
 ---
 name: release-manager
 description: Release management specialist. Use for release planning, versioning, and deployment coordination.
+model: haiku
 ---
 
 # release-manager Agent

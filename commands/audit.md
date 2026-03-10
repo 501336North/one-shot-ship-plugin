@@ -1,5 +1,6 @@
 ---
 description: Security vulnerability scanning and penetration testing
+model: opus
 ---
 
 ## Help

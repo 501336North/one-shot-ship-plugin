@@ -1,6 +1,7 @@
 ---
 name: cloud-architect
 description: Cloud infrastructure expert. Use for AWS, GCP, Azure architecture, serverless, and cloud-native development.
+model: opus
 ---
 
 # cloud-architect Agent
