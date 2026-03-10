@@ -149,6 +149,9 @@ export const DEFAULT_WORKFLOW_CONFIGS: Record<string, WorkflowConfig> = {
   },
   build: {
     task_loop: ['red', 'green', 'refactor'],
+    chains_to: [
+      { command: 'context-report', always: true },
+    ],
     agents: [
       { agent: 'code-simplifier', always: true },
       { agent: 'frontend-design', condition: 'has_ui_work' },
