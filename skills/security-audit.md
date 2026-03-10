@@ -1,6 +1,7 @@
 ---
 name: security-audit
 description: Security vulnerability scanning and penetration testing. Use for security reviews and audits.
+model: opus
 ---
 
 # OSS Security Audit

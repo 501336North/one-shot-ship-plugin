@@ -1,5 +1,6 @@
 ---
 description: View and manage the task queue
+model: haiku
 ---
 
 ## Help

@@ -1,6 +1,7 @@
 ---
 name: ideate
 description: Refine rough ideas into fully-formed designs through collaborative questioning. Use for feature design and planning.
+model: opus
 ---
 
 # OSS Ideate

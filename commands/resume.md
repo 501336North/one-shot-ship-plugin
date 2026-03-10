@@ -1,5 +1,6 @@
 ---
 description: Continue work from a paused state
+model: haiku
 estimated_tokens: 1500-3000
 ---
 

@@ -1,6 +1,7 @@
 ---
 name: incident-responder
 description: Incident response specialist. Use for production incidents, outage investigation, and emergency response.
+model: opus
 ---
 
 # incident-responder Agent

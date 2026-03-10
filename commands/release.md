@@ -1,5 +1,6 @@
 ---
 description: Create a versioned release with changelog
+model: haiku
 ---
 
 ## Help

@@ -1,5 +1,6 @@
 ---
 description: View what changed since your last session (plugin version, prompt updates)
+model: haiku
 ---
 
 ## Help

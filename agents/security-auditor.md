@@ -1,6 +1,7 @@
 ---
 name: security-auditor
 description: Security specialist. Use for security audits, vulnerability assessment, and secure coding practices.
+model: opus
 model_routing: true
 ---
 

@@ -1,5 +1,6 @@
 ---
 description: Chaos engineering and resilience testing
+model: opus
 ---
 
 ## Help

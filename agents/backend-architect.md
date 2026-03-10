@@ -1,6 +1,7 @@
 ---
 name: backend-architect
 description: Backend systems architect. Use for API design, database architecture, microservices, and server-side development.
+model: opus
 model_routing: true
 ---
 

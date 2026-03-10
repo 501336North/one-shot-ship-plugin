@@ -1,5 +1,6 @@
 ---
 description: Create development documentation structure for a feature
+model: haiku
 ---
 
 ## Help

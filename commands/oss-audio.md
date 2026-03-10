@@ -1,6 +1,7 @@
 ---
 name: oss-audio
 description: "[DEPRECATED] Use /oss:settings instead"
+model: haiku
 ---
 
 ## Help

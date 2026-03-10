@@ -1,6 +1,7 @@
 ---
 name: seo-aeo-expert
 description: SEO/AEO specialist. Use for search engine optimization, answer engine optimization, schema markup, Core Web Vitals, and E-E-A-T enhancement. Automatically invoked by frontend agents for optimization.
+model: haiku
 ---
 
 # seo-aeo-expert Agent

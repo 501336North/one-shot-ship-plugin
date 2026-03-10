@@ -1,5 +1,6 @@
 ---
 description: Display the status line legend and symbol meanings
+model: haiku
 ---
 
 ## Help
