@@ -89,6 +89,61 @@
         "description": "Send AskUserQuestion to Telegram for mobile notifications"
       }
     ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/team-task-completed.sh"
+          }
+        ],
+        "description": "Run tests and lint after agent task completion (team mode only)"
+      }
+    ],
+    "TeammateIdle": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/team-idle.sh"
+          }
+        ],
+        "description": "Reassign work when a teammate agent becomes idle (team mode only)"
+      }
+    ],
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-worktree-create.sh"
+          }
+        ],
+        "description": "Initialize OSS context in new git worktrees"
+      }
+    ],
+    "WorktreeRemove": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-worktree-remove.sh"
+          }
+        ],
+        "description": "Clean up OSS state when a worktree is removed"
+      }
+    ],
+    "ConfigChange": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-config-change.sh"
+          }
+        ],
+        "description": "Sync OSS settings when Claude Code configuration changes"
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "tool == \"AskUserQuestion\"",
@@ -119,6 +174,16 @@
           }
         ],
         "description": "PR enhancement after gh pr create"
+      },
+      {
+        "matcher": "tool == \"Write\" || tool == \"Edit\"",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-auto-format.sh"
+          }
+        ],
+        "description": "Auto-format files after Write or Edit operations"
       }
     ]
   }

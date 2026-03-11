@@ -50,6 +50,7 @@ export interface NotificationPreferences {
     voice: string;
     sound: string;
     verbosity: Verbosity;
+    updates: boolean;
 }
 /**
  * Supervisor monitoring mode

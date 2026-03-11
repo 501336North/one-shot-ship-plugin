@@ -1,0 +1,33 @@
+# OS
+.DS_Store
+
+# Dependencies
+node_modules/
+
+# Environment
+.env*
+
+# Keys and credentials
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+
+# Temp files
+*.tmp
+*.md.tmp
+
+# OSS workflow state (ephemeral, not version-controlled)
+.oss/.tdd-phase-ts
+.oss/workflow-state.json
+.oss/watcher.pid
+.oss/queue.json
+
+# Logs
+*.log
+
+# Audit reports (generated per-session)
+PERFORMANCE_AUDIT*.md
+SECURITY_AUDIT*.md
+PENETRATION_TEST*.md

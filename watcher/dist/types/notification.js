@@ -12,6 +12,7 @@ export const DEFAULT_NOTIFICATION_PREFERENCES = {
     voice: 'Samantha',
     sound: 'Glass',
     verbosity: 'important',
+    updates: true,
 };
 /**
  * Default IRON LAW check settings (all enabled)
