@@ -29,6 +29,7 @@ export class NotificationService {
                         voice: parsed.notifications?.voice ?? DEFAULT_NOTIFICATION_SETTINGS.notifications.voice,
                         sound: parsed.notifications?.sound ?? DEFAULT_NOTIFICATION_SETTINGS.notifications.sound,
                         verbosity: parsed.notifications?.verbosity ?? DEFAULT_NOTIFICATION_SETTINGS.notifications.verbosity,
+                        updates: parsed.notifications?.updates ?? DEFAULT_NOTIFICATION_SETTINGS.notifications.updates,
                     },
                     version: parsed.version ?? DEFAULT_NOTIFICATION_SETTINGS.version,
                 };

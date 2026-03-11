@@ -65,6 +65,9 @@ var DEFAULT_WORKFLOW_CONFIGS = {
   },
   build: {
     task_loop: ["red", "green", "refactor"],
+    chains_to: [
+      { command: "context-report", always: true }
+    ],
     agents: [
       { agent: "code-simplifier", always: true },
       { agent: "frontend-design", condition: "has_ui_work" }

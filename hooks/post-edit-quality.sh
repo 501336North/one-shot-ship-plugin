@@ -39,19 +39,9 @@ $CONSOLE_LOGS"
     fi
 fi
 
-# === Auto-Format (Prettier) ===
-# Check if prettier is available and file exists
-if command -v npx &> /dev/null && [[ -f "$FILE_PATH" ]]; then
-    # Check if prettier is installed in the project
-    if [[ -f "$(dirname "$FILE_PATH")/node_modules/.bin/prettier" ]] || \
-       [[ -f "./node_modules/.bin/prettier" ]] || \
-       npx prettier --version &> /dev/null 2>&1; then
-        # Run prettier with timeout
-        if timeout 5 npx prettier --write "$FILE_PATH" &> /dev/null 2>&1; then
-            : # Silent on success
-        fi
-    fi
-fi
+# === Auto-Format ===
+# Formatting is handled by oss-auto-format.sh (PostToolUse hook for Write/Edit).
+# No need to duplicate here — it runs the project's detected formatter per-file.
 
 # === Type Check (tsc) ===
 # Only for TypeScript files

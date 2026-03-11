@@ -18,6 +18,17 @@ if [[ "${OSS_AUTO_FORMAT:-}" == "false" ]]; then
     exit 0
 fi
 
+# Get the file path from Claude tool input
+FILE_PATH="${CLAUDE_TOOL_INPUT_FILE_PATH:-}"
+if [[ -z "$FILE_PATH" && -n "${CLAUDE_TOOL_INPUT:-}" ]]; then
+    FILE_PATH=$(echo "$CLAUDE_TOOL_INPUT" | jq -r '.file_path // empty' 2>/dev/null || echo "")
+fi
+
+# Exit silently if no file path or file doesn't exist
+if [[ -z "$FILE_PATH" || ! -f "$FILE_PATH" ]]; then
+    exit 0
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DETECT_SCRIPT="$SCRIPT_DIR/oss-detect-formatter.sh"
 
@@ -32,27 +43,26 @@ if [[ -z "$formatter" ]]; then
     exit 0
 fi
 
-# Run the formatter (swallow errors - formatting must never block edits)
-echo "Auto-formatting with: $formatter" >&2
+# Run the formatter on the changed file only (not the entire project)
 case "$formatter" in
     prettier)
-        npx prettier --write . 2>/dev/null || true
+        npx prettier --write "$FILE_PATH" 2>/dev/null || true
         ;;
     biome)
-        npx biome format --write . 2>/dev/null || true
+        npx biome format --write "$FILE_PATH" 2>/dev/null || true
         ;;
     gofmt)
-        gofmt -w . 2>/dev/null || true
+        gofmt -w "$FILE_PATH" 2>/dev/null || true
         ;;
     black)
-        black . 2>/dev/null || true
+        black "$FILE_PATH" 2>/dev/null || true
         ;;
     rustfmt)
-        cargo fmt 2>/dev/null || true
+        rustfmt "$FILE_PATH" 2>/dev/null || true
         ;;
     *)
-        # package.json format script or unknown - try npm run format
-        npm run format 2>/dev/null || true
+        # package.json format script - fall back to single file with prettier
+        npx prettier --write "$FILE_PATH" 2>/dev/null || true
         ;;
 esac
 

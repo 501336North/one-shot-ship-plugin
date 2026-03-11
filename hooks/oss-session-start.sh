@@ -65,6 +65,7 @@ HOOKS_TO_COPY=(
     "oss-detect-playwright.sh"
     "ensure-decrypt-cli.sh"
     "oss-iron-laws-sync.sh"
+    "oss-onboard-check.sh"
 )
 for hook in "${HOOKS_TO_COPY[@]}"; do
     if [[ -f "$PLUGIN_ROOT/hooks/$hook" ]]; then
