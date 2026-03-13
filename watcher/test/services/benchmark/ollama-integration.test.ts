@@ -10,12 +10,13 @@ import type { BenchmarkTask } from '../../../src/services/benchmark/types.js';
 
 // Mock the OllamaHandler to avoid actual network calls
 vi.mock('../../../src/services/handlers/ollama-handler.js', () => ({
-  OllamaHandler: vi.fn().mockImplementation(() => ({
-    handle: vi.fn(),
-    getBaseUrl: vi.fn().mockReturnValue('http://localhost:11434'),
-    getEndpoint: vi.fn().mockReturnValue('http://localhost:11434/api/chat'),
-    checkHealth: vi.fn(),
-  })),
+  OllamaHandler: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+    this.handle = vi.fn();
+    this.getBaseUrl = vi.fn().mockReturnValue('http://localhost:11434');
+    this.getEndpoint = vi.fn().mockReturnValue('http://localhost:11434/api/chat');
+    this.checkHealth = vi.fn();
+    return this;
+  }),
 }));
 
 describe('Ollama integration', () => {
@@ -37,7 +38,10 @@ describe('Ollama integration', () => {
       checkHealth: vi.fn(),
       getBaseUrl: vi.fn().mockReturnValue('http://localhost:11434'),
     };
-    vi.mocked(OllamaHandler).mockImplementation(() => mockHandler as ReturnType<typeof OllamaHandler>);
+    vi.mocked(OllamaHandler).mockImplementation(function (this: Record<string, unknown>) {
+      Object.assign(this, mockHandler);
+      return this as ReturnType<typeof OllamaHandler>;
+    });
 
     ollamaIntegration = new OllamaIntegration({
       model: 'qwen2.5-coder:7b',

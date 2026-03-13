@@ -18,6 +18,7 @@ import {
 import { WorkflowConfig, EncryptedWorkflowConfig, DEFAULT_WORKFLOW_CONFIGS } from '../../src/engine/types.js';
 
 // Mock fetch globally
+const originalFetch = global.fetch;
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
@@ -35,13 +36,17 @@ describe('WorkflowConfigAPI', () => {
   beforeEach(() => {
     // Save original env var
     originalOssConfigDir = process.env.OSS_CONFIG_DIR;
-    // Reset mocks
+    // Reset mocks and ensure mock fetch is active
     mockFetch.mockReset();
+    global.fetch = mockFetch;
     // Clear the cache before each test
     clearWorkflowConfigCache();
   });
 
   afterEach(() => {
+    // Restore original fetch to prevent leaking mock to other test files
+    global.fetch = originalFetch;
+
     // Restore original env var
     if (originalOssConfigDir !== undefined) {
       process.env.OSS_CONFIG_DIR = originalOssConfigDir;

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { LLMAnalyzer, LLMAnalysisResult } from '../src/detectors/llm-analyzer';
 import { QueueManager } from '../src/queue/manager';
 import { RuleEngine } from '../src/detectors/rules';
@@ -21,6 +21,7 @@ describe('LLMAnalyzer', () => {
     analyze: ReturnType<typeof vi.fn>;
   };
   let mockFetch: ReturnType<typeof vi.fn>;
+  const originalFetch = global.fetch;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -41,6 +42,11 @@ describe('LLMAnalyzer', () => {
       mockRuleEngine as unknown as RuleEngine,
       'test-api-key'
     );
+  });
+
+  afterEach(() => {
+    // Restore original fetch to prevent leaking mock to other test files
+    global.fetch = originalFetch;
   });
 
   // AC-006.1: LLM analyzes when rules don't match

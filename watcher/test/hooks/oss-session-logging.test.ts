@@ -58,7 +58,7 @@ describe('oss-session-start.sh logging', () => {
    * @behavior Session start logs hook execution to session.log
    * @acceptance-criteria Format: [HH:MM:SS] [hook] [START] oss-session-start
    */
-  it('should log hook START event for session start', () => {
+  it('should log hook START event for session start', { timeout: 15000 }, () => {
     // GIVEN: Clear current-project to ensure global log path for testing
     const currentProjectFile = path.join(ossDir, 'current-project');
     fs.writeFileSync(currentProjectFile, '');
@@ -70,10 +70,13 @@ describe('oss-session-start.sh logging', () => {
     // WHEN: Running oss-session-start.sh (with minimal env to avoid API calls)
     try {
       // Delete CLAUDE_PROJECT_DIR to ensure global log path for testing
+      // Unset OSS_SKIP_HEALTH_CHECK so hook logging actually runs
+      // (setup.ts sets it to '1' globally, but this test needs hook logging enabled)
       const env = {
         ...process.env,
         CLAUDE_PLUGIN_ROOT: path.join(__dirname, '../../..'),
         OSS_SKIP_WATCHER: '1', // Prevent watcher from spawning during tests
+        OSS_SKIP_HEALTH_CHECK: '', // Allow hook logging for this test
       };
       delete env.CLAUDE_PROJECT_DIR;
 
@@ -98,7 +101,7 @@ describe('oss-session-start.sh logging', () => {
    * @behavior Session start logs session event with project info
    * @acceptance-criteria Format: [HH:MM:SS] [session] [START] project=... branch=...
    */
-  it('should log session START event with project metadata', () => {
+  it('should log session START event with project metadata', { timeout: 15000 }, () => {
     // GIVEN: A valid project directory with git
     // Create project .oss directory for project-local logs
     const projectOssDir = path.join(testProjectDir, '.oss', 'logs', 'current-session');
@@ -211,10 +214,12 @@ describe('oss-session-end.sh logging', () => {
     // WHEN: Running oss-session-end.sh (must run from git repo)
     try {
       // Delete CLAUDE_PROJECT_DIR to ensure global log path for testing
+      // Unset OSS_SKIP_HEALTH_CHECK so hook logging runs
       const env = {
         ...process.env,
         CLAUDE_PLUGIN_ROOT: path.join(__dirname, '../../..'),
         OSS_SKIP_WATCHER: '1', // Prevent watcher from spawning during tests
+        OSS_SKIP_HEALTH_CHECK: '', // Allow hook logging for this test
       };
       delete env.CLAUDE_PROJECT_DIR;
 

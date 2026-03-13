@@ -104,7 +104,7 @@ source "${OSS_NOTIFY}" ${args}
 
     // Create a test version that uses our mock
     const testScript = ossNotifyContent.replace(
-      /TELEGRAM_CLI="\$PLUGIN_ROOT\/watcher\/dist\/cli\/telegram-notify\.js"/,
+      /TELEGRAM_CLI="\$\(resolve_cli "telegram-notify\.js" "watcher\/dist\/cli\/telegram-notify\.js"\)"/,
       `TELEGRAM_CLI="${mockTelegramScript}"`
     );
 
@@ -142,8 +142,12 @@ source "${OSS_NOTIFY}" ${args}
         settingsFile,
         JSON.stringify({
           notifications: {
-            style: 'visual',
+            style: 'telegram',
             verbosity: 'all',
+            telegram: {
+              linked: true,
+              enabled: true,
+            },
           },
         })
       );
@@ -172,8 +176,12 @@ source "${OSS_NOTIFY}" ${args}
         settingsFile,
         JSON.stringify({
           notifications: {
-            style: 'visual',
+            style: 'telegram',
             verbosity: 'all',
+            telegram: {
+              linked: true,
+              enabled: true,
+            },
           },
         })
       );
@@ -203,8 +211,12 @@ source "${OSS_NOTIFY}" ${args}
         settingsFile,
         JSON.stringify({
           notifications: {
-            style: 'visual',
+            style: 'telegram',
             verbosity: 'all',
+            telegram: {
+              linked: true,
+              enabled: true,
+            },
           },
         })
       );
@@ -229,8 +241,12 @@ source "${OSS_NOTIFY}" ${args}
         settingsFile,
         JSON.stringify({
           notifications: {
-            style: 'visual',
+            style: 'telegram',
             verbosity: 'all',
+            telegram: {
+              linked: true,
+              enabled: true,
+            },
           },
         })
       );
@@ -260,8 +276,12 @@ source "${OSS_NOTIFY}" ${args}
         settingsFile,
         JSON.stringify({
           notifications: {
-            style: 'visual',
+            style: 'telegram',
             verbosity: 'errors-only',
+            telegram: {
+              linked: true,
+              enabled: true,
+            },
           },
         })
       );
@@ -286,8 +306,12 @@ source "${OSS_NOTIFY}" ${args}
         settingsFile,
         JSON.stringify({
           notifications: {
-            style: 'visual',
+            style: 'telegram',
             verbosity: 'all',
+            telegram: {
+              linked: true,
+              enabled: true,
+            },
           },
         })
       );
@@ -317,8 +341,12 @@ source "${OSS_NOTIFY}" ${args}
         settingsFile,
         JSON.stringify({
           notifications: {
-            style: 'visual',
+            style: 'telegram',
             verbosity: 'all',
+            telegram: {
+              linked: true,
+              enabled: true,
+            },
           },
         })
       );
@@ -347,8 +375,12 @@ source "${OSS_NOTIFY}" ${args}
         settingsFile,
         JSON.stringify({
           notifications: {
-            style: 'visual',
+            style: 'telegram',
             verbosity: 'all',
+            telegram: {
+              linked: true,
+              enabled: true,
+            },
           },
         })
       );
@@ -377,8 +409,12 @@ process.exit(1);
         settingsFile,
         JSON.stringify({
           notifications: {
-            style: 'visual',
+            style: 'telegram',
             verbosity: 'all',
+            telegram: {
+              linked: true,
+              enabled: true,
+            },
           },
         })
       );
@@ -416,8 +452,12 @@ process.exit(0);
         settingsFile,
         JSON.stringify({
           notifications: {
-            style: 'visual',
+            style: 'telegram',
             verbosity: 'important',
+            telegram: {
+              linked: true,
+              enabled: true,
+            },
           },
         })
       );
@@ -436,8 +476,12 @@ process.exit(0);
         settingsFile,
         JSON.stringify({
           notifications: {
-            style: 'visual',
+            style: 'telegram',
             verbosity: 'important',
+            telegram: {
+              linked: true,
+              enabled: true,
+            },
           },
         })
       );
@@ -456,8 +500,12 @@ process.exit(0);
         settingsFile,
         JSON.stringify({
           notifications: {
-            style: 'visual',
+            style: 'telegram',
             verbosity: 'errors-only',
+            telegram: {
+              linked: true,
+              enabled: true,
+            },
           },
         })
       );
@@ -476,8 +524,12 @@ process.exit(0);
         settingsFile,
         JSON.stringify({
           notifications: {
-            style: 'visual',
+            style: 'telegram',
             verbosity: 'errors-only',
+            telegram: {
+              linked: true,
+              enabled: true,
+            },
           },
         })
       );

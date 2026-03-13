@@ -15,20 +15,21 @@ vi.mock('os');
 
 // Mock the benchmark services
 vi.mock('../../src/services/benchmark/runner.js', () => ({
-  BenchmarkRunner: vi.fn().mockImplementation(() => ({
-    runBenchmark: vi.fn().mockResolvedValue({
+  BenchmarkRunner: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+    this.runBenchmark = vi.fn().mockResolvedValue({
       id: 'benchmark-test-id',
       timestamp: '2025-01-17T12:00:00.000Z',
       tasks: [],
       results: new Map(),
-    }),
-    saveResults: vi.fn().mockResolvedValue(undefined),
-  })),
+    });
+    this.saveResults = vi.fn().mockResolvedValue(undefined);
+    return this;
+  }),
 }));
 
 vi.mock('../../src/services/benchmark/evaluator.js', () => ({
-  CompositeEvaluator: vi.fn().mockImplementation(() => ({
-    evaluate: vi.fn().mockResolvedValue({
+  CompositeEvaluator: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+    this.evaluate = vi.fn().mockResolvedValue({
       taskId: 'test-task',
       provider: 'test-provider',
       scores: {
@@ -40,10 +41,11 @@ vi.mock('../../src/services/benchmark/evaluator.js', () => ({
       },
       evaluatedAt: '2025-01-17T12:00:00.000Z',
       evaluatorType: 'composite',
-    }),
-  })),
-  AutomatedEvaluator: vi.fn().mockImplementation(() => ({
-    evaluate: vi.fn().mockResolvedValue({
+    });
+    return this;
+  }),
+  AutomatedEvaluator: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+    this.evaluate = vi.fn().mockResolvedValue({
       taskId: 'test-task',
       provider: 'test-provider',
       scores: {
@@ -55,13 +57,14 @@ vi.mock('../../src/services/benchmark/evaluator.js', () => ({
       },
       evaluatedAt: '2025-01-17T12:00:00.000Z',
       evaluatorType: 'automated',
-    }),
-  })),
+    });
+    return this;
+  }),
 }));
 
 vi.mock('../../src/services/benchmark/reporter.js', () => ({
-  BenchmarkReporter: vi.fn().mockImplementation(() => ({
-    generateReport: vi.fn().mockReturnValue({
+  BenchmarkReporter: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+    this.generateReport = vi.fn().mockReturnValue({
       id: 'report-test-id',
       generatedAt: '2025-01-17T12:00:00.000Z',
       summary: {
@@ -78,10 +81,11 @@ vi.mock('../../src/services/benchmark/reporter.js', () => ({
         providers: [],
       },
       recommendations: [],
-    }),
-    formatAsMarkdown: vi.fn().mockReturnValue('# Benchmark Report\n\nTest content'),
-    formatAsJson: vi.fn().mockReturnValue('{"id":"report-test-id"}'),
-  })),
+    });
+    this.formatAsMarkdown = vi.fn().mockReturnValue('# Benchmark Report\n\nTest content');
+    this.formatAsJson = vi.fn().mockReturnValue('{"id":"report-test-id"}');
+    return this;
+  }),
 }));
 
 vi.mock('../../src/services/benchmark/standard-tasks.js', () => ({

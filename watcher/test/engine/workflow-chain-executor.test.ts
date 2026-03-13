@@ -16,11 +16,12 @@ import {
 
 // Mock the custom command executor
 vi.mock('../../src/engine/custom-command-executor.js', () => ({
-  CustomCommandExecutor: vi.fn().mockImplementation(() => ({
-    execute: vi.fn(),
-    invokeCommand: vi.fn(),
-    shouldStopWorkflow: vi.fn(),
-  })),
+  CustomCommandExecutor: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+    this.execute = vi.fn();
+    this.invokeCommand = vi.fn();
+    this.shouldStopWorkflow = vi.fn();
+    return this;
+  }),
   isCustomCommand: vi.fn(),
   parseCustomCommand: vi.fn(),
 }));
@@ -45,7 +46,10 @@ describe('WorkflowChainExecutor', () => {
       shouldStopWorkflow: vi.fn(),
     };
 
-    (CustomCommandExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockCustomExecutor);
+    (CustomCommandExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(function (this: Record<string, unknown>) {
+      Object.assign(this, mockCustomExecutor);
+      return this;
+    });
 
     executor = new WorkflowChainExecutor({
       apiKey: 'test-api-key',
