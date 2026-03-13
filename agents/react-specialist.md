@@ -1,6 +1,6 @@
 ---
 name: react-specialist
-description: React expert. Use for React development, component architecture, and state management.
+description: Expert React specialist mastering React 18/19 with modern patterns and ecosystem. Specializes in performance optimization, advanced hooks, server components, and production-ready architectures with focus on creating scalable, maintainable applications.
 model_routing: true
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: devops-troubleshooter
-description: DevOps troubleshooting expert. Use for debugging production issues, infrastructure problems, and deployment failures.
+description: Debug production issues, analyze logs, and fix deployment failures. Masters monitoring tools, incident response, and root cause analysis. Use PROACTIVELY for production debugging or system outages.
 ---
 
 # devops-troubleshooter Agent

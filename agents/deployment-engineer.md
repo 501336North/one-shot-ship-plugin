@@ -1,6 +1,6 @@
 ---
 name: deployment-engineer
-description: Deployment and DevOps specialist. Use for CI/CD pipelines, containerization, and production deployments.
+description: Configure CI/CD pipelines, Docker containers, and cloud deployments. Handles GitHub Actions, Kubernetes, and infrastructure automation. Use PROACTIVELY when setting up deployments, containers, or CI/CD workflows.
 ---
 
 # deployment-engineer Agent

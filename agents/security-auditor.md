@@ -1,6 +1,6 @@
 ---
 name: security-auditor
-description: Security specialist. Use for security audits, vulnerability assessment, and secure coding practices.
+description: Review code for vulnerabilities, implement secure authentication, and ensure OWASP compliance. Handles JWT, OAuth2, CORS, CSP, and encryption. Use PROACTIVELY for security reviews, auth flows, or vulnerability fixes.
 model: opus
 model_routing: true
 ---

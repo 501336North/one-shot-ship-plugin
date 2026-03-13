@@ -1,6 +1,6 @@
 ---
 name: debugger
-description: Expert debugger. Use for investigating bugs, tracing issues, analyzing stack traces, and root cause analysis.
+description: Debugging specialist for errors, test failures, and unexpected behavior. Use proactively when encountering any issues.
 model: opus
 model_routing: true
 context: fork

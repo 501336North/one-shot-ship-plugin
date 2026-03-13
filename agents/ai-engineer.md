@@ -1,6 +1,6 @@
 ---
 name: ai-engineer
-description: AI/ML Engineer specializing in LLM applications, RAG systems, prompt engineering, and AI infrastructure. Use for AI-powered features, embeddings, and machine learning integration.
+description: Build LLM applications, RAG systems, and prompt pipelines. Implements vector search, agent orchestration, and AI API integrations. Use PROACTIVELY for LLM features, chatbots, or AI-powered applications.
 ---
 
 # ai-engineer Agent

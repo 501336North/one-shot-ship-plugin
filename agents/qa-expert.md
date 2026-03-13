@@ -1,6 +1,6 @@
 ---
 name: qa-expert
-description: Quality assurance specialist. Use for test strategy, test automation, and quality processes.
+description: Expert QA engineer specializing in comprehensive quality assurance, test strategy, and quality metrics. Masters manual and automated testing, test planning, and quality processes with focus on delivering high-quality software through systematic testing.
 ---
 
 # qa-expert Agent

@@ -1,6 +1,6 @@
 ---
 name: visionos-developer
-description: Expert VisionOS/Apple Vision Pro developer with RAG-powered Apple documentation. Use for visionOS apps, RealityKit, ARKit, spatial computing, immersive experiences, hand tracking, and 3D content.
+description: Expert VisionOS/Apple Vision Pro developer with RAG-powered Apple documentation. Expert VisionOS developer specializing in spatial computing, immersive experiences, and Apple Vision Pro applications. Masters RealityKit, SwiftUI 3D, ARKit, and visionOS-specific APIs. Use PROACTIVELY for VisionOS app development, spatial UI design, 3D content integration, and immersive space creation.
 ---
 
 # VisionOS Developer Agent

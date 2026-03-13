@@ -1,6 +1,6 @@
 ---
 name: test-automator
-description: Test automation specialist. Use for automated testing frameworks, CI integration, and test infrastructure.
+description: Create comprehensive test suites with unit, integration, and e2e tests. Sets up CI pipelines, mocking strategies, and test data. Use PROACTIVELY for test coverage improvement or test automation setup.
 ---
 
 # test-automator Agent

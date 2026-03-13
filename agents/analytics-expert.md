@@ -1,6 +1,6 @@
 ---
 name: analytics-expert
-description: Web analytics specialist. Use for GA4, GTM, Measurement Protocol, custom event tracking, and privacy-compliant analytics implementation.
+description: World-class web analytics specialist mastering Google Analytics 4 (GA4), Google Tag Manager (GTM), Measurement Protocol, custom event tracking, and privacy-compliant analytics implementation across platforms.
 ---
 
 # analytics-expert Agent

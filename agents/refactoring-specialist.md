@@ -1,6 +1,6 @@
 ---
 name: refactoring-specialist
-description: Refactoring expert. Use for code refactoring, design pattern implementation, and code modernization.
+description: Expert refactoring specialist mastering safe code transformation techniques and design pattern application. Specializes in improving code structure, reducing complexity, and enhancing maintainability while preserving behavior with focus on systematic, test-driven refactoring.
 model_routing: true
 context: fork
 ---

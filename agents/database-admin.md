@@ -1,6 +1,6 @@
 ---
 name: database-admin
-description: Database administration expert. Use for database optimization, migrations, replication, and maintenance.
+description: Manage database operations, backups, replication, and monitoring. Handles user permissions, maintenance tasks, and disaster recovery. Use PROACTIVELY for database setup, operational issues, or recovery procedures.
 ---
 
 # database-admin Agent
