@@ -4,7 +4,6 @@ description: Expert code review specialist. Proactively reviews code for quality
 model: opus
 model_routing: true
 context: fork
-background: true
 ---
 
 # code-reviewer Agent
