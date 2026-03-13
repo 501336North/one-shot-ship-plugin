@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TelegramNotifier, PRReviewInfo } from '../../src/services/telegram-notifier.js';
 
 // Mock global fetch for testing
+const originalFetch = global.fetch;
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
@@ -21,10 +22,13 @@ describe('TelegramNotifier', () => {
   beforeEach(() => {
     notifier = new TelegramNotifier(testBridgeUrl);
     vi.clearAllMocks();
+    global.fetch = mockFetch;
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    // Restore original fetch to prevent leaking mock to other test files
+    global.fetch = originalFetch;
   });
 
   describe('sendPRReviewNotification', () => {

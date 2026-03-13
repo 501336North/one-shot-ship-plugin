@@ -29,6 +29,8 @@ describe('BenchmarkRunner', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Re-stub fetch in case it was restored between test files
+    vi.stubGlobal('fetch', mockFetch);
 
     // Create mock CostTracker
     mockCostTracker = {
@@ -72,6 +74,7 @@ describe('BenchmarkRunner', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   describe('constructor', () => {

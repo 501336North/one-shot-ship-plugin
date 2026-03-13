@@ -20,22 +20,25 @@ const mockValidateClaim = vi.fn();
 const mockAnalyze = vi.fn();
 
 vi.mock('../../src/services/benchmark/runner.js', () => ({
-  BenchmarkRunner: vi.fn().mockImplementation(() => ({
-    runBenchmark: mockRunBenchmark,
-  })),
+  BenchmarkRunner: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+    this.runBenchmark = mockRunBenchmark;
+    return this;
+  }),
 }));
 
 vi.mock('../../src/services/benchmark/evaluator.js', () => ({
-  AutomatedEvaluator: vi.fn().mockImplementation(() => ({
-    evaluate: mockEvaluate,
-  })),
+  AutomatedEvaluator: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+    this.evaluate = mockEvaluate;
+    return this;
+  }),
 }));
 
 vi.mock('../../src/services/benchmark/analysis.js', () => ({
-  BenchmarkAnalyzer: vi.fn().mockImplementation(() => ({
-    analyze: mockAnalyze,
-    validateClaim: mockValidateClaim,
-  })),
+  BenchmarkAnalyzer: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+    this.analyze = mockAnalyze;
+    this.validateClaim = mockValidateClaim;
+    return this;
+  }),
 }));
 
 vi.mock('../../src/services/benchmark/standard-tasks.js', () => ({

@@ -4,7 +4,7 @@
  * @acceptance-criteria AC-REGISTRY.1 through AC-REGISTRY.4
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { ModelRegistry } from '../../src/services/model-registry.js';
 
 describe('ModelRegistry', () => {

@@ -10,14 +10,15 @@ import type { BenchmarkTask } from '../../../src/services/benchmark/types.js';
 
 // Mock the OpenRouterHandler to avoid actual network calls
 vi.mock('../../../src/services/handlers/openrouter-handler.js', () => ({
-  OpenRouterHandler: vi.fn().mockImplementation(() => ({
-    handle: vi.fn(),
-    getHeaders: vi.fn().mockReturnValue({
+  OpenRouterHandler: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+    this.handle = vi.fn();
+    this.getHeaders = vi.fn().mockReturnValue({
       Authorization: 'Bearer test-api-key',
       'Content-Type': 'application/json',
-    }),
-    getEndpoint: vi.fn().mockReturnValue('https://openrouter.ai/api/v1/chat/completions'),
-  })),
+    });
+    this.getEndpoint = vi.fn().mockReturnValue('https://openrouter.ai/api/v1/chat/completions');
+    return this;
+  }),
 }));
 
 describe('OpenRouter integration', () => {
@@ -40,7 +41,10 @@ describe('OpenRouter integration', () => {
         'Content-Type': 'application/json',
       }),
     };
-    vi.mocked(OpenRouterHandler).mockImplementation(() => mockHandler as ReturnType<typeof OpenRouterHandler>);
+    vi.mocked(OpenRouterHandler).mockImplementation(function (this: Record<string, unknown>) {
+      Object.assign(this, mockHandler);
+      return this as ReturnType<typeof OpenRouterHandler>;
+    });
 
     openRouterIntegration = new OpenRouterIntegration({
       apiKey: 'test-api-key',

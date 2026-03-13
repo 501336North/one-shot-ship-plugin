@@ -244,8 +244,8 @@ describe('Command Help Documentation - All Commands Baseline', () => {
       .map(f => f.replace('.md', ''));
   });
 
-  it('should have correct number of commands (54)', () => {
-    expect(allCommands.length).toBe(54);
+  it('should have correct number of commands (64)', () => {
+    expect(allCommands.length).toBe(64);
   });
 
   it('commands directory should exist', () => {

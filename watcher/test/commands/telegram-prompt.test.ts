@@ -27,20 +27,19 @@ describe('telegram.md command prompt', () => {
     const content = fs.readFileSync(commandPath, 'utf-8');
     expect(content).toContain('/oss:telegram on');
     expect(content).toContain('/oss:telegram off');
-    expect(content).toContain('/oss:telegram setup');
+    expect(content).toContain('/oss:telegram link');
   });
 
-  it('should include setup instructions with @BotFather', () => {
+  it('should include magic link setup instructions', () => {
     const content = fs.readFileSync(commandPath, 'utf-8');
-    expect(content).toContain('@BotFather');
-    expect(content).toContain('botToken');
-    expect(content).toContain('chatId');
+    expect(content).toContain('magic link');
+    expect(content).toContain('OSSDevWorkflowBot');
   });
 
-  it('should reference CLI tools for implementation', () => {
+  it('should reference API endpoints for implementation', () => {
     const content = fs.readFileSync(commandPath, 'utf-8');
-    expect(content).toContain('telegram-status');
-    expect(content).toContain('telegram-toggle');
-    expect(content).toContain('telegram-setup');
+    expect(content).toContain('telegram/status');
+    expect(content).toContain('telegram/link');
+    expect(content).toContain('telegram/notifications');
   });
 });

@@ -32,6 +32,7 @@ const OPUS_COMMANDS = ['plan', 'ideate', 'review', 'audit', 'postmortem', 'chaos
 // Commands that SHOULD use Haiku — display, config, routine operations
 const HAIKU_COMMANDS = [
   'changelog',
+  'context-report',
   'status',
   'legend',
   'settings',

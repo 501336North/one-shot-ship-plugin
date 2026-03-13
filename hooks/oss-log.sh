@@ -344,8 +344,11 @@ case "$ACTION" in
         # Update workflow-state.json for status line display
         # Detect "starting:" or "completed:" patterns in task message
         # Get project directory for --project-dir flag
+        # Priority: CLAUDE_PROJECT_DIR env var > ~/.oss/current-project file
         PROJECT_DIR=""
-        if [[ -f "$HOME/.oss/current-project" ]]; then
+        if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
+            PROJECT_DIR="$CLAUDE_PROJECT_DIR"
+        elif [[ -f "$HOME/.oss/current-project" ]]; then
             PROJECT_DIR=$(cat "$HOME/.oss/current-project" 2>/dev/null | tr -d '[:space:]')
         fi
 

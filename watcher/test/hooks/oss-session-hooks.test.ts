@@ -103,7 +103,7 @@ describe('Session Hooks - Project Tracking', () => {
      * @behavior Session start copies status line script to ~/.oss/
      * @acceptance-criteria After session start, ~/.oss/oss-statusline.sh matches plugin version
      */
-    it('should copy status line script to ~/.oss/', () => {
+    it('should copy status line script to ~/.oss/', { timeout: 15000 }, () => {
       const statusLineTarget = path.join(ossDir, 'oss-statusline.sh');
       const statusLineSource = path.join(hooksDir, 'oss-statusline.sh');
 

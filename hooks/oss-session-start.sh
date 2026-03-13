@@ -31,7 +31,7 @@ run_with_timeout() {
     fi
 }
 
-# Check for simple mode FIRST (if enabled, nothing else works)
+# Check for simple mode FIRST - CLAUDE_CODE_SIMPLE disables hooks/skills, OSS cannot function
 SIMPLE_CHECK_SCRIPT="$SCRIPT_DIR/oss-simple-mode-check.sh"
 if [[ -x "$SIMPLE_CHECK_SCRIPT" ]]; then
     "$SIMPLE_CHECK_SCRIPT"
@@ -43,7 +43,7 @@ chmod 700 ~/.oss  # Only owner can access
 
 # --- Session Logging (for supervisor visibility) ---
 LOG_SCRIPT="$SCRIPT_DIR/oss-log.sh"
-if [[ -x "$LOG_SCRIPT" ]]; then
+if [[ -x "$LOG_SCRIPT" ]] && [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]]; then
     "$LOG_SCRIPT" hook oss-session-start START
 fi
 
@@ -88,10 +88,12 @@ if [[ -n "$CLAUDE_PROJECT_DIR" ]]; then
     chmod 600 ~/.oss/current-project  # Only owner can read/write
 fi
 
-# Check Claude Code version (non-blocking)
-VERSION_CHECK_SCRIPT="$SCRIPT_DIR/oss-version-check.sh"
-if [[ -x "$VERSION_CHECK_SCRIPT" ]]; then
-    run_with_timeout 2 "$VERSION_CHECK_SCRIPT"
+# Check Claude Code version (non-blocking) - runs claude --version, MIN_VERSION is 2.1.50
+if [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]]; then
+    VERSION_CHECK_SCRIPT="$SCRIPT_DIR/oss-version-check.sh"
+    if [[ -x "$VERSION_CHECK_SCRIPT" ]]; then
+        run_with_timeout 2 "$VERSION_CHECK_SCRIPT"
+    fi
 fi
 
 # Check for API key configuration
@@ -108,11 +110,15 @@ if [[ -z "$API_KEY" ]]; then
     exit 0
 fi
 
-# Quick subscription check (non-blocking)
+# Quick subscription check (non-blocking, skipped in test environments)
 # Note: Full validation happens when skills are used
-SUBSCRIPTION_STATUS=$(curl -s -m 2 -H "Authorization: Bearer $API_KEY" \
-    "https://one-shot-ship-api.onrender.com/api/v1/subscription/status" 2>/dev/null | \
-    grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || echo "unknown")
+if [[ "${OSS_SKIP_HEALTH_CHECK:-}" == "1" ]]; then
+    SUBSCRIPTION_STATUS="active"
+else
+    SUBSCRIPTION_STATUS=$(curl -s -m 2 -H "Authorization: Bearer $API_KEY" \
+        "https://one-shot-ship-api.onrender.com/api/v1/subscription/status" 2>/dev/null | \
+        grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || echo "unknown")
+fi
 
 # Get project name for notification
 PROJECT_NAME="${CLAUDE_PROJECT_DIR##*/}"
@@ -135,10 +141,12 @@ esac
 # Clear iron-laws session marker (legacy cleanup)
 rm -f ~/.oss/iron-laws-session-notified 2>/dev/null
 
-# Sync Iron Laws into CLAUDE.md (freshness check)
-IRON_LAWS_SYNC_SCRIPT="$PLUGIN_ROOT/hooks/oss-iron-laws-sync.sh"
-if [[ -x "$IRON_LAWS_SYNC_SCRIPT" ]]; then
-    CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}" "$IRON_LAWS_SYNC_SCRIPT" 2>/dev/null || true
+# Sync Iron Laws into CLAUDE.md (freshness check, skipped in test environments)
+if [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]]; then
+    IRON_LAWS_SYNC_SCRIPT="$PLUGIN_ROOT/hooks/oss-iron-laws-sync.sh"
+    if [[ -x "$IRON_LAWS_SYNC_SCRIPT" ]]; then
+        CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}" "$IRON_LAWS_SYNC_SCRIPT" 2>/dev/null || true
+    fi
 fi
 
 # --- Watcher Management (US-001) ---
@@ -195,7 +203,7 @@ echo "[$TIMESTAMP] [session] [START] project=$PROJECT_NAME branch=$CURRENT_BRANC
 # prepareForNewSession clears stale workflow data (progress, currentTask, notifications)
 # while preserving chainState history and setting supervisor to 'watching'
 # NOTE: All node calls use run_with_timeout to prevent blocking Claude Code startup
-if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
+if [[ -f "$WORKFLOW_STATE_CLI" ]] && [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]]; then
     # Use --project-dir so state writes go to the project-local file
     _WF_PROJECT_DIR_ARGS=()
     if [[ -n "${CLAUDE_PROJECT_DIR:-}" && -d "${CLAUDE_PROJECT_DIR}/.oss" ]]; then
@@ -293,19 +301,20 @@ if [[ -f "$PROJECT_CONTEXT_FILE" ]]; then
 
     # Visual notification for context restore (via unified oss-notify.sh)
     # NOTE: Backgrounded to prevent blocking Claude Code startup
-    if [[ -x "$NOTIFY_SCRIPT" ]]; then
+    # Skip in test mode to prevent background processes from blocking test runners
+    if [[ -x "$NOTIFY_SCRIPT" ]] && [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]]; then
         "$NOTIFY_SCRIPT" --session context_restored "{\"project\": \"$PROJECT_NAME\", \"branch\": \"${BRANCH:-unknown}\", \"saveDate\": \"${SAVE_DATE}\", \"uncommitted\": $UNCOMMITTED_COUNT}" &
     fi
 else
     # No saved context - fresh start notification (via unified oss-notify.sh)
     # NOTE: Backgrounded to prevent blocking Claude Code startup
-    if [[ -x "$NOTIFY_SCRIPT" ]]; then
+    if [[ -x "$NOTIFY_SCRIPT" ]] && [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]]; then
         "$NOTIFY_SCRIPT" --session fresh_start "{\"project\": \"$PROJECT_NAME\"}" &
     fi
 fi
 
 # Log hook COMPLETE
-if [[ -x "$LOG_SCRIPT" ]]; then
+if [[ -x "$LOG_SCRIPT" ]] && [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]]; then
     "$LOG_SCRIPT" hook oss-session-start COMPLETE
 fi
 

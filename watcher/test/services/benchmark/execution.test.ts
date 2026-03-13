@@ -18,14 +18,14 @@ import { LLMJudgeEvaluator, CompositeEvaluator, EvaluationResult } from '../../.
 
 // Mock the BenchmarkRunner
 vi.mock('../../../src/services/benchmark/runner.js', () => ({
-  BenchmarkRunner: vi.fn(),
+  BenchmarkRunner: vi.fn().mockImplementation(function (this: Record<string, unknown>) { return this; }),
 }));
 
 // Mock the evaluators
 vi.mock('../../../src/services/benchmark/evaluator.js', () => ({
-  LLMJudgeEvaluator: vi.fn(),
-  CompositeEvaluator: vi.fn(),
-  AutomatedEvaluator: vi.fn(),
+  LLMJudgeEvaluator: vi.fn().mockImplementation(function (this: Record<string, unknown>) { return this; }),
+  CompositeEvaluator: vi.fn().mockImplementation(function (this: Record<string, unknown>) { return this; }),
+  AutomatedEvaluator: vi.fn().mockImplementation(function (this: Record<string, unknown>) { return this; }),
   EVALUATION_PROMPT: 'mock prompt',
 }));
 
@@ -111,19 +111,28 @@ describe('Benchmark Execution - Phase 3', () => {
       getTasks: vi.fn().mockReturnValue(standardTasks),
     };
 
-    vi.mocked(BenchmarkRunner).mockImplementation(() => mockRunner as unknown as BenchmarkRunner);
+    vi.mocked(BenchmarkRunner).mockImplementation(function (this: Record<string, unknown>) {
+      Object.assign(this, mockRunner);
+      return this as unknown as BenchmarkRunner;
+    });
 
     // Setup mock LLM evaluator
     mockLLMEvaluator = {
       evaluate: vi.fn(),
     };
-    vi.mocked(LLMJudgeEvaluator).mockImplementation(() => mockLLMEvaluator as unknown as LLMJudgeEvaluator);
+    vi.mocked(LLMJudgeEvaluator).mockImplementation(function (this: Record<string, unknown>) {
+      Object.assign(this, mockLLMEvaluator);
+      return this as unknown as LLMJudgeEvaluator;
+    });
 
     // Setup mock composite evaluator
     mockCompositeEvaluator = {
       evaluate: vi.fn(),
     };
-    vi.mocked(CompositeEvaluator).mockImplementation(() => mockCompositeEvaluator as unknown as CompositeEvaluator);
+    vi.mocked(CompositeEvaluator).mockImplementation(function (this: Record<string, unknown>) {
+      Object.assign(this, mockCompositeEvaluator);
+      return this as unknown as CompositeEvaluator;
+    });
   });
 
   afterEach(() => {

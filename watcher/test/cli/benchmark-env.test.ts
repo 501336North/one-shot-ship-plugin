@@ -15,6 +15,7 @@ vi.mock('os');
 
 describe('Benchmark environment checks', () => {
   let originalEnv: NodeJS.ProcessEnv;
+  const originalFetch = global.fetch;
 
   beforeEach(() => {
     vi.resetModules();
@@ -27,6 +28,8 @@ describe('Benchmark environment checks', () => {
 
   afterEach(() => {
     process.env = originalEnv;
+    // Restore original fetch to prevent leaking mock to other test files
+    global.fetch = originalFetch;
   });
 
   /**

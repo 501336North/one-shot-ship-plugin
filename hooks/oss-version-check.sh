@@ -7,19 +7,24 @@ MIN_MAJOR=2
 MIN_MINOR=1
 MIN_PATCH=50
 
-# Check if claude CLI is available
-if ! command -v claude &>/dev/null; then
-    exit 0
-fi
+# Allow override for testing (OSS_TEST_CC_VERSION="2.1.49")
+if [[ -n "${OSS_TEST_CC_VERSION:-}" ]]; then
+    VERSION="$OSS_TEST_CC_VERSION"
+else
+    # Check if claude CLI is available
+    if ! command -v claude &>/dev/null; then
+        exit 0
+    fi
 
-# Get version string (format: "X.Y.Z (Claude Code)")
-VERSION_OUTPUT=$(claude --version 2>/dev/null || true)
-if [[ -z "$VERSION_OUTPUT" ]]; then
-    exit 0
-fi
+    # Get version string (format: "X.Y.Z (Claude Code)")
+    VERSION_OUTPUT=$(claude --version 2>/dev/null || true)
+    if [[ -z "$VERSION_OUTPUT" ]]; then
+        exit 0
+    fi
 
-# Parse version: extract X.Y.Z from the output
-VERSION=$(echo "$VERSION_OUTPUT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    # Parse version: extract X.Y.Z from the output
+    VERSION=$(echo "$VERSION_OUTPUT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+fi
 if [[ -z "$VERSION" ]]; then
     exit 0
 fi
