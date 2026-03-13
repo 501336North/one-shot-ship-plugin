@@ -1,6 +1,6 @@
 ---
 name: performance-engineer
-description: Performance engineering specialist. Use for optimization, profiling, and performance tuning.
+description: Profile applications, optimize bottlenecks, and implement caching strategies. Handles load testing, CDN setup, and query optimization. Use PROACTIVELY for performance issues or optimization tasks.
 ---
 
 # performance-engineer Agent

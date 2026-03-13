@@ -1,6 +1,6 @@
 ---
 name: backend-architect
-description: Backend systems architect. Use for API design, database architecture, microservices, and server-side development.
+description: Design RESTful APIs, microservice boundaries, and database schemas. Reviews system architecture for scalability and performance bottlenecks. Use PROACTIVELY when creating new backend services or APIs.
 model: opus
 model_routing: true
 ---

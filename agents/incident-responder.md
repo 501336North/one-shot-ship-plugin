@@ -1,6 +1,6 @@
 ---
 name: incident-responder
-description: Incident response specialist. Use for production incidents, outage investigation, and emergency response.
+description: Handles production incidents with urgency and precision. Use IMMEDIATELY when production issues occur. Coordinates debugging, implements fixes, and documents post-mortems.
 model: opus
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: dependency-analyzer
-description: Dependency management specialist. Use for analyzing dependencies, resolving conflicts, and managing package updates.
+description: Analyzes project dependencies, identifies conflicts, and manages dependency updates for optimal project health.
 model: haiku
 ---
 

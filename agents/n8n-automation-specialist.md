@@ -1,6 +1,6 @@
 ---
 name: n8n-automation-specialist
-description: n8n workflow automation expert. Use for creating, debugging, and extending n8n workflows with optimized JSON output.
+description: n8n workflow automation expert. Creates, debugs, and extends n8n workflows with production-ready JSON output. Use for any n8n automation tasks.
 ---
 
 # n8n-automation-specialist Agent

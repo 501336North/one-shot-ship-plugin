@@ -1,6 +1,6 @@
 ---
 name: rust-pro
-description: Rust language expert. Use for Rust development, borrow checker issues, async/tokio patterns, and security auditing.
+description: Rust language expert with deep borrow checker, async/tokio, and security auditing expertise. Generates borrow-checker-clean code, explains ownership concepts, audits unsafe blocks, and integrates with London TDD workflow. Use PROACTIVELY for Rust development, compiler errors, async patterns, or security review.
 ---
 
 # rust-pro Agent

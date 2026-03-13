@@ -1,6 +1,6 @@
 ---
 name: mobile-developer
-description: Mobile development specialist. Use for iOS, Android, and cross-platform mobile development.
+description: Develop React Native or Flutter apps with native integrations. Handles offline sync, push notifications, and app store deployments. Use PROACTIVELY for mobile features, cross-platform code, or app optimization.
 ---
 
 # mobile-developer Agent

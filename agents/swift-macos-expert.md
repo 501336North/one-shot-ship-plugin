@@ -1,6 +1,6 @@
 ---
 name: swift-macos-expert
-description: Swift and macOS specialist. Use for macOS development, Swift programming, and Apple platform development.
+description: Use proactively for Swift and macOS desktop application development, debugging, testing, and architecture. Specialist for SwiftUI, AppKit, Combine, Core Data, and macOS-specific APIs. Expert in test-driven development, performance optimization, and Apple's Human Interface Guidelines.
 ---
 
 # swift-macos-expert Agent

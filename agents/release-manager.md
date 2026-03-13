@@ -1,6 +1,6 @@
 ---
 name: release-manager
-description: Release management specialist. Use for release planning, versioning, and deployment coordination.
+description: Release preparation and deployment specialist handling versioning, changelogs, deployments, and rollbacks. MUST BE USED for all production releases. Use PROACTIVELY to prepare releases and ensure smooth deployments.
 model: haiku
 ---
 

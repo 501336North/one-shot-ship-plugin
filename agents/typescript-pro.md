@@ -1,6 +1,6 @@
 ---
 name: typescript-pro
-description: TypeScript expert. Use for TypeScript development, type system design, and type-safe code.
+description: Master TypeScript with advanced types, generics, and strict type safety. Handles complex type systems, decorators, and enterprise-grade patterns. Use PROACTIVELY for TypeScript architecture, type inference optimization, or advanced typing patterns.
 model_routing: true
 ---
 

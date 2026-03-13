@@ -1,6 +1,6 @@
 ---
 name: graphql-architect
-description: GraphQL specialist. Use for GraphQL API design, schema design, and resolver implementation.
+description: Design GraphQL schemas, resolvers, and federation. Optimizes queries, solves N+1 problems, and implements subscriptions. Use PROACTIVELY for GraphQL API design or performance issues.
 ---
 
 # graphql-architect Agent

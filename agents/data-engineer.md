@@ -1,6 +1,6 @@
 ---
 name: data-engineer
-description: Data pipeline specialist. Use for ETL, data warehousing, streaming architectures, and data infrastructure.
+description: Build ETL pipelines, data warehouses, and streaming architectures. Implements Spark jobs, Airflow DAGs, and Kafka streams. Use PROACTIVELY for data pipeline design or analytics infrastructure.
 ---
 
 # data-engineer Agent
