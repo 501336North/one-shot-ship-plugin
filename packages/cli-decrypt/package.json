@@ -1,6 +1,6 @@
 {
   "name": "@oss/decrypt",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Local decryption CLI for OSS Dev Workflow",
   "type": "module",
   "main": "./dist/index.js",
