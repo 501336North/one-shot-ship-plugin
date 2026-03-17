@@ -24,8 +24,8 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/cli-entry.ts
-var import_fs5 = require("fs");
-var import_path6 = require("path");
+var import_fs6 = require("fs");
+var import_path7 = require("path");
 var import_os6 = require("os");
 
 // src/index.ts
@@ -407,8 +407,8 @@ async function setupCommand() {
 }
 
 // src/commands/decrypt.ts
-var import_fs4 = require("fs");
-var import_path5 = require("path");
+var import_fs5 = require("fs");
+var import_path6 = require("path");
 var import_os5 = require("os");
 
 // src/encryption.ts
@@ -589,20 +589,75 @@ async function verifyDecryptedPrompt(watermarkedContent, type, name, manifest) {
   return { verified: result.valid, skipped: false };
 }
 
+// src/update-state.ts
+var import_fs4 = require("fs");
+var import_path5 = require("path");
+function defaultState() {
+  return {
+    lastPluginVersion: "",
+    lastCheckedAt: "",
+    manifestVersion: 0,
+    manifestHashes: {},
+    promptSignatures: {}
+  };
+}
+function readUpdateState(filePath) {
+  if (!(0, import_fs4.existsSync)(filePath)) {
+    return defaultState();
+  }
+  try {
+    const content = (0, import_fs4.readFileSync)(filePath, "utf8");
+    const parsed = JSON.parse(content);
+    return {
+      lastPluginVersion: parsed.lastPluginVersion ?? "",
+      lastCheckedAt: parsed.lastCheckedAt ?? "",
+      manifestVersion: parsed.manifestVersion ?? 0,
+      manifestHashes: parsed.manifestHashes ?? {},
+      promptSignatures: parsed.promptSignatures ?? {}
+    };
+  } catch {
+    return defaultState();
+  }
+}
+function writeUpdateState(filePath, state) {
+  const dir = (0, import_path5.dirname)(filePath);
+  if (!(0, import_fs4.existsSync)(dir)) {
+    (0, import_fs4.mkdirSync)(dir, { recursive: true });
+  }
+  (0, import_fs4.writeFileSync)(filePath, JSON.stringify(state, null, 2), { mode: 384 });
+}
+
+// src/change-detection.ts
+function detectPromptChange(state, type, name, currentHash) {
+  const promptKey = `${type}/${name}`;
+  if (currentHash === null) {
+    return { changed: false, firstRun: false, promptKey, updatedSignatures: {} };
+  }
+  const cachedHash = state.promptSignatures[promptKey];
+  const firstRun = cachedHash === void 0;
+  const changed = !firstRun && cachedHash !== currentHash;
+  return {
+    changed,
+    firstRun,
+    promptKey,
+    updatedSignatures: { [promptKey]: currentHash }
+  };
+}
+
 // src/commands/decrypt.ts
 var DEFAULT_API_URL2 = "https://one-shot-ship-api.onrender.com";
 var MANIFEST_PUBLIC_KEY = "MCowBQYDK2VwAyEAAwFG32b8TuiVTxrDnXzNrb2v68YN5U9epLnZ3O7pQaI=";
 function getConfigDir3() {
-  return process.env.OSS_CONFIG_DIR || (0, import_path5.join)((0, import_os5.homedir)(), ".oss");
+  return process.env.OSS_CONFIG_DIR || (0, import_path6.join)((0, import_os5.homedir)(), ".oss");
 }
 function getCacheDir3() {
-  return (0, import_path5.join)(getConfigDir3(), "prompt-cache");
+  return (0, import_path6.join)(getConfigDir3(), "prompt-cache");
 }
 function getApiUrl() {
-  const configPath = (0, import_path5.join)(getConfigDir3(), "config.json");
-  if ((0, import_fs4.existsSync)(configPath)) {
+  const configPath = (0, import_path6.join)(getConfigDir3(), "config.json");
+  if ((0, import_fs5.existsSync)(configPath)) {
     try {
-      const content = (0, import_fs4.readFileSync)(configPath, "utf8");
+      const content = (0, import_fs5.readFileSync)(configPath, "utf8");
       const config = JSON.parse(content);
       return config.apiUrl || DEFAULT_API_URL2;
     } catch {
@@ -690,6 +745,23 @@ async function decryptCommand(type, name, debug = false, options = {}) {
     }
   } else {
     console.error("[verify] Manifest unavailable \u2014 skipping verification");
+  }
+  const manifestKey = `${type}/${name}`;
+  const currentHash = manifest?.prompts[manifestKey]?.hash ?? null;
+  const statePath = (0, import_path6.join)(getConfigDir3(), "update-state.json");
+  const updateState = readUpdateState(statePath);
+  const detection = detectPromptChange(updateState, type, name, currentHash);
+  if (detection.changed) {
+    console.error(`[update] /oss:${name} prompt updated`);
+  }
+  if (Object.keys(detection.updatedSignatures).length > 0) {
+    writeUpdateState(statePath, {
+      ...updateState,
+      promptSignatures: {
+        ...updateState.promptSignatures,
+        ...detection.updatedSignatures
+      }
+    });
   }
   console.log(plaintext);
 }
@@ -784,10 +856,10 @@ function showVersion() {
 var MANIFEST_PUBLIC_KEY2 = "MCowBQYDK2VwAyEAAwFG32b8TuiVTxrDnXzNrb2v68YN5U9epLnZ3O7pQaI=";
 var DEFAULT_API_URL3 = "https://one-shot-ship-api.onrender.com";
 function getApiUrl2() {
-  const configPath = (0, import_path6.join)((0, import_os6.homedir)(), ".oss", "config.json");
-  if ((0, import_fs5.existsSync)(configPath)) {
+  const configPath = (0, import_path7.join)((0, import_os6.homedir)(), ".oss", "config.json");
+  if ((0, import_fs6.existsSync)(configPath)) {
     try {
-      const config = JSON.parse((0, import_fs5.readFileSync)(configPath, "utf8"));
+      const config = JSON.parse((0, import_fs6.readFileSync)(configPath, "utf8"));
       return config.apiUrl || DEFAULT_API_URL3;
     } catch {
     }
@@ -872,6 +944,13 @@ async function runCli(args) {
 }
 
 // src/cli.ts
+var originalEmit = process.emit.bind(process);
+process.emit = function(event, ...args) {
+  if (event === "warning" && typeof args[0] === "object" && args[0] !== null && args[0].name === "ExperimentalWarning") {
+    return false;
+  }
+  return originalEmit(event, ...args);
+};
 runCli(process.argv.slice(2)).catch((err) => {
   console.error("Error:", err.message);
   process.exit(1);
