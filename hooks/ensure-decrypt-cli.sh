@@ -21,7 +21,7 @@ OSS_DECRYPT="${OSS_BIN_DIR}/oss-decrypt"
 GITHUB_RELEASES="https://github.com/501336North/one-shot-ship-plugin/releases/latest/download"
 
 # Minimum version required (1.2.0 adds --verify-manifest, --list-prompts, --category for /oss:trust)
-MINIMUM_VERSION="1.2.0"
+MINIMUM_VERSION="1.2.1"
 
 # =============================================================================
 # SECURITY: One-time cleanup of legacy prompt caches (v2.0.19+)
