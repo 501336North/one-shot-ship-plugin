@@ -75,48 +75,19 @@ Transform vague ideas into concrete, actionable designs through Socratic questio
 
 ## Step 1: Ensure Project Configuration
 
-**Check if CLAUDE.md exists:**
+**Run the Iron Laws sync script — it handles CLAUDE.md creation and updates automatically:**
 
 ```bash
-test -f CLAUDE.md && echo "EXISTS" || echo "MISSING"
+~/.oss/hooks/oss-iron-laws-sync.sh
 ```
 
-**If MISSING, fetch the full CLAUDE.md template from API and create it:**
+This script:
+- Creates CLAUDE.md with IRON LAWS if it doesn't exist
+- Updates IRON LAWS if the cache is stale (>24h)
+- Does nothing if CLAUDE.md already has fresh IRON LAWS
+- Uses proper JSON parsing for config (no fragile grep patterns)
 
-1. Read API key and base URL from `~/.oss/config.json`
-2. Extract credentials:
-```bash
-API_KEY=$(grep -o '"apiKey"[[:space:]]*:[[:space:]]*"[^"]*"' ~/.oss/config.json 2>/dev/null | sed 's/.*: *"\([^"]*\)"/\1/')
-API_BASE=$(grep -o '"apiUrl"[[:space:]]*:[[:space:]]*"[^"]*"' ~/.oss/config.json 2>/dev/null | sed 's/.*: *"\([^"]*\)"/\1/')
-API_BASE=${API_BASE:-"https://one-shot-ship-api.onrender.com"}
-```
-3. Use WebFetch to fetch the CLAUDE.md template:
-```
-URL: ${API_BASE}/api/v1/prompts/claude-md
-Headers: Authorization: Bearer ${API_KEY}
-```
-4. Use WebFetch to fetch the IRON LAWS:
-```
-URL: ${API_BASE}/api/v1/prompts/shared/iron-laws
-Headers: Authorization: Bearer ${API_KEY}
-```
-5. Merge: In the template content, replace the placeholder `<!-- IRON LAWS will be injected here by /oss:login -->` with the fetched IRON LAWS content wrapped in `<!-- IRON LAWS START -->` / `<!-- IRON LAWS END -->` markers
-6. Write the fully-formed CLAUDE.md to the project root
-
-**If API fetch fails** (no key, 401, network error), use the Write tool to create a minimal CLAUDE.md with this content:
-```
-# Project Development Guide
-
-This project uses OSS Dev Workflow. Run `/oss:login` to set up the full project configuration with IRON LAWS and development standards.
-
-## Quick Start
-- `/oss:ideate` - Design features
-- `/oss:plan` - Create TDD plans
-- `/oss:build` - Execute with TDD
-- `/oss:ship` - Quality check, commit, PR
-
-*Run `/oss:login` to get the complete CLAUDE.md with IRON LAWS.*
-```
+**If the script fails** (no API key, network error), proceed without CLAUDE.md — the ideation can still work.
 
 ## Step 2: Check Authentication
 
