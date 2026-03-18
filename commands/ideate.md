@@ -83,16 +83,16 @@ test -f CLAUDE.md && echo "EXISTS" || echo "MISSING"
 
 **If MISSING, fetch the full CLAUDE.md template from API and create it:**
 
-1. Read API key from `~/.oss/config.json`
-2. Fetch template from API:
+1. Read API key and base URL from `~/.oss/config.json`
+2. Extract credentials:
 ```bash
-API_KEY=$(cat ~/.oss/config.json 2>/dev/null | grep -o '"apiKey":"[^"]*"' | cut -d'"' -f4)
-API_BASE=$(cat ~/.oss/config.json 2>/dev/null | grep -o '"apiUrl":"[^"]*"' | cut -d'"' -f4)
+API_KEY=$(grep -o '"apiKey"[[:space:]]*:[[:space:]]*"[^"]*"' ~/.oss/config.json 2>/dev/null | sed 's/.*: *"\([^"]*\)"/\1/')
+API_BASE=$(grep -o '"apiUrl"[[:space:]]*:[[:space:]]*"[^"]*"' ~/.oss/config.json 2>/dev/null | sed 's/.*: *"\([^"]*\)"/\1/')
 API_BASE=${API_BASE:-"https://one-shot-ship-api.onrender.com"}
 ```
 3. Use WebFetch to fetch the CLAUDE.md template:
 ```
-URL: ${API_BASE}/api/v1/prompts/templates/claude-md
+URL: ${API_BASE}/api/v1/prompts/claude-md
 Headers: Authorization: Bearer ${API_KEY}
 ```
 4. Use WebFetch to fetch the IRON LAWS:

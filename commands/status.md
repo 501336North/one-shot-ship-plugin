@@ -54,7 +54,7 @@ Check your One Shot Ship subscription status and usage statistics.
 
 ```bash
 if [ -f ~/.oss/config.json ]; then
-    API_KEY=$(cat ~/.oss/config.json | grep -o '"apiKey":\s*"[^"]*"' | cut -d'"' -f4)
+    API_KEY=$(grep -o '"apiKey"[[:space:]]*:[[:space:]]*"[^"]*"' ~/.oss/config.json | sed 's/.*: *"\([^"]*\)"/\1/')
 fi
 ```
 
