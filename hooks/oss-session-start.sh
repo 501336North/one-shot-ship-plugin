@@ -66,6 +66,7 @@ HOOKS_TO_COPY=(
     "ensure-decrypt-cli.sh"
     "oss-iron-laws-sync.sh"
     "oss-onboard-check.sh"
+    "oss-setup-permissions.sh"
 )
 for hook in "${HOOKS_TO_COPY[@]}"; do
     if [[ -f "$PLUGIN_ROOT/hooks/$hook" ]]; then
@@ -140,6 +141,12 @@ esac
 
 # Clear iron-laws session marker (legacy cleanup)
 rm -f ~/.oss/iron-laws-session-notified 2>/dev/null
+
+# Setup project permissions (creates .claude/settings.local.json with OSS entries)
+SETUP_PERMS_SCRIPT="$PLUGIN_ROOT/hooks/oss-setup-permissions.sh"
+if [[ -x "$SETUP_PERMS_SCRIPT" ]]; then
+    "$SETUP_PERMS_SCRIPT" "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || true
+fi
 
 # Sync Iron Laws into CLAUDE.md (freshness check, skipped in test environments)
 if [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]]; then
