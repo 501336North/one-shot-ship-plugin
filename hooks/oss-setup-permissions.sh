@@ -27,6 +27,9 @@ OSS_PERMISSIONS=(
     'Bash(~/.oss/hooks/oss-write-learning.sh:*)'
     'Bash(~/.oss/hooks/oss-changelog.sh:*)'
     'Bash(~/.oss/hooks/fetch-iron-laws.sh:*)'
+    'Bash(~/.oss/hooks/oss-onboard-check.sh:*)'
+    'Bash(~/.oss/hooks/oss-setup-permissions.sh:*)'
+    'Bash(~/.oss/hooks/oss-detect-playwright.sh:*)'
     'Bash(~/.oss/bin/oss-decrypt:*)'
     'Bash(~/.oss/oss-statusline.sh:*)'
 )
@@ -58,11 +61,13 @@ else
     # Case 2: Settings file exists — merge OSS entries
     # Read existing allow list, add missing OSS entries
     if command -v python3 &>/dev/null; then
+        # Build permissions JSON safely via stdin (avoids shell injection)
+        OSS_PERMS_JSON=$(printf '%s\n' "${OSS_PERMISSIONS[@]}" | python3 -c "import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))")
         python3 -c "
 import json, sys
 
-settings_file = '$SETTINGS_FILE'
-oss_perms = $(python3 -c "import json; print(json.dumps([$(printf '"%s",' "${OSS_PERMISSIONS[@]}" | sed 's/,$//')]))")
+settings_file = sys.argv[1]
+oss_perms = json.loads(sys.argv[2])
 
 with open(settings_file) as f:
     data = json.load(f)
@@ -85,7 +90,7 @@ data['permissions'] = perms
 with open(settings_file, 'w') as f:
     json.dump(data, f, indent=2)
     f.write('\n')
-"
+" "$SETTINGS_FILE" "$OSS_PERMS_JSON"
     else
         # Fallback: no python3 — skip merge, don't overwrite
         # Check if OSS entries already present
