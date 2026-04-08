@@ -37,6 +37,10 @@ estimated_tokens: 15000-50000
 # Full pipeline with auto-merge
 /oss:auto --merge "redesign the pricing page"
 
+# Zero-approval mode: answer ideation questions, then walk away
+# Start CC with: claude --dangerously-skip-permissions
+# Then run: /oss:auto --merge "your feature"
+
 # Show help
 /oss:auto --help
 ```
