@@ -21,155 +21,103 @@ model: haiku
 **Arguments:**
 | Argument | Required | Description |
 |----------|----------|-------------|
-| `SUBCOMMAND` | No | clear, remove, status (default: show queue) |
+| `SUBCOMMAND` | No | add, status, drain, schedule, remove, clear (default: status) |
 
 **Options:**
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--help` | `-h` | Show this help message |
+| `--issue` | | GitHub issue URL to add |
+| `--review` | | PR URL for review-only item |
+| `--shared` | | Add to team shared queue |
 | `--verbose` | | Show full task details |
-| `--priority` | | Filter by priority level (low, medium, high, critical) |
 
 **Examples:**
 ```bash
-# Show all pending tasks
-/oss:queue
+# Show queue status
+/oss:queue status
 
-# Show queue with full details
-/oss:queue --verbose
+# Add a free-form item
+/oss:queue add "Build user profile page"
 
-# Remove all tasks
+# Add from GitHub issue
+/oss:queue add --issue https://github.com/org/repo/issues/42
+
+# Add PR for review only
+/oss:queue add --review https://github.com/org/repo/pull/7
+
+# Add to shared team queue
+/oss:queue add --shared "Refactor auth module"
+
+# Drain queue immediately
+/oss:queue drain
+
+# Schedule overnight execution
+/oss:queue schedule
+
+# Remove specific item
+/oss:queue remove <id>
+
+# Clear all items
 /oss:queue clear
-
-# Clear only low-priority tasks
-/oss:queue clear --priority low
-
-# Remove specific task by ID
-/oss:queue remove task-20251206-143022-a1b2
 ```
 
 **Related Commands:**
+- `/oss:build` - Execute queued tasks
 - `/oss:watcher` - Watcher agent management
 - `/oss:legend` - Status line legend
-- `/oss:build` - Execute queued tasks
 
 ---
 
-# /oss:queue - Task Queue Management
+# /oss:queue - Batch Queue Runner
 
-View and manage queued tasks detected by the watcher agent.
+Manage a work queue of features, issues, and PR reviews. Queue items for unattended execution via plan→build→ship pipeline.
 
-## What This Command Does
-
-1. **Shows queue status** - Displays pending tasks by priority
-2. **Manages tasks** - Clear, remove, or inspect tasks
-3. **Priority breakdown** - Shows count by priority level
-
-## Usage
-
-### View Queue
+## Step 1: Check Authentication
 
 ```bash
-# Show all pending tasks
-/oss:queue
-
-# Show queue with full details
-/oss:queue --verbose
+cat ~/.oss/config.json 2>/dev/null | grep apiKey
 ```
 
-### Clear Queue
+If no API key found:
+```
+No API key found. Run: /oss:login
+Register at https://www.oneshotship.com
+```
+
+## Step 2: Ensure Decrypt CLI Installed
 
 ```bash
-# Remove all tasks
-/oss:queue clear
-
-# Clear only low-priority tasks
-/oss:queue clear --priority low
+~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install decrypt CLI. Run /oss:login for manual setup."; exit 1; }
 ```
 
-### Remove Specific Task
+## Step 3: Fetch and Decrypt Prompt
 
 ```bash
-# Remove by task ID
-/oss:queue remove task-20251206-143022-a1b2
+~/.oss/bin/oss-decrypt --type workflows --name queue
 ```
 
-## Implementation
+The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
-When this command runs:
+## Step 4: Execute the Fetched Prompt
 
-1. **Read the queue file**:
-```bash
-cat .oss/queue.json
+The decrypted prompt contains full subcommand logic for add, status, drain, schedule, remove, and clear. Execute it with the ARGUMENTS passed by the user (the subcommand and any flags).
+
+**ARGUMENTS passthrough:** The user's subcommand (e.g., `add`, `status`, `drain`) and flags (e.g., `--issue`, `--shared`) are available in the ARGUMENTS variable. Pass them to the fetched prompt for parsing.
+
+## Error Handling
+
+### If API returns 401
+```
+Authentication failed. Run: /oss:login
 ```
 
-2. **Display summary**:
+### If API returns 403
 ```
-OSS Task Queue
-━━━━━━━━━━━━━━━
-
-Priority Breakdown:
-  Critical: 0
-  High:     2
-  Medium:   1
-  Low:      0
-
-Total: 3 pending tasks
+Subscription expired. Upgrade at: https://www.oneshotship.com/pricing
 ```
 
-3. **If --verbose, show task details**:
+### If API returns 500
 ```
-Task: task-20251206-143022-a1b2
-  Priority: high
-  Type: test_failure
-  Agent: debugger
-  Prompt: Fix the failing test in auth.test.ts...
-```
-
-## Subcommands
-
-### clear
-Removes all tasks from the queue. Use with caution.
-
-### remove <id>
-Removes a specific task by its ID.
-
-### status
-Shows just the count without task details (default).
-
-## File Locations
-
-- Active queue: `.oss/queue.json`
-- Failed tasks: `.oss/queue-failed.json`
-- Expired tasks: `.oss/queue-expired.json`
-
-## Examples
-
-```bash
-# Quick status check
-/oss:queue
-
-# See what's waiting
-/oss:queue --verbose
-
-# Start fresh
-/oss:queue clear
-
-# Skip a specific task
-/oss:queue remove task-20251206-143022-a1b2
-```
-
-## Integration with preCommand Hook
-
-The queue is automatically drained before each user command via the preCommand hook. Tasks execute in priority order:
-
-1. Critical (execute immediately)
-2. High (execute before user command)
-3. Medium (execute when queue drains)
-4. Low (execute when nothing else pending)
-
-Use `--no-queue` flag on any command to skip queue drain:
-
-```bash
-/oss:plan --no-queue
+API temporarily unavailable. Contact support@oneshotship.com
 ```
