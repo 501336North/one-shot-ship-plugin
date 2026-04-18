@@ -166,7 +166,7 @@ Chain Configuration:
 
 Agents:
   1. code-simplifier   [always]
-  2. frontend-design   [if has_ui_work]
+  2. ui-review          [if has_ui_work]
 
 Checkpoint: auto (continues automatically)
 

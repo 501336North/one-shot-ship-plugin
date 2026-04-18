@@ -154,7 +154,7 @@ export const DEFAULT_WORKFLOW_CONFIGS: Record<string, WorkflowConfig> = {
     ],
     agents: [
       { agent: 'code-simplifier', always: true },
-      { agent: 'frontend-design', condition: 'has_ui_work' },
+      { agent: 'ui-review', condition: 'has_ui_work' },
     ],
     checkpoint: 'auto',
   },

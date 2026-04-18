@@ -250,7 +250,7 @@ For EACH task in the plan, execute the TDD cycle with full logging:
 After this command completes, the workflow engine will:
 1. Evaluate conditions from your team's workflow config (fetched from the API)
 2. Execute the next commands in the chain based on those conditions
-3. Spawn any configured agents (e.g., code-simplifier, frontend-design)
+3. Spawn any configured agents (e.g., code-simplifier, ui-review)
 4. Stop at checkpoints for human review (if configured)
 
 Your team's workflow config controls:

@@ -60,7 +60,7 @@ describe('AgentSpawner', () => {
     it('should skip conditional agents when condition false', async () => {
       // Arrange
       const config: AgentConfig = {
-        agent: 'frontend-design',
+        agent: 'ui-review',
         condition: 'has_ui_work',
       };
       const context: WorkflowContext = {
@@ -72,7 +72,7 @@ describe('AgentSpawner', () => {
 
       // Assert
       expect(mockSpawner).not.toHaveBeenCalled();
-      expect(result.agent).toBe('frontend-design');
+      expect(result.agent).toBe('ui-review');
       expect(result.success).toBe(true);
       expect(result.output).toContain('skipped');
     });
@@ -80,7 +80,7 @@ describe('AgentSpawner', () => {
     it('should spawn conditional agents when condition true', async () => {
       // Arrange
       const config: AgentConfig = {
-        agent: 'frontend-design',
+        agent: 'ui-review',
         condition: 'has_ui_work',
       };
       const context: WorkflowContext = {
@@ -91,7 +91,7 @@ describe('AgentSpawner', () => {
       const result = await spawnAgent(config, context);
 
       // Assert
-      expect(mockSpawner).toHaveBeenCalledWith('frontend-design');
+      expect(mockSpawner).toHaveBeenCalledWith('ui-review');
       expect(result.success).toBe(true);
     });
 
@@ -218,7 +218,7 @@ describe('AgentSpawner', () => {
       // Arrange
       const configs: AgentConfig[] = [
         { agent: 'code-reviewer', always: true },
-        { agent: 'frontend-design', condition: 'has_ui_work' },
+        { agent: 'ui-review', condition: 'has_ui_work' },
       ];
       const context: WorkflowContext = {
         changedFiles: ['src/api/routes.ts'],
@@ -229,7 +229,7 @@ describe('AgentSpawner', () => {
 
       // Assert
       expect(results).toHaveLength(2);
-      const frontendResult = results.find((r) => r.agent === 'frontend-design');
+      const frontendResult = results.find((r) => r.agent === 'ui-review');
       expect(frontendResult?.output).toContain('skipped');
       expect(mockSpawner).toHaveBeenCalledTimes(1);
       expect(mockSpawner).toHaveBeenCalledWith('code-reviewer');
