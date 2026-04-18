@@ -41,7 +41,7 @@ estimated_tokens: 2000-6000
 
 **Related Commands:**
 - `/oss:ideate --figma` - Ideate with Figma designs (creates the Figma context)
-- `/oss:design-review` - General UX/UI design review
+- `/oss:ui-review` - UI quality review
 - `/oss:ship` - Ship phase (runs visual QA automatically if Figma context exists)
 
 ---

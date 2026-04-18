@@ -37,7 +37,7 @@ const PHASE_6_COMMANDS = ['monitor', 'incident', 'rollback', 'debug', 'trace', '
 const PHASE_7_COMMANDS = ['login', 'status', 'models', 'settings', 'telegram', 'webhook', 'watcher', 'queue', 'legend', 'docs'];
 
 // Phase 8: Specialized commands
-const PHASE_8_COMMANDS = ['iterate', 'chaos', 'cost', 'design-review', 'experiment', 'feature-flag', 'license', 'privacy', 'retro', 'oss', 'oss-audio'];
+const PHASE_8_COMMANDS = ['iterate', 'chaos', 'cost', 'ui-review', 'experiment', 'feature-flag', 'license', 'privacy', 'retro', 'oss', 'oss-audio'];
 
 // All phases
 const ALL_PHASE_COMMANDS = [

@@ -38,9 +38,9 @@ description: Create distinctive, production-grade frontend interfaces with high 
 ```
 
 **Related Commands:**
-- `/oss:design-review` - Post-hoc UX audit (review existing UI)
+- `/oss:ui-review` - Post-build UI quality review (heuristics + visual quality + design system)
 - `/oss:a11y` - Accessibility audit
-- `/oss:build` - Build phase (auto-triggers `frontend-design` agent for UI tasks)
+- `/oss:build` - Build phase (auto-triggers `ui-review` for UI tasks)
 
 ---
 

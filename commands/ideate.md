@@ -184,7 +184,7 @@ After this command completes, the workflow engine will:
 
 Your team's workflow config controls:
 - `chains_to`: Which commands run next (e.g., requirements, api-design, data-model, adr)
-- `agents`: Which agents to spawn (e.g., code-simplifier, frontend-design)
+- `agents`: Which agents to spawn (e.g., code-simplifier, ui-review)
 - `checkpoint`: Whether to pause for human review (human/auto)
 
 Conditions like `has_api_work`, `has_db_work`, and `has_ui_work` are evaluated automatically
