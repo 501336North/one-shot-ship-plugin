@@ -7,7 +7,7 @@ World-class development workflows for Claude Code. Ship software with confidence
 ```bash
 # In Claude Code
 /plugin marketplace add 501336north/one-shot-ship-plugin
-/plugin install oss@501336north-one-shot-ship-plugin
+/plugin install oss@one-shot-ship-plugin
 ```
 
 ## Getting Started
