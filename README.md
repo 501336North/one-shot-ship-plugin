@@ -14,7 +14,7 @@ World-class development workflows for Claude Code. Ship software with confidence
 
 1. **Register** at [oneshotship.com](https://www.oneshotship.com)
 2. **Login** in Claude Code: `/oss:login`
-3. **Start building**: `/oss:ideate "your idea"`
+3. **Start building**: `/oss:ideate "your idea"` — or `/oss:auto "your idea"` to run the whole pipeline in one go
 
 ## Core Workflow
 
@@ -28,6 +28,14 @@ World-class development workflows for Claude Code. Ship software with confidence
 | `/oss:plan` | Create TDD implementation plans |
 | `/oss:build` | Execute plans with strict TDD |
 | `/oss:ship` | Quality check, commit, PR, merge |
+| `/oss:auto` | Full pipeline (ideate → plan → build → ship) in one session |
+
+### One-shot shortcut
+
+Use `/oss:auto "your idea"` to run all four phases in a single session. It pauses only
+for interactive ideation Q&A, then drives plan → build → ship on its own. Best for
+well-scoped features. Use the four-command flow when you want explicit checkpoints
+between phases.
 
 ## London TDD Cycle
 
@@ -113,13 +121,13 @@ Configure audio cues for hands-free development:
 
 | Category | Commands |
 |----------|----------|
-| Core Workflow | 4 |
+| Core Workflow | 5 |
 | London TDD | 4 |
 | Design | 5 |
 | Testing & Quality | 8 |
 | Deployment | 3 |
 | Operations | 7 |
-| **Total** | **31** |
+| **Total** | **32** |
 
 ## Pricing
 

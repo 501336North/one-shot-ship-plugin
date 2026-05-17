@@ -12,6 +12,8 @@ estimated_tokens: 2000-8000
 
 **Workflow Position:** **IDEATE** → plan → build → ship
 
+> **Tip:** Want the full pipeline in one go? Use `/oss:auto` instead.
+
 **Usage:**
 ```bash
 /oss:ideate [OPTIONS] [IDEA]
