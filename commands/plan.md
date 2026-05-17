@@ -11,6 +11,8 @@ model: opus
 
 **Workflow Position:** ideate → **PLAN** → build → ship
 
+> **Tip:** Want the full pipeline in one go? Use `/oss:auto` instead.
+
 **Usage:**
 ```bash
 /oss:plan [OPTIONS] [FEATURE]

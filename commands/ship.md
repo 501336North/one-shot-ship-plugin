@@ -10,6 +10,8 @@ description: Quality check, commit, create PR, and optionally auto-merge
 
 **Workflow Position:** ideate → plan → build → **SHIP**
 
+> **Tip:** Want the full pipeline in one go? Use `/oss:auto` instead.
+
 **Usage:**
 ```bash
 /oss:ship [OPTIONS]
