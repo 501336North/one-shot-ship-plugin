@@ -63,6 +63,9 @@ export function parseCliArgs(args) {
         else if (arg === '--api-key' && args[i + 1]) {
             result.apiKey = args[++i];
         }
+        else if (arg === '--base-url' && args[i + 1]) {
+            result.baseUrl = args[++i];
+        }
         else if (arg === '--background') {
             result.background = true;
         }
@@ -130,6 +133,28 @@ export function loadApiKeyFromConfig(provider) {
     }
     return undefined;
 }
+/**
+ * Load the ollama base URL from config (`apiKeys.ollama`), if set.
+ * Lets a component route to a remote/networked ollama (e.g. DEEPBLUE over tailnet)
+ * instead of the localhost:11434 default. Returns undefined when not configured.
+ */
+export function loadOllamaBaseUrlFromConfig() {
+    const configPath = path.join(getUserConfigDir(), 'config.json');
+    try {
+        if (fs.existsSync(configPath)) {
+            const content = fs.readFileSync(configPath, 'utf-8');
+            const config = JSON.parse(content);
+            const url = config?.apiKeys?.ollama;
+            if (typeof url === 'string' && url.length > 0) {
+                return url;
+            }
+        }
+    }
+    catch {
+        // Return undefined on error (missing/malformed config)
+    }
+    return undefined;
+}
 // ============================================================================
 // PID File Management
 // ============================================================================
@@ -173,12 +198,13 @@ export function cleanupPidFile(port) {
  * Start the proxy server
  */
 export async function startProxy(options) {
-    const { model, port, apiKey, background, _testProxy } = options;
+    const { model, port, apiKey, baseUrl, background, _testProxy } = options;
     // Use test proxy if provided, otherwise create real one
     const proxy = _testProxy || new ModelProxy({
         model,
         port,
         apiKey,
+        baseUrl,
     });
     try {
         await proxy.start();
@@ -217,7 +243,7 @@ export async function startProxy(options) {
  * Start proxy in background mode
  */
 export async function startProxyBackground(options) {
-    const { model, port, apiKey, _testSpawn } = options;
+    const { model, port, apiKey, baseUrl, _testSpawn } = options;
     // Use injected spawn or real spawn
     const spawnFn = _testSpawn || spawn;
     // Build args for the child process
@@ -227,6 +253,9 @@ export async function startProxyBackground(options) {
     ];
     if (apiKey) {
         args.push('--api-key', apiKey);
+    }
+    if (baseUrl) {
+        args.push('--base-url', baseUrl);
     }
     // Spawn detached child process
     const child = spawnFn(process.execPath, [import.meta.url, ...args], {
@@ -331,6 +360,12 @@ async function main() {
     if (!apiKey && provider !== 'ollama') {
         apiKey = loadApiKeyFromConfig(provider);
     }
+    // Resolve the ollama base URL: explicit --base-url wins, else config apiKeys.ollama,
+    // else undefined (handler falls back to localhost:11434).
+    let baseUrl = parsedArgs.baseUrl;
+    if (!baseUrl && provider === 'ollama') {
+        baseUrl = loadOllamaBaseUrlFromConfig();
+    }
     try {
         let result;
         if (parsedArgs.background) {
@@ -339,6 +374,7 @@ async function main() {
                 model: parsedArgs.model,
                 port: parsedArgs.port,
                 apiKey,
+                baseUrl,
             });
         }
         else {
@@ -347,6 +383,7 @@ async function main() {
                 model: parsedArgs.model,
                 port: parsedArgs.port,
                 apiKey,
+                baseUrl,
                 background: false,
             });
             if (result.error) {

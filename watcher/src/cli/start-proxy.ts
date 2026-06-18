@@ -41,6 +41,8 @@ export interface ParsedArgs {
   model?: string;
   port: number;
   apiKey?: string;
+  /** Base URL for the provider (e.g. a remote/networked ollama like DEEPBLUE over tailnet) */
+  baseUrl?: string;
   background: boolean;
   showHelp: boolean;
   errors: string[];
@@ -53,6 +55,8 @@ export interface StartProxyOptions {
   model: string;
   port: number;
   apiKey?: string;
+  /** Base URL for the provider (ollama endpoint; defaults to localhost:11434 in the handler) */
+  baseUrl?: string;
   background: boolean;
   /** Test dependency injection for ModelProxy */
   _testProxy?: MockProxy;
@@ -96,6 +100,8 @@ export interface BackgroundStartOptions {
   model: string;
   port: number;
   apiKey?: string;
+  /** Base URL for the provider (ollama endpoint) */
+  baseUrl?: string;
   /** Test dependency injection for spawn */
   _testSpawn?: typeof spawn;
 }
@@ -137,6 +143,8 @@ export function parseCliArgs(args: string[]): ParsedArgs {
       }
     } else if (arg === '--api-key' && args[i + 1]) {
       result.apiKey = args[++i];
+    } else if (arg === '--base-url' && args[i + 1]) {
+      result.baseUrl = args[++i];
     } else if (arg === '--background') {
       result.background = true;
     }
@@ -219,6 +227,30 @@ export function loadApiKeyFromConfig(provider: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Load the ollama base URL from config (`apiKeys.ollama`), if set.
+ * Lets a component route to a remote/networked ollama (e.g. DEEPBLUE over tailnet)
+ * instead of the localhost:11434 default. Returns undefined when not configured.
+ */
+export function loadOllamaBaseUrlFromConfig(): string | undefined {
+  const configPath = path.join(getUserConfigDir(), 'config.json');
+
+  try {
+    if (fs.existsSync(configPath)) {
+      const content = fs.readFileSync(configPath, 'utf-8');
+      const config = JSON.parse(content);
+      const url = config?.apiKeys?.ollama;
+      if (typeof url === 'string' && url.length > 0) {
+        return url;
+      }
+    }
+  } catch {
+    // Return undefined on error (missing/malformed config)
+  }
+
+  return undefined;
+}
+
 // ============================================================================
 // PID File Management
 // ============================================================================
@@ -266,13 +298,14 @@ export function cleanupPidFile(port?: number): void {
  * Start the proxy server
  */
 export async function startProxy(options: StartProxyOptions): Promise<StartProxyResult> {
-  const { model, port, apiKey, background, _testProxy } = options;
+  const { model, port, apiKey, baseUrl, background, _testProxy } = options;
 
   // Use test proxy if provided, otherwise create real one
   const proxy = _testProxy || new ModelProxy({
     model,
     port,
     apiKey,
+    baseUrl,
   });
 
   try {
@@ -316,7 +349,7 @@ export async function startProxy(options: StartProxyOptions): Promise<StartProxy
  * Start proxy in background mode
  */
 export async function startProxyBackground(options: BackgroundStartOptions): Promise<StartProxyResult> {
-  const { model, port, apiKey, _testSpawn } = options;
+  const { model, port, apiKey, baseUrl, _testSpawn } = options;
 
   // Use injected spawn or real spawn
   const spawnFn = _testSpawn || spawn;
@@ -329,6 +362,10 @@ export async function startProxyBackground(options: BackgroundStartOptions): Pro
 
   if (apiKey) {
     args.push('--api-key', apiKey);
+  }
+
+  if (baseUrl) {
+    args.push('--base-url', baseUrl);
   }
 
   // Spawn detached child process
@@ -455,6 +492,13 @@ async function main(): Promise<void> {
     apiKey = loadApiKeyFromConfig(provider);
   }
 
+  // Resolve the ollama base URL: explicit --base-url wins, else config apiKeys.ollama,
+  // else undefined (handler falls back to localhost:11434).
+  let baseUrl = parsedArgs.baseUrl;
+  if (!baseUrl && provider === 'ollama') {
+    baseUrl = loadOllamaBaseUrlFromConfig();
+  }
+
   try {
     let result: StartProxyResult;
 
@@ -464,6 +508,7 @@ async function main(): Promise<void> {
         model: parsedArgs.model!,
         port: parsedArgs.port,
         apiKey,
+        baseUrl,
       });
     } else {
       // Start in foreground mode
@@ -471,6 +516,7 @@ async function main(): Promise<void> {
         model: parsedArgs.model!,
         port: parsedArgs.port,
         apiKey,
+        baseUrl,
         background: false,
       });
 

@@ -5,6 +5,8 @@
  * @acceptance-criteria AC-PROXY.1 through AC-PROXY.9
  */
 import * as http from 'http';
+import * as fs from 'fs';
+import * as path from 'path';
 import { createHandler, SUPPORTED_PROVIDERS } from './handler-registry.js';
 // ============================================================================
 // Helper Functions
@@ -231,6 +233,34 @@ export class ModelProxy {
     /**
      * Handle POST /v1/messages request
      */
+    /**
+     * Append a one-line JSON record of a forwarded request to the file named by OSS_PROXY_LOG.
+     * Opt-in only: when OSS_PROXY_LOG is unset this is a no-op (no default file, no disk growth).
+     * Lets the eval prove a routed agent actually hit a given provider/model. Best-effort: any
+     * failure is swallowed so logging never breaks routing.
+     */
+    logRequest(model) {
+        const logPath = process.env.OSS_PROXY_LOG;
+        if (!logPath)
+            return;
+        try {
+            const provider = isNewConfig(this.config)
+                ? this.parsedProvider
+                : this.config.provider;
+            const baseUrl = isNewConfig(this.config) ? this.config.baseUrl : undefined;
+            const line = JSON.stringify({
+                ts: new Date().toISOString(),
+                provider,
+                model: model ?? this.parsedModel,
+                baseUrl,
+            }) + '\n';
+            fs.mkdirSync(path.dirname(logPath), { recursive: true });
+            fs.appendFileSync(logPath, line);
+        }
+        catch {
+            /* observability must never break the proxy */
+        }
+    }
     handleMessagesRequest(req, res) {
         let body = '';
         req.on('data', (chunk) => {
@@ -247,6 +277,9 @@ export class ModelProxy {
                 res.end(JSON.stringify({ error: 'Invalid JSON body' }));
                 return;
             }
+            // Observability: record every forwarded request so callers (e.g. the model-routing eval)
+            // can VERIFY which model/provider actually served an agent. Never let logging break the proxy.
+            this.logRequest(requestBody?.model);
             // If we have a handler (new config), forward to it
             if (this.handler) {
                 try {

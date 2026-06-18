@@ -112,20 +112,35 @@ async function checkProxyHealth(
 /**
  * Check if Ollama is running locally
  */
+// The live Ollama tests below drive the real model `llama3.2`. "Available" therefore means Ollama is up
+// AND that model is pulled — otherwise the real call 404s and the suite fails instead of skipping.
+const OLLAMA_TEST_MODEL = 'llama3.2';
 async function isOllamaRunning(): Promise<boolean> {
   return new Promise((resolve) => {
     const req = http.request(
       {
         hostname: 'localhost',
         port: 11434,
-        path: '/',
+        path: '/api/tags',
         method: 'GET',
         timeout: 2000,
       },
       (res) => {
-        res.on('data', () => {});
+        let data = '';
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
         res.on('end', () => {
-          resolve(res.statusCode === 200);
+          if (res.statusCode !== 200) return resolve(false);
+          try {
+            const parsed = JSON.parse(data);
+            const names: string[] = Array.isArray(parsed.models)
+              ? parsed.models.map((m: { name?: string }) => m.name ?? '')
+              : [];
+            resolve(names.some((n) => n === OLLAMA_TEST_MODEL || n.split(':')[0] === OLLAMA_TEST_MODEL));
+          } catch {
+            resolve(false);
+          }
         });
       }
     );

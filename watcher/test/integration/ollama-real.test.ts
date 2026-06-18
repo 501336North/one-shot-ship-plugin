@@ -44,8 +44,12 @@ async function checkOllamaHealth(): Promise<boolean> {
           if (res.statusCode === 200) {
             try {
               const parsed = JSON.parse(data);
-              // Check if we have any models available
-              resolve(Array.isArray(parsed.models) && parsed.models.length > 0);
+              // Available only if the SPECIFIC model these tests need is pulled —
+              // otherwise the real call would 404 and the suite would fail instead of skip.
+              const names: string[] = Array.isArray(parsed.models)
+                ? parsed.models.map((m: { name?: string }) => m.name ?? '')
+                : [];
+              resolve(names.some((n) => n === OLLAMA_MODEL || n.split(':')[0] === OLLAMA_MODEL.split(':')[0]));
             } catch {
               resolve(false);
             }

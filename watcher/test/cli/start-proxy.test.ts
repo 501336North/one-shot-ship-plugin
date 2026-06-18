@@ -103,6 +103,17 @@ describe('start-proxy CLI', () => {
       expect(result.apiKey).toBe('sk-or-test123');
     });
 
+    it('should accept --base-url argument (remote ollama endpoint)', async () => {
+      const { parseCliArgs } = await import('../../src/cli/start-proxy.js');
+
+      const result = parseCliArgs([
+        '--model', 'ollama/gpt-oss:120b',
+        '--base-url', 'https://deepblue.tail1cda39.ts.net',
+      ]);
+
+      expect(result.baseUrl).toBe('https://deepblue.tail1cda39.ts.net');
+    });
+
     it('should accept --background flag', async () => {
       const { parseCliArgs } = await import('../../src/cli/start-proxy.js');
 
@@ -222,6 +233,28 @@ describe('start-proxy CLI', () => {
       const apiKey = loadApiKeyFromConfig('openrouter');
 
       expect(apiKey).toBe('sk-or-from-config');
+    });
+
+    it('should load ollama baseUrl from config apiKeys.ollama', async () => {
+      (fs.existsSync as Mock).mockImplementation((p: string) => {
+        return p.includes('config.json');
+      });
+      (fs.readFileSync as Mock).mockReturnValue(JSON.stringify({
+        apiKeys: { ollama: 'https://deepblue.tail1cda39.ts.net' },
+      }));
+
+      const { loadOllamaBaseUrlFromConfig } = await import('../../src/cli/start-proxy.js');
+
+      expect(loadOllamaBaseUrlFromConfig()).toBe('https://deepblue.tail1cda39.ts.net');
+    });
+
+    it('returns undefined ollama baseUrl when apiKeys.ollama absent', async () => {
+      (fs.existsSync as Mock).mockImplementation((p: string) => p.includes('config.json'));
+      (fs.readFileSync as Mock).mockReturnValue(JSON.stringify({ apiKeys: {} }));
+
+      const { loadOllamaBaseUrlFromConfig } = await import('../../src/cli/start-proxy.js');
+
+      expect(loadOllamaBaseUrlFromConfig()).toBeUndefined();
     });
   });
 

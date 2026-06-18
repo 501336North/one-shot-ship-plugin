@@ -24,6 +24,8 @@ export interface ParsedArgs {
     model?: string;
     port: number;
     apiKey?: string;
+    /** Base URL for the provider (e.g. a remote/networked ollama like DEEPBLUE over tailnet) */
+    baseUrl?: string;
     background: boolean;
     showHelp: boolean;
     errors: string[];
@@ -35,6 +37,8 @@ export interface StartProxyOptions {
     model: string;
     port: number;
     apiKey?: string;
+    /** Base URL for the provider (ollama endpoint; defaults to localhost:11434 in the handler) */
+    baseUrl?: string;
     background: boolean;
     /** Test dependency injection for ModelProxy */
     _testProxy?: MockProxy;
@@ -77,6 +81,8 @@ export interface BackgroundStartOptions {
     model: string;
     port: number;
     apiKey?: string;
+    /** Base URL for the provider (ollama endpoint) */
+    baseUrl?: string;
     /** Test dependency injection for spawn */
     _testSpawn?: typeof spawn;
 }
@@ -93,6 +99,12 @@ export declare function validateModel(model: string): ValidationResult;
  * Load API key from config file based on provider
  */
 export declare function loadApiKeyFromConfig(provider: string): string | undefined;
+/**
+ * Load the ollama base URL from config (`apiKeys.ollama`), if set.
+ * Lets a component route to a remote/networked ollama (e.g. DEEPBLUE over tailnet)
+ * instead of the localhost:11434 default. Returns undefined when not configured.
+ */
+export declare function loadOllamaBaseUrlFromConfig(): string | undefined;
 /**
  * Get PID file path
  * If port is specified, includes port in filename to allow multiple proxies
