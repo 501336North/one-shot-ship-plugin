@@ -98,6 +98,13 @@ export declare class ModelProxy {
     /**
      * Handle POST /v1/messages request
      */
+    /**
+     * Append a one-line JSON record of a forwarded request to the file named by OSS_PROXY_LOG.
+     * Opt-in only: when OSS_PROXY_LOG is unset this is a no-op (no default file, no disk growth).
+     * Lets the eval prove a routed agent actually hit a given provider/model. Best-effort: any
+     * failure is swallowed so logging never breaks routing.
+     */
+    private logRequest;
     private handleMessagesRequest;
 }
 //# sourceMappingURL=model-proxy.d.ts.map

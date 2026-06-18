@@ -27,7 +27,11 @@ function parseFrontmatter(filePath: string): Record<string, string | boolean> {
 }
 
 // Commands that MUST use Opus — strategic thinking, multi-perspective analysis
-const OPUS_COMMANDS = ['plan', 'ideate', 'review', 'audit', 'postmortem', 'chaos'];
+const OPUS_COMMANDS = ['plan', 'ideate', 'review', 'audit', 'postmortem', 'chaos', 'auto'];
+
+// Commands that MUST use Sonnet — routine but multi-step (e.g. decrypt+execute) where
+// Haiku proved unreliable. See #170 (queue uses sonnet for reliable multi-step decrypt+execute).
+const SONNET_COMMANDS = ['queue'];
 
 // Commands that SHOULD use Haiku — display, config, routine operations
 const HAIKU_COMMANDS = [
@@ -40,7 +44,6 @@ const HAIKU_COMMANDS = [
   'models',
   'pause',
   'resume',
-  'queue',
   'watcher',
   'telegram',
   'workflows',
@@ -94,6 +97,9 @@ const INHERIT_COMMANDS = [
   'verify',
   'visual-qa',
   'webhook',
+  'ui-ux',
+  'visual-test',
+  'xray',
 ];
 
 const VALID_MODEL_VALUES = ['opus', 'sonnet', 'haiku'];
@@ -131,6 +137,22 @@ describe('Command Model Frontmatter (Acceptance)', () => {
     );
   });
 
+  describe('Sonnet commands — routine multi-step, Haiku unreliable', () => {
+    it.each(SONNET_COMMANDS)(
+      'should have model: sonnet in frontmatter for %s',
+      (commandName) => {
+        // GIVEN - A command .md file that handles routine but multi-step work
+        const filePath = join(COMMANDS_DIR, `${commandName}.md`);
+
+        // WHEN - I parse its frontmatter
+        const frontmatter = parseFrontmatter(filePath);
+
+        // THEN - It should specify model: sonnet
+        expect(frontmatter.model).toBe('sonnet');
+      }
+    );
+  });
+
   describe('Inherit-parent commands — no model field', () => {
     it.each(INHERIT_COMMANDS)(
       'should NOT have model field in frontmatter for %s',
@@ -155,7 +177,12 @@ describe('Command Model Frontmatter (Acceptance)', () => {
         .map((f) => f.replace('.md', ''));
 
       // WHEN - I combine all three tier lists
-      const allCategorized = [...OPUS_COMMANDS, ...HAIKU_COMMANDS, ...INHERIT_COMMANDS].sort();
+      const allCategorized = [
+        ...OPUS_COMMANDS,
+        ...SONNET_COMMANDS,
+        ...HAIKU_COMMANDS,
+        ...INHERIT_COMMANDS,
+      ].sort();
 
       // THEN - Every command file should be in exactly one tier
       const sortedFiles = [...allCommandFiles].sort();

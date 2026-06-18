@@ -6,6 +6,7 @@
  */
 
 import * as http from 'http';
+import * as https from 'https';
 import type {
   AnthropicRequest,
   AnthropicResponse,
@@ -195,11 +196,12 @@ export class OllamaHandler {
   ): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const url = new URL(this.baseUrl);
+      const isHttps = url.protocol === 'https:';
       const data = body ? JSON.stringify(body) : '';
 
       const options: http.RequestOptions = {
         hostname: url.hostname,
-        port: parseInt(url.port) || 11434,
+        port: parseInt(url.port) || (isHttps ? 443 : 11434),
         path,
         method,
         headers: body
@@ -210,7 +212,10 @@ export class OllamaHandler {
           : {},
       };
 
-      const req = http.request(options, (res) => {
+      // Honor the base-URL scheme: an https:// remote ollama must not be silently
+      // downgraded to plaintext (would send prompts unencrypted to port 443).
+      const transport = isHttps ? https : http;
+      const req = transport.request(options, (res) => {
         let responseData = '';
 
         res.on('data', (chunk) => {

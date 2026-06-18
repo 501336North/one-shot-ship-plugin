@@ -7,6 +7,9 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import * as http from 'http';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 // These will be implemented
 import { ModelProxy } from '../../src/services/model-proxy.js';
@@ -171,6 +174,60 @@ describe('ModelProxy', () => {
 
       // Handler should process the request (even if it fails due to mock)
       expect(response.status).toBeDefined();
+    });
+
+    it('logs each /v1/messages request to OSS_PROXY_LOG (model + timestamp) for routing verification', async () => {
+      const logPath = path.join(os.tmpdir(), `proxy-log-test-${Date.now()}-${Math.floor(Math.random() * 1e6)}.jsonl`);
+      process.env.OSS_PROXY_LOG = logPath;
+      try {
+        const testHandler = {
+          handle: async () => ({ id: 'x', type: 'message', role: 'assistant', model: 'gpt-oss:120b', content: [], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }),
+          healthCheck: async () => true,
+        };
+        proxy = new ModelProxy({ model: 'ollama/gpt-oss:120b', port: 0, _testHandler: testHandler } as never);
+        await proxy.start();
+
+        await makeRequest(proxy.getPort(), '/v1/messages', {
+          model: 'gpt-oss:120b',
+          messages: [{ role: 'user', content: 'hi' }],
+          max_tokens: 4,
+        });
+
+        const logged = fs.readFileSync(logPath, 'utf-8');
+        expect(logged).toContain('gpt-oss:120b');
+        expect(logged).toContain('ollama');
+      } finally {
+        delete process.env.OSS_PROXY_LOG;
+        try { fs.unlinkSync(logPath); } catch { /* ignore */ }
+      }
+    });
+
+    it('does NOT write the legacy default log when OSS_PROXY_LOG is unset (opt-in only)', async () => {
+      const prev = process.env.OSS_PROXY_LOG;
+      delete process.env.OSS_PROXY_LOG;
+      // The previous implementation appended to this path even when unset. With the opt-in
+      // guard, an unset env var means a no-op — this file must be untouched.
+      const legacyDefault = path.join(os.homedir(), '.oss', 'proxy-requests.log');
+      const before = fs.existsSync(legacyDefault) ? fs.statSync(legacyDefault).mtimeMs : null;
+      try {
+        const testHandler = {
+          handle: async () => ({ id: 'x', type: 'message', role: 'assistant', model: 'gpt-oss:120b', content: [], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }),
+          healthCheck: async () => true,
+        };
+        proxy = new ModelProxy({ model: 'ollama/gpt-oss:120b', port: 0, _testHandler: testHandler } as never);
+        await proxy.start();
+
+        await makeRequest(proxy.getPort(), '/v1/messages', {
+          model: 'gpt-oss:120b',
+          messages: [{ role: 'user', content: 'hi' }],
+          max_tokens: 4,
+        });
+
+        const after = fs.existsSync(legacyDefault) ? fs.statSync(legacyDefault).mtimeMs : null;
+        expect(after).toBe(before); // unchanged (or still absent) → no write happened
+      } finally {
+        if (prev !== undefined) process.env.OSS_PROXY_LOG = prev;
+      }
     });
 
     it('should return 404 for unknown routes', async () => {

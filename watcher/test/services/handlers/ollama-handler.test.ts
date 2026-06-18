@@ -7,12 +7,22 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as http from 'http';
+import * as https from 'https';
 
 import { OllamaHandler } from '../../../src/services/handlers/ollama-handler.js';
 
 // Mock http.request
 vi.mock('http', async () => {
   const actual = await vi.importActual('http');
+  return {
+    ...actual,
+    request: vi.fn(),
+  };
+});
+
+// Mock https.request (remote ollama over TLS must not be downgraded to plaintext)
+vi.mock('https', async () => {
+  const actual = await vi.importActual('https');
   return {
     ...actual,
     request: vi.fn(),
@@ -90,6 +100,25 @@ describe('OllamaHandler', () => {
       // Ollama is local - no API key needed
       const h = new OllamaHandler({});
       expect(h).toBeDefined();
+    });
+  });
+
+  describe('transport scheme', () => {
+    it('uses https.request for an https:// base URL (no plaintext downgrade)', () => {
+      vi.mocked(https.request).mockReturnValue(
+        mockClientRequest as unknown as http.ClientRequest
+      );
+      const h = new OllamaHandler({ baseUrl: 'https://remote.example' });
+      void h.listModels(); // triggers makeRequest synchronously
+      expect(https.request).toHaveBeenCalledTimes(1);
+      expect(http.request).not.toHaveBeenCalled();
+    });
+
+    it('uses http.request for an http:// base URL', () => {
+      const h = new OllamaHandler({ baseUrl: 'http://localhost:11434' });
+      void h.listModels();
+      expect(http.request).toHaveBeenCalledTimes(1);
+      expect(https.request).not.toHaveBeenCalled();
     });
   });
 
