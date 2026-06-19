@@ -57,7 +57,7 @@ describe('agent-model-check CLI', () => {
         projectDir: '/test/project',
       });
 
-      expect(result).toEqual({ useProxy: false });
+      expect(result).toEqual({ useProxy: false, banner: '🤖 OSS model: Claude (session default)' });
     });
 
     it('should return useProxy: false when agent not in config', async () => {
@@ -79,7 +79,7 @@ describe('agent-model-check CLI', () => {
         projectDir: '/test/project',
       });
 
-      expect(result).toEqual({ useProxy: false });
+      expect(result).toEqual({ useProxy: false, banner: '🤖 OSS model: Claude (session default)' });
     });
 
     it('should return useProxy: false when model is "claude" or "default"', async () => {
@@ -99,7 +99,7 @@ describe('agent-model-check CLI', () => {
         projectDir: '/test/project',
       });
 
-      expect(result).toEqual({ useProxy: false });
+      expect(result).toEqual({ useProxy: false, banner: '🤖 OSS model: Claude (session default)' });
     });
   });
 
@@ -129,6 +129,7 @@ describe('agent-model-check CLI', () => {
         model: 'ollama/codellama',
         provider: 'ollama',
         proxyUrl: 'http://localhost:3456',
+        banner: '🤖 OSS model: ollama/codellama (ollama)',
       });
     });
 
@@ -154,6 +155,7 @@ describe('agent-model-check CLI', () => {
         model: 'openrouter/deepseek/deepseek-chat',
         provider: 'openrouter',
         proxyUrl: 'http://localhost:3456',
+        banner: '🤖 OSS model: openrouter/deepseek/deepseek-chat (openrouter)',
       });
     });
 
@@ -179,7 +181,69 @@ describe('agent-model-check CLI', () => {
         model: 'gemini/gemini-2.0-flash',
         provider: 'gemini',
         proxyUrl: 'http://localhost:3456',
+        banner: '🤖 OSS model: gemini/gemini-2.0-flash (gemini)',
       });
+    });
+
+    it('emits a human banner so the routed model is visible on every surface', async () => {
+      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.readFileSync as Mock).mockReturnValue(JSON.stringify({
+        models: { agents: { 'oss:code-reviewer': 'ollama/gpt-oss:120b' } },
+      }));
+      const { checkAgentModel } = await import('../../src/cli/agent-model-check.js');
+      const result = await checkAgentModel({
+        agentName: 'oss:code-reviewer',
+        projectDir: '/test/project',
+      });
+      expect(result.banner).toBe('🤖 OSS model: ollama/gpt-oss:120b (ollama)');
+    });
+
+    it('emits a Claude-tier banner for native agents too (every agent shows its model)', async () => {
+      (fs.existsSync as Mock).mockReturnValue(false); // no custom config, no readable frontmatter
+      const { checkAgentModel } = await import('../../src/cli/agent-model-check.js');
+      const result = await checkAgentModel({
+        agentName: 'oss:code-reviewer',
+        projectDir: '/test/project',
+      });
+      expect(result.useProxy).toBe(false);
+      expect(result.banner).toBe('🤖 OSS model: Claude (session default)');
+    });
+
+    it('reads the agent frontmatter tier for a native agent when available', async () => {
+      // existsSync true; readFileSync returns a frontmatter doc → tier is surfaced.
+      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.readFileSync as Mock).mockImplementation((p: string) =>
+        String(p).endsWith('.md')
+          ? '---\nname: code-reviewer\nmodel: opus\n---\nbody'
+          : JSON.stringify({ models: {} })
+      );
+      const { checkAgentModel } = await import('../../src/cli/agent-model-check.js');
+      const result = await checkAgentModel({
+        agentName: 'oss:code-reviewer',
+        projectDir: '/test/project',
+      });
+      expect(result.banner).toBe('🤖 OSS model: Opus (claude)');
+    });
+
+    it('parses a quoted frontmatter model with an inline comment', async () => {
+      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.readFileSync as Mock).mockImplementation((p: string) =>
+        String(p).endsWith('.md')
+          ? '---\nname: x\nmodel: "sonnet"  # routine\n---\nbody'
+          : JSON.stringify({ models: {} })
+      );
+      const { checkAgentModel } = await import('../../src/cli/agent-model-check.js');
+      const result = await checkAgentModel({ agentName: 'oss:test-engineer', projectDir: '/p' });
+      expect(result.banner).toBe('🤖 OSS model: Sonnet (claude)');
+    });
+
+    it('refuses path-separator agent names (no traversal) and falls back to session-default banner', async () => {
+      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.readFileSync as Mock).mockReturnValue('---\nmodel: opus\n---'); // would say "Opus" if it read it
+      const { checkAgentModel } = await import('../../src/cli/agent-model-check.js');
+      const result = await checkAgentModel({ agentName: 'oss:../../etc/passwd', projectDir: '/p' });
+      // The traversal guard returns before any frontmatter read → generic banner, not "Opus".
+      expect(result.banner).toBe('🤖 OSS model: Claude (session default)');
     });
   });
 
@@ -247,6 +311,7 @@ describe('agent-model-check CLI', () => {
         model: 'ollama/llama3.2',
         provider: 'ollama',
         proxyUrl: 'http://localhost:3456',
+        banner: '🤖 OSS model: ollama/llama3.2 (ollama)',
       });
     });
 
@@ -266,7 +331,7 @@ describe('agent-model-check CLI', () => {
         projectDir: '/test/project',
       });
 
-      expect(result).toEqual({ useProxy: false });
+      expect(result).toEqual({ useProxy: false, banner: '🤖 OSS model: Claude (session default)' });
     });
   });
 
@@ -295,7 +360,7 @@ describe('agent-model-check CLI', () => {
         projectDir: '/test/project',
       });
 
-      expect(result).toEqual({ useProxy: false });
+      expect(result).toEqual({ useProxy: false, banner: '🤖 OSS model: Claude (session default)' });
     });
   });
 
