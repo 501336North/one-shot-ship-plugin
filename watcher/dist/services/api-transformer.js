@@ -10,13 +10,30 @@
 /**
  * Transform Anthropic request to OpenAI format
  */
+/**
+ * Flatten Anthropic content (a plain string OR an array of content blocks) into a single string.
+ * The Claude CLI sends both `system` and `messages[].content` as content-block arrays; downstream
+ * providers (Ollama, OpenAI, Gemini) expect a string.
+ */
+export function flattenAnthropicContent(content) {
+    if (content == null)
+        return '';
+    if (typeof content === 'string')
+        return content;
+    if (!Array.isArray(content))
+        return '';
+    return content
+        .filter((block) => block.type === 'text')
+        .map((block) => block.text ?? '')
+        .join('');
+}
 export function transformToOpenAI(request) {
     const messages = [];
     // Add system message if present
     if (request.system) {
         messages.push({
             role: 'system',
-            content: request.system,
+            content: flattenAnthropicContent(request.system),
         });
     }
     // Transform messages

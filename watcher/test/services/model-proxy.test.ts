@@ -202,6 +202,30 @@ describe('ModelProxy', () => {
       }
     });
 
+    it('forces the proxy configured model onto the request (client cannot select a foreign model)', async () => {
+      // @behavior A nested `claude -p` session cannot pass a foreign model id (the Claude CLI
+      // rejects unknown --model client-side), so it sends its DEFAULT claude id. The proxy must
+      // override that with its configured model — otherwise Ollama 404s. (live-proof finding)
+      let received: { model?: string } | undefined;
+      const testHandler = {
+        handle: async (req: { model?: string }) => {
+          received = req;
+          return { id: 'x', type: 'message' as const, role: 'assistant' as const, model: 'gpt-oss:120b', content: [], stop_reason: 'end_turn' as const, usage: { input_tokens: 1, output_tokens: 1 } };
+        },
+        healthCheck: async () => true,
+      };
+      proxy = new ModelProxy({ model: 'ollama/gpt-oss:120b', port: 0, _testHandler: testHandler } as never);
+      await proxy.start();
+
+      await makeRequest(proxy.getPort(), '/v1/messages', {
+        model: 'claude-sonnet-4-5', // what a nested `claude -p` sends by default
+        messages: [{ role: 'user', content: 'hi' }],
+        max_tokens: 4,
+      });
+
+      expect(received?.model).toBe('ollama/gpt-oss:120b');
+    });
+
     it('does NOT write the legacy default log when OSS_PROXY_LOG is unset (opt-in only)', async () => {
       const prev = process.env.OSS_PROXY_LOG;
       delete process.env.OSS_PROXY_LOG;
@@ -487,11 +511,113 @@ describe('ModelProxy', () => {
 
       expect(mockHandler.handle).toHaveBeenCalledWith(
         expect.objectContaining({
-          model: 'codellama',
+          // Proxy forces its configured model (overriding the request's 'codellama').
+          model: 'ollama/codellama',
           messages: [{ role: 'user', content: 'Test message' }],
           max_tokens: 100,
         })
       );
+    });
+
+    it('answers HEAD / with 200 (claude CLI reachability probe — else it reports "model may not exist")', async () => {
+      proxy = new ModelProxy({ model: 'ollama/codellama', _testHandler: mockHandler });
+      await proxy.start();
+      const res = await makeRequest(proxy.getPort(), '/', {}, 'HEAD');
+      expect(res.status).toBe(200);
+    });
+
+    it('routes /v1/messages even with a query string (claude sends ?beta=true)', async () => {
+      proxy = new ModelProxy({ model: 'ollama/codellama', _testHandler: mockHandler });
+      await proxy.start();
+      await makeRequest(proxy.getPort(), '/v1/messages?beta=true', {
+        model: 'codellama',
+        messages: [{ role: 'user', content: 'hi' }],
+        max_tokens: 4,
+      });
+      expect(mockHandler.handle).toHaveBeenCalled();
+    });
+
+    it('emits an Anthropic SSE event stream when stream:true (the Claude CLI always streams)', async () => {
+      proxy = new ModelProxy({ model: 'ollama/codellama', _testHandler: mockHandler });
+      await proxy.start();
+
+      const res = await makeRequest(proxy.getPort(), '/v1/messages', {
+        model: 'codellama',
+        stream: true,
+        messages: [{ role: 'user', content: 'Hello' }],
+        max_tokens: 100,
+      });
+
+      const sse = res.body as string;
+      // Anthropic SSE event sequence the Claude CLI expects to parse.
+      expect(sse).toContain('event: message_start');
+      expect(sse).toContain('event: content_block_start');
+      expect(sse).toContain('event: content_block_delta');
+      expect(sse).toContain('Hello from mock handler'); // the model's text, as a text_delta
+      expect(sse).toContain('event: content_block_stop');
+      expect(sse).toContain('event: message_delta');
+      expect(sse).toContain('event: message_stop');
+    });
+
+    it('flushes message_start immediately, before the slow backend responds (prevents client idle-timeout)', async () => {
+      // @behavior With a buffered SSE, the client (claude -p) sees ~40s of silence while gpt-oss
+      // thinks, times out, and retries (observed: an 11-call loop). The proxy must flush the
+      // opening events right away and keep the stream alive until the backend returns.
+      let resolveHandler!: (r: unknown) => void;
+      const slowHandler = {
+        handle: () => new Promise((r) => { resolveHandler = r; }),
+        healthCheck: async () => true,
+      };
+      proxy = new ModelProxy({ model: 'ollama/gpt-oss:120b', port: 0, _testHandler: slowHandler } as never);
+      await proxy.start();
+
+      const chunks: string[] = [];
+      const done = new Promise<void>((resolve) => {
+        const req = http.request(
+          { hostname: '127.0.0.1', port: proxy.getPort(), path: '/v1/messages', method: 'POST', headers: { 'Content-Type': 'application/json' } },
+          (res) => {
+            res.on('data', (c) => chunks.push(c.toString()));
+            res.on('end', () => resolve());
+          }
+        );
+        req.end(JSON.stringify({ model: 'x', stream: true, messages: [{ role: 'user', content: 'hi' }], max_tokens: 10 }));
+      });
+
+      // While the backend is still pending, message_start must already be on the wire.
+      await new Promise((r) => setTimeout(r, 150));
+      expect(chunks.join('')).toContain('event: message_start');
+
+      // Now let the backend finish; the stream must complete cleanly.
+      resolveHandler({ id: 'm', type: 'message', role: 'assistant', model: 'gpt-oss:120b', content: [{ type: 'text', text: 'DONE_TEXT' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } });
+      await done;
+      const full = chunks.join('');
+      expect(full).toContain('DONE_TEXT');
+      expect(full).toContain('event: message_stop');
+    });
+
+    it('streams tool_use content blocks (input_json_delta) when the model calls a tool', async () => {
+      // @behavior gpt-oss can call tools; the SSE must surface tool_use blocks so the Claude CLI
+      // executes the tool (not just stream text). stop_reason must be tool_use.
+      const toolHandler = {
+        handle: async () => ({
+          id: 'm', type: 'message' as const, role: 'assistant' as const, model: 'gpt-oss:120b',
+          content: [{ type: 'tool_use' as const, id: 'toolu_9', name: 'Read', input: { path: 'a.ts' } }],
+          stop_reason: 'tool_use' as const, usage: { input_tokens: 1, output_tokens: 1 },
+        }),
+        healthCheck: async () => true,
+      };
+      proxy = new ModelProxy({ model: 'ollama/gpt-oss:120b', port: 0, _testHandler: toolHandler } as never);
+      await proxy.start();
+
+      const res = await makeRequest(proxy.getPort(), '/v1/messages', {
+        model: 'x', stream: true,
+        messages: [{ role: 'user', content: 'read a.ts' }], max_tokens: 50,
+      });
+      const sse = res.body as string;
+      expect(sse).toContain('"type":"tool_use"');
+      expect(sse).toContain('"name":"Read"');
+      expect(sse).toContain('input_json_delta');
+      expect(sse).toContain('"stop_reason":"tool_use"');
     });
 
     it('should return handler response as JSON', async () => {

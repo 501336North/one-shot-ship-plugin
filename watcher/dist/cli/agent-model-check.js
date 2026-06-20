@@ -21,9 +21,17 @@ import * as path from 'path';
 import * as os from 'os';
 import { parseProvider } from '../types/model-settings.js';
 /**
- * Proxy URL for model routing
+ * Default proxy port. NOT 3456 — that collides with claude-code-router's default. Resolution
+ * precedence: env OSS_PROXY_PORT > config models.proxyPort > default.
  */
-const PROXY_URL = 'http://localhost:3456';
+const DEFAULT_PROXY_PORT = 8473;
+/** Resolve the model-proxy port: env override > config (project>user) > default. */
+function resolveProxyPort(projectConfig, userConfig) {
+    const fromEnv = process.env.OSS_PROXY_PORT;
+    if (fromEnv && Number.isFinite(Number(fromEnv)))
+        return Number(fromEnv);
+    return projectConfig.models?.proxyPort ?? userConfig.models?.proxyPort ?? DEFAULT_PROXY_PORT;
+}
 /**
  * Load config from file path
  */
@@ -106,6 +114,12 @@ export async function checkAgentModel(params) {
     if (!agentName) {
         throw new Error('--agent is required');
     }
+    // Recursion guard: when OSS_OFFLOAD_ACTIVE=1 we are already inside a nested offload
+    // session running on the local model. Re-routing here would spawn offload-within-offload
+    // infinitely. Offload is depth-1 only. (AC-OFFLOAD.4)
+    if (process.env.OSS_OFFLOAD_ACTIVE === '1') {
+        return { useProxy: false };
+    }
     // Load configs with precedence: Project > User
     const userConfigPath = path.join(getUserConfigDir(), 'config.json');
     const projectConfigPath = path.join(projectDir, '.oss', 'config.json');
@@ -133,11 +147,12 @@ export async function checkAgentModel(params) {
     // At this point model is guaranteed to be a non-empty string (not undefined, 'claude', or 'default')
     const modelStr = model;
     const provider = parseProvider(modelStr);
+    const proxyUrl = `http://localhost:${resolveProxyPort(projectConfig, userConfig)}`;
     return {
         useProxy: true,
         model: model,
         provider: provider ?? undefined,
-        proxyUrl: PROXY_URL,
+        proxyUrl,
         banner: `🤖 OSS model: ${modelStr}${provider ? ` (${provider})` : ''}`,
     };
 }

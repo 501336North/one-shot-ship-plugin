@@ -57,6 +57,45 @@ Headers:
   Authorization: Bearer {apiKey}
 ```
 
+## Step 2.5: Local-Model Offload (opt-in, config-gated)
+
+**If a custom/local model is configured for this agent, run the agent's work on THAT model
+instead of reasoning here on Claude.** This fires ONLY when `~/.oss/config.json` maps this
+agent to a non-Claude model (e.g. `ollama/gpt-oss:120b`). With no mapping (the default), this
+is a no-op — skip to Step 3 and run natively.
+
+1. Assemble the prompt — write the **expert prompt fetched in Step 2**, a separator, then the
+   **exact task you were given** (the code/diff/files to act on) — to a temp file (use the Write tool):
+
+   ```bash
+   PROMPT_FILE="$(mktemp /tmp/oss-offload-python-pro.XXXXXX.md)"
+   # Write into $PROMPT_FILE:
+   #   <expert prompt from Step 2>
+   #   \n\n---\n\n
+   #   <the task/context you received>
+   ```
+
+2. Run the offloader (it spawns a nested Claude session pointed at your local model via the
+   :3456 proxy, with full tools in the current repo dir):
+
+   ```bash
+   AGENT_ID="oss:python-pro"
+   PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"
+   OFFLOAD="$PLUGIN_ROOT/watcher/dist/cli/agent-offload.js"
+   if [[ -f "$OFFLOAD" ]]; then
+     node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file "$PROMPT_FILE" --project-dir "$(pwd)"
+   else
+     echo '{"offloaded":false,"reason":"native"}'
+   fi
+   ```
+
+3. Parse the JSON result:
+   - **`offloaded: true`** → the local model did the work (generative agents: file edits already
+     landed in the repo). Present its `output` as your result. **STOP — do NOT re-run the work
+     on Claude in Step 3.**
+   - **`offloaded: false`** → run natively: proceed to Step 3. (Covers the default
+     no-model-configured case and any `fallback` after a local failure — your workflow never breaks.)
+
 ## Step 3: Execute the Fetched Prompt
 
 Execute the prompt returned by the API. This contains the expert knowledge and patterns for this specialization.

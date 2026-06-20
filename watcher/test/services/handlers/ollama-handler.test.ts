@@ -109,14 +109,14 @@ describe('OllamaHandler', () => {
         mockClientRequest as unknown as http.ClientRequest
       );
       const h = new OllamaHandler({ baseUrl: 'https://remote.example' });
-      void h.listModels(); // triggers makeRequest synchronously
+      void h.listModels().catch(() => {}); // fire-and-forget: we only assert the transport choice
       expect(https.request).toHaveBeenCalledTimes(1);
       expect(http.request).not.toHaveBeenCalled();
     });
 
     it('uses http.request for an http:// base URL', () => {
       const h = new OllamaHandler({ baseUrl: 'http://localhost:11434' });
-      void h.listModels();
+      void h.listModels().catch(() => {});
       expect(http.request).toHaveBeenCalledTimes(1);
       expect(https.request).not.toHaveBeenCalled();
     });
@@ -208,6 +208,186 @@ describe('OllamaHandler', () => {
         writtenBody.system === 'You are helpful' ||
           writtenBody.messages[0].content === 'You are helpful'
       ).toBe(true);
+    });
+
+    it('strips the ollama/ provider prefix from the model before sending to Ollama', async () => {
+      // @behavior A request for "ollama/gpt-oss:120b" must reach Ollama as "gpt-oss:120b",
+      // otherwise Ollama returns "model not found". Caught by the live deepblue proof.
+      const responseData = JSON.stringify({
+        model: 'gpt-oss:120b',
+        message: { role: 'assistant', content: 'ok' },
+        done: true,
+        prompt_eval_count: 5,
+        eval_count: 2,
+      });
+      mockResponse.on.mockImplementation(
+        (event: string, callback: (data?: string) => void) => {
+          if (event === 'data') setTimeout(() => callback(responseData), 0);
+          if (event === 'end') setTimeout(() => callback(), 10);
+          return mockResponse;
+        }
+      );
+
+      await handler.handle({
+        model: 'ollama/gpt-oss:120b',
+        messages: [{ role: 'user' as const, content: 'Hi' }],
+        max_tokens: 10,
+      });
+
+      const writtenBody = JSON.parse(
+        mockClientRequest.write.mock.calls[0][0] as string
+      );
+      expect(writtenBody.model).toBe('gpt-oss:120b');
+    });
+
+    it('translates tool_use/tool_result history into ollama assistant.tool_calls + tool-role messages', async () => {
+      const responseData = JSON.stringify({
+        model: 'gpt-oss:120b', message: { role: 'assistant', content: 'done' }, done: true,
+        prompt_eval_count: 5, eval_count: 2,
+      });
+      mockResponse.on.mockImplementation((event: string, cb: (d?: string) => void) => {
+        if (event === 'data') setTimeout(() => cb(responseData), 0);
+        if (event === 'end') setTimeout(() => cb(), 10);
+        return mockResponse;
+      });
+
+      await handler.handle({
+        model: 'ollama/gpt-oss:120b',
+        max_tokens: 100,
+        messages: [
+          { role: 'user' as const, content: 'read a.ts' },
+          { role: 'assistant' as const, content: [{ type: 'tool_use', id: 'toolu_1', name: 'Read', input: { path: 'a.ts' } }] },
+          { role: 'user' as const, content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'file contents here' }] },
+        ],
+      });
+
+      const body = JSON.parse(mockClientRequest.write.mock.calls[0][0] as string);
+      // assistant tool_use → ollama assistant message carrying tool_calls
+      const asst = body.messages.find((m: { role: string; tool_calls?: unknown }) => m.role === 'assistant' && m.tool_calls);
+      expect(asst.tool_calls[0].function).toMatchObject({ name: 'Read', arguments: { path: 'a.ts' } });
+      // tool_result → ollama tool-role message
+      const toolMsg = body.messages.find((m: { role: string }) => m.role === 'tool');
+      expect(toolMsg.content).toBe('file contents here');
+    });
+
+    it('parses stringified tool-call arguments into an object (some ollama builds return a JSON string)', async () => {
+      const responseData = JSON.stringify({
+        model: 'gpt-oss:120b',
+        message: {
+          role: 'assistant', content: '',
+          tool_calls: [{ function: { name: 'Read', arguments: '{"path":"a.ts"}' } }], // string, not object
+        },
+        done: true, prompt_eval_count: 5, eval_count: 2,
+      });
+      mockResponse.on.mockImplementation((event: string, cb: (d?: string) => void) => {
+        if (event === 'data') setTimeout(() => cb(responseData), 0);
+        if (event === 'end') setTimeout(() => cb(), 10);
+        return mockResponse;
+      });
+
+      const result = await handler.handle({
+        model: 'ollama/gpt-oss:120b', max_tokens: 100,
+        messages: [{ role: 'user' as const, content: 'read a.ts' }],
+      });
+
+      const toolUse = result.content.find((b) => b.type === 'tool_use') as { input: unknown };
+      expect(toolUse.input).toEqual({ path: 'a.ts' }); // object, not the raw string
+    });
+
+    it('translates ollama tool_calls into Anthropic tool_use blocks with stop_reason tool_use', async () => {
+      const responseData = JSON.stringify({
+        model: 'gpt-oss:120b',
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{ function: { name: 'Read', arguments: { path: 'a.ts' } } }],
+        },
+        done: true, prompt_eval_count: 5, eval_count: 2,
+      });
+      mockResponse.on.mockImplementation((event: string, cb: (d?: string) => void) => {
+        if (event === 'data') setTimeout(() => cb(responseData), 0);
+        if (event === 'end') setTimeout(() => cb(), 10);
+        return mockResponse;
+      });
+
+      const result = await handler.handle({
+        model: 'ollama/gpt-oss:120b',
+        messages: [{ role: 'user' as const, content: 'read a.ts' }],
+        max_tokens: 100,
+      });
+
+      const toolUse = result.content.find((b) => b.type === 'tool_use');
+      expect(toolUse).toMatchObject({ type: 'tool_use', name: 'Read', input: { path: 'a.ts' } });
+      expect((toolUse as { id: string }).id).toBeTruthy();
+      expect(result.stop_reason).toBe('tool_use');
+    });
+
+    it('maps Anthropic tools to ollama function-tool format (lets gpt-oss call tools)', async () => {
+      const responseData = JSON.stringify({
+        model: 'gpt-oss:120b', message: { role: 'assistant', content: 'ok' }, done: true,
+        prompt_eval_count: 5, eval_count: 2,
+      });
+      mockResponse.on.mockImplementation((event: string, cb: (d?: string) => void) => {
+        if (event === 'data') setTimeout(() => cb(responseData), 0);
+        if (event === 'end') setTimeout(() => cb(), 10);
+        return mockResponse;
+      });
+
+      await handler.handle({
+        model: 'ollama/gpt-oss:120b',
+        messages: [{ role: 'user' as const, content: 'read a file' }],
+        max_tokens: 100,
+        tools: [{
+          name: 'Read',
+          description: 'read a file',
+          input_schema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+        }],
+      });
+
+      const body = JSON.parse(mockClientRequest.write.mock.calls[0][0] as string);
+      expect(body.tools).toEqual([{
+        type: 'function',
+        function: {
+          name: 'Read',
+          description: 'read a file',
+          parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+        },
+      }]);
+    });
+
+    it('flattens an array-form system prompt to a string (the Claude CLI sends system as content blocks)', async () => {
+      // @behavior Ollama's /api/chat requires message.content to be a STRING. Claude sends the
+      // system prompt as an array of content blocks; passing that array through makes Ollama 500
+      // ("cannot unmarshal array ... into string"), which the Claude CLI retries in a loop.
+      const responseData = JSON.stringify({
+        model: 'gpt-oss:120b',
+        message: { role: 'assistant', content: 'ok' },
+        done: true,
+        prompt_eval_count: 5,
+        eval_count: 2,
+      });
+      mockResponse.on.mockImplementation(
+        (event: string, callback: (data?: string) => void) => {
+          if (event === 'data') setTimeout(() => callback(responseData), 0);
+          if (event === 'end') setTimeout(() => callback(), 10);
+          return mockResponse;
+        }
+      );
+
+      await handler.handle({
+        model: 'ollama/gpt-oss:120b',
+        system: [
+          { type: 'text', text: 'You are Claude.' },
+          { type: 'text', text: ' Be terse.' },
+        ],
+        messages: [{ role: 'user' as const, content: 'hi' }],
+        max_tokens: 10,
+      });
+
+      const writtenBody = JSON.parse(mockClientRequest.write.mock.calls[0][0] as string);
+      const sys = writtenBody.messages.find((m: { role: string }) => m.role === 'system');
+      expect(typeof sys.content).toBe('string');
+      expect(sys.content).toBe('You are Claude. Be terse.');
     });
 
     it('should transform Ollama response to Anthropic format', async () => {
@@ -369,6 +549,19 @@ describe('OllamaHandler', () => {
 
       expect(models).toContain('codellama:latest');
       expect(models).toContain('llama3.2:latest');
+    });
+
+    it('returns [] when the response has no models array (does not throw)', async () => {
+      const emptyResponse = JSON.stringify({}); // no `models` key
+      mockResponse.on.mockImplementation(
+        (event: string, callback: (data?: string) => void) => {
+          if (event === 'data') setTimeout(() => callback(emptyResponse), 0);
+          if (event === 'end') setTimeout(() => callback(), 10);
+          return mockResponse;
+        }
+      );
+
+      await expect(handler.listModels()).resolves.toEqual([]);
     });
   });
 });

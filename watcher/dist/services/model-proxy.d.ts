@@ -105,6 +105,14 @@ export declare class ModelProxy {
      * failure is swallowed so logging never breaks routing.
      */
     private logRequest;
+    /**
+     * Stream an Anthropic SSE response. The Claude CLI always sends stream:true and will time out
+     * (then retry in a loop) if it sees no bytes while the backend thinks. So we flush the opening
+     * events IMMEDIATELY and emit keepalive pings during inference, then stream the result as a
+     * single text_delta once the backend returns. Handles its own errors mid-stream (status 200
+     * is already committed once streaming begins).
+     */
+    private streamSseResponse;
     private handleMessagesRequest;
 }
 //# sourceMappingURL=model-proxy.d.ts.map

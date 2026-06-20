@@ -9,7 +9,7 @@
  *
  * Output (JSON):
  *   { "useProxy": false } - Use native Claude
- *   { "useProxy": true, "model": "ollama/codellama", "provider": "ollama", "proxyUrl": "http://localhost:3456" }
+ *   { "useProxy": true, "model": "ollama/codellama", "provider": "ollama", "proxyUrl": "http://localhost:8473" }
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, Mock } from 'vitest';
@@ -128,9 +128,87 @@ describe('agent-model-check CLI', () => {
         useProxy: true,
         model: 'ollama/codellama',
         provider: 'ollama',
-        proxyUrl: 'http://localhost:3456',
+        proxyUrl: 'http://localhost:8473',
         banner: '🤖 OSS model: ollama/codellama (ollama)',
       });
+    });
+
+    /**
+     * @behavior Recursion guard: a nested offload session must NEVER re-offload.
+     * @acceptance-criteria AC-OFFLOAD.4
+     * When OSS_OFFLOAD_ACTIVE=1 we are already INSIDE a nested mini-claudish session that
+     * is itself running on the local model. Re-routing here would spawn offload-within-offload
+     * infinitely. Offload is depth-1 only — even for an agent that is otherwise mapped.
+     */
+    it('should return useProxy: false when OSS_OFFLOAD_ACTIVE=1, even for a mapped agent (recursion guard)', async () => {
+      // GIVEN — the agent IS mapped to a local model (would normally route)
+      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.readFileSync as Mock).mockReturnValue(JSON.stringify({
+        models: {
+          agents: {
+            'oss:code-reviewer': 'ollama/gpt-oss:120b',
+          },
+        },
+      }));
+      // AND — we are already inside a nested offload session
+      process.env.OSS_OFFLOAD_ACTIVE = '1';
+
+      const { checkAgentModel } = await import('../../src/cli/agent-model-check.js');
+
+      const result = await checkAgentModel({
+        agentName: 'oss:code-reviewer',
+        projectDir: '/test/project',
+      });
+
+      // THEN — no further offload; the nested session reasons natively (on the local model
+      // it is already running against), never spawning another offload.
+      expect(result.useProxy).toBe(false);
+
+      delete process.env.OSS_OFFLOAD_ACTIVE;
+    });
+
+    /**
+     * @behavior Configurable proxy port — avoid the hardcoded :3456 collision (e.g. with
+     *           claude-code-router). Port resolves env > config(models.proxyPort) > default 8473.
+     * @acceptance-criteria AC-OFFLOAD.6
+     */
+    it('uses models.proxyPort from config in proxyUrl', async () => {
+      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.readFileSync as Mock).mockReturnValue(JSON.stringify({
+        models: {
+          proxyPort: 8456,
+          agents: { 'oss:code-reviewer': 'ollama/gpt-oss:120b' },
+        },
+      }));
+
+      const { checkAgentModel } = await import('../../src/cli/agent-model-check.js');
+      const result = await checkAgentModel({
+        agentName: 'oss:code-reviewer',
+        projectDir: '/test/project',
+      });
+
+      expect(result.proxyUrl).toBe('http://localhost:8456');
+    });
+
+    it('uses OSS_PROXY_PORT env override (highest precedence) in proxyUrl', async () => {
+      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.readFileSync as Mock).mockReturnValue(JSON.stringify({
+        models: {
+          proxyPort: 8456, // env should win over this
+          agents: { 'oss:code-reviewer': 'ollama/gpt-oss:120b' },
+        },
+      }));
+      process.env.OSS_PROXY_PORT = '9999';
+
+      const { checkAgentModel } = await import('../../src/cli/agent-model-check.js');
+      const result = await checkAgentModel({
+        agentName: 'oss:code-reviewer',
+        projectDir: '/test/project',
+      });
+
+      expect(result.proxyUrl).toBe('http://localhost:9999');
+
+      delete process.env.OSS_PROXY_PORT;
     });
 
     it('should return useProxy: true with openrouter model info', async () => {
@@ -154,7 +232,7 @@ describe('agent-model-check CLI', () => {
         useProxy: true,
         model: 'openrouter/deepseek/deepseek-chat',
         provider: 'openrouter',
-        proxyUrl: 'http://localhost:3456',
+        proxyUrl: 'http://localhost:8473',
         banner: '🤖 OSS model: openrouter/deepseek/deepseek-chat (openrouter)',
       });
     });
@@ -180,7 +258,7 @@ describe('agent-model-check CLI', () => {
         useProxy: true,
         model: 'gemini/gemini-2.0-flash',
         provider: 'gemini',
-        proxyUrl: 'http://localhost:3456',
+        proxyUrl: 'http://localhost:8473',
         banner: '🤖 OSS model: gemini/gemini-2.0-flash (gemini)',
       });
     });
@@ -310,7 +388,7 @@ describe('agent-model-check CLI', () => {
         useProxy: true,
         model: 'ollama/llama3.2',
         provider: 'ollama',
-        proxyUrl: 'http://localhost:3456',
+        proxyUrl: 'http://localhost:8473',
         banner: '🤖 OSS model: ollama/llama3.2 (ollama)',
       });
     });

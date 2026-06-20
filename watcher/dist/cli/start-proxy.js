@@ -20,11 +20,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn } from 'child_process';
+import { fileURLToPath } from 'url';
 import { ModelProxy } from '../services/model-proxy.js';
 // ============================================================================
 // Constants
 // ============================================================================
-const DEFAULT_PORT = 3456;
+// Default proxy port. NOT 3456 — that collides with claude-code-router's default. Override via
+// --port or config `models.proxyPort`.
+const DEFAULT_PORT = 8473;
 const SUPPORTED_PROVIDERS = ['ollama', 'openrouter'];
 // ============================================================================
 // CLI Argument Parsing
@@ -144,7 +147,9 @@ export function loadOllamaBaseUrlFromConfig() {
         if (fs.existsSync(configPath)) {
             const content = fs.readFileSync(configPath, 'utf-8');
             const config = JSON.parse(content);
-            const url = config?.apiKeys?.ollama;
+            // The model-routing config nests provider keys under `models.apiKeys`; also accept the
+            // legacy top-level `apiKeys` location.
+            const url = config?.models?.apiKeys?.ollama ?? config?.apiKeys?.ollama;
             if (typeof url === 'string' && url.length > 0) {
                 return url;
             }
@@ -257,8 +262,10 @@ export async function startProxyBackground(options) {
     if (baseUrl) {
         args.push('--base-url', baseUrl);
     }
-    // Spawn detached child process
-    const child = spawnFn(process.execPath, [import.meta.url, ...args], {
+    // Spawn detached child process. Use a real filesystem path — `node <file:// URL>` cannot be
+    // loaded as a script, so the child would crash instantly and the proxy would never bind.
+    const selfPath = fileURLToPath(import.meta.url);
+    const child = spawnFn(process.execPath, [selfPath, ...args], {
         detached: true,
         stdio: 'ignore',
     });

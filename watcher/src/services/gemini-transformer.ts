@@ -11,6 +11,7 @@ import {
   AnthropicResponseContent,
   AnthropicMessage,
   AnthropicContentBlock,
+  flattenAnthropicContent,
 } from './api-transformer.js';
 
 // ============================================================================
@@ -89,10 +90,10 @@ export function transformToGemini(request: AnthropicRequest): GeminiRequest {
     contents: [],
   };
 
-  // Handle system prompt as systemInstruction
+  // Handle system prompt as systemInstruction (string or content-block array → string)
   if (request.system) {
     result.systemInstruction = {
-      parts: [{ text: request.system }],
+      parts: [{ text: flattenAnthropicContent(request.system) }],
     };
   }
 
