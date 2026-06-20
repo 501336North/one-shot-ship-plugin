@@ -424,7 +424,8 @@ describe('Integration: Proxy + OpenRouter', () => {
     expect(result.status).toBe(200);
     expect(result.body).toHaveProperty('id');
     expect(result.body).toHaveProperty('type', 'message');
-    expect(mockHandler.handle).toHaveBeenCalledWith(request);
+    // The proxy force-selects its configured model (overriding the request's model).
+    expect(mockHandler.handle).toHaveBeenCalledWith({ ...request, model: 'openrouter/anthropic/claude-3-haiku' });
   });
 
   /**
@@ -640,7 +641,8 @@ describe('Integration: Agent to Proxy flow', () => {
     expect(result.status).toBe(200);
     const body = result.body as AnthropicResponse;
     expect(body.content[0].text).toContain('completed');
-    expect(mockHandler.handle).toHaveBeenCalledWith(agentRequest);
+    // The proxy force-selects its configured model (overriding the request's model).
+    expect(mockHandler.handle).toHaveBeenCalledWith({ ...agentRequest, model: 'ollama/codellama' });
   });
 
   /**

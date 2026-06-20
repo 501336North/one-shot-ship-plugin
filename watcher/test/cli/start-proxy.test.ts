@@ -80,12 +80,12 @@ describe('start-proxy CLI', () => {
       expect(result.errors).toContain('--model is required');
     });
 
-    it('should accept --port argument (default 3456)', async () => {
+    it('should accept --port argument (default 8473, not the CCR-colliding 3456)', async () => {
       const { parseCliArgs } = await import('../../src/cli/start-proxy.js');
 
-      // Without --port, should default to 3456
+      // Without --port, should default to 8473
       const result1 = parseCliArgs(['--model', 'ollama/codellama']);
-      expect(result1.port).toBe(3456);
+      expect(result1.port).toBe(8473);
 
       // With --port, should use specified port
       const result2 = parseCliArgs(['--model', 'ollama/codellama', '--port', '4567']);
@@ -248,6 +248,19 @@ describe('start-proxy CLI', () => {
       expect(loadOllamaBaseUrlFromConfig()).toBe('https://deepblue.tail1cda39.ts.net');
     });
 
+    it('loads ollama baseUrl from the nested models.apiKeys.ollama (where the model config puts it)', async () => {
+      // The model-routing config nests provider keys under `models.apiKeys`; auto-start must find
+      // the remote ollama URL there, not only at the top level.
+      (fs.existsSync as Mock).mockImplementation((p: string) => p.includes('config.json'));
+      (fs.readFileSync as Mock).mockReturnValue(JSON.stringify({
+        models: { apiKeys: { ollama: 'http://100.86.42.12:11434' } },
+      }));
+
+      const { loadOllamaBaseUrlFromConfig } = await import('../../src/cli/start-proxy.js');
+
+      expect(loadOllamaBaseUrlFromConfig()).toBe('http://100.86.42.12:11434');
+    });
+
     it('returns undefined ollama baseUrl when apiKeys.ollama absent', async () => {
       (fs.existsSync as Mock).mockImplementation((p: string) => p.includes('config.json'));
       (fs.readFileSync as Mock).mockReturnValue(JSON.stringify({ apiKeys: {} }));
@@ -291,6 +304,22 @@ describe('start-proxy CLI', () => {
       expect(mockChild.unref).toHaveBeenCalled();
       expect(result.background).toBe(true);
       expect(result.pid).toBe(54321);
+    });
+
+    it('spawns the child with a filesystem path, not a file:// URL (else node cannot load it and the proxy never binds)', async () => {
+      const { startProxyBackground } = await import('../../src/cli/start-proxy.js');
+      const mockChild = { pid: 1, unref: vi.fn(), on: vi.fn(), stdout: { on: vi.fn() }, stderr: { on: vi.fn() } };
+      const mockSpawn = vi.fn().mockReturnValue(mockChild);
+
+      await startProxyBackground({
+        model: 'ollama/codellama',
+        port: 8473,
+        _testSpawn: mockSpawn as unknown as typeof childProcess.spawn,
+      });
+
+      const scriptArg = (mockSpawn.mock.calls[0][1] as string[])[0];
+      expect(scriptArg.startsWith('file:')).toBe(false);
+      expect(scriptArg).toMatch(/start-proxy\.(js|ts)$/);
     });
 
     it('should write pid file to .oss/proxy.pid', async () => {

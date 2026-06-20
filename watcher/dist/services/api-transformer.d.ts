@@ -37,7 +37,7 @@ export interface AnthropicRequest {
     model: string;
     messages: AnthropicMessage[];
     max_tokens: number;
-    system?: string;
+    system?: string | AnthropicContentBlock[];
     temperature?: number;
     top_p?: number;
     stream?: boolean;
@@ -119,6 +119,12 @@ export interface OpenAIResponse {
 /**
  * Transform Anthropic request to OpenAI format
  */
+/**
+ * Flatten Anthropic content (a plain string OR an array of content blocks) into a single string.
+ * The Claude CLI sends both `system` and `messages[].content` as content-block arrays; downstream
+ * providers (Ollama, OpenAI, Gemini) expect a string.
+ */
+export declare function flattenAnthropicContent(content: string | AnthropicContentBlock[] | undefined): string;
 export declare function transformToOpenAI(request: AnthropicRequest): OpenAIRequest;
 /**
  * Transform OpenAI response to Anthropic format

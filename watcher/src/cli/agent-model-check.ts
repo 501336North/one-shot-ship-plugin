@@ -23,9 +23,20 @@ import * as os from 'os';
 import { parseProvider } from '../types/model-settings.js';
 
 /**
- * Proxy URL for model routing
+ * Default proxy port. NOT 3456 — that collides with claude-code-router's default. Resolution
+ * precedence: env OSS_PROXY_PORT > config models.proxyPort > default.
  */
-const PROXY_URL = 'http://localhost:3456';
+const DEFAULT_PROXY_PORT = 8473;
+
+/** Resolve the model-proxy port: env override > config (project>user) > default. */
+function resolveProxyPort(
+  projectConfig: { models?: { proxyPort?: number } },
+  userConfig: { models?: { proxyPort?: number } },
+): number {
+  const fromEnv = process.env.OSS_PROXY_PORT;
+  if (fromEnv && Number.isFinite(Number(fromEnv))) return Number(fromEnv);
+  return projectConfig.models?.proxyPort ?? userConfig.models?.proxyPort ?? DEFAULT_PROXY_PORT;
+}
 
 /**
  * Result from checking agent model configuration
@@ -63,6 +74,7 @@ export interface ParsedArgs {
 interface RawConfig {
   models?: {
     default?: string;
+    proxyPort?: number;
     agents?: Record<string, string>;
     commands?: Record<string, string>;
     skills?: Record<string, string>;
@@ -153,6 +165,13 @@ export async function checkAgentModel(params: CheckAgentModelParams): Promise<Ch
     throw new Error('--agent is required');
   }
 
+  // Recursion guard: when OSS_OFFLOAD_ACTIVE=1 we are already inside a nested offload
+  // session running on the local model. Re-routing here would spawn offload-within-offload
+  // infinitely. Offload is depth-1 only. (AC-OFFLOAD.4)
+  if (process.env.OSS_OFFLOAD_ACTIVE === '1') {
+    return { useProxy: false };
+  }
+
   // Load configs with precedence: Project > User
   const userConfigPath = path.join(getUserConfigDir(), 'config.json');
   const projectConfigPath = path.join(projectDir, '.oss', 'config.json');
@@ -188,11 +207,13 @@ export async function checkAgentModel(params: CheckAgentModelParams): Promise<Ch
   const modelStr = model as string;
   const provider = parseProvider(modelStr);
 
+  const proxyUrl = `http://localhost:${resolveProxyPort(projectConfig, userConfig)}`;
+
   return {
     useProxy: true,
     model: model,
     provider: provider ?? undefined,
-    proxyUrl: PROXY_URL,
+    proxyUrl,
     banner: `🤖 OSS model: ${modelStr}${provider ? ` (${provider})` : ''}`,
   };
 }

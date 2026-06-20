@@ -9,7 +9,7 @@ import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Provider } from '../types/model-settings.js';
-import type { AnthropicRequest, AnthropicResponse } from './api-transformer.js';
+import type { AnthropicRequest, AnthropicResponse, AnthropicResponseContent } from './api-transformer.js';
 import { createHandler, type Handler, type SupportedProvider, SUPPORTED_PROVIDERS } from './handler-registry.js';
 
 // ============================================================================
@@ -274,15 +274,24 @@ export class ModelProxy {
   ): void {
     const url = req.url || '/';
     const method = req.method || 'GET';
+    const pathname = url.split('?')[0]; // claude appends query strings (e.g. /v1/messages?beta=true)
+
+    // Reachability probe: the Claude CLI sends `HEAD /` before any work; if it 404s, claude
+    // concludes the endpoint/model is unavailable ("model may not exist"). Answer it.
+    if (pathname === '/' && (method === 'HEAD' || method === 'GET')) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(method === 'HEAD' ? undefined : JSON.stringify({ ok: true }));
+      return;
+    }
 
     // Route GET /health
-    if (url === '/health' && method === 'GET') {
+    if (pathname === '/health' && method === 'GET') {
       this.handleHealthRequest(res);
       return;
     }
 
-    // Route /v1/messages
-    if (url === '/v1/messages') {
+    // Route /v1/messages (tolerate query strings)
+    if (pathname === '/v1/messages') {
       if (method !== 'POST') {
         res.writeHead(405, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Method not allowed' }));
@@ -349,6 +358,106 @@ export class ModelProxy {
     }
   }
 
+  /**
+   * Stream an Anthropic SSE response. The Claude CLI always sends stream:true and will time out
+   * (then retry in a loop) if it sees no bytes while the backend thinks. So we flush the opening
+   * events IMMEDIATELY and emit keepalive pings during inference, then stream the result as a
+   * single text_delta once the backend returns. Handles its own errors mid-stream (status 200
+   * is already committed once streaming begins).
+   */
+  private async streamSseResponse(
+    res: http.ServerResponse,
+    requestBody: AnthropicRequest
+  ): Promise<void> {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    });
+    const send = (event: string, data: Record<string, unknown>): void => {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const id = `msg_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+
+    // Flush opening events right away so the client sees bytes before the (slow) backend responds.
+    send('message_start', {
+      type: 'message_start',
+      message: {
+        id,
+        type: 'message',
+        role: 'assistant',
+        model: requestBody.model,
+        content: [],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+    });
+    // Keepalive while the backend is thinking — prevents the client's idle/first-byte timeout.
+    // (Content blocks follow once we know whether the model produced text or a tool_use.)
+    const ping = setInterval(() => {
+      try {
+        send('ping', { type: 'ping' });
+      } catch {
+        /* connection closed */
+      }
+    }, 5000);
+
+    try {
+      const response = await this.handler!.handle(requestBody);
+      clearInterval(ping);
+
+      // Emit each content block — text as text_delta, tool_use as input_json_delta — so the
+      // Claude CLI can render text AND execute tool calls.
+      const blocks: AnthropicResponseContent[] =
+        response.content.length > 0 ? response.content : [{ type: 'text', text: '' }];
+      blocks.forEach((block, index) => {
+        if (block.type === 'tool_use') {
+          send('content_block_start', {
+            type: 'content_block_start',
+            index,
+            content_block: { type: 'tool_use', id: block.id, name: block.name, input: {} },
+          });
+          send('content_block_delta', {
+            type: 'content_block_delta',
+            index,
+            delta: { type: 'input_json_delta', partial_json: JSON.stringify(block.input ?? {}) },
+          });
+        } else {
+          send('content_block_start', {
+            type: 'content_block_start',
+            index,
+            content_block: { type: 'text', text: '' },
+          });
+          send('content_block_delta', {
+            type: 'content_block_delta',
+            index,
+            delta: { type: 'text_delta', text: block.text ?? '' },
+          });
+        }
+        send('content_block_stop', { type: 'content_block_stop', index });
+      });
+
+      send('message_delta', {
+        type: 'message_delta',
+        delta: { stop_reason: response.stop_reason ?? 'end_turn', stop_sequence: null },
+        usage: { output_tokens: response.usage?.output_tokens ?? 0 },
+      });
+      send('message_stop', { type: 'message_stop' });
+      res.end();
+    } catch (error) {
+      clearInterval(ping);
+      // Status 200 is already committed — surface the failure as an SSE error event, then end.
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      try {
+        send('error', { type: 'error', error: { type: 'api_error', message } });
+      } catch {
+        /* connection closed */
+      }
+      res.end();
+    }
+  }
+
   private handleMessagesRequest(
     req: http.IncomingMessage,
     res: http.ServerResponse
@@ -370,20 +479,34 @@ export class ModelProxy {
         return;
       }
 
+      // Force the proxy's configured model. Clients (e.g. a nested `claude -p` offload session)
+      // cannot pass a foreign model id — the Claude CLI rejects unknown --model client-side — so
+      // they send their default claude id. The proxy owns model selection and overrides it here,
+      // otherwise the backend (Ollama) 404s on the wrong name. (live-proof finding)
+      if (isNewConfig(this.config) && this.config.model) {
+        requestBody.model = this.config.model;
+      }
+
       // Observability: record every forwarded request so callers (e.g. the model-routing eval)
       // can VERIFY which model/provider actually served an agent. Never let logging break the proxy.
       this.logRequest(requestBody?.model);
 
       // If we have a handler (new config), forward to it
       if (this.handler) {
-        try {
-          const response = await this.handler.handle(requestBody);
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(response));
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: errorMessage }));
+        if (requestBody.stream) {
+          // The Claude CLI always streams; flush opening events early + keepalive while the
+          // backend thinks, then stream the result. (handles its own errors mid-stream)
+          await this.streamSseResponse(res, requestBody);
+        } else {
+          try {
+            const response = await this.handler.handle(requestBody);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(response));
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: errorMessage }));
+          }
         }
         return;
       }

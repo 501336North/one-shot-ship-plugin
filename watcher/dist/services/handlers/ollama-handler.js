@@ -6,6 +6,7 @@
  */
 import * as http from 'http';
 import * as https from 'https';
+import { flattenAnthropicContent } from '../api-transformer.js';
 /**
  * OllamaHandler - Connects to local Ollama server
  *
@@ -58,42 +59,71 @@ export class OllamaHandler {
      */
     async listModels() {
         const response = (await this.makeRequest('/api/tags', null, 'GET'));
-        return response.models.map((m) => m.name);
+        return (response?.models ?? []).map((m) => m.name);
     }
     /**
      * Transform Anthropic request to Ollama format
      */
     transformToOllama(request) {
         const messages = [];
-        // Handle system message
+        // Handle system message. Anthropic allows `system` as a string OR an array of content
+        // blocks (the Claude CLI sends the array form); Ollama requires a string.
         if (request.system) {
             messages.push({
                 role: 'system',
-                content: request.system,
+                content: flattenAnthropicContent(request.system),
             });
         }
-        // Transform messages
+        // Transform messages. Content may be a string, or a block array that can include tool_use
+        // (assistant calls) and tool_result (results) — both must round-trip so a multi-turn tool
+        // loop works against ollama.
         for (const msg of request.messages) {
             if (typeof msg.content === 'string') {
+                messages.push({ role: msg.role, content: msg.content });
+                continue;
+            }
+            const textParts = [];
+            const toolUses = [];
+            const toolResults = [];
+            for (const block of msg.content) {
+                if (block.type === 'text')
+                    textParts.push(block.text);
+                else if (block.type === 'tool_use')
+                    toolUses.push(block);
+                else if (block.type === 'tool_result')
+                    toolResults.push(block);
+            }
+            if (msg.role === 'assistant' && toolUses.length > 0) {
+                // Assistant turn that called tools → ollama assistant message carrying tool_calls.
                 messages.push({
-                    role: msg.role,
-                    content: msg.content,
+                    role: 'assistant',
+                    content: textParts.join(''),
+                    tool_calls: toolUses.map((tu) => ({
+                        function: {
+                            name: tu.name,
+                            arguments: tu.input,
+                        },
+                    })),
                 });
+            }
+            else if (toolResults.length > 0) {
+                // Tool results → ollama tool-role messages (one per result).
+                for (const tr of toolResults) {
+                    const c = tr.content;
+                    messages.push({ role: 'tool', content: typeof c === 'string' ? c : JSON.stringify(c) });
+                }
+                const text = textParts.join('');
+                if (text.length > 0)
+                    messages.push({ role: msg.role, content: text });
             }
             else {
-                // Handle content array - concatenate text parts
-                const textContent = msg.content
-                    .filter((block) => block.type === 'text')
-                    .map((block) => block.text)
-                    .join('');
-                messages.push({
-                    role: msg.role,
-                    content: textContent,
-                });
+                messages.push({ role: msg.role, content: textParts.join('') });
             }
         }
-        return {
-            model: request.model,
+        const ollamaRequest = {
+            // Ollama expects the bare model name; strip the "ollama/" provider prefix that the
+            // OSS config/agents use (e.g. "ollama/gpt-oss:120b" → "gpt-oss:120b").
+            model: request.model.replace(/^ollama\//, ''),
             messages,
             stream: false,
             options: {
@@ -102,24 +132,65 @@ export class OllamaHandler {
                 top_p: request.top_p,
             },
         };
+        // Map Anthropic tools → ollama function-tool format so the model can call tools.
+        if (request.tools && request.tools.length > 0) {
+            ollamaRequest.tools = request.tools.map((t) => ({
+                type: 'function',
+                function: {
+                    name: t.name,
+                    description: t.description,
+                    parameters: t.input_schema,
+                },
+            }));
+        }
+        return ollamaRequest;
     }
     /**
      * Transform Ollama response to Anthropic format
      */
     transformFromOllama(response) {
-        const content = [
-            {
-                type: 'text',
-                text: response.message.content,
-            },
-        ];
+        const content = [];
+        // Keep any text the model produced (omit an empty text block when it only called tools).
+        if (response.message.content && response.message.content.length > 0) {
+            content.push({ type: 'text', text: response.message.content });
+        }
+        // Translate ollama tool_calls → Anthropic tool_use blocks.
+        const toolCalls = response.message.tool_calls ?? [];
+        for (const call of toolCalls) {
+            // Anthropic tool_use.input must be an object; coerce a stringified arguments payload.
+            const rawArgs = call.function.arguments;
+            let input = {};
+            if (typeof rawArgs === 'string') {
+                try {
+                    input = JSON.parse(rawArgs);
+                }
+                catch {
+                    input = {};
+                }
+            }
+            else if (rawArgs && typeof rawArgs === 'object') {
+                input = rawArgs;
+            }
+            content.push({
+                type: 'tool_use',
+                id: `toolu_${generateId()}`,
+                name: call.function.name,
+                input,
+            });
+        }
+        // A tool call ends the turn with stop_reason 'tool_use'; otherwise end_turn when done.
+        const stopReason = toolCalls.length > 0 ? 'tool_use' : response.done ? 'end_turn' : null;
+        // Never return an empty content array (Anthropic clients expect at least one block).
+        if (content.length === 0) {
+            content.push({ type: 'text', text: '' });
+        }
         return {
             id: `msg_${generateId()}`,
             type: 'message',
             role: 'assistant',
             model: response.model,
             content,
-            stop_reason: response.done ? 'end_turn' : null,
+            stop_reason: stopReason,
             usage: {
                 input_tokens: response.prompt_eval_count || 0,
                 output_tokens: response.eval_count || 0,

@@ -4,6 +4,7 @@
  * @behavior Anthropic requests/responses are converted to/from Gemini generateContent format
  * @acceptance-criteria AC-GEMINI.1 through AC-GEMINI.4
  */
+import { flattenAnthropicContent, } from './api-transformer.js';
 // ============================================================================
 // Transform Functions
 // ============================================================================
@@ -14,10 +15,10 @@ export function transformToGemini(request) {
     const result = {
         contents: [],
     };
-    // Handle system prompt as systemInstruction
+    // Handle system prompt as systemInstruction (string or content-block array → string)
     if (request.system) {
         result.systemInstruction = {
-            parts: [{ text: request.system }],
+            parts: [{ text: flattenAnthropicContent(request.system) }],
         };
     }
     // Transform messages
