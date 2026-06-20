@@ -24,3 +24,14 @@ one-line `🤖 OSS model: <display_name>` banner into the output — accurate, p
 surface (terminal, VS Code, web). This diverges from the "API repo" part of the original scope selection.
 → **Confirm at /oss:build:** Hook approach (recommended) vs. attempt an API-prompt directive (less accurate).
 Phase 3 is planned for the hook approach; if rejected, re-plan Phase 3 for the API repo.
+
+
+## DR-004 RESOLVED (2026-06-18): per-AGENT banner, NOT a session hook
+Investigation (claude-code-guide): `UserPromptSubmit` hooks do NOT receive the model; only `SessionStart`
+(model ID) and the statusLine (`.model.display_name`) do. A SessionStart banner is once-per-session — but
+the model VARIES PER AGENT within a session (code-reviewer→gpt-oss, test-engineer→Claude tier), so a
+session-level banner is wrong. **Resolution:** make `agent-model-check` ALWAYS emit a `banner`, and have
+every routable agent's Step-0 echo it unconditionally. Routed → `🤖 OSS model: <model> (<provider>)`;
+native → the agent's frontmatter tier `🤖 OSS model: <Tier> (claude)`, or `Claude (session default)` for
+inherit agents (which genuinely run on the session model — not nameable here). No hook, no API repo, plugin-only.
+Known UX note: 9 of 13 routable agents have no `model:` frontmatter → they show "session default" (truthful).

@@ -1,6 +1,6 @@
 # Progress: Model-Routing Productionization
 
-## Current Phase: plan → (ready for build)
+## Current Phase: Phase 2+3 BUILT (suite 3273/3273) → ship as 2nd PR
 
 ## Tasks
 - [x] Phase 1 / Task 1: `--base-url` + `loadOllamaBaseUrlFromConfig` (GREEN 2026-06-18)
@@ -8,10 +8,10 @@
 - [x] Phase 1 / Task 3: `OSS_PROXY_LOG` per-request logging (GREEN)
 - [x] Phase 1 / Task 3.5: **fix 6 pre-existing watcher-suite failures** (unplanned; suite now 3251/3251)
 - [x] Phase 1 / dist built (`npm run build` rc=0)
-- [ ] Phase 1 / Task 4: stage + PR-A  ← /oss:ship
-- [ ] Phase 2 / Task 5: `agent-model-check` banner field
-- [ ] Phase 2 / Task 6: Step-0 echoes banner across routable agents + PR-B-plugin
-- [ ] Phase 3 / Task 7: session-model banner hook (GATED on DR-004 confirm) + PR
+- [x] Phase 1 / Task 4: PR-A shipped → PR #173 (no merge); v2.0.71; suite 3254/3254
+- [x] Phase 2 / Task 5: `agent-model-check` banner field (GREEN)
+- [x] Phase 2 / Task 6: 13 routable agents + _shared echo banner; guard test
+- [x] Phase 3 / Task 7: native banner = per-agent Claude tier (DR-004 resolved: no hook; per-agent not session)
 
 ## Pre-existing failures fixed (Task 3.5 — proven failing on stock, unrelated to feature)
 - `model-frontmatter.test.ts`: added `auto`→opus, new `SONNET_COMMANDS=['queue']` tier (per #170),

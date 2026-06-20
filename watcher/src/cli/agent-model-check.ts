@@ -35,6 +35,8 @@ export interface CheckResult {
   model?: string;
   provider?: string;
   proxyUrl?: string;
+  /** Human banner the agent prints at the top of its output so the model is visible on every surface. */
+  banner?: string;
 }
 
 /**
@@ -98,6 +100,49 @@ function isNativeClaudeModel(model: string | undefined): boolean {
 }
 
 /**
+ * Resolve the plugin root so we can read an agent's own .md frontmatter.
+ */
+function getPluginRoot(): string {
+  return process.env.CLAUDE_PLUGIN_ROOT || path.join(os.homedir(), '.claude', 'plugins', 'oss');
+}
+
+/**
+ * Read the agent's declared Claude tier from its .md frontmatter (e.g. `model: opus`).
+ * Returns undefined when the agent inherits the session model (no model field).
+ */
+function getAgentFrontmatterModel(agentName: string): string | undefined {
+  try {
+    const bare = agentName.replace(/^oss:/, '');
+    // Defense-in-depth: never let an agent name escape the agents/ dir (in case the caller
+    // ever passes dynamic input). Today callers pass a hard-coded literal.
+    if (bare.includes('/') || bare.includes('\\') || bare.includes('..')) return undefined;
+    const file = path.join(getPluginRoot(), 'agents', `${bare}.md`);
+    if (!fs.existsSync(file)) return undefined;
+    const content = fs.readFileSync(file, 'utf-8');
+    const fm = content.match(/^---\n([\s\S]*?)\n---/);
+    if (!fm) return undefined;
+    const line = fm[1].split('\n').find((l) => l.trim().startsWith('model:'));
+    if (!line) return undefined;
+    // Take everything after the first colon; strip inline comments and surrounding quotes.
+    let value = line.slice(line.indexOf(':') + 1).replace(/\s+#.*$/, '').trim();
+    value = value.replace(/^["']|["']$/g, '').trim();
+    return value || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Banner for an agent running on native Claude — shows its declared tier so EVERY agent
+ * surfaces its model, not only routed ones.
+ */
+function nativeClaudeBanner(agentName: string): string {
+  const tier = getAgentFrontmatterModel(agentName);
+  if (tier) return `🤖 OSS model: ${tier.charAt(0).toUpperCase()}${tier.slice(1)} (claude)`;
+  return '🤖 OSS model: Claude (session default)';
+}
+
+/**
  * Check if custom model is configured for an agent
  */
 export async function checkAgentModel(params: CheckAgentModelParams): Promise<CheckResult> {
@@ -135,7 +180,7 @@ export async function checkAgentModel(params: CheckAgentModelParams): Promise<Ch
 
   // 5. If no model or native Claude, return useProxy: false
   if (isNativeClaudeModel(model)) {
-    return { useProxy: false };
+    return { useProxy: false, banner: nativeClaudeBanner(agentName) };
   }
 
   // 6. Custom model configured - return proxy info
@@ -148,6 +193,7 @@ export async function checkAgentModel(params: CheckAgentModelParams): Promise<Ch
     model: model,
     provider: provider ?? undefined,
     proxyUrl: PROXY_URL,
+    banner: `🤖 OSS model: ${modelStr}${provider ? ` (${provider})` : ''}`,
   };
 }
 

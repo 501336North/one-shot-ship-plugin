@@ -24,6 +24,8 @@ export interface CheckResult {
     model?: string;
     provider?: string;
     proxyUrl?: string;
+    /** Human banner the agent prints at the top of its output so the model is visible on every surface. */
+    banner?: string;
 }
 /**
  * Parameters for checking agent model

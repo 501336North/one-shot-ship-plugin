@@ -14,13 +14,16 @@ MODEL_CHECK="$PLUGIN_ROOT/watcher/dist/cli/agent-model-check.js"
 if [[ -f "$MODEL_CHECK" ]]; then
     ROUTING=$(node "$MODEL_CHECK" --agent "$AGENT_NAME" 2>/dev/null)
     USE_PROXY=$(echo "$ROUTING" | jq -r '.useProxy // false')
+    BANNER=$(echo "$ROUTING" | jq -r '.banner // empty')
+
+    # Surface the model at the top of output on EVERY surface (terminal, VS Code, web) — for BOTH
+    # routed agents (custom/local model) and native agents (their Claude tier). Not just the status bar.
+    [[ -n "$BANNER" ]] && echo "$BANNER"
 
     if [[ "$USE_PROXY" == "true" ]]; then
         MODEL=$(echo "$ROUTING" | jq -r '.model')
         PROVIDER=$(echo "$ROUTING" | jq -r '.provider')
         PROXY_URL=$(echo "$ROUTING" | jq -r '.proxyUrl')
-
-        echo "Using custom model: $MODEL via $PROVIDER"
         # Route execution through proxy (see Step 2)
     fi
 fi

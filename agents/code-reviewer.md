@@ -21,9 +21,12 @@ if [[ -f "$MODEL_CHECK" ]]; then
     ROUTING=$(node "$MODEL_CHECK" --agent "$AGENT_ID" 2>/dev/null || echo '{"useProxy":false}')
     USE_PROXY=$(echo "$ROUTING" | jq -r '.useProxy // false' 2>/dev/null || echo "false")
 
+    BANNER=$(echo "$ROUTING" | jq -r '.banner // empty' 2>/dev/null)
+    # Surface the model at the top of output on EVERY surface (terminal, VS Code, web) — for BOTH
+    # routed agents (custom/local model) and native agents (their Claude tier).
+    [[ -n "$BANNER" ]] && echo "$BANNER"
     if [[ "$USE_PROXY" == "true" ]]; then
         MODEL=$(echo "$ROUTING" | jq -r '.model')
-        echo "Routing to custom model: $MODEL"
         # Execute via model proxy instead of native Claude
         # The proxy handles API transformation and provider routing
     fi
