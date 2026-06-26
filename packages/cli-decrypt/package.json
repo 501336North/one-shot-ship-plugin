@@ -1,6 +1,6 @@
 {
   "name": "@oss/decrypt",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Local decryption CLI for OSS Dev Workflow",
   "type": "module",
   "main": "./dist/index.js",
@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc",
     "build:bundle": "esbuild src/cli.ts --bundle --platform=node --target=node18 --outfile=dist/oss-decrypt.cjs --format=cjs",
-    "build:binary": "npm run build:bundle && pkg dist/oss-decrypt.cjs --targets node18-macos-arm64,node18-macos-x64,node18-linux-x64 --out-path dist/bin",
+    "build:binary": "npm run build:bundle && pkg dist/oss-decrypt.cjs --targets node18-macos-arm64,node18-macos-x64,node18-linux-x64,node18-linux-arm64 --out-path dist/bin",
     "test": "vitest"
   },
   "devDependencies": {

@@ -21,6 +21,9 @@ jobs:
           - os: ubuntu-latest
             target: node18-linux-x64
             artifact: oss-decrypt-Linux-x64
+          - os: ubuntu-latest
+            target: node18-linux-arm64
+            artifact: oss-decrypt-Linux-arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -86,9 +89,11 @@ jobs:
             artifacts/oss-decrypt-Darwin-arm64/oss-decrypt-Darwin-arm64
             artifacts/oss-decrypt-Darwin-x64/oss-decrypt-Darwin-x64
             artifacts/oss-decrypt-Linux-x64/oss-decrypt-Linux-x64
+            artifacts/oss-decrypt-Linux-arm64/oss-decrypt-Linux-arm64
             artifacts/oss-decrypt-Darwin-arm64.sha256/oss-decrypt-Darwin-arm64.sha256
             artifacts/oss-decrypt-Darwin-x64.sha256/oss-decrypt-Darwin-x64.sha256
             artifacts/oss-decrypt-Linux-x64.sha256/oss-decrypt-Linux-x64.sha256
+            artifacts/oss-decrypt-Linux-arm64.sha256/oss-decrypt-Linux-arm64.sha256
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

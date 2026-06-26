@@ -241,8 +241,10 @@ After successful authentication, install the decryption CLI for secure prompt de
    ```bash
    PLATFORM=$(uname -s)
    ARCH=$(uname -m)
-   # Map architecture: x86_64 -> x64, arm64 stays arm64
+   # Map architecture: x86_64 -> x64, aarch64 -> arm64, arm64 stays arm64
+   # Supported: macOS (arm64/x64) and Linux (x64/arm64, incl. GB10/Graviton/GH200/Ampere)
    [[ "$ARCH" == "x86_64" ]] && ARCH="x64"
+   [[ "$ARCH" == "aarch64" ]] && ARCH="arm64"
    CLI_URL="https://github.com/501336North/one-shot-ship-plugin/releases/latest/download/oss-decrypt-${PLATFORM}-${ARCH}"
 
    echo "Downloading oss-decrypt CLI..."
