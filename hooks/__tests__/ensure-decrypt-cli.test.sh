@@ -12,6 +12,7 @@
 # 6. Accepts binary when SHA-256 checksum matches
 # 7. Rejects binary when SHA-256 checksum does NOT match
 # 8. Rejects binary when .sha256 file unavailable (fail closed)
+# 9. Installs the Linux-arm64 binary on an aarch64 host (GB10/Graviton/GH200)
 
 set -uo pipefail
 
@@ -121,8 +122,9 @@ test_platform_detection() {
     local os=$(uname -s)
     local arch=$(uname -m)
 
-    # Normalize arch
+    # Normalize arch (mirror the hook: x86_64->x64, aarch64->arm64)
     [[ "$arch" == "x86_64" ]] && arch="x64"
+    [[ "$arch" == "aarch64" ]] && arch="arm64"
 
     if [[ "$os" == "Darwin" || "$os" == "Linux" ]] && [[ "$arch" == "arm64" || "$arch" == "x64" ]]; then
         pass "$test_name (detected: $os-$arch)"
@@ -208,6 +210,8 @@ CURLEOF
 
     # Append the routing logic (with variable expansion for paths)
     cat >> "$MOCK_BIN_DIR/curl" << CURLEOF
+# Record every requested URL when a log path is provided (for asset-name assertions)
+[[ -n "\${MOCK_CURL_URL_LOG:-}" ]] && echo "\$URL" >> "\$MOCK_CURL_URL_LOG"
 if [[ "\$URL" == *.sha256 ]]; then
     if [[ "$sha256_mode" == "FAIL" ]]; then
         exit 1
@@ -225,6 +229,101 @@ CURLEOF
 
 teardown_mock_curl() {
     rm -rf "$MOCK_BIN_DIR"
+}
+
+# =============================================================================
+# Helper: Mock `uname` so we can simulate any platform/arch (e.g. aarch64 Linux)
+# without needing that hardware. Mirrors the real uname contract the hook uses:
+#   uname -s -> platform, uname -m -> machine
+# Usage: setup_mock_uname <platform> <machine>
+# =============================================================================
+setup_mock_uname() {
+    local platform="$1"
+    local machine="$2"
+
+    MOCK_UNAME_DIR=$(mktemp -d)
+    cat > "$MOCK_UNAME_DIR/uname" << UNAMEEOF
+#!/bin/bash
+case "\$1" in
+    -s) echo "$platform" ;;
+    -m) echo "$machine" ;;
+    *)  echo "$platform" ;;
+esac
+UNAMEEOF
+    chmod +x "$MOCK_UNAME_DIR/uname"
+    export PATH="$MOCK_UNAME_DIR:$PATH"
+}
+
+teardown_mock_uname() {
+    rm -rf "$MOCK_UNAME_DIR"
+}
+
+# =============================================================================
+# ACCEPTANCE TEST: aarch64 Linux host installs the Linux-arm64 binary
+#
+# @behavior On an aarch64 Linux box (GB10, Graviton, GH200, Ampere) the decrypt
+#           CLI auto-installs so the OSS pipeline (queue/build/plan) can run.
+# @user-story As an aarch64 Linux user, I can run OSS commands without a manual
+#             binary install.
+# @acceptance-criteria Hook resolves aarch64 -> arm64, downloads the
+#             oss-decrypt-Linux-arm64 asset, verifies its checksum, exits 0.
+# @boundary ensure-decrypt-cli.sh (CLI/system boundary)
+# =============================================================================
+test_aarch64_installs_arm64_binary() {
+    local test_name="aarch64 Linux host installs the Linux-arm64 binary"
+    ((TESTS_RUN++))
+
+    setup_test_env
+
+    # GIVEN - a fake arm64 binary + matching checksum staged for download
+    local staging_dir
+    staging_dir=$(mktemp -d)
+    cat > "$staging_dir/binary" << 'BINEOF'
+#!/bin/bash
+if [[ "$1" == "--version" ]]; then echo "oss-decrypt v1.2.2"
+elif [[ "$1" == "--setup" ]]; then exit 0
+else echo "mock"; fi
+BINEOF
+    local expected_hash
+    expected_hash=$(shasum -a 256 "$staging_dir/binary" | awk '{print $1}')
+    # Asset name the hook MUST request on aarch64 Linux:
+    echo "${expected_hash}  oss-decrypt-Linux-arm64" > "$staging_dir/checksum"
+
+    # Record requested URLs so we can assert the arm64 asset was fetched
+    local url_log
+    url_log=$(mktemp)
+    export MOCK_CURL_URL_LOG="$url_log"
+
+    setup_mock_curl "$staging_dir" "OK"
+
+    # GIVEN - the host reports itself as aarch64 Linux
+    setup_mock_uname "Linux" "aarch64"
+
+    # No existing binary -> forces a fresh download through the arch path
+    mkdir -p "$TEST_HOME/.oss/bin"
+
+    # WHEN - the ensure hook runs
+    local result exit_code=0
+    result=$("$HOOK_SCRIPT" 2>&1) || exit_code=$?
+
+    # THEN - it downloaded the -arm64 asset, verified it, and exited 0
+    local requested_arm64=false
+    grep -q "oss-decrypt-Linux-arm64" "$url_log" && requested_arm64=true
+
+    teardown_mock_uname
+    teardown_mock_curl
+    unset MOCK_CURL_URL_LOG
+    rm -f "$url_log"
+    rm -rf "$staging_dir"
+    teardown_test_env
+
+    if [[ $exit_code -eq 0 ]] && [[ "$requested_arm64" == "true" ]] \
+        && echo "$result" | grep -qi "checksum: verified"; then
+        pass "$test_name"
+    else
+        fail "$test_name" "exit 0 + fetched -arm64 asset + checksum verified" \
+            "exit=$exit_code requested_arm64=$requested_arm64 output: $result"
+    fi
 }
 
 # =============================================================================
@@ -392,6 +491,7 @@ test_outdated_version_triggers_update
 test_checksum_match_accepts_binary
 test_checksum_mismatch_rejects_binary
 test_missing_checksum_rejects_binary
+test_aarch64_installs_arm64_binary
 
 echo ""
 echo "======================================="

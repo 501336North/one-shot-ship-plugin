@@ -91,6 +91,7 @@ ARCH=$(uname -m)
 
 # Normalize architecture name
 [[ "$ARCH" == "x86_64" ]] && ARCH="x64"
+[[ "$ARCH" == "aarch64" ]] && ARCH="arm64"
 
 # Validate platform
 if [[ "$PLATFORM" != "Darwin" && "$PLATFORM" != "Linux" ]]; then
