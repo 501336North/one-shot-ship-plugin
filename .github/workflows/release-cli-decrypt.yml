@@ -21,7 +21,11 @@ jobs:
           - os: ubuntu-latest
             target: node18-linux-x64
             artifact: oss-decrypt-Linux-x64
-          - os: ubuntu-latest
+          # MUST be a native arm64 runner: pkg compiles JS -> V8 bytecode per CPU
+          # arch and cannot cross-generate it. Building this target on an x64 runner
+          # produces an arm64 ELF whose snapshot is missing the entry module
+          # (`Cannot find module '/snapshot/dist/oss-decrypt.cjs'` at runtime).
+          - os: ubuntu-24.04-arm
             target: node18-linux-arm64
             artifact: oss-decrypt-Linux-arm64
 
