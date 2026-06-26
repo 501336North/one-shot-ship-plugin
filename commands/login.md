@@ -108,7 +108,14 @@ Configure your API key for OSS Dev Workflow access.
    ```bash
    if [ -x ~/.oss/bin/oss-decrypt ]; then
        ~/.oss/bin/oss-decrypt --setup
-       echo "Updated encryption credentials for new key"
+       # Confirm setup actually produced working credentials before claiming success.
+       VERIFY="$HOME/.oss/hooks/verify-decrypt-setup.sh"
+       [ -x "$VERIFY" ] || VERIFY="$(cat ~/.oss/plugin-root 2>/dev/null)/hooks/verify-decrypt-setup.sh"
+       if [ -x "$VERIFY" ] && "$VERIFY"; then
+           echo "Updated encryption credentials for new key"
+       else
+           echo "Credential refresh did NOT complete — see the error above. Re-run /oss:login."
+       fi
    fi
    ```
 
@@ -262,15 +269,24 @@ After successful authentication, install the decryption CLI for secure prompt de
    - `hardwareId` - Device-specific identifier
    - `salt` - Unique salt for key derivation
 
-4. **Verify installation:**
+4. **Verify installation (gate success on the real verifier):**
+
+   Do NOT declare success just because the binary file exists — a binary that is
+   present but crashes (e.g. a bad build) would slip through. Gate the success
+   message on `verify-decrypt-setup.sh`, which confirms the binary actually RUNS
+   and `credentials.enc` was generated, and surfaces the real error otherwise.
    ```bash
-   if [ -x ~/.oss/bin/oss-decrypt ]; then
-       echo "CLI installed successfully"
+   # Resolve the verifier from the deployed copy, falling back to the plugin root
+   # (the ~/.oss/hooks/ copy may not exist yet right after a mid-session upgrade).
+   VERIFY="$HOME/.oss/hooks/verify-decrypt-setup.sh"
+   [ -x "$VERIFY" ] || VERIFY="$(cat ~/.oss/plugin-root 2>/dev/null)/hooks/verify-decrypt-setup.sh"
+   if [ -x "$VERIFY" ] && "$VERIFY"; then
        ~/.oss/bin/oss-decrypt --version
    else
-       echo "Warning: CLI installation failed. Prompts will fall back to direct API fetch."
+       echo "Setup did NOT complete — see the error above. Prompts will fall back to direct API fetch until resolved."
    fi
    ```
+   Only report setup as complete when `verify-decrypt-setup.sh` exits 0.
 
 **What gets installed:**
 - **~/.oss/bin/oss-decrypt** - CLI binary for decrypting prompts locally

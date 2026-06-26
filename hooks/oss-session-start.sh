@@ -64,6 +64,7 @@ HOOKS_TO_COPY=(
     "oss-statusline.sh"
     "oss-detect-playwright.sh"
     "ensure-decrypt-cli.sh"
+    "verify-decrypt-setup.sh"
     "oss-iron-laws-sync.sh"
     "oss-onboard-check.sh"
     "oss-setup-permissions.sh"

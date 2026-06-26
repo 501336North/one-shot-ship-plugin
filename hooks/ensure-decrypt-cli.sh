@@ -180,11 +180,17 @@ fi
 
 # Run setup to configure credentials
 echo "Running initial setup..."
-if ! "$OSS_DECRYPT" --setup; then
-    echo "Warning: Setup failed. You may need to run /oss:login to configure credentials."
-    # Don't exit with error - binary is installed, setup can be done later
-fi
+"$OSS_DECRYPT" --setup || echo "Warning: Setup reported an error."
 
+# Report HONEST status: only claim "ready" when the binary runs AND credentials
+# were actually generated. Never print a false "ready" on a failed setup.
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NEW_VERSION=$("$OSS_DECRYPT" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
-echo "oss-decrypt CLI v${NEW_VERSION} ready."
+if "$HOOK_DIR/verify-decrypt-setup.sh" >/dev/null 2>&1; then
+    echo "oss-decrypt CLI v${NEW_VERSION} ready."
+else
+    echo "oss-decrypt CLI v${NEW_VERSION} installed, but credential setup did not complete."
+    echo "Run /oss:login to finish credential setup."
+    # Binary is installed (non-fatal); a later /oss:login can complete setup.
+fi
 exit 0
