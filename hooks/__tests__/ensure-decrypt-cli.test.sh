@@ -480,6 +480,62 @@ test_missing_checksum_rejects_binary() {
 # =============================================================================
 # Run all tests
 # =============================================================================
+# =============================================================================
+# TEST: hook must NOT claim "ready" when --setup fails (no false positive)
+#
+# @behavior The auto-install hook reports honest status: if the binary installs
+#           but `--setup` does not produce credentials, it does NOT print a bare
+#           "ready" success — it tells the user setup is incomplete.
+# @acceptance-criteria install still exits 0 (non-fatal), but output contains NO
+#           "ready" success line; instead names setup incomplete.
+# @boundary ensure-decrypt-cli.sh (system boundary)
+# @regression v1.2.2: hook printed "…ready." even when --setup failed.
+# =============================================================================
+test_setup_failure_no_false_ready() {
+    local test_name="Hook does not print false 'ready' when --setup fails"
+    ((TESTS_RUN++))
+
+    setup_test_env
+
+    # Staged binary: --version succeeds (passes runnability), --setup FAILS,
+    # and it never writes credentials.enc.
+    local staging_dir
+    staging_dir=$(mktemp -d)
+    cat > "$staging_dir/binary" << 'BINEOF'
+#!/bin/bash
+if [[ "$1" == "--version" ]]; then echo "oss-decrypt v1.2.3"; exit 0
+elif [[ "$1" == "--setup" ]]; then echo "setup failed" >&2; exit 1
+else echo "mock"; fi
+BINEOF
+    local expected_hash
+    expected_hash=$(shasum -a 256 "$staging_dir/binary" | awk '{print $1}')
+    local PLATFORM=$(uname -s)
+    local ARCH=$(uname -m)
+    [[ "$ARCH" == "x86_64" ]] && ARCH="x64"
+    [[ "$ARCH" == "aarch64" ]] && ARCH="arm64"
+    echo "${expected_hash}  oss-decrypt-${PLATFORM}-${ARCH}" > "$staging_dir/checksum"
+
+    setup_mock_curl "$staging_dir" "OK"
+    mkdir -p "$TEST_HOME/.oss/bin"   # fresh download path
+
+    local result exit_code=0
+    result=$("$HOOK_SCRIPT" 2>&1) || exit_code=$?
+
+    teardown_mock_curl
+    rm -rf "$staging_dir"
+    teardown_test_env
+
+    # Install is non-fatal (exit 0) but must NOT falsely claim readiness.
+    if [[ $exit_code -eq 0 ]] \
+        && ! echo "$result" | grep -qiE "v[0-9.]+ ready|CLI .*ready" \
+        && echo "$result" | grep -qi "setup did not complete\|finish.*setup"; then
+        pass "$test_name"
+    else
+        fail "$test_name" "exit 0 + NO 'ready' + names setup-incomplete" \
+            "exit=$exit_code output: $result"
+    fi
+}
+
 echo "Running ensure-decrypt-cli.sh tests..."
 echo "======================================="
 
@@ -492,6 +548,7 @@ test_checksum_match_accepts_binary
 test_checksum_mismatch_rejects_binary
 test_missing_checksum_rejects_binary
 test_aarch64_installs_arm64_binary
+test_setup_failure_no_false_ready
 
 echo ""
 echo "======================================="
