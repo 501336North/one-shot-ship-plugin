@@ -45,4 +45,18 @@ describe('Release pipeline: aarch64 Linux support', () => {
     expect(yml).toContain(`${ARM64_ASSET}/${ARM64_ASSET}\n`);
     expect(yml).toContain(`${ARM64_ASSET}.sha256/${ARM64_ASSET}.sha256`);
   });
+
+  it('builds the arm64 target on a NATIVE arm64 runner (pkg cannot cross-compile bytecode)', () => {
+    // Regression guard for the v1.2.2 break: pkg compiles JS -> V8 bytecode PER CPU
+    // arch and cannot cross-generate it. Cross-building node18-linux-arm64 on an x64
+    // runner yields an arm64 ELF whose snapshot is missing the entry module ->
+    // `Cannot find module '/snapshot/dist/oss-decrypt.cjs'` at runtime. The arm64
+    // target MUST build on a native arm64 runner (e.g. ubuntu-24.04-arm).
+    const yml = readFileSync(workflowPath, 'utf8');
+    // Find the matrix include entry whose target is node18-linux-arm64 and capture its `os`.
+    const m = yml.match(/-\s*os:\s*(\S+)\s+target:\s*node18-linux-arm64/);
+    expect(m, 'arm64 matrix entry not found (expected `- os: <runner>` then `target: node18-linux-arm64`)').not.toBeNull();
+    const os = m![1];
+    expect(os, `arm64 must build on an arm64 runner, got os: ${os}`).toMatch(/arm/);
+  });
 });

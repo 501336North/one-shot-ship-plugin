@@ -9,9 +9,10 @@
 - [x] Task 4: RED — build-targets.test.ts (release-asset contract) (2026-06-26) — 3 failing
 - [x] Task 5: GREEN — node18-linux-arm64 in build:binary + release yml matrix/files (2026-06-26) — 3/3 pass; real `pkg` build → `ELF ARM aarch64` confirmed
 - [x] Task 8 (partial): bump cli-decrypt 1.2.2 + plugin 2.0.74; fix login.md manual-install arch mapping + platform note (2026-06-26)
-- [ ] Task 6: DEPLOY — tag `cli-decrypt-v1.2.2` after merge → publishes arm64 asset to `latest` (pending merge/ship)
-- [ ] Task 7: E2E — install + decrypt + `/oss:trust` on the GB10 (pending box access; acceptance gate)
-- [x] Task 7.5: trust regression suites pass on build (manifest-verifier/prompt-integrity/trust-acceptance/decrypt-integrity, +build-targets = 32/32)
+- [x] Task 6: DEPLOY — v1.2.2 merged (82bf162) + tagged; release published arm64 asset (2026-06-26)
+- [!] Task 6b: HOTFIX — v1.2.2 arm64 binary CRASHED on GB10 (`Cannot find module '/snapshot/dist/oss-decrypt.cjs'`). Root cause: pkg cannot cross-compile V8 bytecode; arm64 was built on x64 `ubuntu-latest`. Fix = native `ubuntu-24.04-arm` runner + bump 1.2.3 + RED test guard. See DECISIONS.md ADR-001. (2026-06-26)
+- [ ] Task 7: E2E — re-run hook on GB10 → `--setup` generates credentials.enc → queue/build/trust (pending box; acceptance gate, NOT yet passed — v1.2.2 false-positive login)
+- [x] Task 7.5: trust regression suites pass on build (+build-targets = 33/33; full cli-decrypt suite 182/182)
 
 ## Test status (local)
 - Hook harness: 9/9 pass
