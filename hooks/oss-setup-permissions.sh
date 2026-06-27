@@ -20,6 +20,8 @@ SETTINGS_FILE="$SETTINGS_DIR/settings.local.json"
 OSS_PERMISSIONS=(
     'Bash(~/.oss/hooks/oss-log.sh:*)'
     'Bash(~/.oss/hooks/oss-notify.sh:*)'
+    'Bash(~/.oss/hooks/oss-notification.sh:*)'
+    'Bash(~/.oss/hooks/oss-stop.sh:*)'
     'Bash(~/.oss/hooks/oss-iron-laws-sync.sh:*)'
     'Bash(~/.oss/hooks/ensure-decrypt-cli.sh:*)'
     'Bash(~/.oss/hooks/learn-extractor.sh:*)'
