@@ -1,12 +1,26 @@
 # Progress: Per-Agent Model Routing via Launcher + Smart Proxy
 
-## RESUME (fresh /oss:build): branch `feat/per-agent-proxy-routing/build`, baseline = latest wip commit on this branch (HEAD)
-First action: `cd watcher && npx vitest run test/cli/oss-launch.test.ts test/cli/oss-launch-run.test.ts test/services/agent-route-resolver.test.ts test/services/anthropic-passthrough.test.ts test/services/proxy-router.test.ts test/services/routing-log.test.ts test/agents/agent-markers.test.ts test/cli/agent-model-check.test.ts`
-→ expect 62/62 (baseline). Then do the "REMAINING = INTEGRATION GLUE" list below. Keep router
-mode ADDITIVE/gated so non-router behavior is byte-identical; re-run existing model-proxy/
-offload suites as regression guard before ship. Plugin-only; bump plugin.json at ship.
+## RESUME — INTEGRATION GLUE COMPLETE (2026-06-27 16:36 EDT). Ready for `/oss:ship`.
+All glue wired + verified on Mac (155/155 regression, tsc clean, dist smoke green). The ONLY
+remaining item is the **DeepBlue aarch64 acceptance run** (other session; see DRAIN_SH_INTEGRATION.md
++ TESTING.md VERIFY commands) — not runnable from this Mac session.
 
-## Current Phase: build (4 of 7 phases GREEN — HTTP phases remain)
+## Current Phase: build COMPLETE (7 of 7 phases GREEN) → next: /oss:ship
+
+## Integration glue done (2026-06-27, TDD RED→GREEN→REFACTOR each):
+- [x] **model-proxy.ts router-mode HTTP adapter** (additive/gated). New `ModelProxyConfigRouter`
+  + `isRouterConfig`; `handleRouterMessages` dispatches via `routeMessages` (ollama→`emitResolvedSse`,
+  anthropic→`pipeUpstream`); catch-all path forwarded; HEAD `/`+`/health` stay local. Writes
+  nothing to `res` until routeMessages resolves → ollama-throw falls back. REFACTOR: extracted
+  shared `emitResponseBlocks`. Non-router byte-identical (model-proxy.test.ts 45/45). +5 tests.
+- [x] **start-proxy.ts `--router`** — `--model` not required in router mode; `buildRouterConfig`
+  + `loadRouterConfigFromFile`; `startRouterProxy`; background spawn via `--router`; main() wired. +7.
+- [x] **oss-launch real deps** — `resolveClaudeBin` (PATH scan, never self-execs) + `ensureProxy`
+  (reuse-or-start + loud throw); `main()` composition root (real config/health/spawn); +6 tests.
+- [x] **bin/oss-launch** shim → `node watcher/dist/cli/oss-launch.js`.
+- [x] **dist build** — `npm run build` (tsc + cli-bundle); new src compiled to dist/.
+- [x] **Phase 7 docs** — plugin.json 2.0.75→**2.0.76**; `DRAIN_SH_INTEGRATION.md` created; stale
+  port 3456→**8473** across `agents/_shared/model-routing.md` + 13 agent `.md`; proxy-layer note added.
 
 ## Build status 2026-06-27 — LOGIC LAYER COMPLETE (62 tests across 8 files, all GREEN)
 - Phase 1 — `anthropic-passthrough.ts` `forwardToAnthropic`: OAuth bearer + anthropic-* forwarded
@@ -21,19 +35,15 @@ offload suites as regression guard before ship. Plugin-only; bump plugin.json at
   completeness test. ✅
 - Phase 6 — `agent-model-check` self-disables under OSS_PROXY_ROUTING=1. ✅
 
-REMAINING = INTEGRATION GLUE (wiring on top of the tested logic; lower logic-risk):
-- [ ] model-proxy.ts router-mode HTTP adapter: in routerMode, handleRequest streams via
-  routeMessages — ollamaHandle (existing ollama handler + fake-SSE) + passthrough
-  (forwardToAnthropic piped to res); keep HEAD `/` + `/health` local; catch-all → passthrough.
-  Fallback safety: call ollama backend BEFORE writing res so a throw can still fall back.
-- [ ] start-proxy.ts: `--router` mode start (no single model required).
-- [ ] oss-launch real deps: ensureProxy (GET /health; spawn start-proxy --router if down) +
-  resolveClaudeBin (PATH scan skipping self) + `bin/oss-launch` entry; compile to dist/.
-- [ ] dist build for all new src files (plugin runs dist/).
-- [ ] Phase 7: plugin version bump, DRAIN_SH_INTEGRATION.md (point drain.sh at oss-launch),
-  fix stale 3456 refs in agents/_shared/model-routing.md.
+REMAINING = INTEGRATION GLUE — ✅ ALL DONE 2026-06-27 (see "Integration glue done" above):
+- [x] model-proxy.ts router-mode HTTP adapter (additive/gated; fallback-safe; byte-identical non-router)
+- [x] start-proxy.ts `--router` mode start (no single model required)
+- [x] oss-launch real deps: ensureProxy + resolveClaudeBin + `bin/oss-launch` entry; compiled to dist/
+- [x] dist build for all new src files
+- [x] Phase 7: version bump 2.0.76, DRAIN_SH_INTEGRATION.md, 3456→8473 refs fixed
 
-## Test status (local): 62/62 (logic layer) — see TESTING.md
+## Test status (local): 155/155 (regression guard, 14 files) — tsc clean — see TESTING.md
+## Remaining gate: DeepBlue aarch64 acceptance run (other session) — NOT runnable from Mac.
 
 ## Current Phase line (legacy)
 
@@ -81,4 +91,4 @@ REMAINING = INTEGRATION GLUE (wiring on top of the tested logic; lower logic-ris
   proxy per-agent dispatch (subagents inherit parent base URL). See DECISIONS ADR-001.
 - OAuth: DeepBlue uses CLAUDE_CODE_OAUTH_TOKEN → proxy must forward Authorization unchanged.
 
-## Last Updated: 2026-06-27 by /oss:plan
+## Last Updated: 2026-06-27 16:36 EDT by /oss:build

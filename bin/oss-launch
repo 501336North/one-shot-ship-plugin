@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+#
+# oss-launch — launch a Claude Code session through the OSS per-agent model proxy.
+#
+# Transparent: when `models.agents` is NOT configured this execs the real `claude` with the
+# environment UNCHANGED (Anthropic-only users are unaffected). When per-agent local routing IS
+# configured it ensures the router proxy is up, points the session at it, and execs claude.
+#
+# Usage:  oss-launch [any claude args …]
+#   e.g.  oss-launch -p "/oss:build" --dangerously-skip-permissions
+#
+# drain.sh / headless callers should invoke THIS instead of `claude` directly.
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LAUNCH_JS="$DIR/watcher/dist/cli/oss-launch.js"
+
+if [[ ! -f "$LAUNCH_JS" ]]; then
+  echo "[oss-launch] missing $LAUNCH_JS — run 'npm run build' in watcher/ first." >&2
+  exit 1
+fi
+
+exec node "$LAUNCH_JS" "$@"

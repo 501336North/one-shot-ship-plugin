@@ -42,6 +42,7 @@ export function parseCliArgs(args) {
         apiKey: undefined,
         background: false,
         showHelp: false,
+        router: false,
         errors: [],
     };
     for (let i = 0; i < args.length; i++) {
@@ -72,9 +73,13 @@ export function parseCliArgs(args) {
         else if (arg === '--background') {
             result.background = true;
         }
+        else if (arg === '--router') {
+            result.router = true;
+        }
     }
-    // Validate required arguments
-    if (!result.model && !result.showHelp) {
+    // Validate required arguments. Router mode derives its per-agent map from the merged config,
+    // so it does NOT require a single --model.
+    if (!result.model && !result.showHelp && !result.router) {
         result.errors.push('--model is required');
     }
     return result;
@@ -245,21 +250,79 @@ export async function startProxy(options) {
     }
 }
 /**
+ * Normalize a raw parsed config object into a RouterProxyConfig. Fallback defaults ON (the
+ * safety net); agents default to empty; the ollama base url is read from `models.apiKeys.ollama`
+ * with a legacy fallback to top-level `apiKeys.ollama`.
+ */
+export function buildRouterConfig(raw) {
+    const r = (raw ?? {});
+    const models = (r.models ?? {});
+    return {
+        models: {
+            default: models.default,
+            agents: models.agents ?? {},
+            fallbackEnabled: models.fallbackEnabled !== false,
+            apiKeys: { ollama: models.apiKeys?.ollama ?? r.apiKeys?.ollama },
+        },
+    };
+}
+/**
+ * Load the router config from `~/.oss/config.json` (best-effort; defaults on any error).
+ */
+export function loadRouterConfigFromFile() {
+    const configPath = path.join(getUserConfigDir(), 'config.json');
+    try {
+        if (fs.existsSync(configPath)) {
+            const content = fs.readFileSync(configPath, 'utf-8');
+            return buildRouterConfig(JSON.parse(content));
+        }
+    }
+    catch {
+        // Fall through to defaults on any error (missing/malformed config)
+    }
+    return buildRouterConfig({});
+}
+/**
+ * Start the proxy in router mode (per-agent dispatch). No single model is pinned; each request
+ * is routed by its OSS-ROUTE-AGENT marker against `routerConfig.models.agents`.
+ */
+export async function startRouterProxy(options) {
+    const { port, background, routerConfig, _testProxy } = options;
+    const proxy = _testProxy || new ModelProxy({ router: true, routerConfig, port });
+    try {
+        await proxy.start();
+        return {
+            port: proxy.getPort(),
+            pid: process.pid,
+            model: 'router',
+            background,
+            proxy: background ? undefined : proxy,
+        };
+    }
+    catch (error) {
+        const err = error;
+        if (err.code === 'EADDRINUSE') {
+            return { port, pid: 0, model: 'router', background, error: `Port ${port} is already in use` };
+        }
+        return { port, pid: 0, model: 'router', background, error: err.message };
+    }
+}
+/**
  * Start proxy in background mode
  */
 export async function startProxyBackground(options) {
-    const { model, port, apiKey, baseUrl, _testSpawn } = options;
+    const { model, port, apiKey, baseUrl, router, _testSpawn } = options;
     // Use injected spawn or real spawn
     const spawnFn = _testSpawn || spawn;
-    // Build args for the child process
-    const args = [
-        '--model', model,
-        '--port', String(port),
-    ];
-    if (apiKey) {
+    // Build args for the child process. Router mode pins no model — it dispatches per-agent from
+    // the merged config — so it spawns with --router instead of --model.
+    const args = router
+        ? ['--router', '--port', String(port)]
+        : ['--model', model, '--port', String(port)];
+    if (!router && apiKey) {
         args.push('--api-key', apiKey);
     }
-    if (baseUrl) {
+    if (!router && baseUrl) {
         args.push('--base-url', baseUrl);
     }
     // Spawn detached child process. Use a real filesystem path — `node <file:// URL>` cannot be
@@ -279,7 +342,7 @@ export async function startProxyBackground(options) {
     return {
         port,
         pid,
-        model,
+        model: router ? 'router' : model,
         background: true,
     };
 }
@@ -325,6 +388,7 @@ OPTIONS:
                            Examples: ollama/codellama, openrouter/anthropic/claude-3-haiku
   --port <number>          Port to listen on (default: ${DEFAULT_PORT})
   --api-key <key>          API key for the provider (loaded from config if not provided)
+  --router                 Router mode: per-agent dispatch from the merged config (no --model)
   --background             Run in background (detached) mode
   --help, -h               Show this help message
 
@@ -353,6 +417,45 @@ async function main() {
     if (parsedArgs.errors.length > 0) {
         console.error(JSON.stringify({ error: parsedArgs.errors.join(', ') }));
         process.exit(1);
+    }
+    // Router mode: per-agent dispatch from the merged config (no single model). Handled before
+    // model validation since router mode pins no model.
+    if (parsedArgs.router) {
+        try {
+            if (parsedArgs.background) {
+                const result = await startProxyBackground({ router: true, port: parsedArgs.port });
+                console.log(formatOutput(result));
+            }
+            else {
+                const result = await startRouterProxy({
+                    port: parsedArgs.port,
+                    background: false,
+                    routerConfig: loadRouterConfigFromFile(),
+                });
+                if (result.error) {
+                    console.error(formatOutput(result));
+                    process.exit(1);
+                }
+                if (result.proxy) {
+                    const shutdownHandler = createShutdownHandler(result.proxy, () => {
+                        cleanupPidFile(parsedArgs.port);
+                    });
+                    process.on('SIGTERM', () => {
+                        shutdownHandler('SIGTERM').then(() => process.exit(0));
+                    });
+                    process.on('SIGINT', () => {
+                        shutdownHandler('SIGINT').then(() => process.exit(0));
+                    });
+                }
+                writePidFile(process.pid, parsedArgs.port);
+                console.log(formatOutput(result));
+            }
+        }
+        catch (err) {
+            console.error(JSON.stringify({ error: err.message }));
+            process.exit(1);
+        }
+        return;
     }
     // Validate model
     const validation = validateModel(parsedArgs.model);

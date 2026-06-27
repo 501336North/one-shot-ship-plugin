@@ -28,6 +28,8 @@ export interface ParsedArgs {
     baseUrl?: string;
     background: boolean;
     showHelp: boolean;
+    /** Router mode: per-agent dispatch from the merged config (no single --model required). */
+    router: boolean;
     errors: string[];
 }
 /**
@@ -78,11 +80,14 @@ export interface ValidationResult {
  * Background start options
  */
 export interface BackgroundStartOptions {
-    model: string;
+    /** Single-model mode. Omitted in router mode. */
+    model?: string;
     port: number;
     apiKey?: string;
     /** Base URL for the provider (ollama endpoint) */
     baseUrl?: string;
+    /** Router mode: spawn the child with --router (per-agent dispatch, no single model). */
+    router?: boolean;
     /** Test dependency injection for spawn */
     _testSpawn?: typeof spawn;
 }
@@ -122,6 +127,45 @@ export declare function cleanupPidFile(port?: number): void;
  * Start the proxy server
  */
 export declare function startProxy(options: StartProxyOptions): Promise<StartProxyResult>;
+/**
+ * Router-mode proxy config: the per-agent map + fallback + ollama base url, sourced from the
+ * merged OSS config. Mirrors ModelProxyConfigRouter['routerConfig'].
+ */
+export interface RouterProxyConfig {
+    models?: {
+        default?: string;
+        agents?: Record<string, string>;
+        fallbackEnabled?: boolean;
+        apiKeys?: {
+            ollama?: string;
+        };
+    };
+}
+/**
+ * Normalize a raw parsed config object into a RouterProxyConfig. Fallback defaults ON (the
+ * safety net); agents default to empty; the ollama base url is read from `models.apiKeys.ollama`
+ * with a legacy fallback to top-level `apiKeys.ollama`.
+ */
+export declare function buildRouterConfig(raw: unknown): RouterProxyConfig;
+/**
+ * Load the router config from `~/.oss/config.json` (best-effort; defaults on any error).
+ */
+export declare function loadRouterConfigFromFile(): RouterProxyConfig;
+/**
+ * Router start options
+ */
+export interface RouterStartOptions {
+    port: number;
+    background: boolean;
+    routerConfig: RouterProxyConfig;
+    /** Test dependency injection for ModelProxy */
+    _testProxy?: MockProxy;
+}
+/**
+ * Start the proxy in router mode (per-agent dispatch). No single model is pinned; each request
+ * is routed by its OSS-ROUTE-AGENT marker against `routerConfig.models.agents`.
+ */
+export declare function startRouterProxy(options: RouterStartOptions): Promise<StartProxyResult>;
 /**
  * Start proxy in background mode
  */

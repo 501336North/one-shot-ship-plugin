@@ -81,6 +81,33 @@ The feature is **opt-in via `models.agents`**. Encoded as failing acceptance tes
 → **2 files failed (modules don't exist yet)** — canonical outside-in RED. 9 tests defined
 across the two boundaries (launcher decision + proxy route decision), centering the
 Anthropic-only no-impact guarantee. Turns green once `resolveLaunch` + `resolveRoute` are built.
-_Remaining results filled during /oss:build + DeepBlue acceptance run._
 
-## Last Updated: 2026-06-27 by /oss:plan
+### Logic layer (GREEN) — 2026-06-27
+62/62 across 8 files (anthropic-passthrough, agent-route-resolver, proxy-router, routing-log,
+agent-markers, oss-launch, oss-launch-run, agent-model-check).
+
+### Integration glue (GREEN) — 2026-06-27 16:36 EDT
+TDD RED→GREEN→REFACTOR per piece. New suites:
+- `test/services/proxy-router-mode.test.ts` (5) — ModelProxy **router mode** HTTP adapter:
+  marked agent → ollama backend + SSE; unmarked → passthrough piped; ollama-throw → Anthropic
+  fallback (response NOT committed early); HEAD `/` local; unknown path forwarded (not 404).
+- `test/cli/start-proxy-router.test.ts` (7) — `--router` arg parsing (no `--model` required);
+  `buildRouterConfig` (agents/fallbackEnabled-default-true/ollama base url); `startRouterProxy`.
+- `test/cli/oss-launch-deps.test.ts` (6) — `resolveClaudeBin` (PATH scan, self-skip, throws);
+  `ensureProxy` (reuse-or-start + loud failure).
+
+**Regression guard (non-router byte-identical):**
+`npx vitest run` over 14 proxy/offload/launch/router files → **155/155 passed**. Notably
+`model-proxy.test.ts` 45/45 (existing model/provider path untouched), `agent-offload` 7/7,
+`agent-model-check` 24/24. `npx tsc --noEmit` clean (0 errors, no new `any`).
+
+**Dist smoke (end-to-end through `dist/`):** `node dist/cli/start-proxy.js --router --port 18473`
+→ loaded the real merged per-agent config from `~/.oss/config.json`; `GET /health`→200,
+`HEAD /`→200. Confirms the launcher/proxy artifacts the plugin ships actually bind + route.
+
+### Still PENDING — DeepBlue aarch64 acceptance (the real gate)
+The Mac suite + dist smoke prove the wiring; the zero-Ollama→Ollama proof requires the DeepBlue
+session to point drain.sh at `oss-launch` (see `DRAIN_SH_INTEGRATION.md`) and run the VERIFY
+commands above. Not runnable from this Mac session.
+
+## Last Updated: 2026-06-27 16:36 EDT by /oss:build
