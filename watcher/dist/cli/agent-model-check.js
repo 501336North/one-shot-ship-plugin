@@ -120,6 +120,12 @@ export async function checkAgentModel(params) {
     if (process.env.OSS_OFFLOAD_ACTIVE === '1') {
         return { useProxy: false };
     }
+    // Launcher guard: when OSS_PROXY_ROUTING=1 the session was launched through the OSS proxy
+    // (oss-launch), so per-agent routing already happens at the proxy layer for every inherited
+    // subagent. The legacy nested-`claude -p` offload must NOT also fire, or it would double-route.
+    if (process.env.OSS_PROXY_ROUTING === '1') {
+        return { useProxy: false };
+    }
     // Load configs with precedence: Project > User
     const userConfigPath = path.join(getUserConfigDir(), 'config.json');
     const projectConfigPath = path.join(projectDir, '.oss', 'config.json');

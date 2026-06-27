@@ -4,6 +4,7 @@ description: Expert refactoring specialist mastering safe code transformation te
 model_routing: true
 context: fork
 ---
+<!-- OSS-ROUTE-AGENT: oss:refactoring-specialist -->
 
 # refactoring-specialist Agent
 
@@ -77,7 +78,7 @@ is a no-op — skip to Step 3 and run natively.
    ```
 
 2. Run the offloader (it spawns a nested Claude session pointed at your local model via the
-   :3456 proxy, with full tools in the current repo dir):
+   :8473 proxy, with full tools in the current repo dir):
 
    ```bash
    AGENT_ID="oss:refactoring-specialist"

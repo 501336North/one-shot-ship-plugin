@@ -3,6 +3,7 @@ name: python-pro
 description: Write idiomatic Python code with advanced features like decorators, generators, and async/await. Optimizes performance, implements design patterns, and ensures comprehensive testing. Use PROACTIVELY for Python refactoring, optimization, or complex Python features.
 model_routing: true
 ---
+<!-- OSS-ROUTE-AGENT: oss:python-pro -->
 
 # python-pro Agent
 
@@ -76,7 +77,7 @@ is a no-op — skip to Step 3 and run natively.
    ```
 
 2. Run the offloader (it spawns a nested Claude session pointed at your local model via the
-   :3456 proxy, with full tools in the current repo dir):
+   :8473 proxy, with full tools in the current repo dir):
 
    ```bash
    AGENT_ID="oss:python-pro"

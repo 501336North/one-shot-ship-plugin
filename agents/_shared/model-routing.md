@@ -2,6 +2,13 @@
 
 **This section enables per-prompt model routing. Include at the START of agent execution.**
 
+> **Note — two routing paths.** When the session is launched through `oss-launch` (see
+> `DRAIN_SH_INTEGRATION.md`), routing happens at the **proxy layer**: subagents inherit
+> `ANTHROPIC_BASE_URL` and are dispatched by their `OSS-ROUTE-AGENT:<id>` marker, so the
+> per-agent `start-proxy`/offload dance below is **skipped** (the proxy already routed the
+> request). The Step-2.5 nested-offload path below is the fallback for interactive sessions
+> NOT started via the launcher. Default proxy port is **8473**.
+
 ## Step 1: Check for Custom Model Configuration
 
 Before proceeding with the main task, check if a custom model is configured for this agent:
@@ -36,13 +43,13 @@ If `useProxy` is `true`, route the request through our model proxy:
 1. **Start the proxy** (if not running):
    ```bash
    # Check if proxy is already running
-   if ! curl -s "http://localhost:3456/health" > /dev/null 2>&1; then
-       node "$PLUGIN_ROOT/watcher/dist/cli/start-proxy.js" --model "$MODEL" --port 3456 --background
+   if ! curl -s "http://localhost:8473/health" > /dev/null 2>&1; then
+       node "$PLUGIN_ROOT/watcher/dist/cli/start-proxy.js" --model "$MODEL" --port 8473 --background
    fi
    ```
 
 2. **Execute via proxy** using WebFetch:
-   - URL: `http://localhost:3456/v1/messages`
+   - URL: `http://localhost:8473/v1/messages`
    - Method: POST
    - Headers: `Content-Type: application/json`
    - Body: Standard Anthropic API format
@@ -115,7 +122,7 @@ Users configure models in `~/.oss/config.json` or `.oss/config.json`:
 The proxy exposes a health endpoint to verify it's running:
 
 ```bash
-curl http://localhost:3456/health
+curl http://localhost:8473/health
 ```
 
 Response:

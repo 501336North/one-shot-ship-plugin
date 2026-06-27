@@ -3,6 +3,7 @@ name: react-specialist
 description: Expert React specialist mastering React 18/19 with modern patterns and ecosystem. Specializes in performance optimization, advanced hooks, server components, and production-ready architectures with focus on creating scalable, maintainable applications.
 model_routing: true
 ---
+<!-- OSS-ROUTE-AGENT: oss:react-specialist -->
 
 # react-specialist Agent
 
@@ -76,7 +77,7 @@ is a no-op — skip to Step 3 and run natively.
    ```
 
 2. Run the offloader (it spawns a nested Claude session pointed at your local model via the
-   :3456 proxy, with full tools in the current repo dir):
+   :8473 proxy, with full tools in the current repo dir):
 
    ```bash
    AGENT_ID="oss:react-specialist"

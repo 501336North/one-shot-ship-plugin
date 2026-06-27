@@ -6,6 +6,7 @@
  */
 import type { Provider } from '../types/model-settings.js';
 import { type Handler, type SupportedProvider } from './handler-registry.js';
+import { type RouteDeps } from './proxy-router.js';
 /**
  * Configuration for ModelProxy - Legacy format (provider-based)
  */
@@ -33,9 +34,35 @@ export interface ModelProxyConfigNew {
     _testHandler?: Handler;
 }
 /**
+ * Configuration for ModelProxy - Router format (per-agent dispatch).
+ *
+ * In router mode the proxy does NOT force a single construct-time model. Each /v1/messages
+ * request is dispatched per-agent via the already-tested routeMessages logic: a local-mapped
+ * agent is served by Ollama (and streamed back as Anthropic SSE), everything else is forwarded
+ * to Anthropic verbatim. Any non-/, non-/health path is also forwarded (faithful reverse proxy).
+ */
+export interface ModelProxyConfigRouter {
+    router: true;
+    /** Merged OSS config: models.agents (marker→model), models.fallbackEnabled, models.apiKeys.ollama */
+    routerConfig: {
+        models?: {
+            default?: string;
+            agents?: Record<string, string>;
+            fallbackEnabled?: boolean;
+            apiKeys?: {
+                ollama?: string;
+            };
+        };
+    };
+    /** Port to bind to (optional, default 0 for auto-assign) */
+    port?: number;
+    /** Test seam: inject the whole RouteDeps (ollamaHandle/passthrough/log). */
+    _testRouteDeps?: RouteDeps;
+}
+/**
  * Combined configuration type
  */
-export type ModelProxyConfig = ModelProxyConfigLegacy | ModelProxyConfigNew;
+export type ModelProxyConfig = ModelProxyConfigLegacy | ModelProxyConfigNew | ModelProxyConfigRouter;
 /**
  * ModelProxy - HTTP server that proxies requests to model providers
  *
@@ -54,6 +81,8 @@ export declare class ModelProxy {
     private parsedProvider;
     private parsedModel;
     private handler;
+    private routerConfig;
+    private testRouteDeps;
     constructor(config: ModelProxyConfig);
     /**
      * Get the model name (extracted from model string)
@@ -113,6 +142,37 @@ export declare class ModelProxy {
      * is already committed once streaming begins).
      */
     private streamSseResponse;
+    /**
+     * Emit the content blocks + closing events for a resolved Anthropic response over an SSE
+     * `send`. Shared by the streaming path (after the slow backend returns) and the router path
+     * (which already has a resolved backend result). Text → text_delta, tool_use → input_json_delta,
+     * so the Claude CLI can render text AND execute tool calls.
+     */
+    private emitResponseBlocks;
+    /**
+     * Emit a fully-resolved Anthropic response as an SSE event stream in one pass. Unlike
+     * streamSseResponse (which flushes early + pings while a slow backend thinks), the router's
+     * Ollama result is already resolved, so there is nothing to wait for — emit message_start,
+     * the content blocks, then message_stop directly.
+     */
+    private emitResolvedSse;
+    /**
+     * Pipe an upstream fetch Response back to the client verbatim (status + content-type + body).
+     * Used by both the router fallback/pass-through path and the faithful reverse-proxy forward.
+     */
+    private pipeUpstream;
+    /**
+     * Forward any non-/v1/messages request straight to Anthropic and pipe the bytes back — a
+     * faithful reverse proxy. Buffers the body first so POST payloads (e.g. count_tokens) survive.
+     */
+    private forwardRequest;
+    /**
+     * Router mode: dispatch POST /v1/messages per-agent via routeMessages. We write NOTHING to
+     * `res` until routeMessages resolves — that's what lets the Ollama-throw case silently fall
+     * back to Anthropic. Then render by route: 'ollama' result is a resolved AnthropicResponse
+     * (emit as SSE); 'anthropic' result is a fetch Response (pipe it back verbatim).
+     */
+    private handleRouterMessages;
     private handleMessagesRequest;
 }
 //# sourceMappingURL=model-proxy.d.ts.map

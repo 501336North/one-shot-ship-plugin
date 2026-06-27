@@ -3,6 +3,7 @@ name: nextjs-developer
 description: Expert Next.js developer mastering Next.js 14+ with App Router and full-stack features. Specializes in server components, server actions, performance optimization, and production deployment with focus on building fast, SEO-friendly applications.
 model_routing: true
 ---
+<!-- OSS-ROUTE-AGENT: oss:nextjs-developer -->
 
 # nextjs-developer Agent
 
@@ -76,7 +77,7 @@ is a no-op — skip to Step 3 and run natively.
    ```
 
 2. Run the offloader (it spawns a nested Claude session pointed at your local model via the
-   :3456 proxy, with full tools in the current repo dir):
+   :8473 proxy, with full tools in the current repo dir):
 
    ```bash
    AGENT_ID="oss:nextjs-developer"
