@@ -4,6 +4,7 @@ description: Reads and interprets Figma designs via MCP for pixel-perfect implem
 model_routing: true
 context: fork
 ---
+<!-- OSS-ROUTE-AGENT: oss:figma-design-agent -->
 
 # figma-design-agent Agent
 

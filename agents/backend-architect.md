@@ -4,6 +4,7 @@ description: Design RESTful APIs, microservice boundaries, and database schemas.
 model: opus
 model_routing: true
 ---
+<!-- OSS-ROUTE-AGENT: oss:backend-architect -->
 
 # backend-architect Agent
 

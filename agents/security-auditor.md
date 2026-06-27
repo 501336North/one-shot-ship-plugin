@@ -4,6 +4,7 @@ description: Review code for vulnerabilities, implement secure authentication, a
 model: opus
 model_routing: true
 ---
+<!-- OSS-ROUTE-AGENT: oss:security-auditor -->
 
 # security-auditor Agent
 

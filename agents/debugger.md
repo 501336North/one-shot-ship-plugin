@@ -5,6 +5,7 @@ model: opus
 model_routing: true
 context: fork
 ---
+<!-- OSS-ROUTE-AGENT: oss:debugger -->
 
 # debugger Agent
 

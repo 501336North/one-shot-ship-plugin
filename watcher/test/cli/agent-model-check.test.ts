@@ -168,6 +168,29 @@ describe('agent-model-check CLI', () => {
     });
 
     /**
+     * @behavior When the session was launched through the OSS proxy (oss-launch sets
+     *           OSS_PROXY_ROUTING=1), per-agent routing already happens at the proxy layer for
+     *           every inherited subagent. The legacy nested-`claude -p` offload must self-disable
+     *           so it does not double-route.
+     */
+    it('should return useProxy: false when OSS_PROXY_ROUTING=1, even for a mapped agent (launcher guard)', async () => {
+      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.readFileSync as Mock).mockReturnValue(JSON.stringify({
+        models: { agents: { 'oss:code-reviewer': 'ollama/gpt-oss:120b' } },
+      }));
+      process.env.OSS_PROXY_ROUTING = '1';
+
+      const { checkAgentModel } = await import('../../src/cli/agent-model-check.js');
+      const result = await checkAgentModel({
+        agentName: 'oss:code-reviewer',
+        projectDir: '/test/project',
+      });
+
+      expect(result.useProxy).toBe(false);
+      delete process.env.OSS_PROXY_ROUTING;
+    });
+
+    /**
      * @behavior Configurable proxy port — avoid the hardcoded :3456 collision (e.g. with
      *           claude-code-router). Port resolves env > config(models.proxyPort) > default 8473.
      * @acceptance-criteria AC-OFFLOAD.6

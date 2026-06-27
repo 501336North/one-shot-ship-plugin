@@ -4,6 +4,7 @@ description: Simplifies and refines code for clarity, consistency, and maintaina
 model_routing: true
 context: fork
 ---
+<!-- OSS-ROUTE-AGENT: oss:code-simplifier -->
 
 # code-simplifier Agent
 

@@ -4,6 +4,7 @@ description: Automated test generation and coverage specialist. Use PROACTIVELY 
 model_routing: true
 context: fork
 ---
+<!-- OSS-ROUTE-AGENT: oss:test-engineer -->
 
 # test-engineer Agent
 

@@ -3,6 +3,7 @@ name: nextjs-developer
 description: Expert Next.js developer mastering Next.js 14+ with App Router and full-stack features. Specializes in server components, server actions, performance optimization, and production deployment with focus on building fast, SEO-friendly applications.
 model_routing: true
 ---
+<!-- OSS-ROUTE-AGENT: oss:nextjs-developer -->
 
 # nextjs-developer Agent
 
