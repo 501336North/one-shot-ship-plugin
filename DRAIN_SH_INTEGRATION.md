@@ -44,8 +44,27 @@ call node directly (no bin shim):
 node "$PLUGIN_ROOT/watcher/dist/cli/oss-launch.js" -p "/oss:build …" --dangerously-skip-permissions
 ```
 
+## No system Node? (self-contained binary + Node preflight)
+
+`bin/oss-launch` no longer requires a system Node. On first use it fetches a **self-contained
+`oss-launch` binary** (bundled Node, verified by SHA-256) for the box's OS/arch and caches it at
+`~/.oss/bin/oss-launch-<arch>`. That binary brings its own Node, so local routing works with **zero
+system Node**. Selection + degrade behavior:
+
+| Situation | Behavior |
+|-----------|----------|
+| Bundled binary present for the arch | exec it — routing works, no system Node needed |
+| No bundled binary, **system Node ≥ 20** | run via system Node, route normally |
+| No bundled binary, system Node **too old (<20)** | **loud** warning → run **all-cloud** (exit 0) |
+| No bundled binary, **no Node at all** | **loud** warning → exec real `claude` all-cloud (exit 0) |
+
+The degrade is always **loud** (stderr banner) and **never blocks** the run — but it is never
+silent, so a customer can't unknowingly lose local routing. (Min Node for the fallback path: **20**;
+the bundled binary ships Node 18 and is trusted as self-contained.)
+
 > `oss-launch` requires `watcher/dist/` to be built (`cd watcher && npm run build`). The plugin
-> ships the built `dist/`, so a `claude plugin update` to **≥ 2.0.76** is sufficient.
+> ships the built `dist/`, so a `claude plugin update` to **≥ 2.0.77** is sufficient. Self-contained
+> binaries are published by the `Build oss-launch` workflow (tag `oss-launch-v*`).
 
 ---
 

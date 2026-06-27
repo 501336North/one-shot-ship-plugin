@@ -11,6 +11,7 @@
  * The exec wrapper (resolving the real claude binary, starting the proxy, spawning) is
  * built on top of this pure decision in later tasks (T14/T15).
  */
+import { type NodeCheck } from '../services/node-guard.js';
 export interface LaunchConfig {
     models?: {
         agents?: Record<string, string>;
@@ -34,6 +35,20 @@ export declare const DEFAULT_PROXY_PORT = 8473;
  * launched claude is byte-for-byte identical to running `claude` directly.
  */
 export declare function resolveLaunch(config: LaunchConfig | null | undefined, baseEnv: NodeJS.ProcessEnv): LaunchDecision;
+/** Route a leading `start-proxy` subcommand to the proxy entry; else it's a launch. */
+export declare function resolveEntry(argv: string[]): 'start-proxy' | 'launch';
+/** `oss-launch --version` / `-v`. */
+export declare function isVersionRequest(argv: string[]): boolean;
+/**
+ * Build the argv for spawning the router proxy. A bundled binary re-invokes ITSELF with the
+ * `start-proxy` subcommand (its own runtime — no system node); a node-script install spawns the
+ * compiled `start-proxy.js`. In both cases the binary/node is `process.execPath` at the call site.
+ */
+export declare function proxySpawnArgs(opts: {
+    bundled: boolean;
+    startProxyJs: string;
+    port: number;
+}): string[];
 interface SpawnedChild {
     on(event: string, cb: (arg: unknown) => void): unknown;
 }
@@ -51,6 +66,10 @@ export interface LaunchDeps {
     }) => SpawnedChild;
     /** Base environment to start from. */
     baseEnv: NodeJS.ProcessEnv;
+    /** Probe the runtime Node (defaults to ok). main() wires this to checkNode(process.version). */
+    nodeCheck?: () => NodeCheck;
+    /** Surface a loud degrade warning (defaults to console.error). */
+    warn?: (msg: string) => void;
 }
 /**
  * Launch claude, routing through the proxy only when models.agents is configured.
@@ -100,6 +119,6 @@ export declare function ensureProxy(port: number, deps: EnsureProxyDeps): Promis
  * Launcher entrypoint: build the real collaborators (config read, proxy health/start, claude
  * resolution, spawn) and run. Resolves to the child's exit code.
  */
-export declare function main(argv: string[]): Promise<number>;
+export declare function main(argv: string[]): Promise<number | undefined>;
 export {};
 //# sourceMappingURL=oss-launch.d.ts.map

@@ -181,5 +181,6 @@ export declare function createShutdownHandler(proxy: {
  * Format output as JSON string
  */
 export declare function formatOutput(result: StartProxyResult): string;
+export declare function main(args?: string[]): Promise<void>;
 export {};
 //# sourceMappingURL=start-proxy.d.ts.map

@@ -7,9 +7,10 @@
  */
 /**
  * @param version e.g. process.version ("v20.11.0"), or undefined if node couldn't be run.
- * @param minMajor minimum required major version.
+ * @param minMajor minimum required major version. Default 20 (LTS): the dist relies on
+ *   web ReadableStream + Readable.fromWeb + global fetch, all stable from Node 20.
  */
-export function checkNode(version, minMajor = 18) {
+export function checkNode(version, minMajor = 20) {
     if (!version) {
         return {
             ok: false,
@@ -28,5 +29,26 @@ export function checkNode(version, minMajor = 18) {
         };
     }
     return { ok: true, major };
+}
+/**
+ * Decide whether to route through the proxy or degrade to all-cloud — LOUDLY, never silently.
+ *
+ * - routing NOT configured → always route (no proxy is engaged anyway); never warn. This preserves
+ *   the no-impact guarantee for users who don't use local models, regardless of Node state.
+ * - routing configured + Node usable → route.
+ * - routing configured + Node missing/too old → do NOT route; return a loud banner so the operator
+ *   sees the degrade. (The launcher still execs claude all-cloud so work is never blocked.)
+ */
+export function decidePreflight(input) {
+    if (!input.routingConfigured)
+        return { route: true };
+    if (input.nodeCheck.ok)
+        return { route: true };
+    const reason = input.nodeCheck.message ?? 'Node is unavailable.';
+    return {
+        route: false,
+        banner: `⚠️  OSS: local model routing DISABLED — running ALL-CLOUD. ${reason} ` +
+            `Install/upgrade Node (or unset models.agents) to route agents locally.`,
+    };
 }
 //# sourceMappingURL=node-guard.js.map
