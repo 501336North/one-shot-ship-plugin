@@ -2,22 +2,75 @@
 #
 # oss-launch — launch a Claude Code session through the OSS per-agent model proxy.
 #
-# Transparent: when `models.agents` is NOT configured this execs the real `claude` with the
-# environment UNCHANGED (Anthropic-only users are unaffected). When per-agent local routing IS
-# configured it ensures the router proxy is up, points the session at it, and execs claude.
+# Selection order:
+#   1. A self-contained bundled binary for this arch ($BIN_DIR/oss-launch-<arch>) — brings its own
+#      Node, so local routing works with NO system Node.
+#   2. Else system `node` running the compiled JS launcher (the JS guard handles too-old Node).
+#   3. Else (no Node at all) → warn LOUDLY and exec the real `claude` all-cloud. Never silent.
 #
-# Usage:  oss-launch [any claude args …]
-#   e.g.  oss-launch -p "/oss:build" --dangerously-skip-permissions
+# Transparent: when `models.agents` is NOT configured the JS/bundled launcher execs the real
+# `claude` with the environment UNCHANGED (Anthropic-only users unaffected).
 #
-# drain.sh / headless callers should invoke THIS instead of `claude` directly.
-set -euo pipefail
+# Test seams: OSS_LAUNCH_DRY_RUN (echo the chosen action instead of exec), OSS_LAUNCH_BIN_DIR,
+# OSS_LAUNCH_ARCH.
+set -uo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LAUNCH_JS="$DIR/watcher/dist/cli/oss-launch.js"
+BIN_DIR="${OSS_LAUNCH_BIN_DIR:-$HOME/.oss/bin}"
+MIN_NODE=20
 
-if [[ ! -f "$LAUNCH_JS" ]]; then
-  echo "[oss-launch] missing $LAUNCH_JS — run 'npm run build' in watcher/ first." >&2
+# Normalize arch to arm64 / x64 (mirror the oss-decrypt hook's mapping).
+arch="${OSS_LAUNCH_ARCH:-$(uname -m)}"
+case "$arch" in
+  aarch64|arm64) arch="arm64" ;;
+  x86_64|amd64)  arch="x64" ;;
+esac
+BUNDLED="$BIN_DIR/oss-launch-$arch"
+
+# Dry-run helper: in tests, echo the decision and exit instead of exec'ing.
+emit() { [[ -n "${OSS_LAUNCH_DRY_RUN:-}" ]] && { echo "$1"; exit 0; }; }
+
+# Auto-install the bundled binary on first use (best-effort, idempotent). Overridable for tests via
+# OSS_LAUNCH_ENSURE (e.g. /usr/bin/true to skip the network). Never blocks: failure → fall through.
+ENSURE="${OSS_LAUNCH_ENSURE:-$DIR/hooks/ensure-oss-launch.sh}"
+[[ -x "$ENSURE" ]] && "$ENSURE" >/dev/null 2>&1 || true
+
+# 1. Bundled self-contained binary for this arch.
+if [[ -x "$BUNDLED" ]]; then
+  emit "EXEC_BUNDLED $BUNDLED"
+  exec "$BUNDLED" "$@"
+fi
+
+# 2. System node running the JS launcher.
+if command -v node >/dev/null 2>&1; then
+  if [[ ! -f "$LAUNCH_JS" ]]; then
+    echo "[oss-launch] missing $LAUNCH_JS — run 'npm run build' in watcher/ first." >&2
+    exit 1
+  fi
+  emit "EXEC_NODE $LAUNCH_JS"
+  exec node "$LAUNCH_JS" "$@"
+fi
+
+# 3. No Node and no bundled binary → loud degrade to all-cloud (never silent), exec real claude.
+echo "⚠️  OSS: Node not found — local model routing DISABLED, running ALL-CLOUD." >&2
+echo "    Install Node >= $MIN_NODE (or a bundled oss-launch binary) to route agents locally." >&2
+
+self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+self_real="$(readlink -f "$self" 2>/dev/null || echo "$self")"
+claude_bin=""
+IFS=':' read -ra _dirs <<< "$PATH"
+for d in "${_dirs[@]}"; do
+  cand="$d/claude"
+  # Compare realpaths so a `claude` symlinked back to this shim is skipped (no self-exec loop).
+  cand_real="$(readlink -f "$cand" 2>/dev/null || echo "$cand")"
+  if [[ -x "$cand" && "$cand_real" != "$self_real" ]]; then claude_bin="$cand"; break; fi
+done
+
+if [[ -z "$claude_bin" ]]; then
+  echo "[oss-launch] real 'claude' not found on PATH — cannot launch." >&2
   exit 1
 fi
 
-exec node "$LAUNCH_JS" "$@"
+emit "WARN_ALLCLOUD EXEC_CLAUDE $claude_bin"
+exec "$claude_bin" "$@"

@@ -405,8 +405,7 @@ OUTPUT:
 // ============================================================================
 // Main Entry Point
 // ============================================================================
-async function main() {
-    const args = process.argv.slice(2);
+export async function main(args = process.argv.slice(2)) {
     const parsedArgs = parseCliArgs(args);
     // Show help if requested
     if (parsedArgs.showHelp) {
@@ -523,9 +522,12 @@ async function main() {
         process.exit(1);
     }
 }
-// Main execution - only run when called directly
-const isMainModule = import.meta.url === `file://${process.argv[1]}` ||
-    process.argv[1]?.endsWith('start-proxy.js') ||
+// Main execution - only run when invoked directly as start-proxy. We intentionally do NOT use the
+// generic `import.meta.url === file://argv[1]` check here: when this module is bundled INTO
+// oss-launch (which doubles as the proxy and dispatches start-proxy.main() explicitly), that check
+// would otherwise also fire and run main() a SECOND time. Match only the real start-proxy entry.
+const isMainModule = process.argv[1]?.endsWith('start-proxy.js') ||
+    process.argv[1]?.endsWith('start-proxy.cjs') ||
     process.argv[1]?.endsWith('start-proxy.ts');
 if (isMainModule) {
     main().catch((err) => {

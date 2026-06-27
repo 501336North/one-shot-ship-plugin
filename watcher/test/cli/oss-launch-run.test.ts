@@ -62,4 +62,32 @@ describe('runLaunch: exec wrapper', () => {
     expect(opts.env.OSS_PROXY_ROUTING).toBe('1');
     expect(opts.stdio).toBe('inherit');
   });
+
+  it('routing configured but Node too old/missing: WARNS loudly, runs all-cloud, no proxy', async () => {
+    const warn = vi.fn();
+    const d = deps({
+      loadConfig: () => ({ models: { agents: { 'oss:code-reviewer': 'ollama/gpt-oss:120b' } } }),
+      nodeCheck: () => ({ ok: false, message: 'Node.js was not found.' }),
+      warn,
+    });
+    const code = await runLaunch(['-p', 'x'], d);
+
+    expect(code).toBe(0); // never blocked — work continues all-cloud
+    expect(d.ensureProxy).not.toHaveBeenCalled(); // no routing attempted
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toMatch(/all-cloud/i); // loud, not silent
+    const [bin, , opts] = (d.spawn as any).mock.calls[0];
+    expect(bin).toBe('/real/bin/claude');
+    expect(opts.env.ANTHROPIC_BASE_URL).toBeUndefined(); // env UNCHANGED → all-cloud
+    expect(opts.env.OSS_PROXY_ROUTING).toBeUndefined();
+    expect(opts.env.ANTHROPIC_API_KEY).toBe('sk-real');
+  });
+
+  it('routing configured + Node OK (default nodeCheck): still routes (regression)', async () => {
+    const d = deps({
+      loadConfig: () => ({ models: { agents: { 'oss:code-reviewer': 'ollama/gpt-oss:120b' } } }),
+    });
+    await runLaunch(['-p', 'x'], d);
+    expect(d.ensureProxy).toHaveBeenCalledTimes(1); // default nodeCheck must be "ok"
+  });
 });
