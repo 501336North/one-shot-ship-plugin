@@ -12,7 +12,10 @@
 set -uo pipefail
 
 BIN_DIR="${OSS_LAUNCH_BIN_DIR:-$HOME/.oss/bin}"
-RELEASES="${OSS_LAUNCH_RELEASES_URL:-https://github.com/501336North/one-shot-ship-plugin/releases/latest/download}"
+# Pin to a SPECIFIC release tag (not `latest`) so a fresh/unknown release can't auto-roll out to
+# every box. The default tag is bumped (with the committed checksum manifest) at each release.
+OSS_LAUNCH_TAG="${OSS_LAUNCH_TAG:-oss-launch-v2.0.78}"
+RELEASES="${OSS_LAUNCH_RELEASES_URL:-https://github.com/501336North/one-shot-ship-plugin/releases/download/$OSS_LAUNCH_TAG}"
 
 # Detect OS + arch (overridable for tests).
 OS="${OSS_LAUNCH_OS:-$(uname -s)}"
@@ -42,7 +45,10 @@ fi
 mkdir -p "$BIN_DIR"
 
 URL="$RELEASES/oss-launch-$OS-$ARCH"
-TMP="$(mktemp)"
+# Stage the binary INSIDE BIN_DIR so the final `mv` is a same-filesystem rename (atomic). A plain
+# mktemp lands in $TMPDIR, often a different fs → cross-device mv degrades to copy+unlink (not
+# atomic), which could leave a truncated +x binary if interrupted.
+TMP="$(mktemp "$BIN_DIR/.oss-launch.XXXXXX")"
 SUM="$(mktemp)"
 cleanup() { rm -f "$TMP" "$SUM"; }
 trap cleanup EXIT
@@ -70,6 +76,30 @@ fi
 
 if [[ -z "$expected" || "$expected" != "$actual" ]]; then
   echo "[ensure-oss-launch] checksum MISMATCH for $URL — rejecting binary" >&2
+  exit 1
+fi
+
+# SECOND METHOD — committed known-good manifest (the security gate). The in-release .sha256 above is
+# fetched from the SAME release as the binary, so a release-write compromise could swap both. Require
+# the binary's hash to ALSO match a code-reviewed hash committed in the repo. Fail-closed: a missing
+# manifest, a missing entry for this artifact, or a mismatch all REJECT (never trust-on-first-use).
+ARTIFACT="oss-launch-$OS-$ARCH"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CHECKSUMS="${OSS_LAUNCH_CHECKSUMS:-$SCRIPT_DIR/oss-launch-checksums.txt}"
+
+if [[ ! -f "$CHECKSUMS" ]]; then
+  echo "[ensure-oss-launch] no committed checksum manifest ($CHECKSUMS) — refusing (fail closed)" >&2
+  exit 1
+fi
+
+# Manifest lines are `<sha256>  <artifact>` (shasum format). Pull the one for THIS artifact.
+committed="$(awk -v a="$ARTIFACT" '$2 == a {print $1}' "$CHECKSUMS" | head -1)"
+if [[ -z "$committed" ]]; then
+  echo "[ensure-oss-launch] no committed hash for $ARTIFACT — refusing (fail closed)" >&2
+  exit 1
+fi
+if [[ "$committed" != "$actual" ]]; then
+  echo "[ensure-oss-launch] committed-manifest MISMATCH for $ARTIFACT — rejecting (possible release tamper)" >&2
   exit 1
 fi
 
