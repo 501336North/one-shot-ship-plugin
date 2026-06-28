@@ -4,7 +4,11 @@
 # matching line here. Lines are `<sha256>  oss-launch-<OS>-<arch>` (shasum format). Comment lines
 # (starting with #) are ignored.
 #
-# POPULATED AT RELEASE (Phase 3): after a `oss-launch-v*` tag builds the binaries, run
-#   scripts/verify-release.sh <tag> | tee hooks/oss-launch-checksums.txt
-# REVIEW the four hashes against the GitHub Release page, then commit via a reviewed PR. Until then
-# this file has no entries, so ensure-oss-launch.sh fail-closes (no binary is trusted yet) — correct.
+# Populated by scripts/verify-release.sh <tag> (recomputes + cross-checks the published .sha256) and
+# committed via a reviewed PR. Update on every release, in lockstep with OSS_LAUNCH_TAG.
+#
+# Release: oss-launch-v2.0.78
+b9aa898b36a81feabbeb0fe729c439d4f46a2ca78f3e3da6558035c9ac573f84  oss-launch-Darwin-arm64
+5b72931ff119d9eba7b753418ef98013d9fef8a9039f3d8418b3392398dc9f0a  oss-launch-Darwin-x64
+58659d53c3aba889541246fa383a5b7e346d3a78648a43aa08ea390390d6631c  oss-launch-Linux-x64
+b9e2a82734e904d212aa0e9df2c4a44d5f8b1ee8ece842ba0ec9e7cef3016636  oss-launch-Linux-arm64
