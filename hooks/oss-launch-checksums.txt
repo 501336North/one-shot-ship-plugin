@@ -1,0 +1,10 @@
+# oss-launch known-good checksums (the security gate).
+#
+# `ensure-oss-launch.sh` verifies a downloaded binary against BOTH the in-release .sha256 AND a
+# matching line here. Lines are `<sha256>  oss-launch-<OS>-<arch>` (shasum format). Comment lines
+# (starting with #) are ignored.
+#
+# POPULATED AT RELEASE (Phase 3): after a `oss-launch-v*` tag builds the binaries, run
+#   scripts/verify-release.sh <tag> | tee hooks/oss-launch-checksums.txt
+# REVIEW the four hashes against the GitHub Release page, then commit via a reviewed PR. Until then
+# this file has no entries, so ensure-oss-launch.sh fail-closes (no binary is trusted yet) — correct.
