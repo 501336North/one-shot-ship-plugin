@@ -373,6 +373,8 @@ export interface RouterProxyConfig {
     agents?: Record<string, string>;
     fallbackEnabled?: boolean;
     apiKeys?: { ollama?: string };
+    /** Per-model native ollama `think` flag (bare model name → boolean). Opt-in; absent ⇒ unchanged. */
+    think?: Record<string, boolean>;
   };
 }
 
@@ -388,6 +390,7 @@ export function buildRouterConfig(raw: unknown): RouterProxyConfig {
     agents?: Record<string, string>;
     fallbackEnabled?: boolean;
     apiKeys?: { ollama?: string };
+    think?: Record<string, boolean>;
   };
   return {
     models: {
@@ -395,6 +398,8 @@ export function buildRouterConfig(raw: unknown): RouterProxyConfig {
       agents: models.agents ?? {},
       fallbackEnabled: models.fallbackEnabled !== false,
       apiKeys: { ollama: models.apiKeys?.ollama ?? r.apiKeys?.ollama },
+      // Opt-in: carry the think map only when configured (absent ⇒ undefined ⇒ unchanged behavior).
+      think: models.think,
     },
   };
 }

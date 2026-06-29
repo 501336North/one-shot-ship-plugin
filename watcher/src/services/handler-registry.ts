@@ -37,6 +37,8 @@ export interface HandlerConfig {
   provider: SupportedProvider;
   apiKey?: string;
   baseUrl?: string;
+  /** Per-model native `think` map (ollama only), forwarded to OllamaHandler. */
+  think?: Record<string, boolean>;
 }
 
 // ============================================================================
@@ -55,6 +57,7 @@ export function createHandler(config: HandlerConfig): Handler {
     case 'ollama':
       return new OllamaHandler({
         baseUrl: config.baseUrl,
+        think: config.think,
       });
 
     case 'openrouter':

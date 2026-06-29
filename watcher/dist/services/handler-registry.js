@@ -25,6 +25,7 @@ export function createHandler(config) {
         case 'ollama':
             return new OllamaHandler({
                 baseUrl: config.baseUrl,
+                think: config.think,
             });
         case 'openrouter':
             if (!config.apiKey) {

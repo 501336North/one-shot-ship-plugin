@@ -5,7 +5,7 @@
  * @acceptance-criteria AC-PROXY.1 through AC-PROXY.9
  */
 import type { Provider } from '../types/model-settings.js';
-import { type Handler, type SupportedProvider } from './handler-registry.js';
+import { type Handler, type HandlerConfig, type SupportedProvider } from './handler-registry.js';
 import { type RouteDeps } from './proxy-router.js';
 /**
  * Configuration for ModelProxy - Legacy format (provider-based)
@@ -52,6 +52,8 @@ export interface ModelProxyConfigRouter {
             apiKeys?: {
                 ollama?: string;
             };
+            /** Per-model native ollama `think` flag (bare model name → boolean). Opt-in; absent ⇒ unchanged. */
+            think?: Record<string, boolean>;
         };
     };
     /** Port to bind to (optional, default 0 for auto-assign) */
@@ -72,6 +74,11 @@ export type ModelProxyConfig = ModelProxyConfigLegacy | ModelProxyConfigNew | Mo
  * - Forwards to the provider and returns transformed responses
  * - Provides health check endpoint at GET /health
  */
+/**
+ * Build the ollama HandlerConfig for the router path from the merged routerConfig — base URL plus the
+ * opt-in per-model `think` map. Extracted so the wiring (incl. think) is unit-tested directly.
+ */
+export declare function ollamaHandlerConfig(routerConfig: ModelProxyConfigRouter['routerConfig']): HandlerConfig;
 export declare class ModelProxy {
     private config;
     private server;

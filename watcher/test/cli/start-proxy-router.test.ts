@@ -60,6 +60,18 @@ describe('start-proxy --router: buildRouterConfig', () => {
     expect(cfg.models?.agents).toEqual({});
     expect(cfg.models?.fallbackEnabled).toBe(true);
   });
+
+  it('carries the per-model think map when present', () => {
+    const cfg = buildRouterConfig({
+      models: { agents: {}, think: { 'qwen3.6:35b-a3b': false } },
+    });
+    expect(cfg.models?.think).toEqual({ 'qwen3.6:35b-a3b': false });
+  });
+
+  it('omits think when absent (no synthetic default → unchanged behavior)', () => {
+    const cfg = buildRouterConfig({ models: { agents: {} } });
+    expect(cfg.models?.think).toBeUndefined();
+  });
 });
 
 describe('start-proxy --router: startRouterProxy', () => {

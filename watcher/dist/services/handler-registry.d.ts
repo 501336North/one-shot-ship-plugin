@@ -26,6 +26,8 @@ export interface HandlerConfig {
     provider: SupportedProvider;
     apiKey?: string;
     baseUrl?: string;
+    /** Per-model native `think` map (ollama only), forwarded to OllamaHandler. */
+    think?: Record<string, boolean>;
 }
 /**
  * Create a handler for the specified provider

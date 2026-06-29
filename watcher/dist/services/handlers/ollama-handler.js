@@ -16,8 +16,10 @@ import { flattenAnthropicContent } from '../api-transformer.js';
  */
 export class OllamaHandler {
     baseUrl;
+    think;
     constructor(config) {
         this.baseUrl = config.baseUrl || 'http://localhost:11434';
+        this.think = config.think;
     }
     /**
      * Get the base URL for the Ollama server
@@ -132,6 +134,15 @@ export class OllamaHandler {
                 top_p: request.top_p,
             },
         };
+        // Per-model native think control: set ollama's top-level `think` ONLY when the bare (stripped)
+        // model name is a configured key. Existence-keyed so a `false` value is honored; unlisted models
+        // get no `think` key (sending it to a non-thinking model can 400).
+        const bareModel = request.model.replace(/^ollama\//, '');
+        // Own-key check (not `in`): avoids a model named after an Object.prototype member
+        // (e.g. "constructor") spuriously matching the allow-list.
+        if (this.think && Object.prototype.hasOwnProperty.call(this.think, bareModel)) {
+            ollamaRequest.think = this.think[bareModel];
+        }
         // Map Anthropic tools → ollama function-tool format so the model can call tools.
         if (request.tools && request.tools.length > 0) {
             ollamaRequest.tools = request.tools.map((t) => ({

@@ -17,7 +17,27 @@
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as http from 'http';
-import { ModelProxy } from '../../src/services/model-proxy.js';
+import { ModelProxy, ollamaHandlerConfig } from '../../src/services/model-proxy.js';
+
+describe('ollamaHandlerConfig: router → ollama HandlerConfig (incl. per-model think)', () => {
+  it('carries baseUrl AND the think map from routerConfig.models', () => {
+    const cfg = ollamaHandlerConfig({
+      models: {
+        agents: { 'oss:x': 'ollama/qwen3.6:35b-a3b' },
+        apiKeys: { ollama: 'http://deepblue:11434' },
+        think: { 'qwen3.6:35b-a3b': false },
+      },
+    });
+    expect(cfg.provider).toBe('ollama');
+    expect(cfg.baseUrl).toBe('http://deepblue:11434');
+    expect(cfg.think).toEqual({ 'qwen3.6:35b-a3b': false });
+  });
+
+  it('omits think when the router config has none (unchanged behavior)', () => {
+    const cfg = ollamaHandlerConfig({ models: { agents: {} } });
+    expect(cfg.think).toBeUndefined();
+  });
+});
 
 const routerConfig = {
   models: {
