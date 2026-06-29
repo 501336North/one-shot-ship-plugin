@@ -139,6 +139,8 @@ export interface RouterProxyConfig {
         apiKeys?: {
             ollama?: string;
         };
+        /** Per-model native ollama `think` flag (bare model name → boolean). Opt-in; absent ⇒ unchanged. */
+        think?: Record<string, boolean>;
     };
 }
 /**

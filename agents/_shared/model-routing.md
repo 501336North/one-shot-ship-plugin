@@ -9,6 +9,15 @@
 > request). The Step-2.5 nested-offload path below is the fallback for interactive sessions
 > NOT started via the launcher. Default proxy port is **8473**.
 
+> **Note — per-model `think` control (ollama).** Optional `models.think` map (bare model name →
+> boolean) lets the proxy send ollama's native `think` flag per request, so a verbose reasoning
+> model can be served with thinking OFF for latency-sensitive agents:
+> ```json
+> { "models": { "think": { "qwen3.6:35b-a3b": false } } }
+> ```
+> Opt-in and allow-listed: models NOT listed get no `think` key (sending it to a non-thinking model
+> can 400), and Anthropic/cloud requests are entirely unaffected. Absent ⇒ unchanged behavior.
+
 ## Step 1: Check for Custom Model Configuration
 
 Before proceeding with the main task, check if a custom model is configured for this agent:

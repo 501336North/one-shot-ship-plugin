@@ -263,6 +263,8 @@ export function buildRouterConfig(raw) {
             agents: models.agents ?? {},
             fallbackEnabled: models.fallbackEnabled !== false,
             apiKeys: { ollama: models.apiKeys?.ollama ?? r.apiKeys?.ollama },
+            // Opt-in: carry the think map only when configured (absent ⇒ undefined ⇒ unchanged behavior).
+            think: models.think,
         },
     };
 }

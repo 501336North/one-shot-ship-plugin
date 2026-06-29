@@ -11,6 +11,13 @@ import type { AnthropicRequest, AnthropicResponse } from '../api-transformer.js'
 export interface OllamaHandlerConfig {
     /** Base URL for Ollama server (default: http://localhost:11434) */
     baseUrl?: string;
+    /**
+     * Per-model native `think` flag (bare model name → boolean). When the routed (stripped) model name
+     * is a KEY here, the value is sent as ollama's top-level `think` on /api/chat — letting verbose
+     * reasoning models be served with thinking OFF. Models not listed send NO `think` key (sending it
+     * to a non-thinking model can 400). Keyed by existence, so a `false` value is honored.
+     */
+    think?: Record<string, boolean>;
 }
 /**
  * OllamaHandler - Connects to local Ollama server
@@ -21,6 +28,7 @@ export interface OllamaHandlerConfig {
  */
 export declare class OllamaHandler {
     private baseUrl;
+    private think?;
     constructor(config: OllamaHandlerConfig);
     /**
      * Get the base URL for the Ollama server

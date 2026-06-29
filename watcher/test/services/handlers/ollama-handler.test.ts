@@ -10,6 +10,7 @@ import * as http from 'http';
 import * as https from 'https';
 
 import { OllamaHandler } from '../../../src/services/handlers/ollama-handler.js';
+import { createHandler } from '../../../src/services/handler-registry.js';
 
 // Mock http.request
 vi.mock('http', async () => {
@@ -562,6 +563,67 @@ describe('OllamaHandler', () => {
       );
 
       await expect(handler.listModels()).resolves.toEqual([]);
+    });
+  });
+
+  describe('think control (per-model)', () => {
+    // @behavior The proxy sends ollama's native top-level `think` flag ONLY for models listed in the
+    // configured map, so verbose reasoning models can be served with thinking OFF. The value may be
+    // `false`, so membership is keyed by EXISTENCE — `false` must survive (not be swallowed). Unlisted
+    // models and the no-map default send NO `think` key (sending it to a non-thinking model can 400).
+    function setOkResponse() {
+      const responseData = JSON.stringify({
+        model: 'x', message: { role: 'assistant', content: 'ok' }, done: true,
+        prompt_eval_count: 1, eval_count: 1,
+      });
+      mockResponse.on.mockImplementation((event: string, cb: (d?: string) => void) => {
+        if (event === 'data') setTimeout(() => cb(responseData), 0);
+        if (event === 'end') setTimeout(() => cb(), 10);
+        return mockResponse;
+      });
+    }
+    const req = (model: string) => ({
+      model,
+      messages: [{ role: 'user' as const, content: 'hi' }],
+      max_tokens: 16,
+    });
+    const sentBody = () => JSON.parse(mockClientRequest.write.mock.calls[0][0] as string);
+
+    it('(a) configured think:false → body has think:false (value survives; ollama/ strip + bare-name match)', async () => {
+      setOkResponse();
+      const h = new OllamaHandler({ think: { 'qwen3.6:35b-a3b': false } });
+      await h.handle(req('ollama/qwen3.6:35b-a3b'));
+      const body = sentBody();
+      expect('think' in body).toBe(true);
+      expect(body.think).toBe(false);
+    });
+
+    it('(b) configured think:true → body has think:true', async () => {
+      setOkResponse();
+      const h = new OllamaHandler({ think: { 'qwen3.6:35b-a3b': true } });
+      await h.handle(req('ollama/qwen3.6:35b-a3b'));
+      expect(sentBody().think).toBe(true);
+    });
+
+    it('(c) unlisted model with a non-empty map → NO think key', async () => {
+      setOkResponse();
+      const h = new OllamaHandler({ think: { 'qwen3.6:35b-a3b': false } });
+      await h.handle(req('ollama/gpt-oss:120b'));
+      expect('think' in sentBody()).toBe(false);
+    });
+
+    it('(d) no map (default) → NO think key', async () => {
+      setOkResponse();
+      const h = new OllamaHandler({});
+      await h.handle(req('ollama/qwen3.6:35b-a3b'));
+      expect('think' in sentBody()).toBe(false);
+    });
+
+    it('(e) createHandler({provider:ollama, think}) forwards the map to the handler', async () => {
+      setOkResponse();
+      const h = createHandler({ provider: 'ollama', think: { 'qwen3.6:35b-a3b': false } });
+      await h.handle(req('ollama/qwen3.6:35b-a3b'));
+      expect(sentBody().think).toBe(false);
     });
   });
 });

@@ -79,6 +79,17 @@ function generateId() {
  * - Forwards to the provider and returns transformed responses
  * - Provides health check endpoint at GET /health
  */
+/**
+ * Build the ollama HandlerConfig for the router path from the merged routerConfig — base URL plus the
+ * opt-in per-model `think` map. Extracted so the wiring (incl. think) is unit-tested directly.
+ */
+export function ollamaHandlerConfig(routerConfig) {
+    return {
+        provider: 'ollama',
+        baseUrl: routerConfig.models?.apiKeys?.ollama,
+        think: routerConfig.models?.think,
+    };
+}
 export class ModelProxy {
     config;
     server = null;
@@ -522,10 +533,7 @@ export class ModelProxy {
             }
             const deps = this.testRouteDeps ??
                 {
-                    ollamaHandle: async (model, body) => createHandler({
-                        provider: 'ollama',
-                        baseUrl: routerConfig.models?.apiKeys?.ollama,
-                    }).handle({ ...body, model }),
+                    ollamaHandle: async (model, body) => createHandler(ollamaHandlerConfig(routerConfig)).handle({ ...body, model }),
                     passthrough: async () => forwardToAnthropic({
                         path: req.url || '/',
                         method: req.method || 'POST',

@@ -12,7 +12,7 @@ import * as os from 'os';
 import { Readable } from 'stream';
 import type { Provider } from '../types/model-settings.js';
 import type { AnthropicRequest, AnthropicResponse, AnthropicResponseContent } from './api-transformer.js';
-import { createHandler, type Handler, type SupportedProvider, SUPPORTED_PROVIDERS } from './handler-registry.js';
+import { createHandler, type Handler, type HandlerConfig, type SupportedProvider, SUPPORTED_PROVIDERS } from './handler-registry.js';
 import { routeMessages, type RouteDeps } from './proxy-router.js';
 import { forwardToAnthropic } from './anthropic-passthrough.js';
 import { createRoutingLogger } from './routing-log.js';
@@ -66,6 +66,8 @@ export interface ModelProxyConfigRouter {
       agents?: Record<string, string>;
       fallbackEnabled?: boolean;
       apiKeys?: { ollama?: string };
+      /** Per-model native ollama `think` flag (bare model name → boolean). Opt-in; absent ⇒ unchanged. */
+      think?: Record<string, boolean>;
     };
   };
   /** Port to bind to (optional, default 0 for auto-assign) */
@@ -162,6 +164,21 @@ function generateId(): string {
  * - Forwards to the provider and returns transformed responses
  * - Provides health check endpoint at GET /health
  */
+
+/**
+ * Build the ollama HandlerConfig for the router path from the merged routerConfig — base URL plus the
+ * opt-in per-model `think` map. Extracted so the wiring (incl. think) is unit-tested directly.
+ */
+export function ollamaHandlerConfig(
+  routerConfig: ModelProxyConfigRouter['routerConfig']
+): HandlerConfig {
+  return {
+    provider: 'ollama',
+    baseUrl: routerConfig.models?.apiKeys?.ollama,
+    think: routerConfig.models?.think,
+  };
+}
+
 export class ModelProxy {
   private config: ModelProxyConfig;
   private server: http.Server | null = null;
@@ -652,10 +669,7 @@ export class ModelProxy {
         this.testRouteDeps ??
         {
           ollamaHandle: async (model, body) =>
-            createHandler({
-              provider: 'ollama',
-              baseUrl: routerConfig.models?.apiKeys?.ollama,
-            }).handle({ ...(body as object), model } as AnthropicRequest),
+            createHandler(ollamaHandlerConfig(routerConfig)).handle({ ...(body as object), model } as AnthropicRequest),
           passthrough: async () =>
             forwardToAnthropic({
               path: req.url || '/',
