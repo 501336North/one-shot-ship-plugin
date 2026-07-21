@@ -36,6 +36,39 @@ export class TelegramNotifier {
         }
     }
     /**
+     * Send a structured-error escalation notification via telegram-bridge service
+     *
+     * @param info escalation payload (code, severity, message, recovery steps)
+     * @throws Error if HTTP request fails
+     */
+    async sendErrorEscalation(info) {
+        const message = this.formatEscalationMessage(info);
+        const response = await fetch(`${this.telegramBridgeUrl}/api/notify`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ message }),
+        });
+        if (!response.ok) {
+            throw new Error(`Telegram escalation failed: ${response.status} ${response.statusText}`);
+        }
+    }
+    /**
+     * Format a structured-error escalation message for Telegram
+     */
+    formatEscalationMessage(info) {
+        const lines = [
+            `\u{1F6A8} ${info.severity} escalation: ${info.code}`,
+            '',
+            info.message,
+            '',
+            'Recovery:',
+            ...info.recovery.map((step) => `\u{2022} ${step}`),
+        ];
+        return lines.join('\n');
+    }
+    /**
      * Format a PR review message for Telegram
      *
      * @param info PR review information

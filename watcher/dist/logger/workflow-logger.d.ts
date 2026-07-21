@@ -4,7 +4,7 @@
  * Logs entries in hybrid format: JSON line + human-readable summary
  * Includes IRON LAW compliance checklist for every command/agent completion
  */
-export type WorkflowEvent = 'START' | 'PHASE_START' | 'PHASE_COMPLETE' | 'MILESTONE' | 'AGENT_SPAWN' | 'AGENT_COMPLETE' | 'COMPLETE' | 'FAILED' | 'IRON_LAW_CHECK';
+export type WorkflowEvent = 'START' | 'PHASE_START' | 'PHASE_COMPLETE' | 'MILESTONE' | 'AGENT_SPAWN' | 'AGENT_COMPLETE' | 'COMPLETE' | 'FAILED' | 'IRON_LAW_CHECK' | 'OSS_ERROR' | 'RECOVERY';
 export interface AgentInfo {
     type: string;
     id: string;
@@ -39,6 +39,11 @@ export declare class WorkflowLogger {
      */
     log(entry: WorkflowLogEntry): Promise<void>;
     private doLog;
+    /**
+     * RecoveryLogger port (US-006): log a retry-visibility RECOVERY line.
+     * Fire-and-forget — retry visibility must never block the healing pipeline.
+     */
+    logRecovery(data: Record<string, unknown>): void;
     /**
      * Format IRON LAW compliance checklist for logging
      */

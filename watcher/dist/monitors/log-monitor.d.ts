@@ -12,6 +12,7 @@ export declare class LogMonitor {
     private readonly maxBufferSize;
     private lastActivityTime;
     private stuckReported;
+    private readonly recentStructuredErrors;
     constructor(queueManager: QueueManager, ruleEngine: RuleEngine, maxBufferSize?: number);
     /**
      * Process a single log line
@@ -41,6 +42,20 @@ export declare class LogMonitor {
      * Reset monitor state
      */
     reset(): void;
+    /**
+     * Parse a log line as a workflow-log OSS_ERROR event.
+     * Returns the validated wire error, or null when the line is not one.
+     */
+    private parseStructuredError;
+    /**
+     * Whether a structured OSS_ERROR was seen within the dedup window.
+     * Prunes expired entries as a side effect.
+     */
+    private hasRecentStructuredError;
+    /**
+     * Create a task carrying structured provenance from an OSS_ERROR event
+     */
+    private createStructuredTask;
     /**
      * Create a task from a rule match
      */

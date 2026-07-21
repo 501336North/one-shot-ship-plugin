@@ -317,6 +317,21 @@ case "$ACTION" in
         fi
         ERROR="$ARG3"
         log_entry "$COMMAND" "ERROR" "$ERROR"
+
+        # Standardized error contract (US-007/ADR-006): also emit a structured
+        # OSS_ERROR line to the project workflow.log via the oss-error emitter.
+        # Fallback: emitter absent or failing → legacy plaintext behavior only.
+        OSS_ERROR_CLI=""
+        if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" && -f "${CLAUDE_PLUGIN_ROOT}/watcher/dist/cli/oss-error.js" ]]; then
+            OSS_ERROR_CLI="${CLAUDE_PLUGIN_ROOT}/watcher/dist/cli/oss-error.js"
+        else
+            # Find latest installed version (version-agnostic); never fail the hook
+            OSS_ERROR_CLI=$(find "$HOME/.claude/plugins/cache/one-shot-ship-plugin" -name "oss-error.js" -path "*/watcher/dist/cli/*" -type f 2>/dev/null | head -1 || true)
+        fi
+        if [[ -n "$OSS_ERROR_CLI" ]]; then
+            node "$OSS_ERROR_CLI" --code "OSS-WORKFLOW-001" --severity "MEDIUM" \
+                --message "$ERROR" --source "hooks/oss-log.sh" >/dev/null 2>&1 || true
+        fi
         ;;
 
     file)

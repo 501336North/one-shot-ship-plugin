@@ -18,7 +18,8 @@ export type WorkflowEvent =
   | 'COMPLETE'
   | 'FAILED'
   | 'IRON_LAW_CHECK'
-  | 'OSS_ERROR';
+  | 'OSS_ERROR'
+  | 'RECOVERY';
 
 export interface AgentInfo {
   type: string;
@@ -103,6 +104,14 @@ export class WorkflowLogger {
 
     // Atomic append
     fs.appendFileSync(this.logPath, content);
+  }
+
+  /**
+   * RecoveryLogger port (US-006): log a retry-visibility RECOVERY line.
+   * Fire-and-forget — retry visibility must never block the healing pipeline.
+   */
+  logRecovery(data: Record<string, unknown>): void {
+    void this.log({ cmd: 'watcher', event: 'RECOVERY', data });
   }
 
   /**

@@ -42,6 +42,11 @@ export declare class LogReader {
     queryLast(filter: QueryFilter): Promise<ParsedLogEntry | null>;
     private checkForNewEntries;
     private parseContent;
+    /**
+     * Wrap a nonconforming error line into a conformant OSS_ERROR entry
+     * (code OSS-WORKFLOW-901) so it is never thrown and never silently dropped.
+     */
+    private wrapNonconforming;
 }
 export {};
 //# sourceMappingURL=log-reader.d.ts.map
