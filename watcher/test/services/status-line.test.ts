@@ -160,6 +160,25 @@ describe('StatusLineService', () => {
     });
   });
 
+  describe('setRetryStatus', () => {
+    /**
+     * @behavior Watcher retry attempts are visible to the user in the status line
+     *           as "⟳ retry N/2: <code>"
+     * @acceptance-criteria AC-006.1
+     * @business-rule US-006: every retry attempt is user-visible
+     * @boundary IPC/File
+     */
+    it('should persist the retry visibility text to status-line.json', async () => {
+      await service.setRetryStatus('⟳ retry 1/2: OSS-API-001');
+
+      const state = await service.getState();
+      expect(state.retry).toBe('⟳ retry 1/2: OSS-API-001');
+
+      const content = await fs.readFile(path.join(testDir, 'status-line.json'), 'utf-8');
+      expect(JSON.parse(content).retry).toBe('⟳ retry 1/2: OSS-API-001');
+    });
+  });
+
   describe('clearState', () => {
     it('should clear all state values', async () => {
       await service.setTDDPhase('RED');

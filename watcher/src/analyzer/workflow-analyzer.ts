@@ -32,7 +32,10 @@ export type IssueType =
   // IRON LAW violations
   | 'iron_law_violation'
   | 'iron_law_repeated'
-  | 'iron_law_ignored';
+  | 'iron_law_ignored'
+  // Structured OSS_ERROR events (wire contract)
+  | 'oss_error_auto_remediable'
+  | 'oss_error_escalation';
 
 export type HealthStatus = 'healthy' | 'warning' | 'critical';
 
@@ -83,6 +86,9 @@ const THRESHOLDS = {
   AGENT_ABANDONED: 90 * 1000, // 1.5 minutes for agent to complete
 };
 
+// Retry cap for structured OSS_ERROR events (attempt >= cap → escalation)
+const OSS_ERROR_MAX_RETRIES = 2;
+
 // Expected TDD phase order
 const PHASE_ORDER = ['RED', 'GREEN', 'REFACTOR'];
 
@@ -127,6 +133,7 @@ export class WorkflowAnalyzer {
     this.detectExplicitFailures(entries, issues);
     this.detectAgentFailures(entries, issues);
     this.detectIronLawViolations(entries, issues);
+    this.detectStructuredErrors(entries, issues);
 
     // Detect positive signal erosion (absence of good)
     this.detectSilence(state, now, issues);
@@ -531,6 +538,33 @@ export class WorkflowAnalyzer {
             }
           }
         }
+      }
+    }
+  }
+
+  private detectStructuredErrors(entries: ParsedLogEntry[], issues: WorkflowIssue[]): void {
+    for (const entry of entries) {
+      if (entry.event !== 'OSS_ERROR') continue;
+
+      const wire = entry.data;
+      const retryEligible = wire.retry_eligible === true;
+      const cheap = wire.retry_cost === 'cheap';
+      const attempt = typeof wire.attempt === 'number' ? wire.attempt : 0;
+
+      if (retryEligible && cheap && attempt < OSS_ERROR_MAX_RETRIES) {
+        issues.push({
+          type: 'oss_error_auto_remediable',
+          confidence: 0.95,
+          message: `Structured error ${String(wire.code)}: ${String(wire.message)}`,
+          context: { ...wire },
+        });
+      } else {
+        issues.push({
+          type: 'oss_error_escalation',
+          confidence: 0.95,
+          message: `Structured error ${String(wire.code)} requires escalation: ${String(wire.message)}`,
+          context: { ...wire },
+        });
       }
     }
   }

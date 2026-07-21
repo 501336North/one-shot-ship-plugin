@@ -29,6 +29,8 @@ export interface StatusLineState {
   task: string | null;
   supervisor: SupervisorStatus | null;
   contextHealth: ContextHealthInfo | null;
+  /** Retry visibility text, e.g. "⟳ retry 1/2: OSS-API-001" (US-006) */
+  retry?: string;
 }
 
 const DEFAULT_STATE: StatusLineState = {
@@ -104,6 +106,14 @@ export class StatusLineService {
    */
   async setSupervisorStatus(status: SupervisorStatus): Promise<void> {
     this.state.supervisor = status;
+    await this.persist();
+  }
+
+  /**
+   * Set retry visibility text (e.g. "⟳ retry 1/2: OSS-API-001")
+   */
+  async setRetryStatus(text: string): Promise<void> {
+    this.state.retry = text;
     await this.persist();
   }
 

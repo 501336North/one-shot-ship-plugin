@@ -347,4 +347,78 @@ describe('LogMonitor', () => {
       expect(mockQueueManager.addTask).toHaveBeenCalledTimes(1); // No new call
     });
   });
+
+  // AC-004.4: One failure → one intervention (structured event wins over regex)
+  describe('structured OSS_ERROR dedup', () => {
+    const ossErrorLine = (): string =>
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        cmd: 'build',
+        event: 'OSS_ERROR',
+        data: {
+          code: 'OSS-API-001',
+          severity: 'HIGH',
+          source: 'hooks/ensure-decrypt-cli.sh',
+          message: 'Prompt fetch failed: ECONNREFUSED',
+          retry_eligible: true,
+          retry_hint: 'Wait 5s then re-run the fetch',
+          retry_cost: 'cheap',
+          attempt: 0,
+        },
+      });
+
+    const testFailureMatch: RuleMatch = {
+      anomaly_type: 'test_failure',
+      priority: 'high',
+      context: { test_file: 'src/foo.test.ts', log_excerpt: 'FAIL src/foo.test.ts' },
+      suggested_agent: 'debugger',
+      prompt: 'Fix the failing test in src/foo.test.ts.',
+    };
+
+    /**
+     * @behavior When a failure is reported both as a structured OSS_ERROR event and
+     *           by a regex detector in the same window, the user gets exactly ONE
+     *           intervention — the structured one (richer, machine-actionable)
+     * @acceptance-criteria AC-004.4
+     * @business-rule Structured event wins; dedup key = source + time window
+     * @boundary Queue (mocked at interface)
+     */
+    it('should suppress a regex detector hit when an OSS_ERROR for the same failure window exists', async () => {
+      // GIVEN — the structured event arrives first
+      await monitor.processLine(ossErrorLine());
+
+      // WHEN — a regex detector would also fire for the same failure window
+      mockRuleEngine.analyze.mockReturnValue(testFailureMatch);
+      await monitor.processLine('FAIL src/foo.test.ts');
+
+      // THEN — exactly one task was enqueued, with structured provenance
+      expect(mockQueueManager.addTask).toHaveBeenCalledTimes(1);
+      expect(mockQueueManager.addTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          context: expect.objectContaining({
+            provenance: 'structured',
+            error_code: 'OSS-API-001',
+          }),
+        })
+      );
+    });
+
+    /**
+     * @behavior A regex detector hit outside any structured-error window still
+     *           produces its intervention — the net does not go blind
+     * @acceptance-criteria AC-004.4
+     * @business-rule Regex fires alone when no OSS_ERROR matches the window
+     * @boundary Queue (mocked at interface)
+     */
+    it('should still fire regex detection when no OSS_ERROR matches the window', async () => {
+      mockRuleEngine.analyze.mockReturnValue(testFailureMatch);
+
+      await monitor.processLine('FAIL src/foo.test.ts');
+
+      expect(mockQueueManager.addTask).toHaveBeenCalledTimes(1);
+      expect(mockQueueManager.addTask).toHaveBeenCalledWith(
+        expect.objectContaining({ anomaly_type: 'test_failure' })
+      );
+    });
+  });
 });

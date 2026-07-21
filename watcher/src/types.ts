@@ -68,6 +68,12 @@ export interface TaskContext {
   type?: string;
   message?: string;
 
+  // Structured OSS_ERROR context
+  provenance?: 'structured' | 'regex';
+  error_code?: string;
+  error_source?: string;
+  retry_hint?: string;
+
   // Spec drift context
   drift_type?: string;
   spec_item_id?: string;
