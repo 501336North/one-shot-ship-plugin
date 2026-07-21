@@ -16,6 +16,34 @@ import { StatusLineService } from '../services/status-line.js';
 import { TelegramNotifier } from '../services/telegram-notifier.js';
 import { IronLawMonitor } from '../services/iron-law-monitor.js';
 import { SettingsService } from '../services/settings.js';
+import { BoundedLruSet } from './lru-set.js';
+/**
+ * Perf bounds (Phase A-perf). Long-running watcher sessions must stay responsive
+ * and memory-stable regardless of how many log lines have streamed through.
+ *
+ * ANALYSIS_WINDOW — max recent entries retained and handed to the analyzer per
+ * cycle. Chosen well above every detector's real lookback: detectLoops reads the
+ * last 10; regression/tdd/out-of-order/iron-law scan the array but their paired
+ * events (PHASE_COMPLETE→FAILED, RED→GREEN, repeated violations) occur within a
+ * single command's span, comfortably inside 500. Widen this — never break a
+ * detector — if a test proves a real lookback needs more.
+ *
+ * DEDUP_CACHE_LIMIT — cap for the LRU dedup caches (processedIssueSignatures,
+ * notifiedHealthcheckIssues). 1000 unique signatures/notifications far exceeds
+ * any realistic single session, so an ACTIVE dedup entry is never evicted; only
+ * ancient, no-longer-relevant signatures free their slot.
+ *
+ * STATE_SAVE_THRESHOLD — persist state at most once per this many entries
+ * (instead of a synchronous writeFileSync on EVERY line). A leading write on the
+ * first entry keeps the state file fresh from the start, and stop() always
+ * flushes the latest state so nothing is lost on shutdown.
+ *
+ * Note: milestone_timestamps needs no separate cap — it is derived from the
+ * windowed entries, so it is already bounded by ANALYSIS_WINDOW.
+ */
+export const ANALYSIS_WINDOW = 500;
+export const DEDUP_CACHE_LIMIT = 1000;
+export const STATE_SAVE_THRESHOLD = 20;
 export class WatcherSupervisor {
     ossDir;
     statePath;
@@ -30,18 +58,24 @@ export class WatcherSupervisor {
     running = false;
     entries = [];
     state;
+    // Emit the window-drop notice exactly once per session (observability, not spam)
+    windowDropNotified = false;
+    // Throttled state persistence: count entries since the last disk write.
+    entriesSinceSave = 0;
+    hasPersistedOnce = false;
     analyzeCallbacks = [];
     interventionCallbacks = [];
     notifyCallbacks = [];
     ironLawCallbacks = [];
-    // Track which issues we've already generated interventions for
-    processedIssueSignatures = new Set();
+    // Track which issues we've already generated interventions for.
+    // Bounded LRU (not an unbounded Set) so a long session cannot leak memory.
+    processedIssueSignatures = new BoundedLruSet(DEDUP_CACHE_LIMIT);
     // IRON LAW monitoring interval
     ironLawInterval = null;
     // Healthcheck monitoring interval
     healthcheckInterval = null;
-    // Track notified healthcheck issues to deduplicate
-    notifiedHealthcheckIssues = new Set();
+    // Track notified healthcheck issues to deduplicate (bounded LRU, see above).
+    notifiedHealthcheckIssues = new BoundedLruSet(DEDUP_CACHE_LIMIT);
     constructor(ossDir, queueManager, options) {
         this.ossDir = ossDir;
         this.statePath = path.join(ossDir, 'workflow-state.json');
@@ -346,9 +380,11 @@ export class WatcherSupervisor {
         this.ironLawMonitor.setActiveFeature(featureName);
     }
     async handleEntry(entry) {
-        // Add to entries
+        // Add to entries, then bound the retained history so per-entry analyzer work
+        // stays O(window) instead of O(N) (prevents O(N²) growth over a long session).
         this.entries.push(entry);
-        // Analyze current state
+        this.retainWindow();
+        // Analyze current state (bounded window)
         const analysis = this.analyzer.analyze(this.entries);
         // Update state
         this.updateState(analysis);
@@ -388,8 +424,38 @@ export class WatcherSupervisor {
                 await this.queueManager.addTask(taskInput);
             }
         }
-        // Save state periodically
-        await this.saveState();
+        // Persist state on a throttled cadence (not once per log line).
+        await this.maybePersistState();
+    }
+    /**
+     * Throttle state persistence: write on the very first entry (so the state file
+     * is fresh immediately) and then at most once per STATE_SAVE_THRESHOLD entries.
+     * stop() calls saveState() directly to flush the latest state on shutdown.
+     */
+    async maybePersistState() {
+        this.entriesSinceSave++;
+        if (!this.hasPersistedOnce || this.entriesSinceSave >= STATE_SAVE_THRESHOLD) {
+            this.hasPersistedOnce = true;
+            this.entriesSinceSave = 0;
+            await this.saveState();
+        }
+    }
+    /**
+     * Bound the retained entry history to ANALYSIS_WINDOW. Drops the oldest
+     * entries beyond the window and logs the truncation exactly once per session.
+     * The notice goes to console (not workflow.log) on purpose: the LogReader is
+     * actively tailing workflow.log, so writing there would re-ingest the notice.
+     */
+    retainWindow() {
+        if (this.entries.length <= ANALYSIS_WINDOW)
+            return;
+        const dropped = this.entries.length - ANALYSIS_WINDOW;
+        this.entries = this.entries.slice(-ANALYSIS_WINDOW);
+        if (!this.windowDropNotified) {
+            this.windowDropNotified = true;
+            console.warn(`[watcher] analysis window full: retaining the ${ANALYSIS_WINDOW} most ` +
+                `recent log entries; older entries (${dropped}+) are no longer re-scanned.`);
+        }
     }
     updateState(analysis) {
         if (analysis.current_command) {
@@ -421,7 +487,8 @@ export class WatcherSupervisor {
         const existingEntries = await this.logReader.readAll();
         if (existingEntries.length > 0) {
             this.entries = existingEntries;
-            const analysis = this.analyzer.analyze(existingEntries);
+            this.retainWindow();
+            const analysis = this.analyzer.analyze(this.entries);
             this.updateState(analysis);
         }
     }
