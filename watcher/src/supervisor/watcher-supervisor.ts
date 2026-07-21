@@ -10,7 +10,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { LogReader, ParsedLogEntry } from '../logger/log-reader.js';
-import { WorkflowAnalyzer, WorkflowAnalysis } from '../analyzer/workflow-analyzer.js';
+import { WorkflowAnalyzer, WorkflowAnalysis, WorkflowAnchors, ChainProgress } from '../analyzer/workflow-analyzer.js';
 import { InterventionGenerator, Intervention } from '../intervention/generator.js';
 import { WorkflowLogger } from '../logger/workflow-logger.js';
 import { StatusLineService } from '../services/status-line.js';
@@ -62,6 +62,22 @@ export interface SupervisorState {
   };
   milestone_timestamps: string[];
   last_activity_time?: string;
+  /**
+   * Session-lifetime anchor facts accumulated BEFORE the analysis window trims
+   * old entries. Persisted so the anchors survive a supervisor restart (see
+   * WorkflowAnchors). Optional for backward compatibility with legacy state files.
+   */
+  anchors?: WorkflowAnchors;
+}
+
+/** A fresh, empty anchor accumulator (nothing seen yet this session). */
+function emptyAnchors(): WorkflowAnchors {
+  return {
+    firstCommand: undefined,
+    chainProgress: { ideate: 'pending', plan: 'pending', build: 'pending', ship: 'pending' },
+    seenPhases: [],
+    completedPhases: [],
+  };
 }
 
 type AnalyzeCallback = (analysis: WorkflowAnalysis, entries: ParsedLogEntry[]) => void;
@@ -92,6 +108,10 @@ export class WatcherSupervisor {
   private running = false;
   private entries: ParsedLogEntry[] = [];
   private state: SupervisorState;
+
+  // Session-lifetime anchor facts — accumulated on EVERY entry BEFORE windowing,
+  // so eviction of old entries can never starve the session-lifetime detectors.
+  private anchors: WorkflowAnchors = emptyAnchors();
 
   // Emit the window-drop notice exactly once per session (observability, not spam)
   private windowDropNotified = false;
@@ -474,10 +494,14 @@ export class WatcherSupervisor {
     // Add to entries, then bound the retained history so per-entry analyzer work
     // stays O(window) instead of O(N) (prevents O(N²) growth over a long session).
     this.entries.push(entry);
+    // Accumulate session-lifetime anchors BEFORE trimming so facts that scroll out
+    // of the window (first START, completed chain steps, seen/completed phases)
+    // still reach the analyzer.
+    this.accumulateAnchors(entry);
     this.retainWindow();
 
-    // Analyze current state (bounded window)
-    const analysis = this.analyzer.analyze(this.entries);
+    // Analyze current state (bounded window + durable anchors)
+    const analysis = this.analyzer.analyze(this.entries, new Date(), this.anchors);
 
     // Update state
     this.updateState(analysis);
@@ -548,6 +572,45 @@ export class WatcherSupervisor {
   }
 
   /**
+   * Fold one entry into the session-lifetime anchors. Called on EVERY entry
+   * BEFORE retainWindow(), so the anchors record facts even after the entry that
+   * carried them is evicted. The anchor set is a tiny, fixed shape — NOT a copy
+   * of the full entry history — so it stays O(1) in memory over a long session.
+   */
+  private accumulateAnchors(entry: ParsedLogEntry): void {
+    const chain = this.anchors.chainProgress;
+
+    if (entry.event === 'START') {
+      if (!this.anchors.firstCommand) {
+        this.anchors.firstCommand = entry.cmd;
+      }
+      if (entry.cmd in chain && chain[entry.cmd as keyof ChainProgress] === 'pending') {
+        chain[entry.cmd as keyof ChainProgress] = 'in_progress';
+      }
+    }
+
+    if (entry.event === 'COMPLETE' && entry.cmd in chain) {
+      chain[entry.cmd as keyof ChainProgress] = 'complete';
+    }
+
+    if (entry.event === 'FAILED' && entry.cmd in chain) {
+      chain[entry.cmd as keyof ChainProgress] = 'failed';
+    }
+
+    if (entry.event === 'PHASE_START' && entry.phase && !this.anchors.seenPhases.includes(entry.phase)) {
+      this.anchors.seenPhases.push(entry.phase);
+    }
+
+    if (
+      entry.event === 'PHASE_COMPLETE' &&
+      entry.phase &&
+      !this.anchors.completedPhases.includes(entry.phase)
+    ) {
+      this.anchors.completedPhases.push(entry.phase);
+    }
+  }
+
+  /**
    * Bound the retained entry history to ANALYSIS_WINDOW. Drops the oldest
    * entries beyond the window and logs the truncation exactly once per session.
    * The notice goes to console (not workflow.log) on purpose: the LogReader is
@@ -590,6 +653,13 @@ export class WatcherSupervisor {
       try {
         const data = fs.readFileSync(this.statePath, 'utf-8');
         this.state = JSON.parse(data);
+        // Restore persisted anchors; if the state file predates anchors, rebuild
+        // them from the full log so session-lifetime detectors stay correct.
+        if (this.state.anchors) {
+          this.anchors = this.normalizeAnchors(this.state.anchors);
+        } else {
+          await this.rebuildAnchorsFromLog();
+        }
         return;
       } catch {
         // Fall through to rebuild from log
@@ -599,15 +669,47 @@ export class WatcherSupervisor {
     // Rebuild from log
     const existingEntries = await this.logReader.readAll();
     if (existingEntries.length > 0) {
+      // Accumulate anchors across the FULL history before trimming the window.
+      for (const entry of existingEntries) {
+        this.accumulateAnchors(entry);
+      }
       this.entries = existingEntries;
       this.retainWindow();
-      const analysis = this.analyzer.analyze(this.entries);
+      const analysis = this.analyzer.analyze(this.entries, new Date(), this.anchors);
       this.updateState(analysis);
     }
   }
 
+  /**
+   * Rebuild anchors by replaying the full log (used when a persisted state file
+   * predates the anchors field). Does not touch the analysis window.
+   */
+  private async rebuildAnchorsFromLog(): Promise<void> {
+    const existingEntries = await this.logReader.readAll();
+    for (const entry of existingEntries) {
+      this.accumulateAnchors(entry);
+    }
+  }
+
+  /**
+   * Coerce a parsed-from-JSON anchors object into a complete WorkflowAnchors,
+   * filling any field a hand-edited or partial state file might omit.
+   */
+  private normalizeAnchors(raw: Partial<WorkflowAnchors> | undefined): WorkflowAnchors {
+    const base = emptyAnchors();
+    if (!raw) return base;
+    return {
+      firstCommand: raw.firstCommand ?? base.firstCommand,
+      chainProgress: { ...base.chainProgress, ...(raw.chainProgress ?? {}) },
+      seenPhases: Array.isArray(raw.seenPhases) ? [...raw.seenPhases] : base.seenPhases,
+      completedPhases: Array.isArray(raw.completedPhases) ? [...raw.completedPhases] : base.completedPhases,
+    };
+  }
+
   private async saveState(): Promise<void> {
     try {
+      // Fold the live anchors into the persisted state so they survive a restart.
+      this.state.anchors = this.anchors;
       fs.writeFileSync(this.statePath, JSON.stringify(this.state, null, 2));
     } catch {
       // Ignore write errors

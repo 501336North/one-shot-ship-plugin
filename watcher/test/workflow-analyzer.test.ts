@@ -11,6 +11,7 @@ import {
   WorkflowAnalysis,
   WorkflowIssue,
   IssueType,
+  WorkflowAnchors,
 } from '../src/analyzer/workflow-analyzer.js';
 import { ParsedLogEntry } from '../src/logger/log-reader.js';
 import { WorkflowEvent } from '../src/logger/workflow-logger.js';
@@ -649,6 +650,66 @@ describe('WorkflowAnalyzer', () => {
       const repeated = analysis.issues.find((i) => i.type === 'iron_law_repeated');
       expect(repeated).toBeDefined();
       expect(analysis.health).toBe('critical');
+    });
+  });
+
+  describe('session-lifetime anchors survive windowing (perf T15 correctness)', () => {
+    /**
+     * @behavior Session-lifetime detectors (chain / regression / out-of-order) must
+     *           key off durable "anchor facts" the supervisor accumulates BEFORE the
+     *           analysis window trims old entries — not off whatever happens to remain
+     *           in the window. Otherwise a big feature that scrolls its first START /
+     *           an earlier phase COMPLETE out of the 500-entry window emits a FALSE
+     *           issue (spurious chain_broken) or MISSES a real one (regression).
+     * @business-rule A correct anchor never fabricates or drops a violation just
+     *                because unrelated activity pushed the anchor out of the window.
+     * @boundary WorkflowAnalyzer.analyze(entries, now, anchors)
+     */
+    const freshChain = (
+      overrides: Partial<WorkflowAnchors> = {},
+    ): WorkflowAnchors => ({
+      firstCommand: 'ideate',
+      chainProgress: { ideate: 'complete', plan: 'complete', build: 'in_progress', ship: 'pending' },
+      seenPhases: [],
+      completedPhases: [],
+      ...overrides,
+    });
+
+    it('does NOT flag chain_broken when anchors show the prerequisite completed earlier', () => {
+      // The window retains only a late build START — its ideate/plan COMPLETE
+      // scrolled out — but the anchors remember the chain finished.
+      const entries: ParsedLogEntry[] = [entry('build', 'START')];
+
+      const analysis = analyzer.analyze(entries, new Date(), freshChain());
+
+      expect(analysis.issues.some((i) => i.type === 'chain_broken')).toBe(false);
+    });
+
+    it('still flags chain_broken with no anchors (backward compatible)', () => {
+      const analysis = analyzer.analyze([entry('build', 'START')]);
+
+      expect(analysis.issues.some((i) => i.type === 'chain_broken')).toBe(true);
+    });
+
+    it('does NOT flag out_of_order for GREEN when anchors show RED was already seen', () => {
+      // RED PHASE_START scrolled out of the window; only GREEN remains.
+      const entries: ParsedLogEntry[] = [entry('build', 'PHASE_START', {}, { phase: 'GREEN' })];
+      const anchors = freshChain({ seenPhases: ['RED'], completedPhases: ['RED'] });
+
+      const analysis = analyzer.analyze(entries, new Date(), anchors);
+
+      expect(analysis.issues.some((i) => i.type === 'out_of_order')).toBe(false);
+    });
+
+    it('still detects regression when anchors show an earlier PHASE_COMPLETE and the window has only the FAILED', () => {
+      // PHASE_COMPLETE scrolled out; without the anchor the late FAILED would look
+      // like a plain failure and the regression (fail-after-success) would be MISSED.
+      const entries: ParsedLogEntry[] = [entry('build', 'FAILED', { error: 'boom after complete' })];
+      const anchors = freshChain({ seenPhases: ['RED'], completedPhases: ['RED'] });
+
+      const analysis = analyzer.analyze(entries, new Date(), anchors);
+
+      expect(analysis.issues.some((i) => i.type === 'regression')).toBe(true);
     });
   });
 

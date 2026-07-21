@@ -40,15 +40,15 @@ export class WorkflowAnalyzer {
     /**
      * Analyze workflow log entries and detect issues
      */
-    analyze(entries, now = new Date()) {
+    analyze(entries, now = new Date(), anchors) {
         const state = this.buildState(entries, now);
         const issues = [];
         // Detect negative signals (presence of bad)
         this.detectLoops(entries, issues);
         this.detectStuckPhase(state, now, issues);
-        this.detectRegression(entries, issues);
-        this.detectOutOfOrder(entries, issues);
-        this.detectChainViolation(entries, state, issues);
+        this.detectRegression(entries, issues, anchors);
+        this.detectOutOfOrder(entries, issues, anchors);
+        this.detectChainViolation(entries, state, issues, anchors);
         this.detectTddViolation(entries, issues);
         this.detectExplicitFailures(entries, issues);
         this.detectAgentFailures(entries, issues);
@@ -241,10 +241,13 @@ export class WorkflowAnalyzer {
             });
         }
     }
-    detectRegression(entries, issues) {
-        // Look for COMPLETE followed by FAILED
-        let hadComplete = false;
-        let completedPhase;
+    detectRegression(entries, issues, anchors) {
+        // Look for COMPLETE followed by FAILED. Seed from the session-lifetime anchor
+        // so a PHASE_COMPLETE that scrolled out of the window still pairs with a later
+        // FAILED (otherwise the regression would be silently missed).
+        const anchorCompleted = anchors?.completedPhases ?? [];
+        let hadComplete = anchorCompleted.length > 0;
+        let completedPhase = anchorCompleted.length > 0 ? anchorCompleted[anchorCompleted.length - 1] : undefined;
         for (const entry of entries) {
             if (entry.event === 'PHASE_COMPLETE') {
                 hadComplete = true;
@@ -260,7 +263,7 @@ export class WorkflowAnalyzer {
             }
         }
     }
-    detectOutOfOrder(entries, issues) {
+    detectOutOfOrder(entries, issues, anchors) {
         const seenPhases = [];
         for (const entry of entries) {
             if (entry.event === 'PHASE_START' && entry.phase) {
@@ -275,13 +278,17 @@ export class WorkflowAnalyzer {
                         context: { expected: PHASE_ORDER, actual_order: [...seenPhases, entry.phase] },
                     });
                 }
-                // Check for skipped phases (e.g., GREEN without RED)
-                if (expectedIndex > 0 && !seenPhases.includes(PHASE_ORDER[expectedIndex - 1])) {
+                // Check for skipped phases (e.g., GREEN without RED). A predecessor phase
+                // that already ran earlier this session but scrolled out of the window is
+                // remembered by the anchor, so we don't cry "skipped" over a real one.
+                const predecessor = PHASE_ORDER[expectedIndex - 1];
+                const predecessorSeenEarlier = anchors?.seenPhases.includes(predecessor) ?? false;
+                if (expectedIndex > 0 && !seenPhases.includes(predecessor) && !predecessorSeenEarlier) {
                     issues.push({
                         type: 'out_of_order',
                         confidence: 0.9,
-                        message: `Phase ${entry.phase} started without completing ${PHASE_ORDER[expectedIndex - 1]}`,
-                        context: { started: entry.phase, missing: PHASE_ORDER[expectedIndex - 1] },
+                        message: `Phase ${entry.phase} started without completing ${predecessor}`,
+                        context: { started: entry.phase, missing: predecessor },
                     });
                 }
                 if (!seenPhases.includes(entry.phase)) {
@@ -290,19 +297,21 @@ export class WorkflowAnalyzer {
             }
         }
     }
-    detectChainViolation(entries, state, issues) {
-        // Find the first command START
-        const firstCommand = entries.find((e) => e.event === 'START')?.cmd;
+    detectChainViolation(entries, state, issues, anchors) {
+        // The chain rule keys off the session's FIRST command. Prefer the anchor
+        // (durable across windowing); fall back to the first START in the window.
+        const firstCommand = anchors?.firstCommand ?? entries.find((e) => e.event === 'START')?.cmd;
         if (!firstCommand)
             return;
         const prerequisites = CHAIN_PREREQUISITES[firstCommand];
         if (!prerequisites)
             return;
-        // Check if any prerequisite was completed (either in log or in chain progress)
-        const hasPrerequisite = prerequisites.some((prereq) => state.chainProgress[prereq] === 'complete');
-        // Also check if there are any prior entries indicating the chain
-        const hasEarlierChainContext = entries.some((e) => prerequisites.includes(e.cmd) && e.event === 'COMPLETE');
-        if (!hasPrerequisite && !hasEarlierChainContext) {
+        // A prerequisite counts as satisfied if it completed in the window, in the
+        // session-lifetime anchor (survives eviction), or appears as a COMPLETE entry.
+        const hasPrerequisite = prerequisites.some((prereq) => state.chainProgress[prereq] === 'complete' ||
+            anchors?.chainProgress[prereq] === 'complete' ||
+            entries.some((e) => e.cmd === prereq && e.event === 'COMPLETE'));
+        if (!hasPrerequisite) {
             issues.push({
                 type: 'chain_broken',
                 confidence: 0.6, // Lower confidence since we might be mid-session or joining an existing workflow

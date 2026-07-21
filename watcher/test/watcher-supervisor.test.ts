@@ -676,4 +676,112 @@ describe('WatcherSupervisor', () => {
       expect(state.current_command).toBe('plan');
     });
   });
+
+  describe('session-lifetime anchors survive windowing (perf T15 correctness)', () => {
+    /**
+     * @behavior The supervisor accumulates durable "anchor facts" (first command,
+     *           completed chain steps, seen/completed phases) on EVERY entry BEFORE
+     *           the 500-entry window trims history, and feeds them to the analyzer.
+     *           So a big feature that scrolls its ideate/plan COMPLETE (or an earlier
+     *           PHASE_COMPLETE) out of the window neither emits a FALSE chain_broken
+     *           nor MISSES a real regression.
+     * @business-rule Windowing is a perf bound only — it must never change which
+     *                violations the watcher reports.
+     * @boundary Supervisor.handleEntry → accumulate anchors → WorkflowAnalyzer.analyze
+     */
+    type WA = import('../src/analyzer/workflow-analyzer.js').WorkflowAnalysis;
+
+    async function feedFiller(count: number): Promise<void> {
+      for (let i = 0; i < count; i++) {
+        await logger.log({ cmd: 'build', event: 'MILESTONE', data: { index: i } });
+      }
+    }
+
+    it('does NOT emit a false chain_broken when the prerequisite COMPLETE scrolled out of the window', async () => {
+      const analyses: WA[] = [];
+      await supervisor.start();
+      supervisor.onAnalyze((a) => analyses.push(a));
+      await new Promise((r) => setTimeout(r, 100));
+
+      // A valid, completed ideate+plan chain...
+      await logger.log({ cmd: 'ideate', event: 'START', data: {} });
+      await logger.log({ cmd: 'ideate', event: 'COMPLETE', data: { outputs: ['DESIGN.md'] } });
+      await logger.log({ cmd: 'plan', event: 'START', data: {} });
+      await logger.log({ cmd: 'plan', event: 'COMPLETE', data: { outputs: ['PLAN.md'] } });
+
+      // ...then enough activity to push those anchors out of the 500-entry window...
+      await feedFiller(ANALYSIS_WINDOW + 20);
+
+      // ...then a later command whose prerequisites finished long ago.
+      await logger.log({ cmd: 'build', event: 'START', data: {} });
+
+      await vi.waitFor(
+        () => {
+          expect(analyses[analyses.length - 1]?.current_command).toBe('build');
+        },
+        { timeout: 8000 },
+      );
+
+      const latest = analyses[analyses.length - 1];
+      expect(latest.issues.some((i) => i.type === 'chain_broken')).toBe(false);
+    }, 20000);
+
+    it('still detects a regression when the earlier PHASE_COMPLETE scrolled out of the window', async () => {
+      const analyses: WA[] = [];
+      await supervisor.start();
+      supervisor.onAnalyze((a) => analyses.push(a));
+      await new Promise((r) => setTimeout(r, 100));
+
+      // A phase completes, then heavy activity scrolls that COMPLETE out of the
+      // window, then a failure. The regression (fail-after-success) must survive.
+      await logger.log({ cmd: 'build', event: 'START', data: {} });
+      await logger.log({ cmd: 'build', phase: 'RED', event: 'PHASE_START', data: {} });
+      await logger.log({ cmd: 'build', phase: 'RED', event: 'PHASE_COMPLETE', data: {} });
+      await feedFiller(ANALYSIS_WINDOW + 20);
+      await logger.log({ cmd: 'build', event: 'FAILED', data: { error: 'boom after complete' } });
+
+      await vi.waitFor(
+        () => {
+          const latest = analyses[analyses.length - 1];
+          expect(latest?.issues.some((i) => i.type === 'regression')).toBe(true);
+        },
+        { timeout: 8000 },
+      );
+    }, 20000);
+
+    it('restores session anchors across restart so a resumed command is not falsely chain-broken', async () => {
+      // First session: a valid ideate+plan chain, then a clean shutdown that
+      // flushes the accumulated anchors into workflow-state.json.
+      await supervisor.start();
+      await new Promise((r) => setTimeout(r, 100));
+      await logger.log({ cmd: 'ideate', event: 'START', data: {} });
+      await logger.log({ cmd: 'ideate', event: 'COMPLETE', data: { outputs: ['DESIGN.md'] } });
+      await logger.log({ cmd: 'plan', event: 'START', data: {} });
+      await logger.log({ cmd: 'plan', event: 'COMPLETE', data: { outputs: ['PLAN.md'] } });
+      await new Promise((r) => setTimeout(r, 200));
+      await supervisor.stop();
+
+      // Second session: a fresh supervisor over the same .oss dir. Its analysis
+      // window starts empty, so only the restored anchors can vouch for the chain.
+      const resumed = new WatcherSupervisor(ossDir, queueManager, { configDir: ossDir });
+      const analyses: WA[] = [];
+      resumed.onAnalyze((a) => analyses.push(a));
+      await resumed.start();
+      await new Promise((r) => setTimeout(r, 100));
+
+      await logger.log({ cmd: 'build', event: 'START', data: {} });
+
+      await vi.waitFor(
+        () => {
+          expect(analyses[analyses.length - 1]?.current_command).toBe('build');
+        },
+        { timeout: 4000 },
+      );
+
+      const latest = analyses[analyses.length - 1];
+      expect(latest.issues.some((i) => i.type === 'chain_broken')).toBe(false);
+
+      await resumed.stop();
+    }, 15000);
+  });
 });

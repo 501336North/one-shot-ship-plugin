@@ -29,6 +29,25 @@ export interface ChainProgress {
     build: ChainStatus;
     ship: ChainStatus;
 }
+/**
+ * Session-lifetime "anchor facts" accumulated by the supervisor on every entry
+ * BEFORE the analysis window trims old history. Session-lifetime detectors
+ * (chain / regression / out-of-order) consult these so a long session that
+ * scrolls its first START or an earlier phase COMPLETE out of the window neither
+ * fabricates a false issue nor misses a real one. All fields are optional at the
+ * analyzer boundary: when no anchors are supplied, detectors fall back to
+ * deriving everything from the (windowed) entries exactly as before.
+ */
+export interface WorkflowAnchors {
+    /** cmd of the very first START observed this session. */
+    firstCommand?: string;
+    /** Lifetime chain progress (COMPLETE/FAILED status) accumulated before windowing. */
+    chainProgress: ChainProgress;
+    /** Distinct PHASE_START phases seen over the session, in first-seen order. */
+    seenPhases: string[];
+    /** Distinct PHASE_COMPLETE phases seen over the session, in first-seen order. */
+    completedPhases: string[];
+}
 export interface WorkflowAnalysis {
     health: HealthStatus;
     issues: WorkflowIssue[];
@@ -46,7 +65,7 @@ export declare class WorkflowAnalyzer {
     /**
      * Analyze workflow log entries and detect issues
      */
-    analyze(entries: ParsedLogEntry[], now?: Date): WorkflowAnalysis;
+    analyze(entries: ParsedLogEntry[], now?: Date, anchors?: WorkflowAnchors): WorkflowAnalysis;
     private buildState;
     private detectLoops;
     private detectStuckPhase;

@@ -7,7 +7,7 @@
  * - Persist state for continuity
  */
 import { ParsedLogEntry } from '../logger/log-reader.js';
-import { WorkflowAnalysis } from '../analyzer/workflow-analyzer.js';
+import { WorkflowAnalysis, WorkflowAnchors } from '../analyzer/workflow-analyzer.js';
 import { Intervention } from '../intervention/generator.js';
 import { QueueManager } from '../queue/manager.js';
 import { IronLawViolation } from '../services/iron-law-monitor.js';
@@ -50,6 +50,12 @@ export interface SupervisorState {
     };
     milestone_timestamps: string[];
     last_activity_time?: string;
+    /**
+     * Session-lifetime anchor facts accumulated BEFORE the analysis window trims
+     * old entries. Persisted so the anchors survive a supervisor restart (see
+     * WorkflowAnchors). Optional for backward compatibility with legacy state files.
+     */
+    anchors?: WorkflowAnchors;
 }
 type AnalyzeCallback = (analysis: WorkflowAnalysis, entries: ParsedLogEntry[]) => void;
 type InterventionCallback = (intervention: Intervention) => void;
@@ -76,6 +82,7 @@ export declare class WatcherSupervisor {
     private running;
     private entries;
     private state;
+    private anchors;
     private windowDropNotified;
     private entriesSinceSave;
     private hasPersistedOnce;
@@ -172,6 +179,13 @@ export declare class WatcherSupervisor {
      */
     private maybePersistState;
     /**
+     * Fold one entry into the session-lifetime anchors. Called on EVERY entry
+     * BEFORE retainWindow(), so the anchors record facts even after the entry that
+     * carried them is evicted. The anchor set is a tiny, fixed shape — NOT a copy
+     * of the full entry history — so it stays O(1) in memory over a long session.
+     */
+    private accumulateAnchors;
+    /**
      * Bound the retained entry history to ANALYSIS_WINDOW. Drops the oldest
      * entries beyond the window and logs the truncation exactly once per session.
      * The notice goes to console (not workflow.log) on purpose: the LogReader is
@@ -180,6 +194,16 @@ export declare class WatcherSupervisor {
     private retainWindow;
     private updateState;
     private loadState;
+    /**
+     * Rebuild anchors by replaying the full log (used when a persisted state file
+     * predates the anchors field). Does not touch the analysis window.
+     */
+    private rebuildAnchorsFromLog;
+    /**
+     * Coerce a parsed-from-JSON anchors object into a complete WorkflowAnchors,
+     * filling any field a hand-edited or partial state file might omit.
+     */
+    private normalizeAnchors;
     private saveState;
     private getIssueSignature;
     private mapPriority;

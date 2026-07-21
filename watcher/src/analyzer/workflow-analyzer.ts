@@ -64,6 +64,26 @@ export interface ChainProgress {
   ship: ChainStatus;
 }
 
+/**
+ * Session-lifetime "anchor facts" accumulated by the supervisor on every entry
+ * BEFORE the analysis window trims old history. Session-lifetime detectors
+ * (chain / regression / out-of-order) consult these so a long session that
+ * scrolls its first START or an earlier phase COMPLETE out of the window neither
+ * fabricates a false issue nor misses a real one. All fields are optional at the
+ * analyzer boundary: when no anchors are supplied, detectors fall back to
+ * deriving everything from the (windowed) entries exactly as before.
+ */
+export interface WorkflowAnchors {
+  /** cmd of the very first START observed this session. */
+  firstCommand?: string;
+  /** Lifetime chain progress (COMPLETE/FAILED status) accumulated before windowing. */
+  chainProgress: ChainProgress;
+  /** Distinct PHASE_START phases seen over the session, in first-seen order. */
+  seenPhases: string[];
+  /** Distinct PHASE_COMPLETE phases seen over the session, in first-seen order. */
+  completedPhases: string[];
+}
+
 export interface WorkflowAnalysis {
   health: HealthStatus;
   issues: WorkflowIssue[];
@@ -117,16 +137,16 @@ export class WorkflowAnalyzer {
   /**
    * Analyze workflow log entries and detect issues
    */
-  analyze(entries: ParsedLogEntry[], now: Date = new Date()): WorkflowAnalysis {
+  analyze(entries: ParsedLogEntry[], now: Date = new Date(), anchors?: WorkflowAnchors): WorkflowAnalysis {
     const state = this.buildState(entries, now);
     const issues: WorkflowIssue[] = [];
 
     // Detect negative signals (presence of bad)
     this.detectLoops(entries, issues);
     this.detectStuckPhase(state, now, issues);
-    this.detectRegression(entries, issues);
-    this.detectOutOfOrder(entries, issues);
-    this.detectChainViolation(entries, state, issues);
+    this.detectRegression(entries, issues, anchors);
+    this.detectOutOfOrder(entries, issues, anchors);
+    this.detectChainViolation(entries, state, issues, anchors);
     this.detectTddViolation(entries, issues);
     this.detectExplicitFailures(entries, issues);
     this.detectAgentFailures(entries, issues);
@@ -366,10 +386,18 @@ export class WorkflowAnalyzer {
     }
   }
 
-  private detectRegression(entries: ParsedLogEntry[], issues: WorkflowIssue[]): void {
-    // Look for COMPLETE followed by FAILED
-    let hadComplete = false;
-    let completedPhase: string | undefined;
+  private detectRegression(
+    entries: ParsedLogEntry[],
+    issues: WorkflowIssue[],
+    anchors?: WorkflowAnchors
+  ): void {
+    // Look for COMPLETE followed by FAILED. Seed from the session-lifetime anchor
+    // so a PHASE_COMPLETE that scrolled out of the window still pairs with a later
+    // FAILED (otherwise the regression would be silently missed).
+    const anchorCompleted = anchors?.completedPhases ?? [];
+    let hadComplete = anchorCompleted.length > 0;
+    let completedPhase: string | undefined =
+      anchorCompleted.length > 0 ? anchorCompleted[anchorCompleted.length - 1] : undefined;
 
     for (const entry of entries) {
       if (entry.event === 'PHASE_COMPLETE') {
@@ -388,7 +416,11 @@ export class WorkflowAnalyzer {
     }
   }
 
-  private detectOutOfOrder(entries: ParsedLogEntry[], issues: WorkflowIssue[]): void {
+  private detectOutOfOrder(
+    entries: ParsedLogEntry[],
+    issues: WorkflowIssue[],
+    anchors?: WorkflowAnchors
+  ): void {
     const seenPhases: string[] = [];
 
     for (const entry of entries) {
@@ -406,13 +438,17 @@ export class WorkflowAnalyzer {
           });
         }
 
-        // Check for skipped phases (e.g., GREEN without RED)
-        if (expectedIndex > 0 && !seenPhases.includes(PHASE_ORDER[expectedIndex - 1])) {
+        // Check for skipped phases (e.g., GREEN without RED). A predecessor phase
+        // that already ran earlier this session but scrolled out of the window is
+        // remembered by the anchor, so we don't cry "skipped" over a real one.
+        const predecessor = PHASE_ORDER[expectedIndex - 1];
+        const predecessorSeenEarlier = anchors?.seenPhases.includes(predecessor) ?? false;
+        if (expectedIndex > 0 && !seenPhases.includes(predecessor) && !predecessorSeenEarlier) {
           issues.push({
             type: 'out_of_order',
             confidence: 0.9,
-            message: `Phase ${entry.phase} started without completing ${PHASE_ORDER[expectedIndex - 1]}`,
-            context: { started: entry.phase, missing: PHASE_ORDER[expectedIndex - 1] },
+            message: `Phase ${entry.phase} started without completing ${predecessor}`,
+            context: { started: entry.phase, missing: predecessor },
           });
         }
 
@@ -426,24 +462,27 @@ export class WorkflowAnalyzer {
   private detectChainViolation(
     entries: ParsedLogEntry[],
     state: ReturnType<typeof this.buildState>,
-    issues: WorkflowIssue[]
+    issues: WorkflowIssue[],
+    anchors?: WorkflowAnchors
   ): void {
-    // Find the first command START
-    const firstCommand = entries.find((e) => e.event === 'START')?.cmd;
+    // The chain rule keys off the session's FIRST command. Prefer the anchor
+    // (durable across windowing); fall back to the first START in the window.
+    const firstCommand = anchors?.firstCommand ?? entries.find((e) => e.event === 'START')?.cmd;
     if (!firstCommand) return;
 
     const prerequisites = CHAIN_PREREQUISITES[firstCommand];
     if (!prerequisites) return;
 
-    // Check if any prerequisite was completed (either in log or in chain progress)
+    // A prerequisite counts as satisfied if it completed in the window, in the
+    // session-lifetime anchor (survives eviction), or appears as a COMPLETE entry.
     const hasPrerequisite = prerequisites.some(
-      (prereq) => state.chainProgress[prereq as keyof ChainProgress] === 'complete'
+      (prereq) =>
+        state.chainProgress[prereq as keyof ChainProgress] === 'complete' ||
+        anchors?.chainProgress[prereq as keyof ChainProgress] === 'complete' ||
+        entries.some((e) => e.cmd === prereq && e.event === 'COMPLETE')
     );
 
-    // Also check if there are any prior entries indicating the chain
-    const hasEarlierChainContext = entries.some((e) => prerequisites.includes(e.cmd) && e.event === 'COMPLETE');
-
-    if (!hasPrerequisite && !hasEarlierChainContext) {
+    if (!hasPrerequisite) {
       issues.push({
         type: 'chain_broken',
         confidence: 0.6, // Lower confidence since we might be mid-session or joining an existing workflow

@@ -54,4 +54,23 @@ describe('BoundedLruSet (perf T16)', () => {
     expect(set.has('keep')).toBe(true);
     expect(set.has('b')).toBe(false);
   });
+
+  it('re-adding an existing key refreshes its recency so it survives eviction', () => {
+    const set = new BoundedLruSet(3);
+    set.add('keep');
+    set.add('b');
+    set.add('c');
+    // Re-add 'keep' (not has()) — add() on an existing key must also promote it
+    // to most-recently-used, not leave it as the eviction victim.
+    set.add('keep');
+    expect(set.size).toBe(3); // still deduped, no growth
+    // Overflow: the LRU victim should be 'b' (oldest untouched), not 'keep'
+    set.add('d');
+    expect(set.has('keep')).toBe(true);
+    expect(set.has('b')).toBe(false);
+  });
+
+  it('rejects a non-positive cap (a zero-capacity dedup set is meaningless)', () => {
+    expect(() => new BoundedLruSet(0)).toThrow();
+  });
 });
