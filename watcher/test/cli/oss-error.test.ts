@@ -261,4 +261,104 @@ describe('oss-error CLI — Task 4: dual delivery, stamping & redaction', () => 
       expect(sink).toContain('[REDACTED]');
     }
   });
+
+  /**
+   * @behavior Secrets nested inside ARRAY values in --context are redacted, not
+   *           passed through — arrays are recursed like any other structure.
+   * @acceptance-criteria SEC-1 / CR-F1
+   * @business-rule A secret must not survive into any sink because it hid in an array.
+   */
+  it('should redact secrets nested inside array context values (SEC-1)', async () => {
+    // GIVEN — a context array carrying a header string secret and an object secret
+    const sandbox = makeSandbox();
+    const runOssError = await loadEmitter();
+    const headerSecret = 'sk-ant-abc123deadbeef01';
+    const objectSecret = 'sk-ant-xyz9876543210';
+
+    // WHEN
+    const result = await runOssError(
+      validArgv({
+        '--context': JSON.stringify({
+          data: [`Authorization: Bearer ${headerSecret}`, { apiKey: objectSecret }],
+        }),
+      }),
+      emitterEnv(sandbox),
+    );
+
+    // THEN — both secrets are gone from BOTH sinks
+    expect(result.exitCode).toBe(0);
+    const logContent = fs.readFileSync(sandbox.logPath, 'utf-8');
+    for (const sink of [result.stdout, logContent]) {
+      expect(sink).not.toContain(headerSecret);
+      expect(sink).not.toContain(objectSecret);
+      expect(sink).toContain('[REDACTED]');
+    }
+  });
+
+  /**
+   * @behavior A token embedded in free-text --message, a JWT, and a secret passed
+   *           via --source are all scrubbed in BOTH sinks (broadened value patterns
+   *           and source now runs through the redactor).
+   * @acceptance-criteria SEC-2 / CR-F4 / SEC-5
+   * @business-rule Value redaction is not limited to a couple of shapes, and no field
+   *                (including source) leaks embedded secrets.
+   */
+  it('should redact embedded tokens in message, a JWT, and a secret in source (SEC-2)', async () => {
+    // GIVEN — a JWT and a bearer token in the message, and a query-string secret in source
+    const sandbox = makeSandbox();
+    const runOssError = await loadEmitter();
+    const jwt =
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
+    const bearer = 'Bearer oss_live_supersecrettoken99';
+    const sourceSecret = 'AKIAIOSFODNN7EXAMPLE';
+
+    // WHEN
+    const result = await runOssError(
+      validArgv({
+        '--message': `auth failed: ${bearer} then ${jwt}`,
+        '--source': `hooks/run.sh?access_token=${sourceSecret}`,
+      }),
+      emitterEnv(sandbox),
+    );
+
+    // THEN — none of the secrets survive in either sink
+    expect(result.exitCode).toBe(0);
+    const logContent = fs.readFileSync(sandbox.logPath, 'utf-8');
+    for (const sink of [result.stdout, logContent]) {
+      expect(sink, 'JWT must be redacted').not.toContain(jwt);
+      expect(sink, 'bearer token must be redacted').not.toContain('oss_live_supersecrettoken99');
+      expect(sink, 'secret in source must be redacted').not.toContain(sourceSecret);
+      expect(sink).toContain('[REDACTED]');
+    }
+  });
+
+  /**
+   * @behavior An oversized --context is capped so the atomic single-line append can
+   *           never exceed the kernel single-write size and interleave under concurrent
+   *           writers — the log still holds exactly one parseable JSON line.
+   * @acceptance-criteria PERF-6
+   * @business-rule One emission = one atomic, self-contained log line.
+   */
+  it('should cap an oversized context to keep the log line atomically appendable (PERF-6)', async () => {
+    // GIVEN — a context far larger than the single-write cap
+    const sandbox = makeSandbox();
+    const runOssError = await loadEmitter();
+    const huge = 'A'.repeat(64 * 1024);
+
+    // WHEN
+    const result = await runOssError(
+      validArgv({ '--context': JSON.stringify({ blob: huge }) }),
+      emitterEnv(sandbox),
+    );
+
+    // THEN — exactly one line, it parses, and the persisted line is bounded
+    expect(result.exitCode).toBe(0);
+    const raw = fs.readFileSync(sandbox.logPath, 'utf-8');
+    const lines = raw.split('\n').filter((l) => l.trim() !== '');
+    expect(lines, 'exactly one JSON line must be appended').toHaveLength(1);
+    const parsed = JSON.parse(lines[0]) as RawLogLine;
+    expect(parsed.event).toBe('OSS_ERROR');
+    expect(Buffer.byteLength(lines[0], 'utf-8'), 'line must be bounded').toBeLessThan(32 * 1024);
+    expect((parsed.data.context as Record<string, unknown>)._truncated).toBe(true);
+  });
 });

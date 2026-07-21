@@ -19,6 +19,12 @@ export declare enum ErrorCategory {
 }
 export type ErrorSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
 export type RetryCost = 'cheap' | 'expensive';
+/**
+ * Shared retry cap for structured OSS_ERROR events (ADR-004): once `attempt`
+ * reaches this value the watcher stops retrying and escalates. The single source
+ * of truth — both the analyzer classifier and the intervention generator import it.
+ */
+export declare const OSS_ERROR_MAX_RETRIES = 2;
 /** The wire contract emitted in-band (stdout) and out-of-band (workflow.log). */
 export interface WireError {
     code: string;

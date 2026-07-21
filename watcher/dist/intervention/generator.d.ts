@@ -78,10 +78,38 @@ export declare class InterventionGenerator {
      */
     private escalateBySeverity;
     /**
-     * Prompt for an auto-remediation retry task: leads with the emitter's
-     * retry_hint and identifies the error code and source.
+     * Prompt for an auto-remediation retry task (see createStructuredErrorPrompt).
      */
     private createRetryPrompt;
+    /**
+     * Prompt for a structured OSS_ERROR intervention (retry or escalation).
+     *
+     * SEC-3: the error-derived code/source/message/retry_hint are UNTRUSTED — they may
+     * carry prompt-injection payloads — so they are routed EXCLUSIVELY through a
+     * clearly-delimited, explicitly non-authoritative <error_data> block. This method
+     * deliberately does NOT append the generic createPrompt() Issue-Description/Evidence
+     * dump, which would re-print those same untrusted fields as bare markdown OUTSIDE the
+     * guard (unwrapped re-emission bypass). Only static, trusted framing is added around
+     * the block.
+     *
+     * SEC-4: message/retry_hint/source are re-redacted here (defense in depth).
+     *
+     * @param attempt retry attempt index for the retry path, or `null` for escalation.
+     */
+    private createStructuredErrorPrompt;
+    /**
+     * Build the guarded, non-authoritative <error_data> block. Every interpolated
+     * untrusted value is redacted (SEC-4) and then delimiter-neutralized (SEC-3) so a
+     * payload containing a literal `</error_data>` cannot close the guard early.
+     */
+    private buildErrorDataBlock;
+    /**
+     * SEC-3 delimiter-escape defense: replace any literal `<error_data>` /
+     * `</error_data>` occurrence (case-insensitive, whitespace-tolerant, e.g.
+     * `< / error_data >`) with a safe placeholder so untrusted input can never
+     * open or close the guard block.
+     */
+    private neutralizeErrorDataDelimiters;
     /**
      * Create a prompt describing the issue for Claude
      */

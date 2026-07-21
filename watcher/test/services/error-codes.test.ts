@@ -432,6 +432,29 @@ describe('Error Code System', () => {
     });
 
     /**
+     * @behavior A generic "command reported an error" code exists for shell error
+     *           paths that have no more specific classification (used by oss-log.sh).
+     * @acceptance-criteria CR-F2
+     * @business-rule OSS-WORKFLOW-001 means "context limit exceeded / run /clear" — a
+     *                generic shell error must NOT masquerade as that. It resolves to its
+     *                own generic code, MEDIUM, non-retryable, with generic recovery.
+     */
+    it('should provide a generic command-error code OSS-WORKFLOW-902', async () => {
+      const { ErrorRegistry, ErrorCategory } = await import('../../src/services/error-codes');
+
+      const registry = new ErrorRegistry();
+      const generic = registry.getError('OSS-WORKFLOW-902');
+
+      expect(generic, 'OSS-WORKFLOW-902 must be registered').toBeDefined();
+      expect(generic?.category).toBe(ErrorCategory.WORKFLOW);
+      expect(generic?.severity).toBe('MEDIUM');
+      expect(generic?.retry_eligible).toBe(false);
+      expect(generic?.recovery.length).toBeGreaterThan(0);
+      // NOT the context-limit recovery (which mentions /clear)
+      expect(generic?.recovery.join('\n')).not.toContain('/clear');
+    });
+
+    /**
      * @behavior Common Git errors are predefined
      * @acceptance-criteria OSS-GIT-001 through OSS-GIT-003 exist
      */

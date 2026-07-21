@@ -22,6 +22,13 @@ export enum ErrorCategory {
 export type ErrorSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
 export type RetryCost = 'cheap' | 'expensive';
 
+/**
+ * Shared retry cap for structured OSS_ERROR events (ADR-004): once `attempt`
+ * reaches this value the watcher stops retrying and escalates. The single source
+ * of truth — both the analyzer classifier and the intervention generator import it.
+ */
+export const OSS_ERROR_MAX_RETRIES = 2;
+
 /** The wire contract emitted in-band (stdout) and out-of-band (workflow.log). */
 export interface WireError {
   code: string;
@@ -478,6 +485,21 @@ export class ErrorRegistry {
         'Re-run the command',
       ],
       learnMore: 'https://docs.oneshotship.com/errors/workflow/002',
+      severity: 'MEDIUM',
+      retry_eligible: false,
+      retry_cost: 'cheap',
+    }));
+
+    this.register(new OSSError({
+      code: 'OSS-WORKFLOW-902',
+      category: ErrorCategory.WORKFLOW,
+      message: 'Command reported an error',
+      cause: 'A command failure path reported an error with no more specific classification',
+      recovery: [
+        'Review the error message and the command output for the root cause',
+        'Re-run the command once the underlying problem is resolved',
+      ],
+      learnMore: 'https://docs.oneshotship.com/errors/workflow/902',
       severity: 'MEDIUM',
       retry_eligible: false,
       retry_cost: 'cheap',

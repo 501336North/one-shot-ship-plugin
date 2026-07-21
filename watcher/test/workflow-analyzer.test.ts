@@ -691,6 +691,40 @@ describe('WorkflowAnalyzer', () => {
     });
 
     /**
+     * @behavior The issue context copies only the fields the generator reads — it does
+     *           NOT deep-spread the whole wire (which can carry a large nested context).
+     * @acceptance-criteria PERF-2
+     * @business-rule The analyzer runs every cycle; per-issue context must stay bounded.
+     */
+    it('should copy only generator-needed fields into issue context, not the whole wire', () => {
+      const entries: ParsedLogEntry[] = [
+        entry('build', 'START'),
+        entry(
+          'build',
+          'OSS_ERROR',
+          wireError({ context: { huge: 'x'.repeat(10000), nested: { deep: true } } }),
+        ),
+      ];
+
+      const analysis = analyzer.analyze(entries);
+      const remediable = analysis.issues.find((i) => i.type === 'oss_error_auto_remediable');
+
+      expect(remediable).toBeDefined();
+      // needed fields are present
+      expect(remediable?.context).toMatchObject({
+        code: 'OSS-API-001',
+        severity: 'HIGH',
+        source: 'hooks/ensure-decrypt-cli.sh',
+        retry_eligible: true,
+        retry_cost: 'cheap',
+        attempt: 0,
+      });
+      // the wire's nested `context` field was NOT deep-spread in
+      expect(remediable?.context).not.toHaveProperty('context');
+      expect(Object.keys(remediable?.context ?? {})).not.toContain('huge');
+    });
+
+    /**
      * @behavior An expensive structured error is classified escalation-only:
      *           a retry would burn a full pipeline run, so a human decides
      * @acceptance-criteria AC-004.2

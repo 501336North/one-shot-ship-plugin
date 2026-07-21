@@ -8,6 +8,7 @@
  */
 
 import { ParsedLogEntry } from '../logger/log-reader.js';
+import { OSS_ERROR_MAX_RETRIES } from '../services/error-codes.js';
 
 export type IssueType =
   // Negative signals (presence of bad)
@@ -85,9 +86,6 @@ const THRESHOLDS = {
   AGENT_SILENCE: 50 * 1000, // 50 seconds for agent to start producing entries
   AGENT_ABANDONED: 90 * 1000, // 1.5 minutes for agent to complete
 };
-
-// Retry cap for structured OSS_ERROR events (attempt >= cap → escalation)
-const OSS_ERROR_MAX_RETRIES = 2;
 
 // Expected TDD phase order
 const PHASE_ORDER = ['RED', 'GREEN', 'REFACTOR'];
@@ -551,19 +549,34 @@ export class WorkflowAnalyzer {
       const cheap = wire.retry_cost === 'cheap';
       const attempt = typeof wire.attempt === 'number' ? wire.attempt : 0;
 
+      // PERF-2: copy only the fields the generator reads instead of deep-spreading
+      // the whole wire (which can carry a large nested `context`) every cycle.
+      const context: Record<string, unknown> = {
+        code: wire.code,
+        severity: wire.severity,
+        source: wire.source,
+        message: wire.message,
+        retry_eligible: wire.retry_eligible,
+        retry_cost: wire.retry_cost,
+        attempt: wire.attempt,
+      };
+      if (wire.retry_hint !== undefined) {
+        context.retry_hint = wire.retry_hint;
+      }
+
       if (retryEligible && cheap && attempt < OSS_ERROR_MAX_RETRIES) {
         issues.push({
           type: 'oss_error_auto_remediable',
           confidence: 0.95,
           message: `Structured error ${String(wire.code)}: ${String(wire.message)}`,
-          context: { ...wire },
+          context,
         });
       } else {
         issues.push({
           type: 'oss_error_escalation',
           confidence: 0.95,
           message: `Structured error ${String(wire.code)} requires escalation: ${String(wire.message)}`,
-          context: { ...wire },
+          context,
         });
       }
     }

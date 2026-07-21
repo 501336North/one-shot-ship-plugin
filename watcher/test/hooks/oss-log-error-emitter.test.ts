@@ -81,7 +81,7 @@ describe('oss-log.sh error branch — emitter reconciliation (Task 10)', () => {
     const errorEntries = entries.filter((e) => e.event === 'OSS_ERROR');
     expect(errorEntries, 'exactly one OSS_ERROR line must reach workflow.log').toHaveLength(1);
     expect(errorEntries[0].data.message).toBe(message);
-    expect(errorEntries[0].data.code).toBe('OSS-WORKFLOW-001');
+    expect(errorEntries[0].data.code).toBe('OSS-WORKFLOW-902');
     expect(errorEntries[0].data.source).toBe('hooks/oss-log.sh');
 
     // THEN — it is NOT the OSS-WORKFLOW-901 wrap: the line itself is schema-valid

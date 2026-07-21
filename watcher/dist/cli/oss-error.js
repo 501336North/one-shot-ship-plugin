@@ -18,6 +18,7 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 import { pathToFileURL } from 'url';
 import { ErrorRegistry, OSSError } from '../services/error-codes.js';
+import { redactString, redactSecrets } from '../services/redaction.js';
 const KNOWN_FLAGS = [
     '--code',
     '--severity',
@@ -83,46 +84,20 @@ function buildCandidate(flags) {
     return candidate;
 }
 // ---------------------------------------------------------------------------
-// Secret redaction — applied to message, retry_hint and context before ANY write
+// Secret redaction — applied to message, retry_hint, source and context before
+// ANY write, using the single shared redactor (see services/redaction.ts).
 // ---------------------------------------------------------------------------
-const SECRET_VALUE_PATTERNS = [
-    /sk-ant-[A-Za-z0-9_-]+/g,
-    /Bearer\s+[^\s"']+/g,
-];
-/** Keys whose values are secrets regardless of shape (apiKey-like). */
-const SECRET_KEY_PATTERN = /api[_-]?key|secret|token|password/i;
-function redactString(value) {
-    let out = value;
-    for (const pattern of SECRET_VALUE_PATTERNS) {
-        out = out.replace(pattern, '[REDACTED]');
-    }
-    return out;
-}
-function redactContext(context) {
-    const out = {};
-    for (const [key, value] of Object.entries(context)) {
-        if (SECRET_KEY_PATTERN.test(key)) {
-            out[key] = '[REDACTED]';
-        }
-        else if (typeof value === 'string') {
-            out[key] = redactString(value);
-        }
-        else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-            out[key] = redactContext(value);
-        }
-        else {
-            out[key] = value;
-        }
-    }
-    return out;
-}
 function redactWire(wire) {
-    const redacted = { ...wire, message: redactString(wire.message) };
+    const redacted = {
+        ...wire,
+        source: redactString(wire.source),
+        message: redactString(wire.message),
+    };
     if (redacted.retry_hint !== undefined) {
         redacted.retry_hint = redactString(redacted.retry_hint);
     }
     if (redacted.context !== undefined) {
-        redacted.context = redactContext(redacted.context);
+        redacted.context = redactSecrets(redacted.context);
     }
     return redacted;
 }
@@ -153,6 +128,7 @@ function resolveOssDir(env) {
         const toplevel = execSync('git rev-parse --show-toplevel', {
             encoding: 'utf-8',
             stdio: ['ignore', 'pipe', 'ignore'],
+            timeout: 250,
         }).trim();
         if (toplevel !== '') {
             return path.join(toplevel, '.oss');
@@ -168,13 +144,20 @@ function resolveOssDir(env) {
  * Returns a warning string on failure (never throws — sink failure must not
  * mask the original error).
  */
+/** Max serialized log line — keep a single atomic append under the kernel single-write size. */
+const MAX_LOG_LINE_BYTES = 16 * 1024;
 function appendToWorkflowLog(env, wire) {
-    const line = JSON.stringify({
+    const buildLine = (payload) => JSON.stringify({
         ts: new Date().toISOString(),
         cmd: 'oss-error',
         event: 'OSS_ERROR',
-        data: wire,
+        data: payload,
     });
+    let line = buildLine(wire);
+    // Cap oversized context so the atomic append can't tear across a concurrent write.
+    if (Buffer.byteLength(line, 'utf-8') > MAX_LOG_LINE_BYTES) {
+        line = buildLine({ ...wire, context: { _truncated: true } });
+    }
     const ossDir = resolveOssDir(env);
     if (ossDir === null) {
         return 'oss-error: warning: could not resolve project .oss dir; OSS_ERROR not appended to workflow.log\n';

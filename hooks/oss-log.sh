@@ -329,7 +329,7 @@ case "$ACTION" in
             OSS_ERROR_CLI=$(find "$HOME/.claude/plugins/cache/one-shot-ship-plugin" -name "oss-error.js" -path "*/watcher/dist/cli/*" -type f 2>/dev/null | head -1 || true)
         fi
         if [[ -n "$OSS_ERROR_CLI" ]]; then
-            node "$OSS_ERROR_CLI" --code "OSS-WORKFLOW-001" --severity "MEDIUM" \
+            node "$OSS_ERROR_CLI" --code "OSS-WORKFLOW-902" --severity "MEDIUM" \
                 --message "$ERROR" --source "hooks/oss-log.sh" >/dev/null 2>&1 || true
         fi
         ;;

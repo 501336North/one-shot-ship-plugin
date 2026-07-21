@@ -420,5 +420,73 @@ describe('LogMonitor', () => {
         expect.objectContaining({ anomaly_type: 'test_failure' })
       );
     });
+
+    /**
+     * @behavior A secret embedded in a log-sourced OSS_ERROR message is redacted
+     *           before it is embedded in the queue-task prompt/context (defense in depth).
+     * @acceptance-criteria SEC-4
+     * @business-rule The consumer never trusts that log-sourced strings were already scrubbed.
+     * @boundary Queue (mocked at interface)
+     */
+    it('should redact a secret in a log-sourced OSS_ERROR message before enqueuing (SEC-4)', async () => {
+      const secret = 'Bearer oss_live_logsourcedsecret42';
+      const line = JSON.stringify({
+        ts: new Date().toISOString(),
+        cmd: 'build',
+        event: 'OSS_ERROR',
+        data: {
+          code: 'OSS-API-001',
+          severity: 'HIGH',
+          source: 'hooks/ensure-decrypt-cli.sh',
+          message: `auth failed: ${secret}`,
+          retry_eligible: true,
+          retry_hint: `retry with ${secret}`,
+          retry_cost: 'cheap',
+          attempt: 0,
+        },
+      });
+
+      await monitor.processLine(line);
+
+      expect(mockQueueManager.addTask).toHaveBeenCalledTimes(1);
+      const task = mockQueueManager.addTask.mock.calls[0][0] as {
+        prompt: string;
+        context: Record<string, unknown>;
+      };
+      expect(task.prompt).not.toContain('oss_live_logsourcedsecret42');
+      expect(JSON.stringify(task.context)).not.toContain('oss_live_logsourcedsecret42');
+    });
+
+    /**
+     * @behavior When the OSS_ERROR carries no retry_hint, the task context omits the
+     *           key entirely rather than injecting `retry_hint: undefined`.
+     * @acceptance-criteria CR-F5
+     * @business-rule Context keys are only present when they carry a value.
+     * @boundary Queue (mocked at interface)
+     */
+    it('should omit retry_hint from context when the OSS_ERROR has none (CR-F5)', async () => {
+      const line = JSON.stringify({
+        ts: new Date().toISOString(),
+        cmd: 'build',
+        event: 'OSS_ERROR',
+        data: {
+          code: 'OSS-AUTH-001',
+          severity: 'HIGH',
+          source: 'hooks/ensure-decrypt-cli.sh',
+          message: 'Invalid or expired API key',
+          retry_eligible: false,
+          retry_cost: 'cheap',
+          attempt: 0,
+        },
+      });
+
+      await monitor.processLine(line);
+
+      expect(mockQueueManager.addTask).toHaveBeenCalledTimes(1);
+      const task = mockQueueManager.addTask.mock.calls[0][0] as {
+        context: Record<string, unknown>;
+      };
+      expect('retry_hint' in task.context).toBe(false);
+    });
   });
 });

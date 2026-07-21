@@ -18,6 +18,12 @@ export var ErrorCategory;
     ErrorCategory["CONFIG"] = "config";
     ErrorCategory["API"] = "api";
 })(ErrorCategory || (ErrorCategory = {}));
+/**
+ * Shared retry cap for structured OSS_ERROR events (ADR-004): once `attempt`
+ * reaches this value the watcher stops retrying and escalates. The single source
+ * of truth — both the analyzer classifier and the intervention generator import it.
+ */
+export const OSS_ERROR_MAX_RETRIES = 2;
 const SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
 const RETRY_COSTS = ['cheap', 'expensive'];
 function isErrorSeverity(value) {
@@ -404,6 +410,20 @@ export class ErrorRegistry {
                 'Re-run the command',
             ],
             learnMore: 'https://docs.oneshotship.com/errors/workflow/002',
+            severity: 'MEDIUM',
+            retry_eligible: false,
+            retry_cost: 'cheap',
+        }));
+        this.register(new OSSError({
+            code: 'OSS-WORKFLOW-902',
+            category: ErrorCategory.WORKFLOW,
+            message: 'Command reported an error',
+            cause: 'A command failure path reported an error with no more specific classification',
+            recovery: [
+                'Review the error message and the command output for the root cause',
+                'Re-run the command once the underlying problem is resolved',
+            ],
+            learnMore: 'https://docs.oneshotship.com/errors/workflow/902',
             severity: 'MEDIUM',
             retry_eligible: false,
             retry_cost: 'cheap',

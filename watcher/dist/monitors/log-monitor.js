@@ -1,4 +1,5 @@
 import { OSSError } from '../services/error-codes.js';
+import { redactString } from '../services/redaction.js';
 /**
  * Dedup window: a regex detector hit arriving within this window of a
  * structured OSS_ERROR event is considered the same failure (structured wins).
@@ -162,20 +163,25 @@ export class LogMonitor {
             : error.severity === 'MEDIUM'
                 ? 'medium'
                 : 'low';
+        // SEC-4: log-sourced strings are re-redacted before embedding (defense in depth).
+        const safeMessage = redactString(error.message);
+        const safeRetryHint = error.retry_hint !== undefined ? redactString(error.retry_hint) : undefined;
+        const context = {
+            provenance: 'structured',
+            error_code: error.code,
+            error_source: error.source,
+            // CR-F5: only include retry_hint when the error actually carries one.
+            ...(safeRetryHint !== undefined ? { retry_hint: safeRetryHint } : {}),
+            log_excerpt: redactString(line),
+        };
         const task = {
             priority,
             source: 'log-monitor',
             anomaly_type: 'agent_error',
-            prompt: `Structured error ${error.code} from ${error.source}: ${error.message}` +
-                (error.retry_hint !== undefined ? `\nRetry hint: ${error.retry_hint}` : ''),
+            prompt: `Structured error ${error.code} from ${error.source}: ${safeMessage}` +
+                (safeRetryHint !== undefined ? `\nRetry hint: ${safeRetryHint}` : ''),
             suggested_agent: 'debugger',
-            context: {
-                provenance: 'structured',
-                error_code: error.code,
-                error_source: error.source,
-                retry_hint: error.retry_hint,
-                log_excerpt: line,
-            },
+            context,
         };
         await this.queueManager.addTask(task);
     }
