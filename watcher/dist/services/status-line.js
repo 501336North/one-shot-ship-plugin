@@ -80,6 +80,13 @@ export class StatusLineService {
         await this.persist();
     }
     /**
+     * Set retry visibility text (e.g. "⟳ retry 1/2: OSS-API-001")
+     */
+    async setRetryStatus(text) {
+        this.state.retry = text;
+        await this.persist();
+    }
+    /**
      * Set context health information
      */
     async setContextHealth(info) {

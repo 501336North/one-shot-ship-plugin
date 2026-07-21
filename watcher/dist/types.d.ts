@@ -28,6 +28,10 @@ export interface TaskContext {
     law?: number;
     type?: string;
     message?: string;
+    provenance?: 'structured' | 'regex';
+    error_code?: string;
+    error_source?: string;
+    retry_hint?: string;
     drift_type?: string;
     spec_item_id?: string;
     spec_item_description?: string;

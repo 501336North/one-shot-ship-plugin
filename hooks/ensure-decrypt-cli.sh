@@ -20,6 +20,21 @@ OSS_BIN_DIR="${OSS_DIR}/bin"
 OSS_DECRYPT="${OSS_BIN_DIR}/oss-decrypt"
 GITHUB_RELEASES="https://github.com/501336North/one-shot-ship-plugin/releases/latest/download"
 
+# Standardized error contract: emit a structured OSSError via the oss-error
+# emitter when available (in-band stdout JSON + project workflow.log line).
+# Emitter absent or failing → legacy behavior only, never break the hook.
+emit_oss_error() {
+    local cli=""
+    if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" && -f "${CLAUDE_PLUGIN_ROOT}/watcher/dist/cli/oss-error.js" ]]; then
+        cli="${CLAUDE_PLUGIN_ROOT}/watcher/dist/cli/oss-error.js"
+    else
+        # Find latest installed version (version-agnostic); never fail the hook
+        cli=$(find "$HOME/.claude/plugins/cache/one-shot-ship-plugin" -name "oss-error.js" -path "*/watcher/dist/cli/*" -type f 2>/dev/null | head -1 || true)
+    fi
+    [[ -n "$cli" ]] || return 0
+    node "$cli" --source "hooks/ensure-decrypt-cli.sh" "$@" 2>/dev/null || true
+}
+
 # Minimum version required (1.2.0 adds --verify-manifest, --list-prompts, --category for /oss:trust)
 MINIMUM_VERSION="1.2.1"
 
@@ -117,6 +132,9 @@ echo "Downloading from: $DOWNLOAD_URL"
 if ! curl -sL "$DOWNLOAD_URL" -o "$OSS_DECRYPT"; then
     echo "Error: Failed to download oss-decrypt binary"
     echo "Please check your network connection or run /oss:login for manual installation."
+    emit_oss_error --code OSS-API-003 --severity HIGH \
+        --message "oss-decrypt binary download failed: network unreachable" \
+        --retry-eligible true --retry-cost cheap
     exit 1
 fi
 
@@ -131,6 +149,9 @@ if ! curl -sL "${DOWNLOAD_URL}.sha256" -o "$CHECKSUM_FILE"; then
     rm -f "$OSS_DECRYPT" "$CHECKSUM_FILE"
     echo "Error: Could not download checksum file for verification."
     echo "Please run /oss:login for manual installation."
+    emit_oss_error --code OSS-API-003 --severity HIGH \
+        --message "oss-decrypt checksum download failed: network unreachable" \
+        --retry-eligible true --retry-cost cheap
     exit 1
 fi
 
@@ -162,6 +183,9 @@ if [[ "$ACTUAL_HASH" != "$EXPECTED_HASH" ]]; then
     rm -f "$OSS_DECRYPT"
     echo "Error: Binary integrity check failed. The download may have been tampered with."
     echo "Please run /oss:login for manual installation."
+    emit_oss_error --code OSS-API-002 --severity HIGH \
+        --message "oss-decrypt binary integrity check failed: checksum mismatch" \
+        --retry-eligible true --retry-cost cheap
     exit 1
 fi
 
@@ -175,6 +199,9 @@ if ! "$OSS_DECRYPT" --version &>/dev/null; then
     echo "Error: Downloaded binary is not valid"
     rm -f "$OSS_DECRYPT"
     echo "Please run /oss:login for manual installation."
+    emit_oss_error --code OSS-API-002 --severity HIGH \
+        --message "oss-decrypt binary is not executable after download" \
+        --retry-eligible true --retry-cost cheap
     exit 1
 fi
 

@@ -6,6 +6,7 @@
  * - Positive signal erosion (absence of good): silence, missing milestones, declining velocity
  * - Hard stops (positive signals ceased): abrupt stops, partial completion, abandoned agents
  */
+import { OSS_ERROR_MAX_RETRIES } from '../services/error-codes.js';
 // Timing thresholds (in milliseconds) - use slightly lower than test values
 const THRESHOLDS = {
     SILENCE_WARNING: 90 * 1000, // 1.5 minutes of silence
@@ -52,6 +53,7 @@ export class WorkflowAnalyzer {
         this.detectExplicitFailures(entries, issues);
         this.detectAgentFailures(entries, issues);
         this.detectIronLawViolations(entries, issues);
+        this.detectStructuredErrors(entries, issues);
         // Detect positive signal erosion (absence of good)
         this.detectSilence(state, now, issues);
         this.detectMissingMilestones(entries, state, issues);
@@ -387,6 +389,46 @@ export class WorkflowAnalyzer {
                         }
                     }
                 }
+            }
+        }
+    }
+    detectStructuredErrors(entries, issues) {
+        for (const entry of entries) {
+            if (entry.event !== 'OSS_ERROR')
+                continue;
+            const wire = entry.data;
+            const retryEligible = wire.retry_eligible === true;
+            const cheap = wire.retry_cost === 'cheap';
+            const attempt = typeof wire.attempt === 'number' ? wire.attempt : 0;
+            // PERF-2: copy only the fields the generator reads instead of deep-spreading
+            // the whole wire (which can carry a large nested `context`) every cycle.
+            const context = {
+                code: wire.code,
+                severity: wire.severity,
+                source: wire.source,
+                message: wire.message,
+                retry_eligible: wire.retry_eligible,
+                retry_cost: wire.retry_cost,
+                attempt: wire.attempt,
+            };
+            if (wire.retry_hint !== undefined) {
+                context.retry_hint = wire.retry_hint;
+            }
+            if (retryEligible && cheap && attempt < OSS_ERROR_MAX_RETRIES) {
+                issues.push({
+                    type: 'oss_error_auto_remediable',
+                    confidence: 0.95,
+                    message: `Structured error ${String(wire.code)}: ${String(wire.message)}`,
+                    context,
+                });
+            }
+            else {
+                issues.push({
+                    type: 'oss_error_escalation',
+                    confidence: 0.95,
+                    message: `Structured error ${String(wire.code)} requires escalation: ${String(wire.message)}`,
+                    context,
+                });
             }
         }
     }

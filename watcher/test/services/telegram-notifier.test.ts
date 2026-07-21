@@ -232,4 +232,62 @@ describe('TelegramNotifier', () => {
       expect(message).toContain('bob');
     });
   });
+
+  describe('sendErrorEscalation', () => {
+    /**
+     * @behavior CRITICAL/HIGH structured-error escalations reach the user on Telegram
+     *           with the error code and actionable recovery steps
+     * @acceptance-criteria AC-005.1
+     * @business-rule US-005: escalations carry recovery[] so the user can act
+     * @boundary HTTP client to telegram-bridge
+     */
+    it('should POST an escalation message including code and recovery steps', async () => {
+      // GIVEN - an escalation payload with recovery steps
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true }),
+      });
+
+      // WHEN - the escalation is sent
+      await notifier.sendErrorEscalation({
+        code: 'OSS-AUTH-001',
+        severity: 'HIGH',
+        message: 'Invalid or expired API key',
+        recovery: ['Run /oss:login to re-authenticate', 'Generate a new API key if needed'],
+      });
+
+      // THEN - a POST hit the bridge and the message carries code + recovery steps
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [url, init] = mockFetch.mock.calls[0] as [string, { method: string; body: string }];
+      expect(url).toContain(testBridgeUrl);
+      expect(init.method).toBe('POST');
+      const body = JSON.parse(init.body) as { message: string };
+      expect(body.message).toContain('OSS-AUTH-001');
+      expect(body.message).toContain('Run /oss:login to re-authenticate');
+      expect(body.message).toContain('Generate a new API key if needed');
+    });
+
+    /**
+     * @behavior A failed bridge call surfaces as a rejection so the caller can
+     *           decide to swallow-and-log (the pipeline must never crash)
+     * @acceptance-criteria AC-005.1 (edge case)
+     * @boundary HTTP client to telegram-bridge
+     */
+    it('should throw when the bridge responds non-ok', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        statusText: 'Service Unavailable',
+      });
+
+      await expect(
+        notifier.sendErrorEscalation({
+          code: 'OSS-AUTH-001',
+          severity: 'CRITICAL',
+          message: 'Invalid or expired API key',
+          recovery: ['Run /oss:login to re-authenticate'],
+        })
+      ).rejects.toThrow(/503/);
+    });
+  });
 });

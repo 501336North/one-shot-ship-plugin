@@ -20,6 +20,20 @@ export interface PRReviewInfo {
 }
 
 /**
+ * Structured-error escalation information for notification (US-005)
+ */
+export interface ErrorEscalationInfo {
+  /** OSS error code, e.g. OSS-AUTH-001 */
+  code: string;
+  /** Error severity */
+  severity: string;
+  /** Human-readable error message */
+  message: string;
+  /** Actionable recovery steps from the error registry */
+  recovery: string[];
+}
+
+/**
  * Maximum length for review body before truncation
  */
 const MAX_REVIEW_BODY_LENGTH = 200;
@@ -50,6 +64,43 @@ export class TelegramNotifier {
     if (!response.ok) {
       throw new Error(`Telegram notification failed: ${response.status} ${response.statusText}`);
     }
+  }
+
+  /**
+   * Send a structured-error escalation notification via telegram-bridge service
+   *
+   * @param info escalation payload (code, severity, message, recovery steps)
+   * @throws Error if HTTP request fails
+   */
+  async sendErrorEscalation(info: ErrorEscalationInfo): Promise<void> {
+    const message = this.formatEscalationMessage(info);
+
+    const response = await fetch(`${this.telegramBridgeUrl}/api/notify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ message }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Telegram escalation failed: ${response.status} ${response.statusText}`);
+    }
+  }
+
+  /**
+   * Format a structured-error escalation message for Telegram
+   */
+  formatEscalationMessage(info: ErrorEscalationInfo): string {
+    const lines = [
+      `\u{1F6A8} ${info.severity} escalation: ${info.code}`,
+      '',
+      info.message,
+      '',
+      'Recovery:',
+      ...info.recovery.map((step) => `\u{2022} ${step}`),
+    ];
+    return lines.join('\n');
   }
 
   /**

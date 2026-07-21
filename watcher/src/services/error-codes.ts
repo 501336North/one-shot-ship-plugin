@@ -19,6 +19,44 @@ export enum ErrorCategory {
   API = 'api',
 }
 
+export type ErrorSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+export type RetryCost = 'cheap' | 'expensive';
+
+/**
+ * Shared retry cap for structured OSS_ERROR events (ADR-004): once `attempt`
+ * reaches this value the watcher stops retrying and escalates. The single source
+ * of truth — both the analyzer classifier and the intervention generator import it.
+ */
+export const OSS_ERROR_MAX_RETRIES = 2;
+
+/** The wire contract emitted in-band (stdout) and out-of-band (workflow.log). */
+export interface WireError {
+  code: string;
+  severity: ErrorSeverity;
+  source: string;
+  message: string;
+  retry_eligible: boolean;
+  retry_hint?: string;
+  retry_cost: RetryCost;
+  attempt: number;
+  context?: Record<string, unknown>;
+}
+
+const SEVERITIES: readonly ErrorSeverity[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
+const RETRY_COSTS: readonly RetryCost[] = ['cheap', 'expensive'];
+
+function isErrorSeverity(value: unknown): value is ErrorSeverity {
+  return typeof value === 'string' && (SEVERITIES as readonly string[]).includes(value);
+}
+
+function isRetryCost(value: unknown): value is RetryCost {
+  return typeof value === 'string' && (RETRY_COSTS as readonly string[]).includes(value);
+}
+
+function isErrorCategory(value: string): value is ErrorCategory {
+  return (Object.values(ErrorCategory) as string[]).includes(value);
+}
+
 interface OSSErrorOptions {
   code: string;
   category: ErrorCategory;
@@ -27,6 +65,13 @@ interface OSSErrorOptions {
   recovery: string[];
   learnMore: string;
   relatedCommands?: string[];
+  severity?: ErrorSeverity;
+  source?: string;
+  retry_eligible?: boolean;
+  retry_hint?: string;
+  retry_cost?: RetryCost;
+  attempt?: number;
+  context?: Record<string, unknown>;
 }
 
 // ANSI color codes
@@ -47,6 +92,13 @@ export class OSSError extends Error {
   recovery: string[];
   learnMore: string;
   relatedCommands: string[];
+  severity: ErrorSeverity;
+  source: string;
+  retry_eligible: boolean;
+  retry_hint?: string;
+  retry_cost: RetryCost;
+  attempt: number;
+  context?: Record<string, unknown>;
 
   constructor(options: OSSErrorOptions) {
     super(options.message);
@@ -57,6 +109,96 @@ export class OSSError extends Error {
     this.recovery = options.recovery;
     this.learnMore = options.learnMore;
     this.relatedCommands = options.relatedCommands ?? [];
+    this.severity = options.severity ?? 'MEDIUM';
+    this.source = options.source ?? 'unknown';
+    this.retry_eligible = options.retry_eligible ?? false;
+    this.retry_hint = options.retry_hint;
+    this.retry_cost = options.retry_cost ?? 'cheap';
+    this.attempt = options.attempt ?? 0;
+    this.context = options.context;
+  }
+
+  /**
+   * Serialize to the wire contract (in-band stdout / out-of-band workflow.log).
+   */
+  toWireJSON(): WireError {
+    const wire: WireError = {
+      code: this.code,
+      severity: this.severity,
+      source: this.source,
+      message: this.message,
+      retry_eligible: this.retry_eligible,
+      retry_cost: this.retry_cost,
+      attempt: this.attempt,
+    };
+    if (this.retry_hint !== undefined) {
+      wire.retry_hint = this.retry_hint;
+    }
+    if (this.context !== undefined) {
+      wire.context = this.context;
+    }
+    return wire;
+  }
+
+  /**
+   * Validating parse of a wire payload. Throws an Error naming the offending
+   * field when a required field is missing or an enum value is invalid.
+   */
+  static fromWireJSON(value: unknown): OSSError {
+    if (typeof value !== 'object' || value === null) {
+      throw new Error('OSSError.fromWireJSON: payload must be an object');
+    }
+    const obj = value as Record<string, unknown>;
+
+    const requireField = (field: string, check: (v: unknown) => boolean, expected: string): void => {
+      if (!(field in obj)) {
+        throw new Error(`OSSError.fromWireJSON: missing required field "${field}"`);
+      }
+      if (!check(obj[field])) {
+        throw new Error(
+          `OSSError.fromWireJSON: invalid value for "${field}" (expected ${expected}): ${String(obj[field])}`,
+        );
+      }
+    };
+
+    requireField('code', (v) => typeof v === 'string' && v.length > 0, 'non-empty string');
+    requireField('severity', isErrorSeverity, SEVERITIES.join('|'));
+    requireField('source', (v) => typeof v === 'string', 'string');
+    requireField('message', (v) => typeof v === 'string' && v.length > 0, 'non-empty string');
+    requireField('retry_eligible', (v) => typeof v === 'boolean', 'boolean');
+    requireField('retry_cost', isRetryCost, RETRY_COSTS.join('|'));
+    requireField('attempt', (v) => typeof v === 'number' && Number.isInteger(v) && v >= 0, 'non-negative integer');
+    if ('retry_hint' in obj && obj.retry_hint !== undefined && typeof obj.retry_hint !== 'string') {
+      throw new Error('OSSError.fromWireJSON: invalid value for "retry_hint" (expected string)');
+    }
+    if (
+      'context' in obj &&
+      obj.context !== undefined &&
+      (typeof obj.context !== 'object' || obj.context === null || Array.isArray(obj.context))
+    ) {
+      throw new Error('OSSError.fromWireJSON: invalid value for "context" (expected object)');
+    }
+
+    const code = obj.code as string;
+    const categorySegment = (code.split('-')[1] ?? '').toLowerCase();
+    const category = isErrorCategory(categorySegment) ? categorySegment : ErrorCategory.WORKFLOW;
+    const message = obj.message as string;
+
+    return new OSSError({
+      code,
+      category,
+      message,
+      cause: message,
+      recovery: [],
+      learnMore: '',
+      severity: obj.severity as ErrorSeverity,
+      source: obj.source as string,
+      retry_eligible: obj.retry_eligible as boolean,
+      retry_hint: obj.retry_hint as string | undefined,
+      retry_cost: obj.retry_cost as RetryCost,
+      attempt: obj.attempt as number,
+      context: obj.context as Record<string, unknown> | undefined,
+    });
   }
 
   /**
@@ -120,6 +262,9 @@ export class ErrorRegistry {
       ],
       learnMore: 'https://docs.oneshotship.com/errors/auth/001',
       relatedCommands: ['/oss:login', '/oss:status'],
+      severity: 'HIGH',
+      retry_eligible: false,
+      retry_cost: 'cheap',
     }));
 
     this.register(new OSSError({
@@ -133,6 +278,9 @@ export class ErrorRegistry {
       ],
       learnMore: 'https://docs.oneshotship.com/errors/auth/002',
       relatedCommands: ['/oss:status'],
+      severity: 'HIGH',
+      retry_eligible: false,
+      retry_cost: 'cheap',
     }));
 
     this.register(new OSSError({
@@ -263,6 +411,39 @@ export class ErrorRegistry {
       learnMore: 'https://docs.oneshotship.com/errors/api/001',
     }));
 
+    this.register(new OSSError({
+      code: 'OSS-API-002',
+      category: ErrorCategory.API,
+      message: 'Prompt decrypt failed',
+      cause: 'The oss-decrypt CLI could not decrypt the fetched prompt payload',
+      recovery: [
+        'Re-run the command to re-fetch the decrypt CLI',
+        'Run /oss:trust to verify prompt integrity',
+        'Contact support@oneshotship.com if the issue persists',
+      ],
+      learnMore: 'https://docs.oneshotship.com/errors/api/002',
+      relatedCommands: ['/oss:trust'],
+      severity: 'HIGH',
+      retry_eligible: true,
+      retry_cost: 'cheap',
+    }));
+
+    this.register(new OSSError({
+      code: 'OSS-API-003',
+      category: ErrorCategory.API,
+      message: 'API unreachable (network error)',
+      cause: 'Could not reach the OSS API server (DNS or connection failure)',
+      recovery: [
+        'Check your network connection',
+        'Retry the command after a few seconds',
+        'Check status at https://status.oneshotship.com',
+      ],
+      learnMore: 'https://docs.oneshotship.com/errors/api/003',
+      severity: 'HIGH',
+      retry_eligible: true,
+      retry_cost: 'cheap',
+    }));
+
     // CONFIG errors
     this.register(new OSSError({
       code: 'OSS-CONFIG-001',
@@ -275,6 +456,68 @@ export class ErrorRegistry {
       ],
       learnMore: 'https://docs.oneshotship.com/errors/config/001',
       relatedCommands: ['/oss:login'],
+    }));
+
+    this.register(new OSSError({
+      code: 'OSS-CONFIG-002',
+      category: ErrorCategory.CONFIG,
+      message: 'Configuration missing or invalid',
+      cause: 'The ~/.oss/config.json file is missing or failed validation',
+      recovery: [
+        'Run /oss:login to create a fresh configuration',
+        'Verify ~/.oss/config.json contains a valid apiKey entry',
+      ],
+      learnMore: 'https://docs.oneshotship.com/errors/config/002',
+      relatedCommands: ['/oss:login'],
+      severity: 'MEDIUM',
+      retry_eligible: false,
+      retry_cost: 'cheap',
+    }));
+
+    this.register(new OSSError({
+      code: 'OSS-WORKFLOW-002',
+      category: ErrorCategory.WORKFLOW,
+      message: 'workflow.log is not writable',
+      cause: 'The project-local .oss/workflow.log could not be appended to',
+      recovery: [
+        'Check permissions on the project .oss directory',
+        'Remove any directory occupying the .oss/workflow.log path',
+        'Re-run the command',
+      ],
+      learnMore: 'https://docs.oneshotship.com/errors/workflow/002',
+      severity: 'MEDIUM',
+      retry_eligible: false,
+      retry_cost: 'cheap',
+    }));
+
+    this.register(new OSSError({
+      code: 'OSS-WORKFLOW-902',
+      category: ErrorCategory.WORKFLOW,
+      message: 'Command reported an error',
+      cause: 'A command failure path reported an error with no more specific classification',
+      recovery: [
+        'Review the error message and the command output for the root cause',
+        'Re-run the command once the underlying problem is resolved',
+      ],
+      learnMore: 'https://docs.oneshotship.com/errors/workflow/902',
+      severity: 'MEDIUM',
+      retry_eligible: false,
+      retry_cost: 'cheap',
+    }));
+
+    this.register(new OSSError({
+      code: 'OSS-WORKFLOW-901',
+      category: ErrorCategory.WORKFLOW,
+      message: 'Nonconforming error output wrapped',
+      cause: 'A failure path emitted output that does not conform to the OSSError wire contract',
+      recovery: [
+        'Inspect the original output preserved in the error context',
+        'Migrate the emitting script or prompt to the oss-error CLI',
+      ],
+      learnMore: 'https://docs.oneshotship.com/errors/workflow/901',
+      severity: 'MEDIUM',
+      retry_eligible: false,
+      retry_cost: 'cheap',
     }));
   }
 

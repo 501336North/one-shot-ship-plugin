@@ -49,6 +49,13 @@ export class WorkflowLogger {
         fs.appendFileSync(this.logPath, content);
     }
     /**
+     * RecoveryLogger port (US-006): log a retry-visibility RECOVERY line.
+     * Fire-and-forget — retry visibility must never block the healing pipeline.
+     */
+    logRecovery(data) {
+        void this.log({ cmd: 'watcher', event: 'RECOVERY', data });
+    }
+    /**
      * Format IRON LAW compliance checklist for logging
      */
     formatIronLawChecklist(checklist) {

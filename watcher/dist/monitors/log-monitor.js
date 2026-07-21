@@ -1,3 +1,10 @@
+import { OSSError } from '../services/error-codes.js';
+import { redactString } from '../services/redaction.js';
+/**
+ * Dedup window: a regex detector hit arriving within this window of a
+ * structured OSS_ERROR event is considered the same failure (structured wins).
+ */
+const STRUCTURED_ERROR_DEDUP_WINDOW_MS = 5000;
 /**
  * Log Monitor - Monitors agent output for anomalies
  *
@@ -10,6 +17,7 @@ export class LogMonitor {
     maxBufferSize;
     lastActivityTime;
     stuckReported;
+    recentStructuredErrors = [];
     constructor(queueManager, ruleEngine, maxBufferSize = 100) {
         this.queueManager = queueManager;
         this.ruleEngine = ruleEngine;
@@ -35,9 +43,20 @@ export class LogMonitor {
         if (this.logBuffer.length > this.maxBufferSize) {
             this.logBuffer.shift();
         }
+        // Structured OSS_ERROR events win over regex detection (AC-004.4)
+        const structured = this.parseStructuredError(trimmed);
+        if (structured) {
+            this.recentStructuredErrors.push({ source: structured.source, seenAt: Date.now() });
+            await this.createStructuredTask(structured, trimmed);
+            return;
+        }
         // Analyze single line
         const match = this.ruleEngine.analyze(trimmed);
         if (match) {
+            // Dedup: a structured event already covered this failure window
+            if (this.hasRecentStructuredError()) {
+                return;
+            }
             await this.createTask(match);
         }
     }
@@ -103,6 +122,68 @@ export class LogMonitor {
         this.logBuffer.length = 0;
         this.lastActivityTime = Date.now();
         this.stuckReported = false;
+        this.recentStructuredErrors.length = 0;
+    }
+    /**
+     * Parse a log line as a workflow-log OSS_ERROR event.
+     * Returns the validated wire error, or null when the line is not one.
+     */
+    parseStructuredError(line) {
+        if (!line.startsWith('{')) {
+            return null;
+        }
+        try {
+            const parsed = JSON.parse(line);
+            if (parsed.event !== 'OSS_ERROR') {
+                return null;
+            }
+            return OSSError.fromWireJSON(parsed.data).toWireJSON();
+        }
+        catch {
+            return null;
+        }
+    }
+    /**
+     * Whether a structured OSS_ERROR was seen within the dedup window.
+     * Prunes expired entries as a side effect.
+     */
+    hasRecentStructuredError() {
+        const cutoff = Date.now() - STRUCTURED_ERROR_DEDUP_WINDOW_MS;
+        while (this.recentStructuredErrors.length > 0 && this.recentStructuredErrors[0].seenAt < cutoff) {
+            this.recentStructuredErrors.shift();
+        }
+        return this.recentStructuredErrors.length > 0;
+    }
+    /**
+     * Create a task carrying structured provenance from an OSS_ERROR event
+     */
+    async createStructuredTask(error, line) {
+        const priority = error.severity === 'CRITICAL' || error.severity === 'HIGH'
+            ? 'high'
+            : error.severity === 'MEDIUM'
+                ? 'medium'
+                : 'low';
+        // SEC-4: log-sourced strings are re-redacted before embedding (defense in depth).
+        const safeMessage = redactString(error.message);
+        const safeRetryHint = error.retry_hint !== undefined ? redactString(error.retry_hint) : undefined;
+        const context = {
+            provenance: 'structured',
+            error_code: error.code,
+            error_source: error.source,
+            // CR-F5: only include retry_hint when the error actually carries one.
+            ...(safeRetryHint !== undefined ? { retry_hint: safeRetryHint } : {}),
+            log_excerpt: redactString(line),
+        };
+        const task = {
+            priority,
+            source: 'log-monitor',
+            anomaly_type: 'agent_error',
+            prompt: `Structured error ${error.code} from ${error.source}: ${safeMessage}` +
+                (safeRetryHint !== undefined ? `\nRetry hint: ${safeRetryHint}` : ''),
+            suggested_agent: 'debugger',
+            context,
+        };
+        await this.queueManager.addTask(task);
     }
     /**
      * Create a task from a rule match

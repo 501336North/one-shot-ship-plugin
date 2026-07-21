@@ -18,6 +18,19 @@ export interface PRReviewInfo {
     reviewBody: string;
 }
 /**
+ * Structured-error escalation information for notification (US-005)
+ */
+export interface ErrorEscalationInfo {
+    /** OSS error code, e.g. OSS-AUTH-001 */
+    code: string;
+    /** Error severity */
+    severity: string;
+    /** Human-readable error message */
+    message: string;
+    /** Actionable recovery steps from the error registry */
+    recovery: string[];
+}
+/**
  * TelegramNotifier - Sends PR review notifications to Telegram
  */
 export declare class TelegramNotifier {
@@ -30,6 +43,17 @@ export declare class TelegramNotifier {
      * @throws Error if HTTP request fails
      */
     sendPRReviewNotification(info: PRReviewInfo): Promise<void>;
+    /**
+     * Send a structured-error escalation notification via telegram-bridge service
+     *
+     * @param info escalation payload (code, severity, message, recovery steps)
+     * @throws Error if HTTP request fails
+     */
+    sendErrorEscalation(info: ErrorEscalationInfo): Promise<void>;
+    /**
+     * Format a structured-error escalation message for Telegram
+     */
+    formatEscalationMessage(info: ErrorEscalationInfo): string;
     /**
      * Format a PR review message for Telegram
      *

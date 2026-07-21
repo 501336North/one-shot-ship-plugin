@@ -13,18 +13,19 @@ import {
   IssueType,
 } from '../src/analyzer/workflow-analyzer.js';
 import { ParsedLogEntry } from '../src/logger/log-reader.js';
+import { WorkflowEvent } from '../src/logger/workflow-logger.js';
 
 // Helper to create log entries
 function entry(
   cmd: string,
-  event: string,
+  event: WorkflowEvent,
   data: Record<string, unknown> = {},
   overrides: Partial<ParsedLogEntry> = {}
 ): ParsedLogEntry {
   return {
     ts: new Date().toISOString(),
     cmd,
-    event: event as any,
+    event,
     data,
     ...overrides,
   };
@@ -34,14 +35,14 @@ function entry(
 function entryAt(
   ts: Date,
   cmd: string,
-  event: string,
+  event: WorkflowEvent,
   data: Record<string, unknown> = {},
   overrides: Partial<ParsedLogEntry> = {}
 ): ParsedLogEntry {
   return {
     ts: ts.toISOString(),
     cmd,
-    event: event as any,
+    event,
     data,
     ...overrides,
   };
@@ -648,6 +649,142 @@ describe('WorkflowAnalyzer', () => {
       const repeated = analysis.issues.find((i) => i.type === 'iron_law_repeated');
       expect(repeated).toBeDefined();
       expect(analysis.health).toBe('critical');
+    });
+  });
+
+  describe('OSS_ERROR structured event classification (US-004)', () => {
+    const wireError = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+      code: 'OSS-API-001',
+      severity: 'HIGH',
+      source: 'hooks/ensure-decrypt-cli.sh',
+      message: 'Prompt fetch failed: ECONNREFUSED one-shot-ship-api.onrender.com',
+      retry_eligible: true,
+      retry_hint: 'Wait 5s then re-run the fetch',
+      retry_cost: 'cheap',
+      attempt: 0,
+      ...overrides,
+    });
+
+    /**
+     * @behavior A cheap retryable structured error is classified as auto-remediable
+     *           so the watcher can heal it without human involvement
+     * @acceptance-criteria AC-004.1
+     * @business-rule Cheap + retry_eligible + attempt < 2 → high-confidence auto-remediation
+     * @boundary Analyzer
+     */
+    it('should classify retry_eligible+cheap as auto-remediable with high confidence', () => {
+      const entries: ParsedLogEntry[] = [
+        entry('build', 'START'),
+        entry('build', 'OSS_ERROR', wireError()),
+      ];
+
+      const analysis = analyzer.analyze(entries);
+      const remediable = analysis.issues.find((i) => i.type === 'oss_error_auto_remediable');
+
+      expect(remediable).toBeDefined();
+      expect(remediable?.confidence).toBeGreaterThan(0.9);
+      expect(remediable?.context).toMatchObject({
+        code: 'OSS-API-001',
+        retry_hint: 'Wait 5s then re-run the fetch',
+        attempt: 0,
+      });
+    });
+
+    /**
+     * @behavior The issue context copies only the fields the generator reads — it does
+     *           NOT deep-spread the whole wire (which can carry a large nested context).
+     * @acceptance-criteria PERF-2
+     * @business-rule The analyzer runs every cycle; per-issue context must stay bounded.
+     */
+    it('should copy only generator-needed fields into issue context, not the whole wire', () => {
+      const entries: ParsedLogEntry[] = [
+        entry('build', 'START'),
+        entry(
+          'build',
+          'OSS_ERROR',
+          wireError({ context: { huge: 'x'.repeat(10000), nested: { deep: true } } }),
+        ),
+      ];
+
+      const analysis = analyzer.analyze(entries);
+      const remediable = analysis.issues.find((i) => i.type === 'oss_error_auto_remediable');
+
+      expect(remediable).toBeDefined();
+      // needed fields are present
+      expect(remediable?.context).toMatchObject({
+        code: 'OSS-API-001',
+        severity: 'HIGH',
+        source: 'hooks/ensure-decrypt-cli.sh',
+        retry_eligible: true,
+        retry_cost: 'cheap',
+        attempt: 0,
+      });
+      // the wire's nested `context` field was NOT deep-spread in
+      expect(remediable?.context).not.toHaveProperty('context');
+      expect(Object.keys(remediable?.context ?? {})).not.toContain('huge');
+    });
+
+    /**
+     * @behavior An expensive structured error is classified escalation-only:
+     *           a retry would burn a full pipeline run, so a human decides
+     * @acceptance-criteria AC-004.2
+     * @business-rule retry_cost=expensive → never auto-remediable
+     * @boundary Analyzer
+     */
+    it('should classify retry_cost=expensive as escalation-only', () => {
+      const entries: ParsedLogEntry[] = [
+        entry('build', 'START'),
+        entry('build', 'OSS_ERROR', wireError({ retry_cost: 'expensive' })),
+      ];
+
+      const analysis = analyzer.analyze(entries);
+
+      expect(analysis.issues.find((i) => i.type === 'oss_error_auto_remediable')).toBeUndefined();
+      const escalation = analysis.issues.find((i) => i.type === 'oss_error_escalation');
+      expect(escalation).toBeDefined();
+      expect(escalation?.context).toMatchObject({ code: 'OSS-API-001', retry_cost: 'expensive' });
+    });
+
+    /**
+     * @behavior A non-retryable structured error is classified as an escalation
+     *           (retrying cannot help — e.g. expired credentials)
+     * @acceptance-criteria AC-004.2
+     * @business-rule retry_eligible=false → non-retryable escalation
+     * @boundary Analyzer
+     */
+    it('should classify retry_eligible=false as non-retryable escalation', () => {
+      const entries: ParsedLogEntry[] = [
+        entry('build', 'START'),
+        entry('build', 'OSS_ERROR', wireError({ retry_eligible: false, retry_hint: undefined })),
+      ];
+
+      const analysis = analyzer.analyze(entries);
+
+      expect(analysis.issues.find((i) => i.type === 'oss_error_auto_remediable')).toBeUndefined();
+      const escalation = analysis.issues.find((i) => i.type === 'oss_error_escalation');
+      expect(escalation).toBeDefined();
+      expect(escalation?.context).toMatchObject({ code: 'OSS-API-001', retry_eligible: false });
+    });
+
+    /**
+     * @behavior A structured error that already exhausted the retry cap on arrival
+     *           is escalated, never re-queued
+     * @acceptance-criteria AC-003.2
+     * @business-rule attempt >= 2 → escalation (retry cap)
+     * @boundary Analyzer
+     */
+    it('should classify attempt >= 2 as escalation even when cheap and retry-eligible', () => {
+      const entries: ParsedLogEntry[] = [
+        entry('build', 'START'),
+        entry('build', 'OSS_ERROR', wireError({ attempt: 2 })),
+      ];
+
+      const analysis = analyzer.analyze(entries);
+
+      expect(analysis.issues.find((i) => i.type === 'oss_error_auto_remediable')).toBeUndefined();
+      const escalation = analysis.issues.find((i) => i.type === 'oss_error_escalation');
+      expect(escalation).toBeDefined();
+      expect(escalation?.context).toMatchObject({ code: 'OSS-API-001', attempt: 2 });
     });
   });
 });

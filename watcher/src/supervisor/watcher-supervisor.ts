@@ -12,6 +12,9 @@ import * as path from 'path';
 import { LogReader, ParsedLogEntry } from '../logger/log-reader.js';
 import { WorkflowAnalyzer, WorkflowAnalysis } from '../analyzer/workflow-analyzer.js';
 import { InterventionGenerator, Intervention } from '../intervention/generator.js';
+import { WorkflowLogger } from '../logger/workflow-logger.js';
+import { StatusLineService } from '../services/status-line.js';
+import { TelegramNotifier } from '../services/telegram-notifier.js';
 import { QueueManager } from '../queue/manager.js';
 import { CreateTaskInput, AnomalyType } from '../types.js';
 import { IronLawMonitor, IronLawViolation } from '../services/iron-law-monitor.js';
@@ -83,7 +86,16 @@ export class WatcherSupervisor {
     this.statePath = path.join(ossDir, 'workflow-state.json');
     this.logReader = new LogReader(ossDir);
     this.analyzer = new WorkflowAnalyzer();
-    this.interventionGenerator = new InterventionGenerator();
+    // Wire the structured-error healing ports (US-005/US-006) into the generator
+    // so escalation, retry-status-line visibility, and RECOVERY logging fire in
+    // production — not just in the E2E test. Telegram is optional: when no bridge
+    // URL is configured, escalation simply no-ops (generator swallows absence).
+    const bridgeUrl = process.env.OSS_TELEGRAM_BRIDGE_URL;
+    this.interventionGenerator = new InterventionGenerator({
+      recoveryLogger: new WorkflowLogger(ossDir),
+      statusLine: new StatusLineService(ossDir),
+      notifier: bridgeUrl ? new TelegramNotifier(bridgeUrl) : undefined,
+    });
     this.queueManager = queueManager;
 
     // Initialize IRON LAW monitor

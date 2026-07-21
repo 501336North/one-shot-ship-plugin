@@ -7,6 +7,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { WorkflowEvent, AgentInfo } from './workflow-logger.js';
+import { OSSError } from '../services/error-codes.js';
 
 export interface ParsedLogEntry {
   ts: string;
@@ -141,15 +142,54 @@ export class LogReader {
         continue;
       }
 
+      let parsed: ParsedLogEntry;
       try {
-        const parsed = JSON.parse(line) as ParsedLogEntry;
-        entries.push(parsed);
+        parsed = JSON.parse(line) as ParsedLogEntry;
       } catch {
-        // Skip malformed JSON
+        // Malformed JSON: a line claiming to be an error is wrapped as
+        // OSS-WORKFLOW-901 (never dropped); anything else is skipped as before
+        if (line.includes('OSS_ERROR')) {
+          entries.push(this.wrapNonconforming(line));
+        }
         continue;
       }
+
+      if (parsed.event === 'OSS_ERROR') {
+        // Validation net: only schema-valid wire errors pass through
+        try {
+          OSSError.fromWireJSON(parsed.data);
+          entries.push(parsed);
+        } catch {
+          entries.push(this.wrapNonconforming(line, parsed));
+        }
+        continue;
+      }
+
+      entries.push(parsed);
     }
 
     return entries;
+  }
+
+  /**
+   * Wrap a nonconforming error line into a conformant OSS_ERROR entry
+   * (code OSS-WORKFLOW-901) so it is never thrown and never silently dropped.
+   */
+  private wrapNonconforming(line: string, original?: ParsedLogEntry): ParsedLogEntry {
+    return {
+      ts: original?.ts ?? new Date().toISOString(),
+      cmd: original?.cmd ?? 'unknown',
+      event: 'OSS_ERROR',
+      data: {
+        code: 'OSS-WORKFLOW-901',
+        severity: 'MEDIUM',
+        source: 'log-reader',
+        message: 'Nonconforming error output wrapped',
+        retry_eligible: false,
+        retry_cost: 'cheap',
+        attempt: 0,
+        context: { original_line: line },
+      },
+    };
   }
 }

@@ -11,6 +11,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { LogReader, ParsedLogEntry } from '../src/logger/log-reader.js';
 import { WorkflowLogger } from '../src/logger/workflow-logger.js';
+import { OSSError } from '../src/services/error-codes.js';
 
 describe('LogReader', () => {
   let testDir: string;
@@ -292,6 +293,98 @@ describe('LogReader', () => {
       expect(entry?.data.violations).toHaveLength(2);
       expect(entry?.data.violations[0].law).toBe(4);
       expect(entry?.data.violations[1].law).toBe(1);
+    });
+  });
+
+  describe('OSS_ERROR event support (validation net)', () => {
+    const validWireError = {
+      code: 'OSS-API-001',
+      severity: 'HIGH',
+      source: 'hooks/ensure-decrypt-cli.sh',
+      message: 'Prompt fetch failed: ECONNREFUSED',
+      retry_eligible: true,
+      retry_hint: 'Wait 5s then re-run the fetch',
+      retry_cost: 'cheap',
+      attempt: 0,
+    };
+
+    /**
+     * @behavior A structured error written by the emitter round-trips through
+     *           WorkflowLogger → LogReader unchanged
+     * @business-rule One wire contract end to end (US-001, US-004)
+     */
+    it('should write and read back an OSS_ERROR event through WorkflowLogger/LogReader', async () => {
+      await logger.log({ cmd: 'build', event: 'OSS_ERROR', data: { ...validWireError } });
+
+      const entries = await reader.readAll();
+
+      expect(entries).toHaveLength(1);
+      expect(entries[0].event).toBe('OSS_ERROR');
+      expect(entries[0].data).toEqual(validWireError);
+    });
+
+    /**
+     * @behavior A torn/malformed line claiming to be an error is wrapped as a
+     *           conformant OSS-WORKFLOW-901 error, never thrown, never dropped
+     * @business-rule Malformed error lines must not poison the watcher pipeline (AC-004.3)
+     */
+    it('should wrap a malformed error line into a conformant OSSError with code OSS-WORKFLOW-901', async () => {
+      const logPath = path.join(testDir, 'workflow.log');
+      fs.appendFileSync(
+        logPath,
+        '{"ts":"2026-07-20T00:00:00.000Z","cmd":"build","event":"OSS_ERROR","data":{"code":\n',
+      );
+
+      const entries = await reader.readAll();
+
+      const wrapped = entries.find(
+        (e) => e.event === 'OSS_ERROR' && e.data.code === 'OSS-WORKFLOW-901',
+      );
+      expect(wrapped, 'malformed error line must be wrapped, not dropped').toBeDefined();
+      expect(wrapped?.data.retry_eligible).toBe(false);
+      // The wrapped payload itself conforms to the wire contract
+      expect(() => OSSError.fromWireJSON(wrapped?.data)).not.toThrow();
+    });
+
+    /**
+     * @behavior A parseable OSS_ERROR entry whose payload violates the wire
+     *           schema is wrapped as OSS-WORKFLOW-901 instead of passing through
+     * @business-rule Only schema-valid errors reach the analyzer (AC-004.3)
+     */
+    it('should wrap an OSS_ERROR entry with nonconforming data as OSS-WORKFLOW-901', async () => {
+      const logPath = path.join(testDir, 'workflow.log');
+      fs.appendFileSync(
+        logPath,
+        `${JSON.stringify({
+          ts: '2026-07-20T00:00:00.000Z',
+          cmd: 'build',
+          event: 'OSS_ERROR',
+          data: { code: 'OSS-API-001', severity: 'NOT-A-SEVERITY' },
+        })}\n`,
+      );
+
+      const entries = await reader.readAll();
+
+      expect(entries).toHaveLength(1);
+      expect(entries[0].event).toBe('OSS_ERROR');
+      expect(entries[0].data.code).toBe('OSS-WORKFLOW-901');
+      expect(entries[0].data.retry_eligible).toBe(false);
+    });
+
+    /**
+     * @behavior Legacy plaintext bracketed lines are skipped, never fatal
+     * @business-rule Migration safety — old log dialects must not crash the reader
+     */
+    it('should tolerate legacy plaintext bracketed lines without crashing', async () => {
+      const logPath = path.join(testDir, 'workflow.log');
+      fs.appendFileSync(logPath, '[2026-07-20 00:00:00] ERROR something went wrong\n');
+      fs.appendFileSync(logPath, '# BUILD:START - human summary\n');
+      await logger.log({ cmd: 'build', event: 'START', data: {} });
+
+      const entries = await reader.readAll();
+
+      expect(entries).toHaveLength(1);
+      expect(entries[0].event).toBe('START');
     });
   });
 

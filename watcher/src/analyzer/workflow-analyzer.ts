@@ -8,6 +8,7 @@
  */
 
 import { ParsedLogEntry } from '../logger/log-reader.js';
+import { OSS_ERROR_MAX_RETRIES } from '../services/error-codes.js';
 
 export type IssueType =
   // Negative signals (presence of bad)
@@ -32,7 +33,10 @@ export type IssueType =
   // IRON LAW violations
   | 'iron_law_violation'
   | 'iron_law_repeated'
-  | 'iron_law_ignored';
+  | 'iron_law_ignored'
+  // Structured OSS_ERROR events (wire contract)
+  | 'oss_error_auto_remediable'
+  | 'oss_error_escalation';
 
 export type HealthStatus = 'healthy' | 'warning' | 'critical';
 
@@ -127,6 +131,7 @@ export class WorkflowAnalyzer {
     this.detectExplicitFailures(entries, issues);
     this.detectAgentFailures(entries, issues);
     this.detectIronLawViolations(entries, issues);
+    this.detectStructuredErrors(entries, issues);
 
     // Detect positive signal erosion (absence of good)
     this.detectSilence(state, now, issues);
@@ -531,6 +536,48 @@ export class WorkflowAnalyzer {
             }
           }
         }
+      }
+    }
+  }
+
+  private detectStructuredErrors(entries: ParsedLogEntry[], issues: WorkflowIssue[]): void {
+    for (const entry of entries) {
+      if (entry.event !== 'OSS_ERROR') continue;
+
+      const wire = entry.data;
+      const retryEligible = wire.retry_eligible === true;
+      const cheap = wire.retry_cost === 'cheap';
+      const attempt = typeof wire.attempt === 'number' ? wire.attempt : 0;
+
+      // PERF-2: copy only the fields the generator reads instead of deep-spreading
+      // the whole wire (which can carry a large nested `context`) every cycle.
+      const context: Record<string, unknown> = {
+        code: wire.code,
+        severity: wire.severity,
+        source: wire.source,
+        message: wire.message,
+        retry_eligible: wire.retry_eligible,
+        retry_cost: wire.retry_cost,
+        attempt: wire.attempt,
+      };
+      if (wire.retry_hint !== undefined) {
+        context.retry_hint = wire.retry_hint;
+      }
+
+      if (retryEligible && cheap && attempt < OSS_ERROR_MAX_RETRIES) {
+        issues.push({
+          type: 'oss_error_auto_remediable',
+          confidence: 0.95,
+          message: `Structured error ${String(wire.code)}: ${String(wire.message)}`,
+          context,
+        });
+      } else {
+        issues.push({
+          type: 'oss_error_escalation',
+          confidence: 0.95,
+          message: `Structured error ${String(wire.code)} requires escalation: ${String(wire.message)}`,
+          context,
+        });
       }
     }
   }
