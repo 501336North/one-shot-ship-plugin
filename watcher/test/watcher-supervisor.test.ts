@@ -9,7 +9,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { WatcherSupervisor } from '../src/supervisor/watcher-supervisor.js';
+import {
+  WatcherSupervisor,
+  ANALYSIS_WINDOW,
+  STATE_SAVE_THRESHOLD,
+} from '../src/supervisor/watcher-supervisor.js';
+import { WorkflowAnalyzer } from '../src/analyzer/workflow-analyzer.js';
+import type { ParsedLogEntry } from '../src/logger/log-reader.js';
 import { WorkflowLogger } from '../src/logger/workflow-logger.js';
 import { QueueManager } from '../src/queue/manager.js';
 
@@ -520,5 +526,262 @@ describe('WatcherSupervisor', () => {
       // Should only notify once for the same issue
       expect(notifyFn).toHaveBeenCalledTimes(1);
     });
+  });
+
+  describe('analyzer re-scan bounding (perf T15)', () => {
+    /**
+     * @behavior The supervisor must not re-scan unbounded history on every new
+     *           log line — per-entry analyzer work stays bounded by a window,
+     *           not by total entries N (guards O(N²) growth on long sessions).
+     * @business-rule A long-running watcher stays responsive regardless of session length.
+     * @boundary Supervisor.handleEntry → WorkflowAnalyzer.analyze
+     */
+    async function feedEntries(count: number, makeData: (i: number) => Record<string, unknown>): Promise<void> {
+      for (let i = 0; i < count; i++) {
+        await logger.log({ cmd: 'build', event: 'MILESTONE', data: makeData(i) });
+      }
+    }
+
+    it('keeps analyzer input bounded by the window as entries grow', async () => {
+      // Capture input length AT CALL TIME — this.entries is a live reference the
+      // supervisor slices in place, so reading .length afterwards is unreliable.
+      const inputLengths: number[] = [];
+      const realAnalyze = WorkflowAnalyzer.prototype.analyze;
+      const analyzeSpy = vi
+        .spyOn(WorkflowAnalyzer.prototype, 'analyze')
+        .mockImplementation(function (this: WorkflowAnalyzer, entries: ParsedLogEntry[], now?: Date) {
+          inputLengths.push(entries.length);
+          return realAnalyze.call(this, entries, now);
+        });
+      await supervisor.start();
+      await new Promise((r) => setTimeout(r, 100));
+
+      const total = ANALYSIS_WINDOW + 60;
+      await feedEntries(total, (i) => ({ index: i })); // unique data → no false loop
+
+      await vi.waitFor(
+        () => {
+          expect(inputLengths.length).toBeGreaterThan(ANALYSIS_WINDOW);
+        },
+        { timeout: 4000 },
+      );
+
+      const maxInputLen = Math.max(...inputLengths);
+      expect(maxInputLen).toBeLessThanOrEqual(ANALYSIS_WINDOW);
+
+      analyzeSpy.mockRestore();
+    });
+
+    it('still detects a regression spanning the retained window', async () => {
+      const analyses: import('../src/analyzer/workflow-analyzer.js').WorkflowAnalysis[] = [];
+      await supervisor.start();
+      supervisor.onAnalyze((a) => analyses.push(a));
+      await new Promise((r) => setTimeout(r, 100));
+
+      // A completed phase, then many filler entries (still inside the window),
+      // then a failure. detectRegression scans the whole retained array, so the
+      // early PHASE_COMPLETE must survive to be paired with the late FAILED.
+      await logger.log({ cmd: 'build', phase: 'RED', event: 'PHASE_COMPLETE', data: {} });
+      await feedEntries(400, (i) => ({ index: i }));
+      await logger.log({ cmd: 'build', event: 'FAILED', data: { error: 'boom after complete' } });
+
+      await vi.waitFor(
+        () => {
+          const latest = analyses[analyses.length - 1];
+          expect(latest?.issues.some((issue) => issue.type === 'regression')).toBe(true);
+        },
+        { timeout: 4000 },
+      );
+    });
+
+    it('logs exactly once when older entries fall outside the window (no silent cap)', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      await supervisor.start();
+      await new Promise((r) => setTimeout(r, 100));
+
+      // Feed well past the window so trimming happens on many cycles.
+      await feedEntries(ANALYSIS_WINDOW + 40, (i) => ({ index: i }));
+
+      await vi.waitFor(
+        () => {
+          expect(warnSpy).toHaveBeenCalled();
+        },
+        { timeout: 4000 },
+      );
+
+      const dropWarnings = warnSpy.mock.calls.filter((c) => String(c[0]).includes('window'));
+      expect(dropWarnings).toHaveLength(1);
+
+      warnSpy.mockRestore();
+    });
+  });
+
+  describe('state persistence throttling (perf T17)', () => {
+    /**
+     * @behavior State is persisted to disk on a throttled cadence (not a full
+     *           synchronous writeFileSync on every single log line), and the
+     *           latest state is always flushed on stop so nothing is lost.
+     * @business-rule A busy watcher does not thrash the disk per log line, yet
+     *                never loses the final state on shutdown.
+     * @boundary Supervisor.handleEntry / stop → fs.writeFileSync(workflow-state.json)
+     */
+    it('throttles state writes instead of writing on every entry', async () => {
+      // Each persistence does exactly one writeFileSync, so counting saveState
+      // calls == counting disk writes. (fs.writeFileSync itself is a
+      // non-configurable ESM namespace export and cannot be spied directly.)
+      type Savable = { saveState: () => Promise<void> };
+      const saveSpy = vi.spyOn(supervisor as unknown as Savable, 'saveState');
+      const analyzeCount = vi.fn();
+      await supervisor.start();
+      supervisor.onAnalyze(analyzeCount);
+      await new Promise((r) => setTimeout(r, 100));
+
+      const k = STATE_SAVE_THRESHOLD * 2;
+      for (let i = 0; i < k; i++) {
+        await logger.log({ cmd: 'build', event: 'MILESTONE', data: { index: i } }); // unique → no loop
+      }
+
+      await vi.waitFor(
+        () => {
+          expect(analyzeCount.mock.calls.length).toBeGreaterThanOrEqual(k);
+        },
+        { timeout: 4000 },
+      );
+
+      const stateWrites = saveSpy.mock.calls.length;
+
+      // Throttled: far fewer than one-write-per-entry, bounded by the threshold.
+      expect(stateWrites).toBeLessThanOrEqual(Math.ceil(k / STATE_SAVE_THRESHOLD));
+      expect(stateWrites).toBeLessThan(k);
+
+      saveSpy.mockRestore();
+    });
+
+    it('flushes the latest state on stop', async () => {
+      await supervisor.start();
+      await new Promise((r) => setTimeout(r, 100));
+
+      // Fewer entries than the threshold: without an explicit stop-flush, the
+      // final command change would never reach disk.
+      await logger.log({ cmd: 'ideate', event: 'START', data: {} });
+      await logger.log({ cmd: 'ideate', event: 'MILESTONE', data: { index: 0 } });
+      await logger.log({ cmd: 'plan', event: 'START', data: {} });
+      await new Promise((r) => setTimeout(r, 200));
+
+      await supervisor.stop();
+
+      const state = JSON.parse(
+        fs.readFileSync(path.join(ossDir, 'workflow-state.json'), 'utf-8'),
+      ) as { current_command?: string };
+      expect(state.current_command).toBe('plan');
+    });
+  });
+
+  describe('session-lifetime anchors survive windowing (perf T15 correctness)', () => {
+    /**
+     * @behavior The supervisor accumulates durable "anchor facts" (first command,
+     *           completed chain steps, seen/completed phases) on EVERY entry BEFORE
+     *           the 500-entry window trims history, and feeds them to the analyzer.
+     *           So a big feature that scrolls its ideate/plan COMPLETE (or an earlier
+     *           PHASE_COMPLETE) out of the window neither emits a FALSE chain_broken
+     *           nor MISSES a real regression.
+     * @business-rule Windowing is a perf bound only — it must never change which
+     *                violations the watcher reports.
+     * @boundary Supervisor.handleEntry → accumulate anchors → WorkflowAnalyzer.analyze
+     */
+    type WA = import('../src/analyzer/workflow-analyzer.js').WorkflowAnalysis;
+
+    async function feedFiller(count: number): Promise<void> {
+      for (let i = 0; i < count; i++) {
+        await logger.log({ cmd: 'build', event: 'MILESTONE', data: { index: i } });
+      }
+    }
+
+    it('does NOT emit a false chain_broken when the prerequisite COMPLETE scrolled out of the window', async () => {
+      const analyses: WA[] = [];
+      await supervisor.start();
+      supervisor.onAnalyze((a) => analyses.push(a));
+      await new Promise((r) => setTimeout(r, 100));
+
+      // A valid, completed ideate+plan chain...
+      await logger.log({ cmd: 'ideate', event: 'START', data: {} });
+      await logger.log({ cmd: 'ideate', event: 'COMPLETE', data: { outputs: ['DESIGN.md'] } });
+      await logger.log({ cmd: 'plan', event: 'START', data: {} });
+      await logger.log({ cmd: 'plan', event: 'COMPLETE', data: { outputs: ['PLAN.md'] } });
+
+      // ...then enough activity to push those anchors out of the 500-entry window...
+      await feedFiller(ANALYSIS_WINDOW + 20);
+
+      // ...then a later command whose prerequisites finished long ago.
+      await logger.log({ cmd: 'build', event: 'START', data: {} });
+
+      await vi.waitFor(
+        () => {
+          expect(analyses[analyses.length - 1]?.current_command).toBe('build');
+        },
+        { timeout: 8000 },
+      );
+
+      const latest = analyses[analyses.length - 1];
+      expect(latest.issues.some((i) => i.type === 'chain_broken')).toBe(false);
+    }, 20000);
+
+    it('still detects a regression when the earlier PHASE_COMPLETE scrolled out of the window', async () => {
+      const analyses: WA[] = [];
+      await supervisor.start();
+      supervisor.onAnalyze((a) => analyses.push(a));
+      await new Promise((r) => setTimeout(r, 100));
+
+      // A phase completes, then heavy activity scrolls that COMPLETE out of the
+      // window, then a failure. The regression (fail-after-success) must survive.
+      await logger.log({ cmd: 'build', event: 'START', data: {} });
+      await logger.log({ cmd: 'build', phase: 'RED', event: 'PHASE_START', data: {} });
+      await logger.log({ cmd: 'build', phase: 'RED', event: 'PHASE_COMPLETE', data: {} });
+      await feedFiller(ANALYSIS_WINDOW + 20);
+      await logger.log({ cmd: 'build', event: 'FAILED', data: { error: 'boom after complete' } });
+
+      await vi.waitFor(
+        () => {
+          const latest = analyses[analyses.length - 1];
+          expect(latest?.issues.some((i) => i.type === 'regression')).toBe(true);
+        },
+        { timeout: 8000 },
+      );
+    }, 20000);
+
+    it('restores session anchors across restart so a resumed command is not falsely chain-broken', async () => {
+      // First session: a valid ideate+plan chain, then a clean shutdown that
+      // flushes the accumulated anchors into workflow-state.json.
+      await supervisor.start();
+      await new Promise((r) => setTimeout(r, 100));
+      await logger.log({ cmd: 'ideate', event: 'START', data: {} });
+      await logger.log({ cmd: 'ideate', event: 'COMPLETE', data: { outputs: ['DESIGN.md'] } });
+      await logger.log({ cmd: 'plan', event: 'START', data: {} });
+      await logger.log({ cmd: 'plan', event: 'COMPLETE', data: { outputs: ['PLAN.md'] } });
+      await new Promise((r) => setTimeout(r, 200));
+      await supervisor.stop();
+
+      // Second session: a fresh supervisor over the same .oss dir. Its analysis
+      // window starts empty, so only the restored anchors can vouch for the chain.
+      const resumed = new WatcherSupervisor(ossDir, queueManager, { configDir: ossDir });
+      const analyses: WA[] = [];
+      resumed.onAnalyze((a) => analyses.push(a));
+      await resumed.start();
+      await new Promise((r) => setTimeout(r, 100));
+
+      await logger.log({ cmd: 'build', event: 'START', data: {} });
+
+      await vi.waitFor(
+        () => {
+          expect(analyses[analyses.length - 1]?.current_command).toBe('build');
+        },
+        { timeout: 4000 },
+      );
+
+      const latest = analyses[analyses.length - 1];
+      expect(latest.issues.some((i) => i.type === 'chain_broken')).toBe(false);
+
+      await resumed.stop();
+    }, 15000);
   });
 });
