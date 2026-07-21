@@ -221,6 +221,130 @@ describe('WatcherSupervisor', () => {
     });
   });
 
+  describe('structured error healing ports (US-005/US-006)', () => {
+    /**
+     * @behavior When the supervisor consumes a CRITICAL/HIGH non-retryable
+     *           OSS_ERROR, its wired escalation notifier delivers the error to
+     *           the Telegram bridge — proving the supervisor constructs the
+     *           InterventionGenerator WITH the real EscalationNotifier port.
+     * @business-rule US-005 — CRITICAL/HIGH structured errors escalate to a human.
+     * @boundary Supervisor log-consumption pipeline → TelegramNotifier transport
+     *           (mocked ONLY at the global fetch boundary, like the E2E test).
+     */
+    const savedEnv = {
+      HOME: process.env.HOME,
+      CLAUDE_PROJECT_DIR: process.env.CLAUDE_PROJECT_DIR,
+      OSS_TELEGRAM_BRIDGE_URL: process.env.OSS_TELEGRAM_BRIDGE_URL,
+    };
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      process.env.HOME = savedEnv.HOME;
+      process.env.CLAUDE_PROJECT_DIR = savedEnv.CLAUDE_PROJECT_DIR;
+      if (savedEnv.OSS_TELEGRAM_BRIDGE_URL === undefined) {
+        delete process.env.OSS_TELEGRAM_BRIDGE_URL;
+      } else {
+        process.env.OSS_TELEGRAM_BRIDGE_URL = savedEnv.OSS_TELEGRAM_BRIDGE_URL;
+      }
+    });
+
+    it('escalates a CRITICAL non-retryable OSS_ERROR through the wired Telegram notifier', async () => {
+      // GIVEN — a sandbox-pinned supervisor with a configured Telegram bridge
+      process.env.HOME = testDir;
+      process.env.CLAUDE_PROJECT_DIR = testDir;
+      process.env.OSS_TELEGRAM_BRIDGE_URL = 'http://telegram-bridge.invalid:8787';
+
+      const fetchMock = vi.fn(
+        async (): Promise<Response> => new Response('{}', { status: 200 }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      const escSupervisor = new WatcherSupervisor(ossDir, queueManager, {
+        configDir: ossDir,
+        projectDir: testDir,
+      });
+      await escSupervisor.start();
+      await new Promise((r) => setTimeout(r, 100));
+
+      // WHEN — a CRITICAL, expensive (non-retryable) structured error is logged
+      await logger.log({
+        cmd: 'build',
+        event: 'OSS_ERROR',
+        data: {
+          code: 'OSS-API-001',
+          severity: 'CRITICAL',
+          source: 'oss:auto',
+          message: 'Pipeline run failed after 40 minutes: API 500 mid-ship',
+          retry_eligible: true,
+          retry_cost: 'expensive',
+          attempt: 0,
+        },
+      });
+
+      // THEN — the wired notifier delivered the escalation to the bridge
+      await vi.waitFor(() => {
+        expect(fetchMock).toHaveBeenCalled();
+      });
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(String(url)).toContain('/api/notify');
+      expect(String(init?.body)).toContain('OSS-API-001');
+
+      await escSupervisor.stop();
+    });
+
+    it('surfaces retry visibility (status line + RECOVERY log) for a cheap retryable OSS_ERROR', async () => {
+      // GIVEN — a sandbox-pinned supervisor (no Telegram bridge needed here)
+      process.env.HOME = testDir;
+      process.env.CLAUDE_PROJECT_DIR = testDir;
+      delete process.env.OSS_TELEGRAM_BRIDGE_URL;
+
+      const retrySupervisor = new WatcherSupervisor(ossDir, queueManager, {
+        configDir: ossDir,
+        projectDir: testDir,
+      });
+      await retrySupervisor.start();
+      await new Promise((r) => setTimeout(r, 100));
+
+      // WHEN — a cheap retryable structured error is logged
+      await logger.log({
+        cmd: 'build',
+        event: 'OSS_ERROR',
+        data: {
+          code: 'OSS-API-003',
+          severity: 'HIGH',
+          source: 'hooks/ensure-decrypt-cli.sh',
+          message: 'Prompt fetch failed: ECONNREFUSED one-shot-ship-api.onrender.com',
+          retry_eligible: true,
+          retry_hint: 'Wait 5s then re-run the fetch',
+          retry_cost: 'cheap',
+          attempt: 0,
+        },
+      });
+
+      // THEN — the wired RetryStatusLine port persisted the retry text
+      await vi.waitFor(() => {
+        const statusState = JSON.parse(
+          fs.readFileSync(path.join(ossDir, 'status-line.json'), 'utf-8'),
+        ) as { retry?: string };
+        expect(statusState.retry).toBe('⟳ retry 1/2: OSS-API-003');
+      });
+
+      // THEN — the wired RecoveryLogger port wrote a RECOVERY visibility line
+      await vi.waitFor(() => {
+        const recoveryLines = fs
+          .readFileSync(path.join(ossDir, 'workflow.log'), 'utf-8')
+          .split('\n')
+          .filter((l) => !l.startsWith('#') && l.includes('"RECOVERY"'))
+          .map((l) => JSON.parse(l) as { data: Record<string, unknown> });
+        expect(recoveryLines).toHaveLength(1);
+        expect(recoveryLines[0].data.code).toBe('OSS-API-003');
+        expect(recoveryLines[0].data.attempt).toBe(1);
+      });
+
+      await retrySupervisor.stop();
+    });
+  });
+
   describe('healthcheck integration', () => {
     /**
      * @behavior Supervisor runs health checks periodically
