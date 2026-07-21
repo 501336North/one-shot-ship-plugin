@@ -17,7 +17,8 @@ export type WorkflowEvent =
   | 'AGENT_COMPLETE'
   | 'COMPLETE'
   | 'FAILED'
-  | 'IRON_LAW_CHECK';
+  | 'IRON_LAW_CHECK'
+  | 'OSS_ERROR';
 
 export interface AgentInfo {
   type: string;

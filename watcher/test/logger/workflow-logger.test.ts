@@ -133,3 +133,56 @@ describe('WorkflowLogger - IRON_LAW_CHECK', () => {
     expect(humanLine).not.toContain('violation');
   });
 });
+
+describe('WorkflowLogger - OSS_ERROR', () => {
+  let tmpDir: string;
+  let logger: WorkflowLogger;
+  let logPath: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-logger-oss-error-'));
+    logPath = path.join(tmpDir, 'workflow.log');
+    logger = new WorkflowLogger(tmpDir);
+  });
+
+  afterEach(() => {
+    if (fs.existsSync(tmpDir)) {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * @behavior OSS_ERROR is a first-class WorkflowEvent the logger accepts
+   * @business-rule The log layer speaks the standardized error contract natively (US-004)
+   * @acceptance-criteria AC-001.1 — OSS_ERROR entries are WorkflowLogger-shaped
+   */
+  it('should log an OSS_ERROR entry carrying a wire error payload', async () => {
+    // GIVEN - a wire-conformant error payload
+    const event: WorkflowEvent = 'OSS_ERROR';
+
+    // WHEN - it is logged as a structured entry
+    await logger.log({
+      cmd: 'build',
+      event,
+      data: {
+        code: 'OSS-API-001',
+        severity: 'HIGH',
+        source: 'hooks/ensure-decrypt-cli.sh',
+        message: 'Prompt fetch failed: ECONNREFUSED',
+        retry_eligible: true,
+        retry_cost: 'cheap',
+        attempt: 0,
+      },
+    });
+
+    // THEN - the JSON line round-trips with event OSS_ERROR and the payload intact
+    const lines = fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean);
+    const jsonLine: { ts: string; cmd: string; event: string; data: Record<string, unknown> } =
+      JSON.parse(lines[0]);
+    expect(jsonLine.event).toBe('OSS_ERROR');
+    expect(jsonLine.cmd).toBe('build');
+    expect(jsonLine.data.code).toBe('OSS-API-001');
+    expect(jsonLine.data.retry_eligible).toBe(true);
+    expect(typeof jsonLine.ts).toBe('string');
+  });
+});
