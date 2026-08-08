@@ -16,6 +16,14 @@ World-class development workflows for Claude Code. Ship software with confidence
 2. **Login** in Claude Code: `/oss:login`
 3. **Start building**: `/oss:ideate "your idea"` — or `/oss:auto "your idea"` to run the whole pipeline in one go
 
+## Does my code leave my machine?
+
+No. OSS runs on the **BYOCCA model** (Bring Your Own Claude Code Account): you keep your own
+Claude Code subscription, execution stays local, and OSS serves the workflow layer without ever
+proxying your code to the model itself.
+
+Full system reference: [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## Core Workflow
 
 ```
@@ -117,25 +125,21 @@ Configure audio cues for hands-free development:
 /oss-audio sound    # Use system sounds
 ```
 
-## Command Count
+## What ships in the plugin
 
-| Category | Commands |
-|----------|----------|
-| Core Workflow | 5 |
-| London TDD | 4 |
-| Design | 5 |
-| Testing & Quality | 8 |
-| Deployment | 3 |
-| Operations | 7 |
-| **Total** | **32** |
+The tables above cover the commonly used commands. Full inventory:
+
+| | Count | Source |
+|---|---|---|
+| Workflow commands | 68 | [`commands/`](commands/) |
+| Specialized agents | 44 | [`agents/`](agents/) |
+| On-demand skills | 57 | [`skills/`](skills/) |
 
 ## Pricing
 
-- **Free Trial**: 7 days unlimited
-- **Pro**: $39/mo unlimited
-- **Enterprise**: Custom pricing (contact us)
-
-[View pricing](https://www.oneshotship.com/pricing)
+Free trial, then per-seat monthly. Current tiers and terms live on
+**[oneshotship.com/pricing](https://www.oneshotship.com/pricing)** — the single source of truth,
+so this README can't drift out of date against it.
 
 ## Support
 
