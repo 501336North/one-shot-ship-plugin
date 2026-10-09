@@ -18,7 +18,10 @@ set -euo pipefail
 OSS_DIR="${HOME}/.oss"
 OSS_BIN_DIR="${OSS_DIR}/bin"
 OSS_DECRYPT="${OSS_BIN_DIR}/oss-decrypt"
-GITHUB_RELEASES="https://github.com/501336North/one-shot-ship-plugin/releases/latest/download"
+# Pinned release, never "latest": an unrelated release (oss-launch-v2.0.78, 2026-06-28) took GitHub's
+# "Latest" without oss-decrypt assets and every new install 404'd. See .oss/dev/active/decrypt-download-pin/.
+OSS_DECRYPT_TAG="${OSS_DECRYPT_TAG:-cli-decrypt-v1.2.3}"
+GITHUB_RELEASES="https://github.com/501336North/one-shot-ship-plugin/releases/download/${OSS_DECRYPT_TAG}"
 
 # Standardized error contract: emit a structured OSSError via the oss-error
 # emitter when available (in-band stdout JSON + project workflow.log line).
