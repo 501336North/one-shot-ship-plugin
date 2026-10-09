@@ -197,12 +197,14 @@ setup_mock_curl() {
     cat > "$MOCK_BIN_DIR/curl" << 'CURLEOF'
 #!/bin/bash
 # Mock curl - reads from staging files
+ALL_ARGS="$*"
 OUTPUT_FILE=""
 URL=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -o) OUTPUT_FILE="$2"; shift 2 ;;
-        -sL|-s|-L) shift ;;
+        -sL|-s|-L|-fsSL) shift ;;
+        --proto|--connect-timeout|--speed-limit|--speed-time) shift 2 ;;
         *) URL="$1"; shift ;;
     esac
 done
@@ -212,6 +214,7 @@ CURLEOF
     cat >> "$MOCK_BIN_DIR/curl" << CURLEOF
 # Record every requested URL when a log path is provided (for asset-name assertions)
 [[ -n "\${MOCK_CURL_URL_LOG:-}" ]] && echo "\$URL" >> "\$MOCK_CURL_URL_LOG"
+[[ -n "\${MOCK_CURL_ARGS_LOG:-}" ]] && echo "\$ALL_ARGS" >> "\$MOCK_CURL_ARGS_LOG"
 [[ -n "\${MOCK_CURL_OUT_LOG:-}" ]] && echo "\$OUTPUT_FILE" >> "\$MOCK_CURL_OUT_LOG"
 if [[ "\$URL" == *.sha256 ]]; then
     if [[ "$sha256_mode" == "FAIL" ]]; then
@@ -701,6 +704,47 @@ test_failed_update_keeps_working_binary() {
     rm -rf "$st"; teardown_test_env
 }
 
+
+# =============================================================================
+# DOWNLOAD HARDENING (ship gates): fail on HTTP errors, HTTPS only, abort stalled transfers;
+# the tag test seam only accepts a cli-decrypt release tag; failures give an actionable next step.
+# =============================================================================
+test_curl_flags_hardened() {
+    local test_name="Both downloads use -f, HTTPS-only and stall-abort flags"
+    ((TESTS_RUN++)); setup_test_env
+    local st; st=$(mktemp -d); local art; art=$(stage_valid_binary "$st")
+    echo "$(awk '{print $1}' "$st/checksum")  $art" > "$st/manifest"
+    local args="$TEST_HOME/args.log"
+    run_fresh_install "$st" HOME="$TEST_HOME" OSS_DECRYPT_CHECKSUMS="$st/manifest" MOCK_CURL_ARGS_LOG="$args"
+    local n; n=$(grep -c -- "-fsSL --proto =https --connect-timeout 15 --speed-limit 1024 --speed-time 60" "$args" 2>/dev/null)
+    if [[ $RUN_RC -eq 0 && "$n" == "2" ]]; then pass "$test_name"
+    else fail "$test_name" "2 hardened curl calls" "rc=$RUN_RC calls=$(cat "$args" 2>/dev/null | tr '\n' ';')"; fi
+    rm -rf "$st"; teardown_test_env
+}
+
+test_invalid_tag_rejected_without_network() {
+    local test_name="OSS_DECRYPT_TAG that is not cli-decrypt-vX.Y.Z is rejected before any download"
+    ((TESTS_RUN++)); setup_test_env
+    local urls="$TEST_HOME/urls.log"
+    record_urls_install "$urls" HOME="$TEST_HOME" OSS_DECRYPT_TAG="../../../../evil/repo/releases/download/x"
+    local rc=0; HOME="$TEST_HOME" OSS_DECRYPT_TAG="../../evil" PATH="/usr/bin:/bin" bash "$HOOK_SCRIPT" >/dev/null 2>&1 || rc=$?
+    if [[ ! -s "$urls" && $rc -ne 0 ]]; then pass "$test_name"
+    else fail "$test_name" "no URL requested, non-zero exit" "rc=$rc urls=$(head -1 "$urls" 2>/dev/null)"; fi
+    teardown_test_env
+}
+
+test_failures_do_not_loop_to_login() {
+    local test_name="Install failures give an actionable step, never 'run /oss:login for manual installation'"
+    ((TESTS_RUN++)); setup_test_env
+    local st; st=$(mktemp -d); local art; art=$(stage_valid_binary "$st")
+    echo "$(printf 'd%.0s' {1..64})  $art" > "$st/manifest"
+    run_fresh_install "$st" HOME="$TEST_HOME" OSS_DECRYPT_CHECKSUMS="$st/manifest"
+    local hook_refs; hook_refs=$(grep -c "manual installation" "$HOOK_SCRIPT")
+    if [[ $RUN_RC -ne 0 && "$hook_refs" == "0" ]] && grep -qi "github.com" <<<"$RUN_OUT"; then pass "$test_name"
+    else fail "$test_name" "no 'manual installation' anywhere in the hook; output names github.com" "rc=$RUN_RC refs=$hook_refs"; fi
+    rm -rf "$st"; teardown_test_env
+}
+
 echo "Running ensure-decrypt-cli.sh tests..."
 echo "======================================="
 
@@ -722,6 +766,9 @@ test_committed_manifest_missing_entry_rejects
 test_manifest_found_via_plugin_root
 test_download_never_written_to_final_path
 test_failed_update_keeps_working_binary
+test_curl_flags_hardened
+test_invalid_tag_rejected_without_network
+test_failures_do_not_loop_to_login
 
 echo ""
 echo "======================================="

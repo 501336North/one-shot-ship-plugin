@@ -21,7 +21,14 @@ OSS_DECRYPT="${OSS_BIN_DIR}/oss-decrypt"
 # Pinned release, never "latest": an unrelated release (oss-launch-v2.0.78, 2026-06-28) took GitHub's
 # "Latest" without oss-decrypt assets and every new install 404'd. See .oss/dev/active/decrypt-download-pin/.
 OSS_DECRYPT_TAG="${OSS_DECRYPT_TAG:-cli-decrypt-v1.2.3}"
+if [[ ! "$OSS_DECRYPT_TAG" =~ ^cli-decrypt-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Error: invalid OSS_DECRYPT_TAG '$OSS_DECRYPT_TAG' (expected cli-decrypt-vX.Y.Z)"
+    exit 1
+fi
 GITHUB_RELEASES="https://github.com/501336North/one-shot-ship-plugin/releases/download/${OSS_DECRYPT_TAG}"
+# -f: an HTTP error is a failure (not a saved error page); HTTPS only; abort a stalled transfer
+# (<1 KB/s for 60 s) without capping total time on slow links.
+CURL_OPTS=(-fsSL --proto '=https' --connect-timeout 15 --speed-limit 1024 --speed-time 60)
 
 # Standardized error contract: emit a structured OSSError via the oss-error
 # emitter when available (in-band stdout JSON + project workflow.log line).
@@ -115,14 +122,14 @@ ARCH=$(uname -m)
 if [[ "$PLATFORM" != "Darwin" && "$PLATFORM" != "Linux" ]]; then
     echo "Error: Unsupported platform: $PLATFORM"
     echo "Supported platforms: Darwin (macOS), Linux"
-    echo "Please run /oss:login for manual installation."
+    echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
     exit 1
 fi
 
 if [[ "$ARCH" != "arm64" && "$ARCH" != "x64" ]]; then
     echo "Error: Unsupported architecture: $ARCH"
     echo "Supported architectures: arm64, x64"
-    echo "Please run /oss:login for manual installation."
+    echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
     exit 1
 fi
 
@@ -139,9 +146,9 @@ chmod 600 "$TMP_BIN"
 trap 'rm -f "$TMP_BIN"' EXIT
 
 # Download binary
-if ! curl -sL "$DOWNLOAD_URL" -o "$TMP_BIN"; then
+if ! curl "${CURL_OPTS[@]}" "$DOWNLOAD_URL" -o "$TMP_BIN"; then
     echo "Error: Failed to download oss-decrypt binary"
-    echo "Please check your network connection or run /oss:login for manual installation."
+    echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
     emit_oss_error --code OSS-API-003 --severity HIGH \
         --message "oss-decrypt binary download failed: network unreachable" \
         --retry-eligible true --retry-cost cheap
@@ -154,11 +161,11 @@ fi
 # Fail closed: missing or mismatched checksum = reject the binary.
 # =============================================================================
 CHECKSUM_FILE=$(mktemp)
-if ! curl -sL "${DOWNLOAD_URL}.sha256" -o "$CHECKSUM_FILE"; then
+if ! curl "${CURL_OPTS[@]}" "${DOWNLOAD_URL}.sha256" -o "$CHECKSUM_FILE"; then
     echo "[verify] Binary checksum: FAILED — checksum file unavailable"
     rm -f "$CHECKSUM_FILE"
     echo "Error: Could not download checksum file for verification."
-    echo "Please run /oss:login for manual installation."
+    echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
     emit_oss_error --code OSS-API-003 --severity HIGH \
         --message "oss-decrypt checksum download failed: network unreachable" \
         --retry-eligible true --retry-cost cheap
@@ -189,7 +196,7 @@ fi
 if [[ "$ACTUAL_HASH" != "$EXPECTED_HASH" ]]; then
     echo "[verify] Binary checksum: FAILED — mismatch (expected ${EXPECTED_HASH:0:12}..., got ${ACTUAL_HASH:0:12}...)"
     echo "Error: Binary integrity check failed. The download may have been tampered with."
-    echo "Please run /oss:login for manual installation."
+    echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
     emit_oss_error --code OSS-API-002 --severity HIGH \
         --message "oss-decrypt binary integrity check failed: checksum mismatch" \
         --retry-eligible true --retry-cost cheap
@@ -217,7 +224,7 @@ if [[ "$ACTUAL_HASH" != "$COMMITTED_HASH" ]]; then   # an absent entry is empty,
         echo "[verify] Committed hash: FAILED — no committed entry for $ARTIFACT"
     fi
     echo "Error: Binary does not match the plugin's committed checksum. Refusing to install (possible release tamper)."
-    echo "Please update the plugin or run /oss:login for manual installation."
+    echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
     emit_oss_error --code OSS-API-002 --severity HIGH \
         --message "oss-decrypt binary failed committed-manifest verification" \
         --retry-eligible false --retry-cost cheap
@@ -229,7 +236,7 @@ echo "[verify] Committed hash: verified"
 chmod 755 "$TMP_BIN"
 if ! "$TMP_BIN" --version &>/dev/null; then
     echo "Error: Downloaded binary is not valid"
-    echo "Please run /oss:login for manual installation."
+    echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
     emit_oss_error --code OSS-API-002 --severity HIGH \
         --message "oss-decrypt binary is not executable after download" \
         --retry-eligible true --retry-cost cheap
