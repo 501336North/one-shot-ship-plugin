@@ -46,6 +46,8 @@ emit_oss_error() {
 }
 
 # Minimum version required (1.2.0 adds --verify-manifest, --list-prompts, --category for /oss:trust)
+# Must stay <= the version the PINNED binary reports about itself: cli-decrypt-v1.2.3 reports "1.2.1".
+# Raising it above that makes every /oss:* command re-download the binary forever.
 MINIMUM_VERSION="1.2.1"
 
 # =============================================================================

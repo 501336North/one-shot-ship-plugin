@@ -510,7 +510,7 @@ test_setup_failure_no_false_ready() {
     staging_dir=$(mktemp -d)
     cat > "$staging_dir/binary" << 'BINEOF'
 #!/bin/bash
-if [[ "$1" == "--version" ]]; then echo "oss-decrypt v1.2.3"; exit 0
+if [[ "$1" == "--version" ]]; then echo "oss-decrypt v1.2.1"; exit 0
 elif [[ "$1" == "--setup" ]]; then echo "setup failed" >&2; exit 1
 else echo "mock"; fi
 BINEOF
@@ -605,7 +605,7 @@ stage_valid_binary() {   # usage: stage_valid_binary <staging_dir>; echoes the a
     local d="$1"
     cat > "$d/binary" << 'BINEOF'
 #!/bin/bash
-if [[ "$1" == "--version" ]]; then echo "oss-decrypt v1.2.3"
+if [[ "$1" == "--version" ]]; then echo "oss-decrypt v1.2.1"   # = what the real cli-decrypt-v1.2.3 asset reports
 elif [[ "$1" == "--setup" ]]; then mkdir -p "$HOME/.oss"; touch "$HOME/.oss/credentials.enc"; exit 0
 else echo "mock"; fi
 BINEOF
@@ -745,6 +745,38 @@ test_failures_do_not_loop_to_login() {
     rm -rf "$st"; teardown_test_env
 }
 
+
+test_manifest_found_beside_hook() {
+    local test_name="Hook copy finds the manifest beside itself (no plugin-root, no env override)"
+    ((TESTS_RUN++)); setup_test_env
+    local st; st=$(mktemp -d); local art; art=$(stage_valid_binary "$st")
+    mkdir -p "$TEST_HOME/.oss/hooks" "$TEST_HOME/decoy/hooks"
+    cp "$HOOK_SCRIPT" "$TEST_HOME/.oss/hooks/ensure-decrypt-cli.sh"
+    echo "$(awk '{print $1}' "$st/checksum")  $art" > "$TEST_HOME/.oss/hooks/oss-decrypt-checksums.txt"
+    echo "$(printf 'e%.0s' {1..64})  $art" > "$TEST_HOME/decoy/hooks/oss-decrypt-checksums.txt"   # wrong hash
+    echo "$TEST_HOME/decoy" > "$TEST_HOME/.oss/plugin-root"
+    setup_mock_curl "$st" "OK"
+    RUN_RC=0; RUN_OUT=$(env -u OSS_DECRYPT_CHECKSUMS HOME="$TEST_HOME" bash "$TEST_HOME/.oss/hooks/ensure-decrypt-cli.sh" 2>&1) || RUN_RC=$?
+    teardown_mock_curl
+    if [[ $RUN_RC -eq 0 && -x "$TEST_HOME/.oss/bin/oss-decrypt" ]]; then pass "$test_name"
+    else fail "$test_name" "installs using the manifest beside the hook" "rc=$RUN_RC out=$(grep Committed <<<"$RUN_OUT")"; fi
+    rm -rf "$st"; teardown_test_env
+}
+
+test_committed_manifest_is_complete_and_matches_tag() {
+    local test_name="Committed manifest: one 64-hex entry per platform; header tag == hook's pinned tag"
+    ((TESTS_RUN++))
+    local mf; mf="$(dirname "$HOOK_SCRIPT")/oss-decrypt-checksums.txt"
+    local tag; tag=$(grep -oE 'OSS_DECRYPT_TAG:-cli-decrypt-v[0-9]+\.[0-9]+\.[0-9]+' "$HOOK_SCRIPT" | sed 's/.*:-//')
+    local ok=1 a
+    for a in Darwin-arm64 Darwin-x64 Linux-arm64 Linux-x64; do
+        [[ "$(grep -cE "^[0-9a-f]{64}  oss-decrypt-$a$" "$mf")" == "1" ]] || ok=0
+    done
+    [[ -n "$tag" ]] && grep -q "($tag)" "$mf" || ok=0
+    [[ "$(grep -cvE '^#|^$' "$mf")" == "4" ]] || ok=0
+    if [[ $ok == 1 ]]; then pass "$test_name"; else fail "$test_name" "4 valid entries + tag $tag in header" "$(cat "$mf")"; fi
+}
+
 echo "Running ensure-decrypt-cli.sh tests..."
 echo "======================================="
 
@@ -769,6 +801,8 @@ test_failed_update_keeps_working_binary
 test_curl_flags_hardened
 test_invalid_tag_rejected_without_network
 test_failures_do_not_loop_to_login
+test_manifest_found_beside_hook
+test_committed_manifest_is_complete_and_matches_tag
 
 echo ""
 echo "======================================="
