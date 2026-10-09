@@ -207,8 +207,11 @@ if [[ ! -f "$CHECKSUMS" && -z "${OSS_DECRYPT_CHECKSUMS:-}" && -f "$OSS_DIR/plugi
 fi
 COMMITTED_HASH=$(awk -v a="$ARTIFACT" '$2 == a {print $1}' "$CHECKSUMS" 2>/dev/null | head -n1)
 if [[ "$ACTUAL_HASH" != "$COMMITTED_HASH" ]]; then   # an absent entry is empty, never equal
-    if [[ -n "$COMMITTED_HASH" ]]; then echo "[verify] Committed hash: FAILED — mismatch"
-    else echo "[verify] Committed hash: FAILED — no committed entry for $ARTIFACT"; fi
+    if [[ -n "$COMMITTED_HASH" ]]; then
+        echo "[verify] Committed hash: FAILED — mismatch"
+    else
+        echo "[verify] Committed hash: FAILED — no committed entry for $ARTIFACT"
+    fi
     rm -f "$OSS_DECRYPT"
     echo "Error: Binary does not match the plugin's committed checksum. Refusing to install (possible release tamper)."
     echo "Please update the plugin or run /oss:login for manual installation."
