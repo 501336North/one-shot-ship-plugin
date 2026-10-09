@@ -239,25 +239,19 @@ After fetching both:
 
 After successful authentication, install the decryption CLI for secure prompt delivery:
 
-1. **Create bin directory:**
+1. **Install (or update) the CLI through the verified installer hook:**
    ```bash
-   mkdir -p ~/.oss/bin
+   ENSURE=~/.oss/hooks/ensure-decrypt-cli.sh
+   [ -x "$ENSURE" ] || ENSURE="$(cat ~/.oss/plugin-root 2>/dev/null)/hooks/ensure-decrypt-cli.sh"
+   bash "$ENSURE"
    ```
 
-2. **Download CLI binary for your platform:**
-   ```bash
-   PLATFORM=$(uname -s)
-   ARCH=$(uname -m)
-   # Map architecture: x86_64 -> x64, aarch64 -> arm64, arm64 stays arm64
-   # Supported: macOS (arm64/x64) and Linux (x64/arm64, incl. GB10/Graviton/GH200/Ampere)
-   [[ "$ARCH" == "x86_64" ]] && ARCH="x64"
-   [[ "$ARCH" == "aarch64" ]] && ARCH="arm64"
-   CLI_URL="https://github.com/501336North/one-shot-ship-plugin/releases/latest/download/oss-decrypt-${PLATFORM}-${ARCH}"
+   The hook detects your platform (macOS arm64/x64, Linux x64/arm64 incl. GB10/Graviton/GH200/Ampere),
+   downloads `oss-decrypt` from the plugin's pinned release, and refuses the binary unless its SHA-256
+   matches both the release checksum and the hash committed in the plugin. Do not download the binary
+   any other way.
 
-   echo "Downloading oss-decrypt CLI..."
-   curl -sL "$CLI_URL" -o ~/.oss/bin/oss-decrypt
-   chmod +x ~/.oss/bin/oss-decrypt
-   ```
+2. **(If the hook reported an error)** stop here and show the user its message; do not continue to setup.
 
 3. **Setup credentials (requires valid API key):**
    ```bash
