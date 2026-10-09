@@ -21,5 +21,10 @@ for f in "$ROOT"/hooks/oss-session-start*.sh; do
     fail "$(basename "$f") copies the manifest" "copies ensure-decrypt-cli.sh without oss-decrypt-checksums.txt"
   else pass "$(basename "$f") copies the manifest with the installer"; fi
 done
+for f in "$ROOT"/hooks/oss-session-start*.sh; do
+  if grep -q '"oss-decrypt-checksums.txt"' "$f" && grep -qE '^\s*chmod \+x ~/.oss/hooks/\$hook\s*$' "$f"; then
+    fail "$(basename "$f") keeps data files non-executable" "unconditional chmod +x in the copy loop"
+  else pass "$(basename "$f") keeps data files non-executable"; fi
+done
 echo "Results: $((RUN-FAILED))/$RUN passed, $FAILED failed"
 [[ $FAILED -eq 0 ]]
