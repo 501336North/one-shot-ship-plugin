@@ -212,6 +212,7 @@ CURLEOF
     cat >> "$MOCK_BIN_DIR/curl" << CURLEOF
 # Record every requested URL when a log path is provided (for asset-name assertions)
 [[ -n "\${MOCK_CURL_URL_LOG:-}" ]] && echo "\$URL" >> "\$MOCK_CURL_URL_LOG"
+[[ -n "\${MOCK_CURL_OUT_LOG:-}" ]] && echo "\$OUTPUT_FILE" >> "\$MOCK_CURL_OUT_LOG"
 if [[ "\$URL" == *.sha256 ]]; then
     if [[ "$sha256_mode" == "FAIL" ]]; then
         exit 1
@@ -666,6 +667,40 @@ test_manifest_found_via_plugin_root() {
     rm -rf "$st"; teardown_test_env
 }
 
+
+# =============================================================================
+# ATOMIC INSTALL (security gate M1): unverified bytes must never sit at the executable final path,
+# and a failed update must leave the customer's working binary untouched.
+# =============================================================================
+test_download_never_written_to_final_path() {
+    local test_name="Download goes to a temp file, never straight to ~/.oss/bin/oss-decrypt"
+    ((TESTS_RUN++)); setup_test_env
+    local st; st=$(mktemp -d); local art; art=$(stage_valid_binary "$st")
+    echo "$(awk '{print $1}' "$st/checksum")  $art" > "$st/manifest"
+    local outs="$TEST_HOME/outs.log"
+    run_fresh_install "$st" HOME="$TEST_HOME" OSS_DECRYPT_CHECKSUMS="$st/manifest" MOCK_CURL_OUT_LOG="$outs"
+    if [[ $RUN_RC -eq 0 && -s "$outs" ]] && ! grep -qx "$TEST_HOME/.oss/bin/oss-decrypt" "$outs" && [[ -x "$TEST_HOME/.oss/bin/oss-decrypt" ]]; then pass "$test_name"
+    else fail "$test_name" "installed, curl -o never the final path" "rc=$RUN_RC outs=$(tr '\n' ' ' < "$outs" 2>/dev/null)"; fi
+    rm -rf "$st"; teardown_test_env
+}
+
+test_failed_update_keeps_working_binary() {
+    local test_name="Failed update leaves the existing working binary byte-identical and executable"
+    ((TESTS_RUN++)); setup_test_env
+    mkdir -p "$TEST_HOME/.oss/bin"
+    printf '#!/bin/bash\n[[ "$1" == "--version" ]] && echo "oss-decrypt v1.0.0"\n' > "$TEST_HOME/.oss/bin/oss-decrypt"
+    chmod 755 "$TEST_HOME/.oss/bin/oss-decrypt"
+    local before; before=$(shasum -a 256 "$TEST_HOME/.oss/bin/oss-decrypt" | awk '{print $1}')
+    local st; st=$(mktemp -d); local art; art=$(stage_valid_binary "$st")
+    echo "$(printf 'c%.0s' {1..64})  $art" > "$st/manifest"     # committed hash will NOT match -> update rejected
+    run_fresh_install "$st" HOME="$TEST_HOME" OSS_DECRYPT_CHECKSUMS="$st/manifest"
+    local after; after=$(shasum -a 256 "$TEST_HOME/.oss/bin/oss-decrypt" 2>/dev/null | awk '{print $1}')
+    local leftovers; leftovers=$(find "$TEST_HOME/.oss/bin" -type f ! -name oss-decrypt | wc -l | tr -d ' ')
+    if [[ $RUN_RC -ne 0 && "$after" == "$before" && -x "$TEST_HOME/.oss/bin/oss-decrypt" && "$leftovers" == "0" ]]; then pass "$test_name"
+    else fail "$test_name" "rc!=0, old binary intact, no temp files left" "rc=$RUN_RC same=$([[ "$after" == "$before" ]] && echo yes || echo no) leftovers=$leftovers"; fi
+    rm -rf "$st"; teardown_test_env
+}
+
 echo "Running ensure-decrypt-cli.sh tests..."
 echo "======================================="
 
@@ -685,6 +720,8 @@ test_committed_hash_match_installs
 test_committed_hash_mismatch_rejects
 test_committed_manifest_missing_entry_rejects
 test_manifest_found_via_plugin_root
+test_download_never_written_to_final_path
+test_failed_update_keeps_working_binary
 
 echo ""
 echo "======================================="

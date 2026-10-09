@@ -131,8 +131,15 @@ DOWNLOAD_URL="${GITHUB_RELEASES}/oss-decrypt-${PLATFORM}-${ARCH}"
 
 echo "Downloading from: $DOWNLOAD_URL"
 
+# Download to a private temp file beside the final path; it only replaces the installed binary (atomic
+# rename) after BOTH hash checks and a run check pass. Unverified bytes are never executable at the final
+# path, and a failed update leaves the customer's working binary untouched.
+TMP_BIN=$(mktemp "$OSS_BIN_DIR/.oss-decrypt.XXXXXX")
+chmod 600 "$TMP_BIN"
+trap 'rm -f "$TMP_BIN"' EXIT
+
 # Download binary
-if ! curl -sL "$DOWNLOAD_URL" -o "$OSS_DECRYPT"; then
+if ! curl -sL "$DOWNLOAD_URL" -o "$TMP_BIN"; then
     echo "Error: Failed to download oss-decrypt binary"
     echo "Please check your network connection or run /oss:login for manual installation."
     emit_oss_error --code OSS-API-003 --severity HIGH \
@@ -149,7 +156,7 @@ fi
 CHECKSUM_FILE=$(mktemp)
 if ! curl -sL "${DOWNLOAD_URL}.sha256" -o "$CHECKSUM_FILE"; then
     echo "[verify] Binary checksum: FAILED — checksum file unavailable"
-    rm -f "$OSS_DECRYPT" "$CHECKSUM_FILE"
+    rm -f "$CHECKSUM_FILE"
     echo "Error: Could not download checksum file for verification."
     echo "Please run /oss:login for manual installation."
     emit_oss_error --code OSS-API-003 --severity HIGH \
@@ -164,26 +171,23 @@ rm -f "$CHECKSUM_FILE"
 
 if [[ -z "$EXPECTED_HASH" || ${#EXPECTED_HASH} -ne 64 ]]; then
     echo "[verify] Binary checksum: FAILED — invalid checksum format"
-    rm -f "$OSS_DECRYPT"
     echo "Error: Checksum file has invalid format."
     exit 1
 fi
 
 # Compute actual hash (cross-platform: shasum on macOS, sha256sum on Linux)
 if command -v shasum &>/dev/null; then
-    ACTUAL_HASH=$(shasum -a 256 "$OSS_DECRYPT" | awk '{print $1}')
+    ACTUAL_HASH=$(shasum -a 256 "$TMP_BIN" | awk '{print $1}')
 elif command -v sha256sum &>/dev/null; then
-    ACTUAL_HASH=$(sha256sum "$OSS_DECRYPT" | awk '{print $1}')
+    ACTUAL_HASH=$(sha256sum "$TMP_BIN" | awk '{print $1}')
 else
     echo "[verify] Binary checksum: FAILED — no hash command available"
-    rm -f "$OSS_DECRYPT"
     echo "Error: Neither shasum nor sha256sum found."
     exit 1
 fi
 
 if [[ "$ACTUAL_HASH" != "$EXPECTED_HASH" ]]; then
     echo "[verify] Binary checksum: FAILED — mismatch (expected ${EXPECTED_HASH:0:12}..., got ${ACTUAL_HASH:0:12}...)"
-    rm -f "$OSS_DECRYPT"
     echo "Error: Binary integrity check failed. The download may have been tampered with."
     echo "Please run /oss:login for manual installation."
     emit_oss_error --code OSS-API-002 --severity HIGH \
@@ -212,7 +216,6 @@ if [[ "$ACTUAL_HASH" != "$COMMITTED_HASH" ]]; then   # an absent entry is empty,
     else
         echo "[verify] Committed hash: FAILED — no committed entry for $ARTIFACT"
     fi
-    rm -f "$OSS_DECRYPT"
     echo "Error: Binary does not match the plugin's committed checksum. Refusing to install (possible release tamper)."
     echo "Please update the plugin or run /oss:login for manual installation."
     emit_oss_error --code OSS-API-002 --severity HIGH \
@@ -222,19 +225,17 @@ if [[ "$ACTUAL_HASH" != "$COMMITTED_HASH" ]]; then   # an absent entry is empty,
 fi
 echo "[verify] Committed hash: verified"
 
-# Make executable
-chmod +x "$OSS_DECRYPT"
-
-# Verify it runs
-if ! "$OSS_DECRYPT" --version &>/dev/null; then
+# Make executable, prove it runs, then atomically replace the installed binary
+chmod 755 "$TMP_BIN"
+if ! "$TMP_BIN" --version &>/dev/null; then
     echo "Error: Downloaded binary is not valid"
-    rm -f "$OSS_DECRYPT"
     echo "Please run /oss:login for manual installation."
     emit_oss_error --code OSS-API-002 --severity HIGH \
         --message "oss-decrypt binary is not executable after download" \
         --retry-eligible true --retry-cost cheap
     exit 1
 fi
+mv -f "$TMP_BIN" "$OSS_DECRYPT"
 
 # Run setup to configure credentials
 echo "Running initial setup..."
