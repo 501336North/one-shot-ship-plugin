@@ -1,13 +1,21 @@
 #!/bin/bash
-# Release workflows must not let an unrelated release take GitHub "Latest".
+# The oss-launch release job must keep GitHub "Latest" on the EXACT oss-decrypt release the plugin pins.
 # @regression 2026-06-28: oss-launch-v2.0.78 became "Latest" without oss-decrypt assets; installers that
 #   trusted releases/latest/download 404'd for every new user until 2026-10-09.
-# The SHA-pinned softprops/action-gh-release (v1 @ de2c0eb) has no make_latest input, so the oss-launch
-# workflow must re-point Latest at the newest cli-decrypt-v* release (what pre-pin plugin versions still download).
+# Single source of truth (IRON LAW #1b): the tag is read from hooks/ensure-decrypt-cli.sh, never "newest
+# cli-decrypt-v*" (an unreviewed tag push could otherwise become Latest for pre-pin plugin versions).
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WF="$ROOT/.github/workflows/build-oss-launch.yml"
-step="$(awk '/name: Keep Latest on cli-decrypt/,0' "$WF")"
-if grep -q "cli-decrypt-v" <<<"$step" && grep -qE 'gh release edit .*--latest' <<<"$step" && grep -q 'GH_TOKEN' <<<"$step"; then
-  echo "✓ PASS: build-oss-launch.yml re-points Latest to the newest cli-decrypt release"; exit 0
-else echo "✗ FAIL: build-oss-launch.yml has no 'Keep Latest on cli-decrypt' step re-pointing Latest"; exit 1; fi
+code="$(grep -vE '^\s*#' "$WF")"                         # ignore commented-out lines
+release_job="$(awk '/^  release:/,0' <<<"$code")"
+step="$(awk '/name: Keep Latest on cli-decrypt/,0' <<<"$release_job")"
+RUN=0; FAILED=0
+chk() { ((RUN++)); if eval "$2"; then echo "✓ PASS: $1"; else echo "✗ FAIL: $1"; ((FAILED++)); fi; }
+chk "release job checks out the repo (to read the pinned tag)" 'grep -q "uses: actions/checkout@[0-9a-f]\{40\}" <<<"$release_job"'
+chk "step reads the tag from hooks/ensure-decrypt-cli.sh" 'grep -q "hooks/ensure-decrypt-cli.sh" <<<"$step"'
+chk "step marks that tag Latest" 'grep -qE "gh release edit \"\\\$tag\" .*--latest" <<<"$step"'
+chk "step never picks the newest release" '! grep -q "gh release list" <<<"$step"'
+chk "step fails loudly with ::error:: if the tag cannot be read" 'grep -q "::error::" <<<"$step"'
+chk "step has a timeout" 'grep -qE "timeout-minutes: [0-9]+" <<<"$step"'
+echo "Results: $((RUN-FAILED))/$RUN passed, $FAILED failed"; [[ $FAILED -eq 0 ]]
