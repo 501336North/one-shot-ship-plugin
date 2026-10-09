@@ -144,11 +144,14 @@ echo "Downloading from: $DOWNLOAD_URL"
 # rename) after BOTH hash checks and a run check pass. Unverified bytes are never executable at the final
 # path, and a failed update leaves the customer's working binary untouched.
 # A SIGKILL'd install (the one signal no trap can catch) leaves its temp file behind: sweep any older than
-# an hour, never a concurrent install's fresh one. mktemp creates files 0600.
+# an hour, never a concurrent install's fresh one (curl keeps its mtime current: CURL_OPTS must never
+# use -R/--remote-time, which would stamp a live download with the server's old date). mktemp creates 0600.
 find "$OSS_BIN_DIR" -maxdepth 1 -type f -name '.oss-decrypt.*' -mmin +60 -delete 2>/dev/null || true
+# Trap first, so a failure creating either temp file never leaves the other behind.
+TMP_BIN=""; CHECKSUM_FILE=""
+trap 'rm -f "$TMP_BIN" "$CHECKSUM_FILE"' EXIT
 TMP_BIN=$(mktemp "$OSS_BIN_DIR/.oss-decrypt.XXXXXX")
 CHECKSUM_FILE=$(mktemp)
-trap 'rm -f "$TMP_BIN" "$CHECKSUM_FILE"' EXIT
 
 # Download binary
 if ! curl "${CURL_OPTS[@]}" "$DOWNLOAD_URL" -o "$TMP_BIN"; then

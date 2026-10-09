@@ -56,34 +56,35 @@ fail() {
 # TEST 1: Returns 0 when binary exists with current version
 # =============================================================================
 test_binary_exists() {
-    local test_name="Returns 0 when binary exists with current version"
+    local test_name="Returns 0 without any download when the installed binary is current"
     ((TESTS_RUN++))
 
     setup_test_env
 
-    # Setup: Create mock binary that reports a valid version
+    # Setup: installed binary reports exactly what the real pinned asset reports (v1.2.1 = MINIMUM_VERSION)
     mkdir -p "$TEST_HOME/.oss/bin"
     cat > "$TEST_HOME/.oss/bin/oss-decrypt" << 'MOCKEOF'
 #!/bin/bash
 if [[ "$1" == "--version" ]]; then
-    echo "oss-decrypt v1.1.0"
+    echo "oss-decrypt v1.2.1"
 else
     echo "mock binary"
 fi
 MOCKEOF
     chmod +x "$TEST_HOME/.oss/bin/oss-decrypt"
+    local net_log="$TEST_HOME/net.log" offline_mock; offline_mock=$(mktemp -d)
+    printf '#!/bin/sh\necho "$*" >> "%s"\nexit 22\n' "$net_log" > "$offline_mock/curl"; chmod +x "$offline_mock/curl"
 
-    # Run hook
-    local result
-    result=$("$HOOK_SCRIPT" 2>&1) || true
-    local exit_code=$?
+    local result exit_code=0
+    result=$(PATH="$offline_mock:$PATH" "$HOOK_SCRIPT" 2>&1) || exit_code=$?
+    local downloads; downloads=$(wc -l < "$net_log" 2>/dev/null | tr -d ' '); downloads=${downloads:-0}
 
-    teardown_test_env
+    rm -rf "$offline_mock"; teardown_test_env
 
-    if [[ $exit_code -eq 0 ]]; then
+    if [[ $exit_code -eq 0 && "$downloads" == "0" ]]; then
         pass "$test_name"
     else
-        fail "$test_name" "exit code 0" "exit code $exit_code"
+        fail "$test_name" "exit 0 and no download" "exit=$exit_code downloads=$downloads"
     fi
 }
 
@@ -806,14 +807,32 @@ test_interrupted_checksum_download_leaves_no_temp_file() {
     cat > "$mock/curl" << CURLEOF
 #!/bin/bash
 out=""; url=""; prev=""; for a in "\$@"; do [[ "\$prev" == "-o" ]] && out="\$a"; [[ "\$a" == https://* ]] && url="\$a"; prev="\$a"; done
-echo "\$out" >> "$outs"; echo partial > "\$out"; [[ "\$url" == *.sha256 ]] && sleep 2; exit 0
+echo "\$out" >> "$outs"; [[ "\$url" == *.sha256 ]] && echo "\$url" >> "$outs.urls"; echo partial > "\$out"; [[ "\$url" == *.sha256 ]] && sleep 2; exit 0
 CURLEOF
     chmod +x "$mock/curl"
     HOME="$TEST_HOME" PATH="$mock:$PATH" bash "$HOOK_SCRIPT" >/dev/null 2>&1 &
-    local pid=$!; sleep 1; kill -TERM "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; sleep 1
+    local pid=$! n=0; until grep -q sha256 "$outs.urls" 2>/dev/null || [[ $((n++)) -ge 100 ]]; do sleep 0.05; done   # wait until the checksum download is in flight
+    sleep 0.2; kill -TERM "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; sleep 1
     local left=0 f; while read -r f; do [[ -e "$f" ]] && ((left++)); done < "$outs"
     if [[ -s "$outs" && "$left" == "0" ]]; then pass "$test_name"; else fail "$test_name" "every curl -o target removed" "$left left: $(cat "$outs" 2>/dev/null | tr '\n' ' ')"; fi
     while read -r f; do rm -f "$f"; done < "$outs" 2>/dev/null
+    rm -rf "$mock"; teardown_test_env
+}
+
+
+test_failed_second_mktemp_leaves_nothing() {
+    local test_name="If creating the checksum temp file fails, no binary temp file is left behind"
+    ((TESTS_RUN++)); setup_test_env
+    local mock; mock=$(mktemp -d); local real_mktemp; real_mktemp=$(command -v mktemp)
+    cat > "$mock/mktemp" << MKEOF
+#!/bin/bash
+[[ \$# -eq 0 ]] && exit 1          # the checksum temp file (no template) fails
+exec "$real_mktemp" "\$@"
+MKEOF
+    printf '#!/bin/sh\nexit 22\n' > "$mock/curl"; chmod +x "$mock/mktemp" "$mock/curl"
+    HOME="$TEST_HOME" PATH="$mock:$PATH" bash "$HOOK_SCRIPT" >/dev/null 2>&1
+    local left; left=$(find "$TEST_HOME/.oss/bin" -name '.oss-decrypt.*' 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "$left" == "0" ]]; then pass "$test_name"; else fail "$test_name" "0 temp files" "$left left"; fi
     rm -rf "$mock"; teardown_test_env
 }
 
@@ -845,6 +864,7 @@ test_manifest_found_beside_hook
 test_committed_manifest_is_complete_and_matches_tag
 test_stale_temp_files_swept_fresh_kept
 test_interrupted_checksum_download_leaves_no_temp_file
+test_failed_second_mktemp_leaves_nothing
 
 echo ""
 echo "======================================="
