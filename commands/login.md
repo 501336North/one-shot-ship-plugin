@@ -241,10 +241,12 @@ After successful authentication, install the decryption CLI for secure prompt de
 
 1. **Install (or update) the CLI through the verified installer hook:**
    ```bash
-   ENSURE=~/.oss/hooks/ensure-decrypt-cli.sh
-   [ -x "$ENSURE" ] || ENSURE="$(cat ~/.oss/plugin-root 2>/dev/null)/hooks/ensure-decrypt-cli.sh"
-   bash "$ENSURE"
+   ~/.oss/hooks/ensure-decrypt-cli.sh
    ```
+
+   If `~/.oss/hooks/ensure-decrypt-cli.sh` does not exist (session start has not run yet), run
+   `"${CLAUDE_PLUGIN_ROOT}/hooks/ensure-decrypt-cli.sh"` instead. If neither exists, stop and tell the user
+   to restart Claude Code so the One Shot Ship plugin can finish installing its hooks.
 
    The hook detects your platform (macOS arm64/x64, Linux x64/arm64 incl. GB10/Graviton/GH200/Ampere),
    downloads `oss-decrypt` from the plugin's pinned release, and refuses the binary unless its SHA-256

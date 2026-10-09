@@ -47,6 +47,8 @@ a2_login_installs_through_hook() {
   local f="$ROOT/commands/login.md"
   if ! grep -q "ensure-decrypt-cli.sh" "$f"; then fail "A2 login installs through the hook" "login.md never calls ensure-decrypt-cli.sh"
   elif grep -qE "https://[^ ]*oss-decrypt-" "$f"; then fail "A2 login installs through the hook" "login.md has its own oss-decrypt URL"
+  elif ! grep -qE '^ *~/\.oss/hooks/ensure-decrypt-cli\.sh *$' "$f"; then fail "A2 login installs through the hook" "hook not invoked in the allowlisted form ~/.oss/hooks/ensure-decrypt-cli.sh (permission prompt)"
+  elif grep -qE 'cat ~/\.oss/plugin-root[^)]*\)/hooks/ensure-decrypt-cli' "$f"; then fail "A2 login installs through the hook" "unguarded plugin-root fallback can resolve to /hooks/…"
   else pass "A2 /oss:login installs oss-decrypt through the verified hook"; fi
 }
 
