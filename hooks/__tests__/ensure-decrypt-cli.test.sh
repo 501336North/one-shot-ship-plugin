@@ -634,8 +634,8 @@ test_committed_hash_mismatch_rejects() {
     local st; st=$(mktemp -d); local art; art=$(stage_valid_binary "$st")
     echo "$(printf 'a%.0s' {1..64})  $art" > "$st/manifest"
     run_fresh_install "$st" HOME="$TEST_HOME" OSS_DECRYPT_CHECKSUMS="$st/manifest"
-    if [[ $RUN_RC -ne 0 && ! -e "$TEST_HOME/.oss/bin/oss-decrypt" ]]; then pass "$test_name"
-    else fail "$test_name" "non-zero exit, no binary left" "rc=$RUN_RC exists=$([[ -e "$TEST_HOME/.oss/bin/oss-decrypt" ]] && echo yes || echo no)"; fi
+    if [[ $RUN_RC -ne 0 && ! -e "$TEST_HOME/.oss/bin/oss-decrypt" ]] && grep -qx '\[verify\] Committed hash: FAILED — mismatch' <<<"$RUN_OUT"; then pass "$test_name"
+    else fail "$test_name" "non-zero exit, no binary left, plain mismatch message" "rc=$RUN_RC out=$(grep Committed <<<"$RUN_OUT") exists=$([[ -e "$TEST_HOME/.oss/bin/oss-decrypt" ]] && echo yes || echo no)"; fi
     rm -rf "$st"; teardown_test_env
 }
 
@@ -645,8 +645,8 @@ test_committed_manifest_missing_entry_rejects() {
     local st; st=$(mktemp -d); stage_valid_binary "$st" >/dev/null
     echo "$(awk '{print $1}' "$st/checksum")  oss-decrypt-Plan9-mips" > "$st/manifest"
     run_fresh_install "$st" HOME="$TEST_HOME" OSS_DECRYPT_CHECKSUMS="$st/manifest"
-    if [[ $RUN_RC -ne 0 && ! -e "$TEST_HOME/.oss/bin/oss-decrypt" ]]; then pass "$test_name"
-    else fail "$test_name" "non-zero exit, no binary left" "rc=$RUN_RC"; fi
+    if [[ $RUN_RC -ne 0 && ! -e "$TEST_HOME/.oss/bin/oss-decrypt" ]] && grep -q 'Committed hash: FAILED — no committed entry for oss-decrypt-' <<<"$RUN_OUT"; then pass "$test_name"
+    else fail "$test_name" "non-zero exit, no binary left, names the missing entry" "rc=$RUN_RC out=$(grep Committed <<<"$RUN_OUT")"; fi
     rm -rf "$st"; teardown_test_env
 }
 
