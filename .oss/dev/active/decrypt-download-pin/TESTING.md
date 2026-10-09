@@ -16,3 +16,5 @@ The plugin-root test passed vacuously before GREEN; the mutation proves it now g
 **Clean machine (real GitHub, 2026-10-09):** temp HOME → real session start copies hook + manifest → hook downloads
 from `releases/download/cli-decrypt-v1.2.3/`, in-release `.sha256` verified, committed hash verified; second run
 does not download; tampered committed hash → refused, no binary left. (Found + fixed: mismatch message glued the hash.)
+
+**Watcher vitest — NOT fully run.** Full `npx vitest run` exceeded 30 min and was stopped; `vitest run test/hooks` also hung (killed, no stray processes left). This branch changes no watcher source, only `test/hooks/session-start-hooks-copy.test.ts`, which passes 3/3 alone. Run the full watcher suite in CI / on the main checkout before merge.
