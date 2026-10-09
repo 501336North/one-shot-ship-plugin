@@ -34,3 +34,7 @@ does not download; tampered committed hash → refused, no binary left. (Found +
 | all shell suites | only the 3 pre-existing main failures |
 Mutants killed: final-path download, delete-on-reject, missing EXIT trap, beside-hook lookup broken, manifest line deleted, tag bumped without manifest, chmod +x on data files.
 Real GitHub clean machine after the round: pinned download with hardened curl → both hashes verified, binary 755, manifest 644, no temp leftovers.
+
+## Integration after ship fix round 1 (2026-10-09, real GitHub)
+- UPDATE path: v1.0.0 stub present → hook downloads pinned release, both hashes verified, atomically replaced (755), no temp leftovers.
+- FAILED update (committed hash forced wrong): old binary byte-identical, actionable message, no leftovers.
