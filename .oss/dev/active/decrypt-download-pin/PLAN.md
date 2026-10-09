@@ -16,6 +16,27 @@ Must fail on current code (it requests `latest/download`).
 **GREEN:** `OSS_DECRYPT_TAG="${OSS_DECRYPT_TAG:-cli-decrypt-v1.2.3}"`; `GITHUB_RELEASES=".../releases/download/$OSS_DECRYPT_TAG"`. Nothing else.
 **REFACTOR:** header comment states why it is pinned (link DESIGN.md). Existing tests 1–9 stay green.
 
+
+## Task 1b: committed known-good hash manifest (two-method verify, same standard as oss-launch)
+Added 2026-10-09 after Boss asked to check the dev docs for our crypto standard. `oss-launch-release-hardening`
+(DESIGN.md) set it: pinned tag + in-release `.sha256` + a COMMITTED, code-reviewed hash manifest, fail-closed.
+`ensure-decrypt-cli.sh` only had the in-release `.sha256`. (Prompt-level Ed25519 manifest signing lives in the
+binary and is untouched by this work.)
+**RED** (`hooks/__tests__/ensure-decrypt-cli.test.sh`):
+- committed hash matches → installs
+- committed hash MISMATCH while in-release `.sha256` matches → rejects, nothing executable left (release-tamper defense)
+- manifest has no entry for this OS/arch → rejects (fail-closed, never trust-on-first-use)
+- manifest not beside the hook (e.g. `~/.oss/hooks/` copy) → found via `$(cat ~/.oss/plugin-root)/hooks/`
+- existing tests 6–10 supply a manifest through the `OSS_DECRYPT_CHECKSUMS` seam (they must not be weakened)
+**GREEN:** `hooks/oss-decrypt-checksums.txt` = SHA-256 of the 4 `cli-decrypt-v1.2.3` binaries (downloaded, hashed,
+cross-checked against the release `.sha256`; reviewed in the PR = the gate). Verify block mirrors ensure-oss-launch.sh.
+**CUSTOMER-SAFETY (must hold):** the hook only downloads when the binary is missing or < MINIMUM_VERSION, so
+existing installs never reach the new check. Fresh installs need the manifest reachable from `~/.oss/hooks/`.
+
+## Task 1c: session start copies the manifest next to the hook
+**RED:** session-start test asserts `oss-decrypt-checksums.txt` is copied into `~/.oss/hooks/` with `ensure-decrypt-cli.sh`.
+**GREEN:** add it to `HOOKS_TO_COPY` in the session-start script that hooks.json actually runs (provenance: check the `-new`/`-test` variants too).
+
 ## Task 2: /oss:login installs through the hook (one downloader)
 **RED** (`hooks/__tests__/login-setup-gate.test.sh` or new `__tests__/login-decrypt-install.test.sh`):
 - `login.md's install step should invoke ensure-decrypt-cli.sh` — assert Step 5 calls `~/.oss/hooks/ensure-decrypt-cli.sh` (with the plugin-root fallback if the hooks copy is absent) and contains no `curl … oss-decrypt` URL of its own.
@@ -36,8 +57,14 @@ Fresh `HOME` (temp dir), no `~/.oss/bin`: run the real hook against the real Git
 ## Provenance check (IRON LAW #1b) — done at plan time
 `grep -rn "releases/(latest/)?download"` over the repo: download sites = `hooks/ensure-decrypt-cli.sh`, `commands/login.md` (latest — both fixed here), `hooks/ensure-oss-launch.sh`, `scripts/verify-release.sh` (already tag-pinned, correct as-is). `bin/oss-launch`, `verify-decrypt-setup.sh`, `oss-notify.sh` reference the binary but never download it.
 
+## Customer-safety checklist (Boss, 2026-10-09)
+- Existing installs (binary ≥ MINIMUM_VERSION) never download → unaffected by every change here.
+- Users on old plugin versions: covered by the Latest flip (Task 0, done) — their old hooks resolve latest → cli-decrypt-v1.2.3 (verified: real install with origin/main hook succeeded).
+- oss-launch is tag-pinned → unaffected by the flip (verified 200).
+- Note: the cli-decrypt-v1.2.3 Darwin-arm64 binary reports `v1.2.1`; fine for MINIMUM_VERSION=1.2.1, but NEVER raise MINIMUM_VERSION above the binary's self-reported version or the hook re-downloads on every command.
+
 ## Sequence
-Task 0 (when approved, independent) · Task 3 RED → Task 1 → Task 2 → Task 3 GREEN → Task 4 → Task 5 → /oss:ship (PR, Boss merges).
+Task 0 (DONE 2026-10-09, Boss approved) · Task 1 (done) → Task 1b → Task 1c → Task 2 → Task 3 GREEN → Task 4 → Task 5 → /oss:ship (PR, Boss merges).
 Version bump: plugin patch version per repo convention, so marketplace users pick the fix up.
 
 ## Estimated: 5 tasks (+1 ops), ~6 tests

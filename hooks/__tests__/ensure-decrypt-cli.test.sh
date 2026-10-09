@@ -228,6 +228,7 @@ CURLEOF
 }
 
 teardown_mock_curl() {
+    unset OSS_DECRYPT_CHECKSUMS
     rm -rf "$MOCK_BIN_DIR"
 }
 
@@ -294,6 +295,7 @@ BINEOF
     url_log=$(mktemp)
     export MOCK_CURL_URL_LOG="$url_log"
 
+    export OSS_DECRYPT_CHECKSUMS="$staging_dir/checksum"   # committed manifest = same known-good hash
     setup_mock_curl "$staging_dir" "OK"
 
     # GIVEN - the host reports itself as aarch64 Linux
@@ -357,6 +359,7 @@ BINEOF
     [[ "$ARCH" == "x86_64" ]] && ARCH="x64"
     echo "${expected_hash}  oss-decrypt-${PLATFORM}-${ARCH}" > "$staging_dir/checksum"
 
+    export OSS_DECRYPT_CHECKSUMS="$staging_dir/checksum"   # committed manifest = same known-good hash
     setup_mock_curl "$staging_dir" "OK"
 
     # Create existing binary that reports old version (triggers download)
@@ -515,6 +518,7 @@ BINEOF
     [[ "$ARCH" == "aarch64" ]] && ARCH="arm64"
     echo "${expected_hash}  oss-decrypt-${PLATFORM}-${ARCH}" > "$staging_dir/checksum"
 
+    export OSS_DECRYPT_CHECKSUMS="$staging_dir/checksum"   # committed manifest = same known-good hash
     setup_mock_curl "$staging_dir" "OK"
     mkdir -p "$TEST_HOME/.oss/bin"   # fresh download path
 
@@ -586,6 +590,82 @@ test_tag_override() {
     teardown_test_env
 }
 
+
+# =============================================================================
+# TWO-METHOD VERIFY (same standard as ensure-oss-launch.sh, oss-launch-release-hardening):
+# in-release .sha256 AND a committed, code-reviewed manifest (hooks/oss-decrypt-checksums.txt).
+# A release-write compromise can swap the binary AND its in-release .sha256; it cannot change
+# the committed hash. Fail closed: no manifest, no entry, or mismatch => reject.
+# =============================================================================
+stage_valid_binary() {   # usage: stage_valid_binary <staging_dir>; echoes the artifact name
+    local d="$1"
+    cat > "$d/binary" << 'BINEOF'
+#!/bin/bash
+if [[ "$1" == "--version" ]]; then echo "oss-decrypt v1.2.3"
+elif [[ "$1" == "--setup" ]]; then mkdir -p "$HOME/.oss"; touch "$HOME/.oss/credentials.enc"; exit 0
+else echo "mock"; fi
+BINEOF
+    local p a; p=$(uname -s); a=$(uname -m); [[ "$a" == "x86_64" ]] && a="x64"; [[ "$a" == "aarch64" ]] && a="arm64"
+    echo "$(shasum -a 256 "$d/binary" | awk '{print $1}')  oss-decrypt-$p-$a" > "$d/checksum"
+    echo "oss-decrypt-$p-$a"
+}
+
+run_fresh_install() {   # usage: run_fresh_install <staging_dir> [env...]; sets RUN_OUT / RUN_RC
+    local staging_dir="$1"; shift
+    setup_mock_curl "$staging_dir" "OK"
+    RUN_RC=0; RUN_OUT=$(env "$@" "$HOOK_SCRIPT" 2>&1) || RUN_RC=$?
+    teardown_mock_curl
+}
+
+test_committed_hash_match_installs() {
+    local test_name="Committed manifest hash matches -> installs"
+    ((TESTS_RUN++)); setup_test_env
+    local st; st=$(mktemp -d); local art; art=$(stage_valid_binary "$st")
+    echo "$(awk '{print $1}' "$st/checksum")  $art" > "$st/manifest"
+    run_fresh_install "$st" HOME="$TEST_HOME" OSS_DECRYPT_CHECKSUMS="$st/manifest"
+    if [[ $RUN_RC -eq 0 && -x "$TEST_HOME/.oss/bin/oss-decrypt" ]] && echo "$RUN_OUT" | grep -qi "committed.*verified"; then pass "$test_name"
+    else fail "$test_name" "exit 0 + committed hash verified" "rc=$RUN_RC out=$RUN_OUT"; fi
+    rm -rf "$st"; teardown_test_env
+}
+
+test_committed_hash_mismatch_rejects() {
+    local test_name="Committed hash MISMATCH rejects even when in-release .sha256 matches (release tamper)"
+    ((TESTS_RUN++)); setup_test_env
+    local st; st=$(mktemp -d); local art; art=$(stage_valid_binary "$st")
+    echo "$(printf 'a%.0s' {1..64})  $art" > "$st/manifest"
+    run_fresh_install "$st" HOME="$TEST_HOME" OSS_DECRYPT_CHECKSUMS="$st/manifest"
+    if [[ $RUN_RC -ne 0 && ! -e "$TEST_HOME/.oss/bin/oss-decrypt" ]]; then pass "$test_name"
+    else fail "$test_name" "non-zero exit, no binary left" "rc=$RUN_RC exists=$([[ -e "$TEST_HOME/.oss/bin/oss-decrypt" ]] && echo yes || echo no)"; fi
+    rm -rf "$st"; teardown_test_env
+}
+
+test_committed_manifest_missing_entry_rejects() {
+    local test_name="Committed manifest without an entry for this platform rejects (fail closed)"
+    ((TESTS_RUN++)); setup_test_env
+    local st; st=$(mktemp -d); stage_valid_binary "$st" >/dev/null
+    echo "$(awk '{print $1}' "$st/checksum")  oss-decrypt-Plan9-mips" > "$st/manifest"
+    run_fresh_install "$st" HOME="$TEST_HOME" OSS_DECRYPT_CHECKSUMS="$st/manifest"
+    if [[ $RUN_RC -ne 0 && ! -e "$TEST_HOME/.oss/bin/oss-decrypt" ]]; then pass "$test_name"
+    else fail "$test_name" "non-zero exit, no binary left" "rc=$RUN_RC"; fi
+    rm -rf "$st"; teardown_test_env
+}
+
+test_manifest_found_via_plugin_root() {
+    local test_name="Hook copy in ~/.oss/hooks finds the manifest via ~/.oss/plugin-root"
+    ((TESTS_RUN++)); setup_test_env
+    local st; st=$(mktemp -d); local art; art=$(stage_valid_binary "$st")
+    local plugin="$TEST_HOME/plugin"; mkdir -p "$plugin/hooks" "$TEST_HOME/.oss/hooks"
+    echo "$(awk '{print $1}' "$st/checksum")  $art" > "$plugin/hooks/oss-decrypt-checksums.txt"
+    echo "$plugin" > "$TEST_HOME/.oss/plugin-root"
+    cp "$HOOK_SCRIPT" "$TEST_HOME/.oss/hooks/ensure-decrypt-cli.sh"
+    setup_mock_curl "$st" "OK"
+    RUN_RC=0; RUN_OUT=$(env -u OSS_DECRYPT_CHECKSUMS HOME="$TEST_HOME" bash "$TEST_HOME/.oss/hooks/ensure-decrypt-cli.sh" 2>&1) || RUN_RC=$?
+    teardown_mock_curl
+    if [[ $RUN_RC -eq 0 && -x "$TEST_HOME/.oss/bin/oss-decrypt" ]]; then pass "$test_name"
+    else fail "$test_name" "installs using plugin-root manifest" "rc=$RUN_RC out=$RUN_OUT"; fi
+    rm -rf "$st"; teardown_test_env
+}
+
 echo "Running ensure-decrypt-cli.sh tests..."
 echo "======================================="
 
@@ -601,6 +681,10 @@ test_aarch64_installs_arm64_binary
 test_setup_failure_no_false_ready
 test_default_download_is_pinned_tag
 test_tag_override
+test_committed_hash_match_installs
+test_committed_hash_mismatch_rejects
+test_committed_manifest_missing_entry_rejects
+test_manifest_found_via_plugin_root
 
 echo ""
 echo "======================================="

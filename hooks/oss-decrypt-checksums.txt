@@ -1,0 +1,7 @@
+# Committed known-good SHA-256 of the pinned oss-decrypt release (cli-decrypt-v1.2.3).
+# Verified by ensure-decrypt-cli.sh IN ADDITION to the in-release .sha256 (two-method, fail-closed).
+# Changes ONLY via a reviewed PR alongside a tag bump: this file is the release gate.
+673ac463e4cd3e0eb454a5527373049e7da7dae8cf053cf45385cd61f459851c  oss-decrypt-Darwin-arm64
+013cf7eedd64befdf13f894e16925547b89febc8cc0a02da1a8b2e1db221414f  oss-decrypt-Darwin-x64
+dee584f4b7e0cf65fe1d429c9fe56543f54413515b6c0364b4bb464e2315dfe4  oss-decrypt-Linux-arm64
+90d6a9d3fecb54bcd4be30c80cb7045543ff05df4ebc8cf06e8fa04e503df98b  oss-decrypt-Linux-x64

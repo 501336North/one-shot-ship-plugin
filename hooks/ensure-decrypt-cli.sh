@@ -194,6 +194,30 @@ fi
 
 echo "[verify] Binary checksum: verified"
 
+# SECOND METHOD — committed known-good manifest (same standard as ensure-oss-launch.sh). The in-release
+# .sha256 above comes from the SAME release as the binary, so a release-write compromise could swap both.
+# Require the hash to ALSO match a code-reviewed hash committed in the plugin. Fail closed: no manifest,
+# no entry for this artifact, or a mismatch all REJECT. This hook usually runs from the ~/.oss/hooks copy,
+# so the manifest is looked up beside it, then in the plugin root recorded by session start.
+ARTIFACT="oss-decrypt-${PLATFORM}-${ARCH}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CHECKSUMS="${OSS_DECRYPT_CHECKSUMS:-$SCRIPT_DIR/oss-decrypt-checksums.txt}"
+if [[ ! -f "$CHECKSUMS" && -z "${OSS_DECRYPT_CHECKSUMS:-}" && -f "$OSS_DIR/plugin-root" ]]; then
+    CHECKSUMS="$(cat "$OSS_DIR/plugin-root")/hooks/oss-decrypt-checksums.txt"
+fi
+COMMITTED_HASH=$(awk -v a="$ARTIFACT" '$2 == a {print $1}' "$CHECKSUMS" 2>/dev/null | head -n1)
+if [[ "$ACTUAL_HASH" != "$COMMITTED_HASH" ]]; then   # an absent entry is empty, never equal
+    echo "[verify] Committed hash: FAILED — ${COMMITTED_HASH:+mismatch}${COMMITTED_HASH:-no committed entry for $ARTIFACT}"
+    rm -f "$OSS_DECRYPT"
+    echo "Error: Binary does not match the plugin's committed checksum. Refusing to install (possible release tamper)."
+    echo "Please update the plugin or run /oss:login for manual installation."
+    emit_oss_error --code OSS-API-002 --severity HIGH \
+        --message "oss-decrypt binary failed committed-manifest verification" \
+        --retry-eligible false --retry-cost cheap
+    exit 1
+fi
+echo "[verify] Committed hash: verified"
+
 # Make executable
 chmod +x "$OSS_DECRYPT"
 
