@@ -68,3 +68,21 @@ Task 0 (DONE 2026-10-09, Boss approved) · Task 1 (done) → Task 1b → Task 1c
 Version bump: plugin patch version per repo convention, so marketplace users pick the fix up.
 
 ## Estimated: 5 tasks (+1 ops), ~6 tests
+
+## Ship fix round 1 (2026-10-09) — findings from /oss:ship quality gates (quality PASS, perf PASS, security PASS w/ 1 Medium)
+- [x] F1 (sec M1) Download to a private temp file in ~/.oss/bin (0600), verify BOTH hashes on it, then chmod 755 + atomic `mv` over the final path. On any failure the old binary is untouched; trap removes the temp file. RED: fake curl records its `-o` target (must never be the final path) and serves bad bytes; an executable old binary must survive unchanged.
+- [x] F2 (perf P3 / sec P2, pre-existing) curl `-fsSL --proto '=https' --connect-timeout 15 --speed-limit 1024 --speed-time 60` (stall-abort without capping total time for slow links). RED: recorded curl args include these flags for both downloads.
+- [x] F3 (sec L2) Validate OSS_DECRYPT_TAG `^cli-decrypt-v[0-9]+\.[0-9]+\.[0-9]+$`; invalid → exit non-zero, no network call. RED: `OSS_DECRYPT_TAG=../../evil` makes no curl call and fails.
+- [x] F4 (sec L1, quality I2/I3, perf) CI "Keep Latest" step: Latest = the exact tag pinned in hooks/ensure-decrypt-cli.sh (single source; checkout step, SHA-pinned), explicit ::error:: if it cannot be read, `timeout-minutes: 5`; no newest-release selection. Test greps non-comment lines only.
+- [x] F5 (sec L4, quality I4) login.md calls `~/.oss/hooks/ensure-decrypt-cli.sh` in the allowlisted form; fallback `${CLAUDE_PLUGIN_ROOT}/hooks/…` only if it exists; explicit stop message if neither. Extend acceptance A2.
+- [x] F6 (quality L3) Hook failure messages stop sending users to /oss:login "for manual installation" (login now runs this same hook): actionable text (check github.com access / update plugin and retry). RED: no hook failure output contains "manual installation".
+- [x] F7 (quality L1) Test: manifest beside the hook (no plugin-root, no env seam) installs. Anti-vacuity: must go red with the beside-hook lookup mutated.
+- [x] F8 (quality L2) Test the real committed manifest: exactly one 64-hex entry per oss-decrypt-{Darwin,Linux}-{arm64,x64}; header tag == hook's default OSS_DECRYPT_TAG.
+- [x] F9 (quality I1) Test stubs report the real asset's self-version (v1.2.1); comment at MINIMUM_VERSION: must stay ≤ pinned binary's self-reported version.
+- [x] F10 (perf) Session start must not chmod +x data files. RED: behavioural run in temp HOME asserts manifest copied and NOT executable.
+- [x] F11 (sec I1) Unwired oss-session-start-new.sh / -test.sh copy lists: any HOOKS_TO_COPY containing ensure-decrypt-cli.sh must also contain the manifest (guard test).
+- [ ] F12 (quality I5) PR body notes the unrelated archive move of model-frontmatter-routing.
+### Deferred (with reason) — not changed in this PR
+- sec P1 re-verify installed binary every run: hashes ~50 MB on EVERY /oss:* command and forces re-download for every customer whose binary ≠ v1.2.3 bytes → conflicts with Boss's "don't break existing customers". Proposal for a separate decision.
+- sec L3 test seams (OSS_DECRYPT_CHECKSUMS/TAG, plugin-root) in production: accepted — requires same-uid/env control, which already allows replacing hooks or the binary directly (auditor's own assessment).
+- sec P3 emit_oss_error same-uid trust; sec P4 in-release .sha256 kept as defence in depth: accepted, pre-existing.

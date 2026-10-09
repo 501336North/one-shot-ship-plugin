@@ -1,6 +1,6 @@
 # Progress: decrypt-download-pin
 
-## Current Phase: build (code complete; watcher suite + simplifier pending → ready for /oss:ship)
+## Current Phase: ship (fix round 1 built; re-running quality gates)
 
 ## Tasks
 - [x] Task 0: OPS — cli-decrypt-v1.2.3 marked GitHub Latest (Boss OK 2026-10-09). Verified: 4 platforms + .sha256 → 200 (Darwin-arm64 briefly served a cached 404 for ~1 min); a fresh install with the hook from origin/main (what customers run today) succeeds.
@@ -16,4 +16,6 @@
 ## Blockers
 - None. Pre-existing failures on main (not caused here): config-change-guard, format-hook, worktree-hooks shell suites.
 
-## Last Updated: 2026-10-09 11:24 +07 by Claude Code (/oss:build)
+- [x] Ship fix round 1: F1–F11 from quality/perf/security gates (2026-10-09); F12 = PR body; P1/L3/P3/P4 deferred with reasons (PLAN.md)
+
+## Last Updated: 2026-10-09 12:42 +07 by Claude Code (/oss:build ship-fix round 1)

@@ -23,3 +23,14 @@ does not download; tampered committed hash → refused, no binary left. (Found +
 - Fresh HOME: session start copies hook+manifest → pinned download → in-release .sha256 + committed hash verified.
 - Second run: no download. Existing installed binary byte-identical after the hook runs (existing customers untouched).
 - Manifest missing from ~/.oss/hooks: plugin-root fallback verifies.
+
+## Ship fix round 1 (2026-10-09)
+| Suite | Result |
+|---|---|
+| ensure-decrypt-cli.test.sh | 23/23 (+atomic install ×2, curl hardening, tag validation, no login loop, beside-hook lookup, manifest completeness) |
+| session-start-copy.test.sh (new, behavioural) | 4/4 |
+| release-workflows.test.sh | 6/6 |
+| new-user-install.acceptance | 3/3 (A2 now also requires the allowlisted invocation, no root-path fallback) |
+| all shell suites | only the 3 pre-existing main failures |
+Mutants killed: final-path download, delete-on-reject, missing EXIT trap, beside-hook lookup broken, manifest line deleted, tag bumped without manifest, chmod +x on data files.
+Real GitHub clean machine after the round: pinned download with hardened curl → both hashes verified, binary 755, manifest 644, no temp leftovers.
