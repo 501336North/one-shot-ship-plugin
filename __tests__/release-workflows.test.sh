@@ -18,4 +18,7 @@ chk "step marks that tag Latest" 'grep -qE "gh release edit \"\\\$tag\" .*--late
 chk "step never picks the newest release" '! grep -q "gh release list" <<<"$step"'
 chk "step fails loudly with ::error:: if the tag cannot be read" 'grep -q "::error::" <<<"$step"'
 chk "step has a timeout" 'grep -qE "timeout-minutes: [0-9]+" <<<"$step"'
+chk "step runs even if Create Release failed after taking Latest" 'grep -q "if: always()" <<<"$step"'
+chk "release checkout does not persist the write token" 'grep -A3 "uses: actions/checkout" <<<"$release_job" | grep -q "persist-credentials: false"'
+chk "tag read takes a single line" 'grep -q "head -n1" <<<"$step"'
 echo "Results: $((RUN-FAILED))/$RUN passed, $FAILED failed"; [[ $FAILED -eq 0 ]]
