@@ -18,3 +18,8 @@ from `releases/download/cli-decrypt-v1.2.3/`, in-release `.sha256` verified, com
 does not download; tampered committed hash → refused, no binary left. (Found + fixed: mismatch message glued the hash.)
 
 **Watcher vitest — NOT fully run.** Full `npx vitest run` exceeded 30 min and was stopped; `vitest run test/hooks` also hung (killed, no stray processes left). This branch changes no watcher source, only `test/hooks/session-start-hooks-copy.test.ts`, which passes 3/3 alone. Run the full watcher suite in CI / on the main checkout before merge.
+
+## Integration (/oss:integration, 2026-10-09, branch head 7f628bf, real GitHub)
+- Fresh HOME: session start copies hook+manifest → pinned download → in-release .sha256 + committed hash verified.
+- Second run: no download. Existing installed binary byte-identical after the hook runs (existing customers untouched).
+- Manifest missing from ~/.oss/hooks: plugin-root fallback verifies.
