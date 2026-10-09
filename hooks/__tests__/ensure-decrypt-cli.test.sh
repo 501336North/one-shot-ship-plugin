@@ -536,6 +536,56 @@ BINEOF
     fi
 }
 
+
+# =============================================================================
+# TEST: downloads come from a PINNED cli-decrypt release, never "latest"
+#
+# @behavior A fresh install fetches oss-decrypt + .sha256 from
+#           releases/download/<OSS_DECRYPT_TAG>/ (default cli-decrypt-v1.2.3).
+# @regression 2026-06-28 → 2026-10-09: oss-launch-v2.0.78 became GitHub "Latest" without
+#           oss-decrypt assets; latest/download 404'd for every new machine.
+# =============================================================================
+record_urls_install() {   # usage: record_urls_install <urls_log> [env assignments...]
+    local urls="$1"; shift
+    local mock; mock=$(mktemp -d)
+    cat > "$mock/curl" << CURLEOF
+#!/bin/sh
+for a in "\$@"; do case "\$a" in https://*) echo "\$a" >> "$urls";; esac; done
+exit 22
+CURLEOF
+    chmod +x "$mock/curl"
+    env "$@" PATH="$mock:$PATH" bash "$HOOK_SCRIPT" >/dev/null 2>&1 || true
+    rm -rf "$mock"
+}
+
+test_default_download_is_pinned_tag() {
+    local test_name="Fresh install downloads from releases/download/cli-decrypt-v1.2.3/, not latest"
+    ((TESTS_RUN++))
+    setup_test_env
+    local urls="$TEST_HOME/urls.log"
+    record_urls_install "$urls" HOME="$TEST_HOME"
+    if grep -q "/releases/download/cli-decrypt-v1.2.3/oss-decrypt-" "$urls" 2>/dev/null && ! grep -q "/latest/" "$urls"; then
+        echo -e "${GREEN}✓${NC} $test_name"; ((TESTS_PASSED++))
+    else
+        echo -e "${RED}✗${NC} $test_name (requested: $(head -1 "$urls" 2>/dev/null))"; ((TESTS_FAILED++))
+    fi
+    teardown_test_env
+}
+
+test_tag_override() {
+    local test_name="OSS_DECRYPT_TAG overrides the pinned release tag"
+    ((TESTS_RUN++))
+    setup_test_env
+    local urls="$TEST_HOME/urls.log"
+    record_urls_install "$urls" HOME="$TEST_HOME" OSS_DECRYPT_TAG="cli-decrypt-v9.9.9"
+    if grep -q "/releases/download/cli-decrypt-v9.9.9/oss-decrypt-" "$urls" 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} $test_name"; ((TESTS_PASSED++))
+    else
+        echo -e "${RED}✗${NC} $test_name (requested: $(head -1 "$urls" 2>/dev/null))"; ((TESTS_FAILED++))
+    fi
+    teardown_test_env
+}
+
 echo "Running ensure-decrypt-cli.sh tests..."
 echo "======================================="
 
@@ -549,6 +599,8 @@ test_checksum_mismatch_rejects_binary
 test_missing_checksum_rejects_binary
 test_aarch64_installs_arm64_binary
 test_setup_failure_no_false_ready
+test_default_download_is_pinned_tag
+test_tag_override
 
 echo ""
 echo "======================================="
