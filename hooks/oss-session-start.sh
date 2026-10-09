@@ -64,6 +64,7 @@ HOOKS_TO_COPY=(
     "oss-statusline.sh"
     "oss-detect-playwright.sh"
     "ensure-decrypt-cli.sh"
+    "oss-decrypt-checksums.txt"   # committed hash manifest ensure-decrypt-cli.sh verifies against
     "verify-decrypt-setup.sh"
     "oss-iron-laws-sync.sh"
     "oss-onboard-check.sh"

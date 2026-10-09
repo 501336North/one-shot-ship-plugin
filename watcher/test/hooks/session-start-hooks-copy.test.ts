@@ -22,4 +22,10 @@ describe('oss-session-start.sh: HOOKS_TO_COPY', () => {
     const content = fs.readFileSync(sessionStartPath, 'utf-8');
     expect(content).toContain('"verify-decrypt-setup.sh"');
   });
+  // ensure-decrypt-cli.sh runs from ~/.oss/hooks and verifies the downloaded binary against the
+  // committed hash manifest beside it. If the manifest is not copied, every fresh install fails closed.
+  it('should copy oss-decrypt-checksums.txt alongside ensure-decrypt-cli.sh', () => {
+    const content = fs.readFileSync(sessionStartPath, 'utf-8');
+    expect(content).toContain('"oss-decrypt-checksums.txt"');
+  });
 });
