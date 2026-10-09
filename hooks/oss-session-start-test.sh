@@ -34,11 +34,12 @@ HOOKS_TO_COPY=(
     "oss-detect-playwright.sh"
     "fetch-iron-laws.sh"
     "ensure-decrypt-cli.sh"
+    "oss-decrypt-checksums.txt"
 )
 for hook in "${HOOKS_TO_COPY[@]}"; do
     if [[ -f "$PLUGIN_ROOT/hooks/$hook" ]]; then
         cp "$PLUGIN_ROOT/hooks/$hook" ~/.oss/hooks/
-        chmod +x ~/.oss/hooks/$hook
+        if [[ "$hook" == *.sh ]]; then chmod +x ~/.oss/hooks/$hook; fi   # data files (checksum manifest) stay non-executable
     fi
 done
 

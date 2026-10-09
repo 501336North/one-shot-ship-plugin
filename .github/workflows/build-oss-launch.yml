@@ -89,6 +89,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
       - name: Download all artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -112,3 +116,20 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # An oss-launch release must never become GitHub "Latest": plugin versions before the
+      # decrypt-download-pin fix install oss-decrypt from releases/latest/download, which 404'd for every
+      # new user from 2026-06-28 to 2026-10-09 when oss-launch-v2.0.78 took Latest. Latest is set to the
+      # EXACT tag the plugin pins (single source: hooks/ensure-decrypt-cli.sh), never the newest one.
+      - name: Keep Latest on cli-decrypt
+        if: always()   # also when Create Release failed after it already took Latest
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="$(grep -oE 'OSS_DECRYPT_TAG:-cli-decrypt-v[0-9]+\.[0-9]+\.[0-9]+' hooks/ensure-decrypt-cli.sh | head -n1 | sed 's/.*:-//')"
+          if [ -z "$tag" ]; then
+            echo "::error::could not read the pinned cli-decrypt tag from hooks/ensure-decrypt-cli.sh"
+            exit 1
+          fi
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --latest

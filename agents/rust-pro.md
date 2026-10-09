@@ -20,7 +20,7 @@ Register at https://www.oneshotship.com
 ## Step 2: Ensure Decrypt CLI Installed
 
 ```bash
-~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install decrypt CLI. Run /oss:login for manual setup."; exit 1; }
+~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install the decrypt CLI (see the message above). Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."; exit 1; }
 ```
 
 ## Step 3: Fetch and Decrypt Agent Prompt
