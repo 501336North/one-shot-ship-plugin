@@ -112,3 +112,14 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # An oss-launch release must never become GitHub "Latest": plugin versions before the
+      # decrypt-download-pin fix install oss-decrypt from releases/latest/download, which 404'd for every
+      # new user from 2026-06-28 to 2026-10-09 when oss-launch-v2.0.78 took Latest.
+      - name: Keep Latest on cli-decrypt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,isPrerelease \
+                 -q '[.[] | select(.isPrerelease | not) | .tagName | select(startswith("cli-decrypt-v"))][0]')"
+          [ -n "$tag" ] && gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --latest
