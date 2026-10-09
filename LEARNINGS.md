@@ -15,3 +15,7 @@
 ## 2026-10-09 | Testing | one-shot-ship-plugin
 - **Context:** ship fix round 2
 - **Insight:** A signal-cleanup test can pass on the code it is meant to fix: bash already runs the EXIT trap on TERM/HUP/INT, only SIGKILL leaks. Measure which signals leak before writing the fix. And macOS `mktemp` (no template) ignores `TMPDIR`, so assert on the exact paths the code wrote (record curl `-o` targets), not on a directory you assume it used.
+
+## 2026-10-09 | Process | one-shot-ship-plugin
+- **Context:** ship (3 gate iterations)
+- **Insight:** Each "fix the caller text" round missed callers outside the folder its guard scanned (commands/ → agents/). Write the guard over the SHAPE of the call (`ensure-decrypt-cli.sh ||`) across the whole shipped tree first, then fix until it is green — not the other way round.

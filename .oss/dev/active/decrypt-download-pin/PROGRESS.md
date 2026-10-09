@@ -1,6 +1,6 @@
 # Progress: decrypt-download-pin
 
-## Current Phase: ship (fix round 2 built; gate iteration 3 next)
+## Current Phase: ship (fix round 3 built — gate iteration cap reached; awaiting Boss's merge decision)
 
 ## Tasks
 - [x] Task 0: OPS — cli-decrypt-v1.2.3 marked GitHub Latest (Boss OK 2026-10-09). Verified: 4 platforms + .sha256 → 200 (Darwin-arm64 briefly served a cached 404 for ~1 min); a fresh install with the hook from origin/main (what customers run today) succeeds.

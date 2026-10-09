@@ -51,3 +51,8 @@ Mutants killed: no sweep, sweep-all (would delete a concurrent install), checksu
 
 ## Integration after round 2 (real GitHub)
 - Fresh install with a stale SIGKILL leftover present: leftover swept, pinned download verified twice, bin dir holds only oss-decrypt; no checksum temp file left in the system temp dir.
+
+## Ship fix round 3 (2026-10-09, final per IRON LAW #3)
+- ensure-decrypt-cli.test.sh 26/26 (~20 s, no network); guard covers commands + agents; acceptance 3/3; all shell suites: only the 3 pre-existing main failures.
+- Mutants killed: MINIMUM raised (fast-path test RED, proves it was the vacuous one fixed), trap after mktemps, agent text reverted.
+- Real GitHub install after the round: both hashes verified, bin dir holds only oss-decrypt.

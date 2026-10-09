@@ -97,3 +97,15 @@ Version bump: plugin patch version per repo convention, so marketplace users pic
 - [x] G7 (quality N3) Drop redundant `chmod 600` (mktemp already creates 0600) — comment states the guarantee.
 - [x] G8 (sec quality note, IRON LAW #1b) Commands' Step 4 failure text "Run /oss:login for manual setup" loops back into the same hook → accurate guidance in every command; guard test: no command says "for manual setup".
 - Deferred, unchanged: P1 (auditor suggests a cheap inode/size/mtime marker variant — logged as a follow-up proposal for Boss).
+
+## Ship fix round 3 (2026-10-09) — gate iteration 3 (quality FAIL on M1; security PASS; perf PASS w/ 1 Medium). LAST round (IRON LAW #3 cap).
+- [x] H1 (quality M1, security #1, IRON LAW #1b) agents/figma-design-agent.md + agents/rust-pro.md still loop to /oss:login. Guard widened to every shipped `ensure-decrypt-cli.sh ||` caller (repo-wide minus .git/node_modules/.oss/__tests__); RED on the 2 agents, then same replacement text.
+- [x] H2 (perf F1) test_binary_exists: downloaded the real 50 MB binary (mock reported v1.1.0 < MINIMUM) and could never fail (`|| true; exit_code=$?`). Mock reports v1.2.1 (the real fast path its name describes), rc captured properly, offline curl stub must stay UNcalled. RED: raise MINIMUM_VERSION → test fails.
+- [x] H3 (quality I1, security #3) Trap set before both mktemp calls (vars initialised empty) — no untrapped window.
+- [x] H4 (security #4) Comment: the sweep relies on CURL_OPTS never preserving server timestamps (-R would make a live download look stale).
+- [x] H5 (perf F3) Interrupt test polls for curl to start instead of a fixed sleep.
+### Deferred after the cap (follow-up proposals, not in this PR)
+- sec #2: curl orphaned by a TERM aimed at the hook pid alone can recreate a non-executable temp file after the trap; swept within 60 min; Ctrl-C/hangup signal the whole group. Accepted.
+- sec #5 (pre-existing): build job checkout persists its token while running npm; add top-level `permissions: contents: read` + persist-credentials false — separate CI-hardening PR.
+- perf F2: hooks/__tests__ shell suites are not wired into CI — separate PR.
+- P1 re-verify installed binary (auditor's marker idea) — product decision for Boss.
