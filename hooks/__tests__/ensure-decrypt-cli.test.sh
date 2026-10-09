@@ -100,7 +100,10 @@ test_creates_bin_dir() {
     rm -rf "$TEST_HOME/.oss/bin"
 
     # Run hook (will fail on download, but should create dir first)
-    "$HOOK_SCRIPT" 2>&1 || true
+    OFFLINE_LOG="$TEST_HOME/offline.log"
+    local offline_mock; offline_mock=$(mktemp -d)
+    printf '#!/bin/sh\necho "$*" >> "%s"\nexit 22\n' "$OFFLINE_LOG" > "$offline_mock/curl"; chmod +x "$offline_mock/curl"
+    PATH="$offline_mock:$PATH" "$HOOK_SCRIPT" 2>&1 || true
 
     # Check if directory was created
     if [[ -d "$TEST_HOME/.oss/bin" ]]; then
@@ -109,6 +112,7 @@ test_creates_bin_dir() {
         fail "$test_name" "directory exists" "directory missing"
     fi
 
+    if [[ ! -s "$OFFLINE_LOG" ]]; then fail "$test_name (offline)" "download served by an offline stub" "real network used"; ((TESTS_RUN++)); fi
     teardown_test_env
 }
 
@@ -171,8 +175,12 @@ MOCKEOF
     # Run hook - should detect outdated version and try to update
     # (download will fail in test env, but we check the output message)
     local result
-    result=$("$HOOK_SCRIPT" 2>&1) || true
+    OFFLINE_LOG="$TEST_HOME/offline.log"
+    local offline_mock; offline_mock=$(mktemp -d)
+    printf '#!/bin/sh\necho "$*" >> "%s"\nexit 22\n' "$OFFLINE_LOG" > "$offline_mock/curl"; chmod +x "$offline_mock/curl"
+    result=$(PATH="$offline_mock:$PATH" "$HOOK_SCRIPT" 2>&1) || true
 
+    if [[ ! -s "$OFFLINE_LOG" ]]; then fail "$test_name (offline)" "download served by an offline stub" "real network used"; ((TESTS_RUN++)); fi
     teardown_test_env
 
     if echo "$result" | grep -q "outdated"; then
@@ -285,7 +293,7 @@ test_aarch64_installs_arm64_binary() {
     staging_dir=$(mktemp -d)
     cat > "$staging_dir/binary" << 'BINEOF'
 #!/bin/bash
-if [[ "$1" == "--version" ]]; then echo "oss-decrypt v1.2.2"
+if [[ "$1" == "--version" ]]; then echo "oss-decrypt v1.2.1"
 elif [[ "$1" == "--setup" ]]; then exit 0
 else echo "mock"; fi
 BINEOF
@@ -350,7 +358,7 @@ test_checksum_match_accepts_binary() {
     staging_dir=$(mktemp -d)
     cat > "$staging_dir/binary" << 'BINEOF'
 #!/bin/bash
-if [[ "$1" == "--version" ]]; then echo "oss-decrypt v1.2.0"
+if [[ "$1" == "--version" ]]; then echo "oss-decrypt v1.2.1"
 elif [[ "$1" == "--setup" ]]; then exit 0
 else echo "mock"; fi
 BINEOF
@@ -740,7 +748,7 @@ test_failures_do_not_loop_to_login() {
     echo "$(printf 'd%.0s' {1..64})  $art" > "$st/manifest"
     run_fresh_install "$st" HOME="$TEST_HOME" OSS_DECRYPT_CHECKSUMS="$st/manifest"
     local hook_refs; hook_refs=$(grep -c "manual installation" "$HOOK_SCRIPT")
-    if [[ $RUN_RC -ne 0 && "$hook_refs" == "0" ]] && grep -qi "github.com" <<<"$RUN_OUT"; then pass "$test_name"
+    if [[ $RUN_RC -ne 0 && "$hook_refs" == "0" ]] && grep -q "Check that github.com is reachable and the plugin is up to date" <<<"$RUN_OUT"; then pass "$test_name"
     else fail "$test_name" "no 'manual installation' anywhere in the hook; output names github.com" "rc=$RUN_RC refs=$hook_refs"; fi
     rm -rf "$st"; teardown_test_env
 }
@@ -777,6 +785,38 @@ test_committed_manifest_is_complete_and_matches_tag() {
     if [[ $ok == 1 ]]; then pass "$test_name"; else fail "$test_name" "4 valid entries + tag $tag in header" "$(cat "$mf")"; fi
 }
 
+
+test_stale_temp_files_swept_fresh_kept() {
+    local test_name="Install sweeps temp files >60 min old (left by SIGKILL) but keeps a concurrent install's fresh one"
+    ((TESTS_RUN++)); setup_test_env
+    mkdir -p "$TEST_HOME/.oss/bin"
+    echo old > "$TEST_HOME/.oss/bin/.oss-decrypt.STALE1"; touch -t 202001010000 "$TEST_HOME/.oss/bin/.oss-decrypt.STALE1"
+    echo new > "$TEST_HOME/.oss/bin/.oss-decrypt.FRESH1"
+    local urls="$TEST_HOME/urls.log"
+    record_urls_install "$urls" HOME="$TEST_HOME"
+    if [[ ! -e "$TEST_HOME/.oss/bin/.oss-decrypt.STALE1" && -e "$TEST_HOME/.oss/bin/.oss-decrypt.FRESH1" ]]; then pass "$test_name"
+    else fail "$test_name" "stale removed, fresh kept" "stale=$([[ -e "$TEST_HOME/.oss/bin/.oss-decrypt.STALE1" ]] && echo kept || echo gone) fresh=$([[ -e "$TEST_HOME/.oss/bin/.oss-decrypt.FRESH1" ]] && echo kept || echo gone)"; fi
+    teardown_test_env
+}
+
+test_interrupted_checksum_download_leaves_no_temp_file() {
+    local test_name="TERM during the checksum download leaves no temp file behind"
+    ((TESTS_RUN++)); setup_test_env
+    local mock; mock=$(mktemp -d); local outs="$TEST_HOME/outs.log"
+    cat > "$mock/curl" << CURLEOF
+#!/bin/bash
+out=""; url=""; prev=""; for a in "\$@"; do [[ "\$prev" == "-o" ]] && out="\$a"; [[ "\$a" == https://* ]] && url="\$a"; prev="\$a"; done
+echo "\$out" >> "$outs"; echo partial > "\$out"; [[ "\$url" == *.sha256 ]] && sleep 2; exit 0
+CURLEOF
+    chmod +x "$mock/curl"
+    HOME="$TEST_HOME" PATH="$mock:$PATH" bash "$HOOK_SCRIPT" >/dev/null 2>&1 &
+    local pid=$!; sleep 1; kill -TERM "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; sleep 1
+    local left=0 f; while read -r f; do [[ -e "$f" ]] && ((left++)); done < "$outs"
+    if [[ -s "$outs" && "$left" == "0" ]]; then pass "$test_name"; else fail "$test_name" "every curl -o target removed" "$left left: $(cat "$outs" 2>/dev/null | tr '\n' ' ')"; fi
+    while read -r f; do rm -f "$f"; done < "$outs" 2>/dev/null
+    rm -rf "$mock"; teardown_test_env
+}
+
 echo "Running ensure-decrypt-cli.sh tests..."
 echo "======================================="
 
@@ -803,6 +843,8 @@ test_invalid_tag_rejected_without_network
 test_failures_do_not_loop_to_login
 test_manifest_found_beside_hook
 test_committed_manifest_is_complete_and_matches_tag
+test_stale_temp_files_swept_fresh_kept
+test_interrupted_checksum_download_leaves_no_temp_file
 
 echo ""
 echo "======================================="
