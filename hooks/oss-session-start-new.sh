@@ -34,6 +34,7 @@ HOOKS_TO_COPY=(
     "oss-detect-playwright.sh"
     "fetch-iron-laws.sh"
     "ensure-decrypt-cli.sh"
+    "oss-decrypt-checksums.txt"
 )
 for hook in "${HOOKS_TO_COPY[@]}"; do
     if [[ -f "$PLUGIN_ROOT/hooks/$hook" ]]; then
