@@ -48,3 +48,6 @@ Real GitHub clean machine after the round: pinned download with hardened curl â†
 | command-decrypt-failure-text.test.sh (new) | pass (55 commands updated) |
 | all shell suites | only the 3 pre-existing main failures |
 Mutants killed: no sweep, sweep-all (would delete a concurrent install), checksum file outside trap, guidance removed. Two vacuous drafts caught and fixed before GREEN (TERM test passed on old code; TMPDIR ignored by macOS mktemp).
+
+## Integration after round 2 (real GitHub)
+- Fresh install with a stale SIGKILL leftover present: leftover swept, pinned download verified twice, bin dir holds only oss-decrypt; no checksum temp file left in the system temp dir.
