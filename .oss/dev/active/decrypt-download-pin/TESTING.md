@@ -38,3 +38,13 @@ Real GitHub clean machine after the round: pinned download with hardened curl â†
 ## Integration after ship fix round 1 (2026-10-09, real GitHub)
 - UPDATE path: v1.0.0 stub present â†’ hook downloads pinned release, both hashes verified, atomically replaced (755), no temp leftovers.
 - FAILED update (committed hash forced wrong): old binary byte-identical, actionable message, no leftovers.
+
+## Ship fix round 2 (2026-10-09)
+| Suite | Result |
+|---|---|
+| ensure-decrypt-cli.test.sh | 25/25 (+stale sweep, +checksum-interrupt; offline stubs in 2 legacy tests) |
+| session-start-copy.test.sh | 7/7 |
+| release-workflows.test.sh | 9/9 |
+| command-decrypt-failure-text.test.sh (new) | pass (55 commands updated) |
+| all shell suites | only the 3 pre-existing main failures |
+Mutants killed: no sweep, sweep-all (would delete a concurrent install), checksum file outside trap, guidance removed. Two vacuous drafts caught and fixed before GREEN (TERM test passed on old code; TMPDIR ignored by macOS mktemp).

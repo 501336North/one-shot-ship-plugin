@@ -86,3 +86,14 @@ Version bump: plugin patch version per repo convention, so marketplace users pic
 - sec P1 re-verify installed binary every run: hashes ~50 MB on EVERY /oss:* command and forces re-download for every customer whose binary ≠ v1.2.3 bytes → conflicts with Boss's "don't break existing customers". Proposal for a separate decision.
 - sec L3 test seams (OSS_DECRYPT_CHECKSUMS/TAG, plugin-root) in production: accepted — requires same-uid/env control, which already allows replacing hooks or the binary directly (auditor's own assessment).
 - sec P3 emit_oss_error same-uid trust; sec P4 in-release .sha256 kept as defence in depth: accepted, pre-existing.
+
+## Ship fix round 2 (2026-10-09) — gate iteration 2 (quality PASS, perf PASS, security PASS; Low/Info only)
+- [x] G1 (sec N1, quality N2, perf I3) Measured: EXIT trap already cleans up on TERM/HUP/INT; only SIGKILL leaks (untrappable). Fix: sweep ~/.oss/bin/.oss-decrypt.* older than 60 min at install start (never a concurrent install's fresh file), and put the checksum temp file under the same trap. RED: stale swept + fresh kept; TERM during the checksum download leaves nothing.
+- [x] G2 (sec N2/N3/N4, perf I2) CI "Keep Latest" step: `if: always()` (runs even if "Create Release" fails after taking Latest), checkout `persist-credentials: false`, tag read with `head -n1`.
+- [x] G3 (perf L1, provenance) Unwired oss-session-start-new/-test also chmod only *.sh (all three copy loops agree; guard test covers all variants).
+- [x] G4 (quality L1) Actionable-message test asserts the guidance text itself (was vacuous: "Downloading from: https://github.com" always matched).
+- [x] G5 (quality L2) test_creates_bin_dir / test_outdated_version_triggers_update stub curl (no real 50 MB download in the unit suite).
+- [x] G6 (quality N1) Remaining stubs report v1.2.1 (not v1.2.0/v1.2.2).
+- [x] G7 (quality N3) Drop redundant `chmod 600` (mktemp already creates 0600) — comment states the guarantee.
+- [x] G8 (sec quality note, IRON LAW #1b) Commands' Step 4 failure text "Run /oss:login for manual setup" loops back into the same hook → accurate guidance in every command; guard test: no command says "for manual setup".
+- Deferred, unchanged: P1 (auditor suggests a cheap inode/size/mtime marker variant — logged as a follow-up proposal for Boss).
