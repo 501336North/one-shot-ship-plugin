@@ -19,9 +19,14 @@
 #   - the API body is empty, < 500 bytes, > 256KB, HTML, or has no "IRON LAW"
 # A failed fetch sets a 1h backoff; only a validated write marks the cache fresh (24h).
 #
-# Exit codes: 0 done or nothing to do (refresh mode always exits 0)
-#             1 install mode could not install
-#             2 bad arguments
+# Exit codes (refresh mode always exits 0, so session start never fails):
+#   0  done or nothing to do
+#   1  install mode failed for another reason (lock held, temp file, missing helper)
+#   2  bad arguments
+#   3  install mode refused: CLAUDE.md is unsafe to write (symlink, not a regular file, outside
+#      the project, the project is $HOME, malformed markers). Nothing written.
+#   4  install mode has no valid laws to write (not logged in, no key, API unreachable or
+#      non-200, invalid body). Nothing written.
 
 set -uo pipefail
 
@@ -41,6 +46,8 @@ MAX_BODY_BYTES=262144
 
 MARKER_START="<!-- IRON LAWS START - Do not edit manually, updated by /oss:login -->"
 MARKER_END="<!-- IRON LAWS END -->"
+# Written by /oss:ideate 2026-02-27..03-18 (#146-#161); read as a START, rewritten as MARKER_START.
+MARKER_LEGACY_START="<!-- IRON LAWS START -->"
 
 warn() { printf 'oss-iron-laws-sync: %s\n' "$*" >&2; }
 
@@ -52,7 +59,7 @@ case "${1:-}" in
 esac
 
 # Exit without writing: refresh mode is silent-success, install mode reports failure.
-give_up() { [[ "$MODE" == install ]] && exit 1; exit 0; }
+give_up() { [[ "$MODE" == install ]] && exit "${1:-1}"; exit 0; }
 
 mtime() {
     if [[ "$(uname)" == "Darwin" ]]; then stat -f %m "$1" 2>/dev/null || echo 0
@@ -83,13 +90,20 @@ resolve_target() {
     if [[ "$parent_real" != "$proj_real" ]]; then warn "refusing: CLAUDE.md resolves outside the project"; return 1; fi
 }
 
+# Marker lines are compared after dropping trailing whitespace, \r included (CRLF files).
+# Only whole lines equal to a marker count; prose that mentions one is ordinary text.
+MARKER_AWK='
+    function norm(x) { sub(/[[:space:]]+$/, "", x); return x }
+    function is_start(x) { x = norm(x); return x == s || x == ls }
+    function is_end(x) { return norm(x) == e }'
+awk_markers() { awk -v s="$MARKER_START" -v ls="$MARKER_LEGACY_START" -v e="$MARKER_END" "$@"; }
+
 # none = no marker lines, one = exactly one START before exactly one END, bad = anything else.
-# Only whole lines equal to the markers count; prose that mentions them is ordinary text.
 block_state() {
     [[ -f "$CLAUDE_MD" ]] || { echo none; return; }
-    awk -v s="$MARKER_START" -v e="$MARKER_END" '
-        $0 == s { ns++; if (!fs) fs = NR }
-        $0 == e { ne++; if (!fe) fe = NR }
+    awk_markers "$MARKER_AWK"'
+        is_start($0) { ns++; if (!fs) fs = NR }
+        is_end($0) { ne++; if (!fe) fe = NR }
         END {
             if (ns == 0 && ne == 0) print "none"
             else if (ns == 1 && ne == 1 && fs < fe) print "one"
@@ -98,12 +112,53 @@ block_state() {
 }
 
 # --- fetch + validate ------------------------------------------------------------------------
-read_api_key() { # real JSON parsing; the key is printed only into the caller's variable
-    node -e '
-        try {
-            const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-            if (typeof c.apiKey === "string") process.stdout.write(c.apiKey);
-        } catch (e) {}' "$CONFIG_FILE" 2>/dev/null
+# Prints the apiKey from $CONFIG_FILE into the caller's $(...) and nowhere else. Each parser is
+# given the file PATH, never the key, so the key is not in any process's argv.
+# node, else python3, else read_api_key_flat. Prints nothing when the key can't be read.
+read_api_key() {
+    if command -v node >/dev/null 2>&1; then
+        node -e '
+            try {
+                const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+                if (typeof c.apiKey === "string") process.stdout.write(c.apiKey);
+            } catch (e) {}' "$CONFIG_FILE" 2>/dev/null
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 -c '
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        c = json.load(f)
+    if isinstance(c, dict) and isinstance(c.get("apiKey"), str):
+        sys.stdout.write(c["apiKey"])
+except Exception:
+    pass' "$CONFIG_FILE" 2>/dev/null
+    else
+        read_api_key_flat
+    fi
+}
+
+# Last resort, pure bash: the flat `"apiKey": "..."` shape that /oss:login writes. Fails closed
+# (prints nothing) unless "apiKey" occurs exactly once, is followed by `: "`, and its string
+# ends with an unescaped `"` using only the escapes \" \\ \/ and no control characters.
+read_api_key_flat() {
+    local json rest key="" c sep='^[[:space:]]*:[[:space:]]*"'
+    json=$(< "$CONFIG_FILE") || return 1
+    rest=${json#*\"apiKey\"}
+    [[ "$rest" != "$json" && "$rest" != *'"apiKey"'* ]] || return 1
+    [[ "$rest" =~ $sep ]] || return 1
+    rest=${rest:${#BASH_REMATCH[0]}}
+    while [[ -n "$rest" ]]; do
+        c=${rest:0:1}; rest=${rest:1}
+        case "$c" in
+            '"') printf '%s' "$key"; return 0 ;;
+            '\')
+                c=${rest:0:1}; rest=${rest:1}
+                case "$c" in '"' | '\' | '/') key+=$c ;; *) return 1 ;; esac ;;
+            [[:cntrl:]]) return 1 ;;
+            *) key+=$c ;;
+        esac
+    done
+    return 1
 }
 
 # Writes the validated, marker-free laws to $1. Returns 1 on any failure.
@@ -160,31 +215,33 @@ replace_claude_md() {
 # Sets RESULT to "refreshed", "added" or "skipped"; returns 1 on a refusal.
 # Runs in the main shell (not $(...)) so the EXIT trap can remove its temp file.
 write_block() {
-    local body="$1" new="$WORK/new" state
-    resolve_target || return 1
+    local body="$1" new="$WORK/new" state eol=""
+    resolve_target || return 3
     state=$(block_state)
+    # Lines we add follow the file's line ending (its first line); user lines are copied as-is.
+    [[ -f "$CLAUDE_MD" ]] && head -n 1 "$CLAUDE_MD" | grep -q $'\r$' && eol=$'\r'
     case "$MODE/$state" in
         */one)
-            awk -v s="$MARKER_START" -v e="$MARKER_END" -v body="$body" '
-                $0 == e { skip = 0 }
+            awk_markers -v body="$body" -v eol="$eol" "$MARKER_AWK"'
+                is_start($0) { print s eol; print eol; while ((getline l < body) > 0) print l eol; print eol; skip = 1; next }
+                is_end($0) { print e eol; skip = 0; next }
                 !skip { print }
-                $0 == s { print ""; while ((getline l < body) > 0) print l; print ""; skip = 1 }
             ' "$CLAUDE_MD" > "$new" || return 1
             replace_claude_md "$new" && RESULT=refreshed ;;
         install/none)
             {
                 if [[ -s "$CLAUDE_MD" ]]; then
                     cat "$CLAUDE_MD"
-                    [[ -n "$(tail -c 1 "$CLAUDE_MD")" ]] && printf '\n'
-                    printf '\n'
+                    [[ -n "$(tail -c 1 "$CLAUDE_MD")" ]] && printf '%s\n' "$eol"
+                    printf '%s\n' "$eol"
                 fi
-                printf '%s\n\n' "$MARKER_START"
-                cat "$body"
-                printf '\n%s\n' "$MARKER_END"
+                printf '%s\n%s\n' "$MARKER_START$eol" "$eol"
+                awk -v eol="$eol" '{ print $0 eol }' "$body"
+                printf '%s\n%s\n' "$eol" "$MARKER_END$eol"
             } > "$new" || return 1
             replace_claude_md "$new" && RESULT=added ;;
         refresh/none) RESULT=skipped ;;
-        *) warn "skipping: CLAUDE.md does not have exactly one START line before one END line"; return 1 ;;
+        *) warn "skipping: CLAUDE.md does not have exactly one START line before one END line"; return 3 ;;
     esac
 }
 
@@ -196,17 +253,17 @@ cleanup() {
 }
 
 main() {
-    resolve_target || give_up
+    resolve_target || give_up 3
     local state; state=$(block_state)
     if [[ "$state" == bad ]]; then
-        warn "skipping: CLAUDE.md does not have exactly one START line before one END line"; give_up
+        warn "skipping: CLAUDE.md does not have exactly one START line before one END line"; give_up 3
     fi
     if [[ "$MODE" == refresh ]]; then
         [[ "$state" == one ]] || exit 0
         younger_than "$LAST_CHECK_FILE" "$CACHE_TTL_SECONDS" && exit 0
         younger_than "$BACKOFF_FILE" "$BACKOFF_SECONDS" && exit 0
     fi
-    [[ -f "$CONFIG_FILE" ]] || { warn "not logged in ($CONFIG_FILE missing)"; give_up; }
+    [[ -f "$CONFIG_FILE" ]] || { warn "not logged in ($CONFIG_FILE missing)"; give_up 4; }
     # shellcheck source=oss-api-curl.sh
     source "$SCRIPT_DIR/oss-api-curl.sh" 2>/dev/null || { warn "missing $SCRIPT_DIR/oss-api-curl.sh"; give_up; }
 
@@ -216,11 +273,11 @@ main() {
     local body="$WORK/body"
     if ! fetch_body "$body"; then
         touch "$BACKOFF_FILE"
-        give_up
+        give_up 4
     fi
 
     acquire_lock || give_up
-    write_block "$body" || give_up
+    write_block "$body" || give_up $?
     if [[ "$RESULT" != skipped ]]; then
         touch "$LAST_CHECK_FILE"
         rm -f "$BACKOFF_FILE"

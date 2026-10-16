@@ -386,6 +386,194 @@ test_json_config_parsed() {
     teardown
 }
 
+# =============================================================================================
+# S1 Legacy marker (ship gate round 2)
+# /oss:ideate wrote "<!-- IRON LAWS START -->" + the END line from 2026-02-27 (#146) to 03-18 (#161).
+# =============================================================================================
+LEGACY_START='<!-- IRON LAWS START -->'
+
+test_legacy_block_canonicalised() {
+    local mode
+    for mode in refresh install; do
+        local name="S1: legacy START marker ($mode) → one canonical block, user content kept"; ((TESTS_RUN++)); setup
+        printf '%s\n' "# My Project" "Above." "$LEGACY_START" "# OLD IRON LAWS" "$END" "Below." > "$T/proj/CLAUDE.md"
+        stale
+        if [[ $mode == refresh ]]; then run_sync; else run_sync --install; fi
+        local f="$T/proj/CLAUDE.md" s l e
+        s=$(count_line "$START" "$f"); l=$(count_line "$LEGACY_START" "$f"); e=$(count_line "$END" "$f")
+        if [[ $RC -eq 0 && "$s" == "1" && "$l" == "0" && "$e" == "1" ]] && grep -q "FRESH FROM API" "$f" \
+            && ! grep -q "# OLD IRON LAWS" "$f" && grep -qx "Above." "$f" && grep -qx "Below." "$f"; then pass "$name"
+        else fail "$name" "rc 0, 1 canonical START, 0 legacy, 1 END, fresh body, user lines kept" "rc=$RC start=$s legacy=$l end=$e err=$ERR"; fi
+        teardown
+    done
+}
+
+# =============================================================================================
+# S4 CRLF and trailing whitespace on marker lines (ship gate round 2)
+# =============================================================================================
+count_norm() { tr -d '\r' < "$2" | sed 's/[[:space:]]*$//' | grep -cxF -- "$1" || true; }
+all_crlf() { # every line ends in \r\n
+    local total crlf; total=$(wc -l < "$1" | tr -d ' '); crlf=$(grep -c $'\r$' "$1" || true)
+    [[ "$total" -gt 0 && "$total" == "$crlf" ]]
+}
+
+test_crlf_block_refreshed_in_place() {
+    local mode
+    for mode in refresh install; do
+        local name="S4: CRLF CLAUDE.md with one block ($mode) → one block refreshed, still CRLF"; ((TESTS_RUN++)); setup
+        printf '%s\r\n' "# Mine" "Above." "$START" "# OLD IRON LAWS" "$END" "Below." > "$T/proj/CLAUDE.md"
+        stale
+        if [[ $mode == refresh ]]; then run_sync; else run_sync --install; fi
+        local f="$T/proj/CLAUDE.md" s e crlf=n
+        s=$(count_norm "$START" "$f"); e=$(count_norm "$END" "$f"); all_crlf "$f" && crlf=y
+        if [[ $RC -eq 0 && "$s" == "1" && "$e" == "1" && "$crlf" == y ]] && grep -q "FRESH FROM API" "$f" \
+            && ! grep -q "# OLD IRON LAWS" "$f" && grep -q "^Below."$'\r'"$" "$f"; then pass "$name"
+        else fail "$name" "rc 0, 1 START, 1 END, every line CRLF, refreshed, user lines kept" "rc=$RC start=$s end=$e crlf=$crlf err=$ERR"; fi
+        teardown
+    done
+}
+
+test_trailing_space_marker_counts() {
+    local mode
+    for mode in refresh install; do
+        local name="S4: marker lines with trailing spaces/tabs ($mode) → treated as the block"; ((TESTS_RUN++)); setup
+        printf '%s\n' "# Mine" "$START  " "# OLD IRON LAWS" "$END"$'\t' "Below." > "$T/proj/CLAUDE.md"
+        stale
+        if [[ $mode == refresh ]]; then run_sync; else run_sync --install; fi
+        local f="$T/proj/CLAUDE.md" s e
+        s=$(count_norm "$START" "$f"); e=$(count_norm "$END" "$f")
+        if [[ $RC -eq 0 && "$s" == "1" && "$e" == "1" ]] && grep -q "FRESH FROM API" "$f" && ! grep -q "# OLD IRON LAWS" "$f"; then pass "$name"
+        else fail "$name" "rc 0, 1 START, 1 END, refreshed" "rc=$RC start=$s end=$e err=$ERR"; fi
+        teardown
+    done
+}
+
+test_crlf_install_appends_crlf() {
+    local name="S4: --install on a CRLF CLAUDE.md without a block appends a CRLF block"; ((TESTS_RUN++)); setup
+    printf '%s\r\n' "# Mine" "Keep me." > "$T/proj/CLAUDE.md"
+    run_sync --install
+    local f="$T/proj/CLAUDE.md" crlf=n; all_crlf "$f" && crlf=y
+    if [[ $RC -eq 0 && "$(count_norm "$START" "$f")" == "1" && "$crlf" == y ]] && grep -q "FRESH FROM API" "$f"; then pass "$name"
+    else fail "$name" "rc 0, one block, every line CRLF" "rc=$RC start=$(count_norm "$START" "$f") crlf=$crlf"; fi
+    teardown
+}
+
+# =============================================================================================
+# S3 Node-free config parsing (ship gate round 2)
+# node → python3 → strict flat-shape fallback. The key is never printed and never in argv.
+# =============================================================================================
+# hide_tools <names...>: sets HIDDEN_PATH to the system dirs minus those tools (plus T/bin's curl).
+hide_tools() {
+    local d f b skip h
+    mkdir -p "$T/sys"
+    for d in /usr/bin /bin /usr/sbin /sbin; do
+        for f in "$d"/*; do
+            b=${f##*/}; skip=n
+            for h in "$@"; do [[ "$b" == "$h" || "$b" == "$h".* || "$b" == "$h"[0-9]* ]] && skip=y; done
+            [[ $skip == n && ! -e "$T/sys/$b" ]] && ln -s "$f" "$T/sys/$b"
+        done
+    done
+    HIDDEN_PATH="$T/bin:$T/sys"
+}
+# A python3 on HIDDEN_PATH that records its argv, so the test can prove the key is not in it.
+python3_recorder() {
+    local real; real=$(command -v python3)
+    mkdir -p "$T/py"
+    printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s/python3-argv"\nexec "%s" "$@"\n' "$T/shim" "$real" > "$T/py/python3"
+    chmod +x "$T/py/python3"
+    HIDDEN_PATH="$HIDDEN_PATH:$T/py"
+}
+# The JSON text "fake\"quo\\te-KEY" decodes to fake"quo\te-KEY, which curl's config file
+# receives re-escaped as fake\"quo\\te-KEY.
+ESC_JSON="fake\\\"quo\\\\te-$FAKE_KEY"
+ESC_CURLCFG="Authorization: Bearer fake\\\"quo\\\\te-$FAKE_KEY"
+run_hidden() { # like run_sync, with PATH=HIDDEN_PATH
+    RC=0
+    (cd "$T" && HOME="$T/home" CLAUDE_PROJECT_DIR="$T/proj" PATH="$HIDDEN_PATH" \
+        /usr/bin/perl -e 'alarm 30; exec @ARGV' bash "$HOOK_SCRIPT" "$@" </dev/null >"$T/out" 2>"$T/err") || RC=$?
+    OUT=$(cat "$T/out"); ERR=$(cat "$T/err")
+}
+
+test_key_without_node() {
+    local name="S3: node absent → python3 reads the key (incl. escaped quote and backslash), path not key in argv"; ((TESTS_RUN++)); setup
+    printf '{\n  "apiUrl": "https://example.invalid",\n  "apiKey": "%s"\n}\n' "$ESC_JSON" > "$T/home/.oss/config.json"
+    block_file "$T/proj/CLAUDE.md"; stale
+    hide_tools node python python3; python3_recorder
+    run_hidden
+    local py_used=n key_in_argv=n printed=n
+    [[ -s "$T/shim/python3-argv" ]] && py_used=y
+    grep -qF "$FAKE_KEY" "$T/shim/python3-argv" "$T/shim/argv" 2>/dev/null && key_in_argv=y
+    [[ "$OUT$ERR" == *"$FAKE_KEY"* ]] && printed=y
+    if grep -qF "$ESC_CURLCFG" "$T/shim/stdin" 2>/dev/null && [[ $py_used == y && $key_in_argv == n && $printed == n ]] \
+        && grep -q "FRESH FROM API" "$T/proj/CLAUDE.md"; then pass "$name"
+    else fail "$name" "decoded key in curl config, python3 used, key not in argv/output" "py_used=$py_used key_in_argv=$key_in_argv printed=$printed err=${ERR//$FAKE_KEY/<KEY>}"; fi
+    teardown
+}
+
+test_key_without_node_or_python() {
+    local name="S3: node and python3 absent → strict fallback reads the key (incl. escaped quote and backslash)"; ((TESTS_RUN++)); setup
+    printf '{\n  "apiUrl" : "https://example.invalid",\n  "apiKey"  :  "%s",\n  "userId": "u1"\n}\n' "$ESC_JSON" > "$T/home/.oss/config.json"
+    block_file "$T/proj/CLAUDE.md"; stale
+    hide_tools node python python3
+    run_hidden
+    if grep -qF "$ESC_CURLCFG" "$T/shim/stdin" 2>/dev/null && [[ "$OUT$ERR" != *"$FAKE_KEY"* ]] \
+        && grep -q "FRESH FROM API" "$T/proj/CLAUDE.md"; then pass "$name"
+    else fail "$name" "decoded key in curl config, key not printed, refreshed" "rc=$RC err=${ERR//$FAKE_KEY/<KEY>} stdin=$(sed "s/$FAKE_KEY/<KEY>/" "$T/shim/stdin" 2>/dev/null | head -2)"; fi
+    teardown
+}
+
+test_fallback_fails_closed() {
+    local name="S3: fallback meets an escape it does not handle (a JSON unicode escape) → no curl call, file unchanged"; ((TESTS_RUN++)); setup
+    printf '{"apiKey": "abc\\u0041-%s"}\n' "$FAKE_KEY" > "$T/home/.oss/config.json"
+    block_file "$T/proj/CLAUDE.md"; local before; before=$(sum "$T/proj/CLAUDE.md"); stale
+    hide_tools node python python3
+    run_hidden
+    if [[ "$(curl_calls)" == "0" && "$(sum "$T/proj/CLAUDE.md")" == "$before" && "$OUT$ERR" != *"$FAKE_KEY"* ]]; then pass "$name"
+    else fail "$name" "no curl, unchanged, key not printed" "curl=$(curl_calls) err=${ERR//$FAKE_KEY/<KEY>}"; fi
+    teardown
+}
+
+# =============================================================================================
+# S2 --install exit codes: /oss:login stops Step 4 on either, with a different message
+#    3 = refused, CLAUDE.md is unsafe to write   4 = no valid laws to write (login/API/body)
+# =============================================================================================
+test_install_refusal_exit_3() {
+    local label
+    for label in symlink directory home malformed; do
+        local name="S2: --install refuses ($label) → exit 3, nothing written"; ((TESTS_RUN++)); setup
+        local proj="$T/proj"
+        case $label in
+            symlink) printf '# victim\n' > "$T/victim.md"; ln -s "$T/victim.md" "$T/proj/CLAUDE.md" ;;
+            directory) mkdir "$T/proj/CLAUDE.md" ;;
+            home) proj="$T/home" ;;
+            malformed) printf '%s\n' "# Mine" "$START" "no end" > "$T/proj/CLAUDE.md" ;;
+        esac
+        local before="absent"; [[ -f "$proj/CLAUDE.md" ]] && before=$(sum "$proj/CLAUDE.md")
+        PROJ="$proj" run_sync --install
+        local after="absent"; [[ -f "$proj/CLAUDE.md" ]] && after=$(sum "$proj/CLAUDE.md")
+        if [[ $RC -eq 3 && "$after" == "$before" && -n "$ERR" && -z "$OUT" ]]; then pass "$name"
+        else fail "$name" "exit 3, unchanged, reason on stderr, no stdout" "rc=$RC changed=$([[ $after == "$before" ]] && echo n || echo y) err=$ERR"; fi
+        teardown
+    done
+}
+
+test_install_no_laws_exit_4() {
+    local label
+    for label in curl-error http-500 no-key; do
+        local name="S2: --install gets no valid laws ($label) → exit 4, nothing written"; ((TESTS_RUN++)); setup
+        printf '# Mine\n' > "$T/proj/CLAUDE.md"; local before; before=$(sum "$T/proj/CLAUDE.md")
+        case $label in
+            curl-error) printf '#!/bin/bash\nexit 7\n' > "$T/bin/curl" ;;
+            http-500) printf '500' > "$T/shim/code" ;;
+            no-key) printf '{"userId": "u1"}\n' > "$T/home/.oss/config.json" ;;
+        esac
+        run_sync --install
+        if [[ $RC -eq 4 && "$(sum "$T/proj/CLAUDE.md")" == "$before" && -n "$ERR" && -z "$OUT" ]]; then pass "$name"
+        else fail "$name" "exit 4, unchanged, reason on stderr, no stdout" "rc=$RC err=$ERR"; fi
+        teardown
+    done
+}
+
 echo "Running oss-iron-laws-sync.sh safety tests..."
 echo "======================================="
 test_refresh_never_creates
@@ -412,6 +600,15 @@ test_concurrent_installs_one_block
 test_lock_held_blocks_write
 test_stale_lock_cleared
 test_json_config_parsed
+test_legacy_block_canonicalised
+test_crlf_block_refreshed_in_place
+test_trailing_space_marker_counts
+test_crlf_install_appends_crlf
+test_key_without_node
+test_key_without_node_or_python
+test_fallback_fails_closed
+test_install_refusal_exit_3
+test_install_no_laws_exit_4
 echo ""
 echo "======================================="
 echo "Results: $TESTS_PASSED/$TESTS_RUN passed, $TESTS_FAILED failed"

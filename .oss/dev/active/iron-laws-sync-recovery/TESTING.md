@@ -19,6 +19,17 @@ Real API (temp HOME, copied config): `--install` created 1 START/1 END block (11
 
 T3 (real API, temp HOME): CLAUDE.md created with one START/END block incl. "IRON LAW #1"; second run and forced-stale run byte-identical; existing "# OSS Dev Workflow" + user lines + unterminated last line preserved.
 
+Round 2 (S1-S4), RED -> GREEN:
+| Test | RED | GREEN |
+|---|---|---|
+| iron-laws-sync-safety S1 legacy marker (refresh, install) | 2 FAIL (skipped as malformed; install rc=1) | pass |
+| iron-laws-sync-safety S4 CRLF/trailing-space (5 tests) | 5 FAIL (install start=2: duplicate block) | pass |
+| iron-laws-sync-safety S3 node hidden / node+python3 hidden / fail-closed | 2 FAIL ("no API key") + fail-closed already green | pass |
+| iron-laws-sync-safety S2 exit 3 x4, exit 4 x3 | 7 FAIL (all rc=1) | pass |
+| iron-laws-single-writer S2 login stops on exit 3/4 | FAIL | pass |
+Totals: iron-laws-sync-safety 52/52, iron-laws-single-writer 5/5. Anti-vacuity: each hunk reverted (copy aside) went RED and the restore was `cmp`-identical; extra mutations (legacy START dropped from is_start, fallback accepting any escape, python3 branch removed) each went RED.
+Real API (temp HOME, copied config): --install on a CRLF CLAUDE.md -> 1 canonical block, all 314 lines CRLF; forced refresh and a 2nd --install byte-identical. Legacy-marker refresh via python3 (PATH=/usr/bin:/bin) and via the pure-bash fallback (node+python3 hidden) -> 1 canonical block, 0 legacy.
+
 Pre-existing failures on origin/main 0fc2ca4 (unchanged): ideate-template, config-change-guard, format-hook, worktree-hooks.
 
-## Last Updated: 2026-10-16 16:53 +07 by /oss:build (ship-gate round 1)
+## Last Updated: 2026-10-16 17:33 +07 by /oss:build (ship-gate round 2, S1-S4)

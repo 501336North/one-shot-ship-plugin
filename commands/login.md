@@ -177,7 +177,12 @@ After successful authentication, the command installs the IRON LAWS block and th
 This script is the **only** writer of the IRON LAWS block. Do not write, copy or edit that block yourself. It:
 - creates CLAUDE.md with one block if the project has none, appends one block to a CLAUDE.md that has none, or refreshes the existing block in place;
 - prints the laws to stdout only when it has just added them, so this session sees them;
-- refuses without writing (exit 1, reason on stderr) when CLAUDE.md is a symlink or not a regular file, the project directory is your home directory, the block's markers are malformed, or the API response is not a valid laws document. Show the user the stderr reason and continue with 4.2.
+- writes nothing and prints its reason on stderr when it exits non-zero.
+
+**If it exits non-zero, Step 4 ends here: skip 4.2 and 4.3 entirely** (do not fetch the template, do not create or edit CLAUDE.md), show the user the stderr reason, and go on to Step 5.
+- **Exit 3 (refused):** CLAUDE.md is a symlink or not a regular file, resolves outside the project, the project directory is your home directory, or the IRON LAWS markers are malformed (not exactly one START line before one END line). Tell the user: "CLAUDE.md was not updated: {stderr reason}. Fix it and run /oss:login again."
+- **Exit 4 (no laws to write):** not logged in, no API key, the API was unreachable or returned an error, or its response was not a valid laws document. Tell the user: "CLAUDE.md was not updated: could not fetch the IRON LAWS ({stderr reason}). Run /oss:login again when the API is reachable."
+- **Any other non-zero exit:** tell the user "CLAUDE.md was not updated: {stderr reason}."
 
 ### 4.2: Fetch the CLAUDE.md template
 
@@ -191,7 +196,7 @@ Remove the placeholder line `<!-- IRON LAWS will be injected here by /oss:login 
 
 ### 4.3: Merge the template into CLAUDE.md
 
-1. After 4.1, CLAUDE.md normally exists. If it is still missing (4.1 refused), create it with the template only.
+1. 4.1 succeeded, so CLAUDE.md exists and holds exactly one IRON LAWS block.
 2. If it has no `# OSS Dev Workflow` section: append the template with a separator.
 3. If it has one: replace that section with the fresh template. The section ends at the next top-level `# ` heading or at the IRON LAWS block, whichever comes first.
 4. In every case, leave the IRON LAWS block exactly as 4.1 wrote it: never edit, move or duplicate the lines between its markers.

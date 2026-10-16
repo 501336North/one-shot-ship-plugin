@@ -63,12 +63,41 @@ test_ideate_claims_match_script() {
     else fail "$name" "accurate description" "$bad"; fi
 }
 
+# S2 (ship gate round 2): a refused or failed --install must stop Step 4, so the template merge
+# (4.2-4.3) cannot create or rewrite a CLAUDE.md the script declined to touch, or leave the
+# project with a template and no laws. The exit codes the doc names must be the script's own.
+test_login_stops_when_install_fails() {
+    local name="login Step 4 stops (skips 4.2-4.3) when --install exits 3 or 4, and says why"; ((TESTS_RUN++))
+    local bad=""
+    grep -qF 'skip 4.2 and 4.3' <<< "$LOGIN_STEP4" || bad+="no 'skip 4.2 and 4.3' instruction; "
+    grep -qiE 'exit(s)? 3' <<< "$LOGIN_STEP4" || bad+="exit 3 (refused) not handled; "
+    grep -qiE 'exit(s)? 4' <<< "$LOGIN_STEP4" || bad+="exit 4 (no laws) not handled; "
+    grep -qi 'continue with 4.2' <<< "$LOGIN_STEP4" && bad+="still says 'continue with 4.2'; "
+    grep -qi '4.1 refused' <<< "$LOGIN_STEP4" && bad+="4.3 still handles a refused 4.1; "
+    grep -qE '^#[[:space:]]+3[[:space:]].*refus' "$SYNC" || bad+="script header does not define exit 3 as refusal; "
+    grep -qE '^#[[:space:]]+4[[:space:]].*laws' "$SYNC" || bad+="script header does not define exit 4 as no laws; "
+    if [[ -z "$bad" ]]; then pass "$name"
+    else fail "$name" "Step 4 stops on exit 3/4 with a reason; codes match the script" "$bad"; fi
+}
+
+test_no_other_doc_builds_markers() {
+    local name="no skill or command (other than via oss-iron-laws-sync.sh) tells the model to write IRON LAWS START/END markers"; ((TESTS_RUN++))
+    local bad
+    bad=$(grep -lE 'IRON LAWS (START|END)' "$COMMANDS_DIR"/*.md "$COMMANDS_DIR"/../skills/*.md 2>/dev/null | while read -r f; do
+        grep -qE 'oss-iron-laws-sync\.sh --install' "$f" || echo "$(basename "$f")"
+    done)
+    if [[ -z "$bad" ]]; then pass "$name"
+    else fail "$name" "marker writing only via oss-iron-laws-sync.sh --install" "$bad"; fi
+}
+
 echo "Running IRON LAWS single-writer doc tests..."
 echo "======================================="
 test_login_uses_install
 test_login_does_not_write_block_itself
 test_only_login_installs
 test_ideate_claims_match_script
+test_login_stops_when_install_fails
+test_no_other_doc_builds_markers
 echo ""
 echo "======================================="
 echo "Results: $TESTS_PASSED/$TESTS_RUN passed, $TESTS_FAILED failed"

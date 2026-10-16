@@ -80,3 +80,32 @@ All 4 gates FAILED (code-review: 1 CRIT, 3 HIGH; security: 2 HIGH; pen-test: 2 H
 - `session-start-iron-laws` tests 1-2 become behavioural (run session start in a temp HOME with a curl shim).
 - The T1 guard also covers `${CLAUDE_PLUGIN_ROOT}/hooks/...` references in hooks.json and commands.
 - The network path is tested even with `OSS_SKIP_HEALTH_CHECK` (call the script directly).
+
+## Ship gate round 2 → Boss: one more round for 4 customer-impacting items (2026-10-16)
+Round 2: all 4 gates PASS (no CRITICAL/HIGH). Boss: "Yes, one more round".
+
+### S1 (MED cr2-2): legacy marker
+`<!-- IRON LAWS START -->` (written by /oss:ideate 2026-02-27..03-18, #146-#161) and its END twin are accepted as a well-formed block and rewritten to the canonical markers. Tests: refresh and --install on a legacy block → one canonical block, user content kept.
+
+### S2 (MED pen2-1): login.md stops when the script refuses
+If `oss-iron-laws-sync.sh --install` refuses (symlink, non-regular file, outside the project, $HOME, malformed markers), login skips 4.2-4.3 entirely and tells the user why. Text test that pins this wording.
+
+### S3 (LOW cr2-6): node-free config parsing
+Parse `~/.oss/config.json` without requiring node. Use node if available, else python3, else a strict, documented sed/grep fallback for the flat `"apiKey": "..."` shape that handles JSON escapes (\" and \\). The key is never printed. Tests run each path with PATH manipulated (node absent, python3 absent).
+
+### S4 (LOW cr2-1, sec2-3, pen2-5): CRLF and trailing whitespace on marker lines
+Strip `\r` and trailing whitespace before comparing marker lines. A file that uses CRLF keeps CRLF line endings after a rewrite. Tests: a CRLF file with one block → refresh updates it in place (no second block); --install doesn't duplicate it.
+
+### Deferred → FOLLOWUPS (round 2, non-blocking)
+- per-project freshness stamp
+- stale-lock double-break and clock skew
+- the CLAUDE.md→symlink swap race at mv (use a rename that does not follow the target)
+- ideate/auto foreground refresh
+- single-flight fetch before the lock
+- setsid for the detached sync
+- login.md/settings.md/telegram.md still show the key in a curl argv
+- the parent-directory check is dead code
+- login.md 4.3 stale template tail
+- JSON body `{` not rejected
+- behavioural tests for notify/telegram call sites
+- oss-notify analytics curl has no -m
