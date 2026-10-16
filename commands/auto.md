@@ -70,6 +70,8 @@ Run the complete ideate→plan→build→ship pipeline in one command.
 ~/.oss/hooks/oss-iron-laws-sync.sh
 ```
 
+> Iron Laws are loaded from CLAUDE.md at session start; this sync only refreshes them if stale.
+
 ## Step 2: Check Authentication
 
 ```bash
