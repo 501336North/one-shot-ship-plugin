@@ -4,6 +4,7 @@
 # Checks subscription, restores context, and displays welcome
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/oss-api-curl.sh" 2>/dev/null || true  # oss_api_curl: API key via stdin, never argv
 source "$SCRIPT_DIR/oss-config.sh" 2>/dev/null || true
 
 # Ensure ~/.oss directory exists with secure permissions
@@ -73,7 +74,7 @@ fi
 
 # Quick subscription check (non-blocking)
 # Note: Full validation happens when skills are used
-SUBSCRIPTION_STATUS=$(curl -s -m 2 -H "Authorization: Bearer $API_KEY" \
+SUBSCRIPTION_STATUS=$(oss_api_curl "$API_KEY" -s -m 2 \
     "https://one-shot-ship-api.onrender.com/api/v1/subscription/status" 2>/dev/null | \
     grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || echo "unknown")
 

@@ -1,190 +1,233 @@
 #!/bin/bash
-# oss-iron-laws-sync.sh - Sync Iron Laws into CLAUDE.md at session start
+# oss-iron-laws-sync.sh - Keep the IRON LAWS block in the project's CLAUDE.md up to date
 #
 # Usage:
-#   oss-iron-laws-sync.sh
+#   oss-iron-laws-sync.sh            Refresh mode (session start, /oss:ideate, /oss:auto).
+#                                    Refreshes ONLY an existing, well-formed block. Never
+#                                    creates CLAUDE.md and never appends.
+#   oss-iron-laws-sync.sh --install  Install mode (/oss:login only). May create CLAUDE.md or
+#                                    append one block; prints the laws when it adds them.
 #
 # Environment:
-#   CLAUDE_PROJECT_DIR - Project directory (defaults to current dir)
-#   HOME - User home directory
+#   CLAUDE_PROJECT_DIR - Project directory (defaults to the current directory)
+#   HOME               - Holds ~/.oss/config.json and the cache stamps
 #
-# Behavior:
-#   - If CLAUDE.md has fresh Iron Laws (cache <24h): exit 0, no output
-#   - If cache is stale: fetch from API, update CLAUDE.md
-#   - If CLAUDE.md missing or has no markers: create/append + output to stdout
+# Safety (both modes refuse, without writing, and warn on stderr):
+#   - CLAUDE.md is a symlink (incl. dangling) or not a regular file
+#   - CLAUDE.md's directory resolves outside the project, or the project resolves to $HOME
+#   - the markers are not exactly one START line before exactly one END line
+#   - the API body is empty, < 500 bytes, > 256KB, HTML, or has no "IRON LAW"
+# A failed fetch sets a 1h backoff; only a validated write marks the cache fresh (24h).
 #
-# Exit codes:
-#   0 - Success (Iron Laws are in CLAUDE.md)
-#   1 - Error (no API key, API failure)
+# Exit codes: 0 done or nothing to do (refresh mode always exits 0)
+#             1 install mode could not install
+#             2 bad arguments
 
-set -euo pipefail
+set -uo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${HOME}/.oss/config.json"
 API_URL="https://one-shot-ship-api.onrender.com"
 ENDPOINT="/api/v1/prompts/shared/iron-laws"
-CLAUDE_MD="${CLAUDE_PROJECT_DIR:-.}/CLAUDE.md"
-HASH_FILE="${HOME}/.oss/.iron-laws-hash"
-LAST_CHECK_FILE="${HOME}/.oss/.iron-laws-last-check"
-CACHE_TTL_SECONDS=86400  # 24 hours
+STATE_DIR="${HOME}/.oss"
+LAST_CHECK_FILE="${STATE_DIR}/.iron-laws-last-check"
+BACKOFF_FILE="${STATE_DIR}/.iron-laws-backoff"
+LOCK_DIR="${STATE_DIR}/.iron-laws-sync.lock"
+CACHE_TTL_SECONDS=86400   # 24h after a validated write
+BACKOFF_SECONDS=3600      # 1h after a failed fetch
+LOCK_STALE_SECONDS=30
+MIN_BODY_BYTES=500
+MAX_BODY_BYTES=262144
 
 MARKER_START="<!-- IRON LAWS START - Do not edit manually, updated by /oss:login -->"
 MARKER_END="<!-- IRON LAWS END -->"
 
-# Check if CLAUDE.md has Iron Laws markers
-has_iron_laws_markers() {
-    [[ -f "$CLAUDE_MD" ]] && grep -q "IRON LAWS START" "$CLAUDE_MD" 2>/dev/null
+warn() { printf 'oss-iron-laws-sync: %s\n' "$*" >&2; }
+
+MODE=refresh
+case "${1:-}" in
+    --install) MODE=install ;;
+    '') ;;
+    *) warn "unknown argument: $1"; exit 2 ;;
+esac
+
+# Exit without writing: refresh mode is silent-success, install mode reports failure.
+give_up() { [[ "$MODE" == install ]] && exit 1; exit 0; }
+
+mtime() {
+    if [[ "$(uname)" == "Darwin" ]]; then stat -f %m "$1" 2>/dev/null || echo 0
+    else stat -c %Y "$1" 2>/dev/null || echo 0; fi
+}
+file_mode() {
+    if [[ "$(uname)" == "Darwin" ]]; then stat -f %Lp "$1"; else stat -c %a "$1"; fi
+}
+younger_than() { # $1 file, $2 seconds
+    [[ -e "$1" ]] || return 1
+    (( $(date +%s) - $(mtime "$1") < $2 ))
 }
 
-# Check if cache is fresh (<24h old)
-cache_is_fresh() {
-    [[ -f "$LAST_CHECK_FILE" ]] || return 1
-    local last_check_epoch now_epoch diff
-    if [[ "$(uname)" == "Darwin" ]]; then
-        last_check_epoch=$(stat -f %m "$LAST_CHECK_FILE" 2>/dev/null || echo "0")
-    else
-        last_check_epoch=$(stat -c %Y "$LAST_CHECK_FILE" 2>/dev/null || echo "0")
+# --- where we may write ----------------------------------------------------------------------
+# Sets CLAUDE_MD to <physical project dir>/CLAUDE.md, or returns 1 (with a warning) if writing
+# there could land anywhere else. Re-run inside the lock, right before the write.
+resolve_target() {
+    local proj_real home_real parent_real
+    proj_real=$(cd "${CLAUDE_PROJECT_DIR:-$PWD}" 2>/dev/null && pwd -P) || { warn "project directory not found"; return 1; }
+    home_real=$(cd "$HOME" 2>/dev/null && pwd -P) || home_real=""
+    if [[ "$proj_real" == "$home_real" ]]; then
+        warn "refusing: the project directory is \$HOME"; return 1
     fi
-    now_epoch=$(date +%s)
-    diff=$((now_epoch - last_check_epoch))
-    [[ $diff -lt $CACHE_TTL_SECONDS ]]
+    CLAUDE_MD="$proj_real/CLAUDE.md"
+    if [[ -L "$CLAUDE_MD" ]]; then warn "refusing: CLAUDE.md is a symlink"; return 1; fi
+    if [[ -e "$CLAUDE_MD" && ! -f "$CLAUDE_MD" ]]; then warn "refusing: CLAUDE.md is not a regular file"; return 1; fi
+    parent_real=$(cd "$(dirname "$CLAUDE_MD")" 2>/dev/null && pwd -P) || return 1
+    if [[ "$parent_real" != "$proj_real" ]]; then warn "refusing: CLAUDE.md resolves outside the project"; return 1; fi
 }
 
-# Fetch Iron Laws from API (shared endpoint, returns plain markdown)
-# Note: Iron Laws use the shared/unencrypted endpoint, not oss-decrypt.
-# The shared endpoint serves plain markdown to all authenticated users.
-fetch_iron_laws() {
-    local api_key
-    api_key=$(grep -o '"apiKey"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" | sed 's/.*: *"\([^"]*\)"/\1/')
-
-    if [[ -z "$api_key" ]]; then
-        echo "Error: No API key found in config" >&2
-        return 1
-    fi
-
-    local response http_code body
-    response=$(curl -s -m 10 -w "\n%{http_code}" \
-        -H "Authorization: Bearer $api_key" \
-        -H "Content-Type: application/json" \
-        "${API_URL}${ENDPOINT}")
-
-    http_code=$(echo "$response" | tail -n1)
-    body=$(echo "$response" | sed '$d')
-
-    if [[ "$http_code" != "200" ]]; then
-        echo "Error: API returned status $http_code" >&2
-        return 1
-    fi
-
-    echo "$body"
+# none = no marker lines, one = exactly one START before exactly one END, bad = anything else.
+# Only whole lines equal to the markers count; prose that mentions them is ordinary text.
+block_state() {
+    [[ -f "$CLAUDE_MD" ]] || { echo none; return; }
+    awk -v s="$MARKER_START" -v e="$MARKER_END" '
+        $0 == s { ns++; if (!fs) fs = NR }
+        $0 == e { ne++; if (!fe) fe = NR }
+        END {
+            if (ns == 0 && ne == 0) print "none"
+            else if (ns == 1 && ne == 1 && fs < fe) print "one"
+            else print "bad"
+        }' "$CLAUDE_MD"
 }
 
-# Update Iron Laws content between markers in CLAUDE.md
-update_between_markers() {
-    local new_content="$1"
-    local tmp_file
-    tmp_file=$(mktemp)
-
-    local in_markers=false
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        if [[ "$line" == *"IRON LAWS START"* ]]; then
-            echo "$MARKER_START" >> "$tmp_file"
-            echo "" >> "$tmp_file"
-            echo "$new_content" >> "$tmp_file"
-            echo "" >> "$tmp_file"
-            in_markers=true
-            continue
-        fi
-        if [[ "$line" == *"IRON LAWS END"* ]]; then
-            echo "$MARKER_END" >> "$tmp_file"
-            in_markers=false
-            continue
-        fi
-        if [[ "$in_markers" == "false" ]]; then
-            echo "$line" >> "$tmp_file"
-        fi
-    done < "$CLAUDE_MD"
-
-    mv "$tmp_file" "$CLAUDE_MD"
+# --- fetch + validate ------------------------------------------------------------------------
+read_api_key() { # real JSON parsing; the key is printed only into the caller's variable
+    node -e '
+        try {
+            const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            if (typeof c.apiKey === "string") process.stdout.write(c.apiKey);
+        } catch (e) {}' "$CONFIG_FILE" 2>/dev/null
 }
 
-# Append Iron Laws section to CLAUDE.md
-append_iron_laws() {
-    local content="$1"
-    echo "" >> "$CLAUDE_MD"
-    echo "$MARKER_START" >> "$CLAUDE_MD"
-    echo "" >> "$CLAUDE_MD"
-    echo "$content" >> "$CLAUDE_MD"
-    echo "" >> "$CLAUDE_MD"
-    echo "$MARKER_END" >> "$CLAUDE_MD"
+# Writes the validated, marker-free laws to $1. Returns 1 on any failure.
+fetch_body() {
+    local out="$1" raw="$WORK/raw" key rc=0 code bytes
+    key=$(read_api_key)
+    if [[ -z "$key" ]]; then warn "no API key in $CONFIG_FILE"; return 1; fi
+    oss_api_curl "$key" -sS --connect-timeout 2 -m 4 --max-filesize "$MAX_BODY_BYTES" \
+        -w '\n%{http_code}' "${API_URL}${ENDPOINT}" > "$raw" 2>/dev/null || rc=$?
+    unset key
+    if (( rc != 0 )); then warn "API unreachable or response too large (curl exit $rc)"; return 1; fi
+    code=$(tail -n 1 "$raw")
+    if [[ "$code" != "200" ]]; then warn "API returned HTTP $code"; return 1; fi
+    bytes=$(wc -c < "$raw" | tr -d ' ')
+    if (( bytes > MAX_BODY_BYTES + 8 )); then warn "rejected: body over $MAX_BODY_BYTES bytes"; return 1; fi
+    # Drop the status line and any marker-like lines; trim leading/trailing blank lines.
+    sed '$d' "$raw" | awk '
+        /^[[:space:]]*<!--[[:space:]]*IRON LAWS (START|END)/ { next }
+        /^[[:space:]]*$/ { if (started) blanks++; next }
+        { while (blanks > 0) { print ""; blanks-- } started = 1; print }' > "$out"
+    bytes=$(wc -c < "$out" | tr -d ' ')
+    if (( bytes < MIN_BODY_BYTES )); then warn "rejected: body under $MIN_BODY_BYTES bytes"; return 1; fi
+    if grep -qiE '<!doctype html|<html[[:space:]>]' "$out"; then
+        warn "rejected: body looks like HTML"; return 1
+    fi
+    if ! grep -q 'IRON LAW' "$out"; then warn "rejected: body has no IRON LAW heading"; return 1; fi
 }
 
-# Update cache files
-update_cache() {
-    local content="$1"
-    local new_hash
-    if command -v md5sum &>/dev/null; then
-        new_hash=$(echo "$content" | md5sum | cut -d' ' -f1)
-    elif command -v md5 &>/dev/null; then
-        new_hash=$(echo "$content" | md5 -q)
-    else
-        new_hash=$(echo "$content" | cksum | cut -d' ' -f1)
-    fi
-    mkdir -p "$(dirname "$HASH_FILE")"
-    echo "$new_hash" > "$HASH_FILE"
-    touch "$LAST_CHECK_FILE"
+# --- write -----------------------------------------------------------------------------------
+acquire_lock() {
+    for _ in $(seq 1 100); do
+        if mkdir "$LOCK_DIR" 2>/dev/null; then LOCKED=1; return 0; fi
+        if ! younger_than "$LOCK_DIR" "$LOCK_STALE_SECONDS"; then rmdir "$LOCK_DIR" 2>/dev/null; continue; fi
+        sleep 0.1
+    done
+    warn "another sync holds $LOCK_DIR"; return 1
 }
 
-# =============================================================================
-# Main logic
-# =============================================================================
-main() {
-    # Check config exists
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        echo "Error: Config file not found at $CONFIG_FILE" >&2
-        exit 1
-    fi
-
-    # Case 1: CLAUDE.md has markers AND cache is fresh → skip (fast path)
-    if has_iron_laws_markers && cache_is_fresh; then
-        exit 0
-    fi
-
-    # Case 2: CLAUDE.md has markers BUT cache is stale → fetch and update
-    if has_iron_laws_markers; then
-        local content
-        content=$(fetch_iron_laws) || exit 0  # Don't fail on API errors when we have existing
-        update_between_markers "$content"
-        update_cache "$content"
-        # No stdout - CLAUDE.md already had Iron Laws, just refreshed
-        exit 0
-    fi
-
-    # Case 3: CLAUDE.md exists but no markers → fetch, append, stdout
-    # Case 4: CLAUDE.md doesn't exist → fetch, create, stdout
-    local content
-    content=$(fetch_iron_laws) || {
-        echo "Error: Failed to fetch Iron Laws from API" >&2
-        exit 1
-    }
-
+# Replace CLAUDE.md with the content of $1: temp file in the same directory, original mode,
+# atomic rename. Skips the write when nothing changed.
+replace_claude_md() {
+    local new="$1" mode tmp
     if [[ -f "$CLAUDE_MD" ]]; then
-        # Append to existing file
-        append_iron_laws "$content"
+        cmp -s "$new" "$CLAUDE_MD" && return 0
+        mode=$(file_mode "$CLAUDE_MD") || return 1
     else
-        # Create new file
-        cat > "$CLAUDE_MD" << NEWFILE
-$MARKER_START
-
-$content
-
-$MARKER_END
-NEWFILE
+        mode=$(printf '%o' $(( 0666 & ~$(umask) )))
     fi
-
-    update_cache "$content"
-
-    # Output to stdout for current session fallback
-    echo "$content"
+    tmp=$(mktemp "$(dirname "$CLAUDE_MD")/.CLAUDE.md.oss-sync.XXXXXX") || return 1
+    TMP_FILE="$tmp"
+    cat "$new" > "$tmp" && chmod "$mode" "$tmp" && mv -f "$tmp" "$CLAUDE_MD"
 }
 
-main "$@"
+# Sets RESULT to "refreshed", "added" or "skipped"; returns 1 on a refusal.
+# Runs in the main shell (not $(...)) so the EXIT trap can remove its temp file.
+write_block() {
+    local body="$1" new="$WORK/new" state
+    resolve_target || return 1
+    state=$(block_state)
+    case "$MODE/$state" in
+        */one)
+            awk -v s="$MARKER_START" -v e="$MARKER_END" -v body="$body" '
+                $0 == e { skip = 0 }
+                !skip { print }
+                $0 == s { print ""; while ((getline l < body) > 0) print l; print ""; skip = 1 }
+            ' "$CLAUDE_MD" > "$new" || return 1
+            replace_claude_md "$new" && RESULT=refreshed ;;
+        install/none)
+            {
+                if [[ -s "$CLAUDE_MD" ]]; then
+                    cat "$CLAUDE_MD"
+                    [[ -n "$(tail -c 1 "$CLAUDE_MD")" ]] && printf '\n'
+                    printf '\n'
+                fi
+                printf '%s\n\n' "$MARKER_START"
+                cat "$body"
+                printf '\n%s\n' "$MARKER_END"
+            } > "$new" || return 1
+            replace_claude_md "$new" && RESULT=added ;;
+        refresh/none) RESULT=skipped ;;
+        *) warn "skipping: CLAUDE.md does not have exactly one START line before one END line"; return 1 ;;
+    esac
+}
+
+cleanup() {
+    [[ -n "${TMP_FILE:-}" ]] && rm -f "$TMP_FILE"
+    [[ -n "${LOCKED:-}" ]] && rmdir "$LOCK_DIR" 2>/dev/null
+    [[ -n "${WORK:-}" ]] && rm -rf "$WORK"
+    return 0
+}
+
+main() {
+    resolve_target || give_up
+    local state; state=$(block_state)
+    if [[ "$state" == bad ]]; then
+        warn "skipping: CLAUDE.md does not have exactly one START line before one END line"; give_up
+    fi
+    if [[ "$MODE" == refresh ]]; then
+        [[ "$state" == one ]] || exit 0
+        younger_than "$LAST_CHECK_FILE" "$CACHE_TTL_SECONDS" && exit 0
+        younger_than "$BACKOFF_FILE" "$BACKOFF_SECONDS" && exit 0
+    fi
+    [[ -f "$CONFIG_FILE" ]] || { warn "not logged in ($CONFIG_FILE missing)"; give_up; }
+    # shellcheck source=oss-api-curl.sh
+    source "$SCRIPT_DIR/oss-api-curl.sh" 2>/dev/null || { warn "missing $SCRIPT_DIR/oss-api-curl.sh"; give_up; }
+
+    trap cleanup EXIT
+    WORK=$(mktemp -d "${TMPDIR:-/tmp}/oss-iron-laws.XXXXXX") || give_up
+    mkdir -p "$STATE_DIR"
+    local body="$WORK/body"
+    if ! fetch_body "$body"; then
+        touch "$BACKOFF_FILE"
+        give_up
+    fi
+
+    acquire_lock || give_up
+    write_block "$body" || give_up
+    if [[ "$RESULT" != skipped ]]; then
+        touch "$LAST_CHECK_FILE"
+        rm -f "$BACKOFF_FILE"
+    fi
+    # The current session read CLAUDE.md before this block existed: show it once.
+    [[ "$RESULT" == added ]] && cat "$body"
+    exit 0
+}
+
+main

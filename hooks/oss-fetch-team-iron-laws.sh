@@ -21,6 +21,7 @@
 # }
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh" 2>/dev/null || true  # oss_api_curl: API key via stdin, never argv
 
 CONFIG_FILE="${HOME}/.oss/config.json"
 CACHE_FILE="${HOME}/.oss/team-iron-laws.json"
@@ -97,9 +98,8 @@ else
 fi
 
 # Fetch from API with timeout
-RESPONSE=$(curl -s -w "\n%{http_code}" \
+RESPONSE=$(oss_api_curl "$API_KEY" -s -w "\n%{http_code}" \
   --max-time 10 \
-  -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   "${API_URL}${ENDPOINT}" 2>/dev/null || echo -e "\n000")
 

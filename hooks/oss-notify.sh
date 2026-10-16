@@ -19,6 +19,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/oss-api-curl.sh" 2>/dev/null || true  # oss_api_curl: API key via stdin, never argv
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
 
 # =============================================================================
@@ -301,8 +302,7 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                             API_URL=$(grep -o '"apiUrl"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || echo "https://one-shot-ship-api.onrender.com")
                         fi
                         if [[ -n "$API_KEY" ]]; then
-                            curl -sS -X POST "${API_URL}/api/v1/analytics/track" \
-                                -H "Authorization: Bearer $API_KEY" \
+                            oss_api_curl "$API_KEY" -sS -X POST "${API_URL}/api/v1/analytics/track" \
                                 -H "Content-Type: application/json" \
                                 -d "{\"command\": \"$WORKFLOW_CMD\", \"promptType\": \"command\", \"promptName\": \"$WORKFLOW_CMD\"}" \
                                 >/dev/null 2>&1 || true

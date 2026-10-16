@@ -11,6 +11,7 @@
 # Uses API key from ~/.oss/config.json
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh" 2>/dev/null || true  # oss_api_curl: API key via stdin, never argv
 
 CONFIG_FILE="${HOME}/.oss/config.json"
 API_URL="https://one-shot-ship-api.onrender.com"
@@ -60,8 +61,7 @@ fi
 
 # Fetch IRON LAWS with authentication
 CURL_STATUS=0
-RESPONSE=$(curl -s -w "\n%{http_code}" \
-  -H "Authorization: Bearer $API_KEY" \
+RESPONSE=$(oss_api_curl "$API_KEY" -s -w "\n%{http_code}" \
   -H "Content-Type: application/json" \
   "${API_URL}${ENDPOINT}") || CURL_STATUS=$?
 

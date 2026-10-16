@@ -6,9 +6,10 @@
 # Tests:
 # 1. Should exit 0 when CLAUDE.md has fresh Iron Laws (cache <24h)
 # 2. Should fetch from API when hash file is >24h old
-# 3. Should create Iron Laws section when CLAUDE.md exists but has no markers
-# 4. Should create CLAUDE.md from scratch when file missing
-# 5. Should output Iron Laws to stdout when CLAUDE.md was missing
+# 3. --install should create Iron Laws section when CLAUDE.md exists but has no markers
+# 4. --install should create CLAUDE.md from scratch when file missing
+# 5. --install should output Iron Laws to stdout when CLAUDE.md was missing
+# (Session start never creates or appends: see iron-laws-sync-safety.test.sh)
 # 6. Should NOT output to stdout when CLAUDE.md already has Iron Laws
 # 7. Should update Iron Laws between markers when hash differs
 
@@ -47,6 +48,7 @@ create_mock_curl() {
 #!/bin/bash
 # Mock curl: return Iron Laws markdown + 200 status
 echo -e "$iron_laws_content"
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo "IRON LAW padding line \$i: a real laws body is several KB, the sync rejects anything under 500 bytes."; done
 echo "200"
 CURLEOF
     chmod +x "$mock_dir/curl"
@@ -61,6 +63,7 @@ create_tracking_mock_curl() {
 #!/bin/bash
 echo "CURL_WAS_CALLED" > "$marker_file"
 echo -e "$iron_laws_content"
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo "IRON LAW padding line \$i: a real laws body is several KB, the sync rejects anything under 500 bytes."; done
 echo "200"
 CURLEOF
     chmod +x "$mock_dir/curl"
@@ -173,7 +176,7 @@ EOF
 # @business-rule Preserve user's existing CLAUDE.md content
 # =============================================================================
 test_missing_markers_appends() {
-    local test_name="Should create Iron Laws section when markers missing"
+    local test_name="--install should create Iron Laws section when markers missing"
     ((TESTS_RUN++))
 
     TEST_HOME=$(mktemp -d)
@@ -194,7 +197,7 @@ EOF
     create_mock_curl "$MOCK_BIN_DIR"
 
     local result exit_code=0
-    result=$(HOME="$TEST_HOME" CLAUDE_PROJECT_DIR="$TEST_PROJECT" PATH="$MOCK_BIN_DIR:$PATH" "$HOOK_SCRIPT" 2>&1) || exit_code=$?
+    result=$(HOME="$TEST_HOME" CLAUDE_PROJECT_DIR="$TEST_PROJECT" PATH="$MOCK_BIN_DIR:$PATH" "$HOOK_SCRIPT" --install 2>&1) || exit_code=$?
 
     # Check CLAUDE.md now has markers AND preserved original content
     local has_markers=false has_original=false
@@ -217,7 +220,7 @@ EOF
 # @business-rule First-time users get Iron Laws automatically
 # =============================================================================
 test_missing_claude_md_creates() {
-    local test_name="Should create CLAUDE.md from scratch when file missing"
+    local test_name="--install should create CLAUDE.md from scratch when file missing"
     ((TESTS_RUN++))
 
     TEST_HOME=$(mktemp -d)
@@ -231,7 +234,7 @@ test_missing_claude_md_creates() {
     create_mock_curl "$MOCK_BIN_DIR"
 
     local result exit_code=0
-    result=$(HOME="$TEST_HOME" CLAUDE_PROJECT_DIR="$TEST_PROJECT" PATH="$MOCK_BIN_DIR:$PATH" "$HOOK_SCRIPT" 2>&1) || exit_code=$?
+    result=$(HOME="$TEST_HOME" CLAUDE_PROJECT_DIR="$TEST_PROJECT" PATH="$MOCK_BIN_DIR:$PATH" "$HOOK_SCRIPT" --install 2>&1) || exit_code=$?
 
     local file_exists=false has_markers=false
     [[ -f "$TEST_PROJECT/CLAUDE.md" ]] && file_exists=true
@@ -253,7 +256,7 @@ test_missing_claude_md_creates() {
 # @business-rule Current session gets Iron Laws even if CLAUDE.md just created
 # =============================================================================
 test_stdout_fallback_when_created() {
-    local test_name="Should output Iron Laws to stdout when CLAUDE.md was missing"
+    local test_name="--install should output Iron Laws to stdout when CLAUDE.md was missing"
     ((TESTS_RUN++))
 
     TEST_HOME=$(mktemp -d)
@@ -267,7 +270,7 @@ test_stdout_fallback_when_created() {
     create_mock_curl "$MOCK_BIN_DIR"
 
     local result exit_code=0
-    result=$(HOME="$TEST_HOME" CLAUDE_PROJECT_DIR="$TEST_PROJECT" PATH="$MOCK_BIN_DIR:$PATH" "$HOOK_SCRIPT" 2>&1) || exit_code=$?
+    result=$(HOME="$TEST_HOME" CLAUDE_PROJECT_DIR="$TEST_PROJECT" PATH="$MOCK_BIN_DIR:$PATH" "$HOOK_SCRIPT" --install 2>&1) || exit_code=$?
 
     rm -rf "$TEST_HOME" "$TEST_PROJECT" "$MOCK_BIN_DIR"
 
@@ -365,6 +368,7 @@ EOF
 echo "# IRON LAWS - UPDATED VERSION"
 echo ""
 echo "## LAW 1: TDD is mandatory"
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo "IRON LAW padding line $i: a real laws body is several KB, the sync rejects anything under 500 bytes."; done
 echo "200"
 CURLEOF
     chmod +x "$MOCK_BIN_DIR/curl"

@@ -4,8 +4,9 @@
 # Usage: ./session-start-iron-laws.test.sh
 #
 # Tests:
-# 1. Session-start should call iron-laws-sync when API key exists
-# 2. Session-start should skip sync when no API key
+# 1. Session start dispatches the refresh in the background when an API key exists
+# 2. Session start does not start the refresh without an API key
+# 2b. The subscription check keeps the API key off curl argv
 # 3. Session-start should copy sync script to ~/.oss/hooks/
 
 set -uo pipefail
@@ -35,55 +36,111 @@ fail() {
     ((TESTS_FAILED++))
 }
 
+# Fixture for behavioural session-start tests: a temp HOME, a temp project, a curl shim that
+# records argv and --config stdin, and a fake plugin root whose oss-iron-laws-sync.sh is a
+# recorder stub that prints to stdout and takes 6s (an API that never answers).
+ss_setup() {
+    T=$(mktemp -d)
+    mkdir -p "$T/home/.oss" "$T/proj" "$T/bin" "$T/shim" "$T/root/hooks"
+    cat > "$T/bin/curl" << SHIM
+#!/bin/bash
+S="$T/shim"
+printf '%s\n' "\$*" >> "\$S/argv"
+prev=""
+for a in "\$@"; do
+    if [[ ( "\$prev" == "--config" || "\$prev" == "-K" ) && "\$a" == "-" ]]; then cat >> "\$S/stdin"; fi
+    prev="\$a"
+done
+printf '{"status":"active"}'
+SHIM
+    chmod +x "$T/bin/curl"
+    cat > "$T/root/hooks/oss-iron-laws-sync.sh" << STUB
+#!/bin/bash
+printf '%s|%s\n' "\$\$" "\$*" > "$T/sync-started"
+echo "SYNC STDOUT LEAK"
+sleep 6
+touch "$T/sync-finished"
+STUB
+    chmod +x "$T/root/hooks/oss-iron-laws-sync.sh"
+}
+ss_run() { # runs the real session start (health checks ON, so the sync path is live)
+    (cd "$T/proj" && HOME="$T/home" CLAUDE_PLUGIN_ROOT="$T/root" CLAUDE_PROJECT_DIR="$T/proj" \
+        OSS_SKIP_HEALTH_CHECK= OSS_TEST_CC_VERSION=2.1.99 PATH="$T/bin:$PATH" \
+        perl -e 'alarm 30; exec @ARGV' bash "$SESSION_START_SCRIPT" </dev/null 2>&1)
+}
+ss_teardown() {
+    local pid; pid=$(cut -d'|' -f1 "$T/sync-started" 2>/dev/null)
+    [[ -n "$pid" ]] && kill "$pid" 2>/dev/null
+    rm -rf "$T"
+}
+wait_for_file() { local i; for i in $(seq 1 50); do [[ -e "$1" ]] && return 0; sleep 0.1; done; return 1; }
+
 # =============================================================================
-# TEST 1: Session-start should call iron-laws-sync when API key exists
+# TEST 1: Session start dispatches the Iron Laws refresh in the background
 #
-# @behavior Iron Laws sync is invoked during session initialization
-# @business-rule Ensure Iron Laws are fresh at session start
+# @behavior With an API key, session start starts the refresh (refresh mode, no --install)
+#           and returns without waiting for it or showing its output.
+# @business-rule A slow or dead API must never delay a customer's session start.
 # =============================================================================
 test_calls_sync_with_api_key() {
-    local test_name="Session-start should call iron-laws-sync when API key exists"
+    local test_name="Session start dispatches the refresh in the background (never waits for it)"
     ((TESTS_RUN++))
-
-    # Check that oss-session-start.sh invokes oss-iron-laws-sync.sh (not just lists it)
-    if grep -q "IRON_LAWS_SYNC_SCRIPT" "$SESSION_START_SCRIPT" 2>/dev/null; then
-        # Verify invocation is AFTER the API key check
-        local sync_line api_key_line
-        sync_line=$(grep -n 'IRON_LAWS_SYNC_SCRIPT' "$SESSION_START_SCRIPT" | head -1 | cut -d: -f1)
-        api_key_line=$(grep -n 'if \[\[ -z "$API_KEY"' "$SESSION_START_SCRIPT" | head -1 | cut -d: -f1)
-
-        if [[ -n "$sync_line" ]] && [[ -n "$api_key_line" ]] && [[ "$sync_line" -gt "$api_key_line" ]]; then
-            pass "$test_name"
-        else
-            fail "$test_name" "sync call after API key check" "sync_line=$sync_line api_key_line=$api_key_line"
-        fi
+    ss_setup
+    printf '{"apiKey": "fake-key-ss-0001"}\n' > "$T/home/.oss/config.json"
+    local out; out=$(ss_run)
+    local finished_at_return=n; [[ -e "$T/sync-finished" ]] && finished_at_return=y
+    local started=n args=""; wait_for_file "$T/sync-started" && started=y && args=$(cut -d'|' -f2 "$T/sync-started")
+    local leaked=n; [[ "$out" == *"SYNC STDOUT LEAK"* ]] && leaked=y
+    if [[ "$started" == y && "$finished_at_return" == n && "$leaked" == n && -z "$args" ]]; then
+        pass "$test_name"
     else
-        fail "$test_name" "IRON_LAWS_SYNC_SCRIPT invocation in session-start" "not found"
+        fail "$test_name" "started, not awaited, output discarded, no flags" "started=$started finished_at_return=$finished_at_return leaked=$leaked args=$args"
     fi
+    ss_teardown
 }
 
 # =============================================================================
-# TEST 2: Session-start should skip sync when no API key
+# TEST 2: Session start does not start the refresh without an API key
 #
-# @behavior No sync attempted without authentication
+# @behavior No refresh is attempted without authentication
 # @business-rule Don't make API calls without credentials
 # =============================================================================
 test_skips_sync_without_api_key() {
-    local test_name="Session-start should skip sync when no API key"
+    local test_name="Session start does not start the refresh without an API key"
     ((TESTS_RUN++))
-
-    # Verify sync call is positioned after the API key exit guard
-    # The script should exit before reaching sync if no API key
-    local sync_line api_key_exit_line
-    sync_line=$(grep -n 'IRON_LAWS_SYNC_SCRIPT' "$SESSION_START_SCRIPT" 2>/dev/null | head -1 | cut -d: -f1)
-    # Find the "exit 0" that follows the empty API key check
-    api_key_exit_line=$(grep -n 'exit 0' "$SESSION_START_SCRIPT" 2>/dev/null | head -2 | tail -1 | cut -d: -f1)
-
-    if [[ -n "$sync_line" ]] && [[ -n "$api_key_exit_line" ]] && [[ "$sync_line" -gt "$api_key_exit_line" ]]; then
+    ss_setup
+    printf '{}\n' > "$T/home/.oss/config.json"
+    ss_run >/dev/null
+    sleep 1
+    if [[ ! -e "$T/sync-started" ]]; then
         pass "$test_name"
     else
-        fail "$test_name" "sync after API key exit guard" "sync_line=${sync_line:-missing} exit_line=${api_key_exit_line:-missing}"
+        fail "$test_name" "no refresh started" "started"
     fi
+    ss_teardown
+}
+
+# =============================================================================
+# TEST 2b: The subscription check never puts the API key on curl's command line
+#
+# @behavior Session start authenticates via the shared helper (key on curl's stdin)
+# @business-rule Any local user can read process argv with ps; the key must not be there
+# =============================================================================
+test_subscription_check_key_off_argv() {
+    local test_name="Session start subscription check keeps the API key off curl argv"
+    ((TESTS_RUN++))
+    ss_setup
+    printf '{"apiKey": "fake-key-ss-0002"}\n' > "$T/home/.oss/config.json"
+    local out; out=$(ss_run)
+    local in_argv=n in_cfg=n
+    grep -qF "fake-key-ss-0002" "$T/shim/argv" 2>/dev/null && in_argv=y
+    grep -qF "Authorization: Bearer fake-key-ss-0002" "$T/shim/stdin" 2>/dev/null && in_cfg=y
+    if [[ "$in_argv" == n && "$in_cfg" == y && "$out" == *"Ready (active)"* ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "argv=n config=y status active" "argv=$in_argv config=$in_cfg out=$(echo "$out" | grep -i ready)"
+    fi
+    ss_teardown
 }
 
 # =============================================================================
@@ -119,6 +176,7 @@ echo "======================================="
 
 test_calls_sync_with_api_key
 test_skips_sync_without_api_key
+test_subscription_check_key_off_argv
 test_copies_sync_to_oss_hooks
 
 echo ""

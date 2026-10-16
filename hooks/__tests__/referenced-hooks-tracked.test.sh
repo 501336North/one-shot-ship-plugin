@@ -38,5 +38,11 @@ for h in $(grep -ohE '(~|\$HOME|\$\{HOME\})/\.oss/hooks/[A-Za-z0-9_.-]+\.sh' "$R
   check "hooks/$h" "commands/*.md"
 done
 
+# 4. Every ${CLAUDE_PLUGIN_ROOT}/hooks/X that Claude Code runs (hooks.json) or a command names
+plugin_refs=$(grep -ohE '\$\{CLAUDE_PLUGIN_ROOT\}/hooks/[A-Za-z0-9_.-]+\.sh' \
+  "$ROOT/hooks.json" "$ROOT/.claude-plugin/hooks.json" "$ROOT"/commands/*.md 2>/dev/null | sed 's#.*/##' | sort -u)
+[[ -n "$plugin_refs" ]] || fail "\${CLAUDE_PLUGIN_ROOT}/hooks refs parsed" "none found in hooks.json or commands"
+for h in $plugin_refs; do check "hooks/$h" "\${CLAUDE_PLUGIN_ROOT}/hooks (hooks.json, commands)"; done
+
 echo "Results: $((RUN-FAILED))/$RUN passed, $FAILED failed"
 [[ $FAILED -eq 0 ]]
