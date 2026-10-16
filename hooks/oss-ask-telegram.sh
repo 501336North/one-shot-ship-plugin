@@ -11,6 +11,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/oss-api-curl.sh" 2>/dev/null || true  # oss_api_curl: API key via stdin, never argv
 SETTINGS_FILE=~/.oss/settings.json
 CONFIG_FILE=~/.oss/config.json
 PENDING_DIR=~/.oss/pending
@@ -100,8 +101,7 @@ fi
 # Send question to API synchronously (fast operation)
 log "Sending question to API: $QUESTION_ID"
 
-RESPONSE=$(curl -s -X POST "$API_URL/api/v1/telegram/question" \
-    -H "Authorization: Bearer $API_KEY" \
+RESPONSE=$(oss_api_curl "$API_KEY" -s -X POST "$API_URL/api/v1/telegram/question" \
     -H "Content-Type: application/json" \
     -d "$(jq -n \
         --arg qid "$QUESTION_ID" \

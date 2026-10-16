@@ -4,6 +4,7 @@
 # Checks subscription, restores context, and displays welcome
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/oss-api-curl.sh" 2>/dev/null || true  # oss_api_curl: API key via stdin, never argv
 source "$SCRIPT_DIR/oss-config.sh" 2>/dev/null || true
 
 # =============================================================================
@@ -61,6 +62,7 @@ mkdir -p ~/.oss/hooks
 HOOKS_TO_COPY=(
     "oss-log.sh"
     "oss-notify.sh"
+    "oss-api-curl.sh"             # sourced by oss-notify.sh and oss-iron-laws-sync.sh: API key via curl stdin
     "oss-statusline.sh"
     "oss-detect-playwright.sh"
     "ensure-decrypt-cli.sh"
@@ -118,7 +120,7 @@ fi
 if [[ "${OSS_SKIP_HEALTH_CHECK:-}" == "1" ]]; then
     SUBSCRIPTION_STATUS="active"
 else
-    SUBSCRIPTION_STATUS=$(curl -s -m 2 -H "Authorization: Bearer $API_KEY" \
+    SUBSCRIPTION_STATUS=$(oss_api_curl "$API_KEY" -s -m 2 \
         "https://one-shot-ship-api.onrender.com/api/v1/subscription/status" 2>/dev/null | \
         grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || echo "unknown")
 fi
@@ -150,11 +152,12 @@ if [[ -x "$SETUP_PERMS_SCRIPT" ]]; then
     "$SETUP_PERMS_SCRIPT" "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || true
 fi
 
-# Sync Iron Laws into CLAUDE.md (freshness check, skipped in test environments)
+# Refresh an existing IRON LAWS block in CLAUDE.md (skipped in test environments).
+# Detached, output discarded: a slow or dead API must never delay session start.
 if [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]]; then
     IRON_LAWS_SYNC_SCRIPT="$PLUGIN_ROOT/hooks/oss-iron-laws-sync.sh"
     if [[ -x "$IRON_LAWS_SYNC_SCRIPT" ]]; then
-        CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}" "$IRON_LAWS_SYNC_SCRIPT" 2>/dev/null || true
+        ( CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$PWD}" nohup "$IRON_LAWS_SYNC_SCRIPT" </dev/null >/dev/null 2>&1 & )
     fi
 fi
 

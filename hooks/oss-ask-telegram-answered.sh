@@ -12,6 +12,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/oss-api-curl.sh" 2>/dev/null || true  # oss_api_curl: API key via stdin, never argv
 SETTINGS_FILE=~/.oss/settings.json
 CONFIG_FILE=~/.oss/config.json
 PENDING_DIR=~/.oss/pending
@@ -103,8 +104,7 @@ fi
 # Notify API that question was answered via terminal (fire and forget)
 # The API uses first-response-wins - if Telegram already answered, this is a no-op
 {
-    curl -s -X POST "$API_URL/api/v1/telegram/answer" \
-        -H "Authorization: Bearer $API_KEY" \
+    oss_api_curl "$API_KEY" -s -X POST "$API_URL/api/v1/telegram/answer" \
         -H "Content-Type: application/json" \
         -d "$(jq -n \
             --arg qid "$QUESTION_ID" \

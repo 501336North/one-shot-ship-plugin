@@ -19,6 +19,7 @@
 #   "$SCRIPT_DIR/oss-log-analyzer.sh" build | "$SCRIPT_DIR/oss-push-metrics.sh"
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh" 2>/dev/null || true  # oss_api_curl: API key via stdin, never argv
 
 # Configuration
 CONFIG_FILE="${HOME}/.oss/config.json"
@@ -87,10 +88,9 @@ push_metrics() {
     local http_code
 
     # Make API call with timeout
-    response=$(curl -s -w "\n%{http_code}" \
+    response=$(oss_api_curl "$api_key" -s -w "\n%{http_code}" \
         --max-time "$TIMEOUT_SECONDS" \
         -X POST "${API_URL}${ENDPOINT}" \
-        -H "Authorization: Bearer $api_key" \
         -H "Content-Type: application/json" \
         -d "$metrics_json" 2>/dev/null) || {
         log_message "ERROR" "curl failed (network error or timeout)"

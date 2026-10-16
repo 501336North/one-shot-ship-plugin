@@ -166,53 +166,40 @@ The command will:
 
 ## Step 4: Sync CLAUDE.md with IRON LAWS (Automatic)
 
-After successful authentication, the command automatically syncs project guidelines AND injects the IRON LAWS:
+After successful authentication, the command installs the IRON LAWS block and then syncs the project guidelines around it.
 
-### 4.1: Fetch Template and IRON LAWS from API
+### 4.1: Install the IRON LAWS block (single writer)
 
-1. **Fetch CLAUDE.md template:**
-   ```
-   GET https://one-shot-ship-api.onrender.com/api/v1/prompts/claude-md
-   Headers:
-     Authorization: Bearer {apiKey}
-   ```
+```bash
+~/.oss/hooks/oss-iron-laws-sync.sh --install
+```
 
-2. **Sync IRON LAWS into CLAUDE.md (session-start freshness):**
-   ```bash
-   ~/.oss/hooks/oss-iron-laws-sync.sh
-   ```
+This script is the **only** writer of the IRON LAWS block. Do not write, copy or edit that block yourself. It:
+- creates CLAUDE.md with one block if the project has none, appends one block to a CLAUDE.md that has none, or refreshes the existing block in place;
+- prints the laws to stdout only when it has just added them, so this session sees them;
+- writes nothing and prints its reason on stderr when it exits non-zero.
 
-### 4.2: Merge IRON LAWS into Template
+**If it exits non-zero, Step 4 ends here: skip 4.2 and 4.3 entirely** (do not fetch the template, do not create or edit CLAUDE.md), show the user the stderr reason, and go on to Step 5.
+- **Exit 3 (refused):** CLAUDE.md is a symlink or not a regular file, resolves outside the project, the project directory is your home directory, or the IRON LAWS markers are malformed (not exactly one START line before one END line). Tell the user: "CLAUDE.md was not updated: {stderr reason}. Fix it and run /oss:login again."
+- **Exit 4 (no laws to write):** not logged in, no API key, the API was unreachable or returned an error, or its response was not a valid laws document. Tell the user: "CLAUDE.md was not updated: could not fetch the IRON LAWS ({stderr reason}). Run /oss:login again when the API is reachable."
+- **Any other non-zero exit:** tell the user "CLAUDE.md was not updated: {stderr reason}."
 
-After fetching both:
+### 4.2: Fetch the CLAUDE.md template
 
-1. **Find the IRON LAWS placeholder** in the template:
-   ```markdown
-   <!-- IRON LAWS will be injected here by /oss:login -->
-   ```
+```
+GET https://one-shot-ship-api.onrender.com/api/v1/prompts/claude-md
+Headers:
+  Authorization: Bearer {apiKey}
+```
 
-2. **Replace the placeholder** with the full IRON LAWS content:
-   ```markdown
-   <!-- IRON LAWS START - Do not edit manually, updated by /oss:login -->
+Remove the placeholder line `<!-- IRON LAWS will be injected here by /oss:login -->` from the template. The block from 4.1 replaces it; never inject the laws into the template.
 
-   {IRON_LAWS_CONTENT}
+### 4.3: Merge the template into CLAUDE.md
 
-   <!-- IRON LAWS END -->
-   ```
-
-### 4.3: Update or Create CLAUDE.md
-
-1. **Check if CLAUDE.md exists in current directory:**
-   ```bash
-   test -f CLAUDE.md && echo "EXISTS" || echo "MISSING"
-   ```
-
-2. **If MISSING:** Create new CLAUDE.md with the merged content (template + IRON LAWS)
-
-3. **If EXISTS:**
-   - Check if it contains `# OSS Dev Workflow` section
-   - If no OSS section: Append the merged content with a separator
-   - If OSS section exists: Replace it with fresh version (template + IRON LAWS)
+1. 4.1 succeeded, so CLAUDE.md exists and holds exactly one IRON LAWS block.
+2. If it has no `# OSS Dev Workflow` section: append the template with a separator.
+3. If it has one: replace that section with the fresh template. The section ends at the next top-level `# ` heading or at the IRON LAWS block, whichever comes first.
+4. In every case, leave the IRON LAWS block exactly as 4.1 wrote it: never edit, move or duplicate the lines between its markers.
 
 ### 4.4: What Gets Synced
 

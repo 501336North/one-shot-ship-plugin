@@ -21,9 +21,8 @@ test -f CLAUDE.md && echo "EXISTS" || echo "MISSING"
 1. Read API key from `~/.oss/config.json`
 2. Fetch template from API using WebFetch:
    - Template: `${API_BASE}/api/v1/prompts/templates/claude-md` (with `Authorization: Bearer ${API_KEY}`)
-   - IRON LAWS: `${API_BASE}/api/v1/prompts/shared/iron-laws` (with `Authorization: Bearer ${API_KEY}`)
-3. Merge: Replace `<!-- IRON LAWS will be injected here by /oss:login -->` placeholder with fetched IRON LAWS wrapped in `<!-- IRON LAWS START -->` / `<!-- IRON LAWS END -->` markers
-4. Write the fully-formed CLAUDE.md to the project root
+3. Write the template to `CLAUDE.md` in the project root with the `<!-- IRON LAWS will be injected here by /oss:login -->` placeholder line removed. Do not write any IRON LAWS markers or IRON LAWS content yourself.
+4. Install the IRON LAWS block through the single writer: `~/.oss/hooks/oss-iron-laws-sync.sh --install`. If it exits non-zero, keep the template as written and tell the user to run `/oss:login`.
 
 **If API fetch fails**, fall back to a minimal CLAUDE.md that directs the user to run `/oss:login`.
 

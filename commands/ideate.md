@@ -77,17 +77,17 @@ Transform vague ideas into concrete, actionable designs through Socratic questio
 
 ## Step 1: Ensure Project Configuration
 
-**Run the Iron Laws sync script — it handles CLAUDE.md creation and updates automatically:**
+**Refresh the IRON LAWS in CLAUDE.md:**
 
 ```bash
 ~/.oss/hooks/oss-iron-laws-sync.sh
 ```
 
 This script:
-- Creates CLAUDE.md with IRON LAWS if it doesn't exist
-- Updates IRON LAWS if the cache is stale (>24h)
-- Does nothing if CLAUDE.md already has fresh IRON LAWS
-- Uses proper JSON parsing for config (no fragile grep patterns)
+- Refreshes the existing IRON LAWS block in CLAUDE.md when it is older than 24h
+- Never creates CLAUDE.md or adds a block: if CLAUDE.md has no IRON LAWS, run `/oss:login` in this project
+- Does nothing if the laws are fresh, or if the API is unreachable (it retries after 1h)
+- Reads the API key from `~/.oss/config.json` with a real JSON parser
 
 **If the script fails** (no API key, network error), proceed without CLAUDE.md — the ideation can still work.
 
