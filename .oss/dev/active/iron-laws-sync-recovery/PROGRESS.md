@@ -1,6 +1,6 @@
 # Progress: iron-laws-sync-recovery
 
-## Current Phase: build
+## Current Phase: ship (gates clean after round 2 + final re-check; PR + merge + release 2.0.84)
 
 ## Tasks
 - [x] T1: Recurrence guard `hooks/__tests__/referenced-hooks-tracked.test.sh` (RED 19/22 on oss-iron-laws-sync.sh, GREEN 22/22) (completed 2026-10-16)
