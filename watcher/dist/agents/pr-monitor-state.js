@@ -6,6 +6,7 @@
  */
 import { promises as fs } from 'fs';
 import * as path from 'path';
+import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
 /**
  * TTL for processed comment IDs (30 days in milliseconds)
  */
@@ -95,9 +96,6 @@ export class PRMonitorState {
      */
     async save() {
         const filePath = path.join(process.cwd(), STATE_FILE);
-        const dir = path.dirname(filePath);
-        // Ensure directory exists
-        await fs.mkdir(dir, { recursive: true });
         // Clean up expired entries before saving
         this.cleanupExpiredComments();
         // Build processedComments array with timestamps
@@ -112,7 +110,7 @@ export class PRMonitorState {
             lastError: this.lastError,
             stats: this.stats,
         };
-        await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+        safeWriteFileAtomic(path.dirname(filePath), path.basename(filePath), JSON.stringify(data, null, 2));
     }
     /**
      * Add a comment ID to the processed set

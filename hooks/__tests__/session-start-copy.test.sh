@@ -15,6 +15,16 @@ if [[ -f "$M" && ! -x "$M" && -x "$T/.oss/hooks/ensure-decrypt-cli.sh" ]]; then 
 else fail "manifest copied as data" "exists=$([[ -f $M ]] && echo y || echo n) exec=$([[ -x $M ]] && echo y || echo n)"; fi
 rm -rf "$T"
 
+# F12: the write guard ships beside the hooks that source it, so ~/.oss/hooks/oss-log.sh still
+#      writes a normal project's logs (without it every project-local write is refused).
+T=$(mktemp -d); mkdir -p "$T/proj"
+HOME="$T" CLAUDE_PLUGIN_ROOT="$ROOT" bash "$ROOT/hooks/oss-session-start.sh" >/dev/null 2>&1 </dev/null
+HOME="$T" CLAUDE_PROJECT_DIR="$T/proj" bash "$T/.oss/hooks/oss-log.sh" write build "hello" >/dev/null 2>&1 </dev/null
+if [[ -f "$T/.oss/hooks/oss-safe-path.sh" ]] && grep -q hello "$T/proj/.oss/logs/current-session/build.log" 2>/dev/null; then
+    pass "oss-safe-path.sh copied; ~/.oss/hooks/oss-log.sh writes project logs"
+else fail "oss-safe-path.sh copied; ~/.oss/hooks/oss-log.sh writes project logs" "guard=$([[ -f $T/.oss/hooks/oss-safe-path.sh ]] && echo y || echo n)"; fi
+rm -rf "$T"
+
 # F11: every session-start variant that copies the installer also copies its manifest
 for f in "$ROOT"/hooks/oss-session-start*.sh; do
   if grep -q '"ensure-decrypt-cli.sh"' "$f" && ! grep -q '"oss-decrypt-checksums.txt"' "$f"; then

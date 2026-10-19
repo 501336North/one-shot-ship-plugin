@@ -6,6 +6,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/oss-api-curl.sh" 2>/dev/null || true  # oss_api_curl: API key via stdin, never argv
 source "$SCRIPT_DIR/oss-config.sh" 2>/dev/null || true
+if [[ -f "$SCRIPT_DIR/oss-safe-path.sh" ]]; then source "$SCRIPT_DIR/oss-safe-path.sh"; else oss_safe_mkdir() { return 1; }; oss_safe_target() { return 1; }; oss_valid_workflow_name() { return 1; }; oss_refuse_unsafe() { echo "oss: refusing unsafe .oss path ${1:-} (oss-safe-path.sh missing)" >&2; }; fi  # ADR-1 write guard
 
 # =============================================================================
 # TIMEOUT WRAPPER - Prevents blocking on slow/hanging node calls
@@ -62,6 +63,7 @@ mkdir -p ~/.oss/hooks
 HOOKS_TO_COPY=(
     "oss-log.sh"
     "oss-notify.sh"
+    "oss-safe-path.sh"            # sourced by oss-log.sh and oss-notify.sh: the project-write guard
     "oss-api-curl.sh"             # sourced by oss-notify.sh and oss-iron-laws-sync.sh: API key via curl stdin
     "oss-statusline.sh"
     "oss-detect-playwright.sh"
@@ -173,14 +175,16 @@ HEALTH_CHECK_CLI="$PLUGIN_ROOT/watcher/dist/cli/health-check.js"
 # Ensure project .oss directory exists, and setup .gitignore on first creation
 GITIGNORE_FILE="${CLAUDE_PROJECT_DIR:-.}/.gitignore"
 
+_OSS_PROJECT="${CLAUDE_PROJECT_DIR:-.}"
 if [[ ! -d "$PROJECT_OSS_DIR" ]]; then
-    # First time - create .oss folder
-    mkdir -p "$PROJECT_OSS_DIR"
-
-    # Setup .gitignore (only on first .oss creation)
-    OSS_GITIGNORE_MARKER="# OSS Dev Workflow (auto-added)"
-
-    if [[ -f "$GITIGNORE_FILE" ]]; then
+    # First time - create .oss folder (through the guard: a committed .oss link is refused)
+    if ! oss_safe_mkdir "$_OSS_PROJECT" .oss; then
+        oss_refuse_unsafe .oss
+    # Setup .gitignore (only on first .oss creation; a committed .gitignore link is refused)
+    elif ! oss_safe_target "$_OSS_PROJECT" .gitignore; then
+        oss_refuse_unsafe .gitignore
+    elif [[ -f "$GITIGNORE_FILE" ]]; then
+        OSS_GITIGNORE_MARKER="# OSS Dev Workflow (auto-added)"
         # Check if .oss entries already exist
         if ! grep -qE "^\.oss/\*$|^\.oss/$" "$GITIGNORE_FILE" 2>/dev/null; then
             # Add OSS entries to existing .gitignore
@@ -198,8 +202,8 @@ if [[ ! -d "$PROJECT_OSS_DIR" ]]; then
 GITIGNORE_EOF
     fi
 else
-    # .oss already exists - just ensure it's there
-    mkdir -p "$PROJECT_OSS_DIR"
+    # .oss already exists - just ensure it is a real, user-owned directory
+    oss_safe_mkdir "$_OSS_PROJECT" .oss || oss_refuse_unsafe .oss
 fi
 
 # Get git branch for session logging
@@ -233,7 +237,7 @@ fi
 # exits immediately and creates stale PID files. Chain execution is now handled by
 # oss-notify.sh via chain-trigger.js on complete events.
 # Clean up any stale PID files from previous versions.
-rm -f "$WATCHER_PID_FILE" 2>/dev/null
+if oss_safe_mkdir "$_OSS_PROJECT" .oss 2>/dev/null; then rm -f "$WATCHER_PID_FILE" 2>/dev/null; fi
 
 # --- Health Check (Run tests on session start) ---
 # Run npm test to catch any pre-existing failures and queue them

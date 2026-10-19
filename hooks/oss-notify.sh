@@ -20,6 +20,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$SCRIPT_DIR/oss-api-curl.sh" ]]; then source "$SCRIPT_DIR/oss-api-curl.sh"; fi  # oss_api_curl: API key via stdin, never argv
+if [[ -f "$SCRIPT_DIR/oss-safe-path.sh" ]]; then source "$SCRIPT_DIR/oss-safe-path.sh"; else oss_safe_mkdir() { return 1; }; oss_safe_target() { return 1; }; oss_valid_workflow_name() { return 1; }; oss_refuse_unsafe() { echo "oss: refusing unsafe .oss path ${1:-} (oss-safe-path.sh missing)" >&2; }; fi  # oss_valid_workflow_name (fail closed if absent)
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
 
 # =============================================================================
@@ -140,6 +141,12 @@ if [[ "${1:-}" == "--workflow" ]]; then
     # NOTE: start is HIGH so users see when commands begin (per verbosity=important)
     CMD="${2:-}"
     EVENT="${3:-start}"
+    # The name reaches file paths (oss-log.sh <name>.log), analytics JSON and chain-trigger:
+    # anything but a plain command name (e.g. build/../ship) is refused before any of them.
+    if ! oss_valid_workflow_name "$CMD" 2>/dev/null; then
+        echo "oss-notify: invalid workflow name refused (must match ^[a-z][a-z0-9-]{0,40}\$)" >&2
+        exit 0
+    fi
     case "$EVENT" in
         task_complete) PRIORITY="low" ;;
         start|complete|quality_passed|pr_created|merged) PRIORITY="high" ;;
@@ -251,7 +258,8 @@ esac
 if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
     WORKFLOW_CMD="${COPY_ARGS[0]:-}"
     WORKFLOW_EVENT="${COPY_ARGS[1]:-}"
-    WORKFLOW_CONTEXT="${COPY_ARGS[2]:-'{}'}"
+    WORKFLOW_CONTEXT="${COPY_ARGS[2]:-}"
+    [[ -n "$WORKFLOW_CONTEXT" ]] || WORKFLOW_CONTEXT='{}'
 
     # Write to workflow log file
     if [[ -x "$LOG_SCRIPT" && -n "$WORKFLOW_CMD" ]]; then
@@ -367,7 +375,8 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                     fi
 
                     if [[ -n "$CURRENT" && "$CURRENT" != "null" ]]; then
-                        wf_state setProgress "{\"progress\": \"$CURRENT/$TOTAL\", \"currentTask\": \"$TASK_NAME\"}" 2>/dev/null || true
+                        PROGRESS_JSON=$(jq -cn --arg p "$CURRENT/$TOTAL" --arg t "$TASK_NAME" '{progress: $p, currentTask: $t}')
+                        wf_state setProgress "$PROGRESS_JSON" 2>/dev/null || true
                     fi
                 fi
                 ;;
@@ -434,7 +443,8 @@ fi
 
 if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "session" ]]; then
     SESSION_EVENT="${COPY_ARGS[0]:-}"
-    SESSION_CONTEXT="${COPY_ARGS[1]:-'{}'}"
+    SESSION_CONTEXT="${COPY_ARGS[1]:-}"
+    [[ -n "$SESSION_CONTEXT" ]] || SESSION_CONTEXT='{}'
 
     # Update workflow state for session events (with timeout to prevent hanging)
     if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
@@ -481,7 +491,8 @@ fi
 
 if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "issue" ]]; then
     ISSUE_TYPE="${COPY_ARGS[0]:-}"
-    ISSUE_CONTEXT="${COPY_ARGS[1]:-'{}'}"
+    ISSUE_CONTEXT="${COPY_ARGS[1]:-}"
+    [[ -n "$ISSUE_CONTEXT" ]] || ISSUE_CONTEXT='{}'
 
     # Update workflow state to show issue in status line
     if [[ -f "$WORKFLOW_STATE_CLI" ]]; then

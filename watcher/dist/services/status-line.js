@@ -11,6 +11,7 @@
  */
 import { promises as fs } from 'fs';
 import * as path from 'path';
+import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
 const DEFAULT_STATE = {
     phase: null,
     task: null,
@@ -104,8 +105,7 @@ export class StatusLineService {
      * Persist state to file
      */
     async persist() {
-        await fs.mkdir(this.ossDir, { recursive: true });
-        await fs.writeFile(this.stateFile, JSON.stringify(this.state, null, 2));
+        safeWriteFileAtomic(this.ossDir, path.basename(this.stateFile), JSON.stringify(this.state, null, 2));
     }
 }
 //# sourceMappingURL=status-line.js.map

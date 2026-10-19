@@ -13,6 +13,7 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
 /**
  * Default webhook configuration values
  */
@@ -129,19 +130,11 @@ export class WebhookConfig {
         return this.cachedConfig?.port || DEFAULT_WEBHOOK_CONFIG.port;
     }
     /**
-     * Ensure the .oss directory exists
-     */
-    ensureDirectoryExists() {
-        if (!fs.existsSync(this.ossDir)) {
-            fs.mkdirSync(this.ossDir, { recursive: true });
-        }
-    }
-    /**
      * Write config to file
      */
     writeConfig(config) {
-        this.ensureDirectoryExists();
-        fs.writeFileSync(this.configPath, JSON.stringify(config, null, 2));
+        // N2-4: a NEW config.json holds the webhook secret: 0600 (an existing file keeps its mode)
+        safeWriteFileAtomic(this.ossDir, path.basename(this.configPath), JSON.stringify(config, null, 2), { newFileMode: 0o600 });
     }
     /**
      * Read full config file, returning empty object if not exists/invalid

@@ -9,6 +9,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
 import { LogReader, ParsedLogEntry } from '../logger/log-reader.js';
 import { WorkflowAnalyzer, WorkflowAnalysis, WorkflowAnchors, ChainProgress } from '../analyzer/workflow-analyzer.js';
 import { InterventionGenerator, Intervention } from '../intervention/generator.js';
@@ -710,7 +711,7 @@ export class WatcherSupervisor {
     try {
       // Fold the live anchors into the persisted state so they survive a restart.
       this.state.anchors = this.anchors;
-      fs.writeFileSync(this.statePath, JSON.stringify(this.state, null, 2));
+      safeWriteFileAtomic(this.ossDir, path.basename(this.statePath), JSON.stringify(this.state, null, 2));
     } catch {
       // Ignore write errors
     }

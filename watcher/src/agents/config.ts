@@ -7,6 +7,7 @@
 
 import { promises as fs } from 'fs';
 import * as path from 'path';
+import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
 import { homedir } from 'os';
 import { AgentConfig, DEFAULT_AGENT_CONFIG } from './types';
 
@@ -138,14 +139,6 @@ export async function saveAgentConfig(
     ...updates,
   };
 
-  // Ensure .oss directory exists
-  const ossDir = path.join(process.cwd(), '.oss');
-  try {
-    await fs.mkdir(ossDir, { recursive: true });
-  } catch {
-    // Directory may already exist
-  }
-
-  // Write config
-  await fs.writeFile(projectPath, JSON.stringify(projectConfig, null, 2));
+  // Write config (creates .oss safely)
+  safeWriteFileAtomic(path.dirname(projectPath), path.basename(projectPath), JSON.stringify(projectConfig, null, 2));
 }
