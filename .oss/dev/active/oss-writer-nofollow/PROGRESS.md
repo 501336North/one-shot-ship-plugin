@@ -26,8 +26,13 @@
 - [x] N2-5 TOCTOU comment (completed 2026-10-19)
 - [x] N2-6 HOME symlinked config.json keeps target mode (completed 2026-10-19)
 
+## Post-merge test harness (H1-H3)
+- [x] H1 oss-session-context-local "Auto .gitignore Setup" runs session start by path, not `cat | bash` (completed 2026-10-19)
+- [x] H2 oss-notify-telegram stages `hooks/oss-safe-path.sh` next to the rewritten oss-notify copy (completed 2026-10-19)
+- [x] H3 oss-log-project-local uses `project-a-cmd` / `project-b-cmd` (completed 2026-10-19)
+
 ## Blockers
 - None. The plugin-highs session (2.0.88) waits for this PR to merge.
 - Merge note: watcher/dist/**/*.d.ts.map changed in many files (line shifts). chain-trigger.js and chain-trigger.cjs were NOT touched.
 
-## Last Updated: 2026-10-19 17:45 +07 by /oss:build N2-6
+## Last Updated: 2026-10-19 18:15 +07 by /oss:build H1-H3

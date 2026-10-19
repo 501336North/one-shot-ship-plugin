@@ -1,6 +1,10 @@
 # Learnings
 
 ## 2026-10-19 | Testing | watcher
+- **Context:** oss-writer-nofollow (build H1-H3)
+- **Insight:** A fail-closed guard that a hook sources from its own directory turns every test that pipes the script (`cat x | bash`, empty BASH_SOURCE) or copies it alone into a temp dir into a silent no-write. The guard was right; 8 tests went red only in the full watcher run, which the 2.0.87 gates skipped (targeted files only). Stage the guard next to any copied hook, and run the whole test/hooks dir before shipping a hook change.
+
+## 2026-10-19 | Testing | watcher
 - **Context:** plugin-highs-gate (ship gate round 1 fixes)
 - **Insight:** watcher/test/setup.ts runs `pkill -f "oss-session-start"`, `pkill -f "health-check.js"` and deletes every watcher.pid under $TMPDIR, machine-wide. With several sessions on one Mac, a plain `npx vitest run` in one worktree kills other sessions' test runs and the user's live session-start hooks. Until setup.ts kills only what it started, run watcher vitest from a shared machine with a config that omits setupFiles (pool forks, fileParallelism false).
 

@@ -213,7 +213,7 @@ describe('oss-log.sh multi-project isolation', () => {
     // GIVEN: Two separate project directories
 
     // WHEN: Logging to project A (using CLAUDE_PROJECT_DIR env var to avoid parallel test conflicts)
-    execSync(`bash "${ossLogScript}" init projectA_cmd`, {
+    execSync(`bash "${ossLogScript}" init project-a-cmd`, {
       encoding: 'utf-8',
       env: {
         ...process.env,
@@ -223,7 +223,7 @@ describe('oss-log.sh multi-project isolation', () => {
     });
 
     // AND: Logging to project B
-    execSync(`bash "${ossLogScript}" init projectB_cmd`, {
+    execSync(`bash "${ossLogScript}" init project-b-cmd`, {
       encoding: 'utf-8',
       env: {
         ...process.env,
@@ -242,12 +242,12 @@ describe('oss-log.sh multi-project isolation', () => {
     const projectAContent = fs.readFileSync(projectALog, 'utf-8');
     const projectBContent = fs.readFileSync(projectBLog, 'utf-8');
 
-    // Project A should only have projectA_cmd
-    expect(projectAContent).toContain('projectA_cmd');
-    expect(projectAContent).not.toContain('projectB_cmd');
+    // Project A should only have project-a-cmd
+    expect(projectAContent).toContain('project-a-cmd');
+    expect(projectAContent).not.toContain('project-b-cmd');
 
-    // Project B should only have projectB_cmd
-    expect(projectBContent).toContain('projectB_cmd');
-    expect(projectBContent).not.toContain('projectA_cmd');
+    // Project B should only have project-b-cmd
+    expect(projectBContent).toContain('project-b-cmd');
+    expect(projectBContent).not.toContain('project-a-cmd');
   });
 });
