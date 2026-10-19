@@ -33,7 +33,7 @@ mode_of() { ls -ld -- "$1" | cut -c1-10; }
 # ov <cwd> <args...>: run the script as the user would; sets OUT, ERR, RC
 ov() {
     local cwd="$1"; shift
-    OUT=$(cd "$cwd" && HOME="$H" "$SH" "$SCRIPT" "$@" 2>"$T/err" </dev/null); RC=$?
+    OUT=$(cd "$cwd" && env -u CLAUDE_PLUGIN_ROOT -u CLAUDE_PROJECT_DIR HOME="$H" PATH="${OV_PATH:-$PATH}" "$SH" "${OV_SCRIPT:-$SCRIPT}" "$@" 2>"$T/err" </dev/null); RC=$?
     ERR=$(cat "$T/err")
 }
 # refused <name>: rc non-zero but not "script missing / not runnable" (126/127), nothing printed
@@ -121,6 +121,97 @@ ov "$R"
 [[ "$RC" == 2 && -z "$OUT" && "$ERR" == *[Uu]sage* ]] && pass "7: no args -> usage on stderr, rc 2" || fail "7: no args -> usage on stderr, rc 2" "rc=$RC out='$OUT' err='$ERR'"
 ov "$R" bogus
 [[ "$RC" == 2 && -z "$OUT" && "$ERR" == *[Uu]sage* ]] && pass "7: unknown verb -> usage on stderr, rc 2" || fail "7: unknown verb -> usage on stderr, rc 2" "rc=$RC out='$OUT' err='$ERR'"
+
+# === failed <workflow> (US-001 AC-001.2, AC-001.3) ============================================
+# Runs the REAL sibling oss-notify.sh. A = the repo the command runs in (has a real .oss);
+# B = another project, named by ~/.oss/current-project. VD = the value folder `dir` printed.
+proj() { newrepo; mkdir -p "$R/.oss"; }                                   # -> R
+setup_failed() {
+    newhome; proj; A="$R"; proj; B="$R"; R="$A"
+    mkdir -p "$H/.oss"; printf '%s\n' "$B" > "$H/.oss/current-project"
+    ov "$A" dir; VD="$OUT"
+}
+got_event() { grep -qF "[failed]" "$1/.oss/logs/current-session/build.log" 2>/dev/null; }   # <project>
+nothing_sent() { [[ ! -e "$A/.oss/logs" && ! -e "$B/.oss/logs" && ! -e "$A/.oss/workflow-state.json" && ! -e "$B/.oss/workflow-state.json" ]]; }
+# refused_kept <name>: a refusal (not 0/126/127), nothing printed, nothing sent, reason.txt still there
+refused_kept() {
+    if [[ "$RC" == 0 || "$RC" == 2 || "$RC" == 126 || "$RC" == 127 ]]; then fail "$1" "rc=$RC (want a refusal, not 0/usage/126/127) err=$ERR"
+    elif [[ -n "$OUT" ]]; then fail "$1" "printed: $OUT"
+    elif ! nothing_sent; then fail "$1" "an event was sent"
+    elif [[ ! -e "$VD/reason.txt" && ! -L "$VD/reason.txt" ]]; then fail "$1" "reason.txt was removed"
+    else pass "$1"; fi
+}
+
+# --- 8. sends the cleaned reason, deletes the file --------------------------------------------
+setup_failed
+printf "it's \$(id) \`x\`; a|b\nline2\n" > "$VD/reason.txt"
+ov "$A" failed build
+want='its (id) x abline2'
+[[ "$RC" == 0 ]] && pass "8: failed exits 0 when the notice is sent" || fail "8: failed exits 0 when the notice is sent" "rc=$RC err=$ERR"
+grep -qF "[failed] reason=$want, blocker=$want" "$A/.oss/logs/current-session/build.log" 2>/dev/null \
+    && pass "8: quote, \$(, backtick, ; | and newline are stripped from the reason sent" \
+    || fail "8: quote, \$(, backtick, ; | and newline are stripped from the reason sent" "log: $(cat "$A/.oss/logs/current-session/build.log" 2>&1)"
+grep -qF '"supervisor": "intervening"' "$A/.oss/workflow-state.json" 2>/dev/null \
+    && pass "8: the project's supervisor state records the failure" || fail "8: the project's supervisor state records the failure" "$(cat "$A/.oss/workflow-state.json" 2>&1)"
+[[ ! -e "$VD/reason.txt" ]] && pass "8: reason.txt is deleted after sending" || fail "8: reason.txt is deleted after sending" "still there"
+# at most 200 characters
+setup_failed
+printf 'z%.0s' {1..300} > "$VD/reason.txt"
+ov "$A" failed build
+z200=$(printf 'z%.0s' {1..200})
+[[ "$RC" == 0 ]] && grep -qF "[failed] reason=$z200, blocker=$z200" "$A/.oss/logs/current-session/build.log" 2>/dev/null \
+    && pass "8: a 300-character reason is cut to 200" || fail "8: a 300-character reason is cut to 200" "rc=$RC log: $(cut -c1-80 "$A/.oss/logs/current-session/build.log" 2>&1)"
+
+# --- 9. unsafe or missing reason.txt: refused, nothing sent, file kept ------------------------
+setup_failed; echo victim > "$T/target$N"; ln -s "$T/target$N" "$VD/reason.txt"
+ov "$A" failed build
+refused_kept "9: a symlinked reason.txt is refused"
+setup_failed; echo hello > "$VD/reason.txt"; ln "$VD/reason.txt" "$T/second$N"
+ov "$A" failed build
+refused_kept "9: a hard-linked reason.txt (link count 2) is refused"
+setup_failed; mkdir "$VD/reason.txt"
+ov "$A" failed build
+refused_kept "9: a reason.txt directory is refused"
+setup_failed
+ov "$A" failed build
+if [[ "$RC" == 0 || "$RC" == 2 || "$RC" == 126 || "$RC" == 127 || -n "$OUT" ]] || ! nothing_sent; then fail "9: a missing reason.txt is refused" "rc=$RC out='$OUT'"
+else pass "9: a missing reason.txt is refused"; fi
+
+# --- 10. workflow names outside the shared rule are refused -----------------------------------
+for name in 'build/../ship' 'Build' 'projectA_cmd' "$(printf 'a%.0s' {1..42})" ''; do
+    setup_failed; echo hello > "$VD/reason.txt"
+    ov "$A" failed "$name"
+    refused_kept "10: workflow name '$name' is refused"
+done
+
+# --- 11. the notifier fails: rc != 0 and reason.txt is kept -----------------------------------
+setup_failed; echo hello > "$VD/reason.txt"
+mkdir -p "$T/nf$N"; cp "$SCRIPT" "$ROOT/hooks/oss-safe-path.sh" "$T/nf$N/"
+printf '#!/bin/sh\nexit 1\n' > "$T/nf$N/oss-notify.sh"; chmod +x "$T/nf$N/oss-notify.sh"
+OV_SCRIPT="$T/nf$N/oss-value.sh" ov "$A" failed build
+[[ "$RC" != 0 && "$RC" != 2 && "$RC" != 126 && "$RC" != 127 && -f "$VD/reason.txt" ]] \
+    && pass "11: when the notifier fails, rc != 0 and reason.txt is kept" || fail "11: when the notifier fails, rc != 0 and reason.txt is kept" "rc=$RC kept=$([[ -f "$VD/reason.txt" ]] && echo y || echo n)"
+
+# --- 12. routing: the event lands in the project the command ran in ---------------------------
+setup_failed; echo hello > "$VD/reason.txt"; mkdir -p "$A/sub/deep"
+ov "$A/sub/deep" failed build
+[[ "$RC" == 0 ]] && got_event "$A" && ! got_event "$B" \
+    && pass "12: from repoA/sub/deep with current-project = repoB, only repoA gets the event" \
+    || fail "12: from repoA/sub/deep with current-project = repoB, only repoA gets the event" "rc=$RC A=$(got_event "$A" && echo y || echo n) B=$(got_event "$B" && echo y || echo n) err=$ERR"
+# a nested repo with no .oss: the walk stops at its toplevel, so the notifier falls back (#374)
+setup_failed; I="$A/inner"; mkdir -p "$I"; (cd "$I" && git init -q) >/dev/null 2>&1
+ov "$I" dir; VD="$OUT"; echo hello > "$VD/reason.txt"
+ov "$I" failed build
+[[ "$RC" == 0 ]] && got_event "$B" && ! got_event "$A" \
+    && pass "12: a nested repo with no .oss does not borrow the outer repo's .oss (falls back like #374)" \
+    || fail "12: a nested repo with no .oss does not borrow the outer repo's .oss (falls back like #374)" "rc=$RC A=$(got_event "$A" && echo y || echo n) B=$(got_event "$B" && echo y || echo n) err=$ERR"
+# a symlinked .oss is skipped by the walk
+setup_failed; newrepo; C="$R"; mkdir -p "$T/linked$N"; ln -s "$T/linked$N" "$C/.oss"
+ov "$C" dir; VD="$OUT"; echo hello > "$VD/reason.txt"
+ov "$C" failed build
+[[ "$RC" == 0 ]] && got_event "$B" && [[ -z "$(ls -A "$T/linked$N")" ]] \
+    && pass "12: a symlinked .oss is skipped (nothing written through it)" \
+    || fail "12: a symlinked .oss is skipped (nothing written through it)" "rc=$RC B=$(got_event "$B" && echo y || echo n) linked: $(ls -A "$T/linked$N") err=$ERR"
 
 echo
 echo "Results: $((RUN - FAILED))/$RUN passed, $FAILED failed"
