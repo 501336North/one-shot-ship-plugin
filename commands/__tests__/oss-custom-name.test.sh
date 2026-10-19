@@ -6,8 +6,8 @@
 # @behavior /oss:oss-custom refuses a custom command name that is not a plain
 #           identifier before any shell command or oss-decrypt call uses it.
 # @business-rule A team command name reaches shell commands and the decrypt CLI;
-#           after stripping `team:`, only names matching ^[a-z0-9-]{1,128}$ (the
-#           API's team-name rule, the same literal as isSafeTeamCommandName in
+#           after stripping `team:`, only names matching ^[a-z0-9-]{1,100}$ (the
+#           oss-decrypt validateName limit, the same literal as isSafeTeamCommandName in
 #           watcher/src/utils/safe-chain-name.ts) may be used; anything else stops
 #           the command with a report and runs nothing.
 #
@@ -24,7 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WRAPPER="$SCRIPT_DIR/../oss-custom.md"
 HELPER="$SCRIPT_DIR/../../watcher/src/utils/safe-chain-name.ts"
 
-NAME_PATTERN='^[a-z0-9-]{1,128}$'
+NAME_PATTERN='^[a-z0-9-]{1,100}$'
 OLD_NAME_PATTERN='^[a-z][a-z0-9-]{0,40}$'
 STOP_RULE='stop and report it; never run any command with it'
 

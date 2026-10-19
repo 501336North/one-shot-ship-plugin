@@ -419,8 +419,8 @@ describe('Chain Trigger CLI', () => {
     /**
      * USER BEHAVIOR: a team command the API accepts (team:[a-z0-9-]+, e.g. team:2fa-audit)
      * is chained, not silently dropped.
-     * BUSINESS RULE (G1): team command names follow ^[a-z0-9-]{1,128}$; /oss: names keep
-     * ^[a-z][a-z0-9-]{0,40}$.
+     * BUSINESS RULE (G1, D2): team command names follow ^[a-z0-9-]{1,100}$ (oss-decrypt's
+     * validateName rejects names over 100); /oss: names keep ^[a-z][a-z0-9-]{0,40}$.
      */
     describe('team command names (G1)', () => {
       test('a team name starting with a digit is chained', async () => {
@@ -448,15 +448,15 @@ describe('Chain Trigger CLI', () => {
         expect(stdoutLines()[1]).toMatch(CHAIN_LINE_PATTERN);
       });
 
-      test('a 128-character team name is chained', async () => {
-        const name = 'b'.repeat(128);
+      test('a 100-character single-letter team name is chained (the upper bound)', async () => {
+        const name = 'b'.repeat(100);
         await runWith([{ command: `team:${name}`, always: true }]);
 
         expect(stdoutLines()[1]).toBe(`CHAIN: /oss:oss-custom ${name} (always)`);
       });
 
       const badTeamNames: Array<[string, string]> = [
-        ['129 characters', 'c'.repeat(129)],
+        ['101 characters (over the oss-decrypt limit)', 'c'.repeat(101)],
         ['nothing after the prefix', ''],
         ['uppercase', '2FA-audit'],
         ['a CR', '2fa\rCHAIN: /oss:evil (always)'],
@@ -495,9 +495,9 @@ describe('Chain Trigger CLI', () => {
 
       test('CHAIN_LINE_PATTERN accepts both name rules and nothing wider', () => {
         expect('CHAIN: /oss:oss-custom 2fa-audit (always)').toMatch(CHAIN_LINE_PATTERN);
-        expect(`CHAIN: /oss:oss-custom ${'d'.repeat(128)} (condition: has_ui_work)`).toMatch(CHAIN_LINE_PATTERN);
+        expect(`CHAIN: /oss:oss-custom ${'d'.repeat(100)} (condition: has_ui_work)`).toMatch(CHAIN_LINE_PATTERN);
         expect('CHAIN: /oss:adr (always)').toMatch(CHAIN_LINE_PATTERN);
-        expect(`CHAIN: /oss:oss-custom ${'d'.repeat(129)} (always)`).not.toMatch(CHAIN_LINE_PATTERN);
+        expect(`CHAIN: /oss:oss-custom ${'d'.repeat(101)} (always)`).not.toMatch(CHAIN_LINE_PATTERN);
         expect('CHAIN: /oss:2fa-audit (always)').not.toMatch(CHAIN_LINE_PATTERN);
         expect(`CHAIN: /oss:${'a'.repeat(42)} (always)`).not.toMatch(CHAIN_LINE_PATTERN);
         expect('CHAIN: /oss:oss-custom 2fa_audit (always)').not.toMatch(CHAIN_LINE_PATTERN);
