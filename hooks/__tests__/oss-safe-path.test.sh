@@ -46,6 +46,16 @@ mkdir -p "$T/p2"
 (cd "$T/p2" && HOME="$T/home" CLAUDE_PROJECT_DIR="$T/p2" "$SH" "$ROOT/hooks/oss-log.sh" write custom-cmd2 "hello" >/dev/null 2>&1 </dev/null)
 grep -q hello "$T/p2/.oss/logs/current-session/custom-cmd2.log" 2>/dev/null && pass "G2 control: a plain command name still logs" || fail "G2 control: a plain command name still logs" "missing"
 
+# --- G3: a component owned by the PROJECT ROOT's owner is accepted (bind mounts, root in a
+#     container, shared repos). Root-free fixture: project "/" (owned by root) and the
+#     root-owned system tmp directory as the components; the leaf dir is created by us.
+if [[ -d /private/tmp && ! -L /private/tmp ]]; then sysrel=private/tmp; else sysrel=tmp; fi
+leaf="oss-g3.$$"
+rc=$(guard oss_safe_target / "$sysrel/$leaf/probe.json")
+if [[ "$rc" == 0 && -d "/$sysrel/$leaf" ]]; then pass "G3: components owned by the project root's owner are accepted"
+else fail "G3: components owned by the project root's owner are accepted" "rc=$rc"; fi
+rmdir "/$sysrel/$leaf" 2>/dev/null
+
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
 [[ $FAILED -eq 0 ]]

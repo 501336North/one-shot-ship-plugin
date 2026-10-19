@@ -11,7 +11,7 @@
  *           O_EXCL temp + rename, appends via O_APPEND|O_NOFOLLOW. A plain project still works.
  * @boundary Real filesystem (no fs mocks): the links are the attack.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -223,6 +223,20 @@ describe('project .oss writers do not follow committed links', () => {
       await supervisor.stop();
     }
     expect(snapshot()).toBe(before);
+  });
+});
+
+describe('G3: ownership is "current user OR the project root owner"', () => {
+  it('a repo owned by another uid (bind mount, root in a container) is still written', async () => {
+    // Simulate running as a different uid than the one owning the repo and its .oss.
+    const spy = vi.spyOn(process, 'getuid').mockReturnValue(4242);
+    try {
+      fs.mkdirSync(ossDir);
+      await new WorkflowLogger(ossDir).log({ cmd: 'build', event: 'START', data: {} });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(fs.readFileSync(path.join(ossDir, 'workflow.log'), 'utf-8')).toContain('"cmd":"build"');
   });
 });
 
