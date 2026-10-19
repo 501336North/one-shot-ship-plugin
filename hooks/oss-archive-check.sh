@@ -214,6 +214,8 @@ fi
 # Check for and archive completed features
 archived_count=0
 for feature_dir in "$DEV_ACTIVE"/*/; do
+    feature_dir="${feature_dir%/}"
+    [[ -L "$feature_dir" ]] && continue   # a committed link: never move what it points at
     if [[ -d "$feature_dir" ]]; then
         if is_feature_complete "$feature_dir"; then
             archive_feature "$feature_dir" || continue   # refused: not archived, not counted
