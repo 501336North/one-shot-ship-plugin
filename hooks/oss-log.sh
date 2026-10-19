@@ -126,9 +126,9 @@ oss_log_guard() {
     return 1
 }
 if [[ -n "$_OSS_LOG_PROJECT" ]]; then
-    _OSS_LOG_CMD="${2:-}"
-    for _rel in .oss/logs/archive/ .oss/logs/current-session/session.log \
-                ${_OSS_LOG_CMD:+".oss/logs/current-session/${_OSS_LOG_CMD}.log"}; do
+    _OSS_LOG_RELS=(.oss/logs/archive/ .oss/logs/current-session/session.log)
+    [[ -n "${2:-}" ]] && _OSS_LOG_RELS+=(".oss/logs/current-session/${2}.log")
+    for _rel in "${_OSS_LOG_RELS[@]}"; do
         if [[ "$_rel" == */ ]]; then
             oss_safe_mkdir "$_OSS_LOG_PROJECT" "${_rel%/}" && continue
             oss_refuse_unsafe "${_rel%/}"
