@@ -125,8 +125,8 @@ function isSafeChainName(name) {
 
 // src/api/workflow-config.ts
 var PBKDF2_ITERATIONS = 1e5;
-var WORKFLOW_FETCH_TIMEOUT_MS = 8e3;
 var KEY_LENGTH = 32;
+var WORKFLOW_FETCH_TIMEOUT_MS = 8e3;
 var configCache = /* @__PURE__ */ new Map();
 function getMachineKey() {
   const machineId = [
