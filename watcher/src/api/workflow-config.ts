@@ -120,6 +120,8 @@ export async function fetchWorkflowConfig(
       'Content-Type': 'application/json',
     },
     signal: AbortSignal.timeout(timeoutMs),
+    // G5: never replay the Bearer key to a redirect target
+    redirect: 'error',
   });
 
   if (!response.ok) {
