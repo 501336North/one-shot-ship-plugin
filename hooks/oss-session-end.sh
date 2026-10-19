@@ -9,8 +9,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 mkdir -p ~/.oss
 
 # Determine project .oss directory (project-local for context isolation)
+# Through the guard (ADR-1): a cloned repo's committed .oss / session-context.md link is refused.
+if [[ -f "$SCRIPT_DIR/oss-safe-path.sh" ]]; then source "$SCRIPT_DIR/oss-safe-path.sh"; fi
 PROJECT_OSS_DIR="${CLAUDE_PROJECT_DIR:-.}/.oss"
-mkdir -p "$PROJECT_OSS_DIR"
+oss_safe_mkdir "${CLAUDE_PROJECT_DIR:-.}" .oss || oss_refuse_unsafe .oss
 
 # --- Session Logging (for supervisor visibility) ---
 LOG_SCRIPT="$SCRIPT_DIR/oss-log.sh"
@@ -37,6 +39,9 @@ fi
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
 # Save context to project-local file (not global, for multi-project isolation)
+if ! oss_safe_target "${CLAUDE_PROJECT_DIR:-.}" .oss/session-context.md 2>/dev/null; then
+    oss_refuse_unsafe .oss/session-context.md
+else
 cat > "$PROJECT_OSS_DIR/session-context.md" << EOF
 ## Restored Session Context
 _Saved: ${TIMESTAMP}_
@@ -59,6 +64,7 @@ if [[ -n "$UNCOMMITTED" ]]; then
 $UNCOMMITTED
 \`\`\`
 EOF
+fi
 fi
 
 # Update workflow state for Claude Code status line

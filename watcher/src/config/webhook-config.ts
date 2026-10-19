@@ -14,6 +14,7 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
 
 /**
  * Webhook configuration data structure
@@ -170,20 +171,10 @@ export class WebhookConfig {
   }
 
   /**
-   * Ensure the .oss directory exists
-   */
-  private ensureDirectoryExists(): void {
-    if (!fs.existsSync(this.ossDir)) {
-      fs.mkdirSync(this.ossDir, { recursive: true });
-    }
-  }
-
-  /**
    * Write config to file
    */
   private writeConfig(config: Record<string, unknown>): void {
-    this.ensureDirectoryExists();
-    fs.writeFileSync(this.configPath, JSON.stringify(config, null, 2));
+    safeWriteFileAtomic(this.ossDir, path.basename(this.configPath), JSON.stringify(config, null, 2));
   }
 
   /**

@@ -7,6 +7,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { safeAppendFile } from '../utils/safe-project-write.js';
 
 export type WorkflowEvent =
   | 'START'
@@ -103,7 +104,7 @@ export class WorkflowLogger {
     }
 
     // Atomic append
-    fs.appendFileSync(this.logPath, content);
+    safeAppendFile(path.dirname(this.logPath), path.basename(this.logPath), content, { createDirs: false });
   }
 
   /**

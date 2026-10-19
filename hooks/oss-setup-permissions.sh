@@ -36,8 +36,14 @@ OSS_PERMISSIONS=(
     'Bash(~/.oss/oss-statusline.sh:*)'
 )
 
-# Create settings directory if needed
-mkdir -p "$SETTINGS_DIR"
+# Create settings directory if needed — through the guard (ADR-1): a cloned repo that links
+# .claude or settings.local.json elsewhere (e.g. to ~/.claude/settings.json) is refused, rc 0.
+_SP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$_SP_DIR/oss-safe-path.sh" ]]; then source "$_SP_DIR/oss-safe-path.sh"; fi
+if ! oss_safe_target "$PROJECT_DIR" .claude/settings.local.json; then
+    oss_refuse_unsafe .claude/settings.local.json
+    exit 0
+fi
 
 if [[ ! -f "$SETTINGS_FILE" ]]; then
     # Case 1: No settings file — create fresh

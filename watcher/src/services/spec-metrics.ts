@@ -10,6 +10,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
 import type {
   SpecMetricsFile,
   FeatureMetrics,
@@ -92,10 +93,7 @@ export class SpecMetricsService {
     };
 
     // Ensure directory exists
-    const dir = path.dirname(this.metricsPath);
-    await fs.promises.mkdir(dir, { recursive: true });
-
-    await fs.promises.writeFile(this.metricsPath, JSON.stringify(updated, null, 2));
+    safeWriteFileAtomic(path.dirname(this.metricsPath), path.basename(this.metricsPath), JSON.stringify(updated, null, 2));
 
     // Update cache
     this.cachedMetrics = updated;

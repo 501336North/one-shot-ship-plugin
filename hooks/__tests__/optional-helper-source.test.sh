@@ -27,6 +27,9 @@ sandbox() {
     printf '#!/bin/sh\necho "$*" >> "%s/curl.calls"\ncat >/dev/null\n' "$T" > "$T/bin/curl"
     chmod +x "$T/plugin/hooks/oss-log.sh" "$T/bin/node" "$T/bin/curl"
     cp "$ROOT/hooks/oss-notify.sh" "$T/hooks/"
+    # oss-safe-path.sh always ships beside oss-notify.sh (HOOKS_TO_COPY); without it workflow
+    # names cannot be validated and every --workflow event is refused (fail closed, v2.0.87).
+    cp "$ROOT/hooks/oss-safe-path.sh" "$T/hooks/"
 }
 # $(...) waits for the hook's backgrounded analytics subshell too (it inherits stdout).
 run_notify() {

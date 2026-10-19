@@ -6,6 +6,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
 
 // Discovery Chain: ideate → requirements → apiDesign → dataModel → adr
 // Planning Chain: plan → acceptance
@@ -125,13 +126,7 @@ export class WorkflowStateService {
   async initialize(): Promise<void> {
     const defaultState = this.getDefaultState();
 
-    // Ensure directory exists
-    const dir = path.dirname(this.stateFilePath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-
-    // Only write if file doesn't exist
+    // Only write if file doesn't exist (writeState creates the directory safely)
     if (!fs.existsSync(this.stateFilePath)) {
       await this.writeState(defaultState);
     }
@@ -505,12 +500,7 @@ export class WorkflowStateService {
     state.lastUpdate = new Date().toISOString();
     state.version = (state.version ?? 0) + 1;
 
-    const dir = path.dirname(this.stateFilePath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-
-    fs.writeFileSync(this.stateFilePath, JSON.stringify(state, null, 2));
+    safeWriteFileAtomic(path.dirname(this.stateFilePath), path.basename(this.stateFilePath), JSON.stringify(state, null, 2));
   }
 
   /**

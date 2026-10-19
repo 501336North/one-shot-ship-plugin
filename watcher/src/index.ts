@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { safeAppendFile, safeWriteFileAtomic } from './utils/safe-project-write.js';
 import { execSync, spawn } from 'child_process';
 import { QueueManager } from './queue/manager.js';
 import { RuleEngine } from './detectors/rules.js';
@@ -67,7 +68,7 @@ export class Watcher {
     this.config = await this.loadConfig();
 
     // Create PID file
-    fs.writeFileSync(this.pidPath, process.pid.toString());
+    safeWriteFileAtomic(this.ossDir, path.basename(this.pidPath), process.pid.toString());
 
     // Initialize log file
     this.log('Watcher started');
@@ -439,7 +440,7 @@ export class Watcher {
     const timestamp = new Date().toISOString();
     const logLine = `[${timestamp}] ${message}\n`;
 
-    fs.appendFileSync(this.logPath, logLine);
+    safeAppendFile(this.ossDir, path.basename(this.logPath), logLine);
   }
 }
 

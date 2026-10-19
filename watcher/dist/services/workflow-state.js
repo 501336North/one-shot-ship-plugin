@@ -5,6 +5,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
 // Full chain order for sequential progression
 const CHAIN_ORDER = [
     // Discovery Chain
@@ -30,12 +31,7 @@ export class WorkflowStateService {
      */
     async initialize() {
         const defaultState = this.getDefaultState();
-        // Ensure directory exists
-        const dir = path.dirname(this.stateFilePath);
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-        }
-        // Only write if file doesn't exist
+        // Only write if file doesn't exist (writeState creates the directory safely)
         if (!fs.existsSync(this.stateFilePath)) {
             await this.writeState(defaultState);
         }
@@ -357,11 +353,7 @@ export class WorkflowStateService {
     async writeState(state) {
         state.lastUpdate = new Date().toISOString();
         state.version = (state.version ?? 0) + 1;
-        const dir = path.dirname(this.stateFilePath);
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-        }
-        fs.writeFileSync(this.stateFilePath, JSON.stringify(state, null, 2));
+        safeWriteFileAtomic(path.dirname(this.stateFilePath), path.basename(this.stateFilePath), JSON.stringify(state, null, 2));
     }
     /**
      * Sets notification with TTL (non-sticky, auto-expires)

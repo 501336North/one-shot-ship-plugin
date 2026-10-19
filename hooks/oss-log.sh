@@ -21,6 +21,16 @@
 
 set -euo pipefail
 
+# The one bash guard for writes into a project's .oss (ADR-1). Absent helper = every
+# project-local write below is refused (fail closed); the global ~/.oss/logs fallback still works.
+_OSS_LOG_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$_OSS_LOG_SCRIPT_DIR/oss-safe-path.sh" ]]; then source "$_OSS_LOG_SCRIPT_DIR/oss-safe-path.sh"; fi
+if ! declare -F oss_safe_target >/dev/null; then
+    oss_safe_mkdir() { return 1; }
+    oss_safe_target() { return 1; }
+    oss_refuse_unsafe() { echo "oss: refusing unsafe .oss path ${1:-} (oss-safe-path.sh missing)" >&2; }
+fi
+
 # Security: Validate project path to prevent path traversal attacks
 # Returns validated canonical path or empty string if invalid
 validate_project_path() {
@@ -104,9 +114,32 @@ MAX_COMMAND_LOG_SIZE_KB=500      # Max size of individual command logs
 MAX_ARCHIVE_COUNT=5              # Keep last N archived sessions
 MAX_ARCHIVE_AGE_DAYS=7           # Delete archives older than N days
 
-# Ensure directories exist
-mkdir -p "$CURRENT_SESSION"
-mkdir -p "$ARCHIVE_DIR"
+# Ensure directories exist. Project-local: through the guard, and the two log files this
+# invocation appends to must be plain files — a cloned repo's links are refused, rc 0.
+_OSS_LOG_PROJECT=""
+[[ "$LOG_BASE" != "$HOME/.oss/logs" ]] && _OSS_LOG_PROJECT="${LOG_BASE%/.oss/logs}"
+# oss_log_guard <rel-under-project>: 0 when <rel> may be written (always, for the global logs)
+oss_log_guard() {
+    [[ -z "$_OSS_LOG_PROJECT" ]] && return 0
+    oss_safe_target "$_OSS_LOG_PROJECT" "$1" && return 0
+    oss_refuse_unsafe "$1"
+    return 1
+}
+if [[ -n "$_OSS_LOG_PROJECT" ]]; then
+    _OSS_LOG_CMD="${2:-}"
+    for _rel in .oss/logs/archive/ .oss/logs/current-session/session.log \
+                ${_OSS_LOG_CMD:+".oss/logs/current-session/${_OSS_LOG_CMD}.log"}; do
+        if [[ "$_rel" == */ ]]; then
+            oss_safe_mkdir "$_OSS_LOG_PROJECT" "${_rel%/}" && continue
+            oss_refuse_unsafe "${_rel%/}"
+            exit 0
+        fi
+        oss_log_guard "$_rel" || exit 0
+    done
+else
+    mkdir -p "$CURRENT_SESSION"
+    mkdir -p "$ARCHIVE_DIR"
+fi
 
 # Load settings if available
 if [[ -f "${HOME}/.oss/settings.json" ]] && command -v jq &>/dev/null; then
@@ -809,6 +842,10 @@ case "$ACTION" in
         fi
         if [[ -n "$CURRENT_PROJECT" && -d "$CURRENT_PROJECT/.oss" ]]; then
             WORKFLOW_STATE_FILE="$CURRENT_PROJECT/.oss/health-workflow-state.json"
+            if [[ "$SUBCOMMAND" != get ]] && ! oss_safe_target "$CURRENT_PROJECT" .oss/health-workflow-state.json; then
+                oss_refuse_unsafe .oss/health-workflow-state.json
+                exit 0
+            fi
         else
             WORKFLOW_STATE_FILE="$HOME/.oss/health-workflow-state.json"
         fi
@@ -910,6 +947,7 @@ EOF
 
         # Health check log file (used for status detection)
         HC_LOG="$CURRENT_SESSION/health-check.log"
+        oss_log_guard .oss/logs/current-session/health-check.log || exit 0
 
         echo "Running health check in: $CURRENT_PROJECT"
         echo "─────────────────────────────────────────"

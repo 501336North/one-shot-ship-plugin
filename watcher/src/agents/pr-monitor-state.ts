@@ -7,6 +7,7 @@
 
 import { promises as fs } from 'fs';
 import * as path from 'path';
+import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
 
 /**
  * Stats tracked by the PR monitor
@@ -135,11 +136,6 @@ export class PRMonitorState {
    */
   async save(): Promise<void> {
     const filePath = path.join(process.cwd(), STATE_FILE);
-    const dir = path.dirname(filePath);
-
-    // Ensure directory exists
-    await fs.mkdir(dir, { recursive: true });
-
     // Clean up expired entries before saving
     this.cleanupExpiredComments();
 
@@ -157,7 +153,7 @@ export class PRMonitorState {
       stats: this.stats,
     };
 
-    await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+    safeWriteFileAtomic(path.dirname(filePath), path.basename(filePath), JSON.stringify(data, null, 2));
   }
 
   /**

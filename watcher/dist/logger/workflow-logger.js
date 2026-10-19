@@ -4,8 +4,8 @@
  * Logs entries in hybrid format: JSON line + human-readable summary
  * Includes IRON LAW compliance checklist for every command/agent completion
  */
-import * as fs from 'fs';
 import * as path from 'path';
+import { safeAppendFile } from '../utils/safe-project-write.js';
 export class WorkflowLogger {
     logPath;
     writeQueue = Promise.resolve();
@@ -46,7 +46,7 @@ export class WorkflowLogger {
             content += this.formatIronLawChecklist(entry.ironLaws);
         }
         // Atomic append
-        fs.appendFileSync(this.logPath, content);
+        safeAppendFile(path.dirname(this.logPath), path.basename(this.logPath), content, { createDirs: false });
     }
     /**
      * RecoveryLogger port (US-006): log a retry-visibility RECOVERY line.

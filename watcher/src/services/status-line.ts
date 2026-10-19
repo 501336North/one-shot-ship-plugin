@@ -12,6 +12,7 @@
 
 import { promises as fs } from 'fs';
 import * as path from 'path';
+import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
 
 export type TDDPhase = 'RED' | 'GREEN' | 'REFACTOR';
 export type SupervisorStatus = 'watching' | 'intervening' | 'idle';
@@ -137,7 +138,6 @@ export class StatusLineService {
    * Persist state to file
    */
   private async persist(): Promise<void> {
-    await fs.mkdir(this.ossDir, { recursive: true });
-    await fs.writeFile(this.stateFile, JSON.stringify(this.state, null, 2));
+    safeWriteFileAtomic(this.ossDir, path.basename(this.stateFile), JSON.stringify(this.state, null, 2));
   }
 }

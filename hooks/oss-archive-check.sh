@@ -16,6 +16,9 @@
 
 set -euo pipefail
 
+_AC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$_AC_DIR/oss-safe-path.sh" ]]; then source "$_AC_DIR/oss-safe-path.sh"; fi  # ADR-1 write guard
+
 DRY_RUN=false
 LIST_ONLY=false
 PROJECT_DIR=""
@@ -164,8 +167,17 @@ archive_feature() {
         return 0
     fi
 
-    # Create completed directory if needed
-    mkdir -p "$DEV_COMPLETED"
+    # Create completed directory if needed - through the guard (ADR-1): a cloned repo's
+    # committed dev/active or dev/completed link must not move dev docs outside the project
+    # (e.g. into ~/.claude/commands, where they would become global slash commands).
+    local guard_root="$HOME" rel_active rel_completed
+    if [[ -n "$PROJECT_DIR" && "$DEV_DOCS_BASE" == "$PROJECT_DIR"/* ]]; then guard_root="$PROJECT_DIR"; fi
+    rel_active="${DEV_ACTIVE#"$guard_root"/}"
+    rel_completed="${DEV_COMPLETED#"$guard_root"/}"
+    if ! oss_safe_mkdir "$guard_root" "$rel_active" || ! oss_safe_mkdir "$guard_root" "$rel_completed"; then
+        oss_refuse_unsafe "$rel_completed"
+        return 1
+    fi
 
     # Handle duplicate archives (same day)
     if [[ -d "$archive_dir" ]]; then
@@ -204,7 +216,7 @@ archived_count=0
 for feature_dir in "$DEV_ACTIVE"/*/; do
     if [[ -d "$feature_dir" ]]; then
         if is_feature_complete "$feature_dir"; then
-            archive_feature "$feature_dir"
+            archive_feature "$feature_dir" || continue   # refused: not archived, not counted
             ((archived_count++))
         fi
     fi

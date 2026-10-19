@@ -8,16 +8,28 @@ if [[ -z "$WORKTREE_PATH" ]]; then
     exit 0
 fi
 
-# Create .oss/ directory in worktree
-mkdir -p "$WORKTREE_PATH/.oss"
+# Create .oss/ directory in worktree - through the guard (ADR-1): a committed .oss link, or a
+# linked config.json / workflow-state.json, is refused so the API key never lands outside it.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$SCRIPT_DIR/oss-safe-path.sh" ]]; then source "$SCRIPT_DIR/oss-safe-path.sh"; fi
+if ! oss_safe_mkdir "$WORKTREE_PATH" .oss; then
+    oss_refuse_unsafe .oss
+    exit 0
+fi
 
 # Copy auth config from home directory (shared credentials)
-if [[ -f "$HOME/.oss/config.json" ]]; then
+if [[ -f "$HOME/.oss/config.json" ]] && ! oss_safe_target "$WORKTREE_PATH" .oss/config.json; then
+    oss_refuse_unsafe .oss/config.json
+elif [[ -f "$HOME/.oss/config.json" ]]; then
     cp "$HOME/.oss/config.json" "$WORKTREE_PATH/.oss/config.json"
     chmod 600 "$WORKTREE_PATH/.oss/config.json"
 fi
 
 # Initialize workflow-state.json with defaults
+if ! oss_safe_target "$WORKTREE_PATH" .oss/workflow-state.json; then
+    oss_refuse_unsafe .oss/workflow-state.json
+    exit 0
+fi
 cat > "$WORKTREE_PATH/.oss/workflow-state.json" << 'EOF'
 {
   "activeStep": null,

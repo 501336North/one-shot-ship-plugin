@@ -69,6 +69,15 @@ if [[ "$(cat "$T/log.calls" 2>/dev/null)" == "write build [failed]" ]]; then pas
 else fail "default context is {} (log line is exactly '[failed]')" "log=$(cat "$T/log.calls" 2>/dev/null)"; fi
 rm -rf "$T"
 
+# 3b. Same default for --session and --issue (same defect, same fix).
+sandbox
+run_notify --session context_saved >/dev/null 2>&1
+run_notify --issue loop_detected >/dev/null 2>&1
+if [[ "$(cat "$T/log.calls" 2>/dev/null)" == "$(printf 'write session [context_saved] {}\nwrite issue [loop_detected] {}')" ]]; then
+    pass "--session/--issue default context is {} (no literal quotes)"
+else fail "--session/--issue default context is {} (no literal quotes)" "log=$(cat "$T/log.calls" 2>/dev/null | tr '\n' '|')"; fi
+rm -rf "$T"
+
 # 4. task_complete: a task name with quotes reaches setProgress as data in valid JSON.
 sandbox
 run_notify --workflow build task_complete '{"current":3,"total":9,"taskName":"Fix \"quoted\", \"x\": 1"}' >/dev/null 2>&1

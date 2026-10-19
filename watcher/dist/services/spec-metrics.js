@@ -9,6 +9,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
 /** Maximum number of history entries to retain per feature */
 const MAX_HISTORY_ENTRIES = 90;
 /** Minimum number of history entries required for velocity calculation */
@@ -75,9 +76,7 @@ export class SpecMetricsService {
             updated_at: new Date().toISOString(),
         };
         // Ensure directory exists
-        const dir = path.dirname(this.metricsPath);
-        await fs.promises.mkdir(dir, { recursive: true });
-        await fs.promises.writeFile(this.metricsPath, JSON.stringify(updated, null, 2));
+        safeWriteFileAtomic(path.dirname(this.metricsPath), path.basename(this.metricsPath), JSON.stringify(updated, null, 2));
         // Update cache
         this.cachedMetrics = updated;
     }
