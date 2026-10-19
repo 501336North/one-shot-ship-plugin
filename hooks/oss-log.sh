@@ -29,6 +29,7 @@ if ! declare -F oss_safe_target >/dev/null; then
     oss_safe_mkdir() { return 1; }
     oss_safe_target() { return 1; }
     oss_refuse_unsafe() { echo "oss: refusing unsafe .oss path ${1:-} (oss-safe-path.sh missing)" >&2; }
+    oss_valid_workflow_name() { return 1; }
 fi
 
 # Security: Validate project path to prevent path traversal attacks
@@ -127,7 +128,15 @@ oss_log_guard() {
 }
 if [[ -n "$_OSS_LOG_PROJECT" ]]; then
     _OSS_LOG_RELS=(.oss/logs/archive/ .oss/logs/current-session/session.log)
-    [[ -n "${2:-}" ]] && _OSS_LOG_RELS+=(".oss/logs/current-session/${2}.log")
+    case "${1:-}" in
+        init|write|phase|tool|test|error|file|agent|progress|milestone|recovery|timeout|ironlaw|checklist)
+            # These append to <name>.log: only a plain command name may become a path (G2)
+            if ! oss_valid_workflow_name "${2:-}"; then
+                echo "oss-log: invalid command name refused (must match ^[a-z][a-z0-9-]{0,40}\$)" >&2
+                exit 0
+            fi
+            _OSS_LOG_RELS+=(".oss/logs/current-session/${2}.log") ;;
+    esac
     for _rel in "${_OSS_LOG_RELS[@]}"; do
         if [[ "$_rel" == */ ]]; then
             oss_safe_mkdir "$_OSS_LOG_PROJECT" "${_rel%/}" && continue
