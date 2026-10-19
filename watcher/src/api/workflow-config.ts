@@ -16,7 +16,7 @@ import {
   DEFAULT_WORKFLOW_CONFIGS,
 } from '../engine/types.js';
 import { getConfigDir, readApiCredentials } from './api-credentials.js';
-import { isSafeChainName } from '../utils/safe-chain-name.js';
+import { assertValidWorkflowName } from '../utils/workflow-name.js';
 
 const PBKDF2_ITERATIONS = 100000;
 const KEY_LENGTH = 32;
@@ -102,9 +102,7 @@ export async function fetchWorkflowConfig(
   workflowName: string,
   timeoutMs: number = WORKFLOW_FETCH_TIMEOUT_MS
 ): Promise<EncryptedWorkflowConfig> {
-  if (!isSafeChainName(workflowName)) {
-    throw new Error('Invalid workflow name');
-  }
+  assertValidWorkflowName(workflowName);
 
   const credentials = readApiCredentials();
   if (!credentials) {
