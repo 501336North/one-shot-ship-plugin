@@ -46,6 +46,10 @@ Execute a custom command defined by your team with full observability.
 2. **Executes with observability** - Full logging, status updates, IRON LAWS compliance
 3. **Integrates with workflow** - Works within workflow chains (blocking or non-blocking)
 
+## Step 0: Validate the Command Name
+
+Strip a leading `team:` prefix. The remaining name must match `^[a-z][a-z0-9-]{0,40}$` before any command below uses it. If it does not match, stop and report it; never run any command with it.
+
 ## Step 1: Check Authentication
 
 ```bash
