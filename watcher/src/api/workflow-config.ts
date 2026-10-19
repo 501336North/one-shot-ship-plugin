@@ -19,6 +19,9 @@ import { getConfigDir, readApiCredentials } from './api-credentials.js';
 import { isSafeChainName } from '../utils/safe-chain-name.js';
 
 const PBKDF2_ITERATIONS = 100000;
+
+/** Give up on the API well before oss-notify.sh's 30s chain-trigger cap (T3) */
+export const WORKFLOW_FETCH_TIMEOUT_MS = 8000;
 const KEY_LENGTH = 32;
 
 /**
@@ -95,7 +98,10 @@ function userIdToLicenseId(userId: string): string {
 /**
  * Fetch encrypted workflow config from API
  */
-export async function fetchWorkflowConfig(workflowName: string): Promise<EncryptedWorkflowConfig> {
+export async function fetchWorkflowConfig(
+  workflowName: string,
+  timeoutMs: number = WORKFLOW_FETCH_TIMEOUT_MS
+): Promise<EncryptedWorkflowConfig> {
   if (!isSafeChainName(workflowName)) {
     throw new Error('Invalid workflow name');
   }
@@ -113,6 +119,7 @@ export async function fetchWorkflowConfig(workflowName: string): Promise<Encrypt
       Authorization: `Bearer ${credentials.apiKey}`,
       'Content-Type': 'application/json',
     },
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   if (!response.ok) {
