@@ -27,6 +27,7 @@ import { logDiff } from '../../src/services/spec-reconciler/diff-generator.js';
 import type { CoverageDiff, SpecMetricsFile } from '../../src/services/spec-reconciler/types.js';
 import { WorkflowStateService } from '../../src/services/workflow-state.js';
 import { Watcher } from '../../src/index.js';
+import { safeMkdirOss } from '../../src/utils/safe-project-write.js';
 import type { CreateTaskInput } from '../../src/types.js';
 
 let root: string;
@@ -226,9 +227,8 @@ describe('project .oss writers do not follow committed links', () => {
   });
 });
 
-describe('G3: ownership is "current user OR the project root owner"', () => {
-  it('a repo owned by another uid (bind mount, root in a container) is still written', async () => {
-    // Simulate running as a different uid than the one owning the repo and its .oss.
+describe('N2-2: a foreign-owned component is accepted only under a uid-0 root and if not g/o-writable', () => {
+  it('a repo owned by another NON-root uid is refused', async () => {
     const spy = vi.spyOn(process, 'getuid').mockReturnValue(4242);
     try {
       fs.mkdirSync(ossDir);
@@ -236,7 +236,13 @@ describe('G3: ownership is "current user OR the project root owner"', () => {
     } finally {
       spy.mockRestore();
     }
-    expect(fs.readFileSync(path.join(ossDir, 'workflow.log'), 'utf-8')).toContain('"cmd":"build"');
+    expect(fs.existsSync(path.join(ossDir, 'workflow.log'))).toBe(false);
+  });
+
+  it('under a uid-0 project root: a root-owned 0755 dir is accepted, the 1777 system tmp is refused', () => {
+    expect(safeMkdirOss('/usr')).toBe(true);
+    const sysTmp = fs.existsSync('/private/tmp') && !fs.lstatSync('/private/tmp').isSymbolicLink() ? '/private/tmp' : '/tmp';
+    expect(safeMkdirOss(sysTmp)).toBe(false);
   });
 });
 
@@ -253,6 +259,24 @@ describe('ship round 1 (G6)', () => {
     await manager.initialize();
     const umask = process.umask();
     expect(fs.statSync(fresh).mode & 0o777).toBe(0o666 & ~umask);
+  });
+
+  it('N2-3: the kept mode drops setuid/setgid/sticky (masked to 0o777)', async () => {
+    fs.mkdirSync(ossDir);
+    const existing = path.join(ossDir, 'status-line.json');
+    fs.writeFileSync(existing, '{}');
+    fs.chmodSync(existing, 0o4750);
+    await new StatusLineService(ossDir).setTDDPhase('RED');
+    expect(fs.statSync(existing).mode & 0o7777).toBe(0o750);
+  });
+
+  it('N2-4: a NEW webhook config.json is 0600 (it holds the secret); an existing one keeps its mode', async () => {
+    fs.mkdirSync(ossDir);
+    await new WebhookConfig(ossDir).enable({ port: 8080 });
+    expect(fs.statSync(path.join(ossDir, 'config.json')).mode & 0o777).toBe(0o600);
+    fs.chmodSync(path.join(ossDir, 'config.json'), 0o640);
+    await new WebhookConfig(ossDir).enable({ port: 8081 });
+    expect(fs.statSync(path.join(ossDir, 'config.json')).mode & 0o777).toBe(0o640);
   });
 
   it('G6: no temp file is left behind when the write fails', async () => {

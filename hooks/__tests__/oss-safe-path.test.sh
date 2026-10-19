@@ -46,14 +46,17 @@ mkdir -p "$T/p2"
 (cd "$T/p2" && HOME="$T/home" CLAUDE_PROJECT_DIR="$T/p2" "$SH" "$ROOT/hooks/oss-log.sh" write custom-cmd2 "hello" >/dev/null 2>&1 </dev/null)
 grep -q hello "$T/p2/.oss/logs/current-session/custom-cmd2.log" 2>/dev/null && pass "G2 control: a plain command name still logs" || fail "G2 control: a plain command name still logs" "missing"
 
-# --- G3: a component owned by the PROJECT ROOT's owner is accepted (bind mounts, root in a
-#     container, shared repos). Root-free fixture: project "/" (owned by root) and the
-#     root-owned system tmp directory as the components; the leaf dir is created by us.
+# --- N2-2 (narrowed G3): a component we do not own is accepted ONLY when the physical project
+#     root is owned by uid 0 (root-in-container / root-owned bind mount) AND the component is
+#     not group- or other-writable. Root-free fixtures: project "/" (uid 0) with /usr (root,
+#     0755) -> accepted; with the system tmp dir (root, 1777) -> refused.
+rc=$(guard oss_safe_mkdir / usr)
+[[ "$rc" == 0 ]] && pass "N2-2: root-owned project root + root-owned 0755 component is accepted" || fail "N2-2: root-owned project root + root-owned 0755 component is accepted" "rc=$rc"
 if [[ -d /private/tmp && ! -L /private/tmp ]]; then sysrel=private/tmp; else sysrel=tmp; fi
-leaf="oss-g3.$$"
+leaf="oss-n22.$$"
 rc=$(guard oss_safe_target / "$sysrel/$leaf/probe.json")
-if [[ "$rc" == 0 && -d "/$sysrel/$leaf" ]]; then pass "G3: components owned by the project root's owner are accepted"
-else fail "G3: components owned by the project root's owner are accepted" "rc=$rc"; fi
+if [[ "$rc" == 1 && ! -e "/$sysrel/$leaf" ]]; then pass "N2-2: a foreign-owned world-writable component (system tmp) is refused"
+else fail "N2-2: a foreign-owned world-writable component (system tmp) is refused" "rc=$rc"; fi
 rmdir "/$sysrel/$leaf" 2>/dev/null
 
 # --- G4: sourced from a non-bash shell (zsh) the guard fails CLOSED -----------------------------

@@ -248,6 +248,19 @@ if ! grep -q ossk_test_key "$P/.oss/config.json" 2>/dev/null && grep -q shared "
 else fail "oss-worktree-create.sh: a tracked .oss/config.json is not overwritten with the API key" "$(cat "$P/.oss/config.json")"; fi
 rm -rf "$T"
 
+# N2-1: `oss-log.sh tail` touches session.log first: a committed dangling link must not create
+#       the outside file. A stub `tail` on PATH returns at once, so `tail -f` never blocks.
+stub_tail() { mkdir -p "$T/bin"; printf '#!/bin/sh\nexit 0\n' > "$T/bin/tail"; chmod +x "$T/bin/tail"; }
+l_sessdangle() { mkdir -p .oss/logs/current-session && ln -s "$T/outside/created-by-tail.log" .oss/logs/current-session/session.log; }
+world; stub_tail; evil_repo p-tail l_sessdangle; before=$(snapshot)
+out=$(cd "$P" && HOME="$T/home" CLAUDE_PROJECT_DIR="$P" PATH="$T/bin:$PATH" "$SH" "$ROOT/hooks/oss-log.sh" tail 2>&1 </dev/null); rc=$?
+check "oss-log.sh tail: committed dangling session.log link creates nothing outside" "$before" "$rc" "$out"
+rm -rf "$T"
+world; stub_tail; clean_repo p-tailok
+(cd "$P" && HOME="$T/home" CLAUDE_PROJECT_DIR="$P" PATH="$T/bin:$PATH" "$SH" "$ROOT/hooks/oss-log.sh" tail >/dev/null 2>&1 </dev/null)
+[[ -f "$P/.oss/logs/current-session/session.log" ]] && pass "control: oss-log.sh tail on a fresh project still creates session.log" || fail "control: oss-log.sh tail on a fresh project still creates session.log" "missing"
+rm -rf "$T"
+
 # =================================================================================================
 # 9. Controls: an ordinary repo still gets state, logs, gitignore, settings, context, archive
 # =================================================================================================
