@@ -328,6 +328,59 @@ describe('WorkflowConfigAPI', () => {
   });
 
   /**
+   * @behavior A workflow name that is an Object.prototype member gets the empty config, not a prototype member
+   * @business-rule Only the workflows DEFAULT_WORKFLOW_CONFIGS really defines have defaults (G6)
+   */
+  describe('prototype-member workflow names', () => {
+    const protoNames = ['__proto__', 'constructor', 'toString', 'hasOwnProperty'];
+
+    function expectPlainEmpty(result: unknown): void {
+      expect(typeof result).toBe('object');
+      expect(result).not.toBe(Object.prototype);
+      expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
+      expect(result).toStrictEqual({});
+    }
+
+    it.each(protoNames)('%s without credentials returns {}', async (name) => {
+      process.env.OSS_CONFIG_DIR = createTestDir();
+
+      expectPlainEmpty(await getCachedOrFetch(name));
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it.each(protoNames)('%s with credentials returns {} when the API gives no config', async (name) => {
+      const configDir = createTestDir();
+      fs.writeFileSync(
+        path.join(configDir, 'config.json'),
+        JSON.stringify({ apiKey: 'ak_secret_key', apiUrl: 'https://api.example.com' })
+      );
+      process.env.OSS_CONFIG_DIR = configDir;
+      mockFetch.mockResolvedValue({ ok: false, status: 404, json: async () => ({ error: 'Not found' }) });
+
+      expectPlainEmpty(await getCachedOrFetch(name));
+    });
+
+    it('constructor answered by the API but with no stored credentials returns {}', async () => {
+      const configDir = createTestDir(); // no credentials.enc
+      fs.writeFileSync(
+        path.join(configDir, 'config.json'),
+        JSON.stringify({ apiKey: 'ak_secret_key', apiUrl: 'https://api.example.com' })
+      );
+      process.env.OSS_CONFIG_DIR = configDir;
+      mockFetch.mockResolvedValue({ ok: true, json: async () => ({ encrypted: 'e', iv: 'i', authTag: 'a' }) });
+
+      expectPlainEmpty(await getCachedOrFetch('constructor'));
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('a real workflow still gets its defaults', async () => {
+      process.env.OSS_CONFIG_DIR = createTestDir();
+
+      expect(await getCachedOrFetch('build')).toEqual(DEFAULT_WORKFLOW_CONFIGS['build']);
+    });
+  });
+
+  /**
    * @behavior The Bearer API key is never replayed to wherever the API redirects
    * @business-rule fetchWorkflowConfig refuses redirects (G5): a 302 rejects and the target gets no request
    */
