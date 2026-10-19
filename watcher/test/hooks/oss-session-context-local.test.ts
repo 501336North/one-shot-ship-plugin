@@ -292,9 +292,8 @@ describe('Session Start - Auto .gitignore Setup', () => {
     expect(fs.existsSync(projectOssDir)).toBe(false);
 
     // WHEN: Running oss-session-start.sh
-    // Note: Using cat | bash to avoid macOS virtualization file caching issues
     try {
-      execSync(`cat "${sessionStartScript}" | bash`, {
+      execSync(`bash "${sessionStartScript}"`, {
         timeout: 30000,
         encoding: 'utf-8',
         env: {
@@ -336,9 +335,8 @@ describe('Session Start - Auto .gitignore Setup', () => {
     expect(fs.existsSync(projectOssDir)).toBe(false);
 
     // WHEN: Running oss-session-start.sh
-    // Note: Using cat | bash to avoid macOS virtualization file caching issues
     try {
-      execSync(`cat "${sessionStartScript}" | bash`, {
+      execSync(`bash "${sessionStartScript}"`, {
         timeout: 30000,
         encoding: 'utf-8',
         env: {
@@ -378,9 +376,8 @@ describe('Session Start - Auto .gitignore Setup', () => {
     fs.writeFileSync(gitignoreFile, originalContent);
 
     // WHEN: Running oss-session-start.sh
-    // Note: Using cat | bash to avoid macOS virtualization file caching issues
     try {
-      execSync(`cat "${sessionStartScript}" | bash`, {
+      execSync(`bash "${sessionStartScript}"`, {
         timeout: 30000,
         encoding: 'utf-8',
         env: {
@@ -417,9 +414,8 @@ describe('Session Start - Auto .gitignore Setup', () => {
     expect(fs.existsSync(projectOssDir)).toBe(false);
 
     // WHEN: Running oss-session-start.sh
-    // Note: Using cat | bash to avoid macOS virtualization file caching issues
     try {
-      execSync(`cat "${sessionStartScript}" | bash`, {
+      execSync(`bash "${sessionStartScript}"`, {
         timeout: 30000,
         encoding: 'utf-8',
         env: {

@@ -100,4 +100,22 @@ dist rebuilt (121 files fresh); `npx tsc --noEmit` clean.
 
 dist rebuilt; `watcher-dist-fresh.test.sh` PASS (121 files). `hooks/__tests__/oss-writer-nofollow.test.sh` 45/45.
 
-## Last Updated: 2026-10-19 17:45 +07 by /oss:build N2-6
+## Post-merge test harness (H1-H3)
+RED on 0ea1ce2 (v2.0.87), the three files with the no-setup config: 8 failed / 18 passed (26).
+- oss-session-context-local > Auto .gitignore Setup > add .oss entries to existing .gitignore (`expected 'node_modules/\n.env\n' to contain '# OSS Dev Workflow (auto-added)'`)
+- oss-session-context-local > Auto .gitignore Setup > create .gitignore when none exists (`expected false to be true`)
+- oss-notify-telegram > complete / merged / failed / verbosity important / verbosity errors-only (5; no telegram call captured)
+- oss-log-project-local > separate logs for different projects (`expected false to be true`: session.log never written for `projectA_cmd`)
+
+| Task | Change | Three files after |
+|---|---|---|
+| H1 | `bash "<script>"` instead of `cat "<script>" \| bash` in all 4 tests of the describe; obsolete caching comments removed | 6 failed / 20 passed; oss-session-context-local 7/7 |
+| H2 | copy `hooks/oss-safe-path.sh` beside `oss-notify-test.sh` | 1 failed / 25 passed; oss-notify-telegram 14/14 |
+| H3 | `projectA_cmd`/`projectB_cmd` -> `project-a-cmd`/`project-b-cmd` (commands, assertions, comments) | 26/26 |
+
+No assertion changed. The 2 negative tests in the H1 describe (".oss exists" and "no duplicates") also ran via `cat | bash` and passed vacuously, since the hook wrote nothing. They now run by path and still pass.
+
+`watcher/test/hooks` directory: 30 files, 189/189. A first directory run showed 10 failures (oss-log-error-recovery 6, oss-log-health-check 2, oss-userpromptsubmit-logging 2). The cause was `CLAUDE_PROJECT_DIR` leaking from the logging shell: those tests read the global `~/.oss` log. The same 3 files passed alone on this branch and on bac6c13 (13/13 each). Rerun with `env -u CLAUDE_PROJECT_DIR`: 189/189.
+`hooks/__tests__/oss-writer-nofollow.test.sh`: 45/45.
+
+## Last Updated: 2026-10-19 18:15 +07 by /oss:build H1-H3

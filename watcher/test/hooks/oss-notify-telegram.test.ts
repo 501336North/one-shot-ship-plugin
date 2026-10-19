@@ -14,6 +14,8 @@ import * as os from 'os';
 describe('oss-notify.sh Telegram integration', () => {
   const PLUGIN_ROOT = path.resolve(__dirname, '../../..');
   const OSS_NOTIFY = path.join(PLUGIN_ROOT, 'hooks/oss-notify.sh');
+  // The write guard oss-notify.sh sources from its own directory (fail-closed if absent)
+  const OSS_SAFE_PATH = path.join(PLUGIN_ROOT, 'hooks/oss-safe-path.sh');
   const ossDir = path.join(os.homedir(), '.oss');
   const settingsFile = path.join(ossDir, 'settings.json');
 
@@ -111,6 +113,8 @@ source "${OSS_NOTIFY}" ${args}
     const testScriptPath = path.join(path.dirname(mockTelegramScript!), 'oss-notify-test.sh');
     fs.writeFileSync(testScriptPath, testScript);
     fs.chmodSync(testScriptPath, '755');
+    // Stage the real guard next to the copy, as it sits next to the real hook
+    fs.copyFileSync(OSS_SAFE_PATH, path.join(path.dirname(testScriptPath), 'oss-safe-path.sh'));
 
     try {
       const fullEnv: Record<string, string | undefined> = {

@@ -88,3 +88,13 @@ Boss, 2026-10-19: "make you the boss" and resolve fully. Orchestrated from the A
   - RED: the test has a HOME ossDir whose `config.json` is a symlink to a 0600 file. After `safeWriteFileAtomic`, the resulting file must be 0600 (mode & 0o777), not the link's mode. It must fail on the current code: on macOS lstat of a link gives 0755.
   - GREEN: the HOME branch uses `statSync` (follows the link) again, masked to `0o777`. The project branch is unchanged.
   - Rebuild `watcher/dist`. The dist-fresh test must pass.
+
+## Post-merge: watcher hook tests broken by 2.0.87 (H1-H3)
+
+Reported by the plugin-highs session. 8 tests fail on 0ea1ce2 and pass on bac6c13. All three causes are in the test harness; the product works.
+
+- [x] **H1:** `watcher/test/hooks/oss-session-context-local.test.ts`, "Auto .gitignore Setup" (2 tests). They run `cat script | bash`, so `BASH_SOURCE` is empty and `oss-safe-path.sh` isn't found; the hook fails closed. Fix: run the script by its path (`bash "<script>"`), like the other tests in that file.
+- [x] **H2:** `watcher/test/hooks/oss-notify-telegram.test.ts` (5 tests). These write a rewritten copy of oss-notify.sh into a temp dir without `oss-safe-path.sh` beside it. Fix: copy `hooks/oss-safe-path.sh` next to the staged script.
+- [x] **H3:** `watcher/test/hooks/oss-log-project-local.test.ts`, "separate logs for different projects". The names `projectA_cmd` and `projectB_cmd` break the shared rule `^[a-z][a-z0-9-]{0,40}$`; the rule is correct. Fix: use `project-a-cmd` and `project-b-cmd`.
+- RED here means the 8 tests fail now on main; GREEN is all 8 passing. The control is that each test still asserts the original behaviour.
+- [ ] **H4 (guard):** shipping 2.0.87 missed these because the gates ran only targeted vitest files. Run the full `watcher/test/hooks` directory in the next gate (no-setup config).
