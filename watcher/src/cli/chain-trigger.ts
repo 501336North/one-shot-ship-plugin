@@ -141,6 +141,13 @@ export async function executeChainForWorkflow(
       console.error(`chain-trigger: ${skipped - MAX_SKIP_LOG_LINES} more invalid steps skipped`);
     }
 
+    // D3: say how many steps past the read limit were never looked at (not a skip, no cap)
+    if (steps.length > MAX_STEPS_ITERATED) {
+      console.error(
+        `chain-trigger: ${steps.length - MAX_STEPS_ITERATED} steps beyond the ${MAX_STEPS_ITERATED}-step read limit ignored`
+      );
+    }
+
     if (lines.length > 0) {
       console.log('---CHAIN_COMMANDS---');
       for (const line of lines) {
