@@ -125,11 +125,6 @@ On success (data model designed):
 ~/.oss/hooks/oss-notify.sh --workflow data-model complete '{"entitiesDesigned": {COUNT}, "migrationsCreated": {MIGRATIONS}}'
 ```
 
-On failure (couldn't complete data model):
-```bash
-~/.oss/hooks/oss-notify.sh --workflow data-model failed '{"reason": "{REASON}"}'
-```
-
 ## Error Handling
 
 ### If API returns 401

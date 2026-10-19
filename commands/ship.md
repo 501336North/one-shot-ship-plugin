@@ -226,11 +226,6 @@ After PR is merged (with `--merge` flag):
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` and `merged` events.
 
-If shipping fails:
-```bash
-~/.oss/hooks/oss-notify.sh --workflow ship failed '{"blocker": "{REASON}"}'
-```
-
 ## Step 8: Update Status Line (Complete)
 
 **You MUST send `complete` exactly once, as the last event of a successful ship:** right after `pr_created` when there is no `--merge`, or right after `merged` with `--merge` (never before `merged`: `merged` resets the workflow state). Do not send it if shipping failed.

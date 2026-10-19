@@ -131,12 +131,6 @@ On success (test passes):
 ~/.oss/hooks/oss-notify.sh --workflow green complete '{"testFile": "{TEST_FILE}", "linesAdded": {LINES}}'
 ```
 
-On failure (couldn't make test pass):
-```bash
-~/.oss/hooks/oss-log.sh error green "Failed to pass test: {REASON}"
-~/.oss/hooks/oss-notify.sh --workflow green failed '{"reason": "{REASON}"}'
-```
-
 ## Error Handling
 
 ### If API returns 401

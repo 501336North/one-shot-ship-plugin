@@ -116,11 +116,6 @@ On success (requirements extracted):
 ~/.oss/hooks/oss-notify.sh --workflow requirements complete '{"storiesCount": {COUNT}, "criteriaCount": {CRITERIA}}'
 ```
 
-On failure (couldn't extract requirements):
-```bash
-~/.oss/hooks/oss-notify.sh --workflow requirements failed '{"reason": "{REASON}"}'
-```
-
 ## Error Handling
 
 ### If API returns 401

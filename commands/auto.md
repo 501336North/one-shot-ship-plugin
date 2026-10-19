@@ -129,11 +129,6 @@ After auto pipeline completes:
 ~/.oss/hooks/oss-notify.sh --workflow auto complete '{"prNumber": {PR_NUM}, "phases": 4}'
 ```
 
-If auto pipeline fails:
-```bash
-~/.oss/hooks/oss-notify.sh --workflow auto failed '{"phase": "{FAILED_PHASE}", "reason": "{REASON}"}'
-```
-
 ## Error Handling
 
 ### If API returns 401

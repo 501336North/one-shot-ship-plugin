@@ -203,11 +203,6 @@ After all tasks complete:
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.
 
-If build fails:
-```bash
-~/.oss/hooks/oss-notify.sh --workflow build failed '{"failedTest": "{TEST_FILE}:{LINE}"}'
-```
-
 ## Command Chain (per task)
 
 For EACH task in the plan, execute the TDD cycle with full logging:

@@ -132,11 +132,6 @@ After debug complete:
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.
 
-If debug fails:
-```bash
-~/.oss/hooks/oss-notify.sh --workflow debug failed '{"reason": "{ERROR}"}'
-```
-
 ## Command Chain
 
 After debug creates the fix plan:

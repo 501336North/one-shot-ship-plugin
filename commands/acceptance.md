@@ -120,11 +120,6 @@ On success (acceptance test written and fails as expected):
 ~/.oss/hooks/oss-notify.sh --workflow acceptance complete '{"testFile": "{TEST_FILE}", "testsWritten": {COUNT}}'
 ```
 
-On failure (couldn't write acceptance test):
-```bash
-~/.oss/hooks/oss-notify.sh --workflow acceptance failed '{"reason": "{REASON}"}'
-```
-
 ## Error Handling
 
 ### If API returns 401

@@ -128,11 +128,6 @@ On success (integration tests pass):
 ~/.oss/hooks/oss-notify.sh --workflow integration complete '{"testsPass": {COUNT}, "boundariesTested": "{BOUNDARIES}"}'
 ```
 
-On failure (integration tests fail or mock mismatch found):
-```bash
-~/.oss/hooks/oss-notify.sh --workflow integration failed '{"reason": "{REASON}"}'
-```
-
 ## Error Handling
 
 ### If API returns 401

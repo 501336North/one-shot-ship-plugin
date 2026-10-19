@@ -118,11 +118,6 @@ The prompt handles:
 ~/.oss/hooks/oss-notify.sh --workflow code-simplifier complete '{}'
 ```
 
-**Failure (if simplification cannot proceed):**
-```bash
-~/.oss/hooks/oss-notify.sh --workflow code-simplifier failed '{"reason": "{reason}"}'
-```
-
 ## Example Usage
 
 ```bash

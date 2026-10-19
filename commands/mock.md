@@ -126,11 +126,6 @@ On success:
 ~/.oss/hooks/oss-notify.sh --workflow mock complete '{"mocksCreated": {COUNT}}'
 ```
 
-On failure:
-```bash
-~/.oss/hooks/oss-notify.sh --workflow mock failed '{"reason": "{REASON}"}'
-```
-
 ## Error Handling
 
 ### If API returns 401

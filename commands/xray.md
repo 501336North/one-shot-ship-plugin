@@ -115,11 +115,6 @@ After scan completes:
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.
 
-If scan fails:
-```bash
-~/.oss/hooks/oss-notify.sh --workflow xray failed '{"reason": "{REASON}"}'
-```
-
 ## Step 8: Execute Chain Commands (MANDATORY)
 
 After `oss-notify.sh --workflow xray complete` runs, its stdout may contain a `---CHAIN_COMMANDS---` block. If present, **auto-execute, in order, each `CHAIN:` line that passes the parsing rules below** — no user intervention required.

@@ -127,11 +127,6 @@ On success (ADR created):
 ~/.oss/hooks/oss-notify.sh --workflow adr complete '{"adrNumber": {NUMBER}, "title": "{TITLE}"}'
 ```
 
-On failure (couldn't create ADR):
-```bash
-~/.oss/hooks/oss-notify.sh --workflow adr failed '{"reason": "{REASON}"}'
-```
-
 ## Error Handling
 
 ### If API returns 401

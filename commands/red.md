@@ -136,12 +136,6 @@ On success (test written and fails as expected):
 ~/.oss/hooks/oss-notify.sh --workflow red complete '{"testFile": "{TEST_FILE}", "failureMessage": "{FAILURE_MSG}"}'
 ```
 
-On failure (couldn't write test):
-```bash
-~/.oss/hooks/oss-log.sh error red "Failed to write test: {REASON}"
-~/.oss/hooks/oss-notify.sh --workflow red failed '{"reason": "{REASON}"}'
-```
-
 ## Error Handling
 
 ### If API returns 401

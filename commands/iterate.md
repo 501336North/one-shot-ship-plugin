@@ -123,11 +123,6 @@ After iteration plan is complete:
 ~/.oss/hooks/oss-notify.sh --workflow iterate complete '{"taskCount": {N}, "trigger": "{feature_mismatch|scope_change}"}'
 ```
 
-If iteration fails:
-```bash
-~/.oss/hooks/oss-notify.sh --workflow iterate failed '{"reason": "{reason}"}'
-```
-
 ## Command Chain
 
 This command fits in the iteration workflow:

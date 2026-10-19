@@ -194,11 +194,6 @@ After quick task is complete:
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.
 
-If quick task fails:
-```bash
-~/.oss/hooks/oss-notify.sh --workflow quick failed '{"taskId": "{NNN}", "reason": "{REASON}"}'
-```
-
 ## Directory Structure
 
 Quick tasks are stored separately from main workflow:

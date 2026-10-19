@@ -171,11 +171,6 @@ After ideation is complete:
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.
 
-If ideation fails:
-```bash
-~/.oss/hooks/oss-notify.sh --workflow ideate failed '{"reason": "{REASON}"}'
-```
-
 ## Command Orchestration
 
 After this command completes, the workflow engine will:

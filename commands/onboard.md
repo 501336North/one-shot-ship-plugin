@@ -150,11 +150,6 @@ After onboarding is complete:
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.
 
-If onboarding fails:
-```bash
-~/.oss/hooks/oss-notify.sh --workflow onboard failed '{"error": "{REASON}"}'
-```
-
 ## Command Orchestration
 
 After this command completes, the workflow engine will:

@@ -127,11 +127,6 @@ On success (API design complete):
 ~/.oss/hooks/oss-notify.sh --workflow api-design complete '{"endpointsDesigned": {COUNT}, "specFile": "{SPEC_FILE}"}'
 ```
 
-On failure (couldn't complete API design):
-```bash
-~/.oss/hooks/oss-notify.sh --workflow api-design failed '{"reason": "{REASON}"}'
-```
-
 ## Error Handling
 
 ### If API returns 401

@@ -126,11 +126,6 @@ On success (contracts verified):
 ~/.oss/hooks/oss-notify.sh --workflow contract complete '{"contractsVerified": {COUNT}, "consumers": "{CONSUMERS}"}'
 ```
 
-On failure (contract verification failed):
-```bash
-~/.oss/hooks/oss-notify.sh --workflow contract failed '{"reason": "{REASON}"}'
-```
-
 ## Error Handling
 
 ### If API returns 401

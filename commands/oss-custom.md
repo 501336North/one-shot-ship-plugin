@@ -133,10 +133,15 @@ After custom command completes:
 ~/.oss/hooks/oss-notify.sh --workflow custom complete '{"command": "{COMMAND_NAME}"}'
 ```
 
-If custom command fails:
+If custom command fails, report it without putting your own text into a command. Run:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow custom failed '{"command": "{COMMAND_NAME}", "error": "{ERROR_MSG}"}'
+test -x "$HOME/.oss/hooks/oss-value.sh" && "$HOME/.oss/hooks/oss-value.sh" dir
 ```
+Use the Write tool to write a one-line reason to `reason.txt` in the directory it printed, then run this command exactly as written:
+```bash
+"$HOME/.oss/hooks/oss-value.sh" failed custom
+```
+If either command fails, skip the notification and tell the user the reason.
 
 ## Error Handling
 
