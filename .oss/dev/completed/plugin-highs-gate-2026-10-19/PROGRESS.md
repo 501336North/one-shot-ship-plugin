@@ -1,6 +1,9 @@
 # Progress: plugin-highs-gate
 
-## Current Phase: ship
+## Current Phase: shipped
+
+**Final status:** merged to main as PR #197, squash 5bc3e01, 2026-10-19 11:13 UTC (18:13 +07); plugin v2.0.88.
+Merged by the coordinating session under the user's approval; this session opened the PR unmerged.
 
 ## Tasks
 - [x] T8: commands/visual-test.md wrapper (main suite red, 3 tests) (completed 2026-10-19, 6711c40)
@@ -35,7 +38,7 @@
   tsc ✓, no lint script, tests ✓; shell tests 36/40, the 4 failures fail since 2.0.85 (c77ac45) → follow-ups.
 
 ## Blockers
-- None. PR to be opened unmerged; the coordinating session merges per the user's approval.
+- None. Shipped (PR #197). Follow-ups: .oss/dev/FOLLOWUPS.md (20 entries "from: plugin-highs-gate").
 
 ## Notes
 - One `oss-log.sh init build` banner landed in ~/.oss/logs/current-session/build.log (global) because
@@ -77,4 +80,4 @@
   restarts build.log, so round 1's phase log is gone; test runs before ~16:20 loaded watcher/test/setup.ts
   (machine-wide pkill) and may have killed other sessions' processes.
 
-## Last Updated: 2026-10-19 18:11 +07 by /oss:ship
+## Last Updated: 2026-10-19 18:13 +07 by /oss:ship (archive)
