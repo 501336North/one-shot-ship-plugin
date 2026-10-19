@@ -19,10 +19,10 @@ import { getConfigDir, readApiCredentials } from './api-credentials.js';
 import { isSafeChainName } from '../utils/safe-chain-name.js';
 
 const PBKDF2_ITERATIONS = 100000;
+const KEY_LENGTH = 32;
 
 /** Give up on the API well before oss-notify.sh's 30s chain-trigger cap (T3) */
 export const WORKFLOW_FETCH_TIMEOUT_MS = 8000;
-const KEY_LENGTH = 32;
 
 /**
  * Credentials structure from credentials.enc
