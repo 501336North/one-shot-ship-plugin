@@ -108,6 +108,16 @@ The prompt monitors:
 - Error rates
 - Resource utilization
 
+## Step 7: Update Status Line (Completion)
+
+On success only. If the command failed (the prompt sent `failed`), do not send `complete`.
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow monitor complete '{}'
+```
+
 ## Command Chain
 
 ```
@@ -134,12 +144,4 @@ The prompt monitors:
 ```bash
 /oss:monitor
 /oss:monitor --detailed
-```
-
-## Step 7: Update Status Line (Completion)
-
-**You MUST update the workflow status on completion.**
-
-```bash
-~/.oss/hooks/oss-notify.sh --workflow monitor complete '{}'
 ```

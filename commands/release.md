@@ -111,6 +111,16 @@ The prompt handles:
 - Git tagging
 - Release publishing
 
+## Step 7: Update Status Line (Completion)
+
+On success only. If the command failed (the prompt sent `failed`), do not send `complete`.
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow release complete '{}'
+```
+
 ## Command Chain
 
 ```
@@ -151,12 +161,4 @@ Run the commands shown above to complete the release manually.
 /oss:release
 /oss:release --version patch
 /oss:release --version minor
-```
-
-## Step 7: Update Status Line (Completion)
-
-**You MUST update the workflow status on completion.**
-
-```bash
-~/.oss/hooks/oss-notify.sh --workflow release complete '{}'
 ```

@@ -112,18 +112,20 @@ The prompt handles:
 - A/B test integration
 - Flag lifecycle management
 
+## Step 7: Update Status Line (Completion)
+
+On success only. If the command failed (the prompt sent `failed`), do not send `complete`.
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow feature-flag complete '{}'
+```
+
 ## Example Usage
 
 ```bash
 /oss:feature-flag create new-checkout
 /oss:feature-flag rollout new-checkout --percent 10
 /oss:feature-flag disable new-checkout
-```
-
-## Step 7: Update Status Line (Completion)
-
-**You MUST update the workflow status on completion.**
-
-```bash
-~/.oss/hooks/oss-notify.sh --workflow feature-flag complete '{}'
 ```

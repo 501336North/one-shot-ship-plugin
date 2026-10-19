@@ -102,7 +102,11 @@ The CLI fetches the encrypted prompt from the API and decrypts it locally using 
 
 ## Step 6: Execute the Fetched Prompt
 
+Execute the prompt returned by the API.
+
 ## Step 7: Update Status Line (Completion)
+
+On success only. If the command failed (the prompt sent `failed`), do not send `complete`.
 
 **You MUST update the workflow status on completion.**
 

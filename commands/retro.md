@@ -112,18 +112,20 @@ The prompt handles:
 - Action item generation
 - Progress tracking
 
+## Step 7: Update Status Line (Completion)
+
+On success only. If the command failed (the prompt sent `failed`), do not send `complete`.
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow retro complete '{}'
+```
+
 ## Example Usage
 
 ```bash
 /oss:retro
 /oss:retro --format mad-sad-glad
 /oss:retro --sprint 42
-```
-
-## Step 7: Update Status Line (Completion)
-
-**You MUST update the workflow status on completion.**
-
-```bash
-~/.oss/hooks/oss-notify.sh --workflow retro complete '{}'
 ```

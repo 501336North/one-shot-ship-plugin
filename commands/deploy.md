@@ -108,6 +108,16 @@ The prompt handles:
 - Error monitoring
 - Progressive rollout
 
+## Step 7: Update Status Line (Completion)
+
+On success only. If the command failed (the prompt sent `failed`), do not send `complete`.
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow deploy complete '{}'
+```
+
 ## Command Chain
 
 ```
@@ -149,12 +159,4 @@ Run the commands shown above to complete the deployment manually.
 ```bash
 /oss:deploy
 /oss:deploy --canary 10%
-```
-
-## Step 7: Update Status Line (Completion)
-
-**You MUST update the workflow status on completion.**
-
-```bash
-~/.oss/hooks/oss-notify.sh --workflow deploy complete '{}'
 ```

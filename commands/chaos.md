@@ -115,18 +115,20 @@ The prompt handles:
 - Resilience assessment
 - Game day facilitation
 
+## Step 7: Update Status Line (Completion)
+
+On success only. If the command failed (the prompt sent `failed`), do not send `complete`.
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow chaos complete '{}'
+```
+
 ## Example Usage
 
 ```bash
 /oss:chaos
 /oss:chaos --experiment network-partition
 /oss:chaos --target api-service --duration 5m
-```
-
-## Step 7: Update Status Line (Completion)
-
-**You MUST update the workflow status on completion.**
-
-```bash
-~/.oss/hooks/oss-notify.sh --workflow chaos complete '{}'
 ```

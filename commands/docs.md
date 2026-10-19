@@ -105,17 +105,19 @@ The prompt handles:
 - Documentation structure setup
 - Context preservation configuration
 
-## Example Usage
-
-```bash
-/oss:docs "user-authentication"
-/oss:docs "payment-integration"
-```
-
 ## Step 7: Update Status Line (Completion)
+
+On success only. If the command failed (the prompt sent `failed`), do not send `complete`.
 
 **You MUST update the workflow status on completion.**
 
 ```bash
 ~/.oss/hooks/oss-notify.sh --workflow docs complete '{}'
+```
+
+## Example Usage
+
+```bash
+/oss:docs "user-authentication"
+/oss:docs "payment-integration"
 ```

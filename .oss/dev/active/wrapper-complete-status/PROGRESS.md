@@ -5,8 +5,9 @@
 ## Tasks
 - [x] T1 wrappers send complete: 23 wrappers (22 planned + a11y) (completed 2026-10-19)
 - [x] T2 v2.0.89; hooks+commands suites 32/36 files (4 known pre-existing: config-change-guard, format-hook, worktree-hooks, ideate-template); watcher/test/hooks 192/192 (completed 2026-10-19)
+- [x] F1/F2/F5/F9/F13 (ship round 1 Track A): success-only guard in 23 completion steps, step moved right after Execute in 19, 4 empty Execute bodies filled; wrapper-complete 95/95, 9 mutations all killed; commands/__tests__ 126/127 (ideate-template known) (completed 2026-10-19)
 
 ## Blockers
 - None
 
-## Last Updated: 2026-10-19 21:25 +07 by /oss:build T2
+## Last Updated: 2026-10-19 21:37 +07 by /oss:build ship round 1 Track A

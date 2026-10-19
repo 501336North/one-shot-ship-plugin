@@ -112,18 +112,20 @@ The prompt handles:
 - Savings calculation
 - Budget monitoring setup
 
+## Step 7: Update Status Line (Completion)
+
+On success only. If the command failed (the prompt sent `failed`), do not send `complete`.
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow cost complete '{}'
+```
+
 ## Example Usage
 
 ```bash
 /oss:cost
 /oss:cost --provider aws
 /oss:cost --period last-30-days
-```
-
-## Step 7: Update Status Line (Completion)
-
-**You MUST update the workflow status on completion.**
-
-```bash
-~/.oss/hooks/oss-notify.sh --workflow cost complete '{}'
 ```
