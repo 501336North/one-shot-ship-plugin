@@ -159,6 +159,11 @@ export function decryptWorkflowConfig(
   }
 }
 
+/** G6: only workflows DEFAULT_WORKFLOW_CONFIGS really defines have defaults (never a prototype member) */
+function defaultConfigFor(workflowName: string): WorkflowConfig {
+  return Object.hasOwn(DEFAULT_WORKFLOW_CONFIGS, workflowName) ? DEFAULT_WORKFLOW_CONFIGS[workflowName] : {};
+}
+
 /**
  * Get workflow config from cache or fetch from API
  */
@@ -172,7 +177,7 @@ export async function getCachedOrFetch(workflowName: string): Promise<WorkflowCo
   // Check if we have credentials
   if (!readApiCredentials()) {
     // No credentials, cache and return default
-    const defaultConfig = DEFAULT_WORKFLOW_CONFIGS[workflowName] || {};
+    const defaultConfig = defaultConfigFor(workflowName);
     configCache.set(workflowName, defaultConfig);
     return defaultConfig;
   }
@@ -184,7 +189,7 @@ export async function getCachedOrFetch(workflowName: string): Promise<WorkflowCo
     // Get credentials for decryption
     const credentials = retrieveCredentials();
     if (!credentials) {
-      const defaultConfig = DEFAULT_WORKFLOW_CONFIGS[workflowName] || {};
+      const defaultConfig = defaultConfigFor(workflowName);
       configCache.set(workflowName, defaultConfig);
       return defaultConfig;
     }
@@ -194,7 +199,7 @@ export async function getCachedOrFetch(workflowName: string): Promise<WorkflowCo
 
     // Merge with defaults to ensure all fields exist
     const merged = {
-      ...DEFAULT_WORKFLOW_CONFIGS[workflowName],
+      ...defaultConfigFor(workflowName),
       ...decrypted,
     };
 
@@ -202,7 +207,7 @@ export async function getCachedOrFetch(workflowName: string): Promise<WorkflowCo
     return merged;
   } catch {
     // On error, cache and return default config
-    const defaultConfig = DEFAULT_WORKFLOW_CONFIGS[workflowName] || {};
+    const defaultConfig = defaultConfigFor(workflowName);
     configCache.set(workflowName, defaultConfig);
     return defaultConfig;
   }
