@@ -48,7 +48,7 @@ Execute a custom command defined by your team with full observability.
 
 ## Step 0: Validate the Command Name
 
-Strip a leading `team:` prefix. The remaining name must match `^[a-z][a-z0-9-]{0,40}$` before any command below uses it. If it does not match, stop and report it; never run any command with it.
+Strip a leading `team:` prefix. The remaining name must match `^[a-z0-9-]{1,128}$` before any command below uses it. If it does not match, stop and report it; never run any command with it.
 
 ## Step 1: Check Authentication
 
