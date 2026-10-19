@@ -45,6 +45,25 @@ const DEFAULT_API_URL = 'https://one-shot-ship-api.onrender.com';
 /** Maximum number of chain commands to output (H-4: prevent runaway chains) */
 export const MAX_CHAIN_COMMANDS = 10;
 
+/** A chains_to condition is a plain identifier (T1: no CR/LF, delimiters or parens) */
+const SAFE_CONDITION = /^[a-z0-9_-]{1,64}$/;
+
+/**
+ * True when a chains_to command name (team: prefix already stripped) is a plain slug.
+ *
+ * TODO(T1b): replace with isValidWorkflowName from watcher/src/utils/workflow-name.ts
+ * once 2.0.87 lands - one helper, no second copy (IRON LAW #1b).
+ */
+function isSafeChainName(name: string): boolean {
+  return /^[a-z][a-z0-9-]{0,40}$/.test(name);
+}
+
+/** Strip control characters and truncate so a rejected value cannot shape stderr */
+function safeForLog(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/[\u0000-\u001f\u007f]/g, '?').slice(0, 60);
+}
+
 /**
  * Read API credentials from config file
  *
@@ -112,21 +131,31 @@ export async function executeChainForWorkflow(
     }
 
     let executed = 0;
+    let skipped = 0;
     const lines: string[] = [];
 
     for (const step of config.chains_to) {
-      // H-4: Cap output to prevent runaway chains from malicious config
+      // H-4: Cap printed lines to prevent runaway chains from malicious config
       if (executed >= MAX_CHAIN_COMMANDS) {
         break;
       }
 
+      const isTeam = step.command.startsWith('team:');
+      const cmdName = isTeam ? step.command.substring(5) : step.command;
+
+      // T1: config values are untrusted; never copy a non-slug into a CHAIN line
+      if (!isSafeChainName(cmdName) || (step.condition !== undefined && !SAFE_CONDITION.test(step.condition))) {
+        console.error(`chain-trigger: skipping invalid chains_to step "${safeForLog(step.command)}"`);
+        skipped++;
+        continue;
+      }
+
       const condition = step.always ? 'always' : step.condition ? `condition: ${step.condition}` : 'always';
 
-      if (step.command.startsWith('team:')) {
-        const cmdName = step.command.substring(5);
+      if (isTeam) {
         lines.push(`CHAIN: /oss:oss-custom ${cmdName} (${condition})`);
       } else {
-        lines.push(`CHAIN: /oss:${step.command} (${condition})`);
+        lines.push(`CHAIN: /oss:${cmdName} (${condition})`);
       }
 
       executed++;
@@ -140,7 +169,7 @@ export async function executeChainForWorkflow(
       console.log('---END_CHAIN_COMMANDS---');
     }
 
-    return { executed, skipped: 0, errors: [] };
+    return { executed, skipped, errors: [] };
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     return { executed: 0, skipped: 0, errors: [], error: msg };
