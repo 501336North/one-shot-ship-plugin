@@ -138,6 +138,13 @@ OV_PATH="$T/gitfail:$PATH" ov "$R" dir
 refused "7c: a failed git-dir lookup is refused"
 [[ -z "$(ls -A "$H/.oss/run" 2>/dev/null)" ]] && pass "7c: no key folder is created from a failed lookup" || fail "7c: no key folder is created from a failed lookup" "$(ls -A "$H/.oss/run")"
 
+# --- 7d. a HOME that is not absolute is refused (ship round 2, R2-4) --------------------------
+# A relative HOME would put ~/.oss/run (and the value files) inside whatever folder the cwd is.
+newhome; newrepo
+OUT=$(cd "$R" && env -u CLAUDE_PLUGIN_ROOT -u CLAUDE_PROJECT_DIR HOME="relhome" "$SH" "$SCRIPT" dir 2>"$T/err" </dev/null); RC=$?; ERR=$(cat "$T/err")
+refused "7d: a relative HOME is refused"
+[[ ! -e "$R/relhome" ]] && pass "7d: nothing is created under the cwd for a relative HOME" || fail "7d: nothing is created under the cwd for a relative HOME" "$(find "$R/relhome" | head -3)"
+
 # === failed <workflow> (US-001 AC-001.2, AC-001.3) ============================================
 # Runs the REAL sibling oss-notify.sh. A = the repo the command runs in (has a real .oss);
 # B = another project, named by ~/.oss/current-project. VD = the value folder `dir` printed.

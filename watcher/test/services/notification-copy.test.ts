@@ -549,6 +549,45 @@ describe('NotificationCopyService', () => {
   // Quality validation
   // ==========================================================================
 
+  // ==========================================================================
+  // Missing fields (ship round 2, R2-3)
+  // ==========================================================================
+
+  describe('Missing fields', () => {
+    /**
+     * @behavior A notice sent with an empty payload ('{}') never shows a raw {placeholder}
+     * @business-rule Wrapper lifecycle notices send a fixed '{}' (R1-1), so a template whose
+     *   field is missing falls back to the service's static text instead of printing "{taskName}"
+     */
+    test('build task_complete with no fields shows the static fallback text', () => {
+      const copy = service.getWorkflowCopy('build', 'task_complete', {});
+      expect(copy.title).toBe('OSS');
+      expect(copy.message).toBe('Workflow event');
+    });
+
+    test('no workflow, issue or session copy shows a raw {placeholder} when its fields are missing', () => {
+      const raw = /\{\w+\}/;
+      const commands = ['ideate', 'plan', 'build', 'ship'] as const;
+      const events: WorkflowEvent[] = ['start', 'complete', 'failed', 'task_complete', 'quality_passed', 'pr_created', 'merged'];
+      for (const c of commands) {
+        for (const e of events) {
+          const copy = service.getWorkflowCopy(c, e, {});
+          expect(`${c} ${e}: ${copy.title} | ${copy.message}`).not.toMatch(raw);
+        }
+      }
+      const issues: IssueType[] = ['loop_detected', 'tdd_violation', 'regression', 'phase_stuck', 'chain_broken', 'explicit_failure', 'agent_failed'];
+      for (const i of issues) {
+        const copy = service.getIssueCopy(i, {});
+        expect(`${i}: ${copy.title} | ${copy.message}`).not.toMatch(raw);
+      }
+      const sessions: SessionEvent[] = ['context_restored', 'fresh_session', 'fresh_start', 'session_end', 'context_saved'];
+      for (const e of sessions) {
+        const copy = service.getSessionCopy(e, {});
+        expect(`${e}: ${copy.title} | ${copy.message}`).not.toMatch(raw);
+      }
+    });
+  });
+
   describe('Copy Quality Validation', () => {
     /**
      * @behavior All titles are under 20 characters
