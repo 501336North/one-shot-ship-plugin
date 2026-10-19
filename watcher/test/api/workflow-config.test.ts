@@ -230,4 +230,96 @@ describe('WorkflowConfigAPI', () => {
       expect(result).toEqual(DEFAULT_WORKFLOW_CONFIGS['ideate']);
     });
   });
+
+  /**
+   * @behavior The Bearer API key is only ever sent over https, to a well-formed workflow path
+   * @business-rule The config file whose apiUrl is validated is the same file whose key is sent
+   *   (T2: chain-trigger validated ~/.oss while workflow-config fetched from OSS_CONFIG_DIR)
+   */
+  describe('untrusted config and workflow names', () => {
+    let originalHome: string | undefined;
+
+    beforeEach(() => {
+      originalHome = process.env.HOME;
+    });
+
+    afterEach(() => {
+      if (originalHome !== undefined) {
+        process.env.HOME = originalHome;
+      } else {
+        delete process.env.HOME;
+      }
+    });
+
+    function writeConfig(dir: string, apiUrl: string): void {
+      fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ apiKey: 'ak_secret_key', apiUrl }));
+    }
+
+    function okResponse(): { ok: boolean; json: () => Promise<EncryptedWorkflowConfig> } {
+      return { ok: true, json: async () => ({ encrypted: 'e', iv: 'i', authTag: 'a' }) };
+    }
+
+    it('sends no request when the config actually used has an http apiUrl, even if HOME config is https', async () => {
+      const home = createTestDir();
+      fs.mkdirSync(path.join(home, '.oss'));
+      writeConfig(path.join(home, '.oss'), 'https://api.example.com');
+      process.env.HOME = home;
+      const configDir = createTestDir();
+      writeConfig(configDir, 'http://127.0.0.1:9');
+      process.env.OSS_CONFIG_DIR = configDir;
+      mockFetch.mockResolvedValue(okResponse());
+
+      await expect(fetchWorkflowConfig('build')).rejects.toThrow();
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the default config without a request when apiUrl is http', async () => {
+      const configDir = createTestDir();
+      writeConfig(configDir, 'http://127.0.0.1:9');
+      process.env.OSS_CONFIG_DIR = configDir;
+      mockFetch.mockResolvedValue(okResponse());
+
+      const result = await getCachedOrFetch('ideate');
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(result).toEqual(DEFAULT_WORKFLOW_CONFIGS['ideate']);
+    });
+
+    it('still fetches from an https apiUrl', async () => {
+      const configDir = createTestDir();
+      writeConfig(configDir, 'https://api.example.com');
+      process.env.OSS_CONFIG_DIR = configDir;
+      mockFetch.mockResolvedValue(okResponse());
+
+      await fetchWorkflowConfig('build');
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch.mock.calls[0][0]).toBe('https://api.example.com/api/v1/workflows/build');
+    });
+
+    it.each([
+      ['a traversal with a query', 'build/../ship?x=1'],
+      ['a slash', 'build/ship'],
+      ['a dot-dot', '..'],
+      ['a query', 'ship?x=1'],
+      ['a fragment', 'ship#x'],
+      ['a percent-encoding', '%2e%2e'],
+      ['a space', 'a b'],
+      ['uppercase', 'Build'],
+      ['a newline', 'build\nx'],
+      ['an empty name', ''],
+      ['a 42-char name', 'a'.repeat(42)],
+    ])('sends no request for a workflow name with %s', async (_label, name) => {
+      const configDir = createTestDir();
+      writeConfig(configDir, 'https://api.example.com');
+      process.env.OSS_CONFIG_DIR = configDir;
+      mockFetch.mockResolvedValue(okResponse());
+
+      await expect(fetchWorkflowConfig(name)).rejects.toThrow();
+      const fallback = await getCachedOrFetch(name);
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(fallback).toEqual(DEFAULT_WORKFLOW_CONFIGS[name] || {});
+    });
+  });
 });

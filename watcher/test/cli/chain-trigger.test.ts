@@ -78,6 +78,39 @@ describe('Chain Trigger CLI', () => {
 
       fs.rmSync(tmpDir, { recursive: true });
     });
+
+    /**
+     * @behavior chain-trigger validates the same config file workflow-config sends the key from
+     * @business-rule OSS_CONFIG_DIR, when set, is the config used - so it is the config validated (T2)
+     */
+    test('validates the OSS_CONFIG_DIR config, not the HOME config, when no dir is given', () => {
+      const fs = require('fs');
+      const pathMod = require('path');
+      const osMod = require('os');
+      const home = fs.mkdtempSync(pathMod.join(osMod.tmpdir(), 'ct-home-'));
+      const configDir = fs.mkdtempSync(pathMod.join(osMod.tmpdir(), 'ct-cfg-'));
+      fs.mkdirSync(pathMod.join(home, '.oss'));
+      fs.writeFileSync(
+        pathMod.join(home, '.oss', 'config.json'),
+        JSON.stringify({ apiKey: 'ak_home', apiUrl: 'https://api.example.com' })
+      );
+      fs.writeFileSync(
+        pathMod.join(configDir, 'config.json'),
+        JSON.stringify({ apiKey: 'ak_used', apiUrl: 'http://127.0.0.1:9' })
+      );
+      const savedHome = process.env.HOME;
+      const savedDir = process.env.OSS_CONFIG_DIR;
+      process.env.HOME = home;
+      process.env.OSS_CONFIG_DIR = configDir;
+      try {
+        expect(readApiCredentials()).toBeNull();
+      } finally {
+        if (savedHome !== undefined) process.env.HOME = savedHome; else delete process.env.HOME;
+        if (savedDir !== undefined) process.env.OSS_CONFIG_DIR = savedDir; else delete process.env.OSS_CONFIG_DIR;
+        fs.rmSync(home, { recursive: true, force: true });
+        fs.rmSync(configDir, { recursive: true, force: true });
+      }
+    });
   });
 
   // ==========================================================================
