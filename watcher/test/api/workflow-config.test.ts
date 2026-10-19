@@ -472,15 +472,21 @@ describe('WorkflowConfigAPI', () => {
       }
     });
 
-    async function startSilentServer(): Promise<number> {
+    /** `connected` settles on the first accepted connection, so a test can wait for it under load (G7) */
+    async function startSilentServer(): Promise<{ port: number; connected: Promise<void> }> {
+      let onConnection: () => void = () => {};
+      const connected = new Promise<void>((resolve) => {
+        onConnection = resolve;
+      });
       const s = net.createServer((socket) => {
         sockets.push(socket); // accept the connection, never send a byte
+        onConnection();
       });
       server = s;
       await new Promise<void>((resolve) => s.listen(0, '127.0.0.1', () => resolve()));
       const address = s.address();
       if (address === null || typeof address === 'string') throw new Error('no port');
-      return address.port;
+      return { port: address.port, connected };
     }
 
     it('default timeout is well under the 30s chain-trigger cap', () => {
@@ -489,7 +495,7 @@ describe('WorkflowConfigAPI', () => {
     });
 
     it('gives up on a silent server instead of hanging', async () => {
-      const port = await startSilentServer();
+      const { port, connected } = await startSilentServer();
       const configDir = createTestDir();
       fs.writeFileSync(
         path.join(configDir, 'config.json'),
@@ -498,14 +504,20 @@ describe('WorkflowConfigAPI', () => {
       process.env.OSS_CONFIG_DIR = configDir;
       global.fetch = originalFetch;
 
+      // G7: a 1000ms abort leaves room to connect on a loaded machine and stays well under the 3000ms hang race
       const outcome = await Promise.race([
-        fetchWorkflowConfig('build', 200).then(
+        fetchWorkflowConfig('build', 1000).then(
           () => 'resolved',
           () => 'gave-up'
         ),
         new Promise<string>((resolve) => setTimeout(() => resolve('hung'), 3000)),
       ]);
+      const reached = await Promise.race([
+        connected.then(() => 'connected'),
+        new Promise<string>((resolve) => setTimeout(() => resolve('never-connected'), 1000)),
+      ]);
 
+      expect(reached).toBe('connected');
       expect(sockets.length).toBeGreaterThan(0);
       expect(outcome).toBe('gave-up');
     });
@@ -515,7 +527,7 @@ describe('WorkflowConfigAPI', () => {
      * @business-rule One stderr line on timeout (G10): "workflow-config: API timeout, using defaults"
      */
     it('writes exactly one stderr line, with no URL or key, when the fetch times out', async () => {
-      const port = await startSilentServer();
+      const { port } = await startSilentServer();
       const configDir = createTestDir();
       fs.writeFileSync(
         path.join(configDir, 'config.json'),
