@@ -127,7 +127,7 @@ oss_log_guard() {
     return 1
 }
 case "${1:-}" in
-    read|path|list|session|tail|session-path|status|archives) _OSS_LOG_READONLY=1 ;;   # G8: create nothing
+    read|path|list|session|session-path|status|archives) _OSS_LOG_READONLY=1 ;;   # G8: create nothing (tail touches session.log: guarded)
     *) _OSS_LOG_READONLY="" ;;
 esac
 if [[ -n "$_OSS_LOG_READONLY" ]]; then

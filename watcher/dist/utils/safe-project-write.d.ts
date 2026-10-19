@@ -1,6 +1,8 @@
 export interface SafeWriteOptions {
     /** Create missing directories (default true). When false a missing one throws ENOENT. */
     createDirs?: boolean;
+    /** Mode for a NEW file (default 0o666, masked by the umask). Existing files keep theirs. */
+    newFileMode?: number;
 }
 /** Ensure ossDir/relDir exists safely. */
 export declare function safeMkdirOss(ossDir: string, relDir?: string): boolean;

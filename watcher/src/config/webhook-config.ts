@@ -174,7 +174,8 @@ export class WebhookConfig {
    * Write config to file
    */
   private writeConfig(config: Record<string, unknown>): void {
-    safeWriteFileAtomic(this.ossDir, path.basename(this.configPath), JSON.stringify(config, null, 2));
+    // N2-4: a NEW config.json holds the webhook secret: 0600 (an existing file keeps its mode)
+    safeWriteFileAtomic(this.ossDir, path.basename(this.configPath), JSON.stringify(config, null, 2), { newFileMode: 0o600 });
   }
 
   /**

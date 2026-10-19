@@ -4,7 +4,7 @@
  *
  * Every function takes the `.oss` directory and a path relative to it. Rules for each component
  * from the `.oss` directory down to the target's parent: not a symlink, a directory, owned by the
- * current user or by the owner of the physical project root; the target is absent or a regular file with link count 1 that is not a symlink;
+ * current user (or, under a uid-0 project root, by anyone if neither group- nor other-writable); the target is absent or a regular file with link count 1 that is not a symlink;
  * the physical parent stays inside the physical project. The project itself is resolved
  * physically, so a symlink ABOVE it (e.g. /tmp -> /private/tmp) is fine.
  *
@@ -39,9 +39,14 @@ function refuse(ossDir, rel) {
     process.stderr.write(`oss: refusing unsafe .oss path ${path.join(path.basename(ossDir), rel)}\n`);
     return false;
 }
-/** G3: owned by the current user OR by the owner of the physical project root. */
+/**
+ * N2-2 (narrowed G3): owned by the current user, OR the physical project root is owned by uid 0
+ * (root-in-container / root-owned bind mount) and the component is not group- or other-writable.
+ */
 function ownedOk(st, rootUid) {
-    return typeof process.getuid !== 'function' || st.uid === process.getuid() || st.uid === rootUid;
+    if (typeof process.getuid !== 'function' || st.uid === process.getuid())
+        return true;
+    return rootUid === 0 && (st.mode & 0o022) === 0;
 }
 /** Physical path of ossDir/relDir after creating/checking each component, or null if unsafe. */
 function safeDir(ossDir, relDir, createDirs) {
@@ -75,10 +80,11 @@ function safeDir(ossDir, relDir, createDirs) {
             return null;
     }
     const phys = fs.realpathSync(cur);
-    return phys === projectReal || phys.startsWith(projectReal + path.sep) ? phys : null;
+    const inside = projectReal.endsWith(path.sep) ? projectReal : projectReal + path.sep; // project "/" too
+    return phys === projectReal || phys.startsWith(inside) ? phys : null;
 }
-/** Absolute safe target path, or null if any rule fails. */
-function safeTarget(ossDir, rel, createDirs) {
+/** Safe target and the mode seen by the check itself, or null if any rule fails. */
+function checkTarget(ossDir, rel, createDirs) {
     const dir = safeDir(ossDir, path.dirname(rel), createDirs);
     if (dir === null)
         return null;
@@ -90,12 +96,17 @@ function safeTarget(ossDir, rel, createDirs) {
         const st = fs.lstatSync(target);
         if (st.isSymbolicLink() || !st.isFile() || st.nlink !== 1)
             return null;
+        return { path: target, mode: st.mode & 0o777 };
     }
     catch (e) {
         if (e.code !== 'ENOENT')
             throw e;
     }
-    return target;
+    return { path: target, mode: null };
+}
+function safeTarget(ossDir, rel, createDirs) {
+    const t = checkTarget(ossDir, rel, createDirs);
+    return t === null ? null : t.path;
 }
 /** Ensure ossDir/relDir exists safely. */
 export function safeMkdirOss(ossDir, relDir = '') {
@@ -108,25 +119,27 @@ export function safeMkdirOss(ossDir, relDir = '') {
 /** Replace ossDir/rel with data: O_EXCL temp file in the same directory, then rename. */
 export function safeWriteFileAtomic(ossDir, rel, data, options = {}) {
     let target;
+    let keepMode;
     if (isUserOssDir(ossDir)) {
         target = path.join(ossDir, rel);
         fs.mkdirSync(path.dirname(target), { recursive: true });
+        try {
+            keepMode = fs.lstatSync(target).mode & 0o777;
+        }
+        catch {
+            keepMode = null;
+        }
     }
     else {
-        target = safeTarget(ossDir, rel, options.createDirs ?? true);
-        if (target === null)
+        const checked = checkTarget(ossDir, rel, options.createDirs ?? true);
+        if (checked === null)
             return refuse(ossDir, rel);
+        target = checked.path;
+        keepMode = checked.mode; // N2-3: the mode the check saw (lstat), masked to 0o777
     }
-    // G6: an existing file keeps its mode; a new one gets the umask default (0666 & ~umask).
-    let keepMode = null;
-    try {
-        keepMode = fs.statSync(target).mode & 0o7777;
-    }
-    catch {
-        keepMode = null;
-    }
+    // G6: an existing file keeps its mode; a new one gets newFileMode (default 0666 & ~umask).
     const tmp = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`);
-    const fd = fs.openSync(tmp, 'wx', 0o666);
+    const fd = fs.openSync(tmp, 'wx', options.newFileMode ?? 0o666);
     try {
         try {
             if (keepMode !== null)

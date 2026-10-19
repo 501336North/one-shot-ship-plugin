@@ -12,12 +12,15 @@
 # target from it, so the path approved is the path the caller writes (G2).
 # Return 0 = safe to write. Rules for every component below <project> (which is resolved
 # physically, so a symlink ABOVE the project such as /tmp -> /private/tmp is fine):
-#   not a symlink, a directory, owned by the current user or by the project root's owner,
+#   not a symlink, a directory, owned by the current user (or, under a uid-0 project root, by
+#   anyone if neither group- nor other-writable),
 #   no "." or ".." or control characters,
 #   and the physical result still lies inside the physical project.
 # <project> == $HOME means the target is the user's own ~/.oss: out of scope, plain mkdir -p.
-# Bash cannot open O_NOFOLLOW, so `>>` after oss_safe_target is TOCTOU-limited; every directory
-# in the chain is user-owned, so only the user (not a cloned repo) can race it.
+# Bash cannot open O_NOFOLLOW, so `>>` after oss_safe_target is racy: a concurrent process that can
+# write the (checked) directory, i.e. running as the user or the uid-0 project owner, can swap the
+# target for a link between check and write (reproduced in the 2.0.87 pen test). Committed repo
+# content cannot: it needs a live local process. See DECISIONS.md and FOLLOWUPS (G17).
 
 _oss_phys_dir() { (cd -P -- "$1" 2>/dev/null && pwd -P); }
 # G9: the project and $HOME are resolved once per process (each resolution is a subshell).
@@ -29,11 +32,14 @@ _oss_phys_cached() { # <path> -> _OSS_PHYS (no subshell, so the cache survives)
     _OSS_PC_K2="$_OSS_PC_K1"; _OSS_PC_V2="$_OSS_PC_V1"; _OSS_PC_K1="$1"; _OSS_PC_V1="$_OSS_PHYS"
 }
 _oss_uid_of() { local m l o r; read -r m l o r < <(ls -ldn -- "$1" 2>/dev/null) && echo "$o"; }
-# G3: a component is acceptable when owned by the current user OR by the owner of the
-# physical project root (bind mounts, root in a container, shared repos).
+# N2-2 (narrowed G3): a component is acceptable when owned by the current user, OR when the
+# physical project root is owned by uid 0 (root-in-container / root-owned bind mount) AND the
+# component is neither group- nor other-writable.
 _oss_owned_ok() { # <path> <project-real>
     [[ -O "$1" ]] && return 0
-    local o; o=$(_oss_uid_of "$1"); [[ -n "$o" && "$o" == "$(_oss_uid_of "$2")" ]]
+    [[ "$(_oss_uid_of "$2")" == 0 ]] || return 1
+    local m l o r; read -r m l o r < <(ls -ldn -- "$1" 2>/dev/null) || return 1
+    [[ "${m:5:1}" != w && "${m:8:1}" != w ]]
 }
 
 oss_safe_mkdir() {
