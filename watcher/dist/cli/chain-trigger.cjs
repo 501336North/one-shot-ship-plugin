@@ -31,6 +31,7 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // src/cli/chain-trigger.ts
 var chain_trigger_exports = {};
 __export(chain_trigger_exports, {
+  CHAIN_LINE_PATTERN: () => CHAIN_LINE_PATTERN,
   MAX_CHAIN_COMMANDS: () => MAX_CHAIN_COMMANDS,
   executeChainForWorkflow: () => executeChainForWorkflow,
   readApiCredentials: () => readApiCredentials
@@ -122,6 +123,9 @@ function readApiCredentials(configDir) {
 function isSafeChainName(name) {
   return /^[a-z][a-z0-9-]{0,40}$/.test(name);
 }
+function isSafeTeamCommandName(name) {
+  return /^[a-z0-9-]{1,128}$/.test(name);
+}
 
 // src/api/workflow-config.ts
 var PBKDF2_ITERATIONS = 1e5;
@@ -176,14 +180,24 @@ async function fetchWorkflowConfig(workflowName, timeoutMs = WORKFLOW_FETCH_TIME
     throw new Error("No API key configured or apiUrl is not https");
   }
   const endpoint = `${credentials.apiUrl}/api/v1/workflows/${encodeURIComponent(workflowName)}`;
-  const response = await fetch(endpoint, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${credentials.apiKey}`,
-      "Content-Type": "application/json"
-    },
-    signal: AbortSignal.timeout(timeoutMs)
-  });
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${credentials.apiKey}`,
+        "Content-Type": "application/json"
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+      // G5: never replay the Bearer key to a redirect target
+      redirect: "error"
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      console.error("workflow-config: API timeout, using defaults");
+    }
+    throw error;
+  }
   if (!response.ok) {
     const errorResponse = await response.json().catch(() => ({ error: "Request failed" }));
     throw new Error(errorResponse.error || `HTTP ${response.status}`);
@@ -207,13 +221,16 @@ function decryptWorkflowConfig(encrypted, credentials) {
     return {};
   }
 }
+function defaultConfigFor(workflowName) {
+  return Object.hasOwn(DEFAULT_WORKFLOW_CONFIGS, workflowName) ? DEFAULT_WORKFLOW_CONFIGS[workflowName] : {};
+}
 async function getCachedOrFetch(workflowName) {
   const cached = configCache.get(workflowName);
   if (cached) {
     return cached;
   }
   if (!readApiCredentials()) {
-    const defaultConfig = DEFAULT_WORKFLOW_CONFIGS[workflowName] || {};
+    const defaultConfig = defaultConfigFor(workflowName);
     configCache.set(workflowName, defaultConfig);
     return defaultConfig;
   }
@@ -221,19 +238,19 @@ async function getCachedOrFetch(workflowName) {
     const encrypted = await fetchWorkflowConfig(workflowName);
     const credentials = retrieveCredentials();
     if (!credentials) {
-      const defaultConfig = DEFAULT_WORKFLOW_CONFIGS[workflowName] || {};
+      const defaultConfig = defaultConfigFor(workflowName);
       configCache.set(workflowName, defaultConfig);
       return defaultConfig;
     }
     const decrypted = decryptWorkflowConfig(encrypted, credentials);
     const merged = {
-      ...DEFAULT_WORKFLOW_CONFIGS[workflowName],
+      ...defaultConfigFor(workflowName),
       ...decrypted
     };
     configCache.set(workflowName, merged);
     return merged;
   } catch {
-    const defaultConfig = DEFAULT_WORKFLOW_CONFIGS[workflowName] || {};
+    const defaultConfig = defaultConfigFor(workflowName);
     configCache.set(workflowName, defaultConfig);
     return defaultConfig;
   }
@@ -241,37 +258,64 @@ async function getCachedOrFetch(workflowName) {
 
 // src/cli/chain-trigger.ts
 var MAX_CHAIN_COMMANDS = 10;
+var MAX_STEPS_ITERATED = MAX_CHAIN_COMMANDS * 10;
+var MAX_SKIP_LOG_LINES = 5;
 var SAFE_CONDITION = /^[a-z0-9_-]{1,64}$/;
+var CHAIN_LINE_PATTERN = /^CHAIN: \/oss:([a-z][a-z0-9-]{0,40}|oss-custom [a-z0-9-]{1,128}) \((always|condition: [a-z0-9_-]{1,64})\)$/;
 function safeForLog(value) {
-  return value.replace(/[\u0000-\u001f\u007f]/g, "?").slice(0, 60);
+  return value.replace(/[^\x20-\x7e]/g, "?").slice(0, 60);
+}
+function isChainItemShape(value) {
+  if (typeof value !== "object" || value === null) return false;
+  const { command, condition } = value;
+  return typeof command === "string" && (condition === void 0 || typeof condition === "string");
 }
 async function executeChainForWorkflow(workflowName, _credentials) {
   try {
     const config = await getCachedOrFetch(workflowName);
-    if (!config.chains_to || config.chains_to.length === 0) {
+    const rawSteps = config.chains_to;
+    if (!Array.isArray(rawSteps) || rawSteps.length === 0) {
       return { executed: 0, skipped: 0, errors: [] };
     }
+    const steps = rawSteps;
     let executed = 0;
     let skipped = 0;
     const lines = [];
-    for (const step of config.chains_to) {
+    const skip = (message) => {
+      skipped++;
+      if (skipped <= MAX_SKIP_LOG_LINES) {
+        console.error(message);
+      }
+    };
+    const stepCount = Math.min(steps.length, MAX_STEPS_ITERATED);
+    for (let i = 0; i < stepCount; i++) {
       if (executed >= MAX_CHAIN_COMMANDS) {
         break;
       }
-      const isTeam = step.command.startsWith("team:");
-      const cmdName = isTeam ? step.command.substring(5) : step.command;
-      if (!isSafeChainName(cmdName) || step.condition !== void 0 && !SAFE_CONDITION.test(step.condition)) {
-        console.error(`chain-trigger: skipping invalid chains_to step "${safeForLog(step.command)}"`);
-        skipped++;
+      const step = steps[i];
+      if (!isChainItemShape(step)) {
+        skip("chain-trigger: skipping malformed chains_to step");
         continue;
       }
-      const condition = step.always ? "always" : step.condition ? `condition: ${step.condition}` : "always";
+      if (step.condition === "never") {
+        continue;
+      }
+      const isTeam = step.command.startsWith("team:");
+      const cmdName = isTeam ? step.command.substring(5) : step.command;
+      if (!(isTeam ? isSafeTeamCommandName(cmdName) : isSafeChainName(cmdName)) || step.condition !== void 0 && !SAFE_CONDITION.test(step.condition)) {
+        skip(`chain-trigger: skipping invalid chains_to step "${safeForLog(step.command)}"`);
+        continue;
+      }
+      const condition = step.always === true ? "always" : step.condition ? `condition: ${step.condition}` : "always";
       if (isTeam) {
         lines.push(`CHAIN: /oss:oss-custom ${cmdName} (${condition})`);
       } else {
         lines.push(`CHAIN: /oss:${cmdName} (${condition})`);
       }
       executed++;
+    }
+    if (skipped > MAX_SKIP_LOG_LINES) {
+      console.error(`chain-trigger: ${skipped - MAX_SKIP_LOG_LINES} more invalid steps skipped`);
     }
     if (lines.length > 0) {
       console.log("---CHAIN_COMMANDS---");
@@ -319,6 +363,7 @@ if (isDirectExecution) {
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  CHAIN_LINE_PATTERN,
   MAX_CHAIN_COMMANDS,
   executeChainForWorkflow,
   readApiCredentials
