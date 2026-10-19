@@ -25,6 +25,16 @@ if [[ -f "$T/.oss/hooks/oss-safe-path.sh" ]] && grep -q hello "$T/proj/.oss/logs
 else fail "oss-safe-path.sh copied; ~/.oss/hooks/oss-log.sh writes project logs" "guard=$([[ -f $T/.oss/hooks/oss-safe-path.sh ]] && echo y || echo n)"; fi
 rm -rf "$T"
 
+# G21 P4: served prompts call ~/.oss/hooks/oss-value.sh, so session start installs it, runnable,
+#         beside the oss-safe-path.sh and oss-notify.sh it uses (its `dir` verb works from there).
+T=$(mktemp -d); mkdir -p "$T/repo"; (cd "$T/repo" && git init -q) >/dev/null 2>&1
+HOME="$T" CLAUDE_PLUGIN_ROOT="$ROOT" bash "$ROOT/hooks/oss-session-start.sh" >/dev/null 2>&1 </dev/null
+V="$T/.oss/hooks/oss-value.sh"
+out=$(cd "$T/repo" && HOME="$T" "$V" dir 2>/dev/null </dev/null)
+if [[ -x "$V" && -n "$out" && -d "$out" ]]; then pass "oss-value.sh copied, executable, and its dir verb works from ~/.oss/hooks"
+else fail "oss-value.sh copied, executable, and its dir verb works from ~/.oss/hooks" "exists=$([[ -f $V ]] && echo y || echo n) exec=$([[ -x $V ]] && echo y || echo n) dir='$out'"; fi
+rm -rf "$T"
+
 # F11: every session-start variant that copies the installer also copies its manifest
 for f in "$ROOT"/hooks/oss-session-start*.sh; do
   if grep -q '"ensure-decrypt-cli.sh"' "$f" && ! grep -q '"oss-decrypt-checksums.txt"' "$f"; then
