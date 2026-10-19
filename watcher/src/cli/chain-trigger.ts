@@ -17,18 +17,13 @@
  *   1 - Failure
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
 import { getCachedOrFetch } from '../api/workflow-config.js';
+import { readApiCredentials, type ApiCredentials } from '../api/api-credentials.js';
+import { isSafeTeamCommandName } from '../utils/safe-chain-name.js';
+import { WORKFLOW_NAME_PATTERN, isValidWorkflowName } from '../utils/workflow-name.js';
+import type { ChainItem } from '../engine/types.js';
 
-/**
- * API credentials structure
- */
-export interface ApiCredentials {
-  apiKey: string;
-  apiUrl: string;
-}
+export { readApiCredentials, type ApiCredentials };
 
 /**
  * Result of outputting chain instructions
@@ -40,51 +35,31 @@ export interface ChainExecutionResult {
   error?: string;
 }
 
-const DEFAULT_API_URL = 'https://one-shot-ship-api.onrender.com';
-
 /** Maximum number of chain commands to output (H-4: prevent runaway chains) */
 export const MAX_CHAIN_COMMANDS = 10;
 
-/**
- * Read API credentials from config file
- *
- * @param configDir - The config directory (defaults to ~/.oss)
- * @returns Credentials or null if not configured
- */
-export function readApiCredentials(configDir?: string): ApiCredentials | null {
-  const dir = configDir || path.join(os.homedir(), '.oss');
-  const configPath = path.join(dir, 'config.json');
+/** G4: bound the steps a hostile config can make us look at, and the skip lines it can log */
+const MAX_STEPS_ITERATED = MAX_CHAIN_COMMANDS * 10;
+const MAX_SKIP_LOG_LINES = 5;
 
-  if (!fs.existsSync(configPath)) {
-    return null;
-  }
+/** A chains_to condition is a plain identifier (T1: no CR/LF, delimiters or parens) */
+const SAFE_CONDITION = /^[a-z0-9_-]{1,64}$/;
 
-  try {
-    const content = fs.readFileSync(configPath, 'utf8');
-    const config = JSON.parse(content) as { apiKey?: string; apiUrl?: string };
+/** The only shape a printed CHAIN line can take (both name rules, G1) */
+export const CHAIN_LINE_PATTERN = new RegExp(
+  `^CHAIN: \\/oss:(${WORKFLOW_NAME_PATTERN.source.slice(1, -1)}|oss-custom [a-z0-9-]{1,100}) \\((always|condition: [a-z0-9_-]{1,64})\\)$`
+);
 
-    if (!config.apiKey) {
-      return null;
-    }
+/** Keep printable ASCII only and truncate so a rejected value cannot shape stderr (G4) */
+function safeForLog(value: string): string {
+  return value.replace(/[^\x20-\x7e]/g, '?').slice(0, 60);
+}
 
-    // M-2: Validate API URL protocol - reject non-HTTPS to prevent MitM
-    const apiUrl = config.apiUrl || DEFAULT_API_URL;
-    try {
-      const parsed = new URL(apiUrl);
-      if (parsed.protocol !== 'https:') {
-        return null;
-      }
-    } catch {
-      return null;
-    }
-
-    return {
-      apiKey: config.apiKey,
-      apiUrl,
-    };
-  } catch {
-    return null;
-  }
+/** G3: config is untrusted JSON - a step must be an object with a string command and string-or-absent condition */
+function isChainItemShape(value: unknown): value is ChainItem {
+  if (typeof value !== 'object' || value === null) return false;
+  const { command, condition } = value as Record<string, unknown>;
+  return typeof command === 'string' && (condition === undefined || typeof condition === 'string');
 }
 
 /**
@@ -107,29 +82,72 @@ export async function executeChainForWorkflow(
   try {
     const config = await getCachedOrFetch(workflowName);
 
-    if (!config.chains_to || config.chains_to.length === 0) {
+    const rawSteps: unknown = config.chains_to;
+    if (!Array.isArray(rawSteps) || rawSteps.length === 0) {
       return { executed: 0, skipped: 0, errors: [] };
     }
+    const steps: readonly unknown[] = rawSteps;
 
     let executed = 0;
+    let skipped = 0;
     const lines: string[] = [];
+    const skip = (message: string): void => {
+      skipped++;
+      if (skipped <= MAX_SKIP_LOG_LINES) {
+        console.error(message);
+      }
+    };
 
-    for (const step of config.chains_to) {
-      // H-4: Cap output to prevent runaway chains from malicious config
+    const stepCount = Math.min(steps.length, MAX_STEPS_ITERATED);
+    for (let i = 0; i < stepCount; i++) {
+      // H-4: Cap printed lines to prevent runaway chains from malicious config
       if (executed >= MAX_CHAIN_COMMANDS) {
         break;
       }
 
-      const condition = step.always ? 'always' : step.condition ? `condition: ${step.condition}` : 'always';
+      const step = steps[i];
 
-      if (step.command.startsWith('team:')) {
-        const cmdName = step.command.substring(5);
+      if (!isChainItemShape(step)) {
+        skip('chain-trigger: skipping malformed chains_to step');
+        continue;
+      }
+
+      // G2: "never" switches a step off; it is not an invalid step
+      if (step.condition === 'never') {
+        continue;
+      }
+
+      const isTeam = step.command.startsWith('team:');
+      const cmdName = isTeam ? step.command.substring(5) : step.command;
+
+      // T1: config values are untrusted; never copy a non-slug into a CHAIN line
+      const nameIsSafe = isTeam ? isSafeTeamCommandName(cmdName) : isValidWorkflowName(cmdName);
+      const conditionIsSafe = step.condition === undefined || SAFE_CONDITION.test(step.condition);
+      if (!nameIsSafe || !conditionIsSafe) {
+        skip(`chain-trigger: skipping invalid chains_to step "${safeForLog(step.command)}"`);
+        continue;
+      }
+
+      const condition = step.always === true ? 'always' : step.condition ? `condition: ${step.condition}` : 'always';
+
+      if (isTeam) {
         lines.push(`CHAIN: /oss:oss-custom ${cmdName} (${condition})`);
       } else {
-        lines.push(`CHAIN: /oss:${step.command} (${condition})`);
+        lines.push(`CHAIN: /oss:${cmdName} (${condition})`);
       }
 
       executed++;
+    }
+
+    if (skipped > MAX_SKIP_LOG_LINES) {
+      console.error(`chain-trigger: ${skipped - MAX_SKIP_LOG_LINES} more invalid steps skipped`);
+    }
+
+    // D3: say how many steps past the read limit were never looked at (not a skip, no cap)
+    if (steps.length > MAX_STEPS_ITERATED) {
+      console.error(
+        `chain-trigger: ${steps.length - MAX_STEPS_ITERATED} steps beyond the ${MAX_STEPS_ITERATED}-step read limit ignored`
+      );
     }
 
     if (lines.length > 0) {
@@ -140,7 +158,7 @@ export async function executeChainForWorkflow(
       console.log('---END_CHAIN_COMMANDS---');
     }
 
-    return { executed, skipped: 0, errors: [] };
+    return { executed, skipped, errors: [] };
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     return { executed: 0, skipped: 0, errors: [], error: msg };
