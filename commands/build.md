@@ -261,8 +261,8 @@ Your team's workflow config controls:
 - `agents`: Which agents to spawn (configurable per team)
 - `checkpoint`: Whether to pause for human review (human/auto)
 
-Conditions like `has_ui_work` are not evaluated in code: you skip a line whose condition you can check
-from this session and is false, and run it if you cannot tell (see Execute Chain Commands).
+Conditions like `has_ui_work` are not evaluated in code: you skip a line whose condition can be checked
+from this session and is false, and run it if it is true or you cannot tell (see Execute Chain Commands).
 
 To customize your workflow, visit the dashboard at https://www.oneshotship.com/dashboard/workflows
 
@@ -282,8 +282,8 @@ After `oss-notify.sh --workflow build complete` runs, its stdout may contain a `
 - Each chain command runs with full logging and status updates
 - If a blocking chain command fails, stop the chain and report the failure
 - If no `---CHAIN_COMMANDS---` block appears, skip this step
+- If a line's condition can be checked from this session and is false (for example `has_ui_work`: no UI files changed), skip it and log why; if it is true or you cannot tell, run it. Log a skip: `~/.oss/hooks/oss-log.sh write build "[CHAIN] skipped /oss:<command>: <reason>"`
 - Log each: `~/.oss/hooks/oss-log.sh write build "[CHAIN] executing /oss:<command>"`
-- If a line has a condition you can check from this session (for example `has_ui_work`: no UI files changed), skip it and log why; if you cannot tell, run it. Log a skip: `~/.oss/hooks/oss-log.sh write build "[CHAIN] skipped /oss:<command>: <reason>"`
 
 ## Error Handling
 
