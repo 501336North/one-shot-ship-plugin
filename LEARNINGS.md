@@ -1,5 +1,9 @@
 # Learnings
 
+## 2026-10-19 | Plugin | hooks
+- **Context:** dead-hooks-cleanup (build T1-T4, v2.0.90)
+- **Insight:** A hooks file under `.claude-plugin/` is never loaded (only the plugin.json `hooks` path and `hooks/hooks.json` are), and `tool == "X"` matchers are invalid. Seven hooks sat dead for months while their tests read a third, non-existent path. Pin registration with a test that resolves every command in the file actually loaded.
+
 ## 2026-10-19 | Testing | watcher
 - **Context:** oss-writer-nofollow (build H1-H3)
 - **Insight:** A fail-closed guard that a hook sources from its own directory turns every test that pipes the script (`cat x | bash`, empty BASH_SOURCE) or copies it alone into a temp dir into a silent no-write. The guard was right; 8 tests went red only in the full watcher run, which the 2.0.87 gates skipped (targeted files only). Stage the guard next to any copied hook, and run the whole test/hooks dir before shipping a hook change.
