@@ -24,9 +24,10 @@
 - [x] N2-3 mode from the checked lstat & 0o777 (completed 2026-10-19; no macOS RED possible)
 - [x] N2-4 new webhook config.json 0600 (completed 2026-10-19)
 - [x] N2-5 TOCTOU comment (completed 2026-10-19)
+- [x] N2-6 HOME symlinked config.json keeps target mode (completed 2026-10-19)
 
 ## Blockers
 - None. The plugin-highs session (2.0.88) waits for this PR to merge.
 - Merge note: watcher/dist/**/*.d.ts.map changed in many files (line shifts). chain-trigger.js and chain-trigger.cjs were NOT touched.
 
-## Last Updated: 2026-10-19 17:21 +07 by /oss:build round 2 (security-auditor agent)
+## Last Updated: 2026-10-19 17:45 +07 by /oss:build N2-6

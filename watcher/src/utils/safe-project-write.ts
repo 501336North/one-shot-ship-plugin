@@ -129,7 +129,7 @@ export function safeWriteFileAtomic(ossDir: string, rel: string, data: string, o
     target = path.join(ossDir, rel);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     try {
-      keepMode = fs.lstatSync(target).mode & 0o777;
+      keepMode = fs.statSync(target).mode & 0o777; // N2-6: follow a dotfile link to the real file's mode
     } catch {
       keepMode = null;
     }

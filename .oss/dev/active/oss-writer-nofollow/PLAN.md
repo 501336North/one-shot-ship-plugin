@@ -81,3 +81,10 @@ Boss, 2026-10-19: "make you the boss" and resolve fully. Orchestrated from the A
 - [DONE] **N2-4 (security I1):** webhook-config.ts creates a NEW config.json with mode 0600 (existing files keep their mode). RED.
 - [DONE] **N2-5 (doc):** fix the TOCTOU comment at hooks/oss-safe-path.sh:19-20 to match DECISIONS.md (and the new N2-2 rule).
 - [DONE: recorded in FOLLOWUPS] Deferred (FOLLOWUPS): perf LOW (one repeated _oss_phys_dir per write; find per target), memo keyed on path string (LOW), HOME-branch `..` hardening (INFO), archive_feature `-d` follows links (INFO), oss-log read/path don't validate name (INFO).
+
+## Ship round 2 narrow re-check finding (N2-6)
+
+- [x] **N2-6 (MEDIUM, regression from N2-3):** `watcher/src/utils/safe-project-write.ts` `safeWriteFileAtomic`, HOME (`~/.oss`) branch. N2-3 changed `statSync` to `lstatSync`. A symlinked `~/.oss/config.json` (stow / home-manager) now keeps the *link's* mode (0755 macOS / 0777 Linux) instead of the target's 0600, so the file holding the API key becomes world-readable after rewrite.
+  - RED: the test has a HOME ossDir whose `config.json` is a symlink to a 0600 file. After `safeWriteFileAtomic`, the resulting file must be 0600 (mode & 0o777), not the link's mode. It must fail on the current code: on macOS lstat of a link gives 0755.
+  - GREEN: the HOME branch uses `statSync` (follows the link) again, masked to `0o777`. The project branch is unchanged.
+  - Rebuild `watcher/dist`. The dist-fresh test must pass.

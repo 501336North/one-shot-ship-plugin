@@ -93,4 +93,11 @@ The `tail` tests stub `tail` on PATH. A first attempt used a perl alarm; it orph
 
 dist rebuilt (121 files fresh); `npx tsc --noEmit` clean.
 
-## Last Updated: 2026-10-19 17:21 +07 by /oss:build round 2
+## Ship round 2 re-check (N2-6)
+| Task | RED | GREEN | Anti-vacuity |
+|---|---|---|---|
+| N2-6 | node: `a ~/.oss/config.json symlinked by a dotfile manager keeps its 0600 mode after a rewrite (N2-6)` failed with `AssertionError: expected 493 to be 384 // Object.is equality` (the rewrite took the link's 0755, not the target's 0600); 1 failed / 22 passed | HOME branch uses `statSync` (follows the link), mask 0o777; oss-writer-nofollow.test.ts 23/23 | src line reverted to lstatSync: same test RED (493 vs 384); restored: 23/23 |
+
+dist rebuilt; `watcher-dist-fresh.test.sh` PASS (121 files). `hooks/__tests__/oss-writer-nofollow.test.sh` 45/45.
+
+## Last Updated: 2026-10-19 17:45 +07 by /oss:build N2-6
