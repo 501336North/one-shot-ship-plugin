@@ -25,16 +25,17 @@ PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
 
 # =============================================================================
 # TIMEOUT WRAPPER - Prevents blocking on slow/hanging node calls
+# Keeps the command's stderr: each caller redirects it (F6: chain-trigger's goes to its log).
 # =============================================================================
 run_with_timeout() {
     local timeout_secs="${1:-2}"
     shift
     if command -v gtimeout &>/dev/null; then
-        gtimeout "$timeout_secs" "$@" 2>/dev/null || true
+        gtimeout "$timeout_secs" "$@" || true
     elif command -v timeout &>/dev/null; then
-        timeout "$timeout_secs" "$@" 2>/dev/null || true
+        timeout "$timeout_secs" "$@" || true
     else
-        "$@" 2>/dev/null &
+        "$@" &
         local pid=$!
         (sleep "$timeout_secs" && kill -9 $pid 2>/dev/null) &
         local killer=$!
@@ -329,22 +330,23 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                 "$LOG_SCRIPT" checklist "$WORKFLOW_CMD" 2>/dev/null || true
                 ;;
             complete)
-                wf_state completeStep "$WORKFLOW_CMD" 2>/dev/null || true
+                # F7/F8: state updates are bounded (2s each) and silent; only the CHAIN block below reaches the model
+                wf_state_timeout 2 completeStep "$WORKFLOW_CMD" >/dev/null 2>&1 || true
                 # Clear currentCommand since it's done
-                wf_state clearCurrentCommand 2>/dev/null || true
+                wf_state_timeout 2 clearCurrentCommand >/dev/null 2>&1 || true
                 # Clear TDD phase so it doesn't show stale indicator after build ends
-                wf_state clearTddPhase 2>/dev/null || true
+                wf_state_timeout 2 clearTddPhase >/dev/null 2>&1 || true
                 # Set lastCommand for status line display (shows last_cmd → next_cmd)
-                wf_state setLastCommand "$WORKFLOW_CMD" 2>/dev/null || true
+                wf_state_timeout 2 setLastCommand "$WORKFLOW_CMD" >/dev/null 2>&1 || true
                 # Set nextCommand based on workflow progression
                 case "$WORKFLOW_CMD" in
-                    ideate) wf_state setNextCommand "plan" 2>/dev/null || true ;;
-                    plan) wf_state setNextCommand "build" 2>/dev/null || true ;;
-                    build) wf_state setNextCommand "ship" 2>/dev/null || true ;;
+                    ideate) wf_state_timeout 2 setNextCommand "plan" >/dev/null 2>&1 || true ;;
+                    plan) wf_state_timeout 2 setNextCommand "build" >/dev/null 2>&1 || true ;;
+                    build) wf_state_timeout 2 setNextCommand "ship" >/dev/null 2>&1 || true ;;
                     ship)
-                        wf_state clearNextCommand 2>/dev/null || true
+                        wf_state_timeout 2 clearNextCommand >/dev/null 2>&1 || true
                         # Set workflowComplete flag for status line to show "→ DONE"
-                        wf_state setWorkflowComplete true 2>/dev/null || true
+                        wf_state_timeout 2 setWorkflowComplete true >/dev/null 2>&1 || true
                         ;;
                     *) ;; # Non-chain commands don't affect nextCommand
                 esac
@@ -430,8 +432,9 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                 ;;
         esac
 
-        # Call telegram-notify.js (ignore errors so workflow continues)
-        node "$TELEGRAM_CLI" --message "$TELEGRAM_MSG" 2>/dev/null || true
+        # Call telegram-notify.js (ignore errors so workflow continues).
+        # F4: bounded like the chain call; 15s covers a slow send (the CLI itself aborts at 10s).
+        run_with_timeout 15 node "$TELEGRAM_CLI" --message "$TELEGRAM_MSG" 2>/dev/null || true
     fi
 
     exit 0
@@ -450,10 +453,10 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "session" ]]; then
     if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
         case "$SESSION_EVENT" in
             context_restored|fresh_start)
-                wf_state_timeout 2 setSupervisor watching
+                wf_state_timeout 2 setSupervisor watching 2>/dev/null
                 # Set non-sticky notification (auto-clears after 10 seconds)
                 if [[ -n "$MESSAGE" && "$MESSAGE" != "" ]]; then
-                    wf_state_timeout 2 setNotification "$MESSAGE" 10
+                    wf_state_timeout 2 setNotification "$MESSAGE" 10 2>/dev/null
                 fi
                 # Check for plugin/prompt updates (non-blocking, background)
                 if [[ -x "$SCRIPT_DIR/check-updates.sh" ]]; then
@@ -462,13 +465,13 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "session" ]]; then
                         if [[ -n "$update_msg" ]]; then
                             # Wait for session notification to expire before showing update
                             sleep 11
-                            wf_state_timeout 2 setNotification "$update_msg" 30
+                            wf_state_timeout 2 setNotification "$update_msg" 30 2>/dev/null
                         fi
                     ) &
                 fi
                 ;;
             context_saved)
-                wf_state_timeout 2 setSupervisor idle
+                wf_state_timeout 2 setSupervisor idle 2>/dev/null
                 ;;
         esac
     fi

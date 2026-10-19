@@ -75,3 +75,64 @@ Results:
 All 9 were killed. Before this round, M2 to M9 survived.
 
 Provenance: the only other test that reads "Execute the Fetched Prompt" is `watcher/test/agents/local-model-offload.test.ts`, which covers `agents/`, not `commands/`.
+
+## Track B (F3 F4 F6 F7 F8 F10)
+# Track B notes (wrapper-complete-status, ship round 1)
+
+## F3 chain-trigger early return
+- RED: chain-trigger.test.ts "a workflow with no config (audit) makes no API call and prints nothing":
+  `expected "vi.fn()" to not be called at all, but actually been called 1 times` (73/74).
+- GREEN: `if (!Object.hasOwn(DEFAULT_WORKFLOW_CONFIGS, workflowName)) return {0,0,[]}` before the fetch. 74/74 (+ integration 80/80).
+- Anti-vacuity: guard disabled -> audit test RED (1 fail); guard always-true -> build test + 58 others RED.
+- Drift test (client set == ideate, plan, build, ship) passes on first run: it is a characterisation guard.
+- Provenance: server twin is AgenticDevWorkflow-g21/packages/api/src/schemas/workflow-config.ts:14
+  `WORKFLOW_NAMES = ['ideate','plan','build','ship']`. Same set today. API repo not edited.
+
+## F4 Telegram bound
+- RED (vitest): `expected undefined to be an instance of AbortSignal`.
+- GREEN: `signal: AbortSignal.timeout(10_000)` on the sendMessage fetch.
+- RED (bash, oss-notify-complete-bounds case 1): stalled stub took 31s.
+- GREEN: `run_with_timeout 15 node "$TELEGRAM_CLI" ...`. Took 16s (threshold < 24s).
+- Bound: 15s, same order as the chain call's bound. Node aborts at 10s so the CLI normally exits by itself first.
+- No env override added; the test pays the real 15s.
+
+## F6 run_with_timeout keeps stderr
+- RED: chain-trigger.log empty. GREEN: removed the three `2>/dev/null` inside run_with_timeout.
+- Provenance (callers of oss-notify.sh run_with_timeout):
+  - get-copy (2>/dev/null at the call site), check-updates (2>/dev/null), chain-trigger (2>> log), telegram (2>/dev/null, new).
+  - wf_state_timeout -> 4 session calls had NO redirect -> added `2>/dev/null` to each (guarded by case 5).
+  - complete path now uses `>/dev/null 2>&1`.
+  - Twin `run_with_timeout` in hooks/oss-session-start.sh still swallows stderr. Its callers have no log redirect and rely on that swallowing, so it is correct as-is. Left unchanged.
+
+## F7 status lines on complete
+- Provenance grep for "Step completed", "Current command cleared", "TDD phase cleared", "Last command set to", "Next command set/cleared", "Workflow complete set":
+  - watcher/test, hooks, commands, agents, skills: no consumer.
+  - API prompts (AgenticDevWorkflow-g21/packages/api/src/prompts): no consumer.
+  - The only hits are the CLI itself plus one comment in services/workflow-state.ts.
+- Decision: silenced on the complete path only (`>/dev/null`). The CLI's output is unchanged for other callers.
+- RED: STATE-STDOUT lines in complete's output. GREEN: none, and the CHAIN block is still printed (control).
+
+## F8 bounded state calls on complete
+- All 6 wf_state calls in the complete branch now go through `wf_state_timeout 2`, including setNextCommand, clearNextCommand and setWorkflowComplete.
+- RED: hanging stub took 41s (audit, 4 calls x 10s).
+- Test now uses ship (6 calls) with a 20s hang. GREEN 12-13s (threshold < 20s).
+- Anti-vacuity: one call unbounded -> 31s, RED.
+
+## F10 refused write
+- RED: stdout 'Step completed: build' etc. on a symlinked state file (4 of 4 commands).
+- GREEN:
+  - WorkflowStateService.writeRefused is set when safeWriteFileAtomic returns false.
+  - The CLI buffers its success line and, on refusal, sets exitCode 1 and prints nothing. The refusal stays on stderr from the guard.
+- Anti-vacuity: CLI check removed -> 4 RED; flag never set -> 4 RED.
+- PROVENANCE CONFLICT:
+  - hooks/__tests__/oss-writer-nofollow.test.sh section 3 asserted that the CLI exits 0 on refusal (ADR-1 "best-effort writers").
+  - Changed only those 3 CLI cases to a new check_refused: rc != 0, refusal printed, no success line, outside unchanged.
+  - Hook-level cases still assert rc 0.
+  - Anti-vacuity: old CLI behaviour -> 42/45.
+- Callers of the CLI's exit code:
+  - Hooks with `|| true` or run_with_timeout: oss-notify, oss-session-start, oss-session-end, oss-notification, oss-precommand, oss-log setTddPhase.
+  - oss-log agent lines use `(A && B) &`: B is skipped after a refusal, which is harmless because B targets the same refused file.
+  - hooks/oss-workflow-auto.sh has no `|| true`; its last node call's rc becomes the script's rc. It is not registered in hooks.json and only watcher/test/hooks/oss-workflow-auto-hook.test.ts uses it (passes).
+
+## Pre-existing, not fixed
+- In oss-notify.sh run_with_timeout, the no-timeout fallback leaves the killer's `sleep` orphaned. That sleep holds stdout open if the caller pipes it. gtimeout exists on this machine, so the branch is untested.

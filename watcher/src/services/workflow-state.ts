@@ -115,6 +115,8 @@ const TDD_LOOP_PHASES: ChainStep[] = ['red', 'mock', 'green', 'refactor'];
 
 export class WorkflowStateService {
   private stateFilePath: string;
+  /** F10: true once the write guard has refused a write (the refusal is already on stderr) */
+  writeRefused = false;
 
   constructor(stateFilePath?: string) {
     this.stateFilePath = stateFilePath || path.join(process.env.HOME || '~', '.oss', 'workflow-state.json');
@@ -500,7 +502,9 @@ export class WorkflowStateService {
     state.lastUpdate = new Date().toISOString();
     state.version = (state.version ?? 0) + 1;
 
-    safeWriteFileAtomic(path.dirname(this.stateFilePath), path.basename(this.stateFilePath), JSON.stringify(state, null, 2));
+    if (!safeWriteFileAtomic(path.dirname(this.stateFilePath), path.basename(this.stateFilePath), JSON.stringify(state, null, 2))) {
+      this.writeRefused = true;
+    }
   }
 
   /**

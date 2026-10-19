@@ -101,6 +101,8 @@ export async function sendTelegramNotification(message, buttons) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
+            // F4: give up before oss-notify.sh's 15s process bound, so the CLI exits on its own
+            signal: AbortSignal.timeout(10_000),
         });
         if (!response.ok) {
             const error = await response.json();

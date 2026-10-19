@@ -71,6 +71,8 @@ export interface ProgressInfo {
 }
 export declare class WorkflowStateService {
     private stateFilePath;
+    /** F10: true once the write guard has refused a write (the refusal is already on stderr) */
+    writeRefused: boolean;
     constructor(stateFilePath?: string);
     /**
      * Creates state file with default values if it doesn't exist

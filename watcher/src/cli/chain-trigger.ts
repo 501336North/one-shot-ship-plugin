@@ -21,7 +21,7 @@ import { getCachedOrFetch } from '../api/workflow-config.js';
 import { readApiCredentials, type ApiCredentials } from '../api/api-credentials.js';
 import { isSafeTeamCommandName } from '../utils/safe-chain-name.js';
 import { WORKFLOW_NAME_PATTERN, isValidWorkflowName } from '../utils/workflow-name.js';
-import type { ChainItem } from '../engine/types.js';
+import { DEFAULT_WORKFLOW_CONFIGS, type ChainItem } from '../engine/types.js';
 
 export { readApiCredentials, type ApiCredentials };
 
@@ -79,6 +79,10 @@ export async function executeChainForWorkflow(
   workflowName: string,
   _credentials: ApiCredentials
 ): Promise<ChainExecutionResult> {
+  // F3: only workflows with a config can chain; any other name is always a 404 from the API
+  if (!Object.hasOwn(DEFAULT_WORKFLOW_CONFIGS, workflowName)) {
+    return { executed: 0, skipped: 0, errors: [] };
+  }
   try {
     const config = await getCachedOrFetch(workflowName);
 

@@ -34,21 +34,21 @@ Note: FOLLOWUPS 75 (the ship wrapper never sending `complete`) was already fixed
 - [x] **F13 (INFO, code-reviewer):** TESTING.md records the wrong-name and placement mutations as killed.
 
 ### Track B: notifier and watcher
-- [ ] **F3 (MEDIUM, performance-engineer; also covers security LOW and pen-test LOW):** `complete` spawns chain-trigger for workflows that can never chain. Each one makes an authenticated GET that is always a 404 and can block for up to 8 s.
+- [x] **F3 (MEDIUM, performance-engineer; also covers security LOW and pen-test LOW):** `complete` spawns chain-trigger for workflows that can never chain. Each one makes an authenticated GET that is always a 404 and can block for up to 8 s.
   - Fix in `watcher/src/cli/chain-trigger.ts`: return early with no fetch and no output when the workflow is not a key of `DEFAULT_WORKFLOW_CONFIGS`. That list is the single source; provenance: the API `WORKFLOW_NAMES` is the server twin, and both must name exactly ideate, plan, build and ship.
   - Test (vitest): chain-trigger for `audit` makes no fetch and prints nothing; for `build` it still fetches.
   - Rebuild dist, including `chain-trigger.cjs`.
-- [ ] **F4 (MEDIUM, performance-engineer, pre-existing):** the Telegram send has no timeout.
+- [x] **F4 (MEDIUM, performance-engineer, pre-existing):** the Telegram send has no timeout.
   - Fix: wrap it in `run_with_timeout` in `oss-notify.sh`, and add `AbortSignal.timeout` to the fetch in `telegram-notify.ts`.
   - Tests: a bash test with a stalled Telegram stub returns within the bound; a vitest that the fetch passes a signal.
-- [ ] **F6 (LOW, performance-engineer, pre-existing):** `run_with_timeout` sends stderr to /dev/null, so `chain-trigger.log` is always empty.
+- [x] **F6 (LOW, performance-engineer, pre-existing):** `run_with_timeout` sends stderr to /dev/null, so `chain-trigger.log` is always empty.
   - Fix: keep stderr so the caller's `2>>` redirect works.
   - Test: a chain-trigger "No API key" message lands in the log.
-- [ ] **F7 (LOW, performance-engineer):** the 4 workflow-state status lines on `complete` cost tokens.
+- [x] **F7 (LOW, performance-engineer):** the 4 workflow-state status lines on `complete` cost tokens.
   - Run the provenance check first: grep tests and prompts that read "Step completed" etc.
   - If nothing depends on them, silence them on `complete`. Otherwise record no-change with the reason.
-- [ ] **F8 (LOW, performance-engineer):** the 4 sequential `wf_state` spawns on `complete` have no timeout. Fix: use `wf_state_timeout`.
-- [ ] **F10 (INFO, pen-test, pre-existing):** `update-workflow-state` prints "Step completed" even when the guard refused the write.
+- [x] **F8 (LOW, performance-engineer):** the 4 sequential `wf_state` spawns on `complete` have no timeout. Fix: use `wf_state_timeout`.
+- [x] **F10 (INFO, pen-test, pre-existing):** `update-workflow-state` prints "Step completed" even when the guard refused the write.
   - Fix: on refusal, print the refusal and exit non-zero, and do not print the success line.
   - Test: vitest/bash with a symlinked state file.
 
