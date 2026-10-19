@@ -20,6 +20,7 @@
 import { getCachedOrFetch } from '../api/workflow-config.js';
 import { readApiCredentials, type ApiCredentials } from '../api/api-credentials.js';
 import { isSafeChainName, isSafeTeamCommandName } from '../utils/safe-chain-name.js';
+import type { ChainItem } from '../engine/types.js';
 
 export { readApiCredentials, type ApiCredentials };
 
@@ -49,6 +50,13 @@ function safeForLog(value: string): string {
   return value.replace(/[\u0000-\u001f\u007f]/g, '?').slice(0, 60);
 }
 
+/** G3: config is untrusted JSON - a step must be an object with a string command and string-or-absent condition */
+function isChainItemShape(value: unknown): value is ChainItem {
+  if (typeof value !== 'object' || value === null) return false;
+  const { command, condition } = value as Record<string, unknown>;
+  return typeof command === 'string' && (condition === undefined || typeof condition === 'string');
+}
+
 /**
  * Output structured chain instructions for a workflow's chains_to.
  *
@@ -69,7 +77,8 @@ export async function executeChainForWorkflow(
   try {
     const config = await getCachedOrFetch(workflowName);
 
-    if (!config.chains_to || config.chains_to.length === 0) {
+    const steps: unknown = config.chains_to;
+    if (!Array.isArray(steps) || steps.length === 0) {
       return { executed: 0, skipped: 0, errors: [] };
     }
 
@@ -77,10 +86,16 @@ export async function executeChainForWorkflow(
     let skipped = 0;
     const lines: string[] = [];
 
-    for (const step of config.chains_to) {
+    for (const step of steps as unknown[]) {
       // H-4: Cap printed lines to prevent runaway chains from malicious config
       if (executed >= MAX_CHAIN_COMMANDS) {
         break;
+      }
+
+      if (!isChainItemShape(step)) {
+        console.error('chain-trigger: skipping malformed chains_to step');
+        skipped++;
+        continue;
       }
 
       // G2: "never" switches a step off; it is not an invalid step
@@ -98,7 +113,7 @@ export async function executeChainForWorkflow(
         continue;
       }
 
-      const condition = step.always ? 'always' : step.condition ? `condition: ${step.condition}` : 'always';
+      const condition = step.always === true ? 'always' : step.condition ? `condition: ${step.condition}` : 'always';
 
       if (isTeam) {
         lines.push(`CHAIN: /oss:oss-custom ${cmdName} (${condition})`);
