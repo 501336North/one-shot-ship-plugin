@@ -74,8 +74,23 @@
 
 **G6 coverage gap:** no RED case covers the write-failure cleanup path; only the rename-failure path is tested (that test passed before the change). Both now share one catch that removes the temp file.
 
-**Docs regression fixed in this round:** e00c02d's FOLLOWUPS line named the retired verify-preflight hook, which turned verify-preflight-retired.test.sh RED. Reworded; 3/3.
+**Docs regression fixed in this round:** e00c02d's FOLLOWUPS line named the retired ship preflight hook, which turned its retirement test RED. Reworded; 3/3.
 
 **Final sequential run:** all hooks/__tests__ and commands/__tests__ suites pass except the four failures already on main (config-change-guard, format-hook, worktree-hooks hooks.json path, ideate-template). `npx tsc --noEmit` is clean and dist is fresh (121 files).
 
-## Last Updated: 2026-10-19 16:59 +07 by /oss:build round 1
+## Ship round 2 (N2-1 to N2-5)
+| Task | RED | GREEN | Anti-vacuity |
+|---|---|---|---|
+| N2-1 | attack 43/45 (`tail` created the outside file through a dangling link; tail on a fresh project could not create session.log) | 45/45 (bash 3.2 and 5) | oss-log.sh reverted: 2 RED |
+| N2-2 | bash: system-tmp case accepted; node: non-root foreign owner accepted, tmp accepted | oss-safe-path 25/25 (both bashes); node 22/22 | helper reverted: 1 RED; safe-project-write reverted: 3 RED |
+| N2-3 | could not go RED on macOS (its kernel already clears setuid/setgid when a non-root user writes); guard test kept | mode now taken from the checked lstat & 0o777 | n/a |
+| N2-4 | node: a new config.json was 0644 | 0600 for new, existing mode kept; webhook-config 23/23 | webhook-config.ts reverted: 1 RED |
+| N2-5 | doc | TOCTOU comment now matches DECISIONS and the pen test | n/a |
+
+GREEN also fixed a root-project edge in Node: with the project at `/`, the inside-check prefix became `//`, which refused `/usr`. Bash already accepted it.
+
+The `tail` tests stub `tail` on PATH. A first attempt used a perl alarm; it orphaned a `tail -f` process, which I killed by its own PID, not by pkill.
+
+dist rebuilt (121 files fresh); `npx tsc --noEmit` clean.
+
+## Last Updated: 2026-10-19 17:21 +07 by /oss:build round 2

@@ -31,7 +31,7 @@
 ## TOCTOU limits (matches the 2.0.87 pen test)
 - **Bash appends are racy.** Bash `>>`, `cat >`, `cp` and `tee` after `oss_safe_target` cannot use O_NOFOLLOW. In the pen test, a concurrent same-user process swapping `build.log` for a symlink leaked 31 of 300 lines.
   - Committed repo content cannot exploit this: it needs a live local process running as the user.
-  - The directories in the chain are checked (not links; owned by the user or the project-root owner), so another uid cannot race them unless it owns the project.
+  - The directories in the chain are checked (not links; owned by the user, or root-owned and not group/other-writable under a uid-0 project root), so another uid cannot race them unless it is root.
   - Not fixed in this round, on the orchestrator's decision. Tracked as FOLLOWUPS G17.
 - **Node appends held.** They use O_APPEND|O_NOFOLLOW and then fstat the open fd for nlink 1; the pen test's 6000-swap race did not break them.
 - **Node JSON writes** go to a fresh O_EXCL temp file plus a rename, and rename never follows the destination. A directory component swapped between `lstat` and `open` has the same same-user limitation as bash.
@@ -39,7 +39,10 @@
 
 ## Ship round 1 amendments
 - **G2:** no control characters in a rel. The bash target is built from the directory the checks walked (`_OSS_SAFE_DIR`). oss-log.sh builds `<name>.log` only for writing actions, and only from a name that passes `oss_valid_workflow_name`.
-- **G3 / G12:** a component is accepted when it is owned by the current user OR by the uid that owns the physical project root. The same rule is in both twins. The project root is the reference owner, which settles G12 by construction.
+- **N2-2 (narrows G3 below):** a component the current user does not own is accepted ONLY when the physical project root is owned by uid 0 (root-in-container / root-owned bind mount) AND the component is neither group- nor other-writable. A non-root foreign owner is refused, and so is a world-writable dir such as the system tmp. Same rule in both twins.
+- **N2-3:** the kept mode comes from the guard's own lstat, masked to 0o777.
+- **N2-4:** a new webhook config.json (it holds the secret) is created 0600; an existing one keeps its mode.
+- **G3 / G12 (superseded by N2-2):** a component is accepted when it is owned by the current user OR by the uid that owns the physical project root. The same rule is in both twins. The project root is the reference owner, which settles G12 by construction.
   - Tested without root. Bash uses project `/` with the root-owned system tmp directory as components. Node spies `process.getuid` to a different uid.
   - Links and non-directories are still refused.
 - **G4:** the bash guard returns 1 unless it is running under bash.
