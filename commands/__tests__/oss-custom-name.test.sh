@@ -6,20 +6,26 @@
 # @behavior /oss:oss-custom refuses a custom command name that is not a plain
 #           identifier before any shell command or oss-decrypt call uses it.
 # @business-rule A team command name reaches shell commands and the decrypt CLI;
-#           only names matching ^[a-z][a-z0-9-]{0,40}$ may be used, anything
-#           else stops the command with a report and runs nothing.
+#           after stripping `team:`, only names matching ^[a-z0-9-]{1,128}$ (the
+#           API's team-name rule, the same literal as isSafeTeamCommandName in
+#           watcher/src/utils/safe-chain-name.ts) may be used; anything else stops
+#           the command with a report and runs nothing.
 #
 # Tests:
 # 1. oss-custom.md states the name pattern
 # 2. oss-custom.md says to stop and never run anything with an invalid name
 # 3. the rule appears before the first line that uses the name (control: such a line exists)
+# 4. the pattern is the same literal as the chain-trigger team-name helper
+# 5. the old, narrower /oss: name rule is not stated (no contradictory second rule)
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WRAPPER="$SCRIPT_DIR/../oss-custom.md"
+HELPER="$SCRIPT_DIR/../../watcher/src/utils/safe-chain-name.ts"
 
-NAME_PATTERN='^[a-z][a-z0-9-]{0,40}$'
+NAME_PATTERN='^[a-z0-9-]{1,128}$'
+OLD_NAME_PATTERN='^[a-z][a-z0-9-]{0,40}$'
 STOP_RULE='stop and report it; never run any command with it'
 
 TESTS_RUN=0
@@ -88,12 +94,40 @@ test_rule_before_first_use() {
     fi
 }
 
+# =============================================================================
+# TEST 4: same literal as the helper chain-trigger uses for team names
+# =============================================================================
+test_same_as_helper() {
+    local test_name="the pattern is the isSafeTeamCommandName regex in safe-chain-name.ts"
+    ((TESTS_RUN++))
+    if grep -A3 -F -- 'function isSafeTeamCommandName' "$HELPER" | grep -qF -- "/$NAME_PATTERN/"; then
+        pass "$test_name"
+    else
+        fail "$test_name" "/$NAME_PATTERN/ in isSafeTeamCommandName" "helper regex differs or not found"
+    fi
+}
+
+# =============================================================================
+# TEST 5: no contradictory narrower rule
+# =============================================================================
+test_no_old_rule() {
+    local test_name="oss-custom.md does not state the narrower /oss: rule $OLD_NAME_PATTERN"
+    ((TESTS_RUN++))
+    if grep -qF -- "$OLD_NAME_PATTERN" "$WRAPPER"; then
+        fail "$test_name" "no $OLD_NAME_PATTERN" "old rule still present"
+    else
+        pass "$test_name"
+    fi
+}
+
 echo "=== /oss:oss-custom Name Validation Tests ==="
 echo ""
 
 test_pattern_stated
 test_stop_rule
 test_rule_before_first_use
+test_same_as_helper
+test_no_old_rule
 
 echo ""
 echo "=== Results: $TESTS_PASSED/$TESTS_RUN passed, $TESTS_FAILED failed ==="
