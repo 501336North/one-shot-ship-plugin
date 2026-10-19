@@ -83,6 +83,11 @@ export async function executeChainForWorkflow(
         break;
       }
 
+      // G2: "never" switches a step off; it is not an invalid step
+      if (step.condition === 'never') {
+        continue;
+      }
+
       const isTeam = step.command.startsWith('team:');
       const cmdName = isTeam ? step.command.substring(5) : step.command;
 
