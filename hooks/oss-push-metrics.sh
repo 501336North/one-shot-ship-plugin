@@ -19,7 +19,7 @@
 #   "$SCRIPT_DIR/oss-log-analyzer.sh" build | "$SCRIPT_DIR/oss-push-metrics.sh"
 
 set -euo pipefail
-source "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh" 2>/dev/null || true  # oss_api_curl: API key via stdin, never argv
+if [[ -f "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh" ]]; then source "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh"; fi  # oss_api_curl: API key via stdin, never argv
 
 # Configuration
 CONFIG_FILE="${HOME}/.oss/config.json"
