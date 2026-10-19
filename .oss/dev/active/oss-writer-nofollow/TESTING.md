@@ -62,4 +62,20 @@
 - optional-helper-source: the sandbox also ships oss-safe-path.sh, as HOOKS_TO_COPY does.
 - pr-monitor-state "save": runs in a real temp project instead of mocking fs.promises.writeFile. The assertions are the same: a file named pr-monitor-state.json containing IC_789.
 
-## Last Updated: 2026-10-19 16:27 +07 by /oss:build
+## Ship round 1 (G1-G16)
+| Task | RED | GREEN | Anti-vacuity |
+|---|---|---|---|
+| G1 | attack 41/42 (dev/active link moved the outside dir) | 42/42 (bash 3.2 and 5) | archive-check reverted: 1 RED |
+| G2 | oss-safe-path 3/10 | 10/10 | helper reverted: 3 RED; oss-log reverted: 2 RED |
+| G3 | bash rc=1; node 1 failing | 11/11; node 17/17 | each twin reverted: its G3 case RED |
+| G4 G5 G8 G14 | oss-safe-path 11/19 | 19/19 | helper reverted: G4, G5 RED; oss-log reverted: G8 x5, G14 RED |
+| G6 G7 G13 | node 2 failing (G6, plus G11, later deferred); attack 42/43; G13 4 failing | node 19/19; attack 43/43; oss-safe-path 24/24 | safe-project-write reverted: G6 RED; worktree-create: G7 RED; 3 sourcers: their G13 RED |
+| G9 G10 G15 | refactor (behaviour-equivalent) | all suites unchanged and green | n/a |
+
+**G6 coverage gap:** no RED case covers the write-failure cleanup path; only the rename-failure path is tested (that test passed before the change). Both now share one catch that removes the temp file.
+
+**Docs regression fixed in this round:** e00c02d's FOLLOWUPS line named the retired verify-preflight hook, which turned verify-preflight-retired.test.sh RED. Reworded; 3/3.
+
+**Final sequential run:** all hooks/__tests__ and commands/__tests__ suites pass except the four failures already on main (config-change-guard, format-hook, worktree-hooks hooks.json path, ideate-template). `npx tsc --noEmit` is clean and dist is fresh (121 files).
+
+## Last Updated: 2026-10-19 16:59 +07 by /oss:build round 1

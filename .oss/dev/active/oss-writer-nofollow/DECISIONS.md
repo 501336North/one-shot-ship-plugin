@@ -28,7 +28,26 @@
 4. **Fail closed when the helper is absent.** oss-log.sh defines stubs that refuse project writes; global ~/.oss/logs still works. oss-notify refuses every `--workflow` event. HOOKS_TO_COPY always ships the helper beside them, and session-start-copy F12 guards that.
 5. **Analytics `-d` JSON at oss-notify.sh:307 was not rewritten.** It now contains only a validated name, which is the PLAN's "safe printf of validated fields". setProgress (line 370) does use `jq -n --arg`.
 
-## TOCTOU limits
-- Bash cannot open with O_NOFOLLOW. Between `oss_safe_target` and `>>`/`cat >`/`cp`, an attacker could swap the target for a link. Every directory in the chain has been checked to be user-owned and not a link, so only a process running as the user can do that. A cloned repo's static links, which are the threat here, cannot.
-- Node appends use O_NOFOLLOW plus a post-open fstat. JSON writes go to a fresh O_EXCL temp file and a rename, and rename never follows the destination. A directory component swapped between `lstat` and `open` has the same user-only limitation.
-- Reads still follow links: for example, workflow-state reads a linked JSON before refusing to write. Reads are out of scope for this PR.
+## TOCTOU limits (matches the 2.0.87 pen test)
+- **Bash appends are racy.** Bash `>>`, `cat >`, `cp` and `tee` after `oss_safe_target` cannot use O_NOFOLLOW. In the pen test, a concurrent same-user process swapping `build.log` for a symlink leaked 31 of 300 lines.
+  - Committed repo content cannot exploit this: it needs a live local process running as the user.
+  - The directories in the chain are checked (not links; owned by the user or the project-root owner), so another uid cannot race them unless it owns the project.
+  - Not fixed in this round, on the orchestrator's decision. Tracked as FOLLOWUPS G17.
+- **Node appends held.** They use O_APPEND|O_NOFOLLOW and then fstat the open fd for nlink 1; the pen test's 6000-swap race did not break them.
+- **Node JSON writes** go to a fresh O_EXCL temp file plus a rename, and rename never follows the destination. A directory component swapped between `lstat` and `open` has the same same-user limitation as bash.
+- **Reads still follow links.** Out of scope.
+
+## Ship round 1 amendments
+- **G2:** no control characters in a rel. The bash target is built from the directory the checks walked (`_OSS_SAFE_DIR`). oss-log.sh builds `<name>.log` only for writing actions, and only from a name that passes `oss_valid_workflow_name`.
+- **G3 / G12:** a component is accepted when it is owned by the current user OR by the uid that owns the physical project root. The same rule is in both twins. The project root is the reference owner, which settles G12 by construction.
+  - Tested without root. Bash uses project `/` with the root-owned system tmp directory as components. Node spies `process.getuid` to a different uid.
+  - Links and non-directories are still refused.
+- **G4:** the bash guard returns 1 unless it is running under bash.
+- **G5:** bash `oss_safe_target` accepts any target when project == $HOME, matching Node.
+- **G6:** atomic writes keep an existing file's mode; new files get 0666 masked by the umask. The temp file is removed on any failure.
+- **G7:** worktree-create never copies the API key over a git-tracked `.oss/config.json`.
+- **G8:** read-only oss-log.sh actions create nothing.
+- **G13:** every sourcer defines the same fail-closed stubs.
+- **G14:** the archive sweep removes one whole name per line.
+- **G9 / G10 / G15:** memoisation and fewer forks; no behaviour change.
+- **Deferred to FOLLOWUPS:** G11 (it would break the setup of about 10 existing tests), G16 (another suite's setup, not part of this hotfix), G17 (the bash TOCTOU above).
