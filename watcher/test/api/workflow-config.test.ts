@@ -9,8 +9,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import * as net from 'net';
 import {
   fetchWorkflowConfig,
+  WORKFLOW_FETCH_TIMEOUT_MS,
   decryptWorkflowConfig,
   getCachedOrFetch,
   clearWorkflowConfigCache,
@@ -320,6 +322,63 @@ describe('WorkflowConfigAPI', () => {
 
       expect(mockFetch).not.toHaveBeenCalled();
       expect(fallback).toEqual(DEFAULT_WORKFLOW_CONFIGS[name] || {});
+    });
+  });
+
+  /**
+   * @behavior A slow or silent API gives up before oss-notify.sh's 30s chain-trigger cap
+   * @business-rule The chain falls back to defaults instead of being silently dropped (T3)
+   */
+  describe('API that never answers', () => {
+    let server: net.Server | null = null;
+    const sockets: net.Socket[] = [];
+
+    afterEach(async () => {
+      for (const socket of sockets) socket.destroy();
+      sockets.length = 0;
+      if (server) {
+        const s = server;
+        server = null;
+        await new Promise<void>((resolve) => s.close(() => resolve()));
+      }
+    });
+
+    async function startSilentServer(): Promise<number> {
+      const s = net.createServer((socket) => {
+        sockets.push(socket); // accept the connection, never send a byte
+      });
+      server = s;
+      await new Promise<void>((resolve) => s.listen(0, '127.0.0.1', () => resolve()));
+      const address = s.address();
+      if (address === null || typeof address === 'string') throw new Error('no port');
+      return address.port;
+    }
+
+    it('default timeout is well under the 30s chain-trigger cap', () => {
+      expect(WORKFLOW_FETCH_TIMEOUT_MS).toBeGreaterThan(0);
+      expect(WORKFLOW_FETCH_TIMEOUT_MS).toBeLessThanOrEqual(10000);
+    });
+
+    it('gives up on a silent server instead of hanging', async () => {
+      const port = await startSilentServer();
+      const configDir = createTestDir();
+      fs.writeFileSync(
+        path.join(configDir, 'config.json'),
+        JSON.stringify({ apiKey: 'ak_secret_key', apiUrl: `https://127.0.0.1:${port}` })
+      );
+      process.env.OSS_CONFIG_DIR = configDir;
+      global.fetch = originalFetch;
+
+      const outcome = await Promise.race([
+        fetchWorkflowConfig('build', 200).then(
+          () => 'resolved',
+          () => 'gave-up'
+        ),
+        new Promise<string>((resolve) => setTimeout(() => resolve('hung'), 3000)),
+      ]);
+
+      expect(sockets.length).toBeGreaterThan(0);
+      expect(outcome).toBe('gave-up');
     });
   });
 });
