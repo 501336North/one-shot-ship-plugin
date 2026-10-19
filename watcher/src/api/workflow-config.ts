@@ -113,16 +113,25 @@ export async function fetchWorkflowConfig(
 
   const endpoint = `${credentials.apiUrl}/api/v1/workflows/${encodeURIComponent(workflowName)}`;
 
-  const response = await fetch(endpoint, {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${credentials.apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    signal: AbortSignal.timeout(timeoutMs),
-    // G5: never replay the Bearer key to a redirect target
-    redirect: 'error',
-  });
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${credentials.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+      // G5: never replay the Bearer key to a redirect target
+      redirect: 'error',
+    });
+  } catch (error) {
+    // G10: make the fallback visible, without the URL or key
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      console.error('workflow-config: API timeout, using defaults');
+    }
+    throw error;
+  }
 
   if (!response.ok) {
     const errorResponse = await response.json().catch(() => ({ error: 'Request failed' })) as { error?: string };
