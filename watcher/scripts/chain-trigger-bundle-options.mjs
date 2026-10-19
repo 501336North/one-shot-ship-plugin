@@ -17,4 +17,7 @@ export const CHAIN_TRIGGER_BUNDLE_OPTIONS = {
   target: 'node18',
   format: 'cjs',
   outfile: resolve(watcherRoot, 'dist/cli/chain-trigger.cjs'),
+  // esbuild's `// src/...` path comments follow the working dir; pin it so a build from the
+  // repo root (`node watcher/scripts/bundle-cli.js`) gives the same bytes as one from watcher/.
+  absWorkingDir: watcherRoot,
 };
