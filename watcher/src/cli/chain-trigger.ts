@@ -46,7 +46,7 @@ const SAFE_CONDITION = /^[a-z0-9_-]{1,64}$/;
 
 /** The only shape a printed CHAIN line can take (both name rules, G1) */
 export const CHAIN_LINE_PATTERN =
-  /^CHAIN: \/oss:([a-z][a-z0-9-]{0,40}|oss-custom [a-z0-9-]{1,128}) \((always|condition: [a-z0-9_-]{1,64})\)$/;
+  /^CHAIN: \/oss:([a-z][a-z0-9-]{0,40}|oss-custom [a-z0-9-]{1,100}) \((always|condition: [a-z0-9_-]{1,64})\)$/;
 
 /** Keep printable ASCII only and truncate so a rejected value cannot shape stderr (G4) */
 function safeForLog(value: string): string {
