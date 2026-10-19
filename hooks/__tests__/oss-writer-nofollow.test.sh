@@ -230,6 +230,16 @@ out=$(cd "$P" && HOME="$T/home" "$SH" "$ROOT/hooks/oss-archive-check.sh" --proje
 check "oss-archive-check.sh: committed dev/completed link does not move dev docs outside" "$before" "$rc" "$out"
 rm -rf "$T"
 
+# G1: a committed dev/active/<name> link to an outside dir must not pull that dir into the repo
+l_activelink() {
+    mkdir -p .oss/dev/active && ln -s "$T/outside/dir" .oss/dev/active/evil
+}
+world; printf '# Progress\n\n## Current Phase: ship (COMPLETE)\n' > "$T/outside/dir/PROGRESS.md"
+evil_repo p-arch2 l_activelink; before=$(snapshot)
+out=$(cd "$P" && HOME="$T/home" "$SH" "$ROOT/hooks/oss-archive-check.sh" --project-dir="$P" 2>&1 </dev/null); rc=$?
+check "oss-archive-check.sh: committed dev/active/<name> link does not move the outside dir" "$before" "$rc" "$out"
+rm -rf "$T"
+
 # =================================================================================================
 # 9. Controls: an ordinary repo still gets state, logs, gitignore, settings, context, archive
 # =================================================================================================
