@@ -143,8 +143,8 @@ After `oss-notify.sh --workflow visual-qa complete` runs, its stdout may contain
 - Each chain command runs with full logging and status updates
 - If a blocking chain command fails, stop the chain and report the failure
 - If no `---CHAIN_COMMANDS---` block appears, skip this step
+- If a line's condition can be checked from this session and is false (for example `has_ui_work`: no UI files changed), skip it and log why; if it is true or you cannot tell, run it. Log a skip: `~/.oss/hooks/oss-log.sh write visual-qa "[CHAIN] skipped /oss:<command>: <reason>"`
 - Log each: `~/.oss/hooks/oss-log.sh write visual-qa "[CHAIN] executing /oss:<command>"`
-- If a line has a condition you can check from this session (for example `has_ui_work`: no UI files changed), skip it and log why; if you cannot tell, run it. Log a skip: `~/.oss/hooks/oss-log.sh write visual-qa "[CHAIN] skipped /oss:<command>: <reason>"`
 
 ## Error Handling
 
