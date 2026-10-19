@@ -35,4 +35,20 @@ with ~/.oss/current-project naming a victim repo that has a .oss.
 - watcher/test/hooks (no-setup config, no setupFiles): 30 files, 181/181.
 - vitest ship-wrapper-chain + chain-step-contract (read ship.md): 36/36.
 
-## Last Updated: 2026-10-20 06:08 +07 by /oss:build (ship round 1 implementer)
+## Ship round 2 (2026-10-20 06:35 +07, CLAUDE_PROJECT_DIR unset, sequential)
+- RED d021aa3: no-model-text-in-failed section 4 flagged 51 lines in 27 wrappers (control fixture
+  11/11: lowercase, Mixed, hyphenated, `<reason>`, bare fence, ~~~bash, ```Bash, ```bash title="x",
+  inline span, inline hook line, `{x}` in a heredoc; not flagged: `${HOME}`, `%{http_code}`, a json
+  fence, prose `<b>`, heredoc `<dict>`, prose spans that run nothing). notification-copy 2 red,
+  oss-value 7d 2 red.
+- Anti-vacuity: GREEN files reverted -> the same 51 lines / 2 / 2 red; restored -> green.
+- Mutation on a copy of commands/: `"{test_file}: {failure_message}"` back on red.md:133 -> guard red
+  (1 line); `<reason>` back on xray.md:134 -> guard red (1 line).
+- hooks/__tests__ + commands/__tests__: 40 files, 548/549 assertions; only ideate-template 3/4
+  (pre-existing, same failure on the RED commit). oss-value 78/78 and the guard 33/33 under bash 3.2
+  and 5.2.
+- watcher vitest (no-setup config): test/hooks, test/commands, test/skills, notification-copy and
+  every other file that reads commands/*.md: 59 files, 1128/1128. tsc --noEmit clean.
+  watcher-dist-fresh: 121 tracked dist files match.
+
+## Last Updated: 2026-10-20 06:36 +07 by /oss:build (ship round 2 implementer)

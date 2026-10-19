@@ -14,6 +14,7 @@ Plan, design and decisions live in the API repo (branch feat/plugin-value-flags/
 - [x] P6: plugin.json 2.0.91 (2.0.90 was used by #201) (completed 2026-10-20, 208c17d); ship is the lead's
 - [x] Ship round 1 R1-1..R1-6: RED f49006b -> GREEN cbc86b7 (completed 2026-10-20)
 - [x] R1-7, R1-8: reported, not built (see DECISIONS.md)
+- [x] Ship round 2 R2-1..R2-4: RED d021aa3 (guard: 51 lines in 27 wrappers; notification-copy 2 red; oss-value 7d 2 red) -> GREEN 7413730 + 3485b50 (completed 2026-10-20)
 
 ## Deviations from the plan
 - code-simplifier is NOT unserved: /oss:code-simplifier serves agents/code-simplifier, which sends
@@ -32,4 +33,4 @@ Plan, design and decisions live in the API repo (branch feat/plugin-value-flags/
 - plan.md and context-report.md keep a fixed `failed '{}'` line (no model text; possible duplicate log).
 - hooks/oss-session-start-new.sh and -test.sh have their own stale HOOKS_TO_COPY (not registered).
 
-## Last Updated: 2026-10-20 06:08 +07 by /oss:build (ship round 1 implementer)
+## Last Updated: 2026-10-20 06:36 +07 by /oss:build (ship round 2 implementer)
