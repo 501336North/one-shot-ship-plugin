@@ -231,6 +231,16 @@ If shipping fails:
 ~/.oss/hooks/oss-notify.sh --workflow ship failed '{"blocker": "{REASON}"}'
 ```
 
+## Step 8: Update Status Line (Complete)
+
+**You MUST send `complete` exactly once, as the last event of a successful ship:** right after `pr_created` when there is no `--merge`, or right after `merged` with `--merge` (never before `merged`: `merged` resets the workflow state). Do not send it if shipping failed.
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow ship complete '{}'
+```
+
+This marks the workflow done (status line shows "→ DONE") and prints your team's ship chain, if any: act on its output in "Execute Chain Commands" below.
+
 ## Command Orchestration
 
 After this command completes, the workflow engine will:

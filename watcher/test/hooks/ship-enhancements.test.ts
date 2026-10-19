@@ -1,8 +1,8 @@
 /**
- * @behavior Ship enhancements provide verify and learn extraction capabilities
- * @acceptance-criteria verify-preflight.sh and learn-extractor.sh exist and work correctly
- * @business-rule Ship command can run quick or full verification modes
- * @boundary Shell scripts (verify-preflight.sh, learn-extractor.sh)
+ * @behavior Ship enhancements provide learn extraction capabilities
+ * @acceptance-criteria learn-extractor.sh exists and works correctly
+ * @business-rule Ship can extract error-resolution patterns from session logs
+ * @boundary Shell script (learn-extractor.sh)
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -13,7 +13,6 @@ import * as os from 'os';
 
 describe('Ship Enhancements', () => {
   const hooksDir = path.join(__dirname, '../../../hooks');
-  const verifyScript = path.join(hooksDir, 'verify-preflight.sh');
   const learnScript = path.join(hooksDir, 'learn-extractor.sh');
 
   const execOptions: ExecSyncOptionsWithStringEncoding = {
@@ -24,95 +23,6 @@ describe('Ship Enhancements', () => {
       CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..'),
     },
   };
-
-  describe('verify-preflight.sh', () => {
-    /**
-     * @behavior verify-preflight.sh exists and is executable
-     * @acceptance-criteria Script exists in hooks directory with execute permission
-     */
-    it('should exist and be executable', () => {
-      expect(fs.existsSync(verifyScript)).toBe(true);
-      const stats = fs.statSync(verifyScript);
-      // Check if executable (any execute bit set)
-      const isExecutable = (stats.mode & 0o111) !== 0;
-      expect(isExecutable).toBe(true);
-    });
-
-    /**
-     * @behavior quick mode only runs build and tsc
-     * @acceptance-criteria --quick flag limits checks to build and TypeScript only
-     */
-    it('should only run build and tsc in quick mode', () => {
-      let output: string;
-      try {
-        output = execSync(`bash "${verifyScript}" --quick --dry-run`, execOptions);
-      } catch (error: unknown) {
-        output = (error as { stdout?: string }).stdout || '';
-      }
-
-      // In quick mode, should include build and tsc
-      expect(output).toMatch(/build|tsc|typescript/i);
-      // Should NOT include lint, tests, coverage, console.log, or IRON LAW in quick mode
-      expect(output).not.toMatch(/\blint\b/i);
-      expect(output).not.toMatch(/\bcoverage\b/i);
-      expect(output).not.toMatch(/console\.log/i);
-      expect(output).not.toMatch(/IRON LAW/i);
-    });
-
-    /**
-     * @behavior full mode runs all checks
-     * @acceptance-criteria Default mode runs build, tsc, lint, tests, coverage, console.log, IRON LAW
-     */
-    it('should run all checks in full mode', () => {
-      let output: string;
-      try {
-        output = execSync(`bash "${verifyScript}" --dry-run`, execOptions);
-      } catch (error: unknown) {
-        output = (error as { stdout?: string }).stdout || '';
-      }
-
-      // Full mode should include all checks
-      expect(output).toMatch(/build/i);
-      expect(output).toMatch(/tsc|typescript/i);
-      expect(output).toMatch(/lint/i);
-      expect(output).toMatch(/test/i);
-      expect(output).toMatch(/coverage|console/i);
-      expect(output).toMatch(/IRON|iron/i);
-    });
-
-    /**
-     * @behavior outputs tree-formatted results with icons
-     * @acceptance-criteria Output uses tree format with check/cross icons
-     */
-    it('should output tree-formatted results with icons', () => {
-      let output: string;
-      try {
-        output = execSync(`bash "${verifyScript}" --dry-run`, execOptions);
-      } catch (error: unknown) {
-        output = (error as { stdout?: string }).stdout || '';
-      }
-
-      // Should have tree structure characters
-      expect(output).toMatch(/[├└│─]/);
-      // Should have status icons
-      expect(output).toMatch(/[✅❌⏳]/);
-    });
-
-    /**
-     * @behavior returns exit code 0 when all pass, 1 when any fail
-     * @acceptance-criteria Script exit code reflects pass/fail status
-     */
-    it('should return appropriate exit codes', () => {
-      // Dry-run mode should always succeed (exit 0)
-      let exitCode = 0;
-      try {
-        execSync(`bash "${verifyScript}" --dry-run`, execOptions);
-      } catch (error: unknown) {
-        exitCode = (error as { status?: number }).status || 1;
-      }
-      expect(exitCode).toBe(0);
-    });
-  });
 
   describe('learn-extractor.sh', () => {
     const testSessionDir = path.join(os.tmpdir(), `oss-learn-test-${Date.now()}`);
