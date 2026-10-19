@@ -85,6 +85,22 @@ describe('telegram-notify CLI', () => {
       expect(body.text).toBe('Build complete! 47/47 tests passing');
       expect(body.chat_id).toBe('987654321');
     });
+
+    /**
+     * @behavior A stalled Telegram API cannot hold the user's command open: the send gives up
+     * @business-rule F4: the send is bounded by an abort signal (oss-notify.sh also bounds the process)
+     */
+    it('passes an abort signal to the send so a stalled API cannot hang it', async () => {
+      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.readFileSync as Mock).mockReturnValue(JSON.stringify({
+        telegram: { enabled: true, botToken: '123456:ABC-DEF-xyz', chatId: '987654321' },
+      }));
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ result: { message_id: 1 } }) });
+
+      await sendTelegramNotification('hello');
+
+      expect(mockFetch.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+    });
   });
 
   /**

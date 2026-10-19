@@ -21,6 +21,7 @@ import {
   MAX_CHAIN_COMMANDS,
   CHAIN_LINE_PATTERN,
 } from '../../src/cli/chain-trigger.js';
+import { DEFAULT_WORKFLOW_CONFIGS } from '../../src/engine/types.js';
 
 describe('Chain Trigger CLI', () => {
   let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -766,6 +767,47 @@ describe('Chain Trigger CLI', () => {
       ]);
 
       expect(consoleSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  // ==========================================================================
+  // F3: only the four chainable workflows ever reach the API
+  // ==========================================================================
+
+  describe('executeChainForWorkflow - workflows that can never chain (F3)', () => {
+    /**
+     * @behavior Completing a command that has no workflow config (e.g. /oss:audit) makes no API
+     *           call and prints nothing
+     * @business-rule Only ideate, plan, build and ship have a chains_to config; asking the API for
+     *                any other name is always a 404 and can block the user for seconds
+     */
+    test('a workflow with no config (audit) makes no API call and prints nothing', async () => {
+      (getCachedOrFetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+        chains_to: [{ command: 'review', always: true }],
+      });
+
+      const result = await executeChainForWorkflow('audit', { apiKey: 'k', apiUrl: 'https://api.example.com' });
+
+      expect(getCachedOrFetch).not.toHaveBeenCalled();
+      expect(consoleSpy).not.toHaveBeenCalled();
+      expect(result).toEqual({ executed: 0, skipped: 0, errors: [] });
+    });
+
+    test('a chainable workflow (build) still asks the API for its config', async () => {
+      (getCachedOrFetch as ReturnType<typeof vi.fn>).mockResolvedValue({ chains_to: [] });
+
+      await executeChainForWorkflow('build', { apiKey: 'k', apiUrl: 'https://api.example.com' });
+
+      expect(getCachedOrFetch).toHaveBeenCalledWith('build');
+    });
+
+    /**
+     * @behavior The client's list of chainable workflows is exactly the server's list
+     * @business-rule Twin of WORKFLOW_NAMES in the API (packages/api/src/schemas/workflow-config.ts);
+     *                if one side gains a workflow the other must too, or chains silently stop firing
+     */
+    test('the chainable workflows are exactly ideate, plan, build and ship', () => {
+      expect(Object.keys(DEFAULT_WORKFLOW_CONFIGS).sort()).toEqual(['build', 'ideate', 'plan', 'ship']);
     });
   });
 });

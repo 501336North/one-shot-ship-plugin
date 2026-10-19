@@ -109,6 +109,16 @@ The prompt guides:
 - Communication templates
 - Postmortem creation
 
+## Step 7: Update Status Line (Completion)
+
+On success only. If the command failed (the prompt sent `failed`), do not send `complete`.
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow incident complete '{}'
+```
+
 ## Command Chain
 
 ```

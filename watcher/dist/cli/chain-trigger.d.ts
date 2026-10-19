@@ -16,13 +16,8 @@
  *   0 - Success (or no commands to output)
  *   1 - Failure
  */
-/**
- * API credentials structure
- */
-export interface ApiCredentials {
-    apiKey: string;
-    apiUrl: string;
-}
+import { readApiCredentials, type ApiCredentials } from '../api/api-credentials.js';
+export { readApiCredentials, type ApiCredentials };
 /**
  * Result of outputting chain instructions
  */
@@ -34,13 +29,8 @@ export interface ChainExecutionResult {
 }
 /** Maximum number of chain commands to output (H-4: prevent runaway chains) */
 export declare const MAX_CHAIN_COMMANDS = 10;
-/**
- * Read API credentials from config file
- *
- * @param configDir - The config directory (defaults to ~/.oss)
- * @returns Credentials or null if not configured
- */
-export declare function readApiCredentials(configDir?: string): ApiCredentials | null;
+/** The only shape a printed CHAIN line can take (both name rules, G1) */
+export declare const CHAIN_LINE_PATTERN: RegExp;
 /**
  * Output structured chain instructions for a workflow's chains_to.
  *

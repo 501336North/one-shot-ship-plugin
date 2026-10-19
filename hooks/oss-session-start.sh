@@ -26,10 +26,12 @@ run_with_timeout() {
         # Fallback: run with background + sleep + kill pattern
         "$@" 2>/dev/null &
         local pid=$!
-        (sleep "$timeout_secs" && kill -9 $pid 2>/dev/null) &
+        # The timer holds no stdio, and killing it also kills its sleep (R2-1; same shape as oss-notify.sh).
+        ( trap 'kill $s 2>/dev/null; exit 0' TERM; sleep "$timeout_secs" & s=$!; wait $s && kill -9 $pid 2>/dev/null ) </dev/null >/dev/null 2>&1 &
         local killer=$!
         wait $pid 2>/dev/null || true
         kill $killer 2>/dev/null || true
+        wait $killer 2>/dev/null || true
     fi
 }
 

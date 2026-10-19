@@ -129,158 +129,169 @@ async function main() {
         process.exit(1);
     }
     const command = args[0];
+    // F10: hold the success line until we know the write was not refused
+    const said = [];
+    const say = (line) => {
+        said.push(line);
+    };
     try {
         switch (command) {
             case 'setActiveStep': {
                 const step = args[1];
                 await service.setActiveStep(step);
-                console.log(`Active step set to: ${step}`);
+                say(`Active step set to: ${step}`);
                 break;
             }
             case 'setTddPhase': {
                 const phase = args[1];
                 await service.setTddPhase(phase);
-                console.log(`TDD phase set to: ${phase}`);
+                say(`TDD phase set to: ${phase}`);
                 break;
             }
             case 'clearTddPhase': {
                 await service.clearTddPhase();
-                console.log('TDD phase cleared');
+                say('TDD phase cleared');
                 break;
             }
             case 'completeStep': {
                 const step = args[1];
                 await service.completeStep(step);
-                console.log(`Step completed: ${step}`);
+                say(`Step completed: ${step}`);
                 break;
             }
             case 'setSupervisor': {
                 const status = args[1];
                 await service.setSupervisor(status);
-                console.log(`Supervisor status set to: ${status}`);
+                say(`Supervisor status set to: ${status}`);
                 break;
             }
             case 'setProgress': {
                 const progressJson = args[1] || '{}';
                 const progress = JSON.parse(progressJson);
                 await service.setProgress(progress);
-                console.log('Progress updated');
+                say('Progress updated');
                 break;
             }
             case 'resetTddCycle': {
                 await service.resetTddCycle();
-                console.log('TDD cycle reset - starting new iteration');
+                say('TDD cycle reset - starting new iteration');
                 break;
             }
             case 'workflowComplete': {
                 await service.workflowComplete();
-                console.log('Workflow marked complete');
+                say('Workflow marked complete');
                 break;
             }
             case 'reset': {
                 await service.reset();
-                console.log('State reset');
+                say('State reset');
                 break;
             }
             case 'init': {
                 await service.initialize();
-                console.log('State initialized');
+                say('State initialized');
                 break;
             }
             case 'setActiveAgent': {
                 const agentJson = args[1] || '{}';
                 const agent = JSON.parse(agentJson);
                 await service.setActiveAgent(agent);
-                console.log(`Active agent set: ${agent.type}`);
+                say(`Active agent set: ${agent.type}`);
                 break;
             }
             case 'clearActiveAgent': {
                 await service.clearActiveAgent();
-                console.log('Active agent cleared');
+                say('Active agent cleared');
                 break;
             }
             case 'setMessage': {
                 const message = args[1] || '';
                 await service.setMessage(message);
-                console.log(`Message set: ${message}`);
+                say(`Message set: ${message}`);
                 break;
             }
             case 'clearMessage': {
                 await service.clearMessage();
-                console.log('Message cleared');
+                say('Message cleared');
                 break;
             }
             case 'setCurrentCommand': {
                 const cmd = args[1] || '';
                 await service.setCurrentCommand(cmd);
-                console.log(`Current command set to: ${cmd}`);
+                say(`Current command set to: ${cmd}`);
                 break;
             }
             case 'clearCurrentCommand': {
                 await service.clearCurrentCommand();
-                console.log('Current command cleared');
+                say('Current command cleared');
                 break;
             }
             case 'setNextCommand': {
                 const cmd = args[1] || '';
                 await service.setNextCommand(cmd);
-                console.log(`Next command set to: ${cmd}`);
+                say(`Next command set to: ${cmd}`);
                 break;
             }
             case 'clearNextCommand': {
                 await service.clearNextCommand();
-                console.log('Next command cleared');
+                say('Next command cleared');
                 break;
             }
             case 'setNotification': {
                 const message = args[1] || '';
                 const ttlSeconds = args[2] ? parseInt(args[2], 10) : 10;
                 await service.setNotification(message, ttlSeconds);
-                console.log(`Notification set: ${message} (expires in ${ttlSeconds}s)`);
+                say(`Notification set: ${message} (expires in ${ttlSeconds}s)`);
                 break;
             }
             case 'clearNotification': {
                 await service.clearNotification();
-                console.log('Notification cleared');
+                say('Notification cleared');
                 break;
             }
             case 'clearProgress': {
                 await service.clearProgress();
-                console.log('Progress cleared');
+                say('Progress cleared');
                 break;
             }
             case 'prepareForNewSession': {
                 await service.prepareForNewSession();
-                console.log('Session state prepared');
+                say('Session state prepared');
                 break;
             }
             case 'setSessionId': {
                 const sessionId = args[1] || '';
                 await service.setSessionId(sessionId);
-                console.log(`Session ID set: ${sessionId}`);
+                say(`Session ID set: ${sessionId}`);
                 break;
             }
             case 'setLastCommand': {
                 const cmd = args[1] || '';
                 await service.setLastCommand(cmd);
-                console.log(`Last command set to: ${cmd}`);
+                say(`Last command set to: ${cmd}`);
                 break;
             }
             case 'clearLastCommand': {
                 await service.clearLastCommand();
-                console.log('Last command cleared');
+                say('Last command cleared');
                 break;
             }
             case 'setWorkflowComplete': {
                 const complete = args[1] === 'true';
                 await service.setWorkflowComplete(complete);
-                console.log(`Workflow complete set to: ${complete}`);
+                say(`Workflow complete set to: ${complete}`);
                 break;
             }
             default:
                 console.error(`Unknown command: ${command}`);
                 process.exit(1);
         }
+        if (service.writeRefused) {
+            process.exitCode = 1;
+            return;
+        }
+        for (const line of said)
+            console.log(line);
     }
     catch (error) {
         console.error(`Error: ${error}`);
