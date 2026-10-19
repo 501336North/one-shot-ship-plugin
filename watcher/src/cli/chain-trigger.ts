@@ -80,10 +80,11 @@ export async function executeChainForWorkflow(
   try {
     const config = await getCachedOrFetch(workflowName);
 
-    const steps: unknown = config.chains_to;
-    if (!Array.isArray(steps) || steps.length === 0) {
+    const rawSteps: unknown = config.chains_to;
+    if (!Array.isArray(rawSteps) || rawSteps.length === 0) {
       return { executed: 0, skipped: 0, errors: [] };
     }
+    const steps: readonly unknown[] = rawSteps;
 
     let executed = 0;
     let skipped = 0;
@@ -102,7 +103,7 @@ export async function executeChainForWorkflow(
         break;
       }
 
-      const step: unknown = steps[i];
+      const step = steps[i];
 
       if (!isChainItemShape(step)) {
         skip('chain-trigger: skipping malformed chains_to step');
