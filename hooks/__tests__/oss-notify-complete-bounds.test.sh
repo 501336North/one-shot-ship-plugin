@@ -9,7 +9,7 @@
 #           F6: run_with_timeout keeps stderr, so a caller's 2>> redirect receives it; callers that
 #           must stay quiet redirect stderr themselves.
 #
-# Time cost: about 27s (cases 1 and 4 wait for the real 15s and 6 x 2s bounds).
+# Time cost: about 32s (cases 1 and 4 wait for the real 15s and 6 x 2s bounds; case 6 settles 1s).
 #
 # Usage: ./hooks/__tests__/oss-notify-complete-bounds.test.sh
 set -uo pipefail
@@ -86,6 +86,38 @@ run_notify --session context_saved
 if grep -q "setSupervisor idle" "$T/node.calls" && ! grep -q "STATE-STDERR" "$T/err"; then
     pass "session state updates keep the state CLI's stderr out of the hook's output"
 else fail "session state updates keep the state CLI's stderr out of the hook's output" "err=$(tr '\n' '|' < "$T/err")"; fi
+rm -rf "$T"
+
+# 6. R2-1: on a host with neither timeout nor gtimeout (stock macOS), the fallback timer must not hold
+#    the hook's stdout open, print a job notice, or leave its sleep behind. A pipe reader returns at once.
+sandbox
+mkdir -p "$T/sys"
+for d in /usr/local/bin /usr/bin /bin /usr/sbin /sbin; do
+    for f in "$d"/*; do
+        n=${f##*/}
+        [[ "$n" == timeout || "$n" == gtimeout || -e "$T/sys/$n" ]] && continue
+        ln -s "$f" "$T/sys/$n" 2>/dev/null
+    done
+done
+printf '#!/bin/bash\necho $$ >> "%s/sleep.pids"\nexec %s "$@"\n' "$T" "$(command -v sleep)" > "$T/bin/sleep"
+chmod +x "$T/bin/sleep"
+"$T/bin/sleep" 0; rm -f "$T/sleep.pids"  # warm the wrapper so its pid is recorded promptly
+if PATH="$T/bin:$T/sys" command -v timeout >/dev/null || PATH="$T/bin:$T/sys" command -v gtimeout >/dev/null; then
+    fail "fallback timer setup hides timeout and gtimeout" "a timeout tool is still on the PATH"
+else
+    start=$(date +%s)
+    (cd "$T" && HOME="$T/home" CLAUDE_PLUGIN_ROOT="$T/plugin" CLAUDE_PROJECT_DIR="" PATH="$T/bin:$T/sys" \
+        "$SH" "$ROOT/hooks/oss-notify.sh" --workflow audit complete '{}' </dev/null 2>"$T/err" | cat >"$T/out")
+    took=$(( $(date +%s) - start ))
+    /bin/sleep 1  # a new script's first exec can lag on macOS; every timer sleeps 2s or more, so an orphan is still alive
+    left=""
+    while read -r p; do kill -0 "$p" 2>/dev/null && left="$left $p"; done < <(cat "$T/sleep.pids" 2>/dev/null)
+    if [[ $took -lt 5 ]] && ! grep -q "Terminated" "$T/err" && [[ -z "$left" ]]; then
+        pass "the fallback timer releases stdout at once, prints no job notice, leaves no sleep (took ${took}s)"
+    else fail "the fallback timer releases stdout at once, prints no job notice, leaves no sleep" \
+        "took=${took}s leftover-sleeps=[${left}] err=$(tr '\n' '|' < "$T/err")"; fi
+    for p in $left; do kill "$p" 2>/dev/null; done
+fi
 rm -rf "$T"
 
 echo ""
