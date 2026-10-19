@@ -509,5 +509,29 @@ describe('WorkflowConfigAPI', () => {
       expect(sockets.length).toBeGreaterThan(0);
       expect(outcome).toBe('gave-up');
     });
+
+    /**
+     * @behavior A timed-out fetch is visible in the session, without leaking the URL or key
+     * @business-rule One stderr line on timeout (G10): "workflow-config: API timeout, using defaults"
+     */
+    it('writes exactly one stderr line, with no URL or key, when the fetch times out', async () => {
+      const port = await startSilentServer();
+      const configDir = createTestDir();
+      fs.writeFileSync(
+        path.join(configDir, 'config.json'),
+        JSON.stringify({ apiKey: 'ak_secret_key', apiUrl: `https://127.0.0.1:${port}` })
+      );
+      process.env.OSS_CONFIG_DIR = configDir;
+      global.fetch = originalFetch;
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      try {
+        await expect(fetchWorkflowConfig('build', 200)).rejects.toThrow();
+
+        expect(errorSpy.mock.calls).toEqual([['workflow-config: API timeout, using defaults']]);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
   });
 });
