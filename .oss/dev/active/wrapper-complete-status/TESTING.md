@@ -22,3 +22,9 @@ That is the 22 in the plan plus **a11y**, which the plan's list missed. a11y was
 ### Anti-vacuity
 - Stashed only the wrappers (`git stash push -m wcs-av -- commands/*.md`): RED again with the same 23 named, 0/24. Then applied the stash by SHA and dropped it by message.
 - Mutated trace's line to `complete '{"n": {N}}'`: `trace.md has the fixed completion line` FAILED (23/24). Restored afterwards.
+
+## T2
+- v2.0.88 -> v2.0.89
+- hooks/__tests__ + commands/__tests__: 32/36 files pass; the 4 failures are pre-existing on main (stale hooks/hooks.json path in 3 tests; ideate-template)
+- watcher-dist-fresh: PASS after npm ci in the new worktree
+- watcher/test/hooks (no-setup, CLAUDE_PROJECT_DIR unset): 31 files, 192/192

@@ -1,7 +1,7 @@
 # Plan: wrapper-complete-status
 
 ## Summary
-22 plugin command wrappers send `oss-notify.sh --workflow <cmd> start` and never `complete`, so the status line never shows done for them (FOLLOWUPS 76). Each gets a fixed `complete '{}'` step at its end. The JSON is fixed, so no model value enters the shell.
+23 plugin command wrappers (a11y found by the RED test, in addition to the 22 listed) send `oss-notify.sh --workflow <cmd> start` and never `complete`, so the status line never shows done for them (FOLLOWUPS 76). Each gets a fixed `complete '{}'` step at its end. The JSON is fixed, so no model value enters the shell.
 
 The wrappers are: audit, bench, chaos, cost, deploy, docs, experiment, feature-flag, incident, license, load, monitor, postmortem, privacy, release, retro, rollback, smoke, stage, tech-debt, test, trace.
 
