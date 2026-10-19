@@ -27,7 +27,7 @@ import { logDiff } from '../../src/services/spec-reconciler/diff-generator.js';
 import type { CoverageDiff, SpecMetricsFile } from '../../src/services/spec-reconciler/types.js';
 import { WorkflowStateService } from '../../src/services/workflow-state.js';
 import { Watcher } from '../../src/index.js';
-import { safeMkdirOss } from '../../src/utils/safe-project-write.js';
+import { safeMkdirOss, safeWriteFileAtomic } from '../../src/utils/safe-project-write.js';
 import type { CreateTaskInput } from '../../src/types.js';
 
 let root: string;
@@ -322,5 +322,17 @@ describe('controls: a plain project still gets its files', () => {
     fs.symlinkSync(realGlobal, path.join(root, 'home', '.oss'));
     await new StatusLineService(path.join(root, 'home', '.oss')).setTDDPhase('GREEN');
     expect(JSON.parse(fs.readFileSync(path.join(realGlobal, 'status-line.json'), 'utf-8')).phase).toBe('GREEN');
+  });
+
+  it('a ~/.oss/config.json symlinked by a dotfile manager keeps its 0600 mode after a rewrite (N2-6)', () => {
+    const homeOss = path.join(root, 'home', '.oss');
+    const realConfig = path.join(root, 'home', 'dotfiles', 'config.json');
+    fs.mkdirSync(path.dirname(realConfig), { recursive: true });
+    fs.mkdirSync(homeOss, { recursive: true });
+    fs.writeFileSync(realConfig, '{"apiKey":"secret"}');
+    fs.chmodSync(realConfig, 0o600);
+    fs.symlinkSync(realConfig, path.join(homeOss, 'config.json'));
+    safeWriteFileAtomic(homeOss, 'config.json', '{}');
+    expect(fs.statSync(path.join(homeOss, 'config.json')).mode & 0o777).toBe(0o600);
   });
 });
