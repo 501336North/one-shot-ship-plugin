@@ -15,6 +15,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { safeAppendFile } from '../utils/safe-project-write.js';
 import { execSync } from 'child_process';
 import { pathToFileURL } from 'url';
 import { ErrorRegistry, OSSError } from '../services/error-codes.js';
@@ -162,10 +163,10 @@ function appendToWorkflowLog(env, wire) {
     if (ossDir === null) {
         return 'oss-error: warning: could not resolve project .oss dir; OSS_ERROR not appended to workflow.log\n';
     }
-    const logPath = path.join(ossDir, 'workflow.log');
     try {
-        fs.appendFileSync(logPath, `${line}\n`);
-        return null;
+        if (safeAppendFile(ossDir, 'workflow.log', `${line}\n`, { createDirs: false }))
+            return null;
+        return 'oss-error: warning: workflow.log not appended (unsafe path refused); in-band JSON still emitted\n';
     }
     catch (appendError) {
         const message = appendError instanceof Error ? appendError.message : String(appendError);

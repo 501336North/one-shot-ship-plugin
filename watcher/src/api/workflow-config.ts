@@ -15,10 +15,14 @@ import {
   EncryptedWorkflowConfig,
   DEFAULT_WORKFLOW_CONFIGS,
 } from '../engine/types.js';
+import { getConfigDir, readApiCredentials } from './api-credentials.js';
+import { assertValidWorkflowName } from '../utils/workflow-name.js';
 
-const DEFAULT_API_URL = 'https://one-shot-ship-api.onrender.com';
 const PBKDF2_ITERATIONS = 100000;
 const KEY_LENGTH = 32;
+
+/** Give up on the API well before oss-notify.sh's 30s chain-trigger cap (T3) */
+export const WORKFLOW_FETCH_TIMEOUT_MS = 8000;
 
 /**
  * Credentials structure from credentials.enc
@@ -34,29 +38,6 @@ interface StoredCredentials {
  * In-memory cache for workflow configs (session-scoped)
  */
 const configCache: Map<string, WorkflowConfig> = new Map();
-
-/**
- * Get the config directory path
- */
-function getConfigDir(): string {
-  return process.env.OSS_CONFIG_DIR || path.join(os.homedir(), '.oss');
-}
-
-/**
- * Read the config.json file
- */
-function readConfig(): { apiKey?: string; apiUrl?: string } {
-  const configPath = path.join(getConfigDir(), 'config.json');
-  if (!fs.existsSync(configPath)) {
-    return {};
-  }
-  try {
-    const content = fs.readFileSync(configPath, 'utf8');
-    return JSON.parse(content);
-  } catch {
-    return {};
-  }
-}
 
 /**
  * Get machine-specific key for decrypting stored credentials
@@ -117,23 +98,38 @@ function userIdToLicenseId(userId: string): string {
 /**
  * Fetch encrypted workflow config from API
  */
-export async function fetchWorkflowConfig(workflowName: string): Promise<EncryptedWorkflowConfig> {
-  const config = readConfig();
-  const apiKey = config.apiKey;
-  if (!apiKey) {
-    throw new Error('No API key configured');
+export async function fetchWorkflowConfig(
+  workflowName: string,
+  timeoutMs: number = WORKFLOW_FETCH_TIMEOUT_MS
+): Promise<EncryptedWorkflowConfig> {
+  assertValidWorkflowName(workflowName);
+
+  const credentials = readApiCredentials();
+  if (!credentials) {
+    throw new Error('No API key configured or apiUrl is not https');
   }
 
-  const apiUrl = config.apiUrl || DEFAULT_API_URL;
-  const endpoint = `${apiUrl}/api/v1/workflows/${workflowName}`;
+  const endpoint = `${credentials.apiUrl}/api/v1/workflows/${encodeURIComponent(workflowName)}`;
 
-  const response = await fetch(endpoint, {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${credentials.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+      // G5: never replay the Bearer key to a redirect target
+      redirect: 'error',
+    });
+  } catch (error) {
+    // G10: make the fallback visible, without the URL or key
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      console.error('workflow-config: API timeout, using defaults');
+    }
+    throw error;
+  }
 
   if (!response.ok) {
     const errorResponse = await response.json().catch(() => ({ error: 'Request failed' })) as { error?: string };
@@ -170,6 +166,11 @@ export function decryptWorkflowConfig(
   }
 }
 
+/** G6: only workflows DEFAULT_WORKFLOW_CONFIGS really defines have defaults (never a prototype member) */
+function defaultConfigFor(workflowName: string): WorkflowConfig {
+  return Object.hasOwn(DEFAULT_WORKFLOW_CONFIGS, workflowName) ? DEFAULT_WORKFLOW_CONFIGS[workflowName] : {};
+}
+
 /**
  * Get workflow config from cache or fetch from API
  */
@@ -181,10 +182,9 @@ export async function getCachedOrFetch(workflowName: string): Promise<WorkflowCo
   }
 
   // Check if we have credentials
-  const config = readConfig();
-  if (!config.apiKey) {
+  if (!readApiCredentials()) {
     // No credentials, cache and return default
-    const defaultConfig = DEFAULT_WORKFLOW_CONFIGS[workflowName] || {};
+    const defaultConfig = defaultConfigFor(workflowName);
     configCache.set(workflowName, defaultConfig);
     return defaultConfig;
   }
@@ -196,7 +196,7 @@ export async function getCachedOrFetch(workflowName: string): Promise<WorkflowCo
     // Get credentials for decryption
     const credentials = retrieveCredentials();
     if (!credentials) {
-      const defaultConfig = DEFAULT_WORKFLOW_CONFIGS[workflowName] || {};
+      const defaultConfig = defaultConfigFor(workflowName);
       configCache.set(workflowName, defaultConfig);
       return defaultConfig;
     }
@@ -206,7 +206,7 @@ export async function getCachedOrFetch(workflowName: string): Promise<WorkflowCo
 
     // Merge with defaults to ensure all fields exist
     const merged = {
-      ...DEFAULT_WORKFLOW_CONFIGS[workflowName],
+      ...defaultConfigFor(workflowName),
       ...decrypted,
     };
 
@@ -214,7 +214,7 @@ export async function getCachedOrFetch(workflowName: string): Promise<WorkflowCo
     return merged;
   } catch {
     // On error, cache and return default config
-    const defaultConfig = DEFAULT_WORKFLOW_CONFIGS[workflowName] || {};
+    const defaultConfig = defaultConfigFor(workflowName);
     configCache.set(workflowName, defaultConfig);
     return defaultConfig;
   }

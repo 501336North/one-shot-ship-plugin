@@ -69,10 +69,6 @@ export declare class WebhookConfig {
      */
     getPort(): number;
     /**
-     * Ensure the .oss directory exists
-     */
-    private ensureDirectoryExists;
-    /**
      * Write config to file
      */
     private writeConfig;

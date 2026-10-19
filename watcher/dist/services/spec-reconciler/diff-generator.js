@@ -7,8 +7,8 @@
  * @behavior Diff generator detects file changes and generates coverage diffs
  * @acceptance-criteria AC-DIFF-GEN.1 through AC-DIFF-GEN.9
  */
-import * as fs from 'fs';
 import * as path from 'path';
+import { safeAppendFile } from '../../utils/safe-project-write.js';
 /**
  * Patterns to exclude from feature scope.
  */
@@ -155,12 +155,10 @@ export function generateCoverageDiff(before, after, trigger) {
 export async function logDiff(diff, basePath) {
     const ossDir = path.join(basePath, '.oss');
     const logPath = path.join(ossDir, 'spec-diffs.log');
-    // Ensure .oss directory exists
-    await fs.promises.mkdir(ossDir, { recursive: true });
     // Format log entry as JSON line with summary
     const summary = `[${diff.timestamp}] ${diff.feature} via ${diff.trigger}: coverage ${diff.net.coverageChange >= 0 ? '+' : ''}${(diff.net.coverageChange * 100).toFixed(1)}%, drift ${diff.net.driftChange >= 0 ? '+' : ''}${diff.net.driftChange}`;
     const logEntry = JSON.stringify({ ...diff, _summary: summary }) + '\n';
     // Append to log file
-    await fs.promises.appendFile(logPath, logEntry, 'utf-8');
+    safeAppendFile(ossDir, path.basename(logPath), logEntry);
 }
 //# sourceMappingURL=diff-generator.js.map

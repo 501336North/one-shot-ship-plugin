@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
 import { execSync } from 'child_process';
 import {
   Task,
@@ -386,17 +387,13 @@ export class QueueManager {
     archive.updated_at = new Date().toISOString();
 
     // Atomic write
-    const tempPath = `${archivePath}.tmp`;
-    fs.writeFileSync(tempPath, JSON.stringify(archive, null, 2));
-    fs.renameSync(tempPath, archivePath);
+    safeWriteFileAtomic(this.ossDir, path.basename(archivePath), JSON.stringify(archive, null, 2), { createDirs: false });
   }
 
   private async persist(): Promise<void> {
     this.queue.updated_at = new Date().toISOString();
 
     // Atomic write: write to temp file, then rename
-    const tempPath = `${this.queuePath}.tmp`;
-    fs.writeFileSync(tempPath, JSON.stringify(this.queue, null, 2));
-    fs.renameSync(tempPath, this.queuePath);
+    safeWriteFileAtomic(this.ossDir, path.basename(this.queuePath), JSON.stringify(this.queue, null, 2), { createDirs: false });
   }
 }

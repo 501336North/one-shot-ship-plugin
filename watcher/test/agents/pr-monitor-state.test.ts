@@ -10,6 +10,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'fs';
 import * as path from 'path';
+import * as os from 'os';
+import * as realFs from 'fs';
 import { PRMonitorState } from '../../src/agents/pr-monitor-state';
 
 // Mock fs for testing
@@ -85,18 +87,23 @@ describe('PRMonitorState', () => {
       state.addProcessedComment('IC_789');
       state.incrementStat('commentsProcessed');
 
-      vi.mocked(fs.mkdir).mockResolvedValue(undefined);
-      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+      // save() writes through the shared .oss guard (sync, real fs), so run it in a temp project
+      const project = realFs.mkdtempSync(path.join(os.tmpdir(), 'pr-monitor-state-'));
+      const cwd = process.cwd();
+      process.chdir(project);
+      try {
+        // WHEN - We save state
+        await state.save();
 
-      // WHEN - We save state
-      await state.save();
-
-      // THEN - Should write to file with proper formatting
-      expect(fs.writeFile).toHaveBeenCalled();
-      const [filePath, content] = vi.mocked(fs.writeFile).mock.calls[0];
-      expect(filePath).toContain('pr-monitor-state.json');
-      const parsed = JSON.parse(content as string);
-      expect(parsed.processedCommentIds).toContain('IC_789');
+        // THEN - Should write to file with proper formatting
+        const filePath = path.join(project, '.oss', 'pr-monitor-state.json');
+        expect(realFs.existsSync(filePath)).toBe(true);
+        const parsed = JSON.parse(realFs.readFileSync(filePath, 'utf-8'));
+        expect(parsed.processedCommentIds).toContain('IC_789');
+      } finally {
+        process.chdir(cwd);
+        realFs.rmSync(project, { recursive: true, force: true });
+      }
     });
   });
 

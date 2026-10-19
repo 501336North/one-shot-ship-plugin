@@ -1,5 +1,45 @@
 # Learnings
 
+## 2026-10-19 | Testing | watcher
+- **Context:** oss-writer-nofollow (build H1-H3)
+- **Insight:** A fail-closed guard that a hook sources from its own directory turns every test that pipes the script (`cat x | bash`, empty BASH_SOURCE) or copies it alone into a temp dir into a silent no-write. The guard was right; 8 tests went red only in the full watcher run, which the 2.0.87 gates skipped (targeted files only). Stage the guard next to any copied hook, and run the whole test/hooks dir before shipping a hook change.
+
+## 2026-10-19 | Testing | watcher
+- **Context:** plugin-highs-gate (ship gate round 1 fixes)
+- **Insight:** watcher/test/setup.ts runs `pkill -f "oss-session-start"`, `pkill -f "health-check.js"` and deletes every watcher.pid under $TMPDIR, machine-wide. With several sessions on one Mac, a plain `npx vitest run` in one worktree kills other sessions' test runs and the user's live session-start hooks. Until setup.ts kills only what it started, run watcher vitest from a shared machine with a config that omits setupFiles (pool forks, fileParallelism false).
+
+## 2026-10-19 | Testing | watcher
+- **Context:** plugin-highs-gate (ship gate round 1 fixes)
+- **Insight:** A mutation run is what shows a guard is one-sided. The "log on timeout" test passed with a mutant that logged on every error, until a control test (a non-timeout failure logs nothing) was added. When a fix is "do X only when Y", write the not-Y control too. Also record equivalent-safe survivors instead of chasing them: `redirect: 'manual'` survives the `redirect: 'error'` test, but Node then returns the 3xx itself, `!ok` throws, and the target is never contacted.
+
+## 2026-10-19 | Process | hooks
+- **Context:** plugin-highs-gate (build round 2)
+- **Insight:** `oss-log.sh init build` starts current-session/build.log over, so `grep -c 'OSS Command: /oss:build'` stays 1 after a second genuine /oss:build invocation in the same session. The IRON LAW banner count cannot count rounds as written; check for a new `build:START` line per round instead, or make init append.
+
+## 2026-10-19 | Security | watcher
+- **Context:** oss-writer-nofollow (build N2-6)
+- **Insight:** Swapping statSync for lstatSync to 'use the checked inode' is wrong where links are legitimate (HOME ~/.oss is user-owned; dotfile managers symlink config.json): the rewrite copies the link's 0755/0777 mode onto the secret file. Decide per branch whether a link is refused (project) or followed (HOME).
+
+## 2026-10-19 | Security | hooks, watcher
+- **Context:** oss-writer-nofollow (build)
+- **Insight:** Any path under a repo is attacker-controlled: `git clone` recreates committed symlinks. So every write into `<project>/...` must go through ONE guard per runtime (hooks/oss-safe-path.sh, watcher/src/utils/safe-project-write.ts). The guard rejects any symlinked component, requires user-owned directories, and requires the target to be absent or a plain file with nlink 1. The N0 grep found 26 writers. The worst were not the obvious state file: worktree-create copied the API key through a linked `.oss/config.json`, and archive-check moved committed dev docs through a linked `dev/completed` (for example into ~/.claude/commands). `mkdir -p` / `mkdirSync` of a FINAL link is not a sink (mkdir never follows it); a link as an INTERMEDIATE component is. Attack tests must run the committed dist CLIs, because customers run dist and a src-only fix stays RED.
+
+## 2026-10-19 | Testing | hooks
+- **Context:** oss-writer-nofollow (build)
+- **Insight:** Another session's watcher/test/setup.ts runs `pkill -f "oss-session-start"`, `pkill -f "health-check.js"` and `find $TMPDIR -name watcher.pid -delete` against the whole machine. It killed hook test runs, deleted sentinels, and killed an anti-vacuity loop mid-revert. Shell tests that run session start should run it under another file name and keep their world outside $TMPDIR. Revert loops should take file names on stdin and restore on TERM. Commit fixtures with `git add -f`, because the user's XDG ignore drops `.claude/settings.local.json`.
+
+## 2026-10-19 | Security | watcher
+- **Context:** plugin-highs-gate (build, from the post-merge ship gate on #193)
+- **Insight:** Fixing a dead path can make an old flaw reachable. #193 only made ship send `complete`, but that switched on chain-trigger's output for ship, and chain-trigger copied team-config `command`/`condition` straight into `CHAIN:` lines that the model runs without asking. A newline in either field forged extra lines or free text outside the block, and the 10-line cap counted config entries, not printed lines. When a change wires up a previously unreachable consumer, gate the data it now consumes: validate every value that reaches an auto-execute channel against a strict shape, and assert in tests that every printed line matches that shape (watcher/test/cli/chain-trigger.test.ts).
+
+## 2026-10-19 | Build | watcher
+- **Context:** plugin-highs-gate (build)
+- **Insight:** Hooks run the COMMITTED bundle (watcher/dist/cli/chain-trigger.cjs), not src, and it had lagged src since #169. Every src fix and src test passed while customers ran old code. Guard it with a test that builds src in memory with esbuild using the same options as scripts/bundle-cli.js and `absWorkingDir` pinned (deterministic, ~0.1s), then asserts the committed bundle is byte-identical (watcher/test/hooks/chain-trigger-dist.test.ts).
+
+## 2026-10-19 | Config | watcher
+- **Context:** plugin-highs-gate (build, IRON LAW #1b)
+- **Insight:** Two readers of "the OSS config" disagreed: chain-trigger checked `https:` on ~/.oss/config.json while workflow-config fetched using OSS_CONFIG_DIR's file, so the checked file was not the used file and the Bearer key went over plain http. One reader (watcher/src/api/api-credentials.ts) now serves both, and the https check sits inside the fetch itself. Other API callers still read config their own way (custom-command-executor, startup-optimizer): follow-ups.
+
 ## 2026-10-19 | Workflow | commands
 - **Context:** plugin-highs (build)
 - **Insight:** A wrapper step that says "after X runs, read its output" is a contract with another line of the same file. ship.md's chain step waited for `ship complete`, which nothing in ship.md ever sent, so team `chains_to` for ship and "-> DONE" never fired. Test the wrapper by running the notify lines it documents, in order, against the real oss-notify.sh, and assert the block lands on the event the chain step names (watcher/test/hooks/ship-wrapper-chain.test.ts). Order matters too: `merged` resets workflow state, so `complete` must come after it.
