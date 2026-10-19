@@ -5,9 +5,11 @@
 #           writes its value files (~/.oss/run/<key>), starts it clean of stale values, and
 #           refuses (prints nothing) when any part of that folder is a link, or outside a repo.
 # @business-rule US-001 AC-001.1 / ADR-001 (plugin-value-flags): the folder, its key and its
-#           checks are exactly the served value-folder command's, so served prompts and the
-#           plugin agree on where the values live. The key is pinned here by equality to the
-#           served formula: git rev-parse --absolute-git-dir | git hash-object --stdin | cut -c1-16
+#           checks are the served value-folder command's. The key is pinned here by equality to
+#           { git rev-parse --show-toplevel; git rev-parse --absolute-git-dir; } | git hash-object --stdin | cut -c1-16
+#           (ship round 1, R1-3: the toplevel is part of the key, so a .git gitfile naming another
+#           repo's git dir does not share its folder). The served prompts still hash the git dir
+#           alone; Phase B moves them onto this helper.
 #
 # Usage: ./hooks/__tests__/oss-value.test.sh
 #        BASH_UNDER_TEST=/opt/local/bin/bash ./hooks/__tests__/oss-value.test.sh
@@ -28,7 +30,7 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJE
 N=0
 newhome() { N=$((N + 1)); H="$T/home$N"; mkdir -p "$H"; }               # -> H (fresh, empty)
 newrepo() { N=$((N + 1)); R="$T/repo$N"; mkdir -p "$R"; (cd "$R" && git init -q) >/dev/null 2>&1; } # -> R
-key_of() { (cd "$1" && git rev-parse --absolute-git-dir | git hash-object --stdin | cut -c1-16); }
+key_of() { (cd "$1" && { git rev-parse --show-toplevel; git rev-parse --absolute-git-dir; } | git hash-object --stdin | cut -c1-16); }
 mode_of() { ls -ld -- "$1" | cut -c1-10; }
 # ov <cwd> <args...>: run the script as the user would; sets OUT, ERR, RC
 ov() {
@@ -122,6 +124,20 @@ ov "$R"
 ov "$R" bogus
 [[ "$RC" == 2 && -z "$OUT" && "$ERR" == *[Uu]sage* ]] && pass "7: unknown verb -> usage on stderr, rc 2" || fail "7: unknown verb -> usage on stderr, rc 2" "rc=$RC out='$OUT' err='$ERR'"
 
+# --- 7b. a .git gitfile naming another repo's git dir does not share its folder (R1-3) ------
+newhome; newrepo; V="$R"; newrepo; X="$R"; rm -rf "$X/.git"; printf 'gitdir: %s/.git\n' "$V" > "$X/.git"
+ov "$V" dir; vout="$OUT"; ov "$X" dir
+[[ "$RC" == 0 && -n "$vout" && -n "$OUT" && "$OUT" != "$vout" ]] \
+    && pass "7b: a repo whose .git file points at another repo's git dir gets its own folder" \
+    || fail "7b: a repo whose .git file points at another repo's git dir gets its own folder" "rc=$RC victim='$vout' gitfile repo='$OUT'"
+
+# --- 7c. a failed git lookup is refused, not hashed as empty input (R1-4) ---------------------
+newhome; newrepo; REAL_GIT=$(command -v git); mkdir -p "$T/gitfail"
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = --absolute-git-dir ] && exit 128; done\nexec "%s" "$@"\n' "$REAL_GIT" > "$T/gitfail/git"; chmod +x "$T/gitfail/git"
+OV_PATH="$T/gitfail:$PATH" ov "$R" dir
+refused "7c: a failed git-dir lookup is refused"
+[[ -z "$(ls -A "$H/.oss/run" 2>/dev/null)" ]] && pass "7c: no key folder is created from a failed lookup" || fail "7c: no key folder is created from a failed lookup" "$(ls -A "$H/.oss/run")"
+
 # === failed <workflow> (US-001 AC-001.2, AC-001.3) ============================================
 # Runs the REAL sibling oss-notify.sh. A = the repo the command runs in (has a real .oss);
 # B = another project, named by ~/.oss/current-project. VD = the value folder `dir` printed.
@@ -202,16 +218,35 @@ ov "$A/sub/deep" failed build
 setup_failed; I="$A/inner"; mkdir -p "$I"; (cd "$I" && git init -q) >/dev/null 2>&1
 ov "$I" dir; VD="$OUT"; echo hello > "$VD/reason.txt"
 ov "$I" failed build
-[[ "$RC" == 0 ]] && got_event "$B" && ! got_event "$A" \
-    && pass "12: a nested repo with no .oss does not borrow the outer repo's .oss (falls back like #374)" \
-    || fail "12: a nested repo with no .oss does not borrow the outer repo's .oss (falls back like #374)" "rc=$RC A=$(got_event "$A" && echo y || echo n) B=$(got_event "$B" && echo y || echo n) err=$ERR"
+[[ "$RC" == 0 ]] && got_event "$H" && ! got_event "$A" && ! got_event "$B" \
+    && pass "12: a nested repo with no .oss borrows neither the outer repo nor current-project (lands in ~/.oss, R1-2)" \
+    || fail "12: a nested repo with no .oss borrows neither the outer repo nor current-project (lands in ~/.oss, R1-2)" "rc=$RC home=$(got_event "$H" && echo y || echo n) A=$(got_event "$A" && echo y || echo n) B=$(got_event "$B" && echo y || echo n) err=$ERR"
 # a symlinked .oss is skipped by the walk
 setup_failed; newrepo; C="$R"; mkdir -p "$T/linked$N"; ln -s "$T/linked$N" "$C/.oss"
 ov "$C" dir; VD="$OUT"; echo hello > "$VD/reason.txt"
 ov "$C" failed build
-[[ "$RC" == 0 ]] && got_event "$B" && [[ -z "$(ls -A "$T/linked$N")" ]] \
-    && pass "12: a symlinked .oss is skipped (nothing written through it)" \
-    || fail "12: a symlinked .oss is skipped (nothing written through it)" "rc=$RC B=$(got_event "$B" && echo y || echo n) linked: $(ls -A "$T/linked$N") err=$ERR"
+[[ "$RC" == 0 ]] && got_event "$H" && ! got_event "$B" && [[ -z "$(ls -A "$T/linked$N")" ]] \
+    && pass "12: a symlinked .oss is skipped (nothing written through it; lands in ~/.oss, not current-project)" \
+    || fail "12: a symlinked .oss is skipped (nothing written through it; lands in ~/.oss, not current-project)" "rc=$RC home=$(got_event "$H" && echo y || echo n) B=$(got_event "$B" && echo y || echo n) linked: $(ls -A "$T/linked$N") err=$ERR"
+
+# a repo with no .oss at all: the victim named by current-project is untouched (R1-2)
+setup_failed; newrepo; C="$R"
+ov "$C" dir; VD="$OUT"; echo hello > "$VD/reason.txt"
+ov "$C" failed build
+[[ "$RC" == 0 ]] && got_event "$H" && [[ ! -e "$B/.oss/logs" && ! -e "$B/.oss/workflow-state.json" ]] \
+    && pass "12: from a repo with no .oss, current-project's logs and state are untouched; the event lands in ~/.oss (R1-2)" \
+    || fail "12: from a repo with no .oss, current-project's logs and state are untouched; the event lands in ~/.oss (R1-2)" "rc=$RC home=$(got_event "$H" && echo y || echo n) victim: $(ls -A "$B/.oss") err=$ERR"
+
+# --- 12b. reason.txt swapped for a link between the check and the read is not sent (R1-5) ----
+# A `stat` on PATH swaps reason.txt for a symlink to a secret the first time it is asked about it.
+setup_failed; echo hello > "$VD/reason.txt"; echo TOPSECRET > "$T/secret$N"
+REAL_STAT=$(command -v stat); mkdir -p "$T/swap$N"
+printf '#!/bin/sh\nfor a in "$@"; do case "$a" in */reason.txt) if [ ! -e "%s/swapped" ]; then : > "%s/swapped"; mv "$a" "$a.orig"; ln -s "%s" "$a"; fi ;; esac; done\nexec "%s" "$@"\n' "$T/swap$N" "$T/swap$N" "$T/secret$N" "$REAL_STAT" > "$T/swap$N/stat"; chmod +x "$T/swap$N/stat"
+OV_PATH="$T/swap$N:$PATH" ov "$A" failed build
+if grep -rqF TOPSECRET "$A/.oss" "$B/.oss" "$H/.oss/logs" 2>/dev/null; then fail "12b: a reason.txt swapped for a link after the check is not read" "the secret was sent (rc=$RC)"
+elif [[ ! -e "$T/swap$N/swapped" ]]; then fail "12b: a reason.txt swapped for a link after the check is not read" "the swap never ran"
+elif [[ "$RC" == 0 ]]; then fail "12b: a reason.txt swapped for a link after the check is not read" "rc=0 (want a refusal)"
+else pass "12b: a reason.txt swapped for a link after the check is not read (refused, secret not sent)"; fi
 
 # === error <source> (US-002) ==================================================================
 # Runs the REAL watcher/dist/cli/oss-error.js, found through ~/.oss/plugin-root (= this checkout).
@@ -250,6 +285,13 @@ done
 [[ -s "$A/.oss/workflow.log" && ! -e "$B/.oss/workflow.log" ]] \
     && pass "13: from repoA/sub/deep with current-project = repoB, only repoA gets the event" \
     || fail "13: from repoA/sub/deep with current-project = repoB, only repoA gets the event" "A=$([[ -s "$A/.oss/workflow.log" ]] && echo y || echo n) B=$([[ -e "$B/.oss/workflow.log" ]] && echo y || echo n)"
+# from a repo with no .oss: current-project's workflow.log is untouched, the event lands in ~/.oss (R1-2)
+setup_error; newrepo; C="$R"; ov "$C" dir; VD="$OUT"
+printf 'down\n' > "$VD/message.txt"; printf 'later\n' > "$VD/hint.txt"; printf 'OSS-API-001 MEDIUM true cheap 1\n' > "$VD/error.txt"
+ove "$C" error cmd:build
+[[ "$RC" == 0 && ! -e "$B/.oss/workflow.log" && -s "$H/.oss/workflow.log" ]] \
+    && pass "13: from a repo with no .oss, current-project's workflow.log is untouched; the event lands in ~/.oss (R1-2)" \
+    || fail "13: from a repo with no .oss, current-project's workflow.log is untouched; the event lands in ~/.oss (R1-2)" "rc=$RC victim=$([[ -e "$B/.oss/workflow.log" ]] && echo y || echo n) home=$([[ -s "$H/.oss/workflow.log" ]] && echo y || echo n) err=$ERR"
 # every served code is accepted
 bad=""; for c in $SERVED_CODES; do
     setup_error "$c HIGH false expensive 2"; ove "$A" error cmd:build
@@ -281,6 +323,9 @@ setup_error; NL="$T/two$N
 lines"; mkdir -p "$NL/watcher/dist/cli"; : > "$NL/watcher/dist/cli/oss-error.js"
 printf '%s\n' "$NL" > "$H/.oss/plugin-root"; ove "$A" error cmd:build
 refused_emit "15: a 2-line ~/.oss/plugin-root is refused"
+# a symlinked ~/.oss/plugin-root (to a file naming the real root) is refused (R1-6)
+setup_error; mv "$H/.oss/plugin-root" "$T/rootfile$N"; ln -s "$T/rootfile$N" "$H/.oss/plugin-root"; ove "$A" error cmd:build
+refused_emit "15: a symlinked ~/.oss/plugin-root is refused"
 setup_error; mkdir -p "$T/emptyroot$N"; printf '%s\n' "$T/emptyroot$N" > "$H/.oss/plugin-root"; ove "$A" error cmd:build
 refused_emit "15: a plugin root without oss-error.js is refused"
 

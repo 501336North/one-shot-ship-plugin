@@ -9,6 +9,10 @@
 #           a {PLACEHOLDER} for the model to fill.
 # @business-rule A wrapper whose served prompt already sends the failure notice has no failed
 #           notify step of its own (the same failure was logged twice).
+# @business-rule Ship round 1, R1-1: NO shell line in any wrapper has a {PLACEHOLDER} for the model
+#           to fill (lifecycle notify lines send a fixed '{}'; oss-log.sh takes no free text).
+#           Shell lines = every line inside a ```bash/sh fence, plus any other line that runs an
+#           oss-log/oss-notify/oss-value hook. ${VAR} shell expansions are not placeholders.
 # @business-rule oss-custom has no served failure notice (team prompts), so it reports through
 #           the fixed oss-value.sh lines: the model writes reason.txt with the Write tool.
 #
@@ -69,6 +73,25 @@ f="$COMMANDS_DIR/oss-custom.md"
 grep -qF 'Write tool' "$f" && grep -qF 'reason.txt' "$f" \
     && pass "oss-custom.md tells the model to write reason.txt with the Write tool" \
     || fail "oss-custom.md tells the model to write reason.txt with the Write tool" "instruction missing"
+
+# 4. no shell line in any wrapper carries a {PLACEHOLDER} (R1-1)
+# Print "<file>:<lineno>:<line>" for every shell line with a {UPPER_CASE} placeholder.
+placeholder_lines() {
+    awk '
+        FNR == 1 { fence = 0; sh = 0 }
+        /^[[:space:]]*```/ { if (!fence) { fence = 1; sh = ($0 ~ /```(bash|sh|shell|zsh)[[:space:]]*$/) } else { fence = 0; sh = 0 }; next }
+        {
+            shell = (fence && sh) || (!fence && $0 ~ /oss-(log|notify|value)\.sh/)
+            if (shell && $0 ~ /(^|[^$])\{[A-Z_][A-Z0-9_]*\}/) print FILENAME ":" FNR ":" $0
+        }' "$@"
+}
+# detector control: it flags a placeholder in a bash fence and an inline hook line, not ${HOME}
+ctl=$(mktemp -d); printf '```bash\necho "${HOME}"\nx "{TEST_FILE}"\n```\nrun ~/.oss/hooks/oss-log.sh test red FAIL "{MSG}"\n```json\n{"a": "{NOT_SHELL}"}\n```\n' > "$ctl/c.md"
+n=$(placeholder_lines "$ctl/c.md" | wc -l | tr -d ' '); rm -rf "$ctl"
+[[ "$n" == 2 ]] && pass "the placeholder detector flags fenced and inline shell lines only (2)" || fail "the placeholder detector flags fenced and inline shell lines only" "flagged $n, want 2"
+bad=$(placeholder_lines "$COMMANDS_DIR"/*.md)
+[[ -z "$bad" ]] && pass "no shell line in any wrapper has a {PLACEHOLDER}" \
+    || fail "no shell line in any wrapper has a {PLACEHOLDER}" "$(printf '%s\n' "$bad" | wc -l | tr -d ' ') lines in $(printf '%s\n' "$bad" | cut -d: -f1 | sort -u | wc -l | tr -d ' ') files: $(printf '%s\n' "$bad" | sed "s|$COMMANDS_DIR/||" | cut -d: -f1,2 | tr '\n' ' ')"
 
 echo ""
 echo "Results: $((TESTS_RUN - TESTS_FAILED))/$TESTS_RUN passed, $TESTS_FAILED failed"
