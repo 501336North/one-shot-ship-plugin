@@ -27,3 +27,7 @@ The seven: oss-ask-telegram, oss-ask-telegram-answered, post-bash-pr, post-edit-
   - Report the test-count delta.
 - [ ] **T4:** v2.0.90, then run the whole `hooks/__tests__`, `commands/__tests__` and `watcher/test/hooks` (no-setup config, `CLAUDE_PROJECT_DIR` unset).
 - **Not in scope:** the API Telegram question/answer/subscribe endpoints become unused. They are a candidate for a later API cleanup, not touched here.
+
+## Gate round 1 (2026-10-19)
+
+- [x] G1: hooks-registration.test.sh check (b) requires each registered script to be executable (-x), not just present. Guard: copy with one registered script chmod -x must turn the test red (mutation M6 survived the code-review gate).

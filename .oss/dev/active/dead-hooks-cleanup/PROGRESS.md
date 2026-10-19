@@ -17,3 +17,9 @@
 - API Telegram question/answer endpoints now unused (per PLAN).
 
 ## Last Updated: 2026-10-19 23:28 +07 by refactoring-specialist (/oss:build T1-T4)
+
+## Gate round 1 (2026-10-19)
+- [x] G1: check (b) requires -x; exec-bit mutant now red (22/23), real 23/23
+- Gates: performance PASS, pen-test PASS, security PASS, code-review PASS. NAG discarded: matcher allow-list regex, hooks/hooks.json not checked, /bin/sh first-word, reload/save-context dead files. build-team.md stale hook claims = API repo, already in FOLLOWUPS.
+
+## Last Updated: 2026-10-19 by /oss:build (gate round 1)

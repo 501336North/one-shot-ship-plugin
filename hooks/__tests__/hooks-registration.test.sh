@@ -38,8 +38,8 @@ else
     [[ -z "$cmd" ]] && continue
     script="${cmd%% *}"
     script="${script//\$\{CLAUDE_PLUGIN_ROOT\}/$ROOT}"
-    if [[ -f "$script" ]]; then pass "(b) command resolves: ${cmd}"
-    else fail "(b) command resolves: ${cmd}" "no file at $script"; fi
+    if [[ -f "$script" && -x "$script" ]]; then pass "(b) command resolves: ${cmd}"
+    else fail "(b) command resolves: ${cmd}" "no executable file at $script"; fi
   done <<< "$commands"
 
   # (c) every matcher is empty, '*', or a tool-name list; never an expression
