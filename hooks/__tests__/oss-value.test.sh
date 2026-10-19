@@ -213,6 +213,80 @@ ov "$C" failed build
     && pass "12: a symlinked .oss is skipped (nothing written through it)" \
     || fail "12: a symlinked .oss is skipped (nothing written through it)" "rc=$RC B=$(got_event "$B" && echo y || echo n) linked: $(ls -A "$T/linked$N") err=$ERR"
 
+# === error <source> (US-002) ==================================================================
+# Runs the REAL watcher/dist/cli/oss-error.js, found through ~/.oss/plugin-root (= this checkout).
+# A `node` on PATH records each call, so "nothing emitted" means the emitter never ran.
+# The 18 codes are the served emitter's list: all are accepted, and OSS-UNKNOWN-001 (in the
+# watcher registry but not in the served list) is refused, so the helper's list is pinned to it.
+SERVED_CODES="OSS-API-001 OSS-API-002 OSS-API-003 OSS-AUTH-001 OSS-AUTH-002 OSS-AUTH-003 OSS-CONFIG-001 OSS-CONFIG-002 OSS-GIT-001 OSS-GIT-002 OSS-GIT-003 OSS-TDD-001 OSS-TDD-002 OSS-TDD-003 OSS-WORKFLOW-001 OSS-WORKFLOW-002 OSS-WORKFLOW-901 OSS-WORKFLOW-902"
+REAL_NODE=$(command -v node)
+mkdir -p "$T/bin"; printf '#!/bin/sh\necho "$*" >> "%s/node.calls"\nexec "%s" "$@"\n' "$T" "$REAL_NODE" > "$T/bin/node"; chmod +x "$T/bin/node"
+setup_error() {
+    setup_failed; rm -f "$T/node.calls"
+    printf '%s\n' "$ROOT" > "$H/.oss/plugin-root"
+    printf "api's down; \$(id)\n" > "$VD/message.txt"
+    printf 'retry `later` | soon\n' > "$VD/hint.txt"
+    printf '%s\n' "${1:-OSS-API-001 MEDIUM true cheap 1}" > "$VD/error.txt"
+}
+ove() { OV_PATH="$T/bin:$PATH" ov "$@"; }
+no_emit() { [[ ! -e "$T/node.calls" && ! -e "$A/.oss/workflow.log" && ! -e "$B/.oss/workflow.log" ]]; }
+refused_emit() {
+    if [[ "$RC" == 0 || "$RC" == 2 || "$RC" == 126 || "$RC" == 127 ]]; then fail "$1" "rc=$RC (want a refusal, not 0/usage/126/127) err=$ERR"
+    elif [[ -n "$OUT" ]]; then fail "$1" "printed: $OUT"
+    elif ! no_emit; then fail "$1" "the emitter ran: $(cat "$T/node.calls" 2>/dev/null)"
+    elif [[ -z "$ERR" ]]; then fail "$1" "no stderr line"
+    else pass "$1"; fi
+}
+
+# --- 13. valid fields are emitted; the 3 files are deleted; the event lands in repoA ----------
+setup_error; mkdir -p "$A/sub/deep"
+ove "$A/sub/deep" error cmd:build
+[[ "$RC" == 0 ]] && pass "13: error exits 0 when emitted" || fail "13: error exits 0 when emitted" "rc=$RC err=$ERR"
+ok=1; for want in '"code":"OSS-API-001"' '"severity":"MEDIUM"' '"source":"cmd:build"' '"message":"apis down (id)"' '"retry_hint":"retry later  soon"' '"retry_eligible":true' '"retry_cost":"cheap"' '"attempt":1'; do
+    [[ "$OUT" == *"$want"* ]] || { ok=0; fail "13: stdout is the OSSError JSON" "missing $want in: $OUT"; }
+done
+[[ "$ok" == 1 ]] && pass "13: stdout is the OSSError JSON with the fields and the cleaned message and hint"
+[[ ! -e "$VD/message.txt" && ! -e "$VD/hint.txt" && ! -e "$VD/error.txt" ]] && pass "13: the 3 value files are deleted" || fail "13: the 3 value files are deleted" "$(ls -A "$VD")"
+[[ -s "$A/.oss/workflow.log" && ! -e "$B/.oss/workflow.log" ]] \
+    && pass "13: from repoA/sub/deep with current-project = repoB, only repoA gets the event" \
+    || fail "13: from repoA/sub/deep with current-project = repoB, only repoA gets the event" "A=$([[ -s "$A/.oss/workflow.log" ]] && echo y || echo n) B=$([[ -e "$B/.oss/workflow.log" ]] && echo y || echo n)"
+# every served code is accepted
+bad=""; for c in $SERVED_CODES; do
+    setup_error "$c HIGH false expensive 2"; ove "$A" error cmd:build
+    [[ "$RC" == 0 && "$OUT" == *"\"code\":\"$c\""* ]] || bad="$bad $c"
+done
+[[ -z "$bad" ]] && pass "13: each of the 18 served codes is emitted" || fail "13: each of the 18 served codes is emitted" "refused:$bad"
+
+# --- 14. invalid fields: refused, nothing emitted --------------------------------------------
+for e in 'OSS-UNKNOWN-001 MEDIUM true cheap 1' 'OSS-NOPE-001 MEDIUM true cheap 1' 'OSS-API-001 SEVERE true cheap 1' \
+         'OSS-API-001 MEDIUM maybe cheap 1' 'OSS-API-001 MEDIUM true free 1' 'OSS-API-001 MEDIUM true cheap 1a' \
+         'OSS-API-001 MEDIUM true cheap' 'OSS-API-001 MEDIUM true cheap 1 extra'; do
+    setup_error "$e"; ove "$A" error cmd:build
+    refused_emit "14: error.txt '$e' is refused"
+done
+for src in build cmd:Build 'cmd:a/../b' ''; do
+    setup_error; ove "$A" error "$src"
+    refused_emit "14: source '$src' is refused"
+done
+
+# --- 15. the emitter cannot be located safely: refused ---------------------------------------
+setup_error; rm -f "$H/.oss/plugin-root"; ove "$A" error cmd:build
+refused_emit "15: a missing ~/.oss/plugin-root is refused"
+setup_error; printf 'relative/root\n' > "$H/.oss/plugin-root"; ove "$A" error cmd:build
+refused_emit "15: a relative ~/.oss/plugin-root is refused"
+setup_error; printf '%s\n%s\n' "$ROOT" "$ROOT" > "$H/.oss/plugin-root"; ove "$A" error cmd:build
+refused_emit "15: a 2-line ~/.oss/plugin-root is refused"
+setup_error; mkdir -p "$T/emptyroot$N"; printf '%s\n' "$T/emptyroot$N" > "$H/.oss/plugin-root"; ove "$A" error cmd:build
+refused_emit "15: a plugin root without oss-error.js is refused"
+
+# --- 16. a linked value file: refused ---------------------------------------------------------
+for f in message hint error; do
+    setup_error; mv "$VD/$f.txt" "$T/real$N"; ln -s "$T/real$N" "$VD/$f.txt"; ove "$A" error cmd:build
+    refused_emit "16: a symlinked $f.txt is refused"
+    setup_error; ln "$VD/$f.txt" "$T/second$N"; ove "$A" error cmd:build
+    refused_emit "16: a hard-linked $f.txt is refused"
+done
+
 echo
 echo "Results: $((RUN - FAILED))/$RUN passed, $FAILED failed"
 [[ "$FAILED" == 0 ]]
