@@ -319,6 +319,11 @@ async function executeChainForWorkflow(workflowName, _credentials) {
     if (skipped > MAX_SKIP_LOG_LINES) {
       console.error(`chain-trigger: ${skipped - MAX_SKIP_LOG_LINES} more invalid steps skipped`);
     }
+    if (steps.length > MAX_STEPS_ITERATED) {
+      console.error(
+        `chain-trigger: ${steps.length - MAX_STEPS_ITERATED} steps beyond the ${MAX_STEPS_ITERATED}-step read limit ignored`
+      );
+    }
     if (lines.length > 0) {
       console.log("---CHAIN_COMMANDS---");
       for (const line of lines) {
