@@ -37,6 +37,10 @@ export interface ChainExecutionResult {
 /** Maximum number of chain commands to output (H-4: prevent runaway chains) */
 export const MAX_CHAIN_COMMANDS = 10;
 
+/** G4: bound the steps a hostile config can make us look at, and the skip lines it can log */
+const MAX_STEPS_ITERATED = MAX_CHAIN_COMMANDS * 10;
+const MAX_SKIP_LOG_LINES = 5;
+
 /** A chains_to condition is a plain identifier (T1: no CR/LF, delimiters or parens) */
 const SAFE_CONDITION = /^[a-z0-9_-]{1,64}$/;
 
@@ -44,10 +48,9 @@ const SAFE_CONDITION = /^[a-z0-9_-]{1,64}$/;
 export const CHAIN_LINE_PATTERN =
   /^CHAIN: \/oss:([a-z][a-z0-9-]{0,40}|oss-custom [a-z0-9-]{1,128}) \((always|condition: [a-z0-9_-]{1,64})\)$/;
 
-/** Strip control characters and truncate so a rejected value cannot shape stderr */
+/** Keep printable ASCII only and truncate so a rejected value cannot shape stderr (G4) */
 function safeForLog(value: string): string {
-  // eslint-disable-next-line no-control-regex
-  return value.replace(/[\u0000-\u001f\u007f]/g, '?').slice(0, 60);
+  return value.replace(/[^\x20-\x7e]/g, '?').slice(0, 60);
 }
 
 /** G3: config is untrusted JSON - a step must be an object with a string command and string-or-absent condition */
@@ -85,16 +88,24 @@ export async function executeChainForWorkflow(
     let executed = 0;
     let skipped = 0;
     const lines: string[] = [];
+    const skip = (message: string): void => {
+      skipped++;
+      if (skipped <= MAX_SKIP_LOG_LINES) {
+        console.error(message);
+      }
+    };
 
-    for (const step of steps as unknown[]) {
+    const stepCount = Math.min(steps.length, MAX_STEPS_ITERATED);
+    for (let i = 0; i < stepCount; i++) {
       // H-4: Cap printed lines to prevent runaway chains from malicious config
       if (executed >= MAX_CHAIN_COMMANDS) {
         break;
       }
 
+      const step: unknown = steps[i];
+
       if (!isChainItemShape(step)) {
-        console.error('chain-trigger: skipping malformed chains_to step');
-        skipped++;
+        skip('chain-trigger: skipping malformed chains_to step');
         continue;
       }
 
@@ -108,8 +119,7 @@ export async function executeChainForWorkflow(
 
       // T1: config values are untrusted; never copy a non-slug into a CHAIN line
       if (!(isTeam ? isSafeTeamCommandName(cmdName) : isSafeChainName(cmdName)) || (step.condition !== undefined && !SAFE_CONDITION.test(step.condition))) {
-        console.error(`chain-trigger: skipping invalid chains_to step "${safeForLog(step.command)}"`);
-        skipped++;
+        skip(`chain-trigger: skipping invalid chains_to step "${safeForLog(step.command)}"`);
         continue;
       }
 
@@ -122,6 +132,10 @@ export async function executeChainForWorkflow(
       }
 
       executed++;
+    }
+
+    if (skipped > MAX_SKIP_LOG_LINES) {
+      console.error(`chain-trigger: ${skipped - MAX_SKIP_LOG_LINES} more invalid steps skipped`);
     }
 
     if (lines.length > 0) {
