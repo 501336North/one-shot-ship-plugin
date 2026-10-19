@@ -1,5 +1,17 @@
 # Learnings
 
+## 2026-10-19 | Testing | watcher
+- **Context:** plugin-highs-gate (ship gate round 1 fixes)
+- **Insight:** watcher/test/setup.ts runs `pkill -f "oss-session-start"`, `pkill -f "health-check.js"` and deletes every watcher.pid under $TMPDIR, machine-wide. With several sessions on one Mac, a plain `npx vitest run` in one worktree kills other sessions' test runs and the user's live session-start hooks. Until setup.ts kills only what it started, run watcher vitest from a shared machine with a config that omits setupFiles (pool forks, fileParallelism false).
+
+## 2026-10-19 | Testing | watcher
+- **Context:** plugin-highs-gate (ship gate round 1 fixes)
+- **Insight:** A mutation run is what shows a guard is one-sided. The "log on timeout" test passed with a mutant that logged on every error, until a control test (a non-timeout failure logs nothing) was added. When a fix is "do X only when Y", write the not-Y control too. Also record equivalent-safe survivors instead of chasing them: `redirect: 'manual'` survives the `redirect: 'error'` test, but Node then returns the 3xx itself, `!ok` throws, and the target is never contacted.
+
+## 2026-10-19 | Process | hooks
+- **Context:** plugin-highs-gate (build round 2)
+- **Insight:** `oss-log.sh init build` starts current-session/build.log over, so `grep -c 'OSS Command: /oss:build'` stays 1 after a second genuine /oss:build invocation in the same session. The IRON LAW banner count cannot count rounds as written; check for a new `build:START` line per round instead, or make init append.
+
 ## 2026-10-19 | Security | watcher
 - **Context:** oss-writer-nofollow (build N2-6)
 - **Insight:** Swapping statSync for lstatSync to 'use the checked inode' is wrong where links are legitimate (HOME ~/.oss is user-owned; dotfile managers symlink config.json): the rewrite copies the link's 0755/0777 mode onto the secret file. Decide per branch whether a link is refused (project) or followed (HOME).
