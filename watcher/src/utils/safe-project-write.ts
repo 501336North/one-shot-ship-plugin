@@ -21,12 +21,19 @@ export interface SafeWriteOptions {
   createDirs?: boolean;
 }
 
+/** G15: realpath($HOME) once per HOME value (HOME can change, e.g. in tests). */
+let homeCache: { home: string; real: string } | null = null;
+function realHome(home: string): string {
+  if (homeCache === null || homeCache.home !== home) homeCache = { home, real: fs.realpathSync(home) };
+  return homeCache.real;
+}
+
 function isUserOssDir(ossDir: string): boolean {
   const home = process.env.HOME;
   if (!home) return false;
   if (path.resolve(ossDir) === path.resolve(home, '.oss')) return true;
   try {
-    return path.basename(ossDir) === '.oss' && fs.realpathSync(path.dirname(ossDir)) === fs.realpathSync(home);
+    return path.basename(ossDir) === '.oss' && fs.realpathSync(path.dirname(ossDir)) === realHome(home);
   } catch {
     return false;
   }

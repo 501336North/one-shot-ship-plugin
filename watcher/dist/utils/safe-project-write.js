@@ -15,6 +15,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+/** G15: realpath($HOME) once per HOME value (HOME can change, e.g. in tests). */
+let homeCache = null;
+function realHome(home) {
+    if (homeCache === null || homeCache.home !== home)
+        homeCache = { home, real: fs.realpathSync(home) };
+    return homeCache.real;
+}
 function isUserOssDir(ossDir) {
     const home = process.env.HOME;
     if (!home)
@@ -22,7 +29,7 @@ function isUserOssDir(ossDir) {
     if (path.resolve(ossDir) === path.resolve(home, '.oss'))
         return true;
     try {
-        return path.basename(ossDir) === '.oss' && fs.realpathSync(path.dirname(ossDir)) === fs.realpathSync(home);
+        return path.basename(ossDir) === '.oss' && fs.realpathSync(path.dirname(ossDir)) === realHome(home);
     }
     catch {
         return false;

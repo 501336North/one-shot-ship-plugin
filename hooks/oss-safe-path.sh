@@ -20,6 +20,14 @@
 # in the chain is user-owned, so only the user (not a cloned repo) can race it.
 
 _oss_phys_dir() { (cd -P -- "$1" 2>/dev/null && pwd -P); }
+# G9: the project and $HOME are resolved once per process (each resolution is a subshell).
+_OSS_PC_K1=""; _OSS_PC_V1=""; _OSS_PC_K2=""; _OSS_PC_V2=""
+_oss_phys_cached() { # <path> -> _OSS_PHYS (no subshell, so the cache survives)
+    if [[ -n "$_OSS_PC_K1" && "$1" == "$_OSS_PC_K1" ]]; then _OSS_PHYS="$_OSS_PC_V1"; return 0; fi
+    if [[ -n "$_OSS_PC_K2" && "$1" == "$_OSS_PC_K2" ]]; then _OSS_PHYS="$_OSS_PC_V2"; return 0; fi
+    _OSS_PHYS=$(_oss_phys_dir "$1") && [[ -n "$_OSS_PHYS" ]] || return 1
+    _OSS_PC_K2="$_OSS_PC_K1"; _OSS_PC_V2="$_OSS_PC_V1"; _OSS_PC_K1="$1"; _OSS_PC_V1="$_OSS_PHYS"
+}
 _oss_uid_of() { local m l o r; read -r m l o r < <(ls -ldn -- "$1" 2>/dev/null) && echo "$o"; }
 # G3: a component is acceptable when owned by the current user OR by the owner of the
 # physical project root (bind mounts, root in a container, shared repos).
@@ -34,9 +42,9 @@ oss_safe_mkdir() {
     _OSS_SAFE_DIR=""; _OSS_SAFE_HOME=""
     [[ -n "$proj" && -n "$rel" && "$rel" != /* ]] || return 1
     [[ "$rel" != *[[:cntrl:]]* ]] || return 1   # a newline would end `read` early: check != write
-    real=$(_oss_phys_dir "$proj") || return 1
+    _oss_phys_cached "$proj" || return 1; real="$_OSS_PHYS"
     [[ -n "$real" ]] || return 1
-    home=$(_oss_phys_dir "${HOME:-/nonexistent}") || home=""
+    home=""; _oss_phys_cached "${HOME:-/nonexistent}" && home="$_OSS_PHYS"
     if [[ -n "$home" && "$real" == "$home" ]]; then
         mkdir -p -- "$real/$rel" 2>/dev/null || return 1
         _OSS_SAFE_DIR="$real/$rel"; _OSS_SAFE_HOME=1

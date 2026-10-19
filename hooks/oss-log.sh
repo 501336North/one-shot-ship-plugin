@@ -23,7 +23,7 @@ set -euo pipefail
 
 # The one bash guard for writes into a project's .oss (ADR-1). Absent helper = every
 # project-local write below is refused (fail closed); the global ~/.oss/logs fallback still works.
-_OSS_LOG_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_OSS_LOG_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"; [[ "$_OSS_LOG_SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]] && _OSS_LOG_SCRIPT_DIR=.  # G10: no dirname fork
 if [[ -f "$_OSS_LOG_SCRIPT_DIR/oss-safe-path.sh" ]]; then source "$_OSS_LOG_SCRIPT_DIR/oss-safe-path.sh"; fi
 if ! declare -F oss_safe_target >/dev/null; then
     oss_safe_mkdir() { return 1; }
