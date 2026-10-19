@@ -10,11 +10,8 @@ export default defineConfig({
     // CRITICAL: Force single-threaded execution to avoid race conditions
     // Tests share global state like ~/.oss/current-project
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        singleFork: true,
-      },
-    },
+    // vitest 4 replaced poolOptions.forks.singleFork with maxWorkers: 1 (one fork; files still isolated)
+    maxWorkers: 1,
     // Run test FILES sequentially
     fileParallelism: false,
     // Run tests within each file sequentially
