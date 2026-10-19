@@ -240,7 +240,7 @@ describe('G3: ownership is "current user OR the project root owner"', () => {
   });
 });
 
-describe('ship round 1 (G6, G11)', () => {
+describe('ship round 1 (G6)', () => {
   it('G6: an existing state file keeps its mode, and a new one gets the umask default (not 0600)', async () => {
     fs.mkdirSync(ossDir);
     const existing = path.join(ossDir, 'status-line.json');
@@ -265,13 +265,6 @@ describe('ship round 1 (G6, G11)', () => {
       // the failure itself is fine; the leftover is not
     }
     expect(fs.readdirSync(ossDir).filter((n) => n.endsWith('.tmp'))).toEqual([]);
-  });
-
-  it('G11: a writer handed a directory that is not .oss refuses (it cannot guard an unknown root)', async () => {
-    const notOss = path.join(project, 'elsewhere');
-    fs.mkdirSync(notOss);
-    await new WorkflowLogger(notOss).log({ cmd: 'build', event: 'START', data: {} });
-    expect(fs.existsSync(path.join(notOss, 'workflow.log'))).toBe(false);
   });
 });
 

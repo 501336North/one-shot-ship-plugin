@@ -39,7 +39,7 @@ OSS_PERMISSIONS=(
 # Create settings directory if needed — through the guard (ADR-1): a cloned repo that links
 # .claude or settings.local.json elsewhere (e.g. to ~/.claude/settings.json) is refused, rc 0.
 _SP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "$_SP_DIR/oss-safe-path.sh" ]]; then source "$_SP_DIR/oss-safe-path.sh"; fi
+if [[ -f "$_SP_DIR/oss-safe-path.sh" ]]; then source "$_SP_DIR/oss-safe-path.sh"; else oss_safe_mkdir() { return 1; }; oss_safe_target() { return 1; }; oss_valid_workflow_name() { return 1; }; oss_refuse_unsafe() { echo "oss: refusing unsafe .oss path ${1:-} (oss-safe-path.sh missing)" >&2; }; fi
 if ! oss_safe_target "$PROJECT_DIR" .claude/settings.local.json; then
     oss_refuse_unsafe .claude/settings.local.json
     exit 0

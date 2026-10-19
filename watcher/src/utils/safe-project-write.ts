@@ -105,17 +105,25 @@ export function safeWriteFileAtomic(ossDir: string, rel: string, data: string, o
     target = safeTarget(ossDir, rel, options.createDirs ?? true);
     if (target === null) return refuse(ossDir, rel);
   }
-  const tmp = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`);
-  const fd = fs.openSync(tmp, 'wx', 0o600);
+  // G6: an existing file keeps its mode; a new one gets the umask default (0666 & ~umask).
+  let keepMode: number | null = null;
   try {
-    fs.writeSync(fd, data);
-  } finally {
-    fs.closeSync(fd);
+    keepMode = fs.statSync(target).mode & 0o7777;
+  } catch {
+    keepMode = null;
   }
+  const tmp = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`);
+  const fd = fs.openSync(tmp, 'wx', 0o666);
   try {
+    try {
+      if (keepMode !== null) fs.fchmodSync(fd, keepMode);
+      fs.writeSync(fd, data);
+    } finally {
+      fs.closeSync(fd);
+    }
     fs.renameSync(tmp, target);
   } catch (e) {
-    fs.rmSync(tmp, { force: true });
+    fs.rmSync(tmp, { force: true }); // never leave the temp file behind
     throw e;
   }
   return true;

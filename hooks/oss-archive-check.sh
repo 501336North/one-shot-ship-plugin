@@ -17,7 +17,7 @@
 set -euo pipefail
 
 _AC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "$_AC_DIR/oss-safe-path.sh" ]]; then source "$_AC_DIR/oss-safe-path.sh"; fi  # ADR-1 write guard
+if [[ -f "$_AC_DIR/oss-safe-path.sh" ]]; then source "$_AC_DIR/oss-safe-path.sh"; else oss_safe_mkdir() { return 1; }; oss_safe_target() { return 1; }; oss_valid_workflow_name() { return 1; }; oss_refuse_unsafe() { echo "oss: refusing unsafe .oss path ${1:-} (oss-safe-path.sh missing)" >&2; }; fi  # ADR-1 write guard
 
 DRY_RUN=false
 LIST_ONLY=false

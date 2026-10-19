@@ -10,7 +10,7 @@ mkdir -p ~/.oss
 
 # Determine project .oss directory (project-local for context isolation)
 # Through the guard (ADR-1): a cloned repo's committed .oss / session-context.md link is refused.
-if [[ -f "$SCRIPT_DIR/oss-safe-path.sh" ]]; then source "$SCRIPT_DIR/oss-safe-path.sh"; fi
+if [[ -f "$SCRIPT_DIR/oss-safe-path.sh" ]]; then source "$SCRIPT_DIR/oss-safe-path.sh"; else oss_safe_mkdir() { return 1; }; oss_safe_target() { return 1; }; oss_valid_workflow_name() { return 1; }; oss_refuse_unsafe() { echo "oss: refusing unsafe .oss path ${1:-} (oss-safe-path.sh missing)" >&2; }; fi
 PROJECT_OSS_DIR="${CLAUDE_PROJECT_DIR:-.}/.oss"
 oss_safe_mkdir "${CLAUDE_PROJECT_DIR:-.}" .oss || oss_refuse_unsafe .oss
 
