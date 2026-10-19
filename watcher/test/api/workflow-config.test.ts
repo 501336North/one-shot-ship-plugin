@@ -533,5 +533,24 @@ describe('WorkflowConfigAPI', () => {
         errorSpy.mockRestore();
       }
     });
+
+    it('does not report a timeout when the fetch fails for another reason', async () => {
+      const configDir = createTestDir();
+      fs.writeFileSync(
+        path.join(configDir, 'config.json'),
+        JSON.stringify({ apiKey: 'ak_secret_key', apiUrl: 'https://api.example.com' })
+      );
+      process.env.OSS_CONFIG_DIR = configDir;
+      mockFetch.mockRejectedValue(new TypeError('fetch failed'));
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      try {
+        await expect(fetchWorkflowConfig('build')).rejects.toThrow('fetch failed');
+
+        expect(errorSpy).not.toHaveBeenCalled();
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
   });
 });
