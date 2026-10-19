@@ -119,12 +119,15 @@ function readApiCredentials(configDir) {
   }
 }
 
-// src/utils/safe-chain-name.ts
-function isSafeChainName(name) {
-  return /^[a-z][a-z0-9-]{0,40}$/.test(name);
+// src/utils/workflow-name.ts
+var WORKFLOW_NAME_PATTERN = /^[a-z][a-z0-9-]{0,40}$/;
+function isValidWorkflowName(name) {
+  return WORKFLOW_NAME_PATTERN.test(name);
 }
-function isSafeTeamCommandName(name) {
-  return /^[a-z0-9-]{1,100}$/.test(name);
+function assertValidWorkflowName(name) {
+  if (!isValidWorkflowName(name)) {
+    throw new Error("Invalid workflow name");
+  }
 }
 
 // src/api/workflow-config.ts
@@ -172,9 +175,7 @@ function userIdToLicenseId(userId) {
   return `lic_${crypto.createHash("sha256").update(userId).digest("hex").substring(0, 24)}`;
 }
 async function fetchWorkflowConfig(workflowName, timeoutMs = WORKFLOW_FETCH_TIMEOUT_MS) {
-  if (!isSafeChainName(workflowName)) {
-    throw new Error("Invalid workflow name");
-  }
+  assertValidWorkflowName(workflowName);
   const credentials = readApiCredentials();
   if (!credentials) {
     throw new Error("No API key configured or apiUrl is not https");
@@ -256,12 +257,19 @@ async function getCachedOrFetch(workflowName) {
   }
 }
 
+// src/utils/safe-chain-name.ts
+function isSafeTeamCommandName(name) {
+  return /^[a-z0-9-]{1,100}$/.test(name);
+}
+
 // src/cli/chain-trigger.ts
 var MAX_CHAIN_COMMANDS = 10;
 var MAX_STEPS_ITERATED = MAX_CHAIN_COMMANDS * 10;
 var MAX_SKIP_LOG_LINES = 5;
 var SAFE_CONDITION = /^[a-z0-9_-]{1,64}$/;
-var CHAIN_LINE_PATTERN = /^CHAIN: \/oss:([a-z][a-z0-9-]{0,40}|oss-custom [a-z0-9-]{1,100}) \((always|condition: [a-z0-9_-]{1,64})\)$/;
+var CHAIN_LINE_PATTERN = new RegExp(
+  `^CHAIN: \\/oss:(${WORKFLOW_NAME_PATTERN.source.slice(1, -1)}|oss-custom [a-z0-9-]{1,100}) \\((always|condition: [a-z0-9_-]{1,64})\\)$`
+);
 function safeForLog(value) {
   return value.replace(/[^\x20-\x7e]/g, "?").slice(0, 60);
 }
@@ -302,7 +310,7 @@ async function executeChainForWorkflow(workflowName, _credentials) {
       }
       const isTeam = step.command.startsWith("team:");
       const cmdName = isTeam ? step.command.substring(5) : step.command;
-      const nameIsSafe = isTeam ? isSafeTeamCommandName(cmdName) : isSafeChainName(cmdName);
+      const nameIsSafe = isTeam ? isSafeTeamCommandName(cmdName) : isValidWorkflowName(cmdName);
       const conditionIsSafe = step.condition === void 0 || SAFE_CONDITION.test(step.condition);
       if (!nameIsSafe || !conditionIsSafe) {
         skip(`chain-trigger: skipping invalid chains_to step "${safeForLog(step.command)}"`);
