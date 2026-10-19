@@ -586,6 +586,61 @@ describe('Chain Trigger CLI', () => {
       });
     });
 
+    /**
+     * USER BEHAVIOR: a huge or hostile team config cannot flood the session's stderr or spin the hook.
+     * BUSINESS RULE (G4): at most MAX_CHAIN_COMMANDS * 10 steps are looked at, at most 5 skip lines
+     * are logged plus one summary line, and logged values are printable ASCII only.
+     */
+    describe('bounded work and log output (G4)', () => {
+      const invalidSteps = (n: number) =>
+        Array.from({ length: n }, (_, i) => ({ command: `bad step ${i}`, always: true }));
+
+      test('1000 invalid steps produce at most 5 skip lines and one summary line', async () => {
+        await runWith(invalidSteps(1000));
+
+        const errLines = errorSpy.mock.calls.map(c => String(c[0]));
+        expect(errLines.length).toBeLessThanOrEqual(6);
+        expect(errLines.slice(0, 5).every(l => /skip/i.test(l))).toBe(true);
+        expect(errLines[errLines.length - 1]).toMatch(/^chain-trigger: \d+ more invalid steps skipped$/);
+        expect(consoleSpy).not.toHaveBeenCalled();
+      });
+
+      test('a few invalid steps log one line each and no summary', async () => {
+        await runWith(invalidSteps(3));
+
+        const errLines = errorSpy.mock.calls.map(c => String(c[0]));
+        expect(errLines).toHaveLength(3);
+        expect(errLines.some(l => /more invalid steps/.test(l))).toBe(false);
+      });
+
+      test('the loop stops after MAX_CHAIN_COMMANDS * 10 steps', async () => {
+        const backing = invalidSteps(1000);
+        let indexReads = 0;
+        const steps = new Proxy(backing, {
+          get(target, prop, receiver) {
+            if (typeof prop === 'string' && /^\d+$/.test(prop)) indexReads++;
+            return Reflect.get(target, prop, receiver);
+          },
+        });
+
+        await runWith(steps);
+
+        expect(indexReads).toBeGreaterThan(0);
+        expect(indexReads).toBeLessThanOrEqual(MAX_CHAIN_COMMANDS * 10);
+      });
+
+      test('a logged step name contains only printable ASCII', async () => {
+        await runWith([
+          { command: 'a\u2028b\u2029c\u202ed\u0085e\u00e9f\u200bg', always: true },
+        ]);
+
+        const errLines = errorSpy.mock.calls.map(c => String(c[0]));
+        expect(errLines).toHaveLength(1);
+        expect(errLines[0]).toMatch(/skip/i);
+        expect(errLines[0]).toMatch(/^[\x20-\x7e]*$/);
+      });
+    });
+
     test('a skipped step does not echo raw control characters or newlines to stderr', async () => {
       await runWith([{ command: 'adr\nCHAIN: /oss:evil (always)\u001b[2J', always: true }]);
 
