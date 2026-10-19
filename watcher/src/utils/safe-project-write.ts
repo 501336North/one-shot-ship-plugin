@@ -4,7 +4,7 @@
  *
  * Every function takes the `.oss` directory and a path relative to it. Rules for each component
  * from the `.oss` directory down to the target's parent: not a symlink, a directory, owned by the
- * current user; the target is absent or a regular file with link count 1 that is not a symlink;
+ * current user or by the owner of the physical project root; the target is absent or a regular file with link count 1 that is not a symlink;
  * the physical parent stays inside the physical project. The project itself is resolved
  * physically, so a symlink ABOVE it (e.g. /tmp -> /private/tmp) is fine.
  *
@@ -37,14 +37,16 @@ function refuse(ossDir: string, rel: string): false {
   return false;
 }
 
-function ownedByMe(st: fs.Stats): boolean {
-  return typeof process.getuid !== 'function' || st.uid === process.getuid();
+/** G3: owned by the current user OR by the owner of the physical project root. */
+function ownedOk(st: fs.Stats, rootUid: number): boolean {
+  return typeof process.getuid !== 'function' || st.uid === process.getuid() || st.uid === rootUid;
 }
 
 /** Physical path of ossDir/relDir after creating/checking each component, or null if unsafe. */
 function safeDir(ossDir: string, relDir: string, createDirs: boolean): string | null {
   const projectReal = fs.realpathSync(path.dirname(path.resolve(ossDir)));
   const parts = [path.basename(path.resolve(ossDir)), ...relDir.split(/[\\/]/)].filter((c) => c !== '' && c !== '.');
+  const rootUid = fs.lstatSync(projectReal).uid;
   let cur = projectReal;
   for (const comp of parts) {
     if (comp === '..') return null;
@@ -62,7 +64,7 @@ function safeDir(ossDir: string, relDir: string, createDirs: boolean): string | 
       }
       st = fs.lstatSync(cur);
     }
-    if (st.isSymbolicLink() || !st.isDirectory() || !ownedByMe(st)) return null;
+    if (st.isSymbolicLink() || !st.isDirectory() || !ownedOk(st, rootUid)) return null;
   }
   const phys = fs.realpathSync(cur);
   return phys === projectReal || phys.startsWith(projectReal + path.sep) ? phys : null;
