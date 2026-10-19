@@ -83,7 +83,7 @@ Register at https://www.oneshotship.com
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow debug start '{"bug": "{DESCRIPTION}"}'
+~/.oss/hooks/oss-notify.sh --workflow debug start '{}'
 ```
 
 ## Step 4: Ensure Decrypt CLI Installed
@@ -117,17 +117,17 @@ The prompt guides the debugging workflow:
 
 After root cause found:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow debug milestone '{"phase": "investigate", "causes": {COUNT}}'
+~/.oss/hooks/oss-notify.sh --workflow debug milestone '{}'
 ```
 
 After reproduction test written:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow debug milestone '{"phase": "reproduce", "test": "{TEST_PATH}", "status": "RED"}'
+~/.oss/hooks/oss-notify.sh --workflow debug milestone '{}'
 ```
 
 After debug complete:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow debug complete '{"severity": "{SEVERITY}", "tasks": {TASK_COUNT}}'
+~/.oss/hooks/oss-notify.sh --workflow debug complete '{}'
 ```
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.

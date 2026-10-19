@@ -122,7 +122,7 @@ The prompt guides you through:
 
 On success (data model designed):
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow data-model complete '{"entitiesDesigned": {COUNT}, "migrationsCreated": {MIGRATIONS}}'
+~/.oss/hooks/oss-notify.sh --workflow data-model complete '{}'
 ```
 
 ## Error Handling

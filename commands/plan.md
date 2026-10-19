@@ -129,7 +129,7 @@ The prompt guides creation of a TDD plan with:
 
 After plan is complete:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow plan complete '{"taskCount": {TASK_COUNT}, "phases": {PHASE_COUNT}}'
+~/.oss/hooks/oss-notify.sh --workflow plan complete '{}'
 ```
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.

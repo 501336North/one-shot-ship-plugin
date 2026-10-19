@@ -131,7 +131,7 @@ Register at https://www.oneshotship.com
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow verify start '{"phase": "{PHASE_NUMBER}"}'
+~/.oss/hooks/oss-notify.sh --workflow verify start '{}'
 ```
 
 ## Step 4: Ensure Decrypt CLI Installed
@@ -167,14 +167,14 @@ Execute the prompt returned by the API. The proprietary prompt contains:
 
 After verification is complete:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow verify complete '{"passed": {PASS_COUNT}, "failed": {FAIL_COUNT}, "skipped": {SKIP_COUNT}}'
+~/.oss/hooks/oss-notify.sh --workflow verify complete '{}'
 ```
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.
 
 If verification has failures:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow verify issues_found '{"failCount": {FAIL_COUNT}, "fixPlanReady": true}'
+~/.oss/hooks/oss-notify.sh --workflow verify issues_found '{}'
 ```
 
 ## UAT Document Format

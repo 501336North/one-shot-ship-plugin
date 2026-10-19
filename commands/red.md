@@ -130,10 +130,10 @@ On success (test written and fails as expected):
 ```bash
 # Log TDD phase complete (MANDATORY)
 ~/.oss/hooks/oss-log.sh phase red RED complete
-~/.oss/hooks/oss-log.sh test red FAIL "{TEST_FILE}: {FAILURE_MSG}"
+~/.oss/hooks/oss-log.sh test red FAIL
 
 # Update status line
-~/.oss/hooks/oss-notify.sh --workflow red complete '{"testFile": "{TEST_FILE}", "failureMessage": "{FAILURE_MSG}"}'
+~/.oss/hooks/oss-notify.sh --workflow red complete '{}'
 ```
 
 ## Error Handling

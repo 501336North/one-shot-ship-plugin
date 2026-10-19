@@ -125,10 +125,10 @@ On success (test passes):
 ```bash
 # Log TDD phase complete (MANDATORY)
 ~/.oss/hooks/oss-log.sh phase green GREEN complete
-~/.oss/hooks/oss-log.sh test green PASS "{TEST_FILE}"
+~/.oss/hooks/oss-log.sh test green PASS
 
 # Update status line
-~/.oss/hooks/oss-notify.sh --workflow green complete '{"testFile": "{TEST_FILE}", "linesAdded": {LINES}}'
+~/.oss/hooks/oss-notify.sh --workflow green complete '{}'
 ```
 
 ## Error Handling

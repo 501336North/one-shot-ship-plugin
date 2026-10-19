@@ -123,7 +123,7 @@ The prompt guides you through:
 
 On success:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow mock complete '{"mocksCreated": {COUNT}}'
+~/.oss/hooks/oss-notify.sh --workflow mock complete '{}'
 ```
 
 ## Error Handling

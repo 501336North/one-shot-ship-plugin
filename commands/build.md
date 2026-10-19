@@ -152,7 +152,7 @@ Register at https://www.oneshotship.com
 ## Step 3: Update Status Line (Start)
 
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow build start '{"totalTasks": {TASK_COUNT}}'
+~/.oss/hooks/oss-notify.sh --workflow build start '{}'
 ```
 
 **You MUST update the workflow status before proceeding.**
@@ -193,12 +193,12 @@ The prompt enforces TDD discipline:
 
 After each task completes:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow build task_complete '{"current": {N}, "total": {TOTAL}, "taskName": "{TASK_NAME}"}'
+~/.oss/hooks/oss-notify.sh --workflow build task_complete '{}'
 ```
 
 After all tasks complete:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow build complete '{"testsPass": {TEST_COUNT}, "duration": "{DURATION}"}'
+~/.oss/hooks/oss-notify.sh --workflow build complete '{}'
 ```
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.

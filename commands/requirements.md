@@ -113,7 +113,7 @@ The prompt guides you through:
 
 On success (requirements extracted):
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow requirements complete '{"storiesCount": {COUNT}, "criteriaCount": {CRITERIA}}'
+~/.oss/hooks/oss-notify.sh --workflow requirements complete '{}'
 ```
 
 ## Error Handling

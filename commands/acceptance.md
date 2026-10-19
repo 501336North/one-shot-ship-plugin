@@ -117,7 +117,7 @@ The prompt guides you through:
 
 On success (acceptance test written and fails as expected):
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow acceptance complete '{"testFile": "{TEST_FILE}", "testsWritten": {COUNT}}'
+~/.oss/hooks/oss-notify.sh --workflow acceptance complete '{}'
 ```
 
 ## Error Handling

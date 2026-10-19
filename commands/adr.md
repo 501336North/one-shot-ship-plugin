@@ -124,7 +124,7 @@ The prompt guides you through:
 
 On success (ADR created):
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow adr complete '{"adrNumber": {NUMBER}, "title": "{TITLE}"}'
+~/.oss/hooks/oss-notify.sh --workflow adr complete '{}'
 ```
 
 ## Error Handling

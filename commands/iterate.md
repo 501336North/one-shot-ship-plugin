@@ -120,7 +120,7 @@ The prompt will guide you through:
 
 After iteration plan is complete:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow iterate complete '{"taskCount": {N}, "trigger": "{feature_mismatch|scope_change}"}'
+~/.oss/hooks/oss-notify.sh --workflow iterate complete '{}'
 ```
 
 ## Command Chain

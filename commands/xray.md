@@ -110,7 +110,7 @@ The prompt orchestrates the full xray scan:
 
 After scan completes:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow xray complete '{"findings": {TOTAL}, "critical": {N}, "high": {N}}'
+~/.oss/hooks/oss-notify.sh --workflow xray complete '{}'
 ```
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.

@@ -117,7 +117,7 @@ Execute the prompt returned by the API. The proprietary prompt contains:
 
 After visual QA is complete:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow visual-qa complete '{"discrepancies": {COUNT}, "blocking": {BLOCKING_COUNT}}'
+~/.oss/hooks/oss-notify.sh --workflow visual-qa complete '{}'
 ```
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.

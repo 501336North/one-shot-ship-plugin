@@ -216,12 +216,12 @@ After quality checks pass:
 
 After PR is created:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow ship pr_created '{"prNumber": {PR_NUM}, "prTitle": "{PR_TITLE}"}'
+~/.oss/hooks/oss-notify.sh --workflow ship pr_created '{}'
 ```
 
 After PR is merged (with `--merge` flag):
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow ship merged '{"branch": "{BRANCH}", "prNumber": {PR_NUM}}'
+~/.oss/hooks/oss-notify.sh --workflow ship merged '{}'
 ```
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` and `merged` events.

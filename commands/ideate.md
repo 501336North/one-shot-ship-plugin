@@ -118,7 +118,7 @@ Register at https://www.oneshotship.com
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow ideate start '{"idea": "{USER_IDEA}"}'
+~/.oss/hooks/oss-notify.sh --workflow ideate start '{}'
 ```
 
 ## Step 5: Ensure Decrypt CLI Installed
@@ -166,7 +166,7 @@ When `--figma` flag is active, the proprietary prompt additionally contains:
 
 After ideation is complete:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow ideate complete '{"requirementsCount": {COUNT}}'
+~/.oss/hooks/oss-notify.sh --workflow ideate complete '{}'
 ```
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.

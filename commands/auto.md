@@ -97,7 +97,7 @@ Register at https://www.oneshotship.com
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow auto start '{"idea": "{USER_IDEA}"}'
+~/.oss/hooks/oss-notify.sh --workflow auto start '{}'
 ```
 
 ## Step 5: Ensure Decrypt CLI Installed
@@ -126,7 +126,7 @@ The prompt orchestrates the full pipeline:
 
 After auto pipeline completes:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow auto complete '{"prNumber": {PR_NUM}, "phases": 4}'
+~/.oss/hooks/oss-notify.sh --workflow auto complete '{}'
 ```
 
 ## Error Handling

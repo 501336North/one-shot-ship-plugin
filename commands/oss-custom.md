@@ -77,7 +77,7 @@ Register at https://www.oneshotship.com
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow custom start '{"command": "{COMMAND_NAME}"}'
+~/.oss/hooks/oss-notify.sh --workflow custom start '{}'
 ```
 
 Replace `{COMMAND_NAME}` with the actual custom command name (without `team:` prefix).
@@ -130,7 +130,7 @@ Execute the prompt content returned by the API. The prompt will guide the workfl
 
 After custom command completes:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow custom complete '{"command": "{COMMAND_NAME}"}'
+~/.oss/hooks/oss-notify.sh --workflow custom complete '{}'
 ```
 
 If custom command fails, report it without putting your own text into a command. Run:

@@ -104,7 +104,7 @@ Execute the prompt returned by the API. It guides you through:
 
 After visual tests pass:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow visual-test complete '{"checksPassed": {PASS_COUNT}, "total": {TOTAL_COUNT}}'
+~/.oss/hooks/oss-notify.sh --workflow visual-test complete '{}'
 ```
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.

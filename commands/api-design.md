@@ -124,7 +124,7 @@ The prompt guides you through:
 
 On success (API design complete):
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow api-design complete '{"endpointsDesigned": {COUNT}, "specFile": "{SPEC_FILE}"}'
+~/.oss/hooks/oss-notify.sh --workflow api-design complete '{}'
 ```
 
 ## Error Handling

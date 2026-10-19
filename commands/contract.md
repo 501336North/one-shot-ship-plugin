@@ -123,7 +123,7 @@ The prompt guides you through:
 
 On success (contracts verified):
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow contract complete '{"contractsVerified": {COUNT}, "consumers": "{CONSUMERS}"}'
+~/.oss/hooks/oss-notify.sh --workflow contract complete '{}'
 ```
 
 ## Error Handling
