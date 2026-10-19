@@ -135,4 +135,18 @@ Provenance: the only other test that reads "Execute the Fetched Prompt" is `watc
   - hooks/oss-workflow-auto.sh has no `|| true`; its last node call's rc becomes the script's rc. It is not registered in hooks.json and only watcher/test/hooks/oss-workflow-auto-hook.test.ts uses it (passes).
 
 ## Pre-existing, not fixed
-- In oss-notify.sh run_with_timeout, the no-timeout fallback leaves the killer's `sleep` orphaned. That sleep holds stdout open if the caller pipes it. gtimeout exists on this machine, so the branch is untested.
+- (Fixed in R2-1, below.) In oss-notify.sh run_with_timeout, the no-timeout fallback left the killer's `sleep` orphaned and holding stdout.
+
+## R2-1 fallback timer (no timeout/gtimeout)
+- Tests build a PATH of symlinks to /usr/local/bin, /usr/bin, /bin, /usr/sbin, /sbin minus timeout/gtimeout, plus a `sleep` wrapper that records its pid. They assert the PATH really hides both tools.
+- oss-notify-complete-bounds.test.sh case 6: `--workflow audit complete '{}'` with stdout read through `| cat`; asserts < 5s, no `Terminated` on stderr, no recorded sleep alive 1s later.
+  - RED: 31s, stderr `Terminated: 15 ( sleep "$timeout_secs" && kill -9 $pid ... )`.
+  - GREEN: 0-1s, 6/6.
+- New session-start-timeout-fallback.test.sh: session start with stdout to a file; asserts no `Terminated`, no recorded sleep alive.
+  - RED: one orphan sleep alive. GREEN: 1/1 (3 runs).
+- Gotcha: a freshly written script's first exec can lag ~0.3s+ on macOS, so the sleep wrapper is warmed once and the leftover check waits 1s (all timers are >= 2s).
+- Anti-vacuity:
+  - notify full revert -> RED (30s + Terminated).
+  - notify mutant "stdio redirected + wait, no trap" -> RED (5 leftover sleeps), so the orphan assertion bites on its own.
+  - session-start revert -> RED (1 leftover sleep).
+- Suites: complete-bounds 6/6, oss-writer-nofollow 45/45, oss-notify-workflow-name 12/12, session-start-timeout-fallback 1/1, session-start-copy 8/8, session-start-iron-laws 4/4.

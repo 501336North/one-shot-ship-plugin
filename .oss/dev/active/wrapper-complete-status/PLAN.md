@@ -56,3 +56,11 @@ Note: FOLLOWUPS 75 (the ship wrapper never sending `complete`) was already fixed
 - **pen-test INFO:** hostile committed `workflow-state.json` content persists, but it is never printed by `complete`. It is a display-only path to the user.
 - **pen-test INFO:** the installed hook is inert without the plugin cache. This is expected on real installs; verify after deploy.
 - **security INFO:** the checklist `grep -r` runs over the cwd. It is read-only and writes only to a log.
+
+## Ship round 2 findings (2026-10-19), user: "fix it now"
+- [x] **R2-1 (MEDIUM, matters, performance R2):** the fallback `run_with_timeout` path (no `timeout`/`gtimeout`, i.e. stock macOS) leaves the killer's `sleep` holding the hook's stdout and stderr open, so a pipe reader waits about 33 s on every `complete`. The same change also fixes:
+  - **LOW:** orphan `sleep` processes pile up;
+  - **LOW:** a `Terminated: 15` job notice reaches stderr;
+  - the 3 s copy-service `$(...)` hold.
+  - **Fix:** run the killer as `( sleep N && kill -9 $pid ) >/dev/null 2>&1 &`, kill its `sleep` with the subshell, and `wait` the killer quietly.
+  - **Test:** a case in `oss-notify-complete-bounds.test.sh` with a PATH hiding `timeout`/`gtimeout`, reading stdout through a pipe with a time bound (< 5 s for audit `complete`), asserting no `Terminated` on stderr and no leftover `sleep` from this run. It is RED today (about 33 s).
