@@ -61,7 +61,7 @@ function section(text: string, heading: string): string {
 describe('chain step contract in command wrappers', () => {
   it('control: the derived shape is the readable CHAIN line regex with both name rules', () => {
     expect(STRICT_CHAIN_SHAPE.startsWith('^CHAIN: /oss:(')).toBe(true);
-    expect(STRICT_CHAIN_SHAPE).toContain('oss-custom [a-z0-9-]{1,128}');
+    expect(STRICT_CHAIN_SHAPE).toContain('oss-custom [a-z0-9-]{1,100}');
   });
 
   it('control: the scan finds every wrapper with an Execute Chain Commands step (at least 7)', () => {
