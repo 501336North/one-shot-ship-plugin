@@ -5,9 +5,11 @@
 #                                   of the 7 value files; nothing printed and rc != 0 when unsafe.
 #   oss-value.sh failed <workflow>  send reason.txt from that folder, cleaned, as the workflow's
 #                                   failed notice to the project the cwd is in; then delete it.
+#   oss-value.sh error <cmd:name>   emit message.txt, hint.txt and error.txt (5 fields) through
+#                                   oss-error.js as an OSSError from <cmd:name>; then delete them.
 #
 # `dir` is the served value-folder command, step for step; `failed` is the served failure-notice
-# reader. Keep them identical.
+# reader and `error` the served oss-error emitter (same code and severity lists). Keep them identical.
 set -u
 
 _OV_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,7 +19,7 @@ if [[ ! -f "$_OV_HERE/oss-safe-path.sh" ]]; then
 fi
 source "$_OV_HERE/oss-safe-path.sh"
 
-_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow>" >&2; exit 2; }
+_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name>" >&2; exit 2; }
 
 _OV_RUN="$HOME/.oss/run"
 
@@ -76,8 +78,28 @@ _ov_cmd_failed() {
     && rm -f "$_OV_DIR/reason.txt"
 }
 
+_ov_cmd_error() {
+    local o R m h e c s y k a x
+    o=$(pwd -P)
+    case "${1:-}" in cmd:*) ;; *) false ;; esac && oss_valid_workflow_name "${1#cmd:}" \
+    && R=$(cat "$HOME/.oss/plugin-root" 2>/dev/null) && case "$R" in /*) ;; *) false ;; esac \
+    && test "$(printf '%s' "$R" | wc -l)" -eq 0 && test -d "$R" && test -f "$R/watcher/dist/cli/oss-error.js" \
+    && _ov_dir && _ov_read_value message.txt && m="$_OV_VAL" && _ov_read_value hint.txt && h="$_OV_VAL" \
+    && _ov_check_value error.txt && e=$(LC_ALL=C tr -c 'A-Za-z0-9-' ' ' < "$_OV_DIR/error.txt" | cut -c1-120) \
+    && read -r c s y k a x <<< "$e" && test -z "$x" \
+    && case "$c" in OSS-API-001|OSS-API-002|OSS-API-003|OSS-AUTH-001|OSS-AUTH-002|OSS-AUTH-003|OSS-CONFIG-001|OSS-CONFIG-002|OSS-GIT-001|OSS-GIT-002|OSS-GIT-003|OSS-TDD-001|OSS-TDD-002|OSS-TDD-003|OSS-WORKFLOW-001|OSS-WORKFLOW-002|OSS-WORKFLOW-901|OSS-WORKFLOW-902) ;; *) false ;; esac \
+    && case "$s" in CRITICAL|HIGH|MEDIUM|LOW) ;; *) false ;; esac && case "$y" in true|false) ;; *) false ;; esac \
+    && case "$k" in cheap|expensive) ;; *) false ;; esac && case "$a" in ''|*[!0-9]*) false ;; esac \
+    || { echo "oss-value: error: refused (bad source, plugin root, value file or error.txt field)" >&2; return 1; }
+    _ov_walk "$o"
+    CLAUDE_PROJECT_DIR="$_OV_PROJ" node "$R/watcher/dist/cli/oss-error.js" --code "$c" --severity "$s" --message "$m" --source "$1" \
+        --retry-eligible "$y" --retry-cost "$k" --retry-hint "$h" --attempt "$a" \
+    && rm -f "$_OV_DIR/message.txt" "$_OV_DIR/hint.txt" "$_OV_DIR/error.txt"
+}
+
 case "${1:-}" in
     dir) _ov_cmd_dir ;;
+    error) _ov_cmd_error "${2:-}" ;;
     failed) _ov_cmd_failed "${2:-}" ;;
     *) _ov_usage ;;
 esac

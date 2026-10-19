@@ -272,9 +272,14 @@ done
 # --- 15. the emitter cannot be located safely: refused ---------------------------------------
 setup_error; rm -f "$H/.oss/plugin-root"; ove "$A" error cmd:build
 refused_emit "15: a missing ~/.oss/plugin-root is refused"
-setup_error; printf 'relative/root\n' > "$H/.oss/plugin-root"; ove "$A" error cmd:build
+# relative: it names a real emitter below the cwd, so only the absolute-path rule refuses it
+setup_error; mkdir -p "$A/relroot/watcher/dist/cli"; : > "$A/relroot/watcher/dist/cli/oss-error.js"
+printf 'relroot\n' > "$H/.oss/plugin-root"; ove "$A" error cmd:build
 refused_emit "15: a relative ~/.oss/plugin-root is refused"
-setup_error; printf '%s\n%s\n' "$ROOT" "$ROOT" > "$H/.oss/plugin-root"; ove "$A" error cmd:build
+# 2 lines: together they name a real directory (its name has a newline), so only the one-line rule refuses it
+setup_error; NL="$T/two$N
+lines"; mkdir -p "$NL/watcher/dist/cli"; : > "$NL/watcher/dist/cli/oss-error.js"
+printf '%s\n' "$NL" > "$H/.oss/plugin-root"; ove "$A" error cmd:build
 refused_emit "15: a 2-line ~/.oss/plugin-root is refused"
 setup_error; mkdir -p "$T/emptyroot$N"; printf '%s\n' "$T/emptyroot$N" > "$H/.oss/plugin-root"; ove "$A" error cmd:build
 refused_emit "15: a plugin root without oss-error.js is refused"
