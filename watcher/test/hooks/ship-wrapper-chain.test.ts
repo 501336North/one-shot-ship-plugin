@@ -59,7 +59,7 @@ function count(haystack: string, needle: string): number {
 describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
   let tmp: string;
   let home: string;
-  let server: https.Server;
+  let server: https.Server | undefined;
   let port: number;
   const workflowRequests: string[] = [];
 
@@ -113,7 +113,7 @@ describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
       res.writeHead(m ? 404 : 200, { 'Content-Type': 'application/json' });
       res.end('{}');
     });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', resolve));
     port = (server.address() as AddressInfo).port;
 
     fs.writeFileSync(
@@ -123,8 +123,8 @@ describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
   });
 
   afterAll(async () => {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    fs.rmSync(tmp, { recursive: true, force: true });
+    await new Promise<void>((resolve) => (server ? server.close(() => resolve()) : resolve()));
+    if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
   });
 
   /** A fresh project dir, so each run's workflow-state is its own. */
