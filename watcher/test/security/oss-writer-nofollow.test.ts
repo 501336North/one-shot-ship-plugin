@@ -240,6 +240,41 @@ describe('G3: ownership is "current user OR the project root owner"', () => {
   });
 });
 
+describe('ship round 1 (G6, G11)', () => {
+  it('G6: an existing state file keeps its mode, and a new one gets the umask default (not 0600)', async () => {
+    fs.mkdirSync(ossDir);
+    const existing = path.join(ossDir, 'status-line.json');
+    fs.writeFileSync(existing, '{}');
+    fs.chmodSync(existing, 0o640);
+    await new StatusLineService(ossDir).setTDDPhase('RED');
+    expect(fs.statSync(existing).mode & 0o777).toBe(0o640);
+    const fresh = path.join(ossDir, 'queue.json');
+    const manager = new QueueManager(ossDir);
+    await manager.initialize();
+    const umask = process.umask();
+    expect(fs.statSync(fresh).mode & 0o777).toBe(0o666 & ~umask);
+  });
+
+  it('G6: no temp file is left behind when the write fails', async () => {
+    fs.mkdirSync(ossDir);
+    const target = path.join(ossDir, 'workflow-state.json');
+    fs.mkdirSync(target); // a directory where the file goes: rename fails
+    try {
+      await new WorkflowStateService(target).setSupervisor('intervening');
+    } catch {
+      // the failure itself is fine; the leftover is not
+    }
+    expect(fs.readdirSync(ossDir).filter((n) => n.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('G11: a writer handed a directory that is not .oss refuses (it cannot guard an unknown root)', async () => {
+    const notOss = path.join(project, 'elsewhere');
+    fs.mkdirSync(notOss);
+    await new WorkflowLogger(notOss).log({ cmd: 'build', event: 'START', data: {} });
+    expect(fs.existsSync(path.join(notOss, 'workflow.log'))).toBe(false);
+  });
+});
+
 describe('controls: a plain project still gets its files', () => {
   it('QueueManager, WorkflowLogger, StatusLineService and WorkflowStateService still write', async () => {
     fs.mkdirSync(ossDir);

@@ -85,6 +85,16 @@ echo x > "$T/p14/.oss/logs/archive/session-a b.log.gz"
 if [[ -f "$T/p14/cwd/b.log.gz" && ! -e "$T/p14/.oss/logs/archive/session-a b.log.gz" ]]; then pass "G14: whitespace archive name is deleted itself, nothing else"
 else fail "G14: whitespace archive name is deleted itself, nothing else" "cwd=$(ls "$T/p14/cwd") archive=$(ls "$T/p14/.oss/logs/archive" | tr '\n' '|')"; fi
 
+# --- G13: a sourcer whose helper is missing refuses quietly (no exit-127 noise), rc 0 ---------
+for h in oss-setup-permissions.sh oss-session-end.sh oss-worktree-create.sh oss-worktree-remove.sh oss-archive-check.sh; do
+    mkdir -p "$T/g13/hooks" "$T/g13/proj/.oss/dev/active"; cp "$ROOT/hooks/$h" "$T/g13/hooks/x-$h"
+    err=$(cd "$T/g13/proj" && HOME="$T/home" CLAUDE_PROJECT_DIR="$T/g13/proj" CLAUDE_WORKTREE_PATH="$T/g13/proj" \
+          "$SH" "$T/g13/hooks/x-$h" "$T/g13/proj" 2>&1 >/dev/null </dev/null); rc=$?
+    if [[ $rc -eq 0 && "$err" != *"command not found"* ]]; then pass "G13: $h without oss-safe-path.sh fails closed quietly"
+    else fail "G13: $h without oss-safe-path.sh fails closed quietly" "rc=$rc err=$(echo "$err" | head -2 | tr '\n' ' ')"; fi
+    rm -rf "$T/g13"
+done
+
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
 [[ $FAILED -eq 0 ]]

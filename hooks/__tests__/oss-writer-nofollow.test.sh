@@ -240,6 +240,14 @@ out=$(cd "$P" && HOME="$T/home" "$SH" "$ROOT/hooks/oss-archive-check.sh" --proje
 check "oss-archive-check.sh: committed dev/active/<name> link does not move the outside dir" "$before" "$rc" "$out"
 rm -rf "$T"
 
+# G7: a TRACKED .oss/config.json is never overwritten with the API key (it would be committed)
+l_trackedcfg() { mkdir -p .oss && echo '{"team": "shared"}' > .oss/config.json; }
+world; logged_in; evil_repo p-wtracked l_trackedcfg
+(cd "$P" && HOME="$T/home" CLAUDE_WORKTREE_PATH="$P" "$SH" "$ROOT/hooks/oss-worktree-create.sh" >/dev/null 2>&1 </dev/null)
+if ! grep -q ossk_test_key "$P/.oss/config.json" 2>/dev/null && grep -q shared "$P/.oss/config.json"; then pass "oss-worktree-create.sh: a tracked .oss/config.json is not overwritten with the API key"
+else fail "oss-worktree-create.sh: a tracked .oss/config.json is not overwritten with the API key" "$(cat "$P/.oss/config.json")"; fi
+rm -rf "$T"
+
 # =================================================================================================
 # 9. Controls: an ordinary repo still gets state, logs, gitignore, settings, context, archive
 # =================================================================================================
