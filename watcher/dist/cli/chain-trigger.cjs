@@ -36,14 +36,11 @@ __export(chain_trigger_exports, {
   readApiCredentials: () => readApiCredentials
 });
 module.exports = __toCommonJS(chain_trigger_exports);
+
+// src/api/workflow-config.ts
 var fs2 = __toESM(require("fs"), 1);
 var path2 = __toESM(require("path"), 1);
 var os2 = __toESM(require("os"), 1);
-
-// src/api/workflow-config.ts
-var fs = __toESM(require("fs"), 1);
-var path = __toESM(require("path"), 1);
-var os = __toESM(require("os"), 1);
 var crypto = __toESM(require("crypto"), 1);
 
 // src/engine/types.ts
@@ -70,7 +67,7 @@ var DEFAULT_WORKFLOW_CONFIGS = {
     ],
     agents: [
       { agent: "code-simplifier", always: true },
-      { agent: "frontend-design", condition: "has_ui_work" }
+      { agent: "ui-review", condition: "has_ui_work" }
     ],
     checkpoint: "auto"
   },
@@ -84,42 +81,69 @@ var DEFAULT_WORKFLOW_CONFIGS = {
   }
 };
 
-// src/api/workflow-config.ts
+// src/api/api-credentials.ts
+var fs = __toESM(require("fs"), 1);
+var path = __toESM(require("path"), 1);
+var os = __toESM(require("os"), 1);
 var DEFAULT_API_URL = "https://one-shot-ship-api.onrender.com";
-var PBKDF2_ITERATIONS = 1e5;
-var KEY_LENGTH = 32;
-var configCache = /* @__PURE__ */ new Map();
 function getConfigDir() {
   return process.env.OSS_CONFIG_DIR || path.join(os.homedir(), ".oss");
 }
-function readConfig() {
-  const configPath = path.join(getConfigDir(), "config.json");
+function readApiCredentials(configDir) {
+  const configPath = path.join(configDir || getConfigDir(), "config.json");
   if (!fs.existsSync(configPath)) {
-    return {};
+    return null;
   }
   try {
     const content = fs.readFileSync(configPath, "utf8");
-    return JSON.parse(content);
+    const config = JSON.parse(content);
+    if (!config.apiKey) {
+      return null;
+    }
+    const apiUrl = config.apiUrl || DEFAULT_API_URL;
+    try {
+      const parsed = new URL(apiUrl);
+      if (parsed.protocol !== "https:") {
+        return null;
+      }
+    } catch {
+      return null;
+    }
+    return {
+      apiKey: config.apiKey,
+      apiUrl
+    };
   } catch {
-    return {};
+    return null;
   }
 }
+
+// src/utils/safe-chain-name.ts
+function isSafeChainName(name) {
+  return /^[a-z][a-z0-9-]{0,40}$/.test(name);
+}
+
+// src/api/workflow-config.ts
+var PBKDF2_ITERATIONS = 1e5;
+var WORKFLOW_FETCH_TIMEOUT_MS = 8e3;
+var KEY_LENGTH = 32;
+var configCache = /* @__PURE__ */ new Map();
 function getMachineKey() {
   const machineId = [
     process.env.USER || "user",
-    os.homedir(),
+    os2.homedir(),
     process.platform,
     process.arch
   ].join(":");
   return crypto.createHash("sha256").update(machineId).digest();
 }
 function retrieveCredentials() {
-  const credentialsPath = path.join(getConfigDir(), "credentials.enc");
-  if (!fs.existsSync(credentialsPath)) {
+  const credentialsPath = path2.join(getConfigDir(), "credentials.enc");
+  if (!fs2.existsSync(credentialsPath)) {
     return null;
   }
   try {
-    const stored = fs.readFileSync(credentialsPath, "utf8");
+    const stored = fs2.readFileSync(credentialsPath, "utf8");
     const [ivBase64, authTagBase64, encrypted] = stored.split(":");
     if (!ivBase64 || !authTagBase64 || !encrypted) {
       return null;
@@ -143,20 +167,22 @@ function deriveKey(apiKey, licenseId, hardwareId, salt) {
 function userIdToLicenseId(userId) {
   return `lic_${crypto.createHash("sha256").update(userId).digest("hex").substring(0, 24)}`;
 }
-async function fetchWorkflowConfig(workflowName) {
-  const config = readConfig();
-  const apiKey = config.apiKey;
-  if (!apiKey) {
-    throw new Error("No API key configured");
+async function fetchWorkflowConfig(workflowName, timeoutMs = WORKFLOW_FETCH_TIMEOUT_MS) {
+  if (!isSafeChainName(workflowName)) {
+    throw new Error("Invalid workflow name");
   }
-  const apiUrl = config.apiUrl || DEFAULT_API_URL;
-  const endpoint = `${apiUrl}/api/v1/workflows/${workflowName}`;
+  const credentials = readApiCredentials();
+  if (!credentials) {
+    throw new Error("No API key configured or apiUrl is not https");
+  }
+  const endpoint = `${credentials.apiUrl}/api/v1/workflows/${encodeURIComponent(workflowName)}`;
   const response = await fetch(endpoint, {
     method: "GET",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${credentials.apiKey}`,
       "Content-Type": "application/json"
-    }
+    },
+    signal: AbortSignal.timeout(timeoutMs)
   });
   if (!response.ok) {
     const errorResponse = await response.json().catch(() => ({ error: "Request failed" }));
@@ -186,8 +212,7 @@ async function getCachedOrFetch(workflowName) {
   if (cached) {
     return cached;
   }
-  const config = readConfig();
-  if (!config.apiKey) {
+  if (!readApiCredentials()) {
     const defaultConfig = DEFAULT_WORKFLOW_CONFIGS[workflowName] || {};
     configCache.set(workflowName, defaultConfig);
     return defaultConfig;
@@ -215,36 +240,10 @@ async function getCachedOrFetch(workflowName) {
 }
 
 // src/cli/chain-trigger.ts
-var DEFAULT_API_URL2 = "https://one-shot-ship-api.onrender.com";
 var MAX_CHAIN_COMMANDS = 10;
-function readApiCredentials(configDir) {
-  const dir = configDir || path2.join(os2.homedir(), ".oss");
-  const configPath = path2.join(dir, "config.json");
-  if (!fs2.existsSync(configPath)) {
-    return null;
-  }
-  try {
-    const content = fs2.readFileSync(configPath, "utf8");
-    const config = JSON.parse(content);
-    if (!config.apiKey) {
-      return null;
-    }
-    const apiUrl = config.apiUrl || DEFAULT_API_URL2;
-    try {
-      const parsed = new URL(apiUrl);
-      if (parsed.protocol !== "https:") {
-        return null;
-      }
-    } catch {
-      return null;
-    }
-    return {
-      apiKey: config.apiKey,
-      apiUrl
-    };
-  } catch {
-    return null;
-  }
+var SAFE_CONDITION = /^[a-z0-9_-]{1,64}$/;
+function safeForLog(value) {
+  return value.replace(/[\u0000-\u001f\u007f]/g, "?").slice(0, 60);
 }
 async function executeChainForWorkflow(workflowName, _credentials) {
   try {
@@ -253,17 +252,24 @@ async function executeChainForWorkflow(workflowName, _credentials) {
       return { executed: 0, skipped: 0, errors: [] };
     }
     let executed = 0;
+    let skipped = 0;
     const lines = [];
     for (const step of config.chains_to) {
       if (executed >= MAX_CHAIN_COMMANDS) {
         break;
       }
+      const isTeam = step.command.startsWith("team:");
+      const cmdName = isTeam ? step.command.substring(5) : step.command;
+      if (!isSafeChainName(cmdName) || step.condition !== void 0 && !SAFE_CONDITION.test(step.condition)) {
+        console.error(`chain-trigger: skipping invalid chains_to step "${safeForLog(step.command)}"`);
+        skipped++;
+        continue;
+      }
       const condition = step.always ? "always" : step.condition ? `condition: ${step.condition}` : "always";
-      if (step.command.startsWith("team:")) {
-        const cmdName = step.command.substring(5);
+      if (isTeam) {
         lines.push(`CHAIN: /oss:oss-custom ${cmdName} (${condition})`);
       } else {
-        lines.push(`CHAIN: /oss:${step.command} (${condition})`);
+        lines.push(`CHAIN: /oss:${cmdName} (${condition})`);
       }
       executed++;
     }
@@ -274,7 +280,7 @@ async function executeChainForWorkflow(workflowName, _credentials) {
       }
       console.log("---END_CHAIN_COMMANDS---");
     }
-    return { executed, skipped: 0, errors: [] };
+    return { executed, skipped, errors: [] };
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unknown error";
     return { executed: 0, skipped: 0, errors: [], error: msg };
