@@ -93,6 +93,14 @@ The CLI fetches the encrypted prompt from the API and decrypts it locally using 
 
 ## Step 6: Execute the Fetched Prompt
 
+## Step 7: Update Status Line (Completion)
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow trace complete '{}'
+```
+
 ## Error Handling
 
 ### If API returns 401

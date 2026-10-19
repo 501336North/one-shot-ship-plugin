@@ -136,3 +136,11 @@ The prompt guides:
 /oss:incident
 /oss:incident --severity critical
 ```
+
+## Step 7: Update Status Line (Completion)
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow incident complete '{}'
+```

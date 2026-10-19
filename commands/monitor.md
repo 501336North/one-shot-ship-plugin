@@ -135,3 +135,11 @@ The prompt monitors:
 /oss:monitor
 /oss:monitor --detailed
 ```
+
+## Step 7: Update Status Line (Completion)
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow monitor complete '{}'
+```

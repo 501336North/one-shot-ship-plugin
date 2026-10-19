@@ -119,3 +119,11 @@ The prompt handles:
 /oss:cost --provider aws
 /oss:cost --period last-30-days
 ```
+
+## Step 7: Update Status Line (Completion)
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow cost complete '{}'
+```

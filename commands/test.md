@@ -153,3 +153,11 @@ The prompt handles:
 /oss:test
 /oss:test --flow checkout
 ```
+
+## Step 9: Update Status Line (Completion)
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow test complete '{}'
+```

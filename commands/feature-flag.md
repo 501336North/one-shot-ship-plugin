@@ -119,3 +119,11 @@ The prompt handles:
 /oss:feature-flag rollout new-checkout --percent 10
 /oss:feature-flag disable new-checkout
 ```
+
+## Step 7: Update Status Line (Completion)
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow feature-flag complete '{}'
+```

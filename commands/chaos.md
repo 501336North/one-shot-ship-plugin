@@ -122,3 +122,11 @@ The prompt handles:
 /oss:chaos --experiment network-partition
 /oss:chaos --target api-service --duration 5m
 ```
+
+## Step 7: Update Status Line (Completion)
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow chaos complete '{}'
+```

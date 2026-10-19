@@ -119,3 +119,11 @@ The prompt handles:
 /oss:license --output NOTICE.md
 /oss:license --policy strict
 ```
+
+## Step 7: Update Status Line (Completion)
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow license complete '{}'
+```

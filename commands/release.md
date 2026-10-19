@@ -152,3 +152,11 @@ Run the commands shown above to complete the release manually.
 /oss:release --version patch
 /oss:release --version minor
 ```
+
+## Step 7: Update Status Line (Completion)
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow release complete '{}'
+```

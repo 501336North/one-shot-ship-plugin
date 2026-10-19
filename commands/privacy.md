@@ -119,3 +119,11 @@ The prompt handles:
 /oss:privacy --regulation GDPR
 /oss:privacy --deep
 ```
+
+## Step 7: Update Status Line (Completion)
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow privacy complete '{}'
+```

@@ -150,3 +150,11 @@ Run the commands shown above to complete the deployment manually.
 /oss:deploy
 /oss:deploy --canary 10%
 ```
+
+## Step 7: Update Status Line (Completion)
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow deploy complete '{}'
+```

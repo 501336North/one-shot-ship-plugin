@@ -111,3 +111,11 @@ The prompt handles:
 /oss:docs "user-authentication"
 /oss:docs "payment-integration"
 ```
+
+## Step 7: Update Status Line (Completion)
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow docs complete '{}'
+```

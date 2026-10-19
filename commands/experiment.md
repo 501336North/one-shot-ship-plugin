@@ -118,3 +118,11 @@ The prompt handles:
 /oss:experiment analyze checkout-flow
 /oss:experiment report checkout-flow
 ```
+
+## Step 7: Update Status Line (Completion)
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow experiment complete '{}'
+```

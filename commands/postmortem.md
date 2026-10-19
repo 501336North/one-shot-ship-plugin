@@ -120,3 +120,11 @@ The prompt handles:
 /oss:postmortem --incident INC-2024-001
 /oss:postmortem --template google-sre
 ```
+
+## Step 7: Update Status Line (Completion)
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow postmortem complete '{}'
+```
