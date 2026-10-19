@@ -19,7 +19,7 @@
 
 import { getCachedOrFetch } from '../api/workflow-config.js';
 import { readApiCredentials, type ApiCredentials } from '../api/api-credentials.js';
-import { isSafeChainName } from '../utils/safe-chain-name.js';
+import { isSafeChainName, isSafeTeamCommandName } from '../utils/safe-chain-name.js';
 
 export { readApiCredentials, type ApiCredentials };
 
@@ -38,6 +38,10 @@ export const MAX_CHAIN_COMMANDS = 10;
 
 /** A chains_to condition is a plain identifier (T1: no CR/LF, delimiters or parens) */
 const SAFE_CONDITION = /^[a-z0-9_-]{1,64}$/;
+
+/** The only shape a printed CHAIN line can take (both name rules, G1) */
+export const CHAIN_LINE_PATTERN =
+  /^CHAIN: \/oss:([a-z][a-z0-9-]{0,40}|oss-custom [a-z0-9-]{1,128}) \((always|condition: [a-z0-9_-]{1,64})\)$/;
 
 /** Strip control characters and truncate so a rejected value cannot shape stderr */
 function safeForLog(value: string): string {
@@ -83,7 +87,7 @@ export async function executeChainForWorkflow(
       const cmdName = isTeam ? step.command.substring(5) : step.command;
 
       // T1: config values are untrusted; never copy a non-slug into a CHAIN line
-      if (!isSafeChainName(cmdName) || (step.condition !== undefined && !SAFE_CONDITION.test(step.condition))) {
+      if (!(isTeam ? isSafeTeamCommandName(cmdName) : isSafeChainName(cmdName)) || (step.condition !== undefined && !SAFE_CONDITION.test(step.condition))) {
         console.error(`chain-trigger: skipping invalid chains_to step "${safeForLog(step.command)}"`);
         skipped++;
         continue;
