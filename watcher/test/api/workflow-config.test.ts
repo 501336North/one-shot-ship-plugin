@@ -10,6 +10,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as net from 'net';
+import * as https from 'https';
+import { execFileSync } from 'child_process';
 import {
   fetchWorkflowConfig,
   WORKFLOW_FETCH_TIMEOUT_MS,
@@ -322,6 +324,80 @@ describe('WorkflowConfigAPI', () => {
 
       expect(mockFetch).not.toHaveBeenCalled();
       expect(fallback).toEqual(DEFAULT_WORKFLOW_CONFIGS[name] || {});
+    });
+  });
+
+  /**
+   * @behavior The Bearer API key is never replayed to wherever the API redirects
+   * @business-rule fetchWorkflowConfig refuses redirects (G5): a 302 rejects and the target gets no request
+   */
+  describe('API that redirects', () => {
+    const servers: https.Server[] = [];
+    let tlsDir = '';
+    let savedTlsReject: string | undefined;
+
+    afterEach(async () => {
+      for (const s of servers) {
+        s.closeAllConnections();
+        await new Promise<void>((resolve) => s.close(() => resolve()));
+      }
+      servers.length = 0;
+      tlsDir = ''; // removed with the other test dirs
+      if (savedTlsReject !== undefined) process.env.NODE_TLS_REJECT_UNAUTHORIZED = savedTlsReject;
+      else delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    });
+
+    function tlsOptions(): { key: Buffer; cert: Buffer } {
+      if (!tlsDir) {
+        tlsDir = createTestDir();
+        execFileSync('openssl', [
+          'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+          '-keyout', path.join(tlsDir, 'key.pem'), '-out', path.join(tlsDir, 'cert.pem'),
+          '-days', '1', '-subj', '/CN=localhost',
+        ], { stdio: 'ignore' });
+      }
+      return {
+        key: fs.readFileSync(path.join(tlsDir, 'key.pem')),
+        cert: fs.readFileSync(path.join(tlsDir, 'cert.pem')),
+      };
+    }
+
+    async function listen(handler: https.RequestListener): Promise<number> {
+      const s = https.createServer(tlsOptions(), handler);
+      servers.push(s);
+      await new Promise<void>((resolve) => s.listen(0, '127.0.0.1', () => resolve()));
+      const address = s.address();
+      if (address === null || typeof address === 'string') throw new Error('no port');
+      return address.port;
+    }
+
+    it('rejects a 302 and sends nothing to the redirect target', async () => {
+      const targetRequests: Array<string | undefined> = [];
+      const targetPort = await listen((req, res) => {
+        targetRequests.push(req.headers.authorization);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ encrypted: 'e', iv: 'i', authTag: 'a' }));
+      });
+      let apiRequests = 0;
+      const apiPort = await listen((_req, res) => {
+        apiRequests++;
+        res.writeHead(302, { Location: `https://127.0.0.1:${targetPort}/api/v1/workflows/build` });
+        res.end();
+      });
+      const configDir = createTestDir();
+      fs.writeFileSync(
+        path.join(configDir, 'config.json'),
+        JSON.stringify({ apiKey: 'ak_secret_key', apiUrl: `https://127.0.0.1:${apiPort}` })
+      );
+      process.env.OSS_CONFIG_DIR = configDir;
+      savedTlsReject = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; // self-signed local stand-ins
+      global.fetch = originalFetch;
+
+      await expect(fetchWorkflowConfig('build', 2000)).rejects.toThrow();
+
+      expect(apiRequests).toBe(1);
+      expect(targetRequests).toEqual([]);
     });
   });
 
