@@ -302,7 +302,9 @@ async function executeChainForWorkflow(workflowName, _credentials) {
       }
       const isTeam = step.command.startsWith("team:");
       const cmdName = isTeam ? step.command.substring(5) : step.command;
-      if (!(isTeam ? isSafeTeamCommandName(cmdName) : isSafeChainName(cmdName)) || step.condition !== void 0 && !SAFE_CONDITION.test(step.condition)) {
+      const nameIsSafe = isTeam ? isSafeTeamCommandName(cmdName) : isSafeChainName(cmdName);
+      const conditionIsSafe = step.condition === void 0 || SAFE_CONDITION.test(step.condition);
+      if (!nameIsSafe || !conditionIsSafe) {
         skip(`chain-trigger: skipping invalid chains_to step "${safeForLog(step.command)}"`);
         continue;
       }

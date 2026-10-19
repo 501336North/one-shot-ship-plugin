@@ -119,7 +119,9 @@ export async function executeChainForWorkflow(
       const cmdName = isTeam ? step.command.substring(5) : step.command;
 
       // T1: config values are untrusted; never copy a non-slug into a CHAIN line
-      if (!(isTeam ? isSafeTeamCommandName(cmdName) : isSafeChainName(cmdName)) || (step.condition !== undefined && !SAFE_CONDITION.test(step.condition))) {
+      const nameIsSafe = isTeam ? isSafeTeamCommandName(cmdName) : isSafeChainName(cmdName);
+      const conditionIsSafe = step.condition === undefined || SAFE_CONDITION.test(step.condition);
+      if (!nameIsSafe || !conditionIsSafe) {
         skip(`chain-trigger: skipping invalid chains_to step "${safeForLog(step.command)}"`);
         continue;
       }
