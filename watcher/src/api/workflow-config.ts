@@ -15,8 +15,9 @@ import {
   EncryptedWorkflowConfig,
   DEFAULT_WORKFLOW_CONFIGS,
 } from '../engine/types.js';
+import { getConfigDir, readApiCredentials } from './api-credentials.js';
+import { isSafeChainName } from '../utils/safe-chain-name.js';
 
-const DEFAULT_API_URL = 'https://one-shot-ship-api.onrender.com';
 const PBKDF2_ITERATIONS = 100000;
 const KEY_LENGTH = 32;
 
@@ -34,29 +35,6 @@ interface StoredCredentials {
  * In-memory cache for workflow configs (session-scoped)
  */
 const configCache: Map<string, WorkflowConfig> = new Map();
-
-/**
- * Get the config directory path
- */
-function getConfigDir(): string {
-  return process.env.OSS_CONFIG_DIR || path.join(os.homedir(), '.oss');
-}
-
-/**
- * Read the config.json file
- */
-function readConfig(): { apiKey?: string; apiUrl?: string } {
-  const configPath = path.join(getConfigDir(), 'config.json');
-  if (!fs.existsSync(configPath)) {
-    return {};
-  }
-  try {
-    const content = fs.readFileSync(configPath, 'utf8');
-    return JSON.parse(content);
-  } catch {
-    return {};
-  }
-}
 
 /**
  * Get machine-specific key for decrypting stored credentials
@@ -118,19 +96,21 @@ function userIdToLicenseId(userId: string): string {
  * Fetch encrypted workflow config from API
  */
 export async function fetchWorkflowConfig(workflowName: string): Promise<EncryptedWorkflowConfig> {
-  const config = readConfig();
-  const apiKey = config.apiKey;
-  if (!apiKey) {
-    throw new Error('No API key configured');
+  if (!isSafeChainName(workflowName)) {
+    throw new Error('Invalid workflow name');
   }
 
-  const apiUrl = config.apiUrl || DEFAULT_API_URL;
-  const endpoint = `${apiUrl}/api/v1/workflows/${workflowName}`;
+  const credentials = readApiCredentials();
+  if (!credentials) {
+    throw new Error('No API key configured or apiUrl is not https');
+  }
+
+  const endpoint = `${credentials.apiUrl}/api/v1/workflows/${encodeURIComponent(workflowName)}`;
 
   const response = await fetch(endpoint, {
     method: 'GET',
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${credentials.apiKey}`,
       'Content-Type': 'application/json',
     },
   });
@@ -181,8 +161,7 @@ export async function getCachedOrFetch(workflowName: string): Promise<WorkflowCo
   }
 
   // Check if we have credentials
-  const config = readConfig();
-  if (!config.apiKey) {
+  if (!readApiCredentials()) {
     // No credentials, cache and return default
     const defaultConfig = DEFAULT_WORKFLOW_CONFIGS[workflowName] || {};
     configCache.set(workflowName, defaultConfig);

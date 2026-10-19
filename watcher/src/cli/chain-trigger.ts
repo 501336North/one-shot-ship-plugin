@@ -17,18 +17,11 @@
  *   1 - Failure
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
 import { getCachedOrFetch } from '../api/workflow-config.js';
+import { readApiCredentials, type ApiCredentials } from '../api/api-credentials.js';
+import { isSafeChainName } from '../utils/safe-chain-name.js';
 
-/**
- * API credentials structure
- */
-export interface ApiCredentials {
-  apiKey: string;
-  apiUrl: string;
-}
+export { readApiCredentials, type ApiCredentials };
 
 /**
  * Result of outputting chain instructions
@@ -40,70 +33,16 @@ export interface ChainExecutionResult {
   error?: string;
 }
 
-const DEFAULT_API_URL = 'https://one-shot-ship-api.onrender.com';
-
 /** Maximum number of chain commands to output (H-4: prevent runaway chains) */
 export const MAX_CHAIN_COMMANDS = 10;
 
 /** A chains_to condition is a plain identifier (T1: no CR/LF, delimiters or parens) */
 const SAFE_CONDITION = /^[a-z0-9_-]{1,64}$/;
 
-/**
- * True when a chains_to command name (team: prefix already stripped) is a plain slug.
- *
- * TODO(T1b): replace with isValidWorkflowName from watcher/src/utils/workflow-name.ts
- * once 2.0.87 lands - one helper, no second copy (IRON LAW #1b).
- */
-function isSafeChainName(name: string): boolean {
-  return /^[a-z][a-z0-9-]{0,40}$/.test(name);
-}
-
 /** Strip control characters and truncate so a rejected value cannot shape stderr */
 function safeForLog(value: string): string {
   // eslint-disable-next-line no-control-regex
   return value.replace(/[\u0000-\u001f\u007f]/g, '?').slice(0, 60);
-}
-
-/**
- * Read API credentials from config file
- *
- * @param configDir - The config directory (defaults to ~/.oss)
- * @returns Credentials or null if not configured
- */
-export function readApiCredentials(configDir?: string): ApiCredentials | null {
-  const dir = configDir || path.join(os.homedir(), '.oss');
-  const configPath = path.join(dir, 'config.json');
-
-  if (!fs.existsSync(configPath)) {
-    return null;
-  }
-
-  try {
-    const content = fs.readFileSync(configPath, 'utf8');
-    const config = JSON.parse(content) as { apiKey?: string; apiUrl?: string };
-
-    if (!config.apiKey) {
-      return null;
-    }
-
-    // M-2: Validate API URL protocol - reject non-HTTPS to prevent MitM
-    const apiUrl = config.apiUrl || DEFAULT_API_URL;
-    try {
-      const parsed = new URL(apiUrl);
-      if (parsed.protocol !== 'https:') {
-        return null;
-      }
-    } catch {
-      return null;
-    }
-
-    return {
-      apiKey: config.apiKey,
-      apiUrl,
-    };
-  } catch {
-    return null;
-  }
 }
 
 /**
