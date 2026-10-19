@@ -140,7 +140,7 @@ On success only. If the command failed (the prompt sent `failed`), do not send `
 
 If permission is denied for `npm publish` or release commands, your release is prepared:
 
-```
+```text
 ⚠️ Permission denied for npm publish.
 
 Release package prepared. To publish manually:

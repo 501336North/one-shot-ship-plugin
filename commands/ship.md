@@ -269,8 +269,8 @@ After `oss-notify.sh --workflow ship complete` runs, its stdout may contain a `-
 - Each chain command runs with full logging and status updates
 - If a blocking chain command fails, stop the chain and report the failure
 - If no `---CHAIN_COMMANDS---` block appears, skip this step
-- If a line's condition can be checked from this session and is false (for example `has_ui_work`: no UI files changed), skip it and log why; if it is true or you cannot tell, run it. Log a skip: `~/.oss/hooks/oss-log.sh write ship "[CHAIN] skipped /oss:<command>: <reason>"`
-- Log each: `~/.oss/hooks/oss-log.sh write ship "[CHAIN] executing /oss:<command>"`
+- If a line's condition can be checked from this session and is false (for example `has_ui_work`: no UI files changed), skip it and log why; if it is true or you cannot tell, run it. Log a skip with this fixed line (no command name or reason in it): `~/.oss/hooks/oss-log.sh write ship "[CHAIN] skipped a chain command (condition false)"`
+- Log each with this fixed line: `~/.oss/hooks/oss-log.sh write ship "[CHAIN] executing a chain command"`
 
 ## Error Handling
 
@@ -333,9 +333,8 @@ If permission is denied for `git push` or PR creation, your work is preserved:
 ```
 ⚠️ Permission denied for git push.
 
-PR prepared but not pushed. To complete manually:
-  git push -u origin {branch-name}
-  gh pr create --title "{title}" --body "{body}"
+PR prepared but not pushed. To complete manually, push this branch
+to origin and open a pull request for it against main.
 
 Files staged and committed:
   - [list of committed files]

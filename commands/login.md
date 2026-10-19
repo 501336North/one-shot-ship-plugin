@@ -186,7 +186,7 @@ This script is the **only** writer of the IRON LAWS block. Do not write, copy or
 
 ### 4.2: Fetch the CLAUDE.md template
 
-```
+```text
 GET https://one-shot-ship-api.onrender.com/api/v1/prompts/claude-md
 Headers:
   Authorization: Bearer {apiKey}

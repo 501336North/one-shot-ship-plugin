@@ -12,7 +12,7 @@ estimated_tokens: 2000-5000
 **Workflow Position:** Can be inserted anywhere in the workflow chain (ideate → plan → **CUSTOM** → build → ship)
 
 **Usage:**
-```bash
+```text
 /oss:custom <command-name>
 ```
 
@@ -157,7 +157,7 @@ Upgrade at: https://www.oneshotship.com/pricing
 ```
 
 ### If API returns 404
-```
+```text
 Custom command '{COMMAND_NAME}' not found.
 Check your team's custom commands at: https://www.oneshotship.com/dashboard/commands
 ```

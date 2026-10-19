@@ -142,7 +142,7 @@ Subscription expired. Upgrade at: https://www.oneshotship.com/pricing
 ```
 
 ### If any phase fails
-```
+```text
 Auto pipeline stopped at {phase}. Fix the issue and resume with:
   /oss:{phase}
 ```

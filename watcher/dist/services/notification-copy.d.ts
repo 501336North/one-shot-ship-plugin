@@ -96,7 +96,8 @@ export declare class NotificationCopyService {
      */
     getAllMessages(): string[];
     /**
-     * Interpolate {placeholder} values in a template string
+     * Interpolate {placeholder} values in a template string; when a field is missing, the
+     * static fallback text is returned instead (a raw {placeholder} never reaches a notification).
      */
     private interpolate;
 }

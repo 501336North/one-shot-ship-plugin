@@ -11,7 +11,7 @@ description: Design data schemas and relationships
 **Workflow Position:** ideate -> requirements -> api-design -> **DATA-MODEL** -> plan
 
 **Usage:**
-```bash
+```text
 /oss:data-model [OPTIONS] <DESCRIPTION>
 ```
 

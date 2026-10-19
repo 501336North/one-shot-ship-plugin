@@ -169,7 +169,7 @@ export class NotificationCopyService {
             // Subtitle shows branch and uncommitted count
             subtitle = `[${context.branch || 'unknown'}] • ${uncommittedText}`;
         }
-        message = this.interpolate(message, context);
+        message = this.interpolate(message, context, 'Session event');
         return {
             title: template.title,
             message,
@@ -194,8 +194,8 @@ export class NotificationCopyService {
         if (event === 'quality_passed' && context.checks) {
             message = message.replace('{checksCount}', String(context.checks.length));
         }
-        title = this.interpolate(title, context);
-        message = this.interpolate(message, context);
+        title = this.interpolate(title, context, 'OSS');
+        message = this.interpolate(message, context, 'Workflow event');
         // Generate subtitle showing chain state
         const subtitle = this.generateChainSubtitle(command, event, context);
         return {
@@ -335,7 +335,7 @@ export class NotificationCopyService {
         if (!template) {
             return { title: 'OSS Issue', message: 'Issue detected' };
         }
-        const message = this.interpolate(template.message, context);
+        const message = this.interpolate(template.message, context, 'Issue detected');
         return {
             title: template.title,
             message,
@@ -384,16 +384,20 @@ export class NotificationCopyService {
         return messages;
     }
     /**
-     * Interpolate {placeholder} values in a template string
+     * Interpolate {placeholder} values in a template string; when a field is missing, the
+     * static fallback text is returned instead (a raw {placeholder} never reaches a notification).
      */
-    interpolate(template, context) {
-        return template.replace(/\{(\w+)\}/g, (match, key) => {
+    interpolate(template, context, fallback) {
+        let missing = false;
+        const text = template.replace(/\{(\w+)\}/g, (match, key) => {
             const value = context[key];
             if (value === undefined || value === null) {
-                return match; // Keep placeholder if no value
+                missing = true;
+                return match;
             }
             return String(value);
         });
+        return missing ? fallback : text;
     }
 }
 //# sourceMappingURL=notification-copy.js.map

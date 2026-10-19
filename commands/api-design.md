@@ -11,7 +11,7 @@ description: Design API contracts before implementation (Outside-In starting poi
 **Workflow Position:** ideate -> requirements -> **API-DESIGN** -> data-model -> plan
 
 **Usage:**
-```bash
+```text
 /oss:api-design [OPTIONS] <DESCRIPTION>
 ```
 

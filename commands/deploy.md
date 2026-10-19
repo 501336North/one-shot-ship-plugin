@@ -143,9 +143,9 @@ If permission is denied for `kubectl` or deployment commands, your manifests are
 ```
 ⚠️ Permission denied for kubectl apply.
 
-Deployment manifests prepared. To deploy manually:
-  kubectl apply -f {manifest-path}
-  kubectl rollout status deployment/{name}
+Deployment manifests prepared. To deploy manually, apply the
+manifests listed below with kubectl, then watch the deployment's
+rollout status until it completes.
 
 Files created:
   - deployment.yaml

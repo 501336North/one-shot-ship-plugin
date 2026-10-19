@@ -72,7 +72,7 @@ Register at https://www.oneshotship.com
 
 Call the workflows API endpoint to get the list:
 
-```
+```text
 URL: https://one-shot-ship-api.onrender.com/api/v1/workflows
 Method: GET
 Headers:
@@ -95,7 +95,7 @@ Response:
 
 ## Step 3: Display Workflow List
 
-```
+```text
 ==============================================
      WORKFLOW CONFIGURATION
 ==============================================
@@ -117,7 +117,7 @@ Dashboard: https://www.oneshotship.com/dashboard
 
 If a workflow name is provided, fetch and display its configuration:
 
-```
+```text
 URL: https://one-shot-ship-api.onrender.com/api/v1/workflows/{workflowName}
 Method: GET
 Headers:

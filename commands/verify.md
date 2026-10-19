@@ -66,7 +66,7 @@ Validate built features through conversational testing with persistent state.
 
 If `--help` or `-h` is passed, display usage information and exit:
 
-```
+```text
 /oss:verify - User Acceptance Testing
 
 USAGE:

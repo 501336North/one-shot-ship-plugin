@@ -11,7 +11,7 @@ description: Create Architecture Decision Records
 **Workflow Position:** any time - **ADR** (Architecture Decision Records)
 
 **Usage:**
-```bash
+```text
 /oss:adr [OPTIONS] <DECISION>
 ```
 

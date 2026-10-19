@@ -11,7 +11,7 @@ description: Extract user stories and acceptance criteria from ideas
 **Workflow Position:** ideate -> **REQUIREMENTS** -> api-design -> plan
 
 **Usage:**
-```bash
+```text
 /oss:requirements [OPTIONS] <IDEA>
 ```
 

@@ -13,6 +13,8 @@
 # emitter (same code and severity lists). Phase B moves the served copies onto this script.
 set -u
 
+case "${HOME:-}" in /*) ;; *) echo "oss-value: HOME is not an absolute path; refusing" >&2; exit 1 ;; esac
+
 _OV_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ ! -f "$_OV_HERE/oss-safe-path.sh" ]]; then
     echo "oss-value: oss-safe-path.sh missing beside $_OV_HERE/oss-value.sh; refusing" >&2

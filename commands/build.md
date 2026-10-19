@@ -85,7 +85,7 @@ For EVERY task, you MUST follow this exact sequence with logging:
 5. **Log RED complete:**
    ```bash
    ~/.oss/hooks/oss-log.sh phase build RED complete
-   ~/.oss/hooks/oss-log.sh test build FAIL "{test_file}: {failure_message}"
+   ~/.oss/hooks/oss-log.sh test build FAIL
    ```
 
 ### GREEN Phase
@@ -99,7 +99,7 @@ For EVERY task, you MUST follow this exact sequence with logging:
 5. **Log GREEN complete:**
    ```bash
    ~/.oss/hooks/oss-log.sh phase build GREEN complete
-   ~/.oss/hooks/oss-log.sh test build PASS "{test_file}"
+   ~/.oss/hooks/oss-log.sh test build PASS
    ```
 
 ### REFACTOR Phase
@@ -116,13 +116,13 @@ For EVERY task, you MUST follow this exact sequence with logging:
    ```
 
 ### Agent Delegation Logging
-When delegating to specialized agents (Task tool), you MUST log:
+When delegating to specialized agents (Task tool), you MUST log (fixed text only: never put an agent name, task or result into the command):
 ```bash
 # Before spawning agent
-~/.oss/hooks/oss-log.sh agent build {agent_type} "starting: {task_description}"
+~/.oss/hooks/oss-log.sh agent build delegate "starting: delegated task"
 
 # After agent completes
-~/.oss/hooks/oss-log.sh agent build {agent_type} "completed: {result_summary}"
+~/.oss/hooks/oss-log.sh agent build delegate "completed: delegated task"
 ```
 
 **CRITICAL**: Do NOT batch multiple TDD cycles into a single agent delegation. Each RED-GREEN-REFACTOR cycle must be logged individually.
@@ -215,13 +215,13 @@ For EACH task in the plan, execute the TDD cycle with full logging:
 │ 2. Write the failing test                                       │
 │ 3. Run test - MUST FAIL                                        │
 │ 4. LOG: oss-log.sh phase build RED complete                    │
-│ 5. LOG: oss-log.sh test build FAIL "test.ts: error msg"        │
+│ 5. LOG: oss-log.sh test build FAIL                             │
 ├─────────────────────────────────────────────────────────────────┤
 │ 6. LOG: oss-log.sh phase build GREEN start                     │
 │ 7. Write MINIMAL code to pass                                   │
 │ 8. Run test - MUST PASS                                        │
 │ 9. LOG: oss-log.sh phase build GREEN complete                  │
-│ 10. LOG: oss-log.sh test build PASS "test.ts"                  │
+│ 10. LOG: oss-log.sh test build PASS                            │
 ├─────────────────────────────────────────────────────────────────┤
 │ 11. LOG: oss-log.sh phase build REFACTOR start                 │
 │ 12. Clean up (if needed)                                        │
@@ -277,8 +277,8 @@ After `oss-notify.sh --workflow build complete` runs, its stdout may contain a `
 - Each chain command runs with full logging and status updates
 - If a blocking chain command fails, stop the chain and report the failure
 - If no `---CHAIN_COMMANDS---` block appears, skip this step
-- If a line's condition can be checked from this session and is false (for example `has_ui_work`: no UI files changed), skip it and log why; if it is true or you cannot tell, run it. Log a skip: `~/.oss/hooks/oss-log.sh write build "[CHAIN] skipped /oss:<command>: <reason>"`
-- Log each: `~/.oss/hooks/oss-log.sh write build "[CHAIN] executing /oss:<command>"`
+- If a line's condition can be checked from this session and is false (for example `has_ui_work`: no UI files changed), skip it and log why; if it is true or you cannot tell, run it. Log a skip with this fixed line (no command name or reason in it): `~/.oss/hooks/oss-log.sh write build "[CHAIN] skipped a chain command (condition false)"`
+- Log each with this fixed line: `~/.oss/hooks/oss-log.sh write build "[CHAIN] executing a chain command"`
 
 ## Error Handling
 

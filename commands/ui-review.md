@@ -122,7 +122,7 @@ The prompt handles:
 
 **Completion (after review completes):**
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow ui-review complete '{"issues": {count}}'
+~/.oss/hooks/oss-notify.sh --workflow ui-review complete '{}'
 ```
 
 ## Example Usage

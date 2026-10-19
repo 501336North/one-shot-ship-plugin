@@ -170,10 +170,7 @@ Determine which prompts to audit based on tier and scope:
 **Single prompt (`--prompt build`):**
 Only audit the prompt matching the given name. Search the manifest for prompts whose name portion (after the `/`) matches.
 
-**Category filter (`--category commands`):**
-```bash
-~/.oss/bin/oss-decrypt --list-prompts --category <cat>
-```
+**Category filter (`--category commands`):** run the full-tier list command above (`~/.oss/bin/oss-decrypt --list-prompts`, no category on the command line) and keep only the entries whose `category` equals the requested one.
 
 Parse the JSON output into a list of prompts to audit. Each entry has `name`, `category`, `hash`, `size`.
 
@@ -195,11 +192,7 @@ Auditing prompt 2/24: commands/ship...
 
 ### Step 5a: Decrypt the Prompt
 
-```bash
-~/.oss/bin/oss-decrypt --type <category> --name <name_part>
-```
-
-Where `<name_part>` is the portion after the `/` in the prompt key (e.g., for `commands/build`, type is `commands` and name is `build`).
+Run `~/.oss/bin/oss-decrypt` with `--type` set to the prompt's category and `--name` set to the portion after the `/` in the prompt key (e.g., for `commands/build`: `~/.oss/bin/oss-decrypt --type commands --name build`). Only run it when the category and the name each match `^[a-z0-9_-]+$`; any other entry is not decrypted and is listed in the report as "skipped: unexpected name".
 
 Capture the decrypted output for analysis. **Do NOT display the decrypted content to the user** — it contains proprietary IP.
 
@@ -398,7 +391,7 @@ oss-decrypt version: {version}
 ```
 
 Tell the user where the report was saved:
-```
+```text
 Report saved to: .oss/trust-report-{date}.md
 ```
 

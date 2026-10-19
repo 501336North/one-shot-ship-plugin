@@ -77,7 +77,7 @@ Execute ad-hoc tasks with TDD guarantees but skip optional workflow steps.
 
 If `--help` or `-h` is passed, display usage information and exit:
 
-```
+```text
 /oss:quick - Execute ad-hoc tasks with TDD guarantees
 
 USAGE:

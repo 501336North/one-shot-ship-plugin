@@ -62,7 +62,7 @@ Create a handoff document for session continuation.
 
 If `--help` or `-h` is passed, display usage information and exit:
 
-```
+```text
 /oss:pause - Save current work state for later resumption
 
 USAGE:
