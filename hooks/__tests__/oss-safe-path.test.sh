@@ -56,6 +56,35 @@ if [[ "$rc" == 0 && -d "/$sysrel/$leaf" ]]; then pass "G3: components owned by t
 else fail "G3: components owned by the project root's owner are accepted" "rc=$rc"; fi
 rmdir "/$sysrel/$leaf" 2>/dev/null
 
+# --- G4: sourced from a non-bash shell (zsh) the guard fails CLOSED -----------------------------
+if command -v zsh >/dev/null 2>&1; then
+    mkdir -p "$T/p4"; ln -s "$T/outside" "$T/p4/.oss"
+    rc=$(HOME="$T/home" zsh -f -c 'source "$1" 2>/dev/null; oss_safe_target "$2" .oss/x.log 2>/dev/null; echo $?' _ "$ROOT/hooks/oss-safe-path.sh" "$T/p4")
+    [[ "$rc" != 0 ]] && pass "G4: under zsh a linked .oss is still refused (fail closed)" || fail "G4: under zsh a linked .oss is still refused (fail closed)" "rc=$rc"
+fi
+
+# --- G5: project == $HOME is the user's own dir: a dotfiles symlink there is accepted (as Node)
+mkdir -p "$T/home/.claude" "$T/dotfiles"; echo '{}' > "$T/dotfiles/settings.local.json"
+ln -s "$T/dotfiles/settings.local.json" "$T/home/.claude/settings.local.json"
+rc=$(guard oss_safe_target "$T/home" .claude/settings.local.json)
+[[ "$rc" == 0 ]] && pass "G5: HOME-launched session keeps a symlinked ~/.claude/settings.local.json" || fail "G5: HOME-launched session keeps a symlinked ~/.claude/settings.local.json" "rc=$rc"
+
+# --- G8: read-only oss-log.sh actions create nothing in the project ---------------------------
+for act in read path list status session-path; do
+    mkdir -p "$T/p8-$act"
+    (cd "$T/p8-$act" && HOME="$T/home" CLAUDE_PROJECT_DIR="$T/p8-$act" "$SH" "$ROOT/hooks/oss-log.sh" "$act" build >/dev/null 2>&1 </dev/null)
+    [[ ! -e "$T/p8-$act/.oss" ]] && pass "G8: oss-log.sh $act creates no .oss" || fail "G8: oss-log.sh $act creates no .oss" "$(cd "$T/p8-$act" && find .oss | tr '\n' ' ')"
+done
+
+# --- G14: archive cleanup survives names with whitespace (no stray rm in the cwd) -------------
+mkdir -p "$T/p14/.oss/logs/archive" "$T/p14/cwd"; echo keep > "$T/p14/cwd/b.log.gz"
+# six newer archives (future mtime, so the age sweep leaves them) + the oldest one with a space
+for i in 1 2 3 4 5 6; do echo x > "$T/p14/.oss/logs/archive/session-$i.log.gz"; touch -t 20300101000$i "$T/p14/.oss/logs/archive/session-$i.log.gz"; done
+echo x > "$T/p14/.oss/logs/archive/session-a b.log.gz"
+(cd "$T/p14/cwd" && HOME="$T/home" CLAUDE_PROJECT_DIR="$T/p14" "$SH" "$ROOT/hooks/oss-log.sh" clean >/dev/null 2>&1 </dev/null)
+if [[ -f "$T/p14/cwd/b.log.gz" && ! -e "$T/p14/.oss/logs/archive/session-a b.log.gz" ]]; then pass "G14: whitespace archive name is deleted itself, nothing else"
+else fail "G14: whitespace archive name is deleted itself, nothing else" "cwd=$(ls "$T/p14/cwd") archive=$(ls "$T/p14/.oss/logs/archive" | tr '\n' '|')"; fi
+
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
 [[ $FAILED -eq 0 ]]
