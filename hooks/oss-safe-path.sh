@@ -29,8 +29,9 @@ _oss_owned_ok() { # <path> <project-real>
 }
 
 oss_safe_mkdir() {
+    [[ -n "${BASH_VERSION:-}" ]] || return 1   # G4: other shells (zsh read -a) would fail open
     local proj="${1:-}" rel="${2:-}" real home cur comp phys
-    _OSS_SAFE_DIR=""
+    _OSS_SAFE_DIR=""; _OSS_SAFE_HOME=""
     [[ -n "$proj" && -n "$rel" && "$rel" != /* ]] || return 1
     [[ "$rel" != *[[:cntrl:]]* ]] || return 1   # a newline would end `read` early: check != write
     real=$(_oss_phys_dir "$proj") || return 1
@@ -38,7 +39,7 @@ oss_safe_mkdir() {
     home=$(_oss_phys_dir "${HOME:-/nonexistent}") || home=""
     if [[ -n "$home" && "$real" == "$home" ]]; then
         mkdir -p -- "$real/$rel" 2>/dev/null || return 1
-        _OSS_SAFE_DIR="$real/$rel"
+        _OSS_SAFE_DIR="$real/$rel"; _OSS_SAFE_HOME=1
         return 0
     fi
     local -a parts=()
@@ -57,12 +58,14 @@ oss_safe_mkdir() {
 }
 
 oss_safe_target() {
+    [[ -n "${BASH_VERSION:-}" ]] || return 1
     local proj="${1:-}" rel="${2:-}" dir base t
     [[ -n "$rel" && "$rel" != */ && "$rel" != *[[:cntrl:]]* ]] || return 1
     base="${rel##*/}"
     if [[ "$base" == "$rel" ]]; then dir="."; else dir="${rel%/*}"; fi
     [[ -n "$base" && "$base" != "." && "$base" != ".." ]] || return 1
     oss_safe_mkdir "$proj" "$dir" || return 1
+    [[ -n "$_OSS_SAFE_HOME" ]] && return 0   # G5: ~/.oss and ~/.claude are the user's own (as Node)
     t="$_OSS_SAFE_DIR/$base"
     [[ -L "$t" ]] && return 1
     [[ -e "$t" ]] || return 0
@@ -72,6 +75,7 @@ oss_safe_target() {
 oss_refuse_unsafe() { echo "oss: refusing unsafe .oss path ${1:-}" >&2; }
 
 oss_valid_workflow_name() {
+    [[ -n "${BASH_VERSION:-}" ]] || return 1
     local re='^[a-z][a-z0-9-]{0,40}$'
     [[ "${1:-}" =~ $re ]]
 }

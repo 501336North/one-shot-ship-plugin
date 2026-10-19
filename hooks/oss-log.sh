@@ -126,7 +126,13 @@ oss_log_guard() {
     oss_refuse_unsafe "$1"
     return 1
 }
-if [[ -n "$_OSS_LOG_PROJECT" ]]; then
+case "${1:-}" in
+    read|path|list|session|tail|session-path|status|archives) _OSS_LOG_READONLY=1 ;;   # G8: create nothing
+    *) _OSS_LOG_READONLY="" ;;
+esac
+if [[ -n "$_OSS_LOG_READONLY" ]]; then
+    :
+elif [[ -n "$_OSS_LOG_PROJECT" ]]; then
     _OSS_LOG_RELS=(.oss/logs/archive/ .oss/logs/current-session/session.log)
     case "${1:-}" in
         init|write|phase|tool|test|error|file|agent|progress|milestone|recovery|timeout|ironlaw|checklist)
@@ -205,7 +211,10 @@ clean_old_archives() {
     # Keep only MAX_ARCHIVE_COUNT most recent archives
     local archive_count=$(ls -1 "$ARCHIVE_DIR"/session-*.log.gz 2>/dev/null | wc -l | tr -d ' ')
     if [[ "$archive_count" -gt "$MAX_ARCHIVE_COUNT" ]]; then
-        ls -1t "$ARCHIVE_DIR"/session-*.log.gz 2>/dev/null | tail -n +$((MAX_ARCHIVE_COUNT + 1)) | xargs rm -f 2>/dev/null || true
+        # one name per line, removed as a whole (G14: xargs split names on whitespace)
+        ls -1t "$ARCHIVE_DIR"/session-*.log.gz 2>/dev/null | tail -n +$((MAX_ARCHIVE_COUNT + 1)) | while IFS= read -r old; do
+            rm -f -- "$old"
+        done || true
     fi
 }
 
