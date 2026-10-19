@@ -1,6 +1,6 @@
 # Progress: oss-writer-nofollow (security hotfix)
 
-## Current Phase: build (ship round 1 fixes complete, ready for the /oss:ship re-gate)
+## Current Phase: shipped (v2.0.87 PR #195 0ea1ce2; test harness PR #196 684a1ec)
 
 ## Tasks
 - [x] N0: provenance sweep of project-.oss writers (completed 2026-10-19). 31 sites classified; see NOTES.md
@@ -35,4 +35,4 @@
 - None. The plugin-highs session (2.0.88) waits for this PR to merge.
 - Merge note: watcher/dist/**/*.d.ts.map changed in many files (line shifts). chain-trigger.js and chain-trigger.cjs were NOT touched.
 
-## Last Updated: 2026-10-19 18:15 +07 by /oss:build H1-H3
+## Last Updated: 2026-10-19 18:40 +07 by /oss:ship (archive)
