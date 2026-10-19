@@ -12,6 +12,8 @@ Plan, design and decisions live in the API repo (branch feat/plugin-value-flags/
 - [x] P4: HOOKS_TO_COPY installs oss-value.sh: RED 8/9 -> GREEN 9/9 (completed 2026-10-20, 4b9dbe5 / 95f012f)
 - [x] P5: wrapper `failed` steps: 26 duplicates removed, oss-custom rewritten; RED 1/31 -> GREEN 31/31 (completed 2026-10-20, 58baa7e / 041161d)
 - [x] P6: plugin.json 2.0.91 (2.0.90 was used by #201) (completed 2026-10-20, 208c17d); ship is the lead's
+- [x] Ship round 1 R1-1..R1-6: RED f49006b -> GREEN cbc86b7 (completed 2026-10-20)
+- [x] R1-7, R1-8: reported, not built (see DECISIONS.md)
 
 ## Deviations from the plan
 - code-simplifier is NOT unserved: /oss:code-simplifier serves agents/code-simplifier, which sends
@@ -24,8 +26,10 @@ Plan, design and decisions live in the API repo (branch feat/plugin-value-flags/
 - None
 
 ## Follow-ups flagged (not in scope)
-- `complete` notify lines with placeholders remain (e.g. verify.md, api-design.md): ADR-5, a later cut.
+- ~~`complete` notify lines with placeholders remain~~: fixed in ship round 1 R1-1 (all 42 now send '{}').
+- Phase B: served prompts hash the git dir alone (~153 sites) and pass an empty CLAUDE_PROJECT_DIR when
+  no .oss is found; A3/A4 must move them onto oss-value.sh (new key: toplevel + git dir) in step.
 - plan.md and context-report.md keep a fixed `failed '{}'` line (no model text; possible duplicate log).
 - hooks/oss-session-start-new.sh and -test.sh have their own stale HOOKS_TO_COPY (not registered).
 
-## Last Updated: 2026-10-20 05:39 +07 by /oss:build (P2-P6 implementer)
+## Last Updated: 2026-10-20 06:08 +07 by /oss:build (ship round 1 implementer)
