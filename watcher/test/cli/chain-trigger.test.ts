@@ -595,14 +595,63 @@ describe('Chain Trigger CLI', () => {
       const invalidSteps = (n: number) =>
         Array.from({ length: n }, (_, i) => ({ command: `bad step ${i}`, always: true }));
 
+      /** D3: the one line that reports steps past the read limit; it counts toward no cap. */
+      const BEYOND_LIMIT_LINE = /^chain-trigger: \d+ steps beyond the 100-step read limit ignored$/;
+
       test('1000 invalid steps produce at most 5 skip lines and one summary line', async () => {
         await runWith(invalidSteps(1000));
 
-        const errLines = errorSpy.mock.calls.map(c => String(c[0]));
+        const allErrLines = errorSpy.mock.calls.map(c => String(c[0]));
+        const errLines = allErrLines.filter(l => !BEYOND_LIMIT_LINE.test(l));
         expect(errLines.length).toBeLessThanOrEqual(6);
         expect(errLines.slice(0, 5).every(l => /skip/i.test(l))).toBe(true);
         expect(errLines[errLines.length - 1]).toMatch(/^chain-trigger: \d+ more invalid steps skipped$/);
         expect(consoleSpy).not.toHaveBeenCalled();
+        // D3: the beyond-limit line is added on top of the skip lines and summary, not instead of them
+        expect(allErrLines.filter(l => BEYOND_LIMIT_LINE.test(l))).toEqual([
+          'chain-trigger: 900 steps beyond the 100-step read limit ignored',
+        ]);
+      });
+
+      /**
+       * USER BEHAVIOR: a team whose config lists more than 100 steps is told how many were not read,
+       * instead of the extra steps disappearing silently.
+       * BUSINESS RULE (D3): steps past MAX_CHAIN_COMMANDS * 10 are ignored and reported in exactly one
+       * printable-ASCII stderr line with their count; the line is not an invalid-step skip.
+       */
+      test('150 steps (100 never + 50 valid) report the 50 ignored steps in one line', async () => {
+        const steps = [
+          ...Array.from({ length: 100 }, () => ({ command: 'adr', condition: 'never' })),
+          ...Array.from({ length: 50 }, (_, i) => ({ command: `team:cmd-${i}`, always: true })),
+        ];
+
+        const result = await runWith(steps);
+
+        const errLines = errorSpy.mock.calls.map(c => String(c[0]));
+        expect(errLines).toEqual(['chain-trigger: 50 steps beyond the 100-step read limit ignored']);
+        expect(errLines[0]).toMatch(/^[\x20-\x7e]*$/);
+        expect(consoleSpy).not.toHaveBeenCalled();
+        expect(result.executed).toBe(0);
+        expect(result.skipped).toBe(0);
+      });
+
+      test('101 steps report exactly 1 ignored step', async () => {
+        const steps = Array.from({ length: 101 }, () => ({ command: 'adr', condition: 'never' }));
+
+        await runWith(steps);
+
+        expect(errorSpy.mock.calls.map(c => String(c[0]))).toEqual([
+          'chain-trigger: 1 steps beyond the 100-step read limit ignored',
+        ]);
+      });
+
+      test('a 100-step config reports no ignored steps', async () => {
+        const steps = Array.from({ length: 100 }, () => ({ command: 'adr', condition: 'never' }));
+
+        await runWith(steps);
+
+        expect(stderrText()).not.toMatch(/beyond the 100-step read limit/);
+        expect(errorSpy).not.toHaveBeenCalled();
       });
 
       test('a few invalid steps log one line each and no summary', async () => {
