@@ -279,6 +279,9 @@ function isChainItemShape(value) {
   return typeof command === "string" && (condition === void 0 || typeof condition === "string");
 }
 async function executeChainForWorkflow(workflowName, _credentials) {
+  if (!Object.hasOwn(DEFAULT_WORKFLOW_CONFIGS, workflowName)) {
+    return { executed: 0, skipped: 0, errors: [] };
+  }
   try {
     const config = await getCachedOrFetch(workflowName);
     const rawSteps = config.chains_to;

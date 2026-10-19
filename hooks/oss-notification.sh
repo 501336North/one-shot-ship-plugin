@@ -65,7 +65,7 @@ case "$STYLE" in
         ;;
     "telegram")
         # Telegram style: Use local notifications only for "Ready" events
-        # AskUserQuestion prompts go to Telegram via PreToolUse hook (oss-ask-telegram.sh)
+        # Telegram style keeps notifications local (no AskUserQuestion relay hook is registered)
         # "Ready" notifications stay local - sending them to Telegram would spam the user
         PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
         WORKFLOW_STATE_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js"

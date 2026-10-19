@@ -112,6 +112,16 @@ The prompt handles:
 - Attribution file generation
 - Risk report creation
 
+## Step 7: Update Status Line (Completion)
+
+On success only. If the command failed (the prompt sent `failed`), do not send `complete`.
+
+**You MUST update the workflow status on completion.**
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow license complete '{}'
+```
+
 ## Example Usage
 
 ```bash

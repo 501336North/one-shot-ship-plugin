@@ -14,7 +14,8 @@ import * as path from 'path';
 describe('Context Gate Removal', () => {
   const pluginRoot = path.resolve(__dirname, '../../../');
   const hooksDir = path.join(pluginRoot, 'hooks');
-  const hooksJsonPath = path.join(pluginRoot, '.claude-plugin/hooks.json');
+  // The root hooks.json is the file plugin.json loads; .claude-plugin/hooks.json never loaded.
+  const hooksJsonPath = path.join(pluginRoot, 'hooks.json');
 
   describe('AC-CONTEXT.1: Context gate file should be removed', () => {
     it('should not have oss-context-gate.sh in hooks directory', () => {
@@ -26,9 +27,12 @@ describe('Context Gate Removal', () => {
       const hooksJson = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf-8'));
       const userPromptSubmitHooks = hooksJson.hooks?.UserPromptSubmit || [];
 
+      // hooks.json has nested structure: [{ hooks: [{ command: "..." }] }]
       const hasContextGate = userPromptSubmitHooks.some(
-        (hook: { command?: string }) =>
-          hook.command?.includes('context-gate')
+        (hookGroup: { hooks?: Array<{ command?: string }> }) =>
+          hookGroup.hooks?.some(
+            (hook: { command?: string }) => hook.command?.includes('context-gate')
+          )
       );
 
       expect(hasContextGate).toBe(false);

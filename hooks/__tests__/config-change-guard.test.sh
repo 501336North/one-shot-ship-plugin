@@ -12,7 +12,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOOKS_JSON="$SCRIPT_DIR/../hooks.json"
+HOOKS_JSON="$SCRIPT_DIR/../../hooks.json"  # the root file plugin.json loads
 GUARD_SCRIPT="$SCRIPT_DIR/../oss-config-change.sh"
 
 # Test tracking

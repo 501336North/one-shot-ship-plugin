@@ -81,6 +81,14 @@ check() {
     if [[ "$before" == "$after" && "$rc" -eq 0 ]]; then pass "$name"
     else fail "$name" "rc=$rc outside-changed=$([[ "$before" == "$after" ]] && echo no || echo YES) diff=[$(diff <(echo "$before") <(echo "$after") | tr '\n' ' ')] out=[$(echo "$out" | tail -3 | tr '\n' ' ')]"; fi
 }
+# check_refused <name> <before-snapshot> <rc> <out>: the state CLI itself (F10) - outside unchanged,
+# the refusal printed, no success line, and a non-zero exit (every hook caller ignores its rc)
+check_refused() {
+    local name="$1" before="$2" rc="$3" out="$4" after
+    after=$(snapshot)
+    if [[ "$before" == "$after" && "$rc" -ne 0 && "$out" == "oss: refusing unsafe .oss path"* && "$out" != *"Supervisor status set"* ]]; then pass "$name"
+    else fail "$name" "rc=$rc outside-changed=$([[ "$before" == "$after" ]] && echo no || echo YES) out=[$(echo "$out" | tail -3 | tr '\n' ' ')]"; fi
+}
 
 # --- link layouts committed by the malicious repo ------------------------------------------------
 l_state()    { mkdir -p .oss && ln -s "$T/outside/victim.json" .oss/workflow-state.json; }
@@ -160,12 +168,12 @@ rm -rf "$T"
 for c in state ossdir; do
     world; evil_repo "p-u$c" "l_$c"; before=$(snapshot)
     out=$(run_in "$P" node "$DIST/cli/update-workflow-state.js" --project-dir "$P" setSupervisor intervening 2>&1); rc=$?
-    check "update-workflow-state.js setSupervisor: committed $c link does not write outside" "$before" "$rc" "$out"
+    check_refused "update-workflow-state.js setSupervisor: committed $c link does not write outside" "$before" "$rc" "$out"
     rm -rf "$T"
 done
 world; clean_repo p-uhard; mkdir -p "$P/.oss"; ln "$T/outside/victim.json" "$P/.oss/workflow-state.json"; before=$(snapshot)
 out=$(run_in "$P" node "$DIST/cli/update-workflow-state.js" --project-dir "$P" setSupervisor intervening 2>&1); rc=$?
-check "update-workflow-state.js setSupervisor: hard-linked state file is not written" "$before" "$rc" "$out"
+check_refused "update-workflow-state.js setSupervisor: hard-linked state file is not written" "$before" "$rc" "$out"
 rm -rf "$T"
 
 # =================================================================================================
