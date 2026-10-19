@@ -246,7 +246,7 @@ This marks the workflow done (status line shows "→ DONE") and prints your team
 ## Command Orchestration
 
 After this command completes, the workflow engine will:
-1. Fetch your team's workflow config from the API (conditions are shown as text and are not evaluated)
+1. Fetch your team's workflow config from the API (conditions are not evaluated in code; you judge the ones you can check, see Execute Chain Commands)
 2. Execute any chained commands (e.g., stage, deploy)
 3. Spawn configured agents for post-ship tasks
 4. Stop at checkpoints for human review (if configured)
@@ -275,6 +275,7 @@ After `oss-notify.sh --workflow ship complete` runs, its stdout may contain a `-
 - If a blocking chain command fails, stop the chain and report the failure
 - If no `---CHAIN_COMMANDS---` block appears, skip this step
 - Log each: `~/.oss/hooks/oss-log.sh write ship "[CHAIN] executing /oss:<command>"`
+- If a line has a condition you can check from this session (for example `has_ui_work`: no UI files changed), skip it and log why; if you cannot tell, run it. Log a skip: `~/.oss/hooks/oss-log.sh write ship "[CHAIN] skipped /oss:<command>: <reason>"`
 
 ## Error Handling
 

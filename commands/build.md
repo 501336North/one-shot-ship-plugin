@@ -251,7 +251,7 @@ For EACH task in the plan, execute the TDD cycle with full logging:
 
 After this command completes, the workflow engine will:
 1. Fetch your team's workflow config from the API
-2. Print the next commands in the chain as `CHAIN:` lines (conditions are shown as text and are not evaluated)
+2. Print the next commands in the chain as `CHAIN:` lines (conditions are not evaluated in code; you judge the ones you can check, see Execute Chain Commands)
 3. Spawn any configured agents (e.g., code-simplifier, ui-review)
 4. Stop at checkpoints for human review (if configured)
 
@@ -261,7 +261,8 @@ Your team's workflow config controls:
 - `agents`: Which agents to spawn (configurable per team)
 - `checkpoint`: Whether to pause for human review (human/auto)
 
-Conditions like `has_ui_work` are shown as text on the `CHAIN:` line; they are not evaluated.
+Conditions like `has_ui_work` are not evaluated in code: you skip a line whose condition you can check
+from this session and is false, and run it if you cannot tell (see Execute Chain Commands).
 
 To customize your workflow, visit the dashboard at https://www.oneshotship.com/dashboard/workflows
 
@@ -282,6 +283,7 @@ After `oss-notify.sh --workflow build complete` runs, its stdout may contain a `
 - If a blocking chain command fails, stop the chain and report the failure
 - If no `---CHAIN_COMMANDS---` block appears, skip this step
 - Log each: `~/.oss/hooks/oss-log.sh write build "[CHAIN] executing /oss:<command>"`
+- If a line has a condition you can check from this session (for example `has_ui_work`: no UI files changed), skip it and log why; if you cannot tell, run it. Log a skip: `~/.oss/hooks/oss-log.sh write build "[CHAIN] skipped /oss:<command>: <reason>"`
 
 ## Error Handling
 
