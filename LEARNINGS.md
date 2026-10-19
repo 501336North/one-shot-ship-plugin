@@ -1,5 +1,17 @@
 # Learnings
 
+## 2026-10-19 | Security | watcher
+- **Context:** plugin-highs-gate (build, from the post-merge ship gate on #193)
+- **Insight:** Fixing a dead path can make an old flaw reachable. #193 only made ship send `complete`, but that switched on chain-trigger's output for ship, and chain-trigger copied team-config `command`/`condition` straight into `CHAIN:` lines that the model runs without asking. A newline in either field forged extra lines or free text outside the block, and the 10-line cap counted config entries, not printed lines. When a change wires up a previously unreachable consumer, gate the data it now consumes: validate every value that reaches an auto-execute channel against a strict shape, and assert in tests that every printed line matches that shape (watcher/test/cli/chain-trigger.test.ts).
+
+## 2026-10-19 | Build | watcher
+- **Context:** plugin-highs-gate (build)
+- **Insight:** Hooks run the COMMITTED bundle (watcher/dist/cli/chain-trigger.cjs), not src, and it had lagged src since #169. Every src fix and src test passed while customers ran old code. Guard it with a test that builds src in memory with esbuild using the same options as scripts/bundle-cli.js and `absWorkingDir` pinned (deterministic, ~0.1s), then asserts the committed bundle is byte-identical (watcher/test/hooks/chain-trigger-dist.test.ts).
+
+## 2026-10-19 | Config | watcher
+- **Context:** plugin-highs-gate (build, IRON LAW #1b)
+- **Insight:** Two readers of "the OSS config" disagreed: chain-trigger checked `https:` on ~/.oss/config.json while workflow-config fetched using OSS_CONFIG_DIR's file, so the checked file was not the used file and the Bearer key went over plain http. One reader (watcher/src/api/api-credentials.ts) now serves both, and the https check sits inside the fetch itself. Other API callers still read config their own way (custom-command-executor, startup-optimizer): follow-ups.
+
 ## 2026-10-19 | Workflow | commands
 - **Context:** plugin-highs (build)
 - **Insight:** A wrapper step that says "after X runs, read its output" is a contract with another line of the same file. ship.md's chain step waited for `ship complete`, which nothing in ship.md ever sent, so team `chains_to` for ship and "-> DONE" never fired. Test the wrapper by running the notify lines it documents, in order, against the real oss-notify.sh, and assert the block lands on the event the chain step names (watcher/test/hooks/ship-wrapper-chain.test.ts). Order matters too: `merged` resets workflow state, so `complete` must come after it.
