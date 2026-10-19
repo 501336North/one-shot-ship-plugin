@@ -1,5 +1,13 @@
 # Learnings
 
+## 2026-10-19 | Workflow | commands
+- **Context:** plugin-highs (build)
+- **Insight:** A wrapper step that says "after X runs, read its output" is a contract with another line of the same file. ship.md's chain step waited for `ship complete`, which nothing in ship.md ever sent, so team `chains_to` for ship and "-> DONE" never fired. Test the wrapper by running the notify lines it documents, in order, against the real oss-notify.sh, and assert the block lands on the event the chain step names (watcher/test/hooks/ship-wrapper-chain.test.ts). Order matters too: `merged` resets workflow state, so `complete` must come after it.
+
+## 2026-10-19 | Bash | hooks
+- **Context:** plugin-highs (build)
+- **Insight:** A script nobody calls still ships and still gets fixed in review rounds. The old ship preflight hook (deleted in 2.0.86) failed every full-mode run (grep no-match under pipefail) and every run on /bin/bash 3.2 (`declare -A`); its own dry-run tests passed because dry-run skipped the broken check. When a script has no caller, delete it and guard the absence with a retirement test in hooks/__tests__ rather than repair it.
+
 ## 2026-10-09 | Config | one-shot-ship-plugin
 - **Context:** build (decrypt-download-pin)
 - **Insight:** `releases/latest/download` is shared by EVERY release in the repo. Publishing any release (oss-launch) can silently take "Latest" and 404 another binary's installer for months. Pin each installer to its own tag and keep a guard test (`__tests__/new-user-install.acceptance.test.sh` A3) that fails on `releases/latest/download` in shipped files.
