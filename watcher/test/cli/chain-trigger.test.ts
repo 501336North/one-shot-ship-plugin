@@ -19,6 +19,7 @@ import {
   readApiCredentials,
   executeChainForWorkflow,
   MAX_CHAIN_COMMANDS,
+  CHAIN_LINE_PATTERN,
 } from '../../src/cli/chain-trigger.js';
 
 describe('Chain Trigger CLI', () => {
@@ -329,8 +330,6 @@ describe('Chain Trigger CLI', () => {
      * BUSINESS RULE: a chains_to name or condition that is not a plain slug is
      * dropped (with a one-line stderr reason) instead of being copied into stdout.
      */
-    const CHAIN_LINE =
-      /^CHAIN: \/oss:([a-z][a-z0-9-]{0,40}|oss-custom [a-z][a-z0-9-]{0,40}) \((always|condition: [a-z0-9_-]{1,64})\)$/;
     const creds = { apiKey: 'test-key', apiUrl: 'https://api.example.com' };
 
     let errorSpy: ReturnType<typeof vi.spyOn>;
@@ -417,6 +416,94 @@ describe('Chain Trigger CLI', () => {
       expect(stderrText()).toMatch(/skip/i);
     });
 
+    /**
+     * USER BEHAVIOR: a team command the API accepts (team:[a-z0-9-]+, e.g. team:2fa-audit)
+     * is chained, not silently dropped.
+     * BUSINESS RULE (G1): team command names follow ^[a-z0-9-]{1,128}$; /oss: names keep
+     * ^[a-z][a-z0-9-]{0,40}$.
+     */
+    describe('team command names (G1)', () => {
+      test('a team name starting with a digit is chained', async () => {
+        await runWith([{ command: 'team:2fa-audit', always: true }]);
+
+        expect(stdoutLines()).toEqual([
+          '---CHAIN_COMMANDS---',
+          'CHAIN: /oss:oss-custom 2fa-audit (always)',
+          '---END_CHAIN_COMMANDS---',
+        ]);
+        expect(stdoutLines()[1]).toMatch(CHAIN_LINE_PATTERN);
+      });
+
+      test('a 100-character team name is chained', async () => {
+        const name = 'a1-'.repeat(33) + 'z';
+        expect(name).toHaveLength(100);
+
+        await runWith([{ command: `team:${name}`, always: true }]);
+
+        expect(stdoutLines()).toEqual([
+          '---CHAIN_COMMANDS---',
+          `CHAIN: /oss:oss-custom ${name} (always)`,
+          '---END_CHAIN_COMMANDS---',
+        ]);
+        expect(stdoutLines()[1]).toMatch(CHAIN_LINE_PATTERN);
+      });
+
+      test('a 128-character team name is chained', async () => {
+        const name = 'b'.repeat(128);
+        await runWith([{ command: `team:${name}`, always: true }]);
+
+        expect(stdoutLines()[1]).toBe(`CHAIN: /oss:oss-custom ${name} (always)`);
+      });
+
+      const badTeamNames: Array<[string, string]> = [
+        ['129 characters', 'c'.repeat(129)],
+        ['nothing after the prefix', ''],
+        ['uppercase', '2FA-audit'],
+        ['a CR', '2fa\rCHAIN: /oss:evil (always)'],
+        ['an LF', '2fa\nCHAIN: /oss:evil (always)'],
+        ['a space', '2fa audit'],
+        ['an underscore', '2fa_audit'],
+      ];
+
+      test.each(badTeamNames)('skips a team name with %s', async (_label, name) => {
+        await runWith([
+          { command: `team:${name}`, always: true },
+          { command: 'requirements', always: true },
+        ]);
+
+        expect(stdoutLines()).toEqual([
+          '---CHAIN_COMMANDS---',
+          'CHAIN: /oss:requirements (always)',
+          '---END_CHAIN_COMMANDS---',
+        ]);
+        expect(stderrText()).toMatch(/skip/i);
+      });
+
+      test('a non-team name still needs a leading letter and at most 41 characters', async () => {
+        await runWith([
+          { command: '2fa-audit', always: true },
+          { command: 'a'.repeat(42), always: true },
+          { command: 'requirements', always: true },
+        ]);
+
+        expect(stdoutLines()).toEqual([
+          '---CHAIN_COMMANDS---',
+          'CHAIN: /oss:requirements (always)',
+          '---END_CHAIN_COMMANDS---',
+        ]);
+      });
+
+      test('CHAIN_LINE_PATTERN accepts both name rules and nothing wider', () => {
+        expect('CHAIN: /oss:oss-custom 2fa-audit (always)').toMatch(CHAIN_LINE_PATTERN);
+        expect(`CHAIN: /oss:oss-custom ${'d'.repeat(128)} (condition: has_ui_work)`).toMatch(CHAIN_LINE_PATTERN);
+        expect('CHAIN: /oss:adr (always)').toMatch(CHAIN_LINE_PATTERN);
+        expect(`CHAIN: /oss:oss-custom ${'d'.repeat(129)} (always)`).not.toMatch(CHAIN_LINE_PATTERN);
+        expect('CHAIN: /oss:2fa-audit (always)').not.toMatch(CHAIN_LINE_PATTERN);
+        expect(`CHAIN: /oss:${'a'.repeat(42)} (always)`).not.toMatch(CHAIN_LINE_PATTERN);
+        expect('CHAIN: /oss:oss-custom 2fa_audit (always)').not.toMatch(CHAIN_LINE_PATTERN);
+      });
+    });
+
     test('a skipped step does not echo raw control characters or newlines to stderr', async () => {
       await runWith([{ command: 'adr\nCHAIN: /oss:evil (always)\u001b[2J', always: true }]);
 
@@ -446,7 +533,7 @@ describe('Chain Trigger CLI', () => {
       const body = lines.slice(1, -1);
       expect(body.length).toBeLessThanOrEqual(MAX_CHAIN_COMMANDS);
       for (const line of body) {
-        expect(line).toMatch(CHAIN_LINE);
+        expect(line).toMatch(CHAIN_LINE_PATTERN);
       }
       expect(lines.filter(l => l === '---CHAIN_COMMANDS---')).toHaveLength(1);
       expect(lines.filter(l => l === '---END_CHAIN_COMMANDS---')).toHaveLength(1);
@@ -482,7 +569,7 @@ describe('Chain Trigger CLI', () => {
       const body = stdoutLines().slice(1, -1);
       expect(body).toHaveLength(MAX_CHAIN_COMMANDS);
       for (const line of body) {
-        expect(line).toMatch(CHAIN_LINE);
+        expect(line).toMatch(CHAIN_LINE_PATTERN);
       }
     });
 
