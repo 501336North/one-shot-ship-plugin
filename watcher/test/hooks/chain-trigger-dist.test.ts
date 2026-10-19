@@ -17,11 +17,18 @@ import * as https from 'https';
 import * as os from 'os';
 import * as path from 'path';
 import type { AddressInfo } from 'net';
+import { createRequire } from 'module';
+import { pathToFileURL } from 'url';
 import { buildSync } from 'esbuild';
+import { CHAIN_TRIGGER_BUNDLE_OPTIONS } from '../../scripts/chain-trigger-bundle-options.mjs';
 
 const run = promisify(execFile);
 
 const watcherRoot = path.resolve(__dirname, '../..');
+const repoRoot = path.resolve(watcherRoot, '..');
+const sharedOptionsUrl = pathToFileURL(path.join(watcherRoot, 'scripts', 'chain-trigger-bundle-options.mjs')).href;
+/** The watcher's own esbuild, by file URL, so a child process running in the repo root can load it */
+const esbuildUrl = pathToFileURL(createRequire(path.join(watcherRoot, 'package.json')).resolve('esbuild')).href;
 const committedBundle = path.join(watcherRoot, 'dist', 'cli', 'chain-trigger.cjs');
 
 /** One legitimate step plus one whose command smuggles a newline and a second CHAIN: line. */
@@ -114,22 +121,35 @@ describe('committed chain-trigger bundle carries the src behaviour', () => {
   }, 90000);
 
   it('the committed bundle is byte-identical to a fresh esbuild of src/cli/chain-trigger.ts', () => {
-    // Same options as scripts/bundle-cli.js; absWorkingDir pins the path comments esbuild emits.
-    const fresh = buildSync({
-      entryPoints: [path.join(watcherRoot, 'src', 'cli', 'chain-trigger.ts')],
-      bundle: true,
-      platform: 'node',
-      target: 'node18',
-      format: 'cjs',
-      write: false,
-      outfile: committedBundle,
-      absWorkingDir: watcherRoot,
-      logLevel: 'silent',
-    });
+    // The very options scripts/bundle-cli.js uses (G8: one copy, IRON LAW #1b).
+    const fresh = buildSync({ ...CHAIN_TRIGGER_BUNDLE_OPTIONS, write: false, logLevel: 'silent' });
     const freshText = fresh.outputFiles[0].text;
     expect(
       fs.readFileSync(committedBundle, 'utf8') === freshText,
       'dist/cli/chain-trigger.cjs lags src: run `npm run build:cli-bundle` and commit it',
+    ).toBe(true);
+  });
+
+  /**
+   * @behavior Building the bundle from the repo root (`node watcher/scripts/bundle-cli.js`)
+   *           gives the same bytes as building it from watcher/, so a release built from
+   *           either directory ships the committed bundle unchanged.
+   */
+  it('the shared bundle options give the committed bytes when the build runs from the repo root', () => {
+    const script = [
+      `const { buildSync } = await import(${JSON.stringify(esbuildUrl)});`,
+      `const { CHAIN_TRIGGER_BUNDLE_OPTIONS } = await import(${JSON.stringify(sharedOptionsUrl)});`,
+      "const out = buildSync({ ...CHAIN_TRIGGER_BUNDLE_OPTIONS, write: false, logLevel: 'silent' });",
+      'process.stdout.write(out.outputFiles[0].text);',
+    ].join('\n');
+    const fromRepoRoot = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    expect(
+      fromRepoRoot === fs.readFileSync(committedBundle, 'utf8'),
+      'a build from the repo root differs from dist/cli/chain-trigger.cjs (esbuild path comments follow cwd)',
     ).toBe(true);
   });
 });

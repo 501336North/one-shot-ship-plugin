@@ -14,21 +14,13 @@ import { buildSync } from 'esbuild';
 import { readFileSync, writeFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { CHAIN_TRIGGER_BUNDLE_OPTIONS } from './chain-trigger-bundle-options.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const watcherRoot = resolve(__dirname, '..');
 
-// Bundle chain-trigger.ts into a standalone CJS file
-// We use CJS so the shebang works without ESM module parsing issues
-const result = buildSync({
-  entryPoints: [resolve(watcherRoot, 'src/cli/chain-trigger.ts')],
-  bundle: true,
-  platform: 'node',
-  target: 'node18',
-  format: 'cjs',
-  outfile: resolve(watcherRoot, 'dist/cli/chain-trigger.cjs'),
-  write: true,
-});
+// Bundle chain-trigger.ts into a standalone CJS file (options shared with the dist guard test)
+const result = buildSync({ ...CHAIN_TRIGGER_BUNDLE_OPTIONS, write: true });
 
 if (result.errors.length > 0) {
   console.error('Bundle failed:', result.errors);
