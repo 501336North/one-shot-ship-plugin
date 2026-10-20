@@ -64,34 +64,11 @@ Configure your API key for OSS Dev Workflow access.
    - Run `~/.oss/hooks/oss-value.sh dir` and note the folder it prints. If it prints nothing, show the user its error and stop.
    - Use the Write tool to write the key alone to `key.txt` in that folder. If no key was given, tell the user "Error: --key requires an API key value. Usage: /oss:login --key ak_xxxxx" and stop.
 
-2. **Read, validate and save the key** in ONE Bash call (the read checks the key's shape and deletes `key.txt` at once):
+2. **Read, validate and save the key** in ONE Bash call (it checks the key's shape and deletes `key.txt` at once, checks the key against `/api/v1/subscription/status`, saves it to `~/.oss/config.json` keeping the other settings, and prints the plan):
    ```bash
-   NEW_KEY=$(~/.oss/hooks/oss-value.sh read key)
-   if [ -z "$NEW_KEY" ]; then
-       echo "Error: the key is missing or not a valid API key. Usage: /oss:login --key ak_xxxxx"
-       exit 1
-   fi
-   RESPONSE=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $NEW_KEY" \
-       "https://one-shot-ship-api.onrender.com/api/v1/subscription/status")
-   HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-   BODY=$(echo "$RESPONSE" | head -1)
-
-   if [ "$HTTP_CODE" != "200" ]; then
-       echo "Error: Invalid API key. Get a valid key from https://www.oneshotship.com/dashboard"
-       exit 1
-   fi
-
-   mkdir -p ~/.oss
-   # Read existing config to preserve apiUrl and other settings
-   if [ -f ~/.oss/config.json ]; then
-       EXISTING=$(cat ~/.oss/config.json)
-       UPDATED=$(echo "$EXISTING" | jq --arg key "$NEW_KEY" '.apiKey = $key')
-   else
-       UPDATED=$(jq -n --arg key "$NEW_KEY" '{"apiKey": $key, "apiUrl": "https://one-shot-ship-api.onrender.com"}')
-   fi
-   echo "$UPDATED" > ~/.oss/config.json
-   echo "Plan: $(echo "$BODY" | jq -r '.plan // "unknown"')"
+   ~/.oss/hooks/oss-value.sh login
    ```
+   If it prints an error instead of `Plan: ...`, show the user that error and stop.
 
 3. **Clear cached credentials** so the decrypt CLI picks up the new key:
    ```bash
@@ -141,23 +118,25 @@ Configure your API key for OSS Dev Workflow access.
 
 Get your API key from: https://www.oneshotship.com/dashboard
 
-## Step 2: Configure
+If no key was passed (`/oss:login` alone), ask the user for it.
 
-Enter your API key when prompted, or pass it directly:
+## Step 2: Hand Over and Save the Key
 
-```bash
-/oss:login YOUR_API_KEY
-```
+The key reaches the shell through the value folder, never typed into a command (the same steps as `--key`):
+
+1. Run `~/.oss/hooks/oss-value.sh dir` and note the folder it prints. If it prints nothing, show the user its error and stop.
+2. Use the Write tool to write the key alone to `key.txt` in that folder.
+3. Run this one call. It checks the key's shape and deletes `key.txt` at once, checks the key against `https://one-shot-ship-api.onrender.com/api/v1/subscription/status`, saves it to `~/.oss/config.json` (with `apiUrl` `https://one-shot-ship-api.onrender.com` when the file is new; other settings are kept) and prints the plan:
+   ```bash
+   ~/.oss/hooks/oss-value.sh login
+   ```
+   If it prints an error instead of `Plan: ...`, show the user that error and stop.
 
 > Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
 
 ## Step 3: Verification
 
-The command will:
-1. Create `~/.oss/` directory if needed
-2. Store API key in `~/.oss/config.json` with format: `{"apiKey": "YOUR_KEY", "apiUrl": "https://one-shot-ship-api.onrender.com"}`
-3. Verify key by calling: `curl -H "Authorization: Bearer YOUR_KEY" https://one-shot-ship-api.onrender.com/api/v1/subscription/status`
-4. Display subscription status (trial, active, expired)
+Show the user the plan the call printed (trial, active, expired).
 
 ## Step 4: Sync CLAUDE.md with IRON LAWS (Automatic)
 

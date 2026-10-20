@@ -82,7 +82,7 @@ calls() { cat "$T/calls" 2>/dev/null; }
 # === R4-1: the value lines work from a folder that is in no git repository ===================
 for kind in norepo repo; do
     sandbox "$kind"; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"
-    model_writes key ossk_test_key_123; run_block login.md 'read key)'
+    model_writes key ossk_test_key_123; run_block login.md 'oss-value.sh login'
     [[ "$RC" == 0 && "$(jq -r .apiKey "$H/.oss/config.json" 2>/dev/null)" == ossk_test_key_123 && "$OUT" == *"Plan: pro"* ]] \
         && pass "$kind: /oss:login --key saves the key it read" || fail "$kind: /oss:login --key saves the key it read" "rc=$RC out=$OUT"
 

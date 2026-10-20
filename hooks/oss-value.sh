@@ -20,6 +20,7 @@
 #   oss-value.sh models-set         the plugin's models.js set <type> <prompt> <model> from prompt.txt + model.txt.
 #   oss-value.sh cli <script> <args>  one of the fixed plugin CLI calls (webhook-setup setup [--port N],
 #                                   webhook-toggle on, update-workflow-state init) from the plugin root.
+#   oss-value.sh login              key.txt checked against the API and saved to ~/.oss/config.json.
 # Each value hand-off is ONE call spelled ~/.oss/hooks/oss-value.sh <verb> (the allowed prefix): a
 # $(...) && chain asks for approval even when every part is allowed (ship round 5, R5-1).
 #
@@ -37,7 +38,7 @@ if [[ ! -f "$_OV_HERE/oss-safe-path.sh" ]]; then
 fi
 source "$_OV_HERE/oss-safe-path.sh"
 
-_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args>" >&2; exit 2; }
+_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args> | login" >&2; exit 2; }
 
 _OV_RUN="$HOME/.oss/run"
 
@@ -105,7 +106,7 @@ _ov_read_value() {
 # <file> <regex>: the checked file, read whole, deleted at once (valid or not: a key never
 # lingers), then held to <regex> -> _OV_VAL. A refused open leaves the path alone.
 _ov_take() {
-    _OV_VAL=""; _ov_open "$1" || { exec 3<&- 2>/dev/null; return 1; }
+    _OV_VAL=""; _ov_open "$1" || { { exec 3<&-; } 2>/dev/null; return 1; }   # braces: a bare exec 2>/dev/null would silence the caller
     local v; v=$(cat <&3); exec 3<&-; rm -f "$_OV_DIR/$1"
     [[ "$v" =~ $2 ]] && _OV_VAL=$v
 }
@@ -166,6 +167,20 @@ _ov_cmd_cli() {
     esac && _ov_root && test -f "$_OV_ROOT/watcher/dist/cli/$1.js" \
     || { echo "oss-value: cli: refused (not one of the fixed plugin CLI calls, or no plugin root)" >&2; return 1; }
     exec node "$_OV_ROOT/watcher/dist/cli/$1.js" "${@:2}"
+}
+
+# login: key.txt (the key rule) checked against the API, then saved to ~/.oss/config.json (other
+# settings kept; a new file gets the API URL) - /oss:login <KEY> and --key, one allowed call.
+_ov_cmd_login() {
+    local k r c u
+    _ov_dir && _ov_get key && k=$_OV_VAL \
+    || { echo "Error: the key is missing or not a valid API key. Usage: /oss:login ak_xxxxx" >&2; return 1; }
+    r=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $k" "https://one-shot-ship-api.onrender.com/api/v1/subscription/status")
+    test "$(printf '%s\n' "$r" | tail -1)" = 200 \
+    || { echo "Error: Invalid API key. Get a valid key from https://www.oneshotship.com/dashboard" >&2; return 1; }
+    c="$HOME/.oss/config.json"; mkdir -p "$HOME/.oss"
+    if test -f "$c"; then u=$(jq --arg key "$k" '.apiKey = $key' "$c"); else u=$(jq -n --arg key "$k" '{"apiKey": $key, "apiUrl": "https://one-shot-ship-api.onrender.com"}'); fi
+    printf '%s\n' "$u" > "$c" && echo "Plan: $(printf '%s\n' "$r" | head -1 | jq -r '.plan // "unknown"')"
 }
 
 _ov_cmd_agent() {
@@ -230,5 +245,6 @@ case "${1:-}" in
     decrypt) shift; _ov_cmd_decrypt "$@" ;;
     models-set) _ov_cmd_models_set ;;
     cli) shift; _ov_cmd_cli "$@" ;;
+    login) _ov_cmd_login ;;
     *) _ov_usage ;;
 esac
