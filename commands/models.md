@@ -178,7 +178,8 @@ else
     NAME="$PROMPT_NAME"
 fi
 
-# Update config
+# Update config (the plugin root is checked by oss-value.sh root)
+PLUGIN_ROOT=$("$HOME/.oss/hooks/oss-value.sh" root) || exit 1
 node "$PLUGIN_ROOT/watcher/dist/cli/models.js" set "$TYPE" "$NAME" "$MODEL_ID"
 ```
 

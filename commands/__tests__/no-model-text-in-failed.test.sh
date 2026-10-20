@@ -66,9 +66,10 @@ done
 
 # 3. oss-custom reports through the two fixed helper lines and nothing else
 f="$COMMANDS_DIR/oss-custom.md"
-[[ "$(grep -cxF -- "$DIR_LINE" "$f")" == 1 && "$(grep -cxF -- "$CUSTOM_LINE" "$f")" == 1 ]] \
-    && pass "oss-custom.md has exactly the two fixed oss-value.sh lines" \
-    || fail "oss-custom.md has exactly the two fixed oss-value.sh lines" "dir=$(grep -cxF -- "$DIR_LINE" "$f") failed=$(grep -cxF -- "$CUSTOM_LINE" "$f")"
+# (the dir line twice since ship round 4, R4-2: Step 5 also hands the command name over by custom.txt)
+[[ "$(grep -cxF -- "$DIR_LINE" "$f")" == 2 && "$(grep -cxF -- "$CUSTOM_LINE" "$f")" == 1 ]] \
+    && pass "oss-custom.md has the fixed dir line (Step 5 and Step 7) and one fixed failed line" \
+    || fail "oss-custom.md has the fixed dir line (Step 5 and Step 7) and one fixed failed line" "dir=$(grep -cxF -- "$DIR_LINE" "$f") failed=$(grep -cxF -- "$CUSTOM_LINE" "$f")"
 [[ -z "$(failed_lines "$f")" ]] && pass "oss-custom.md has no failed notify line" || fail "oss-custom.md has no failed notify line" "$(failed_lines "$f" | cut -d: -f2-)"
 grep -qF 'Write tool' "$f" && grep -qF 'reason.txt' "$f" \
     && pass "oss-custom.md tells the model to write reason.txt with the Write tool" \
@@ -85,12 +86,10 @@ grep -qF 'Write tool' "$f" && grep -qF 'reason.txt' "$f" \
 # ```http fences (request shapes) are scanned too, with {apiKey} (from config) allowed by name; the
 # fixed log tag [CHAIN] is allowed by name; a /oss:<cmd> usage line in a fence is not shell.
 # In a shell fence, a $NAME / ${NAME} / $1 that the same fence never assigns (NAME=, read, for,
-# local, export, declare) is model-filled text too; allowed: HOME, PWD, BASH_SOURCE, and the
-# known-open file:NAME entries passed in -v known (each must still occur: a fixed one is removed).
-# Prints "<file>:<lineno>:<line>", and "STALE:<entry>" for a known-open entry that no longer occurs.
+# local, export, declare) is model-filled text too; allowed: HOME, PWD, BASH_SOURCE (ship round 4,
+# R4-2: no known-open exceptions are left). Prints "<file>:<lineno>:<line>".
 placeholder_lines() {
-    awk -v known="${KNOWN_OPEN:-}" '
-        BEGIN { nk = split(known, kl, " "); for (i = 1; i <= nk; i++) kn[kl[i]] = 1 }
+    awk '
         function strip(s,   o) {
             gsub(/\\\$/, "", s)
             do { o = s; gsub(/\$[{][^{}]*[}]/, "", s) } while (s != o)
@@ -104,7 +103,6 @@ placeholder_lines() {
                 || (ang && s ~ /<[A-Za-z_]([A-Za-z0-9_ .:|-]*[A-Za-z0-9_])?>/) \
                 || s ~ /\[[A-Z][A-Z0-9_]+( [A-Z0-9_]+)*\]/
         }
-        function base(f) { sub(/.*\//, "", f); return f }
         function assigns(l,   t, n, w, i, k) {
             t = l
             while (match(t, /(^|[^A-Za-z0-9_$])[A-Za-z_][A-Za-z0-9_]*\+?=/)) { n = substr(t, RSTART, RLENGTH); sub(/^[^A-Za-z_]/, "", n); sub(/\+?=$/, "", n); asg[n] = 1; t = substr(t, RSTART + RLENGTH) }
@@ -112,14 +110,12 @@ placeholder_lines() {
             t = l; while (match(t, /(read|local|export|declare)([[:space:]]+-[A-Za-z]+)*([[:space:]]+[A-Za-z_][A-Za-z0-9_]*)+/)) { n = substr(t, RSTART, RLENGTH); k = split(n, w, /[[:space:]]+/); for (i = 2; i <= k; i++) if (w[i] !~ /^-/) asg[w[i]] = 1; t = substr(t, RSTART + RLENGTH) }
         }
         # prints nothing; returns 1 when the line uses a $NAME/${NAME}/$1 the fence never assigns
-        # and that is not known-open (a known-open use is recorded as seen)
-        function unbound(l,   s, nm, e, bad) {
+        function unbound(l,   s, nm, bad) {
             s = l; gsub(/\\\$/, "", s); gsub(/\047[^\047]*\047/, "", s); bad = 0
             while (match(s, /\$[{]?([A-Za-z_][A-Za-z0-9_]*|[0-9])/)) {
                 nm = substr(s, RSTART, RLENGTH); sub(/^\$[{]?/, "", nm); s = substr(s, RSTART + RLENGTH)
                 if (nm in asg || nm == "HOME" || nm == "PWD" || nm == "BASH_SOURCE") continue
-                e = base(FILENAME) ":" nm
-                if (e in kn) seen[e] = 1; else bad = 1
+                bad = 1
             }
             return bad
         }
@@ -160,8 +156,7 @@ placeholder_lines() {
             n = split($0, sp, "`")
             for (i = 2; i < n; i += 2)
                 if (sp[i] ~ /oss-[a-z-]+\.(sh|js)|bin\/oss-|~\/\.oss|\$HOME\/\.oss|(^|[^A-Za-z])(git|gh|node|kubectl) / && ph(sp[i], 1, 0)) { print FILENAME ":" FNR ":" $0; break }
-        }
-        END { for (e in kn) if (!(e in seen)) print "STALE:" e }' "$@"
+        }' "$@"
 }
 # detector control: every line marked "# flag" below is flagged once; every other line is not
 # (${HOME}, curl -w %{...}, a json/text fence, prose <b>, a heredoc <dict>, prose `spans` that run
@@ -225,22 +220,12 @@ run ~/.oss/hooks/oss-log.sh test red FAIL "{MSG}"
 Prose with <b>bold</b>, a `{span}` and a `/oss-audio <option>` that run nothing.
 FIXTURE
 want=$(grep -cE '^<string>|^(x|y|z|w|sp|dot|col|msg|pipe|br|br2|def|pf|run|bare|tilde|cap|info|GET) |^echo "\$(UNSET_THING|1)"|^Run `|^run ~' "$ctl/c.md" | tr -d ' ')
-got=$(KNOWN_OPEN= placeholder_lines "$ctl/c.md")
+got=$(placeholder_lines "$ctl/c.md")
 n=$(printf '%s\n' "$got" | grep -c . | tr -d ' ')
 [[ "$want" == 24 && "$n" == 24 ]] && pass "the placeholder detector flags every shell spelling and nothing else (24)" \
     || fail "the placeholder detector flags every shell spelling and nothing else" "flagged $n, want 24 (fixture marks $want): $(printf '%s\n' "$got" | cut -d: -f2 | tr '\n' ' ')"
-# the known-open list is checked both ways: a listed entry is not reported, a fixed one is STALE
-got=$(KNOWN_OPEN="c.md:UNSET_THING c.md:GONE" placeholder_lines "$ctl/c.md")
-[[ "$(printf '%s\n' "$got" | grep -c . | tr -d ' ')" == 24 && "$(printf '%s\n' "$got" | grep -c '^STALE:c.md:GONE$')" == 1 ]] \
-    && pass "a known-open entry is not reported, and one that no longer occurs is STALE" \
-    || fail "a known-open entry is not reported, and one that no longer occurs is STALE" "$(printf '%s\n' "$got" | tr '\n' '|')"
 rm -rf "$ctl"
 
-# Known-open: unassigned variables in wrappers outside the round-3 scope (R3-5 lists the user-
-# argument lines it fixes). Reported to the lead, not fixed here (stop rule). Remove an entry
-# when its wrapper is fixed; an entry that no longer occurs fails this test.
-KNOWN_OPEN="login.md:CLAUDE_PLUGIN_ROOT login.md:PLIST_PATH login.md:STATUSLINE_SCRIPT models.md:PLUGIN_ROOT oss-audio.md:OSS_AUDIO_ENABLED oss-audio.md:OSS_USE_VOICE oss-audio.md:OSS_VOICE oss-custom.md:1 settings.md:TELEGRAM_LINKED settings.md:STYLE settings.md:API_KEY settings.md:API_URL settings.md:VERBOSITY settings.md:VOICE settings.md:SOUND telegram.md:1 telegram.md:API_URL telegram.md:API_KEY visual-test.md:OSS_CONFIG_DIR watcher.md:PID webhook.md:CLAUDE_PLUGIN_ROOT"
-export KNOWN_OPEN
 bad=$(placeholder_lines "$COMMANDS_DIR"/*.md)
 [[ -z "$bad" ]] && pass "no shell line in any wrapper has a model-filled placeholder or unassigned variable" \
     || fail "no shell line in any wrapper has a model-filled placeholder or unassigned variable" "$(printf '%s\n' "$bad" | wc -l | tr -d ' ') lines: $(printf '%s\n' "$bad" | sed "s|$COMMANDS_DIR/||" | cut -d: -f1,2 | tr '\n' ' ')"

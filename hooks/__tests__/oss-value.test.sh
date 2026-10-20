@@ -67,12 +67,12 @@ ov "$R" dir
 
 # --- 2. stale value files are removed, other files kept ---------------------------------------
 newhome; mkdir -p "$H/.oss/run/$key"
-VALUE_FILES="feature numbers date reason message hint error agent key style prompt model workflow category name"
+VALUE_FILES="feature numbers date reason message hint error agent key style prompt model workflow category name notify_style voice sound verbosity custom"
 for f in $VALUE_FILES; do echo stale > "$H/.oss/run/$key/$f.txt"; done
 echo keep > "$H/.oss/run/$key/unrelated.dat"
 ov "$R" dir
 left=""; for f in $VALUE_FILES; do [[ -e "$H/.oss/run/$key/$f.txt" ]] && left="$left $f.txt"; done
-[[ "$RC" == 0 && -z "$left" ]] && pass "2: the 15 stale value files are removed (incl. agent.txt and the read files, R3-4/R3-5)" || fail "2: the 15 stale value files are removed (incl. agent.txt and the read files, R3-4/R3-5)" "rc=$RC left:$left"
+[[ "$RC" == 0 && -z "$left" ]] && pass "2: the 20 stale value files are removed (incl. agent.txt and the read files, R3-4/R3-5/R4-2)" || fail "2: the 20 stale value files are removed (incl. agent.txt and the read files, R3-4/R3-5/R4-2)" "rc=$RC left:$left"
 [[ -f "$H/.oss/run/$key/unrelated.dat" ]] && pass "2: an unrelated file is kept" || fail "2: an unrelated file is kept" "deleted"
 
 # --- 3. old *.txt in another key folder are pruned --------------------------------------------
@@ -353,6 +353,20 @@ refused_emit "15: a symlinked ~/.oss/plugin-root is refused"
 setup_error; mkdir -p "$T/emptyroot$N"; printf '%s\n' "$T/emptyroot$N" > "$H/.oss/plugin-root"; ove "$A" error cmd:build
 refused_emit "15: a plugin root without oss-error.js is refused"
 
+# --- 15b. root prints the plugin root through the same checks (ship round 4, R4-2) -----------
+# Wrappers compute the plugin root with `oss-value.sh root` instead of a $CLAUDE_PLUGIN_ROOT /
+# $PLUGIN_ROOT the Bash tool never sets. Works in any folder (no value folder needed).
+newhome; mkdir -p "$H/.oss"; printf '%s\n' "$ROOT" > "$H/.oss/plugin-root"; ovn root
+[[ "$RC" == 0 && "$OUT" == "$ROOT" ]] && pass "15b: root prints the plugin root named by ~/.oss/plugin-root" || fail "15b: root prints the plugin root named by ~/.oss/plugin-root" "rc=$RC out='$OUT' err=$ERR"
+newhome; mkdir -p "$H/.oss"; ovn root; refused1 "15b: root refuses a missing ~/.oss/plugin-root"
+newhome; mkdir -p "$H/.oss" "$T/w$N/relroot"; printf 'relroot\n' > "$H/.oss/plugin-root"; ovn root; refused1 "15b: root refuses a relative plugin root"
+newhome; mkdir -p "$H/.oss"; NL="$T/rtwo$N
+lines"; mkdir -p "$NL"; printf '%s\n' "$NL" > "$H/.oss/plugin-root"; ovn root; refused1 "15b: root refuses a 2-line plugin root"
+newhome; mkdir -p "$H/.oss"; printf '%s\n' "$ROOT" > "$T/rootfile$N"; ln -s "$T/rootfile$N" "$H/.oss/plugin-root"; ovn root; refused1 "15b: root refuses a symlinked ~/.oss/plugin-root"
+newhome; mkdir -p "$H/.oss"; printf '%s\n' "$T/nosuchdir$N" > "$H/.oss/plugin-root"; ovn root; refused1 "15b: root refuses a plugin root that is not a directory"
+newhome; mkdir -p "$H/.oss"; printf '%s\n' '/tmp/$(touch PWNED)' > "$H/.oss/plugin-root"; ovn root
+if [[ -e "$NR/PWNED" || -e "$H/PWNED" ]]; then fail "15b: root refuses a hostile plugin root" "something ran"; else refused1 "15b: root refuses a hostile plugin root"; fi
+
 # --- 16. a linked value file: refused ---------------------------------------------------------
 for f in message hint error; do
     setup_error; mv "$VD/$f.txt" "$T/real$N"; ln -s "$T/real$N" "$VD/$f.txt"; ove "$A" error cmd:build
@@ -371,7 +385,9 @@ setup_read() { newhome; newrepo; ov "$R" dir; VD="$OUT"; }
 pwned() { [[ -e "$T/PWNED" || -e "$R/PWNED" || -e "$H/PWNED" ]]; }
 for nv in 'key ossk_test_key_123' 'key ak_xxxxxxxx' 'style visual' 'style audio' 'style sound' 'style none' \
           'prompt oss:code-reviewer' 'prompt /oss:ship' 'model ollama/codellama' 'model openrouter/meta-llama/llama-3.2-3b:free' \
-          'workflow build' 'workflow team:deploy-v2.1' 'category commands' 'name code-simplifier'; do
+          'workflow build' 'workflow team:deploy-v2.1' 'category commands' 'name code-simplifier' \
+          'notify_style visual' 'notify_style telegram' 'notify_style none' 'voice Samantha' 'voice Moira' 'sound Glass' 'sound Pop' \
+          'verbosity all' 'verbosity important' 'verbosity errors-only' 'custom review-standards' "custom $(printf 'c%.0s' {1..100})"; do
     n=${nv%% *}; v=${nv#* }
     setup_read; printf '%s\n' "$v" > "$VD/$n.txt"; ov "$R" read "$n"
     [[ "$RC" == 0 && "$OUT" == "$v" && ! -e "$VD/$n.txt" ]] && pass "17: read $n prints '$v' and deletes $n.txt" \
@@ -383,15 +399,24 @@ line2'
 for nv in 'key $(touch PWNED)' "key a'b'cdefgh" 'key short' "key $(printf 'k%.0s' {1..201})" \
           'style Visual' 'style loud' 'style $(touch PWNED)' \
           'prompt oss:Ship' 'prompt a b' "prompt $(printf 'p%.0s' {1..101})" 'model `touch PWNED`' 'model a;touch PWNED' \
-          'workflow ../ship' 'workflow a/b' 'workflow $(touch PWNED)' 'category a.b' 'category a:b' 'name ../x' "name x'y" 'key ' ; do
+          'workflow ../ship' 'workflow a/b' 'workflow $(touch PWNED)' 'category a.b' 'category a:b' 'name ../x' "name x'y" 'key ' \
+          'notify_style Telegram' 'notify_style loud' 'notify_style $(touch PWNED)' "notify_style visual'" \
+          'voice samantha' 'voice Alex' 'voice $(touch PWNED)' 'voice "Samantha"' 'sound glass' 'sound Basso' 'sound `touch PWNED`' \
+          'verbosity errors_only' 'verbosity All' 'verbosity $(touch PWNED)' "verbosity all'" \
+          'custom team:review' 'custom Review' 'custom a_b' 'custom ../x' 'custom $(touch PWNED)' "custom a'b" "custom $(printf 'c%.0s' {1..101})" ; do
     n=${nv%% *}; v=${nv#* }
     setup_read; printf '%s' "$v" > "$VD/$n.txt"; ov "$R" read "$n"
     if pwned; then fail "17: read $n refuses '$v'" "something ran (PWNED exists)"
     else refused1 "17: read $n refuses '$v'"; fi
     [[ ! -e "$VD/$n.txt" ]] && pass "17: a refused $n.txt is deleted too" || fail "17: a refused $n.txt is deleted too" "still there"
 done
-for n in key style workflow; do
+for n in key style workflow notify_style voice sound verbosity custom; do
     setup_read; printf '%s' "$NLV" > "$VD/$n.txt"; ov "$R" read "$n"; refused1 "17: read $n refuses a two-line value"
+done
+for nv in 'notify_style visual' 'voice Samantha' 'sound Glass' 'verbosity all' 'custom review'; do
+    n=${nv%% *}; v=${nv#* }
+    setup_read; printf '%s\n$(touch PWNED)\n' "$v" > "$VD/$n.txt"; ov "$R" read "$n"
+    if pwned; then fail "17: read $n refuses a valid first line followed by a command" "something ran"; else refused1 "17: read $n refuses a valid first line followed by a command"; fi
 done
 # an unknown name, a linked or missing file, outside a repo: refused
 setup_read; echo value1234 > "$VD/bogus.txt"; ov "$R" read bogus; refused1 "17: read of an unknown name is refused"

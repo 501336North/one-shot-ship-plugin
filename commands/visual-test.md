@@ -47,7 +47,7 @@ description: Visual testing with computer-use MCP
 ## Step 1: Check Authentication
 
 ```bash
-grep -q '"apiKey"' "${OSS_CONFIG_DIR:-$HOME/.oss}/config.json" && echo "API key configured"
+grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
 ```
 
 If no API key found:

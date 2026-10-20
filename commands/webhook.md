@@ -78,7 +78,7 @@ Receive notifications when GitHub PR reviews are submitted, enabling real-time r
 Run the setup command to generate a cryptographically secure secret:
 
 ```bash
-node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/webhook-setup.js" setup
+R=$("$HOME/.oss/hooks/oss-value.sh" root) && node "$R/watcher/dist/cli/webhook-setup.js" setup
 ```
 
 This will:
@@ -144,7 +144,7 @@ https://random-words-here.trycloudflare.com/webhook
 Enable the webhook server:
 
 ```bash
-node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/webhook-toggle.js" on
+R=$("$HOME/.oss/hooks/oss-value.sh" root) && node "$R/watcher/dist/cli/webhook-toggle.js" on
 ```
 
 The server will start listening on the configured port.
@@ -194,14 +194,14 @@ Requests exceeding the limit receive HTTP 429 response.
 3. Regenerate secret if needed:
    ```bash
    rm ~/.oss/config.json  # Remove old config
-   node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/webhook-setup.js" setup
+   R=$("$HOME/.oss/hooks/oss-value.sh" root) && node "$R/watcher/dist/cli/webhook-setup.js" setup
    ```
 
 ### "Connection refused" Error
 
 1. Ensure webhook server is running:
    ```bash
-   node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/webhook-toggle.js" on
+   R=$("$HOME/.oss/hooks/oss-value.sh" root) && node "$R/watcher/dist/cli/webhook-toggle.js" on
    ```
 2. Check the port is not in use:
    ```bash
@@ -239,7 +239,7 @@ Ignored events (return 200 but not processed):
 ### Custom Port
 
 ```bash
-node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/webhook-setup.js" setup --port 8080
+R=$("$HOME/.oss/hooks/oss-value.sh" root) && node "$R/watcher/dist/cli/webhook-setup.js" setup --port 8080
 ```
 
 ### Manual Configuration
@@ -265,7 +265,7 @@ To generate a new secret (invalidates existing GitHub webhook):
 jq 'del(.webhook)' ~/.oss/config.json > tmp && mv tmp ~/.oss/config.json
 
 # Re-run setup
-node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/webhook-setup.js" setup
+R=$("$HOME/.oss/hooks/oss-value.sh" root) && node "$R/watcher/dist/cli/webhook-setup.js" setup
 ```
 
 Then update the secret in GitHub repository settings.

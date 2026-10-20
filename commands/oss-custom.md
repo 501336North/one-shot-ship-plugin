@@ -90,15 +90,21 @@ This auto-installs the decrypt CLI if missing. Existing installations are unaffe
 
 ## Step 5: Fetch Custom Command Prompt
 
-Strip the `team:` prefix if present and fetch the custom command:
+The name reaches the shell through the value folder, never typed into the command. Run:
+```bash
+test -x "$HOME/.oss/hooks/oss-value.sh" && "$HOME/.oss/hooks/oss-value.sh" dir
+```
+Use the Write tool to write the name, with any `team:` prefix stripped, alone to `custom.txt` in the directory it printed, then fetch the custom command:
 
 ```bash
-# Parse command name (strip team: prefix if present)
-COMMAND_NAME="${1#team:}"
+# Read the command name (checked against ^[a-z0-9-]{1,100}$, then deleted)
+COMMAND_NAME=$("$HOME/.oss/hooks/oss-value.sh" read custom) || exit 1
 
 # Fetch custom command prompt from API
 ~/.oss/bin/oss-decrypt --type custom --name "$COMMAND_NAME"
 ```
+
+If the read prints nothing, the name is not valid: stop and report it.
 
 The decrypt CLI fetches the prompt from `/api/v1/prompts/custom/{name}` and returns the decrypted prompt content.
 

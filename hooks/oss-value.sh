@@ -8,11 +8,13 @@
 #                                   failed notice to the project the cwd is in; then delete it.
 #   oss-value.sh error <cmd:name>   emit message.txt, hint.txt and error.txt (5 fields) through
 #                                   oss-error.js as an OSSError from <cmd:name>; then delete them.
-#   oss-value.sh read <name>        print <name>.txt (key style prompt model workflow category name)
-#                                   when it matches that name's rule in _ov_cmd_read; deleted once read.
+#   oss-value.sh read <name>        print <name>.txt (key style prompt model workflow category name
+#                                   notify_style voice sound verbosity custom) when it matches that
+#                                   name's rule in _ov_cmd_read; deleted once read.
 #   oss-value.sh agent <workflow> start|complete
 #                                   log agent.txt (the specialist's name) through oss-log.sh agent
 #                                   with a fixed task text, for the status line; deleted once read.
+#   oss-value.sh root               print the plugin root named by ~/.oss/plugin-root, checked (any cwd).
 #
 # `dir` is the served value-folder command, step for step, except the key (toplevel + git dir, ship
 # round 1 R1-3); `failed` is the served failure-notice reader and `error` the served oss-error
@@ -28,7 +30,7 @@ if [[ ! -f "$_OV_HERE/oss-safe-path.sh" ]]; then
 fi
 source "$_OV_HERE/oss-safe-path.sh"
 
-_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete" >&2; exit 2; }
+_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root" >&2; exit 2; }
 
 _OV_RUN="$HOME/.oss/run"
 
@@ -67,6 +69,7 @@ _ov_cmd_dir() {
     && local p="$_OV_DIR" \
     && rm -f "$p/feature.txt" "$p/numbers.txt" "$p/date.txt" "$p/reason.txt" "$p/message.txt" "$p/hint.txt" "$p/error.txt" \
              "$p/agent.txt" "$p/key.txt" "$p/style.txt" "$p/prompt.txt" "$p/model.txt" "$p/workflow.txt" "$p/category.txt" "$p/name.txt" \
+             "$p/notify_style.txt" "$p/voice.txt" "$p/sound.txt" "$p/verbosity.txt" "$p/custom.txt" \
     && printf '%s\n' "$p"
 }
 
@@ -108,6 +111,11 @@ _ov_cmd_read() {
         prompt|model) re='^[a-z0-9_./:-]{1,100}$' ;;
         workflow) re='^[a-z0-9_.:-]{1,100}$' ;;
         category|name) re='^[a-z0-9_-]{1,100}$' ;;
+        notify_style) re='^(visual|audio|sound|telegram|none)$' ;;   # /oss:settings' own lists
+        voice) re='^(Samantha|Daniel|Karen|Moira)$' ;;
+        sound) re='^(Glass|Ping|Purr|Pop)$' ;;
+        verbosity) re='^(all|important|errors-only)$' ;;
+        custom) re='^[a-z0-9-]{1,100}$' ;;   # oss-custom Step 0 = isSafeTeamCommandName
         *) false ;;
     esac && _ov_dir && _ov_take "$1.txt" "$re" && printf '%s\n' "$_OV_VAL" \
     || { echo "oss-value: read: refused (unknown name, or the value file missing, unsafe or not a valid ${1:-value})" >&2; return 1; }
@@ -134,12 +142,24 @@ _ov_cmd_failed() {
     && rm -f "$_OV_DIR/reason.txt"
 }
 
+# The plugin root named by ~/.oss/plugin-root (not a link, owned, absolute, one line, a folder)
+# -> _OV_ROOT. The one place the plugin root is checked: error and root use it.
+_ov_root() {
+    _OV_ROOT=""; local r
+    _ov_safe "$HOME/.oss/plugin-root" && r=$(cat "$HOME/.oss/plugin-root" 2>/dev/null) && case "$r" in /*) ;; *) false ;; esac \
+    && test "$(printf '%s' "$r" | wc -l)" -eq 0 && test -d "$r" && _OV_ROOT=$r
+}
+
+_ov_cmd_root() {
+    _ov_root && printf '%s\n' "$_OV_ROOT" \
+    || { echo "oss-value: root: refused (~/.oss/plugin-root missing, a link, not absolute, not one line or not a folder)" >&2; return 1; }
+}
+
 _ov_cmd_error() {
     local o R m h e c s y k a x
     o=$(pwd -P)
     case "${1:-}" in cmd:*) ;; *) false ;; esac && oss_valid_workflow_name "${1#cmd:}" \
-    && _ov_safe "$HOME/.oss/plugin-root" && R=$(cat "$HOME/.oss/plugin-root" 2>/dev/null) && case "$R" in /*) ;; *) false ;; esac \
-    && test "$(printf '%s' "$R" | wc -l)" -eq 0 && test -d "$R" && test -f "$R/watcher/dist/cli/oss-error.js" \
+    && _ov_root && R=$_OV_ROOT && test -f "$R/watcher/dist/cli/oss-error.js" \
     && _ov_dir && _ov_read_value message.txt && m="$_OV_VAL" && _ov_read_value hint.txt && h="$_OV_VAL" \
     && _ov_open error.txt && e=$(LC_ALL=C tr -c 'A-Za-z0-9-' ' ' <&3 | cut -c1-120) && exec 3<&- \
     && read -r c s y k a x <<< "$e" && test -z "$x" \
@@ -159,5 +179,6 @@ case "${1:-}" in
     failed) _ov_cmd_failed "${2:-}" ;;
     read) _ov_cmd_read "${2:-}" ;;
     agent) _ov_cmd_agent "${2:-}" "${3:-}" ;;
+    root) _ov_cmd_root ;;
     *) _ov_usage ;;
 esac

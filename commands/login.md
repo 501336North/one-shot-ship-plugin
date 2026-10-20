@@ -291,8 +291,9 @@ After successful authentication, install tools if not already present:
    OSS_ICON_PNG="$HOME/.oss/notification-icon.png"
    if [ ! -f "$OSS_ICON_PNG" ]; then
        # Download or create the OSS icon
+       PLUGIN_ROOT=$("$HOME/.oss/hooks/oss-value.sh" root 2>/dev/null)
        curl -sL "https://www.oneshotship.com/icon.png" -o "$OSS_ICON_PNG" 2>/dev/null || \
-       sips -s format png "$CLAUDE_PLUGIN_ROOT/assets/icon.png" --out "$OSS_ICON_PNG" 2>/dev/null || \
+       { test -n "$PLUGIN_ROOT" && sips -s format png "$PLUGIN_ROOT/assets/icon.png" --out "$OSS_ICON_PNG" 2>/dev/null; } || \
        echo "Note: Could not create notification icon. Notifications will work without branding."
    fi
    ```
@@ -310,7 +311,7 @@ After successful authentication, install tools if not already present:
 
 4. **Initialize workflow state:**
    ```bash
-   node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js" init
+   PLUGIN_ROOT=$("$HOME/.oss/hooks/oss-value.sh" root) && node "$PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js" init
    ```
 
 5. **Verify status line script exists:**
@@ -334,7 +335,8 @@ After tools are installed, set up the supervisor daemon for process monitoring.
 
 **First, check if daemon is included in this plugin version:**
 ```bash
-if [ ! -d "$CLAUDE_PLUGIN_ROOT/daemon" ]; then
+PLUGIN_ROOT=$("$HOME/.oss/hooks/oss-value.sh" root)
+if [ ! -d "$PLUGIN_ROOT/daemon" ]; then
     echo "Daemon not included in current plugin version. Skipping daemon setup."
     # Skip to Step 8
 fi
@@ -344,7 +346,7 @@ fi
 
 1. **Build daemon package (if needed):**
    ```bash
-   cd "$CLAUDE_PLUGIN_ROOT/daemon"
+   PLUGIN_ROOT=$("$HOME/.oss/hooks/oss-value.sh" root) && cd "$PLUGIN_ROOT/daemon" || exit 1
    if [ ! -d "dist" ]; then
        npm run build
    fi
@@ -354,6 +356,7 @@ fi
    ```bash
    OSS_DIR="${HOME}/.oss"
    PLIST_PATH="${HOME}/Library/LaunchAgents/com.oneshotship.daemon.plist"
+   PLUGIN_ROOT=$("$HOME/.oss/hooks/oss-value.sh" root) || exit 1
 
    if [ ! -f "$PLIST_PATH" ]; then
        mkdir -p "$(dirname "$PLIST_PATH")"
@@ -368,7 +371,7 @@ fi
        <key>ProgramArguments</key>
        <array>
            <string>node</string>
-           <string>${CLAUDE_PLUGIN_ROOT}/daemon/bin/oss-daemon.js</string>
+           <string>${PLUGIN_ROOT}/daemon/bin/oss-daemon.js</string>
            <string>start</string>
        </array>
        <key>WorkingDirectory</key>
@@ -390,6 +393,7 @@ fi
 
 3. **Load daemon service:**
    ```bash
+   PLIST_PATH="${HOME}/Library/LaunchAgents/com.oneshotship.daemon.plist"
    if ! launchctl list | grep -q "com.oneshotship.daemon"; then
        launchctl load "$PLIST_PATH"
        echo "OSS Daemon started"
@@ -398,6 +402,7 @@ fi
 
 4. **Verify daemon is running:**
    ```bash
+   PLIST_PATH="${HOME}/Library/LaunchAgents/com.oneshotship.daemon.plist"
    if launchctl list | grep -q "com.oneshotship.daemon"; then
        echo "Supervisor daemon is running"
    else
@@ -463,6 +468,7 @@ Set up the status line script to show TDD phase in Claude Code's terminal:
 
 4. **Verify status line:**
    ```bash
+   STATUSLINE_SCRIPT="${HOME}/.oss/oss-statusline.sh"
    if [ -x "$STATUSLINE_SCRIPT" ]; then
        echo "Status line script ready"
        echo "When TDD phase is active, you'll see: [Claude] 🔴 RED 3/8"

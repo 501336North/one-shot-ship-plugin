@@ -9,6 +9,11 @@
 #           value folder that `oss-value.sh dir` printed.
 # @business-rule Ship round 4, R4-1: outside a git repository the value folder is the one per-user
 #           folder ~/.oss/run/home (same checks), so these commands work there again.
+# @behavior /oss:settings, /oss:telegram, /oss:custom, /oss:watcher, /oss:webhook, /oss:login,
+#           /oss:oss-audio and /oss:visual-test work as before, and a ' or $( in a value never runs.
+# @business-rule Ship round 4, R4-2: a block uses only values it reads from a value file (checked in
+#           code by oss-value.sh read), computes itself (config.json, oss-value.sh root, fixed
+#           paths) or reads from its own file with a check (watcher.pid); never one the model types.
 #
 # The model's part (run `dir`, Write the value file) is done here by the test; every shell block is
 # taken from the wrapper by a literal line it contains and run unchanged. curl, node and oss-decrypt
@@ -27,19 +32,23 @@ trap 'rm -rf "$T"' EXIT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
 
-# fence_with <file> <literal>: the body of the first fenced block in commands/<file> holding <literal>
+# fence_with <file> <literal>: the body of the first fenced block in commands/<file> holding <literal>,
+# less the indent of its opening fence (a block inside a list item)
 fence_with() {
     awk -v lit="$2" '
-        /^[[:space:]]*```/ { if (!inf) { inf = 1; n = 0; hit = 0; next } inf = 0; if (hit) { for (i = 1; i <= n; i++) print b[i]; exit } next }
-        inf { b[++n] = $0; if (index($0, lit)) hit = 1 }' "$C/$1"
+        /^[[:space:]]*```/ { if (!inf) { inf = 1; n = 0; hit = 0; match($0, /^[[:space:]]*/); ind = RLENGTH; next } inf = 0; if (hit) { for (i = 1; i <= n; i++) print b[i]; exit } next }
+        inf { l = $0; if (substr(l, 1, ind) ~ /^[[:space:]]*$/) l = substr(l, ind + 1); b[++n] = l; if (index($0, lit)) hit = 1 }' "$C/$1"
 }
 
-# stubs: each records "<name> <args>" in $T/calls; curl prints $T/curl.out
+# stubs: each records "<name> <args>" in $T/calls; curl prints $T/curl.out and exits $T/curl.rc
 mkdir -p "$T/bin"
-for s in curl node; do
-    printf '#!/bin/sh\necho "%s $*" >> "%s/calls"\n[ "%s" = curl ] && cat "%s/curl.out" 2>/dev/null\nexit 0\n' "$s" "$T" "$s" "$T" > "$T/bin/$s"
+for s in curl node say afplay terminal-notifier sips launchctl sleep npm brew; do
+    printf '#!/bin/sh\necho "%s $*" >> "%s/calls"\n[ "%s" = curl ] && { cat "%s/curl.out" 2>/dev/null; exit "$(cat "%s/curl.rc" 2>/dev/null || echo 0)"; }\nexit 0\n' "$s" "$T" "$s" "$T" "$T" > "$T/bin/$s"
     chmod +x "$T/bin/$s"
 done
+# a plugin root for ~/.oss/plugin-root to name (the wrappers compute it with oss-value.sh root)
+FR="$T/fakeroot"; mkdir -p "$FR/watcher/dist/cli" "$FR/daemon/dist" "$FR/assets"
+for j in models webhook-setup webhook-toggle update-workflow-state; do : > "$FR/watcher/dist/cli/$j.js"; done; : > "$FR/assets/icon.png"
 
 N=0
 # sandbox <cwd-kind>: fresh HOME with the real hooks, a cwd (norepo|repo) -> H, W
@@ -47,9 +56,10 @@ sandbox() {
     N=$((N + 1)); H="$T/h$N"; mkdir -p "$H/.oss/hooks" "$H/.oss/bin"
     cp "$ROOT/hooks/oss-value.sh" "$ROOT/hooks/oss-safe-path.sh" "$ROOT/hooks/oss-log.sh" "$ROOT/hooks/oss-notify.sh" "$H/.oss/hooks/"
     printf '#!/bin/sh\necho "oss-decrypt $*" >> "%s/calls"\n' "$T" > "$H/.oss/bin/oss-decrypt"; chmod +x "$H/.oss/bin/oss-decrypt"
+    printf '%s\n' "$FR" > "$H/.oss/plugin-root"
     W="$T/w$N/cwd"; mkdir -p "$W"
     [[ "$1" == repo ]] && (cd "$W" && git init -q) >/dev/null 2>&1
-    rm -f "$T/calls" "$T/curl.out"
+    rm -f "$T/calls" "$T/curl.out" "$T/curl.rc"
 }
 # in_sandbox <cmd...>: run in the cwd with the sandbox HOME and the stubs first on PATH
 in_sandbox() {
@@ -77,7 +87,7 @@ for kind in norepo repo; do
         && pass "$kind: /oss:login --key saves the key it read" || fail "$kind: /oss:login --key saves the key it read" "rc=$RC out=$OUT"
 
     sandbox "$kind"; model_writes prompt oss:code-reviewer model ollama/codellama; run_block models.md 'read prompt)'
-    [[ "$RC" == 0 && "$(calls)" == *"models.js set agents oss:code-reviewer ollama/codellama"* ]] \
+    [[ "$RC" == 0 && "$(calls)" == "node $FR/watcher/dist/cli/models.js set agents oss:code-reviewer ollama/codellama" ]] \
         && pass "$kind: /oss:models set passes the prompt and model it read" || fail "$kind: /oss:models set passes the prompt and model it read" "rc=$RC out=$OUT calls=$(calls)"
 
     sandbox "$kind"; model_writes workflow build; run_block workflows.md 'read workflow)'
@@ -92,6 +102,126 @@ for f in login.md models.md workflows.md trust.md; do
     grep -qiF 'inside a git repository' "$C/$f" && fail "$f does not say the value folder needs a git repository" "$(grep -niF 'inside a git repository' "$C/$f" | head -1)" \
         || pass "$f does not say the value folder needs a git repository"
 done
+
+# === R4-2: every value a block uses is read from a value file or computed in the block ========
+pwned() { [[ -e "$W/PWNED" || -e "$H/PWNED" || -e "$T/PWNED" ]]; }
+cfg() { printf '{"apiKey": "%s", "apiUrl": "%s"}\n' "$1" "$2" > "$H/.oss/config.json"; }
+
+# --- settings: the save block reads the choices, computes the key and the Telegram link -------
+SAVE='read notify_style)'
+sandbox repo; cfg ossk_k1 https://api.example.invalid; printf '{"linked":false}\n' > "$T/curl.out"
+model_writes notify_style audio verbosity all voice Daniel; run_block settings.md "$SAVE"
+j() { jq -r "$1" "$H/.oss/settings.json" 2>/dev/null; }
+[[ "$RC" == 0 && "$(j .notifications.style)" == audio && "$(j .notifications.voice)" == Daniel && "$(j .notifications.sound)" == Glass \
+   && "$(j .notifications.verbosity)" == all && "$(j .notifications.telegram.linked)" == false && "$(j .notifications.telegram.enabled)" == false && "$(j .version)" == 2 ]] \
+    && pass "settings: the save block writes the choices it read (voice read, sound kept)" || fail "settings: the save block writes the choices it read (voice read, sound kept)" "rc=$RC out=$OUT settings=$(cat "$H/.oss/settings.json" 2>&1)"
+[[ "$(calls)" == *"say -v Daniel"* && "$(calls)" == *"Bearer ossk_k1"* && "$(calls)" == *"https://api.example.invalid/api/v1/telegram/status"* && "$(calls)" != *PATCH* ]] \
+    && pass "settings: the key and URL come from config.json; the test notice uses the voice read; no PATCH when not linked" || fail "settings: the key and URL come from config.json; the test notice uses the voice read; no PATCH when not linked" "calls=$(calls)"
+[[ "$OUT" == *"Style:     audio"* && "$OUT" == *"Voice:     Daniel"* ]] && pass "settings: the save block prints the new configuration" || fail "settings: the save block prints the new configuration" "$OUT"
+# sound chosen: sound read, voice kept from settings.json
+sandbox repo; cfg ossk_k1 https://api.example.invalid; printf '{"linked":false}\n' > "$T/curl.out"
+printf '{"notifications":{"style":"visual","voice":"Karen","sound":"Glass","verbosity":"important"},"version":2}\n' > "$H/.oss/settings.json"
+model_writes notify_style sound verbosity important sound Pop; run_block settings.md "$SAVE"
+[[ "$RC" == 0 && "$(j .notifications.voice)" == Karen && "$(j .notifications.sound)" == Pop && "$(calls)" == *"afplay /System/Library/Sounds/Pop.aiff"* ]] \
+    && pass "settings: sound chosen: sound read, voice kept from settings.json" || fail "settings: sound chosen: sound read, voice kept from settings.json" "rc=$RC out=$OUT calls=$(calls)"
+# telegram chosen but not linked: falls back to visual
+sandbox repo; cfg ossk_k1 https://api.example.invalid; printf '{"linked":false}\n' > "$T/curl.out"
+model_writes notify_style telegram verbosity important; run_block settings.md "$SAVE"
+[[ "$RC" == 0 && "$(j .notifications.style)" == visual && "$OUT" == *"falling back to 'visual'"* && "$(calls)" == *terminal-notifier* ]] \
+    && pass "settings: telegram not linked falls back to visual" || fail "settings: telegram not linked falls back to visual" "rc=$RC out=$OUT"
+# telegram chosen and linked: enabled through the API
+sandbox repo; cfg ossk_k1 https://api.example.invalid; printf '{"linked":true}\n' > "$T/curl.out"
+model_writes notify_style telegram verbosity errors-only; run_block settings.md "$SAVE"
+[[ "$RC" == 0 && "$(j .notifications.style)" == telegram && "$(j .notifications.telegram.linked)" == true && "$(j .notifications.telegram.enabled)" == true \
+   && "$(calls)" == *"PATCH https://api.example.invalid/api/v1/telegram/notifications"*'"enabled": true'* ]] \
+    && pass "settings: telegram linked: saved and enabled through the API" || fail "settings: telegram linked: saved and enabled through the API" "rc=$RC calls=$(calls) settings=$(cat "$H/.oss/settings.json" 2>&1)"
+# a linked value the API sends that is not true/false is not written into settings.json
+sandbox repo; cfg ossk_k1 https://api.example.invalid; printf '{"linked":"1, \\"x\\": 2"}\n' > "$T/curl.out"
+model_writes notify_style visual verbosity all; run_block settings.md "$SAVE"
+[[ "$RC" == 0 && "$(j .notifications.telegram.linked)" == false ]] && pass "settings: an odd linked value from the API is saved as false" || fail "settings: an odd linked value from the API is saved as false" "rc=$RC settings=$(cat "$H/.oss/settings.json" 2>&1)"
+# hostile choices: refused, settings.json untouched, nothing run
+for nv in 'notify_style $(touch PWNED)' "notify_style visual'; touch PWNED; '" 'verbosity $(touch PWNED)' 'voice $(touch PWNED)' 'sound `touch PWNED`' 'voice Samantha
+$(touch PWNED)'; do
+    n=${nv%% *}; v=${nv#* }
+    sandbox repo; cfg ossk_k1 https://api.example.invalid; printf '{"linked":false}\n' > "$T/curl.out"; echo '{"keep":1}' > "$H/.oss/settings.json"
+    case "$n" in notify_style) model_writes notify_style "$v" verbosity all ;; verbosity) model_writes notify_style visual verbosity "$v" ;;
+                 voice) model_writes notify_style audio verbosity all voice "$v" ;; sound) model_writes notify_style sound verbosity all sound "$v" ;; esac
+    run_block settings.md "$SAVE"
+    if pwned; then fail "settings: hostile $n is refused" "something ran"
+    elif [[ "$RC" == 0 || "$(cat "$H/.oss/settings.json")" != '{"keep":1}' || "$(calls)" == *say* || "$(calls)" == *afplay* || "$(calls)" == *PATCH* ]]; then fail "settings: hostile $n is refused" "rc=$RC calls=$(calls) settings=$(cat "$H/.oss/settings.json")"
+    else pass "settings: hostile $n '$v' is refused, settings.json untouched, nothing run"; fi
+done
+
+# --- telegram: each subcommand block computes the key and URL from config.json ---------------
+for lit in 'telegram/status" \' 'telegram/link" \' '{"enabled": true}' '{"enabled": false}' 'telegram/unlink" \'; do
+    sandbox repo; cfg ossk_k2 https://api.example.invalid; printf '{"success":true,"linked":true,"magicLink":"https://t.me/x"}\n' > "$T/curl.out"
+    run_block telegram.md "$lit"
+    [[ "$RC" == 0 && "$(calls)" == *"Bearer ossk_k2"* && "$(calls)" == *"https://api.example.invalid/api/v1/telegram/"* ]] \
+        && pass "telegram: the block holding '$lit' uses the key and URL from config.json" || fail "telegram: the block holding '$lit' uses the key and URL from config.json" "rc=$RC out=$OUT calls=$(calls)"
+done
+sandbox repo; cfg '$(touch PWNED)' https://api.example.invalid; printf '{"linked":false}\n' > "$T/curl.out"; run_block telegram.md 'telegram/status" \'
+! pwned && [[ "$(calls)" == *'Bearer $(touch PWNED)'* ]] && pass "telegram: a hostile key in config.json is only ever a quoted argument" || fail "telegram: a hostile key in config.json is only ever a quoted argument" "calls=$(calls)"
+grep -qF '${1' "$C/telegram.md" && fail "telegram.md takes no \$1 in a shell block" "$(grep -nF '${1' "$C/telegram.md")" || pass "telegram.md takes no \$1 in a shell block"
+
+# --- oss-custom: the team command name is read from custom.txt --------------------------------
+sandbox repo; model_writes custom review-standards; run_block oss-custom.md 'read custom)'
+[[ "$RC" == 0 && "$(calls)" == "oss-decrypt --type custom --name review-standards" ]] && pass "oss-custom: decrypts the name it read" || fail "oss-custom: decrypts the name it read" "rc=$RC out=$OUT calls=$(calls)"
+for v in '$(touch PWNED)' 'team:review' "a'b" 'review
+$(touch PWNED)' '../x'; do
+    sandbox repo; model_writes custom "$v"; run_block oss-custom.md 'read custom)'
+    if pwned; then fail "oss-custom: hostile name is refused" "something ran"
+    elif [[ "$RC" == 0 || -n "$(calls)" ]]; then fail "oss-custom: hostile name '$v' is refused" "rc=$RC calls=$(calls)"
+    else pass "oss-custom: hostile name '$v' is refused, nothing decrypted"; fi
+done
+
+# --- watcher: the PID is read from .oss/watcher.pid and must be a number -----------------------
+sleep_pid() { /bin/sleep 30 & SP=$!; }
+sandbox repo; mkdir -p "$W/.oss"; sleep_pid; echo "$SP" > "$W/.oss/watcher.pid"; run_block watcher.md 'watcher.pid'
+kill "$SP" 2>/dev/null; wait "$SP" 2>/dev/null
+[[ "$RC" == 0 && "$OUT" == *"Running"* && "$OUT" == *"$SP"* ]] && pass "watcher: a live PID from the file reads as running" || fail "watcher: a live PID from the file reads as running" "rc=$RC out=$OUT"
+sandbox repo; run_block watcher.md 'watcher.pid'
+[[ "$OUT" == *"Stopped"* ]] && pass "watcher: no PID file reads as stopped" || fail "watcher: no PID file reads as stopped" "rc=$RC out=$OUT"
+for v in '$(touch PWNED)' '1; touch PWNED' '12345678901' '-1' '1 1' '1,1'; do
+    sandbox repo; mkdir -p "$W/.oss"; printf '%s\n' "$v" > "$W/.oss/watcher.pid"; run_block watcher.md 'watcher.pid'
+    if pwned; then fail "watcher: PID '$v' is refused" "something ran"
+    elif [[ "$OUT" != *"Stopped"* ]]; then fail "watcher: PID '$v' is refused" "out=$OUT"
+    else pass "watcher: PID file '$v' reads as stopped, nothing run"; fi
+done
+
+# --- plugin root: computed with oss-value.sh root (webhook, login) ----------------------------
+for lit in 'webhook-setup.js" setup' 'webhook-toggle.js" on' 'webhook-setup.js" setup --port 8080'; do
+    sandbox repo; run_block webhook.md "$lit"
+    [[ "$RC" == 0 && "$(calls)" == "node $FR/watcher/dist/cli/webhook-"* ]] && pass "webhook: the block holding '$lit' runs the plugin root's script" || fail "webhook: the block holding '$lit' runs the plugin root's script" "rc=$RC out=$OUT calls=$(calls)"
+done
+sandbox repo; rm -f "$H/.oss/plugin-root"; run_block webhook.md 'webhook-setup.js" setup'
+[[ "$RC" != 0 && -z "$(calls)" ]] && pass "webhook: without a plugin root nothing runs" || fail "webhook: without a plugin root nothing runs" "rc=$RC calls=$(calls)"
+sandbox repo; run_block login.md 'update-workflow-state.js" init'
+[[ "$RC" == 0 && "$(calls)" == "node $FR/watcher/dist/cli/update-workflow-state.js init" ]] && pass "login: workflow state init runs the plugin root's CLI" || fail "login: workflow state init runs the plugin root's CLI" "rc=$RC calls=$(calls)"
+sandbox repo; echo 1 > "$T/curl.rc"; run_block login.md 'notification-icon.png"'
+[[ "$(calls)" == *"sips -s format png $FR/assets/icon.png"* ]] && pass "login: the icon fallback converts the plugin root's icon" || fail "login: the icon fallback converts the plugin root's icon" "rc=$RC calls=$(calls)"
+sandbox repo; run_block login.md 'Skipping daemon setup'
+[[ "$RC" == 0 && "$OUT" != *Skipping* ]] && pass "login: the daemon check finds the plugin root's daemon folder" || fail "login: the daemon check finds the plugin root's daemon folder" "rc=$RC out=$OUT"
+sandbox repo; run_block login.md 'npm run build'
+[[ "$RC" == 0 && "$(calls)" != *npm* ]] && pass "login: the daemon build step runs in the plugin root (dist exists: no build)" || fail "login: the daemon build step runs in the plugin root (dist exists: no build)" "rc=$RC out=$OUT calls=$(calls)"
+sandbox repo; run_block login.md 'oss-daemon.js</string>'
+P="$H/Library/LaunchAgents/com.oneshotship.daemon.plist"
+[[ "$RC" == 0 ]] && grep -qF "<string>$FR/daemon/bin/oss-daemon.js</string>" "$P" 2>/dev/null && pass "login: the plist names the plugin root's daemon" || fail "login: the plist names the plugin root's daemon" "rc=$RC out=$OUT plist=$(cat "$P" 2>&1 | head -3)"
+sandbox repo; run_block login.md 'launchctl load "$PLIST_PATH"'
+[[ "$RC" == 0 && "$(calls)" == *"launchctl load $H/Library/LaunchAgents/com.oneshotship.daemon.plist"* ]] && pass "login: the daemon load step loads the fixed plist path" || fail "login: the daemon load step loads the fixed plist path" "rc=$RC calls=$(calls)"
+sandbox repo; run_block login.md 'start it manually with'
+[[ "$OUT" == *"launchctl load $H/Library/LaunchAgents/com.oneshotship.daemon.plist"* ]] && pass "login: the daemon check names the fixed plist path" || fail "login: the daemon check names the fixed plist path" "out=$OUT"
+sandbox repo; printf '#!/bin/sh\n' > "$H/.oss/oss-statusline.sh"; chmod +x "$H/.oss/oss-statusline.sh"; run_block login.md 'Status line script ready'
+[[ "$OUT" == *"Status line script ready"* ]] && pass "login: the status line check uses the fixed script path" || fail "login: the status line check uses the fixed script path" "rc=$RC out=$OUT"
+
+# --- oss-audio: status reads the three settings without running the file ----------------------
+sandbox repo; printf 'export OSS_AUDIO_ENABLED="true"\nexport OSS_USE_VOICE="false"\nexport OSS_VOICE="Daniel"\n' > "$H/.oss/audio-config"; run_block oss-audio.md 'audio-config ]'
+[[ "$RC" == 0 && "$OUT" == *"Enabled: true"* && "$OUT" == *"Mode: Sound"* && "$OUT" == *"Voice: Daniel"* ]] && pass "oss-audio: status shows the three settings" || fail "oss-audio: status shows the three settings" "rc=$RC out=$OUT"
+sandbox repo; printf 'export OSS_AUDIO_ENABLED="true"\ntouch "$HOME/PWNED"\nexport OSS_VOICE="$(touch $HOME/PWNED)"\n' > "$H/.oss/audio-config"; run_block oss-audio.md 'audio-config ]'
+! pwned && [[ "$OUT" == *"Enabled: true"* ]] && pass "oss-audio: status never runs the config file" || fail "oss-audio: status never runs the config file" "pwned=$(pwned && echo y || echo n) out=$OUT"
+
+# --- visual-test: the key check reads the fixed config path ------------------------------------
+sandbox repo; cfg ossk_k3 x; run_block visual-test.md '"apiKey"'
+[[ "$OUT" == "API key configured" ]] && pass "visual-test: the key check reads ~/.oss/config.json" || fail "visual-test: the key check reads ~/.oss/config.json" "rc=$RC out=$OUT"
 
 echo ""
 echo "Results: $((TESTS_RUN - TESTS_FAILED))/$TESTS_RUN passed, $TESTS_FAILED failed"
