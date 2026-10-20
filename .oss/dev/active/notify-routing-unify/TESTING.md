@@ -29,8 +29,16 @@ in A (or `~/.oss` from C/D), never in B, never through the link.
 | `watcher/src/cli/oss-error.ts`, `update-workflow-state.ts` | model-run (and via hooks) | CHANGED (T3) |
 | `hooks/oss-value.sh` | model-run | never read it; walk now shared (T5) |
 
-`grep -rlF current-project hooks watcher/src` after this branch: only the CC-run rows above.
+`grep -rlF current-project hooks/*.sh watcher/src` after this branch: the CC-run rows above, plus comments in
+`oss-safe-path.sh`, `oss-value.sh`, `oss-archive-check.sh` and `utils/project-dir.ts` that say it is never read.
 Not changed: `hooks/oss-statusline.sh` also reads bare `$TMPDIR`, but it does not run under `set -u` (no crash).
 
-## Results (2026-10-20)
-See PROGRESS.md for the final sequential run counts.
+## Results (2026-10-20, one sequential run)
+- hooks/__tests__ + commands/__tests__ (44 suites, `env -u CLAUDE_PROJECT_DIR bash`): 43 green; only
+  ideate-template 3/4 (pre-existing). project-routing 43/43 also on bash 5 (/opt/local/bin/bash);
+  oss-value 328/328 on bash 3.2 and 5; watcher-dist-fresh PASS (122 files).
+- watcher vitest (no-setup config, root = this worktree): test/hooks + utils/project-dir +
+  cli/update-workflow-state* + cli/oss-error + acceptance/integration error-contract: 40 files, 233/233.
+  Also retargeted test/hooks/oss-session-logging.test.ts (2 cases: start runs outside any project;
+  session-end creates the repo's .oss, so its hook lines are that project's).
+- watcher `tsc --noEmit`: clean.

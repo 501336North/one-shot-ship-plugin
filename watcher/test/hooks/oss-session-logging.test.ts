@@ -81,6 +81,7 @@ describe('oss-session-start.sh logging', () => {
       delete env.CLAUDE_PROJECT_DIR;
 
       execSync(`bash "${ossSessionStartScript}"`, {
+        cwd: os.tmpdir(), // outside any project: the global log (routing D1)
         encoding: 'utf-8',
         env,
         timeout: 10000,
@@ -233,12 +234,10 @@ describe('oss-session-end.sh logging', () => {
       // May fail due to various reasons
     }
 
-    // THEN: Session log should contain hook entries after marker
-    const logContent = fs.readFileSync(sessionLog, 'utf-8');
-    const markerIndex = logContent.lastIndexOf(marker);
-    const newContent = markerIndex >= 0 ? logContent.slice(markerIndex + marker.length) : logContent;
-
-    expect(newContent).toMatch(/\[hook\].*oss-session-end/);
+    // THEN: session-end creates the repo's .oss, so (routing D1: the cwd's nearest real .oss)
+    // its hook entries land in that project's own session log, not the global one
+    const projectSessionLog = path.join(fs.realpathSync(testProjectDir), '.oss', 'logs', 'current-session', 'session.log');
+    expect(fs.readFileSync(projectSessionLog, 'utf-8')).toMatch(/\[hook\].*oss-session-end/);
   });
 
   /**
