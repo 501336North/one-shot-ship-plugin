@@ -133,7 +133,7 @@ if [[ $rc -eq 0 && "$err" == *"oss: refusing unsafe .oss path"* ]]; then pass "o
 else fail "oss-log.sh: refusal prints 'oss: refusing unsafe .oss path' and exits 0" "rc=$rc err=$err"; fi
 rm -rf "$T"
 
-# health workflow state (oss-log.sh workflow set-feature), routed via ~/.oss/current-project
+# health workflow state (oss-log.sh workflow set-feature), routed by the cwd (current-project names it too)
 world; evil_repo p-health l_health; echo "$P" > "$T/home/.oss/current-project"; before=$(snapshot)
 out=$(cd "$P" && HOME="$T/home" CLAUDE_PROJECT_DIR="" "$SH" "$ROOT/hooks/oss-log.sh" workflow set-feature evil 2>&1); rc=$?
 check "oss-log.sh workflow set-feature: committed health-workflow-state.json link is not written" "$before" "$rc" "$out"
@@ -156,10 +156,10 @@ for c in state logs ossdir; do
     check "oss-notify.sh --workflow build failed: committed $c link does not write outside" "$before" "$rc" "$out"
     rm -rf "$T"
 done
-# the plugin wrapper's ordinary start event, routed via ~/.oss/current-project (single-session user)
+# the plugin wrapper's ordinary start event, run in the repo (current-project names it too: single-session user)
 world; evil_repo p-nstart l_state; echo "$P" > "$T/home/.oss/current-project"; before=$(snapshot)
 out=$(cd "$P" && HOME="$T/home" CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="" "$SH" "$ROOT/hooks/oss-notify.sh" --workflow build start 2>&1 </dev/null); rc=$?
-check "oss-notify.sh --workflow build start via current-project: state link is not written" "$before" "$rc" "$out"
+check "oss-notify.sh --workflow build start from the repo: state link is not written" "$before" "$rc" "$out"
 rm -rf "$T"
 
 # =================================================================================================

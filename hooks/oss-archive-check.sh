@@ -38,11 +38,9 @@ for arg in "$@"; do
     esac
 done
 
-# Get project directory from current-project if not specified
-if [[ -z "$PROJECT_DIR" ]]; then
-    if [[ -f "$HOME/.oss/current-project" ]]; then
-        PROJECT_DIR=$(cat "$HOME/.oss/current-project" 2>/dev/null | tr -d '[:space:]')
-    fi
+# Not specified: the project this runs in (oss_resolve_project, the shared rule; never current-project)
+if [[ -z "$PROJECT_DIR" ]] && declare -F oss_resolve_project >/dev/null; then
+    oss_resolve_project; PROJECT_DIR="$_OSS_PROJ"
 fi
 
 # Resolve dev docs path with project-local priority

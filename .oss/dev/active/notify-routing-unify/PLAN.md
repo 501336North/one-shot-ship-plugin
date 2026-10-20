@@ -12,7 +12,7 @@ Project for an event = `CLAUDE_PROJECT_DIR` if set → else the nearest REAL (no
 - [x] T3: watcher oss-error (src/cli/oss-error.ts) and update-workflow-state.ts resolve the same way (when no --project-dir); rebuild dist; vitest for A/B.
 - [x] T4: oss-log.sh TMPDIR crash: `${TMPDIR:-}` (and any other unset-var reads under set -u in that function); test with TMPDIR unset → project log is project-local.
 - [x] T5: oss-value.sh `_ov_walk` reuses the shared resolver (no second copy).
-- [ ] T6: provenance — list every remaining current-project reader (archive-check, precommand, statusline, session-end…) in TESTING.md: CC-run hooks get CLAUDE_PROJECT_DIR from Claude Code and may keep it as a last resort; model-run scripts may not. Change any model-run one.
+- [x] T6: provenance — list every remaining current-project reader (archive-check, precommand, statusline, session-end…) in TESTING.md: CC-run hooks get CLAUDE_PROJECT_DIR from Claude Code and may keep it as a last resort; model-run scripts may not. Change any model-run one.
 - [ ] T7: version 2.0.92.
 
 Out of scope: the served prompts (they pass CLAUDE_PROJECT_DIR explicitly or use the helper).

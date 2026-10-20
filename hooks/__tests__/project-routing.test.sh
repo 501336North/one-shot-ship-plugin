@@ -170,6 +170,14 @@ copies=$(cd "$ROOT/hooks" && grep -lF '"$d/.oss"' ./*.sh | tr '\n' ' ')
     && pass "T5: the .oss walk exists once (hooks/oss-safe-path.sh); oss-value.sh uses it" \
     || fail "T5: the .oss walk exists once (hooks/oss-safe-path.sh); oss-value.sh uses it" "walk found in: $copies"
 
+# --- T6: oss-archive-check.sh (run by the served /oss:plan via the Bash tool) -------------------
+world
+for p in "$A" "$B"; do mkdir -p "$p/.oss/dev/active/feat-done"; printf '# P\n## Current Phase: complete\n' > "$p/.oss/dev/active/feat-done/PROGRESS.md"; done
+run "$A/sub/deep" "$SH" "$ROOT/hooks/oss-archive-check.sh"
+[[ ! -d "$A/.oss/dev/active/feat-done" && -n "$(ls "$A/.oss/dev/completed" 2>/dev/null)" && -d "$B/.oss/dev/active/feat-done" && ! -e "$B/.oss/dev/completed" ]] \
+    && pass "T6: archive-check from A/sub/deep (current-project = B) archives A's finished feature, never B's" \
+    || fail "T6: archive-check from A/sub/deep (current-project = B) archives A's finished feature, never B's" "rc=$RC A:$(ls "$A/.oss/dev"/* 2>&1 | tr '\n' ' ') B:$(ls "$B/.oss/dev"/* 2>&1 | tr '\n' ' ') out=$OUT"
+
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
 [[ $FAILED -eq 0 ]]
