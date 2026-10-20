@@ -1,6 +1,6 @@
 # Progress: notify-routing-unify
 
-## Current Phase: build (ship round 2 fixes complete; ready for /oss:ship)
+## Current Phase: complete (shipped: plugin PR #204, v2.0.92, merged 2026-10-20)
 
 ## Tasks
 - [x] T1: shared resolver (oss_resolve_project / oss_project_walk in hooks/oss-safe-path.sh) + oss-notify.sh (completed 2026-10-20)
@@ -25,3 +25,5 @@
 - None. Known pre-existing failure: commands/__tests__/ideate-template.test.sh (3/4).
 
 ## Last Updated: 2026-10-20 17:10 +07 by /oss:build (ship round 2 implementer)
+
+## Last Updated: 2026-10-20 by orchestrator (archived after merge)

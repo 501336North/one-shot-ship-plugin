@@ -3,7 +3,7 @@
 Plan, design and decisions live in the API repo (branch feat/plugin-value-flags/plan,
 `.oss/dev/active/plugin-value-flags/`).
 
-## Current Phase: build
+## Current Phase: complete (shipped: plugin PR #203, v2.0.91, merged 2026-10-20)
 
 ## Tasks
 - [x] P1: `oss-value.sh dir` (completed 2026-10-19, aab0e11 / b6cae56)
@@ -70,3 +70,5 @@ Plan, design and decisions live in the API repo (branch feat/plugin-value-flags/
 - Round 5 targeted-check provenance, not changed: other config.json writers - commands/webhook.md `jq ... > tmp && mv tmp ~/.oss/config.json` (tmp gets the umask mode, so it can turn a 600 config back to 644; also writes `tmp` in the cwd), watcher/src/cli/models.ts writeFileSync (keeps the existing mode; a new file gets 644).
 
 ## Last Updated: 2026-10-20 by /oss:build (R5-6..R5-8)
+
+## Last Updated: 2026-10-20 by orchestrator (archived after merge)
