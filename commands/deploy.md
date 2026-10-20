@@ -140,12 +140,12 @@ On success only. If the command failed (the prompt sent `failed`), do not send `
 
 If permission is denied for `kubectl` or deployment commands, your manifests are preserved:
 
-```
+```text
 ⚠️ Permission denied for kubectl apply.
 
-Deployment manifests prepared. To deploy manually, apply the
-manifests listed below with kubectl, then watch the deployment's
-rollout status until it completes.
+Deployment manifests prepared. To deploy manually, run:
+  kubectl apply -f deployment.yaml -f service.yaml
+  kubectl rollout status -f deployment.yaml
 
 Files created:
   - deployment.yaml

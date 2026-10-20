@@ -81,7 +81,7 @@ For EVERY task, you MUST follow this exact sequence with logging:
    ```
 2. Write the test FIRST
 3. Run the test and confirm it FAILS
-4. Document the failure message
+4. Note why it fails (for yourself: the log line below takes no file name or message)
 5. **Log RED complete:**
    ```bash
    ~/.oss/hooks/oss-log.sh phase build RED complete
@@ -116,13 +116,13 @@ For EVERY task, you MUST follow this exact sequence with logging:
    ```
 
 ### Agent Delegation Logging
-When delegating to specialized agents (Task tool), you MUST log (fixed text only: never put an agent name, task or result into the command):
+When delegating to specialized agents (Task tool), you MUST log the agent through the value folder (never put an agent name, task or result into a command). Once per build, run `"$HOME/.oss/hooks/oss-value.sh" dir` and keep the folder it prints. Before each log line below, use the Write tool to write the agent's name alone (e.g. `code-reviewer`; lower case, digits, `:` and `-`) to `agent.txt` in that folder; the line checks the name, logs it with a fixed task text (the status line shows the agent) and deletes the file. If it refuses, go on without it.
 ```bash
-# Before spawning agent
-~/.oss/hooks/oss-log.sh agent build delegate "starting: delegated task"
+# Before spawning agent (after writing agent.txt)
+"$HOME/.oss/hooks/oss-value.sh" agent build start
 
-# After agent completes
-~/.oss/hooks/oss-log.sh agent build delegate "completed: delegated task"
+# After agent completes (after writing agent.txt again)
+"$HOME/.oss/hooks/oss-value.sh" agent build complete
 ```
 
 **CRITICAL**: Do NOT batch multiple TDD cycles into a single agent delegation. Each RED-GREEN-REFACTOR cycle must be logged individually.
@@ -231,13 +231,13 @@ For EACH task in the plan, execute the TDD cycle with full logging:
 ```
 
 **Expected log output for each TDD cycle:**
-```
+```text
 [HH:MM:SS] [PHASE] RED start
 [HH:MM:SS] [PHASE] RED complete
-[HH:MM:SS] [TEST] FAIL - test/foo.test.ts: expected X but got Y
+[HH:MM:SS] [TEST] FAIL
 [HH:MM:SS] [PHASE] GREEN start
 [HH:MM:SS] [PHASE] GREEN complete
-[HH:MM:SS] [TEST] PASS - test/foo.test.ts
+[HH:MM:SS] [TEST] PASS
 [HH:MM:SS] [PHASE] REFACTOR start
 [HH:MM:SS] [PHASE] REFACTOR complete
 ```

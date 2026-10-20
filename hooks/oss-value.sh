@@ -2,11 +2,16 @@
 # oss-value.sh - the one plugin script that owns the per-repo value folder (G21 cut 1, ADR-001).
 #
 #   oss-value.sh dir                print the physical ~/.oss/run/<key> for the cwd's repo, cleared
-#                                   of the 7 value files; nothing printed and rc != 0 when unsafe.
+#                                   of the 15 value files; nothing printed and rc != 0 when unsafe.
 #   oss-value.sh failed <workflow>  send reason.txt from that folder, cleaned, as the workflow's
 #                                   failed notice to the project the cwd is in; then delete it.
 #   oss-value.sh error <cmd:name>   emit message.txt, hint.txt and error.txt (5 fields) through
 #                                   oss-error.js as an OSSError from <cmd:name>; then delete them.
+#   oss-value.sh read <name>        print <name>.txt (key style prompt model workflow category name)
+#                                   when it matches that name's rule in _ov_cmd_read; deleted once read.
+#   oss-value.sh agent <workflow> start|complete
+#                                   log agent.txt (the specialist's name) through oss-log.sh agent
+#                                   with a fixed task text, for the status line; deleted once read.
 #
 # `dir` is the served value-folder command, step for step, except the key (toplevel + git dir, ship
 # round 1 R1-3); `failed` is the served failure-notice reader and `error` the served oss-error
@@ -22,7 +27,7 @@ if [[ ! -f "$_OV_HERE/oss-safe-path.sh" ]]; then
 fi
 source "$_OV_HERE/oss-safe-path.sh"
 
-_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name>" >&2; exit 2; }
+_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete" >&2; exit 2; }
 
 _OV_RUN="$HOME/.oss/run"
 
@@ -56,6 +61,7 @@ _ov_cmd_dir() {
     && local k && k=$(_ov_key) && mkdir -p -m 700 "$_OV_RUN/$k" && _ov_dir && chmod 700 "$_OV_DIR" && touch "$_OV_DIR" \
     && local p="$_OV_DIR" \
     && rm -f "$p/feature.txt" "$p/numbers.txt" "$p/date.txt" "$p/reason.txt" "$p/message.txt" "$p/hint.txt" "$p/error.txt" \
+             "$p/agent.txt" "$p/key.txt" "$p/style.txt" "$p/prompt.txt" "$p/model.txt" "$p/workflow.txt" "$p/category.txt" "$p/name.txt" \
     && printf '%s\n' "$p"
 }
 
@@ -79,6 +85,38 @@ _ov_open() {
 # Checked <file>, kept to the served charset, at most 200 characters -> _OV_VAL.
 _ov_read_value() {
     _ov_open "$1" && _OV_VAL=$(LC_ALL=C tr -cd 'A-Za-z0-9 ._,:()/-' <&3 | cut -c1-200); local r=$?; exec 3<&-; return $r
+}
+
+# <file> <regex>: the checked file, read whole, deleted at once (valid or not: a key never
+# lingers), then held to <regex> -> _OV_VAL. A refused open leaves the path alone.
+_ov_take() {
+    _OV_VAL=""; _ov_open "$1" || { exec 3<&- 2>/dev/null; return 1; }
+    local v; v=$(cat <&3); exec 3<&-; rm -f "$_OV_DIR/$1"
+    [[ "$v" =~ $2 ]] && _OV_VAL=$v
+}
+
+_ov_cmd_read() {
+    local re
+    case "${1:-}" in
+        key) re='^[A-Za-z0-9_-]{8,200}$' ;;
+        style) re='^(visual|audio|sound|none)$' ;;
+        prompt|model) re='^[a-z0-9_./:-]{1,100}$' ;;
+        workflow) re='^[a-z0-9_.:-]{1,100}$' ;;
+        category|name) re='^[a-z0-9_-]{1,100}$' ;;
+        *) false ;;
+    esac && _ov_dir && _ov_take "$1.txt" "$re" && printf '%s\n' "$_OV_VAL" \
+    || { echo "oss-value: read: refused (unknown name, or the value file missing, unsafe or not a valid ${1:-value})" >&2; return 1; }
+}
+
+_ov_cmd_agent() {
+    local o t
+    o=$(pwd -P)
+    oss_valid_workflow_name "${1:-}" \
+    && case "${2:-}" in start) t="starting: delegated task" ;; complete) t="completed: delegated task" ;; *) false ;; esac \
+    && _ov_dir && _ov_take agent.txt '^[a-z][a-z0-9:-]{0,60}$' \
+    || { echo "oss-value: agent: refused (bad workflow or start|complete, or agent.txt missing, unsafe or not an agent name)" >&2; return 1; }
+    _ov_walk "$o"
+    CLAUDE_PROJECT_DIR="$_OV_PROJ" "$_OV_HERE/oss-log.sh" agent "$1" "$_OV_VAL" "$t"
 }
 
 _ov_cmd_failed() {
@@ -114,5 +152,7 @@ case "${1:-}" in
     dir) _ov_cmd_dir ;;
     error) _ov_cmd_error "${2:-}" ;;
     failed) _ov_cmd_failed "${2:-}" ;;
+    read) _ov_cmd_read "${2:-}" ;;
+    agent) _ov_cmd_agent "${2:-}" "${3:-}" ;;
     *) _ov_usage ;;
 esac

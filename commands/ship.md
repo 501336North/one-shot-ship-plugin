@@ -330,11 +330,12 @@ Quality checks failed. Fix issues before shipping:
 
 If permission is denied for `git push` or PR creation, your work is preserved:
 
-```
+```text
 ⚠️ Permission denied for git push.
 
-PR prepared but not pushed. To complete manually, push this branch
-to origin and open a pull request for it against main.
+PR prepared but not pushed. To complete manually, run:
+  git push -u origin HEAD
+  gh pr create --base main --fill
 
 Files staged and committed:
   - [list of committed files]

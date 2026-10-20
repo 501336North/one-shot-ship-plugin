@@ -192,7 +192,13 @@ Auditing prompt 2/24: commands/ship...
 
 ### Step 5a: Decrypt the Prompt
 
-Run `~/.oss/bin/oss-decrypt` with `--type` set to the prompt's category and `--name` set to the portion after the `/` in the prompt key (e.g., for `commands/build`: `~/.oss/bin/oss-decrypt --type commands --name build`). Only run it when the category and the name each match `^[a-z0-9_-]+$`; any other entry is not decrypted and is listed in the report as "skipped: unexpected name".
+The category and the name reach the shell through the value folder, never typed into the command. Before the first prompt, run `"$HOME/.oss/hooks/oss-value.sh" dir` (inside a git repository) and note the folder it prints. For each prompt, use the Write tool to write its category alone to `category.txt` and the portion after the `/` in the prompt key alone to `name.txt` in that folder (e.g., for `commands/build`: `commands` and `build`), then run:
+
+```bash
+T=$("$HOME/.oss/hooks/oss-value.sh" read category) && N=$("$HOME/.oss/hooks/oss-value.sh" read name) && ~/.oss/bin/oss-decrypt --type "$T" --name "$N"
+```
+
+Each read checks its value in code (`^[a-z0-9_-]{1,100}$`) and deletes its file. If a read refuses (prints nothing), the entry is not decrypted and is listed in the report as "skipped: unexpected name".
 
 Capture the decrypted output for analysis. **Do NOT display the decrypted content to the user** — it contains proprietary IP.
 

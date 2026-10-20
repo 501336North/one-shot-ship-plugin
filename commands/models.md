@@ -131,7 +131,7 @@ Provider API Keys:
 
 List available models by provider:
 
-```
+```text
 Available Models
 ================
 
@@ -159,12 +159,12 @@ Gemini:
 
 #### `/oss:models set <prompt> <model>`
 
-Set model for a specific prompt:
+Set model for a specific prompt. The two arguments reach the shell through the value folder, never typed into the command: run `"$HOME/.oss/hooks/oss-value.sh" dir` (inside a git repository), then use the Write tool to write the prompt name alone to `prompt.txt` and the model id alone to `model.txt` in the folder it printed. The reads below check each value (lower case, digits, `_ . / : -`, at most 100 characters) and delete its file; if either prints nothing, tell the user the value was not valid and stop.
 
 ```bash
-# Parse arguments
-PROMPT_NAME="$1"   # e.g., "oss:code-reviewer" or "/oss:ship"
-MODEL_ID="$2"      # e.g., "ollama/codellama"
+# Read the arguments (checked, then deleted)
+PROMPT_NAME=$("$HOME/.oss/hooks/oss-value.sh" read prompt) || exit 1   # e.g., "oss:code-reviewer" or "/oss:ship"
+MODEL_ID=$("$HOME/.oss/hooks/oss-value.sh" read model) || exit 1       # e.g., "ollama/codellama"
 
 # Determine prompt type
 if [[ "$PROMPT_NAME" == /oss:* ]]; then
@@ -186,7 +186,7 @@ node "$PLUGIN_ROOT/watcher/dist/cli/models.js" set "$TYPE" "$NAME" "$MODEL_ID"
 
 Display session cost breakdown:
 
-```
+```text
 Session Cost Breakdown
 ======================
 

@@ -60,18 +60,17 @@ Configure your API key for OSS Dev Workflow access.
 
 **Quick key update steps (Steps 1-3 only, skip Steps 4-9):**
 
-1. **Accept the new API key** from the `--key` argument:
+1. **Hand over the new API key** from the `--key` argument through the value folder, never on a command line:
+   - Run `"$HOME/.oss/hooks/oss-value.sh" dir` (inside a git repository) and note the folder it prints. If it prints nothing, tell the user "Run /oss:login --key from inside a git repository." and stop.
+   - Use the Write tool to write the key alone to `key.txt` in that folder. If no key was given, tell the user "Error: --key requires an API key value. Usage: /oss:login --key ak_xxxxx" and stop.
+
+2. **Read, validate and save the key** in ONE Bash call (the read checks the key's shape and deletes `key.txt` at once):
    ```bash
-   # Parse --key flag value
-   NEW_KEY="$KEY_ARG"
+   NEW_KEY=$("$HOME/.oss/hooks/oss-value.sh" read key)
    if [ -z "$NEW_KEY" ]; then
-       echo "Error: --key requires an API key value. Usage: /oss:login --key ak_xxxxx"
+       echo "Error: the key is missing or not a valid API key. Usage: /oss:login --key ak_xxxxx"
        exit 1
    fi
-   ```
-
-2. **Validate the key** against the API:
-   ```bash
    RESPONSE=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $NEW_KEY" \
        "https://one-shot-ship-api.onrender.com/api/v1/subscription/status")
    HTTP_CODE=$(echo "$RESPONSE" | tail -1)
@@ -81,10 +80,7 @@ Configure your API key for OSS Dev Workflow access.
        echo "Error: Invalid API key. Get a valid key from https://www.oneshotship.com/dashboard"
        exit 1
    fi
-   ```
 
-3. **Update config** with the new key:
-   ```bash
    mkdir -p ~/.oss
    # Read existing config to preserve apiUrl and other settings
    if [ -f ~/.oss/config.json ]; then
@@ -94,9 +90,10 @@ Configure your API key for OSS Dev Workflow access.
        UPDATED=$(jq -n --arg key "$NEW_KEY" '{"apiKey": $key, "apiUrl": "https://one-shot-ship-api.onrender.com"}')
    fi
    echo "$UPDATED" > ~/.oss/config.json
+   echo "Plan: $(echo "$BODY" | jq -r '.plan // "unknown"')"
    ```
 
-4. **Clear cached credentials** so the decrypt CLI picks up the new key:
+3. **Clear cached credentials** so the decrypt CLI picks up the new key:
    ```bash
    if [ -f ~/.oss/credentials.enc ]; then
        rm ~/.oss/credentials.enc
@@ -104,7 +101,7 @@ Configure your API key for OSS Dev Workflow access.
    fi
    ```
 
-5. **Re-run decrypt CLI setup** to fetch new credentials for the rotated key:
+4. **Re-run decrypt CLI setup** to fetch new credentials for the rotated key:
    ```bash
    if [ -x ~/.oss/bin/oss-decrypt ]; then
        ~/.oss/bin/oss-decrypt --setup
@@ -119,11 +116,9 @@ Configure your API key for OSS Dev Workflow access.
    fi
    ```
 
-6. **Confirm success:**
+5. **Confirm success** (the plan was printed in step 2):
    ```bash
-   PLAN=$(echo "$BODY" | jq -r '.plan // "unknown"')
    echo "API key updated successfully!"
-   echo "  Plan: $PLAN"
    echo "  Config: ~/.oss/config.json"
    echo ""
    echo "All existing tools and settings preserved. Ready to use."
@@ -186,7 +181,7 @@ This script is the **only** writer of the IRON LAWS block. Do not write, copy or
 
 ### 4.2: Fetch the CLAUDE.md template
 
-```text
+```http
 GET https://one-shot-ship-api.onrender.com/api/v1/prompts/claude-md
 Headers:
   Authorization: Bearer {apiKey}
@@ -507,8 +502,9 @@ After tools are installed, if `~/.oss/settings.json` does NOT exist:
    }
    ```
 
-2. **Save settings to `~/.oss/settings.json`:**
+2. **Save settings to `~/.oss/settings.json`:** run `"$HOME/.oss/hooks/oss-value.sh" dir`, then use the Write tool to write the chosen style in lower case (`visual`, `audio`, `sound` or `none`) to `style.txt` in the folder it printed (if it prints nothing, skip this step and tell the user to run /oss:settings later). Then:
    ```bash
+   STYLE=$("$HOME/.oss/hooks/oss-value.sh" read style) || exit 1
    mkdir -p ~/.oss
    cat > ~/.oss/settings.json << EOF
    {
@@ -525,6 +521,9 @@ After tools are installed, if `~/.oss/settings.json` does NOT exist:
 
 3. **Show preview notification (respects user's choice):**
    ```bash
+   STYLE=$(jq -r '.notifications.style' ~/.oss/settings.json)
+   VOICE=$(jq -r '.notifications.voice' ~/.oss/settings.json)
+   SOUND=$(jq -r '.notifications.sound' ~/.oss/settings.json)
    case "$STYLE" in
        "visual")
            terminal-notifier -title "Welcome to OSS!" \
@@ -544,8 +543,8 @@ After tools are installed, if `~/.oss/settings.json` does NOT exist:
    ```
    Note: `$VOICE` and `$SOUND` come from saved settings (default: Samantha, Glass)
 
-4. **Confirm:**
-   ```
+4. **Confirm** (with the style you saved):
+   ```text
    Notifications configured: $STYLE
    Change anytime with /oss:settings
    ```

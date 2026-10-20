@@ -80,8 +80,6 @@ Register at https://www.oneshotship.com
 ~/.oss/hooks/oss-notify.sh --workflow custom start '{}'
 ```
 
-Replace `{COMMAND_NAME}` with the actual custom command name (without `team:` prefix).
-
 ## Step 4: Ensure Decrypt CLI Installed
 
 ```bash
