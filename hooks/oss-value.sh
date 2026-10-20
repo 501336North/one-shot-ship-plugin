@@ -71,7 +71,7 @@ _ov_dir() {
 
 _ov_cmd_dir() {
     _ov_repo \
-    && mkdir -p -m 700 "$_OV_RUN" && _ov_safe "$_OV_RUN" && chmod 700 "$_OV_RUN" \
+    && mkdir -p -m 700 "$HOME/.oss" "$_OV_RUN" && _ov_safe "$_OV_RUN" && chmod 700 "$_OV_RUN" \
     && { find "$_OV_RUN" -mindepth 2 -maxdepth 2 -type f -name '*.txt' -mtime +7 -delete; find "$_OV_RUN" -mindepth 1 -maxdepth 1 -type d -empty -mtime +1 -delete || true; } 2>/dev/null \
     && local k && k=$(_ov_key) && mkdir -p -m 700 "$_OV_RUN/$k" && _ov_dir && chmod 700 "$_OV_DIR" && touch "$_OV_DIR" \
     && local p="$_OV_DIR" \
@@ -173,7 +173,8 @@ _ov_cmd_cli() {
 # login: key.txt (the key rule) checked against the API, then saved to ~/.oss/config.json (other
 # settings kept; a new file gets the API URL) - /oss:login <KEY> and --key, one allowed call.
 _ov_cmd_login() {
-    local k r c u
+    local k r c u t
+    umask 077   # the key file and anything made here: owner-only (R5-6)
     _ov_dir && _ov_get key && k=$_OV_VAL \
     || { echo "Error: the key is missing or not a valid API key. Usage: /oss:login ak_xxxxx" >&2; return 1; }
     source "$_OV_HERE/oss-api-curl.sh" || return 1   # oss_api_curl: the key on curl's stdin, never in argv
@@ -182,7 +183,7 @@ _ov_cmd_login() {
     || { echo "Error: Invalid API key. Get a valid key from https://www.oneshotship.com/dashboard" >&2; return 1; }
     c="$HOME/.oss/config.json"; mkdir -p "$HOME/.oss"
     if test -f "$c"; then u=$(jq --arg key "$k" '.apiKey = $key' "$c"); else u=$(jq -n --arg key "$k" '{"apiKey": $key, "apiUrl": "https://one-shot-ship-api.onrender.com"}'); fi
-    printf '%s\n' "$u" > "$c" && echo "Plan: $(printf '%s\n' "$r" | head -1 | jq -r '.plan // "unknown"')"
+    t=$(mktemp "$HOME/.oss/config.json.XXXXXX") && printf '%s\n' "$u" > "$t" && chmod 600 "$t" && mv -f "$t" "$c" && echo "Plan: $(printf '%s\n' "$r" | head -1 | jq -r '.plan // "unknown"')"
 }
 
 _ov_cmd_agent() {
