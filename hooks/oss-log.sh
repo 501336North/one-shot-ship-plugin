@@ -921,10 +921,10 @@ EOF
         # Run health check in current project
         # The project is OSS_LOG_PROJECT_DIR (the shared rule)
         # Output written to health-check.log for status detection
-        CURRENT_PROJECT="$OSS_LOG_PROJECT_DIR"
+        CURRENT_PROJECT=$(validate_project_path "$OSS_LOG_PROJECT_DIR") || CURRENT_PROJECT=""
 
-        if [[ -z "$CURRENT_PROJECT" || ! -d "$CURRENT_PROJECT" ]]; then
-            echo "No active project. Start a Claude Code session first."
+        if [[ -z "$CURRENT_PROJECT" ]]; then
+            echo "Not inside a project (no .oss found and no session pointer)"
             exit 1
         fi
 

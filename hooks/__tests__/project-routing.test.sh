@@ -170,6 +170,17 @@ copies=$(cd "$ROOT/hooks" && grep -lF '"$d/.oss"' ./*.sh | tr '\n' ' ')
     && pass "T5: the .oss walk exists once (hooks/oss-safe-path.sh); oss-value.sh uses it" \
     || fail "T5: the .oss walk exists once (hooks/oss-safe-path.sh); oss-value.sh uses it" "walk found in: $copies"
 
+# --- R1-5: health-check runs only in a valid project, and says why when there is none -------------
+hc_world() { world; mkdir -p "$T/hc$N/watcher/dist/cli"; printf 'console.log("hc cwd " + process.cwd())\n' > "$T/hc$N/watcher/dist/cli/health-check.js"; echo "$T/hc$N" > "$H/.oss/plugin-root"; }
+hc_world; run "$C/sub" "$SH" "$ROOT/hooks/oss-log.sh" health-check
+[[ $RC -ne 0 && "$OUT" == *"Not inside a project (no .oss found and no session pointer)"* && "$OUT" != *"hc cwd"* ]] \
+    && pass "R1-5: health-check outside any project says it is not inside a project and runs nothing" \
+    || fail "R1-5: health-check outside any project says it is not inside a project and runs nothing" "rc=$RC out=$OUT"
+hc_world; OUT=$(cd "$C" && env HOME="$H" CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR=/usr "$SH" "$ROOT/hooks/oss-log.sh" health-check 2>&1 </dev/null); RC=$?
+[[ $RC -ne 0 && "$OUT" != *"hc cwd"* ]] \
+    && pass "R1-5: health-check refuses a project outside HOME and the temp dirs (validate_project_path)" \
+    || fail "R1-5: health-check refuses a project outside HOME and the temp dirs (validate_project_path)" "rc=$RC out=$OUT"
+
 # --- T6: oss-archive-check.sh (run by the served /oss:plan via the Bash tool) -------------------
 world
 for p in "$A" "$B"; do mkdir -p "$p/.oss/dev/active/feat-done"; printf '# P\n## Current Phase: complete\n' > "$p/.oss/dev/active/feat-done/PROGRESS.md"; done
