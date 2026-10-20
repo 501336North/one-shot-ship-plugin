@@ -7,6 +7,10 @@
 #                                         file with link count 1 that is not a symlink
 #   oss_refuse_unsafe <rel>               the one stderr line a refused write prints
 #   oss_valid_workflow_name <name>        ^[a-z][a-z0-9-]{0,40}$ (twin: watcher/src/utils/workflow-name.ts)
+#   oss_project_walk <dir>                the nearest real (not linked) .oss from <dir> up to its git
+#                                         toplevel -> _OSS_PROJ ("" when none: the global ~/.oss)
+#   oss_resolve_project                   CLAUDE_PROJECT_DIR if set, else oss_project_walk from the
+#                                         physical cwd -> _OSS_PROJ (twin: watcher/src/utils/project-dir.ts)
 #
 # oss_safe_mkdir sets _OSS_SAFE_DIR to the directory it checked; oss_safe_target builds the
 # target from it, so the path approved is the path the caller writes (G2).
@@ -92,4 +96,21 @@ oss_valid_workflow_name() {
     [[ -n "${BASH_VERSION:-}" ]] || return 1
     local re='^[a-z][a-z0-9-]{0,40}$'
     [[ "${1:-}" =~ $re ]]
+}
+
+# The ONE routing rule for model-run scripts (notify-routing-unify D1). ~/.oss/current-project is
+# never read: it names whichever session started last, not the project the command runs in.
+oss_project_walk() {
+    local d="${1:-}" top
+    _OSS_PROJ=""
+    top=$(unset GIT_DIR GIT_WORK_TREE; cd -- "$d" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null) || return 0
+    while [[ -n "$top" && ( "$d" == "$top" || "$d" == "$top"/* ) ]]; do
+        [[ -d "$d/.oss" && ! -L "$d/.oss" ]] && { _OSS_PROJ="$d"; return 0; }
+        d="${d%/*}"
+    done
+    return 0
+}
+oss_resolve_project() {
+    if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then _OSS_PROJ="$CLAUDE_PROJECT_DIR"; return 0; fi
+    oss_project_walk "$(pwd -P)"
 }

@@ -85,16 +85,10 @@ fi
 # =============================================================================
 # Resolve project directory so workflow state writes go to the correct
 # project-local file (not the global ~/.oss/workflow-state.json).
-# Resolution order: CLAUDE_PROJECT_DIR env → ~/.oss/current-project file → git root
-_OSS_PROJECT_DIR=""
-if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
-    _OSS_PROJECT_DIR="$CLAUDE_PROJECT_DIR"
-elif [[ -f "$HOME/.oss/current-project" ]]; then
-    _OSS_PROJECT_DIR=$(cat "$HOME/.oss/current-project" 2>/dev/null | tr -d '[:space:]')
-fi
-if [[ -z "$_OSS_PROJECT_DIR" ]]; then
-    _OSS_PROJECT_DIR=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
-fi
+# Resolution: oss_resolve_project (hooks/oss-safe-path.sh), the one rule for every model-run script.
+_OSS_PROJ=""
+declare -F oss_resolve_project >/dev/null && oss_resolve_project
+_OSS_PROJECT_DIR="$_OSS_PROJ"
 
 # Helper: call update-workflow-state.js with --project-dir when available
 # Usage: wf_state <command> [args...]
