@@ -190,7 +190,9 @@ HEALTH_CHECK_CLI="$PLUGIN_ROOT/watcher/dist/cli/health-check.js"
 GITIGNORE_FILE="${CLAUDE_PROJECT_DIR:-.}/.gitignore"
 
 _OSS_PROJECT="${CLAUDE_PROJECT_DIR:-.}"
-if [[ ! -d "$PROJECT_OSS_DIR" ]]; then
+if [[ -z "${CLAUDE_PROJECT_DIR:-}" ]]; then
+    :   # no project known: no stray ./.oss (R1-4; Claude Code always sets CLAUDE_PROJECT_DIR)
+elif [[ ! -d "$PROJECT_OSS_DIR" ]]; then
     # First time - create .oss folder (through the guard: a committed .oss link is refused)
     if ! oss_safe_mkdir "$_OSS_PROJECT" .oss; then
         oss_refuse_unsafe .oss
@@ -251,7 +253,7 @@ fi
 # exits immediately and creates stale PID files. Chain execution is now handled by
 # oss-notify.sh via chain-trigger.js on complete events.
 # Clean up any stale PID files from previous versions.
-if oss_safe_mkdir "$_OSS_PROJECT" .oss 2>/dev/null; then rm -f "$WATCHER_PID_FILE" 2>/dev/null; fi
+if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]] && oss_safe_mkdir "$_OSS_PROJECT" .oss 2>/dev/null; then rm -f "$WATCHER_PID_FILE" 2>/dev/null; fi
 
 # --- Health Check (Run tests on session start) ---
 # Run npm test to catch any pre-existing failures and queue them

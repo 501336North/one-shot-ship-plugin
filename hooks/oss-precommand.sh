@@ -118,18 +118,12 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-}"
 if [[ -z "$PROJECT_DIR" && -f "${HOME}/.oss/current-project" ]]; then
     PROJECT_DIR=$(cat "${HOME}/.oss/current-project" 2>/dev/null)
 fi
-PROJECT_DIR="${PROJECT_DIR:-.}"
-
-# Check if .oss directory exists
+# No project known: no queue, and no stray ./.oss (R1-4; Claude Code always sets CLAUDE_PROJECT_DIR here)
 OSS_DIR="$PROJECT_DIR/.oss"
-if [[ ! -d "$OSS_DIR" ]]; then
-    # No .oss directory - create it
-    mkdir -p "$OSS_DIR"
-fi
 
 # Check if queue file exists
 QUEUE_FILE="$OSS_DIR/queue.json"
-if [[ ! -f "$QUEUE_FILE" ]]; then
+if [[ -z "$PROJECT_DIR" || ! -f "$QUEUE_FILE" ]]; then
     if [[ -x "$LOG_SCRIPT" ]]; then
         "$LOG_SCRIPT" hook oss-precommand COMPLETE
     fi

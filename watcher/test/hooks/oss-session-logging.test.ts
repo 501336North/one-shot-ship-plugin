@@ -234,10 +234,11 @@ describe('oss-session-end.sh logging', () => {
       // May fail due to various reasons
     }
 
-    // THEN: session-end creates the repo's .oss, so (routing D1: the cwd's nearest real .oss)
-    // its hook entries land in that project's own session log, not the global one
-    const projectSessionLog = path.join(fs.realpathSync(testProjectDir), '.oss', 'logs', 'current-session', 'session.log');
-    expect(fs.readFileSync(projectSessionLog, 'utf-8')).toMatch(/\[hook\].*oss-session-end/);
+    // THEN: with no project known it creates no stray .oss in the cwd (ship round 1, R1-4), so its
+    // hook entries land in the global session log
+    expect(fs.existsSync(path.join(testProjectDir, '.oss'))).toBe(false);
+    const logContent = fs.readFileSync(sessionLog, 'utf-8');
+    expect(logContent.slice(logContent.lastIndexOf(marker))).toMatch(/\[hook\].*oss-session-end/);
   });
 
   /**

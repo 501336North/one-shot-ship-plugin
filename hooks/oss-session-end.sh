@@ -20,7 +20,7 @@ if declare -F oss_session_pointer_remove >/dev/null; then
     fi
 fi
 PROJECT_OSS_DIR="${CLAUDE_PROJECT_DIR:-.}/.oss"
-oss_safe_mkdir "${CLAUDE_PROJECT_DIR:-.}" .oss || oss_refuse_unsafe .oss
+[[ -z "${CLAUDE_PROJECT_DIR:-}" ]] || oss_safe_mkdir "$CLAUDE_PROJECT_DIR" .oss || oss_refuse_unsafe .oss   # no project: no stray ./.oss (R1-4)
 
 # --- Session Logging (for supervisor visibility) ---
 LOG_SCRIPT="$SCRIPT_DIR/oss-log.sh"
@@ -47,7 +47,9 @@ fi
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
 # Save context to project-local file (not global, for multi-project isolation)
-if ! oss_safe_target "${CLAUDE_PROJECT_DIR:-.}" .oss/session-context.md 2>/dev/null; then
+if [[ -z "${CLAUDE_PROJECT_DIR:-}" ]]; then
+    :   # no project known: no context file (and no stray ./.oss)
+elif ! oss_safe_target "$CLAUDE_PROJECT_DIR" .oss/session-context.md 2>/dev/null; then
     oss_refuse_unsafe .oss/session-context.md
 else
 cat > "$PROJECT_OSS_DIR/session-context.md" << EOF
