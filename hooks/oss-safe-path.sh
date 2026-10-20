@@ -9,9 +9,10 @@
 #   oss_valid_workflow_name <name>        ^[a-z][a-z0-9-]{0,40}$ (twin: watcher/src/utils/workflow-name.ts)
 #   oss_project_walk <dir>                the nearest real (not linked) .oss from <dir> up to the first
 #                                         dir holding a .git entry -> _OSS_PROJ ("" = the global ~/.oss)
-#   oss_resolve_project [dir]             CLAUDE_PROJECT_DIR if set, else this session's pointer
-#                                         (oss_session_project), else oss_project_walk from [dir] or the
-#                                         physical cwd -> _OSS_PROJ (twin: watcher/src/utils/project-dir.ts)
+#   oss_resolve_project [dir]             CLAUDE_PROJECT_DIR if set, else oss_project_walk from [dir] or
+#                                         the physical cwd when it finds a .oss in another repo than this
+#                                         session's pointer (oss_session_project), else the pointer, else
+#                                         the walk -> _OSS_PROJ (twin: watcher/src/utils/project-dir.ts)
 #   oss_session_pointer_write/_remove/_prune, oss_hook_stdin   the SessionStart/End side of the pointer
 #
 # oss_safe_mkdir sets _OSS_SAFE_DIR to the directory it checked; oss_safe_target builds the
@@ -104,24 +105,31 @@ oss_valid_workflow_name() {
 # never read: it names whichever session started last, not the project the command runs in.
 # The walk stops at (and includes) the first directory holding a .git entry (dir or file); no git
 # call, so no git config / GIT_* variable moves the bound. No .git above: no project.
-oss_project_walk() {
+oss_project_walk() { # -> _OSS_PROJ, and _OSS_GIT: the dir holding the .git entry ("" = none)
     local d="${1:-}" found=""
-    _OSS_PROJ=""
+    _OSS_PROJ=""; _OSS_GIT=""
     [[ "$d" == /* ]] || return 0
     d="${d%/}"
     while :; do
         [[ -z "$found" && -d "$d/.oss" && ! -L "$d/.oss" ]] && found="${d:-/}"
-        [[ -e "$d/.git" || -L "$d/.git" ]] && { _OSS_PROJ="$found"; return 0; }
+        [[ -e "$d/.git" || -L "$d/.git" ]] && { _OSS_PROJ="$found"; _OSS_GIT="${d:-/}"; return 0; }
         [[ -n "$d" ]] || return 0
         d="${d%/*}"
     done
 }
+# R2-1 (D3): the pointer wins unless the walk finds a .oss in ANOTHER repo (its .git dir is not the
+# pointer project's): session started in product 1, the user now works in product 2.
 oss_resolve_project() { # [dir] (default: the physical cwd)
     if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then _OSS_PROJ="$CLAUDE_PROJECT_DIR"; return 0; fi
-    oss_session_project && return 0
-    local d="${1:-}"
+    local d="${1:-}" w g p
     if [[ -z "$d" ]]; then d=$(pwd -P; echo .); d="${d%$'\n.'}"; fi
-    oss_project_walk "$d"
+    oss_project_walk "$d"; w="$_OSS_PROJ"; g="$_OSS_GIT"
+    if oss_session_project; then
+        p="$_OSS_PROJ"
+        [[ -z "$w" ]] && return 0
+        _oss_phys_cached "$p" && oss_project_walk "$_OSS_PHYS" && [[ "$_OSS_GIT" == "$g" ]] && { _OSS_PROJ="$p"; return 0; }
+    fi
+    _OSS_PROJ="$w"
 }
 
 # Per-session pointer ~/.oss/sessions/<id>/project (ship round 1, D2): written by the SessionStart

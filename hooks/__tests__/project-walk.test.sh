@@ -33,19 +33,19 @@ repo() { mkdir -p "$1" && (cd "$1" && git init -q) >/dev/null 2>&1; }
 
 # shell_proj <cwd> / ts_proj <cwd>: the project each resolver picks (no env, no pointer); "" = none.
 # A trailing "." is printed and removed so a name ending in a newline or space survives $(...).
-shell_proj() {
-    local o; o=$(cd "$1" && env -u CLAUDE_PROJECT_DIR -u CLAUDE_CODE_SESSION_ID HOME="$H" "$SH" -c \
+shell_proj() { # <cwd> [session id]
+    local o; o=$(cd "$1" && env -u CLAUDE_PROJECT_DIR -u CLAUDE_CODE_SESSION_ID HOME="$H" ${2:+CLAUDE_CODE_SESSION_ID="$2"} "$SH" -c \
         'source "$1/hooks/oss-safe-path.sh"; oss_resolve_project; printf "%s." "$_OSS_PROJ"' _ "$ROOT" 2>&1); printf '%s' "${o%.}"
 }
-ts_proj() {
-    local o; o=$(cd "$1" && env -u CLAUDE_PROJECT_DIR -u CLAUDE_CODE_SESSION_ID HOME="$H" node --input-type=module -e '
+ts_proj() { # <cwd> [session id]
+    local o; o=$(cd "$1" && env -u CLAUDE_PROJECT_DIR -u CLAUDE_CODE_SESSION_ID HOME="$H" ${2:+CLAUDE_CODE_SESSION_ID="$2"} node --input-type=module -e '
         const m = await import(process.argv[1]);
-        const p = m.resolveProjectDir({ HOME: process.env.HOME }, process.cwd());
+        const p = m.resolveProjectDir({ HOME: process.env.HOME, CLAUDE_CODE_SESSION_ID: process.env.CLAUDE_CODE_SESSION_ID }, process.cwd());
         process.stdout.write((p ?? "") + ".");' "$ROOT/watcher/dist/utils/project-dir.js" 2>&1); printf '%s' "${o%.}"
 }
-# expect <label> <cwd> <want>: both resolvers give <want>
+# expect <label> <cwd> <want> [session id]: both resolvers give <want>
 expect() {
-    local s t; s=$(shell_proj "$2"); t=$(ts_proj "$2")
+    local s t; s=$(shell_proj "$2" "${4:-}"); t=$(ts_proj "$2" "${4:-}")
     [[ "$s" == "$3" ]] && pass "shell: $1" || fail "shell: $1" "got [$s] want [$3]"
     [[ "$t" == "$3" ]] && pass "ts: $1" || fail "ts: $1" "got [$t] want [$3]"
 }
@@ -81,6 +81,13 @@ expect "outside any repo a stray .oss is not a project" "$O/sub" ""
 expect "the sandbox HOME (not a repo) is not a project" "$H" ""
 L="$T/linked"; repo "$L"; mkdir -p "$T/target"; ln -s "$T/target" "$L/.oss"
 expect "a linked .oss is never followed" "$L" ""
+
+# --- R2-1: the session pointer against the walk (pointer named through a link to the product) ----
+Q="$T/prodQ"; repo "$Q"; mkdir -p "$Q/.oss" "$Q/sub/stray/.oss"; ln -s "$Q" "$T/linkQ"
+mkdir -m 700 -p "$H/.oss/sessions/SQ"; printf '%s\n' "$T/linkQ" > "$H/.oss/sessions/SQ/project"; chmod 600 "$H/.oss/sessions/SQ/project"
+expect "a stray .oss inside the pointer's repo (pointer spelled through a link) keeps the pointer" "$Q/sub/stray" "$T/linkQ" SQ
+expect "another repo's own .oss wins over the pointer" "$S/a b/c " "$S/a b" SQ
+expect "a nested repo with no .oss keeps the pointer" "$I" "$T/linkQ" SQ
 
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"

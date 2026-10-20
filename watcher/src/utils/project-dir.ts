@@ -2,8 +2,10 @@
  * The ONE routing rule for model-run CLIs (notify-routing-unify D1). Twin of oss_resolve_project
  * in hooks/oss-safe-path.sh; keep the rules identical.
  *
- * CLAUDE_PROJECT_DIR if set, else this session's pointer (sessionProjectDir), else the nearest real (not linked) .oss walking up from the cwd,
- * stopping at (and including) the first directory holding a .git entry (no git call), else null (the caller uses the global ~/.oss).
+ * CLAUDE_PROJECT_DIR if set; else the nearest real (not linked) .oss walking up from the cwd, stopping at
+ * (and including) the first directory holding a .git entry (no git call), when that .git dir is not the
+ * one of this session's pointer (sessionProjectDir); else the pointer; else the walk; else null (the
+ * caller uses the global ~/.oss).
  * ~/.oss/current-project is never read: it names whichever session started last.
  */
 
@@ -16,20 +18,28 @@ export function resolveProjectDir(
 ): string | null {
   const fromEnv = env.CLAUDE_PROJECT_DIR;
   if (fromEnv !== undefined && fromEnv !== '') return fromEnv;
+  const walked = walk(cwd);
   const fromSession = sessionProjectDir(env);
-  if (fromSession !== null) return fromSession;
+  // R2-1 (D3): the pointer wins unless the walk finds a .oss in ANOTHER repo (its .git dir is not
+  // the pointer project's): session started in product 1, the user now works in product 2.
+  if (fromSession !== null && (walked.project === null || walk(fromSession).git === walked.git)) return fromSession;
+  return walked.project;
+}
+
+/** The nearest real .oss from <start> up to the first dir holding a .git entry (`git`; null = none). */
+function walk(start: string): { project: string | null; git: string | null } {
   let dir: string;
   try {
-    dir = fs.realpathSync(cwd);
+    dir = fs.realpathSync(start);
   } catch {
-    return null;
+    return { project: null, git: null };
   }
   let found: string | null = null;
   for (;;) {
     if (found === null && isRealDir(path.join(dir, '.oss'))) found = dir;
-    if (exists(path.join(dir, '.git'))) return found;
+    if (exists(path.join(dir, '.git'))) return { project: found, git: dir };
     const up = path.dirname(dir);
-    if (up === dir) return null;
+    if (up === dir) return { project: null, git: null };
     dir = up;
   }
 }

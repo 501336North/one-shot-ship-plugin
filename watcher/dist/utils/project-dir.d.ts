@@ -2,8 +2,10 @@
  * The ONE routing rule for model-run CLIs (notify-routing-unify D1). Twin of oss_resolve_project
  * in hooks/oss-safe-path.sh; keep the rules identical.
  *
- * CLAUDE_PROJECT_DIR if set, else this session's pointer (sessionProjectDir), else the nearest real (not linked) .oss walking up from the cwd,
- * stopping at (and including) the first directory holding a .git entry (no git call), else null (the caller uses the global ~/.oss).
+ * CLAUDE_PROJECT_DIR if set; else the nearest real (not linked) .oss walking up from the cwd, stopping at
+ * (and including) the first directory holding a .git entry (no git call), when that .git dir is not the
+ * one of this session's pointer (sessionProjectDir); else the pointer; else the walk; else null (the
+ * caller uses the global ~/.oss).
  * ~/.oss/current-project is never read: it names whichever session started last.
  */
 export declare function resolveProjectDir(env: Record<string, string | undefined>, cwd?: string): string | null;
