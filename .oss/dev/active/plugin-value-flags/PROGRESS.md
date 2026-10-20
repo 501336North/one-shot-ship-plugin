@@ -15,6 +15,8 @@ Plan, design and decisions live in the API repo (branch feat/plugin-value-flags/
 - [x] Ship round 1 R1-1..R1-6: RED f49006b -> GREEN cbc86b7 (completed 2026-10-20)
 - [x] R1-7, R1-8: reported, not built (see DECISIONS.md)
 - [x] Ship round 2 R2-1..R2-4: RED d021aa3 (guard: 51 lines in 27 wrappers; notification-copy 2 red; oss-value 7d 2 red) -> GREEN 7413730 + 3485b50 (completed 2026-10-20)
+- [x] Ship round 3 R3-1..R3-7: RED 55d92ef (value-file-wrappers 0/32, oss-value 84 red, guard flags 29 lines) -> GREEN 8ebb265 (completed 2026-10-20)
+- [x] R3-8: D5 corrected, visionos `{user_context}` in FOLLOWUPS (completed 2026-10-20)
 
 ## Deviations from the plan
 - code-simplifier is NOT unserved: /oss:code-simplifier serves agents/code-simplifier, which sends
@@ -32,5 +34,8 @@ Plan, design and decisions live in the API repo (branch feat/plugin-value-flags/
   no .oss is found; A3/A4 must move them onto oss-value.sh (new key: toplevel + git dir) in step.
 - plan.md and context-report.md keep a fixed `failed '{}'` line (no model text; possible duplicate log).
 - hooks/oss-session-start-new.sh and -test.sh have their own stale HOOKS_TO_COPY (not registered).
+- Round 3: the guard's unassigned-variable rule hits 21 file:NAME pairs outside the R3-5 list
+  (settings.md is the big one); KNOWN_OPEN in the guard + FOLLOWUPS (D8). The value-file verbs need a
+  git repo, so login --key / models set / workflows / trust refuse outside one (D7, FOLLOWUPS).
 
-## Last Updated: 2026-10-20 06:36 +07 by /oss:build (ship round 2 implementer)
+## Last Updated: 2026-10-20 07:50 +07 by /oss:build (ship round 3 implementer)

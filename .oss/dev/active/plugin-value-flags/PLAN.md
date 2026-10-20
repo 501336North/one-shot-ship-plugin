@@ -19,3 +19,21 @@ Re-check: security FAIL, pen-test FAIL (proved `src/$(touch PWNED).test.ts` runs
 - [x] R2-2 (HIGH): widen the guard: any `{word}` or `<word>` placeholder in any case (after stripping `${…}`), on every shell line — every fenced block except json/yaml/yml/markdown/md/typescript/ts/javascript/js/text/diff (case-insensitive, info strings allowed, `~~~` recognised, bare fences = shell), plus inline backtick spans that run `oss-*`, `~/.oss`, `$HOME/.oss`, `git`, `gh`, `node`, `kubectl`. Control fixture includes lowercase, mixed case, `<reason>`, a bare fence, a `~~~bash` fence and a ```Bash fence.
 - [x] R2-3 (MEDIUM, regression from R1-1): notifications must not show raw `{placeholder}` text when a field is missing: `watcher/src/services/notification-copy.ts` interpolate/getWorkflowCopy falls back to the template's static text (rebuild watcher dist so watcher-dist-fresh passes).
 - [x] R2-4 (INFO): `hooks/oss-value.sh` refuses a HOME that is not absolute.
+
+# Ship round 3 fixes (2026-10-20) — user: "Fix (a) and (b), then merge"
+
+Round-2 re-check: HIGH closed in all three gates; LOW/INFO left.
+
+(a) small text fixes
+- [x] R3-1: ship.md:336-343 and deploy.md:146-155 fallback: give fixed, placeholder-free commands (e.g. `git push -u origin HEAD`, `gh pr create --base main --fill`; deploy: a fixed instruction with no model-filled names) so "run the commands shown above" points at real text again.
+- [x] R3-2: delete the stale oss-custom.md:83 sentence ("Replace `{COMMAND_NAME}` …").
+- [x] R3-3: build.md "Expected log output" block (~:235-242): no example that shows a file name/message after `[TEST] FAIL`, and nothing that tells the model to append the failure message to `oss-log.sh test`.
+- [x] R3-4: build.md:122,125 agent logging: bring back the specialist's name on the status line through a value file, not the command line: an `oss-value.sh agent <workflow> start|complete` verb that reads `agent.txt` (validated `^[a-z][a-z0-9:-]{0,60}$`) and calls oss-log.sh agent.
+
+(b) user-argument lines and guard coverage
+- [x] R3-5: model-filled user arguments in shell lines go through a value file read by the command, never typed into the line: login.md:66 (`$KEY_ARG`), login.md:516-538 (`$STYLE`/`$VOICE`/`$SOUND`), models.md:165-166 (`$1`/`$2`), workflows.md:120 (`{workflowName}`), trust.md:195 (category/name: the command reads them from a file and checks `^[a-z0-9_-]+$` in code, not by the model). Reuse `oss-value.sh dir` for the folder; each command reads its file, validates in code, deletes it. Secrets (the API key) are deleted right after use.
+- [x] R3-6: widen the guard (no-model-text-in-failed.test.sh section 4): placeholders containing spaces, dots, colons or pipes (`{test file}`, `{task.file}`, `<file:line>`, `<commit message>`, `{reason|none}`); upper-case bracket placeholders `[MESSAGE]`; `${X:-{reason}}` (strip only balanced `${…}`); `%{…}` stripped only in curl `-w`; a `<<EOF` heredoc fed to a shell is shell; unbound `$NAME`/`$1` inside a shell fence that the same fence never assigns (allowlist HOME, PWD, plus variables set by the fence or by the value-file reader). Control fixture covers each.
+- [x] R3-7: the 4 request-shape fences relabelled ```text in round 2 (login.md:189, status.md:63, workflows.md:75,120) get an honest label (```http) and the guard scans `http` fences; `{apiKey}` from config is allowlisted by name (the key-on-argv issue is FOLLOWUPS item 44).
+- [x] R3-8: DECISIONS.md D5 correction (agents/visionos-developer.md:36 and skills/visionos-developer.md:44 also have `{user_context}`): note as out of wrapper scope and add a FOLLOWUPS security line.
+
+Stop rule: if any task needs more than the value-file pattern already in oss-value.sh or a guard rule, stop and report instead of growing it.

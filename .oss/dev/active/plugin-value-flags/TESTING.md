@@ -51,4 +51,29 @@ with ~/.oss/current-project naming a victim repo that has a .oss.
   every other file that reads commands/*.md: 59 files, 1128/1128. tsc --noEmit clean.
   watcher-dist-fresh: 121 tracked dist files match.
 
-## Last Updated: 2026-10-20 06:36 +07 by /oss:build (ship round 2 implementer)
+## Ship round 3 (2026-10-20 07:50 +07, CLAUDE_PROJECT_DIR unset, sequential)
+- RED 55d92ef: value-file-wrappers.test.sh (new) 0/32; oss-value.test.sh 86/170 (84 new red: dir
+  clear list, `read` 17-*, `agent` 18-*); no-model-text-in-failed section 4 flags 29 wrapper lines
+  (build.md log example, login.md user args, models.md $1/$2 and display fences). Fixture 24/24
+  positive lines (spaces . : |, [MESSAGE], ${X:-{reason}}, %{x} off curl, bash heredoc <reason>,
+  unassigned $NAME and $1, http {workflowName}, all round-2 spellings) and negatives (curl -w
+  %{http_code}, jq '{type: $k}', [ -f x ], tr '[A-Z]', <in >out, assigned/allowed variables,
+  {apiKey}, a /oss: usage line, [CHAIN], text fence); KNOWN_OPEN checked both ways (listed hit hidden,
+  vanished entry STALE).
+- GREEN 8ebb265: all three green.
+- Anti-vacuity: the 10 GREEN files reverted -> 0/32, 86/170, guard 33/34; restored -> green.
+- Mutation on copies of commands/ (13 spellings inserted one at a time, incl. `NEW_KEY="$KEY_ARG"`,
+  `PROMPT_NAME="$1"`, http `{workflowName}` and `{apiToken}`): guard red each time; fixing
+  models.md PLUGIN_ROOT in a copy -> STALE:models.md:PLUGIN_ROOT; unchanged copy green.
+- Sandbox HOME (scratchpad, never ~/.oss), wrapper lines run as written: key.txt `$(touch PWNED)`,
+  `ossk_ok'$(touch PWNED)'`, two-line, backtick; style.txt with `'; touch PWNED; '`; trust category
+  `build/../x`; agent.txt `$(touch PWNED)`, quote, two-line -> all refused rc 1, nothing printed, file
+  deleted, PWNED never created (bash 3.2 and 5.2). Valid key printed; valid agent logged
+  `[AGENT] code-reviewer: starting: delegated task` (rc 1 there from the pre-existing oss-log.sh
+  find/pipefail exit when no plugin cache exists: FOLLOWUPS).
+- hooks/__tests__ + commands/__tests__: 41 files, 40 rc 0; only ideate-template 3/4 (pre-existing).
+  oss-value 170/170, guard 34/34, value-file-wrappers 32/32 under bash 3.2 and 5.2.
+- watcher vitest (no-setup config): test/hooks + test/commands + notification-copy 49 files 414/414;
+  cc-v2150-adoption, prompts/refactored, skills/workflows 29/29. tsc --noEmit clean.
+
+## Last Updated: 2026-10-20 07:50 +07 by /oss:build (ship round 3 implementer)
