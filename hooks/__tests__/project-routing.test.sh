@@ -151,6 +151,25 @@ has_log "$A" tmpdir-unset-env && [[ "$OUT" != *unbound* ]] \
     && pass "T4: with TMPDIR unset, CLAUDE_PROJECT_DIR=A still logs to A" \
     || fail "T4: with TMPDIR unset, CLAUDE_PROJECT_DIR=A still logs to A" "rc=$RC A:$(ls -A "$A/.oss") out=$OUT"
 
+# --- T5: oss-value.sh failed routes by the same walk; there is ONE copy of the walk ------------
+vfailed() { # <cwd>: write reason.txt into the cwd's value folder, then send it
+    local vd; vd=$(cd "$1" && env -u CLAUDE_PROJECT_DIR HOME="$H" "$SH" "$ROOT/hooks/oss-value.sh" dir 2>/dev/null </dev/null)
+    [[ -n "$vd" ]] && echo routing-reason > "$vd/reason.txt"
+    run "$1" "$SH" "$ROOT/hooks/oss-value.sh" failed build
+}
+world; vfailed "$A/sub/deep"
+has_log "$A" routing-reason && untouched \
+    && pass "T5: oss-value failed from A/sub/deep (current-project = B) lands in A, never B" \
+    || fail "T5: oss-value failed from A/sub/deep (current-project = B) lands in A, never B" "rc=$RC A:$(ls -A "$A/.oss") B:$(ls -A "$B/.oss") out=$OUT"
+world; vfailed "$D"
+has_log "$H" routing-reason && untouched && lt_empty \
+    && pass "T5: oss-value failed from a repo with a linked .oss lands in ~/.oss, never the link target or B" \
+    || fail "T5: oss-value failed from a repo with a linked .oss lands in ~/.oss, never the link target or B" "rc=$RC home:$(ls -A "$H/.oss") LT:$(ls -A "$LT") out=$OUT"
+copies=$(cd "$ROOT/hooks" && grep -lF '"$d/.oss"' ./*.sh | tr '\n' ' ')
+[[ "$copies" == "./oss-safe-path.sh " ]] && grep -qF 'oss_project_walk' "$ROOT/hooks/oss-value.sh" \
+    && pass "T5: the .oss walk exists once (hooks/oss-safe-path.sh); oss-value.sh uses it" \
+    || fail "T5: the .oss walk exists once (hooks/oss-safe-path.sh); oss-value.sh uses it" "walk found in: $copies"
+
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
 [[ $FAILED -eq 0 ]]

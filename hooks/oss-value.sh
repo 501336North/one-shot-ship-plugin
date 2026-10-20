@@ -82,13 +82,9 @@ _ov_cmd_dir() {
     && printf '%s\n' "$p"
 }
 
-# The served #374 walk: the nearest real (not linked) .oss from <cwd> up to the repo top, or $HOME.
-_ov_walk() {
-    local d="$1"; _OV_PROJ=$HOME   # none found: the global ~/.oss, never ~/.oss/current-project
-    while test -n "$_OV_TOP" && case "$d" in "$_OV_TOP"|"$_OV_TOP"/*) true ;; *) false ;; esac; do
-        test -d "$d/.oss" && test ! -L "$d/.oss" && _OV_PROJ=$d && break; d=${d%/*}
-    done
-}
+# The served #374 walk, shared (oss_project_walk in oss-safe-path.sh): the nearest real (not linked)
+# .oss from <cwd> up to the repo top, or $HOME (the global ~/.oss, never ~/.oss/current-project).
+_ov_walk() { oss_project_walk "$1"; _OV_PROJ=${_OSS_PROJ:-$HOME}; }
 
 # "<inode> <link count>": of the opened file for /dev/fd/N, else of the path itself (not followed).
 _ov_st() { case "$1" in /dev/fd/*) stat -L -c '%i %h' "$1" 2>/dev/null || stat -L -f '%i %l' "$1" ;; *) stat -c '%i %h' "$1" 2>/dev/null || stat -f '%i %l' "$1" ;; esac; }
