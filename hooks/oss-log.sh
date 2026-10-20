@@ -176,6 +176,8 @@ check_session_size() {
 rotate_session_log() {
     local timestamp=$(date '+%Y%m%d-%H%M%S')
     local archive_name="session-${timestamp}.log"
+    # R2-4: an existing name (a committed link to a folder) would take session.log out of the repo
+    if [[ -e "${ARCHIVE_DIR}/${archive_name}" || -L "${ARCHIVE_DIR}/${archive_name}" ]]; then oss_refuse_unsafe "logs/archive/${archive_name}"; return 1; fi
     mv "$UNIFIED_LOG" "${ARCHIVE_DIR}/${archive_name}"
     # Compress the archive
     gzip "${ARCHIVE_DIR}/${archive_name}" 2>/dev/null || true
@@ -654,6 +656,8 @@ case "$ACTION" in
         # Archive current session and start fresh
         if [[ -d "$CURRENT_SESSION" ]]; then
             ARCHIVE_NAME="session-$(date '+%Y%m%d-%H%M%S')"
+            # R2-4: an existing name (a committed link to a folder) would take the session out of the repo
+            if [[ -e "${LOG_BASE}/${ARCHIVE_NAME}" || -L "${LOG_BASE}/${ARCHIVE_NAME}" ]]; then oss_refuse_unsafe "logs/${ARCHIVE_NAME}"; exit 0; fi
             mv "$CURRENT_SESSION" "${LOG_BASE}/${ARCHIVE_NAME}"
         fi
         mkdir -p "$CURRENT_SESSION"
@@ -751,8 +755,7 @@ case "$ACTION" in
     rotate)
         # Force rotate session log
         if [[ -f "$UNIFIED_LOG" ]]; then
-            rotate_session_log
-            echo "Session log rotated and archived."
+            if rotate_session_log; then echo "Session log rotated and archived."; fi
         else
             echo "No session log to rotate."
         fi
