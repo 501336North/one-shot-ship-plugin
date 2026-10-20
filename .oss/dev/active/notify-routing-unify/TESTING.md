@@ -42,3 +42,42 @@ Not changed: `hooks/oss-statusline.sh` also reads bare `$TMPDIR`, but it does no
   Also retargeted test/hooks/oss-session-logging.test.ts (2 cases: start runs outside any project;
   session-end creates the repo's .oss, so its hook lines are that project's).
 - watcher `tsc --noEmit`: clean.
+
+## Ship round 1 (2026-10-20): per-session pointer + git-free walk
+
+- `hooks/__tests__/session-routing.test.sh` (new, 106; ACCEPTANCE): sandbox HOME, four sessions S1..S4 ->
+  four real repos P1..P4 (each with a stray `sub/stray/.oss` and a real submodule `mod`). Pointers written by
+  the REAL SessionStart hook in shuffled order (S3, S1, S4, S2), aged 9/4/2/0 days. Then oss-notify,
+  oss-log write/phase/agent, oss-value failed, oss-error, update-workflow-state with
+  `CLAUDE_CODE_SESSION_ID=Sn` and no CLAUDE_PROJECT_DIR, from (a) the stray sub-folder, (b) outside any
+  repo, (c) the submodule: 84/84 land in Pn only (no artifact in any other product, stray .oss, submodule,
+  ~/.oss or the outside folder). Fallbacks (shell oss-log AND TS update-workflow-state, both -> the walk):
+  no pointer, id unset, linked file, linked id folder, linked ~/.oss/sessions, relative path, two-line
+  path, folder with no .oss, id with `/..`. SessionEnd removes only its own pointer; PreCompact keeps it;
+  the stdin session_id gets a pointer too; an invalid stdin id writes nothing; 31-day pruned, 29-day kept;
+  a linked ~/.oss/sessions is refused by the writer; modes 700/700/600.
+  Anti-vacuity: 11 mutations of the guards, 10 turned it red (file link, id-folder, sessions-folder,
+  absolute, one-line, id regex, real .oss, PreCompact guard, prune age, stdin-id write); the 11th (prune
+  keep-ids) survived -> the code was redundant (the write runs first) and was removed.
+- Foreign owner: not producible without root on macOS. Covered in `watcher/test/utils/project-dir.test.ts`
+  (geteuid spied to another uid -> null; mutation dropping the uid check turns it red). The shell twin uses
+  `-O` on all three paths (same rule, not exercised by a test).
+- `hooks/__tests__/project-walk.test.sh` (new, 25): R1-3 repros (`core.worktree=../..`, nested repo with
+  `core.worktree=<A>` and its sub-folder -> never the enclosing project; GIT_DIR/GIT_WORK_TREE env ignored)
+  and R1-2 twin parity on one tree (trailing space, newline in a name, `.git` FILE, submodule, nested repo,
+  stray .oss outside a repo, linked .oss): shell and TS agree on every case. RED before: 15/25.
+- `hooks/__tests__/no-stray-oss.test.sh` (new, 4): precommand, session-start, session-end create no `./.oss`
+  with no project known; control: with CLAUDE_PROJECT_DIR precommand still finds the queue.
+  Source of `watcher/.oss`: oss-session-logging.test.ts (pre-T7) ran session-start from the watcher folder.
+  Retargeted: its session-end case now asserts no `.oss` is created and the hook lines go to the global log.
+- `project-routing.test.sh` +2 (R1-5): health-check outside any project -> new message, nothing run;
+  CLAUDE_PROJECT_DIR=/usr -> refused by validate_project_path.
+
+### Results (2026-10-20, one sequential run)
+- hooks/__tests__ + commands/__tests__ (47 suites, `env -u CLAUDE_PROJECT_DIR bash`): 46 green;
+  ideate-template 3/4 (pre-existing). New suites also green on bash 5: project-walk 25, project-routing 45,
+  no-stray-oss 4, session-routing 106. oss-value 328/328; watcher-dist-fresh PASS.
+- watcher vitest test/hooks + test/utils + test/cli (no-setup config): 60 files, 556/556.
+- `tsc --noEmit`: clean. No `.oss` under the worktree except the root one afterwards.
+- Pre-existing, not changed: several watcher hook tests (oss-session-logging, oss-userpromptsubmit-logging)
+  write to the REAL ~/.oss session log (they use os.homedir()).
