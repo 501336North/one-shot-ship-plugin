@@ -41,6 +41,7 @@ describe('resolveProjectDir', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     fs.rmSync(root, { recursive: true, force: true });
   });
 
@@ -70,6 +71,12 @@ describe('resolveProjectDir', () => {
 
   it('resolves no project outside any git repo', () => {
     expect(resolveProjectDir({ HOME: home }, home)).toBeNull();
+  });
+
+  it("resolves no project in a repo that belongs to another user (git's safe.directory rule)", () => {
+    const me = process.geteuid?.() ?? 0;
+    vi.spyOn(process, 'geteuid').mockReturnValue(me + 1);
+    expect(resolveProjectDir({ HOME: home }, path.join(a, 'sub', 'deep'))).toBeNull();
   });
 
   it('keeps CLAUDE_PROJECT_DIR first when it is set', () => {

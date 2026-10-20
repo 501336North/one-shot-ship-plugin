@@ -30,15 +30,32 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
 H="$T/home"; mkdir -p "$H/.oss"
 repo() { mkdir -p "$1" && (cd "$1" && git init -q) >/dev/null 2>&1; }
+# R2-2: another user's folder, simulated - FOREIGN lists exact paths (":"-separated) that the shell
+# `test -O` (BASH_ENV) and the TS lstat uid (a --require shim) report as owned by someone else.
+FOREIGN=""
+cat > "$T/foreign.sh" <<'SH'
+test() { if [[ "${1:-}" == -O && -n "${OSS_T_FOREIGN:-}" && ":$OSS_T_FOREIGN:" == *":${2:-}:"* ]]; then return 1; fi; builtin test "$@"; }
+SH
+cat > "$T/foreign.cjs" <<'JS'
+const fs = require('fs');
+const list = (process.env.OSS_T_FOREIGN || '').split(':').filter(Boolean);
+const orig = fs.lstatSync;
+fs.lstatSync = function (p, ...a) {
+  const st = orig.call(fs, p, ...a);
+  if (!st || !list.includes(String(p))) return st;
+  return new Proxy(st, { get: (t, k) => (k === 'uid' ? t.uid + 1 : typeof t[k] === 'function' ? t[k].bind(t) : t[k]) });
+};
+require('module').syncBuiltinESMExports();
+JS
 
 # shell_proj <cwd> / ts_proj <cwd>: the project each resolver picks (no env, no pointer); "" = none.
 # A trailing "." is printed and removed so a name ending in a newline or space survives $(...).
 shell_proj() { # <cwd> [session id]
-    local o; o=$(cd "$1" && env -u CLAUDE_PROJECT_DIR -u CLAUDE_CODE_SESSION_ID HOME="$H" ${2:+CLAUDE_CODE_SESSION_ID="$2"} "$SH" -c \
+    local o; o=$(cd "$1" && env -u CLAUDE_PROJECT_DIR -u CLAUDE_CODE_SESSION_ID HOME="$H" ${2:+CLAUDE_CODE_SESSION_ID="$2"} BASH_ENV="$T/foreign.sh" OSS_T_FOREIGN="$FOREIGN" "$SH" -c \
         'source "$1/hooks/oss-safe-path.sh"; oss_resolve_project; printf "%s." "$_OSS_PROJ"' _ "$ROOT" 2>&1); printf '%s' "${o%.}"
 }
 ts_proj() { # <cwd> [session id]
-    local o; o=$(cd "$1" && env -u CLAUDE_PROJECT_DIR -u CLAUDE_CODE_SESSION_ID HOME="$H" ${2:+CLAUDE_CODE_SESSION_ID="$2"} node --input-type=module -e '
+    local o; o=$(cd "$1" && env -u CLAUDE_PROJECT_DIR -u CLAUDE_CODE_SESSION_ID HOME="$H" ${2:+CLAUDE_CODE_SESSION_ID="$2"} OSS_T_FOREIGN="$FOREIGN" node --require "$T/foreign.cjs" --input-type=module -e '
         const m = await import(process.argv[1]);
         const p = m.resolveProjectDir({ HOME: process.env.HOME, CLAUDE_CODE_SESSION_ID: process.env.CLAUDE_CODE_SESSION_ID }, process.cwd());
         process.stdout.write((p ?? "") + ".");' "$ROOT/watcher/dist/utils/project-dir.js" 2>&1); printf '%s' "${o%.}"
@@ -88,6 +105,21 @@ mkdir -m 700 -p "$H/.oss/sessions/SQ"; printf '%s\n' "$T/linkQ" > "$H/.oss/sessi
 expect "a stray .oss inside the pointer's repo (pointer spelled through a link) keeps the pointer" "$Q/sub/stray" "$T/linkQ" SQ
 expect "another repo's own .oss wins over the pointer" "$S/a b/c " "$S/a b" SQ
 expect "a nested repo with no .oss keeps the pointer" "$I" "$T/linkQ" SQ
+
+# --- R2-2: only the user's own .oss, only in the user's own repo (mirrors git safe.directory) ------
+X="$T/tmpX"; repo "$X"; mkdir -p "$X/.oss" "$X/foo"
+FOREIGN="$X:$X/.oss"
+expect "another user's folder holding .git and .oss (attacker-made /tmp/.git + /tmp/.oss) is no project" "$X/foo" ""
+expect "... and the session pointer keeps its product there" "$X/foo" "$T/linkQ" SQ
+FOREIGN="$X"
+expect "the user's own .oss inside another user's repo is no project" "$X/foo" ""
+G="$T/mine"; repo "$G"; mkdir -p "$G/.oss" "$G/sub/.oss" "$G/sub/x"
+FOREIGN="$G/sub/.oss"
+expect "a .oss owned by another user is skipped (the user's own one above is found)" "$G/sub/x" "$G"
+FOREIGN="$G/sub/.oss"
+expect "... also when the session pointer names another product" "$G/sub/x" "$G" SQ
+FOREIGN=""
+expect "control: the same trees with nothing foreign" "$X/foo" "$X"
 
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
