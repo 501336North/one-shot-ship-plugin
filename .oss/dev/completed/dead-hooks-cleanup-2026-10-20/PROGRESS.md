@@ -1,6 +1,6 @@
 # Progress: dead-hooks-cleanup
 
-## Current Phase: build
+## Current Phase: complete (shipped: plugin PR #201, v2.0.90, merged 2026-10-20)
 
 ## Tasks
 - [x] T1: provenance of the 7 hooks; 9 scripts unreachable (7 + sse-telegram-listener + oss-detect-formatter), see NOTES.md (completed 2026-10-19)
@@ -23,3 +23,5 @@
 - Gates: performance PASS, pen-test PASS, security PASS, code-review PASS. NAG discarded: matcher allow-list regex, hooks/hooks.json not checked, /bin/sh first-word, reload/save-context dead files. build-team.md stale hook claims = API repo, already in FOLLOWUPS.
 
 ## Last Updated: 2026-10-19 by /oss:build (gate round 1)
+
+## Last Updated: 2026-10-20 by orchestrator (archived after merge)
