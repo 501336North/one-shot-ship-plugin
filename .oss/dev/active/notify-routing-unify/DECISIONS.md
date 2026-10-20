@@ -99,3 +99,8 @@ keep a trailing newline (no `$(...)` on the result). oss-value, the resolver, th
 **Test seam.** Owner checks in oss-safe-path.sh are spelled `test -O` (not `[[ -O ]]`), so a test can
 simulate another user's folder with a BASH_ENV `test` function; TS uses a geteuid spy or a `--require`
 shim on `fs.lstatSync`'s uid. Without root, macOS cannot produce a foreign-owned folder in a temp dir.
+
+**Split writers after a `cd` (accepted).** After the session moves into another repo or worktree, Claude
+Code-run hooks still get `CLAUDE_PROJECT_DIR` (the launch dir) and write there, while model-run scripts and
+the status line follow the cwd. Each event still lands in a real project the user owns; a git worktree with
+its own `.oss` counts as its own project.
