@@ -88,7 +88,10 @@ grep -qF 'Write tool' "$f" && grep -qF 'reason.txt' "$f" \
 # fixed log tag [CHAIN] is allowed by name; a /oss:<cmd> usage line in a fence is not shell.
 # In a shell fence, a $NAME / ${NAME} / $1 that the same fence never assigns (NAME=, read, for,
 # local, export, declare) is model-filled text too; allowed: HOME, PWD, BASH_SOURCE (ship round 4,
-# R4-2: no known-open exceptions are left). Prints "<file>:<lineno>:<line>".
+# R4-2: no known-open exceptions are left). Ship round 5, R5-4: single-quoted text is dropped before
+# the {word}/[WORD] checks; USER, OSTYPE, TMPDIR, SHELL, PATH, LANG, TERM and the tag [OK] are allowed
+# by name; $1.. is allowed inside a name() { ... } body in the same fence.
+# Prints "<file>:<lineno>:<rule>:<line>" (rule: {word}, <word>, [WORD] or unassigned-variable).
 placeholder_lines() {
     awk '
         function strip(s,   o) {
@@ -98,11 +101,14 @@ placeholder_lines() {
             gsub(/\$[A-Za-z_][A-Za-z0-9_]*/, "", s)
             return s
         }
+        # the rule that fires on s ("" when none)
         function ph(s, ang, http) {
-            s = strip(s); gsub(/\[CHAIN\]/, "", s); if (http) gsub(/[{]apiKey[}]/, "", s)
-            return s ~ /[{][A-Za-z_]([A-Za-z0-9_ .:|-]*[A-Za-z0-9_])?[}]/ \
-                || (ang && s ~ /<[A-Za-z_]([A-Za-z0-9_ .:|-]*[A-Za-z0-9_])?>/) \
-                || s ~ /\[[A-Z][A-Z0-9_]+( [A-Z0-9_]+)*\]/
+            s = strip(s); gsub(/\[(CHAIN|OK)\]/, "", s); if (http) gsub(/[{]apiKey[}]/, "", s)
+            if (ang && s ~ /<[A-Za-z_]([A-Za-z0-9_ .:|-]*[A-Za-z0-9_])?>/) return "<word>"
+            gsub(/\047[^\047]*\047/, "", s)
+            if (s ~ /[{][A-Za-z_]([A-Za-z0-9_ .:|-]*[A-Za-z0-9_])?[}]/) return "{word}"
+            if (s ~ /\[[A-Z][A-Z0-9_]+( [A-Z0-9_]+)*\]/) return "[WORD]"
+            return ""
         }
         function assigns(l,   t, n, w, i, k) {
             t = l
@@ -111,24 +117,24 @@ placeholder_lines() {
             t = l; while (match(t, /(read|local|export|declare)([[:space:]]+-[A-Za-z]+)*([[:space:]]+[A-Za-z_][A-Za-z0-9_]*)+/)) { n = substr(t, RSTART, RLENGTH); k = split(n, w, /[[:space:]]+/); for (i = 2; i <= k; i++) if (w[i] !~ /^-/) asg[w[i]] = 1; t = substr(t, RSTART + RLENGTH) }
         }
         # prints nothing; returns 1 when the line uses a $NAME/${NAME}/$1 the fence never assigns
-        function unbound(l,   s, nm, bad) {
+        function unbound(l, fn,   s, nm, bad) {
             s = l; gsub(/\\\$/, "", s); gsub(/\047[^\047]*\047/, "", s); bad = 0
             while (match(s, /\$[{]?([A-Za-z_][A-Za-z0-9_]*|[0-9])/)) {
                 nm = substr(s, RSTART, RLENGTH); sub(/^\$[{]?/, "", nm); s = substr(s, RSTART + RLENGTH)
-                if (nm in asg || nm == "HOME" || nm == "PWD" || nm == "BASH_SOURCE") continue
+                if (nm in asg || nm ~ /^(HOME|PWD|BASH_SOURCE|USER|OSTYPE|TMPDIR|SHELL|PATH|LANG|TERM)$/ || (fn && nm ~ /^[0-9]$/)) continue
                 bad = 1
             }
             return bad
         }
         function flush(   i) {
             for (i = 1; i <= nb; i++) {
-                if (bp[i]) { print FILENAME ":" bl[i] ":" buf[i]; continue }
+                if (bp[i] != "") { print FILENAME ":" bl[i] ":" bp[i] ":" buf[i]; continue }
                 if (sh != 1 || bq[i]) continue
-                if (unbound(buf[i])) print FILENAME ":" bl[i] ":" buf[i]
+                if (unbound(buf[i], bf[i])) print FILENAME ":" bl[i] ":unassigned-variable:" buf[i]
             }
             nb = 0; split("", asg)
         }
-        FNR == 1 { fence = ""; sh = 0; hd = ""; hq = 0; hs = 0; nb = 0 }
+        FNR == 1 { fence = ""; sh = 0; hd = ""; hq = 0; hs = 0; nb = 0; fd = 0 }
         match($0, /^[[:space:]]*(```|~~~)/) {
             m = substr($0, RSTART + RLENGTH - 3, 3); rest = substr($0, RSTART + RLENGTH)
             sub(/^[`~]*[[:space:]]*/, "", rest)
@@ -137,14 +143,19 @@ placeholder_lines() {
                 sh = (w[1] == "http") ? 2 : (w[1] !~ /^(json|yaml|yml|markdown|md|typescript|ts|javascript|js|text|txt|diff)$/)
                 next
             }
-            if (m == fence && rest ~ /^[[:space:]]*$/) { flush(); fence = ""; sh = 0; hd = ""; next }
+            if (m == fence && rest ~ /^[[:space:]]*$/) { flush(); fence = ""; sh = 0; hd = ""; fd = 0; next }
         }
         fence != "" {
             if (!sh || $0 ~ /^[[:space:]]*\/oss([:-]|[[:space:]]|$)/) next   # a /oss:<cmd> usage line is typed to Claude, not run
             t = $0; gsub(/[[:space:]]/, "", t)
             nb++; buf[nb] = $0; bl[nb] = FNR; bq[nb] = (hd != "" && hq)
-            if (hd != "" && t == hd) { hd = ""; bp[nb] = 0; next }
+            if (hd != "" && t == hd) { hd = ""; bp[nb] = ""; next }
             bp[nb] = ph($0, hd == "" || hs, sh == 2)
+            # inside a name() { ... } body (fd = open braces left), $1.. are the function arguments
+            t = $0; gsub(/\047[^\047]*\047/, "", t)
+            if (!fd && t ~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(\)[[:space:]]*[{]/) fd = 0.5
+            bf[nb] = (fd > 0)
+            if (fd > 0) { fd += gsub(/[{]/, "{", t) - gsub(/[}]/, "}", t); if (fd <= 0.5) fd = 0 }
             if (sh == 1 && !bq[nb]) assigns($0)
             if (hd == "" && match($0, /<<-?[[:space:]]*["\047]?[A-Za-z_]+/)) {
                 hd = substr($0, RSTART, RLENGTH); hq = (hd ~ /["\047]/); sub(/^<<-?[[:space:]]*["\047]?/, "", hd)
@@ -152,17 +163,18 @@ placeholder_lines() {
             }
             next
         }
-        $0 ~ /oss-(log|notify|value)\.sh/ { if (ph($0, 1, 0)) print FILENAME ":" FNR ":" $0; next }
+        $0 ~ /oss-(log|notify|value)\.sh/ { r = ph($0, 1, 0); if (r != "") print FILENAME ":" FNR ":" r ":" $0; next }
         {
             n = split($0, sp, "`")
             for (i = 2; i < n; i += 2)
-                if (sp[i] ~ /oss-[a-z-]+\.(sh|js)|bin\/oss-|~\/\.oss|\$HOME\/\.oss|(^|[^A-Za-z])(git|gh|node|kubectl) / && ph(sp[i], 1, 0)) { print FILENAME ":" FNR ":" $0; break }
+                if (sp[i] ~ /oss-[a-z-]+\.(sh|js)|bin\/oss-|~\/\.oss|\$HOME\/\.oss|(^|[^A-Za-z])(git|gh|node|kubectl) / && (r = ph(sp[i], 1, 0)) != "") { print FILENAME ":" FNR ":" r ":" $0; break }
         }' "$@"
 }
 # detector control: every line marked "# flag" below is flagged once; every other line is not
 # (${HOME}, curl -w %{...}, a json/text fence, prose <b>, a heredoc <dict>, prose `spans` that run
 # nothing, jq '{a: $x}', [ -f x ], tr '[A-Z]', <in >out, assigned and allowed variables, {apiKey},
-# a /oss: usage line, the [CHAIN] log tag).
+# a /oss: usage line, the [CHAIN] log tag; ship round 5, R5-4: the [OK] tag, {..} inside single quotes
+# (awk '{print}', jq '{name: .name}'), $1 inside a f() { ... } body, USER OSTYPE TMPDIR SHELL PATH LANG TERM).
 ctl=$(mktemp -d)
 cat > "$ctl/c.md" <<'FIXTURE'
 ```bash
@@ -193,6 +205,15 @@ X=1; for f in a b; do read -r L; echo "$X $f $L ${X}"; done
 jq -n --arg k v '{type: $k}' && [ -f x ] && tr -d '[A-Z]' && sort <in >out && echo "[ok]"
 /oss:a11y [OPTIONS] [PATH]
 ~/.oss/hooks/oss-log.sh write build "[CHAIN] executing a chain command"
+echo "[OK] Model format valid"
+awk '{print}' f
+jq -r '{name: .name}' x.json
+f() { echo "$1"; }
+g() {
+    printf '%s\n' "$2"
+}
+echo "$3"
+echo "$USER $OSTYPE $TMPDIR $SHELL $PATH $LANG $TERM"
 ```
 ```
 bare "{count}"
@@ -220,16 +241,23 @@ run ~/.oss/hooks/oss-log.sh test red FAIL "{MSG}"
 ```
 Prose with <b>bold</b>, a `{span}` and a `/oss-audio <option>` that run nothing.
 FIXTURE
-want=$(grep -cE '^<string>|^(x|y|z|w|sp|dot|col|msg|pipe|br|br2|def|pf|run|bare|tilde|cap|info|GET) |^echo "\$(UNSET_THING|1)"|^Run `|^run ~' "$ctl/c.md" | tr -d ' ')
+want=$(grep -cE '^<string>|^(x|y|z|w|sp|dot|col|msg|pipe|br|br2|def|pf|run|bare|tilde|cap|info|GET) |^echo "\$(UNSET_THING|1|3)"|^Run `|^run ~' "$ctl/c.md" | tr -d ' ')
 got=$(placeholder_lines "$ctl/c.md")
 n=$(printf '%s\n' "$got" | grep -c . | tr -d ' ')
-[[ "$want" == 24 && "$n" == 24 ]] && pass "the placeholder detector flags every shell spelling and nothing else (24)" \
-    || fail "the placeholder detector flags every shell spelling and nothing else" "flagged $n, want 24 (fixture marks $want): $(printf '%s\n' "$got" | cut -d: -f2 | tr '\n' ' ')"
+[[ "$want" == 25 && "$n" == 25 ]] && pass "the placeholder detector flags every shell spelling and nothing else (25)" \
+    || fail "the placeholder detector flags every shell spelling and nothing else" "flagged $n, want 25 (fixture marks $want): $(printf '%s\n' "$got" | cut -d: -f2 | tr '\n' ' ')"
+# ship round 5, R5-4: each failure names the rule that fired (file:line:rule:text)
+rule_of() { printf '%s\n' "$got" | awk -F: -v l="$1" '$2 == l { print $3; exit }'; }
+ln_of() { grep -nF -- "$1" "$ctl/c.md" | head -1 | cut -d: -f1; }
+[[ "$(rule_of "$(ln_of 'x "{test_file}"')")" == '{word}' && "$(rule_of "$(ln_of 'w "skipped: <reason>"')")" == '<word>' \
+   && "$(rule_of "$(ln_of 'br "[MESSAGE]"')")" == '[WORD]' && "$(rule_of "$(ln_of 'echo "$UNSET_THING"')")" == 'unassigned-variable' ]] \
+    && pass "each flagged line names its rule ({word}, <word>, [WORD], unassigned-variable)" \
+    || fail "each flagged line names its rule" "$(printf '%s\n' "$got" | cut -d: -f2,3 | tr '\n' ' ')"
 rm -rf "$ctl"
 
 bad=$(placeholder_lines "$COMMANDS_DIR"/*.md)
 [[ -z "$bad" ]] && pass "no shell line in any wrapper has a model-filled placeholder or unassigned variable" \
-    || fail "no shell line in any wrapper has a model-filled placeholder or unassigned variable" "$(printf '%s\n' "$bad" | wc -l | tr -d ' ') lines: $(printf '%s\n' "$bad" | sed "s|$COMMANDS_DIR/||" | cut -d: -f1,2 | tr '\n' ' ')"
+    || fail "no shell line in any wrapper has a model-filled placeholder or unassigned variable" "$(printf '%s\n' "$bad" | wc -l | tr -d ' ') lines: $(printf '%s\n' "$bad" | sed "s|$COMMANDS_DIR/||" | cut -d: -f1-3 | tr '\n' ' ')"
 
 echo ""
 echo "Results: $((TESTS_RUN - TESTS_FAILED))/$TESTS_RUN passed, $TESTS_FAILED failed"
