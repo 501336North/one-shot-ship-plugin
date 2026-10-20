@@ -111,8 +111,13 @@ oss_project_walk() { # -> _OSS_PROJ, and _OSS_GIT: the dir holding the .git entr
     [[ "$d" == /* ]] || return 0
     d="${d%/}"
     while :; do
-        [[ -z "$found" && -d "$d/.oss" && ! -L "$d/.oss" ]] && found="${d:-/}"
-        [[ -e "$d/.git" || -L "$d/.git" ]] && { _OSS_PROJ="$found"; _OSS_GIT="${d:-/}"; return 0; }
+        # R2-2: only the user's own .oss, only in the user's own repo (git's safe.directory rule).
+        # `test -O`, not [[ -O ]]: the parity test simulates another user's folder through `test`.
+        [[ -z "$found" && -d "$d/.oss" && ! -L "$d/.oss" ]] && test -O "$d/.oss" && found="${d:-/}"
+        if [[ -e "$d/.git" || -L "$d/.git" ]]; then
+            test -O "${d:-/}" || return 0
+            _OSS_PROJ="$found"; _OSS_GIT="${d:-/}"; return 0
+        fi
         [[ -n "$d" ]] || return 0
         d="${d%/*}"
     done

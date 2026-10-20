@@ -33,10 +33,12 @@ function walk(start) {
     }
     let found = null;
     for (;;) {
-        if (found === null && isRealDir(path.join(dir, '.oss')))
+        // R2-2: only the user's own .oss, only in the user's own repo (git's safe.directory rule).
+        if (found === null && isRealDir(path.join(dir, '.oss')) && ownedByMe(path.join(dir, '.oss')))
             found = dir;
-        if (exists(path.join(dir, '.git')))
-            return { project: found, git: dir };
+        if (exists(path.join(dir, '.git'))) {
+            return ownedByMe(dir) ? { project: found, git: dir } : { project: null, git: null };
+        }
         const up = path.dirname(dir);
         if (up === dir)
             return { project: null, git: null };
@@ -78,6 +80,14 @@ function exists(p) {
     try {
         fs.lstatSync(p);
         return true;
+    }
+    catch {
+        return false;
+    }
+}
+function ownedByMe(p) {
+    try {
+        return fs.lstatSync(p).uid === process.geteuid?.();
     }
     catch {
         return false;
