@@ -34,8 +34,9 @@ describe('oss-log.sh health-check', () => {
       originalPluginRoot = fs.readFileSync(pluginRootFile, 'utf-8');
     }
 
-    // Create test project with passing tests
+    // Create test project (a git repo) with passing tests
     fs.mkdirSync(testProjectDir, { recursive: true });
+    execSync('git init -q', { cwd: testProjectDir });
     fs.writeFileSync(
       path.join(testProjectDir, 'package.json'),
       JSON.stringify({
@@ -48,7 +49,8 @@ describe('oss-log.sh health-check', () => {
 
     // Set up marker files for health check
     fs.mkdirSync(ossDir, { recursive: true });
-    fs.writeFileSync(path.join(ossDir, 'current-project'), testProjectDir);
+    // current-project names another project: never used for routing (D1); the cwd decides
+    fs.writeFileSync(path.join(ossDir, 'current-project'), os.homedir());
     fs.writeFileSync(path.join(ossDir, 'plugin-root'), path.join(__dirname, '../../..'));
 
     // Ensure logs directory exists
@@ -84,13 +86,14 @@ describe('oss-log.sh health-check', () => {
    */
   it('should write health check output to log file', () => {
     // GIVEN: A project with passing tests
-    // Health check logs go to project-local location when current-project is set
+    // Health check logs go to the project-local location of the project it runs in
     const projectHealthCheckLog = path.join(testProjectDir, '.oss', 'logs', 'current-session', 'health-check.log');
     fs.mkdirSync(path.dirname(projectHealthCheckLog), { recursive: true });
 
     // WHEN: Running oss-log.sh health-check
     try {
       execSync(`bash "${ossLogScript}" health-check`, {
+        cwd: testProjectDir, // the command runs inside the project
         timeout: 60000,
         encoding: 'utf-8',
         env: {
@@ -117,15 +120,15 @@ describe('oss-log.sh health-check', () => {
    */
   it('should contain PASSED or FAILED marker in log file', () => {
     // GIVEN: A project with tests
-    // Note: Health check log location depends on get_log_base() which uses current-project
     // The health check writes to {log_base}/current-session/health-check.log
-    // Since we set current-project to testProjectDir, logs go there
+    // It runs inside testProjectDir (which has .oss), so logs go there
     const projectHealthCheckLog = path.join(testProjectDir, '.oss', 'logs', 'current-session', 'health-check.log');
     fs.mkdirSync(path.dirname(projectHealthCheckLog), { recursive: true });
 
     // WHEN: Running health check
     try {
       execSync(`bash "${ossLogScript}" health-check`, {
+        cwd: testProjectDir, // the command runs inside the project
         timeout: 60000,
         encoding: 'utf-8',
         env: {
@@ -164,6 +167,7 @@ describe('oss-log.sh health-check', () => {
     let exitCode: number | null = null;
     try {
       execSync(`bash "${ossLogScript}" health-check`, {
+        cwd: testProjectDir, // the command runs inside the project
         timeout: 60000,
         encoding: 'utf-8',
         env: {
@@ -206,6 +210,7 @@ describe('oss-log.sh health-check', () => {
     // WHEN: Running health check (may pass or fail based on CLI analysis)
     try {
       execSync(`bash "${ossLogScript}" health-check`, {
+        cwd: testProjectDir, // the command runs inside the project
         timeout: 60000,
         encoding: 'utf-8',
         env: {

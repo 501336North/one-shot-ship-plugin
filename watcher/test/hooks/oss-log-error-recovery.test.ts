@@ -58,6 +58,7 @@ describe('oss-log.sh recovery action', () => {
       : '';
 
     execSync(`bash "${ossLogScript}" recovery build "Retrying after error" "attempt=2"`, {
+      cwd: os.tmpdir(), // outside any project: the global log (routing D1)
       encoding: 'utf-8',
     });
 
@@ -77,6 +78,7 @@ describe('oss-log.sh recovery action', () => {
       : '';
 
     execSync(`bash "${ossLogScript}" recovery plan "Fallback to synchronous execution"`, {
+      cwd: os.tmpdir(), // outside any project: the global log (routing D1)
       encoding: 'utf-8',
     });
 
@@ -94,6 +96,7 @@ describe('oss-log.sh recovery action', () => {
     let errorOutput = '';
     try {
       execSync(`bash "${ossLogScript}" recovery`, {
+        cwd: os.tmpdir(), // outside any project: the global log (routing D1)
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
       });
@@ -154,6 +157,7 @@ describe('oss-log.sh timeout action', () => {
       : '';
 
     execSync(`bash "${ossLogScript}" timeout build "Process hung after 60s" "pid=12345"`, {
+      cwd: os.tmpdir(), // outside any project: the global log (routing D1)
       encoding: 'utf-8',
     });
 
@@ -173,6 +177,7 @@ describe('oss-log.sh timeout action', () => {
       : '';
 
     execSync(`bash "${ossLogScript}" timeout ship "Test runner exceeded timeout"`, {
+      cwd: os.tmpdir(), // outside any project: the global log (routing D1)
       encoding: 'utf-8',
     });
 
@@ -190,6 +195,7 @@ describe('oss-log.sh timeout action', () => {
     let errorOutput = '';
     try {
       execSync(`bash "${ossLogScript}" timeout`, {
+        cwd: os.tmpdir(), // outside any project: the global log (routing D1)
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
       });

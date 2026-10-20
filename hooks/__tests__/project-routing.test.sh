@@ -60,6 +60,53 @@ world; OUT=$(cd "$C" && env HOME="$H" CLAUDE_PLUGIN_ROOT="$ROOT" OSS_SKIP_WATCHE
 [[ -f "$A/.oss/workflow-state.json" ]] && has_log "$A" "[start]" \
     && pass "T1 control: CLAUDE_PROJECT_DIR=A from repo C sends state and log to A" || fail "T1 control: CLAUDE_PROJECT_DIR=A from repo C sends state and log to A" "A:$(ls -A "$A/.oss") out=$OUT"
 
+# --- T2: every oss-log.sh resolution site (log base, phase/agent state, health state/check) ----
+# log_case <label> <want-in-log> <cmd...>: from A/sub/deep -> A; from C (no .oss) and D (linked .oss) -> ~/.oss.
+# B's logs are never written (B's state is T3: update-workflow-state's own fallback).
+log_case() {
+    local label="$1" want="$2"; shift 2
+    world; run "$A/sub/deep" "$@"
+    has_log "$A" "$want" && [[ ! -e "$B/.oss/logs" && ! -e "$H/.oss/logs/current-session" ]] \
+        && pass "T2: $label from A/sub/deep (current-project = B) logs to A, never B" \
+        || fail "T2: $label from A/sub/deep (current-project = B) logs to A, never B" "rc=$RC A:$(ls -A "$A/.oss") B:$(ls -A "$B/.oss") out=$OUT"
+    world; run "$C/sub" "$@"
+    has_log "$H" "$want" && [[ ! -e "$B/.oss/logs" && ! -e "$C/.oss" ]] \
+        && pass "T2: $label from a repo with no .oss logs to ~/.oss, never B" \
+        || fail "T2: $label from a repo with no .oss logs to ~/.oss, never B" "rc=$RC home:$(ls -A "$H/.oss") B:$(ls -A "$B/.oss") out=$OUT"
+    world; run "$D" "$@"
+    has_log "$H" "$want" && [[ ! -e "$B/.oss/logs" ]] && lt_empty \
+        && pass "T2: $label from a repo with a linked .oss logs to ~/.oss, never the link target or B" \
+        || fail "T2: $label from a repo with a linked .oss logs to ~/.oss, never the link target or B" "rc=$RC home:$(ls -A "$H/.oss") LT:$(ls -A "$LT") out=$OUT"
+}
+for ev in start complete failed; do
+    ctx='{}'; [[ "$ev" == failed ]] && ctx='{"reason":"r"}'
+    log_case "notify $ev" "[$ev]" "$SH" "$ROOT/hooks/oss-notify.sh" --workflow build "$ev" "$ctx"
+done
+log_case "oss-log write" "hello-routing" "$SH" "$ROOT/hooks/oss-log.sh" write build hello-routing
+log_case "oss-log test" "PASS" "$SH" "$ROOT/hooks/oss-log.sh" test build PASS "1/1"
+log_case "oss-log phase" "RED start" "$SH" "$ROOT/hooks/oss-log.sh" phase build RED start
+log_case "oss-log agent" "oss:debugger" "$SH" "$ROOT/hooks/oss-log.sh" agent build oss:debugger "starting: x"
+# phase/agent also move the status line: A's state, never B's
+world; run "$A/sub/deep" "$SH" "$ROOT/hooks/oss-log.sh" phase build RED start
+grep -qF '"tddPhase": "red"' "$A/.oss/workflow-state.json" 2>/dev/null && [[ ! -e "$B/.oss/workflow-state.json" ]] \
+    && pass "T2: oss-log phase RED start from A sets A's TDD phase, never B's" \
+    || fail "T2: oss-log phase RED start from A sets A's TDD phase, never B's" "A:$(cat "$A/.oss/workflow-state.json" 2>&1 | head -5) B:$(ls -A "$B/.oss")"
+world; run "$A/sub/deep" "$SH" "$ROOT/hooks/oss-log.sh" agent build oss:debugger "starting: x"
+for _ in 1 2 3 4 5 6 7 8 9 10; do grep -qF 'oss:debugger' "$A/.oss/workflow-state.json" 2>/dev/null && break; sleep 0.3; done   # the state update runs in the background
+grep -qF 'oss:debugger' "$A/.oss/workflow-state.json" 2>/dev/null && [[ ! -e "$B/.oss/workflow-state.json" ]] \
+    && pass "T2: oss-log agent start from A sets A's active agent, never B's" \
+    || fail "T2: oss-log agent start from A sets A's active agent, never B's" "A:$(ls -A "$A/.oss") B:$(ls -A "$B/.oss")"
+world; run "$A/sub/deep" "$SH" "$ROOT/hooks/oss-log.sh" workflow set-feature feat-x
+[[ -f "$A/.oss/health-workflow-state.json" && ! -e "$B/.oss/health-workflow-state.json" ]] \
+    && pass "T2: oss-log workflow set-feature from A writes A's health state, never B's" \
+    || fail "T2: oss-log workflow set-feature from A writes A's health state, never B's" "A:$(ls -A "$A/.oss") B:$(ls -A "$B/.oss") out=$OUT"
+world; mkdir -p "$T/hc$N/watcher/dist/cli"; printf 'console.log("hc cwd " + process.cwd())\n' > "$T/hc$N/watcher/dist/cli/health-check.js"
+echo "$T/hc$N" > "$H/.oss/plugin-root"
+run "$A/sub/deep" "$SH" "$ROOT/hooks/oss-log.sh" health-check
+grep -qF "hc cwd $A" "$A/.oss/logs/current-session/health-check.log" 2>/dev/null && [[ ! -e "$B/.oss/logs" ]] \
+    && pass "T2: oss-log health-check from A checks A and logs to A, never B" \
+    || fail "T2: oss-log health-check from A checks A and logs to A, never B" "rc=$RC A:$(ls -A "$A/.oss") B:$(ls -A "$B/.oss") out=$OUT"
+
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
 [[ $FAILED -eq 0 ]]

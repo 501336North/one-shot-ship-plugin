@@ -8,7 +8,7 @@ Project for an event = `CLAUDE_PROJECT_DIR` if set → else the nearest REAL (no
 
 ## Tasks
 - [x] T1 RED/GREEN: shared resolver + oss-notify.sh uses it. Test: two projects A and B, current-project = B; a notify run from inside A lands in A; from a repo with no .oss lands in ~/.oss; never in B.
-- [ ] T2: oss-log.sh's three resolution sites (≈81-90, 303-308, 413-418) use it; same A/B test for `write`, `test`, `phase`, `agent`.
+- [x] T2: oss-log.sh's three resolution sites (≈81-90, 303-308, 413-418) use it; same A/B test for `write`, `test`, `phase`, `agent`.
 - [ ] T3: watcher oss-error (src/cli/oss-error.ts) and update-workflow-state.ts resolve the same way (when no --project-dir); rebuild dist; vitest for A/B.
 - [ ] T4: oss-log.sh TMPDIR crash: `${TMPDIR:-}` (and any other unset-var reads under set -u in that function); test with TMPDIR unset → project log is project-local.
 - [ ] T5: oss-value.sh `_ov_walk` reuses the shared resolver (no second copy).

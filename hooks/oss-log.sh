@@ -77,18 +77,15 @@ validate_project_path() {
     return 0
 }
 
-# Get log base directory - project-local first, global fallback
-# Priority: 1) CLAUDE_PROJECT_DIR (env var), 2) ~/.oss/current-project, 3) ~/.oss/logs (global)
-get_log_base() {
-    local project_dir=""
+# The project this invocation belongs to: oss_resolve_project (hooks/oss-safe-path.sh), the one
+# rule every site below uses. "" = none (the global ~/.oss). Absent helper: none (fail closed).
+_OSS_PROJ=""
+declare -F oss_resolve_project >/dev/null && oss_resolve_project
+OSS_LOG_PROJECT_DIR="$_OSS_PROJ"
 
-    # CLAUDE_PROJECT_DIR takes priority (explicit env var for tests/automation)
-    if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
-        project_dir="$CLAUDE_PROJECT_DIR"
-    # Fall back to current-project file for interactive sessions
-    elif [[ -f "$HOME/.oss/current-project" ]]; then
-        project_dir=$(cat "$HOME/.oss/current-project" 2>/dev/null | tr -d '[:space:]')
-    fi
+# Get log base directory - project-local first, global fallback (~/.oss/logs)
+get_log_base() {
+    local project_dir="$OSS_LOG_PROJECT_DIR"
 
     # Validate and use project-local if valid
     if [[ -n "$project_dir" ]]; then
@@ -299,17 +296,7 @@ case "$ACTION" in
         if [[ "$STATUS" == "start" ]]; then
             PHASE_LOWER=$(echo "$PHASE" | tr '[:upper:]' '[:lower:]')
             if [[ "$PHASE_LOWER" =~ ^(red|green|refactor)$ ]]; then
-                # Get project directory for --project-dir flag
-                # Resolution: CLAUDE_PROJECT_DIR env → current-project file → git root
-                PROJECT_DIR=""
-                if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
-                    PROJECT_DIR="$CLAUDE_PROJECT_DIR"
-                elif [[ -f "$HOME/.oss/current-project" ]]; then
-                    PROJECT_DIR=$(cat "$HOME/.oss/current-project" 2>/dev/null | tr -d '[:space:]')
-                fi
-                if [[ -z "$PROJECT_DIR" ]]; then
-                    PROJECT_DIR=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
-                fi
+                PROJECT_DIR="$OSS_LOG_PROJECT_DIR"   # --project-dir for the state CLI
 
                 # Find update-workflow-state.js CLI (version-agnostic lookup)
                 UPDATE_CLI=""
@@ -409,14 +396,7 @@ case "$ACTION" in
 
         # Update workflow-state.json for status line display
         # Detect "starting:" or "completed:" patterns in task message
-        # Get project directory for --project-dir flag
-        # Priority: CLAUDE_PROJECT_DIR env var > ~/.oss/current-project file
-        PROJECT_DIR=""
-        if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
-            PROJECT_DIR="$CLAUDE_PROJECT_DIR"
-        elif [[ -f "$HOME/.oss/current-project" ]]; then
-            PROJECT_DIR=$(cat "$HOME/.oss/current-project" 2>/dev/null | tr -d '[:space:]')
-        fi
+        PROJECT_DIR="$OSS_LOG_PROJECT_DIR"   # --project-dir for the state CLI
 
         # Find update-workflow-state.js CLI (version-agnostic lookup)
         UPDATE_CLI=""
@@ -853,7 +833,7 @@ case "$ACTION" in
         SUBCOMMAND="${COMMAND:-}"
         # Use separate file from main workflow-state.json (used by status line)
         # Use project-local health state if available (with security validation)
-        RAW_PROJECT=$(cat ~/.oss/current-project 2>/dev/null | tr -d '[:space:]')
+        RAW_PROJECT="$OSS_LOG_PROJECT_DIR"
         CURRENT_PROJECT=""
         if [[ -n "$RAW_PROJECT" ]]; then
             CURRENT_PROJECT=$(validate_project_path "$RAW_PROJECT") || CURRENT_PROJECT=""
@@ -939,12 +919,9 @@ EOF
 
     health-check)
         # Run health check in current project
-        # Reads current project from ~/.oss/current-project
+        # The project is OSS_LOG_PROJECT_DIR (the shared rule)
         # Output written to health-check.log for status detection
-        CURRENT_PROJECT=""
-        if [[ -f "$HOME/.oss/current-project" ]]; then
-            CURRENT_PROJECT=$(cat "$HOME/.oss/current-project" 2>/dev/null)
-        fi
+        CURRENT_PROJECT="$OSS_LOG_PROJECT_DIR"
 
         if [[ -z "$CURRENT_PROJECT" || ! -d "$CURRENT_PROJECT" ]]; then
             echo "No active project. Start a Claude Code session first."

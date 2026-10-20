@@ -58,6 +58,7 @@ describe('oss-log.sh milestone action', () => {
       : '';
 
     execSync(`bash "${ossLogScript}" milestone plan archive_check "Checked for features to archive"`, {
+      cwd: os.tmpdir(), // outside any project: the global log (routing D1)
       encoding: 'utf-8',
       env: {
         ...process.env,
@@ -79,6 +80,7 @@ describe('oss-log.sh milestone action', () => {
     let errorOutput = '';
     try {
       execSync(`bash "${ossLogScript}" milestone`, {
+        cwd: os.tmpdir(), // outside any project: the global log (routing D1)
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
@@ -103,6 +105,7 @@ describe('oss-log.sh milestone action', () => {
     let errorOutput = '';
     try {
       execSync(`bash "${ossLogScript}" milestone plan`, {
+        cwd: os.tmpdir(), // outside any project: the global log (routing D1)
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
@@ -166,6 +169,7 @@ describe('oss-log.sh skill action', () => {
       : '';
 
     execSync(`bash "${ossLogScript}" skill create-dev-docs START "feature=auth-module"`, {
+      cwd: os.tmpdir(), // outside any project: the global log (routing D1)
       encoding: 'utf-8',
       env: {
         ...process.env,
@@ -189,6 +193,7 @@ describe('oss-log.sh skill action', () => {
       : '';
 
     execSync(`bash "${ossLogScript}" skill create-dev-docs COMPLETE "files_created=3"`, {
+      cwd: os.tmpdir(), // outside any project: the global log (routing D1)
       encoding: 'utf-8',
       env: {
         ...process.env,
@@ -212,6 +217,7 @@ describe('oss-log.sh skill action', () => {
       : '';
 
     execSync(`bash "${ossLogScript}" skill build FAILED "Test compilation failed"`, {
+      cwd: os.tmpdir(), // outside any project: the global log (routing D1)
       encoding: 'utf-8',
       env: {
         ...process.env,
@@ -233,6 +239,7 @@ describe('oss-log.sh skill action', () => {
     let errorOutput = '';
     try {
       execSync(`bash "${ossLogScript}" skill`, {
+        cwd: os.tmpdir(), // outside any project: the global log (routing D1)
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
@@ -257,6 +264,7 @@ describe('oss-log.sh skill action', () => {
     let errorOutput = '';
     try {
       execSync(`bash "${ossLogScript}" skill create-dev-docs`, {
+        cwd: os.tmpdir(), // outside any project: the global log (routing D1)
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {

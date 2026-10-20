@@ -1,5 +1,5 @@
 /**
- * @behavior oss-log.sh writes health workflow state to project .oss/ when current-project set
+ * @behavior oss-log.sh writes health workflow state to the .oss of the project it runs in
  * @acceptance-criteria Health state updates go to project directory
  * @business-rule Multi-project support requires logging to correct project
  * @boundary Shell script (oss-log.sh workflow commands)
@@ -34,8 +34,9 @@ describe('oss-log.sh - Project Health State', () => {
       originalGlobalHealthState = fs.readFileSync(globalHealthStateFile, 'utf-8');
     }
 
-    // Create test project directory with .oss
+    // Create test project (a git repo) with .oss
     fs.mkdirSync(projectOssDir, { recursive: true });
+    execSync('git init -q', { cwd: testProjectDir });
   });
 
   afterEach(() => {
@@ -60,17 +61,19 @@ describe('oss-log.sh - Project Health State', () => {
    * @behavior oss-log.sh workflow set-feature writes to project health state
    * @acceptance-criteria Feature name written to project .oss/health-workflow-state.json
    */
-  it('should write health state to project .oss when current-project set', () => {
-    // GIVEN: current-project points to test project
-    fs.writeFileSync(currentProjectFile, testProjectDir);
+  it('should write health state to project .oss when run inside the project', () => {
+    // GIVEN: current-project names another project (never used for routing, D1)
+    fs.writeFileSync(currentProjectFile, os.homedir());
 
-    // WHEN: Running log script with workflow set-feature
+    // WHEN: Running log script with workflow set-feature from inside the project
     try {
       execSync(`bash "${logScript}" workflow set-feature test-feature`, {
+        cwd: testProjectDir,
         timeout: 10000,
         encoding: 'utf-8',
         env: {
           ...process.env,
+          CLAUDE_PROJECT_DIR: '',
           CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..'),
         },
       });
@@ -85,20 +88,22 @@ describe('oss-log.sh - Project Health State', () => {
   });
 
   /**
-   * @behavior oss-log.sh falls back to global when no current-project
-   * @acceptance-criteria Uses ~/.oss when current-project is empty
+   * @behavior oss-log.sh falls back to global outside any project
+   * @acceptance-criteria Uses ~/.oss when the cwd is in no project
    */
-  it('should fall back to global when current-project empty', () => {
-    // GIVEN: current-project is empty
-    fs.writeFileSync(currentProjectFile, '');
+  it('should fall back to global when run outside any project', () => {
+    // GIVEN: current-project names the test project (never used for routing, D1)
+    fs.writeFileSync(currentProjectFile, testProjectDir);
 
-    // WHEN: Running log script with workflow set-feature
+    // WHEN: Running log script with workflow set-feature outside any project
     try {
       execSync(`bash "${logScript}" workflow set-feature global-feature`, {
+        cwd: os.tmpdir(),
         timeout: 10000,
         encoding: 'utf-8',
         env: {
           ...process.env,
+          CLAUDE_PROJECT_DIR: '',
           CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..'),
         },
       });
