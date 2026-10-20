@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # oss-value.sh - the one plugin script that owns the per-repo value folder (G21 cut 1, ADR-001).
 #
-#   oss-value.sh dir                print the physical ~/.oss/run/<key> for the cwd's repo, cleared
-#                                   of the 15 value files; nothing printed and rc != 0 when unsafe.
+#   oss-value.sh dir                print the physical ~/.oss/run/<key> for the cwd's repo (outside any
+#                                   repo ~/.oss/run/home), cleared of the value files; nothing printed
+#                                   and rc != 0 when unsafe.
 #   oss-value.sh failed <workflow>  send reason.txt from that folder, cleaned, as the workflow's
 #                                   failed notice to the project the cwd is in; then delete it.
 #   oss-value.sh error <cmd:name>   emit message.txt, hint.txt and error.txt (5 fields) through
@@ -31,16 +32,20 @@ _ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<nam
 
 _OV_RUN="$HOME/.oss/run"
 
-# The cwd's repo, never one named by the environment; cd to its toplevel.
+# The cwd's repo, never one named by the environment; cd to its toplevel. Outside any repo
+# _OV_TOP is empty: the one per-user folder (ship round 4, R4-1).
 _ov_repo() {
-    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
-    && _OV_TOP=$(git rev-parse --show-toplevel) && cd "$_OV_TOP" >/dev/null
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+    _OV_TOP=$(git rev-parse --show-toplevel 2>/dev/null) || { _OV_TOP=""; return 0; }
+    cd "$_OV_TOP" >/dev/null
 }
 # Toplevel + git dir, so a .git file naming another repo's git dir gets its own key; an empty
 # lookup is refused, never hashed. (The served prompts still hash the git dir alone: Phase B.)
+# Outside any repo the key is "home" (never 16 hex, so it cannot meet a repo's folder).
 _ov_key() {
     local g k
-    g=$(git rev-parse --absolute-git-dir) && test -n "$_OV_TOP" && test -n "$g" \
+    test -n "$_OV_TOP" || { echo home; return 0; }
+    g=$(git rev-parse --absolute-git-dir) && test -n "$g" \
     && k=$(printf '%s\n%s\n' "$_OV_TOP" "$g" | git hash-object --stdin | cut -c1-16) && test "${#k}" = 16 && printf '%s\n' "$k"
 }
 _ov_safe() { test ! -L "$1" && test -O "$1"; }   # the served not-link + owner checks

@@ -95,11 +95,21 @@ echo victim > "$E/reason.txt"
 ov "$R" dir
 refused "4b: ~/.oss/run/<key> as a symlink is refused"
 [[ "$(ls -A "$E")" == reason.txt && "$(ls -A "$H/.oss/run")" == "$key" ]] && pass "4b: nothing created or removed through the <key> link" || fail "4b: nothing created or removed through the <key> link" "elsewhere: $(ls -A "$E") run: $(ls -A "$H/.oss/run")"
-# 4c. outside any git repo
-newhome; mkdir -p "$T/norepo$N/cwd"; NR="$T/norepo$N/cwd"
-OUT=$(cd "$NR" && GIT_CEILING_DIRECTORIES="$T/norepo$N" HOME="$H" "$SH" "$SCRIPT" dir 2>"$T/err" </dev/null); RC=$?; ERR=$(cat "$T/err")
-refused "4c: outside any git repo is refused"
-[[ ! -e "$H/.oss/run" ]] && pass "4c: nothing created outside a repo" || fail "4c: nothing created outside a repo" "$(ls -A "$H/.oss")"
+# 4c. outside any git repo: one per-user folder, ~/.oss/run/home (ship round 4, R4-1), same checks
+# ovn <args...>: run the script from a cwd that is in no git repo; sets OUT, ERR, RC, NR
+ovn() {
+    mkdir -p "$T/norepo$N/cwd"; NR="$T/norepo$N/cwd"
+    OUT=$(cd "$NR" && env -u CLAUDE_PLUGIN_ROOT -u CLAUDE_PROJECT_DIR GIT_CEILING_DIRECTORIES="$T/norepo$N" HOME="$H" "$SH" "$SCRIPT" "$@" 2>"$T/err" </dev/null); RC=$?
+    ERR=$(cat "$T/err")
+}
+newhome; ovn dir
+[[ "$RC" == 0 && "$OUT" == "$H/.oss/run/home" ]] && pass "4c: outside any git repo, dir prints \$HOME/.oss/run/home" || fail "4c: outside any git repo, dir prints \$HOME/.oss/run/home" "rc=$RC out='$OUT' err=$ERR"
+[[ "$(mode_of "$H/.oss/run/home" 2>&1)" == drwx------ && "$(mode_of "$H/.oss/run" 2>&1)" == drwx------ ]] && pass "4c: the home folder and ~/.oss/run are mode 700" || fail "4c: the home folder and ~/.oss/run are mode 700" "$(mode_of "$H/.oss/run/home" 2>&1) $(mode_of "$H/.oss/run" 2>&1)"
+newhome; mkdir -p "$H/.oss/run/home"; for f in key style reason agent; do echo stale > "$H/.oss/run/home/$f.txt"; done; ovn dir
+[[ "$RC" == 0 && -z "$(ls -A "$H/.oss/run/home")" ]] && pass "4c: the home folder is cleared of stale value files" || fail "4c: the home folder is cleared of stale value files" "rc=$RC left: $(ls -A "$H/.oss/run/home")"
+newhome; mkdir -p "$H/.oss/run" "$T/elsewhere$N"; ln -s "$T/elsewhere$N" "$H/.oss/run/home"; E="$T/elsewhere$N"; echo victim > "$E/key.txt"; ovn dir
+refused "4c: a symlinked ~/.oss/run/home is refused"
+[[ "$(ls -A "$E")" == key.txt ]] && pass "4c: nothing created or removed through the home link" || fail "4c: nothing created or removed through the home link" "$(ls -A "$E")"
 
 # --- 5. GIT_DIR / GIT_WORK_TREE pointing at another repo do not change the key ----------------
 newhome; R1="$R"; newrepo; R2="$R"; R="$R1"
@@ -245,6 +255,12 @@ ov "$C" failed build
     && pass "12: from a repo with no .oss, current-project's logs and state are untouched; the event lands in ~/.oss (R1-2)" \
     || fail "12: from a repo with no .oss, current-project's logs and state are untouched; the event lands in ~/.oss (R1-2)" "rc=$RC home=$(got_event "$H" && echo y || echo n) victim: $(ls -A "$B/.oss") err=$ERR"
 
+# outside any git repo: the notice is sent from the home folder and lands in ~/.oss (R4-1)
+newhome; mkdir -p "$H/.oss"; ovn dir; [[ -n "$OUT" ]] && echo hello > "$OUT/reason.txt"; ovn failed build
+[[ "$RC" == 0 ]] && got_event "$H" && [[ ! -e "$H/.oss/run/home/reason.txt" ]] \
+    && pass "12: outside any git repo the failed notice is sent and lands in ~/.oss (R4-1)" \
+    || fail "12: outside any git repo the failed notice is sent and lands in ~/.oss (R4-1)" "rc=$RC home=$(got_event "$H" && echo y || echo n) err=$ERR"
+
 # --- 12b. reason.txt swapped for a link between the check and the read is not sent (R1-5) ----
 # A `stat` on PATH swaps reason.txt for a symlink to a secret the first time it is asked about it.
 setup_failed; echo hello > "$VD/reason.txt"; echo TOPSECRET > "$T/secret$N"
@@ -386,9 +402,12 @@ refused1 "17: a symlinked key.txt is refused"
 [[ -f "$T/target$N" ]] && pass "17: the symlink's target is not deleted" || fail "17: the symlink's target is not deleted" "gone"
 setup_read; echo ossk_secret_key_1 > "$VD/key.txt"; ln "$VD/key.txt" "$T/second$N"; ov "$R" read key
 refused1 "17: a hard-linked key.txt is refused"
-newhome; mkdir -p "$T/norepo$N/cwd"
-OUT=$(cd "$T/norepo$N/cwd" && GIT_CEILING_DIRECTORIES="$T/norepo$N" HOME="$H" "$SH" "$SCRIPT" read key 2>"$T/err" </dev/null); RC=$?; ERR=$(cat "$T/err")
-refused1 "17: read outside any git repo is refused"
+# outside any git repo the home folder is used (R4-1): read works there, with the same rule
+newhome; ovn dir; [[ -n "$OUT" ]] && echo ossk_home_key_123 > "$OUT/key.txt"; ovn read key
+[[ "$RC" == 0 && "$OUT" == ossk_home_key_123 && ! -e "$H/.oss/run/home/key.txt" ]] && pass "17: read outside any git repo reads the home folder (R4-1)" \
+    || fail "17: read outside any git repo reads the home folder (R4-1)" "rc=$RC out='$OUT' err=$ERR"
+newhome; ovn dir; [[ -n "$OUT" ]] && printf '%s' '$(touch PWNED)' > "$OUT/key.txt"; ovn read key
+if [[ -e "$NR/PWNED" || -e "$H/PWNED" ]]; then fail "17: outside a repo a hostile key is refused" "something ran"; else refused1 "17: outside a repo a hostile key is refused"; fi
 
 # === agent <workflow> start|complete (ship round 3, R3-4) =====================================
 # The model writes the specialist's name to agent.txt; `agent` checks it in code and calls the

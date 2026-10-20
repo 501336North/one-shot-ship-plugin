@@ -115,7 +115,7 @@ Dashboard: https://www.oneshotship.com/dashboard
 
 ## Step 4: Show Specific Workflow (Optional)
 
-If a workflow name is provided, fetch and display its configuration. The name reaches the shell through the value folder: run `"$HOME/.oss/hooks/oss-value.sh" dir` (inside a git repository), use the Write tool to write the name alone to `workflow.txt` in the folder it printed, then run:
+If a workflow name is provided, fetch and display its configuration. The name reaches the shell through the value folder: run `"$HOME/.oss/hooks/oss-value.sh" dir`, use the Write tool to write the name alone to `workflow.txt` in the folder it printed, then run:
 
 ```bash
 WORKFLOW=$("$HOME/.oss/hooks/oss-value.sh" read workflow) && echo "$WORKFLOW"

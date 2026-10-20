@@ -192,7 +192,7 @@ Auditing prompt 2/24: commands/ship...
 
 ### Step 5a: Decrypt the Prompt
 
-The category and the name reach the shell through the value folder, never typed into the command. Before the first prompt, run `"$HOME/.oss/hooks/oss-value.sh" dir` (inside a git repository) and note the folder it prints. For each prompt, use the Write tool to write its category alone to `category.txt` and the portion after the `/` in the prompt key alone to `name.txt` in that folder (e.g., for `commands/build`: `commands` and `build`), then run:
+The category and the name reach the shell through the value folder, never typed into the command. Before the first prompt, run `"$HOME/.oss/hooks/oss-value.sh" dir` and note the folder it prints. For each prompt, use the Write tool to write its category alone to `category.txt` and the portion after the `/` in the prompt key alone to `name.txt` in that folder (e.g., for `commands/build`: `commands` and `build`), then run:
 
 ```bash
 T=$("$HOME/.oss/hooks/oss-value.sh" read category) && N=$("$HOME/.oss/hooks/oss-value.sh" read name) && ~/.oss/bin/oss-decrypt --type "$T" --name "$N"

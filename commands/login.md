@@ -61,7 +61,7 @@ Configure your API key for OSS Dev Workflow access.
 **Quick key update steps (Steps 1-3 only, skip Steps 4-9):**
 
 1. **Hand over the new API key** from the `--key` argument through the value folder, never on a command line:
-   - Run `"$HOME/.oss/hooks/oss-value.sh" dir` (inside a git repository) and note the folder it prints. If it prints nothing, tell the user "Run /oss:login --key from inside a git repository." and stop.
+   - Run `"$HOME/.oss/hooks/oss-value.sh" dir` and note the folder it prints. If it prints nothing, show the user its error and stop.
    - Use the Write tool to write the key alone to `key.txt` in that folder. If no key was given, tell the user "Error: --key requires an API key value. Usage: /oss:login --key ak_xxxxx" and stop.
 
 2. **Read, validate and save the key** in ONE Bash call (the read checks the key's shape and deletes `key.txt` at once):

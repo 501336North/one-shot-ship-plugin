@@ -159,7 +159,7 @@ Gemini:
 
 #### `/oss:models set <prompt> <model>`
 
-Set model for a specific prompt. The two arguments reach the shell through the value folder, never typed into the command: run `"$HOME/.oss/hooks/oss-value.sh" dir` (inside a git repository), then use the Write tool to write the prompt name alone to `prompt.txt` and the model id alone to `model.txt` in the folder it printed. The reads below check each value (lower case, digits, `_ . / : -`, at most 100 characters) and delete its file; if either prints nothing, tell the user the value was not valid and stop.
+Set model for a specific prompt. The two arguments reach the shell through the value folder, never typed into the command: run `"$HOME/.oss/hooks/oss-value.sh" dir`, then use the Write tool to write the prompt name alone to `prompt.txt` and the model id alone to `model.txt` in the folder it printed. The reads below check each value (lower case, digits, `_ . / : -`, at most 100 characters) and delete its file; if either prints nothing, tell the user the value was not valid and stop.
 
 ```bash
 # Read the arguments (checked, then deleted)
