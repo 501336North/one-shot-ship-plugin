@@ -182,7 +182,8 @@ _ov_cmd_login() {
     test "$(printf '%s\n' "$r" | tail -1)" = 200 \
     || { echo "Error: Invalid API key. Get a valid key from https://www.oneshotship.com/dashboard" >&2; return 1; }
     c="$HOME/.oss/config.json"; mkdir -p "$HOME/.oss"
-    if test -f "$c"; then u=$(jq --arg key "$k" '.apiKey = $key' "$c"); else u=$(jq -n --arg key "$k" '{"apiKey": $key, "apiUrl": "https://one-shot-ship-api.onrender.com"}'); fi
+    if test -f "$c"; then u=$(jq --arg key "$k" '.apiKey = $key' "$c"); else u=$(jq -n --arg key "$k" '{"apiKey": $key, "apiUrl": "https://one-shot-ship-api.onrender.com"}'); fi && test -n "$u" \
+    || { echo "Error: could not update ~/.oss/config.json (not valid JSON, or jq missing); it was left as it was." >&2; return 1; }
     t=$(mktemp "$HOME/.oss/config.json.XXXXXX") && printf '%s\n' "$u" > "$t" && chmod 600 "$t" && mv -f "$t" "$c" && echo "Plan: $(printf '%s\n' "$r" | head -1 | jq -r '.plan // "unknown"')"
 }
 

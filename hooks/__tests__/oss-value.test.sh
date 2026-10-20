@@ -589,6 +589,17 @@ setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; echo '{"apiKey":"old"
     && pass "22: an existing 644 config.json comes out 600 with the new key (R5-6)" || fail "22: an existing config.json comes out 600 (R5-6)" "rc=$RC cfg=$(mode_of "$H/.oss/config.json" 2>&1)"
 [[ -z "$(find "$H/.oss" -maxdepth 1 -name 'config.json.*')" ]] && pass "22: login leaves no temp file behind (R5-6)" || fail "22: login leaves no temp file behind (R5-6)" "$(ls -a "$H/.oss")"
 umask "$OLD_UMASK"
+# R5-7: when jq cannot build the new config (malformed config.json, or no jq) login refuses and
+# leaves config.json byte for byte as it was; `Plan:` only after a successful write.
+mkdir -p "$T/nojq"; printf '#!/bin/sh\nexit 127\n' > "$T/nojq/jq"; chmod +x "$T/nojq/jq"
+for c in 'malformed|{bad|' 'empty||' 'no jq|{"apiKey":"old"}|nojq'; do
+    IFS='|' read -r what body nj <<< "$c"
+    setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; printf '%s' "$body" > "$H/.oss/config.json"
+    cp "$H/.oss/config.json" "$T/cfg.before"; echo ossk_login_key_8 > "$VD/key.txt"
+    if [[ -n "$nj" ]]; then OV_PATH="$T/nojq:$T/sbin:$PATH" ov "$R" login; else ovs "$R" login; fi
+    [[ "$RC" == 1 && "$OUT" != *Plan:* && -n "$ERR" ]] && cmp -s "$T/cfg.before" "$H/.oss/config.json" && [[ -z "$(find "$H/.oss" -maxdepth 1 -name 'config.json.*')" ]] \
+        && pass "22: login with $what refuses and leaves config.json untouched (R5-7)" || fail "22: login with $what refuses, config.json untouched (R5-7)" "rc=$RC out='$OUT' err=$ERR cfg=$(cat "$H/.oss/config.json")"
+done
 
 # --- 23. read model accepts what isValidModelId accepts (ship round 5, R5-3) -------------------
 # @behavior /oss:models set takes a real model id such as ollama/hf.co/org/Qwen3-GGUF:Q4_K_M.
