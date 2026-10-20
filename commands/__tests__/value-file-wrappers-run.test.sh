@@ -86,14 +86,14 @@ for kind in norepo repo; do
     [[ "$RC" == 0 && "$(jq -r .apiKey "$H/.oss/config.json" 2>/dev/null)" == ossk_test_key_123 && "$OUT" == *"Plan: pro"* ]] \
         && pass "$kind: /oss:login --key saves the key it read" || fail "$kind: /oss:login --key saves the key it read" "rc=$RC out=$OUT"
 
-    sandbox "$kind"; model_writes prompt oss:code-reviewer model ollama/codellama; run_block models.md 'read prompt)'
+    sandbox "$kind"; model_writes prompt oss:code-reviewer model ollama/codellama; run_block models.md 'oss-value.sh models-set'
     [[ "$RC" == 0 && "$(calls)" == "node $FR/watcher/dist/cli/models.js set agents oss:code-reviewer ollama/codellama" ]] \
         && pass "$kind: /oss:models set passes the prompt and model it read" || fail "$kind: /oss:models set passes the prompt and model it read" "rc=$RC out=$OUT calls=$(calls)"
 
-    sandbox "$kind"; model_writes workflow build; run_block workflows.md 'read workflow)'
+    sandbox "$kind"; model_writes workflow build; run_block workflows.md 'oss-value.sh read workflow'
     [[ "$RC" == 0 && "$OUT" == build ]] && pass "$kind: /oss:workflows <name> prints the name it read" || fail "$kind: /oss:workflows <name> prints the name it read" "rc=$RC out=$OUT"
 
-    sandbox "$kind"; model_writes category commands name build; run_block trust.md 'read category)'
+    sandbox "$kind"; model_writes category commands name build; run_block trust.md 'oss-value.sh decrypt'
     [[ "$RC" == 0 && "$(calls)" == "oss-decrypt --type commands --name build" ]] \
         && pass "$kind: /oss:trust decrypts with the category and name it read" || fail "$kind: /oss:trust decrypts with the category and name it read" "rc=$RC out=$OUT calls=$(calls)"
 done
@@ -164,11 +164,11 @@ sandbox repo; cfg '$(touch PWNED)' https://api.example.invalid; printf '{"linked
 grep -qF '${1' "$C/telegram.md" && fail "telegram.md takes no \$1 in a shell block" "$(grep -nF '${1' "$C/telegram.md")" || pass "telegram.md takes no \$1 in a shell block"
 
 # --- oss-custom: the team command name is read from custom.txt --------------------------------
-sandbox repo; model_writes custom review-standards; run_block oss-custom.md 'read custom)'
+sandbox repo; model_writes custom review-standards; run_block oss-custom.md 'oss-value.sh decrypt custom'
 [[ "$RC" == 0 && "$(calls)" == "oss-decrypt --type custom --name review-standards" ]] && pass "oss-custom: decrypts the name it read" || fail "oss-custom: decrypts the name it read" "rc=$RC out=$OUT calls=$(calls)"
 for v in '$(touch PWNED)' 'team:review' "a'b" 'review
 $(touch PWNED)' '../x'; do
-    sandbox repo; model_writes custom "$v"; run_block oss-custom.md 'read custom)'
+    sandbox repo; model_writes custom "$v"; run_block oss-custom.md 'oss-value.sh decrypt custom'
     if pwned; then fail "oss-custom: hostile name is refused" "something ran"
     elif [[ "$RC" == 0 || -n "$(calls)" ]]; then fail "oss-custom: hostile name '$v' is refused" "rc=$RC calls=$(calls)"
     else pass "oss-custom: hostile name '$v' is refused, nothing decrypted"; fi
@@ -189,13 +189,13 @@ for v in '$(touch PWNED)' '1; touch PWNED' '12345678901' '-1' '1 1' '1,1'; do
 done
 
 # --- plugin root: computed with oss-value.sh root (webhook, login) ----------------------------
-for lit in 'webhook-setup.js" setup' 'webhook-toggle.js" on' 'webhook-setup.js" setup --port 8080'; do
+for lit in 'cli webhook-setup setup' 'cli webhook-toggle on' 'cli webhook-setup setup --port 8080'; do
     sandbox repo; run_block webhook.md "$lit"
     [[ "$RC" == 0 && "$(calls)" == "node $FR/watcher/dist/cli/webhook-"* ]] && pass "webhook: the block holding '$lit' runs the plugin root's script" || fail "webhook: the block holding '$lit' runs the plugin root's script" "rc=$RC out=$OUT calls=$(calls)"
 done
-sandbox repo; rm -f "$H/.oss/plugin-root"; run_block webhook.md 'webhook-setup.js" setup'
+sandbox repo; rm -f "$H/.oss/plugin-root"; run_block webhook.md 'cli webhook-setup setup'
 [[ "$RC" != 0 && -z "$(calls)" ]] && pass "webhook: without a plugin root nothing runs" || fail "webhook: without a plugin root nothing runs" "rc=$RC calls=$(calls)"
-sandbox repo; run_block login.md 'update-workflow-state.js" init'
+sandbox repo; run_block login.md 'cli update-workflow-state init'
 [[ "$RC" == 0 && "$(calls)" == "node $FR/watcher/dist/cli/update-workflow-state.js init" ]] && pass "login: workflow state init runs the plugin root's CLI" || fail "login: workflow state init runs the plugin root's CLI" "rc=$RC calls=$(calls)"
 sandbox repo; echo 1 > "$T/curl.rc"; run_block login.md 'notification-icon.png"'
 [[ "$(calls)" == *"sips -s format png $FR/assets/icon.png"* ]] && pass "login: the icon fallback converts the plugin root's icon" || fail "login: the icon fallback converts the plugin root's icon" "rc=$RC calls=$(calls)"

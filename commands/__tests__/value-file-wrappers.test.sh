@@ -16,6 +16,8 @@
 #           stale "Replace {COMMAND_NAME}" sentence; build.md's log example shows no file/message
 #           after [TEST] FAIL/PASS.
 # @business-rule Ship round 3, R3-7: request-shape fences are labelled ```http.
+# @business-rule Ship round 5, R5-1: each value hand-off is ONE call spelled with the allowed prefix
+#           `~/.oss/hooks/oss-value.sh <verb>` (no $(...) && chain), so it runs without a prompt.
 
 set -uo pipefail
 C="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -25,8 +27,9 @@ fail() { echo "✗ FAIL: $1 — $2"; TESTS_RUN=$((TESTS_RUN + 1)); TESTS_FAILED=
 has() { grep -qF -- "$2" "$C/$1"; }                       # <file> <literal>
 check() { if "${@:2}"; then pass "$1"; else fail "$1" "not as expected"; fi; }   # <name> <cmd...>
 none() { ! grep -qF -- "$2" "$C/$1"; }
+line() { awk -v w="$2" '{ sub(/^[[:space:]]+/, "") } $0 == w { f = 1 } END { exit !f }' "$C/$1"; }   # <file> <whole line, any indent>
 
-V='"$HOME/.oss/hooks/oss-value.sh"'
+V='~/.oss/hooks/oss-value.sh'   # the allowed prefix, spelled exactly (ship round 5, R5-1)
 
 # R3-1: fallbacks give fixed, placeholder-free commands
 check "ship.md fallback shows git push -u origin HEAD" has ship.md 'git push -u origin HEAD'
@@ -52,15 +55,21 @@ check "build.md has no direct oss-log.sh agent line" none build.md 'oss-log.sh a
 check "login.md --key reads the key from key.txt" has login.md "NEW_KEY=\$($V read key)"
 check "login.md has no \$KEY_ARG" none login.md '$KEY_ARG'
 check "login.md first-run style reads style.txt" has login.md "STYLE=\$($V read style)"
-check "models.md set reads prompt.txt" has models.md "PROMPT_NAME=\$($V read prompt)"
-check "models.md set reads model.txt" has models.md "MODEL_ID=\$($V read model)"
+check "models.md set reads prompt.txt and model.txt in one call (R5-1)" line models.md "$V models-set"
+check "models.md set has no \$(...) read of its own" none models.md 'PROMPT_NAME=$('
 check "models.md set does not take \$1" none models.md 'PROMPT_NAME="$1"'
 check "models.md set does not take \$2" none models.md 'MODEL_ID="$2"'
-check "workflows.md reads workflow.txt" has workflows.md "WORKFLOW=\$($V read workflow)"
+check "workflows.md reads workflow.txt in one call (R5-1)" line workflows.md "$V read workflow"
 check "workflows.md has no {workflowName}" none workflows.md '{workflowName}'
-check "trust.md reads category.txt" has trust.md "T=\$($V read category)"
-check "trust.md reads name.txt" has trust.md "N=\$($V read name)"
-check "trust.md decrypts with the values read" has trust.md '~/.oss/bin/oss-decrypt --type "$T" --name "$N"'
+check "trust.md decrypts with category.txt and name.txt in one call (R5-1)" line trust.md "$V decrypt"
+check "trust.md has no \$(...) && decrypt chain" none trust.md '--type "$T" --name "$N"'
+check "oss-custom.md decrypts with custom.txt in one call (R5-1)" line oss-custom.md "$V decrypt custom"
+check "oss-custom.md has no \$(...) read of the name" none oss-custom.md 'COMMAND_NAME=$('
+for a in 'webhook-setup setup' 'webhook-toggle on' 'webhook-setup setup --port 8080'; do
+    check "webhook.md runs '$a' in one call (R5-1)" line webhook.md "$V cli $a"
+done
+check "webhook.md has no \$(...) root chain" none webhook.md 'R=$('
+check "login.md initialises workflow state in one call (R5-1)" line login.md "$V cli update-workflow-state init"
 for f in login.md models.md workflows.md trust.md build.md; do
     check "$f tells the model to use the folder oss-value.sh dir prints" has "$f" "$V dir"
 done

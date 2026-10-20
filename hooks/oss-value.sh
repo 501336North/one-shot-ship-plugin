@@ -15,6 +15,13 @@
 #                                   log agent.txt (the specialist's name) through oss-log.sh agent
 #                                   with a fixed task text, for the status line; deleted once read.
 #   oss-value.sh root               print the plugin root named by ~/.oss/plugin-root, checked (any cwd).
+#   oss-value.sh decrypt [custom]   ~/.oss/bin/oss-decrypt --type <category> --name <name> from category.txt
+#                                   + name.txt (or --type custom --name <custom.txt>), checked as read does.
+#   oss-value.sh models-set         the plugin's models.js set <type> <prompt> <model> from prompt.txt + model.txt.
+#   oss-value.sh cli <script> <args>  one of the fixed plugin CLI calls (webhook-setup setup [--port N],
+#                                   webhook-toggle on, update-workflow-state init) from the plugin root.
+# Each value hand-off is ONE call spelled ~/.oss/hooks/oss-value.sh <verb> (the allowed prefix): a
+# $(...) && chain asks for approval even when every part is allowed (ship round 5, R5-1).
 #
 # `dir` is the served value-folder command, step for step, except the key (toplevel + git dir, ship
 # round 1 R1-3); `failed` is the served failure-notice reader and `error` the served oss-error
@@ -30,7 +37,7 @@ if [[ ! -f "$_OV_HERE/oss-safe-path.sh" ]]; then
 fi
 source "$_OV_HERE/oss-safe-path.sh"
 
-_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root" >&2; exit 2; }
+_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args>" >&2; exit 2; }
 
 _OV_RUN="$HOME/.oss/run"
 
@@ -103,7 +110,9 @@ _ov_take() {
     [[ "$v" =~ $2 ]] && _OV_VAL=$v
 }
 
-_ov_cmd_read() {
+# <name>: <name>.txt from _OV_DIR held to that name's rule -> _OV_VAL (deleted once read). The one
+# list of per-name rules: read and the verbs that act on a value (decrypt, models-set) use it.
+_ov_get() {
     local re
     case "${1:-}" in
         key) re='^[A-Za-z0-9_-]{8,200}$' ;;
@@ -117,8 +126,46 @@ _ov_cmd_read() {
         verbosity) re='^(all|important|errors-only)$' ;;
         custom) re='^[a-z0-9-]{1,100}$' ;;   # oss-custom Step 0 = isSafeTeamCommandName
         *) false ;;
-    esac && _ov_dir && _ov_take "$1.txt" "$re" && printf '%s\n' "$_OV_VAL" \
+    esac && _ov_take "$1.txt" "$re"
+}
+
+_ov_cmd_read() {
+    _ov_dir && _ov_get "${1:-}" && printf '%s\n' "$_OV_VAL" \
     || { echo "oss-value: read: refused (unknown name, or the value file missing, unsafe or not a valid ${1:-value})" >&2; return 1; }
+}
+
+# decrypt [custom]: oss-decrypt with category.txt + name.txt (or custom.txt as a custom name), each
+# held to its read rule, in the caller's folder - one allowed call instead of a $(read) && chain.
+_ov_cmd_decrypt() {
+    local o t n
+    o=$(pwd -P)
+    _ov_dir && case "$#:${1:-}" in
+        0:) _ov_get category && t=$_OV_VAL && _ov_get name && n=$_OV_VAL ;;
+        1:custom) t=custom && _ov_get custom && n=$_OV_VAL ;;
+        *) false ;;
+    esac || { echo "oss-value: decrypt: refused (bad argument, or a value file missing, unsafe or not a valid name)" >&2; return 1; }
+    cd "$o" && exec "$HOME/.oss/bin/oss-decrypt" --type "$t" --name "$n"
+}
+
+# models-set: models.js set <type> <name> <model> from prompt.txt + model.txt (/oss:x -> commands
+# oss:x, oss:x -> agents, else skills: the /oss:models set rule), from the checked plugin root.
+_ov_cmd_models_set() {
+    local p m t n
+    _ov_dir && _ov_get prompt && p=$_OV_VAL && _ov_get model && m=$_OV_VAL && _ov_root \
+    || { echo "oss-value: models-set: refused (prompt.txt or model.txt missing, unsafe or not valid, or no plugin root)" >&2; return 1; }
+    case "$p" in /oss:*) t=commands; n=${p#/} ;; oss:*) t=agents; n=$p ;; *) t=skills; n=$p ;; esac
+    exec node "$_OV_ROOT/watcher/dist/cli/models.js" set "$t" "$n" "$m"
+}
+
+# cli <script> <args>: one of the fixed plugin CLI calls the wrappers make, from the checked plugin root.
+_ov_cmd_cli() {
+    case "$#:${1:-}:${2:-}:${3:-}" in
+        2:webhook-setup:setup:|2:webhook-toggle:on:|2:update-workflow-state:init:) ;;
+        4:webhook-setup:setup:--port) case "$4" in ''|*[!0-9]*|??????*) false ;; esac ;;
+        *) false ;;
+    esac && _ov_root && test -f "$_OV_ROOT/watcher/dist/cli/$1.js" \
+    || { echo "oss-value: cli: refused (not one of the fixed plugin CLI calls, or no plugin root)" >&2; return 1; }
+    exec node "$_OV_ROOT/watcher/dist/cli/$1.js" "${@:2}"
 }
 
 _ov_cmd_agent() {
@@ -180,5 +227,8 @@ case "${1:-}" in
     read) _ov_cmd_read "${2:-}" ;;
     agent) _ov_cmd_agent "${2:-}" "${3:-}" ;;
     root) _ov_cmd_root ;;
+    decrypt) shift; _ov_cmd_decrypt "$@" ;;
+    models-set) _ov_cmd_models_set ;;
+    cli) shift; _ov_cmd_cli "$@" ;;
     *) _ov_usage ;;
 esac

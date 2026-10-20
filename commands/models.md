@@ -159,28 +159,10 @@ Gemini:
 
 #### `/oss:models set <prompt> <model>`
 
-Set model for a specific prompt. The two arguments reach the shell through the value folder, never typed into the command: run `"$HOME/.oss/hooks/oss-value.sh" dir`, then use the Write tool to write the prompt name alone to `prompt.txt` and the model id alone to `model.txt` in the folder it printed. The reads below check each value (lower case, digits, `_ . / : -`, at most 100 characters) and delete its file; if either prints nothing, tell the user the value was not valid and stop.
+Set model for a specific prompt. The two arguments reach the shell through the value folder, never typed into the command: run `~/.oss/hooks/oss-value.sh dir`, then use the Write tool to write the prompt name alone to `prompt.txt` and the model id alone to `model.txt` in the folder it printed. Then run this one call. It reads and checks each value (lower case, digits, `_ . / : -`, at most 100 characters), deletes its file, picks the prompt type (`/oss:x` is a command, `oss:x` an agent, anything else a skill) and runs the plugin's `models.js set` with the type, the name and the model, from the checked plugin root. If it refuses (`oss-value: models-set: refused`), tell the user the value was not valid and stop.
 
 ```bash
-# Read the arguments (checked, then deleted)
-PROMPT_NAME=$("$HOME/.oss/hooks/oss-value.sh" read prompt) || exit 1   # e.g., "oss:code-reviewer" or "/oss:ship"
-MODEL_ID=$("$HOME/.oss/hooks/oss-value.sh" read model) || exit 1       # e.g., "ollama/codellama"
-
-# Determine prompt type
-if [[ "$PROMPT_NAME" == /oss:* ]]; then
-    TYPE="commands"
-    NAME="${PROMPT_NAME#/}"
-elif [[ "$PROMPT_NAME" == oss:* ]]; then
-    TYPE="agents"
-    NAME="$PROMPT_NAME"
-else
-    TYPE="skills"
-    NAME="$PROMPT_NAME"
-fi
-
-# Update config (the plugin root is checked by oss-value.sh root)
-PLUGIN_ROOT=$("$HOME/.oss/hooks/oss-value.sh" root) || exit 1
-node "$PLUGIN_ROOT/watcher/dist/cli/models.js" set "$TYPE" "$NAME" "$MODEL_ID"
+~/.oss/hooks/oss-value.sh models-set
 ```
 
 #### `/oss:models costs`

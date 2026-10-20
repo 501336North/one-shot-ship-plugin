@@ -116,13 +116,13 @@ For EVERY task, you MUST follow this exact sequence with logging:
    ```
 
 ### Agent Delegation Logging
-When delegating to specialized agents (Task tool), you MUST log the agent through the value folder (never put an agent name, task or result into a command). Once per build, run `"$HOME/.oss/hooks/oss-value.sh" dir` and keep the folder it prints. Before each log line below, use the Write tool to write the agent's name alone (e.g. `code-reviewer`; lower case, digits, `:` and `-`) to `agent.txt` in that folder; the line checks the name, logs it with a fixed task text (the status line shows the agent) and deletes the file. If it refuses, go on without it.
+When delegating to specialized agents (Task tool), you MUST log the agent through the value folder (never put an agent name, task or result into a command). Once per build, run `~/.oss/hooks/oss-value.sh dir` and keep the folder it prints. Before each log line below, use the Write tool to write the agent's name alone (e.g. `code-reviewer`; lower case, digits, `:` and `-`) to `agent.txt` in that folder; the line checks the name, logs it with a fixed task text (the status line shows the agent) and deletes the file. If it refuses, go on without it.
 ```bash
 # Before spawning agent (after writing agent.txt)
-"$HOME/.oss/hooks/oss-value.sh" agent build start
+~/.oss/hooks/oss-value.sh agent build start
 
 # After agent completes (after writing agent.txt again)
-"$HOME/.oss/hooks/oss-value.sh" agent build complete
+~/.oss/hooks/oss-value.sh agent build complete
 ```
 
 **CRITICAL**: Do NOT batch multiple TDD cycles into a single agent delegation. Each RED-GREEN-REFACTOR cycle must be logged individually.

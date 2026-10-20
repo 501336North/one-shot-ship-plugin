@@ -235,7 +235,7 @@ fi
 The answers reach the shell through the value folder, never typed into a command. Run:
 
 ```bash
-test -x "$HOME/.oss/hooks/oss-value.sh" && "$HOME/.oss/hooks/oss-value.sh" dir
+~/.oss/hooks/oss-value.sh dir
 ```
 
 Use the Write tool to write each answer alone, in the spelling shown, to its file in the directory it printed:
@@ -254,7 +254,7 @@ Run this block exactly as written. It reads and checks each answer (a value outs
 - writes `~/.oss/settings.json`, sends a test notification in the new style and prints the new configuration.
 
 ```bash
-V="$HOME/.oss/hooks/oss-value.sh"
+V=~/.oss/hooks/oss-value.sh
 SETTINGS_FILE="$HOME/.oss/settings.json"
 STYLE=$("$V" read notify_style) || exit 1
 VERBOSITY=$("$V" read verbosity) || exit 1

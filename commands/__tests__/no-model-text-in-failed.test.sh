@@ -26,8 +26,9 @@ COMMANDS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # `--workflow <w> failed` itself. Measured against the API prompts on 2026-10-20.
 DUPLICATES="acceptance adr api-design auto build code-simplifier contract data-model debug green ideate integration iterate mock onboard quick red refactor requirements review ship ui-review ui-ux visual-qa visual-test xray"
 
-DIR_LINE='test -x "$HOME/.oss/hooks/oss-value.sh" && "$HOME/.oss/hooks/oss-value.sh" dir'
-CUSTOM_LINE='"$HOME/.oss/hooks/oss-value.sh" failed custom'
+# spelled with the allowed prefix, one call each (ship round 5, R5-1: no `test -x ... &&` chain)
+DIR_LINE='~/.oss/hooks/oss-value.sh dir'
+CUSTOM_LINE='~/.oss/hooks/oss-value.sh failed custom'
 
 TESTS_RUN=0; TESTS_FAILED=0
 pass() { echo "✓ PASS: $1"; TESTS_RUN=$((TESTS_RUN + 1)); }

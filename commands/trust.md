@@ -192,13 +192,13 @@ Auditing prompt 2/24: commands/ship...
 
 ### Step 5a: Decrypt the Prompt
 
-The category and the name reach the shell through the value folder, never typed into the command. Before the first prompt, run `"$HOME/.oss/hooks/oss-value.sh" dir` and note the folder it prints. For each prompt, use the Write tool to write its category alone to `category.txt` and the portion after the `/` in the prompt key alone to `name.txt` in that folder (e.g., for `commands/build`: `commands` and `build`), then run:
+The category and the name reach the shell through the value folder, never typed into the command. Before the first prompt, run `~/.oss/hooks/oss-value.sh dir` and note the folder it prints. For each prompt, use the Write tool to write its category alone to `category.txt` and the portion after the `/` in the prompt key alone to `name.txt` in that folder (e.g., for `commands/build`: `commands` and `build`), then run:
 
 ```bash
-T=$("$HOME/.oss/hooks/oss-value.sh" read category) && N=$("$HOME/.oss/hooks/oss-value.sh" read name) && ~/.oss/bin/oss-decrypt --type "$T" --name "$N"
+~/.oss/hooks/oss-value.sh decrypt
 ```
 
-Each read checks its value in code (`^[a-z0-9_-]{1,100}$`) and deletes its file. If a read refuses (prints nothing), the entry is not decrypted and is listed in the report as "skipped: unexpected name".
+It reads both files, checks each value in code (`^[a-z0-9_-]{1,100}$`), deletes them and runs `~/.oss/bin/oss-decrypt` with them as `--type` and `--name`: one allowed call, no approval prompt. If it refuses (`oss-value: decrypt: refused`), the entry is not decrypted and is listed in the report as "skipped: unexpected name".
 
 Capture the decrypted output for analysis. **Do NOT display the decrypted content to the user** — it contains proprietary IP.
 

@@ -483,6 +483,76 @@ if [[ "$RC" == 0 || "$RC" == 126 || "$RC" == 127 ]] || ! nothing_sent; then fail
 setup_failed; echo code-reviewer > "$T/target$N"; ln -s "$T/target$N" "$VD/agent.txt"; ova "$A" agent build start
 if [[ "$RC" == 0 || "$RC" == 126 || "$RC" == 127 ]] || ! nothing_sent; then fail "18: a symlinked agent.txt is refused" "rc=$RC"; else pass "18: a symlinked agent.txt is refused"; fi
 
+# === decrypt, models-set, cli: a value hand-off is ONE allowed call (ship round 5, R5-1) ======
+# Claude Code asks before a $(...) && chain even when every part is allowed, so the verb reads the
+# value files itself (the same per-name rules as read) and runs the one fixed program with them.
+# node and ~/.oss/bin/oss-decrypt are stubs that only record their arguments (one per line).
+mkdir -p "$T/sbin"; printf '#!/bin/sh\necho "node $*" >> "%s/sb.calls"\nexit 0\n' "$T" > "$T/sbin/node"; chmod +x "$T/sbin/node"
+SFR="$T/sfakeroot"; mkdir -p "$SFR/watcher/dist/cli"; for j in models webhook-setup webhook-toggle update-workflow-state; do : > "$SFR/watcher/dist/cli/$j.js"; done
+# setup_act: a home with a plugin root and an oss-decrypt stub, a repo and its value folder -> VD
+setup_act() {
+    setup_read; rm -f "$T/sb.calls"; mkdir -p "$H/.oss/bin"; printf '%s\n' "$SFR" > "$H/.oss/plugin-root"
+    printf '#!/bin/sh\necho "oss-decrypt $*" >> "%s/sb.calls"\n' "$T" > "$H/.oss/bin/oss-decrypt"; chmod +x "$H/.oss/bin/oss-decrypt"
+}
+ovs() { OV_PATH="$T/sbin:$PATH" ov "$@"; }
+sbcalls() { cat "$T/sb.calls" 2>/dev/null; }
+# refused_act <name>: a refusal (rc 1, nothing printed), nothing run, nothing left behind
+refused_act() {
+    if pwned; then fail "$1" "something ran (PWNED exists)"
+    elif [[ "$RC" != 1 || -n "$OUT" || -n "$(sbcalls)" ]]; then fail "$1" "rc=$RC out='$OUT' calls=$(sbcalls) err=$ERR"
+    else pass "$1"; fi
+}
+# --- 19. decrypt: category.txt + name.txt, or custom.txt with type custom ----------------------
+setup_act; echo commands > "$VD/category.txt"; echo build > "$VD/name.txt"; ovs "$R" decrypt
+[[ "$RC" == 0 && "$(sbcalls)" == "oss-decrypt --type commands --name build" && ! -e "$VD/category.txt" && ! -e "$VD/name.txt" ]] \
+    && pass "19: decrypt runs oss-decrypt with the category and name it read, and deletes both files" || fail "19: decrypt runs oss-decrypt with the category and name it read" "rc=$RC calls=$(sbcalls) err=$ERR"
+setup_act; echo review-standards > "$VD/custom.txt"; ovs "$R" decrypt custom
+[[ "$RC" == 0 && "$(sbcalls)" == "oss-decrypt --type custom --name review-standards" && ! -e "$VD/custom.txt" ]] \
+    && pass "19: decrypt custom runs oss-decrypt --type custom with the name it read" || fail "19: decrypt custom runs oss-decrypt --type custom with the name it read" "rc=$RC calls=$(sbcalls) err=$ERR"
+setup_act; mkdir -p "$R/sub"; echo agents > "$VD/category.txt"; echo x > "$VD/name.txt"
+printf '#!/bin/sh\npwd -P >> "%s/sb.calls"\n' "$T" > "$H/.oss/bin/oss-decrypt"; ovs "$R/sub" decrypt
+[[ "$RC" == 0 && "$(sbcalls)" == "$R/sub" ]] && pass "19: decrypt runs oss-decrypt in the caller's folder" || fail "19: decrypt runs oss-decrypt in the caller's folder" "rc=$RC calls=$(sbcalls)"
+for cn in 'commands $(touch PWNED)' "commands b'c" 'a.b build' '../x build' 'commands ../x' 'commands a/b' 'Commands build'; do
+    c=${cn%% *}; n=${cn#* }
+    setup_act; printf '%s\n' "$c" > "$VD/category.txt"; printf '%s\n' "$n" > "$VD/name.txt"; ovs "$R" decrypt
+    refused_act "19: decrypt refuses category '$c' name '$n', nothing decrypted"
+done
+for v in 'team:review' '$(touch PWNED)' 'a_b' 'Review'; do
+    setup_act; printf '%s\n' "$v" > "$VD/custom.txt"; ovs "$R" decrypt custom; refused_act "19: decrypt custom refuses '$v'"
+done
+setup_act; echo commands > "$VD/category.txt"; ovs "$R" decrypt; refused_act "19: decrypt refuses a missing name.txt"
+setup_act; echo x > "$VD/category.txt"; echo y > "$VD/name.txt"; ovs "$R" decrypt bogus; refused_act "19: decrypt refuses an unknown argument"
+setup_act; echo commands > "$T/tgt$N"; ln -s "$T/tgt$N" "$VD/category.txt"; echo build > "$VD/name.txt"; ovs "$R" decrypt; refused_act "19: decrypt refuses a symlinked category.txt"
+# --- 20. models-set: prompt.txt + model.txt -> models.js set <type> <name> <model> -------------
+for pm in 'oss:code-reviewer|ollama/codellama|agents oss:code-reviewer' '/oss:ship|openrouter/meta-llama/llama-3.2-3b:free|commands oss:ship' 'tdd-red|default|skills tdd-red'; do
+    IFS='|' read -r p m want <<< "$pm"
+    setup_act; printf '%s\n' "$p" > "$VD/prompt.txt"; printf '%s\n' "$m" > "$VD/model.txt"; ovs "$R" models-set
+    [[ "$RC" == 0 && "$(sbcalls)" == "node $SFR/watcher/dist/cli/models.js set $want $m" && ! -e "$VD/prompt.txt" && ! -e "$VD/model.txt" ]] \
+        && pass "20: models-set '$p' '$m' runs models.js set $want $m" || fail "20: models-set '$p' '$m' runs models.js set $want $m" "rc=$RC calls=$(sbcalls) err=$ERR"
+done
+for pm in 'oss:x|$(touch PWNED)' "oss:x|a'b" 'oss:x|a;touch PWNED' '$(touch PWNED)|ollama/x' 'a b|ollama/x' 'oss:x|' ; do
+    IFS='|' read -r p m <<< "$pm"
+    setup_act; printf '%s\n' "$p" > "$VD/prompt.txt"; printf '%s\n' "$m" > "$VD/model.txt"; ovs "$R" models-set
+    refused_act "20: models-set refuses prompt '$p' model '$m', models.js not run"
+done
+setup_act; echo oss:x > "$VD/prompt.txt"; echo ollama/x > "$VD/model.txt"; rm -f "$H/.oss/plugin-root"; ovs "$R" models-set; refused_act "20: models-set refuses without a plugin root"
+# --- 21. cli: only the fixed plugin CLI calls the wrappers make --------------------------------
+for a in 'webhook-setup setup' 'webhook-toggle on' 'update-workflow-state init' 'webhook-setup setup --port 8080'; do
+    setup_act; mkdir -p "$R/sub"; ovs "$R/sub" cli $a
+    [[ "$RC" == 0 && "$(sbcalls)" == "node $SFR/watcher/dist/cli/${a%% *}.js ${a#* }" ]] \
+        && pass "21: cli $a runs node <plugin root>/watcher/dist/cli/<script>.js with those arguments" || fail "21: cli $a runs the plugin CLI" "rc=$RC calls=$(sbcalls) err=$ERR"
+done
+setup_act; printf '#!/bin/sh\npwd -P >> "%s/sb.calls"\n' "$T" > "$T/sbin/node.pwd"; mkdir -p "$T/sbin2"; cp "$T/sbin/node.pwd" "$T/sbin2/node"; chmod +x "$T/sbin2/node"
+mkdir -p "$R/sub"; OV_PATH="$T/sbin2:$PATH" ov "$R/sub" cli update-workflow-state init
+[[ "$RC" == 0 && "$(sbcalls)" == "$R/sub" ]] && pass "21: cli runs in the caller's folder (workflow state is per project)" || fail "21: cli runs in the caller's folder" "rc=$RC calls=$(sbcalls)"
+for a in 'models set agents x y' 'webhook-setup' 'webhook-setup setup extra' 'webhook-setup setup --port' 'webhook-setup setup --port 80a' 'webhook-setup setup --port 123456' \
+         'webhook-setup setup --port 80 extra' 'webhook-toggle off;id' '../../x setup' 'oss-error setup'; do
+    setup_act; ovs "$R" cli $a; refused_act "21: cli refuses '$a'"
+done
+setup_act; ovs "$R" cli 'webhook-setup setup'; refused_act "21: cli refuses one argument holding a space"
+setup_act; rm -f "$H/.oss/plugin-root"; ovs "$R" cli webhook-toggle on; refused_act "21: cli refuses without a plugin root"
+setup_act; mkdir -p "$T/emptyroot$N"; printf '%s\n' "$T/emptyroot$N" > "$H/.oss/plugin-root"; ovs "$R" cli webhook-toggle on; refused_act "21: cli refuses a plugin root without the script"
+
 echo
 echo "Results: $((RUN - FAILED))/$RUN passed, $FAILED failed"
 [[ "$FAILED" == 0 ]]

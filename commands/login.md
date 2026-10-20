@@ -61,12 +61,12 @@ Configure your API key for OSS Dev Workflow access.
 **Quick key update steps (Steps 1-3 only, skip Steps 4-9):**
 
 1. **Hand over the new API key** from the `--key` argument through the value folder, never on a command line:
-   - Run `"$HOME/.oss/hooks/oss-value.sh" dir` and note the folder it prints. If it prints nothing, show the user its error and stop.
+   - Run `~/.oss/hooks/oss-value.sh dir` and note the folder it prints. If it prints nothing, show the user its error and stop.
    - Use the Write tool to write the key alone to `key.txt` in that folder. If no key was given, tell the user "Error: --key requires an API key value. Usage: /oss:login --key ak_xxxxx" and stop.
 
 2. **Read, validate and save the key** in ONE Bash call (the read checks the key's shape and deletes `key.txt` at once):
    ```bash
-   NEW_KEY=$("$HOME/.oss/hooks/oss-value.sh" read key)
+   NEW_KEY=$(~/.oss/hooks/oss-value.sh read key)
    if [ -z "$NEW_KEY" ]; then
        echo "Error: the key is missing or not a valid API key. Usage: /oss:login --key ak_xxxxx"
        exit 1
@@ -291,7 +291,7 @@ After successful authentication, install tools if not already present:
    OSS_ICON_PNG="$HOME/.oss/notification-icon.png"
    if [ ! -f "$OSS_ICON_PNG" ]; then
        # Download or create the OSS icon
-       PLUGIN_ROOT=$("$HOME/.oss/hooks/oss-value.sh" root 2>/dev/null)
+       PLUGIN_ROOT=$(~/.oss/hooks/oss-value.sh root 2>/dev/null)
        curl -sL "https://www.oneshotship.com/icon.png" -o "$OSS_ICON_PNG" 2>/dev/null || \
        { test -n "$PLUGIN_ROOT" && sips -s format png "$PLUGIN_ROOT/assets/icon.png" --out "$OSS_ICON_PNG" 2>/dev/null; } || \
        echo "Note: Could not create notification icon. Notifications will work without branding."
@@ -311,7 +311,7 @@ After successful authentication, install tools if not already present:
 
 4. **Initialize workflow state:**
    ```bash
-   PLUGIN_ROOT=$("$HOME/.oss/hooks/oss-value.sh" root) && node "$PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js" init
+   ~/.oss/hooks/oss-value.sh cli update-workflow-state init
    ```
 
 5. **Verify status line script exists:**
@@ -335,7 +335,7 @@ After tools are installed, set up the supervisor daemon for process monitoring.
 
 **First, check if daemon is included in this plugin version:**
 ```bash
-PLUGIN_ROOT=$("$HOME/.oss/hooks/oss-value.sh" root)
+PLUGIN_ROOT=$(~/.oss/hooks/oss-value.sh root)
 if [ ! -d "$PLUGIN_ROOT/daemon" ]; then
     echo "Daemon not included in current plugin version. Skipping daemon setup."
     # Skip to Step 8
@@ -346,7 +346,8 @@ fi
 
 1. **Build daemon package (if needed):**
    ```bash
-   PLUGIN_ROOT=$("$HOME/.oss/hooks/oss-value.sh" root) && cd "$PLUGIN_ROOT/daemon" || exit 1
+   PLUGIN_ROOT=$(~/.oss/hooks/oss-value.sh root) || exit 1
+   cd "$PLUGIN_ROOT/daemon" || exit 1
    if [ ! -d "dist" ]; then
        npm run build
    fi
@@ -356,7 +357,7 @@ fi
    ```bash
    OSS_DIR="${HOME}/.oss"
    PLIST_PATH="${HOME}/Library/LaunchAgents/com.oneshotship.daemon.plist"
-   PLUGIN_ROOT=$("$HOME/.oss/hooks/oss-value.sh" root) || exit 1
+   PLUGIN_ROOT=$(~/.oss/hooks/oss-value.sh root) || exit 1
 
    if [ ! -f "$PLIST_PATH" ]; then
        mkdir -p "$(dirname "$PLIST_PATH")"
@@ -508,9 +509,9 @@ After tools are installed, if `~/.oss/settings.json` does NOT exist:
    }
    ```
 
-2. **Save settings to `~/.oss/settings.json`:** run `"$HOME/.oss/hooks/oss-value.sh" dir`, then use the Write tool to write the chosen style in lower case (`visual`, `audio`, `sound` or `none`) to `style.txt` in the folder it printed (if it prints nothing, skip this step and tell the user to run /oss:settings later). Then:
+2. **Save settings to `~/.oss/settings.json`:** run `~/.oss/hooks/oss-value.sh dir`, then use the Write tool to write the chosen style in lower case (`visual`, `audio`, `sound` or `none`) to `style.txt` in the folder it printed (if it prints nothing, skip this step and tell the user to run /oss:settings later). Then:
    ```bash
-   STYLE=$("$HOME/.oss/hooks/oss-value.sh" read style) || exit 1
+   STYLE=$(~/.oss/hooks/oss-value.sh read style) || exit 1
    mkdir -p ~/.oss
    cat > ~/.oss/settings.json << EOF
    {

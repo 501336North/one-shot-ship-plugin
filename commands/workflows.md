@@ -115,13 +115,13 @@ Dashboard: https://www.oneshotship.com/dashboard
 
 ## Step 4: Show Specific Workflow (Optional)
 
-If a workflow name is provided, fetch and display its configuration. The name reaches the shell through the value folder: run `"$HOME/.oss/hooks/oss-value.sh" dir`, use the Write tool to write the name alone to `workflow.txt` in the folder it printed, then run:
+If a workflow name is provided, fetch and display its configuration. The name reaches the shell through the value folder: run `~/.oss/hooks/oss-value.sh dir`, use the Write tool to write the name alone to `workflow.txt` in the folder it printed, then run:
 
 ```bash
-WORKFLOW=$("$HOME/.oss/hooks/oss-value.sh" read workflow) && echo "$WORKFLOW"
+~/.oss/hooks/oss-value.sh read workflow
 ```
 
-It prints the name only when it is valid (lower case, digits, `_ . : -`) and deletes the file; if it prints nothing, tell the user the name is not valid and stop. Fetch with `$WORKFLOW` replaced by exactly the name it printed:
+It prints the name only when it is valid (lower case, digits, `_ . : -`) and deletes the file; if it prints nothing, tell the user the name is not valid and stop. Fetch with `$WORKFLOW` below replaced by exactly the name it printed:
 
 ```http
 URL: https://one-shot-ship-api.onrender.com/api/v1/workflows/$WORKFLOW
