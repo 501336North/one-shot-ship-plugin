@@ -491,7 +491,7 @@ mkdir -p "$T/sbin"; printf '#!/bin/sh\necho "node $*" >> "%s/sb.calls"\nexit 0\n
 SFR="$T/sfakeroot"; mkdir -p "$SFR/watcher/dist/cli"; for j in models webhook-setup webhook-toggle update-workflow-state; do : > "$SFR/watcher/dist/cli/$j.js"; done
 # setup_act: a home with a plugin root and an oss-decrypt stub, a repo and its value folder -> VD
 setup_act() {
-    setup_read; rm -f "$T/sb.calls"; mkdir -p "$H/.oss/bin"; printf '%s\n' "$SFR" > "$H/.oss/plugin-root"
+    setup_read; rm -f "$T/sb.calls" "$T/curl.stdin"; mkdir -p "$H/.oss/bin"; printf '%s\n' "$SFR" > "$H/.oss/plugin-root"
     printf '#!/bin/sh\necho "oss-decrypt $*" >> "%s/sb.calls"\n' "$T" > "$H/.oss/bin/oss-decrypt"; chmod +x "$H/.oss/bin/oss-decrypt"
 }
 ovs() { OV_PATH="$T/sbin:$PATH" ov "$@"; }
@@ -556,13 +556,15 @@ setup_act; mkdir -p "$T/emptyroot$N"; printf '%s\n' "$T/emptyroot$N" > "$H/.oss/
 # --- 22. login: key.txt -> validated against the API -> saved to ~/.oss/config.json (R5-2) ----
 # /oss:login <KEY> and /oss:login --key hand the key over the same way: Write key.txt, then this one
 # call. curl is a stub: it records its arguments and prints $T/curl.out (body, then the HTTP code).
-printf '#!/bin/sh\necho "curl $*" >> "%s/sb.calls"\ncat "%s/curl.out"\n' "$T" "$T" > "$T/sbin/curl"; chmod +x "$T/sbin/curl"
+# The key goes to curl on stdin (--config -, the oss-api-curl.sh helper), never in argv (ps shows argv).
+printf '#!/bin/sh\necho "curl $*" >> "%s/sb.calls"\ncase " $* " in *" --config - "*) cat > "%s/curl.stdin" ;; esac\ncat "%s/curl.out"\n' "$T" "$T" "$T" > "$T/sbin/curl"; chmod +x "$T/sbin/curl"
 setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; echo ossk_login_key_1 > "$VD/key.txt"; ovs "$R" login
 [[ "$RC" == 0 && "$OUT" == "Plan: pro" && "$(jq -r .apiKey "$H/.oss/config.json" 2>/dev/null)" == ossk_login_key_1 \
    && "$(jq -r .apiUrl "$H/.oss/config.json" 2>/dev/null)" == https://one-shot-ship-api.onrender.com && ! -e "$VD/key.txt" ]] \
     && pass "22: login saves a key the API accepts (new config with the API URL) and prints the plan" || fail "22: login saves a key the API accepts" "rc=$RC out='$OUT' cfg=$(cat "$H/.oss/config.json" 2>&1) err=$ERR"
-[[ "$(sbcalls)" == *"Authorization: Bearer ossk_login_key_1"*"https://one-shot-ship-api.onrender.com/api/v1/subscription/status"* ]] \
-    && pass "22: login checks the key against /api/v1/subscription/status" || fail "22: login checks the key against the API" "calls=$(sbcalls)"
+[[ "$(sbcalls)" == *"https://one-shot-ship-api.onrender.com/api/v1/subscription/status"* && "$(sbcalls)" != *ossk_login_key_1* \
+   && "$(cat "$T/curl.stdin" 2>/dev/null)" == *"Authorization: Bearer ossk_login_key_1"* ]] \
+    && pass "22: login checks the key against /api/v1/subscription/status, the key on curl's stdin, never argv" || fail "22: login checks the key against the API, key on stdin only" "calls=$(sbcalls) stdin=$(cat "$T/curl.stdin" 2>&1)"
 setup_act; printf '{"plan":"team"}\n200\n' > "$T/curl.out"; printf '{"apiKey":"old","apiUrl":"https://x.invalid","other":1}\n' > "$H/.oss/config.json"
 echo ossk_login_key_2 > "$VD/key.txt"; ovs "$R" login
 [[ "$RC" == 0 && "$(jq -c . "$H/.oss/config.json")" == '{"apiKey":"ossk_login_key_2","apiUrl":"https://x.invalid","other":1}' ]] \

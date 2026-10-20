@@ -176,7 +176,8 @@ _ov_cmd_login() {
     local k r c u
     _ov_dir && _ov_get key && k=$_OV_VAL \
     || { echo "Error: the key is missing or not a valid API key. Usage: /oss:login ak_xxxxx" >&2; return 1; }
-    r=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $k" "https://one-shot-ship-api.onrender.com/api/v1/subscription/status")
+    source "$_OV_HERE/oss-api-curl.sh" || return 1   # oss_api_curl: the key on curl's stdin, never in argv
+    r=$(oss_api_curl "$k" -s -w "\n%{http_code}" "https://one-shot-ship-api.onrender.com/api/v1/subscription/status")
     test "$(printf '%s\n' "$r" | tail -1)" = 200 \
     || { echo "Error: Invalid API key. Get a valid key from https://www.oneshotship.com/dashboard" >&2; return 1; }
     c="$HOME/.oss/config.json"; mkdir -p "$HOME/.oss"

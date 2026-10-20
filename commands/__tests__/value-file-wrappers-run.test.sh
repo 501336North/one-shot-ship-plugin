@@ -54,7 +54,7 @@ N=0
 # sandbox <cwd-kind>: fresh HOME with the real hooks, a cwd (norepo|repo) -> H, W
 sandbox() {
     N=$((N + 1)); H="$T/h$N"; mkdir -p "$H/.oss/hooks" "$H/.oss/bin"
-    cp "$ROOT/hooks/oss-value.sh" "$ROOT/hooks/oss-safe-path.sh" "$ROOT/hooks/oss-log.sh" "$ROOT/hooks/oss-notify.sh" "$H/.oss/hooks/"
+    cp "$ROOT/hooks/oss-value.sh" "$ROOT/hooks/oss-safe-path.sh" "$ROOT/hooks/oss-api-curl.sh" "$ROOT/hooks/oss-log.sh" "$ROOT/hooks/oss-notify.sh" "$H/.oss/hooks/"
     printf '#!/bin/sh\necho "oss-decrypt $*" >> "%s/calls"\n' "$T" > "$H/.oss/bin/oss-decrypt"; chmod +x "$H/.oss/bin/oss-decrypt"
     printf '%s\n' "$FR" > "$H/.oss/plugin-root"
     W="$T/w$N/cwd"; mkdir -p "$W"
