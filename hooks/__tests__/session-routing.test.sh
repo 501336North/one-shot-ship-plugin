@@ -189,6 +189,14 @@ age OLD31 31; age YNG29 29; age S1 40
 [[ -f "$SESS/YNG29/project" ]] && pass "a 29-day-old pointer is kept" || fail "a 29-day-old pointer is kept" "$(ls "$SESS" | tr '\n' ' ')"
 [[ -f "$SESS/S1/project" && -n "$(find "$SESS/S1/project" -mmin -5)" ]] && pass "the starting session's own (40-day-old) pointer is rewritten, not pruned" || fail "the starting session's own (40-day-old) pointer is rewritten, not pruned" "$(ls -la "$SESS/S1" 2>&1 | tr '\n' ' ')"
 
+# R2-6: the prune is one find over ~/.oss/sessions, not one per pointer folder (SessionStart cost)
+mkdir -p "$T/fbin"; printf '#!/bin/sh\necho x >> "%s/find.calls"\nexec /usr/bin/find "$@"\n' "$T" > "$T/fbin/find"; chmod +x "$T/fbin/find"
+for id in P1a P2a P3a P4a P5a; do mkdir -m 700 "$SESS/$id"; printf '%s\n' "$P1" > "$SESS/$id/project"; chmod 600 "$SESS/$id/project"; done
+rm -f "$T/find.calls"
+env HOME="$H" PATH="$T/fbin:$PATH" "$SH" -c 'source "$1/hooks/oss-safe-path.sh"; oss_session_pointer_prune' _ "$ROOT" >/dev/null 2>&1
+[[ "$(wc -l < "$T/find.calls" 2>/dev/null | tr -d ' ')" == 1 ]] && pass "R2-6: the prune runs find once for all pointer folders" \
+    || fail "R2-6: the prune runs find once for all pointer folders" "find calls: $(wc -l < "$T/find.calls" 2>/dev/null)"
+
 # --- a linked ~/.oss/sessions is refused by the writer ---------------------------------------------
 H3="$T/home3"; mkdir -p "$H3/.oss" "$T/elsewhere"; ln -s "$T/elsewhere" "$H3/.oss/sessions"
 (cd "$P1" && env HOME="$H3" CLAUDE_PLUGIN_ROOT="$ROOT" OSS_SKIP_HEALTH_CHECK=1 CLAUDE_PROJECT_DIR="$P1" CLAUDE_CODE_SESSION_ID=S1 \
