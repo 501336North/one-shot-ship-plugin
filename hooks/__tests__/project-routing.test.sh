@@ -32,7 +32,7 @@ N=0
 #        C = a repo with no .oss; D = a repo whose .oss is a link to $LT.
 world() {
     N=$((N + 1)); local w="$T/w$N"
-    H="$w/home"; A="$H/projA"; B="$H/projB"; C="$H/projC"; D="$H/projD"; LT="$w/linktarget"
+    local r; H="$w/home"; A="$H/projA"; B="$H/projB"; C="$H/projC"; D="$H/projD"; LT="$w/linktarget"
     mkdir -p "$H/.oss" "$A/.oss" "$A/sub/deep" "$B/.oss" "$C/sub" "$D" "$LT"
     for r in "$A" "$B" "$C" "$D"; do (cd "$r" && git init -q) >/dev/null 2>&1; done
     ln -s "$LT" "$D/.oss"
@@ -106,6 +106,40 @@ run "$A/sub/deep" "$SH" "$ROOT/hooks/oss-log.sh" health-check
 grep -qF "hc cwd $A" "$A/.oss/logs/current-session/health-check.log" 2>/dev/null && [[ ! -e "$B/.oss/logs" ]] \
     && pass "T2: oss-log health-check from A checks A and logs to A, never B" \
     || fail "T2: oss-log health-check from A checks A and logs to A, never B" "rc=$RC A:$(ls -A "$A/.oss") B:$(ls -A "$B/.oss") out=$OUT"
+
+# --- T3: the TS CLIs (no --project-dir): oss-error and update-workflow-state -------------------
+ERR_ARGS=(--code OSS-API-001 --severity HIGH --message routing-msg --source cmd:build)
+world; run "$A/sub/deep" node "$ROOT/watcher/dist/cli/oss-error.js" "${ERR_ARGS[@]}"
+grep -qF routing-msg "$A/.oss/workflow.log" 2>/dev/null && untouched \
+    && pass "T3: oss-error from A/sub/deep (current-project = B) appends to A's workflow.log, never B's" \
+    || fail "T3: oss-error from A/sub/deep (current-project = B) appends to A's workflow.log, never B's" "rc=$RC A:$(ls -A "$A/.oss") B:$(ls -A "$B/.oss") out=$OUT"
+for r in C D; do
+    world; [[ $r == C ]] && cwd="$C/sub" || cwd="$D"
+    run "$cwd" node "$ROOT/watcher/dist/cli/oss-error.js" "${ERR_ARGS[@]}"
+    grep -qF routing-msg "$H/.oss/workflow.log" 2>/dev/null && untouched && lt_empty \
+        && pass "T3: oss-error from repo $r (no real .oss) appends to ~/.oss/workflow.log, never B or a link target" \
+        || fail "T3: oss-error from repo $r (no real .oss) appends to ~/.oss/workflow.log, never B or a link target" "rc=$RC home:$(ls -A "$H/.oss") B:$(ls -A "$B/.oss") LT:$(ls -A "$LT") out=$OUT"
+done
+world; run "$A/sub/deep" node "$ROOT/watcher/dist/cli/update-workflow-state.js" setSupervisor intervening
+grep -qF intervening "$A/.oss/workflow-state.json" 2>/dev/null && untouched \
+    && pass "T3: update-workflow-state from A/sub/deep writes A's state, never B's" \
+    || fail "T3: update-workflow-state from A/sub/deep writes A's state, never B's" "rc=$RC A:$(ls -A "$A/.oss") B:$(ls -A "$B/.oss") out=$OUT"
+for r in C D; do
+    world; [[ $r == C ]] && cwd="$C/sub" || cwd="$D"
+    run "$cwd" node "$ROOT/watcher/dist/cli/update-workflow-state.js" setSupervisor intervening
+    grep -qF intervening "$H/.oss/workflow-state.json" 2>/dev/null && untouched && lt_empty \
+        && pass "T3: update-workflow-state from repo $r (no real .oss) writes ~/.oss state, never B or a link target" \
+        || fail "T3: update-workflow-state from repo $r (no real .oss) writes ~/.oss state, never B or a link target" "rc=$RC home:$(ls -A "$H/.oss") B:$(ls -A "$B/.oss") LT:$(ls -A "$LT") out=$OUT"
+done
+# end to end: every hook event from C or D leaves B wholly untouched (log AND state)
+for cwd in C D; do
+    world; [[ $cwd == C ]] && d="$C/sub" || d="$D"
+    run "$d" "$SH" "$ROOT/hooks/oss-notify.sh" --workflow build failed '{"reason":"r"}'
+    run "$d" "$SH" "$ROOT/hooks/oss-log.sh" phase build RED start
+    run "$d" "$SH" "$ROOT/hooks/oss-log.sh" agent build oss:debugger "starting: x"; sleep 1
+    untouched && lt_empty && pass "T3: notify failed + phase + agent from repo $cwd leave B (and any link target) untouched" \
+        || fail "T3: notify failed + phase + agent from repo $cwd leave B (and any link target) untouched" "B:$(ls -A "$B/.oss") LT:$(ls -A "$LT")"
+done
 
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"

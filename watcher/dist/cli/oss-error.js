@@ -16,7 +16,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { safeAppendFile } from '../utils/safe-project-write.js';
-import { execSync } from 'child_process';
+import { resolveProjectDir } from '../utils/project-dir.js';
 import { pathToFileURL } from 'url';
 import { ErrorRegistry, OSSError } from '../services/error-codes.js';
 import { redactString, redactSecrets } from '../services/redaction.js';
@@ -105,38 +105,15 @@ function redactWire(wire) {
 // ---------------------------------------------------------------------------
 // Out-of-band delivery — project-local .oss/workflow.log resolution + append
 // ---------------------------------------------------------------------------
-/** Resolution order: CLAUDE_PROJECT_DIR → ~/.oss/current-project → git toplevel. */
+/** The project's .oss by the shared rule (utils/project-dir.ts), else the global ~/.oss. */
 function resolveOssDir(env) {
-    const fromEnv = env.CLAUDE_PROJECT_DIR;
-    if (fromEnv !== undefined && fromEnv !== '' && fs.existsSync(fromEnv)) {
-        return path.join(fromEnv, '.oss');
+    const projectDir = resolveProjectDir(env);
+    if (projectDir !== null && fs.existsSync(projectDir)) {
+        return path.join(projectDir, '.oss');
     }
     const home = env.HOME;
     if (home !== undefined && home !== '') {
-        try {
-            const projectDir = fs
-                .readFileSync(path.join(home, '.oss', 'current-project'), 'utf-8')
-                .trim();
-            if (projectDir !== '' && fs.existsSync(projectDir)) {
-                return path.join(projectDir, '.oss');
-            }
-        }
-        catch {
-            // No current-project file — fall through to git toplevel
-        }
-    }
-    try {
-        const toplevel = execSync('git rev-parse --show-toplevel', {
-            encoding: 'utf-8',
-            stdio: ['ignore', 'pipe', 'ignore'],
-            timeout: 250,
-        }).trim();
-        if (toplevel !== '') {
-            return path.join(toplevel, '.oss');
-        }
-    }
-    catch {
-        // Not in a git repo — no sink available
+        return path.join(home, '.oss');
     }
     return null;
 }

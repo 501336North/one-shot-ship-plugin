@@ -109,18 +109,21 @@ describe('update-workflow-state CLI - Project Support', () => {
     });
   });
 
-  describe('current-project file', () => {
+  describe('no --project-dir: the project the CLI runs in (D1 routing)', () => {
     /**
-     * @behavior CLI reads current-project when no --project-dir
-     * @acceptance-criteria Uses project from ~/.oss/current-project if set
+     * @behavior CLI run inside a project writes that project's state, whatever current-project names
+     * @acceptance-criteria Uses the cwd's nearest real .oss (bounded by the git toplevel)
      */
-    it('should use current-project when no --project-dir', () => {
-      // GIVEN: current-project points to test project
-      fs.writeFileSync(currentProjectFile, testProjectDir);
+    it('should use the project it runs in when no --project-dir', () => {
+      // GIVEN: the test project is a repo; current-project names another (never used, D1)
+      execSync('git init -q', { cwd: testProjectDir });
+      fs.writeFileSync(currentProjectFile, os.homedir());
 
-      // WHEN: Running CLI without --project-dir
+      // WHEN: Running CLI without --project-dir from inside the project
       try {
         execSync(`node "${cliPath}" setActiveStep ship`, {
+          cwd: testProjectDir,
+          env: { ...process.env, CLAUDE_PROJECT_DIR: '' },
           timeout: 10000,
           encoding: 'utf-8',
         });
@@ -135,12 +138,12 @@ describe('update-workflow-state CLI - Project Support', () => {
     });
 
     /**
-     * @behavior CLI falls back to global when current-project empty
-     * @acceptance-criteria Uses ~/.oss/ when current-project is empty
+     * @behavior CLI falls back to global outside any project
+     * @acceptance-criteria Uses ~/.oss/ outside any project, even when current-project names one
      */
-    it('should fall back to global when current-project empty', () => {
-      // GIVEN: current-project is empty
-      fs.writeFileSync(currentProjectFile, '');
+    it('should fall back to global when run outside any project', () => {
+      // GIVEN: current-project names the test project (never used, D1)
+      fs.writeFileSync(currentProjectFile, testProjectDir);
 
       // AND: Global .oss directory exists, no state file
       fs.mkdirSync(path.dirname(globalWorkflowFile), { recursive: true });
@@ -152,6 +155,8 @@ describe('update-workflow-state CLI - Project Support', () => {
       let output = '';
       try {
         output = execSync(`node "${cliPath}" setActiveStep ideate`, {
+          cwd: os.tmpdir(),
+          env: { ...process.env, CLAUDE_PROJECT_DIR: '' },
           timeout: 10000,
           encoding: 'utf-8',
         });
