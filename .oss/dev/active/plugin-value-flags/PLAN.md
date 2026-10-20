@@ -64,3 +64,6 @@ Stays in FOLLOWUPS: API key on curl argv (item 44) - except /oss:login, whose ke
 
 Round 5 done 2026-10-20: R5-1 36febd1, R5-2 ba86c72 + 9bc354d, R5-3 c72ed05, R5-4 b4a232b (see PROGRESS.md, TESTING.md, D11).
 - [x] R5-5 (R5-1 gap): value-file Writes to ~/.oss/run prompt (no allow rule). Add `Edit(~/.oss/run/**)` to OSS_PERMISSIONS (Edit rules cover the Write tool), fresh and merged settings.
+- [x] R5-6 (MEDIUM, targeted check): `login` writes ~/.oss/config.json (and creates ~/.oss) owner-only: umask 077 in the verb, file 600, never world-readable. (a730917)
+- [x] R5-7 (MEDIUM): `login` never truncates config.json: if jq fails or yields nothing (malformed config, jq missing), refuse with an error, leave the file as it was, print `Plan:` only after a successful write. (21460a0)
+- [x] R5-8 (MEDIUM, security): changing the API key always asks the user once: move `login` out of the allowlisted oss-value.sh into its own `~/.oss/hooks/oss-login.sh` (not in OSS_PERMISSIONS, installed via HOOKS_TO_COPY), reusing oss-value's functions; login.md calls it; a test pins that oss-login.sh is NOT in OSS_PERMISSIONS and `oss-value.sh login` is refused. (d009054)

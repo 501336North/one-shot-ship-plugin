@@ -140,3 +140,14 @@ line, not-allowlisted-spelling; fixture). Not covered: the Write tool to ~/.oss/
 (no Edit(~/.oss/run/**) rule is installed; reported, not changed), and blocks that also run curl, jq,
 npm, launchctl, sips or a heredoc write prompt for those programs regardless.
 
+
+## D12 (2026-10-20, ship round 5 R5-6..R5-8): credential changes always ask
+
+Saving the API key is the one value hand-off that must NOT be zero-approval: an allowlisted verb would
+let any model rewrite ~/.oss/config.json without the user seeing it. So the key is saved by its own
+script, ~/.oss/hooks/oss-login.sh, installed by HOOKS_TO_COPY and deliberately absent from
+OSS_PERMISSIONS (pinned by auto-permissions.test.sh); /oss:login asks once, at that call. It reuses
+oss-value.sh by sourcing it (a sourced oss-value.sh returns before its verb dispatch), so the value
+folder, the key rule (_ov_get key / _ov_take) and oss_api_curl (key on curl's stdin) are not copied.
+`oss-value.sh login` is refused. The file is written owner-only (umask 077, mktemp in ~/.oss, chmod
+600, mv) and never truncated: a jq failure or empty result refuses and leaves the file as it was.

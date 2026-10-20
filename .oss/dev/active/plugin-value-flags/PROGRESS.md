@@ -63,3 +63,10 @@ Plan, design and decisions live in the API repo (branch feat/plugin-value-flags/
 - [x] R5-5: Edit(~/.oss/run/**) added to OSS_PERMISSIONS so value-file Writes do not prompt (completed 2026-10-20). auto-permissions RED 10/12 -> GREEN 12/12.
 
 ## Last Updated: 2026-10-20 by /oss:build (R5-5)
+
+- [x] R5-6: login saves config.json owner-only: umask 077, mktemp in ~/.oss + chmod 600 + mv; `dir` creates ~/.oss 700 (completed 2026-10-20, a730917). RED observed 644 / 755 under umask 022 -> GREEN 600 / 700.
+- [x] R5-7: login refuses (rc 1, error) and leaves config.json byte-identical when jq fails or prints nothing (malformed, empty, no jq); `Plan:` only after the mv (completed 2026-10-20, 21460a0).
+- [x] R5-8: login moved to hooks/oss-login.sh (HOOKS_TO_COPY, NOT OSS_PERMISSIONS; sources oss-value.sh, which returns before dispatch when sourced); `oss-value.sh login` refused; login.md both paths call ~/.oss/hooks/oss-login.sh (completed 2026-10-20, d009054).
+- Round 5 targeted-check provenance, not changed: other config.json writers - commands/webhook.md `jq ... > tmp && mv tmp ~/.oss/config.json` (tmp gets the umask mode, so it can turn a 600 config back to 644; also writes `tmp` in the cwd), watcher/src/cli/models.ts writeFileSync (keeps the existing mode; a new file gets 644).
+
+## Last Updated: 2026-10-20 by /oss:build (R5-6..R5-8)

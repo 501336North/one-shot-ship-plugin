@@ -132,3 +132,9 @@ with ~/.oss/current-project naming a victim repo that has a .oss.
 - watcher vitest (no-setup config) test/hooks + test/commands: 48 files 371/371. tsc --noEmit clean.
 
 ## Last Updated: 2026-10-20 11:20 +07 by /oss:build (ship round 5 implementer)
+
+- R5-6 RED (umask 022, sandbox HOME): config.json -rw-r--r--, ~/.oss drwxr-xr-x; existing 644 config stayed 644. GREEN: -rw------- / drwx------, no config.json.* temp left. Mutations: drop `$HOME/.oss` from `dir`'s mkdir -m 700 -> red; plain `printf > config.json` -> red. Dropping only umask 077 + chmod 600 survives (mktemp already creates 600): defence in depth, unguarded by design.
+- R5-7 RED: `{bad` and no jq (a jq stub exiting 127 first on PATH) -> rc 0, `Plan: pro` / `Plan: `, config.json truncated. GREEN: rc 1, error, cmp byte-identical, no temp. Added the empty config.json case (jq rc 0, no output); mutation dropping `test -n "$u"` -> that case red.
+- R5-8 RED: oss-login.sh missing (14 red in oss-value section 22), login.md still calls oss-value.sh login (2 red), wrappers-run 2 red, session-start-hooks-copy 1 red. auto-permissions "oss-login.sh absent" (fresh + merged) passes by construction; mutation adding Bash(~/.oss/hooks/oss-login.sh:*) to OSS_PERMISSIONS -> 2 red. Mutations: removing the sourced-return guard in oss-value.sh -> 14 red; re-adding `login) exec oss-login.sh` to oss-value.sh -> the "oss-value.sh login is refused" check red.
+- The login tests stay in oss-value.test.sh section 22 (its sandbox helpers) and run hooks/oss-login.sh via OV_SCRIPT.
+- Final (sequential, once): hooks/__tests__ + commands/__tests__ 43 files, 42 rc 0, only ideate-template 3/4 (pre-existing); oss-value 328/328, auto-permissions 14/14, referenced-hooks-tracked 39/39, no-compound 2/2, wrappers 42/42, wrappers-run 61/61. watcher vitest test/hooks + test/commands (no-setup config): 48 files 372/372.
