@@ -82,13 +82,10 @@ _ov_cmd_dir() {
     && printf '%s\n' "$p"
 }
 
-# The served #374 walk: the nearest real (not linked) .oss from <cwd> up to the repo top, or $HOME.
-_ov_walk() {
-    local d="$1"; _OV_PROJ=$HOME   # none found: the global ~/.oss, never ~/.oss/current-project
-    while test -n "$_OV_TOP" && case "$d" in "$_OV_TOP"|"$_OV_TOP"/*) true ;; *) false ;; esac; do
-        test -d "$d/.oss" && test ! -L "$d/.oss" && _OV_PROJ=$d && break; d=${d%/*}
-    done
-}
+# The shared rule (oss_resolve_project in oss-safe-path.sh) from <cwd>: CLAUDE_PROJECT_DIR, this
+# session's pointer, the nearest real .oss up to the first .git entry, or $HOME (the global ~/.oss,
+# never ~/.oss/current-project).
+_ov_walk() { oss_resolve_project "$1"; _OV_PROJ=${_OSS_PROJ:-$HOME}; }
 
 # "<inode> <link count>": of the opened file for /dev/fd/N, else of the path itself (not followed).
 _ov_st() { case "$1" in /dev/fd/*) stat -L -c '%i %h' "$1" 2>/dev/null || stat -L -f '%i %l' "$1" ;; *) stat -c '%i %h' "$1" 2>/dev/null || stat -f '%i %l' "$1" ;; esac; }
@@ -141,7 +138,7 @@ _ov_cmd_read() {
 # held to its read rule, in the caller's folder - one allowed call instead of a $(read) && chain.
 _ov_cmd_decrypt() {
     local o t n
-    o=$(pwd -P)
+    oss_phys_cwd; o="$_OSS_CWD"
     _ov_dir && case "$#:${1:-}" in
         0:) _ov_get category && t=$_OV_VAL && _ov_get name && n=$_OV_VAL ;;
         1:custom) t=custom && _ov_get custom && n=$_OV_VAL ;;
@@ -173,7 +170,7 @@ _ov_cmd_cli() {
 
 _ov_cmd_agent() {
     local o t
-    o=$(pwd -P)
+    oss_phys_cwd; o="$_OSS_CWD"
     oss_valid_workflow_name "${1:-}" \
     && case "${2:-}" in start) t="starting: delegated task" ;; complete) t="completed: delegated task" ;; *) false ;; esac \
     && _ov_dir && _ov_take agent.txt '^[a-z][a-z0-9:-]{0,60}$' \
@@ -184,7 +181,7 @@ _ov_cmd_agent() {
 
 _ov_cmd_failed() {
     local o r
-    o=$(pwd -P)
+    oss_phys_cwd; o="$_OSS_CWD"
     oss_valid_workflow_name "${1:-}" && _ov_dir && _ov_read_value reason.txt && r="$_OV_VAL" \
     || { echo "oss-value: failed: refused (bad workflow name, or reason.txt missing or unsafe)" >&2; return 1; }
     _ov_walk "$o"
@@ -207,7 +204,7 @@ _ov_cmd_root() {
 
 _ov_cmd_error() {
     local o R m h e c s y k a x
-    o=$(pwd -P)
+    oss_phys_cwd; o="$_OSS_CWD"
     case "${1:-}" in cmd:*) ;; *) false ;; esac && oss_valid_workflow_name "${1#cmd:}" \
     && _ov_root && R=$_OV_ROOT && test -f "$R/watcher/dist/cli/oss-error.js" \
     && _ov_dir && _ov_read_value message.txt && m="$_OV_VAL" && _ov_read_value hint.txt && h="$_OV_VAL" \

@@ -630,6 +630,25 @@ for m in 'ollama/a;touch PWNED' 'ollama/$(touch PWNED)' 'ollama/a b' 'ollama/../
 done
 setup_read; echo oss:Ship > "$VD/prompt.txt"; ov "$R" read prompt; refused1 "23: read prompt still refuses upper case (only the model rule widened)"
 
+# --- 24. the cwd keeps a trailing newline (R2-5, IRON LAW #1b: one cwd rule with oss_resolve_project)
+# A project folder inside repoA whose name ends in a newline: `$(pwd -P)` dropped it and the walk
+# from the shortened (non-existent) path climbed to repoA.
+setup_error; NLD="$A/nl
+"; mkdir -p "$NLD/.oss"
+echo hello > "$VD/reason.txt"; ov "$NLD" failed build
+[[ "$RC" == 0 ]] && got_event "$NLD" && ! got_event "$A" \
+    && pass "24: failed from a folder whose name ends in a newline lands in that folder's .oss, not the repo's" \
+    || fail "24: failed from a folder whose name ends in a newline lands in that folder's .oss, not the repo's" "rc=$RC nl=$(got_event "$NLD" && echo y || echo n) A=$(got_event "$A" && echo y || echo n) err=$ERR"
+echo code-reviewer > "$VD/agent.txt"; ova "$NLD" agent build start
+[[ "$RC" == 0 && -n "$(agent_log "$NLD" 'code-reviewer: starting')" && -z "$(agent_log "$A" 'code-reviewer: starting')" ]] \
+    && pass "24: agent from that folder lands in that folder's .oss, not the repo's" \
+    || fail "24: agent from that folder lands in that folder's .oss, not the repo's" "rc=$RC err=$ERR"
+printf 'down\n' > "$VD/message.txt"; printf 'later\n' > "$VD/hint.txt"; printf 'OSS-API-001 MEDIUM true cheap 1\n' > "$VD/error.txt"
+ove "$NLD" error cmd:build
+[[ "$RC" == 0 && -s "$NLD/.oss/workflow.log" && ! -e "$A/.oss/workflow.log" ]] \
+    && pass "24: error from that folder lands in that folder's .oss, not the repo's" \
+    || fail "24: error from that folder lands in that folder's .oss, not the repo's" "rc=$RC err=$ERR"
+
 echo
 echo "Results: $((RUN - FAILED))/$RUN passed, $FAILED failed"
 [[ "$FAILED" == 0 ]]

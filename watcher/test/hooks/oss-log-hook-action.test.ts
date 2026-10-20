@@ -64,6 +64,7 @@ describe('oss-log.sh hook action', () => {
 
     // WHEN: Running oss-log.sh hook SessionStart START
     execSync(`bash "${ossLogScript}" hook SessionStart START`, {
+      cwd: os.tmpdir(), // outside any project: the global log (routing D1)
       encoding: 'utf-8',
       env: {
         ...process.env,
@@ -91,6 +92,7 @@ describe('oss-log.sh hook action', () => {
 
     // WHEN: Running oss-log.sh hook oss-precommand COMPLETE
     execSync(`bash "${ossLogScript}" hook oss-precommand COMPLETE`, {
+      cwd: os.tmpdir(), // outside any project: the global log (routing D1)
       encoding: 'utf-8',
       env: {
         ...process.env,
@@ -117,6 +119,7 @@ describe('oss-log.sh hook action', () => {
 
     // WHEN: Running oss-log.sh hook oss-iron-law-check FAILED "Violation detected"
     execSync(`bash "${ossLogScript}" hook oss-iron-law-check FAILED "Violation detected"`, {
+      cwd: os.tmpdir(), // outside any project: the global log (routing D1)
       encoding: 'utf-8',
       env: {
         ...process.env,
@@ -142,6 +145,7 @@ describe('oss-log.sh hook action', () => {
     let errorOutput = '';
     try {
       execSync(`bash "${ossLogScript}" hook`, {
+        cwd: os.tmpdir(), // outside any project: the global log (routing D1)
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
@@ -170,6 +174,7 @@ describe('oss-log.sh hook action', () => {
     let errorOutput = '';
     try {
       execSync(`bash "${ossLogScript}" hook SessionStart`, {
+        cwd: os.tmpdir(), // outside any project: the global log (routing D1)
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {

@@ -104,11 +104,11 @@ describe('oss-log.sh project-local paths', () => {
 
   /**
    * @behavior oss-log.sh falls back to global when no project context
-   * @acceptance-criteria Without current-project file, uses ~/.oss/logs/
+   * @acceptance-criteria Outside any project (and whatever current-project names), uses ~/.oss/logs/
    */
   it('should fall back to global logs when no project context', () => {
-    // GIVEN: No current-project file (empty it)
-    fs.writeFileSync(currentProjectFile, '');
+    // GIVEN: current-project names a project; it is never used for routing (D1)
+    fs.writeFileSync(currentProjectFile, testProjectDir);
 
     // Save initial state of global logs
     const globalSessionLog = path.join(globalLogsDir, 'session.log');
@@ -118,6 +118,7 @@ describe('oss-log.sh project-local paths', () => {
 
     // WHEN: Running oss-log.sh init
     const output = execSync(`bash "${ossLogScript}" init fallbacktest`, {
+      cwd: os.tmpdir(), // outside any project
       encoding: 'utf-8',
       env: {
         ...process.env,

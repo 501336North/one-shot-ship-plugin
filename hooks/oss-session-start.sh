@@ -99,6 +99,16 @@ if [[ -n "$CLAUDE_PROJECT_DIR" ]]; then
     chmod 600 ~/.oss/current-project  # Only owner can read/write
 fi
 
+# This session's pointer (notify-routing-unify D2): model-run scripts get no CLAUDE_PROJECT_DIR but
+# do get CLAUDE_CODE_SESSION_ID, so they read ~/.oss/sessions/<id>/project. Written on every
+# SessionStart (startup/resume/clear/compact) under that id and, when it differs, the stdin session_id.
+if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]] && declare -F oss_session_pointer_write >/dev/null; then
+    oss_hook_stdin
+    oss_session_pointer_write "${CLAUDE_CODE_SESSION_ID:-}" "$CLAUDE_PROJECT_DIR"
+    [[ "$_OSS_HOOK_SID" != "${CLAUDE_CODE_SESSION_ID:-}" ]] && oss_session_pointer_write "$_OSS_HOOK_SID" "$CLAUDE_PROJECT_DIR"
+    oss_session_pointer_prune
+fi
+
 # Check Claude Code version (non-blocking) - runs claude --version, MIN_VERSION is 2.1.50
 if [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]]; then
     VERSION_CHECK_SCRIPT="$SCRIPT_DIR/oss-version-check.sh"
@@ -180,7 +190,9 @@ HEALTH_CHECK_CLI="$PLUGIN_ROOT/watcher/dist/cli/health-check.js"
 GITIGNORE_FILE="${CLAUDE_PROJECT_DIR:-.}/.gitignore"
 
 _OSS_PROJECT="${CLAUDE_PROJECT_DIR:-.}"
-if [[ ! -d "$PROJECT_OSS_DIR" ]]; then
+if [[ -z "${CLAUDE_PROJECT_DIR:-}" ]]; then
+    :   # no project known: no stray ./.oss (R1-4; Claude Code always sets CLAUDE_PROJECT_DIR)
+elif [[ ! -d "$PROJECT_OSS_DIR" ]]; then
     # First time - create .oss folder (through the guard: a committed .oss link is refused)
     if ! oss_safe_mkdir "$_OSS_PROJECT" .oss; then
         oss_refuse_unsafe .oss
@@ -241,7 +253,7 @@ fi
 # exits immediately and creates stale PID files. Chain execution is now handled by
 # oss-notify.sh via chain-trigger.js on complete events.
 # Clean up any stale PID files from previous versions.
-if oss_safe_mkdir "$_OSS_PROJECT" .oss 2>/dev/null; then rm -f "$WATCHER_PID_FILE" 2>/dev/null; fi
+if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]] && oss_safe_mkdir "$_OSS_PROJECT" .oss 2>/dev/null; then rm -f "$WATCHER_PID_FILE" 2>/dev/null; fi
 
 # --- Health Check (Run tests on session start) ---
 # Run npm test to catch any pre-existing failures and queue them

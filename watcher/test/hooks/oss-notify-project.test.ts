@@ -1,6 +1,6 @@
 /**
  * @behavior oss-notify.sh writes workflow state to project .oss/ via CLI
- * @acceptance-criteria Workflow state updates go to project directory when current-project set
+ * @acceptance-criteria Workflow state updates go to the project the command runs in (D1 routing)
  * @business-rule Multi-project support requires notifications to update correct project state
  * @boundary Shell script (oss-notify.sh)
  */
@@ -34,8 +34,9 @@ describe('oss-notify.sh - Project State Updates', () => {
       originalGlobalWorkflow = fs.readFileSync(globalWorkflowFile, 'utf-8');
     }
 
-    // Create test project directory with .oss
+    // Create test project (a git repo) with .oss
     fs.mkdirSync(projectOssDir, { recursive: true });
+    execSync('git init -q', { cwd: testProjectDir });
   });
 
   afterEach(() => {
@@ -60,17 +61,18 @@ describe('oss-notify.sh - Project State Updates', () => {
    * @behavior oss-notify.sh workflow start updates project state via CLI
    * @acceptance-criteria activeStep written to project .oss/workflow-state.json
    */
-  it('should write workflow state to project .oss when current-project set', () => {
-    // GIVEN: current-project points to test project
-    fs.writeFileSync(currentProjectFile, testProjectDir);
+  it('should write workflow state to project .oss when run inside the project', () => {
+    // GIVEN: the command runs inside the test project; current-project names another (never used, D1)
+    fs.writeFileSync(currentProjectFile, os.homedir());
 
     // WHEN: Running notify script with workflow start
     try {
-      // Delete CLAUDE_PROJECT_DIR so CLI uses current-project file
+      // Delete CLAUDE_PROJECT_DIR: the Bash tool does not set it
       const env = { ...process.env, CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..') };
       delete env.CLAUDE_PROJECT_DIR;
 
       execSync(`bash "${notifyScript}" --workflow build start '{}'`, {
+        cwd: testProjectDir,
         timeout: 10000,
         encoding: 'utf-8',
         env,
@@ -90,9 +92,9 @@ describe('oss-notify.sh - Project State Updates', () => {
    * @acceptance-criteria Global ~/.oss/workflow-state.json version unchanged after project-scoped update
    * @business-rule Status line reads project-local state, so writes must go there too
    */
-  it('should NOT modify global workflow-state.json when current-project is set', () => {
-    // GIVEN: current-project points to test project
-    fs.writeFileSync(currentProjectFile, testProjectDir);
+  it('should NOT modify global workflow-state.json when run inside the project', () => {
+    // GIVEN: the command runs inside the test project; current-project names another (never used, D1)
+    fs.writeFileSync(currentProjectFile, os.homedir());
 
     // AND: Global state has a known version
     const globalStateBefore = fs.existsSync(globalWorkflowFile)
@@ -106,6 +108,7 @@ describe('oss-notify.sh - Project State Updates', () => {
       delete env.CLAUDE_PROJECT_DIR;
 
       execSync(`bash "${notifyScript}" --workflow build start '{}'`, {
+        cwd: testProjectDir,
         timeout: 10000,
         encoding: 'utf-8',
         env,
@@ -131,8 +134,8 @@ describe('oss-notify.sh - Project State Updates', () => {
    * @acceptance-criteria progress written to project .oss/workflow-state.json
    */
   it('should update project progress on task_complete', () => {
-    // GIVEN: current-project points to test project
-    fs.writeFileSync(currentProjectFile, testProjectDir);
+    // GIVEN: the command runs inside the test project; current-project names another (never used, D1)
+    fs.writeFileSync(currentProjectFile, os.homedir());
 
     // AND: Project has initial state from build start
     fs.writeFileSync(projectWorkflowFile, JSON.stringify({
@@ -142,11 +145,12 @@ describe('oss-notify.sh - Project State Updates', () => {
 
     // WHEN: Running notify script with task_complete
     try {
-      // Delete CLAUDE_PROJECT_DIR so CLI uses current-project file
+      // Delete CLAUDE_PROJECT_DIR: the Bash tool does not set it
       const env = { ...process.env, CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..') };
       delete env.CLAUDE_PROJECT_DIR;
 
       execSync(`bash "${notifyScript}" --workflow build task_complete '{"current": 3, "total": 10, "taskName": "Test task"}'`, {
+        cwd: testProjectDir,
         timeout: 10000,
         encoding: 'utf-8',
         env,

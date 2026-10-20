@@ -133,7 +133,7 @@ if [[ $rc -eq 0 && "$err" == *"oss: refusing unsafe .oss path"* ]]; then pass "o
 else fail "oss-log.sh: refusal prints 'oss: refusing unsafe .oss path' and exits 0" "rc=$rc err=$err"; fi
 rm -rf "$T"
 
-# health workflow state (oss-log.sh workflow set-feature), routed via ~/.oss/current-project
+# health workflow state (oss-log.sh workflow set-feature), routed by the cwd (current-project names it too)
 world; evil_repo p-health l_health; echo "$P" > "$T/home/.oss/current-project"; before=$(snapshot)
 out=$(cd "$P" && HOME="$T/home" CLAUDE_PROJECT_DIR="" "$SH" "$ROOT/hooks/oss-log.sh" workflow set-feature evil 2>&1); rc=$?
 check "oss-log.sh workflow set-feature: committed health-workflow-state.json link is not written" "$before" "$rc" "$out"
@@ -156,10 +156,10 @@ for c in state logs ossdir; do
     check "oss-notify.sh --workflow build failed: committed $c link does not write outside" "$before" "$rc" "$out"
     rm -rf "$T"
 done
-# the plugin wrapper's ordinary start event, routed via ~/.oss/current-project (single-session user)
+# the plugin wrapper's ordinary start event, run in the repo (current-project names it too: single-session user)
 world; evil_repo p-nstart l_state; echo "$P" > "$T/home/.oss/current-project"; before=$(snapshot)
 out=$(cd "$P" && HOME="$T/home" CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="" "$SH" "$ROOT/hooks/oss-notify.sh" --workflow build start 2>&1 </dev/null); rc=$?
-check "oss-notify.sh --workflow build start via current-project: state link is not written" "$before" "$rc" "$out"
+check "oss-notify.sh --workflow build start from the repo: state link is not written" "$before" "$rc" "$out"
 rm -rf "$T"
 
 # =================================================================================================
@@ -290,6 +290,28 @@ if grep -q '^\.oss/\*$' "$P/.gitignore" 2>/dev/null && grep -q 'oss-log.sh' "$P/
 else fail "control: a normal repo still gets .gitignore and settings.local.json" "gi=$(cat "$P/.gitignore" 2>&1)"; fi
 if [[ -f "$P/.oss/session-context.md" ]]; then pass "control: a normal repo still gets session-context.md"
 else fail "control: a normal repo still gets session-context.md" "missing"; fi
+rm -rf "$T"
+
+# R2-4 (pen LOW-1): committed links at the archive names oss-log.sh will pick (session-<timestamp>
+# for now .. now+15s) must not pull session.log / current-session into an outside directory.
+ts_names() { local i; for i in $(seq 0 15); do date -r $(( $(date +%s) + i )) '+%Y%m%d-%H%M%S' 2>/dev/null || date -d "@$(( $(date +%s) + i ))" '+%Y%m%d-%H%M%S'; done; }
+l_rotlinks() { mkdir -p .oss/logs/archive .oss/logs/current-session && echo old > .oss/logs/current-session/session.log && for t in $(ts_names); do ln -s "$T/outside/dir" ".oss/logs/archive/session-$t.log"; done; }
+l_clrlinks() { mkdir -p .oss/logs/current-session && echo old > .oss/logs/current-session/build.log && for t in $(ts_names); do ln -s "$T/outside/dir" ".oss/logs/session-$t"; done; }
+world; evil_repo p-rot l_rotlinks; before=$(snapshot)
+out=$(run_in "$P" "$SH" "$ROOT/hooks/oss-log.sh" rotate 2>&1); rc=$?
+check "R2-4: oss-log.sh rotate: committed links at the archive names move nothing outside" "$before" "$rc" "$out"
+rm -rf "$T"
+world; evil_repo p-clr l_clrlinks; before=$(snapshot)
+out=$(run_in "$P" "$SH" "$ROOT/hooks/oss-log.sh" clear-session 2>&1); rc=$?
+check "R2-4: oss-log.sh clear-session: committed links at the archive names move nothing outside" "$before" "$rc" "$out"
+rm -rf "$T"
+world; clean_repo p-okrot; mkdir -p "$P/.oss/logs/current-session"; echo keep > "$P/.oss/logs/current-session/session.log"; echo b > "$P/.oss/logs/current-session/build.log"
+run_in "$P" "$SH" "$ROOT/hooks/oss-log.sh" rotate >/dev/null 2>&1
+ls "$P/.oss/logs/archive/"session-*.log.gz >/dev/null 2>&1 && pass "control: a normal repo still rotates session.log into the archive" \
+    || fail "control: a normal repo still rotates session.log into the archive" "$(ls -R "$P/.oss/logs" 2>&1 | tr '\n' ' ')"
+run_in "$P" "$SH" "$ROOT/hooks/oss-log.sh" clear-session >/dev/null 2>&1
+ls "$P/.oss/logs/"session-*/build.log >/dev/null 2>&1 && pass "control: a normal repo still archives current-session on clear-session" \
+    || fail "control: a normal repo still archives current-session on clear-session" "$(ls -R "$P/.oss/logs" 2>&1 | tr '\n' ' ')"
 rm -rf "$T"
 
 world; clean_repo p-okarch

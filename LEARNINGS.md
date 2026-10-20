@@ -111,3 +111,11 @@
 ## 2026-10-19 | Bash | hooks
 - **Context:** api-curl-source (build)
 - **Insight:** On macOS /bin/bash 3.2, `source missing 2>/dev/null || true` under `set -e` exits the script with rc 1 and no output; the `|| true` (or any `|| { ... }`) never runs. bash 4+/5 honours it, so tests that run hooks via a PATH `bash` (often Homebrew/MacPorts 5.x) stay green. Load optional files with `if [[ -f X ]]; then source X; fi`, and run hook tests under `/bin/bash` explicitly. Without `-e` (e.g. `set -uo pipefail`) the fallback is reachable on 3.2. Guard: hooks/__tests__/optional-helper-source.test.sh.
+
+## 2026-10-20 | Bash | hooks
+- **Context:** notify-routing-unify (build, ship round 2, R2-5)
+- **Insight:** Fixing one `$(pwd -P)` that drops a trailing newline is not enough: every `$(...)` downstream that re-derives the path (`$(realpath ...)` in a validator, `$(_phys_dir ...)` in the write guard, `x=$(validate ...)` in the caller) strips it again, and the event silently falls to the global log instead of the right project. Compute the physical path ONCE with a sentinel (`o=$(cd -P -- "$d" && pwd -P && echo .); o="${o%$'\n.'}"`) and hand it on in a variable, never through another `$(...)`. Test it with a project folder whose name ends in a newline inside a normal repo (a repo TOP ending in newline is refused earlier by `git rev-parse --show-toplevel`, which has the same strip).
+
+## 2026-10-20 | Testing | hooks
+- **Context:** notify-routing-unify (build, ship round 2, R2-2/R2-6)
+- **Insight:** Without root you cannot make a folder owned by another user, and `[[ -O x ]]` is a keyword no test can intercept. Spell owner checks `test -O x` and simulate a foreign owner per exact path with a BASH_ENV file defining `test() { [[ $1 == -O && ":$LIST:" == *":$2:"* ]] && return 1; builtin test "$@"; }` - BASH_ENV is read by every non-interactive bash, including `bash -c` and hook scripts. TS twin: `node --require shim.cjs` that wraps `fs.lstatSync` to bump `uid` for listed paths, then `require('module').syncBuiltinESMExports()` so ESM `import * as fs` sees it. Also: `mv src name` moves src INTO name when name is a link to a folder - check `[[ -e name || -L name ]]` before archiving to a predictable name.

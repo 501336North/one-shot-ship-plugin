@@ -24,6 +24,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { WorkflowStateService, ChainStep, SupervisorStatus } from '../services/workflow-state.js';
+import { resolveProjectDir } from '../utils/project-dir.js';
 
 /**
  * Validate project path for security (prevent path traversal attacks)
@@ -103,31 +104,14 @@ function getStateFilePath(args: string[]): { stateFilePath: string | undefined; 
     return { stateFilePath: undefined, remainingArgs };
   }
 
-  // Priority 1: CLAUDE_PROJECT_DIR env var (for tests and automation)
-  const envProjectDir = process.env.CLAUDE_PROJECT_DIR;
-  if (envProjectDir) {
-    const validatedPath = validateProjectPath(envProjectDir);
-    if (validatedPath) {
-      return {
-        stateFilePath: path.join(validatedPath, '.oss', 'workflow-state.json'),
-        remainingArgs: args,
-      };
-    }
-  }
-
-  // Priority 2: current-project file (for interactive sessions)
-  const currentProjectPath = path.join(process.env.HOME || '', '.oss', 'current-project');
-  try {
-    const projectDir = fs.readFileSync(currentProjectPath, 'utf-8').trim();
-    const validatedPath = validateProjectPath(projectDir);
-    if (validatedPath) {
-      return {
-        stateFilePath: path.join(validatedPath, '.oss', 'workflow-state.json'),
-        remainingArgs: args,
-      };
-    }
-  } catch {
-    // No current-project file or invalid, use default
+  // The shared rule (utils/project-dir.ts): CLAUDE_PROJECT_DIR, else the cwd's nearest real .oss
+  const projectDir = resolveProjectDir(process.env);
+  const validatedPath = projectDir === null ? null : validateProjectPath(projectDir);
+  if (validatedPath) {
+    return {
+      stateFilePath: path.join(validatedPath, '.oss', 'workflow-state.json'),
+      remainingArgs: args,
+    };
   }
 
   return { stateFilePath: undefined, remainingArgs: args };

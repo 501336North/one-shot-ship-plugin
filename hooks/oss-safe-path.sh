@@ -7,6 +7,14 @@
 #                                         file with link count 1 that is not a symlink
 #   oss_refuse_unsafe <rel>               the one stderr line a refused write prints
 #   oss_valid_workflow_name <name>        ^[a-z][a-z0-9-]{0,40}$ (twin: watcher/src/utils/workflow-name.ts)
+#   oss_project_walk <dir>                the nearest real (not linked) .oss from <dir> up to the first
+#                                         dir holding a .git entry -> _OSS_PROJ ("" = the global ~/.oss)
+#   oss_phys_cwd                          the physical cwd -> _OSS_CWD (a trailing newline kept)
+#   oss_resolve_project [dir]             CLAUDE_PROJECT_DIR if set, else oss_project_walk from [dir] or
+#                                         the physical cwd when it finds a .oss in another repo than this
+#                                         session's pointer (oss_session_project), else the pointer, else
+#                                         the walk -> _OSS_PROJ (twin: watcher/src/utils/project-dir.ts)
+#   oss_session_pointer_write/_remove/_prune, oss_hook_stdin   the SessionStart/End side of the pointer
 #
 # oss_safe_mkdir sets _OSS_SAFE_DIR to the directory it checked; oss_safe_target builds the
 # target from it, so the path approved is the path the caller writes (G2).
@@ -22,13 +30,14 @@
 # target for a link between check and write (reproduced in the 2.0.87 pen test). Committed repo
 # content cannot: it needs a live local process. See DECISIONS.md and FOLLOWUPS (G17).
 
-_oss_phys_dir() { (cd -P -- "$1" 2>/dev/null && pwd -P); }
+# <dir> -> _OSS_PD, its physical path; a trailing newline is kept ($(pwd -P) alone drops it, R2-5)
+_oss_phys_dir() { _OSS_PD=$(cd -P -- "$1" 2>/dev/null && pwd -P && echo .) || { _OSS_PD=""; return 1; }; _OSS_PD="${_OSS_PD%$'\n.'}"; }
 # G9: the project and $HOME are resolved once per process (each resolution is a subshell).
 _OSS_PC_K1=""; _OSS_PC_V1=""; _OSS_PC_K2=""; _OSS_PC_V2=""
 _oss_phys_cached() { # <path> -> _OSS_PHYS (no subshell, so the cache survives)
     if [[ -n "$_OSS_PC_K1" && "$1" == "$_OSS_PC_K1" ]]; then _OSS_PHYS="$_OSS_PC_V1"; return 0; fi
     if [[ -n "$_OSS_PC_K2" && "$1" == "$_OSS_PC_K2" ]]; then _OSS_PHYS="$_OSS_PC_V2"; return 0; fi
-    _OSS_PHYS=$(_oss_phys_dir "$1") && [[ -n "$_OSS_PHYS" ]] || return 1
+    _oss_phys_dir "$1" && _OSS_PHYS="$_OSS_PD" && [[ -n "$_OSS_PHYS" ]] || return 1
     _OSS_PC_K2="$_OSS_PC_K1"; _OSS_PC_V2="$_OSS_PC_V1"; _OSS_PC_K1="$1"; _OSS_PC_V1="$_OSS_PHYS"
 }
 _oss_uid_of() { local m l o r; read -r m l o r < <(ls -ldn -- "$1" 2>/dev/null) && echo "$o"; }
@@ -66,7 +75,7 @@ oss_safe_mkdir() {
         [[ -e "$cur" || -L "$cur" ]] || mkdir -- "$cur" 2>/dev/null || true
         [[ ! -L "$cur" && -d "$cur" ]] && _oss_owned_ok "$cur" "$real" || return 1
     done
-    phys=$(_oss_phys_dir "$cur") || return 1
+    _oss_phys_dir "$cur" || return 1; phys="$_OSS_PD"
     [[ "$phys" == "$real" || "$phys" == "$real"/* ]] || return 1
     _OSS_SAFE_DIR="$cur"   # the directory the checks above actually walked
 }
@@ -92,4 +101,101 @@ oss_valid_workflow_name() {
     [[ -n "${BASH_VERSION:-}" ]] || return 1
     local re='^[a-z][a-z0-9-]{0,40}$'
     [[ "${1:-}" =~ $re ]]
+}
+
+# The ONE routing rule for model-run scripts (notify-routing-unify D1). ~/.oss/current-project is
+# never read: it names whichever session started last, not the project the command runs in.
+# The walk stops at (and includes) the first directory holding a .git entry (dir or file); no git
+# call, so no git config / GIT_* variable moves the bound. No .git above: no project.
+oss_project_walk() { # -> _OSS_PROJ, and _OSS_GIT: the dir holding the .git entry ("" = none)
+    local d="${1:-}" found=""
+    _OSS_PROJ=""; _OSS_GIT=""
+    [[ "$d" == /* ]] || return 0
+    d="${d%/}"
+    while :; do
+        # R2-2: only the user's own .oss, only in the user's own repo (git's safe.directory rule).
+        # `test -O`, not [[ -O ]]: the parity test simulates another user's folder through `test`.
+        [[ -z "$found" && -d "$d/.oss" && ! -L "$d/.oss" ]] && test -O "$d/.oss" && found="${d:-/}"
+        if [[ -e "$d/.git" || -L "$d/.git" ]]; then
+            test -O "${d:-/}" || return 0
+            _OSS_PROJ="$found"; _OSS_GIT="${d:-/}"; return 0
+        fi
+        [[ -n "$d" ]] || return 0
+        d="${d%/*}"
+    done
+}
+# The physical cwd -> _OSS_CWD, a trailing newline kept ($(pwd -P) alone drops it). The ONE cwd rule.
+oss_phys_cwd() { _oss_phys_dir . ; _OSS_CWD="$_OSS_PD"; }
+# R2-1 (D3): the pointer wins unless the walk finds a .oss in ANOTHER repo (its .git dir is not the
+# pointer project's): session started in product 1, the user now works in product 2.
+oss_resolve_project() { # [dir] (default: the physical cwd)
+    if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then _OSS_PROJ="$CLAUDE_PROJECT_DIR"; return 0; fi
+    local d="${1:-}" w g p
+    if [[ -z "$d" ]]; then oss_phys_cwd; d="$_OSS_CWD"; fi
+    oss_project_walk "$d"; w="$_OSS_PROJ"; g="$_OSS_GIT"
+    if oss_session_project; then
+        p="$_OSS_PROJ"
+        [[ -z "$w" ]] && return 0
+        _oss_phys_cached "$p" && oss_project_walk "$_OSS_PHYS" && [[ "$_OSS_GIT" == "$g" ]] && { _OSS_PROJ="$p"; return 0; }
+    fi
+    _OSS_PROJ="$w"
+}
+
+# Per-session pointer ~/.oss/sessions/<id>/project (ship round 1, D2): written by the SessionStart
+# hook from CLAUDE_PROJECT_DIR, read by model-run scripts through CLAUDE_CODE_SESSION_ID.
+_OSS_SID_RE='^[A-Za-z0-9-]{1,100}$'
+_oss_own_dir() { [[ -d "$1" && ! -L "$1" ]] && test -O "$1"; }   # `test -O`: the tests' other-user seam
+# This session's pointer -> _OSS_PROJ; rc 1 (and "") when absent or not trusted.
+oss_session_project() {
+    local id="${CLAUDE_CODE_SESSION_ID:-}" s f p
+    _OSS_PROJ=""
+    [[ "$id" =~ $_OSS_SID_RE && "${HOME:-}" == /* ]] || return 1
+    s="$HOME/.oss/sessions"; f="$s/$id/project"
+    _oss_own_dir "$s" && _oss_own_dir "$s/$id" && [[ -f "$f" && ! -L "$f" && -O "$f" ]] || return 1
+    p=$(<"$f") 2>/dev/null || return 1
+    [[ "$p" == /* && "$p" != *[[:cntrl:]]* && -d "$p/.oss" && ! -L "$p/.oss" ]] || return 1
+    _OSS_PROJ="$p"
+}
+_oss_sessions_dir() { # -> _OSS_SESS (created 700 when absent); rc 1 when linked / not owned
+    _OSS_SESS=""
+    [[ "${HOME:-}" == /* && -d "$HOME/.oss" ]] || return 1
+    [[ -e "$HOME/.oss/sessions" || -L "$HOME/.oss/sessions" ]] || mkdir -m 700 "$HOME/.oss/sessions" 2>/dev/null
+    _oss_own_dir "$HOME/.oss/sessions" && chmod 700 "$HOME/.oss/sessions" && _OSS_SESS="$HOME/.oss/sessions"
+}
+# <id> <project>: atomic, owner-only (dir 700, file 600)
+oss_session_pointer_write() {
+    local id="${1:-}" p="${2:-}" d t
+    [[ "$id" =~ $_OSS_SID_RE && "$p" == /* && "$p" != *[[:cntrl:]]* ]] && _oss_sessions_dir || return 1
+    d="$_OSS_SESS/$id"; t="$d/.project.$$"
+    [[ -e "$d" || -L "$d" ]] || mkdir -m 700 "$d" 2>/dev/null
+    _oss_own_dir "$d" && chmod 700 "$d" || return 1
+    rm -f "$t" && (umask 077; printf '%s\n' "$p" > "$t") && mv -f "$t" "$d/project"
+}
+# <id>: remove that session's pointer folder
+oss_session_pointer_remove() {
+    local id="${1:-}"
+    [[ "$id" =~ $_OSS_SID_RE ]] && _oss_sessions_dir && _oss_own_dir "$_OSS_SESS/$id" || return 1
+    rm -rf -- "$_OSS_SESS/$id"
+}
+# Remove pointer folders whose file is older than 30 days. Run after this session's write, so its
+# own (just rewritten) pointer is never old.
+oss_session_pointer_prune() {
+    local f d n
+    _oss_sessions_dir || return 1
+    while IFS= read -r -d '' f; do   # one find for every folder (R2-6)
+        d="${f%/project}"; n="${d##*/}"
+        [[ "$n" =~ $_OSS_SID_RE ]] && _oss_own_dir "$d" && rm -rf -- "$d"
+    done < <(find "$_OSS_SESS" -mindepth 2 -maxdepth 2 -name project -type f -mtime +30 -print0 2>/dev/null)
+    return 0
+}
+# The stdin JSON a Claude Code hook receives -> _OSS_HOOK_SID (session_id, when valid), _OSS_HOOK_EVENT
+oss_hook_stdin() {
+    local in="" re
+    _OSS_HOOK_SID=""; _OSS_HOOK_EVENT=""
+    [[ -t 0 ]] || IFS= read -r -d '' -t 2 in || true
+    re='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9-]{1,100})"'
+    [[ "$in" =~ $re ]] && _OSS_HOOK_SID="${BASH_REMATCH[1]}"
+    re='"hook_event_name"[[:space:]]*:[[:space:]]*"([A-Za-z]{1,40})"'
+    [[ "$in" =~ $re ]] && _OSS_HOOK_EVENT="${BASH_REMATCH[1]}"
+    return 0
 }

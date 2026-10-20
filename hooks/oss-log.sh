@@ -45,7 +45,7 @@ validate_project_path() {
 
     # Canonicalize with realpath (resolves symlinks)
     local canonical
-    canonical=$(realpath "$project_path" 2>/dev/null) || return 1
+    _oss_phys_dir "$project_path" || return 1; canonical="$_OSS_PD"   # R2-5: the one physical-path rule
     [[ -z "$canonical" ]] && return 1
 
     # Must be a directory
@@ -61,7 +61,7 @@ validate_project_path() {
 
     # Check if in temp directory (for tests)
     local in_tmp=false
-    if [[ -n "$TMPDIR" ]]; then
+    if [[ -n "${TMPDIR:-}" ]]; then
         local tmp_resolved
         tmp_resolved=$(realpath "$TMPDIR" 2>/dev/null) || true
         [[ -n "$tmp_resolved" && ("$canonical" == "$tmp_resolved" || "$canonical" == "$tmp_resolved"/*) ]] && in_tmp=true
@@ -73,27 +73,24 @@ validate_project_path() {
         return 1
     fi
 
-    echo "$canonical"
+    _OSS_VALID="$canonical"   # -> _OSS_VALID (a variable: $(...) would drop a trailing newline)
     return 0
 }
 
-# Get log base directory - project-local first, global fallback
-# Priority: 1) CLAUDE_PROJECT_DIR (env var), 2) ~/.oss/current-project, 3) ~/.oss/logs (global)
-get_log_base() {
-    local project_dir=""
+# The project this invocation belongs to: oss_resolve_project (hooks/oss-safe-path.sh), the one
+# rule every site below uses. "" = none (the global ~/.oss). Absent helper: none (fail closed).
+_OSS_PROJ=""
+declare -F oss_resolve_project >/dev/null && oss_resolve_project
+OSS_LOG_PROJECT_DIR="$_OSS_PROJ"
 
-    # CLAUDE_PROJECT_DIR takes priority (explicit env var for tests/automation)
-    if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
-        project_dir="$CLAUDE_PROJECT_DIR"
-    # Fall back to current-project file for interactive sessions
-    elif [[ -f "$HOME/.oss/current-project" ]]; then
-        project_dir=$(cat "$HOME/.oss/current-project" 2>/dev/null | tr -d '[:space:]')
-    fi
+# Get log base directory - project-local first, global fallback (~/.oss/logs)
+get_log_base() {
+    local project_dir="$OSS_LOG_PROJECT_DIR"
 
     # Validate and use project-local if valid
     if [[ -n "$project_dir" ]]; then
         local validated_path
-        validated_path=$(validate_project_path "$project_dir") || validated_path=""
+        validate_project_path "$project_dir" && validated_path="$_OSS_VALID" || validated_path=""
         if [[ -n "$validated_path" ]]; then
             echo "$validated_path/.oss/logs"
             return 0
@@ -179,6 +176,8 @@ check_session_size() {
 rotate_session_log() {
     local timestamp=$(date '+%Y%m%d-%H%M%S')
     local archive_name="session-${timestamp}.log"
+    # R2-4: an existing name (a committed link to a folder) would take session.log out of the repo
+    if [[ -e "${ARCHIVE_DIR}/${archive_name}" || -L "${ARCHIVE_DIR}/${archive_name}" ]]; then oss_refuse_unsafe "logs/archive/${archive_name}"; return 1; fi
     mv "$UNIFIED_LOG" "${ARCHIVE_DIR}/${archive_name}"
     # Compress the archive
     gzip "${ARCHIVE_DIR}/${archive_name}" 2>/dev/null || true
@@ -299,17 +298,7 @@ case "$ACTION" in
         if [[ "$STATUS" == "start" ]]; then
             PHASE_LOWER=$(echo "$PHASE" | tr '[:upper:]' '[:lower:]')
             if [[ "$PHASE_LOWER" =~ ^(red|green|refactor)$ ]]; then
-                # Get project directory for --project-dir flag
-                # Resolution: CLAUDE_PROJECT_DIR env → current-project file → git root
-                PROJECT_DIR=""
-                if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
-                    PROJECT_DIR="$CLAUDE_PROJECT_DIR"
-                elif [[ -f "$HOME/.oss/current-project" ]]; then
-                    PROJECT_DIR=$(cat "$HOME/.oss/current-project" 2>/dev/null | tr -d '[:space:]')
-                fi
-                if [[ -z "$PROJECT_DIR" ]]; then
-                    PROJECT_DIR=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
-                fi
+                PROJECT_DIR="$OSS_LOG_PROJECT_DIR"   # --project-dir for the state CLI
 
                 # Find update-workflow-state.js CLI (version-agnostic lookup)
                 UPDATE_CLI=""
@@ -409,14 +398,7 @@ case "$ACTION" in
 
         # Update workflow-state.json for status line display
         # Detect "starting:" or "completed:" patterns in task message
-        # Get project directory for --project-dir flag
-        # Priority: CLAUDE_PROJECT_DIR env var > ~/.oss/current-project file
-        PROJECT_DIR=""
-        if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
-            PROJECT_DIR="$CLAUDE_PROJECT_DIR"
-        elif [[ -f "$HOME/.oss/current-project" ]]; then
-            PROJECT_DIR=$(cat "$HOME/.oss/current-project" 2>/dev/null | tr -d '[:space:]')
-        fi
+        PROJECT_DIR="$OSS_LOG_PROJECT_DIR"   # --project-dir for the state CLI
 
         # Find update-workflow-state.js CLI (version-agnostic lookup)
         UPDATE_CLI=""
@@ -674,6 +656,8 @@ case "$ACTION" in
         # Archive current session and start fresh
         if [[ -d "$CURRENT_SESSION" ]]; then
             ARCHIVE_NAME="session-$(date '+%Y%m%d-%H%M%S')"
+            # R2-4: an existing name (a committed link to a folder) would take the session out of the repo
+            if [[ -e "${LOG_BASE}/${ARCHIVE_NAME}" || -L "${LOG_BASE}/${ARCHIVE_NAME}" ]]; then oss_refuse_unsafe "logs/${ARCHIVE_NAME}"; exit 0; fi
             mv "$CURRENT_SESSION" "${LOG_BASE}/${ARCHIVE_NAME}"
         fi
         mkdir -p "$CURRENT_SESSION"
@@ -771,8 +755,7 @@ case "$ACTION" in
     rotate)
         # Force rotate session log
         if [[ -f "$UNIFIED_LOG" ]]; then
-            rotate_session_log
-            echo "Session log rotated and archived."
+            if rotate_session_log; then echo "Session log rotated and archived."; fi
         else
             echo "No session log to rotate."
         fi
@@ -853,10 +836,10 @@ case "$ACTION" in
         SUBCOMMAND="${COMMAND:-}"
         # Use separate file from main workflow-state.json (used by status line)
         # Use project-local health state if available (with security validation)
-        RAW_PROJECT=$(cat ~/.oss/current-project 2>/dev/null | tr -d '[:space:]')
+        RAW_PROJECT="$OSS_LOG_PROJECT_DIR"
         CURRENT_PROJECT=""
         if [[ -n "$RAW_PROJECT" ]]; then
-            CURRENT_PROJECT=$(validate_project_path "$RAW_PROJECT") || CURRENT_PROJECT=""
+            validate_project_path "$RAW_PROJECT" && CURRENT_PROJECT="$_OSS_VALID" || CURRENT_PROJECT=""
         fi
         if [[ -n "$CURRENT_PROJECT" && -d "$CURRENT_PROJECT/.oss" ]]; then
             WORKFLOW_STATE_FILE="$CURRENT_PROJECT/.oss/health-workflow-state.json"
@@ -939,15 +922,12 @@ EOF
 
     health-check)
         # Run health check in current project
-        # Reads current project from ~/.oss/current-project
+        # The project is OSS_LOG_PROJECT_DIR (the shared rule)
         # Output written to health-check.log for status detection
-        CURRENT_PROJECT=""
-        if [[ -f "$HOME/.oss/current-project" ]]; then
-            CURRENT_PROJECT=$(cat "$HOME/.oss/current-project" 2>/dev/null)
-        fi
+        validate_project_path "$OSS_LOG_PROJECT_DIR" && CURRENT_PROJECT="$_OSS_VALID" || CURRENT_PROJECT=""
 
-        if [[ -z "$CURRENT_PROJECT" || ! -d "$CURRENT_PROJECT" ]]; then
-            echo "No active project. Start a Claude Code session first."
+        if [[ -z "$CURRENT_PROJECT" ]]; then
+            echo "Not inside a project (no .oss found and no session pointer)"
             exit 1
         fi
 
