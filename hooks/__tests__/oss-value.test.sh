@@ -67,11 +67,12 @@ ov "$R" dir
 
 # --- 2. stale value files are removed, other files kept ---------------------------------------
 newhome; mkdir -p "$H/.oss/run/$key"
-for f in feature numbers date reason message hint error; do echo stale > "$H/.oss/run/$key/$f.txt"; done
+VALUE_FILES="feature numbers date reason message hint error agent key style prompt model workflow category name"
+for f in $VALUE_FILES; do echo stale > "$H/.oss/run/$key/$f.txt"; done
 echo keep > "$H/.oss/run/$key/unrelated.dat"
 ov "$R" dir
-left=""; for f in feature numbers date reason message hint error; do [[ -e "$H/.oss/run/$key/$f.txt" ]] && left="$left $f.txt"; done
-[[ "$RC" == 0 && -z "$left" ]] && pass "2: the 7 stale value files are removed" || fail "2: the 7 stale value files are removed" "rc=$RC left:$left"
+left=""; for f in $VALUE_FILES; do [[ -e "$H/.oss/run/$key/$f.txt" ]] && left="$left $f.txt"; done
+[[ "$RC" == 0 && -z "$left" ]] && pass "2: the 15 stale value files are removed (incl. agent.txt and the read files, R3-4/R3-5)" || fail "2: the 15 stale value files are removed (incl. agent.txt and the read files, R3-4/R3-5)" "rc=$RC left:$left"
 [[ -f "$H/.oss/run/$key/unrelated.dat" ]] && pass "2: an unrelated file is kept" || fail "2: an unrelated file is kept" "deleted"
 
 # --- 3. old *.txt in another key folder are pruned --------------------------------------------
@@ -343,6 +344,95 @@ for f in message hint error; do
     setup_error; ln "$VD/$f.txt" "$T/second$N"; ove "$A" error cmd:build
     refused_emit "16: a hard-linked $f.txt is refused"
 done
+
+# === read <name> (ship round 3, R3-5) =========================================================
+# A wrapper's user value (API key, style, prompt/model name, workflow, trust category/name) is
+# written by the model to <name>.txt; `read` prints it only when it matches that name's rule in
+# code, and deletes the file as soon as it is read (valid or not), so a key never lingers.
+# refused1: a refusal by the verb itself (rc 1), not usage (2) or not runnable (126/127)
+refused1() { if [[ "$RC" == 2 ]]; then fail "$1" "rc=2 (usage, not a refusal) err=$ERR"; else refused "$1"; fi; }
+setup_read() { newhome; newrepo; ov "$R" dir; VD="$OUT"; }
+pwned() { [[ -e "$T/PWNED" || -e "$R/PWNED" || -e "$H/PWNED" ]]; }
+for nv in 'key ossk_test_key_123' 'key ak_xxxxxxxx' 'style visual' 'style audio' 'style sound' 'style none' \
+          'prompt oss:code-reviewer' 'prompt /oss:ship' 'model ollama/codellama' 'model openrouter/meta-llama/llama-3.2-3b:free' \
+          'workflow build' 'workflow team:deploy-v2.1' 'category commands' 'name code-simplifier'; do
+    n=${nv%% *}; v=${nv#* }
+    setup_read; printf '%s\n' "$v" > "$VD/$n.txt"; ov "$R" read "$n"
+    [[ "$RC" == 0 && "$OUT" == "$v" && ! -e "$VD/$n.txt" ]] && pass "17: read $n prints '$v' and deletes $n.txt" \
+        || fail "17: read $n prints '$v' and deletes $n.txt" "rc=$RC out='$OUT' left=$([[ -e "$VD/$n.txt" ]] && echo y || echo n) err=$ERR"
+done
+# hostile or out-of-rule values: refused, nothing printed, nothing run, the file is gone
+NLV='line1
+line2'
+for nv in 'key $(touch PWNED)' "key a'b'cdefgh" 'key short' "key $(printf 'k%.0s' {1..201})" \
+          'style Visual' 'style loud' 'style $(touch PWNED)' \
+          'prompt oss:Ship' 'prompt a b' "prompt $(printf 'p%.0s' {1..101})" 'model `touch PWNED`' 'model a;touch PWNED' \
+          'workflow ../ship' 'workflow a/b' 'workflow $(touch PWNED)' 'category a.b' 'category a:b' 'name ../x' "name x'y" 'key ' ; do
+    n=${nv%% *}; v=${nv#* }
+    setup_read; printf '%s' "$v" > "$VD/$n.txt"; ov "$R" read "$n"
+    if pwned; then fail "17: read $n refuses '$v'" "something ran (PWNED exists)"
+    else refused1 "17: read $n refuses '$v'"; fi
+    [[ ! -e "$VD/$n.txt" ]] && pass "17: a refused $n.txt is deleted too" || fail "17: a refused $n.txt is deleted too" "still there"
+done
+for n in key style workflow; do
+    setup_read; printf '%s' "$NLV" > "$VD/$n.txt"; ov "$R" read "$n"; refused1 "17: read $n refuses a two-line value"
+done
+# an unknown name, a linked or missing file, outside a repo: refused
+setup_read; echo value1234 > "$VD/bogus.txt"; ov "$R" read bogus; refused1 "17: read of an unknown name is refused"
+[[ -e "$VD/bogus.txt" ]] && pass "17: an unknown name's file is not touched" || fail "17: an unknown name's file is not touched" "deleted"
+setup_read; ov "$R" read key; refused1 "17: read of a missing key.txt is refused"
+setup_read; echo ossk_secret_key_1 > "$T/target$N"; ln -s "$T/target$N" "$VD/key.txt"; ov "$R" read key
+refused1 "17: a symlinked key.txt is refused"
+[[ -f "$T/target$N" ]] && pass "17: the symlink's target is not deleted" || fail "17: the symlink's target is not deleted" "gone"
+setup_read; echo ossk_secret_key_1 > "$VD/key.txt"; ln "$VD/key.txt" "$T/second$N"; ov "$R" read key
+refused1 "17: a hard-linked key.txt is refused"
+newhome; mkdir -p "$T/norepo$N/cwd"
+OUT=$(cd "$T/norepo$N/cwd" && GIT_CEILING_DIRECTORIES="$T/norepo$N" HOME="$H" "$SH" "$SCRIPT" read key 2>"$T/err" </dev/null); RC=$?; ERR=$(cat "$T/err")
+refused1 "17: read outside any git repo is refused"
+
+# === agent <workflow> start|complete (ship round 3, R3-4) =====================================
+# The model writes the specialist's name to agent.txt; `agent` checks it in code and calls the
+# real sibling oss-log.sh agent, so the status line shows the agent (activeAgent.type) again.
+# CLAUDE_PLUGIN_ROOT = this checkout, so oss-log.sh finds watcher/dist/cli/update-workflow-state.js.
+ova() {
+    local cwd="$1"; shift
+    OUT=$(cd "$cwd" && env -u CLAUDE_PROJECT_DIR CLAUDE_PLUGIN_ROOT="$ROOT" HOME="$H" "$SH" "$SCRIPT" "$@" 2>"$T/err" </dev/null); RC=$?
+    ERR=$(cat "$T/err")
+}
+agent_log() { grep -F "$2" "$1/.oss/logs/current-session/build.log" 2>/dev/null; }   # <project> <text>
+# wait_state <project> <jq filter> <want>: the state CLI runs in the background, so poll (10s cap)
+wait_state() { local i=0; while (( i < 100 )); do [[ "$(jq -r "$2" "$1/.oss/workflow-state.json" 2>/dev/null)" == "$3" ]] && return 0; sleep 0.1; i=$((i + 1)); done; return 1; }
+setup_failed; echo code-reviewer > "$VD/agent.txt"
+ova "$A" agent build start
+[[ "$RC" == 0 ]] && pass "18: agent build start exits 0" || fail "18: agent build start exits 0" "rc=$RC err=$ERR"
+[[ -n "$(agent_log "$A" 'code-reviewer: starting: delegated task')" ]] && pass "18: the project's build.log names the agent (fixed task text)" \
+    || fail "18: the project's build.log names the agent (fixed task text)" "$(cat "$A/.oss/logs/current-session/build.log" 2>&1)"
+wait_state "$A" '.activeAgent.type // ""' code-reviewer && pass "18: workflow-state activeAgent.type is the agent (status line shows it)" \
+    || fail "18: workflow-state activeAgent.type is the agent (status line shows it)" "$(cat "$A/.oss/workflow-state.json" 2>&1)"
+[[ ! -e "$VD/agent.txt" ]] && pass "18: agent.txt is deleted after start" || fail "18: agent.txt is deleted after start" "still there"
+[[ ! -e "$B/.oss/logs" ]] && pass "18: current-project (another repo) gets nothing" || fail "18: current-project (another repo) gets nothing" "$(ls -A "$B/.oss")"
+echo code-reviewer > "$VD/agent.txt"; ova "$A" agent build complete
+[[ "$RC" == 0 && -n "$(agent_log "$A" 'code-reviewer: completed: delegated task')" ]] && pass "18: agent build complete logs the completion" \
+    || fail "18: agent build complete logs the completion" "rc=$RC err=$ERR"
+wait_state "$A" '.activeAgent // "none"' none && pass "18: completion clears activeAgent" || fail "18: completion clears activeAgent" "$(cat "$A/.oss/workflow-state.json" 2>&1)"
+[[ ! -e "$VD/agent.txt" ]] && pass "18: agent.txt is deleted after complete" || fail "18: agent.txt is deleted after complete" "still there"
+# hostile names: refused, nothing logged, nothing run, file deleted
+for v in '$(touch PWNED)' 'Code-Reviewer' 'code reviewer' "a'b" '1agent' "$(printf 'a%.0s' {1..62})" "$NLV"; do
+    setup_failed; printf '%s' "$v" > "$VD/agent.txt"; ova "$A" agent build start
+    if [[ -e "$T/PWNED" || -e "$A/PWNED" ]]; then fail "18: agent name '$v' is refused" "something ran"
+    elif [[ "$RC" == 0 || "$RC" == 2 || "$RC" == 126 || "$RC" == 127 || -n "$OUT" ]] || ! nothing_sent; then fail "18: agent name '$v' is refused" "rc=$RC out='$OUT'"
+    else pass "18: agent name '$v' is refused, nothing logged"; fi
+    [[ ! -e "$VD/agent.txt" ]] && pass "18: a refused agent.txt is deleted" || fail "18: a refused agent.txt is deleted" "still there"
+done
+for args in 'build begin' 'Build start' 'build' 'a/../b start'; do
+    setup_failed; echo code-reviewer > "$VD/agent.txt"; ova "$A" agent $args
+    if [[ "$RC" == 0 || "$RC" == 126 || "$RC" == 127 || -n "$OUT" ]] || ! nothing_sent; then fail "18: agent '$args' is refused" "rc=$RC out='$OUT'"
+    else pass "18: agent '$args' is refused, nothing logged"; fi
+done
+setup_failed; ova "$A" agent build start
+if [[ "$RC" == 0 || "$RC" == 126 || "$RC" == 127 ]] || ! nothing_sent; then fail "18: a missing agent.txt is refused" "rc=$RC"; else pass "18: a missing agent.txt is refused"; fi
+setup_failed; echo code-reviewer > "$T/target$N"; ln -s "$T/target$N" "$VD/agent.txt"; ova "$A" agent build start
+if [[ "$RC" == 0 || "$RC" == 126 || "$RC" == 127 ]] || ! nothing_sent; then fail "18: a symlinked agent.txt is refused" "rc=$RC"; else pass "18: a symlinked agent.txt is refused"; fi
 
 echo
 echo "Results: $((RUN - FAILED))/$RUN passed, $FAILED failed"
