@@ -81,3 +81,36 @@ Not changed: `hooks/oss-statusline.sh` also reads bare `$TMPDIR`, but it does no
 - `tsc --noEmit`: clean. No `.oss` under the worktree except the root one afterwards.
 - Pre-existing, not changed: several watcher hook tests (oss-session-logging, oss-userpromptsubmit-logging)
   write to the REAL ~/.oss session log (they use os.homedir()).
+
+## Ship round 2 (2026-10-20)
+
+RED -> GREEN per task (every new guard mutation-checked: reverted, its test went red, restored):
+- R2-1 `session-routing.test.sh` +15 (S1's pointer = product 1, cwd product 2 / product 2/work: oss-notify,
+  oss-log write/phase/agent, oss-value failed, oss-error, update-workflow-state, archive-check -> product 2):
+  106/121 -> 121/121. `project-dir.test.ts` +2 (another repo's .oss over the pointer; stray in the
+  pointer's repo keeps it). `project-walk.test.sh` +6 parity (pointer spelled through a link + stray,
+  another repo, nested repo). Mutations: pointer-always-wins -> 11 shell + 1 TS red; pointer bound
+  computed without the physical path -> 1 red.
+- R2-2 `project-walk.test.sh` +12 parity: attacker-made .git + .oss in another user's folder -> no project
+  (and the pointer keeps its product), own .oss in a foreign repo -> none, a foreign .oss is skipped,
+  control. Foreign owner simulated per path: BASH_ENV `test` function (shell `test -O`) and a
+  `--require` shim on fs.lstatSync uid (TS). `project-dir.test.ts` +1 (geteuid spy). 33/43 -> 43/43.
+  Mutations: each twin's .oss owner check -> 2 red; each twin's .git-holder owner check -> 1 red.
+  (Replaces round 1's "shell foreign owner not exercised by a test".)
+- R2-3 `no-stray-oss.test.sh` +1: current-project = B (2 queued), cwd in P (1 queued) -> P's. 4/5 -> 5/5.
+- R2-4 `oss-writer-nofollow.test.sh` +4: committed links at session-<now..now+15s> names (archive/*.log
+  and logs/session-*) -> nothing moved outside; controls: a normal repo still rotates and archives.
+  47/49 -> 49/49. Mutations: either refusal removed -> its repro red.
+- R2-5 `oss-value.test.sh` +3: failed / agent / error from a project folder whose name ends in a newline
+  land in that folder's .oss. 328/331 -> 331/331. Mutations: oss-value back to $(pwd -P) -> 3 red;
+  _oss_phys_dir stripping the newline -> 3 red; oss-log log base through $(...) -> 2 red.
+- R2-6 `session-routing.test.sh` +3: prune runs find once (PATH shim, was 14); an old non-id folder is
+  kept; an old foreign-owned folder is kept (the id and owner checks had survived mutation before).
+  121/122 -> 124/124. Mutations: -mtime +28 -> red; id check dropped -> red; owner check dropped -> red.
+
+### Results (2026-10-20 17:08 +07, one sequential run)
+- hooks/__tests__ + commands/__tests__ (47 suites): 46 green; ideate-template 3/4 (pre-existing).
+  session-routing 124, project-walk 43, oss-value 331, oss-writer-nofollow 49, project-routing 45,
+  no-stray-oss 5, oss-safe-path 25; watcher-dist-fresh rc 0.
+- watcher vitest test/hooks + test/utils + test/cli (no-setup routing config): 60 files, 559/559.
+- `tsc --noEmit`: clean. No `.oss` under the worktree except the root one.

@@ -66,3 +66,36 @@ by model-run code).
 and session-end create `.oss` only in `CLAUDE_PROJECT_DIR` (their `.` fallback made `watcher/.oss` when a
 test ran them from the watcher folder). `oss-log.sh health-check` runs only in a project that passes
 `validate_project_path`, else "Not inside a project (no .oss found and no session pointer)".
+
+## D3: walk vs pointer, and whose .oss counts (ship round 2, 2026-10-20)
+
+**Walk vs pointer (R2-1).** D2 trusted the session pointer before looking at the cwd, so a session
+started in product 1 that moved on to product 2 kept sending product 2's events to product 1. The
+resolver now runs the git-free walk first and compares bounds:
+1. `CLAUDE_PROJECT_DIR` if set (unchanged).
+2. Walk from the physical cwd -> W (nearest owned real `.oss`) and Wg (the dir holding the first `.git`).
+3. Pointer P valid: if W is empty, or Wg equals the bound of P (the walk from P's PHYSICAL path), P wins.
+   Otherwise W wins - it is a different repo with its own `.oss`.
+4. No valid pointer: W, else the global `~/.oss`.
+Comparing bounds, not paths, is what keeps the D2 cases: a stray `.oss` in a sub-folder of the pointer's
+repo (same bound -> pointer), a submodule or nested repo without `.oss` (W empty -> pointer), outside any
+repo (W empty -> pointer). P is resolved physically so a pointer spelled through `/tmp` or a link still
+matches its own repo's bound. Shell `oss_resolve_project` / TS `resolveProjectDir`, identical.
+
+**Ownership (R2-2), mirrors git's safe.directory.** The walk accepts a `.oss` only when it is a real
+directory (not a link) owned by the current user; a foreign one is skipped and the walk keeps climbing to
+the bound. When the dir holding the `.git` entry is not owned by the user the walk yields NO project
+(then the pointer, else `~/.oss`). Closes "anyone who can create /tmp/.git + /tmp/.oss captures every
+command run below /tmp". Consequence, accepted: a repo on a root-owned bind mount, used by a non-root
+user, resolves no project by the walk (git itself refuses such a repo without safe.directory); the
+pointer / CLAUDE_PROJECT_DIR still name it. The write guard's uid-0 project-root rule (`_oss_owned_ok`)
+answers a different question - where a write may go once the project is chosen - and is unchanged.
+
+**One physical-path rule (R2-5).** `_oss_phys_dir` (-> `_OSS_PD`) and `oss_phys_cwd` (-> `_OSS_CWD`) in
+oss-safe-path.sh are the only places a physical path is computed for routing and the write guard; they
+keep a trailing newline (no `$(...)` on the result). oss-value, the resolver, the guard and oss-log's
+`validate_project_path` (now -> `_OSS_VALID`) go through them.
+
+**Test seam.** Owner checks in oss-safe-path.sh are spelled `test -O` (not `[[ -O ]]`), so a test can
+simulate another user's folder with a BASH_ENV `test` function; TS uses a geteuid spy or a `--require`
+shim on `fs.lstatSync`'s uid. Without root, macOS cannot produce a foreign-owned folder in a temp dir.

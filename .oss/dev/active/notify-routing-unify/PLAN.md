@@ -46,3 +46,14 @@ a1518c4 health-check R1-5). Rule and reasons: DECISIONS.md D2. Tests: TESTING.md
 Not changed (outside this round): session-start still writes `.claude/settings.local.json` and
 `.gitignore` via oss-setup-permissions.sh into `.` when CLAUDE_PROJECT_DIR is unset (tests only; CC
 always sets it).
+
+## Ship round 2 (gate findings, 2026-10-20)
+
+- [x] R2-1 (quality MEDIUM): the walk wins over the session pointer when it finds a real, owned `.oss` whose bounding `.git` dir is NOT the pointer's project (session started in repo A, now working in repo B). Pointer still wins for: nothing found, stray `.oss` inside the pointer's repo, submodule without `.oss`, cwd outside any repo. Shell + TS twin. RED: pointer=P1, cwd inside P2 -> P2 (oss-notify, oss-log, oss-value failed, oss-error, update-workflow-state, archive-check).
+- [x] R2-2 (security MEDIUM): the walk accepts a `.oss` only if owned by the current user and not a link, and stops with no project when the dir holding `.git` is not owned by the user (mirrors git safe.directory). Shell + TS. RED via resolver-level parity test (simulate foreign owner: BASH_ENV `test()` trick / geteuid spy).
+- [x] R2-3 (security LOW): `hooks/oss-precommand.sh:118` stops reading `~/.oss/current-project`; uses the shared resolver.
+- [x] R2-4 (pen LOW-1): `oss-log.sh` rotate_session_log (:179) and clear-session (:657) refuse when the archive destination exists or is a link. RED: committed links at the timestamp names -> nothing moved outside.
+- [x] R2-5 (pen LOW-2, IRON LAW #1b): `oss-value.sh:175/184/205` stop computing cwd with `$(pwd -P)`; use the resolver's cwd handling (keeps trailing newline). RED: repo top ending in newline.
+- [x] R2-6 (quality LOW): pointer prune uses ONE `find "$_OSS_SESS" -mindepth 2 -maxdepth 2 -name project -type f -mtime +30`, then the existing own-dir / id checks before removing the parent. Behaviour tests (31d pruned, 29d kept, links refused) stay green.
+
+Discarded (triage, not reachable / nag): INFO-1 NUL/C1 byte parity (pointer is the user's own 600 file), INFO-2 archive-check false "Archived" on dangling link (nothing escapes), INFO-3 relative HOME (not attacker-controlled), INFO-4 workflow get reads a linked file (no write).
