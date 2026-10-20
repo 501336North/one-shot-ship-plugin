@@ -118,7 +118,8 @@ _ov_get() {
     case "${1:-}" in
         key) re='^[A-Za-z0-9_-]{8,200}$' ;;
         style) re='^(visual|audio|sound|none)$' ;;
-        prompt|model) re='^[a-z0-9_./:-]{1,100}$' ;;
+        prompt) re='^[a-z0-9_./:-]{1,100}$' ;;
+        model) re='^[A-Za-z0-9_./:-]{1,100}$' ;;   # isValidModelId's ids (upper case too); no `..` (below)
         workflow) re='^[a-z0-9_.:-]{1,100}$' ;;
         category|name) re='^[a-z0-9_-]{1,100}$' ;;
         notify_style) re='^(visual|audio|sound|telegram|none)$' ;;   # /oss:settings' own lists
@@ -127,7 +128,7 @@ _ov_get() {
         verbosity) re='^(all|important|errors-only)$' ;;
         custom) re='^[a-z0-9-]{1,100}$' ;;   # oss-custom Step 0 = isSafeTeamCommandName
         *) false ;;
-    esac && _ov_take "$1.txt" "$re"
+    esac && _ov_take "$1.txt" "$re" && case "$1:$_OV_VAL" in model:*..*) _OV_VAL=""; false ;; esac
 }
 
 _ov_cmd_read() {

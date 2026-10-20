@@ -578,6 +578,25 @@ for v in '$(touch PWNED)' "abc'defgh" 'short' 'ossk key with space'; do
 done
 setup_act; ovs "$R" login; [[ "$RC" == 1 && -z "$(sbcalls)" && "$ERR" == *"not a valid API key"* ]] && pass "22: login without key.txt is refused" || fail "22: login without key.txt is refused" "rc=$RC err=$ERR"
 
+# --- 23. read model accepts what isValidModelId accepts (ship round 5, R5-3) -------------------
+# @behavior /oss:models set takes a real model id such as ollama/hf.co/org/Qwen3-GGUF:Q4_K_M.
+# @business-rule The shell rule and watcher isValidModelId (types/model-settings.ts) agree on these
+#           shared examples, so the two cannot drift; the shell rule still refuses shell
+#           metacharacters, spaces and `..` (isValidModelId may accept those: they never reach a shell).
+MODEL_OK='ollama/hf.co/org/Qwen3-GGUF:Q4_K_M ollama/codellama openrouter/meta-llama/llama-3.2-3b:free gemini/gemini-2.0-flash openai/GPT-4o default claude'
+MS="$ROOT/watcher/dist/types/model-settings.js"
+for m in $MODEL_OK; do
+    w=$(node --input-type=module -e "import { isValidModelId } from '$MS'; console.log(isValidModelId(process.argv[1]))" "$m" 2>&1)
+    [[ "$w" == true ]] && pass "23: isValidModelId accepts '$m'" || fail "23: isValidModelId accepts '$m'" "got $w"
+    setup_read; printf '%s\n' "$m" > "$VD/model.txt"; ov "$R" read model
+    [[ "$RC" == 0 && "$OUT" == "$m" ]] && pass "23: read model accepts '$m'" || fail "23: read model accepts '$m'" "rc=$RC out='$OUT' err=$ERR"
+done
+for m in 'ollama/a;touch PWNED' 'ollama/$(touch PWNED)' 'ollama/a b' 'ollama/../x' 'ollama/a..b' 'ollama/`id`' "ollama/a'b" 'ollama/a|b'; do
+    setup_read; printf '%s\n' "$m" > "$VD/model.txt"; ov "$R" read model
+    if pwned; then fail "23: read model refuses '$m'" "something ran"; else refused1 "23: read model refuses '$m'"; fi
+done
+setup_read; echo oss:Ship > "$VD/prompt.txt"; ov "$R" read prompt; refused1 "23: read prompt still refuses upper case (only the model rule widened)"
+
 echo
 echo "Results: $((RUN - FAILED))/$RUN passed, $FAILED failed"
 [[ "$FAILED" == 0 ]]

@@ -159,7 +159,7 @@ Gemini:
 
 #### `/oss:models set <prompt> <model>`
 
-Set model for a specific prompt. The two arguments reach the shell through the value folder, never typed into the command: run `~/.oss/hooks/oss-value.sh dir`, then use the Write tool to write the prompt name alone to `prompt.txt` and the model id alone to `model.txt` in the folder it printed. Then run this one call. It reads and checks each value (lower case, digits, `_ . / : -`, at most 100 characters), deletes its file, picks the prompt type (`/oss:x` is a command, `oss:x` an agent, anything else a skill) and runs the plugin's `models.js set` with the type, the name and the model, from the checked plugin root. If it refuses (`oss-value: models-set: refused`), tell the user the value was not valid and stop.
+Set model for a specific prompt. The two arguments reach the shell through the value folder, never typed into the command: run `~/.oss/hooks/oss-value.sh dir`, then use the Write tool to write the prompt name alone to `prompt.txt` and the model id alone to `model.txt` in the folder it printed. Then run this one call. It reads and checks each value (the prompt: lower case, digits, `_ . / : -`; the model: also upper case, e.g. `ollama/hf.co/org/Qwen3-GGUF:Q4_K_M`, never `..`; at most 100 characters), deletes its file, picks the prompt type (`/oss:x` is a command, `oss:x` an agent, anything else a skill) and runs the plugin's `models.js set` with the type, the name and the model, from the checked plugin root. If it refuses (`oss-value: models-set: refused`), tell the user the value was not valid and stop.
 
 ```bash
 ~/.oss/hooks/oss-value.sh models-set
