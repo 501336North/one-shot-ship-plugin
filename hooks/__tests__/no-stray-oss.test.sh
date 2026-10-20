@@ -42,6 +42,17 @@ OUT=$(cd "$P/sub2" && env -u CLAUDE_CODE_SESSION_ID HOME="$H" CLAUDE_PLUGIN_ROOT
 [[ "$OUT" == *"1 queued task"* && ! -e "$P/sub2/.oss" ]] && pass "control: with CLAUDE_PROJECT_DIR the project's queue is still found" \
     || fail "control: with CLAUDE_PROJECT_DIR the project's queue is still found" "rc=$RC out=$OUT"
 
+# R2-3: precommand never reads ~/.oss/current-project (it names whichever session started last);
+# with no CLAUDE_PROJECT_DIR it uses the shared resolver - here the cwd walk finds P, not B.
+B="$T/projB"; mkdir -p "$B/.oss"; (cd "$B" && git init -q) >/dev/null 2>&1
+printf '{"tasks":[{"status":"pending","priority":"high","prompt":"b1"},{"status":"pending","priority":"high","prompt":"b2"}]}\n' > "$B/.oss/queue.json"
+printf '%s\n' "$B" > "$H/.oss/current-project"
+OUT=$(cd "$P/sub2" && env -u CLAUDE_PROJECT_DIR -u CLAUDE_CODE_SESSION_ID HOME="$H" CLAUDE_PLUGIN_ROOT="$ROOT" OSS_SKIP_HEALTH_CHECK=1 \
+    "$SH" "$ROOT/hooks/oss-precommand.sh" "hello" 2>&1 </dev/null); RC=$?
+[[ "$OUT" == *"1 queued task"* && "$OUT" != *"2 queued task"* ]] \
+    && pass "R2-3: no CLAUDE_PROJECT_DIR: precommand shows the cwd project's queue, never current-project's" \
+    || fail "R2-3: no CLAUDE_PROJECT_DIR: precommand shows the cwd project's queue, never current-project's" "rc=$RC out=$OUT"
+
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
 [[ $FAILED -eq 0 ]]
