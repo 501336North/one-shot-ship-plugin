@@ -37,3 +37,16 @@ Round-2 re-check: HIGH closed in all three gates; LOW/INFO left.
 - [x] R3-8: DECISIONS.md D5 correction (agents/visionos-developer.md:36 and skills/visionos-developer.md:44 also have `{user_context}`): note as out of wrapper scope and add a FOLLOWUPS security line.
 
 Stop rule: if any task needs more than the value-file pattern already in oss-value.sh or a guard rule, stop and report instead of growing it.
+
+# Ship round 4 fixes (2026-10-20) — user: "Fix all 21 too"
+
+- [x] R4-1 (regression from R3-5): outside a git repo the helper uses one per-user value folder `~/.oss/run/home` (same not-link/owner/700 checks, events route to `$HOME/.oss`), so `/oss:login --key`, `/oss:models set`, `/oss:workflows <name>` and `/oss:trust` work from any folder again. Test: run each wrapper line from a non-repo cwd in a sandbox HOME.
+- [x] R4-2: every KNOWN_OPEN pair in the guard is fixed and removed from the list (the list ends empty, or the helper is deleted):
+  - model/user values → value files via `oss-value.sh read <name>` with a per-name rule in code: settings.md STYLE, VOICE, SOUND, VERBOSITY, TELEGRAM_LINKED; telegram.md `$1`; oss-custom.md `$1`; watcher.md PID (read from the repo file by the command itself, validated `^[0-9]{1,10}$`, never typed by the model).
+  - values the command can compute itself → compute in the same fence (API_KEY / API_URL from ~/.oss/config.json with jq; PLUGIN_ROOT / CLAUDE_PLUGIN_ROOT from `~/.oss/plugin-root` through the same checks oss-value uses; PLIST_PATH, STATUSLINE_SCRIPT, OSS_CONFIG_DIR from fixed paths; oss-audio's sourced variables made explicit in the fence).
+  - this also fixes `/oss:models set` (PLUGIN_ROOT never set).
+- [x] R4-3: the oss-log.sh `agent` exit-code bug under `set -euo pipefail` when the plugin cache folder is missing (found by R3-4's sandbox): `oss-value.sh agent` must return 0 when the log line was written. Smallest fix in oss-log.sh, with a test.
+
+Stop rule: same as round 3.
+
+Round 4 done 2026-10-20: R4-1 b351de9, R4-2 1064220, R4-3 21b1c85 (see PROGRESS.md, TESTING.md, D9/D10).

@@ -76,4 +76,32 @@ with ~/.oss/current-project naming a victim repo that has a .oss.
 - watcher vitest (no-setup config): test/hooks + test/commands + notification-copy 49 files 414/414;
   cc-v2150-adoption, prompts/refactored, skills/workflows 29/29. tsc --noEmit clean.
 
-## Last Updated: 2026-10-20 07:50 +07 by /oss:build (ship round 3 implementer)
+## Ship round 4 (2026-10-20 08:28 +07, CLAUDE_PROJECT_DIR unset, sequential)
+- R4-1 RED: oss-value.test.sh 170/175 (4c home folder, 12 failed from a non-repo cwd, 17 read from a
+  non-repo cwd); value-file-wrappers-run.test.sh (new) 2/12: login --key, models set, workflows,
+  trust refused from a non-repo cwd, the repo-cwd control passed. GREEN b351de9: 175/175, 12/12.
+- R4-2 RED: guard without KNOWN_OPEN flags 51 lines in 9 wrappers (detector fixture still 24/24);
+  run-test 36 red of 59 (settings, telegram, oss-custom, watcher, webhook, login root/paths,
+  oss-audio source ran PWNED, models set ran `/watcher/dist/cli/models.js`); oss-value 36 red of 242
+  (5 names, root verb, dir clear list); visual-test-auth 2/3. GREEN 1064220: guard 33/33, run-test
+  61/61, oss-value 242/242, visual-test-auth 3/3, oss-custom-name 5/5.
+- R4-3 RED: oss-log-missing-cache.test.sh (new) 2/4 (agent and phase start rc 1 with the line
+  written, no plugin cache; cache control passed); oss-value 18 rc 1. GREEN 21b1c85: 4/4, 243/243.
+- Anti-vacuity / mutations: R4-1 RED was the unchanged script; R4-2: voice rule `.*` -> 6 oss-value
+  + 2 run-test red; PID regex removed -> `1 1` and `1,1` read as running (2 red); linked check removed
+  -> odd linked value red; oss-audio `source` -> PWNED (RED run). Restored -> green.
+- Sandbox HOME (mktemp, never ~/.oss), blocks run as written with stub curl/node/say/afplay/
+  terminal-notifier/sips/launchctl/sleep/npm/brew/oss-decrypt: notify_style `$(touch PWNED)` and
+  `visual'; touch PWNED; '`, verbosity `$(touch PWNED)`, voice `$(touch PWNED)` and `Samantha` +
+  newline + `$(touch PWNED)`, sound backtick, custom `$(touch PWNED)`/`team:review`/quote/two-line/`../x`,
+  PID file `$(touch PWNED)`/`1; touch PWNED`, config apiKey `$(touch PWNED)`, plugin-root
+  `/tmp/$(touch PWNED)`, audio-config with `touch "$HOME/PWNED"`: all refused or inert, settings.json
+  untouched, nothing decrypted, PWNED never created. Every new read name also refused for quotes,
+  case, out-of-list values, two lines, and a valid first line followed by a command.
+- hooks/__tests__ + commands/__tests__: 43 files, 42 rc 0; only ideate-template 3/4 (pre-existing).
+  oss-value 243/243, oss-log-missing-cache 4/4, guard 33/33, value-file-wrappers 32/32,
+  value-file-wrappers-run 61/61 under bash 3.2 and 5.2.26.
+- watcher vitest (no-setup config): test/hooks + test/commands + notification-copy 49 files 414/414.
+  tsc --noEmit clean.
+
+## Last Updated: 2026-10-20 08:28 +07 by /oss:build (ship round 4 implementer)

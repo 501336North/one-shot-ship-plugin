@@ -17,6 +17,9 @@ Plan, design and decisions live in the API repo (branch feat/plugin-value-flags/
 - [x] Ship round 2 R2-1..R2-4: RED d021aa3 (guard: 51 lines in 27 wrappers; notification-copy 2 red; oss-value 7d 2 red) -> GREEN 7413730 + 3485b50 (completed 2026-10-20)
 - [x] Ship round 3 R3-1..R3-7: RED 55d92ef (value-file-wrappers 0/32, oss-value 84 red, guard flags 29 lines) -> GREEN 8ebb265 (completed 2026-10-20)
 - [x] R3-8: D5 corrected, visionos `{user_context}` in FOLLOWUPS (completed 2026-10-20)
+- [x] Ship round 4 R4-1: value folder ~/.oss/run/home outside a repo; RED 10/12 -> GREEN b351de9 (completed 2026-10-20)
+- [x] Ship round 4 R4-2: the 21 KNOWN_OPEN pairs fixed, mechanism removed, `read` names notify_style/voice/sound/verbosity/custom, verb `root`; RED (guard 51 lines, run-test 36 red, oss-value 36 red) -> GREEN 1064220 (completed 2026-10-20)
+- [x] Ship round 4 R4-3: oss-log.sh find/pipefail exit; RED 2/4 -> GREEN 21b1c85 (completed 2026-10-20)
 
 ## Deviations from the plan
 - code-simplifier is NOT unserved: /oss:code-simplifier serves agents/code-simplifier, which sends
@@ -34,8 +37,11 @@ Plan, design and decisions live in the API repo (branch feat/plugin-value-flags/
   no .oss is found; A3/A4 must move them onto oss-value.sh (new key: toplevel + git dir) in step.
 - plan.md and context-report.md keep a fixed `failed '{}'` line (no model text; possible duplicate log).
 - hooks/oss-session-start-new.sh and -test.sh have their own stale HOOKS_TO_COPY (not registered).
-- Round 3: the guard's unassigned-variable rule hits 21 file:NAME pairs outside the R3-5 list
-  (settings.md is the big one); KNOWN_OPEN in the guard + FOLLOWUPS (D8). The value-file verbs need a
-  git repo, so login --key / models set / workflows / trust refuse outside one (D7, FOLLOWUPS).
+- ~~Round 3: 21 KNOWN_OPEN pairs; value verbs need a git repo~~: fixed in ship round 4 (D9, D10).
+- Round 4 provenance, not changed: login.md:110/260 read ~/.oss/plugin-root unchecked and login.md:230
+  names ${CLAUDE_PLUGIN_ROOT} (fallbacks for when ~/.oss/hooks is missing, so oss-value.sh cannot be
+  used there); hooks/oss-log.sh:956 and oss-iron-law-check.sh:240 read it unchecked; oss-notify.sh:123
+  has the same find/pipefail shape (reached only with a wrong CLAUDE_PLUGIN_ROOT and no cache);
+  login.md Steps 6.3/8.1 `cp "~/.oss/hooks/oss-statusline.sh"` quotes the ~ (pre-existing, fails).
 
-## Last Updated: 2026-10-20 07:50 +07 by /oss:build (ship round 3 implementer)
+## Last Updated: 2026-10-20 08:28 +07 by /oss:build (ship round 4 implementer)

@@ -67,6 +67,7 @@ the fixed '{}' payloads (D2) a notice reads e.g. "OSS / Workflow event" instead 
   three back from ~/.oss/settings.json with jq, so only STYLE needed `read`.
 - The verbs need a git repo (the folder is per repo, ADR-001): login --key, models set, workflows
   <name> and trust now refuse outside one and say so. Reported, not worked around (stop rule).
+  **Superseded by D9 (ship round 4, R4-1):** outside a repo the folder is ~/.oss/run/home.
 
 ## D8 (2026-10-20, ship round 3 R3-6/R3-7): the guard's widened rule
 Adds to D5: a placeholder may contain spaces, `.`, `:` and `|` (not at its ends), or be an upper-case
@@ -84,3 +85,41 @@ and webhook.md CLAUDE_PLUGIN_ROOT, login.md PLIST_PATH/STATUSLINE_SCRIPT, oss-au
 visual-test.md OSS_CONFIG_DIR). They are listed in KNOWN_OPEN in the guard, checked both ways (a new
 hit fails; a listed pair that no longer occurs fails as STALE), and in FOLLOWUPS. Fixing them is
 beyond the round-3 tasks (stop rule).
+**Superseded by D10 (ship round 4, R4-2):** all 21 pairs are fixed and the KNOWN_OPEN mechanism is
+removed from the guard; an unassigned variable in a shell fence now always fails it.
+
+## D9 (2026-10-20, ship round 4 R4-1): outside a git repo, one per-user value folder
+When `git rev-parse --show-toplevel` fails (the cwd is in no repository), `_ov_repo` leaves the
+toplevel empty and `_ov_key` returns the fixed key `home`, so the folder is `~/.oss/run/home`. It gets
+exactly the checks a repo folder gets (`~/.oss/run` and the folder: not a link, owned, mode 700;
+value files through `_ov_open`), is cleared by `dir` and pruned with the others. `home` is never 16
+hex, so it cannot meet a repo's folder. `_ov_walk` already maps an empty toplevel to `$HOME`, so
+`failed`/`error`/`agent` events from outside a repo land in `~/.oss`. A repo whose git-dir lookup
+fails is still refused (only a failed toplevel lookup means "no repo"). login --key, models set,
+workflows <name> and trust work from any folder again; the wrappers no longer say "inside a git
+repository".
+
+## D10 (2026-10-20, ship round 4 R4-2): compute in the fence, read the rest, type nothing
+Every `$NAME` a wrapper shell block uses is assigned in that block (the guard's rule, now without
+exceptions). Where it comes from, in order of preference:
+1. Not needed in the shell at all: telegram's subcommand only picks which block to run (prose).
+2. Computed in the block: the API key and URL from `~/.oss/config.json` with jq (settings, telegram);
+   the Telegram link from the API, true only when it says exactly `true`; the plugin root with the new
+   verb `oss-value.sh root` (models set, webhook, login), which applies the checks `error` already
+   applied to `~/.oss/plugin-root` (not a link, owned, absolute, one line, a folder; one helper
+   `_ov_root` for both); fixed paths for PLIST_PATH, STATUSLINE_SCRIPT and visual-test's config.json
+   (`OSS_CONFIG_DIR` was never set in the Bash tool); oss-audio's three settings read by name with
+   sed instead of sourcing (running) the file.
+3. Read from the block's own file with a check: watcher.md's PID from `.oss/watcher.pid`, used only
+   when it matches `^[0-9]{1,10}$` (`1 1` would otherwise make `ps -p` report running).
+4. A user/model value: a value file read by `oss-value.sh read <name>` with a per-name rule in code,
+   each the wrapper's own list: `notify_style` visual|audio|sound|telegram|none (login's `style` has
+   no telegram, so it is a separate name), `voice` Samantha|Daniel|Karen|Moira, `sound`
+   Glass|Ping|Purr|Pop, `verbosity` all|important|errors-only, `custom` `^[a-z0-9-]{1,100}$`
+   (oss-custom Step 0 = isSafeTeamCommandName). `dir` clears these 5 files too (20 in all).
+settings.md Steps 3.5-5 became one block: it reads style and verbosity (and voice/sound only for
+audio/sound, otherwise keeps the current value from settings.json), checks the link, falls back to
+visual for an unlinked Telegram, syncs, writes settings.json with `jq -n --arg` (no heredoc
+interpolation) and prints the new configuration. The lead's brief named `telegram_linked` and a
+telegram argument as read names; the link is computed instead (the API is the source, not the model)
+and the argument never reaches a shell, so neither name exists.
