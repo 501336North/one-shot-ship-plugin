@@ -21,6 +21,15 @@ Plan, design and decisions live in the API repo (branch feat/plugin-value-flags/
 - [x] Ship round 4 R4-2: the 21 KNOWN_OPEN pairs fixed, mechanism removed, `read` names notify_style/voice/sound/verbosity/custom, verb `root`; RED (guard 51 lines, run-test 36 red, oss-value 36 red) -> GREEN 1064220 (completed 2026-10-20)
 - [x] Ship round 4 R4-3: oss-log.sh find/pipefail exit; RED 2/4 -> GREEN 21b1c85 (completed 2026-10-20)
 
+## Ship round 5 (2026-10-20)
+- [x] R5-1: zero-approval value hand-offs: `Bash(~/.oss/hooks/oss-value.sh:*)` allowed; every wrapper
+  spells `~/.oss/hooks/oss-value.sh`; verbs `decrypt [custom]`, `models-set`, `cli <script> <args>`;
+  compound guard widened (completed 2026-10-20, 36febd1)
+- [x] R5-2: default /oss:login <KEY> = --key path; verb `login`; key via oss_api_curl (stdin); _ov_take
+  no longer silences stderr after a missing file (completed 2026-10-20, ba86c72, 9bc354d)
+- [x] R5-3: `read model` accepts upper case (isValidModelId examples pinned), refuses `..` (completed 2026-10-20, c72ed05)
+- [x] R5-4: guard false positives fixed, rule name printed (completed 2026-10-20, b4a232b)
+
 ## Deviations from the plan
 - code-simplifier is NOT unserved: /oss:code-simplifier serves agents/code-simplifier, which sends
   `--workflow code-simplifier failed`. So P5 = 26 deletions + 1 rewrite (oss-custom), not 25 + 2.
@@ -43,5 +52,10 @@ Plan, design and decisions live in the API repo (branch feat/plugin-value-flags/
   used there); hooks/oss-log.sh:956 and oss-iron-law-check.sh:240 read it unchecked; oss-notify.sh:123
   has the same find/pipefail shape (reached only with a wrong CLAUDE_PLUGIN_ROOT and no cache);
   login.md Steps 6.3/8.1 `cp "~/.oss/hooks/oss-statusline.sh"` quotes the ~ (pre-existing, fails).
+- Round 5, not changed: the Write tool to ~/.oss/run/<key> asks for approval by default (outside the
+  project and additionalDirectories; no Edit(~/.oss/run/**) allow rule is installed). Blocks that also
+  run curl/jq/say (settings Step 4), brew/npm/launchctl/sips or a heredoc write (login first-run steps
+  6-8, style) still prompt for those programs; they hold one `X=$(~/.oss/hooks/oss-value.sh ...) ||
+  exit 1` line, no chain.
 
-## Last Updated: 2026-10-20 08:28 +07 by /oss:build (ship round 4 implementer)
+## Last Updated: 2026-10-20 11:20 +07 by /oss:build (ship round 5 implementer)

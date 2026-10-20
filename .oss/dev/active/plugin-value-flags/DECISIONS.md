@@ -123,3 +123,20 @@ visual for an unlinked Telegram, syncs, writes settings.json with `jq -n --arg` 
 interpolation) and prints the new configuration. The lead's brief named `telegram_linked` and a
 telegram argument as read names; the link is computed instead (the API is the source, not the model)
 and the argument never reaches a shell, so neither name exists.
+
+## D11 (2026-10-20, ship round 5 R5-1): one call per value hand-off, for zero approval
+Claude Code auto-approves a Bash call only when it matches an allowed prefix literally, and asks before
+a `$(...)` chained with `&&`/`;` even when every part is allowed. So a value hand-off is ONE call
+spelled `~/.oss/hooks/oss-value.sh <verb> <fixed args>` (allowed by `Bash(~/.oss/hooks/oss-value.sh:*)`
+in OSS_PERMISSIONS); never `"$HOME/.oss/hooks/oss-value.sh"` (that spelling matches no prefix) and
+never `test -x ... && ...`. Where a read value feeds an action, a thin verb does both over the existing
+`_ov_dir` / `_ov_get` (the one list of per-name rules, shared with `read`) / `_ov_root`:
+`decrypt [custom]` (trust, oss-custom -> ~/.oss/bin/oss-decrypt, in the caller's folder),
+`models-set` (prompt type rule moved from models.md), `cli <script> <args>` (only webhook-setup setup
+[--port 1-5 digits], webhook-toggle on, update-workflow-state init; arguments checked by count and
+value), `login` (key checked against the API through oss_api_curl, so the key is on curl's stdin,
+then saved to config.json). Guarded by no-compound-commands.test.sh (substitution-in-chain on a hook
+line, not-allowlisted-spelling; fixture). Not covered: the Write tool to ~/.oss/run asks by default
+(no Edit(~/.oss/run/**) rule is installed; reported, not changed), and blocks that also run curl, jq,
+npm, launchctl, sips or a heredoc write prompt for those programs regardless.
+

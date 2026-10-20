@@ -50,3 +50,16 @@ Stop rule: if any task needs more than the value-file pattern already in oss-val
 Stop rule: same as round 3.
 
 Round 4 done 2026-10-20: R4-1 b351de9, R4-2 1064220, R4-3 21b1c85 (see PROGRESS.md, TESTING.md, D9/D10).
+
+# Ship round 5 fixes (2026-10-20) — user: "Fix MEDIUMs + regressions, merge"
+
+Final re-check: pen-test PASS; security 1 MEDIUM (default login prose); code review 1 MEDIUM (approval prompts, regression from rounds 3-4) + LOWs.
+
+- [x] R5-1 (MEDIUM, regression): zero-approval again. Add `Bash(~/.oss/hooks/oss-value.sh:*)` to hooks/oss-setup-permissions.sh OSS_PERMISSIONS (and any test that pins that list), spell every wrapper call `~/.oss/hooks/oss-value.sh` (matches the allowlist), and make each value hand-off a single allowlisted call with no `$(...) &&` chain: trust.md:195-199, build.md:119-126, models.md:182, webhook.md:81,147,197,204,242,268, login.md:314,349. Smallest way: a verb that does the read and the action itself (e.g. `oss-value.sh decrypt` reads category+name and execs ~/.oss/bin/oss-decrypt with them; `models set` reads prompt+model and runs the CLI) — only where a chain is otherwise unavoidable. Widen `no-compound-commands.test.sh` to catch `$(` + `&&` on wrapper shell lines.
+- [x] R5-2 (MEDIUM): the default `/oss:login <KEY>` flow (login.md:131-158) uses the same dir → Write key.txt → read key block as `--key`; no prose that has the model type the key into curl.
+- [x] R5-3 (LOW, regression): `read model` accepts what `isValidModelId` accepts (upper case allowed, e.g. `ollama/hf.co/org/Qwen3-GGUF:Q4_K_M`), still refusing shell metacharacters; one shared rule source if practical, else a test pinning both to the same examples.
+- [x] R5-4 (LOW): guard false positives: strip single-quoted text before the `{}`/`[]` checks, allow standard env vars (USER, OSTYPE, TMPDIR, SHELL, PATH, LANG, TERM) and function-positional `$1` inside a `f() { … }` body, and print which rule fired in each failure. Fixture: the 5 false positives from the review become negatives.
+
+Stays in FOLLOWUPS: API key on curl argv (item 44) - except /oss:login, whose key now goes through oss_api_curl (9bc354d).
+
+Round 5 done 2026-10-20: R5-1 36febd1, R5-2 ba86c72 + 9bc354d, R5-3 c72ed05, R5-4 b4a232b (see PROGRESS.md, TESTING.md, D11).

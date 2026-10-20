@@ -104,4 +104,31 @@ with ~/.oss/current-project naming a victim repo that has a .oss.
 - watcher vitest (no-setup config): test/hooks + test/commands + notification-copy 49 files 414/414.
   tsc --noEmit clean.
 
-## Last Updated: 2026-10-20 08:28 +07 by /oss:build (ship round 4 implementer)
+## Ship round 5 (2026-10-20)
+- R5-1 RED: auto-permissions 8/10 (oss-value.sh not allowed); no-compound-commands flagged 40 wrapper
+  lines (not-allowlisted-spelling, substitution-in-chain) with its detector fixture passing;
+  value-file-wrappers 17/38; no-model-text dir/failed pins 32/33; run-test 50/61 (no one-call blocks);
+  oss-value 50 red (decrypt/models-set/cli: usage). GREEN 36febd1: 10/10, 2/2, 38/38, 33/33, 61/61, 288/288.
+- R5-2 RED: oss-value 22 (login: 9 red), value-file-wrappers 4 red, run-test 2 red. GREEN ba86c72: 297/297,
+  41/41, 61/61. Final run then found oss-api-curl.test.sh guard red (Bearer header in a tracked hook):
+  RED test 22 key-on-stdin-not-argv (319/320), GREEN 9bc354d (login uses oss_api_curl): 320/320, 6/6.
+- R5-3 RED: 4 red (upper-case model ids refused, `..` accepted). GREEN c72ed05. The shared examples
+  (incl. ollama/hf.co/org/Qwen3-GGUF:Q4_K_M, openai/GPT-4o, default, claude) pass isValidModelId run
+  with node against watcher/dist/types/model-settings.js AND `read model`.
+- R5-4 RED: guard fixture flagged 30 (6 false positives) and no rule names. GREEN b4a232b: 34/34, fixture
+  25 positives exactly (adds `echo "$3"` after a function body).
+- Anti-vacuity / mutations (each restored after): decrypt without cd back, name unchecked, cli port check
+  removed, cli arg count loosened, models-set type rule changed, login without the 200 check, key
+  unchecked, config overwritten, _ov_take back to `exec 3<&- 2>/dev/null`; guard: function body never
+  closes, no fn positional, no single-quote strip, no env names, no [OK], wrong rule name -> each red.
+  models-set's `cd` back to the caller's folder was unguarded and removed (models.js uses ~/.oss).
+- Sandbox HOME (mktemp, never ~/.oss), stub node/curl/oss-decrypt: category/name/custom/prompt/model
+  values `$(touch PWNED)`, quotes, `;`, backticks, `..`, `/`, upper case where not allowed, two lines,
+  symlinked value files, missing files; cli `webhook-toggle off;id`, `../../x`, extra args, bad ports,
+  one argument with a space; login keys `$(touch PWNED)`, quote, short, spaces, API 401. All refused
+  with nothing run or saved; PWNED never created; the key never in curl argv.
+- hooks/__tests__ + commands/__tests__: 43 files, 42 rc 0; only ideate-template 3/4 (pre-existing).
+  oss-value 320/320, guard 34/34, run-test 61/61, compound 2/2 also under /opt/local/bin/bash 5.
+- watcher vitest (no-setup config) test/hooks + test/commands: 48 files 371/371. tsc --noEmit clean.
+
+## Last Updated: 2026-10-20 11:20 +07 by /oss:build (ship round 5 implementer)
