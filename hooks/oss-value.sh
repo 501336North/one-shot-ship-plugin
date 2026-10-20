@@ -138,7 +138,7 @@ _ov_cmd_read() {
 # held to its read rule, in the caller's folder - one allowed call instead of a $(read) && chain.
 _ov_cmd_decrypt() {
     local o t n
-    o=$(pwd -P)
+    oss_phys_cwd; o="$_OSS_CWD"
     _ov_dir && case "$#:${1:-}" in
         0:) _ov_get category && t=$_OV_VAL && _ov_get name && n=$_OV_VAL ;;
         1:custom) t=custom && _ov_get custom && n=$_OV_VAL ;;
@@ -170,7 +170,7 @@ _ov_cmd_cli() {
 
 _ov_cmd_agent() {
     local o t
-    o=$(pwd -P)
+    oss_phys_cwd; o="$_OSS_CWD"
     oss_valid_workflow_name "${1:-}" \
     && case "${2:-}" in start) t="starting: delegated task" ;; complete) t="completed: delegated task" ;; *) false ;; esac \
     && _ov_dir && _ov_take agent.txt '^[a-z][a-z0-9:-]{0,60}$' \
@@ -181,7 +181,7 @@ _ov_cmd_agent() {
 
 _ov_cmd_failed() {
     local o r
-    o=$(pwd -P)
+    oss_phys_cwd; o="$_OSS_CWD"
     oss_valid_workflow_name "${1:-}" && _ov_dir && _ov_read_value reason.txt && r="$_OV_VAL" \
     || { echo "oss-value: failed: refused (bad workflow name, or reason.txt missing or unsafe)" >&2; return 1; }
     _ov_walk "$o"
@@ -204,7 +204,7 @@ _ov_cmd_root() {
 
 _ov_cmd_error() {
     local o R m h e c s y k a x
-    o=$(pwd -P)
+    oss_phys_cwd; o="$_OSS_CWD"
     case "${1:-}" in cmd:*) ;; *) false ;; esac && oss_valid_workflow_name "${1#cmd:}" \
     && _ov_root && R=$_OV_ROOT && test -f "$R/watcher/dist/cli/oss-error.js" \
     && _ov_dir && _ov_read_value message.txt && m="$_OV_VAL" && _ov_read_value hint.txt && h="$_OV_VAL" \

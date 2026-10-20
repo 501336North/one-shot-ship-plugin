@@ -9,6 +9,7 @@
 #   oss_valid_workflow_name <name>        ^[a-z][a-z0-9-]{0,40}$ (twin: watcher/src/utils/workflow-name.ts)
 #   oss_project_walk <dir>                the nearest real (not linked) .oss from <dir> up to the first
 #                                         dir holding a .git entry -> _OSS_PROJ ("" = the global ~/.oss)
+#   oss_phys_cwd                          the physical cwd -> _OSS_CWD (a trailing newline kept)
 #   oss_resolve_project [dir]             CLAUDE_PROJECT_DIR if set, else oss_project_walk from [dir] or
 #                                         the physical cwd when it finds a .oss in another repo than this
 #                                         session's pointer (oss_session_project), else the pointer, else
@@ -29,13 +30,14 @@
 # target for a link between check and write (reproduced in the 2.0.87 pen test). Committed repo
 # content cannot: it needs a live local process. See DECISIONS.md and FOLLOWUPS (G17).
 
-_oss_phys_dir() { (cd -P -- "$1" 2>/dev/null && pwd -P); }
+# <dir> -> _OSS_PD, its physical path; a trailing newline is kept ($(pwd -P) alone drops it, R2-5)
+_oss_phys_dir() { _OSS_PD=$(cd -P -- "$1" 2>/dev/null && pwd -P && echo .) || { _OSS_PD=""; return 1; }; _OSS_PD="${_OSS_PD%$'\n.'}"; }
 # G9: the project and $HOME are resolved once per process (each resolution is a subshell).
 _OSS_PC_K1=""; _OSS_PC_V1=""; _OSS_PC_K2=""; _OSS_PC_V2=""
 _oss_phys_cached() { # <path> -> _OSS_PHYS (no subshell, so the cache survives)
     if [[ -n "$_OSS_PC_K1" && "$1" == "$_OSS_PC_K1" ]]; then _OSS_PHYS="$_OSS_PC_V1"; return 0; fi
     if [[ -n "$_OSS_PC_K2" && "$1" == "$_OSS_PC_K2" ]]; then _OSS_PHYS="$_OSS_PC_V2"; return 0; fi
-    _OSS_PHYS=$(_oss_phys_dir "$1") && [[ -n "$_OSS_PHYS" ]] || return 1
+    _oss_phys_dir "$1" && _OSS_PHYS="$_OSS_PD" && [[ -n "$_OSS_PHYS" ]] || return 1
     _OSS_PC_K2="$_OSS_PC_K1"; _OSS_PC_V2="$_OSS_PC_V1"; _OSS_PC_K1="$1"; _OSS_PC_V1="$_OSS_PHYS"
 }
 _oss_uid_of() { local m l o r; read -r m l o r < <(ls -ldn -- "$1" 2>/dev/null) && echo "$o"; }
@@ -73,7 +75,7 @@ oss_safe_mkdir() {
         [[ -e "$cur" || -L "$cur" ]] || mkdir -- "$cur" 2>/dev/null || true
         [[ ! -L "$cur" && -d "$cur" ]] && _oss_owned_ok "$cur" "$real" || return 1
     done
-    phys=$(_oss_phys_dir "$cur") || return 1
+    _oss_phys_dir "$cur" || return 1; phys="$_OSS_PD"
     [[ "$phys" == "$real" || "$phys" == "$real"/* ]] || return 1
     _OSS_SAFE_DIR="$cur"   # the directory the checks above actually walked
 }
@@ -122,12 +124,14 @@ oss_project_walk() { # -> _OSS_PROJ, and _OSS_GIT: the dir holding the .git entr
         d="${d%/*}"
     done
 }
+# The physical cwd -> _OSS_CWD, a trailing newline kept ($(pwd -P) alone drops it). The ONE cwd rule.
+oss_phys_cwd() { _oss_phys_dir . ; _OSS_CWD="$_OSS_PD"; }
 # R2-1 (D3): the pointer wins unless the walk finds a .oss in ANOTHER repo (its .git dir is not the
 # pointer project's): session started in product 1, the user now works in product 2.
 oss_resolve_project() { # [dir] (default: the physical cwd)
     if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then _OSS_PROJ="$CLAUDE_PROJECT_DIR"; return 0; fi
     local d="${1:-}" w g p
-    if [[ -z "$d" ]]; then d=$(pwd -P; echo .); d="${d%$'\n.'}"; fi
+    if [[ -z "$d" ]]; then oss_phys_cwd; d="$_OSS_CWD"; fi
     oss_project_walk "$d"; w="$_OSS_PROJ"; g="$_OSS_GIT"
     if oss_session_project; then
         p="$_OSS_PROJ"

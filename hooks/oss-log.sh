@@ -45,7 +45,7 @@ validate_project_path() {
 
     # Canonicalize with realpath (resolves symlinks)
     local canonical
-    canonical=$(realpath "$project_path" 2>/dev/null) || return 1
+    _oss_phys_dir "$project_path" || return 1; canonical="$_OSS_PD"   # R2-5: the one physical-path rule
     [[ -z "$canonical" ]] && return 1
 
     # Must be a directory
@@ -73,7 +73,7 @@ validate_project_path() {
         return 1
     fi
 
-    echo "$canonical"
+    _OSS_VALID="$canonical"   # -> _OSS_VALID (a variable: $(...) would drop a trailing newline)
     return 0
 }
 
@@ -90,7 +90,7 @@ get_log_base() {
     # Validate and use project-local if valid
     if [[ -n "$project_dir" ]]; then
         local validated_path
-        validated_path=$(validate_project_path "$project_dir") || validated_path=""
+        validate_project_path "$project_dir" && validated_path="$_OSS_VALID" || validated_path=""
         if [[ -n "$validated_path" ]]; then
             echo "$validated_path/.oss/logs"
             return 0
@@ -839,7 +839,7 @@ case "$ACTION" in
         RAW_PROJECT="$OSS_LOG_PROJECT_DIR"
         CURRENT_PROJECT=""
         if [[ -n "$RAW_PROJECT" ]]; then
-            CURRENT_PROJECT=$(validate_project_path "$RAW_PROJECT") || CURRENT_PROJECT=""
+            validate_project_path "$RAW_PROJECT" && CURRENT_PROJECT="$_OSS_VALID" || CURRENT_PROJECT=""
         fi
         if [[ -n "$CURRENT_PROJECT" && -d "$CURRENT_PROJECT/.oss" ]]; then
             WORKFLOW_STATE_FILE="$CURRENT_PROJECT/.oss/health-workflow-state.json"
@@ -924,7 +924,7 @@ EOF
         # Run health check in current project
         # The project is OSS_LOG_PROJECT_DIR (the shared rule)
         # Output written to health-check.log for status detection
-        CURRENT_PROJECT=$(validate_project_path "$OSS_LOG_PROJECT_DIR") || CURRENT_PROJECT=""
+        validate_project_path "$OSS_LOG_PROJECT_DIR" && CURRENT_PROJECT="$_OSS_VALID" || CURRENT_PROJECT=""
 
         if [[ -z "$CURRENT_PROJECT" ]]; then
             echo "Not inside a project (no .oss found and no session pointer)"
