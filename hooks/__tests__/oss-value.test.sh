@@ -460,6 +460,11 @@ echo code-reviewer > "$VD/agent.txt"; ova "$A" agent build complete
     || fail "18: agent build complete logs the completion" "rc=$RC err=$ERR"
 wait_state "$A" '.activeAgent // "none"' none && pass "18: completion clears activeAgent" || fail "18: completion clears activeAgent" "$(cat "$A/.oss/workflow-state.json" 2>&1)"
 [[ ! -e "$VD/agent.txt" ]] && pass "18: agent.txt is deleted after complete" || fail "18: agent.txt is deleted after complete" "still there"
+# without CLAUDE_PLUGIN_ROOT and with no plugin cache folder (the Bash tool, R4-3): the line is
+# logged and agent exits 0
+setup_failed; echo code-reviewer > "$VD/agent.txt"; ov "$A" agent build start
+[[ "$RC" == 0 && -n "$(agent_log "$A" 'code-reviewer: starting: delegated task')" ]] && pass "18: with no plugin cache, agent logs the line and exits 0 (R4-3)" \
+    || fail "18: with no plugin cache, agent logs the line and exits 0 (R4-3)" "rc=$RC err=$ERR"
 # hostile names: refused, nothing logged, nothing run, file deleted
 for v in '$(touch PWNED)' 'Code-Reviewer' 'code reviewer' "a'b" '1agent' "$(printf 'a%.0s' {1..62})" "$NLV"; do
     setup_failed; printf '%s' "$v" > "$VD/agent.txt"; ova "$A" agent build start
