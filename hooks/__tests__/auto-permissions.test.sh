@@ -92,6 +92,23 @@ else
 fi
 rm -rf "$TMPDIR_4"
 
+# --- Test 5: the value-folder helper is allowed (ship round 5, R5-1) ---
+# @behavior A user runs /oss:trust, /oss:models set, /oss:webhook, /oss:login and the other value
+#           hand-offs without an approval prompt: each is one `~/.oss/hooks/oss-value.sh <verb>` call.
+# @business-rule Claude Code matches the prefix literally, so the rule is this exact string.
+echo "Test 5: Allows ~/.oss/hooks/oss-value.sh (fresh and merged)"
+TMPDIR_5=$(mktemp -d)
+"$SETUP_SCRIPT" "$TMPDIR_5"
+grep -qF '"Bash(~/.oss/hooks/oss-value.sh:*)"' "$TMPDIR_5/.claude/settings.local.json" && pass "Fresh file allows oss-value.sh" || fail "Fresh file does not allow oss-value.sh"
+grep -qF '"Edit(~/.oss/run/**)"' "$TMPDIR_5/.claude/settings.local.json" && pass "Fresh file allows value-file writes in ~/.oss/run" || fail "Fresh file does not allow value-file writes in ~/.oss/run"
+! grep -qF 'oss-login.sh' "$TMPDIR_5/.claude/settings.local.json" && pass "Fresh file does not allow oss-login.sh (a key change always asks, R5-8)" || fail "Fresh file allows oss-login.sh (a key change must always ask, R5-8)"
+printf '{"permissions":{"allow":["WebSearch"]}}\n' > "$TMPDIR_5/.claude/settings.local.json"
+"$SETUP_SCRIPT" "$TMPDIR_5"
+grep -qF '"Bash(~/.oss/hooks/oss-value.sh:*)"' "$TMPDIR_5/.claude/settings.local.json" && pass "Merged file allows oss-value.sh" || fail "Merged file does not allow oss-value.sh"
+grep -qF '"Edit(~/.oss/run/**)"' "$TMPDIR_5/.claude/settings.local.json" && pass "Merged file allows value-file writes in ~/.oss/run" || fail "Merged file does not allow value-file writes in ~/.oss/run"
+! grep -qF 'oss-login.sh' "$TMPDIR_5/.claude/settings.local.json" && pass "Merged file does not allow oss-login.sh (a key change always asks, R5-8)" || fail "Merged file allows oss-login.sh (a key change must always ask, R5-8)"
+rm -rf "$TMPDIR_5"
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

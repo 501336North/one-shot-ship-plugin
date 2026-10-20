@@ -11,7 +11,7 @@ description: Extract user stories and acceptance criteria from ideas
 **Workflow Position:** ideate -> **REQUIREMENTS** -> api-design -> plan
 
 **Usage:**
-```bash
+```text
 /oss:requirements [OPTIONS] <IDEA>
 ```
 
@@ -113,12 +113,7 @@ The prompt guides you through:
 
 On success (requirements extracted):
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow requirements complete '{"storiesCount": {COUNT}, "criteriaCount": {CRITERIA}}'
-```
-
-On failure (couldn't extract requirements):
-```bash
-~/.oss/hooks/oss-notify.sh --workflow requirements failed '{"reason": "{REASON}"}'
+~/.oss/hooks/oss-notify.sh --workflow requirements complete '{}'
 ```
 
 ## Error Handling

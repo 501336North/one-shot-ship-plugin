@@ -145,15 +145,10 @@ The prompt guides codebase analysis with:
 
 After onboarding is complete:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow onboard complete '{"docsGenerated": 5, "projectType": "{TYPE}"}'
+~/.oss/hooks/oss-notify.sh --workflow onboard complete '{}'
 ```
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.
-
-If onboarding fails:
-```bash
-~/.oss/hooks/oss-notify.sh --workflow onboard failed '{"error": "{REASON}"}'
-```
 
 ## Command Orchestration
 

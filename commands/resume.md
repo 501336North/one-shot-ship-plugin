@@ -159,7 +159,7 @@ Execute the prompt returned by the API. The proprietary prompt contains:
 
 After resume is complete:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow resume complete '{"feature": "{FEATURE_NAME}", "phase": "{PHASE}", "task": "{TASK}"}'
+~/.oss/hooks/oss-notify.sh --workflow resume complete '{}'
 ```
 
 ## Resume Flow

@@ -317,7 +317,7 @@ case "$ACTION" in
                     UPDATE_CLI="${CLAUDE_PLUGIN_ROOT}/watcher/dist/cli/update-workflow-state.js"
                 else
                     # Find latest installed version (version-agnostic)
-                    UPDATE_CLI=$(find "$HOME/.claude/plugins/cache/one-shot-ship-plugin" -name "update-workflow-state.js" -path "*/watcher/dist/cli/*" -type f 2>/dev/null | head -1)
+                    UPDATE_CLI=$(find "$HOME/.claude/plugins/cache/one-shot-ship-plugin" -name "update-workflow-state.js" -path "*/watcher/dist/cli/*" -type f 2>/dev/null | head -1 || true)
                 fi
 
                 if [[ -n "$UPDATE_CLI" ]]; then
@@ -424,7 +424,7 @@ case "$ACTION" in
             UPDATE_CLI="${CLAUDE_PLUGIN_ROOT}/watcher/dist/cli/update-workflow-state.js"
         else
             # Find latest installed version (version-agnostic)
-            UPDATE_CLI=$(find "$HOME/.claude/plugins/cache/one-shot-ship-plugin" -name "update-workflow-state.js" -path "*/watcher/dist/cli/*" -type f 2>/dev/null | head -1)
+            UPDATE_CLI=$(find "$HOME/.claude/plugins/cache/one-shot-ship-plugin" -name "update-workflow-state.js" -path "*/watcher/dist/cli/*" -type f 2>/dev/null | head -1 || true)
         fi
 
         if [[ -n "$UPDATE_CLI" ]]; then

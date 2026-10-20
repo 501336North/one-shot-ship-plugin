@@ -72,7 +72,7 @@ Register at https://www.oneshotship.com
 
 Call the workflows API endpoint to get the list:
 
-```
+```http
 URL: https://one-shot-ship-api.onrender.com/api/v1/workflows
 Method: GET
 Headers:
@@ -95,7 +95,7 @@ Response:
 
 ## Step 3: Display Workflow List
 
-```
+```text
 ==============================================
      WORKFLOW CONFIGURATION
 ==============================================
@@ -115,10 +115,16 @@ Dashboard: https://www.oneshotship.com/dashboard
 
 ## Step 4: Show Specific Workflow (Optional)
 
-If a workflow name is provided, fetch and display its configuration:
+If a workflow name is provided, fetch and display its configuration. The name reaches the shell through the value folder: run `~/.oss/hooks/oss-value.sh dir`, use the Write tool to write the name alone to `workflow.txt` in the folder it printed, then run:
 
+```bash
+~/.oss/hooks/oss-value.sh read workflow
 ```
-URL: https://one-shot-ship-api.onrender.com/api/v1/workflows/{workflowName}
+
+It prints the name only when it is valid (lower case, digits, `_ . : -`) and deletes the file; if it prints nothing, tell the user the name is not valid and stop. Fetch with `$WORKFLOW` below replaced by exactly the name it printed:
+
+```http
+URL: https://one-shot-ship-api.onrender.com/api/v1/workflows/$WORKFLOW
 Method: GET
 Headers:
   Authorization: Bearer {apiKey}

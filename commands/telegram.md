@@ -78,24 +78,17 @@ API_URL=$(cat ~/.oss/config.json 2>/dev/null | jq -r '.apiUrl // "https://api.on
 
 ### Step 1: Parse Arguments
 
-```bash
-SUBCOMMAND="${1:-status}"
-case "$SUBCOMMAND" in
-    link|on|off|unlink|status|--help|-h)
-        ;;
-    *)
-        echo "Unknown subcommand: $SUBCOMMAND"
-        echo "Usage: /oss:telegram [link|on|off|unlink|status]"
-        exit 1
-        ;;
-esac
-```
+The subcommand is the user's argument (`status` when none is given). It is only used to pick the block below to run; it never goes into a command. For `--help` or `-h`, show the Help section above and stop. For anything other than `link`, `on`, `off`, `unlink` or `status`, tell the user "Unknown subcommand: <what they typed>" and "Usage: /oss:telegram [link|on|off|unlink|status]", and stop.
+
+Each block below reads the API key and URL from `~/.oss/config.json` itself.
 
 ### Step 2: Handle Subcommands
 
 #### status (default)
 
 ```bash
+API_KEY=$(jq -r '.apiKey // empty' ~/.oss/config.json 2>/dev/null)
+API_URL=$(jq -r '.apiUrl // "https://api.oneshotship.com"' ~/.oss/config.json 2>/dev/null)
 # Get current status from API
 RESPONSE=$(curl -s --http1.1 -X GET "$API_URL/api/v1/telegram/status" \
     -H "Authorization: Bearer $API_KEY" \
@@ -131,6 +124,8 @@ fi
 #### link
 
 ```bash
+API_KEY=$(jq -r '.apiKey // empty' ~/.oss/config.json 2>/dev/null)
+API_URL=$(jq -r '.apiUrl // "https://api.oneshotship.com"' ~/.oss/config.json 2>/dev/null)
 # Generate magic link
 RESPONSE=$(curl -s --http1.1 -X POST "$API_URL/api/v1/telegram/link" \
     -H "Authorization: Bearer $API_KEY" \
@@ -182,6 +177,8 @@ echo "⏱️  Link expired. Run /oss:telegram link to try again."
 #### on
 
 ```bash
+API_KEY=$(jq -r '.apiKey // empty' ~/.oss/config.json 2>/dev/null)
+API_URL=$(jq -r '.apiUrl // "https://api.oneshotship.com"' ~/.oss/config.json 2>/dev/null)
 # Enable notifications
 RESPONSE=$(curl -s --http1.1 -X PATCH "$API_URL/api/v1/telegram/notifications" \
     -H "Authorization: Bearer $API_KEY" \
@@ -206,6 +203,8 @@ echo "You'll receive messages when Claude needs your input."
 #### off
 
 ```bash
+API_KEY=$(jq -r '.apiKey // empty' ~/.oss/config.json 2>/dev/null)
+API_URL=$(jq -r '.apiUrl // "https://api.oneshotship.com"' ~/.oss/config.json 2>/dev/null)
 # Disable notifications
 RESPONSE=$(curl -s --http1.1 -X PATCH "$API_URL/api/v1/telegram/notifications" \
     -H "Authorization: Bearer $API_KEY" \
@@ -220,6 +219,8 @@ echo "You won't receive Telegram messages. Terminal notifications still work."
 #### unlink
 
 ```bash
+API_KEY=$(jq -r '.apiKey // empty' ~/.oss/config.json 2>/dev/null)
+API_URL=$(jq -r '.apiUrl // "https://api.oneshotship.com"' ~/.oss/config.json 2>/dev/null)
 # Unlink account
 RESPONSE=$(curl -s --http1.1 -X DELETE "$API_URL/api/v1/telegram/unlink" \
     -H "Authorization: Bearer $API_KEY" \

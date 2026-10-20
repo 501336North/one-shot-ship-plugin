@@ -1,5 +1,9 @@
 # Learnings
 
+## 2026-10-20 | Testing | hooks
+- **Context:** plugin-value-flags (build P2-P3, oss-value.sh)
+- **Insight:** A refusal test proves nothing when something downstream would refuse the same input. oss-error.js validates codes and fields itself, `test -d` rejects a relative or two-line path, and a script without the verb exits 2 with usage: each made the helper's own checks removable with the suite green. Assert that the downstream tool never ran (a recording `node` on PATH), give each rule an input only that rule rejects (a relative root that resolves below the cwd, a directory whose name has a newline), and do not accept rc 2 as a refusal.
+
 ## 2026-10-19 | Plugin | hooks
 - **Context:** dead-hooks-cleanup (build T1-T4, v2.0.90)
 - **Insight:** A hooks file under `.claude-plugin/` is never loaded (only the plugin.json `hooks` path and `hooks/hooks.json` are), and `tool == "X"` matchers are invalid. Seven hooks sat dead for months while their tests read a third, non-existent path. Pin registration with a test that resolves every command in the file actually loaded.

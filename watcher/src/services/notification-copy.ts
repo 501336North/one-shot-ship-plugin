@@ -268,7 +268,7 @@ export class NotificationCopyService {
       subtitle = `[${context.branch || 'unknown'}] • ${uncommittedText}`;
     }
 
-    message = this.interpolate(message, context as Record<string, unknown>);
+    message = this.interpolate(message, context as Record<string, unknown>, 'Session event');
 
     return {
       title: template.title,
@@ -299,8 +299,8 @@ export class NotificationCopyService {
       message = message.replace('{checksCount}', String(context.checks.length));
     }
 
-    title = this.interpolate(title, context as Record<string, unknown>);
-    message = this.interpolate(message, context as Record<string, unknown>);
+    title = this.interpolate(title, context as Record<string, unknown>, 'OSS');
+    message = this.interpolate(message, context as Record<string, unknown>, 'Workflow event');
 
     // Generate subtitle showing chain state
     const subtitle = this.generateChainSubtitle(command, event, context);
@@ -465,7 +465,7 @@ export class NotificationCopyService {
       return { title: 'OSS Issue', message: 'Issue detected' };
     }
 
-    const message = this.interpolate(template.message, context as Record<string, unknown>);
+    const message = this.interpolate(template.message, context as Record<string, unknown>, 'Issue detected');
 
     return {
       title: template.title,
@@ -526,15 +526,19 @@ export class NotificationCopyService {
   }
 
   /**
-   * Interpolate {placeholder} values in a template string
+   * Interpolate {placeholder} values in a template string; when a field is missing, the
+   * static fallback text is returned instead (a raw {placeholder} never reaches a notification).
    */
-  private interpolate(template: string, context: Record<string, unknown>): string {
-    return template.replace(/\{(\w+)\}/g, (match, key) => {
+  private interpolate(template: string, context: Record<string, unknown>, fallback: string): string {
+    let missing = false;
+    const text = template.replace(/\{(\w+)\}/g, (match, key) => {
       const value = context[key];
       if (value === undefined || value === null) {
-        return match; // Keep placeholder if no value
+        missing = true;
+        return match;
       }
       return String(value);
     });
+    return missing ? fallback : text;
   }
 }

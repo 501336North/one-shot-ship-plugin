@@ -10,7 +10,7 @@
 #
 # Tests:
 # 1. Step 1 has no `grep apiKey` (which prints the matching line, key included)
-# 2. Step 1 uses the quiet check on ${OSS_CONFIG_DIR:-$HOME/.oss}/config.json
+# 2. Step 1 uses the quiet check on the fixed $HOME/.oss/config.json (ship round 4, R4-2: no unset OSS_CONFIG_DIR)
 # 3. control: Step 1 exists and still tells the user what to do when no key is found
 
 set -uo pipefail
@@ -18,7 +18,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WRAPPER="$SCRIPT_DIR/../visual-test.md"
 
-QUIET_CHECK='grep -q '"'"'"apiKey"'"'"' "${OSS_CONFIG_DIR:-$HOME/.oss}/config.json" && echo "API key configured"'
+QUIET_CHECK='grep -q '"'"'"apiKey"'"'"' "$HOME/.oss/config.json" && echo "API key configured"'
 PRINTING_CHECK='grep apiKey'
 NO_KEY_TEXT='No API key found. Run: /oss:login'
 
@@ -68,7 +68,7 @@ test_no_printing_grep() {
 }
 
 test_quiet_check() {
-    local test_name="Step 1 checks the key quietly in \${OSS_CONFIG_DIR:-\$HOME/.oss}/config.json"
+    local test_name="Step 1 checks the key quietly in \$HOME/.oss/config.json"
     ((TESTS_RUN++))
     if step1 | grep -qF -- "$QUIET_CHECK"; then
         pass "$test_name"

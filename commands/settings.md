@@ -230,13 +230,50 @@ fi
 }
 ```
 
-### Step 3.5: Validate Telegram Selection
+### Step 3.5: Hand Over the Choices
 
-**If user selects "Telegram" but it's not linked:**
-
-Check if Telegram is linked via API. If not linked, show error and prompt to link:
+The answers reach the shell through the value folder, never typed into a command. Run:
 
 ```bash
+~/.oss/hooks/oss-value.sh dir
+```
+
+Use the Write tool to write each answer alone, in the spelling shown, to its file in the directory it printed:
+- `notify_style.txt`: `visual`, `audio`, `sound`, `telegram` or `none`
+- `verbosity.txt`: `all`, `important` or `errors-only`
+- `voice.txt` (only when the style is `audio`): `Samantha`, `Daniel`, `Karen` or `Moira`
+- `sound.txt` (only when the style is `sound`): `Glass`, `Ping`, `Purr` or `Pop`
+
+If `dir` prints nothing, tell the user the settings were not changed and show its error.
+
+### Step 4: Save, Sync and Test (one Bash call)
+
+Run this block exactly as written. It reads and checks each answer (a value outside its list is refused and nothing is saved), keeps the current voice or sound when that question was not asked, checks the Telegram link itself, and:
+- if the user selected Telegram but it is not linked, prints how to link it and falls back to `visual`;
+- syncs `telegram.enabled` with the API when Telegram is linked (enabled only when the style is `telegram`), so the server-side state matches local settings;
+- writes `~/.oss/settings.json`, sends a test notification in the new style and prints the new configuration.
+
+```bash
+V=~/.oss/hooks/oss-value.sh
+SETTINGS_FILE="$HOME/.oss/settings.json"
+STYLE=$("$V" read notify_style) || exit 1
+VERBOSITY=$("$V" read verbosity) || exit 1
+VOICE=$(jq -r '.notifications.voice // "Samantha"' "$SETTINGS_FILE" 2>/dev/null) || VOICE="Samantha"
+SOUND=$(jq -r '.notifications.sound // "Glass"' "$SETTINGS_FILE" 2>/dev/null) || SOUND="Glass"
+if [[ "$STYLE" == "audio" ]]; then VOICE=$("$V" read voice) || exit 1; fi
+if [[ "$STYLE" == "sound" ]]; then SOUND=$("$V" read sound) || exit 1; fi
+
+# Check the Telegram link (true only when the API says exactly true)
+API_KEY=$(jq -r '.apiKey // empty' ~/.oss/config.json 2>/dev/null)
+API_URL=$(jq -r '.apiUrl // "https://api.oneshotship.com"' ~/.oss/config.json 2>/dev/null)
+TELEGRAM_LINKED="false"
+if [[ -n "$API_KEY" ]]; then
+    LINKED=$(curl -s --http1.1 -X GET "$API_URL/api/v1/telegram/status" \
+        -H "Authorization: Bearer $API_KEY" \
+        -H "Content-Type: application/json" | jq -r '.linked // false' 2>/dev/null)
+    [[ "$LINKED" == "true" ]] && TELEGRAM_LINKED="true"
+fi
+
 if [[ "$STYLE" == "telegram" && "$TELEGRAM_LINKED" != "true" ]]; then
     echo ""
     echo "Telegram is not linked yet."
@@ -250,22 +287,6 @@ if [[ "$STYLE" == "telegram" && "$TELEGRAM_LINKED" != "true" ]]; then
     echo "For now, falling back to 'visual' style."
     STYLE="visual"
 fi
-```
-
-Set `STYLE="visual"` and continue.
-
-### Step 4: Save Settings
-
-Write updated settings to `~/.oss/settings.json`.
-
-**CRITICAL: When style changes, sync telegram.enabled with the API:**
-- If style = "telegram" → call API to enable notifications
-- If style != "telegram" → call API to disable notifications
-
-This ensures the server-side state matches local settings.
-
-```bash
-mkdir -p ~/.oss
 
 # Determine telegram enabled state based on style
 if [[ "$STYLE" == "telegram" ]]; then
@@ -282,29 +303,13 @@ if [[ -n "$API_KEY" && "$TELEGRAM_LINKED" == "true" ]]; then
         -d "{\"enabled\": $TELEGRAM_ENABLED}" > /dev/null
 fi
 
-cat > ~/.oss/settings.json << EOF
-{
-  "notifications": {
-    "style": "$STYLE",
-    "voice": "$VOICE",
-    "sound": "$SOUND",
-    "verbosity": "$VERBOSITY",
-    "telegram": {
-      "linked": $TELEGRAM_LINKED,
-      "enabled": $TELEGRAM_ENABLED
-    }
-  },
-  "version": 2
-}
-EOF
-```
+mkdir -p ~/.oss
+jq -n --arg style "$STYLE" --arg voice "$VOICE" --arg sound "$SOUND" --arg verbosity "$VERBOSITY" \
+    --argjson linked "$TELEGRAM_LINKED" --argjson enabled "$TELEGRAM_ENABLED" \
+    '{notifications: {style: $style, voice: $voice, sound: $sound, verbosity: $verbosity, telegram: {linked: $linked, enabled: $enabled}}, version: 2}' \
+    > "$SETTINGS_FILE" || exit 1
 
-### Step 5: Test Notification
-
-Send a test notification using the new settings:
-
-```bash
-# Based on style
+# Test notification, based on style
 case "$STYLE" in
     "visual")
         terminal-notifier -title "Settings Saved" -message "OSS notifications configured" -sound default
@@ -323,23 +328,22 @@ case "$STYLE" in
         echo "Notifications disabled. Settings saved."
         ;;
 esac
+
+echo ""
+echo "Settings saved to ~/.oss/settings.json"
+echo ""
+echo "New Configuration:"
+echo "  Style:     $STYLE"
+echo "  Voice:     $VOICE"
+echo "  Sound:     $SOUND"
+echo "  Verbosity: $VERBOSITY"
+echo ""
+echo "Your notifications are now configured!"
 ```
 
-### Step 6: Confirm
+### Step 5: Confirm
 
-Display confirmation message:
-
-```
-Settings saved to ~/.oss/settings.json
-
-New Configuration:
-  Style:     $STYLE
-  Voice:     $VOICE
-  Sound:     $SOUND
-  Verbosity: $VERBOSITY
-
-Your notifications are now configured!
-```
+Show the user the block's output (the new configuration). If a read refused a value, nothing was saved: tell the user which answer was not valid.
 
 ## Settings Schema
 

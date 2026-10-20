@@ -11,7 +11,7 @@ description: Design data schemas and relationships
 **Workflow Position:** ideate -> requirements -> api-design -> **DATA-MODEL** -> plan
 
 **Usage:**
-```bash
+```text
 /oss:data-model [OPTIONS] <DESCRIPTION>
 ```
 
@@ -122,12 +122,7 @@ The prompt guides you through:
 
 On success (data model designed):
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow data-model complete '{"entitiesDesigned": {COUNT}, "migrationsCreated": {MIGRATIONS}}'
-```
-
-On failure (couldn't complete data model):
-```bash
-~/.oss/hooks/oss-notify.sh --workflow data-model failed '{"reason": "{REASON}"}'
+~/.oss/hooks/oss-notify.sh --workflow data-model complete '{}'
 ```
 
 ## Error Handling

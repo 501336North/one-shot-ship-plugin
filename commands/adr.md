@@ -11,7 +11,7 @@ description: Create Architecture Decision Records
 **Workflow Position:** any time - **ADR** (Architecture Decision Records)
 
 **Usage:**
-```bash
+```text
 /oss:adr [OPTIONS] <DECISION>
 ```
 
@@ -124,12 +124,7 @@ The prompt guides you through:
 
 On success (ADR created):
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow adr complete '{"adrNumber": {NUMBER}, "title": "{TITLE}"}'
-```
-
-On failure (couldn't create ADR):
-```bash
-~/.oss/hooks/oss-notify.sh --workflow adr failed '{"reason": "{REASON}"}'
+~/.oss/hooks/oss-notify.sh --workflow adr complete '{}'
 ```
 
 ## Error Handling

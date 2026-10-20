@@ -11,7 +11,7 @@ description: A/B testing and experimentation framework
 **Workflow Position:** any time - **EXPERIMENT** (A/B testing)
 
 **Usage:**
-```bash
+```text
 /oss:experiment [SUBCOMMAND] <EXPERIMENT_NAME>
 ```
 

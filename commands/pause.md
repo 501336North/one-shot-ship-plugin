@@ -62,7 +62,7 @@ Create a handoff document for session continuation.
 
 If `--help` or `-h` is passed, display usage information and exit:
 
-```
+```text
 /oss:pause - Save current work state for later resumption
 
 USAGE:
@@ -122,7 +122,7 @@ Register at https://www.oneshotship.com
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow pause start '{"feature": "{FEATURE_NAME}"}'
+~/.oss/hooks/oss-notify.sh --workflow pause start '{}'
 ```
 
 ## Step 4: Ensure Decrypt CLI Installed
@@ -156,7 +156,7 @@ Execute the prompt returned by the API. The proprietary prompt contains:
 
 After pause is complete:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow pause complete '{"feature": "{FEATURE_NAME}", "handoffPath": "{PATH}"}'
+~/.oss/hooks/oss-notify.sh --workflow pause complete '{}'
 ```
 
 ## HANDOFF.md Format

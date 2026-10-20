@@ -12,7 +12,7 @@ estimated_tokens: 2000-5000
 **Workflow Position:** Can be inserted anywhere in the workflow chain (ideate → plan → **CUSTOM** → build → ship)
 
 **Usage:**
-```bash
+```text
 /oss:custom <command-name>
 ```
 
@@ -77,10 +77,8 @@ Register at https://www.oneshotship.com
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow custom start '{"command": "{COMMAND_NAME}"}'
+~/.oss/hooks/oss-notify.sh --workflow custom start '{}'
 ```
-
-Replace `{COMMAND_NAME}` with the actual custom command name (without `team:` prefix).
 
 ## Step 4: Ensure Decrypt CLI Installed
 
@@ -92,15 +90,17 @@ This auto-installs the decrypt CLI if missing. Existing installations are unaffe
 
 ## Step 5: Fetch Custom Command Prompt
 
-Strip the `team:` prefix if present and fetch the custom command:
+The name reaches the shell through the value folder, never typed into the command. Run:
+```bash
+~/.oss/hooks/oss-value.sh dir
+```
+Use the Write tool to write the name, with any `team:` prefix stripped, alone to `custom.txt` in the directory it printed, then fetch the custom command:
 
 ```bash
-# Parse command name (strip team: prefix if present)
-COMMAND_NAME="${1#team:}"
-
-# Fetch custom command prompt from API
-~/.oss/bin/oss-decrypt --type custom --name "$COMMAND_NAME"
+~/.oss/hooks/oss-value.sh decrypt custom
 ```
+
+It reads the name, checks it against `^[a-z0-9-]{1,100}$`, deletes the file and runs `~/.oss/bin/oss-decrypt --type custom` with it. If it refuses (`oss-value: decrypt: refused`), the name is not valid: stop and report it.
 
 The decrypt CLI fetches the prompt from `/api/v1/prompts/custom/{name}` and returns the decrypted prompt content.
 
@@ -130,13 +130,18 @@ Execute the prompt content returned by the API. The prompt will guide the workfl
 
 After custom command completes:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow custom complete '{"command": "{COMMAND_NAME}"}'
+~/.oss/hooks/oss-notify.sh --workflow custom complete '{}'
 ```
 
-If custom command fails:
+If custom command fails, report it without putting your own text into a command. Run:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow custom failed '{"command": "{COMMAND_NAME}", "error": "{ERROR_MSG}"}'
+~/.oss/hooks/oss-value.sh dir
 ```
+Use the Write tool to write a one-line reason to `reason.txt` in the directory it printed, then run this command exactly as written:
+```bash
+~/.oss/hooks/oss-value.sh failed custom
+```
+If either command fails, skip the notification and tell the user the reason.
 
 ## Error Handling
 
@@ -152,7 +157,7 @@ Upgrade at: https://www.oneshotship.com/pricing
 ```
 
 ### If API returns 404
-```
+```text
 Custom command '{COMMAND_NAME}' not found.
 Check your team's custom commands at: https://www.oneshotship.com/dashboard/commands
 ```

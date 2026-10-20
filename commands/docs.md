@@ -12,7 +12,7 @@ model: haiku
 **Workflow Position:** any time - **DOCS** generation
 
 **Usage:**
-```bash
+```text
 /oss:docs [OPTIONS] <FEATURE_NAME>
 ```
 

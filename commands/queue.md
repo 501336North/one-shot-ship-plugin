@@ -33,7 +33,7 @@ model: sonnet
 | `--verbose` | | Show full task details |
 
 **Examples:**
-```bash
+```text
 # Show queue status
 /oss:queue status
 

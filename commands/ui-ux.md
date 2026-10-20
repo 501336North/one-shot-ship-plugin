@@ -119,11 +119,6 @@ The prompt handles:
 ~/.oss/hooks/oss-notify.sh --workflow ui-ux complete '{}'
 ```
 
-**Failure (if UI/UX cannot proceed):**
-```bash
-~/.oss/hooks/oss-notify.sh --workflow ui-ux failed '{"reason": "{reason}"}'
-```
-
 ## Example Usage
 
 ```bash

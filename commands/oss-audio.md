@@ -80,7 +80,10 @@ When user runs `/oss-audio <option>`:
 Read and display current settings from `~/.oss/audio-config`:
 ```bash
 if [ -f ~/.oss/audio-config ]; then
-    source ~/.oss/audio-config
+    # read the three settings by name; the file is never run
+    OSS_AUDIO_ENABLED=$(sed -n 's/^export OSS_AUDIO_ENABLED="\([a-z]*\)"$/\1/p' ~/.oss/audio-config | tail -1)
+    OSS_USE_VOICE=$(sed -n 's/^export OSS_USE_VOICE="\([a-z]*\)"$/\1/p' ~/.oss/audio-config | tail -1)
+    OSS_VOICE=$(sed -n 's/^export OSS_VOICE="\([A-Za-z]*\)"$/\1/p' ~/.oss/audio-config | tail -1)
     echo "OSS Audio Settings:"
     echo "  Enabled: $OSS_AUDIO_ENABLED"
     echo "  Mode: $([ "$OSS_USE_VOICE" = "true" ] && echo "Voice" || echo "Sound")"

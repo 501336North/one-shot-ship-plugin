@@ -129,13 +129,7 @@ On success (refactoring complete, tests green):
 ~/.oss/hooks/oss-log.sh test refactor PASS "all tests still passing"
 
 # Update status line
-~/.oss/hooks/oss-notify.sh --workflow refactor complete '{"improvements": "{IMPROVEMENTS}"}'
-```
-
-On failure (tests broke during refactoring):
-```bash
-~/.oss/hooks/oss-log.sh error refactor "Tests broke during refactoring: {REASON}"
-~/.oss/hooks/oss-notify.sh --workflow refactor failed '{"reason": "{REASON}"}'
+~/.oss/hooks/oss-notify.sh --workflow refactor complete '{}'
 ```
 
 ## Error Handling

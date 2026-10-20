@@ -77,7 +77,7 @@ Execute ad-hoc tasks with TDD guarantees but skip optional workflow steps.
 
 If `--help` or `-h` is passed, display usage information and exit:
 
-```
+```text
 /oss:quick - Execute ad-hoc tasks with TDD guarantees
 
 USAGE:
@@ -152,7 +152,7 @@ Register at https://www.oneshotship.com
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow quick start '{"description": "{TASK_DESCRIPTION}"}'
+~/.oss/hooks/oss-notify.sh --workflow quick start '{}'
 ```
 
 ## Step 4: Ensure Decrypt CLI Installed
@@ -189,15 +189,10 @@ Execute the prompt returned by the API. The proprietary prompt contains:
 
 After quick task is complete:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow quick complete '{"taskId": "{NNN}", "commits": {COMMIT_COUNT}, "testsAdded": {TEST_COUNT}}'
+~/.oss/hooks/oss-notify.sh --workflow quick complete '{}'
 ```
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.
-
-If quick task fails:
-```bash
-~/.oss/hooks/oss-notify.sh --workflow quick failed '{"taskId": "{NNN}", "reason": "{REASON}"}'
-```
 
 ## Directory Structure
 

@@ -216,20 +216,15 @@ After quality checks pass:
 
 After PR is created:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow ship pr_created '{"prNumber": {PR_NUM}, "prTitle": "{PR_TITLE}"}'
+~/.oss/hooks/oss-notify.sh --workflow ship pr_created '{}'
 ```
 
 After PR is merged (with `--merge` flag):
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow ship merged '{"branch": "{BRANCH}", "prNumber": {PR_NUM}}'
+~/.oss/hooks/oss-notify.sh --workflow ship merged '{}'
 ```
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` and `merged` events.
-
-If shipping fails:
-```bash
-~/.oss/hooks/oss-notify.sh --workflow ship failed '{"blocker": "{REASON}"}'
-```
 
 ## Step 8: Update Status Line (Complete)
 
@@ -274,8 +269,8 @@ After `oss-notify.sh --workflow ship complete` runs, its stdout may contain a `-
 - Each chain command runs with full logging and status updates
 - If a blocking chain command fails, stop the chain and report the failure
 - If no `---CHAIN_COMMANDS---` block appears, skip this step
-- If a line's condition can be checked from this session and is false (for example `has_ui_work`: no UI files changed), skip it and log why; if it is true or you cannot tell, run it. Log a skip: `~/.oss/hooks/oss-log.sh write ship "[CHAIN] skipped /oss:<command>: <reason>"`
-- Log each: `~/.oss/hooks/oss-log.sh write ship "[CHAIN] executing /oss:<command>"`
+- If a line's condition can be checked from this session and is false (for example `has_ui_work`: no UI files changed), skip it and log why; if it is true or you cannot tell, run it. Log a skip with this fixed line (no command name or reason in it): `~/.oss/hooks/oss-log.sh write ship "[CHAIN] skipped a chain command (condition false)"`
+- Log each: `~/.oss/hooks/oss-log.sh write ship "[CHAIN] executing a chain command"`
 
 ## Error Handling
 
@@ -335,12 +330,12 @@ Quality checks failed. Fix issues before shipping:
 
 If permission is denied for `git push` or PR creation, your work is preserved:
 
-```
+```text
 ⚠️ Permission denied for git push.
 
-PR prepared but not pushed. To complete manually:
-  git push -u origin {branch-name}
-  gh pr create --title "{title}" --body "{body}"
+PR prepared but not pushed. To complete manually, run:
+  git push -u origin HEAD
+  gh pr create --base main --fill
 
 Files staged and committed:
   - [list of committed files]

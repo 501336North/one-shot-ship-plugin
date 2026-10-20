@@ -11,7 +11,7 @@ description: Design API contracts before implementation (Outside-In starting poi
 **Workflow Position:** ideate -> requirements -> **API-DESIGN** -> data-model -> plan
 
 **Usage:**
-```bash
+```text
 /oss:api-design [OPTIONS] <DESCRIPTION>
 ```
 
@@ -124,12 +124,7 @@ The prompt guides you through:
 
 On success (API design complete):
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow api-design complete '{"endpointsDesigned": {COUNT}, "specFile": "{SPEC_FILE}"}'
-```
-
-On failure (couldn't complete API design):
-```bash
-~/.oss/hooks/oss-notify.sh --workflow api-design failed '{"reason": "{REASON}"}'
+~/.oss/hooks/oss-notify.sh --workflow api-design complete '{}'
 ```
 
 ## Error Handling

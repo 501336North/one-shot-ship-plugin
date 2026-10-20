@@ -107,17 +107,18 @@ Control and monitor the background watcher agent that detects anomalies.
 
 When this command runs:
 
-1. **Check PID file**:
+1. **Check the PID file and the process** (the PID is read from the file, never typed; anything but
+   a number reads as stopped):
 ```bash
-cat .oss/watcher.pid 2>/dev/null
+PID=$(cat .oss/watcher.pid 2>/dev/null)
+if [[ "$PID" =~ ^[0-9]{1,10}$ ]] && ps -p "$PID" > /dev/null 2>&1; then
+    echo "Status: Running (PID $PID)"
+else
+    echo "Status: Stopped"
+fi
 ```
 
-2. **Verify process running**:
-```bash
-ps -p $PID > /dev/null 2>&1
-```
-
-3. **Display status**:
+2. **Display status**:
 ```
 OSS Watcher Status
 ━━━━━━━━━━━━━━━━━━

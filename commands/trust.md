@@ -170,10 +170,7 @@ Determine which prompts to audit based on tier and scope:
 **Single prompt (`--prompt build`):**
 Only audit the prompt matching the given name. Search the manifest for prompts whose name portion (after the `/`) matches.
 
-**Category filter (`--category commands`):**
-```bash
-~/.oss/bin/oss-decrypt --list-prompts --category <cat>
-```
+**Category filter (`--category commands`):** run the full-tier list command above (`~/.oss/bin/oss-decrypt --list-prompts`, no category on the command line) and keep only the entries whose `category` equals the requested one.
 
 Parse the JSON output into a list of prompts to audit. Each entry has `name`, `category`, `hash`, `size`.
 
@@ -195,11 +192,13 @@ Auditing prompt 2/24: commands/ship...
 
 ### Step 5a: Decrypt the Prompt
 
+The category and the name reach the shell through the value folder, never typed into the command. Before the first prompt, run `~/.oss/hooks/oss-value.sh dir` and note the folder it prints. For each prompt, use the Write tool to write its category alone to `category.txt` and the portion after the `/` in the prompt key alone to `name.txt` in that folder (e.g., for `commands/build`: `commands` and `build`), then run:
+
 ```bash
-~/.oss/bin/oss-decrypt --type <category> --name <name_part>
+~/.oss/hooks/oss-value.sh decrypt
 ```
 
-Where `<name_part>` is the portion after the `/` in the prompt key (e.g., for `commands/build`, type is `commands` and name is `build`).
+It reads both files, checks each value in code (`^[a-z0-9_-]{1,100}$`), deletes them and runs `~/.oss/bin/oss-decrypt` with them as `--type` and `--name`: one allowed call, no approval prompt. If it refuses (`oss-value: decrypt: refused`), the entry is not decrypted and is listed in the report as "skipped: unexpected name".
 
 Capture the decrypted output for analysis. **Do NOT display the decrypted content to the user** — it contains proprietary IP.
 
@@ -398,7 +397,7 @@ oss-decrypt version: {version}
 ```
 
 Tell the user where the report was saved:
-```
+```text
 Report saved to: .oss/trust-report-{date}.md
 ```
 

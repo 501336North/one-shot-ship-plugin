@@ -118,7 +118,7 @@ Register at https://www.oneshotship.com
 **You MUST update the workflow status before proceeding.**
 
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow ideate start '{"idea": "{USER_IDEA}"}'
+~/.oss/hooks/oss-notify.sh --workflow ideate start '{}'
 ```
 
 ## Step 5: Ensure Decrypt CLI Installed
@@ -166,15 +166,10 @@ When `--figma` flag is active, the proprietary prompt additionally contains:
 
 After ideation is complete:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow ideate complete '{"requirementsCount": {COUNT}}'
+~/.oss/hooks/oss-notify.sh --workflow ideate complete '{}'
 ```
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.
-
-If ideation fails:
-```bash
-~/.oss/hooks/oss-notify.sh --workflow ideate failed '{"reason": "{REASON}"}'
-```
 
 ## Command Orchestration
 
@@ -210,8 +205,8 @@ After `oss-notify.sh --workflow ideate complete` runs, its stdout may contain a 
 - Each chain command runs with full logging and status updates
 - If a blocking chain command fails, stop the chain and report the failure
 - If no `---CHAIN_COMMANDS---` block appears, skip this step
-- If a line's condition can be checked from this session and is false (for example `has_ui_work`: no UI files changed), skip it and log why; if it is true or you cannot tell, run it. Log a skip: `~/.oss/hooks/oss-log.sh write ideate "[CHAIN] skipped /oss:<command>: <reason>"`
-- Log each: `~/.oss/hooks/oss-log.sh write ideate "[CHAIN] executing /oss:<command>"`
+- If a line's condition can be checked from this session and is false (for example `has_ui_work`: no UI files changed), skip it and log why; if it is true or you cannot tell, run it. Log a skip with this fixed line (no command name or reason in it): `~/.oss/hooks/oss-log.sh write ideate "[CHAIN] skipped a chain command (condition false)"`
+- Log each: `~/.oss/hooks/oss-log.sh write ideate "[CHAIN] executing a chain command"`
 
 ## Error Handling
 

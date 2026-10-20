@@ -60,43 +60,17 @@ Configure your API key for OSS Dev Workflow access.
 
 **Quick key update steps (Steps 1-3 only, skip Steps 4-9):**
 
-1. **Accept the new API key** from the `--key` argument:
+1. **Hand over the new API key** from the `--key` argument through the value folder, never on a command line:
+   - Run `~/.oss/hooks/oss-value.sh dir` and note the folder it prints. If it prints nothing, show the user its error and stop.
+   - Use the Write tool to write the key alone to `key.txt` in that folder. If no key was given, tell the user "Error: --key requires an API key value. Usage: /oss:login --key ak_xxxxx" and stop.
+
+2. **Read, validate and save the key** in ONE Bash call (it checks the key's shape and deletes `key.txt` at once, checks the key against `/api/v1/subscription/status`, saves it to `~/.oss/config.json` keeping the other settings, and prints the plan):
    ```bash
-   # Parse --key flag value
-   NEW_KEY="$KEY_ARG"
-   if [ -z "$NEW_KEY" ]; then
-       echo "Error: --key requires an API key value. Usage: /oss:login --key ak_xxxxx"
-       exit 1
-   fi
+   ~/.oss/hooks/oss-login.sh
    ```
+   If it prints an error instead of `Plan: ...`, show the user that error and stop.
 
-2. **Validate the key** against the API:
-   ```bash
-   RESPONSE=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $NEW_KEY" \
-       "https://one-shot-ship-api.onrender.com/api/v1/subscription/status")
-   HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-   BODY=$(echo "$RESPONSE" | head -1)
-
-   if [ "$HTTP_CODE" != "200" ]; then
-       echo "Error: Invalid API key. Get a valid key from https://www.oneshotship.com/dashboard"
-       exit 1
-   fi
-   ```
-
-3. **Update config** with the new key:
-   ```bash
-   mkdir -p ~/.oss
-   # Read existing config to preserve apiUrl and other settings
-   if [ -f ~/.oss/config.json ]; then
-       EXISTING=$(cat ~/.oss/config.json)
-       UPDATED=$(echo "$EXISTING" | jq --arg key "$NEW_KEY" '.apiKey = $key')
-   else
-       UPDATED=$(jq -n --arg key "$NEW_KEY" '{"apiKey": $key, "apiUrl": "https://one-shot-ship-api.onrender.com"}')
-   fi
-   echo "$UPDATED" > ~/.oss/config.json
-   ```
-
-4. **Clear cached credentials** so the decrypt CLI picks up the new key:
+3. **Clear cached credentials** so the decrypt CLI picks up the new key:
    ```bash
    if [ -f ~/.oss/credentials.enc ]; then
        rm ~/.oss/credentials.enc
@@ -104,7 +78,7 @@ Configure your API key for OSS Dev Workflow access.
    fi
    ```
 
-5. **Re-run decrypt CLI setup** to fetch new credentials for the rotated key:
+4. **Re-run decrypt CLI setup** to fetch new credentials for the rotated key:
    ```bash
    if [ -x ~/.oss/bin/oss-decrypt ]; then
        ~/.oss/bin/oss-decrypt --setup
@@ -119,11 +93,9 @@ Configure your API key for OSS Dev Workflow access.
    fi
    ```
 
-6. **Confirm success:**
+5. **Confirm success** (the plan was printed in step 2):
    ```bash
-   PLAN=$(echo "$BODY" | jq -r '.plan // "unknown"')
    echo "API key updated successfully!"
-   echo "  Plan: $PLAN"
    echo "  Config: ~/.oss/config.json"
    echo ""
    echo "All existing tools and settings preserved. Ready to use."
@@ -146,23 +118,25 @@ Configure your API key for OSS Dev Workflow access.
 
 Get your API key from: https://www.oneshotship.com/dashboard
 
-## Step 2: Configure
+If no key was passed (`/oss:login` alone), ask the user for it.
 
-Enter your API key when prompted, or pass it directly:
+## Step 2: Hand Over and Save the Key
 
-```bash
-/oss:login YOUR_API_KEY
-```
+The key reaches the shell through the value folder, never typed into a command (the same steps as `--key`):
+
+1. Run `~/.oss/hooks/oss-value.sh dir` and note the folder it prints. If it prints nothing, show the user its error and stop.
+2. Use the Write tool to write the key alone to `key.txt` in that folder.
+3. Run this one call. It checks the key's shape and deletes `key.txt` at once, checks the key against `https://one-shot-ship-api.onrender.com/api/v1/subscription/status`, saves it to `~/.oss/config.json` (with `apiUrl` `https://one-shot-ship-api.onrender.com` when the file is new; other settings are kept) and prints the plan:
+   ```bash
+   ~/.oss/hooks/oss-login.sh
+   ```
+   If it prints an error instead of `Plan: ...`, show the user that error and stop.
 
 > Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
 
 ## Step 3: Verification
 
-The command will:
-1. Create `~/.oss/` directory if needed
-2. Store API key in `~/.oss/config.json` with format: `{"apiKey": "YOUR_KEY", "apiUrl": "https://one-shot-ship-api.onrender.com"}`
-3. Verify key by calling: `curl -H "Authorization: Bearer YOUR_KEY" https://one-shot-ship-api.onrender.com/api/v1/subscription/status`
-4. Display subscription status (trial, active, expired)
+Show the user the plan the call printed (trial, active, expired).
 
 ## Step 4: Sync CLAUDE.md with IRON LAWS (Automatic)
 
@@ -186,7 +160,7 @@ This script is the **only** writer of the IRON LAWS block. Do not write, copy or
 
 ### 4.2: Fetch the CLAUDE.md template
 
-```
+```http
 GET https://one-shot-ship-api.onrender.com/api/v1/prompts/claude-md
 Headers:
   Authorization: Bearer {apiKey}
@@ -296,8 +270,9 @@ After successful authentication, install tools if not already present:
    OSS_ICON_PNG="$HOME/.oss/notification-icon.png"
    if [ ! -f "$OSS_ICON_PNG" ]; then
        # Download or create the OSS icon
+       PLUGIN_ROOT=$(~/.oss/hooks/oss-value.sh root 2>/dev/null)
        curl -sL "https://www.oneshotship.com/icon.png" -o "$OSS_ICON_PNG" 2>/dev/null || \
-       sips -s format png "$CLAUDE_PLUGIN_ROOT/assets/icon.png" --out "$OSS_ICON_PNG" 2>/dev/null || \
+       { test -n "$PLUGIN_ROOT" && sips -s format png "$PLUGIN_ROOT/assets/icon.png" --out "$OSS_ICON_PNG" 2>/dev/null; } || \
        echo "Note: Could not create notification icon. Notifications will work without branding."
    fi
    ```
@@ -315,7 +290,7 @@ After successful authentication, install tools if not already present:
 
 4. **Initialize workflow state:**
    ```bash
-   node "$CLAUDE_PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js" init
+   ~/.oss/hooks/oss-value.sh cli update-workflow-state init
    ```
 
 5. **Verify status line script exists:**
@@ -339,7 +314,8 @@ After tools are installed, set up the supervisor daemon for process monitoring.
 
 **First, check if daemon is included in this plugin version:**
 ```bash
-if [ ! -d "$CLAUDE_PLUGIN_ROOT/daemon" ]; then
+PLUGIN_ROOT=$(~/.oss/hooks/oss-value.sh root)
+if [ ! -d "$PLUGIN_ROOT/daemon" ]; then
     echo "Daemon not included in current plugin version. Skipping daemon setup."
     # Skip to Step 8
 fi
@@ -349,7 +325,8 @@ fi
 
 1. **Build daemon package (if needed):**
    ```bash
-   cd "$CLAUDE_PLUGIN_ROOT/daemon"
+   PLUGIN_ROOT=$(~/.oss/hooks/oss-value.sh root) || exit 1
+   cd "$PLUGIN_ROOT/daemon" || exit 1
    if [ ! -d "dist" ]; then
        npm run build
    fi
@@ -359,6 +336,7 @@ fi
    ```bash
    OSS_DIR="${HOME}/.oss"
    PLIST_PATH="${HOME}/Library/LaunchAgents/com.oneshotship.daemon.plist"
+   PLUGIN_ROOT=$(~/.oss/hooks/oss-value.sh root) || exit 1
 
    if [ ! -f "$PLIST_PATH" ]; then
        mkdir -p "$(dirname "$PLIST_PATH")"
@@ -373,7 +351,7 @@ fi
        <key>ProgramArguments</key>
        <array>
            <string>node</string>
-           <string>${CLAUDE_PLUGIN_ROOT}/daemon/bin/oss-daemon.js</string>
+           <string>${PLUGIN_ROOT}/daemon/bin/oss-daemon.js</string>
            <string>start</string>
        </array>
        <key>WorkingDirectory</key>
@@ -395,6 +373,7 @@ fi
 
 3. **Load daemon service:**
    ```bash
+   PLIST_PATH="${HOME}/Library/LaunchAgents/com.oneshotship.daemon.plist"
    if ! launchctl list | grep -q "com.oneshotship.daemon"; then
        launchctl load "$PLIST_PATH"
        echo "OSS Daemon started"
@@ -403,6 +382,7 @@ fi
 
 4. **Verify daemon is running:**
    ```bash
+   PLIST_PATH="${HOME}/Library/LaunchAgents/com.oneshotship.daemon.plist"
    if launchctl list | grep -q "com.oneshotship.daemon"; then
        echo "Supervisor daemon is running"
    else
@@ -468,6 +448,7 @@ Set up the status line script to show TDD phase in Claude Code's terminal:
 
 4. **Verify status line:**
    ```bash
+   STATUSLINE_SCRIPT="${HOME}/.oss/oss-statusline.sh"
    if [ -x "$STATUSLINE_SCRIPT" ]; then
        echo "Status line script ready"
        echo "When TDD phase is active, you'll see: [Claude] 🔴 RED 3/8"
@@ -507,8 +488,9 @@ After tools are installed, if `~/.oss/settings.json` does NOT exist:
    }
    ```
 
-2. **Save settings to `~/.oss/settings.json`:**
+2. **Save settings to `~/.oss/settings.json`:** run `~/.oss/hooks/oss-value.sh dir`, then use the Write tool to write the chosen style in lower case (`visual`, `audio`, `sound` or `none`) to `style.txt` in the folder it printed (if it prints nothing, skip this step and tell the user to run /oss:settings later). Then:
    ```bash
+   STYLE=$(~/.oss/hooks/oss-value.sh read style) || exit 1
    mkdir -p ~/.oss
    cat > ~/.oss/settings.json << EOF
    {
@@ -525,6 +507,9 @@ After tools are installed, if `~/.oss/settings.json` does NOT exist:
 
 3. **Show preview notification (respects user's choice):**
    ```bash
+   STYLE=$(jq -r '.notifications.style' ~/.oss/settings.json)
+   VOICE=$(jq -r '.notifications.voice' ~/.oss/settings.json)
+   SOUND=$(jq -r '.notifications.sound' ~/.oss/settings.json)
    case "$STYLE" in
        "visual")
            terminal-notifier -title "Welcome to OSS!" \
@@ -544,8 +529,8 @@ After tools are installed, if `~/.oss/settings.json` does NOT exist:
    ```
    Note: `$VOICE` and `$SOUND` come from saved settings (default: Samantha, Glass)
 
-4. **Confirm:**
-   ```
+4. **Confirm** (with the style you saved):
+   ```text
    Notifications configured: $STYLE
    Change anytime with /oss:settings
    ```

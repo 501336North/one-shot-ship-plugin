@@ -110,15 +110,10 @@ The prompt orchestrates the full xray scan:
 
 After scan completes:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow xray complete '{"findings": {TOTAL}, "critical": {N}, "high": {N}}'
+~/.oss/hooks/oss-notify.sh --workflow xray complete '{}'
 ```
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.
-
-If scan fails:
-```bash
-~/.oss/hooks/oss-notify.sh --workflow xray failed '{"reason": "{REASON}"}'
-```
 
 ## Step 8: Execute Chain Commands (MANDATORY)
 
@@ -136,8 +131,8 @@ After `oss-notify.sh --workflow xray complete` runs, its stdout may contain a `-
 - Each chain command runs with full logging and status updates
 - If a blocking chain command fails, stop the chain and report the failure
 - If no `---CHAIN_COMMANDS---` block appears, skip this step
-- If a line's condition can be checked from this session and is false (for example `has_ui_work`: no UI files changed), skip it and log why; if it is true or you cannot tell, run it. Log a skip: `~/.oss/hooks/oss-log.sh write xray "[CHAIN] skipped /oss:<command>: <reason>"`
-- Log each: `~/.oss/hooks/oss-log.sh write xray "[CHAIN] executing /oss:<command>"`
+- If a line's condition can be checked from this session and is false (for example `has_ui_work`: no UI files changed), skip it and log why; if it is true or you cannot tell, run it. Log a skip with this fixed line (no command name or reason in it): `~/.oss/hooks/oss-log.sh write xray "[CHAIN] skipped a chain command (condition false)"`
+- Log each: `~/.oss/hooks/oss-log.sh write xray "[CHAIN] executing a chain command"`
 
 ## Error Handling
 

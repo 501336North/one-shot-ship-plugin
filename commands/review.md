@@ -119,11 +119,6 @@ On success:
 ~/.oss/hooks/oss-notify.sh --workflow review complete '{}'
 ```
 
-On failure:
-```bash
-~/.oss/hooks/oss-notify.sh --workflow review failed '{"error": "{ERROR_MESSAGE}"}'
-```
-
 ## Error Handling
 
 ### If API returns 401

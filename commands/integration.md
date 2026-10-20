@@ -125,12 +125,7 @@ The prompt guides you through:
 
 On success (integration tests pass):
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow integration complete '{"testsPass": {COUNT}, "boundariesTested": "{BOUNDARIES}"}'
-```
-
-On failure (integration tests fail or mock mismatch found):
-```bash
-~/.oss/hooks/oss-notify.sh --workflow integration failed '{"reason": "{REASON}"}'
+~/.oss/hooks/oss-notify.sh --workflow integration complete '{}'
 ```
 
 ## Error Handling

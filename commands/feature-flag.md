@@ -11,7 +11,7 @@ description: Feature flag implementation and management
 **Workflow Position:** any time - **FEATURE-FLAG** management
 
 **Usage:**
-```bash
+```text
 /oss:feature-flag [SUBCOMMAND] <FLAG_NAME> [OPTIONS]
 ```
 

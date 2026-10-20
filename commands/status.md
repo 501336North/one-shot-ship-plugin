@@ -60,7 +60,7 @@ fi
 
 ## Step 2: Fetch Status
 
-```
+```http
 URL: https://one-shot-ship-api.onrender.com/api/v1/auth/verify
 Method: GET
 Headers:

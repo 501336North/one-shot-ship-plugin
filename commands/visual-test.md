@@ -47,7 +47,7 @@ description: Visual testing with computer-use MCP
 ## Step 1: Check Authentication
 
 ```bash
-grep -q '"apiKey"' "${OSS_CONFIG_DIR:-$HOME/.oss}/config.json" && echo "API key configured"
+grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
 ```
 
 If no API key found:
@@ -104,15 +104,10 @@ Execute the prompt returned by the API. It guides you through:
 
 After visual tests pass:
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow visual-test complete '{"checksPassed": {PASS_COUNT}, "total": {TOTAL_COUNT}}'
+~/.oss/hooks/oss-notify.sh --workflow visual-test complete '{}'
 ```
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` events.
-
-If visual tests fail:
-```bash
-~/.oss/hooks/oss-notify.sh --workflow visual-test failed '{"reason": "{REASON}"}'
-```
 
 ## Step 8: Execute Chain Commands (MANDATORY)
 
@@ -130,8 +125,8 @@ After `oss-notify.sh --workflow visual-test complete` runs, its stdout may conta
 - Each chain command runs with full logging and status updates
 - If a blocking chain command fails, stop the chain and report the failure
 - If no `---CHAIN_COMMANDS---` block appears, skip this step
-- If a line's condition can be checked from this session and is false (for example `has_ui_work`: no UI files changed), skip it and log why; if it is true or you cannot tell, run it. Log a skip: `~/.oss/hooks/oss-log.sh write visual-test "[CHAIN] skipped /oss:<command>: <reason>"`
-- Log each: `~/.oss/hooks/oss-log.sh write visual-test "[CHAIN] executing /oss:<command>"`
+- If a line's condition can be checked from this session and is false (for example `has_ui_work`: no UI files changed), skip it and log why; if it is true or you cannot tell, run it. Log a skip with this fixed line (no command name or reason in it): `~/.oss/hooks/oss-log.sh write visual-test "[CHAIN] skipped a chain command (condition false)"`
+- Log each: `~/.oss/hooks/oss-log.sh write visual-test "[CHAIN] executing a chain command"`
 
 ## Error Handling
 

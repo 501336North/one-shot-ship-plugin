@@ -122,12 +122,7 @@ The prompt handles:
 
 **Completion (after review completes):**
 ```bash
-~/.oss/hooks/oss-notify.sh --workflow ui-review complete '{"issues": {count}}'
-```
-
-**Failure (if review cannot proceed):**
-```bash
-~/.oss/hooks/oss-notify.sh --workflow ui-review failed '{"reason": "{reason}"}'
+~/.oss/hooks/oss-notify.sh --workflow ui-review complete '{}'
 ```
 
 ## Example Usage

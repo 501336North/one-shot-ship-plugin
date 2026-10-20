@@ -66,6 +66,8 @@ HOOKS_TO_COPY=(
     "oss-log.sh"
     "oss-notify.sh"
     "oss-safe-path.sh"            # sourced by oss-log.sh and oss-notify.sh: the project-write guard
+    "oss-value.sh"                # served prompts' value files: dir / failed / error (G21); needs the two above
+    "oss-login.sh"                # /oss:login saves the key; sources oss-value.sh; NOT allowlisted (R5-8)
     "oss-api-curl.sh"             # sourced by oss-notify.sh and oss-iron-laws-sync.sh: API key via curl stdin
     "oss-statusline.sh"
     "oss-detect-playwright.sh"
