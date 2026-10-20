@@ -144,7 +144,7 @@ oss_resolve_project() { # [dir] (default: the physical cwd)
 # Per-session pointer ~/.oss/sessions/<id>/project (ship round 1, D2): written by the SessionStart
 # hook from CLAUDE_PROJECT_DIR, read by model-run scripts through CLAUDE_CODE_SESSION_ID.
 _OSS_SID_RE='^[A-Za-z0-9-]{1,100}$'
-_oss_own_dir() { [[ -d "$1" && ! -L "$1" && -O "$1" ]]; }
+_oss_own_dir() { [[ -d "$1" && ! -L "$1" ]] && test -O "$1"; }   # `test -O`: the tests' other-user seam
 # This session's pointer -> _OSS_PROJ; rc 1 (and "") when absent or not trusted.
 oss_session_project() {
     local id="${CLAUDE_CODE_SESSION_ID:-}" s f p
@@ -180,13 +180,12 @@ oss_session_pointer_remove() {
 # Remove pointer folders whose file is older than 30 days. Run after this session's write, so its
 # own (just rewritten) pointer is never old.
 oss_session_pointer_prune() {
-    local d n
+    local f d n
     _oss_sessions_dir || return 1
-    for d in "$_OSS_SESS"/*; do
-        n="${d##*/}"
-        [[ "$n" =~ $_OSS_SID_RE ]] && _oss_own_dir "$d" || continue
-        [[ -n "$(find "$d/project" -prune -type f -mtime +30 2>/dev/null)" ]] && rm -rf -- "$d"
-    done
+    while IFS= read -r -d '' f; do   # one find for every folder (R2-6)
+        d="${f%/project}"; n="${d##*/}"
+        [[ "$n" =~ $_OSS_SID_RE ]] && _oss_own_dir "$d" && rm -rf -- "$d"
+    done < <(find "$_OSS_SESS" -mindepth 2 -maxdepth 2 -name project -type f -mtime +30 -print0 2>/dev/null)
     return 0
 }
 # The stdin JSON a Claude Code hook receives -> _OSS_HOOK_SID (session_id, when valid), _OSS_HOOK_EVENT

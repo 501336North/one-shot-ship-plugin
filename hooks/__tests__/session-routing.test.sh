@@ -197,6 +197,14 @@ env HOME="$H" PATH="$T/fbin:$PATH" "$SH" -c 'source "$1/hooks/oss-safe-path.sh";
 [[ "$(wc -l < "$T/find.calls" 2>/dev/null | tr -d ' ')" == 1 ]] && pass "R2-6: the prune runs find once for all pointer folders" \
     || fail "R2-6: the prune runs find once for all pointer folders" "find calls: $(wc -l < "$T/find.calls" 2>/dev/null)"
 
+# ... and still only folders with a valid id that the user owns (another user's: BASH_ENV `test -O`)
+for id in bad.id FOREIGN1; do mkdir -m 700 "$SESS/$id"; printf '%s\n' "$P1" > "$SESS/$id/project"; chmod 600 "$SESS/$id/project"; age "$id" 31; done
+printf 'test() { if [[ "${1:-}" == -O && "${2:-}" == */FOREIGN1 ]]; then return 1; fi; builtin test "$@"; }\n' > "$T/foreign.sh"
+env HOME="$H" BASH_ENV="$T/foreign.sh" "$SH" -c 'source "$1/hooks/oss-safe-path.sh"; oss_session_pointer_prune' _ "$ROOT" >/dev/null 2>&1
+[[ -f "$SESS/bad.id/project" ]] && pass "R2-6: an old folder whose name is not a session id is kept" || fail "R2-6: an old folder whose name is not a session id is kept" "$(ls "$SESS" | tr '\n' ' ')"
+[[ -f "$SESS/FOREIGN1/project" ]] && pass "R2-6: an old folder owned by another user is kept" || fail "R2-6: an old folder owned by another user is kept" "$(ls "$SESS" | tr '\n' ' ')"
+rm -rf "$SESS/bad.id" "$SESS/FOREIGN1"
+
 # --- a linked ~/.oss/sessions is refused by the writer ---------------------------------------------
 H3="$T/home3"; mkdir -p "$H3/.oss" "$T/elsewhere"; ln -s "$T/elsewhere" "$H3/.oss/sessions"
 (cd "$P1" && env HOME="$H3" CLAUDE_PLUGIN_ROOT="$ROOT" OSS_SKIP_HEALTH_CHECK=1 CLAUDE_PROJECT_DIR="$P1" CLAUDE_CODE_SESSION_ID=S1 \
