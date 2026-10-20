@@ -141,6 +141,16 @@ for cwd in C D; do
         || fail "T3: notify failed + phase + agent from repo $cwd leave B (and any link target) untouched" "B:$(ls -A "$B/.oss") LT:$(ls -A "$LT")"
 done
 
+# --- T4: TMPDIR unset (common on Linux): a project's log stays project-local --------------------
+world; OUT=$(cd "$A/sub/deep" && env -u CLAUDE_PROJECT_DIR -u TMPDIR HOME="$H" CLAUDE_PLUGIN_ROOT="$ROOT" "$SH" "$ROOT/hooks/oss-log.sh" write build tmpdir-unset 2>&1 </dev/null); RC=$?
+has_log "$A" tmpdir-unset && [[ ! -e "$H/.oss/logs" ]] && [[ "$OUT" != *unbound* ]] \
+    && pass "T4: with TMPDIR unset, oss-log write from A logs to A (no unbound-variable fallback to ~/.oss)" \
+    || fail "T4: with TMPDIR unset, oss-log write from A logs to A (no unbound-variable fallback to ~/.oss)" "rc=$RC A:$(ls -A "$A/.oss") home:$(ls -A "$H/.oss") out=$OUT"
+world; OUT=$(cd "$C" && env -u TMPDIR HOME="$H" CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$A" "$SH" "$ROOT/hooks/oss-log.sh" write build tmpdir-unset-env 2>&1 </dev/null); RC=$?
+has_log "$A" tmpdir-unset-env && [[ "$OUT" != *unbound* ]] \
+    && pass "T4: with TMPDIR unset, CLAUDE_PROJECT_DIR=A still logs to A" \
+    || fail "T4: with TMPDIR unset, CLAUDE_PROJECT_DIR=A still logs to A" "rc=$RC A:$(ls -A "$A/.oss") out=$OUT"
+
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
 [[ $FAILED -eq 0 ]]

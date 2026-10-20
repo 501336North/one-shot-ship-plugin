@@ -61,7 +61,7 @@ validate_project_path() {
 
     # Check if in temp directory (for tests)
     local in_tmp=false
-    if [[ -n "$TMPDIR" ]]; then
+    if [[ -n "${TMPDIR:-}" ]]; then
         local tmp_resolved
         tmp_resolved=$(realpath "$TMPDIR" 2>/dev/null) || true
         [[ -n "$tmp_resolved" && ("$canonical" == "$tmp_resolved" || "$canonical" == "$tmp_resolved"/*) ]] && in_tmp=true
