@@ -100,9 +100,11 @@ echo "Test 5: Allows ~/.oss/hooks/oss-value.sh (fresh and merged)"
 TMPDIR_5=$(mktemp -d)
 "$SETUP_SCRIPT" "$TMPDIR_5"
 grep -qF '"Bash(~/.oss/hooks/oss-value.sh:*)"' "$TMPDIR_5/.claude/settings.local.json" && pass "Fresh file allows oss-value.sh" || fail "Fresh file does not allow oss-value.sh"
+grep -qF '"Edit(~/.oss/run/**)"' "$TMPDIR_5/.claude/settings.local.json" && pass "Fresh file allows value-file writes in ~/.oss/run" || fail "Fresh file does not allow value-file writes in ~/.oss/run"
 printf '{"permissions":{"allow":["WebSearch"]}}\n' > "$TMPDIR_5/.claude/settings.local.json"
 "$SETUP_SCRIPT" "$TMPDIR_5"
 grep -qF '"Bash(~/.oss/hooks/oss-value.sh:*)"' "$TMPDIR_5/.claude/settings.local.json" && pass "Merged file allows oss-value.sh" || fail "Merged file does not allow oss-value.sh"
+grep -qF '"Edit(~/.oss/run/**)"' "$TMPDIR_5/.claude/settings.local.json" && pass "Merged file allows value-file writes in ~/.oss/run" || fail "Merged file does not allow value-file writes in ~/.oss/run"
 rm -rf "$TMPDIR_5"
 
 # --- Summary ---

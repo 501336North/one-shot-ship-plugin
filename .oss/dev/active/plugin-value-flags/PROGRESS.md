@@ -59,3 +59,7 @@ Plan, design and decisions live in the API repo (branch feat/plugin-value-flags/
   exit 1` line, no chain.
 
 ## Last Updated: 2026-10-20 11:20 +07 by /oss:build (ship round 5 implementer)
+
+- [x] R5-5: Edit(~/.oss/run/**) added to OSS_PERMISSIONS so value-file Writes do not prompt (completed 2026-10-20). auto-permissions RED 10/12 -> GREEN 12/12.
+
+## Last Updated: 2026-10-20 by /oss:build (R5-5)

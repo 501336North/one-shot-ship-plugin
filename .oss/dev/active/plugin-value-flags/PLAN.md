@@ -63,3 +63,4 @@ Final re-check: pen-test PASS; security 1 MEDIUM (default login prose); code rev
 Stays in FOLLOWUPS: API key on curl argv (item 44) - except /oss:login, whose key now goes through oss_api_curl (9bc354d).
 
 Round 5 done 2026-10-20: R5-1 36febd1, R5-2 ba86c72 + 9bc354d, R5-3 c72ed05, R5-4 b4a232b (see PROGRESS.md, TESTING.md, D11).
+- [x] R5-5 (R5-1 gap): value-file Writes to ~/.oss/run prompt (no allow rule). Add `Edit(~/.oss/run/**)` to OSS_PERMISSIONS (Edit rules cover the Write tool), fresh and merged settings.

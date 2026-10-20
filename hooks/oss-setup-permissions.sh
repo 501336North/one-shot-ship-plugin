@@ -21,6 +21,7 @@ OSS_PERMISSIONS=(
     'Bash(~/.oss/hooks/oss-log.sh:*)'
     'Bash(~/.oss/hooks/oss-notify.sh:*)'
     'Bash(~/.oss/hooks/oss-value.sh:*)'
+    'Edit(~/.oss/run/**)'
     'Bash(~/.oss/hooks/oss-notification.sh:*)'
     'Bash(~/.oss/hooks/oss-stop.sh:*)'
     'Bash(~/.oss/hooks/oss-iron-laws-sync.sh:*)'
