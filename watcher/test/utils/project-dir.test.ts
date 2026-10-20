@@ -9,7 +9,7 @@
  *           never read.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -74,5 +74,41 @@ describe('resolveProjectDir', () => {
 
   it('keeps CLAUDE_PROJECT_DIR first when it is set', () => {
     expect(resolveProjectDir({ HOME: home, CLAUDE_PROJECT_DIR: b }, path.join(a, 'sub'))).toBe(b);
+  });
+});
+
+/**
+ * @behavior A CLI run in a session whose SessionStart pointer names product B resolves B from any
+ *           cwd - unless a folder or the file of that pointer belongs to another user (then the cwd
+ *           walk decides, never the pointer). Shell twin: oss_session_project.
+ * @business-rule notify-routing-unify D2: the pointer is trusted only when the user owns it.
+ */
+describe('resolveProjectDir: the session pointer', () => {
+  let root: string;
+  let home: string;
+  let b: string;
+
+  beforeEach(() => {
+    root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-project-ptr-')));
+    home = path.join(root, 'home');
+    b = path.join(root, 'prodB');
+    fs.mkdirSync(path.join(b, '.oss'), { recursive: true });
+    fs.mkdirSync(path.join(home, '.oss', 'sessions', 'S2'), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(path.join(home, '.oss', 'sessions', 'S2', 'project'), `${b}\n`, { mode: 0o600 });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("resolves this session's product from a folder outside any repo", () => {
+    expect(resolveProjectDir({ HOME: home, CLAUDE_CODE_SESSION_ID: 'S2' }, root)).toBe(b);
+  });
+
+  it('ignores a pointer owned by another user', () => {
+    const me = process.geteuid?.() ?? 0;
+    vi.spyOn(process, 'geteuid').mockReturnValue(me + 1);
+    expect(resolveProjectDir({ HOME: home, CLAUDE_CODE_SESSION_ID: 'S2' }, root)).toBeNull();
   });
 });

@@ -9,8 +9,10 @@
 #   oss_valid_workflow_name <name>        ^[a-z][a-z0-9-]{0,40}$ (twin: watcher/src/utils/workflow-name.ts)
 #   oss_project_walk <dir>                the nearest real (not linked) .oss from <dir> up to the first
 #                                         dir holding a .git entry -> _OSS_PROJ ("" = the global ~/.oss)
-#   oss_resolve_project                   CLAUDE_PROJECT_DIR if set, else oss_project_walk from the
+#   oss_resolve_project [dir]             CLAUDE_PROJECT_DIR if set, else this session's pointer
+#                                         (oss_session_project), else oss_project_walk from [dir] or the
 #                                         physical cwd -> _OSS_PROJ (twin: watcher/src/utils/project-dir.ts)
+#   oss_session_pointer_write/_remove/_prune, oss_hook_stdin   the SessionStart/End side of the pointer
 #
 # oss_safe_mkdir sets _OSS_SAFE_DIR to the directory it checked; oss_safe_target builds the
 # target from it, so the path approved is the path the caller writes (G2).
@@ -114,8 +116,70 @@ oss_project_walk() {
         d="${d%/*}"
     done
 }
-oss_resolve_project() {
+oss_resolve_project() { # [dir] (default: the physical cwd)
     if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then _OSS_PROJ="$CLAUDE_PROJECT_DIR"; return 0; fi
-    local d; d=$(pwd -P; echo .); d="${d%$'\n.'}"
+    oss_session_project && return 0
+    local d="${1:-}"
+    if [[ -z "$d" ]]; then d=$(pwd -P; echo .); d="${d%$'\n.'}"; fi
     oss_project_walk "$d"
+}
+
+# Per-session pointer ~/.oss/sessions/<id>/project (ship round 1, D2): written by the SessionStart
+# hook from CLAUDE_PROJECT_DIR, read by model-run scripts through CLAUDE_CODE_SESSION_ID.
+_OSS_SID_RE='^[A-Za-z0-9-]{1,100}$'
+_oss_own_dir() { [[ -d "$1" && ! -L "$1" && -O "$1" ]]; }
+# This session's pointer -> _OSS_PROJ; rc 1 (and "") when absent or not trusted.
+oss_session_project() {
+    local id="${CLAUDE_CODE_SESSION_ID:-}" s f p
+    _OSS_PROJ=""
+    [[ "$id" =~ $_OSS_SID_RE && "${HOME:-}" == /* ]] || return 1
+    s="$HOME/.oss/sessions"; f="$s/$id/project"
+    _oss_own_dir "$s" && _oss_own_dir "$s/$id" && [[ -f "$f" && ! -L "$f" && -O "$f" ]] || return 1
+    p=$(<"$f") 2>/dev/null || return 1
+    [[ "$p" == /* && "$p" != *[[:cntrl:]]* && -d "$p/.oss" && ! -L "$p/.oss" ]] || return 1
+    _OSS_PROJ="$p"
+}
+_oss_sessions_dir() { # -> _OSS_SESS (created 700 when absent); rc 1 when linked / not owned
+    _OSS_SESS=""
+    [[ "${HOME:-}" == /* && -d "$HOME/.oss" ]] || return 1
+    [[ -e "$HOME/.oss/sessions" || -L "$HOME/.oss/sessions" ]] || mkdir -m 700 "$HOME/.oss/sessions" 2>/dev/null
+    _oss_own_dir "$HOME/.oss/sessions" && chmod 700 "$HOME/.oss/sessions" && _OSS_SESS="$HOME/.oss/sessions"
+}
+# <id> <project>: atomic, owner-only (dir 700, file 600)
+oss_session_pointer_write() {
+    local id="${1:-}" p="${2:-}" d t
+    [[ "$id" =~ $_OSS_SID_RE && "$p" == /* && "$p" != *[[:cntrl:]]* ]] && _oss_sessions_dir || return 1
+    d="$_OSS_SESS/$id"; t="$d/.project.$$"
+    [[ -e "$d" || -L "$d" ]] || mkdir -m 700 "$d" 2>/dev/null
+    _oss_own_dir "$d" && chmod 700 "$d" || return 1
+    rm -f "$t" && (umask 077; printf '%s\n' "$p" > "$t") && mv -f "$t" "$d/project"
+}
+# <id>: remove that session's pointer folder
+oss_session_pointer_remove() {
+    local id="${1:-}"
+    [[ "$id" =~ $_OSS_SID_RE ]] && _oss_sessions_dir && _oss_own_dir "$_OSS_SESS/$id" || return 1
+    rm -rf -- "$_OSS_SESS/$id"
+}
+# Remove pointer folders whose file is older than 30 days. Run after this session's write, so its
+# own (just rewritten) pointer is never old.
+oss_session_pointer_prune() {
+    local d n
+    _oss_sessions_dir || return 1
+    for d in "$_OSS_SESS"/*; do
+        n="${d##*/}"
+        [[ "$n" =~ $_OSS_SID_RE ]] && _oss_own_dir "$d" || continue
+        [[ -n "$(find "$d/project" -prune -type f -mtime +30 2>/dev/null)" ]] && rm -rf -- "$d"
+    done
+    return 0
+}
+# The stdin JSON a Claude Code hook receives -> _OSS_HOOK_SID (session_id, when valid), _OSS_HOOK_EVENT
+oss_hook_stdin() {
+    local in="" re
+    _OSS_HOOK_SID=""; _OSS_HOOK_EVENT=""
+    [[ -t 0 ]] || IFS= read -r -d '' -t 2 in || true
+    re='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9-]{1,100})"'
+    [[ "$in" =~ $re ]] && _OSS_HOOK_SID="${BASH_REMATCH[1]}"
+    re='"hook_event_name"[[:space:]]*:[[:space:]]*"([A-Za-z]{1,40})"'
+    [[ "$in" =~ $re ]] && _OSS_HOOK_EVENT="${BASH_REMATCH[1]}"
+    return 0
 }

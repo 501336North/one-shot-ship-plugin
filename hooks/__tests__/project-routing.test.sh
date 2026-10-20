@@ -166,7 +166,7 @@ has_log "$H" routing-reason && untouched && lt_empty \
     && pass "T5: oss-value failed from a repo with a linked .oss lands in ~/.oss, never the link target or B" \
     || fail "T5: oss-value failed from a repo with a linked .oss lands in ~/.oss, never the link target or B" "rc=$RC home:$(ls -A "$H/.oss") LT:$(ls -A "$LT") out=$OUT"
 copies=$(cd "$ROOT/hooks" && grep -lF '"$d/.oss"' ./*.sh | tr '\n' ' ')
-[[ "$copies" == "./oss-safe-path.sh " ]] && grep -qF 'oss_project_walk' "$ROOT/hooks/oss-value.sh" \
+[[ "$copies" == "./oss-safe-path.sh " ]] && grep -qF 'oss_resolve_project' "$ROOT/hooks/oss-value.sh" \
     && pass "T5: the .oss walk exists once (hooks/oss-safe-path.sh); oss-value.sh uses it" \
     || fail "T5: the .oss walk exists once (hooks/oss-safe-path.sh); oss-value.sh uses it" "walk found in: $copies"
 

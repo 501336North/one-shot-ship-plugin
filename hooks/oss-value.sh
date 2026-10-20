@@ -82,9 +82,10 @@ _ov_cmd_dir() {
     && printf '%s\n' "$p"
 }
 
-# The served #374 walk, shared (oss_project_walk in oss-safe-path.sh): the nearest real (not linked)
-# .oss from <cwd> up to the repo top, or $HOME (the global ~/.oss, never ~/.oss/current-project).
-_ov_walk() { oss_project_walk "$1"; _OV_PROJ=${_OSS_PROJ:-$HOME}; }
+# The shared rule (oss_resolve_project in oss-safe-path.sh) from <cwd>: CLAUDE_PROJECT_DIR, this
+# session's pointer, the nearest real .oss up to the first .git entry, or $HOME (the global ~/.oss,
+# never ~/.oss/current-project).
+_ov_walk() { oss_resolve_project "$1"; _OV_PROJ=${_OSS_PROJ:-$HOME}; }
 
 # "<inode> <link count>": of the opened file for /dev/fd/N, else of the path itself (not followed).
 _ov_st() { case "$1" in /dev/fd/*) stat -L -c '%i %h' "$1" 2>/dev/null || stat -L -f '%i %l' "$1" ;; *) stat -c '%i %h' "$1" 2>/dev/null || stat -f '%i %l' "$1" ;; esac; }
