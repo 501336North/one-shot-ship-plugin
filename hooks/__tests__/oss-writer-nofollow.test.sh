@@ -292,6 +292,28 @@ if [[ -f "$P/.oss/session-context.md" ]]; then pass "control: a normal repo stil
 else fail "control: a normal repo still gets session-context.md" "missing"; fi
 rm -rf "$T"
 
+# R2-4 (pen LOW-1): committed links at the archive names oss-log.sh will pick (session-<timestamp>
+# for now .. now+15s) must not pull session.log / current-session into an outside directory.
+ts_names() { local i; for i in $(seq 0 15); do date -r $(( $(date +%s) + i )) '+%Y%m%d-%H%M%S' 2>/dev/null || date -d "@$(( $(date +%s) + i ))" '+%Y%m%d-%H%M%S'; done; }
+l_rotlinks() { mkdir -p .oss/logs/archive .oss/logs/current-session && echo old > .oss/logs/current-session/session.log && for t in $(ts_names); do ln -s "$T/outside/dir" ".oss/logs/archive/session-$t.log"; done; }
+l_clrlinks() { mkdir -p .oss/logs/current-session && echo old > .oss/logs/current-session/build.log && for t in $(ts_names); do ln -s "$T/outside/dir" ".oss/logs/session-$t"; done; }
+world; evil_repo p-rot l_rotlinks; before=$(snapshot)
+out=$(run_in "$P" "$SH" "$ROOT/hooks/oss-log.sh" rotate 2>&1); rc=$?
+check "R2-4: oss-log.sh rotate: committed links at the archive names move nothing outside" "$before" "$rc" "$out"
+rm -rf "$T"
+world; evil_repo p-clr l_clrlinks; before=$(snapshot)
+out=$(run_in "$P" "$SH" "$ROOT/hooks/oss-log.sh" clear-session 2>&1); rc=$?
+check "R2-4: oss-log.sh clear-session: committed links at the archive names move nothing outside" "$before" "$rc" "$out"
+rm -rf "$T"
+world; clean_repo p-okrot; mkdir -p "$P/.oss/logs/current-session"; echo keep > "$P/.oss/logs/current-session/session.log"; echo b > "$P/.oss/logs/current-session/build.log"
+run_in "$P" "$SH" "$ROOT/hooks/oss-log.sh" rotate >/dev/null 2>&1
+ls "$P/.oss/logs/archive/"session-*.log.gz >/dev/null 2>&1 && pass "control: a normal repo still rotates session.log into the archive" \
+    || fail "control: a normal repo still rotates session.log into the archive" "$(ls -R "$P/.oss/logs" 2>&1 | tr '\n' ' ')"
+run_in "$P" "$SH" "$ROOT/hooks/oss-log.sh" clear-session >/dev/null 2>&1
+ls "$P/.oss/logs/"session-*/build.log >/dev/null 2>&1 && pass "control: a normal repo still archives current-session on clear-session" \
+    || fail "control: a normal repo still archives current-session on clear-session" "$(ls -R "$P/.oss/logs" 2>&1 | tr '\n' ' ')"
+rm -rf "$T"
+
 world; clean_repo p-okarch
 mkdir -p "$P/.oss/dev/active/feat"; printf '# Progress\n\n## Current Phase: ship (COMPLETE)\n\n- [x] done\n' > "$P/.oss/dev/active/feat/PROGRESS.md"
 (cd "$P" && HOME="$T/home" "$SH" "$ROOT/hooks/oss-archive-check.sh" --project-dir="$P" >/dev/null 2>&1 </dev/null)
