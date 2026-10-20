@@ -28,4 +28,10 @@ describe('oss-session-start.sh: HOOKS_TO_COPY', () => {
     const content = fs.readFileSync(sessionStartPath, 'utf-8');
     expect(content).toContain('"oss-decrypt-checksums.txt"');
   });
+  // /oss:login saves the key with ~/.oss/hooks/oss-login.sh (kept out of the allowlist, R5-8),
+  // so it must be installed with the other hooks.
+  it('should copy oss-login.sh', () => {
+    const content = fs.readFileSync(sessionStartPath, 'utf-8');
+    expect(content).toContain('"oss-login.sh"');
+  });
 });

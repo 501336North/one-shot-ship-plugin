@@ -20,7 +20,8 @@
 #   oss-value.sh models-set         the plugin's models.js set <type> <prompt> <model> from prompt.txt + model.txt.
 #   oss-value.sh cli <script> <args>  one of the fixed plugin CLI calls (webhook-setup setup [--port N],
 #                                   webhook-toggle on, update-workflow-state init) from the plugin root.
-#   oss-value.sh login              key.txt checked against the API and saved to ~/.oss/config.json.
+# (Saving the API key is hooks/oss-login.sh, NOT a verb here: this script is allowlisted, a key
+# change must always ask - R5-8. oss-login.sh sources this file for its functions.)
 # Each value hand-off is ONE call spelled ~/.oss/hooks/oss-value.sh <verb> (the allowed prefix): a
 # $(...) && chain asks for approval even when every part is allowed (ship round 5, R5-1).
 #
@@ -38,7 +39,7 @@ if [[ ! -f "$_OV_HERE/oss-safe-path.sh" ]]; then
 fi
 source "$_OV_HERE/oss-safe-path.sh"
 
-_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args> | login" >&2; exit 2; }
+_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args>" >&2; exit 2; }
 
 _OV_RUN="$HOME/.oss/run"
 
@@ -170,23 +171,6 @@ _ov_cmd_cli() {
     exec node "$_OV_ROOT/watcher/dist/cli/$1.js" "${@:2}"
 }
 
-# login: key.txt (the key rule) checked against the API, then saved to ~/.oss/config.json (other
-# settings kept; a new file gets the API URL) - /oss:login <KEY> and --key, one allowed call.
-_ov_cmd_login() {
-    local k r c u t
-    umask 077   # the key file and anything made here: owner-only (R5-6)
-    _ov_dir && _ov_get key && k=$_OV_VAL \
-    || { echo "Error: the key is missing or not a valid API key. Usage: /oss:login ak_xxxxx" >&2; return 1; }
-    source "$_OV_HERE/oss-api-curl.sh" || return 1   # oss_api_curl: the key on curl's stdin, never in argv
-    r=$(oss_api_curl "$k" -s -w "\n%{http_code}" "https://one-shot-ship-api.onrender.com/api/v1/subscription/status")
-    test "$(printf '%s\n' "$r" | tail -1)" = 200 \
-    || { echo "Error: Invalid API key. Get a valid key from https://www.oneshotship.com/dashboard" >&2; return 1; }
-    c="$HOME/.oss/config.json"; mkdir -p "$HOME/.oss"
-    if test -f "$c"; then u=$(jq --arg key "$k" '.apiKey = $key' "$c"); else u=$(jq -n --arg key "$k" '{"apiKey": $key, "apiUrl": "https://one-shot-ship-api.onrender.com"}'); fi && test -n "$u" \
-    || { echo "Error: could not update ~/.oss/config.json (not valid JSON, or jq missing); it was left as it was." >&2; return 1; }
-    t=$(mktemp "$HOME/.oss/config.json.XXXXXX") && printf '%s\n' "$u" > "$t" && chmod 600 "$t" && mv -f "$t" "$c" && echo "Plan: $(printf '%s\n' "$r" | head -1 | jq -r '.plan // "unknown"')"
-}
-
 _ov_cmd_agent() {
     local o t
     o=$(pwd -P)
@@ -239,6 +223,7 @@ _ov_cmd_error() {
     && rm -f "$_OV_DIR/message.txt" "$_OV_DIR/hint.txt" "$_OV_DIR/error.txt"
 }
 
+[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0   # sourced (oss-login.sh): the functions only, no verb
 case "${1:-}" in
     dir) _ov_cmd_dir ;;
     error) _ov_cmd_error "${2:-}" ;;
@@ -249,6 +234,5 @@ case "${1:-}" in
     decrypt) shift; _ov_cmd_decrypt "$@" ;;
     models-set) _ov_cmd_models_set ;;
     cli) shift; _ov_cmd_cli "$@" ;;
-    login) _ov_cmd_login ;;
     *) _ov_usage ;;
 esac

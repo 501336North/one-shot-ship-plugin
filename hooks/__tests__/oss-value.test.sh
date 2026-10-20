@@ -554,11 +554,16 @@ setup_act; rm -f "$H/.oss/plugin-root"; ovs "$R" cli webhook-toggle on; refused_
 setup_act; mkdir -p "$T/emptyroot$N"; printf '%s\n' "$T/emptyroot$N" > "$H/.oss/plugin-root"; ovs "$R" cli webhook-toggle on; refused_act "21: cli refuses a plugin root without the script"
 
 # --- 22. login: key.txt -> validated against the API -> saved to ~/.oss/config.json (R5-2) ----
+# R5-8: login is its own script, hooks/oss-login.sh, kept OUT of the allowlist so changing the API
+# key always asks the user once; it reuses oss-value.sh's functions. oss-value.sh login is refused.
+LOGIN="$ROOT/hooks/oss-login.sh"
+ovl() { OV_SCRIPT="$LOGIN" ovs "$1"; }
+[[ -f "$LOGIN" && -x "$LOGIN" ]] && pass "22: hooks/oss-login.sh exists and is executable (R5-8)" || fail "22: hooks/oss-login.sh exists and is executable (R5-8)" "missing or not executable"
 # /oss:login <KEY> and /oss:login --key hand the key over the same way: Write key.txt, then this one
 # call. curl is a stub: it records its arguments and prints $T/curl.out (body, then the HTTP code).
 # The key goes to curl on stdin (--config -, the oss-api-curl.sh helper), never in argv (ps shows argv).
 printf '#!/bin/sh\necho "curl $*" >> "%s/sb.calls"\ncase " $* " in *" --config - "*) cat > "%s/curl.stdin" ;; esac\ncat "%s/curl.out"\n' "$T" "$T" "$T" > "$T/sbin/curl"; chmod +x "$T/sbin/curl"
-setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; echo ossk_login_key_1 > "$VD/key.txt"; ovs "$R" login
+setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; echo ossk_login_key_1 > "$VD/key.txt"; ovl "$R"
 [[ "$RC" == 0 && "$OUT" == "Plan: pro" && "$(jq -r .apiKey "$H/.oss/config.json" 2>/dev/null)" == ossk_login_key_1 \
    && "$(jq -r .apiUrl "$H/.oss/config.json" 2>/dev/null)" == https://one-shot-ship-api.onrender.com && ! -e "$VD/key.txt" ]] \
     && pass "22: login saves a key the API accepts (new config with the API URL) and prints the plan" || fail "22: login saves a key the API accepts" "rc=$RC out='$OUT' cfg=$(cat "$H/.oss/config.json" 2>&1) err=$ERR"
@@ -566,25 +571,25 @@ setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; echo ossk_login_key_1
    && "$(cat "$T/curl.stdin" 2>/dev/null)" == *"Authorization: Bearer ossk_login_key_1"* ]] \
     && pass "22: login checks the key against /api/v1/subscription/status, the key on curl's stdin, never argv" || fail "22: login checks the key against the API, key on stdin only" "calls=$(sbcalls) stdin=$(cat "$T/curl.stdin" 2>&1)"
 setup_act; printf '{"plan":"team"}\n200\n' > "$T/curl.out"; printf '{"apiKey":"old","apiUrl":"https://x.invalid","other":1}\n' > "$H/.oss/config.json"
-echo ossk_login_key_2 > "$VD/key.txt"; ovs "$R" login
+echo ossk_login_key_2 > "$VD/key.txt"; ovl "$R"
 [[ "$RC" == 0 && "$(jq -c . "$H/.oss/config.json")" == '{"apiKey":"ossk_login_key_2","apiUrl":"https://x.invalid","other":1}' ]] \
     && pass "22: login keeps the other config.json settings" || fail "22: login keeps the other config.json settings" "rc=$RC cfg=$(cat "$H/.oss/config.json" 2>&1)"
-setup_act; printf '{"error":"bad"}\n401\n' > "$T/curl.out"; echo '{"apiKey":"keep"}' > "$H/.oss/config.json"; echo ossk_login_key_3 > "$VD/key.txt"; ovs "$R" login
+setup_act; printf '{"error":"bad"}\n401\n' > "$T/curl.out"; echo '{"apiKey":"keep"}' > "$H/.oss/config.json"; echo ossk_login_key_3 > "$VD/key.txt"; ovl "$R"
 [[ "$RC" == 1 && "$(cat "$H/.oss/config.json")" == '{"apiKey":"keep"}' && "$ERR" == *"Invalid API key"* && ! -e "$VD/key.txt" ]] \
     && pass "22: a key the API refuses is not saved" || fail "22: a key the API refuses is not saved" "rc=$RC cfg=$(cat "$H/.oss/config.json") err=$ERR"
 for v in '$(touch PWNED)' "abc'defgh" 'short' 'ossk key with space'; do
-    setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; printf '%s\n' "$v" > "$VD/key.txt"; ovs "$R" login
+    setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; printf '%s\n' "$v" > "$VD/key.txt"; ovl "$R"
     if pwned; then fail "22: login refuses key '$v'" "something ran"
     elif [[ "$RC" != 1 || -n "$OUT" || -n "$(sbcalls)" || -e "$H/.oss/config.json" ]]; then fail "22: login refuses key '$v'" "rc=$RC out='$OUT' calls=$(sbcalls)"
     else pass "22: login refuses key '$v': no API call, nothing saved"; fi
 done
-setup_act; ovs "$R" login; [[ "$RC" == 1 && -z "$(sbcalls)" && "$ERR" == *"not a valid API key"* ]] && pass "22: login without key.txt is refused" || fail "22: login without key.txt is refused" "rc=$RC err=$ERR"
+setup_act; ovl "$R"; [[ "$RC" == 1 && -z "$(sbcalls)" && "$ERR" == *"not a valid API key"* ]] && pass "22: login without key.txt is refused" || fail "22: login without key.txt is refused" "rc=$RC err=$ERR"
 # R5-6: the saved key is owner-only even under the usual umask 022: config.json 600, a new ~/.oss 700.
 OLD_UMASK=$(umask); umask 022
-setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; echo ossk_login_key_6 > "$VD/key.txt"; ovs "$R" login
+setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; echo ossk_login_key_6 > "$VD/key.txt"; ovl "$R"
 [[ "$RC" == 0 && "$(mode_of "$H/.oss/config.json")" == -rw------- && "$(mode_of "$H/.oss")" == drwx------ ]] \
     && pass "22: under umask 022 a new config.json is 600 and a new ~/.oss is 700 (R5-6)" || fail "22: login writes owner-only (R5-6)" "rc=$RC cfg=$(mode_of "$H/.oss/config.json" 2>&1) dir=$(mode_of "$H/.oss" 2>&1)"
-setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; echo '{"apiKey":"old"}' > "$H/.oss/config.json"; chmod 644 "$H/.oss/config.json"; echo ossk_login_key_7 > "$VD/key.txt"; ovs "$R" login
+setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; echo '{"apiKey":"old"}' > "$H/.oss/config.json"; chmod 644 "$H/.oss/config.json"; echo ossk_login_key_7 > "$VD/key.txt"; ovl "$R"
 [[ "$RC" == 0 && "$(mode_of "$H/.oss/config.json")" == -rw------- && "$(jq -r .apiKey "$H/.oss/config.json")" == ossk_login_key_7 ]] \
     && pass "22: an existing 644 config.json comes out 600 with the new key (R5-6)" || fail "22: an existing config.json comes out 600 (R5-6)" "rc=$RC cfg=$(mode_of "$H/.oss/config.json" 2>&1)"
 [[ -z "$(find "$H/.oss" -maxdepth 1 -name 'config.json.*')" ]] && pass "22: login leaves no temp file behind (R5-6)" || fail "22: login leaves no temp file behind (R5-6)" "$(ls -a "$H/.oss")"
@@ -596,10 +601,15 @@ for c in 'malformed|{bad|' 'empty||' 'no jq|{"apiKey":"old"}|nojq'; do
     IFS='|' read -r what body nj <<< "$c"
     setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; printf '%s' "$body" > "$H/.oss/config.json"
     cp "$H/.oss/config.json" "$T/cfg.before"; echo ossk_login_key_8 > "$VD/key.txt"
-    if [[ -n "$nj" ]]; then OV_PATH="$T/nojq:$T/sbin:$PATH" ov "$R" login; else ovs "$R" login; fi
+    if [[ -n "$nj" ]]; then OV_SCRIPT="$LOGIN" OV_PATH="$T/nojq:$T/sbin:$PATH" ov "$R"; else ovl "$R"; fi
     [[ "$RC" == 1 && "$OUT" != *Plan:* && -n "$ERR" ]] && cmp -s "$T/cfg.before" "$H/.oss/config.json" && [[ -z "$(find "$H/.oss" -maxdepth 1 -name 'config.json.*')" ]] \
         && pass "22: login with $what refuses and leaves config.json untouched (R5-7)" || fail "22: login with $what refuses, config.json untouched (R5-7)" "rc=$RC out='$OUT' err=$ERR cfg=$(cat "$H/.oss/config.json")"
 done
+# R5-8: the allowlisted oss-value.sh no longer saves a key.
+printf '#!/bin/sh\necho "curl $*" >> "%s/sb.calls"\ncat "%s/curl.out"\n' "$T" "$T" > "$T/sbin/curl"; chmod +x "$T/sbin/curl"
+setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; echo ossk_login_key_9 > "$VD/key.txt"; ovs "$R" login
+[[ "$RC" != 0 && "$RC" != 126 && "$RC" != 127 && -z "$OUT" && -z "$(sbcalls)" && ! -e "$H/.oss/config.json" ]] \
+    && pass "22: oss-value.sh login is refused: no API call, nothing saved (R5-8)" || fail "22: oss-value.sh login is refused (R5-8)" "rc=$RC out='$OUT' calls=$(sbcalls) err=$ERR"
 
 # --- 23. read model accepts what isValidModelId accepts (ship round 5, R5-3) -------------------
 # @behavior /oss:models set takes a real model id such as ollama/hf.co/org/Qwen3-GGUF:Q4_K_M.

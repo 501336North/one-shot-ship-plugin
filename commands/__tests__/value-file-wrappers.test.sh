@@ -17,7 +17,7 @@
 #           after [TEST] FAIL/PASS.
 # @business-rule Ship round 3, R3-7: request-shape fences are labelled ```http.
 # @business-rule Ship round 5, R5-2: /oss:login <KEY> hands the key over like --key (Write key.txt, then
-#           `oss-value.sh login`); no step tells the model to type the key into curl.
+#           `oss-login.sh`, R5-8: not allowlisted, so a key change asks once); no step tells the model to type the key into curl.
 # @business-rule Ship round 5, R5-1: each value hand-off is ONE call spelled with the allowed prefix
 #           `~/.oss/hooks/oss-value.sh <verb>` (no $(...) && chain), so it runs without a prompt.
 
@@ -54,7 +54,8 @@ check "build.md tells the model to Write agent.txt" has build.md 'agent.txt'
 check "build.md has no direct oss-log.sh agent line" none build.md 'oss-log.sh agent build'
 
 # R3-5
-check "login.md --key and the default flow both save the key with one call (R5-2)" test "$(awk '{ sub(/^[[:space:]]+/, "") } $0 == "~/.oss/hooks/oss-value.sh login"' "$C/login.md" | wc -l | tr -d ' ')" = 2
+check "login.md --key and the default flow both save the key with one call to oss-login.sh (R5-2, R5-8)" test "$(awk '{ sub(/^[[:space:]]+/, "") } $0 == "~/.oss/hooks/oss-login.sh"' "$C/login.md" | wc -l | tr -d ' ')" = 2
+check "login.md no longer saves the key through the allowlisted oss-value.sh (R5-8)" none login.md "$V login"
 check "login.md never puts the key into a command it shows (R5-2)" none login.md 'Bearer YOUR_KEY'
 check "login.md has no \$(...) read of the key" none login.md 'NEW_KEY=$('
 check "login.md's default flow hands the key over through key.txt (R5-2)" sh -c "sed -n '/^## Full Login Flow/,\$p' '$C/login.md' | grep -qF 'key.txt'"

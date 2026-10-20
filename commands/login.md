@@ -66,7 +66,7 @@ Configure your API key for OSS Dev Workflow access.
 
 2. **Read, validate and save the key** in ONE Bash call (it checks the key's shape and deletes `key.txt` at once, checks the key against `/api/v1/subscription/status`, saves it to `~/.oss/config.json` keeping the other settings, and prints the plan):
    ```bash
-   ~/.oss/hooks/oss-value.sh login
+   ~/.oss/hooks/oss-login.sh
    ```
    If it prints an error instead of `Plan: ...`, show the user that error and stop.
 
@@ -128,7 +128,7 @@ The key reaches the shell through the value folder, never typed into a command (
 2. Use the Write tool to write the key alone to `key.txt` in that folder.
 3. Run this one call. It checks the key's shape and deletes `key.txt` at once, checks the key against `https://one-shot-ship-api.onrender.com/api/v1/subscription/status`, saves it to `~/.oss/config.json` (with `apiUrl` `https://one-shot-ship-api.onrender.com` when the file is new; other settings are kept) and prints the plan:
    ```bash
-   ~/.oss/hooks/oss-value.sh login
+   ~/.oss/hooks/oss-login.sh
    ```
    If it prints an error instead of `Plan: ...`, show the user that error and stop.
 

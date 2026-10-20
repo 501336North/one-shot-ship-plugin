@@ -54,7 +54,7 @@ N=0
 # sandbox <cwd-kind>: fresh HOME with the real hooks, a cwd (norepo|repo) -> H, W
 sandbox() {
     N=$((N + 1)); H="$T/h$N"; mkdir -p "$H/.oss/hooks" "$H/.oss/bin"
-    cp "$ROOT/hooks/oss-value.sh" "$ROOT/hooks/oss-safe-path.sh" "$ROOT/hooks/oss-api-curl.sh" "$ROOT/hooks/oss-log.sh" "$ROOT/hooks/oss-notify.sh" "$H/.oss/hooks/"
+    cp "$ROOT/hooks/oss-value.sh" "$ROOT/hooks/oss-login.sh" "$ROOT/hooks/oss-safe-path.sh" "$ROOT/hooks/oss-api-curl.sh" "$ROOT/hooks/oss-log.sh" "$ROOT/hooks/oss-notify.sh" "$H/.oss/hooks/"
     printf '#!/bin/sh\necho "oss-decrypt $*" >> "%s/calls"\n' "$T" > "$H/.oss/bin/oss-decrypt"; chmod +x "$H/.oss/bin/oss-decrypt"
     printf '%s\n' "$FR" > "$H/.oss/plugin-root"
     W="$T/w$N/cwd"; mkdir -p "$W"
@@ -82,7 +82,7 @@ calls() { cat "$T/calls" 2>/dev/null; }
 # === R4-1: the value lines work from a folder that is in no git repository ===================
 for kind in norepo repo; do
     sandbox "$kind"; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"
-    model_writes key ossk_test_key_123; run_block login.md 'oss-value.sh login'
+    model_writes key ossk_test_key_123; run_block login.md 'oss-login.sh'
     [[ "$RC" == 0 && "$(jq -r .apiKey "$H/.oss/config.json" 2>/dev/null)" == ossk_test_key_123 && "$OUT" == *"Plan: pro"* ]] \
         && pass "$kind: /oss:login --key saves the key it read" || fail "$kind: /oss:login --key saves the key it read" "rc=$RC out=$OUT"
 
