@@ -106,6 +106,21 @@ describe('resolveProjectDir: the session pointer', () => {
     expect(resolveProjectDir({ HOME: home, CLAUDE_CODE_SESSION_ID: 'S2' }, root)).toBe(b);
   });
 
+  it("resolves another repo's own .oss over the pointer (session started in B, now working in C)", () => {
+    const c = path.join(root, 'prodC');
+    fs.mkdirSync(path.join(c, '.oss'), { recursive: true });
+    fs.mkdirSync(path.join(c, 'sub'));
+    execSync('git init -q', { cwd: c, env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null' } });
+    expect(resolveProjectDir({ HOME: home, CLAUDE_CODE_SESSION_ID: 'S2' }, path.join(c, 'sub'))).toBe(c);
+  });
+
+  it("keeps the pointer's product for a stray .oss inside the pointer's own repo", () => {
+    execSync('git init -q', { cwd: b, env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null' } });
+    const stray = path.join(b, 'sub', 'stray');
+    fs.mkdirSync(path.join(stray, '.oss'), { recursive: true });
+    expect(resolveProjectDir({ HOME: home, CLAUDE_CODE_SESSION_ID: 'S2' }, stray)).toBe(b);
+  });
+
   it('ignores a pointer owned by another user', () => {
     const me = process.geteuid?.() ?? 0;
     vi.spyOn(process, 'geteuid').mockReturnValue(me + 1);

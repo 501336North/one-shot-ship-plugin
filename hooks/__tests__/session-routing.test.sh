@@ -108,6 +108,28 @@ for N in 4 2 1 3; do
     done
 done
 
+# --- R2-1: the session started in product 1, the user now works in product 2 ---------------------
+# The walk finds product 2's own .oss (its .git is not product 1's): product 2 wins over the pointer.
+mkdir -p "$P2/work"; N=2
+for cwd in "$P2" "$P2/work"; do
+    w="cwd ${cwd#"$T/"}"
+    clean; ev 1 "$cwd" "$SH" "$ROOT/hooks/oss-notify.sh" --workflow build start '{}';   check "R2-1 S1 (pointer=product 1) from $w: oss-notify lands in product 2"
+    clean; ev 1 "$cwd" "$SH" "$ROOT/hooks/oss-log.sh" write build "msg-r21";           check "R2-1 S1 (pointer=product 1) from $w: oss-log write lands in product 2"
+    clean; ev 1 "$cwd" "$SH" "$ROOT/hooks/oss-log.sh" phase build RED start;           check "R2-1 S1 (pointer=product 1) from $w: oss-log phase lands in product 2"
+    clean; ev 1 "$cwd" "$SH" "$ROOT/hooks/oss-log.sh" agent build oss:debugger "x"; wait_agent 2; check "R2-1 S1 (pointer=product 1) from $w: oss-log agent lands in product 2"
+    clean; vd=$(cd "$cwd" && env -u CLAUDE_PROJECT_DIR HOME="$H" CLAUDE_CODE_SESSION_ID=S1 "$SH" "$ROOT/hooks/oss-value.sh" dir 2>/dev/null </dev/null)
+    [[ -n "$vd" ]] && echo "reason-r21" > "$vd/reason.txt"
+    ev 1 "$cwd" "$SH" "$ROOT/hooks/oss-value.sh" failed build;                         check "R2-1 S1 (pointer=product 1) from $w: oss-value failed lands in product 2"
+    clean; ev 1 "$cwd" node "$ROOT/watcher/dist/cli/oss-error.js" "${ERR_ARGS[@]}";    check "R2-1 S1 (pointer=product 1) from $w: oss-error lands in product 2"
+    clean; ev 1 "$cwd" node "$ROOT/watcher/dist/cli/update-workflow-state.js" setSupervisor intervening; check "R2-1 S1 (pointer=product 1) from $w: update-workflow-state lands in product 2"
+done
+for n in 1 2; do mkdir -p "$(prod $n)/.oss/dev/active/feat-done"; printf '# P\n## Current Phase: complete\n' > "$(prod $n)/.oss/dev/active/feat-done/PROGRESS.md"; done
+ev 1 "$P2/work" "$SH" "$ROOT/hooks/oss-archive-check.sh"
+[[ ! -d "$P2/.oss/dev/active/feat-done" && -n "$(ls "$P2/.oss/dev/completed" 2>/dev/null)" && -d "$P1/.oss/dev/active/feat-done" && ! -e "$P1/.oss/dev/completed" ]] \
+    && pass "R2-1 S1 (pointer=product 1) from product 2: archive-check archives product 2's feature, never product 1's" \
+    || fail "R2-1 S1 (pointer=product 1) from product 2: archive-check archives product 2's feature, never product 1's" "rc=$RC out=$OUT"
+rm -rf "$P1/.oss/dev" "$P2/.oss/dev"
+
 # --- fallbacks: a pointer that cannot be trusted is ignored -> the cwd walk (here: product 2) ----
 # Run from product 2's plain sub-folder with a session whose pointer would say product 1.
 mkdir -p "$P2/plain"
