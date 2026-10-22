@@ -115,14 +115,15 @@ export async function fetchEncryptedPrompt(
   type: 'commands' | 'workflows' | 'skills' | 'agents' | 'hooks' | 'custom',
   name: string
 ): Promise<EncryptedPromptResponse> {
-  // Build URL based on type
+  // Build URL based on type. The name is encoded so it can only address its own endpoint.
+  const encodedName = encodeURIComponent(name);
   let endpoint: string;
   if (type === 'workflows') {
-    endpoint = `${apiUrl}/api/v1/prompts/workflows/${name}`;
+    endpoint = `${apiUrl}/api/v1/prompts/workflows/${encodedName}`;
   } else if (type === 'commands') {
-    endpoint = `${apiUrl}/api/v1/prompts/${name}`;
+    endpoint = `${apiUrl}/api/v1/prompts/${encodedName}`;
   } else {
-    endpoint = `${apiUrl}/api/v1/prompts/${type}/${name}`;
+    endpoint = `${apiUrl}/api/v1/prompts/${type}/${encodedName}`;
   }
 
   const response = await fetch(endpoint, {
@@ -169,7 +170,7 @@ export async function fetchCustomPrompt(
   apiUrl: string,
   name: string
 ): Promise<CustomPromptResponse> {
-  const endpoint = `${apiUrl}/api/v1/prompts/custom/${name}`;
+  const endpoint = `${apiUrl}/api/v1/prompts/custom/${encodeURIComponent(name)}`;
 
   const response = await fetch(endpoint, {
     method: 'GET',

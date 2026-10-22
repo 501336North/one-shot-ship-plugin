@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-import { fetchCredentials, fetchEncryptedPrompt } from '../src/api-client.js';
+import { fetchCredentials, fetchEncryptedPrompt, fetchCustomPrompt } from '../src/api-client.js';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -174,6 +174,55 @@ describe('API Client', () => {
       await expect(
         fetchEncryptedPrompt('ak', 'https://api.example.com', 'commands', 'plan')
       ).rejects.toThrow('Unauthorized');
+    });
+  });
+  /**
+   * @behavior A prompt or team-command name can only address its own endpoint:
+   *   `/`, `..`, `?` and `#` in a name never reach another API path with the user's key
+   * @business-rule DECRYPT-005 (names are URL-encoded)
+   * @boundary CLI API Client
+   */
+  describe('name encoding', () => {
+    const HOSTILE = 'a/../b?x=1#y';
+    const ENCODED = 'a%2F..%2Fb%3Fx%3D1%23y';
+
+    beforeEach(() => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ encrypted: 'e', iv: 'i', authTag: 'a', prompt: 'p', name: 'n', displayName: 'd', isBlocking: false }),
+      });
+    });
+
+    it('fetchCustomPrompt should encode the name', async () => {
+      await fetchCustomPrompt('ak_test', 'https://api.example.com', HOSTILE);
+      expect(mockFetch).toHaveBeenCalledWith(
+        `https://api.example.com/api/v1/prompts/custom/${ENCODED}`,
+        expect.anything()
+      );
+    });
+
+    it('fetchEncryptedPrompt should encode the name for commands', async () => {
+      await fetchEncryptedPrompt('ak_test', 'https://api.example.com', 'commands', HOSTILE);
+      expect(mockFetch).toHaveBeenCalledWith(
+        `https://api.example.com/api/v1/prompts/${ENCODED}`,
+        expect.anything()
+      );
+    });
+
+    it('fetchEncryptedPrompt should encode the name for workflows', async () => {
+      await fetchEncryptedPrompt('ak_test', 'https://api.example.com', 'workflows', HOSTILE);
+      expect(mockFetch).toHaveBeenCalledWith(
+        `https://api.example.com/api/v1/prompts/workflows/${ENCODED}`,
+        expect.anything()
+      );
+    });
+
+    it('fetchEncryptedPrompt should encode the name for a typed path (agents)', async () => {
+      await fetchEncryptedPrompt('ak_test', 'https://api.example.com', 'agents', HOSTILE);
+      expect(mockFetch).toHaveBeenCalledWith(
+        `https://api.example.com/api/v1/prompts/agents/${ENCODED}`,
+        expect.anything()
+      );
     });
   });
 });
