@@ -29,7 +29,7 @@ var import_path7 = require("path");
 var import_os6 = require("os");
 
 // src/index.ts
-var VERSION = "1.2.1";
+var VERSION = "1.2.4";
 
 // src/commands/setup.ts
 var import_fs3 = require("fs");
