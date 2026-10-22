@@ -175,6 +175,23 @@ describe('API Client', () => {
         fetchEncryptedPrompt('ak', 'https://api.example.com', 'commands', 'plan')
       ).rejects.toThrow('Unauthorized');
     });
+
+    it('should reject an unknown type without sending a request', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ encrypted: 'e', iv: 'i', authTag: 'a' }),
+      });
+
+      await expect(
+        fetchEncryptedPrompt(
+          'ak_test',
+          'https://api.example.com',
+          'x/../../auth/y?' as unknown as 'agents',
+          'a'
+        )
+      ).rejects.toThrow(/Invalid prompt type/);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
   });
   /**
    * @behavior A prompt or team-command name can only address its own endpoint:

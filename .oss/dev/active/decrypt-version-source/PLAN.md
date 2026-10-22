@@ -59,6 +59,15 @@ another API path with the user's key).
 - `fetchEncryptedPrompt should encode the name` — same, for `commands`, `workflows` and a typed path.
 **GREEN:** `encodeURIComponent(name)` at both sites (fetchCredentials already encodes).
 
+#### Task 3b: `--type` is checked against the allowlist (found in build, 2026-10-22)
+**Behavior:** same class as Task 3, second site: the typed branch builds `/api/v1/prompts/${type}/…` from
+`--type`, which `cli-entry.ts` only casts and never checks, so `--type 'x/../../auth/y?'` sends the key elsewhere.
+The plugin's wrappers are safe (oss-value.sh checks the category); a direct CLI call is not.
+**Tests (RED):** an unknown `--type` is rejected before any request (no fetch call), with a clear error;
+every type the plugin uses still works.
+**GREEN:** reject types outside the existing allowed list (reuse the one `cache.ts` `validateType` uses — one
+source, not a second list).
+
 #### Task 4: keyed requests never follow a redirect
 **Behavior:** the API key is sent only to the configured API URL, never to wherever a redirect points.
 **Tests (RED):** `test/api-client.test.ts`

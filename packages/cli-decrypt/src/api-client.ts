@@ -8,7 +8,7 @@
 
 import { join } from 'path';
 import { homedir } from 'os';
-import { CacheService } from './cache.js';
+import { CacheService, validateType } from './cache.js';
 
 /**
  * Get cache directory path
@@ -115,6 +115,7 @@ export async function fetchEncryptedPrompt(
   type: 'commands' | 'workflows' | 'skills' | 'agents' | 'hooks' | 'custom',
   name: string
 ): Promise<EncryptedPromptResponse> {
+  validateType(type);
   // Build URL based on type. The name is encoded so it can only address its own endpoint.
   const encodedName = encodeURIComponent(name);
   let endpoint: string;
