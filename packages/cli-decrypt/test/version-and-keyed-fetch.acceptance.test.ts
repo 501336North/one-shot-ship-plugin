@@ -144,6 +144,67 @@ describe('AC-KEY-1: the API key is never sent to a redirect target', () => {
     expect(target.received, 'redirect target received a keyed request').toEqual([]);
     expect(outcome.rejected).toBe(true);
   });
+
+  /**
+   * Same-origin redirects are the realistic leak: fetch strips Authorization only when the
+   * redirect crosses origins, so a 302 to another path on the same host would carry the key.
+   */
+  async function startSameOriginRedirectingApi(): Promise<{
+    baseUrl: string;
+    received: RecordedRequest[];
+  }> {
+    const received: RecordedRequest[] = [];
+    const { baseUrl } = await startServer((req, res) => {
+      received.push({ url: req.url ?? '', authorization: req.headers.authorization });
+      if (req.url === '/stolen') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ userId: 'u', salt: 's', hardwareId: 'hw-1', encrypted: 'e', iv: 'i', authTag: 'a', prompt: 'p', name: 'n', displayName: 'd', isBlocking: false }));
+        return;
+      }
+      res.writeHead(302, { Location: '/stolen' });
+      res.end();
+    });
+    return { baseUrl, received };
+  }
+
+  it('fetchCredentials refuses a same-origin redirect and never follows it with the key', async () => {
+    // Given an API that redirects to another path on the same host
+    const api = await startSameOriginRedirectingApi();
+
+    // When credentials are fetched with the user's key
+    const outcome = await settle(() => fetchCredentials(FAKE_KEY, api.baseUrl, 'hw-1'));
+
+    // Then only the original request was made, and the call fails
+    expect(api.received.map((r) => r.url), 'redirect was followed').not.toContain('/stolen');
+    expect(api.received).toHaveLength(1);
+    expect(outcome.rejected).toBe(true);
+  });
+
+  it('fetchEncryptedPrompt refuses a same-origin redirect and never follows it with the key', async () => {
+    // Given an API that redirects to another path on the same host
+    const api = await startSameOriginRedirectingApi();
+
+    // When an encrypted workflow prompt is fetched with the user's key
+    const outcome = await settle(() => fetchEncryptedPrompt(FAKE_KEY, api.baseUrl, 'workflows', 'build'));
+
+    // Then only the original request was made, and the call fails
+    expect(api.received.map((r) => r.url), 'redirect was followed').not.toContain('/stolen');
+    expect(api.received).toHaveLength(1);
+    expect(outcome.rejected).toBe(true);
+  });
+
+  it('fetchCustomPrompt refuses a same-origin redirect and never follows it with the key', async () => {
+    // Given an API that redirects to another path on the same host
+    const api = await startSameOriginRedirectingApi();
+
+    // When a team custom command is fetched with the user's key
+    const outcome = await settle(() => fetchCustomPrompt(FAKE_KEY, api.baseUrl, 'team-cmd'));
+
+    // Then only the original request was made, and the call fails
+    expect(api.received.map((r) => r.url), 'redirect was followed').not.toContain('/stolen');
+    expect(api.received).toHaveLength(1);
+    expect(outcome.rejected).toBe(true);
+  });
 });
 
 describe('AC-KEY-2: a prompt name can only reach its own endpoint', () => {
