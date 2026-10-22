@@ -43,6 +43,21 @@ jobs:
         run: npm ci
         working-directory: packages/cli-decrypt
 
+      # A release once shipped with package.json bumped but VERSION in src/index.ts
+      # not, so the binary reported a stale version. Refuse to build on any mismatch.
+      - name: Check tag matches version
+        working-directory: packages/cli-decrypt
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#cli-decrypt-v}"
+          pkg="$(node -p "require('./package.json').version")"
+          src="$(sed -n "s/^export const VERSION = '\(.*\)';$/\1/p" src/index.ts)"
+          if [ "$tag" != "$pkg" ] || [ "$tag" != "$src" ]; then
+            echo "::error::tag version '$tag' must equal package.json version '$pkg' and src/index.ts VERSION '$src'"
+            exit 1
+          fi
+          echo "tag, package.json and VERSION all = $tag"
+
       - name: Build bundle
         run: npm run build:bundle
         working-directory: packages/cli-decrypt

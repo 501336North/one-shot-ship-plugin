@@ -11,9 +11,11 @@
  * whole OSS pipeline is locked out on aarch64. This test guards that contract.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync } from 'fs';
+import { execFileSync } from 'child_process';
+import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
-import { dirname, resolve } from 'path';
+import { dirname, resolve, join } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgPath = resolve(__dirname, '../package.json');
@@ -58,5 +60,98 @@ describe('Release pipeline: aarch64 Linux support', () => {
     expect(m, 'arm64 matrix entry not found (expected `- os: <runner>` then `target: node18-linux-arm64`)').not.toBeNull();
     const os = m![1];
     expect(os, `arm64 must build on an arm64 runner, got os: ${os}`).toMatch(/arm/);
+  });
+});
+
+/**
+ * @behavior A cli-decrypt release refuses to build when its tag does not match the source.
+ * @acceptance-criteria The tag version (cli-decrypt-vX.Y.Z) must equal package.json "version"
+ *           AND `VERSION` in src/index.ts, checked before `Build bundle`; any mismatch fails the job.
+ * @boundary Release pipeline
+ *
+ * Root cause guarded: a release once shipped with package.json bumped but VERSION not,
+ * so the binary reported a stale version.
+ */
+const CHECK_STEP = 'Check tag matches version';
+
+function stepRunScript(yml: string, stepName: string): string | null {
+  const lines = yml.split('\n');
+  const start = lines.findIndex((l) => l.trim() === `- name: ${stepName}`);
+  if (start === -1) return null;
+  const stepIndent = lines[start].indexOf('-');
+  for (let i = start + 1; i < lines.length; i++) {
+    const l = lines[i];
+    const indent = l.search(/\S/);
+    if (indent !== -1 && indent <= stepIndent) break; // next step / end of steps
+    if (l.trim() === 'run: |') {
+      const body: string[] = [];
+      for (let j = i + 1; j < lines.length; j++) {
+        const bi = lines[j].search(/\S/);
+        if (bi !== -1 && bi <= indent) break;
+        body.push(lines[j].slice(indent + 2));
+      }
+      return body.join('\n');
+    }
+  }
+  return null;
+}
+
+function runCheck(script: string, tag: string, pkgVersion: string, srcVersion: string): number {
+  const dir = mkdtempSync(join(tmpdir(), 'tag-check-'));
+  try {
+    mkdirSync(join(dir, 'src'));
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'x', version: pkgVersion }));
+    writeFileSync(join(dir, 'src/index.ts'), `export const VERSION = '${srcVersion}';\n`);
+    try {
+      execFileSync('bash', ['-c', script], {
+        cwd: dir,
+        env: { ...process.env, GITHUB_REF_NAME: tag },
+        stdio: 'pipe',
+      });
+      return 0;
+    } catch (e) {
+      return (e as { status?: number }).status ?? 1;
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+describe('Release pipeline: tag must match the source version', () => {
+  const yml = readFileSync(workflowPath, 'utf8');
+
+  it('should check the tag against package.json and VERSION before building', () => {
+    const check = yml.indexOf(`- name: ${CHECK_STEP}`);
+    const build = yml.indexOf('- name: Build bundle');
+    expect(check, `build job has no "${CHECK_STEP}" step`).toBeGreaterThan(-1);
+    expect(check, `"${CHECK_STEP}" must run before "Build bundle"`).toBeLessThan(build);
+  });
+
+  describe('the check script', () => {
+    const script = stepRunScript(yml, CHECK_STEP);
+
+    it('has a run: | script', () => {
+      expect(script, `"${CHECK_STEP}" step has no \`run: |\` script`).not.toBeNull();
+    });
+
+    it('passes when tag, package.json and VERSION all agree', () => {
+      expect(script).not.toBeNull();
+      expect(runCheck(script!, 'cli-decrypt-v1.2.4', '1.2.4', '1.2.4')).toBe(0);
+    });
+
+    it('fails when the tag differs from both sources', () => {
+      expect(script).not.toBeNull();
+      expect(runCheck(script!, 'cli-decrypt-v1.2.5', '1.2.4', '1.2.4')).not.toBe(0);
+    });
+
+    it('fails when VERSION in src/index.ts was not bumped', () => {
+      expect(script).not.toBeNull();
+      expect(runCheck(script!, 'cli-decrypt-v1.2.4', '1.2.4', '1.2.1')).not.toBe(0);
+    });
+
+    it('fails when package.json was not bumped', () => {
+      expect(script).not.toBeNull();
+      expect(runCheck(script!, 'cli-decrypt-v1.2.4', '1.2.3', '1.2.4')).not.toBe(0);
+    });
   });
 });
