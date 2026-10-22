@@ -203,6 +203,7 @@ async function fetchCredentials(apiKey, apiUrl, hardwareId) {
   const url = `${apiUrl}/api/v1/auth/credentials?hardwareId=${encodeURIComponent(hardwareId)}`;
   const response = await fetch(url, {
     method: "GET",
+    redirect: "error",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json"
@@ -216,16 +217,19 @@ async function fetchCredentials(apiKey, apiUrl, hardwareId) {
   return response.json();
 }
 async function fetchEncryptedPrompt(apiKey, apiUrl, type, name) {
+  validateType(type);
+  const encodedName = encodeURIComponent(name);
   let endpoint;
   if (type === "workflows") {
-    endpoint = `${apiUrl}/api/v1/prompts/workflows/${name}`;
+    endpoint = `${apiUrl}/api/v1/prompts/workflows/${encodedName}`;
   } else if (type === "commands") {
-    endpoint = `${apiUrl}/api/v1/prompts/${name}`;
+    endpoint = `${apiUrl}/api/v1/prompts/${encodedName}`;
   } else {
-    endpoint = `${apiUrl}/api/v1/prompts/${type}/${name}`;
+    endpoint = `${apiUrl}/api/v1/prompts/${type}/${encodedName}`;
   }
   const response = await fetch(endpoint, {
     method: "GET",
+    redirect: "error",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json"
@@ -245,9 +249,10 @@ async function fetchEncryptedPrompt(apiKey, apiUrl, type, name) {
   return response.json();
 }
 async function fetchCustomPrompt(apiKey, apiUrl, name) {
-  const endpoint = `${apiUrl}/api/v1/prompts/custom/${name}`;
+  const endpoint = `${apiUrl}/api/v1/prompts/custom/${encodeURIComponent(name)}`;
   const response = await fetch(endpoint, {
     method: "GET",
+    redirect: "error",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json"
