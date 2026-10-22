@@ -193,6 +193,7 @@ describe('API Client', () => {
       expect(mockFetch).not.toHaveBeenCalled();
     });
   });
+
   /**
    * @behavior A prompt or team-command name can only address its own endpoint:
    *   `/`, `..`, `?` and `#` in a name never reach another API path with the user's key

@@ -8,4 +8,16 @@
 - Release gate (manual, recorded here): 4 assets + `.sha256`; Darwin-arm64 `--version`; Linux-arm64 via `strings`.
 
 ## Results
-(filled by /oss:build)
+### /oss:build 2026-10-22 (PR 1)
+Every task RED first, then GREEN; each guard checked by mutation.
+- T1 `test/version.test.ts` 2 tests. RED `expected '1.2.1' to be '1.2.3'` (source and built bundle). GREEN 2/2.
+- T2 `test/build-targets.test.ts` +6 (step exists before Build bundle; script runs: match 0; wrong tag, stale VERSION,
+  stale package.json non-zero). RED "no Check tag matches version step". GREEN 10/10. Mutations: drop VERSION compare,
+  drop package.json compare, drop `exit 1`: each killed.
+- T3 `test/api-client.test.ts` +4 (commands, workflows, typed, custom). RED unencoded URL. GREEN. Each branch mutation killed.
+- T3b +1 (unknown type rejects, fetch never called). RED "promise resolved instead of rejecting". Mutation killed.
+- T4 +3 (`redirect: 'error'` per site). RED x3. Each site mutation kills its unit test AND its AC-KEY-1 test.
+- Acceptance `test/version-and-keyed-fetch.acceptance.test.ts`: 6/6 (was 6 RED).
+- Full cli-decrypt suite: 22 files, 204/204. `tsc --noEmit` clean (after `npm ci`). Bundle `--version` = v1.2.4.
+- Not covered by a test: a SAME-origin redirect in AC-KEY-1 (the unit tests pin the option; a scratch probe confirmed
+  a same-origin 302 is refused).

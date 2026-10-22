@@ -119,3 +119,7 @@
 ## 2026-10-20 | Testing | hooks
 - **Context:** notify-routing-unify (build, ship round 2, R2-2/R2-6)
 - **Insight:** Without root you cannot make a folder owned by another user, and `[[ -O x ]]` is a keyword no test can intercept. Spell owner checks `test -O x` and simulate a foreign owner per exact path with a BASH_ENV file defining `test() { [[ $1 == -O && ":$LIST:" == *":$2:"* ]] && return 1; builtin test "$@"; }` - BASH_ENV is read by every non-interactive bash, including `bash -c` and hook scripts. TS twin: `node --require shim.cjs` that wraps `fs.lstatSync` to bump `uid` for listed paths, then `require('module').syncBuiltinESMExports()` so ESM `import * as fs` sees it. Also: `mv src name` moves src INTO name when name is a link to a folder - check `[[ -e name || -L name ]]` before archiving to a predictable name.
+
+## 2026-10-22 | Security | packages/cli-decrypt
+- **Context:** build (decrypt-version-source)
+- **Insight:** A validator that exists is not a validator that runs: `cache.ts` had `validateType` + `ALLOWED_TYPES`, but its only caller is the disk cache, which is off, so `--type` reached the keyed URL unchecked. When hardening one input in a URL (encoding `--name`), trace every other input in the same URL to its first runtime check. Also: Node's fetch strips `Authorization` on a CROSS-origin redirect, so a two-port redirect test only proves the extra request; assert the target gets zero requests (not "no auth header"), or the test passes without the fix.

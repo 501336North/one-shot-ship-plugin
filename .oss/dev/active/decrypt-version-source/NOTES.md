@@ -12,3 +12,8 @@
 - Node's fetch already drops `Authorization` on a CROSS-origin redirect (the test's second server got the request
   without the header). The real leak is a SAME-origin redirect (another path on the API host) and the extra request
   itself; the tests assert zero requests to the target, which covers both. Severity stays LOW.
+- Build (2026-10-22): `packages/cli-decrypt/node_modules` was empty; vitest ran via npx, tsc reported 86 missing-global
+  errors until `npm ci`. `npx tsc --noEmit` / `build.test.ts` leave untracked `dist/*.js|.d.ts|.map`: `git clean dist/`.
+- The tracked `dist/oss-decrypt.cjs` goes stale after any src change; the release rebuilds from source, so it is not
+  what ships, but rebuild it before committing.
+- On a refused redirect the CLI prints `Error: fetch failed` (cause not printed), exit 1; key and URL not printed.
