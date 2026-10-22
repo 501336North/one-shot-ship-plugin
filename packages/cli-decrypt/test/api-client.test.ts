@@ -242,4 +242,33 @@ describe('API Client', () => {
       );
     });
   });
+
+  /**
+   * @behavior The API key is sent only to the configured API URL: a keyed request never follows a redirect
+   * @business-rule FOLLOWUPS 46 (keyed fetches use redirect: 'error')
+   * @boundary CLI API Client
+   */
+  describe('keyed requests refuse redirects', () => {
+    beforeEach(() => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ userId: 'u', salt: 's', hardwareId: 'h', encrypted: 'e', iv: 'i', authTag: 'a', prompt: 'p', name: 'n', displayName: 'd', isBlocking: false }),
+      });
+    });
+
+    it('fetchCredentials never follows a redirect', async () => {
+      await fetchCredentials('ak_test', 'https://api.example.com', 'hw-1');
+      expect(mockFetch).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ redirect: 'error' }));
+    });
+
+    it('fetchEncryptedPrompt never follows a redirect', async () => {
+      await fetchEncryptedPrompt('ak_test', 'https://api.example.com', 'commands', 'build');
+      expect(mockFetch).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ redirect: 'error' }));
+    });
+
+    it('fetchCustomPrompt never follows a redirect', async () => {
+      await fetchCustomPrompt('ak_test', 'https://api.example.com', 'deploy');
+      expect(mockFetch).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ redirect: 'error' }));
+    });
+  });
 });

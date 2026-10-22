@@ -80,6 +80,7 @@ export async function fetchCredentials(
 
   const response = await fetch(url, {
     method: 'GET',
+    redirect: 'error',
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
@@ -129,6 +130,7 @@ export async function fetchEncryptedPrompt(
 
   const response = await fetch(endpoint, {
     method: 'GET',
+    redirect: 'error',
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
@@ -175,6 +177,7 @@ export async function fetchCustomPrompt(
 
   const response = await fetch(endpoint, {
     method: 'GET',
+    redirect: 'error',
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
