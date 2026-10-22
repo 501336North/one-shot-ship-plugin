@@ -55,7 +55,7 @@ hook, checksums header, hook tests, new-user acceptance test, login.md — and r
 **Behavior:** a prompt or team-command name can only ever address its own endpoint (no `../` or `?` reaching
 another API path with the user's key).
 **Tests (RED):** `test/api-client.test.ts`
-- `fetchCustomPrompt should encode the name` — name `a/../b?x=1` → fetch URL ends `/custom/a%2F..%2Fb%3Fx%3D1`.
+- `fetchCustomPrompt should encode the name` — name `a/../b?x=1#y` (covers `/`, `..`, `?`, `#`) → fetch URL ends `/custom/a%2F..%2Fb%3Fx%3D1%23y`.
 - `fetchEncryptedPrompt should encode the name` — same, for `commands`, `workflows` and a typed path.
 **GREEN:** `encodeURIComponent(name)` at both sites (fetchCredentials already encodes).
 

@@ -7,3 +7,8 @@
 - Plugin repo has no CI; the cli-decrypt release workflow runs only on `cli-decrypt-v*` tags.
 - DeepBlue is running the eval ladder: check `systemctl --user is-active gb10-eval@ladder` / ask the
   `oss-model-eval-04` session before running anything there.
+- Acceptance (2026-10-22): `test/version-and-keyed-fetch.acceptance.test.ts`, 6 tests, all RED on their assertions
+  (v1.2.1 vs 1.2.3; redirect target received a request x3; unencoded name reached `/prompts/b?x=1` x2).
+- Node's fetch already drops `Authorization` on a CROSS-origin redirect (the test's second server got the request
+  without the header). The real leak is a SAME-origin redirect (another path on the API host) and the extra request
+  itself; the tests assert zero requests to the target, which covers both. Severity stays LOW.
