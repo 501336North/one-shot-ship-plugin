@@ -40,3 +40,17 @@ R2-3 (5 RED; 3 mutants), R2-4 (4 RED groups; 4 mutants), R2-5 (guard proven by 2
 Totals: cli-decrypt 26 files 312/312, tsc clean, npm audit 0, bundle v1.2.4; bash test files 49/49; watcher 3704/3704.
 Note: watcher test/hooks/oss-log-error-recovery + oss-log-health-check fail (9/10) when CLAUDE_PROJECT_DIR is exported
 in the caller's shell — pre-existing isolation gap, logged.
+
+### Release gate + /oss:build --phase 3 (2026-10-23)
+- Release cli-decrypt-v1.2.4 (run 39894135200): 4 assets match their .sha256; Darwin-arm64 native, Darwin-x64 (Rosetta),
+  Linux-arm64 and Linux-x64 (local docker) all print `oss-decrypt v1.2.4`.
+- T6 RED 27/29 (pin v1.2.3 vs package 1.2.4); GREEN ensure-decrypt-cli 29/29, verify-decrypt-setup 4/4, new-user-install 3/3.
+  Live hook run (temp HOME): v1.2.4 Darwin-arm64 downloaded, in-release + committed hash verified. Mutations: tag back,
+  MINIMUM raised -> red. A wrong committed hash is caught only by a live download (fails closed).
+- T7 RED 0/1 (shipped paths changed, version unchanged); GREEN 2.0.93; downgrade and unchanged both red.
+- All plugin bash test files 50/50.
+- PR2-R1 (2026-10-23): RED 29/32 (1.2.1 and 1.2.3 installs kept); GREEN 32/32; mutations 1.2.1 and 1.2.5 red.
+  Live (temp HOME, real GitHub): a fake installed v1.2.1 was replaced by the verified v1.2.4 (431fe3fa…), second run
+  downloaded nothing.
+- PR2-R2 (2026-10-23): RED 37/41 then 41/42; GREEN 42/42; mutations: download failure hard, hash mismatch soft, no post-install floor check, no cap, cap on first install -> all red.
+- PR2-R3 (2026-10-23): 4 cycles, each RED first: runnable 43/46->47/47; captive portal 47/50->50/50; deadline 49/50->50/50; backoff 53/59->60/60. 18 mutations, all red.

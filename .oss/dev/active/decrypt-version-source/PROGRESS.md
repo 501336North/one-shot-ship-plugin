@@ -1,6 +1,6 @@
 # Progress: decrypt-version-source
 
-## Current Phase: shipping PR 1 (gate passed after round 3 on 2026-10-23; awaiting user go to merge)
+## Current Phase: shipping PR 2 (gate passed 2026-10-23; awaiting user go to merge)
 
 ## Tasks
 ### Phase 1 — CLI version (PR 1)
@@ -30,13 +30,16 @@
 - [x] R2-5: analytics body already safe (WORKFLOW_CMD guarded by oss_valid_workflow_name); test added, no code change
 - [x] R2-6: release checkout persist-credentials: false; no shared npm cache
 ### Gate (user go each)
-- [ ] Merge PR 1
-- [ ] Push tag cli-decrypt-v1.2.4; verify 4 assets + shas; Darwin-arm64 `--version` = v1.2.4
+- [x] Merge PR 1 (#207, 94b3a25, 2026-10-23)
+- [x] Push tag cli-decrypt-v1.2.4; 4 assets + shas verified; all 4 binaries print v1.2.4 (2026-10-23, run 39894135200)
 ### Phase 3 — hook pin (PR 2)
-- [ ] Task 6: hook tag v1.2.4 + committed checksums + test fakes + comment
-- [ ] Task 7: plugin.json patch bump
+- [x] Task 6: hook tag v1.2.4 + committed checksums + test fakes + comment (2026-10-23)
+- [x] PR2-R1: MINIMUM_VERSION 1.2.4 so existing installs get v1.2.4 (D5, 2026-10-23)
+- [x] PR2-R2: soft upgrade (D6): failed download keeps a runnable older binary; tamper stays hard; below-floor asset never installed; --max-time 90 on upgrades (2026-10-23)
+- [x] PR2-R3: one 100 s upgrade deadline (.sha256 first), 6 h stamp after a failed upgrade, unparseable .sha256 = failed download, runnable = --version exit 0 and >= 1.2.1 (2026-10-23)
+- [x] Task 7: plugin.json 2.0.93 + plugin-version-bump guard test (2026-10-23)
 
 ## Blockers
 - Phase 3 needs the v1.2.4 release (real checksums). Merges and the tag push need the user's go.
 
-## Last Updated: 2026-10-23 by /oss:ship (PR 1)
+## Last Updated: 2026-10-23 by /oss:ship (PR 2)

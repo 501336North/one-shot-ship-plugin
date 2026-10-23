@@ -61,12 +61,12 @@ test_binary_exists() {
 
     setup_test_env
 
-    # Setup: installed binary reports exactly what the real pinned asset reports (v1.2.1 = MINIMUM_VERSION)
+    # Setup: installed binary reports exactly what the real pinned asset reports (cli-decrypt-v1.2.4 -> v1.2.4)
     mkdir -p "$TEST_HOME/.oss/bin"
     cat > "$TEST_HOME/.oss/bin/oss-decrypt" << 'MOCKEOF'
 #!/bin/bash
 if [[ "$1" == "--version" ]]; then
-    echo "oss-decrypt v1.2.1"
+    echo "oss-decrypt v1.2.4"
 else
     echo "mock binary"
 fi
@@ -195,7 +195,7 @@ MOCKEOF
 # Helper: Create a mock curl that serves files from a staging directory
 # Usage: setup_mock_curl <staging_dir> <sha256_mode>
 #   - staging_dir: directory containing a "binary" file and optionally "checksum" file
-#   - sha256_mode: "OK" to serve checksum, "FAIL" to simulate 404
+#   - sha256_mode: "OK" to serve checksum, "FAIL" to simulate 404, "BINFAIL" to fail the binary download
 # =============================================================================
 setup_mock_curl() {
     local staging_dir="$1"
@@ -213,7 +213,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         -o) OUTPUT_FILE="$2"; shift 2 ;;
         -sL|-s|-L|-fsSL) shift ;;
-        --proto|--connect-timeout|--speed-limit|--speed-time) shift 2 ;;
+        --proto|--connect-timeout|--speed-limit|--speed-time|--max-time) shift 2 ;;
         *) URL="$1"; shift ;;
     esac
 done
@@ -231,6 +231,7 @@ if [[ "\$URL" == *.sha256 ]]; then
     fi
     cp "$staging_dir/checksum" "\$OUTPUT_FILE"
 else
+    [[ "$sha256_mode" == "BINFAIL" ]] && exit 22
     cp "$staging_dir/binary" "\$OUTPUT_FILE"
 fi
 exit 0
@@ -294,7 +295,7 @@ test_aarch64_installs_arm64_binary() {
     staging_dir=$(mktemp -d)
     cat > "$staging_dir/binary" << 'BINEOF'
 #!/bin/bash
-if [[ "$1" == "--version" ]]; then echo "oss-decrypt v1.2.1"
+if [[ "$1" == "--version" ]]; then echo "oss-decrypt v1.2.4"
 elif [[ "$1" == "--setup" ]]; then exit 0
 else echo "mock"; fi
 BINEOF
@@ -359,7 +360,7 @@ test_checksum_match_accepts_binary() {
     staging_dir=$(mktemp -d)
     cat > "$staging_dir/binary" << 'BINEOF'
 #!/bin/bash
-if [[ "$1" == "--version" ]]; then echo "oss-decrypt v1.2.1"
+if [[ "$1" == "--version" ]]; then echo "oss-decrypt v1.2.4"
 elif [[ "$1" == "--setup" ]]; then exit 0
 else echo "mock"; fi
 BINEOF
@@ -519,7 +520,7 @@ test_setup_failure_no_false_ready() {
     staging_dir=$(mktemp -d)
     cat > "$staging_dir/binary" << 'BINEOF'
 #!/bin/bash
-if [[ "$1" == "--version" ]]; then echo "oss-decrypt v1.2.1"; exit 0
+if [[ "$1" == "--version" ]]; then echo "oss-decrypt v1.2.4"; exit 0
 elif [[ "$1" == "--setup" ]]; then echo "setup failed" >&2; exit 1
 else echo "mock"; fi
 BINEOF
@@ -558,7 +559,7 @@ BINEOF
 # TEST: downloads come from a PINNED cli-decrypt release, never "latest"
 #
 # @behavior A fresh install fetches oss-decrypt + .sha256 from
-#           releases/download/<OSS_DECRYPT_TAG>/ (default cli-decrypt-v1.2.3).
+#           releases/download/<OSS_DECRYPT_TAG>/ (default cli-decrypt-v1.2.4).
 # @regression 2026-06-28 → 2026-10-09: oss-launch-v2.0.78 became GitHub "Latest" without
 #           oss-decrypt assets; latest/download 404'd for every new machine.
 # =============================================================================
@@ -576,12 +577,12 @@ CURLEOF
 }
 
 test_default_download_is_pinned_tag() {
-    local test_name="Fresh install downloads from releases/download/cli-decrypt-v1.2.3/, not latest"
+    local test_name="Fresh install downloads from releases/download/cli-decrypt-v1.2.4/, not latest"
     ((TESTS_RUN++))
     setup_test_env
     local urls="$TEST_HOME/urls.log"
     record_urls_install "$urls" HOME="$TEST_HOME"
-    if grep -q "/releases/download/cli-decrypt-v1.2.3/oss-decrypt-" "$urls" 2>/dev/null && ! grep -q "/latest/" "$urls"; then
+    if grep -q "/releases/download/cli-decrypt-v1.2.4/oss-decrypt-" "$urls" 2>/dev/null && ! grep -q "/latest/" "$urls"; then
         echo -e "${GREEN}✓${NC} $test_name"; ((TESTS_PASSED++))
     else
         echo -e "${RED}✗${NC} $test_name (requested: $(head -1 "$urls" 2>/dev/null))"; ((TESTS_FAILED++))
@@ -614,7 +615,7 @@ stage_valid_binary() {   # usage: stage_valid_binary <staging_dir>; echoes the a
     local d="$1"
     cat > "$d/binary" << 'BINEOF'
 #!/bin/bash
-if [[ "$1" == "--version" ]]; then echo "oss-decrypt v1.2.1"   # = what the real cli-decrypt-v1.2.3 asset reports
+if [[ "$1" == "--version" ]]; then echo "oss-decrypt v1.2.4"   # = what the real cli-decrypt-v1.2.4 asset reports
 elif [[ "$1" == "--setup" ]]; then mkdir -p "$HOME/.oss"; touch "$HOME/.oss/credentials.enc"; exit 0
 else echo "mock"; fi
 BINEOF
@@ -836,6 +837,396 @@ MKEOF
     rm -rf "$mock"; teardown_test_env
 }
 
+# @behavior A new install downloads the oss-decrypt build that matches this repo's CLI source:
+#           the hook's pinned tag is cli-decrypt-v<packages/cli-decrypt/package.json version>.
+# @regression v1.2.3 shipped a binary that reported 1.2.1; the pin must follow the released version.
+test_pinned_tag_matches_cli_package_version() {
+    local test_name="pinned tag matches the CLI package version"
+    ((TESTS_RUN++))
+    local pkg; pkg="$(dirname "$HOOK_SCRIPT")/../packages/cli-decrypt/package.json"
+    local ver; ver=$(node -p "require(process.argv[1]).version" "$pkg" 2>/dev/null)
+    local tag; tag=$(grep -oE 'OSS_DECRYPT_TAG:-cli-decrypt-v[0-9]+\.[0-9]+\.[0-9]+' "$HOOK_SCRIPT" | sed 's/.*:-//')
+    if [[ -n "$ver" && "$tag" == "cli-decrypt-v$ver" ]]; then pass "$test_name"
+    else fail "$test_name" "cli-decrypt-v$ver" "${tag:-<none>}"; fi
+}
+
+# @behavior The reviewed checksum manifest names exactly one release: the one the hook pins.
+test_committed_checksums_header_names_pinned_tag() {
+    local test_name="committed checksums header names the pinned tag"
+    ((TESTS_RUN++))
+    local mf; mf="$(dirname "$HOOK_SCRIPT")/oss-decrypt-checksums.txt"
+    local tag; tag=$(grep -oE 'OSS_DECRYPT_TAG:-cli-decrypt-v[0-9]+\.[0-9]+\.[0-9]+' "$HOOK_SCRIPT" | sed 's/.*:-//')
+    local named; named=$(grep -oE 'cli-decrypt-v[0-9]+\.[0-9]+\.[0-9]+' "$mf" | sort -u)
+    if [[ -n "$tag" && "$named" == "$tag" ]]; then pass "$test_name"
+    else fail "$test_name" "manifest names only $tag" "$(echo $named)"; fi
+}
+
+# =============================================================================
+# D5 (PR2-R1): MINIMUM_VERSION == the pinned release (1.2.4). Every earlier install
+# (v1.2.1-v1.2.3, all of which report "1.2.1") is replaced by the verified pinned asset,
+# so the v1.2.4 security fixes reach existing users. The pinned asset reports 1.2.4,
+# so once installed it is kept with no further download (no re-download loop).
+# =============================================================================
+# usage: run_with_installed <reported version>; sets RUN_RC, RUN_DOWNLOADS, RUN_REPLACED
+run_with_installed() {
+    mkdir -p "$TEST_HOME/.oss/bin"
+    printf '#!/bin/bash\n[[ "$1" == "--version" ]] && echo "oss-decrypt v%s" || echo mock\n' "$1" > "$TEST_HOME/.oss/bin/oss-decrypt"
+    chmod +x "$TEST_HOME/.oss/bin/oss-decrypt"
+    local st; st=$(mktemp -d); local art; art=$(stage_valid_binary "$st")
+    echo "$(awk '{print $1}' "$st/checksum")  $art" > "$st/manifest"
+    local urls="$TEST_HOME/urls.log"; rm -f "$urls"
+    run_fresh_install "$st" HOME="$TEST_HOME" OSS_DECRYPT_CHECKSUMS="$st/manifest" MOCK_CURL_URL_LOG="$urls"
+    RUN_DOWNLOADS=$(wc -l 2>/dev/null < "$urls" | tr -d ' '); RUN_DOWNLOADS=${RUN_DOWNLOADS:-0}
+    RUN_REPLACED=no; cmp -s "$st/binary" "$TEST_HOME/.oss/bin/oss-decrypt" && RUN_REPLACED=yes
+    RUN_STAGING="$st"
+}
+
+# @behavior D5: an install reporting 1.2.1 (v1.2.1/v1.2.2/v1.2.3) is upgraded to the pinned asset.
+test_v121_install_is_upgraded_to_pinned() {
+    local test_name="An installed binary reporting 1.2.1 is replaced by the pinned release"
+    ((TESTS_RUN++)); setup_test_env
+    run_with_installed "1.2.1"; rm -rf "$RUN_STAGING"
+    if [[ $RUN_RC -eq 0 && "$RUN_DOWNLOADS" != "0" && "$RUN_REPLACED" == "yes" ]]; then pass "$test_name"
+    else fail "$test_name" "exit 0, download attempted, pinned asset installed" "rc=$RUN_RC downloads=$RUN_DOWNLOADS replaced=$RUN_REPLACED"; fi
+    teardown_test_env
+}
+
+# @behavior D5: any version below the pinned release (here 1.2.3) is upgraded too.
+test_v123_install_is_upgraded_to_pinned() {
+    local test_name="An installed binary reporting 1.2.3 is replaced by the pinned release"
+    ((TESTS_RUN++)); setup_test_env
+    run_with_installed "1.2.3"; rm -rf "$RUN_STAGING"
+    if [[ $RUN_RC -eq 0 && "$RUN_DOWNLOADS" != "0" && "$RUN_REPLACED" == "yes" ]]; then pass "$test_name"
+    else fail "$test_name" "exit 0, download attempted, pinned asset installed" "rc=$RUN_RC downloads=$RUN_DOWNLOADS replaced=$RUN_REPLACED"; fi
+    teardown_test_env
+}
+
+# @behavior D5: an install already at the pinned version (1.2.4) is kept with no download.
+test_v124_install_kept_without_download() {
+    local test_name="An installed binary reporting 1.2.4 is kept with no download"
+    ((TESTS_RUN++)); setup_test_env
+    run_with_installed "1.2.4"; rm -rf "$RUN_STAGING"
+    if [[ $RUN_RC -eq 0 && "$RUN_DOWNLOADS" == "0" && "$RUN_REPLACED" == "no" ]]; then pass "$test_name"
+    else fail "$test_name" "exit 0, no download, existing binary kept" "rc=$RUN_RC downloads=$RUN_DOWNLOADS replaced=$RUN_REPLACED"; fi
+    teardown_test_env
+}
+
+# @behavior D5 no-loop: once the pinned asset is installed, the next run downloads nothing.
+test_pinned_asset_not_redownloaded_on_next_run() {
+    local test_name="After upgrading to the pinned asset, the next run does not download again"
+    ((TESTS_RUN++)); setup_test_env
+    run_with_installed "1.2.1"
+    local first_rc=$RUN_RC first_replaced=$RUN_REPLACED
+    local st="$RUN_STAGING" urls="$TEST_HOME/urls2.log"
+    run_fresh_install "$st" HOME="$TEST_HOME" OSS_DECRYPT_CHECKSUMS="$st/manifest" MOCK_CURL_URL_LOG="$urls"
+    local second; second=$(wc -l 2>/dev/null < "$urls" | tr -d ' '); second=${second:-0}
+    rm -rf "$st"
+    if [[ $first_rc -eq 0 && "$first_replaced" == "yes" && $RUN_RC -eq 0 && "$second" == "0" ]]; then pass "$test_name"
+    else fail "$test_name" "first run installs pinned asset, second run: exit 0 and no download" "first_rc=$first_rc replaced=$first_replaced second_rc=$RUN_RC second_downloads=$second"; fi
+    teardown_test_env
+}
+
+# =============================================================================
+# D6 (PR2-R2) soft upgrade: with the 1.2.4 floor every older install goes down the install path.
+# A DOWNLOAD failure (offline, GitHub blocked, 404, stall) must not take away a working older binary:
+# warn on stderr, keep it, exit 0, retry next command. A hash MISMATCH is tampering and stays hard.
+# No binary (or one that does not answer --version) + any failure stays hard. A verified asset that
+# reports a version below the floor is never installed (it would be re-downloaded forever).
+# =============================================================================
+# usage: run_upgrade <installed: X.Y.Z|none|broken|raw:<script body>> <curl: OK|FAIL|BINFAIL> <tamper: none|release|malformed|html|empty|committed> [asset version]
+# sets RUN_RC, RUN_OUT (stdout), RUN_ERR (stderr), RUN_KEPT (installed file byte-identical), RUN_ASSET (pinned asset at final path)
+run_upgrade() {
+    local installed="$1" curl_mode="$2" tamper="$3" asset_ver="${4:-1.2.4}" final="$TEST_HOME/.oss/bin/oss-decrypt"
+    mkdir -p "$TEST_HOME/.oss/bin"
+    case "$installed" in
+        none) ;;
+        broken) printf '#!/bin/bash\nexit 1\n' > "$final"; chmod +x "$final" ;;
+        raw:*) printf '#!/bin/bash\n%s\n' "${installed#raw:}" > "$final"; chmod +x "$final" ;;
+        *) printf '#!/bin/bash\n[[ "$1" == "--version" ]] && echo "oss-decrypt v%s" || echo mock\n' "$installed" > "$final"; chmod +x "$final" ;;
+    esac
+    local before; before=$(shasum -a 256 "$final" 2>/dev/null | awk '{print $1}')
+    local st; st=$(mktemp -d); local art; art=$(stage_valid_binary "$st")
+    sed "s/v1\.2\.4/v$asset_ver/" "$st/binary" > "$st/b" && mv "$st/b" "$st/binary"
+    local hash; hash=$(shasum -a 256 "$st/binary" | awk '{print $1}')
+    echo "$hash  $art" > "$st/checksum"; echo "$hash  $art" > "$st/manifest"
+    case "$tamper" in
+        release) echo "$(printf '0%.0s' {1..64})  $art" > "$st/checksum" ;;
+        malformed) echo "not-a-hash  $art" > "$st/checksum" ;;
+        html) printf '<!DOCTYPE html>\n<html><body>Sign in to continue to the network</body></html>\n' > "$st/checksum" ;;
+        empty) : > "$st/checksum" ;;
+        committed) echo "$(printf 'e%.0s' {1..64})  $art" > "$st/manifest" ;;
+    esac
+    setup_mock_curl "$st" "$curl_mode"
+    RUN_RC=0; HOME="$TEST_HOME" OSS_DECRYPT_CHECKSUMS="$st/manifest" "$HOOK_SCRIPT" >"$TEST_HOME/out" 2>"$TEST_HOME/err" || RUN_RC=$?
+    teardown_mock_curl
+    RUN_ERR=$(cat "$TEST_HOME/err"); RUN_OUT=$(cat "$TEST_HOME/out")
+    local after; after=$(shasum -a 256 "$final" 2>/dev/null | awk '{print $1}')
+    RUN_KEPT=no; [[ -n "$before" && "$after" == "$before" && -x "$final" ]] && RUN_KEPT=yes
+    RUN_ASSET=no; cmp -s "$st/binary" "$final" && RUN_ASSET=yes
+    rm -rf "$st"
+}
+SOFT_WARN="oss-decrypt update to cli-decrypt-v1.2.4 failed"
+
+# @behavior D6(a): offline/blocked user with a working v1.2.1 keeps every /oss command when the asset download fails.
+test_asset_download_failure_keeps_runnable_binary() {
+    local test_name="Installed 1.2.1 + asset download fails -> warning on stderr, exit 0, binary untouched"
+    ((TESTS_RUN++)); setup_test_env
+    run_upgrade "1.2.1" "BINFAIL" "none"
+    if [[ $RUN_RC -eq 0 && "$RUN_KEPT" == "yes" ]] && grep -q "$SOFT_WARN (download); keeping the installed version; will retry next command" <<<"$RUN_ERR"; then pass "$test_name"
+    else fail "$test_name" "rc=0, kept, stderr warning" "rc=$RUN_RC kept=$RUN_KEPT err=$RUN_ERR"; fi
+    teardown_test_env
+}
+
+# @behavior D6(a): the same when only the in-release .sha256 download fails.
+test_checksum_download_failure_keeps_runnable_binary() {
+    local test_name="Installed 1.2.1 + .sha256 download fails -> warning on stderr, exit 0, binary untouched"
+    ((TESTS_RUN++)); setup_test_env
+    run_upgrade "1.2.1" "FAIL" "none"
+    if [[ $RUN_RC -eq 0 && "$RUN_KEPT" == "yes" ]] && grep -q "$SOFT_WARN (download); keeping the installed version" <<<"$RUN_ERR"; then pass "$test_name"
+    else fail "$test_name" "rc=0, kept, stderr warning" "rc=$RUN_RC kept=$RUN_KEPT err=$RUN_ERR"; fi
+    teardown_test_env
+}
+
+# @behavior D6(b): tampering is never soft, even with a working older binary installed. Only a WELL-FORMED
+#           64-hex value that disagrees (in-release .sha256 or committed manifest) is tampering.
+#           (PR2-R3 item 3: round 2 listed `malformed` here; an unparseable .sha256 is not a hash that
+#           disagrees, it is a download that did not deliver one, so it moved to the soft test below.)
+test_hash_mismatch_with_old_binary_stays_hard() {
+    local t
+    for t in release committed; do
+        local test_name="Installed 1.2.1 + $t hash mismatch -> exit 1, old binary kept, no soft warning"
+        ((TESTS_RUN++)); setup_test_env
+        run_upgrade "1.2.1" "OK" "$t"
+        if [[ $RUN_RC -eq 1 && "$RUN_KEPT" == "yes" ]] && ! grep -q "$SOFT_WARN" <<<"$RUN_ERR"; then pass "$test_name"
+        else fail "$test_name" "rc=1, kept, no soft warning" "rc=$RUN_RC kept=$RUN_KEPT err=$RUN_ERR"; fi
+        teardown_test_env
+    done
+}
+
+# @behavior D6(a) PR2-R3 item 3: a captive portal / block page answers 200 with HTML (or nothing), so both
+#           curls "succeed" but no hash arrives. That is a failed download, not tampering: a user with a
+#           working v1.2.1 keeps every /oss command (warn, exit 0, old binary kept, asset not installed).
+test_unparseable_checksum_with_runnable_binary_is_soft() {
+    local t
+    for t in html empty malformed; do
+        local test_name="Installed 1.2.1 + $t .sha256 (no hash delivered) -> warning, exit 0, old binary kept"
+        ((TESTS_RUN++)); setup_test_env
+        run_upgrade "1.2.1" "OK" "$t"
+        if [[ $RUN_RC -eq 0 && "$RUN_KEPT" == "yes" && "$RUN_ASSET" == "no" ]] && grep -q "$SOFT_WARN" <<<"$RUN_ERR"; then pass "$test_name"
+        else fail "$test_name" "rc=0, kept, asset not installed, warning" "rc=$RUN_RC kept=$RUN_KEPT asset=$RUN_ASSET err=$RUN_ERR"; fi
+        teardown_test_env
+    done
+}
+
+# @behavior D6(c) PR2-R3 item 3: with nothing installed, an unparseable .sha256 is still fatal (nothing to keep).
+test_unparseable_checksum_without_binary_stays_hard() {
+    local test_name="No binary + HTML .sha256 -> exit 1, nothing installed, no soft warning"
+    ((TESTS_RUN++)); setup_test_env
+    run_upgrade "none" "OK" "html"
+    if [[ $RUN_RC -eq 1 && ! -e "$TEST_HOME/.oss/bin/oss-decrypt" ]] && ! grep -q "$SOFT_WARN" <<<"$RUN_ERR"; then pass "$test_name"
+    else fail "$test_name" "rc=1, nothing installed, no soft warning" "rc=$RUN_RC err=$RUN_ERR"; fi
+    teardown_test_env
+}
+
+# @behavior D6(c): with nothing usable installed, a download failure is still fatal (exit 1).
+test_download_failure_without_runnable_binary_stays_hard() {
+    local i
+    for i in none broken; do
+        local test_name="Installed=$i + asset download fails -> exit 1"
+        ((TESTS_RUN++)); setup_test_env
+        run_upgrade "$i" "BINFAIL" "none"
+        if [[ $RUN_RC -eq 1 ]] && ! grep -q "$SOFT_WARN" <<<"$RUN_ERR"; then pass "$test_name"
+        else fail "$test_name" "rc=1, no soft warning" "rc=$RUN_RC err=$RUN_ERR"; fi
+        teardown_test_env
+    done
+}
+
+# @behavior D6(d): a verified asset that reports below the floor is never installed (no re-download loop);
+#           a working older binary is kept (warn, exit 0), with nothing installed it is fatal.
+test_below_floor_asset_never_installed() {
+    local test_name="Installed 1.2.1 + verified asset reporting 1.2.3 -> not installed, old kept, warning, exit 0"
+    ((TESTS_RUN++)); setup_test_env
+    run_upgrade "1.2.1" "OK" "none" "1.2.3"
+    if [[ $RUN_RC -eq 0 && "$RUN_KEPT" == "yes" && "$RUN_ASSET" == "no" ]] && grep -q "$SOFT_WARN" <<<"$RUN_ERR"; then pass "$test_name"
+    else fail "$test_name" "rc=0, kept, asset not installed, warning" "rc=$RUN_RC kept=$RUN_KEPT asset=$RUN_ASSET err=$RUN_ERR"; fi
+    teardown_test_env
+    test_name="No binary + verified asset reporting 1.2.3 -> not installed, exit 1"
+    ((TESTS_RUN++)); setup_test_env
+    run_upgrade "none" "OK" "none" "1.2.3"
+    if [[ $RUN_RC -eq 1 && ! -e "$TEST_HOME/.oss/bin/oss-decrypt" ]]; then pass "$test_name"
+    else fail "$test_name" "rc=1, nothing installed" "rc=$RUN_RC exists=$([[ -e "$TEST_HOME/.oss/bin/oss-decrypt" ]] && echo yes || echo no)"; fi
+    teardown_test_env
+}
+
+# @behavior PR2-R3 item 4: only a binary that answers --version with exit 0 AND a version >= 1.2.1 (the old
+#           floor) counts as a working install worth keeping. A binary that prints a version then fails, a crash
+#           trace that happens to contain an X.Y.Z, or a pre-1.2.1 install is NOT kept on a failed download:
+#           exit 1 (hard path) so the user is told, instead of a broken/ancient binary staying in service forever.
+#           The outdated message names exactly one version (never a newline-joined "0.0.0").
+test_unrunnable_or_ancient_install_takes_hard_path() {
+    local label body
+    for label in "prints-v1.2.1-then-exits-1" "crash-trace-with-node-v18.0.0" "prints-v0.9.0-exit-0"; do
+        case "$label" in
+            prints-v1.2.1-then-exits-1) body='echo "oss-decrypt v1.2.1"; exit 1' ;;
+            crash-trace-with-node-v18.0.0) body='echo "node v18.0.0 crashed"; exit 1' ;;
+            prints-v0.9.0-exit-0) body='echo "oss-decrypt v0.9.0"; exit 0' ;;
+        esac
+        local test_name="Installed binary $label + download fails -> exit 1, old file kept, no soft warning, one version in message"
+        ((TESTS_RUN++)); setup_test_env
+        run_upgrade "raw:$body" "FAIL" "none"
+        if [[ $RUN_RC -eq 1 && "$RUN_KEPT" == "yes" ]] && ! grep -q "$SOFT_WARN" <<<"$RUN_ERR" \
+            && ! grep -q '^0\.0\.0' <<<"$RUN_OUT"$'\n'"$RUN_ERR"; then pass "$test_name"
+        else fail "$test_name" "rc=1, kept, no soft warning, no line starting 0.0.0" "rc=$RUN_RC kept=$RUN_KEPT out=$RUN_OUT err=$RUN_ERR"; fi
+        teardown_test_env
+    done
+    # Control: a v1.2.1 binary that exits 0 is a working install -> soft path.
+    local test_name="Control: installed v1.2.1 exiting 0 + download fails -> soft path, exit 0, kept"
+    ((TESTS_RUN++)); setup_test_env
+    run_upgrade 'raw:echo "oss-decrypt v1.2.1"; exit 0' "FAIL" "none"
+    if [[ $RUN_RC -eq 0 && "$RUN_KEPT" == "yes" ]] && grep -q "$SOFT_WARN" <<<"$RUN_ERR"; then pass "$test_name"
+    else fail "$test_name" "rc=0, kept, soft warning" "rc=$RUN_RC kept=$RUN_KEPT err=$RUN_ERR"; fi
+    teardown_test_env
+    # Only the FIRST X.Y.Z counts: a version line that also names a runtime is read as the oss-decrypt version.
+    test_name="Installed 'oss-decrypt v1.2.1 (node v18.0.0)' exiting 0 + download fails -> message names v1.2.1 only, soft path"
+    ((TESTS_RUN++)); setup_test_env
+    run_upgrade 'raw:echo "oss-decrypt v1.2.1 (node v18.0.0)"; exit 0' "FAIL" "none"
+    if [[ $RUN_RC -eq 0 && "$RUN_KEPT" == "yes" ]] && grep -qx 'oss-decrypt v1.2.1 is outdated (requires >= v1.2.4). Updating...' <<<"$RUN_OUT" \
+        && ! grep -q '18\.0\.0' <<<"$RUN_OUT"; then pass "$test_name"
+    else fail "$test_name" "rc=0, kept, outdated message names v1.2.1 only" "rc=$RUN_RC kept=$RUN_KEPT out=$RUN_OUT"; fi
+    teardown_test_env
+}
+
+# @behavior D6(e) PR2-R3 item 1: the hook runs inside a ~120 s Bash tool call. Upgrading over a working binary
+#           gets ONE deadline for the whole download so a slow-but-steady link fails INSIDE the hook and takes
+#           the soft path (keep the old binary) instead of the tool killing the hook. The small .sha256 is fetched
+#           FIRST with --max-time 15, then the binary with what is left of a 100 s budget (0 < cap <= 100).
+#           (Round 2 put --max-time 90 on BOTH curls, binary first: worst case ~180 s + connect timeouts, past
+#           the tool timeout, so the soft path never ran. That test asserted "--max-time 90" on the asset; it is
+#           replaced by this one.) A first install has no cap and keeps its order (binary, then .sha256): it must finish.
+test_upgrade_download_has_one_deadline_first_install_does_not() {
+    local test_name="Installed 1.2.1 -> .sha256 first (--max-time 15), binary within the 100 s budget; no binary -> binary first, no cap"
+    ((TESTS_RUN++)); setup_test_env
+    local up_first up_bin up_cap fresh_first fresh_all up_rc fresh_rc
+    export MOCK_CURL_ARGS_LOG="$TEST_HOME/curl.args"; run_upgrade "1.2.1" "OK" "none"; up_rc=$RUN_RC
+    up_first=$(head -n1 "$MOCK_CURL_ARGS_LOG" 2>/dev/null)
+    up_bin=$(grep -v '\.sha256 ' "$MOCK_CURL_ARGS_LOG" 2>/dev/null)
+    up_cap=$(grep -oE -- '--max-time [0-9]+' <<<"$up_bin" | awk '{print $2}')
+    teardown_test_env; setup_test_env
+    export MOCK_CURL_ARGS_LOG="$TEST_HOME/curl.args"; run_upgrade "none" "OK" "none"; fresh_rc=$RUN_RC
+    fresh_first=$(head -n1 "$MOCK_CURL_ARGS_LOG" 2>/dev/null)
+    fresh_all=$(cat "$MOCK_CURL_ARGS_LOG" 2>/dev/null)
+    unset MOCK_CURL_ARGS_LOG
+    if [[ $up_rc -eq 0 && $fresh_rc -eq 0 \
+        && "$up_first" == *".sha256 -o "* && $(grep -oc -- '--max-time' <<<"$up_first") -eq 1 && "$up_first" == *"--max-time 15 "* \
+        && -n "$up_bin" && $(grep -c -- '--max-time' <<<"$up_bin") -eq 1 && "$up_cap" =~ ^[0-9]+$ && $up_cap -gt 0 && $up_cap -le 100 \
+        && -n "$fresh_first" && "$fresh_first" != *".sha256 "* && "$fresh_all" != *"--max-time"* ]]; then pass "$test_name"
+    else fail "$test_name" "upgrade: first curl .sha256 with one --max-time 15, binary curl one --max-time in (0,100]; first install: binary first, no --max-time" \
+        "up_rc=$up_rc fresh_rc=$fresh_rc up_first=[$up_first] up_bin=[$up_bin] cap=[$up_cap] fresh=[$fresh_all]"; fi
+    teardown_test_env
+}
+
+# =============================================================================
+# PR2-R3 item 2: after a failed upgrade on the soft path, a stamp beside the binary
+# (~/.oss/bin/.decrypt-upgrade-failed, "<epoch> <tag>") postpones further attempts for 6 h so a
+# user on a slow link does not pay up to ~100 s on every /oss command. Same tag + < 6 h old + a
+# runnable binary -> no curl at all, short stderr note, exit 0. Older, another tag, unparseable,
+# no runnable binary -> try normally. A successful install removes the stamp; a hash mismatch
+# (tamper, hard) never writes one; a symlink at the stamp path is never followed.
+# =============================================================================
+STAMP_REL=".oss/bin/.decrypt-upgrade-failed"
+POSTPONE_NOTE="oss-decrypt update to cli-decrypt-v1.2.4 postponed"
+# usage: curl_calls -> number of curl invocations recorded in $MOCK_CURL_ARGS_LOG
+curl_calls() { local n; n=$(wc -l 2>/dev/null < "$MOCK_CURL_ARGS_LOG" | tr -d ' '); echo "${n:-0}"; }
+
+# @behavior (a)+(b): a failed upgrade writes the stamp; the next command skips the download entirely.
+test_failed_upgrade_postpones_next_attempt() {
+    local test_name="Installed 1.2.1 + download fails -> stamp written, exit 0; next run: no curl, exit 0, kept, postponed note"
+    ((TESTS_RUN++)); setup_test_env
+    local stamp="$TEST_HOME/$STAMP_REL" a_rc stamp_ok=no
+    export MOCK_CURL_ARGS_LOG="$TEST_HOME/curl.args"
+    run_upgrade "1.2.1" "BINFAIL" "none"; a_rc=$RUN_RC
+    [[ -f "$stamp" && ! -L "$stamp" ]] && grep -qE '^[0-9]+ cli-decrypt-v1\.2\.4$' "$stamp" && stamp_ok=yes
+    rm -f "$MOCK_CURL_ARGS_LOG"
+    run_upgrade "1.2.1" "OK" "none"
+    local calls; calls=$(curl_calls); unset MOCK_CURL_ARGS_LOG
+    if [[ $a_rc -eq 0 && "$stamp_ok" == "yes" && $RUN_RC -eq 0 && "$calls" == "0" && "$RUN_KEPT" == "yes" && "$RUN_ASSET" == "no" ]] \
+        && grep -q "$POSTPONE_NOTE (last attempt failed [0-9]* min ago)" <<<"$RUN_ERR"; then pass "$test_name"
+    else fail "$test_name" "a: rc 0 + stamp '<epoch> <tag>'; b: rc 0, 0 curl calls, kept, postponed note" \
+        "a_rc=$a_rc stamp_ok=$stamp_ok [$(cat "$stamp" 2>/dev/null)] b_rc=$RUN_RC calls=$calls kept=$RUN_KEPT asset=$RUN_ASSET err=$RUN_ERR"; fi
+    teardown_test_env
+}
+
+# @behavior (c)+(d)+defensive parse: a stale (> 6 h), other-tag, future-dated or unparseable stamp does not
+#           postpone: the upgrade runs, installs the pinned asset and removes the stamp.
+test_stale_or_foreign_stamp_does_not_postpone() {
+    local label content now; now=$(date +%s)
+    for label in older-than-6h other-tag future-dated non-numeric arith-injection; do
+        case "$label" in
+            older-than-6h) content="$((now - 6*3600 - 60)) cli-decrypt-v1.2.4" ;;
+            other-tag) content="$now cli-decrypt-v1.2.3" ;;
+            future-dated) content="$((now + 3600)) cli-decrypt-v1.2.4" ;;
+            non-numeric) content="soon cli-decrypt-v1.2.4" ;;
+            arith-injection) content='x[$(touch "$HOME/pwned")] cli-decrypt-v1.2.4' ;;
+        esac
+        local test_name="Installed 1.2.1 + $label stamp + working download -> upgraded, stamp removed"
+        ((TESTS_RUN++)); setup_test_env
+        mkdir -p "$TEST_HOME/.oss/bin"; echo "$content" > "$TEST_HOME/$STAMP_REL"
+        export MOCK_CURL_ARGS_LOG="$TEST_HOME/curl.args"
+        run_upgrade "1.2.1" "OK" "none"
+        local calls; calls=$(curl_calls); unset MOCK_CURL_ARGS_LOG
+        if [[ $RUN_RC -eq 0 && "$calls" != "0" && "$RUN_ASSET" == "yes" && ! -e "$TEST_HOME/$STAMP_REL" && ! -e "$TEST_HOME/pwned" ]] \
+            && ! grep -q "postponed" <<<"$RUN_ERR"; then pass "$test_name"
+        else fail "$test_name" "rc 0, curl called, asset installed, stamp gone, no postponed note" \
+            "rc=$RUN_RC calls=$calls asset=$RUN_ASSET stamp=$(cat "$TEST_HOME/$STAMP_REL" 2>/dev/null) err=$RUN_ERR"; fi
+        teardown_test_env
+    done
+}
+
+# @behavior (e): a first install (no binary) ignores a fresh stamp and installs; the stamp is removed.
+test_first_install_ignores_stamp() {
+    local test_name="No binary + fresh stamp for the same tag -> install attempted and succeeds, stamp removed"
+    ((TESTS_RUN++)); setup_test_env
+    mkdir -p "$TEST_HOME/.oss/bin"; echo "$(date +%s) cli-decrypt-v1.2.4" > "$TEST_HOME/$STAMP_REL"
+    export MOCK_CURL_ARGS_LOG="$TEST_HOME/curl.args"
+    run_upgrade "none" "OK" "none"
+    local calls; calls=$(curl_calls); unset MOCK_CURL_ARGS_LOG
+    if [[ $RUN_RC -eq 0 && "$calls" != "0" && "$RUN_ASSET" == "yes" && ! -e "$TEST_HOME/$STAMP_REL" ]]; then pass "$test_name"
+    else fail "$test_name" "rc 0, curl called, installed, stamp removed" "rc=$RUN_RC calls=$calls asset=$RUN_ASSET err=$RUN_ERR"; fi
+    teardown_test_env
+}
+
+# @behavior (f): tampering (hash mismatch) is hard and never postpones the next attempt.
+test_hash_mismatch_writes_no_stamp() {
+    local t
+    for t in release committed; do
+        local test_name="Installed 1.2.1 + $t hash mismatch -> exit 1, no stamp written"
+        ((TESTS_RUN++)); setup_test_env
+        run_upgrade "1.2.1" "OK" "$t"
+        if [[ $RUN_RC -eq 1 && ! -e "$TEST_HOME/$STAMP_REL" ]]; then pass "$test_name"
+        else fail "$test_name" "rc 1, no stamp" "rc=$RUN_RC stamp=$(cat "$TEST_HOME/$STAMP_REL" 2>/dev/null)"; fi
+        teardown_test_env
+    done
+}
+
+# @behavior (g): a symlink at the stamp path is never followed: its target is not overwritten and it
+#           does not postpone (a planted link cannot switch off upgrades).
+test_stamp_symlink_never_followed() {
+    local test_name="Stamp path is a symlink -> target unchanged after a failed upgrade; link does not postpone"
+    ((TESTS_RUN++)); setup_test_env
+    mkdir -p "$TEST_HOME/.oss/bin"; local target="$TEST_HOME/victim"
+    echo "precious" > "$target"; ln -s "$target" "$TEST_HOME/$STAMP_REL"
+    run_upgrade "1.2.1" "BINFAIL" "none"; local a_rc=$RUN_RC a_target; a_target=$(cat "$target")
+    # A link pointing at a fresh, well-formed stamp must not postpone either.
+    echo "$(date +%s) cli-decrypt-v1.2.4" > "$target"
+    export MOCK_CURL_ARGS_LOG="$TEST_HOME/curl.args"
+    run_upgrade "1.2.1" "OK" "none"
+    local calls; calls=$(curl_calls); unset MOCK_CURL_ARGS_LOG
+    if [[ $a_rc -eq 0 && "$a_target" == "precious" && $RUN_RC -eq 0 && "$calls" != "0" && "$RUN_ASSET" == "yes" ]]; then pass "$test_name"
+    else fail "$test_name" "rc 0, target still 'precious'; link ignored -> upgrade attempted and installed" \
+        "a_rc=$a_rc target=[$a_target] b_rc=$RUN_RC calls=$calls asset=$RUN_ASSET err=$RUN_ERR"; fi
+    teardown_test_env
+}
+
 echo "Running ensure-decrypt-cli.sh tests..."
 echo "======================================="
 
@@ -865,6 +1256,26 @@ test_committed_manifest_is_complete_and_matches_tag
 test_stale_temp_files_swept_fresh_kept
 test_interrupted_checksum_download_leaves_no_temp_file
 test_failed_second_mktemp_leaves_nothing
+test_pinned_tag_matches_cli_package_version
+test_committed_checksums_header_names_pinned_tag
+test_v121_install_is_upgraded_to_pinned
+test_v123_install_is_upgraded_to_pinned
+test_v124_install_kept_without_download
+test_pinned_asset_not_redownloaded_on_next_run
+test_asset_download_failure_keeps_runnable_binary
+test_checksum_download_failure_keeps_runnable_binary
+test_hash_mismatch_with_old_binary_stays_hard
+test_unparseable_checksum_with_runnable_binary_is_soft
+test_unparseable_checksum_without_binary_stays_hard
+test_download_failure_without_runnable_binary_stays_hard
+test_below_floor_asset_never_installed
+test_upgrade_download_has_one_deadline_first_install_does_not
+test_unrunnable_or_ancient_install_takes_hard_path
+test_failed_upgrade_postpones_next_attempt
+test_stale_or_foreign_stamp_does_not_postpone
+test_first_install_ignores_stamp
+test_hash_mismatch_writes_no_stamp
+test_stamp_symlink_never_followed
 
 echo ""
 echo "======================================="

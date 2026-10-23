@@ -131,3 +131,11 @@
 ## 2026-10-23 | Testing | hooks + packages/cli-decrypt
 - **Context:** build (decrypt-version-source, ship round 2)
 - **Insight:** When one rule lives in two languages (TS `getApiUrl`, bash `oss_api_url`), only a shared case table run against both keeps them equal; it found 15 TS-only and 12 bash-only accepts, plus zsh-only NUL accepts (zsh `=~` stops at NUL). Do type and charset checks inside jq so NUL never reaches the shell, and never anchor a jq charset test (`^`/`$` match at line breaks; use `test("[^!-~]")`). curl reads ~/.curlrc unless `-q` is the FIRST argument, which can add a second keyed URL or a trace file with the key. Watcher hook tests break when CLAUDE_PROJECT_DIR is exported in the shell running vitest — unset it before running suites.
+
+## 2026-10-23 | Release | packages/cli-decrypt, hooks/ensure-decrypt-cli.sh
+- **Context:** build (decrypt-version-source, phase 3)
+- **Insight:** Linux release binaries can be smoke-tested on a Mac without a Linux box: `docker run --rm --platform linux/arm64 -v "$PWD":/w:ro debian:bookworm-slim /w/oss-decrypt-Linux-arm64 --version` (chmod +x first; a :ro mount keeps the exec bit only if the host file has it). The committed checksums in hooks/oss-decrypt-checksums.txt are guarded only by a live download, because every unit test injects its own manifest; a wrong value fails closed (install refused), never open.
+
+## 2026-10-23 | Security | hooks/ensure-decrypt-cli.sh
+- **Context:** build (decrypt-version-source PR 2)
+- **Insight:** Never put text read from a file into bash `$(( ))` before checking it is digits only: arithmetic evaluates names and `a[$(cmd)]`, so a stamp file becomes command execution. Also: raising a version floor forces every existing user through the download path; make that path fail soft when a working binary exists (but never on a hash mismatch), cap the whole upgrade below the caller's timeout (small file first, binary gets the rest), and back off after a failure, or slow and offline users lose the tool.
