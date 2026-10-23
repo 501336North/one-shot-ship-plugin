@@ -7,6 +7,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from '
 import { join } from 'path';
 import { homedir } from 'os';
 import crypto from 'crypto';
+import { getConfigDir } from './config.js';
 
 /**
  * Credentials structure for decryption
@@ -16,14 +17,6 @@ export interface Credentials {
   userId: string;
   hardwareId: string;
   salt: string;
-}
-
-/**
- * Get the config directory path
- * Can be overridden with OSS_CONFIG_DIR env var for testing
- */
-function getConfigDir(): string {
-  return process.env.OSS_CONFIG_DIR || join(homedir(), '.oss');
 }
 
 /**

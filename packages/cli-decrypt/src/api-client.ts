@@ -7,15 +7,15 @@
  */
 
 import { join } from 'path';
-import { homedir } from 'os';
-import { CacheService } from './cache.js';
+import { getConfigDir } from './config.js';
+import { CacheService, validateType, validateName } from './cache.js';
+import { stripControl } from './strip-control.js';
 
 /**
  * Get cache directory path
  */
 function getCacheDir(): string {
-  const configDir = process.env.OSS_CONFIG_DIR || join(homedir(), '.oss');
-  return join(configDir, 'prompt-cache');
+  return join(getConfigDir(), 'prompt-cache');
 }
 
 /**
@@ -63,6 +63,31 @@ export interface CustomPromptResponse {
 }
 
 /**
+ * fetch with redirects refused. Node's fetch reports a refused redirect only as
+ * "fetch failed"; name it so the user knows to check apiUrl.
+ */
+async function fetchNoRedirect(
+  url: string,
+  init: Omit<RequestInit, 'headers'> & { headers: Record<string, string> }
+): Promise<Response> {
+  // fetch's own header error quotes the whole value, which would print the API key.
+  if (Object.values(init.headers).some((value) => /[\r\n\0]/.test(value))) {
+    throw new Error('Your stored API key contains invalid characters. Run /oss:login again.');
+  }
+  try {
+    return await fetch(url, { ...init, redirect: 'error' });
+  } catch (err: unknown) {
+    const cause: unknown = err instanceof Error ? err.cause : undefined;
+    if (cause instanceof Error && cause.message === 'unexpected redirect') {
+      throw new Error(
+        'The API answered with a redirect; refusing to send your API key. Check apiUrl in your OSS config.'
+      );
+    }
+    throw err;
+  }
+}
+
+/**
  * Fetch decryption credentials from the API
  *
  * @param apiKey - User's API key
@@ -78,7 +103,7 @@ export async function fetchCredentials(
 ): Promise<CredentialsResponse> {
   const url = `${apiUrl}/api/v1/auth/credentials?hardwareId=${encodeURIComponent(hardwareId)}`;
 
-  const response = await fetch(url, {
+  const response = await fetchNoRedirect(url, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -93,7 +118,7 @@ export async function fetchCredentials(
     const error = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
       error?: string;
     };
-    throw new Error(error.error || 'Request failed');
+    throw new Error(stripControl(error.error || 'Request failed'));
   }
 
   return response.json() as Promise<CredentialsResponse>;
@@ -115,17 +140,20 @@ export async function fetchEncryptedPrompt(
   type: 'commands' | 'workflows' | 'skills' | 'agents' | 'hooks' | 'custom',
   name: string
 ): Promise<EncryptedPromptResponse> {
-  // Build URL based on type
+  validateType(type);
+  validateName(name);
+  // Build URL based on type. The name is encoded so it can only address its own endpoint.
+  const encodedName = encodeURIComponent(name);
   let endpoint: string;
   if (type === 'workflows') {
-    endpoint = `${apiUrl}/api/v1/prompts/workflows/${name}`;
+    endpoint = `${apiUrl}/api/v1/prompts/workflows/${encodedName}`;
   } else if (type === 'commands') {
-    endpoint = `${apiUrl}/api/v1/prompts/${name}`;
+    endpoint = `${apiUrl}/api/v1/prompts/${encodedName}`;
   } else {
-    endpoint = `${apiUrl}/api/v1/prompts/${type}/${name}`;
+    endpoint = `${apiUrl}/api/v1/prompts/${type}/${encodedName}`;
   }
 
-  const response = await fetch(endpoint, {
+  const response = await fetchNoRedirect(endpoint, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -146,7 +174,7 @@ export async function fetchEncryptedPrompt(
     const error = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
       error?: string;
     };
-    throw new Error(error.error || 'Request failed');
+    throw new Error(stripControl(error.error || 'Request failed'));
   }
 
   return response.json() as Promise<EncryptedPromptResponse>;
@@ -169,9 +197,10 @@ export async function fetchCustomPrompt(
   apiUrl: string,
   name: string
 ): Promise<CustomPromptResponse> {
-  const endpoint = `${apiUrl}/api/v1/prompts/custom/${name}`;
+  validateName(name);
+  const endpoint = `${apiUrl}/api/v1/prompts/custom/${encodeURIComponent(name)}`;
 
-  const response = await fetch(endpoint, {
+  const response = await fetchNoRedirect(endpoint, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -192,7 +221,7 @@ export async function fetchCustomPrompt(
     const error = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
       error?: string;
     };
-    throw new Error(error.error || 'Request failed');
+    throw new Error(stripControl(error.error || 'Request failed'));
   }
 
   return response.json() as Promise<CustomPromptResponse>;

@@ -297,21 +297,11 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                 # Note: oss-decrypt also tracks when prompts are fetched from API,
                 # but cached prompts bypass the API, so we track here as the source of truth
                 (
-                    CONFIG_FILE=~/.oss/config.json
-                    if [[ -f "$CONFIG_FILE" ]]; then
-                        if command -v jq &>/dev/null; then
-                            API_KEY=$(jq -r '.apiKey // ""' "$CONFIG_FILE" 2>/dev/null)
-                            API_URL=$(jq -r '.apiUrl // "https://one-shot-ship-api.onrender.com"' "$CONFIG_FILE" 2>/dev/null)
-                        else
-                            API_KEY=$(grep -o '"apiKey"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/')
-                            API_URL=$(grep -o '"apiUrl"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || echo "https://one-shot-ship-api.onrender.com")
-                        fi
-                        if [[ -n "$API_KEY" ]]; then
-                            oss_api_curl "$API_KEY" -sS -X POST "${API_URL}/api/v1/analytics/track" \
-                                -H "Content-Type: application/json" \
-                                -d "{\"command\": \"$WORKFLOW_CMD\", \"promptType\": \"command\", \"promptName\": \"$WORKFLOW_CMD\"}" \
-                                >/dev/null 2>&1 || true
-                        fi
+                    if API_KEY=$(oss_api_key) && API_URL=$(oss_api_url); then
+                        oss_api_curl "$API_KEY" -sS -X POST "${API_URL}/api/v1/analytics/track" \
+                            -H "Content-Type: application/json" \
+                            -d "{\"command\": \"$WORKFLOW_CMD\", \"promptType\": \"command\", \"promptName\": \"$WORKFLOW_CMD\"}" \
+                            >/dev/null 2>&1 || true
                     fi
                 ) &
                 ;;

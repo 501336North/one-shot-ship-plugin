@@ -102,6 +102,10 @@ describe('Cache Storage', () => {
       expect(() => validateName('foo\0bar')).toThrow('path traversal');
     });
 
+    it('should reject a single dot (a URL dot segment that resolves to the parent path)', () => {
+      expect(() => validateName('.')).toThrow(/Invalid prompt name/);
+    });
+
     it('should reject empty names', () => {
       expect(() => validateName('')).toThrow('must be 1-100 characters');
     });

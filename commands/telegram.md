@@ -68,12 +68,13 @@ Receive notifications on your phone when Claude Code needs your input. Answer qu
 ### Step 0: Check Authentication
 
 ```bash
-API_KEY=$(cat ~/.oss/config.json 2>/dev/null | jq -r '.apiKey // empty')
+source ~/.oss/hooks/oss-api-curl.sh  # oss_api_key + oss_api_url + oss_api_curl (key via stdin, never argv)
+API_KEY=$(oss_api_key)
 if [[ -z "$API_KEY" ]]; then
     echo "Not authenticated. Run: /oss:login"
     exit 1
 fi
-API_URL=$(cat ~/.oss/config.json 2>/dev/null | jq -r '.apiUrl // "https://api.oneshotship.com"')
+oss_api_url >/dev/null || { echo "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"; exit 1; }
 ```
 
 ### Step 1: Parse Arguments
@@ -87,23 +88,23 @@ Each block below reads the API key and URL from `~/.oss/config.json` itself.
 #### status (default)
 
 ```bash
-API_KEY=$(jq -r '.apiKey // empty' ~/.oss/config.json 2>/dev/null)
-API_URL=$(jq -r '.apiUrl // "https://api.oneshotship.com"' ~/.oss/config.json 2>/dev/null)
+source ~/.oss/hooks/oss-api-curl.sh  # oss_api_key + oss_api_url + oss_api_curl (key via stdin, never argv)
+API_KEY=$(oss_api_key)
+API_URL=$(oss_api_url) || { echo "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"; exit 1; }
 # Get current status from API
-RESPONSE=$(curl -s --http1.1 -X GET "$API_URL/api/v1/telegram/status" \
-    -H "Authorization: Bearer $API_KEY" \
+RESPONSE=$(oss_api_curl "$API_KEY" -s --http1.1 -X GET "$API_URL/api/v1/telegram/status" \
     -H "Content-Type: application/json")
 
-LINKED=$(echo "$RESPONSE" | jq -r '.linked')
-CHAT_ID=$(echo "$RESPONSE" | jq -r '.chatId // "N/A"')
-NOTIFS_ENABLED=$(echo "$RESPONSE" | jq -r '.notificationsEnabled // false')
+LINKED=$(printf '%s' "$RESPONSE" | oss_json_field linked)
+CHAT_ID=$(printf '%s' "$RESPONSE" | oss_json_field chatId)
+NOTIFS_ENABLED=$(printf '%s' "$RESPONSE" | oss_json_field notificationsEnabled)
 
 if [[ "$LINKED" == "true" ]]; then
     echo "Telegram Status"
     echo "==============="
     echo ""
     echo "✅ Account linked"
-    echo "   Chat ID: $CHAT_ID"
+    echo "   Chat ID: ${CHAT_ID:-N/A}"
     echo "   Notifications: $([ "$NOTIFS_ENABLED" == "true" ] && echo "ON" || echo "OFF")"
     echo ""
     echo "Commands:"
@@ -124,21 +125,21 @@ fi
 #### link
 
 ```bash
-API_KEY=$(jq -r '.apiKey // empty' ~/.oss/config.json 2>/dev/null)
-API_URL=$(jq -r '.apiUrl // "https://api.oneshotship.com"' ~/.oss/config.json 2>/dev/null)
+source ~/.oss/hooks/oss-api-curl.sh  # oss_api_key + oss_api_url + oss_api_curl (key via stdin, never argv)
+API_KEY=$(oss_api_key)
+API_URL=$(oss_api_url) || { echo "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"; exit 1; }
 # Generate magic link
-RESPONSE=$(curl -s --http1.1 -X POST "$API_URL/api/v1/telegram/link" \
-    -H "Authorization: Bearer $API_KEY" \
+RESPONSE=$(oss_api_curl "$API_KEY" -s --http1.1 -X POST "$API_URL/api/v1/telegram/link" \
     -H "Content-Type: application/json")
 
-SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+SUCCESS=$(printf '%s' "$RESPONSE" | oss_json_field success)
 if [[ "$SUCCESS" != "true" ]]; then
-    echo "Error: $(echo "$RESPONSE" | jq -r '.error')"
+    echo "Error: $(printf '%s' "$RESPONSE" | oss_json_field error)"
     exit 1
 fi
 
-MAGIC_LINK=$(echo "$RESPONSE" | jq -r '.magicLink')
-EXPIRES_AT=$(echo "$RESPONSE" | jq -r '.expiresAt')
+MAGIC_LINK=$(printf '%s' "$RESPONSE" | oss_json_field magicLink)
+EXPIRES_AT=$(printf '%s' "$RESPONSE" | oss_json_field expiresAt)
 
 echo "Link Your Telegram Account"
 echo "=========================="
@@ -156,10 +157,9 @@ echo "Waiting for confirmation..."
 # Poll for linking completion (max 5 minutes)
 for i in {1..60}; do
     sleep 5
-    STATUS=$(curl -s --http1.1 -X GET "$API_URL/api/v1/telegram/status" \
-        -H "Authorization: Bearer $API_KEY" \
+    STATUS=$(oss_api_curl "$API_KEY" -s --http1.1 -X GET "$API_URL/api/v1/telegram/status" \
         -H "Content-Type: application/json")
-    LINKED=$(echo "$STATUS" | jq -r '.linked')
+    LINKED=$(printf '%s' "$STATUS" | oss_json_field linked)
     if [[ "$LINKED" == "true" ]]; then
         echo ""
         echo "✅ Telegram linked successfully!"
@@ -177,16 +177,16 @@ echo "⏱️  Link expired. Run /oss:telegram link to try again."
 #### on
 
 ```bash
-API_KEY=$(jq -r '.apiKey // empty' ~/.oss/config.json 2>/dev/null)
-API_URL=$(jq -r '.apiUrl // "https://api.oneshotship.com"' ~/.oss/config.json 2>/dev/null)
+source ~/.oss/hooks/oss-api-curl.sh  # oss_api_key + oss_api_url + oss_api_curl (key via stdin, never argv)
+API_KEY=$(oss_api_key)
+API_URL=$(oss_api_url) || { echo "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"; exit 1; }
 # Enable notifications
-RESPONSE=$(curl -s --http1.1 -X PATCH "$API_URL/api/v1/telegram/notifications" \
-    -H "Authorization: Bearer $API_KEY" \
+RESPONSE=$(oss_api_curl "$API_KEY" -s --http1.1 -X PATCH "$API_URL/api/v1/telegram/notifications" \
     -H "Content-Type: application/json" \
     -d '{"enabled": true}')
 
-SUCCESS=$(echo "$RESPONSE" | jq -r '.success // false')
-ERROR=$(echo "$RESPONSE" | jq -r '.error // empty')
+SUCCESS=$(printf '%s' "$RESPONSE" | oss_json_field success)
+ERROR=$(printf '%s' "$RESPONSE" | oss_json_field error)
 
 if [[ -n "$ERROR" ]]; then
     echo "Error: $ERROR"
@@ -203,11 +203,11 @@ echo "You'll receive messages when Claude needs your input."
 #### off
 
 ```bash
-API_KEY=$(jq -r '.apiKey // empty' ~/.oss/config.json 2>/dev/null)
-API_URL=$(jq -r '.apiUrl // "https://api.oneshotship.com"' ~/.oss/config.json 2>/dev/null)
+source ~/.oss/hooks/oss-api-curl.sh  # oss_api_key + oss_api_url + oss_api_curl (key via stdin, never argv)
+API_KEY=$(oss_api_key)
+API_URL=$(oss_api_url) || { echo "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"; exit 1; }
 # Disable notifications
-RESPONSE=$(curl -s --http1.1 -X PATCH "$API_URL/api/v1/telegram/notifications" \
-    -H "Authorization: Bearer $API_KEY" \
+RESPONSE=$(oss_api_curl "$API_KEY" -s --http1.1 -X PATCH "$API_URL/api/v1/telegram/notifications" \
     -H "Content-Type: application/json" \
     -d '{"enabled": false}')
 
@@ -219,11 +219,11 @@ echo "You won't receive Telegram messages. Terminal notifications still work."
 #### unlink
 
 ```bash
-API_KEY=$(jq -r '.apiKey // empty' ~/.oss/config.json 2>/dev/null)
-API_URL=$(jq -r '.apiUrl // "https://api.oneshotship.com"' ~/.oss/config.json 2>/dev/null)
+source ~/.oss/hooks/oss-api-curl.sh  # oss_api_key + oss_api_url + oss_api_curl (key via stdin, never argv)
+API_KEY=$(oss_api_key)
+API_URL=$(oss_api_url) || { echo "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"; exit 1; }
 # Unlink account
-RESPONSE=$(curl -s --http1.1 -X DELETE "$API_URL/api/v1/telegram/unlink" \
-    -H "Authorization: Bearer $API_KEY" \
+RESPONSE=$(oss_api_curl "$API_KEY" -s --http1.1 -X DELETE "$API_URL/api/v1/telegram/unlink" \
     -H "Content-Type: application/json")
 
 echo "✅ Telegram account unlinked"

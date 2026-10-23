@@ -14,9 +14,10 @@ process.emit = function (event: string, ...args: unknown[]) {
 } as typeof process.emit;
 
 import { runCli } from './cli-entry.js';
+import { stripControl } from './strip-control.js';
 
 // Run CLI with process arguments (skip node and script path)
-runCli(process.argv.slice(2)).catch((err) => {
-  console.error('Error:', err.message);
+runCli(process.argv.slice(2)).catch((err: unknown) => {
+  console.error('Error:', stripControl(err instanceof Error ? err.message : String(err)));
   process.exit(1);
 });

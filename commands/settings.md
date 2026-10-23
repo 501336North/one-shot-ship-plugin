@@ -158,12 +158,11 @@ Use `AskUserQuestion` tool to let user modify settings:
 First, check if Telegram is linked via API:
 
 ```bash
-API_KEY=$(cat ~/.oss/config.json 2>/dev/null | jq -r '.apiKey // empty')
-API_URL=$(cat ~/.oss/config.json 2>/dev/null | jq -r '.apiUrl // "https://api.oneshotship.com"')
+source ~/.oss/hooks/oss-api-curl.sh  # oss_api_key + oss_api_url + oss_api_curl (key via stdin, never argv)
+API_KEY=$(oss_api_key)
 
-if [[ -n "$API_KEY" ]]; then
-    TELEGRAM_STATUS=$(curl -s --http1.1 -X GET "$API_URL/api/v1/telegram/status" \
-        -H "Authorization: Bearer $API_KEY" \
+if [[ -n "$API_KEY" ]] && API_URL=$(oss_api_url); then
+    TELEGRAM_STATUS=$(oss_api_curl "$API_KEY" -s --http1.1 -X GET "$API_URL/api/v1/telegram/status" \
         -H "Content-Type: application/json")
     TELEGRAM_LINKED=$(echo "$TELEGRAM_STATUS" | jq -r '.linked // false')
 else
@@ -264,12 +263,11 @@ if [[ "$STYLE" == "audio" ]]; then VOICE=$("$V" read voice) || exit 1; fi
 if [[ "$STYLE" == "sound" ]]; then SOUND=$("$V" read sound) || exit 1; fi
 
 # Check the Telegram link (true only when the API says exactly true)
-API_KEY=$(jq -r '.apiKey // empty' ~/.oss/config.json 2>/dev/null)
-API_URL=$(jq -r '.apiUrl // "https://api.oneshotship.com"' ~/.oss/config.json 2>/dev/null)
+source ~/.oss/hooks/oss-api-curl.sh  # oss_api_key + oss_api_url + oss_api_curl (key via stdin, never argv)
+API_KEY=$(oss_api_key)
 TELEGRAM_LINKED="false"
-if [[ -n "$API_KEY" ]]; then
-    LINKED=$(curl -s --http1.1 -X GET "$API_URL/api/v1/telegram/status" \
-        -H "Authorization: Bearer $API_KEY" \
+if [[ -n "$API_KEY" ]] && API_URL=$(oss_api_url); then
+    LINKED=$(oss_api_curl "$API_KEY" -s --http1.1 -X GET "$API_URL/api/v1/telegram/status" \
         -H "Content-Type: application/json" | jq -r '.linked // false' 2>/dev/null)
     [[ "$LINKED" == "true" ]] && TELEGRAM_LINKED="true"
 fi
@@ -297,8 +295,7 @@ fi
 
 # Sync with API if authenticated and telegram is linked
 if [[ -n "$API_KEY" && "$TELEGRAM_LINKED" == "true" ]]; then
-    curl -s --http1.1 -X PATCH "$API_URL/api/v1/telegram/notifications" \
-        -H "Authorization: Bearer $API_KEY" \
+    oss_api_curl "$API_KEY" -s --http1.1 -X PATCH "$API_URL/api/v1/telegram/notifications" \
         -H "Content-Type: application/json" \
         -d "{\"enabled\": $TELEGRAM_ENABLED}" > /dev/null
 fi

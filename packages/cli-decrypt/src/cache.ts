@@ -62,7 +62,7 @@ export function validateType(type: string): asserts type is PromptType {
  * @throws Error if name contains path traversal characters
  */
 export function validateName(name: string): void {
-  if (name.includes('/') || name.includes('\\') || name.includes('..') || name.includes('\0')) {
+  if (name.includes('/') || name.includes('\\') || name.includes('..') || name.includes('\0') || name === '.') {
     throw new Error(`Invalid prompt name: contains path traversal characters`);
   }
   if (name.length === 0 || name.length > 100) {

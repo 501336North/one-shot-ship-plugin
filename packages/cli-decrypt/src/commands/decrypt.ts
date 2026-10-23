@@ -3,9 +3,8 @@
  * Fetches encrypted prompts from API and decrypts them locally
  */
 
-import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
+import { getConfigDir, getApiUrl } from '../config.js';
 import { fetchEncryptedPrompt, fetchCustomPrompt } from '../api-client.js';
 import { retrieveCredentials } from '../storage.js';
 import { deriveKey, decrypt, userIdToLicenseId } from '../encryption.js';
@@ -15,11 +14,6 @@ import { fetchManifest, verifyManifestSignature, type SignedManifest } from '../
 import { verifyDecryptedPrompt } from '../integrity-pipeline.js';
 import { readUpdateState, writeUpdateState } from '../update-state.js';
 import { detectPromptChange } from '../change-detection.js';
-
-/**
- * Default API URL (can be overridden in config)
- */
-const DEFAULT_API_URL = 'https://one-shot-ship-api.onrender.com';
 
 /**
  * Ed25519 public key for manifest signature verification (base64 SPKI DER).
@@ -40,36 +34,10 @@ export interface DecryptOptions {
 }
 
 /**
- * Get config directory path
- */
-function getConfigDir(): string {
-  return process.env.OSS_CONFIG_DIR || join(homedir(), '.oss');
-}
-
-/**
  * Get cache directory path
  */
 function getCacheDir(): string {
   return join(getConfigDir(), 'prompt-cache');
-}
-
-/**
- * Read API URL from config (or use default)
- */
-function getApiUrl(): string {
-  const configPath = join(getConfigDir(), 'config.json');
-
-  if (existsSync(configPath)) {
-    try {
-      const content = readFileSync(configPath, 'utf8');
-      const config = JSON.parse(content);
-      return config.apiUrl || DEFAULT_API_URL;
-    } catch {
-      // Fall through to default
-    }
-  }
-
-  return DEFAULT_API_URL;
 }
 
 /**
