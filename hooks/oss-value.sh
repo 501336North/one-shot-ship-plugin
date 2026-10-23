@@ -120,7 +120,7 @@ _ov_get() {
         model) re='^[A-Za-z0-9_./:-]{1,100}$' ;;   # isValidModelId's ids (upper case too); no `..` (below)
         workflow) re='^[a-z0-9_.:-]{1,100}$' ;;
         category|name) re='^[a-z0-9_-]{1,100}$' ;;
-        notify_style) re='^(visual|audio|sound|telegram|none)$' ;;   # /oss:settings' own lists
+        notify_style) re='^(visual|audio|sound|none)$' ;;   # /oss:settings' own lists
         voice) re='^(Samantha|Daniel|Karen|Moira)$' ;;
         sound) re='^(Glass|Ping|Purr|Pop)$' ;;
         verbosity) re='^(all|important|errors-only)$' ;;
