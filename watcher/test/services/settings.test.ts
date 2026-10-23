@@ -117,6 +117,32 @@ describe('SettingsService', () => {
   });
 
   describe('validation', () => {
+    /**
+     * @behavior A settings.json written before Telegram was removed still loads:
+     *           the user's other preferences survive and the stale telegram block
+     *           (bot token, chat id) is dropped instead of being carried forward.
+     * @business-rule Customer Telegram is gone; old files must not crash the watcher.
+     */
+    it('should load an old settings file with a telegram block and drop it', () => {
+      const testDir = createTestDir();
+      fs.writeFileSync(
+        path.join(testDir, 'settings.json'),
+        JSON.stringify({
+          notifications: { style: 'audio', voice: 'Daniel', sound: 'Purr', verbosity: 'all' },
+          telegram: { enabled: true, botToken: 'old-token', chatId: '42' },
+          version: 1,
+        })
+      );
+
+      const service = new SettingsService(testDir);
+      service.save();
+      const loaded = service.getSettings();
+
+      expect(loaded.notifications.style).toBe('audio');
+      expect(loaded).not.toHaveProperty('telegram');
+      expect(fs.readFileSync(path.join(testDir, 'settings.json'), 'utf8')).not.toContain('old-token');
+    });
+
     it('should validate settings schema and fall back to defaults on invalid', () => {
       const testDir = createTestDir();
       const settingsPath = path.join(testDir, 'settings.json');

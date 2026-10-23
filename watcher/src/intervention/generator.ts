@@ -21,7 +21,7 @@ export interface EscalationPayload {
   recovery: string[];
 }
 
-/** Notification collaborator interface (implemented by TelegramNotifier). */
+/** Escalation channel port. No implementation is wired today; a future channel plugs in here. */
 export interface EscalationNotifier {
   sendErrorEscalation(payload: EscalationPayload): Promise<void>;
 }
@@ -231,7 +231,7 @@ export class InterventionGenerator {
   }
 
   /**
-   * US-005 severity routing: CRITICAL/HIGH escalations notify Telegram with
+   * US-005 severity routing: CRITICAL/HIGH escalations notify the escalation channel with
    * recovery[] steps; MEDIUM/LOW stay in-session/log only. Notification
    * failures are swallowed and logged — never thrown into the pipeline.
    */
@@ -253,7 +253,7 @@ export class InterventionGenerator {
         recovery: this.registry.getError(code)?.recovery ?? [],
       })
       .catch((err: unknown) => {
-        console.error('Telegram escalation failed (swallowed):', err);
+        console.error('Escalation notification failed (swallowed):', err);
       });
   }
 
