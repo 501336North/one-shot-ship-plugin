@@ -82,6 +82,86 @@ source, not a second list).
 #### Task 5: rebuild + package checks
 - `npm run build:bundle`; whole cli-decrypt suite green; tsc clean. Bundle contains `1.2.4`.
 
+### Ship round 1 fixes (PR 1, 2026-10-23; user chose: toolchain in PR 1, two design items to their own feature)
+Each task RED first, each guard checked by mutation. Only `packages/cli-decrypt` + the release workflow.
+
+#### R1-1 (security LOW, branch-scoped): names `.` / `..` cannot reach a parent path
+`encodeURIComponent` keeps `.`; URL parsing resolves `..` → the key reaches `/api/v1/` or `/api/v1/prompts/`.
+**RED:** for every type branch + custom: names `.`, `..`, `''` reject before any fetch. **GREEN:** call the existing
+`validateName` (cache.ts) in `fetchEncryptedPrompt` and `fetchCustomPrompt` (one rule, two callers; check it accepts
+every real plugin name).
+
+#### R1-2 (matters, introduced by T4): a refused redirect says so
+**RED:** real-fetch redirect → error message names the redirect and apiUrl (not bare "fetch failed"), key absent.
+**GREEN:** map the fetch rejection whose cause is the redirect refusal to a fixed message at the 3 keyed sites (one helper).
+
+#### R1-3 (security LOW, pre-existing): the key never appears in an error
+A key with an embedded CR/LF/NUL makes undici throw `invalid header value "Bearer <key>"`, printed by cli.ts.
+**RED:** each keyed function with such a key rejects with a message that does not contain the key. **GREEN:** fixed message.
+
+#### R1-4 (security LOW, pre-existing): server error text is printed without control characters
+**RED:** an API error body with ESC/CR/BEL sequences → the thrown message has none. **GREEN:** strip C0/C1 + DEL.
+
+#### R1-5 (security LOW, pre-existing + IRON LAW 1b): one apiUrl source, https only
+`getApiUrl` exists in decrypt.ts and cli-entry.ts (different config-dir rules) and setup.ts reads apiUrl a third way.
+**RED:** http:// (non-loopback), a URL with query or fragment, and garbage are refused before any keyed request;
+`http://127.0.0.1`/`localhost` allowed; all three sites resolve the same value under OSS_CONFIG_DIR.
+**GREEN:** one exported helper used by all three sites.
+
+#### R1-5b (security LOW, found by R1-5's provenance grep): the hook follows the same apiUrl rule
+`hooks/oss-notify.sh` (`start` branch, analytics/track) reads `.apiUrl` and sends the Bearer key there with no check,
+so it accepts an `http://` / `?x=` apiUrl the CLI now refuses. **RED:** hook test: http (non-loopback), `?`, `#` apiUrl
+→ no request carries the key; https and loopback http still sent. **GREEN:** the same rule in the hook (skip the
+best-effort analytics call when the URL fails it).
+
+#### R1-5c (security LOW + broken default, found by R1-5b's provenance grep): settings.md / telegram.md
+`commands/settings.md` and `commands/telegram.md` (8 snippets) read `.apiUrl` with no check, default to
+`https://api.oneshotship.com` (does NOT resolve, checked 2026-10-23; the real API is one-shot-ship-api.onrender.com),
+and pass the key as `curl -H "Authorization: Bearer $API_KEY"` (key in the process list), unlike hooks' `oss_api_curl`.
+**RED:** a test over `commands/*.md`: no `Authorization: Bearer $` on a curl command line; every `.apiUrl` read uses the
+real default and goes through the same rule (https or loopback http, no ?/#). **GREEN:** one small shared hook helper
+(e.g. `oss_api_url` next to `oss_api_curl`, used by oss-notify.sh too) and the snippets call it + `oss_api_curl`.
+
+#### R1-5d (matters, same provenance): /oss:trust allowlists the real API host
+`commands/trust.md:219` exfiltration allowlist names `api.oneshotship.com` (does not resolve) and not the real API
+host, so a served prompt that names `one-shot-ship-api.onrender.com` is reported as exfiltration. It is now the last
+file naming that host. **RED:** a test that the allowlist names `one-shot-ship-api.onrender.com` and no non-resolving
+host. **GREEN:** replace the host.
+
+#### R1-6 (CRITICAL/HIGH CVEs): clean toolchain
+`pkg` (HIGH, no fix) → `@yao-pkg/pkg`; targets node18 → node22 (package.json `build:binary`, workflow matrix,
+build-targets.test.ts, esbuild `--target`); CI `node-version` 22; vitest 3 → 5; esbuild → 0.28.
+**RED:** a test that `npm audit` reports 0 (or a test asserting the lockfile has no `pkg` and targets are node22);
+**GREEN:** upgrades; full suite green; `npm audit` 0; bundle rebuilt.
+
+#### R1-7 (security MEDIUM/LOW): release workflow supply chain
+`npm install -g pkg` unpinned → use the lockfile's binary (`npx --no-install pkg` / `./node_modules/.bin/pkg`);
+pin every action to a commit SHA; build job `permissions: contents: read`; version check before `npm ci`.
+**RED:** build-targets.test.ts asserts each of these. **GREEN:** workflow edits.
+
+### Ship round 2 fixes (2026-10-23; all security LOW/INFO from the round-2 gate, in this PR's code)
+#### R2-1: one apiUrl rule, same answer in TS and bash, one table of cases
+`config.ts` accepts a JSON array (`Array.includes('?')` is false) and normalises forms bash refuses (uppercase,
+`127.1`, leading space); zsh `=~` stops at NUL; curl and fetch disagree on `https://a@b`.
+**RED:** one shared fixture of URL cases (`packages/cli-decrypt/test/fixtures/api-url-cases.json`: input → accept/
+refuse) run by a vitest test against `getApiUrl` AND by a bash test against `oss_api_url` (bash + zsh). Includes:
+non-string, control chars/NUL/whitespace, userinfo `@`, uppercase scheme, `127.1`, `localhost.`, `?`, `#`, globs.
+**GREEN:** the literal rule in both: string only; no control chars or whitespace; no `@`; no `?`/`#`; starts with
+`https://` + host, or matches the loopback http regex; then (TS) `new URL` must parse. Return the input unchanged.
+#### R2-2: key and URL from the same config dir (bash)
+`oss_api_url` honours `${OSS_CONFIG_DIR:-$HOME/.oss}` like the CLI; add `oss_api_key` reading the same file;
+snippets and oss-notify use it. No-jq fallback: no custom apiUrl without jq (default URL only).
+#### R2-3: curl never reads a .curlrc or globs
+`oss_api_curl` passes `-q` first and `--globoff`. **RED:** a HOME/.curlrc with `url =`/`trace-ascii` gets no key.
+#### R2-4: every printed error and echoed server field is stripped
+`cli.ts` prints `stripControl(err.message)` (`err: unknown`, no implicit any); `stripControl` also removes bidi and
+zero-width (U+200B–U+200F, U+202A–U+202E, U+2066–U+2069). telegram.md strips server fields it echoes.
+#### R2-5: oss-notify analytics body is JSON-escaped (`WORKFLOW_CMD` into `-d`)
+#### R2-6: release build: `persist-credentials: false` on checkout; no shared npm cache in the tag build
+
+Logged, not fixed here (user decision 2026-10-23): credentials.enc key derivation (move to OS keychain) and
+refusing to send the key when TLS verification is disabled / proxy set → security FOLLOWUPS, own feature.
+
 ### — GATE: user go → merge PR 1 → user go → push tag `cli-decrypt-v1.2.4` —
 - Watch the release workflow; confirm 4 binaries + 4 `.sha256` assets on the v1.2.4 release.
 - Download each asset; verify its sha against the in-release `.sha256`; run the Darwin-arm64 binary

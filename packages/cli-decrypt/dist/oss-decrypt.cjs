@@ -23,27 +23,59 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// src/cli-entry.ts
-var import_fs6 = require("fs");
-var import_path7 = require("path");
-var import_os6 = require("os");
-
 // src/index.ts
 var VERSION = "1.2.4";
 
 // src/commands/setup.ts
-var import_fs3 = require("fs");
-var import_path4 = require("path");
-var import_os4 = require("os");
+var import_fs4 = require("fs");
+var import_path5 = require("path");
 
 // src/api-client.ts
-var import_path2 = require("path");
+var import_path3 = require("path");
+
+// src/config.ts
+var import_fs = require("fs");
+var import_path = require("path");
 var import_os = require("os");
+var DEFAULT_API_URL = "https://one-shot-ship-api.onrender.com";
+var HTTPS_URL = /^https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?(\/[A-Za-z0-9._~%/-]*)?$/;
+var LOOPBACK_HTTP_URL = /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:[0-9]{1,5})?(\/[A-Za-z0-9._~%/-]*)?$/;
+var REFUSAL = "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment.";
+function getConfigDir() {
+  return process.env.OSS_CONFIG_DIR || (0, import_path.join)((0, import_os.homedir)(), ".oss");
+}
+function readConfiguredApiUrl() {
+  const configPath = (0, import_path.join)(getConfigDir(), "config.json");
+  if ((0, import_fs.existsSync)(configPath)) {
+    try {
+      const config = JSON.parse((0, import_fs.readFileSync)(configPath, "utf8"));
+      return config.apiUrl;
+    } catch {
+    }
+  }
+  return void 0;
+}
+function parses(value) {
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function getApiUrl() {
+  const apiUrl = readConfiguredApiUrl();
+  if (apiUrl === void 0 || apiUrl === null || apiUrl === "") return DEFAULT_API_URL;
+  if (typeof apiUrl !== "string" || !(HTTPS_URL.test(apiUrl) || LOOPBACK_HTTP_URL.test(apiUrl)) || !parses(apiUrl)) {
+    throw new Error(REFUSAL);
+  }
+  return apiUrl;
+}
 
 // src/cache.ts
 var import_crypto = require("crypto");
-var import_fs = require("fs");
-var import_path = require("path");
+var import_fs2 = require("fs");
+var import_path2 = require("path");
 var DEFAULT_TTL_MS = 60 * 60 * 1e3;
 var ALLOWED_TYPES = ["commands", "workflows", "skills", "agents", "hooks", "custom"];
 function validateType(type) {
@@ -52,7 +84,7 @@ function validateType(type) {
   }
 }
 function validateName(name) {
-  if (name.includes("/") || name.includes("\\") || name.includes("..") || name.includes("\0")) {
+  if (name.includes("/") || name.includes("\\") || name.includes("..") || name.includes("\0") || name === ".") {
     throw new Error(`Invalid prompt name: contains path traversal characters`);
   }
   if (name.length === 0 || name.length > 100) {
@@ -74,14 +106,14 @@ var CacheService = class {
    * Get the path to a cache file
    */
   getCachePath(key) {
-    return (0, import_path.join)(this.cacheDir, `${key}.json`);
+    return (0, import_path2.join)(this.cacheDir, `${key}.json`);
   }
   /**
    * Ensure the cache directory exists with secure permissions (0o700)
    */
   ensureCacheDir() {
-    if (!(0, import_fs.existsSync)(this.cacheDir)) {
-      (0, import_fs.mkdirSync)(this.cacheDir, { recursive: true, mode: 448 });
+    if (!(0, import_fs2.existsSync)(this.cacheDir)) {
+      (0, import_fs2.mkdirSync)(this.cacheDir, { recursive: true, mode: 448 });
     }
   }
   /**
@@ -103,7 +135,7 @@ var CacheService = class {
       ttl
     };
     const cachePath = this.getCachePath(key);
-    (0, import_fs.writeFileSync)(cachePath, JSON.stringify(entry), { encoding: "utf8", mode: 384 });
+    (0, import_fs2.writeFileSync)(cachePath, JSON.stringify(entry), { encoding: "utf8", mode: 384 });
   }
   /**
    * Retrieve a prompt from the cache
@@ -112,14 +144,14 @@ var CacheService = class {
   async get(type, name, userId) {
     const key = getCacheKey(type, name, userId);
     const cachePath = this.getCachePath(key);
-    if (!(0, import_fs.existsSync)(cachePath)) {
+    if (!(0, import_fs2.existsSync)(cachePath)) {
       return null;
     }
     try {
-      const data = (0, import_fs.readFileSync)(cachePath, "utf8");
+      const data = (0, import_fs2.readFileSync)(cachePath, "utf8");
       const entry = JSON.parse(data);
       if (this.isExpired(entry)) {
-        (0, import_fs.unlinkSync)(cachePath);
+        (0, import_fs2.unlinkSync)(cachePath);
         return null;
       }
       return entry.content;
@@ -140,21 +172,21 @@ var CacheService = class {
   async clear(type, name, userId) {
     const key = getCacheKey(type, name, userId);
     const cachePath = this.getCachePath(key);
-    if ((0, import_fs.existsSync)(cachePath)) {
-      (0, import_fs.unlinkSync)(cachePath);
+    if ((0, import_fs2.existsSync)(cachePath)) {
+      (0, import_fs2.unlinkSync)(cachePath);
     }
   }
   /**
    * Remove all cached prompts
    */
   async clearAll() {
-    if (!(0, import_fs.existsSync)(this.cacheDir)) {
+    if (!(0, import_fs2.existsSync)(this.cacheDir)) {
       return;
     }
-    const files = (0, import_fs.readdirSync)(this.cacheDir);
+    const files = (0, import_fs2.readdirSync)(this.cacheDir);
     for (const file of files) {
       if (file.endsWith(".json")) {
-        (0, import_fs.unlinkSync)((0, import_path.join)(this.cacheDir, file));
+        (0, import_fs2.unlinkSync)((0, import_path2.join)(this.cacheDir, file));
       }
     }
   }
@@ -162,17 +194,17 @@ var CacheService = class {
    * Get cache statistics
    */
   async getStats() {
-    if (!(0, import_fs.existsSync)(this.cacheDir)) {
+    if (!(0, import_fs2.existsSync)(this.cacheDir)) {
       return { entries: 0, totalBytes: 0 };
     }
-    const files = (0, import_fs.readdirSync)(this.cacheDir);
+    const files = (0, import_fs2.readdirSync)(this.cacheDir);
     let totalBytes = 0;
     let entries = 0;
     for (const file of files) {
       if (file.endsWith(".json")) {
-        const filePath = (0, import_path.join)(this.cacheDir, file);
+        const filePath = (0, import_path2.join)(this.cacheDir, file);
         try {
-          const content = (0, import_fs.readFileSync)(filePath, "utf8");
+          const content = (0, import_fs2.readFileSync)(filePath, "utf8");
           totalBytes += Buffer.byteLength(content, "utf8");
           entries++;
         } catch {
@@ -183,10 +215,14 @@ var CacheService = class {
   }
 };
 
+// src/strip-control.ts
+function stripControl(text) {
+  return text.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, "");
+}
+
 // src/api-client.ts
 function getCacheDir() {
-  const configDir = process.env.OSS_CONFIG_DIR || (0, import_path2.join)((0, import_os.homedir)(), ".oss");
-  return (0, import_path2.join)(configDir, "prompt-cache");
+  return (0, import_path3.join)(getConfigDir(), "prompt-cache");
 }
 async function handleCacheClearDirective(response) {
   const clearCache = response.headers.get("X-OSS-Clear-Cache");
@@ -199,11 +235,26 @@ async function handleCacheClearDirective(response) {
     }
   }
 }
+async function fetchNoRedirect(url, init) {
+  if (Object.values(init.headers).some((value) => /[\r\n\0]/.test(value))) {
+    throw new Error("Your stored API key contains invalid characters. Run /oss:login again.");
+  }
+  try {
+    return await fetch(url, { ...init, redirect: "error" });
+  } catch (err) {
+    const cause = err instanceof Error ? err.cause : void 0;
+    if (cause instanceof Error && cause.message === "unexpected redirect") {
+      throw new Error(
+        "The API answered with a redirect; refusing to send your API key. Check apiUrl in your OSS config."
+      );
+    }
+    throw err;
+  }
+}
 async function fetchCredentials(apiKey, apiUrl, hardwareId) {
   const url = `${apiUrl}/api/v1/auth/credentials?hardwareId=${encodeURIComponent(hardwareId)}`;
-  const response = await fetch(url, {
+  const response = await fetchNoRedirect(url, {
     method: "GET",
-    redirect: "error",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json"
@@ -212,12 +263,13 @@ async function fetchCredentials(apiKey, apiUrl, hardwareId) {
   if (!response.ok) {
     await handleCacheClearDirective(response);
     const error = await response.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(error.error || "Request failed");
+    throw new Error(stripControl(error.error || "Request failed"));
   }
   return response.json();
 }
 async function fetchEncryptedPrompt(apiKey, apiUrl, type, name) {
   validateType(type);
+  validateName(name);
   const encodedName = encodeURIComponent(name);
   let endpoint;
   if (type === "workflows") {
@@ -227,9 +279,8 @@ async function fetchEncryptedPrompt(apiKey, apiUrl, type, name) {
   } else {
     endpoint = `${apiUrl}/api/v1/prompts/${type}/${encodedName}`;
   }
-  const response = await fetch(endpoint, {
+  const response = await fetchNoRedirect(endpoint, {
     method: "GET",
-    redirect: "error",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json"
@@ -244,15 +295,15 @@ async function fetchEncryptedPrompt(apiKey, apiUrl, type, name) {
       throw new Error("Unauthorized");
     }
     const error = await response.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(error.error || "Request failed");
+    throw new Error(stripControl(error.error || "Request failed"));
   }
   return response.json();
 }
 async function fetchCustomPrompt(apiKey, apiUrl, name) {
+  validateName(name);
   const endpoint = `${apiUrl}/api/v1/prompts/custom/${encodeURIComponent(name)}`;
-  const response = await fetch(endpoint, {
+  const response = await fetchNoRedirect(endpoint, {
     method: "GET",
-    redirect: "error",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json"
@@ -267,21 +318,18 @@ async function fetchCustomPrompt(apiKey, apiUrl, name) {
       throw new Error("Unauthorized");
     }
     const error = await response.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(error.error || "Request failed");
+    throw new Error(stripControl(error.error || "Request failed"));
   }
   return response.json();
 }
 
 // src/storage.ts
-var import_fs2 = require("fs");
-var import_path3 = require("path");
+var import_fs3 = require("fs");
+var import_path4 = require("path");
 var import_os2 = require("os");
 var import_crypto2 = __toESM(require("crypto"), 1);
-function getConfigDir() {
-  return process.env.OSS_CONFIG_DIR || (0, import_path3.join)((0, import_os2.homedir)(), ".oss");
-}
 function getCredentialsPath() {
-  return (0, import_path3.join)(getConfigDir(), "credentials.enc");
+  return (0, import_path4.join)(getConfigDir(), "credentials.enc");
 }
 function getMachineKey() {
   const machineId = [
@@ -322,20 +370,20 @@ function decryptCredentials(stored) {
 }
 async function storeCredentials(credentials) {
   const configDir = getConfigDir();
-  if (!(0, import_fs2.existsSync)(configDir)) {
-    (0, import_fs2.mkdirSync)(configDir, { recursive: true, mode: 448 });
+  if (!(0, import_fs3.existsSync)(configDir)) {
+    (0, import_fs3.mkdirSync)(configDir, { recursive: true, mode: 448 });
   }
   const encrypted = encryptCredentials(credentials);
   const credentialsPath = getCredentialsPath();
-  (0, import_fs2.writeFileSync)(credentialsPath, encrypted, { mode: 384 });
+  (0, import_fs3.writeFileSync)(credentialsPath, encrypted, { mode: 384 });
 }
 async function retrieveCredentials() {
   const credentialsPath = getCredentialsPath();
-  if (!(0, import_fs2.existsSync)(credentialsPath)) {
+  if (!(0, import_fs3.existsSync)(credentialsPath)) {
     return null;
   }
   try {
-    const stored = (0, import_fs2.readFileSync)(credentialsPath, "utf8");
+    const stored = (0, import_fs3.readFileSync)(credentialsPath, "utf8");
     return decryptCredentials(stored);
   } catch {
     return null;
@@ -371,20 +419,16 @@ function getHardwareId() {
 }
 
 // src/commands/setup.ts
-var DEFAULT_API_URL = "https://one-shot-ship-api.onrender.com";
-function getConfigDir2() {
-  return process.env.OSS_CONFIG_DIR || (0, import_path4.join)((0, import_os4.homedir)(), ".oss");
-}
 function getCacheDir2() {
-  return (0, import_path4.join)(getConfigDir2(), "prompt-cache");
+  return (0, import_path5.join)(getConfigDir(), "prompt-cache");
 }
 function readConfig() {
-  const configPath = (0, import_path4.join)(getConfigDir2(), "config.json");
-  if (!(0, import_fs3.existsSync)(configPath)) {
+  const configPath = (0, import_path5.join)(getConfigDir(), "config.json");
+  if (!(0, import_fs4.existsSync)(configPath)) {
     return {};
   }
   try {
-    const content = (0, import_fs3.readFileSync)(configPath, "utf8");
+    const content = (0, import_fs4.readFileSync)(configPath, "utf8");
     return JSON.parse(content);
   } catch {
     return {};
@@ -396,7 +440,7 @@ async function setupCommand() {
   if (!apiKey) {
     throw new Error("No API key configured. Run /oss:login first.");
   }
-  const apiUrl = config.apiUrl || DEFAULT_API_URL;
+  const apiUrl = getApiUrl();
   const hardwareId = getHardwareId();
   const cache = new CacheService(getCacheDir2());
   await cache.clearAll();
@@ -412,9 +456,7 @@ async function setupCommand() {
 }
 
 // src/commands/decrypt.ts
-var import_fs5 = require("fs");
-var import_path6 = require("path");
-var import_os5 = require("os");
+var import_path7 = require("path");
 
 // src/encryption.ts
 var import_crypto4 = __toESM(require("crypto"), 1);
@@ -595,8 +637,8 @@ async function verifyDecryptedPrompt(watermarkedContent, type, name, manifest) {
 }
 
 // src/update-state.ts
-var import_fs4 = require("fs");
-var import_path5 = require("path");
+var import_fs5 = require("fs");
+var import_path6 = require("path");
 function defaultState() {
   return {
     lastPluginVersion: "",
@@ -607,11 +649,11 @@ function defaultState() {
   };
 }
 function readUpdateState(filePath) {
-  if (!(0, import_fs4.existsSync)(filePath)) {
+  if (!(0, import_fs5.existsSync)(filePath)) {
     return defaultState();
   }
   try {
-    const content = (0, import_fs4.readFileSync)(filePath, "utf8");
+    const content = (0, import_fs5.readFileSync)(filePath, "utf8");
     const parsed = JSON.parse(content);
     return {
       lastPluginVersion: parsed.lastPluginVersion ?? "",
@@ -625,11 +667,11 @@ function readUpdateState(filePath) {
   }
 }
 function writeUpdateState(filePath, state) {
-  const dir = (0, import_path5.dirname)(filePath);
-  if (!(0, import_fs4.existsSync)(dir)) {
-    (0, import_fs4.mkdirSync)(dir, { recursive: true });
+  const dir = (0, import_path6.dirname)(filePath);
+  if (!(0, import_fs5.existsSync)(dir)) {
+    (0, import_fs5.mkdirSync)(dir, { recursive: true });
   }
-  (0, import_fs4.writeFileSync)(filePath, JSON.stringify(state, null, 2), { mode: 384 });
+  (0, import_fs5.writeFileSync)(filePath, JSON.stringify(state, null, 2), { mode: 384 });
 }
 
 // src/change-detection.ts
@@ -650,25 +692,9 @@ function detectPromptChange(state, type, name, currentHash) {
 }
 
 // src/commands/decrypt.ts
-var DEFAULT_API_URL2 = "https://one-shot-ship-api.onrender.com";
 var MANIFEST_PUBLIC_KEY = "MCowBQYDK2VwAyEAAwFG32b8TuiVTxrDnXzNrb2v68YN5U9epLnZ3O7pQaI=";
-function getConfigDir3() {
-  return process.env.OSS_CONFIG_DIR || (0, import_path6.join)((0, import_os5.homedir)(), ".oss");
-}
 function getCacheDir3() {
-  return (0, import_path6.join)(getConfigDir3(), "prompt-cache");
-}
-function getApiUrl() {
-  const configPath = (0, import_path6.join)(getConfigDir3(), "config.json");
-  if ((0, import_fs5.existsSync)(configPath)) {
-    try {
-      const content = (0, import_fs5.readFileSync)(configPath, "utf8");
-      const config = JSON.parse(content);
-      return config.apiUrl || DEFAULT_API_URL2;
-    } catch {
-    }
-  }
-  return DEFAULT_API_URL2;
+  return (0, import_path7.join)(getConfigDir(), "prompt-cache");
 }
 async function decryptCommand(type, name, debug = false, options = {}) {
   const logger = new DebugLogger(debug);
@@ -753,7 +779,7 @@ async function decryptCommand(type, name, debug = false, options = {}) {
   }
   const manifestKey = `${type}/${name}`;
   const currentHash = manifest?.prompts[manifestKey]?.hash ?? null;
-  const statePath = (0, import_path6.join)(getConfigDir3(), "update-state.json");
+  const statePath = (0, import_path7.join)(getConfigDir(), "update-state.json");
   const updateState = readUpdateState(statePath);
   const detection = detectPromptChange(updateState, type, name, currentHash);
   if (detection.changed) {
@@ -859,20 +885,8 @@ function showVersion() {
   console.log(`oss-decrypt v${VERSION}`);
 }
 var MANIFEST_PUBLIC_KEY2 = "MCowBQYDK2VwAyEAAwFG32b8TuiVTxrDnXzNrb2v68YN5U9epLnZ3O7pQaI=";
-var DEFAULT_API_URL3 = "https://one-shot-ship-api.onrender.com";
-function getApiUrl2() {
-  const configPath = (0, import_path7.join)((0, import_os6.homedir)(), ".oss", "config.json");
-  if ((0, import_fs6.existsSync)(configPath)) {
-    try {
-      const config = JSON.parse((0, import_fs6.readFileSync)(configPath, "utf8"));
-      return config.apiUrl || DEFAULT_API_URL3;
-    } catch {
-    }
-  }
-  return DEFAULT_API_URL3;
-}
 async function verifyManifestCommand() {
-  const manifest = await fetchManifest(getApiUrl2());
+  const manifest = await fetchManifest(getApiUrl());
   if (manifest === null) {
     console.log(JSON.stringify({ signatureValid: false, error: "Failed to fetch manifest" }));
     process.exitCode = 1;
@@ -890,13 +904,13 @@ async function verifyManifestCommand() {
     generatedAt: manifest.generatedAt,
     categories
   };
-  console.log(JSON.stringify(report));
+  console.log(stripControl(JSON.stringify(report)));
   if (!signatureValid) {
     process.exitCode = 1;
   }
 }
 async function listPromptsCommand(category) {
-  const manifest = await fetchManifest(getApiUrl2());
+  const manifest = await fetchManifest(getApiUrl());
   if (manifest === null) {
     console.log(JSON.stringify([]));
     return;
@@ -910,7 +924,7 @@ async function listPromptsCommand(category) {
   if (category) {
     entries = entries.filter((entry) => entry.category === category);
   }
-  console.log(JSON.stringify(entries));
+  console.log(stripControl(JSON.stringify(entries)));
 }
 async function runCli(args) {
   const parsed = parseArgs(args);
@@ -957,6 +971,6 @@ process.emit = function(event, ...args) {
   return originalEmit(event, ...args);
 };
 runCli(process.argv.slice(2)).catch((err) => {
-  console.error("Error:", err.message);
+  console.error("Error:", stripControl(err instanceof Error ? err.message : String(err)));
   process.exit(1);
 });

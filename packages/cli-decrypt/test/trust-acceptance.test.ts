@@ -169,6 +169,36 @@ describe('/oss:trust - Acceptance Tests', () => {
   // =========================================================================
   // AC-TRUST-007: --list-prompts flag parsing and output
   // =========================================================================
+  /**
+   * @behavior Manifest text printed by --verify-manifest / --list-prompts cannot drive the terminal
+   * @business-rule The manifest is server-supplied; JSON escapes C0 but not DEL or C1 (e.g. U+009B CSI),
+   *   so the printed report carries none of them while staying valid JSON
+   */
+  describe('manifest text is stripped of terminal control characters', () => {
+    const hostile = (): manifestVerifier.SignedManifest => ({
+      ...validManifest,
+      generatedAt: '2026\u009b2J\u007f-02-14',
+      prompts: { 'commands/evil\u009b2J\u007f\u0085': { hash: 'h\u009dx', size: 1 } },
+    });
+
+    it('--list-prompts prints no DEL or C1 characters', async () => {
+      vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(hostile());
+      await runCli(['--list-prompts']);
+      const output = consoleSpy.mock.calls.map(c => c[0]).join('\n');
+      expect(output).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+      expect(JSON.parse(output)[0].name).toContain('evil');
+    });
+
+    it('--verify-manifest prints no DEL or C1 characters', async () => {
+      vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(hostile());
+      vi.mocked(manifestVerifier.verifyManifestSignature).mockReturnValue(true);
+      await runCli(['--verify-manifest']);
+      const output = consoleSpy.mock.calls.map(c => c[0]).join('\n');
+      expect(output).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+      expect(JSON.parse(output).generatedAt).toContain('2026');
+    });
+  });
+
   describe('--list-prompts (Prompt Enumeration)', () => {
     /**
      * @behavior CLI accepts --list-prompts flag

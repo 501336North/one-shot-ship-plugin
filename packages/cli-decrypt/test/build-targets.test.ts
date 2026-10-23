@@ -25,10 +25,10 @@ const workflowPath = resolve(
 );
 
 const ARM64_ASSET = 'oss-decrypt-Linux-arm64';
-const ARM64_TARGET = 'node18-linux-arm64';
+const ARM64_TARGET = 'node22-linux-arm64';
 
 describe('Release pipeline: aarch64 Linux support', () => {
-  it('builds the node18-linux-arm64 target in the local build:binary script', () => {
+  it('builds the node22-linux-arm64 target in the local build:binary script', () => {
     const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
     const buildBinary: string = pkg.scripts?.['build:binary'] ?? '';
     expect(buildBinary).toContain(ARM64_TARGET);
@@ -55,9 +55,9 @@ describe('Release pipeline: aarch64 Linux support', () => {
     // `Cannot find module '/snapshot/dist/oss-decrypt.cjs'` at runtime. The arm64
     // target MUST build on a native arm64 runner (e.g. ubuntu-24.04-arm).
     const yml = readFileSync(workflowPath, 'utf8');
-    // Find the matrix include entry whose target is node18-linux-arm64 and capture its `os`.
-    const m = yml.match(/-\s*os:\s*(\S+)\s+target:\s*node18-linux-arm64/);
-    expect(m, 'arm64 matrix entry not found (expected `- os: <runner>` then `target: node18-linux-arm64`)').not.toBeNull();
+    // Find the matrix include entry whose target is node22-linux-arm64 and capture its `os`.
+    const m = yml.match(/-\s*os:\s*(\S+)\s+target:\s*node22-linux-arm64/);
+    expect(m, 'arm64 matrix entry not found (expected `- os: <runner>` then `target: node22-linux-arm64`)').not.toBeNull();
     const os = m![1];
     expect(os, `arm64 must build on an arm64 runner, got os: ${os}`).toMatch(/arm/);
   });
@@ -153,5 +153,76 @@ describe('Release pipeline: tag must match the source version', () => {
       expect(script).not.toBeNull();
       expect(runCheck(script!, 'cli-decrypt-v1.2.4', '1.2.3', '1.2.4')).not.toBe(0);
     });
+  });
+});
+
+/**
+ * @behavior The release pipeline cannot be hijacked through a moved action tag or an
+ *           over-privileged build job.
+ * @acceptance-criteria Every third-party action is pinned to a full commit SHA; the build job
+ *           only reads the repo (contents: read); only the release job may write (contents: write,
+ *           nothing broader); the tag/version check runs before any dependency is installed.
+ * @boundary Release pipeline
+ */
+function jobBlock(yml: string, job: string): string {
+  const lines = yml.split('\n');
+  const start = lines.findIndex((l) => l === `  ${job}:`);
+  if (start === -1) return '';
+  const end = lines.findIndex((l, i) => i > start && /^ {2}\S/.test(l));
+  return lines.slice(start, end === -1 ? undefined : end).join('\n');
+}
+
+function permissionsOf(block: string): string[] {
+  const lines = block.split('\n');
+  const at = lines.findIndex((l) => /^ {4}permissions:\s*$/.test(l));
+  if (at === -1) return [];
+  const out: string[] = [];
+  for (let i = at + 1; i < lines.length && /^ {6}\S/.test(lines[i]); i++) out.push(lines[i].trim());
+  return out;
+}
+
+describe('Release pipeline: supply-chain hardening', () => {
+  const yml = readFileSync(workflowPath, 'utf8');
+
+  it('pins every action to a full 40-char commit SHA', () => {
+    const uses = [...yml.matchAll(/^\s*(?:-\s*)?uses:\s*(\S+)/gm)].map((m) => m[1]);
+    expect(uses.length).toBe(6);
+    for (const u of uses) expect(u, `unpinned action: ${u}`).toMatch(/^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/);
+  });
+
+  it('gives the build job read-only repo access', () => {
+    expect(permissionsOf(jobBlock(yml, 'build'))).toEqual(['contents: read']);
+  });
+
+  it('gives the release job contents: write and nothing broader', () => {
+    expect(permissionsOf(jobBlock(yml, 'release'))).toEqual(['contents: write']);
+  });
+
+  it('checks the tag before installing dependencies', () => {
+    const check = yml.indexOf(`- name: ${CHECK_STEP}`);
+    const install = yml.indexOf('run: npm ci');
+    expect(check).toBeGreaterThan(-1);
+    expect(install).toBeGreaterThan(-1);
+    expect(check, `"${CHECK_STEP}" must run before npm ci`).toBeLessThan(install);
+  });
+
+  // npm ci runs dependency install scripts; a persisted checkout token in .git/config
+  // would hand them the job's GITHUB_TOKEN.
+  it('never leaves the GITHUB_TOKEN in .git/config for dependency install scripts', () => {
+    const checkouts = [
+      ...yml.matchAll(/^(\s*)-\s*uses:\s*actions\/checkout@\S+[^\n]*\n((?:\1\s+[^\n]*\n)*)/gm),
+    ];
+    expect(checkouts.length).toBeGreaterThan(0);
+    for (const c of checkouts) {
+      expect(c[2], 'actions/checkout must set persist-credentials: false').toMatch(
+        /^\s+persist-credentials:\s*false\s*$/m
+      );
+    }
+  });
+
+  // A tag-triggered release must not restore a shared npm cache another workflow could poison.
+  it('does not restore a shared npm cache in the release build', () => {
+    expect(yml).not.toMatch(/^\s*cache:/m);
+    expect(yml).not.toMatch(/^\s*cache-dependency-path:/m);
   });
 });

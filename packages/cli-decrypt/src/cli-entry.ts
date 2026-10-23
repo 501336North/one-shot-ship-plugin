@@ -3,13 +3,12 @@
  * Parses arguments and routes to appropriate commands
  */
 
-import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
 import { VERSION } from './index.js';
 import { setupCommand } from './commands/setup.js';
 import { decryptCommand } from './commands/decrypt.js';
 import { fetchManifest, verifyManifestSignature } from './manifest-verifier.js';
+import { stripControl } from './strip-control.js';
+import { getApiUrl } from './config.js';
 
 /**
  * Parsed CLI arguments
@@ -130,20 +129,6 @@ function showVersion(): void {
 }
 
 const MANIFEST_PUBLIC_KEY = 'MCowBQYDK2VwAyEAAwFG32b8TuiVTxrDnXzNrb2v68YN5U9epLnZ3O7pQaI=';
-const DEFAULT_API_URL = 'https://one-shot-ship-api.onrender.com';
-
-function getApiUrl(): string {
-  const configPath = join(homedir(), '.oss', 'config.json');
-  if (existsSync(configPath)) {
-    try {
-      const config = JSON.parse(readFileSync(configPath, 'utf8'));
-      return config.apiUrl || DEFAULT_API_URL;
-    } catch {
-      // Fall through to default
-    }
-  }
-  return DEFAULT_API_URL;
-}
 
 /**
  * Verify the signed prompt manifest and output a JSON report
@@ -172,7 +157,7 @@ async function verifyManifestCommand(): Promise<void> {
     categories,
   };
 
-  console.log(JSON.stringify(report));
+  console.log(stripControl(JSON.stringify(report)));
 
   if (!signatureValid) {
     process.exitCode = 1;
@@ -201,7 +186,7 @@ async function listPromptsCommand(category?: string): Promise<void> {
     entries = entries.filter((entry) => entry.category === category);
   }
 
-  console.log(JSON.stringify(entries));
+  console.log(stripControl(JSON.stringify(entries)));
 }
 
 /**

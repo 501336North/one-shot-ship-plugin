@@ -5,23 +5,11 @@
 
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
 import { fetchCredentials } from '../api-client.js';
 import { storeCredentials } from '../storage.js';
 import { getHardwareId } from '../hardware.js';
 import { CacheService } from '../cache.js';
-
-/**
- * Default API URL (can be overridden in config)
- */
-const DEFAULT_API_URL = 'https://one-shot-ship-api.onrender.com';
-
-/**
- * Get config directory path
- */
-function getConfigDir(): string {
-  return process.env.OSS_CONFIG_DIR || join(homedir(), '.oss');
-}
+import { getConfigDir, getApiUrl } from '../config.js';
 
 /**
  * Get cache directory path
@@ -33,7 +21,7 @@ function getCacheDir(): string {
 /**
  * Read configuration file
  */
-function readConfig(): { apiKey?: string; apiUrl?: string } {
+function readConfig(): { apiKey?: string } {
   const configPath = join(getConfigDir(), 'config.json');
 
   if (!existsSync(configPath)) {
@@ -62,7 +50,7 @@ export async function setupCommand(): Promise<void> {
     throw new Error('No API key configured. Run /oss:login first.');
   }
 
-  const apiUrl = config.apiUrl || DEFAULT_API_URL;
+  const apiUrl = getApiUrl();
 
   // Generate hardware ID
   const hardwareId = getHardwareId();

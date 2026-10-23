@@ -17,3 +17,11 @@
 - The tracked `dist/oss-decrypt.cjs` goes stale after any src change; the release rebuilds from source, so it is not
   what ships, but rebuild it before committing.
 - On a refused redirect the CLI prints `Error: fetch failed` (cause not printed), exit 1; key and URL not printed.
+- Round 1 (2026-10-23): `oss-log.sh init build` rewrites current-session/build.log, so the banner count is 1 per
+  invocation file; the previous round's log is archived.
+- Release risk: the pinned actions (checkout/setup-node/upload/download v4, softprops v2.6.2) run on the Node 20
+  runtime GitHub is phasing out. If the v1.2.4 tag run fails at "Set up job", move to the Node 24 majors; a failed
+  run publishes nothing. Last successful release runs: June 2026.
+- vitest 5 declares node `^22.12 || ^24 || >=26`; this Mac runs 25.4 (EBADENGINE warning only).
+- Not in this PR: `.github/workflows/build-oss-launch.yml` (oss-launch binary) still installs `pkg@5.8.1` on node18
+  (same HIGH GHSA-22r3-9w55-cj54) and softprops v1 → logged as security FOLLOWUP for its own fix.

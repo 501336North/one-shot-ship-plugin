@@ -216,7 +216,7 @@ Search for these exact patterns in the decrypted text:
 - `WebFetch`
 - `base64` (encoding of data for exfiltration)
 - `http://` (non-HTTPS URLs)
-- URLs containing domains other than: `api.oneshotship.com`, `github.com`, `npmjs.com`
+- URLs containing domains other than: `one-shot-ship-api.onrender.com`, `github.com`, `npmjs.com`
 
 For each match, record: category=`exfiltration`, pattern=`<matched>`, line=`<line number>`, context=`<surrounding 80 chars>`
 

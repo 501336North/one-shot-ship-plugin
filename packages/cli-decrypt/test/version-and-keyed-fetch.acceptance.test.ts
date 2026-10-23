@@ -4,8 +4,9 @@
  * @acceptance-criteria AC-VER-1: the shipped bundle's `--version` equals package.json `version`.
  * @acceptance-criteria AC-KEY-1: a keyed request that is answered with a redirect is refused,
  *           and the redirect target never receives a request (so never sees the key).
- * @acceptance-criteria AC-KEY-2: a prompt / team-command name is URL-encoded, so it can only
- *           address its own endpoint (no extra path segments, no query string, no fragment).
+ * @acceptance-criteria AC-KEY-2: a prompt / team-command name can only address its own endpoint:
+ *           a name with `/` or a dot segment (`.`, `..`) is refused before any request is made,
+ *           and any other name is URL-encoded (no query string, no fragment).
  * @business-rule VER-001: a release cannot report a different version than the one published.
  * @business-rule KEY-001: the Bearer key is sent only to the configured API URL.
  * @business-rule KEY-002: user-supplied names cannot steer a keyed request to another API path.
@@ -13,12 +14,13 @@
  *           local 127.0.0.1 servers only — no fetch mocks, no external network, fake key).
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { execFileSync } from 'child_process';
-import { readFileSync } from 'fs';
+import { execFile, execFileSync } from 'child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http';
 import type { AddressInfo } from 'net';
 import { fileURLToPath } from 'url';
-import { dirname, resolve } from 'path';
+import { dirname, join, resolve } from 'path';
 
 import {
   fetchCredentials,
@@ -70,12 +72,12 @@ async function startRedirectingApi(targetBaseUrl: string): Promise<string> {
 }
 
 /** Runs a keyed call and reports whether it rejected, without throwing. */
-async function settle(call: () => Promise<unknown>): Promise<{ rejected: boolean }> {
+async function settle(call: () => Promise<unknown>): Promise<{ rejected: boolean; message: string }> {
   try {
     await call();
-    return { rejected: false };
-  } catch {
-    return { rejected: true };
+    return { rejected: false, message: '' };
+  } catch (err) {
+    return { rejected: true, message: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -117,6 +119,10 @@ describe('AC-KEY-1: the API key is never sent to a redirect target', () => {
     // Then the redirect target never sees a request, and the call fails
     expect(target.received, 'redirect target received a keyed request').toEqual([]);
     expect(outcome.rejected).toBe(true);
+    // And the user is told a redirect was refused (pointing at apiUrl), without the key
+    expect(outcome.message).toMatch(/redirect/i);
+    expect(outcome.message).toMatch(/apiUrl/);
+    expect(outcome.message).not.toContain(FAKE_KEY);
   });
 
   it('fetchEncryptedPrompt refuses a redirect and the redirect target receives nothing', async () => {
@@ -130,6 +136,10 @@ describe('AC-KEY-1: the API key is never sent to a redirect target', () => {
     // Then the redirect target never sees a request, and the call fails
     expect(target.received, 'redirect target received a keyed request').toEqual([]);
     expect(outcome.rejected).toBe(true);
+    // And the user is told a redirect was refused (pointing at apiUrl), without the key
+    expect(outcome.message).toMatch(/redirect/i);
+    expect(outcome.message).toMatch(/apiUrl/);
+    expect(outcome.message).not.toContain(FAKE_KEY);
   });
 
   it('fetchCustomPrompt refuses a redirect and the redirect target receives nothing', async () => {
@@ -143,6 +153,10 @@ describe('AC-KEY-1: the API key is never sent to a redirect target', () => {
     // Then the redirect target never sees a request, and the call fails
     expect(target.received, 'redirect target received a keyed request').toEqual([]);
     expect(outcome.rejected).toBe(true);
+    // And the user is told a redirect was refused (pointing at apiUrl), without the key
+    expect(outcome.message).toMatch(/redirect/i);
+    expect(outcome.message).toMatch(/apiUrl/);
+    expect(outcome.message).not.toContain(FAKE_KEY);
   });
 
   /**
@@ -208,8 +222,9 @@ describe('AC-KEY-1: the API key is never sent to a redirect target', () => {
 });
 
 describe('AC-KEY-2: a prompt name can only reach its own endpoint', () => {
-  const HOSTILE_NAME = 'a/../b?x=1#y';
-  const ENCODED_NAME = encodeURIComponent(HOSTILE_NAME); // a%2F..%2Fb%3Fx%3D1%23y
+  const TRAVERSAL_NAMES = ['a/../b?x=1#y', '..', '.'];
+  const QUERY_NAME = 'b?x=1#y';
+  const ENCODED_QUERY_NAME = encodeURIComponent(QUERY_NAME); // b%3Fx%3D1%23y
 
   async function startRecordingApi(): Promise<{ baseUrl: string; seen: string[] }> {
     const seen: string[] = [];
@@ -221,25 +236,147 @@ describe('AC-KEY-2: a prompt name can only reach its own endpoint', () => {
     return { baseUrl, seen };
   }
 
-  it('fetchCustomPrompt sends the name as a single encoded path segment', async () => {
+  for (const name of TRAVERSAL_NAMES) {
+    it(`fetchCustomPrompt refuses the name ${JSON.stringify(name)} and the API receives nothing`, async () => {
+      // Given an API that records every request it receives
+      const api = await startRecordingApi();
+
+      // When a custom command whose name could address a parent path is fetched with the user's key
+      const outcome = await settle(() => fetchCustomPrompt(FAKE_KEY, api.baseUrl, name));
+
+      // Then the call is refused and no request (so no key) left the client
+      expect(outcome.rejected).toBe(true);
+      expect(api.seen).toEqual([]);
+    });
+
+    it(`fetchEncryptedPrompt refuses the command name ${JSON.stringify(name)} and the API receives nothing`, async () => {
+      // Given an API that records every request it receives
+      const api = await startRecordingApi();
+
+      // When a command prompt whose name could address a parent path is fetched with the user's key
+      const outcome = await settle(() => fetchEncryptedPrompt(FAKE_KEY, api.baseUrl, 'commands', name));
+
+      // Then the call is refused and no request (so no key) left the client
+      expect(outcome.rejected).toBe(true);
+      expect(api.seen).toEqual([]);
+    });
+  }
+
+  it('fetchCustomPrompt sends a name with query characters as a single encoded path segment', async () => {
     // Given an API that records the path it is asked for
     const api = await startRecordingApi();
 
-    // When a custom command with path and query characters in its name is fetched
-    await settle(() => fetchCustomPrompt(FAKE_KEY, api.baseUrl, HOSTILE_NAME));
+    // When a custom command with query and fragment characters in its name is fetched
+    await settle(() => fetchCustomPrompt(FAKE_KEY, api.baseUrl, QUERY_NAME));
 
     // Then the API saw exactly the custom endpoint for that encoded name
-    expect(api.seen).toEqual([`/api/v1/prompts/custom/${ENCODED_NAME}`]);
+    expect(api.seen).toEqual([`/api/v1/prompts/custom/${ENCODED_QUERY_NAME}`]);
   });
 
-  it('fetchEncryptedPrompt sends the command name as a single encoded path segment', async () => {
+  it('fetchEncryptedPrompt sends a command name with query characters as a single encoded path segment', async () => {
     // Given an API that records the path it is asked for
     const api = await startRecordingApi();
 
-    // When a command prompt with path and query characters in its name is fetched
-    await settle(() => fetchEncryptedPrompt(FAKE_KEY, api.baseUrl, 'commands', HOSTILE_NAME));
+    // When a command prompt with query and fragment characters in its name is fetched
+    await settle(() => fetchEncryptedPrompt(FAKE_KEY, api.baseUrl, 'commands', QUERY_NAME));
 
     // Then the API saw exactly the command endpoint for that encoded name
-    expect(api.seen).toEqual([`/api/v1/prompts/${ENCODED_NAME}`]);
+    expect(api.seen).toEqual([`/api/v1/prompts/${ENCODED_QUERY_NAME}`]);
+  });
+});
+
+/**
+ * Integration check for the mocked boundary in api-client.test.ts (R1-4): there, fetch is mocked to
+ * return a Response with control characters in its error text. Here a real local server sends the
+ * same bytes over a real socket through the real fetch, so the JSON decoding path is the real one.
+ */
+describe('R1-4 (real fetch): server error text reaches the user without control characters', () => {
+  // ESC[31m (colour), BEL, CR, and the C1 CSI 0x9b — a terminal-control payload in the error field.
+  const HOSTILE_ERROR_BODY = '{ "error": "bad\\u001b[31mred\\u0007\\r\\u009b2J" }';
+  const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
+
+  async function startHostileErrorApi(): Promise<string> {
+    const { baseUrl } = await startServer((_req, res) => {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(HOSTILE_ERROR_BODY);
+    });
+    return baseUrl;
+  }
+
+  it('fetchCredentials rejects with the server error text, minus control characters', async () => {
+    // Given an API whose 400 error message carries terminal control characters
+    const apiUrl = await startHostileErrorApi();
+
+    // When credentials are fetched with the user's key
+    const outcome = await settle(() => fetchCredentials(FAKE_KEY, apiUrl, 'hw-1'));
+
+    // Then the user sees the readable text and no control characters
+    expect(outcome.rejected).toBe(true);
+    expect(outcome.message).toContain('bad');
+    expect(outcome.message).toContain('red');
+    expect(outcome.message).not.toMatch(CONTROL_CHARS);
+  });
+
+  it('fetchEncryptedPrompt rejects with the server error text, minus control characters', async () => {
+    // Given an API whose 400 error message carries terminal control characters
+    const apiUrl = await startHostileErrorApi();
+
+    // When an encrypted workflow prompt is fetched with the user's key
+    const outcome = await settle(() => fetchEncryptedPrompt(FAKE_KEY, apiUrl, 'workflows', 'build'));
+
+    // Then the user sees the readable text and no control characters
+    expect(outcome.rejected).toBe(true);
+    expect(outcome.message).toContain('bad');
+    expect(outcome.message).toContain('red');
+    expect(outcome.message).not.toMatch(CONTROL_CHARS);
+  });
+
+  it('fetchCustomPrompt rejects with the server error text, minus control characters', async () => {
+    // Given an API whose 400 error message carries terminal control characters
+    const apiUrl = await startHostileErrorApi();
+
+    // When a team custom command is fetched with the user's key
+    const outcome = await settle(() => fetchCustomPrompt(FAKE_KEY, apiUrl, 'team-cmd'));
+
+    // Then the user sees the readable text and no control characters
+    expect(outcome.rejected).toBe(true);
+    expect(outcome.message).toContain('bad');
+    expect(outcome.message).toContain('red');
+    expect(outcome.message).not.toMatch(CONTROL_CHARS);
+  });
+});
+
+/**
+ * R2-4: every error the CLI prints is stripped, not only the server `error` field. A 200 answer whose
+ * body is not JSON makes the JSON decoder throw a message that quotes the body; the CLI must print it
+ * without control or bidi characters.
+ * @boundary The built bundle, spawned as the user runs it, against a local 127.0.0.1 server.
+ */
+describe('R2-4 (built CLI): a printed error carries no control or bidi characters', () => {
+  it('oss-decrypt --setup against a non-JSON OK body prints a clean error and exits 1', async () => {
+    // Given an API that answers 200 with a non-JSON body carrying ESC, BEL and U+202E (right-to-left override)
+    const { baseUrl } = await startServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('bad\u001b[31mred\u0007\u202eevil');
+    });
+    const configDir = mkdtempSync(join(tmpdir(), 'oss-r2-4-'));
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({ apiKey: FAKE_KEY, apiUrl: baseUrl }));
+
+    // When the user runs setup with the built CLI
+    const result = await new Promise<{ code: number | null; stderr: string }>((resolveRun) => {
+      execFile(
+        process.execPath,
+        [bundlePath, '--setup'],
+        { encoding: 'utf8', env: { ...process.env, OSS_CONFIG_DIR: configDir } },
+        (err, _stdout, stderr) => resolveRun({ code: err ? (err.code as number) : 0, stderr })
+      );
+    });
+    rmSync(configDir, { recursive: true, force: true });
+
+    // Then it fails, shows the readable words, and none of the hostile characters
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('Error:');
+    expect(result.stderr).toContain('red');
+    expect(result.stderr).not.toMatch(/[\u001b\u0007\u202e]/);
   });
 });

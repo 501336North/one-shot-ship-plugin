@@ -123,3 +123,11 @@
 ## 2026-10-22 | Security | packages/cli-decrypt
 - **Context:** build (decrypt-version-source)
 - **Insight:** A validator that exists is not a validator that runs: `cache.ts` had `validateType` + `ALLOWED_TYPES`, but its only caller is the disk cache, which is off, so `--type` reached the keyed URL unchecked. When hardening one input in a URL (encoding `--name`), trace every other input in the same URL to its first runtime check. Also: Node's fetch strips `Authorization` on a CROSS-origin redirect, so a two-port redirect test only proves the extra request; assert the target gets zero requests (not "no auth header"), or the test passes without the fix.
+
+## 2026-10-23 | Security | packages/cli-decrypt, hooks, commands
+- **Context:** build (decrypt-version-source, ship round 1)
+- **Insight:** One value read in N places is N security policies. `apiUrl` was read by the CLI (3 copies, two config-dir rules), `oss-notify.sh`, and 8 snippets in settings/telegram.md with a default host that does not resolve; hardening the CLI alone left the hook sending the Bearer key to any URL. Grep the KEY (where the secret is sent) as well as the VALUE. Also: `encodeURIComponent` does not encode `.`, so `..` still walks up a path; validate names, don't just encode them. And `npm install -g pkg` in CI silently installs the unmaintained, advisory-carrying `pkg@5.8.1` regardless of the lockfile; build tools must come from `./node_modules/.bin`.
+
+## 2026-10-23 | Testing | hooks + packages/cli-decrypt
+- **Context:** build (decrypt-version-source, ship round 2)
+- **Insight:** When one rule lives in two languages (TS `getApiUrl`, bash `oss_api_url`), only a shared case table run against both keeps them equal; it found 15 TS-only and 12 bash-only accepts, plus zsh-only NUL accepts (zsh `=~` stops at NUL). Do type and charset checks inside jq so NUL never reaches the shell, and never anchor a jq charset test (`^`/`$` match at line breaks; use `test("[^!-~]")`). curl reads ~/.curlrc unless `-q` is the FIRST argument, which can add a second keyed URL or a trace file with the key. Watcher hook tests break when CLAUDE_PROJECT_DIR is exported in the shell running vitest — unset it before running suites.
