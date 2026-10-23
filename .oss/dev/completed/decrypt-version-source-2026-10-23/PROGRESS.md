@@ -1,6 +1,6 @@
 # Progress: decrypt-version-source
 
-## Current Phase: shipping PR 2 (gate passed 2026-10-23; awaiting user go to merge)
+## Current Phase: complete (PR 1 #207, release cli-decrypt-v1.2.4, PR 2 #208 merged 2026-10-23)
 
 ## Tasks
 ### Phase 1 — CLI version (PR 1)
@@ -42,4 +42,4 @@
 ## Blockers
 - Phase 3 needs the v1.2.4 release (real checksums). Merges and the tag push need the user's go.
 
-## Last Updated: 2026-10-23 by /oss:ship (PR 2)
+## Last Updated: 2026-10-23 by /oss:ship (archive)
