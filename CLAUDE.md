@@ -12,7 +12,6 @@
 |------------|------|---------|
 | **AgenticDevWorkflow** | `/Users/ysl/dev/AgenticDevWorkflow` | API server, web dashboard, database, `.claude-plugin/` integration |
 | **one-shot-ship-plugin** | `/Users/ysl/dev/one-shot-ship-plugin` | Plugin source, watcher supervisor, PR monitor, agents, commands |
-| **Telegram Driver** | `/Users/ysl/dev/Telegram Driver` | Telegram bridge service, notification system |
 
 ### Before Answering ANY Question
 
@@ -20,7 +19,6 @@
 CROSS-REPO CHECK:
 1. [ ] Searched AgenticDevWorkflow
 2. [ ] Searched one-shot-ship-plugin
-3. [ ] Searched Telegram Driver
 ```
 
 ---
@@ -120,7 +118,6 @@ Route specific prompts to different AI models (OpenRouter, Ollama, OpenAI, Gemin
 ## Related Repositories
 
 - **AgenticDevWorkflow**: API server, prompts served to plugin
-- **Telegram Driver**: Notification fallback for AskUserQuestion
 
 ---
 
