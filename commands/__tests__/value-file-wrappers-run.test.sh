@@ -9,7 +9,7 @@
 #           value folder that `oss-value.sh dir` printed.
 # @business-rule Ship round 4, R4-1: outside a git repository the value folder is the one per-user
 #           folder ~/.oss/run/home (same checks), so these commands work there again.
-# @behavior /oss:settings, /oss:telegram, /oss:custom, /oss:watcher, /oss:webhook, /oss:login,
+# @behavior /oss:settings, /oss:custom, /oss:watcher, /oss:webhook, /oss:login,
 #           /oss:oss-audio and /oss:visual-test work as before, and a ' or $( in a value never runs.
 # @business-rule Ship round 4, R4-2: a block uses only values it reads from a value file (checked in
 #           code by oss-value.sh read), computes itself (config.json, oss-value.sh root, fixed
@@ -107,61 +107,40 @@ done
 pwned() { [[ -e "$W/PWNED" || -e "$H/PWNED" || -e "$T/PWNED" ]]; }
 cfg() { printf '{"apiKey": "%s", "apiUrl": "%s"}\n' "$1" "$2" > "$H/.oss/config.json"; }
 
-# --- settings: the save block reads the choices, computes the key and the Telegram link -------
+# --- settings: the save block reads the choices and writes them; it calls no API -------------
 SAVE='read notify_style)'
-sandbox repo; cfg ossk_k1 https://api.example.invalid; printf '{"linked":false}\n' > "$T/curl.out"
+sandbox repo; cfg ossk_k1 https://api.example.invalid
 model_writes notify_style audio verbosity all voice Daniel; run_block settings.md "$SAVE"
 j() { jq -r "$1" "$H/.oss/settings.json" 2>/dev/null; }
 [[ "$RC" == 0 && "$(j .notifications.style)" == audio && "$(j .notifications.voice)" == Daniel && "$(j .notifications.sound)" == Glass \
-   && "$(j .notifications.verbosity)" == all && "$(j .notifications.telegram.linked)" == false && "$(j .notifications.telegram.enabled)" == false && "$(j .version)" == 2 ]] \
+   && "$(j .notifications.verbosity)" == all && "$(j '.notifications | has("telegram")')" == false && "$(j .version)" == 2 ]] \
     && pass "settings: the save block writes the choices it read (voice read, sound kept)" || fail "settings: the save block writes the choices it read (voice read, sound kept)" "rc=$RC out=$OUT settings=$(cat "$H/.oss/settings.json" 2>&1)"
-[[ "$(calls)" == *"say -v Daniel"* && "$(calls)" == *"Bearer ossk_k1"* && "$(calls)" == *"https://api.example.invalid/api/v1/telegram/status"* && "$(calls)" != *PATCH* ]] \
-    && pass "settings: the key and URL come from config.json; the test notice uses the voice read; no PATCH when not linked" || fail "settings: the key and URL come from config.json; the test notice uses the voice read; no PATCH when not linked" "calls=$(calls)"
+[[ "$(calls)" == *"say -v Daniel"* && "$(calls)" != *curl* ]] \
+    && pass "settings: the test notice uses the voice read; no API is called" || fail "settings: the test notice uses the voice read; no API is called" "calls=$(calls)"
 [[ "$OUT" == *"Style:     audio"* && "$OUT" == *"Voice:     Daniel"* ]] && pass "settings: the save block prints the new configuration" || fail "settings: the save block prints the new configuration" "$OUT"
 # sound chosen: sound read, voice kept from settings.json
-sandbox repo; cfg ossk_k1 https://api.example.invalid; printf '{"linked":false}\n' > "$T/curl.out"
+sandbox repo; cfg ossk_k1 https://api.example.invalid
 printf '{"notifications":{"style":"visual","voice":"Karen","sound":"Glass","verbosity":"important"},"version":2}\n' > "$H/.oss/settings.json"
 model_writes notify_style sound verbosity important sound Pop; run_block settings.md "$SAVE"
 [[ "$RC" == 0 && "$(j .notifications.voice)" == Karen && "$(j .notifications.sound)" == Pop && "$(calls)" == *"afplay /System/Library/Sounds/Pop.aiff"* ]] \
     && pass "settings: sound chosen: sound read, voice kept from settings.json" || fail "settings: sound chosen: sound read, voice kept from settings.json" "rc=$RC out=$OUT calls=$(calls)"
-# telegram chosen but not linked: falls back to visual
-sandbox repo; cfg ossk_k1 https://api.example.invalid; printf '{"linked":false}\n' > "$T/curl.out"
+# telegram is no longer a style: refused, settings.json untouched, nothing run, no API called
+sandbox repo; cfg ossk_k1 https://api.example.invalid; echo '{"keep":1}' > "$H/.oss/settings.json"
 model_writes notify_style telegram verbosity important; run_block settings.md "$SAVE"
-[[ "$RC" == 0 && "$(j .notifications.style)" == visual && "$OUT" == *"falling back to 'visual'"* && "$(calls)" == *terminal-notifier* ]] \
-    && pass "settings: telegram not linked falls back to visual" || fail "settings: telegram not linked falls back to visual" "rc=$RC out=$OUT"
-# telegram chosen and linked: enabled through the API
-sandbox repo; cfg ossk_k1 https://api.example.invalid; printf '{"linked":true}\n' > "$T/curl.out"
-model_writes notify_style telegram verbosity errors-only; run_block settings.md "$SAVE"
-[[ "$RC" == 0 && "$(j .notifications.style)" == telegram && "$(j .notifications.telegram.linked)" == true && "$(j .notifications.telegram.enabled)" == true \
-   && "$(calls)" == *"PATCH https://api.example.invalid/api/v1/telegram/notifications"*'"enabled": true'* ]] \
-    && pass "settings: telegram linked: saved and enabled through the API" || fail "settings: telegram linked: saved and enabled through the API" "rc=$RC calls=$(calls) settings=$(cat "$H/.oss/settings.json" 2>&1)"
-# a linked value the API sends that is not true/false is not written into settings.json
-sandbox repo; cfg ossk_k1 https://api.example.invalid; printf '{"linked":"1, \\"x\\": 2"}\n' > "$T/curl.out"
-model_writes notify_style visual verbosity all; run_block settings.md "$SAVE"
-[[ "$RC" == 0 && "$(j .notifications.telegram.linked)" == false ]] && pass "settings: an odd linked value from the API is saved as false" || fail "settings: an odd linked value from the API is saved as false" "rc=$RC settings=$(cat "$H/.oss/settings.json" 2>&1)"
+[[ "$RC" != 0 && "$(cat "$H/.oss/settings.json")" == '{"keep":1}' && -z "$(calls)" ]] \
+    && pass "settings: telegram is refused as a style, settings.json untouched, nothing run" || fail "settings: telegram is refused as a style, settings.json untouched, nothing run" "rc=$RC out=$OUT calls=$(calls) settings=$(cat "$H/.oss/settings.json" 2>&1)"
 # hostile choices: refused, settings.json untouched, nothing run
 for nv in 'notify_style $(touch PWNED)' "notify_style visual'; touch PWNED; '" 'verbosity $(touch PWNED)' 'voice $(touch PWNED)' 'sound `touch PWNED`' 'voice Samantha
 $(touch PWNED)'; do
     n=${nv%% *}; v=${nv#* }
-    sandbox repo; cfg ossk_k1 https://api.example.invalid; printf '{"linked":false}\n' > "$T/curl.out"; echo '{"keep":1}' > "$H/.oss/settings.json"
+    sandbox repo; cfg ossk_k1 https://api.example.invalid; echo '{"keep":1}' > "$H/.oss/settings.json"
     case "$n" in notify_style) model_writes notify_style "$v" verbosity all ;; verbosity) model_writes notify_style visual verbosity "$v" ;;
                  voice) model_writes notify_style audio verbosity all voice "$v" ;; sound) model_writes notify_style sound verbosity all sound "$v" ;; esac
     run_block settings.md "$SAVE"
     if pwned; then fail "settings: hostile $n is refused" "something ran"
-    elif [[ "$RC" == 0 || "$(cat "$H/.oss/settings.json")" != '{"keep":1}' || "$(calls)" == *say* || "$(calls)" == *afplay* || "$(calls)" == *PATCH* ]]; then fail "settings: hostile $n is refused" "rc=$RC calls=$(calls) settings=$(cat "$H/.oss/settings.json")"
+    elif [[ "$RC" == 0 || "$(cat "$H/.oss/settings.json")" != '{"keep":1}' || "$(calls)" == *say* || "$(calls)" == *afplay* || "$(calls)" == *curl* ]]; then fail "settings: hostile $n is refused" "rc=$RC calls=$(calls) settings=$(cat "$H/.oss/settings.json")"
     else pass "settings: hostile $n '$v' is refused, settings.json untouched, nothing run"; fi
 done
-
-# --- telegram: each subcommand block computes the key and URL from config.json ---------------
-for lit in 'telegram/status" \' 'telegram/link" \' '{"enabled": true}' '{"enabled": false}' 'telegram/unlink" \'; do
-    sandbox repo; cfg ossk_k2 https://api.example.invalid; printf '{"success":true,"linked":true,"magicLink":"https://t.me/x"}\n' > "$T/curl.out"
-    run_block telegram.md "$lit"
-    [[ "$RC" == 0 && "$(calls)" == *"Bearer ossk_k2"* && "$(calls)" == *"https://api.example.invalid/api/v1/telegram/"* ]] \
-        && pass "telegram: the block holding '$lit' uses the key and URL from config.json" || fail "telegram: the block holding '$lit' uses the key and URL from config.json" "rc=$RC out=$OUT calls=$(calls)"
-done
-sandbox repo; cfg '$(touch PWNED)' https://api.example.invalid; printf '{"linked":false}\n' > "$T/curl.out"; run_block telegram.md 'telegram/status" \'
-! pwned && [[ "$(calls)" == *'Bearer $(touch PWNED)'* ]] && pass "telegram: a hostile key in config.json is only ever a quoted argument" || fail "telegram: a hostile key in config.json is only ever a quoted argument" "calls=$(calls)"
-grep -qF '${1' "$C/telegram.md" && fail "telegram.md takes no \$1 in a shell block" "$(grep -nF '${1' "$C/telegram.md")" || pass "telegram.md takes no \$1 in a shell block"
 
 # --- oss-custom: the team command name is read from custom.txt --------------------------------
 sandbox repo; model_writes custom review-standards; run_block oss-custom.md 'oss-value.sh decrypt custom'

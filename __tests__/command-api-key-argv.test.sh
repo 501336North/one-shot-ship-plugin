@@ -27,8 +27,6 @@ check "every API_URL= in a command comes from oss_api_url" \
     "$(grep -n 'API_URL=' "$ROOT"/commands/*.md | grep -v 'API_URL=\$(oss_api_url)')"
 check "no command names the unresolvable api.oneshotship.com (not in a curl, not in an allowlist)" \
     "$(grep -nE 'api\.oneshotship\.com' "$ROOT"/commands/*.md)"
-check "telegram.md reads every server field through oss_json_field (control/bidi stripped in jq), never raw jq -r" \
-    "$(grep -n 'jq -r' "$ROOT"/commands/telegram.md)"
 # Each ```bash block runs as its own shell, so each one that calls a helper must source it.
 check "every bash block calling oss_api_url/oss_api_key/oss_api_curl sources ~/.oss/hooks/oss-api-curl.sh" \
     "$(awk '/^```bash/{inb=1; src=0; use=0; start=FNR; next}
