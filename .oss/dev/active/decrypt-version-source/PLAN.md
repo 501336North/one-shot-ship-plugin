@@ -182,6 +182,34 @@ refusing to send the key when TLS verification is disabled / proxy set → secur
 downloads verified at the gate); fix the "reports 1.2.1" comment; update `__tests__/new-user-install.acceptance.test.sh`
 if it pins the tag.
 
+#### PR2-R1 (ship gate, all 4 reviewers MEDIUM; user decision 2026-10-23): existing installs get v1.2.4
+MINIMUM_VERSION 1.2.1 keeps every existing binary (v1.2.3 reports "1.2.1"), so v1.2.4's security fixes reach only
+new installs. **RED:** an installed binary reporting 1.2.1 (and 1.2.3) IS replaced by the pinned v1.2.4; one reporting
+1.2.4 is kept with no download. **GREEN:** MINIMUM_VERSION="1.2.4"; comment says why it is now safe (the pinned binary
+reports 1.2.4, so no re-download loop). Supersedes D2.
+
+#### PR2-R2 (round 2, 3 reviewers; user chose "soft upgrade" 2026-10-23)
+With the 1.2.4 floor, a failed upgrade download (offline, GitHub blocked, slow link hitting the ~2 min tool timeout)
+exits 1 and blocks every /oss command although a working older binary is installed. Also nothing checks the version a
+new binary reports before installing it (re-download loop if an asset ever reports below the floor).
+**RED:** (a) installed runnable v1.2.1 + download/verification-of-download failure → warning on stderr, exit 0, old binary
+kept and still runnable; (b) a hash MISMATCH (in-release or committed) with an older binary installed → still exit 1
+(tamper is never soft); (c) no binary installed + download fails → exit 1 (unchanged); (d) a verified asset that
+reports a version below MINIMUM_VERSION is NOT installed (exit non-zero or soft-fail per (a), old binary kept).
+**GREEN:** minimal: soft-fail only for network/download failures when a runnable binary exists; post-install version
+check against MINIMUM_VERSION before `mv`.
+
+#### PR2-R3 (round 3, user chose "one bounded fix round" 2026-10-23; LAST change to PR 2)
+Hook only (hooks/ensure-decrypt-cli.sh + its tests):
+1. One deadline per upgrade: fetch .sha256 first (--max-time 15), then the binary with the remaining budget
+   (total <= 100 s); first installs unchanged (no cap).
+2. After a failed upgrade on the soft path, write a stamp (e.g. ~/.oss/bin/.decrypt-upgrade-failed) and skip
+   upgrade attempts for 6 h (fast exit 0 with the installed binary); a successful install removes the stamp.
+3. An unparseable/empty .sha256 (captive portal) counts as a failed download -> soft path when runnable;
+   a real hash mismatch stays hard.
+4. HAVE_RUNNABLE only if `--version` exits 0, first match only, and version >= 1.2.1 (old floor).
+Each item RED first; mutation-checked.
+
 #### Task 7: plugin version bump
 - `.claude-plugin/plugin.json` patch bump (triggers auto-update).
 

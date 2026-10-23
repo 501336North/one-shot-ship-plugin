@@ -91,7 +91,7 @@ MOCKEOF
 install_working_binary() {
     cat > "$TEST_HOME/.oss/bin/oss-decrypt" << 'MOCKEOF'
 #!/bin/bash
-if [[ "$1" == "--version" ]]; then echo "oss-decrypt v1.2.3"; exit 0
+if [[ "$1" == "--version" ]]; then echo "oss-decrypt v1.2.4"; exit 0
 elif [[ "$1" == "--setup" ]]; then exit 0
 else echo "mock"; fi
 MOCKEOF

@@ -10,7 +10,7 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PINNED="/releases/download/cli-decrypt-v1.2.3/"
+PINNED="/releases/download/cli-decrypt-v1.2.4/"
 TESTS_RUN=0; TESTS_PASSED=0; TESTS_FAILED=0
 pass() { echo "✓ PASS: $1"; ((TESTS_PASSED++)); }
 fail() { echo "✗ FAIL: $1 — $2"; ((TESTS_FAILED++)); }

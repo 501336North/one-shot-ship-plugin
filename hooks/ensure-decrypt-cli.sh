@@ -18,16 +18,17 @@ set -euo pipefail
 OSS_DIR="${HOME}/.oss"
 OSS_BIN_DIR="${OSS_DIR}/bin"
 OSS_DECRYPT="${OSS_BIN_DIR}/oss-decrypt"
+UPGRADE_STAMP="${OSS_BIN_DIR}/.decrypt-upgrade-failed"
 # Pinned release, never "latest": an unrelated release (oss-launch-v2.0.78, 2026-06-28) took GitHub's
 # "Latest" without oss-decrypt assets and every new install 404'd. See .oss/dev/active/decrypt-download-pin/.
-OSS_DECRYPT_TAG="${OSS_DECRYPT_TAG:-cli-decrypt-v1.2.3}"
+OSS_DECRYPT_TAG="${OSS_DECRYPT_TAG:-cli-decrypt-v1.2.4}"
 if [[ ! "$OSS_DECRYPT_TAG" =~ ^cli-decrypt-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "Error: invalid OSS_DECRYPT_TAG '$OSS_DECRYPT_TAG' (expected cli-decrypt-vX.Y.Z)"
     exit 1
 fi
 GITHUB_RELEASES="https://github.com/501336North/one-shot-ship-plugin/releases/download/${OSS_DECRYPT_TAG}"
 # -f: an HTTP error is a failure (not a saved error page); HTTPS only; abort a stalled transfer
-# (<1 KB/s for 60 s) without capping total time on slow links.
+# (<1 KB/s for 60 s). First installs have no total-time cap; upgrades over a working binary get one deadline (D6).
 CURL_OPTS=(-fsSL --proto '=https' --connect-timeout 15 --speed-limit 1024 --speed-time 60)
 
 # Standardized error contract: emit a structured OSSError via the oss-error
@@ -45,10 +46,11 @@ emit_oss_error() {
     node "$cli" --source "hooks/ensure-decrypt-cli.sh" "$@" 2>/dev/null || true
 }
 
-# Minimum version required (1.2.0 adds --verify-manifest, --list-prompts, --category for /oss:trust)
-# Must stay <= the version the PINNED binary reports about itself: cli-decrypt-v1.2.3 reports "1.2.1".
-# Raising it above that makes every /oss:* command re-download the binary forever.
-MINIMUM_VERSION="1.2.1"
+# Minimum version required. The floor EQUALS the pinned release (cli-decrypt-v1.2.4) so its security
+# fixes reach existing installs: v1.2.1-v1.2.3 all report "1.2.1" and are replaced by the verified
+# pinned asset on the next /oss:* command (D5). It must NEVER exceed what the pinned binary reports
+# about itself ("1.2.4"), or every /oss:* command would re-download the binary forever.
+MINIMUM_VERSION="1.2.4"
 
 # =============================================================================
 # SECURITY: One-time cleanup of legacy prompt caches (v2.0.19+)
@@ -83,12 +85,29 @@ version_gte() {
 # Check if binary exists AND meets minimum version
 # =============================================================================
 NEEDS_INSTALL=false
+HAVE_RUNNABLE=false
 
 if [[ -x "$OSS_DECRYPT" ]]; then
-    # Binary exists — check version
-    CURRENT_VERSION=$("$OSS_DECRYPT" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "0.0.0")
+    # Binary exists — check version. Only a clean `--version` (exit 0) counts; the first X.Y.Z only.
+    VERSION_OUT=$("$OSS_DECRYPT" --version 2>/dev/null) || VERSION_OUT=""
+    CURRENT_VERSION=$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' <<<"$VERSION_OUT" | head -n1 || true)
+    CURRENT_VERSION=${CURRENT_VERSION:-0.0.0}
     if version_gte "$CURRENT_VERSION" "$MINIMUM_VERSION"; then
         exit 0
+    fi
+    # Soft path (keep it on a failed download) only for a working install at or above the old floor 1.2.1.
+    version_gte "$CURRENT_VERSION" "1.2.1" && HAVE_RUNNABLE=true
+    # A failed upgrade to THIS tag less than 6 h ago (stamp "<epoch> <tag>", never a symlink): keep the
+    # working binary and skip the download, so a slow link does not cost ~100 s on every command.
+    if [[ "$HAVE_RUNNABLE" == "true" && -f "$UPGRADE_STAMP" && ! -L "$UPGRADE_STAMP" ]]; then
+        read -r STAMP_AT STAMP_TAG _ < "$UPGRADE_STAMP" || true
+        # Digits only BEFORE any arithmetic: bash evaluates names (and a[$(cmd)]) inside $(( )).
+        [[ "${STAMP_AT:-}" =~ ^[0-9]{1,12}$ ]] || STAMP_AT=""
+        STAMP_AGE=$(( $(date +%s) - 10#${STAMP_AT:-0} ))
+        if [[ -n "$STAMP_AT" && "${STAMP_TAG:-}" == "$OSS_DECRYPT_TAG" && $STAMP_AGE -ge 0 && $STAMP_AGE -lt 21600 ]]; then
+            echo "oss-decrypt update to ${OSS_DECRYPT_TAG} postponed (last attempt failed $((STAMP_AGE / 60)) min ago)" >&2
+            exit 0
+        fi
     fi
     echo "oss-decrypt v${CURRENT_VERSION} is outdated (requires >= v${MINIMUM_VERSION}). Updating..."
     NEEDS_INSTALL=true
@@ -112,6 +131,19 @@ fi
 # Create bin directory if needed
 mkdir -p "$OSS_BIN_DIR"
 
+# D6 soft upgrade: a failed DOWNLOAD (or an asset reporting below the floor) must not take away a working
+# older binary. Warn, keep it, exit 0, stamp it (retry after 6 h). Hash mismatches never come here (tamper is hard).
+keep_installed_or_fail() {
+    if [[ "$HAVE_RUNNABLE" == "true" ]]; then
+        echo "oss-decrypt update to ${OSS_DECRYPT_TAG} failed ($1); keeping the installed version; will retry next command" >&2
+        # Postpone the next attempt (see the stamp check above). Never follow a symlink; temp file + rename.
+        if [[ ! -L "$UPGRADE_STAMP" ]]; then
+            local tmp; tmp=$(mktemp "$UPGRADE_STAMP.XXXXXX" 2>/dev/null) || exit 0
+            { echo "$(date +%s) ${OSS_DECRYPT_TAG}" > "$tmp" && mv -f "$tmp" "$UPGRADE_STAMP"; } 2>/dev/null || rm -f "$tmp"
+        fi
+        exit 0
+    fi
+}
 # Detect platform
 PLATFORM=$(uname -s)
 ARCH=$(uname -m)
@@ -153,37 +185,58 @@ trap 'rm -f "$TMP_BIN" "$CHECKSUM_FILE"' EXIT
 TMP_BIN=$(mktemp "$OSS_BIN_DIR/.oss-decrypt.XXXXXX")
 CHECKSUM_FILE=$(mktemp)
 
-# Download binary
-if ! curl "${CURL_OPTS[@]}" "$DOWNLOAD_URL" -o "$TMP_BIN"; then
-    echo "Error: Failed to download oss-decrypt binary"
-    echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
-    emit_oss_error --code OSS-API-003 --severity HIGH \
-        --message "oss-decrypt binary download failed: network unreachable" \
-        --retry-eligible true --retry-cost cheap
-    exit 1
-fi
+# Download binary ($@ = extra curl options)
+fetch_binary() {
+    if ! curl "${CURL_OPTS[@]}" "$@" "$DOWNLOAD_URL" -o "$TMP_BIN"; then
+        keep_installed_or_fail "download"
+        echo "Error: Failed to download oss-decrypt binary"
+        echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
+        emit_oss_error --code OSS-API-003 --severity HIGH \
+            --message "oss-decrypt binary download failed: network unreachable" \
+            --retry-eligible true --retry-cost cheap
+        exit 1
+    fi
+}
 
 # =============================================================================
 # SECURITY: Verify binary SHA-256 checksum before execution
 # Download the .sha256 file and compare against the downloaded binary.
 # Fail closed: missing or mismatched checksum = reject the binary.
 # =============================================================================
-if ! curl "${CURL_OPTS[@]}" "${DOWNLOAD_URL}.sha256" -o "$CHECKSUM_FILE"; then
-    echo "[verify] Binary checksum: FAILED — checksum file unavailable"
-    rm -f "$CHECKSUM_FILE"
-    echo "Error: Could not download checksum file for verification."
-    echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
-    emit_oss_error --code OSS-API-003 --severity HIGH \
-        --message "oss-decrypt checksum download failed: network unreachable" \
-        --retry-eligible true --retry-cost cheap
-    exit 1
+fetch_checksum() {
+    if ! curl "${CURL_OPTS[@]}" "$@" "${DOWNLOAD_URL}.sha256" -o "$CHECKSUM_FILE"; then
+        keep_installed_or_fail "download"
+        echo "[verify] Binary checksum: FAILED — checksum file unavailable"
+        rm -f "$CHECKSUM_FILE"
+        echo "Error: Could not download checksum file for verification."
+        echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
+        emit_oss_error --code OSS-API-003 --severity HIGH \
+            --message "oss-decrypt checksum download failed: network unreachable" \
+            --retry-eligible true --retry-cost cheap
+        exit 1
+    fi
+}
+
+# The hook runs inside a ~120 s Bash tool call: an upgrade over a working binary gets ONE 100 s deadline for
+# both downloads, so a slow link fails inside the hook (and takes the soft path above) before the tool kills
+# it. The small .sha256 goes first (15 s), the binary gets the rest. A first install has no cap: it must finish.
+if [[ "$HAVE_RUNNABLE" == "true" ]]; then
+    DL_START=$SECONDS
+    fetch_checksum --max-time 15
+    fetch_binary --max-time $((100 - (SECONDS - DL_START)))
+else
+    fetch_binary
+    fetch_checksum
 fi
 
 # Extract expected hash from checksum file (format: "<hash>  <filename>")
 EXPECTED_HASH=$(head -n1 "$CHECKSUM_FILE" | awk '{print $1}')
 rm -f "$CHECKSUM_FILE"
 
+# No hash delivered (empty, or a captive-portal HTML page served with 200) is a failed download, not a
+# mismatch: soft when a runnable binary is installed. A well-formed hash that disagrees stays hard below.
 if [[ -z "$EXPECTED_HASH" || ${#EXPECTED_HASH} -ne 64 ]]; then
+    keep_installed_or_fail "download: checksum file has no hash"
     echo "[verify] Binary checksum: FAILED — invalid checksum format"
     echo "Error: Checksum file has invalid format."
     exit 1
@@ -249,7 +302,15 @@ if ! "$TMP_BIN" --version &>/dev/null; then
         --retry-eligible true --retry-cost cheap
     exit 1
 fi
+# Never install a binary that reports below the floor: the next command would download it again, forever.
+DOWNLOADED_VERSION=$("$TMP_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "0.0.0")
+if ! version_gte "$DOWNLOADED_VERSION" "$MINIMUM_VERSION"; then
+    keep_installed_or_fail "release reports v${DOWNLOADED_VERSION}, below v${MINIMUM_VERSION}"
+    echo "Error: Downloaded binary reports v${DOWNLOADED_VERSION}, below the required v${MINIMUM_VERSION}. Refusing to install."
+    exit 1
+fi
 mv -f "$TMP_BIN" "$OSS_DECRYPT"
+rm -f "$UPGRADE_STAMP"
 
 # Run setup to configure credentials
 echo "Running initial setup..."
