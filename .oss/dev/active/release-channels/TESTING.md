@@ -48,4 +48,10 @@ Repo-wide ratchets guard against a new site reintroducing a hard-coded host or a
 - Pre-existing on clean origin/next: ideate-template, no-telegram-command
 - Load flakes (pass 2/2 alone, FOLLOWUPS): oss-api-curl.real.integration, oss-notification-style, oss-notify-complete-bounds
 
-## Last Updated: 2026-10-26 by /oss:build
+### 2026-10-26: T10 (manifest key by address)
+- cli-decrypt: manifest-key-by-address 36/36 (real Ed25519, throwaway keys); untrusted-address-refused 10/10 (fetch mocked at the boundary)
+- Mutations killed: prod->staging key, startsWith instead of origin, unknown->prod fallback, missing staging key->prod, each caller with a fixed prod key
+- api-url-source: 2 tests re-expressed (loopback decrypt now fails closed until T11; one-source test proves it through the shared refusal)
+- Full cli-decrypt 358/358; tsc clean; bundle rebuilt; live prod manifest verifies (signatureValid true, 138 prompts)
+
+## Last Updated: 2026-10-26 17:55 CST by typescript-pro (T10)
