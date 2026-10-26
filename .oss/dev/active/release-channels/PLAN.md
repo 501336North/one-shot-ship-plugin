@@ -27,7 +27,8 @@ Build a STAGING swimlane next to production for OSS (plugin + API/prompts) so th
 
 ## Phase A: Branches and repo notes (no code)
 
-### Task 1: Create `next` in the plugin and API repos
+### Task 1: Create `next` in the plugin and API repos (DONE 2026-10-26)
+Pushed after the go-ahead: plugin `next` = 2c36f9f, API `next` = e50fe47 (both equal to `main` at creation). This branch was rebased onto `origin/next`.
 - `git fetch origin main && git push origin origin/main:refs/heads/next` in each repo. ⛔ Confirm first.
 - Rebase `feat/release-channels/plan` onto `origin/next` (same commit today).
 - **Acceptance:** `git ls-remote --heads origin next` returns a sha equal to `origin/main` at creation, in both repos.
@@ -37,6 +38,11 @@ Build a STAGING swimlane next to production for OSS (plugin + API/prompts) so th
 - `should name next as the integration branch in CLAUDE.md, outside the IRON LAWS block`: the note's line number < the IRON LAWS start marker, or the note sits after the END marker
 - `should not change the IRON LAWS block`: the block's bytes are unchanged vs `origin/main`
 **GREEN:** add a `## Branching in this repo` section to `CLAUDE.md` above the IRON LAWS block. The same note goes into the API repo (its own test in `packages/api/test/repo/integration-branch-note.test.ts`).
+
+### Task 2b (API repo): CI runs on `next` too
+Found 2026-10-26, when `next` was pushed: `.github/workflows/test.yml` triggers only on `push: [main]` and `pull_request: [main]`, so a PR into `next` gets no CI. The plugin repo has no test workflow at all (release workflows only; out of scope here).
+**RED:** `packages/api/test/repo/ci-triggers.test.ts`: `should run test.yml on push and pull_request for main and next`.
+**GREEN:** add `next` to both trigger lists. Nothing that deploys (`sync-mcp-time.yml`, render.yaml) is changed.
 
 ---
 
@@ -107,7 +113,7 @@ Delegate: `typescript-pro`.
 - **Exclude `agents/performance-auditor.md` and `agents/visionos-developer.md`** (and their `skills/` twins) until Task 9 lands. The fixture marks them `blocked-by:T9`, and the ratchet allows exactly those two until then.
 **REFACTOR:** if the step text is duplicated 99 times, keep it duplicated (one line); don't introduce an include mechanism (YAGNI).
 
-### Task 9 (API repo): every served prompt matches its manifest hash
+### Task 9 (API repo): every served prompt matches its manifest hash. Maintainer wants performance-auditor and visionos-developer fixed (2026-10-26)
 Delegate: `typescript-pro`. Branch from `origin/next` in AgenticDevWorkflow.
 **RED:** `packages/api/test/prompts/manifest-integrity.test.ts`
 - `should hash every prompt file to the value in the generated manifest`, over **all** prompts. It must fail today for `agents/performance-auditor` and `agents/visionos-developer`.

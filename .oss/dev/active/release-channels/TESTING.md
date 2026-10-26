@@ -30,6 +30,12 @@ Repo-wide ratchets guard against a new site reintroducing a hard-coded host or a
 | `__tests__/release-checklist.test.sh` | T20 | AC-008.3 |
 
 ## Results
-_None yet: plan phase._
+### 2026-10-26: acceptance written (`__tests__/release-channels.acceptance.test.sh`), 2/5 pass as expected
+- A1 PASS (guard, US-001): with no apiUrl, every hook calls production only
+- A2 FAIL (US-002): with apiUrl = http://127.0.0.1:9, fetch-iron-laws, oss-fetch-team-iron-laws, oss-changelog and oss-session-start still call production. Turns green with PLAN T4/T5.
+- A3 FAIL (US-003): 99 files still WebFetch a prompt (matches the plan count). Turns green with PLAN T8 + T9.
+- A4 FAIL (US-005): no STAGING marker off production. Turns green with PLAN T14.
+- A5 PASS (guard, US-001/US-005): no marker on production
+- Kept uncommitted until it is green (IRON LAW: no failing tests committed). /oss:build lands it with the task that turns its last row green.
 
-## Last Updated: 2026-10-26 by /oss:plan
+## Last Updated: 2026-10-26 by /oss:acceptance
