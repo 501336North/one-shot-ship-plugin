@@ -430,17 +430,12 @@ is_idle_state() {
 }
 
 # =============================================================================
-# Build status line with proper separators
+# Section 0: Channel (release channels)
 # =============================================================================
-# Section order (full active display):
-#   health | [Model] project | branch | workflow | agent | supervisor | queue | notification
-#
-# Section order (minimal idle display):
-#   health | branch | → next | 🚨 critical queue (if any) | notification
-# =============================================================================
-# Channel (release channels): which API this session talks to, from oss_api_url (the rule every call follows),
+# Which API this session talks to, from oss_api_url (the rule every call follows),
 # and whether the plugin is a beta build (a version with a pre-release part, e.g. 2.1.0-beta.1).
 # Production + stable plugin: no section, so customers see no change.
+# =============================================================================
 compute_channel() {
     local helper="" h url ver="" root="" beta=false
     for h in "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh" "$HOME/.oss/hooks/oss-api-curl.sh"; do
@@ -465,6 +460,15 @@ compute_channel() {
     return 0
 }
 
+# =============================================================================
+# Build status line with proper separators
+# =============================================================================
+# Section order (full active display):
+#   [channel] | health | [Model] project | branch | workflow | agent | supervisor | queue | notification
+#
+# Section order (minimal idle display):
+#   [channel] | health | branch | → next | 🚨 critical queue (if any) | notification
+# =============================================================================
 build_status_line() {
     local sections=()
     local channel

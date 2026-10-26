@@ -13,13 +13,14 @@ _OSS_SEMVER_ID='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
 _OSS_SEMVER_RE="^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(${_OSS_SEMVER_ID}(\.${_OSS_SEMVER_ID})*))?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$"
 
 oss_semver_cmp() {
-    local a1 a2 a3 ap b1 b2 b3 bp i n x y
+    local ap bp i n x y
+    local -a a b
     [[ "${1:-}" =~ $_OSS_SEMVER_RE ]] || return 2
-    a1=${BASH_REMATCH[1]}; a2=${BASH_REMATCH[2]}; a3=${BASH_REMATCH[3]}; ap=${BASH_REMATCH[5]}
+    a=("${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"); ap=${BASH_REMATCH[5]}
     [[ "${2:-}" =~ $_OSS_SEMVER_RE ]] || return 2
-    b1=${BASH_REMATCH[1]}; b2=${BASH_REMATCH[2]}; b3=${BASH_REMATCH[3]}; bp=${BASH_REMATCH[5]}
-    for i in 1 2 3; do
-        eval "x=\$a$i; y=\$b$i"
+    b=("${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"); bp=${BASH_REMATCH[5]}
+    for i in 0 1 2; do
+        x=${a[i]}; y=${b[i]}
         if (( x < y )); then echo -1; return 0; fi
         if (( x > y )); then echo 1; return 0; fi
     done
