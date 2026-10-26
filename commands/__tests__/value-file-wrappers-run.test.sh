@@ -148,6 +148,23 @@ LS_BEFORE=$(ls -A "$H/.oss"); run_block settings.md "$SAVE"
 MODE=$(stat -c %a "$H/.oss/settings.json" 2>/dev/null || stat -f %Lp "$H/.oss/settings.json")
 [[ "$MODE" == 640 && ! -L "$H/.oss/settings.json" && "$(ls -A "$H/.oss")" == "$LS_BEFORE" ]] \
     && pass "settings: the save keeps the file's mode and leaves no temp file" || fail "settings: the save keeps the file's mode and leaves no temp file" "mode=$MODE ls=$(ls -A "$H/.oss" | tr '\n' ' ')"
+# P2R2-2: the save removes the retired Telegram settings (a plaintext bot token) and keeps the rest
+# @behavior A user whose settings.json still holds the old Telegram bot token runs /oss:settings;
+#           afterwards the token is gone and their model routing and API keys are as they were.
+# @business-rule Telegram notifications are retired: /oss:settings never writes .telegram or
+#           .notifications.telegram back, even where the session-start cleanup did not run.
+sandbox repo; cfg ossk_k1 https://api.example.invalid
+cat > "$H/.oss/settings.json" <<'JSON'
+{"telegram":{"botToken":"dummy","chatId":"1","enabled":true},
+ "models":{"agents":{"oss:code-reviewer":"ollama/gpt-oss:120b"}},"apiKeys":{"openrouter":"sk-or-test"},
+ "notifications":{"style":"visual","voice":"Karen","sound":"Ping","verbosity":"important","telegram":{"enabled":true}},"version":2}
+JSON
+KEPT_BEFORE=$(jq -S '{models, apiKeys}' "$H/.oss/settings.json")
+model_writes notify_style sound verbosity all sound Pop; run_block settings.md "$SAVE"
+[[ "$RC" == 0 && "$(j 'has("telegram")')" == false && "$(j '.notifications | has("telegram")')" == false \
+   && "$(jq -S '{models, apiKeys}' "$H/.oss/settings.json" 2>&1)" == "$KEPT_BEFORE" \
+   && "$(j .notifications.style)" == sound && "$(j .notifications.sound)" == Pop && "$(j .notifications.verbosity)" == all ]] \
+    && pass "settings: the save removes the retired Telegram settings, keeping models and apiKeys" || fail "settings: the save removes the retired Telegram settings, keeping models and apiKeys" "rc=$RC keys=$(jq -c '[keys, (.notifications|keys)]' "$H/.oss/settings.json" 2>&1)"
 # no settings.json: created with just notifications and version, mode 600
 sandbox repo; model_writes notify_style visual verbosity all; run_block settings.md "$SAVE"
 MODE=$(stat -c %a "$H/.oss/settings.json" 2>/dev/null || stat -f %Lp "$H/.oss/settings.json" 2>/dev/null)

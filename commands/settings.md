@@ -229,7 +229,7 @@ If `dir` prints nothing, tell the user the settings were not changed and show it
 
 ### Step 4: Save and Test (one Bash call)
 
-Run this block exactly as written. It reads and checks each answer (a value outside its list is refused and nothing is saved), keeps the current voice or sound when that question was not asked, merges the choices into `~/.oss/settings.json` (every other setting is kept; a file that is not valid JSON or is a symlink is refused and left as it is), sends a test notification in the new style and prints the new configuration.
+Run this block exactly as written. It reads and checks each answer (a value outside its list is refused and nothing is saved), keeps the current voice or sound when that question was not asked, merges the choices into `~/.oss/settings.json` (every other setting is kept, except the retired Telegram settings, which are removed; a file that is not valid JSON or is a symlink is refused and left as it is), sends a test notification in the new style and prints the new configuration.
 
 ```bash
 V=~/.oss/hooks/oss-value.sh
@@ -242,7 +242,7 @@ if [[ "$STYLE" == "audio" ]]; then VOICE=$("$V" read voice) || exit 1; fi
 if [[ "$STYLE" == "sound" ]]; then SOUND=$("$V" read sound) || exit 1; fi
 
 mkdir -p ~/.oss
-# Merge: only notifications.{style,voice,sound,verbosity} and version change; every other key is kept
+# Merge: only notifications.{style,voice,sound,verbosity} and version change and the retired telegram keys are removed; every other key is kept
 CURRENT='{}'; MODE=600
 if [[ -L "$SETTINGS_FILE" || ( -e "$SETTINGS_FILE" && ! -f "$SETTINGS_FILE" ) ]]; then
     echo "Not saved: ~/.oss/settings.json is a symlink or not a regular file; it was left as it is." >&2; exit 1
@@ -255,7 +255,7 @@ if [[ -f "$SETTINGS_FILE" ]]; then
 fi
 TMP=$(mktemp "$HOME/.oss/settings.json.XXXXXX") || exit 1
 printf '%s' "$CURRENT" | jq --arg s "$STYLE" --arg v "$VOICE" --arg so "$SOUND" --arg vb "$VERBOSITY" \
-    '.notifications = ((.notifications // {}) + {style: $s, voice: $v, sound: $so, verbosity: $vb}) | .version = 2' > "$TMP" \
+    '.notifications = ((.notifications // {}) + {style: $s, voice: $v, sound: $so, verbosity: $vb}) | .version = 2 | del(.telegram, .notifications.telegram)' > "$TMP" \
     && chmod "$MODE" "$TMP" && mv -f "$TMP" "$SETTINGS_FILE" || { rm -f "$TMP"; exit 1; }
 
 # Test notification, based on style
