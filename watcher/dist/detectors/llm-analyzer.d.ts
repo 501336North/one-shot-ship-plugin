@@ -19,10 +19,8 @@ export interface LLMAnalysisResult {
 export declare class LLMAnalyzer {
     private readonly queueManager;
     private readonly ruleEngine;
-    private readonly apiKey;
     private readonly confidenceThreshold;
-    private readonly apiUrl;
-    constructor(queueManager: QueueManager, ruleEngine: RuleEngine, apiKey: string, confidenceThreshold?: number, apiUrl?: string);
+    constructor(queueManager: QueueManager, ruleEngine: RuleEngine, confidenceThreshold?: number);
     /**
      * Analyze log content - first with rules, then LLM if needed
      */

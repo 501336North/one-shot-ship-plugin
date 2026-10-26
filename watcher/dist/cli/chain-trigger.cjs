@@ -87,33 +87,55 @@ var fs = __toESM(require("fs"), 1);
 var path = __toESM(require("path"), 1);
 var os = __toESM(require("os"), 1);
 var DEFAULT_API_URL = "https://one-shot-ship-api.onrender.com";
+var HTTPS_URL = /^https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?(\/[A-Za-z0-9._~%/-]*)?$/;
+var LOOPBACK_HTTP_URL = /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:[0-9]{1,5})?(\/[A-Za-z0-9._~%/-]*)?$/;
 function getConfigDir() {
   return process.env.OSS_CONFIG_DIR || path.join(os.homedir(), ".oss");
 }
-function readApiCredentials(configDir) {
-  const configPath = path.join(configDir || getConfigDir(), "config.json");
-  if (!fs.existsSync(configPath)) {
+function parses(value) {
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function resolveApiUrl(apiUrl) {
+  if (apiUrl === void 0 || apiUrl === null || apiUrl === "") return DEFAULT_API_URL;
+  if (typeof apiUrl !== "string") return null;
+  if (!(HTTPS_URL.test(apiUrl) || LOOPBACK_HTTP_URL.test(apiUrl)) || !parses(apiUrl)) return null;
+  return apiUrl;
+}
+function readOwnConfigFile(configPath) {
+  let fd;
+  try {
+    fd = fs.openSync(configPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  } catch {
     return null;
   }
   try {
-    const content = fs.readFileSync(configPath, "utf8");
+    const stat = fs.fstatSync(fd);
+    const uid = process.getuid?.();
+    if (!stat.isFile() || uid !== void 0 && stat.uid !== uid || (stat.mode & 18) !== 0) {
+      return null;
+    }
+    return fs.readFileSync(fd, "utf8");
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+function readApiCredentials(configDir) {
+  const content = readOwnConfigFile(path.join(configDir || getConfigDir(), "config.json"));
+  if (content === null) return null;
+  try {
     const config = JSON.parse(content);
-    if (!config.apiKey) {
+    const { apiKey } = config;
+    if (typeof apiKey !== "string" || apiKey === "" || /[\r\n]/.test(apiKey)) {
       return null;
     }
-    const apiUrl = config.apiUrl || DEFAULT_API_URL;
-    try {
-      const parsed = new URL(apiUrl);
-      if (parsed.protocol !== "https:") {
-        return null;
-      }
-    } catch {
-      return null;
-    }
-    return {
-      apiKey: config.apiKey,
-      apiUrl
-    };
+    const apiUrl = resolveApiUrl(config.apiUrl);
+    if (apiUrl === null) return null;
+    return { apiKey, apiUrl };
   } catch {
     return null;
   }

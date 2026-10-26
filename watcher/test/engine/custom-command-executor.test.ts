@@ -7,6 +7,9 @@
 
 import { describe, test, expect, beforeEach, vi, afterEach } from 'vitest';
 import { exec } from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 // Import implementation (will be created in GREEN phase)
 import {
@@ -27,19 +30,133 @@ vi.mock('child_process', () => ({
 
 const mockExec = vi.mocked(exec);
 
+/** The OSS config the executor reads its key and API from (OSS_CONFIG_DIR/config.json, 0600). */
+let configDir: string;
+let savedConfigDir: string | undefined;
+function writeConfig(config: Record<string, unknown>): void {
+  fs.writeFileSync(path.join(configDir, 'config.json'), JSON.stringify(config), { mode: 0o600 });
+}
+
 describe('CustomCommandExecutor', () => {
   let executor: CustomCommandExecutor;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    executor = new CustomCommandExecutor({
-      apiKey: 'test-api-key',
-      apiUrl: 'https://api.example.com',
-    });
+    savedConfigDir = process.env.OSS_CONFIG_DIR;
+    configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-custom-cmd-'));
+    process.env.OSS_CONFIG_DIR = configDir;
+    writeConfig({ apiKey: 'test-api-key', apiUrl: 'https://api.example.com' });
+    executor = new CustomCommandExecutor();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    if (savedConfigDir === undefined) delete process.env.OSS_CONFIG_DIR;
+    else process.env.OSS_CONFIG_DIR = savedConfigDir;
+    fs.rmSync(configDir, { recursive: true, force: true });
+  });
+
+  // ==========================================================================
+  // Where the key goes (#45): the API the OSS config names, nowhere else
+  // ==========================================================================
+
+  describe('Key and API from the OSS config (#45)', () => {
+    const okCommand = {
+      ok: true,
+      status: 200,
+      json: async () => ({ prompt: '# P', name: 'review-standards' }),
+    };
+
+    test('should take the URL and key from readApiCredentials', async () => {
+      writeConfig({ apiKey: 'staging-key', apiUrl: 'https://staging.example.com/base' });
+      mockFetch.mockResolvedValueOnce(okCommand);
+
+      await executor.fetchCustomCommand('review-standards');
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch.mock.calls[0][0]).toBe(
+        'https://staging.example.com/base/api/v1/prompts/custom/review-standards'
+      );
+      expect(mockFetch.mock.calls[0][1].headers.Authorization).toBe('Bearer staging-key');
+    });
+
+    test('should send nothing when there is no usable OSS config', async () => {
+      fs.rmSync(path.join(configDir, 'config.json'));
+
+      const result = await executor.execute('team:review-standards');
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(result.success).toBe(false);
+    });
+
+    test.each(['http://api.example.com', 'ftp://api.example.com', 'https://a@b'])(
+      'should refuse a non-https apiUrl (loopback http allowed, as the rule says): %s',
+      async (apiUrl) => {
+        writeConfig({ apiKey: 'k', apiUrl });
+
+        await expect(executor.fetchCustomCommand('review-standards')).rejects.toThrow();
+        expect(mockFetch).not.toHaveBeenCalled();
+      }
+    );
+
+    test('should send to a loopback http API (the DEV channel)', async () => {
+      writeConfig({ apiKey: 'dev-key', apiUrl: 'http://127.0.0.1:4100' });
+      mockFetch.mockResolvedValueOnce(okCommand);
+
+      await executor.fetchCustomCommand('review-standards');
+
+      expect(mockFetch.mock.calls[0][0]).toBe('http://127.0.0.1:4100/api/v1/prompts/custom/review-standards');
+    });
+
+    test.each(['../admin', 'a/b', 'x?y=1', 'x#y', 'Review', 'has space', '', 'a'.repeat(101)])(
+      'should refuse a command name that fails isSafeTeamCommandName: %s',
+      async (name) => {
+        await expect(executor.fetchCustomCommand(name)).rejects.toThrow();
+        expect(mockFetch).not.toHaveBeenCalled();
+      }
+    );
+
+    test('should encode the name it sends', async () => {
+      mockFetch.mockResolvedValueOnce(okCommand);
+
+      await executor.fetchCustomCommand('0-lint-2');
+
+      expect(mockFetch.mock.calls[0][0]).toBe(
+        `https://api.example.com/api/v1/prompts/custom/${encodeURIComponent('0-lint-2')}`
+      );
+    });
+
+    test('should time out', async () => {
+      // A server that never answers: the request only ends when its signal aborts.
+      mockFetch.mockImplementationOnce(
+        (_url: string, init: { signal?: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+          })
+      );
+
+      await expect(executor.fetchCustomCommand('review-standards', 50)).rejects.toThrow();
+    });
+
+    test('should time out by default', async () => {
+      mockFetch.mockResolvedValueOnce(okCommand);
+
+      await executor.fetchCustomCommand('review-standards');
+
+      expect(mockFetch.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+    });
+
+    test('should refuse a redirect', async () => {
+      // fetch as the platform implements it: 'follow' (the default) replays the request, Bearer
+      // key included, to the Location host; 'manual' hands back the 3xx; 'error' rejects.
+      mockFetch.mockImplementationOnce(async (_url: string, init: { redirect?: RequestRedirect }) => {
+        if (init.redirect === 'error') throw new TypeError('fetch failed: redirect');
+        if (init.redirect === 'manual') return { ok: false, status: 302, json: async () => ({}) };
+        return okCommand;
+      });
+
+      await expect(executor.fetchCustomCommand('review-standards')).rejects.toThrow();
+    });
   });
 
   // ==========================================================================

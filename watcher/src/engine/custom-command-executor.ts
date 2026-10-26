@@ -18,16 +18,10 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { homedir } from 'os';
 import { join } from 'path';
+import { readApiCredentials } from '../api/api-credentials.js';
+import { isSafeTeamCommandName } from '../utils/safe-chain-name.js';
 
 const execAsync = promisify(exec);
-
-/**
- * Configuration for the custom command executor
- */
-export interface CustomCommandExecutorConfig {
-  apiKey: string;
-  apiUrl: string;
-}
 
 /**
  * Response from the custom command API
@@ -55,6 +49,9 @@ export interface CustomCommandResult {
  * The prefix that identifies custom team commands
  */
 const CUSTOM_COMMAND_PREFIX = 'team:';
+
+/** How long a custom command fetch may take before it is abandoned */
+export const CUSTOM_COMMAND_FETCH_TIMEOUT_MS = 10000;
 
 /**
  * Check if a command is a custom team command
@@ -86,30 +83,37 @@ export function parseCustomCommand(command: string): string | null {
  * Executor for custom team commands
  */
 export class CustomCommandExecutor {
-  private apiKey: string;
-  private apiUrl: string;
-
-  constructor(config: CustomCommandExecutorConfig) {
-    this.apiKey = config.apiKey;
-    this.apiUrl = config.apiUrl;
-  }
 
   /**
    * Fetch a custom command prompt from the API
    *
    * @param commandName - The command name (without 'team:' prefix)
+   * @param timeoutMs - Abort the request after this long
    * @returns The custom command response or null if not found
-   * @throws Error on authentication or subscription failures
+   * @throws Error on an unsafe name, no usable OSS config, timeout, redirect, auth or subscription failures
    */
-  async fetchCustomCommand(commandName: string): Promise<CustomCommandResponse | null> {
-    const url = `${this.apiUrl}/api/v1/prompts/custom/${commandName}`;
+  async fetchCustomCommand(
+    commandName: string,
+    timeoutMs: number = CUSTOM_COMMAND_FETCH_TIMEOUT_MS
+  ): Promise<CustomCommandResponse | null> {
+    if (!isSafeTeamCommandName(commandName)) {
+      throw new Error('Invalid custom command name');
+    }
+    const credentials = readApiCredentials();
+    if (!credentials) {
+      throw new Error('No API key configured, or apiUrl in your OSS config is refused. Run /oss:login');
+    }
+    const url = `${credentials.apiUrl}/api/v1/prompts/custom/${encodeURIComponent(commandName)}`;
 
     const response = await fetch(url, {
       method: 'GET',
       headers: {
-        Authorization: `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${credentials.apiKey}`,
         'Content-Type': 'application/json',
       },
+      signal: AbortSignal.timeout(timeoutMs),
+      // never replay the Bearer key to a redirect target
+      redirect: 'error',
     });
 
     if (!response.ok) {

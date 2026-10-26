@@ -27,7 +27,7 @@ describe('Watcher Process', () => {
   // AC-001.4: PID file created at .oss/watcher.pid
   describe('PID file management', () => {
     it('should create PID file on start', async () => {
-      const watcher = new Watcher(ossDir, 'test-api-key');
+      const watcher = new Watcher(ossDir);
       await watcher.start();
 
       const pidPath = path.join(ossDir, 'watcher.pid');
@@ -37,7 +37,7 @@ describe('Watcher Process', () => {
     });
 
     it('should write process ID to PID file', async () => {
-      const watcher = new Watcher(ossDir, 'test-api-key');
+      const watcher = new Watcher(ossDir);
       await watcher.start();
 
       const pidPath = path.join(ossDir, 'watcher.pid');
@@ -50,7 +50,7 @@ describe('Watcher Process', () => {
     });
 
     it('should remove PID file on stop', async () => {
-      const watcher = new Watcher(ossDir, 'test-api-key');
+      const watcher = new Watcher(ossDir);
       await watcher.start();
       await watcher.stop();
 
@@ -66,7 +66,7 @@ describe('Watcher Process', () => {
       const pidPath = path.join(ossDir, 'watcher.pid');
       fs.writeFileSync(pidPath, process.pid.toString());
 
-      const watcher = new Watcher(ossDir, 'test-api-key');
+      const watcher = new Watcher(ossDir);
       const isRunning = await watcher.isAnotherWatcherRunning();
 
       expect(isRunning).toBe(true);
@@ -77,7 +77,7 @@ describe('Watcher Process', () => {
       const pidPath = path.join(ossDir, 'watcher.pid');
       fs.writeFileSync(pidPath, '999999999'); // Unlikely to be a real process
 
-      const watcher = new Watcher(ossDir, 'test-api-key');
+      const watcher = new Watcher(ossDir);
       const isRunning = await watcher.isAnotherWatcherRunning();
 
       expect(isRunning).toBe(false);
@@ -87,7 +87,7 @@ describe('Watcher Process', () => {
       const pidPath = path.join(ossDir, 'watcher.pid');
       fs.writeFileSync(pidPath, '999999999');
 
-      const watcher = new Watcher(ossDir, 'test-api-key');
+      const watcher = new Watcher(ossDir);
       await watcher.cleanupStalePidFile();
 
       expect(fs.existsSync(pidPath)).toBe(false);
@@ -98,7 +98,7 @@ describe('Watcher Process', () => {
       const pidPath = path.join(ossDir, 'watcher.pid');
       fs.writeFileSync(pidPath, process.pid.toString());
 
-      const watcher = new Watcher(ossDir, 'test-api-key');
+      const watcher = new Watcher(ossDir);
       const started = await watcher.start();
 
       expect(started).toBe(false);
@@ -108,7 +108,7 @@ describe('Watcher Process', () => {
   // AC-001.5: Watcher logs to .oss/watcher.log
   describe('logging', () => {
     it('should create log file', async () => {
-      const watcher = new Watcher(ossDir, 'test-api-key');
+      const watcher = new Watcher(ossDir);
       await watcher.start();
 
       const logPath = path.join(ossDir, 'watcher.log');
@@ -118,7 +118,7 @@ describe('Watcher Process', () => {
     });
 
     it('should write startup message to log', async () => {
-      const watcher = new Watcher(ossDir, 'test-api-key');
+      const watcher = new Watcher(ossDir);
       await watcher.start();
 
       const logPath = path.join(ossDir, 'watcher.log');
@@ -130,7 +130,7 @@ describe('Watcher Process', () => {
     });
 
     it('should write shutdown message to log', async () => {
-      const watcher = new Watcher(ossDir, 'test-api-key');
+      const watcher = new Watcher(ossDir);
       await watcher.start();
       await watcher.stop();
 
@@ -144,7 +144,7 @@ describe('Watcher Process', () => {
   // Watcher state
   describe('state management', () => {
     it('should report running state after start', async () => {
-      const watcher = new Watcher(ossDir, 'test-api-key');
+      const watcher = new Watcher(ossDir);
       await watcher.start();
 
       expect(watcher.getState()).toBe(WatcherState.Running);
@@ -153,7 +153,7 @@ describe('Watcher Process', () => {
     });
 
     it('should report stopped state after stop', async () => {
-      const watcher = new Watcher(ossDir, 'test-api-key');
+      const watcher = new Watcher(ossDir);
       await watcher.start();
       await watcher.stop();
 
@@ -161,7 +161,7 @@ describe('Watcher Process', () => {
     });
 
     it('should report idle state initially', () => {
-      const watcher = new Watcher(ossDir, 'test-api-key');
+      const watcher = new Watcher(ossDir);
 
       expect(watcher.getState()).toBe(WatcherState.Idle);
     });
@@ -170,7 +170,7 @@ describe('Watcher Process', () => {
   // Queue integration
   describe('queue integration', () => {
     it('should initialize queue manager on start', async () => {
-      const watcher = new Watcher(ossDir, 'test-api-key');
+      const watcher = new Watcher(ossDir);
       await watcher.start();
 
       const queuePath = path.join(ossDir, 'queue.json');
@@ -183,7 +183,7 @@ describe('Watcher Process', () => {
   // Config management
   describe('configuration', () => {
     it('should use default config when no config file exists', async () => {
-      const watcher = new Watcher(ossDir, 'test-api-key');
+      const watcher = new Watcher(ossDir);
       const config = await watcher.loadConfig();
 
       expect(config.enabled).toBe(true);
@@ -206,7 +206,7 @@ describe('Watcher Process', () => {
       };
       fs.writeFileSync(path.join(ossDir, 'config.json'), JSON.stringify(customConfig));
 
-      const watcher = new Watcher(ossDir, 'test-api-key');
+      const watcher = new Watcher(ossDir);
       const config = await watcher.loadConfig();
 
       expect(config.monitors.tests).toBe(false);
@@ -217,7 +217,7 @@ describe('Watcher Process', () => {
   // Graceful shutdown
   describe('graceful shutdown', () => {
     it('should stop cleanly', async () => {
-      const watcher = new Watcher(ossDir, 'test-api-key');
+      const watcher = new Watcher(ossDir);
       await watcher.start();
 
       // Should not throw
@@ -225,7 +225,7 @@ describe('Watcher Process', () => {
     });
 
     it('should handle multiple stop calls', async () => {
-      const watcher = new Watcher(ossDir, 'test-api-key');
+      const watcher = new Watcher(ossDir);
       await watcher.start();
       await watcher.stop();
 

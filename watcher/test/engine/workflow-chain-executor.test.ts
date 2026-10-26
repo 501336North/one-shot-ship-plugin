@@ -51,10 +51,7 @@ describe('WorkflowChainExecutor', () => {
       return this;
     });
 
-    executor = new WorkflowChainExecutor({
-      apiKey: 'test-api-key',
-      apiUrl: 'https://api.example.com',
-    });
+    executor = new WorkflowChainExecutor();
   });
 
   afterEach(() => {

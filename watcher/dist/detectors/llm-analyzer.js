@@ -1,3 +1,4 @@
+import { readApiCredentials } from '../api/api-credentials.js';
 /**
  * LLM Analyzer - Fallback analysis for anomalies rules miss
  *
@@ -6,15 +7,11 @@
 export class LLMAnalyzer {
     queueManager;
     ruleEngine;
-    apiKey;
     confidenceThreshold;
-    apiUrl;
-    constructor(queueManager, ruleEngine, apiKey, confidenceThreshold = 0.7, apiUrl = 'https://one-shot-ship-api.onrender.com/api/v1/analyze') {
+    constructor(queueManager, ruleEngine, confidenceThreshold = 0.7) {
         this.queueManager = queueManager;
         this.ruleEngine = ruleEngine;
-        this.apiKey = apiKey;
         this.confidenceThreshold = confidenceThreshold;
-        this.apiUrl = apiUrl;
     }
     /**
      * Analyze log content - first with rules, then LLM if needed
@@ -49,16 +46,22 @@ export class LLMAnalyzer {
      * Analyze using LLM API
      */
     async analyzeLLM(logContent) {
+        // The key and the API it may go to, from the OSS config; nothing is sent when it is refused
+        const credentials = readApiCredentials();
+        if (!credentials)
+            return null;
         try {
-            const response = await fetch(this.apiUrl, {
+            const response = await fetch(`${credentials.apiUrl}/api/v1/analyze`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.apiKey}`,
+                    'Authorization': `Bearer ${credentials.apiKey}`,
                 },
                 body: JSON.stringify({
                     log_content: logContent,
                 }),
+                // never replay the Bearer key to a redirect target
+                redirect: 'error',
             });
             if (!response.ok) {
                 // Graceful fallback - return null on error
