@@ -217,7 +217,8 @@ Delegate: `deployment-engineer` (shell).
 
 ### Task 19: Beta versions on `next` (AC-008.4)
 **RED:** extend `__tests__/plugin-version-bump.test.sh`: `should accept X.Y.Z-beta.N on next and reject a prerelease version in a release PR`. Also `hooks/check-updates.sh`/`oss-version-check.sh` compare versions with prereleases correctly (a `2.1.0-beta.3` vs `2.0.91` row).
-**GREEN:** set `.claude-plugin/plugin.json` on `next` to `2.1.0-beta.1`; adjust the version comparison helper(s). Provenance: grep for every version comparison (`version_gte`, sort -V) and route them through one helper.
+**Measured defect (2026-10-26, T4):** `__tests__/plugin-version-bump.test.sh` compares with `sort -V`, which ranks `2.1.0-beta.1` ABOVE `2.1.0`, so the first release PR (beta → stable) would fail the bump check. The prerelease-aware comparison must cover this test too.
+**GREEN:** `.claude-plugin/plugin.json` on `next` is already `2.1.0-beta.1` (set in T4, which first changed shipped paths); adjust the version comparison helper(s). Provenance: grep for every version comparison (`version_gte`, sort -V) and route them through one helper.
 
 ### Task 20: Release PR template and RELEASING.md (AC-008.3)
 **RED:** `__tests__/release-checklist.test.sh`: `should list the four checklist items in .github/PULL_REQUEST_TEMPLATE/release.md` (STAGING run, version bump, API + migrations first, merge-back) and `docs/RELEASING.md` should describe hotfix → merge-back.

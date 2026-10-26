@@ -31,8 +31,6 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${HOME}/.oss/config.json"
-API_URL="https://one-shot-ship-api.onrender.com"
 ENDPOINT="/api/v1/prompts/shared/iron-laws"
 STATE_DIR="${HOME}/.oss"
 LAST_CHECK_FILE="${STATE_DIR}/.iron-laws-last-check"
@@ -263,9 +261,11 @@ main() {
         younger_than "$LAST_CHECK_FILE" "$CACHE_TTL_SECONDS" && exit 0
         younger_than "$BACKOFF_FILE" "$BACKOFF_SECONDS" && exit 0
     fi
-    [[ -f "$CONFIG_FILE" ]] || { warn "not logged in ($CONFIG_FILE missing)"; give_up 4; }
     # shellcheck source=oss-api-curl.sh
     source "$SCRIPT_DIR/oss-api-curl.sh" 2>/dev/null || { warn "missing $SCRIPT_DIR/oss-api-curl.sh"; give_up; }
+    CONFIG_FILE="$(oss_config_file)"  # the key and the URL it goes to come from one file
+    [[ -f "$CONFIG_FILE" ]] || { warn "not logged in ($CONFIG_FILE missing)"; give_up 4; }
+    API_URL="$(oss_api_url)" || { warn "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"; give_up 4; }
 
     trap cleanup EXIT
     WORK=$(mktemp -d "${TMPDIR:-/tmp}/oss-iron-laws.XXXXXX") || give_up

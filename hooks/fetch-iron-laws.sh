@@ -13,8 +13,8 @@
 set -euo pipefail
 if [[ -f "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh" ]]; then source "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh"; fi  # oss_api_curl: API key via stdin, never argv
 
-CONFIG_FILE="${HOME}/.oss/config.json"
-API_URL="https://one-shot-ship-api.onrender.com"
+CONFIG_FILE="$(oss_config_file)"  # the key and the URL it goes to come from one file (oss-api-curl.sh)
+API_URL="$(oss_api_url)" || { echo "Error: apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment" >&2; exit 1; }
 ENDPOINT="/api/v1/prompts/shared/iron-laws"
 
 # Standardized error contract: emit a structured OSSError via the oss-error
