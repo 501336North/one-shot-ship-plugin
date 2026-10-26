@@ -14,14 +14,14 @@
  * 4. Workflow engine decides whether to stop or continue based on result
  */
 
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { homedir } from 'os';
 import { join } from 'path';
 import { readApiCredentials } from '../api/api-credentials.js';
 import { isSafeTeamCommandName } from '../utils/safe-chain-name.js';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 /**
  * Response from the custom command API
@@ -199,14 +199,14 @@ export class CustomCommandExecutor {
   }
 
   /**
-   * Execute a shell command with error handling
+   * Run a hook script with an argv array: no shell, so a name or payload is never interpreted (FR9)
    *
-   * @param command - The shell command to execute
-   * @returns Promise that resolves when command completes
+   * @param script - The hook script path
+   * @param args - Its arguments, passed verbatim
    */
-  private async runShellCommand(command: string): Promise<void> {
+  private async runHook(script: string, args: string[]): Promise<void> {
     try {
-      await execAsync(command);
+      await execFileAsync(script, args);
     } catch {
       // Shell command failures are non-fatal for logging/status
     }
@@ -225,18 +225,19 @@ export class CustomCommandExecutor {
    * @returns The execution result with prompt content
    */
   async invokeCommand(commandName: string): Promise<CustomCommandResult> {
+    if (!isSafeTeamCommandName(commandName)) {
+      return { success: false, commandName, error: 'Invalid custom command name', isBlocking: false };
+    }
     const hooksDir = join(homedir(), '.oss', 'hooks');
     const logScript = join(hooksDir, 'oss-log.sh');
     const notifyScript = join(hooksDir, 'oss-notify.sh');
 
     // Step 1: Initialize logging
-    await this.runShellCommand(`${logScript} init custom`);
+    await this.runHook(logScript, ['init', 'custom']);
 
     // Step 2: Update status line (start)
     const startPayload = JSON.stringify({ command: commandName });
-    await this.runShellCommand(
-      `${notifyScript} --workflow custom start '${startPayload}'`
-    );
+    await this.runHook(notifyScript, ['--workflow', 'custom', 'start', startPayload]);
 
     try {
       // Step 3: Fetch custom command from API
@@ -248,9 +249,7 @@ export class CustomCommandExecutor {
           command: commandName,
           error: `Custom command '${commandName}' not found`,
         });
-        await this.runShellCommand(
-          `${notifyScript} --workflow custom failed '${failPayload}'`
-        );
+        await this.runHook(notifyScript, ['--workflow', 'custom', 'failed', failPayload]);
 
         return {
           success: false,
@@ -262,9 +261,7 @@ export class CustomCommandExecutor {
 
       // Step 4: Update status line (complete)
       const completePayload = JSON.stringify({ command: commandName });
-      await this.runShellCommand(
-        `${notifyScript} --workflow custom complete '${completePayload}'`
-      );
+      await this.runHook(notifyScript, ['--workflow', 'custom', 'complete', completePayload]);
 
       return {
         success: true,
@@ -280,9 +277,7 @@ export class CustomCommandExecutor {
         command: commandName,
         error: errorMsg,
       });
-      await this.runShellCommand(
-        `${notifyScript} --workflow custom failed '${failPayload}'`
-      );
+      await this.runHook(notifyScript, ['--workflow', 'custom', 'failed', failPayload]);
 
       return {
         success: false,
