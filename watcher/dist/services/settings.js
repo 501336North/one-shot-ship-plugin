@@ -17,6 +17,15 @@ const ENV_VAR_NAMES = {
     gemini: 'GEMINI_API_KEY',
 };
 const VALID_STYLES = ['visual', 'audio', 'sound', 'none'];
+/**
+ * The one rule for a saved notification style: a known style is kept, anything else (including the
+ * retired "telegram") reads as the default style.
+ */
+export function normalizeStyle(style) {
+    return VALID_STYLES.includes(style)
+        ? style
+        : DEFAULT_NOTIFICATION_SETTINGS.notifications.style;
+}
 const VALID_VERBOSITIES = ['all', 'important', 'errors-only'];
 const VALID_SUPERVISOR_MODES = ['always', 'workflow-only'];
 export class SettingsService {
@@ -126,9 +135,7 @@ export class SettingsService {
         const notifications = p.notifications;
         if (notifications) {
             // Validate style
-            if (VALID_STYLES.includes(notifications.style)) {
-                settings.notifications.style = notifications.style;
-            }
+            settings.notifications.style = normalizeStyle(notifications.style);
             // Validate verbosity
             if (VALID_VERBOSITIES.includes(notifications.verbosity)) {
                 settings.notifications.verbosity = notifications.verbosity;
@@ -203,7 +210,7 @@ export class SettingsService {
      * Set notification style
      */
     setNotificationStyle(style) {
-        if (VALID_STYLES.includes(style)) {
+        if (normalizeStyle(style) === style) {
             this.settings.notifications.style = style;
         }
     }

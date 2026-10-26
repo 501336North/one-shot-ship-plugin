@@ -37,6 +37,15 @@ const ENV_VAR_NAMES: Record<string, string> = {
 };
 
 const VALID_STYLES: NotificationStyle[] = ['visual', 'audio', 'sound', 'none'];
+/**
+ * The one rule for a saved notification style: a known style is kept, anything else (including the
+ * retired "telegram") reads as the default style.
+ */
+export function normalizeStyle(style: unknown): NotificationStyle {
+  return VALID_STYLES.includes(style as NotificationStyle)
+    ? (style as NotificationStyle)
+    : DEFAULT_NOTIFICATION_SETTINGS.notifications.style;
+}
 const VALID_VERBOSITIES: Verbosity[] = ['all', 'important', 'errors-only'];
 const VALID_SUPERVISOR_MODES: SupervisorMode[] = ['always', 'workflow-only'];
 
@@ -160,9 +169,7 @@ export class SettingsService {
 
     if (notifications) {
       // Validate style
-      if (VALID_STYLES.includes(notifications.style as NotificationStyle)) {
-        settings.notifications.style = notifications.style as NotificationStyle;
-      }
+      settings.notifications.style = normalizeStyle(notifications.style);
 
       // Validate verbosity
       if (VALID_VERBOSITIES.includes(notifications.verbosity as Verbosity)) {
@@ -251,7 +258,7 @@ export class SettingsService {
    * Set notification style
    */
   setNotificationStyle(style: NotificationStyle): void {
-    if (VALID_STYLES.includes(style)) {
+    if (normalizeStyle(style) === style) {
       this.settings.notifications.style = style;
     }
   }

@@ -22,14 +22,6 @@ export declare class NotificationService {
      */
     shouldNotify(event: NotificationEvent): boolean;
     /**
-     * Generate the shell command to dispatch a notification
-     */
-    getNotifyCommand(event: NotificationEvent): string;
-    /**
-     * Escape shell special characters
-     */
-    private escapeShell;
-    /**
      * Get the default priority for an event type
      */
     static getDefaultPriority(eventType: NotificationEventType): Priority;

@@ -35,7 +35,7 @@ fi
 # =============================================================================
 
 case "$STYLE" in
-    "visual")
+    "visual"|"telegram")
         # Visual notification (system notification sound plays automatically)
         OSS_ICON_PNG="$HOME/.oss/notification-icon.png"
 

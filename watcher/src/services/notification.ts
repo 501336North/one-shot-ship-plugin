@@ -17,6 +17,7 @@ import {
   DEFAULT_NOTIFICATION_SETTINGS,
   EVENT_TYPE_PRIORITIES,
 } from '../types/notification.js';
+import { normalizeStyle } from './settings.js';
 
 export class NotificationService {
   private settings: NotificationSettings;
@@ -39,7 +40,7 @@ export class NotificationService {
         // Merge with defaults for missing fields
         return {
           notifications: {
-            style: parsed.notifications?.style ?? DEFAULT_NOTIFICATION_SETTINGS.notifications.style,
+            style: normalizeStyle(parsed.notifications?.style),
             voice: parsed.notifications?.voice ?? DEFAULT_NOTIFICATION_SETTINGS.notifications.voice,
             sound: parsed.notifications?.sound ?? DEFAULT_NOTIFICATION_SETTINGS.notifications.sound,
             verbosity:
@@ -91,41 +92,6 @@ export class NotificationService {
       default:
         return true;
     }
-  }
-
-  /**
-   * Generate the shell command to dispatch a notification
-   */
-  getNotifyCommand(event: NotificationEvent): string {
-    const { style, voice, sound } = this.settings.notifications;
-
-    switch (style) {
-      case 'visual':
-        // Use status line message instead of terminal-notifier
-        // The status line is the primary visual feedback mechanism
-        const cli = path.join(process.env.CLAUDE_PLUGIN_ROOT || '', 'watcher', 'dist', 'cli', 'update-workflow-state.js');
-        return `node "${cli}" setMessage "${this.escapeShell(event.message)}"`;
-
-      case 'audio':
-        return `say -v ${voice} "${this.escapeShell(event.message)}"`;
-
-      case 'sound':
-        return `afplay "/System/Library/Sounds/${sound}.aiff"`;
-
-      case 'muted':
-      case 'none':
-        return '';
-
-      default:
-        return '';
-    }
-  }
-
-  /**
-   * Escape shell special characters
-   */
-  private escapeShell(str: string): string {
-    return str.replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`');
   }
 
   /**

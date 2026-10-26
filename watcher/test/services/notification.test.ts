@@ -74,6 +74,31 @@ describe('NotificationService', () => {
       expect(loaded.notifications.voice).toBe('Samantha'); // default
       expect(loaded.notifications.verbosity).toBe('important'); // default
     });
+
+    /**
+     * @behavior A user whose saved style is still "telegram" (the retired Telegram bot) is treated as a
+     *           visual user, exactly as the settings service reads the same file.
+     * @business-rule Only visual/audio/sound/none are styles; anything else reads as the default, visual.
+     */
+    it('should read a saved telegram style as visual', () => {
+      fs.writeFileSync(
+        settingsPath,
+        JSON.stringify({ notifications: { style: 'telegram', verbosity: 'all' } })
+      );
+      service = new NotificationService(testDir);
+
+      expect(service.getSettings().notifications.style).toBe('visual');
+    });
+  });
+
+  describe('retired dispatch command', () => {
+    /**
+     * @behavior The service decides whether to notify; it no longer builds shell commands (the hooks
+     *           own dispatch), so the unused, unguarded command builder is gone.
+     */
+    it('should not expose getNotifyCommand', () => {
+      expect('getNotifyCommand' in NotificationService.prototype).toBe(false);
+    });
   });
 
   describe('verbosity filtering', () => {
@@ -157,85 +182,6 @@ describe('NotificationService', () => {
       };
 
       expect(service.shouldNotify(criticalEvent)).toBe(false);
-    });
-  });
-
-  describe('notification dispatch', () => {
-    it('should generate visual notification command using setMessage', () => {
-      fs.writeFileSync(
-        settingsPath,
-        JSON.stringify({ notifications: { style: 'visual', verbosity: 'all' } })
-      );
-      service = new NotificationService(testDir);
-
-      const event: NotificationEvent = {
-        type: 'COMMAND_COMPLETE',
-        title: '✅ Build Complete',
-        message: '24 tests passing',
-        priority: 'high',
-      };
-
-      const command = service.getNotifyCommand(event);
-      // Visual notifications now use setMessage for status line
-      expect(command).toContain('setMessage');
-      expect(command).toContain('24 tests passing');
-    });
-
-    it('should generate audio notification command', () => {
-      fs.writeFileSync(
-        settingsPath,
-        JSON.stringify({ notifications: { style: 'audio', voice: 'Daniel', verbosity: 'all' } })
-      );
-      service = new NotificationService(testDir);
-
-      const event: NotificationEvent = {
-        type: 'COMMAND_COMPLETE',
-        title: 'Build Complete',
-        message: '24 tests passing',
-        priority: 'high',
-      };
-
-      const command = service.getNotifyCommand(event);
-      expect(command).toContain('say');
-      expect(command).toContain('-v Daniel');
-      expect(command).toContain('24 tests passing');
-    });
-
-    it('should generate sound notification command', () => {
-      fs.writeFileSync(
-        settingsPath,
-        JSON.stringify({ notifications: { style: 'sound', sound: 'Ping', verbosity: 'all' } })
-      );
-      service = new NotificationService(testDir);
-
-      const event: NotificationEvent = {
-        type: 'COMMAND_COMPLETE',
-        title: 'Build Complete',
-        message: '24 tests passing',
-        priority: 'high',
-      };
-
-      const command = service.getNotifyCommand(event);
-      expect(command).toContain('afplay');
-      expect(command).toContain('Ping.aiff');
-    });
-
-    it('should return empty command when style is "none"', () => {
-      fs.writeFileSync(
-        settingsPath,
-        JSON.stringify({ notifications: { style: 'none', verbosity: 'all' } })
-      );
-      service = new NotificationService(testDir);
-
-      const event: NotificationEvent = {
-        type: 'COMMAND_COMPLETE',
-        title: 'Build Complete',
-        message: '24 tests passing',
-        priority: 'high',
-      };
-
-      const command = service.getNotifyCommand(event);
-      expect(command).toBe('');
     });
   });
 

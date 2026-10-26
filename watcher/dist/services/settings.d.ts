@@ -10,6 +10,11 @@ import { ModelSettings } from '../types/model-settings.js';
  * Prompt type for model configuration
  */
 export type PromptType = 'agent' | 'command' | 'skill' | 'hook';
+/**
+ * The one rule for a saved notification style: a known style is kept, anything else (including the
+ * retired "telegram") reads as the default style.
+ */
+export declare function normalizeStyle(style: unknown): NotificationStyle;
 export declare class SettingsService {
     private settings;
     private settingsPath;
