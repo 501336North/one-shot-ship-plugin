@@ -1,0 +1,152 @@
+[
+  {
+    "apiUrl": "https://one-shot-ship-api.onrender.com",
+    "trusted": true,
+    "canonical": "https://one-shot-ship-api.onrender.com",
+    "why": "production"
+  },
+  {
+    "apiUrl": "https://one-shot-ship-api.onrender.com/",
+    "trusted": true,
+    "canonical": "https://one-shot-ship-api.onrender.com",
+    "why": "production with trailing slash (FR6)"
+  },
+  {
+    "apiUrl": "https://one-shot-ship-api.onrender.com:443",
+    "trusted": true,
+    "canonical": "https://one-shot-ship-api.onrender.com",
+    "why": "production with default port (FR6)"
+  },
+  {
+    "apiUrl": "HTTPS://ONE-SHOT-SHIP-API.ONRENDER.COM",
+    "trusted": true,
+    "canonical": "https://one-shot-ship-api.onrender.com",
+    "why": "case-folded scheme and host"
+  },
+  {
+    "apiUrl": "https://one-shot-ship-api-staging.onrender.com",
+    "trusted": true,
+    "canonical": "https://one-shot-ship-api-staging.onrender.com",
+    "why": "staging"
+  },
+  {
+    "apiUrl": "https://one-shot-ship-api-staging.onrender.com/",
+    "trusted": true,
+    "canonical": "https://one-shot-ship-api-staging.onrender.com",
+    "why": "staging with trailing slash"
+  },
+  {
+    "apiUrl": "http://localhost",
+    "trusted": true,
+    "canonical": "http://localhost",
+    "why": "loopback name"
+  },
+  {
+    "apiUrl": "http://localhost:3001",
+    "trusted": true,
+    "canonical": "http://localhost:3001",
+    "why": "loopback name with port"
+  },
+  {
+    "apiUrl": "http://127.0.0.1:9",
+    "trusted": true,
+    "canonical": "http://127.0.0.1:9",
+    "why": "loopback v4 with port"
+  },
+  {
+    "apiUrl": "http://[::1]:8080",
+    "trusted": true,
+    "canonical": "http://[::1]:8080",
+    "why": "loopback v6 with port"
+  },
+  {
+    "apiUrl": "http://localhost:3001/",
+    "trusted": true,
+    "canonical": "http://localhost:3001",
+    "why": "loopback with trailing slash"
+  },
+  {
+    "apiUrl": "https://api.example.com",
+    "trusted": false,
+    "canonical": null,
+    "why": "custom https host: not a trusted OSS API (FR4)"
+  },
+  {
+    "apiUrl": "https://one-shot-ship-api.onrender.com.evil.com",
+    "trusted": false,
+    "canonical": null,
+    "why": "production look-alike suffix"
+  },
+  {
+    "apiUrl": "https://evil.one-shot-ship-api.onrender.com",
+    "trusted": false,
+    "canonical": null,
+    "why": "production as a subdomain label"
+  },
+  {
+    "apiUrl": "https://one-shot-ship-api.onrender.com:8443",
+    "trusted": false,
+    "canonical": null,
+    "why": "production host, other port"
+  },
+  {
+    "apiUrl": "https://one-shot-ship-api.onrender.com/base/v1",
+    "trusted": false,
+    "canonical": null,
+    "why": "production host with a path"
+  },
+  {
+    "apiUrl": "https://one-shot-ship-api-staging.onrender.com:444",
+    "trusted": false,
+    "canonical": null,
+    "why": "staging host, other port"
+  },
+  {
+    "apiUrl": "http://one-shot-ship-api.onrender.com",
+    "trusted": false,
+    "canonical": null,
+    "why": "production over plain http"
+  },
+  {
+    "apiUrl": "https://localhost:3001",
+    "trusted": false,
+    "canonical": null,
+    "why": "https loopback is not the DEV form"
+  },
+  {
+    "apiUrl": "http://127.0.0.2",
+    "trusted": false,
+    "canonical": null,
+    "why": "other loopback address"
+  },
+  {
+    "apiUrl": "http://localhost.evil.com",
+    "trusted": false,
+    "canonical": null,
+    "why": "loopback as a label of another host"
+  },
+  {
+    "apiUrl": "http://api.example.com",
+    "trusted": false,
+    "canonical": null,
+    "why": "plain http to a non-loopback host"
+  },
+  {
+    "apiUrl": "https://user@one-shot-ship-api.onrender.com",
+    "trusted": false,
+    "canonical": null,
+    "why": "userinfo"
+  },
+  {
+    "apiUrl": "https://one-shot-ship-api.onrender.com?x=1",
+    "trusted": false,
+    "canonical": null,
+    "why": "query"
+  },
+  {
+    "apiUrl": "https://one-shot-ship-api.onrender.com#f",
+    "trusted": false,
+    "canonical": null,
+    "why": "fragment"
+  }
+]
