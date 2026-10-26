@@ -45,6 +45,17 @@ while IFS=$'\t' read -r f t n st; do
 done < "$MAP"
 check "each converted file runs oss-decrypt for the prompt it used to fetch" "${wrong%$'\n'}"
 
+# 2b. FR2 (ship round 1): each converted file installs the CLI first, because on a fresh install
+#     ~/.oss/bin/oss-decrypt does not exist yet (the old WebFetch steps needed no local binary).
+noinst=""
+while IFS=$'\t' read -r f t n st; do
+    [[ "$st" == convert ]] || continue
+    e=$(grep -n '^~/\.oss/hooks/ensure-decrypt-cli\.sh ' "$f" | head -1 | cut -d: -f1)
+    d=$(grep -nxF "~/.oss/bin/oss-decrypt --type $t --name $n" "$f" | head -1 | cut -d: -f1)
+    [[ -n "$e" && -n "$d" && "$e" -lt "$d" ]] || noinst="$noinst$f"$'\n'
+done < "$MAP"
+check "each converted file runs ensure-decrypt-cli.sh before oss-decrypt" "${noinst%$'\n'}"
+
 # 3. No converted file still tells the model to WebFetch.
 wf=$(awk -F'\t' '$4 == "convert" { print $1 }' "$MAP" | while IFS= read -r f; do grep -n 'WebFetch' "$f" | sed "s#^#$f:#"; done)
 check "no converted file mentions WebFetch" "$wf"
