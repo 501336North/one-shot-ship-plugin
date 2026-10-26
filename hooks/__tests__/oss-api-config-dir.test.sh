@@ -23,8 +23,8 @@ DEFAULT="https://one-shot-ship-api.onrender.com"
 
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/home/.oss" "$T/alt"
-printf '%s' '{"apiKey":"K1","apiUrl":"https://u1.example.com"}' > "$T/home/.oss/config.json"
-printf '%s' '{"apiKey":"K2","apiUrl":"https://u2.example.com"}' > "$T/alt/config.json"
+printf '%s' '{"apiKey":"K1","apiUrl":"http://localhost:4101"}' > "$T/home/.oss/config.json"
+printf '%s' '{"apiKey":"K2","apiUrl":"https://one-shot-ship-api-staging.onrender.com"}' > "$T/alt/config.json"
 
 # A PATH with every command on the real PATH except jq (a symlink farm), for the no-jq branch.
 mkdir -p "$T/nojq"
@@ -42,9 +42,9 @@ helper() {  # $1 = function, $2 = OSS_CONFIG_DIR value, $3 = PATH
 }
 
 if command -v jq >/dev/null 2>&1; then
-    expect "OSS_CONFIG_DIR set: oss_api_url reads its config" "https://u2.example.com" "$(helper oss_api_url "$T/alt" "$PATH")"
+    expect "OSS_CONFIG_DIR set: oss_api_url reads its config" "https://one-shot-ship-api-staging.onrender.com" "$(helper oss_api_url "$T/alt" "$PATH")"
     expect "OSS_CONFIG_DIR set: oss_api_key reads its config" "K2" "$(helper oss_api_key "$T/alt" "$PATH")"
-    expect "OSS_CONFIG_DIR unset: oss_api_url reads ~/.oss" "https://u1.example.com" "$(helper oss_api_url "" "$PATH")"
+    expect "OSS_CONFIG_DIR unset: oss_api_url reads ~/.oss" "http://localhost:4101" "$(helper oss_api_url "" "$PATH")"
     expect "OSS_CONFIG_DIR unset: oss_api_key reads ~/.oss" "K1" "$(helper oss_api_key "" "$PATH")"
     for cfg in '{"apiUrl":"https://u.example.com"}' '{"apiKey":""}' '{"apiKey":7}' '{"apiKey":null}' 'not json'; do
         mkdir -p "$T/bad"; printf '%s' "$cfg" > "$T/bad/config.json"
@@ -58,13 +58,14 @@ fi
 if PATH="$NOJQ" command -v jq >/dev/null 2>&1; then
     fail "no-jq branch" "could not hide jq"
 else
-    expect "no jq: a custom apiUrl is ignored, the default API is printed" "$DEFAULT" "$(helper oss_api_url "$T/alt" "$NOJQ")"
+    # Ship round 1 (FR5): a named apiUrl without jq is refused, never silently read as production.
+    expect "no jq: a named apiUrl is refused (never read as production)" "" "$(helper oss_api_url "$T/alt" "$NOJQ")"
     expect "no jq: oss_api_key still reads the key (from OSS_CONFIG_DIR)" "K2" "$(helper oss_api_key "$T/alt" "$NOJQ")"
     expect "no jq: oss_api_key still reads the key (from ~/.oss)" "K1" "$(helper oss_api_key "" "$NOJQ")"
     for cfg in '{"apiKey":"K","apiUrl":"https://a.example.com","apiUrl":"http://evil.example.com"}' \
                '{"apiKey":"K","x":{"apiUrl":"http://evil.example.com"},"apiUrl":"https://a.example.com"}'; do
         mkdir -p "$T/dup"; printf '%s' "$cfg" > "$T/dup/config.json"
-        expect "no jq: duplicate/nested apiUrl keys do not matter ($cfg)" "$DEFAULT" "$(helper oss_api_url "$T/dup" "$NOJQ")"
+        expect "no jq: a config naming apiUrl (duplicate/nested: $cfg) is refused" "" "$(helper oss_api_url "$T/dup" "$NOJQ")"
     done
 fi
 

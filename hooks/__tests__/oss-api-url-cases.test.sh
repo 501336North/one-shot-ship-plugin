@@ -1,5 +1,6 @@
 #!/bin/bash
-# oss_api_url (hooks/oss-api-curl.sh) answers the shared apiUrl case table the same way getApiUrl does.
+# oss_api_url_syntax (hooks/oss-api-curl.sh) answers the shared apiUrl SYNTAX table the same way getApiUrl does.
+# (Trust - which hosts may receive the key - is oss-api-trust.test.sh, over trusted-api-url-cases.json.)
 #
 # @behavior For every case in packages/cli-decrypt/test/fixtures/api-url-cases.json, oss_api_url sourced
 #           in bash AND in zsh accepts (prints the value, or the default API when missing/null/empty) or
@@ -27,7 +28,7 @@ for SH in $SHELLS; do
         expected=$(jq -r ".[$i] | if (.apiUrl // \"\") == \"\" then \"$DEFAULT\" else .apiUrl end" "$CASES")
         T=$(mktemp -d); mkdir -p "$T/.oss"
         jq -c ".[$i] | if has(\"apiUrl\") then {apiUrl} else {} end" "$CASES" > "$T/.oss/config.json"
-        OUT=$(HOME="$T" "$SH" -c 'source "$1"; oss_api_url' _ "$ROOT/hooks/oss-api-curl.sh" 2>/dev/null); RC=$?
+        OUT=$(HOME="$T" "$SH" -c 'source "$1"; oss_api_url_syntax' _ "$ROOT/hooks/oss-api-curl.sh" 2>/dev/null); RC=$?
         rm -rf "$T"
         name="[$(basename "$SH")] case $i: $why"
         if [[ "$accept" == true ]]; then

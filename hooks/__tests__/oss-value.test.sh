@@ -570,9 +570,9 @@ setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; echo ossk_login_key_1
 [[ "$(sbcalls)" == *"https://one-shot-ship-api.onrender.com/api/v1/subscription/status"* && "$(sbcalls)" != *ossk_login_key_1* \
    && "$(cat "$T/curl.stdin" 2>/dev/null)" == *"Authorization: Bearer ossk_login_key_1"* ]] \
     && pass "22: login checks the key against /api/v1/subscription/status, the key on curl's stdin, never argv" || fail "22: login checks the key against the API, key on stdin only" "calls=$(sbcalls) stdin=$(cat "$T/curl.stdin" 2>&1)"
-setup_act; printf '{"plan":"team"}\n200\n' > "$T/curl.out"; printf '{"apiKey":"old","apiUrl":"https://x.invalid","other":1}\n' > "$H/.oss/config.json"
+setup_act; printf '{"plan":"team"}\n200\n' > "$T/curl.out"; printf '{"apiKey":"old","apiUrl":"https://one-shot-ship-api-staging.onrender.com","other":1}\n' > "$H/.oss/config.json"
 echo ossk_login_key_2 > "$VD/key.txt"; ovl "$R"
-[[ "$RC" == 0 && "$(jq -c . "$H/.oss/config.json")" == '{"apiKey":"ossk_login_key_2","apiUrl":"https://x.invalid","other":1}' ]] \
+[[ "$RC" == 0 && "$(jq -c . "$H/.oss/config.json")" == '{"apiKey":"ossk_login_key_2","apiUrl":"https://one-shot-ship-api-staging.onrender.com","other":1}' ]] \
     && pass "22: login keeps the other config.json settings" || fail "22: login keeps the other config.json settings" "rc=$RC cfg=$(cat "$H/.oss/config.json" 2>&1)"
 # release channels (US-002): a STAGING or DEV config names its API; login checks the key against THAT API.
 setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; printf '{"apiKey":"old","apiUrl":"http://127.0.0.1:9"}\n' > "$H/.oss/config.json"

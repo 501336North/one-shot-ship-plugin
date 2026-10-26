@@ -12,6 +12,9 @@
 # The production API: the address every call uses when the OSS config names none (also read by the status
 # line to tell production from STAGING; the ratchet allows the literal only here, in the CLI and in the watcher).
 OSS_API_DEFAULT_URL="https://one-shot-ship-api.onrender.com"
+# The staging API (release channels). The same constant as STAGING_API_URL in packages/cli-decrypt/src/manifest-keys.ts
+# and the watcher's api-credentials.ts; all three are tested against trusted-api-url-cases.json.
+OSS_API_STAGING_URL="https://one-shot-ship-api-staging.onrender.com"
 
 oss_api_curl() {
     local key="${1:-}"
@@ -31,10 +34,21 @@ oss_api_curl() {
 # it may go to always come from this one file.
 oss_config_file() { printf '%s\n' "${OSS_CONFIG_DIR:-$HOME/.oss}/config.json"; }
 
+# oss_config_trusted - returns 0 when the OSS config may be read: it is missing, or a regular file (not a
+# symlink) owned by this user and not world-writable. Group-writable is allowed (umask 002). The same rule as
+# the CLI and the watcher (ship round 1, FR7).
+oss_config_trusted() {
+    local f; f=$(oss_config_file)
+    [[ -e "$f" || -L "$f" ]] || return 0
+    [[ ! -L "$f" && -f "$f" ]] || return 1
+    [[ -n "$(find "$f" -maxdepth 0 -user "$(id -u)" ! -perm -002 2>/dev/null)" ]]
+}
+
 # oss_api_key - prints apiKey from the OSS config when it is a non-empty string; otherwise prints nothing
 # and returns 1. Without jq: the flat `"apiKey": "..."` shape that /oss:login writes.
 oss_api_key() {
     local key=''
+    oss_config_trusted || return 1
     if command -v jq &>/dev/null; then
         key=$(jq -r 'if (.apiKey | type) == "string" then .apiKey else "" end' "$(oss_config_file)" 2>/dev/null)
     else
@@ -53,7 +67,7 @@ oss_api_key() {
 # bash drops it; anchor-free, since jq's ^ and $ also match at line breaks); jq prints "!" (which the regexes refuse) for any value that fails them.
 #
 #   API_URL=$(oss_api_url) || { echo "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"; exit 1; }
-oss_api_url() {
+oss_api_url_syntax() {
     local url='' hostport='' port=''
     local https='^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%/-]*)?$'
     local loopback='^http://(127\.0\.0\.1|localhost|\[::1\])(:[0-9]{1,5})?(/[A-Za-z0-9._~%/-]*)?$'
@@ -62,6 +76,8 @@ oss_api_url() {
                      elif (.apiUrl | type) != "string" then "!"
                      elif (.apiUrl | test("[^!-~]")) then "!"
                      else .apiUrl end' "$(oss_config_file)" 2>/dev/null)
+    elif grep -q '"apiUrl"' "$(oss_config_file)" 2>/dev/null; then
+        return 1   # FR5: never read a named apiUrl as production just because jq is missing
     fi
     [[ -n "$url" ]] || url="$OSS_API_DEFAULT_URL"
     [[ "$url" =~ $https || "$url" =~ $loopback ]] || return 1
@@ -70,6 +86,30 @@ oss_api_url() {
     case "$hostport" in
         *\]) ;;
         *:*) port=${hostport##*:}; (( 10#$port <= 65535 )) || return 1 ;;
+    esac
+    printf '%s\n' "$url"
+}
+
+# oss_api_url - prints the canonical origin of the API the key may go to, or nothing and rc 1. The address must
+# pass the syntax rule above AND be a trusted OSS API: production, staging, or loopback http (DEV). A trailing
+# "/", the default ":443" and host case are normalised; any other path, port or host is refused. The same trust
+# rule as the CLI and the watcher, tested against trusted-api-url-cases.json (ship round 1, FR4/FR6).
+#
+#   API_URL=$(oss_api_url) || { echo "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"; exit 1; }
+oss_api_url() {
+    local url scheme rest hostport path
+    oss_config_trusted || return 1
+    url=$(oss_api_url_syntax) || return 1
+    scheme=${url%%://*}; rest=${url#*://}
+    hostport=${rest%%/*}; path=${rest#"$hostport"}
+    [[ -z "$path" || "$path" == / ]] || return 1
+    hostport=$(printf '%s' "$hostport" | tr 'A-Z' 'a-z')
+    [[ "$scheme" == https ]] && hostport=${hostport%:443}
+    url="$scheme://$hostport"
+    case "$url" in
+        "$OSS_API_DEFAULT_URL" | "$OSS_API_STAGING_URL") ;;
+        http://localhost | http://localhost:[0-9]* | http://127.0.0.1 | http://127.0.0.1:[0-9]* | "http://[::1]" | "http://[::1]:"[0-9]*) ;;
+        *) return 1 ;;
     esac
     printf '%s\n' "$url"
 }

@@ -24,11 +24,20 @@ run_helper() {
     rm -rf "$T"
 }
 
-for url in 'https://api.example.com' 'https://api.example.com/base' 'http://127.0.0.1:4100' \
-           'http://localhost:4100' 'http://localhost' 'http://[::1]:4100/'; do
-    run_helper "{\"apiUrl\":\"$url\"}"
-    if [[ $RC == 0 && "$OUT" == "$url" ]]; then pass "accepts '$url'"
-    else fail "accepts '$url'" "rc=$RC out='$OUT'"; fi
+# Ship round 1 (FR4/FR6): only a trusted OSS API is accepted, printed as its canonical origin.
+for pair in "http://127.0.0.1:4100|http://127.0.0.1:4100" "http://localhost:4100|http://localhost:4100" \
+            "http://localhost|http://localhost" "http://[::1]:4100/|http://[::1]:4100" \
+            "https://one-shot-ship-api-staging.onrender.com|https://one-shot-ship-api-staging.onrender.com"; do
+    url=${pair%%|*}; want=${pair#*|}
+    run_helper "{\"apiKey\":\"k\",\"apiUrl\":\"$url\"}"
+    if [[ $RC == 0 && "$OUT" == "$want" ]]; then pass "accepts '$url' as '$want'"
+    else fail "accepts '$url' as '$want'" "rc=$RC out='$OUT'"; fi
+done
+# A well-formed custom host is not an OSS API: refused (FR4).
+for url in 'https://api.example.com' 'https://api.example.com/base'; do
+    run_helper "{\"apiKey\":\"k\",\"apiUrl\":\"$url\"}"
+    if [[ $RC != 0 && -z "$OUT" ]]; then pass "refuses the untrusted host '$url'"
+    else fail "refuses the untrusted host '$url'" "rc=$RC out='$OUT'"; fi
 done
 
 for url in 'http://evil.example.com' 'http://localhost.evil.com' 'https://api.example.com/?x=' \
