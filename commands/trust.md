@@ -131,7 +131,7 @@ the production address uses the production key, and the staging address or a loc
 staging key. Any other address is refused, and an error that names `apiUrl` lists the accepted
 addresses. "staging signing key not configured in this build" means this `oss-decrypt` carries no
 staging key yet. In both cases:
-```
+```text
 Manifest Signature: REFUSED ✗
 REASON: <the error message>
 No prompts were fetched from this address.
