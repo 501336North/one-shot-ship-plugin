@@ -180,14 +180,61 @@ describe('readApiCredentials: a config file only the user controls (#47)', () =>
   });
 
   it.each([
-    ['group-writable', 0o620],
     ['world-writable', 0o602],
+    ['world-writable under umask 000', 0o666],
   ])('should refuse a config.json that is %s', (_label, mode) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const dir = writeConfig({ apiKey: 'k' });
     expect(readApiCredentials(dir)).not.toBeNull();
 
     fs.chmodSync(path.join(dir, 'config.json'), mode);
     expect(readApiCredentials(dir)).toBeNull();
+  });
+
+  // FR7: the shell and the CLI allow group-writable; umask 002 (common on Ubuntu) writes 0664.
+  it.each([
+    ['group-writable', 0o620],
+    ['0664 (umask 002)', 0o664],
+  ])('should accept a config.json that is %s', (_label, mode) => {
+    const dir = writeConfig({ apiKey: 'k' });
+    fs.chmodSync(path.join(dir, 'config.json'), mode);
+
+    expect(readApiCredentials(dir)).toEqual({ apiKey: 'k', apiUrl: DEFAULT_API_URL });
+  });
+
+  it.each([
+    ['a symlink', (dir: string): string => {
+      const link = tempDir();
+      fs.symlinkSync(path.join(dir, 'config.json'), path.join(link, 'config.json'));
+      return link;
+    }],
+    ['world-writable', (dir: string): string => {
+      fs.chmodSync(path.join(dir, 'config.json'), 0o602);
+      return dir;
+    }],
+    ['owned by another user', (dir: string): string => {
+      const myUid = fs.statSync(path.join(dir, 'config.json')).uid;
+      vi.spyOn(process, 'getuid').mockReturnValue(myUid + 1);
+      return dir;
+    }],
+  ])('should warn once, naming the file but never the key, when config.json is %s', (_label, refuse) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const dir = refuse(writeConfig({ apiKey: 'secret-key-456' }));
+
+    expect(readApiCredentials(dir)).toBeNull();
+    expect(readApiCredentials(dir)).toBeNull();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const message = String(warn.mock.calls[0][0]);
+    expect(message).toContain(path.join(dir, 'config.json'));
+    expect(message).not.toContain('secret-key-456');
+  });
+
+  it('should not warn when there is no config.json at all (not logged in)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    expect(readApiCredentials(tempDir())).toBeNull();
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 

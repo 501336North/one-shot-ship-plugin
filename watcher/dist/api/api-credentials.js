@@ -62,19 +62,29 @@ function resolveApiUrl(apiUrl, configPath) {
     }
     return origin;
 }
-/** config.json content, only when it is a regular file (not a symlink) owned by us and not group/world-writable */
+const UNSAFE_CONFIG = 'is refused: it must be a regular file (not a symlink) owned by you and not world-writable ' +
+    '(chmod 600 it); the OSS API key will not be used';
+/**
+ * config.json content, only when it is a regular file (not a symlink) owned by us and not
+ * world-writable. Group-writable is allowed (umask 002), the same rule as the shell and the CLI (FR7).
+ * A missing file is silent (not logged in); a refused one warns once.
+ */
 function readOwnConfigFile(configPath) {
     let fd;
     try {
         fd = fs.openSync(configPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
     }
-    catch {
+    catch (error) {
+        if (error.code !== 'ENOENT') {
+            warnOnce(`[oss-watcher] ${configPath} ${UNSAFE_CONFIG}.`);
+        }
         return null;
     }
     try {
         const stat = fs.fstatSync(fd);
         const uid = process.getuid?.();
-        if (!stat.isFile() || (uid !== undefined && stat.uid !== uid) || (stat.mode & 0o022) !== 0) {
+        if (!stat.isFile() || (uid !== undefined && stat.uid !== uid) || (stat.mode & 0o002) !== 0) {
+            warnOnce(`[oss-watcher] ${configPath} ${UNSAFE_CONFIG}.`);
             return null;
         }
         return fs.readFileSync(fd, 'utf8');

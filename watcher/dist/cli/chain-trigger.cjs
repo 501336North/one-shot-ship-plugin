@@ -122,17 +122,22 @@ function resolveApiUrl(apiUrl, configPath) {
   }
   return origin;
 }
+var UNSAFE_CONFIG = "is refused: it must be a regular file (not a symlink) owned by you and not world-writable (chmod 600 it); the OSS API key will not be used";
 function readOwnConfigFile(configPath) {
   let fd;
   try {
     fd = fs.openSync(configPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-  } catch {
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      warnOnce(`[oss-watcher] ${configPath} ${UNSAFE_CONFIG}.`);
+    }
     return null;
   }
   try {
     const stat = fs.fstatSync(fd);
     const uid = process.getuid?.();
-    if (!stat.isFile() || uid !== void 0 && stat.uid !== uid || (stat.mode & 18) !== 0) {
+    if (!stat.isFile() || uid !== void 0 && stat.uid !== uid || (stat.mode & 2) !== 0) {
+      warnOnce(`[oss-watcher] ${configPath} ${UNSAFE_CONFIG}.`);
       return null;
     }
     return fs.readFileSync(fd, "utf8");
