@@ -17,7 +17,6 @@ import {
   CustomCommandResult,
   isCustomCommand,
   parseCustomCommand,
-  CustomCommandExecutorConfig,
 } from './custom-command-executor.js';
 
 /**
@@ -69,8 +68,8 @@ export type WorkflowContext = Record<string, boolean | string | number>;
 export class WorkflowChainExecutor {
   private customExecutor: CustomCommandExecutor;
 
-  constructor(config: CustomCommandExecutorConfig) {
-    this.customExecutor = new CustomCommandExecutor(config);
+  constructor() {
+    this.customExecutor = new CustomCommandExecutor();
   }
 
   /**
