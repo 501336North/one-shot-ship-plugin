@@ -285,3 +285,100 @@ Tick the DESIGN.md success criteria. Sprint D can then start on `next`.
 
 ## Estimated Tasks: 20 build tasks + 3 manual bring-up steps
 ## Estimated Test Cases: ~95
+
+---
+
+## Ship round 1 fix tasks (2026-10-27, from the 4 quality gates)
+All four gates FAILED. Round 1 fixes every finding that matters. Plugin work lands on `feat/release-channels/ship`, API work on `feat/release-channels/build-t15-t18`. Each fix is RED-first with a test that fails without it.
+
+Maintainer decisions (2026-10-27):
+- **Team custom commands:** stay the ONE documented unverified exception (DB-served, per team). They are fetched only from a trusted address (FR4), and the output marks them unverified. Recorded in ADR-005, with a follow-up to sign them per team.
+- **IRON LAWS + CLAUDE.md template:** signed in this round (FR15). The per-team workflow config (`/api/v1/workflows`) stays unsigned but host-restricted (FR4). Recorded in ADR-005, with a follow-up.
+
+### FR1 (HIGH): beta plugin gets a beta oss-decrypt
+`ensure-decrypt-cli.sh` pins `cli-decrypt-v1.2.4` (production key only). Requirements:
+- Bump `packages/cli-decrypt` (package.json + `VERSION`) to `1.3.0-beta.1`.
+- The tag comes from the plugin version: a beta plugin uses the beta CLI tag, a stable plugin keeps `cli-decrypt-v1.2.4`.
+- The tag check accepts the pre-release form.
+- An installed binary must equal the pinned version exactly when either one is a pre-release.
+
+Tests: the pin follows the plugin version; a pre-release tag is accepted; a beta binary does not satisfy a stable pin.
+
+### FR2 (HIGH): converted fetches install the CLI first
+The 99 converted agents/skills run `~/.oss/bin/oss-decrypt` without `ensure-decrypt-cli.sh`, so a fresh install fails. Add the same guarded step the commands use. Extend `prompt-fetch-via-decrypt.test.sh` to require it before the decrypt line.
+
+### FR3 (HIGH, security): oss-decrypt fails closed
+A missing, slow or unparseable manifest, or a prompt missing from it, currently delivers the prompt unverified. Requirements:
+- Fail closed for every manifest-covered type.
+- Fetch the manifest in parallel with the prompt, with a 10 s timeout.
+- Cache the verified manifest under `~/.oss/run` (TTL 300 s, per API origin).
+- The custom type stays the documented exception.
+
+API side (`build-t15-t18`): the manifest gains signed `workflows/<name>` entries for every WORKFLOW_NAME_MAPPINGS entry, hashed as served. Otherwise every workflow prompt would be refused.
+**Production note:** the production manifest must be re-signed with these entries before the plugin release ships.
+
+Tests:
+- manifest missing / timeout / prompt absent → refused
+- custom → delivered, marked unverified
+- parallel fetch
+- cache hit, and cache refused when the signature fails
+- the API integrity test covers `workflows/*`
+
+### FR4 (MED, security): one trusted-address rule for every key sender
+Accept only:
+- production
+- staging (`https://one-shot-ship-api-staging.onrender.com`)
+- loopback http
+
+Apply this in:
+- the shell `oss_api_url` (and therefore every hook and verb)
+- the watcher `readApiCredentials`
+- the CLI (already)
+
+`oss-login` refuses anything else. Extend the shared `api-url-cases.json` with allowlist rows (a custom https host is refused), and run all three readers against it.
+
+### FR5 (MED, security): no silent production fallback without jq
+When `config.json` names an `apiUrl` and jq is missing, `oss_api_url` refuses (rc 1) instead of returning production. The status line shows a clear marker.
+
+### FR6 (MED): origin normalisation in one place
+- A trailing `/` and `https…:443` normalise to the origin before classification.
+- The status line compares origins (no false STAGING for `…com/` or `…com:443`).
+- Status line uses ≤1 jq call per render (perf gate: +19 ms).
+
+### FR7 (MED): one config-file trust rule
+In the shell, the CLI and the watcher, refuse:
+- a symlinked `config.json`
+- a `config.json` owned by someone else
+- a world-writable `config.json`
+
+Allow group-writable (umask 002). Add a test row for mode 0664.
+
+### FR8 (MED, security, API): startup signing only on explicit opt-in
+`MANIFEST_SIGN_AT_STARTUP=1`, set in `render.yaml` on the staging service only, enables signing at startup. With a key present but no flag (local dev, production), the committed manifest is served.
+
+### FR9 (MED, security, watcher): no shell interpolation in custom-command-executor
+Validate the name at the top of `invokeCommand`, and use `execFile` with an argv array (not `exec` with a string).
+
+### FR10 (LOW–MED, watcher): the iron-law-log-parser hint never shows a curl with the key
+Point the hint at the allowlisted path (`~/.oss/hooks/oss-iron-laws-sync.sh` / `oss-value.sh`).
+
+### FR11 (LOW): the workflow name cannot be dots only
+`oss-value.sh`: `.`/`..` are refused for `workflow` (and `category`/`name` if they can be).
+
+### FR12 (MED/LOW, API script): oss-channel.sh hardening
+- Backup created under `umask 077` (0600).
+- Channel homes `mkdir -m 700`.
+- A symlinked `~/.oss-<channel>` is refused.
+- `dev`: `cd -- "$2" || die`, and print the path with `printf %q`.
+- A newly created beta home is seeded with `config.json` `{"apiUrl": "<staging>"}` (no key).
+
+### FR13 (LOW): release workflow classifies by the version part
+Every tag contains `-` (`cli-decrypt-v…`). Classify with the part after `cli-decrypt-v`, in a step whose logic the test actually runs (sample tags: stable → not pre-release; beta → pre-release, never Latest).
+
+### FR14 (LOW, perf, watcher): llm-analyzer request timeout
+`AbortSignal.timeout(10_000)`, the same as custom-command-executor.
+
+### FR15 (MED, security, maintainer decision): IRON LAWS + CLAUDE.md template verified
+- `fetch-iron-laws.sh` / `oss-iron-laws-sync.sh` fetch `shared/iron-laws` through `oss-decrypt` (signature + hash), and the template (`templates/claude-md`) is verified the same way.
+- `oss-decrypt` gains the `shared`/`templates` types if needed (API routes exist: check that they serve encrypted payloads).
+- `/oss:login` and `skills/ideate.md` use the verified path.
