@@ -59,7 +59,7 @@ if [[ -n "$CLAUDE_PROJECT_DIR" ]]; then
 fi
 
 # Check for API key configuration
-CONFIG_FILE=~/.oss/config.json
+CONFIG_FILE="$(oss_config_file)"  # the key and the URL it goes to come from one file (oss-api-curl.sh)
 if [[ ! -f "$CONFIG_FILE" ]]; then
     echo "OSS: Not logged in. Run /oss login to authenticate."
     exit 0
@@ -74,9 +74,14 @@ fi
 
 # Quick subscription check (non-blocking)
 # Note: Full validation happens when skills are used
-SUBSCRIPTION_STATUS=$(oss_api_curl "$API_KEY" -s -m 2 \
-    "https://one-shot-ship-api.onrender.com/api/v1/subscription/status" 2>/dev/null | \
-    grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || echo "unknown")
+if API_URL="$(oss_api_url)"; then
+    SUBSCRIPTION_STATUS=$(oss_api_curl "$API_KEY" -s -m 2 \
+        "${API_URL}/api/v1/subscription/status" 2>/dev/null | \
+        grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || echo "unknown")
+else
+    echo "OSS: apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"
+    SUBSCRIPTION_STATUS="unknown"
+fi
 
 # Get project name for notification
 PROJECT_NAME="${CLAUDE_PROJECT_DIR##*/}"

@@ -16,6 +16,7 @@ set -uo pipefail
 CONFIG_DIR="${OSS_CONFIG_DIR:-$HOME/.oss}"
 STATE_FILE="$CONFIG_DIR/update-state.json"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/oss-api-curl.sh"  # oss_api_url: the one rule for which API the config names
 PLUGIN_JSON="${OSS_PLUGIN_JSON:-$SCRIPT_DIR/../.claude-plugin/plugin.json}"
 
 # Read current plugin version
@@ -57,8 +58,10 @@ if [[ "$skip_manifest" != "1" ]]; then
     if [[ -n "${OSS_MOCK_MANIFEST:-}" && -f "${OSS_MOCK_MANIFEST:-}" ]]; then
         manifest_json=$(cat "$OSS_MOCK_MANIFEST")
     else
-        manifest_url="${OSS_MANIFEST_URL:-https://one-shot-ship-api.onrender.com/api/v1/prompts/manifest}"
-        manifest_json=$(curl -s --max-time 3 "$manifest_url" 2>/dev/null) || manifest_json=""
+        # The API the OSS config names (oss_api_url); an invalid apiUrl fetches nothing.
+        if api_url="$(oss_api_url)"; then
+            manifest_json=$(curl -s --max-time 3 "$api_url/api/v1/prompts/manifest" 2>/dev/null) || manifest_json=""
+        fi
     fi
 
     if [[ -n "$manifest_json" && "$has_state" == true ]] && command -v jq &>/dev/null; then

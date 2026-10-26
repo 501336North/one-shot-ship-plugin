@@ -574,6 +574,11 @@ setup_act; printf '{"plan":"team"}\n200\n' > "$T/curl.out"; printf '{"apiKey":"o
 echo ossk_login_key_2 > "$VD/key.txt"; ovl "$R"
 [[ "$RC" == 0 && "$(jq -c . "$H/.oss/config.json")" == '{"apiKey":"ossk_login_key_2","apiUrl":"https://x.invalid","other":1}' ]] \
     && pass "22: login keeps the other config.json settings" || fail "22: login keeps the other config.json settings" "rc=$RC cfg=$(cat "$H/.oss/config.json" 2>&1)"
+# release channels (US-002): a STAGING or DEV config names its API; login checks the key against THAT API.
+setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; printf '{"apiKey":"old","apiUrl":"http://127.0.0.1:9"}\n' > "$H/.oss/config.json"
+echo ossk_login_key_8 > "$VD/key.txt"; ovl "$R"
+[[ "$RC" == 0 && "$(sbcalls)" == *"http://127.0.0.1:9/api/v1/subscription/status"* && "$(sbcalls)" != *onrender.com* ]] \
+    && pass "22: login checks the key against the API the config names (apiUrl), never production" || fail "22: login checks the key against the API the config names" "rc=$RC calls=$(sbcalls) err=$ERR"
 setup_act; printf '{"error":"bad"}\n401\n' > "$T/curl.out"; echo '{"apiKey":"keep"}' > "$H/.oss/config.json"; echo ossk_login_key_3 > "$VD/key.txt"; ovl "$R"
 [[ "$RC" == 1 && "$(cat "$H/.oss/config.json")" == '{"apiKey":"keep"}' && "$ERR" == *"Invalid API key"* && ! -e "$VD/key.txt" ]] \
     && pass "22: a key the API refuses is not saved" || fail "22: a key the API refuses is not saved" "rc=$RC cfg=$(cat "$H/.oss/config.json") err=$ERR"

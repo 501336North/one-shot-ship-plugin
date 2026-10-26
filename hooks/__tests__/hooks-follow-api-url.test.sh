@@ -29,6 +29,10 @@ CASES=(
     "oss-iron-laws-sync.sh|--install"
     "oss-fetch-team-iron-laws.sh|"
     "fetch-iron-laws.sh|"
+    "oss-changelog.sh|"
+    "check-updates.sh|"
+    "oss-session-start-new.sh|"
+    "oss-session-start-test.sh|"
 )
 
 # Runs one hook with the given config.json content; prints the distinct hosts it called (one per line).
@@ -39,6 +43,13 @@ hosts_called() {  # $1 = hook, $2 = argument (may be empty), $3 = config.json co
     cfgdir="$sb/home/.oss"
     if [[ "${4:-}" == split ]]; then cfgdir="$sb/alt"; printf '%s' '{}' > "$sb/home/.oss/config.json"; fi
     printf '%s' "$3" > "$cfgdir/config.json"
+    # check-updates fetches the manifest only on a later run with a cached plugin version.
+    local extra=()
+    if [[ "$1" == check-updates.sh ]]; then
+        printf '%s' '{"name":"oss","version":"9.9.9"}' > "$sb/plugin.json"
+        printf '%s' '{"lastPluginVersion":"9.9.9","lastCheckedAt":"2026-01-01T00:00:00Z","manifestVersion":0,"manifestHashes":{},"promptSignatures":{}}' > "$cfgdir/update-state.json"
+        extra=(OSS_PLUGIN_JSON="$sb/plugin.json")
+    fi
     cat > "$sb/mock/curl" <<CURL
 #!/bin/sh
 for a in "\$@"; do
@@ -49,7 +60,7 @@ CURL
     chmod +x "$sb/mock/curl"; : > "$sb/hosts"
     local args=(); [[ -n "$2" ]] && args=("$2")
     (cd "$sb/proj" && HOME="$sb/home" OSS_CONFIG_DIR="$cfgdir" CLAUDE_PROJECT_DIR="$sb/proj" \
-        PATH="$sb/mock:$PATH" CLAUDE_PLUGIN_ROOT="$ROOT" \
+        PATH="$sb/mock:$PATH" CLAUDE_PLUGIN_ROOT="$ROOT" env ${extra[@]+"${extra[@]}"} \
         perl -e 'alarm 25; exec @ARGV' bash "$ROOT/hooks/$1" ${args[@]+"${args[@]}"} </dev/null >/dev/null 2>&1)
     sort -u "$sb/hosts"; rm -rf "$sb"
 }
