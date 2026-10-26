@@ -4,14 +4,14 @@
  */
 
 import { join } from 'path';
-import { getConfigDir, getApiUrl } from '../config.js';
+import { getConfigDir } from '../config.js';
 import { fetchEncryptedPrompt, fetchCustomPrompt } from '../api-client.js';
 import { retrieveCredentials } from '../storage.js';
 import { deriveKey, decrypt, userIdToLicenseId } from '../encryption.js';
 import { DebugLogger } from '../debug.js';
 import { CacheService } from '../cache.js';
 import { fetchManifest, verifyManifestSignature, type SignedManifest } from '../manifest-verifier.js';
-import { publicKeyFor } from '../manifest-keys.js';
+import { getTrustedApiOrigin, publicKeyFor } from '../manifest-keys.js';
 import { verifyDecryptedPrompt } from '../integrity-pipeline.js';
 import { readUpdateState, writeUpdateState } from '../update-state.js';
 import { detectPromptChange } from '../change-detection.js';
@@ -78,7 +78,7 @@ export async function decryptCommand(
   // 3. Subscription status is verified on every request
   logger.log('SECURITY', 'Disk caching disabled - fetching fresh from API');
 
-  const apiUrl = getApiUrl();
+  const apiUrl = getTrustedApiOrigin();
   logger.log('FETCH', `API URL: ${apiUrl}`);
 
   // The manifest key for this address, resolved before any request: an address this build holds no key

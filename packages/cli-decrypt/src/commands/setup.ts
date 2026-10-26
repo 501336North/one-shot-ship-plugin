@@ -9,7 +9,8 @@ import { fetchCredentials } from '../api-client.js';
 import { storeCredentials } from '../storage.js';
 import { getHardwareId } from '../hardware.js';
 import { CacheService } from '../cache.js';
-import { getConfigDir, getApiUrl } from '../config.js';
+import { getConfigDir } from '../config.js';
+import { getTrustedApiOrigin } from '../manifest-keys.js';
 
 /**
  * Get cache directory path
@@ -50,7 +51,7 @@ export async function setupCommand(): Promise<void> {
     throw new Error('No API key configured. Run /oss:login first.');
   }
 
-  const apiUrl = getApiUrl();
+  const apiUrl = getTrustedApiOrigin();
 
   // Generate hardware ID
   const hardwareId = getHardwareId();

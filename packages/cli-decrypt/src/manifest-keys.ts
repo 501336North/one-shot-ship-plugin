@@ -10,7 +10,7 @@
  */
 
 import crypto from 'crypto';
-import { DEFAULT_API_URL, isAcceptedApiUrl } from './config.js';
+import { DEFAULT_API_URL, getApiUrl, isAcceptedApiUrl } from './config.js';
 
 export interface ManifestKeys {
   /** Base64 SPKI DER Ed25519 public key */
@@ -61,17 +61,39 @@ function stagingKey(keys: ManifestKeys): string {
 }
 
 /**
- * The public key a manifest from `apiUrl` must be signed with. The address must pass the shared apiUrl
- * rule (no userinfo, query or fragment) and then match by exact origin; there is no prefix matching.
+ * The canonical origin of a trusted API address, or null. Trusted: the production or staging origin over https,
+ * or plain http to a loopback host (local development). The address must pass the shared apiUrl syntax rule
+ * (no userinfo, query or fragment) and carry no path; `…/` and the default port normalise away. This is the one
+ * rule every API-key sender in this CLI uses (FR4/FR6); its case table is test/fixtures/trusted-api-url-cases.json.
+ */
+export function trustedApiOrigin(apiUrl: string): string | null {
+  if (!isAcceptedApiUrl(apiUrl)) return null;
+  const url = new URL(apiUrl);
+  if (url.pathname !== '/') return null;
+  if (url.origin === DEFAULT_API_URL || url.origin === STAGING_API_URL) return url.origin;
+  if (url.protocol === 'http:' && LOOPBACK_HOSTS.includes(url.hostname)) return url.origin;
+  return null;
+}
+
+/**
+ * The configured API address as its trusted canonical origin: the one address every request (keyed or not) uses.
+ *
+ * @throws when apiUrl is not a trusted address (message names apiUrl, never echoes it)
+ */
+export function getTrustedApiOrigin(): string {
+  const origin = trustedApiOrigin(getApiUrl());
+  if (origin === null) throw new Error(UNTRUSTED_ADDRESS);
+  return origin;
+}
+
+/**
+ * The public key a manifest from `apiUrl` must be signed with, chosen by its trusted origin (trustedApiOrigin).
  *
  * @throws when the address is not production, staging or loopback (message names apiUrl, never echoes it)
  * @throws when the address needs the staging key and this build carries none
  */
 export function publicKeyFor(apiUrl: string, keys: ManifestKeys = PINNED_KEYS): string {
-  if (!isAcceptedApiUrl(apiUrl)) throw new Error(UNTRUSTED_ADDRESS);
-  const url = new URL(apiUrl);
-  if (url.origin === DEFAULT_API_URL) return keys.production;
-  if (url.origin === STAGING_API_URL) return stagingKey(keys);
-  if (url.protocol === 'http:' && LOOPBACK_HOSTS.includes(url.hostname)) return stagingKey(keys);
-  throw new Error(UNTRUSTED_ADDRESS);
+  const origin = trustedApiOrigin(apiUrl);
+  if (origin === null) throw new Error(UNTRUSTED_ADDRESS);
+  return origin === DEFAULT_API_URL ? keys.production : stagingKey(keys);
 }

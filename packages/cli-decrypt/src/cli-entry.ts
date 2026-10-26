@@ -8,8 +8,7 @@ import { setupCommand } from './commands/setup.js';
 import { decryptCommand } from './commands/decrypt.js';
 import { fetchManifest, verifyManifestSignature } from './manifest-verifier.js';
 import { stripControl } from './strip-control.js';
-import { getApiUrl } from './config.js';
-import { publicKeyFor } from './manifest-keys.js';
+import { getTrustedApiOrigin, publicKeyFor } from './manifest-keys.js';
 
 /**
  * Parsed CLI arguments
@@ -133,7 +132,7 @@ function showVersion(): void {
  * Verify the signed prompt manifest and output a JSON report
  */
 async function verifyManifestCommand(): Promise<void> {
-  const apiUrl = getApiUrl();
+  const apiUrl = getTrustedApiOrigin();
   const manifestPublicKey = publicKeyFor(apiUrl);
   const manifest = await fetchManifest(apiUrl);
 
@@ -169,7 +168,7 @@ async function verifyManifestCommand(): Promise<void> {
  * List prompts from the manifest, optionally filtered by category
  */
 async function listPromptsCommand(category?: string): Promise<void> {
-  const manifest = await fetchManifest(getApiUrl());
+  const manifest = await fetchManifest(getTrustedApiOrigin());
 
   if (manifest === null) {
     console.log(JSON.stringify([]));
