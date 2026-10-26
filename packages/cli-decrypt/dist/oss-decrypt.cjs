@@ -66,10 +66,13 @@ function parses(value) {
 function getApiUrl() {
   const apiUrl = readConfiguredApiUrl();
   if (apiUrl === void 0 || apiUrl === null || apiUrl === "") return DEFAULT_API_URL;
-  if (typeof apiUrl !== "string" || !(HTTPS_URL.test(apiUrl) || LOOPBACK_HTTP_URL.test(apiUrl)) || !parses(apiUrl)) {
+  if (typeof apiUrl !== "string" || !isAcceptedApiUrl(apiUrl)) {
     throw new Error(REFUSAL);
   }
   return apiUrl;
+}
+function isAcceptedApiUrl(apiUrl) {
+  return (HTTPS_URL.test(apiUrl) || LOOPBACK_HTTP_URL.test(apiUrl)) && parses(apiUrl);
 }
 
 // src/cache.ts
@@ -582,6 +585,39 @@ async function fetchManifest(apiUrl, signal) {
   }
 }
 
+// src/manifest-keys.ts
+var import_crypto6 = __toESM(require("crypto"), 1);
+var STAGING_API_URL = "https://one-shot-ship-api-staging.onrender.com";
+var PRODUCTION_MANIFEST_PUBLIC_KEY = "MCowBQYDK2VwAyEAAwFG32b8TuiVTxrDnXzNrb2v68YN5U9epLnZ3O7pQaI=";
+var STAGING_MANIFEST_PUBLIC_KEY = "PLACEHOLDER-NOT-A-KEY: staging signing key not generated yet (Task 11)";
+var PINNED_KEYS = {
+  production: PRODUCTION_MANIFEST_PUBLIC_KEY,
+  staging: STAGING_MANIFEST_PUBLIC_KEY
+};
+var LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
+var UNTRUSTED_ADDRESS = `apiUrl in your OSS config is not an address this oss-decrypt trusts for signed prompts. Accepted: ${DEFAULT_API_URL} (production), ${STAGING_API_URL} (staging), or http://localhost, http://127.0.0.1 or http://[::1] with any port (local development).`;
+var STAGING_KEY_MISSING = "[SECURITY] staging signing key not configured in this build. Prompt delivery blocked.";
+function isEd25519PublicKey(key) {
+  try {
+    const keyObj = import_crypto6.default.createPublicKey({ key: Buffer.from(key, "base64"), format: "der", type: "spki" });
+    return keyObj.asymmetricKeyType === "ed25519";
+  } catch {
+    return false;
+  }
+}
+function stagingKey(keys) {
+  if (!isEd25519PublicKey(keys.staging)) throw new Error(STAGING_KEY_MISSING);
+  return keys.staging;
+}
+function publicKeyFor(apiUrl, keys = PINNED_KEYS) {
+  if (!isAcceptedApiUrl(apiUrl)) throw new Error(UNTRUSTED_ADDRESS);
+  const url = new URL(apiUrl);
+  if (url.origin === DEFAULT_API_URL) return keys.production;
+  if (url.origin === STAGING_API_URL) return stagingKey(keys);
+  if (url.protocol === "http:" && LOOPBACK_HOSTS.includes(url.hostname)) return stagingKey(keys);
+  throw new Error(UNTRUSTED_ADDRESS);
+}
+
 // src/watermark.ts
 var HOMOGLYPH_MAP = {
   "\u03BF": "o",
@@ -606,9 +642,9 @@ function stripWatermark(content) {
 }
 
 // src/prompt-integrity.ts
-var import_crypto6 = __toESM(require("crypto"), 1);
+var import_crypto7 = __toESM(require("crypto"), 1);
 function hashContent(content) {
-  return import_crypto6.default.createHash("sha256").update(content).digest("hex");
+  return import_crypto7.default.createHash("sha256").update(content).digest("hex");
 }
 function verifyPromptHash(strippedContent, type, name, manifest) {
   const key = `${type}/${name}`;
@@ -692,7 +728,6 @@ function detectPromptChange(state, type, name, currentHash) {
 }
 
 // src/commands/decrypt.ts
-var MANIFEST_PUBLIC_KEY = "MCowBQYDK2VwAyEAAwFG32b8TuiVTxrDnXzNrb2v68YN5U9epLnZ3O7pQaI=";
 function getCacheDir3() {
   return (0, import_path7.join)(getConfigDir(), "prompt-cache");
 }
@@ -714,6 +749,7 @@ async function decryptCommand(type, name, debug = false, options = {}) {
   logger.log("SECURITY", "Disk caching disabled - fetching fresh from API");
   const apiUrl = getApiUrl();
   logger.log("FETCH", `API URL: ${apiUrl}`);
+  const manifestPublicKey = publicKeyFor(apiUrl);
   if (type === "custom") {
     logger.log("FETCH", `Fetching custom command: ${name}`);
     const startFetch2 = Date.now();
@@ -761,7 +797,7 @@ async function decryptCommand(type, name, debug = false, options = {}) {
     clearTimeout(timeout);
   }
   if (manifest) {
-    if (!verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY)) {
+    if (!verifyManifestSignature(manifest, manifestPublicKey)) {
       console.error("[verify] Manifest signature: FAILED \u2014 prompt blocked");
       throw new Error("[SECURITY] Manifest signature verification FAILED. Prompt delivery blocked.");
     }
@@ -884,15 +920,16 @@ Examples:
 function showVersion() {
   console.log(`oss-decrypt v${VERSION}`);
 }
-var MANIFEST_PUBLIC_KEY2 = "MCowBQYDK2VwAyEAAwFG32b8TuiVTxrDnXzNrb2v68YN5U9epLnZ3O7pQaI=";
 async function verifyManifestCommand() {
-  const manifest = await fetchManifest(getApiUrl());
+  const apiUrl = getApiUrl();
+  const manifestPublicKey = publicKeyFor(apiUrl);
+  const manifest = await fetchManifest(apiUrl);
   if (manifest === null) {
     console.log(JSON.stringify({ signatureValid: false, error: "Failed to fetch manifest" }));
     process.exitCode = 1;
     return;
   }
-  const signatureValid = verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY2);
+  const signatureValid = verifyManifestSignature(manifest, manifestPublicKey);
   const categories = {};
   for (const key of Object.keys(manifest.prompts)) {
     const category = key.split("/")[0];

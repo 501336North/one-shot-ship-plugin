@@ -125,6 +125,18 @@ WARNING: The prompt manifest signature could not be verified.
 This may indicate the manifest has been tampered with.
 ```
 
+If the command exits with an error instead of a report, `oss-decrypt` refused the API address before
+fetching anything. It checks the manifest with the public key that belongs to `apiUrl` in the OSS config:
+the production address uses the production key, and the staging address or a localhost address uses the
+staging key. Any other address is refused, and an error that names `apiUrl` lists the accepted
+addresses. "staging signing key not configured in this build" means this `oss-decrypt` carries no
+staging key yet. In both cases:
+```
+Manifest Signature: REFUSED ✗
+REASON: <the error message>
+No prompts were fetched from this address.
+```
+
 If `signatureValid` is null:
 ```
 Manifest Signature: UNAVAILABLE

@@ -14,10 +14,11 @@
 - [x] T8: 95/99 prompt fetches via oss-decrypt, keycheck in 151 files (#44), ideate template fix, 5f56c16 (2026-10-26)
 - [ ] T8 remainder: performance-auditor + visionos-developer (and skill twins). Waits for API PR #389 to reach next
 - [ ] T9: API prompt integrity hotfix. PR #389 into API main (CI green; re-running after main moved). Maintainer authorised the merge.
-- [ ] T3 ratchet (prod literal allowlist), T10–T20 (pending)
+- [x] T10: oss-decrypt picks the manifest key by address (branch feat/release-channels/build-t10); staging key is a fail-closed placeholder until T11 (2026-10-26)
+- [ ] T3 ratchet (prod literal allowlist), T11–T20 (pending)
 - [ ] H1–H3 bring-up (pending; H1 needs go-ahead + cost)
 
 ## Blockers
 - None. Gated steps: T11 (staging key), T17 (beta repo), H1 (Render/DB).
 
-## Last Updated: 2026-10-26 by /oss:build
+## Last Updated: 2026-10-26 17:55 CST by typescript-pro (T10)
