@@ -331,6 +331,27 @@ describe('LLMAnalyzer', () => {
       expect(result).toBeNull();
     });
 
+    // FR14: a server that accepts the request and never answers must not hang the analyzer.
+    // The 10s budget (the same as custom-command-executor) is shortened here so the test stays fast.
+    it('should abort a hung request after 10s and return null', async () => {
+      const realTimeout = AbortSignal.timeout.bind(AbortSignal);
+      const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => realTimeout(50));
+      mockFetch.mockImplementation(
+        (_url: string, init: { signal?: AbortSignal }) =>
+          new Promise((_, reject) => {
+            init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+          })
+      );
+
+      const outcome = await Promise.race([
+        analyzer.analyze('logs').then((result) => ({ result })),
+        new Promise<string>((resolve) => setTimeout(() => resolve('hung'), 2000)),
+      ]);
+
+      expect(outcome).toEqual({ result: null });
+      expect(timeoutSpy).toHaveBeenCalledWith(10_000);
+    });
+
     it('should handle timeout gracefully', async () => {
       mockFetch.mockImplementation(() => new Promise((_, reject) => {
         setTimeout(() => reject(new Error('Timeout')), 100);

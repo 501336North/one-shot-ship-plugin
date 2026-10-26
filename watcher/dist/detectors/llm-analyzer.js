@@ -62,6 +62,8 @@ export class LLMAnalyzer {
                 }),
                 // never replay the Bearer key to a redirect target
                 redirect: 'error',
+                // a server that never answers must not hang the analyzer (FR14; as custom-command-executor)
+                signal: AbortSignal.timeout(10_000),
             });
             if (!response.ok) {
                 // Graceful fallback - return null on error
