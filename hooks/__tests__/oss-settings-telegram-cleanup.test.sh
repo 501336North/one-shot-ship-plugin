@@ -9,17 +9,26 @@
 #           keys are left alone) and must never print anything (session-start output reaches the model).
 #
 # Usage: ./hooks/__tests__/oss-settings-telegram-cleanup.test.sh
+# Every case runs twice: once with the native stat, then again with GNU coreutils stat first on PATH
+# (Linux behaviour: there `stat -f` means --file-system, not BSD's format flag). On macOS the GNU pass
+# needs `gstat` (coreutils); without it the pass is reported SKIPPED, never counted as passed.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CLEANUP="$ROOT/hooks/oss-settings-cleanup.sh"
 RUN=0; FAILED=0
+GNU_PASS="${OSS_GNU_STAT_PASS:-}"
 pass() { echo "✓ PASS: $1"; ((RUN++)); }
 fail() { echo "✗ FAIL: $1 — $2"; ((RUN++)); ((FAILED++)); }
-inode_mode() { stat -f '%i %Lp' "$1" 2>/dev/null || stat -c '%i %a' "$1"; }
-mode_of() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
+inode_mode() { stat -c '%i %a' "$1" 2>/dev/null || stat -f '%i %Lp' "$1"; }
+mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
 
 WITH_TELEGRAM='{"version":2,"telegram":{"botToken":"123:SECRET","chatId":"42","enabled":true},"notifications":{"style":"visual","telegram":{"botToken":"123:SECRET","chatId":"42","enabled":true}},"models":{"agents":{"oss:test-engineer":"ollama/gpt-oss:120b"}},"apiKeys":{"openrouter":"sk-or-x"}}'
 EXPECTED='{"version":2,"notifications":{"style":"visual"},"models":{"agents":{"oss:test-engineer":"ollama/gpt-oss:120b"}},"apiKeys":{"openrouter":"sk-or-x"}}'
+
+if [[ -n "$GNU_PASS" ]]; then
+    if stat --version 2>/dev/null | grep -q coreutils; then pass "stat on PATH is GNU coreutils (anchor)"
+    else fail "stat on PATH is GNU coreutils (anchor)" "$(command -v stat)"; fi
+fi
 
 new_home() { T=$(mktemp -d); mkdir -p "$T/.oss"; S="$T/.oss/settings.json"; }
 run_cleanup() { OUT=$(HOME="$T" bash "$CLEANUP" 2>/dev/null </dev/null); RC=$?; }
@@ -95,6 +104,23 @@ HOME="$T" CLAUDE_PLUGIN_ROOT="$ROOT" OSS_SKIP_HEALTH_CHECK=1 bash "$ROOT/hooks/o
 if [[ "$(jq -S . "$S" 2>/dev/null)" == "$(printf '%s' "$EXPECTED" | jq -S .)" ]]; then pass "oss-session-start.sh removes the telegram keys"
 else fail "oss-session-start.sh removes the telegram keys" "$(jq -c . "$S" 2>&1)"; fi
 rm -rf "$T"
+
+# 10. The same cases under GNU stat (outer run only)
+if [[ -z "$GNU_PASS" ]]; then
+    if stat --version 2>/dev/null | grep -q coreutils; then
+        echo "GNU stat pass: native stat is already GNU coreutils — covered by the cases above"
+    elif GSTAT=$(command -v gstat 2>/dev/null) && [[ -n "$GSTAT" ]]; then
+        SHIM=$(mktemp -d); ln -s "$GSTAT" "$SHIM/stat"
+        echo "--- GNU stat pass ($GSTAT as stat) ---"
+        GNU_OUT=$(OSS_GNU_STAT_PASS=1 PATH="$SHIM:$PATH" bash "${BASH_SOURCE[0]}" 2>&1); GNU_RC=$?
+        printf '%s\n' "$GNU_OUT" | sed 's/^/    /'
+        if [[ $GNU_RC -eq 0 ]]; then pass "every case passes with GNU stat first on PATH"
+        else fail "every case passes with GNU stat first on PATH" "$(printf '%s\n' "$GNU_OUT" | tail -1)"; fi
+        rm -rf "$SHIM"
+    else
+        echo "SKIPPED: GNU stat pass — no GNU stat available (install coreutils for gstat); NOT counted as passed"
+    fi
+fi
 
 echo "Results: $((RUN-FAILED))/$RUN passed, $FAILED failed"
 [[ $FAILED -eq 0 ]]

@@ -331,7 +331,7 @@ test_dash_lines_kept() {
 test_mode_kept() {
     local name="R6: file mode 0644 kept across a refresh"; ((TESTS_RUN++)); setup
     block_file "$T/proj/CLAUDE.md"; chmod 0644 "$T/proj/CLAUDE.md"; stale; run_sync
-    local m; m=$(stat -f %Lp "$T/proj/CLAUDE.md" 2>/dev/null || stat -c %a "$T/proj/CLAUDE.md")
+    local m; m=$(stat -c %a "$T/proj/CLAUDE.md" 2>/dev/null || stat -f %Lp "$T/proj/CLAUDE.md")
     if [[ "$m" == "644" ]] && grep -q "FRESH FROM API" "$T/proj/CLAUDE.md"; then pass "$name"
     else fail "$name" "644, refreshed" "mode=$m"; fi
     teardown
