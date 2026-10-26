@@ -124,6 +124,46 @@ printf '{"notifications":{"style":"visual","voice":"Karen","sound":"Glass","verb
 model_writes notify_style sound verbosity important sound Pop; run_block settings.md "$SAVE"
 [[ "$RC" == 0 && "$(j .notifications.voice)" == Karen && "$(j .notifications.sound)" == Pop && "$(calls)" == *"afplay /System/Library/Sounds/Pop.aiff"* ]] \
     && pass "settings: sound chosen: sound read, voice kept from settings.json" || fail "settings: sound chosen: sound read, voice kept from settings.json" "rc=$RC out=$OUT calls=$(calls)"
+# P2R1-B: the save block merges into settings.json; it never drops the keys it does not own
+# @behavior A user changes notification style with /oss:settings and keeps their model routing,
+#           API keys, supervisor and any other settings exactly as they were.
+# @business-rule /oss:settings owns notifications.{style,voice,sound,verbosity} and .version only.
+#           Every other key, at the top level or inside notifications, is kept byte for byte. A file
+#           it cannot merge safely (not valid JSON, a symlink) is refused and left as it is.
+sandbox repo; cfg ossk_k1 https://api.example.invalid
+cat > "$H/.oss/settings.json" <<'JSON'
+{"models":{"agents":{"oss:code-reviewer":"ollama/gpt-oss:120b"},"think":{"ollama/gpt-oss:120b":false}},
+ "apiKeys":{"openrouter":"sk-or-test"},"supervisor":{"enabled":true,"interval":30},"zzUnrelated":[1,"two",{"3":null}],
+ "notifications":{"style":"visual","voice":"Karen","sound":"Ping","verbosity":"important","extra":{"keep":true}},"version":1}
+JSON
+chmod 640 "$H/.oss/settings.json"
+OTHERS_BEFORE=$(jq -S 'del(.notifications, .version)' "$H/.oss/settings.json")
+model_writes notify_style sound verbosity errors-only sound Pop
+LS_BEFORE=$(ls -A "$H/.oss"); run_block settings.md "$SAVE"
+[[ "$RC" == 0 && "$(jq -S 'del(.notifications, .version)' "$H/.oss/settings.json" 2>&1)" == "$OTHERS_BEFORE" ]] \
+    && pass "settings: models, apiKeys, supervisor and unrelated keys are unchanged after a save" || fail "settings: models, apiKeys, supervisor and unrelated keys are unchanged after a save" "rc=$RC out=$OUT settings=$(cat "$H/.oss/settings.json" 2>&1)"
+[[ "$(j .notifications.style)" == sound && "$(j .notifications.voice)" == Karen && "$(j .notifications.sound)" == Pop \
+   && "$(j .notifications.verbosity)" == errors-only && "$(jq -c .notifications.extra "$H/.oss/settings.json" 2>/dev/null)" == '{"keep":true}' && "$(j .version)" == 2 ]] \
+    && pass "settings: the save sets the four choices and version 2, keeping other notification keys" || fail "settings: the save sets the four choices and version 2, keeping other notification keys" "settings=$(cat "$H/.oss/settings.json" 2>&1)"
+MODE=$(stat -c %a "$H/.oss/settings.json" 2>/dev/null || stat -f %Lp "$H/.oss/settings.json")
+[[ "$MODE" == 640 && ! -L "$H/.oss/settings.json" && "$(ls -A "$H/.oss")" == "$LS_BEFORE" ]] \
+    && pass "settings: the save keeps the file's mode and leaves no temp file" || fail "settings: the save keeps the file's mode and leaves no temp file" "mode=$MODE ls=$(ls -A "$H/.oss" | tr '\n' ' ')"
+# no settings.json: created with just notifications and version, mode 600
+sandbox repo; model_writes notify_style visual verbosity all; run_block settings.md "$SAVE"
+MODE=$(stat -c %a "$H/.oss/settings.json" 2>/dev/null || stat -f %Lp "$H/.oss/settings.json" 2>/dev/null)
+[[ "$RC" == 0 && "$(jq -c keys "$H/.oss/settings.json" 2>/dev/null)" == '["notifications","version"]' && "$(jq -c ".notifications | keys" "$H/.oss/settings.json" 2>/dev/null)" == '["sound","style","verbosity","voice"]' && "$MODE" == 600 ]] \
+    && pass "settings: a missing settings.json is created with notifications and version only (mode 600)" || fail "settings: a missing settings.json is created with notifications and version only (mode 600)" "rc=$RC mode=$MODE settings=$(cat "$H/.oss/settings.json" 2>&1)"
+# settings.json that is not valid JSON: refused with a clear message, the file left as it was
+sandbox repo; printf '{"models": {"agents": BROKEN\n' > "$H/.oss/settings.json"
+model_writes notify_style visual verbosity all; LS_BEFORE=$(ls -A "$H/.oss"); run_block settings.md "$SAVE"
+[[ "$RC" != 0 && "$(cat "$H/.oss/settings.json")" == '{"models": {"agents": BROKEN' && "$OUT" == *"not valid JSON"* \
+   && "$(ls -A "$H/.oss")" == "$LS_BEFORE" && "$(calls)" != *terminal-notifier* ]] \
+    && pass "settings: an invalid settings.json is refused with a message and left untouched" || fail "settings: an invalid settings.json is refused with a message and left untouched" "rc=$RC out=$OUT calls=$(calls) settings=$(cat "$H/.oss/settings.json" 2>&1)"
+# settings.json that is a symlink: refused, the link and its target left as they were
+sandbox repo; echo '{"keep":1}' > "$H/target.json"; ln -s "$H/target.json" "$H/.oss/settings.json"
+model_writes notify_style visual verbosity all; run_block settings.md "$SAVE"
+[[ "$RC" != 0 && -L "$H/.oss/settings.json" && "$(cat "$H/target.json")" == '{"keep":1}' && "$(calls)" != *terminal-notifier* ]] \
+    && pass "settings: a symlinked settings.json is refused, link and target untouched" || fail "settings: a symlinked settings.json is refused, link and target untouched" "rc=$RC out=$OUT link=$([[ -L "$H/.oss/settings.json" ]] && echo y || echo n) target=$(cat "$H/target.json")"
 # telegram is no longer a style: refused, settings.json untouched, nothing run, no API called
 sandbox repo; cfg ossk_k1 https://api.example.invalid; echo '{"keep":1}' > "$H/.oss/settings.json"
 model_writes notify_style telegram verbosity important; run_block settings.md "$SAVE"

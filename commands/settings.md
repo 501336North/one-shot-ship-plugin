@@ -229,7 +229,7 @@ If `dir` prints nothing, tell the user the settings were not changed and show it
 
 ### Step 4: Save and Test (one Bash call)
 
-Run this block exactly as written. It reads and checks each answer (a value outside its list is refused and nothing is saved), keeps the current voice or sound when that question was not asked, writes `~/.oss/settings.json`, sends a test notification in the new style and prints the new configuration.
+Run this block exactly as written. It reads and checks each answer (a value outside its list is refused and nothing is saved), keeps the current voice or sound when that question was not asked, merges the choices into `~/.oss/settings.json` (every other setting is kept; a file that is not valid JSON or is a symlink is refused and left as it is), sends a test notification in the new style and prints the new configuration.
 
 ```bash
 V=~/.oss/hooks/oss-value.sh
@@ -242,9 +242,21 @@ if [[ "$STYLE" == "audio" ]]; then VOICE=$("$V" read voice) || exit 1; fi
 if [[ "$STYLE" == "sound" ]]; then SOUND=$("$V" read sound) || exit 1; fi
 
 mkdir -p ~/.oss
-jq -n --arg style "$STYLE" --arg voice "$VOICE" --arg sound "$SOUND" --arg verbosity "$VERBOSITY" \
-    '{notifications: {style: $style, voice: $voice, sound: $sound, verbosity: $verbosity}, version: 2}' \
-    > "$SETTINGS_FILE" || exit 1
+# Merge: only notifications.{style,voice,sound,verbosity} and version change; every other key is kept
+CURRENT='{}'; MODE=600
+if [[ -L "$SETTINGS_FILE" || ( -e "$SETTINGS_FILE" && ! -f "$SETTINGS_FILE" ) ]]; then
+    echo "Not saved: ~/.oss/settings.json is a symlink or not a regular file; it was left as it is." >&2; exit 1
+fi
+if [[ -f "$SETTINGS_FILE" ]]; then
+    jq -e 'type == "object"' "$SETTINGS_FILE" >/dev/null 2>&1 \
+        || { echo "Not saved: ~/.oss/settings.json is not valid JSON; it was left as it is. Fix or remove it, then run /oss:settings again." >&2; exit 1; }
+    CURRENT=$(cat "$SETTINGS_FILE") || exit 1
+    MODE=$(stat -c %a "$SETTINGS_FILE" 2>/dev/null || stat -f %Lp "$SETTINGS_FILE") || exit 1
+fi
+TMP=$(mktemp "$HOME/.oss/settings.json.XXXXXX") || exit 1
+printf '%s' "$CURRENT" | jq --arg s "$STYLE" --arg v "$VOICE" --arg so "$SOUND" --arg vb "$VERBOSITY" \
+    '.notifications = ((.notifications // {}) + {style: $s, voice: $v, sound: $so, verbosity: $vb}) | .version = 2' > "$TMP" \
+    && chmod "$MODE" "$TMP" && mv -f "$TMP" "$SETTINGS_FILE" || { rm -f "$TMP"; exit 1; }
 
 # Test notification, based on style
 case "$STYLE" in
@@ -276,7 +288,7 @@ echo "Your notifications are now configured!"
 
 ### Step 5: Confirm
 
-Show the user the block's output (the new configuration). If a read refused a value, nothing was saved: tell the user which answer was not valid.
+Show the user the block's output (the new configuration). If a read refused a value, nothing was saved: tell the user which answer was not valid. If it printed "Not saved", show that line: settings.json was left as it is.
 
 ## Settings Schema
 
