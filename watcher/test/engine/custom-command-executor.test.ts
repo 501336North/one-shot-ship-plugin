@@ -45,7 +45,7 @@ describe('CustomCommandExecutor', () => {
     savedConfigDir = process.env.OSS_CONFIG_DIR;
     configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-custom-cmd-'));
     process.env.OSS_CONFIG_DIR = configDir;
-    writeConfig({ apiKey: 'test-api-key', apiUrl: 'https://api.example.com' });
+    writeConfig({ apiKey: 'test-api-key', apiUrl: 'https://one-shot-ship-api-staging.onrender.com' });
     executor = new CustomCommandExecutor();
   });
 
@@ -68,14 +68,14 @@ describe('CustomCommandExecutor', () => {
     };
 
     test('should take the URL and key from readApiCredentials', async () => {
-      writeConfig({ apiKey: 'staging-key', apiUrl: 'https://staging.example.com/base' });
+      writeConfig({ apiKey: 'staging-key', apiUrl: 'https://one-shot-ship-api-staging.onrender.com' });
       mockFetch.mockResolvedValueOnce(okCommand);
 
       await executor.fetchCustomCommand('review-standards');
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
       expect(mockFetch.mock.calls[0][0]).toBe(
-        'https://staging.example.com/base/api/v1/prompts/custom/review-standards'
+        'https://one-shot-ship-api-staging.onrender.com/api/v1/prompts/custom/review-standards'
       );
       expect(mockFetch.mock.calls[0][1].headers.Authorization).toBe('Bearer staging-key');
     });
@@ -122,7 +122,7 @@ describe('CustomCommandExecutor', () => {
       await executor.fetchCustomCommand('0-lint-2');
 
       expect(mockFetch.mock.calls[0][0]).toBe(
-        `https://api.example.com/api/v1/prompts/custom/${encodeURIComponent('0-lint-2')}`
+        `https://one-shot-ship-api-staging.onrender.com/api/v1/prompts/custom/${encodeURIComponent('0-lint-2')}`
       );
     });
 
@@ -245,7 +245,7 @@ describe('CustomCommandExecutor', () => {
       const result = await executor.fetchCustomCommand('review-standards');
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'https://api.example.com/api/v1/prompts/custom/review-standards',
+        'https://one-shot-ship-api-staging.onrender.com/api/v1/prompts/custom/review-standards',
         expect.objectContaining({
           method: 'GET',
           headers: expect.objectContaining({

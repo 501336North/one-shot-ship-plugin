@@ -29,6 +29,21 @@ const CASES_PATH = path.resolve(
 );
 const CASES = JSON.parse(fs.readFileSync(CASES_PATH, 'utf8')) as ApiUrlCase[];
 
+interface TrustedApiUrlCase {
+  apiUrl: string;
+  trusted: boolean;
+  canonical: string | null;
+  why: string;
+}
+
+const TRUSTED_CASES_PATH = path.resolve(
+  __dirname,
+  '../../../packages/cli-decrypt/test/fixtures/trusted-api-url-cases.json'
+);
+const TRUSTED_CASES = JSON.parse(fs.readFileSync(TRUSTED_CASES_PATH, 'utf8')) as TrustedApiUrlCase[];
+
+const STAGING = 'https://one-shot-ship-api-staging.onrender.com';
+
 const dirs: string[] = [];
 let savedConfigDir: string | undefined;
 let savedHome: string | undefined;
@@ -64,24 +79,25 @@ describe('readApiCredentials: the apiUrl rule', () => {
     expect(CASES.length).toBeGreaterThan(10);
   });
 
-  it.each(CASES.map((row) => [row.why, row] as const))(
-    'should agree with oss_api_url on every row of api-url-cases.json: %s',
+  // The syntax table's refused rows stay refused. Its accepted rows are well-formed addresses, but
+  // whether the key may go there is the trust table's decision (FR4), checked below.
+  it.each(CASES.filter((row) => !row.accept).map((row) => [row.why, row] as const))(
+    'should refuse every row api-url-cases.json refuses: %s',
     (_why, row) => {
       const config: Record<string, unknown> = { apiKey: 'test-key' };
       if ('apiUrl' in row) config.apiUrl = row.apiUrl;
-      const credentials = readApiCredentials(writeConfig(config));
-
-      if (!row.accept) {
-        expect(credentials).toBeNull();
-        return;
-      }
-      const isDefault = row.apiUrl === undefined || row.apiUrl === null || row.apiUrl === '';
-      expect(credentials).toEqual({
-        apiKey: 'test-key',
-        apiUrl: isDefault ? DEFAULT_API_URL : row.apiUrl,
-      });
+      expect(readApiCredentials(writeConfig(config))).toBeNull();
     }
   );
+
+  it.each(
+    CASES.filter((row) => row.accept && (row.apiUrl === undefined || row.apiUrl === null || row.apiUrl === ''))
+      .map((row) => [row.why, row] as const)
+  )('should give the production API for a missing apiUrl: %s', (_why, row) => {
+    const config: Record<string, unknown> = { apiKey: 'test-key' };
+    if ('apiUrl' in row) config.apiUrl = row.apiUrl;
+    expect(readApiCredentials(writeConfig(config))).toEqual({ apiKey: 'test-key', apiUrl: DEFAULT_API_URL });
+  });
 
   it('should give the production API when apiUrl is missing', () => {
     expect(readApiCredentials(writeConfig({ apiKey: 'k' }))?.apiUrl).toBe(
@@ -90,14 +106,48 @@ describe('readApiCredentials: the apiUrl rule', () => {
   });
 });
 
+describe('readApiCredentials: the trusted-address rule (FR4, FR6)', () => {
+  it('has a non-empty shared trust table with both trusted and untrusted rows', () => {
+    expect(TRUSTED_CASES.some((row) => row.trusted)).toBe(true);
+    expect(TRUSTED_CASES.some((row) => !row.trusted)).toBe(true);
+  });
+
+  it.each(TRUSTED_CASES.map((row) => [row.why, row] as const))(
+    'should agree with every row of trusted-api-url-cases.json: %s',
+    (_why, row) => {
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const credentials = readApiCredentials(writeConfig({ apiKey: 'test-key', apiUrl: row.apiUrl }));
+
+      if (row.trusted) {
+        expect(credentials).toEqual({ apiKey: 'test-key', apiUrl: row.canonical });
+      } else {
+        expect(credentials).toBeNull();
+      }
+    }
+  );
+
+  it('should warn once, naming apiUrl but never the key, when the address is not trusted', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const dir = writeConfig({ apiKey: 'secret-key-123', apiUrl: 'https://api.example.com' });
+
+    expect(readApiCredentials(dir)).toBeNull();
+    expect(readApiCredentials(dir)).toBeNull();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const message = String(warn.mock.calls[0][0]);
+    expect(message).toContain('apiUrl');
+    expect(message).not.toContain('secret-key-123');
+  });
+});
+
 describe('readApiCredentials: which config file', () => {
   it('should read key and URL from $OSS_CONFIG_DIR/config.json when OSS_CONFIG_DIR is set', () => {
     const home = tempDir();
     process.env.HOME = home;
-    writeConfig({ apiKey: 'home-key', apiUrl: 'https://home.example.com' }, path.join(home, '.oss'));
-    process.env.OSS_CONFIG_DIR = writeConfig({ apiKey: 'staging-key', apiUrl: 'https://staging.example.com' });
+    writeConfig({ apiKey: 'home-key', apiUrl: 'http://localhost:4100' }, path.join(home, '.oss'));
+    process.env.OSS_CONFIG_DIR = writeConfig({ apiKey: 'staging-key', apiUrl: STAGING });
 
-    expect(readApiCredentials()).toEqual({ apiKey: 'staging-key', apiUrl: 'https://staging.example.com' });
+    expect(readApiCredentials()).toEqual({ apiKey: 'staging-key', apiUrl: STAGING });
   });
 
   it('should read key and URL from ~/.oss/config.json when OSS_CONFIG_DIR is not set', () => {
@@ -112,7 +162,7 @@ describe('readApiCredentials: which config file', () => {
 
 describe('readApiCredentials: a config file only the user controls (#47)', () => {
   it('should refuse a config.json that is a symlink', () => {
-    const real = writeConfig({ apiKey: 'k', apiUrl: 'https://api.example.com' });
+    const real = writeConfig({ apiKey: 'k', apiUrl: STAGING });
     const dir = tempDir();
     fs.symlinkSync(path.join(real, 'config.json'), path.join(dir, 'config.json'));
 

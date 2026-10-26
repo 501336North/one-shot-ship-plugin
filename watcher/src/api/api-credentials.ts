@@ -16,6 +16,9 @@ export interface ApiCredentials {
 }
 
 export const DEFAULT_API_URL = 'https://one-shot-ship-api.onrender.com';
+export const STAGING_API_URL = 'https://one-shot-ship-api-staging.onrender.com';
+
+const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
 
 // The one apiUrl rule, written identically in hooks/oss-api-curl.sh (oss_api_url) and
 // packages/cli-decrypt/src/config.ts (getApiUrl). The case table all three are tested against:
@@ -28,21 +31,48 @@ export function getConfigDir(): string {
   return process.env.OSS_CONFIG_DIR || path.join(os.homedir(), '.oss');
 }
 
-function parses(value: string): boolean {
+/**
+ * The trust rule (FR4), shared with oss_api_url and the CLI through
+ * packages/cli-decrypt/test/fixtures/trusted-api-url-cases.json: a well-formed address whose origin is
+ * production, staging or loopback http, with no path. Returns the canonical origin, or null.
+ */
+function trustedOrigin(apiUrl: string): string | null {
+  if (!(HTTPS_URL.test(apiUrl) || LOOPBACK_HTTP_URL.test(apiUrl))) return null;
+  let url: URL;
   try {
-    new URL(value);
-    return true;
+    url = new URL(apiUrl);
   } catch {
-    return false;
+    return null;
   }
+  if (url.pathname !== '/') return null;
+  const trusted =
+    url.origin === DEFAULT_API_URL ||
+    url.origin === STAGING_API_URL ||
+    (url.protocol === 'http:' && LOOPBACK_HOSTS.includes(url.hostname));
+  return trusted ? url.origin : null;
 }
 
-/** apiUrl per the rule: missing/null/empty is the default; else a matching string, or null (refused) */
-function resolveApiUrl(apiUrl: unknown): string | null {
+const warned = new Set<string>();
+
+/** One warning per message per process, so a polling caller does not flood the log */
+function warnOnce(message: string): void {
+  if (warned.has(message)) return;
+  warned.add(message);
+  console.warn(message);
+}
+
+/** apiUrl per the rule: missing/null/empty is the default; else the trusted canonical origin, or null (refused) */
+function resolveApiUrl(apiUrl: unknown, configPath: string): string | null {
   if (apiUrl === undefined || apiUrl === null || apiUrl === '') return DEFAULT_API_URL;
-  if (typeof apiUrl !== 'string') return null;
-  if (!(HTTPS_URL.test(apiUrl) || LOOPBACK_HTTP_URL.test(apiUrl)) || !parses(apiUrl)) return null;
-  return apiUrl;
+  const origin = typeof apiUrl === 'string' ? trustedOrigin(apiUrl) : null;
+  if (origin === null) {
+    warnOnce(
+      `[oss-watcher] apiUrl in ${configPath} is not a trusted OSS API address; the API key will not be sent. ` +
+        `Accepted: ${DEFAULT_API_URL} (production), ${STAGING_API_URL} (staging), ` +
+        `or http://localhost, http://127.0.0.1 or http://[::1] with any port (local development).`
+    );
+  }
+  return origin;
 }
 
 /** config.json content, only when it is a regular file (not a symlink) owned by us and not group/world-writable */
@@ -70,10 +100,11 @@ function readOwnConfigFile(configPath: string): string | null {
  *
  * @param configDir - The config directory (defaults to getConfigDir())
  * @returns Credentials, or null if not configured, the file is not the user's alone, the apiKey is
- *          not a CR/LF-free string, or apiUrl fails the shared rule
+ *          not a CR/LF-free string, or apiUrl is not a trusted OSS API address (one warning)
  */
 export function readApiCredentials(configDir?: string): ApiCredentials | null {
-  const content = readOwnConfigFile(path.join(configDir || getConfigDir(), 'config.json'));
+  const configPath = path.join(configDir || getConfigDir(), 'config.json');
+  const content = readOwnConfigFile(configPath);
   if (content === null) return null;
 
   try {
@@ -83,7 +114,7 @@ export function readApiCredentials(configDir?: string): ApiCredentials | null {
       return null;
     }
 
-    const apiUrl = resolveApiUrl(config.apiUrl);
+    const apiUrl = resolveApiUrl(config.apiUrl, configPath);
     if (apiUrl === null) return null;
 
     return { apiKey, apiUrl };

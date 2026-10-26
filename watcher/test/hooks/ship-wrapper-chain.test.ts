@@ -15,11 +15,11 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execFile, execFileSync } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
-import * as https from 'https';
+import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
 import type { AddressInfo } from 'net';
@@ -59,7 +59,7 @@ function count(haystack: string, needle: string): number {
 describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
   let tmp: string;
   let home: string;
-  let server: https.Server | undefined;
+  let server: http.Server | undefined;
   let port: number;
   const workflowRequests: string[] = [];
 
@@ -68,13 +68,6 @@ describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
     home = path.join(tmp, 'home');
     fs.mkdirSync(path.join(home, '.oss'), { recursive: true });
 
-    // Self-signed cert for the local API stand-in (chain-trigger only accepts https).
-    const key = path.join(tmp, 'key.pem');
-    const cert = path.join(tmp, 'cert.pem');
-    execFileSync('openssl', [
-      'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert,
-      '-days', '1', '-subj', '/CN=localhost',
-    ], { stdio: 'ignore' });
 
     // Stored credentials, encrypted the way the plugin's login writes them (machine-bound key).
     const creds = { apiKey: 'test-key', userId: 'user-1', hardwareId: 'hw-1', salt: 'salt-1' };
@@ -102,7 +95,7 @@ describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
       authTag: cfgCipher.getAuthTag().toString('base64'),
     });
 
-    server = https.createServer({ key: fs.readFileSync(key), cert: fs.readFileSync(cert) }, (req, res) => {
+    server = http.createServer((req, res) => {
       const m = req.url?.match(/^\/api\/v1\/workflows\/([a-z-]+)$/);
       if (m) workflowRequests.push(m[1]);
       if (m && m[1] === 'ship') {
@@ -118,7 +111,7 @@ describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
 
     fs.writeFileSync(
       path.join(home, '.oss', 'config.json'),
-      JSON.stringify({ apiKey: creds.apiKey, apiUrl: `https://localhost:${port}` }),
+      JSON.stringify({ apiKey: creds.apiKey, apiUrl: `http://localhost:${port}` }),
     );
   });
 
@@ -142,7 +135,6 @@ describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
       HOME: home,
       CLAUDE_PLUGIN_ROOT: pluginRoot,
       CLAUDE_PROJECT_DIR: project,
-      NODE_TLS_REJECT_UNAUTHORIZED: '0',
       NODE_NO_WARNINGS: '1',
       OSS_SKIP_WATCHER: '1',
     };

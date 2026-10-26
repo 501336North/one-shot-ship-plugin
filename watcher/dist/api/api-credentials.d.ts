@@ -10,6 +10,7 @@ export interface ApiCredentials {
     apiUrl: string;
 }
 export declare const DEFAULT_API_URL = "https://one-shot-ship-api.onrender.com";
+export declare const STAGING_API_URL = "https://one-shot-ship-api-staging.onrender.com";
 /** OSS_CONFIG_DIR when set, else ~/.oss */
 export declare function getConfigDir(): string;
 /**
@@ -17,7 +18,7 @@ export declare function getConfigDir(): string;
  *
  * @param configDir - The config directory (defaults to getConfigDir())
  * @returns Credentials, or null if not configured, the file is not the user's alone, the apiKey is
- *          not a CR/LF-free string, or apiUrl fails the shared rule
+ *          not a CR/LF-free string, or apiUrl is not a trusted OSS API address (one warning)
  */
 export declare function readApiCredentials(configDir?: string): ApiCredentials | null;
 //# sourceMappingURL=api-credentials.d.ts.map

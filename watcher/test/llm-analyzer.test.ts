@@ -68,13 +68,13 @@ describe('LLMAnalyzer', () => {
     const noAnomaly = { ok: true, json: () => Promise.resolve({ anomaly_detected: false }) };
 
     it('should send the configured key to the configured API', async () => {
-      writeConfig({ apiKey: 'staging-key', apiUrl: 'https://staging.example.com' });
+      writeConfig({ apiKey: 'staging-key', apiUrl: 'https://one-shot-ship-api-staging.onrender.com' });
       mockFetch.mockResolvedValue(noAnomaly);
 
       await analyzer.analyze('logs');
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
-      expect(mockFetch.mock.calls[0][0]).toBe('https://staging.example.com/api/v1/analyze');
+      expect(mockFetch.mock.calls[0][0]).toBe('https://one-shot-ship-api-staging.onrender.com/api/v1/analyze');
       expect(mockFetch.mock.calls[0][1].headers.Authorization).toBe('Bearer staging-key');
     });
 

@@ -10,8 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as net from 'net';
-import * as https from 'https';
-import { execFileSync } from 'child_process';
+import * as http from 'http';
 import {
   fetchWorkflowConfig,
   WORKFLOW_FETCH_TIMEOUT_MS,
@@ -83,7 +82,7 @@ describe('WorkflowConfigAPI', () => {
       const configPath = path.join(testDir, 'config.json');
       fs.writeFileSync(configPath, JSON.stringify({
         apiKey: 'test-api-key',
-        apiUrl: 'https://api.example.com',
+        apiUrl: 'https://one-shot-ship-api-staging.onrender.com',
       }));
 
       // Mock successful API response
@@ -148,7 +147,7 @@ describe('WorkflowConfigAPI', () => {
       const configPath = path.join(testDir, 'config.json');
       fs.writeFileSync(configPath, JSON.stringify({
         apiKey: 'test-api-key',
-        apiUrl: 'https://api.example.com',
+        apiUrl: 'https://one-shot-ship-api-staging.onrender.com',
       }));
 
       // Mock API response
@@ -181,7 +180,7 @@ describe('WorkflowConfigAPI', () => {
       const configPath = path.join(testDir, 'config.json');
       fs.writeFileSync(configPath, JSON.stringify({
         apiKey: 'test-api-key',
-        apiUrl: 'https://api.example.com',
+        apiUrl: 'https://one-shot-ship-api-staging.onrender.com',
       }));
 
       // Mock API error
@@ -207,7 +206,7 @@ describe('WorkflowConfigAPI', () => {
       const configPath = path.join(testDir, 'config.json');
       fs.writeFileSync(configPath, JSON.stringify({
         apiKey: 'test-api-key',
-        apiUrl: 'https://api.example.com',
+        apiUrl: 'https://one-shot-ship-api-staging.onrender.com',
       }));
 
       // Mock network error
@@ -266,7 +265,7 @@ describe('WorkflowConfigAPI', () => {
     it('sends no request when the config actually used has an http apiUrl, even if HOME config is https', async () => {
       const home = createTestDir();
       fs.mkdirSync(path.join(home, '.oss'));
-      writeConfig(path.join(home, '.oss'), 'https://api.example.com');
+      writeConfig(path.join(home, '.oss'), 'https://one-shot-ship-api-staging.onrender.com');
       process.env.HOME = home;
       const configDir = createTestDir();
       writeConfig(configDir, 'http://api.example.com');
@@ -291,14 +290,14 @@ describe('WorkflowConfigAPI', () => {
 
     it('still fetches from an https apiUrl', async () => {
       const configDir = createTestDir();
-      writeConfig(configDir, 'https://api.example.com');
+      writeConfig(configDir, 'https://one-shot-ship-api-staging.onrender.com');
       process.env.OSS_CONFIG_DIR = configDir;
       mockFetch.mockResolvedValue(okResponse());
 
       await fetchWorkflowConfig('build');
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
-      expect(mockFetch.mock.calls[0][0]).toBe('https://api.example.com/api/v1/workflows/build');
+      expect(mockFetch.mock.calls[0][0]).toBe('https://one-shot-ship-api-staging.onrender.com/api/v1/workflows/build');
     });
 
     it.each([
@@ -315,7 +314,7 @@ describe('WorkflowConfigAPI', () => {
       ['a 42-char name', 'a'.repeat(42)],
     ])('sends no request for a workflow name with %s', async (_label, name) => {
       const configDir = createTestDir();
-      writeConfig(configDir, 'https://api.example.com');
+      writeConfig(configDir, 'https://one-shot-ship-api-staging.onrender.com');
       process.env.OSS_CONFIG_DIR = configDir;
       mockFetch.mockResolvedValue(okResponse());
 
@@ -352,7 +351,7 @@ describe('WorkflowConfigAPI', () => {
       const configDir = createTestDir();
       fs.writeFileSync(
         path.join(configDir, 'config.json'),
-        JSON.stringify({ apiKey: 'ak_secret_key', apiUrl: 'https://api.example.com' })
+        JSON.stringify({ apiKey: 'ak_secret_key', apiUrl: 'https://one-shot-ship-api-staging.onrender.com' })
       );
       process.env.OSS_CONFIG_DIR = configDir;
       mockFetch.mockResolvedValue({ ok: false, status: 404, json: async () => ({ error: 'Not found' }) });
@@ -364,7 +363,7 @@ describe('WorkflowConfigAPI', () => {
       const configDir = createTestDir(); // no credentials.enc
       fs.writeFileSync(
         path.join(configDir, 'config.json'),
-        JSON.stringify({ apiKey: 'ak_secret_key', apiUrl: 'https://api.example.com' })
+        JSON.stringify({ apiKey: 'ak_secret_key', apiUrl: 'https://one-shot-ship-api-staging.onrender.com' })
       );
       process.env.OSS_CONFIG_DIR = configDir;
       mockFetch.mockResolvedValue({ ok: true, json: async () => ({ encrypted: 'e', iv: 'i', authTag: 'a' }) });
@@ -385,9 +384,7 @@ describe('WorkflowConfigAPI', () => {
    * @business-rule fetchWorkflowConfig refuses redirects (G5): a 302 rejects and the target gets no request
    */
   describe('API that redirects', () => {
-    const servers: https.Server[] = [];
-    let tlsDir = '';
-    let savedTlsReject: string | undefined;
+    const servers: http.Server[] = [];
 
     afterEach(async () => {
       for (const s of servers) {
@@ -395,28 +392,10 @@ describe('WorkflowConfigAPI', () => {
         await new Promise<void>((resolve) => s.close(() => resolve()));
       }
       servers.length = 0;
-      tlsDir = ''; // removed with the other test dirs
-      if (savedTlsReject !== undefined) process.env.NODE_TLS_REJECT_UNAUTHORIZED = savedTlsReject;
-      else delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
     });
 
-    function tlsOptions(): { key: Buffer; cert: Buffer } {
-      if (!tlsDir) {
-        tlsDir = createTestDir();
-        execFileSync('openssl', [
-          'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
-          '-keyout', path.join(tlsDir, 'key.pem'), '-out', path.join(tlsDir, 'cert.pem'),
-          '-days', '1', '-subj', '/CN=localhost',
-        ], { stdio: 'ignore' });
-      }
-      return {
-        key: fs.readFileSync(path.join(tlsDir, 'key.pem')),
-        cert: fs.readFileSync(path.join(tlsDir, 'cert.pem')),
-      };
-    }
-
-    async function listen(handler: https.RequestListener): Promise<number> {
-      const s = https.createServer(tlsOptions(), handler);
+    async function listen(handler: http.RequestListener): Promise<number> {
+      const s = http.createServer(handler);
       servers.push(s);
       await new Promise<void>((resolve) => s.listen(0, '127.0.0.1', () => resolve()));
       const address = s.address();
@@ -434,17 +413,15 @@ describe('WorkflowConfigAPI', () => {
       let apiRequests = 0;
       const apiPort = await listen((_req, res) => {
         apiRequests++;
-        res.writeHead(302, { Location: `https://127.0.0.1:${targetPort}/api/v1/workflows/build` });
+        res.writeHead(302, { Location: `http://127.0.0.1:${targetPort}/api/v1/workflows/build` });
         res.end();
       });
       const configDir = createTestDir();
       fs.writeFileSync(
         path.join(configDir, 'config.json'),
-        JSON.stringify({ apiKey: 'ak_secret_key', apiUrl: `https://127.0.0.1:${apiPort}` })
+        JSON.stringify({ apiKey: 'ak_secret_key', apiUrl: `http://127.0.0.1:${apiPort}` })
       );
       process.env.OSS_CONFIG_DIR = configDir;
-      savedTlsReject = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-      process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; // self-signed local stand-ins
       global.fetch = originalFetch;
 
       await expect(fetchWorkflowConfig('build', 2000)).rejects.toThrow();
@@ -499,7 +476,7 @@ describe('WorkflowConfigAPI', () => {
       const configDir = createTestDir();
       fs.writeFileSync(
         path.join(configDir, 'config.json'),
-        JSON.stringify({ apiKey: 'ak_secret_key', apiUrl: `https://127.0.0.1:${port}` })
+        JSON.stringify({ apiKey: 'ak_secret_key', apiUrl: `http://127.0.0.1:${port}` })
       );
       process.env.OSS_CONFIG_DIR = configDir;
       global.fetch = originalFetch;
@@ -531,7 +508,7 @@ describe('WorkflowConfigAPI', () => {
       const configDir = createTestDir();
       fs.writeFileSync(
         path.join(configDir, 'config.json'),
-        JSON.stringify({ apiKey: 'ak_secret_key', apiUrl: `https://127.0.0.1:${port}` })
+        JSON.stringify({ apiKey: 'ak_secret_key', apiUrl: `http://127.0.0.1:${port}` })
       );
       process.env.OSS_CONFIG_DIR = configDir;
       global.fetch = originalFetch;
@@ -550,7 +527,7 @@ describe('WorkflowConfigAPI', () => {
       const configDir = createTestDir();
       fs.writeFileSync(
         path.join(configDir, 'config.json'),
-        JSON.stringify({ apiKey: 'ak_secret_key', apiUrl: 'https://api.example.com' })
+        JSON.stringify({ apiKey: 'ak_secret_key', apiUrl: 'https://one-shot-ship-api-staging.onrender.com' })
       );
       process.env.OSS_CONFIG_DIR = configDir;
       mockFetch.mockRejectedValue(new TypeError('fetch failed'));

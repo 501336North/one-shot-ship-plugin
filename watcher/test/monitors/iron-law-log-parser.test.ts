@@ -365,12 +365,12 @@ describe('IronLawLogParser - Intervention Task Creation', () => {
       });
 
       it('should include the configured API URL in prompt for 3rd+ violation', () => {
-        writeConfig({ apiKey: 'k', apiUrl: 'https://staging.example.com' });
+        writeConfig({ apiKey: 'k', apiUrl: 'https://one-shot-ship-api-staging.onrender.com' });
 
         const prompt = thirdViolationPrompt();
 
-        expect(prompt).toContain('curl -s -H "Authorization: Bearer {apiKey}" https://staging.example.com/api/v1/prompts/shared/iron-laws');
-        expect(prompt).not.toContain('onrender.com');
+        expect(prompt).toContain('curl -s -H "Authorization: Bearer {apiKey}" https://one-shot-ship-api-staging.onrender.com/api/v1/prompts/shared/iron-laws');
+        expect(prompt).not.toContain('https://one-shot-ship-api.onrender.com');
       });
 
       it('should include the production API URL when apiUrl is missing', () => {

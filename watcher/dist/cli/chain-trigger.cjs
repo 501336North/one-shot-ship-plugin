@@ -87,24 +87,40 @@ var fs = __toESM(require("fs"), 1);
 var path = __toESM(require("path"), 1);
 var os = __toESM(require("os"), 1);
 var DEFAULT_API_URL = "https://one-shot-ship-api.onrender.com";
+var STAGING_API_URL = "https://one-shot-ship-api-staging.onrender.com";
+var LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
 var HTTPS_URL = /^https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?(\/[A-Za-z0-9._~%/-]*)?$/;
 var LOOPBACK_HTTP_URL = /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:[0-9]{1,5})?(\/[A-Za-z0-9._~%/-]*)?$/;
 function getConfigDir() {
   return process.env.OSS_CONFIG_DIR || path.join(os.homedir(), ".oss");
 }
-function parses(value) {
+function trustedOrigin(apiUrl) {
+  if (!(HTTPS_URL.test(apiUrl) || LOOPBACK_HTTP_URL.test(apiUrl))) return null;
+  let url;
   try {
-    new URL(value);
-    return true;
+    url = new URL(apiUrl);
   } catch {
-    return false;
+    return null;
   }
+  if (url.pathname !== "/") return null;
+  const trusted = url.origin === DEFAULT_API_URL || url.origin === STAGING_API_URL || url.protocol === "http:" && LOOPBACK_HOSTS.includes(url.hostname);
+  return trusted ? url.origin : null;
 }
-function resolveApiUrl(apiUrl) {
+var warned = /* @__PURE__ */ new Set();
+function warnOnce(message) {
+  if (warned.has(message)) return;
+  warned.add(message);
+  console.warn(message);
+}
+function resolveApiUrl(apiUrl, configPath) {
   if (apiUrl === void 0 || apiUrl === null || apiUrl === "") return DEFAULT_API_URL;
-  if (typeof apiUrl !== "string") return null;
-  if (!(HTTPS_URL.test(apiUrl) || LOOPBACK_HTTP_URL.test(apiUrl)) || !parses(apiUrl)) return null;
-  return apiUrl;
+  const origin = typeof apiUrl === "string" ? trustedOrigin(apiUrl) : null;
+  if (origin === null) {
+    warnOnce(
+      `[oss-watcher] apiUrl in ${configPath} is not a trusted OSS API address; the API key will not be sent. Accepted: ${DEFAULT_API_URL} (production), ${STAGING_API_URL} (staging), or http://localhost, http://127.0.0.1 or http://[::1] with any port (local development).`
+    );
+  }
+  return origin;
 }
 function readOwnConfigFile(configPath) {
   let fd;
@@ -125,7 +141,8 @@ function readOwnConfigFile(configPath) {
   }
 }
 function readApiCredentials(configDir) {
-  const content = readOwnConfigFile(path.join(configDir || getConfigDir(), "config.json"));
+  const configPath = path.join(configDir || getConfigDir(), "config.json");
+  const content = readOwnConfigFile(configPath);
   if (content === null) return null;
   try {
     const config = JSON.parse(content);
@@ -133,7 +150,7 @@ function readApiCredentials(configDir) {
     if (typeof apiKey !== "string" || apiKey === "" || /[\r\n]/.test(apiKey)) {
       return null;
     }
-    const apiUrl = resolveApiUrl(config.apiUrl);
+    const apiUrl = resolveApiUrl(config.apiUrl, configPath);
     if (apiUrl === null) return null;
     return { apiKey, apiUrl };
   } catch {
