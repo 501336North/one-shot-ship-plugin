@@ -1,6 +1,7 @@
 import { QueueManager } from '../queue/manager.js';
 import { RuleEngine, RuleMatch } from './rules.js';
 import { AnomalyType, Priority, CreateTaskInput, TaskContext } from '../types.js';
+import { readApiCredentials } from '../api/api-credentials.js';
 
 /**
  * LLM Analysis response
@@ -34,22 +35,12 @@ export interface LLMAnalysisResult {
 export class LLMAnalyzer {
   private readonly queueManager: QueueManager;
   private readonly ruleEngine: RuleEngine;
-  private readonly apiKey: string;
   private readonly confidenceThreshold: number;
-  private readonly apiUrl: string;
 
-  constructor(
-    queueManager: QueueManager,
-    ruleEngine: RuleEngine,
-    apiKey: string,
-    confidenceThreshold: number = 0.7,
-    apiUrl: string = 'https://one-shot-ship-api.onrender.com/api/v1/analyze'
-  ) {
+  constructor(queueManager: QueueManager, ruleEngine: RuleEngine, confidenceThreshold: number = 0.7) {
     this.queueManager = queueManager;
     this.ruleEngine = ruleEngine;
-    this.apiKey = apiKey;
     this.confidenceThreshold = confidenceThreshold;
-    this.apiUrl = apiUrl;
   }
 
   /**
@@ -89,16 +80,22 @@ export class LLMAnalyzer {
    * Analyze using LLM API
    */
   private async analyzeLLM(logContent: string): Promise<LLMAnalysisResult | null> {
+    // The key and the API it may go to, from the OSS config; nothing is sent when it is refused
+    const credentials = readApiCredentials();
+    if (!credentials) return null;
+
     try {
-      const response = await fetch(this.apiUrl, {
+      const response = await fetch(`${credentials.apiUrl}/api/v1/analyze`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.apiKey}`,
+          'Authorization': `Bearer ${credentials.apiKey}`,
         },
         body: JSON.stringify({
           log_content: logContent,
         }),
+        // never replay the Bearer key to a redirect target
+        redirect: 'error',
       });
 
       if (!response.ok) {

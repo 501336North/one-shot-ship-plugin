@@ -28,7 +28,6 @@ export enum WatcherState {
  */
 export class Watcher {
   private readonly ossDir: string;
-  private readonly apiKey: string;
   private readonly pidPath: string;
   private readonly logPath: string;
   private readonly configPath: string;
@@ -43,9 +42,8 @@ export class Watcher {
   private webhookReceiver: WebhookReceiver | null = null;
   private config: WatcherConfig = DEFAULT_CONFIG;
 
-  constructor(ossDir: string, apiKey: string) {
+  constructor(ossDir: string) {
     this.ossDir = ossDir;
-    this.apiKey = apiKey;
     this.pidPath = path.join(ossDir, 'watcher.pid');
     this.logPath = path.join(ossDir, 'watcher.log');
     this.configPath = path.join(ossDir, 'config.json');
@@ -94,7 +92,6 @@ export class Watcher {
       this.llmAnalyzer = new LLMAnalyzer(
         this.queueManager,
         this.ruleEngine,
-        this.apiKey,
         this.config.llm_confidence_threshold
       );
     }

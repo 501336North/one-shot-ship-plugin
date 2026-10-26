@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { IronLawLogParser, IronLawResult } from '../../src/monitors/iron-law-log-parser.js';
 
 interface IronLawViolationRecord {
@@ -337,16 +340,57 @@ describe('IronLawLogParser - Intervention Task Creation', () => {
       expect(task?.prompt).toContain('IRON LAW #1 violated 3+ times');
     });
 
-    it('should include API URL in prompt for 3rd+ violation', () => {
-      monitor.recordViolation(2, "Using any type");
-      monitor.recordViolation(2, "Using any type again");
-      monitor.recordViolation(2, "Using any type still");
+    describe('the IRON LAWS fetch names the API the OSS config names', () => {
+      let configDir: string;
+      let savedConfigDir: string | undefined;
+      const writeConfig = (config: Record<string, unknown>): void =>
+        fs.writeFileSync(path.join(configDir, 'config.json'), JSON.stringify(config), { mode: 0o600 });
+      const thirdViolationPrompt = (): string | undefined => {
+        monitor.recordViolation(2, "Using any type");
+        monitor.recordViolation(2, "Using any type again");
+        monitor.recordViolation(2, "Using any type still");
+        return monitor.createInterventionTask(2, "Using any type still")?.prompt;
+      };
 
-      const task = monitor.createInterventionTask(2, "Using any type still");
+      beforeEach(() => {
+        savedConfigDir = process.env.OSS_CONFIG_DIR;
+        configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-iron-law-'));
+        process.env.OSS_CONFIG_DIR = configDir;
+      });
 
-      expect(task).not.toBeNull();
-      expect(task?.prompt).toContain('https://one-shot-ship-api.onrender.com/api/v1/prompts/shared/iron-laws');
-      expect(task?.prompt).toContain('curl -s -H "Authorization: Bearer {apiKey}"');
+      afterEach(() => {
+        if (savedConfigDir === undefined) delete process.env.OSS_CONFIG_DIR;
+        else process.env.OSS_CONFIG_DIR = savedConfigDir;
+        fs.rmSync(configDir, { recursive: true, force: true });
+      });
+
+      it('should include the configured API URL in prompt for 3rd+ violation', () => {
+        writeConfig({ apiKey: 'k', apiUrl: 'https://staging.example.com' });
+
+        const prompt = thirdViolationPrompt();
+
+        expect(prompt).toContain('curl -s -H "Authorization: Bearer {apiKey}" https://staging.example.com/api/v1/prompts/shared/iron-laws');
+        expect(prompt).not.toContain('onrender.com');
+      });
+
+      it('should include the production API URL when apiUrl is missing', () => {
+        writeConfig({ apiKey: 'k' });
+
+        expect(thirdViolationPrompt()).toContain(
+          'curl -s -H "Authorization: Bearer {apiKey}" https://one-shot-ship-api.onrender.com/api/v1/prompts/shared/iron-laws'
+        );
+      });
+
+      it('should name no API, and point at /oss:login, when the OSS config is refused', () => {
+        writeConfig({ apiKey: 'k', apiUrl: 'http://staging.example.com' });
+
+        const prompt = thirdViolationPrompt();
+
+        expect(prompt).toContain('MANDATORY: Fetch IRON LAWS and place at top of context');
+        expect(prompt).toContain('/oss:login');
+        expect(prompt).not.toContain('curl');
+        expect(prompt).not.toContain('onrender.com');
+      });
     });
 
     it('should have correct source', () => {

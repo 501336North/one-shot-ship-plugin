@@ -27,7 +27,6 @@ export var WatcherState;
  */
 export class Watcher {
     ossDir;
-    apiKey;
     pidPath;
     logPath;
     configPath;
@@ -40,9 +39,8 @@ export class Watcher {
     llmAnalyzer = null;
     webhookReceiver = null;
     config = DEFAULT_CONFIG;
-    constructor(ossDir, apiKey) {
+    constructor(ossDir) {
         this.ossDir = ossDir;
-        this.apiKey = apiKey;
         this.pidPath = path.join(ossDir, 'watcher.pid');
         this.logPath = path.join(ossDir, 'watcher.log');
         this.configPath = path.join(ossDir, 'config.json');
@@ -74,7 +72,7 @@ export class Watcher {
         this.testMonitor = new TestMonitor(this.queueManager);
         this.gitMonitor = new GitMonitor(this.queueManager);
         if (this.config.use_llm_analysis) {
-            this.llmAnalyzer = new LLMAnalyzer(this.queueManager, this.ruleEngine, this.apiKey, this.config.llm_confidence_threshold);
+            this.llmAnalyzer = new LLMAnalyzer(this.queueManager, this.ruleEngine, this.config.llm_confidence_threshold);
         }
         // Initialize webhook receiver if configured
         await this.initializeWebhookReceiver();

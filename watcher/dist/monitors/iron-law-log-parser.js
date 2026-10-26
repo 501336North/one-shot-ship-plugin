@@ -1,3 +1,4 @@
+import { readApiCredentials } from '../api/api-credentials.js';
 export class IronLawLogParser {
     violations = new Map();
     history = [];
@@ -78,7 +79,12 @@ export class IronLawLogParser {
                 }
             };
         }
-        let prompt = `IRON LAW #${law} violated 3+ times\n\nMANDATORY: Fetch IRON LAWS and place at top of context\n\ncurl -s -H "Authorization: Bearer {apiKey}" https://one-shot-ship-api.onrender.com/api/v1/prompts/shared/iron-laws`;
+        // The API the OSS config names; when the config is refused, name none (never production instead)
+        const apiUrl = readApiCredentials()?.apiUrl;
+        const fetchHint = apiUrl
+            ? `curl -s -H "Authorization: Bearer {apiKey}" ${apiUrl}/api/v1/prompts/shared/iron-laws`
+            : 'No usable OSS config (apiKey, apiUrl): run /oss:login';
+        let prompt = `IRON LAW #${law} violated 3+ times\n\nMANDATORY: Fetch IRON LAWS and place at top of context\n\n${fetchHint}`;
         if (correction) {
             prompt += `\n\n${correction}`;
         }
