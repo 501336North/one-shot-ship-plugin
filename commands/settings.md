@@ -39,7 +39,6 @@ model: haiku
 ```
 
 **Related Commands:**
-- `/oss:telegram` - Configure Telegram notifications
 - `/oss:login` - Configure API key
 - `/oss:models` - Configure model routing
 
@@ -76,7 +75,6 @@ NOTIFICATION STYLES:
   visual     macOS Notification Center (terminal-notifier)
   audio      Spoken messages using text-to-speech
   sound      System sounds (Glass, Ping, etc.)
-  telegram   Telegram notifications + local backup
   none       Silent mode - no notifications
 
 VERBOSITY LEVELS:
@@ -155,21 +153,6 @@ Use `AskUserQuestion` tool to let user modify settings:
 
 **Question 1: Notification Style**
 
-First, check if Telegram is linked via API:
-
-```bash
-source ~/.oss/hooks/oss-api-curl.sh  # oss_api_key + oss_api_url + oss_api_curl (key via stdin, never argv)
-API_KEY=$(oss_api_key)
-
-if [[ -n "$API_KEY" ]] && API_URL=$(oss_api_url); then
-    TELEGRAM_STATUS=$(oss_api_curl "$API_KEY" -s --http1.1 -X GET "$API_URL/api/v1/telegram/status" \
-        -H "Content-Type: application/json")
-    TELEGRAM_LINKED=$(echo "$TELEGRAM_STATUS" | jq -r '.linked // false')
-else
-    TELEGRAM_LINKED="false"
-fi
-```
-
 ```json
 {
   "question": "How would you like to be notified?",
@@ -178,7 +161,6 @@ fi
     {"label": "Visual", "description": "macOS notification center (terminal-notifier)"},
     {"label": "Audio", "description": "Spoken messages using text-to-speech"},
     {"label": "Sound", "description": "System sounds (Glass, Ping, etc.)"},
-    {"label": "Telegram", "description": "Mobile notifications - link account first via /oss:telegram link"},
     {"label": "None", "description": "Silent mode - no notifications"}
   ],
   "multiSelect": false
@@ -238,19 +220,16 @@ The answers reach the shell through the value folder, never typed into a command
 ```
 
 Use the Write tool to write each answer alone, in the spelling shown, to its file in the directory it printed:
-- `notify_style.txt`: `visual`, `audio`, `sound`, `telegram` or `none`
+- `notify_style.txt`: `visual`, `audio`, `sound` or `none`
 - `verbosity.txt`: `all`, `important` or `errors-only`
 - `voice.txt` (only when the style is `audio`): `Samantha`, `Daniel`, `Karen` or `Moira`
 - `sound.txt` (only when the style is `sound`): `Glass`, `Ping`, `Purr` or `Pop`
 
 If `dir` prints nothing, tell the user the settings were not changed and show its error.
 
-### Step 4: Save, Sync and Test (one Bash call)
+### Step 4: Save and Test (one Bash call)
 
-Run this block exactly as written. It reads and checks each answer (a value outside its list is refused and nothing is saved), keeps the current voice or sound when that question was not asked, checks the Telegram link itself, and:
-- if the user selected Telegram but it is not linked, prints how to link it and falls back to `visual`;
-- syncs `telegram.enabled` with the API when Telegram is linked (enabled only when the style is `telegram`), so the server-side state matches local settings;
-- writes `~/.oss/settings.json`, sends a test notification in the new style and prints the new configuration.
+Run this block exactly as written. It reads and checks each answer (a value outside its list is refused and nothing is saved), keeps the current voice or sound when that question was not asked, merges the choices into `~/.oss/settings.json` (every other setting is kept, except the retired Telegram settings, which are removed; a file that is not valid JSON or is a symlink is refused and left as it is), sends a test notification in the new style and prints the new configuration.
 
 ```bash
 V=~/.oss/hooks/oss-value.sh
@@ -262,49 +241,22 @@ SOUND=$(jq -r '.notifications.sound // "Glass"' "$SETTINGS_FILE" 2>/dev/null) ||
 if [[ "$STYLE" == "audio" ]]; then VOICE=$("$V" read voice) || exit 1; fi
 if [[ "$STYLE" == "sound" ]]; then SOUND=$("$V" read sound) || exit 1; fi
 
-# Check the Telegram link (true only when the API says exactly true)
-source ~/.oss/hooks/oss-api-curl.sh  # oss_api_key + oss_api_url + oss_api_curl (key via stdin, never argv)
-API_KEY=$(oss_api_key)
-TELEGRAM_LINKED="false"
-if [[ -n "$API_KEY" ]] && API_URL=$(oss_api_url); then
-    LINKED=$(oss_api_curl "$API_KEY" -s --http1.1 -X GET "$API_URL/api/v1/telegram/status" \
-        -H "Content-Type: application/json" | jq -r '.linked // false' 2>/dev/null)
-    [[ "$LINKED" == "true" ]] && TELEGRAM_LINKED="true"
-fi
-
-if [[ "$STYLE" == "telegram" && "$TELEGRAM_LINKED" != "true" ]]; then
-    echo ""
-    echo "Telegram is not linked yet."
-    echo ""
-    echo "To link your Telegram account:"
-    echo "1. Run: /oss:telegram link"
-    echo "2. Click the magic link on your phone"
-    echo "3. Press START in Telegram"
-    echo "4. Then re-run /oss:settings to select Telegram"
-    echo ""
-    echo "For now, falling back to 'visual' style."
-    STYLE="visual"
-fi
-
-# Determine telegram enabled state based on style
-if [[ "$STYLE" == "telegram" ]]; then
-    TELEGRAM_ENABLED="true"
-else
-    TELEGRAM_ENABLED="false"
-fi
-
-# Sync with API if authenticated and telegram is linked
-if [[ -n "$API_KEY" && "$TELEGRAM_LINKED" == "true" ]]; then
-    oss_api_curl "$API_KEY" -s --http1.1 -X PATCH "$API_URL/api/v1/telegram/notifications" \
-        -H "Content-Type: application/json" \
-        -d "{\"enabled\": $TELEGRAM_ENABLED}" > /dev/null
-fi
-
 mkdir -p ~/.oss
-jq -n --arg style "$STYLE" --arg voice "$VOICE" --arg sound "$SOUND" --arg verbosity "$VERBOSITY" \
-    --argjson linked "$TELEGRAM_LINKED" --argjson enabled "$TELEGRAM_ENABLED" \
-    '{notifications: {style: $style, voice: $voice, sound: $sound, verbosity: $verbosity, telegram: {linked: $linked, enabled: $enabled}}, version: 2}' \
-    > "$SETTINGS_FILE" || exit 1
+# Merge: only notifications.{style,voice,sound,verbosity} and version change and the retired telegram keys are removed; every other key is kept
+CURRENT='{}'; MODE=600
+if [[ -L "$SETTINGS_FILE" || ( -e "$SETTINGS_FILE" && ! -f "$SETTINGS_FILE" ) ]]; then
+    echo "Not saved: ~/.oss/settings.json is a symlink or not a regular file; it was left as it is." >&2; exit 1
+fi
+if [[ -f "$SETTINGS_FILE" ]]; then
+    jq -e 'type == "object"' "$SETTINGS_FILE" >/dev/null 2>&1 \
+        || { echo "Not saved: ~/.oss/settings.json is not valid JSON; it was left as it is. Fix or remove it, then run /oss:settings again." >&2; exit 1; }
+    CURRENT=$(cat "$SETTINGS_FILE") || exit 1
+    MODE=$(stat -c %a "$SETTINGS_FILE" 2>/dev/null || stat -f %Lp "$SETTINGS_FILE") || exit 1
+fi
+TMP=$(mktemp "$HOME/.oss/settings.json.XXXXXX") || exit 1
+printf '%s' "$CURRENT" | jq --arg s "$STYLE" --arg v "$VOICE" --arg so "$SOUND" --arg vb "$VERBOSITY" \
+    '.notifications = ((.notifications // {}) + {style: $s, voice: $v, sound: $so, verbosity: $vb}) | .version = 2 | del(.telegram, .notifications.telegram)' > "$TMP" \
+    && chmod "$MODE" "$TMP" && mv -f "$TMP" "$SETTINGS_FILE" || { rm -f "$TMP"; exit 1; }
 
 # Test notification, based on style
 case "$STYLE" in
@@ -316,10 +268,6 @@ case "$STYLE" in
         ;;
     "sound")
         afplay "/System/Library/Sounds/${SOUND}.aiff"
-        ;;
-    "telegram")
-        # Telegram test is handled by the API - just confirm
-        echo "📱 Telegram notifications enabled - you'll receive messages when Claude needs input"
         ;;
     "none")
         echo "Notifications disabled. Settings saved."
@@ -340,27 +288,21 @@ echo "Your notifications are now configured!"
 
 ### Step 5: Confirm
 
-Show the user the block's output (the new configuration). If a read refused a value, nothing was saved: tell the user which answer was not valid.
+Show the user the block's output (the new configuration). If a read refused a value, nothing was saved: tell the user which answer was not valid. If it printed "Not saved", show that line: settings.json was left as it is.
 
 ## Settings Schema
 
 ```json
 {
   "notifications": {
-    "style": "visual" | "audio" | "sound" | "telegram" | "none",
+    "style": "visual" | "audio" | "sound" | "none",
     "voice": "Samantha" | "Daniel" | "Karen" | "Moira",
     "sound": "Glass" | "Ping" | "Purr" | "Pop",
-    "verbosity": "all" | "important" | "errors-only",
-    "telegram": {
-      "linked": true | false,
-      "enabled": true | false
-    }
+    "verbosity": "all" | "important" | "errors-only"
   },
   "version": 2
 }
 ```
-
-**Note:** Telegram credentials (chatId) are stored server-side, not locally. Use `/oss:telegram` to manage linking.
 
 ## Available Options
 
@@ -370,7 +312,6 @@ Show the user the block's output (the new configuration). If a read refused a va
 | visual | terminal-notifier | macOS Notification Center |
 | audio | say | Text-to-speech |
 | sound | afplay | System sounds |
-| telegram | API + @OSSDevWorkflowBot | Mobile notifications (link via /oss:telegram link) |
 | none | - | Silent mode |
 
 ### Verbosity Levels

@@ -616,13 +616,13 @@ describe('InterventionGenerator', () => {
     }
 
     /**
-     * @behavior CRITICAL and HIGH escalations wake the user up via Telegram with
+     * @behavior CRITICAL and HIGH escalations wake the user up via the escalation channel with
      *           recovery[] steps so they can act without digging through logs
      * @acceptance-criteria AC-005.1
      * @business-rule US-005: severity routes the escalation channel
-     * @boundary telegram-notifier (mocked at its interface)
+     * @boundary EscalationNotifier port (mocked at its interface)
      */
-    it('should send a Telegram notification for CRITICAL and HIGH escalations', () => {
+    it('should send an escalation notification for CRITICAL and HIGH escalations', () => {
       for (const severity of ['CRITICAL', 'HIGH'] as const) {
         mockNotifier.sendErrorEscalation.mockClear();
 
@@ -642,12 +642,12 @@ describe('InterventionGenerator', () => {
     });
 
     /**
-     * @behavior MEDIUM/LOW escalations stay in-session/log only — no Telegram noise
+     * @behavior MEDIUM/LOW escalations stay in-session/log only — no escalation noise
      * @acceptance-criteria AC-005.2
      * @business-rule US-005: only CRITICAL/HIGH interrupt the user
-     * @boundary telegram-notifier (mocked at its interface)
+     * @boundary EscalationNotifier port (mocked at its interface)
      */
-    it('should NOT notify Telegram for MEDIUM/LOW escalations', () => {
+    it('should NOT notify the escalation channel for MEDIUM/LOW escalations', () => {
       for (const severity of ['MEDIUM', 'LOW'] as const) {
         wiredGenerator.generate(escalationIssue(severity));
       }
@@ -694,7 +694,7 @@ describe('InterventionGenerator', () => {
      *           watcher never waits for a confirmation that cannot come
      * @acceptance-criteria AC-005.3
      * @business-rule Unattended expensive error → immediate escalation, no auto-retry
-     * @boundary telegram-notifier (mocked at its interface)
+     * @boundary EscalationNotifier port (mocked at its interface)
      */
     it('should escalate expensive errors immediately in unattended mode without prompting', () => {
       const expensiveIssue = escalationIssue('HIGH', {
@@ -711,13 +711,13 @@ describe('InterventionGenerator', () => {
     });
 
     /**
-     * @behavior A failing Telegram bridge never crashes the healing pipeline —
+     * @behavior A failing escalation channel never crashes the healing pipeline —
      *           the failure is swallowed and logged
      * @acceptance-criteria AC-005.1 (edge case: notify errors are logged, swallowed)
      * @business-rule Notification failures must not mask the original error
-     * @boundary telegram-notifier (mocked at its interface)
+     * @boundary EscalationNotifier port (mocked at its interface)
      */
-    it('should swallow and log a Telegram failure, never throw', async () => {
+    it('should swallow and log an escalation failure, never throw', async () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       mockNotifier.sendErrorEscalation.mockRejectedValue(new Error('bridge down'));
 

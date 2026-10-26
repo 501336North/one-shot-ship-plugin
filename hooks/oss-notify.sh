@@ -2,17 +2,12 @@
 # oss-notify.sh - Unified notification hook for OSS Dev Workflow
 #
 # Usage (direct):
-#   oss-notify.sh "Title" "Message" [priority]
+#   oss-notify.sh "Title" "Message"
 #
 # Usage (with copy service):
 #   oss-notify.sh --workflow <command> <event> [context-json]
 #   oss-notify.sh --session <event> [context-json]
 #   oss-notify.sh --issue <type> [context-json]
-#
-# Priority levels:
-#   low      - Command start, agent spawn
-#   high     - Command complete, PR created (default)
-#   critical - Command failed, loop detected
 #
 # Respects settings from ~/.oss/settings.json
 
@@ -73,7 +68,6 @@ resolve_cli() {
 
 COPY_CLI="$(resolve_cli "get-copy.js" "watcher/dist/cli/get-copy.js")"
 WORKFLOW_STATE_CLI="$(resolve_cli "update-workflow-state.js" "watcher/dist/cli/update-workflow-state.js")"
-TELEGRAM_CLI="$(resolve_cli "telegram-notify.js" "watcher/dist/cli/telegram-notify.js")"
 # Prefer bundled .cjs (standalone, no external imports) over .js (needs api/engine deps)
 CHAIN_TRIGGER_CLI="$(resolve_cli "chain-trigger.cjs" "watcher/dist/cli/chain-trigger.cjs")"
 if [[ ! -f "$CHAIN_TRIGGER_CLI" ]]; then
@@ -128,42 +122,30 @@ COPY_ARGS=()
 TITLE=""
 MESSAGE=""
 SUBTITLE=""
-PRIORITY="high"
 
 if [[ "${1:-}" == "--workflow" ]]; then
     USE_COPY_SERVICE=true
     COPY_TYPE="workflow"
     COPY_ARGS=("${@:2}")
-    # Map command events to priorities and icons
-    # NOTE: start is HIGH so users see when commands begin (per verbosity=important)
     CMD="${2:-}"
-    EVENT="${3:-start}"
     # The name reaches file paths (oss-log.sh <name>.log), analytics JSON and chain-trigger:
     # anything but a plain command name (e.g. build/../ship) is refused before any of them.
     if ! oss_valid_workflow_name "$CMD" 2>/dev/null; then
         echo "oss-notify: invalid workflow name refused (must match ^[a-z][a-z0-9-]{0,40}\$)" >&2
         exit 0
     fi
-    case "$EVENT" in
-        task_complete) PRIORITY="low" ;;
-        start|complete|quality_passed|pr_created|merged) PRIORITY="high" ;;
-        failed) PRIORITY="critical" ;;
-    esac
 elif [[ "${1:-}" == "--session" ]]; then
     USE_COPY_SERVICE=true
     COPY_TYPE="session"
     COPY_ARGS=("${@:2}")
-    PRIORITY="high"
 elif [[ "${1:-}" == "--issue" ]]; then
     USE_COPY_SERVICE=true
     COPY_TYPE="issue"
     COPY_ARGS=("${@:2}")
-    PRIORITY="critical"
 else
-    # Direct usage: oss-notify.sh "Title" "Message" [priority]
+    # Direct usage: oss-notify.sh "Title" "Message"
     TITLE="${1:-Notification}"
     MESSAGE="${2:-}"
-    PRIORITY="${3:-high}"
 fi
 
 # =============================================================================
@@ -213,43 +195,21 @@ SETTINGS_FILE=~/.oss/settings.json
 if [[ -f "$SETTINGS_FILE" ]]; then
     if command -v jq &>/dev/null; then
         STYLE=$(jq -r '.notifications.style // "visual"' "$SETTINGS_FILE" 2>/dev/null || echo "visual")
-        VERBOSITY=$(jq -r '.notifications.verbosity // "important"' "$SETTINGS_FILE" 2>/dev/null || echo "important")
         VOICE=$(jq -r '.notifications.voice // "Samantha"' "$SETTINGS_FILE" 2>/dev/null || echo "Samantha")
         SOUND=$(jq -r '.notifications.sound // "Glass"' "$SETTINGS_FILE" 2>/dev/null || echo "Glass")
     else
         STYLE=$(grep -o '"style"[[:space:]]*:[[:space:]]*"[^"]*"' "$SETTINGS_FILE" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || echo "visual")
-        VERBOSITY=$(grep -o '"verbosity"[[:space:]]*:[[:space:]]*"[^"]*"' "$SETTINGS_FILE" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || echo "important")
         VOICE=$(grep -o '"voice"[[:space:]]*:[[:space:]]*"[^"]*"' "$SETTINGS_FILE" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || echo "Samantha")
         SOUND=$(grep -o '"sound"[[:space:]]*:[[:space:]]*"[^"]*"' "$SETTINGS_FILE" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || echo "Glass")
     fi
 else
     STYLE="visual"
-    VERBOSITY="important"
     VOICE="Samantha"
     SOUND="Glass"
 fi
 
 # =============================================================================
-# Filter by verbosity (only affects notifications, not state updates)
-# =============================================================================
-
-SKIP_NOTIFICATION=false
-case "$VERBOSITY" in
-    "errors-only")
-        [[ "$PRIORITY" != "critical" ]] && SKIP_NOTIFICATION=true
-        ;;
-    "important")
-        [[ "$PRIORITY" == "low" ]] && SKIP_NOTIFICATION=true
-        ;;
-    # "all" - allow everything through
-esac
-
-# Skip notification if style is none
-[[ "$STYLE" == "none" ]] && SKIP_NOTIFICATION=true
-
-# =============================================================================
 # Update workflow state (for Claude Code status line)
-# NOTE: This runs BEFORE notification filtering - state always updates
 # =============================================================================
 
 if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
@@ -369,58 +329,6 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                 fi
                 ;;
         esac
-    fi
-
-    # Send Telegram notification for workflow events if CLI exists
-    # (skip if notification is filtered by verbosity OR if notifications.telegram.enabled is false)
-    TELEGRAM_NOTIF_ENABLED="false"
-    if [[ -f "$SETTINGS_FILE" ]] && command -v jq &>/dev/null; then
-        TELEGRAM_NOTIF_ENABLED=$(jq -r '.notifications.telegram.enabled // false' "$SETTINGS_FILE" 2>/dev/null || echo "false")
-    fi
-
-    if [[ "$SKIP_NOTIFICATION" != true ]] && [[ "$TELEGRAM_NOTIF_ENABLED" == "true" ]] && [[ -f "$TELEGRAM_CLI" ]] && [[ -n "$MESSAGE" ]]; then
-        # Build the notification message
-        TELEGRAM_MSG="/oss:$WORKFLOW_CMD $WORKFLOW_EVENT"
-
-        # Add context info for specific events
-        case "$WORKFLOW_EVENT" in
-            complete)
-                if command -v jq &>/dev/null; then
-                    TESTS=$(echo "$WORKFLOW_CONTEXT" | jq -r '.testsPass // ""' 2>/dev/null)
-                    DURATION=$(echo "$WORKFLOW_CONTEXT" | jq -r '.duration // ""' 2>/dev/null)
-                    if [[ -n "$TESTS" && "$TESTS" != "null" ]]; then
-                        TELEGRAM_MSG="$TELEGRAM_MSG - $TESTS tests passing"
-                    fi
-                    if [[ -n "$DURATION" && "$DURATION" != "null" ]]; then
-                        TELEGRAM_MSG="$TELEGRAM_MSG ($DURATION)"
-                    fi
-                fi
-                ;;
-            merged)
-                if command -v jq &>/dev/null; then
-                    PR_NUM=$(echo "$WORKFLOW_CONTEXT" | jq -r '.prNumber // ""' 2>/dev/null)
-                    BRANCH=$(echo "$WORKFLOW_CONTEXT" | jq -r '.branch // ""' 2>/dev/null)
-                    if [[ -n "$PR_NUM" && "$PR_NUM" != "null" ]]; then
-                        TELEGRAM_MSG="$TELEGRAM_MSG - PR #$PR_NUM merged"
-                    fi
-                    if [[ -n "$BRANCH" && "$BRANCH" != "null" ]]; then
-                        TELEGRAM_MSG="$TELEGRAM_MSG ($BRANCH)"
-                    fi
-                fi
-                ;;
-            failed)
-                if command -v jq &>/dev/null; then
-                    BLOCKER=$(echo "$WORKFLOW_CONTEXT" | jq -r '.blocker // ""' 2>/dev/null)
-                    if [[ -n "$BLOCKER" && "$BLOCKER" != "null" ]]; then
-                        TELEGRAM_MSG="$TELEGRAM_MSG - $BLOCKER"
-                    fi
-                fi
-                ;;
-        esac
-
-        # Call telegram-notify.js (ignore errors so workflow continues).
-        # F4: bounded like the chain call; 15s covers a slow send (the CLI itself aborts at 10s).
-        run_with_timeout 15 node "$TELEGRAM_CLI" --message "$TELEGRAM_MSG" 2>/dev/null || true
     fi
 
     exit 0

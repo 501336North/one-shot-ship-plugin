@@ -42,7 +42,6 @@ model: haiku
 **Related Commands:**
 - `/oss:status` - Check subscription status
 - `/oss:settings` - Configure notification preferences
-- `/oss:telegram` - Set up Telegram notifications
 
 ---
 

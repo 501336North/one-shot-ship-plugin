@@ -34,7 +34,7 @@ const PHASE_5_COMMANDS = ['stage', 'deploy', 'release', 'smoke'];
 const PHASE_6_COMMANDS = ['monitor', 'incident', 'rollback', 'debug', 'trace', 'postmortem'];
 
 // Phase 7: Utility commands
-const PHASE_7_COMMANDS = ['login', 'status', 'models', 'settings', 'telegram', 'webhook', 'watcher', 'queue', 'legend', 'docs'];
+const PHASE_7_COMMANDS = ['login', 'status', 'models', 'settings', 'webhook', 'watcher', 'queue', 'legend', 'docs'];
 
 // Phase 8: Specialized commands
 const PHASE_8_COMMANDS = ['iterate', 'chaos', 'cost', 'ui-review', 'experiment', 'feature-flag', 'license', 'privacy', 'retro', 'oss', 'oss-audio'];
@@ -244,8 +244,8 @@ describe('Command Help Documentation - All Commands Baseline', () => {
       .map(f => f.replace('.md', ''));
   });
 
-  it('should have correct number of commands (69)', () => {
-    expect(allCommands.length).toBe(69);
+  it('should have correct number of commands (68)', () => {
+    expect(allCommands.length).toBe(68);
   });
 
   it('commands directory should exist', () => {

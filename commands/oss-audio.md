@@ -37,7 +37,6 @@ model: haiku
 
 **Related Commands:**
 - `/oss:settings` - Full notification management (recommended)
-- `/oss:telegram` - Telegram notifications
 
 ---
 

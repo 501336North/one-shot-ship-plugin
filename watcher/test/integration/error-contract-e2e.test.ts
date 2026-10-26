@@ -3,16 +3,16 @@
  *           real watcher pipeline (WorkflowLogger → LogReader → WorkflowAnalyzer →
  *           InterventionGenerator → QueueManager) and heals cheap retryable failures
  *           (auto_remediate task carrying the retry_hint, RECOVERY visibility line,
- *           status-line retry text), escalates expensive failures via the real
- *           TelegramNotifier (transport mocked at the fetch boundary) without any
- *           retry task, and surfaces hand-corrupted OSS_ERROR lines as OSS-WORKFLOW-901.
+ *           status-line retry text), surfaces expensive failures as escalations
+ *           without any retry task, and surfaces hand-corrupted OSS_ERROR lines as
+ *           OSS-WORKFLOW-901.
  * @acceptance-criteria DESIGN success criteria 1–3; validates the A3 collaborator
- *                      port design (RecoveryLogger/RetryStatusLine/EscalationNotifier)
- *                      against real implementations (London: integration validates mocks).
+ *                      port design (RecoveryLogger/RetryStatusLine) against real
+ *                      implementations (London: integration validates mocks).
  * @business-rule US-004/US-005/US-006 — the healing loop works with real parts, not
  *                just against the mocks used in unit tests.
  * @boundary Emitter CLI (runOssError) + watcher supervisor pipeline + queue persistence.
- *           Mocked: ONLY the Telegram HTTP transport (global fetch).
+ *           Nothing is mocked; no escalation channel is wired (EscalationNotifier port unimplemented).
  */
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
@@ -27,7 +27,6 @@ import { WorkflowAnalyzer } from '../../src/analyzer/workflow-analyzer';
 import { InterventionGenerator, Intervention } from '../../src/intervention/generator';
 import { QueueManager } from '../../src/queue/manager';
 import { StatusLineService } from '../../src/services/status-line';
-import { TelegramNotifier } from '../../src/services/telegram-notifier';
 import { Task, CreateTaskInput } from '../../src/types';
 
 interface Sandbox {
@@ -47,7 +46,6 @@ function makeSandbox(): Sandbox {
 }
 
 afterEach(() => {
-  vi.unstubAllGlobals();
   while (sandboxes.length > 0) {
     const dir = sandboxes.pop();
     if (dir) {
@@ -163,14 +161,7 @@ describe('error contract end-to-end (Task 12)', () => {
     });
   });
 
-  it('should escalate an expensive failure end-to-end via the real TelegramNotifier without enqueuing any retry task', async () => {
-    // GIVEN — the ONLY mock in this suite: the Telegram HTTP transport boundary
-    const fetchMock = vi.fn(
-      async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> =>
-        new Response('{}', { status: 200 }),
-    );
-    vi.stubGlobal('fetch', fetchMock);
-
+  it('should surface an expensive failure end-to-end as an escalation without enqueuing any retry task', async () => {
     // GIVEN — a real expensive emission (a retry would burn a full pipeline run)
     const sandbox = makeSandbox();
     const workflowLogger = new WorkflowLogger(sandbox.ossDir);
@@ -189,10 +180,8 @@ describe('error contract end-to-end (Task 12)', () => {
     );
     expect(emitted.exitCode).toBe(0);
 
-    // GIVEN — the generator wired with the REAL notifier implementation
-    const generator = new InterventionGenerator({
-      notifier: new TelegramNotifier('http://telegram-bridge.invalid:8787'),
-    });
+    // GIVEN — the generator with no escalation channel wired
+    const generator = new InterventionGenerator();
 
     // WHEN
     const { interventions, queuedTasks } = await runPipeline(sandbox, generator);
@@ -204,17 +193,6 @@ describe('error contract end-to-end (Task 12)', () => {
 
     // THEN — NO retry task was persisted to the queue
     expect(queuedTasks).toHaveLength(0);
-
-    // THEN — the real TelegramNotifier delivered the escalation through the
-    // (mocked) transport: code + registry recovery steps in the payload
-    await vi.waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-    });
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(String(url)).toContain('/api/notify');
-    const body = String(init?.body);
-    expect(body).toContain('OSS-API-001');
-    expect(body).toContain('status.oneshotship.com');
   });
 
   it('should surface a hand-corrupted OSS_ERROR line as OSS-WORKFLOW-901 through the same pipeline', async () => {

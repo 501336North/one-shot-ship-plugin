@@ -45,7 +45,6 @@ const HAIKU_COMMANDS = [
   'pause',
   'resume',
   'watcher',
-  'telegram',
   'workflows',
   'oss',
   'oss-audio',

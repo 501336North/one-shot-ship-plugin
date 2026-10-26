@@ -16,7 +16,6 @@ import {
   DEFAULT_NOTIFICATION_SETTINGS,
   DEFAULT_SUPERVISOR_SETTINGS,
 } from '../types/notification.js';
-import { TelegramConfig, DEFAULT_TELEGRAM_CONFIG } from '../types/telegram.js';
 import {
   ModelSettings,
   ProviderConfig,
@@ -38,6 +37,15 @@ const ENV_VAR_NAMES: Record<string, string> = {
 };
 
 const VALID_STYLES: NotificationStyle[] = ['visual', 'audio', 'sound', 'none'];
+/**
+ * The one rule for a saved notification style: a known style is kept, anything else (including the
+ * retired "telegram") reads as the default style.
+ */
+export function normalizeStyle(style: unknown): NotificationStyle {
+  return VALID_STYLES.includes(style as NotificationStyle)
+    ? (style as NotificationStyle)
+    : DEFAULT_NOTIFICATION_SETTINGS.notifications.style;
+}
 const VALID_VERBOSITIES: Verbosity[] = ['all', 'important', 'errors-only'];
 const VALID_SUPERVISOR_MODES: SupervisorMode[] = ['always', 'workflow-only'];
 
@@ -85,7 +93,6 @@ export class SettingsService {
         ...DEFAULT_SUPERVISOR_SETTINGS,
         ironLawChecks: { ...DEFAULT_SUPERVISOR_SETTINGS.ironLawChecks },
       },
-      telegram: { ...DEFAULT_TELEGRAM_CONFIG },
       version: DEFAULT_NOTIFICATION_SETTINGS.version,
     };
   }
@@ -162,9 +169,7 @@ export class SettingsService {
 
     if (notifications) {
       // Validate style
-      if (VALID_STYLES.includes(notifications.style as NotificationStyle)) {
-        settings.notifications.style = notifications.style as NotificationStyle;
-      }
+      settings.notifications.style = normalizeStyle(notifications.style);
 
       // Validate verbosity
       if (VALID_VERBOSITIES.includes(notifications.verbosity as Verbosity)) {
@@ -220,20 +225,6 @@ export class SettingsService {
       }
     }
 
-    // Validate telegram settings
-    const telegram = p.telegram as Record<string, unknown> | undefined;
-    if (telegram && settings.telegram) {
-      if (typeof telegram.enabled === 'boolean') {
-        settings.telegram.enabled = telegram.enabled;
-      }
-      if (typeof telegram.botToken === 'string') {
-        settings.telegram.botToken = telegram.botToken;
-      }
-      if (typeof telegram.chatId === 'string') {
-        settings.telegram.chatId = telegram.chatId;
-      }
-    }
-
     return settings;
   }
 
@@ -267,7 +258,7 @@ export class SettingsService {
    * Set notification style
    */
   setNotificationStyle(style: NotificationStyle): void {
-    if (VALID_STYLES.includes(style)) {
+    if (normalizeStyle(style) === style) {
       this.settings.notifications.style = style;
     }
   }
@@ -334,32 +325,6 @@ export class SettingsService {
       this.settings.supervisor = { ...DEFAULT_SUPERVISOR_SETTINGS };
     }
     this.settings.supervisor.ironLawChecks[law] = enabled;
-  }
-
-  /**
-   * Get telegram configuration
-   */
-  getTelegram(): TelegramConfig {
-    return this.settings.telegram || { ...DEFAULT_TELEGRAM_CONFIG };
-  }
-
-  /**
-   * Set telegram configuration
-   */
-  setTelegram(config: TelegramConfig): void {
-    this.settings.telegram = { ...config };
-    this.save();
-  }
-
-  /**
-   * Toggle telegram enabled state
-   */
-  setTelegramEnabled(enabled: boolean): void {
-    if (!this.settings.telegram) {
-      this.settings.telegram = { ...DEFAULT_TELEGRAM_CONFIG };
-    }
-    this.settings.telegram.enabled = enabled;
-    this.save();
   }
 
   /**

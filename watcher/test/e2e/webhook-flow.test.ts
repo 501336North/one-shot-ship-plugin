@@ -1,10 +1,10 @@
 /**
  * E2E Webhook Flow Tests
  *
- * @behavior Complete flow from webhook reception to task queue and Telegram notification
- * @acceptance-criteria Full integration test of webhook -> task queue -> notification pipeline
- * @business-rule PR review webhooks result in queued tasks and Telegram notifications
- * @boundary System boundary test (HTTP webhook -> queue.json -> Telegram API)
+ * @behavior Complete flow from webhook reception to task queue
+ * @acceptance-criteria Full integration test of webhook -> task queue pipeline
+ * @business-rule PR review webhooks result in queued tasks
+ * @boundary System boundary test (HTTP webhook -> queue.json)
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -13,7 +13,6 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import { Watcher, WatcherState } from '../../src/index';
-import { TelegramNotifier } from '../../src/services/telegram-notifier';
 
 /**
  * Helper function to create valid HMAC-SHA256 signature
@@ -23,11 +22,6 @@ function createSignature(payload: string, secret: string): string {
   hmac.update(payload, 'utf8');
   return `sha256=${hmac.digest('hex')}`;
 }
-
-/**
- * Mock fetch for Telegram notifications - but NOT for webhook HTTP calls
- */
-const mockFetch = vi.fn();
 
 describe('E2E: Webhook to Task Queue Flow', () => {
   let testDir: string;
@@ -394,85 +388,5 @@ describe('E2E: Webhook to Task Queue Flow', () => {
     expect(queue.tasks.length).toBe(10);
 
     await watcher.stop();
-  });
-});
-
-describe('TelegramNotifier Integration', () => {
-  let notifier: TelegramNotifier;
-  const TEST_BRIDGE_URL = 'http://localhost:3737';
-
-  // Store original fetch
-  const originalFetch = global.fetch;
-
-  beforeEach(() => {
-    notifier = new TelegramNotifier(TEST_BRIDGE_URL);
-    global.fetch = mockFetch;
-    vi.clearAllMocks();
-  });
-
-  afterEach(() => {
-    global.fetch = originalFetch;
-  });
-
-  /**
-   * @behavior TelegramNotifier sends formatted PR review notifications
-   * @acceptance-criteria E2E-TELEGRAM.1
-   */
-  it('should send formatted notification for PR review', async () => {
-    // GIVEN - A mock successful response
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ success: true }),
-    });
-
-    // WHEN - We send a PR review notification
-    await notifier.sendPRReviewNotification({
-      prNumber: 123,
-      prTitle: 'Add feature X',
-      reviewerName: 'alice',
-      reviewBody: 'Please fix the bug',
-    });
-
-    // THEN - Fetch should have been called with correct parameters
-    expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(mockFetch).toHaveBeenCalledWith(
-      `${TEST_BRIDGE_URL}/api/notify`,
-      expect.objectContaining({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      })
-    );
-
-    // Verify message content
-    const [, options] = mockFetch.mock.calls[0];
-    const body = JSON.parse(options.body);
-    expect(body.message).toContain('Changes Requested');
-    expect(body.message).toContain('PR #123');
-    expect(body.message).toContain('Add feature X');
-    expect(body.message).toContain('alice');
-    expect(body.message).toContain('Please fix the bug');
-  });
-
-  /**
-   * @behavior TelegramNotifier handles HTTP errors gracefully
-   * @acceptance-criteria E2E-TELEGRAM.2
-   */
-  it('should throw error on HTTP failure', async () => {
-    // GIVEN - A mock error response
-    mockFetch.mockResolvedValueOnce({
-      ok: false,
-      status: 500,
-      statusText: 'Internal Server Error',
-    });
-
-    // WHEN/THEN - Should throw an error
-    await expect(
-      notifier.sendPRReviewNotification({
-        prNumber: 1,
-        prTitle: 'Test',
-        reviewerName: 'tester',
-        reviewBody: 'Test body',
-      })
-    ).rejects.toThrow('Telegram notification failed');
   });
 });

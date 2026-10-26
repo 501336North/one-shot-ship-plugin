@@ -35,7 +35,7 @@ fi
 # =============================================================================
 
 case "$STYLE" in
-    "visual")
+    "visual"|"telegram")
         # Visual notification - update status line with non-sticky notification
         # The status line is the primary visual feedback mechanism
         PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
@@ -61,20 +61,6 @@ case "$STYLE" in
         SOUND_FILE="/System/Library/Sounds/${SOUND}.aiff"
         if [[ -f "$SOUND_FILE" ]] && command -v afplay &>/dev/null; then
             afplay "$SOUND_FILE" &>/dev/null &
-        fi
-        ;;
-    "telegram")
-        # Telegram style: Use local notifications only for "Ready" events
-        # Telegram style keeps notifications local (no AskUserQuestion relay hook is registered)
-        # "Ready" notifications stay local - sending them to Telegram would spam the user
-        PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
-        WORKFLOW_STATE_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js"
-        if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
-            node "$WORKFLOW_STATE_CLI" setNotification "Ready" 10 2>/dev/null || true
-        fi
-        # Local popup notification (not sent to Telegram)
-        if command -v terminal-notifier &>/dev/null; then
-            terminal-notifier -title "OSS" -message "Ready" -sound "Funk" &>/dev/null &
         fi
         ;;
 esac

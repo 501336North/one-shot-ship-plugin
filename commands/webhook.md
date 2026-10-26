@@ -45,7 +45,6 @@ description: Configure GitHub webhook for PR review notifications
 ```
 
 **Related Commands:**
-- `/oss:telegram` - Telegram notifications
 - `/oss:settings` - General settings
 - `/oss:monitor` - Production monitoring with PR integration
 
