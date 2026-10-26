@@ -10,16 +10,13 @@ Real-time production health monitoring and alerting.
 ## Step 1: Check Authentication
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+~/.oss/hooks/oss-value.sh keycheck
 ```
 
 ## Step 2: Fetch Prompt from API
 
-```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/workflows/monitor
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+```bash
+~/.oss/bin/oss-decrypt --type workflows --name monitor
 ```
 
 ## Step 3: Execute the Fetched Prompt

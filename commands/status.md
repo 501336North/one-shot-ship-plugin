@@ -53,7 +53,7 @@ Check your One Shot Ship subscription status and usage statistics.
 ## Step 1: Check Configuration
 
 ```bash
-source ~/.oss/hooks/oss-api-curl.sh && oss_api_key >/dev/null && echo "API key configured"
+~/.oss/hooks/oss-value.sh keycheck
 ```
 
 If it prints nothing: "No API key found. Run: /oss:login".
@@ -63,7 +63,7 @@ If it prints nothing: "No API key found. Run: /oss:login".
 Run this one call against the API your config names; the key goes to curl on stdin, never into this conversation or a command line:
 
 ```bash
-source ~/.oss/hooks/oss-api-curl.sh && u=$(oss_api_url) && k=$(oss_api_key) && oss_api_curl "$k" -s -m 30 "$u/api/v1/auth/verify"
+~/.oss/hooks/oss-value.sh api auth/verify
 ```
 
 > Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.

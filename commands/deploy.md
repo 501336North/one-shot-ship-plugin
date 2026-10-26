@@ -57,7 +57,7 @@ Deploy to production with canary rollout and comprehensive monitoring.
 ## Step 1: Check Authentication
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+~/.oss/hooks/oss-value.sh keycheck
 ```
 
 If no API key found:

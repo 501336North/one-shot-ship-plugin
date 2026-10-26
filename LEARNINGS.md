@@ -147,3 +147,11 @@
 ## 2026-10-26 | Planning | release-channels
 - **Context:** plan
 - **Insight:** The plan's archive step matches `Current Phase:.*(ship|complete)` anywhere on the line, so "ideate (complete) → next: plan" archives a live feature. Keep the word "complete" out of PROGRESS phase lines until the feature ships.
+
+## 2026-10-26 | Config | release-channels
+- **Context:** build
+- **Insight:** A wrapper's shell step must be ONE command that matches an allowlisted prefix (`~/.oss/hooks/oss-value.sh …`, `~/.oss/bin/oss-decrypt …`). `source … && u=$(oss_api_url) && …` is correct shell, but it makes Claude Code ask for approval on every /oss command (R5-1); `commands/__tests__/no-compound-commands.test.sh` catches it. New wrapper behaviour goes into a verb of `oss-value.sh` (here `keycheck` and `api <endpoint>`), never into an inline pipeline. Run `commands/__tests__/*.test.sh` too, not only `hooks/` and `__tests__/`.
+
+## 2026-10-26 | Testing | release-channels
+- **Context:** build
+- **Insight:** In a test harness, `VAR=value` produced by an array expansion (`${extra[@]} cmd`) is NOT an assignment: the hook never saw the variable, and a "calls nothing" row passed vacuously. Pass such pairs through `env "${extra[@]}" cmd`. Also, in `hooks/__tests__/oss-value.test.sh` a later section replaces the `$T/sbin/curl` stub with one that does not record stdin; any new section that asserts on `curl.stdin` must install its own stub.

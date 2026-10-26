@@ -654,6 +654,44 @@ ove "$NLD" error cmd:build
     && pass "24: error from that folder lands in that folder's .oss, not the repo's" \
     || fail "24: error from that folder lands in that folder's .oss, not the repo's" "rc=$RC err=$ERR"
 
+# --- 25. keycheck and api: the wrappers' API calls as ONE allowlisted command (release channels T7/T8) ---
+# Every /oss wrapper checks the key and calls the API through oss-value.sh (allowlisted: no approval prompt,
+# R5-1). keycheck says only WHETHER a key is configured (never the key: follow-up #44). api sends a GET to
+# one of a fixed set of endpoints at the API the config names (oss_api_url), with the key on curl's stdin.
+# Section 22's stub records curl's stdin; a later section replaced it, so put it back for these rows.
+printf '#!/bin/sh\necho "curl $*" >> "%s/sb.calls"\ncase " $* " in *" --config - "*) cat > "%s/curl.stdin" ;; esac\ncat "%s/curl.out"\n' "$T" "$T" "$T" > "$T/sbin/curl"; chmod +x "$T/sbin/curl"
+setup_act; printf '{"apiKey":"ossk_keycheck_1"}\n' > "$H/.oss/config.json"; ovs "$R" keycheck
+[[ "$RC" == 0 && "$OUT" == "API key configured" && "$OUT$ERR" != *ossk_keycheck_1* ]] \
+    && pass "25: keycheck says a key is configured and never prints it" || fail "25: keycheck says a key is configured" "rc=$RC out='$OUT' err=$ERR"
+setup_act; rm -f "$H/.oss/config.json"; ovs "$R" keycheck
+[[ "$RC" == 1 && -z "$OUT" ]] && pass "25: keycheck without a key prints nothing and fails" || fail "25: keycheck without a key" "rc=$RC out='$OUT'"
+for ep in auth/verify workflows prompts/claude-md; do
+    setup_act; printf '{"ok":true}\n200\n' > "$T/curl.out"; printf '{"apiKey":"ossk_api_1"}\n' > "$H/.oss/config.json"; ovs "$R" api "$ep"
+    [[ "$RC" == 0 && "$(sbcalls)" == *"https://one-shot-ship-api.onrender.com/api/v1/$ep"* && "$(sbcalls)" != *ossk_api_1* \
+       && "$(cat "$T/curl.stdin" 2>/dev/null)" == *"Authorization: Bearer ossk_api_1"* && "$OUT" == *'"ok":true'* ]] \
+        && pass "25: api $ep calls the production API by default, key on stdin, and prints the answer" \
+        || fail "25: api $ep calls the API with the key on stdin" "rc=$RC calls=$(sbcalls) stdin=$(cat "$T/curl.stdin" 2>&1) out='$OUT' err=$ERR"
+done
+setup_act; printf '{"ok":true}\n200\n' > "$T/curl.out"; printf '{"apiKey":"ossk_api_2","apiUrl":"http://127.0.0.1:9"}\n' > "$H/.oss/config.json"; ovs "$R" api auth/verify
+[[ "$RC" == 0 && "$(sbcalls)" == *"http://127.0.0.1:9/api/v1/auth/verify"* && "$(sbcalls)" != *onrender.com* ]] \
+    && pass "25: api calls the API the config names (apiUrl), never production" || fail "25: api follows apiUrl" "rc=$RC calls=$(sbcalls)"
+setup_act; printf '{"apiKey":"ossk_api_3","apiUrl":"http://api.example.com"}\n' > "$H/.oss/config.json"; ovs "$R" api auth/verify
+[[ "$RC" == 1 && -z "$(sbcalls)" ]] && pass "25: api with an invalid apiUrl calls nothing" || fail "25: api with an invalid apiUrl calls nothing" "rc=$RC calls=$(sbcalls)"
+for ep in subscription/status 'auth/verify?x=1' ../admin prompts/agents/x ''; do
+    setup_act; printf '{"apiKey":"ossk_api_4"}\n' > "$H/.oss/config.json"; ovs "$R" api "$ep"
+    [[ "$RC" == 1 && -z "$OUT" && -z "$(sbcalls)" ]] && pass "25: api refuses endpoint '$ep' (not in the fixed set), calls nothing" \
+        || fail "25: api refuses endpoint '$ep'" "rc=$RC out='$OUT' calls=$(sbcalls)"
+done
+setup_act; printf '{"ok":true}\n200\n' > "$T/curl.out"; printf '{"apiKey":"ossk_api_5"}\n' > "$H/.oss/config.json"; echo ideate > "$VD/workflow.txt"; ovs "$R" api workflow
+[[ "$RC" == 0 && "$(sbcalls)" == *"/api/v1/workflows/ideate"* && ! -e "$VD/workflow.txt" ]] \
+    && pass "25: api workflow fetches the workflow named in workflow.txt and deletes the file" || fail "25: api workflow" "rc=$RC calls=$(sbcalls) err=$ERR"
+for v in '../x' 'a b' 'Build' '$(touch PWNED)'; do
+    setup_act; printf '{"apiKey":"ossk_api_6"}\n' > "$H/.oss/config.json"; printf '%s\n' "$v" > "$VD/workflow.txt"; ovs "$R" api workflow
+    if pwned; then fail "25: api workflow refuses '$v'" "something ran"
+    elif [[ "$RC" != 1 || -n "$(sbcalls)" ]]; then fail "25: api workflow refuses '$v'" "rc=$RC calls=$(sbcalls)"
+    else pass "25: api workflow refuses name '$v', calls nothing"; fi
+done
+
 echo
 echo "Results: $((RUN - FAILED))/$RUN passed, $FAILED failed"
 [[ "$FAILED" == 0 ]]

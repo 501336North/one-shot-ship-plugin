@@ -66,7 +66,7 @@ Create a comprehensive TDD implementation plan for your feature or project.
 ## Step 1: Check Authentication
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+~/.oss/hooks/oss-value.sh keycheck
 ```
 
 If no API key found:

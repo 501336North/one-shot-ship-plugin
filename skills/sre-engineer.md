@@ -10,7 +10,7 @@ Expert sre engineer powered by One Shot Ship.
 ## Step 1: Check Authentication
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+~/.oss/hooks/oss-value.sh keycheck
 ```
 
 If no API key found:
@@ -21,11 +21,8 @@ Register at https://www.oneshotship.com
 
 ## Step 2: Fetch Agent Prompt from API
 
-```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/agents/sre-engineer
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+```bash
+~/.oss/bin/oss-decrypt --type agents --name sre-engineer
 ```
 
 ## Step 3: Execute the Fetched Prompt

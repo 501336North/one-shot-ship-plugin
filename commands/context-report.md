@@ -56,7 +56,7 @@ Auto-generate a structured report documenting what was built, why, and what it a
 ## Step 1: Check Authentication
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+~/.oss/hooks/oss-value.sh keycheck
 ```
 
 If no API key found:

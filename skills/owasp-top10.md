@@ -7,11 +7,8 @@ model: opus
 
 ## Fetch from API
 
-```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/skills/owasp-top10
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+```bash
+~/.oss/bin/oss-decrypt --type skills --name owasp-top10
 ```
 
 This skill provides comprehensive guidance on preventing OWASP Top 10 vulnerabilities:

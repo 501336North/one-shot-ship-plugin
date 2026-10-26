@@ -6,11 +6,8 @@ description: RESTful API design best practices
 
 ## Fetch from API
 
-```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/skills/rest-best-practices
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+```bash
+~/.oss/bin/oss-decrypt --type skills --name rest-best-practices
 ```
 
 This skill provides comprehensive guidance on REST API design:

@@ -6,11 +6,8 @@ description: London-style TDD methodology (Outside-In, Mockist)
 
 ## Fetch from API
 
-```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/skills/london-tdd
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+```bash
+~/.oss/bin/oss-decrypt --type skills --name london-tdd
 ```
 
 This skill provides comprehensive guidance on London-style Test-Driven Development including:

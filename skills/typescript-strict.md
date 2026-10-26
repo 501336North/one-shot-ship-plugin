@@ -6,11 +6,8 @@ description: TypeScript strict mode and type safety patterns
 
 ## Fetch from API
 
-```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/skills/typescript-strict
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+```bash
+~/.oss/bin/oss-decrypt --type skills --name typescript-strict
 ```
 
 This skill provides comprehensive guidance on TypeScript strict mode including:

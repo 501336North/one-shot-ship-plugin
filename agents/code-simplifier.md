@@ -39,7 +39,7 @@ If `useProxy` is false or check unavailable, proceed with native Claude executio
 ## Step 1: Check Authentication
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+~/.oss/hooks/oss-value.sh keycheck
 ```
 
 If no API key found, inform the user:
@@ -50,13 +50,10 @@ Register at https://www.oneshotship.com
 
 ## Step 2: Fetch Agent Prompt
 
-Use WebFetch to get the expert prompt:
+Fetch and decrypt the expert prompt (checked against the signed manifest; it comes from the API your OSS config names):
 
-```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/agents/code-simplifier
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+```bash
+~/.oss/bin/oss-decrypt --type agents --name code-simplifier
 ```
 
 ## Step 2.5: Local-Model Offload (opt-in, config-gated)

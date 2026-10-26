@@ -8,7 +8,7 @@ description: Build ETL pipelines, data warehouses, and streaming architectures. 
 ## Step 1: Check Authentication
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+~/.oss/hooks/oss-value.sh keycheck
 ```
 
 If no API key found, inform the user:
@@ -19,13 +19,10 @@ Register at https://www.oneshotship.com
 
 ## Step 2: Fetch Agent Prompt
 
-Use WebFetch to get the expert prompt:
+Fetch and decrypt the expert prompt (checked against the signed manifest; it comes from the API your OSS config names):
 
-```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/agents/data-engineer
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+```bash
+~/.oss/bin/oss-decrypt --type agents --name data-engineer
 ```
 
 ## Step 3: Execute the Fetched Prompt

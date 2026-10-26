@@ -39,7 +39,7 @@ if [[ ! -f "$_OV_HERE/oss-safe-path.sh" ]]; then
 fi
 source "$_OV_HERE/oss-safe-path.sh"
 
-_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args>" >&2; exit 2; }
+_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args> | keycheck | api auth/verify|workflows|prompts/claude-md|workflow" >&2; exit 2; }
 
 _OV_RUN="$HOME/.oss/run"
 
@@ -220,6 +220,26 @@ _ov_cmd_error() {
     && rm -f "$_OV_DIR/message.txt" "$_OV_DIR/hint.txt" "$_OV_DIR/error.txt"
 }
 
+# keycheck: says whether the OSS config holds an API key, never the key itself (follow-up #44).
+_ov_cmd_keycheck() {
+    source "$_OV_HERE/oss-api-curl.sh" && oss_api_key >/dev/null && echo "API key configured"
+}
+
+# api <endpoint>: GET one endpoint of a fixed set at the API the OSS config names (oss_api_url), the key on
+# curl's stdin (oss_api_curl); prints the answer. `api workflow` fetches workflows/<name>, the name from
+# workflow.txt. One allowlisted command, so a wrapper's API call asks no approval (R5-1).
+_ov_cmd_api() {
+    local e u k
+    case "$#:${1:-}" in
+        1:auth/verify|1:workflows|1:prompts/claude-md) e=$1 ;;
+        1:workflow) _ov_dir && _ov_get workflow && e="workflows/$_OV_VAL" ;;
+        *) false ;;
+    esac || { echo "oss-value: api: refused (not auth/verify, workflows, prompts/claude-md or workflow, or workflow.txt missing or not a valid name)" >&2; return 1; }
+    source "$_OV_HERE/oss-api-curl.sh" && u=$(oss_api_url) && k=$(oss_api_key) \
+    || { echo "oss-value: api: refused (no API key, or apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment)" >&2; return 1; }
+    oss_api_curl "$k" -s -m 30 "$u/api/v1/$e"
+}
+
 [[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0   # sourced (oss-login.sh): the functions only, no verb
 case "${1:-}" in
     dir) _ov_cmd_dir ;;
@@ -231,5 +251,7 @@ case "${1:-}" in
     decrypt) shift; _ov_cmd_decrypt "$@" ;;
     models-set) _ov_cmd_models_set ;;
     cli) shift; _ov_cmd_cli "$@" ;;
+    keycheck) _ov_cmd_keycheck ;;
+    api) shift; _ov_cmd_api "$@" ;;
     *) _ov_usage ;;
 esac

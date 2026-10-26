@@ -6,11 +6,8 @@ description: Mocking patterns for London TDD (ts-mockito, Jest, Vitest)
 
 ## Fetch from API
 
-```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/skills/mocking-patterns
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+```bash
+~/.oss/bin/oss-decrypt --type skills --name mocking-patterns
 ```
 
 This skill provides comprehensive guidance on mocking including:

@@ -59,7 +59,7 @@ View and manage your team's customizable workflow configuration.
 ## Step 1: Check Authentication
 
 ```bash
-source ~/.oss/hooks/oss-api-curl.sh && oss_api_key >/dev/null && echo "API key configured"
+~/.oss/hooks/oss-value.sh keycheck
 ```
 
 If no API key found:
@@ -73,7 +73,7 @@ Register at https://www.oneshotship.com
 Call the workflows endpoint of the API your config names; the key goes to curl on stdin, never into this conversation or a command line:
 
 ```bash
-source ~/.oss/hooks/oss-api-curl.sh && u=$(oss_api_url) && k=$(oss_api_key) && oss_api_curl "$k" -s -m 30 "$u/api/v1/workflows"
+~/.oss/hooks/oss-value.sh api workflows
 ```
 
 Response:
@@ -112,17 +112,13 @@ Dashboard: https://www.oneshotship.com/dashboard
 
 ## Step 4: Show Specific Workflow (Optional)
 
-If a workflow name is provided, fetch and display its configuration. The name reaches the shell through the value folder: run `~/.oss/hooks/oss-value.sh dir`, use the Write tool to write the name alone to `workflow.txt` in the folder it printed, then run:
+If a workflow name is provided, fetch and display its configuration. The name reaches the shell through the value folder: run `~/.oss/hooks/oss-value.sh dir`, use the Write tool to write the name alone to `workflow.txt` in the folder it printed, then run this one call. It reads the name, deletes the file, and fetches that workflow from the API your OSS config names (the key goes to curl on stdin, never into this conversation or a command line):
 
 ```bash
-~/.oss/hooks/oss-value.sh read workflow
+~/.oss/hooks/oss-value.sh api workflow
 ```
 
-It prints the name only when it is valid (lower case, digits, `_ . : -`) and deletes the file; if it prints nothing, tell the user the name is not valid and stop. Fetch with `$WORKFLOW` below replaced by exactly the name it printed:
-
-```bash
-source ~/.oss/hooks/oss-api-curl.sh && u=$(oss_api_url) && k=$(oss_api_key) && oss_api_curl "$k" -s -m 30 "$u/api/v1/workflows/$WORKFLOW"
-```
+If it refuses (the name is not lower case, digits, `_ . : -`), tell the user the name is not valid and stop.
 
 Display the decrypted configuration:
 

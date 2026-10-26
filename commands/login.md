@@ -162,7 +162,7 @@ This script is the **only** writer of the IRON LAWS block. Do not write, copy or
 Run this one call; the key goes to curl on stdin, never into this conversation or a command line:
 
 ```bash
-source ~/.oss/hooks/oss-api-curl.sh && u=$(oss_api_url) && k=$(oss_api_key) && oss_api_curl "$k" -s -m 30 "$u/api/v1/prompts/claude-md"
+~/.oss/hooks/oss-value.sh api prompts/claude-md
 ```
 
 Remove the placeholder line `<!-- IRON LAWS will be injected here by /oss:login -->` from the template. The block from 4.1 replaces it; never inject the laws into the template.

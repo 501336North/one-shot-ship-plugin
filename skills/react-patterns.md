@@ -6,11 +6,8 @@ description: Modern React patterns (hooks, compound components)
 
 ## Fetch from API
 
-```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/skills/react-patterns
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+```bash
+~/.oss/bin/oss-decrypt --type skills --name react-patterns
 ```
 
 This skill provides comprehensive guidance on modern React including:
