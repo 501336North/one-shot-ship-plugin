@@ -114,5 +114,9 @@ jobs:
             artifacts/oss-decrypt-Linux-x64.sha256/oss-decrypt-Linux-x64.sha256
             artifacts/oss-decrypt-Linux-arm64.sha256/oss-decrypt-Linux-arm64.sha256
           generate_release_notes: true
+          # Beta CLI (tag version with a pre-release part, e.g. cli-decrypt-v1.3.0-beta.1): a pre-release that
+          # never takes "Latest" (release channels ADR-005; the 2026-06-28 "Latest" incident). Stable: unchanged.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.ref_name, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
