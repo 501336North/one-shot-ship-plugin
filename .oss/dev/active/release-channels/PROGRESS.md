@@ -1,24 +1,29 @@
 # Progress: Release channels (DEV / STAGING / PROD)
 
-## Current Phase: build
+## Current Phase: build (all code tasks done; gated steps pending)
 
 ## Tasks
 - [x] Ideate, requirements, ADR-004/005, plan, acceptance (2026-10-26)
-- [x] T1: `next` pushed in plugin + API repos (2026-10-26)
-- [x] T2: repo notes, plugin b6ee7f6 / API c9e3e5e (2026-10-26)
-- [x] T2b: API CI runs on next, c9e3e5e (2026-10-26)
-- [x] T4: 5 hooks follow apiUrl, b7103b1 (2026-10-26)
-- [x] T5: changelog, check-updates, login, retired session-start variants; OSS_MANIFEST_URL removed, 14dc24b (2026-10-26)
-- [x] T6: watcher reader + key senders (#45, #47), da04064/f2c7c7c/8b7e8fb, merged e7d807d (2026-10-26)
-- [x] T7: command API calls, ddbce5b; corrected in 5f56c16 (allowlisted `oss-value.sh api` verbs, R5-1)
-- [x] T8: 95/99 prompt fetches via oss-decrypt, keycheck in 151 files (#44), ideate template fix, 5f56c16 (2026-10-26)
-- [ ] T8 remainder: performance-auditor + visionos-developer (and skill twins). Waits for API PR #389 to reach next
-- [ ] T9: API prompt integrity hotfix. PR #389 into API main (CI green; re-running after main moved). Maintainer authorised the merge.
-- [x] T10: oss-decrypt picks the manifest key by address (branch feat/release-channels/build-t10); staging key is a fail-closed placeholder until T11 (2026-10-26)
-- [ ] T3 ratchet (prod literal allowlist), T11–T20 (pending)
-- [ ] H1–H3 bring-up (pending; H1 needs go-ahead + cost)
+- [x] T1 `next` in both repos; T2 repo notes; T2b API CI on next (API PR #391, open for review)
+- [x] T3 literal ratchet, 7651a0e
+- [x] T4/T5 hooks follow apiUrl, b7103b1 / 14dc24b
+- [x] T6 watcher reader + key senders (#45, #47), merged e7d807d
+- [x] T7 command API calls via allowlisted `oss-value.sh api` / `keycheck` (5f56c16)
+- [x] T8 99/99 prompt fetches via oss-decrypt, key never printed (#44), 5f56c16 + b1158f7. visionOS RAG carded (FOLLOWUPS)
+- [x] T9 API prompt-integrity hotfix: #389 merged to main (0917b32), synced to next #390, verified live
+- [x] T10 signing key by address in oss-decrypt (T10 branch merged; staging key is a fail-closed placeholder)
+- [x] T12 /oss:trust allowlist names the staging host, 2bd8edd
+- [x] T13 beta CLI = pre-release, never Latest, 62624f3
+- [x] T14 status line `⚠ STAGING` + mismatch warnings, 910d38d (acceptance 5/5)
+- [x] T15 render.yaml staging service, T16 per-environment manifest signing, T18 oss-channel.sh (API branch feat/release-channels/build-t15-t18)
+- [x] T19 SemVer version gate, 01dfe1e
+- [x] T20 release template + RELEASING.md (plugin 292b999, API 9fe787b)
+- [ ] T11 staging signing key: maintainer generates; public half -> packages/cli-decrypt/src/manifest-keys.ts STAGING_MANIFEST_PUBLIC_KEY
+- [ ] T17 beta marketplace repo 501336North/one-shot-ship-plugin-beta: needs go-ahead to create
+- [ ] H1 Render staging service + DB + Stripe test keys: needs go-ahead + cost
+- [ ] H2 switch to beta and run the workflow on STAGING; H3 acceptance sign-off
 
 ## Blockers
 - None. Gated steps: T11 (staging key), T17 (beta repo), H1 (Render/DB).
 
-## Last Updated: 2026-10-26 17:55 CST by typescript-pro (T10)
+## Last Updated: 2026-10-26 by /oss:build
