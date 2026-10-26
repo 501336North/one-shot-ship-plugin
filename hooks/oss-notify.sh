@@ -2,17 +2,12 @@
 # oss-notify.sh - Unified notification hook for OSS Dev Workflow
 #
 # Usage (direct):
-#   oss-notify.sh "Title" "Message" [priority]
+#   oss-notify.sh "Title" "Message"
 #
 # Usage (with copy service):
 #   oss-notify.sh --workflow <command> <event> [context-json]
 #   oss-notify.sh --session <event> [context-json]
 #   oss-notify.sh --issue <type> [context-json]
-#
-# Priority levels:
-#   low      - Command start, agent spawn
-#   high     - Command complete, PR created (default)
-#   critical - Command failed, loop detected
 #
 # Respects settings from ~/.oss/settings.json
 
@@ -127,42 +122,30 @@ COPY_ARGS=()
 TITLE=""
 MESSAGE=""
 SUBTITLE=""
-PRIORITY="high"
 
 if [[ "${1:-}" == "--workflow" ]]; then
     USE_COPY_SERVICE=true
     COPY_TYPE="workflow"
     COPY_ARGS=("${@:2}")
-    # Map command events to priorities and icons
-    # NOTE: start is HIGH so users see when commands begin (per verbosity=important)
     CMD="${2:-}"
-    EVENT="${3:-start}"
     # The name reaches file paths (oss-log.sh <name>.log), analytics JSON and chain-trigger:
     # anything but a plain command name (e.g. build/../ship) is refused before any of them.
     if ! oss_valid_workflow_name "$CMD" 2>/dev/null; then
         echo "oss-notify: invalid workflow name refused (must match ^[a-z][a-z0-9-]{0,40}\$)" >&2
         exit 0
     fi
-    case "$EVENT" in
-        task_complete) PRIORITY="low" ;;
-        start|complete|quality_passed|pr_created|merged) PRIORITY="high" ;;
-        failed) PRIORITY="critical" ;;
-    esac
 elif [[ "${1:-}" == "--session" ]]; then
     USE_COPY_SERVICE=true
     COPY_TYPE="session"
     COPY_ARGS=("${@:2}")
-    PRIORITY="high"
 elif [[ "${1:-}" == "--issue" ]]; then
     USE_COPY_SERVICE=true
     COPY_TYPE="issue"
     COPY_ARGS=("${@:2}")
-    PRIORITY="critical"
 else
-    # Direct usage: oss-notify.sh "Title" "Message" [priority]
+    # Direct usage: oss-notify.sh "Title" "Message"
     TITLE="${1:-Notification}"
     MESSAGE="${2:-}"
-    PRIORITY="${3:-high}"
 fi
 
 # =============================================================================
@@ -212,43 +195,21 @@ SETTINGS_FILE=~/.oss/settings.json
 if [[ -f "$SETTINGS_FILE" ]]; then
     if command -v jq &>/dev/null; then
         STYLE=$(jq -r '.notifications.style // "visual"' "$SETTINGS_FILE" 2>/dev/null || echo "visual")
-        VERBOSITY=$(jq -r '.notifications.verbosity // "important"' "$SETTINGS_FILE" 2>/dev/null || echo "important")
         VOICE=$(jq -r '.notifications.voice // "Samantha"' "$SETTINGS_FILE" 2>/dev/null || echo "Samantha")
         SOUND=$(jq -r '.notifications.sound // "Glass"' "$SETTINGS_FILE" 2>/dev/null || echo "Glass")
     else
         STYLE=$(grep -o '"style"[[:space:]]*:[[:space:]]*"[^"]*"' "$SETTINGS_FILE" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || echo "visual")
-        VERBOSITY=$(grep -o '"verbosity"[[:space:]]*:[[:space:]]*"[^"]*"' "$SETTINGS_FILE" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || echo "important")
         VOICE=$(grep -o '"voice"[[:space:]]*:[[:space:]]*"[^"]*"' "$SETTINGS_FILE" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || echo "Samantha")
         SOUND=$(grep -o '"sound"[[:space:]]*:[[:space:]]*"[^"]*"' "$SETTINGS_FILE" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || echo "Glass")
     fi
 else
     STYLE="visual"
-    VERBOSITY="important"
     VOICE="Samantha"
     SOUND="Glass"
 fi
 
 # =============================================================================
-# Filter by verbosity (only affects notifications, not state updates)
-# =============================================================================
-
-SKIP_NOTIFICATION=false
-case "$VERBOSITY" in
-    "errors-only")
-        [[ "$PRIORITY" != "critical" ]] && SKIP_NOTIFICATION=true
-        ;;
-    "important")
-        [[ "$PRIORITY" == "low" ]] && SKIP_NOTIFICATION=true
-        ;;
-    # "all" - allow everything through
-esac
-
-# Skip notification if style is none
-[[ "$STYLE" == "none" ]] && SKIP_NOTIFICATION=true
-
-# =============================================================================
 # Update workflow state (for Claude Code status line)
-# NOTE: This runs BEFORE notification filtering - state always updates
 # =============================================================================
 
 if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
