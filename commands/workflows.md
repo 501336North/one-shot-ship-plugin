@@ -59,7 +59,7 @@ View and manage your team's customizable workflow configuration.
 ## Step 1: Check Authentication
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+source ~/.oss/hooks/oss-api-curl.sh && oss_api_key >/dev/null && echo "API key configured"
 ```
 
 If no API key found:
@@ -70,13 +70,10 @@ Register at https://www.oneshotship.com
 
 ## Step 2: Fetch Workflow List
 
-Call the workflows API endpoint to get the list:
+Call the workflows endpoint of the API your config names; the key goes to curl on stdin, never into this conversation or a command line:
 
-```http
-URL: https://one-shot-ship-api.onrender.com/api/v1/workflows
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+```bash
+source ~/.oss/hooks/oss-api-curl.sh && u=$(oss_api_url) && k=$(oss_api_key) && oss_api_curl "$k" -s -m 30 "$u/api/v1/workflows"
 ```
 
 Response:
@@ -123,11 +120,8 @@ If a workflow name is provided, fetch and display its configuration. The name re
 
 It prints the name only when it is valid (lower case, digits, `_ . : -`) and deletes the file; if it prints nothing, tell the user the name is not valid and stop. Fetch with `$WORKFLOW` below replaced by exactly the name it printed:
 
-```http
-URL: https://one-shot-ship-api.onrender.com/api/v1/workflows/$WORKFLOW
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+```bash
+source ~/.oss/hooks/oss-api-curl.sh && u=$(oss_api_url) && k=$(oss_api_key) && oss_api_curl "$k" -s -m 30 "$u/api/v1/workflows/$WORKFLOW"
 ```
 
 Display the decrypted configuration:
