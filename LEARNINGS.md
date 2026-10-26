@@ -139,3 +139,11 @@
 ## 2026-10-23 | Security | hooks/ensure-decrypt-cli.sh
 - **Context:** build (decrypt-version-source PR 2)
 - **Insight:** Never put text read from a file into bash `$(( ))` before checking it is digits only: arithmetic evaluates names and `a[$(cmd)]`, so a stamp file becomes command execution. Also: raising a version floor forces every existing user through the download path; make that path fail soft when a working binary exists (but never on a hash mismatch), cap the whole upgrade below the caller's timeout (small file first, binary gets the rest), and back off after a failure, or slow and offline users lose the tool.
+
+## 2026-10-26 | Planning | release-channels
+- **Context:** plan
+- **Insight:** The `URL:` WebFetch steps in agents/skills/commands are live calls, not documentation, and the API routes they hit return ENCRYPTED JSON, so the model gets ciphertext. The type/name comes from each file's URL, not its filename (e.g. `skills/build.md` fetches `prompts/workflows/build`). Probe with `oss-decrypt --type <t> --name <n>` before converting: on 2026-10-26, `agents/performance-auditor` and `agents/visionos-developer` failed the integrity check on production.
+
+## 2026-10-26 | Planning | release-channels
+- **Context:** plan
+- **Insight:** The plan's archive step matches `Current Phase:.*(ship|complete)` anywhere on the line, so "ideate (complete) → next: plan" archives a live feature. Keep the word "complete" out of PROGRESS phase lines until the feature ships.
