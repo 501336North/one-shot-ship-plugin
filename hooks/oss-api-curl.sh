@@ -9,6 +9,10 @@
 # Callers therefore cannot use curl's stdin for anything else (e.g. `-d @-`).
 # Returns 2 without calling curl if the key is empty or contains a line break.
 
+# The production API: the address every call uses when the OSS config names none (also read by the status
+# line to tell production from STAGING; the ratchet allows the literal only here, in the CLI and in the watcher).
+OSS_API_DEFAULT_URL="https://one-shot-ship-api.onrender.com"
+
 oss_api_curl() {
     local key="${1:-}"
     shift
@@ -59,7 +63,7 @@ oss_api_url() {
                      elif (.apiUrl | test("[^!-~]")) then "!"
                      else .apiUrl end' "$(oss_config_file)" 2>/dev/null)
     fi
-    [[ -n "$url" ]] || url="https://one-shot-ship-api.onrender.com"
+    [[ -n "$url" ]] || url="$OSS_API_DEFAULT_URL"
     [[ "$url" =~ $https || "$url" =~ $loopback ]] || return 1
     hostport=${url#*://}
     hostport=${hostport%%/*}

@@ -1,0 +1,64 @@
+#!/bin/bash
+# The status line says which swimlane this session is in (release channels US-005).
+#
+# @behavior The first section of the status line names the channel from the API address actually in use
+#           (oss_api_url, the same rule every call follows) and the plugin's version:
+#             production + stable plugin   -> no channel section (customers see no change)
+#             staging/localhost + beta     -> "⚠ STAGING"
+#             staging/localhost + stable   -> "⚠ STAGING" and a mismatch warning
+#             production + beta plugin     -> a mismatch warning (never the word STAGING)
+#             invalid apiUrl               -> "⚠ apiUrl invalid" (never STAGING, never blank)
+# @business-rule The maintainer must never confuse testing with real work, and a half-switched machine
+#           (plugin from one channel, API of the other) must be visible at a glance.
+#
+# Usage: ./hooks/__tests__/statusline-channel.test.sh
+set -uo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PROD="https://one-shot-ship-api.onrender.com"
+STAGING="https://one-shot-ship-api-staging.onrender.com"
+RUN=0; FAILED=0
+pass() { echo "✓ PASS: $1"; RUN=$((RUN + 1)); }
+fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
+
+# line <apiUrl or ""> <plugin version>: the rendered status line for that config and plugin.
+line() {
+    local sb; sb="$(mktemp -d)"; mkdir -p "$sb/home/.oss" "$sb/plugin/.claude-plugin"
+    if [[ -n "$1" ]]; then printf '{"apiKey":"k","apiUrl":"%s"}' "$1" > "$sb/home/.oss/config.json"
+    else printf '{"apiKey":"k"}' > "$sb/home/.oss/config.json"; fi
+    printf '{"name":"oss","version":"%s"}' "$2" > "$sb/plugin/.claude-plugin/plugin.json"
+    printf '%s\n' "$sb/plugin" > "$sb/home/.oss/plugin-root"
+    (cd "$sb" && printf '{}' | env -u CLAUDE_PLUGIN_ROOT -u OSS_CONFIG_DIR HOME="$sb/home" \
+        perl -e 'alarm 20; exec @ARGV' bash "$ROOT/hooks/oss-statusline.sh" 2>/dev/null)
+    rm -rf "$sb"
+}
+first_section() { printf '%s\n' "${1%% | *}"; }
+
+l=$(line "" 2.0.94)
+if [[ -n "$l" && "$l" != *STAGING* && "$l" != *mismatch* && "$l" != *"apiUrl invalid"* ]]; then pass "production + stable: no channel section"
+else fail "production + stable: no channel section" "got '$l'"; fi
+
+l=$(line "$STAGING" 2.1.0-beta.1)
+if [[ "$(first_section "$l")" == "⚠ STAGING" ]]; then pass "staging + beta: the first section is '⚠ STAGING'"
+else fail "staging + beta: the first section is '⚠ STAGING'" "got '$l'"; fi
+
+for lb in "http://localhost:3001" "http://127.0.0.1:9" "http://[::1]:8080"; do
+    l=$(line "$lb" 2.1.0-beta.1)
+    if [[ "$(first_section "$l")" == *STAGING* ]]; then pass "localhost ($lb) + beta: shows STAGING"
+    else fail "localhost ($lb) + beta: shows STAGING" "got '$l'"; fi
+done
+
+l=$(line "$STAGING" 2.0.94)
+if [[ "$(first_section "$l")" == *STAGING* && "$(first_section "$l")" == *mismatch* ]]; then pass "staging + stable plugin: STAGING and a mismatch warning"
+else fail "staging + stable plugin: STAGING and a mismatch warning" "got '$l'"; fi
+
+l=$(line "$PROD" 2.1.0-beta.1)
+if [[ "$(first_section "$l")" == *mismatch* && "$l" != *STAGING* ]]; then pass "production + beta plugin: a mismatch warning, never STAGING"
+else fail "production + beta plugin: a mismatch warning, never STAGING" "got '$l'"; fi
+
+l=$(line "http://api.example.com" 2.1.0-beta.1)
+if [[ "$(first_section "$l")" == "⚠ apiUrl invalid" && "$l" != *STAGING* ]]; then pass "invalid apiUrl: '⚠ apiUrl invalid', never STAGING"
+else fail "invalid apiUrl: '⚠ apiUrl invalid', never STAGING" "got '$l'"; fi
+
+echo ""
+echo "Results: $((RUN - FAILED))/$RUN passed"
+[[ $FAILED -eq 0 ]]

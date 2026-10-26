@@ -438,8 +438,38 @@ is_idle_state() {
 # Section order (minimal idle display):
 #   health | branch | → next | 🚨 critical queue (if any) | notification
 # =============================================================================
+# Channel (release channels): which API this session talks to, from oss_api_url (the rule every call follows),
+# and whether the plugin is a beta build (a version with a pre-release part, e.g. 2.1.0-beta.1).
+# Production + stable plugin: no section, so customers see no change.
+compute_channel() {
+    local helper="" h url ver="" root="" beta=false
+    for h in "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh" "$HOME/.oss/hooks/oss-api-curl.sh"; do
+        [[ -f "$h" ]] && { helper="$h"; break; }
+    done
+    [[ -n "$helper" ]] || return 0
+    # shellcheck source=oss-api-curl.sh
+    source "$helper" 2>/dev/null || return 0
+    root="${CLAUDE_PLUGIN_ROOT:-}"
+    [[ -z "$root" && -f "$HOME/.oss/plugin-root" ]] && root=$(head -n1 "$HOME/.oss/plugin-root" 2>/dev/null)
+    [[ -n "$root" && -f "$root/.claude-plugin/plugin.json" ]] \
+        && ver=$(jq -r '.version // ""' "$root/.claude-plugin/plugin.json" 2>/dev/null)
+    [[ "$ver" == *-* ]] && beta=true
+    if ! url=$(oss_api_url 2>/dev/null); then echo "⚠ apiUrl invalid"; return 0; fi
+    if [[ "$url" == "$OSS_API_DEFAULT_URL" ]]; then
+        $beta && echo "⚠ beta plugin → production API (mismatch)"
+    elif $beta || [[ -z "$ver" ]]; then
+        echo "⚠ STAGING"
+    else
+        echo "⚠ STAGING · stable plugin (mismatch)"
+    fi
+    return 0
+}
+
 build_status_line() {
     local sections=()
+    local channel
+    channel=$(compute_channel)
+    [[ -n "$channel" ]] && sections+=("$channel")   # first: the swimlane must be impossible to miss
 
     # Compute each section
     local health model_project branch workflow agent supervisor queue notification
