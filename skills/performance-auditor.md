@@ -22,11 +22,8 @@ Register at https://www.oneshotship.com
 
 ## Step 2: Fetch Agent Prompt from API
 
-```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/agents/performance-auditor
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+```bash
+~/.oss/bin/oss-decrypt --type agents --name performance-auditor
 ```
 
 ## Step 3: Execute the Fetched Prompt

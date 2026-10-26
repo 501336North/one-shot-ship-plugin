@@ -1,11 +1,11 @@
 ---
 name: visionos-developer
-description: Expert VisionOS/Apple Vision Pro developer with RAG-powered Apple documentation. Use for visionOS apps, RealityKit, ARKit, spatial computing, immersive experiences, hand tracking, and 3D content. Auto-activates when detecting VisionOS-related questions.
+description: Expert VisionOS/Apple Vision Pro developer. Use for visionOS apps, RealityKit, ARKit, spatial computing, immersive experiences, hand tracking, and 3D content. Auto-activates when detecting VisionOS-related questions.
 ---
 
 # VisionOS Developer Agent
 
-Expert spatial computing developer powered by live Apple documentation via RAG.
+Expert spatial computing developer.
 
 ## When This Skill Activates
 
@@ -29,40 +29,23 @@ No API key found. Run: /oss login
 Register at https://www.oneshotship.com
 ```
 
-## Step 2: Extract User Context
+## Step 2: Fetch Agent Prompt
 
-Identify the user's specific VisionOS question or task. This will be used to fetch relevant Apple documentation via RAG.
+Fetch and decrypt the expert prompt (checked against the signed manifest; it comes from the API your OSS config names):
 
-**Example contexts:**
-- "How do I track hands?" → context=hand+tracking+ARKit
-- "Create an immersive space" → context=ImmersiveSpace+visionOS
-- "Add 3D models" → context=RealityKit+ModelEntity
-
-## Step 3: Fetch Agent Prompt with RAG
-
-```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/agents/visionos-developer?context={user_context}
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+```bash
+~/.oss/bin/oss-decrypt --type agents --name visionos-developer
 ```
 
-The API will:
-1. Query Pinecone for relevant Apple documentation
-2. Prepend the RAG context to the expert prompt
-3. Return the enhanced prompt with current API references
+## Step 3: Execute the Prompt
 
-## Step 4: Execute the Enhanced Prompt
-
-Execute the fetched prompt which now includes:
-- Relevant Apple documentation snippets
+Execute the fetched prompt, which includes:
 - Expert VisionOS development patterns
 - Current API signatures and best practices
 
 ## What You Get
 
-The RAG-enhanced visionos-developer agent provides:
-- **Current API knowledge** from 6,500+ Apple docs
+The visionos-developer agent provides:
 - **Correct API signatures** that compile against latest visionOS SDK
 - **Best practices** for spatial computing UX
 - **Production patterns** for ARKit, RealityKit, SwiftUI
@@ -83,6 +66,3 @@ Subscription expired. Upgrade at: https://www.oneshotship.com/pricing
 ```
 API temporarily unavailable. Contact support@oneshotship.com
 ```
-
-### If RAG returns no context
-The agent will still work using the base expert prompt - just without the supplementary documentation.

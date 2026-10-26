@@ -25,7 +25,7 @@ agents/ml-engineer.md	agents	ml-engineer	convert
 agents/mobile-developer.md	agents	mobile-developer	convert
 agents/n8n-automation-specialist.md	agents	n8n-automation-specialist	convert
 agents/nextjs-developer.md	agents	nextjs-developer	convert
-agents/performance-auditor.md	agents	performance-auditor	blocked-by:T9
+agents/performance-auditor.md	agents	performance-auditor	convert
 agents/performance-engineer.md	agents	performance-engineer	convert
 agents/python-pro.md	agents	python-pro	convert
 agents/qa-expert.md	agents	qa-expert	convert
@@ -39,7 +39,7 @@ agents/swift-macos-expert.md	agents	swift-macos-expert	convert
 agents/test-automator.md	agents	test-automator	convert
 agents/test-engineer.md	agents	test-engineer	convert
 agents/typescript-pro.md	agents	typescript-pro	convert
-agents/visionos-developer.md	agents	visionos-developer	blocked-by:T9
+agents/visionos-developer.md	agents	visionos-developer	convert
 skills/ai-engineer.md	agents	ai-engineer	convert
 skills/architecture-auditor.md	agents	architecture-auditor	convert
 skills/backend-architect.md	agents	backend-architect	convert
@@ -75,7 +75,7 @@ skills/mocking-patterns.md	skills	mocking-patterns	convert
 skills/monitor.md	workflows	monitor	convert
 skills/nextjs-developer.md	agents	nextjs-developer	convert
 skills/owasp-top10.md	skills	owasp-top10	convert
-skills/performance-auditor.md	agents	performance-auditor	blocked-by:T9
+skills/performance-auditor.md	agents	performance-auditor	convert
 skills/performance-benchmark.md	workflows	performance-benchmark	convert
 skills/performance-engineer.md	agents	performance-engineer	convert
 skills/plan.md	workflows	plan	convert
@@ -96,4 +96,4 @@ skills/test-automator.md	agents	test-automator	convert
 skills/test-engineer.md	agents	test-engineer	convert
 skills/typescript-pro.md	agents	typescript-pro	convert
 skills/typescript-strict.md	skills	typescript-strict	convert
-skills/visionos-developer.md	agents	visionos-developer	blocked-by:T9
+skills/visionos-developer.md	agents	visionos-developer	convert
