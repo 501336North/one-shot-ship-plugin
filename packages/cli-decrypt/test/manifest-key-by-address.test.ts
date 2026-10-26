@@ -129,14 +129,20 @@ describe('the manifest key is chosen by the API address', () => {
   });
 
   it.each([STAGING_API_URL, ...LOOPBACK_ADDRESSES])(
-    'should fail closed for %s while this build has no staging key',
+    'should use the pinned staging key for %s (Task 11)',
     (apiUrl) => {
-      expect(() => publicKeyFor(apiUrl)).toThrow('staging signing key not configured in this build');
+      expect(publicKeyFor(apiUrl)).toBe(PINNED_KEYS.staging);
+      expect(publicKeyFor(apiUrl)).not.toBe(PINNED_KEYS.production);
     }
   );
 
+  it('should fail closed, never falling back to the production key, when a build has no staging key', () => {
+    const noStaging: ManifestKeys = { production: prod.publicKey, staging: 'PLACEHOLDER-NOT-A-KEY' };
+    expect(() => publicKeyFor(STAGING_API_URL, noStaging)).toThrow('staging signing key not configured in this build');
+  });
+
   it('should never hand out the production key for a non-production address', () => {
-    const noStaging: ManifestKeys = { production: prod.publicKey, staging: PINNED_KEYS.staging };
+    const noStaging: ManifestKeys = { production: prod.publicKey, staging: 'PLACEHOLDER-NOT-A-KEY' };
     expect(() => publicKeyFor(STAGING_API_URL, noStaging)).toThrow(/not configured/);
   });
 });

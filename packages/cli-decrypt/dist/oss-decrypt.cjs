@@ -589,7 +589,7 @@ async function fetchManifest(apiUrl, signal) {
 var import_crypto6 = __toESM(require("crypto"), 1);
 var STAGING_API_URL = "https://one-shot-ship-api-staging.onrender.com";
 var PRODUCTION_MANIFEST_PUBLIC_KEY = "MCowBQYDK2VwAyEAAwFG32b8TuiVTxrDnXzNrb2v68YN5U9epLnZ3O7pQaI=";
-var STAGING_MANIFEST_PUBLIC_KEY = "PLACEHOLDER-NOT-A-KEY: staging signing key not generated yet (Task 11)";
+var STAGING_MANIFEST_PUBLIC_KEY = "MCowBQYDK2VwAyEAKLiCuK8jxJRAfaV1bqE5aSeNP+T5pG3r2jFmLb0sfqI=";
 var PINNED_KEYS = {
   production: PRODUCTION_MANIFEST_PUBLIC_KEY,
   staging: STAGING_MANIFEST_PUBLIC_KEY
