@@ -71,7 +71,9 @@ fi
 
 # =============================================================================
 # Version comparison helper
-# Returns 0 if $1 >= $2 (semver), 1 otherwise
+# Returns 0 if $1 >= $2, 1 otherwise. Inputs here are always plain X.Y.Z (the first X.Y.Z of --version, and
+# MINIMUM_VERSION), where `sort -V` is exact. Pre-release versions (2.1.0-beta.1) need hooks/oss-semver.sh instead;
+# this hook does not source it because its ~/.oss/hooks copy must run on its own.
 # =============================================================================
 version_gte() {
     # printf each version on its own line, sort with version-sort, take first
