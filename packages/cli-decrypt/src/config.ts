@@ -52,12 +52,13 @@ function parses(value: string): boolean {
 export function getApiUrl(): string {
   const apiUrl = readConfiguredApiUrl();
   if (apiUrl === undefined || apiUrl === null || apiUrl === '') return DEFAULT_API_URL;
-  if (
-    typeof apiUrl !== 'string' ||
-    !(HTTPS_URL.test(apiUrl) || LOOPBACK_HTTP_URL.test(apiUrl)) ||
-    !parses(apiUrl)
-  ) {
+  if (typeof apiUrl !== 'string' || !isAcceptedApiUrl(apiUrl)) {
     throw new Error(REFUSAL);
   }
   return apiUrl;
+}
+
+/** The one apiUrl rule as a predicate: the https or loopback-http shape, and parses as a URL. */
+export function isAcceptedApiUrl(apiUrl: string): boolean {
+  return (HTTPS_URL.test(apiUrl) || LOOPBACK_HTTP_URL.test(apiUrl)) && parses(apiUrl);
 }
