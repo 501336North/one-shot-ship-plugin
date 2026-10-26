@@ -3,13 +3,12 @@
  * Fetches credentials from API and stores them locally
  */
 
-import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { fetchCredentials } from '../api-client.js';
 import { storeCredentials } from '../storage.js';
 import { getHardwareId } from '../hardware.js';
 import { CacheService } from '../cache.js';
-import { getConfigDir } from '../config.js';
+import { getConfigDir, readConfigFile } from '../config.js';
 import { getTrustedApiOrigin } from '../manifest-keys.js';
 
 /**
@@ -20,34 +19,15 @@ function getCacheDir(): string {
 }
 
 /**
- * Read configuration file
- */
-function readConfig(): { apiKey?: string } {
-  const configPath = join(getConfigDir(), 'config.json');
-
-  if (!existsSync(configPath)) {
-    return {};
-  }
-
-  try {
-    const content = readFileSync(configPath, 'utf8');
-    return JSON.parse(content);
-  } catch {
-    return {};
-  }
-}
-
-/**
  * Run setup - fetch and store credentials
  *
  * @throws Error if API key not configured or API call fails
  */
 export async function setupCommand(): Promise<void> {
   // Read API key from config
-  const config = readConfig();
-  const apiKey = config.apiKey;
+  const apiKey = readConfigFile().apiKey;
 
-  if (!apiKey) {
+  if (typeof apiKey !== 'string' || !apiKey) {
     throw new Error('No API key configured. Run /oss:login first.');
   }
 
