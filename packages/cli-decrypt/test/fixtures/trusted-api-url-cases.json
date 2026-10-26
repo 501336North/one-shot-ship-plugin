@@ -18,10 +18,10 @@
     "why": "production with default port (FR6)"
   },
   {
-    "apiUrl": "HTTPS://ONE-SHOT-SHIP-API.ONRENDER.COM",
+    "apiUrl": "https://ONE-SHOT-SHIP-API.ONRENDER.COM",
     "trusted": true,
     "canonical": "https://one-shot-ship-api.onrender.com",
-    "why": "case-folded scheme and host"
+    "why": "upper-case host (the syntax rule refuses an upper-case scheme)"
   },
   {
     "apiUrl": "https://one-shot-ship-api-staging.onrender.com",
