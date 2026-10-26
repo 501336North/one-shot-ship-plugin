@@ -98,7 +98,7 @@ describe('Chain Trigger CLI', () => {
       );
       fs.writeFileSync(
         pathMod.join(configDir, 'config.json'),
-        JSON.stringify({ apiKey: 'ak_used', apiUrl: 'http://127.0.0.1:9' })
+        JSON.stringify({ apiKey: 'ak_used', apiUrl: 'http://api.example.com' })
       );
       const savedHome = process.env.HOME;
       const savedDir = process.env.OSS_CONFIG_DIR;

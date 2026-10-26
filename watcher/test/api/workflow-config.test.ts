@@ -269,7 +269,7 @@ describe('WorkflowConfigAPI', () => {
       writeConfig(path.join(home, '.oss'), 'https://api.example.com');
       process.env.HOME = home;
       const configDir = createTestDir();
-      writeConfig(configDir, 'http://127.0.0.1:9');
+      writeConfig(configDir, 'http://api.example.com');
       process.env.OSS_CONFIG_DIR = configDir;
       mockFetch.mockResolvedValue(okResponse());
 
@@ -277,9 +277,9 @@ describe('WorkflowConfigAPI', () => {
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
-    it('falls back to the default config without a request when apiUrl is http', async () => {
+    it('falls back to the default config without a request when apiUrl is http to a non-loopback host', async () => {
       const configDir = createTestDir();
-      writeConfig(configDir, 'http://127.0.0.1:9');
+      writeConfig(configDir, 'http://api.example.com');
       process.env.OSS_CONFIG_DIR = configDir;
       mockFetch.mockResolvedValue(okResponse());
 
