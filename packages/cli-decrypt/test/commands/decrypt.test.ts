@@ -66,7 +66,7 @@ describe('Decrypt Command', () => {
     vi.mocked(manifestVerifier.verifyManifestSignature).mockReturnValue(true);
     vi.mocked(integrityPipeline.verifyDecryptedPrompt).mockResolvedValue({
       verified: true,
-      skipped: false,
+      status: 'match',
     });
 
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -156,7 +156,7 @@ describe('Decrypt Command', () => {
     it('should NOT output prompt when prompt hash does not match manifest', async () => {
       vi.mocked(integrityPipeline.verifyDecryptedPrompt).mockResolvedValue({
         verified: false,
-        skipped: false,
+        status: 'mismatch',
       });
 
       await expect(decryptCommand('commands', 'plan')).rejects.toThrow('[SECURITY]');
@@ -169,12 +169,12 @@ describe('Decrypt Command', () => {
       expect(consoleSpy).toHaveBeenCalledWith('Decrypted prompt content!');
     });
 
-    it('should output prompt when manifest is unavailable (graceful degradation)', async () => {
+    // FR3: fail closed. An unavailable manifest blocks the prompt (it used to be delivered unverified).
+    it('should NOT output prompt when manifest is unavailable', async () => {
       vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(null);
 
-      await decryptCommand('commands', 'plan');
-
-      expect(consoleSpy).toHaveBeenCalledWith('Decrypted prompt content!');
+      await expect(decryptCommand('commands', 'plan')).rejects.toThrow('[SECURITY]');
+      expect(consoleSpy).not.toHaveBeenCalledWith('Decrypted prompt content!');
     });
 
     it('should output verification status messages to stderr', async () => {
@@ -197,12 +197,11 @@ describe('Decrypt Command', () => {
       expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('FAILED'));
     });
 
-    it('should show skip message when manifest unavailable', async () => {
+    it('should show a blocked message when manifest unavailable', async () => {
       vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(null);
 
-      await decryptCommand('commands', 'plan');
-
-      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('skipping'));
+      await expect(decryptCommand('commands', 'plan')).rejects.toThrow('[SECURITY]');
+      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('blocked'));
     });
   });
 });

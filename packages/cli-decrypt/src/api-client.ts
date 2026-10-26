@@ -8,7 +8,7 @@
 
 import { join } from 'path';
 import { getConfigDir } from './config.js';
-import { CacheService, validateType, validateName } from './cache.js';
+import { CacheService, validateType, validateName, type EncryptedPromptType, type PlainPromptType } from './cache.js';
 import { stripControl } from './strip-control.js';
 
 /**
@@ -137,7 +137,7 @@ export async function fetchCredentials(
 export async function fetchEncryptedPrompt(
   apiKey: string,
   apiUrl: string,
-  type: 'commands' | 'workflows' | 'skills' | 'agents' | 'hooks' | 'custom',
+  type: EncryptedPromptType,
   name: string
 ): Promise<EncryptedPromptResponse> {
   validateType(type);
@@ -225,4 +225,41 @@ export async function fetchCustomPrompt(
   }
 
   return response.json() as Promise<CustomPromptResponse>;
+}
+
+/**
+ * Fetch a plaintext prompt resource: IRON LAWS (`shared/<name>`) or the CLAUDE.md template (`templates/claude-md`).
+ * The API serves both as raw markdown at GET /api/v1/prompts/shared/:name and GET /api/v1/prompts/claude-md;
+ * there is no route for any other template. The caller verifies the text against the signed manifest.
+ *
+ * @throws Error for a template the API does not serve (before any request), or on a failed request
+ */
+export async function fetchPlainPrompt(
+  apiKey: string,
+  apiUrl: string,
+  type: PlainPromptType,
+  name: string
+): Promise<string> {
+  validateName(name);
+  let endpoint: string;
+  if (type === 'templates') {
+    if (name !== 'claude-md') throw new Error('Unknown template: the API serves only claude-md.');
+    endpoint = `${apiUrl}/api/v1/prompts/claude-md`;
+  } else {
+    endpoint = `${apiUrl}/api/v1/prompts/shared/${encodeURIComponent(name)}`;
+  }
+
+  const response = await fetchNoRedirect(endpoint, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+
+  if (!response.ok) {
+    await handleCacheClearDirective(response);
+    if (response.status === 404) throw new Error('Prompt not found');
+    if (response.status === 401) throw new Error('Unauthorized');
+    throw new Error('Request failed');
+  }
+
+  return response.text();
 }

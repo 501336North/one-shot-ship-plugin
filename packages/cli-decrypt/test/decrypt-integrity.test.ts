@@ -1,6 +1,6 @@
 /**
  * @behavior Decrypt flow integrates manifest verification and watermark stripping
- * @acceptance-criteria Verify prompt after decrypt, warn on mismatch, skip gracefully when no manifest
+ * @acceptance-criteria Verify prompt after decrypt; a mismatch or a prompt absent from the manifest is not verified (FR3)
  * @boundary CLI Integration
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -66,7 +66,7 @@ describe('Decrypt Integrity Pipeline', () => {
     const result = await verifyDecryptedPrompt(watermarked, 'commands', 'plan', manifest);
 
     expect(result.verified).toBe(true);
-    expect(result.skipped).toBe(false);
+    expect(result.status).toBe('match');
   });
 
   it('should fail when content does not match manifest hash after stripping', async () => {
@@ -77,25 +77,19 @@ describe('Decrypt Integrity Pipeline', () => {
     const result = await verifyDecryptedPrompt('tampered content', 'commands', 'plan', manifest);
 
     expect(result.verified).toBe(false);
-    expect(result.skipped).toBe(false);
+    expect(result.status).toBe('mismatch');
   });
 
-  it('should skip verification when manifest is null (graceful degradation)', async () => {
-    const result = await verifyDecryptedPrompt('any content', 'commands', 'plan', null);
-
-    expect(result.verified).toBe(true);
-    expect(result.skipped).toBe(true);
-  });
-
-  it('should skip verification when prompt key not in manifest', async () => {
+  // FR3: fail closed. A prompt the signed manifest does not list is NOT verified.
+  it('should not verify a prompt whose key is not in the manifest', async () => {
     const manifest = createManifest({
       'commands/build': { hash: sha256('build content'), size: 13 },
     });
 
     const result = await verifyDecryptedPrompt('plan content', 'commands', 'plan', manifest);
 
-    expect(result.verified).toBe(true);
-    expect(result.skipped).toBe(true);
+    expect(result.verified).toBe(false);
+    expect(result.status).toBe('not_in_manifest');
   });
 
   it('should handle watermarked content with all three homoglyph types', async () => {

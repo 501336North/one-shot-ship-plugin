@@ -2,7 +2,7 @@
  * The one place the CLI decides where its config lives and which API it talks to.
  */
 
-import { existsSync, readFileSync } from 'fs';
+import { lstatSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
@@ -22,17 +22,34 @@ export function getConfigDir(): string {
   return process.env.OSS_CONFIG_DIR || join(homedir(), '.oss');
 }
 
-function readConfiguredApiUrl(): unknown {
+const UNTRUSTED_CONFIG =
+  'Refusing to read config.json in your OSS config directory: it must be a regular file (not a symlink) ' +
+  'owned by you and not writable by other users. Fix it with: chmod 600 config.json';
+
+/**
+ * The one config.json reader (FR7): missing -> {}; a symlink, a file owned by another user or a world-writable
+ * file -> refused; group-writable (umask 002) is allowed. Unparseable JSON reads as {}.
+ */
+export function readConfigFile(): Record<string, unknown> {
   const configPath = join(getConfigDir(), 'config.json');
-  if (existsSync(configPath)) {
-    try {
-      const config = JSON.parse(readFileSync(configPath, 'utf8')) as { apiUrl?: unknown };
-      return config.apiUrl;
-    } catch {
-      // Fall through to default
-    }
+  let stat;
+  try {
+    stat = lstatSync(configPath);
+  } catch {
+    return {};
   }
-  return undefined;
+  if (!stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 0o002) !== 0) {
+    throw new Error(UNTRUSTED_CONFIG);
+  }
+  try {
+    return JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+function readConfiguredApiUrl(): unknown {
+  return readConfigFile().apiUrl;
 }
 
 function parses(value: string): boolean {

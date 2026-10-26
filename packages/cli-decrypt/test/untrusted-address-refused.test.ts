@@ -14,6 +14,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 import { decryptCommand } from '../src/commands/decrypt.js';
+import { setupCommand } from '../src/commands/setup.js';
 import { runCli } from '../src/cli-entry.js';
 import { STAGING_API_URL } from '../src/manifest-keys.js';
 import * as storage from '../src/storage.js';
@@ -95,4 +96,29 @@ describe('an address without a signing key is refused before any request', () =>
     expect(fetchMock).toHaveBeenCalled();
     expect(String(fetchMock.mock.calls[0][0])).toContain(new URL(STAGING_API_URL).host);
   });
+  // FR4: every API-key sender uses the one trust rule, not only the prompt fetch.
+  it('setup refuses an unknown https apiUrl without sending the API key', async () => {
+    useApiUrl('https://api.example.com');
+    await expect(setupCommand()).rejects.toThrow(/apiUrl/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('--list-prompts refuses an unknown https apiUrl without fetching the manifest', async () => {
+    useApiUrl('https://api.example.com');
+    await expect(runCli(['--list-prompts'])).rejects.toThrow(/apiUrl/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // FR6: a trusted address is requested at its canonical origin (no `//api`, no `:443`).
+  it.each(['https://one-shot-ship-api.onrender.com/', 'https://one-shot-ship-api.onrender.com:443'])(
+    'decrypt and setup request %s at the canonical production origin',
+    async (apiUrl) => {
+      useApiUrl(apiUrl);
+      await decryptCommand('commands', 'plan').catch(() => undefined);
+      await setupCommand().catch(() => undefined);
+      const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+      expect(urls.length).toBeGreaterThan(1);
+      for (const url of urls) expect(url.startsWith('https://one-shot-ship-api.onrender.com/api/v1/')).toBe(true);
+    }
+  );
 });

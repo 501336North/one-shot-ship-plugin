@@ -117,10 +117,11 @@ describe('apiUrl has one source and is checked before the key is sent', () => {
     expect(fetchedUrls()).toEqual([]);
   });
 
+  // FR4: --list-prompts follows the same trusted-address rule as decrypt (a custom host is refused).
   it('with OSS_CONFIG_DIR set, --list-prompts uses the same apiUrl', async () => {
-    writeConfig({ apiUrl: 'https://custom-api.example.com' });
+    writeConfig({ apiUrl: 'https://one-shot-ship-api-staging.onrender.com' });
     await runCli(['--list-prompts']);
-    expect(fetchedUrls()).toEqual(['https://custom-api.example.com/api/v1/prompts/manifest']);
+    expect(fetchedUrls()).toEqual(['https://one-shot-ship-api-staging.onrender.com/api/v1/prompts/manifest']);
   });
 
   it('no apiUrl in config means the default API for every command', async () => {
