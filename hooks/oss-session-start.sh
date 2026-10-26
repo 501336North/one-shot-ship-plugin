@@ -45,6 +45,9 @@ fi
 mkdir -p ~/.oss
 chmod 700 ~/.oss  # Only owner can access
 
+# Telegram is retired: drop its old plaintext bot token from settings.json (silent, never fails the session)
+bash "$SCRIPT_DIR/oss-settings-cleanup.sh" </dev/null >/dev/null 2>&1 || true
+
 # --- Session Logging (for supervisor visibility) ---
 LOG_SCRIPT="$SCRIPT_DIR/oss-log.sh"
 if [[ -x "$LOG_SCRIPT" ]] && [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]]; then
