@@ -8,6 +8,7 @@ import { setupCommand } from './commands/setup.js';
 import { decryptCommand } from './commands/decrypt.js';
 import { fetchManifest, verifyManifestSignature } from './manifest-verifier.js';
 import { stripControl } from './strip-control.js';
+import type { PromptType } from './cache.js';
 import { getTrustedApiOrigin, publicKeyFor } from './manifest-keys.js';
 
 /**
@@ -23,7 +24,7 @@ export interface CliArgs {
   verifyManifest?: boolean;
   listPrompts?: boolean;
   category?: string;
-  type?: 'commands' | 'workflows' | 'skills' | 'agents' | 'hooks' | 'custom';
+  type?: PromptType;
   name?: string;
 }
 
@@ -97,7 +98,7 @@ Usage:
 
 Options:
   --setup              Run initial setup (fetch credentials)
-  --type, -t <type>    Prompt type: commands, workflows, skills, agents, hooks, custom
+  --type, -t <type>    Prompt type: commands, workflows, skills, agents, hooks, shared, templates, custom
   --name, -n <name>    Prompt name
   --debug, -d          Enable verbose debug output
   --no-cache           Bypass cache, always fetch from API
@@ -112,6 +113,8 @@ Examples:
   oss-decrypt --setup
   oss-decrypt --type commands --name plan
   oss-decrypt --type workflows --name build
+  oss-decrypt --type shared --name iron-laws
+  oss-decrypt --type templates --name claude-md
   oss-decrypt --debug --type commands --name plan
   oss-decrypt --no-cache --type commands --name plan
   oss-decrypt --clear-cache

@@ -35,8 +35,16 @@ const DEFAULT_TTL_MS = 60 * 60 * 1000;
 /**
  * Allowed prompt types (runtime validation)
  */
-const ALLOWED_TYPES = ['commands', 'workflows', 'skills', 'agents', 'hooks', 'custom'] as const;
+const ALLOWED_TYPES = ['commands', 'workflows', 'skills', 'agents', 'hooks', 'custom', 'shared', 'templates'] as const;
 export type PromptType = (typeof ALLOWED_TYPES)[number];
+/** Types the API serves as plaintext markdown (not encrypted, not watermarked); still covered by the manifest. */
+export type PlainPromptType = Extract<PromptType, 'shared' | 'templates'>;
+/** Types the API serves as an encrypted envelope. */
+export type EncryptedPromptType = Exclude<PromptType, PlainPromptType>;
+
+export function isPlainPromptType(type: PromptType): type is PlainPromptType {
+  return type === 'shared' || type === 'templates';
+}
 
 /**
  * Cache entry structure

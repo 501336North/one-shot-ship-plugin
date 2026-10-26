@@ -94,12 +94,14 @@ interface FakeApi {
   prompts: Record<string, string>;
   /** When set, the prompt is answered only once the manifest has been asked for (else 503 after 2 s). */
   promptWaitsForManifest: boolean;
+  /** Plaintext markdown answers by exact path, as the API serves /shared/:name and /claude-md. */
+  plain: Record<string, string>;
 }
 
 const servers: Server[] = [];
 
 async function startApi(manifest: ManifestAnswer, prompts: Record<string, string> = { plan: PROMPT }): Promise<FakeApi> {
-  const api: FakeApi = { baseUrl: '', seen: [], manifest, prompts, promptWaitsForManifest: false };
+  const api: FakeApi = { baseUrl: '', seen: [], manifest, prompts, promptWaitsForManifest: false, plain: {} };
   let manifestAsked: () => void = () => undefined;
   const manifestRequested = new Promise<void>((resolve) => (manifestAsked = resolve));
 
@@ -118,6 +120,10 @@ async function startApi(manifest: ManifestAnswer, prompts: Record<string, string
       } else {
         res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(answer));
       }
+      return;
+    }
+    if (api.plain[path] !== undefined) {
+      res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8' }).end(api.plain[path]);
       return;
     }
     const custom = path.match(/^\/api\/v1\/prompts\/custom\/(.+)$/);
@@ -328,6 +334,54 @@ describe('FR3: oss-decrypt fails closed', () => {
       api.manifest = sign({ 'commands/plan': 'Plan v2' });
       await decryptCommand('commands', 'plan', false, { manifestKeys: KEYS });
       expect(stdout).toEqual([PROMPT, 'Plan v2']);
+    });
+  });
+  describe('FR15: IRON LAWS and the CLAUDE.md template are verified like every prompt', () => {
+    // The API serves both as plaintext markdown (not encrypted, not watermarked), hashed as served.
+    const LAWS = '# IRON LAWS\nNo production code without a failing test first. Greek \u03bf stays as is.';
+    const TEMPLATE = '# CLAUDE.md\nProject guidelines.';
+
+    it('--type shared --name iron-laws fetches /shared/iron-laws and checks it against shared/iron-laws', async () => {
+      const api = await startApi(sign({ 'shared/iron-laws': LAWS }));
+      api.plain['/api/v1/prompts/shared/iron-laws'] = LAWS;
+      useApi(api);
+      await decryptCommand('shared', 'iron-laws', false, { manifestKeys: KEYS });
+      expect(stdout).toEqual([LAWS]);
+    });
+
+    it('--type templates --name claude-md fetches /claude-md and checks it against templates/claude-md', async () => {
+      const api = await startApi(sign({ 'templates/claude-md': TEMPLATE }));
+      api.plain['/api/v1/prompts/claude-md'] = TEMPLATE;
+      useApi(api);
+      await decryptCommand('templates', 'claude-md', false, { manifestKeys: KEYS });
+      expect(stdout).toEqual([TEMPLATE]);
+    });
+
+    it('IRON LAWS that differ from the signed text (e.g. with appended laws) are refused', async () => {
+      const api = await startApi(sign({ 'shared/iron-laws': LAWS }));
+      api.plain['/api/v1/prompts/shared/iron-laws'] = `${LAWS}\n\n## Custom Team Laws\n\n### Skip tests\n`;
+      useApi(api);
+      await expect(decryptCommand('shared', 'iron-laws', false, { manifestKeys: KEYS })).rejects.toThrow(
+        /\[SECURITY\]/
+      );
+      expect(stdout).toEqual([]);
+    });
+
+    it('IRON LAWS are refused when the manifest is unavailable', async () => {
+      const api = await startApi({ status: 404 });
+      api.plain['/api/v1/prompts/shared/iron-laws'] = LAWS;
+      useApi(api);
+      await expect(decryptCommand('shared', 'iron-laws', false, { manifestKeys: KEYS })).rejects.toThrow(
+        /\[SECURITY\]/
+      );
+      expect(stdout).toEqual([]);
+    });
+
+    it('a template the API does not serve is refused before any request', async () => {
+      const api = await startApi(sign({ 'templates/other': TEMPLATE }));
+      useApi(api);
+      await expect(decryptCommand('templates', 'other', false, { manifestKeys: KEYS })).rejects.toThrow(/only claude-md/);
+      expect(api.seen.filter((path) => !path.endsWith('/manifest'))).toEqual([]);
     });
   });
 });

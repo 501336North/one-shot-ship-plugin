@@ -5,15 +5,15 @@
 
 import { join } from 'path';
 import { getConfigDir } from '../config.js';
-import { fetchEncryptedPrompt, fetchCustomPrompt } from '../api-client.js';
+import { fetchEncryptedPrompt, fetchCustomPrompt, fetchPlainPrompt } from '../api-client.js';
 import { retrieveCredentials } from '../storage.js';
 import { deriveKey, decrypt, userIdToLicenseId } from '../encryption.js';
 import { DebugLogger } from '../debug.js';
-import { CacheService } from '../cache.js';
+import { CacheService, isPlainPromptType, type PromptType } from '../cache.js';
 import type { SignedManifest } from '../manifest-verifier.js';
 import { getTrustedApiOrigin, publicKeyFor, type ManifestKeys } from '../manifest-keys.js';
 import { fetchVerifiedManifest, readCachedManifest } from '../verified-manifest.js';
-import { verifyDecryptedPrompt } from '../integrity-pipeline.js';
+import { verifyDecryptedPrompt, verifyPlainPrompt, type VerificationResult } from '../integrity-pipeline.js';
 import { readUpdateState, writeUpdateState } from '../update-state.js';
 import { detectPromptChange } from '../change-detection.js';
 
@@ -41,14 +41,14 @@ function getCacheDir(): string {
 /**
  * Decrypt a prompt and output to stdout
  *
- * @param type - Prompt type (commands, workflows, skills, agents, hooks, custom)
+ * @param type - Prompt type (commands, workflows, skills, agents, hooks, shared, templates, custom)
  * @param name - Prompt name
  * @param debug - Enable debug output
  * @param options - Additional options (noCache, clearCache)
  * @throws Error if credentials not setup or decryption fails
  */
 export async function decryptCommand(
-  type: 'commands' | 'workflows' | 'skills' | 'agents' | 'hooks' | 'custom',
+  type: PromptType,
   name: string,
   debug = false,
   options: DecryptOptions = {}
@@ -100,6 +100,7 @@ export async function decryptCommand(
 
   const fetchPlaintext = async (): Promise<string> => {
     logger.log('FETCH', `Fetching prompt: ${type}/${name}`);
+    if (isPlainPromptType(type)) return fetchPlainPrompt(credentials.apiKey, apiUrl, type, name);
     const encryptedPrompt = await fetchEncryptedPrompt(credentials.apiKey, apiUrl, type, name);
     // Transform userId to licenseId (must match server-side format), then derive the key and decrypt.
     const licenseId = userIdToLicenseId(credentials.userId);
@@ -127,11 +128,15 @@ export async function decryptCommand(
   }
   console.error('[verify] Manifest signature: valid');
 
-  let integrity = await verifyDecryptedPrompt(plaintext, type, name, manifest);
+  const check = async (against: SignedManifest): Promise<VerificationResult> =>
+    isPlainPromptType(type)
+      ? verifyPlainPrompt(plaintext, type, name, against)
+      : verifyDecryptedPrompt(plaintext, type, name, against);
+  let integrity = await check(manifest);
   if (!integrity.verified && cached) {
     // The prompt may have changed since the manifest was cached: check it against a fresh manifest once.
     manifest = await fetchVerifiedManifest(apiUrl, manifestPublicKey);
-    integrity = await verifyDecryptedPrompt(plaintext, type, name, manifest);
+    integrity = await check(manifest);
   }
   if (integrity.status === 'not_in_manifest') {
     console.error('[verify] Prompt not in the signed manifest — prompt blocked');

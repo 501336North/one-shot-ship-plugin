@@ -37,3 +37,17 @@ export async function verifyDecryptedPrompt(
   const result = verifyPromptHash(stripWatermark(watermarkedContent), type, name, manifest);
   return { verified: result.status === 'match', status: result.status };
 }
+
+/**
+ * Verify a plaintext prompt resource (shared, templates) against a signed manifest. The API serves these
+ * unwatermarked, so the text is hashed exactly as received (no homoglyph stripping).
+ */
+export function verifyPlainPrompt(
+  content: string,
+  type: string,
+  name: string,
+  manifest: SignedManifest
+): VerificationResult {
+  const result = verifyPromptHash(content, type, name, manifest);
+  return { verified: result.status === 'match', status: result.status };
+}
