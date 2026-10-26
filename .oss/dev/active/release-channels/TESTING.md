@@ -38,4 +38,14 @@ Repo-wide ratchets guard against a new site reintroducing a hard-coded host or a
 - A5 PASS (guard, US-001/US-005): no marker on production
 - Kept uncommitted until it is green (IRON LAW: no failing tests committed). /oss:build lands it with the task that turns its last row green.
 
-## Last Updated: 2026-10-26 by /oss:acceptance
+### 2026-10-26: build results so far
+- hooks-follow-api-url 36/36; oss-value 350/350; check-updates 8/8; changelog 4/4
+- command-api-calls 8/8; command-api-key-argv 7/7; prompt-fetch-via-decrypt 7/7 (2 mutations killed)
+- value-file-wrappers 42/42; value-file-wrappers-run 61/61; xray-wrapper 7/7; no-compound-commands and no-model-text-in-failed green
+- watcher (T6 agent, safe config): 377/377 over 15 files; watcher-dist-fresh PASS (116 files) after merge
+- API: release-channels-branching 3/3; manifest-integrity 139/139; full API unit 6680/6680
+- Acceptance: A1, A2, A5 green; A3 waits for the 2 blocked agents (#389); A4 waits for T14
+- Pre-existing on clean origin/next: ideate-template, no-telegram-command
+- Load flakes (pass 2/2 alone, FOLLOWUPS): oss-api-curl.real.integration, oss-notification-style, oss-notify-complete-bounds
+
+## Last Updated: 2026-10-26 by /oss:build
