@@ -21,8 +21,8 @@ fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/.oss" "$T/bin"; chmod 700 "$T/.oss"
 printf '{"apiKey":"k"}' > "$T/.oss/config.json"; chmod 600 "$T/.oss/config.json"
-# curl: serves $T/body for ?part=custom, records argv.
-printf '#!/bin/bash\necho "$*" >> "%s/curl-argv"\ncat "%s/body"\n' "$T" "$T" > "$T/bin/curl"; chmod +x "$T/bin/curl"
+# curl: serves $T/body for ?part=custom, records argv; exits with the code in $T/curl-rc when that file exists.
+printf '#!/bin/bash\necho "$*" >> "%s/curl-argv"\n[[ -f "%s/curl-rc" ]] && exit "$(cat "%s/curl-rc")"\ncat "%s/body"\n' "$T" "$T" "$T" "$T" > "$T/bin/curl"; chmod +x "$T/bin/curl"
 
 custom() {  # custom <body printf format>: serves it, runs the helper; sets OUT, RC
     printf "$1" > "$T/body"
@@ -66,11 +66,24 @@ want=$(printf "$ORDINARY")
 # 16 KiB after stripping: no section at all (the hooks then write the verified laws alone). curl is told the same cap.
 big() { local i; printf '## Custom Team Laws\\n\\n### Rule\\n\\n'; for (( i = 0; i < $1; i++ )); do printf '%099d\\n' 0; done; }
 custom "$(big 170)"   # 17 000+ bytes
-[[ "$RC" != 0 && -z "$OUT" ]] && pass "a section over 16 KiB is refused (nothing printed)" || fail "a section over 16 KiB is refused" "rc=$RC bytes=${#OUT}"
+[[ "$RC" == 1 && -z "$OUT" ]] && pass "a section over 16 KiB is refused (nothing printed, rc 1: no section)" || fail "a section over 16 KiB is refused, rc 1" "rc=$RC bytes=${#OUT}"
 custom "$(big 160)"   # 16 000+ bytes
 [[ "$RC" == 0 && "$OUT" == "## Custom Team Laws"* ]] && pass "a section just under 16 KiB is printed" || fail "a section just under 16 KiB is printed" "rc=$RC"
 grep -q -- '--max-filesize 16384 ' "$T/curl-argv" && pass "curl is given the same cap (--max-filesize 16384)" \
     || fail "curl is given --max-filesize 16384" "argv: $(tail -n 1 "$T/curl-argv")"
+
+# TR4: a fetch that FAILS (curl error, HTTP error, timeout) is rc 2, so the sync retries in an hour instead of marking
+# the laws fresh for a day; no section (an empty 200, over the cap) is rc 1. The fetch gives up after 5 s.
+for rc in 28 22 7; do
+    printf '%s' "$rc" > "$T/curl-rc"; custom '## Custom Team Laws\n- x\n'
+    [[ "$RC" == 2 && -z "$OUT" ]] && pass "curl exit $rc (the fetch failed) → rc 2, nothing printed" || fail "curl exit $rc → rc 2" "rc=$RC out=$OUT"
+done
+printf 63 > "$T/curl-rc"; custom '## Custom Team Laws\n- x\n'
+[[ "$RC" == 1 && -z "$OUT" ]] && pass "curl exit 63 (over --max-filesize) → rc 1: no section, not a failure" || fail "curl exit 63 → rc 1" "rc=$RC out=$OUT"
+rm -f "$T/curl-rc"; custom ''
+[[ "$RC" == 1 && -z "$OUT" ]] && pass "an empty 200 → rc 1: no section, not a failure" || fail "an empty 200 → rc 1" "rc=$RC out=$OUT"
+grep -q -- ' -m 5 ' "$T/curl-argv" && ! grep -q -- ' -m 10 ' "$T/curl-argv" && pass "the fetch gives up after 5 s (-m 5)" \
+    || fail "the fetch gives up after 5 s (-m 5)" "argv: $(tail -n 1 "$T/curl-argv")"
 
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"

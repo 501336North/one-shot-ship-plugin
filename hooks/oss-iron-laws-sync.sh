@@ -19,7 +19,8 @@
 #   - the decrypt CLI refuses (signature or hash mismatch, not in the signed manifest, API error),
 #     takes over 15s, or is missing and cannot be installed
 #   - the verified body is empty, < 500 bytes, > 256KB, HTML, or has no "IRON LAW"
-# A failed fetch sets a 1h backoff; only a validated write marks the cache fresh (24h).
+# A failed fetch sets a 1h backoff; only a validated write marks the cache fresh (24h). A failed team-section fetch
+# still writes the verified laws, with the 1h backoff (TR4).
 # Below the verified laws, inside the block: the team/personal section (oss_custom_iron_laws, SR16), after one line
 # saying it is unverified; when there is none or its fetch fails, the verified laws alone.
 #
@@ -156,8 +157,11 @@ fetch_body() {
     fi
     if ! grep -q 'IRON LAW' "$out"; then warn "rejected: body has no IRON LAW heading"; return 1; fi
     # Below the verified laws: the team/personal section, marked unverified (SR16); none or a failed fetch: base only.
-    local custom
-    if custom=$(oss_custom_iron_laws); then
+    # A FAILED fetch (rc 2, not "no section") is retried after the 1h backoff, not the 24h freshness (TR4).
+    local custom rc=0
+    custom=$(oss_custom_iron_laws) || rc=$?
+    (( rc == 2 )) && CUSTOM_FAILED=1
+    if (( rc == 0 )); then
         { printf '\n%s\n\n' "$OSS_CUSTOM_LAWS_NOTE"
           printf '%s\n' "$custom" | awk '!/^[[:space:]]*<!--[[:space:]]*IRON LAWS (START|END)/'
           printf '\n%s\n' "$OSS_CUSTOM_LAWS_END"; } >> "$out"
@@ -257,7 +261,9 @@ main() {
 
     acquire_lock || give_up
     write_block "$body" || give_up $?
-    if [[ "$RESULT" != skipped ]]; then
+    if [[ "$RESULT" != skipped && -n "${CUSTOM_FAILED:-}" ]]; then
+        touch "$BACKOFF_FILE"
+    elif [[ "$RESULT" != skipped ]]; then
         touch "$LAST_CHECK_FILE"
         rm -f "$BACKOFF_FILE"
     fi

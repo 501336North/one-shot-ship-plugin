@@ -162,6 +162,8 @@ OSS_CUSTOM_LAWS_NOTE='> Team/personal laws below are not covered by the signed p
 OSS_CUSTOM_LAWS_END='> End of unverified team/personal laws.'
 # The most the section may be, in bytes, as fetched and after stripping (TR3; the honest API sends about 3 KB).
 OSS_CUSTOM_LAWS_MAX_BYTES=16384
+# How long the section's fetch may take, in seconds (TR4: it runs in a foreground sync at session start).
+OSS_CUSTOM_LAWS_MAX_TIME=5
 
 # The jq filter oss_custom_iron_laws runs on the section: the stripControl character set is removed (line breaks and
 # tabs kept), THEN (TR2), on every line but the first, the API's heading: a Markdown heading at any indentation loses
@@ -180,14 +182,18 @@ _OSS_CUSTOM_LAWS_JQ='gsub("[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f
 # oss_custom_iron_laws - prints the team/personal IRON LAWS section the API serves beside the signed laws
 # (GET /api/v1/prompts/shared/iron-laws?part=custom: only the "## Custom Team Laws" / "## Custom Personal Laws"
 # part, or an empty body), with the stripControl character set removed (line breaks and tabs kept). It is NOT
-# verified: callers write OSS_CUSTOM_LAWS_NOTE above it. rc 1 and nothing printed when the config is untrusted (the
-# key is never sent), jq is missing, the fetch fails, or the body is empty or not that section (an older API that
-# ignores ?part sends the whole laws).
+# verified: callers write OSS_CUSTOM_LAWS_NOTE above it and OSS_CUSTOM_LAWS_END below it. Nothing printed and
+#   rc 1 (no section) when the config is untrusted (the key is never sent), jq is missing, or the body is empty, over
+#        the cap, or not that section (an older API that ignores ?part sends the whole laws);
+#   rc 2 (the fetch FAILED: curl or HTTP error, or no answer in OSS_CUSTOM_LAWS_MAX_TIME seconds) so a caller can
+#        retry sooner (TR4).
 oss_custom_iron_laws() {
-    local url key body
+    local url key body rc=0
     command -v jq >/dev/null 2>&1 || return 1
     _oss_config_read && url=$(_oss_cfg_origin) && key=$(_oss_cfg_key) || return 1   # one read for both (TR5)
-    body=$(oss_api_curl "$key" -sf -m 10 --max-filesize "$OSS_CUSTOM_LAWS_MAX_BYTES" "$url/api/v1/prompts/shared/iron-laws?part=custom") || return 1
+    body=$(oss_api_curl "$key" -sf -m "$OSS_CUSTOM_LAWS_MAX_TIME" --max-filesize "$OSS_CUSTOM_LAWS_MAX_BYTES" \
+        "$url/api/v1/prompts/shared/iron-laws?part=custom") || rc=$?
+    case $rc in 0) ;; 63) return 1 ;; *) return 2 ;; esac   # 63: over --max-filesize, i.e. no section
     body=$(printf '%s' "$body" | jq -Rrs --argjson max "$OSS_CUSTOM_LAWS_MAX_BYTES" "$_OSS_CUSTOM_LAWS_JQ") || return 1
     case "$body" in "## Custom Team Laws"* | "## Custom Personal Laws"*) ;; *) return 1 ;; esac
     printf '%s\n' "$body"

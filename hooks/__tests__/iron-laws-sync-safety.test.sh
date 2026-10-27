@@ -448,7 +448,7 @@ test_custom_section_forged_lines() {
 test_custom_section_absent() {
     local mode
     for mode in empty fail notcustom oversized; do
-        local name="SR16: team section $mode → the verified laws alone, no unverified marker, sync succeeds"; ((TESTS_RUN++)); setup
+        local name="SR16/TR4: team section $mode → the verified laws alone, no unverified marker, sync succeeds; $([[ $mode == fail ]] && echo "1h backoff, not marked fresh" || echo "marked fresh")"; ((TESTS_RUN++)); setup
         case $mode in
             empty) : > "$T/shim/custom" ;;
             fail) touch "$T/shim/custom-fail" ;;
@@ -457,8 +457,15 @@ test_custom_section_absent() {
         esac
         block_file "$T/proj/CLAUDE.md"; stale; run_sync
         local b; b=$(block_of "$T/proj/CLAUDE.md")
-        if [[ $RC -eq 0 && "$b" == *"FRESH FROM API"* && "$b" != *"unverified"* && "$(grep -c 'FRESH FROM API' "$T/proj/CLAUDE.md")" == 1 && "$(custom_calls)" == 1 ]]; then pass "$name"
-        else fail "$name" "rc 0, base only, once, no marker, one custom fetch" "rc=$RC custom=$(custom_calls) block: $b"; fi
+        # TR4: a FAILED fetch keeps the 24h stamp stale and sets the 1h backoff, so the next session retries the team
+        # laws; no section (empty, not a section, over the cap) is a complete answer: fresh for 24h, no backoff.
+        local fresh=n backoff=n want_fresh=y want_backoff=n
+        [[ -n "$(find "$T/home/.oss/.iron-laws-last-check" -newer "$T/shim/body" 2>/dev/null)" ]] && fresh=y
+        [[ -e "$T/home/.oss/.iron-laws-backoff" ]] && backoff=y
+        [[ $mode == fail ]] && { want_fresh=n; want_backoff=y; }
+        if [[ $RC -eq 0 && "$b" == *"FRESH FROM API"* && "$b" != *"unverified"* && "$(grep -c 'FRESH FROM API' "$T/proj/CLAUDE.md")" == 1 && "$(custom_calls)" == 1 \
+              && $fresh == "$want_fresh" && $backoff == "$want_backoff" ]]; then pass "$name"
+        else fail "$name" "rc 0, base only, once, no marker, one custom fetch, fresh=$want_fresh backoff=$want_backoff" "rc=$RC custom=$(custom_calls) fresh=$fresh backoff=$backoff block: $b"; fi
         teardown
     done
 }
