@@ -2,8 +2,8 @@
  * Update state management for tracking plugin/prompt changes across sessions.
  * Stores cached versions, manifest hashes, and prompt signatures.
  */
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { dirname } from 'path';
+import { existsSync, readFileSync } from 'fs';
+import { writeFileNoFollow } from './safe-write.js';
 
 export interface UpdateState {
   lastPluginVersion: string;
@@ -42,10 +42,14 @@ export function readUpdateState(filePath: string): UpdateState {
   }
 }
 
+/**
+ * Save the update state (writeFileNoFollow, owner-only). Best effort: it only feeds "prompt updated" notices, so a
+ * state file that cannot be written safely (e.g. a symlinked directory) is skipped and never blocks prompt delivery.
+ */
 export function writeUpdateState(filePath: string, state: UpdateState): void {
-  const dir = dirname(filePath);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
+  try {
+    writeFileNoFollow(filePath, JSON.stringify(state, null, 2), { mode: 0o600 });
+  } catch {
+    // skipped: see above
   }
-  writeFileSync(filePath, JSON.stringify(state, null, 2), { mode: 0o600 });
 }

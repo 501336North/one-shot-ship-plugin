@@ -12,6 +12,7 @@ import { DebugLogger } from '../debug.js';
 import { CacheService, isPlainPromptType, type PromptType } from '../cache.js';
 import type { SignedManifest } from '../manifest-verifier.js';
 import { getTrustedApiOrigin, publicKeyFor, type ManifestKeys } from '../manifest-keys.js';
+import { stripControlKeepLines } from '../strip-control.js';
 import { fetchVerifiedManifest, readCachedManifest } from '../verified-manifest.js';
 import { verifyDecryptedPrompt, verifyPlainPrompt, type VerificationResult } from '../integrity-pipeline.js';
 import { readUpdateState, writeUpdateState } from '../update-state.js';
@@ -94,7 +95,7 @@ export async function decryptCommand(
     logger.log('FETCH', `Fetching custom command: ${name}`);
     const customPrompt = await fetchCustomPrompt(credentials.apiKey, apiUrl, name);
     console.error('[verify] UNVERIFIED: team custom command (not covered by the signed manifest)');
-    console.log(customPrompt.prompt);
+    console.log(stripControlKeepLines(customPrompt.prompt));
     return;
   }
 

@@ -6,3 +6,11 @@
 export function stripControl(text: string): string {
   return text.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, '');
 }
+
+/**
+ * stripControl for multi-line text a user reads as a document (a team custom command body): the same characters
+ * are removed except line feed and tab, which carry the document's layout and cannot drive the terminal.
+ */
+export function stripControlKeepLines(text: string): string {
+  return text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, '');
+}

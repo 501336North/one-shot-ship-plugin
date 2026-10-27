@@ -6,9 +6,10 @@
  */
 
 import { createHash } from 'crypto';
-import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
+import { readFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { getConfigDir } from './config.js';
+import { writeFileNoFollow } from './safe-write.js';
 import { fetchManifest, verifyManifestSignature, type SignedManifest } from './manifest-verifier.js';
 
 export const MANIFEST_TIMEOUT_MS = 10_000;
@@ -56,14 +57,11 @@ export function readCachedManifest(origin: string, publicKey: string): SignedMan
   return cached.manifest;
 }
 
+/** Cache the verified manifest owner-only under run/ (writeFileNoFollow); a cache that cannot be written is skipped. */
 function writeCachedManifest(origin: string, manifest: SignedManifest): void {
+  const entry: CachedManifest = { origin, fetchedAt: Date.now(), manifest };
   try {
-    mkdirSync(runDir(), { recursive: true, mode: 0o700 });
-    chmodSync(runDir(), 0o700);
-    const path = cachePath(origin);
-    const entry: CachedManifest = { origin, fetchedAt: Date.now(), manifest };
-    writeFileSync(path, JSON.stringify(entry), { mode: 0o600 });
-    chmodSync(path, 0o600);
+    writeFileNoFollow(cachePath(origin), JSON.stringify(entry), { mode: 0o600, dirMode: 0o700, enforceDirMode: true });
   } catch {
     // A cache that cannot be written only costs a fetch next time.
   }
