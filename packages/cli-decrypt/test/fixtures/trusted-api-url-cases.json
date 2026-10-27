@@ -148,5 +148,23 @@
     "trusted": false,
     "canonical": null,
     "why": "fragment"
+  },
+  {
+    "apiUrl": "https://one-shot-ship-api.onrender.com:0443",
+    "trusted": true,
+    "canonical": "https://one-shot-ship-api.onrender.com",
+    "why": "production with a zero-padded default port: URL normalises it (SR14)"
+  },
+  {
+    "apiUrl": "http://localhost:80",
+    "trusted": true,
+    "canonical": "http://localhost",
+    "why": "loopback with the http default port (SR14)"
+  },
+  {
+    "apiUrl": "http://localhost:00080",
+    "trusted": true,
+    "canonical": "http://localhost",
+    "why": "loopback with a zero-padded default port (SR14)"
   }
 ]

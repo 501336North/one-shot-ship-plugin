@@ -92,19 +92,25 @@ oss_api_url_syntax() {
 
 # oss_api_url - prints the canonical origin of the API the key may go to, or nothing and rc 1. The address must
 # pass the syntax rule above AND be a trusted OSS API: production, staging, or loopback http (DEV). A trailing
-# "/", the default ":443" and host case are normalised; any other path, port or host is refused. The same trust
+# "/", host case and the port (numerically; dropped when it is the scheme default, as WHATWG URL does) are
+# normalised; any other path, port or host is refused. The same trust
 # rule as the CLI and the watcher, tested against trusted-api-url-cases.json (ship round 1, FR4/FR6).
 #
 #   API_URL=$(oss_api_url) || { echo "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"; exit 1; }
 oss_api_url() {
-    local url scheme rest hostport path
+    local url scheme rest hostport path port
     oss_config_trusted || return 1
     url=$(oss_api_url_syntax) || return 1
     scheme=${url%%://*}; rest=${url#*://}
     hostport=${rest%%/*}; path=${rest#"$hostport"}
     [[ -z "$path" || "$path" == / ]] || return 1
     hostport=$(printf '%s' "$hostport" | tr 'A-Z' 'a-z')
-    [[ "$scheme" == https ]] && hostport=${hostport%:443}
+    # The port as WHATWG URL reads it: a number (leading zeros dropped), omitted when it is the scheme's default.
+    case "$hostport" in
+        *\]) ;;
+        *:*) port=$(( 10#${hostport##*:} )); hostport=${hostport%:*}
+             [[ "$scheme:$port" == https:443 || "$scheme:$port" == http:80 ]] || hostport="$hostport:$port" ;;
+    esac
     url="$scheme://$hostport"
     case "$url" in
         "$OSS_API_DEFAULT_URL" | "$OSS_API_STAGING_URL") ;;
