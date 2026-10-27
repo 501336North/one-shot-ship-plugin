@@ -66,6 +66,42 @@ validate_project_path() {
 }
 
 # =============================================================================
+# Section 0: Channel (release channels)
+# =============================================================================
+# Which API this session talks to, from oss_api_url (the rule every call follows),
+# and whether the plugin is a beta build (a version with a pre-release part, e.g. 2.1.0-beta.1).
+# Production + stable plugin: no section, so customers see no change.
+# =============================================================================
+# Runs on every render: shell built-ins only, apart from what oss_api_url needs (SR9).
+compute_channel() {
+    local helper="" h here url ver="" root="" beta=false line re='"version"[[:space:]]*:[[:space:]]*"([^"]+)"'
+    here=${BASH_SOURCE[0]%/*}; [[ "$here" == "${BASH_SOURCE[0]}" ]] && here=.
+    for h in "$here/oss-api-curl.sh" "$HOME/.oss/hooks/oss-api-curl.sh"; do
+        [[ -f "$h" ]] && { helper="$h"; break; }
+    done
+    [[ -n "$helper" ]] || return 0
+    # shellcheck source=oss-api-curl.sh
+    source "$helper" 2>/dev/null || return 0
+    root="${CLAUDE_PLUGIN_ROOT:-}"
+    [[ -z "$root" && -f "$HOME/.oss/plugin-root" ]] && IFS= read -r root < "$HOME/.oss/plugin-root"
+    if [[ -n "$root" && -f "$root/.claude-plugin/plugin.json" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            [[ "$line" =~ $re ]] && { ver=${BASH_REMATCH[1]}; break; }
+        done < "$root/.claude-plugin/plugin.json"
+    fi
+    [[ "$ver" == *-* ]] && beta=true
+    if ! url=$(oss_api_url 2>/dev/null); then echo "⚠ apiUrl invalid"; return 0; fi
+    if [[ "$url" == "$OSS_API_DEFAULT_URL" ]]; then
+        $beta && echo "⚠ beta plugin → production API (mismatch)"
+    elif $beta || [[ -z "$ver" ]]; then
+        echo "⚠ STAGING"
+    else
+        echo "⚠ STAGING · stable plugin (mismatch)"
+    fi
+    return 0
+}
+
+# =============================================================================
 # Read input and setup
 # =============================================================================
 
@@ -74,7 +110,9 @@ INPUT=$(cat)
 
 # Check for jq dependency
 if ! command -v jq &>/dev/null; then
-    echo "[jq required]"
+    # SR8: the swimlane still shows (the decrypt CLI reaches staging without jq); see compute_channel.
+    channel=$(compute_channel)
+    echo "${channel:+$channel | }[jq required]"
     exit 0
 fi
 
@@ -427,42 +465,6 @@ is_idle_state() {
         return 0  # true - is idle
     fi
     return 1  # false - not idle
-}
-
-# =============================================================================
-# Section 0: Channel (release channels)
-# =============================================================================
-# Which API this session talks to, from oss_api_url (the rule every call follows),
-# and whether the plugin is a beta build (a version with a pre-release part, e.g. 2.1.0-beta.1).
-# Production + stable plugin: no section, so customers see no change.
-# =============================================================================
-# Runs on every render: shell built-ins only, apart from what oss_api_url needs (SR9).
-compute_channel() {
-    local helper="" h here url ver="" root="" beta=false line re='"version"[[:space:]]*:[[:space:]]*"([^"]+)"'
-    here=${BASH_SOURCE[0]%/*}; [[ "$here" == "${BASH_SOURCE[0]}" ]] && here=.
-    for h in "$here/oss-api-curl.sh" "$HOME/.oss/hooks/oss-api-curl.sh"; do
-        [[ -f "$h" ]] && { helper="$h"; break; }
-    done
-    [[ -n "$helper" ]] || return 0
-    # shellcheck source=oss-api-curl.sh
-    source "$helper" 2>/dev/null || return 0
-    root="${CLAUDE_PLUGIN_ROOT:-}"
-    [[ -z "$root" && -f "$HOME/.oss/plugin-root" ]] && IFS= read -r root < "$HOME/.oss/plugin-root"
-    if [[ -n "$root" && -f "$root/.claude-plugin/plugin.json" ]]; then
-        while IFS= read -r line || [[ -n "$line" ]]; do
-            [[ "$line" =~ $re ]] && { ver=${BASH_REMATCH[1]}; break; }
-        done < "$root/.claude-plugin/plugin.json"
-    fi
-    [[ "$ver" == *-* ]] && beta=true
-    if ! url=$(oss_api_url 2>/dev/null); then echo "⚠ apiUrl invalid"; return 0; fi
-    if [[ "$url" == "$OSS_API_DEFAULT_URL" ]]; then
-        $beta && echo "⚠ beta plugin → production API (mismatch)"
-    elif $beta || [[ -z "$ver" ]]; then
-        echo "⚠ STAGING"
-    else
-        echo "⚠ STAGING · stable plugin (mismatch)"
-    fi
-    return 0
 }
 
 # =============================================================================

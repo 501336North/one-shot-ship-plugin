@@ -8,6 +8,7 @@
 #             staging/localhost + stable   -> "⚠ STAGING" and a mismatch warning
 #             production + beta plugin     -> a mismatch warning (never the word STAGING)
 #             invalid apiUrl               -> "⚠ apiUrl invalid" (never STAGING, never blank)
+#           Without jq the section still renders, before "[jq required]" (SR8).
 # @business-rule The maintainer must never confuse testing with real work, and a half-switched machine
 #           (plugin from one channel, API of the other) must be visible at a glance.
 #
@@ -20,15 +21,16 @@ RUN=0; FAILED=0
 pass() { echo "✓ PASS: $1"; RUN=$((RUN + 1)); }
 fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
 
-# line <apiUrl or ""> <plugin version>: the rendered status line for that config and plugin.
+# line <apiUrl or ""> <plugin version> [PATH]: the rendered status line for that config and plugin.
 line() {
     local sb; sb="$(mktemp -d)"; mkdir -p "$sb/home/.oss" "$sb/plugin/.claude-plugin"
     if [[ -n "$1" ]]; then printf '{"apiKey":"k","apiUrl":"%s"}' "$1" > "$sb/home/.oss/config.json"
     else printf '{"apiKey":"k"}' > "$sb/home/.oss/config.json"; fi
     printf '{"name":"oss","version":"%s"}' "$2" > "$sb/plugin/.claude-plugin/plugin.json"
     printf '%s\n' "$sb/plugin" > "$sb/home/.oss/plugin-root"
-    (cd "$sb" && printf '{}' | env -u CLAUDE_PLUGIN_ROOT -u OSS_CONFIG_DIR HOME="$sb/home" \
-        perl -e 'alarm 20; exec @ARGV' bash "$ROOT/hooks/oss-statusline.sh" 2>/dev/null)
+    chmod 600 "$sb/home/.oss/config.json"
+    (cd "$sb" && printf '{}' | env -u CLAUDE_PLUGIN_ROOT -u OSS_CONFIG_DIR HOME="$sb/home" PATH="${3:-$PATH}" \
+        /usr/bin/perl -e 'alarm 20; exec @ARGV' /bin/bash "$ROOT/hooks/oss-statusline.sh" 2>/dev/null)
     rm -rf "$sb"
 }
 first_section() { printf '%s\n' "${1%% | *}"; }
@@ -69,6 +71,17 @@ else fail "custom host: '⚠ apiUrl invalid', never STAGING" "got '$l'"; fi
 l=$(line "http://api.example.com" 2.1.0-beta.1)
 if [[ "$(first_section "$l")" == "⚠ apiUrl invalid" && "$l" != *STAGING* ]]; then pass "invalid apiUrl: '⚠ apiUrl invalid', never STAGING"
 else fail "invalid apiUrl: '⚠ apiUrl invalid', never STAGING" "got '$l'"; fi
+
+# SR8: without jq the status line still says which swimlane it is in, before "[jq required]". Without jq a config
+# that names an apiUrl cannot be read (FR5), so it shows "⚠ apiUrl invalid": never blank, never production.
+NOJQ="$(mktemp -d)"; ln -s /usr/bin/* /bin/* "$NOJQ/" 2>/dev/null; rm -f "$NOJQ/jq"
+l=$(line "$STAGING" 2.1.0-beta.1 "$NOJQ")
+if [[ "$(first_section "$l")" == "⚠ apiUrl invalid" && "$l" == *"[jq required]"* ]]; then pass "no jq + staging: '⚠ apiUrl invalid' before '[jq required]'"
+else fail "no jq + staging: '⚠ apiUrl invalid' before '[jq required]'" "got '$l'"; fi
+l=$(line "" 2.1.0-beta.1 "$NOJQ")
+if [[ "$(first_section "$l")" == *mismatch* && "$l" == *"[jq required]"* ]]; then pass "no jq + no apiUrl + beta plugin: the mismatch warning is still shown"
+else fail "no jq + no apiUrl + beta plugin: the mismatch warning is still shown" "got '$l'"; fi
+rm -rf "$NOJQ"
 
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
