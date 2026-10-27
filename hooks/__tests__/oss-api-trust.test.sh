@@ -141,6 +141,22 @@ channel_dir_case() {  # channel_dir_case <target dir mode> <want> <label>
 channel_dir_case 700 trusted "~/.oss -> ~/.oss-beta (0700), config 0600, loopback: trusted (the channel layout)"
 channel_dir_case 775 refused "~/.oss -> ~/.oss-beta (0775), config 0600, loopback: refused (the link's target is checked)"
 
+# SR16: the team IRON LAWS fetch (oss_custom_iron_laws) sends the key only where oss_api_url allows: an untrusted
+# apiUrl (a custom host, or loopback named by a group-writable config) makes no curl call at all.
+mkdir -p "$T/curlrec"; printf '#!/bin/bash\necho "$*" >> "%s/curl-calls"\nprintf "## Custom Team Laws\\n- x\\n"\n' "$T" > "$T/curlrec/curl"; chmod +x "$T/curlrec/curl"
+for row in "https://api.example.com 600" "http://localhost:3001 664"; do
+    set -- $row; rm -f "$T/curl-calls" "$T/.oss/config.json"
+    printf '{"apiKey":"k","apiUrl":"%s"}' "$1" > "$T/.oss/config.json"; chmod "$2" "$T/.oss/config.json"
+    call oss_custom_iron_laws "$T/curlrec:$PATH"; chmod 600 "$T/.oss/config.json"
+    [[ "$RC" != 0 && -z "$OUT" && ! -e "$T/curl-calls" ]] && pass "team laws: untrusted apiUrl ($1, config $2) → no curl, nothing printed" \
+        || fail "team laws: untrusted apiUrl ($1, config $2) → no curl" "rc=$RC out='$OUT' calls=$(cat "$T/curl-calls" 2>/dev/null)"
+done
+rm -f "$T/curl-calls"; printf '{"apiKey":"k","apiUrl":"http://localhost:3001"}' > "$T/.oss/config.json"; chmod 600 "$T/.oss/config.json"
+call oss_custom_iron_laws "$T/curlrec:$PATH"
+[[ "$RC" == 0 && "$OUT" == "## Custom Team Laws"* && "$(cat "$T/curl-calls")" == *"http://localhost:3001/api/v1/prompts/shared/iron-laws?part=custom" ]] \
+    && pass "team laws: a trusted apiUrl is fetched at <origin>/api/v1/prompts/shared/iron-laws?part=custom" \
+    || fail "team laws: a trusted apiUrl is fetched" "rc=$RC out='$OUT' calls=$(cat "$T/curl-calls" 2>/dev/null)"
+
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
 [[ $FAILED -eq 0 ]]

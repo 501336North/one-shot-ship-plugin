@@ -22,9 +22,11 @@ pass() { echo "✓ PASS: $1"; RUN=$((RUN + 1)); }
 fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
 
 # How each hook is driven so that it makes its API call (measured 2026-10-26).
-# oss-iron-laws-sync.sh and fetch-iron-laws.sh are not here since FR15: they make no API call of their own; the
-# decrypt CLI fetches the verified laws, and the CLI's address rule is tested in packages/cli-decrypt.
-# iron-laws-sync-safety.test.sh and fetch-iron-laws.test.sh prove the hooks never run curl for the laws.
+# oss-iron-laws-sync.sh and fetch-iron-laws.sh are not here since FR15: the decrypt CLI fetches the verified laws
+# (its address rule is tested in packages/cli-decrypt). Their one call of their own, the unverified team section
+# (SR16), goes through oss_custom_iron_laws -> oss_api_url; oss-api-trust.test.sh checks its address and that an
+# untrusted apiUrl gets no call, and iron-laws-sync-safety.test.sh / fetch-iron-laws.test.sh that curl is never
+# used for the laws themselves.
 #   name | arguments
 CASES=(
     "oss-session-start.sh|"

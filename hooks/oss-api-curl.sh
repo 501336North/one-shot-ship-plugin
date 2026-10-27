@@ -149,6 +149,25 @@ oss_api_url() {
     printf '%s\n' "$url"
 }
 
+# The line written above the team/personal IRON LAWS, which the signed prompt manifest does not cover (SR16).
+OSS_CUSTOM_LAWS_NOTE='> Team/personal laws below are not covered by the signed prompt manifest (unverified).'
+
+# oss_custom_iron_laws - prints the team/personal IRON LAWS section the API serves beside the signed laws
+# (GET /api/v1/prompts/shared/iron-laws?part=custom: only the "## Custom Team Laws" / "## Custom Personal Laws"
+# part, or an empty body), with the stripControl character set removed (line breaks and tabs kept). It is NOT
+# verified: callers write OSS_CUSTOM_LAWS_NOTE above it. rc 1 and nothing printed when the config is untrusted (the
+# key is never sent), jq is missing, the fetch fails, or the body is empty or not that section (an older API that
+# ignores ?part sends the whole laws).
+oss_custom_iron_laws() {
+    local url key body
+    command -v jq >/dev/null 2>&1 || return 1
+    url=$(oss_api_url) && key=$(oss_api_key) || return 1
+    body=$(oss_api_curl "$key" -sf -m 10 "$url/api/v1/prompts/shared/iron-laws?part=custom") || return 1
+    body=$(printf '%s' "$body" | jq -Rrs 'gsub("[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]"; "")') || return 1
+    case "$body" in "## Custom Team Laws"* | "## Custom Personal Laws"*) ;; *) return 1 ;; esac
+    printf '%s\n' "$body"
+}
+
 # oss_json_field FIELD - reads JSON (a server response) on stdin and prints .FIELD as text ("" when missing,
 # null or false). Control characters and the zero-width/bidi characters are removed inside jq, so those raw
 # bytes never reach the shell or the terminal. Same character set as stripControl in

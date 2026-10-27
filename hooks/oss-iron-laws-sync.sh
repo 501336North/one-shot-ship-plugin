@@ -20,6 +20,8 @@
 #     takes over 15s, or is missing and cannot be installed
 #   - the verified body is empty, < 500 bytes, > 256KB, HTML, or has no "IRON LAW"
 # A failed fetch sets a 1h backoff; only a validated write marks the cache fresh (24h).
+# Below the verified laws, inside the block: the team/personal section (oss_custom_iron_laws, SR16), after one line
+# saying it is unverified; when there is none or its fetch fails, the verified laws alone.
 #
 # Exit codes (refresh mode always exits 0, so session start never fails):
 #   0  done or nothing to do
@@ -153,6 +155,12 @@ fetch_body() {
         warn "rejected: body looks like HTML"; return 1
     fi
     if ! grep -q 'IRON LAW' "$out"; then warn "rejected: body has no IRON LAW heading"; return 1; fi
+    # Below the verified laws: the team/personal section, marked unverified (SR16); none or a failed fetch: base only.
+    local custom
+    if custom=$(oss_custom_iron_laws); then
+        { printf '\n%s\n\n' "$OSS_CUSTOM_LAWS_NOTE"
+          printf '%s\n' "$custom" | awk '!/^[[:space:]]*<!--[[:space:]]*IRON LAWS (START|END)/'; } >> "$out"
+    fi
 }
 
 # --- write -----------------------------------------------------------------------------------

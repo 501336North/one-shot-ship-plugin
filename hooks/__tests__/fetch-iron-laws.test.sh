@@ -71,7 +71,9 @@ esac
 printf '# IRON LAWS\n\n## LAW 1: TDD\n\n'
 CLIEOF
     chmod +x "$TEST_HOME/.oss/bin/oss-decrypt"
-    printf '#!/bin/bash\necho "$*" >> "%s/curl-called"\nexit 7\n' "$TEST_HOME" > "$MOCK_BIN_DIR/curl"
+    # curl records every call; it serves $TEST_HOME/custom for ?part=custom (SR16), anything else fails (exit 7).
+    printf '#!/bin/bash\necho "$*" >> "%s/curl-called"\ncase "$*" in *part=custom*) [[ -f "%s/custom" ]] && { cat "%s/custom"; exit 0; } ;; esac\nexit 7\n' \
+        "$TEST_HOME" "$TEST_HOME" "$TEST_HOME" > "$MOCK_BIN_DIR/curl"
     chmod +x "$MOCK_BIN_DIR/curl"
 }
 run_hook() { # sets result, exit_code
@@ -94,7 +96,7 @@ test_plain_markdown_response() {
     run_hook
     local argv curl_called=n
     argv=$(cat "$TEST_HOME/cli-argv" 2>/dev/null)
-    [[ -f "$TEST_HOME/curl-called" ]] && curl_called=y
+    grep -qv 'part=custom' "$TEST_HOME/curl-called" 2>/dev/null && curl_called=y   # only the team section may use curl (SR16)
     cleanup
     if [[ $exit_code -eq 0 ]] && echo "$result" | grep -q "IRON LAWS" && [[ "$argv" == "--type shared --name iron-laws" && "$curl_called" == n ]]; then
         pass "$test_name"
@@ -135,7 +137,7 @@ test_refusal_prints_no_laws() {
     make_sandbox; echo refused > "$TEST_HOME/cli-mode"
     local out exit_code=0
     out=$(HOME="$TEST_HOME" CLAUDE_PLUGIN_ROOT="$TEST_HOME/no-plugin" PATH="$MOCK_BIN_DIR:$PATH" "$HOOK_SCRIPT" 2>/dev/null) || exit_code=$?
-    local curl_called=n; [[ -f "$TEST_HOME/curl-called" ]] && curl_called=y
+    local curl_called=n; grep -qv 'part=custom' "$TEST_HOME/curl-called" 2>/dev/null && curl_called=y
     cleanup
     if [[ $exit_code -ne 0 && "$out" != *"IRON LAWS"* && "$curl_called" == n ]]; then
         pass "$test_name"
@@ -191,6 +193,45 @@ test_ensure_failure_prints_no_laws() {
 }
 
 # =============================================================================
+# SR16: below the verified laws, the team/personal section (?part=custom) marked unverified; none, empty or a failed
+# fetch: the verified laws alone, still exit 0. An untrusted apiUrl: exit 1 before any curl (the key never leaves).
+# =============================================================================
+NOTE='> Team/personal laws below are not covered by the signed prompt manifest (unverified).'
+test_custom_section_printed() {
+    local test_name="The team section is printed below the verified laws, marked unverified, control characters stripped"
+    ((TESTS_RUN++))
+    make_sandbox; printf '## Custom Personal Laws\n- Mine: \033[1mbold\033[0m\n' > "$TEST_HOME/custom"
+    run_hook --raw
+    cleanup
+    if [[ $exit_code -eq 0 && "$result" == *"LAW 1: TDD"*"$NOTE"*"## Custom Personal Laws"*"- Mine: [1mbold[0m"* && "$result" != *$'\033'* ]]; then pass "$test_name"
+    else fail "$test_name" "exit 0, laws, note, section, no ESC" "exit=$exit_code output: $result"; fi
+}
+test_custom_section_absent() {
+    local mode
+    for mode in empty fail; do
+        local test_name="Team section $mode → the verified laws alone, no unverified note, exit 0"
+        ((TESTS_RUN++))
+        make_sandbox; [[ $mode == empty ]] && : > "$TEST_HOME/custom"
+        run_hook --raw
+        local asked=n; grep -q 'part=custom' "$TEST_HOME/curl-called" 2>/dev/null && asked=y
+        cleanup
+        if [[ $exit_code -eq 0 && "$result" == *"LAW 1: TDD"* && "$result" != *unverified* && $asked == y ]]; then pass "$test_name"
+        else fail "$test_name" "exit 0, laws, no note, the section was asked for" "exit=$exit_code asked=$asked output: $result"; fi
+    done
+}
+test_custom_section_untrusted_api() {
+    local test_name="An untrusted apiUrl → exit 1 and no curl at all"
+    ((TESTS_RUN++))
+    make_sandbox; echo '{"apiKey": "test-key-123", "apiUrl": "https://api.example.com"}' > "$TEST_HOME/.oss/config.json"
+    printf '## Custom Team Laws\n- x\n' > "$TEST_HOME/custom"
+    run_hook --raw
+    local curled=n; [[ -s "$TEST_HOME/curl-called" ]] && curled=y
+    cleanup
+    if [[ $exit_code -eq 1 && $curled == n && "$result" != *"Custom Team Laws"* ]]; then pass "$test_name"
+    else fail "$test_name" "exit 1, no curl" "exit=$exit_code curled=$curled output: $result"; fi
+}
+
+# =============================================================================
 # Run all tests
 # =============================================================================
 echo "Running fetch-iron-laws.sh tests..."
@@ -202,6 +243,9 @@ test_refusal_prints_no_laws
 test_missing_cli_installs_first
 test_installed_cli_still_ensured
 test_ensure_failure_prints_no_laws
+test_custom_section_printed
+test_custom_section_absent
+test_custom_section_untrusted_api
 
 echo ""
 echo "======================================="

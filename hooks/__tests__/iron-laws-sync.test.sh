@@ -181,7 +181,8 @@ EOF
 
     local cli_args="" curl_called=false
     [[ -f "$marker_file" ]] && cli_args=$(cat "$marker_file")
-    [[ -f "$TEST_HOME/curl-called" ]] && curl_called=true
+    # The only curl allowed is the unverified team section (SR16); the laws themselves never come from curl.
+    grep -qv 'part=custom' "$TEST_HOME/curl-called" 2>/dev/null && curl_called=true
 
     rm -rf "$TEST_HOME" "$TEST_PROJECT" "$MOCK_BIN_DIR"
 

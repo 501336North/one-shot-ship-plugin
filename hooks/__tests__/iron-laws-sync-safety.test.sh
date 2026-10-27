@@ -11,7 +11,8 @@
 # @business-rule The sync never damages, duplicates, or redirects writes from a user's file,
 #           never stores a bad API response, never blocks session start, and never puts the
 #           API key on a command line. The laws come only from oss-decrypt, which verifies them
-#           against the signed manifest (FR15): a CLI refusal writes nothing, and curl is never used.
+#           against the signed manifest (FR15): a CLI refusal writes nothing, and curl is never used for them.
+#           The team/personal section (SR16) is appended below them, marked unverified.
 #
 # Usage: ./hooks/__tests__/iron-laws-sync-safety.test.sh
 
@@ -56,7 +57,7 @@ FAKE_KEY='fake-key-0123456789abcdef'
 # --- fixture --------------------------------------------------------------------------------
 # T/home   HOME with .oss/config.json and .oss/bin/oss-decrypt (the stub CLI)
 # T/proj   CLAUDE_PROJECT_DIR
-# T/bin    curl tripwire: records any call to T/shim/curl-argv and fails
+# T/bin    curl: records any call to T/shim/curl-argv; serves the custom section (SR16), otherwise fails
 # T/shim   CLI control: body, refuse (a message: the CLI prints it on stderr and exits 1), sleep;
 #          records argv (one line per call)
 setup() {
@@ -76,7 +77,17 @@ printf '\n'   # console.log ends the output with a newline
 exit 0
 SHIM
     chmod +x "$T/home/.oss/bin/oss-decrypt"
-    printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s/curl-argv"\nexit 7\n' "$T/shim" > "$T/bin/curl"
+    # curl: records argv; serves T/shim/custom for ?part=custom (SR16), or fails there when T/shim/custom-fail
+    # exists; any other call is a tripwire (exit 7).
+    cat > "$T/bin/curl" << CURL
+#!/bin/bash
+printf '%s\n' "\$*" >> "$T/shim/curl-argv"
+case "\$*" in *"part=custom"*)
+    [[ -f "$T/shim/custom-fail" ]] && exit 22
+    [[ -f "$T/shim/custom" ]] && { cat "$T/shim/custom"; exit 0; } ;;
+esac
+exit 7
+CURL
     chmod +x "$T/bin/curl"
     valid_body > "$T/shim/body"
 }
@@ -106,7 +117,9 @@ run_sync() {
     OUT=$(cat "$T/out"); ERR=$(cat "$T/err")
 }
 cli_calls() { [[ -f "$T/shim/argv" ]] && wc -l < "$T/shim/argv" | tr -d ' ' || echo 0; }
-curl_calls() { [[ -f "$T/shim/curl-argv" ]] && wc -l < "$T/shim/curl-argv" | tr -d ' ' || echo 0; }
+# curl calls other than the team/personal section (SR16): the laws themselves are never fetched by curl.
+curl_calls() { if [[ -f "$T/shim/curl-argv" ]]; then grep -vc 'part=custom' "$T/shim/curl-argv"; else echo 0; fi; }
+custom_calls() { if [[ -f "$T/shim/curl-argv" ]]; then grep -c 'part=custom' "$T/shim/curl-argv"; else echo 0; fi; }
 count_line() { grep -cxF -- "$1" "$2" 2>/dev/null || true; }
 sum() { cksum < "$1"; }
 
@@ -400,6 +413,50 @@ test_watchdog_leaves_no_sleep() {
     teardown
 }
 
+# SR16 (maintainer decision: team IRON LAWS stay in CLAUDE.md). After the VERIFIED base, the team/personal section
+# (GET /api/v1/prompts/shared/iron-laws?part=custom, key on curl's stdin, same trust rule) is appended inside the
+# block below one line saying it is unverified, with control characters stripped. Empty, failed, or not a custom
+# section (e.g. an older API that ignores ?part): the base alone, no marker, and the sync still succeeds.
+UNVERIFIED='> Team/personal laws below are not covered by the signed prompt manifest (unverified).'
+block_of() { awk -v s="$START" -v e="$END" '$0 == s { on = 1; next } $0 == e { on = 0 } on' "$1"; }
+test_custom_section_appended() {
+    local name="SR16: the team section is appended below the verified laws, marked unverified, control characters and marker lines stripped"; ((TESTS_RUN++)); setup
+    printf '## Custom Team Laws\n\n- Team rule: \033[31mred\033[0m deploys need two reviews.\a\n%s\n- after a marker line\n' "$END" > "$T/shim/custom"
+    block_file "$T/proj/CLAUDE.md"; stale; run_sync
+    local b; b=$(block_of "$T/proj/CLAUDE.md")
+    local order=n; [[ "$b" == *"FRESH FROM API"*"$UNVERIFIED"*"## Custom Team Laws"*"Team rule: [31mred[0m deploys"* ]] && order=y
+    local ctl=n; LC_ALL=C grep -q $'[\x01-\x08\x0b-\x1f\x7f]' "$T/proj/CLAUDE.md" && ctl=y
+    local url=n; grep -qx -- '-q --globoff --config - .*https://one-shot-ship-api.onrender.com/api/v1/prompts/shared/iron-laws?part=custom' "$T/shim/curl-argv" && url=y
+    if [[ $RC -eq 0 && $order == y && $ctl == n && "$(count_line "$END" "$T/proj/CLAUDE.md")" == 1 && "$b" == *"after a marker line"* && "$(custom_calls)" == 1 && "$(curl_calls)" == 0 && $url == y && "$(cat "$T/shim/curl-argv")" != *"$FAKE_KEY"* ]]; then pass "$name"
+    else fail "$name" "base, marker, section in order; no control bytes; one keyed curl to ?part=custom (key not in argv)" "rc=$RC order=$order ctl=$ctl ends=$(count_line "$END" "$T/proj/CLAUDE.md") custom=$(custom_calls) url=$url argv=$(cat "$T/shim/curl-argv" 2>/dev/null) block: $b"; fi
+    teardown
+}
+test_custom_section_absent() {
+    local mode
+    for mode in empty fail notcustom; do
+        local name="SR16: team section $mode → the verified laws alone, no unverified marker, sync succeeds"; ((TESTS_RUN++)); setup
+        case $mode in
+            empty) : > "$T/shim/custom" ;;
+            fail) touch "$T/shim/custom-fail" ;;
+            notcustom) valid_body > "$T/shim/custom" ;;   # an older API ignoring ?part sends the whole laws
+        esac
+        block_file "$T/proj/CLAUDE.md"; stale; run_sync
+        local b; b=$(block_of "$T/proj/CLAUDE.md")
+        if [[ $RC -eq 0 && "$b" == *"FRESH FROM API"* && "$b" != *"unverified"* && "$(grep -c 'FRESH FROM API' "$T/proj/CLAUDE.md")" == 1 && "$(custom_calls)" == 1 ]]; then pass "$name"
+        else fail "$name" "rc 0, base only, once, no marker, one custom fetch" "rc=$RC custom=$(custom_calls) block: $b"; fi
+        teardown
+    done
+}
+test_custom_section_untrusted_api() {
+    local name="SR16: an untrusted apiUrl → no curl at all (the key never leaves), nothing written"; ((TESTS_RUN++)); setup
+    printf '{"apiKey": "%s", "apiUrl": "https://api.example.com"}\n' "$FAKE_KEY" > "$T/home/.oss/config.json"
+    printf '## Custom Team Laws\n- x\n' > "$T/shim/custom"
+    block_file "$T/proj/CLAUDE.md"; local before; before=$(sum "$T/proj/CLAUDE.md"); stale; run_sync
+    if [[ ! -s "$T/shim/curl-argv" && "$(sum "$T/proj/CLAUDE.md")" == "$before" ]]; then pass "$name"
+    else fail "$name" "no curl, unchanged" "curl argv: $(cat "$T/shim/curl-argv" 2>/dev/null)"; fi
+    teardown
+}
+
 # =============================================================================================
 # R6 Robust rewrite
 # =============================================================================================
@@ -674,6 +731,9 @@ test_markdown_with_angle_placeholders_accepted
 test_valid_write_marks_fresh
 test_cli_time_cap
 test_watchdog_leaves_no_sleep
+test_custom_section_appended
+test_custom_section_absent
+test_custom_section_untrusted_api
 test_key_off_argv
 test_cli_refusal_writes_nothing
 test_cli_missing_installs_first
