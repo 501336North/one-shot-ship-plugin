@@ -10,7 +10,7 @@
  */
 
 import crypto from 'crypto';
-import { DEFAULT_API_URL, getApiUrl, isAcceptedApiUrl } from './config.js';
+import { DEFAULT_API_URL, getApiUrlSetting, isAcceptedApiUrl } from './config.js';
 
 export interface ManifestKeys {
   /** Base64 SPKI DER Ed25519 public key */
@@ -78,12 +78,23 @@ export function trustedApiOrigin(apiUrl: string): string | null {
 /**
  * The configured API address as its trusted canonical origin: the one address every request (keyed or not) uses.
  *
+ * Loopback privacy rule (SR2, identical in meaning in the shell and the watcher): a LOOPBACK apiUrl is trusted only
+ * when config.json has no group- or world-write bit (mode & 0o022 == 0) AND its containing directory has no group-
+ * or world-write bit. Production and staging are unchanged (a group-writable config is accepted, the directory is
+ * not checked). A refused loopback address takes the same refusal as any untrusted address: the key is never sent.
+ *
  * @throws when apiUrl is not a trusted address (message names apiUrl, never echoes it)
  */
 export function getTrustedApiOrigin(): string {
-  const origin = trustedApiOrigin(getApiUrl());
+  const { apiUrl, configWritableOnlyByOwner } = getApiUrlSetting();
+  const origin = trustedApiOrigin(apiUrl);
   if (origin === null) throw new Error(UNTRUSTED_ADDRESS);
+  if (isLoopbackOrigin(origin) && !configWritableOnlyByOwner) throw new Error(UNTRUSTED_ADDRESS);
   return origin;
+}
+
+function isLoopbackOrigin(origin: string): boolean {
+  return origin !== DEFAULT_API_URL && origin !== STAGING_API_URL;
 }
 
 /**

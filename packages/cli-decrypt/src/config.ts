@@ -2,7 +2,7 @@
  * The one place the CLI decides where its config lives and which API it talks to.
  */
 
-import { closeSync, constants, fstatSync, openSync, readFileSync } from 'fs';
+import { closeSync, constants, fstatSync, openSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
@@ -32,12 +32,22 @@ const UNTRUSTED_CONFIG =
  * (O_NOFOLLOW) and both checked (fstat) and read through that one descriptor, so it cannot be swapped in between.
  */
 export function readConfigFile(): Record<string, unknown> {
+  return readConfig().values;
+}
+
+interface ConfigRead {
+  values: Record<string, unknown>;
+  /** config.json and its directory carry no group- or world-write bit (mode & 0o022 == 0). */
+  writableOnlyByOwner: boolean;
+}
+
+function readConfig(): ConfigRead {
   const configPath = join(getConfigDir(), 'config.json');
   let fd: number;
   try {
     fd = openSync(configPath, constants.O_RDONLY | constants.O_NOFOLLOW);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { values: {}, writableOnlyByOwner: false };
     throw new Error(UNTRUSTED_CONFIG);
   }
   try {
@@ -45,19 +55,18 @@ export function readConfigFile(): Record<string, unknown> {
     if (!stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 0o002) !== 0) {
       throw new Error(UNTRUSTED_CONFIG);
     }
+    const writableOnlyByOwner =
+      (stat.mode & 0o022) === 0 && (statSync(getConfigDir()).mode & 0o022) === 0;
     try {
-      return JSON.parse(readFileSync(fd, 'utf8')) as Record<string, unknown>;
+      return { values: JSON.parse(readFileSync(fd, 'utf8')) as Record<string, unknown>, writableOnlyByOwner };
     } catch {
-      return {};
+      return { values: {}, writableOnlyByOwner };
     }
   } finally {
     closeSync(fd);
   }
 }
 
-function readConfiguredApiUrl(): unknown {
-  return readConfigFile().apiUrl;
-}
 
 function parses(value: string): boolean {
   try {
@@ -74,12 +83,20 @@ function parses(value: string): boolean {
  * never echoing the value.
  */
 export function getApiUrl(): string {
-  const apiUrl = readConfiguredApiUrl();
-  if (apiUrl === undefined || apiUrl === null || apiUrl === '') return DEFAULT_API_URL;
+  return getApiUrlSetting().apiUrl;
+}
+
+/** getApiUrl, plus whether config.json and its directory are writable by the owner alone (see ConfigRead). */
+export function getApiUrlSetting(): { apiUrl: string; configWritableOnlyByOwner: boolean } {
+  const { values, writableOnlyByOwner } = readConfig();
+  const apiUrl = values.apiUrl;
+  if (apiUrl === undefined || apiUrl === null || apiUrl === '') {
+    return { apiUrl: DEFAULT_API_URL, configWritableOnlyByOwner: writableOnlyByOwner };
+  }
   if (typeof apiUrl !== 'string' || !isAcceptedApiUrl(apiUrl)) {
     throw new Error(REFUSAL);
   }
-  return apiUrl;
+  return { apiUrl, configWritableOnlyByOwner: writableOnlyByOwner };
 }
 
 /** The one apiUrl rule as a predicate: the https or loopback-http shape, and parses as a URL. */
