@@ -103,9 +103,10 @@ var import_path3 = require("path");
 var import_crypto = require("crypto");
 var import_fs2 = require("fs");
 var import_path2 = require("path");
-function writeFileNoFollow(path, data, options) {
+function writeFileNoFollow(target, data, options) {
+  (0, import_fs2.mkdirSync)((0, import_path2.dirname)(target), { recursive: true, mode: options.dirMode });
+  const path = inResolvedConfigDir(target);
   const dir = (0, import_path2.dirname)(path);
-  (0, import_fs2.mkdirSync)(dir, { recursive: true, mode: options.dirMode });
   const fd = (0, import_fs2.openSync)(dir, import_fs2.constants.O_RDONLY | import_fs2.constants.O_DIRECTORY | import_fs2.constants.O_NOFOLLOW);
   try {
     const stat = (0, import_fs2.fstatSync)(fd);
@@ -119,6 +120,12 @@ function writeFileNoFollow(path, data, options) {
   const temp = (0, import_path2.join)(dir, `.${(0, import_path2.basename)(path)}.${(0, import_crypto.randomBytes)(8).toString("hex")}.tmp`);
   (0, import_fs2.writeFileSync)(temp, data, { mode: options.mode, flag: "wx" });
   (0, import_fs2.renameSync)(temp, path);
+}
+function inResolvedConfigDir(path) {
+  const configDir = getConfigDir();
+  const inside = (0, import_path2.relative)(configDir, path);
+  if (inside === "" || inside.startsWith("..") || (0, import_path2.isAbsolute)(inside)) return path;
+  return (0, import_path2.join)((0, import_fs2.realpathSync)(configDir), inside);
 }
 
 // src/cache.ts
