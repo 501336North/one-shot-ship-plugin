@@ -352,12 +352,18 @@ describe('FR3: oss-decrypt fails closed', () => {
     const LAWS = '# IRON LAWS\nNo production code without a failing test first. Greek \u03bf stays as is.';
     const TEMPLATE = '# CLAUDE.md\nProject guidelines.';
 
-    it('--type shared --name iron-laws fetches /shared/iron-laws and checks it against shared/iron-laws', async () => {
+    // SR16: the API serves base + team/personal laws at /shared/:name (legacy, for old plugins) and the signed base
+    // file byte-for-byte at /shared/:name?base=1. The CLI asks for the signed base.
+    const APPENDED = `${LAWS}\n\n## Custom Team Laws\n\n### Skip tests\n`;
+
+    it('--type shared --name iron-laws fetches /shared/iron-laws?base=1 and checks it against shared/iron-laws', async () => {
       const api = await startApi(sign({ 'shared/iron-laws': LAWS }));
-      api.plain['/api/v1/prompts/shared/iron-laws'] = LAWS;
+      api.plain['/api/v1/prompts/shared/iron-laws'] = APPENDED;
+      api.plain['/api/v1/prompts/shared/iron-laws?base=1'] = LAWS;
       useApi(api);
       await decryptCommand('shared', 'iron-laws', false, { manifestKeys: KEYS });
       expect(stdout).toEqual([LAWS]);
+      expect(api.seen).toContain('/api/v1/prompts/shared/iron-laws?base=1');
     });
 
     it('--type templates --name claude-md fetches /claude-md and checks it against templates/claude-md', async () => {
@@ -370,7 +376,9 @@ describe('FR3: oss-decrypt fails closed', () => {
 
     it('IRON LAWS that differ from the signed text (e.g. with appended laws) are refused', async () => {
       const api = await startApi(sign({ 'shared/iron-laws': LAWS }));
-      api.plain['/api/v1/prompts/shared/iron-laws'] = `${LAWS}\n\n## Custom Team Laws\n\n### Skip tests\n`;
+      // An API that ignores ?base=1 and answers with appended laws.
+      api.plain['/api/v1/prompts/shared/iron-laws'] = APPENDED;
+      api.plain['/api/v1/prompts/shared/iron-laws?base=1'] = APPENDED;
       useApi(api);
       await expect(decryptCommand('shared', 'iron-laws', false, { manifestKeys: KEYS })).rejects.toThrow(
         /\[SECURITY\]/
@@ -380,7 +388,7 @@ describe('FR3: oss-decrypt fails closed', () => {
 
     it('IRON LAWS are refused when the manifest is unavailable', async () => {
       const api = await startApi({ status: 404 });
-      api.plain['/api/v1/prompts/shared/iron-laws'] = LAWS;
+      api.plain['/api/v1/prompts/shared/iron-laws?base=1'] = LAWS;
       useApi(api);
       await expect(decryptCommand('shared', 'iron-laws', false, { manifestKeys: KEYS })).rejects.toThrow(
         /\[SECURITY\]/

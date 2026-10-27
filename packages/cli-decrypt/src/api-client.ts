@@ -267,7 +267,7 @@ export async function fetchCustomPrompt(
 
 /**
  * Fetch a plaintext prompt resource: IRON LAWS (`shared/<name>`) or the CLAUDE.md template (`templates/claude-md`).
- * The API serves both as raw markdown at GET /api/v1/prompts/shared/:name and GET /api/v1/prompts/claude-md;
+ * The API serves both as raw markdown at GET /api/v1/prompts/shared/:name?base=1 and GET /api/v1/prompts/claude-md;
  * there is no route for any other template. The caller verifies the text against the signed manifest.
  *
  * @throws Error for a template the API does not serve (before any request), or on a failed request
@@ -285,7 +285,9 @@ export async function fetchPlainPrompt(
     if (name !== 'claude-md') throw new Error('Unknown template: the API serves only claude-md.');
     endpoint = `${apiUrl}/api/v1/prompts/claude-md`;
   } else {
-    endpoint = `${apiUrl}/api/v1/prompts/shared/${encodeURIComponent(name)}`;
+    // ?base=1: the signed base file byte-for-byte. Without it the API appends team/personal laws (for old plugins),
+    // which the signed manifest cannot cover.
+    endpoint = `${apiUrl}/api/v1/prompts/shared/${encodeURIComponent(name)}?base=1`;
   }
 
   return keyedRequest(endpoint, {
