@@ -21,11 +21,25 @@ OSS_DECRYPT="${OSS_BIN_DIR}/oss-decrypt"
 UPGRADE_STAMP="${OSS_BIN_DIR}/.decrypt-upgrade-failed"
 # Pinned release, never "latest": an unrelated release (oss-launch-v2.0.78, 2026-06-28) took GitHub's
 # "Latest" without oss-decrypt assets and every new install 404'd. See .oss/dev/active/decrypt-download-pin/.
-OSS_DECRYPT_TAG="${OSS_DECRYPT_TAG:-cli-decrypt-v1.2.4}"
-if [[ ! "$OSS_DECRYPT_TAG" =~ ^cli-decrypt-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Error: invalid OSS_DECRYPT_TAG '$OSS_DECRYPT_TAG' (expected cli-decrypt-vX.Y.Z)"
+# Release channels (ADR-004): the pin follows the plugin's channel. A beta plugin (a version with a pre-release part,
+# e.g. 2.1.0-beta.1) pins the beta CLI, which carries the staging signing key, and verifies it against its own
+# committed checksum file; a stable plugin keeps the stable pin unchanged. The plugin version is read beside this
+# hook, or through ~/.oss/plugin-root when it runs from the ~/.oss/hooks copy.
+OSS_DECRYPT_STABLE_TAG="cli-decrypt-v1.2.4"
+OSS_DECRYPT_BETA_TAG="cli-decrypt-v1.3.0-beta.1"
+PLUGIN_JSON="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../.claude-plugin/plugin.json"
+[[ -f "$PLUGIN_JSON" || ! -f "$OSS_DIR/plugin-root" ]] || PLUGIN_JSON="$(head -n1 "$OSS_DIR/plugin-root")/.claude-plugin/plugin.json"
+PLUGIN_VERSION=$(sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$PLUGIN_JSON" 2>/dev/null | head -n1 || true)
+if [[ "$PLUGIN_VERSION" == *-* ]]; then
+    OSS_DECRYPT_TAG="${OSS_DECRYPT_TAG:-$OSS_DECRYPT_BETA_TAG}"; CHECKSUMS_NAME="oss-decrypt-checksums.beta.txt"
+else
+    OSS_DECRYPT_TAG="${OSS_DECRYPT_TAG:-$OSS_DECRYPT_STABLE_TAG}"; CHECKSUMS_NAME="oss-decrypt-checksums.txt"
+fi
+if [[ ! "$OSS_DECRYPT_TAG" =~ ^cli-decrypt-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; then
+    echo "Error: invalid OSS_DECRYPT_TAG '$OSS_DECRYPT_TAG' (expected cli-decrypt-vX.Y.Z or cli-decrypt-vX.Y.Z-pre.N)"
     exit 1
 fi
+PINNED_VERSION="${OSS_DECRYPT_TAG#cli-decrypt-v}"
 GITHUB_RELEASES="https://github.com/501336North/one-shot-ship-plugin/releases/download/${OSS_DECRYPT_TAG}"
 # -f: an HTTP error is a failure (not a saved error page); HTTPS only; abort a stalled transfer
 # (<1 KB/s for 60 s). First installs have no total-time cap; upgrades over a working binary get one deadline (D6).
@@ -92,9 +106,13 @@ HAVE_RUNNABLE=false
 if [[ -x "$OSS_DECRYPT" ]]; then
     # Binary exists — check version. Only a clean `--version` (exit 0) counts; the first X.Y.Z only.
     VERSION_OUT=$("$OSS_DECRYPT" --version 2>/dev/null) || VERSION_OUT=""
-    CURRENT_VERSION=$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' <<<"$VERSION_OUT" | head -n1 || true)
-    CURRENT_VERSION=${CURRENT_VERSION:-0.0.0}
-    if version_gte "$CURRENT_VERSION" "$MINIMUM_VERSION"; then
+    CURRENT_FULL=$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?' <<<"$VERSION_OUT" | head -n1 || true)
+    CURRENT_VERSION=${CURRENT_FULL%%-*}; CURRENT_VERSION=${CURRENT_VERSION:-0.0.0}
+    # A pre-release on either side must match the pin EXACTLY: a beta binary never satisfies a stable pin
+    # (sort -V would rank it as its X.Y.Z) and a stable binary never satisfies a beta pin.
+    if [[ "$PINNED_VERSION" == *-* || "$CURRENT_FULL" == *-* ]]; then
+        [[ "$CURRENT_FULL" == "$PINNED_VERSION" ]] && exit 0
+    elif version_gte "$CURRENT_VERSION" "$MINIMUM_VERSION"; then
         exit 0
     fi
     # Soft path (keep it on a failed download) only for a working install at or above the old floor 1.2.1.
@@ -274,9 +292,9 @@ echo "[verify] Binary checksum: verified"
 # so the manifest is looked up beside it, then in the plugin root recorded by session start.
 ARTIFACT="oss-decrypt-${PLATFORM}-${ARCH}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CHECKSUMS="${OSS_DECRYPT_CHECKSUMS:-$SCRIPT_DIR/oss-decrypt-checksums.txt}"
+CHECKSUMS="${OSS_DECRYPT_CHECKSUMS:-$SCRIPT_DIR/$CHECKSUMS_NAME}"
 if [[ ! -f "$CHECKSUMS" && -z "${OSS_DECRYPT_CHECKSUMS:-}" && -f "$OSS_DIR/plugin-root" ]]; then
-    CHECKSUMS="$(cat "$OSS_DIR/plugin-root")/hooks/oss-decrypt-checksums.txt"
+    CHECKSUMS="$(cat "$OSS_DIR/plugin-root")/hooks/$CHECKSUMS_NAME"
 fi
 COMMITTED_HASH=$(awk -v a="$ARTIFACT" '$2 == a {print $1}' "$CHECKSUMS" 2>/dev/null | head -n1)
 if [[ "$ACTUAL_HASH" != "$COMMITTED_HASH" ]]; then   # an absent entry is empty, never equal

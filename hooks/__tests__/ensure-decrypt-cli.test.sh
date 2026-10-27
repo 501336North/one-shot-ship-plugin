@@ -17,7 +17,14 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOOK_SCRIPT="$SCRIPT_DIR/../ensure-decrypt-cli.sh"
+# Release channels: the hook pins by the plugin's channel. This suite guards the STABLE customer path, so it runs the
+# hook from a throwaway plugin tree whose plugin.json is a stable version (the repo itself is a beta on `next`).
+# The beta path is hooks/__tests__/ensure-decrypt-channel.test.sh.
+STABLE_TREE="$(mktemp -d)"; trap 'rm -rf "$STABLE_TREE"' EXIT
+mkdir -p "$STABLE_TREE/.claude-plugin" "$STABLE_TREE/hooks"
+printf '{"name":"oss","version":"2.0.94"}\n' > "$STABLE_TREE/.claude-plugin/plugin.json"
+cp "$SCRIPT_DIR/../ensure-decrypt-cli.sh" "$SCRIPT_DIR"/../oss-decrypt-checksums*.txt "$STABLE_TREE/hooks/"
+HOOK_SCRIPT="$STABLE_TREE/hooks/ensure-decrypt-cli.sh"
 
 # Test tracking
 TESTS_RUN=0
@@ -777,7 +784,7 @@ test_committed_manifest_is_complete_and_matches_tag() {
     local test_name="Committed manifest: one 64-hex entry per platform; header tag == hook's pinned tag"
     ((TESTS_RUN++))
     local mf; mf="$(dirname "$HOOK_SCRIPT")/oss-decrypt-checksums.txt"
-    local tag; tag=$(grep -oE 'OSS_DECRYPT_TAG:-cli-decrypt-v[0-9]+\.[0-9]+\.[0-9]+' "$HOOK_SCRIPT" | sed 's/.*:-//')
+    local tag; tag=$(grep -oE 'OSS_DECRYPT_STABLE_TAG="cli-decrypt-v[0-9]+\.[0-9]+\.[0-9]+"' "$HOOK_SCRIPT" | sed -E 's/.*="([^"]+)"/\1/')
     local ok=1 a
     for a in Darwin-arm64 Darwin-x64 Linux-arm64 Linux-x64; do
         [[ "$(grep -cE "^[0-9a-f]{64}  oss-decrypt-$a$" "$mf")" == "1" ]] || ok=0
@@ -841,11 +848,11 @@ MKEOF
 #           the hook's pinned tag is cli-decrypt-v<packages/cli-decrypt/package.json version>.
 # @regression v1.2.3 shipped a binary that reported 1.2.1; the pin must follow the released version.
 test_pinned_tag_matches_cli_package_version() {
-    local test_name="pinned tag matches the CLI package version"
+    local test_name="the BETA pin matches the CLI package version (the CLI built from this tree, published as a pre-release)"
     ((TESTS_RUN++))
-    local pkg; pkg="$(dirname "$HOOK_SCRIPT")/../packages/cli-decrypt/package.json"
+    local pkg; pkg="$SCRIPT_DIR/../../packages/cli-decrypt/package.json"
     local ver; ver=$(node -p "require(process.argv[1]).version" "$pkg" 2>/dev/null)
-    local tag; tag=$(grep -oE 'OSS_DECRYPT_TAG:-cli-decrypt-v[0-9]+\.[0-9]+\.[0-9]+' "$HOOK_SCRIPT" | sed 's/.*:-//')
+    local tag; tag=$(grep -oE 'OSS_DECRYPT_BETA_TAG="cli-decrypt-v[^"]+"' "$HOOK_SCRIPT" | sed -E 's/.*="([^"]+)"/\1/')
     if [[ -n "$ver" && "$tag" == "cli-decrypt-v$ver" ]]; then pass "$test_name"
     else fail "$test_name" "cli-decrypt-v$ver" "${tag:-<none>}"; fi
 }
@@ -855,7 +862,7 @@ test_committed_checksums_header_names_pinned_tag() {
     local test_name="committed checksums header names the pinned tag"
     ((TESTS_RUN++))
     local mf; mf="$(dirname "$HOOK_SCRIPT")/oss-decrypt-checksums.txt"
-    local tag; tag=$(grep -oE 'OSS_DECRYPT_TAG:-cli-decrypt-v[0-9]+\.[0-9]+\.[0-9]+' "$HOOK_SCRIPT" | sed 's/.*:-//')
+    local tag; tag=$(grep -oE 'OSS_DECRYPT_STABLE_TAG="cli-decrypt-v[0-9]+\.[0-9]+\.[0-9]+"' "$HOOK_SCRIPT" | sed -E 's/.*="([^"]+)"/\1/')
     local named; named=$(grep -oE 'cli-decrypt-v[0-9]+\.[0-9]+\.[0-9]+' "$mf" | sort -u)
     if [[ -n "$tag" && "$named" == "$tag" ]]; then pass "$test_name"
     else fail "$test_name" "manifest names only $tag" "$(echo $named)"; fi

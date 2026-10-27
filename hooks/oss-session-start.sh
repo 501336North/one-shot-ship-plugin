@@ -76,6 +76,7 @@ HOOKS_TO_COPY=(
     "oss-detect-playwright.sh"
     "ensure-decrypt-cli.sh"
     "oss-decrypt-checksums.txt"   # committed hash manifest ensure-decrypt-cli.sh verifies against
+    "oss-decrypt-checksums.beta.txt" # the beta CLI's committed hash manifest (release channels; beta plugins only)
     "verify-decrypt-setup.sh"
     "oss-iron-laws-sync.sh"
     "oss-onboard-check.sh"
