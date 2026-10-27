@@ -54,3 +54,18 @@ Rejected: it keeps the unverified path and the key in context.
 
 ## Related Decisions
 - ADR-004: Release channels
+
+## Amendment 1 (2026-10-27): ship round 1, maintainer decisions
+The quality gates found that verification failed OPEN: a missing, slow (>3 s; about 1 in 3 production fetches measured) or unlisted manifest delivered the prompt unverified. That made "key chosen by address" a non-boundary. The rules now:
+
+1. **Verification is mandatory (fail closed).**
+   - Every manifest-covered prompt (commands, workflows, skills, agents, hooks, `shared/iron-laws`, `templates/claude-md`) is refused when the manifest is missing, unreachable, unparseable, wrongly signed, or does not list it.
+   - The manifest is fetched in parallel with the prompt (10 s timeout) and cached per API origin for 300 s. The cache is re-verified on every read.
+   - The API adds signed `workflows/<name>` entries, because workflows are served from `commands/<target>` through `WORKFLOW_NAME_MAPPINGS`.
+2. **One trust rule for every key sender:** production, staging, or loopback http only, normalised to the canonical origin. It applies in the shell `oss_api_url`, the CLI `trustedApiOrigin`, and the watcher `readApiCredentials`, all tested against `packages/cli-decrypt/test/fixtures/trusted-api-url-cases.json`. A custom or look-alike host never receives the key. The config file itself must not be a symlink, foreign-owned or world-writable (group-writable is allowed).
+3. **Documented unverified exceptions (maintainer decision, 2026-10-27):** team-authored content cannot be in the release-signed manifest.
+   - team custom commands (`--type custom`): delivered only from a trusted address, marked `[verify] UNVERIFIED`
+   - team/personal custom IRON LAWS (`/api/v1/iron-laws/team/:id`, `/personal`): served separately; `/shared/iron-laws` now serves only the signed base file
+   - Follow-up: sign team content per team.
+4. **The per-team workflow config** (`/api/v1/workflows`: which commands chain and which agents run) stays unsigned. It is host-restricted by rule 2. Follow-up: sign it.
+5. **Startup signing is explicit:** `MANIFEST_SIGN_AT_STARTUP=1`, set on the staging service only. A key present without the flag (local dev, production) serves the committed, reviewed manifest.
