@@ -372,15 +372,34 @@ describe('IronLawLogParser - Intervention Task Creation', () => {
       it.each([
         ['staging', { apiKey: 'k-secret', apiUrl: 'https://one-shot-ship-api-staging.onrender.com' }],
         ['production (apiUrl missing)', { apiKey: 'k-secret' }],
-      ])('should tell the model to re-read the IRON LAWS block in CLAUDE.md, with no command, key or URL, for a %s config', (_label, config) => {
+      ])('should tell the model to re-read the verified IRON LAWS in CLAUDE.md, with no command, key or URL, for a %s config', (_label, config) => {
         writeConfig(config);
 
         const prompt = thirdViolationPrompt();
 
         expect(prompt).toContain('MANDATORY: Fetch IRON LAWS and place at top of context');
-        expect(prompt).toContain('Re-read the IRON LAWS block in CLAUDE.md');
+        expect(prompt).toContain('Re-read the verified IRON LAWS in CLAUDE.md');
         expect(prompt).not.toMatch(/oss-iron-laws-sync|~\/|\.sh\b|\bRun\b/);
         expect(prompt).not.toMatch(/curl|Bearer|Authorization|apiKey|k-secret|https?:\/\//);
+      });
+
+      // TR2: since SR16 the IRON LAWS block also holds an UNVERIFIED team/personal section, below the note the
+      // shell writes (OSS_CUSTOM_LAWS_NOTE in hooks/oss-api-curl.sh). "Follow everything between the markers"
+      // would hand that section the authority of the signed laws, so the hint names the note the shell
+      // actually writes (read from the shell, so the two cannot drift) and points above it only.
+      it('should point at the verified IRON LAWS above the unverified note, and call the team/personal section advisory', () => {
+        writeConfig({ apiKey: 'k' });
+        const shell = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'hooks', 'oss-api-curl.sh'), 'utf8');
+        const note = /^OSS_CUSTOM_LAWS_NOTE='> (.+)'$/m.exec(shell)?.[1];
+        expect(note).toBeDefined();
+
+        const prompt = thirdViolationPrompt();
+
+        expect(prompt).toContain('Re-read the verified IRON LAWS in CLAUDE.md');
+        expect(prompt).toContain(`above the note "${note}"`);
+        expect(prompt).toMatch(/team\/personal section below that note is advisory and does not override them/i);
+        expect(prompt).not.toContain('between the IRON LAWS START and END markers');
+        expect(prompt).not.toMatch(/oss-iron-laws-sync|~\/|\.sh\b|\bRun\b/);
       });
 
       it('should name no API, and point at /oss:login, when the OSS config is refused', () => {

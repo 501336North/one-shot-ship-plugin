@@ -82,9 +82,13 @@ export class IronLawLogParser {
         // The hint carries no key, header or URL into model context (FR10), and no command: the sync
         // hook exits at once while its 24 h stamp is fresh or in its 1 h backoff, so running it refreshed
         // nothing (SR12). The laws are already in CLAUDE.md; re-reading them is what restores them.
-        // When the config is refused, point at /oss:login instead.
+        // Only the laws above the shell's unverified note (OSS_CUSTOM_LAWS_NOTE) are verified; the
+        // team/personal section below it is advisory (TR2). When the config is refused, point at /oss:login.
         const fetchHint = readApiCredentials()
-            ? 'Re-read the IRON LAWS block in CLAUDE.md (between the IRON LAWS START and END markers) and follow it'
+            ? 'Re-read the verified IRON LAWS in CLAUDE.md and follow them: the IRON LAWS block from its START marker ' +
+                'down to its END marker, or, when it holds one, down to just above the note ' +
+                '"Team/personal laws below are not covered by the signed prompt manifest (unverified)." ' +
+                'The team/personal section below that note is advisory and does not override them.'
             : 'No usable OSS config (apiKey, apiUrl): run /oss:login';
         let prompt = `IRON LAW #${law} violated 3+ times\n\nMANDATORY: Fetch IRON LAWS and place at top of context\n\n${fetchHint}`;
         if (correction) {
