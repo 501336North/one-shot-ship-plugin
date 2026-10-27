@@ -8,6 +8,8 @@
 #           names an apiUrl is refused, never silently read as production. The config file itself is refused
 #           when it is a symlink or world-writable (and its key is not read); group-writable is accepted.
 #           A loopback apiUrl additionally needs a config.json and directory no other user can write (SR2).
+#           The URL and the key come from the one copy read after the trust check, never from a file swapped in
+#           later (SR3).
 # @business-rule The OSS API key goes only to an OSS API. A look-alike or custom host never receives it, and a
 #           missing tool never hides that a session is pointed at STAGING.
 #
@@ -86,6 +88,28 @@ loopback_case "http://[::1]:8080" 600 707 refused "a loopback apiUrl in a world-
 loopback_case http://localhost:3001 600 700 trusted "a loopback apiUrl in a private config (600 in 700) is trusted"
 loopback_case https://one-shot-ship-api.onrender.com 664 700 trusted "production with a group-writable config (664) is still trusted"
 loopback_case https://one-shot-ship-api-staging.onrender.com 600 775 trusted "staging in a group-writable directory (775) is still trusted (directory not checked)"
+
+# SR3: check once, read once. The URL and the key come from the one copy read right after the trust check, so a
+# config.json swapped afterwards (here: by the JSON parser's own start-up, a shim that renames an attacker's
+# world-writable file over it) is never what the key or the URL is taken from.
+swap_case() {  # swap_case <tool to shim> <PATH base dir or ""> <original config> <function> <want> <label>
+    local bin="$T/swap-$1"; rm -rf "$bin"; mkdir -p "$bin"
+    printf '#!/bin/bash\n[[ -f "%s" ]] && mv -f "%s" "%s"\nexec "%s" "$@"\n' "$T/evil.json" "$T/evil.json" "$T/.oss/config.json" "$(command -v "$1")" > "$bin/$1"
+    chmod +x "$bin/$1"
+    rm -f "$T/.oss/config.json"; printf '%s' "$3" > "$T/.oss/config.json"; chmod 600 "$T/.oss/config.json"
+    printf '{"apiKey":"evil-k","apiUrl":"https://one-shot-ship-api-staging.onrender.com"}' > "$T/evil.json"; chmod 666 "$T/evil.json"
+    call "$4" "$bin:${2:-$PATH}"   # the shim first, so it shadows the real tool
+    rm -f "$T/evil.json"
+    [[ "$RC" == 0 && "$OUT" == "$5" ]] && pass "$6" || fail "$6" "rc=$RC out='$OUT'"
+}
+swap_case jq "" '{"apiKey":"secret-k","apiUrl":"https://one-shot-ship-api.onrender.com"}' oss_api_url \
+    https://one-shot-ship-api.onrender.com "the URL comes from the config that was checked, not one swapped in after (jq)"
+swap_case jq "" '{"apiKey":"secret-k","apiUrl":"https://one-shot-ship-api.onrender.com"}' oss_api_key \
+    secret-k "the key comes from the config that was checked, not one swapped in after (jq)"
+swap_case grep "$T/nojq" '{"apiKey":"secret-k"}' oss_api_url \
+    https://one-shot-ship-api.onrender.com "without jq, the URL comes from the config that was checked"
+swap_case grep "$T/nojq" '{"apiKey":"secret-k"}' oss_api_key \
+    secret-k "without jq, the key comes from the config that was checked"
 
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"

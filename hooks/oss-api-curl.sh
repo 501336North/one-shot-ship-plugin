@@ -44,15 +44,27 @@ oss_config_trusted() {
     [[ -n "$(find "$f" -maxdepth 0 -user "$(id -u)" ! -perm -002 2>/dev/null)" ]]
 }
 
+# _oss_config_read - the trust check, then the ONE read of the OSS config (SR3): sets _OSS_CFG to its text ('' when
+# missing). The URL and the key are taken from this copy, never by reading the path again after the check.
+# rc 1 when the config may not be read, or holds a NUL byte (not JSON; `read -d ''` stops there and returns 0).
+_oss_config_read() {
+    local f
+    _OSS_CFG=''
+    oss_config_trusted || return 1
+    f=$(oss_config_file)
+    [[ -e "$f" ]] || return 0
+    ! IFS= read -r -d '' _OSS_CFG < "$f"
+}
+
 # oss_api_key - prints apiKey from the OSS config when it is a non-empty string; otherwise prints nothing
 # and returns 1. Without jq: the flat `"apiKey": "..."` shape that /oss:login writes.
 oss_api_key() {
-    local key=''
-    oss_config_trusted || return 1
+    local key='' re='"apiKey"[[:space:]]*:[[:space:]]*"([^"]*)"'
+    _oss_config_read || return 1
     if command -v jq &>/dev/null; then
-        key=$(jq -r 'if (.apiKey | type) == "string" then .apiKey else "" end' "$(oss_config_file)" 2>/dev/null)
-    else
-        key=$(grep -o '"apiKey"[[:space:]]*:[[:space:]]*"[^"]*"' "$(oss_config_file)" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/')
+        key=$(printf '%s' "$_OSS_CFG" | jq -r 'if (.apiKey | type) == "string" then .apiKey else "" end' 2>/dev/null)
+    elif [[ "$_OSS_CFG" =~ $re ]]; then
+        key=${BASH_REMATCH[1]-${match[1]-}}   # bash, zsh
     fi
     [[ -n "$key" ]] || return 1
     printf '%s\n' "$key"
@@ -68,15 +80,20 @@ oss_api_key() {
 #
 #   API_URL=$(oss_api_url) || { echo "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"; exit 1; }
 oss_api_url_syntax() {
-    local url='' hostport='' port=''
+    _oss_config_read && _oss_url_syntax && printf '%s\n' "$_OSS_URL"
+}
+
+# _oss_url_syntax - the rule above over the copy _oss_config_read made; sets _OSS_URL.
+_oss_url_syntax() {
+    local url='' hostport='' port='' named='"apiUrl"[[:space:]]*:[[:space:]]*("[^"]|[^"n[:space:]])'
     local https='^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%/-]*)?$'
     local loopback='^http://(127\.0\.0\.1|localhost|\[::1\])(:[0-9]{1,5})?(/[A-Za-z0-9._~%/-]*)?$'
     if command -v jq &>/dev/null; then
-        url=$(jq -r 'if .apiUrl == null then ""
+        url=$(printf '%s' "$_OSS_CFG" | jq -r 'if .apiUrl == null then ""
                      elif (.apiUrl | type) != "string" then "!"
                      elif (.apiUrl | test("[^!-~]")) then "!"
-                     else .apiUrl end' "$(oss_config_file)" 2>/dev/null)
-    elif grep -qE '"apiUrl"[[:space:]]*:[[:space:]]*("[^"]|[^"n[:space:]])' "$(oss_config_file)" 2>/dev/null; then
+                     else .apiUrl end' 2>/dev/null)
+    elif [[ "$_OSS_CFG" =~ $named ]]; then
         return 1   # FR5: a named apiUrl (non-empty, non-null) is never read as production just because jq is missing
     fi
     [[ -n "$url" ]] || url="$OSS_API_DEFAULT_URL"
@@ -87,7 +104,7 @@ oss_api_url_syntax() {
         *\]) ;;
         *:*) port=${hostport##*:}; (( 10#$port <= 65535 )) || return 1 ;;
     esac
-    printf '%s\n' "$url"
+    _OSS_URL=$url
 }
 
 # oss_api_url - prints the canonical origin of the API the key may go to, or nothing and rc 1. The address must
@@ -100,8 +117,8 @@ oss_api_url_syntax() {
 #   API_URL=$(oss_api_url) || { echo "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"; exit 1; }
 oss_api_url() {
     local url scheme rest hostport path port f
-    oss_config_trusted || return 1
-    url=$(oss_api_url_syntax) || return 1
+    _oss_config_read && _oss_url_syntax || return 1
+    url=$_OSS_URL
     scheme=${url%%://*}; rest=${url#*://}
     hostport=${rest%%/*}; path=${rest#"$hostport"}
     [[ -z "$path" || "$path" == / ]] || return 1
