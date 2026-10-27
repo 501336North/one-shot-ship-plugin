@@ -107,6 +107,8 @@ function isLoopback(origin) {
 function onlyUserWritable(fileMode, dir) {
     if ((fileMode & GROUP_OR_WORLD_WRITE) !== 0)
         return false;
+    // stat, not lstat: ~/.oss may be a symlink to ~/.oss-stable / ~/.oss-beta / ~/.oss-dev (the channel
+    // layout), and what matters is who can write the directory it resolves to
     try {
         return (fs.statSync(dir).mode & GROUP_OR_WORLD_WRITE) === 0;
     }

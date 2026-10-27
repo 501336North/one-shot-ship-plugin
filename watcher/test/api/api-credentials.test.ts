@@ -291,6 +291,25 @@ describe('readApiCredentials: a loopback apiUrl needs a config only the user can
     expect(readApiCredentials(dir)).toEqual({ apiKey: 'k', apiUrl: LOOPBACK });
   });
 
+  // The channel layout (scripts/oss-channel.sh): ~/.oss is a symlink to ~/.oss-stable, ~/.oss-beta or
+  // ~/.oss-dev. The directory rule is about the directory the symlink resolves to; a symlinked
+  // config.json FILE stays refused (O_NOFOLLOW, above).
+  it.each([
+    ['0700', 0o700, true],
+    ['0775', 0o775, false],
+  ])('should judge a loopback apiUrl by the directory ~/.oss resolves to (~/.oss -> ~/.oss-beta, %s)', (_label, mode, trusted) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const home = tempDir();
+    const beta = writeConfig({ apiKey: 'k', apiUrl: LOOPBACK }, path.join(home, '.oss-beta'));
+    fs.chmodSync(path.join(beta, 'config.json'), 0o600);
+    fs.chmodSync(beta, mode);
+    fs.symlinkSync(beta, path.join(home, '.oss'));
+
+    expect(readApiCredentials(path.join(home, '.oss'))).toEqual(
+      trusted ? { apiKey: 'k', apiUrl: LOOPBACK } : null
+    );
+  });
+
   it('should still trust production from a group-writable (0664) config.json in a 0775 directory', () => {
     const dir = writeConfig({ apiKey: 'k', apiUrl: DEFAULT_API_URL });
     fs.chmodSync(path.join(dir, 'config.json'), 0o664);
