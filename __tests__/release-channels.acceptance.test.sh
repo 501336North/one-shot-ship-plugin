@@ -23,7 +23,9 @@ PROD_HOST="https://one-shot-ship-api.onrender.com"
 LOOPBACK="http://127.0.0.1:9"
 # The hooks that make an API call on a plain session (measured 2026-10-26). PLAN Tasks 4/5 add unit rows
 # for the hooks that only call under extra conditions (push-metrics, check-updates, iron-laws-sync).
-HOOKS=(fetch-iron-laws.sh oss-fetch-team-iron-laws.sh oss-changelog.sh oss-session-start.sh)
+# fetch-iron-laws.sh left this list in FR15: it makes no API call of its own; the decrypt CLI fetches and
+# verifies the laws (its address rule is tested in packages/cli-decrypt).
+HOOKS=(oss-fetch-team-iron-laws.sh oss-changelog.sh oss-session-start.sh)
 TESTS_RUN=0; TESTS_PASSED=0; TESTS_FAILED=0
 pass() { echo "✓ PASS: $1"; TESTS_PASSED=$((TESTS_PASSED + 1)); }
 fail() { echo "✗ FAIL: $1 — $2"; TESTS_FAILED=$((TESTS_FAILED + 1)); }

@@ -22,15 +22,14 @@ pass() { echo "✓ PASS: $1"; RUN=$((RUN + 1)); }
 fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
 
 # How each hook is driven so that it makes its API call (measured 2026-10-26).
-# oss-iron-laws-sync.sh is not here since FR15: it makes no API call of its own; the decrypt CLI fetches the
-# verified laws, and the CLI's address rule is tested in packages/cli-decrypt. iron-laws-sync-safety.test.sh
-# proves the hook never runs curl for the laws.
+# oss-iron-laws-sync.sh and fetch-iron-laws.sh are not here since FR15: they make no API call of their own; the
+# decrypt CLI fetches the verified laws, and the CLI's address rule is tested in packages/cli-decrypt.
+# iron-laws-sync-safety.test.sh and fetch-iron-laws.test.sh prove the hooks never run curl for the laws.
 #   name | arguments
 CASES=(
     "oss-session-start.sh|"
     "oss-push-metrics.sh|{\"event\":\"t\"}"
     "oss-fetch-team-iron-laws.sh|"
-    "fetch-iron-laws.sh|"
     "oss-changelog.sh|"
     "check-updates.sh|"
     "oss-session-start-new.sh|"

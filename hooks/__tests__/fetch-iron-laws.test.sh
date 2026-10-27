@@ -4,8 +4,10 @@
 # Usage: ./fetch-iron-laws.test.sh
 #
 # Tests:
-# 1. Exits 0 and outputs content when API returns plain markdown (non-raw mode)
-# 2. Exits 1 when API returns non-200 status
+# 1. Exits 0 and outputs the laws the decrypt CLI verified (non-raw mode), never curl
+# 2. Exits 1 and points at /oss:login when the API rejects the key
+# 3. A CLI refusal prints no laws and never falls back to curl
+# 4. A missing CLI is installed first; when that fails, exit 1
 
 set -uo pipefail
 
@@ -34,83 +36,117 @@ fail() {
     ((TESTS_FAILED++))
 }
 
+# The laws come only from the decrypt CLI (FR15): it verifies them against the signed manifest and
+# prints them, or refuses. make_sandbox puts a stub CLI at $TEST_HOME/.oss/bin/oss-decrypt (driven by
+# $TEST_HOME/cli-mode) that records its argv, and a curl tripwire on PATH that records any call.
+make_sandbox() {
+    TEST_HOME=$(mktemp -d)
+    MOCK_BIN_DIR=$(mktemp -d)
+    mkdir -p "$TEST_HOME/.oss/bin"
+    echo '{"apiKey": "test-key-123"}' > "$TEST_HOME/.oss/config.json"
+    cat > "$TEST_HOME/.oss/bin/oss-decrypt" << CLIEOF
+#!/bin/bash
+echo "\$*" >> "$TEST_HOME/cli-argv"
+case "\$(cat "$TEST_HOME/cli-mode" 2>/dev/null)" in
+    unauthorized) echo "Error: Unauthorized" >&2; exit 1 ;;
+    refused) echo "# IRON LAWS (tampered)"; echo "[verify] Prompt hash: FAILED — prompt blocked" >&2
+             echo "Error: [SECURITY] Prompt integrity check FAILED. Content may have been tampered with." >&2; exit 1 ;;
+    unreachable) echo "Error: fetch failed" >&2; exit 1 ;;
+esac
+printf '# IRON LAWS\n\n## LAW 1: TDD\n\n'
+CLIEOF
+    chmod +x "$TEST_HOME/.oss/bin/oss-decrypt"
+    printf '#!/bin/bash\necho "$*" >> "%s/curl-called"\nexit 7\n' "$TEST_HOME" > "$MOCK_BIN_DIR/curl"
+    chmod +x "$MOCK_BIN_DIR/curl"
+}
+run_hook() { # sets result, exit_code
+    exit_code=0
+    result=$(HOME="$TEST_HOME" CLAUDE_PLUGIN_ROOT="$TEST_HOME/no-plugin" PATH="$MOCK_BIN_DIR:$PATH" "$HOOK_SCRIPT" "$@" 2>&1) || exit_code=$?
+}
+cleanup() { rm -rf "$TEST_HOME" "$MOCK_BIN_DIR"; }
+
 # =============================================================================
-# TEST 1: Exits 0 when API returns plain markdown (non-raw mode)
+# TEST 1: Outputs the verified laws (non-raw mode)
 #
-# @behavior fetch-iron-laws outputs content when API returns plain markdown
-# @acceptance-criteria Script exits 0, outputs the markdown body
+# @behavior fetch-iron-laws prints the laws the decrypt CLI verified
+# @acceptance-criteria Script exits 0, outputs the markdown, asked the CLI for shared/iron-laws, no curl
 # @boundary fetch-iron-laws.sh (system boundary)
 # =============================================================================
 test_plain_markdown_response() {
-    local test_name="Exits 0 and outputs content when API returns plain markdown"
+    local test_name="Exits 0 and outputs the laws from 'oss-decrypt --type shared --name iron-laws', never curl"
     ((TESTS_RUN++))
-
-    TEST_HOME=$(mktemp -d)
-
-    # Create config with API key
-    mkdir -p "$TEST_HOME/.oss"
-    echo '{"apiKey": "test-key-123"}' > "$TEST_HOME/.oss/config.json"
-
-    # Create mock curl that returns plain markdown with 200 status code
-    MOCK_BIN_DIR=$(mktemp -d)
-    cat > "$MOCK_BIN_DIR/curl" << 'CURLEOF'
-#!/bin/bash
-# Mock curl: return plain markdown body + 200 status code
-# curl uses -w "\n%{http_code}" so last line is the status
-echo "# IRON LAWS"
-echo ""
-echo "## LAW 1: TDD"
-echo ""
-echo "200"
-CURLEOF
-    chmod +x "$MOCK_BIN_DIR/curl"
-
-    # Run hook with mock curl and mock HOME
-    local result exit_code=0
-    result=$(HOME="$TEST_HOME" PATH="$MOCK_BIN_DIR:$PATH" "$HOOK_SCRIPT" 2>&1) || exit_code=$?
-
-    rm -rf "$TEST_HOME" "$MOCK_BIN_DIR"
-
-    if [[ $exit_code -eq 0 ]] && echo "$result" | grep -q "IRON LAWS"; then
+    make_sandbox
+    run_hook
+    local argv curl_called=n
+    argv=$(cat "$TEST_HOME/cli-argv" 2>/dev/null)
+    [[ -f "$TEST_HOME/curl-called" ]] && curl_called=y
+    cleanup
+    if [[ $exit_code -eq 0 ]] && echo "$result" | grep -q "IRON LAWS" && [[ "$argv" == "--type shared --name iron-laws" && "$curl_called" == n ]]; then
         pass "$test_name"
     else
-        fail "$test_name" "exit 0 + output containing 'IRON LAWS'" "exit=$exit_code output: $result"
+        fail "$test_name" "exit 0 + 'IRON LAWS', CLI argv exact, no curl" "exit=$exit_code argv=$argv curl=$curl_called output: $result"
     fi
 }
 
 # =============================================================================
-# TEST 2: Exits 1 when API returns non-200 status
+# TEST 2: Exits 1 when the API rejects the key
 #
-# @behavior fetch-iron-laws reports error on API failure
-# @acceptance-criteria Script exits 1 on 401 response
+# @behavior fetch-iron-laws reports an auth failure and points at /oss:login
+# @acceptance-criteria Script exits 1 when the CLI reports Unauthorized
 # @boundary fetch-iron-laws.sh (system boundary)
 # =============================================================================
 test_api_error_response() {
-    local test_name="Exits 1 when API returns 401 status"
+    local test_name="Exits 1 and points at /oss:login when the API returns 401"
     ((TESTS_RUN++))
-
-    TEST_HOME=$(mktemp -d)
-
-    mkdir -p "$TEST_HOME/.oss"
-    echo '{"apiKey": "bad-key"}' > "$TEST_HOME/.oss/config.json"
-
-    MOCK_BIN_DIR=$(mktemp -d)
-    cat > "$MOCK_BIN_DIR/curl" << 'CURLEOF'
-#!/bin/bash
-echo '{"error":"Unauthorized"}'
-echo "401"
-CURLEOF
-    chmod +x "$MOCK_BIN_DIR/curl"
-
-    local result exit_code=0
-    result=$(HOME="$TEST_HOME" PATH="$MOCK_BIN_DIR:$PATH" "$HOOK_SCRIPT" 2>&1) || exit_code=$?
-
-    rm -rf "$TEST_HOME" "$MOCK_BIN_DIR"
-
-    if [[ $exit_code -ne 0 ]]; then
+    make_sandbox; echo unauthorized > "$TEST_HOME/cli-mode"
+    run_hook
+    cleanup
+    if [[ $exit_code -eq 1 ]] && [[ "$result" == *"/oss:login"* ]]; then
         pass "$test_name"
     else
-        fail "$test_name" "exit non-zero" "exit=$exit_code output: $result"
+        fail "$test_name" "exit 1 + /oss:login" "exit=$exit_code output: $result"
+    fi
+}
+
+# =============================================================================
+# TEST 3: A CLI refusal prints no laws and never falls back to curl
+#
+# @behavior Laws that fail the signed-manifest check never reach the caller
+# @business-rule FR15: IRON LAWS reach the user only after verification (fail closed)
+# =============================================================================
+test_refusal_prints_no_laws() {
+    local test_name="CLI refusal (hash mismatch) → non-zero, no laws on stdout, no curl fallback"
+    ((TESTS_RUN++))
+    make_sandbox; echo refused > "$TEST_HOME/cli-mode"
+    local out exit_code=0
+    out=$(HOME="$TEST_HOME" CLAUDE_PLUGIN_ROOT="$TEST_HOME/no-plugin" PATH="$MOCK_BIN_DIR:$PATH" "$HOOK_SCRIPT" 2>/dev/null) || exit_code=$?
+    local curl_called=n; [[ -f "$TEST_HOME/curl-called" ]] && curl_called=y
+    cleanup
+    if [[ $exit_code -ne 0 && "$out" != *"IRON LAWS"* && "$curl_called" == n ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "non-zero, no laws on stdout, no curl" "exit=$exit_code curl=$curl_called stdout: $out"
+    fi
+}
+
+# =============================================================================
+# TEST 4: A missing CLI is installed first; if that fails, no laws and no curl to the API
+#
+# @behavior fetch-iron-laws runs ensure-decrypt-cli.sh when oss-decrypt is missing
+# =============================================================================
+test_missing_cli_installs_first() {
+    local test_name="oss-decrypt missing → installer runs; when it fails, exit 1 and no curl to the laws endpoint"
+    ((TESTS_RUN++))
+    make_sandbox; rm -f "$TEST_HOME/.oss/bin/oss-decrypt"
+    run_hook
+    local installer=n laws_curl=n
+    grep -q 'github.com' "$TEST_HOME/curl-called" 2>/dev/null && installer=y
+    grep -q 'iron-laws' "$TEST_HOME/curl-called" 2>/dev/null && laws_curl=y
+    cleanup
+    if [[ $exit_code -eq 1 && "$installer" == y && "$laws_curl" == n ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "exit 1, installer tried, no laws curl" "exit=$exit_code installer=$installer laws_curl=$laws_curl output: $result"
     fi
 }
 
@@ -122,6 +158,8 @@ echo "======================================="
 
 test_plain_markdown_response
 test_api_error_response
+test_refusal_prints_no_laws
+test_missing_cli_installs_first
 
 echo ""
 echo "======================================="

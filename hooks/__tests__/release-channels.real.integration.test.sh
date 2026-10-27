@@ -66,9 +66,8 @@ arrived() {  # arrived <method> <path>: the request reached the server with the 
     grep -qxF "$1 $2|Bearer $KEY" "$T/requests.log"
 }
 
-run "$ROOT/hooks/fetch-iron-laws.sh"
-arrived GET /api/v1/prompts/shared/iron-laws && pass "fetch-iron-laws reaches the configured API, authenticated" \
-    || fail "fetch-iron-laws reaches the configured API, authenticated" "log: $(tr '\n' ' ' < "$T/requests.log")"
+# fetch-iron-laws.sh is not driven here since FR15: the decrypt CLI makes that request (verified against the
+# signed manifest), and its request to the configured API is tested in packages/cli-decrypt.
 
 run "$ROOT/hooks/oss-session-start.sh"
 arrived GET /api/v1/subscription/status && pass "oss-session-start's subscription check reaches the configured API, authenticated" \
