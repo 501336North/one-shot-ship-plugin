@@ -45,24 +45,31 @@ function getConfigDir() {
 }
 var UNTRUSTED_CONFIG = "Refusing to read config.json in your OSS config directory: it must be a regular file (not a symlink) owned by you and not writable by other users. Fix it with: chmod 600 config.json";
 function readConfigFile() {
+  return readConfig().values;
+}
+function readConfig() {
   const configPath = (0, import_path.join)(getConfigDir(), "config.json");
-  let stat;
+  let fd;
   try {
-    stat = (0, import_fs.lstatSync)(configPath);
-  } catch {
-    return {};
-  }
-  if (!stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 2) !== 0) {
+    fd = (0, import_fs.openSync)(configPath, import_fs.constants.O_RDONLY | import_fs.constants.O_NOFOLLOW);
+  } catch (error) {
+    if (error.code === "ENOENT") return { values: {}, writableOnlyByOwner: false };
     throw new Error(UNTRUSTED_CONFIG);
   }
   try {
-    return JSON.parse((0, import_fs.readFileSync)(configPath, "utf8"));
-  } catch {
-    return {};
+    const stat = (0, import_fs.fstatSync)(fd);
+    if (!stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 2) !== 0) {
+      throw new Error(UNTRUSTED_CONFIG);
+    }
+    const writableOnlyByOwner = (stat.mode & 18) === 0 && ((0, import_fs.statSync)(getConfigDir()).mode & 18) === 0;
+    try {
+      return { values: JSON.parse((0, import_fs.readFileSync)(fd, "utf8")), writableOnlyByOwner };
+    } catch {
+      return { values: {}, writableOnlyByOwner };
+    }
+  } finally {
+    (0, import_fs.closeSync)(fd);
   }
-}
-function readConfiguredApiUrl() {
-  return readConfigFile().apiUrl;
 }
 function parses(value) {
   try {
@@ -72,13 +79,16 @@ function parses(value) {
     return false;
   }
 }
-function getApiUrl() {
-  const apiUrl = readConfiguredApiUrl();
-  if (apiUrl === void 0 || apiUrl === null || apiUrl === "") return DEFAULT_API_URL;
+function getApiUrlSetting() {
+  const { values, writableOnlyByOwner } = readConfig();
+  const apiUrl = values.apiUrl;
+  if (apiUrl === void 0 || apiUrl === null || apiUrl === "") {
+    return { apiUrl: DEFAULT_API_URL, configWritableOnlyByOwner: writableOnlyByOwner };
+  }
   if (typeof apiUrl !== "string" || !isAcceptedApiUrl(apiUrl)) {
     throw new Error(REFUSAL);
   }
-  return apiUrl;
+  return { apiUrl, configWritableOnlyByOwner: writableOnlyByOwner };
 }
 function isAcceptedApiUrl(apiUrl) {
   return (HTTPS_URL.test(apiUrl) || LOOPBACK_HTTP_URL.test(apiUrl)) && parses(apiUrl);
@@ -234,6 +244,9 @@ var CacheService = class {
 function stripControl(text) {
   return text.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, "");
 }
+function stripControlKeepLines(text) {
+  return text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, "");
+}
 
 // src/api-client.ts
 function getCacheDir() {
@@ -266,23 +279,42 @@ async function fetchNoRedirect(url, init) {
     throw err;
   }
 }
-async function fetchCredentials(apiKey, apiUrl, hardwareId) {
+var API_TIMEOUT_MS = 6e4;
+async function keyedRequest(url, init, timeoutMs, read) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchNoRedirect(url, { ...init, signal: controller.signal });
+    return await read(response);
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error(
+        `The OSS API did not answer within ${timeoutMs / 1e3} s. Try again; if it persists, check apiUrl in your OSS config.`
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function fetchCredentials(apiKey, apiUrl, hardwareId, options = {}) {
   const url = `${apiUrl}/api/v1/auth/credentials?hardwareId=${encodeURIComponent(hardwareId)}`;
-  const response = await fetchNoRedirect(url, {
+  return keyedRequest(url, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json"
     }
+  }, options.timeoutMs ?? API_TIMEOUT_MS, async (response) => {
+    if (!response.ok) {
+      await handleCacheClearDirective(response);
+      const error = await response.json().catch(() => ({ error: "Request failed" }));
+      throw new Error(stripControl(error.error || "Request failed"));
+    }
+    return response.json();
   });
-  if (!response.ok) {
-    await handleCacheClearDirective(response);
-    const error = await response.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(stripControl(error.error || "Request failed"));
-  }
-  return response.json();
 }
-async function fetchEncryptedPrompt(apiKey, apiUrl, type, name) {
+async function fetchEncryptedPrompt(apiKey, apiUrl, type, name, options = {}) {
   validateType(type);
   validateName(name);
   const encodedName = encodeURIComponent(name);
@@ -294,69 +326,72 @@ async function fetchEncryptedPrompt(apiKey, apiUrl, type, name) {
   } else {
     endpoint = `${apiUrl}/api/v1/prompts/${type}/${encodedName}`;
   }
-  const response = await fetchNoRedirect(endpoint, {
+  return keyedRequest(endpoint, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json"
     }
+  }, options.timeoutMs ?? API_TIMEOUT_MS, async (response) => {
+    if (!response.ok) {
+      await handleCacheClearDirective(response);
+      if (response.status === 404) {
+        throw new Error("Prompt not found");
+      }
+      if (response.status === 401) {
+        throw new Error("Unauthorized");
+      }
+      const error = await response.json().catch(() => ({ error: "Request failed" }));
+      throw new Error(stripControl(error.error || "Request failed"));
+    }
+    return response.json();
   });
-  if (!response.ok) {
-    await handleCacheClearDirective(response);
-    if (response.status === 404) {
-      throw new Error("Prompt not found");
-    }
-    if (response.status === 401) {
-      throw new Error("Unauthorized");
-    }
-    const error = await response.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(stripControl(error.error || "Request failed"));
-  }
-  return response.json();
 }
-async function fetchCustomPrompt(apiKey, apiUrl, name) {
+async function fetchCustomPrompt(apiKey, apiUrl, name, options = {}) {
   validateName(name);
   const endpoint = `${apiUrl}/api/v1/prompts/custom/${encodeURIComponent(name)}`;
-  const response = await fetchNoRedirect(endpoint, {
+  return keyedRequest(endpoint, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json"
     }
+  }, options.timeoutMs ?? API_TIMEOUT_MS, async (response) => {
+    if (!response.ok) {
+      await handleCacheClearDirective(response);
+      if (response.status === 404) {
+        throw new Error("Prompt not found");
+      }
+      if (response.status === 401) {
+        throw new Error("Unauthorized");
+      }
+      const error = await response.json().catch(() => ({ error: "Request failed" }));
+      throw new Error(stripControl(error.error || "Request failed"));
+    }
+    return response.json();
   });
-  if (!response.ok) {
-    await handleCacheClearDirective(response);
-    if (response.status === 404) {
-      throw new Error("Prompt not found");
-    }
-    if (response.status === 401) {
-      throw new Error("Unauthorized");
-    }
-    const error = await response.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(stripControl(error.error || "Request failed"));
-  }
-  return response.json();
 }
-async function fetchPlainPrompt(apiKey, apiUrl, type, name) {
+async function fetchPlainPrompt(apiKey, apiUrl, type, name, options = {}) {
   validateName(name);
   let endpoint;
   if (type === "templates") {
     if (name !== "claude-md") throw new Error("Unknown template: the API serves only claude-md.");
     endpoint = `${apiUrl}/api/v1/prompts/claude-md`;
   } else {
-    endpoint = `${apiUrl}/api/v1/prompts/shared/${encodeURIComponent(name)}`;
+    endpoint = `${apiUrl}/api/v1/prompts/shared/${encodeURIComponent(name)}?base=1`;
   }
-  const response = await fetchNoRedirect(endpoint, {
+  return keyedRequest(endpoint, {
     method: "GET",
     headers: { Authorization: `Bearer ${apiKey}` }
+  }, options.timeoutMs ?? API_TIMEOUT_MS, async (response) => {
+    if (!response.ok) {
+      await handleCacheClearDirective(response);
+      if (response.status === 404) throw new Error("Prompt not found");
+      if (response.status === 401) throw new Error("Unauthorized");
+      throw new Error("Request failed");
+    }
+    return response.text();
   });
-  if (!response.ok) {
-    await handleCacheClearDirective(response);
-    if (response.status === 404) throw new Error("Prompt not found");
-    if (response.status === 401) throw new Error("Unauthorized");
-    throw new Error("Request failed");
-  }
-  return response.text();
 }
 
 // src/storage.ts
@@ -487,9 +522,14 @@ function trustedApiOrigin(apiUrl) {
   return null;
 }
 function getTrustedApiOrigin() {
-  const origin = trustedApiOrigin(getApiUrl());
+  const { apiUrl, configWritableOnlyByOwner } = getApiUrlSetting();
+  const origin = trustedApiOrigin(apiUrl);
   if (origin === null) throw new Error(UNTRUSTED_ADDRESS);
+  if (isLoopbackOrigin(origin) && !configWritableOnlyByOwner) throw new Error(UNTRUSTED_ADDRESS);
   return origin;
+}
+function isLoopbackOrigin(origin) {
+  return origin !== DEFAULT_API_URL && origin !== STAGING_API_URL;
 }
 function publicKeyFor(apiUrl, keys = PINNED_KEYS) {
   const origin = trustedApiOrigin(apiUrl);
@@ -685,13 +725,21 @@ function readCachedManifest(origin, publicKey) {
   return cached.manifest;
 }
 function writeCachedManifest(origin, manifest) {
+  const dir = runDir();
   try {
-    (0, import_fs4.mkdirSync)(runDir(), { recursive: true, mode: 448 });
-    (0, import_fs4.chmodSync)(runDir(), 448);
-    const path = cachePath(origin);
+    (0, import_fs4.mkdirSync)(dir, { recursive: true, mode: 448 });
+    const fd = (0, import_fs4.openSync)(dir, import_fs4.constants.O_RDONLY | import_fs4.constants.O_DIRECTORY | import_fs4.constants.O_NOFOLLOW);
+    try {
+      const stat = (0, import_fs4.fstatSync)(fd);
+      if (!stat.isDirectory() || stat.uid !== process.getuid?.()) return;
+      (0, import_fs4.fchmodSync)(fd, 448);
+    } finally {
+      (0, import_fs4.closeSync)(fd);
+    }
     const entry = { origin, fetchedAt: Date.now(), manifest };
-    (0, import_fs4.writeFileSync)(path, JSON.stringify(entry), { mode: 384 });
-    (0, import_fs4.chmodSync)(path, 384);
+    const temp = (0, import_path6.join)(dir, `.manifest-${(0, import_crypto7.randomBytes)(8).toString("hex")}.tmp`);
+    (0, import_fs4.writeFileSync)(temp, JSON.stringify(entry), { mode: 384, flag: "wx" });
+    (0, import_fs4.renameSync)(temp, cachePath(origin));
   } catch {
   }
 }
@@ -843,7 +891,7 @@ async function decryptCommand(type, name, debug = false, options = {}) {
     logger.log("FETCH", `Fetching custom command: ${name}`);
     const customPrompt = await fetchCustomPrompt(credentials.apiKey, apiUrl, name);
     console.error("[verify] UNVERIFIED: team custom command (not covered by the signed manifest)");
-    console.log(customPrompt.prompt);
+    console.log(stripControlKeepLines(customPrompt.prompt));
     return;
   }
   const fetchPlaintext = async () => {
