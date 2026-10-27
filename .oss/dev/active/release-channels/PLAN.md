@@ -458,3 +458,44 @@ round-1 fix did not land, otherwise they go to `.oss/dev/FOLLOWUPS.md`. Every ta
 - `watcher/test/hooks/hook-error-adoption.test.ts` (fetch-iron-laws.sh, 4 tests) runs the real hook with a stub
   v0.0.0 CLI; since SR6 the hook always runs `ensure-decrypt-cli.sh`, which judges the stub outdated, so the
   expected OSSError emits never happen. Stub the installer as the shell suites do, keep every original assertion.
+
+## Ship round 3 fix tasks (2026-10-27, from the 4 round-3 gates)
+
+Gates: quality PASS, performance PASS (1 MED functional), security FAIL (2 LOW), pentest PASS (1 LOW).
+Rule unchanged: CRITICAL/HIGH/MED and every security finding block. RED first for every task.
+
+### TR1 (MED, security, IRON LAW #1b): one deadline shape, guarded independently of the Node version
+- CLI `keyedRequest` (`packages/cli-decrypt/src/api-client.ts`) uses an AbortController only; on Node 25 a stalled body
+  never settles after a GC. Use the watcher's `withDeadline` shape (Promise.race that rejects on its own + abort).
+- Guards (CLI and watcher): test the deadline with a request function that IGNORES its signal (settles only via the
+  race), so the test is red on the abort-only shape on every Node version. Keep the forced-GC stall test as well.
+
+### TR2 (LOW, security): team-law text cannot forge verified headings or the note
+- Shell `oss_custom_iron_laws`: AFTER control stripping, neutralise every line matching
+  `^\s{0,3}(#{1,6}\s|=+\s*$|-{3,}\s*$)` and any line forging the unverified/verified note; close the section with a
+  fixed end-of-unverified-section line.
+- API `customIronLawsSection`: normalise controls/zero-width/indentation BEFORE the heading/rule sanitiser; also
+  indented headings and setext underlines. Legacy output for ordinary laws stays byte-identical.
+- Watcher SR12 hint: re-read the VERIFIED IRON LAWS (above the unverified note), not "everything between the markers".
+
+### TR3 (LOW, security): the unverified section is size-bounded
+- `oss-iron-laws-sync.sh` / `fetch-iron-laws.sh`: cap the custom section (curl `--max-filesize` and a byte check);
+  over the cap → base only.
+
+### TR4 (LOW, perf/functional): a stalled custom fetch neither blocks long nor hides team laws for a day
+- `-m 5` for the custom fetch; when it FAILS (not when empty), write the base but use the 1 h backoff, not the 24 h stamp.
+
+### TR5 (INFO→fixed, SR3 claim): `oss_custom_iron_laws` reads the config once (URL and key from one copy)
+
+### TR6 (LOW): no-jq `oss_api_key` refuses an ambiguous key (more than one `"apiKey"`, or a backslash in the value)
+
+### TR7 (LOW, perf): production config + stable plugin pays no jq/stat per render
+- Fast path in `compute_channel`: no `"apiUrl"` in the config copy and a version without `-` → print nothing,
+  no fork. Guard: the process-count test for that case expects 0 extra execs.
+
+### TR8 (INFO→fixed): the API integration test's direct curls use `-q` (never the user's ~/.curlrc)
+
+### To FOLLOWUPS (not this round)
+- BOM-prefixed config read three ways (shell+jq loopback / CLI `{}` / watcher refuses); macOS ACLs ignored by all
+  three readers; CLI state READS follow symlinks (writes don't); safe-write O_NOFOLLOW covers the last component only;
+  plugin-root with a NUL byte (`oss-value.sh` vs status line).
