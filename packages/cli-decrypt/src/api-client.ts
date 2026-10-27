@@ -87,6 +87,41 @@ async function fetchNoRedirect(
   }
 }
 
+/** Time limit for a keyed request, body included: 60 s covers a Render cold start. */
+export const API_TIMEOUT_MS = 60_000;
+
+export interface RequestOptions {
+  /** Time limit for the whole request, body included (default API_TIMEOUT_MS). */
+  timeoutMs?: number;
+}
+
+/**
+ * fetchNoRedirect plus reading the response, under one time limit. The timer is an AbortController + setTimeout
+ * cleared only after `read` has consumed the body (AbortSignal.timeout was measured not to abort a stalled body).
+ */
+async function keyedRequest<T>(
+  url: string,
+  init: Omit<RequestInit, 'headers'> & { headers: Record<string, string> },
+  timeoutMs: number,
+  read: (response: Response) => Promise<T>
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchNoRedirect(url, { ...init, signal: controller.signal });
+    return await read(response);
+  } catch (err: unknown) {
+    if (controller.signal.aborted) {
+      throw new Error(
+        `The OSS API did not answer within ${timeoutMs / 1000} s. Try again; if it persists, check apiUrl in your OSS config.`
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Fetch decryption credentials from the API
  *
@@ -99,29 +134,30 @@ async function fetchNoRedirect(
 export async function fetchCredentials(
   apiKey: string,
   apiUrl: string,
-  hardwareId: string
+  hardwareId: string,
+  options: RequestOptions = {}
 ): Promise<CredentialsResponse> {
   const url = `${apiUrl}/api/v1/auth/credentials?hardwareId=${encodeURIComponent(hardwareId)}`;
 
-  const response = await fetchNoRedirect(url, {
+  return keyedRequest(url, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
+  }, options.timeoutMs ?? API_TIMEOUT_MS, async (response) => {
+    if (!response.ok) {
+      // SECURITY: Check for cache clear directive on auth failures
+      await handleCacheClearDirective(response);
+
+      const error = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
+        error?: string;
+      };
+      throw new Error(stripControl(error.error || 'Request failed'));
+    }
+
+    return response.json() as Promise<CredentialsResponse>;
   });
-
-  if (!response.ok) {
-    // SECURITY: Check for cache clear directive on auth failures
-    await handleCacheClearDirective(response);
-
-    const error = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
-      error?: string;
-    };
-    throw new Error(stripControl(error.error || 'Request failed'));
-  }
-
-  return response.json() as Promise<CredentialsResponse>;
 }
 
 /**
@@ -138,7 +174,8 @@ export async function fetchEncryptedPrompt(
   apiKey: string,
   apiUrl: string,
   type: EncryptedPromptType,
-  name: string
+  name: string,
+  options: RequestOptions = {}
 ): Promise<EncryptedPromptResponse> {
   validateType(type);
   validateName(name);
@@ -153,31 +190,31 @@ export async function fetchEncryptedPrompt(
     endpoint = `${apiUrl}/api/v1/prompts/${type}/${encodedName}`;
   }
 
-  const response = await fetchNoRedirect(endpoint, {
+  return keyedRequest(endpoint, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
+  }, options.timeoutMs ?? API_TIMEOUT_MS, async (response) => {
+    if (!response.ok) {
+      // SECURITY: Check for cache clear directive on any error (especially 401)
+      await handleCacheClearDirective(response);
+
+      if (response.status === 404) {
+        throw new Error('Prompt not found');
+      }
+      if (response.status === 401) {
+        throw new Error('Unauthorized');
+      }
+      const error = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
+        error?: string;
+      };
+      throw new Error(stripControl(error.error || 'Request failed'));
+    }
+
+    return response.json() as Promise<EncryptedPromptResponse>;
   });
-
-  if (!response.ok) {
-    // SECURITY: Check for cache clear directive on any error (especially 401)
-    await handleCacheClearDirective(response);
-
-    if (response.status === 404) {
-      throw new Error('Prompt not found');
-    }
-    if (response.status === 401) {
-      throw new Error('Unauthorized');
-    }
-    const error = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
-      error?: string;
-    };
-    throw new Error(stripControl(error.error || 'Request failed'));
-  }
-
-  return response.json() as Promise<EncryptedPromptResponse>;
 }
 
 /**
@@ -195,36 +232,37 @@ export async function fetchEncryptedPrompt(
 export async function fetchCustomPrompt(
   apiKey: string,
   apiUrl: string,
-  name: string
+  name: string,
+  options: RequestOptions = {}
 ): Promise<CustomPromptResponse> {
   validateName(name);
   const endpoint = `${apiUrl}/api/v1/prompts/custom/${encodeURIComponent(name)}`;
 
-  const response = await fetchNoRedirect(endpoint, {
+  return keyedRequest(endpoint, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
+  }, options.timeoutMs ?? API_TIMEOUT_MS, async (response) => {
+    if (!response.ok) {
+      // SECURITY: Check for cache clear directive on any error (especially 401)
+      await handleCacheClearDirective(response);
+
+      if (response.status === 404) {
+        throw new Error('Prompt not found');
+      }
+      if (response.status === 401) {
+        throw new Error('Unauthorized');
+      }
+      const error = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
+        error?: string;
+      };
+      throw new Error(stripControl(error.error || 'Request failed'));
+    }
+
+    return response.json() as Promise<CustomPromptResponse>;
   });
-
-  if (!response.ok) {
-    // SECURITY: Check for cache clear directive on any error (especially 401)
-    await handleCacheClearDirective(response);
-
-    if (response.status === 404) {
-      throw new Error('Prompt not found');
-    }
-    if (response.status === 401) {
-      throw new Error('Unauthorized');
-    }
-    const error = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
-      error?: string;
-    };
-    throw new Error(stripControl(error.error || 'Request failed'));
-  }
-
-  return response.json() as Promise<CustomPromptResponse>;
 }
 
 /**
@@ -238,7 +276,8 @@ export async function fetchPlainPrompt(
   apiKey: string,
   apiUrl: string,
   type: PlainPromptType,
-  name: string
+  name: string,
+  options: RequestOptions = {}
 ): Promise<string> {
   validateName(name);
   let endpoint: string;
@@ -249,17 +288,17 @@ export async function fetchPlainPrompt(
     endpoint = `${apiUrl}/api/v1/prompts/shared/${encodeURIComponent(name)}`;
   }
 
-  const response = await fetchNoRedirect(endpoint, {
+  return keyedRequest(endpoint, {
     method: 'GET',
     headers: { Authorization: `Bearer ${apiKey}` },
+  }, options.timeoutMs ?? API_TIMEOUT_MS, async (response) => {
+    if (!response.ok) {
+      await handleCacheClearDirective(response);
+      if (response.status === 404) throw new Error('Prompt not found');
+      if (response.status === 401) throw new Error('Unauthorized');
+      throw new Error('Request failed');
+    }
+
+    return response.text();
   });
-
-  if (!response.ok) {
-    await handleCacheClearDirective(response);
-    if (response.status === 404) throw new Error('Prompt not found');
-    if (response.status === 401) throw new Error('Unauthorized');
-    throw new Error('Request failed');
-  }
-
-  return response.text();
 }
