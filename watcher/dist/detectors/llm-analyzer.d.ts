@@ -11,6 +11,8 @@ export interface LLMAnalysisResult {
     suggested_agent: string;
     prompt: string;
 }
+/** How long an analyze request, body included, may take before it is abandoned (FR14) */
+export declare const LLM_ANALYZE_TIMEOUT_MS = 10000;
 /**
  * LLM Analyzer - Fallback analysis for anomalies rules miss
  *
@@ -20,7 +22,8 @@ export declare class LLMAnalyzer {
     private readonly queueManager;
     private readonly ruleEngine;
     private readonly confidenceThreshold;
-    constructor(queueManager: QueueManager, ruleEngine: RuleEngine, confidenceThreshold?: number);
+    private readonly requestTimeoutMs;
+    constructor(queueManager: QueueManager, ruleEngine: RuleEngine, confidenceThreshold?: number, requestTimeoutMs?: number);
     /**
      * Analyze log content - first with rules, then LLM if needed
      */

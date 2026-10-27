@@ -181,6 +181,24 @@ function readApiCredentials(configDir) {
   }
 }
 
+// src/api/with-deadline.ts
+async function withDeadline(timeoutMs, request) {
+  const controller = new AbortController();
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const timeout = new DOMException("The OSS API request timed out", "TimeoutError");
+      controller.abort(timeout);
+      reject(timeout);
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([request(controller.signal), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // src/utils/workflow-name.ts
 var WORKFLOW_NAME_PATTERN = /^[a-z][a-z0-9-]{0,40}$/;
 function isValidWorkflowName(name) {
@@ -243,17 +261,23 @@ async function fetchWorkflowConfig(workflowName, timeoutMs = WORKFLOW_FETCH_TIME
     throw new Error("No API key configured or apiUrl is not https");
   }
   const endpoint = `${credentials.apiUrl}/api/v1/workflows/${encodeURIComponent(workflowName)}`;
-  let response;
   try {
-    response = await fetch(endpoint, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${credentials.apiKey}`,
-        "Content-Type": "application/json"
-      },
-      signal: AbortSignal.timeout(timeoutMs),
-      // G5: never replay the Bearer key to a redirect target
-      redirect: "error"
+    return await withDeadline(timeoutMs, async (signal) => {
+      const response = await fetch(endpoint, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${credentials.apiKey}`,
+          "Content-Type": "application/json"
+        },
+        signal,
+        // G5: never replay the Bearer key to a redirect target
+        redirect: "error"
+      });
+      if (!response.ok) {
+        const errorResponse = await response.json().catch(() => ({ error: "Request failed" }));
+        throw new Error(errorResponse.error || `HTTP ${response.status}`);
+      }
+      return await response.json();
     });
   } catch (error) {
     if (error instanceof Error && error.name === "TimeoutError") {
@@ -261,11 +285,6 @@ async function fetchWorkflowConfig(workflowName, timeoutMs = WORKFLOW_FETCH_TIME
     }
     throw error;
   }
-  if (!response.ok) {
-    const errorResponse = await response.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(errorResponse.error || `HTTP ${response.status}`);
-  }
-  return response.json();
 }
 function decryptWorkflowConfig(encrypted, credentials) {
   try {
