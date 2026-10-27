@@ -31,7 +31,11 @@ done
 exit 0
 CURL
   chmod +x "$sb/mock/curl"
-  HOME="$sb/home" PATH="$sb/mock:$PATH" bash "$ROOT/hooks/ensure-decrypt-cli.sh" >/dev/null 2>&1 || true
+  # A customer's install is a STABLE plugin (the repo is a beta on `next`; the hook pins by channel).
+  mkdir -p "$sb/plugin/.claude-plugin" "$sb/plugin/hooks"
+  printf '{"name":"oss","version":"2.0.94"}\n' > "$sb/plugin/.claude-plugin/plugin.json"
+  cp "$ROOT/hooks/ensure-decrypt-cli.sh" "$ROOT"/hooks/oss-decrypt-checksums*.txt "$sb/plugin/hooks/"
+  HOME="$sb/home" PATH="$sb/mock:$PATH" bash "$sb/plugin/hooks/ensure-decrypt-cli.sh" >/dev/null 2>&1 || true
   local urls; urls="$(cat "$sb/urls.log" 2>/dev/null)"
   if [[ -z "$urls" ]]; then fail "A1 fresh machine fetches pinned release" "hook requested no URL"
   elif grep -q "/latest/" <<<"$urls"; then fail "A1 fresh machine fetches pinned release" "requested latest: $(grep /latest/ <<<"$urls" | head -1)"
