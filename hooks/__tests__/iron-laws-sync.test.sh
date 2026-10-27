@@ -5,7 +5,7 @@
 #
 # Tests:
 # 1. Should exit 0 when CLAUDE.md has fresh Iron Laws (cache <24h)
-# 2. Should fetch from API when hash file is >24h old
+# 2. Should fetch the laws through the decrypt CLI (never curl) when the cache is >24h old
 # 3. --install should create Iron Laws section when CLAUDE.md exists but has no markers
 # 4. --install should create CLAUDE.md from scratch when file missing
 # 5. --install should output Iron Laws to stdout when CLAUDE.md was missing
@@ -40,33 +40,41 @@ fail() {
     ((TESTS_FAILED++))
 }
 
-# Helper: create a mock curl that returns Iron Laws content
-create_mock_curl() {
+# The laws reach the hook only through the decrypt CLI (FR15): the CLI checks them against the signed
+# manifest and prints them, or refuses. These helpers stub it at $TEST_HOME/.oss/bin/oss-decrypt.
+# $1 (the PATH dir) gets a curl that records any call to $TEST_HOME/curl-called and fails: the hook
+# must never fetch the laws itself.
+create_curl_tripwire() {
     local mock_dir="$1"
-    local iron_laws_content="${2:-# IRON LAWS\n\n## LAW 1: TDD\nNo code without tests.}"
     cat > "$mock_dir/curl" << CURLEOF
 #!/bin/bash
-# Mock curl: return Iron Laws markdown + 200 status
-echo -e "$iron_laws_content"
-for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo "IRON LAW padding line \$i: a real laws body is several KB, the sync rejects anything under 500 bytes."; done
-echo "200"
+echo "\$*" >> "$TEST_HOME/curl-called"
+exit 7
 CURLEOF
     chmod +x "$mock_dir/curl"
 }
 
-# Helper: create a tracking mock curl
-create_tracking_mock_curl() {
+# Helper: a stub oss-decrypt that prints verified Iron Laws content
+create_mock_cli() {
+    local mock_dir="$1"
+    local iron_laws_content="${2:-# IRON LAWS\n\n## LAW 1: TDD\nNo code without tests.}"
+    create_tracking_mock_cli "$mock_dir" "" "$iron_laws_content"
+}
+
+# Helper: a stub oss-decrypt that records its arguments to $2 (when given) and prints the laws
+create_tracking_mock_cli() {
     local mock_dir="$1"
     local marker_file="$2"
     local iron_laws_content="${3:-# IRON LAWS - UPDATED\n\n## LAW 1: TDD}"
-    cat > "$mock_dir/curl" << CURLEOF
+    create_curl_tripwire "$mock_dir"
+    mkdir -p "$TEST_HOME/.oss/bin"
+    cat > "$TEST_HOME/.oss/bin/oss-decrypt" << CLIEOF
 #!/bin/bash
-echo "CURL_WAS_CALLED" > "$marker_file"
+[[ -n "$marker_file" ]] && echo "\$*" > "$marker_file"
 echo -e "$iron_laws_content"
 for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo "IRON LAW padding line \$i: a real laws body is several KB, the sync rejects anything under 500 bytes."; done
-echo "200"
-CURLEOF
-    chmod +x "$mock_dir/curl"
+CLIEOF
+    chmod +x "$TEST_HOME/.oss/bin/oss-decrypt"
 }
 
 # =============================================================================
@@ -100,23 +108,23 @@ EOF
     echo "abc123" > "$TEST_HOME/.oss/.iron-laws-hash"
     touch "$TEST_HOME/.oss/.iron-laws-last-check"
 
-    # Create mock curl that should NOT be called
+    # The decrypt CLI should NOT be called
     MOCK_BIN_DIR=$(mktemp -d)
-    local marker_file="$TEST_HOME/curl-called"
-    create_tracking_mock_curl "$MOCK_BIN_DIR" "$marker_file"
+    local marker_file="$TEST_HOME/cli-called"
+    create_tracking_mock_cli "$MOCK_BIN_DIR" "$marker_file"
 
     local result exit_code=0
     result=$(HOME="$TEST_HOME" CLAUDE_PROJECT_DIR="$TEST_PROJECT" PATH="$MOCK_BIN_DIR:$PATH" "$HOOK_SCRIPT" 2>&1) || exit_code=$?
 
-    local curl_called=false
-    [[ -f "$marker_file" ]] && curl_called=true
+    local cli_called=false
+    [[ -f "$marker_file" ]] && cli_called=true
 
     rm -rf "$TEST_HOME" "$TEST_PROJECT" "$MOCK_BIN_DIR"
 
-    if [[ $exit_code -eq 0 ]] && [[ "$curl_called" == "false" ]]; then
+    if [[ $exit_code -eq 0 ]] && [[ "$cli_called" == "false" ]]; then
         pass "$test_name"
     else
-        fail "$test_name" "exit 0, no curl call" "exit=$exit_code curl_called=$curl_called output=$result"
+        fail "$test_name" "exit 0, no CLI call" "exit=$exit_code cli_called=$cli_called output=$result"
     fi
 }
 
@@ -127,7 +135,7 @@ EOF
 # @business-rule Keep Iron Laws up-to-date with latest from API
 # =============================================================================
 test_stale_cache_fetches() {
-    local test_name="Should fetch from API when hash file is >24h old"
+    local test_name="Should fetch the laws through the decrypt CLI (never curl) when the cache is >24h old"
     ((TESTS_RUN++))
 
     TEST_HOME=$(mktemp -d)
@@ -149,23 +157,24 @@ EOF
     echo "old-hash" > "$TEST_HOME/.oss/.iron-laws-hash"
     touch -t 202601010000 "$TEST_HOME/.oss/.iron-laws-last-check"
 
-    # Create tracking mock curl
+    # Tracking stub CLI
     MOCK_BIN_DIR=$(mktemp -d)
-    local marker_file="$TEST_HOME/curl-called"
-    create_tracking_mock_curl "$MOCK_BIN_DIR" "$marker_file"
+    local marker_file="$TEST_HOME/cli-called"
+    create_tracking_mock_cli "$MOCK_BIN_DIR" "$marker_file"
 
     local result exit_code=0
     result=$(HOME="$TEST_HOME" CLAUDE_PROJECT_DIR="$TEST_PROJECT" PATH="$MOCK_BIN_DIR:$PATH" "$HOOK_SCRIPT" 2>&1) || exit_code=$?
 
-    local curl_called=false
-    [[ -f "$marker_file" ]] && curl_called=true
+    local cli_args="" curl_called=false
+    [[ -f "$marker_file" ]] && cli_args=$(cat "$marker_file")
+    [[ -f "$TEST_HOME/curl-called" ]] && curl_called=true
 
     rm -rf "$TEST_HOME" "$TEST_PROJECT" "$MOCK_BIN_DIR"
 
-    if [[ $exit_code -eq 0 ]] && [[ "$curl_called" == "true" ]]; then
+    if [[ $exit_code -eq 0 ]] && [[ "$cli_args" == "--type shared --name iron-laws" ]] && [[ "$curl_called" == "false" ]]; then
         pass "$test_name"
     else
-        fail "$test_name" "exit 0, curl called" "exit=$exit_code curl_called=$curl_called output=$result"
+        fail "$test_name" "exit 0, CLI called with --type shared --name iron-laws, no curl" "exit=$exit_code cli_args=$cli_args curl_called=$curl_called output=$result"
     fi
 }
 
@@ -194,7 +203,7 @@ EOF
 
     # No cache files exist
     MOCK_BIN_DIR=$(mktemp -d)
-    create_mock_curl "$MOCK_BIN_DIR"
+    create_mock_cli "$MOCK_BIN_DIR"
 
     local result exit_code=0
     result=$(HOME="$TEST_HOME" CLAUDE_PROJECT_DIR="$TEST_PROJECT" PATH="$MOCK_BIN_DIR:$PATH" "$HOOK_SCRIPT" --install 2>&1) || exit_code=$?
@@ -231,7 +240,7 @@ test_missing_claude_md_creates() {
 
     # No CLAUDE.md exists
     MOCK_BIN_DIR=$(mktemp -d)
-    create_mock_curl "$MOCK_BIN_DIR"
+    create_mock_cli "$MOCK_BIN_DIR"
 
     local result exit_code=0
     result=$(HOME="$TEST_HOME" CLAUDE_PROJECT_DIR="$TEST_PROJECT" PATH="$MOCK_BIN_DIR:$PATH" "$HOOK_SCRIPT" --install 2>&1) || exit_code=$?
@@ -267,7 +276,7 @@ test_stdout_fallback_when_created() {
 
     # No CLAUDE.md exists
     MOCK_BIN_DIR=$(mktemp -d)
-    create_mock_curl "$MOCK_BIN_DIR"
+    create_mock_cli "$MOCK_BIN_DIR"
 
     local result exit_code=0
     result=$(HOME="$TEST_HOME" CLAUDE_PROJECT_DIR="$TEST_PROJECT" PATH="$MOCK_BIN_DIR:$PATH" "$HOOK_SCRIPT" --install 2>&1) || exit_code=$?
@@ -312,7 +321,7 @@ EOF
     touch "$TEST_HOME/.oss/.iron-laws-last-check"
 
     MOCK_BIN_DIR=$(mktemp -d)
-    create_mock_curl "$MOCK_BIN_DIR"
+    create_mock_cli "$MOCK_BIN_DIR"
 
     local result exit_code=0
     result=$(HOME="$TEST_HOME" CLAUDE_PROJECT_DIR="$TEST_PROJECT" PATH="$MOCK_BIN_DIR:$PATH" "$HOOK_SCRIPT" 2>&1) || exit_code=$?
@@ -361,17 +370,9 @@ EOF
     echo "old-hash" > "$TEST_HOME/.oss/.iron-laws-hash"
     touch -t 202601010000 "$TEST_HOME/.oss/.iron-laws-last-check"
 
-    # Mock curl returns UPDATED content
+    # The CLI prints UPDATED content
     MOCK_BIN_DIR=$(mktemp -d)
-    cat > "$MOCK_BIN_DIR/curl" << 'CURLEOF'
-#!/bin/bash
-echo "# IRON LAWS - UPDATED VERSION"
-echo ""
-echo "## LAW 1: TDD is mandatory"
-for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo "IRON LAW padding line $i: a real laws body is several KB, the sync rejects anything under 500 bytes."; done
-echo "200"
-CURLEOF
-    chmod +x "$MOCK_BIN_DIR/curl"
+    create_mock_cli "$MOCK_BIN_DIR" "# IRON LAWS - UPDATED VERSION\n\n## LAW 1: TDD is mandatory"
 
     local result exit_code=0
     result=$(HOME="$TEST_HOME" CLAUDE_PROJECT_DIR="$TEST_PROJECT" PATH="$MOCK_BIN_DIR:$PATH" "$HOOK_SCRIPT" 2>&1) || exit_code=$?
@@ -416,7 +417,7 @@ test_refresh_keeps_last_line_without_newline() {
     touch -t 202601010000 "$TEST_HOME/.oss/.iron-laws-last-check"
 
     MOCK_BIN_DIR=$(mktemp -d)
-    create_mock_curl "$MOCK_BIN_DIR" "# IRON LAWS - FRESH"
+    create_mock_cli "$MOCK_BIN_DIR" "# IRON LAWS - FRESH"
 
     local exit_code=0
     HOME="$TEST_HOME" CLAUDE_PROJECT_DIR="$TEST_PROJECT" PATH="$MOCK_BIN_DIR:$PATH" "$HOOK_SCRIPT" >/dev/null 2>&1 || exit_code=$?

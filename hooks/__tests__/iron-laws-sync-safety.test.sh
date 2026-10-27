@@ -3,13 +3,15 @@
 #
 # The sync runs at EVERY Claude Code session start in customer projects, so a defect here
 # rewrites customer files. Each test drives the real script in a temp HOME + temp project
-# with a curl shim on PATH (no network), and asserts on files and the shim's recorded argv.
+# with a stub decrypt CLI at $HOME/.oss/bin/oss-decrypt and a curl tripwire on PATH (no network), and
+# asserts on files and the stubs' recorded argv.
 #
 # @behavior Session start may only refresh an existing, well-formed IRON LAWS block in the
 #           project's own CLAUDE.md; --install (from /oss:login) may create or append one block.
 # @business-rule The sync never damages, duplicates, or redirects writes from a user's file,
 #           never stores a bad API response, never blocks session start, and never puts the
-#           API key on a command line.
+#           API key on a command line. The laws come only from oss-decrypt, which verifies them
+#           against the signed manifest (FR15): a CLI refusal writes nothing, and curl is never used.
 #
 # Usage: ./hooks/__tests__/iron-laws-sync-safety.test.sh
 
@@ -38,29 +40,29 @@ END='<!-- IRON LAWS END -->'
 FAKE_KEY='fake-key-0123456789abcdef'
 
 # --- fixture --------------------------------------------------------------------------------
-# T/home   HOME with .oss/config.json
+# T/home   HOME with .oss/config.json and .oss/bin/oss-decrypt (the stub CLI)
 # T/proj   CLAUDE_PROJECT_DIR
-# T/bin    curl shim
-# T/shim   shim control: body, code, sleep; records argv (one line per call) and stdin
+# T/bin    curl tripwire: records any call to T/shim/curl-argv and fails
+# T/shim   CLI control: body, refuse (a message: the CLI prints it on stderr and exits 1), sleep;
+#          records argv (one line per call)
 setup() {
     T=$(mktemp -d)
     T=$(cd "$T" && pwd -P)
-    mkdir -p "$T/home/.oss" "$T/proj" "$T/bin" "$T/shim"
+    mkdir -p "$T/home/.oss/bin" "$T/proj" "$T/bin" "$T/shim"
     printf '{"apiKey": "%s"}\n' "$FAKE_KEY" > "$T/home/.oss/config.json"
-    cat > "$T/bin/curl" << SHIM
+    cat > "$T/home/.oss/bin/oss-decrypt" << SHIM
 #!/bin/bash
 S="$T/shim"
 printf '%s\n' "\$*" >> "\$S/argv"
-prev=""
-for a in "\$@"; do
-    if [[ ( "\$prev" == "--config" || "\$prev" == "-K" ) && "\$a" == "-" ]]; then cat >> "\$S/stdin"; fi
-    prev="\$a"
-done
 [[ -f "\$S/sleep" ]] && sleep "\$(cat "\$S/sleep")"
+# A refusing stub still prints the body: only the exit status may decide that nothing is written.
 [[ -f "\$S/body" ]] && cat "\$S/body"
-printf '\n%s\n' "\$(cat "\$S/code" 2>/dev/null || echo 200)"
+if [[ -f "\$S/refuse" ]]; then echo "[verify] Prompt hash: FAILED — prompt blocked" >&2; echo "Error: \$(cat "\$S/refuse")" >&2; exit 1; fi
+printf '\n'   # console.log ends the output with a newline
 exit 0
 SHIM
+    chmod +x "$T/home/.oss/bin/oss-decrypt"
+    printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s/curl-argv"\nexit 7\n' "$T/shim" > "$T/bin/curl"
     chmod +x "$T/bin/curl"
     valid_body > "$T/shim/body"
 }
@@ -89,7 +91,8 @@ run_sync() {
         perl -e 'alarm 30; exec @ARGV' bash "$HOOK_SCRIPT" "$@" </dev/null >"$T/out" 2>"$T/err") || RC=$?
     OUT=$(cat "$T/out"); ERR=$(cat "$T/err")
 }
-curl_calls() { [[ -f "$T/shim/argv" ]] && wc -l < "$T/shim/argv" | tr -d ' ' || echo 0; }
+cli_calls() { [[ -f "$T/shim/argv" ]] && wc -l < "$T/shim/argv" | tr -d ' ' || echo 0; }
+curl_calls() { [[ -f "$T/shim/curl-argv" ]] && wc -l < "$T/shim/curl-argv" | tr -d ' ' || echo 0; }
 count_line() { grep -cxF -- "$1" "$2" 2>/dev/null || true; }
 sum() { cksum < "$1"; }
 
@@ -99,8 +102,8 @@ sum() { cksum < "$1"; }
 test_refresh_never_creates() {
     local name="R1: session start (no flag) never creates CLAUDE.md"; ((TESTS_RUN++)); setup
     run_sync
-    if [[ ! -e "$T/proj/CLAUDE.md" && "$(curl_calls)" == "0" ]]; then pass "$name"
-    else fail "$name" "no CLAUDE.md, no curl call" "exists=$([[ -e $T/proj/CLAUDE.md ]] && echo y || echo n) curl_calls=$(curl_calls)"; fi
+    if [[ ! -e "$T/proj/CLAUDE.md" && "$(cli_calls)" == "0" ]]; then pass "$name"
+    else fail "$name" "no CLAUDE.md, no CLI call" "exists=$([[ -e $T/proj/CLAUDE.md ]] && echo y || echo n) cli_calls=$(cli_calls)"; fi
     teardown
 }
 
@@ -108,8 +111,8 @@ test_refresh_never_appends() {
     local name="R1: session start leaves a CLAUDE.md without markers byte-identical"; ((TESTS_RUN++)); setup
     printf '# Mine\n\nNo laws here.\n' > "$T/proj/CLAUDE.md"; local before; before=$(sum "$T/proj/CLAUDE.md")
     run_sync
-    if [[ "$(sum "$T/proj/CLAUDE.md")" == "$before" && "$(curl_calls)" == "0" ]]; then pass "$name"
-    else fail "$name" "unchanged, no curl call" "changed=$([[ "$(sum "$T/proj/CLAUDE.md")" == "$before" ]] && echo n || echo y) curl_calls=$(curl_calls)"; fi
+    if [[ "$(sum "$T/proj/CLAUDE.md")" == "$before" && "$(cli_calls)" == "0" ]]; then pass "$name"
+    else fail "$name" "unchanged, no CLI call" "changed=$([[ "$(sum "$T/proj/CLAUDE.md")" == "$before" ]] && echo n || echo y) cli_calls=$(cli_calls)"; fi
     teardown
 }
 
@@ -146,8 +149,8 @@ check_symlink_refused() {
         stale
         if [[ $mode == refresh ]]; then run_sync; else run_sync --install; fi
         local after="absent"; [[ -e "$tgt" ]] && after=$(sum "$tgt")
-        if [[ "$after" == "$before" && -L "$T/proj/CLAUDE.md" && "$(curl_calls)" == "0" ]]; then pass "$name"
-        else fail "$name" "target unchanged, link intact, no curl" "target_changed=$([[ $after == "$before" ]] && echo n || echo y) link=$([[ -L $T/proj/CLAUDE.md ]] && echo y || echo n) curl=$(curl_calls)"; fi
+        if [[ "$after" == "$before" && -L "$T/proj/CLAUDE.md" && "$(cli_calls)" == "0" ]]; then pass "$name"
+        else fail "$name" "target unchanged, link intact, no CLI call" "target_changed=$([[ $after == "$before" ]] && echo n || echo y) link=$([[ -L $T/proj/CLAUDE.md ]] && echo y || echo n) cli=$(cli_calls)"; fi
         teardown
     done
 }
@@ -161,16 +164,16 @@ test_not_regular_file_refused() {
     local name="R1: CLAUDE.md that is a directory → no write"; ((TESTS_RUN++)); setup
     mkdir "$T/proj/CLAUDE.md"
     run_sync --install
-    if [[ -d "$T/proj/CLAUDE.md" && -z "$(ls -A "$T/proj/CLAUDE.md")" && "$(curl_calls)" == "0" ]]; then pass "$name"
-    else fail "$name" "exit 0, dir untouched, no curl" "rc=$RC curl=$(curl_calls)"; fi
+    if [[ -d "$T/proj/CLAUDE.md" && -z "$(ls -A "$T/proj/CLAUDE.md")" && "$(cli_calls)" == "0" ]]; then pass "$name"
+    else fail "$name" "exit 0, dir untouched, no CLI call" "rc=$RC cli=$(cli_calls)"; fi
     teardown
 }
 
 test_home_refused() {
     local name="R1: CLAUDE_PROJECT_DIR = \$HOME is refused (no ~/CLAUDE.md written)"; ((TESTS_RUN++)); setup
     PROJ="$T/home" run_sync --install
-    if [[ ! -e "$T/home/CLAUDE.md" && "$(curl_calls)" == "0" ]]; then pass "$name"
-    else fail "$name" "no ~/CLAUDE.md, no curl" "exists=$([[ -e $T/home/CLAUDE.md ]] && echo y || echo n) curl=$(curl_calls)"; fi
+    if [[ ! -e "$T/home/CLAUDE.md" && "$(cli_calls)" == "0" ]]; then pass "$name"
+    else fail "$name" "no ~/CLAUDE.md, no CLI call" "exists=$([[ -e $T/home/CLAUDE.md ]] && echo y || echo n) cli=$(cli_calls)"; fi
     teardown
 }
 
@@ -180,8 +183,8 @@ test_parent_symlink_to_home_refused() {
     block_file "$T/home/CLAUDE.md"; local before; before=$(sum "$T/home/CLAUDE.md"); stale
     PROJ="$T/linkproj" run_sync
     PROJ="$T/linkproj" run_sync --install
-    if [[ "$(sum "$T/home/CLAUDE.md")" == "$before" && "$(curl_calls)" == "0" ]]; then pass "$name"
-    else fail "$name" "~/CLAUDE.md unchanged, no curl" "changed=$([[ "$(sum "$T/home/CLAUDE.md")" == "$before" ]] && echo n || echo y) curl=$(curl_calls)"; fi
+    if [[ "$(sum "$T/home/CLAUDE.md")" == "$before" && "$(cli_calls)" == "0" ]]; then pass "$name"
+    else fail "$name" "~/CLAUDE.md unchanged, no CLI call" "changed=$([[ "$(sum "$T/home/CLAUDE.md")" == "$before" ]] && echo n || echo y) cli=$(cli_calls)"; fi
     teardown
 }
 
@@ -251,22 +254,23 @@ test_two_blocks_untouched() {
 check_rejected_body() { # $1 label, $2 code; body already in T/shim/body
     local label="$1" code="$2"
     local name="R3: $label → block unchanged, stdout empty, not marked fresh, 1h backoff"; ((TESTS_RUN++))
-    printf '%s' "$code" > "$T/shim/code"
+    [[ "$code" == 200 ]] || printf 'Request failed' > "$T/shim/refuse"
     block_file "$T/proj/CLAUDE.md"; local before; before=$(sum "$T/proj/CLAUDE.md"); stale
     run_sync
     local first_out="$OUT" lc_fresh=n
     [[ -n "$(find "$T/home/.oss/.iron-laws-last-check" -newer "$T/shim/body" 2>/dev/null)" ]] && lc_fresh=y
-    run_sync   # within the backoff window: must not call curl again
-    local calls; calls=$(curl_calls)
+    run_sync   # within the backoff window: must not call the CLI again
+    local calls; calls=$(cli_calls)
     if [[ "$(sum "$T/proj/CLAUDE.md")" == "$before" && -z "$first_out" && "$lc_fresh" == n && "$calls" == "1" ]]; then pass "$name"
-    else fail "$name" "unchanged, no stdout, stamp not fresh, 1 curl call over 2 runs" \
-        "changed=$([[ "$(sum "$T/proj/CLAUDE.md")" == "$before" ]] && echo n || echo y) stdout_bytes=${#first_out} fresh_stamp=$lc_fresh curl_calls=$calls"; fi
+    else fail "$name" "unchanged, no stdout, stamp not fresh, 1 CLI call over 2 runs" \
+        "changed=$([[ "$(sum "$T/proj/CLAUDE.md")" == "$before" ]] && echo n || echo y) stdout_bytes=${#first_out} fresh_stamp=$lc_fresh cli_calls=$calls"; fi
     teardown
 }
 test_rejected_bodies() {
     setup; : > "$T/shim/body"; check_rejected_body "empty 200" 200
     setup; printf '<!DOCTYPE html>\n<html><head><title>502 Bad Gateway</title></head><body>%s IRON LAW</body></html>\n' "$(head -c 800 /dev/zero | tr '\0' x)" > "$T/shim/body"; check_rejected_body "HTML page served as 200" 200
     setup; printf '<html><body><h1>502 Bad Gateway</h1></body></html>\n' > "$T/shim/body"; check_rejected_body "HTML 502 page" 502
+    setup; check_rejected_body "CLI refusal (hash does not match the signed manifest)" refused
     setup; { valid_body; head -c 16777216 /dev/zero | tr '\0' 'a'; printf '\n'; } > "$T/shim/body"; check_rejected_body "16MB body" 200
     setup; { printf '# Something else\n\n'; head -c 900 /dev/zero | tr '\0' 'z'; printf '\n'; } > "$T/shim/body"; check_rejected_body "body without IRON LAW" 200
     setup; printf '# IRON LAWS\nshort\n' > "$T/shim/body"; check_rejected_body "body under 500 bytes" 200
@@ -291,12 +295,13 @@ test_valid_write_marks_fresh() {
     teardown
 }
 
-test_curl_size_and_time_caps() {
-    local name="R3/R4: curl gets --max-filesize 262144, --connect-timeout 2, -m 4"; ((TESTS_RUN++)); setup
-    block_file "$T/proj/CLAUDE.md"; stale; run_sync
-    local a; a=$(cat "$T/shim/argv" 2>/dev/null)
-    if [[ "$a" == *"--max-filesize 262144"* && "$a" == *"--connect-timeout 2"* && ( "$a" == *"-m 4"* || "$a" == *"--max-time 4"* ) ]]; then pass "$name"
-    else fail "$name" "caps in argv" "argv=${a//$FAKE_KEY/<KEY>}"; fi
+test_cli_time_cap() {
+    local name="R4: a CLI that hangs is stopped (time cap) → block unchanged, 1h backoff, exit 0"; ((TESTS_RUN++)); setup
+    block_file "$T/proj/CLAUDE.md"; local before; before=$(sum "$T/proj/CLAUDE.md"); stale
+    printf '60' > "$T/shim/sleep"
+    local t0; t0=$(date +%s); run_sync; local took=$(( $(date +%s) - t0 ))
+    if [[ $RC -eq 0 && $took -lt 25 && "$(sum "$T/proj/CLAUDE.md")" == "$before" && -e "$T/home/.oss/.iron-laws-backoff" ]]; then pass "$name"
+    else fail "$name" "returns well before the CLI would, unchanged, backoff set" "rc=$RC took=${took}s backoff=$([[ -e $T/home/.oss/.iron-laws-backoff ]] && echo y || echo n)"; fi
     teardown
 }
 
@@ -304,14 +309,43 @@ test_curl_size_and_time_caps() {
 # R5 apiKey never in argv
 # =============================================================================================
 test_key_off_argv() {
-    local name="R5: API key absent from curl argv, sent via --config on stdin"; ((TESTS_RUN++)); setup
+    local name="R5: the laws come from 'oss-decrypt --type shared --name iron-laws' alone: no key in argv, no curl"; ((TESTS_RUN++)); setup
     block_file "$T/proj/CLAUDE.md"; stale; run_sync
-    local in_argv=n in_cfg=n in_out=n
-    grep -qF "$FAKE_KEY" "$T/shim/argv" 2>/dev/null && in_argv=y
-    grep -qF "Authorization: Bearer $FAKE_KEY" "$T/shim/stdin" 2>/dev/null && in_cfg=y
+    local a in_out=n; a=$(cat "$T/shim/argv" 2>/dev/null)
     [[ "$OUT$ERR" == *"$FAKE_KEY"* ]] && in_out=y
-    if [[ "$in_argv" == n && "$in_cfg" == y && "$in_out" == n ]] && grep -q "FRESH FROM API" "$T/proj/CLAUDE.md"; then pass "$name"
-    else fail "$name" "argv=n config=y printed=n, refreshed" "argv=$in_argv config=$in_cfg printed=$in_out"; fi
+    if [[ "$a" == "--type shared --name iron-laws" && "$(curl_calls)" == "0" && "$in_out" == n ]] && grep -q "FRESH FROM API" "$T/proj/CLAUDE.md"; then pass "$name"
+    else fail "$name" "CLI argv exactly '--type shared --name iron-laws', no curl, key not printed, refreshed" "argv=${a//$FAKE_KEY/<KEY>} curl=$(curl_calls) printed=$in_out"; fi
+    teardown
+}
+
+# =============================================================================================
+# V  Verified laws only (ship round 1, FR15): a CLI refusal writes nothing and never falls back
+# =============================================================================================
+test_cli_refusal_writes_nothing() {
+    local mode
+    for mode in refresh install; do
+        local name="V: the CLI refuses (signature or hash mismatch) ($mode) → nothing written, no curl fallback"; ((TESTS_RUN++)); setup
+        if [[ $mode == refresh ]]; then block_file "$T/proj/CLAUDE.md"; else printf '# Mine\n' > "$T/proj/CLAUDE.md"; fi
+        local before; before=$(sum "$T/proj/CLAUDE.md"); stale
+        printf '[SECURITY] Prompt integrity check FAILED. Content may have been tampered with.' > "$T/shim/refuse"
+        if [[ $mode == refresh ]]; then run_sync; else run_sync --install; fi
+        local want=0; [[ $mode == install ]] && want=4
+        if [[ $RC -eq $want && "$(sum "$T/proj/CLAUDE.md")" == "$before" && -z "$OUT" && "$(cli_calls)" == "1" && "$(curl_calls)" == "0" \
+            && -e "$T/home/.oss/.iron-laws-backoff" ]]; then pass "$name"
+        else fail "$name" "rc $want, unchanged, no stdout, 1 CLI call, 0 curl calls, backoff" "rc=$RC changed=$([[ "$(sum "$T/proj/CLAUDE.md")" == "$before" ]] && echo n || echo y) cli=$(cli_calls) curl=$(curl_calls) out=$OUT"; fi
+        teardown
+    done
+}
+
+test_cli_missing_installs_first() {
+    local name="V: oss-decrypt missing → ensure-decrypt-cli.sh runs first; when it fails, exit 4, nothing written, no curl for the laws"; ((TESTS_RUN++)); setup
+    rm -f "$T/home/.oss/bin/oss-decrypt"
+    printf '# Mine\n' > "$T/proj/CLAUDE.md"; local before; before=$(sum "$T/proj/CLAUDE.md")
+    run_sync --install
+    local laws_curl=n; grep -q 'iron-laws' "$T/shim/curl-argv" 2>/dev/null && laws_curl=y
+    local installer_ran=n; grep -q 'github.com' "$T/shim/curl-argv" 2>/dev/null && installer_ran=y
+    if [[ $RC -eq 4 && "$(sum "$T/proj/CLAUDE.md")" == "$before" && -z "$OUT" && "$installer_ran" == y && "$laws_curl" == n ]]; then pass "$name"
+    else fail "$name" "installer tried (github), exit 4, unchanged, no laws curl" "rc=$RC installer=$installer_ran laws_curl=$laws_curl err=$ERR"; fi
     teardown
 }
 
@@ -378,11 +412,11 @@ test_stale_lock_cleared() {
 }
 
 test_json_config_parsed() {
-    local name="R6: config.json parsed as JSON (spaces, newlines, escapes)"; ((TESTS_RUN++)); setup
-    printf '{\n  "apiUrl" : "https://example.invalid",\n  "apiKey"   :   "abc\\/def\\u0041-%s"\n}\n' "$FAKE_KEY" > "$T/home/.oss/config.json"
+    local name="R6: any config.json shape (spaces, newlines, escapes) → refreshed; the hook hands no key to anything"; ((TESTS_RUN++)); setup
+    printf '{\n  "apiKey"   :   "abc\\/def\\u0041-%s"\n}\n' "$FAKE_KEY" > "$T/home/.oss/config.json"
     block_file "$T/proj/CLAUDE.md"; stale; run_sync
-    if grep -qF "Authorization: Bearer abc/defA-$FAKE_KEY" "$T/shim/stdin" 2>/dev/null; then pass "$name"
-    else fail "$name" "decoded key 'abc/defA-…' in curl config" "stdin=$(sed "s/$FAKE_KEY/<KEY>/" "$T/shim/stdin" 2>/dev/null | head -3)"; fi
+    if grep -q "FRESH FROM API" "$T/proj/CLAUDE.md" && ! grep -qF "$FAKE_KEY" "$T/shim/argv" && [[ "$OUT$ERR" != *"$FAKE_KEY"* ]]; then pass "$name"
+    else fail "$name" "refreshed, key in no argv and no output" "rc=$RC err=${ERR//$FAKE_KEY/<KEY>}"; fi
     teardown
 }
 
@@ -459,10 +493,10 @@ test_crlf_install_appends_crlf() {
 }
 
 # =============================================================================================
-# S3 Node-free config parsing (ship gate round 2)
-# node → python3 → strict flat-shape fallback. The key is never printed and never in argv.
+# S3 Node-free (ship gate round 2). Since FR15 the hook reads no API key at all: the decrypt CLI holds
+# the credentials. Without node or python3 it still refreshes, and the key is never printed or in argv.
 # =============================================================================================
-# hide_tools <names...>: sets HIDDEN_PATH to the system dirs minus those tools (plus T/bin's curl).
+# hide_tools <names...>: sets HIDDEN_PATH to the system dirs minus those tools (plus T/bin's curl tripwire).
 hide_tools() {
     local d f b skip h
     mkdir -p "$T/sys"
@@ -483,10 +517,8 @@ python3_recorder() {
     chmod +x "$T/py/python3"
     HIDDEN_PATH="$HIDDEN_PATH:$T/py"
 }
-# The JSON text "fake\"quo\\te-KEY" decodes to fake"quo\te-KEY, which curl's config file
-# receives re-escaped as fake\"quo\\te-KEY.
+# The JSON text "fake\"quo\\te-KEY": an escaped quote and backslash.
 ESC_JSON="fake\\\"quo\\\\te-$FAKE_KEY"
-ESC_CURLCFG="Authorization: Bearer fake\\\"quo\\\\te-$FAKE_KEY"
 run_hidden() { # like run_sync, with PATH=HIDDEN_PATH
     RC=0
     (cd "$T" && HOME="$T/home" CLAUDE_PROJECT_DIR="$T/proj" PATH="$HIDDEN_PATH" \
@@ -495,41 +527,38 @@ run_hidden() { # like run_sync, with PATH=HIDDEN_PATH
 }
 
 test_key_without_node() {
-    local name="S3: node absent → python3 reads the key (incl. escaped quote and backslash), path not key in argv"; ((TESTS_RUN++)); setup
-    printf '{\n  "apiUrl": "https://example.invalid",\n  "apiKey": "%s"\n}\n' "$ESC_JSON" > "$T/home/.oss/config.json"
+    local name="S3: node absent → refreshed through the CLI; the key is in no argv and no output"; ((TESTS_RUN++)); setup
+    printf '{\n  "apiKey": "%s"\n}\n' "$ESC_JSON" > "$T/home/.oss/config.json"
     block_file "$T/proj/CLAUDE.md"; stale
     hide_tools node python python3; python3_recorder
     run_hidden
-    local py_used=n key_in_argv=n printed=n
-    [[ -s "$T/shim/python3-argv" ]] && py_used=y
+    local key_in_argv=n printed=n
     grep -qF "$FAKE_KEY" "$T/shim/python3-argv" "$T/shim/argv" 2>/dev/null && key_in_argv=y
     [[ "$OUT$ERR" == *"$FAKE_KEY"* ]] && printed=y
-    if grep -qF "$ESC_CURLCFG" "$T/shim/stdin" 2>/dev/null && [[ $py_used == y && $key_in_argv == n && $printed == n ]] \
-        && grep -q "FRESH FROM API" "$T/proj/CLAUDE.md"; then pass "$name"
-    else fail "$name" "decoded key in curl config, python3 used, key not in argv/output" "py_used=$py_used key_in_argv=$key_in_argv printed=$printed err=${ERR//$FAKE_KEY/<KEY>}"; fi
+    if [[ $key_in_argv == n && $printed == n ]] && grep -q "FRESH FROM API" "$T/proj/CLAUDE.md"; then pass "$name"
+    else fail "$name" "refreshed, key not in argv/output" "key_in_argv=$key_in_argv printed=$printed err=${ERR//$FAKE_KEY/<KEY>}"; fi
     teardown
 }
 
 test_key_without_node_or_python() {
-    local name="S3: node and python3 absent → strict fallback reads the key (incl. escaped quote and backslash)"; ((TESTS_RUN++)); setup
-    printf '{\n  "apiUrl" : "https://example.invalid",\n  "apiKey"  :  "%s",\n  "userId": "u1"\n}\n' "$ESC_JSON" > "$T/home/.oss/config.json"
+    local name="S3: node and python3 absent → refreshed through the CLI, key not printed"; ((TESTS_RUN++)); setup
+    printf '{\n  "apiKey"  :  "%s",\n  "userId": "u1"\n}\n' "$ESC_JSON" > "$T/home/.oss/config.json"
     block_file "$T/proj/CLAUDE.md"; stale
     hide_tools node python python3
     run_hidden
-    if grep -qF "$ESC_CURLCFG" "$T/shim/stdin" 2>/dev/null && [[ "$OUT$ERR" != *"$FAKE_KEY"* ]] \
-        && grep -q "FRESH FROM API" "$T/proj/CLAUDE.md"; then pass "$name"
-    else fail "$name" "decoded key in curl config, key not printed, refreshed" "rc=$RC err=${ERR//$FAKE_KEY/<KEY>} stdin=$(sed "s/$FAKE_KEY/<KEY>/" "$T/shim/stdin" 2>/dev/null | head -2)"; fi
+    if [[ "$OUT$ERR" != *"$FAKE_KEY"* && "$(curl_calls)" == "0" ]] && grep -q "FRESH FROM API" "$T/proj/CLAUDE.md"; then pass "$name"
+    else fail "$name" "refreshed, key not printed, no curl" "rc=$RC err=${ERR//$FAKE_KEY/<KEY>} curl=$(curl_calls)"; fi
     teardown
 }
 
 test_fallback_fails_closed() {
-    local name="S3: fallback meets an escape it does not handle (a JSON unicode escape) → no curl call, file unchanged"; ((TESTS_RUN++)); setup
-    printf '{"apiKey": "abc\\u0041-%s"}\n' "$FAKE_KEY" > "$T/home/.oss/config.json"
+    local name="S3: not logged in (no config.json), node and python3 absent → no CLI call, file unchanged"; ((TESTS_RUN++)); setup
+    rm -f "$T/home/.oss/config.json"
     block_file "$T/proj/CLAUDE.md"; local before; before=$(sum "$T/proj/CLAUDE.md"); stale
     hide_tools node python python3
     run_hidden
-    if [[ "$(curl_calls)" == "0" && "$(sum "$T/proj/CLAUDE.md")" == "$before" && "$OUT$ERR" != *"$FAKE_KEY"* ]]; then pass "$name"
-    else fail "$name" "no curl, unchanged, key not printed" "curl=$(curl_calls) err=${ERR//$FAKE_KEY/<KEY>}"; fi
+    if [[ "$(cli_calls)" == "0" && "$(curl_calls)" == "0" && "$(sum "$T/proj/CLAUDE.md")" == "$before" ]]; then pass "$name"
+    else fail "$name" "no CLI call, no curl, unchanged" "cli=$(cli_calls) curl=$(curl_calls) err=$ERR"; fi
     teardown
 }
 
@@ -559,13 +588,13 @@ test_install_refusal_exit_3() {
 
 test_install_no_laws_exit_4() {
     local label
-    for label in curl-error http-500 no-key; do
+    for label in cli-error cli-refused no-config; do
         local name="S2: --install gets no valid laws ($label) → exit 4, nothing written"; ((TESTS_RUN++)); setup
         printf '# Mine\n' > "$T/proj/CLAUDE.md"; local before; before=$(sum "$T/proj/CLAUDE.md")
         case $label in
-            curl-error) printf '#!/bin/bash\nexit 7\n' > "$T/bin/curl" ;;
-            http-500) printf '500' > "$T/shim/code" ;;
-            no-key) printf '{"userId": "u1"}\n' > "$T/home/.oss/config.json" ;;
+            cli-error) printf 'Request failed' > "$T/shim/refuse" ;;
+            cli-refused) printf '[SECURITY] shared/iron-laws is not in the signed prompt manifest. Prompt delivery blocked.' > "$T/shim/refuse" ;;
+            no-config) rm -f "$T/home/.oss/config.json" ;;
         esac
         run_sync --install
         if [[ $RC -eq 4 && "$(sum "$T/proj/CLAUDE.md")" == "$before" && -n "$ERR" && -z "$OUT" ]]; then pass "$name"
@@ -592,8 +621,10 @@ test_two_blocks_untouched
 test_rejected_bodies
 test_markdown_with_angle_placeholders_accepted
 test_valid_write_marks_fresh
-test_curl_size_and_time_caps
+test_cli_time_cap
 test_key_off_argv
+test_cli_refusal_writes_nothing
+test_cli_missing_installs_first
 test_dash_lines_kept
 test_mode_kept
 test_concurrent_installs_one_block
