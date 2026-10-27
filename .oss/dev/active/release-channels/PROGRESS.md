@@ -1,6 +1,6 @@
 # Progress: Release channels (DEV / STAGING / PROD)
 
-## Current Phase: build done; next: ship
+## Current Phase: ship (round 1 fixes done; round 2 gates next)
 
 ## Tasks
 - [x] Ideate, requirements, ADR-004/005, plan, acceptance (2026-10-26)
@@ -23,7 +23,14 @@
 - [ ] H1 Render staging service + DB + Stripe test keys: needs go-ahead + cost
 - [ ] H2 switch to beta and run the workflow on STAGING; H3 acceptance sign-off
 
+- [x] Ship round 1: 4 gates FAILED, 15 fix tasks FR1-FR15 (PLAN.md) all done 2026-10-27, through /oss:build (one banner for the round)
+  - plugin: 305303e, 2794dbf, 6e49f34, f69ddf1, d5e03f2, 06e5f77, 020d9ba, 3bb0417, ad34907; merged CLI (FR3/FR4/FR7/FR15/FR1-CLI), watcher (FR4/FR7/FR9/FR10/FR14), FR15 hooks
+  - API (build-t15-t18): FR15 35d2b63, FR3 7b48e02, FR8 94bb6a6, FR12 7672068, template c4a07e0
+- [ ] Ship round 2: re-run the 4 gates
+- [ ] Maintainer steps before the feature is usable on STAGING: publish tag cli-decrypt-v1.3.0-beta.1 and commit its checksums; T17 beta repo; H1 Render
+- [ ] Maintainer steps before the first RELEASE: re-sign the production manifest (22 workflows/* entries); publish and pin a stable cli-decrypt >= 1.3.0
+
 ## Blockers
 - None. Gated steps: T11 (staging key), T17 (beta repo), H1 (Render/DB).
 
-## Last Updated: 2026-10-26 by /oss:build (complete)
+## Last Updated: 2026-10-27 by /oss:build (ship round 1 fixes)
