@@ -87,9 +87,9 @@ This script:
 - Refreshes the existing IRON LAWS block in CLAUDE.md when it is older than 24h
 - Never creates CLAUDE.md or adds a block: if CLAUDE.md has no IRON LAWS, run `/oss:login` in this project
 - Does nothing if the laws are fresh, or if the API is unreachable (it retries after 1h)
-- Reads the API key from `~/.oss/config.json` with a real JSON parser
+- Writes only laws the decrypt CLI (`~/.oss/bin/oss-decrypt`) verified against the signed manifest; if the CLI refuses, nothing is written
 
-**If the script fails** (no API key, network error), proceed without CLAUDE.md — the ideation can still work.
+**If the script fails** (not logged in, network error, laws refused), proceed without CLAUDE.md — the ideation can still work.
 
 ## Step 2: Check Authentication
 

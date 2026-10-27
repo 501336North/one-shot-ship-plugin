@@ -665,7 +665,7 @@ setup_act; printf '{"apiKey":"ossk_keycheck_1"}\n' > "$H/.oss/config.json"; ovs 
     && pass "25: keycheck says a key is configured and never prints it" || fail "25: keycheck says a key is configured" "rc=$RC out='$OUT' err=$ERR"
 setup_act; rm -f "$H/.oss/config.json"; ovs "$R" keycheck
 [[ "$RC" == 1 && -z "$OUT" ]] && pass "25: keycheck without a key prints nothing and fails" || fail "25: keycheck without a key" "rc=$RC out='$OUT'"
-for ep in auth/verify workflows prompts/claude-md; do
+for ep in auth/verify workflows; do
     setup_act; printf '{"ok":true}\n200\n' > "$T/curl.out"; printf '{"apiKey":"ossk_api_1"}\n' > "$H/.oss/config.json"; ovs "$R" api "$ep"
     [[ "$RC" == 0 && "$(sbcalls)" == *"https://one-shot-ship-api.onrender.com/api/v1/$ep"* && "$(sbcalls)" != *ossk_api_1* \
        && "$(cat "$T/curl.stdin" 2>/dev/null)" == *"Authorization: Bearer ossk_api_1"* && "$OUT" == *'"ok":true'* ]] \
@@ -677,7 +677,8 @@ setup_act; printf '{"ok":true}\n200\n' > "$T/curl.out"; printf '{"apiKey":"ossk_
     && pass "25: api calls the API the config names (apiUrl), never production" || fail "25: api follows apiUrl" "rc=$RC calls=$(sbcalls)"
 setup_act; printf '{"apiKey":"ossk_api_3","apiUrl":"http://api.example.com"}\n' > "$H/.oss/config.json"; ovs "$R" api auth/verify
 [[ "$RC" == 1 && -z "$(sbcalls)" ]] && pass "25: api with an invalid apiUrl calls nothing" || fail "25: api with an invalid apiUrl calls nothing" "rc=$RC calls=$(sbcalls)"
-for ep in subscription/status 'auth/verify?x=1' ../admin prompts/agents/x ''; do
+# prompts/claude-md left the set in FR15: the template is fetched verified with `oss-decrypt --type templates`.
+for ep in subscription/status 'auth/verify?x=1' ../admin prompts/agents/x prompts/claude-md ''; do
     setup_act; printf '{"apiKey":"ossk_api_4"}\n' > "$H/.oss/config.json"; ovs "$R" api "$ep"
     [[ "$RC" == 1 && -z "$OUT" && -z "$(sbcalls)" ]] && pass "25: api refuses endpoint '$ep' (not in the fixed set), calls nothing" \
         || fail "25: api refuses endpoint '$ep'" "rc=$RC out='$OUT' calls=$(sbcalls)"

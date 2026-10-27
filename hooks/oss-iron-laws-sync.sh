@@ -16,7 +16,9 @@
 #   - CLAUDE.md is a symlink (incl. dangling) or not a regular file
 #   - CLAUDE.md's directory resolves outside the project, or the project resolves to $HOME
 #   - the markers are not exactly one START line before exactly one END line
-#   - the API body is empty, < 500 bytes, > 256KB, HTML, or has no "IRON LAW"
+#   - the decrypt CLI refuses (signature or hash mismatch, not in the signed manifest, API error),
+#     takes over 15s, or is missing and cannot be installed
+#   - the verified body is empty, < 500 bytes, > 256KB, HTML, or has no "IRON LAW"
 # A failed fetch sets a 1h backoff; only a validated write marks the cache fresh (24h).
 #
 # Exit codes (refresh mode always exits 0, so session start never fails):
@@ -25,20 +27,21 @@
 #   2  bad arguments
 #   3  install mode refused: CLAUDE.md is unsafe to write (symlink, not a regular file, outside
 #      the project, the project is $HOME, malformed markers). Nothing written.
-#   4  install mode has no valid laws to write (not logged in, no key, API unreachable or
-#      non-200, invalid body). Nothing written.
+#   4  install mode has no valid laws to write (not logged in, decrypt CLI missing or refused,
+#      API unreachable, invalid body). Nothing written.
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENDPOINT="/api/v1/prompts/shared/iron-laws"
 STATE_DIR="${HOME}/.oss"
+OSS_DECRYPT="${STATE_DIR}/bin/oss-decrypt"
 LAST_CHECK_FILE="${STATE_DIR}/.iron-laws-last-check"
 BACKOFF_FILE="${STATE_DIR}/.iron-laws-backoff"
 LOCK_DIR="${STATE_DIR}/.iron-laws-sync.lock"
 CACHE_TTL_SECONDS=86400   # 24h after a validated write
 BACKOFF_SECONDS=3600      # 1h after a failed fetch
 LOCK_STALE_SECONDS=30
+CLI_TIMEOUT_SECONDS=15   # the CLI's own manifest fetch times out at 10s
 MIN_BODY_BYTES=500
 MAX_BODY_BYTES=262144
 
@@ -110,73 +113,36 @@ block_state() {
 }
 
 # --- fetch + validate ------------------------------------------------------------------------
-# Prints the apiKey from $CONFIG_FILE into the caller's $(...) and nowhere else. Each parser is
-# given the file PATH, never the key, so the key is not in any process's argv.
-# node, else python3, else read_api_key_flat. Prints nothing when the key can't be read.
-read_api_key() {
-    if command -v node >/dev/null 2>&1; then
-        node -e '
-            try {
-                const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-                if (typeof c.apiKey === "string") process.stdout.write(c.apiKey);
-            } catch (e) {}' "$CONFIG_FILE" 2>/dev/null
-    elif command -v python3 >/dev/null 2>&1; then
-        python3 -c '
-import json, sys
-try:
-    with open(sys.argv[1], encoding="utf-8") as f:
-        c = json.load(f)
-    if isinstance(c, dict) and isinstance(c.get("apiKey"), str):
-        sys.stdout.write(c["apiKey"])
-except Exception:
-    pass' "$CONFIG_FILE" 2>/dev/null
-    else
-        read_api_key_flat
-    fi
-}
-
-# Last resort, pure bash: the flat `"apiKey": "..."` shape that /oss:login writes. Fails closed
-# (prints nothing) unless "apiKey" occurs exactly once, is followed by `: "`, and its string
-# ends with an unescaped `"` using only the escapes \" \\ \/ and no control characters.
-read_api_key_flat() {
-    local json rest key="" c sep='^[[:space:]]*:[[:space:]]*"'
-    json=$(< "$CONFIG_FILE") || return 1
-    rest=${json#*\"apiKey\"}
-    [[ "$rest" != "$json" && "$rest" != *'"apiKey"'* ]] || return 1
-    [[ "$rest" =~ $sep ]] || return 1
-    rest=${rest:${#BASH_REMATCH[0]}}
-    while [[ -n "$rest" ]]; do
-        c=${rest:0:1}; rest=${rest:1}
-        case "$c" in
-            '"') printf '%s' "$key"; return 0 ;;
-            '\')
-                c=${rest:0:1}; rest=${rest:1}
-                case "$c" in '"' | '\' | '/') key+=$c ;; *) return 1 ;; esac ;;
-            [[:cntrl:]]) return 1 ;;
-            *) key+=$c ;;
-        esac
-    done
-    return 1
+# The laws come only from the decrypt CLI (FR15, ADR-005): it fetches /api/v1/prompts/shared/iron-laws
+# with its own stored credentials, checks the body's sha256 against the signed manifest entry
+# shared/iron-laws, and prints it, or refuses (non-zero exit). The hook never sees the API key.
+# A missing CLI is installed first by ensure-decrypt-cli.sh beside this hook.
+run_cli() { # $1 output file; the CLI is stopped after CLI_TIMEOUT_SECONDS
+    local out="$1" pid watchdog rc=0
+    "$OSS_DECRYPT" --type shared --name iron-laws > "$out" 2>"$WORK/cli-err" & pid=$!
+    ( sleep "$CLI_TIMEOUT_SECONDS"; kill "$pid" 2>/dev/null ) </dev/null >/dev/null 2>&1 & watchdog=$!
+    wait "$pid" || rc=$?
+    kill "$watchdog" 2>/dev/null
+    return "$rc"
 }
 
 # Writes the validated, marker-free laws to $1. Returns 1 on any failure.
 fetch_body() {
-    local out="$1" raw="$WORK/raw" key rc=0 code bytes
-    key=$(read_api_key)
-    if [[ -z "$key" ]]; then warn "no API key in $CONFIG_FILE"; return 1; fi
-    oss_api_curl "$key" -sS --connect-timeout 2 -m 4 --max-filesize "$MAX_BODY_BYTES" \
-        -w '\n%{http_code}' "${API_URL}${ENDPOINT}" > "$raw" 2>/dev/null || rc=$?
-    unset key
-    if (( rc != 0 )); then warn "API unreachable or response too large (curl exit $rc)"; return 1; fi
-    code=$(tail -n 1 "$raw")
-    if [[ "$code" != "200" ]]; then warn "API returned HTTP $code"; return 1; fi
+    local out="$1" raw="$WORK/raw" rc=0 bytes
+    if [[ ! -x "$OSS_DECRYPT" ]] && ! "$SCRIPT_DIR/ensure-decrypt-cli.sh" </dev/null >/dev/null 2>&1; then
+        warn "the decrypt CLI is not installed and could not be installed"; return 1
+    fi
+    run_cli "$raw" || rc=$?
+    if (( rc != 0 )); then
+        warn "the decrypt CLI refused or failed (exit $rc): $(tail -n 1 "$WORK/cli-err" 2>/dev/null)"; return 1
+    fi
     bytes=$(wc -c < "$raw" | tr -d ' ')
     if (( bytes > MAX_BODY_BYTES + 8 )); then warn "rejected: body over $MAX_BODY_BYTES bytes"; return 1; fi
-    # Drop the status line and any marker-like lines; trim leading/trailing blank lines.
-    sed '$d' "$raw" | awk '
+    # Drop any marker-like lines; trim leading/trailing blank lines.
+    awk '
         /^[[:space:]]*<!--[[:space:]]*IRON LAWS (START|END)/ { next }
         /^[[:space:]]*$/ { if (started) blanks++; next }
-        { while (blanks > 0) { print ""; blanks-- } started = 1; print }' > "$out"
+        { while (blanks > 0) { print ""; blanks-- } started = 1; print }' "$raw" > "$out"
     bytes=$(wc -c < "$out" | tr -d ' ')
     if (( bytes < MIN_BODY_BYTES )); then warn "rejected: body under $MIN_BODY_BYTES bytes"; return 1; fi
     if grep -qiE '<!doctype html|<html[[:space:]>]' "$out"; then
@@ -263,9 +229,9 @@ main() {
     fi
     # shellcheck source=oss-api-curl.sh
     source "$SCRIPT_DIR/oss-api-curl.sh" 2>/dev/null || { warn "missing $SCRIPT_DIR/oss-api-curl.sh"; give_up; }
-    CONFIG_FILE="$(oss_config_file)"  # the key and the URL it goes to come from one file
+    CONFIG_FILE="$(oss_config_file)"  # logged in; the decrypt CLI reads its own credentials
     [[ -f "$CONFIG_FILE" ]] || { warn "not logged in ($CONFIG_FILE missing)"; give_up 4; }
-    API_URL="$(oss_api_url)" || { warn "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"; give_up 4; }
+    oss_api_url >/dev/null || { warn "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"; give_up 4; }
 
     trap cleanup EXIT
     WORK=$(mktemp -d "${TMPDIR:-/tmp}/oss-iron-laws.XXXXXX") || give_up

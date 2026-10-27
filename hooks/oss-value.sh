@@ -39,7 +39,7 @@ if [[ ! -f "$_OV_HERE/oss-safe-path.sh" ]]; then
 fi
 source "$_OV_HERE/oss-safe-path.sh"
 
-_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args> | keycheck | api auth/verify|workflows|prompts/claude-md|workflow" >&2; exit 2; }
+_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args> | keycheck | api auth/verify|workflows|workflow" >&2; exit 2; }
 
 _OV_RUN="$HOME/.oss/run"
 
@@ -231,10 +231,10 @@ _ov_cmd_keycheck() {
 _ov_cmd_api() {
     local e u k
     case "$#:${1:-}" in
-        1:auth/verify|1:workflows|1:prompts/claude-md) e=$1 ;;
+        1:auth/verify|1:workflows) e=$1 ;;
         1:workflow) _ov_dir && _ov_get workflow && e="workflows/$_OV_VAL" ;;
         *) false ;;
-    esac || { echo "oss-value: api: refused (not auth/verify, workflows, prompts/claude-md or workflow, or workflow.txt missing or not a valid name)" >&2; return 1; }
+    esac || { echo "oss-value: api: refused (not auth/verify, workflows or workflow, or workflow.txt missing or not a valid name)" >&2; return 1; }
     source "$_OV_HERE/oss-api-curl.sh" && u=$(oss_api_url) && k=$(oss_api_key) \
     || { echo "oss-value: api: refused (no API key, or apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment)" >&2; return 1; }
     oss_api_curl "$k" -s -m 30 "$u/api/v1/$e"

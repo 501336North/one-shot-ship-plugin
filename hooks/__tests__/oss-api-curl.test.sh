@@ -90,7 +90,7 @@ check_site() { # $1 label, then the command to run under the temp HOME/PATH
     teardown
 }
 test_sites() {
-    check_site "fetch-iron-laws.sh" bash "$HOOKS_DIR/fetch-iron-laws.sh"
+    # fetch-iron-laws.sh sends no key since FR15: the decrypt CLI fetches the laws with its own credentials.
     check_site "oss-fetch-team-iron-laws.sh" bash "$HOOKS_DIR/oss-fetch-team-iron-laws.sh"
     check_site "oss-push-metrics.sh" bash "$HOOKS_DIR/oss-push-metrics.sh" '{"command":"build"}'
 }
