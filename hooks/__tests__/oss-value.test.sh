@@ -685,7 +685,7 @@ done
 setup_act; printf '{"ok":true}\n200\n' > "$T/curl.out"; printf '{"apiKey":"ossk_api_5"}\n' > "$H/.oss/config.json"; echo ideate > "$VD/workflow.txt"; ovs "$R" api workflow
 [[ "$RC" == 0 && "$(sbcalls)" == *"/api/v1/workflows/ideate"* && ! -e "$VD/workflow.txt" ]] \
     && pass "25: api workflow fetches the workflow named in workflow.txt and deletes the file" || fail "25: api workflow" "rc=$RC calls=$(sbcalls) err=$ERR"
-for v in '../x' 'a b' 'Build' '$(touch PWNED)'; do
+for v in '../x' 'a b' 'Build' '$(touch PWNED)' '..' '.' '...'; do  # dots-only: curl squashes workflows/.. (FR11)
     setup_act; printf '{"apiKey":"ossk_api_6"}\n' > "$H/.oss/config.json"; printf '%s\n' "$v" > "$VD/workflow.txt"; ovs "$R" api workflow
     if pwned; then fail "25: api workflow refuses '$v'" "something ran"
     elif [[ "$RC" != 1 || -n "$(sbcalls)" ]]; then fail "25: api workflow refuses '$v'" "rc=$RC calls=$(sbcalls)"

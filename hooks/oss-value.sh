@@ -126,7 +126,7 @@ _ov_get() {
         verbosity) re='^(all|important|errors-only)$' ;;
         custom) re='^[a-z0-9-]{1,100}$' ;;   # oss-custom Step 0 = isSafeTeamCommandName
         *) false ;;
-    esac && _ov_take "$1.txt" "$re" && case "$1:$_OV_VAL" in model:*..*) _OV_VAL=""; false ;; esac
+    esac && _ov_take "$1.txt" "$re" && case "$1:$_OV_VAL" in model:*..*) _OV_VAL=""; false ;; workflow:*[!.]*) ;; workflow:*) _OV_VAL=""; false ;; esac  # dots-only: curl squashes workflows/.. (FR11)
 }
 
 _ov_cmd_read() {
