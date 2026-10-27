@@ -251,3 +251,7 @@
 ## 2026-10-27 | Testing | hooks
 - **Context:** build (release-channels ship round 3, TR9)
 - **Insight:** `/usr/bin/jq` ships with macOS, so a stub dir first on PATH does not hide jq; no-jq tests need a PATH built without it. And a refusal row can pass before the fix for an unrelated reason (two grep matches made a key with a line break that the curl helper refused): mutate the helper's own rule to prove the row guards it.
+
+## 2026-10-27 | Testing | hooks + API
+- **Context:** integration (release-channels ship round 3)
+- **Insight:** a "second sync is byte-identical" check is vacuous while the 24 h stamp makes the second sync a no-op: remove the stamp and prove a refetch in the request log. Markdown neutralising is an open-ended rule (container prefixes `>`/`-`/`1.` still make headings): the real boundary for team text is the fixed note and closing line around it; keep the API and the hook on ONE rule so the two halves cannot disagree.

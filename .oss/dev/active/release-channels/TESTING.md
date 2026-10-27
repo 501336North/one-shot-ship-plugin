@@ -102,4 +102,14 @@ Every fix RED first, each guard proven by reverting/mutating it (all killed exce
 | TR10 | code-simplifier asserts the oss-decrypt contract | 6 mutations |
 - Merged regression: all 92 tracked shell tests (agents/, bin/, scripts/, .github/ included for the first time): 90 pass, only ideate-template and no-telegram-command fail (also on next). Watcher 822/822, cli-decrypt 462/462, API 6903 pass + 1 live `npm audit` flake (76/76 alone), tsc clean everywhere, real-API integration 15/15.
 
-## Last Updated: 2026-10-27 by /oss:build (ship round 3 fixes)
+
+### 2026-10-27: ship round 3 integration (hostile team laws, real API + real hook + real sync)
+| Boundary | Verdict |
+|---|---|
+| API `?part=custom` → `oss_custom_iron_laws` → sync → CLAUDE.md, 7 forgeries (zero-width, indented, setext, control+rule, forged note, forged closing line, forged END) | MATCH: each layer neutralises them alone; one START/END, note and closing line once, second (really refetching) sync byte-identical |
+| API legacy body (stable plugin writes it raw) | MATCH for the 7 forgeries |
+| API vs hook heading rule (`\s{0,3}` vs `\s*`) | MISMATCH (IRON LAW #1b), legacy path only |
+| container-prefixed headings (`> ##`, `- ##`, `1. #`, `+ ---`, `> ===`) | pass both halves: round-4 fix task |
+- Committed ff1b22a (api.integration 25/25; mutants of each half go red). oss-api-curl.real.integration 15/16 once in 7 (the ps-sampling check, already in FOLLOWUPS).
+
+## Last Updated: 2026-10-27 by /oss:integration (ship round 3)

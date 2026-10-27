@@ -510,3 +510,11 @@ Rule unchanged: CRITICAL/HIGH/MED and every security finding block. RED first fo
   T8 conversion to `oss-decrypt` removed. Assert the new contract (install step + `oss-decrypt --type agents --name
   code-simplifier`, key check through `oss-value.sh keycheck`). Also: every regression run covers every tracked
   `*.test.sh` (agents/, bin/, scripts/, .github/ were never in the round 1-3 runs).
+
+## Ship round 4 candidate tasks (from the round-3 integration; merged with the round-4 gate findings)
+### UR1 (LOW, security, IRON LAW #1b): one heading rule for API and hook, container prefixes included
+- Integration (ff1b22a, uncommitted probe): `> ## IRON LAW #7`, `- ## IRON LAW #8`, `1. # IRON LAW #10`, `+ ---`, `> ===`
+  pass both the API's `neutraliseLawMarkdown` and the hook's neutraliser; and the API uses `^\s{0,3}#` while the
+  hook uses `^\s*#` (4+ spaces inside a list item is still a heading in the legacy body the stable plugin writes).
+  One rule on both sides: drop leading container markers (`>`, `-`, `+`, `*`, `N.`, `N)`) and any indentation
+  before testing for heading/setext/rule. Add these cases to the real-API integration test.
