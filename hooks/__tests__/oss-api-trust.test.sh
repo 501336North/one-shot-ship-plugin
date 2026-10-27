@@ -126,6 +126,21 @@ gnu_case http://localhost:3001 600 trusted "with GNU stat: a private loopback co
 gnu_case http://localhost:3001 664 refused "with GNU stat: a group-writable loopback config is refused"
 gnu_case https://one-shot-ship-api.onrender.com 646 refused "with GNU stat: a world-writable config is refused"
 
+# The channel layout (scripts/oss-channel.sh): ~/.oss is a SYMLINK to ~/.oss-stable / ~/.oss-beta / ~/.oss-dev. The
+# loopback rule checks the folder the link resolves to (a symlinked config DIRECTORY is supported; a symlinked
+# config.json FILE stays refused, above).
+channel_dir_case() {  # channel_dir_case <target dir mode> <want> <label>
+    local h="$T/chome"; rm -rf "$h"; mkdir -p "$h/.oss-beta"; chmod "$1" "$h/.oss-beta"; ln -s "$h/.oss-beta" "$h/.oss"
+    printf '{"apiKey":"k","apiUrl":"http://localhost:3001"}' > "$h/.oss-beta/config.json"; chmod 600 "$h/.oss-beta/config.json"
+    OUT=$(HOME="$h" "$SH" -c 'source "$1"; oss_api_url' _ "$ROOT/hooks/oss-api-curl.sh" 2>/dev/null); RC=$?
+    KEY=$(HOME="$h" "$SH" -c 'source "$1"; oss_api_key' _ "$ROOT/hooks/oss-api-curl.sh" 2>/dev/null)
+    chmod 700 "$h/.oss-beta"
+    if [[ "$2" == trusted ]]; then [[ "$RC" == 0 && "$OUT" == http://localhost:3001 && "$KEY" == k ]] && pass "$3" || fail "$3" "rc=$RC out='$OUT' key='$KEY'"
+    else [[ "$RC" != 0 && -z "$OUT" ]] && pass "$3" || fail "$3" "rc=$RC out='$OUT'"; fi
+}
+channel_dir_case 700 trusted "~/.oss -> ~/.oss-beta (0700), config 0600, loopback: trusted (the channel layout)"
+channel_dir_case 775 refused "~/.oss -> ~/.oss-beta (0775), config 0600, loopback: refused (the link's target is checked)"
+
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
 [[ $FAILED -eq 0 ]]
