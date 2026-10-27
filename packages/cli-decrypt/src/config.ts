@@ -2,7 +2,7 @@
  * The one place the CLI decides where its config lives and which API it talks to.
  */
 
-import { lstatSync, readFileSync } from 'fs';
+import { closeSync, constants, fstatSync, openSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
@@ -28,23 +28,30 @@ const UNTRUSTED_CONFIG =
 
 /**
  * The one config.json reader (FR7): missing -> {}; a symlink, a file owned by another user or a world-writable
- * file -> refused; group-writable (umask 002) is allowed. Unparseable JSON reads as {}.
+ * file -> refused; group-writable (umask 002) is allowed. Unparseable JSON reads as {}. The file is opened once
+ * (O_NOFOLLOW) and both checked (fstat) and read through that one descriptor, so it cannot be swapped in between.
  */
 export function readConfigFile(): Record<string, unknown> {
   const configPath = join(getConfigDir(), 'config.json');
-  let stat;
+  let fd: number;
   try {
-    stat = lstatSync(configPath);
-  } catch {
-    return {};
-  }
-  if (!stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 0o002) !== 0) {
+    fd = openSync(configPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
     throw new Error(UNTRUSTED_CONFIG);
   }
   try {
-    return JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>;
-  } catch {
-    return {};
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 0o002) !== 0) {
+      throw new Error(UNTRUSTED_CONFIG);
+    }
+    try {
+      return JSON.parse(readFileSync(fd, 'utf8')) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  } finally {
+    closeSync(fd);
   }
 }
 
