@@ -101,6 +101,15 @@ jobs:
       - name: List artifacts
         run: ls -R artifacts
 
+      # Release channels (FR13): classify by the VERSION part of the tag. Every tag name contains "-"
+      # ("cli-decrypt-v..."), so testing the whole ref name would make every release a pre-release.
+      - name: Classify tag
+        id: channel
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#cli-decrypt-v}"
+          if [[ "$version" == *-* ]]; then echo "prerelease=true" >> "$GITHUB_OUTPUT"; else echo "prerelease=false" >> "$GITHUB_OUTPUT"; fi
+
       - name: Create Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
@@ -114,9 +123,9 @@ jobs:
             artifacts/oss-decrypt-Linux-x64.sha256/oss-decrypt-Linux-x64.sha256
             artifacts/oss-decrypt-Linux-arm64.sha256/oss-decrypt-Linux-arm64.sha256
           generate_release_notes: true
-          # Beta CLI (tag version with a pre-release part, e.g. cli-decrypt-v1.3.0-beta.1): a pre-release that
-          # never takes "Latest" (release channels ADR-005; the 2026-06-28 "Latest" incident). Stable: unchanged.
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          make_latest: ${{ !contains(github.ref_name, '-') }}
+          # Beta CLI (e.g. cli-decrypt-v1.3.0-beta.1): a pre-release that never takes "Latest" (release channels
+          # ADR-005; the 2026-06-28 "Latest" incident). Stable: a normal release that becomes Latest.
+          prerelease: ${{ steps.channel.outputs.prerelease == 'true' }}
+          make_latest: ${{ steps.channel.outputs.prerelease != 'true' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
