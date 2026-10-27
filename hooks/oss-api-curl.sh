@@ -94,11 +94,12 @@ oss_api_url_syntax() {
 # pass the syntax rule above AND be a trusted OSS API: production, staging, or loopback http (DEV). A trailing
 # "/", host case and the port (numerically; dropped when it is the scheme default, as WHATWG URL does) are
 # normalised; any other path, port or host is refused. The same trust
-# rule as the CLI and the watcher, tested against trusted-api-url-cases.json (ship round 1, FR4/FR6).
+# rule as the CLI and the watcher, tested against trusted-api-url-cases.json (ship round 1, FR4/FR6). A loopback
+# origin also needs a config.json and directory with no group- or world-write bit (ship round 2, SR2).
 #
 #   API_URL=$(oss_api_url) || { echo "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"; exit 1; }
 oss_api_url() {
-    local url scheme rest hostport path port
+    local url scheme rest hostport path port f
     oss_config_trusted || return 1
     url=$(oss_api_url_syntax) || return 1
     scheme=${url%%://*}; rest=${url#*://}
@@ -114,7 +115,10 @@ oss_api_url() {
     url="$scheme://$hostport"
     case "$url" in
         "$OSS_API_DEFAULT_URL" | "$OSS_API_STAGING_URL") ;;
-        http://localhost | http://localhost:[0-9]* | http://127.0.0.1 | http://127.0.0.1:[0-9]* | "http://[::1]" | "http://[::1]:"[0-9]*) ;;
+        http://localhost | http://localhost:[0-9]* | http://127.0.0.1 | http://127.0.0.1:[0-9]* | "http://[::1]" | "http://[::1]:"[0-9]*)
+            # SR2: the key goes to whatever listens on this port, so only a config no one else can write may name it.
+            f=$(oss_config_file)
+            [[ -z "$(find "$f" "${f%/*}" -maxdepth 0 \( -perm -020 -o -perm -002 \) 2>/dev/null)" ]] || return 1 ;;
         *) return 1 ;;
     esac
     printf '%s\n' "$url"

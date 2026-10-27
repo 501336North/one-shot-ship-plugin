@@ -7,6 +7,7 @@
 #           and host case normalised) and refuses (rc 1, nothing printed) otherwise. Without jq, a config that
 #           names an apiUrl is refused, never silently read as production. The config file itself is refused
 #           when it is a symlink or world-writable (and its key is not read); group-writable is accepted.
+#           A loopback apiUrl additionally needs a config.json and directory no other user can write (SR2).
 # @business-rule The OSS API key goes only to an OSS API. A look-alike or custom host never receives it, and a
 #           missing tool never hides that a session is pointed at STAGING.
 #
@@ -70,6 +71,21 @@ rm -f "$T/.oss/config.json"; ln -s "$T/real.json" "$T/.oss/config.json"
 call oss_api_url; r1=$RC; o1=$OUT; call oss_api_key
 [[ "$r1" != 0 && -z "$o1" && "$RC" != 0 && -z "$OUT" ]] && pass "a symlinked config is refused for the URL and the key" \
     || fail "a symlinked config is refused" "url rc=$r1 '$o1' key rc=$RC '$OUT'"
+
+# SR2: a LOOPBACK apiUrl (where the key goes to whatever listens on this machine's port) is trusted only when no one
+# but the user can write config.json or its directory; production/staging keep the FR7 rule (group-writable accepted).
+loopback_case() {  # loopback_case <url> <file mode> <dir mode> <want: trusted|refused> <label>
+    rm -f "$T/.oss/config.json"; printf '{"apiKey":"k","apiUrl":"%s"}' "$1" > "$T/.oss/config.json"; chmod "$2" "$T/.oss/config.json"; chmod "$3" "$T/.oss"
+    call oss_api_url; chmod 700 "$T/.oss"; chmod 600 "$T/.oss/config.json"
+    if [[ "$4" == trusted ]]; then [[ "$RC" == 0 && -n "$OUT" ]] && pass "$5" || fail "$5" "rc=$RC out='$OUT'"
+    else [[ "$RC" != 0 && -z "$OUT" ]] && pass "$5" || fail "$5" "rc=$RC out='$OUT'"; fi
+}
+loopback_case http://localhost:3001 664 700 refused "a group-writable config (664) cannot point the key at loopback"
+loopback_case http://127.0.0.1:9 600 775 refused "a loopback apiUrl in a group-writable directory (775) is refused"
+loopback_case "http://[::1]:8080" 600 707 refused "a loopback apiUrl in a world-writable directory (707) is refused"
+loopback_case http://localhost:3001 600 700 trusted "a loopback apiUrl in a private config (600 in 700) is trusted"
+loopback_case https://one-shot-ship-api.onrender.com 664 700 trusted "production with a group-writable config (664) is still trusted"
+loopback_case https://one-shot-ship-api-staging.onrender.com 600 775 trusted "staging in a group-writable directory (775) is still trusted (directory not checked)"
 
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
