@@ -54,4 +54,14 @@ Repo-wide ratchets guard against a new site reintroducing a hard-coded host or a
 - api-url-source: 2 tests re-expressed (loopback decrypt now fails closed until T11; one-source test proves it through the shared refusal)
 - Full cli-decrypt 358/358; tsc clean; bundle rebuilt; live prod manifest verifies (signatureValid true, 138 prompts)
 
-## Last Updated: 2026-10-26 17:55 CST by typescript-pro (T10)
+### 2026-10-27: ship round 1 integration (real CLI from this branch against PRODUCTION, read-only)
+| Prompt | Result |
+|---|---|
+| agents/code-reviewer, skills/london-tdd | verified |
+| shared/iron-laws, templates/claude-md (FR15 path) | verified |
+| workflows/build | REFUSED: not in the signed manifest. Expected until the production manifest is re-signed with the 22 workflows/* entries (release gate). Staging signs at startup with them. |
+| commands/status | not served (plugin-local command), as before |
+- Fail-closed confirmed against the live service; no mock/reality mismatch in the hooks (the oss-decrypt stub contract = the real CLI's exit code + stdout).
+- Full regression: 82 shell suites. Only the known pre-existing failures (ideate-template, no-telegram-command) remain; the load flakes (iron-laws-sync-safety, oss-api-curl ps, notify bounds) pass alone. cli-decrypt 422/422.
+
+## Last Updated: 2026-10-27 by /oss:integration (ship round 1)
