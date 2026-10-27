@@ -76,4 +76,15 @@ Every fix RED first, each guard proven by reverting/mutating it (all killed exce
 - Merged regression: 83 shell suites; failing only ideate-template, no-telegram-command (pre-existing on next) and iron-laws-sync-safety 63/64 (load flake, 64/64 alone).
 - Found by the merge, not by any one group: SR6 x watcher hook-error-adoption (real GitHub downloads from a test) -> SR18.
 
-## Last Updated: 2026-10-27 14:55 CST by /oss:build (ship round 2 fixes)
+
+### 2026-10-27: ship round 2 integration (real API router on loopback, in-memory DB, throwaway signing key)
+| Boundary | Mock assumption | Reality | Verdict |
+|---|---|---|---|
+| CLI shared fetch | fake API serves the signed file at `?base=1` | real route served 13331 bytes, sha256 = manifest entry; signature + hash verified with an injected key | MATCH |
+| `oss_custom_iron_laws` | curl stub returns `## Custom Team Laws` section | real `?part=custom` = the legacy append exactly; sync writes base + note + section into CLAUDE.md | MATCH (team) |
+| personal laws | API test seeds a `personal_<id>` row | the real writer stores personal laws elsewhere; never served (pre-existing on main) | MISMATCH, FOLLOWUPS (product decision) |
+| workflow-name fixture | 50 names from 5a48652 | identical at HEAD; all signed by the generator | MATCH |
+| symlinked `~/.oss` | per-package temp layouts | real status line STAGING, oss_api_url, oss-value root, CLI setup writes credentials.enc into .oss-beta; 0770 target refused | MATCH |
+- Committed: `hooks/__tests__/release-channels.api.integration.test.sh` (15 checks, needs `OSS_API_REPO`; prints SKIP with a reason otherwise). Shown to fail on 4 contract mutations.
+
+## Last Updated: 2026-10-27 by /oss:integration (ship round 2)

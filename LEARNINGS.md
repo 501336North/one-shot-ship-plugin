@@ -223,3 +223,7 @@
 ## 2026-10-27 | Testing | watcher + hooks
 - **Context:** build (release-channels ship round 2, SR18)
 - **Insight:** parallel fix branches each passed their own suites, yet the merge broke a watcher test: SR6 (hook always runs the CLI installer) made a watcher test that runs the real hook with a stub CLI start real GitHub downloads. After merging fix branches, run every suite that executes a changed script, across packages; and put a curl tripwire on PATH in any test that runs a hook, so network access fails loudly.
+
+## 2026-10-27 | Testing | hooks + API
+- **Context:** integration (release-channels ship round 2)
+- **Insight:** a test seed that bypasses the real writer (a synthetic `personal_<id>` row) made a read path look tested when real data never reaches it; seed through the route. And in shell tests, a `$(...)` in a call's arguments resets `$?` before a later `$?` in the same argument list expands, so `cmd; check "x $(wc -l <f)" $?` always passes. To boot the API without loading `packages/api/.env`, run it from an empty cwd (`dotenv.config()` reads `process.cwd()/.env`).
