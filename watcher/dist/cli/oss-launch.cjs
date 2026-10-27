@@ -245,8 +245,10 @@ function generateId() {
 // src/services/handlers/ollama-handler.ts
 var OllamaHandler = class {
   baseUrl;
+  think;
   constructor(config) {
     this.baseUrl = config.baseUrl || "http://localhost:11434";
+    this.think = config.think;
   }
   /**
    * Get the base URL for the Ollama server
@@ -348,6 +350,10 @@ var OllamaHandler = class {
         top_p: request2.top_p
       }
     };
+    const bareModel = request2.model.replace(/^ollama\//, "");
+    if (this.think && Object.prototype.hasOwnProperty.call(this.think, bareModel)) {
+      ollamaRequest.think = this.think[bareModel];
+    }
     if (request2.tools && request2.tools.length > 0) {
       ollamaRequest.tools = request2.tools.map((t) => ({
         type: "function",
@@ -571,7 +577,8 @@ function createHandler(config) {
   switch (config.provider) {
     case "ollama":
       return new OllamaHandler({
-        baseUrl: config.baseUrl
+        baseUrl: config.baseUrl,
+        think: config.think
       });
     case "openrouter":
       if (!config.apiKey) {
@@ -726,6 +733,13 @@ function generateId3() {
     result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return result;
+}
+function ollamaHandlerConfig(routerConfig) {
+  return {
+    provider: "ollama",
+    baseUrl: routerConfig.models?.apiKeys?.ollama,
+    think: routerConfig.models?.think
+  };
 }
 var ModelProxy = class {
   config;
@@ -1130,10 +1144,7 @@ data: ${JSON.stringify(data)}
         return;
       }
       const deps = this.testRouteDeps ?? {
-        ollamaHandle: async (model, body) => createHandler({
-          provider: "ollama",
-          baseUrl: routerConfig.models?.apiKeys?.ollama
-        }).handle({ ...body, model }),
+        ollamaHandle: async (model, body) => createHandler(ollamaHandlerConfig(routerConfig)).handle({ ...body, model }),
         passthrough: async () => forwardToAnthropic({
           path: req.url || "/",
           method: req.method || "POST",
@@ -1395,7 +1406,9 @@ function buildRouterConfig(raw) {
       default: models.default,
       agents: models.agents ?? {},
       fallbackEnabled: models.fallbackEnabled !== false,
-      apiKeys: { ollama: models.apiKeys?.ollama ?? r.apiKeys?.ollama }
+      apiKeys: { ollama: models.apiKeys?.ollama ?? r.apiKeys?.ollama },
+      // Opt-in: carry the think map only when configured (absent ⇒ undefined ⇒ unchanged behavior).
+      think: models.think
     }
   };
 }
@@ -1702,7 +1715,7 @@ async function main2(argv) {
     return void 0;
   }
   if (isVersionRequest(argv)) {
-    let version = "2.0.78" ? "2.0.78" : "unknown";
+    let version = "2.1.0-beta.1" ? "2.1.0-beta.1" : "unknown";
     if (version === "unknown") {
       try {
         const manifest = path4.join(path4.dirname((0, import_url2.fileURLToPath)(__ossImportMetaUrl)), "..", "..", "..", ".claude-plugin", "plugin.json");

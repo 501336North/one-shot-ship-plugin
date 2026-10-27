@@ -6,7 +6,7 @@
  */
 
 import { describe, test, expect, beforeEach, vi, afterEach } from 'vitest';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -23,12 +23,12 @@ import {
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
-// Mock child_process.exec for shell script calls
+// Mock child_process.execFile at the boundary: the hook scripts (oss-log.sh, oss-notify.sh)
 vi.mock('child_process', () => ({
-  exec: vi.fn(),
+  execFile: vi.fn(),
 }));
 
-const mockExec = vi.mocked(exec);
+const mockExec = vi.mocked(execFile);
 
 /** The OSS config the executor reads its key and API from (OSS_CONFIG_DIR/config.json, 0600). */
 let configDir: string;
@@ -45,7 +45,7 @@ describe('CustomCommandExecutor', () => {
     savedConfigDir = process.env.OSS_CONFIG_DIR;
     configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-custom-cmd-'));
     process.env.OSS_CONFIG_DIR = configDir;
-    writeConfig({ apiKey: 'test-api-key', apiUrl: 'https://api.example.com' });
+    writeConfig({ apiKey: 'test-api-key', apiUrl: 'https://one-shot-ship-api-staging.onrender.com' });
     executor = new CustomCommandExecutor();
   });
 
@@ -68,14 +68,14 @@ describe('CustomCommandExecutor', () => {
     };
 
     test('should take the URL and key from readApiCredentials', async () => {
-      writeConfig({ apiKey: 'staging-key', apiUrl: 'https://staging.example.com/base' });
+      writeConfig({ apiKey: 'staging-key', apiUrl: 'https://one-shot-ship-api-staging.onrender.com' });
       mockFetch.mockResolvedValueOnce(okCommand);
 
       await executor.fetchCustomCommand('review-standards');
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
       expect(mockFetch.mock.calls[0][0]).toBe(
-        'https://staging.example.com/base/api/v1/prompts/custom/review-standards'
+        'https://one-shot-ship-api-staging.onrender.com/api/v1/prompts/custom/review-standards'
       );
       expect(mockFetch.mock.calls[0][1].headers.Authorization).toBe('Bearer staging-key');
     });
@@ -122,7 +122,7 @@ describe('CustomCommandExecutor', () => {
       await executor.fetchCustomCommand('0-lint-2');
 
       expect(mockFetch.mock.calls[0][0]).toBe(
-        `https://api.example.com/api/v1/prompts/custom/${encodeURIComponent('0-lint-2')}`
+        `https://one-shot-ship-api-staging.onrender.com/api/v1/prompts/custom/${encodeURIComponent('0-lint-2')}`
       );
     });
 
@@ -245,7 +245,7 @@ describe('CustomCommandExecutor', () => {
       const result = await executor.fetchCustomCommand('review-standards');
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'https://api.example.com/api/v1/prompts/custom/review-standards',
+        'https://one-shot-ship-api-staging.onrender.com/api/v1/prompts/custom/review-standards',
         expect.objectContaining({
           method: 'GET',
           headers: expect.objectContaining({
@@ -501,13 +501,13 @@ describe('CustomCommandExecutor', () => {
       // Reset exec mock for each test
       mockExec.mockReset();
       // Default: shell commands succeed
-      mockExec.mockImplementation((cmd: string, callback: unknown) => {
+      mockExec.mockImplementation(((_file: string, _args: string[], callback: unknown) => {
         (callback as (error: Error | null, result: { stdout: string; stderr: string }) => void)(
           null,
           { stdout: '', stderr: '' }
         );
-        return {} as ReturnType<typeof exec>;
-      });
+        return {} as ReturnType<typeof execFile>;
+      }) as unknown as typeof execFile);
     });
 
     /**
@@ -529,7 +529,8 @@ describe('CustomCommandExecutor', () => {
 
       // THEN - oss-log.sh init custom should be called
       expect(mockExec).toHaveBeenCalledWith(
-        expect.stringContaining('oss-log.sh init custom'),
+        expect.stringContaining('oss-log.sh'),
+        ['init', 'custom'],
         expect.any(Function)
       );
     });
@@ -553,7 +554,8 @@ describe('CustomCommandExecutor', () => {
 
       // THEN - oss-notify.sh --workflow custom start should be called
       expect(mockExec).toHaveBeenCalledWith(
-        expect.stringContaining('oss-notify.sh --workflow custom start'),
+        expect.stringContaining('oss-notify.sh'),
+        expect.arrayContaining(['--workflow', 'custom', 'start']),
         expect.any(Function)
       );
     });
@@ -601,7 +603,8 @@ describe('CustomCommandExecutor', () => {
 
       // THEN - oss-notify.sh --workflow custom failed should be called
       expect(mockExec).toHaveBeenCalledWith(
-        expect.stringContaining('oss-notify.sh --workflow custom failed'),
+        expect.stringContaining('oss-notify.sh'),
+        expect.arrayContaining(['--workflow', 'custom', 'failed']),
         expect.any(Function)
       );
     });
@@ -616,13 +619,13 @@ describe('CustomCommandExecutor', () => {
       // Reset exec mock for each test
       mockExec.mockReset();
       // Default: shell commands succeed
-      mockExec.mockImplementation((cmd: string, callback: unknown) => {
+      mockExec.mockImplementation(((_file: string, _args: string[], callback: unknown) => {
         (callback as (error: Error | null, result: { stdout: string; stderr: string }) => void)(
           null,
           { stdout: '', stderr: '' }
         );
-        return {} as ReturnType<typeof exec>;
-      });
+        return {} as ReturnType<typeof execFile>;
+      }) as unknown as typeof execFile);
     });
 
     /**
@@ -651,7 +654,7 @@ describe('CustomCommandExecutor', () => {
       );
 
       expect(logCalls.length).toBeGreaterThanOrEqual(1);
-      expect(logCalls[0][0]).toContain('oss-log.sh init custom');
+      expect(logCalls[0][1]).toEqual(['init', 'custom']);
     });
 
     /**
@@ -683,13 +686,13 @@ describe('CustomCommandExecutor', () => {
 
       // Verify start notification
       const startCall = notifyCalls.find(
-        (call) => typeof call[0] === 'string' && call[0].includes('--workflow custom start')
+        (call) => Array.isArray(call[1]) && call[1].join(' ').startsWith('--workflow custom start')
       );
       expect(startCall).toBeDefined();
 
       // Verify complete notification
       const completeCall = notifyCalls.find(
-        (call) => typeof call[0] === 'string' && call[0].includes('--workflow custom complete')
+        (call) => Array.isArray(call[1]) && call[1].join(' ').startsWith('--workflow custom complete')
       );
       expect(completeCall).toBeDefined();
     });

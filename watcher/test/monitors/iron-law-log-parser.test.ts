@@ -364,21 +364,19 @@ describe('IronLawLogParser - Intervention Task Creation', () => {
         fs.rmSync(configDir, { recursive: true, force: true });
       });
 
-      it('should include the configured API URL in prompt for 3rd+ violation', () => {
-        writeConfig({ apiKey: 'k', apiUrl: 'https://staging.example.com' });
+      // FR10: the hint is read by the model; a curl with {apiKey} invites the key into model context
+      // and argv. It names the allowlisted sync hook instead, and no key, header or URL.
+      it.each([
+        ['staging', { apiKey: 'k-secret', apiUrl: 'https://one-shot-ship-api-staging.onrender.com' }],
+        ['production (apiUrl missing)', { apiKey: 'k-secret' }],
+      ])('should point at the allowlisted sync hook, with no key or URL, for a %s config', (_label, config) => {
+        writeConfig(config);
 
         const prompt = thirdViolationPrompt();
 
-        expect(prompt).toContain('curl -s -H "Authorization: Bearer {apiKey}" https://staging.example.com/api/v1/prompts/shared/iron-laws');
-        expect(prompt).not.toContain('onrender.com');
-      });
-
-      it('should include the production API URL when apiUrl is missing', () => {
-        writeConfig({ apiKey: 'k' });
-
-        expect(thirdViolationPrompt()).toContain(
-          'curl -s -H "Authorization: Bearer {apiKey}" https://one-shot-ship-api.onrender.com/api/v1/prompts/shared/iron-laws'
-        );
+        expect(prompt).toContain('MANDATORY: Fetch IRON LAWS and place at top of context');
+        expect(prompt).toContain('~/.oss/hooks/oss-iron-laws-sync.sh');
+        expect(prompt).not.toMatch(/curl|Bearer|Authorization|apiKey|k-secret|https?:\/\//);
       });
 
       it('should name no API, and point at /oss:login, when the OSS config is refused', () => {

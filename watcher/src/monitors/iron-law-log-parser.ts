@@ -109,10 +109,10 @@ export class IronLawLogParser {
       };
     }
 
-    // The API the OSS config names; when the config is refused, name none (never production instead)
-    const apiUrl = readApiCredentials()?.apiUrl;
-    const fetchHint = apiUrl
-      ? `curl -s -H "Authorization: Bearer {apiKey}" ${apiUrl}/api/v1/prompts/shared/iron-laws`
+    // The allowlisted sync hook fetches with the key itself, so the hint carries no key, header or
+    // URL into model context (FR10); when the config is refused, point at /oss:login instead
+    const fetchHint = readApiCredentials()
+      ? 'Run ~/.oss/hooks/oss-iron-laws-sync.sh, then re-read the IRON LAWS block in CLAUDE.md'
       : 'No usable OSS config (apiKey, apiUrl): run /oss:login';
     let prompt = `IRON LAW #${law} violated 3+ times\n\nMANDATORY: Fetch IRON LAWS and place at top of context\n\n${fetchHint}`;
 

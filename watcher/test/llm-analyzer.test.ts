@@ -68,13 +68,13 @@ describe('LLMAnalyzer', () => {
     const noAnomaly = { ok: true, json: () => Promise.resolve({ anomaly_detected: false }) };
 
     it('should send the configured key to the configured API', async () => {
-      writeConfig({ apiKey: 'staging-key', apiUrl: 'https://staging.example.com' });
+      writeConfig({ apiKey: 'staging-key', apiUrl: 'https://one-shot-ship-api-staging.onrender.com' });
       mockFetch.mockResolvedValue(noAnomaly);
 
       await analyzer.analyze('logs');
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
-      expect(mockFetch.mock.calls[0][0]).toBe('https://staging.example.com/api/v1/analyze');
+      expect(mockFetch.mock.calls[0][0]).toBe('https://one-shot-ship-api-staging.onrender.com/api/v1/analyze');
       expect(mockFetch.mock.calls[0][1].headers.Authorization).toBe('Bearer staging-key');
     });
 
@@ -329,6 +329,27 @@ describe('LLMAnalyzer', () => {
       const result = await analyzer.analyze('normal operations');
 
       expect(result).toBeNull();
+    });
+
+    // FR14: a server that accepts the request and never answers must not hang the analyzer.
+    // The 10s budget (the same as custom-command-executor) is shortened here so the test stays fast.
+    it('should abort a hung request after 10s and return null', async () => {
+      const realTimeout = AbortSignal.timeout.bind(AbortSignal);
+      const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => realTimeout(50));
+      mockFetch.mockImplementation(
+        (_url: string, init: { signal?: AbortSignal }) =>
+          new Promise((_, reject) => {
+            init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+          })
+      );
+
+      const outcome = await Promise.race([
+        analyzer.analyze('logs').then((result) => ({ result })),
+        new Promise<string>((resolve) => setTimeout(() => resolve('hung'), 2000)),
+      ]);
+
+      expect(outcome).toEqual({ result: null });
+      expect(timeoutSpy).toHaveBeenCalledWith(10_000);
     });
 
     it('should handle timeout gracefully', async () => {
