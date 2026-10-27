@@ -21,13 +21,17 @@ RUN=0; FAILED=0
 pass() { echo "✓ PASS: $1"; RUN=$((RUN + 1)); }
 fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
 
-# line <apiUrl or ""> <plugin version> [PATH]: the rendered status line for that config and plugin.
+# line <apiUrl or ""> <plugin version> [PATH] [link|twolines]: the rendered status line for that config and plugin.
 line() {
     local sb; sb="$(mktemp -d)"; mkdir -p "$sb/home/.oss" "$sb/plugin/.claude-plugin"
     if [[ -n "$1" ]]; then printf '{"apiKey":"k","apiUrl":"%s"}' "$1" > "$sb/home/.oss/config.json"
     else printf '{"apiKey":"k"}' > "$sb/home/.oss/config.json"; fi
     printf '{"name":"oss","version":"%s"}' "$2" > "$sb/plugin/.claude-plugin/plugin.json"
-    printf '%s\n' "$sb/plugin" > "$sb/home/.oss/plugin-root"
+    case "${4:-}" in   # ~/.oss/plugin-root: plain, or one that fails the `oss-value.sh root` checks (SR5)
+        link) printf '%s\n' "$sb/plugin" > "$sb/elsewhere"; ln -s "$sb/elsewhere" "$sb/home/.oss/plugin-root" ;;
+        twolines) printf '%s\n/tmp\n' "$sb/plugin" > "$sb/home/.oss/plugin-root" ;;
+        *) printf '%s\n' "$sb/plugin" > "$sb/home/.oss/plugin-root" ;;
+    esac
     chmod 600 "$sb/home/.oss/config.json"
     (cd "$sb" && printf '{}' | env -u CLAUDE_PLUGIN_ROOT -u OSS_CONFIG_DIR HOME="$sb/home" PATH="${3:-$PATH}" \
         /usr/bin/perl -e 'alarm 20; exec @ARGV' /bin/bash "$ROOT/hooks/oss-statusline.sh" 2>/dev/null)
@@ -82,6 +86,14 @@ l=$(line "" 2.1.0-beta.1 "$NOJQ")
 if [[ "$(first_section "$l")" == *mismatch* && "$l" == *"[jq required]"* ]]; then pass "no jq + no apiUrl + beta plugin: the mismatch warning is still shown"
 else fail "no jq + no apiUrl + beta plugin: the mismatch warning is still shown" "got '$l'"; fi
 rm -rf "$NOJQ"
+
+# SR5 (same rule as `oss-value.sh root`): a ~/.oss/plugin-root that is a symlink or not one line is not used to read
+# the plugin version, so it cannot make a production session claim a beta plugin.
+for m in link twolines; do
+    l=$(line "$PROD" 2.1.0-beta.1 "" "$m")
+    if [[ -n "$l" && "$l" != *mismatch* && "$l" != *STAGING* ]]; then pass "a plugin-root that fails the checks ($m) is not read"
+    else fail "a plugin-root that fails the checks ($m) is not read" "got '$l'"; fi
+done
 
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"

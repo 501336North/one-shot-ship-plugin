@@ -23,7 +23,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STABLE_TREE="$(mktemp -d)"; trap 'rm -rf "$STABLE_TREE"' EXIT
 mkdir -p "$STABLE_TREE/.claude-plugin" "$STABLE_TREE/hooks"
 printf '{"name":"oss","version":"2.0.94"}\n' > "$STABLE_TREE/.claude-plugin/plugin.json"
-cp "$SCRIPT_DIR/../ensure-decrypt-cli.sh" "$SCRIPT_DIR"/../oss-decrypt-checksums*.txt "$STABLE_TREE/hooks/"
+cp "$SCRIPT_DIR/../ensure-decrypt-cli.sh" "$SCRIPT_DIR"/../oss-decrypt-checksums*.txt "$SCRIPT_DIR/../oss-value.sh" "$SCRIPT_DIR/../oss-safe-path.sh" "$STABLE_TREE/hooks/"
 HOOK_SCRIPT="$STABLE_TREE/hooks/ensure-decrypt-cli.sh"
 
 # Test tracking
@@ -679,11 +679,32 @@ test_manifest_found_via_plugin_root() {
     echo "$(awk '{print $1}' "$st/checksum")  $art" > "$plugin/hooks/oss-decrypt-checksums.txt"
     echo "$plugin" > "$TEST_HOME/.oss/plugin-root"
     cp "$HOOK_SCRIPT" "$TEST_HOME/.oss/hooks/ensure-decrypt-cli.sh"
+    cp "$(dirname "$HOOK_SCRIPT")/oss-value.sh" "$(dirname "$HOOK_SCRIPT")/oss-safe-path.sh" "$TEST_HOME/.oss/hooks/"   # copied with it at session start
     setup_mock_curl "$st" "OK"
     RUN_RC=0; RUN_OUT=$(env -u OSS_DECRYPT_CHECKSUMS HOME="$TEST_HOME" bash "$TEST_HOME/.oss/hooks/ensure-decrypt-cli.sh" 2>&1) || RUN_RC=$?
     teardown_mock_curl
     if [[ $RUN_RC -eq 0 && -x "$TEST_HOME/.oss/bin/oss-decrypt" ]]; then pass "$test_name"
     else fail "$test_name" "installs using plugin-root manifest" "rc=$RUN_RC out=$RUN_OUT"; fi
+    rm -rf "$st"; teardown_test_env
+}
+
+
+# SR5: the committed manifest is looked up through ~/.oss/plugin-root only when that file passes the
+# `oss-value.sh root` checks; a symlinked plugin-root (which could name any folder) finds no manifest: fail closed.
+test_manifest_not_found_via_symlinked_plugin_root() {
+    local test_name="Hook copy refuses a symlinked ~/.oss/plugin-root for the manifest (fail closed)"
+    ((TESTS_RUN++)); setup_test_env
+    local st; st=$(mktemp -d); local art; art=$(stage_valid_binary "$st")
+    local plugin="$TEST_HOME/plugin"; mkdir -p "$plugin/hooks" "$TEST_HOME/.oss/hooks"
+    echo "$(awk '{print $1}' "$st/checksum")  $art" > "$plugin/hooks/oss-decrypt-checksums.txt"
+    echo "$plugin" > "$TEST_HOME/elsewhere"; ln -s "$TEST_HOME/elsewhere" "$TEST_HOME/.oss/plugin-root"
+    cp "$HOOK_SCRIPT" "$TEST_HOME/.oss/hooks/ensure-decrypt-cli.sh"
+    cp "$(dirname "$HOOK_SCRIPT")/oss-value.sh" "$(dirname "$HOOK_SCRIPT")/oss-safe-path.sh" "$TEST_HOME/.oss/hooks/"
+    setup_mock_curl "$st" "OK"
+    RUN_RC=0; RUN_OUT=$(env -u OSS_DECRYPT_CHECKSUMS HOME="$TEST_HOME" bash "$TEST_HOME/.oss/hooks/ensure-decrypt-cli.sh" 2>&1) || RUN_RC=$?
+    teardown_mock_curl
+    if [[ $RUN_RC -ne 0 && ! -e "$TEST_HOME/.oss/bin/oss-decrypt" ]] && grep -q 'Committed hash: FAILED' <<<"$RUN_OUT"; then pass "$test_name"
+    else fail "$test_name" "rejects: no manifest through a symlinked plugin-root" "rc=$RUN_RC out=$(grep -i committed <<<"$RUN_OUT")"; fi
     rm -rf "$st"; teardown_test_env
 }
 
@@ -1253,6 +1274,7 @@ test_committed_hash_match_installs
 test_committed_hash_mismatch_rejects
 test_committed_manifest_missing_entry_rejects
 test_manifest_found_via_plugin_root
+test_manifest_not_found_via_symlinked_plugin_root
 test_download_never_written_to_final_path
 test_failed_update_keeps_working_binary
 test_curl_flags_hardened

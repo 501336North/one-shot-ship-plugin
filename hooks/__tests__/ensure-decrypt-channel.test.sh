@@ -17,8 +17,10 @@ pass() { echo "✓ PASS: $1"; RUN=$((RUN + 1)); }
 fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
 STABLE_TAG="cli-decrypt-v1.2.4"; BETA_TAG="cli-decrypt-v1.3.0-beta.1"
 
-# run <plugin version> <installed binary version or ""> [copy]: runs the hook from a throwaway plugin tree (or, with
-# "copy", from a ~/.oss/hooks copy whose ~/.oss/plugin-root names that tree). Sets RC, OUT and URLS (downloads asked).
+# run <plugin version> <installed binary version or ""> [copy [link|relative|twolines]]: runs the hook from a throwaway
+# plugin tree (or, with "copy", from a ~/.oss/hooks copy - beside the helpers session start copies with it - whose
+# ~/.oss/plugin-root names that tree: plainly, or as a symlink, a relative path or a two-line file). Sets RC, OUT and
+# URLS (downloads asked).
 run() {
     local t; t="$(mktemp -d)"; mkdir -p "$t/plugin/.claude-plugin" "$t/plugin/hooks" "$t/home/.oss/bin" "$t/mock"
     printf '{"name":"oss","version":"%s"}\n' "$1" > "$t/plugin/.claude-plugin/plugin.json"
@@ -31,10 +33,16 @@ run() {
     chmod +x "$t/mock/curl"; : > "$t/urls"
     local hook="$t/plugin/hooks/ensure-decrypt-cli.sh"
     if [[ "${3:-}" == copy ]]; then
-        mkdir -p "$t/home/.oss/hooks"; cp "$hook" "$t/home/.oss/hooks/"; hook="$t/home/.oss/hooks/ensure-decrypt-cli.sh"
-        printf '%s\n' "$t/plugin" > "$t/home/.oss/plugin-root"
+        mkdir -p "$t/home/.oss/hooks"; cp "$hook" "$ROOT/hooks/oss-value.sh" "$ROOT/hooks/oss-safe-path.sh" "$t/home/.oss/hooks/"
+        hook="$t/home/.oss/hooks/ensure-decrypt-cli.sh"
+        case "${4:-}" in
+            link) printf '%s\n' "$t/plugin" > "$t/elsewhere"; ln -s "$t/elsewhere" "$t/home/.oss/plugin-root" ;;
+            relative) mv "$t/plugin" "$t/home/plugin"; printf 'plugin\n' > "$t/home/.oss/plugin-root" ;;
+            twolines) printf '%s\n%s\n' "$t/plugin" "/tmp" > "$t/home/.oss/plugin-root" ;;
+            *) printf '%s\n' "$t/plugin" > "$t/home/.oss/plugin-root" ;;
+        esac
     fi
-    OUT=$(cd "$t" && env -u CLAUDE_PLUGIN_ROOT -u OSS_DECRYPT_TAG HOME="$t/home" PATH="$t/mock:$PATH" bash "$hook" 2>&1); RC=$?
+    OUT=$(cd "$t/${5:-}" && env -u CLAUDE_PLUGIN_ROOT -u OSS_DECRYPT_TAG HOME="$t/home" PATH="$t/mock:$PATH" bash "$hook" 2>&1); RC=$?
     URLS=$(cat "$t/urls"); rm -rf "$t"
 }
 
@@ -59,6 +67,15 @@ run 2.0.94 1.2.4
 run 2.1.0-beta.1 "" copy
 [[ "$URLS" == *"/download/$BETA_TAG/"* ]] && pass "the ~/.oss/hooks copy finds the beta plugin through plugin-root" \
     || fail "the ~/.oss/hooks copy finds the beta plugin through plugin-root" "urls: $URLS out: $OUT"
+
+# SR5: ~/.oss/plugin-root is checked as `oss-value.sh root` checks it (not a link, absolute, one line, owned, a folder)
+# before it chooses the channel. A root that fails the checks is not used: the stable pin, as for no plugin-root.
+for mode in link relative twolines; do
+    t_cwd=""; [[ "$mode" == relative ]] && t_cwd=home
+    run 2.1.0-beta.1 "" copy "$mode" "$t_cwd"   # relative: run from the folder it would resolve against
+    [[ "$URLS" == *"/download/$STABLE_TAG/"* && "$URLS" != *"$BETA_TAG"* ]] && pass "a plugin-root that fails the checks ($mode) does not choose the beta channel" \
+        || fail "a plugin-root that fails the checks ($mode) does not choose the beta channel" "urls: $URLS out: $OUT"
+done
 
 [[ -f "$ROOT/hooks/oss-decrypt-checksums.beta.txt" ]] && pass "the beta CLI has its own committed checksum file" \
     || fail "the beta CLI has its own committed checksum file" "hooks/oss-decrypt-checksums.beta.txt missing"

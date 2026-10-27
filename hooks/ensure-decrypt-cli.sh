@@ -27,8 +27,13 @@ UPGRADE_STAMP="${OSS_BIN_DIR}/.decrypt-upgrade-failed"
 # hook, or through ~/.oss/plugin-root when it runs from the ~/.oss/hooks copy.
 OSS_DECRYPT_STABLE_TAG="cli-decrypt-v1.2.4"
 OSS_DECRYPT_BETA_TAG="cli-decrypt-v1.3.0-beta.1"
-PLUGIN_JSON="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../.claude-plugin/plugin.json"
-[[ -f "$PLUGIN_JSON" || ! -f "$OSS_DIR/plugin-root" ]] || PLUGIN_JSON="$(head -n1 "$OSS_DIR/plugin-root")/.claude-plugin/plugin.json"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The plugin root recorded by session start, checked by the one helper that owns that check (`oss-value.sh root`, beside
+# this hook in the plugin and in ~/.oss/hooks): not a link, owned by the user, absolute, one line, a folder (SR5).
+# Nothing printed (rc 1) when it fails, so a refused root is the same as none: the stable pin, no committed manifest.
+plugin_root() { bash "$SCRIPT_DIR/oss-value.sh" root 2>/dev/null; }
+PLUGIN_JSON="$SCRIPT_DIR/../.claude-plugin/plugin.json"
+if [[ ! -f "$PLUGIN_JSON" ]] && R=$(plugin_root); then PLUGIN_JSON="$R/.claude-plugin/plugin.json"; fi
 PLUGIN_VERSION=$(sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$PLUGIN_JSON" 2>/dev/null | head -n1 || true)
 if [[ "$PLUGIN_VERSION" == *-* ]]; then
     OSS_DECRYPT_TAG="${OSS_DECRYPT_TAG:-$OSS_DECRYPT_BETA_TAG}"; CHECKSUMS_NAME="oss-decrypt-checksums.beta.txt"
@@ -291,12 +296,11 @@ echo "[verify] Binary checksum: verified"
 # no entry for this artifact, or a mismatch all REJECT. This hook usually runs from the ~/.oss/hooks copy,
 # so the manifest is looked up beside it, then in the plugin root recorded by session start.
 ARTIFACT="oss-decrypt-${PLATFORM}-${ARCH}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHECKSUMS="${OSS_DECRYPT_CHECKSUMS:-$SCRIPT_DIR/$CHECKSUMS_NAME}"
-if [[ ! -f "$CHECKSUMS" && -z "${OSS_DECRYPT_CHECKSUMS:-}" && -f "$OSS_DIR/plugin-root" ]]; then
-    CHECKSUMS="$(cat "$OSS_DIR/plugin-root")/hooks/$CHECKSUMS_NAME"
+if [[ ! -f "$CHECKSUMS" && -z "${OSS_DECRYPT_CHECKSUMS:-}" ]] && R=$(plugin_root); then
+    CHECKSUMS="$R/hooks/$CHECKSUMS_NAME"
 fi
-COMMITTED_HASH=$(awk -v a="$ARTIFACT" '$2 == a {print $1}' "$CHECKSUMS" 2>/dev/null | head -n1)
+COMMITTED_HASH=$(awk -v a="$ARTIFACT" '$2 == a {print $1}' "$CHECKSUMS" 2>/dev/null | head -n1) || COMMITTED_HASH=""   # no manifest: the message below, not a silent set -e exit
 if [[ "$ACTUAL_HASH" != "$COMMITTED_HASH" ]]; then   # an absent entry is empty, never equal
     if [[ -n "$COMMITTED_HASH" ]]; then
         echo "[verify] Committed hash: FAILED — mismatch"

@@ -75,6 +75,7 @@ validate_project_path() {
 # Runs on every render: shell built-ins only, apart from what oss_api_url needs (SR9).
 compute_channel() {
     local helper="" h here url ver="" root="" beta=false line re='"version"[[:space:]]*:[[:space:]]*"([^"]+)"'
+    local rf="$HOME/.oss/plugin-root" rr=""
     here=${BASH_SOURCE[0]%/*}; [[ "$here" == "${BASH_SOURCE[0]}" ]] && here=.
     for h in "$here/oss-api-curl.sh" "$HOME/.oss/hooks/oss-api-curl.sh"; do
         [[ -f "$h" ]] && { helper="$h"; break; }
@@ -83,7 +84,12 @@ compute_channel() {
     # shellcheck source=oss-api-curl.sh
     source "$helper" 2>/dev/null || return 0
     root="${CLAUDE_PLUGIN_ROOT:-}"
-    [[ -z "$root" && -f "$HOME/.oss/plugin-root" ]] && IFS= read -r root < "$HOME/.oss/plugin-root"
+    # ~/.oss/plugin-root as `oss-value.sh root` checks it (not a link, owned, absolute, one line, a folder: SR5), in
+    # built-ins because this runs on every render.
+    if [[ -z "$root" && -f "$rf" && ! -L "$rf" && -O "$rf" ]] && ! IFS= read -r -d '' rr < "$rf"; then
+        while [[ "$rr" == *$'\n' ]]; do rr=${rr%$'\n'}; done
+        [[ "$rr" == /* && -d "$rr" ]] && root=$rr   # a second line makes it no folder
+    fi
     if [[ -n "$root" && -f "$root/.claude-plugin/plugin.json" ]]; then
         while IFS= read -r line || [[ -n "$line" ]]; do
             [[ "$line" =~ $re ]] && { ver=${BASH_REMATCH[1]}; break; }
