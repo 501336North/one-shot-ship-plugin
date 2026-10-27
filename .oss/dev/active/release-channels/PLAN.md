@@ -382,3 +382,74 @@ Every tag contains `-` (`cli-decrypt-v…`). Classify with the part after `cli-d
 - `fetch-iron-laws.sh` / `oss-iron-laws-sync.sh` fetch `shared/iron-laws` through `oss-decrypt` (signature + hash), and the template (`templates/claude-md`) is verified the same way.
 - `oss-decrypt` gains the `shared`/`templates` types if needed (API routes exist: check that they serve encrypted payloads).
 - `/oss:login` and `skills/ideate.md` use the verified path.
+
+## Ship round 2 fix tasks (2026-10-27, from the 4 round-2 quality gates)
+
+Round-2 rule: CRITICAL/HIGH and every security finding block; other findings that matter are fixed here when a
+round-1 fix did not land, otherwise they go to `.oss/dev/FOLLOWUPS.md`. Every task is RED first.
+
+### SR1 (HIGH, API, IRON LAW #1b): one rule for which workflow names are signed
+- The route serves `workflows/<n>` from `workflowCommandName(n)` (mapped alias, else `commands/<n>`); the generator
+  signs only the 22 mapped names, so 29 shipped wrappers (`quick`, `xray`, `verify`, `deploy`, `test`, ...) are refused
+  by the fail-closed CLI. The generator emits `workflows/<n>` for every name the route can serve, through the same helper.
+- Guard: a committed list of every `--type workflows --name X` the plugin ships; each has a manifest entry.
+
+### SR2 (MED, security): a group-writable config cannot point the key at loopback
+- Shell, CLI, watcher: a loopback `apiUrl` is trusted only when `config.json` and its directory are not group- or
+  world-writable. Production/staging with a group-writable config stay accepted (customers unchanged).
+
+### SR3 (LOW, security): read the config once, after the check
+- CLI: `O_NOFOLLOW` open + `fstat` on the same fd (as the watcher). Shell: the trust check and the reads use one copy.
+
+### SR4 (LOW, security): the manifest cache never writes through a symlink
+- Refuse a symlinked or foreign-owned `run/`; write the cache via temp file + rename (or `O_NOFOLLOW|O_CREAT`).
+
+### SR5 (LOW, security): `~/.oss/plugin-root` is validated in ensure-decrypt-cli.sh
+- Same checks as `_ov_root` (not a link, owned by the user, absolute path, one line) for the pin and checksum reads.
+
+### SR6 (LOW, security): the laws sync always runs ensure-decrypt-cli.sh first
+- `oss-iron-laws-sync.sh` and `fetch-iron-laws.sh` call it every time (no-op when the pin is met), so an outdated CLI is upgraded.
+
+### SR7 (LOW, security): custom-command text is stripped of control characters
+- `decrypt.ts` prints the `--type custom` body through `stripControl()`.
+
+### SR8 (LOW, security): no jq never hides STAGING
+- The status line renders the channel section (or a channel-unknown marker) before the `[jq required]` early exit.
+
+### SR9 (MED, perf, round-1 fix did not land): status-line channel cost
+- `compute_channel` / `oss_api_url` without `id`, `find`, `tr`, `head` forks (`$EUID`, `[[ -O ]]`, bash case folding,
+  one `sed`), and/or a channel cache newer than config.json and plugin.json. Guard: a timed assertion vs a baseline.
+
+### SR10 (LOW, perf, FR14 did not land): timeouts that survive a stalled body
+- `llm-analyzer.ts` and `custom-command-executor.ts`: `AbortController` + `setTimeout` cleared after the body is read.
+  Guard: a server that sends headers then stalls.
+- CLI keyed prompt fetch: a 60 s limit with a clear message.
+
+### SR11 (LOW): the iron-laws watchdog leaves no stray `sleep`
+
+### SR12 (LOW, watcher): the refresh-laws hint actually refreshes (or tells the model to read the existing block)
+
+### SR13 (LOW, test this feature broke): `watcher/test/hooks/oss-statusline-next-command.test.ts:163`
+- Pin the plugin version / apiUrl so the channel mismatch warning does not leak into the next-command assertion.
+
+### SR14 (LOW/INFO, IRON LAW #1b): one canonical port rule
+- Add `:0443`, `localhost:80`, `localhost:00080` rows to `trusted-api-url-cases.json`; the shell canonicalises the port numerically as `URL` does.
+
+### SR15 (INFO, API): `WORKFLOW_NAME_MAPPINGS` lookup uses own keys only (`constructor` -> 404/400, not 500)
+
+### SR16 (maintainer decision 2026-10-27: "Keep for customers"): team IRON LAWS stay in CLAUDE.md
+- API `/shared/iron-laws`: unchanged for old plugins (base + team/personal append, as on main); with the new CLI's
+  request for the signed base only (e.g. `?base=1`), the signed file byte-for-byte.
+- New plugin: the sync appends team/personal laws below the verified block, marked unverified (Amendment 1 rule 3).
+- Correct the inaccurate premise in `.oss/dev/FOLLOWUPS.md` and ADR-005 Amendment 1.
+
+### To FOLLOWUPS (not this round)
+- Replay of an old signed manifest (sign `generatedAt` + monotonic check: needs a format change older CLIs reject).
+- `--list-prompts` reads the manifest unverified; `--verify-manifest` has no timeout (pre-existing).
+- `OSS_DECRYPT_TAG` / `OSS_DECRYPT_CHECKSUMS` env overrides outside tests (pre-existing).
+- `oss-channel.sh dev` copies hook symlinks as symlinks (maintainer-only).
+
+### SR17 (LOW, security, IRON LAW #1b from SR4): every CLI writer refuses symlinks
+- Found while fixing SR4: `src/cache.ts:152` (prompt cache), `src/update-state.ts:50`, `src/storage.ts:102` (credentials)
+  write by path and follow symlinks. Same rule as the manifest cache: one shared safe-write helper (no-follow dir,
+  owner check, temp file + rename), every writer routed through it.

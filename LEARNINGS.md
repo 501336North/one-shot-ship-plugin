@@ -175,3 +175,47 @@
 - **Insight:**
   - Read every test result line before writing a commit message that quotes it. A 2/3 was committed as "3/3" and needed a follow-up correction commit.
   - When a bash command is moved to the background after it already ran `git stash push`, never touch the stashed file until it finishes. Then restore by the stash entry's SHA, not by position.
+
+## 2026-10-27 | Testing | cli-decrypt
+- **Context:** build (release-channels ship round 2, SR7)
+- **Insight:** `stripControl` removes LF and TAB too, so it flattens a multi-line document into one line; prompt bodies (team custom commands) need `stripControlKeepLines`, which strips the same set except LF/TAB (CR still goes, so CRLF prints as LF).
+
+## 2026-10-27 | Testing | cli-decrypt
+- **Context:** build (release-channels ship round 2, SR10)
+- **Insight:** a "timeout survives a stalled body" test needs a real local server that sends 200 + headers + part of the body and then stalls; a server that never sends headers passes with any abort mechanism. In vitest, `AbortSignal.timeout` did abort the stalled body (the perf gate saw it hang in a plain node run under GC), so the AbortController+setTimeout choice is not distinguishable by that test: guard the wiring (signal passed, timer cleared only after the body is read), not the mechanism.
+
+## 2026-10-27 | Security | cli-decrypt
+- **Context:** build (release-channels ship round 2, SR4/SR17)
+- **Insight:** fixing one file writer for symlink-following left three others (prompt cache, update state, credentials) with the same defect; when a gate names one writer, grep every `writeFileSync`/`mkdirSync` in the package and route them all through one safe-write helper (IRON LAW #1b).
+
+## 2026-10-27 | Testing | plugin
+- **Context:** build (release-channels ship round 2)
+- **Insight:** in this harness, typing `\uXXXX` inside a Bash command (even in a quoted heredoc) can turn into raw or corrupted UTF-8 bytes; write test data containing `\u` escapes with the Write/Edit tools instead.
+
+## 2026-10-27 | API | packages/api
+- **Context:** build (release-channels ship round 2, SR15)
+- **Insight:** a `Record` lookup with `map[name] || name` on a URL param resolves `constructor`/`__proto__`/`toString` to Object.prototype members; here it surfaced as a 400 "Invalid prompt name" for a well-formed name, not a 500, so only a test asserting 404 catches it. `tsconfig` lib is ES2020: use `Object.prototype.hasOwnProperty.call`, not `Object.hasOwn`.
+
+## 2026-10-27 | API | packages/api
+- **Context:** build (release-channels ship round 2, SR1)
+- **Insight:** when a route resolves a name through a mapping with a fallback (`workflowCommandName`: alias, else `commands/<n>`), whatever signs or lists the servable names must go through the same function and enumerate the fallback set too; signing only the mapping keys silently left 29 shipped commands unsigned.
+
+## 2026-10-27 | Security | plugin + cli-decrypt
+- **Context:** build (release-channels ship round 2, SR17)
+- **Insight:** "refuse symlinks" collides with this feature's own layout: `~/.oss` is a symlink to `~/.oss-<channel>` by design (oss-channel.sh). Resolve the config directory itself once (realpath, then owner/mode checks on the target) and refuse symlinks only for what is inside it. Every hardening of a path under `~/.oss` needs a test row with the symlinked channel layout.
+
+## 2026-10-27 | Testing | cli-decrypt
+- **Context:** build (release-channels ship round 2, SR17)
+- **Insight:** in a test that changes HOME, assert `os.homedir() === HOME` before touching anything, so a runtime that ignores HOME can never reach the real `~/.oss`; and in mutation loops back up into a fresh `mktemp -d` and check the copy succeeded, or mutations stack silently.
+
+## 2026-10-27 | Testing | watcher
+- **Context:** build (release-channels ship round 2, SR10)
+- **Insight:** on Node 25 a fetch with `redirect: 'error'` whose signal is aborted while GC runs does NOT reject a pending `response.json()`, whether the signal came from `AbortSignal.timeout` or an AbortController + timer; bound fetch + body read with one deadline race (`watcher/src/api/with-deadline.ts`). To reproduce in vitest without CLI flags: `v8.setFlagsFromString('--expose-gc'); vm.runInNewContext('gc')` and call it in a tight interval during the request.
+
+## 2026-10-27 | Testing | watcher
+- **Context:** build (release-channels ship round 2, SR13)
+- **Insight:** status-line tests inherit `CLAUDE_PLUGIN_ROOT` / `~/.oss/plugin-root`, which other tests rewrite; on a beta checkout the channel mismatch warning leaks into unrelated assertions. Pin the plugin version per test file (temp plugin root with its own plugin.json). And a new `src` module imported by a tracked `watcher/dist` file must have its dist output committed too.
+
+## 2026-10-27 | Config | hooks
+- **Context:** build (release-channels ship round 2, SR9/SR2/SR11)
+- **Insight:** on macOS a status-line render pays ~15 ms per `find` and ~4 ms per `stat`; `id`/`find`/`tr`/`head` forks were most of the +20 ms. Guard render cost by counting processes (PATH shims, diff against a stubbed section), not wall time. Checking modes through a symlinked channel home needs `stat -L`/`find -H` (plain stat judges the link's 0755). `kill` on a `( sleep N; ... ) &` watchdog leaves the sleep alive: trap TERM inside the subshell. On GNU, a `stat -f` probe can exit 0 when a file named like the operand exists, so validate the output, not only the rc.
