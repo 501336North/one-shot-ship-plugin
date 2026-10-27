@@ -68,9 +68,11 @@ _oss_config_read() {
 # oss_api_key - prints apiKey from the OSS config when it is a non-empty string; otherwise prints nothing
 # and returns 1. Without jq: the flat `"apiKey": "..."` shape that /oss:login writes, and only that (TR6): a config
 # naming "apiKey" twice (a nested one too) or a value with a backslash (an escape) is refused, not guessed at.
-oss_api_key() {
+oss_api_key() { _oss_config_read && _oss_cfg_key; }
+
+# _oss_cfg_key - oss_api_key over the copy _oss_config_read made (TR5: callers that also need the URL read once).
+_oss_cfg_key() {
     local key='' re='"apiKey"[[:space:]]*:[[:space:]]*"([^"]*)"' twice='"apiKey".*"apiKey"'
-    _oss_config_read || return 1
     if command -v jq &>/dev/null; then
         key=$(printf '%s' "$_OSS_CFG" | jq -r 'if (.apiKey | type) == "string" then .apiKey else "" end' 2>/dev/null)
     elif [[ "$_OSS_CFG" =~ $re ]]; then
@@ -126,9 +128,12 @@ _oss_url_syntax() {
 # origin also needs a config.json and directory with no group- or world-write bit (ship round 2, SR2).
 #
 #   API_URL=$(oss_api_url) || { echo "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"; exit 1; }
-oss_api_url() {
+oss_api_url() { _oss_config_read && _oss_cfg_origin; }
+
+# _oss_cfg_origin - oss_api_url over the copy _oss_config_read made.
+_oss_cfg_origin() {
     local url scheme rest hostport path port
-    _oss_config_read && _oss_url_syntax || return 1
+    _oss_url_syntax || return 1
     url=$_OSS_URL
     scheme=${url%%://*}; rest=${url#*://}
     hostport=${rest%%/*}; path=${rest#"$hostport"}
@@ -178,7 +183,7 @@ _OSS_CUSTOM_LAWS_JQ='gsub("[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f
 oss_custom_iron_laws() {
     local url key body
     command -v jq >/dev/null 2>&1 || return 1
-    url=$(oss_api_url) && key=$(oss_api_key) || return 1
+    _oss_config_read && url=$(_oss_cfg_origin) && key=$(_oss_cfg_key) || return 1   # one read for both (TR5)
     body=$(oss_api_curl "$key" -sf -m 10 "$url/api/v1/prompts/shared/iron-laws?part=custom") || return 1
     body=$(printf '%s' "$body" | jq -Rrs "$_OSS_CUSTOM_LAWS_JQ") || return 1
     case "$body" in "## Custom Team Laws"* | "## Custom Personal Laws"*) ;; *) return 1 ;; esac

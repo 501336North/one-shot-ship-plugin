@@ -157,6 +157,19 @@ call oss_custom_iron_laws "$T/curlrec:$PATH"
     && pass "team laws: a trusted apiUrl is fetched at <origin>/api/v1/prompts/shared/iron-laws?part=custom" \
     || fail "team laws: a trusted apiUrl is fetched" "rc=$RC out='$OUT' calls=$(cat "$T/curl-calls" 2>/dev/null)"
 
+# TR5: oss_custom_iron_laws takes the URL AND the key from one read of the config (SR3). A jq shim swaps another config
+# in on its first start (oss_api_url's parse); a second read for the key would send that file's key. The swapped-in
+# file is private here (600), so only a second read, not the trust check, can tell the two apart.
+mkdir -p "$T/swap-one"
+printf '#!/bin/bash\n[[ -f "%s" ]] && mv -f "%s" "%s"\nexec "%s" "$@"\n' "$T/evil.json" "$T/evil.json" "$T/.oss/config.json" "$(command -v jq)" > "$T/swap-one/jq"
+printf '#!/bin/bash\ncat > "%s/sent-config"\nprintf "## Custom Team Laws\\n- x\\n"\n' "$T" > "$T/swap-one/curl"; chmod +x "$T/swap-one/jq" "$T/swap-one/curl"
+rm -f "$T/.oss/config.json" "$T/sent-config"; printf '{"apiKey":"secret-k"}' > "$T/.oss/config.json"; chmod 600 "$T/.oss/config.json"
+printf '{"apiKey":"evil-k"}' > "$T/evil.json"; chmod 600 "$T/evil.json"
+call oss_custom_iron_laws "$T/swap-one:$PATH"; rm -f "$T/evil.json"
+sent=$(cat "$T/sent-config" 2>/dev/null)
+[[ "$RC" == 0 && "$sent" == *"Bearer secret-k"* ]] && pass "team laws: the key sent comes from the same read as the URL (one config read)" \
+    || fail "team laws: the key sent comes from the same read as the URL" "rc=$RC sent='$sent'"
+
 # TR6: without jq the key is read by a regex that takes the FIRST "apiKey" (a nested one too) and stops at an escaped
 # quote. A config it cannot read unambiguously is refused rather than sending a wrong or truncated key; jq reads it.
 nojq_key_case() {  # nojq_key_case <config> <label>
