@@ -227,3 +227,27 @@
 ## 2026-10-27 | Testing | hooks + API
 - **Context:** integration (release-channels ship round 2)
 - **Insight:** a test seed that bypasses the real writer (a synthetic `personal_<id>` row) made a read path look tested when real data never reaches it; seed through the route. And in shell tests, a `$(...)` in a call's arguments resets `$?` before a later `$?` in the same argument list expands, so `cmd; check "x $(wc -l <f)" $?` always passes. To boot the API without loading `packages/api/.env`, run it from an empty cwd (`dotenv.config()` reads `process.cwd()/.env`).
+
+## 2026-10-27 | Testing | cli-decrypt + watcher
+- **Context:** build (release-channels ship round 3, TR1)
+- **Insight:** a deadline guard built only on a real stalled server depends on the Node version (the Node 25 GC hang does not reproduce on 26, and Homebrew upgraded Node mid-session). A fetch stub whose body never resolves and that ignores its signal is red on an abort-only deadline on every Node; keep the stalled-server tests as well. When a request's abort listener rejects synchronously it can beat the deadline's own rejection, so map every failure after the abort to the timeout error.
+
+## 2026-10-27 | Testing | watcher
+- **Context:** build (release-channels ship round 3, TR2)
+- **Insight:** when two packages must agree on a fixed string (the watcher's hint quotes the shell's unverified-laws note), make the test read the string from its single source (`OSS_CUSTOM_LAWS_NOTE` in hooks/oss-api-curl.sh) instead of copying it, so they cannot drift. And `npm run build` in watcher/ creates ~35 untracked dist files: commit only the tracked outputs of the src you changed.
+
+## 2026-10-27 | Security | packages/api
+- **Context:** build (release-channels ship round 3, TR2)
+- **Insight:** sanitise user text AFTER normalising it (controls, zero-width, bidi, CR), or an invisible prefix carries a heading past the filter and a later strip rebuilds it. In JS, `^` with the `m` flag also matches after a bare `\r`, so CR must be removed explicitly. Test what each consumer actually receives: a test that applies the plugin's strip first cannot see an attack on the stable plugin, which writes the body raw.
+
+## 2026-10-27 | Testing | plugin
+- **Context:** build (release-channels ship round 3, TR10)
+- **Insight:** three ship rounds of "full regression" ran only hooks/__tests__, __tests__ and commands/__tests__, so a test this feature broke in agents/__tests__ (passes on next, fails here) went unseen until round 3. A full run is `git ls-files '*.test.sh'`, never a hand-picked directory list; compare any failure against a detached worktree of origin/next before calling it pre-existing.
+
+## 2026-10-27 | Testing | hooks
+- **Context:** build (release-channels ship round 3, TR4/TR7/TR3)
+- **Insight:** when "failed" and "empty" start to behave differently, re-check every fixture whose stub fails by default: they may have passed only because failure used to count as empty. jq reads `"apiUrl"` (escaped) as apiUrl, so a built-in fast path that greps raw text for a key name must refuse backslashes. curl's `--max-filesize` is invisible to a curl stub: test it with real curl against a loopback server that sends a Content-Length.
+
+## 2026-10-27 | Testing | hooks
+- **Context:** build (release-channels ship round 3, TR9)
+- **Insight:** `/usr/bin/jq` ships with macOS, so a stub dir first on PATH does not hide jq; no-jq tests need a PATH built without it. And a refusal row can pass before the fix for an unrelated reason (two grep matches made a key with a line break that the curl helper refused): mutate the helper's own rule to prove the row guards it.

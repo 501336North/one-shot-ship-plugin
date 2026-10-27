@@ -499,3 +499,14 @@ Rule unchanged: CRITICAL/HIGH/MED and every security finding block. RED first fo
 - BOM-prefixed config read three ways (shell+jq loopback / CLI `{}` / watcher refuses); macOS ACLs ignored by all
   three readers; CLI state READS follow symlinks (writes don't); safe-write O_NOFOLLOW covers the last component only;
   plugin-root with a NUL byte (`oss-value.sh` vs status line).
+
+### TR9 (LOW, IRON LAW #1b from TR5/TR6): every hook reads the key through `oss_api_key`
+- `oss-push-metrics.sh`, `oss-fetch-team-iron-laws.sh`, `oss-session-start.sh`, `oss-session-start-new.sh`,
+  `oss-session-start-test.sh` still `grep -o '"apiKey"...'` themselves (no read-once, no ambiguous-key refusal,
+  no config trust check). Route them through the shared helper (URL and key from one read where both are used).
+
+### TR10 (regression this feature caused): `agents/__tests__/code-simplifier.test.sh`
+- Passes on origin/next (6/6), fails on this branch (4/6): it asserts the old WebFetch URL and auth step that the
+  T8 conversion to `oss-decrypt` removed. Assert the new contract (install step + `oss-decrypt --type agents --name
+  code-simplifier`, key check through `oss-value.sh keycheck`). Also: every regression run covers every tracked
+  `*.test.sh` (agents/, bin/, scripts/, .github/ were never in the round 1-3 runs).

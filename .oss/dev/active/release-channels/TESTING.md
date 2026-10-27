@@ -87,4 +87,19 @@ Every fix RED first, each guard proven by reverting/mutating it (all killed exce
 | symlinked `~/.oss` | per-package temp layouts | real status line STAGING, oss_api_url, oss-value root, CLI setup writes credentials.enc into .oss-beta; 0770 target refused | MATCH |
 - Committed: `hooks/__tests__/release-channels.api.integration.test.sh` (15 checks, needs `OSS_API_REPO`; prints SKIP with a reason otherwise). Shown to fail on 4 contract mutations.
 
-## Last Updated: 2026-10-27 by /oss:integration (ship round 2)
+
+### 2026-10-27: ship round 3 fixes TR1-TR10 (one /oss:build round)
+| Task | Guard | Mutation evidence |
+|---|---|---|
+| TR1 CLI + manifest deadline (race) | signal-ignoring fetch stubs (red on abort-only on every Node) + forced-GC stall tests | race removed 8-9 red; read outside deadline 12 red; signal not passed 4 red |
+| TR1 watcher | direct `withDeadline` tests + each sender with a signal-ignoring fetch | race/reject removed 4 red; each sender abort-only 1 red (old GC test stayed green on Node 26) |
+| TR2 API | `neutraliseLawMarkdown` (normalise, then headings/setext/rules, repeat); as-served and post-strip views; ordinary law byte-identical | 8 mutations killed |
+| TR2 shell + hint | oss-custom-iron-laws (forgery cases), closing line last, hint names verified laws only (note read from oss-api-curl.sh) | 5+ mutations killed |
+| TR3 / TR4 | 16 KiB cap (`--max-filesize` + byte check); rc 2 = failed fetch → 1 h backoff, `-m 5`; real-curl stall + Content-Length tests | killed |
+| TR5 / TR6 / TR9 | one config read for URL + key in every hook; no-jq ambiguous key refused; hooks-read-key-via-helper 30 cases | killed per hook |
+| TR7 | production + stable status line starts 0 programs (was 2) | killed |
+| TR8 | `-q` on the integration test's curls; hostile `.curlrc` planted | killed |
+| TR10 | code-simplifier asserts the oss-decrypt contract | 6 mutations |
+- Merged regression: all 92 tracked shell tests (agents/, bin/, scripts/, .github/ included for the first time): 90 pass, only ideate-template and no-telegram-command fail (also on next). Watcher 822/822, cli-decrypt 462/462, API 6903 pass + 1 live `npm audit` flake (76/76 alone), tsc clean everywhere, real-API integration 15/15.
+
+## Last Updated: 2026-10-27 by /oss:build (ship round 3 fixes)
