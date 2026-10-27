@@ -111,6 +111,21 @@ swap_case grep "$T/nojq" '{"apiKey":"secret-k"}' oss_api_url \
 swap_case grep "$T/nojq" '{"apiKey":"secret-k"}' oss_api_key \
     secret-k "without jq, the key comes from the config that was checked"
 
+# The permission check works with GNU/busybox stat too (Linux): a stand-in that answers `-c %a` and treats `-f` as
+# --file-system (file-system details on stdout, rc 1 for the "%Lp" operand), as GNU stat does.
+mkdir -p "$T/gnustat"; real_stat=$(command -v stat)
+printf '#!/bin/bash\ncase " $* " in\n  *" -c "*) shift 3; exec %s -L -f %%Lp "$@" ;;\n  *) echo "  File: \"$4\""; echo "    ID: 0 Namelen: 255"; exit 1 ;;\nesac\n' "$real_stat" > "$T/gnustat/stat"
+chmod +x "$T/gnustat/stat"
+gnu_case() {  # gnu_case <url> <file mode> <want> <label>
+    rm -f "$T/.oss/config.json"; printf '{"apiKey":"k","apiUrl":"%s"}' "$1" > "$T/.oss/config.json"; chmod "$2" "$T/.oss/config.json"
+    call oss_api_url "$T/gnustat:$PATH"; chmod 600 "$T/.oss/config.json"
+    if [[ "$3" == trusted ]]; then [[ "$RC" == 0 && -n "$OUT" ]] && pass "$4" || fail "$4" "rc=$RC out='$OUT'"
+    else [[ "$RC" != 0 && -z "$OUT" ]] && pass "$4" || fail "$4" "rc=$RC out='$OUT'"; fi
+}
+gnu_case http://localhost:3001 600 trusted "with GNU stat: a private loopback config is trusted"
+gnu_case http://localhost:3001 664 refused "with GNU stat: a group-writable loopback config is refused"
+gnu_case https://one-shot-ship-api.onrender.com 646 refused "with GNU stat: a world-writable config is refused"
+
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
 [[ $FAILED -eq 0 ]]

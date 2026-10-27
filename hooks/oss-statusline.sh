@@ -436,18 +436,23 @@ is_idle_state() {
 # and whether the plugin is a beta build (a version with a pre-release part, e.g. 2.1.0-beta.1).
 # Production + stable plugin: no section, so customers see no change.
 # =============================================================================
+# Runs on every render: shell built-ins only, apart from what oss_api_url needs (SR9).
 compute_channel() {
-    local helper="" h url ver="" root="" beta=false
-    for h in "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh" "$HOME/.oss/hooks/oss-api-curl.sh"; do
+    local helper="" h here url ver="" root="" beta=false line re='"version"[[:space:]]*:[[:space:]]*"([^"]+)"'
+    here=${BASH_SOURCE[0]%/*}; [[ "$here" == "${BASH_SOURCE[0]}" ]] && here=.
+    for h in "$here/oss-api-curl.sh" "$HOME/.oss/hooks/oss-api-curl.sh"; do
         [[ -f "$h" ]] && { helper="$h"; break; }
     done
     [[ -n "$helper" ]] || return 0
     # shellcheck source=oss-api-curl.sh
     source "$helper" 2>/dev/null || return 0
     root="${CLAUDE_PLUGIN_ROOT:-}"
-    [[ -z "$root" && -f "$HOME/.oss/plugin-root" ]] && root=$(head -n1 "$HOME/.oss/plugin-root" 2>/dev/null)
-    [[ -n "$root" && -f "$root/.claude-plugin/plugin.json" ]] \
-        && ver=$(sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$root/.claude-plugin/plugin.json" 2>/dev/null | head -n1)   # no jq fork per render (perf gate)
+    [[ -z "$root" && -f "$HOME/.oss/plugin-root" ]] && IFS= read -r root < "$HOME/.oss/plugin-root"
+    if [[ -n "$root" && -f "$root/.claude-plugin/plugin.json" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            [[ "$line" =~ $re ]] && { ver=${BASH_REMATCH[1]}; break; }
+        done < "$root/.claude-plugin/plugin.json"
+    fi
     [[ "$ver" == *-* ]] && beta=true
     if ! url=$(oss_api_url 2>/dev/null); then echo "⚠ apiUrl invalid"; return 0; fi
     if [[ "$url" == "$OSS_API_DEFAULT_URL" ]]; then

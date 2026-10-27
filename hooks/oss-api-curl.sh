@@ -36,22 +36,31 @@ oss_config_file() { printf '%s\n' "${OSS_CONFIG_DIR:-$HOME/.oss}/config.json"; }
 
 # oss_config_trusted - returns 0 when the OSS config may be read: it is missing, or a regular file (not a
 # symlink) owned by this user and not world-writable. Group-writable is allowed (umask 002). The same rule as
-# the CLI and the watcher (ship round 1, FR7).
+# the CLI and the watcher (ship round 1, FR7). Also sets _OSS_CFG_PRIVATE to 0 when the file or its directory
+# has a group- or world-write bit (SR2: such a config may not name a loopback API).
+# One stat and shell tests only: the status line calls this on every render (SR9).
 oss_config_trusted() {
-    local f; f=$(oss_config_file)
+    local f="${OSS_CONFIG_DIR:-$HOME/.oss}/config.json" m fm dm
+    _OSS_CFG_PRIVATE=1
     [[ -e "$f" || -L "$f" ]] || return 0
-    [[ ! -L "$f" && -f "$f" ]] || return 1
-    [[ -n "$(find "$f" -maxdepth 0 -user "$(id -u)" ! -perm -002 2>/dev/null)" ]]
+    [[ ! -L "$f" && -f "$f" && -O "$f" ]] || return 1
+    # The permission bits of the file and its directory, in octal, one per line: BSD stat, else GNU/busybox stat
+    # (which reads -f as --file-system and prints file-system details, so anything but octal lines means "not BSD").
+    m=$(stat -L -f %Lp "$f" "${f%/*}" 2>/dev/null) && [[ "$m" != *[!0-7$'\n']* ]] \
+        || m=$(stat -L -c %a "$f" "${f%/*}" 2>/dev/null) || return 1
+    fm=${m%%$'\n'*}; dm=${m#*$'\n'}
+    case "$fm:$dm" in :* | *: | *[!0-7:]*) return 1 ;; esac
+    (( (8#$fm & 2) == 0 )) || return 1
+    (( ((8#$fm | 8#$dm) & 18) == 0 )) || _OSS_CFG_PRIVATE=0   # 18 = 0o022
 }
 
 # _oss_config_read - the trust check, then the ONE read of the OSS config (SR3): sets _OSS_CFG to its text ('' when
 # missing). The URL and the key are taken from this copy, never by reading the path again after the check.
 # rc 1 when the config may not be read, or holds a NUL byte (not JSON; `read -d ''` stops there and returns 0).
 _oss_config_read() {
-    local f
+    local f="${OSS_CONFIG_DIR:-$HOME/.oss}/config.json"
     _OSS_CFG=''
     oss_config_trusted || return 1
-    f=$(oss_config_file)
     [[ -e "$f" ]] || return 0
     ! IFS= read -r -d '' _OSS_CFG < "$f"
 }
@@ -116,13 +125,13 @@ _oss_url_syntax() {
 #
 #   API_URL=$(oss_api_url) || { echo "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"; exit 1; }
 oss_api_url() {
-    local url scheme rest hostport path port f
+    local url scheme rest hostport path port
     _oss_config_read && _oss_url_syntax || return 1
     url=$_OSS_URL
     scheme=${url%%://*}; rest=${url#*://}
     hostport=${rest%%/*}; path=${rest#"$hostport"}
     [[ -z "$path" || "$path" == / ]] || return 1
-    hostport=$(printf '%s' "$hostport" | tr 'A-Z' 'a-z')
+    [[ "$hostport" == *[[:upper:]]* ]] && hostport=$(printf '%s' "$hostport" | tr 'A-Z' 'a-z')   # tr only when needed (SR9)
     # The port as WHATWG URL reads it: a number (leading zeros dropped), omitted when it is the scheme's default.
     case "$hostport" in
         *\]) ;;
@@ -134,8 +143,7 @@ oss_api_url() {
         "$OSS_API_DEFAULT_URL" | "$OSS_API_STAGING_URL") ;;
         http://localhost | http://localhost:[0-9]* | http://127.0.0.1 | http://127.0.0.1:[0-9]* | "http://[::1]" | "http://[::1]:"[0-9]*)
             # SR2: the key goes to whatever listens on this port, so only a config no one else can write may name it.
-            f=$(oss_config_file)
-            [[ -z "$(find "$f" "${f%/*}" -maxdepth 0 \( -perm -020 -o -perm -002 \) 2>/dev/null)" ]] || return 1 ;;
+            (( _OSS_CFG_PRIVATE )) || return 1 ;;
         *) return 1 ;;
     esac
     printf '%s\n' "$url"
