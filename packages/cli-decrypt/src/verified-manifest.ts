@@ -11,6 +11,7 @@ import { join } from 'path';
 import { getConfigDir } from './config.js';
 import { writeFileNoFollow } from './safe-write.js';
 import { fetchManifest, verifyManifestSignature, type SignedManifest } from './manifest-verifier.js';
+import { withDeadline } from './with-deadline.js';
 
 export const MANIFEST_TIMEOUT_MS = 10_000;
 export const MANIFEST_CACHE_TTL_MS = 300_000;
@@ -69,14 +70,11 @@ function writeCachedManifest(origin: string, manifest: SignedManifest): void {
 
 /** Fetch the manifest from `origin` (10 s limit), verify it, cache it. Throws unless verified. */
 export async function fetchVerifiedManifest(origin: string, publicKey: string): Promise<SignedManifest> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), MANIFEST_TIMEOUT_MS);
-  let manifest: SignedManifest | null;
-  try {
-    manifest = await fetchManifest(origin, controller.signal);
-  } finally {
-    clearTimeout(timer);
-  }
+  const manifest = await withDeadline(
+    MANIFEST_TIMEOUT_MS,
+    (signal) => fetchManifest(origin, signal),
+    () => new Error(UNAVAILABLE)
+  );
   if (manifest === null) throw new Error(UNAVAILABLE);
   if (!verifyManifestSignature(manifest, publicKey)) throw new Error(BAD_SIGNATURE);
   writeCachedManifest(origin, manifest);

@@ -10,6 +10,7 @@ import { join } from 'path';
 import { getConfigDir } from './config.js';
 import { CacheService, validateType, validateName, type EncryptedPromptType, type PlainPromptType } from './cache.js';
 import { stripControl } from './strip-control.js';
+import { withDeadline } from './with-deadline.js';
 
 /**
  * Get cache directory path
@@ -95,31 +96,21 @@ export interface RequestOptions {
   timeoutMs?: number;
 }
 
-/**
- * fetchNoRedirect plus reading the response, under one time limit. The timer is an AbortController + setTimeout
- * cleared only after `read` has consumed the body (AbortSignal.timeout was measured not to abort a stalled body).
- */
+/** fetchNoRedirect plus reading the response, body included, under one time limit (withDeadline, TR1). */
 async function keyedRequest<T>(
   url: string,
   init: Omit<RequestInit, 'headers'> & { headers: Record<string, string> },
   timeoutMs: number,
   read: (response: Response) => Promise<T>
 ): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetchNoRedirect(url, { ...init, signal: controller.signal });
-    return await read(response);
-  } catch (err: unknown) {
-    if (controller.signal.aborted) {
-      throw new Error(
+  return withDeadline(
+    timeoutMs,
+    async (signal) => read(await fetchNoRedirect(url, { ...init, signal })),
+    () =>
+      new Error(
         `The OSS API did not answer within ${timeoutMs / 1000} s. Try again; if it persists, check apiUrl in your OSS config.`
-      );
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
+      )
+  );
 }
 
 /**

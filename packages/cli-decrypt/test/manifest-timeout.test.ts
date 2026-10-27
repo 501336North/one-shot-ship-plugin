@@ -2,6 +2,8 @@
  * @behavior A manifest request that never answers is still awaited at 9.999 s, abandoned at 10 s, and the prompt is
  *           refused. (Production measured 2-4 s, so the old 3 s limit skipped verification on about one fetch in three.)
  * @business-rule FR3 (release-channels ship round 1): manifest fetch timeout 10 s, fail closed.
+ *           TR1 (ship round 3): the 10 s limit holds even when the request ignores its abort signal (on Node 25 an
+ *           aborted, stalled body read never settled after a GC), the same deadline shape as the keyed requests.
  * @boundary fetchVerifiedManifest, with fetch (the network) stubbed and timers faked.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -58,5 +60,26 @@ describe('manifest fetch timeout', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(aborted).toBe(true);
     expect(await settled).toMatch(/\[SECURITY\]/);
+  });
+
+  it('gives up at 10 s and refuses even when the request ignores its abort signal', async () => {
+    const never = (): Promise<never> => new Promise<never>(() => undefined);
+    vi.stubGlobal('fetch', () =>
+      Promise.resolve({ ok: true, status: 200, json: never, text: never } as unknown as Response)
+    );
+    const settled = fetchVerifiedManifest(ORIGIN, ANY_KEY).then(
+      () => 'resolved',
+      (err: unknown) => (err instanceof Error ? err.message : String(err))
+    );
+    let outcome: string | undefined;
+    void settled.then((value) => {
+      outcome = value;
+    });
+
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(outcome).toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(outcome).toMatch(/\[SECURITY\]/);
   });
 });
