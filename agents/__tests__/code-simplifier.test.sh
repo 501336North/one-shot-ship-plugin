@@ -3,8 +3,9 @@
 #
 # Verifies:
 # 1. code-simplifier.md exists in agents directory
-# 2. Contains API fetch URL for code-simplifier
-# 3. Contains auth check step
+# 2. Fetches its OWN prompt (agents/code-simplifier) through the verified decrypt CLI, installed first
+#    (release channels T8 / ADR-005: oss-decrypt follows apiUrl and checks the signed manifest; no WebFetch)
+# 3. Checks auth (oss-value.sh keycheck, which never prints the key) before fetching
 # 4. Contains error handling (401, 403, 500)
 #
 # Usage: ./code-simplifier.test.sh
@@ -52,30 +53,48 @@ test_file_exists() {
 }
 
 # =============================================================================
-# TEST 2: Contains API fetch URL
+# TEST 2: Fetches its own prompt, verified (oss-decrypt after the install step)
 # =============================================================================
+FETCH_LINE='~/.oss/bin/oss-decrypt --type agents --name code-simplifier'
+INSTALL_RE='^~/\.oss/hooks/ensure-decrypt-cli\.sh '
+KEYCHECK_LINE='~/.oss/hooks/oss-value.sh keycheck'
+
+line_of() { grep -n "$@" "$FILE" 2>/dev/null | head -1 | cut -d: -f1; }
+
 test_api_fetch_url() {
-    local test_name="should contain API fetch URL for code-simplifier"
+    local test_name="should fetch its own prompt through oss-decrypt, after installing the CLI"
     ((TESTS_RUN++))
 
-    if grep -q "/api/v1/prompts/agents/code-simplifier" "$FILE" 2>/dev/null; then
+    local fetch install webfetch
+    fetch=$(line_of -xF "$FETCH_LINE")
+    install=$(line_of -E "$INSTALL_RE")
+    webfetch=$(grep -c 'WebFetch' "$FILE" 2>/dev/null)
+
+    if [[ -n "$fetch" && -n "$install" && "$install" -lt "$fetch" && "$webfetch" -eq 0 ]]; then
         pass "$test_name"
     else
-        fail "$test_name" "contains /api/v1/prompts/agents/code-simplifier" "URL not found"
+        fail "$test_name" "ensure-decrypt-cli.sh, then the line: $FETCH_LINE; no WebFetch" \
+            "install line=${install:-none} fetch line=${fetch:-none} WebFetch mentions=$webfetch"
     fi
 }
 
 # =============================================================================
-# TEST 3: Contains auth check
+# TEST 3: Checks auth before fetching, without printing the key
 # =============================================================================
 test_auth_check() {
-    local test_name="should contain auth check step"
+    local test_name="should check auth (keycheck) before fetching, never printing the key"
     ((TESTS_RUN++))
 
-    if grep -q "config.json" "$FILE" 2>/dev/null && grep -q "apiKey" "$FILE" 2>/dev/null; then
+    local check fetch printing
+    check=$(line_of -xF "$KEYCHECK_LINE")
+    fetch=$(line_of -xF "$FETCH_LINE")
+    printing=$(grep -cE 'grep[^|]*apiKey' "$FILE" 2>/dev/null)
+
+    if [[ -n "$check" && -n "$fetch" && "$check" -lt "$fetch" && "$printing" -eq 0 ]]; then
         pass "$test_name"
     else
-        fail "$test_name" "contains config.json and apiKey" "auth check not found"
+        fail "$test_name" "the line: $KEYCHECK_LINE, before the fetch; no grep of apiKey" \
+            "keycheck line=${check:-none} fetch line=${fetch:-none} apiKey greps=$printing"
     fi
 }
 
