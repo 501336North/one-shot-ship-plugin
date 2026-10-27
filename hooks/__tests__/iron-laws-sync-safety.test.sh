@@ -383,6 +383,23 @@ test_cli_ensure_failure_writes_nothing() {
     teardown
 }
 
+# SR11: the CLI time cap leaves nothing behind. A sync whose CLI answers at once must not leave the watchdog's
+# `sleep` running for the rest of the cap. sleep on PATH is a shim that records its pid; after the sync returns,
+# none of those pids may be alive (no machine-wide pgrep: only this run's own sleeps are looked at).
+test_watchdog_leaves_no_sleep() {
+    local name="SR11: a fast sync leaves no watchdog sleep running"; ((TESTS_RUN++)); setup
+    printf '#!/bin/bash\necho $$ >> "%s/sleep-pids"\nexec %s "$@"\n' "$T/shim" "$(command -v sleep)" > "$T/bin/sleep"; chmod +x "$T/bin/sleep"
+    echo 0.5 > "$T/shim/sleep"   # the CLI answers in half a second: long enough for the watchdog to start its sleep
+    block_file "$T/proj/CLAUDE.md"; stale; run_sync
+    local p alive="" started=0
+    [[ -f "$T/shim/sleep-pids" ]] && started=$(wc -l < "$T/shim/sleep-pids" | tr -d ' ')
+    for p in $(cat "$T/shim/sleep-pids" 2>/dev/null); do kill -0 "$p" 2>/dev/null && alive="$alive $p"; done
+    for p in $alive; do kill "$p" 2>/dev/null; done
+    if [[ "$started" -ge 2 && -z "$alive" ]] && grep -q "FRESH FROM API" "$T/proj/CLAUDE.md"; then pass "$name"
+    else fail "$name" "the watchdog's sleep started and is gone when the sync returns" "started=$started alive:${alive:- none} rc=$RC"; fi
+    teardown
+}
+
 # =============================================================================================
 # R6 Robust rewrite
 # =============================================================================================
@@ -656,6 +673,7 @@ test_rejected_bodies
 test_markdown_with_angle_placeholders_accepted
 test_valid_write_marks_fresh
 test_cli_time_cap
+test_watchdog_leaves_no_sleep
 test_key_off_argv
 test_cli_refusal_writes_nothing
 test_cli_missing_installs_first

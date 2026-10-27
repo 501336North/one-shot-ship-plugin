@@ -120,7 +120,9 @@ block_state() {
 run_cli() { # $1 output file; the CLI is stopped after CLI_TIMEOUT_SECONDS
     local out="$1" pid watchdog rc=0
     "$OSS_DECRYPT" --type shared --name iron-laws > "$out" 2>"$WORK/cli-err" & pid=$!
-    ( sleep "$CLI_TIMEOUT_SECONDS"; kill "$pid" 2>/dev/null ) </dev/null >/dev/null 2>&1 & watchdog=$!
+    # Killing the watchdog must also stop its sleep (SR11): the TERM trap kills it ($! is the sleep once started).
+    ( trap 'kill $! 2>/dev/null; exit 0' TERM
+      sleep "$CLI_TIMEOUT_SECONDS" & wait $!; kill "$pid" 2>/dev/null ) </dev/null >/dev/null 2>&1 & watchdog=$!
     wait "$pid" || rc=$?
     kill "$watchdog" 2>/dev/null
     return "$rc"
