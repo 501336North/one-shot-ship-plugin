@@ -83,7 +83,9 @@ done
 # R3-7 superseded by release-channels ADR-005 (2026-10-26): the ```http request shapes were WebFetch calls the model
 # made with the key in its context and the production host fixed; each is now one allowlisted call of the api verb.
 has() { grep -qxF "~/.oss/hooks/oss-value.sh $2" "$C/$1"; }
-check "login.md fetches the CLAUDE.md template with oss-value.sh api prompts/claude-md" has login.md 'api prompts/claude-md'
+# FR15: the CLAUDE.md template is no longer an api-verb call; login.md fetches it verified with
+# `~/.oss/bin/oss-decrypt --type templates --name claude-md` (checked in __tests__/command-api-calls.test.sh).
+check "login.md no longer fetches the CLAUDE.md template with oss-value.sh api prompts/claude-md" none login.md 'api prompts/claude-md'
 check "status.md checks the account with oss-value.sh api auth/verify" has status.md 'api auth/verify'
 check "workflows.md lists and shows workflows with oss-value.sh api workflows / api workflow" \
     eval 'has workflows.md "api workflows" && has workflows.md "api workflow"'

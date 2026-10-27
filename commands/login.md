@@ -141,6 +141,20 @@ Show the user the plan the call printed (trial, active, expired).
 
 After successful authentication, the command installs the IRON LAWS block and then syncs the project guidelines around it.
 
+### 4.0: Install the decrypt CLI and its credentials
+
+The IRON LAWS (4.1) and the template (4.2) reach CLAUDE.md only after the decrypt CLI has checked them against the signed manifest, so install and set it up first:
+
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install the decrypt CLI (see the message above). Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."; exit 1; }
+```
+
+```bash
+~/.oss/bin/oss-decrypt --setup
+```
+
+**If either call fails, Step 4 ends here** (do not run 4.1-4.3): show the user the message and go on to Step 5, which retries the install.
+
 ### 4.1: Install the IRON LAWS block (single writer)
 
 ```bash
@@ -159,11 +173,13 @@ This script is the **only** writer of the IRON LAWS block. Do not write, copy or
 
 ### 4.2: Fetch the CLAUDE.md template
 
-Run this one call; the key goes to curl on stdin, never into this conversation or a command line:
+Run this one call. The decrypt CLI fetches the template with its own credentials and prints it only if it matches the signed manifest entry `templates/claude-md`:
 
 ```bash
-~/.oss/hooks/oss-value.sh api prompts/claude-md
+~/.oss/bin/oss-decrypt --type templates --name claude-md
 ```
+
+**If it exits non-zero** (the template was refused or the API was unreachable), skip 4.3: never write a template the CLI did not print. Tell the user "CLAUDE.md guidelines were not updated: {stderr reason}." and go on to Step 5.
 
 Remove the placeholder line `<!-- IRON LAWS will be injected here by /oss:login -->` from the template. The block from 4.1 replaces it; never inject the laws into the template.
 
@@ -176,7 +192,7 @@ Remove the placeholder line `<!-- IRON LAWS will be injected here by /oss:login 
 
 ### 4.4: What Gets Synced
 
-**From IRON LAWS (shared/iron-laws endpoint):**
+**From IRON LAWS (shared/iron-laws, verified by the decrypt CLI):**
 - IRON LAW #1: TDD (with MINIMAL emphasis in GREEN phase)
 - IRON LAW #2: Test Philosophy
 - IRON LAW #3: Loop Detection Protocol
@@ -186,7 +202,7 @@ Remove the placeholder line `<!-- IRON LAWS will be injected here by /oss:login 
 - PROHIBITED section
 - Pre-Command Check Summary
 
-**From Template (claude-md endpoint):**
+**From Template (templates/claude-md, verified by the decrypt CLI):**
 - London TDD methodology overview
 - Agent delegation table (which agents to use for what)
 - All available `/oss:` commands reference
