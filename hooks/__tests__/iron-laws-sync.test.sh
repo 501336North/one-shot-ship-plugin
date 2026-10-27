@@ -16,7 +16,21 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOOK_SCRIPT="$SCRIPT_DIR/../oss-iron-laws-sync.sh"
+# The hook runs from a throwaway copy of hooks/ whose ensure-decrypt-cli.sh is a stub (SR6: the hook runs it before
+# every sync): it records each call in $HOME/.ensure-calls, fails when $HOME/.ensure-fail exists, keeps an installed CLI; a missing CLI "fails to install"
+# after asking GitHub (the curl tripwire records that). The real installer has its own suites.
+HOOK_TREE=$(mktemp -d); trap 'rm -rf "$HOOK_TREE"' EXIT
+cp "$SCRIPT_DIR/../oss-iron-laws-sync.sh" "$SCRIPT_DIR/../oss-api-curl.sh" "$HOOK_TREE/"
+cat > "$HOOK_TREE/ensure-decrypt-cli.sh" << 'ENSUREEOF'
+#!/bin/bash
+echo ensure >> "$HOME/.ensure-calls"
+[[ -f "$HOME/.ensure-fail" ]] && exit 1   # e.g. the pinned CLI failed verification
+[[ -x "$HOME/.oss/bin/oss-decrypt" ]] && exit 0
+curl -fsSL "https://github.com/501336North/one-shot-ship-plugin/releases/download/stub/oss-decrypt" -o /dev/null
+exit 1
+ENSUREEOF
+chmod +x "$HOOK_TREE/ensure-decrypt-cli.sh"
+HOOK_SCRIPT="$HOOK_TREE/oss-iron-laws-sync.sh"
 
 # Test tracking
 TESTS_RUN=0

@@ -18,7 +18,21 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOOK_SCRIPT="$SCRIPT_DIR/../oss-iron-laws-sync.sh"
+# The hook runs from a throwaway copy of hooks/ whose ensure-decrypt-cli.sh is a stub (SR6: the hook runs it before
+# every sync): it records each call in $HOME/.ensure-calls, fails when $HOME/.ensure-fail exists, keeps an installed CLI; a missing CLI "fails to install"
+# after asking GitHub (the curl tripwire records that). The real installer has its own suites.
+HOOK_TREE=$(mktemp -d); trap 'rm -rf "$HOOK_TREE"' EXIT
+cp "$SCRIPT_DIR/../oss-iron-laws-sync.sh" "$SCRIPT_DIR/../oss-api-curl.sh" "$HOOK_TREE/"
+cat > "$HOOK_TREE/ensure-decrypt-cli.sh" << 'ENSUREEOF'
+#!/bin/bash
+echo ensure >> "$HOME/.ensure-calls"
+[[ -f "$HOME/.ensure-fail" ]] && exit 1   # e.g. the pinned CLI failed verification
+[[ -x "$HOME/.oss/bin/oss-decrypt" ]] && exit 0
+curl -fsSL "https://github.com/501336North/one-shot-ship-plugin/releases/download/stub/oss-decrypt" -o /dev/null
+exit 1
+ENSUREEOF
+chmod +x "$HOOK_TREE/ensure-decrypt-cli.sh"
+HOOK_SCRIPT="$HOOK_TREE/oss-iron-laws-sync.sh"
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -349,6 +363,26 @@ test_cli_missing_installs_first() {
     teardown
 }
 
+# SR6: the pinned decrypt CLI is ensured before EVERY fetch, not only when it is missing, so an outdated or
+# wrong-channel CLI is upgraded (ensure-decrypt-cli.sh exits at once when the pin is met). If it fails, the
+# installed CLI is not trusted to fetch the laws: nothing is written.
+test_cli_ensured_every_sync() {
+    local name="SR6: an installed CLI is still ensured (once) before the laws are fetched"; ((TESTS_RUN++)); setup
+    block_file "$T/proj/CLAUDE.md"; stale; run_sync
+    local n=0; [[ -f "$T/home/.ensure-calls" ]] && n=$(wc -l < "$T/home/.ensure-calls" | tr -d ' ')
+    if [[ "$n" == 1 ]] && grep -q "FRESH FROM API" "$T/proj/CLAUDE.md"; then pass "$name"
+    else fail "$name" "ensure-decrypt-cli.sh ran once, block refreshed" "ensure calls=$n rc=$RC err=$ERR"; fi
+    teardown
+}
+test_cli_ensure_failure_writes_nothing() {
+    local name="SR6: ensure-decrypt-cli.sh fails with a CLI installed → the CLI is not run, nothing written, exit 4"; ((TESTS_RUN++)); setup
+    block_file "$T/proj/CLAUDE.md"; local before; before=$(sum "$T/proj/CLAUDE.md"); touch "$T/home/.ensure-fail"
+    run_sync --install
+    if [[ $RC -eq 4 && "$(sum "$T/proj/CLAUDE.md")" == "$before" && "$(cli_calls)" == 0 ]]; then pass "$name"
+    else fail "$name" "rc 4, unchanged, no CLI call" "rc=$RC cli=$(cli_calls) err=$ERR"; fi
+    teardown
+}
+
 # =============================================================================================
 # R6 Robust rewrite
 # =============================================================================================
@@ -625,6 +659,8 @@ test_cli_time_cap
 test_key_off_argv
 test_cli_refusal_writes_nothing
 test_cli_missing_installs_first
+test_cli_ensured_every_sync
+test_cli_ensure_failure_writes_nothing
 test_dash_lines_kept
 test_mode_kept
 test_concurrent_installs_one_block

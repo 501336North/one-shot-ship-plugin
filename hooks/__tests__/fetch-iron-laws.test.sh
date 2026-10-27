@@ -8,11 +8,26 @@
 # 2. Exits 1 and points at /oss:login when the API rejects the key
 # 3. A CLI refusal prints no laws and never falls back to curl
 # 4. A missing CLI is installed first; when that fails, exit 1
+# 5. An installed CLI is still ensured first (SR6); when that fails, exit 1 and the CLI is not run
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOOK_SCRIPT="$SCRIPT_DIR/../fetch-iron-laws.sh"
+# The hook runs from a throwaway copy of hooks/ whose ensure-decrypt-cli.sh is a stub (SR6: the hook runs it before
+# every sync): it records each call in $HOME/.ensure-calls, fails when $HOME/.ensure-fail exists, keeps an installed CLI; a missing CLI "fails to install"
+# after asking GitHub (the curl tripwire records that). The real installer has its own suites.
+HOOK_TREE=$(mktemp -d); trap 'rm -rf "$HOOK_TREE"' EXIT
+cp "$SCRIPT_DIR/../fetch-iron-laws.sh" "$SCRIPT_DIR/../oss-api-curl.sh" "$HOOK_TREE/"
+cat > "$HOOK_TREE/ensure-decrypt-cli.sh" << 'ENSUREEOF'
+#!/bin/bash
+echo ensure >> "$HOME/.ensure-calls"
+[[ -f "$HOME/.ensure-fail" ]] && exit 1   # e.g. the pinned CLI failed verification
+[[ -x "$HOME/.oss/bin/oss-decrypt" ]] && exit 0
+curl -fsSL "https://github.com/501336North/one-shot-ship-plugin/releases/download/stub/oss-decrypt" -o /dev/null
+exit 1
+ENSUREEOF
+chmod +x "$HOOK_TREE/ensure-decrypt-cli.sh"
+HOOK_SCRIPT="$HOOK_TREE/fetch-iron-laws.sh"
 
 # Test tracking
 TESTS_RUN=0
@@ -151,6 +166,31 @@ test_missing_cli_installs_first() {
 }
 
 # =============================================================================
+# SR6: the pinned decrypt CLI is ensured before every fetch (an outdated or wrong-channel CLI is upgraded);
+# when that fails, the installed CLI is not run and no laws are printed.
+# =============================================================================
+test_installed_cli_still_ensured() {
+    local test_name="An installed oss-decrypt is still ensured before the fetch (once)"
+    ((TESTS_RUN++))
+    make_sandbox
+    run_hook
+    local n=0; [[ -f "$TEST_HOME/.ensure-calls" ]] && n=$(wc -l < "$TEST_HOME/.ensure-calls" | tr -d ' ')
+    cleanup
+    if [[ $exit_code -eq 0 && "$n" == 1 ]]; then pass "$test_name"
+    else fail "$test_name" "exit 0, ensure-decrypt-cli.sh ran once" "exit=$exit_code ensure calls=$n output: $result"; fi
+}
+test_ensure_failure_prints_no_laws() {
+    local test_name="ensure-decrypt-cli.sh fails with a CLI installed → exit 1, the CLI is not run, no laws"
+    ((TESTS_RUN++))
+    make_sandbox; touch "$TEST_HOME/.ensure-fail"
+    run_hook
+    local ran=n; [[ -f "$TEST_HOME/cli-argv" ]] && ran=y
+    cleanup
+    if [[ $exit_code -eq 1 && "$ran" == n && "$result" != *"LAW 1"* ]]; then pass "$test_name"
+    else fail "$test_name" "exit 1, CLI not run, no laws" "exit=$exit_code ran=$ran output: $result"; fi
+}
+
+# =============================================================================
 # Run all tests
 # =============================================================================
 echo "Running fetch-iron-laws.sh tests..."
@@ -160,6 +200,8 @@ test_plain_markdown_response
 test_api_error_response
 test_refusal_prints_no_laws
 test_missing_cli_installs_first
+test_installed_cli_still_ensured
+test_ensure_failure_prints_no_laws
 
 echo ""
 echo "======================================="

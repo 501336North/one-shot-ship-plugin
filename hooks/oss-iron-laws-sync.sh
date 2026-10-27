@@ -116,7 +116,7 @@ block_state() {
 # The laws come only from the decrypt CLI (FR15, ADR-005): it fetches /api/v1/prompts/shared/iron-laws
 # with its own stored credentials, checks the body's sha256 against the signed manifest entry
 # shared/iron-laws, and prints it, or refuses (non-zero exit). The hook never sees the API key.
-# A missing CLI is installed first by ensure-decrypt-cli.sh beside this hook.
+# ensure-decrypt-cli.sh beside this hook installs or upgrades it to the pinned version first, on every fetch.
 run_cli() { # $1 output file; the CLI is stopped after CLI_TIMEOUT_SECONDS
     local out="$1" pid watchdog rc=0
     "$OSS_DECRYPT" --type shared --name iron-laws > "$out" 2>"$WORK/cli-err" & pid=$!
@@ -129,8 +129,10 @@ run_cli() { # $1 output file; the CLI is stopped after CLI_TIMEOUT_SECONDS
 # Writes the validated, marker-free laws to $1. Returns 1 on any failure.
 fetch_body() {
     local out="$1" raw="$WORK/raw" rc=0 bytes
-    if [[ ! -x "$OSS_DECRYPT" ]] && ! "$SCRIPT_DIR/ensure-decrypt-cli.sh" </dev/null >/dev/null 2>&1; then
-        warn "the decrypt CLI is not installed and could not be installed"; return 1
+    # Every time, not only when the CLI is missing (SR6): an outdated or wrong-channel CLI is upgraded; it exits at
+    # once when the pin is met. A failure means the installed CLI is not trusted to fetch the laws.
+    if ! "$SCRIPT_DIR/ensure-decrypt-cli.sh" </dev/null >/dev/null 2>&1; then
+        warn "the decrypt CLI could not be installed or updated to the pinned version"; return 1
     fi
     run_cli "$raw" || rc=$?
     if (( rc != 0 )); then
