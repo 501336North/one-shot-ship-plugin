@@ -75,7 +75,7 @@ validate_project_path() {
 # Runs on every render: shell built-ins only, apart from what oss_api_url needs (SR9).
 compute_channel() {
     local helper="" h here url ver="" root="" beta=false line re='"version"[[:space:]]*:[[:space:]]*"([^"]+)"'
-    local rf="$HOME/.oss/plugin-root" rr=""
+    local rf="$HOME/.oss/plugin-root" rr="" cf cfg=""
     here=${BASH_SOURCE[0]%/*}; [[ "$here" == "${BASH_SOURCE[0]}" ]] && here=.
     for h in "$here/oss-api-curl.sh" "$HOME/.oss/hooks/oss-api-curl.sh"; do
         [[ -f "$h" ]] && { helper="$h"; break; }
@@ -96,6 +96,15 @@ compute_channel() {
         done < "$root/.claude-plugin/plugin.json"
     fi
     [[ "$ver" == *-* ]] && beta=true
+    # TR7: production (the config names no apiUrl) and a stable plugin show nothing, so most customers pay no jq or
+    # stat per render. A built-in read of a regular, non-link file; any backslash (jq reads "api\u0055rl" as apiUrl),
+    # a NUL, or anything else goes the full way. Skipping the trust check here hides no key: oss_api_url/oss_api_key
+    # still refuse an untrusted config where the key is sent; only the "apiUrl invalid" warning is not shown for it.
+    cf="${OSS_CONFIG_DIR:-$HOME/.oss}/config.json"
+    if ! $beta && [[ -f "$cf" && ! -L "$cf" ]] && ! IFS= read -r -d '' cfg < "$cf" \
+        && [[ "$cfg" != *apiUrl* && "$cfg" != *\\* ]]; then
+        return 0
+    fi
     if ! url=$(oss_api_url 2>/dev/null); then echo "⚠ apiUrl invalid"; return 0; fi
     if [[ "$url" == "$OSS_API_DEFAULT_URL" ]]; then
         $beta && echo "⚠ beta plugin → production API (mismatch)"
