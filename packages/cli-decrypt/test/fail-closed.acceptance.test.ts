@@ -96,12 +96,14 @@ interface FakeApi {
   promptWaitsForManifest: boolean;
   /** Plaintext markdown answers by exact path, as the API serves /shared/:name and /claude-md. */
   plain: Record<string, string>;
+  /** The team custom command body served at /custom/:name. */
+  custom: string;
 }
 
 const servers: Server[] = [];
 
 async function startApi(manifest: ManifestAnswer, prompts: Record<string, string> = { plan: PROMPT }): Promise<FakeApi> {
-  const api: FakeApi = { baseUrl: '', seen: [], manifest, prompts, promptWaitsForManifest: false, plain: {} };
+  const api: FakeApi = { baseUrl: '', seen: [], manifest, prompts, promptWaitsForManifest: false, plain: {}, custom: 'Team rule: run the linter.' };
   let manifestAsked: () => void = () => undefined;
   const manifestRequested = new Promise<void>((resolve) => (manifestAsked = resolve));
 
@@ -129,7 +131,7 @@ async function startApi(manifest: ManifestAnswer, prompts: Record<string, string
     const custom = path.match(/^\/api\/v1\/prompts\/custom\/(.+)$/);
     if (custom) {
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(
-        JSON.stringify({ prompt: 'Team rule: run the linter.', name: custom[1], displayName: 'Lint', isBlocking: false })
+        JSON.stringify({ prompt: api.custom, name: custom[1], displayName: 'Lint', isBlocking: false })
       );
       return;
     }
@@ -268,6 +270,15 @@ describe('FR3: oss-decrypt fails closed', () => {
       await decryptCommand('custom', 'lint', false, { manifestKeys: KEYS });
       expect(stdout).toEqual(['Team rule: run the linter.']);
       expect(stderr.join('\n')).toMatch(/unverified/i);
+    });
+
+    it('their text is stripped of terminal control, bidi and zero-width characters; lines and tabs survive', async () => {
+      const api = await startApi({ status: 404 });
+      api.custom = '# Lint\n\tRun \u001b[31mlint\u001b[0m\u202eevil\u200b now.\r\n';
+      useApi(api);
+      await decryptCommand('custom', 'lint', false, { manifestKeys: KEYS });
+      expect(stdout).toEqual(['# Lint\n\tRun [31mlint[0mevil now.\n']);
+      expect(stderr.join('\n')).toMatch(/\[verify\] UNVERIFIED/);
     });
   });
 
