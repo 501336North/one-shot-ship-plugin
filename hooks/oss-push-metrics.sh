@@ -22,8 +22,8 @@ set -euo pipefail
 if [[ -f "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh" ]]; then source "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh"; fi  # oss_api_curl: API key via stdin, never argv
 
 # Configuration
-CONFIG_FILE="$(oss_config_file)"  # the key and the URL it goes to come from one file (oss-api-curl.sh)
-API_URL="$(oss_api_url)" || exit 0  # invalid apiUrl: send nothing (metrics are best-effort)
+# The key and the URL it goes to come from ONE trusted read of the OSS config (oss-api-curl.sh, TR5/TR9).
+_oss_config_read && API_URL="$(_oss_cfg_origin)" || exit 0  # untrusted config or invalid apiUrl: send nothing (metrics are best-effort)
 ENDPOINT="/api/v1/metrics/command-completion"
 LOG_DIR="${HOME}/.oss/logs"
 LOG_FILE="${LOG_DIR}/metrics-push.log"
@@ -46,18 +46,7 @@ log_message() {
 
 # Helper: Get API key from config
 get_api_key() {
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        return 1
-    fi
-
-    local api_key
-    api_key=$(grep -o '"apiKey"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" 2>/dev/null | sed 's/.*: *"\([^"]*\)"/\1/')
-
-    if [[ -z "$api_key" ]]; then
-        return 1
-    fi
-
-    echo "$api_key"
+    _oss_cfg_key   # the shared reader (TR9): refuses an ambiguous key
 }
 
 # Helper: Enhance metrics with timestamp and metadata

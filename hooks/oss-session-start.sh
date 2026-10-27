@@ -129,7 +129,8 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
 fi
 
 # Check if API key exists in config
-API_KEY=$(grep -o '"apiKey"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f4)
+# The key and the URL it goes to come from ONE trusted read of the OSS config (oss-api-curl.sh, TR5/TR9).
+_oss_config_read 2>/dev/null; API_KEY=$(_oss_cfg_key 2>/dev/null)
 if [[ -z "$API_KEY" ]]; then
     echo "OSS: No API key found. Run /oss login to authenticate."
     exit 0
@@ -140,7 +141,7 @@ fi
 if [[ "${OSS_SKIP_HEALTH_CHECK:-}" == "1" ]]; then
     SUBSCRIPTION_STATUS="active"
 else
-    if API_URL="$(oss_api_url)"; then
+    if API_URL="$(_oss_cfg_origin)"; then
         SUBSCRIPTION_STATUS=$(oss_api_curl "$API_KEY" -s -m 2 \
             "${API_URL}/api/v1/subscription/status" 2>/dev/null | \
             grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || echo "unknown")
