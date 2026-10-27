@@ -270,6 +270,26 @@ function stripControlKeepLines(text) {
   return text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, "");
 }
 
+// src/with-deadline.ts
+async function withDeadline(timeoutMs, request, timeoutError) {
+  const controller = new AbortController();
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(timeoutError());
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([request(controller.signal), deadline]);
+  } catch (err) {
+    if (controller.signal.aborted) throw timeoutError();
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // src/api-client.ts
 function getCacheDir() {
   return (0, import_path4.join)(getConfigDir(), "prompt-cache");
@@ -303,21 +323,13 @@ async function fetchNoRedirect(url, init) {
 }
 var API_TIMEOUT_MS = 6e4;
 async function keyedRequest(url, init, timeoutMs, read) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetchNoRedirect(url, { ...init, signal: controller.signal });
-    return await read(response);
-  } catch (err) {
-    if (controller.signal.aborted) {
-      throw new Error(
-        `The OSS API did not answer within ${timeoutMs / 1e3} s. Try again; if it persists, check apiUrl in your OSS config.`
-      );
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
+  return withDeadline(
+    timeoutMs,
+    async (signal) => read(await fetchNoRedirect(url, { ...init, signal })),
+    () => new Error(
+      `The OSS API did not answer within ${timeoutMs / 1e3} s. Try again; if it persists, check apiUrl in your OSS config.`
+    )
+  );
 }
 async function fetchCredentials(apiKey, apiUrl, hardwareId, options = {}) {
   const url = `${apiUrl}/api/v1/auth/credentials?hardwareId=${encodeURIComponent(hardwareId)}`;
@@ -749,14 +761,11 @@ function writeCachedManifest(origin, manifest) {
   }
 }
 async function fetchVerifiedManifest(origin, publicKey) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), MANIFEST_TIMEOUT_MS);
-  let manifest;
-  try {
-    manifest = await fetchManifest(origin, controller.signal);
-  } finally {
-    clearTimeout(timer);
-  }
+  const manifest = await withDeadline(
+    MANIFEST_TIMEOUT_MS,
+    (signal) => fetchManifest(origin, signal),
+    () => new Error(UNAVAILABLE)
+  );
   if (manifest === null) throw new Error(UNAVAILABLE);
   if (!verifyManifestSignature(manifest, publicKey)) throw new Error(BAD_SIGNATURE);
   writeCachedManifest(origin, manifest);
