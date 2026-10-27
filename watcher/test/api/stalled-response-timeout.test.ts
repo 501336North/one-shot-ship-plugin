@@ -68,7 +68,7 @@ beforeEach(async () => {
     { mode: 0o600 }
   );
   process.env.OSS_CONFIG_DIR = configDir;
-  gcLoop = setInterval(gc, Number(process.env.GCI));
+  gcLoop = setInterval(gc, 5);
 });
 
 afterEach(async () => {
