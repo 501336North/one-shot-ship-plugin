@@ -365,17 +365,21 @@ describe('IronLawLogParser - Intervention Task Creation', () => {
       });
 
       // FR10: the hint is read by the model; a curl with {apiKey} invites the key into model context
-      // and argv. It names the allowlisted sync hook instead, and no key, header or URL.
+      // and argv, so it carries no key, header or URL.
+      // SR12: nor a command. The sync hook exits at once while its 24 h stamp is fresh or in its 1 h
+      // backoff, so "run the hook" refreshed nothing; the laws are already in CLAUDE.md (session start
+      // keeps them current), and re-reading that block is what actually restores them.
       it.each([
         ['staging', { apiKey: 'k-secret', apiUrl: 'https://one-shot-ship-api-staging.onrender.com' }],
         ['production (apiUrl missing)', { apiKey: 'k-secret' }],
-      ])('should point at the allowlisted sync hook, with no key or URL, for a %s config', (_label, config) => {
+      ])('should tell the model to re-read the IRON LAWS block in CLAUDE.md, with no command, key or URL, for a %s config', (_label, config) => {
         writeConfig(config);
 
         const prompt = thirdViolationPrompt();
 
         expect(prompt).toContain('MANDATORY: Fetch IRON LAWS and place at top of context');
-        expect(prompt).toContain('~/.oss/hooks/oss-iron-laws-sync.sh');
+        expect(prompt).toContain('Re-read the IRON LAWS block in CLAUDE.md');
+        expect(prompt).not.toMatch(/oss-iron-laws-sync|~\/|\.sh\b|\bRun\b/);
         expect(prompt).not.toMatch(/curl|Bearer|Authorization|apiKey|k-secret|https?:\/\//);
       });
 
