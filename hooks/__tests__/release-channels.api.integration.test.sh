@@ -45,6 +45,9 @@ done
 T="$(mktemp -d)"; API_PID=""
 cleanup() { [[ -n "$API_PID" ]] && kill "$API_PID" 2>/dev/null; wait "$API_PID" 2>/dev/null; rm -rf "$T"; }
 trap cleanup EXIT
+# Every curl here, the test's own and the hooks', must ignore a default .curlrc (TR8: -q first; the user's ~/.curlrc
+# could otherwise change what is compared). A hostile one is planted where curl looks first, so a missing -q fails.
+mkdir -p "$T/curlhome"; printf 'write-out = "HOSTILE-CURLRC"\n' > "$T/curlhome/.curlrc"; export CURL_HOME="$T/curlhome"
 
 # --- the real API, on loopback, never reading the checkout's .env (cwd is an empty dir, HOME a temp dir) -------------
 mkdir -p "$T/api" "$T/apicwd" "$T/apihome"
@@ -95,21 +98,21 @@ base_line=$(grep -E '^[0-9]+ GET /api/v1/prompts/shared/iron-laws\?base=1 200 ' 
 [[ $rc != 0 && ! -s "$T/bundle.out" ]] && grep -q 'Manifest signature verification FAILED' "$T/bundle.err"
 check "the bundle (staging key pinned for loopback) refuses a manifest the real staging key did not sign, printing nothing" $? \
     "rc=$rc err: $(tail -n 1 "$T/bundle.err")"
-curl -s "$API/api/v1/prompts/manifest" > "$T/manifest.json"
+curl -q -s "$API/api/v1/prompts/manifest" > "$T/manifest.json"
 signed_hash=$(jq -r '.prompts["shared/iron-laws"].hash' "$T/manifest.json")
 served_hash=$(printf '%s' "$base_line" | cut -d' ' -f5)
 [[ -n "$served_hash" && "$served_hash" == "$signed_hash" ]]
 check "the API's answer to exactly that request hashes to the manifest's shared/iron-laws entry" $? \
     "served $served_hash, manifest $signed_hash"
 inhome "$H/.oss/bin/oss-decrypt" --type shared --name iron-laws >"$T/verified.out" 2>"$T/verified.err"; rc=$?
-curl -s -H "Authorization: Bearer $TEAM_KEY" "$API/api/v1/prompts/shared/iron-laws?base=1" > "$T/base.body"
+curl -q -s -H "Authorization: Bearer $TEAM_KEY" "$API/api/v1/prompts/shared/iron-laws?base=1" > "$T/base.body"
 { cat "$T/base.body"; echo; } | cmp -s - "$T/verified.out" && [[ $rc == 0 ]] && grep -q 'Prompt hash: verified' "$T/verified.err"
 check "the CLI's decryptCommand verifies signature and hash against the real API and prints the signed file" $? \
     "rc=$rc err: $(tr '\n' ' ' < "$T/verified.err")"
 
 # 3. ?part=custom: the hook's section is the team section the API appends for the stable plugin
-curl -s -H "Authorization: Bearer $TEAM_KEY" "$API/api/v1/prompts/shared/iron-laws?part=custom" > "$T/part.body"
-curl -s -H "Authorization: Bearer $TEAM_KEY" "$API/api/v1/prompts/shared/iron-laws" > "$T/legacy.body"
+curl -q -s -H "Authorization: Bearer $TEAM_KEY" "$API/api/v1/prompts/shared/iron-laws?part=custom" > "$T/part.body"
+curl -q -s -H "Authorization: Bearer $TEAM_KEY" "$API/api/v1/prompts/shared/iron-laws" > "$T/legacy.body"
 { cat "$T/base.body"; printf '\n\n'; cat "$T/part.body"; } | cmp -s - "$T/legacy.body"
 check "the API's legacy body is exactly the signed file, a blank line, then the ?part=custom section" $? \
     "legacy $(wc -c < "$T/legacy.body") bytes, base $(wc -c < "$T/base.body"), part $(wc -c < "$T/part.body")"
