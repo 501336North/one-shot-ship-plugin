@@ -5,8 +5,19 @@
  * deleted, never trusted. Anything short of a verified manifest is an error: there is no unverified fallback.
  */
 
-import { createHash } from 'crypto';
-import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
+import { createHash, randomBytes } from 'crypto';
+import {
+  closeSync,
+  constants,
+  fchmodSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'fs';
 import { join } from 'path';
 import { getConfigDir } from './config.js';
 import { fetchManifest, verifyManifestSignature, type SignedManifest } from './manifest-verifier.js';
@@ -56,14 +67,27 @@ export function readCachedManifest(origin: string, publicKey: string): SignedMan
   return cached.manifest;
 }
 
+/**
+ * Write the cache without ever following a symlink: run/ is opened O_NOFOLLOW and must be a directory owned by this
+ * user (else caching is skipped), its mode is fixed through that descriptor, and the entry is written to a fresh
+ * O_EXCL temp file in run/ and renamed over the cache path (rename replaces a link, it never writes through one).
+ */
 function writeCachedManifest(origin: string, manifest: SignedManifest): void {
+  const dir = runDir();
   try {
-    mkdirSync(runDir(), { recursive: true, mode: 0o700 });
-    chmodSync(runDir(), 0o700);
-    const path = cachePath(origin);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const fd = openSync(dir, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    try {
+      const stat = fstatSync(fd);
+      if (!stat.isDirectory() || stat.uid !== process.getuid?.()) return;
+      fchmodSync(fd, 0o700);
+    } finally {
+      closeSync(fd);
+    }
     const entry: CachedManifest = { origin, fetchedAt: Date.now(), manifest };
-    writeFileSync(path, JSON.stringify(entry), { mode: 0o600 });
-    chmodSync(path, 0o600);
+    const temp = join(dir, `.manifest-${randomBytes(8).toString('hex')}.tmp`);
+    writeFileSync(temp, JSON.stringify(entry), { mode: 0o600, flag: 'wx' });
+    renameSync(temp, cachePath(origin));
   } catch {
     // A cache that cannot be written only costs a fetch next time.
   }
