@@ -87,10 +87,31 @@ function readOwnConfigFile(configPath) {
             warnOnce(`[oss-watcher] ${configPath} ${UNSAFE_CONFIG}.`);
             return null;
         }
-        return fs.readFileSync(fd, 'utf8');
+        return { content: fs.readFileSync(fd, 'utf8'), mode: stat.mode };
     }
     finally {
         fs.closeSync(fd);
+    }
+}
+const GROUP_OR_WORLD_WRITE = 0o022;
+const UNSAFE_LOOPBACK = 'names a local (loopback) API but it or its directory is group- or world-writable ' +
+    '(chmod 600 the file and chmod 700 its directory); the OSS API key will not be sent';
+function isLoopback(origin) {
+    return LOOPBACK_HOSTS.includes(new URL(origin).hostname);
+}
+/**
+ * SR2: a loopback apiUrl is trusted only when neither config.json nor its directory has a group- or
+ * world-write bit, so a group member cannot point the key at a port they listen on. The same rule
+ * as oss_api_url (hooks/oss-api-curl.sh) and getApiUrl (packages/cli-decrypt).
+ */
+function onlyUserWritable(fileMode, dir) {
+    if ((fileMode & GROUP_OR_WORLD_WRITE) !== 0)
+        return false;
+    try {
+        return (fs.statSync(dir).mode & GROUP_OR_WORLD_WRITE) === 0;
+    }
+    catch {
+        return false;
     }
 }
 /**
@@ -102,9 +123,10 @@ function readOwnConfigFile(configPath) {
  */
 export function readApiCredentials(configDir) {
     const configPath = path.join(configDir || getConfigDir(), 'config.json');
-    const content = readOwnConfigFile(configPath);
-    if (content === null)
+    const file = readOwnConfigFile(configPath);
+    if (file === null)
         return null;
+    const { content } = file;
     try {
         const config = JSON.parse(content);
         const { apiKey } = config;
@@ -114,6 +136,10 @@ export function readApiCredentials(configDir) {
         const apiUrl = resolveApiUrl(config.apiUrl, configPath);
         if (apiUrl === null)
             return null;
+        if (isLoopback(apiUrl) && !onlyUserWritable(file.mode, path.dirname(configPath))) {
+            warnOnce(`[oss-watcher] ${configPath} ${UNSAFE_LOOPBACK}.`);
+            return null;
+        }
         return { apiKey, apiUrl };
     }
     catch {

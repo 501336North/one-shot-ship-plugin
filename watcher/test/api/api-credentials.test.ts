@@ -255,3 +255,47 @@ describe('readApiCredentials: the apiKey (#47)', () => {
     expect(readApiCredentials(writeConfig({ apiKey: 'ak_live_123' }))?.apiKey).toBe('ak_live_123');
   });
 });
+
+// SR2: a loopback apiUrl sends the key to whatever listens on this machine, so it is trusted only from
+// a config only the user can write: neither config.json nor its directory has a group- or world-write
+// bit. Production and staging keep the FR7 rule (group-writable file accepted, directory not checked).
+describe('readApiCredentials: a loopback apiUrl needs a config only the user can write (SR2)', () => {
+  const LOOPBACK = 'http://127.0.0.1:3001';
+
+  it('should refuse a loopback apiUrl from a group-writable (0664) config.json, warning once', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const dir = writeConfig({ apiKey: 'secret-key-789', apiUrl: LOOPBACK });
+    fs.chmodSync(dir, 0o700);
+    fs.chmodSync(path.join(dir, 'config.json'), 0o664);
+
+    expect(readApiCredentials(dir)).toBeNull();
+    expect(readApiCredentials(dir)).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).not.toContain('secret-key-789');
+  });
+
+  it('should refuse a loopback apiUrl from a 0600 config.json in a group-writable (0775) directory', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const dir = writeConfig({ apiKey: 'k', apiUrl: LOOPBACK });
+    fs.chmodSync(path.join(dir, 'config.json'), 0o600);
+    fs.chmodSync(dir, 0o775);
+
+    expect(readApiCredentials(dir)).toBeNull();
+  });
+
+  it('should trust a loopback apiUrl from a 0600 config.json in a 0700 directory', () => {
+    const dir = writeConfig({ apiKey: 'k', apiUrl: LOOPBACK });
+    fs.chmodSync(path.join(dir, 'config.json'), 0o600);
+    fs.chmodSync(dir, 0o700);
+
+    expect(readApiCredentials(dir)).toEqual({ apiKey: 'k', apiUrl: LOOPBACK });
+  });
+
+  it('should still trust production from a group-writable (0664) config.json in a 0775 directory', () => {
+    const dir = writeConfig({ apiKey: 'k', apiUrl: DEFAULT_API_URL });
+    fs.chmodSync(path.join(dir, 'config.json'), 0o664);
+    fs.chmodSync(dir, 0o775);
+
+    expect(readApiCredentials(dir)).toEqual({ apiKey: 'k', apiUrl: DEFAULT_API_URL });
+  });
+});

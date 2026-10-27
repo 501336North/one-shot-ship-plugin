@@ -84,7 +84,7 @@ const UNSAFE_CONFIG =
  * world-writable. Group-writable is allowed (umask 002), the same rule as the shell and the CLI (FR7).
  * A missing file is silent (not logged in); a refused one warns once.
  */
-function readOwnConfigFile(configPath: string): string | null {
+function readOwnConfigFile(configPath: string): { content: string; mode: number } | null {
   let fd: number;
   try {
     fd = fs.openSync(configPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
@@ -101,9 +101,33 @@ function readOwnConfigFile(configPath: string): string | null {
       warnOnce(`[oss-watcher] ${configPath} ${UNSAFE_CONFIG}.`);
       return null;
     }
-    return fs.readFileSync(fd, 'utf8');
+    return { content: fs.readFileSync(fd, 'utf8'), mode: stat.mode };
   } finally {
     fs.closeSync(fd);
+  }
+}
+
+const GROUP_OR_WORLD_WRITE = 0o022;
+
+const UNSAFE_LOOPBACK =
+  'names a local (loopback) API but it or its directory is group- or world-writable ' +
+  '(chmod 600 the file and chmod 700 its directory); the OSS API key will not be sent';
+
+function isLoopback(origin: string): boolean {
+  return LOOPBACK_HOSTS.includes(new URL(origin).hostname);
+}
+
+/**
+ * SR2: a loopback apiUrl is trusted only when neither config.json nor its directory has a group- or
+ * world-write bit, so a group member cannot point the key at a port they listen on. The same rule
+ * as oss_api_url (hooks/oss-api-curl.sh) and getApiUrl (packages/cli-decrypt).
+ */
+function onlyUserWritable(fileMode: number, dir: string): boolean {
+  if ((fileMode & GROUP_OR_WORLD_WRITE) !== 0) return false;
+  try {
+    return (fs.statSync(dir).mode & GROUP_OR_WORLD_WRITE) === 0;
+  } catch {
+    return false;
   }
 }
 
@@ -116,8 +140,9 @@ function readOwnConfigFile(configPath: string): string | null {
  */
 export function readApiCredentials(configDir?: string): ApiCredentials | null {
   const configPath = path.join(configDir || getConfigDir(), 'config.json');
-  const content = readOwnConfigFile(configPath);
-  if (content === null) return null;
+  const file = readOwnConfigFile(configPath);
+  if (file === null) return null;
+  const { content } = file;
 
   try {
     const config = JSON.parse(content) as { apiKey?: unknown; apiUrl?: unknown };
@@ -128,6 +153,10 @@ export function readApiCredentials(configDir?: string): ApiCredentials | null {
 
     const apiUrl = resolveApiUrl(config.apiUrl, configPath);
     if (apiUrl === null) return null;
+    if (isLoopback(apiUrl) && !onlyUserWritable(file.mode, path.dirname(configPath))) {
+      warnOnce(`[oss-watcher] ${configPath} ${UNSAFE_LOOPBACK}.`);
+      return null;
+    }
 
     return { apiKey, apiUrl };
   } catch {
