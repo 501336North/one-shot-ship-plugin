@@ -140,15 +140,29 @@ function readOwnConfigFile(configPath) {
       warnOnce(`[oss-watcher] ${configPath} ${UNSAFE_CONFIG}.`);
       return null;
     }
-    return fs.readFileSync(fd, "utf8");
+    return { content: fs.readFileSync(fd, "utf8"), mode: stat.mode };
   } finally {
     fs.closeSync(fd);
   }
 }
+var GROUP_OR_WORLD_WRITE = 18;
+var UNSAFE_LOOPBACK = "names a local (loopback) API but it or its directory is group- or world-writable (chmod 600 the file and chmod 700 its directory); the OSS API key will not be sent";
+function isLoopback(origin) {
+  return LOOPBACK_HOSTS.includes(new URL(origin).hostname);
+}
+function onlyUserWritable(fileMode, dir) {
+  if ((fileMode & GROUP_OR_WORLD_WRITE) !== 0) return false;
+  try {
+    return (fs.statSync(dir).mode & GROUP_OR_WORLD_WRITE) === 0;
+  } catch {
+    return false;
+  }
+}
 function readApiCredentials(configDir) {
   const configPath = path.join(configDir || getConfigDir(), "config.json");
-  const content = readOwnConfigFile(configPath);
-  if (content === null) return null;
+  const file = readOwnConfigFile(configPath);
+  if (file === null) return null;
+  const { content } = file;
   try {
     const config = JSON.parse(content);
     const { apiKey } = config;
@@ -157,9 +171,31 @@ function readApiCredentials(configDir) {
     }
     const apiUrl = resolveApiUrl(config.apiUrl, configPath);
     if (apiUrl === null) return null;
+    if (isLoopback(apiUrl) && !onlyUserWritable(file.mode, path.dirname(configPath))) {
+      warnOnce(`[oss-watcher] ${configPath} ${UNSAFE_LOOPBACK}.`);
+      return null;
+    }
     return { apiKey, apiUrl };
   } catch {
     return null;
+  }
+}
+
+// src/api/with-deadline.ts
+async function withDeadline(timeoutMs, request) {
+  const controller = new AbortController();
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const timeout = new DOMException("The OSS API request timed out", "TimeoutError");
+      controller.abort(timeout);
+      reject(timeout);
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([request(controller.signal), deadline]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -225,17 +261,23 @@ async function fetchWorkflowConfig(workflowName, timeoutMs = WORKFLOW_FETCH_TIME
     throw new Error("No API key configured or apiUrl is not https");
   }
   const endpoint = `${credentials.apiUrl}/api/v1/workflows/${encodeURIComponent(workflowName)}`;
-  let response;
   try {
-    response = await fetch(endpoint, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${credentials.apiKey}`,
-        "Content-Type": "application/json"
-      },
-      signal: AbortSignal.timeout(timeoutMs),
-      // G5: never replay the Bearer key to a redirect target
-      redirect: "error"
+    return await withDeadline(timeoutMs, async (signal) => {
+      const response = await fetch(endpoint, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${credentials.apiKey}`,
+          "Content-Type": "application/json"
+        },
+        signal,
+        // G5: never replay the Bearer key to a redirect target
+        redirect: "error"
+      });
+      if (!response.ok) {
+        const errorResponse = await response.json().catch(() => ({ error: "Request failed" }));
+        throw new Error(errorResponse.error || `HTTP ${response.status}`);
+      }
+      return await response.json();
     });
   } catch (error) {
     if (error instanceof Error && error.name === "TimeoutError") {
@@ -243,11 +285,6 @@ async function fetchWorkflowConfig(workflowName, timeoutMs = WORKFLOW_FETCH_TIME
     }
     throw error;
   }
-  if (!response.ok) {
-    const errorResponse = await response.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(errorResponse.error || `HTTP ${response.status}`);
-  }
-  return response.json();
 }
 function decryptWorkflowConfig(encrypted, credentials) {
   try {

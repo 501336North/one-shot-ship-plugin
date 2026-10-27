@@ -16,6 +16,7 @@ import {
   DEFAULT_WORKFLOW_CONFIGS,
 } from '../engine/types.js';
 import { getConfigDir, readApiCredentials } from './api-credentials.js';
+import { withDeadline } from './with-deadline.js';
 import { assertValidWorkflowName } from '../utils/workflow-name.js';
 
 const PBKDF2_ITERATIONS = 100000;
@@ -111,17 +112,26 @@ export async function fetchWorkflowConfig(
 
   const endpoint = `${credentials.apiUrl}/api/v1/workflows/${encodeURIComponent(workflowName)}`;
 
-  let response: Response;
   try {
-    response = await fetch(endpoint, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${credentials.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      signal: AbortSignal.timeout(timeoutMs),
-      // G5: never replay the Bearer key to a redirect target
-      redirect: 'error',
+    // the deadline covers the body read too: a stalled body must not hang the watcher (SR10)
+    return await withDeadline(timeoutMs, async (signal) => {
+      const response = await fetch(endpoint, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${credentials.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        signal,
+        // G5: never replay the Bearer key to a redirect target
+        redirect: 'error',
+      });
+
+      if (!response.ok) {
+        const errorResponse = await response.json().catch(() => ({ error: 'Request failed' })) as { error?: string };
+        throw new Error(errorResponse.error || `HTTP ${response.status}`);
+      }
+
+      return (await response.json()) as EncryptedWorkflowConfig;
     });
   } catch (error) {
     // G10: make the fallback visible, without the URL or key
@@ -130,13 +140,6 @@ export async function fetchWorkflowConfig(
     }
     throw error;
   }
-
-  if (!response.ok) {
-    const errorResponse = await response.json().catch(() => ({ error: 'Request failed' })) as { error?: string };
-    throw new Error(errorResponse.error || `HTTP ${response.status}`);
-  }
-
-  return response.json() as Promise<EncryptedWorkflowConfig>;
 }
 
 /**

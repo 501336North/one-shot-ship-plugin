@@ -79,10 +79,12 @@ export class IronLawLogParser {
                 }
             };
         }
-        // The allowlisted sync hook fetches with the key itself, so the hint carries no key, header or
-        // URL into model context (FR10); when the config is refused, point at /oss:login instead
+        // The hint carries no key, header or URL into model context (FR10), and no command: the sync
+        // hook exits at once while its 24 h stamp is fresh or in its 1 h backoff, so running it refreshed
+        // nothing (SR12). The laws are already in CLAUDE.md; re-reading them is what restores them.
+        // When the config is refused, point at /oss:login instead.
         const fetchHint = readApiCredentials()
-            ? 'Run ~/.oss/hooks/oss-iron-laws-sync.sh, then re-read the IRON LAWS block in CLAUDE.md'
+            ? 'Re-read the IRON LAWS block in CLAUDE.md (between the IRON LAWS START and END markers) and follow it'
             : 'No usable OSS config (apiKey, apiUrl): run /oss:login';
         let prompt = `IRON LAW #${law} violated 3+ times\n\nMANDATORY: Fetch IRON LAWS and place at top of context\n\n${fetchHint}`;
         if (correction) {

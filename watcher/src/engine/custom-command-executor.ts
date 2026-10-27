@@ -19,6 +19,7 @@ import { promisify } from 'util';
 import { homedir } from 'os';
 import { join } from 'path';
 import { readApiCredentials } from '../api/api-credentials.js';
+import { withDeadline } from '../api/with-deadline.js';
 import { isSafeTeamCommandName } from '../utils/safe-chain-name.js';
 
 const execFileAsync = promisify(execFile);
@@ -105,34 +106,37 @@ export class CustomCommandExecutor {
     }
     const url = `${credentials.apiUrl}/api/v1/prompts/custom/${encodeURIComponent(commandName)}`;
 
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${credentials.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      signal: AbortSignal.timeout(timeoutMs),
-      // never replay the Bearer key to a redirect target
-      redirect: 'error',
+    // the deadline covers the body read too: a stalled body must not hang the watcher (SR10)
+    return withDeadline(timeoutMs, async (signal) => {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${credentials.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        signal,
+        // never replay the Bearer key to a redirect target
+        redirect: 'error',
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          return null;
+        }
+        if (response.status === 401) {
+          throw new Error('Authentication failed. Run /oss:login to refresh credentials.');
+        }
+        if (response.status === 403) {
+          throw new Error('Subscription expired. Upgrade at: https://www.oneshotship.com/pricing');
+        }
+        const errorData = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
+          error?: string;
+        };
+        throw new Error(errorData.error || 'Request failed');
+      }
+
+      return (await response.json()) as CustomCommandResponse;
     });
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        return null;
-      }
-      if (response.status === 401) {
-        throw new Error('Authentication failed. Run /oss:login to refresh credentials.');
-      }
-      if (response.status === 403) {
-        throw new Error('Subscription expired. Upgrade at: https://www.oneshotship.com/pricing');
-      }
-      const errorData = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
-        error?: string;
-      };
-      throw new Error(errorData.error || 'Request failed');
-    }
-
-    return response.json() as Promise<CustomCommandResponse>;
   }
 
   /**
