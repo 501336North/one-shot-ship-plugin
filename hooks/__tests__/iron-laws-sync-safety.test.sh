@@ -57,7 +57,7 @@ FAKE_KEY='fake-key-0123456789abcdef'
 # --- fixture --------------------------------------------------------------------------------
 # T/home   HOME with .oss/config.json and .oss/bin/oss-decrypt (the stub CLI)
 # T/proj   CLAUDE_PROJECT_DIR
-# T/bin    curl: records any call to T/shim/curl-argv; serves the custom section (SR16), otherwise fails
+# T/bin    curl: records any call to T/shim/curl-argv; serves the custom section (SR16, default empty), otherwise fails
 # T/shim   CLI control: body, refuse (a message: the CLI prints it on stderr and exits 1), sleep;
 #          records argv (one line per call)
 setup() {
@@ -77,14 +77,16 @@ printf '\n'   # console.log ends the output with a newline
 exit 0
 SHIM
     chmod +x "$T/home/.oss/bin/oss-decrypt"
-    # curl: records argv; serves T/shim/custom for ?part=custom (SR16), or fails there when T/shim/custom-fail
-    # exists; any other call is a tripwire (exit 7).
+    # curl: records argv; serves T/shim/custom for ?part=custom (SR16; none: an empty 200, a user with no team laws),
+    # or fails there when T/shim/custom-fail exists; any other call is a tripwire (exit 7). TR4: a FAILED team fetch
+    # sets the 1h backoff, so the default must be the honest API's empty answer, not a failure.
     cat > "$T/bin/curl" << CURL
 #!/bin/bash
 printf '%s\n' "\$*" >> "$T/shim/curl-argv"
 case "\$*" in *"part=custom"*)
     [[ -f "$T/shim/custom-fail" ]] && exit 22
-    [[ -f "$T/shim/custom" ]] && { cat "$T/shim/custom"; exit 0; } ;;
+    [[ -f "$T/shim/custom" ]] && cat "$T/shim/custom"
+    exit 0 ;;
 esac
 exit 7
 CURL
