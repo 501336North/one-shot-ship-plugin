@@ -3,11 +3,12 @@
  * Uses encrypted file storage with machine-derived key
  */
 
-import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import crypto from 'crypto';
 import { getConfigDir } from './config.js';
+import { writeFileNoFollow } from './safe-write.js';
 
 /**
  * Credentials structure for decryption
@@ -89,17 +90,9 @@ function decryptCredentials(stored: string): Credentials {
  * Store credentials securely
  */
 export async function storeCredentials(credentials: Credentials): Promise<void> {
-  const configDir = getConfigDir();
-
-  // Ensure config directory exists
-  if (!existsSync(configDir)) {
-    mkdirSync(configDir, { recursive: true, mode: 0o700 });
-  }
-
   const encrypted = encryptCredentials(credentials);
-  const credentialsPath = getCredentialsPath();
-
-  writeFileSync(credentialsPath, encrypted, { mode: 0o600 });
+  // Owner-only, never through a symlink (writeFileNoFollow); a symlinked or foreign config directory is refused.
+  writeFileNoFollow(getCredentialsPath(), encrypted, { mode: 0o600, dirMode: 0o700 });
 }
 
 /**
