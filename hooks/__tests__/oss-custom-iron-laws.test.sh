@@ -62,6 +62,16 @@ custom "$ORDINARY"
 want=$(printf "$ORDINARY")
 [[ "$RC" == 0 && "$OUT" == "$want" ]] && pass "an ordinary team section is printed unchanged" || fail "an ordinary team section is printed unchanged" "rc=$RC out: $OUT"
 
+# TR3: the unverified section is size-bounded (the verified laws are capped too; the honest API sends ~3 KB). Over
+# 16 KiB after stripping: no section at all (the hooks then write the verified laws alone). curl is told the same cap.
+big() { local i; printf '## Custom Team Laws\\n\\n### Rule\\n\\n'; for (( i = 0; i < $1; i++ )); do printf '%099d\\n' 0; done; }
+custom "$(big 170)"   # 17 000+ bytes
+[[ "$RC" != 0 && -z "$OUT" ]] && pass "a section over 16 KiB is refused (nothing printed)" || fail "a section over 16 KiB is refused" "rc=$RC bytes=${#OUT}"
+custom "$(big 160)"   # 16 000+ bytes
+[[ "$RC" == 0 && "$OUT" == "## Custom Team Laws"* ]] && pass "a section just under 16 KiB is printed" || fail "a section just under 16 KiB is printed" "rc=$RC"
+grep -q -- '--max-filesize 16384 ' "$T/curl-argv" && pass "curl is given the same cap (--max-filesize 16384)" \
+    || fail "curl is given --max-filesize 16384" "argv: $(tail -n 1 "$T/curl-argv")"
+
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
 [[ $FAILED -eq 0 ]]

@@ -209,10 +209,11 @@ test_custom_section_printed() {
 }
 test_custom_section_absent() {
     local mode
-    for mode in empty fail; do
+    for mode in empty fail oversized; do
         local test_name="Team section $mode → the verified laws alone, no unverified note, exit 0"
         ((TESTS_RUN++))
         make_sandbox; [[ $mode == empty ]] && : > "$TEST_HOME/custom"
+        [[ $mode == oversized ]] && { printf '## Custom Team Laws\n\n'; head -c 20000 /dev/zero | tr '\0' 'x'; printf '\n'; } > "$TEST_HOME/custom"   # TR3
         run_hook --raw
         local asked=n; grep -q 'part=custom' "$TEST_HOME/curl-called" 2>/dev/null && asked=y
         cleanup

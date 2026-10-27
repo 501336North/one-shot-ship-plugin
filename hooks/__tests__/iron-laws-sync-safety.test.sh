@@ -447,12 +447,13 @@ test_custom_section_forged_lines() {
 }
 test_custom_section_absent() {
     local mode
-    for mode in empty fail notcustom; do
+    for mode in empty fail notcustom oversized; do
         local name="SR16: team section $mode → the verified laws alone, no unverified marker, sync succeeds"; ((TESTS_RUN++)); setup
         case $mode in
             empty) : > "$T/shim/custom" ;;
             fail) touch "$T/shim/custom-fail" ;;
             notcustom) valid_body > "$T/shim/custom" ;;   # an older API ignoring ?part sends the whole laws
+            oversized) { printf '## Custom Team Laws\n\n'; head -c 20000 /dev/zero | tr '\0' 'x'; printf '\n'; } > "$T/shim/custom" ;;   # TR3: over 16 KiB
         esac
         block_file "$T/proj/CLAUDE.md"; stale; run_sync
         local b; b=$(block_of "$T/proj/CLAUDE.md")
