@@ -157,6 +157,24 @@ call oss_custom_iron_laws "$T/curlrec:$PATH"
     && pass "team laws: a trusted apiUrl is fetched at <origin>/api/v1/prompts/shared/iron-laws?part=custom" \
     || fail "team laws: a trusted apiUrl is fetched" "rc=$RC out='$OUT' calls=$(cat "$T/curl-calls" 2>/dev/null)"
 
+# TR6: without jq the key is read by a regex that takes the FIRST "apiKey" (a nested one too) and stops at an escaped
+# quote. A config it cannot read unambiguously is refused rather than sending a wrong or truncated key; jq reads it.
+nojq_key_case() {  # nojq_key_case <config> <label>
+    rm -f "$T/.oss/config.json"; printf '%s' "$1" > "$T/.oss/config.json"; chmod 600 "$T/.oss/config.json"
+    call oss_api_key "$T/nojq"
+    [[ "$RC" != 0 && -z "$OUT" ]] && pass "without jq: $2 → no key (refused)" || fail "without jq: $2 → refused" "rc=$RC out='$OUT'"
+}
+nojq_key_case '{"meta":{"apiKey":"nested-k"},"apiKey":"top-k"}' "a nested apiKey before the top-level one"
+nojq_key_case '{"apiKey":"first-k","apiKey":"second-k"}' "a duplicated apiKey"
+nojq_key_case '{"apiKey":"ab\"cd"}' "an apiKey with an escaped quote"
+printf '{"meta":{"apiKey":"nested-k"},"apiKey":"top-k"}' > "$T/.oss/config.json"; chmod 600 "$T/.oss/config.json"
+call oss_api_key
+[[ "$RC" == 0 && "$OUT" == top-k ]] && pass "with jq: the top-level apiKey is read, a nested one ignored (unchanged)" \
+    || fail "with jq: the top-level apiKey is read" "rc=$RC out='$OUT'"
+printf '{"apiKey":"plain-k"}' > "$T/.oss/config.json"; call oss_api_key "$T/nojq"
+[[ "$RC" == 0 && "$OUT" == plain-k ]] && pass "without jq: the flat config /oss:login writes still gives its key" \
+    || fail "without jq: the flat config still gives its key" "rc=$RC out='$OUT'"
+
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
 [[ $FAILED -eq 0 ]]

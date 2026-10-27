@@ -66,14 +66,16 @@ _oss_config_read() {
 }
 
 # oss_api_key - prints apiKey from the OSS config when it is a non-empty string; otherwise prints nothing
-# and returns 1. Without jq: the flat `"apiKey": "..."` shape that /oss:login writes.
+# and returns 1. Without jq: the flat `"apiKey": "..."` shape that /oss:login writes, and only that (TR6): a config
+# naming "apiKey" twice (a nested one too) or a value with a backslash (an escape) is refused, not guessed at.
 oss_api_key() {
-    local key='' re='"apiKey"[[:space:]]*:[[:space:]]*"([^"]*)"'
+    local key='' re='"apiKey"[[:space:]]*:[[:space:]]*"([^"]*)"' twice='"apiKey".*"apiKey"'
     _oss_config_read || return 1
     if command -v jq &>/dev/null; then
         key=$(printf '%s' "$_OSS_CFG" | jq -r 'if (.apiKey | type) == "string" then .apiKey else "" end' 2>/dev/null)
     elif [[ "$_OSS_CFG" =~ $re ]]; then
         key=${BASH_REMATCH[1]-${match[1]-}}   # bash, zsh
+        [[ "$key" == *\\* || "$_OSS_CFG" =~ $twice ]] && return 1
     fi
     [[ -n "$key" ]] || return 1
     printf '%s\n' "$key"
