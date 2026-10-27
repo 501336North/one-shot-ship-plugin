@@ -37,7 +37,7 @@ run_notify() {
         "$SH" "$T/hooks/oss-notify.sh" "$@" 2>&1 </dev/null)
 }
 logged_in() {
-    echo '{"apiKey":"ossk_test_key","apiUrl":"https://example.invalid"}' > "$T/home/.oss/config.json"
+    echo '{"apiKey":"ossk_test_key","apiUrl":"https://one-shot-ship-api-staging.onrender.com"}' > "$T/home/.oss/config.json"
     : > "$T/plugin/watcher/dist/cli/update-workflow-state.js"
 }
 

@@ -76,8 +76,8 @@ oss_api_url_syntax() {
                      elif (.apiUrl | type) != "string" then "!"
                      elif (.apiUrl | test("[^!-~]")) then "!"
                      else .apiUrl end' "$(oss_config_file)" 2>/dev/null)
-    elif grep -q '"apiUrl"' "$(oss_config_file)" 2>/dev/null; then
-        return 1   # FR5: never read a named apiUrl as production just because jq is missing
+    elif grep -qE '"apiUrl"[[:space:]]*:[[:space:]]*("[^"]|[^"n[:space:]])' "$(oss_config_file)" 2>/dev/null; then
+        return 1   # FR5: a named apiUrl (non-empty, non-null) is never read as production just because jq is missing
     fi
     [[ -n "$url" ]] || url="$OSS_API_DEFAULT_URL"
     [[ "$url" =~ $https || "$url" =~ $loopback ]] || return 1

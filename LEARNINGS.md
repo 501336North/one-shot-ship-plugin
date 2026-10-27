@@ -155,3 +155,23 @@
 ## 2026-10-26 | Testing | release-channels
 - **Context:** build
 - **Insight:** In a test harness, `VAR=value` produced by an array expansion (`${extra[@]} cmd`) is NOT an assignment: the hook never saw the variable, and a "calls nothing" row passed vacuously. Pass such pairs through `env "${extra[@]}" cmd`. Also, in `hooks/__tests__/oss-value.test.sh` a later section replaces the `$T/sbin/curl` stub with one that does not record stdin; any new section that asserts on `curl.stdin` must install its own stub.
+
+## 2026-10-27 | Security | release-channels (ship round 1)
+- **Context:** ship → build (fix round)
+- **Insight:** A signature check that FAILS OPEN is no boundary. oss-decrypt delivered prompts unverified when the manifest was missing, slow (>3 s, measured on about 1 in 3 production fetches) or did not list the prompt. Every "key by address" guarantee in ADR-005 rested on it. Before trusting a verification step, test the paths where verification is SKIPPED (missing manifest, timeout, unlisted item), not only the paths where it fails.
+
+## 2026-10-27 | Security | release-channels (ship round 1)
+- **Context:** ship → build (fix round)
+- **Insight:** Tightening one key sender (oss-decrypt's address→key allowlist) while others (hooks, watcher, login) still accept any https address leaves the key exfiltrable. That is IRON LAW #1b at the security layer. Keep the TRUST rule (which hosts may receive the key) in its own shared case table (`trusted-api-url-cases.json`), separate from the SYNTAX table, and run every reader, in every language, against it.
+
+## 2026-10-27 | Testing | release-channels (ship round 1)
+- **Context:** ship → build (fix round)
+- **Insight:**
+  - A test that greps a workflow's text cannot catch a logic bug in it: `contains(github.ref_name, '-')` was "tested" while matching EVERY tag. Extract the step's shell and RUN it on sample inputs.
+  - Once the repo itself is on a beta version (`next`), suites that model a CUSTOMER install must run the hook from a throwaway STABLE plugin tree, or they silently start testing the beta path.
+
+## 2026-10-27 | Process | release-channels (ship round 1)
+- **Context:** ship → build (fix round)
+- **Insight:**
+  - Read every test result line before writing a commit message that quotes it. A 2/3 was committed as "3/3" and needed a follow-up correction commit.
+  - When a bash command is moved to the background after it already ran `git stash push`, never touch the stashed file until it finishes. Then restore by the stash entry's SHA, not by position.

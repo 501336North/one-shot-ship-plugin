@@ -44,6 +44,11 @@ printf '{"apiKey":"k","apiUrl":"https://one-shot-ship-api-staging.onrender.com"}
 call oss_api_url "$T/nojq"
 [[ "$RC" != 0 && -z "$OUT" ]] && pass "without jq, a config that names an apiUrl is refused (never read as production)" \
     || fail "without jq, a config that names an apiUrl is refused" "rc=$RC out='$OUT'"
+for cfg in '{"apiKey":"k","apiUrl":""}' '{"apiKey":"k","apiUrl":null}' '{"apiKey":"k", "apiUrl" : ""}'; do
+    printf '%s' "$cfg" > "$T/.oss/config.json"; call oss_api_url "$T/nojq"
+    [[ "$RC" == 0 && "$OUT" == "https://one-shot-ship-api.onrender.com" ]] && pass "without jq, an empty or null apiUrl still means production ($cfg)" \
+        || fail "without jq, an empty or null apiUrl still means production ($cfg)" "rc=$RC out='$OUT'"
+done
 printf '{"apiKey":"k"}' > "$T/.oss/config.json"
 call oss_api_url "$T/nojq"
 [[ "$RC" == 0 && "$OUT" == "https://one-shot-ship-api.onrender.com" ]] && pass "without jq, a config with no apiUrl still means production" \
