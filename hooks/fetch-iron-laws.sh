@@ -110,5 +110,5 @@ fi
 
 # Below the verified laws: the team/personal section, marked unverified (SR16); none or a failed fetch: the laws alone.
 if CUSTOM=$(oss_custom_iron_laws); then
-  printf '\n%s\n\n%s\n' "$OSS_CUSTOM_LAWS_NOTE" "$CUSTOM"
+  printf '\n%s\n\n%s\n\n%s\n' "$OSS_CUSTOM_LAWS_NOTE" "$CUSTOM" "$OSS_CUSTOM_LAWS_END"
 fi

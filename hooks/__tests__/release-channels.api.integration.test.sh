@@ -129,8 +129,8 @@ mkdir "$T/hooks"; cp "$ROOT/hooks/fetch-iron-laws.sh" "$ROOT/hooks/oss-iron-laws
 printf '#!/bin/bash\nexit 0\n' > "$T/hooks/ensure-decrypt-cli.sh"; chmod +x "$T/hooks/"*.sh
 inhome bash "$T/hooks/fetch-iron-laws.sh" --raw >"$T/fetch.out" 2>"$T/fetch.err"; rc=$?
 { printf '%s\n' "$(cat "$T/base.body")"; printf '\n%s\n\n' '> Team/personal laws below are not covered by the signed prompt manifest (unverified).'
-  cat "$T/hook.out"; } | cmp -s - "$T/fetch.out" && [[ $rc == 0 ]]
-check "fetch-iron-laws.sh prints the verified laws, the unverified note, then the API's team section" $? \
+  cat "$T/hook.out"; printf '\n%s\n' '> End of unverified team/personal laws.'; } | cmp -s - "$T/fetch.out" && [[ $rc == 0 ]]
+check "fetch-iron-laws.sh prints the verified laws, the unverified note, the API's team section, then the closing line" $? \
     "rc=$rc err: $(tail -n 2 "$T/fetch.err")"
 inhome bash "$T/hooks/oss-iron-laws-sync.sh" --install >/dev/null 2>"$T/sync.err"; rc=$?
 [[ $rc == 0 ]] && grep -qx '## Custom Team Laws' "$H/proj/CLAUDE.md" && grep -qF 'not covered by the signed prompt manifest' "$H/proj/CLAUDE.md" \

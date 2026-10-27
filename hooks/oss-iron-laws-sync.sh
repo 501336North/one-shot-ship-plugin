@@ -159,7 +159,8 @@ fetch_body() {
     local custom
     if custom=$(oss_custom_iron_laws); then
         { printf '\n%s\n\n' "$OSS_CUSTOM_LAWS_NOTE"
-          printf '%s\n' "$custom" | awk '!/^[[:space:]]*<!--[[:space:]]*IRON LAWS (START|END)/'; } >> "$out"
+          printf '%s\n' "$custom" | awk '!/^[[:space:]]*<!--[[:space:]]*IRON LAWS (START|END)/'
+          printf '\n%s\n' "$OSS_CUSTOM_LAWS_END"; } >> "$out"
     fi
 }
 

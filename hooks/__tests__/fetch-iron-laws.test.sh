@@ -197,14 +197,15 @@ test_ensure_failure_prints_no_laws() {
 # fetch: the verified laws alone, still exit 0. An untrusted apiUrl: exit 1 before any curl (the key never leaves).
 # =============================================================================
 NOTE='> Team/personal laws below are not covered by the signed prompt manifest (unverified).'
+CLOSE='> End of unverified team/personal laws.'   # TR2: the section ends with a fixed line the team text cannot forge
 test_custom_section_printed() {
     local test_name="The team section is printed below the verified laws, marked unverified, control characters stripped"
     ((TESTS_RUN++))
     make_sandbox; printf '## Custom Personal Laws\n- Mine: \033[1mbold\033[0m\n' > "$TEST_HOME/custom"
     run_hook --raw
     cleanup
-    if [[ $exit_code -eq 0 && "$result" == *"LAW 1: TDD"*"$NOTE"*"## Custom Personal Laws"*"- Mine: [1mbold[0m"* && "$result" != *$'\033'* ]]; then pass "$test_name"
-    else fail "$test_name" "exit 0, laws, note, section, no ESC" "exit=$exit_code output: $result"; fi
+    if [[ $exit_code -eq 0 && "$result" == *"LAW 1: TDD"*"$NOTE"*"## Custom Personal Laws"*"- Mine: [1mbold[0m"*$'\n\n'"$CLOSE" && "$result" != *$'\033'* ]]; then pass "$test_name"
+    else fail "$test_name" "exit 0, laws, note, section, closing line last, no ESC" "exit=$exit_code output: $result"; fi
 }
 test_custom_section_absent() {
     local mode

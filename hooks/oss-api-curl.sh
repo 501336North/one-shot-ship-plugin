@@ -151,6 +151,21 @@ oss_api_url() {
 
 # The line written above the team/personal IRON LAWS, which the signed prompt manifest does not cover (SR16).
 OSS_CUSTOM_LAWS_NOTE='> Team/personal laws below are not covered by the signed prompt manifest (unverified).'
+# The line written below them (TR2): team text after it cannot pass for verified text.
+OSS_CUSTOM_LAWS_END='> End of unverified team/personal laws.'
+
+# The jq filter oss_custom_iron_laws runs on the section: the stripControl character set is removed (line breaks and
+# tabs kept), THEN (TR2), on every line but the first, the API's heading: a Markdown heading at any indentation loses
+# its #s (the API's "### <law name>" lines stay), a setext underline or thematic break is emptied, and a line that
+# reads like OSS_CUSTOM_LAWS_NOTE or OSS_CUSTOM_LAWS_END is emptied. Stripping first means a zero-width character
+# cannot hide a heading from the API's filter and then vanish here.
+_OSS_CUSTOM_LAWS_JQ='gsub("[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]"; "")
+    | split("\n")
+    | .[0:1] + (.[1:] | map(
+        (if test("^\\s*#{1,6}(\\s|$)") and (test("^### [^#\\s]") | not) then sub("^\\s*(#+(\\s+|$))+"; "") else . end)
+        | if test("^\\s*(=+\\s*|-+\\s*|([-*_]\\s*){3,})$") or test("^[\\s>*_#]*(team/personal laws|end of unverified)"; "i")
+          then "" else . end))
+    | join("\n")'
 
 # oss_custom_iron_laws - prints the team/personal IRON LAWS section the API serves beside the signed laws
 # (GET /api/v1/prompts/shared/iron-laws?part=custom: only the "## Custom Team Laws" / "## Custom Personal Laws"
@@ -163,7 +178,7 @@ oss_custom_iron_laws() {
     command -v jq >/dev/null 2>&1 || return 1
     url=$(oss_api_url) && key=$(oss_api_key) || return 1
     body=$(oss_api_curl "$key" -sf -m 10 "$url/api/v1/prompts/shared/iron-laws?part=custom") || return 1
-    body=$(printf '%s' "$body" | jq -Rrs 'gsub("[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]"; "")') || return 1
+    body=$(printf '%s' "$body" | jq -Rrs "$_OSS_CUSTOM_LAWS_JQ") || return 1
     case "$body" in "## Custom Team Laws"* | "## Custom Personal Laws"*) ;; *) return 1 ;; esac
     printf '%s\n' "$body"
 }
