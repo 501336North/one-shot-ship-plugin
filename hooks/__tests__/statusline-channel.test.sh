@@ -55,6 +55,17 @@ l=$(line "$PROD" 2.1.0-beta.1)
 if [[ "$(first_section "$l")" == *mismatch* && "$l" != *STAGING* ]]; then pass "production + beta plugin: a mismatch warning, never STAGING"
 else fail "production + beta plugin: a mismatch warning, never STAGING" "got '$l'"; fi
 
+# FR6 (ship round 1): production written with a trailing "/" or the default ":443" is still production.
+for p in "$PROD/" "https://one-shot-ship-api.onrender.com:443"; do
+    l=$(line "$p" 2.0.94)
+    if [[ -n "$l" && "$l" != *STAGING* && "$l" != *mismatch* && "$l" != *"apiUrl"* ]]; then pass "production written as '$p' + stable: no channel section"
+    else fail "production written as '$p' + stable: no channel section" "got '$l'"; fi
+done
+# FR4: a custom https host is not an OSS API: never shown as STAGING.
+l=$(line "https://api.example.com" 2.1.0-beta.1)
+if [[ "$(first_section "$l")" == "⚠ apiUrl invalid" && "$l" != *STAGING* ]]; then pass "custom host: '⚠ apiUrl invalid', never STAGING"
+else fail "custom host: '⚠ apiUrl invalid', never STAGING" "got '$l'"; fi
+
 l=$(line "http://api.example.com" 2.1.0-beta.1)
 if [[ "$(first_section "$l")" == "⚠ apiUrl invalid" && "$l" != *STAGING* ]]; then pass "invalid apiUrl: '⚠ apiUrl invalid', never STAGING"
 else fail "invalid apiUrl: '⚠ apiUrl invalid', never STAGING" "got '$l'"; fi

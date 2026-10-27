@@ -447,7 +447,7 @@ compute_channel() {
     root="${CLAUDE_PLUGIN_ROOT:-}"
     [[ -z "$root" && -f "$HOME/.oss/plugin-root" ]] && root=$(head -n1 "$HOME/.oss/plugin-root" 2>/dev/null)
     [[ -n "$root" && -f "$root/.claude-plugin/plugin.json" ]] \
-        && ver=$(jq -r '.version // ""' "$root/.claude-plugin/plugin.json" 2>/dev/null)
+        && ver=$(sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$root/.claude-plugin/plugin.json" 2>/dev/null | head -n1)   # no jq fork per render (perf gate)
     [[ "$ver" == *-* ]] && beta=true
     if ! url=$(oss_api_url 2>/dev/null); then echo "⚠ apiUrl invalid"; return 0; fi
     if [[ "$url" == "$OSS_API_DEFAULT_URL" ]]; then
