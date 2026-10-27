@@ -453,3 +453,8 @@ round-1 fix did not land, otherwise they go to `.oss/dev/FOLLOWUPS.md`. Every ta
 - Found while fixing SR4: `src/cache.ts:152` (prompt cache), `src/update-state.ts:50`, `src/storage.ts:102` (credentials)
   write by path and follow symlinks. Same rule as the manifest cache: one shared safe-write helper (no-follow dir,
   owner check, temp file + rename), every writer routed through it.
+
+### SR18 (integration break found merging round 2): watcher hook-error-adoption vs SR6
+- `watcher/test/hooks/hook-error-adoption.test.ts` (fetch-iron-laws.sh, 4 tests) runs the real hook with a stub
+  v0.0.0 CLI; since SR6 the hook always runs `ensure-decrypt-cli.sh`, which judges the stub outdated, so the
+  expected OSSError emits never happen. Stub the installer as the shell suites do, keep every original assertion.

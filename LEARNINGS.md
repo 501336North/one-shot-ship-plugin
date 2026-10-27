@@ -219,3 +219,7 @@
 ## 2026-10-27 | Config | hooks
 - **Context:** build (release-channels ship round 2, SR9/SR2/SR11)
 - **Insight:** on macOS a status-line render pays ~15 ms per `find` and ~4 ms per `stat`; `id`/`find`/`tr`/`head` forks were most of the +20 ms. Guard render cost by counting processes (PATH shims, diff against a stubbed section), not wall time. Checking modes through a symlinked channel home needs `stat -L`/`find -H` (plain stat judges the link's 0755). `kill` on a `( sleep N; ... ) &` watchdog leaves the sleep alive: trap TERM inside the subshell. On GNU, a `stat -f` probe can exit 0 when a file named like the operand exists, so validate the output, not only the rc.
+
+## 2026-10-27 | Testing | watcher + hooks
+- **Context:** build (release-channels ship round 2, SR18)
+- **Insight:** parallel fix branches each passed their own suites, yet the merge broke a watcher test: SR6 (hook always runs the CLI installer) made a watcher test that runs the real hook with a stub CLI start real GitHub downloads. After merging fix branches, run every suite that executes a changed script, across packages; and put a curl tripwire on PATH in any test that runs a hook, so network access fails loudly.

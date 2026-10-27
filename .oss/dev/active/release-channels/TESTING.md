@@ -64,4 +64,16 @@ Repo-wide ratchets guard against a new site reintroducing a hard-coded host or a
 - Fail-closed confirmed against the live service; no mock/reality mismatch in the hooks (the oss-decrypt stub contract = the real CLI's exit code + stdout).
 - Full regression: 82 shell suites. Only the known pre-existing failures (ideate-template, no-telegram-command) remain; the load flakes (iron-laws-sync-safety, oss-api-curl ps, notify bounds) pass alone. cli-decrypt 422/422.
 
-## Last Updated: 2026-10-27 by /oss:integration (ship round 1)
+
+### 2026-10-27: ship round 2 fixes SR1-SR18 (one /oss:build round)
+Every fix RED first, each guard proven by reverting/mutating it (all killed except the noted ones).
+| Group | Tasks | New/changed tests | Result |
+|---|---|---|---|
+| API (build-t15-t18) | SR1, SR15, SR16 | workflow-manifest-agreement (50 shipped wrapper names in a committed fixture), manifest-generator, verify-manifest, iron-laws-custom (3 modes) | unit 6896 pass (3 load timeouts pass alone); tsc clean; oss-channel 19/19 |
+| CLI | SR2, SR3, SR4, SR7, SR10, SR16, SR17 | loopback-config-privacy, config-read-once, manifest-cache-no-symlink, safe-write-writers, channel-config-dir (symlinked `~/.oss`), api-timeout (stalled body), fail-closed acceptance (?base=1, stripped custom text) | 453/453 merged; tsc clean; bundle rebuilt. Unproven: O_EXCL on the random temp name; AbortSignal.timeout vs controller not distinguishable in vitest |
+| Shell hooks | SR2, SR3, SR5, SR6, SR8, SR9, SR11, SR14, SR16 | oss-api-trust (55: ports, loopback modes, symlinked channel home, swap-after-check), statusline-channel (+no-jq), statusline-channel-cost (process count), ensure-decrypt-channel/cli (plugin-root checks), fetch-iron-laws / iron-laws-sync(-safety) (ensure always, team laws section) | status line: compute_channel 17-27 ms -> 7-12 ms per call; full render mean +20.5 -> +2.7 ms vs origin/next (median +17 -> +11, noisy, load 6-13) |
+| Watcher | SR2, SR10, SR12, SR13, SR18 | api-credentials (loopback modes, symlinked home), stalled-response-timeout (forced GC), iron-law-log-parser hint, statusline tests pinned to a stable plugin, hook-error-adoption (stub installer, curl tripwire) | 812/815 (3 load timeouts in untouched files pass alone); tsc clean |
+- Merged regression: 83 shell suites; failing only ideate-template, no-telegram-command (pre-existing on next) and iron-laws-sync-safety 63/64 (load flake, 64/64 alone).
+- Found by the merge, not by any one group: SR6 x watcher hook-error-adoption (real GitHub downloads from a test) -> SR18.
+
+## Last Updated: 2026-10-27 14:55 CST by /oss:build (ship round 2 fixes)

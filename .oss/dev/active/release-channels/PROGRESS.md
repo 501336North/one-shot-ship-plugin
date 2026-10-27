@@ -1,6 +1,6 @@
 # Progress: Release channels (DEV / STAGING / PROD)
 
-## Current Phase: ship (round 2 fixes in progress)
+## Current Phase: ship (round 2 fixes done; round 3 gates next)
 
 ## Tasks
 - [x] Ideate, requirements, ADR-004/005, plan, acceptance (2026-10-26)
@@ -27,7 +27,7 @@
   - plugin: 305303e, 2794dbf, 6e49f34, f69ddf1, d5e03f2, 06e5f77, 020d9ba, 3bb0417, ad34907; merged CLI (FR3/FR4/FR7/FR15/FR1-CLI), watcher (FR4/FR7/FR9/FR10/FR14), FR15 hooks
   - API (build-t15-t18): FR15 35d2b63, FR3 7b48e02, FR8 94bb6a6, FR12 7672068, template c4a07e0
 - [x] Ship round 2 gates (2026-10-27): code review FAIL (1 HIGH: 29 wrappers unsigned), perf FAIL (status line +20 ms, stalled-body timeout), security PASS (1 MED), pentest PASS (2 LOW)
-- [ ] Ship round 2 fixes SR1-SR16 (PLAN.md) through /oss:build (in progress): API SR1/SR15/SR16; CLI SR2/SR3/SR4/SR7/SR10/SR16; shell SR2/SR3/SR5/SR6/SR8/SR9/SR11/SR14/SR16; watcher SR2/SR10/SR12/SR13; docs: ADR-005 rules 1-3 and the FOLLOWUPS premise corrected
+- [x] Ship round 2 fixes SR1-SR18 (PLAN.md) through /oss:build, done 2026-10-27 (SR17 from the SR4 provenance check, SR18 from the merge): API SR1/SR15/SR16; CLI SR2/SR3/SR4/SR7/SR10/SR16; shell SR2/SR3/SR5/SR6/SR8/SR9/SR11/SR14/SR16; watcher SR2/SR10/SR12/SR13; docs: ADR-005 rules 1-3 and the FOLLOWUPS premise corrected
 - [ ] Ship round 3: re-run the 4 gates on the round-2 fixes
 - [ ] Maintainer steps before the feature is usable on STAGING: publish tag cli-decrypt-v1.3.0-beta.1 and commit its checksums; T17 beta repo; H1 Render
 - [ ] Maintainer steps before the first RELEASE: re-sign the production manifest (every workflows/* entry, SR1); publish and pin a stable cli-decrypt >= 1.3.0
@@ -35,4 +35,4 @@
 ## Blockers
 - None. Gated steps: T11 (staging key), T17 (beta repo), H1 (Render/DB).
 
-## Last Updated: 2026-10-27 12:18 CST by /oss:build (ship round 2 fixes)
+## Last Updated: 2026-10-27 14:55 CST by /oss:build (ship round 2 fixes)
