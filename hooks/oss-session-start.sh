@@ -130,15 +130,24 @@ fi
 
 # Check if API key exists in config
 # The key and the URL it goes to come from ONE trusted read of the OSS config (oss-api-curl.sh, TR5/TR9).
-_oss_config_read 2>/dev/null; API_KEY=$(_oss_cfg_key 2>/dev/null)
-if [[ -z "$API_KEY" ]]; then
-    echo "OSS: No API key found. Run /oss login to authenticate."
-    exit 0
+# UR4: a config the trust check refuses (symlink, owner, mode) is reported, and session start goes on without a key.
+API_KEY=""; CONFIG_UNTRUSTED=""
+if ! _oss_config_read 2>/dev/null; then
+    CONFIG_UNTRUSTED=1
+    echo "OSS: Your OSS config is untrusted (a symlink, not owned by you, or writable by others): run /oss:login to replace it."
+else
+    API_KEY=$(_oss_cfg_key 2>/dev/null)
+    if [[ -z "$API_KEY" ]]; then
+        echo "OSS: No API key found. Run /oss login to authenticate."
+        exit 0
+    fi
 fi
 
 # Quick subscription check (non-blocking, skipped in test environments)
 # Note: Full validation happens when skills are used
-if [[ "${OSS_SKIP_HEALTH_CHECK:-}" == "1" ]]; then
+if [[ -n "$CONFIG_UNTRUSTED" ]]; then
+    SUBSCRIPTION_STATUS="unknown"   # no key: no subscription check
+elif [[ "${OSS_SKIP_HEALTH_CHECK:-}" == "1" ]]; then
     SUBSCRIPTION_STATUS="active"
 else
     if API_URL="$(_oss_cfg_origin)"; then
