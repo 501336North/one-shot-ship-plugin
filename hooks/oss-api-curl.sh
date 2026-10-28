@@ -26,8 +26,9 @@ oss_api_curl() {
     # and not a here-string, which bash 3.2 backs with a temp file (the key on disk).
     # -q must stay FIRST: it stops curl reading a default .curlrc ($CURL_HOME, $XDG_CONFIG_HOME, $HOME), whose
     # url=/trace-ascii= lines would send the key to a second host or write it to disk. --globoff: no {a,b}/[1-2]
-    # expansion, so one call is one keyed request.
-    curl -q --globoff --config - "$@" < <(printf 'header = "Authorization: Bearer %s"\n' "$key")
+    # expansion, so one call is one keyed request. --noproxy '*' (UR2): a *_proxy variable never receives the key (the
+    # CLI and the watcher ignore them too).
+    curl -q --globoff --noproxy '*' --config - "$@" < <(printf 'header = "Authorization: Bearer %s"\n' "$key")
 }
 
 # The OSS config file, as getConfigDir in packages/cli-decrypt/src/config.ts picks it: the key and the URL
