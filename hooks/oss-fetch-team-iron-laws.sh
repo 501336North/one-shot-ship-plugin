@@ -86,8 +86,15 @@ if [[ -z "$API_KEY" || -z "$API_URL" ]]; then
   exit 0
 fi
 
-# Get team ID from config (if user is in a team)
-TEAM_ID=$(grep -o '"teamId"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" 2>/dev/null | sed 's/.*: *"\([^"]*\)"/\1/' || echo "")
+# Get team ID from config (if user is in a team): from the same checked read as the key and URL (_OSS_CFG), and only
+# a plain id, so config text cannot steer the keyed request to another API path (UR10). Otherwise: the defaults.
+if command -v jq >/dev/null 2>&1; then
+  TEAM_ID=$(printf '%s' "$_OSS_CFG" | jq -r 'if (.teamId | type) == "string" then .teamId else "" end' 2>/dev/null || true)
+else
+  TEAM_RE='"teamId"[[:space:]]*:[[:space:]]*"([^"]*)"'
+  TEAM_ID=""; [[ "$_OSS_CFG" =~ $TEAM_RE ]] && TEAM_ID=${BASH_REMATCH[1]}
+fi
+[[ "$TEAM_ID" =~ ^[A-Za-z0-9_-]+$ ]] || TEAM_ID=""
 
 # Determine endpoint based on team membership
 if [[ -z "$TEAM_ID" ]]; then
