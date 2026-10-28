@@ -105,4 +105,26 @@ describe('oss-log.sh command log rounds', () => {
     expect(log.split('\n').length).toBeLessThan(3300);
     expect(countBanners(log)).toBe(3);
   });
+
+  /**
+   * @behavior A command log with no banner in its dropped part is still trimmed
+   * @acceptance-criteria With a 1KB cap, a bannerless log of 1100+ lines, then clean:
+   *   clean completes (prints Done.) and the log has fewer than 1100 lines
+   */
+  it('should still trim a log whose dropped part has no banner', () => {
+    fs.writeFileSync(
+      path.join(home, '.oss/settings.json'),
+      JSON.stringify({ logs: { maxCommandLogSizeKB: 1 } })
+    );
+    runLog('write', 'build', 'no banner here');
+    const filler = Array.from({ length: 1100 }, (_, n) => `[00:00:00] filler line ${n}`).join(
+      '\n'
+    );
+    fs.appendFileSync(buildLogPath(), `${filler}\n`);
+
+    const out = runLog('clean');
+
+    expect(out).toContain('Done.');
+    expect(readBuildLog().split('\n').length).toBeLessThan(1100);
+  });
 });
