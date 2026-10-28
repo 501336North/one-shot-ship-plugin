@@ -68,6 +68,7 @@ FOLLOWUPS.md lines 59 (setup.ts pkill), 90 (api-curl.real curl has no -m), 103 (
 |---|---|---|
 | `hooks/oss-log.sh:423-437` (`agent` action) | `(node … 2>/dev/null) &`, stdout inherited | Fix: detach. Test: `oss-log.sh agent` closes its output while a stub `node` is still running. |
 | `hooks/oss-session-start.sh:270-286` (opt-in health check, `OSS_RUN_HEALTH_CHECK=1`) | Echoes its summary from a background job; it only reaches the user because startup blocks for the whole test run | Fix: detach and write the summary to `health-check.log`. Test like T3. The decision goes in DECISIONS D3. |
+| `hooks/oss-notify.sh:108-111` `oss-log.sh` fallback (found by acceptance) | `_found_log=$(find "$HOME/.claude/plugins/cache/…" … \| sort -V \| tail -1)` under `set -euo pipefail`. When the cache dir is missing, the hook exits silently, before any state update. | Fix: `\|\| true` (or a guarded lookup). Test: when `$PLUGIN_ROOT/hooks/oss-log.sh` is absent and there is no plugin cache, `--workflow X start` still updates state. |
 | `run_with_timeout` `"$@" &` (oss-notify.sh:33, oss-session-start.sh:27) | Waited in the foreground | Justify: safe, the caller waits by design and the timer is already detached. |
 | `oss-notification.sh` / `oss-stop.sh` `&>/dev/null &` | stdout and stderr already detached | Justify: safe. |
 | `oss-session-start-new.sh`, `oss-session-start-test.sh` | Not registered as hooks (FOLLOWUPS line 29) | Justify: unreachable; their removal is the existing follow-up. |
