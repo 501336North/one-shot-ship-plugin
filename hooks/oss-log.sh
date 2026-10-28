@@ -199,7 +199,7 @@ check_command_log_size() {
             # Keep dropped rounds' banners: the build banner count is an IRON LAW observable
             local dropped=$(( $(wc -l < "$log_file") - 1000 ))
             if [[ "$dropped" -gt 0 ]]; then
-                head -n "$dropped" "$log_file" | grep 'OSS Command:' >> "$temp_file"
+                { head -n "$dropped" "$log_file" | grep 'OSS Command:' || true; } >> "$temp_file"
             fi
             tail -1000 "$log_file" >> "$temp_file"
             mv "$temp_file" "$log_file"
