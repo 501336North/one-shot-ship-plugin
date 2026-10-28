@@ -405,12 +405,13 @@ describe('IronLawLogParser - Intervention Task Creation', () => {
       // UR7: the stable plugin writes the team/personal section into the same block WITHOUT the note, starting at
       // its "## Custom Team Laws" / "## Custom Personal Laws" heading. A hint that ends the verified laws only at
       // the note would hand that section the authority of the signed laws, so the verified laws end at whichever
-      // comes first: the note or one of those headings. The headings are read from the shell's acceptance rule
-      // for the section (oss_custom_iron_laws in hooks/oss-api-curl.sh), so the two cannot drift.
+      // comes first: the note or one of those headings. The headings are read from the one variable the shell's
+      // acceptance rule for the section uses (OSS_CUSTOM_LAWS_HEADINGS in hooks/oss-api-curl.sh), so the two
+      // cannot drift.
       it('should also end the verified IRON LAWS at a team/personal heading written without the note (stable plugin)', () => {
         writeConfig({ apiKey: 'k' });
         const shell = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'hooks', 'oss-api-curl.sh'), 'utf8');
-        const accepted = /case "\$body" in "(## Custom [^"]+)"\* \| "(## Custom [^"]+)"\*\)/.exec(shell);
+        const accepted = /^OSS_CUSTOM_LAWS_HEADINGS='([^'|]+)\|([^'|]+)'$/m.exec(shell);
         expect(accepted?.slice(1)).toEqual(['## Custom Team Laws', '## Custom Personal Laws']);
         const [team, personal] = (accepted ?? []).slice(1);
 

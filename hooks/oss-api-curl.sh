@@ -180,6 +180,9 @@ _oss_cfg_origin() {
 OSS_CUSTOM_LAWS_NOTE='> Team/personal laws below are not covered by the signed prompt manifest (unverified).'
 # The line written below them (TR2): team text after it cannot pass for verified text.
 OSS_CUSTOM_LAWS_END='> End of unverified team/personal laws.'
+# The only first lines a section may have, exactly, split on "|" (UR16): the headings the API serves. Defined once:
+# the jq filter below checks against it and the watcher's hint (iron-law-log-parser) is tested against it.
+OSS_CUSTOM_LAWS_HEADINGS='## Custom Team Laws|## Custom Personal Laws'
 # The most the section may be, in bytes, as fetched and after stripping (TR3; the honest API sends about 3 KB).
 OSS_CUSTOM_LAWS_MAX_BYTES=16384
 # How long the section's fetch may take, in seconds (TR4: it runs in a foreground sync at session start).
@@ -196,13 +199,13 @@ _OSS_INVISIBLE_JQ='def invisible: "[\\p{Cf}\u0000-\u0008\u000b-\u001f\u007f-\u00
 # dropped (CLAUDE.md's block is found by whole lines, fence or not), then the whole block: the note, the section in a
 # backtick fence (info string "text") longer than any backtick run in it, so no line of the team's text can close it
 # and everything inside stays one code block of literal text, then the closing line. Prints "" over $max bytes (no
-# section, TR3) and "!" when the first line is not exactly the API's heading (not a section).
+# section, TR3) and "!" when the first line is not exactly one of OSS_CUSTOM_LAWS_HEADINGS (not a section).
 _OSS_CUSTOM_LAWS_JQ="$_OSS_INVISIBLE_JQ"'
     gsub(invisible; "")
     | split("\n") | map(select(test("^\\s*<!--\\s*IRON LAWS (START|END)") | not)) | join("\n")
     | sub("\n+$"; "")
     | if utf8bytelength > $max then ""
-      elif (split("\n")[0] | . != "## Custom Team Laws" and . != "## Custom Personal Laws") then "!"
+      elif (split("\n")[0] as $first | $headings | split("|") | any(.[]; . == $first) | not) then "!"
       else ("`" * ([4, ([scan("`+") | length] | max // 0) + 1] | max)) as $fence
         | $note + "\n\n" + $fence + "text\n" + . + "\n" + $fence + "\n\n" + $end end'
 
@@ -226,7 +229,8 @@ oss_custom_iron_laws() {
     body=${body%$'\n'*}
     [[ -n "$body" ]] || return 1   # an empty 200: no section
     body=$(printf '%s' "$body" | jq -Rrs --argjson max "$OSS_CUSTOM_LAWS_MAX_BYTES" \
-        --arg note "$OSS_CUSTOM_LAWS_NOTE" --arg end "$OSS_CUSTOM_LAWS_END" "$_OSS_CUSTOM_LAWS_JQ") || return 1
+        --arg note "$OSS_CUSTOM_LAWS_NOTE" --arg end "$OSS_CUSTOM_LAWS_END" --arg headings "$OSS_CUSTOM_LAWS_HEADINGS" \
+        "$_OSS_CUSTOM_LAWS_JQ") || return 1
     case "$body" in '') return 1 ;; '!') return 2 ;; esac   # over the cap: no section; UR11: not a section
     printf '%s\n' "$body"
 }
