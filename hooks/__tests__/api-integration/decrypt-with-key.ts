@@ -6,7 +6,9 @@
  *
  * Env: CLI_SRC (packages/cli-decrypt/src), PUB (base64 SPKI DER public key), HOME / OSS_CONFIG_DIR as for oss-decrypt.
  * Prints what oss-decrypt prints; exit 1 with "Error: <message>" on a refusal.
+ * Hermetic (UR8): egress-guard.cjs refuses and records any non-loopback connect or DNS lookup.
  */
+import './egress-guard.cjs';
 import path from 'path';
 
 interface Keys {
