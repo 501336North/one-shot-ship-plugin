@@ -11,3 +11,7 @@
 - Waiting for maintainer answers.
 
 ## Last Updated: 2026-10-28 19:40 CST by /oss:ideate
+
+## 2026-10-29: DROPPED by the maintainer
+The staging swimlane is abandoned. `next` is archived as `archive/release-channels-next-2026-10-29` and the
+infrastructure teardown is with the maintainer (script). This branch keeps NOTES.md as research only.
