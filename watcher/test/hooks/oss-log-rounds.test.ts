@@ -79,4 +79,36 @@ describe('oss-log.sh command log rounds', () => {
     expect(countBanners(log)).toBe(1);
     expect(log.startsWith('═══')).toBe(true);
   });
+
+  /**
+   * @behavior Trimming an oversized command log does not erase earlier rounds' banners
+   * @acceptance-criteria With a 1KB cap, three rounds of 1100 lines each, then clean:
+   *   the log is trimmed (fewer than 3300 lines) and all three banners remain
+   */
+  it("should keep every round's banner when the log is trimmed", () => {
+    fs.writeFileSync(
+      path.join(home, '.oss/settings.json'),
+      JSON.stringify({ logs: { maxCommandLogSizeKB: 1 } })
+    );
+    const buildLogPath = path.join(
+      fs.realpathSync(project),
+      '.oss/logs/current-session/build.log'
+    );
+
+    for (let round = 1; round <= 3; round++) {
+      runLog('init', 'build');
+      const filler = Array.from(
+        { length: 1100 },
+        (_, n) => `[00:00:00] filler line ${round}-${n}`
+      ).join('\n');
+      fs.appendFileSync(buildLogPath, `${filler}\n`);
+    }
+
+    runLog('clean');
+
+    const log = readBuildLog();
+
+    expect(log.split('\n').length).toBeLessThan(3300);
+    expect(countBanners(log)).toBe(3);
+  });
 });
