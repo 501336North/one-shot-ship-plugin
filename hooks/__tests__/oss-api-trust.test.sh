@@ -233,6 +233,10 @@ for p in "$PATH" "$T/nojq"; do
     [[ "$OUT" == "rc=1 cfg=[] key=[]" ]] && pass "a config holding a NUL byte: rc 1, _OSS_CFG empty, no key ($lbl)" \
         || fail "a config holding a NUL byte: rc 1, _OSS_CFG empty, no key ($lbl)" "$OUT"
 done
+printf '{"apiKey":"k"}' > "$T/.oss/config.json"; chmod 000 "$T/.oss/config.json"
+call '_oss_config_read; echo "rc=$? cfg=[$_OSS_CFG]"; oss_api_url; echo "url-rc=$?"'
+[[ "$OUT" == $'rc=1 cfg=[]\nurl-rc=1' ]] && pass "an unreadable (mode 000) config: rc 1, and no URL (not read as a missing config, i.e. production)" \
+    || fail "an unreadable (mode 000) config: rc 1, no URL" "$OUT"
 chmod 666 "$T/.oss/config.json"
 call '_OSS_CFG=stale; _oss_config_read; echo "rc=$? cfg=[$_OSS_CFG]"'; chmod 600 "$T/.oss/config.json"
 [[ "$OUT" == "rc=1 cfg=[]" ]] && pass "an untrusted (world-writable) config: rc 1, _OSS_CFG empty" || fail "an untrusted config: rc 1, _OSS_CFG empty" "$OUT"

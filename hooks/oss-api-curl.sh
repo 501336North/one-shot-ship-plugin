@@ -58,12 +58,14 @@ oss_config_trusted() {
 # _oss_config_read - the trust check, then the ONE read of the OSS config (SR3): sets _OSS_CFG to its text ('' when
 # missing). The URL and the key are taken from this copy, never by reading the path again after the check.
 # rc 1 when the config may not be read, or holds a NUL byte (not JSON; `read -d ''` stops there and returns 0).
-# _OSS_CFG is empty after EVERY failure (UR4), so a caller that ignores the rc still finds no key or URL.
+# _OSS_CFG is empty after EVERY failure (UR4), so a caller that ignores the rc still finds no key or URL. An
+# unreadable config is a failure, never read as a missing one (production).
 _oss_config_read() {
     local f="${OSS_CONFIG_DIR:-$HOME/.oss}/config.json"
     _OSS_CFG=''
     oss_config_trusted || return 1
     [[ -e "$f" ]] || return 0
+    [[ -r "$f" ]] || return 1   # unreadable is not missing: a failed redirection would also end `read` with rc 1
     ! IFS= read -r -d '' _OSS_CFG < "$f" || { _OSS_CFG=''; return 1; }
 }
 
