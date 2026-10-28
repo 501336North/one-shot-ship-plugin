@@ -196,6 +196,11 @@ check_command_log_size() {
             echo "═══════════════════════════════════════════════════════════════" > "$temp_file"
             echo "  [Log truncated - kept last 1000 lines]" >> "$temp_file"
             echo "═══════════════════════════════════════════════════════════════" >> "$temp_file"
+            # Keep dropped rounds' banners: the build banner count is an IRON LAW observable
+            local dropped=$(( $(wc -l < "$log_file") - 1000 ))
+            if [[ "$dropped" -gt 0 ]]; then
+                head -n "$dropped" "$log_file" | grep 'OSS Command:' >> "$temp_file"
+            fi
             tail -1000 "$log_file" >> "$temp_file"
             mv "$temp_file" "$log_file"
         fi
