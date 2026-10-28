@@ -20,7 +20,8 @@
 #     takes over 15s, or is missing and cannot be installed
 #   - the verified body is empty, < 500 bytes, > 256KB, HTML, or has no "IRON LAW"
 # A failed fetch sets a 1h backoff; only a validated write marks the cache fresh (24h). A failed team-section fetch
-# still writes the verified laws, with the 1h backoff (TR4).
+# still writes the verified laws and marks them fresh; the team section alone is retried after 1h, from the verified
+# laws kept in ~/.oss/.iron-laws-verified, without asking the decrypt CLI again (TR4, UR12).
 # Below the verified laws, inside the block: the team/personal section (oss_custom_iron_laws, SR16), after one line
 # saying it is unverified, inside a backtick fence it cannot close, then a closing line (UR1'); when there is none or
 # its fetch fails, the verified laws alone.
@@ -41,6 +42,8 @@ STATE_DIR="${HOME}/.oss"
 OSS_DECRYPT="${STATE_DIR}/bin/oss-decrypt"
 LAST_CHECK_FILE="${STATE_DIR}/.iron-laws-last-check"
 BACKOFF_FILE="${STATE_DIR}/.iron-laws-backoff"
+TEAM_RETRY_FILE="${STATE_DIR}/.iron-laws-team-retry"   # UR12: a failed team-section fetch, retried after 1h on its own
+VERIFIED_CACHE="${STATE_DIR}/.iron-laws-verified"      # UR12: the last verified laws written, for that team-only retry
 LOCK_DIR="${STATE_DIR}/.iron-laws-sync.lock"
 CACHE_TTL_SECONDS=86400   # 24h after a validated write
 BACKOFF_SECONDS=3600      # 1h after a failed fetch
@@ -121,6 +124,14 @@ block_state() {
 # with its own stored credentials, checks the body's sha256 against the signed manifest entry
 # shared/iron-laws, and prints it, or refuses (non-zero exit). The hook never sees the API key.
 # ensure-decrypt-cli.sh beside this hook installs or upgrades it to the pinned version first, on every fetch.
+# UR12: the team-only retry reuses the verified laws written last time (a regular file, not a symlink); 1 when there
+# are none, so the caller fetches them again.
+cached_body() { [[ -f "$VERIFIED_CACHE" && ! -L "$VERIFIED_CACHE" ]] && cp "$VERIFIED_CACHE" "$1"; }
+keep_verified() { # $1 the validated laws, before the team section
+    local tmp; tmp=$(mktemp "$STATE_DIR/.iron-laws-verified.XXXXXX") || return 0
+    cp "$1" "$tmp" && mv -f "$tmp" "$VERIFIED_CACHE" || rm -f "$tmp"
+}
+
 run_cli() { # $1 output file; the CLI is stopped after CLI_TIMEOUT_SECONDS
     local out="$1" pid watchdog rc=0
     "$OSS_DECRYPT" --type shared --name iron-laws > "$out" 2>"$WORK/cli-err" & pid=$!
@@ -135,14 +146,17 @@ run_cli() { # $1 output file; the CLI is stopped after CLI_TIMEOUT_SECONDS
 # Writes the validated, marker-free laws to $1. Returns 1 on any failure.
 fetch_body() {
     local out="$1" raw="$WORK/raw" rc=0 bytes
-    # Every time, not only when the CLI is missing (SR6): an outdated or wrong-channel CLI is upgraded; it exits at
-    # once when the pin is met. A failure means the installed CLI is not trusted to fetch the laws.
-    if ! "$SCRIPT_DIR/ensure-decrypt-cli.sh" </dev/null >/dev/null 2>&1; then
-        warn "the decrypt CLI could not be installed or updated to the pinned version"; return 1
-    fi
-    run_cli "$raw" || rc=$?
-    if (( rc != 0 )); then
-        warn "the decrypt CLI refused or failed (exit $rc): $(tail -n 1 "$WORK/cli-err" 2>/dev/null)"; return 1
+    [[ -n "${TEAM_ONLY:-}" ]] && ! cached_body "$raw" && TEAM_ONLY=
+    if [[ -z "${TEAM_ONLY:-}" ]]; then
+        # Every time, not only when the CLI is missing (SR6): an outdated or wrong-channel CLI is upgraded; it exits at
+        # once when the pin is met. A failure means the installed CLI is not trusted to fetch the laws.
+        if ! "$SCRIPT_DIR/ensure-decrypt-cli.sh" </dev/null >/dev/null 2>&1; then
+            warn "the decrypt CLI could not be installed or updated to the pinned version"; return 1
+        fi
+        run_cli "$raw" || rc=$?
+        if (( rc != 0 )); then
+            warn "the decrypt CLI refused or failed (exit $rc): $(tail -n 1 "$WORK/cli-err" 2>/dev/null)"; return 1
+        fi
     fi
     bytes=$(wc -c < "$raw" | tr -d ' ')
     if (( bytes > MAX_BODY_BYTES + 8 )); then warn "rejected: body over $MAX_BODY_BYTES bytes"; return 1; fi
@@ -157,11 +171,15 @@ fetch_body() {
         warn "rejected: body looks like HTML"; return 1
     fi
     if ! grep -q 'IRON LAW' "$out"; then warn "rejected: body has no IRON LAW heading"; return 1; fi
+    [[ -n "${TEAM_ONLY:-}" ]] || keep_verified "$out"
     # Below the verified laws: the team/personal section, marked unverified (SR16); none or a failed fetch: base only.
-    # A FAILED fetch (rc 2, not "no section") is retried after the 1h backoff, not the 24h freshness (TR4).
+    # A FAILED fetch (rc 2, not "no section") is retried on its own after 1h (TR4, UR12).
     local custom rc=0
     custom=$(oss_custom_iron_laws) || rc=$?
-    (( rc == 2 )) && CUSTOM_FAILED=1
+    if (( rc == 2 )); then
+        CUSTOM_FAILED=1
+        [[ -n "${TEAM_ONLY:-}" ]] && return 1   # the block already holds these verified laws: nothing to rewrite
+    fi
     if (( rc == 0 )); then printf '\n%s\n' "$custom" >> "$out"; fi   # the note, the fenced section, the closing line (UR1')
 }
 
@@ -238,7 +256,11 @@ main() {
     fi
     if [[ "$MODE" == refresh ]]; then
         [[ "$state" == one ]] || exit 0
-        younger_than "$LAST_CHECK_FILE" "$CACHE_TTL_SECONDS" && exit 0
+        if younger_than "$LAST_CHECK_FILE" "$CACHE_TTL_SECONDS"; then
+            # UR12: the verified laws are fresh; only a team section whose fetch failed over an hour ago is retried.
+            [[ -e "$TEAM_RETRY_FILE" ]] && ! younger_than "$TEAM_RETRY_FILE" "$BACKOFF_SECONDS" || exit 0
+            TEAM_ONLY=1
+        fi
         younger_than "$BACKOFF_FILE" "$BACKOFF_SECONDS" && exit 0
     fi
     # shellcheck source=oss-api-curl.sh
@@ -252,17 +274,16 @@ main() {
     mkdir -p "$STATE_DIR"
     local body="$WORK/body"
     if ! fetch_body "$body"; then
-        touch "$BACKOFF_FILE"
+        if [[ -n "${TEAM_ONLY:-}" ]]; then touch "$TEAM_RETRY_FILE"; else touch "$BACKOFF_FILE"; fi
         give_up 4
     fi
 
     acquire_lock || give_up
     write_block "$body" || give_up $?
-    if [[ "$RESULT" != skipped && -n "${CUSTOM_FAILED:-}" ]]; then
-        touch "$BACKOFF_FILE"
-    elif [[ "$RESULT" != skipped ]]; then
-        touch "$LAST_CHECK_FILE"
-        rm -f "$BACKOFF_FILE"
+    if [[ "$RESULT" != skipped ]]; then
+        # UR12: the 24h stamp follows the verified laws; the team section has its own 1h retry stamp.
+        [[ -n "${TEAM_ONLY:-}" ]] || { touch "$LAST_CHECK_FILE"; rm -f "$BACKOFF_FILE"; }
+        if [[ -n "${CUSTOM_FAILED:-}" ]]; then touch "$TEAM_RETRY_FILE"; else rm -f "$TEAM_RETRY_FILE"; fi
     fi
     # The current session read CLAUDE.md before this block existed: show it once.
     [[ "$RESULT" == added ]] && cat "$body"

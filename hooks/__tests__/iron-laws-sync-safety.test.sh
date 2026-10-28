@@ -466,31 +466,75 @@ test_custom_section_fenced() {
     else fail "$name" "fence ok, one START/END, END after the closing line, 2 fetches, identical" "rc=$RC violations: ${v:-none} after-close: $after starts=$(count_line "$START" "$T/first") ends=$(count_line "$END" "$T/first") fetches=$(custom_calls) same=$same err=$ERR"; fi
     teardown
 }
+# UR12: the 24 h stamp follows the VERIFIED laws: it is written whenever they were written, even when the team fetch
+# failed. A failed team fetch sets its OWN 1 h retry stamp (.iron-laws-team-retry), never the verified-laws backoff, so
+# only the team fetch retries hourly. No section (empty, over the cap) is a complete answer: no retry stamp.
+# UR9: the same under --install (/oss:login), where a failed team fetch must not leave the laws unstamped either.
+TEAM_RETRY_STAMP=.iron-laws-team-retry
 test_custom_section_absent() {
     local mode
-    for mode in empty fail notcustom redirect oversized; do
-        local failed=n; case $mode in fail | notcustom | redirect) failed=y ;; esac
-        local name="SR16/TR4/UR11: team section $mode → the verified laws alone, no unverified marker, sync succeeds; $([[ $failed == y ]] && echo "1h backoff, not marked fresh" || echo "marked fresh")"; ((TESTS_RUN++)); setup
+    for mode in empty fail notcustom redirect oversized install-fail; do
+        local failed=n; case $mode in fail | notcustom | redirect | install-fail) failed=y ;; esac
+        local name="SR16/TR4/UR11/UR12: team section $mode → the verified laws alone, no unverified marker, sync succeeds, 24h stamp written; $([[ $failed == y ]] && echo "team retry stamp set, no verified-laws backoff" || echo "no team retry stamp")"; ((TESTS_RUN++)); setup
+        local args=()
         case $mode in
             empty) : > "$T/shim/custom" ;;
             fail) touch "$T/shim/custom-fail" ;;
+            install-fail) touch "$T/shim/custom-fail"; args=(--install) ;;
             notcustom) valid_body > "$T/shim/custom" ;;   # UR11: an older API ignoring ?part sends the whole laws: a failed fetch
             redirect) printf '## Custom Team Laws\n- x\n' > "$T/shim/custom"; printf 302 > "$T/shim/http-code" ;;   # UR11: a 3xx is a failed fetch
             oversized) { printf '## Custom Team Laws\n\n'; head -c 20000 /dev/zero | tr '\0' 'x'; printf '\n'; } > "$T/shim/custom" ;;   # TR3: over 16 KiB
         esac
-        block_file "$T/proj/CLAUDE.md"; stale; run_sync
+        touch -t 202601010000 "$T/home/.oss/$TEAM_RETRY_STAMP"   # an old retry stamp: cleared by a complete answer
+        block_file "$T/proj/CLAUDE.md"; stale; run_sync ${args[@]+"${args[@]}"}
         local b; b=$(block_of "$T/proj/CLAUDE.md")
-        # TR4: a FAILED fetch keeps the 24h stamp stale and sets the 1h backoff, so the next session retries the team
-        # laws; no section (empty, not a section, over the cap) is a complete answer: fresh for 24h, no backoff.
-        local fresh=n backoff=n want_fresh=y want_backoff=n
+        local fresh=n backoff=n retry=n want_retry=n
         [[ -n "$(find "$T/home/.oss/.iron-laws-last-check" -newer "$T/shim/body" 2>/dev/null)" ]] && fresh=y
         [[ -e "$T/home/.oss/.iron-laws-backoff" ]] && backoff=y
-        [[ $failed == y ]] && { want_fresh=n; want_backoff=y; }
+        [[ -n "$(find "$T/home/.oss/$TEAM_RETRY_STAMP" -newer "$T/shim/body" 2>/dev/null)" ]] && retry=y
+        [[ $failed == y ]] && want_retry=y
         if [[ $RC -eq 0 && "$b" == *"FRESH FROM API"* && "$b" != *"unverified"* && "$(grep -c 'FRESH FROM API' "$T/proj/CLAUDE.md")" == 1 && "$(custom_calls)" == 1 \
-              && $fresh == "$want_fresh" && $backoff == "$want_backoff" ]]; then pass "$name"
-        else fail "$name" "rc 0, base only, once, no marker, one custom fetch, fresh=$want_fresh backoff=$want_backoff" "rc=$RC custom=$(custom_calls) fresh=$fresh backoff=$backoff block: $b"; fi
+              && $fresh == y && $backoff == n && $retry == "$want_retry" ]]; then pass "$name"
+        else fail "$name" "rc 0, base only, once, no marker, one custom fetch, fresh=y backoff=n retry=$want_retry" "rc=$RC custom=$(custom_calls) fresh=$fresh backoff=$backoff retry=$retry block: $b"; fi
         teardown
     done
+}
+# UR12: after a failed team fetch, the next sessions within the hour do nothing; once the retry stamp is an hour old
+# (verified laws still fresh) ONLY the team fetch runs: no CLI call, the block becomes the same verified laws plus the
+# team section, the retry stamp is cleared, and the 24 h stamp is left as it was (the verified laws were not refetched).
+team_retry_setup() {  # a project synced with a failed team fetch, then the team section served
+    setup; touch "$T/shim/custom-fail"; block_file "$T/proj/CLAUDE.md"; stale; run_sync
+    rm -f "$T/shim/custom-fail" "$T/shim/argv" "$T/shim/curl-argv"; printf '## Custom Team Laws\n\n### Rule\n\nTEAM TEXT\n' > "$T/shim/custom"
+    # The verified laws change on the server; the team-only retry must not fetch them.
+    printf '# IRON LAWS - SECOND FETCH\n' > "$T/shim/body"; valid_body | tail -n +2 >> "$T/shim/body"
+}
+test_team_retry_within_hour() {
+    local name="UR12: within an hour of a failed team fetch a session start does nothing (no CLI, no curl)"; ((TESTS_RUN++)); team_retry_setup
+    local before; before=$(sum "$T/proj/CLAUDE.md"); run_sync
+    if [[ $RC -eq 0 && "$(cli_calls)" == 0 && "$(custom_calls)" == 0 && "$(sum "$T/proj/CLAUDE.md")" == "$before" ]]; then pass "$name"
+    else fail "$name" "no CLI, no curl, unchanged" "rc=$RC cli=$(cli_calls) custom=$(custom_calls)"; fi
+    teardown
+}
+test_team_retry_after_hour() {
+    local name="UR12: an hour after a failed team fetch only the team fetch runs: no CLI, verified laws kept, team section added, retry stamp cleared, 24h stamp untouched"; ((TESTS_RUN++)); team_retry_setup
+    touch -t 202601010000 "$T/home/.oss/$TEAM_RETRY_STAMP"
+    cp -p "$T/home/.oss/.iron-laws-last-check" "$T/lc-before"   # the 24 h stamp's mtime before the retry
+    run_sync
+    local b; b=$(block_of "$T/proj/CLAUDE.md")
+    local lc_same=n; [[ ! "$T/home/.oss/.iron-laws-last-check" -nt "$T/lc-before" && ! "$T/home/.oss/.iron-laws-last-check" -ot "$T/lc-before" ]] && lc_same=y
+    if [[ $RC -eq 0 && "$(cli_calls)" == 0 && "$(custom_calls)" == 1 && "$b" == *"FRESH FROM API"*"TEAM TEXT"* && "$b" != *"SECOND FETCH"* \
+          && ! -e "$T/home/.oss/$TEAM_RETRY_STAMP" && $lc_same == y && ! -e "$T/home/.oss/.iron-laws-backoff" ]]; then pass "$name"
+    else fail "$name" "cli 0, 1 team fetch, first verified laws + team text, retry stamp gone, 24h stamp untouched" "rc=$RC cli=$(cli_calls) custom=$(custom_calls) retry=$([[ -e $T/home/.oss/$TEAM_RETRY_STAMP ]] && echo y || echo n) lc_same=$lc_same block: $b"; fi
+    teardown
+}
+test_team_retry_fails_again() {
+    local name="UR12: a team retry that fails again: no CLI, block unchanged, retry stamp renewed"; ((TESTS_RUN++)); team_retry_setup
+    touch "$T/shim/custom-fail"; touch -t 202601010000 "$T/home/.oss/$TEAM_RETRY_STAMP"
+    local before; before=$(sum "$T/proj/CLAUDE.md"); run_sync
+    local retry=n; [[ -n "$(find "$T/home/.oss/$TEAM_RETRY_STAMP" -newer "$T/shim/body" 2>/dev/null)" ]] && retry=y
+    if [[ $RC -eq 0 && "$(cli_calls)" == 0 && "$(custom_calls)" == 1 && "$(sum "$T/proj/CLAUDE.md")" == "$before" && $retry == y ]]; then pass "$name"
+    else fail "$name" "cli 0, 1 team fetch, unchanged, retry renewed" "rc=$RC cli=$(cli_calls) custom=$(custom_calls) retry=$retry"; fi
+    teardown
 }
 test_custom_section_untrusted_api() {
     local name="SR16: an untrusted apiUrl → no curl at all (the key never leaves), nothing written"; ((TESTS_RUN++)); setup
@@ -779,6 +823,9 @@ test_watchdog_leaves_no_sleep
 test_custom_section_appended
 test_custom_section_fenced
 test_custom_section_absent
+test_team_retry_within_hour
+test_team_retry_after_hour
+test_team_retry_fails_again
 test_custom_section_untrusted_api
 test_key_off_argv
 test_cli_refusal_writes_nothing
