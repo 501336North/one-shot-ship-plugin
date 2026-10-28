@@ -108,6 +108,12 @@ rm -f "$REC"
 lines=$(wc -l < "$T/err" | tr -d ' ')
 [[ $RC -eq 0 && ! -e "$REC" && "$lines" == 1 && "$(cat "$T/err")" =~ ^oss:.*jq ]] && pass "$name (no jq: one stderr line)" \
     || fail "$name (no jq: one stderr line)" "rc=$RC stderr-lines=$lines stderr=$(cat "$T/err") record=$(cat "$REC" 2>/dev/null)"
+# the jq warning is for OSS projects only: every other repo the plugin runs in hears nothing
+name='should print nothing in a repo without .oss when jq is missing'
+NO="$T/no-oss"; mkdir -p "$NO"
+(cd "$NO" && git init -q)
+(cd "$NO" && CLAUDE_PROJECT_DIR="$NO" PATH="$NB" "$NB/bash" "$HOOK" < "$FIX/pick.json" 2>"$T/err"); RC=$?
+[[ $RC -eq 0 && ! -s "$T/err" && ! -e "$NO/.oss" ]] && pass "$name" || fail "$name" "rc=$RC stderr=$(cat "$T/err")"
 
 # 6. a question the person left unanswered is not a decision: no line for it
 name='should skip a question with no entry in answers, and still record the answered one'
@@ -134,7 +140,7 @@ name='should still write a line when uuidgen or shasum is missing'
 run_hook_without() {
     local B="$T/bin-no-$1" t w
     rm -rf "$B"; mkdir -p "$B"
-    for t in bash cat cut date dirname git jq printf tr find ls pwd od head shasum sha256sum uuidgen; do
+    for t in bash cat cut date dirname git jq printf tr find ls pwd od head mkdir rmdir sleep shasum sha256sum uuidgen; do
         [[ " $* " == *" $t "* ]] && continue
         w=$(command -v "$t" 2>/dev/null) && [[ "$w" == /* ]] && ln -s "$w" "$B/$t"
     done
@@ -172,8 +178,8 @@ new_project() {
     for f in "$@"; do mkdir -p "$Q/.oss/dev/active/$f"; done
     printf '{"currentCommand":"build"}\n' > "$Q/.oss/workflow-state.json"
 }
-# run_in_project: the hook on pick.json in Q -> RC, stderr in $T/err
-run_in_project() { (cd "$Q" && CLAUDE_PROJECT_DIR="$Q" "$HOOK" < "$FIX/pick.json" 2>"$T/err"); RC=$?; }
+# run_in_project [payload]: the hook on <payload> (default pick.json) in Q -> RC, stderr in $T/err
+run_in_project() { (cd "$Q" && CLAUDE_PROJECT_DIR="$Q" "$HOOK" < "${1:-$FIX/pick.json}" 2>"$T/err"); RC=$?; }
 # lines_under <dir>: every decisions file under <dir> with its line count, one per row, sorted
 lines_under() { (cd "$1" && find . -name 'decision*.ndjson' -type f -exec wc -l {} + 2>/dev/null | grep -v ' total$' | awk '{print $2 ":" $1}' | sort | tr '\n' ' '); }
 
@@ -263,6 +269,63 @@ for c in 'two active folders' '.oss without .oss/dev'; do
     [[ $RC -eq 0 && "$before" == "$after" ]] && pass "$name ($c)" \
         || fail "$name ($c)" "rc=$RC new=$(diff <(echo "$before") <(echo "$after") | grep '^>' | tr '\n' ' ')"
 done
+
+# Task 10 (1:N): every answer to the same question is kept, in order. A question is the feature plus
+# its wording, with case and runs of whitespace not counting; answerIndex counts that key's lines.
+name='should give a re-asked question with the same wording the same questionKey and answerIndex 2, keeping line 1 unchanged'
+new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"
+run_in_project; first=$(head -n 1 "$R" 2>/dev/null)
+run_in_project; again=$(head -n 1 "$R" 2>/dev/null)
+got=$(jq -sc '[length, .[1].answerIndex, (.[0].questionKey == .[1].questionKey)]' "$R" 2>/dev/null)
+[[ $RC -eq 0 && -n "$first" && "$first" == "$again" && "$got" == '[2,2,true]' ]] && pass "$name" \
+    || fail "$name" "rc=$RC line1-unchanged=$([[ "$first" == "$again" ]] && echo yes || echo no) [lines,index2,samekey]=$got"
+
+name='should treat wording that differs only in case or whitespace as the same question'
+jq '.tool_response.questions[0].question as $q
+    | (" \t" + ($q | ascii_upcase | gsub(" "; "  \t\n ")) + " \n") as $v
+    | .tool_response.questions[0].question = $v
+    | .tool_response.answers = {($v): .tool_response.answers[$q]}' "$FIX/pick.json" > "$T/reworded.json"
+want_q=$(jq -c '.tool_response.questions[0].question' "$T/reworded.json")
+new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"
+run_in_project; run_in_project "$T/reworded.json"
+got=$(jq -sc '[length, .[1].answerIndex, (.[0].questionKey == .[1].questionKey)]' "$R" 2>/dev/null)
+gotq=$(jq -sc '.[1].question' "$R" 2>/dev/null)
+[[ $RC -eq 0 && "$got" == '[2,2,true]' && "$gotq" == "$want_q" ]] && pass "$name" \
+    || fail "$name" "rc=$RC [lines,index2,samekey]=$got question-as-asked=$([[ "$gotq" == "$want_q" ]] && echo yes || echo "no: $gotq")"
+
+name='should give a question asked in another feature its own key'
+new_project feat/demo/build demo other; run_in_project
+(cd "$Q" && git checkout -q -B feat/other/build); run_in_project
+a=$(jq -c '[.questionKey, .answerIndex]' "$Q/.oss/dev/active/demo/decisions.ndjson" 2>/dev/null)
+b=$(jq -c '[.questionKey, .answerIndex]' "$Q/.oss/dev/active/other/decisions.ndjson" 2>/dev/null)
+[[ $RC -eq 0 && "$a" == *',1]' && "$b" == *',1]' && "${a%,*}" != "${b%,*}" ]] && pass "$name" \
+    || fail "$name" "rc=$RC demo=$a other=$b"
+
+name='should write two whole lines when two sessions answer at the same moment'
+bad=0; why=""
+for r in $(seq 10); do
+    new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"
+    (cd "$Q" && CLAUDE_PROJECT_DIR="$Q" "$HOOK" < "$FIX/pick.json" 2>/dev/null) &
+    (cd "$Q" && CLAUDE_PROJECT_DIR="$Q" "$HOOK" < "$FIX/pick.json" 2>/dev/null) &
+    wait
+    got=$(jq -sc '[.[].answerIndex] | sort' "$R" 2>/dev/null)
+    [[ $(wc -l < "$R" 2>/dev/null) -eq 2 && "$got" == '[1,2]' ]] || { bad=$((bad + 1)); why+=" run $r: ${got:-unparsable};"; }
+done
+[[ $bad -eq 0 ]] && pass "$name (10 races)" || fail "$name (10 races)" "$bad of 10 races went wrong:$why"
+
+# a session that holds the record too long must not stall the picker: wait briefly, then skip quietly
+name='should give up quietly, writing nothing, when another session keeps the record locked'
+new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"
+mkdir "$R.lock"; start=$SECONDS
+run_in_project; took=$((SECONDS - start))
+[[ $RC -eq 0 && ! -e "$R" && -d "$R.lock" && ! -s "$T/err" && $took -le 5 ]] && pass "$name" \
+    || fail "$name" "rc=$RC took=${took}s record=$(cat "$R" 2>/dev/null) lock-kept=$([[ -d "$R.lock" ]] && echo yes || echo no) stderr=$(cat "$T/err")"
+
+name='should count each question of a multi-question set on its own'
+new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"
+run_in_project "$FIX/multi.json"; run_in_project "$FIX/multi.json"
+got=$(jq -sc '[.[].answerIndex], ([.[].questionKey] | unique | length), (.[0].questionKey == .[2].questionKey), (.[1].questionKey == .[3].questionKey)' "$R" 2>/dev/null | tr '\n' ' ')
+[[ $RC -eq 0 && "$got" == '[1,1,2,2] 2 true true ' ]] && pass "$name" || fail "$name" "rc=$RC [indexes] distinct-keys same-q1 same-q2 = $got"
 
 echo "$RUN run, $FAILED failed"
 [[ $FAILED -eq 0 ]]

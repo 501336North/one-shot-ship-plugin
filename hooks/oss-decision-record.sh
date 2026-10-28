@@ -8,16 +8,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=hooks/oss-safe-path.sh
 source "$SCRIPT_DIR/oss-safe-path.sh" 2>/dev/null || exit 0
 
+oss_resolve_project
+proj="$_OSS_PROJ"
+# plugin hooks run in every repo: one that never used OSS (no .oss folder) gains nothing, not even the jq
+# warning below. A linked .oss passes here and is refused, with its one stderr line, by oss_safe_target.
+[[ -n "$proj" && -d "$proj/.oss" ]] || exit 0
+
 command -v jq >/dev/null 2>&1 || { echo "oss: decision record skipped, jq not found" >&2; exit 0; }
 in=""
 [[ -t 0 ]] || IFS= read -r -d '' -t 2 in || true
 [[ $(printf '%s' "$in" | jq -r '.tool_name' 2>/dev/null) == AskUserQuestion ]] || exit 0
 
-oss_resolve_project
-proj="$_OSS_PROJ"
-# plugin hooks run in every repo: one that never used OSS (no .oss folder) gains nothing. A linked .oss
-# passes here and is refused, with its one stderr line, by oss_safe_target below.
-[[ -n "$proj" && -d "$proj/.oss" ]] || exit 0
 branch=$(cd "$proj" 2>/dev/null && git symbolic-ref --short -q HEAD)
 # ADR-009 (the IRON LAW #4 branch convention): the <feature> of a <type>/<feature>/<phase> branch when that
 # folder is active, else the only active folder, else none. A name is ^[A-Za-z0-9._-]+$, not starting with "."
@@ -42,7 +43,9 @@ command -v shasum >/dev/null 2>&1 || command -v sha256sum >/dev/null 2>&1 || exi
 count=$(printf '%s' "$in" | jq -r '.tool_response.questions | length') || exit 0
 lines=""
 for ((i = 0; i < count; i++)); do
-    question=$(printf '%s' "$in" | jq -r --argjson i "$i" '.tool_response.questions[$i].question') || continue
+    # the same question whatever its case or runs of whitespace: lower-cased, collapsed, trimmed
+    question=$(printf '%s' "$in" | jq -r --argjson i "$i" '.tool_response.questions[$i].question
+        | ascii_downcase | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" ")') || continue
     qkey=$(printf '%s\n%s' "$feature" "$question" | sha256 | cut -c1-16)
     id=$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]')
     if [[ -z "$id" ]]; then # no uuidgen (Linux): a v4 uuid from 16 random bytes
@@ -72,5 +75,16 @@ done
 # no answered question: no record, and no folder made for one
 [[ -n "$lines" ]] || exit 0
 oss_safe_target "$proj" "$rec" || { oss_refuse_unsafe "$rec"; exit 0; }
-printf '%s' "$lines" >> "$_OSS_SAFE_DIR/${rec##*/}"
+file="$_OSS_SAFE_DIR/${rec##*/}"
+# one session at a time reads the count and appends (mkdir is atomic; macOS has no flock). A record
+# held for ~2 s is skipped quietly: a hook never stalls the picker.
+lock="$file.lock"
+for ((t = 0; t < 40; t++)); do mkdir "$lock" 2>/dev/null && break; sleep 0.05; done
+((t < 40)) || exit 0
+trap 'rmdir "$lock" 2>/dev/null' EXIT
+# answerIndex: 1 + the lines this record already holds for the same questionKey
+old=/dev/null; [[ -f "$file" ]] && old="$file"
+lines=$(printf '%s' "$lines" | jq -c --slurpfile old "$old" '
+    . as $l | .answerIndex = 1 + ([$old[] | select(.questionKey == $l.questionKey)] | length)' 2>/dev/null) || exit 0
+printf '%s\n' "$lines" >> "$file"
 exit 0
