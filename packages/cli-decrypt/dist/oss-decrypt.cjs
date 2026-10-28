@@ -264,10 +264,16 @@ var CacheService = class {
 
 // src/strip-control.ts
 function stripControl(text) {
-  return text.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, "");
+  return text.replace(
+    /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u034f\u115f\u1160\u3164\u{e0000}-\u{e007f}\p{Cf}]/gu,
+    ""
+  );
 }
 function stripControlKeepLines(text) {
-  return text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, "");
+  return text.replace(
+    /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029\u034f\u115f\u1160\u3164\u{e0000}-\u{e007f}\p{Cf}]/gu,
+    ""
+  );
 }
 
 // src/with-deadline.ts
