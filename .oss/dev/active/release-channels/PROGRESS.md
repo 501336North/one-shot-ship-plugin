@@ -1,6 +1,6 @@
 # Progress: Release channels (DEV / STAGING / PROD)
 
-## Current Phase: ship (round 4 fixes in progress)
+## Current Phase: ship (round 4 fixes done; round 5 gates next)
 
 ## Tasks
 - [x] Ideate, requirements, ADR-004/005, plan, acceptance (2026-10-26)
@@ -31,7 +31,7 @@
 - [x] Ship round 3 gates (2026-10-27): quality PASS, perf PASS (1 MED: CLI deadline on Node 25), security FAIL (2 LOW: CLI deadline, team-law heading forgery), pentest PASS (1 LOW: unverified section unbounded)
 - [x] Ship round 3 fixes TR1-TR10 (PLAN.md) through /oss:build, done 2026-10-27 (TR9 from the TR5/TR6 provenance check, TR10 a regression found by widening the regression to every tracked test)
 - [x] Ship round 4 gates (2026-10-28): quality PASS (6 LOW), perf PASS (2 LOW), security FAIL (LOW), pentest FAIL (LOW; it also sent 3 throwaway-key requests to production by running a stable-plugin script: answered 401, no real key)
-- [ ] Ship round 4 fixes UR1-UR13 (PLAN.md) through /oss:build (in progress); maintainer decision: fence the team section, new plugin only
+- [x] Ship round 4 fixes UR1-UR16 (PLAN.md) through /oss:build, done 2026-10-28; maintainer decision: fence the team section, new plugin only. API branch merged with next (#398: main #392-#396)
 - [ ] Ship round 5: re-run the gates on the round-4 fixes
 - [ ] Maintainer steps before the feature is usable on STAGING: publish tag cli-decrypt-v1.3.0-beta.1 and commit its checksums; T17 beta repo; H1 Render
 - [ ] Maintainer steps before the first RELEASE: re-sign the production manifest (every workflows/* entry, SR1); publish and pin a stable cli-decrypt >= 1.3.0

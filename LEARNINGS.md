@@ -263,3 +263,15 @@
 ## 2026-10-28 | Config | hooks
 - **Context:** build (release-channels ship round 4, UR4/UR5)
 - **Insight:** `cmd < file 2>/dev/null` still prints the failed open's error (put `2>/dev/null` before `<`), and `! read -d '' v < file` is TRUE when the open fails, so an unreadable config silently read as "missing" (= production): check `[[ -r ]]` first. bash 3.2 has no built-in for permission bits, so any mode check costs a `stat`.
+
+## 2026-10-28 | Testing | hooks
+- **Context:** build (release-channels ship round 4, UR1'/UR8)
+- **Insight:** an awk variable named `close` (a builtin) makes awk exit with an error and no output, so an awk-based "violations" checker silently passes everything: count an awk failure as a violation. jq `--arg` hands `\uXXXX` to Oniguruma literally, so a regex character table must be a jq string literal (`def`), with supplementary characters as surrogate pairs. A curl shim that does `exec /usr/bin/curl` changes argv[0] (tests that look for curl in `ps` stop seeing it): use `exec -a "$0"`. A function whose last line is `(( rc == 0 )) && ...` returns 1 when the condition is false.
+
+## 2026-10-28 | Testing | hooks (process)
+- **Context:** build (release-channels ship round 4, full regression)
+- **Insight:** a hook test killed by its alarm under load can leave the hook's background `curl` children running after the test's stub dir is removed; they then resolve the real curl and call production. Only the loopback-only shim (refused: 3) caught it in the full run. Always run full regressions behind a refusing shim, and make hook tests put a refusing curl after their stub and reap background children.
+
+## 2026-10-28 | Testing | watcher + hooks
+- **Context:** build (release-channels ship round 4, UR16)
+- **Insight:** a test that extracts a value by regex-matching another file's code layout (the shell's old `case` pattern) breaks on any refactor of that code; pin it to a named variable in the single source instead.

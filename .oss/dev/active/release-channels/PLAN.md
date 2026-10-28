@@ -559,3 +559,8 @@ UR1 above is replaced by UR1' below.
 ### UR15 (IRON LAW #1b from UR14): `oss_json_field` strips the same widened table
 - `hooks/oss-api-curl.sh` `oss_json_field` (server text shown to the user) still strips the old C0/C1/ZW/bidi set,
   while the API (027f124), the CLI (a4a4d4d) and the team-laws fence (UR1') use the widened table. One table.
+### UR16 (merge break UR1' x UR7): one source for the team-section headings
+- UR7's watcher test parses the headings out of the shell's old `case "$body" in "## Custom Team Laws"*` pattern;
+  UR1' replaced it with an exact first-line check in the jq filter, so the test reads `undefined`. Define the two
+  headings once in hooks/oss-api-curl.sh (e.g. `OSS_CUSTOM_LAWS_HEADINGS`), use it in the shell's check, and read it
+  in the watcher test (as OSS_CUSTOM_LAWS_NOTE already is).

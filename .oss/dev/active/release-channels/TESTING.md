@@ -112,4 +112,21 @@ Every fix RED first, each guard proven by reverting/mutating it (all killed exce
 | container-prefixed headings (`> ##`, `- ##`, `1. #`, `+ ---`, `> ===`) | pass both halves: round-4 fix task |
 - Committed ff1b22a (api.integration 25/25; mutants of each half go red). oss-api-curl.real.integration 15/16 once in 7 (the ps-sampling check, already in FOLLOWUPS).
 
-## Last Updated: 2026-10-27 by /oss:integration (ship round 3)
+
+### 2026-10-28: ship round 4 fixes UR1'-UR16 (one /oss:build round)
+| Task | Guard | Mutation evidence |
+|---|---|---|
+| UR1' fence (maintainer decision: new plugin only) | oss-custom-iron-laws 40 cases (every gate forgery stays inside a `text` fence longer than any backtick run), custom-laws-fence.sh structural check, markdown-it check in the real-API test, sync byte-identical on refetch | fence fixed at 4, no strip, prefix heading, no fence, marker drop removed: all killed |
+| UR2 no proxy | real curl + recording proxy | `--noproxy` removed: red |
+| UR3 flat-only without jq | key and URL, status line | 3 sites killed |
+| UR4 / UR10 / UR11 / UR12 | session-start-untrusted-config (9), fetch-team-iron-laws (15), 3xx/non-section = failed, team retry stamp separate from the daily verified refresh | killed |
+| UR5-A (owner + readable fast path) | hard-link to a root-owned file, mode 000 | killed; UR5-B write bits not applied (FOLLOWUPS) |
+| UR6 one read in notify/value | swap-after-check shim | killed |
+| UR7 hint / UR16 one heading source | watcher test reads OSS_CUSTOM_LAWS_NOTE and OSS_CUSTOM_LAWS_HEADINGS | killed |
+| UR8 hermetic real-API test | outer proxy + NODE_OPTIONS marker planted: 0 connections, 0 loads; JSON mail transport | killed |
+| UR9 timer guards | `vi.getTimerCount() === 0` in CLI and watcher | clearTimeout removed: red |
+| UR13 / UR14 / UR15 one strip table | API `INVISIBLE`, CLI stripControl(KeepLines), shell `def invisible` (team laws and oss_json_field) | each range killed |
+- Regression (behind a loopback-only curl shim): shell 94 suites, only ideate-template / no-telegram-command fail plus load-sensitive suites that pass alone; cli-decrypt 497/497; watcher 823/825 (the UR16 break, fixed, and a load flake); API 7284/7295 with 8 exec/real-hooks files timing out under load (1127/1127 alone); tsc clean; real-API integration 33/33.
+- The shim refused 3 production requests in the loaded full run only (FOLLOWUPS, HIGH: a killed hook test's background curls fall through to the real curl).
+
+## Last Updated: 2026-10-28 by /oss:build (ship round 4 fixes)
