@@ -101,6 +101,30 @@ for m in link twolines; do
     else fail "a plugin-root that fails the checks ($m) is not read" "got '$l'"; fi
 done
 
+# UR5: the TR7 fast path (production + stable shows nothing, no program started) is only for a config the user owns.
+# Any other config goes the full way, which says "apiUrl invalid" for an untrusted one (as before TR7), and the fast
+# path's own read prints nothing on stderr (a mode-000 config must not print "Permission denied" into the status line).
+# render <config setup>: sets L (stdout) and E (stderr) for a stable plugin, production config, private ~/.oss.
+render() {
+    local sb; sb="$(mktemp -d)"; mkdir -p "$sb/home/.oss" "$sb/plugin/.claude-plugin"; chmod 700 "$sb/home/.oss"
+    printf '{"name":"oss","version":"2.0.94"}' > "$sb/plugin/.claude-plugin/plugin.json"; printf '%s\n' "$sb/plugin" > "$sb/home/.oss/plugin-root"
+    eval "$1"
+    L=$(cd "$sb" && printf '{}' | env -u CLAUDE_PLUGIN_ROOT -u OSS_CONFIG_DIR HOME="$sb/home" \
+        /usr/bin/perl -e 'alarm 20; exec @ARGV' /bin/bash "$ROOT/hooks/oss-statusline.sh" 2>"$sb/err"); E=$(cat "$sb/err")
+    chmod 600 "$sb/home/.oss/config.json" 2>/dev/null; rm -rf "$sb"
+}
+# A config this user does not own: a hard link to a root-owned file holding no "apiUrl" and no backslash.
+owned_by_other=""
+for f in /private/etc/hosts /etc/hosts /etc/shells /etc/protocols; do
+    [[ -f "$f" && ! -O "$f" ]] && ! grep -q 'apiUrl\|\\' "$f" 2>/dev/null && { owned_by_other=$f; break; }
+done
+render 'ln "$owned_by_other" "$sb/home/.oss/config.json"'
+if [[ -n "$owned_by_other" && "$(first_section "$L")" == "⚠ apiUrl invalid" ]]; then pass "a config owned by another user (no apiUrl) + stable: '⚠ apiUrl invalid', not the silent fast path"
+else fail "a config owned by another user (no apiUrl) + stable: '⚠ apiUrl invalid'" "file='$owned_by_other' got '$L' err='$E'"; fi
+render 'printf "{\"apiKey\":\"k\"}" > "$sb/home/.oss/config.json"; chmod 000 "$sb/home/.oss/config.json"'
+if [[ -z "$E" && "$(first_section "$L")" == "⚠ apiUrl invalid" ]]; then pass "an unreadable (mode 000) config: '⚠ apiUrl invalid', nothing on stderr"
+else fail "an unreadable (mode 000) config: '⚠ apiUrl invalid', nothing on stderr" "line='$L' err='$E'"; fi
+
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
 [[ $FAILED -eq 0 ]]
