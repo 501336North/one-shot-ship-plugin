@@ -227,5 +227,42 @@ for link in .oss .oss/dev .oss/dev/active/demo .oss/dev/active/demo/decisions.nd
         || fail "$name ($link)" "rc=$RC outside-changed=$([[ "$before" == "$after" ]] && echo no || echo yes) stderr=$(cat "$T/err")"
 done
 
+# Task 9b. Plugin hooks run in every repo, and Claude Code always sets CLAUDE_PROJECT_DIR: a repo that
+# never used OSS must not gain a .oss from a picker answer.
+name='should write nothing, and create no .oss, in a project without a real .oss folder'
+for c in 'no .oss at all' '.oss is a regular file'; do
+    Q=$(mktemp -d "$T/p.XXXXXX")
+    (cd "$Q" && git init -q && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && git checkout -q -B feat/demo/build)
+    [[ "$c" == *file ]] && printf 'not a folder\n' > "$Q/.oss"
+    before=$(snapshot "$Q"); run_in_project; after=$(snapshot "$Q")
+    [[ $RC -eq 0 && "$before" == "$after" && ( "$c" == *file || ! -s "$T/err" ) ]] && pass "$name ($c)" \
+        || fail "$name ($c)" "rc=$RC new=$(diff <(echo "$before") <(echo "$after") | grep '^>' | tr '\n' ' ') stderr=$(cat "$T/err")"
+done
+
+# Task 9b: only a <type>/<feature>/<phase> branch names a feature; "foo" or "feat/demo" names none
+name='should only take the feature from a branch shaped <type>/<feature>/<phase>'
+for c in 'foo|foo bar|unfiled' 'feat/demo|demo bar|unfiled' 'feat/demo/build|demo bar|demo'; do
+    IFS='|' read -r b fs want <<< "$c"; read -r -a folders <<< "$fs"
+    new_project "$b" "${folders[@]}"; run_in_project
+    if [[ "$want" == unfiled ]]; then wantf="./dev/decisions-unfiled.ndjson:1 "; f="$Q/.oss/dev/decisions-unfiled.ndjson"; wantv=null
+    else wantf="./dev/active/$want/decisions.ndjson:1 "; f="$Q/.oss/dev/active/$want/decisions.ndjson"; wantv="\"$want\""; fi
+    got=$(jq -c '.feature' "$f" 2>/dev/null)
+    [[ $RC -eq 0 && "$got" == "$wantv" && "$(lines_under "$Q/.oss")" == "$wantf" ]] && pass "$name ($b)" \
+        || fail "$name ($b)" "rc=$RC feature=$got files=$(lines_under "$Q/.oss")"
+done
+
+# Task 9b: no answer, no decision: nothing written and no folder made for a record that has no line
+name='should create nothing when no question was answered'
+jq '.tool_response.answers = {}' "$FIX/pick.json" > "$T/noanswer.json"
+for c in 'two active folders' '.oss without .oss/dev'; do
+    new_project main one two
+    [[ "$c" == *without* ]] && rm -rf "${Q:?}/.oss/dev"
+    before=$(snapshot "$Q")
+    (cd "$Q" && CLAUDE_PROJECT_DIR="$Q" "$HOOK" < "$T/noanswer.json" 2>"$T/err"); RC=$?
+    after=$(snapshot "$Q")
+    [[ $RC -eq 0 && "$before" == "$after" ]] && pass "$name ($c)" \
+        || fail "$name ($c)" "rc=$RC new=$(diff <(echo "$before") <(echo "$after") | grep '^>' | tr '\n' ' ')"
+done
+
 echo "$RUN run, $FAILED failed"
 [[ $FAILED -eq 0 ]]

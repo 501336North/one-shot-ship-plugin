@@ -15,11 +15,16 @@ in=""
 
 oss_resolve_project
 proj="$_OSS_PROJ"
+# plugin hooks run in every repo: one that never used OSS (no .oss folder) gains nothing. A linked .oss
+# passes here and is refused, with its one stderr line, by oss_safe_target below.
+[[ -n "$proj" && -d "$proj/.oss" ]] || exit 0
 branch=$(cd "$proj" 2>/dev/null && git symbolic-ref --short -q HEAD)
-# ADR-009 (the /oss:context-report rule): the <feature> of a <type>/<feature>/<phase> branch when that
+# ADR-009 (the IRON LAW #4 branch convention): the <feature> of a <type>/<feature>/<phase> branch when that
 # folder is active, else the only active folder, else none. A name is ^[A-Za-z0-9._-]+$, not starting with "."
 name_re='^[A-Za-z0-9_-][A-Za-z0-9._-]*$'
-feature=$(printf '%s' "$branch" | cut -d/ -f2)
+branch_re='^[^/]+/([^/]+)/[^/]'
+feature=""
+[[ "$branch" =~ $branch_re ]] && feature=${BASH_REMATCH[1]}
 if [[ ! "$feature" =~ $name_re || ! -d "$proj/.oss/dev/active/$feature" ]]; then
     active=("$proj"/.oss/dev/active/*/)
     feature=""
@@ -35,8 +40,7 @@ sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256; else sha256
 command -v shasum >/dev/null 2>&1 || command -v sha256sum >/dev/null 2>&1 || exit 0
 
 count=$(printf '%s' "$in" | jq -r '.tool_response.questions | length') || exit 0
-oss_safe_target "$proj" "$rec" || { oss_refuse_unsafe "$rec"; exit 0; }
-out="$_OSS_SAFE_DIR/${rec##*/}"
+lines=""
 for ((i = 0; i < count; i++)); do
     question=$(printf '%s' "$in" | jq -r --argjson i "$i" '.tool_response.questions[$i].question') || continue
     qkey=$(printf '%s\n%s' "$feature" "$question" | sha256 | cut -c1-16)
@@ -63,6 +67,10 @@ for ((i = 0; i < count; i++)); do
            notes: (($r.annotations[$q.question].notes | strings) // null), kind: "decision", command: $command,
            answeredAt: $now, person: {status: "unverified"}, session: .session_id}') || continue
     [[ -n "$line" ]] || continue
-    printf '%s\n' "$line" >> "$out"
+    lines+="$line"$'\n'
 done
+# no answered question: no record, and no folder made for one
+[[ -n "$lines" ]] || exit 0
+oss_safe_target "$proj" "$rec" || { oss_refuse_unsafe "$rec"; exit 0; }
+printf '%s' "$lines" >> "$_OSS_SAFE_DIR/${rec##*/}"
 exit 0
