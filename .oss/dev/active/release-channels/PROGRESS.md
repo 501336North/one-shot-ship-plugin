@@ -19,7 +19,7 @@
 - [x] T19 SemVer version gate, 01dfe1e
 - [x] T20 release template + RELEASING.md (plugin 292b999, API 9fe787b)
 - [x] T11 staging key pinned (bfaf04a); private half in the password manager
-- [ ] T17 beta marketplace repo 501336North/one-shot-ship-plugin-beta: needs go-ahead to create
+- [x] T17 beta marketplace repo 501336North/one-shot-ship-plugin-beta created (private) 2026-10-28; marketplace in its PR #1 (validated), awaiting merge
 - [ ] H1 Render staging service + DB + Stripe test keys: needs go-ahead + cost
 - [ ] H2 switch to beta and run the workflow on STAGING; H3 acceptance sign-off
 
@@ -34,11 +34,11 @@
 - [x] Ship round 4 fixes UR1-UR16 (PLAN.md) through /oss:build, done 2026-10-28; maintainer decision: fence the team section, new plugin only. API branch merged with next (#398: main #392-#396)
 - [x] Ship round 5 gates (2026-10-28, rule: MED+ blocks): pentest PASS (2 LOW, 4 INFO), perf PASS (1 LOW), security PASS (5 LOW, 3 INFO), quality FAIL (1 MEDIUM: stale watcher workflows test, from T7; 4 LOW, 3 INFO). LOW/INFO in FOLLOWUPS
 - [x] Ship round 5 fix UR17 through /oss:build (0ad880d), done 2026-10-28; full watcher suite 3675/3675
-- [ ] Ship round 5: re-run the gates on the round-4 fixes
+- [x] Shipped 2026-10-28: plugin PR #211 and API PR #399 into next (not merged)
 - [ ] Maintainer steps before the feature is usable on STAGING: publish tag cli-decrypt-v1.3.0-beta.1 and commit its checksums; T17 beta repo; H1 Render
 - [ ] Maintainer steps before the first RELEASE: re-sign the production manifest (every workflows/* entry, SR1); publish and pin a stable cli-decrypt >= 1.3.0
 
 ## Blockers
 - None. Gated steps: T11 (staging key), T17 (beta repo), H1 (Render/DB).
 
-## Last Updated: 2026-10-28 14:30 CST by /oss:build (ship round 5 fix UR17)
+## Last Updated: 2026-10-28 15:00 CST by orchestrator (T17, ship PRs)
