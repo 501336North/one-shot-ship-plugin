@@ -252,7 +252,7 @@ case "$ACTION" in
         LOG_FILE="$CURRENT_SESSION/${COMMAND}.log"
         TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
-        # Create/clear command log file with header
+        # Append header so a second run in the same session keeps earlier rounds
         {
             echo "═══════════════════════════════════════════════════════════════"
             echo "  OSS Command: /oss:${COMMAND}"
@@ -261,7 +261,7 @@ case "$ACTION" in
             echo "  PID: $$"
             echo "═══════════════════════════════════════════════════════════════"
             echo ""
-        } > "$LOG_FILE"
+        } >> "$LOG_FILE"
 
         # Also log to unified session log
         echo "" >> "$UNIFIED_LOG"
