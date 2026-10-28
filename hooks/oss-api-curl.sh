@@ -232,11 +232,11 @@ oss_custom_iron_laws() {
 }
 
 # oss_json_field FIELD - reads JSON (a server response) on stdin and prints .FIELD as text ("" when missing,
-# null or false). Control characters and the zero-width/bidi characters are removed inside jq, so those raw
-# bytes never reach the shell or the terminal. Same character set as stripControl in
-# packages/cli-decrypt/src/strip-control.ts.
+# null or false). The invisible table above (UR15: ONE table, the one the team-laws fence uses; the same set as
+# stripControl in packages/cli-decrypt/src/strip-control.ts and the API) plus tab and line feed (one field, one line) is
+# removed inside jq, so those raw bytes never reach the shell or the terminal.
 #
 #   CHAT_ID=$(printf '%s' "$RESPONSE" | oss_json_field chatId)
 oss_json_field() {
-    jq -r --arg f "$1" '.[$f] // "" | tostring | gsub("[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]"; "")'
+    jq -r --arg f "$1" "$_OSS_INVISIBLE_JQ"' .[$f] // "" | tostring | gsub(invisible; "") | gsub("[\t\n]"; "")'
 }
