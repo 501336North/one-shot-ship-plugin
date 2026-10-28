@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { LLMAnalyzer, LLMAnalysisResult } from '../src/detectors/llm-analyzer';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { LLMAnalyzer, LLMAnalysisResult, LLM_ANALYZE_TIMEOUT_MS } from '../src/detectors/llm-analyzer';
 import { QueueManager } from '../src/queue/manager';
 import { RuleEngine } from '../src/detectors/rules';
 import { Task } from '../src/types';
@@ -22,9 +25,18 @@ describe('LLMAnalyzer', () => {
   };
   let mockFetch: ReturnType<typeof vi.fn>;
   const originalFetch = global.fetch;
+  let configDir: string;
+  let savedConfigDir: string | undefined;
+  /** The OSS config the analyzer takes its key and API from (OSS_CONFIG_DIR/config.json, 0600) */
+  const writeConfig = (config: Record<string, unknown>): void =>
+    fs.writeFileSync(path.join(configDir, 'config.json'), JSON.stringify(config), { mode: 0o600 });
 
   beforeEach(() => {
     vi.clearAllMocks();
+    savedConfigDir = process.env.OSS_CONFIG_DIR;
+    configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-llm-analyzer-'));
+    process.env.OSS_CONFIG_DIR = configDir;
+    writeConfig({ apiKey: 'test-api-key' });
 
     mockQueueManager = {
       addTask: vi.fn().mockResolvedValue({ id: 'task-123' } as Task),
@@ -39,14 +51,68 @@ describe('LLMAnalyzer', () => {
 
     analyzer = new LLMAnalyzer(
       mockQueueManager as unknown as QueueManager,
-      mockRuleEngine as unknown as RuleEngine,
-      'test-api-key'
+      mockRuleEngine as unknown as RuleEngine
     );
   });
 
   afterEach(() => {
     // Restore original fetch to prevent leaking mock to other test files
     global.fetch = originalFetch;
+    if (savedConfigDir === undefined) delete process.env.OSS_CONFIG_DIR;
+    else process.env.OSS_CONFIG_DIR = savedConfigDir;
+    fs.rmSync(configDir, { recursive: true, force: true });
+  });
+
+  // The key goes only to the API the OSS config names (release channels: STAGING / DEV)
+  describe('key and API from the OSS config', () => {
+    const noAnomaly = { ok: true, json: () => Promise.resolve({ anomaly_detected: false }) };
+
+    it('should send the configured key to the configured API', async () => {
+      writeConfig({ apiKey: 'staging-key', apiUrl: 'https://one-shot-ship-api-staging.onrender.com' });
+      mockFetch.mockResolvedValue(noAnomaly);
+
+      await analyzer.analyze('logs');
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch.mock.calls[0][0]).toBe('https://one-shot-ship-api-staging.onrender.com/api/v1/analyze');
+      expect(mockFetch.mock.calls[0][1].headers.Authorization).toBe('Bearer staging-key');
+    });
+
+    it('should use the production API when apiUrl is missing', async () => {
+      mockFetch.mockResolvedValue(noAnomaly);
+
+      await analyzer.analyze('logs');
+
+      expect(mockFetch.mock.calls[0][0]).toBe('https://one-shot-ship-api.onrender.com/api/v1/analyze');
+    });
+
+    it('should refuse a redirect (never replay the key to another host)', async () => {
+      // fetch as the platform implements it: 'follow' (the default) replays the request, Bearer
+      // key included, to the Location host; 'manual' hands back the 3xx; 'error' rejects.
+      mockFetch.mockImplementation(async (_url: string, init: { redirect?: RequestRedirect }) => {
+        if (init.redirect === 'error') throw new TypeError('fetch failed: redirect');
+        if (init.redirect === 'manual') return { ok: false, status: 302, json: () => Promise.resolve({}) };
+        return {
+          ok: true,
+          json: () => Promise.resolve({
+            anomaly_detected: true, anomaly_type: 'unusual_pattern', priority: 'medium',
+            analysis: 'from the redirect target', confidence: 0.99, suggested_agent: 'debugger', prompt: 'p',
+          }),
+        };
+      });
+
+      expect(await analyzer.analyze('logs')).toBeNull();
+    });
+
+    it('should send nothing, and not fall back to production, when apiUrl is refused', async () => {
+      writeConfig({ apiKey: 'k', apiUrl: 'http://staging.example.com' });
+      mockFetch.mockResolvedValue(noAnomaly);
+
+      const result = await analyzer.analyze('logs');
+
+      expect(result).toBeNull();
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
   });
 
   // AC-006.1: LLM analyzes when rules don't match
@@ -265,6 +331,26 @@ describe('LLMAnalyzer', () => {
       expect(result).toBeNull();
     });
 
+    // FR14: a server that accepts the request and never answers must not hang the analyzer.
+    // The 10s budget (the same as custom-command-executor) is shortened here so the test stays fast.
+    it('should abort a hung request after 10s and return null', async () => {
+      expect(LLM_ANALYZE_TIMEOUT_MS).toBe(10_000);
+      const fastAnalyzer = new LLMAnalyzer(
+        mockQueueManager as unknown as QueueManager,
+        mockRuleEngine as unknown as RuleEngine,
+        0.7,
+        50
+      );
+      mockFetch.mockImplementation(() => new Promise(() => undefined));
+
+      const outcome = await Promise.race([
+        fastAnalyzer.analyze('logs').then((result) => ({ result })),
+        new Promise<string>((resolve) => setTimeout(() => resolve('hung'), 2000)),
+      ]);
+
+      expect(outcome).toEqual({ result: null });
+    });
+
     it('should handle timeout gracefully', async () => {
       mockFetch.mockImplementation(() => new Promise((_, reject) => {
         setTimeout(() => reject(new Error('Timeout')), 100);
@@ -282,7 +368,6 @@ describe('LLMAnalyzer', () => {
       const strictAnalyzer = new LLMAnalyzer(
         mockQueueManager as unknown as QueueManager,
         mockRuleEngine as unknown as RuleEngine,
-        'test-key',
         0.9 // High threshold
       );
 

@@ -13,7 +13,7 @@ import { execFile, execFileSync } from 'child_process';
 import { promisify } from 'util';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
-import * as https from 'https';
+import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
 import type { AddressInfo } from 'net';
@@ -42,19 +42,13 @@ const HOSTILE_SHIP_CONFIG = {
 describe('committed chain-trigger bundle carries the src behaviour', () => {
   let tmp: string;
   let home: string;
-  let server: https.Server | undefined;
+  let server: http.Server | undefined;
 
   beforeAll(async () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-ct-dist-'));
     home = path.join(tmp, 'home');
     fs.mkdirSync(path.join(home, '.oss'), { recursive: true });
 
-    const key = path.join(tmp, 'key.pem');
-    const cert = path.join(tmp, 'cert.pem');
-    execFileSync('openssl', [
-      'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert,
-      '-days', '1', '-subj', '/CN=localhost',
-    ], { stdio: 'ignore' });
 
     // Stored credentials, encrypted the way the plugin's login writes them (machine-bound key).
     const creds = { apiKey: 'test-key', userId: 'user-1', hardwareId: 'hw-1', salt: 'salt-1' };
@@ -82,7 +76,7 @@ describe('committed chain-trigger bundle carries the src behaviour', () => {
       authTag: cfgCipher.getAuthTag().toString('base64'),
     });
 
-    server = https.createServer({ key: fs.readFileSync(key), cert: fs.readFileSync(cert) }, (req, res) => {
+    server = http.createServer((req, res) => {
       const isShip = req.url === '/api/v1/workflows/ship';
       res.writeHead(isShip ? 200 : 404, { 'Content-Type': 'application/json' });
       res.end(isShip ? shipBody : '{}');
@@ -92,7 +86,7 @@ describe('committed chain-trigger bundle carries the src behaviour', () => {
 
     fs.writeFileSync(
       path.join(home, '.oss', 'config.json'),
-      JSON.stringify({ apiKey: creds.apiKey, apiUrl: `https://localhost:${port}` }),
+      JSON.stringify({ apiKey: creds.apiKey, apiUrl: `http://localhost:${port}` }),
     );
   }, 60000);
 
@@ -108,7 +102,6 @@ describe('committed chain-trigger bundle carries the src behaviour', () => {
         USER: process.env.USER,
         TMPDIR: process.env.TMPDIR,
         HOME: home,
-        NODE_TLS_REJECT_UNAUTHORIZED: '0',
         NODE_NO_WARNINGS: '1',
       },
       cwd: tmp,

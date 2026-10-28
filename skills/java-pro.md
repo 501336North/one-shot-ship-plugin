@@ -10,7 +10,7 @@ Expert java pro powered by One Shot Ship.
 ## Step 1: Check Authentication
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+~/.oss/hooks/oss-value.sh keycheck
 ```
 
 If no API key found:
@@ -21,11 +21,14 @@ Register at https://www.oneshotship.com
 
 ## Step 2: Fetch Agent Prompt from API
 
+Install the decrypt CLI if it is missing (a fresh install has none yet):
+
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install the decrypt CLI (see the message above). Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."; exit 1; }
 ```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/agents/java-pro
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+
+```bash
+~/.oss/bin/oss-decrypt --type agents --name java-pro
 ```
 
 ## Step 3: Execute the Fetched Prompt

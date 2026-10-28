@@ -8,7 +8,8 @@ import { setupCommand } from './commands/setup.js';
 import { decryptCommand } from './commands/decrypt.js';
 import { fetchManifest, verifyManifestSignature } from './manifest-verifier.js';
 import { stripControl } from './strip-control.js';
-import { getApiUrl } from './config.js';
+import type { PromptType } from './cache.js';
+import { getTrustedApiOrigin, publicKeyFor } from './manifest-keys.js';
 
 /**
  * Parsed CLI arguments
@@ -23,7 +24,7 @@ export interface CliArgs {
   verifyManifest?: boolean;
   listPrompts?: boolean;
   category?: string;
-  type?: 'commands' | 'workflows' | 'skills' | 'agents' | 'hooks' | 'custom';
+  type?: PromptType;
   name?: string;
 }
 
@@ -97,7 +98,7 @@ Usage:
 
 Options:
   --setup              Run initial setup (fetch credentials)
-  --type, -t <type>    Prompt type: commands, workflows, skills, agents, hooks, custom
+  --type, -t <type>    Prompt type: commands, workflows, skills, agents, hooks, shared, templates, custom
   --name, -n <name>    Prompt name
   --debug, -d          Enable verbose debug output
   --no-cache           Bypass cache, always fetch from API
@@ -112,6 +113,8 @@ Examples:
   oss-decrypt --setup
   oss-decrypt --type commands --name plan
   oss-decrypt --type workflows --name build
+  oss-decrypt --type shared --name iron-laws
+  oss-decrypt --type templates --name claude-md
   oss-decrypt --debug --type commands --name plan
   oss-decrypt --no-cache --type commands --name plan
   oss-decrypt --clear-cache
@@ -128,13 +131,13 @@ function showVersion(): void {
   console.log(`oss-decrypt v${VERSION}`);
 }
 
-const MANIFEST_PUBLIC_KEY = 'MCowBQYDK2VwAyEAAwFG32b8TuiVTxrDnXzNrb2v68YN5U9epLnZ3O7pQaI=';
-
 /**
  * Verify the signed prompt manifest and output a JSON report
  */
 async function verifyManifestCommand(): Promise<void> {
-  const manifest = await fetchManifest(getApiUrl());
+  const apiUrl = getTrustedApiOrigin();
+  const manifestPublicKey = publicKeyFor(apiUrl);
+  const manifest = await fetchManifest(apiUrl);
 
   if (manifest === null) {
     console.log(JSON.stringify({ signatureValid: false, error: 'Failed to fetch manifest' }));
@@ -142,7 +145,7 @@ async function verifyManifestCommand(): Promise<void> {
     return;
   }
 
-  const signatureValid = verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY);
+  const signatureValid = verifyManifestSignature(manifest, manifestPublicKey);
 
   const categories: Record<string, number> = {};
   for (const key of Object.keys(manifest.prompts)) {
@@ -168,7 +171,7 @@ async function verifyManifestCommand(): Promise<void> {
  * List prompts from the manifest, optionally filtered by category
  */
 async function listPromptsCommand(category?: string): Promise<void> {
-  const manifest = await fetchManifest(getApiUrl());
+  const manifest = await fetchManifest(getTrustedApiOrigin());
 
   if (manifest === null) {
     console.log(JSON.stringify([]));

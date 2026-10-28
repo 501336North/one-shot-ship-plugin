@@ -19,7 +19,6 @@ export declare enum WatcherState {
  */
 export declare class Watcher {
     private readonly ossDir;
-    private readonly apiKey;
     private readonly pidPath;
     private readonly logPath;
     private readonly configPath;
@@ -32,7 +31,7 @@ export declare class Watcher {
     private llmAnalyzer;
     private webhookReceiver;
     private config;
-    constructor(ossDir: string, apiKey: string);
+    constructor(ossDir: string);
     /**
      * Start the watcher process
      * @returns true if started, false if another watcher already running

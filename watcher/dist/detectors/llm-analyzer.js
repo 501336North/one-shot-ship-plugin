@@ -1,3 +1,7 @@
+import { readApiCredentials } from '../api/api-credentials.js';
+import { withDeadline } from '../api/with-deadline.js';
+/** How long an analyze request, body included, may take before it is abandoned (FR14) */
+export const LLM_ANALYZE_TIMEOUT_MS = 10_000;
 /**
  * LLM Analyzer - Fallback analysis for anomalies rules miss
  *
@@ -6,15 +10,13 @@
 export class LLMAnalyzer {
     queueManager;
     ruleEngine;
-    apiKey;
     confidenceThreshold;
-    apiUrl;
-    constructor(queueManager, ruleEngine, apiKey, confidenceThreshold = 0.7, apiUrl = 'https://one-shot-ship-api.onrender.com/api/v1/analyze') {
+    requestTimeoutMs;
+    constructor(queueManager, ruleEngine, confidenceThreshold = 0.7, requestTimeoutMs = LLM_ANALYZE_TIMEOUT_MS) {
         this.queueManager = queueManager;
         this.ruleEngine = ruleEngine;
-        this.apiKey = apiKey;
         this.confidenceThreshold = confidenceThreshold;
-        this.apiUrl = apiUrl;
+        this.requestTimeoutMs = requestTimeoutMs;
     }
     /**
      * Analyze log content - first with rules, then LLM if needed
@@ -49,22 +51,32 @@ export class LLMAnalyzer {
      * Analyze using LLM API
      */
     async analyzeLLM(logContent) {
+        // The key and the API it may go to, from the OSS config; nothing is sent when it is refused
+        const credentials = readApiCredentials();
+        if (!credentials)
+            return null;
         try {
-            const response = await fetch(this.apiUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.apiKey}`,
-                },
-                body: JSON.stringify({
-                    log_content: logContent,
-                }),
+            // a server that never answers, or stalls mid-body, must not hang the analyzer (FR14, SR10)
+            const data = await withDeadline(this.requestTimeoutMs, async (signal) => {
+                const response = await fetch(`${credentials.apiUrl}/api/v1/analyze`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${credentials.apiKey}`,
+                    },
+                    body: JSON.stringify({
+                        log_content: logContent,
+                    }),
+                    // never replay the Bearer key to a redirect target
+                    redirect: 'error',
+                    signal,
+                });
+                // Graceful fallback - null on an error status
+                return response.ok ? (await response.json()) : null;
             });
-            if (!response.ok) {
-                // Graceful fallback - return null on error
+            if (data === null) {
                 return null;
             }
-            const data = await response.json();
             // No anomaly detected
             if (!data.anomaly_detected) {
                 return null;

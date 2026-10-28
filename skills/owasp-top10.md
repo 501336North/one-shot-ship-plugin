@@ -7,11 +7,14 @@ model: opus
 
 ## Fetch from API
 
+Install the decrypt CLI if it is missing (a fresh install has none yet):
+
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install the decrypt CLI (see the message above). Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."; exit 1; }
 ```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/skills/owasp-top10
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+
+```bash
+~/.oss/bin/oss-decrypt --type skills --name owasp-top10
 ```
 
 This skill provides comprehensive guidance on preventing OWASP Top 10 vulnerabilities:

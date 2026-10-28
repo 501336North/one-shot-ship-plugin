@@ -24,8 +24,9 @@
  */
 
 import { createHash } from 'crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync, chmodSync } from 'fs';
+import { existsSync, readFileSync, unlinkSync, readdirSync } from 'fs';
 import { join } from 'path';
+import { writeFileNoFollow } from './safe-write.js';
 
 /**
  * Default TTL for cached prompts (1 hour in milliseconds)
@@ -35,8 +36,16 @@ const DEFAULT_TTL_MS = 60 * 60 * 1000;
 /**
  * Allowed prompt types (runtime validation)
  */
-const ALLOWED_TYPES = ['commands', 'workflows', 'skills', 'agents', 'hooks', 'custom'] as const;
+const ALLOWED_TYPES = ['commands', 'workflows', 'skills', 'agents', 'hooks', 'custom', 'shared', 'templates'] as const;
 export type PromptType = (typeof ALLOWED_TYPES)[number];
+/** Types the API serves as plaintext markdown (not encrypted, not watermarked); still covered by the manifest. */
+export type PlainPromptType = Extract<PromptType, 'shared' | 'templates'>;
+/** Types the API serves as an encrypted envelope. */
+export type EncryptedPromptType = Exclude<PromptType, PlainPromptType>;
+
+export function isPlainPromptType(type: PromptType): type is PlainPromptType {
+  return type === 'shared' || type === 'templates';
+}
 
 /**
  * Cache entry structure
@@ -105,15 +114,6 @@ export class CacheService {
   }
 
   /**
-   * Ensure the cache directory exists with secure permissions (0o700)
-   */
-  private ensureCacheDir(): void {
-    if (!existsSync(this.cacheDir)) {
-      mkdirSync(this.cacheDir, { recursive: true, mode: 0o700 });
-    }
-  }
-
-  /**
    * Check if a cache entry is expired
    */
   private isExpired(entry: CacheEntry): boolean {
@@ -131,8 +131,6 @@ export class CacheService {
     content: string,
     ttl: number = DEFAULT_TTL_MS
   ): Promise<void> {
-    this.ensureCacheDir();
-
     const key = getCacheKey(type, name, userId);
     const entry: CacheEntry = {
       content,
@@ -141,7 +139,7 @@ export class CacheService {
     };
 
     const cachePath = this.getCachePath(key);
-    writeFileSync(cachePath, JSON.stringify(entry), { encoding: 'utf8', mode: 0o600 });
+    writeFileNoFollow(cachePath, JSON.stringify(entry), { mode: 0o600, dirMode: 0o700 });
   }
 
   /**

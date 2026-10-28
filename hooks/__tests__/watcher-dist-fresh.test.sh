@@ -41,7 +41,7 @@ while IFS= read -r f; do
         [[ -f "$target" ]] || continue
         (cd "$ROOT" && git ls-files --error-unmatch "${target#"$ROOT"/}" >/dev/null 2>&1) || missing="$missing ${target#"$ROOT"/}"
     done
-done < <(cd "$ROOT" && git ls-files 'watcher/dist/cli/*.js' 'watcher/dist/services/*.js' 'watcher/dist/queue/*.js' 'watcher/dist/drain-queue.js')
+done < <(cd "$ROOT" && git ls-files 'watcher/dist/cli/*.js' 'watcher/dist/services/*.js' 'watcher/dist/queue/*.js' 'watcher/dist/drain-queue.js' 'watcher/dist/detectors/*.js' 'watcher/dist/monitors/*.js' 'watcher/dist/index.js')
 missing=$(echo "$missing" | tr ' ' '\n' | sort -u | tr '\n' ' ')
 if [[ -z "$stale" && -z "${missing// /}" && $checked -gt 0 ]]; then
     echo "✓ PASS: $checked tracked watcher/dist .js files match a fresh build of watcher/src; imports tracked"

@@ -14,20 +14,15 @@
  * 4. Workflow engine decides whether to stop or continue based on result
  */
 
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { homedir } from 'os';
 import { join } from 'path';
+import { readApiCredentials } from '../api/api-credentials.js';
+import { withDeadline } from '../api/with-deadline.js';
+import { isSafeTeamCommandName } from '../utils/safe-chain-name.js';
 
-const execAsync = promisify(exec);
-
-/**
- * Configuration for the custom command executor
- */
-export interface CustomCommandExecutorConfig {
-  apiKey: string;
-  apiUrl: string;
-}
+const execFileAsync = promisify(execFile);
 
 /**
  * Response from the custom command API
@@ -55,6 +50,9 @@ export interface CustomCommandResult {
  * The prefix that identifies custom team commands
  */
 const CUSTOM_COMMAND_PREFIX = 'team:';
+
+/** How long a custom command fetch may take before it is abandoned */
+export const CUSTOM_COMMAND_FETCH_TIMEOUT_MS = 10000;
 
 /**
  * Check if a command is a custom team command
@@ -86,49 +84,59 @@ export function parseCustomCommand(command: string): string | null {
  * Executor for custom team commands
  */
 export class CustomCommandExecutor {
-  private apiKey: string;
-  private apiUrl: string;
-
-  constructor(config: CustomCommandExecutorConfig) {
-    this.apiKey = config.apiKey;
-    this.apiUrl = config.apiUrl;
-  }
 
   /**
    * Fetch a custom command prompt from the API
    *
    * @param commandName - The command name (without 'team:' prefix)
+   * @param timeoutMs - Abort the request after this long
    * @returns The custom command response or null if not found
-   * @throws Error on authentication or subscription failures
+   * @throws Error on an unsafe name, no usable OSS config, timeout, redirect, auth or subscription failures
    */
-  async fetchCustomCommand(commandName: string): Promise<CustomCommandResponse | null> {
-    const url = `${this.apiUrl}/api/v1/prompts/custom/${commandName}`;
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-    });
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        return null;
-      }
-      if (response.status === 401) {
-        throw new Error('Authentication failed. Run /oss:login to refresh credentials.');
-      }
-      if (response.status === 403) {
-        throw new Error('Subscription expired. Upgrade at: https://www.oneshotship.com/pricing');
-      }
-      const errorData = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
-        error?: string;
-      };
-      throw new Error(errorData.error || 'Request failed');
+  async fetchCustomCommand(
+    commandName: string,
+    timeoutMs: number = CUSTOM_COMMAND_FETCH_TIMEOUT_MS
+  ): Promise<CustomCommandResponse | null> {
+    if (!isSafeTeamCommandName(commandName)) {
+      throw new Error('Invalid custom command name');
     }
+    const credentials = readApiCredentials();
+    if (!credentials) {
+      throw new Error('No API key configured, or apiUrl in your OSS config is refused. Run /oss:login');
+    }
+    const url = `${credentials.apiUrl}/api/v1/prompts/custom/${encodeURIComponent(commandName)}`;
 
-    return response.json() as Promise<CustomCommandResponse>;
+    // the deadline covers the body read too: a stalled body must not hang the watcher (SR10)
+    return withDeadline(timeoutMs, async (signal) => {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${credentials.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        signal,
+        // never replay the Bearer key to a redirect target
+        redirect: 'error',
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          return null;
+        }
+        if (response.status === 401) {
+          throw new Error('Authentication failed. Run /oss:login to refresh credentials.');
+        }
+        if (response.status === 403) {
+          throw new Error('Subscription expired. Upgrade at: https://www.oneshotship.com/pricing');
+        }
+        const errorData = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
+          error?: string;
+        };
+        throw new Error(errorData.error || 'Request failed');
+      }
+
+      return (await response.json()) as CustomCommandResponse;
+    });
   }
 
   /**
@@ -195,14 +203,14 @@ export class CustomCommandExecutor {
   }
 
   /**
-   * Execute a shell command with error handling
+   * Run a hook script with an argv array: no shell, so a name or payload is never interpreted (FR9)
    *
-   * @param command - The shell command to execute
-   * @returns Promise that resolves when command completes
+   * @param script - The hook script path
+   * @param args - Its arguments, passed verbatim
    */
-  private async runShellCommand(command: string): Promise<void> {
+  private async runHook(script: string, args: string[]): Promise<void> {
     try {
-      await execAsync(command);
+      await execFileAsync(script, args);
     } catch {
       // Shell command failures are non-fatal for logging/status
     }
@@ -221,18 +229,19 @@ export class CustomCommandExecutor {
    * @returns The execution result with prompt content
    */
   async invokeCommand(commandName: string): Promise<CustomCommandResult> {
+    if (!isSafeTeamCommandName(commandName)) {
+      return { success: false, commandName, error: 'Invalid custom command name', isBlocking: false };
+    }
     const hooksDir = join(homedir(), '.oss', 'hooks');
     const logScript = join(hooksDir, 'oss-log.sh');
     const notifyScript = join(hooksDir, 'oss-notify.sh');
 
     // Step 1: Initialize logging
-    await this.runShellCommand(`${logScript} init custom`);
+    await this.runHook(logScript, ['init', 'custom']);
 
     // Step 2: Update status line (start)
     const startPayload = JSON.stringify({ command: commandName });
-    await this.runShellCommand(
-      `${notifyScript} --workflow custom start '${startPayload}'`
-    );
+    await this.runHook(notifyScript, ['--workflow', 'custom', 'start', startPayload]);
 
     try {
       // Step 3: Fetch custom command from API
@@ -244,9 +253,7 @@ export class CustomCommandExecutor {
           command: commandName,
           error: `Custom command '${commandName}' not found`,
         });
-        await this.runShellCommand(
-          `${notifyScript} --workflow custom failed '${failPayload}'`
-        );
+        await this.runHook(notifyScript, ['--workflow', 'custom', 'failed', failPayload]);
 
         return {
           success: false,
@@ -258,9 +265,7 @@ export class CustomCommandExecutor {
 
       // Step 4: Update status line (complete)
       const completePayload = JSON.stringify({ command: commandName });
-      await this.runShellCommand(
-        `${notifyScript} --workflow custom complete '${completePayload}'`
-      );
+      await this.runHook(notifyScript, ['--workflow', 'custom', 'complete', completePayload]);
 
       return {
         success: true,
@@ -276,9 +281,7 @@ export class CustomCommandExecutor {
         command: commandName,
         error: errorMsg,
       });
-      await this.runShellCommand(
-        `${notifyScript} --workflow custom failed '${failPayload}'`
-      );
+      await this.runHook(notifyScript, ['--workflow', 'custom', 'failed', failPayload]);
 
       return {
         success: false,

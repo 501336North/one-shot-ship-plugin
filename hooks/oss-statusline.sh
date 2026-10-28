@@ -66,6 +66,59 @@ validate_project_path() {
 }
 
 # =============================================================================
+# Section 0: Channel (release channels)
+# =============================================================================
+# Which API this session talks to, from oss_api_url (the rule every call follows),
+# and whether the plugin is a beta build (a version with a pre-release part, e.g. 2.1.0-beta.1).
+# Production + stable plugin: no section, so customers see no change.
+# =============================================================================
+# Runs on every render: shell built-ins only, apart from what oss_api_url needs (SR9).
+compute_channel() {
+    local helper="" h here url ver="" root="" beta=false line re='"version"[[:space:]]*:[[:space:]]*"([^"]+)"'
+    local rf="$HOME/.oss/plugin-root" rr="" cf cfg=""
+    here=${BASH_SOURCE[0]%/*}; [[ "$here" == "${BASH_SOURCE[0]}" ]] && here=.
+    for h in "$here/oss-api-curl.sh" "$HOME/.oss/hooks/oss-api-curl.sh"; do
+        [[ -f "$h" ]] && { helper="$h"; break; }
+    done
+    [[ -n "$helper" ]] || return 0
+    # shellcheck source=oss-api-curl.sh
+    source "$helper" 2>/dev/null || return 0
+    root="${CLAUDE_PLUGIN_ROOT:-}"
+    # ~/.oss/plugin-root as `oss-value.sh root` checks it (not a link, owned, absolute, one line, a folder: SR5), in
+    # built-ins because this runs on every render.
+    if [[ -z "$root" && -f "$rf" && ! -L "$rf" && -O "$rf" ]] && ! IFS= read -r -d '' rr < "$rf"; then
+        while [[ "$rr" == *$'\n' ]]; do rr=${rr%$'\n'}; done
+        [[ "$rr" == /* && -d "$rr" ]] && root=$rr   # a second line makes it no folder
+    fi
+    if [[ -n "$root" && -f "$root/.claude-plugin/plugin.json" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            [[ "$line" =~ $re ]] && { ver=${BASH_REMATCH[1]}; break; }
+        done < "$root/.claude-plugin/plugin.json"
+    fi
+    [[ "$ver" == *-* ]] && beta=true
+    # TR7: production (the config names no apiUrl) and a stable plugin show nothing, so most customers pay no jq or
+    # stat per render. A built-in read of a regular, non-link file; any backslash (jq reads "api\u0055rl" as apiUrl),
+    # a NUL, or anything else goes the full way. Skipping the trust check here hides no key: oss_api_url/oss_api_key
+    # still refuse an untrusted config where the key is sent; only the "apiUrl invalid" warning is not shown for it.
+    cf="${OSS_CONFIG_DIR:-$HOME/.oss}/config.json"
+    # UR5: only a config this user owns and can read (a failed redirection would also end `read` with rc 1); the
+    # read's own errors are silenced (2>/dev/null BEFORE the <, or the failed open still prints), never shown.
+    if ! $beta && [[ -f "$cf" && ! -L "$cf" && -O "$cf" && -r "$cf" ]] && ! IFS= read -r -d '' cfg 2>/dev/null < "$cf" \
+        && [[ "$cfg" != *apiUrl* && "$cfg" != *\\* ]]; then
+        return 0
+    fi
+    if ! url=$(oss_api_url 2>/dev/null); then echo "⚠ apiUrl invalid"; return 0; fi
+    if [[ "$url" == "$OSS_API_DEFAULT_URL" ]]; then
+        $beta && echo "⚠ beta plugin → production API (mismatch)"
+    elif $beta || [[ -z "$ver" ]]; then
+        echo "⚠ STAGING"
+    else
+        echo "⚠ STAGING · stable plugin (mismatch)"
+    fi
+    return 0
+}
+
+# =============================================================================
 # Read input and setup
 # =============================================================================
 
@@ -74,7 +127,9 @@ INPUT=$(cat)
 
 # Check for jq dependency
 if ! command -v jq &>/dev/null; then
-    echo "[jq required]"
+    # SR8: the swimlane still shows (the decrypt CLI reaches staging without jq); see compute_channel.
+    channel=$(compute_channel)
+    echo "${channel:+$channel | }[jq required]"
     exit 0
 fi
 
@@ -433,13 +488,16 @@ is_idle_state() {
 # Build status line with proper separators
 # =============================================================================
 # Section order (full active display):
-#   health | [Model] project | branch | workflow | agent | supervisor | queue | notification
+#   [channel] | health | [Model] project | branch | workflow | agent | supervisor | queue | notification
 #
 # Section order (minimal idle display):
-#   health | branch | → next | 🚨 critical queue (if any) | notification
+#   [channel] | health | branch | → next | 🚨 critical queue (if any) | notification
 # =============================================================================
 build_status_line() {
     local sections=()
+    local channel
+    channel=$(compute_channel)
+    [[ -n "$channel" ]] && sections+=("$channel")   # first: the swimlane must be impossible to miss
 
     # Compute each section
     local health model_project branch workflow agent supervisor queue notification

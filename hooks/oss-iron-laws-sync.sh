@@ -16,8 +16,15 @@
 #   - CLAUDE.md is a symlink (incl. dangling) or not a regular file
 #   - CLAUDE.md's directory resolves outside the project, or the project resolves to $HOME
 #   - the markers are not exactly one START line before exactly one END line
-#   - the API body is empty, < 500 bytes, > 256KB, HTML, or has no "IRON LAW"
-# A failed fetch sets a 1h backoff; only a validated write marks the cache fresh (24h).
+#   - the decrypt CLI refuses (signature or hash mismatch, not in the signed manifest, API error),
+#     takes over 15s, or is missing and cannot be installed
+#   - the verified body is empty, < 500 bytes, > 256KB, HTML, or has no "IRON LAW"
+# A failed fetch sets a 1h backoff; only a validated write marks the cache fresh (24h). A failed team-section fetch
+# still writes the verified laws and marks them fresh; the team section alone is retried after 1h, from the verified
+# laws kept in ~/.oss/.iron-laws-verified, without asking the decrypt CLI again (TR4, UR12).
+# Below the verified laws, inside the block: the team/personal section (oss_custom_iron_laws, SR16), after one line
+# saying it is unverified, inside a backtick fence it cannot close, then a closing line (UR1'); when there is none or
+# its fetch fails, the verified laws alone.
 #
 # Exit codes (refresh mode always exits 0, so session start never fails):
 #   0  done or nothing to do
@@ -25,22 +32,23 @@
 #   2  bad arguments
 #   3  install mode refused: CLAUDE.md is unsafe to write (symlink, not a regular file, outside
 #      the project, the project is $HOME, malformed markers). Nothing written.
-#   4  install mode has no valid laws to write (not logged in, no key, API unreachable or
-#      non-200, invalid body). Nothing written.
+#   4  install mode has no valid laws to write (not logged in, decrypt CLI missing or refused,
+#      API unreachable, invalid body). Nothing written.
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${HOME}/.oss/config.json"
-API_URL="https://one-shot-ship-api.onrender.com"
-ENDPOINT="/api/v1/prompts/shared/iron-laws"
 STATE_DIR="${HOME}/.oss"
+OSS_DECRYPT="${STATE_DIR}/bin/oss-decrypt"
 LAST_CHECK_FILE="${STATE_DIR}/.iron-laws-last-check"
 BACKOFF_FILE="${STATE_DIR}/.iron-laws-backoff"
+TEAM_RETRY_FILE="${STATE_DIR}/.iron-laws-team-retry"   # UR12: a failed team-section fetch, retried after 1h on its own
+VERIFIED_CACHE="${STATE_DIR}/.iron-laws-verified"      # UR12: the last verified laws written, for that team-only retry
 LOCK_DIR="${STATE_DIR}/.iron-laws-sync.lock"
 CACHE_TTL_SECONDS=86400   # 24h after a validated write
 BACKOFF_SECONDS=3600      # 1h after a failed fetch
 LOCK_STALE_SECONDS=30
+CLI_TIMEOUT_SECONDS=15   # the CLI's own manifest fetch times out at 10s
 MIN_BODY_BYTES=500
 MAX_BODY_BYTES=262144
 
@@ -112,79 +120,67 @@ block_state() {
 }
 
 # --- fetch + validate ------------------------------------------------------------------------
-# Prints the apiKey from $CONFIG_FILE into the caller's $(...) and nowhere else. Each parser is
-# given the file PATH, never the key, so the key is not in any process's argv.
-# node, else python3, else read_api_key_flat. Prints nothing when the key can't be read.
-read_api_key() {
-    if command -v node >/dev/null 2>&1; then
-        node -e '
-            try {
-                const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-                if (typeof c.apiKey === "string") process.stdout.write(c.apiKey);
-            } catch (e) {}' "$CONFIG_FILE" 2>/dev/null
-    elif command -v python3 >/dev/null 2>&1; then
-        python3 -c '
-import json, sys
-try:
-    with open(sys.argv[1], encoding="utf-8") as f:
-        c = json.load(f)
-    if isinstance(c, dict) and isinstance(c.get("apiKey"), str):
-        sys.stdout.write(c["apiKey"])
-except Exception:
-    pass' "$CONFIG_FILE" 2>/dev/null
-    else
-        read_api_key_flat
-    fi
+# The laws come only from the decrypt CLI (FR15, ADR-005): it fetches /api/v1/prompts/shared/iron-laws
+# with its own stored credentials, checks the body's sha256 against the signed manifest entry
+# shared/iron-laws, and prints it, or refuses (non-zero exit). The hook never sees the API key.
+# ensure-decrypt-cli.sh beside this hook installs or upgrades it to the pinned version first, on every fetch.
+# UR12: the team-only retry reuses the verified laws written last time (a regular file, not a symlink); 1 when there
+# are none, so the caller fetches them again.
+cached_body() { [[ -f "$VERIFIED_CACHE" && ! -L "$VERIFIED_CACHE" ]] && cp "$VERIFIED_CACHE" "$1"; }
+keep_verified() { # $1 the validated laws, before the team section
+    local tmp; tmp=$(mktemp "$STATE_DIR/.iron-laws-verified.XXXXXX") || return 0
+    cp "$1" "$tmp" && mv -f "$tmp" "$VERIFIED_CACHE" || rm -f "$tmp"
 }
 
-# Last resort, pure bash: the flat `"apiKey": "..."` shape that /oss:login writes. Fails closed
-# (prints nothing) unless "apiKey" occurs exactly once, is followed by `: "`, and its string
-# ends with an unescaped `"` using only the escapes \" \\ \/ and no control characters.
-read_api_key_flat() {
-    local json rest key="" c sep='^[[:space:]]*:[[:space:]]*"'
-    json=$(< "$CONFIG_FILE") || return 1
-    rest=${json#*\"apiKey\"}
-    [[ "$rest" != "$json" && "$rest" != *'"apiKey"'* ]] || return 1
-    [[ "$rest" =~ $sep ]] || return 1
-    rest=${rest:${#BASH_REMATCH[0]}}
-    while [[ -n "$rest" ]]; do
-        c=${rest:0:1}; rest=${rest:1}
-        case "$c" in
-            '"') printf '%s' "$key"; return 0 ;;
-            '\')
-                c=${rest:0:1}; rest=${rest:1}
-                case "$c" in '"' | '\' | '/') key+=$c ;; *) return 1 ;; esac ;;
-            [[:cntrl:]]) return 1 ;;
-            *) key+=$c ;;
-        esac
-    done
-    return 1
+run_cli() { # $1 output file; the CLI is stopped after CLI_TIMEOUT_SECONDS
+    local out="$1" pid watchdog rc=0
+    "$OSS_DECRYPT" --type shared --name iron-laws > "$out" 2>"$WORK/cli-err" & pid=$!
+    # Killing the watchdog must also stop its sleep (SR11): the TERM trap kills it ($! is the sleep once started).
+    ( trap 'kill $! 2>/dev/null; exit 0' TERM
+      sleep "$CLI_TIMEOUT_SECONDS" & wait $!; kill "$pid" 2>/dev/null ) </dev/null >/dev/null 2>&1 & watchdog=$!
+    wait "$pid" || rc=$?
+    kill "$watchdog" 2>/dev/null
+    return "$rc"
 }
 
 # Writes the validated, marker-free laws to $1. Returns 1 on any failure.
 fetch_body() {
-    local out="$1" raw="$WORK/raw" key rc=0 code bytes
-    key=$(read_api_key)
-    if [[ -z "$key" ]]; then warn "no API key in $CONFIG_FILE"; return 1; fi
-    oss_api_curl "$key" -sS --connect-timeout 2 -m 4 --max-filesize "$MAX_BODY_BYTES" \
-        -w '\n%{http_code}' "${API_URL}${ENDPOINT}" > "$raw" 2>/dev/null || rc=$?
-    unset key
-    if (( rc != 0 )); then warn "API unreachable or response too large (curl exit $rc)"; return 1; fi
-    code=$(tail -n 1 "$raw")
-    if [[ "$code" != "200" ]]; then warn "API returned HTTP $code"; return 1; fi
+    local out="$1" raw="$WORK/raw" rc=0 bytes
+    [[ -n "${TEAM_ONLY:-}" ]] && ! cached_body "$raw" && TEAM_ONLY=
+    if [[ -z "${TEAM_ONLY:-}" ]]; then
+        # Every time, not only when the CLI is missing (SR6): an outdated or wrong-channel CLI is upgraded; it exits at
+        # once when the pin is met. A failure means the installed CLI is not trusted to fetch the laws.
+        if ! "$SCRIPT_DIR/ensure-decrypt-cli.sh" </dev/null >/dev/null 2>&1; then
+            warn "the decrypt CLI could not be installed or updated to the pinned version"; return 1
+        fi
+        run_cli "$raw" || rc=$?
+        if (( rc != 0 )); then
+            warn "the decrypt CLI refused or failed (exit $rc): $(tail -n 1 "$WORK/cli-err" 2>/dev/null)"; return 1
+        fi
+    fi
     bytes=$(wc -c < "$raw" | tr -d ' ')
     if (( bytes > MAX_BODY_BYTES + 8 )); then warn "rejected: body over $MAX_BODY_BYTES bytes"; return 1; fi
-    # Drop the status line and any marker-like lines; trim leading/trailing blank lines.
-    sed '$d' "$raw" | awk '
+    # Drop any marker-like lines; trim leading/trailing blank lines.
+    awk '
         /^[[:space:]]*<!--[[:space:]]*IRON LAWS (START|END)/ { next }
         /^[[:space:]]*$/ { if (started) blanks++; next }
-        { while (blanks > 0) { print ""; blanks-- } started = 1; print }' > "$out"
+        { while (blanks > 0) { print ""; blanks-- } started = 1; print }' "$raw" > "$out"
     bytes=$(wc -c < "$out" | tr -d ' ')
     if (( bytes < MIN_BODY_BYTES )); then warn "rejected: body under $MIN_BODY_BYTES bytes"; return 1; fi
     if grep -qiE '<!doctype html|<html[[:space:]>]' "$out"; then
         warn "rejected: body looks like HTML"; return 1
     fi
     if ! grep -q 'IRON LAW' "$out"; then warn "rejected: body has no IRON LAW heading"; return 1; fi
+    [[ -n "${TEAM_ONLY:-}" ]] || keep_verified "$out"
+    # Below the verified laws: the team/personal section, marked unverified (SR16); none or a failed fetch: base only.
+    # A FAILED fetch (rc 2, not "no section") is retried on its own after 1h (TR4, UR12).
+    local custom rc=0
+    custom=$(oss_custom_iron_laws) || rc=$?
+    if (( rc == 2 )); then
+        CUSTOM_FAILED=1
+        [[ -n "${TEAM_ONLY:-}" ]] && return 1   # the block already holds these verified laws: nothing to rewrite
+    fi
+    if (( rc == 0 )); then printf '\n%s\n' "$custom" >> "$out"; fi   # the note, the fenced section, the closing line (UR1')
 }
 
 # --- write -----------------------------------------------------------------------------------
@@ -260,27 +256,34 @@ main() {
     fi
     if [[ "$MODE" == refresh ]]; then
         [[ "$state" == one ]] || exit 0
-        younger_than "$LAST_CHECK_FILE" "$CACHE_TTL_SECONDS" && exit 0
+        if younger_than "$LAST_CHECK_FILE" "$CACHE_TTL_SECONDS"; then
+            # UR12: the verified laws are fresh; only a team section whose fetch failed over an hour ago is retried.
+            [[ -e "$TEAM_RETRY_FILE" ]] && ! younger_than "$TEAM_RETRY_FILE" "$BACKOFF_SECONDS" || exit 0
+            TEAM_ONLY=1
+        fi
         younger_than "$BACKOFF_FILE" "$BACKOFF_SECONDS" && exit 0
     fi
-    [[ -f "$CONFIG_FILE" ]] || { warn "not logged in ($CONFIG_FILE missing)"; give_up 4; }
     # shellcheck source=oss-api-curl.sh
     source "$SCRIPT_DIR/oss-api-curl.sh" 2>/dev/null || { warn "missing $SCRIPT_DIR/oss-api-curl.sh"; give_up; }
+    CONFIG_FILE="$(oss_config_file)"  # logged in; the decrypt CLI reads its own credentials
+    [[ -f "$CONFIG_FILE" ]] || { warn "not logged in ($CONFIG_FILE missing)"; give_up 4; }
+    oss_api_url >/dev/null || { warn "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"; give_up 4; }
 
     trap cleanup EXIT
     WORK=$(mktemp -d "${TMPDIR:-/tmp}/oss-iron-laws.XXXXXX") || give_up
     mkdir -p "$STATE_DIR"
     local body="$WORK/body"
     if ! fetch_body "$body"; then
-        touch "$BACKOFF_FILE"
+        if [[ -n "${TEAM_ONLY:-}" ]]; then touch "$TEAM_RETRY_FILE"; else touch "$BACKOFF_FILE"; fi
         give_up 4
     fi
 
     acquire_lock || give_up
     write_block "$body" || give_up $?
     if [[ "$RESULT" != skipped ]]; then
-        touch "$LAST_CHECK_FILE"
-        rm -f "$BACKOFF_FILE"
+        # UR12: the 24h stamp follows the verified laws; the team section has its own 1h retry stamp.
+        [[ -n "${TEAM_ONLY:-}" ]] || { touch "$LAST_CHECK_FILE"; rm -f "$BACKOFF_FILE"; }
+        if [[ -n "${CUSTOM_FAILED:-}" ]]; then touch "$TEAM_RETRY_FILE"; else rm -f "$TEAM_RETRY_FILE"; fi
     fi
     # The current session read CLAUDE.md before this block existed: show it once.
     [[ "$RESULT" == added ]] && cat "$body"

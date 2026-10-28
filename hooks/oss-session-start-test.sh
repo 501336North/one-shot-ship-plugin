@@ -59,24 +59,39 @@ if [[ -n "$CLAUDE_PROJECT_DIR" ]]; then
 fi
 
 # Check for API key configuration
-CONFIG_FILE=~/.oss/config.json
+CONFIG_FILE="$(oss_config_file)"  # the key and the URL it goes to come from one file (oss-api-curl.sh)
 if [[ ! -f "$CONFIG_FILE" ]]; then
     echo "OSS: Not logged in. Run /oss login to authenticate."
     exit 0
 fi
 
 # Check if API key exists in config
-API_KEY=$(grep -o '"apiKey"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f4)
-if [[ -z "$API_KEY" ]]; then
-    echo "OSS: No API key found. Run /oss login to authenticate."
-    exit 0
+# The key and the URL it goes to come from ONE trusted read of the OSS config (oss-api-curl.sh, TR5/TR9).
+# UR4: a config the trust check refuses (symlink, owner, mode) is reported, and session start goes on without a key.
+API_KEY=""; CONFIG_UNTRUSTED=""
+if ! _oss_config_read 2>/dev/null; then
+    CONFIG_UNTRUSTED=1
+    echo "OSS: Your OSS config is untrusted (a symlink, not owned by you, or writable by others): run /oss:login to replace it."
+else
+    API_KEY=$(_oss_cfg_key 2>/dev/null)
+    if [[ -z "$API_KEY" ]]; then
+        echo "OSS: No API key found. Run /oss login to authenticate."
+        exit 0
+    fi
 fi
 
 # Quick subscription check (non-blocking)
 # Note: Full validation happens when skills are used
-SUBSCRIPTION_STATUS=$(oss_api_curl "$API_KEY" -s -m 2 \
-    "https://one-shot-ship-api.onrender.com/api/v1/subscription/status" 2>/dev/null | \
-    grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || echo "unknown")
+if [[ -n "$CONFIG_UNTRUSTED" ]]; then
+    SUBSCRIPTION_STATUS="unknown"   # no key: no subscription check
+elif API_URL="$(_oss_cfg_origin)"; then
+    SUBSCRIPTION_STATUS=$(oss_api_curl "$API_KEY" -s -m 2 \
+        "${API_URL}/api/v1/subscription/status" 2>/dev/null | \
+        grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || echo "unknown")
+else
+    echo "OSS: apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"
+    SUBSCRIPTION_STATUS="unknown"
+fi
 
 # Get project name for notification
 PROJECT_NAME="${CLAUDE_PROJECT_DIR##*/}"

@@ -6,11 +6,14 @@ description: Modern React patterns (hooks, compound components)
 
 ## Fetch from API
 
+Install the decrypt CLI if it is missing (a fresh install has none yet):
+
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install the decrypt CLI (see the message above). Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."; exit 1; }
 ```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/skills/react-patterns
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+
+```bash
+~/.oss/bin/oss-decrypt --type skills --name react-patterns
 ```
 
 This skill provides comprehensive guidance on modern React including:

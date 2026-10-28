@@ -21,6 +21,12 @@ describe('oss-statusline.sh - Next Command Display', () => {
   const projectOssDir = path.join(testProjectDir, '.oss');
   const projectWorkflowFile = path.join(projectOssDir, 'workflow-state.json');
 
+  // Render as a STABLE plugin, so the channel section (release channels) adds nothing with an arrow:
+  // a beta plugin on production renders "⚠ beta plugin → production API (mismatch)", and whichever
+  // plugin the test runner happens to run under must not decide what these next-command tests see.
+  const stablePluginRoot = path.join(testProjectDir, 'stable-plugin');
+  const renderEnv = { ...process.env, CLAUDE_PLUGIN_ROOT: stablePluginRoot };
+
   let originalCurrentProject: string | null = null;
 
   beforeEach(() => {
@@ -31,6 +37,11 @@ describe('oss-statusline.sh - Next Command Display', () => {
 
     // Create test project directory
     fs.mkdirSync(projectOssDir, { recursive: true });
+    fs.mkdirSync(path.join(stablePluginRoot, '.claude-plugin'), { recursive: true });
+    fs.writeFileSync(
+      path.join(stablePluginRoot, '.claude-plugin', 'plugin.json'),
+      JSON.stringify({ name: 'oss', version: '2.0.0' })
+    );
 
     // Initialize as git repo
     try {
@@ -81,6 +92,7 @@ describe('oss-statusline.sh - Next Command Display', () => {
         timeout: 5000,
         encoding: 'utf-8',
         cwd: testProjectDir,
+        env: renderEnv,
       });
     } catch (error) {
       const execError = error as { stdout?: string; stderr?: string };
@@ -116,6 +128,7 @@ describe('oss-statusline.sh - Next Command Display', () => {
         timeout: 5000,
         encoding: 'utf-8',
         cwd: testProjectDir,
+        env: renderEnv,
       });
     } catch (error) {
       const execError = error as { stdout?: string; stderr?: string };
@@ -152,6 +165,7 @@ describe('oss-statusline.sh - Next Command Display', () => {
         timeout: 5000,
         encoding: 'utf-8',
         cwd: testProjectDir,
+        env: renderEnv,
       });
     } catch (error) {
       const execError = error as { stdout?: string; stderr?: string };

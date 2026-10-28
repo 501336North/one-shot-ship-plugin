@@ -51,12 +51,24 @@ describe('/oss:workflows skill', () => {
   });
 
   /**
-   * @behavior Skill references API endpoint
-   * @acceptance-criteria Task 16: Uses API to fetch config
+   * @behavior Skill fetches the workflow list and one named workflow through the OSS value helper
+   * @acceptance-criteria Task 16: Uses API to fetch config; ADR-005: the API key goes to curl on
+   *   stdin and never into the conversation, and the address follows the configured apiUrl
    */
-  it('should reference the workflows API endpoint', () => {
+  it('should fetch workflow config through the oss-value.sh helper', () => {
     const content = readFileSync(SKILL_PATH, 'utf-8');
-    expect(content).toContain('/api/v1/workflows');
+    expect(content).toMatch(/^~\/\.oss\/hooks\/oss-value\.sh api workflows$/m);
+    expect(content).toMatch(/^~\/\.oss\/hooks\/oss-value\.sh api workflow$/m);
+  });
+
+  /**
+   * @behavior Skill never tells the model to call the API itself with the key
+   * @acceptance-criteria ADR-005: no raw API path, Bearer header or apiKey placeholder in the command
+   */
+  it('should not inline a raw workflows API call or the API key', () => {
+    const content = readFileSync(SKILL_PATH, 'utf-8');
+    expect(content).not.toContain('/api/v1/');
+    expect(content).not.toMatch(/Bearer|\{apiKey\}|grep apiKey/);
   });
 
   /**

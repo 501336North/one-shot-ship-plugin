@@ -37,7 +37,7 @@ run_notify() {
         "$SH" "$T/hooks/oss-notify.sh" "$@" 2>&1 </dev/null)
 }
 logged_in() {
-    echo '{"apiKey":"ossk_test_key","apiUrl":"https://example.invalid"}' > "$T/home/.oss/config.json"
+    echo '{"apiKey":"ossk_test_key","apiUrl":"https://one-shot-ship-api-staging.onrender.com"}' > "$T/home/.oss/config.json"
     : > "$T/plugin/watcher/dist/cli/update-workflow-state.js"
 }
 
@@ -57,11 +57,11 @@ if [[ $rc -eq 0 ]] && grep -q '^write build \[start\]' "$T/log.calls" 2>/dev/nul
 else fail "notify without oss-api-curl.sh: start event exits 0, is logged, analytics skipped" "rc=$rc log=$(cat "$T/log.calls" 2>/dev/null) curl=$(cat "$T/curl.calls" 2>/dev/null) out=$out"; fi
 rm -rf "$T"
 
-# 3. Helper present: oss_api_curl is defined and used (-q first, --globoff, key on stdin via --config -, not argv).
+# 3. Helper present: oss_api_curl is defined and used (-q first, --globoff, --noproxy (UR2), key on stdin via --config -, not argv).
 sandbox; logged_in; cp "$ROOT/hooks/oss-api-curl.sh" "$T/hooks/"
 out=$(run_notify --workflow build start); rc=$?
 calls=$(cat "$T/curl.calls" 2>/dev/null)
-if [[ $rc -eq 0 ]] && [[ "$calls" == "-q --globoff --config - "*"/api/v1/analytics/track"* ]] && [[ "$calls" != *ossk_test_key* ]]; then
+if [[ $rc -eq 0 ]] && [[ "$calls" == "-q --globoff --noproxy * --config - "*"/api/v1/analytics/track"* ]] && [[ "$calls" != *ossk_test_key* ]]; then
     pass "notify with oss-api-curl.sh: analytics goes through oss_api_curl"
 else fail "notify with oss-api-curl.sh: analytics goes through oss_api_curl" "rc=$rc curl=$calls out=$out"; fi
 rm -rf "$T"

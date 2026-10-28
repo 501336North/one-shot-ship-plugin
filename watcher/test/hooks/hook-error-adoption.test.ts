@@ -1,9 +1,9 @@
 /**
- * @behavior The highest-frequency real hook failures (auth 401/403, network
+ * @behavior The highest-frequency real hook failures (auth 401, laws refused by the signed manifest, network
  *           unreachable, decrypt/binary integrity) emit a structured OSSError:
  *           in-band JSON on stdout, an OSS_ERROR line in the project
  *           workflow.log, the hook's original exit code preserved, and the
- *           existing human recovery guidance (/oss:login, pricing) untouched.
+ *           existing human recovery guidance (/oss:login) untouched.
  *           When the emitter dist is absent, hooks behave exactly as before.
  * @acceptance-criteria Task 11 — hook adoption of the standardized error contract
  * @business-rule US-002: hook failures speak the wire contract so the calling
@@ -11,7 +11,7 @@
  * @boundary Shell scripts (hooks/fetch-iron-laws.sh, hooks/ensure-decrypt-cli.sh)
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -56,11 +56,51 @@ afterEach(() => {
   }
 });
 
+/**
+ * Install a stub decrypt CLI at ~/.oss/bin/oss-decrypt. Since FR15, fetch-iron-laws.sh gets the laws only
+ * from `oss-decrypt --type shared --name iron-laws`, which verifies them against the signed manifest.
+ */
+function stubDecryptCli(sandbox: Sandbox, script: string): void {
+  const binDir = path.join(sandbox.home, '.oss', 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
+  const stubPath = path.join(binDir, 'oss-decrypt');
+  fs.writeFileSync(stubPath, `#!/bin/bash\n${script}\n`);
+  fs.chmodSync(stubPath, 0o755);
+}
+
 /** Install an executable `curl` stub in the sandbox PATH. */
 function stubCurl(sandbox: Sandbox, script: string): void {
   const stubPath = path.join(sandbox.stubBin, 'curl');
   fs.writeFileSync(stubPath, `#!/bin/bash\n${script}\n`);
   fs.chmodSync(stubPath, 0o755);
+}
+
+/**
+ * A throwaway copy of hooks/ whose ensure-decrypt-cli.sh is a stub. Since SR6 fetch-iron-laws.sh runs
+ * ensure-decrypt-cli.sh before every fetch; the real installer would judge the stub CLI outdated and download
+ * from GitHub. The stub records each call in $HOME/.ensure-calls, keeps an installed CLI and never touches the
+ * network. The real installer is covered by the ensure-decrypt-cli.sh suite below and its shell suite.
+ * Built once per describe: the first exec of a freshly written script can take seconds on a loaded macOS host.
+ */
+function makeHookTree(): string {
+  const hookTree = fs.mkdtempSync(path.join(os.tmpdir(), 'hook-adoption-hooks-'));
+  for (const name of ['fetch-iron-laws.sh', 'oss-api-curl.sh']) {
+    fs.copyFileSync(path.join(path.dirname(FETCH_IRON_LAWS), name), path.join(hookTree, name));
+  }
+  const ensureStub = path.join(hookTree, 'ensure-decrypt-cli.sh');
+  fs.writeFileSync(
+    ensureStub,
+    '#!/bin/bash\necho ensure >> "$HOME/.ensure-calls"\n[[ -x "$HOME/.oss/bin/oss-decrypt" ]] && exit 0\nexit 1\n',
+  );
+  fs.chmodSync(ensureStub, 0o755);
+  return hookTree;
+}
+
+function runFetchIronLaws(hookTree: string, sandbox: Sandbox, pluginRoot: string): RunResult {
+  const result = runHook(path.join(hookTree, 'fetch-iron-laws.sh'), sandbox, pluginRoot);
+  // The hook still ensured the CLI first (SR6)
+  expect(fs.readFileSync(path.join(sandbox.home, '.ensure-calls'), 'utf-8')).toBe('ensure\n');
+  return result;
 }
 
 interface RunResult {
@@ -113,14 +153,23 @@ function readWorkflowErrors(ossDir: string): WireError[] {
     .map((l) => (JSON.parse(l) as { data: WireError }).data);
 }
 
-describe('fetch-iron-laws.sh emits OSSError on auth failures (Task 11)', () => {
+// Each test spawns bash, freshly written stub executables and node: generous timeout for loaded hosts.
+describe('fetch-iron-laws.sh emits OSSError on auth failures (Task 11)', { timeout: 30_000 }, () => {
+  let hookTree = '';
+  beforeAll(() => {
+    hookTree = makeHookTree();
+  });
+  afterAll(() => {
+    fs.rmSync(hookTree, { recursive: true, force: true });
+  });
+
   it('should emit OSS-AUTH-001 (retry_eligible=false) and mention /oss:login when the API returns 401', () => {
-    // GIVEN — the API answers 401 (curl stub prints body + status line, exits 0)
+    // GIVEN — the API answers 401 (the decrypt CLI reports it as "Unauthorized" and exits 1)
     const sandbox = makeSandbox();
-    stubCurl(sandbox, 'printf \'{"error":"invalid key"}\\n401\'');
+    stubDecryptCli(sandbox, 'echo "Error: Unauthorized" >&2; exit 1');
 
     // WHEN
-    const result = runHook(FETCH_IRON_LAWS, sandbox, REPO_ROOT);
+    const result = runFetchIronLaws(hookTree, sandbox, REPO_ROOT);
 
     // THEN — original exit code preserved
     expect(result.status).toBe(1);
@@ -138,33 +187,36 @@ describe('fetch-iron-laws.sh emits OSSError on auth failures (Task 11)', () => {
     expect(logged.map((e) => e.code)).toContain('OSS-AUTH-001');
   });
 
-  it('should emit OSS-AUTH-002 and mention pricing when the API returns 403', () => {
-    // GIVEN — the API answers 403 (subscription expired)
+  it('should emit OSS-API-002 (not retryable) and print no laws when the CLI refuses them (signed-manifest mismatch)', () => {
+    // GIVEN — the laws fail the signed-manifest check (FR15); the CLI prints its refusal and exits 1
     const sandbox = makeSandbox();
-    stubCurl(sandbox, 'printf \'{"error":"subscription expired"}\\n403\'');
+    stubDecryptCli(
+      sandbox,
+      'echo "Error: [SECURITY] Prompt integrity check FAILED. Content may have been tampered with." >&2; exit 1',
+    );
 
     // WHEN
-    const result = runHook(FETCH_IRON_LAWS, sandbox, REPO_ROOT);
+    const result = runFetchIronLaws(hookTree, sandbox, REPO_ROOT);
 
     // THEN
     expect(result.status).toBe(1);
     const wire = parseInBandError(result.stdout);
-    expect(wire.code).toBe('OSS-AUTH-002');
+    expect(wire.code).toBe('OSS-API-002');
     expect(wire.retry_eligible).toBe(false);
-    expect(result.stderr).toContain('pricing');
-    expect(readWorkflowErrors(sandbox.ossDir).map((e) => e.code)).toContain('OSS-AUTH-002');
+    expect(result.stderr).toContain('signed manifest');
+    expect(readWorkflowErrors(sandbox.ossDir).map((e) => e.code)).toContain('OSS-API-002');
   });
 
-  it('should emit cheap-retryable OSS-API-003 and preserve the curl exit code when the network is unreachable', () => {
-    // GIVEN — curl cannot resolve the host (exit 6, nothing printed)
+  it('should emit cheap-retryable OSS-API-003 and preserve the CLI exit code when the network is unreachable', () => {
+    // GIVEN — the decrypt CLI cannot reach the API (exit 3, nothing on stdout)
     const sandbox = makeSandbox();
-    stubCurl(sandbox, 'exit 6');
+    stubDecryptCli(sandbox, 'echo "Error: fetch failed" >&2; exit 3');
 
     // WHEN
-    const result = runHook(FETCH_IRON_LAWS, sandbox, REPO_ROOT);
+    const result = runFetchIronLaws(hookTree, sandbox, REPO_ROOT);
 
-    // THEN — the original (curl) exit code is preserved
-    expect(result.status).toBe(6);
+    // THEN — the original (CLI) exit code is preserved
+    expect(result.status).toBe(3);
 
     // THEN — a cheap retryable network error was emitted in-band and to the log
     const wire = parseInBandError(result.stdout);
@@ -179,10 +231,10 @@ describe('fetch-iron-laws.sh emits OSSError on auth failures (Task 11)', () => {
     const sandbox = makeSandbox();
     const emptyPluginRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hook-adoption-empty-'));
     sandboxes.push(emptyPluginRoot);
-    stubCurl(sandbox, 'printf \'{"error":"invalid key"}\\n401\'');
+    stubDecryptCli(sandbox, 'echo "Error: Unauthorized" >&2; exit 1');
 
     // WHEN
-    const result = runHook(FETCH_IRON_LAWS, sandbox, emptyPluginRoot);
+    const result = runFetchIronLaws(hookTree, sandbox, emptyPluginRoot);
 
     // THEN — legacy behavior fully preserved
     expect(result.status).toBe(1);

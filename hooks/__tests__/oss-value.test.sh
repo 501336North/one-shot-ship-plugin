@@ -570,10 +570,15 @@ setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; echo ossk_login_key_1
 [[ "$(sbcalls)" == *"https://one-shot-ship-api.onrender.com/api/v1/subscription/status"* && "$(sbcalls)" != *ossk_login_key_1* \
    && "$(cat "$T/curl.stdin" 2>/dev/null)" == *"Authorization: Bearer ossk_login_key_1"* ]] \
     && pass "22: login checks the key against /api/v1/subscription/status, the key on curl's stdin, never argv" || fail "22: login checks the key against the API, key on stdin only" "calls=$(sbcalls) stdin=$(cat "$T/curl.stdin" 2>&1)"
-setup_act; printf '{"plan":"team"}\n200\n' > "$T/curl.out"; printf '{"apiKey":"old","apiUrl":"https://x.invalid","other":1}\n' > "$H/.oss/config.json"
+setup_act; printf '{"plan":"team"}\n200\n' > "$T/curl.out"; printf '{"apiKey":"old","apiUrl":"https://one-shot-ship-api-staging.onrender.com","other":1}\n' > "$H/.oss/config.json"
 echo ossk_login_key_2 > "$VD/key.txt"; ovl "$R"
-[[ "$RC" == 0 && "$(jq -c . "$H/.oss/config.json")" == '{"apiKey":"ossk_login_key_2","apiUrl":"https://x.invalid","other":1}' ]] \
+[[ "$RC" == 0 && "$(jq -c . "$H/.oss/config.json")" == '{"apiKey":"ossk_login_key_2","apiUrl":"https://one-shot-ship-api-staging.onrender.com","other":1}' ]] \
     && pass "22: login keeps the other config.json settings" || fail "22: login keeps the other config.json settings" "rc=$RC cfg=$(cat "$H/.oss/config.json" 2>&1)"
+# release channels (US-002): a STAGING or DEV config names its API; login checks the key against THAT API.
+setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; printf '{"apiKey":"old","apiUrl":"http://127.0.0.1:9"}\n' > "$H/.oss/config.json"
+echo ossk_login_key_8 > "$VD/key.txt"; ovl "$R"
+[[ "$RC" == 0 && "$(sbcalls)" == *"http://127.0.0.1:9/api/v1/subscription/status"* && "$(sbcalls)" != *onrender.com* ]] \
+    && pass "22: login checks the key against the API the config names (apiUrl), never production" || fail "22: login checks the key against the API the config names" "rc=$RC calls=$(sbcalls) err=$ERR"
 setup_act; printf '{"error":"bad"}\n401\n' > "$T/curl.out"; echo '{"apiKey":"keep"}' > "$H/.oss/config.json"; echo ossk_login_key_3 > "$VD/key.txt"; ovl "$R"
 [[ "$RC" == 1 && "$(cat "$H/.oss/config.json")" == '{"apiKey":"keep"}' && "$ERR" == *"Invalid API key"* && ! -e "$VD/key.txt" ]] \
     && pass "22: a key the API refuses is not saved" || fail "22: a key the API refuses is not saved" "rc=$RC cfg=$(cat "$H/.oss/config.json") err=$ERR"
@@ -648,6 +653,58 @@ ove "$NLD" error cmd:build
 [[ "$RC" == 0 && -s "$NLD/.oss/workflow.log" && ! -e "$A/.oss/workflow.log" ]] \
     && pass "24: error from that folder lands in that folder's .oss, not the repo's" \
     || fail "24: error from that folder lands in that folder's .oss, not the repo's" "rc=$RC err=$ERR"
+
+# --- 25. keycheck and api: the wrappers' API calls as ONE allowlisted command (release channels T7/T8) ---
+# Every /oss wrapper checks the key and calls the API through oss-value.sh (allowlisted: no approval prompt,
+# R5-1). keycheck says only WHETHER a key is configured (never the key: follow-up #44). api sends a GET to
+# one of a fixed set of endpoints at the API the config names (oss_api_url), with the key on curl's stdin.
+# Section 22's stub records curl's stdin; a later section replaced it, so put it back for these rows.
+printf '#!/bin/sh\necho "curl $*" >> "%s/sb.calls"\ncase " $* " in *" --config - "*) cat > "%s/curl.stdin" ;; esac\ncat "%s/curl.out"\n' "$T" "$T" "$T" > "$T/sbin/curl"; chmod +x "$T/sbin/curl"
+setup_act; printf '{"apiKey":"ossk_keycheck_1"}\n' > "$H/.oss/config.json"; ovs "$R" keycheck
+[[ "$RC" == 0 && "$OUT" == "API key configured" && "$OUT$ERR" != *ossk_keycheck_1* ]] \
+    && pass "25: keycheck says a key is configured and never prints it" || fail "25: keycheck says a key is configured" "rc=$RC out='$OUT' err=$ERR"
+setup_act; rm -f "$H/.oss/config.json"; ovs "$R" keycheck
+[[ "$RC" == 1 && -z "$OUT" ]] && pass "25: keycheck without a key prints nothing and fails" || fail "25: keycheck without a key" "rc=$RC out='$OUT'"
+for ep in auth/verify workflows; do
+    setup_act; printf '{"ok":true}\n200\n' > "$T/curl.out"; printf '{"apiKey":"ossk_api_1"}\n' > "$H/.oss/config.json"; ovs "$R" api "$ep"
+    [[ "$RC" == 0 && "$(sbcalls)" == *"https://one-shot-ship-api.onrender.com/api/v1/$ep"* && "$(sbcalls)" != *ossk_api_1* \
+       && "$(cat "$T/curl.stdin" 2>/dev/null)" == *"Authorization: Bearer ossk_api_1"* && "$OUT" == *'"ok":true'* ]] \
+        && pass "25: api $ep calls the production API by default, key on stdin, and prints the answer" \
+        || fail "25: api $ep calls the API with the key on stdin" "rc=$RC calls=$(sbcalls) stdin=$(cat "$T/curl.stdin" 2>&1) out='$OUT' err=$ERR"
+done
+setup_act; printf '{"ok":true}\n200\n' > "$T/curl.out"; printf '{"apiKey":"ossk_api_2","apiUrl":"http://127.0.0.1:9"}\n' > "$H/.oss/config.json"; ovs "$R" api auth/verify
+[[ "$RC" == 0 && "$(sbcalls)" == *"http://127.0.0.1:9/api/v1/auth/verify"* && "$(sbcalls)" != *onrender.com* ]] \
+    && pass "25: api calls the API the config names (apiUrl), never production" || fail "25: api follows apiUrl" "rc=$RC calls=$(sbcalls)"
+setup_act; printf '{"apiKey":"ossk_api_3","apiUrl":"http://api.example.com"}\n' > "$H/.oss/config.json"; ovs "$R" api auth/verify
+[[ "$RC" == 1 && -z "$(sbcalls)" ]] && pass "25: api with an invalid apiUrl calls nothing" || fail "25: api with an invalid apiUrl calls nothing" "rc=$RC calls=$(sbcalls)"
+# prompts/claude-md left the set in FR15: the template is fetched verified with `oss-decrypt --type templates`.
+for ep in subscription/status 'auth/verify?x=1' ../admin prompts/agents/x prompts/claude-md ''; do
+    setup_act; printf '{"apiKey":"ossk_api_4"}\n' > "$H/.oss/config.json"; ovs "$R" api "$ep"
+    [[ "$RC" == 1 && -z "$OUT" && -z "$(sbcalls)" ]] && pass "25: api refuses endpoint '$ep' (not in the fixed set), calls nothing" \
+        || fail "25: api refuses endpoint '$ep'" "rc=$RC out='$OUT' calls=$(sbcalls)"
+done
+setup_act; printf '{"ok":true}\n200\n' > "$T/curl.out"; printf '{"apiKey":"ossk_api_5"}\n' > "$H/.oss/config.json"; echo ideate > "$VD/workflow.txt"; ovs "$R" api workflow
+[[ "$RC" == 0 && "$(sbcalls)" == *"/api/v1/workflows/ideate"* && ! -e "$VD/workflow.txt" ]] \
+    && pass "25: api workflow fetches the workflow named in workflow.txt and deletes the file" || fail "25: api workflow" "rc=$RC calls=$(sbcalls) err=$ERR"
+for v in '../x' 'a b' 'Build' '$(touch PWNED)' '..' '.' '...'; do  # dots-only: curl squashes workflows/.. (FR11)
+    setup_act; printf '{"apiKey":"ossk_api_6"}\n' > "$H/.oss/config.json"; printf '%s\n' "$v" > "$VD/workflow.txt"; ovs "$R" api workflow
+    if pwned; then fail "25: api workflow refuses '$v'" "something ran"
+    elif [[ "$RC" != 1 || -n "$(sbcalls)" ]]; then fail "25: api workflow refuses '$v'" "rc=$RC calls=$(sbcalls)"
+    else pass "25: api workflow refuses name '$v', calls nothing"; fi
+done
+
+# UR6 (SR3/TR5): api takes the URL and the key from ONE read of the config. A jq shim renames another private config over
+# it the first time jq starts (the parse after the first read); a second read would pair one file's URL with the other's key.
+setup_act; printf '{"ok":true}\n200\n' > "$T/curl.out"; chmod 700 "$H/.oss"
+rm -f "$H/.oss/config.json"; printf '{"apiKey":"ossk_secret","apiUrl":"http://127.0.0.1:9"}' > "$H/.oss/config.json"; chmod 600 "$H/.oss/config.json"
+printf '{"apiKey":"ossk_evil","apiUrl":"http://127.0.0.1:7"}' > "$T/evil.json"; chmod 600 "$T/evil.json"
+mkdir -p "$T/swapjq"; printf '#!/bin/bash\n[[ -f "%s" ]] && mv -f "%s" "%s"\nexec "%s" "$@"\n' "$T/evil.json" "$T/evil.json" "$H/.oss/config.json" \
+    "$(command -v jq)" > "$T/swapjq/jq"; chmod +x "$T/swapjq/jq"
+OV_PATH="$T/swapjq:$T/sbin:$PATH" ov "$R" api auth/verify; rm -f "$T/evil.json"
+c=$(sbcalls); k=$(cat "$T/curl.stdin" 2>/dev/null)
+[[ "$RC" == 0 && ( ( "$c" == *127.0.0.1:9/* && "$k" == *"Bearer ossk_secret"* ) || ( "$c" == *127.0.0.1:7/* && "$k" == *"Bearer ossk_evil"* ) ) ]] \
+    && pass "25: api takes the URL and the key from one read of the config (a file swapped in between cannot mix them)" \
+    || fail "25: api takes the URL and the key from one read of the config" "rc=$RC calls=$c key=${k##*Bearer }"
 
 echo
 echo "Results: $((RUN - FAILED))/$RUN passed, $FAILED failed"

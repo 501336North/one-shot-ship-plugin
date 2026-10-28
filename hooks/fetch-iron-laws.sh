@@ -5,17 +5,23 @@
 #   fetch-iron-laws.sh [--raw]
 #
 # Options:
-#   --raw    Output raw JSON response (default: extract content)
+#   --raw    Print the verified body as is (default: extract a JSON "content" field if present)
 #
-# Returns the IRON LAWS content from the API endpoint.
-# Uses API key from ~/.oss/config.json
+# Prints the IRON LAWS, fetched and verified by the decrypt CLI (ship round 1 FR15): it checks the
+# body's sha256 against the signed manifest entry shared/iron-laws and refuses on any failure, so
+# unverified laws are never printed. ensure-decrypt-cli.sh installs or upgrades the CLI first, every time.
+# Below them: the team/personal section (oss_custom_iron_laws, SR16), after one line saying it is unverified, fenced (UR1').
+#
+# Exit codes: 0 laws printed; 1 not logged in, CLI missing and not installable, auth failure,
+# laws refused; otherwise the CLI's exit code (API unreachable or other failure).
 
 set -euo pipefail
-if [[ -f "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh" ]]; then source "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh"; fi  # oss_api_curl: API key via stdin, never argv
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$SCRIPT_DIR/oss-api-curl.sh" ]]; then source "$SCRIPT_DIR/oss-api-curl.sh"; fi  # oss_config_file, oss_api_url
 
-CONFIG_FILE="${HOME}/.oss/config.json"
-API_URL="https://one-shot-ship-api.onrender.com"
-ENDPOINT="/api/v1/prompts/shared/iron-laws"
+CONFIG_FILE="$(oss_config_file)"  # logged in; the decrypt CLI reads its own credentials
+oss_api_url >/dev/null || { echo "Error: apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment" >&2; exit 1; }
+OSS_DECRYPT="$HOME/.oss/bin/oss-decrypt"
 
 # Standardized error contract: emit a structured OSSError via the oss-error
 # emitter when available (in-band stdout JSON + project workflow.log line).
@@ -50,57 +56,42 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
   exit 1
 fi
 
-# Extract API key from config
-API_KEY=$(grep -o '"apiKey"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" | sed 's/.*: *"\([^"]*\)"/\1/')
-
-if [[ -z "$API_KEY" ]]; then
-  echo "Error: No API key found in config" >&2
-  echo "Run /oss:login to configure" >&2
+# Install or upgrade the decrypt CLI to the pinned version, every time (SR6): an outdated or wrong-channel CLI is
+# replaced; it exits at once when the pin is met. On failure the installed CLI is not used.
+if ! "$SCRIPT_DIR/ensure-decrypt-cli.sh" </dev/null >&2; then
+  echo "Error: the decrypt CLI could not be installed or updated to the pinned version" >&2
   exit 1
 fi
 
-# Fetch IRON LAWS with authentication
-CURL_STATUS=0
-RESPONSE=$(oss_api_curl "$API_KEY" -s -w "\n%{http_code}" \
-  -H "Content-Type: application/json" \
-  "${API_URL}${ENDPOINT}") || CURL_STATUS=$?
+# Fetch the verified IRON LAWS. Nothing is printed unless the CLI exits 0.
+CLI_STATUS=0
+CLI_ERR=$(mktemp "${TMPDIR:-/tmp}/oss-fetch-iron-laws.XXXXXX")
+trap 'rm -f "$CLI_ERR"' EXIT
+BODY=$("$OSS_DECRYPT" --type shared --name iron-laws 2>"$CLI_ERR") || CLI_STATUS=$?
 
-if [[ "$CURL_STATUS" -ne 0 ]]; then
-  echo "Error: Could not reach OSS API (curl exit $CURL_STATUS)" >&2
-  emit_oss_error --code OSS-API-003 --severity HIGH \
-    --message "IRON LAWS fetch failed: network unreachable (curl exit $CURL_STATUS)" \
-    --retry-eligible true --retry-cost cheap
-  exit "$CURL_STATUS"
-fi
-
-# Extract HTTP status code (last line)
-HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-BODY=$(echo "$RESPONSE" | sed '$d')
-
-# Check for errors
-if [[ "$HTTP_CODE" != "200" ]]; then
-  echo "Error: API returned status $HTTP_CODE" >&2
-  case $HTTP_CODE in
-    401)
+if [[ "$CLI_STATUS" -ne 0 ]]; then
+  REASON=$(tail -n 1 "$CLI_ERR")
+  echo "Error: could not get verified IRON LAWS (oss-decrypt exit $CLI_STATUS): $REASON" >&2
+  case "$REASON" in
+    *Unauthorized*)
       echo "Authentication failed. Run /oss:login to refresh credentials" >&2
       emit_oss_error --code OSS-AUTH-001 --severity HIGH \
         --message "IRON LAWS fetch failed: authentication rejected (HTTP 401)" \
         --retry-eligible false
+      exit 1
       ;;
-    403)
-      echo "Subscription expired. Upgrade at: https://www.oneshotship.com/pricing" >&2
-      emit_oss_error --code OSS-AUTH-002 --severity HIGH \
-        --message "IRON LAWS fetch failed: subscription expired (HTTP 403)" \
+    *SECURITY*)
+      echo "The IRON LAWS were refused: they did not match the signed manifest" >&2
+      emit_oss_error --code OSS-API-002 --severity HIGH \
+        --message "IRON LAWS refused: not verified against the signed manifest" \
         --retry-eligible false
-      ;;
-    404)
-      echo "IRON LAWS endpoint not found" >&2
-      ;;
-    *)
-      echo "Response: $BODY" >&2
+      exit 1
       ;;
   esac
-  exit 1
+  emit_oss_error --code OSS-API-003 --severity HIGH \
+    --message "IRON LAWS fetch failed (oss-decrypt exit $CLI_STATUS)" \
+    --retry-eligible true --retry-cost cheap
+  exit "$CLI_STATUS"
 fi
 
 # Output result
@@ -115,4 +106,9 @@ else
   else
     echo "$BODY"
   fi
+fi
+
+# Below the verified laws: the team/personal section, marked unverified (SR16); none or a failed fetch: the laws alone.
+if CUSTOM=$(oss_custom_iron_laws); then
+  printf '\n%s\n' "$CUSTOM"   # the note, the fenced section, the closing line (UR1')
 fi

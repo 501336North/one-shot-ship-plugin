@@ -65,7 +65,7 @@ check "models.md set reads prompt.txt and model.txt in one call (R5-1)" line mod
 check "models.md set has no \$(...) read of its own" none models.md 'PROMPT_NAME=$('
 check "models.md set does not take \$1" none models.md 'PROMPT_NAME="$1"'
 check "models.md set does not take \$2" none models.md 'MODEL_ID="$2"'
-check "workflows.md reads workflow.txt in one call (R5-1)" line workflows.md "$V read workflow"
+check "workflows.md reads workflow.txt in one call (R5-1; api workflow reads it itself, ADR-005)" line workflows.md "$V api workflow"
 check "workflows.md has no {workflowName}" none workflows.md '{workflowName}'
 check "trust.md decrypts with category.txt and name.txt in one call (R5-1)" line trust.md "$V decrypt"
 check "trust.md has no \$(...) && decrypt chain" none trust.md '--type "$T" --name "$N"'
@@ -80,11 +80,15 @@ for f in login.md models.md workflows.md trust.md build.md; do
     check "$f tells the model to use the folder oss-value.sh dir prints" has "$f" "$V dir"
 done
 
-# R3-7: request shapes are ```http
-cnt() { grep -c '^```http' "$C/$1" | tr -d ' '; }
-check "login.md has its request shape as an http fence" test "$(cnt login.md)" -ge 1
-check "status.md has its request shape as an http fence" test "$(cnt status.md)" -ge 1
-check "workflows.md has both request shapes as http fences" test "$(cnt workflows.md)" -ge 2
+# R3-7 superseded by release-channels ADR-005 (2026-10-26): the ```http request shapes were WebFetch calls the model
+# made with the key in its context and the production host fixed; each is now one allowlisted call of the api verb.
+has() { grep -qxF "~/.oss/hooks/oss-value.sh $2" "$C/$1"; }
+# FR15: the CLAUDE.md template is no longer an api-verb call; login.md fetches it verified with
+# `~/.oss/bin/oss-decrypt --type templates --name claude-md` (checked in __tests__/command-api-calls.test.sh).
+check "login.md no longer fetches the CLAUDE.md template with oss-value.sh api prompts/claude-md" none login.md 'api prompts/claude-md'
+check "status.md checks the account with oss-value.sh api auth/verify" has status.md 'api auth/verify'
+check "workflows.md lists and shows workflows with oss-value.sh api workflows / api workflow" \
+    eval 'has workflows.md "api workflows" && has workflows.md "api workflow"'
 
 echo ""
 echo "Results: $((TESTS_RUN - TESTS_FAILED))/$TESTS_RUN passed, $TESTS_FAILED failed"

@@ -8,7 +8,7 @@ description: Create comprehensive test suites with unit, integration, and e2e te
 ## Step 1: Check Authentication
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+~/.oss/hooks/oss-value.sh keycheck
 ```
 
 If no API key found, inform the user:
@@ -19,13 +19,16 @@ Register at https://www.oneshotship.com
 
 ## Step 2: Fetch Agent Prompt
 
-Use WebFetch to get the expert prompt:
+Fetch and decrypt the expert prompt (checked against the signed manifest; it comes from the API your OSS config names):
 
+Install the decrypt CLI if it is missing (a fresh install has none yet):
+
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install the decrypt CLI (see the message above). Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."; exit 1; }
 ```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/agents/test-automator
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+
+```bash
+~/.oss/bin/oss-decrypt --type agents --name test-automator
 ```
 
 ## Step 3: Execute the Fetched Prompt

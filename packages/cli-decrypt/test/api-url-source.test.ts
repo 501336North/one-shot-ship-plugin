@@ -70,14 +70,15 @@ describe('apiUrl has one source and is checked before the key is sent', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    // decrypt on loopback needs the staging signing key (ADR-005); untrusted-address-refused.test.ts
+    // covers it. setup sends no manifest-verified request, so it still shows loopback http is allowed.
     it.each(['http://127.0.0.1:4100', 'http://localhost:4100'])(
       'plain http to this machine (%s) is allowed',
       async (apiUrl) => {
         writeConfig({ apiUrl });
         await setupCommand().catch(() => undefined);
-        await decryptCommand('commands', 'plan').catch(() => undefined);
         const urls = fetchedUrls();
-        expect(urls.length).toBeGreaterThanOrEqual(2);
+        expect(urls.length).toBeGreaterThanOrEqual(1);
         for (const url of urls) {
           expect(url.startsWith(`${apiUrl}/api/v1/`)).toBe(true);
         }
@@ -107,22 +108,20 @@ describe('apiUrl has one source and is checked before the key is sent', () => {
     });
   });
 
+  // An address with no signing key is refused by both (ADR-005). Had --verify-manifest read apiUrl from
+  // anywhere else it would fall back to the default API and fetch its manifest.
   it('with OSS_CONFIG_DIR set, --verify-manifest uses the same apiUrl as decrypt', async () => {
     writeConfig({ apiUrl: 'https://custom-api.example.com' });
-    await decryptCommand('commands', 'plan').catch(() => undefined);
-    await runCli(['--verify-manifest']);
-    process.exitCode = undefined;
-    const urls = fetchedUrls();
-    expect(urls).toContain('https://custom-api.example.com/api/v1/prompts/manifest');
-    for (const url of urls) {
-      expect(url.startsWith('https://custom-api.example.com/api/v1/')).toBe(true);
-    }
+    await expect(decryptCommand('commands', 'plan')).rejects.toThrow(/apiUrl/);
+    await expect(runCli(['--verify-manifest'])).rejects.toThrow(/apiUrl/);
+    expect(fetchedUrls()).toEqual([]);
   });
 
+  // FR4: --list-prompts follows the same trusted-address rule as decrypt (a custom host is refused).
   it('with OSS_CONFIG_DIR set, --list-prompts uses the same apiUrl', async () => {
-    writeConfig({ apiUrl: 'https://custom-api.example.com' });
+    writeConfig({ apiUrl: 'https://one-shot-ship-api-staging.onrender.com' });
     await runCli(['--list-prompts']);
-    expect(fetchedUrls()).toEqual(['https://custom-api.example.com/api/v1/prompts/manifest']);
+    expect(fetchedUrls()).toEqual(['https://one-shot-ship-api-staging.onrender.com/api/v1/prompts/manifest']);
   });
 
   it('no apiUrl in config means the default API for every command', async () => {

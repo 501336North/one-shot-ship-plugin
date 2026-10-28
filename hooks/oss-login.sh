@@ -7,18 +7,19 @@ set -u
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/oss-value.sh" || exit 1
 
 _ov_cmd_login() {
-    local k r c u t
+    local k a r c u t
     umask 077   # the key file and anything made here: owner-only (R5-6)
     _ov_dir && _ov_get key && k=$_OV_VAL \
     || { echo "Error: the key is missing or not a valid API key. Usage: /oss:login ak_xxxxx" >&2; return 1; }
     source "$_OV_HERE/oss-api-curl.sh" || return 1   # oss_api_curl: the key on curl's stdin, never in argv
-    r=$(oss_api_curl "$k" -s -w "\n%{http_code}" "https://one-shot-ship-api.onrender.com/api/v1/subscription/status")
+    a=$(oss_api_url) || { echo "Error: apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment" >&2; return 1; }   # the API the config names
+    r=$(oss_api_curl "$k" -s -w "\n%{http_code}" "$a/api/v1/subscription/status")
     test "$(printf '%s\n' "$r" | tail -1)" = 200 \
     || { echo "Error: Invalid API key. Get a valid key from https://www.oneshotship.com/dashboard" >&2; return 1; }
-    c="$HOME/.oss/config.json"; mkdir -p "$HOME/.oss"
-    if test -f "$c"; then u=$(jq --arg key "$k" '.apiKey = $key' "$c"); else u=$(jq -n --arg key "$k" '{"apiKey": $key, "apiUrl": "https://one-shot-ship-api.onrender.com"}'); fi && test -n "$u" \
+    c=$(oss_config_file); mkdir -p "${c%/*}"   # the same file the URL above came from
+    if test -f "$c"; then u=$(jq --arg key "$k" '.apiKey = $key' "$c"); else u=$(jq -n --arg key "$k" --arg url "$a" '{"apiKey": $key, "apiUrl": $url}'); fi && test -n "$u" \
     || { echo "Error: could not update ~/.oss/config.json (not valid JSON, or jq missing); it was left as it was." >&2; return 1; }
-    t=$(mktemp "$HOME/.oss/config.json.XXXXXX") && printf '%s\n' "$u" > "$t" && chmod 600 "$t" && mv -f "$t" "$c" && echo "Plan: $(printf '%s\n' "$r" | head -1 | jq -r '.plan // "unknown"')"
+    t=$(mktemp "$c.XXXXXX") && printf '%s\n' "$u" > "$t" && chmod 600 "$t" && mv -f "$t" "$c" && echo "Plan: $(printf '%s\n' "$r" | head -1 | jq -r '.plan // "unknown"')"
 }
 
 _ov_cmd_login

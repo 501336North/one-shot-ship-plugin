@@ -24,14 +24,13 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/index.ts
-var VERSION = "1.2.4";
+var VERSION = "1.3.0-beta.1";
 
 // src/commands/setup.ts
-var import_fs4 = require("fs");
-var import_path5 = require("path");
+var import_path6 = require("path");
 
 // src/api-client.ts
-var import_path3 = require("path");
+var import_path4 = require("path");
 
 // src/config.ts
 var import_fs = require("fs");
@@ -44,16 +43,33 @@ var REFUSAL = "apiUrl in your OSS config must be an https URL (plain http only f
 function getConfigDir() {
   return process.env.OSS_CONFIG_DIR || (0, import_path.join)((0, import_os.homedir)(), ".oss");
 }
-function readConfiguredApiUrl() {
+var UNTRUSTED_CONFIG = "Refusing to read config.json in your OSS config directory: it must be a regular file (not a symlink) owned by you and not writable by other users. Fix it with: chmod 600 config.json";
+function readConfigFile() {
+  return readConfig().values;
+}
+function readConfig() {
   const configPath = (0, import_path.join)(getConfigDir(), "config.json");
-  if ((0, import_fs.existsSync)(configPath)) {
-    try {
-      const config = JSON.parse((0, import_fs.readFileSync)(configPath, "utf8"));
-      return config.apiUrl;
-    } catch {
-    }
+  let fd;
+  try {
+    fd = (0, import_fs.openSync)(configPath, import_fs.constants.O_RDONLY | import_fs.constants.O_NOFOLLOW);
+  } catch (error) {
+    if (error.code === "ENOENT") return { values: {}, writableOnlyByOwner: false };
+    throw new Error(UNTRUSTED_CONFIG);
   }
-  return void 0;
+  try {
+    const stat = (0, import_fs.fstatSync)(fd);
+    if (!stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 2) !== 0) {
+      throw new Error(UNTRUSTED_CONFIG);
+    }
+    const writableOnlyByOwner = (stat.mode & 18) === 0 && ((0, import_fs.statSync)(getConfigDir()).mode & 18) === 0;
+    try {
+      return { values: JSON.parse((0, import_fs.readFileSync)(fd, "utf8")), writableOnlyByOwner };
+    } catch {
+      return { values: {}, writableOnlyByOwner };
+    }
+  } finally {
+    (0, import_fs.closeSync)(fd);
+  }
 }
 function parses(value) {
   try {
@@ -63,21 +79,61 @@ function parses(value) {
     return false;
   }
 }
-function getApiUrl() {
-  const apiUrl = readConfiguredApiUrl();
-  if (apiUrl === void 0 || apiUrl === null || apiUrl === "") return DEFAULT_API_URL;
-  if (typeof apiUrl !== "string" || !(HTTPS_URL.test(apiUrl) || LOOPBACK_HTTP_URL.test(apiUrl)) || !parses(apiUrl)) {
+function getApiUrlSetting() {
+  const { values, writableOnlyByOwner } = readConfig();
+  const apiUrl = values.apiUrl;
+  if (apiUrl === void 0 || apiUrl === null || apiUrl === "") {
+    return { apiUrl: DEFAULT_API_URL, configWritableOnlyByOwner: writableOnlyByOwner };
+  }
+  if (typeof apiUrl !== "string" || !isAcceptedApiUrl(apiUrl)) {
     throw new Error(REFUSAL);
   }
-  return apiUrl;
+  return { apiUrl, configWritableOnlyByOwner: writableOnlyByOwner };
+}
+function isAcceptedApiUrl(apiUrl) {
+  return (HTTPS_URL.test(apiUrl) || LOOPBACK_HTTP_URL.test(apiUrl)) && parses(apiUrl);
 }
 
 // src/cache.ts
+var import_crypto2 = require("crypto");
+var import_fs3 = require("fs");
+var import_path3 = require("path");
+
+// src/safe-write.ts
 var import_crypto = require("crypto");
 var import_fs2 = require("fs");
 var import_path2 = require("path");
+function writeFileNoFollow(target, data, options) {
+  (0, import_fs2.mkdirSync)((0, import_path2.dirname)(target), { recursive: true, mode: options.dirMode });
+  const path = inResolvedConfigDir(target);
+  const dir = (0, import_path2.dirname)(path);
+  const fd = (0, import_fs2.openSync)(dir, import_fs2.constants.O_RDONLY | import_fs2.constants.O_DIRECTORY | import_fs2.constants.O_NOFOLLOW);
+  try {
+    const stat = (0, import_fs2.fstatSync)(fd);
+    if (!stat.isDirectory() || stat.uid !== process.getuid?.()) {
+      throw new Error(`Refusing to write ${(0, import_path2.basename)(path)}: its directory must be a directory you own.`);
+    }
+    if (options.enforceDirMode && options.dirMode !== void 0) (0, import_fs2.fchmodSync)(fd, options.dirMode);
+  } finally {
+    (0, import_fs2.closeSync)(fd);
+  }
+  const temp = (0, import_path2.join)(dir, `.${(0, import_path2.basename)(path)}.${(0, import_crypto.randomBytes)(8).toString("hex")}.tmp`);
+  (0, import_fs2.writeFileSync)(temp, data, { mode: options.mode, flag: "wx" });
+  (0, import_fs2.renameSync)(temp, path);
+}
+function inResolvedConfigDir(path) {
+  const configDir = getConfigDir();
+  const inside = (0, import_path2.relative)(configDir, path);
+  if (inside === "" || inside.startsWith("..") || (0, import_path2.isAbsolute)(inside)) return path;
+  return (0, import_path2.join)((0, import_fs2.realpathSync)(configDir), inside);
+}
+
+// src/cache.ts
 var DEFAULT_TTL_MS = 60 * 60 * 1e3;
-var ALLOWED_TYPES = ["commands", "workflows", "skills", "agents", "hooks", "custom"];
+var ALLOWED_TYPES = ["commands", "workflows", "skills", "agents", "hooks", "custom", "shared", "templates"];
+function isPlainPromptType(type) {
+  return type === "shared" || type === "templates";
+}
 function validateType(type) {
   if (!ALLOWED_TYPES.includes(type)) {
     throw new Error(`Invalid prompt type: ${type}. Allowed: ${ALLOWED_TYPES.join(", ")}`);
@@ -95,7 +151,7 @@ function getCacheKey(type, name, userId) {
   validateType(type);
   validateName(name);
   const input = `${type}:${name}:${userId}`;
-  return (0, import_crypto.createHash)("sha256").update(input).digest("hex");
+  return (0, import_crypto2.createHash)("sha256").update(input).digest("hex");
 }
 var CacheService = class {
   cacheDir;
@@ -106,15 +162,7 @@ var CacheService = class {
    * Get the path to a cache file
    */
   getCachePath(key) {
-    return (0, import_path2.join)(this.cacheDir, `${key}.json`);
-  }
-  /**
-   * Ensure the cache directory exists with secure permissions (0o700)
-   */
-  ensureCacheDir() {
-    if (!(0, import_fs2.existsSync)(this.cacheDir)) {
-      (0, import_fs2.mkdirSync)(this.cacheDir, { recursive: true, mode: 448 });
-    }
+    return (0, import_path3.join)(this.cacheDir, `${key}.json`);
   }
   /**
    * Check if a cache entry is expired
@@ -127,15 +175,14 @@ var CacheService = class {
    * Store a prompt in the cache
    */
   async set(type, name, userId, content, ttl = DEFAULT_TTL_MS) {
-    this.ensureCacheDir();
     const key = getCacheKey(type, name, userId);
     const entry = {
       content,
       timestamp: Date.now(),
       ttl
     };
-    const cachePath = this.getCachePath(key);
-    (0, import_fs2.writeFileSync)(cachePath, JSON.stringify(entry), { encoding: "utf8", mode: 384 });
+    const cachePath2 = this.getCachePath(key);
+    writeFileNoFollow(cachePath2, JSON.stringify(entry), { mode: 384, dirMode: 448 });
   }
   /**
    * Retrieve a prompt from the cache
@@ -143,15 +190,15 @@ var CacheService = class {
    */
   async get(type, name, userId) {
     const key = getCacheKey(type, name, userId);
-    const cachePath = this.getCachePath(key);
-    if (!(0, import_fs2.existsSync)(cachePath)) {
+    const cachePath2 = this.getCachePath(key);
+    if (!(0, import_fs3.existsSync)(cachePath2)) {
       return null;
     }
     try {
-      const data = (0, import_fs2.readFileSync)(cachePath, "utf8");
+      const data = (0, import_fs3.readFileSync)(cachePath2, "utf8");
       const entry = JSON.parse(data);
       if (this.isExpired(entry)) {
-        (0, import_fs2.unlinkSync)(cachePath);
+        (0, import_fs3.unlinkSync)(cachePath2);
         return null;
       }
       return entry.content;
@@ -171,22 +218,22 @@ var CacheService = class {
    */
   async clear(type, name, userId) {
     const key = getCacheKey(type, name, userId);
-    const cachePath = this.getCachePath(key);
-    if ((0, import_fs2.existsSync)(cachePath)) {
-      (0, import_fs2.unlinkSync)(cachePath);
+    const cachePath2 = this.getCachePath(key);
+    if ((0, import_fs3.existsSync)(cachePath2)) {
+      (0, import_fs3.unlinkSync)(cachePath2);
     }
   }
   /**
    * Remove all cached prompts
    */
   async clearAll() {
-    if (!(0, import_fs2.existsSync)(this.cacheDir)) {
+    if (!(0, import_fs3.existsSync)(this.cacheDir)) {
       return;
     }
-    const files = (0, import_fs2.readdirSync)(this.cacheDir);
+    const files = (0, import_fs3.readdirSync)(this.cacheDir);
     for (const file of files) {
       if (file.endsWith(".json")) {
-        (0, import_fs2.unlinkSync)((0, import_path2.join)(this.cacheDir, file));
+        (0, import_fs3.unlinkSync)((0, import_path3.join)(this.cacheDir, file));
       }
     }
   }
@@ -194,17 +241,17 @@ var CacheService = class {
    * Get cache statistics
    */
   async getStats() {
-    if (!(0, import_fs2.existsSync)(this.cacheDir)) {
+    if (!(0, import_fs3.existsSync)(this.cacheDir)) {
       return { entries: 0, totalBytes: 0 };
     }
-    const files = (0, import_fs2.readdirSync)(this.cacheDir);
+    const files = (0, import_fs3.readdirSync)(this.cacheDir);
     let totalBytes = 0;
     let entries = 0;
     for (const file of files) {
       if (file.endsWith(".json")) {
-        const filePath = (0, import_path2.join)(this.cacheDir, file);
+        const filePath = (0, import_path3.join)(this.cacheDir, file);
         try {
-          const content = (0, import_fs2.readFileSync)(filePath, "utf8");
+          const content = (0, import_fs3.readFileSync)(filePath, "utf8");
           totalBytes += Buffer.byteLength(content, "utf8");
           entries++;
         } catch {
@@ -217,12 +264,41 @@ var CacheService = class {
 
 // src/strip-control.ts
 function stripControl(text) {
-  return text.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, "");
+  return text.replace(
+    /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u034f\u115f\u1160\u3164\u{e0000}-\u{e007f}\p{Cf}]/gu,
+    ""
+  );
+}
+function stripControlKeepLines(text) {
+  return text.replace(
+    /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029\u034f\u115f\u1160\u3164\u{e0000}-\u{e007f}\p{Cf}]/gu,
+    ""
+  );
+}
+
+// src/with-deadline.ts
+async function withDeadline(timeoutMs, request, timeoutError) {
+  const controller = new AbortController();
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(timeoutError());
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([request(controller.signal), deadline]);
+  } catch (err) {
+    if (controller.signal.aborted) throw timeoutError();
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // src/api-client.ts
 function getCacheDir() {
-  return (0, import_path3.join)(getConfigDir(), "prompt-cache");
+  return (0, import_path4.join)(getConfigDir(), "prompt-cache");
 }
 async function handleCacheClearDirective(response) {
   const clearCache = response.headers.get("X-OSS-Clear-Cache");
@@ -251,23 +327,34 @@ async function fetchNoRedirect(url, init) {
     throw err;
   }
 }
-async function fetchCredentials(apiKey, apiUrl, hardwareId) {
+var API_TIMEOUT_MS = 6e4;
+async function keyedRequest(url, init, timeoutMs, read) {
+  return withDeadline(
+    timeoutMs,
+    async (signal) => read(await fetchNoRedirect(url, { ...init, signal })),
+    () => new Error(
+      `The OSS API did not answer within ${timeoutMs / 1e3} s. Try again; if it persists, check apiUrl in your OSS config.`
+    )
+  );
+}
+async function fetchCredentials(apiKey, apiUrl, hardwareId, options = {}) {
   const url = `${apiUrl}/api/v1/auth/credentials?hardwareId=${encodeURIComponent(hardwareId)}`;
-  const response = await fetchNoRedirect(url, {
+  return keyedRequest(url, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json"
     }
+  }, options.timeoutMs ?? API_TIMEOUT_MS, async (response) => {
+    if (!response.ok) {
+      await handleCacheClearDirective(response);
+      const error = await response.json().catch(() => ({ error: "Request failed" }));
+      throw new Error(stripControl(error.error || "Request failed"));
+    }
+    return response.json();
   });
-  if (!response.ok) {
-    await handleCacheClearDirective(response);
-    const error = await response.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(stripControl(error.error || "Request failed"));
-  }
-  return response.json();
 }
-async function fetchEncryptedPrompt(apiKey, apiUrl, type, name) {
+async function fetchEncryptedPrompt(apiKey, apiUrl, type, name, options = {}) {
   validateType(type);
   validateName(name);
   const encodedName = encodeURIComponent(name);
@@ -279,57 +366,81 @@ async function fetchEncryptedPrompt(apiKey, apiUrl, type, name) {
   } else {
     endpoint = `${apiUrl}/api/v1/prompts/${type}/${encodedName}`;
   }
-  const response = await fetchNoRedirect(endpoint, {
+  return keyedRequest(endpoint, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json"
     }
+  }, options.timeoutMs ?? API_TIMEOUT_MS, async (response) => {
+    if (!response.ok) {
+      await handleCacheClearDirective(response);
+      if (response.status === 404) {
+        throw new Error("Prompt not found");
+      }
+      if (response.status === 401) {
+        throw new Error("Unauthorized");
+      }
+      const error = await response.json().catch(() => ({ error: "Request failed" }));
+      throw new Error(stripControl(error.error || "Request failed"));
+    }
+    return response.json();
   });
-  if (!response.ok) {
-    await handleCacheClearDirective(response);
-    if (response.status === 404) {
-      throw new Error("Prompt not found");
-    }
-    if (response.status === 401) {
-      throw new Error("Unauthorized");
-    }
-    const error = await response.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(stripControl(error.error || "Request failed"));
-  }
-  return response.json();
 }
-async function fetchCustomPrompt(apiKey, apiUrl, name) {
+async function fetchCustomPrompt(apiKey, apiUrl, name, options = {}) {
   validateName(name);
   const endpoint = `${apiUrl}/api/v1/prompts/custom/${encodeURIComponent(name)}`;
-  const response = await fetchNoRedirect(endpoint, {
+  return keyedRequest(endpoint, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json"
     }
+  }, options.timeoutMs ?? API_TIMEOUT_MS, async (response) => {
+    if (!response.ok) {
+      await handleCacheClearDirective(response);
+      if (response.status === 404) {
+        throw new Error("Prompt not found");
+      }
+      if (response.status === 401) {
+        throw new Error("Unauthorized");
+      }
+      const error = await response.json().catch(() => ({ error: "Request failed" }));
+      throw new Error(stripControl(error.error || "Request failed"));
+    }
+    return response.json();
   });
-  if (!response.ok) {
-    await handleCacheClearDirective(response);
-    if (response.status === 404) {
-      throw new Error("Prompt not found");
-    }
-    if (response.status === 401) {
-      throw new Error("Unauthorized");
-    }
-    const error = await response.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(stripControl(error.error || "Request failed"));
+}
+async function fetchPlainPrompt(apiKey, apiUrl, type, name, options = {}) {
+  validateName(name);
+  let endpoint;
+  if (type === "templates") {
+    if (name !== "claude-md") throw new Error("Unknown template: the API serves only claude-md.");
+    endpoint = `${apiUrl}/api/v1/prompts/claude-md`;
+  } else {
+    endpoint = `${apiUrl}/api/v1/prompts/shared/${encodeURIComponent(name)}?base=1`;
   }
-  return response.json();
+  return keyedRequest(endpoint, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${apiKey}` }
+  }, options.timeoutMs ?? API_TIMEOUT_MS, async (response) => {
+    if (!response.ok) {
+      await handleCacheClearDirective(response);
+      if (response.status === 404) throw new Error("Prompt not found");
+      if (response.status === 401) throw new Error("Unauthorized");
+      throw new Error("Request failed");
+    }
+    return response.text();
+  });
 }
 
 // src/storage.ts
-var import_fs3 = require("fs");
-var import_path4 = require("path");
+var import_fs4 = require("fs");
+var import_path5 = require("path");
 var import_os2 = require("os");
-var import_crypto2 = __toESM(require("crypto"), 1);
+var import_crypto3 = __toESM(require("crypto"), 1);
 function getCredentialsPath() {
-  return (0, import_path4.join)(getConfigDir(), "credentials.enc");
+  return (0, import_path5.join)(getConfigDir(), "credentials.enc");
 }
 function getMachineKey() {
   const machineId = [
@@ -338,12 +449,12 @@ function getMachineKey() {
     process.platform,
     process.arch
   ].join(":");
-  return import_crypto2.default.createHash("sha256").update(machineId).digest();
+  return import_crypto3.default.createHash("sha256").update(machineId).digest();
 }
 function encryptCredentials(credentials) {
   const key = getMachineKey();
-  const iv = import_crypto2.default.randomBytes(16);
-  const cipher = import_crypto2.default.createCipheriv("aes-256-gcm", key, iv);
+  const iv = import_crypto3.default.randomBytes(16);
+  const cipher = import_crypto3.default.createCipheriv("aes-256-gcm", key, iv);
   const data = JSON.stringify(credentials);
   let encrypted = cipher.update(data, "utf8", "base64");
   encrypted += cipher.final("base64");
@@ -362,28 +473,23 @@ function decryptCredentials(stored) {
   const key = getMachineKey();
   const iv = Buffer.from(ivBase64, "base64");
   const authTag = Buffer.from(authTagBase64, "base64");
-  const decipher = import_crypto2.default.createDecipheriv("aes-256-gcm", key, iv);
+  const decipher = import_crypto3.default.createDecipheriv("aes-256-gcm", key, iv);
   decipher.setAuthTag(authTag);
   let decrypted = decipher.update(encrypted, "base64", "utf8");
   decrypted += decipher.final("utf8");
   return JSON.parse(decrypted);
 }
 async function storeCredentials(credentials) {
-  const configDir = getConfigDir();
-  if (!(0, import_fs3.existsSync)(configDir)) {
-    (0, import_fs3.mkdirSync)(configDir, { recursive: true, mode: 448 });
-  }
   const encrypted = encryptCredentials(credentials);
-  const credentialsPath = getCredentialsPath();
-  (0, import_fs3.writeFileSync)(credentialsPath, encrypted, { mode: 384 });
+  writeFileNoFollow(getCredentialsPath(), encrypted, { mode: 384, dirMode: 448 });
 }
 async function retrieveCredentials() {
   const credentialsPath = getCredentialsPath();
-  if (!(0, import_fs3.existsSync)(credentialsPath)) {
+  if (!(0, import_fs4.existsSync)(credentialsPath)) {
     return null;
   }
   try {
-    const stored = (0, import_fs3.readFileSync)(credentialsPath, "utf8");
+    const stored = (0, import_fs4.readFileSync)(credentialsPath, "utf8");
     return decryptCredentials(stored);
   } catch {
     return null;
@@ -392,7 +498,7 @@ async function retrieveCredentials() {
 
 // src/hardware.ts
 var import_os3 = require("os");
-var import_crypto3 = __toESM(require("crypto"), 1);
+var import_crypto4 = __toESM(require("crypto"), 1);
 function getMacAddress() {
   const interfaces = (0, import_os3.networkInterfaces)();
   for (const name of Object.keys(interfaces)) {
@@ -414,33 +520,68 @@ function getHardwareId() {
     process.platform,
     process.arch
   ].join(":");
-  const hash = import_crypto3.default.createHash("sha256").update(components).digest("hex");
+  const hash = import_crypto4.default.createHash("sha256").update(components).digest("hex");
   return hash.substring(0, 32);
+}
+
+// src/manifest-keys.ts
+var import_crypto5 = __toESM(require("crypto"), 1);
+var STAGING_API_URL = "https://one-shot-ship-api-staging.onrender.com";
+var PRODUCTION_MANIFEST_PUBLIC_KEY = "MCowBQYDK2VwAyEAAwFG32b8TuiVTxrDnXzNrb2v68YN5U9epLnZ3O7pQaI=";
+var STAGING_MANIFEST_PUBLIC_KEY = "MCowBQYDK2VwAyEAKLiCuK8jxJRAfaV1bqE5aSeNP+T5pG3r2jFmLb0sfqI=";
+var PINNED_KEYS = {
+  production: PRODUCTION_MANIFEST_PUBLIC_KEY,
+  staging: STAGING_MANIFEST_PUBLIC_KEY
+};
+var LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
+var UNTRUSTED_ADDRESS = `apiUrl in your OSS config is not an address this oss-decrypt trusts for signed prompts. Accepted: ${DEFAULT_API_URL} (production), ${STAGING_API_URL} (staging), or http://localhost, http://127.0.0.1 or http://[::1] with any port (local development).`;
+var STAGING_KEY_MISSING = "[SECURITY] staging signing key not configured in this build. Prompt delivery blocked.";
+function isEd25519PublicKey(key) {
+  try {
+    const keyObj = import_crypto5.default.createPublicKey({ key: Buffer.from(key, "base64"), format: "der", type: "spki" });
+    return keyObj.asymmetricKeyType === "ed25519";
+  } catch {
+    return false;
+  }
+}
+function stagingKey(keys) {
+  if (!isEd25519PublicKey(keys.staging)) throw new Error(STAGING_KEY_MISSING);
+  return keys.staging;
+}
+function trustedApiOrigin(apiUrl) {
+  if (!isAcceptedApiUrl(apiUrl)) return null;
+  const url = new URL(apiUrl);
+  if (url.pathname !== "/") return null;
+  if (url.origin === DEFAULT_API_URL || url.origin === STAGING_API_URL) return url.origin;
+  if (url.protocol === "http:" && LOOPBACK_HOSTS.includes(url.hostname)) return url.origin;
+  return null;
+}
+function getTrustedApiOrigin() {
+  const { apiUrl, configWritableOnlyByOwner } = getApiUrlSetting();
+  const origin = trustedApiOrigin(apiUrl);
+  if (origin === null) throw new Error(UNTRUSTED_ADDRESS);
+  if (isLoopbackOrigin(origin) && !configWritableOnlyByOwner) throw new Error(UNTRUSTED_ADDRESS);
+  return origin;
+}
+function isLoopbackOrigin(origin) {
+  return origin !== DEFAULT_API_URL && origin !== STAGING_API_URL;
+}
+function publicKeyFor(apiUrl, keys = PINNED_KEYS) {
+  const origin = trustedApiOrigin(apiUrl);
+  if (origin === null) throw new Error(UNTRUSTED_ADDRESS);
+  return origin === DEFAULT_API_URL ? keys.production : stagingKey(keys);
 }
 
 // src/commands/setup.ts
 function getCacheDir2() {
-  return (0, import_path5.join)(getConfigDir(), "prompt-cache");
-}
-function readConfig() {
-  const configPath = (0, import_path5.join)(getConfigDir(), "config.json");
-  if (!(0, import_fs4.existsSync)(configPath)) {
-    return {};
-  }
-  try {
-    const content = (0, import_fs4.readFileSync)(configPath, "utf8");
-    return JSON.parse(content);
-  } catch {
-    return {};
-  }
+  return (0, import_path6.join)(getConfigDir(), "prompt-cache");
 }
 async function setupCommand() {
-  const config = readConfig();
-  const apiKey = config.apiKey;
-  if (!apiKey) {
+  const apiKey = readConfigFile().apiKey;
+  if (typeof apiKey !== "string" || !apiKey) {
     throw new Error("No API key configured. Run /oss:login first.");
   }
-  const apiUrl = getApiUrl();
+  const apiUrl = getTrustedApiOrigin();
   const hardwareId = getHardwareId();
   const cache = new CacheService(getCacheDir2());
   await cache.clearAll();
@@ -456,15 +597,15 @@ async function setupCommand() {
 }
 
 // src/commands/decrypt.ts
-var import_path7 = require("path");
+var import_path8 = require("path");
 
 // src/encryption.ts
-var import_crypto4 = __toESM(require("crypto"), 1);
+var import_crypto6 = __toESM(require("crypto"), 1);
 var PBKDF2_ITERATIONS = 1e5;
 var KEY_LENGTH = 32;
 function deriveKey(apiKey, licenseId, hardwareId, salt) {
   const combined = `${apiKey}:${licenseId}:${hardwareId}`;
-  return import_crypto4.default.pbkdf2Sync(
+  return import_crypto6.default.pbkdf2Sync(
     combined,
     salt,
     PBKDF2_ITERATIONS,
@@ -473,10 +614,10 @@ function deriveKey(apiKey, licenseId, hardwareId, salt) {
   );
 }
 function userIdToLicenseId(userId) {
-  return `lic_${import_crypto4.default.createHash("sha256").update(userId).digest("hex").substring(0, 24)}`;
+  return `lic_${import_crypto6.default.createHash("sha256").update(userId).digest("hex").substring(0, 24)}`;
 }
 function decrypt(encrypted, iv, authTag, key) {
-  const decipher = import_crypto4.default.createDecipheriv(
+  const decipher = import_crypto6.default.createDecipheriv(
     "aes-256-gcm",
     key,
     Buffer.from(iv, "base64")
@@ -537,8 +678,13 @@ var DebugLogger = class {
   }
 };
 
+// src/verified-manifest.ts
+var import_crypto8 = require("crypto");
+var import_fs5 = require("fs");
+var import_path7 = require("path");
+
 // src/manifest-verifier.ts
-var import_crypto5 = __toESM(require("crypto"), 1);
+var import_crypto7 = __toESM(require("crypto"), 1);
 function verifyManifestSignature(manifest, publicKey) {
   try {
     const sortedKeys = Object.keys(manifest.prompts).sort();
@@ -552,12 +698,12 @@ function verifyManifestSignature(manifest, publicKey) {
       signing: manifest.signing,
       prompts: sortedPrompts
     });
-    const keyObj = import_crypto5.default.createPublicKey({
+    const keyObj = import_crypto7.default.createPublicKey({
       key: Buffer.from(publicKey, "base64"),
       format: "der",
       type: "spki"
     });
-    return import_crypto5.default.verify(
+    return import_crypto7.default.verify(
       null,
       Buffer.from(data, "utf8"),
       keyObj,
@@ -580,6 +726,56 @@ async function fetchManifest(apiUrl, signal) {
   } catch {
     return null;
   }
+}
+
+// src/verified-manifest.ts
+var MANIFEST_TIMEOUT_MS = 1e4;
+var MANIFEST_CACHE_TTL_MS = 3e5;
+var UNAVAILABLE = "[SECURITY] The signed prompt manifest could not be fetched from apiUrl. Prompt delivery blocked.";
+var BAD_SIGNATURE = "[SECURITY] Manifest signature verification FAILED. Prompt delivery blocked.";
+function runDir() {
+  return (0, import_path7.join)(getConfigDir(), "run");
+}
+function cachePath(origin) {
+  return (0, import_path7.join)(runDir(), `manifest-${(0, import_crypto8.createHash)("sha256").update(origin).digest("hex").slice(0, 16)}.json`);
+}
+function discard(path) {
+  try {
+    (0, import_fs5.unlinkSync)(path);
+  } catch {
+  }
+  return null;
+}
+function readCachedManifest(origin, publicKey) {
+  const path = cachePath(origin);
+  let cached;
+  try {
+    cached = JSON.parse((0, import_fs5.readFileSync)(path, "utf8"));
+  } catch {
+    return null;
+  }
+  const age = Date.now() - cached.fetchedAt;
+  const fresh = cached.origin === origin && age >= 0 && age < MANIFEST_CACHE_TTL_MS;
+  if (!fresh || !verifyManifestSignature(cached.manifest, publicKey)) return discard(path);
+  return cached.manifest;
+}
+function writeCachedManifest(origin, manifest) {
+  const entry = { origin, fetchedAt: Date.now(), manifest };
+  try {
+    writeFileNoFollow(cachePath(origin), JSON.stringify(entry), { mode: 384, dirMode: 448, enforceDirMode: true });
+  } catch {
+  }
+}
+async function fetchVerifiedManifest(origin, publicKey) {
+  const manifest = await withDeadline(
+    MANIFEST_TIMEOUT_MS,
+    (signal) => fetchManifest(origin, signal),
+    () => new Error(UNAVAILABLE)
+  );
+  if (manifest === null) throw new Error(UNAVAILABLE);
+  if (!verifyManifestSignature(manifest, publicKey)) throw new Error(BAD_SIGNATURE);
+  writeCachedManifest(origin, manifest);
+  return manifest;
 }
 
 // src/watermark.ts
@@ -606,9 +802,9 @@ function stripWatermark(content) {
 }
 
 // src/prompt-integrity.ts
-var import_crypto6 = __toESM(require("crypto"), 1);
+var import_crypto9 = __toESM(require("crypto"), 1);
 function hashContent(content) {
-  return import_crypto6.default.createHash("sha256").update(content).digest("hex");
+  return import_crypto9.default.createHash("sha256").update(content).digest("hex");
 }
 function verifyPromptHash(strippedContent, type, name, manifest) {
   const key = `${type}/${name}`;
@@ -625,20 +821,16 @@ function verifyPromptHash(strippedContent, type, name, manifest) {
 
 // src/integrity-pipeline.ts
 async function verifyDecryptedPrompt(watermarkedContent, type, name, manifest) {
-  if (!manifest) {
-    return { verified: true, skipped: true };
-  }
-  const stripped = stripWatermark(watermarkedContent);
-  const result = verifyPromptHash(stripped, type, name, manifest);
-  if (result.status === "not_in_manifest") {
-    return { verified: true, skipped: true };
-  }
-  return { verified: result.valid, skipped: false };
+  const result = verifyPromptHash(stripWatermark(watermarkedContent), type, name, manifest);
+  return { verified: result.status === "match", status: result.status };
+}
+function verifyPlainPrompt(content, type, name, manifest) {
+  const result = verifyPromptHash(content, type, name, manifest);
+  return { verified: result.status === "match", status: result.status };
 }
 
 // src/update-state.ts
-var import_fs5 = require("fs");
-var import_path6 = require("path");
+var import_fs6 = require("fs");
 function defaultState() {
   return {
     lastPluginVersion: "",
@@ -649,11 +841,11 @@ function defaultState() {
   };
 }
 function readUpdateState(filePath) {
-  if (!(0, import_fs5.existsSync)(filePath)) {
+  if (!(0, import_fs6.existsSync)(filePath)) {
     return defaultState();
   }
   try {
-    const content = (0, import_fs5.readFileSync)(filePath, "utf8");
+    const content = (0, import_fs6.readFileSync)(filePath, "utf8");
     const parsed = JSON.parse(content);
     return {
       lastPluginVersion: parsed.lastPluginVersion ?? "",
@@ -667,11 +859,10 @@ function readUpdateState(filePath) {
   }
 }
 function writeUpdateState(filePath, state) {
-  const dir = (0, import_path6.dirname)(filePath);
-  if (!(0, import_fs5.existsSync)(dir)) {
-    (0, import_fs5.mkdirSync)(dir, { recursive: true });
+  try {
+    writeFileNoFollow(filePath, JSON.stringify(state, null, 2), { mode: 384 });
+  } catch {
   }
-  (0, import_fs5.writeFileSync)(filePath, JSON.stringify(state, null, 2), { mode: 384 });
 }
 
 // src/change-detection.ts
@@ -692,9 +883,8 @@ function detectPromptChange(state, type, name, currentHash) {
 }
 
 // src/commands/decrypt.ts
-var MANIFEST_PUBLIC_KEY = "MCowBQYDK2VwAyEAAwFG32b8TuiVTxrDnXzNrb2v68YN5U9epLnZ3O7pQaI=";
 function getCacheDir3() {
-  return (0, import_path7.join)(getConfigDir(), "prompt-cache");
+  return (0, import_path8.join)(getConfigDir(), "prompt-cache");
 }
 async function decryptCommand(type, name, debug = false, options = {}) {
   const logger = new DebugLogger(debug);
@@ -712,74 +902,58 @@ async function decryptCommand(type, name, debug = false, options = {}) {
     throw new Error("Credentials not found. Run setup first.");
   }
   logger.log("SECURITY", "Disk caching disabled - fetching fresh from API");
-  const apiUrl = getApiUrl();
+  const apiUrl = getTrustedApiOrigin();
   logger.log("FETCH", `API URL: ${apiUrl}`);
+  const manifestPublicKey = publicKeyFor(apiUrl, options.manifestKeys);
   if (type === "custom") {
     logger.log("FETCH", `Fetching custom command: ${name}`);
-    const startFetch2 = Date.now();
     const customPrompt = await fetchCustomPrompt(credentials.apiKey, apiUrl, name);
-    logger.log("FETCH", `Custom command fetched in ${Date.now() - startFetch2}ms`);
-    console.log(customPrompt.prompt);
+    console.error("[verify] UNVERIFIED: team custom command (not covered by the signed manifest)");
+    console.log(stripControlKeepLines(customPrompt.prompt));
     return;
   }
-  logger.log("FETCH", `Fetching prompt: ${type}/${name}`);
-  const startFetch = Date.now();
-  const encryptedPrompt = await fetchEncryptedPrompt(
-    credentials.apiKey,
-    apiUrl,
-    type,
-    name
-  );
-  logger.log("FETCH", `Fetch completed in ${Date.now() - startFetch}ms`);
-  const licenseId = userIdToLicenseId(credentials.userId);
-  logger.log("DERIVE", "Deriving decryption key");
-  const startDerive = Date.now();
-  const key = deriveKey(
-    credentials.apiKey,
-    licenseId,
-    credentials.hardwareId,
-    credentials.salt
-  );
-  logger.log("DERIVE", `Key derivation completed in ${Date.now() - startDerive}ms`);
-  logger.log("DECRYPT", "Decrypting prompt content");
-  const startDecrypt = Date.now();
-  const plaintext = decrypt(
-    encryptedPrompt.encrypted,
-    encryptedPrompt.iv,
-    encryptedPrompt.authTag,
-    key
-  );
-  logger.log("DECRYPT", `Decryption completed in ${Date.now() - startDecrypt}ms`);
+  const fetchPlaintext = async () => {
+    logger.log("FETCH", `Fetching prompt: ${type}/${name}`);
+    if (isPlainPromptType(type)) return fetchPlainPrompt(credentials.apiKey, apiUrl, type, name);
+    const encryptedPrompt = await fetchEncryptedPrompt(credentials.apiKey, apiUrl, type, name);
+    const licenseId = userIdToLicenseId(credentials.userId);
+    const key = deriveKey(credentials.apiKey, licenseId, credentials.hardwareId, credentials.salt);
+    return decrypt(encryptedPrompt.encrypted, encryptedPrompt.iv, encryptedPrompt.authTag, key);
+  };
   console.error("[verify] Checking prompt integrity...");
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 3e3);
-  let manifest = null;
+  const cached = readCachedManifest(apiUrl, manifestPublicKey);
+  let plaintext;
+  let manifest;
   try {
-    manifest = await fetchManifest(apiUrl, controller.signal);
-  } catch {
-  } finally {
-    clearTimeout(timeout);
+    [plaintext, manifest] = await Promise.all([
+      fetchPlaintext(),
+      cached ? Promise.resolve(cached) : fetchVerifiedManifest(apiUrl, manifestPublicKey)
+    ]);
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("[SECURITY]")) {
+      console.error("[verify] Manifest: FAILED \u2014 prompt blocked");
+    }
+    throw err;
   }
-  if (manifest) {
-    if (!verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY)) {
-      console.error("[verify] Manifest signature: FAILED \u2014 prompt blocked");
-      throw new Error("[SECURITY] Manifest signature verification FAILED. Prompt delivery blocked.");
-    }
-    console.error("[verify] Manifest signature: valid");
-    const integrity = await verifyDecryptedPrompt(plaintext, type, name, manifest);
-    if (!integrity.verified && !integrity.skipped) {
-      console.error("[verify] Prompt hash: FAILED \u2014 prompt blocked");
-      throw new Error("[SECURITY] Prompt integrity check FAILED. Content may have been tampered with.");
-    }
-    if (!integrity.skipped) {
-      console.error("[verify] Prompt hash: verified");
-    }
-  } else {
-    console.error("[verify] Manifest unavailable \u2014 skipping verification");
+  console.error("[verify] Manifest signature: valid");
+  const check = async (against) => isPlainPromptType(type) ? verifyPlainPrompt(plaintext, type, name, against) : verifyDecryptedPrompt(plaintext, type, name, against);
+  let integrity = await check(manifest);
+  if (!integrity.verified && cached) {
+    manifest = await fetchVerifiedManifest(apiUrl, manifestPublicKey);
+    integrity = await check(manifest);
   }
+  if (integrity.status === "not_in_manifest") {
+    console.error("[verify] Prompt not in the signed manifest \u2014 prompt blocked");
+    throw new Error(`[SECURITY] ${type}/${name} is not in the signed prompt manifest. Prompt delivery blocked.`);
+  }
+  if (!integrity.verified) {
+    console.error("[verify] Prompt hash: FAILED \u2014 prompt blocked");
+    throw new Error("[SECURITY] Prompt integrity check FAILED. Content may have been tampered with.");
+  }
+  console.error("[verify] Prompt hash: verified");
   const manifestKey = `${type}/${name}`;
-  const currentHash = manifest?.prompts[manifestKey]?.hash ?? null;
-  const statePath = (0, import_path7.join)(getConfigDir(), "update-state.json");
+  const currentHash = manifest.prompts[manifestKey]?.hash ?? null;
+  const statePath = (0, import_path8.join)(getConfigDir(), "update-state.json");
   const updateState = readUpdateState(statePath);
   const detection = detectPromptChange(updateState, type, name, currentHash);
   if (detection.changed) {
@@ -858,7 +1032,7 @@ Usage:
 
 Options:
   --setup              Run initial setup (fetch credentials)
-  --type, -t <type>    Prompt type: commands, workflows, skills, agents, hooks, custom
+  --type, -t <type>    Prompt type: commands, workflows, skills, agents, hooks, shared, templates, custom
   --name, -n <name>    Prompt name
   --debug, -d          Enable verbose debug output
   --no-cache           Bypass cache, always fetch from API
@@ -873,6 +1047,8 @@ Examples:
   oss-decrypt --setup
   oss-decrypt --type commands --name plan
   oss-decrypt --type workflows --name build
+  oss-decrypt --type shared --name iron-laws
+  oss-decrypt --type templates --name claude-md
   oss-decrypt --debug --type commands --name plan
   oss-decrypt --no-cache --type commands --name plan
   oss-decrypt --clear-cache
@@ -884,15 +1060,16 @@ Examples:
 function showVersion() {
   console.log(`oss-decrypt v${VERSION}`);
 }
-var MANIFEST_PUBLIC_KEY2 = "MCowBQYDK2VwAyEAAwFG32b8TuiVTxrDnXzNrb2v68YN5U9epLnZ3O7pQaI=";
 async function verifyManifestCommand() {
-  const manifest = await fetchManifest(getApiUrl());
+  const apiUrl = getTrustedApiOrigin();
+  const manifestPublicKey = publicKeyFor(apiUrl);
+  const manifest = await fetchManifest(apiUrl);
   if (manifest === null) {
     console.log(JSON.stringify({ signatureValid: false, error: "Failed to fetch manifest" }));
     process.exitCode = 1;
     return;
   }
-  const signatureValid = verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY2);
+  const signatureValid = verifyManifestSignature(manifest, manifestPublicKey);
   const categories = {};
   for (const key of Object.keys(manifest.prompts)) {
     const category = key.split("/")[0];
@@ -910,7 +1087,7 @@ async function verifyManifestCommand() {
   }
 }
 async function listPromptsCommand(category) {
-  const manifest = await fetchManifest(getApiUrl());
+  const manifest = await fetchManifest(getTrustedApiOrigin());
   if (manifest === null) {
     console.log(JSON.stringify([]));
     return;

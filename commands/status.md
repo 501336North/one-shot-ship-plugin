@@ -53,18 +53,17 @@ Check your One Shot Ship subscription status and usage statistics.
 ## Step 1: Check Configuration
 
 ```bash
-if [ -f ~/.oss/config.json ]; then
-    API_KEY=$(grep -o '"apiKey"[[:space:]]*:[[:space:]]*"[^"]*"' ~/.oss/config.json | sed 's/.*: *"\([^"]*\)"/\1/')
-fi
+~/.oss/hooks/oss-value.sh keycheck
 ```
+
+If it prints nothing: "No API key found. Run: /oss:login".
 
 ## Step 2: Fetch Status
 
-```http
-URL: https://one-shot-ship-api.onrender.com/api/v1/auth/verify
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+Run this one call against the API your config names; the key goes to curl on stdin, never into this conversation or a command line:
+
+```bash
+~/.oss/hooks/oss-value.sh api auth/verify
 ```
 
 > Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.

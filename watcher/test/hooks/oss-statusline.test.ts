@@ -5,7 +5,7 @@
  * @boundary Shell script (oss-statusline.sh)
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -22,6 +22,27 @@ describe('oss-statusline.sh - Project State Reading', () => {
   const projectOssDir = path.join(testProjectDir, '.oss');
   const projectWorkflowFile = path.join(projectOssDir, 'workflow-state.json');
   const projectQueueFile = path.join(projectOssDir, 'queue.json');
+
+  // Render as a STABLE plugin, so the channel section (release channels) adds nothing ahead of the
+  // health indicator and no arrow: a beta plugin on production renders "⚠ beta plugin → production
+  // API (mismatch)". Without this, CLAUDE_PLUGIN_ROOT or ~/.oss/plugin-root of whoever runs the
+  // tests decides what they see (SR13).
+  const stablePluginRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-statusline-stable-plugin-'));
+  let savedPluginRoot: string | undefined;
+  beforeAll(() => {
+    fs.mkdirSync(path.join(stablePluginRoot, '.claude-plugin'), { recursive: true });
+    fs.writeFileSync(
+      path.join(stablePluginRoot, '.claude-plugin', 'plugin.json'),
+      JSON.stringify({ name: 'oss', version: '2.0.0' })
+    );
+    savedPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+    process.env.CLAUDE_PLUGIN_ROOT = stablePluginRoot;
+  });
+  afterAll(() => {
+    if (savedPluginRoot === undefined) delete process.env.CLAUDE_PLUGIN_ROOT;
+    else process.env.CLAUDE_PLUGIN_ROOT = savedPluginRoot;
+    fs.rmSync(stablePluginRoot, { recursive: true, force: true });
+  });
 
   // Save original state
   let originalCurrentProject: string | null = null;

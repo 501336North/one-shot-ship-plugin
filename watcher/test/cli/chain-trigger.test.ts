@@ -71,12 +71,12 @@ describe('Chain Trigger CLI', () => {
       fs.mkdirSync(tmpDir, { recursive: true });
       fs.writeFileSync(
         tmpDir + '/config.json',
-        JSON.stringify({ apiKey: 'ak_testkey123', apiUrl: 'https://api.example.com' })
+        JSON.stringify({ apiKey: 'ak_testkey123', apiUrl: 'https://one-shot-ship-api-staging.onrender.com' })
       );
 
       const result = readApiCredentials(tmpDir);
       expect(result).not.toBeNull();
-      expect(result!.apiUrl).toBe('https://api.example.com');
+      expect(result!.apiUrl).toBe('https://one-shot-ship-api-staging.onrender.com');
 
       fs.rmSync(tmpDir, { recursive: true });
     });
@@ -94,11 +94,11 @@ describe('Chain Trigger CLI', () => {
       fs.mkdirSync(pathMod.join(home, '.oss'));
       fs.writeFileSync(
         pathMod.join(home, '.oss', 'config.json'),
-        JSON.stringify({ apiKey: 'ak_home', apiUrl: 'https://api.example.com' })
+        JSON.stringify({ apiKey: 'ak_home', apiUrl: 'https://one-shot-ship-api-staging.onrender.com' })
       );
       fs.writeFileSync(
         pathMod.join(configDir, 'config.json'),
-        JSON.stringify({ apiKey: 'ak_used', apiUrl: 'http://127.0.0.1:9' })
+        JSON.stringify({ apiKey: 'ak_used', apiUrl: 'http://api.example.com' })
       );
       const savedHome = process.env.HOME;
       const savedDir = process.env.OSS_CONFIG_DIR;
@@ -136,7 +136,7 @@ describe('Chain Trigger CLI', () => {
 
       await executeChainForWorkflow('build', {
         apiKey: 'test-key',
-        apiUrl: 'https://api.example.com',
+        apiUrl: 'https://one-shot-ship-api-staging.onrender.com',
       });
 
       const output = consoleSpy.mock.calls.map(c => c[0]).join('\n');
@@ -160,7 +160,7 @@ describe('Chain Trigger CLI', () => {
 
       await executeChainForWorkflow('ideate', {
         apiKey: 'test-key',
-        apiUrl: 'https://api.example.com',
+        apiUrl: 'https://one-shot-ship-api-staging.onrender.com',
       });
 
       const output = consoleSpy.mock.calls.map(c => c[0]).join('\n');
@@ -185,7 +185,7 @@ describe('Chain Trigger CLI', () => {
 
       await executeChainForWorkflow('plan', {
         apiKey: 'test-key',
-        apiUrl: 'https://api.example.com',
+        apiUrl: 'https://one-shot-ship-api-staging.onrender.com',
       });
 
       const output = consoleSpy.mock.calls.map(c => c[0]).join('\n');
@@ -209,7 +209,7 @@ describe('Chain Trigger CLI', () => {
 
       await executeChainForWorkflow('build', {
         apiKey: 'test-key',
-        apiUrl: 'https://api.example.com',
+        apiUrl: 'https://one-shot-ship-api-staging.onrender.com',
       });
 
       const output = consoleSpy.mock.calls.map(c => c[0]).join('\n');
@@ -234,7 +234,7 @@ describe('Chain Trigger CLI', () => {
 
       const result = await executeChainForWorkflow('build', {
         apiKey: 'test-key',
-        apiUrl: 'https://api.example.com',
+        apiUrl: 'https://one-shot-ship-api-staging.onrender.com',
       });
 
       // No console.log calls for chain instructions
@@ -261,7 +261,7 @@ describe('Chain Trigger CLI', () => {
 
       await executeChainForWorkflow('build', {
         apiKey: 'test-key',
-        apiUrl: 'https://api.example.com',
+        apiUrl: 'https://one-shot-ship-api-staging.onrender.com',
       });
 
       const output = consoleSpy.mock.calls.map(c => c[0]).join('\n');
@@ -281,7 +281,7 @@ describe('Chain Trigger CLI', () => {
 
       const result = await executeChainForWorkflow('build', {
         apiKey: 'test-key',
-        apiUrl: 'https://api.example.com',
+        apiUrl: 'https://one-shot-ship-api-staging.onrender.com',
       });
 
       expect(result.executed).toBe(0);
@@ -310,7 +310,7 @@ describe('Chain Trigger CLI', () => {
 
       await executeChainForWorkflow('build', {
         apiKey: 'test-key',
-        apiUrl: 'https://api.example.com',
+        apiUrl: 'https://one-shot-ship-api-staging.onrender.com',
       });
 
       // Should NOT have tried to instantiate or call the executor
@@ -331,7 +331,7 @@ describe('Chain Trigger CLI', () => {
      * BUSINESS RULE: a chains_to name or condition that is not a plain slug is
      * dropped (with a one-line stderr reason) instead of being copied into stdout.
      */
-    const creds = { apiKey: 'test-key', apiUrl: 'https://api.example.com' };
+    const creds = { apiKey: 'test-key', apiUrl: 'https://one-shot-ship-api-staging.onrender.com' };
 
     let errorSpy: ReturnType<typeof vi.spyOn>;
 
@@ -786,7 +786,7 @@ describe('Chain Trigger CLI', () => {
         chains_to: [{ command: 'review', always: true }],
       });
 
-      const result = await executeChainForWorkflow('audit', { apiKey: 'k', apiUrl: 'https://api.example.com' });
+      const result = await executeChainForWorkflow('audit', { apiKey: 'k', apiUrl: 'https://one-shot-ship-api-staging.onrender.com' });
 
       expect(getCachedOrFetch).not.toHaveBeenCalled();
       expect(consoleSpy).not.toHaveBeenCalled();
@@ -796,7 +796,7 @@ describe('Chain Trigger CLI', () => {
     test('a chainable workflow (build) still asks the API for its config', async () => {
       (getCachedOrFetch as ReturnType<typeof vi.fn>).mockResolvedValue({ chains_to: [] });
 
-      await executeChainForWorkflow('build', { apiKey: 'k', apiUrl: 'https://api.example.com' });
+      await executeChainForWorkflow('build', { apiKey: 'k', apiUrl: 'https://one-shot-ship-api-staging.onrender.com' });
 
       expect(getCachedOrFetch).toHaveBeenCalledWith('build');
     });

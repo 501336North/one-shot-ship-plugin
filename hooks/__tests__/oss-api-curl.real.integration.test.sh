@@ -34,9 +34,10 @@ fi
 T=$(mktemp -d)
 SERVER_PID=''
 SERVER2_PID=''
+SERVER3_PID=''
 cleanup() {
     local pid
-    for pid in $SERVER_PID $SERVER2_PID; do kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; done
+    for pid in $SERVER_PID $SERVER2_PID $SERVER3_PID; do kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; done
     rm -rf "$T"
 }
 trap cleanup EXIT
@@ -180,6 +181,43 @@ oss_api_curl "$KEY" -sS -m 5 "http://127.0.0.1:$PORT/api/v1/{a,b}" >/dev/null 2>
 KEYED=$(grep -c "|Bearer $KEY\$" "$T/requests.log")
 if (( KEYED <= 1 )); then pass "a URL with {a,b} sends at most one keyed request (no glob expansion)"
 else fail "a URL with {a,b} sends at most one keyed request" "$KEYED keyed requests: '$(sed "s/$KEY/<KEY>/g" "$T/requests.log" | tr '\n' ' ')'"; fi
+
+# --- Scenario 6 (TR3/TR4): the team-laws fetch against real curl: a stalled API is given up on (a FAILED fetch, rc 2,
+# so the sync retries in an hour), and a body over the 16 KiB cap is refused by curl's --max-filesize (no section, rc 1).
+cat > "$T/laws.py" << 'PY2'
+import http.server, sys, time
+mode_path, port_path = sys.argv[1], sys.argv[2]
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        mode = open(mode_path).read().strip()
+        if mode == 'stall':
+            time.sleep(20); return
+        body = b'## Custom Team Laws\n\n' + b'x' * 20000 + b'\n'
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/markdown')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *a): pass
+class S(http.server.ThreadingHTTPServer): daemon_threads = True
+srv = S(('127.0.0.1', 0), H)
+with open(port_path + '.tmp', 'w') as f: f.write(str(srv.server_address[1]))
+import os; os.rename(port_path + '.tmp', port_path)
+srv.serve_forever()
+PY2
+echo stall > "$T/laws-mode"
+python3 -I "$T/laws.py" "$T/laws-mode" "$T/port3" &
+SERVER3_PID=$!
+for _ in $(seq 1 50); do [[ -s "$T/port3" ]] && break; sleep 0.1; done
+printf '{"apiKey": "%s", "apiUrl": "http://127.0.0.1:%s"}\n' "$KEY" "$(cat "$T/port3")" > "$T/home/.oss/config.json"
+start=$SECONDS
+out=$(OSS_CUSTOM_LAWS_MAX_TIME=1; oss_custom_iron_laws); rc=$?; took=$((SECONDS - start))
+if [[ $rc == 2 && -z "$out" && $took -lt 8 ]]; then pass "team laws: a stalled API is given up on (short -m for the test) and reported as a failed fetch (rc 2)"
+else fail "team laws: a stalled API is given up on, rc 2" "rc=$rc took=${took}s out=$out"; fi
+echo big > "$T/laws-mode"
+out=$(oss_custom_iron_laws); rc=$?
+if [[ $rc == 1 && -z "$out" ]]; then pass "team laws: a 20 KB body is refused by curl --max-filesize: no section (rc 1), nothing printed"
+else fail "team laws: a 20 KB body is refused, rc 1" "rc=$rc bytes=${#out}"; fi
 
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"

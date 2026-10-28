@@ -51,7 +51,7 @@ Configure your API key for OSS Dev Workflow access.
 
 ## API Configuration
 
-**API Base URL:** `https://one-shot-ship-api.onrender.com`
+**API Base URL:** the `apiUrl` in your OSS config (`~/.oss/config.json`), or production when it is not set. Every call below goes to that one address (`oss_api_url` in `~/.oss/hooks/oss-api-curl.sh`).
 
 ## Quick Key Update Mode (`--key`)
 
@@ -63,7 +63,7 @@ Configure your API key for OSS Dev Workflow access.
    - Run `~/.oss/hooks/oss-value.sh dir` and note the folder it prints. If it prints nothing, show the user its error and stop.
    - Use the Write tool to write the key alone to `key.txt` in that folder. If no key was given, tell the user "Error: --key requires an API key value. Usage: /oss:login --key ak_xxxxx" and stop.
 
-2. **Read, validate and save the key** in ONE Bash call (it checks the key's shape and deletes `key.txt` at once, checks the key against `/api/v1/subscription/status`, saves it to `~/.oss/config.json` keeping the other settings, and prints the plan):
+2. **Read, validate and save the key** in ONE Bash call (it checks the key's shape and deletes `key.txt` at once, checks the key against the subscription status of the API your config names, saves it to the config file keeping the other settings, and prints the plan):
    ```bash
    ~/.oss/hooks/oss-login.sh
    ```
@@ -109,7 +109,7 @@ Configure your API key for OSS Dev Workflow access.
 ## What This Command Does
 
 1. **Prompts for API key** - Or accepts as argument
-2. **Validates key** - Tests against API at `https://one-shot-ship-api.onrender.com/api/v1/subscription/status`
+2. **Validates key** - Checks it against the API your config names (production when none is set)
 3. **Stores securely** - Saves to `~/.oss/config.json`
 4. **Confirms access** - Shows subscription status
 
@@ -125,7 +125,7 @@ The key reaches the shell through the value folder, never typed into a command (
 
 1. Run `~/.oss/hooks/oss-value.sh dir` and note the folder it prints. If it prints nothing, show the user its error and stop.
 2. Use the Write tool to write the key alone to `key.txt` in that folder.
-3. Run this one call. It checks the key's shape and deletes `key.txt` at once, checks the key against `https://one-shot-ship-api.onrender.com/api/v1/subscription/status`, saves it to `~/.oss/config.json` (with `apiUrl` `https://one-shot-ship-api.onrender.com` when the file is new; other settings are kept) and prints the plan:
+3. Run this one call. It checks the key's shape and deletes `key.txt` at once, checks the key against the subscription status of the API your config names (production when none is set), saves it to the config file (a new file gets that address as `apiUrl`; other settings are kept) and prints the plan:
    ```bash
    ~/.oss/hooks/oss-login.sh
    ```
@@ -140,6 +140,20 @@ Show the user the plan the call printed (trial, active, expired).
 ## Step 4: Sync CLAUDE.md with IRON LAWS (Automatic)
 
 After successful authentication, the command installs the IRON LAWS block and then syncs the project guidelines around it.
+
+### 4.0: Install the decrypt CLI and its credentials
+
+The IRON LAWS (4.1) and the template (4.2) reach CLAUDE.md only after the decrypt CLI has checked them against the signed manifest, so install and set it up first:
+
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install the decrypt CLI (see the message above). Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."; exit 1; }
+```
+
+```bash
+~/.oss/bin/oss-decrypt --setup
+```
+
+**If either call fails, Step 4 ends here** (do not run 4.1-4.3): show the user the message and go on to Step 5, which retries the install.
 
 ### 4.1: Install the IRON LAWS block (single writer)
 
@@ -159,11 +173,13 @@ This script is the **only** writer of the IRON LAWS block. Do not write, copy or
 
 ### 4.2: Fetch the CLAUDE.md template
 
-```http
-GET https://one-shot-ship-api.onrender.com/api/v1/prompts/claude-md
-Headers:
-  Authorization: Bearer {apiKey}
+Run this one call. The decrypt CLI fetches the template with its own credentials and prints it only if it matches the signed manifest entry `templates/claude-md`:
+
+```bash
+~/.oss/bin/oss-decrypt --type templates --name claude-md
 ```
+
+**If it exits non-zero** (the template was refused or the API was unreachable), skip 4.3: never write a template the CLI did not print. Tell the user "CLAUDE.md guidelines were not updated: {stderr reason}." and go on to Step 5.
 
 Remove the placeholder line `<!-- IRON LAWS will be injected here by /oss:login -->` from the template. The block from 4.1 replaces it; never inject the laws into the template.
 
@@ -176,7 +192,7 @@ Remove the placeholder line `<!-- IRON LAWS will be injected here by /oss:login 
 
 ### 4.4: What Gets Synced
 
-**From IRON LAWS (shared/iron-laws endpoint):**
+**From IRON LAWS (shared/iron-laws, verified by the decrypt CLI):**
 - IRON LAW #1: TDD (with MINIMAL emphasis in GREEN phase)
 - IRON LAW #2: Test Philosophy
 - IRON LAW #3: Loop Detection Protocol
@@ -186,7 +202,7 @@ Remove the placeholder line `<!-- IRON LAWS will be injected here by /oss:login 
 - PROHIBITED section
 - Pre-Command Check Summary
 
-**From Template (claude-md endpoint):**
+**From Template (templates/claude-md, verified by the decrypt CLI):**
 - London TDD methodology overview
 - Agent delegation table (which agents to use for what)
 - All available `/oss:` commands reference
@@ -555,7 +571,7 @@ After login, `~/.oss/config.json` will contain:
 ```json
 {
   "apiKey": "ak_xxxxx",
-  "apiUrl": "https://one-shot-ship-api.onrender.com"
+  "apiUrl": "<the API address; production unless your config named another>"
 }
 ```
 
@@ -569,5 +585,5 @@ Get a valid key from https://www.oneshotship.com/dashboard
 ### Network Error
 ```
 Check internet connection and try again
-API endpoint: https://one-shot-ship-api.onrender.com/api/v1/subscription/status
+API: the address set as `apiUrl` (OSS config), or production when not set
 ```

@@ -9,6 +9,13 @@
 # Callers therefore cannot use curl's stdin for anything else (e.g. `-d @-`).
 # Returns 2 without calling curl if the key is empty or contains a line break.
 
+# The production API: the address every call uses when the OSS config names none (also read by the status
+# line to tell production from STAGING; the ratchet allows the literal only here, in the CLI and in the watcher).
+OSS_API_DEFAULT_URL="https://one-shot-ship-api.onrender.com"
+# The staging API (release channels). The same constant as STAGING_API_URL in packages/cli-decrypt/src/manifest-keys.ts
+# and the watcher's api-credentials.ts; all three are tested against trusted-api-url-cases.json.
+OSS_API_STAGING_URL="https://one-shot-ship-api-staging.onrender.com"
+
 oss_api_curl() {
     local key="${1:-}"
     shift
@@ -19,22 +26,76 @@ oss_api_curl() {
     # and not a here-string, which bash 3.2 backs with a temp file (the key on disk).
     # -q must stay FIRST: it stops curl reading a default .curlrc ($CURL_HOME, $XDG_CONFIG_HOME, $HOME), whose
     # url=/trace-ascii= lines would send the key to a second host or write it to disk. --globoff: no {a,b}/[1-2]
-    # expansion, so one call is one keyed request.
-    curl -q --globoff --config - "$@" < <(printf 'header = "Authorization: Bearer %s"\n' "$key")
+    # expansion, so one call is one keyed request. --noproxy '*' (UR2): a *_proxy variable never receives the key (the
+    # CLI and the watcher ignore them too).
+    curl -q --globoff --noproxy '*' --config - "$@" < <(printf 'header = "Authorization: Bearer %s"\n' "$key")
 }
 
 # The OSS config file, as getConfigDir in packages/cli-decrypt/src/config.ts picks it: the key and the URL
 # it may go to always come from this one file.
 oss_config_file() { printf '%s\n' "${OSS_CONFIG_DIR:-$HOME/.oss}/config.json"; }
 
+# oss_config_trusted - returns 0 when the OSS config may be read: it is missing, or a regular file (not a
+# symlink) owned by this user and not world-writable. Group-writable is allowed (umask 002). The same rule as
+# the CLI and the watcher (ship round 1, FR7). Also sets _OSS_CFG_PRIVATE to 0 when the file or its directory
+# has a group- or world-write bit (SR2: such a config may not name a loopback API).
+# One stat and shell tests only: the status line calls this on every render (SR9).
+oss_config_trusted() {
+    local f="${OSS_CONFIG_DIR:-$HOME/.oss}/config.json" m fm dm
+    _OSS_CFG_PRIVATE=1
+    [[ -e "$f" || -L "$f" ]] || return 0
+    [[ ! -L "$f" && -f "$f" && -O "$f" ]] || return 1
+    # The permission bits of the file and its directory, in octal, one per line: BSD stat, else GNU/busybox stat
+    # (which reads -f as --file-system and prints file-system details, so anything but octal lines means "not BSD").
+    m=$(stat -L -f %Lp "$f" "${f%/*}" 2>/dev/null) && [[ "$m" != *[!0-7$'\n']* ]] \
+        || m=$(stat -L -c %a "$f" "${f%/*}" 2>/dev/null) || return 1
+    fm=${m%%$'\n'*}; dm=${m#*$'\n'}
+    case "$fm:$dm" in :* | *: | *[!0-7:]*) return 1 ;; esac
+    (( (8#$fm & 2) == 0 )) || return 1
+    (( ((8#$fm | 8#$dm) & 18) == 0 )) || _OSS_CFG_PRIVATE=0   # 18 = 0o022
+}
+
+# _oss_config_read - the trust check, then the ONE read of the OSS config (SR3): sets _OSS_CFG to its text ('' when
+# missing). The URL and the key are taken from this copy, never by reading the path again after the check.
+# rc 1 when the config may not be read, or holds a NUL byte (not JSON; `read -d ''` stops there and returns 0).
+# _OSS_CFG is empty after EVERY failure (UR4), so a caller that ignores the rc still finds no key or URL. An
+# unreadable config is a failure, never read as a missing one (production).
+_oss_config_read() {
+    local f="${OSS_CONFIG_DIR:-$HOME/.oss}/config.json"
+    _OSS_CFG=''
+    oss_config_trusted || return 1
+    [[ -e "$f" ]] || return 0
+    [[ -r "$f" ]] || return 1   # unreadable is not missing: a failed redirection would also end `read` with rc 1
+    ! IFS= read -r -d '' _OSS_CFG < "$f" || { _OSS_CFG=''; return 1; }
+}
+
 # oss_api_key - prints apiKey from the OSS config when it is a non-empty string; otherwise prints nothing
-# and returns 1. Without jq: the flat `"apiKey": "..."` shape that /oss:login writes.
-oss_api_key() {
-    local key=''
+# and returns 1. Without jq: the flat `"apiKey": "..."` shape that /oss:login writes, and only that (TR6): a config
+# naming "apiKey" twice (a nested one too) or a value with a backslash (an escape) is refused, not guessed at.
+oss_api_key() { _oss_config_read && _oss_cfg_key; }
+
+# _oss_cfg_flat - without jq, the config is read by regex only when it is flat JSON (UR3): ONE object of string keys to
+# scalars or arrays of scalars, no backslash anywhere (so no \u-spelled key) and no second "{" (so no nested key).
+# Anything else (invalid JSON too) could read differently from jq and JSON.parse in the CLI, so it is refused.
+_oss_cfg_flat() {
+    local w='[[:space:]]*' str='"[^"\\[:cntrl:]]*"' num='-?(0|[1-9][0-9]*)([.][0-9]+)?([eE][+-]?[0-9]+)?' v m re
+    v="(${str}|${num}|true|false|null)"   # braces: zsh reads $w[ as a subscript
+    v="(${v}|\\[${w}(${v}(${w},${w}${v})*)?${w}\\])"
+    m="${str}${w}:${w}${v}"
+    re="^${w}[{]${w}(${m}(${w},${w}${m})*)?${w}[}]${w}\$"
+    [[ "$_OSS_CFG" =~ $re ]]
+}
+
+# _oss_cfg_key - oss_api_key over the copy _oss_config_read made (TR5: callers that also need the URL read once).
+_oss_cfg_key() {
+    local key='' re='"apiKey"[[:space:]]*:[[:space:]]*"([^"]*)"' twice='"apiKey".*"apiKey"'
     if command -v jq &>/dev/null; then
-        key=$(jq -r 'if (.apiKey | type) == "string" then .apiKey else "" end' "$(oss_config_file)" 2>/dev/null)
-    else
-        key=$(grep -o '"apiKey"[[:space:]]*:[[:space:]]*"[^"]*"' "$(oss_config_file)" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/')
+        key=$(printf '%s' "$_OSS_CFG" | jq -r 'if (.apiKey | type) == "string" then .apiKey else "" end' 2>/dev/null)
+    elif ! _oss_cfg_flat; then
+        return 1
+    elif [[ "$_OSS_CFG" =~ $re ]]; then
+        key=${BASH_REMATCH[1]-${match[1]-}}   # bash, zsh
+        [[ "$key" == *\\* || "$_OSS_CFG" =~ $twice ]] && return 1
     fi
     [[ -n "$key" ]] || return 1
     printf '%s\n' "$key"
@@ -49,17 +110,26 @@ oss_api_key() {
 # bash drops it; anchor-free, since jq's ^ and $ also match at line breaks); jq prints "!" (which the regexes refuse) for any value that fails them.
 #
 #   API_URL=$(oss_api_url) || { echo "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"; exit 1; }
-oss_api_url() {
-    local url='' hostport='' port=''
+oss_api_url_syntax() {
+    _oss_config_read && _oss_url_syntax && printf '%s\n' "$_OSS_URL"
+}
+
+# _oss_url_syntax - the rule above over the copy _oss_config_read made; sets _OSS_URL.
+_oss_url_syntax() {
+    local url='' hostport='' port='' named='"apiUrl"[[:space:]]*:[[:space:]]*("[^"]|[^"n[:space:]])'
     local https='^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%/-]*)?$'
     local loopback='^http://(127\.0\.0\.1|localhost|\[::1\])(:[0-9]{1,5})?(/[A-Za-z0-9._~%/-]*)?$'
     if command -v jq &>/dev/null; then
-        url=$(jq -r 'if .apiUrl == null then ""
+        url=$(printf '%s' "$_OSS_CFG" | jq -r 'if .apiUrl == null then ""
                      elif (.apiUrl | type) != "string" then "!"
                      elif (.apiUrl | test("[^!-~]")) then "!"
-                     else .apiUrl end' "$(oss_config_file)" 2>/dev/null)
+                     else .apiUrl end' 2>/dev/null)
+    elif [[ -n "$_OSS_CFG" ]] && ! _oss_cfg_flat; then
+        return 1   # UR3: not flat JSON, so the regex below could disagree with the CLI (an escaped "apiUrl")
+    elif [[ "$_OSS_CFG" =~ $named ]]; then
+        return 1   # FR5: a named apiUrl (non-empty, non-null) is never read as production just because jq is missing
     fi
-    [[ -n "$url" ]] || url="https://one-shot-ship-api.onrender.com"
+    [[ -n "$url" ]] || url="$OSS_API_DEFAULT_URL"
     [[ "$url" =~ $https || "$url" =~ $loopback ]] || return 1
     hostport=${url#*://}
     hostport=${hostport%%/*}
@@ -67,15 +137,110 @@ oss_api_url() {
         *\]) ;;
         *:*) port=${hostport##*:}; (( 10#$port <= 65535 )) || return 1 ;;
     esac
+    _OSS_URL=$url
+}
+
+# oss_api_url - prints the canonical origin of the API the key may go to, or nothing and rc 1. The address must
+# pass the syntax rule above AND be a trusted OSS API: production, staging, or loopback http (DEV). A trailing
+# "/", host case and the port (numerically; dropped when it is the scheme default, as WHATWG URL does) are
+# normalised; any other path, port or host is refused. The same trust
+# rule as the CLI and the watcher, tested against trusted-api-url-cases.json (ship round 1, FR4/FR6). A loopback
+# origin also needs a config.json and directory with no group- or world-write bit (ship round 2, SR2).
+#
+#   API_URL=$(oss_api_url) || { echo "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"; exit 1; }
+oss_api_url() { _oss_config_read && _oss_cfg_origin; }
+
+# _oss_cfg_origin - oss_api_url over the copy _oss_config_read made.
+_oss_cfg_origin() {
+    local url scheme rest hostport path port
+    _oss_url_syntax || return 1
+    url=$_OSS_URL
+    scheme=${url%%://*}; rest=${url#*://}
+    hostport=${rest%%/*}; path=${rest#"$hostport"}
+    [[ -z "$path" || "$path" == / ]] || return 1
+    [[ "$hostport" == *[[:upper:]]* ]] && hostport=$(printf '%s' "$hostport" | tr 'A-Z' 'a-z')   # tr only when needed (SR9)
+    # The port as WHATWG URL reads it: a number (leading zeros dropped), omitted when it is the scheme's default.
+    case "$hostport" in
+        *\]) ;;
+        *:*) port=$(( 10#${hostport##*:} )); hostport=${hostport%:*}
+             [[ "$scheme:$port" == https:443 || "$scheme:$port" == http:80 ]] || hostport="$hostport:$port" ;;
+    esac
+    url="$scheme://$hostport"
+    case "$url" in
+        "$OSS_API_DEFAULT_URL" | "$OSS_API_STAGING_URL") ;;
+        http://localhost | http://localhost:[0-9]* | http://127.0.0.1 | http://127.0.0.1:[0-9]* | "http://[::1]" | "http://[::1]:"[0-9]*)
+            # SR2: the key goes to whatever listens on this port, so only a config no one else can write may name it.
+            (( _OSS_CFG_PRIVATE )) || return 1 ;;
+        *) return 1 ;;
+    esac
     printf '%s\n' "$url"
 }
 
+# The line written above the team/personal IRON LAWS, which the signed prompt manifest does not cover (SR16).
+OSS_CUSTOM_LAWS_NOTE='> Team/personal laws below are not covered by the signed prompt manifest (unverified).'
+# The line written below them (TR2): team text after it cannot pass for verified text.
+OSS_CUSTOM_LAWS_END='> End of unverified team/personal laws.'
+# The only first lines a section may have, exactly, split on "|" (UR16): the headings the API serves. Defined once:
+# the jq filter below checks against it and the watcher's hint (iron-law-log-parser) is tested against it.
+OSS_CUSTOM_LAWS_HEADINGS='## Custom Team Laws|## Custom Personal Laws'
+# The most the section may be, in bytes, as fetched and after stripping (TR3; the honest API sends about 3 KB).
+OSS_CUSTOM_LAWS_MAX_BYTES=16384
+# How long the section's fetch may take, in seconds (TR4: it runs in a foreground sync at session start).
+OSS_CUSTOM_LAWS_MAX_TIME=5
+
+# The characters removed from the section before anything else (UR1'): one table. Unicode Cf (format: zero-width,
+# bidi, tags, ...), the C0/C1 controls and DEL (line feed and tab kept; CR removed), U+2028/U+2029 (line breaks a
+# reader may honour), and the invisible fillers that are not Cf: U+00AD, U+034F, U+061C, U+115F, U+1160, U+180E,
+# U+2060-2064, U+3164, U+FEFF, U+E0000-E007F (written as surrogate pairs: jq strings take no \u{...}). A jq def, not
+# an --arg: only a jq string literal turns \uXXXX into the character (Oniguruma reads \u as a plain u).
+_OSS_INVISIBLE_JQ='def invisible: "[\\p{Cf}\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f\u1160\u180e\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\u3164\ufeff\udb40\udc00-\udb40\udc7f]";'
+
+# The jq filter oss_custom_iron_laws runs on the section (UR1'): the table above removed, IRON LAWS marker lines
+# dropped (CLAUDE.md's block is found by whole lines, fence or not), then the whole block: the note, the section in a
+# backtick fence (info string "text") longer than any backtick run in it, so no line of the team's text can close it
+# and everything inside stays one code block of literal text, then the closing line. Prints "" over $max bytes (no
+# section, TR3) and "!" when the first line is not exactly one of OSS_CUSTOM_LAWS_HEADINGS (not a section).
+_OSS_CUSTOM_LAWS_JQ="$_OSS_INVISIBLE_JQ"'
+    gsub(invisible; "")
+    | split("\n") | map(select(test("^\\s*<!--\\s*IRON LAWS (START|END)") | not)) | join("\n")
+    | sub("\n+$"; "")
+    | if utf8bytelength > $max then ""
+      elif (split("\n")[0] as $first | $headings | split("|") | any(.[]; . == $first) | not) then "!"
+      else ("`" * ([4, ([scan("`+") | length] | max // 0) + 1] | max)) as $fence
+        | $note + "\n\n" + $fence + "text\n" + . + "\n" + $fence + "\n\n" + $end end'
+
+# oss_custom_iron_laws - prints the team/personal IRON LAWS block written below the signed laws (SR16, UR1'): the
+# section the API serves (GET /api/v1/prompts/shared/iron-laws?part=custom: only "## Custom Team Laws" /
+# "## Custom Personal Laws", or an empty body), invisible characters removed, fenced between OSS_CUSTOM_LAWS_NOTE and
+# OSS_CUSTOM_LAWS_END (see _OSS_CUSTOM_LAWS_JQ). It is NOT verified. Nothing printed and
+#   rc 1 (no section) when the config is untrusted (the key is never sent), jq is missing, or the body is empty or
+#        over the cap;
+#   rc 2 (the fetch FAILED: curl or HTTP error, a 3xx (never followed), a 2xx that is not that section (an older API
+#        that ignores ?part sends the whole laws), or no answer in OSS_CUSTOM_LAWS_MAX_TIME seconds) so a caller can
+#        retry sooner (TR4, UR11).
+oss_custom_iron_laws() {
+    local url key body rc=0
+    command -v jq >/dev/null 2>&1 || return 1
+    _oss_config_read && url=$(_oss_cfg_origin) && key=$(_oss_cfg_key) || return 1   # one read for both (TR5)
+    body=$(oss_api_curl "$key" -sf -m "$OSS_CUSTOM_LAWS_MAX_TIME" --max-filesize "$OSS_CUSTOM_LAWS_MAX_BYTES" \
+        -w '\n%{http_code}' "$url/api/v1/prompts/shared/iron-laws?part=custom") || rc=$?
+    case $rc in 0) ;; 63) return 1 ;; *) return 2 ;; esac   # 63: over --max-filesize, i.e. no section
+    case "${body##*$'\n'}" in 2[0-9][0-9]) ;; *) return 2 ;; esac   # UR11: a 3xx (not followed) is a failed fetch
+    body=${body%$'\n'*}
+    [[ -n "$body" ]] || return 1   # an empty 200: no section
+    body=$(printf '%s' "$body" | jq -Rrs --argjson max "$OSS_CUSTOM_LAWS_MAX_BYTES" \
+        --arg note "$OSS_CUSTOM_LAWS_NOTE" --arg end "$OSS_CUSTOM_LAWS_END" --arg headings "$OSS_CUSTOM_LAWS_HEADINGS" \
+        "$_OSS_CUSTOM_LAWS_JQ") || return 1
+    case "$body" in '') return 1 ;; '!') return 2 ;; esac   # over the cap: no section; UR11: not a section
+    printf '%s\n' "$body"
+}
+
 # oss_json_field FIELD - reads JSON (a server response) on stdin and prints .FIELD as text ("" when missing,
-# null or false). Control characters and the zero-width/bidi characters are removed inside jq, so those raw
-# bytes never reach the shell or the terminal. Same character set as stripControl in
-# packages/cli-decrypt/src/strip-control.ts.
+# null or false). The invisible table above (UR15: ONE table, the one the team-laws fence uses; the same set as
+# stripControl in packages/cli-decrypt/src/strip-control.ts and the API) plus tab and line feed (one field, one line) is
+# removed inside jq, so those raw bytes never reach the shell or the terminal.
 #
 #   CHAT_ID=$(printf '%s' "$RESPONSE" | oss_json_field chatId)
 oss_json_field() {
-    jq -r --arg f "$1" '.[$f] // "" | tostring | gsub("[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]"; "")'
+    jq -r --arg f "$1" "$_OSS_INVISIBLE_JQ"' .[$f] // "" | tostring | gsub(invisible; "") | gsub("[\t\n]"; "")'
 }

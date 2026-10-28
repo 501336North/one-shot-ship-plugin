@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { IronLawLogParser, IronLawResult } from '../../src/monitors/iron-law-log-parser.js';
 
 interface IronLawViolationRecord {
@@ -337,16 +340,97 @@ describe('IronLawLogParser - Intervention Task Creation', () => {
       expect(task?.prompt).toContain('IRON LAW #1 violated 3+ times');
     });
 
-    it('should include API URL in prompt for 3rd+ violation', () => {
-      monitor.recordViolation(2, "Using any type");
-      monitor.recordViolation(2, "Using any type again");
-      monitor.recordViolation(2, "Using any type still");
+    describe('the IRON LAWS fetch names the API the OSS config names', () => {
+      let configDir: string;
+      let savedConfigDir: string | undefined;
+      const writeConfig = (config: Record<string, unknown>): void =>
+        fs.writeFileSync(path.join(configDir, 'config.json'), JSON.stringify(config), { mode: 0o600 });
+      const thirdViolationPrompt = (): string | undefined => {
+        monitor.recordViolation(2, "Using any type");
+        monitor.recordViolation(2, "Using any type again");
+        monitor.recordViolation(2, "Using any type still");
+        return monitor.createInterventionTask(2, "Using any type still")?.prompt;
+      };
 
-      const task = monitor.createInterventionTask(2, "Using any type still");
+      beforeEach(() => {
+        savedConfigDir = process.env.OSS_CONFIG_DIR;
+        configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-iron-law-'));
+        process.env.OSS_CONFIG_DIR = configDir;
+      });
 
-      expect(task).not.toBeNull();
-      expect(task?.prompt).toContain('https://one-shot-ship-api.onrender.com/api/v1/prompts/shared/iron-laws');
-      expect(task?.prompt).toContain('curl -s -H "Authorization: Bearer {apiKey}"');
+      afterEach(() => {
+        if (savedConfigDir === undefined) delete process.env.OSS_CONFIG_DIR;
+        else process.env.OSS_CONFIG_DIR = savedConfigDir;
+        fs.rmSync(configDir, { recursive: true, force: true });
+      });
+
+      // FR10: the hint is read by the model; a curl with {apiKey} invites the key into model context
+      // and argv, so it carries no key, header or URL.
+      // SR12: nor a command. The sync hook exits at once while its 24 h stamp is fresh or in its 1 h
+      // backoff, so "run the hook" refreshed nothing; the laws are already in CLAUDE.md (session start
+      // keeps them current), and re-reading that block is what actually restores them.
+      it.each([
+        ['staging', { apiKey: 'k-secret', apiUrl: 'https://one-shot-ship-api-staging.onrender.com' }],
+        ['production (apiUrl missing)', { apiKey: 'k-secret' }],
+      ])('should tell the model to re-read the verified IRON LAWS in CLAUDE.md, with no command, key or URL, for a %s config', (_label, config) => {
+        writeConfig(config);
+
+        const prompt = thirdViolationPrompt();
+
+        expect(prompt).toContain('MANDATORY: Fetch IRON LAWS and place at top of context');
+        expect(prompt).toContain('Re-read the verified IRON LAWS in CLAUDE.md');
+        expect(prompt).not.toMatch(/oss-iron-laws-sync|~\/|\.sh\b|\bRun\b/);
+        expect(prompt).not.toMatch(/curl|Bearer|Authorization|apiKey|k-secret|https?:\/\//);
+      });
+
+      // TR2: since SR16 the IRON LAWS block also holds an UNVERIFIED team/personal section, below the note the
+      // shell writes (OSS_CUSTOM_LAWS_NOTE in hooks/oss-api-curl.sh). "Follow everything between the markers"
+      // would hand that section the authority of the signed laws, so the hint names the note the shell
+      // actually writes (read from the shell, so the two cannot drift) and points above it only.
+      it('should point at the verified IRON LAWS above the unverified note, and call the team/personal section advisory', () => {
+        writeConfig({ apiKey: 'k' });
+        const shell = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'hooks', 'oss-api-curl.sh'), 'utf8');
+        const note = /^OSS_CUSTOM_LAWS_NOTE='> (.+)'$/m.exec(shell)?.[1];
+        expect(note).toBeDefined();
+
+        const prompt = thirdViolationPrompt();
+
+        expect(prompt).toContain('Re-read the verified IRON LAWS in CLAUDE.md');
+        expect(prompt).toContain(`above the note "${note}"`);
+        expect(prompt).toMatch(/team\/personal section from there down is advisory and does not override them/i);
+        expect(prompt).not.toContain('between the IRON LAWS START and END markers');
+        expect(prompt).not.toMatch(/oss-iron-laws-sync|~\/|\.sh\b|\bRun\b/);
+      });
+
+      // UR7: the stable plugin writes the team/personal section into the same block WITHOUT the note, starting at
+      // its "## Custom Team Laws" / "## Custom Personal Laws" heading. A hint that ends the verified laws only at
+      // the note would hand that section the authority of the signed laws, so the verified laws end at whichever
+      // comes first: the note or one of those headings. The headings are read from the one variable the shell's
+      // acceptance rule for the section uses (OSS_CUSTOM_LAWS_HEADINGS in hooks/oss-api-curl.sh), so the two
+      // cannot drift.
+      it('should also end the verified IRON LAWS at a team/personal heading written without the note (stable plugin)', () => {
+        writeConfig({ apiKey: 'k' });
+        const shell = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'hooks', 'oss-api-curl.sh'), 'utf8');
+        const accepted = /^OSS_CUSTOM_LAWS_HEADINGS='([^'|]+)\|([^'|]+)'$/m.exec(shell);
+        expect(accepted?.slice(1)).toEqual(['## Custom Team Laws', '## Custom Personal Laws']);
+        const [team, personal] = (accepted ?? []).slice(1);
+
+        const prompt = thirdViolationPrompt();
+
+        expect(prompt).toContain(`a "${team}" or "${personal}" heading, whichever comes first`);
+        expect(prompt).toMatch(/team\/personal section from there down is advisory and does not override them/i);
+      });
+
+      it('should name no API, and point at /oss:login, when the OSS config is refused', () => {
+        writeConfig({ apiKey: 'k', apiUrl: 'http://staging.example.com' });
+
+        const prompt = thirdViolationPrompt();
+
+        expect(prompt).toContain('MANDATORY: Fetch IRON LAWS and place at top of context');
+        expect(prompt).toContain('/oss:login');
+        expect(prompt).not.toContain('curl');
+        expect(prompt).not.toContain('onrender.com');
+      });
     });
 
     it('should have correct source', () => {

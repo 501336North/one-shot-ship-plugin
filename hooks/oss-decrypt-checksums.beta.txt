@@ -1,0 +1,4 @@
+# Committed known-good SHA-256 of the pinned BETA oss-decrypt release (cli-decrypt-v1.3.0-beta.1), used by
+# beta plugins only (release channels). Verified by ensure-decrypt-cli.sh IN ADDITION to the in-release .sha256
+# (two-method, fail-closed). EMPTY until that pre-release tag is published by CI: with no entry, a beta install
+# is refused ("no committed entry"), never installed unverified. Changes ONLY via a reviewed PR alongside the tag.

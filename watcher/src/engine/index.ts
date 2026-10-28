@@ -33,7 +33,6 @@ export {
   parseCustomCommand,
 } from './custom-command-executor.js';
 export type {
-  CustomCommandExecutorConfig,
   CustomCommandResponse,
   CustomCommandResult,
 } from './custom-command-executor.js';

@@ -68,10 +68,11 @@ test_auth_check() {
         return
     fi
 
-    if grep -q 'config.json' "$XRAY_WRAPPER" && grep -q 'apiKey' "$XRAY_WRAPPER"; then
+    # the key check says only WHETHER a key is configured (oss-value.sh keycheck), never prints it (#44)
+    if grep -qxF '~/.oss/hooks/oss-value.sh keycheck' "$XRAY_WRAPPER"; then
         pass "$test_name"
     else
-        fail "$test_name" "contains config.json and apiKey" "missing auth check"
+        fail "$test_name" "runs ~/.oss/hooks/oss-value.sh keycheck" "missing auth check"
     fi
 }
 

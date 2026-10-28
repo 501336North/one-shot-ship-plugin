@@ -18,18 +18,23 @@ test -f CLAUDE.md && echo "EXISTS" || echo "MISSING"
 
 **If MISSING, fetch the full CLAUDE.md template from API and create it:**
 
-1. Read API key from `~/.oss/config.json`
-2. Fetch template from API using WebFetch:
-   - Template: `${API_BASE}/api/v1/prompts/templates/claude-md` (with `Authorization: Bearer ${API_KEY}`)
+1. Install the decrypt CLI if it is missing (a fresh install has none yet):
+   ```bash
+   ~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install the decrypt CLI (see the message above). Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."; exit 1; }
+   ```
+2. Fetch the template. The decrypt CLI prints it only if it matches the signed manifest entry `templates/claude-md`:
+   ```bash
+   ~/.oss/bin/oss-decrypt --type templates --name claude-md
+   ```
 3. Write the template to `CLAUDE.md` in the project root with the `<!-- IRON LAWS will be injected here by /oss:login -->` placeholder line removed. Do not write any IRON LAWS markers or IRON LAWS content yourself.
 4. Install the IRON LAWS block through the single writer: `~/.oss/hooks/oss-iron-laws-sync.sh --install`. If it exits non-zero, keep the template as written and tell the user to run `/oss:login`.
 
-**If API fetch fails**, fall back to a minimal CLAUDE.md that directs the user to run `/oss:login`.
+**If the fetch fails or the CLI refuses the template** (non-zero exit), never write what it printed: fall back to a minimal CLAUDE.md that directs the user to run `/oss:login`.
 
 ## Step 2: Check Authentication
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+~/.oss/hooks/oss-value.sh keycheck
 ```
 
 If no API key found:
@@ -40,11 +45,14 @@ Register at https://www.oneshotship.com
 
 ## Step 3: Fetch Prompt from API
 
+Install the decrypt CLI if it is missing (a fresh install has none yet):
+
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install the decrypt CLI (see the message above). Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."; exit 1; }
 ```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/workflows/ideate
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+
+```bash
+~/.oss/bin/oss-decrypt --type workflows --name ideate
 ```
 
 ## Step 4: Execute the Fetched Prompt

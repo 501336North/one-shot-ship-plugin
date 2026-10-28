@@ -139,3 +139,151 @@
 ## 2026-10-23 | Security | hooks/ensure-decrypt-cli.sh
 - **Context:** build (decrypt-version-source PR 2)
 - **Insight:** Never put text read from a file into bash `$(( ))` before checking it is digits only: arithmetic evaluates names and `a[$(cmd)]`, so a stamp file becomes command execution. Also: raising a version floor forces every existing user through the download path; make that path fail soft when a working binary exists (but never on a hash mismatch), cap the whole upgrade below the caller's timeout (small file first, binary gets the rest), and back off after a failure, or slow and offline users lose the tool.
+
+## 2026-10-26 | Planning | release-channels
+- **Context:** plan
+- **Insight:** The `URL:` WebFetch steps in agents/skills/commands are live calls, not documentation, and the API routes they hit return ENCRYPTED JSON, so the model gets ciphertext. The type/name comes from each file's URL, not its filename (e.g. `skills/build.md` fetches `prompts/workflows/build`). Probe with `oss-decrypt --type <t> --name <n>` before converting: on 2026-10-26, `agents/performance-auditor` and `agents/visionos-developer` failed the integrity check on production.
+
+## 2026-10-26 | Planning | release-channels
+- **Context:** plan
+- **Insight:** The plan's archive step matches `Current Phase:.*(ship|complete)` anywhere on the line, so "ideate (complete) → next: plan" archives a live feature. Keep the word "complete" out of PROGRESS phase lines until the feature ships.
+
+## 2026-10-26 | Config | release-channels
+- **Context:** build
+- **Insight:** A wrapper's shell step must be ONE command that matches an allowlisted prefix (`~/.oss/hooks/oss-value.sh …`, `~/.oss/bin/oss-decrypt …`). `source … && u=$(oss_api_url) && …` is correct shell, but it makes Claude Code ask for approval on every /oss command (R5-1); `commands/__tests__/no-compound-commands.test.sh` catches it. New wrapper behaviour goes into a verb of `oss-value.sh` (here `keycheck` and `api <endpoint>`), never into an inline pipeline. Run `commands/__tests__/*.test.sh` too, not only `hooks/` and `__tests__/`.
+
+## 2026-10-26 | Testing | release-channels
+- **Context:** build
+- **Insight:** In a test harness, `VAR=value` produced by an array expansion (`${extra[@]} cmd`) is NOT an assignment: the hook never saw the variable, and a "calls nothing" row passed vacuously. Pass such pairs through `env "${extra[@]}" cmd`. Also, in `hooks/__tests__/oss-value.test.sh` a later section replaces the `$T/sbin/curl` stub with one that does not record stdin; any new section that asserts on `curl.stdin` must install its own stub.
+
+## 2026-10-27 | Security | release-channels (ship round 1)
+- **Context:** ship → build (fix round)
+- **Insight:** A signature check that FAILS OPEN is no boundary. oss-decrypt delivered prompts unverified when the manifest was missing, slow (>3 s, measured on about 1 in 3 production fetches) or did not list the prompt. Every "key by address" guarantee in ADR-005 rested on it. Before trusting a verification step, test the paths where verification is SKIPPED (missing manifest, timeout, unlisted item), not only the paths where it fails.
+
+## 2026-10-27 | Security | release-channels (ship round 1)
+- **Context:** ship → build (fix round)
+- **Insight:** Tightening one key sender (oss-decrypt's address→key allowlist) while others (hooks, watcher, login) still accept any https address leaves the key exfiltrable. That is IRON LAW #1b at the security layer. Keep the TRUST rule (which hosts may receive the key) in its own shared case table (`trusted-api-url-cases.json`), separate from the SYNTAX table, and run every reader, in every language, against it.
+
+## 2026-10-27 | Testing | release-channels (ship round 1)
+- **Context:** ship → build (fix round)
+- **Insight:**
+  - A test that greps a workflow's text cannot catch a logic bug in it: `contains(github.ref_name, '-')` was "tested" while matching EVERY tag. Extract the step's shell and RUN it on sample inputs.
+  - Once the repo itself is on a beta version (`next`), suites that model a CUSTOMER install must run the hook from a throwaway STABLE plugin tree, or they silently start testing the beta path.
+
+## 2026-10-27 | Process | release-channels (ship round 1)
+- **Context:** ship → build (fix round)
+- **Insight:**
+  - Read every test result line before writing a commit message that quotes it. A 2/3 was committed as "3/3" and needed a follow-up correction commit.
+  - When a bash command is moved to the background after it already ran `git stash push`, never touch the stashed file until it finishes. Then restore by the stash entry's SHA, not by position.
+
+## 2026-10-27 | Testing | cli-decrypt
+- **Context:** build (release-channels ship round 2, SR7)
+- **Insight:** `stripControl` removes LF and TAB too, so it flattens a multi-line document into one line; prompt bodies (team custom commands) need `stripControlKeepLines`, which strips the same set except LF/TAB (CR still goes, so CRLF prints as LF).
+
+## 2026-10-27 | Testing | cli-decrypt
+- **Context:** build (release-channels ship round 2, SR10)
+- **Insight:** a "timeout survives a stalled body" test needs a real local server that sends 200 + headers + part of the body and then stalls; a server that never sends headers passes with any abort mechanism. In vitest, `AbortSignal.timeout` did abort the stalled body (the perf gate saw it hang in a plain node run under GC), so the AbortController+setTimeout choice is not distinguishable by that test: guard the wiring (signal passed, timer cleared only after the body is read), not the mechanism.
+
+## 2026-10-27 | Security | cli-decrypt
+- **Context:** build (release-channels ship round 2, SR4/SR17)
+- **Insight:** fixing one file writer for symlink-following left three others (prompt cache, update state, credentials) with the same defect; when a gate names one writer, grep every `writeFileSync`/`mkdirSync` in the package and route them all through one safe-write helper (IRON LAW #1b).
+
+## 2026-10-27 | Testing | plugin
+- **Context:** build (release-channels ship round 2)
+- **Insight:** in this harness, typing `\uXXXX` inside a Bash command (even in a quoted heredoc) can turn into raw or corrupted UTF-8 bytes; write test data containing `\u` escapes with the Write/Edit tools instead.
+
+## 2026-10-27 | API | packages/api
+- **Context:** build (release-channels ship round 2, SR15)
+- **Insight:** a `Record` lookup with `map[name] || name` on a URL param resolves `constructor`/`__proto__`/`toString` to Object.prototype members; here it surfaced as a 400 "Invalid prompt name" for a well-formed name, not a 500, so only a test asserting 404 catches it. `tsconfig` lib is ES2020: use `Object.prototype.hasOwnProperty.call`, not `Object.hasOwn`.
+
+## 2026-10-27 | API | packages/api
+- **Context:** build (release-channels ship round 2, SR1)
+- **Insight:** when a route resolves a name through a mapping with a fallback (`workflowCommandName`: alias, else `commands/<n>`), whatever signs or lists the servable names must go through the same function and enumerate the fallback set too; signing only the mapping keys silently left 29 shipped commands unsigned.
+
+## 2026-10-27 | Security | plugin + cli-decrypt
+- **Context:** build (release-channels ship round 2, SR17)
+- **Insight:** "refuse symlinks" collides with this feature's own layout: `~/.oss` is a symlink to `~/.oss-<channel>` by design (oss-channel.sh). Resolve the config directory itself once (realpath, then owner/mode checks on the target) and refuse symlinks only for what is inside it. Every hardening of a path under `~/.oss` needs a test row with the symlinked channel layout.
+
+## 2026-10-27 | Testing | cli-decrypt
+- **Context:** build (release-channels ship round 2, SR17)
+- **Insight:** in a test that changes HOME, assert `os.homedir() === HOME` before touching anything, so a runtime that ignores HOME can never reach the real `~/.oss`; and in mutation loops back up into a fresh `mktemp -d` and check the copy succeeded, or mutations stack silently.
+
+## 2026-10-27 | Testing | watcher
+- **Context:** build (release-channels ship round 2, SR10)
+- **Insight:** on Node 25 a fetch with `redirect: 'error'` whose signal is aborted while GC runs does NOT reject a pending `response.json()`, whether the signal came from `AbortSignal.timeout` or an AbortController + timer; bound fetch + body read with one deadline race (`watcher/src/api/with-deadline.ts`). To reproduce in vitest without CLI flags: `v8.setFlagsFromString('--expose-gc'); vm.runInNewContext('gc')` and call it in a tight interval during the request.
+
+## 2026-10-27 | Testing | watcher
+- **Context:** build (release-channels ship round 2, SR13)
+- **Insight:** status-line tests inherit `CLAUDE_PLUGIN_ROOT` / `~/.oss/plugin-root`, which other tests rewrite; on a beta checkout the channel mismatch warning leaks into unrelated assertions. Pin the plugin version per test file (temp plugin root with its own plugin.json). And a new `src` module imported by a tracked `watcher/dist` file must have its dist output committed too.
+
+## 2026-10-27 | Config | hooks
+- **Context:** build (release-channels ship round 2, SR9/SR2/SR11)
+- **Insight:** on macOS a status-line render pays ~15 ms per `find` and ~4 ms per `stat`; `id`/`find`/`tr`/`head` forks were most of the +20 ms. Guard render cost by counting processes (PATH shims, diff against a stubbed section), not wall time. Checking modes through a symlinked channel home needs `stat -L`/`find -H` (plain stat judges the link's 0755). `kill` on a `( sleep N; ... ) &` watchdog leaves the sleep alive: trap TERM inside the subshell. On GNU, a `stat -f` probe can exit 0 when a file named like the operand exists, so validate the output, not only the rc.
+
+## 2026-10-27 | Testing | watcher + hooks
+- **Context:** build (release-channels ship round 2, SR18)
+- **Insight:** parallel fix branches each passed their own suites, yet the merge broke a watcher test: SR6 (hook always runs the CLI installer) made a watcher test that runs the real hook with a stub CLI start real GitHub downloads. After merging fix branches, run every suite that executes a changed script, across packages; and put a curl tripwire on PATH in any test that runs a hook, so network access fails loudly.
+
+## 2026-10-27 | Testing | hooks + API
+- **Context:** integration (release-channels ship round 2)
+- **Insight:** a test seed that bypasses the real writer (a synthetic `personal_<id>` row) made a read path look tested when real data never reaches it; seed through the route. And in shell tests, a `$(...)` in a call's arguments resets `$?` before a later `$?` in the same argument list expands, so `cmd; check "x $(wc -l <f)" $?` always passes. To boot the API without loading `packages/api/.env`, run it from an empty cwd (`dotenv.config()` reads `process.cwd()/.env`).
+
+## 2026-10-27 | Testing | cli-decrypt + watcher
+- **Context:** build (release-channels ship round 3, TR1)
+- **Insight:** a deadline guard built only on a real stalled server depends on the Node version (the Node 25 GC hang does not reproduce on 26, and Homebrew upgraded Node mid-session). A fetch stub whose body never resolves and that ignores its signal is red on an abort-only deadline on every Node; keep the stalled-server tests as well. When a request's abort listener rejects synchronously it can beat the deadline's own rejection, so map every failure after the abort to the timeout error.
+
+## 2026-10-27 | Testing | watcher
+- **Context:** build (release-channels ship round 3, TR2)
+- **Insight:** when two packages must agree on a fixed string (the watcher's hint quotes the shell's unverified-laws note), make the test read the string from its single source (`OSS_CUSTOM_LAWS_NOTE` in hooks/oss-api-curl.sh) instead of copying it, so they cannot drift. And `npm run build` in watcher/ creates ~35 untracked dist files: commit only the tracked outputs of the src you changed.
+
+## 2026-10-27 | Security | packages/api
+- **Context:** build (release-channels ship round 3, TR2)
+- **Insight:** sanitise user text AFTER normalising it (controls, zero-width, bidi, CR), or an invisible prefix carries a heading past the filter and a later strip rebuilds it. In JS, `^` with the `m` flag also matches after a bare `\r`, so CR must be removed explicitly. Test what each consumer actually receives: a test that applies the plugin's strip first cannot see an attack on the stable plugin, which writes the body raw.
+
+## 2026-10-27 | Testing | plugin
+- **Context:** build (release-channels ship round 3, TR10)
+- **Insight:** three ship rounds of "full regression" ran only hooks/__tests__, __tests__ and commands/__tests__, so a test this feature broke in agents/__tests__ (passes on next, fails here) went unseen until round 3. A full run is `git ls-files '*.test.sh'`, never a hand-picked directory list; compare any failure against a detached worktree of origin/next before calling it pre-existing.
+
+## 2026-10-27 | Testing | hooks
+- **Context:** build (release-channels ship round 3, TR4/TR7/TR3)
+- **Insight:** when "failed" and "empty" start to behave differently, re-check every fixture whose stub fails by default: they may have passed only because failure used to count as empty. jq reads `"apiUrl"` (escaped) as apiUrl, so a built-in fast path that greps raw text for a key name must refuse backslashes. curl's `--max-filesize` is invisible to a curl stub: test it with real curl against a loopback server that sends a Content-Length.
+
+## 2026-10-27 | Testing | hooks
+- **Context:** build (release-channels ship round 3, TR9)
+- **Insight:** `/usr/bin/jq` ships with macOS, so a stub dir first on PATH does not hide jq; no-jq tests need a PATH built without it. And a refusal row can pass before the fix for an unrelated reason (two grep matches made a key with a line break that the curl helper refused): mutate the helper's own rule to prove the row guards it.
+
+## 2026-10-27 | Testing | hooks + API
+- **Context:** integration (release-channels ship round 3)
+- **Insight:** a "second sync is byte-identical" check is vacuous while the 24 h stamp makes the second sync a no-op: remove the stamp and prove a refetch in the request log. Markdown neutralising is an open-ended rule (container prefixes `>`/`-`/`1.` still make headings): the real boundary for team text is the fixed note and closing line around it; keep the API and the hook on ONE rule so the two halves cannot disagree.
+
+## 2026-10-28 | Security | plugin (process)
+- **Context:** ship round 4 (pentest gate)
+- **Insight:** "never contact production" in a brief is not enough: a gate ran the STABLE plugin's sync from origin/main (production URL hard-coded, apiUrl ignored) and sent 3 throwaway-key requests to production (401, no real key). Every agent brief now requires a curl shim first on PATH that refuses any non-loopback host, and node started without proxy vars or NODE_OPTIONS. And for free text written into CLAUDE.md, contain it (a fence it cannot close) rather than filtering known Markdown shapes: four gate rounds kept finding new shapes.
+
+## 2026-10-28 | Config | hooks
+- **Context:** build (release-channels ship round 4, UR4/UR5)
+- **Insight:** `cmd < file 2>/dev/null` still prints the failed open's error (put `2>/dev/null` before `<`), and `! read -d '' v < file` is TRUE when the open fails, so an unreadable config silently read as "missing" (= production): check `[[ -r ]]` first. bash 3.2 has no built-in for permission bits, so any mode check costs a `stat`.
+
+## 2026-10-28 | Testing | hooks
+- **Context:** build (release-channels ship round 4, UR1'/UR8)
+- **Insight:** an awk variable named `close` (a builtin) makes awk exit with an error and no output, so an awk-based "violations" checker silently passes everything: count an awk failure as a violation. jq `--arg` hands `\uXXXX` to Oniguruma literally, so a regex character table must be a jq string literal (`def`), with supplementary characters as surrogate pairs. A curl shim that does `exec /usr/bin/curl` changes argv[0] (tests that look for curl in `ps` stop seeing it): use `exec -a "$0"`. A function whose last line is `(( rc == 0 )) && ...` returns 1 when the condition is false.
+
+## 2026-10-28 | Testing | hooks (process)
+- **Context:** build (release-channels ship round 4, full regression)
+- **Insight:** a hook test killed by its alarm under load can leave the hook's background `curl` children running after the test's stub dir is removed; they then resolve the real curl and call production. Only the loopback-only shim (refused: 3) caught it in the full run. Always run full regressions behind a refusing shim, and make hook tests put a refusing curl after their stub and reap background children.
+
+## 2026-10-28 | Testing | watcher + hooks
+- **Context:** build (release-channels ship round 4, UR16)
+- **Insight:** a test that extracts a value by regex-matching another file's code layout (the shell's old `case` pattern) breaks on any refactor of that code; pin it to a named variable in the single source instead.
+
+## 2026-10-28 | Testing | watcher
+- **Context:** build (release-channels ship round 5, UR17)
+- **Insight:** A test that greps a command file's text goes stale silently when the command's contract changes (T7 moved workflows.md to `oss-value.sh api workflows`; the test still wanted `/api/v1/workflows`). It stayed red for three rounds because each round ran only a SUBSET of the watcher suite. Close every fix round with the FULL watcher suite (safe config), not the files you think you touched.
+
+## 2026-10-28 | Testing | watcher
+- **Context:** build (release-channels ship round 5, UR17)
+- **Insight:** A plain substring check for `oss-value.sh api workflow` is also satisfied by `api workflows`, so it proves nothing about the single-workflow call. Match whole lines (`^...$` with the `m` flag) when one command name is a prefix of another.
+
+## 2026-10-28 | Testing | watcher
+- **Context:** build (release-channels ship round 5, UR17)
+- **Insight:** A "safe" watcher setup that swaps HOME for a fresh empty folder per test makes session-start tests fail with "OSS: Not logged in", which looks like a regression. The safe setup must itself write the dummy `~/.oss/config.json` (0600, dir 0700) into the folder it creates, not rely on the outer temp HOME.

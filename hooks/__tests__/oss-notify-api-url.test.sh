@@ -2,8 +2,8 @@
 # oss-notify.sh --workflow <cmd> start sends the API key only to an apiUrl the CLI would accept.
 #
 # @behavior The start event's best-effort analytics call (Bearer key) goes to <apiUrl>/api/v1/analytics/track
-#           only when apiUrl is https, or plain http to 127.0.0.1/localhost/[::1], and has no ? or #.
-#           Any other apiUrl: no request at all. No apiUrl (with or without jq): the default API.
+#           only when apiUrl is a trusted OSS API: production, staging, or plain http to 127.0.0.1/localhost/[::1]
+#           (ship round 1 FR4; a custom https host is no longer accepted). Any other apiUrl: no request at all. No apiUrl (with or without jq): the default API.
 # @business-rule The API key never travels in cleartext or to a different path than the one we build.
 #           Same rule as getApiUrl in packages/cli-decrypt/src/config.ts.
 #
@@ -60,7 +60,7 @@ run_start() {  # $1 = PATH to use, $2 = workflow name (default build)
 calls() { [[ -f "$T/curl.args" ]] && wc -l < "$T/curl.args" | tr -d ' ' || echo 0; }
 
 # 1. Refused apiUrls: no request at all (so no request carries the key).
-for url in 'http://evil.example.com' 'https://api.example.com/?x=' 'https://api.example.com/#' \
+for url in 'http://evil.example.com' 'https://api.example.com/?x=' 'https://api.example.com/#' 'https://api.example.com' \
            'http://localhost.evil.com' 'http://127.0.0.1@evil.example.com' \
            'http://localhost:4100@evil.example.com' 'ftp://api.example.com'; do
     sandbox "{\"apiKey\":\"k-secret\",\"apiUrl\":\"$url\"}"
@@ -71,7 +71,7 @@ for url in 'http://evil.example.com' 'https://api.example.com/?x=' 'https://api.
 done
 
 # 2. Accepted apiUrls: exactly one request, to <apiUrl>/api/v1/analytics/track, carrying the key.
-for url in 'https://api.example.com' 'http://127.0.0.1:4100' 'http://localhost:4100' 'http://[::1]:4100'; do
+for url in 'https://one-shot-ship-api-staging.onrender.com' 'http://127.0.0.1:4100' 'http://localhost:4100' 'http://[::1]:4100'; do
     sandbox "{\"apiKey\":\"k-secret\",\"apiUrl\":\"$url\"}"
     run_start "$T/bin:$PATH"
     if [[ "$(calls)" == 1 ]] && grep -qF -- "$url/api/v1/analytics/track" "$T/curl.args" \
@@ -103,9 +103,9 @@ done
 
 # 4. OSS_CONFIG_DIR set: the key and the URL both come from its config, not ~/.oss (like the CLI).
 sandbox '{"apiKey":"K1-home","apiUrl":"https://u1.example.com"}'
-mkdir -p "$T/alt"; printf '%s' '{"apiKey":"K2-alt","apiUrl":"https://u2.example.com"}' > "$T/alt/config.json"
+mkdir -p "$T/alt"; printf '%s' '{"apiKey":"K2-alt","apiUrl":"https://one-shot-ship-api-staging.onrender.com"}' > "$T/alt/config.json"
 CFG_DIR="$T/alt" run_start "$T/bin:$PATH"
-if [[ "$(calls)" == 1 ]] && grep -qF -- "https://u2.example.com/api/v1/analytics/track" "$T/curl.args" \
+if [[ "$(calls)" == 1 ]] && grep -qF -- "https://one-shot-ship-api-staging.onrender.com/api/v1/analytics/track" "$T/curl.args" \
    && grep -qF 'Authorization: Bearer K2-alt' "$T/curl.stdin"; then
     pass "OSS_CONFIG_DIR set: one request to its apiUrl with its key"
 else fail "OSS_CONFIG_DIR set: one request to its apiUrl with its key" \
@@ -133,6 +133,23 @@ if command -v jq >/dev/null 2>&1; then
     else fail "valid workflow name gives a JSON body with exactly command/promptType/promptName" "calls=$(calls) body=$body"; fi
     rm -rf "$T"
 else fail "valid workflow name gives a JSON body with exactly command/promptType/promptName" "jq not installed"; fi
+
+# 6. UR6 (SR3/TR5): the URL and the key come from ONE read of the config. A jq shim renames another private config over
+#    it the first time jq starts (the parse after the first read); a second read would pair one file's key with the other
+#    file's URL. Whichever file is used, the key and the URL must be the same file's.
+if command -v jq >/dev/null 2>&1; then
+    sandbox '{"apiKey":"secret-k","apiUrl":"http://localhost:3001"}'; chmod 700 "$T/home/.oss"; chmod 600 "$T/home/.oss/config.json"
+    printf '{"apiKey":"evil-k","apiUrl":"http://localhost:9999"}' > "$T/evil.json"; chmod 600 "$T/evil.json"
+    mkdir -p "$T/swap"
+    printf '#!/bin/bash\n[[ -f "%s" ]] && mv -f "%s" "%s"\nexec "%s" "$@"\n' "$T/evil.json" "$T/evil.json" "$T/home/.oss/config.json" \
+        "$(command -v jq)" > "$T/swap/jq"; chmod +x "$T/swap/jq"
+    run_start "$T/bin:$T/swap:$PATH"
+    a=$(cat "$T/curl.args" 2>/dev/null); k=$(cat "$T/curl.stdin" 2>/dev/null)
+    if [[ "$(calls)" == 1 && ( ( "$a" == *localhost:3001/* && "$k" == *"Bearer secret-k"* ) || ( "$a" == *localhost:9999/* && "$k" == *"Bearer evil-k"* ) ) ]]; then
+        pass "the analytics key and URL come from one read of the config (a file swapped in between cannot mix them)"
+    else fail "the analytics key and URL come from one read of the config" "calls=$(calls) args=$a key=${k##*Bearer }"; fi
+    rm -rf "$T"
+else fail "the analytics key and URL come from one read of the config" "jq not installed"; fi
 
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"

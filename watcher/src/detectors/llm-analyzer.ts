@@ -1,6 +1,8 @@
 import { QueueManager } from '../queue/manager.js';
 import { RuleEngine, RuleMatch } from './rules.js';
 import { AnomalyType, Priority, CreateTaskInput, TaskContext } from '../types.js';
+import { readApiCredentials } from '../api/api-credentials.js';
+import { withDeadline } from '../api/with-deadline.js';
 
 /**
  * LLM Analysis response
@@ -26,6 +28,9 @@ export interface LLMAnalysisResult {
   prompt: string;
 }
 
+/** How long an analyze request, body included, may take before it is abandoned (FR14) */
+export const LLM_ANALYZE_TIMEOUT_MS = 10_000;
+
 /**
  * LLM Analyzer - Fallback analysis for anomalies rules miss
  *
@@ -34,22 +39,19 @@ export interface LLMAnalysisResult {
 export class LLMAnalyzer {
   private readonly queueManager: QueueManager;
   private readonly ruleEngine: RuleEngine;
-  private readonly apiKey: string;
   private readonly confidenceThreshold: number;
-  private readonly apiUrl: string;
+  private readonly requestTimeoutMs: number;
 
   constructor(
     queueManager: QueueManager,
     ruleEngine: RuleEngine,
-    apiKey: string,
     confidenceThreshold: number = 0.7,
-    apiUrl: string = 'https://one-shot-ship-api.onrender.com/api/v1/analyze'
+    requestTimeoutMs: number = LLM_ANALYZE_TIMEOUT_MS
   ) {
     this.queueManager = queueManager;
     this.ruleEngine = ruleEngine;
-    this.apiKey = apiKey;
     this.confidenceThreshold = confidenceThreshold;
-    this.apiUrl = apiUrl;
+    this.requestTimeoutMs = requestTimeoutMs;
   }
 
   /**
@@ -89,24 +91,32 @@ export class LLMAnalyzer {
    * Analyze using LLM API
    */
   private async analyzeLLM(logContent: string): Promise<LLMAnalysisResult | null> {
-    try {
-      const response = await fetch(this.apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify({
-          log_content: logContent,
-        }),
-      });
+    // The key and the API it may go to, from the OSS config; nothing is sent when it is refused
+    const credentials = readApiCredentials();
+    if (!credentials) return null;
 
-      if (!response.ok) {
-        // Graceful fallback - return null on error
+    try {
+      // a server that never answers, or stalls mid-body, must not hang the analyzer (FR14, SR10)
+      const data = await withDeadline(this.requestTimeoutMs, async (signal) => {
+        const response = await fetch(`${credentials.apiUrl}/api/v1/analyze`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${credentials.apiKey}`,
+          },
+          body: JSON.stringify({
+            log_content: logContent,
+          }),
+          // never replay the Bearer key to a redirect target
+          redirect: 'error',
+          signal,
+        });
+        // Graceful fallback - null on an error status
+        return response.ok ? ((await response.json()) as LLMResponse) : null;
+      });
+      if (data === null) {
         return null;
       }
-
-      const data = await response.json() as LLMResponse;
 
       // No anomaly detected
       if (!data.anomaly_detected) {

@@ -23,10 +23,11 @@
 set -euo pipefail
 if [[ -f "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh" ]]; then source "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh"; fi  # oss_api_curl: API key via stdin, never argv
 
-CONFIG_FILE="${HOME}/.oss/config.json"
+CONFIG_FILE="$(oss_config_file)"  # the key and the URL it goes to come from one file (oss-api-curl.sh)
 CACHE_FILE="${HOME}/.oss/team-iron-laws.json"
 CACHE_TTL=3600  # 1 hour in seconds
-API_URL="https://one-shot-ship-api.onrender.com"
+# The key and the URL it goes to come from ONE trusted read of the OSS config (TR5/TR9).
+_oss_config_read && API_URL="$(_oss_cfg_origin)" || API_URL=""  # untrusted config or invalid apiUrl: send nothing, return the default config below
 
 # Default config when no team/API available
 DEFAULT_CONFIG='{
@@ -77,16 +78,23 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
 fi
 
 # Extract API key from config
-API_KEY=$(grep -o '"apiKey"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" 2>/dev/null | sed 's/.*: *"\([^"]*\)"/\1/' || echo "")
+API_KEY=$(_oss_cfg_key || true)   # the shared reader (TR9): refuses an ambiguous key
 
-if [[ -z "$API_KEY" ]]; then
-  # Return default config if not logged in
+if [[ -z "$API_KEY" || -z "$API_URL" ]]; then
+  # Return default config if not logged in (or apiUrl is invalid)
   echo "$DEFAULT_CONFIG" | tr -d '\n' | tr -s ' '
   exit 0
 fi
 
-# Get team ID from config (if user is in a team)
-TEAM_ID=$(grep -o '"teamId"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" 2>/dev/null | sed 's/.*: *"\([^"]*\)"/\1/' || echo "")
+# Get team ID from config (if user is in a team): from the same checked read as the key and URL (_OSS_CFG), and only
+# a plain id, so config text cannot steer the keyed request to another API path (UR10). Otherwise: the defaults.
+if command -v jq >/dev/null 2>&1; then
+  TEAM_ID=$(printf '%s' "$_OSS_CFG" | jq -r 'if (.teamId | type) == "string" then .teamId else "" end' 2>/dev/null || true)
+else
+  TEAM_RE='"teamId"[[:space:]]*:[[:space:]]*"([^"]*)"'
+  TEAM_ID=""; [[ "$_OSS_CFG" =~ $TEAM_RE ]] && TEAM_ID=${BASH_REMATCH[1]}
+fi
+[[ "$TEAM_ID" =~ ^[A-Za-z0-9_-]+$ ]] || TEAM_ID=""
 
 # Determine endpoint based on team membership
 if [[ -z "$TEAM_ID" ]]; then

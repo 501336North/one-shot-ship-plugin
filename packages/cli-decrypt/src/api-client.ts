@@ -8,8 +8,9 @@
 
 import { join } from 'path';
 import { getConfigDir } from './config.js';
-import { CacheService, validateType, validateName } from './cache.js';
+import { CacheService, validateType, validateName, type EncryptedPromptType, type PlainPromptType } from './cache.js';
 import { stripControl } from './strip-control.js';
+import { withDeadline } from './with-deadline.js';
 
 /**
  * Get cache directory path
@@ -87,6 +88,31 @@ async function fetchNoRedirect(
   }
 }
 
+/** Time limit for a keyed request, body included: 60 s covers a Render cold start. */
+export const API_TIMEOUT_MS = 60_000;
+
+export interface RequestOptions {
+  /** Time limit for the whole request, body included (default API_TIMEOUT_MS). */
+  timeoutMs?: number;
+}
+
+/** fetchNoRedirect plus reading the response, body included, under one time limit (withDeadline, TR1). */
+async function keyedRequest<T>(
+  url: string,
+  init: Omit<RequestInit, 'headers'> & { headers: Record<string, string> },
+  timeoutMs: number,
+  read: (response: Response) => Promise<T>
+): Promise<T> {
+  return withDeadline(
+    timeoutMs,
+    async (signal) => read(await fetchNoRedirect(url, { ...init, signal })),
+    () =>
+      new Error(
+        `The OSS API did not answer within ${timeoutMs / 1000} s. Try again; if it persists, check apiUrl in your OSS config.`
+      )
+  );
+}
+
 /**
  * Fetch decryption credentials from the API
  *
@@ -99,29 +125,30 @@ async function fetchNoRedirect(
 export async function fetchCredentials(
   apiKey: string,
   apiUrl: string,
-  hardwareId: string
+  hardwareId: string,
+  options: RequestOptions = {}
 ): Promise<CredentialsResponse> {
   const url = `${apiUrl}/api/v1/auth/credentials?hardwareId=${encodeURIComponent(hardwareId)}`;
 
-  const response = await fetchNoRedirect(url, {
+  return keyedRequest(url, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
+  }, options.timeoutMs ?? API_TIMEOUT_MS, async (response) => {
+    if (!response.ok) {
+      // SECURITY: Check for cache clear directive on auth failures
+      await handleCacheClearDirective(response);
+
+      const error = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
+        error?: string;
+      };
+      throw new Error(stripControl(error.error || 'Request failed'));
+    }
+
+    return response.json() as Promise<CredentialsResponse>;
   });
-
-  if (!response.ok) {
-    // SECURITY: Check for cache clear directive on auth failures
-    await handleCacheClearDirective(response);
-
-    const error = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
-      error?: string;
-    };
-    throw new Error(stripControl(error.error || 'Request failed'));
-  }
-
-  return response.json() as Promise<CredentialsResponse>;
 }
 
 /**
@@ -137,8 +164,9 @@ export async function fetchCredentials(
 export async function fetchEncryptedPrompt(
   apiKey: string,
   apiUrl: string,
-  type: 'commands' | 'workflows' | 'skills' | 'agents' | 'hooks' | 'custom',
-  name: string
+  type: EncryptedPromptType,
+  name: string,
+  options: RequestOptions = {}
 ): Promise<EncryptedPromptResponse> {
   validateType(type);
   validateName(name);
@@ -153,31 +181,31 @@ export async function fetchEncryptedPrompt(
     endpoint = `${apiUrl}/api/v1/prompts/${type}/${encodedName}`;
   }
 
-  const response = await fetchNoRedirect(endpoint, {
+  return keyedRequest(endpoint, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
+  }, options.timeoutMs ?? API_TIMEOUT_MS, async (response) => {
+    if (!response.ok) {
+      // SECURITY: Check for cache clear directive on any error (especially 401)
+      await handleCacheClearDirective(response);
+
+      if (response.status === 404) {
+        throw new Error('Prompt not found');
+      }
+      if (response.status === 401) {
+        throw new Error('Unauthorized');
+      }
+      const error = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
+        error?: string;
+      };
+      throw new Error(stripControl(error.error || 'Request failed'));
+    }
+
+    return response.json() as Promise<EncryptedPromptResponse>;
   });
-
-  if (!response.ok) {
-    // SECURITY: Check for cache clear directive on any error (especially 401)
-    await handleCacheClearDirective(response);
-
-    if (response.status === 404) {
-      throw new Error('Prompt not found');
-    }
-    if (response.status === 401) {
-      throw new Error('Unauthorized');
-    }
-    const error = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
-      error?: string;
-    };
-    throw new Error(stripControl(error.error || 'Request failed'));
-  }
-
-  return response.json() as Promise<EncryptedPromptResponse>;
 }
 
 /**
@@ -195,34 +223,75 @@ export async function fetchEncryptedPrompt(
 export async function fetchCustomPrompt(
   apiKey: string,
   apiUrl: string,
-  name: string
+  name: string,
+  options: RequestOptions = {}
 ): Promise<CustomPromptResponse> {
   validateName(name);
   const endpoint = `${apiUrl}/api/v1/prompts/custom/${encodeURIComponent(name)}`;
 
-  const response = await fetchNoRedirect(endpoint, {
+  return keyedRequest(endpoint, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
+  }, options.timeoutMs ?? API_TIMEOUT_MS, async (response) => {
+    if (!response.ok) {
+      // SECURITY: Check for cache clear directive on any error (especially 401)
+      await handleCacheClearDirective(response);
+
+      if (response.status === 404) {
+        throw new Error('Prompt not found');
+      }
+      if (response.status === 401) {
+        throw new Error('Unauthorized');
+      }
+      const error = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
+        error?: string;
+      };
+      throw new Error(stripControl(error.error || 'Request failed'));
+    }
+
+    return response.json() as Promise<CustomPromptResponse>;
   });
+}
 
-  if (!response.ok) {
-    // SECURITY: Check for cache clear directive on any error (especially 401)
-    await handleCacheClearDirective(response);
-
-    if (response.status === 404) {
-      throw new Error('Prompt not found');
-    }
-    if (response.status === 401) {
-      throw new Error('Unauthorized');
-    }
-    const error = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
-      error?: string;
-    };
-    throw new Error(stripControl(error.error || 'Request failed'));
+/**
+ * Fetch a plaintext prompt resource: IRON LAWS (`shared/<name>`) or the CLAUDE.md template (`templates/claude-md`).
+ * The API serves both as raw markdown at GET /api/v1/prompts/shared/:name?base=1 and GET /api/v1/prompts/claude-md;
+ * there is no route for any other template. The caller verifies the text against the signed manifest.
+ *
+ * @throws Error for a template the API does not serve (before any request), or on a failed request
+ */
+export async function fetchPlainPrompt(
+  apiKey: string,
+  apiUrl: string,
+  type: PlainPromptType,
+  name: string,
+  options: RequestOptions = {}
+): Promise<string> {
+  validateName(name);
+  let endpoint: string;
+  if (type === 'templates') {
+    if (name !== 'claude-md') throw new Error('Unknown template: the API serves only claude-md.');
+    endpoint = `${apiUrl}/api/v1/prompts/claude-md`;
+  } else {
+    // ?base=1: the signed base file byte-for-byte. Without it the API appends team/personal laws (for old plugins),
+    // which the signed manifest cannot cover.
+    endpoint = `${apiUrl}/api/v1/prompts/shared/${encodeURIComponent(name)}?base=1`;
   }
 
-  return response.json() as Promise<CustomPromptResponse>;
+  return keyedRequest(endpoint, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${apiKey}` },
+  }, options.timeoutMs ?? API_TIMEOUT_MS, async (response) => {
+    if (!response.ok) {
+      await handleCacheClearDirective(response);
+      if (response.status === 404) throw new Error('Prompt not found');
+      if (response.status === 401) throw new Error('Unauthorized');
+      throw new Error('Request failed');
+    }
+
+    return response.text();
+  });
 }

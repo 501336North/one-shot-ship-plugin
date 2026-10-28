@@ -87,35 +87,115 @@ var fs = __toESM(require("fs"), 1);
 var path = __toESM(require("path"), 1);
 var os = __toESM(require("os"), 1);
 var DEFAULT_API_URL = "https://one-shot-ship-api.onrender.com";
+var STAGING_API_URL = "https://one-shot-ship-api-staging.onrender.com";
+var LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
+var HTTPS_URL = /^https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?(\/[A-Za-z0-9._~%/-]*)?$/;
+var LOOPBACK_HTTP_URL = /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:[0-9]{1,5})?(\/[A-Za-z0-9._~%/-]*)?$/;
 function getConfigDir() {
   return process.env.OSS_CONFIG_DIR || path.join(os.homedir(), ".oss");
 }
-function readApiCredentials(configDir) {
-  const configPath = path.join(configDir || getConfigDir(), "config.json");
-  if (!fs.existsSync(configPath)) {
+function trustedOrigin(apiUrl) {
+  if (!(HTTPS_URL.test(apiUrl) || LOOPBACK_HTTP_URL.test(apiUrl))) return null;
+  let url;
+  try {
+    url = new URL(apiUrl);
+  } catch {
+    return null;
+  }
+  if (url.pathname !== "/") return null;
+  const trusted = url.origin === DEFAULT_API_URL || url.origin === STAGING_API_URL || url.protocol === "http:" && LOOPBACK_HOSTS.includes(url.hostname);
+  return trusted ? url.origin : null;
+}
+var warned = /* @__PURE__ */ new Set();
+function warnOnce(message) {
+  if (warned.has(message)) return;
+  warned.add(message);
+  console.warn(message);
+}
+function resolveApiUrl(apiUrl, configPath) {
+  if (apiUrl === void 0 || apiUrl === null || apiUrl === "") return DEFAULT_API_URL;
+  const origin = typeof apiUrl === "string" ? trustedOrigin(apiUrl) : null;
+  if (origin === null) {
+    warnOnce(
+      `[oss-watcher] apiUrl in ${configPath} is not a trusted OSS API address; the API key will not be sent. Accepted: ${DEFAULT_API_URL} (production), ${STAGING_API_URL} (staging), or http://localhost, http://127.0.0.1 or http://[::1] with any port (local development).`
+    );
+  }
+  return origin;
+}
+var UNSAFE_CONFIG = "is refused: it must be a regular file (not a symlink) owned by you and not world-writable (chmod 600 it); the OSS API key will not be used";
+function readOwnConfigFile(configPath) {
+  let fd;
+  try {
+    fd = fs.openSync(configPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      warnOnce(`[oss-watcher] ${configPath} ${UNSAFE_CONFIG}.`);
+    }
     return null;
   }
   try {
-    const content = fs.readFileSync(configPath, "utf8");
+    const stat = fs.fstatSync(fd);
+    const uid = process.getuid?.();
+    if (!stat.isFile() || uid !== void 0 && stat.uid !== uid || (stat.mode & 2) !== 0) {
+      warnOnce(`[oss-watcher] ${configPath} ${UNSAFE_CONFIG}.`);
+      return null;
+    }
+    return { content: fs.readFileSync(fd, "utf8"), mode: stat.mode };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+var GROUP_OR_WORLD_WRITE = 18;
+var UNSAFE_LOOPBACK = "names a local (loopback) API but it or its directory is group- or world-writable (chmod 600 the file and chmod 700 its directory); the OSS API key will not be sent";
+function isLoopback(origin) {
+  return LOOPBACK_HOSTS.includes(new URL(origin).hostname);
+}
+function onlyUserWritable(fileMode, dir) {
+  if ((fileMode & GROUP_OR_WORLD_WRITE) !== 0) return false;
+  try {
+    return (fs.statSync(dir).mode & GROUP_OR_WORLD_WRITE) === 0;
+  } catch {
+    return false;
+  }
+}
+function readApiCredentials(configDir) {
+  const configPath = path.join(configDir || getConfigDir(), "config.json");
+  const file = readOwnConfigFile(configPath);
+  if (file === null) return null;
+  const { content } = file;
+  try {
     const config = JSON.parse(content);
-    if (!config.apiKey) {
+    const { apiKey } = config;
+    if (typeof apiKey !== "string" || apiKey === "" || /[\r\n]/.test(apiKey)) {
       return null;
     }
-    const apiUrl = config.apiUrl || DEFAULT_API_URL;
-    try {
-      const parsed = new URL(apiUrl);
-      if (parsed.protocol !== "https:") {
-        return null;
-      }
-    } catch {
+    const apiUrl = resolveApiUrl(config.apiUrl, configPath);
+    if (apiUrl === null) return null;
+    if (isLoopback(apiUrl) && !onlyUserWritable(file.mode, path.dirname(configPath))) {
+      warnOnce(`[oss-watcher] ${configPath} ${UNSAFE_LOOPBACK}.`);
       return null;
     }
-    return {
-      apiKey: config.apiKey,
-      apiUrl
-    };
+    return { apiKey, apiUrl };
   } catch {
     return null;
+  }
+}
+
+// src/api/with-deadline.ts
+async function withDeadline(timeoutMs, request) {
+  const controller = new AbortController();
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const timeout = new DOMException("The OSS API request timed out", "TimeoutError");
+      controller.abort(timeout);
+      reject(timeout);
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([request(controller.signal), deadline]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -181,17 +261,23 @@ async function fetchWorkflowConfig(workflowName, timeoutMs = WORKFLOW_FETCH_TIME
     throw new Error("No API key configured or apiUrl is not https");
   }
   const endpoint = `${credentials.apiUrl}/api/v1/workflows/${encodeURIComponent(workflowName)}`;
-  let response;
   try {
-    response = await fetch(endpoint, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${credentials.apiKey}`,
-        "Content-Type": "application/json"
-      },
-      signal: AbortSignal.timeout(timeoutMs),
-      // G5: never replay the Bearer key to a redirect target
-      redirect: "error"
+    return await withDeadline(timeoutMs, async (signal) => {
+      const response = await fetch(endpoint, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${credentials.apiKey}`,
+          "Content-Type": "application/json"
+        },
+        signal,
+        // G5: never replay the Bearer key to a redirect target
+        redirect: "error"
+      });
+      if (!response.ok) {
+        const errorResponse = await response.json().catch(() => ({ error: "Request failed" }));
+        throw new Error(errorResponse.error || `HTTP ${response.status}`);
+      }
+      return await response.json();
     });
   } catch (error) {
     if (error instanceof Error && error.name === "TimeoutError") {
@@ -199,11 +285,6 @@ async function fetchWorkflowConfig(workflowName, timeoutMs = WORKFLOW_FETCH_TIME
     }
     throw error;
   }
-  if (!response.ok) {
-    const errorResponse = await response.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(errorResponse.error || `HTTP ${response.status}`);
-  }
-  return response.json();
 }
 function decryptWorkflowConfig(encrypted, credentials) {
   try {

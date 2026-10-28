@@ -37,7 +37,9 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJE
 fence_with() {
     awk -v lit="$2" '
         /^[[:space:]]*```/ { if (!inf) { inf = 1; n = 0; hit = 0; match($0, /^[[:space:]]*/); ind = RLENGTH; next } inf = 0; if (hit) { for (i = 1; i <= n; i++) print b[i]; exit } next }
-        inf { l = $0; if (substr(l, 1, ind) ~ /^[[:space:]]*$/) l = substr(l, ind + 1); b[++n] = l; if (index($0, lit)) hit = 1 }' "$C/$1"
+        inf { l = $0; if (substr(l, 1, ind) ~ /^[[:space:]]*$/) l = substr(l, ind + 1); b[++n] = l
+              t = $0; sub(/^[[:space:]]+/, "", t); sub(/[[:space:]]+$/, "", t)
+              if (substr(lit, 1, 1) == "=" ? t == substr(lit, 2) : index($0, lit)) hit = 1 }' "$C/$1"
 }
 
 # stubs: each records "<name> <args>" in $T/calls; curl prints $T/curl.out and exits $T/curl.rc
@@ -71,7 +73,8 @@ model_writes() {
     local d; d=$(in_sandbox "$H/.oss/hooks/oss-value.sh" dir 2>/dev/null) && [[ -n "$d" ]] || return 1
     while (( $# >= 2 )); do printf '%s\n' "$2" > "$d/$1.txt"; shift 2; done
 }
-# run_block <file> <literal>: run that wrapper block as written -> OUT, RC
+# run_block <file> <literal>: run that wrapper block as written -> OUT, RC. A literal starting with "=" must
+# be a whole line of the block (so "=~/.oss/hooks/oss-value.sh api workflow" skips the "... api workflows" block)
 run_block() {
     local b; b=$(fence_with "$1" "$2")
     [[ -n "$b" ]] || { OUT="(no block holding '$2' in $1)"; RC=99; return; }
@@ -90,8 +93,16 @@ for kind in norepo repo; do
     [[ "$RC" == 0 && "$(calls)" == "node $FR/watcher/dist/cli/models.js set agents oss:code-reviewer ollama/codellama" ]] \
         && pass "$kind: /oss:models set passes the prompt and model it read" || fail "$kind: /oss:models set passes the prompt and model it read" "rc=$RC out=$OUT calls=$(calls)"
 
-    sandbox "$kind"; model_writes workflow build; run_block workflows.md 'oss-value.sh read workflow'
-    [[ "$RC" == 0 && "$OUT" == build ]] && pass "$kind: /oss:workflows <name> prints the name it read" || fail "$kind: /oss:workflows <name> prints the name it read" "rc=$RC out=$OUT"
+    # release channels (ADR-005): /oss:workflows <name> reads workflow.txt and fetches that workflow in ONE call,
+    # at the API the config names, the key on curl's stdin (never on its command line)
+    sandbox "$kind"; printf '{"apiKey":"ossk_wf_run_1"}\n' > "$H/.oss/config.json"; printf '{"name":"build"}\n' > "$T/curl.out"
+    model_writes workflow build; run_block workflows.md '=~/.oss/hooks/oss-value.sh api workflow'
+    [[ "$RC" == 0 && "$(calls)" == *"https://one-shot-ship-api.onrender.com/api/v1/workflows/build"* && "$(calls)" != *ossk_wf_run_1* && "$OUT" == *'"name":"build"'* ]] \
+        && pass "$kind: /oss:workflows <name> fetches the workflow it read, key off the command line" || fail "$kind: /oss:workflows <name> fetches the workflow it read" "rc=$RC out=$OUT calls=$(calls)"
+    sandbox "$kind"; printf '{"apiKey":"ossk_st_run_1","apiUrl":"http://127.0.0.1:9"}\n' > "$H/.oss/config.json"; printf '{"valid":true}\n' > "$T/curl.out"
+    run_block status.md 'oss-value.sh api auth/verify'
+    [[ "$RC" == 0 && "$(calls)" == *"http://127.0.0.1:9/api/v1/auth/verify"* && "$(calls)" != *onrender.com* && "$(calls)" != *ossk_st_run_1* ]] \
+        && pass "$kind: /oss:status checks the account at the API the config names" || fail "$kind: /oss:status checks the account at the API the config names" "rc=$RC out=$OUT calls=$(calls)"
 
     sandbox "$kind"; model_writes category commands name build; run_block trust.md 'oss-value.sh decrypt'
     [[ "$RC" == 0 && "$(calls)" == "oss-decrypt --type commands --name build" ]] \

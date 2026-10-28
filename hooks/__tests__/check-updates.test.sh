@@ -354,12 +354,14 @@ test_handles_manifest_failure() {
 }
 EOF
 
+    # The API the config names is unreachable (nothing listens on port 9).
+    printf '%s' '{"apiUrl":"http://127.0.0.1:9"}' > "$test_dir/config/config.json"
+
     local start_time exit_code=0
     start_time=$(date +%s)
     local result
     result=$(OSS_CONFIG_DIR="$test_dir/config" \
              OSS_PLUGIN_JSON="$test_dir/plugin/plugin.json" \
-             OSS_MANIFEST_URL="http://localhost:99999/nonexistent" \
              "$CHECK_UPDATES_SCRIPT" 2>&1) || exit_code=$?
     local end_time
     end_time=$(date +%s)

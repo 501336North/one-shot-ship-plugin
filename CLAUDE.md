@@ -121,6 +121,16 @@ Route specific prompts to different AI models (OpenRouter, Ollama, OpenAI, Gemin
 
 ---
 
+## Branching in this repo
+
+`next` is the integration branch (release channels, ADR-004). Feature branches start from `origin/next`
+(`git fetch origin next && git checkout -b <branch> origin/next`) and their PRs target `next`.
+`main` is what customers install: it changes only by a release PR (`next` → `main`) or a hotfix PR, and
+every hotfix is merged back into `next`. This overrides "branch from origin/main" in IRON LAW #4 below
+for this repo only; the rest of Law #4 applies unchanged.
+
+---
+
 *Part of the OSS Dev Workflow solution*
 
 <!-- IRON LAWS START - Do not edit manually, updated by /oss:login -->
