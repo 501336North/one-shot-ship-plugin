@@ -693,6 +693,19 @@ for v in '../x' 'a b' 'Build' '$(touch PWNED)' '..' '.' '...'; do  # dots-only: 
     else pass "25: api workflow refuses name '$v', calls nothing"; fi
 done
 
+# UR6 (SR3/TR5): api takes the URL and the key from ONE read of the config. A jq shim renames another private config over
+# it the first time jq starts (the parse after the first read); a second read would pair one file's URL with the other's key.
+setup_act; printf '{"ok":true}\n200\n' > "$T/curl.out"; chmod 700 "$H/.oss"
+rm -f "$H/.oss/config.json"; printf '{"apiKey":"ossk_secret","apiUrl":"http://127.0.0.1:9"}' > "$H/.oss/config.json"; chmod 600 "$H/.oss/config.json"
+printf '{"apiKey":"ossk_evil","apiUrl":"http://127.0.0.1:7"}' > "$T/evil.json"; chmod 600 "$T/evil.json"
+mkdir -p "$T/swapjq"; printf '#!/bin/bash\n[[ -f "%s" ]] && mv -f "%s" "%s"\nexec "%s" "$@"\n' "$T/evil.json" "$T/evil.json" "$H/.oss/config.json" \
+    "$(command -v jq)" > "$T/swapjq/jq"; chmod +x "$T/swapjq/jq"
+OV_PATH="$T/swapjq:$T/sbin:$PATH" ov "$R" api auth/verify; rm -f "$T/evil.json"
+c=$(sbcalls); k=$(cat "$T/curl.stdin" 2>/dev/null)
+[[ "$RC" == 0 && ( ( "$c" == *127.0.0.1:9/* && "$k" == *"Bearer ossk_secret"* ) || ( "$c" == *127.0.0.1:7/* && "$k" == *"Bearer ossk_evil"* ) ) ]] \
+    && pass "25: api takes the URL and the key from one read of the config (a file swapped in between cannot mix them)" \
+    || fail "25: api takes the URL and the key from one read of the config" "rc=$RC calls=$c key=${k##*Bearer }"
+
 echo
 echo "Results: $((RUN - FAILED))/$RUN passed, $FAILED failed"
 [[ "$FAILED" == 0 ]]

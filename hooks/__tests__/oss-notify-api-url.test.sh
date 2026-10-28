@@ -134,6 +134,23 @@ if command -v jq >/dev/null 2>&1; then
     rm -rf "$T"
 else fail "valid workflow name gives a JSON body with exactly command/promptType/promptName" "jq not installed"; fi
 
+# 6. UR6 (SR3/TR5): the URL and the key come from ONE read of the config. A jq shim renames another private config over
+#    it the first time jq starts (the parse after the first read); a second read would pair one file's key with the other
+#    file's URL. Whichever file is used, the key and the URL must be the same file's.
+if command -v jq >/dev/null 2>&1; then
+    sandbox '{"apiKey":"secret-k","apiUrl":"http://localhost:3001"}'; chmod 700 "$T/home/.oss"; chmod 600 "$T/home/.oss/config.json"
+    printf '{"apiKey":"evil-k","apiUrl":"http://localhost:9999"}' > "$T/evil.json"; chmod 600 "$T/evil.json"
+    mkdir -p "$T/swap"
+    printf '#!/bin/bash\n[[ -f "%s" ]] && mv -f "%s" "%s"\nexec "%s" "$@"\n' "$T/evil.json" "$T/evil.json" "$T/home/.oss/config.json" \
+        "$(command -v jq)" > "$T/swap/jq"; chmod +x "$T/swap/jq"
+    run_start "$T/bin:$T/swap:$PATH"
+    a=$(cat "$T/curl.args" 2>/dev/null); k=$(cat "$T/curl.stdin" 2>/dev/null)
+    if [[ "$(calls)" == 1 && ( ( "$a" == *localhost:3001/* && "$k" == *"Bearer secret-k"* ) || ( "$a" == *localhost:9999/* && "$k" == *"Bearer evil-k"* ) ) ]]; then
+        pass "the analytics key and URL come from one read of the config (a file swapped in between cannot mix them)"
+    else fail "the analytics key and URL come from one read of the config" "calls=$(calls) args=$a key=${k##*Bearer }"; fi
+    rm -rf "$T"
+else fail "the analytics key and URL come from one read of the config" "jq not installed"; fi
+
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
 [[ $FAILED -eq 0 ]]

@@ -257,7 +257,8 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                 # Note: oss-decrypt also tracks when prompts are fetched from API,
                 # but cached prompts bypass the API, so we track here as the source of truth
                 (
-                    if API_KEY=$(oss_api_key) && API_URL=$(oss_api_url); then
+                    # One read of the config for the key AND the URL (UR6, as TR5): a file swapped in between cannot mix them.
+                    if _oss_config_read && API_URL=$(_oss_cfg_origin) && API_KEY=$(_oss_cfg_key); then
                         oss_api_curl "$API_KEY" -sS -X POST "${API_URL}/api/v1/analytics/track" \
                             -H "Content-Type: application/json" \
                             -d "{\"command\": \"$WORKFLOW_CMD\", \"promptType\": \"command\", \"promptName\": \"$WORKFLOW_CMD\"}" \
