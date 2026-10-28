@@ -24,7 +24,8 @@ fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
 # line <apiUrl or ""> <plugin version> [PATH] [link|twolines]: the rendered status line for that config and plugin.
 line() {
     local sb; sb="$(mktemp -d)"; mkdir -p "$sb/home/.oss" "$sb/plugin/.claude-plugin"
-    if [[ -n "$1" ]]; then printf '{"apiKey":"k","apiUrl":"%s"}' "$1" > "$sb/home/.oss/config.json"
+    if [[ "$1" == "{"* ]]; then printf '%s' "$1" > "$sb/home/.oss/config.json"   # a whole config
+    elif [[ -n "$1" ]]; then printf '{"apiKey":"k","apiUrl":"%s"}' "$1" > "$sb/home/.oss/config.json"
     else printf '{"apiKey":"k"}' > "$sb/home/.oss/config.json"; fi
     printf '{"name":"oss","version":"%s"}' "$2" > "$sb/plugin/.claude-plugin/plugin.json"
     case "${4:-}" in   # ~/.oss/plugin-root: plain, or one that fails the `oss-value.sh root` checks (SR5)
@@ -85,6 +86,11 @@ else fail "no jq + staging: '⚠ apiUrl invalid' before '[jq required]'" "got '$
 l=$(line "" 2.1.0-beta.1 "$NOJQ")
 if [[ "$(first_section "$l")" == *mismatch* && "$l" == *"[jq required]"* ]]; then pass "no jq + no apiUrl + beta plugin: the mismatch warning is still shown"
 else fail "no jq + no apiUrl + beta plugin: the mismatch warning is still shown" "got '$l'"; fi
+# UR3: without jq, a config that is not flat JSON (here apiUrl spelled with a \u escape, which the CLI reads as staging)
+# is refused, so the swimlane says "apiUrl invalid": never blank (which would mean production).
+l=$(line '{"apiKey":"k","api\u0055rl":"'"$STAGING"'"}' 2.0.94 "$NOJQ")
+if [[ "$(first_section "$l")" == "⚠ apiUrl invalid" && "$l" == *"[jq required]"* ]]; then pass "no jq + escaped staging apiUrl + stable: '⚠ apiUrl invalid', never blank"
+else fail "no jq + escaped staging apiUrl + stable: '⚠ apiUrl invalid', never blank" "got '$l'"; fi
 rm -rf "$NOJQ"
 
 # SR5 (same rule as `oss-value.sh root`): a ~/.oss/plugin-root that is a symlink or not one line is not used to read

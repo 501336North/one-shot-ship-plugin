@@ -72,11 +72,25 @@ _oss_config_read() {
 # naming "apiKey" twice (a nested one too) or a value with a backslash (an escape) is refused, not guessed at.
 oss_api_key() { _oss_config_read && _oss_cfg_key; }
 
+# _oss_cfg_flat - without jq, the config is read by regex only when it is flat JSON (UR3): ONE object of string keys to
+# scalars or arrays of scalars, no backslash anywhere (so no \u-spelled key) and no second "{" (so no nested key).
+# Anything else (invalid JSON too) could read differently from jq and JSON.parse in the CLI, so it is refused.
+_oss_cfg_flat() {
+    local w='[[:space:]]*' str='"[^"\\[:cntrl:]]*"' num='-?(0|[1-9][0-9]*)([.][0-9]+)?([eE][+-]?[0-9]+)?' v m re
+    v="(${str}|${num}|true|false|null)"   # braces: zsh reads $w[ as a subscript
+    v="(${v}|\\[${w}(${v}(${w},${w}${v})*)?${w}\\])"
+    m="${str}${w}:${w}${v}"
+    re="^${w}[{]${w}(${m}(${w},${w}${m})*)?${w}[}]${w}\$"
+    [[ "$_OSS_CFG" =~ $re ]]
+}
+
 # _oss_cfg_key - oss_api_key over the copy _oss_config_read made (TR5: callers that also need the URL read once).
 _oss_cfg_key() {
     local key='' re='"apiKey"[[:space:]]*:[[:space:]]*"([^"]*)"' twice='"apiKey".*"apiKey"'
     if command -v jq &>/dev/null; then
         key=$(printf '%s' "$_OSS_CFG" | jq -r 'if (.apiKey | type) == "string" then .apiKey else "" end' 2>/dev/null)
+    elif ! _oss_cfg_flat; then
+        return 1
     elif [[ "$_OSS_CFG" =~ $re ]]; then
         key=${BASH_REMATCH[1]-${match[1]-}}   # bash, zsh
         [[ "$key" == *\\* || "$_OSS_CFG" =~ $twice ]] && return 1
@@ -108,6 +122,8 @@ _oss_url_syntax() {
                      elif (.apiUrl | type) != "string" then "!"
                      elif (.apiUrl | test("[^!-~]")) then "!"
                      else .apiUrl end' 2>/dev/null)
+    elif [[ -n "$_OSS_CFG" ]] && ! _oss_cfg_flat; then
+        return 1   # UR3: not flat JSON, so the regex below could disagree with the CLI (an escaped "apiUrl")
     elif [[ "$_OSS_CFG" =~ $named ]]; then
         return 1   # FR5: a named apiUrl (non-empty, non-null) is never read as production just because jq is missing
     fi
