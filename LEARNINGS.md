@@ -1,5 +1,9 @@
 # Learnings
 
+## 2026-10-28 | Planning | hooks
+- **Context:** plan (hook-test-hermetic)
+- **Insight:** A hook's caller (Claude Code, execSync) waits for EOF on the hook's stdout/stderr, not for bash to exit. So `( … ) &` without `</dev/null >/dev/null 2>&1` silently makes "background" work block: an unbounded analytics curl on every /oss start, and an 11 s sleep at session start. Test "doesn't block" with a received/release stub and the child's `close` event, never with a wall-clock threshold.
+
 ## 2026-10-20 | Testing | hooks
 - **Context:** plugin-value-flags (build P2-P3, oss-value.sh)
 - **Insight:** A refusal test proves nothing when something downstream would refuse the same input. oss-error.js validates codes and fields itself, `test -d` rejects a relative or two-line path, and a script without the verb exits 2 with usage: each made the helper's own checks removable with the suite green. Assert that the downstream tool never ran (a recording `node` on PATH), give each rule an input only that rule rejects (a relative root that resolves below the cwd, a directory whose name has a newline), and do not accept rc 2 as a refusal.
