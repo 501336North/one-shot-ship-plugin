@@ -429,7 +429,7 @@ test_custom_section_appended() {
     local b; b=$(block_of "$T/proj/CLAUDE.md")
     local order=n; [[ "$b" == *"FRESH FROM API"*"$UNVERIFIED"*"## Custom Team Laws"*"Team rule: [31mred[0m deploys"* ]] && order=y
     local ctl=n; LC_ALL=C grep -q $'[\x01-\x08\x0b-\x1f\x7f]' "$T/proj/CLAUDE.md" && ctl=y
-    local url=n; grep -qx -- '-q --globoff --config - .*https://one-shot-ship-api.onrender.com/api/v1/prompts/shared/iron-laws?part=custom' "$T/shim/curl-argv" && url=y
+    local url=n; grep -qx -- '-q --globoff --noproxy \* --config - .*https://one-shot-ship-api.onrender.com/api/v1/prompts/shared/iron-laws?part=custom' "$T/shim/curl-argv" && url=y
     local last; last=$(printf '%s\n' "$b" | grep -v '^$' | tail -n 1)
     if [[ $RC -eq 0 && $order == y && $ctl == n && "$(count_line "$END" "$T/proj/CLAUDE.md")" == 1 && "$b" == *"after a marker line"* && "$last" == "$CLOSE" && "$(custom_calls)" == 1 && "$(curl_calls)" == 0 && $url == y && "$(cat "$T/shim/curl-argv")" != *"$FAKE_KEY"* ]]; then pass "$name"
     else fail "$name" "base, marker, section, closing line, in order; no control bytes; one keyed curl to ?part=custom (key not in argv)" "rc=$RC order=$order ctl=$ctl last=$last ends=$(count_line "$END" "$T/proj/CLAUDE.md") custom=$(custom_calls) url=$url argv=$(cat "$T/shim/curl-argv" 2>/dev/null) block: $b"; fi
