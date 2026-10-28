@@ -1,7 +1,8 @@
 #!/bin/bash
 # OSS Decision Record Hook (PostToolUse, AskUserQuestion)
 # Appends one JSON line per answered picker question to the feature's committed record,
-# .oss/dev/active/<feature>/decisions.ndjson (radical-observability G1). Never blocks: exit 0 always.
+# .oss/dev/active/<feature>/decisions.ndjson, or .oss/dev/decisions-unfiled.ndjson when no feature
+# is active (radical-observability G1). Writes only through oss_safe_target. Never blocks: exit 0 always.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=hooks/oss-safe-path.sh
@@ -15,8 +16,18 @@ in=""
 oss_resolve_project
 proj="$_OSS_PROJ"
 branch=$(cd "$proj" 2>/dev/null && git symbolic-ref --short -q HEAD)
+# ADR-009 (the /oss:context-report rule): the <feature> of a <type>/<feature>/<phase> branch when that
+# folder is active, else the only active folder, else none. A name is ^[A-Za-z0-9._-]+$, not starting with "."
+name_re='^[A-Za-z0-9_-][A-Za-z0-9._-]*$'
 feature=$(printf '%s' "$branch" | cut -d/ -f2)
-[[ -n "$feature" && -d "$proj/.oss/dev/active/$feature" ]] || exit 0
+if [[ ! "$feature" =~ $name_re || ! -d "$proj/.oss/dev/active/$feature" ]]; then
+    active=("$proj"/.oss/dev/active/*/)
+    feature=""
+    [[ ${#active[@]} -eq 1 && -d "${active[0]}" ]] && { feature=${active[0]%/}; feature=${feature##*/}; }
+    [[ "$feature" =~ $name_re ]] || feature=""
+fi
+rec=".oss/dev/decisions-unfiled.ndjson"
+[[ -n "$feature" ]] && rec=".oss/dev/active/$feature/decisions.ndjson"
 command=$(jq -r '.currentCommand // empty' "$proj/.oss/workflow-state.json" 2>/dev/null)
 
 # the same sha-256 hex whichever tool the box has (macOS: shasum; some Linux: only sha256sum)
@@ -24,6 +35,8 @@ sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256; else sha256
 command -v shasum >/dev/null 2>&1 || command -v sha256sum >/dev/null 2>&1 || exit 0
 
 count=$(printf '%s' "$in" | jq -r '.tool_response.questions | length') || exit 0
+oss_safe_target "$proj" "$rec" || { oss_refuse_unsafe "$rec"; exit 0; }
+out="$_OSS_SAFE_DIR/${rec##*/}"
 for ((i = 0; i < count; i++)); do
     question=$(printf '%s' "$in" | jq -r --argjson i "$i" '.tool_response.questions[$i].question') || continue
     qkey=$(printf '%s\n%s' "$feature" "$question" | sha256 | cut -c1-16)
@@ -43,13 +56,13 @@ for ((i = 0; i < count; i++)); do
             end;
         .tool_response as $r | $r.questions[$i] as $q | $r.answers[$q.question] as $a
         | select($a != null)
-        | {v: 1, id: $id, feature: $feature, questionKey: $qkey, answerIndex: 1,
+        | {v: 1, id: $id, feature: (if $feature == "" then null else $feature end), questionKey: $qkey, answerIndex: 1,
            question: $q.question, header: $q.header, options: $q.options,
            recommended: ([$q.options[].label | select(endswith(" (Recommended)")) | .[:-14]][0]),
            choice: (if $q.multiSelect then picks($a; [$q.options[].label] | sort_by(-length)) else $a end),
            notes: (($r.annotations[$q.question].notes | strings) // null), kind: "decision", command: $command,
            answeredAt: $now, person: {status: "unverified"}, session: .session_id}') || continue
     [[ -n "$line" ]] || continue
-    printf '%s\n' "$line" >> "$proj/.oss/dev/active/$feature/decisions.ndjson"
+    printf '%s\n' "$line" >> "$out"
 done
 exit 0

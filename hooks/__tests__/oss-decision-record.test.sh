@@ -161,5 +161,71 @@ run_hook_without shasum sha256sum
 [[ $RC -eq 0 && ! -e "$REC" ]] && pass "$name (no hash tool at all: nothing written)" \
     || fail "$name (no hash tool at all: nothing written)" "rc=$RC record=$(cat "$REC" 2>/dev/null)"
 
+# Task 9 (ADR-009): which file the answer lands in. The feature is the branch's <type>/<feature>/<phase>
+# when that folder is active, else the only active folder, else none: .oss/dev/decisions-unfiled.ndjson.
+# new_project <branch> [folder...]: a fresh repo on <branch> with those active folders -> Q
+new_project() {
+    local b=$1 f; shift
+    Q=$(mktemp -d "$T/p.XXXXXX")
+    (cd "$Q" && git init -q && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && git checkout -q -B "$b")
+    mkdir -p "$Q/.oss/dev/active"
+    for f in "$@"; do mkdir -p "$Q/.oss/dev/active/$f"; done
+    printf '{"currentCommand":"build"}\n' > "$Q/.oss/workflow-state.json"
+}
+# run_in_project: the hook on pick.json in Q -> RC, stderr in $T/err
+run_in_project() { (cd "$Q" && CLAUDE_PROJECT_DIR="$Q" "$HOOK" < "$FIX/pick.json" 2>"$T/err"); RC=$?; }
+# lines_under <dir>: every decisions file under <dir> with its line count, one per row, sorted
+lines_under() { (cd "$1" && find . -name 'decision*.ndjson' -type f -exec wc -l {} + 2>/dev/null | grep -v ' total$' | awk '{print $2 ":" $1}' | sort | tr '\n' ' '); }
+
+name='should write to .oss/dev/active/<feature>/decisions.ndjson for the feature named by the branch'
+new_project feat/demo/build demo other; run_in_project
+got=$(jq -r '.feature' "$Q/.oss/dev/active/demo/decisions.ndjson" 2>/dev/null)
+[[ $RC -eq 0 && "$got" == demo && "$(lines_under "$Q/.oss")" == "./dev/active/demo/decisions.ndjson:1 " ]] && pass "$name" \
+    || fail "$name" "rc=$RC feature=$got files=$(lines_under "$Q/.oss")"
+
+name='should take the only active folder when the branch names none'
+new_project main solo; run_in_project
+got=$(jq -r '.feature' "$Q/.oss/dev/active/solo/decisions.ndjson" 2>/dev/null)
+[[ $RC -eq 0 && "$got" == solo && "$(lines_under "$Q/.oss")" == "./dev/active/solo/decisions.ndjson:1 " ]] && pass "$name" \
+    || fail "$name" "rc=$RC feature=$got files=$(lines_under "$Q/.oss")"
+
+name='should use .oss/dev/decisions-unfiled.ndjson when no feature is active'
+for c in 'no folder|main' 'two folders, the branch names neither|main one two' 'two folders, the branch names a missing one|feat/gone/build one two'; do
+    label=${c%%|*}; read -r -a args <<< "${c#*|}"
+    new_project "${args[@]}"; run_in_project
+    got=$(jq -c '[.feature, (.questionKey | test("^[0-9a-f]{16}$"))]' "$Q/.oss/dev/decisions-unfiled.ndjson" 2>/dev/null)
+    [[ $RC -eq 0 && "$got" == '[null,true]' && "$(lines_under "$Q/.oss")" == "./dev/decisions-unfiled.ndjson:1 " ]] && pass "$name ($label)" \
+        || fail "$name ($label)" "rc=$RC line=$got files=$(lines_under "$Q/.oss")"
+done
+
+# a name outside ^[A-Za-z0-9._-]+$ (or starting with ".") is never a feature: the next rule applies.
+# (git refuses a branch component starting with ".", so the branch case uses ";", which git allows.)
+name='should refuse a feature name that is not ^[A-Za-z0-9._-]+$ or starts with .'
+for c in 'the branch names it|feat/a;b/build|a;b' 'the only folder|main|my feat' 'the only folder|main|a;b'; do
+    IFS='|' read -r label b f <<< "$c"
+    new_project "$b" "$f"; run_in_project
+    got=$(jq -c '.feature' "$Q/.oss/dev/decisions-unfiled.ndjson" 2>/dev/null)
+    [[ $RC -eq 0 && "$got" == null && "$(lines_under "$Q/.oss")" == "./dev/decisions-unfiled.ndjson:1 " ]] && pass "$name ($label: $f)" \
+        || fail "$name ($label: $f)" "rc=$RC feature=$got files=$(lines_under "$Q/.oss")"
+done
+
+# a committed link must never carry the answer out of the project: refuse, say so once, exit 0
+name='should refuse to write through a symlinked .oss, .oss/dev, feature folder or decisions file'
+# snapshot <dir>: every path under <dir> with the hash of each file
+snapshot() { (cd "$1" && find . | sort && find . -type f -exec shasum {} + | sort); }
+for link in .oss .oss/dev .oss/dev/active/demo .oss/dev/active/demo/decisions.ndjson; do
+    new_project feat/demo/build demo
+    O=$(mktemp -d "$T/outside.XXXXXX")
+    if [[ "$link" == */decisions.ndjson ]]; then
+        printf 'outside\n' > "$O/file"; ln -s "$O/file" "$Q/$link"
+    else
+        cp -R "$Q/$link/." "$O/"; printf 'outside\n' > "$O/keep"; rm -rf "${Q:?}/$link"; ln -s "$O" "$Q/$link"
+    fi
+    before=$(snapshot "$O"); run_in_project; after=$(snapshot "$O")
+    errs=$(wc -l < "$T/err" | tr -d ' ')
+    [[ $RC -eq 0 && "$before" == "$after" && "$errs" == 1 && "$(cat "$T/err")" =~ ^oss:\ refusing ]] && pass "$name ($link)" \
+        || fail "$name ($link)" "rc=$RC outside-changed=$([[ "$before" == "$after" ]] && echo no || echo yes) stderr=$(cat "$T/err")"
+done
+
 echo "$RUN run, $FAILED failed"
 [[ $FAILED -eq 0 ]]
