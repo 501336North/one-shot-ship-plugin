@@ -188,6 +188,19 @@ printf '{"apiKey":"plain-k"}' > "$T/.oss/config.json"; call oss_api_key "$T/nojq
 [[ "$RC" == 0 && "$OUT" == plain-k ]] && pass "without jq: the flat config /oss:login writes still gives its key" \
     || fail "without jq: the flat config still gives its key" "rc=$RC out='$OUT'"
 
+# UR4: _oss_config_read leaves _OSS_CFG empty on EVERY failure. A NUL byte stops `read -d ''` with rc 0 and the text
+# before it in the variable; a caller that ignored the rc would still find a key there.
+rm -f "$T/.oss/config.json"; printf '{"apiKey":"pre-nul-k"}\0{"apiKey":"x"}' > "$T/.oss/config.json"; chmod 600 "$T/.oss/config.json"
+for p in "$PATH" "$T/nojq"; do
+    lbl="with jq"; [[ "$p" == "$T/nojq" ]] && lbl="without jq"
+    call '_oss_config_read; echo "rc=$? cfg=[$_OSS_CFG] key=[$(_oss_cfg_key)]"' "$p"
+    [[ "$OUT" == "rc=1 cfg=[] key=[]" ]] && pass "a config holding a NUL byte: rc 1, _OSS_CFG empty, no key ($lbl)" \
+        || fail "a config holding a NUL byte: rc 1, _OSS_CFG empty, no key ($lbl)" "$OUT"
+done
+chmod 666 "$T/.oss/config.json"
+call '_OSS_CFG=stale; _oss_config_read; echo "rc=$? cfg=[$_OSS_CFG]"'; chmod 600 "$T/.oss/config.json"
+[[ "$OUT" == "rc=1 cfg=[]" ]] && pass "an untrusted (world-writable) config: rc 1, _OSS_CFG empty" || fail "an untrusted config: rc 1, _OSS_CFG empty" "$OUT"
+
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
 [[ $FAILED -eq 0 ]]
