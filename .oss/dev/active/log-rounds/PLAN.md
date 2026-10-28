@@ -26,17 +26,27 @@ Sites that write or read the command-log banner (`git grep` on origin/main, plug
 ### Task 2: Rotation keeps every banner
 **Tests (RED):** same file
 - [ ] `should keep every round's banner when the log is trimmed` — 3 inits with enough lines between them that rotation fires (set `logs.maxCommandLogSizeKB` low through a temp HOME settings file, or call the trim path directly), then the count is still 3.
+  Also assert the log is shorter after `clean` (the trim ran), so "never trim" cannot pass.
+- [ ] `should still trim a log whose dropped part has no banner` (control: a `write`-only log over the cap → `clean` prints `Done.` and the log is trimmed). Both hooks run under `set -euo pipefail`: a grep with no match exits 1 and aborts the script. Write this test RED-first, before the GREEN code it guards.
 **GREEN:** in `check_command_log_size`, copy the `OSS Command:` lines from the part being dropped into the kept file (after the truncation notice) before the last 1000 lines.
 
 ### Task 3: The analyzer reports the latest round only
 **Tests (RED):** `watcher/test/hooks/oss-log-analyzer-rounds.test.ts` (temp HOME; the analyzer reads `$HOME/.oss/logs/current-session`)
 - [ ] `should take the start time from the latest round` — a build.log with two banners (`Started: … 10:00:00` and `… 11:00:00`) → reported start is 11:00:00.
-- [ ] `should count only the latest round's test results` — round 1 has 3 `[TEST] … FAIL` lines, round 2 has 1 PASS → failed 0, passed 1.
-**GREEN:** read the command log from its last `OSS Command:` banner (one `awk` that prints from the last banner) and use that for the start time and the PASS/FAIL counts.
+- [ ] `should count only the latest round's test results` — round 1 has 3 `[TEST] … FAIL` lines AND 1 PASS line, round 2 has 1 PASS → failed 0, passed 1. (Round 1 needs the PASS line: without it, reverting only the PASS-count site stays green.)
+- [ ] `should report the latest round of a log written by oss-log.sh` (integration: the fixtures above are hand-written; build two rounds with the real `oss-log.sh init`/`test` in a temp HOME, run the analyzer → failed 0, passed 1).
+**GREEN:** read the command log from its last `OSS Command:` banner (one `awk` that prints from the last banner) and use that for the start time and the PASS/FAIL counts. Compute it once per function.
+
+## Process (from attempt 1, kept on `backup/log-rounds-build-attempt1`)
+- Every line of code, including refactors and tests added after GREEN, goes through a logged RED → GREEN → REFACTOR cycle inside `/oss:build`.
+- Each cycle is delegated to a specialist agent (one cycle per delegation, logged through the value folder `agent.txt`).
+- Commit and push each phase (RED, GREEN, REFACTOR) to `fix/log-rounds/build`.
+- Run vitest with a config that omits `setupFiles` (watcher/test/setup.ts pkills machine-wide). Never write the real `~/.oss`.
+- No `git -C`.
 
 ## Ship
 - Bump `.claude-plugin/plugin.json` patch version (rule: every plugin deploy bumps).
 - No API change; the IRON LAW text stays as written (its grep becomes correct).
 - Coordinate with the release-channels work in progress (several plugin worktrees on `feat/release-channels/*`): rebase on origin/main right before ship.
 
-## Estimated: 3 tasks, 5 tests
+## Estimated: 3 tasks, 8 tests
