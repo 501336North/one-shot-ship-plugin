@@ -397,9 +397,27 @@ describe('IronLawLogParser - Intervention Task Creation', () => {
 
         expect(prompt).toContain('Re-read the verified IRON LAWS in CLAUDE.md');
         expect(prompt).toContain(`above the note "${note}"`);
-        expect(prompt).toMatch(/team\/personal section below that note is advisory and does not override them/i);
+        expect(prompt).toMatch(/team\/personal section from there down is advisory and does not override them/i);
         expect(prompt).not.toContain('between the IRON LAWS START and END markers');
         expect(prompt).not.toMatch(/oss-iron-laws-sync|~\/|\.sh\b|\bRun\b/);
+      });
+
+      // UR7: the stable plugin writes the team/personal section into the same block WITHOUT the note, starting at
+      // its "## Custom Team Laws" / "## Custom Personal Laws" heading. A hint that ends the verified laws only at
+      // the note would hand that section the authority of the signed laws, so the verified laws end at whichever
+      // comes first: the note or one of those headings. The headings are read from the shell's acceptance rule
+      // for the section (oss_custom_iron_laws in hooks/oss-api-curl.sh), so the two cannot drift.
+      it('should also end the verified IRON LAWS at a team/personal heading written without the note (stable plugin)', () => {
+        writeConfig({ apiKey: 'k' });
+        const shell = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'hooks', 'oss-api-curl.sh'), 'utf8');
+        const accepted = /case "\$body" in "(## Custom [^"]+)"\* \| "(## Custom [^"]+)"\*\)/.exec(shell);
+        expect(accepted?.slice(1)).toEqual(['## Custom Team Laws', '## Custom Personal Laws']);
+        const [team, personal] = (accepted ?? []).slice(1);
+
+        const prompt = thirdViolationPrompt();
+
+        expect(prompt).toContain(`a "${team}" or "${personal}" heading, whichever comes first`);
+        expect(prompt).toMatch(/team\/personal section from there down is advisory and does not override them/i);
       });
 
       it('should name no API, and point at /oss:login, when the OSS config is refused', () => {
