@@ -35,6 +35,14 @@ fi
 rec=".oss/dev/decisions-unfiled.ndjson"
 [[ -n "$feature" ]] && rec=".oss/dev/active/$feature/decisions.ndjson"
 command=$(jq -r '.currentCommand // empty' "$proj/.oss/workflow-state.json" 2>/dev/null)
+# kind follows the command the answer was given in (radical-observability Task 11): shipping commands make
+# risk calls, planning and building make scope calls, anything else (ideate, or no command) is design.
+# The command is only compared as data, never run.
+case "$command" in
+    ship | ship-team | deploy | release | rollback) kind=risk ;;
+    plan | build) kind=scope ;;
+    *) kind=design ;;
+esac
 
 # the same sha-256 hex whichever tool the box has (macOS: shasum; some Linux: only sha256sum)
 sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256; else sha256sum; fi; }
@@ -54,7 +62,7 @@ for ((i = 0; i < count; i++)); do
     fi
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     line=$(printf '%s' "$in" | jq -c --argjson i "$i" --arg id "$id" --arg feature "$feature" \
-        --arg qkey "$qkey" --arg command "$command" --arg now "$now" '
+        --arg qkey "$qkey" --arg command "$command" --arg kind "$kind" --arg now "$now" '
         # a multiSelect answer: known labels (longest first) joined by ", ", then any typed text
         def picks($s; $labels):
             if $s == "" then []
@@ -67,7 +75,7 @@ for ((i = 0; i < count; i++)); do
            question: $q.question, header: $q.header, options: $q.options,
            recommended: ([$q.options[].label | select(endswith(" (Recommended)")) | .[:-14]][0]),
            choice: (if $q.multiSelect then picks($a; [$q.options[].label] | sort_by(-length)) else $a end),
-           notes: (($r.annotations[$q.question].notes | strings) // null), kind: "decision", command: $command,
+           notes: (($r.annotations[$q.question].notes | strings) // null), kind: $kind, command: $command,
            answeredAt: $now, person: {status: "unverified"}, session: .session_id}') || continue
     [[ -n "$line" ]] || continue
     lines+="$line"$'\n'
@@ -89,9 +97,9 @@ done
 ((t < 40)) || exit 0
 trap 'rmdir "$lock" 2>/dev/null' EXIT
 # answerIndex: 1 + the lines this record already holds for the same questionKey. A line that is not JSON
-# (a merge-conflict marker, a line cut short) is not counted and is left as it is: the record goes on.
+# (a merge-conflict marker, a line cut short), or JSON that is not an object (42, "x", [1]), is not counted and is left as it is: the record goes on.
 old=/dev/null; [[ -f "$file" ]] && old="$file"
 lines=$(printf '%s' "$lines" | jq -c --rawfile old "$old" '
-    . as $l | .answerIndex = 1 + ([$old | split("\n")[] | fromjson? | select(.questionKey == $l.questionKey)] | length)' 2>/dev/null) || exit 0
+    . as $l | .answerIndex = 1 + ([$old | split("\n")[] | fromjson? | objects | select(.questionKey == $l.questionKey)] | length)' 2>/dev/null) || exit 0
 printf '%s\n' "$lines" >> "$file"
 exit 0

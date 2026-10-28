@@ -62,5 +62,13 @@ for h in oss-ask-telegram.sh oss-ask-telegram-answered.sh post-bash-pr.sh post-e
   else fail "(d) unreachable hooks/$h is removed" "still present; nothing loaded runs it"; fi
 done
 
+# (e) radical-observability Task 11: every picker answer reaches the decision record, without the picker
+#     waiting on it. Exactly one PostToolUse entry, matching AskUserQuestion only, runs the hook async.
+name='(e) hooks.json should run oss-decision-record.sh after AskUserQuestion, in the background'
+got=$(jq -c '[.hooks.PostToolUse[]? | select(.hooks[]?.command | strings | endswith("/hooks/oss-decision-record.sh"))
+             | {matcher, hooks}]' "$HOOKS_JSON" 2>/dev/null)
+want='[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/oss-decision-record.sh","async":true}]}]'
+if [[ "$got" == "$want" ]]; then pass "$name"; else fail "$name" "PostToolUse entries for the hook = ${got:-none}"; fi
+
 echo "Results: $((RUN-FAILED))/$RUN passed, $FAILED failed"
 [[ $FAILED -eq 0 ]]

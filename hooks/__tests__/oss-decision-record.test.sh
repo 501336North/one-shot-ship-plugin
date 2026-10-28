@@ -338,6 +338,19 @@ got=$(tail -n 1 "$R" | jq -c '[.answerIndex, .questionKey == ($v | fromjson).que
 [[ $RC -eq 0 && -n "$valid" && $(wc -l < "$R") -eq 4 && "$(head -n 3 "$R")" == "$before" && "$got" == '[2,true]' ]] && pass "$name" \
     || fail "$name" "rc=$RC lines=$(wc -l < "$R" | tr -d ' ') bad-lines-kept=$([[ "$(head -n 3 "$R")" == "$before" ]] && echo yes || echo no) [index,samekey]=$got"
 
+# a line that is valid JSON but not an object (a lone 42, "x" or [1]) is not a decision either: it is
+# skipped like any other foreign line, and the record goes on
+name='should still record when the record holds a JSON line that is not an object'
+for junk in '42' '"x"' '[1]'; do
+    new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"
+    run_in_project; valid=$(head -n 1 "$R" 2>/dev/null)
+    printf '%s\n%s\n' "$valid" "$junk" > "$R"; before=$(cat "$R")
+    run_in_project
+    got=$(tail -n 1 "$R" | jq -c '.answerIndex' 2>/dev/null)
+    [[ $RC -eq 0 && -n "$valid" && $(wc -l < "$R") -eq 3 && "$(head -n 2 "$R")" == "$before" && "$got" == 2 ]] && pass "$name ($junk)" \
+        || fail "$name ($junk)" "rc=$RC lines=$(wc -l < "$R" | tr -d ' ') answerIndex=$got"
+done
+
 # a hook killed while holding the lock leaves its folder behind: once it is old, the next answer takes it
 # over, or every later answer would be skipped forever. (A fresh lock is still waited on, then skipped:
 # see "should give up quietly" above.)
@@ -350,6 +363,22 @@ run_in_project
 got=$(jq -c '.answerIndex' "$R" 2>/dev/null)
 [[ $RC -eq 0 && "$got" == 1 && ! -e "$R.lock" && ! -s "$T/err" ]] && pass "$name" \
     || fail "$name" "rc=$RC answerIndex=$got lock-left=$([[ -e "$R.lock" ]] && echo yes || echo no) stderr=$(cat "$T/err")"
+
+# Task 11: the kind of an answer follows the command it was given in. Shipping commands make risk calls,
+# planning and building make scope calls, everything else (ideate, or no command at all) is design.
+name='should tag answers given during ship, ship-team, deploy, release or rollback as risk; plan or build as scope; anything else as design'
+for c in ship:risk ship-team:risk deploy:risk release:risk rollback:risk plan:scope build:scope ideate:design empty:design missing:design; do
+    cmd=${c%%:*}; want=${c#*:}
+    new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"
+    case "$cmd" in
+        empty) printf '{"currentCommand":""}\n' > "$Q/.oss/workflow-state.json" ;;
+        missing) rm -f "$Q/.oss/workflow-state.json" ;;
+        *) jq -n --arg c "$cmd" '{currentCommand: $c}' > "$Q/.oss/workflow-state.json" ;;
+    esac
+    run_in_project
+    got=$(jq -r '.kind' "$R" 2>/dev/null)
+    [[ $RC -eq 0 && "$got" == "$want" ]] && pass "$name ($cmd -> $want)" || fail "$name ($cmd -> $want)" "rc=$RC kind=$got"
+done
 
 echo "$RUN run, $FAILED failed"
 [[ $FAILED -eq 0 ]]
