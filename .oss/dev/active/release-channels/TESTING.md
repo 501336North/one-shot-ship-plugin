@@ -129,4 +129,10 @@ Every fix RED first, each guard proven by reverting/mutating it (all killed exce
 - Regression (behind a loopback-only curl shim): shell 94 suites, only ideate-template / no-telegram-command fail plus load-sensitive suites that pass alone; cli-decrypt 497/497; watcher 823/825 (the UR16 break, fixed, and a load flake); API 7284/7295 with 8 exec/real-hooks files timing out under load (1127/1127 alone); tsc clean; real-API integration 33/33.
 - The shim refused 3 production requests in the loaded full run only (FOLLOWUPS, HIGH: a killed hook test's background curls fall through to the real curl).
 
-## Last Updated: 2026-10-28 by /oss:build (ship round 4 fixes)
+### 2026-10-28: ship round 5 fix UR17 (one /oss:build round)
+- watcher/test/skills/workflows.test.ts: the stale `/api/v1/workflows` assertion replaced by two behaviours (fetch through `oss-value.sh api workflows` / `api workflow`, whole-line; no raw /api/v1/, Bearer, {apiKey}, `grep apiKey`). RED against origin/next's pre-T7 workflows.md (2 failed); 4 mutations each killed.
+- IRON LAW #1b grep: no other test asserts a raw API path in a T7-moved command file.
+- Full watcher suite (safe config, temp HOME, shim): 259 files, 3675/3675; tsc clean.
+- Round-5 gate suites (before UR17): shell 94 tracked *.test.sh, only ideate-template and no-telegram-command fail (both fail on next too); API integration 33/33 x2; cli-decrypt 497/497; API unit 7295/7295; oss-channel 19/19.
+
+## Last Updated: 2026-10-28 14:30 CST by /oss:build (ship round 5 fix UR17)

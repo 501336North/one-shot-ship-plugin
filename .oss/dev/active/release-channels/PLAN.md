@@ -564,3 +564,13 @@ UR1 above is replaced by UR1' below.
   UR1' replaced it with an exact first-line check in the jq filter, so the test reads `undefined`. Define the two
   headings once in hooks/oss-api-curl.sh (e.g. `OSS_CUSTOM_LAWS_HEADINGS`), use it in the shell's check, and read it
   in the watcher test (as OSS_CUSTOM_LAWS_NOTE already is).
+
+## Ship round 5 fix tasks (2026-10-28, round-5 gates; rule: MED+ blocks, LOW/INFO to FOLLOWUPS)
+
+### UR17 (MEDIUM, code review): watcher `test/skills/workflows.test.ts` asserts the pre-T7 contract and is red
+- `should reference the workflows API endpoint` expects `commands/workflows.md` to contain `/api/v1/workflows`.
+  T7 (ddbce5b/5f56c16) moved the command to `~/.oss/hooks/oss-value.sh api workflows` / `api workflow`, so the
+  branch ships a red watcher suite (earlier rounds ran a watcher subset). Assert the new contract: the command
+  fetches through the helper (`oss-value.sh api workflows` and `api workflow`) and no raw key/URL path is inlined.
+- IRON LAW #1b: grep every other watcher/plugin test that asserts a raw `/api/v1/...` path in a `commands/*.md`
+  that T7 moved to the helper; fix each the same way. Run the FULL watcher suite (safe config) to close the round.

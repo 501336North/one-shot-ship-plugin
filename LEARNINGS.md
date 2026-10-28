@@ -275,3 +275,15 @@
 ## 2026-10-28 | Testing | watcher + hooks
 - **Context:** build (release-channels ship round 4, UR16)
 - **Insight:** a test that extracts a value by regex-matching another file's code layout (the shell's old `case` pattern) breaks on any refactor of that code; pin it to a named variable in the single source instead.
+
+## 2026-10-28 | Testing | watcher
+- **Context:** build (release-channels ship round 5, UR17)
+- **Insight:** A test that greps a command file's text goes stale silently when the command's contract changes (T7 moved workflows.md to `oss-value.sh api workflows`; the test still wanted `/api/v1/workflows`). It stayed red for three rounds because each round ran only a SUBSET of the watcher suite. Close every fix round with the FULL watcher suite (safe config), not the files you think you touched.
+
+## 2026-10-28 | Testing | watcher
+- **Context:** build (release-channels ship round 5, UR17)
+- **Insight:** A plain substring check for `oss-value.sh api workflow` is also satisfied by `api workflows`, so it proves nothing about the single-workflow call. Match whole lines (`^...$` with the `m` flag) when one command name is a prefix of another.
+
+## 2026-10-28 | Testing | watcher
+- **Context:** build (release-channels ship round 5, UR17)
+- **Insight:** A "safe" watcher setup that swaps HOME for a fresh empty folder per test makes session-start tests fail with "OSS: Not logged in", which looks like a regression. The safe setup must itself write the dummy `~/.oss/config.json` (0600, dir 0700) into the folder it creates, not rely on the outer temp HOME.
