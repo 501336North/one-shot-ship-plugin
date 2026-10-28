@@ -327,5 +327,29 @@ run_in_project "$FIX/multi.json"; run_in_project "$FIX/multi.json"
 got=$(jq -sc '[.[].answerIndex], ([.[].questionKey] | unique | length), (.[0].questionKey == .[2].questionKey), (.[1].questionKey == .[3].questionKey)' "$R" 2>/dev/null | tr '\n' ' ')
 [[ $RC -eq 0 && "$got" == '[1,1,2,2] 2 true true ' ]] && pass "$name" || fail "$name" "rc=$RC [indexes] distinct-keys same-q1 same-q2 = $got"
 
+# Task 10b (ADR-003/004): a record never silently stops. A line that is not JSON (a merge-conflict
+# marker, a line cut short) is left as it is, and answers keep being recorded after it.
+name='should still record, counting only the valid lines, when the record holds a line that is not JSON'
+new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"
+run_in_project; valid=$(head -n 1 "$R" 2>/dev/null)
+printf '%s\n%s\n%s\n' "$valid" '<<<<<<< HEAD' "${valid:0:40}" > "$R"; before=$(cat "$R")
+run_in_project
+got=$(tail -n 1 "$R" | jq -c '[.answerIndex, .questionKey == ($v | fromjson).questionKey]' --arg v "$valid" 2>/dev/null)
+[[ $RC -eq 0 && -n "$valid" && $(wc -l < "$R") -eq 4 && "$(head -n 3 "$R")" == "$before" && "$got" == '[2,true]' ]] && pass "$name" \
+    || fail "$name" "rc=$RC lines=$(wc -l < "$R" | tr -d ' ') bad-lines-kept=$([[ "$(head -n 3 "$R")" == "$before" ]] && echo yes || echo no) [index,samekey]=$got"
+
+# a hook killed while holding the lock leaves its folder behind: once it is old, the next answer takes it
+# over, or every later answer would be skipped forever. (A fresh lock is still waited on, then skipped:
+# see "should give up quietly" above.)
+name='should take over a lock left by a crashed hook once it is older than 10 seconds'
+new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"
+then_s=$(($(date +%s) - 60))
+stamp=$(date -r "$then_s" +%Y%m%d%H%M.%S 2>/dev/null || date -d "@$then_s" +%Y%m%d%H%M.%S)
+mkdir "$R.lock" && touch -t "$stamp" "$R.lock"
+run_in_project
+got=$(jq -c '.answerIndex' "$R" 2>/dev/null)
+[[ $RC -eq 0 && "$got" == 1 && ! -e "$R.lock" && ! -s "$T/err" ]] && pass "$name" \
+    || fail "$name" "rc=$RC answerIndex=$got lock-left=$([[ -e "$R.lock" ]] && echo yes || echo no) stderr=$(cat "$T/err")"
+
 echo "$RUN run, $FAILED failed"
 [[ $FAILED -eq 0 ]]

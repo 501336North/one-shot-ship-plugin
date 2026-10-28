@@ -77,14 +77,21 @@ done
 oss_safe_target "$proj" "$rec" || { oss_refuse_unsafe "$rec"; exit 0; }
 file="$_OSS_SAFE_DIR/${rec##*/}"
 # one session at a time reads the count and appends (mkdir is atomic; macOS has no flock). A record
-# held for ~2 s is skipped quietly: a hook never stalls the picker.
+# held for ~2 s is skipped quietly: a hook never stalls the picker. A lock older than 10 s was left by a
+# hook that died: it is taken over (rmdir: only an empty, real folder), or the record would stop for good.
 lock="$file.lock"
-for ((t = 0; t < 40; t++)); do mkdir "$lock" 2>/dev/null && break; sleep 0.05; done
+for ((t = 0; t < 40; t++)); do
+    mkdir "$lock" 2>/dev/null && break
+    m=$(stat -c %Y "$lock" 2>/dev/null || stat -f %m "$lock" 2>/dev/null)
+    [[ ! -L "$lock" && "$m" =~ ^[0-9]+$ ]] && (($(date +%s) - m > 10)) && rmdir "$lock" 2>/dev/null && continue
+    sleep 0.05
+done
 ((t < 40)) || exit 0
 trap 'rmdir "$lock" 2>/dev/null' EXIT
-# answerIndex: 1 + the lines this record already holds for the same questionKey
+# answerIndex: 1 + the lines this record already holds for the same questionKey. A line that is not JSON
+# (a merge-conflict marker, a line cut short) is not counted and is left as it is: the record goes on.
 old=/dev/null; [[ -f "$file" ]] && old="$file"
-lines=$(printf '%s' "$lines" | jq -c --slurpfile old "$old" '
-    . as $l | .answerIndex = 1 + ([$old[] | select(.questionKey == $l.questionKey)] | length)' 2>/dev/null) || exit 0
+lines=$(printf '%s' "$lines" | jq -c --rawfile old "$old" '
+    . as $l | .answerIndex = 1 + ([$old | split("\n")[] | fromjson? | select(.questionKey == $l.questionKey)] | length)' 2>/dev/null) || exit 0
 printf '%s\n' "$lines" >> "$file"
 exit 0
