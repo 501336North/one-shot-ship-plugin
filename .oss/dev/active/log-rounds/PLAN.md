@@ -30,7 +30,8 @@ Sites that write or read the command-log banner (`git grep` on origin/main, plug
 - [ ] `should still trim a log whose dropped part has no banner` (control: a `write`-only log over the cap → `clean` prints `Done.` and the log is trimmed). Both hooks run under `set -euo pipefail`: a grep with no match exits 1 and aborts the script. Write this test RED-first, before the GREEN code it guards.
 **GREEN:** in `check_command_log_size`, copy the `OSS Command:` lines from the part being dropped into the kept file (after the truncation notice) before the last 1000 lines.
 
-### Task 3: The analyzer reports the latest round only
+### Task 3: The analyzer reports the latest round only — DROPPED (2026-10-28, user decision)
+`hooks/oss-log-analyzer.sh` (and `oss-push-metrics.sh`) have no caller: not in hooks.json, commands, scripts, or AgenticDevWorkflow. It also reads `$HOME/.oss/logs` while oss-log.sh writes project-local logs. Fixing it would change code that never runs; moved to `.oss/dev/FOLLOWUPS.md` (wire up or delete). The task as originally planned:
 **Tests (RED):** `watcher/test/hooks/oss-log-analyzer-rounds.test.ts` (temp HOME; the analyzer reads `$HOME/.oss/logs/current-session`)
 - [ ] `should take the start time from the latest round` — a build.log with two banners (`Started: … 10:00:00` and `… 11:00:00`) → reported start is 11:00:00.
 - [ ] `should count only the latest round's test results` — round 1 has 3 `[TEST] … FAIL` lines AND 1 PASS line, round 2 has 1 PASS → failed 0, passed 1. (Round 1 needs the PASS line: without it, reverting only the PASS-count site stays green.)

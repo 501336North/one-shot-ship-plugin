@@ -1,5 +1,13 @@
 # Learnings
 
+## 2026-10-28 | Testing | hooks
+- **Context:** log-rounds (build round 2, oss-log.sh trim)
+- **Insight:** In a `set -euo pipefail` hook, `cmd | grep x >> f` aborts the whole script when grep finds nothing. Attempt 1 hit it by accident after GREEN; round 2 kept GREEN minimal on purpose (no `|| true`), then wrote "dropped part has no banner" RED first: it failed with `clean` exiting non-zero, which proved the guard is load-bearing. When a hook gains a grep, plan the no-match test as its own cycle.
+
+## 2026-10-28 | Process | hooks
+- **Context:** log-rounds (provenance check before Task 3)
+- **Insight:** Before fixing a reader, check that anything calls it. The plan's provenance table listed oss-log-analyzer.sh as a site to fix, but nothing in hooks.json, commands, scripts or the API repo invokes it (or oss-push-metrics.sh). A `git grep` for callers belongs next to the grep for sites; it turned a planned task into a follow-up. (The 2026-10-19 entry below about init truncating build.log is resolved by this branch.)
+
 ## 2026-10-20 | Testing | hooks
 - **Context:** plugin-value-flags (build P2-P3, oss-value.sh)
 - **Insight:** A refusal test proves nothing when something downstream would refuse the same input. oss-error.js validates codes and fields itself, `test -d` rejects a relative or two-line path, and a script without the verb exits 2 with usage: each made the helper's own checks removable with the suite green. Assert that the downstream tool never ran (a recording `node` on PATH), give each rule an input only that rule rejects (a relative root that resolves below the cwd, a directory whose name has a newline), and do not accept rc 2 as a refusal.
