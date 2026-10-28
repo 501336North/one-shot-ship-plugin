@@ -97,7 +97,8 @@ done
 ((t < 40)) || exit 0
 trap 'rmdir "$lock" 2>/dev/null' EXIT
 # answerIndex: 1 + the lines this record already holds for the same questionKey. A line that is not JSON
-# (a merge-conflict marker, a line cut short), or JSON that is not an object (42, "x", [1]), is not counted and is left as it is: the record goes on.
+# (a merge-conflict marker, a line cut short), or JSON that is not an object (42, "x", [1]), is not counted
+# and is left as it is: the record goes on.
 old=/dev/null; [[ -f "$file" ]] && old="$file"
 lines=$(printf '%s' "$lines" | jq -c --rawfile old "$old" '
     . as $l | .answerIndex = 1 + ([$old | split("\n")[] | fromjson? | objects | select(.questionKey == $l.questionKey)] | length)' 2>/dev/null) || exit 0
