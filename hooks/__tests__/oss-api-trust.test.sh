@@ -153,7 +153,7 @@ for row in "https://api.example.com 600" "http://localhost:3001 664"; do
 done
 rm -f "$T/curl-calls"; printf '{"apiKey":"k","apiUrl":"http://localhost:3001"}' > "$T/.oss/config.json"; chmod 600 "$T/.oss/config.json"
 call oss_custom_iron_laws "$T/curlrec:$PATH"
-[[ "$RC" == 0 && "$OUT" == "## Custom Team Laws"* && "$(cat "$T/curl-calls")" == *"http://localhost:3001/api/v1/prompts/shared/iron-laws?part=custom" ]] \
+[[ "$RC" == 0 && "$OUT" == *$'\n## Custom Team Laws\n'* && "$(cat "$T/curl-calls")" == *"http://localhost:3001/api/v1/prompts/shared/iron-laws?part=custom" ]] \
     && pass "team laws: a trusted apiUrl is fetched at <origin>/api/v1/prompts/shared/iron-laws?part=custom" \
     || fail "team laws: a trusted apiUrl is fetched" "rc=$RC out='$OUT' calls=$(cat "$T/curl-calls" 2>/dev/null)"
 

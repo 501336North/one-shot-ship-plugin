@@ -10,7 +10,7 @@
 # Prints the IRON LAWS, fetched and verified by the decrypt CLI (ship round 1 FR15): it checks the
 # body's sha256 against the signed manifest entry shared/iron-laws and refuses on any failure, so
 # unverified laws are never printed. ensure-decrypt-cli.sh installs or upgrades the CLI first, every time.
-# Below them: the team/personal section (oss_custom_iron_laws, SR16), after one line saying it is unverified.
+# Below them: the team/personal section (oss_custom_iron_laws, SR16), after one line saying it is unverified, fenced (UR1').
 #
 # Exit codes: 0 laws printed; 1 not logged in, CLI missing and not installable, auth failure,
 # laws refused; otherwise the CLI's exit code (API unreachable or other failure).
@@ -110,5 +110,5 @@ fi
 
 # Below the verified laws: the team/personal section, marked unverified (SR16); none or a failed fetch: the laws alone.
 if CUSTOM=$(oss_custom_iron_laws); then
-  printf '\n%s\n\n%s\n\n%s\n' "$OSS_CUSTOM_LAWS_NOTE" "$CUSTOM" "$OSS_CUSTOM_LAWS_END"
+  printf '\n%s\n' "$CUSTOM"   # the note, the fenced section, the closing line (UR1')
 fi

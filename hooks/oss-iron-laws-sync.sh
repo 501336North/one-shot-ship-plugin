@@ -22,7 +22,8 @@
 # A failed fetch sets a 1h backoff; only a validated write marks the cache fresh (24h). A failed team-section fetch
 # still writes the verified laws, with the 1h backoff (TR4).
 # Below the verified laws, inside the block: the team/personal section (oss_custom_iron_laws, SR16), after one line
-# saying it is unverified; when there is none or its fetch fails, the verified laws alone.
+# saying it is unverified, inside a backtick fence it cannot close, then a closing line (UR1'); when there is none or
+# its fetch fails, the verified laws alone.
 #
 # Exit codes (refresh mode always exits 0, so session start never fails):
 #   0  done or nothing to do
@@ -161,11 +162,7 @@ fetch_body() {
     local custom rc=0
     custom=$(oss_custom_iron_laws) || rc=$?
     (( rc == 2 )) && CUSTOM_FAILED=1
-    if (( rc == 0 )); then
-        { printf '\n%s\n\n' "$OSS_CUSTOM_LAWS_NOTE"
-          printf '%s\n' "$custom" | awk '!/^[[:space:]]*<!--[[:space:]]*IRON LAWS (START|END)/'
-          printf '\n%s\n' "$OSS_CUSTOM_LAWS_END"; } >> "$out"
-    fi
+    if (( rc == 0 )); then printf '\n%s\n' "$custom" >> "$out"; fi   # the note, the fenced section, the closing line (UR1')
 }
 
 # --- write -----------------------------------------------------------------------------------

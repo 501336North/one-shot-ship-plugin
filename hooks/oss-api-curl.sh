@@ -165,24 +165,31 @@ OSS_CUSTOM_LAWS_MAX_BYTES=16384
 # How long the section's fetch may take, in seconds (TR4: it runs in a foreground sync at session start).
 OSS_CUSTOM_LAWS_MAX_TIME=5
 
-# The jq filter oss_custom_iron_laws runs on the section: the stripControl character set is removed (line breaks and
-# tabs kept), THEN (TR2), on every line but the first, the API's heading: a Markdown heading at any indentation loses
-# its #s (the API's "### <law name>" lines stay), a setext underline or thematic break is emptied, and a line that
-# reads like OSS_CUSTOM_LAWS_NOTE or OSS_CUSTOM_LAWS_END is emptied. Stripping first means a zero-width character
-# cannot hide a heading from the API's filter and then vanish here. Over $max bytes: nothing (TR3).
-_OSS_CUSTOM_LAWS_JQ='gsub("[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]"; "")
-    | split("\n")
-    | .[0:1] + (.[1:] | map(
-        (if test("^\\s*#{1,6}(\\s|$)") and (test("^### [^#\\s]") | not) then sub("^\\s*(#+(\\s+|$))+"; "") else . end)
-        | if test("^\\s*(=+\\s*|-+\\s*|([-*_]\\s*){3,})$") or test("^[\\s>*_#]*(team/personal laws|end of unverified)"; "i")
-          then "" else . end))
-    | join("\n")
-    | if utf8bytelength > $max then "" else . end'
+# The characters removed from the section before anything else (UR1'): one table. Unicode Cf (format: zero-width,
+# bidi, tags, ...), the C0/C1 controls and DEL (line feed and tab kept; CR removed), U+2028/U+2029 (line breaks a
+# reader may honour), and the invisible fillers that are not Cf: U+00AD, U+034F, U+061C, U+115F, U+1160, U+180E,
+# U+2060-2064, U+3164, U+FEFF, U+E0000-E007F (written as surrogate pairs: jq strings take no \u{...}). A jq def, not
+# an --arg: only a jq string literal turns \uXXXX into the character (Oniguruma reads \u as a plain u).
+_OSS_INVISIBLE_JQ='def invisible: "[\\p{Cf}\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f\u1160\u180e\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\u3164\ufeff\udb40\udc00-\udb40\udc7f]";'
 
-# oss_custom_iron_laws - prints the team/personal IRON LAWS section the API serves beside the signed laws
-# (GET /api/v1/prompts/shared/iron-laws?part=custom: only the "## Custom Team Laws" / "## Custom Personal Laws"
-# part, or an empty body), with the stripControl character set removed (line breaks and tabs kept). It is NOT
-# verified: callers write OSS_CUSTOM_LAWS_NOTE above it and OSS_CUSTOM_LAWS_END below it. Nothing printed and
+# The jq filter oss_custom_iron_laws runs on the section (UR1'): the table above removed, IRON LAWS marker lines
+# dropped (CLAUDE.md's block is found by whole lines, fence or not), then the whole block: the note, the section in a
+# backtick fence (info string "text") longer than any backtick run in it, so no line of the team's text can close it
+# and everything inside stays one code block of literal text, then the closing line. Prints "" over $max bytes (no
+# section, TR3) and "!" when the first line is not exactly the API's heading (not a section).
+_OSS_CUSTOM_LAWS_JQ="$_OSS_INVISIBLE_JQ"'
+    gsub(invisible; "")
+    | split("\n") | map(select(test("^\\s*<!--\\s*IRON LAWS (START|END)") | not)) | join("\n")
+    | sub("\n+$"; "")
+    | if utf8bytelength > $max then ""
+      elif (split("\n")[0] | . != "## Custom Team Laws" and . != "## Custom Personal Laws") then "!"
+      else ("`" * ([4, ([scan("`+") | length] | max // 0) + 1] | max)) as $fence
+        | $note + "\n\n" + $fence + "text\n" + . + "\n" + $fence + "\n\n" + $end end'
+
+# oss_custom_iron_laws - prints the team/personal IRON LAWS block written below the signed laws (SR16, UR1'): the
+# section the API serves (GET /api/v1/prompts/shared/iron-laws?part=custom: only "## Custom Team Laws" /
+# "## Custom Personal Laws", or an empty body), invisible characters removed, fenced between OSS_CUSTOM_LAWS_NOTE and
+# OSS_CUSTOM_LAWS_END (see _OSS_CUSTOM_LAWS_JQ). It is NOT verified. Nothing printed and
 #   rc 1 (no section) when the config is untrusted (the key is never sent), jq is missing, or the body is empty or
 #        over the cap;
 #   rc 2 (the fetch FAILED: curl or HTTP error, a 3xx (never followed), a 2xx that is not that section (an older API
@@ -198,9 +205,9 @@ oss_custom_iron_laws() {
     case "${body##*$'\n'}" in 2[0-9][0-9]) ;; *) return 2 ;; esac   # UR11: a 3xx (not followed) is a failed fetch
     body=${body%$'\n'*}
     [[ -n "$body" ]] || return 1   # an empty 200: no section
-    body=$(printf '%s' "$body" | jq -Rrs --argjson max "$OSS_CUSTOM_LAWS_MAX_BYTES" "$_OSS_CUSTOM_LAWS_JQ") || return 1
-    [[ -n "$body" ]] || return 1   # over the cap after stripping: no section
-    case "$body" in "## Custom Team Laws"* | "## Custom Personal Laws"*) ;; *) return 2 ;; esac   # UR11: not a section
+    body=$(printf '%s' "$body" | jq -Rrs --argjson max "$OSS_CUSTOM_LAWS_MAX_BYTES" \
+        --arg note "$OSS_CUSTOM_LAWS_NOTE" --arg end "$OSS_CUSTOM_LAWS_END" "$_OSS_CUSTOM_LAWS_JQ") || return 1
+    case "$body" in '') return 1 ;; '!') return 2 ;; esac   # over the cap: no section; UR11: not a section
     printf '%s\n' "$body"
 }
 
