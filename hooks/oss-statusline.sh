@@ -101,7 +101,9 @@ compute_channel() {
     # a NUL, or anything else goes the full way. Skipping the trust check here hides no key: oss_api_url/oss_api_key
     # still refuse an untrusted config where the key is sent; only the "apiUrl invalid" warning is not shown for it.
     cf="${OSS_CONFIG_DIR:-$HOME/.oss}/config.json"
-    if ! $beta && [[ -f "$cf" && ! -L "$cf" ]] && ! IFS= read -r -d '' cfg < "$cf" \
+    # UR5: only a config this user owns and can read (a failed redirection would also end `read` with rc 1); the
+    # read's own errors are silenced (2>/dev/null BEFORE the <, or the failed open still prints), never shown.
+    if ! $beta && [[ -f "$cf" && ! -L "$cf" && -O "$cf" && -r "$cf" ]] && ! IFS= read -r -d '' cfg 2>/dev/null < "$cf" \
         && [[ "$cfg" != *apiUrl* && "$cfg" != *\\* ]]; then
         return 0
     fi

@@ -26,8 +26,9 @@ oss_api_curl() {
     # and not a here-string, which bash 3.2 backs with a temp file (the key on disk).
     # -q must stay FIRST: it stops curl reading a default .curlrc ($CURL_HOME, $XDG_CONFIG_HOME, $HOME), whose
     # url=/trace-ascii= lines would send the key to a second host or write it to disk. --globoff: no {a,b}/[1-2]
-    # expansion, so one call is one keyed request.
-    curl -q --globoff --config - "$@" < <(printf 'header = "Authorization: Bearer %s"\n' "$key")
+    # expansion, so one call is one keyed request. --noproxy '*' (UR2): a *_proxy variable never receives the key (the
+    # CLI and the watcher ignore them too).
+    curl -q --globoff --noproxy '*' --config - "$@" < <(printf 'header = "Authorization: Bearer %s"\n' "$key")
 }
 
 # The OSS config file, as getConfigDir in packages/cli-decrypt/src/config.ts picks it: the key and the URL
@@ -57,12 +58,15 @@ oss_config_trusted() {
 # _oss_config_read - the trust check, then the ONE read of the OSS config (SR3): sets _OSS_CFG to its text ('' when
 # missing). The URL and the key are taken from this copy, never by reading the path again after the check.
 # rc 1 when the config may not be read, or holds a NUL byte (not JSON; `read -d ''` stops there and returns 0).
+# _OSS_CFG is empty after EVERY failure (UR4), so a caller that ignores the rc still finds no key or URL. An
+# unreadable config is a failure, never read as a missing one (production).
 _oss_config_read() {
     local f="${OSS_CONFIG_DIR:-$HOME/.oss}/config.json"
     _OSS_CFG=''
     oss_config_trusted || return 1
     [[ -e "$f" ]] || return 0
-    ! IFS= read -r -d '' _OSS_CFG < "$f"
+    [[ -r "$f" ]] || return 1   # unreadable is not missing: a failed redirection would also end `read` with rc 1
+    ! IFS= read -r -d '' _OSS_CFG < "$f" || { _OSS_CFG=''; return 1; }
 }
 
 # oss_api_key - prints apiKey from the OSS config when it is a non-empty string; otherwise prints nothing
@@ -70,11 +74,25 @@ _oss_config_read() {
 # naming "apiKey" twice (a nested one too) or a value with a backslash (an escape) is refused, not guessed at.
 oss_api_key() { _oss_config_read && _oss_cfg_key; }
 
+# _oss_cfg_flat - without jq, the config is read by regex only when it is flat JSON (UR3): ONE object of string keys to
+# scalars or arrays of scalars, no backslash anywhere (so no \u-spelled key) and no second "{" (so no nested key).
+# Anything else (invalid JSON too) could read differently from jq and JSON.parse in the CLI, so it is refused.
+_oss_cfg_flat() {
+    local w='[[:space:]]*' str='"[^"\\[:cntrl:]]*"' num='-?(0|[1-9][0-9]*)([.][0-9]+)?([eE][+-]?[0-9]+)?' v m re
+    v="(${str}|${num}|true|false|null)"   # braces: zsh reads $w[ as a subscript
+    v="(${v}|\\[${w}(${v}(${w},${w}${v})*)?${w}\\])"
+    m="${str}${w}:${w}${v}"
+    re="^${w}[{]${w}(${m}(${w},${w}${m})*)?${w}[}]${w}\$"
+    [[ "$_OSS_CFG" =~ $re ]]
+}
+
 # _oss_cfg_key - oss_api_key over the copy _oss_config_read made (TR5: callers that also need the URL read once).
 _oss_cfg_key() {
     local key='' re='"apiKey"[[:space:]]*:[[:space:]]*"([^"]*)"' twice='"apiKey".*"apiKey"'
     if command -v jq &>/dev/null; then
         key=$(printf '%s' "$_OSS_CFG" | jq -r 'if (.apiKey | type) == "string" then .apiKey else "" end' 2>/dev/null)
+    elif ! _oss_cfg_flat; then
+        return 1
     elif [[ "$_OSS_CFG" =~ $re ]]; then
         key=${BASH_REMATCH[1]-${match[1]-}}   # bash, zsh
         [[ "$key" == *\\* || "$_OSS_CFG" =~ $twice ]] && return 1
@@ -106,6 +124,8 @@ _oss_url_syntax() {
                      elif (.apiUrl | type) != "string" then "!"
                      elif (.apiUrl | test("[^!-~]")) then "!"
                      else .apiUrl end' 2>/dev/null)
+    elif [[ -n "$_OSS_CFG" ]] && ! _oss_cfg_flat; then
+        return 1   # UR3: not flat JSON, so the regex below could disagree with the CLI (an escaped "apiUrl")
     elif [[ "$_OSS_CFG" =~ $named ]]; then
         return 1   # FR5: a named apiUrl (non-empty, non-null) is never read as production just because jq is missing
     fi

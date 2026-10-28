@@ -188,6 +188,59 @@ printf '{"apiKey":"plain-k"}' > "$T/.oss/config.json"; call oss_api_key "$T/nojq
 [[ "$RC" == 0 && "$OUT" == plain-k ]] && pass "without jq: the flat config /oss:login writes still gives its key" \
     || fail "without jq: the flat config still gives its key" "rc=$RC out='$OUT'"
 
+# UR3 (#1b): without jq, a regex reads the config, and it disagreed with jq / JSON.parse (the CLI) on duplicate keys, \u
+# escapes, nested keys and invalid JSON. Such a config is refused for the key AND the URL unless it is flat: one object
+# of string keys to scalar values (or arrays of scalars), no backslash anywhere, exactly one "{".
+nojq_refused_case() {  # nojq_refused_case <config> <label>
+    rm -f "$T/.oss/config.json"; printf '%s' "$1" > "$T/.oss/config.json"; chmod 600 "$T/.oss/config.json"
+    call oss_api_key "$T/nojq"; local kr=$RC ko=$OUT
+    call oss_api_url "$T/nojq"
+    [[ "$kr" != 0 && -z "$ko" && "$RC" != 0 && -z "$OUT" ]] && pass "without jq: $2 → key AND URL refused" \
+        || fail "without jq: $2 → key AND URL refused" "key rc=$kr '$ko' url rc=$RC '$OUT'"
+}
+nojq_refused_case '{"apiKey":"evil","\u0061piKey":"abc"}' 'a \u-spelled second apiKey (JSON: abc)'
+nojq_refused_case '{"api\u004bey":"abc"}' 'a \u-spelled apiKey'
+nojq_refused_case '{"meta":{"apiKey":"nested-k"}}' 'a nested-only apiKey (JSON: none)'
+nojq_refused_case '{"apiKey":"A",}' 'invalid JSON (trailing comma)'
+nojq_refused_case '{"apiKey":"A" "x":1}' 'invalid JSON (missing comma)'
+nojq_refused_case '{"apiKey":"k","api\u0055rl":"https://one-shot-ship-api-staging.onrender.com"}' 'an escaped apiUrl naming staging (CLI: staging)'
+rm -f "$T/.oss/config.json"; printf '{"apiKey":"evil","apiKey":"abc"}' > "$T/.oss/config.json"; chmod 600 "$T/.oss/config.json"
+call oss_api_key "$T/nojq"
+[[ "$RC" != 0 && -z "$OUT" ]] && pass "without jq: a duplicated apiKey (JSON: the last) → no key" || fail "without jq: a duplicated apiKey → no key" "rc=$RC out='$OUT'"
+nojq_flat_case() {  # nojq_flat_case <config> <want key> <want url> <label>
+    rm -f "$T/.oss/config.json"; printf '%s' "$1" > "$T/.oss/config.json"; chmod 600 "$T/.oss/config.json"
+    call oss_api_key "$T/nojq"; local ko=$OUT
+    call oss_api_url "$T/nojq"
+    [[ "$ko" == "$2" && "$OUT" == "$3" ]] && pass "without jq: $4 → still read" || fail "without jq: $4 → still read" "key '$ko' url '$OUT'"
+}
+nojq_flat_case $' {\n  "apiKey": "flat-k",\n  "n": -1.5e3, "b": true, "z": null, "tags": ["a", 2, false], "e": []\n}\n' flat-k \
+    https://one-shot-ship-api.onrender.com "a pretty-printed flat config with numbers, booleans, null and arrays of scalars"
+rm -f "$T/.oss/config.json"; call oss_api_url "$T/nojq"
+[[ "$RC" == 0 && "$OUT" == https://one-shot-ship-api.onrender.com ]] && pass "without jq: no config at all still means production" \
+    || fail "without jq: no config at all still means production" "rc=$RC out='$OUT'"
+for cfg in '{"apiKey":"evil","\u0061piKey":"abc"}' '{"meta":{"apiKey":"nested-k"},"apiKey":"top-k"}'; do
+    printf '%s' "$cfg" > "$T/.oss/config.json"; chmod 600 "$T/.oss/config.json"; call oss_api_key
+    [[ "$RC" == 0 && -n "$OUT" && "$OUT" != evil && "$OUT" != nested-k ]] && pass "with jq: $cfg is read as JSON reads it (unchanged)" \
+        || fail "with jq: $cfg is read as JSON reads it" "rc=$RC out='$OUT'"
+done
+
+# UR4: _oss_config_read leaves _OSS_CFG empty on EVERY failure. A NUL byte stops `read -d ''` with rc 0 and the text
+# before it in the variable; a caller that ignored the rc would still find a key there.
+rm -f "$T/.oss/config.json"; printf '{"apiKey":"pre-nul-k"}\0{"apiKey":"x"}' > "$T/.oss/config.json"; chmod 600 "$T/.oss/config.json"
+for p in "$PATH" "$T/nojq"; do
+    lbl="with jq"; [[ "$p" == "$T/nojq" ]] && lbl="without jq"
+    call '_oss_config_read; echo "rc=$? cfg=[$_OSS_CFG] key=[$(_oss_cfg_key)]"' "$p"
+    [[ "$OUT" == "rc=1 cfg=[] key=[]" ]] && pass "a config holding a NUL byte: rc 1, _OSS_CFG empty, no key ($lbl)" \
+        || fail "a config holding a NUL byte: rc 1, _OSS_CFG empty, no key ($lbl)" "$OUT"
+done
+printf '{"apiKey":"k"}' > "$T/.oss/config.json"; chmod 000 "$T/.oss/config.json"
+call '_oss_config_read; echo "rc=$? cfg=[$_OSS_CFG]"; oss_api_url; echo "url-rc=$?"'
+[[ "$OUT" == $'rc=1 cfg=[]\nurl-rc=1' ]] && pass "an unreadable (mode 000) config: rc 1, and no URL (not read as a missing config, i.e. production)" \
+    || fail "an unreadable (mode 000) config: rc 1, no URL" "$OUT"
+chmod 666 "$T/.oss/config.json"
+call '_OSS_CFG=stale; _oss_config_read; echo "rc=$? cfg=[$_OSS_CFG]"'; chmod 600 "$T/.oss/config.json"
+[[ "$OUT" == "rc=1 cfg=[]" ]] && pass "an untrusted (world-writable) config: rc 1, _OSS_CFG empty" || fail "an untrusted config: rc 1, _OSS_CFG empty" "$OUT"
+
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
 [[ $FAILED -eq 0 ]]

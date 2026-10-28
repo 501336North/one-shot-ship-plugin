@@ -235,7 +235,8 @@ _ov_cmd_api() {
         1:workflow) _ov_dir && _ov_get workflow && e="workflows/$_OV_VAL" ;;
         *) false ;;
     esac || { echo "oss-value: api: refused (not auth/verify, workflows or workflow, or workflow.txt missing or not a valid name)" >&2; return 1; }
-    source "$_OV_HERE/oss-api-curl.sh" && u=$(oss_api_url) && k=$(oss_api_key) \
+    # One read of the config for the URL AND the key (UR6, as TR5): a file swapped in between cannot mix them.
+    source "$_OV_HERE/oss-api-curl.sh" && _oss_config_read && u=$(_oss_cfg_origin) && k=$(_oss_cfg_key) \
     || { echo "oss-value: api: refused (no API key, or apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment)" >&2; return 1; }
     oss_api_curl "$k" -s -m 30 "$u/api/v1/$e"
 }
