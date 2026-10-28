@@ -39,6 +39,17 @@ describe('oss-log.sh command log rounds', () => {
   const countBanners = (log: string): number =>
     log.split('\n').filter((line) => line.includes('OSS Command: /oss:build')).length;
 
+  const capCommandLogAt1KB = (): void =>
+    fs.writeFileSync(
+      path.join(home, '.oss/settings.json'),
+      JSON.stringify({ logs: { maxCommandLogSizeKB: 1 } })
+    );
+
+  const appendFiller = (label: string): void => {
+    const filler = Array.from({ length: 1100 }, (_, n) => `[00:00:00] filler line ${label}${n}`);
+    fs.appendFileSync(buildLogPath(), `${filler.join('\n')}\n`);
+  };
+
   beforeEach(() => {
     world = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-log-rounds-'));
     home = path.join(world, 'home');
@@ -85,17 +96,10 @@ describe('oss-log.sh command log rounds', () => {
    *   the log is trimmed (fewer than 3300 lines) and all three banners remain
    */
   it("should keep every round's banner when the log is trimmed", () => {
-    fs.writeFileSync(
-      path.join(home, '.oss/settings.json'),
-      JSON.stringify({ logs: { maxCommandLogSizeKB: 1 } })
-    );
+    capCommandLogAt1KB();
     for (let round = 1; round <= 3; round++) {
       runLog('init', 'build');
-      const filler = Array.from(
-        { length: 1100 },
-        (_, n) => `[00:00:00] filler line ${round}-${n}`
-      ).join('\n');
-      fs.appendFileSync(buildLogPath(), `${filler}\n`);
+      appendFiller(`${round}-`);
     }
 
     runLog('clean');
@@ -112,15 +116,9 @@ describe('oss-log.sh command log rounds', () => {
    *   clean completes (prints Done.) and the log has fewer than 1100 lines
    */
   it('should still trim a log whose dropped part has no banner', () => {
-    fs.writeFileSync(
-      path.join(home, '.oss/settings.json'),
-      JSON.stringify({ logs: { maxCommandLogSizeKB: 1 } })
-    );
+    capCommandLogAt1KB();
     runLog('write', 'build', 'no banner here');
-    const filler = Array.from({ length: 1100 }, (_, n) => `[00:00:00] filler line ${n}`).join(
-      '\n'
-    );
-    fs.appendFileSync(buildLogPath(), `${filler}\n`);
+    appendFiller('');
 
     const out = runLog('clean');
 
