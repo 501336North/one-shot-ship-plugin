@@ -31,11 +31,10 @@ describe('oss-log.sh command log rounds', () => {
       encoding: 'utf-8',
     });
 
-  const readBuildLog = (): string =>
-    fs.readFileSync(
-      path.join(fs.realpathSync(project), '.oss/logs/current-session/build.log'),
-      'utf-8'
-    );
+  const buildLogPath = (): string =>
+    path.join(fs.realpathSync(project), '.oss/logs/current-session/build.log');
+
+  const readBuildLog = (): string => fs.readFileSync(buildLogPath(), 'utf-8');
 
   const countBanners = (log: string): number =>
     log.split('\n').filter((line) => line.includes('OSS Command: /oss:build')).length;
@@ -90,18 +89,13 @@ describe('oss-log.sh command log rounds', () => {
       path.join(home, '.oss/settings.json'),
       JSON.stringify({ logs: { maxCommandLogSizeKB: 1 } })
     );
-    const buildLogPath = path.join(
-      fs.realpathSync(project),
-      '.oss/logs/current-session/build.log'
-    );
-
     for (let round = 1; round <= 3; round++) {
       runLog('init', 'build');
       const filler = Array.from(
         { length: 1100 },
         (_, n) => `[00:00:00] filler line ${round}-${n}`
       ).join('\n');
-      fs.appendFileSync(buildLogPath, `${filler}\n`);
+      fs.appendFileSync(buildLogPath(), `${filler}\n`);
     }
 
     runLog('clean');
