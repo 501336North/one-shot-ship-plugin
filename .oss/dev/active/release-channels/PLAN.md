@@ -518,3 +518,37 @@ Rule unchanged: CRITICAL/HIGH/MED and every security finding block. RED first fo
   hook uses `^\s*#` (4+ spaces inside a list item is still a heading in the legacy body the stable plugin writes).
   One rule on both sides: drop leading container markers (`>`, `-`, `+`, `*`, `N.`, `N)`) and any indentation
   before testing for heading/setext/rule. Add these cases to the real-API integration test.
+
+## Ship round 4 fix tasks (2026-10-28, round-4 gates + round-3 integration)
+
+Gates: quality PASS (6 LOW), performance PASS (2 LOW), security FAIL (LOW), pentest FAIL (LOW).
+Maintainer decision 2026-10-28: "Fence, new plugin only" — the team section goes inside a container its text cannot
+leave; the legacy API body (stable plugin) stays as on main and is a release-time decision (FOLLOWUPS).
+UR1 above is replaced by UR1' below.
+
+### UR1' (security): the team section is fenced in the new plugin
+- `oss_custom_iron_laws` / sync / `fetch-iron-laws.sh`: after the unverified note, wrap the whole section in a
+  backtick fence (info string `text`) whose length is max(4, longest backtick run in the section + 1), then the
+  closing line, then END. Nothing inside can become a heading, note, closing line, comment, fence end or link
+  definition. Keep the control/invisible strip, widened to one shared table (Cf, Zl/Zp U+2028/2029, U+00AD, U+034F,
+  U+061C, U+115F/1160, U+180E, U+2060-2064, U+3164, U+FEFF, U+E0000-E007F). Line-level Markdown neutralising in the
+  hook becomes unnecessary: drop it if the fence invariant is tested (perf finding: 0.5 s jq on tiny lines).
+- First line must be exactly `## Custom Team Laws` or `## Custom Personal Laws`.
+- Real-API integration: every gate forgery (look-alikes, invisibles, U+2028, unclosed `<!--`/fence, `<details>`,
+  link reference definitions, forged note/closing/END) stays inside the fence; verified laws and the user's own
+  sections after the block render unchanged (markdown-it or an equivalent parser check).
+### UR2 (security): keyed curl never goes through a proxy — `--noproxy '*'` in `oss_api_curl` (and any other keyed curl)
+### UR3 (security, #1b): without jq, refuse any config that is not flat JSON (a backslash, or a second `{`) for key AND URL
+### UR4: `_oss_config_read` clears `_OSS_CFG` on every failure; session-start hooks check its rc and, on an untrusted
+  config, say so and continue the rest of session start without a key (pre-TR9 behaviour for everything else)
+### UR5: status-line fast path only for an owner-owned config with no group/world write; read errors silenced
+### UR6 (#1b): `oss-notify.sh`, `oss-value.sh` read URL and key from one `_oss_config_read`
+### UR7: watcher hint also stops at `## Custom Team Laws` / `## Custom Personal Laws` (blocks written by the stable plugin)
+### UR8: the real-API integration test is hermetic: no SMTP (stub the mail transport), hooks and curls under a scrubbed
+  env (no `*_proxy`, no `NODE_OPTIONS`), `--noproxy '*'`; never runs a stable-plugin script that can reach production
+### UR9: guards for `clearTimeout` in both `withDeadline`s (no pending timer after a resolved request) and for the
+  failed-team-fetch backoff under `--install`
+### UR10: `oss-fetch-team-iron-laws.sh` reads `teamId` from the checked config copy and requires `^[A-Za-z0-9_-]+$`
+### UR11: a 3xx (or a 2xx that is not a section) counts as a failed team fetch (1 h retry), not "no section"
+### UR12 (perf): a failing team fetch retries hourly on its own stamp; the verified-laws refresh stays daily
+### UR13 (API, regression vs legacy): `neutraliseLawMarkdown` splits on U+2028/U+2029 (the legacy `/m` sanitiser did)

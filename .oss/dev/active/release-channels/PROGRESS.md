@@ -1,6 +1,6 @@
 # Progress: Release channels (DEV / STAGING / PROD)
 
-## Current Phase: ship (round 3 fixes done; round 4 gates next)
+## Current Phase: ship (round 4 fixes in progress)
 
 ## Tasks
 - [x] Ideate, requirements, ADR-004/005, plan, acceptance (2026-10-26)
@@ -30,11 +30,13 @@
 - [x] Ship round 2 fixes SR1-SR18 (PLAN.md) through /oss:build, done 2026-10-27 (SR17 from the SR4 provenance check, SR18 from the merge): API SR1/SR15/SR16; CLI SR2/SR3/SR4/SR7/SR10/SR16; shell SR2/SR3/SR5/SR6/SR8/SR9/SR11/SR14/SR16; watcher SR2/SR10/SR12/SR13; docs: ADR-005 rules 1-3 and the FOLLOWUPS premise corrected
 - [x] Ship round 3 gates (2026-10-27): quality PASS, perf PASS (1 MED: CLI deadline on Node 25), security FAIL (2 LOW: CLI deadline, team-law heading forgery), pentest PASS (1 LOW: unverified section unbounded)
 - [x] Ship round 3 fixes TR1-TR10 (PLAN.md) through /oss:build, done 2026-10-27 (TR9 from the TR5/TR6 provenance check, TR10 a regression found by widening the regression to every tracked test)
-- [ ] Ship round 4: re-run the gates on the round-3 fixes
+- [x] Ship round 4 gates (2026-10-28): quality PASS (6 LOW), perf PASS (2 LOW), security FAIL (LOW), pentest FAIL (LOW; it also sent 3 throwaway-key requests to production by running a stable-plugin script: answered 401, no real key)
+- [ ] Ship round 4 fixes UR1-UR13 (PLAN.md) through /oss:build (in progress); maintainer decision: fence the team section, new plugin only
+- [ ] Ship round 5: re-run the gates on the round-4 fixes
 - [ ] Maintainer steps before the feature is usable on STAGING: publish tag cli-decrypt-v1.3.0-beta.1 and commit its checksums; T17 beta repo; H1 Render
 - [ ] Maintainer steps before the first RELEASE: re-sign the production manifest (every workflows/* entry, SR1); publish and pin a stable cli-decrypt >= 1.3.0
 
 ## Blockers
 - None. Gated steps: T11 (staging key), T17 (beta repo), H1 (Render/DB).
 
-## Last Updated: 2026-10-27 by /oss:build (ship round 3 fixes)
+## Last Updated: 2026-10-28 by /oss:build (ship round 4 fixes)
