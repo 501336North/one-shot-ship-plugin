@@ -23,6 +23,13 @@ File: `watcher/test/hooks/acceptance/hook-background-detach.acceptance.test.ts`.
 
 **Observed during warm-up:** one first exec of a new stub took 19.4 s at load average 9. That confirms DESIGN test defect 1.
 
+### T1 (2026-10-29, /oss:build, test-engineer)
+File: `watcher/test/hooks/oss-notify-analytics-detach.test.ts`, 3 tests.
+- RED on current code: 2 failed for the right reason. Output was still open 15 s after the request started, and the analytics curl argv had no `-m`. The control (event still sent) passed.
+- GREEN: 3/3. The acceptance "workflow start" test now passes; the other 3 acceptance tests stay RED (T2, T3).
+- Anti-vacuity: reverting the redirect turns only test 1 RED; removing `-m 5` turns only test 2 RED.
+- Whole hooks dir (safe config): 173/177. Failures: the 3 acceptance tests for T2/T3, and `oss-session-logging` "should log hook START event for session start" (6.7 s, a known flake, fixed by T11).
+
 ## Stability proof (T15)
 (5 runs per suite, plus 1 run under load, plus the real ~/.oss mtime check)
 

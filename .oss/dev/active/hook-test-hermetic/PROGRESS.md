@@ -1,10 +1,10 @@
 # Progress: hook-test-hermetic
 
-## Current Phase: acceptance (done, 4 RED tests uncommitted), next is build
+## Current Phase: build (started 2026-10-29; acceptance tests uncommitted until T1-T3 turn them GREEN)
 
 ## Tasks
-- [ ] T1: Analytics POST on workflow start is detached and time-limited (pending)
-- [ ] T2: A pending update notice never holds session events (pending)
+- [x] T1: Analytics POST on workflow start is detached and time-limited (completed 2026-10-29)
+- [ ] T2: A pending update notice never holds session events (in progress)
 - [ ] T3: Session start launches notify detached (pending)
 - [ ] T4: Provenance sweep of background jobs and unbounded curls in hooks/ (pending)
 - [ ] T5: setup.ts sandboxes HOME and kills nothing it did not start (pending)
@@ -23,4 +23,4 @@
 ## Blockers
 - None
 
-## Last Updated: 2026-10-28 by /oss:acceptance
+## Last Updated: 2026-10-29 07:49 CST by /oss:build (T1)
