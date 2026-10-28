@@ -109,5 +109,57 @@ lines=$(wc -l < "$T/err" | tr -d ' ')
 [[ $RC -eq 0 && ! -e "$REC" && "$lines" == 1 && "$(cat "$T/err")" =~ ^oss:.*jq ]] && pass "$name (no jq: one stderr line)" \
     || fail "$name (no jq: one stderr line)" "rc=$RC stderr-lines=$lines stderr=$(cat "$T/err") record=$(cat "$REC" 2>/dev/null)"
 
+# 6. a question the person left unanswered is not a decision: no line for it
+name='should skip a question with no entry in answers, and still record the answered one'
+for n in 0 1; do
+    jq --argjson n "$n" 'del(.tool_response.answers[.tool_response.questions[$n].question])' "$FIX/multi.json" > "$T/half.json"
+    run_hook "$T/half.json"; got=$(jq -sc '[.[].question]' "$REC" 2>/dev/null)
+    want=$(jq -c --argjson n "$n" '[.tool_response.questions[1 - $n].question]' "$FIX/multi.json")
+    [[ $RC -eq 0 && $(wc -l < "$REC") -eq 1 && "$got" == "$want" ]] && pass "$name (question $((n + 1)) unanswered)" \
+        || fail "$name (question $((n + 1)) unanswered)" "rc=$RC questions=$got"
+done
+
+# 7. the note a person adds to an answer is kept with it; anything but a text note is no note
+name='should store the person'"'"'s note on the answer from annotations, and null when there is none'
+for c in '{"notes":"because the deadline moved"}|"because the deadline moved"' '{"preview":"x"}|null' '{"notes":42}|null'; do
+    ann=${c%%|*}; want=${c#*|}
+    jq --argjson a "$ann" '.tool_response.annotations[.tool_response.questions[0].question] = $a' "$FIX/pick.json" > "$T/note.json"
+    run_hook "$T/note.json"; got=$(jq -c '.notes' "$REC" 2>/dev/null)
+    [[ $RC -eq 0 && "$got" == "$want" ]] && pass "$name ($ann)" || fail "$name ($ann)" "rc=$RC notes=$got"
+done
+
+# 8. Linux boxes (the GB10) have no uuidgen, some have no shasum: the answer is still recorded, same key
+name='should still write a line when uuidgen or shasum is missing'
+# run_hook_without <tool>: the hook on a PATH of only the tools it may call, minus <tool> -> RC
+run_hook_without() {
+    local B="$T/bin-no-$1" t w
+    rm -rf "$B"; mkdir -p "$B"
+    for t in bash cat cut date dirname git jq printf tr find ls pwd od head shasum sha256sum uuidgen; do
+        [[ " $* " == *" $t "* ]] && continue
+        w=$(command -v "$t" 2>/dev/null) && [[ "$w" == /* ]] && ln -s "$w" "$B/$t"
+    done
+    rm -f "$REC"; (cd "$P" && PATH="$B" "$B/bash" "$HOOK" < "$FIX/pick.json" 2>"$T/err"); RC=$?
+}
+run_hook_without nothing; key=$(jq -r '.questionKey' "$REC" 2>/dev/null)
+[[ $RC -eq 0 && "$key" =~ ^[0-9a-f]{16}$ ]] && pass "$name (all tools: the reference key)" || fail "$name (all tools: the reference key)" "rc=$RC key=$key"
+for t in uuidgen shasum; do
+    run_hook_without "$t"
+    got=$(jq -c --arg key "$key" '[(.id | test("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")), .questionKey == $key]' "$REC" 2>/dev/null)
+    [[ $RC -eq 0 && $(wc -l < "$REC" 2>/dev/null) -eq 1 && "$got" == "[true,true]" ]] && pass "$name (no $t)" \
+        || fail "$name (no $t)" "rc=$RC checks=$got line=$(cat "$REC" 2>/dev/null) stderr=$(cat "$T/err")"
+done
+# the API takes v4 ids only (z.uuidv4): 16 fallback ids must all carry the version and variant bits
+bad=0
+for _ in $(seq 16); do
+    run_hook_without uuidgen
+    jq -e '.id | test("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")' "$REC" >/dev/null 2>&1 || bad=$((bad + 1))
+done
+[[ $bad -eq 0 ]] && pass "$name (no uuidgen: every fallback id is a v4 uuid)" \
+    || fail "$name (no uuidgen: every fallback id is a v4 uuid)" "$bad of 16 ids were not v4"
+# no sha-256 tool at all: a line without its key is worse than none
+run_hook_without shasum sha256sum
+[[ $RC -eq 0 && ! -e "$REC" ]] && pass "$name (no hash tool at all: nothing written)" \
+    || fail "$name (no hash tool at all: nothing written)" "rc=$RC record=$(cat "$REC" 2>/dev/null)"
+
 echo "$RUN run, $FAILED failed"
 [[ $FAILED -eq 0 ]]

@@ -139,3 +139,7 @@
 ## 2026-10-23 | Security | hooks/ensure-decrypt-cli.sh
 - **Context:** build (decrypt-version-source PR 2)
 - **Insight:** Never put text read from a file into bash `$(( ))` before checking it is digits only: arithmetic evaluates names and `a[$(cmd)]`, so a stamp file becomes command execution. Also: raising a version floor forces every existing user through the download path; make that path fail soft when a working binary exists (but never on a hash mismatch), cap the whole upgrade below the caller's timeout (small file first, binary gets the rest), and back off after a failure, or slow and offline users lose the tool.
+
+## 2026-10-28 | Testing | hooks/oss-decision-record.sh (radical-observability Task 8b)
+- **Context:** build
+- **Insight:** A "skip the unanswered question" test passed before the code existed, because the unanswered question in the fixture was a multiSelect one and `picks(null; …)` made jq error, so `|| continue` skipped it by accident. Feed the same rule through every branch (here a single-select question too, which DID write `choice: null`) before trusting a first-run pass. Also: a check on random output (the uuid variant bits) that passes 75% of the time without the code is no guard; repeat it (16 runs leaves a 0.25^16 chance of a false pass) and prove it with the mutation.
