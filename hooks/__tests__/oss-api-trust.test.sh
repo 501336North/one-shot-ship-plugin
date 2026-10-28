@@ -143,7 +143,7 @@ channel_dir_case 775 refused "~/.oss -> ~/.oss-beta (0775), config 0600, loopbac
 
 # SR16: the team IRON LAWS fetch (oss_custom_iron_laws) sends the key only where oss_api_url allows: an untrusted
 # apiUrl (a custom host, or loopback named by a group-writable config) makes no curl call at all.
-mkdir -p "$T/curlrec"; printf '#!/bin/bash\necho "$*" >> "%s/curl-calls"\nprintf "## Custom Team Laws\\n- x\\n"\n' "$T" > "$T/curlrec/curl"; chmod +x "$T/curlrec/curl"
+mkdir -p "$T/curlrec"; printf '#!/bin/bash\necho "$*" >> "%s/curl-calls"\nprintf "## Custom Team Laws\\n- x\\n\\n200"\n' "$T" > "$T/curlrec/curl"; chmod +x "$T/curlrec/curl"
 for row in "https://api.example.com 600" "http://localhost:3001 664"; do
     set -- $row; rm -f "$T/curl-calls" "$T/.oss/config.json"
     printf '{"apiKey":"k","apiUrl":"%s"}' "$1" > "$T/.oss/config.json"; chmod "$2" "$T/.oss/config.json"
@@ -162,7 +162,7 @@ call oss_custom_iron_laws "$T/curlrec:$PATH"
 # file is private here (600), so only a second read, not the trust check, can tell the two apart.
 mkdir -p "$T/swap-one"
 printf '#!/bin/bash\n[[ -f "%s" ]] && mv -f "%s" "%s"\nexec "%s" "$@"\n' "$T/evil.json" "$T/evil.json" "$T/.oss/config.json" "$(command -v jq)" > "$T/swap-one/jq"
-printf '#!/bin/bash\ncat > "%s/sent-config"\nprintf "## Custom Team Laws\\n- x\\n"\n' "$T" > "$T/swap-one/curl"; chmod +x "$T/swap-one/jq" "$T/swap-one/curl"
+printf '#!/bin/bash\ncat > "%s/sent-config"\nprintf "## Custom Team Laws\\n- x\\n\\n200"\n' "$T" > "$T/swap-one/curl"; chmod +x "$T/swap-one/jq" "$T/swap-one/curl"
 rm -f "$T/.oss/config.json" "$T/sent-config"; printf '{"apiKey":"secret-k"}' > "$T/.oss/config.json"; chmod 600 "$T/.oss/config.json"
 printf '{"apiKey":"evil-k"}' > "$T/evil.json"; chmod 600 "$T/evil.json"
 call oss_custom_iron_laws "$T/swap-one:$PATH"; rm -f "$T/evil.json"

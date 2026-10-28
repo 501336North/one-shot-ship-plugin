@@ -86,6 +86,7 @@ printf '%s\n' "\$*" >> "$T/shim/curl-argv"
 case "\$*" in *"part=custom"*)
     [[ -f "$T/shim/custom-fail" ]] && exit 22
     [[ -f "$T/shim/custom" ]] && cat "$T/shim/custom"
+    printf '\\n%s' "\$(cat "$T/shim/http-code" 2>/dev/null || echo 200)"   # curl -w '\\n%{http_code}'
     exit 0 ;;
 esac
 exit 7
@@ -449,12 +450,14 @@ test_custom_section_forged_lines() {
 }
 test_custom_section_absent() {
     local mode
-    for mode in empty fail notcustom oversized; do
-        local name="SR16/TR4: team section $mode → the verified laws alone, no unverified marker, sync succeeds; $([[ $mode == fail ]] && echo "1h backoff, not marked fresh" || echo "marked fresh")"; ((TESTS_RUN++)); setup
+    for mode in empty fail notcustom redirect oversized; do
+        local failed=n; case $mode in fail | notcustom | redirect) failed=y ;; esac
+        local name="SR16/TR4/UR11: team section $mode → the verified laws alone, no unverified marker, sync succeeds; $([[ $failed == y ]] && echo "1h backoff, not marked fresh" || echo "marked fresh")"; ((TESTS_RUN++)); setup
         case $mode in
             empty) : > "$T/shim/custom" ;;
             fail) touch "$T/shim/custom-fail" ;;
-            notcustom) valid_body > "$T/shim/custom" ;;   # an older API ignoring ?part sends the whole laws
+            notcustom) valid_body > "$T/shim/custom" ;;   # UR11: an older API ignoring ?part sends the whole laws: a failed fetch
+            redirect) printf '## Custom Team Laws\n- x\n' > "$T/shim/custom"; printf 302 > "$T/shim/http-code" ;;   # UR11: a 3xx is a failed fetch
             oversized) { printf '## Custom Team Laws\n\n'; head -c 20000 /dev/zero | tr '\0' 'x'; printf '\n'; } > "$T/shim/custom" ;;   # TR3: over 16 KiB
         esac
         block_file "$T/proj/CLAUDE.md"; stale; run_sync
@@ -464,7 +467,7 @@ test_custom_section_absent() {
         local fresh=n backoff=n want_fresh=y want_backoff=n
         [[ -n "$(find "$T/home/.oss/.iron-laws-last-check" -newer "$T/shim/body" 2>/dev/null)" ]] && fresh=y
         [[ -e "$T/home/.oss/.iron-laws-backoff" ]] && backoff=y
-        [[ $mode == fail ]] && { want_fresh=n; want_backoff=y; }
+        [[ $failed == y ]] && { want_fresh=n; want_backoff=y; }
         if [[ $RC -eq 0 && "$b" == *"FRESH FROM API"* && "$b" != *"unverified"* && "$(grep -c 'FRESH FROM API' "$T/proj/CLAUDE.md")" == 1 && "$(custom_calls)" == 1 \
               && $fresh == "$want_fresh" && $backoff == "$want_backoff" ]]; then pass "$name"
         else fail "$name" "rc 0, base only, once, no marker, one custom fetch, fresh=$want_fresh backoff=$want_backoff" "rc=$RC custom=$(custom_calls) fresh=$fresh backoff=$backoff block: $b"; fi

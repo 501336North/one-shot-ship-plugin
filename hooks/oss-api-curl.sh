@@ -183,19 +183,24 @@ _OSS_CUSTOM_LAWS_JQ='gsub("[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f
 # (GET /api/v1/prompts/shared/iron-laws?part=custom: only the "## Custom Team Laws" / "## Custom Personal Laws"
 # part, or an empty body), with the stripControl character set removed (line breaks and tabs kept). It is NOT
 # verified: callers write OSS_CUSTOM_LAWS_NOTE above it and OSS_CUSTOM_LAWS_END below it. Nothing printed and
-#   rc 1 (no section) when the config is untrusted (the key is never sent), jq is missing, or the body is empty, over
-#        the cap, or not that section (an older API that ignores ?part sends the whole laws);
-#   rc 2 (the fetch FAILED: curl or HTTP error, or no answer in OSS_CUSTOM_LAWS_MAX_TIME seconds) so a caller can
-#        retry sooner (TR4).
+#   rc 1 (no section) when the config is untrusted (the key is never sent), jq is missing, or the body is empty or
+#        over the cap;
+#   rc 2 (the fetch FAILED: curl or HTTP error, a 3xx (never followed), a 2xx that is not that section (an older API
+#        that ignores ?part sends the whole laws), or no answer in OSS_CUSTOM_LAWS_MAX_TIME seconds) so a caller can
+#        retry sooner (TR4, UR11).
 oss_custom_iron_laws() {
     local url key body rc=0
     command -v jq >/dev/null 2>&1 || return 1
     _oss_config_read && url=$(_oss_cfg_origin) && key=$(_oss_cfg_key) || return 1   # one read for both (TR5)
     body=$(oss_api_curl "$key" -sf -m "$OSS_CUSTOM_LAWS_MAX_TIME" --max-filesize "$OSS_CUSTOM_LAWS_MAX_BYTES" \
-        "$url/api/v1/prompts/shared/iron-laws?part=custom") || rc=$?
+        -w '\n%{http_code}' "$url/api/v1/prompts/shared/iron-laws?part=custom") || rc=$?
     case $rc in 0) ;; 63) return 1 ;; *) return 2 ;; esac   # 63: over --max-filesize, i.e. no section
+    case "${body##*$'\n'}" in 2[0-9][0-9]) ;; *) return 2 ;; esac   # UR11: a 3xx (not followed) is a failed fetch
+    body=${body%$'\n'*}
+    [[ -n "$body" ]] || return 1   # an empty 200: no section
     body=$(printf '%s' "$body" | jq -Rrs --argjson max "$OSS_CUSTOM_LAWS_MAX_BYTES" "$_OSS_CUSTOM_LAWS_JQ") || return 1
-    case "$body" in "## Custom Team Laws"* | "## Custom Personal Laws"*) ;; *) return 1 ;; esac
+    [[ -n "$body" ]] || return 1   # over the cap after stripping: no section
+    case "$body" in "## Custom Team Laws"* | "## Custom Personal Laws"*) ;; *) return 2 ;; esac   # UR11: not a section
     printf '%s\n' "$body"
 }
 

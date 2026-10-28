@@ -72,7 +72,7 @@ printf '# IRON LAWS\n\n## LAW 1: TDD\n\n'
 CLIEOF
     chmod +x "$TEST_HOME/.oss/bin/oss-decrypt"
     # curl records every call; it serves $TEST_HOME/custom for ?part=custom (SR16), anything else fails (exit 7).
-    printf '#!/bin/bash\necho "$*" >> "%s/curl-called"\ncase "$*" in *part=custom*) [[ -f "%s/custom" ]] && { cat "%s/custom"; exit 0; } ;; esac\nexit 7\n' \
+    printf '#!/bin/bash\necho "$*" >> "%s/curl-called"\ncase "$*" in *part=custom*) [[ -f "%s/custom" ]] && { cat "%s/custom"; printf "\\n200"; exit 0; } ;; esac\nexit 7\n' \
         "$TEST_HOME" "$TEST_HOME" "$TEST_HOME" > "$MOCK_BIN_DIR/curl"
     chmod +x "$MOCK_BIN_DIR/curl"
 }

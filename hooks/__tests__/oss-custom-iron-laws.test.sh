@@ -21,8 +21,17 @@ fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/.oss" "$T/bin"; chmod 700 "$T/.oss"
 printf '{"apiKey":"k"}' > "$T/.oss/config.json"; chmod 600 "$T/.oss/config.json"
-# curl: serves $T/body for ?part=custom, records argv; exits with the code in $T/curl-rc when that file exists.
-printf '#!/bin/bash\necho "$*" >> "%s/curl-argv"\n[[ -f "%s/curl-rc" ]] && exit "$(cat "%s/curl-rc")"\ncat "%s/body"\n' "$T" "$T" "$T" "$T" > "$T/bin/curl"; chmod +x "$T/bin/curl"
+# curl: serves $T/body for ?part=custom, records argv; exits with the code in $T/curl-rc when that file exists. Asked
+# for the status (-w), it ends the output with a line break and the code in $T/http-code (200 when absent), as curl does.
+cat > "$T/bin/curl" << CURL
+#!/bin/bash
+echo "\$*" >> "$T/curl-argv"
+[[ -f "$T/curl-rc" ]] && exit "\$(cat "$T/curl-rc")"
+cat "$T/body"
+case "\$*" in *'%{http_code}'*) printf '\\n%s' "\$(cat "$T/http-code" 2>/dev/null || echo 200)" ;; esac
+exit 0
+CURL
+chmod +x "$T/bin/curl"
 
 custom() {  # custom <body printf format>: serves it, runs the helper; sets OUT, RC
     printf "$1" > "$T/body"
@@ -84,6 +93,24 @@ rm -f "$T/curl-rc"; custom ''
 [[ "$RC" == 1 && -z "$OUT" ]] && pass "an empty 200 → rc 1: no section, not a failure" || fail "an empty 200 → rc 1" "rc=$RC out=$OUT"
 grep -q -- ' -m 5 ' "$T/curl-argv" && ! grep -q -- ' -m 10 ' "$T/curl-argv" && pass "the fetch gives up after 5 s (-m 5)" \
     || fail "the fetch gives up after 5 s (-m 5)" "argv: $(tail -n 1 "$T/curl-argv")"
+
+# UR11: only a 2xx answer that IS a section counts. A 3xx (curl does not follow it, so the body is a redirect page) or a
+# 2xx whose first line is not exactly "## Custom Team Laws" / "## Custom Personal Laws" (an older API, a proxy page) is
+# a FAILED fetch, rc 2 (the sync retries in an hour), never "no section" (fresh for a day). An empty 200 stays rc 1.
+for code in 301 302 304 307 308; do
+    printf '%s' "$code" > "$T/http-code"; custom '## Custom Team Laws\n- x\n'
+    [[ "$RC" == 2 && -z "$OUT" ]] && pass "HTTP $code → rc 2 (a failed fetch), nothing printed" || fail "HTTP $code → rc 2" "rc=$RC out=$OUT"
+done
+printf 200 > "$T/http-code"
+grep -qF -- '-w \n%{http_code}' "$T/curl-argv" && pass "the fetch asks curl for the HTTP status (-w)" || fail "the fetch asks curl for the status" "argv: $(tail -n 1 "$T/curl-argv")"
+custom '# IRON LAWS\n\n## IRON LAW #1: TDD\n'
+[[ "$RC" == 2 && -z "$OUT" ]] && pass "a 200 that is not a section (the whole laws) → rc 2, nothing printed" || fail "a 200 that is not a section → rc 2" "rc=$RC out=$OUT"
+custom '<html><body>proxy</body></html>\n## Custom Team Laws\n'
+[[ "$RC" == 2 && -z "$OUT" ]] && pass "a 200 HTML page → rc 2, nothing printed" || fail "a 200 HTML page → rc 2" "rc=$RC out=$OUT"
+custom ''
+[[ "$RC" == 1 && -z "$OUT" ]] && pass "an empty 200 is still rc 1 (no section) with the status asked for" || fail "an empty 200 → rc 1" "rc=$RC out=$OUT"
+custom '## Custom Personal Laws\n\n### Mine\n\nRule.\n'
+[[ "$RC" == 0 && "$OUT" == *"## Custom Personal Laws"* ]] && pass "a personal section is a section (rc 0)" || fail "a personal section → rc 0" "rc=$RC out=$OUT"
 
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
