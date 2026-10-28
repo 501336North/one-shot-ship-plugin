@@ -4,8 +4,8 @@
 
 ## Tasks
 - [x] T1: Analytics POST on workflow start is detached and time-limited (completed 2026-10-29)
-- [ ] T2: A pending update notice never holds session events (in progress)
-- [ ] T3: Session start launches notify detached (pending)
+- [x] T2: A pending update notice never holds session events (completed 2026-10-29)
+- [ ] T3: Session start launches notify detached (in progress)
 - [ ] T4: Provenance sweep of background jobs and unbounded curls in hooks/ (pending)
 - [ ] T5: setup.ts sandboxes HOME and kills nothing it did not start (pending)
 - [ ] T6: Fix the tests that break under the sandboxed HOME, one cycle per file (pending)
@@ -23,4 +23,4 @@
 ## Blockers
 - None
 
-## Last Updated: 2026-10-29 07:49 CST by /oss:build (T1)
+## Last Updated: 2026-10-29 07:57 CST by /oss:build (T2)

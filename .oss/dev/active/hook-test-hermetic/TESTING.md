@@ -30,6 +30,15 @@ File: `watcher/test/hooks/oss-notify-analytics-detach.test.ts`, 3 tests.
 - Anti-vacuity: reverting the redirect turns only test 1 RED; removing `-m 5` turns only test 2 RED.
 - Whole hooks dir (safe config): 173/177. Failures: the 3 acceptance tests for T2/T3, and `oss-session-logging` "should log hook START event for session start" (6.7 s, a known flake, fixed by T11).
 
+### T2 (2026-10-29, /oss:build, test-engineer)
+File: `watcher/test/hooks/oss-notify-update-notice-detach.test.ts`, 2 tests.
+- RED: test 1 failed because the output was still open 15 s after the notice delay started. It checks first that the delay was reached, so it cannot pass vacuously. The control (notice still posted after release) passed.
+- GREEN: 2/2. Acceptance: "workflow start" and "session event" now pass; the 2 session-start tests stay RED (T3).
+- Anti-vacuity: reverting the redirect turns test 1 RED with the same message.
+- Whole hooks dir (safe config): 177/179. The only failures are the 2 T3 acceptance tests.
+- **Watch in T15:** in that full run, the acceptance "fresh start" test failed at its launch check (line 355) after the 20 s marker backstop, not at the close check. Run alone, it fails at the close check as expected. If this recurs after T3, the backstop is load-sensitive and needs fixing.
+- The helpers (`writeStub`, `warm`, hermetic env, `startHook`) are now copied in 3 files. T7 is where they get shared.
+
 ## Stability proof (T15)
 (5 runs per suite, plus 1 run under load, plus the real ~/.oss mtime check)
 

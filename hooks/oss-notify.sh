@@ -361,7 +361,7 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "session" ]]; then
                             sleep 11
                             wf_state_timeout 2 setNotification "$update_msg" 30 2>/dev/null
                         fi
-                    ) &
+                    ) </dev/null >/dev/null 2>&1 &
                 fi
                 ;;
             context_saved)
