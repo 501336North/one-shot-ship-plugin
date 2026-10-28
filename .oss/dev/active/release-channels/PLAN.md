@@ -552,3 +552,10 @@ UR1 above is replaced by UR1' below.
 ### UR11: a 3xx (or a 2xx that is not a section) counts as a failed team fetch (1 h retry), not "no section"
 ### UR12 (perf): a failing team fetch retries hourly on its own stamp; the verified-laws refresh stays daily
 ### UR13 (API, regression vs legacy): `neutraliseLawMarkdown` splits on U+2028/U+2029 (the legacy `/m` sanitiser did)
+### UR14 (IRON LAW #1b from UR13): the CLI strip table is the same widened table
+- `packages/cli-decrypt/src/strip-control.ts` (`stripControl`, `stripControlKeepLines`, used for team custom-command
+  text) still lists only C0/C1/zero-width/bidi; the API (027f124) and the shell (UR1') now strip Cf, U+2028/2029,
+  U+034F, U+115F/1160, U+3164 and U+E0000-E007F as well. One table, same members, in all three.
+### UR15 (IRON LAW #1b from UR14): `oss_json_field` strips the same widened table
+- `hooks/oss-api-curl.sh` `oss_json_field` (server text shown to the user) still strips the old C0/C1/ZW/bidi set,
+  while the API (027f124), the CLI (a4a4d4d) and the team-laws fence (UR1') use the widened table. One table.

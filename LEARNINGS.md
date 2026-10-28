@@ -255,3 +255,11 @@
 ## 2026-10-27 | Testing | hooks + API
 - **Context:** integration (release-channels ship round 3)
 - **Insight:** a "second sync is byte-identical" check is vacuous while the 24 h stamp makes the second sync a no-op: remove the stamp and prove a refetch in the request log. Markdown neutralising is an open-ended rule (container prefixes `>`/`-`/`1.` still make headings): the real boundary for team text is the fixed note and closing line around it; keep the API and the hook on ONE rule so the two halves cannot disagree.
+
+## 2026-10-28 | Security | plugin (process)
+- **Context:** ship round 4 (pentest gate)
+- **Insight:** "never contact production" in a brief is not enough: a gate ran the STABLE plugin's sync from origin/main (production URL hard-coded, apiUrl ignored) and sent 3 throwaway-key requests to production (401, no real key). Every agent brief now requires a curl shim first on PATH that refuses any non-loopback host, and node started without proxy vars or NODE_OPTIONS. And for free text written into CLAUDE.md, contain it (a fence it cannot close) rather than filtering known Markdown shapes: four gate rounds kept finding new shapes.
+
+## 2026-10-28 | Config | hooks
+- **Context:** build (release-channels ship round 4, UR4/UR5)
+- **Insight:** `cmd < file 2>/dev/null` still prints the failed open's error (put `2>/dev/null` before `<`), and `! read -d '' v < file` is TRUE when the open fails, so an unreadable config silently read as "missing" (= production): check `[[ -r ]]` first. bash 3.2 has no built-in for permission bits, so any mode check costs a `stat`.
