@@ -16,7 +16,8 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOOK_SCRIPT="$SCRIPT_DIR/../oss-iron-laws-sync.sh"
+# HOOKS_UNDER_TEST=/path/to/hooks-copy runs these tests against a copy (mutants).
+HOOK_SCRIPT="${HOOKS_UNDER_TEST:-$SCRIPT_DIR/..}/oss-iron-laws-sync.sh"
 
 # Test tracking
 TESTS_RUN=0

@@ -10,7 +10,8 @@
 #
 # Environment:
 #   CLAUDE_PROJECT_DIR - Project directory (defaults to the current directory)
-#   HOME               - Holds ~/.oss/config.json and the cache stamps
+#   HOME               - Holds ~/.oss/config.json (unless OSS_CONFIG_DIR is set) and the cache stamps
+#   OSS_CONFIG_DIR     - Holds config.json instead of ~/.oss: apiKey, and apiUrl, the only API it is sent to
 #
 # Safety (both modes refuse, without writing, and warn on stderr):
 #   - CLAUDE.md is a symlink (incl. dangling) or not a regular file
@@ -31,8 +32,6 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${HOME}/.oss/config.json"
-API_URL="https://one-shot-ship-api.onrender.com"
 ENDPOINT="/api/v1/prompts/shared/iron-laws"
 STATE_DIR="${HOME}/.oss"
 LAST_CHECK_FILE="${STATE_DIR}/.iron-laws-last-check"
@@ -263,9 +262,12 @@ main() {
         younger_than "$LAST_CHECK_FILE" "$CACHE_TTL_SECONDS" && exit 0
         younger_than "$BACKOFF_FILE" "$BACKOFF_SECONDS" && exit 0
     fi
-    [[ -f "$CONFIG_FILE" ]] || { warn "not logged in ($CONFIG_FILE missing)"; give_up 4; }
     # shellcheck source=oss-api-curl.sh
     source "$SCRIPT_DIR/oss-api-curl.sh" 2>/dev/null || { warn "missing $SCRIPT_DIR/oss-api-curl.sh"; give_up; }
+    CONFIG_FILE=$(oss_config_file)
+    [[ -f "$CONFIG_FILE" ]] || { warn "not logged in ($CONFIG_FILE missing)"; give_up 4; }
+    # The key goes only to the API configured beside it.
+    API_URL=$(oss_api_url) || { warn "refusing: apiUrl in $CONFIG_FILE must be an https URL (plain http only for localhost) with no user@, query or fragment"; give_up 4; }
 
     trap cleanup EXIT
     WORK=$(mktemp -d "${TMPDIR:-/tmp}/oss-iron-laws.XXXXXX") || give_up
