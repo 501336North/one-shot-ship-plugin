@@ -9,9 +9,12 @@
 #
 # Usage: ./hooks/__tests__/oss-notify-api-url.test.sh
 #        BASH_UNDER_TEST=/opt/local/bin/bash ./hooks/__tests__/oss-notify-api-url.test.sh
+#        HOOKS_UNDER_TEST=/path/to/hooks-copy ./hooks/__tests__/oss-notify-api-url.test.sh   (mutants)
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+HOOK="${HOOKS_UNDER_TEST:-$ROOT/hooks}/oss-notify.sh"
 SH="${BASH_UNDER_TEST:-/bin/bash}"
+source "$ROOT/hooks/__tests__/lib/warm-stub.sh"
 RUN=0; FAILED=0
 pass() { echo "✓ PASS: $1"; RUN=$((RUN + 1)); }
 fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
@@ -19,23 +22,29 @@ echo "Running oss-notify-api-url tests under $("$SH" -c 'echo "$BASH_VERSION"') 
 
 DEFAULT_TRACK="https://one-shot-ship-api.onrender.com/api/v1/analytics/track"
 
-# Sandbox: temp HOME with a config, a fake plugin root, fake node, and a fake curl that records
-# its arguments and the config it reads on stdin (where oss_api_curl puts the Authorization header).
-sandbox() {  # $1 = config.json body
-    T=$(mktemp -d)
-    mkdir -p "$T/home/.oss" "$T/plugin/hooks" "$T/plugin/watcher/dist/cli" "$T/bin"
-    printf '%s' "$1" > "$T/home/.oss/config.json"
-    printf '#!/bin/sh\nexit 0\n' > "$T/plugin/hooks/oss-log.sh"
-    printf '#!/bin/sh\nexit 0\n' > "$T/bin/node"
-    cat > "$T/bin/curl" <<EOF
-#!/bin/bash
-echo "\$*" >> "$T/curl.args"
-cat >> "$T/curl.stdin"
+# Stubs made and warmed once (macOS scans each new executable on its first exec): a fake plugin
+# root, fake node, and a fake curl that records its arguments and the config it reads on stdin
+# (where oss_api_curl puts the Authorization header) into the current case's dir, $SHIM.
+KS=$(mktemp -d); KS=$(cd "$KS" && pwd -P)
+mkdir -p "$KS/plugin/watcher/dist/cli"
+: > "$KS/plugin/watcher/dist/cli/update-workflow-state.js"
+: > "$KS/plugin/watcher/dist/cli/chain-trigger.cjs"
+STUBS_WARM=y
+warm_stub "$KS/plugin/hooks/oss-log.sh" 'exit 0' || STUBS_WARM=n
+warm_stub "$KS/bin/node" 'exit 0' || STUBS_WARM=n
+warm_stub "$KS/bin/curl" "$(cat <<'EOF'
+echo "$*" >> "$SHIM/curl.args"
+cat >> "$SHIM/curl.stdin"
 exit 0
 EOF
-    chmod +x "$T/plugin/hooks/oss-log.sh" "$T/bin/node" "$T/bin/curl"
-    : > "$T/plugin/watcher/dist/cli/update-workflow-state.js"
-    : > "$T/plugin/watcher/dist/cli/chain-trigger.cjs"
+)" || STUBS_WARM=n
+if [[ $STUBS_WARM != y ]]; then echo "✗ FAIL: stub warm-up — a stub did not run"; rm -rf "$KS"; exit 1; fi
+# Sandbox: a case dir ($T) with a temp HOME holding the config. $T/bin is the stub dir.
+sandbox() {  # $1 = config.json body
+    T=$(mktemp -d)
+    mkdir -p "$T/home/.oss"
+    ln -s "$KS/bin" "$T/bin"
+    printf '%s' "$1" > "$T/home/.oss/config.json"
 }
 # A PATH with every command on the real PATH except jq (a symlink farm), for the no-jq branch.
 nojq_path() {
@@ -50,12 +59,16 @@ nojq_path() {
     done
     echo "$T/bin:$T/nojq"
 }
-# Command substitution returns only when every writer of its pipe has exited, so this waits for
-# the hook's background analytics subshell (it inherits stdout) - no polling, no sleeps.
+# The hook detaches its analytics job from stdin/stdout/stderr (T1), so it can still be running
+# when the hook exits. Fd 3 is a second writer on the command substitution's pipe: the hook, the
+# detached job and the curl it runs all inherit it, and $(...) returns only when every writer has
+# exited. So every check below runs after the analytics job is done - no polling, no sleeps.
+# This is what keeps the "no request" checks honest: without it they would pass by racing the job.
+# The accepted-URL cases prove the wait works (they read the request after run_start returns).
 run_start() {  # $1 = PATH to use, $2 = workflow name (default build)
     local _out
-    _out=$(cd "$T" && HOME="$T/home" OSS_CONFIG_DIR="${CFG_DIR:-}" CLAUDE_PLUGIN_ROOT="$T/plugin" CLAUDE_PROJECT_DIR="" PATH="$1" \
-        "$SH" "$ROOT/hooks/oss-notify.sh" --workflow "${2:-build}" start </dev/null 2>&1)
+    _out=$(cd "$T" && SHIM="$T" HOME="$T/home" OSS_CONFIG_DIR="${CFG_DIR:-}" CLAUDE_PLUGIN_ROOT="$KS/plugin" CLAUDE_PROJECT_DIR="" PATH="$1" \
+        "$SH" "$HOOK" --workflow "${2:-build}" start </dev/null 2>&1 3>&1)
 }
 calls() { [[ -f "$T/curl.args" ]] && wc -l < "$T/curl.args" | tr -d ' ' || echo 0; }
 
@@ -133,6 +146,8 @@ if command -v jq >/dev/null 2>&1; then
     else fail "valid workflow name gives a JSON body with exactly command/promptType/promptName" "calls=$(calls) body=$body"; fi
     rm -rf "$T"
 else fail "valid workflow name gives a JSON body with exactly command/promptType/promptName" "jq not installed"; fi
+
+rm -rf "$KS"
 
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
