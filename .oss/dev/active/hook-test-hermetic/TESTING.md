@@ -188,6 +188,15 @@ File: `hooks/__tests__/oss-api-curl.real.integration.test.sh` (+50/-19). Scenari
 - Mutant (key back in argv via `-H "Authorization: Bearer $key"`, scratch copy) failed 5 of 5, every time on "key never in any command line". The "server received Bearer <key>" assertion still passes under this mutant (Python `headers.get` returns the first value), so only the in-flight check catches it.
 - Unmutated scratch copy: 15/15. 5 runs green, 15/15 each. Under load (8 loops making and running fresh scripts) green, 15/15 in 6 s. Re-run by orchestrator: 15/15.
 
+### T4f (2026-10-29, /oss:build, test-engineer)
+Files: `hooks/oss-session-start.sh` (subscription check) and the new `watcher/test/hooks/oss-session-start-subscription-url.test.ts`. The URL is now resolved with `oss_api_url`. An invalid apiUrl means no call is made and the status is "unknown".
+- The test runs with its own HOME, warm curl/claude/say/afplay stubs, and a sandbox plugin root that holds a copy of hooks/ (`OSS_TEST_HOOKS_DIR` points it at a scratch copy). It uses spawnSync with an fd-3 pipe, so detached jobs are awaited. beforeAll runs one warm-up session start, because the copied hooks are new files and their first exec is scanned (40-60 s under parallel load; the hook was observed stuck at its first exec of oss-log.sh).
+- RED: apiUrl 127.0.0.1:9 → the call went to onrender (2 failed; the no-apiUrl control passed).
+- Mutants (scratch copies), all RED: the original hook; the guard kept but the URL hardcoded; `oss_api_url || jq .apiUrl` (bypasses the invalid-URL check).
+- GREEN: 3/3 over 5 sequential runs. 12/12 with 6 vitest processes running at once. Neighbouring suites 17/17. Orchestrator re-run: 3/3.
+- Provenance: fetch-iron-laws.sh, oss-fetch-team-iron-laws.sh, oss-iron-laws-sync.sh and oss-push-metrics.sh still send the key to the hardcoded host (FOLLOWUPS:95; asked the user whether to widen T4f). oss-login.sh's first login is justified. The -new/-test copies are unreachable (FOLLOWUPS:29). check-updates and changelog send no key.
+- Gap at this same site: the key is read from `~/.oss/config.json` (line 124), but the URL comes from `oss_config_file` (honours OSS_CONFIG_DIR). Fixed in T4f-2.
+
 ## Stability proof (T15)
 Extra checks found during build:
 - every "no network / no call" assertion on a hook with detached jobs must wait for those jobs (fd-3 pipe or a done marker), or it is vacuous (T10);

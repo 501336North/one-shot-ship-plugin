@@ -138,10 +138,12 @@ fi
 # Note: Full validation happens when skills are used
 if [[ "${OSS_SKIP_HEALTH_CHECK:-}" == "1" ]]; then
     SUBSCRIPTION_STATUS="active"
-else
+elif API_URL=$(oss_api_url); then
     SUBSCRIPTION_STATUS=$(oss_api_curl "$API_KEY" -s -m 2 \
-        "https://one-shot-ship-api.onrender.com/api/v1/subscription/status" 2>/dev/null | \
+        "${API_URL}/api/v1/subscription/status" 2>/dev/null | \
         grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || echo "unknown")
+else
+    SUBSCRIPTION_STATUS="unknown"   # invalid apiUrl: the key goes nowhere
 fi
 
 # Get project name for notification
