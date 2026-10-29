@@ -1,5 +1,9 @@
 # Learnings
 
+## 2026-10-29 | Testing | hooks
+- **Context:** hook-test-hermetic (/oss:integration, real-curl analytics test)
+- **Insight:** Two things only real dependencies showed. (1) A watchdog subshell inherits the script's TERM trap, so killing the subshell alone does not unblock a `$(... 3>&1)` wait: the detached job's real curl still holds fd 3. Kill the pipe's writers (the curls for this run's port), then the subshell. (2) Real curl confirms the stub assumption, but the two guards overlap: without the detach the hook is still bounded by `-m 5`, so a slow API would cost up to 5 s per /oss:* start, not hang it. Each guard needs its own scenario (held request vs never-answered request) to be caught. Also: `oss-log.sh` without CLAUDE_PROJECT_DIR follows the machine-global ~/.oss/current-project, so another session's start can route this project's init line elsewhere (FOLLOWUPS).
+
 ## 2026-10-29 | Testing | hooks + watcher
 - **Context:** hook-test-hermetic (T15b, T15c)
 - **Insight:** Three extensions of the fd-3 rule. (1) In Node, `execSync(..., { stdio: ['pipe','pipe','pipe','pipe'] })` waits for EOF on the 4th pipe, which detached jobs inherit. Treat its ETIMEDOUT as a failure; a bare `catch {}` turns "did not finish" into a vacuous pass. (2) A global test env can switch off the very path that an assertion is about: watcher/test/setup.ts sets OSS_SKIP_HEALTH_CHECK=1, so "session hooks make no network calls" never ran the refresh or notify jobs it was meant to cover. A mutant that sends an off-sandbox curl from those jobs passed. (3) For "no X while a lock is held", put a stub of the wait primitive (`sleep`) first on PATH as the handshake: on the first wait it checks the negative, then releases the lock. That replaces `sleep 1; check`, which passed against a lock-ignoring sync that was 2 s slow.

@@ -362,4 +362,21 @@ Verification only. No code or test was changed. The scripts are the same as in t
   - `workflow-state.json`: the heartbeat of `oss-daemon.js` (PID 2640). It was seen writing at 18:26:55 and 18:27:55, after the suite had finished.
   - `team-iron-laws.json`: only the mtime changed (18:10:07, 3657 s after 17:09:10, which matches the 1 h cache TTL). The content hash is unchanged.
 
-## Last Updated: 2026-10-29 18:29 CST by test-engineer (T15 re-run after T15b/T15c: shell 5/5 + load green)
+## Integration (/oss:integration)
+2026-10-29 18:54 CST, test-engineer. New file: `hooks/__tests__/oss-notify-analytics.real.integration.test.sh` (no product code changed).
+
+- **Mocked boundary:** the analytics POST in `hooks/oss-notify.sh` (`--workflow <cmd> start`, `oss_api_curl ... -sS -m 5 -X POST .../api/v1/analytics/track`). `watcher/test/hooks/oss-notify-analytics-detach.test.ts` and `hooks/__tests__/oss-notify-api-url.test.sh` use a stub curl, so they assume that (a) the job is detached and the hook returns while the API holds the request, and (b) real curl's `-m 5` ends the job when the API never answers.
+- **Real test:** real `/usr/bin/curl`, a python3 ThreadingHTTPServer on 127.0.0.1 (random port), temp HOME with a fake key and `apiUrl` = that server. Only node and oss-log.sh are stubbed. Event-driven: `received` fifo plus `release` file; a 60 s watchdog and the recorder's 120 s hold are hang backstops only, and no duration is asserted. Requires jq (without it the hook posts to production), otherwise SKIP.
+  - S1: the hook runs without fd 3. Its `$(...)` returns, the server reports `received`, `release` is not yet created, and the hook's real curl is still running. After release, the curl exits and the log holds exactly one `POST /api/v1/analytics/track|Bearer <key>`. The hook prints nothing.
+  - S2: the server never answers. The hook runs with `3>&1`, so `$(...)` returns only when the detached job and curl have exited. Checks: it returns before the watchdog, the server saw the request, and no curl to the sandbox port is left running.
+- **Mutants** (scratch copies of hooks/ via `HOOKS_UNDER_TEST`):
+
+| Mutant | Result |
+|---|---|
+| (i) `) </dev/null >/dev/null 2>&1 &` changed to `) &` (no detach) | **RED 8/9**: S1 "real curl was still waiting ... after the hook returned" fails. The hook was held until curl's own `-m 5` gave up. |
+| (ii) `-m 5` removed | **RED 7/9**: S2 watchdog fired after 60 s, and a curl was left running (the watchdog stopped it). |
+
+- **GREEN:** 3/3 runs at 9/9 under `/bin/bash` 3.2, plus 9/9 with `BASH_UNDER_TEST=/opt/homebrew/bin/bash`. `bash32-parse` 98/98. No curl or recorder process was left after any run, including the mutant runs.
+- **Stub vs real:** no mismatch. Real curl behaves as the stubs assume. Note: without the detach, the hook is still bounded, but only by `-m 5`. A held API costs up to 5 s per `/oss:*` start. The `-m` and the detach are separate guards, and each mutant is caught by its own scenario.
+
+## Last Updated: 2026-10-29 18:54 CST by test-engineer (real-curl integration test for oss-notify analytics)
