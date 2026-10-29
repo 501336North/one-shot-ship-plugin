@@ -379,4 +379,33 @@ Verification only. No code or test was changed. The scripts are the same as in t
 - **GREEN:** 3/3 runs at 9/9 under `/bin/bash` 3.2, plus 9/9 with `BASH_UNDER_TEST=/opt/homebrew/bin/bash`. `bash32-parse` 98/98. No curl or recorder process was left after any run, including the mutant runs.
 - **Stub vs real:** no mismatch. Real curl behaves as the stubs assume. Note: without the detach, the hook is still bounded, but only by `-m 5`. A held API costs up to 5 s per `/oss:*` start. The `-m` and the detach are separate guards, and each mutant is caught by its own scenario.
 
-## Last Updated: 2026-10-29 18:54 CST by test-engineer (real-curl integration test for oss-notify analytics)
+## T17: session start never downgrades the shared ~/.oss/hooks
+2026-10-29 19:32 CST, test-engineer. New file: `hooks/__tests__/session-start-no-hook-downgrade.test.sh` (11 assertions, sandbox HOME, no config so no key and no network, `3>&1` in `$(...)`, `HOOKS_UNDER_TEST` for mutants). Fake plugin roots 2.0.83 / 2.0.95 / 2.0.100 / 2.1.0 / no plugin.json / non-numeric version, each with distinguishable data copies of every `HOOKS_TO_COPY` name (read from the hook under test). Runtime about 1.8 s.
+
+- **Rule as implemented** (`hooks/oss-session-start.sh`): session start copies `HOOKS_TO_COPY` and the legacy `~/.oss/oss-statusline.sh` only when there is no recorded version in `~/.oss/hooks/.installed-version`, or when its own version (`$PLUGIN_ROOT/.claude-plugin/plugin.json` "version") is the same or newer. After it copies, it writes its version there. Compare: numeric per dot part, bash 3.2, no `sort -V`. A version that is not `^[0-9]+(\.[0-9]+)*$` counts as unreadable (a record like that counts as no record). If its own version is unreadable and a record exists, it does not overwrite. If there is no record, it copies as before and writes none. The legacy statusline is under the same rule, because it comes from the same root in the same step and would be downgraded the same way.
+- **RED** (HEAD hook): 3/11, 8 failed: the 2.0.83-over-2.0.94 incident, 2.0.95-over-2.0.100, unreadable version, non-numeric version, and every "record written" control. The 3 that passed are the cases where today's behaviour is already correct (same version copies; no record and no version copies; nothing is evaluated).
+- **Mutants** (scratch copies of hooks/):
+
+| Mutant | Result |
+|---|---|
+| m1 drop the check (`if true`) | RED 7/11: incident, numeric, unreadable, non-numeric version |
+| m2 always refuse (`if false`) | RED 5/11: all 6 install controls |
+| m3 text compare (`[[ ! $1 < $2 ]]`) | RED 9/11: 2.0.95 vs 2.0.100 both directions |
+| m4 no version validation | RED 10/11: `0+a[$(touch pwned)]` in the record ran `touch` (bash arithmetic evaluates array subscripts) |
+| m5 record never written | RED 7/11: 4 record controls |
+| m6 legacy statusline copied outside the guard | RED 7/11: the 4 refuse cases (the snapshot includes `~/.oss/oss-statusline.sh`) |
+
+- **GREEN:** 11/11 three times under `/bin/bash` 3.2. `bash32-parse` 99/99. `session-start-copy` 9/9, `session-start-iron-laws` 4/4, `session-start-timeout-fallback` 1/1. `cd watcher && npx vitest run test/hooks`: 39 files, 204 tests passed.
+- **Provenance (IRON LAW #1b), `grep -rn '\.oss/hooks' hooks/*.sh`:**
+
+| Site | Writes plugin files into ~/.oss/hooks? | Verdict |
+|---|---|---|
+| oss-session-start.sh | yes (HOOKS_TO_COPY + legacy statusline) | guarded (this task) |
+| oss-session-start-new.sh | yes, same loop | not registered: `.claude-plugin/hooks.json` names only oss-session-start.sh, and nothing else refers to it. Left as is |
+| oss-session-start-test.sh | yes, same loop | not registered, same as above. Left as is |
+| oss-setup-permissions.sh | no: `~/.oss/hooks/...` strings are permission allowlist entries | fine |
+| ensure-decrypt-cli.sh | no: comments only (usage path, where it runs from) | fine |
+| verify-decrypt-setup.sh | no: usage comment | fine |
+| oss-value.sh | no: comment naming the allowed call prefix | fine |
+
+## Last Updated: 2026-10-29 19:32 CST by test-engineer (T17: no downgrade of ~/.oss/hooks)

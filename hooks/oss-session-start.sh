@@ -81,17 +81,34 @@ HOOKS_TO_COPY=(
     "oss-onboard-check.sh"
     "oss-setup-permissions.sh"
 )
-for hook in "${HOOKS_TO_COPY[@]}"; do
-    if [[ -f "$PLUGIN_ROOT/hooks/$hook" ]]; then
-        cp "$PLUGIN_ROOT/hooks/$hook" ~/.oss/hooks/
-        if [[ "$hook" == *.sh ]]; then chmod +x ~/.oss/hooks/$hook; fi   # data files (checksum manifest) stay non-executable
-    fi
-done
+# Never downgrade them (T17): ~/.oss/hooks is machine-global, so a session on an older plugin must not
+# replace hooks a newer plugin installed. Versions are dot-separated digits, compared per part; anything
+# else counts as unreadable (and never reaches arithmetic). No record: copy, as before. Unreadable own
+# version with a record: keep the record's hooks (we cannot show we are not older).
+oss_version() { [[ "$1" =~ ^[0-9]+(\.[0-9]+)*$ ]] && printf '%s' "$1"; }
+oss_version_ge() { # A >= B
+    local IFS=. i; local -a a=($1) b=($2)
+    for ((i = 0; i < ${#a[@]} || i < ${#b[@]}; i++)); do
+        (( 10#${a[i]:-0} != 10#${b[i]:-0} )) && { (( 10#${a[i]:-0} > 10#${b[i]:-0} )); return; }
+    done
+    return 0
+}
+PLUGIN_VERSION=$(oss_version "$(grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "$PLUGIN_ROOT/.claude-plugin/plugin.json" 2>/dev/null | head -1 | cut -d'"' -f4)")
+INSTALLED_VERSION=$(oss_version "$(head -1 ~/.oss/hooks/.installed-version 2>/dev/null)")
+if [[ -z "$INSTALLED_VERSION" ]] || { [[ -n "$PLUGIN_VERSION" ]] && oss_version_ge "$PLUGIN_VERSION" "$INSTALLED_VERSION"; }; then
+    for hook in "${HOOKS_TO_COPY[@]}"; do
+        if [[ -f "$PLUGIN_ROOT/hooks/$hook" ]]; then
+            cp "$PLUGIN_ROOT/hooks/$hook" ~/.oss/hooks/
+            if [[ "$hook" == *.sh ]]; then chmod +x ~/.oss/hooks/$hook; fi   # data files (checksum manifest) stay non-executable
+        fi
+    done
 
-# Also copy to legacy location for backwards compatibility
-if [[ -f "$PLUGIN_ROOT/hooks/oss-statusline.sh" ]]; then
-    cp "$PLUGIN_ROOT/hooks/oss-statusline.sh" ~/.oss/oss-statusline.sh
-    chmod +x ~/.oss/oss-statusline.sh
+    # Also copy to legacy location for backwards compatibility
+    if [[ -f "$PLUGIN_ROOT/hooks/oss-statusline.sh" ]]; then
+        cp "$PLUGIN_ROOT/hooks/oss-statusline.sh" ~/.oss/oss-statusline.sh
+        chmod +x ~/.oss/oss-statusline.sh
+    fi
+    if [[ -n "$PLUGIN_VERSION" ]]; then printf '%s\n' "$PLUGIN_VERSION" > ~/.oss/hooks/.installed-version; fi
 fi
 
 # Write current project path EARLY for multi-project support

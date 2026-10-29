@@ -1,5 +1,9 @@
 # Learnings
 
+## 2026-10-29 | Security | hooks
+- **Context:** hook-test-hermetic (build T17, version compare in session start)
+- **Insight:** `10#` does not make bash arithmetic safe on file content. `(( 10#$v > 1 ))` with v=`0+a[$(cmd)]` runs cmd in /bin/bash 3.2, because array subscripts in the expanded text are expanded again. Check that a value is digits (`[[ $v =~ ^[0-9]+(\.[0-9]+)*$ ]]`) before any `(( ))` sees it. Proving it was harder than expected. The first payload, `touch $HOME/pwned`, did run, but inside a function with `local IFS=.` the dotted $HOME was split, so touch failed and the no-validation mutant passed. An injection probe has to have an effect that the code under test cannot break, such as a relative path with no IFS characters.
+
 ## 2026-10-29 | Testing | hooks
 - **Context:** hook-test-hermetic (/oss:integration, real-curl analytics test)
 - **Insight:** Two things only real dependencies showed. (1) A watchdog subshell inherits the script's TERM trap, so killing the subshell alone does not unblock a `$(... 3>&1)` wait: the detached job's real curl still holds fd 3. Kill the pipe's writers (the curls for this run's port), then the subshell. (2) Real curl confirms the stub assumption, but the two guards overlap: without the detach the hook is still bounded by `-m 5`, so a slow API would cost up to 5 s per /oss:* start, not hang it. Each guard needs its own scenario (held request vs never-answered request) to be caught. Also: when log lines land in the wrong project, compare the installed copy with the source before blaming the source. Here the repo's oss-log.sh has not read ~/.oss/current-project since 2.0.92; the machine-global ~/.oss/hooks/oss-log.sh had been replaced by a 2.0.83 copy when a session on an older plugin started (FOLLOWUPS, HIGH). `cmp` each ~/.oss/hooks file against the plugin cache versions to see which version wrote it.
