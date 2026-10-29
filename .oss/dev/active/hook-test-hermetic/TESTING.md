@@ -158,7 +158,33 @@ File: `watcher/test/hooks/hook-error-adoption.test.ts`. There is now one curl st
 
 ### Full suite after T4a-2 (2026-10-29, real config): 264/264 files, 3570/3570 tests, rc 0.
 
+### T8 (2026-10-29, /oss:build, test-engineer)
+File: `watcher/test/hooks/oss-notify-telegram.test.ts`. The `bin/node` and `oss-log.sh` stubs are created once in beforeAll with writeWarmStub. Each test gets its own `NODE_CALLS` file. The behaviour test is `it.each(['build','ship'])`, so a leak between runs would show.
+- RED (leak): with the stubs shared but writing to a fixed file, the ship run saw build's call.
+- Mutant: a scratch hooks copy that calls telegram-notify.js after chain-trigger turns all 3 tests RED.
+- GREEN: 3/3 over 5 runs. No executable is created after beforeAll.
+- A hand probe before the change: the first run against fresh stubs took 5.36 s and the second 0.10 s, just over vitest's 5 s default.
+
+### T10 (2026-10-29, /oss:build, test-engineer)
+File: `watcher/test/hooks/oss-notify-project.test.ts`. The file now owns its HOME: mkdtemp, `.oss` at 0700, no save/restore of real files. A recording curl stub (warm, per-test `CURL_CALLS`). The child env drops CLAUDE_CODE_SESSION_ID, CLAUDE_PROJECT_DIR and OSS_CONFIG_DIR.
+- New test, "should send nothing to the network". With a fake key and apiUrl in the sandbox, it is RED: the analytics POST was recorded. The fake key is not kept, because a keyed `start` is supposed to send the event, and T1 covers that.
+- **The hook runs via spawnSync with an extra pipe on fd 3.** The detached jobs inherit it, so spawnSync returns only after they exit, with a 15 s bound. Without that pipe, the zero-call assertion passed even with a key: it raced the detached job and was vacuous. This applies to any "no call happened" check on a hook with detached jobs (see T15).
+- Mutant: project dir taken from `current-project` (the D1 defect) turns all 3 project-resolution tests RED. An unmutated scratch copy passes 4/4.
+- GREEN: 4/4 over 5 runs.
+
+### T12 (2026-10-29, /oss:build, test-engineer)
+File: `watcher/test/hooks/oss-log-error-recovery.test.ts`. One sandbox per test (home/.oss plus a work dir with an empty `.git` that fences the project walk). Every run gets HOME=sandbox and has CLAUDE_PROJECT_DIR and CLAUDE_CODE_SESSION_ID removed. The save/restore code is gone (`grep restore` finds nothing).
+- RED: a sentinel parent HOME received RECOVERY and TIMEOUT lines in build.log and session.log under the old execSync options. The old file also forced `~/.oss/current-project` to '' and could leave it behind empty.
+- Mutants: `recovery` logs nothing makes the 2 recovery tests RED; dropping HOME=sandbox makes 5 RED.
+- GREEN: 7/7 over 5 runs.
+- Noted: `$TMPDIR/.oss` exists as an empty dir (from Oct 20). With a `.git` above any test cwd under $TMPDIR, the project walk would pick it up. This file is fenced. Checked in T15.
+
+### Full suite after T8, T10, T12 (2026-10-29, real config): 264/264 files, 3573/3573 tests.
+
 ## Stability proof (T15)
+Extra checks found during build:
+- every "no network / no call" assertion on a hook with detached jobs must wait for those jobs (fd-3 pipe or a done marker), or it is vacuous (T10);
+- `$TMPDIR/.oss` must not be picked up as a project by any test (T12).
 (5 runs per suite, plus 1 run under load, plus the real ~/.oss mtime check)
 
 ## Last Updated: 2026-10-28 by /oss:plan

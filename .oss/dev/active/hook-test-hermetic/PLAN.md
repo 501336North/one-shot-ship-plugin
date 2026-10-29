@@ -94,6 +94,12 @@ This is not a background-job or time-limit defect, so it is outside DESIGN's sco
 ### Task 4a-2 (found by the full suite after T9, 2026-10-29): tests that read state the detached `oss-log.sh agent` chain has not written yet
 `integration/agent-status-line` "should clear agent…" waits for `activeAgent` to clear, then expects `supervisor` to be watching. Since T4a, `setSupervisor watching` runs detached, after `clearActiveAgent`, so the test is flaky. RED: the observed failure, made deterministic. GREEN: wait for the supervisor value. Provenance: grep every test that runs `oss-log.sh agent … completed` (or relies on the order of the two chained calls) and fix each one the same way.
 
+### Task 4f (user: fix in this branch, 2026-10-29): session start's subscription call uses the configured API URL
+`hooks/oss-session-start.sh:142` sends the key to a hardcoded `https://one-shot-ship-api.onrender.com/api/v1/subscription/status`. Every other keyed call resolves the URL through `oss_api_url`. IRON LAW #1b: two sites disagree about where the key goes.
+- RED: with `apiUrl` set to a sandbox URL in config.json, the recorded curl argv for the subscription call targets that URL (today it targets the hardcoded host). Control: with no apiUrl, the default host is used, as `oss_api_url` defines.
+- GREEN: resolve the URL with `oss_api_url`, the same helper the other keyed calls use.
+- Provenance: grep hooks/ (and watcher/src if keyed) for other hardcoded API hosts that take a key, for example oss-login.sh:15. Each one is fixed through the same helper or justified (login runs before any config exists).
+
 ---
 
 ## Phase B: Test isolation at the root

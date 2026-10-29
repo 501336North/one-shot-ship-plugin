@@ -10,11 +10,12 @@
 - [x] T5: setup.ts sandboxes HOME and kills nothing it did not start (completed 2026-10-29)
 - [x] T6: Fix the tests that break under the sandboxed HOME (completed 2026-10-29: 6.a .oss in sandbox HOME, 6.b session-context-local, 6.b2 restore test, 6.c = T11; plus 4a-2 agent-status-line race)
 - [x] T7: Warm-stub helpers in TS and bash (completed 2026-10-29)
-- [ ] T8: oss-notify-telegram.test.ts: stubs made once and warm (pending)
+- [x] T8: oss-notify-telegram.test.ts: stubs made once and warm (completed 2026-10-29)
 - [x] T9: hook-error-adoption.test.ts: one env-driven curl stub (completed 2026-10-29)
-- [ ] T10: oss-notify-project.test.ts made hermetic (pending)
+- [x] T10: oss-notify-project.test.ts made hermetic (completed 2026-10-29)
 - [x] T11: oss-session-logging.test.ts made hermetic, live session safe (completed 2026-10-29 as T6.c)
-- [ ] T12: oss-log-error-recovery.test.ts writes only in its sandbox (pending)
+- [x] T12: oss-log-error-recovery.test.ts writes only in its sandbox (completed 2026-10-29)
+- [ ] T4f: session start's subscription call uses the configured apiUrl (user: fix in this branch, 2026-10-29) (in progress)
 - [ ] T13: complete-bounds.test.sh checks boundedness, not wall-clock (pending)
 - [ ] T14: api-curl.real.integration.test.sh is event-driven (pending)
 - [ ] T15: Stability proof: 5 runs each, plus a run under load (pending)
@@ -23,4 +24,4 @@
 ## Blockers
 - None
 
-## Last Updated: 2026-10-29 11:22 CST by /oss:build (full suite 3570/3570; next T8, T10, T12-T14)
+## Last Updated: 2026-10-29 12:18 CST by /oss:build (T8, T10, T12 done; suite 3573/3573)
