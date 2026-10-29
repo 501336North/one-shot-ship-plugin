@@ -52,6 +52,12 @@ File: `watcher/test/hooks/oss-notify-log-fallback.test.ts`, 2 tests.
 - RED: when there is no oss-log.sh and no plugin cache, the hook exited 1 silently before `setActiveStep build` (no node calls). The control, with oss-log.sh in the cache, passed.
 - GREEN: 2/2. Anti-vacuity: removing `|| true` turns test 1 RED with the same message. Together with the T1 and T2 files: 7/7.
 
+### T4b (2026-10-29, /oss:build, test-engineer)
+File: `watcher/test/hooks/oss-session-start-health-check-detach.test.ts`, 2 tests.
+- RED: (1) session start stayed open 15 s into the health check; (2) health-check.log had no summary, which went to the hook's stdout instead.
+- GREEN: 2/2. Anti-vacuity: reverting the redirect turns only test 1 RED; reverting `>> health-check.log` turns only test 2 RED.
+- Regression check: the notify-detach file and the acceptance file both pass (10/10).
+
 ## Stability proof (T15)
 (5 runs per suite, plus 1 run under load, plus the real ~/.oss mtime check)
 

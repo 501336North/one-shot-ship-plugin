@@ -275,15 +275,15 @@ if [[ "${OSS_RUN_HEALTH_CHECK:-}" == "1" ]] && [[ -f "$HEALTH_CHECK_CLI" ]] && [
         mkdir -p "$LOG_DIR"
         node "$HEALTH_CHECK_CLI" --verbose > "$LOG_DIR/health-check.log" 2>&1
         EXIT_CODE=$?
-        # Also echo summary to session
+        # Append summary to the log (stdout is detached, D3)
         if [[ $EXIT_CODE -eq 0 ]]; then
             echo "OSS: ✅ Health check passed - all tests passing"
         elif [[ $EXIT_CODE -eq 1 ]]; then
             echo "OSS: ❌ Health check found failing tests - check queue"
         else
             echo "OSS: ⚠️ Health check error - see ~/.oss/logs/current-session/health-check.log"
-        fi
-    ) &
+        fi >> "$LOG_DIR/health-check.log"
+    ) </dev/null >/dev/null 2>&1 &
 fi
 
 # Restore previous session context if available (project-local first, for multi-project isolation)
