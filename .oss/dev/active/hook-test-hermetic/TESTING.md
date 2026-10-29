@@ -19,7 +19,7 @@ File: `watcher/test/hooks/acceptance/hook-background-detach.acceptance.test.ts`.
 
 **Anti-vacuity:** with all four redirects in place, 4/4 GREEN. With only two of them, exactly the matching two turn GREEN. The hooks were then restored, and `git diff hooks/` is empty.
 
-**Not committed yet:** these tests must not land RED. They are committed with T1–T3, when they turn GREEN.
+**Committed with T3 (2026-10-29), 4/4 GREEN.**
 
 **Observed during warm-up:** one first exec of a new stub took 19.4 s at load average 9. That confirms DESIGN test defect 1.
 
@@ -38,6 +38,14 @@ File: `watcher/test/hooks/oss-notify-update-notice-detach.test.ts`, 2 tests.
 - Whole hooks dir (safe config): 177/179. The only failures are the 2 T3 acceptance tests.
 - **Watch in T15:** in that full run, the acceptance "fresh start" test failed at its launch check (line 355) after the 20 s marker backstop, not at the close check. Run alone, it fails at the close check as expected. If this recurs after T3, the backstop is load-sensitive and needs fixing.
 - The helpers (`writeStub`, `warm`, hermetic env, `startHook`) are now copied in 3 files. T7 is where they get shared.
+
+### T3 (2026-10-29, /oss:build, test-engineer)
+File: `watcher/test/hooks/oss-session-start-notify-detach.test.ts`, 4 tests (2 branches × close + control).
+- RED: both "finish starting" cases failed: output still open 15 s after the notify launch. Controls passed.
+- GREEN: 4/4. Acceptance file: 4/4.
+- Anti-vacuity: reverting the context_restored redirect turns only that case RED; the same holds for fresh_start.
+- REFACTOR: the acceptance MARKER_BACKSTOP_MS went from 20 s to 60 s, and TEST_TIMEOUT_MS from 40 s to 100 s (load-sensitive launch wait seen in the T2 run). No assertion changed.
+- Whole hooks dir (safe config): 182/183. The one failure was `hook-error-adoption` "should emit OSS-AUTH-001 ... 401", a known flake that T9 fixes.
 
 ## Stability proof (T15)
 (5 runs per suite, plus 1 run under load, plus the real ~/.oss mtime check)

@@ -338,13 +338,13 @@ if [[ -f "$PROJECT_CONTEXT_FILE" ]]; then
     # NOTE: Backgrounded to prevent blocking Claude Code startup
     # Skip in test mode to prevent background processes from blocking test runners
     if [[ -x "$NOTIFY_SCRIPT" ]] && [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]]; then
-        "$NOTIFY_SCRIPT" --session context_restored "{\"project\": \"$PROJECT_NAME\", \"branch\": \"${BRANCH:-unknown}\", \"saveDate\": \"${SAVE_DATE}\", \"uncommitted\": $UNCOMMITTED_COUNT}" &
+        "$NOTIFY_SCRIPT" --session context_restored "{\"project\": \"$PROJECT_NAME\", \"branch\": \"${BRANCH:-unknown}\", \"saveDate\": \"${SAVE_DATE}\", \"uncommitted\": $UNCOMMITTED_COUNT}" </dev/null >/dev/null 2>&1 &
     fi
 else
     # No saved context - fresh start notification (via unified oss-notify.sh)
     # NOTE: Backgrounded to prevent blocking Claude Code startup
     if [[ -x "$NOTIFY_SCRIPT" ]] && [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]]; then
-        "$NOTIFY_SCRIPT" --session fresh_start "{\"project\": \"$PROJECT_NAME\"}" &
+        "$NOTIFY_SCRIPT" --session fresh_start "{\"project\": \"$PROJECT_NAME\"}" </dev/null >/dev/null 2>&1 &
     fi
 fi
 
