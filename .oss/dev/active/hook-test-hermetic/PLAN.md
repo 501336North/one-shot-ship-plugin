@@ -276,6 +276,27 @@ Not a code task: verification, recorded in TESTING.md.
 
 Any red counts as a defect. It is fixed as a new RED-first task, never retried.
 
+### Task 15b: `oss-notification-style.test.sh` waits for the popup instead of a 2 s window (found in T15)
+T15 shell run 2 and the load run failed: the hook backgrounds `terminal-notifier` (`&>/dev/null &`,
+hooks/oss-notification.sh:50), the test writes the stub fresh per case and polls 20 × 0.1 s, and a fresh
+executable's first exec takes 1.6–3.3 s. Under load both styles missed the popup and `telegram == visual`
+passed on two incomplete lists.
+- RED: a stub that is slow on purpose (or a mutant hook that drops the popup) shows the current test either
+  fails or passes vacuously; the new test must fail for the mutant and pass for the real hook.
+- GREEN: stubs made once with `warm_stub`, symlinked into each sandbox; run the hook with `3>&1` inside the
+  substitution so it returns only when the backgrounded stub exits (the hook redirects only fds 0–2). No clock.
+- Same pattern, same fix: `oss-stop-telegram-style.test.sh:30` (fresh stubs, 1 s window).
+
+### Task 15c: negative checks after a background job wait for the job, not `sleep 1` (found in T15)
+These pass without proving anything on a loaded machine:
+- `session-start-iron-laws.test.sh:114` "no refresh started", `iron-laws-sync-safety.test.sh:363` "no write
+  while locked", `project-routing.test.sh:139` "B untouched" (and `:95`, a 3 s window for the state write).
+- `oss-session-logging` "should make no network calls" does not wait for the nohup'd sync or the notify job.
+Each gets a wait on the job itself (fd-3 pipe or a done marker), plus a mutant showing the negative check can
+now go red. No wall-clock asserts.
+
+Then T15's shell part is re-run: 5 runs plus one under load.
+
 ### Task 16: Version bump and server follow-up
 - `.claude-plugin/plugin.json` 2.0.94 → 2.0.95 (customer-facing hook fix); also any version pins kept in sync by existing tests.
 - FOLLOWUPS.md gets one item: production analytics contains test-run events sent from the developer's account during hook test runs, so AgenticDevWorkflow should exclude or flag them.

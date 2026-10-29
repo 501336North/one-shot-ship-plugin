@@ -248,4 +248,98 @@ Extra checks found during build:
 - `$TMPDIR/.oss` must not be picked up as a project by any test (T12).
 (5 runs per suite, plus 1 run under load, plus the real ~/.oss mtime check)
 
-## Last Updated: 2026-10-28 by /oss:plan
+### T15 result (2026-10-29 15:02-16:58 CST, test-engineer; HEAD 28f8d67): NOT PASSED
+One shell file is flaky: `hooks/__tests__/oss-notification-style.test.sh`, red in shell run 2 and in the shell run under load. Everything else was green in every run. Per the plan, this is a defect to fix as a new RED-first task, not a retry.
+
+How it was run (scripts and every log are in the session scratchpad `t15/`):
+- Watcher: `cd watcher && npx vitest run` (the real vitest.config.ts with setup.ts), `gtimeout 3600`.
+- Shell: every `hooks/__tests__/*.test.sh` in order, from the repo root. Each is exec'd so its own shebang applies (48 have `#!/bin/bash`, i.e. 3.2). `ensure-oss-launch.test.sh` is not executable, so it ran as `/bin/bash file`. `no-telegram-hook`, `oss-notify-dead-vars` and `stat-order` use `#!/usr/bin/env bash`, which resolves to bash 5.3 on PATH. `gtimeout 1800` per file.
+- Load: 8 parallel loops, each writing a brand-new script, `chmod +x`, exec, `rm`, until a stop file appears. A trap and the stop file end them; afterwards ps shows none left. Measured with no load generator: a new script's first exec takes 1.6-3.3 s and its second about 0.01 s. Under the shell load run each loop managed 327 iterations in 1392 s, about 4.3 s per new script.
+
+| Suite | Run | Result | Duration | Load (1/5/15 at end) |
+|---|---|---|---|---|
+| watcher | 1 | 265/265 files, 3578/3578 tests | 124 s | 5.37 7.28 8.49 |
+| watcher | 2 | 265/265, 3578/3578 | 127 s | 5.92 6.64 8.06 |
+| watcher | 3 | 265/265, 3578/3578 | 124 s | 4.65 6.18 7.70 |
+| watcher | 4 | 265/265, 3578/3578 | 120 s | 6.77 6.12 7.45 |
+| watcher | 5 | 265/265, 3578/3578 | 116 s | 5.66 6.17 7.31 |
+| watcher | load | 265/265, 3578/3578 | 263 s | 12.33 44.61 79.36 (start 14.81) |
+| shell | 1 | 51/51 files, 963 PASS lines | 523 s | 9.99 7.75 6.90 |
+| shell | 2 | **50/51**, 962 PASS, 1 FAIL | 755 s | 6.17 7.64 7.49 |
+| shell | 3 | 51/51, 963 PASS | 524 s | 4.40 6.18 6.81 |
+| shell | 4 | 51/51, 963 PASS | 455 s | 5.95 6.31 6.65 |
+| shell | 5 | 51/51, 963 PASS | 523 s | 65.57 25.49 14.01 (see below) |
+| shell | load | **50/51**, 962 PASS, 1 FAIL | 1388 s | 3.60 5.33 19.42 (start 8.03) |
+
+During shell run 5, another session (oss-lab) ran 48 busy-loop CPU burners: load 65 to 119. The run stayed green. The load runs waited until that job had exited and the 1-minute load was below 15.
+
+**Defect: oss-notification-style.test.sh waits on the clock for a fresh stub's first exec.**
+- Run 2: `✗ FAIL: a saved telegram style behaves exactly as visual — visual=node update-workflow-state.js setNotification Ready 10|terminal-notifier -title OSS -message Ready -sound Funk| telegram=node update-workflow-state.js setNotification Ready 10|`
+- Load run: `✗ FAIL: visual style sets the Ready notice and shows the popup — calls=node update-workflow-state.js setNotification Ready 10|`
+- Root cause: `oss-notification.sh:50` backgrounds `terminal-notifier ... &>/dev/null &`. `run_style` creates that stub fresh in every call (mktemp, printf, chmod), then polls for its line for at most 20 x 0.1 s = 2 s. The stub's first exec costs 1.6-3.3 s at ambient load (measured above), so whether the line lands within the window is chance. This is the diag-b stall condition: a fresh executable plus a wall-clock window.
+- Vacuity: in the load run, both styles missed the popup, so `telegram == visual` passed comparing two incomplete call lists. Only the anchor check caught it.
+- Fix direction (test only, not done here): make the stubs once with `warm_stub`. Wait for the backgrounded popup with an event, not a clock: the hook redirects only fds 0-2, so a `3>&1` pipe inside the command substitution (as in T4h) makes it return after the popup stub exits.
+
+**Same pattern, green in all 6 runs but latent:**
+- `oss-stop-telegram-style.test.sh:30`: fresh stubs per call, 10 x 0.1 s = 1 s window for backgrounded say/afplay.
+- `project-routing.test.sh:95`: a 10 x 0.3 s window for the detached `oss-log.sh agent` state write. Line 139 runs `sleep 1` and then asserts B is untouched; it does not wait for the detached jobs, so that check is weak under load.
+- `iron-laws-sync-safety.test.sh:363`: `sleep 1`, then "no write while locked". The child could still be in its first exec, so this check can pass vacuously.
+- `session-start-iron-laws.test.sh:114`: `sleep 1`, then "no refresh started" on a nohup'd job. Same vacuity under load.
+
+**Real ~/.oss untouched.** Snapshots of mtime+size (and shasum) were taken for every file directly under `~/.oss` (986 entries) and `~/.oss/logs/current-session/*`: before any run, after each run, and at the end.
+- Test-only sentinels are byte-identical and keep their mtimes: `fallbacktest.log` (written only by watcher/test/hooks/oss-log-project-local.test.ts; last written 08:01 today, before T5), `projectA_cmd.log` and `testcmd.log` (oss-value.test.sh names), `envtest.log`, `projectB_cmd.log`, `test.log`, `test-tdd.log`, `test-verbose.log`, `red.log`, `precheck.log`, `plan.log`, `health-workflow-state.json`.
+- Excluded as written by live processes, each attributed:
+  - `workflow-state.json`: `daemon/bin/oss-daemon.js` (PID 2640, up 10 days) writes `daemonHeartbeat` every 60 s at :52, also while idle with no test running (watched for 5 min). The decisions worktree session also ran `update-workflow-state.js`.
+  - `session.log`: the bytes appended during all runs are only session START/END lines for real projects (oss-model-eval, AgenticDevWorkflow-g21, this worktree at 16:57/16:58).
+  - `current-project`, `plugin-root`, `oss-statusline.sh`: rewritten together at 15:39, 15:57 and 16:58, matching those live session STARTs. plugin-root holds the installed cache path `.../oss/2.0.94`, which a test from this worktree would not write.
+  - `build.log`: lines at 16:33 about `watcher/test/cli/redact-decision.test.ts`, a file that exists only in the one-shot-ship-plugin-decisions worktree.
+  - `team-iron-laws.json`: rewritten 3649 s after its previous write, i.e. the 1 h cache TTL of oss-fetch-team-iron-laws.sh via a live oss-iron-law-check. Content hash unchanged, and it holds server-only fields that appear in no test fixture.
+  - `update-state.json`: mtime only (15:24:41), content hash unchanged, during live session activity. No test running at that moment touches it.
+  - `proxy-596xx.pid`: the model proxy of a live session.
+- `$TMPDIR/.oss`: still the empty dir from Oct 20, same mtime before and after. There is no `.git` at or above `$TMPDIR`, so the walk (which stops at the first `.git`) cannot reach it.
+
+**Audit of "no network / no call" assertions on hooks with detached jobs.** Detached jobs exist in oss-notify.sh (analytics POST on start; check-updates under --session), oss-session-start.sh (nohup iron-laws sync, notify --session, health check), oss-log.sh agent (state updates), oss-notification.sh and oss-stop.sh (popup/say/afplay).
+- Waits correctly (fd-3 pipe): watcher oss-notify-project ("send nothing to the network"), oss-session-start-subscription-url; shell oss-notify-api-url, optional-helper-source (`3>&1`, T4h).
+- Waits correctly (markers): oss-notify-analytics-detach, oss-notify-update-notice-detach, oss-log-agent-detach, oss-session-start-notify-detach, oss-session-start-health-check-detach, acceptance hook-background-detach. These assert only positive calls, via received/release/done markers.
+- Valid, because no detached job is started:
+  - oss-session-context-local "no network calls": OSS_SKIP_HEALTH_CHECK=1 skips notify --session and the iron-laws sync.
+  - oss-notify-workflow-name: the name is refused before any job.
+  - value-file-wrappers-run settings "no curl": the settings block has no detached job.
+  - workflow-config: in-process fetch, not a hook.
+- Does not wait, partly vacuous: oss-session-logging "should make no network calls". It runs execSync with stdio 0-2 only and without OSS_SKIP_HEALTH_CHECK. The nohup'd iron-laws sync and the detached notify --session can run curl after the assertion. Today the sandbox apiUrl, the PATH curl stub and OSS_SKIP_MANIFEST keep them off the network, but the assertion itself would not see a late off-sandbox call.
+- Does not wait, backed by a static check: oss-notify-telegram "never runs telegram-notify.js" (stdio 0-2). The `complete` path's node calls are synchronous, and the source grep test guards the rest.
+- Vacuous under load (clock waits): session-start-iron-laws:114, iron-laws-sync-safety:363, project-routing:139 (listed above), and oss-notification-style's equality check.
+
+### T15b / T15c (2026-10-29 17:21 CST, test-engineer; by hand, not a /oss:build invocation)
+Test-only changes; no hook touched. Each file can now be pointed at a scratch copy of hooks/ with
+`HOOKS_UNDER_TEST`. All mutants were made in scratch copies, never in the real hooks. "Delay" mutants
+stand in for a slow first exec under load and keep the behaviour correct, so a sound test must pass them.
+
+| File | Mutant (scratch copy) | Old test | New test |
+|---|---|---|---|
+| oss-notification-style | popup run as `( sleep 3; terminal-notifier … ) &` (correct, just late) | FAIL: anchor "visual … shows the popup", and `telegram == visual` PASSED on two lists without the popup (the T15 failure, reproduced) | PASS 3/3 |
+| oss-notification-style | style `t*` also runs `{ sleep 3; say Ready; } &` (telegram != visual) | **PASS 3/3 (vacuous)** | FAIL: telegram has `say Ready` |
+| oss-notification-style | popup line replaced by `:` | (not run) | FAIL: anchor |
+| oss-stop-telegram-style | popup run as `( sleep 3; terminal-notifier … ) &` (correct, just late) | FAIL: anchor, calls empty | PASS 2/2 |
+| oss-stop-telegram-style | style `t*` also runs `{ sleep 3; say Done; } &` | **PASS 2/2 (vacuous)** | FAIL: telegram has `say Done` |
+| session-start-iron-laws T2 | refresh started before the key check (no key needed) | FAIL (caught at idle) | FAIL |
+| session-start-iron-laws T2 | same, started after `sleep 2` | **PASS 4/4 (vacuous)** | FAIL |
+| iron-laws-sync-safety R6 lock | acquire_lock ignores the lock | FAIL (caught at idle) | FAIL: never-waited |
+| iron-laws-sync-safety R6 lock | acquire_lock ignores the lock after `/bin/sleep 2` | **PASS (vacuous)** | FAIL: never-waited |
+| iron-laws-sync-safety R6 lock | write first, then take the lock | FAIL | FAIL: written_while_locked=y |
+| project-routing :95 | agent state update starts after `sleep 4` (correct, just late) | FAIL (3 s window) | PASS |
+| project-routing :95 | agent state update dropped | FAIL | FAIL |
+| project-routing :139 | no-project agent update goes to `current-project` (B) after `sleep 2` | **PASS 45/45 (vacuous)** | FAIL: C and D cases, B:workflow-state.json |
+| watcher oss-session-logging "no network calls" | nohup'd refresh replaced by `sleep 3; curl https://mutant.invalid/sync` | **PASS 6/6 (vacuous)** | FAIL: mutant URL recorded |
+| watcher oss-session-logging "no network calls" | extra `( sleep 3; curl https://mutant.invalid/late ) &` at the end of session start | **PASS 6/6 (vacuous)** | FAIL: mutant URL recorded |
+
+GREEN changes:
+- notification-style, stop-telegram-style: stubs made once with `warm_stub` and symlinked; the hook runs with `3>&1` inside `$(...)`, and the calls are read after every backgrounded job has exited. The polling loops are gone.
+- session-start-iron-laws: curl shim and refresh stub made once with `warm_stub` and symlinked (they write into `$SS_T`); T2 runs `$(ss_run 3>&1 >/dev/null)`. The `sleep 1` is gone.
+- iron-laws-sync-safety R6 lock: a `sleep` stub first on PATH is the handshake. On the sync's first lock-wait sleep it records whether CLAUDE.md exists, then releases the lock. The test waits for the sync to exit. A sync that never waits never releases the lock, which reads "never-waited". The `sleep 1` is gone.
+- project-routing: `run()` adds `3>&1`, so every case waits for detached jobs. The 10 x 0.3 s poll (:95) and the `sleep 1` (:139) are gone. The run time went from 15 s to 13 s.
+- watcher oss-session-logging: test/setup.ts sets `OSS_SKIP_HEALTH_CHECK=1` for every test, and `hookEnv` inherited it, so the old "no network calls" test never ran the refresh or the session notify. The test now sets `OSS_SKIP_HEALTH_CHECK: ''`. It runs both hooks through `runHookAndJobs` (execSync with a 4th `'pipe'`, which execSync waits on; ETIMEDOUT is a failure, not swallowed), and anchors that the subscription-check request was recorded.
+
+Verification (/bin/bash 3.2, run directly): bash32-parse 97/97. 5 consecutive runs each: notification-style 5/5, stop-telegram-style 5/5, session-start-iron-laws 5/5, iron-laws-sync-safety 5/5 (57/57 each), project-routing 5/5 (45/45 each), `npx vitest run test/hooks/oss-session-logging.test.ts` 5/5 (6/6 each). Not done here: the T15 re-run of the whole shell suite and the run under load.
+
+## Last Updated: 2026-10-29 17:21 CST by test-engineer (T15b, T15c)

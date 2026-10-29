@@ -355,18 +355,29 @@ test_concurrent_installs_one_block() {
     teardown
 }
 
+# The sync waits for a held lock by sleeping between tries. A `sleep` stub first on PATH is the
+# handshake: on the first sleep it records whether CLAUDE.md was already written, then releases the
+# lock. So "no write while locked" is checked at the moment the sync is known to be waiting, not
+# after a fixed delay, and the test then waits for the sync itself to exit. A sync that never waits
+# (ignores the lock) never sleeps, so the lock is never released by the stub: that is a failure too.
 test_lock_held_blocks_write() {
     local name="R6: a sync holding the lock blocks the write until it is released"; ((TESTS_RUN++)); setup
     mkdir "$T/home/.oss/.iron-laws-sync.lock"
-    (cd "$T" && HOME="$T/home" CLAUDE_PROJECT_DIR="$T/proj" PATH="$T/bin:$PATH" \
-        perl -e 'alarm 30; exec @ARGV' bash "$HOOK_SCRIPT" --install </dev/null >/dev/null 2>&1) & local pid=$!
-    sleep 1
-    local early=n; [[ -e "$T/proj/CLAUDE.md" ]] && early=y
-    rmdir "$T/home/.oss/.iron-laws-sync.lock"
-    wait "$pid"
+    warm_stub "$T/lockbin/sleep" "$(cat << 'STUB'
+if [[ ! -e "$LOCK_PROBE" && -d "$LOCK_HELD" ]]; then
+    { [[ -e "$CLAUDE_PROJECT_DIR/CLAUDE.md" ]] && echo y || echo n; } > "$LOCK_PROBE"
+    rmdir "$LOCK_HELD"
+fi
+exec /bin/sleep "$@"
+STUB
+)" || echo "lock test: sleep stub did not warm" >&2
+    (cd "$T" && HOME="$T/home" CLAUDE_PROJECT_DIR="$T/proj" PATH="$T/lockbin:$T/bin:$PATH" \
+        LOCK_HELD="$T/home/.oss/.iron-laws-sync.lock" LOCK_PROBE="$T/lock-probe" \
+        perl -e 'alarm 30; exec @ARGV' bash "$HOOK_SCRIPT" --install </dev/null >/dev/null 2>&1)
+    local early; early=$(cat "$T/lock-probe" 2>/dev/null || echo never-waited)
     local later=n; [[ "$(count_line "$START" "$T/proj/CLAUDE.md")" == "1" ]] && later=y
     if [[ "$early" == n && "$later" == y && ! -e "$T/home/.oss/.iron-laws-sync.lock" ]]; then pass "$name"
-    else fail "$name" "no write while locked, one block after release, lock removed" "written_while_locked=$early block_after=$later"; fi
+    else fail "$name" "waited with no write while locked, one block after release, lock removed" "written_while_locked=$early block_after=$later"; fi
     teardown
 }
 

@@ -1,5 +1,9 @@
 # Learnings
 
+## 2026-10-29 | Testing | hooks + watcher
+- **Context:** hook-test-hermetic (T15b, T15c)
+- **Insight:** Three extensions of the fd-3 rule. (1) In Node, `execSync(..., { stdio: ['pipe','pipe','pipe','pipe'] })` waits for EOF on the 4th pipe, which detached jobs inherit. Treat its ETIMEDOUT as a failure; a bare `catch {}` turns "did not finish" into a vacuous pass. (2) A global test env can switch off the very path that an assertion is about: watcher/test/setup.ts sets OSS_SKIP_HEALTH_CHECK=1, so "session hooks make no network calls" never ran the refresh or notify jobs it was meant to cover. A mutant that sends an off-sandbox curl from those jobs passed. (3) For "no X while a lock is held", put a stub of the wait primitive (`sleep`) first on PATH as the handshake: on the first wait it checks the negative, then releases the lock. That replaces `sleep 1; check`, which passed against a lock-ignoring sync that was 2 s slow.
+
 ## 2026-10-29 | Testing | hooks
 - **Context:** hook-test-hermetic (build T7-T14)
 - **Insight:** On macOS the first exec of a NEW executable is security-scanned: 0.3 s idle, 60 s or more under load. Most of this repo's "slow" or "flaky" hook tests were paying that per case, by writing a fresh stub (or copying hooks/) per sandbox. Make each stub once per run with `warm_stub` and symlink it into sandboxes; symlink a hooks dir instead of copying it. The hooks resolve their root logically (`cd dirname && pwd`) plus CLAUDE_PLUGIN_ROOT, so a symlinked hooks dir keeps the sandbox root.

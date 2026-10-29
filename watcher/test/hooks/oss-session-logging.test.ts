@@ -21,8 +21,10 @@ import * as path from 'path';
 import * as os from 'os';
 
 const PLUGIN_ROOT = path.join(__dirname, '../../..');
-const SESSION_START = path.join(PLUGIN_ROOT, 'hooks/oss-session-start.sh');
-const SESSION_END = path.join(PLUGIN_ROOT, 'hooks/oss-session-end.sh');
+// HOOKS_UNDER_TEST=/path/to/hooks-copy runs these tests against a copy (mutants).
+const HOOKS_DIR = process.env.HOOKS_UNDER_TEST ?? path.join(PLUGIN_ROOT, 'hooks');
+const SESSION_START = path.join(HOOKS_DIR, 'oss-session-start.sh');
+const SESSION_END = path.join(HOOKS_DIR, 'oss-session-end.sh');
 const SANDBOX_API_URL = 'http://127.0.0.1:9';
 const HOOK_TIMEOUT_MS = 10000;
 // A start or end run costs about 1 s warm (bash + a few node CLI calls); the budget leaves room
@@ -89,6 +91,28 @@ function runHook(script: string, cwd: string, overrides: Record<string, string |
   } catch {
     // The hooks never fail a session; the assertions below read what they wrote.
   }
+}
+
+/**
+ * Runs a hook and waits for every job it started. Fd 3 is an extra pipe that the hook and the jobs
+ * it detaches (`</dev/null >/dev/null 2>&1 &` leaves fd 3 alone) all inherit, and execSync returns
+ * only when every writer has closed it. Returns false if that did not happen within HOOK_TIMEOUT_MS.
+ */
+function runHookAndJobs(script: string, cwd: string, overrides: Record<string, string | undefined> = {}): boolean {
+  try {
+    execSync(`bash "${script}"`, {
+      cwd,
+      encoding: 'utf-8',
+      env: hookEnv(overrides),
+      input: '',
+      stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
+      timeout: HOOK_TIMEOUT_MS,
+    });
+  } catch (error) {
+    // A non-zero exit is fine (the hooks never fail a session); not finishing in time is not.
+    if ((error as NodeJS.ErrnoException).code === 'ETIMEDOUT') return false;
+  }
+  return true;
 }
 
 function makeGitProject(name: string, branch?: string): string {
@@ -248,18 +272,24 @@ describe('oss-session-end.sh logging', () => {
 
 describe('session hooks stay off the network', () => {
   /**
-   * @behavior Running the session hooks in a test never reaches a real server
+   * @behavior Running the session hooks in a test never reaches a real server, including the work
+   *           they start in the background (the Iron Laws refresh, the session notification)
    * @business-rule Every request goes to the sandbox's unroutable apiUrl, through the recording stub
    */
-  it('should make no network calls', { timeout: TEST_TIMEOUT_MS }, () => {
-    // GIVEN: a logged-in project (on top of every hook run this file has already made)
+  it('should make no network calls', { timeout: 2 * HOOK_TIMEOUT_MS + TEST_TIMEOUT_MS }, () => {
+    // GIVEN: a logged-in project (on top of every hook run this file has already made), with the
+    // network paths live: test/setup.ts turns them off for every other test (OSS_SKIP_HEALTH_CHECK)
     const project = makeGitProject(`network-project-${testId}`);
+    const live = { CLAUDE_PROJECT_DIR: project, OSS_SKIP_HEALTH_CHECK: '' };
 
-    // WHEN: a session starts and ends there
-    runHook(SESSION_START, project, { CLAUDE_PROJECT_DIR: project });
-    runHook(SESSION_END, project, { CLAUDE_PROJECT_DIR: project });
+    // WHEN: a session starts and ends there, and every job the hooks started has finished
+    expect(runHookAndJobs(SESSION_START, project, live)).toBe(true);
+    expect(runHookAndJobs(SESSION_END, project, live)).toBe(true);
 
-    // THEN: every curl the hooks ran was the stub, aimed at the sandbox apiUrl
-    expect(recordedCurlUrls().filter((url) => !url.startsWith(`${SANDBOX_API_URL}/`))).toEqual([]);
+    // THEN: the hooks did make requests (the subscription check), and every one was the stub,
+    // aimed at the sandbox apiUrl
+    const urls = recordedCurlUrls();
+    expect(urls).toContain(`${SANDBOX_API_URL}/api/v1/subscription/status`);
+    expect(urls.filter((url) => !url.startsWith(`${SANDBOX_API_URL}/`))).toEqual([]);
   });
 });

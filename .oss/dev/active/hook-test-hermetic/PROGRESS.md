@@ -21,10 +21,12 @@
 - [x] T13: complete-bounds.test.sh checks boundedness, not wall-clock (completed 2026-10-29)
 - [x] T13b: complete-bounds parses under /bin/bash 3.2 (completed 2026-10-29)
 - [x] T14: api-curl.real.integration.test.sh is event-driven (completed 2026-10-29)
-- [ ] T15: Stability proof: 5 runs each, plus a run under load (pending)
+- [ ] T15: Stability proof: 5 runs each, plus a run under load (NOT PASSED 2026-10-29 16:59 CST, test-engineer: watcher 5/5 + load green; shell red 1 of 5 + red under load, oss-notification-style.test.sh 2 s clock wait on a fresh backgrounded stub; real ~/.oss untouched; see TESTING.md T15)
+- [x] T15b: oss-notification-style (and stop-telegram-style) wait for the popup, not a 2 s window (completed 2026-10-29, test-engineer)
+- [x] T15c: negative checks after background jobs wait for the job, not sleep 1 (completed 2026-10-29, test-engineer)
 - [ ] T16: Version bump to 2.0.95 and the server analytics follow-up (pending)
 
 ## Blockers
 - None
 
-## Last Updated: 2026-10-29 15:00 CST by /oss:build (T4h, T4i, T13b done)
+## Last Updated: 2026-10-29 17:21 CST by test-engineer (T15b, T15c green; T15 shell re-run pending)

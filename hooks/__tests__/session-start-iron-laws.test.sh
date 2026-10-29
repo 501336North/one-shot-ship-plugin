@@ -12,7 +12,8 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SESSION_START_SCRIPT="$SCRIPT_DIR/../oss-session-start.sh"
+# HOOKS_UNDER_TEST=/path/to/hooks-copy runs these tests against a copy (mutants).
+SESSION_START_SCRIPT="${HOOKS_UNDER_TEST:-$SCRIPT_DIR/..}/oss-session-start.sh"
 
 # Test tracking
 TESTS_RUN=0
@@ -39,32 +40,39 @@ fail() {
 # Fixture for behavioural session-start tests: a temp HOME, a temp project, a curl shim that
 # records argv and --config stdin, and a fake plugin root whose oss-iron-laws-sync.sh is a
 # recorder stub that prints to stdout and takes 6s (an API that never answers).
-ss_setup() {
-    T=$(mktemp -d)
-    mkdir -p "$T/home/.oss" "$T/proj" "$T/bin" "$T/shim" "$T/root/hooks"
-    cat > "$T/bin/curl" << SHIM
-#!/bin/bash
-S="$T/shim"
-printf '%s\n' "\$*" >> "\$S/argv"
+# Both stubs are made and warmed once (macOS scans each new executable on its first exec, 0.3-60 s)
+# and symlinked into each case; they write into the current case's dir, $SS_T.
+source "$SCRIPT_DIR/lib/warm-stub.sh"
+KS=$(mktemp -d); KS=$(cd "$KS" && pwd -P)
+trap 'rm -rf "$KS"' EXIT
+STUBS_WARM=y
+warm_stub "$KS/bin/curl" "$(cat << 'SHIM'
+S="$SS_T/shim"
+printf '%s\n' "$*" >> "$S/argv"
 prev=""
-for a in "\$@"; do
-    if [[ ( "\$prev" == "--config" || "\$prev" == "-K" ) && "\$a" == "-" ]]; then cat >> "\$S/stdin"; fi
-    prev="\$a"
+for a in "$@"; do
+    if [[ ( "$prev" == "--config" || "$prev" == "-K" ) && "$a" == "-" ]]; then cat >> "$S/stdin"; fi
+    prev="$a"
 done
 printf '{"status":"active"}'
 SHIM
-    chmod +x "$T/bin/curl"
-    cat > "$T/root/hooks/oss-iron-laws-sync.sh" << STUB
-#!/bin/bash
-printf '%s|%s\n' "\$\$" "\$*" > "$T/sync-started"
+)" || STUBS_WARM=n
+warm_stub "$KS/sync.sh" "$(cat << 'STUB'
+printf '%s|%s\n' "$$" "$*" > "$SS_T/sync-started"
 echo "SYNC STDOUT LEAK"
 sleep 6
-touch "$T/sync-finished"
+touch "$SS_T/sync-finished"
 STUB
-    chmod +x "$T/root/hooks/oss-iron-laws-sync.sh"
+)" || STUBS_WARM=n
+if [[ $STUBS_WARM != y ]]; then echo "✗ FAIL: stub warm-up — a stub did not run"; exit 1; fi
+ss_setup() {
+    T=$(mktemp -d)
+    mkdir -p "$T/home/.oss" "$T/proj" "$T/shim" "$T/root/hooks"
+    ln -s "$KS/bin" "$T/bin"
+    ln -s "$KS/sync.sh" "$T/root/hooks/oss-iron-laws-sync.sh"
 }
 ss_run() { # runs the real session start (health checks ON, so the sync path is live)
-    (cd "$T/proj" && HOME="$T/home" CLAUDE_PLUGIN_ROOT="$T/root" CLAUDE_PROJECT_DIR="$T/proj" \
+    (cd "$T/proj" && SS_T="$T" HOME="$T/home" CLAUDE_PLUGIN_ROOT="$T/root" CLAUDE_PROJECT_DIR="$T/proj" \
         OSS_SKIP_HEALTH_CHECK= OSS_TEST_CC_VERSION=2.1.99 PATH="$T/bin:$PATH" \
         perl -e 'alarm 30; exec @ARGV' bash "$SESSION_START_SCRIPT" </dev/null 2>&1)
 }
@@ -110,8 +118,10 @@ test_skips_sync_without_api_key() {
     ((TESTS_RUN++))
     ss_setup
     printf '{}\n' > "$T/home/.oss/config.json"
-    ss_run >/dev/null
-    sleep 1
+    # Fd 3 is a second writer on the substitution's pipe: the hook and every job it starts (the
+    # nohup'd refresh redirects only fds 0-2) inherit it, so $(...) returns only when all of them
+    # have exited. A refresh started by mistake, however slow, has written sync-started by then.
+    local _wait; _wait=$(ss_run 3>&1 >/dev/null)
     if [[ ! -e "$T/sync-started" ]]; then
         pass "$test_name"
     else
