@@ -197,6 +197,16 @@ Files: `hooks/oss-session-start.sh` (subscription check) and the new `watcher/te
 - Provenance: fetch-iron-laws.sh, oss-fetch-team-iron-laws.sh, oss-iron-laws-sync.sh and oss-push-metrics.sh still send the key to the hardcoded host (FOLLOWUPS:95; asked the user whether to widen T4f). oss-login.sh's first login is justified. The -new/-test copies are unreachable (FOLLOWUPS:29). check-updates and changelog send no key.
 - Gap at this same site: the key is read from `~/.oss/config.json` (line 124), but the URL comes from `oss_config_file` (honours OSS_CONFIG_DIR). Fixed in T4f-2.
 
+### T13 (2026-10-29, /oss:build, test-engineer)
+File: `hooks/__tests__/oss-notify-complete-bounds.test.sh` (8 checks, was 7). No wall-clock assertion is left; `grep took|date +%s|SECONDS` only matches a comment.
+- Warm `node` and `oss-log.sh` stubs. The recording `gtimeout`/`timeout` stubs export the limit they ran under, so each state call logs `<limit>|<argv>`.
+- The ship complete case expects 6 calls, all `2|`; the build complete case expects 5.
+- Hang case: no timeout tools on PATH, so the hook's own fallback timer is tested. It passes when the hook exits without `release` after at least one `received`. Its timer `sleep` is a gated stub: timer N waits until `received` has N lines, so "all 6 attempted" cannot race the 2 s timer. Proven by a scratch test whose hung stub waits 3 s: the old count failed, the new one passed 8/8.
+- Fallback-timer case: the `sleep` stub records its pid, so "stdout released, no sleep left behind" is checked without a clock.
+- Mutants (scratch copies; each fails within one 60 s backstop): m1 wf_state_timeout calls node directly gives 3/8; m2 setWorkflowComplete loses its timeout gives 6/8; m3 the timer never kills gives 6/8; m5 the TERM trap leaves its sleep gives a case-6 failure. m4 (timer keeps stdio) survives; it is equivalent, because the timer is still killed and stdout closes.
+- GREEN: 5 sequential runs plus 1 under load (8 fresh-script loops). Orchestrator re-run: 8/8.
+- Runtime is 25-302 s depending on load. One instrumented run under load took 50 s: 57% the 18 stub warm-ups (first-exec scan), 24% the hook's real timers, 16% `no_timeout_tools` symlinking /usr/bin. FOLLOWUPS: make the shared stubs once per run and the no-timeout PATH once.
+
 ## Stability proof (T15)
 Extra checks found during build:
 - every "no network / no call" assertion on a hook with detached jobs must wait for those jobs (fd-3 pipe or a done marker), or it is vacuous (T10);
