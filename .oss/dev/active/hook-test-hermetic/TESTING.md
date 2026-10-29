@@ -58,6 +58,15 @@ File: `watcher/test/hooks/oss-session-start-health-check-detach.test.ts`, 2 test
 - GREEN: 2/2. Anti-vacuity: reverting the redirect turns only test 1 RED; reverting `>> health-check.log` turns only test 2 RED.
 - Regression check: the notify-detach file and the acceptance file both pass (10/10).
 
+### T4a (2026-10-29, /oss:build, test-engineer)
+File: `watcher/test/hooks/oss-log-agent-detach.test.ts`, 5 tests: 4 variants (starting or completed, each with and without a project dir) plus a control.
+- RED: all 4 variants were still open 15 s into the state update. Each also confirms it reached its intended branch. The control passed.
+- GREEN: 5/5, 16 runs in a row including parallel runs. The orchestrator then reran it together with oss-log-agent-state 3 times: 10/10 each time.
+- Anti-vacuity: reverting each of the 4 redirects alone turns exactly its own variant RED. A partial mutant (stdin and stdout redirected, no `2>&1`) is also RED.
+- **The fix broke one existing test, and it was fixed:** `oss-log-agent-state` "should set supervisor to watching when agent completes" failed 3/3 with the fixed hook and passed 3/3 at HEAD. That test only passed because the hook blocked: it read `supervisor` after `clearActiveAgent` and before `setSupervisor`. It now waits for `supervisor === 'watching'`.
+- **Unexplained, recorded:** the first GREEN run had 1 failure at 217 ms, and its message was not captured. It did not recur in 16 later runs. The likely cause is that `afterEach` deleted the state dir while the detached node chain was still writing to it. afterEach now waits for both node calls to finish (`node-done`). T15 must confirm this.
+- **Same race, not yet fixed:** `oss-log-agent-state` "should still write to log file..." deletes its project dir while a real detached node chain may still be running. Added to T6.
+
 ## Stability proof (T15)
 (5 runs per suite, plus 1 run under load, plus the real ~/.oss mtime check)
 

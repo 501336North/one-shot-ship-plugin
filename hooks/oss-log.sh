@@ -421,19 +421,19 @@ case "$ACTION" in
                 AGENT_JSON=$(jq -n --arg type "$AGENT" --arg task "$TASK_DESC" '{type: $type, task: $task}')
                 if [[ -n "$PROJECT_DIR" && -d "$PROJECT_DIR/.oss" ]]; then
                     (node "$UPDATE_CLI" --project-dir "$PROJECT_DIR" setSupervisor intervening 2>/dev/null && \
-                     node "$UPDATE_CLI" --project-dir "$PROJECT_DIR" setActiveAgent "$AGENT_JSON" 2>/dev/null) &
+                     node "$UPDATE_CLI" --project-dir "$PROJECT_DIR" setActiveAgent "$AGENT_JSON" 2>/dev/null) </dev/null >/dev/null 2>&1 &
                 else
                     (node "$UPDATE_CLI" setSupervisor intervening 2>/dev/null && \
-                     node "$UPDATE_CLI" setActiveAgent "$AGENT_JSON" 2>/dev/null) &
+                     node "$UPDATE_CLI" setActiveAgent "$AGENT_JSON" 2>/dev/null) </dev/null >/dev/null 2>&1 &
                 fi
             elif [[ "$TASK" =~ completed:\ * ]]; then
                 # Clear active agent and set supervisor to watching (sequentially to avoid race)
                 if [[ -n "$PROJECT_DIR" && -d "$PROJECT_DIR/.oss" ]]; then
                     (node "$UPDATE_CLI" --project-dir "$PROJECT_DIR" clearActiveAgent 2>/dev/null && \
-                     node "$UPDATE_CLI" --project-dir "$PROJECT_DIR" setSupervisor watching 2>/dev/null) &
+                     node "$UPDATE_CLI" --project-dir "$PROJECT_DIR" setSupervisor watching 2>/dev/null) </dev/null >/dev/null 2>&1 &
                 else
                     (node "$UPDATE_CLI" clearActiveAgent 2>/dev/null && \
-                     node "$UPDATE_CLI" setSupervisor watching 2>/dev/null) &
+                     node "$UPDATE_CLI" setSupervisor watching 2>/dev/null) </dev/null >/dev/null 2>&1 &
                 fi
             fi
         fi

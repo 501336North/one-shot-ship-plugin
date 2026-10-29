@@ -85,6 +85,25 @@ describe('oss-log.sh - Agent State Updates', () => {
     return false;
   };
 
+  // Wait for the supervisor to reach a given value
+  const waitForSupervisor = async (value: string, maxMs = 2000): Promise<boolean> => {
+    const start = Date.now();
+    while (Date.now() - start < maxMs) {
+      if (fs.existsSync(workflowStateFile)) {
+        try {
+          const state = JSON.parse(fs.readFileSync(workflowStateFile, 'utf-8'));
+          if (state.supervisor === value) {
+            return true;
+          }
+        } catch {
+          // File might be partially written
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    return false;
+  };
+
   // Wait for activeAgent to be cleared
   const waitForAgentCleared = async (maxMs = 2000): Promise<boolean> => {
     const start = Date.now();
@@ -172,10 +191,12 @@ describe('oss-log.sh - Agent State Updates', () => {
     runLogCommand('agent build typescript-pro "completed: Types fixed"');
 
     // THEN: workflow-state.json should have supervisor: "watching"
-    const cleared = await waitForAgentCleared();
-    expect(cleared).toBe(true);
+    // The update runs detached and clears the agent BEFORE it sets the supervisor, so wait for the
+    // supervisor itself rather than for the cleared agent.
+    const watching = await waitForSupervisor('watching');
+    expect(watching).toBe(true);
     const state = JSON.parse(fs.readFileSync(workflowStateFile, 'utf-8'));
-    expect(state.supervisor).toBe('watching');
+    expect(state.activeAgent).toBeUndefined();
   });
 
   /**

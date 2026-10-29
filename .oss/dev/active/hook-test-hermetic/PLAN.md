@@ -131,6 +131,8 @@ The tests:
 - Each failing file becomes one cycle. RED: the failure observed under the sandbox, recorded. GREEN: the test builds the files it needs. Never point it back at the real HOME.
 - Each cycle is logged; the files are listed in PROGRESS.md as T6.a, T6.b, and so on.
 
+**Known item before the run (found by T4a, 2026-10-29):** `oss-log-agent-state.test.ts` "should still write to log file..." deletes its project dir in afterEach while the now-detached real `node` chain may still be writing. That is a teardown race that can flake, and it is one T6.x cycle: wait for the chain to finish, or stub node, before deleting.
+
 **Acceptance:**
 - The full suite passes.
 - `grep -rn "os.userInfo().homedir\|/Users/" watcher/test` finds no reach-around to the real HOME.
