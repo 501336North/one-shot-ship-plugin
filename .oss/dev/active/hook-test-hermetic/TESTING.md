@@ -207,6 +207,16 @@ File: `hooks/__tests__/oss-notify-complete-bounds.test.sh` (8 checks, was 7). No
 - GREEN: 5 sequential runs plus 1 under load (8 fresh-script loops). Orchestrator re-run: 8/8.
 - Runtime is 25-302 s depending on load. One instrumented run under load took 50 s: 57% the 18 stub warm-ups (first-exec scan), 24% the hook's real timers, 16% `no_timeout_tools` symlinking /usr/bin. FOLLOWUPS: make the shared stubs once per run and the no-timeout PATH once.
 
+### T4f-2 (2026-10-29, /oss:build, test-engineer)
+Hook: `CONFIG_FILE=$(oss_config_file)` in oss-session-start.sh, so the logged-in check, the key read and oss_api_url read one file. The curl stub now also records stdin, where the key travels.
+- New test: with OSS_CONFIG_DIR set (key KB, apiUrl 127.0.0.1:9) and HOME's config holding KA, only KB is sent, to 127.0.0.1:9. New control: unset, HOME's key and URL are used.
+- RED: the call carried `Bearer fake-key-home-KA`; the URL assertion before it passed, which is exactly the leak.
+- The flake fix in the same test: the sandbox plugin root's `hooks` is now a SYMLINK to the real (or mutant) hooks dir, not a copy, so no new files are scanned. The first run had hit the 180 s beforeAll budget while copying. The hooks resolve their root logically (`cd dirname && pwd`; CLAUDE_PLUGIN_ROOT is set). A recording node stub asserts that no node CLI ran, which proves the root did not jump to the repo's watcher/dist. The warm-up session was dropped (beforeAll 2.3-2.8 s).
+- Latent: oss-notify.sh:19 (`$SCRIPT_DIR/..` when CLAUDE_PLUGIN_ROOT is unset) and check-updates.sh:24 would cross the symlink. Neither runs in this test.
+- Mutants (fresh scratch copies), all RED by assertion, no timeouts: A pre-T4f hook gives 4 failed; B hardcoded URL gives 3; C invalid-URL bypass gives 1; D old line 124 gives 1 (`Bearer fake-key-home-KA`).
+- GREEN: 5 sequential runs (5.8-9.9 s) and 6 parallel runs (17-21 s) at load ~18, all 5/5. Neighbouring suites 23/23. Orchestrator re-run: 5/5 in 5.8 s.
+- FOLLOWUPS: the grep key read vs oss_api_key (jq) parse a `\"` key differently.
+
 ## Stability proof (T15)
 Extra checks found during build:
 - every "no network / no call" assertion on a hook with detached jobs must wait for those jobs (fd-3 pipe or a done marker), or it is vacuous (T10);

@@ -121,7 +121,7 @@ if [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]]; then
 fi
 
 # Check for API key configuration
-CONFIG_FILE=~/.oss/config.json
+CONFIG_FILE=$(oss_config_file 2>/dev/null)   # the same file oss_api_url reads: key and URL from one place
 if [[ ! -f "$CONFIG_FILE" ]]; then
     echo "OSS: Not logged in. Run /oss login to authenticate."
     exit 0

@@ -12,13 +12,17 @@
  *   the child env (that includes CLAUDE_CODE_SESSION_ID, CLAUDE_PROJECT_DIR and OSS_CONFIG_DIR).
  *   OSS_SKIP_WATCHER=1 is set. OSS_SKIP_HEALTH_CHECK stays unset, because the subscription check runs
  *   only when it is not "1"; OSS_RUN_HEALTH_CHECK stays unset, so the opt-in test run does not start.
- * - a sandbox bin/ first on PATH: a recording `curl` (one line of argv per call, in a per-test file,
- *   prints {"status":"active"}) and no-op `claude`, `say` and `afplay`. Stubs are warmed once in beforeAll.
- * - the hook runs from a sandbox plugin root: a copy of hooks/ (no watcher/dist, so no node CLI runs).
- *   OSS_TEST_HOOKS_DIR may point the copy at another hooks dir (used to run mutants).
- * - the copied hooks are new files, so beforeAll runs the whole hook once (warm-up session, own HOME):
- *   the macOS first-exec scan of every script it execs happens there, not inside a test. Without it,
- *   parallel runs measured a 40-60 s first session start.
+ * - a sandbox bin/ first on PATH: a recording `curl` (one line of argv per call in a per-test file, and
+ *   its stdin, where oss_api_curl writes the `header = "Authorization: Bearer <key>"` config, in a second
+ *   file; prints {"status":"active"}), a recording `node` (argv per call, exits 0) and no-op `claude`, `say`
+ *   and `afplay`. Stubs are warmed once in beforeAll.
+ * - OSS_CONFIG_DIR is set only by the tests that pass a configDir: the key, and the URL it goes to, must
+ *   both come from that one file (oss_config_file).
+ * - the hook runs from a sandbox plugin root (CLAUDE_PLUGIN_ROOT) whose hooks/ is a SYMLINK to the real
+ *   hooks dir, or to OSS_TEST_HOOKS_DIR (used to run mutants). Not a copy: copied scripts are new files,
+ *   and the macOS first-exec scan of each one cost up to minutes under parallel load. The hooks resolve
+ *   the plugin root logically (cd + pwd, CLAUDE_PLUGIN_ROOT), so the root stays the sandbox, which has no
+ *   watcher/dist: the node stub proves no watcher CLI runs.
  * - fd 3 is an extra pipe; the hook's detached jobs (notify, iron-laws sync) inherit it, so spawnSync
  *   returns only after they all exit and the curl record is complete. The timeout is a hang backstop.
  */
@@ -44,20 +48,14 @@ beforeAll(() => {
   fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-session-start-suburl-'));
   binDir = path.join(fixtureRoot, 'bin');
   pluginRoot = path.join(fixtureRoot, 'plugin');
-  fs.cpSync(HOOKS_SOURCE, path.join(pluginRoot, 'hooks'), {
-    recursive: true,
-    filter: (src) => path.basename(src) !== '__tests__',
-  });
+  fs.mkdirSync(pluginRoot);
+  fs.symlinkSync(path.resolve(HOOKS_SOURCE), path.join(pluginRoot, 'hooks'));
   writeWarmStub(
     path.join(binDir, 'curl'),
-    'printf "%s\\n" "$*" >> "$CURL_CALLS"\nprintf \'{"status":"active"}\'\nexit 0\n',
+    'printf "%s\\n" "$*" >> "$CURL_CALLS"\ncat >> "$CURL_CALLS.stdin"\nprintf \'{"status":"active"}\'\nexit 0\n',
   );
+  writeWarmStub(path.join(binDir, 'node'), 'printf "%s\\n" "$*" >> "$NODE_CALLS"\nexit 0\n');
   for (const name of ['claude', 'say', 'afplay']) writeWarmStub(path.join(binDir, name), 'exit 0\n');
-
-  const warm = path.join(fixtureRoot, 'warm-up');
-  fs.mkdirSync(path.join(warm, 'project'), { recursive: true });
-  runHook(path.join(warm, 'home'), path.join(warm, 'project'), path.join(warm, 'curl-calls'),
-    { apiKey: FAKE_KEY, apiUrl: 'http://127.0.0.1:9' }, WARMUP_TIMEOUT_MS - 30_000);
 }, WARMUP_TIMEOUT_MS);
 
 afterAll(() => {
@@ -85,9 +83,18 @@ interface HookRun {
   status: number | null;
   output: string;
   calls: string[];
+  stdin: string;
+  nodeCalls: string[];
 }
 
-function runHook(home: string, project: string, calls: string, config: Record<string, string>, backstopMs: number): HookRun {
+function runHook(
+  home: string,
+  project: string,
+  calls: string,
+  config: Record<string, string>,
+  backstopMs: number,
+  configDir?: string,
+): HookRun {
   fs.mkdirSync(path.join(home, '.oss'), { recursive: true, mode: 0o700 });
   fs.chmodSync(path.join(home, '.oss'), 0o700);
   fs.writeFileSync(path.join(home, '.oss/config.json'), JSON.stringify(config));
@@ -102,7 +109,9 @@ function runHook(home: string, project: string, calls: string, config: Record<st
     CLAUDE_PLUGIN_ROOT: pluginRoot,
     OSS_SKIP_WATCHER: '1',
     CURL_CALLS: calls,
+    NODE_CALLS: `${calls}.node`,
   });
+  if (configDir) env.OSS_CONFIG_DIR = configDir;
   const result = spawnSync('bash', [path.join(pluginRoot, 'hooks/oss-session-start.sh')], {
     cwd: project,
     env,
@@ -112,11 +121,13 @@ function runHook(home: string, project: string, calls: string, config: Record<st
   });
   if (result.error) throw new Error(`session start did not finish (hang backstop): ${result.error.message}`);
   const recorded = fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').split('\n').filter(Boolean) : [];
-  return { status: result.status, output: `${result.stdout}${result.stderr}`, calls: recorded };
+  const stdin = fs.existsSync(`${calls}.stdin`) ? fs.readFileSync(`${calls}.stdin`, 'utf8') : '';
+  const nodeCalls = fs.existsSync(`${calls}.node`) ? fs.readFileSync(`${calls}.node`, 'utf8').split('\n').filter(Boolean) : [];
+  return { status: result.status, output: `${result.stdout}${result.stderr}`, calls: recorded, stdin, nodeCalls };
 }
 
-function startSession(config: Record<string, string>): HookRun {
-  return runHook(homeDir, projectDir, curlCalls, config, RUN_BACKSTOP_MS);
+function startSession(config: Record<string, string>, configDir?: string): HookRun {
+  return runHook(homeDir, projectDir, curlCalls, config, RUN_BACKSTOP_MS, configDir);
 }
 
 const subscriptionCalls = (calls: string[]) => calls.filter((c) => c.includes('/api/v1/subscription/status'));
@@ -135,6 +146,8 @@ describe('oss-session-start.sh: subscription check URL', () => {
       expect(run.calls.filter((c) => c.includes('onrender.com')), `all curl calls:\n${run.calls.join('\n')}`).toEqual([]);
       expect(run.calls.join('\n')).not.toContain(FAKE_KEY);
       expect(run.output).toContain('OSS: Ready (active)');
+      // The sandbox, not the repo, is the plugin root: no watcher CLI ran.
+      expect(run.nodeCalls, `node calls:\n${run.nodeCalls.join('\n')}`).toEqual([]);
     },
     TEST_TIMEOUT_MS,
   );
@@ -161,6 +174,41 @@ describe('oss-session-start.sh: subscription check URL', () => {
       expect(subscriptionCalls(run.calls), `all curl calls:\n${run.calls.join('\n')}`).toEqual([]);
       expect(run.calls.filter((c) => c.includes('evil.example') || c.includes('onrender.com'))).toEqual([]);
       expect(run.output).toContain('OSS: Ready - IRON LAWS active');
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'takes the key and its URL from OSS_CONFIG_DIR when set, never the HOME config key',
+    () => {
+      const keyHome = 'fake-key-home-KA';
+      const keyDir = 'fake-key-configdir-KB';
+      const configDir = path.join(caseRoot, 'config-b');
+      fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(path.join(configDir, 'config.json'), JSON.stringify({ apiKey: keyDir, apiUrl: 'http://127.0.0.1:9' }));
+
+      const run = startSession({ apiKey: keyHome }, configDir);
+
+      expect(run.status, run.output).toBe(0);
+      const sub = subscriptionCalls(run.calls);
+      expect(sub, `all curl calls:\n${run.calls.join('\n')}`).toHaveLength(1);
+      expect(sub[0]).toContain('http://127.0.0.1:9/api/v1/subscription/status');
+      expect(run.stdin, 'curl --config stdin').toContain(`Bearer ${keyDir}`);
+      expect(run.stdin, 'curl --config stdin').not.toContain(keyHome);
+      expect(run.calls.filter((c) => c.includes('onrender.com'))).toEqual([]);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'takes the key and its URL from the HOME config when OSS_CONFIG_DIR is unset',
+    () => {
+      const run = startSession({ apiKey: FAKE_KEY, apiUrl: 'http://127.0.0.1:9' });
+
+      const sub = subscriptionCalls(run.calls);
+      expect(sub, `all curl calls:\n${run.calls.join('\n')}`).toHaveLength(1);
+      expect(sub[0]).toContain('http://127.0.0.1:9/api/v1/subscription/status');
+      expect(run.stdin, 'curl --config stdin').toContain(`Bearer ${FAKE_KEY}`);
     },
     TEST_TIMEOUT_MS,
   );
