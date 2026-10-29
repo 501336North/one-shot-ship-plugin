@@ -24,9 +24,9 @@
 - [x] T15: Stability proof: 5 runs each, plus a run under load (completed 2026-10-29: watcher 5/5 + load before T15b; shell 5/5 + load after T15b/T15c, test-engineer)
 - [x] T15b: oss-notification-style (and stop-telegram-style) wait for the popup, not a 2 s window (completed 2026-10-29, test-engineer)
 - [x] T15c: negative checks after background jobs wait for the job, not sleep 1 (completed 2026-10-29, test-engineer)
-- [ ] T16: Version bump to 2.0.95 and the server analytics follow-up (pending)
+- [x] T16: Version bump to 2.0.95 and the server analytics follow-up (completed 2026-10-29: plugin.json 2.0.95, the only pin; FOLLOWUPS analytics item)
 
 ## Blockers
 - None
 
-## Last Updated: 2026-10-29 18:29 CST by test-engineer (T15 re-run green: shell 5/5 + load after T15b/T15c)
+## Last Updated: 2026-10-29 18:31 CST by /oss:build (T16 done; all tasks complete)
