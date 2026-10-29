@@ -181,6 +181,13 @@ File: `watcher/test/hooks/oss-log-error-recovery.test.ts`. One sandbox per test 
 
 ### Full suite after T8, T10, T12 (2026-10-29, real config): 264/264 files, 3573/3573 tests.
 
+### T14 (2026-10-29, /oss:build, test-engineer)
+File: `hooks/__tests__/oss-api-curl.real.integration.test.sh` (+50/-19). Scenario 1 no longer samples ps on a timer.
+- The recorder takes one request on hold when `$T/hold/armed` exists, signals `received` on a fifo, and holds until `release`, with a 25 s backstop. The test reads `ps -axo args=` once while the request is held. It checks that the analytics curl line is there and that the key is absent.
+- The curl shim is warm. Scenario 1's curl has `-m 30`; it was `-m 5`, and the timeout was raised above the hold time. The `OSS_API_CURL_HELPER` override points the test at scratch copies.
+- Mutant (key back in argv via `-H "Authorization: Bearer $key"`, scratch copy) failed 5 of 5, every time on "key never in any command line". The "server received Bearer <key>" assertion still passes under this mutant (Python `headers.get` returns the first value), so only the in-flight check catches it.
+- Unmutated scratch copy: 15/15. 5 runs green, 15/15 each. Under load (8 loops making and running fresh scripts) green, 15/15 in 6 s. Re-run by orchestrator: 15/15.
+
 ## Stability proof (T15)
 Extra checks found during build:
 - every "no network / no call" assertion on a hook with detached jobs must wait for those jobs (fd-3 pipe or a done marker), or it is vacuous (T10);

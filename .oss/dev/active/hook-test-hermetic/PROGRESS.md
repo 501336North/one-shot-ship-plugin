@@ -17,11 +17,11 @@
 - [x] T12: oss-log-error-recovery.test.ts writes only in its sandbox (completed 2026-10-29)
 - [ ] T4f: session start's subscription call uses the configured apiUrl (user: fix in this branch, 2026-10-29) (in progress)
 - [ ] T13: complete-bounds.test.sh checks boundedness, not wall-clock (pending)
-- [ ] T14: api-curl.real.integration.test.sh is event-driven (pending)
+- [x] T14: api-curl.real.integration.test.sh is event-driven (completed 2026-10-29)
 - [ ] T15: Stability proof: 5 runs each, plus a run under load (pending)
 - [ ] T16: Version bump to 2.0.95 and the server analytics follow-up (pending)
 
 ## Blockers
 - None
 
-## Last Updated: 2026-10-29 12:18 CST by /oss:build (T8, T10, T12 done; suite 3573/3573)
+## Last Updated: 2026-10-29 12:35 CST by /oss:build (T14 done; T4f, T13 in progress)

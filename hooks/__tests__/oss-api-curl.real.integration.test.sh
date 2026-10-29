@@ -11,12 +11,19 @@
 # @business-rule The API key travels only in a header to the configured, allowed API URL; never in argv.
 # @boundary Real curl, real python3 http.server on 127.0.0.1 (random free port), temp HOME, fake key.
 #
+# Scenario 1 is event-driven: the recorder signals `received` once it has the request headers and then
+# holds the response until the test creates `release`, so the ps check runs while curl is provably
+# in flight. Time limits (-m, the read timeout, the recorder's hold limit) only stop a hang; none is asserted.
+#
 # Usage: ./hooks/__tests__/oss-api-curl.real.integration.test.sh
+#   OSS_API_CURL_HELPER=/path/to/oss-api-curl.sh  test another copy of the helper (e.g. a mutant)
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HELPER="$(cd "$SCRIPT_DIR/.." && pwd)/oss-api-curl.sh"
+HELPER="${OSS_API_CURL_HELPER:-$(cd "$SCRIPT_DIR/.." && pwd)/oss-api-curl.sh}"
+# shellcheck source=lib/warm-stub.sh
+source "$SCRIPT_DIR/lib/warm-stub.sh"
 
 RUN=0; FAILED=0
 pass() { echo "✓ PASS: $1"; RUN=$((RUN + 1)); }
@@ -36,6 +43,7 @@ SERVER_PID=''
 SERVER2_PID=''
 cleanup() {
     local pid
+    : > "$T/hold/release" 2>/dev/null   # never leave the recorder holding a request
     for pid in $SERVER_PID $SERVER2_PID; do kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; done
     rm -rf "$T"
 }
@@ -44,17 +52,25 @@ trap cleanup EXIT
 # A random key generated in-process, so it is never in this script's own argv or source.
 KEY="oss_itest_$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
 
-# Recorder: one line per request "METHOD PATH|AUTHORIZATION", answers after 1s so the request is in flight.
+# Recorder: one line per request "METHOD PATH|AUTHORIZATION". If HOLD_DIR/armed exists, it takes that
+# one request on hold: removes armed, writes "received" to the HOLD_DIR/received fifo, and answers only
+# once HOLD_DIR/release exists (or after 25 s, a backstop so a broken test cannot hang the server).
 cat > "$T/recorder.py" << 'PY'
-import http.server, sys, time
+import http.server, os, sys, time
 log_path, port_path = sys.argv[1], sys.argv[2]
+hold_dir = sys.argv[3] if len(sys.argv) > 3 else ''
 class H(http.server.BaseHTTPRequestHandler):
     def _record(self):
         n = int(self.headers.get('Content-Length') or 0)
         if n: self.rfile.read(n)
         with open(log_path, 'a') as f:
             f.write('%s %s|%s\n' % (self.command, self.path, self.headers.get('Authorization', '')))
-        time.sleep(1)
+        if hold_dir and os.path.exists(os.path.join(hold_dir, 'armed')):
+            os.remove(os.path.join(hold_dir, 'armed'))
+            with open(os.path.join(hold_dir, 'received'), 'w') as f: f.write('received\n')
+            deadline = time.time() + 25
+            while not os.path.exists(os.path.join(hold_dir, 'release')) and time.time() < deadline:
+                time.sleep(0.02)
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', '2')
@@ -68,7 +84,10 @@ import os; os.rename(port_path + '.tmp', port_path)
 srv.serve_forever()
 PY
 : > "$T/requests.log"
-python3 -I "$T/recorder.py" "$T/requests.log" "$T/port" &
+mkdir -p "$T/hold"
+mkfifo "$T/hold/received"
+exec 3<> "$T/hold/received"   # read-write, so neither side's open blocks
+python3 -I "$T/recorder.py" "$T/requests.log" "$T/port" "$T/hold" &
 SERVER_PID=$!
 for _ in $(seq 1 50); do [[ -s "$T/port" ]] && break; sleep 0.1; done
 if [[ ! -s "$T/port" ]]; then
@@ -81,8 +100,12 @@ PORT=$(cat "$T/port")
 REAL_CURL=$(command -v curl)
 mkdir -p "$T/home/.oss" "$T/bin"
 printf '{"apiKey": "%s", "apiUrl": "http://127.0.0.1:%s"}\n' "$KEY" "$PORT" > "$T/home/.oss/config.json"
-printf '#!/bin/bash\necho x >> "%s/curl-calls"\nexec "%s" "$@"\n' "$T" "$REAL_CURL" > "$T/bin/curl"
-chmod +x "$T/bin/curl"
+# Warmed: the first-exec scan of the new shim happens here, not while a request is on hold.
+if ! warm_stub "$T/bin/curl" "echo x >> \"$T/curl-calls\"
+exec \"$REAL_CURL\" \"\$@\""; then
+    fail "curl shim warms up" "warm_stub returned non-zero"
+    echo ""; echo "Results: $((RUN - FAILED))/$RUN passed"; exit 1
+fi
 export HOME="$T/home"
 export PATH="$T/bin:$PATH"
 
@@ -90,19 +113,27 @@ export PATH="$T/bin:$PATH"
 source "$HELPER"
 
 # --- Scenario 1: a real POST reaches the configured API with the key only in the header ---
-(API_URL=$(oss_api_url) && oss_api_curl "$KEY" -sS -m 5 -X POST "$API_URL/api/v1/analytics/track" -d '{}' \
-    > "$T/curl.out" 2> "$T/curl.err"; echo $? > "$T/curl.rc") &
+: > "$T/hold/armed"
+(API_URL=$(oss_api_url) && oss_api_curl "$KEY" -sS -m 30 -X POST "$API_URL/api/v1/analytics/track" -d '{}' \
+    > "$T/curl.out" 2> "$T/curl.err" 3<&-; echo $? > "$T/curl.rc") &
 CLIENT_PID=$!
 
-# While the server holds the request (1s), sample every process command line.
-SAW_CURL=0; KEY_IN_PS=0
-for _ in $(seq 1 8); do
-    PS_OUT=$(ps -axo args 2>/dev/null)
-    [[ "$PS_OUT" == *"$REAL_CURL"*"/api/v1/analytics/track"* || "$PS_OUT" == *"curl --config -"*"/api/v1/analytics/track"* ]] && SAW_CURL=1
-    [[ "$PS_OUT" == *"$KEY"* ]] && KEY_IN_PS=1
-    sleep 0.1
-done
+# Wait for the recorder to say it holds the request (curl is now waiting for the answer), then read
+# every process command line once, while it is held. 20 s is only a hang guard.
+SAW_CURL=0; KEY_IN_PS=0; HELD=0
+if read -r -t 20 -u 3 MARK && [[ "$MARK" == received ]]; then
+    HELD=1
+    PS_OUT=$(ps -axo args= 2>/dev/null)
+    while IFS= read -r LINE; do
+        [[ "$LINE" == *curl*"/api/v1/analytics/track"* ]] && SAW_CURL=1
+        [[ "$LINE" == *"$KEY"* ]] && KEY_IN_PS=1
+    done <<< "$PS_OUT"
+fi
+: > "$T/hold/release"
 wait "$CLIENT_PID"
+
+if [[ $HELD == 1 ]]; then pass "the recorder held the request in flight while ps was read"
+else fail "the recorder held the request in flight while ps was read" "no 'received' from the recorder within 20s"; fi
 
 if [[ "$(cat "$T/curl.rc" 2>/dev/null)" == 0 ]]; then pass "real curl POST to the local API succeeds"
 else fail "real curl POST to the local API succeeds" "rc=$(cat "$T/curl.rc" 2>/dev/null) err=$(cat "$T/curl.err" 2>/dev/null)"; fi
@@ -115,10 +146,10 @@ else
         "log='$(sed "s/$KEY/<KEY>/g" "$T/requests.log")'"
 fi
 
-if [[ $SAW_CURL == 1 ]]; then pass "curl was observed in ps while the request was in flight (ps check is not vacuous)"
+if [[ $HELD == 1 && $SAW_CURL == 1 ]]; then pass "curl was observed in ps while the request was in flight (ps check is not vacuous)"
 else fail "curl was observed in ps while the request was in flight" "never saw the curl process"; fi
 
-if [[ $KEY_IN_PS == 0 ]]; then pass "the key never appeared in any process command line during the request"
+if [[ $HELD == 1 && $KEY_IN_PS == 0 ]]; then pass "the key never appeared in any process command line during the request"
 else fail "the key never appeared in any process command line during the request" "key found in ps -axo args"; fi
 
 # --- Scenario 2: a non-loopback plain-http apiUrl refuses before any request ---
