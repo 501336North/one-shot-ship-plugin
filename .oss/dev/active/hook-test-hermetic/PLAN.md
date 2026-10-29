@@ -83,13 +83,16 @@ FOLLOWUPS.md lines 59 (setup.ts pkill), 90 (api-curl.real curl has no -m), 103 (
 - The commit body lists every site found and why each unfixed one is safe.
 - NOTES.md records the final grep commands and their output.
 
-### Task 4e (found by T4c, 2026-10-29): other pipefail exits in oss-notify.sh. Scope is the user's call.
+### Task 4e (found by T4c, 2026-10-29): other pipefail exits in oss-notify.sh. User decision 2026-10-29: follow-up, moved to .oss/dev/FOLLOWUPS.md, not in this branch.
 Under `set -euo pipefail`, a `$(echo … | jq …)` with no `||` exits the hook silently whenever the input is not JSON:
 - lines 160-162: TITLE, MESSAGE and SUBTITLE from get-copy.js output. `run_with_timeout` returns 0, so the `|| echo '{}'` at line 157 never catches bad output.
 - lines 316-319: the `task_complete` context fields, before setTddPhase and setProgress.
 - line 399: the `--issue` message, before setIssue.
 - line 60 (`resolve_cli`, find|sort|tail): safe today only because it runs inside `$()` without inherit_errexit.
 This is not a background-job or time-limit defect, so it is outside DESIGN's scope. It is listed here so it is tracked, not lost.
+
+### Task 4a-2 (found by the full suite after T9, 2026-10-29): tests that read state the detached `oss-log.sh agent` chain has not written yet
+`integration/agent-status-line` "should clear agent…" waits for `activeAgent` to clear, then expects `supervisor` to be watching. Since T4a, `setSupervisor watching` runs detached, after `clearActiveAgent`, so the test is flaky. RED: the observed failure, made deterministic. GREEN: wait for the supervisor value. Provenance: grep every test that runs `oss-log.sh agent … completed` (or relies on the order of the two chained calls) and fix each one the same way.
 
 ---
 
@@ -130,6 +133,16 @@ The tests:
 - Run the full suite once.
 - Each failing file becomes one cycle. RED: the failure observed under the sandbox, recorded. GREEN: the test builds the files it needs. Never point it back at the real HOME.
 - Each cycle is logged; the files are listed in PROGRESS.md as T6.a, T6.b, and so on.
+
+**Run result (T5, 2026-10-29), full suite with the real config:** 42 tests failing in 10 files, 3523 passing.
+- **T6.a, root cause of 8 files:** the old setup.ts ran `mkdirSync(~/.oss)`, and those tests write `$HOME/.oss/current-project` or `workflow-state.json` into it. The new temp HOME has no `.oss`, so they hit ENOENT. Affected: oss-statusline (19), oss-log-project-local (5), oss-notify-project (3), oss-statusline-next-command (3), oss-statusline-tdd-emoji (3), cli/update-workflow-state (2), oss-log-project (2), oss-statusline-git (1). Fix: setup.ts creates `$HOME/.oss` inside the temp HOME, which every real install has, with its own RED assertion in setup-isolation (DECISIONS D6).
+- **T6.b:** oss-session-context-local (3) depends on a real `~/.oss/config.json` apiKey (it gets "Not logged in" instead of the restore, and no .gitignore block). Fix: a sandbox config with a fake key, plus a curl stub so nothing reaches the network.
+- **T6.c = T11, pulled forward:** oss-session-logging (1) fails on the same not-logged-in exit. T11 makes this file hermetic anyway, and the suite must be green before T5 can be committed.
+- T5 stays uncommitted until T6 is green (IRON LAW: no commit with failing tests).
+- The 8 empty `oss-test-home-*` dirs in $TMPDIR predate T5 (dated Oct 19-28). Current runs leave 0: every test dir and all 24 files that mock fs/os were checked with a scratch TMPDIR. They came from killed runs or older local setups. Nothing to fix.
+
+- **T6.b2 (found by T6.b anti-vacuity):** the "should read session-context.md from project-local .oss directory" test cannot tell the project file from the global one. A mutant that restores from `$HOME/.oss/session-context.md` survives. RED: drop the global file from that test (or give the two files different markers and assert the project marker), shown against that mutant. GREEN: the real hook passes. Test-only.
+- **Noted, confirmed by T6.c (IRON LAW #1b: two sites disagree):** `oss-session-start.sh:142` hardcodes `https://one-shot-ship-api.onrender.com` for the subscription call and ignores `apiUrl`. Any session-start test that unsets `OSS_SKIP_HEALTH_CHECK` without a curl stub calls production. It is a FOLLOWUPS candidate, recorded at T16.
 
 **Known item before the run (found by T4a, 2026-10-29):** `oss-log-agent-state.test.ts` "should still write to log file..." deletes its project dir in afterEach while the now-detached real `node` chain may still be writing. That is a teardown race that can flake, and it is one T6.x cycle: wait for the chain to finish, or stub node, before deleting.
 

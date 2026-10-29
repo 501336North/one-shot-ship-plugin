@@ -73,6 +73,91 @@ File: `hooks/__tests__/oss-value.test.sh`, section 22: 2 new assertions, a contr
 - GREEN: 334/334. Anti-vacuity: removing `-m 10` gives the same failure. Regression: `commands/__tests__/value-file-wrappers-run.test.sh` passes 59/59.
 - **Slow, worth noting for T15:** oss-value.test.sh takes about 3 min. value-file-wrappers-run.test.sh took over 10 min at load 3 to 4.5, with long silent stretches inside `oss-value.sh dir`. Neither failed.
 
+### T5 (2026-10-29, /oss:build, typescript-pro)
+Files: `watcher/test/setup-isolation.test.ts` (a child vitest with the real config runs the probe `watcher/test/fixtures/setup-probe/probe.test.ts`) and `watcher/test/setup.ts`.
+- **Safety:** the child runs with recording `pkill`, `find` and `killall` stubs first on PATH. It also gets a sandbox TMPDIR and a fake "real" HOME. A throwaway check confirmed `execSync('pkill …')` resolves to the stub. So the RED run could not kill anything on the machine.
+- **RED:** 5/5 behaviour tests failed for the right reason:
+  - the probe saw the fake real home;
+  - `live-session` was visible;
+  - the real `current-project` was deleted;
+  - pkill was called 4 times;
+  - `find -delete` was called once.
+  The guard test (child exits 0, probe written) passed.
+- **GREEN:** 6/6.
+- **Anti-vacuity:** restoring each removed behaviour alone turns exactly its own test RED. That covers the HOME redirect, the env deletes, the current-project unlink, the pkill and the find -delete.
+- **Full suite with the real config:** 3523 passed, 42 failed in 10 files. All 10 files depended on the real HOME. They are the T6 cycles.
+
+### T6.a (2026-10-29, /oss:build, typescript-pro)
+- **RED:** the new setup-isolation test failed: the probe saw no `$HOME/.oss`. `oss-log-project` failed with ENOENT on `.oss/current-project`.
+- **GREEN:** setup.ts runs `fs.mkdirSync(<testHome>/.oss, { mode: 0o700 })`, which is the real install's mode. setup-isolation passes 7/7, and all 8 files pass:
+  - oss-statusline 19/19
+  - oss-log-project-local 5/5
+  - oss-notify-project 3/3
+  - oss-statusline-next-command 3/3
+  - oss-statusline-tdd-emoji 3/3
+  - update-workflow-state 4/4
+  - oss-log-project 2/2
+  - oss-statusline-git 3/3
+- **Anti-vacuity:** removing the mkdir turns the new test RED.
+
+### T6.b (2026-10-29, /oss:build, test-engineer)
+File: `watcher/test/hooks/oss-session-context-local.test.ts` (+144/-218: shared hookEnv/runHook helpers, no save/restore of the real HOME files).
+- RED under the temp HOME: 3 failed ("Not logged in" instead of the restore; no .gitignore block, or no .gitignore file created). 2 of the 4 passing tests were passing vacuously: they pass when the hook exits early.
+- The new "should make no network calls" test records zero curl calls. Every network path is gated by `OSS_SKIP_HEALTH_CHECK=1`. Non-vacuity was shown by dropping that switch: the stub then records the subscription call to the production host. The stub-off variant was not run: `oss-session-start.sh:142` hardcodes the production URL and ignores `apiUrl`, so without the stub it would really reach production.
+- GREEN: 8/8 in 3 back-to-back runs.
+- Anti-vacuity on a scratch copy of hooks/:
+  - removing the .gitignore block turns its test RED;
+  - disabling the project-context restore turns its test RED;
+  - **a mutant that restores from the GLOBAL file instead of the project file SURVIVED.** The restore test also writes a global context and checks only the message. This becomes task T6.b2.
+- First exec of a new stub took 40.2 s under parallel-agent load (second exec 0.002 s). The warm-up budget is 120 s. T7 must take this into account.
+
+### T6.b2 (2026-10-29, /oss:build, test-engineer)
+- The restore test no longer writes a global `~/.oss/session-context.md`. It deletes one if the inject test left it behind. That way only the project file can produce "Previous session context restored", which is the hook's only stdout observable for the restore.
+- RED against the global-file mutant, run on a scratch copy of hooks/ with the files warm: "OSS: Ready (active)…" printed, but no restore. 1 failed / 7 passed. The first mutant run timed out on first-exec scans of the fresh copy (24-30 s, empty output) and is not counted as RED.
+- GREEN: 8/8 in 3 runs. `git diff hooks/` is empty.
+
+### T6.c = T11 (2026-10-29, /oss:build, test-engineer)
+File: `watcher/test/hooks/oss-session-logging.test.ts`, 6 tests.
+- RED under the temp HOME: "session START event with project metadata" failed because of the not-logged-in exit. The new "no network calls" test, run against the old env (logged-in HOME, health check on), recorded a call to the production subscription URL.
+- The new "should only remove its own session pointer" test sets up real pointers for the test-owned id and for another id. It was RED with the old inherited-id behaviour (the parent env carried the other id): the other pointer was deleted.
+- The curl stub is reached as `BASH_FUNC_curl%%` → `bash <stub>`, so it is never exec'd directly. Direct first exec of a new file cost 0.8 to 16.5 s, and about 58 s inside vitest.
+- Each test now has its own session id. A shared id let an earlier test's pointer redirect a later test's log lines.
+- Timeouts: 15 s per test (session end no longer uses vitest's 5 s default). GREEN: 6/6 in 3 runs, plus 5 earlier runs.
+- Anti-vacuity:
+  - Session end skipping `oss_session_pointer_remove`: the pointer test goes RED.
+  - Session start skipping its START line: the START test goes RED.
+  - The remove-all mutant (an `rm -rf` of an expanded var) was blocked by a safety check and not run. The first mutant covers that the removal runs; the setup with two pointers covers whose pointer is removed.
+- The real `~/.oss` (plugin-root, hooks/oss-log.sh, sessions/) is unchanged across these runs: the mtimes are still 08:01. The real session.log already holds test lines from 08:01, from an earlier run made elsewhere.
+
+### Full suite after T5 + T6 (2026-10-29, real config)
+3565 passed, 4 failed. All 4 are in `hook-error-adoption.test.ts` "fetch-iron-laws.sh emits OSSError…": vitest's 5 s timeout fired. Alone, the file passes 7/7. This is the per-test cold-stub defect diagnosed in DESIGN, so T7 and T9 are pulled forward. T5 and T6 are committed only once the suite is green.
+
+### T7 (2026-10-29, /oss:build, test-engineer)
+Files: `watcher/test/hooks/helpers/warm-stub.ts` (+ `.test.ts`); `hooks/__tests__/lib/warm-stub.sh` (+ `hooks/__tests__/warm-stub.test.sh`).
+- API: `writeWarmStub(file, body, onWarm?)` plus `WARMUP_TIMEOUT_MS = 180_000`; `warm_stub <file> <body> [on_warm]`. Each helper writes the guard line, sets 0755, execs the file ITSELF once with `OSS_STUB_WARMUP=<marker>`, and fails if the marker is missing.
+- RED: the modules did not exist. GREEN: vitest 1/1, bash 3/3, 3 more runs each.
+- Anti-vacuity: skipping the warm-up exec turns each test RED.
+- **Known survivor:** a mutant that runs `bash file` instead of exec-ing the file passes. The marker and the side effect are the same either way, and only the OS scan differs. Pinning it would need a spy on the unit under test or a timing check, so it is recorded here and not chased.
+- No runner picks up `hooks/__tests__/lib/` by glob. Bash tests are run by hand, and `stat-order`, `referenced-hooks-tracked` and `no-stray-oss` still pass.
+- `watcher/tsconfig.json` excludes `test/`, so test files have no type check in the repo. A scratch tsconfig gave rc 0 with no `any`.
+
+### T9 (2026-10-29, /oss:build, test-engineer)
+File: `watcher/test/hooks/hook-error-adoption.test.ts`. There is now one curl stub, made with `writeWarmStub` in beforeAll, driven by `STUB_CURL_MODE` (http | fail | checksum), `STUB_CURL_BODY` and `STUB_CURL_CODE`. If no mode is set, the stub exits 99.
+- RED: with the env not yet wired, 5 per-mode assertions failed: no 401/403 text, no `curl exit 6`, exit 99 instead of 1, no checksum mismatch.
+- Mutant: fetch-iron-laws emits OSS-AUTH-999 on 401 (in a scratch copy). Only the 401 test fails.
+- GREEN: 7/7 in 5 runs, about 1.2 s each. No executable is created outside beforeAll. `git diff hooks/` is empty.
+- Gap: the ensure-decrypt-cli fail-mode cases cannot see curl's exit code, because the hook does not print it. Fail mode is proven only through fetch-iron-laws.
+
+### Full suite after T9 (2026-10-29, real config)
+3569 passed, 1 failed: `integration/agent-status-line` "should clear agent from status line when agent completes". It expected `✓` (watching) and got `✅`. The test waits for the agent to be cleared, then reads `supervisor`, which the detached second call (`setSupervisor watching`) has not written yet. This is the same race T4a found in oss-log-agent-state, and it was introduced by T4a's detach. It passed in the post-T6 run, so it is intermittent. It is fixed as T4a-2 below, with a provenance grep.
+
+### T4a-2 (2026-10-29, /oss:build, test-engineer)
+- RED: deterministic. A scratch copy of hooks/ has `sleep 1` between the chained calls, and with it the test fails with the observed message.
+- GREEN: `waitForSupervisor('watching')` runs before the status-line read. It passes 2/2 on the delayed copy and 10/10 over 5 runs on the real hooks.
+- Provenance: every test that runs `oss-log.sh agent`, or reads activeAgent/supervisor, was grepped in watcher/test and hooks/__tests__. Each match was run against the delayed copy, and only agent-status-line depended on the chain order. The verdicts are in the commit body.
+
+### Full suite after T4a-2 (2026-10-29, real config): 264/264 files, 3570/3570 tests, rc 0.
+
 ## Stability proof (T15)
 (5 runs per suite, plus 1 run under load, plus the real ~/.oss mtime check)
 

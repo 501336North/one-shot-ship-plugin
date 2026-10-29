@@ -20,4 +20,7 @@ Redirecting `HOME` once covers every `os.homedir()` user. Files that break under
 ## D5: Repo-scaffolding steps of /oss:plan Step 0 not applied
 That step would overwrite `.gitignore`, add ci.yml and an ecosystem config, and change branch protection on main. All of it is out of scope for this fix, and changing main is forbidden (IRON LAW #4).
 
-## Last Updated: 2026-10-28 by /oss:plan
+## D6: The sandbox HOME gets an empty `.oss`, created in setup.ts (T6.a, 2026-10-29)
+8 test files write into `$HOME/.oss` and relied on the old setup.ts creating the real one. Every real install has `~/.oss`, so a temp HOME that has one is the faithful world. Creating it once in setup.ts, guarded by its own assertion, is one change. The alternative is the same mkdir copied into 8 files. It never touches the real HOME.
+
+## Last Updated: 2026-10-29 by /oss:build (T6)
