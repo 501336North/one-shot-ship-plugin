@@ -1,0 +1,61 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/home/dev/.claude/projects/-home-dev-project/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/home/dev/project",
+  "scratchpad_dir": "/tmp/claude/scratchpad",
+  "prompt_id": "00000000-0000-4000-8000-000000000002",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "AskUserQuestion",
+  "tool_input": {
+    "questions": [
+      {
+        "question": "T0 probe 3 of 4 (throwaway): please pick \"Banana\" as is, without typing anything.",
+        "header": "Probe plain",
+        "options": [
+          {
+            "label": "Apple (Recommended)",
+            "description": "Probe option marked as recommended."
+          },
+          {
+            "label": "Banana",
+            "description": "Pick this one."
+          }
+        ],
+        "multiSelect": false
+      }
+    ],
+    "answers": {
+      "T0 probe 3 of 4 (throwaway): please pick \"Banana\" as is, without typing anything.": "Banana"
+    },
+    "annotations": {}
+  },
+  "tool_response": {
+    "questions": [
+      {
+        "question": "T0 probe 3 of 4 (throwaway): please pick \"Banana\" as is, without typing anything.",
+        "header": "Probe plain",
+        "options": [
+          {
+            "label": "Apple (Recommended)",
+            "description": "Probe option marked as recommended."
+          },
+          {
+            "label": "Banana",
+            "description": "Pick this one."
+          }
+        ],
+        "multiSelect": false
+      }
+    ],
+    "answers": {
+      "T0 probe 3 of 4 (throwaway): please pick \"Banana\" as is, without typing anything.": "Banana"
+    },
+    "annotations": {}
+  },
+  "tool_use_id": "toolu_fixture",
+  "duration_ms": 1
+}

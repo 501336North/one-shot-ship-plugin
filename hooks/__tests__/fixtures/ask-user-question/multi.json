@@ -1,0 +1,101 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/home/dev/.claude/projects/-home-dev-project/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/home/dev/project",
+  "scratchpad_dir": "/tmp/claude/scratchpad",
+  "prompt_id": "00000000-0000-4000-8000-000000000002",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "AskUserQuestion",
+  "tool_input": {
+    "questions": [
+      {
+        "question": "T0 probe 1 of 2 (throwaway, nothing is decided): please choose \"Other\" and type a few words, e.g. \"probe other text\".",
+        "header": "Probe pick",
+        "options": [
+          {
+            "label": "Apple (Recommended)",
+            "description": "Probe option marked as recommended."
+          },
+          {
+            "label": "Banana",
+            "description": "Plain probe option."
+          }
+        ],
+        "multiSelect": false
+      },
+      {
+        "question": "T0 probe 2 of 2 (throwaway): please tick at least two options, and add a note on this question if the picker lets you.",
+        "header": "Probe multi",
+        "options": [
+          {
+            "label": "Red",
+            "description": "Probe option."
+          },
+          {
+            "label": "Green, with a comma",
+            "description": "Label holding a comma, to see how the answer is joined."
+          },
+          {
+            "label": "Blue",
+            "description": "Probe option."
+          }
+        ],
+        "multiSelect": true
+      }
+    ],
+    "answers": {
+      "T0 probe 1 of 2 (throwaway, nothing is decided): please choose \"Other\" and type a few words, e.g. \"probe other text\".": "probe other text",
+      "T0 probe 2 of 2 (throwaway): please tick at least two options, and add a note on this question if the picker lets you.": "Red, Blue, \" both, the red and blue pill.  Just like in the Matrix\""
+    },
+    "annotations": {}
+  },
+  "tool_response": {
+    "questions": [
+      {
+        "question": "T0 probe 1 of 2 (throwaway, nothing is decided): please choose \"Other\" and type a few words, e.g. \"probe other text\".",
+        "header": "Probe pick",
+        "options": [
+          {
+            "label": "Apple (Recommended)",
+            "description": "Probe option marked as recommended."
+          },
+          {
+            "label": "Banana",
+            "description": "Plain probe option."
+          }
+        ],
+        "multiSelect": false
+      },
+      {
+        "question": "T0 probe 2 of 2 (throwaway): please tick at least two options, and add a note on this question if the picker lets you.",
+        "header": "Probe multi",
+        "options": [
+          {
+            "label": "Red",
+            "description": "Probe option."
+          },
+          {
+            "label": "Green, with a comma",
+            "description": "Label holding a comma, to see how the answer is joined."
+          },
+          {
+            "label": "Blue",
+            "description": "Probe option."
+          }
+        ],
+        "multiSelect": true
+      }
+    ],
+    "answers": {
+      "T0 probe 1 of 2 (throwaway, nothing is decided): please choose \"Other\" and type a few words, e.g. \"probe other text\".": "probe other text",
+      "T0 probe 2 of 2 (throwaway): please tick at least two options, and add a note on this question if the picker lets you.": "Red, Blue, \" both, the red and blue pill.  Just like in the Matrix\""
+    },
+    "annotations": {}
+  },
+  "tool_use_id": "toolu_fixture",
+  "duration_ms": 1
+}
