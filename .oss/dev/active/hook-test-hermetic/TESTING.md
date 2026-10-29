@@ -342,4 +342,24 @@ GREEN changes:
 
 Verification (/bin/bash 3.2, run directly): bash32-parse 97/97. 5 consecutive runs each: notification-style 5/5, stop-telegram-style 5/5, session-start-iron-laws 5/5, iron-laws-sync-safety 5/5 (57/57 each), project-routing 5/5 (45/45 each), `npx vitest run test/hooks/oss-session-logging.test.ts` 5/5 (6/6 each). Not done here: the T15 re-run of the whole shell suite and the run under load.
 
-## Last Updated: 2026-10-29 17:21 CST by test-engineer (T15b, T15c)
+### T15 re-run (after T15b/T15c) (2026-10-29 17:26-18:26 CST, test-engineer; HEAD cd24cb8): PASSED
+Verification only. No code or test was changed. The scripts are the same as in the T15 run (copied to the session scratchpad `t15-rerun/`, with fresh logs): all 51 `hooks/__tests__/*.test.sh` files, each exec'd through its own shebang (`ensure-oss-launch.test.sh` through `/bin/bash`), `gtimeout 1800` per file, from the repo root. The load run started at a 1-minute load of 1.95, below the limit of 15. PASS/FAIL are lines matching `PASS`/`FAIL` across all the per-file logs. That count includes T15b/T15c's new checks and is not comparable with the 963 in the T15 table.
+
+| Run | Files passed | PASS / FAIL lines | Duration | Load (1/5/15 at end) |
+|---|---|---|---|---|
+| shell 1 | 51/51 | 1142 / 0 | 409 s | 3.89 3.70 4.86 |
+| shell 2 | 51/51 | 1142 / 0 | 418 s | 4.50 5.78 5.63 |
+| shell 3 | 51/51 | 1142 / 0 | 428 s | 8.51 5.29 5.25 |
+| shell 4 | 51/51 | 1142 / 0 | 402 s | 1.77 3.20 4.24 |
+| shell 5 | 51/51 | 1142 / 0 | 382 s | 1.73 2.50 3.51 |
+| shell, under load | 51/51 | 1142 / 0 | 1484 s | 3.88 4.99 4.55 (start 1.95) |
+
+- **Load:** the 8 fresh-script loops ran 326-327 iterations each in about 1488 s, roughly 4.6 s per new script. That is the same stall condition as the T15 load run (4.3 s). Under load, the files T15b/T15c changed were green: oss-notification-style 21 s, oss-stop-telegram-style 23 s, project-routing 15 s, session-start-iron-laws 10 s, iron-laws-sync-safety 284 s.
+- **Cleanup:** the trap and stop file ended the loops; all 8 wrote their final count line. The trap removed the load directory. `ps` afterwards showed no process from shellsuite, master, load or the loaddir.
+- **Real ~/.oss** (mtime+size of 1001 entries and shasum of 999 files, taken before, after each run and at the end). Test-only sentinels are unchanged. `$TMPDIR/.oss` is unchanged. Each change has a writer outside this suite:
+  - `current-project` (now `/Users/ysl/dev`), `plugin-root` (now the installed cache `.../oss/2.0.83`; this worktree is 2.0.94), `oss-statusline.sh` and `session.log` were written together at 17:52:05-08, during run 4. The 134 bytes appended to session.log are exactly two live-session lines: `[17:50:49] [session] [END] project=ObsidianVaultNick` and `[17:52:08] [session] [START] project=dev branch=main`. This is the same pattern as in T15.
+  - `update-state.json`: one write at 17:52:10 (`lastCheckedAt` 09:52:10Z, `lastPluginVersion` 2.0.83), which belongs to that same live start. One earlier write at 17:31:26 kept the same size. It came during run 1 while oss-value.test.sh was running. That file runs every hook with a sandbox `HOME`, and it cannot reach check-updates.sh or oss-changelog.sh, the only scripts that write this file. A live session had started at 17:30:00 (AgenticDevWorkflow-g21).
+  - `workflow-state.json`: the heartbeat of `oss-daemon.js` (PID 2640). It was seen writing at 18:26:55 and 18:27:55, after the suite had finished.
+  - `team-iron-laws.json`: only the mtime changed (18:10:07, 3657 s after 17:09:10, which matches the 1 h cache TTL). The content hash is unchanged.
+
+## Last Updated: 2026-10-29 18:29 CST by test-engineer (T15 re-run after T15b/T15c: shell 5/5 + load green)
