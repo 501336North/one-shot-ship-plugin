@@ -11,7 +11,7 @@
 #
 # Features:
 #   - Adds timestamp and plugin metadata
-#   - Authenticates with API key from ~/.oss/config.json
+#   - Authenticates with apiKey, sent only to apiUrl, both from the OSS config (oss_config_file)
 #   - Saves to pending queue if API unreachable
 #   - Silent failure (never blocks command execution)
 #
@@ -22,8 +22,7 @@ set -euo pipefail
 if [[ -f "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh" ]]; then source "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh"; fi  # oss_api_curl: API key via stdin, never argv
 
 # Configuration
-CONFIG_FILE="${HOME}/.oss/config.json"
-API_URL="https://one-shot-ship-api.onrender.com"
+CONFIG_FILE=$(oss_config_file)
 ENDPOINT="/api/v1/metrics/command-completion"
 LOG_DIR="${HOME}/.oss/logs"
 LOG_FILE="${LOG_DIR}/metrics-push.log"
@@ -86,6 +85,12 @@ push_metrics() {
 
     local response
     local http_code
+
+    # The key goes only to the API configured beside it
+    API_URL=$(oss_api_url) || {
+        log_message "WARN" "apiUrl in $CONFIG_FILE refused (https only, plain http only for localhost) - not sending"
+        return 1
+    }
 
     # Make API call with timeout
     response=$(oss_api_curl "$api_key" -s -w "\n%{http_code}" \
