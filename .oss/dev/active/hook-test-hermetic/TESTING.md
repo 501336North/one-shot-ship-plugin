@@ -238,6 +238,10 @@ Files: `hooks/__tests__/optional-helper-source.test.sh`, `hooks/__tests__/oss-no
 - Neighbours touching oss-notify.sh (/bin/bash): auto-permissions 14/14, oss-notify-updates 2/2, dead-vars 6/6, project-routing 45/45, workflow-name 12/12, writer-nofollow 49/49, session-start-copy 9/9, oss-value 334/334, session-routing 124/124, timeout-fallback 1/1.
 - **Found:** `oss-notify-complete-bounds.test.sh` (T13, ad194f2) does not parse under /bin/bash 3.2, its own shebang: line 79, a `case` pattern `)` inside a `$(cat <<EOF)` body ends the substitution early. It passes 8/8 under bash 5.3. Not fixed here.
 
+### T13b (2026-10-29, /oss:build orchestrator)
+- RED: new hooks/__tests__/bash32-parse.test.sh, `/bin/bash -n` over every bash script in hooks/ and hooks/__tests__/: 96/97, oss-notify-complete-bounds.test.sh line 79 `syntax error near unexpected token '('`. That RED run against the original file is the guard's mutant check.
+- GREEN: the two case arms in the node stub's heredoc become `(*update-workflow-state.js)` and `(*chain-trigger.cjs)`. 97/97. complete-bounds itself 8/8 under /bin/bash 3.2 and under bash 5.3.
+
 ## Stability proof (T15)
 Extra checks found during build:
 - every "no network / no call" assertion on a hook with detached jobs must wait for those jobs (fd-3 pipe or a done marker), or it is vacuous (T10);

@@ -115,6 +115,9 @@ Found by T4g's full shell run. T1 (422f942) detached the workflow-start analytic
 - GREEN: wait for the detached call with the event-driven pattern (fd-3 pipe or a received marker from the curl stub, no sleep), never by un-detaching the hook.
 - Mutant: a hook whose analytics call is removed must fail each fixed case.
 
+### Task 13b: complete-bounds parses under /bin/bash 3.2
+Found by the T4h agent: T13's node stub has bare `pattern)` case arms inside `$(cat <<EOF)`, and bash 3.2 (the shebang's /bin/bash on stock macOS) ends the substitution at the `)`. It only ran because `bash` on PATH here is 5.3. RED: new hooks/__tests__/bash32-parse.test.sh (`/bin/bash -n` on every bash hook and hook test). GREEN: `(pattern)` arms.
+
 ### Task 4i: fetch-iron-laws.sh's request is bounded
 Found by T4g: its `oss_api_curl` call has no `-m`/`--max-time`, the only keyed call left without one (DESIGN: no unbounded curls). RED: a stub that holds the request records that no time limit was passed. GREEN: add `-m` like its siblings.
 

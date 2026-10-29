@@ -68,14 +68,14 @@ sandbox() {
     warm_stub "$T/bin/node" "$(cat <<EOF
 echo "\${OSS_TEST_UNDER_TIMEOUT:-none}|\$*" >> "$T/node.calls"
 case "\$1" in
-  *update-workflow-state.js)
+  (*update-workflow-state.js)
     if [[ "\${STATE:-}" == hang ]]; then
         echo "\$*" >> "$T/received"
         while [[ -d "$T" && ! -e "$T/release" ]]; do /bin/sleep 0.05; done
         exit 0
     fi
     echo "STATE-STDOUT \$*"; echo "STATE-STDERR \$*" >&2 ;;
-  *chain-trigger.cjs)
+  (*chain-trigger.cjs)
     echo "---CHAIN_COMMANDS---"; echo "CHAIN: /oss:review (always)"; echo "---END_CHAIN_COMMANDS---"
     echo "No API key configured. Run /oss:login" >&2; exit 1 ;;
 esac

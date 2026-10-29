@@ -16,9 +16,10 @@
 - [x] T11: oss-session-logging.test.ts made hermetic, live session safe (completed 2026-10-29 as T6.c)
 - [x] T12: oss-log-error-recovery.test.ts writes only in its sandbox (completed 2026-10-29)
 - [x] T4f: keyed calls use the configured apiUrl and its key (completed 2026-10-29: session start 478b804, T4f-2 a12e1d6, T4g 256f262 49bd0fc 3cfeaf9 e06d4d3)
-- [x] T4h: optional-helper-source and oss-notify-api-url wait for the detached analytics POST (regression from T1) (done 2026-10-29, test-engineer, not via a /oss:build invocation; uncommitted)
-- [x] T4i: fetch-iron-laws.sh's curl gets a time limit (found in T4g) (done 2026-10-29, test-engineer, not via a /oss:build invocation; uncommitted)
+- [x] T4h: optional-helper-source and oss-notify-api-url wait for the detached analytics POST (regression from T1) (done 2026-10-29, test-engineer, not via a /oss:build invocation; e70b389, 9e1a0da)
+- [x] T4i: fetch-iron-laws.sh's curl gets a time limit (found in T4g) (done 2026-10-29, test-engineer, not via a /oss:build invocation; e70b389, 9e1a0da)
 - [x] T13: complete-bounds.test.sh checks boundedness, not wall-clock (completed 2026-10-29)
+- [x] T13b: complete-bounds parses under /bin/bash 3.2 (completed 2026-10-29)
 - [x] T14: api-curl.real.integration.test.sh is event-driven (completed 2026-10-29)
 - [ ] T15: Stability proof: 5 runs each, plus a run under load (pending)
 - [ ] T16: Version bump to 2.0.95 and the server analytics follow-up (pending)
@@ -26,4 +27,4 @@
 ## Blockers
 - None
 
-## Last Updated: 2026-10-29 14:55 CST by test-engineer (T4h, T4i done)
+## Last Updated: 2026-10-29 15:00 CST by /oss:build (T4h, T4i, T13b done)
