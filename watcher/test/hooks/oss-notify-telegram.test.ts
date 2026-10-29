@@ -5,35 +5,32 @@
  * @boundary Shell script (oss-notify.sh) -> any `node` CLI it runs
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { writeWarmStub, WARMUP_TIMEOUT_MS } from './helpers/warm-stub';
 
 describe('oss-notify.sh sends nothing to Telegram', () => {
   const PLUGIN_ROOT = path.resolve(__dirname, '../../..');
   const OSS_NOTIFY = path.join(PLUGIN_ROOT, 'hooks/oss-notify.sh');
 
-  // Sandbox: temp HOME and a fake plugin root; a fake `node` on PATH records every call.
+  // Sandbox, built once per file: temp HOME and a fake plugin root; a fake `node` on PATH records
+  // every call. The stubs are created and warmed in beforeAll so the macOS first-exec scan never
+  // lands inside a test; no executable is created after it.
   let sandbox: string;
   let callsFile: string;
 
-  beforeEach(() => {
+  beforeAll(() => {
     sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-notify-no-telegram-'));
-    callsFile = path.join(sandbox, 'node.calls');
     const cliDir = path.join(sandbox, 'plugin/watcher/dist/cli');
     fs.mkdirSync(path.join(sandbox, 'home/.oss'), { recursive: true });
-    fs.mkdirSync(path.join(sandbox, 'plugin/hooks'), { recursive: true });
     fs.mkdirSync(cliDir, { recursive: true });
-    fs.mkdirSync(path.join(sandbox, 'bin'), { recursive: true });
 
-    fs.writeFileSync(path.join(sandbox, 'plugin/hooks/oss-log.sh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-    fs.writeFileSync(
-      path.join(sandbox, 'bin/node'),
-      `#!/bin/bash\necho "$*" >> "${callsFile}"\nexit 0\n`,
-      { mode: 0o755 }
-    );
+    writeWarmStub(path.join(sandbox, 'plugin/hooks/oss-log.sh'), 'exit 0\n');
+    // Env contract: NODE_CALLS = the calls file of the test that runs the hook.
+    writeWarmStub(path.join(sandbox, 'bin/node'), 'echo "$*" >> "$NODE_CALLS"\nexit 0\n');
     // An old install may still have the Telegram CLI on disk.
     for (const cli of ['update-workflow-state.js', 'chain-trigger.cjs', 'telegram-notify.js']) {
       fs.writeFileSync(path.join(cliDir, cli), '');
@@ -44,9 +41,15 @@ describe('oss-notify.sh sends nothing to Telegram', () => {
         notifications: { style: 'telegram', verbosity: 'all', telegram: { linked: true, enabled: true } },
       })
     );
+  }, WARMUP_TIMEOUT_MS);
+
+  let testIndex = 0;
+  beforeEach(() => {
+    testIndex += 1;
+    callsFile = path.join(sandbox, `node-${testIndex}.calls`);
   });
 
-  afterEach(() => {
+  afterAll(() => {
     fs.rmSync(sandbox, { recursive: true, force: true });
   });
 
@@ -55,33 +58,41 @@ describe('oss-notify.sh sends nothing to Telegram', () => {
     return fs.readFileSync(callsFile, 'utf-8').split('\n').filter((line) => line);
   }
 
-  it('never runs telegram-notify.js when a command completes with Telegram enabled in settings', () => {
-    const env: Record<string, string | undefined> = {
-      ...process.env,
-      HOME: path.join(sandbox, 'home'),
-      CLAUDE_PLUGIN_ROOT: path.join(sandbox, 'plugin'),
-      CLAUDE_PROJECT_DIR: '',
-      OSS_SKIP_WATCHER: '1',
-      PATH: `${path.join(sandbox, 'bin')}:${process.env.PATH ?? ''}`,
-    };
+  it.each(['build', 'ship'])(
+    'never runs telegram-notify.js when /oss:%s completes with Telegram enabled in settings',
+    (workflow) => {
+      const env: Record<string, string | undefined> = {
+        ...process.env,
+        HOME: path.join(sandbox, 'home'),
+        CLAUDE_PLUGIN_ROOT: path.join(sandbox, 'plugin'),
+        CLAUDE_PROJECT_DIR: '',
+        OSS_SKIP_WATCHER: '1',
+        NODE_CALLS: callsFile,
+        PATH: `${path.join(sandbox, 'bin')}:${process.env.PATH ?? ''}`,
+      };
 
-    try {
-      execFileSync('bash', [OSS_NOTIFY, '--workflow', 'build', 'complete', '{"testsPass": 47}'], {
-        cwd: sandbox,
-        env,
-        encoding: 'utf-8',
-        timeout: 30000,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-    } catch {
-      // the hook's exit code is not under test here
+      try {
+        execFileSync('bash', [OSS_NOTIFY, '--workflow', workflow, 'complete', '{"testsPass": 47}'], {
+          cwd: sandbox,
+          env,
+          encoding: 'utf-8',
+          timeout: 30000,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+      } catch {
+        // the hook's exit code is not under test here
+      }
+
+      const calls = nodeCalls();
+      // Anchor: the hook really ran its node CLIs (otherwise "no Telegram call" proves nothing).
+      expect(calls.some((c) => c.includes('update-workflow-state.js'))).toBe(true);
+      // The stubs are shared by every test: this test's calls file holds this run only.
+      expect(calls.filter((c) => c.includes('setLastCommand'))).toEqual([
+        expect.stringMatching(new RegExp(` setLastCommand ${workflow}$`)),
+      ]);
+      expect(calls.filter((c) => c.includes('telegram-notify.js'))).toEqual([]);
     }
-
-    const calls = nodeCalls();
-    // Anchor: the hook really ran its node CLIs (otherwise "no Telegram call" proves nothing).
-    expect(calls.some((c) => c.includes('update-workflow-state.js'))).toBe(true);
-    expect(calls.filter((c) => c.includes('telegram-notify.js'))).toEqual([]);
-  });
+  );
 
   it('has no Telegram code left in oss-notify.sh', () => {
     const source = fs.readFileSync(OSS_NOTIFY, 'utf-8');
