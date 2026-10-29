@@ -1,6 +1,6 @@
 # Progress: hook-test-hermetic
 
-## Current Phase: build complete (ready for /oss:ship)
+## Current Phase: build (T17 added after /oss:integration)
 
 ## Tasks
 - [x] T1: Analytics POST on workflow start is detached and time-limited (completed 2026-10-29)
@@ -25,8 +25,9 @@
 - [x] T15b: oss-notification-style (and stop-telegram-style) wait for the popup, not a 2 s window (completed 2026-10-29, test-engineer)
 - [x] T15c: negative checks after background jobs wait for the job, not sleep 1 (completed 2026-10-29, test-engineer)
 - [x] T16: Version bump to 2.0.95 and the server analytics follow-up (completed 2026-10-29: plugin.json 2.0.95, the only pin; FOLLOWUPS analytics item)
+- [ ] T17: session start never downgrades the shared ~/.oss/hooks (in progress)
 
 ## Blockers
 - None
 
-## Last Updated: 2026-10-29 18:40 CST by /oss:build (all tasks done; code-simplifier f175c8d; watcher 265/265 files, 3578 tests)
+## Last Updated: 2026-10-29 19:23 CST by orchestrator (T17 added: older plugin overwrote ~/.oss/hooks; user: fix here)

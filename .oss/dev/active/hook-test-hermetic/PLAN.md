@@ -297,6 +297,22 @@ now go red. No wall-clock asserts.
 
 Then T15's shell part is re-run: 5 runs plus one under load.
 
+### Task 17: session start never downgrades the shared ~/.oss/hooks (found in /oss:integration, user decision 2026-10-29)
+`hooks/oss-session-start.sh` (HOOKS_TO_COPY loop) copies its plugin's hooks into the machine-global
+`~/.oss/hooks` with no version check. On 2026-10-29 17:52 a session on plugin 2.0.83 replaced oss-log.sh,
+oss-notify.sh and ensure-decrypt-cli.sh (2.0.94 installed), so every session logged by the old
+current-project rule and ran the old notify and decrypt installer.
+- Rule: a session start replaces the shared hooks only when its plugin version is the same as or newer than
+  the version that last installed them. It records that version next to the hooks when it copies.
+  No record yet (first install, or hooks from before this change): copy, as today.
+- RED (acceptance, sandbox HOME): hooks installed by a newer version + a session start from an older plugin
+  root → the shared hooks are unchanged. Controls: same version → copied; newer plugin → copied; no record →
+  copied. Each must fail against a mutant that drops the check (or always refuses).
+- Provenance check (IRON LAW #1b): grep every other writer of `~/.oss/hooks` (oss-session-start-new.sh,
+  oss-session-start-test.sh, login, setup-permissions, ensure-decrypt-cli…) and either route it through the
+  same rule or state in the commit why it is fine.
+- Version compare is numeric per dot-separated part (2.0.100 > 2.0.95) and works in /bin/bash 3.2.
+
 ### Task 16: Version bump and server follow-up
 - `.claude-plugin/plugin.json` 2.0.94 → 2.0.95 (customer-facing hook fix); also any version pins kept in sync by existing tests.
 - FOLLOWUPS.md gets one item: production analytics contains test-run events sent from the developer's account during hook test runs, so AgenticDevWorkflow should exclude or flag them.
