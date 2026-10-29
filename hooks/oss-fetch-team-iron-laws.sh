@@ -23,10 +23,9 @@
 set -euo pipefail
 if [[ -f "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh" ]]; then source "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh"; fi  # oss_api_curl: API key via stdin, never argv
 
-CONFIG_FILE="${HOME}/.oss/config.json"
+CONFIG_FILE=$(oss_config_file)
 CACHE_FILE="${HOME}/.oss/team-iron-laws.json"
 CACHE_TTL=3600  # 1 hour in seconds
-API_URL="https://one-shot-ship-api.onrender.com"
 
 # Default config when no team/API available
 DEFAULT_CONFIG='{
@@ -97,11 +96,16 @@ else
   ENDPOINT="/api/v1/iron-laws/team/${TEAM_ID}"
 fi
 
-# Fetch from API with timeout
-RESPONSE=$(oss_api_curl "$API_KEY" -s -w "\n%{http_code}" \
-  --max-time 10 \
-  -H "Content-Type: application/json" \
-  "${API_URL}${ENDPOINT}" 2>/dev/null || echo -e "\n000")
+# Fetch from API with timeout. The key goes only to the API configured beside it: a refused
+# apiUrl makes no request and falls back like an unreachable API.
+if API_URL=$(oss_api_url); then
+  RESPONSE=$(oss_api_curl "$API_KEY" -s -w "\n%{http_code}" \
+    --max-time 10 \
+    -H "Content-Type: application/json" \
+    "${API_URL}${ENDPOINT}" 2>/dev/null || echo -e "\n000")
+else
+  RESPONSE=$'\n000'
+fi
 
 # Extract HTTP status code (last line)
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
