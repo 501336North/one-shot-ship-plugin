@@ -83,6 +83,14 @@ FOLLOWUPS.md lines 59 (setup.ts pkill), 90 (api-curl.real curl has no -m), 103 (
 - The commit body lists every site found and why each unfixed one is safe.
 - NOTES.md records the final grep commands and their output.
 
+### Task 4e (found by T4c, 2026-10-29): other pipefail exits in oss-notify.sh. Scope is the user's call.
+Under `set -euo pipefail`, a `$(echo … | jq …)` with no `||` exits the hook silently whenever the input is not JSON:
+- lines 160-162: TITLE, MESSAGE and SUBTITLE from get-copy.js output. `run_with_timeout` returns 0, so the `|| echo '{}'` at line 157 never catches bad output.
+- lines 316-319: the `task_complete` context fields, before setTddPhase and setProgress.
+- line 399: the `--issue` message, before setIssue.
+- line 60 (`resolve_cli`, find|sort|tail): safe today only because it runs inside `$()` without inherit_errexit.
+This is not a background-job or time-limit defect, so it is outside DESIGN's scope. It is listed here so it is tracked, not lost.
+
 ---
 
 ## Phase B: Test isolation at the root

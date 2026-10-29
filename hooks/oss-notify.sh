@@ -108,7 +108,7 @@ wf_state_timeout() {
 LOG_SCRIPT="$PLUGIN_ROOT/hooks/oss-log.sh"
 # LOG_SCRIPT fallback: check plugin cache if not found at PLUGIN_ROOT
 if [[ ! -f "$LOG_SCRIPT" ]]; then
-    _found_log=$(find "$HOME/.claude/plugins/cache/one-shot-ship-plugin" -name "oss-log.sh" -path "*/hooks/*" -type f 2>/dev/null | sort -V | tail -1)
+    _found_log=$(find "$HOME/.claude/plugins/cache/one-shot-ship-plugin" -name "oss-log.sh" -path "*/hooks/*" -type f 2>/dev/null | sort -V | tail -1 || true)
     [[ -n "$_found_log" ]] && LOG_SCRIPT="$_found_log"
 fi
 

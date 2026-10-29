@@ -47,6 +47,11 @@ File: `watcher/test/hooks/oss-session-start-notify-detach.test.ts`, 4 tests (2 b
 - REFACTOR: the acceptance MARKER_BACKSTOP_MS went from 20 s to 60 s, and TEST_TIMEOUT_MS from 40 s to 100 s (load-sensitive launch wait seen in the T2 run). No assertion changed.
 - Whole hooks dir (safe config): 182/183. The one failure was `hook-error-adoption` "should emit OSS-AUTH-001 ... 401", a known flake that T9 fixes.
 
+### T4c (2026-10-29, /oss:build, test-engineer)
+File: `watcher/test/hooks/oss-notify-log-fallback.test.ts`, 2 tests.
+- RED: when there is no oss-log.sh and no plugin cache, the hook exited 1 silently before `setActiveStep build` (no node calls). The control, with oss-log.sh in the cache, passed.
+- GREEN: 2/2. Anti-vacuity: removing `|| true` turns test 1 RED with the same message. Together with the T1 and T2 files: 7/7.
+
 ## Stability proof (T15)
 (5 runs per suite, plus 1 run under load, plus the real ~/.oss mtime check)
 
