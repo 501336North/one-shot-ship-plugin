@@ -15,7 +15,9 @@
 - [x] T10: oss-notify-project.test.ts made hermetic (completed 2026-10-29)
 - [x] T11: oss-session-logging.test.ts made hermetic, live session safe (completed 2026-10-29 as T6.c)
 - [x] T12: oss-log-error-recovery.test.ts writes only in its sandbox (completed 2026-10-29)
-- [ ] T4f: session start's subscription call uses the configured apiUrl (user: fix in this branch, 2026-10-29; widened to 4 more scripts by user 2026-10-29) (in progress: session start done in 478b804, T4f-2 key/URL one file, T4g other scripts)
+- [x] T4f: keyed calls use the configured apiUrl and its key (completed 2026-10-29: session start 478b804, T4f-2 a12e1d6, T4g 256f262 49bd0fc 3cfeaf9 e06d4d3)
+- [ ] T4h: optional-helper-source and oss-notify-api-url wait for the detached analytics POST (regression from T1) (pending)
+- [ ] T4i: fetch-iron-laws.sh's curl gets a time limit (found in T4g) (pending)
 - [x] T13: complete-bounds.test.sh checks boundedness, not wall-clock (completed 2026-10-29)
 - [x] T14: api-curl.real.integration.test.sh is event-driven (completed 2026-10-29)
 - [ ] T15: Stability proof: 5 runs each, plus a run under load (pending)
@@ -24,4 +26,4 @@
 ## Blockers
 - None
 
-## Last Updated: 2026-10-29 13:15 CST by /oss:build (T13 done; T4f-2 in progress; T4g approved)
+## Last Updated: 2026-10-29 14:39 CST by /oss:build (T4g done; T4h, T4i added)

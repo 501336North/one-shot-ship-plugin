@@ -217,6 +217,14 @@ Hook: `CONFIG_FILE=$(oss_config_file)` in oss-session-start.sh, so the logged-in
 - GREEN: 5 sequential runs (5.8-9.9 s) and 6 parallel runs (17-21 s) at load ~18, all 5/5. Neighbouring suites 23/23. Orchestrator re-run: 5/5 in 5.8 s.
 - FOLLOWUPS: the grep key read vs oss_api_key (jq) parse a `\"` key differently.
 
+### T4g (2026-10-29, test-engineer; by hand, not a /oss:build invocation)
+Four scripts now send the key only to the configured apiUrl, with key and URL from `oss_config_file`: fetch-iron-laws.sh, oss-fetch-team-iron-laws.sh, oss-push-metrics.sh, oss-iron-laws-sync.sh. One recording, warm curl stub per file (argv plus the `--config -` stdin where the key travels); a sandbox HOME per case; OSS_CONFIG_DIR always passed explicitly; `HOOKS_UNDER_TEST` for mutants.
+- Cases per script: (a) apiUrl honoured, (b) OSS_CONFIG_DIR's key sent and HOME's never, (c) a refused apiUrl sends nothing, (d) control: no apiUrl uses the default host.
+- RED: fetch-iron-laws 3/6, team 1/4, push-metrics 1/4, sync-safety 53/57 (both refresh and --install).
+- Mutants (scratch copies): hardcoded URL fails (a)-(c) everywhere; HOME config fails (b) everywhere.
+- GREEN: 5/5 runs each (6/6, 4/4, 4/4, 57/57 + 8/8). Orchestrator re-run: all green, oss-api-curl 6/6.
+- Full shell suite (2751 s under load): 2 failures, both regressions from T1 (422f942): optional-helper-source (4/5) and oss-notify-api-url (11/21) assert right after the hook returns, but the analytics POST is now detached. Tracked as T4h.
+
 ## Stability proof (T15)
 Extra checks found during build:
 - every "no network / no call" assertion on a hook with detached jobs must wait for those jobs (fd-3 pipe or a done marker), or it is vacuous (T10);

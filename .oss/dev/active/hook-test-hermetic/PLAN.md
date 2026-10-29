@@ -109,6 +109,15 @@ Found while doing T4f (IRON LAW #1b). The key was read from `~/.oss/config.json`
 - GREEN: `API_URL=$(oss_api_url)` (refuse and skip the call when invalid), with the key from `oss_api_key` / `oss_config_file`.
 - Out of scope, recorded: oss-login.sh (first login has no config; re-login against a custom apiUrl is in FOLLOWUPS); oss-session-start-new/-test.sh (unreachable, FOLLOWUPS:29).
 
+### Task 4h: the two notify tests wait for the detached analytics POST
+Found by T4g's full shell run. T1 (422f942) detached the workflow-start analytics POST, but `hooks/__tests__/optional-helper-source.test.sh` (case 3) and `hooks/__tests__/oss-notify-api-url.test.sh` (11 of 21) look for the request right after the hook returns, so they now see no call. That is a test that cannot see the real behaviour.
+- RED: already red (4/5, 11/21). Before changing them, show each case's assertion would also pass for a hook that never sends (vacuity check) once fixed.
+- GREEN: wait for the detached call with the event-driven pattern (fd-3 pipe or a received marker from the curl stub, no sleep), never by un-detaching the hook.
+- Mutant: a hook whose analytics call is removed must fail each fixed case.
+
+### Task 4i: fetch-iron-laws.sh's request is bounded
+Found by T4g: its `oss_api_curl` call has no `-m`/`--max-time`, the only keyed call left without one (DESIGN: no unbounded curls). RED: a stub that holds the request records that no time limit was passed. GREEN: add `-m` like its siblings.
+
 ---
 
 ## Phase B: Test isolation at the root
