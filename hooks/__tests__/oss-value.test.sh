@@ -570,6 +570,15 @@ setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; echo ossk_login_key_1
 [[ "$(sbcalls)" == *"https://one-shot-ship-api.onrender.com/api/v1/subscription/status"* && "$(sbcalls)" != *ossk_login_key_1* \
    && "$(cat "$T/curl.stdin" 2>/dev/null)" == *"Authorization: Bearer ossk_login_key_1"* ]] \
     && pass "22: login checks the key against /api/v1/subscription/status, the key on curl's stdin, never argv" || fail "22: login checks the key against the API, key on stdin only" "calls=$(sbcalls) stdin=$(cat "$T/curl.stdin" 2>&1)"
+# T4d: a hung API must not hang /oss:login forever, so the key check carries a curl time limit
+# (-m N / --max-time N, 1 <= N <= 30). The stub above is warmed first (cold-exec scan outside the run);
+# it never touches the network, and HOME is the sandbox. The login still succeeding is the control.
+"$T/sbin/curl" </dev/null >/dev/null 2>&1
+setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; echo ossk_login_key_t4d > "$VD/key.txt"; ovl "$R"
+[[ "$RC" == 0 && "$OUT" == "Plan: pro" ]] && pass "22: login's key check has a time limit (control: the login succeeds)" || fail "22: login's key check has a time limit (control: the login succeeds)" "rc=$RC out='$OUT' err=$ERR"
+_t4d_lim=$(sbcalls | tr "\n" " " | grep -oE '(^| )(-m|--max-time) [0-9]+( |$)' | grep -oE '[0-9]+' | head -1)
+[[ -n "$_t4d_lim" ]] && (( _t4d_lim >= 1 && _t4d_lim <= 30 )) \
+    && pass "22: login's key check has a time limit (-m $_t4d_lim)" || fail "22: login's key check has a time limit" "no -m/--max-time in 1..30: calls=$(sbcalls)"
 setup_act; printf '{"plan":"team"}\n200\n' > "$T/curl.out"; printf '{"apiKey":"old","apiUrl":"https://x.invalid","other":1}\n' > "$H/.oss/config.json"
 echo ossk_login_key_2 > "$VD/key.txt"; ovl "$R"
 [[ "$RC" == 0 && "$(jq -c . "$H/.oss/config.json")" == '{"apiKey":"ossk_login_key_2","apiUrl":"https://x.invalid","other":1}' ]] \

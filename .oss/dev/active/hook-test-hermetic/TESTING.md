@@ -67,6 +67,12 @@ File: `watcher/test/hooks/oss-log-agent-detach.test.ts`, 5 tests: 4 variants (st
 - **Unexplained, recorded:** the first GREEN run had 1 failure at 217 ms, and its message was not captured. It did not recur in 16 later runs. The likely cause is that `afterEach` deleted the state dir while the detached node chain was still writing to it. afterEach now waits for both node calls to finish (`node-done`). T15 must confirm this.
 - **Same race, not yet fixed:** `oss-log-agent-state` "should still write to log file..." deletes its project dir while a real detached node chain may still be running. Added to T6.
 
+### T4d (2026-10-29, /oss:build, test-engineer)
+File: `hooks/__tests__/oss-value.test.sh`, section 22: 2 new assertions, a control plus the time-limit check.
+- RED: no `-m`/`--max-time` in the login curl argv (333/334). The control (login succeeds) passed.
+- GREEN: 334/334. Anti-vacuity: removing `-m 10` gives the same failure. Regression: `commands/__tests__/value-file-wrappers-run.test.sh` passes 59/59.
+- **Slow, worth noting for T15:** oss-value.test.sh takes about 3 min. value-file-wrappers-run.test.sh took over 10 min at load 3 to 4.5, with long silent stretches inside `oss-value.sh dir`. Neither failed.
+
 ## Stability proof (T15)
 (5 runs per suite, plus 1 run under load, plus the real ~/.oss mtime check)
 
