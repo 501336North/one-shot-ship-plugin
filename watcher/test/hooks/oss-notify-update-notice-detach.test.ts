@@ -14,27 +14,26 @@
  *   no-op oss-log.sh, a dummy workflow-state CLI path and a check-updates.sh that prints a notice.
  * - `node` records every workflow-state CLI call; `sleep` turns the notice delay (any sleep of
  *   10 s or more) into "write delay-received, wait for release" and passes shorter sleeps on.
- * - stubs are created and executed once in beforeAll (OSS_STUB_WARMUP=1), never inside a test.
+ * - stubs are created and executed once in beforeAll (writeWarmStub), never inside a test.
  * - time limits are only hang backstops; hitting one is a failure with a message.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
-import { spawn, execFileSync, type ChildProcess } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { writeWarmStub, WARMUP_TIMEOUT_MS } from './helpers/warm-stub';
 
 const REPO_HOOKS = path.join(__dirname, '../../../hooks');
 
 const CLOSE_BACKSTOP_MS = 15_000;
 const MARKER_BACKSTOP_MS = 20_000;
 const TEST_TIMEOUT_MS = 60_000;
-const WARMUP_TIMEOUT_MS = 180_000;
 
 const NOTICE = 'OSS update available: 9.9.9';
 const NOTICE_CALL = `setNotification ${NOTICE} 30`;
 
-const WARMUP_GUARD = '[ -n "${OSS_STUB_WARMUP:-}" ] && exit 0';
 // /bin/sleep explicitly: the sandbox PATH carries the `sleep` stub itself.
 const HOLD_UNTIL_RELEASE =
   'i=0; while [ ! -e "$STUB_STATE/release" ] && [ "$i" -lt 600 ]; do /bin/sleep 0.05; i=$((i+1)); done';
@@ -43,15 +42,6 @@ let fixtureRoot: string;
 let binDir: string;
 let pluginRoot: string;
 
-function writeStub(file: string, body: string): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `#!/bin/bash\n${WARMUP_GUARD}\n${body}\n`, { mode: 0o755 });
-}
-
-function warm(file: string): void {
-  execFileSync(file, [], { env: { ...process.env, OSS_STUB_WARMUP: '1' }, stdio: 'ignore' });
-}
-
 beforeAll(() => {
   fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-update-notice-detach-'));
   binDir = path.join(fixtureRoot, 'bin');
@@ -59,12 +49,12 @@ beforeAll(() => {
   fs.mkdirSync(path.join(pluginRoot, 'hooks'), { recursive: true });
 
   // node: wf_state / wf_state_timeout call `node "$WORKFLOW_STATE_CLI" <command> ...`; record each call.
-  writeStub(
+  writeWarmStub(
     path.join(binDir, 'node'),
     ['[ -n "${STUB_STATE:-}" ] && printf "%s\\n" "$*" >> "$STUB_STATE/node-calls"', 'exit 0'].join('\n'),
   );
   // sleep: the notice delay (10 s or more) waits for `release` instead of the clock.
-  writeStub(
+  writeWarmStub(
     path.join(binDir, 'sleep'),
     [
       'n="${1:-0}"; n="${n%%.*}"',
@@ -80,20 +70,11 @@ beforeAll(() => {
     fs.chmodSync(path.join(pluginRoot, 'hooks', name), 0o755);
   }
   // Without oss-log.sh next to it, oss-notify.sh's plugin-cache fallback exits the hook early.
-  writeStub(path.join(pluginRoot, 'hooks/oss-log.sh'), 'exit 0');
-  writeStub(path.join(pluginRoot, 'hooks/check-updates.sh'), `echo "${NOTICE}"`);
+  writeWarmStub(path.join(pluginRoot, 'hooks/oss-log.sh'), 'exit 0');
+  writeWarmStub(path.join(pluginRoot, 'hooks/check-updates.sh'), `echo "${NOTICE}"`);
   const wfCli = path.join(pluginRoot, 'watcher/dist/cli/update-workflow-state.js');
   fs.mkdirSync(path.dirname(wfCli), { recursive: true });
   fs.writeFileSync(wfCli, '// stub path; `node` on PATH is the recording stub\n');
-
-  for (const stub of [
-    path.join(binDir, 'node'),
-    path.join(binDir, 'sleep'),
-    path.join(pluginRoot, 'hooks/oss-log.sh'),
-    path.join(pluginRoot, 'hooks/check-updates.sh'),
-  ]) {
-    warm(stub);
-  }
 }, WARMUP_TIMEOUT_MS);
 
 afterAll(() => {

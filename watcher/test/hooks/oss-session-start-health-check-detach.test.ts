@@ -18,24 +18,23 @@
  *   Any other `node` call exits 0.
  * - the hook runs from a sandbox plugin root holding the real oss-session-start.sh and what it
  *   sources, plus a dummy watcher/dist/cli/health-check.js so the hook finds the CLI.
- * - stubs are created and executed once in beforeAll (OSS_STUB_WARMUP=1), never inside a test.
+ * - stubs are created and executed once in beforeAll (writeWarmStub), never inside a test.
  * - time limits are only hang backstops; hitting one is a failure with a message.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
-import { spawn, execFileSync, type ChildProcess } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { writeWarmStub, WARMUP_TIMEOUT_MS } from './helpers/warm-stub';
 
 const REPO_HOOKS = path.join(__dirname, '../../../hooks');
 
 const CLOSE_BACKSTOP_MS = 15_000;
 const MARKER_BACKSTOP_MS = 60_000;
 const TEST_TIMEOUT_MS = 100_000;
-const WARMUP_TIMEOUT_MS = 180_000;
 
-const WARMUP_GUARD = '[ -n "${OSS_STUB_WARMUP:-}" ] && exit 0';
 const HOLD_UNTIL_RELEASE =
   'i=0; while [ ! -e "$STUB_STATE/release" ] && [ "$i" -lt 600 ]; do /bin/sleep 0.05; i=$((i+1)); done';
 
@@ -43,26 +42,17 @@ let fixtureRoot: string;
 let binDir: string;
 let pluginRoot: string;
 
-function writeStub(file: string, body: string): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `#!/bin/bash\n${WARMUP_GUARD}\n${body}\n`, { mode: 0o755 });
-}
-
-function warm(file: string): void {
-  execFileSync(file, [], { env: { ...process.env, OSS_STUB_WARMUP: '1' }, stdio: 'ignore' });
-}
-
 beforeAll(() => {
   fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-session-start-health-'));
   binDir = path.join(fixtureRoot, 'bin');
   pluginRoot = path.join(fixtureRoot, 'plugin');
   fs.mkdirSync(path.join(pluginRoot, 'hooks'), { recursive: true });
 
-  writeStub(
+  writeWarmStub(
     path.join(binDir, 'curl'),
     ['[ -n "${STUB_STATE:-}" ] && printf "%s\\n" "$@" >> "$STUB_STATE/curl-argv"', 'exit 0'].join('\n'),
   );
-  writeStub(
+  writeWarmStub(
     path.join(binDir, 'node'),
     [
       'case "${1:-}" in */watcher/dist/cli/health-check.js) ;; *) exit 0 ;; esac',
@@ -79,8 +69,6 @@ beforeAll(() => {
   const healthCli = path.join(pluginRoot, 'watcher/dist/cli/health-check.js');
   fs.mkdirSync(path.dirname(healthCli), { recursive: true });
   fs.writeFileSync(healthCli, '// dummy: the PATH node stub stands in for the health check\n');
-
-  for (const stub of [path.join(binDir, 'curl'), path.join(binDir, 'node')]) warm(stub);
 }, WARMUP_TIMEOUT_MS);
 
 afterAll(() => {

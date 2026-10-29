@@ -10,10 +10,11 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
-import { execSync, execFileSync } from 'child_process';
+import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { writeWarmStub, WARMUP_TIMEOUT_MS } from './helpers/warm-stub';
 
 const hooksDir = path.join(__dirname, '../../../hooks');
 const sessionEndScript = path.join(hooksDir, 'oss-session-end.sh');
@@ -79,24 +80,18 @@ beforeAll(() => {
   );
 
   // Recording curl stub: logs its argv, answers like an active subscription, never touches the network.
-  fs.mkdirSync(stubBinDir, { recursive: true });
-  fs.writeFileSync(
+  // Warmed here, so the macOS first-exec scan of the new file is paid outside every test.
+  writeWarmStub(
     curlStub,
     [
-      '#!/bin/bash',
       `printf '%s\\x1f' "$@" >> "${curlCallsFile}"`,
       `printf '\\n' >> "${curlCallsFile}"`,
       `printf '%s' '{"status":"active"}'`,
       'exit 0',
-      '',
     ].join('\n'),
   );
-  fs.chmodSync(curlStub, 0o755);
-  // Warm it: the first exec of a new file pays the macOS security scan, so pay it here, not in a test.
-  execFileSync(curlStub, [`${SANDBOX_API_URL}/warmup`], { stdio: 'ignore' });
   fs.writeFileSync(curlCallsFile, '');
-  // That scan is serialized machine-wide and was measured at 40 s under load: budget for it here.
-}, 120_000);
+}, WARMUP_TIMEOUT_MS);
 
 function makeGitProject(prefix: string, withCommit: boolean): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));

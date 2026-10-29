@@ -10,38 +10,27 @@
  * - two sandbox HOMEs, made once: one with no .claude/plugins/cache at all, one whose plugin cache
  *   holds a no-op oss-log.sh.
  * - a sandbox bin/ first on PATH whose `node` records its argv and whose `curl` is a no-op.
- * - stubs are created and executed once in beforeAll (OSS_STUB_WARMUP=1), never inside a test.
+ * - stubs are created and executed once in beforeAll (writeWarmStub), never inside a test.
  * - the time limit is only a hang backstop.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
-import { spawn, execFileSync } from 'child_process';
+import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { writeWarmStub, WARMUP_TIMEOUT_MS } from './helpers/warm-stub';
 
 const REPO_HOOKS = path.join(__dirname, '../../../hooks');
 
 const CLOSE_BACKSTOP_MS = 15_000;
 const TEST_TIMEOUT_MS = 40_000;
-const WARMUP_TIMEOUT_MS = 180_000;
-
-const WARMUP_GUARD = '[ -n "${OSS_STUB_WARMUP:-}" ] && exit 0';
 
 let fixtureRoot: string;
 let binDir: string;
 let pluginRoot: string;
 let homeWithoutCache: string;
 let homeWithCache: string;
-
-function writeStub(file: string, body: string): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `#!/bin/bash\n${WARMUP_GUARD}\n${body}\n`, { mode: 0o755 });
-}
-
-function warm(file: string): void {
-  execFileSync(file, [], { env: { ...process.env, OSS_STUB_WARMUP: '1' }, stdio: 'ignore' });
-}
 
 beforeAll(() => {
   fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-notify-log-fallback-'));
@@ -54,11 +43,11 @@ beforeAll(() => {
   fs.mkdirSync(path.join(homeWithCache, '.oss'), { recursive: true });
 
   // node: wf_state calls `node "$WORKFLOW_STATE_CLI" <command> ...`; record each call on one line.
-  writeStub(
+  writeWarmStub(
     path.join(binDir, 'node'),
     ['[ -n "${STUB_STATE:-}" ] || exit 0', 'printf "%s\\n" "$*" >> "$STUB_STATE/node-calls"', 'exit 0'].join('\n'),
   );
-  writeStub(path.join(binDir, 'curl'), 'exit 0');
+  writeWarmStub(path.join(binDir, 'curl'), 'exit 0');
 
   for (const name of ['oss-notify.sh', 'oss-api-curl.sh', 'oss-safe-path.sh']) {
     fs.copyFileSync(path.join(REPO_HOOKS, name), path.join(pluginRoot, 'hooks', name));
@@ -70,9 +59,7 @@ beforeAll(() => {
   fs.writeFileSync(wfCli, '// stub path; `node` on PATH is a recording stub\n');
 
   const cachedLog = path.join(homeWithCache, '.claude/plugins/cache/one-shot-ship-plugin/x/hooks/oss-log.sh');
-  writeStub(cachedLog, 'exit 0');
-
-  for (const stub of [path.join(binDir, 'node'), path.join(binDir, 'curl'), cachedLog]) warm(stub);
+  writeWarmStub(cachedLog, 'exit 0');
 }, WARMUP_TIMEOUT_MS);
 
 afterAll(() => {

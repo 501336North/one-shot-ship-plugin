@@ -14,25 +14,24 @@
  * - the hook runs from a sandbox plugin root holding the real oss-session-start.sh and what it
  *   sources, plus an oss-notify.sh stub that records its argv, writes `received` and holds its
  *   inherited stdout until `release` (30 s self-exit backstop).
- * - stubs are created and executed once in beforeAll (OSS_STUB_WARMUP=1), never inside a test.
+ * - stubs are created and executed once in beforeAll (writeWarmStub), never inside a test.
  * - time limits are only hang backstops; hitting one is a failure with a message. Session start
  *   does real work before it launches the notify call, so the marker backstop is generous.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
-import { spawn, execFileSync, type ChildProcess } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { writeWarmStub, WARMUP_TIMEOUT_MS } from './helpers/warm-stub';
 
 const REPO_HOOKS = path.join(__dirname, '../../../hooks');
 
 const CLOSE_BACKSTOP_MS = 15_000;
 const MARKER_BACKSTOP_MS = 60_000;
 const TEST_TIMEOUT_MS = 100_000;
-const WARMUP_TIMEOUT_MS = 180_000;
 
-const WARMUP_GUARD = '[ -n "${OSS_STUB_WARMUP:-}" ] && exit 0';
 const HOLD_UNTIL_RELEASE =
   'i=0; while [ ! -e "$STUB_STATE/release" ] && [ "$i" -lt 600 ]; do /bin/sleep 0.05; i=$((i+1)); done';
 
@@ -40,22 +39,13 @@ let fixtureRoot: string;
 let binDir: string;
 let pluginRoot: string;
 
-function writeStub(file: string, body: string): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `#!/bin/bash\n${WARMUP_GUARD}\n${body}\n`, { mode: 0o755 });
-}
-
-function warm(file: string): void {
-  execFileSync(file, [], { env: { ...process.env, OSS_STUB_WARMUP: '1' }, stdio: 'ignore' });
-}
-
 beforeAll(() => {
   fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-session-start-detach-'));
   binDir = path.join(fixtureRoot, 'bin');
   pluginRoot = path.join(fixtureRoot, 'plugin');
   fs.mkdirSync(path.join(pluginRoot, 'hooks'), { recursive: true });
 
-  writeStub(
+  writeWarmStub(
     path.join(binDir, 'curl'),
     ['[ -n "${STUB_STATE:-}" ] && printf "%s\\n" "$@" >> "$STUB_STATE/curl-argv"', 'exit 0'].join('\n'),
   );
@@ -64,14 +54,12 @@ beforeAll(() => {
     fs.copyFileSync(path.join(REPO_HOOKS, name), path.join(pluginRoot, 'hooks', name));
     fs.chmodSync(path.join(pluginRoot, 'hooks', name), 0o755);
   }
-  writeStub(
+  writeWarmStub(
     path.join(pluginRoot, 'hooks/oss-notify.sh'),
     ['printf "%s\\n" "$*" >> "$STUB_STATE/notify-argv"', ': > "$STUB_STATE/notify-received"', HOLD_UNTIL_RELEASE, 'exit 0'].join(
       '\n',
     ),
   );
-
-  for (const stub of [path.join(binDir, 'curl'), path.join(pluginRoot, 'hooks/oss-notify.sh')]) warm(stub);
 }, WARMUP_TIMEOUT_MS);
 
 afterAll(() => {

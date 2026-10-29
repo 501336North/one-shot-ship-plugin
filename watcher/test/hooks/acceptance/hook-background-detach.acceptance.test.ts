@@ -17,15 +17,16 @@
  *   `release` file (30 s self-exit backstop). A test asserts that the hook's `close` event
  *   (every stdio pipe at EOF, which is what Claude Code waits for) fires while `release` does not
  *   exist yet. Time limits below are only hang backstops: hitting one is a failure with a message.
- * - Stubs are created once in beforeAll and executed once there (OSS_STUB_WARMUP=1), so the macOS
+ * - Stubs are created once in beforeAll and executed once there (writeWarmStub), so the macOS
  *   first-exec security scan of a new executable never happens inside a test.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
-import { spawn, execFileSync, type ChildProcess } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { writeWarmStub, WARMUP_TIMEOUT_MS } from '../helpers/warm-stub';
 
 const REPO_HOOKS = path.join(__dirname, '../../../../hooks');
 
@@ -35,11 +36,6 @@ const REPO_HOOKS = path.join(__dirname, '../../../../hooks');
 const CLOSE_BACKSTOP_MS = 15_000;
 const MARKER_BACKSTOP_MS = 60_000;
 const TEST_TIMEOUT_MS = 100_000;
-// The first exec of each new stub (macOS security scan) is unbounded under load: 19 s was seen
-// for a single file. beforeAll pays that once, outside every test, under this hang backstop.
-const WARMUP_TIMEOUT_MS = 180_000;
-
-const WARMUP_GUARD = '[ -n "${OSS_STUB_WARMUP:-}" ] && exit 0';
 
 // Waits for $STUB_STATE/release; self-exits after 30 s so a crashed test never leaks a process.
 // Uses /bin/sleep explicitly because the sandbox PATH carries a `sleep` stub (scenario 2).
@@ -50,16 +46,6 @@ let fixtureRoot: string;
 let binDir: string;
 let notifyPluginRoot: string;
 let sessionPluginRoot: string;
-
-function writeStub(file: string, body: string): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `#!/bin/bash\n${WARMUP_GUARD}\n${body}\n`, { mode: 0o755 });
-}
-
-/** Execute a new stub once, outside any test, so macOS's first-exec scan happens here. */
-function warm(file: string): void {
-  execFileSync(file, [], { env: { ...process.env, OSS_STUB_WARMUP: '1' }, stdio: 'ignore' });
-}
 
 function copyHook(name: string, pluginRoot: string): void {
   fs.copyFileSync(path.join(REPO_HOOKS, name), path.join(pluginRoot, 'hooks', name));
@@ -72,7 +58,7 @@ beforeAll(() => {
 
   // curl: the seam oss_api_curl reaches (it runs plain `curl` from PATH). Records argv; when
   // CURL_STUB_HOLD=1 it signals `curl-received` and holds the request open until `release`.
-  writeStub(
+  writeWarmStub(
     path.join(binDir, 'curl'),
     [
       '[ -n "${STUB_STATE:-}" ] || exit 0',
@@ -88,7 +74,7 @@ beforeAll(() => {
   // node: wf_state / wf_state_timeout call `node "$WORKFLOW_STATE_CLI" <command> ...` from PATH.
   // Recording that argv is the smallest seam that shows WHEN the update notice is posted
   // (setNotification <notice> 30) without running the real workflow-state CLI.
-  writeStub(
+  writeWarmStub(
     path.join(binDir, 'node'),
     ['[ -n "${STUB_STATE:-}" ] && printf "%s\\n" "$*" >> "$STUB_STATE/node-calls"', 'exit 0'].join('\n'),
   );
@@ -97,7 +83,7 @@ beforeAll(() => {
   // notification can expire first. Any sleep of 10 s or more is that delay: it signals
   // `delay-received` and waits for `release` instead of the clock. Shorter sleeps (timeout timers)
   // are passed to the real /bin/sleep.
-  writeStub(
+  writeWarmStub(
     path.join(binDir, 'sleep'),
     [
       'n="${1:-0}"; n="${n%%.*}"',
@@ -117,11 +103,11 @@ beforeAll(() => {
   const wfCli = path.join(notifyPluginRoot, 'watcher/dist/cli/update-workflow-state.js');
   fs.mkdirSync(path.dirname(wfCli), { recursive: true });
   fs.writeFileSync(wfCli, '// stub path; `node` on PATH is the recording stub\n');
-  writeStub(path.join(notifyPluginRoot, 'hooks/check-updates.sh'), 'echo "OSS update available: 9.9.9"');
+  writeWarmStub(path.join(notifyPluginRoot, 'hooks/check-updates.sh'), 'echo "OSS update available: 9.9.9"');
   // oss-log.sh: every real install ships it next to oss-notify.sh. Without it, oss-notify.sh falls
   // back to `find ~/.claude/plugins/cache/... | sort | tail` which, under its set -euo pipefail and
   // a sandbox HOME with no plugin cache, exits the hook before it does anything. A no-op stands in.
-  writeStub(path.join(notifyPluginRoot, 'hooks/oss-log.sh'), 'exit 0');
+  writeWarmStub(path.join(notifyPluginRoot, 'hooks/oss-log.sh'), 'exit 0');
 
   // Plugin root for oss-session-start.sh: the real hook and what it sources or runs with bash,
   // plus an oss-notify.sh stub that holds its inherited stdio until `release`. Everything else
@@ -132,23 +118,12 @@ beforeAll(() => {
   for (const name of ['oss-session-start.sh', 'oss-api-curl.sh', 'oss-safe-path.sh', 'oss-config.sh', 'oss-settings-cleanup.sh']) {
     copyHook(name, sessionPluginRoot);
   }
-  writeStub(
+  writeWarmStub(
     path.join(sessionPluginRoot, 'hooks/oss-notify.sh'),
     ['printf "%s\\n" "$*" >> "$STUB_STATE/notify-argv"', ': > "$STUB_STATE/notify-received"', HOLD_UNTIL_RELEASE, 'exit 0'].join(
       '\n',
     ),
   );
-
-  for (const stub of [
-    path.join(binDir, 'curl'),
-    path.join(binDir, 'node'),
-    path.join(binDir, 'sleep'),
-    path.join(notifyPluginRoot, 'hooks/check-updates.sh'),
-    path.join(notifyPluginRoot, 'hooks/oss-log.sh'),
-    path.join(sessionPluginRoot, 'hooks/oss-notify.sh'),
-  ]) {
-    warm(stub);
-  }
 }, WARMUP_TIMEOUT_MS);
 
 afterAll(() => {

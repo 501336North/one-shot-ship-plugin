@@ -12,39 +12,29 @@
  *   CURL* removed from the env; a sandbox bin/ first on PATH whose `curl` and `node` are stubs.
  * - the hook runs from a sandbox plugin root holding the real oss-notify.sh and what it sources.
  * - the curl stub records its argv, writes `received`, and (CURL_STUB_HOLD=1) waits for `release`.
- * - stubs are created and executed once in beforeAll (OSS_STUB_WARMUP=1), never inside a test.
+ * - stubs are created and executed once in beforeAll (writeWarmStub), never inside a test.
  * - time limits are only hang backstops; hitting one is a failure with a message.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
-import { spawn, execFileSync, type ChildProcess } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { writeWarmStub, WARMUP_TIMEOUT_MS } from './helpers/warm-stub';
 
 const REPO_HOOKS = path.join(__dirname, '../../../hooks');
 
 const CLOSE_BACKSTOP_MS = 15_000;
 const MARKER_BACKSTOP_MS = 20_000;
 const TEST_TIMEOUT_MS = 40_000;
-const WARMUP_TIMEOUT_MS = 180_000;
 
-const WARMUP_GUARD = '[ -n "${OSS_STUB_WARMUP:-}" ] && exit 0';
 const HOLD_UNTIL_RELEASE =
   'i=0; while [ ! -e "$STUB_STATE/release" ] && [ "$i" -lt 600 ]; do sleep 0.05; i=$((i+1)); done';
 
 let fixtureRoot: string;
 let binDir: string;
 let pluginRoot: string;
-
-function writeStub(file: string, body: string): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `#!/bin/bash\n${WARMUP_GUARD}\n${body}\n`, { mode: 0o755 });
-}
-
-function warm(file: string): void {
-  execFileSync(file, [], { env: { ...process.env, OSS_STUB_WARMUP: '1' }, stdio: 'ignore' });
-}
 
 beforeAll(() => {
   fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-analytics-detach-'));
@@ -53,7 +43,7 @@ beforeAll(() => {
   fs.mkdirSync(path.join(pluginRoot, 'hooks'), { recursive: true });
 
   // curl: oss_api_curl runs plain `curl` from PATH (the key arrives on stdin via --config -, not argv).
-  writeStub(
+  writeWarmStub(
     path.join(binDir, 'curl'),
     [
       '[ -n "${STUB_STATE:-}" ] || exit 0',
@@ -64,21 +54,17 @@ beforeAll(() => {
     ].join('\n'),
   );
   // node: wf_state calls `node "$WORKFLOW_STATE_CLI" ...`; a no-op keeps the real CLI out.
-  writeStub(path.join(binDir, 'node'), 'exit 0');
+  writeWarmStub(path.join(binDir, 'node'), 'exit 0');
 
   for (const name of ['oss-notify.sh', 'oss-api-curl.sh', 'oss-safe-path.sh']) {
     fs.copyFileSync(path.join(REPO_HOOKS, name), path.join(pluginRoot, 'hooks', name));
     fs.chmodSync(path.join(pluginRoot, 'hooks', name), 0o755);
   }
   // Without oss-log.sh next to it, oss-notify.sh's plugin-cache fallback exits the hook early.
-  writeStub(path.join(pluginRoot, 'hooks/oss-log.sh'), 'exit 0');
+  writeWarmStub(path.join(pluginRoot, 'hooks/oss-log.sh'), 'exit 0');
   const wfCli = path.join(pluginRoot, 'watcher/dist/cli/update-workflow-state.js');
   fs.mkdirSync(path.dirname(wfCli), { recursive: true });
   fs.writeFileSync(wfCli, '// stub path; `node` on PATH is a no-op stub\n');
-
-  for (const stub of [path.join(binDir, 'curl'), path.join(binDir, 'node'), path.join(pluginRoot, 'hooks/oss-log.sh')]) {
-    warm(stub);
-  }
 }, WARMUP_TIMEOUT_MS);
 
 afterAll(() => {
