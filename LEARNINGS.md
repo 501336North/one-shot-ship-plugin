@@ -1,5 +1,25 @@
 # Learnings
 
+## 2026-10-29 | Testing | hooks
+- **Context:** hook-test-hermetic (build T7-T14)
+- **Insight:** On macOS the first exec of a NEW executable is security-scanned: 0.3 s idle, 60 s or more under load. Most of this repo's "slow" or "flaky" hook tests were paying that per case, by writing a fresh stub (or copying hooks/) per sandbox. Make each stub once per run with `warm_stub` and symlink it into sandboxes; symlink a hooks dir instead of copying it. The hooks resolve their root logically (`cd dirname && pwd`) plus CLAUDE_PLUGIN_ROOT, so a symlinked hooks dir keeps the sandbox root.
+
+## 2026-10-29 | Testing | hooks
+- **Context:** hook-test-hermetic (build T1, T4h, T10)
+- **Insight:** Once a hook detaches a job (`</dev/null >/dev/null 2>&1 &`), `$(hook)` no longer waits for it, so every assertion about what that job does is now racy, and every "no request" assertion passes vacuously. T1's detach silently broke two test files (calls=0) and had already made their "refused URL" cases unable to fail. Pass `3>&1` inside the substitution: the job inherits fd 3, so `$(...)` returns only when it exits, with no sleep. Prove it with a mutant that removes the call.
+
+## 2026-10-29 | Security | hooks
+- **Context:** hook-test-hermetic (build T4f, T4g)
+- **Insight:** Five scripts sent the API key to a hardcoded production host and read it from $HOME/.oss/config.json, while `oss_api_url` honoured OSS_CONFIG_DIR and a configured apiUrl. Fixing only the first site (session start) left key A going to URL B. The rule is: the key goes only to the configured API, and key and URL come from one file (`oss_config_file`). `grep -rn 'onrender.com\|\.oss/config.json' hooks/*.sh` is the provenance check; oss-worktree-create.sh is the remaining site (FOLLOWUPS).
+
+## 2026-10-29 | Process | workflow
+- **Context:** hook-test-hermetic (build) and AgenticDevWorkflow#402
+- **Insight:** The IRON LAW "count `OSS Command: /oss:build` banners in build.log" could never exceed 1, because `oss-log.sh init` truncates build.log. Every init also appends `[build] [INIT]` to the append-only `current-session/session.log`; that count rising by one per round is the observable now served in the laws. Also: in this build the T4g, T4h/T4i, T15 and server-side CLAUDE.md rounds were done by delegated agents, RED-first but not as /oss:build invocations, and their learnings were captured here afterwards.
+
+## 2026-10-29 | Testing | hooks
+- **Context:** hook-test-hermetic (build T13b)
+- **Insight:** `bash` on a dev Mac's PATH is often Homebrew 5.x, but hooks and tests declare `#!/bin/bash`, which is 3.2. A bare `pattern)` case arm inside `$(cat <<EOF ...)` parses in 5.x and is a syntax error in 3.2, so a test can be "green" only because of the runner's PATH. hooks/__tests__/bash32-parse.test.sh now runs `/bin/bash -n` over every bash hook and test; write `(pattern)` arms inside substitutions.
+
 ## 2026-10-28 | Planning | hooks
 - **Context:** plan (hook-test-hermetic)
 - **Insight:** A hook's caller (Claude Code, execSync) waits for EOF on the hook's stdout/stderr, not for bash to exit. So `( … ) &` without `</dev/null >/dev/null 2>&1` silently makes "background" work block: an unbounded analytics curl on every /oss start, and an 11 s sleep at session start. Test "doesn't block" with a received/release stub and the child's `close` event, never with a wall-clock threshold.
