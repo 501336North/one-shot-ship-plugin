@@ -225,6 +225,19 @@ Four scripts now send the key only to the configured apiUrl, with key and URL fr
 - GREEN: 5/5 runs each (6/6, 4/4, 4/4, 57/57 + 8/8). Orchestrator re-run: all green, oss-api-curl 6/6.
 - Full shell suite (2751 s under load): 2 failures, both regressions from T1 (422f942): optional-helper-source (4/5) and oss-notify-api-url (11/21) assert right after the hook returns, but the analytics POST is now detached. Tracked as T4h.
 
+### T4h (2026-10-29, test-engineer; by hand, not a /oss:build invocation)
+Files: `hooks/__tests__/optional-helper-source.test.sh`, `hooks/__tests__/oss-notify-api-url.test.sh`. Both now take `HOOKS_UNDER_TEST`, make their stubs once with `warm_stub` (cases symlink to them; each case's dir is `$SHIM`), and run the hook with `3>&1` inside the command substitution. The detached analytics job and its curl inherit fd 3, so `$(...)` returns only after they exit.
+- Diagnosis: scratch trees with the unmodified tests. Current hooks: 4/5 and 11/21 (the reported failures). Only the detach redirect reverted: 5/5 and 21/21. Hook at 422f942^: 5/5 and 21/21.
+- Vacuity of the old "no request" checks, proven: under mutants m3 (apiUrl validation bypassed), m4 (workflow-name validation bypassed) and m5 (helper absent → direct curl), the OLD files still passed all 7 refused-URL cases, all 4 hostile-name cases and optional-helper case 2.
+- Mutants against the new files (scratch copies): m1 analytics call removed → 10/10 request cases of api-url fail and optional-helper case 3 fails; m2 key to a hardcoded host → the 5 custom-apiUrl cases fail (the 4 default-host cases pass, as expected); m3 → 7/7 refused-URL cases fail; m4 → 4/4 hostile-name cases fail; m5 → optional-helper case 2 fails.
+- GREEN: 5 sequential runs each, 5/5 and 21/21 (load 5-9).
+
+### T4i (2026-10-29, test-engineer; by hand, not a /oss:build invocation)
+`hooks/fetch-iron-laws.sh` gets `--max-time 10` (as oss-fetch-team-iron-laws.sh). New test 7 in `fetch-iron-laws.test.sh`: the recorded argv has `-m N` or `--max-time N`, 1 <= N <= 10.
+- RED: 6/7, `limit=` empty, argv without a limit. Mutant (scratch copy without the flag): 6/7, same message. GREEN: 7/7 over 5 runs.
+- Neighbours touching oss-notify.sh (/bin/bash): auto-permissions 14/14, oss-notify-updates 2/2, dead-vars 6/6, project-routing 45/45, workflow-name 12/12, writer-nofollow 49/49, session-start-copy 9/9, oss-value 334/334, session-routing 124/124, timeout-fallback 1/1.
+- **Found:** `oss-notify-complete-bounds.test.sh` (T13, ad194f2) does not parse under /bin/bash 3.2, its own shebang: line 79, a `case` pattern `)` inside a `$(cat <<EOF)` body ends the substitution early. It passes 8/8 under bash 5.3. Not fixed here.
+
 ## Stability proof (T15)
 Extra checks found during build:
 - every "no network / no call" assertion on a hook with detached jobs must wait for those jobs (fd-3 pipe or a done marker), or it is vacuous (T10);

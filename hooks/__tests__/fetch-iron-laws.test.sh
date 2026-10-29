@@ -8,6 +8,7 @@
 # 2. Exits 1 when API returns non-200 status
 # 3-6. The keyed request goes to the configured apiUrl with that config's key (OSS_CONFIG_DIR
 #      honoured); a refused apiUrl gets no request; no apiUrl means the default API
+# 7. The keyed request carries a time limit
 
 set -uo pipefail
 
@@ -189,6 +190,24 @@ test_no_api_url_default_host() {
 }
 
 # =============================================================================
+# TEST 7: the keyed request is time-bounded
+#
+# @behavior A slow or hung API cannot hold the IRON LAWS fetch (and whatever waits on it) forever:
+#           curl is given a time limit of 1-10 s, like the other keyed calls in hooks/.
+# @business-rule No unbounded network call on a hook path (hook-test-hermetic DESIGN).
+# @boundary fetch-iron-laws.sh (system boundary); curl is the faked collaborator
+# =============================================================================
+test_request_time_limit() {
+    local test_name="the keyed request carries a time limit (-m/--max-time N, 1 <= N <= 10)"
+    ((TESTS_RUN++))
+    key_case e '{"apiKey":"fake-key-K"}'
+    local limit=""
+    if [[ "$ARGV" =~ (^|[[:space:]])(-m|--max-time)[[:space:]]+([0-9]+)([[:space:]]|\|) ]]; then limit=${BASH_REMATCH[3]}; fi
+    if [[ $RC -eq 0 && $CALLS == 1 && -n "$limit" ]] && (( limit >= 1 && limit <= 10 )); then pass "$test_name"
+    else fail "$test_name" "1 call whose argv has -m N or --max-time N, 1 <= N <= 10" "exit=$RC calls=$CALLS limit=$limit argv=$ARGV"; fi
+}
+
+# =============================================================================
 # Run all tests
 # =============================================================================
 echo "Running fetch-iron-laws.sh tests..."
@@ -200,6 +219,7 @@ test_configured_api_url
 test_oss_config_dir_key_and_url
 test_invalid_api_url_no_request
 test_no_api_url_default_host
+test_request_time_limit
 rm -rf "$KS"
 
 echo ""

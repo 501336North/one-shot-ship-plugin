@@ -66,7 +66,7 @@ API_URL=$(oss_api_url) || {
 
 # Fetch IRON LAWS with authentication
 CURL_STATUS=0
-RESPONSE=$(oss_api_curl "$API_KEY" -s -w "\n%{http_code}" \
+RESPONSE=$(oss_api_curl "$API_KEY" -s --max-time 10 -w "\n%{http_code}" \
   -H "Content-Type: application/json" \
   "${API_URL}${ENDPOINT}") || CURL_STATUS=$?
 
