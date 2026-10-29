@@ -176,22 +176,17 @@ Remove the placeholder line `<!-- IRON LAWS will be injected here by /oss:login 
 
 ### 4.4: What Gets Synced
 
-**From IRON LAWS (shared/iron-laws endpoint):**
-- IRON LAW #1: TDD (with MINIMAL emphasis in GREEN phase)
-- IRON LAW #2: Test Philosophy
-- IRON LAW #3: Loop Detection Protocol
-- IRON LAW #4: Agent Git Flow
-- IRON LAW #5: Agent Delegation
-- IRON LAW #6: Dev Docs Synchronization
-- PROHIBITED section
-- Pre-Command Check Summary
+**From IRON LAWS (`/api/v1/prompts/shared/iron-laws`):** the block that
+`oss-iron-laws-sync.sh --install` writes: every numbered IRON LAW, the
+dev-docs symlink guard, the Decisions rules and the Enforcement pre-check. Session start refreshes
+this block in projects that already have one; never edit it by hand.
 
-**From Template (claude-md endpoint):**
-- London TDD methodology overview
-- Agent delegation table (which agents to use for what)
-- All available `/oss:` commands reference
-- Git workflow guidelines
-- Quality standards
+**From the template (`/api/v1/prompts/claude-md`):** the `# OSS Dev Workflow - Project Guidelines`
+section: workflow command boundaries and the `/oss:` command reference. Put
+project-specific guidance under its own top-level `# ` heading, since login replaces only this
+section and the laws block.
+
+This list names where each part comes from, not what it says: the served text is the reference.
 
 **Note:** IRON LAWS are the single source of truth. Every `/oss:login` pulls the latest version from the API.
 
