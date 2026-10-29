@@ -8,13 +8,12 @@
 #   --raw    Output raw JSON response (default: extract content)
 #
 # Returns the IRON LAWS content from the API endpoint.
-# Uses API key from ~/.oss/config.json
+# Uses apiKey and apiUrl from the OSS config ($OSS_CONFIG_DIR/config.json, else ~/.oss/config.json)
 
 set -euo pipefail
 if [[ -f "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh" ]]; then source "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh"; fi  # oss_api_curl: API key via stdin, never argv
 
-CONFIG_FILE="${HOME}/.oss/config.json"
-API_URL="https://one-shot-ship-api.onrender.com"
+CONFIG_FILE=$(oss_config_file)
 ENDPOINT="/api/v1/prompts/shared/iron-laws"
 
 # Standardized error contract: emit a structured OSSError via the oss-error
@@ -58,6 +57,12 @@ if [[ -z "$API_KEY" ]]; then
   echo "Run /oss:login to configure" >&2
   exit 1
 fi
+
+# The key goes only to the API configured beside it
+API_URL=$(oss_api_url) || {
+  echo "Error: apiUrl in $CONFIG_FILE must be an https URL (plain http only for localhost) with no user@, query or fragment" >&2
+  exit 1
+}
 
 # Fetch IRON LAWS with authentication
 CURL_STATUS=0

@@ -100,6 +100,15 @@ This is not a background-job or time-limit defect, so it is outside DESIGN's sco
 - GREEN: resolve the URL with `oss_api_url`, the same helper the other keyed calls use.
 - Provenance: grep hooks/ (and watcher/src if keyed) for other hardcoded API hosts that take a key, for example oss-login.sh:15. Each one is fixed through the same helper or justified (login runs before any config exists).
 
+### Task 4f-2: session start reads the key from the same file as its URL
+Found while doing T4f (IRON LAW #1b). The key was read from `~/.oss/config.json`, but `oss_api_url` reads `oss_config_file` (honours OSS_CONFIG_DIR), so HOME's key could go to another config's URL. RED: with OSS_CONFIG_DIR set, the call carries config B's key, never HOME's. GREEN: `CONFIG_FILE=$(oss_config_file)`.
+
+### Task 4g (user: fix here, 2026-10-29): the other keyed scripts use the configured API and its key
+`fetch-iron-laws.sh`, `oss-fetch-team-iron-laws.sh`, `oss-iron-laws-sync.sh` and `oss-push-metrics.sh` send the key to a hardcoded `https://one-shot-ship-api.onrender.com`, and read the key from `$HOME/.oss/config.json`. One cycle per script:
+- RED: with a sandbox config (key K, apiUrl http://127.0.0.1:9), the recorded request goes to the sandbox URL with K, never to onrender. Control: with no apiUrl, the default host.
+- GREEN: `API_URL=$(oss_api_url)` (refuse and skip the call when invalid), with the key from `oss_api_key` / `oss_config_file`.
+- Out of scope, recorded: oss-login.sh (first login has no config; re-login against a custom apiUrl is in FOLLOWUPS); oss-session-start-new/-test.sh (unreachable, FOLLOWUPS:29).
+
 ---
 
 ## Phase B: Test isolation at the root
