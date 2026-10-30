@@ -23,6 +23,8 @@
 #        BASH_UNDER_TEST=/opt/homebrew/bin/bash ./hooks/__tests__/oss-notify-analytics.real.integration.test.sh
 
 set -uo pipefail
+# T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="${HOOKS_UNDER_TEST:-$(cd "$SCRIPT_DIR/.." && pwd)}/oss-notify.sh"
@@ -134,10 +136,10 @@ run_hook() {
     (
         cd "$T/cwd" || exit 1
         if [[ $fd3 == y ]]; then
-            o=$(HOME="$T/home" OSS_CONFIG_DIR='' CLAUDE_PLUGIN_ROOT="$T/plugin" CLAUDE_PROJECT_DIR='' PATH="$T/bin:$PATH" \
+            o=$(OSS_ALLOW_HTTP_LOOPBACK=1 HOME="$T/home" OSS_CONFIG_DIR='' CLAUDE_PLUGIN_ROOT="$T/plugin" CLAUDE_PROJECT_DIR='' PATH="$T/bin:$PATH" \
                 "$SH" "$HOOK" --workflow build start </dev/null 2>&1 3>&1 4<&-)
         else
-            o=$(HOME="$T/home" OSS_CONFIG_DIR='' CLAUDE_PLUGIN_ROOT="$T/plugin" CLAUDE_PROJECT_DIR='' PATH="$T/bin:$PATH" \
+            o=$(OSS_ALLOW_HTTP_LOOPBACK=1 HOME="$T/home" OSS_CONFIG_DIR='' CLAUDE_PLUGIN_ROOT="$T/plugin" CLAUDE_PROJECT_DIR='' PATH="$T/bin:$PATH" \
                 "$SH" "$HOOK" --workflow build start </dev/null 2>&1 3<&- 4<&-)
         fi
         printf '%s' "$o" > "$out"

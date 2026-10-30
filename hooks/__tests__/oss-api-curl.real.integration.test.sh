@@ -19,6 +19,9 @@
 #   OSS_API_CURL_HELPER=/path/to/oss-api-curl.sh  test another copy of the helper (e.g. a mutant)
 
 set -uo pipefail
+# A developer's exported OSS_CONFIG_DIR would point oss_api_url at the API that config names, so the
+# real curl below would send there instead of the local recorder (T29). Loopback is opted in on purpose below.
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="${OSS_API_CURL_HELPER:-$(cd "$SCRIPT_DIR/.." && pwd)/oss-api-curl.sh}"
@@ -107,6 +110,7 @@ exec \"$REAL_CURL\" \"\$@\""; then
     echo ""; echo "Results: $((RUN - FAILED))/$RUN passed"; exit 1
 fi
 export HOME="$T/home"
+export OSS_ALLOW_HTTP_LOOPBACK=1   # the API here is a real local http server: plain http needs the opt-in (T20)
 export PATH="$T/bin:$PATH"
 
 # shellcheck source=/dev/null

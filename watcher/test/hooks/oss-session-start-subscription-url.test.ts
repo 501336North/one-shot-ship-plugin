@@ -5,6 +5,8 @@
  * @business-rule The API key goes only to the configured API: the same URL rule (oss_api_url) that
  *   every other keyed call uses. No call during session start may send it to the default host when
  *   the user set an apiUrl.
+ *   Plain http to a loopback apiUrl is used only with OSS_ALLOW_HTTP_LOOPBACK=1 (T20); without it, no request
+ *   is made and session start prints one line naming the switch, so a local dev setup says why it went quiet.
  * @boundary hooks/oss-session-start.sh, run as Claude Code runs it.
  *
  * Hermetic:
@@ -16,6 +18,8 @@
  *   its stdin, where oss_api_curl writes the `header = "Authorization: Bearer <key>"` config, in a second
  *   file; prints {"status":"active"}), a recording `node` (argv per call, exits 0) and no-op `claude`, `say`
  *   and `afplay`. Stubs are warmed once in beforeAll.
+ * - OSS_ALLOW_HTTP_LOOPBACK=1 is set only by the tests that expect a request to a loopback http apiUrl, so
+ *   the tests without it prove the refusal.
  * - OSS_CONFIG_DIR is set only by the tests that pass a configDir: the key, and the URL it goes to, must
  *   both come from that one file (oss_config_file).
  * - the hook runs from a sandbox plugin root (CLAUDE_PLUGIN_ROOT) whose hooks/ is a SYMLINK to the real
@@ -94,6 +98,7 @@ function runHook(
   config: Record<string, string>,
   backstopMs: number,
   configDir?: string,
+  extraEnv: Record<string, string> = {},
 ): HookRun {
   fs.mkdirSync(path.join(home, '.oss'), { recursive: true, mode: 0o700 });
   fs.chmodSync(path.join(home, '.oss'), 0o700);
@@ -112,6 +117,7 @@ function runHook(
     NODE_CALLS: `${calls}.node`,
   });
   if (configDir) env.OSS_CONFIG_DIR = configDir;
+  Object.assign(env, extraEnv);
   const result = spawnSync('bash', [path.join(pluginRoot, 'hooks/oss-session-start.sh')], {
     cwd: project,
     env,
@@ -126,9 +132,12 @@ function runHook(
   return { status: result.status, output: `${result.stdout}${result.stderr}`, calls: recorded, stdin, nodeCalls };
 }
 
-function startSession(config: Record<string, string>, configDir?: string): HookRun {
-  return runHook(homeDir, projectDir, curlCalls, config, RUN_BACKSTOP_MS, configDir);
+function startSession(config: Record<string, string>, configDir?: string, extraEnv: Record<string, string> = {}): HookRun {
+  return runHook(homeDir, projectDir, curlCalls, config, RUN_BACKSTOP_MS, configDir, extraEnv);
 }
+
+const ALLOW_LOOPBACK = { OSS_ALLOW_HTTP_LOOPBACK: '1' };
+const switchLines = (output: string) => output.split('\n').filter((l) => l.includes('OSS_ALLOW_HTTP_LOOPBACK'));
 
 const subscriptionCalls = (calls: string[]) => calls.filter((c) => c.includes('/api/v1/subscription/status'));
 
@@ -136,9 +145,10 @@ describe('oss-session-start.sh: subscription check URL', () => {
   it(
     'sends the subscription request to the configured apiUrl, and nothing to the default host',
     () => {
-      const run = startSession({ apiKey: FAKE_KEY, apiUrl: 'http://127.0.0.1:9' });
+      const run = startSession({ apiKey: FAKE_KEY, apiUrl: 'http://127.0.0.1:9' }, undefined, ALLOW_LOOPBACK);
 
       expect(run.status, run.output).toBe(0);
+      expect(switchLines(run.output), run.output).toEqual([]);
       const sub = subscriptionCalls(run.calls);
       expect(sub, `all curl calls:\n${run.calls.join('\n')}`).toHaveLength(1);
       expect(sub[0]).toContain('http://127.0.0.1:9/api/v1/subscription/status');
@@ -158,6 +168,7 @@ describe('oss-session-start.sh: subscription check URL', () => {
       const run = startSession({ apiKey: FAKE_KEY });
 
       expect(run.status, run.output).toBe(0);
+      expect(switchLines(run.output), run.output).toEqual([]);
       const sub = subscriptionCalls(run.calls);
       expect(sub, `all curl calls:\n${run.calls.join('\n')}`).toHaveLength(1);
       expect(sub[0]).toContain(`${DEFAULT_HOST}/api/v1/subscription/status`);
@@ -174,6 +185,8 @@ describe('oss-session-start.sh: subscription check URL', () => {
       expect(subscriptionCalls(run.calls), `all curl calls:\n${run.calls.join('\n')}`).toEqual([]);
       expect(run.calls.filter((c) => c.includes('evil.example') || c.includes('onrender.com'))).toEqual([]);
       expect(run.output).toContain('OSS: Ready - IRON LAWS active');
+      // Refused for its host, not for plain http: the switch would not help, so it is not named.
+      expect(switchLines(run.output), run.output).toEqual([]);
     },
     TEST_TIMEOUT_MS,
   );
@@ -187,7 +200,7 @@ describe('oss-session-start.sh: subscription check URL', () => {
       fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
       fs.writeFileSync(path.join(configDir, 'config.json'), JSON.stringify({ apiKey: keyDir, apiUrl: 'http://127.0.0.1:9' }));
 
-      const run = startSession({ apiKey: keyHome }, configDir);
+      const run = startSession({ apiKey: keyHome }, configDir, ALLOW_LOOPBACK);
 
       expect(run.status, run.output).toBe(0);
       const sub = subscriptionCalls(run.calls);
@@ -203,12 +216,43 @@ describe('oss-session-start.sh: subscription check URL', () => {
   it(
     'takes the key and its URL from the HOME config when OSS_CONFIG_DIR is unset',
     () => {
-      const run = startSession({ apiKey: FAKE_KEY, apiUrl: 'http://127.0.0.1:9' });
+      const run = startSession({ apiKey: FAKE_KEY, apiUrl: 'http://127.0.0.1:9' }, undefined, ALLOW_LOOPBACK);
 
       const sub = subscriptionCalls(run.calls);
       expect(sub, `all curl calls:\n${run.calls.join('\n')}`).toHaveLength(1);
       expect(sub[0]).toContain('http://127.0.0.1:9/api/v1/subscription/status');
       expect(run.stdin, 'curl --config stdin').toContain(`Bearer ${FAKE_KEY}`);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it.each([
+    ['the subscription check on', {}],
+    ['OSS_SKIP_HEALTH_CHECK=1', { OSS_SKIP_HEALTH_CHECK: '1' }],
+  ])(
+    'refuses a loopback http apiUrl without OSS_ALLOW_HTTP_LOOPBACK=1: no request, one line naming the switch (%s)',
+    (_label, extraEnv) => {
+      const run = startSession({ apiKey: FAKE_KEY, apiUrl: 'http://127.0.0.1:9' }, undefined, extraEnv);
+
+      expect(run.status, run.output).toBe(0);
+      expect(run.calls.filter((c) => c.includes('127.0.0.1')), `all curl calls:\n${run.calls.join('\n')}`).toEqual([]);
+      expect(subscriptionCalls(run.calls)).toEqual([]);
+      const lines = switchLines(run.output);
+      expect(lines, run.output).toHaveLength(1);
+      expect(lines[0]).toMatch(/^OSS: .*plain http.*set OSS_ALLOW_HTTP_LOOPBACK=1/);
+      expect(run.output).not.toContain(FAKE_KEY);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'names no switch when apiUrl is https',
+    () => {
+      const run = startSession({ apiKey: FAKE_KEY, apiUrl: 'https://api.example.com' });
+
+      expect(run.status, run.output).toBe(0);
+      expect(switchLines(run.output), run.output).toEqual([]);
+      expect(subscriptionCalls(run.calls)).toHaveLength(1);
     },
     TEST_TIMEOUT_MS,
   );

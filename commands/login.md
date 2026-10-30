@@ -51,7 +51,7 @@ Configure your API key for OSS Dev Workflow access.
 
 ## API Configuration
 
-**API Base URL:** `https://one-shot-ship-api.onrender.com`
+**API Base URL:** the `apiUrl` in the OSS config (`$OSS_CONFIG_DIR/config.json` when that is set, else `~/.oss/config.json`); default `https://one-shot-ship-api.onrender.com`. Every request login makes goes through a hook that reads it; never send the key to a URL yourself.
 
 ## Quick Key Update Mode (`--key`)
 
@@ -63,16 +63,18 @@ Configure your API key for OSS Dev Workflow access.
    - Run `~/.oss/hooks/oss-value.sh dir` and note the folder it prints. If it prints nothing, show the user its error and stop.
    - Use the Write tool to write the key alone to `key.txt` in that folder. If no key was given, tell the user "Error: --key requires an API key value. Usage: /oss:login --key ak_xxxxx" and stop.
 
-2. **Read, validate and save the key** in ONE Bash call (it checks the key's shape and deletes `key.txt` at once, checks the key against `/api/v1/subscription/status`, saves it to `~/.oss/config.json` keeping the other settings, and prints the plan):
+2. **Read, validate and save the key** in ONE Bash call (it checks the key's shape and deletes `key.txt` at once, checks the key against `/api/v1/subscription/status` on the API in that config's `apiUrl` (default `https://one-shot-ship-api.onrender.com`), saves it to the OSS config (`$OSS_CONFIG_DIR/config.json` when that is set, else `~/.oss/config.json`) keeping the other settings, and prints the plan):
    ```bash
    ~/.oss/hooks/oss-login.sh
    ```
    If it prints an error instead of `Plan: ...`, show the user that error and stop.
 
-3. **Clear cached credentials** so the decrypt CLI picks up the new key:
+3. **Clear cached credentials** so the decrypt CLI picks up the new key (they sit beside the OSS config: `$OSS_CONFIG_DIR` when that is set, else `~/.oss`):
    ```bash
-   if [ -f ~/.oss/credentials.enc ]; then
-       rm ~/.oss/credentials.enc
+   . ~/.oss/hooks/oss-api-curl.sh
+   CREDS="$(dirname "$(oss_config_file)")/credentials.enc"
+   if [ -f "$CREDS" ]; then
+       rm "$CREDS"
        echo "Cleared cached credentials (will refresh on next command)"
    fi
    ```
@@ -94,8 +96,9 @@ Configure your API key for OSS Dev Workflow access.
 
 5. **Confirm success** (the plan was printed in step 2):
    ```bash
+   . ~/.oss/hooks/oss-api-curl.sh
    echo "API key updated successfully!"
-   echo "  Config: ~/.oss/config.json"
+   echo "  Config: $(oss_config_file)"
    echo ""
    echo "All existing tools and settings preserved. Ready to use."
    ```
@@ -109,8 +112,8 @@ Configure your API key for OSS Dev Workflow access.
 ## What This Command Does
 
 1. **Prompts for API key** - Or accepts as argument
-2. **Validates key** - Tests against API at `https://one-shot-ship-api.onrender.com/api/v1/subscription/status`
-3. **Stores securely** - Saves to `~/.oss/config.json`
+2. **Validates key** - Tests against `/api/v1/subscription/status` on the API in that config's `apiUrl` (default `https://one-shot-ship-api.onrender.com`)
+3. **Stores securely** - Saves to the OSS config (`$OSS_CONFIG_DIR/config.json` when that is set, else `~/.oss/config.json`)
 4. **Confirms access** - Shows subscription status
 
 ## Step 1: Get API Key
@@ -125,7 +128,7 @@ The key reaches the shell through the value folder, never typed into a command (
 
 1. Run `~/.oss/hooks/oss-value.sh dir` and note the folder it prints. If it prints nothing, show the user its error and stop.
 2. Use the Write tool to write the key alone to `key.txt` in that folder.
-3. Run this one call. It checks the key's shape and deletes `key.txt` at once, checks the key against `https://one-shot-ship-api.onrender.com/api/v1/subscription/status`, saves it to `~/.oss/config.json` (with `apiUrl` `https://one-shot-ship-api.onrender.com` when the file is new; other settings are kept) and prints the plan:
+3. Run this one call. It checks the key's shape and deletes `key.txt` at once, checks the key against `/api/v1/subscription/status` on the API in that config's `apiUrl` (default `https://one-shot-ship-api.onrender.com`), saves it to the OSS config (`$OSS_CONFIG_DIR/config.json` when that is set, else `~/.oss/config.json`) (with `apiUrl` `https://one-shot-ship-api.onrender.com` when the file is new; other settings are kept) and prints the plan:
    ```bash
    ~/.oss/hooks/oss-login.sh
    ```
@@ -159,11 +162,13 @@ This script is the **only** writer of the IRON LAWS block. Do not write, copy or
 
 ### 4.2: Fetch the CLAUDE.md template
 
-```http
-GET https://one-shot-ship-api.onrender.com/api/v1/prompts/claude-md
-Headers:
-  Authorization: Bearer {apiKey}
+```bash
+~/.oss/hooks/oss-claude-md-template.sh
 ```
+
+It takes no arguments. It sends the key from the OSS config only to the API that config's `apiUrl` names (the API the key was just checked against), and prints the template to stdout. Do not fetch the template any other way.
+
+**If it exits non-zero, skip 4.3** (do not create or edit CLAUDE.md beyond what 4.1 wrote), tell the user "The CLAUDE.md project guidelines were not updated: {stderr reason}. Run /oss:login again to retry.", and go on to Step 5.
 
 Remove the placeholder line `<!-- IRON LAWS will be injected here by /oss:login -->` from the template. The block from 4.1 replaces it; never inject the laws into the template.
 
@@ -546,7 +551,7 @@ After tools are installed, if `~/.oss/settings.json` does NOT exist:
 
 ## Config File Format
 
-After login, `~/.oss/config.json` will contain:
+After login, the OSS config (`$OSS_CONFIG_DIR/config.json` when that is set, else `~/.oss/config.json`) will contain (a new file gets the default `apiUrl`; an existing one keeps its own):
 ```json
 {
   "apiKey": "ak_xxxxx",
@@ -564,5 +569,5 @@ Get a valid key from https://www.oneshotship.com/dashboard
 ### Network Error
 ```
 Check internet connection and try again
-API endpoint: https://one-shot-ship-api.onrender.com/api/v1/subscription/status
+API endpoint: /api/v1/subscription/status on the apiUrl in your OSS config (default https://one-shot-ship-api.onrender.com)
 ```

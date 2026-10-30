@@ -24,8 +24,14 @@ echo "Running oss-value tests under $("$SH" -c 'echo "$BASH_VERSION"') ($SH)..."
 
 T=$(cd "$(mktemp -d /tmp/oss-value.XXXXXX)" && pwd -P)
 trap 'rm -rf "$T"' EXIT
+# Session start runs under an alias (lib/session-start-alias.sh): an outside `pkill -f oss-session-start` misses it (T48).
+source "$ROOT/hooks/__tests__/lib/session-start-alias.sh"
+SS_HOOK=$(session_start_alias "${HOOKS_UNDER_TEST:-$ROOT/hooks}" "$T/ss-alias/hooks") || { echo "✗ FAIL: session start alias"; exit 1; }
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+# The hooks read the API key and URL from $OSS_CONFIG_DIR/config.json: a developer's exported
+# override must not lead them to the real key and the real API (T19).
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 
 N=0
 newhome() { N=$((N + 1)); H="$T/home$N"; mkdir -p "$H"; }               # -> H (fresh, empty)
@@ -556,7 +562,7 @@ setup_act; mkdir -p "$T/emptyroot$N"; printf '%s\n' "$T/emptyroot$N" > "$H/.oss/
 # --- 22. login: key.txt -> validated against the API -> saved to ~/.oss/config.json (R5-2) ----
 # R5-8: login is its own script, hooks/oss-login.sh, kept OUT of the allowlist so changing the API
 # key always asks the user once; it reuses oss-value.sh's functions. oss-value.sh login is refused.
-LOGIN="$ROOT/hooks/oss-login.sh"
+LOGIN="${HOOKS_UNDER_TEST:-$ROOT/hooks}/oss-login.sh"
 ovl() { OV_SCRIPT="$LOGIN" ovs "$1"; }
 [[ -f "$LOGIN" && -x "$LOGIN" ]] && pass "22: hooks/oss-login.sh exists and is executable (R5-8)" || fail "22: hooks/oss-login.sh exists and is executable (R5-8)" "missing or not executable"
 # /oss:login <KEY> and /oss:login --key hand the key over the same way: Write key.txt, then this one
@@ -583,6 +589,33 @@ setup_act; printf '{"plan":"team"}\n200\n' > "$T/curl.out"; printf '{"apiKey":"o
 echo ossk_login_key_2 > "$VD/key.txt"; ovl "$R"
 [[ "$RC" == 0 && "$(jq -c . "$H/.oss/config.json")" == '{"apiKey":"ossk_login_key_2","apiUrl":"https://x.invalid","other":1}' ]] \
     && pass "22: login keeps the other config.json settings" || fail "22: login keeps the other config.json settings" "rc=$RC cfg=$(cat "$H/.oss/config.json" 2>&1)"
+[[ "$(sbcalls)" == *"https://x.invalid/api/v1/subscription/status"* && "$(sbcalls)" != *onrender* ]] \
+    && pass "22: login checks the key against the configured apiUrl, not production (T22)" || fail "22: login checks the key against the configured apiUrl (T22)" "calls=$(sbcalls)"
+# T22 (pen-test L1, S2, CR3): login writes the same config file the hooks read ($OSS_CONFIG_DIR/config.json,
+# else ~/.oss/config.json), so the next session start finds the key; ~/.oss/config.json is not touched.
+setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; C="$T/cfgdir$N"; echo ossk_login_key_cd > "$VD/key.txt"; OSS_CONFIG_DIR="$C" ovl "$R"
+[[ "$RC" == 0 && "$(jq -r .apiKey "$C/config.json" 2>/dev/null)" == ossk_login_key_cd && ! -e "$H/.oss/config.json" ]] \
+    && pass "22: with OSS_CONFIG_DIR set, login saves the key in \$OSS_CONFIG_DIR/config.json, not ~/.oss (T22)" || fail "22: with OSS_CONFIG_DIR set, login saves there (T22)" "rc=$RC err=$ERR cfgdir=$(ls -A "$C" 2>&1) home=$(ls -A "$H/.oss")"
+SS_OUT=$(HOME="$H" OSS_CONFIG_DIR="$C" CLAUDE_PLUGIN_ROOT="$ROOT" OSS_SKIP_HEALTH_CHECK=1 PATH="$T/sbin:$PATH" /bin/bash "$SS_HOOK" 2>&1 </dev/null)
+[[ "$SS_OUT" == *"OSS: Ready"* && "$SS_OUT" != *"Not logged in"* && "$SS_OUT" != *"No API key"* ]] \
+    && pass "22: after that login, the next session start finds the key (T22)" || fail "22: after that login, the next session start finds the key (T22)" "out=$SS_OUT"
+# T22: an apiUrl oss_api_url refuses (plain http to a remote host) gets no request at all: the key goes nowhere.
+setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; printf '{"apiKey":"old","apiUrl":"http://evil.example"}\n' > "$H/.oss/config.json"
+cp "$H/.oss/config.json" "$T/cfg.before"; echo ossk_login_key_ru > "$VD/key.txt"; ovl "$R"
+[[ "$RC" != 0 && "$OUT" != *Plan:* && -z "$(sbcalls)" && "$ERR" == *apiUrl* ]] && cmp -s "$T/cfg.before" "$H/.oss/config.json" \
+    && pass "22: a refused apiUrl: no request, a message naming apiUrl, rc != 0, config untouched (T22)" || fail "22: a refused apiUrl gets no request (T22)" "rc=$RC out='$OUT' calls=$(sbcalls) err=$ERR"
+# T22: loopback http without OSS_ALLOW_HTTP_LOOPBACK=1 (oss_api_url rc 2): no request, and login names the switch
+# with the very line session start prints for the same config; with the switch the key goes to that local API.
+setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; printf '{"apiKey":"old","apiUrl":"http://127.0.0.1:8080"}\n' > "$H/.oss/config.json"
+echo ossk_login_key_lb > "$VD/key.txt"; ovl "$R"
+SS_OUT=$(HOME="$H" CLAUDE_PLUGIN_ROOT="$ROOT" OSS_SKIP_HEALTH_CHECK=1 PATH="$T/sbin:$PATH" /bin/bash "$SS_HOOK" 2>/dev/null </dev/null)
+[[ "$RC" != 0 && -z "$(sbcalls)" && "$ERR" == "OSS: apiUrl is plain http to a local API, refused; set OSS_ALLOW_HTTP_LOOPBACK=1 to allow it." \
+   && "$(printf '%s\n' "$SS_OUT" | grep -cxF -- "$ERR")" == 1 ]] \
+    && pass "22: loopback http without the opt-in: no request, the same switch line session start prints (T22)" || fail "22: loopback http without the opt-in (T22)" "rc=$RC calls=$(sbcalls) err=$ERR ss=$SS_OUT"
+setup_act; printf '{"plan":"pro"}\n200\n' > "$T/curl.out"; printf '{"apiKey":"old","apiUrl":"http://127.0.0.1:8080"}\n' > "$H/.oss/config.json"
+echo ossk_login_key_lb2 > "$VD/key.txt"; OSS_ALLOW_HTTP_LOOPBACK=1 ovl "$R"
+[[ "$RC" == 0 && "$(sbcalls)" == *"http://127.0.0.1:8080/api/v1/subscription/status"* ]] \
+    && pass "22: with OSS_ALLOW_HTTP_LOOPBACK=1 login checks the key against the local API (T22)" || fail "22: with OSS_ALLOW_HTTP_LOOPBACK=1 login uses the local API (T22)" "rc=$RC calls=$(sbcalls) err=$ERR"
 setup_act; printf '{"error":"bad"}\n401\n' > "$T/curl.out"; echo '{"apiKey":"keep"}' > "$H/.oss/config.json"; echo ossk_login_key_3 > "$VD/key.txt"; ovl "$R"
 [[ "$RC" == 1 && "$(cat "$H/.oss/config.json")" == '{"apiKey":"keep"}' && "$ERR" == *"Invalid API key"* && ! -e "$VD/key.txt" ]] \
     && pass "22: a key the API refuses is not saved" || fail "22: a key the API refuses is not saved" "rc=$RC cfg=$(cat "$H/.oss/config.json") err=$ERR"

@@ -11,6 +11,8 @@
 #
 # Usage: ./hooks/__tests__/hooks-registration.test.sh
 set -uo pipefail
+# T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HOOKS_JSON="$ROOT/hooks.json"
 RUN=0; FAILED=0
@@ -61,6 +63,14 @@ for h in oss-ask-telegram.sh oss-ask-telegram-answered.sh post-bash-pr.sh post-e
   if [[ ! -e "$ROOT/hooks/$h" ]]; then pass "(d) unreachable hooks/$h is removed"
   else fail "(d) unreachable hooks/$h is removed" "still present; nothing loaded runs it"; fi
 done
+
+# (e) radical-observability Task 11: every picker answer reaches the decision record, without the picker
+#     waiting on it. Exactly one PostToolUse entry, matching AskUserQuestion only, runs the hook async.
+name='(e) hooks.json should run oss-decision-record.sh after AskUserQuestion, in the background'
+got=$(jq -c '[.hooks.PostToolUse[]? | select(.hooks[]?.command | strings | endswith("/hooks/oss-decision-record.sh"))
+             | {matcher, hooks}]' "$HOOKS_JSON" 2>/dev/null)
+want='[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/oss-decision-record.sh","async":true}]}]'
+if [[ "$got" == "$want" ]]; then pass "$name"; else fail "$name" "PostToolUse entries for the hook = ${got:-none}"; fi
 
 echo "Results: $((RUN-FAILED))/$RUN passed, $FAILED failed"
 [[ $FAILED -eq 0 ]]

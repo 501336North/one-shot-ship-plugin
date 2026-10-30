@@ -317,6 +317,208 @@ current-project rule and ran the old notify and decrypt installer.
 - `.claude-plugin/plugin.json` 2.0.94 → 2.0.95 (customer-facing hook fix); also any version pins kept in sync by existing tests.
 - FOLLOWUPS.md gets one item: production analytics contains test-run events sent from the developer's account during hook test runs, so AgenticDevWorkflow should exclude or flag them.
 
+## Phase E: /oss:ship gate round 1 findings (2026-10-30)
+Four gates (code-reviewer FAIL, security-auditor FAIL, pen-test FAIL, performance PASS). Under the ship
+rules, every finding that matters is fixed in round 1, and every security finding matters. Each task is
+RED-first with an anti-vacuity mutant, uses a sandbox HOME, and has no wall-clock asserts. Run the IRON LAW
+#1b provenance grep on every task that changes where a key, URL, path or version comes from.
+Nag, discarded and counted: SC2206 warnings (CR5, solved by T18 if it touches the split); stale committed
+`watcher/dist` bundle (CR7, pre-existing); invalid apiUrl writes no backoff stamp (perf 3, no user effect);
+iron-laws-sync-safety runtime (perf 4); copy on equal version (perf 6).
+
+### Task 18: harden the T17 version record (pen-test M1, L2, L3, L4, I1; security S4, S5; code-review CR6)
+`hooks/oss-session-start.sh`, the version record (`~/.oss/hooks/.installed-version`).
+- The record is written only after every hook copy succeeded, atomically (temp file in the same dir + `mv`).
+- It is read and written only when it is a regular file and not a symlink. A FIFO, a directory or a
+  symlink means no trusted record, so the plugin copies (the same as having no record) and replaces it.
+  Never `head` a FIFO.
+- The record also names the plugin root that wrote it. A newer record counts only while that root
+  still exists and its `plugin.json` still says that version. Otherwise (the newer plugin was uninstalled
+  or rolled back, or the record was planted), the older plugin copies. This gives rollback a way back and
+  stops a planted high record from freezing updates.
+- `~/.oss/plugin-root` (line 62) is written only when the hooks are copied, so the shared hooks and the
+  plugin root they use always come from the same plugin.
+- Version parse: read `version` from the top-level object of `plugin.json` (not the first "version"
+  anywhere); a prerelease such as `2.1.0-beta.1` compares as its numeric core; a part longer than 9
+  digits is invalid.
+- The health-check background job gets a time bound.
+
+### Task 19: test setup clears every config override (security S1, code-review CR2)
+`watcher/test/setup.ts` deletes `OSS_CONFIG_DIR`, `CLAUDE_PLUGIN_ROOT` and `OSS_MANIFEST_URL`. The bash test
+files that run hooks with the real env (session-start-iron-laws, oss-notify-complete-bounds,
+oss-notification-style, project-routing, oss-value) unset `OSS_CONFIG_DIR`. `setup-isolation.test.ts`
+asserts all three are gone. RED: set `OSS_CONFIG_DIR` in the parent env and show a hook reaching the
+config it points to.
+
+### Task 20: plain http only with an explicit opt-in for a loopback API (pen-test M2)
+`hooks/oss-api-curl.sh:55` (`oss_api_url`). An `http://127.0.0.1…`/`localhost` apiUrl is refused unless
+`OSS_ALLOW_HTTP_LOOPBACK=1` is set, so the key is never sent in cleartext to a local port that anything can
+listen on, and the reply is never written into CLAUDE.md or team-iron-laws.json. https stays as it is.
+Tests that use a local server set the opt-in.
+Never silent (user decision 2026-10-30): when a loopback http apiUrl is refused, session start and
+`/oss:login` print one line naming `OSS_ALLOW_HTTP_LOOPBACK=1`, so a local dev setup says why it went quiet. Covers every caller: fetch-iron-laws, oss-fetch-team-iron-laws,
+oss-iron-laws-sync, oss-push-metrics, oss-session-start.
+
+### Task 21: an unreadable config refuses instead of falling back to production (security S3)
+`oss_api_url`: when the config file exists but jq is missing or cannot parse it, return no URL (so no
+request is made). Production is the default only when the file parses and has no `apiUrl`.
+
+### Task 22: login and worktree-create use the same config file and API as the hooks (pen-test L1, security S2, code-review CR3)
+`hooks/oss-login.sh` validates the key against `oss_api_url` and writes `oss_config_file`, keeping any
+existing `apiUrl`. `hooks/oss-worktree-create.sh:21-27` copies `oss_config_file`. RED: with
+`OSS_CONFIG_DIR` set, login writes there and the next session start finds the key.
+
+### Task 23: session start reports a broken install instead of "Not logged in" (code-review CR4)
+`hooks/oss-session-start.sh:141`: when `oss-api-curl.sh` did not load, say the install is broken (reinstall
+the plugin), not "Not logged in".
+
+### Task 24: JSON built from values is escaped, TEAM_ID is checked (security S6)
+`hooks/oss-notify.sh:262` and `hooks/oss-session-start.sh:360` build their JSON with `jq -n --arg` (or reject
+values that would need escaping). `hooks/oss-fetch-team-iron-laws.sh:96` refuses a TEAM_ID that is not
+`^[A-Za-z0-9_-]+$` and makes no request.
+
+### Task 25: team IRON LAWS cache is tied to the API it came from, and a failed fetch backs off (perf 1, perf 2)
+`hooks/oss-fetch-team-iron-laws.sh` and `hooks/oss-iron-laws-sync.sh`: the cache records the apiUrl it was
+fetched from, and a cache from another apiUrl is never served (not even as the stale fallback). A failed
+team fetch writes a backoff stamp, so while the API is down an IRON LAW check does not wait up to 10 s
+every time.
+
+### Task 26: flaky and unbounded tests (code-review CR1, perf 5)
+- `watcher/test/services/metrics-collector.test.ts:110` asserts on recorded durations without a real
+  30 ms timer (fake timers or an injected clock), so it cannot read 29 ms under load.
+- `hooks/__tests__/oss-notify-complete-bounds.test.sh:244`: the stub's release wait has a cap, so a killed
+  test leaves no process spinning.
+
+### Task 27: esbuild CVE (security D1, GHSA-67mh-4wv8-2f99)
+`watcher/package.json`: esbuild `^0.21.5` → a fixed release that also satisfies vite 8 (`^0.27.0 || ^0.28.0`),
+lockfile updated, `npm ls esbuild` shows no `invalid`, `npm audit` shows no esbuild advisory, the build and
+the full suite pass.
+
+## Phase F: /oss:ship gate round 2 findings (2026-10-30)
+Round 2 rules: CRITICAL/HIGH, security findings at LOW or above, secrets and known CVEs block; the rest that
+matters goes to FOLLOWUPS. The stop signal did not fire (findings are both about round-1 fixes and original), so
+this is a full fix round; round 3 is a gate report only. Same rules as Phase E: RED-first, mutants, sandbox HOME.
+
+### Task 28: bring origin/main's #213 into the tree, version 2.0.96 (code-review CR2, security F9)
+origin/main gained e8b1fa8 (#213, decisions log, also "2.0.95") after this branch's merge base. Two different
+builds called 2.0.95 defeat the T17/T18 guard (equal versions always copy). Apply #213's changes to the working
+tree (no commit inside the gate loop), merge its LEARNINGS.md entries, set `.claude-plugin/plugin.json` to 2.0.96.
+The ship commit then rebases cleanly onto origin/main. Full suites must pass with #213's tests included.
+
+### Task 29: no test reaches the configured config or API (security F1 MEDIUM, F2; code-review CR5, CR8)
+`hooks/__tests__/oss-api-curl.real.integration.test.sh` and `iron-laws-sync.test.sh` unset `OSS_CONFIG_DIR` and
+`OSS_MANIFEST_URL`. New guard test: every `hooks/__tests__/*.test.sh` and `commands/__tests__/*.test.sh` that runs a
+hook unsets both (or runs hooks only under `env -i`/`env -u`), so the next new test cannot forget. RED: the
+sentinel run (OSS_CONFIG_DIR at a scratch config + local listener) shows requests or a changed result before.
+`session-start-notify-payload.test.sh` gets mode 755 like its siblings.
+
+### Task 30: one config reader for key and URL (pen-test 5, security F4, code-review CR1 MEDIUM regression)
+`oss_api_url` and every key read (`oss-session-start.sh` grep, `oss-fetch-team-iron-laws.sh`, `fetch-iron-laws.sh`,
+`oss_api_key`) read the config through ONE helper that accepts exactly one top-level JSON object: jq with `-s`
+(slurp, length 1, type object); without jq, `node -e` JSON.parse (node is a plugin requirement); neither → refuse.
+So nested objects (`models`, `webhook`, documented in commands/models.md and webhook.md) work again without jq,
+concatenated documents and trailing garbage are refused in both branches, and key and URL always come from the
+same object. Remove the grep/sed apiUrl reader added in T21.
+
+### Task 31: the version record's plugin root must be real (pen-test 1, 2; security F3)
+A newer record counts only when its root is a directory owned by the user, not a symlink, its
+`.claude-plugin/plugin.json` is a regular, user-owned, non-symlink file, and the installed `~/.oss/hooks` copies
+are byte-identical to that root's `hooks/` copies (so the record names the plugin the installed hooks really came
+from). Otherwise the current plugin copies. A FIFO there is never opened.
+
+### Task 32: files in ~/.oss are read only when regular and written atomically (pen-test 4, 7; security F6)
+`~/.oss/team-iron-laws.json(.src)`, `~/.oss/.team-iron-laws-backoff`, `~/.oss/.iron-laws-last-check`: read only when
+a regular file and not a symlink (a FIFO is never opened); written via a temp file in the same directory and `mv`,
+so a symlink at the path is replaced, not followed.
+
+### Task 33: login (pen-test 6; security F5, F8; code-review CR3, CR4)
+`hooks/oss-login.sh` prints `.plan` through `oss_json_field`. `commands/login.md` Step 4.2 fetches the CLAUDE.md
+template from the configured API (via the same hook helper), not a hardcoded host; the "Config:" line and the
+credentials.enc removal follow `OSS_CONFIG_DIR`.
+
+Deferred to FOLLOWUPS (not blocking): version parser rejects minified/tab plugin.json (pen-test 3); run_bounded
+fallback does not kill grandchildren (pen-test 8, CR6); watcher api-credentials refuses loopback even with the
+opt-in (CR7); team-laws warm-cache cost +10 ms and one refetch after upgrade (perf 1, 2); oss_api_url twice at
+session start (perf 3); worktree config copy permissions window (pen-test 11, security INFO); login does not show
+the host the key goes to (security F7, INFO); future-mtime stamps stay fresh (pen-test 9); missing helper under
+set -e exits 127 (pen-test 10). Nag: run_bounded job status line in the log (perf 4).
+
+## Phase G: /oss:ship keep-fixing round after the cap (2026-10-30)
+Round 3 (report only) left 7 security LOW findings open; the user chose "keep fixing until clean". Same rules as
+Phases E-F. After this round: a narrow re-check by the pen-tester and security-auditor plus code-reviewer.
+
+### Task 34: the template hook accepts only a complete, bounded, clean template (pen-test r3 #1 MEDIUM, #2)
+`hooks/oss-claude-md-template.sh`: a non-zero curl exit (timeout mid-body) is a failure; `--max-filesize` like
+oss-iron-laws-sync.sh; an HTML body is refused like the sync hook does; terminal control codes (C0 except tab/newline,
+C1, bidi/zero-width) never reach stdout.
+
+### Task 35: the config is read only when it is a regular file (pen-test r3 #3, security r3 F5)
+`oss_config_strings` (and every `-e` config test before it) opens the config only when `[[ -f ]]` holds (a symlink to a
+regular file is fine; a FIFO, a device such as /dev/zero, or a directory is refused without opening it). The template
+hook and the per-prompt team-laws hook must not hang.
+
+### Task 36: a trusted record root must hold every hook (pen-test r3 #4)
+`oss_record_trusted`: every HOOKS_TO_COPY entry must exist in the root and in ~/.oss/hooks and be byte-identical; a
+missing one means not trusted.
+
+### Task 37: key and URL from one read at every site (pen-test r3 #5, security r3 F2)
+One helper returns the key and the checked URL from a single `oss_config_strings apiKey,apiUrl` read. Route the template
+hook, oss-iron-laws-sync.sh, fetch-iron-laws.sh, oss-push-metrics.sh, and (IRON LAW #1b, the known follow-up of the same
+class) session start and oss-notify through it. Error messages stay as they are.
+
+### Task 38: login prints exactly one plan line (pen-test r3 #6)
+`oss_json_field` (or the login call site) prints one line at most, from one JSON object; U+2028/2029, U+FEFF, U+061C,
+U+00AD and the other format characters are stripped along with the existing set.
+
+### Task 39: config path and names are never options to node or jq (security r3 F1)
+`oss_config_strings` passes `--` before the path (node: `node -e CODE -- path names`; jq: `--` before the file), so a
+path starting with `-` is a path.
+
+### Task 40: /oss:login never puts the key on a command line (security r3 F3)
+`hooks/oss-login.sh` hands the key to jq on stdin, not `--arg`; the real-integration test's "key out of every process
+command line" check covers jq too.
+
+### Task 41: the T40 test reads permissions GNU-stat first (post-crash baseline, stat-order guard)
+`hooks/__tests__/oss-login-key-argv.test.sh:80` runs `stat -f %Lp ... || stat -c %a`, the BSD-first order that
+stat-order.test.sh refuses (GNU stat on PATH misreads `-f`). Use the repo's GNU-first form. Test-only change; the
+RED is stat-order.test.sh, which fails now.
+
+### Task 42: session-start tests are flaky under load (post-crash baseline, IRON LAW #2)
+In a full shell run done while the watcher suite was running, `oss-config-one-object` ("[nojq] session start: a key
+in a second document is no key", out='') and `oss-settings-telegram-cleanup` (GNU-stat case, "session start removes
+the telegram keys") each failed once. Both passed when run alone (126/126 twice, 15/15). Both cases run session start.
+Find the root cause (suspected: a time limit in session start, or a test wait, that cuts the work off under exec load);
+fix it, or delete the case. Prove it with a run under load. Customer-facing if the cause is in the hook.
+
+### Task 43: session-start-notify-payload results vary (open item from T29)
+The same class as T42, recorded in T29 as "varying results in clean runs". Investigate together with T42.
+
+### Task 44: login's config jq call takes `--` before the path (found in T39)
+`hooks/oss-login.sh:25` runs `jq ... "$c"` on `oss_config_file` with no `--`, so a config dir starting with `-` breaks
+login (same class as T39). RED first, in the style of oss-config-dash-path.test.sh.
+
+### Task 45: one stripping set for text shown to the user or to Claude (found in T38, IRON LAW #1b)
+T38 widened `oss_json_field` to strip `\p{Cf}` and U+2028/2029. Two other places still strip only the old, narrower
+set: `stripControl` (packages/cli-decrypt/src/strip-control.ts, whose comment claims it uses the same set as
+oss_json_field) and the template hook's filter (hooks/oss-claude-md-template.sh:46). For the template, invisible
+tag characters in CLAUDE.md are a hidden-instruction risk. Make the three agree, with a test at each site.
+
+### Task 46: oss_json_field's object-type check is unguarded (T38 mutant survivor)
+Removing the "exactly one object" type check survives every test, because jq errors and prints nothing and login
+discards the exit code. Either show it with a test that can see the difference, or delete the check as redundant
+and say so in DECISIONS.md.
+
+### Task 47: the other OSS_CONFIG_DIR paths take `--` too (found in T44's grep, IRON LAW #1b)
+The same class as T39 and T44, still unguarded: `hooks/check-updates.sh` (jq at lines 28, 45, 89, 105, 138, 146;
+`mkdir -p` at 52; `chmod 600` at 63, 108, 141, 149), `hooks/oss-changelog.sh` (jq at 32, 65, 108) and
+`hooks/oss-worktree-create.sh:28-29` (`cp`, which fails closed). A dash-named config dir breaks them. RED first, with
+the GNU-coreutils second pass from oss-login-dash-path.test.sh (chmod `--` is only observable under GNU getopt).
+
+Deferred to FOLLOWUPS (not blocking): jq/node parity on BOM, NaN and deep nesting (fail closed both ways); teamId
+non-string disables the team fetch (CR r3 #2); "No API key found" shown for an invalid config (CR r3 #4); login.md:249
+path text; login.md Step 3 CREDS fallback when the helper is missing (pen-test r3 #7); TOCTOU windows in oss_is_regular
+and oss_write_atomic (same-user, INFO); oss_record_trusted cmp cost (perf INFO); agents/*.md key handling (pre-existing).
+
 ---
 
 ## Implementation Sequence

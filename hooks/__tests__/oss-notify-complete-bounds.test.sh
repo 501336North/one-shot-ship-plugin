@@ -21,10 +21,15 @@
 # Usage: ./hooks/__tests__/oss-notify-complete-bounds.test.sh
 #        HOOKS_UNDER_TEST=/path/to/hooks-copy ./hooks/__tests__/oss-notify-complete-bounds.test.sh  (mutants)
 set -uo pipefail
+# The hooks read the API key and URL from $OSS_CONFIG_DIR/config.json: a developer's exported
+# override must not lead them to the real key and the real API (T19).
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SH="${BASH_UNDER_TEST:-/bin/bash}"
 HOOK="${HOOKS_UNDER_TEST:-$ROOT/hooks}/oss-notify.sh"
 BACKSTOP_TICKS=600   # 600 x 0.1 s = 60 s; reached only when a check is about to fail
+STUB_TICKS=2400      # 2400 x 0.05 s = 120 s: a stub left blocked by a killed test gives up on its own,
+                     # and only after the backstop, so it never ends a wait that a check relies on
 RUN=0; FAILED=0
 pass() { echo "✓ PASS: $1"; RUN=$((RUN + 1)); }
 fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
@@ -71,7 +76,7 @@ case "\$1" in
   (*update-workflow-state.js)
     if [[ "\${STATE:-}" == hang ]]; then
         echo "\$*" >> "$T/received"
-        while [[ -d "$T" && ! -e "$T/release" ]]; do /bin/sleep 0.05; done
+        i=0; while [[ -d "$T" && ! -e "$T/release" ]] && (( i++ < $STUB_TICKS )); do /bin/sleep 0.05; done
         exit 0
     fi
     echo "STATE-STDOUT \$*"; echo "STATE-STDERR \$*" >&2 ;;
@@ -109,6 +114,23 @@ no_timeout_tools() {
             ln -s "$f" "$T/sys/$n" 2>/dev/null
         done
     done
+}
+# gated_sleep_stub <file>: a `sleep` whose Nth call first waits until $T/received has N lines (case 4).
+gated_sleep_stub() {
+    warm_stub "$1" "$(cat <<EOF
+echo x >> "$T/timer.calls"; n=\$(grep -c . "$T/timer.calls")
+i=0; while [[ -d "$T" && ! -e "$T/release" ]] && (( \$(cat "$T/received" 2>/dev/null | grep -c .) < n )) && (( i++ < $STUB_TICKS )); do /bin/sleep 0.05; done
+exec /bin/sleep "\$@"
+EOF
+)" || fail "sandbox" "gated sleep stub did not warm"
+}
+# blocking_sleep_stub <file>: a `sleep` that records its pid and blocks until $T/release (case 6).
+blocking_sleep_stub() {
+    warm_stub "$1" "$(cat <<EOF
+echo \$\$ >> "$T/sleep.pids"
+i=0; while [[ -d "$T" && ! -e "$T/release" ]] && (( i++ < $STUB_TICKS )); do /bin/sleep 0.05; done
+EOF
+)" || fail "sandbox" "sleep stub did not warm"
 }
 run_notify() {
     (cd "$T" && HOME="$T/home" CLAUDE_PLUGIN_ROOT="$T/plugin" CLAUDE_PROJECT_DIR="" PATH="$T/bin:$PATH" \
@@ -161,12 +183,7 @@ cleanup
 #    timer, however slow a stub is to start.
 sandbox
 no_timeout_tools
-warm_stub "$T/bin/sleep" "$(cat <<EOF
-echo x >> "$T/timer.calls"; n=\$(grep -c . "$T/timer.calls")
-while [[ -d "$T" && ! -e "$T/release" ]] && (( \$(cat "$T/received" 2>/dev/null | grep -c .) < n )); do /bin/sleep 0.05; done
-exec /bin/sleep "\$@"
-EOF
-)" || fail "sandbox" "gated sleep stub did not warm"
+gated_sleep_stub "$T/bin/sleep"
 (cd "$T" && STATE=hang HOME="$T/home" CLAUDE_PLUGIN_ROOT="$T/plugin" CLAUDE_PROJECT_DIR="" PATH="$T/bin:$T/sys" \
     OSS_TEST_UNDER_TIMEOUT="" "$SH" "$HOOK" --workflow ship complete </dev/null >"$T/out" 2>"$T/err") &
 HOOK_PID=$!
@@ -197,11 +214,7 @@ cleanup
 #    blocks until release, so a timer that held stdout or outlived the hook would never finish on its own.
 sandbox
 no_timeout_tools
-warm_stub "$T/bin/sleep" "$(cat <<EOF
-echo \$\$ >> "$T/sleep.pids"
-while [[ -d "$T" && ! -e "$T/release" ]]; do /bin/sleep 0.05; done
-EOF
-)" || fail "sandbox" "sleep stub did not warm"
+blocking_sleep_stub "$T/bin/sleep"
 if PATH="$T/bin:$T/sys" command -v timeout >/dev/null || PATH="$T/bin:$T/sys" command -v gtimeout >/dev/null; then
     fail "fallback timer setup hides timeout and gtimeout" "a timeout tool is still on the PATH"
 else
@@ -221,6 +234,28 @@ else
         "stdout-released=$released timers=$(grep -c . "$T/sleep.pids" 2>/dev/null) leftover-sleeps=[${left}] err=$(tr '\n' '|' < "$T/err")"; fi
 fi
 cleanup
+
+# 7. T26: a test killed before cleanup never creates $T/release, so every stub that waits for it must
+#    also give up on its own after STUB_TICKS polls. Each stub is written here with a 3-poll cap and run
+#    with $T present and no release: it must exit by itself (the 60 s poll is only the failure guard).
+STUB_TICKS=3 sandbox
+STUB_TICKS=3 gated_sleep_stub "$T/bin/gated-sleep"
+STUB_TICKS=3 blocking_sleep_stub "$T/bin/blocking-sleep"
+STUB_PIDS=""
+for p in 1 2 3 4 5 6 7 8 9; do echo x; done > "$T/timer.calls"   # gated-sleep is timer 10: the hung node's 1 line never opens its gate
+STATE=hang "$T/bin/node" "$T/plugin/watcher/dist/cli/update-workflow-state.js" </dev/null >/dev/null 2>&1 &
+STUB_PIDS="$STUB_PIDS $!"
+"$T/bin/gated-sleep" 0 </dev/null >/dev/null 2>&1 &
+STUB_PIDS="$STUB_PIDS $!"
+"$T/bin/blocking-sleep" 0 </dev/null >/dev/null 2>&1 &
+STUB_PIDS="$STUB_PIDS $!"
+stubs_gone() { local p; for p in $STUB_PIDS; do alive "$p" && return 1; done; return 0; }
+if wait_for stubs_gone && [[ ! -e "$T/release" ]]; then
+    pass "a release-waiting stub exits on its own when the test never releases it"
+else left=""; for p in $STUB_PIDS; do alive "$p" && left="$left $p"; done
+    fail "a release-waiting stub exits on its own when the test never releases it" "still running:${left}"; fi
+cleanup
+for p in $STUB_PIDS; do wait "$p" 2>/dev/null; done
 
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"

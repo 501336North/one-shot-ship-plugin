@@ -18,7 +18,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { safeAppendFile } from '../utils/safe-project-write.js';
 import { resolveProjectDir } from '../utils/project-dir.js';
-import { pathToFileURL } from 'url';
+import { isMainModule } from '../lib/is-main-module.js';
 import { ErrorRegistry, OSSError, WireError } from '../services/error-codes.js';
 import { redactString, redactSecrets } from '../services/redaction.js';
 
@@ -229,7 +229,6 @@ export async function main(): Promise<void> {
   process.exitCode = result.exitCode;
 }
 
-const invokedPath = process.argv[1];
-if (invokedPath !== undefined && import.meta.url === pathToFileURL(invokedPath).href) {
+if (isMainModule(import.meta.url, process.argv[1])) {
   void main();
 }

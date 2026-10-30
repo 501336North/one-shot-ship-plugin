@@ -2,7 +2,8 @@
 # oss-notify.sh --workflow <cmd> start sends the API key only to an apiUrl the CLI would accept.
 #
 # @behavior The start event's best-effort analytics call (Bearer key) goes to <apiUrl>/api/v1/analytics/track
-#           only when apiUrl is https, or plain http to 127.0.0.1/localhost/[::1], and has no ? or #.
+#           only when apiUrl is https, or plain http to 127.0.0.1/localhost/[::1] with OSS_ALLOW_HTTP_LOOPBACK=1,
+#           and has no ? or #.
 #           Any other apiUrl: no request at all. No apiUrl (with or without jq): the default API.
 # @business-rule The API key never travels in cleartext or to a different path than the one we build.
 #           Same rule as getApiUrl in packages/cli-decrypt/src/config.ts.
@@ -11,6 +12,8 @@
 #        BASH_UNDER_TEST=/opt/local/bin/bash ./hooks/__tests__/oss-notify-api-url.test.sh
 #        HOOKS_UNDER_TEST=/path/to/hooks-copy ./hooks/__tests__/oss-notify-api-url.test.sh   (mutants)
 set -uo pipefail
+# T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HOOK="${HOOKS_UNDER_TEST:-$ROOT/hooks}/oss-notify.sh"
 SH="${BASH_UNDER_TEST:-/bin/bash}"
@@ -31,7 +34,9 @@ mkdir -p "$KS/plugin/watcher/dist/cli"
 : > "$KS/plugin/watcher/dist/cli/chain-trigger.cjs"
 STUBS_WARM=y
 warm_stub "$KS/plugin/hooks/oss-log.sh" 'exit 0' || STUBS_WARM=n
-warm_stub "$KS/bin/node" 'exit 0' || STUBS_WARM=n
+# node -e is the config reader without jq (oss_config_strings, T30): that one runs the real node.
+REAL_NODE=$(command -v node) || { echo "✗ FAIL: node is required (the no-jq config reader)"; exit 1; }
+warm_stub "$KS/bin/node" '[ "${1-}" = -e ] && exec "'"$REAL_NODE"'" "$@"; exit 0' || STUBS_WARM=n
 warm_stub "$KS/bin/curl" "$(cat <<'EOF'
 echo "$*" >> "$SHIM/curl.args"
 cat >> "$SHIM/curl.stdin"
@@ -67,7 +72,7 @@ nojq_path() {
 # The accepted-URL cases prove the wait works (they read the request after run_start returns).
 run_start() {  # $1 = PATH to use, $2 = workflow name (default build)
     local _out
-    _out=$(cd "$T" && SHIM="$T" HOME="$T/home" OSS_CONFIG_DIR="${CFG_DIR:-}" CLAUDE_PLUGIN_ROOT="$KS/plugin" CLAUDE_PROJECT_DIR="" PATH="$1" \
+    _out=$(cd "$T" && SHIM="$T" OSS_ALLOW_HTTP_LOOPBACK="${ALLOW-1}" HOME="$T/home" OSS_CONFIG_DIR="${CFG_DIR:-}" CLAUDE_PLUGIN_ROOT="$KS/plugin" CLAUDE_PROJECT_DIR="" PATH="$1" \
         "$SH" "$HOOK" --workflow "${2:-build}" start </dev/null 2>&1 3>&1)
 }
 calls() { [[ -f "$T/curl.args" ]] && wc -l < "$T/curl.args" | tr -d ' ' || echo 0; }
@@ -80,6 +85,16 @@ for url in 'http://evil.example.com' 'https://api.example.com/?x=' 'https://api.
     run_start "$T/bin:$PATH"
     if [[ "$(calls)" == 0 ]]; then pass "apiUrl '$url' is refused: no analytics request, key never sent"
     else fail "apiUrl '$url' is refused: no analytics request, key never sent" "curl=$(tr '\n' '|' < "$T/curl.args")"; fi
+    rm -rf "$T"
+done
+
+# 1b. Plain http to a loopback API without OSS_ALLOW_HTTP_LOOPBACK=1 (T20, pen-test M2): no request either.
+# Every other case runs with the opt-in (run_start's default), so it proves the URL rule, not the switch.
+for url in 'http://127.0.0.1:4100' 'http://localhost:4100' 'http://[::1]:4100'; do
+    sandbox "{\"apiKey\":\"k-secret\",\"apiUrl\":\"$url\"}"
+    ALLOW='' run_start "$T/bin:$PATH"
+    if [[ "$(calls)" == 0 ]]; then pass "apiUrl '$url' without OSS_ALLOW_HTTP_LOOPBACK=1: no analytics request, key never sent"
+    else fail "apiUrl '$url' without OSS_ALLOW_HTTP_LOOPBACK=1: no analytics request, key never sent" "curl=$(tr '\n' '|' < "$T/curl.args")"; fi
     rm -rf "$T"
 done
 

@@ -9,10 +9,13 @@
 # Usage: ./commands/__tests__/iron-laws-single-writer.test.sh
 
 set -uo pipefail
+# T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMMANDS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SYNC="$COMMANDS_DIR/../hooks/oss-iron-laws-sync.sh"
+CURL="$COMMANDS_DIR/../hooks/oss-api-curl.sh"
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -56,8 +59,9 @@ test_ideate_claims_match_script() {
     local name="ideate Step 1 makes no claim the script does not keep"; ((TESTS_RUN++))
     local bad=""
     grep -qiE '^- *Creates CLAUDE\.md' <<< "$IDEATE_STEP1" && bad+="claims it creates CLAUDE.md (refresh never creates); "
-    if grep -qi 'JSON pars' <<< "$IDEATE_STEP1" && ! grep -qF 'JSON.parse(' "$SYNC"; then
-        bad+="claims JSON parsing but the script does not JSON.parse; "
+    # The script reads the key through oss_api_creds, whose one reader (oss-api-curl.sh) parses with jq or node (T30, T37).
+    if grep -qi 'JSON pars' <<< "$IDEATE_STEP1" && ! { grep -qF 'oss_api_creds' "$SYNC" && grep -qF 'JSON.parse(' "$CURL"; }; then
+        bad+="claims JSON parsing but the script does not read the key through the JSON reader; "
     fi
     if [[ -z "$bad" ]]; then pass "$name"
     else fail "$name" "accurate description" "$bad"; fi

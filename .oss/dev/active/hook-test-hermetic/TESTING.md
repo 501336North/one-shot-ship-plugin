@@ -408,4 +408,89 @@ Verification only. No code or test was changed. The scripts are the same as in t
 | verify-decrypt-setup.sh | no: usage comment | fine |
 | oss-value.sh | no: comment naming the allowed call prefix | fine |
 
-## Last Updated: 2026-10-29 19:32 CST by test-engineer (T17: no downgrade of ~/.oss/hooks)
+## Ship gate round 1 fix round (T18-T27, 2026-10-30)
+Every task RED-first with oss-log phases, plus anti-vacuity mutants on scratch copies (all killed).
+| Task | Tests | Result | Mutants |
+|---|---|---|---|
+| T18 version record | session-start-no-hook-downgrade (11 → 26), health-check-detach (2 → 3) | 26/26, 3/3 | 16 |
+| T19 config overrides | setup-isolation (+3), 12 shell files unset OSS_CONFIG_DIR/OSS_MANIFEST_URL | 10/10; sentinel key leak shown before in 9 files | 3 |
+| T20 loopback opt-in | oss-api-url 54, oss-api-url-cases 192, oss-notify-api-url 24, subscription-url | all pass | 7 |
+| T21 unreadable config | oss-api-url, oss-api-url-cases (176), oss-api-curl, oss-api-config-dir | all pass | 7 |
+| T22 login/worktree | oss-value 340, worktree-hooks 8, value-file-wrappers-run 59 | all pass | 6 |
+| T23 broken install | session-start-copy (+2) | 11/11 | 1 |
+| T24 JSON/TEAM_ID | oss-fetch-team-iron-laws (+cases), session-start-notify-payload (new, 7) | all pass | 7 |
+| T25 cache/backoff | oss-fetch-team-iron-laws 20, iron-laws-sync-safety 59, iron-laws-sync 8 | all pass | 9 |
+| T26 flaky/unbounded | metrics-collector (fake timers, exact), complete-bounds case 7 | 10/10 ×11 under load, 9/9 | 6 |
+| T27 esbuild | npm audit 1 moderate → 0; build output byte-identical | vitest 3585/3585 | n/a (RED = advisory) |
+
+Known not-RED-first: T22's refused-apiUrl case (guarded by mutant M1); T27 (dependency bump, RED is the advisory).
+
+### /oss:integration after the round-1 fixes (2026-10-30)
+New `hooks/__tests__/oss-login-team-laws.real.integration.test.sh`: real curl against python3 recorders on loopback
+(opt-in set), 22/22 on 3 runs, under /bin/bash 3.2 and bash 5. Login: one keyed GET /api/v1/subscription/status,
+key never in argv, config written to OSS_CONFIG_DIR keeping apiUrl, 401 writes nothing, no-opt-in loopback sends
+nothing and prints the switch line. Team fetch: 200 caches body + .src, 500 serves same-API stale cache and writes
+backoff, next run sends nothing; connection refused → default + backoff; server A's cache never served for B.
+Mutants killed: key on argv, no backoff, .src ignored, 401 accepted, no switch line, no .src written.
+Stub vs reality: no behaviour mismatch (trailing newline and doubled 000 on refused connection are read with tail).
+Untested assumption: login reads the plan with `head -1` (compact JSON from the API today).
+
+## Last Updated: 2026-10-30 by /oss:build (ship round 1 fix round T18-T27)
+
+## Ship gate round 2 fix round (2026-10-30, T28–T33)
+
+| Task | New / changed tests | RED | GREEN | Mutants |
+|------|---------------------|-----|-------|---------|
+| T28 | #213's own tests (decision-record, hooks-registration, watcher redaction) | n/a (upstream merge) | 3/3, 101/101, 25/25, 31/31 | n/a |
+| T29 | tests-hermetic-env.test.sh (new); unsets in 43 test files | sentinel got 2 POSTs; guard 41 files flagged | 0 sentinel hits; guard 65/65+ | 2 killed |
+| T30 | oss-config-one-object.test.sh (new); oss-api-url*, config-dir, sync-safety updated | 52/90 | 126/126 | 10 killed |
+| T31 | session-start-no-hook-downgrade.test.sh | 29/36 | 36/36 | 9 killed; -O checks unguarded (no sudo) |
+| T32 | oss-state-files-nofollow.test.sh (new) | 1/19 | 20/20 (×4) | 6 killed |
+| T33 | oss-login-plan-text, oss-claude-md-template, login-config-dir (new); watcher session-start-hooks-copy (every hook a command runs is copied) | control codes reached terminal; 8/12; 6/7; copy guard named the new hook | 4/4, 12/12, 7/7, 5/5 | 13 killed |
+
+Orchestrator fixes found by existing tests: no-model-text-in-failed caught a T33 placeholder in login.md (fixed, 34/34);
+iron-laws-single-writer checked JSON parsing in the sync hook, which T30 moved to the shared reader (check now follows
+the reader; mutant without oss_api_key fails 5/6).
+
+Full suites after the round: watcher 268 files / 3606 tests pass. Shell 72/76 files pass (after the iron-laws-single-writer fix):
+referenced-hooks-tracked and watcher-dist-fresh fail only because #213's and T33's new files are untracked (both pass
+against a temp index with them added); ideate-template and no-telegram-command fail on origin/main too.
+session-start-notify-payload: 10/10 consecutive runs 7/7 (the earlier mixed results came while T31 was editing the hook).
+
+### /oss:integration after round 2 (real curl, local server)
+New `hooks/__tests__/iron-laws-sync.real.integration.test.sh` 15/15 (3 runs): the key from the shared reader (jq and
+node-only PATH, nested models/webhook objects) arrives as `Authorization: Bearer`, never in argv (`ps` while the request
+is held); a two-document config sends nothing; the stamp is a regular file holding the apiUrl and a refresh within 24h
+sends nothing (stale-stamp control); symlinked stamp and backoff leave their victims unchanged.
+`oss-login-team-laws.real.integration.test.sh` Scenario 1c (23/23): plan control codes sent as JSON escapes never reach
+the terminal (od over the output). 8 mutants killed. Mock vs reality: no mismatch. Notes: `--install` ignores the stamp
+(the 24h skip is refresh mode only); NUL is dropped by bash `$(...)`, not by the filter.
+
+## Ship gate round 3 fix round (2026-10-30, T34–T48, resumed after a Mac crash)
+
+New test files: oss-config-read-safety (T35), oss-config-dash-path (T39), oss-config-one-read (T37),
+oss-login-dash-path (T44), oss-config-dash-hooks (T47), session-start-outside-kill (T42/T48) and
+lib/session-start-alias.sh. Extended: oss-json-field and oss-login-plan-text (T38), oss-claude-md-template (T34 case 9c,
+T45 case 12), oss-login-key-argv (T40 case 3, T41), packages/cli-decrypt/test/strip-control.test.ts (T45, including the
+bash ↔ TS full-code-point parity test), and 8 session-start test files routed through the alias (T48).
+
+Each task went RED first. Mutants were run in private copies only: T35 4, T39 2, T37 15, T38 7/8 (the survivor was removed as
+redundant, T46/D9), T41 1, T44 5, T45 9, T47 15, T42 5, T34 12 (1 survivor closed by case 9c), T40 6 (2 survivors
+closed, 1 equivalent), T48 via the outside-kill guard (RED 6/14).
+
+### Final runs (orchestrator, 2026-10-30 21:50 CST)
+- watcher: 268/268 files, 3606 tests.
+- shell: 80/84 files, run one at a time with /bin/bash. The 4 that fail: referenced-hooks-tracked and watcher-dist-fresh fail only
+  on untracked files (cleared by the commit); ideate-template and no-telegram-command fail at 0fcb96f too.
+- cli-decrypt: 26 files, 316 tests (from a scratch copy with node_modules linked; this worktree has none).
+- No orphan processes after the runs.
+
+### Unguarded (stated, not hidden)
+- The real-curl integration test cannot see jq. Only the unit test's recording jq checks that the key is in no jq argv (T40).
+- `chmod -- 600` in login is equivalent today (mktemp 0600 + umask 077). The 4 chmod `--` mutants in T47 and the T44 one
+  are killed only by the GNU-coreutils pass, which reports SKIPPED where coreutils is missing.
+- A test that starts session start in a new process group would escape the outside-kill guard (none does today).
+- The shipped oss-decrypt binary (cli-decrypt-v1.2.4) and the tracked dist bundle do not have T45's stripping set; no
+  test checks bundle against source.
+
+## Last Updated: 2026-10-30 21:50 CST by /oss:build (ship round 3 fix round T34–T48)

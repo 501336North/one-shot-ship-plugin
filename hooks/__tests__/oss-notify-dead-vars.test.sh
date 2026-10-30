@@ -4,6 +4,8 @@
 #   VERBOSITY except that filter. Assigning them is dead code that implies a filter which no longer exists.
 #   STYLE is still read (direct-call audio/sound) and must stay.
 set -u
+# T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 SH="$DIR/hooks/oss-notify.sh"
 pass=0; fail=0

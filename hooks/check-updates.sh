@@ -14,7 +14,8 @@
 
 set -uo pipefail
 
-# Paths
+# Paths. `--` before each one in jq, mkdir and chmod: a relative OSS_CONFIG_DIR such as "-cfg" is a path, never
+# options (T47; chmod needs it before the mode, `chmod -- 600 "$f"`, for GNU getopt).
 CONFIG_DIR="${OSS_CONFIG_DIR:-$HOME/.oss}"
 STATE_FILE="$CONFIG_DIR/update-state.json"
 SETTINGS_FILE="$CONFIG_DIR/settings.json"
@@ -25,7 +26,7 @@ PLUGIN_JSON="${OSS_PLUGIN_JSON:-$SCRIPT_DIR/../.claude-plugin/plugin.json}"
 
 # Check if notifications are enabled
 if [[ -f "$SETTINGS_FILE" ]] && command -v jq &>/dev/null; then
-    updates_enabled=$(jq -r 'if .notifications.updates == false then "false" else "true" end' "$SETTINGS_FILE" 2>/dev/null)
+    updates_enabled=$(jq -r 'if .notifications.updates == false then "false" else "true" end' -- "$SETTINGS_FILE" 2>/dev/null)
     if [[ "$updates_enabled" == "false" ]]; then
         exit 0
     fi
@@ -42,14 +43,14 @@ release_note=$(jq -r '.releaseNote // ""' "$PLUGIN_JSON" 2>/dev/null)
 cached_version=""
 first_run=false
 if [[ -f "$STATE_FILE" ]] && command -v jq &>/dev/null; then
-    cached_version=$(jq -r '.lastPluginVersion // ""' "$STATE_FILE" 2>/dev/null)
+    cached_version=$(jq -r '.lastPluginVersion // ""' -- "$STATE_FILE" 2>/dev/null)
 else
     first_run=true
 fi
 
 # First run — cache silently, no notification
 if [[ "$first_run" == true || -z "$cached_version" ]]; then
-    mkdir -p "$CONFIG_DIR"
+    mkdir -p -- "$CONFIG_DIR"
     # Initialize state
     cat > "$STATE_FILE" << ENDSTATE
 {
@@ -60,7 +61,7 @@ if [[ "$first_run" == true || -z "$cached_version" ]]; then
   "promptSignatures": {}
 }
 ENDSTATE
-    chmod 600 "$STATE_FILE"
+    chmod -- 600 "$STATE_FILE"
     exit 0
 fi
 
@@ -86,7 +87,7 @@ if [[ "$skip_manifest" != "1" ]]; then
 
     if [[ -n "$manifest_json" ]] && command -v jq &>/dev/null; then
         # Get cached hashes
-        cached_hashes=$(jq -r '.manifestHashes // {}' "$STATE_FILE" 2>/dev/null)
+        cached_hashes=$(jq -r '.manifestHashes // {}' -- "$STATE_FILE" 2>/dev/null)
 
         # Compare each prompt hash
         for key in $(echo "$manifest_json" | jq -r '.prompts | keys[]' 2>/dev/null); do
@@ -102,10 +103,10 @@ if [[ "$skip_manifest" != "1" ]]; then
         new_hashes=$(echo "$manifest_json" | jq '{manifestHashes: (.prompts | to_entries | map({(.key): .value.hash}) | add // {})}' 2>/dev/null)
         if [[ -n "$new_hashes" ]]; then
             # Merge new hashes into state
-            merged=$(jq -s '.[0] * .[1]' "$STATE_FILE" <(echo "$new_hashes") 2>/dev/null)
+            merged=$(jq -s '.[0] * .[1]' -- "$STATE_FILE" <(echo "$new_hashes") 2>/dev/null)
             if [[ -n "$merged" ]]; then
                 echo "$merged" > "$STATE_FILE"
-                chmod 600 "$STATE_FILE"
+                chmod -- 600 "$STATE_FILE"
             fi
         fi
     fi
@@ -135,18 +136,18 @@ fi
 
 # Update cached plugin version
 if [[ "$plugin_changed" == true ]]; then
-    updated=$(jq --arg v "$current_version" '.lastPluginVersion = $v' "$STATE_FILE" 2>/dev/null)
+    updated=$(jq --arg v "$current_version" '.lastPluginVersion = $v' -- "$STATE_FILE" 2>/dev/null)
     if [[ -n "$updated" ]]; then
         echo "$updated" > "$STATE_FILE"
-        chmod 600 "$STATE_FILE"
+        chmod -- 600 "$STATE_FILE"
     fi
 fi
 
 # Update lastCheckedAt
-updated=$(jq --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.lastCheckedAt = $t' "$STATE_FILE" 2>/dev/null)
+updated=$(jq --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.lastCheckedAt = $t' -- "$STATE_FILE" 2>/dev/null)
 if [[ -n "$updated" ]]; then
     echo "$updated" > "$STATE_FILE"
-    chmod 600 "$STATE_FILE"
+    chmod -- 600 "$STATE_FILE"
 fi
 
 # Output notification (consumed by caller)

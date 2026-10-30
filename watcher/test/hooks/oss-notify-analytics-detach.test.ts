@@ -113,6 +113,9 @@ function startWorkflow(command: string, extraEnv: Record<string, string> = {}): 
     PATH: `${binDir}:${process.env.PATH ?? '/usr/bin:/bin'}`,
     CLAUDE_PLUGIN_ROOT: pluginRoot,
     STUB_STATE: stateDir,
+    // Every test here expects the analytics request to the sandbox http://127.0.0.1:9 (T20: plain http
+    // to a loopback API is used only with this opt-in).
+    OSS_ALLOW_HTTP_LOOPBACK: '1',
     ...extraEnv,
   });
   const child = spawn('bash', [path.join(pluginRoot, 'hooks/oss-notify.sh'), '--workflow', command, 'start', '{}'], {

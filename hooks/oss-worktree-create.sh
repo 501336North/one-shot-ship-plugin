@@ -17,13 +17,16 @@ if ! oss_safe_mkdir "$WORKTREE_PATH" .oss; then
     exit 0
 fi
 
-# Copy auth config from home directory (shared credentials)
-if [[ -f "$HOME/.oss/config.json" ]] && (cd "$WORKTREE_PATH" && git ls-files --error-unmatch .oss/config.json >/dev/null 2>&1); then
+# Copy the auth config the hooks read (oss_config_file: $OSS_CONFIG_DIR, else ~/.oss); without the helper, none.
+# `cp --`: a relative OSS_CONFIG_DIR such as "-cfg" is a path, never options (T47).
+source "$SCRIPT_DIR/oss-api-curl.sh" 2>/dev/null || oss_config_file() { return 1; }
+CONFIG_FILE=$(oss_config_file)
+if [[ -f "$CONFIG_FILE" ]] && (cd "$WORKTREE_PATH" && git ls-files --error-unmatch .oss/config.json >/dev/null 2>&1); then
     echo "oss: .oss/config.json is tracked by git; not copying the API key into it" >&2
-elif [[ -f "$HOME/.oss/config.json" ]] && ! oss_safe_target "$WORKTREE_PATH" .oss/config.json; then
+elif [[ -f "$CONFIG_FILE" ]] && ! oss_safe_target "$WORKTREE_PATH" .oss/config.json; then
     oss_refuse_unsafe .oss/config.json
-elif [[ -f "$HOME/.oss/config.json" ]]; then
-    cp "$HOME/.oss/config.json" "$WORKTREE_PATH/.oss/config.json"
+elif [[ -f "$CONFIG_FILE" ]]; then
+    cp -- "$CONFIG_FILE" "$WORKTREE_PATH/.oss/config.json"
     chmod 600 "$WORKTREE_PATH/.oss/config.json"
 fi
 

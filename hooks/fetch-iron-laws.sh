@@ -50,7 +50,7 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
 fi
 
 # Extract API key from config
-API_KEY=$(grep -o '"apiKey"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" | sed 's/.*: *"\([^"]*\)"/\1/')
+oss_api_creds || true; API_KEY=$OSS_KEY   # key and URL from one read of one object (T30, T37)
 
 if [[ -z "$API_KEY" ]]; then
   echo "Error: No API key found in config" >&2
@@ -59,7 +59,7 @@ if [[ -z "$API_KEY" ]]; then
 fi
 
 # The key goes only to the API configured beside it
-API_URL=$(oss_api_url) || {
+API_URL=$OSS_URL; [[ $OSS_URL_RC == 0 ]] || {
   echo "Error: apiUrl in $CONFIG_FILE must be an https URL (plain http only for localhost) with no user@, query or fragment" >&2
   exit 1
 }

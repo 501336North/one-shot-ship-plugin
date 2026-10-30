@@ -10,6 +10,9 @@
 # 3. Session-start should copy sync script to ~/.oss/hooks/
 
 set -uo pipefail
+# The hooks read the API key and URL from $OSS_CONFIG_DIR/config.json: a developer's exported
+# override must not lead them to the real key and the real API (T19).
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # HOOKS_UNDER_TEST=/path/to/hooks-copy runs these tests against a copy (mutants).
@@ -45,6 +48,9 @@ fail() {
 source "$SCRIPT_DIR/lib/warm-stub.sh"
 KS=$(mktemp -d); KS=$(cd "$KS" && pwd -P)
 trap 'rm -rf "$KS"' EXIT
+# Session start runs under an alias (lib/session-start-alias.sh): an outside `pkill -f oss-session-start` misses it (T48).
+source "$SCRIPT_DIR/lib/session-start-alias.sh"
+SS_HOOK=$(session_start_alias "$(dirname "$SESSION_START_SCRIPT")" "$KS/ss-alias/hooks") || { echo "✗ FAIL: session start alias"; exit 1; }
 STUBS_WARM=y
 warm_stub "$KS/bin/curl" "$(cat << 'SHIM'
 S="$SS_T/shim"
@@ -74,7 +80,7 @@ ss_setup() {
 ss_run() { # runs the real session start (health checks ON, so the sync path is live)
     (cd "$T/proj" && SS_T="$T" HOME="$T/home" CLAUDE_PLUGIN_ROOT="$T/root" CLAUDE_PROJECT_DIR="$T/proj" \
         OSS_SKIP_HEALTH_CHECK= OSS_TEST_CC_VERSION=2.1.99 PATH="$T/bin:$PATH" \
-        perl -e 'alarm 30; exec @ARGV' bash "$SESSION_START_SCRIPT" </dev/null 2>&1)
+        perl -e 'alarm 30; exec @ARGV' bash "$SS_HOOK" </dev/null 2>&1)
 }
 ss_teardown() {
     local pid; pid=$(cut -d'|' -f1 "$T/sync-started" 2>/dev/null)
@@ -168,7 +174,7 @@ test_copies_sync_to_oss_hooks() {
     local tmp_home
     tmp_home=$(mktemp -d)
     HOME="$tmp_home" CLAUDE_PLUGIN_ROOT="$SCRIPT_DIR/../.." OSS_SKIP_HEALTH_CHECK=1 \
-        bash "$SESSION_START_SCRIPT" >/dev/null 2>&1 </dev/null
+        bash "$SS_HOOK" >/dev/null 2>&1 </dev/null
     local copied="$tmp_home/.oss/hooks/oss-iron-laws-sync.sh"
     if [[ -x "$copied" ]]; then
         pass "$test_name"

@@ -280,7 +280,8 @@ describe('session hooks stay off the network', () => {
     // GIVEN: a logged-in project (on top of every hook run this file has already made), with the
     // network paths live: test/setup.ts turns them off for every other test (OSS_SKIP_HEALTH_CHECK)
     const project = makeGitProject(`network-project-${testId}`);
-    const live = { CLAUDE_PROJECT_DIR: project, OSS_SKIP_HEALTH_CHECK: '' };
+    // (the sandbox apiUrl is plain http to 127.0.0.1: requests go there only with the opt-in, T20)
+    const live = { CLAUDE_PROJECT_DIR: project, OSS_SKIP_HEALTH_CHECK: '', OSS_ALLOW_HTTP_LOOPBACK: '1' };
 
     // WHEN: a session starts and ends there, and every job the hooks started has finished
     expect(runHookAndJobs(SESSION_START, project, live)).toBe(true);

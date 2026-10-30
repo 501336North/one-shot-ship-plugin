@@ -11,10 +11,14 @@
 #        BASH_UNDER_TEST=/opt/local/bin/bash ./hooks/__tests__/optional-helper-source.test.sh
 #        HOOKS_UNDER_TEST=/path/to/hooks-copy ./hooks/__tests__/optional-helper-source.test.sh   (mutants)
 set -uo pipefail
+# T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HOOKS="${HOOKS_UNDER_TEST:-$ROOT/hooks}"
 SH="${BASH_UNDER_TEST:-/bin/bash}"
 source "$ROOT/hooks/__tests__/lib/warm-stub.sh"
+# Session start runs under an alias (lib/session-start-alias.sh): an outside `pkill -f oss-session-start` misses it (T48).
+source "$ROOT/hooks/__tests__/lib/session-start-alias.sh"
 RUN=0; FAILED=0
 pass() { echo "✓ PASS: $1"; ((RUN++)); }
 fail() { echo "✗ FAIL: $1 — $2"; ((RUN++)); ((FAILED++)); }
@@ -81,7 +85,8 @@ rm -rf "$T"
 
 # 4. Session start without the helper beside it still copies the hooks into ~/.oss/hooks.
 T=$(mktemp -d); mkdir -p "$T/home" "$T/hooks"; cp "$ROOT/hooks/oss-session-start.sh" "$T/hooks/"
-(cd "$T" && HOME="$T/home" CLAUDE_PLUGIN_ROOT="$ROOT" "$SH" "$T/hooks/oss-session-start.sh" >/dev/null 2>&1 </dev/null); rc=$?
+SS_HOOK=$(session_start_alias "$T/hooks") || SS_HOOK="$T/no-alias"
+(cd "$T" && HOME="$T/home" CLAUDE_PLUGIN_ROOT="$ROOT" "$SH" "$SS_HOOK" >/dev/null 2>&1 </dev/null); rc=$?
 if [[ $rc -eq 0 && -f "$T/home/.oss/hooks/oss-notify.sh" && -f "$T/home/.oss/hooks/oss-api-curl.sh" ]]; then
     pass "session start without oss-api-curl.sh beside it: exits 0 and installs the hooks"
 else fail "session start without oss-api-curl.sh beside it: exits 0 and installs the hooks" "rc=$rc"; fi

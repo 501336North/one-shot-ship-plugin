@@ -2,6 +2,8 @@
  * Global vitest setup: each test file runs in a sandbox.
  * - HOME (and so os.homedir()) is a fresh temp dir, set before any test reads it.
  * - The live Claude session (CLAUDE_CODE_SESSION_ID, CLAUDE_PROJECT_DIR) is hidden.
+ * - The developer's overrides (OSS_CONFIG_DIR, CLAUDE_PLUGIN_ROOT, OSS_MANIFEST_URL) are
+ *   hidden, so no hook or module reads the real config key. Tests that need one set it.
  * - Background watchers and health checks are switched off.
  * It never kills processes or deletes files outside its own temp HOME.
  */
@@ -16,6 +18,9 @@ fs.mkdirSync(path.join(testHome, '.oss'), { mode: 0o700 });
 
 delete process.env.CLAUDE_CODE_SESSION_ID;
 delete process.env.CLAUDE_PROJECT_DIR;
+delete process.env.OSS_CONFIG_DIR;
+delete process.env.CLAUDE_PLUGIN_ROOT;
+delete process.env.OSS_MANIFEST_URL;
 
 process.env.OSS_SKIP_WATCHER = '1';
 process.env.OSS_SKIP_HEALTH_CHECK = '1';

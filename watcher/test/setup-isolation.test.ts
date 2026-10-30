@@ -17,6 +17,9 @@ interface ProbeReport {
   HOME: string | null;
   CLAUDE_CODE_SESSION_ID: string | null;
   CLAUDE_PROJECT_DIR: string | null;
+  OSS_CONFIG_DIR: string | null;
+  CLAUDE_PLUGIN_ROOT: string | null;
+  OSS_MANIFEST_URL: string | null;
   ossDir: { isDirectory: boolean; entries: string[] } | null;
 }
 
@@ -83,6 +86,11 @@ beforeAll(() => {
         TMPDIR: childTmp,
         CLAUDE_CODE_SESSION_ID: 'live-session',
         CLAUDE_PROJECT_DIR: '/some/live/project',
+        // A developer's own overrides: the real config (and its key), the
+        // installed plugin, and the manifest URL. Here they point at the sandbox.
+        OSS_CONFIG_DIR: path.join(fakeRealHome, '.oss'),
+        CLAUDE_PLUGIN_ROOT: path.join(sandbox, 'live-plugin'),
+        OSS_MANIFEST_URL: 'http://127.0.0.1:9/manifest.json',
         OSS_SETUP_PROBE_OUT: probeOut,
       },
     }
@@ -115,6 +123,18 @@ describe('global test setup (setup.ts)', () => {
     const seen = probe();
     expect(seen.CLAUDE_CODE_SESSION_ID).toBeNull();
     expect(seen.CLAUDE_PROJECT_DIR).toBeNull();
+  });
+
+  it("should not let tests see the user's config folder, so no hook can read the real key", () => {
+    expect(probe().OSS_CONFIG_DIR).toBeNull();
+  });
+
+  it("should not let tests run the user's installed plugin", () => {
+    expect(probe().CLAUDE_PLUGIN_ROOT).toBeNull();
+  });
+
+  it("should not let tests fetch the user's manifest URL", () => {
+    expect(probe().OSS_MANIFEST_URL).toBeNull();
   });
 
   it("should leave the user's real ~/.oss alone", () => {

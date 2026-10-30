@@ -12,6 +12,8 @@
 # Usage: ./hooks/__tests__/oss-notify-workflow-name.test.sh
 #        BASH_UNDER_TEST=/opt/local/bin/bash ./hooks/__tests__/oss-notify-workflow-name.test.sh
 set -uo pipefail
+# T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SH="${BASH_UNDER_TEST:-/bin/bash}"
 RUN=0; FAILED=0

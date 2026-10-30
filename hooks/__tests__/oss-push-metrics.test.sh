@@ -11,6 +11,8 @@
 # Usage: ./hooks/__tests__/oss-push-metrics.test.sh
 #        HOOKS_UNDER_TEST=/path/to/hooks-copy ./hooks/__tests__/oss-push-metrics.test.sh  (mutants)
 set -uo pipefail
+# T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK_SCRIPT="${HOOKS_UNDER_TEST:-$SCRIPT_DIR/..}/oss-push-metrics.sh"
 source "$SCRIPT_DIR/lib/warm-stub.sh"
@@ -39,7 +41,7 @@ key_case() { # $1 case dir, $2 ~/.oss/config.json body, [$3 OSS_CONFIG_DIR confi
     local cfgdir=""
     if [[ -n "${3:-}" ]]; then cfgdir="$SHIM/alt"; mkdir -p "$cfgdir"; printf '%s' "$3" > "$cfgdir/config.json"; fi
     RC=0
-    OUT=$(cd "$SHIM" && SHIM="$SHIM" HOME="$SHIM/home" OSS_CONFIG_DIR="$cfgdir" PATH="$KS/bin:$PATH" \
+    OUT=$(cd "$SHIM" && SHIM="$SHIM" OSS_ALLOW_HTTP_LOOPBACK=1 HOME="$SHIM/home" OSS_CONFIG_DIR="$cfgdir" PATH="$KS/bin:$PATH" \
         /bin/bash "$HOOK_SCRIPT" '{"command":"build"}' </dev/null 2>&1) || RC=$?
     CALLS=0; ARGV=""
     if [[ -f "$SHIM/argv" ]]; then CALLS=$(wc -l < "$SHIM/argv" | tr -d ' '); ARGV=$(tr '\n' '|' < "$SHIM/argv"); fi

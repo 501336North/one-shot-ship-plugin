@@ -10,6 +10,9 @@
 # Usage: ./hooks/__tests__/oss-api-curl.test.sh
 
 set -uo pipefail
+# The hooks read the API key and URL from $OSS_CONFIG_DIR/config.json: a developer's exported
+# override must not lead them to the real key and the real API (T19).
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOKS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -95,12 +98,29 @@ test_sites() {
     check_site "oss-push-metrics.sh" bash "$HOOKS_DIR/oss-push-metrics.sh" '{"command":"build"}'
 }
 
+# T21 (security S3): a config jq cannot parse still yields the key to a grep, so its apiUrl must not fall back
+# to the default API: the key meant for the configured (dev) API would go to production. No request at all.
+check_unparsable_no_call() { # $1 label, then the command
+    local label="$1"; shift
+    local name="site: $label makes no request when config.json cannot be parsed"; ((TESTS_RUN++)); setup
+    printf '{"apiKey": "%s", "apiUrl": "https://dev.example.invalid",}\n' "$FAKE_KEY" > "$T/home/.oss/config.json"
+    (cd "$T" && HOME="$T/home" PATH="$T/bin:$PATH" OSS_SKIP_HEALTH_CHECK='' perl -e 'alarm 30; exec @ARGV' "$@" </dev/null >/dev/null 2>&1)
+    if [[ ! -f "$T/shim/argv" ]]; then pass "$name"
+    else fail "$name" "no curl call" "calls=$(wc -l < "$T/shim/argv") argv=$(sed "s/$FAKE_KEY/<KEY>/g" "$T/shim/argv" | head -3)"; fi
+    teardown
+}
+test_unparsable_sites() {
+    check_unparsable_no_call "fetch-iron-laws.sh" bash "$HOOKS_DIR/fetch-iron-laws.sh"
+    check_unparsable_no_call "oss-push-metrics.sh" bash "$HOOKS_DIR/oss-push-metrics.sh" '{"command":"build"}'
+}
+
 echo "Running oss-api-curl.sh tests..."
 echo "======================================="
 test_helper_key_on_stdin
 test_helper_escapes_and_refuses
 test_no_hook_puts_key_in_argv
 test_sites
+test_unparsable_sites
 echo ""
 echo "======================================="
 echo "Results: $TESTS_PASSED/$TESTS_RUN passed, $TESTS_FAILED failed"

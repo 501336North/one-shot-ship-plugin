@@ -11,28 +11,30 @@ if [[ -f "$SCRIPT_DIR/oss-safe-path.sh" ]]; then source "$SCRIPT_DIR/oss-safe-pa
 # =============================================================================
 # TIMEOUT WRAPPER - Prevents blocking on slow/hanging node calls
 # =============================================================================
+# run_bounded <secs> <cmd...>: run a command, killed after <secs>; keeps its output and exit status
+# (ended by the bound: non-zero, 124 from timeout, 137 from the fallback's kill -9).
+run_bounded() {
+    local secs=$1; shift
+    if command -v gtimeout &>/dev/null; then gtimeout "$secs" "$@"      # macOS with coreutils installed
+    elif command -v timeout &>/dev/null; then timeout "$secs" "$@"      # Linux or macOS with timeout available
+    else
+        # Fallback: background + sleep + kill. The timer holds no stdio, and killing it also kills its
+        # sleep (R2-1; same shape as oss-notify.sh).
+        "$@" &
+        local pid=$! killer rc
+        ( trap 'kill $s 2>/dev/null; exit 0' TERM; sleep "$secs" & s=$!; wait $s && kill -9 $pid 2>/dev/null ) </dev/null >/dev/null 2>&1 &
+        killer=$!
+        wait $pid; rc=$?
+        kill $killer 2>/dev/null; wait $killer 2>/dev/null
+        return $rc
+    fi
+}
 # Run command with timeout, fail silently if it takes too long
 # This prevents Claude Code from hanging on startup if node CLI calls are slow
 run_with_timeout() {
     local timeout_secs="${1:-2}"
     shift
-    if command -v gtimeout &>/dev/null; then
-        # macOS with coreutils installed
-        gtimeout "$timeout_secs" "$@" 2>/dev/null || true
-    elif command -v timeout &>/dev/null; then
-        # Linux or macOS with timeout available
-        timeout "$timeout_secs" "$@" 2>/dev/null || true
-    else
-        # Fallback: run with background + sleep + kill pattern
-        "$@" 2>/dev/null &
-        local pid=$!
-        # The timer holds no stdio, and killing it also kills its sleep (R2-1; same shape as oss-notify.sh).
-        ( trap 'kill $s 2>/dev/null; exit 0' TERM; sleep "$timeout_secs" & s=$!; wait $s && kill -9 $pid 2>/dev/null ) </dev/null >/dev/null 2>&1 &
-        local killer=$!
-        wait $pid 2>/dev/null || true
-        kill $killer 2>/dev/null || true
-        wait $killer 2>/dev/null || true
-    fi
+    run_bounded "$timeout_secs" "$@" 2>/dev/null || true
 }
 
 # Check for simple mode FIRST - CLAUDE_CODE_SIMPLE disables hooks/skills, OSS cannot function
@@ -54,13 +56,8 @@ if [[ -x "$LOG_SCRIPT" ]] && [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]]; then
     "$LOG_SCRIPT" hook oss-session-start START
 fi
 
-# Determine plugin root and persist it for skill/command scripts
+# Determine plugin root (persisted to ~/.oss/plugin-root below, together with the shared hooks)
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(dirname "$SCRIPT_DIR")}"
-
-# Persist plugin root path for skills/commands that run outside hook context
-# Skills executed by the model don't have CLAUDE_PLUGIN_ROOT set, so they read this file
-echo "$PLUGIN_ROOT" > ~/.oss/plugin-root
-chmod 600 ~/.oss/plugin-root
 
 # Copy frequently-used hooks to ~/.oss/hooks/ for reliable access from skills
 # This ensures skills can find these hooks without relying on CLAUDE_PLUGIN_ROOT
@@ -78,37 +75,93 @@ HOOKS_TO_COPY=(
     "oss-decrypt-checksums.txt"   # committed hash manifest ensure-decrypt-cli.sh verifies against
     "verify-decrypt-setup.sh"
     "oss-iron-laws-sync.sh"
+    "oss-claude-md-template.sh"   # /oss:login Step 4.2: the CLAUDE.md template from the configured API
     "oss-onboard-check.sh"
     "oss-setup-permissions.sh"
 )
 # Never downgrade them (T17): ~/.oss/hooks is machine-global, so a session on an older plugin must not
-# replace hooks a newer plugin installed. Versions are dot-separated digits, compared per part; anything
-# else counts as unreadable (and never reaches arithmetic). No record: copy, as before. Unreadable own
-# version with a record: keep the record's hooks (we cannot show we are not older).
-oss_version() { [[ "$1" =~ ^[0-9]+(\.[0-9]+)*$ ]] && printf '%s' "$1"; }
-oss_version_ge() { # A >= B
-    local IFS=. i; local -a a=($1) b=($2)
+# replace hooks a newer plugin installed. Versions are dot-separated digits (a -prerelease suffix is
+# dropped), compared per part; anything else counts as unreadable (and never reaches arithmetic). No
+# trusted record: copy, as before. Unreadable own version with a trusted record: keep the record's hooks
+# (we cannot show we are not older).
+oss_version() { # the numeric core (2.1.0-beta.1 -> 2.1.0); parts of 1-9 digits, so (( )) never overflows
+    local re='^([0-9]{1,9}(\.[0-9]{1,9})*)(-[0-9A-Za-z.-]+)?$'
+    [[ "$1" =~ $re ]] && printf '%s' "${BASH_REMATCH[1]}"
+}
+oss_version_ge() { # A >= B, both from oss_version (digits and dots only, so the split below is safe)
+    local IFS=. i
+    # shellcheck disable=SC2206
+    local -a a=($1) b=($2)
     for ((i = 0; i < ${#a[@]} || i < ${#b[@]}; i++)); do
         (( 10#${a[i]:-0} != 10#${b[i]:-0} )) && { (( 10#${a[i]:-0} > 10#${b[i]:-0} )); return; }
     done
     return 0
 }
-PLUGIN_VERSION=$(oss_version "$(grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "$PLUGIN_ROOT/.claude-plugin/plugin.json" 2>/dev/null | head -1 | cut -d'"' -f4)")
-INSTALLED_VERSION=$(oss_version "$(head -1 ~/.oss/hooks/.installed-version 2>/dev/null)")
+oss_plugin_version() { # <root>: the top-level "version" of <root>/.claude-plugin/plugin.json
+    # Top-level keys are indented 0-2 spaces, nested ones deeper, so a nested "version" never wins. One
+    # parser for every session (no jq branch): two plugins on one machine always read a root the same way.
+    oss_version "$(grep -oE '^ {0,2}"version"[[:space:]]*:[[:space:]]*"[^"]*"' "$1/.claude-plugin/plugin.json" 2>/dev/null | head -1 | cut -d'"' -f4)"
+}
+PLUGIN_VERSION=$(oss_plugin_version "$PLUGIN_ROOT")
+# The record is "<version>\n<plugin root that wrote it>". It counts only while that root still has that
+# version: an uninstalled or rolled-back plugin (or a planted record) is no record. A one-line record
+# (only the unreleased 2.0.95 wrote one) names no root, so it is no record too.
+oss_record_trusted() { # <version> <root>: <root> is the plugin the installed hooks came from (T31)
+    # A user-owned real directory and plugin.json, tested before any read (a FIFO is never opened: it
+    # would hang session start); then that root's version; then the hooks, cheapest checks first.
+    local v=$1 r=$2 n
+    [[ -d "$r" && ! -L "$r" && -O "$r" ]] || return 1
+    [[ -f "$r/.claude-plugin/plugin.json" && ! -L "$r/.claude-plugin/plugin.json" && -O "$r/.claude-plugin/plugin.json" ]] || return 1
+    [[ "$(oss_plugin_version "$r")" == "$v" ]] || return 1
+    # Every hook this plugin installs must be a regular non-symlink file in the root AND in ~/.oss/hooks,
+    # byte-identical (T36): one missing on either side means not trusted, since a root holding only some
+    # proves nothing about the rest. The first mismatch stops; cmp opens only regular files.
+    for n in "${HOOKS_TO_COPY[@]}"; do
+        [[ -f "$r/hooks/$n" && ! -L "$r/hooks/$n" && -f "$HOME/.oss/hooks/$n" && ! -L "$HOME/.oss/hooks/$n" ]] || return 1
+        cmp -s "$r/hooks/$n" "$HOME/.oss/hooks/$n" || return 1
+    done
+}
+OSS_RECORD="$HOME/.oss/hooks/.installed-version"
+INSTALLED_VERSION=""   # only a regular file is ever opened: a FIFO would block the read, a link points elsewhere
+if [[ -f "$OSS_RECORD" && ! -L "$OSS_RECORD" ]]; then
+    { IFS= read -r _rec_version; IFS= read -r _rec_root; } 2>/dev/null < "$OSS_RECORD"
+    _rec_version=$(oss_version "${_rec_version:-}")
+    # Only a record newer than this plugin (or any record, when this version is unreadable) can stop
+    # the copy, so only then is its root checked.
+    if [[ -n "$_rec_version" && -n "${_rec_root:-}" ]] &&
+        ! { [[ -n "$PLUGIN_VERSION" ]] && oss_version_ge "$PLUGIN_VERSION" "$_rec_version"; } &&
+        oss_record_trusted "$_rec_version" "$_rec_root"; then
+        INSTALLED_VERSION=$_rec_version
+    fi
+fi
 if [[ -z "$INSTALLED_VERSION" ]] || { [[ -n "$PLUGIN_VERSION" ]] && oss_version_ge "$PLUGIN_VERSION" "$INSTALLED_VERSION"; }; then
+    # Persist plugin root path for skills/commands that run outside hook context (they have no
+    # CLAUDE_PLUGIN_ROOT). Only with the hooks (T18): the shared hooks and the root they use are one plugin's.
+    echo "$PLUGIN_ROOT" > ~/.oss/plugin-root
+    chmod 600 ~/.oss/plugin-root
+    _copied=1
     for hook in "${HOOKS_TO_COPY[@]}"; do
         if [[ -f "$PLUGIN_ROOT/hooks/$hook" ]]; then
-            cp "$PLUGIN_ROOT/hooks/$hook" ~/.oss/hooks/
-            if [[ "$hook" == *.sh ]]; then chmod +x ~/.oss/hooks/$hook; fi   # data files (checksum manifest) stay non-executable
+            cp "$PLUGIN_ROOT/hooks/$hook" ~/.oss/hooks/ || _copied=0
+            if [[ "$hook" == *.sh ]]; then chmod +x ~/.oss/hooks/$hook || _copied=0; fi   # data files (checksum manifest) stay non-executable
         fi
     done
 
     # Also copy to legacy location for backwards compatibility
     if [[ -f "$PLUGIN_ROOT/hooks/oss-statusline.sh" ]]; then
-        cp "$PLUGIN_ROOT/hooks/oss-statusline.sh" ~/.oss/oss-statusline.sh
-        chmod +x ~/.oss/oss-statusline.sh
+        cp "$PLUGIN_ROOT/hooks/oss-statusline.sh" ~/.oss/oss-statusline.sh || _copied=0
+        chmod +x ~/.oss/oss-statusline.sh || _copied=0
     fi
-    if [[ -n "$PLUGIN_VERSION" ]]; then printf '%s\n' "$PLUGIN_VERSION" > ~/.oss/hooks/.installed-version; fi
+    # The record says who installed ALL of them: written only when every copy succeeded, by replacing
+    # the file (temp in the same dir + mv), so a reader never sees half a record and nothing at the
+    # record's path (a hard link, a symlink) is written through.
+    if [[ "$_copied" == 1 && -n "$PLUGIN_VERSION" ]]; then
+        _rec_tmp=$(mktemp "$HOME/.oss/hooks/.installed-version.XXXXXX" 2>/dev/null) &&
+            printf '%s\n%s\n' "$PLUGIN_VERSION" "$PLUGIN_ROOT" > "$_rec_tmp" &&
+            { [[ ! -L "$OSS_RECORD" && ! -d "$OSS_RECORD" ]] || rm -rf "$OSS_RECORD"; } &&   # mv would land inside a dir (or a link to one)
+            mv -f "$_rec_tmp" "$OSS_RECORD" ||
+            rm -f "$_rec_tmp" 2>/dev/null
+    fi
 fi
 
 # Write current project path EARLY for multi-project support
@@ -138,6 +191,10 @@ if [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]]; then
 fi
 
 # Check for API key configuration
+if ! declare -F oss_config_file >/dev/null; then
+    echo "OSS: install incomplete (oss-api-curl.sh missing) — reinstall the plugin."
+    exit 0
+fi
 CONFIG_FILE=$(oss_config_file 2>/dev/null)   # the same file oss_api_url reads: key and URL from one place
 if [[ ! -f "$CONFIG_FILE" ]]; then
     echo "OSS: Not logged in. Run /oss login to authenticate."
@@ -145,17 +202,21 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
 fi
 
 # Check if API key exists in config
-API_KEY=$(grep -o '"apiKey"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f4)
+oss_api_creds 2>/dev/null; API_KEY=$OSS_KEY   # key and URL from one read of one object (T30, T37)
 if [[ -z "$API_KEY" ]]; then
     echo "OSS: No API key found. Run /oss login to authenticate."
     exit 0
 fi
 
+# Plain http to a local API without the opt-in: oss_api_url gives no URL (rc 2), so the key goes nowhere;
+# say why instead of going quiet (T20, D7). The URL is not echoed: the user knows it, and it is never printed.
+[[ "$OSS_URL_RC" == 2 ]] && oss_loopback_refused
+
 # Quick subscription check (non-blocking, skipped in test environments)
 # Note: Full validation happens when skills are used
 if [[ "${OSS_SKIP_HEALTH_CHECK:-}" == "1" ]]; then
     SUBSCRIPTION_STATUS="active"
-elif API_URL=$(oss_api_url); then
+elif API_URL=$OSS_URL; [[ "$OSS_URL_RC" == 0 ]]; then
     SUBSCRIPTION_STATUS=$(oss_api_curl "$API_KEY" -s -m 2 \
         "${API_URL}/api/v1/subscription/status" 2>/dev/null | \
         grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || echo "unknown")
@@ -292,7 +353,9 @@ if [[ "${OSS_RUN_HEALTH_CHECK:-}" == "1" ]] && [[ -f "$HEALTH_CHECK_CLI" ]] && [
         # Use > to overwrite (not >>) so stale results don't persist
         LOG_DIR="$HOME/.oss/logs/current-session"
         mkdir -p "$LOG_DIR"
-        node "$HEALTH_CHECK_CLI" --verbose > "$LOG_DIR/health-check.log" 2>&1
+        # Bounded (T18): a hung check must not live on after the session. OSS_HEALTH_CHECK_TIMEOUT: seconds.
+        _hc_secs=900; [[ "${OSS_HEALTH_CHECK_TIMEOUT:-}" =~ ^[1-9][0-9]{0,5}$ ]] && _hc_secs=$OSS_HEALTH_CHECK_TIMEOUT
+        run_bounded "$_hc_secs" node "$HEALTH_CHECK_CLI" --verbose > "$LOG_DIR/health-check.log" 2>&1
         EXIT_CODE=$?
         # Append summary to the log (stdout is detached, D3)
         if [[ $EXIT_CODE -eq 0 ]]; then
@@ -307,6 +370,10 @@ fi
 
 # Restore previous session context if available (project-local first, for multi-project isolation)
 NOTIFY_SCRIPT="$PLUGIN_ROOT/hooks/oss-notify.sh"
+# The notify context is JSON built from a folder name and a saved branch (S6): jq builds it, so a " or a backslash
+# stays data. Without jq only values in a plain charset are interpolated; any other value: no notification.
+NOTIFY_CONTEXT=""
+oss_plain_values() { local re='^[A-Za-z0-9 ._/+@:-]*$' v; for v in "$@"; do [[ "$v" =~ $re ]] || return 1; done; }
 PROJECT_CONTEXT_FILE="$PROJECT_OSS_DIR/session-context.md"
 
 if [[ -f "$PROJECT_CONTEXT_FILE" ]]; then
@@ -348,7 +415,9 @@ if [[ -f "$PROJECT_CONTEXT_FILE" ]]; then
     fi
 
     # Count uncommitted changes from current git status
-    UNCOMMITTED_COUNT=$(git status -s 2>/dev/null | grep -c . || echo "0")
+    # One number: grep -c prints 0 AND exits 1 when nothing matches, so "|| echo 0" gave "0<newline>0"
+    UNCOMMITTED_COUNT=$(git status -s 2>/dev/null | grep -c . || true)
+    [[ "$UNCOMMITTED_COUNT" =~ ^[0-9]+$ ]] || UNCOMMITTED_COUNT=0
 
     echo ""
     echo "Previous session context restored."
@@ -357,13 +426,24 @@ if [[ -f "$PROJECT_CONTEXT_FILE" ]]; then
     # NOTE: Backgrounded to prevent blocking Claude Code startup
     # Skip in test mode to prevent background processes from blocking test runners
     if [[ -x "$NOTIFY_SCRIPT" ]] && [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]]; then
-        "$NOTIFY_SCRIPT" --session context_restored "{\"project\": \"$PROJECT_NAME\", \"branch\": \"${BRANCH:-unknown}\", \"saveDate\": \"${SAVE_DATE}\", \"uncommitted\": $UNCOMMITTED_COUNT}" </dev/null >/dev/null 2>&1 &
+        if command -v jq >/dev/null 2>&1; then
+            NOTIFY_CONTEXT=$(jq -cn --arg project "$PROJECT_NAME" --arg branch "${BRANCH:-unknown}" --arg saveDate "$SAVE_DATE" \
+                --argjson uncommitted "$UNCOMMITTED_COUNT" '{project: $project, branch: $branch, saveDate: $saveDate, uncommitted: $uncommitted}' 2>/dev/null || true)
+        elif oss_plain_values "$PROJECT_NAME" "${BRANCH:-unknown}" "$SAVE_DATE"; then
+            NOTIFY_CONTEXT="{\"project\": \"$PROJECT_NAME\", \"branch\": \"${BRANCH:-unknown}\", \"saveDate\": \"${SAVE_DATE}\", \"uncommitted\": $UNCOMMITTED_COUNT}"
+        fi
+        if [[ -n "$NOTIFY_CONTEXT" ]]; then "$NOTIFY_SCRIPT" --session context_restored "$NOTIFY_CONTEXT" </dev/null >/dev/null 2>&1 & fi
     fi
 else
     # No saved context - fresh start notification (via unified oss-notify.sh)
     # NOTE: Backgrounded to prevent blocking Claude Code startup
     if [[ -x "$NOTIFY_SCRIPT" ]] && [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]]; then
-        "$NOTIFY_SCRIPT" --session fresh_start "{\"project\": \"$PROJECT_NAME\"}" </dev/null >/dev/null 2>&1 &
+        if command -v jq >/dev/null 2>&1; then
+            NOTIFY_CONTEXT=$(jq -cn --arg project "$PROJECT_NAME" '{project: $project}' 2>/dev/null || true)
+        elif oss_plain_values "$PROJECT_NAME"; then
+            NOTIFY_CONTEXT="{\"project\": \"$PROJECT_NAME\"}"
+        fi
+        if [[ -n "$NOTIFY_CONTEXT" ]]; then "$NOTIFY_SCRIPT" --session fresh_start "$NOTIFY_CONTEXT" </dev/null >/dev/null 2>&1 & fi
     fi
 fi
 

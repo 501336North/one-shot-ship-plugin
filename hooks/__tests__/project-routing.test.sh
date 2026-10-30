@@ -28,6 +28,9 @@ T=$(cd "$(mktemp -d /tmp/oss-routing.XXXXXX)" && pwd -P)
 trap 'rm -rf "$T"' EXIT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
+# The hooks read the API key and URL from $OSS_CONFIG_DIR/config.json: a developer's exported
+# override must not lead them to the real key and the real API (T19).
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL
 
 N=0
 # world: H = sandbox HOME; A, B = real repos with a real .oss; current-project = B.

@@ -31,6 +31,9 @@ T=$(cd "$(mktemp -d /tmp/oss-wrun.XXXXXX)" && pwd -P)
 trap 'rm -rf "$T"' EXIT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+# The hooks read and /oss:login writes $OSS_CONFIG_DIR/config.json: a developer's exported override must
+# not lead them to the real key, or let the login block overwrite it with a test key (T22).
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL
 
 # fence_with <file> <literal>: the body of the first fenced block in commands/<file> holding <literal>,
 # less the indent of its opening fence (a block inside a list item)

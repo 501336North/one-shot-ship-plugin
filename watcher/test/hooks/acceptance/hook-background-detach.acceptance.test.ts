@@ -238,7 +238,8 @@ describe('Acceptance: a hook never keeps Claude Code waiting on its background w
     'workflow start: output closes while the analytics request is still in flight',
     async () => {
       // Given the analytics API is slow: the request is held open until we release it
-      const env = hermeticEnv(notifyPluginRoot, { CURL_STUB_HOLD: '1' });
+      // (the sandbox apiUrl is http://127.0.0.1:9: plain http to a loopback API needs the opt-in, T20)
+      const env = hermeticEnv(notifyPluginRoot, { CURL_STUB_HOLD: '1', OSS_ALLOW_HTTP_LOOPBACK: '1' });
 
       // When a workflow starts
       const run = startHook(path.join(notifyPluginRoot, 'hooks/oss-notify.sh'), ['--workflow', 'build', 'start', '{}'], env);

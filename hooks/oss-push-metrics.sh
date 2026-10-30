@@ -43,20 +43,15 @@ log_message() {
     echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
 }
 
-# Helper: Get API key from config
+# Helper: read the API key (and the URL it may go to) from config
+# Sets OSS_KEY, OSS_URL and OSS_URL_RC from one read (oss_api_creds, T37): push_metrics sends OSS_KEY only to
+# OSS_URL. Call it directly, not in $(...).
 get_api_key() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
         return 1
     fi
-
-    local api_key
-    api_key=$(grep -o '"apiKey"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" 2>/dev/null | sed 's/.*: *"\([^"]*\)"/\1/')
-
-    if [[ -z "$api_key" ]]; then
-        return 1
-    fi
-
-    echo "$api_key"
+    oss_api_creds || true
+    [[ -n "$OSS_KEY" ]]
 }
 
 # Helper: Enhance metrics with timestamp and metadata
@@ -87,7 +82,7 @@ push_metrics() {
     local http_code
 
     # The key goes only to the API configured beside it
-    API_URL=$(oss_api_url) || {
+    API_URL=$OSS_URL; [[ $OSS_URL_RC == 0 ]] || {
         log_message "WARN" "apiUrl in $CONFIG_FILE refused (https only, plain http only for localhost) - not sending"
         return 1
     }
@@ -173,10 +168,11 @@ clean_old_pending() {
 
 # Handle --retry flag
 if [[ "${1:-}" == "--retry" ]]; then
-    API_KEY=$(get_api_key) || {
+    get_api_key || {
         echo "No API key configured. Run /oss:login first."
         exit 0
     }
+    API_KEY=$OSS_KEY
     retry_pending "$API_KEY"
     exit 0
 fi
@@ -203,10 +199,11 @@ if [[ "$METRICS_JSON" != "{"* ]]; then
 fi
 
 # Get API key (skip silently if not configured - user not logged in)
-API_KEY=$(get_api_key) || {
+get_api_key || {
     log_message "DEBUG" "No API key - user not logged in, skipping"
     exit 0
 }
+API_KEY=$OSS_KEY
 
 # Enhance metrics with timestamp and metadata
 ENHANCED_METRICS=$(enhance_metrics "$METRICS_JSON")

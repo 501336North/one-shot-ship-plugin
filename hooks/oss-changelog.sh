@@ -12,7 +12,8 @@
 
 set -uo pipefail
 
-# Paths
+# Paths. `--` before the state file in every jq call: a relative OSS_CONFIG_DIR such as "-cfg" is a path, never
+# options (T47).
 CONFIG_DIR="${OSS_CONFIG_DIR:-$HOME/.oss}"
 STATE_FILE="$CONFIG_DIR/update-state.json"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,7 +30,7 @@ cached_version=""
 has_state=false
 if [[ -f "$STATE_FILE" ]] && command -v jq &>/dev/null; then
     has_state=true
-    cached_version=$(jq -r '.lastPluginVersion // ""' "$STATE_FILE" 2>/dev/null)
+    cached_version=$(jq -r '.lastPluginVersion // ""' -- "$STATE_FILE" 2>/dev/null)
 fi
 
 # Header
@@ -62,7 +63,7 @@ if [[ "$skip_manifest" != "1" ]]; then
     fi
 
     if [[ -n "$manifest_json" && "$has_state" == true ]] && command -v jq &>/dev/null; then
-        cached_hashes=$(jq -r '.manifestHashes // {}' "$STATE_FILE" 2>/dev/null)
+        cached_hashes=$(jq -r '.manifestHashes // {}' -- "$STATE_FILE" 2>/dev/null)
         changed_prompts=()
         new_prompts=()
 
@@ -105,7 +106,7 @@ fi
 
 # Footer
 if [[ "$has_state" == true ]]; then
-    last_checked=$(jq -r '.lastCheckedAt // "unknown"' "$STATE_FILE" 2>/dev/null)
+    last_checked=$(jq -r '.lastCheckedAt // "unknown"' -- "$STATE_FILE" 2>/dev/null)
     echo "Last checked: $last_checked"
 fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

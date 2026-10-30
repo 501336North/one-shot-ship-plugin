@@ -20,6 +20,8 @@
  *   sources, plus a dummy watcher/dist/cli/health-check.js so the hook finds the CLI.
  * - stubs are created and executed once in beforeAll (writeWarmStub), never inside a test.
  * - time limits are only hang backstops; hitting one is a failure with a message.
+ * - the time-bound case sets OSS_HEALTH_CHECK_TIMEOUT=1 and never releases the stub: only the bound can
+ *   end it (the stub's own 30 s backstop exits 0, which would log "passed", not the error).
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
@@ -133,7 +135,7 @@ function readIfExists(file: string): string {
   return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
 }
 
-function startSession(healthExit: number): HookRun {
+function startSession(healthExit: number, extraEnv: Record<string, string> = {}): HookRun {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (key.startsWith('CLAUDE_') || key.startsWith('OSS_') || key.startsWith('CURL')) continue;
@@ -147,6 +149,7 @@ function startSession(healthExit: number): HookRun {
     OSS_SKIP_HEALTH_CHECK: '1',
     STUB_STATE: stateDir,
     STUB_HEALTH_EXIT: String(healthExit),
+    ...extraEnv,
   });
   const child = spawn('bash', [path.join(pluginRoot, 'hooks/oss-session-start.sh')], {
     cwd: projectDir,
@@ -183,6 +186,25 @@ describe('oss-session-start.sh: opt-in health check', () => {
         `oss-session-start.sh kept its stdout/stderr open while the opt-in health check was running ` +
           `(not closed ${CLOSE_BACKSTOP_MS / 1000} s after the launch; Claude Code would still be waiting)`,
       ).toBe(true);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'should end a health check that outlives its time bound and log the error',
+    async () => {
+      const run = startSession(0, { OSS_HEALTH_CHECK_TIMEOUT: '1' });
+      const healthLog = path.join(homeDir, '.oss/logs/current-session/health-check.log');
+
+      const launched = await fileAppears(path.join(stateDir, 'health-received'));
+      expect(launched, `session start never launched the health check; output:\n${run.output()}`).toBe(true);
+
+      expect(
+        await fileContains(healthLog, 'Health check error'),
+        `a hung health check was never ended (no error summary while the stub was held); log:\n` +
+          `${readIfExists(healthLog)}\nhook output:\n${run.output()}`,
+      ).toBe(true);
+      expect(readIfExists(healthLog)).not.toContain('Health check passed');
     },
     TEST_TIMEOUT_MS,
   );

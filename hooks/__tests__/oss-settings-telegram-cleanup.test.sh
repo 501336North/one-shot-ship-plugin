@@ -13,8 +13,13 @@
 # (Linux behaviour: there `stat -f` means --file-system, not BSD's format flag). On macOS the GNU pass
 # needs `gstat` (coreutils); without it the pass is reported SKIPPED, never counted as passed.
 set -uo pipefail
+# T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CLEANUP="$ROOT/hooks/oss-settings-cleanup.sh"
+source "$ROOT/hooks/__tests__/lib/session-start-alias.sh"
+SS_DIR=$(mktemp -d); trap 'rm -rf "$SS_DIR"' EXIT
+SS_HOOK=$(session_start_alias "$ROOT/hooks" "$SS_DIR/hooks") || { echo "✗ FAIL: session start alias"; exit 1; }
 RUN=0; FAILED=0
 GNU_PASS="${OSS_GNU_STAT_PASS:-}"
 pass() { echo "✓ PASS: $1"; ((RUN++)); }
@@ -100,7 +105,7 @@ rm -rf "$T"
 
 # 9. Session start runs the cleanup (the token is gone after a real session start)
 new_home; printf '%s\n' "$WITH_TELEGRAM" > "$S"; chmod 600 "$S"
-HOME="$T" CLAUDE_PLUGIN_ROOT="$ROOT" OSS_SKIP_HEALTH_CHECK=1 bash "$ROOT/hooks/oss-session-start.sh" >/dev/null 2>&1 </dev/null
+HOME="$T" CLAUDE_PLUGIN_ROOT="$ROOT" OSS_SKIP_HEALTH_CHECK=1 bash "$SS_HOOK" >/dev/null 2>&1 </dev/null
 if [[ "$(jq -S . "$S" 2>/dev/null)" == "$(printf '%s' "$EXPECTED" | jq -S .)" ]]; then pass "oss-session-start.sh removes the telegram keys"
 else fail "oss-session-start.sh removes the telegram keys" "$(jq -c . "$S" 2>&1)"; fi
 rm -rf "$T"

@@ -22,6 +22,8 @@
 #           `~/.oss/hooks/oss-value.sh <verb>` (no $(...) && chain), so it runs without a prompt.
 
 set -uo pipefail
+# T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 C="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TESTS_RUN=0; TESTS_FAILED=0
 pass() { echo "✓ PASS: $1"; TESTS_RUN=$((TESTS_RUN + 1)); }
@@ -82,7 +84,9 @@ done
 
 # R3-7: request shapes are ```http
 cnt() { grep -c '^```http' "$C/$1" | tr -d ' '; }
-check "login.md has its request shape as an http fence" test "$(cnt login.md)" -ge 1
+# T33: login.md has no request of its own left; the template comes through oss-claude-md-template.sh
+# (login-config-dir.test.sh checks no step sends a request or the key itself)
+check "login.md shows no request shape (every login request goes through a hook)" test "$(cnt login.md)" -eq 0
 check "status.md has its request shape as an http fence" test "$(cnt status.md)" -ge 1
 check "workflows.md has both request shapes as http fences" test "$(cnt workflows.md)" -ge 2
 

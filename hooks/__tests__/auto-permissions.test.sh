@@ -1,6 +1,8 @@
 #!/bin/bash
 # Test: oss-setup-permissions.sh creates .claude/settings.local.json
 set -euo pipefail
+# T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SETUP_SCRIPT="$SCRIPT_DIR/oss-setup-permissions.sh"

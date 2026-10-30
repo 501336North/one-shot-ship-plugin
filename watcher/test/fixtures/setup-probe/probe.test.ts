@@ -24,6 +24,9 @@ it('reports the environment a test sees', () => {
         HOME: process.env.HOME ?? null,
         CLAUDE_CODE_SESSION_ID: process.env.CLAUDE_CODE_SESSION_ID ?? null,
         CLAUDE_PROJECT_DIR: process.env.CLAUDE_PROJECT_DIR ?? null,
+        OSS_CONFIG_DIR: process.env.OSS_CONFIG_DIR ?? null,
+        CLAUDE_PLUGIN_ROOT: process.env.CLAUDE_PLUGIN_ROOT ?? null,
+        OSS_MANIFEST_URL: process.env.OSS_MANIFEST_URL ?? null,
         ossDir: ossDirReport(path.join(os.homedir(), '.oss')),
       })
     );
