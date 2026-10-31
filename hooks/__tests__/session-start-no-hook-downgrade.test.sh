@@ -26,6 +26,7 @@ set -uo pipefail
 # T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
 unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/run-capped.sh"   # the one time cap a test may use (T49)
 SESSION_START="${HOOKS_UNDER_TEST:-$SCRIPT_DIR/..}/oss-session-start.sh"
 RUN=0; FAILED=0
 pass() { echo "✓ PASS: $1"; RUN=$((RUN+1)); }
@@ -67,9 +68,9 @@ seed() { # seed <version|""> [<root>] [<hooks from>] : a home whose hooks were i
 }
 snapshot() { (cd "$T/home/.oss" && for f in hooks/* hooks/.installed-version oss-statusline.sh plugin-root; do [[ -f "$f" ]] && cksum "$f"; done) }
 run_from() { # run_from <root> : session start, sandbox HOME, no config (no key, no network); 3>&1 waits for detached jobs
-    out=$(cd "$T" && env -u CLAUDE_PROJECT_DIR -u OSS_CONFIG_DIR -u OSS_MANIFEST_URL -u OSS_ALLOW_HTTP_LOOPBACK -u CLAUDE_CODE_SESSION_ID \
+    out=$(cd "$T" && run_capped 30 env -u CLAUDE_PROJECT_DIR -u OSS_CONFIG_DIR -u OSS_MANIFEST_URL -u OSS_ALLOW_HTTP_LOOPBACK -u CLAUDE_CODE_SESSION_ID \
         HOME="$T/home" CLAUDE_PLUGIN_ROOT="$KS/$1" OSS_SKIP_HEALTH_CHECK=1 \
-        perl -e 'alarm 30; exec @ARGV' /bin/bash "$SS_HOOK" </dev/null 2>&1 3>&1)
+        /bin/bash "$SS_HOOK" </dev/null 2>&1 3>&1)
 }
 # Only a regular file is read: the FIFO case would block a failure message forever.
 record() { [[ -f "$T/home/.oss/hooks/.installed-version" ]] && cat "$T/home/.oss/hooks/.installed-version" 2>/dev/null; }

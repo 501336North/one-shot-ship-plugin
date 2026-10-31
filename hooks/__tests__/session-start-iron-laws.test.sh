@@ -15,6 +15,7 @@ set -uo pipefail
 unset OSS_CONFIG_DIR OSS_MANIFEST_URL
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/run-capped.sh"   # the one time cap a test may use (T49)
 # HOOKS_UNDER_TEST=/path/to/hooks-copy runs these tests against a copy (mutants).
 SESSION_START_SCRIPT="${HOOKS_UNDER_TEST:-$SCRIPT_DIR/..}/oss-session-start.sh"
 
@@ -80,7 +81,7 @@ ss_setup() {
 ss_run() { # runs the real session start (health checks ON, so the sync path is live)
     (cd "$T/proj" && SS_T="$T" HOME="$T/home" CLAUDE_PLUGIN_ROOT="$T/root" CLAUDE_PROJECT_DIR="$T/proj" \
         OSS_SKIP_HEALTH_CHECK= OSS_TEST_CC_VERSION=2.1.99 PATH="$T/bin:$PATH" \
-        perl -e 'alarm 30; exec @ARGV' bash "$SS_HOOK" </dev/null 2>&1)
+        run_capped 30 bash "$SS_HOOK" </dev/null 2>&1)
 }
 ss_teardown() {
     local pid; pid=$(cut -d'|' -f1 "$T/sync-started" 2>/dev/null)

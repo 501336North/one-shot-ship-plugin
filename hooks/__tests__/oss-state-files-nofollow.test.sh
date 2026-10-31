@@ -25,6 +25,7 @@ HOOKS="${HOOKS_UNDER_TEST:-$SCRIPT_DIR/..}"
 TEAM="$HOOKS/oss-fetch-team-iron-laws.sh"
 SYNC="$HOOKS/oss-iron-laws-sync.sh"
 source "$SCRIPT_DIR/lib/warm-stub.sh"
+source "$SCRIPT_DIR/lib/run-capped.sh"   # the one time cap a test may use (T49)
 RUN=0; FAILED=0
 pass() { echo "✓ PASS: $1"; RUN=$((RUN + 1)); }
 fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
@@ -67,14 +68,12 @@ victim() { # victim <content>: $C/outside/victim holds <content>, 2 h old; VICTI
 }
 victim_same() { [[ "$(cat "$C/outside/victim")" == "$VICTIM_BODY" && "$(mtime_of "$C/outside/victim")" == "$VICTIM_MTIME" ]]; }
 regular() { [[ -f "$1" && ! -L "$1" ]]; }
-run_hook() { # run_hook <hook> [args]: sandbox HOME, project $C/proj, the stub curl. Its own process group, killed
-    # whole after 20 s (exit 124), so a hook stuck on a FIFO, and the cat it started, never hang the suite.
+run_hook() { # run_hook <hook> [args]: sandbox HOME, project $C/proj, the stub curl. Through run_capped: its own
+    # process group, killed whole after 20 s, so a hook stuck on a FIFO, and the cat it started, never hang the suite.
     local hook="$1"; shift
     RC=0
     OUT=$(cd "$C/proj" && SHIM="$C" OSS_ALLOW_HTTP_LOOPBACK=1 HOME="$C/home" CLAUDE_PROJECT_DIR="$C/proj" PATH="$KS/bin:$PATH" \
-        perl -e 'my $p = fork; if (!$p) { setpgrp(0, 0); exec @ARGV; exit 127 }
-                 $SIG{ALRM} = sub { kill "KILL", -$p }; alarm 20; waitpid($p, 0); exit($? & 127 ? 124 : $? >> 8)' \
-        /bin/bash "$hook" "$@" </dev/null 2>&1) || RC=$?
+        run_capped 20 /bin/bash "$hook" "$@" </dev/null 2>&1) || RC=$?
     CALLS=0; [[ -f "$C/argv" ]] && CALLS=$(wc -l < "$C/argv" | tr -d ' ')
 }
 fifo_at() { # fifo_at <path> <r|w>: <path> is a FIFO; r = a writer waits on it (catches a read), w = a reader (catches a write)

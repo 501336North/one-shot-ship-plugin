@@ -57,6 +57,13 @@
 - [x] T45: one stripping set at all three sites (completed 2026-10-30, security-auditor: shared `OSS_JQ_INVISIBLE` def in oss-api-curl.sh used by oss_json_field and the template; stripControl gets `\p{Cf}` + U+2028/2029 (`u` flag); RED template 22/23, cli-decrypt 2/7 → 23/23, 7/7; new full-code-point parity test bash ↔ TS (236 code points stripped by both); 9 mutants killed. SHIPPED BINARY NOT UPDATED: users run the released oss-decrypt (cli-decrypt-v1.2.4); the tracked dist bundle is stale and no test checks bundle vs source → needs a cli-decrypt release, user decision)
 - [x] T46: oss_json_field object-type check guarded or removed (completed 2026-10-30, security-auditor: removed in REFACTOR as redundant (stdout identical over the corpus, only the unread exit status differed); D9; tests green before and after)
 - [x] T47: check-updates, changelog, worktree-create take `--` on config paths (completed 2026-10-30, security-auditor: new oss-config-dash-hooks.test.sh, native + GNU pass, empty-stderr asserts; RED 1/11 → 11/11; real bug: without `--` check-updates read a dash-named state as missing and overwrote it; 15 mutants killed, the 4 chmod ones only in the GNU pass)
+- [x] T49: no test can leave orphan processes (completed 2026-10-31, test-engineer, test-only. Requested by the user: "we need to make sure not to do this again".
+  - New `hooks/__tests__/lib/run-capped.sh`: perl fork + setpgrp; KILL to the whole group on the cap (rc 124); after every run it checks the group and kills survivors (rc 125). No timeout, gtimeout, setsid or pkill.
+  - Self-test run-capped.test.sh: RED (missing) → 21/21. Covers /dev/zero, a TERM-ignoring child and background grandchildren. 4 mutants killed. The m4 settle-wait code was written before its test; the missing case was added after the mutant survived.
+  - Guard no-hand-capped-tests.test.sh: RED named 13 files → 19/19. Its allowlist is file + exact line, and stale entries fail. 4 mutants killed.
+  - 13 files routed through run_capped, assertions unchanged.
+  - Correction to the plan's list: config-change-guard has no cap (it only matched on "false alarms"), and oss-decision-record was missing. Its timeout/gtimeout cap on /dev/zero ran an empty command on stock macOS.
+  - Unguarded: a leak is killed, but it fails the test only where the call's status is checked; a hook that leaves its process group; background helpers that tests start without the cap.)
 
 ### Open after T45/T47 (not started; need a decision)
 - cli-decrypt release so users get T45's stripControl (version bump, tag, OSS_DECRYPT_TAG, MINIMUM_VERSION, checksums, rebuilt dist) and a test that the tracked bundle matches the source. Outward-facing: user decision.
@@ -75,4 +82,4 @@ The earlier round's banner landed in another worktree's build.log because ~/.oss
 ## Blockers
 - None
 
-## Last Updated: 2026-10-30 21:50 CST by /oss:build (round 3 fix round complete: T34–T48 done and checked by the orchestrator; code-simplifier changed comments only; watcher 268/268, 3606; shell 80/84, the 4 failing all known; committed on this branch, not pushed; next: narrow re-check by pen-tester + security-auditor + code-reviewer in /oss:ship)
+## Last Updated: 2026-10-31 12:20 CST by /oss:build (T49 done: no test can leave orphan processes; committed on this branch, not pushed)

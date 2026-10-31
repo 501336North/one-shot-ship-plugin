@@ -19,6 +19,7 @@
 #        HOOKS_UNDER_TEST=/path/to/hooks-copy /bin/bash hooks/__tests__/oss-config-dash-hooks.test.sh  (mutants)
 set -uo pipefail
 HOOKS="${HOOKS_UNDER_TEST:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/run-capped.sh"   # the one time cap a test may use (T49)
 RUN=0; FAILED=0
 pass() { echo "✓ PASS: $1"; RUN=$((RUN + 1)); }
 fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
@@ -42,9 +43,9 @@ GNU=""   # a dir of GNU coreutils shims, first on PATH for the second pass
 # run_hook HOOK [VAR=value...]: runs HOOK from the cwd $W with OSS_CONFIG_DIR=-cfg; sets OUT, ERR, RC.
 run_hook() {
     local hook=$1; shift
-    OUT=$(cd "$W" && env -u CLAUDE_PLUGIN_ROOT -u CLAUDE_PROJECT_DIR GIT_CEILING_DIRECTORIES="$T/w" HOME="$H" \
+    OUT=$(cd "$W" && run_capped 20 env -u CLAUDE_PLUGIN_ROOT -u CLAUDE_PROJECT_DIR GIT_CEILING_DIRECTORIES="$T/w" HOME="$H" \
         PATH="${GNU:+$GNU:}$PATH" OSS_CONFIG_DIR=-cfg OSS_PLUGIN_JSON="$T/plugin.json" \
-        OSS_MANIFEST_URL=http://127.0.0.1:9/never "$@" perl -e 'alarm 20; exec @ARGV' /bin/bash "$HOOKS/$hook" \
+        OSS_MANIFEST_URL=http://127.0.0.1:9/never "$@" /bin/bash "$HOOKS/$hook" \
         2>"$T/err" </dev/null); RC=$?
     ERR=$(tr '\n' ' ' < "$T/err")
 }

@@ -15,6 +15,7 @@ set -uo pipefail
 # T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
 unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/run-capped.sh"   # the one time cap a test may use (T49)
 HOOKS="${HOOKS_UNDER_TEST:-$SCRIPT_DIR/..}"
 source "$SCRIPT_DIR/lib/warm-stub.sh"
 source "$SCRIPT_DIR/lib/session-start-alias.sh"
@@ -63,9 +64,9 @@ start() {
         printf '# Session Context\n\n**Branch:** %s\n\n_Saved: 2026-01-01 10:00:00_\n' "$2" > "$P/.oss/session-context.md"
     fi
     local path="$KS/bin:$PATH"; [[ $3 == nojq ]] && path="$KS/bin:$NOJQ"
-    out=$(cd "$P" && env -u OSS_SKIP_HEALTH_CHECK -u OSS_CONFIG_DIR -u CLAUDE_CODE_SESSION_ID -u OSS_RUN_HEALTH_CHECK \
+    out=$(cd "$P" && run_capped 60 env -u OSS_SKIP_HEALTH_CHECK -u OSS_CONFIG_DIR -u CLAUDE_CODE_SESSION_ID -u OSS_RUN_HEALTH_CHECK \
         HOME="$T/home" CLAUDE_PLUGIN_ROOT="$KS/plugin" CLAUDE_PROJECT_DIR="$P" STUB_STATE="$T/state" PATH="$path" \
-        perl -e 'alarm 60; exec @ARGV' /bin/bash "$SS_HOOK" </dev/null 2>&1 3>&1)
+        /bin/bash "$SS_HOOK" </dev/null 2>&1 3>&1)
 }
 payload() { cat "$T/state/payload.$1" 2>/dev/null; }
 

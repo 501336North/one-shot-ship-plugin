@@ -14,6 +14,7 @@ set -uo pipefail
 # T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
 unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/run-capped.sh"   # the one time cap a test may use (T49)
 HOOKS="${HOOKS_UNDER_TEST:-$SCRIPT_DIR/..}"
 RUN=0; FAILED=0
 pass() { echo "✓ PASS: $1"; RUN=$((RUN + 1)); }
@@ -49,7 +50,7 @@ helper() {
     printf '%s' "$VALID" > "$W/$2/config.json"
     RC=0
     OUT=$(cd "$W" && HOME="$W/home" OSS_CONFIG_DIR="$2" PATH="$(mode_path "$1")" \
-        perl -e 'alarm 20; exec @ARGV' /bin/bash -c 'source "$1"; '"$3" _ "$HOOKS/oss-api-curl.sh" </dev/null 2>/dev/null) || RC=$?
+        run_capped 20 /bin/bash -c 'source "$1"; '"$3" _ "$HOOKS/oss-api-curl.sh" </dev/null 2>/dev/null) || RC=$?
 }
 
 for MODE in jq nojq; do

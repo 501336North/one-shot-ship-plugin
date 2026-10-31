@@ -494,3 +494,16 @@ closed, 1 equivalent), T48 via the outside-kill guard (RED 6/14).
   test checks bundle against source.
 
 ## Last Updated: 2026-10-30 21:50 CST by /oss:build (ship round 3 fix round T34–T48)
+
+## T49: no test can leave orphan processes (2026-10-31 12:20 CST)
+- run-capped.test.sh 21/21 (endless /dev/zero, a TERM-ignoring child, background grandchildren, normal exit). 4 mutants
+  killed. no-hand-capped-tests.test.sh 19/19 (RED named 13 files); 4 mutants killed. 13 files routed through run_capped.
+- Final shell run: 84/86 files, run one at a time with /bin/bash. The 2 failing (ideate-template, no-telegram-command) also
+  fail at 0fcb96f. No orphans.
+- Final watcher run: 3599 passed, 7 "skipped", all in oss-session-start-subscription-url.test.ts. Cause: another session's
+  vitest in one-shot-ship-plugin-decisions was running at the same time. That checkout's setup.ts still runs
+  `pkill -f "oss-session-start"` machine-wide, which matches the vitest process for this file (its argv carries the file
+  name). Run alone 3 times: 2 runs killed with SIGTERM (rc 143), 1 run not interrupted, 8/8. Not a defect here; the hazard
+  disappears once 225b685 is on main and the other worktrees rebase. The other session was told.
+
+## Last Updated: 2026-10-31 12:20 CST by /oss:build (T49)

@@ -18,6 +18,7 @@ set -uo pipefail
 unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HOOK="$ROOT/hooks/oss-decision-record.sh"
+source "$ROOT/hooks/__tests__/lib/run-capped.sh"   # the one time cap a test may use (T49)
 FIX="$ROOT/hooks/__tests__/fixtures/ask-user-question"
 RUN=0; FAILED=0
 pass() { echo "✓ PASS: $1"; RUN=$((RUN + 1)); }
@@ -460,7 +461,7 @@ for target in /dev/zero outside; do
     rm -f "$Q/.oss/workflow-state.json"
     if [[ $target == outside ]]; then O=$(mktemp -d "$T/outside.XXXXXX"); printf '{"currentCommand":"ship"}\n' > "$O/ws.json"; target="$O/ws.json"; fi
     ln -s "$target" "$Q/.oss/workflow-state.json"
-    (cd "$Q" && CLAUDE_PROJECT_DIR="$Q" "$(command -v timeout || command -v gtimeout)" 20 "$HOOK" < "$FIX/pick.json" 2>"$T/err"); RC=$?
+    (cd "$Q" && CLAUDE_PROJECT_DIR="$Q" run_capped 20 "$HOOK" < "$FIX/pick.json" 2>"$T/err"); RC=$?
     got=$(jq -c '[.command, .kind]' "$R" 2>/dev/null)
     [[ $RC -eq 0 && "$got" == '["","design"]' ]] && pass "$name (${target##*/})" || fail "$name (${target##*/})" "rc=$RC [command,kind]=$got"
 done

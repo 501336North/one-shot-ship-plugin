@@ -514,6 +514,22 @@ The same class as T39 and T44, still unguarded: `hooks/check-updates.sh` (jq at 
 `hooks/oss-worktree-create.sh:28-29` (`cp`, which fails closed). A dash-named config dir breaks them. RED first, with
 the GNU-coreutils second pass from oss-login-dash-path.test.sh (chmod `--` is only observable under GNU getopt).
 
+### Task 49: no test can leave orphan processes (the likely cause of the 2026-10-30 Mac crash)
+A `perl -e 'alarm N; exec @ARGV'` cap kills the hook's shell but not its children. In oss-config-read-safety a
+`jq -s` child kept reading /dev/zero after the cap, growing without bound, and a dozen of them piled up. Two files
+were fixed in place. 11 still use the shell-only cap; 3 of them also feed endless input or FIFOs
+(iron-laws-sync-safety, session-start-no-hook-downgrade, oss-login-dash-path). The other 8 are config-change-guard,
+oss-api-curl, oss-config-dash-hooks, oss-config-dash-path, oss-config-one-object, oss-config-one-read,
+session-start-iron-laws and session-start-notify-payload.
+1. One helper, `hooks/__tests__/lib/run-capped.sh`. It runs the command in its own process group. On the cap it kills
+   the whole group. After every run it checks that no member of the group survived; if one did, it kills it and the
+   test fails.
+2. Route all 13 capped files through it, including the 2 with a hand-made group kill, so there is one implementation.
+3. A guard test: any test file that writes its own `alarm`, `timeout` or `gtimeout` cap around a hook fails (RED: it
+   names the 13 files).
+4. A test of the helper itself: endless input plus a child that ignores SIGTERM; nothing outlives the cap; a mutant
+   that drops the group kill is caught.
+
 Deferred to FOLLOWUPS (not blocking): jq/node parity on BOM, NaN and deep nesting (fail closed both ways); teamId
 non-string disables the team fetch (CR r3 #2); "No API key found" shown for an invalid config (CR r3 #4); login.md:249
 path text; login.md Step 3 CREDS fallback when the helper is missing (pen-test r3 #7); TOCTOU windows in oss_is_regular

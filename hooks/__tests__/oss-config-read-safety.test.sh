@@ -19,6 +19,7 @@ unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOKS="${HOOKS_UNDER_TEST:-$SCRIPT_DIR/..}"
 source "$SCRIPT_DIR/lib/warm-stub.sh"
+source "$SCRIPT_DIR/lib/run-capped.sh"   # the one time cap a test may use (T49)
 RUN=0; FAILED=0
 pass() { echo "✓ PASS: $1"; RUN=$((RUN + 1)); }
 fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
@@ -77,16 +78,11 @@ check_opened() {
     WRITER=""
 }
 
-# The alarm only stops a run that hangs (a reader stuck on /dev/zero); every assertion is on output and status,
-# and a run the alarm stops has status 142, never the 1 a refusal gives. The run gets its own process group and
-# the alarm kills that whole group: killing only the hook's shell left its jq/node child reading /dev/zero
-# forever (orphans that grew without bound across runs).
-capped() {
-    perl -e '$p = fork; die unless defined $p;
-        if (!$p) { setpgrp(0, 0); exec @ARGV or exit 127 }
-        $SIG{ALRM} = sub { kill "KILL", -$p; waitpid($p, 0); exit 142 }; alarm 20;
-        waitpid($p, 0); exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$@"
-}
+# The cap only stops a run that hangs (a reader stuck on /dev/zero); every assertion is on output and status,
+# and a run the cap stops has status RUN_CAPPED_CAP_RC (124), never the 1 a refusal gives. run_capped kills the
+# run's whole process group: killing only the hook's shell left its jq/node child reading /dev/zero forever
+# (orphans that grew without bound across runs).
+capped() { run_capped 20 "$@"; }
 
 # helper <mode> <kind> <function> : runs the function from oss-api-curl.sh; sets OUT, RC and OPENED.
 helper() {

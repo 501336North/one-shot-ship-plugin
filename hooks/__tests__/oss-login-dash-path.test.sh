@@ -17,6 +17,7 @@
 #        HOOKS_UNDER_TEST=/path/to/hooks-copy /bin/bash hooks/__tests__/oss-login-dash-path.test.sh  (mutants)
 set -uo pipefail
 HOOKS="${HOOKS_UNDER_TEST:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/run-capped.sh"   # the one time cap a test may use (T49)
 RUN=0; FAILED=0
 pass() { echo "✓ PASS: $1"; RUN=$((RUN + 1)); }
 fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
@@ -40,13 +41,14 @@ KEY="ossk_Dash-Key_$RND"
 C="$W/-cfg/config.json"
 
 GNU=""   # a dir of GNU coreutils shims, put after the stubs on PATH for the second pass
-in_sandbox() { (cd "$W" && env -u CLAUDE_PLUGIN_ROOT -u CLAUDE_PROJECT_DIR GIT_CEILING_DIRECTORIES="$T/w" HOME="$H" PATH="$T/bin${GNU:+:$GNU}:$PATH" "$@"); }
+# in_sandbox cmd... ; with SANDBOX_CAP=N set, the run goes through run_capped N (its own process group, killed whole).
+in_sandbox() { (cd "$W" && ${SANDBOX_CAP:+run_capped "$SANDBOX_CAP"} env -u CLAUDE_PLUGIN_ROOT -u CLAUDE_PROJECT_DIR GIT_CEILING_DIRECTORIES="$T/w" HOME="$H" PATH="$T/bin${GNU:+:$GNU}:$PATH" "$@"); }
 # login: key.txt holds $KEY, the API accepts it, OSS_CONFIG_DIR=-cfg (relative to the cwd); sets OUT, RC.
 login() {
     local d; d=$(in_sandbox /bin/bash "$H/.oss/hooks/oss-value.sh" dir 2>/dev/null)
     [[ -n "$d" ]] || { OUT="(oss-value.sh dir printed nothing)"; RC=99; return; }
     printf '%s\n' "$KEY" > "$d/key.txt"
-    OUT=$(in_sandbox env OSS_CONFIG_DIR=-cfg perl -e 'alarm 20; exec @ARGV' /bin/bash "$H/.oss/hooks/oss-login.sh" \
+    OUT=$(SANDBOX_CAP=20 in_sandbox env OSS_CONFIG_DIR=-cfg /bin/bash "$H/.oss/hooks/oss-login.sh" \
         2>"$T/login.err" </dev/null); RC=$?
 }
 mode_of() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }

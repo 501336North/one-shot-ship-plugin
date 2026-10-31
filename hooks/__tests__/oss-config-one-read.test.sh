@@ -15,6 +15,7 @@ set -uo pipefail
 # T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
 unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/run-capped.sh"   # the one time cap a test may use (T49)
 HOOKS="${HOOKS_UNDER_TEST:-$SCRIPT_DIR/..}"
 source "$SCRIPT_DIR/lib/warm-stub.sh"
 # Session start runs under an alias (lib/session-start-alias.sh): an outside `pkill -f oss-session-start` misses it (T48).
@@ -96,9 +97,9 @@ site() {
         (session-start) cmd=(/bin/bash "$SS_HOOK") ;;
         (notify) root="$KS/pluginN"; cmd=(/bin/bash "$root/hooks/oss-notify.sh" --workflow build start) ;;
     esac
-    OUT=$(cd "$SHIM/proj" && env -u OSS_SKIP_HEALTH_CHECK -u CLAUDE_CODE_SESSION_ID -u OSS_RUN_HEALTH_CHECK \
+    OUT=$(cd "$SHIM/proj" && run_capped 60 env -u OSS_SKIP_HEALTH_CHECK -u CLAUDE_CODE_SESSION_ID -u OSS_RUN_HEALTH_CHECK \
         SHIM="$SHIM" HOME="$SHIM/home" CLAUDE_PLUGIN_ROOT="$root" CLAUDE_PROJECT_DIR="$SHIM/proj" PATH="$(mode_path "$2")" \
-        perl -e 'alarm 60; exec @ARGV' "${cmd[@]}" </dev/null 2>&1 3>&1)
+        "${cmd[@]}" </dev/null 2>&1 3>&1)
     PAIRS=$(cat "$SHIM/pairs" 2>/dev/null)
 }
 

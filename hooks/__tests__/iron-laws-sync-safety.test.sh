@@ -18,6 +18,7 @@ set -uo pipefail
 unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/run-capped.sh"   # the one time cap a test may use (T49)
 # HOOKS_UNDER_TEST=/path/to/hooks-copy runs these tests against a copy (mutants).
 HOOK_SCRIPT="${HOOKS_UNDER_TEST:-$SCRIPT_DIR/..}/oss-iron-laws-sync.sh"
 source "$SCRIPT_DIR/lib/warm-stub.sh"
@@ -90,7 +91,7 @@ run_sync() {
     local proj="${PROJ:-$T/proj}"
     RC=0
     (cd "$T" && OSS_ALLOW_HTTP_LOOPBACK=1 HOME="$T/home" OSS_CONFIG_DIR="${CFG_DIR:-}" CLAUDE_PROJECT_DIR="$proj" PATH="$T/bin:$PATH" \
-        perl -e 'alarm 30; exec @ARGV' bash "$HOOK_SCRIPT" "$@" </dev/null >"$T/out" 2>"$T/err") || RC=$?
+        run_capped 30 bash "$HOOK_SCRIPT" "$@" </dev/null >"$T/out" 2>"$T/err") || RC=$?
     OUT=$(cat "$T/out"); ERR=$(cat "$T/err")
 }
 curl_calls() { [[ -f "$T/shim/argv" ]] && wc -l < "$T/shim/argv" | tr -d ' ' || echo 0; }
@@ -348,7 +349,7 @@ test_concurrent_installs_one_block() {
     local i pids=()
     for i in 1 2 3; do
         (cd "$T" && HOME="$T/home" CLAUDE_PROJECT_DIR="$T/proj" PATH="$T/bin:$PATH" \
-            perl -e 'alarm 30; exec @ARGV' bash "$HOOK_SCRIPT" --install </dev/null >/dev/null 2>&1) & pids+=($!)
+            run_capped 30 bash "$HOOK_SCRIPT" --install </dev/null >/dev/null 2>&1) & pids+=($!)
     done
     wait "${pids[@]}"
     local s e; s=$(count_line "$START" "$T/proj/CLAUDE.md"); e=$(count_line "$END" "$T/proj/CLAUDE.md")
@@ -375,7 +376,7 @@ STUB
 )" || echo "lock test: sleep stub did not warm" >&2
     (cd "$T" && HOME="$T/home" CLAUDE_PROJECT_DIR="$T/proj" PATH="$T/lockbin:$T/bin:$PATH" \
         LOCK_HELD="$T/home/.oss/.iron-laws-sync.lock" LOCK_PROBE="$T/lock-probe" \
-        perl -e 'alarm 30; exec @ARGV' bash "$HOOK_SCRIPT" --install </dev/null >/dev/null 2>&1)
+        run_capped 30 bash "$HOOK_SCRIPT" --install </dev/null >/dev/null 2>&1)
     local early; early=$(cat "$T/lock-probe" 2>/dev/null || echo never-waited)
     local later=n; [[ "$(count_line "$START" "$T/proj/CLAUDE.md")" == "1" ]] && later=y
     if [[ "$early" == n && "$later" == y && ! -e "$T/home/.oss/.iron-laws-sync.lock" ]]; then pass "$name"
@@ -497,7 +498,7 @@ ESC_CURLCFG="Authorization: Bearer fake\\\"quo\\\\te-$FAKE_KEY"
 run_hidden() { # like run_sync, with PATH=HIDDEN_PATH
     RC=0
     (cd "$T" && HOME="$T/home" OSS_CONFIG_DIR="" CLAUDE_PROJECT_DIR="$T/proj" PATH="$HIDDEN_PATH" \
-        /usr/bin/perl -e 'alarm 30; exec @ARGV' bash "$HOOK_SCRIPT" "$@" </dev/null >"$T/out" 2>"$T/err") || RC=$?
+        run_capped 30 bash "$HOOK_SCRIPT" "$@" </dev/null >"$T/out" 2>"$T/err") || RC=$?
     OUT=$(cat "$T/out"); ERR=$(cat "$T/err")
 }
 

@@ -20,6 +20,7 @@ set -uo pipefail
 # T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
 unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/run-capped.sh"   # the one time cap a test may use (T49)
 HOOKS="${HOOKS_UNDER_TEST:-$SCRIPT_DIR/..}"
 source "$SCRIPT_DIR/lib/warm-stub.sh"
 source "$SCRIPT_DIR/lib/session-start-alias.sh"
@@ -178,9 +179,9 @@ site() {
         (iron-laws-sync) cmd=(/bin/bash "$KS/plugin/hooks/oss-iron-laws-sync.sh" --install) ;;
         (session-start) cmd=(/bin/bash "$SS_HOOK") ;;
     esac
-    OUT=$(cd "$SHIM/proj" && env -u OSS_SKIP_HEALTH_CHECK -u CLAUDE_CODE_SESSION_ID -u OSS_RUN_HEALTH_CHECK \
+    OUT=$(cd "$SHIM/proj" && run_capped 60 env -u OSS_SKIP_HEALTH_CHECK -u CLAUDE_CODE_SESSION_ID -u OSS_RUN_HEALTH_CHECK \
         SHIM="$SHIM" HOME="$SHIM/home" CLAUDE_PLUGIN_ROOT="$KS/plugin" CLAUDE_PROJECT_DIR="$SHIM/proj" PATH="$p" \
-        perl -e 'alarm 60; exec @ARGV' "${cmd[@]}" </dev/null 2>&1 3>&1); RC=$?
+        "${cmd[@]}" </dev/null 2>&1 3>&1); RC=$?
     SENT=n; grep -q 'Bearer fake-key-' "$SHIM/stdin" 2>/dev/null && SENT=y
     TO=$(grep -oE 'https?://[^ ]+' "$SHIM/argv" 2>/dev/null | tr '\n' ' ')
 }

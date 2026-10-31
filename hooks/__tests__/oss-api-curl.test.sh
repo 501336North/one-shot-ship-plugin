@@ -15,6 +15,7 @@ set -uo pipefail
 unset OSS_CONFIG_DIR OSS_MANIFEST_URL
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/run-capped.sh"   # the one time cap a test may use (T49)
 HOOKS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 HELPER="$HOOKS_DIR/oss-api-curl.sh"
 
@@ -87,7 +88,7 @@ test_no_hook_puts_key_in_argv() {
 check_site() { # $1 label, then the command to run under the temp HOME/PATH
     local label="$1"; shift
     local name="site: $label sends the key via the helper (not argv)"; ((TESTS_RUN++)); setup
-    (cd "$T" && HOME="$T/home" PATH="$T/bin:$PATH" OSS_SKIP_HEALTH_CHECK='' perl -e 'alarm 30; exec @ARGV' "$@" </dev/null >/dev/null 2>&1)
+    (cd "$T" && HOME="$T/home" PATH="$T/bin:$PATH" OSS_SKIP_HEALTH_CHECK='' run_capped 30 "$@" </dev/null >/dev/null 2>&1)
     if [[ "$(key_in_argv)" == n && "$(key_in_cfg)" == y ]]; then pass "$name"
     else fail "$name" "argv=n config=y" "argv=$(key_in_argv) config=$(key_in_cfg) calls=$(wc -l < "$T/shim/argv" 2>/dev/null || echo 0)"; fi
     teardown
@@ -104,7 +105,7 @@ check_unparsable_no_call() { # $1 label, then the command
     local label="$1"; shift
     local name="site: $label makes no request when config.json cannot be parsed"; ((TESTS_RUN++)); setup
     printf '{"apiKey": "%s", "apiUrl": "https://dev.example.invalid",}\n' "$FAKE_KEY" > "$T/home/.oss/config.json"
-    (cd "$T" && HOME="$T/home" PATH="$T/bin:$PATH" OSS_SKIP_HEALTH_CHECK='' perl -e 'alarm 30; exec @ARGV' "$@" </dev/null >/dev/null 2>&1)
+    (cd "$T" && HOME="$T/home" PATH="$T/bin:$PATH" OSS_SKIP_HEALTH_CHECK='' run_capped 30 "$@" </dev/null >/dev/null 2>&1)
     if [[ ! -f "$T/shim/argv" ]]; then pass "$name"
     else fail "$name" "no curl call" "calls=$(wc -l < "$T/shim/argv") argv=$(sed "s/$FAKE_KEY/<KEY>/g" "$T/shim/argv" | head -3)"; fi
     teardown
