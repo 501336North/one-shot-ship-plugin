@@ -507,3 +507,4 @@ closed, 1 equivalent), T48 via the outside-kill guard (RED 6/14).
   disappears once 225b685 is on main and the other worktrees rebase. The other session was told.
 
 ## Last Updated: 2026-10-31 12:20 CST by /oss:build (T49)
+- Clean watcher re-run after the other session stopped its vitest (2026-10-31 12:29 CST): 268/268 files, 3606/3606 tests. (One run in between, while a sharded vitest from the other checkout was running, had 1 failure that was not captured; the cause is unproven.)
