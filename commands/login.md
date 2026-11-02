@@ -491,17 +491,14 @@ After tools are installed, if `~/.oss/settings.json` does NOT exist:
    ```bash
    STYLE=$(~/.oss/hooks/oss-value.sh read style) || exit 1
    mkdir -p ~/.oss
-   cat > ~/.oss/settings.json << EOF
-   {
-     "notifications": {
-       "style": "$STYLE",
-       "voice": "Samantha",
-       "sound": "Glass",
-       "verbosity": "important"
-     },
-     "version": 1
-   }
-   EOF
+   if [[ -e ~/.oss/settings.json || -L ~/.oss/settings.json ]]; then
+     echo "~/.oss/settings.json already exists - keeping it unchanged"
+   else
+   # under the settings lock, saved at 600 (it later holds API keys); a file another writer made meanwhile is kept
+   source ~/.oss/hooks/oss-api-curl.sh || exit 1
+   oss_settings_update --arg s "$STYLE" \
+     'if . == null then {notifications: {style: $s, voice: "Samantha", sound: "Glass", verbosity: "important"}, version: 1} else . end'
+   fi
    ```
 
 3. **Show preview notification (respects user's choice):**

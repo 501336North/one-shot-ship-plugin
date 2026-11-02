@@ -5,6 +5,7 @@
 #   oss_safe_mkdir  <project> <rel-dir>   create <project>/<rel-dir> one component at a time
 #   oss_safe_target <project> <rel-file>  parent chain as above; target absent, or a regular
 #                                         file with link count 1 that is not a symlink
+#   oss_single_link <file>                absent, or a regular file with link count 1 that is not a symlink
 #   oss_refuse_unsafe <rel>               the one stderr line a refused write prints
 #   oss_valid_workflow_name <name>        ^[a-z][a-z0-9-]{0,40}$ (twin: watcher/src/utils/workflow-name.ts)
 #   oss_project_walk <dir>                the nearest real (not linked) .oss from <dir> up to the first
@@ -82,17 +83,22 @@ oss_safe_mkdir() {
 
 oss_safe_target() {
     [[ -n "${BASH_VERSION:-}" ]] || return 1
-    local proj="${1:-}" rel="${2:-}" dir base t
+    local proj="${1:-}" rel="${2:-}" dir base
     [[ -n "$rel" && "$rel" != */ && "$rel" != *[[:cntrl:]]* ]] || return 1
     base="${rel##*/}"
     if [[ "$base" == "$rel" ]]; then dir="."; else dir="${rel%/*}"; fi
     [[ -n "$base" && "$base" != "." && "$base" != ".." ]] || return 1
     oss_safe_mkdir "$proj" "$dir" || return 1
     [[ -n "$_OSS_SAFE_HOME" ]] && return 0   # G5: ~/.oss and ~/.claude are the user's own (as Node)
-    t="$_OSS_SAFE_DIR/$base"
-    [[ -L "$t" ]] && return 1
-    [[ -e "$t" ]] || return 0
-    [[ -f "$t" && -n "$(find "$t" -prune -type f -links 1 2>/dev/null)" ]]
+    oss_single_link "$_OSS_SAFE_DIR/$base"
+}
+
+# oss_single_link <file>: absent, or a regular file that is not a symlink and has link count 1 (a hardlink
+# would let an append land in another file). The one link-count check for a file a hook appends to.
+oss_single_link() {
+    [[ -L "$1" ]] && return 1
+    [[ -e "$1" ]] || return 0
+    [[ -f "$1" && -n "$(find "$1" -prune -type f -links 1 2>/dev/null)" ]]
 }
 
 oss_refuse_unsafe() { echo "oss: refusing unsafe .oss path ${1:-}" >&2; }

@@ -35,6 +35,16 @@ if [[ -x "$V" && -n "$out" && -d "$out" ]]; then pass "oss-value.sh copied, exec
 else fail "oss-value.sh copied, executable, and its dir verb works from ~/.oss/hooks" "exists=$([[ -f $V ]] && echo y || echo n) exec=$([[ -x $V ]] && echo y || echo n) dir='$out'"; fi
 rm -rf "$T"
 
+# radical-observability Task 14: /oss:settings decisions calls ~/.oss/hooks/oss-decisions-policy.sh, so
+#         session start installs it, runnable, beside the oss-api-curl.sh it sources (no key: it says so).
+T=$(mktemp -d)
+HOME="$T" CLAUDE_PLUGIN_ROOT="$ROOT" bash "$ROOT/hooks/oss-session-start.sh" >/dev/null 2>&1 </dev/null
+D="$T/.oss/hooks/oss-decisions-policy.sh"
+out=$(HOME="$T" "$D" status 2>/dev/null </dev/null); rc=$?
+if [[ -x "$D" && $rc -eq 1 && "$out" == "Run /oss:login first" ]]; then pass "oss-decisions-policy.sh copied, executable, and runs from ~/.oss/hooks"
+else fail "oss-decisions-policy.sh copied, executable, and runs from ~/.oss/hooks" "exists=$([[ -f $D ]] && echo y || echo n) exec=$([[ -x $D ]] && echo y || echo n) rc=$rc out='$out'"; fi
+rm -rf "$T"
+
 # F11: every session-start variant that copies the installer also copies its manifest
 for f in "$ROOT"/hooks/oss-session-start*.sh; do
   if grep -q '"ensure-decrypt-cli.sh"' "$f" && ! grep -q '"oss-decrypt-checksums.txt"' "$f"; then
