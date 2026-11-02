@@ -1,5 +1,9 @@
 # Learnings
 
+## 2026-10-30 | Security | hooks
+- **Context:** build (gate-fix round), radical-observability PR 3 (oss-decision-record.sh push, Tasks 15a-15k)
+- **Insight:** A committed file is input from everyone who can push to the repo, so "send every unmarked line" sent teammates' answers and planted lines under the user's key, and marker lines in the same file could be forged to stop a push (and put the account email in git). What this machine wrote, and what happened to it, belongs in a private per-user outbox outside the repo; the committed record is only looked up by id. Second: renaming a stale lock to a unique name before removing it does NOT make takeover atomic. A session that saw the lock stale earlier renames whatever is there now, which may be the winner's fresh lock, and "put it back" races a third session. What works is a guard folder named after the stale lock's inode and mtime (one session per stale instance), a re-check that the lock is still that instance, then rmdir. The race only reproduced once a `stat` stub delayed its answer after seeing an old mtime and each hold lasted a moment (a 40000-line record); with plain timing a broken takeover passed 8 of 8 races.
+
 ## 2026-10-28 | Security | watcher + hooks
 - **Context:** radical-observability (ship PR 2 round 2, redact-decision)
 - **Insight:** A fail-closed pipe is only closed if "ran" means "produced the right output". The redactor's main-module guard compared `import.meta.url` (node resolves symlinks) with `argv[1]` (it does not), so through a linked plugin folder it printed nothing and exited 0, and the hook committed blank lines. Check the output's shape (same non-empty line count as sent), not only the exit code, and test the hook through a symlinked plugin root. Also: redacting text but hashing the raw text leaves an oracle; derive every value written next to redacted text (keys, hashes) from the redacted form. And an allowlist of fields to redact misses fields the producer adds later (AskUserQuestion's option `preview`): walk every string at any depth inside the text fields (the API's `redactRecord` walks the whole record; the CLI walks the text fields only, so a new top-level text field must join `FREE_TEXT_FIELDS`). Round 3 added two more: (1) fields DERIVED from the same text (label → choice, recommended, answerText) must be redacted consistently: a context rule such as "lone value at the end of its line" fires in one field and not in another, so collect every span removed anywhere and remove it everywhere; (2) compare real paths on BOTH sides of a main-module check (`--preserve-symlinks-main` keeps the link in `import.meta.url`).
@@ -163,3 +167,28 @@
 ## 2026-10-29 | Security | watcher/src/services/redaction.ts (radical-observability keep-fixing round 5)
 - **Context:** build (gate-fix round)
 - **Insight:** Appending a ported pattern list in front of the old one is a provenance change: the old `bare-bearer` never ran on `token=Bearer <opaque>` any more, because the ported `secret-assignment` consumed `Bearer` as the value first, and five gate rounds missed it because every corpus compared the API list with itself, never the watcher with origin/main's watcher. Reordering does not fix it (neither order covers the other); a predicate that declines the scheme word does. Keep a frozen copy of the previous list in a test and assert the new list never keeps a secret value the old one removed.
+
+## 2026-10-29 | Testing | hooks/oss-decision-record.sh (radical-observability PR 3)
+- **Context:** build
+- **Insight:** Cap text only AFTER redacting it: cutting a field at the API's 2000-unit limit first can leave a token prefix too short for any pattern, and that prefix is then sent. Also, a hook that takes a mkdir lock twice (append, network, append markers) must forget the lock on release: an EXIT trap that always runs `rmdir "$lock"` deletes ANOTHER session's lock taken in between. Keep a `held` flag that release clears and the trap checks.
+
+## 2026-10-31 | Testing | hooks/oss-decision-record.sh (radical-observability 16r)
+- **Context:** build (gate-fix round)
+- **Insight:** Moving a lock from the worktree to `~/.oss/locks` (via `oss_private_dir`) made 4 unrelated "uuidgen or shasum missing" tests red: they run the hook on a PATH of symlinks to an allowlist of tools, and the hook now needed `chmod` (and `mktemp`/`mv` for the refusal file). Under that PATH a missing tool looks exactly like the security refusal ("~/.oss/locks is a symlink or not yours"), so the failure reads as a real check firing. When a hook starts calling a new external command, grep the tests for a tool allowlist (`for t in bash cat ...`) and extend it in the same change.
+
+## 2026-10-31 | Testing | hooks/oss-api-curl.sh, watcher/src/services/settings.ts (radical-observability 16ac/16ad)
+- **Context:** build (gate-fix round)
+- **Insight:** A mkdir lock whose path is a link or a file is "refused" anyway once the wait times out, so a test of the refusal line must also assert it answers at once (or counts zero waits), or the mutant survives. `mktemp` already makes files 600, so deleting a `chmod 600` is an equivalent mutant: mutate it to 644. A `name() ( ... )` subshell function can trap EXIT/INT/TERM to release a lock without replacing the caller's EXIT trap. In the watcher, make the retry a count with an injected sleep, so a test can release the lock from inside the sleep (a concurrent writer without threads), and give one stale takeover per save for free or a small budget refuses after taking over.
+
+## 2026-10-31 | Build | watcher/dist (radical-observability 16ac/16ad)
+- **Context:** build
+- **Insight:** Compiling to a scratch `--outDir` outside the project writes source maps whose `sources` climb to an absolute-ish path (`../../../../…/Users/...`); rewrite them to `../../src/...` before copying into dist. Earlier rounds' copied maps had this damage.
+
+## 2026-10-31 | Testing | hooks/oss-api-curl.sh, watcher/src/services/settings.ts (radical-observability 16ag)
+- **Context:** build (gate-fix round)
+- **Insight:** A stale-lock takeover must take the lock's identity (inode + mtime) from the same stat that judged it stale, then remove it only if it is still that identity: a plain rmdir after the age check removes a fresh lock another writer made in between. For shell and watcher to contend on one guard folder, the watcher must spell the mtime in whole seconds like `stat %m/%Y`. A `stat` override seam inside `bash -c` must copy its own positional args first, and on macOS gate on a successful call (`stat -c` fails before `stat -f` runs).
+
+## 2026-11-02 radical-observability 16ak-16an
+- "Anything at this path" for a marker needs `-e || -L`: `-e` misses a dangling symlink, `-f` follows one.
+- To fake a lock takeover in a test, create the new lock before removing the old one, or the new folder can reuse the inode and match the holder's id.
+- The record hook now calls `stat` on every run (oss_lock_id); a test PATH without it never releases the lock.

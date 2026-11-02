@@ -20,6 +20,7 @@ model: haiku
 | Argument | Required | Description |
 |----------|----------|-------------|
 | `SUBCOMMAND` | No | show (default: interactive configuration) |
+| `decisions off\|on\|status` | No | Turn the decision push off or on for you on this machine (and for your team if you are its owner or admin), or show both |
 
 **Options:**
 | Flag | Short | Description |
@@ -33,6 +34,11 @@ model: haiku
 
 # Display current settings (read-only)
 /oss:settings show
+
+# Turn the decision push off for you on this machine (and your team, if you are its owner or admin), back on, or show it
+/oss:settings decisions off
+/oss:settings decisions on
+/oss:settings decisions status
 
 # Show help
 /oss:settings --help
@@ -53,6 +59,7 @@ Display and modify OSS preferences including notifications, voices, and sounds.
 ```bash
 /oss:settings              # Show current settings interactively
 /oss:settings show         # Display current settings
+/oss:settings decisions off|on|status   # The decision push: yours, and your team's (owner or admin)
 /oss:settings --help       # Display help and usage information
 ```
 
@@ -66,6 +73,10 @@ If `--help` is passed, display usage information and exit:
 USAGE:
   /oss:settings              Show current settings interactively
   /oss:settings show         Display current settings (read-only)
+  /oss:settings decisions off      Stop sending your picker answers on this machine
+                                   (and your team's, if you are its owner or admin)
+  /oss:settings decisions on       Send them again
+  /oss:settings decisions status   Show your setting and your team's
   /oss:settings --help       Display this help message
 
 OPTIONS:
@@ -94,6 +105,16 @@ SOUNDS (when style=sound):
   Purr       Soft purr
   Pop        Pop sound
 
+DECISION RECORD:
+  Each picker answer (the question, its options, your pick and your note,
+  never code) is sent to your OSS account to build your team's decision
+  record. It is redacted (secrets and tokens removed) and capped in length.
+  Only answers you gave on this machine are sent, under your account.
+  On by default. Anyone can turn it off for themselves on this machine;
+  a team owner or admin also turns it off for the whole team.
+  Answers given while the push is off are never sent, even later.
+  If ~/.oss/settings.json cannot be read, the push stays off.
+
 SETTINGS FILE:
   ~/.oss/settings.json
 
@@ -104,6 +125,40 @@ EXAMPLES:
 ```
 
 **If --help is detected, output the above and do not proceed with the interactive flow.**
+
+## Step 0.5: The Decision Push (`decisions off|on|status`)
+
+If the argument starts with `decisions`, look at the rest of the argument and run EXACTLY ONE of these three
+fixed Bash commands, copied as written. Never put anything the person typed into the command.
+
+| The rest of the argument is exactly | Run |
+|---|---|
+| `off` | the first command below |
+| `on` | the second command below |
+| `status` | the third command below |
+
+```bash
+~/.oss/hooks/oss-decisions-policy.sh off
+```
+
+```bash
+~/.oss/hooks/oss-decisions-policy.sh on
+```
+
+```bash
+~/.oss/hooks/oss-decisions-policy.sh status
+```
+
+For anything else (no word, another word, more than one word), run nothing and print this line:
+
+```
+Usage: /oss:settings decisions off|on|status
+```
+
+Print the command's one line to the person exactly as it comes, and STOP: no settings file edits, no
+questions, no interactive flow. (`off` turns the push off for this person on this machine, and for their team
+too when they are its owner or admin; `on` reverses both; `status` shows both. `status` prints one more line
+first when the decision record last refused to write an answer through a symlink; print it too.)
 
 ## Implementation
 
@@ -229,7 +284,7 @@ If `dir` prints nothing, tell the user the settings were not changed and show it
 
 ### Step 4: Save and Test (one Bash call)
 
-Run this block exactly as written. It reads and checks each answer (a value outside its list is refused and nothing is saved), keeps the current voice or sound when that question was not asked, merges the choices into `~/.oss/settings.json` (every other setting is kept, except the retired Telegram settings, which are removed; a file that is not valid JSON or is a symlink is refused and left as it is), sends a test notification in the new style and prints the new configuration.
+Run this block exactly as written. It reads and checks each answer (a value outside its list is refused and nothing is saved), keeps the current voice or sound when that question was not asked, merges the choices into `~/.oss/settings.json` (every other setting is kept, except the retired Telegram settings, which are removed; a file that is a symlink, is not yours or is not exactly one JSON object is refused and left as it is, and the file is saved owner-only (600): the same rule as every other settings.json writer), sends a test notification in the new style and prints the new configuration.
 
 ```bash
 V=~/.oss/hooks/oss-value.sh
@@ -243,20 +298,15 @@ if [[ "$STYLE" == "sound" ]]; then SOUND=$("$V" read sound) || exit 1; fi
 
 mkdir -p ~/.oss
 # Merge: only notifications.{style,voice,sound,verbosity} and version change and the retired telegram keys are removed; every other key is kept
-CURRENT='{}'; MODE=600
 if [[ -L "$SETTINGS_FILE" || ( -e "$SETTINGS_FILE" && ! -f "$SETTINGS_FILE" ) ]]; then
     echo "Not saved: ~/.oss/settings.json is a symlink or not a regular file; it was left as it is." >&2; exit 1
 fi
-if [[ -f "$SETTINGS_FILE" ]]; then
-    jq -e 'type == "object"' "$SETTINGS_FILE" >/dev/null 2>&1 \
-        || { echo "Not saved: ~/.oss/settings.json is not valid JSON; it was left as it is. Fix or remove it, then run /oss:settings again." >&2; exit 1; }
-    CURRENT=$(cat "$SETTINGS_FILE") || exit 1
-    MODE=$(stat -c %a "$SETTINGS_FILE" 2>/dev/null || stat -f %Lp "$SETTINGS_FILE") || exit 1
-fi
-TMP=$(mktemp "$HOME/.oss/settings.json.XXXXXX") || exit 1
-printf '%s' "$CURRENT" | jq --arg s "$STYLE" --arg v "$VOICE" --arg so "$SOUND" --arg vb "$VERBOSITY" \
-    '.notifications = ((.notifications // {}) + {style: $s, voice: $v, sound: $so, verbosity: $vb}) | .version = 2 | del(.telegram, .notifications.telegram)' > "$TMP" \
-    && chmod "$MODE" "$TMP" && mv -f "$TMP" "$SETTINGS_FILE" || { rm -f "$TMP"; exit 1; }
+source ~/.oss/hooks/oss-api-curl.sh || exit 1
+oss_settings_mergeable "$SETTINGS_FILE" \
+    || { echo "Not saved: ~/.oss/settings.json is not valid JSON (exactly one object) or is not yours; it was left as it is. Fix or remove it, then run /oss:settings again." >&2; exit 1; }
+oss_settings_update --arg s "$STYLE" --arg v "$VOICE" --arg so "$SOUND" --arg vb "$VERBOSITY" \
+    '.notifications = ((.notifications // {}) + {style: $s, voice: $v, sound: $so, verbosity: $vb}) | .version = 2 | del(.telegram, .notifications.telegram)' \
+    || { echo "Not saved: ~/.oss/settings.json could not be written; it was left as it is." >&2; exit 1; }
 
 # Test notification, based on style
 case "$STYLE" in

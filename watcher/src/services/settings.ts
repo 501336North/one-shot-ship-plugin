@@ -49,15 +49,95 @@ export function normalizeStyle(style: unknown): NotificationStyle {
 const VALID_VERBOSITIES: Verbosity[] = ['all', 'important', 'errors-only'];
 const VALID_SUPERVISOR_MODES: SupervisorMode[] = ['always', 'workflow-only'];
 
+/** How save() waits for the shared settings lock; injectable so tests need not sleep. */
+export interface SettingsLockOptions {
+  /** how long to wait for a held lock before refusing (default 5000 ms, retried every 100 ms) */
+  lockTimeoutMs?: number;
+  /** sleeps for the given ms (default: a blocking wait, since save() is synchronous) */
+  sleep?: (ms: number) => void;
+}
+
+const LOCK_RETRY_MS = 100;
+const LOCK_STALE_MS = 30_000;
+
+/** A lock's identity: its inode and mtime (ns), so a lock removed and made again is a different one. */
+function lockId(lock: string): string | null {
+  try {
+    const st = fs.lstatSync(lock, { bigint: true });
+    return `${st.ino}-${st.mtimeNs}`;
+  } catch {
+    return null;
+  }
+}
+
+function rmdirQuiet(dir: string): void {
+  try {
+    fs.rmdirSync(dir);
+  } catch {
+    // gone already, or not empty: not ours to force
+  }
+}
+
+/**
+ * Remove a stale lock only if it is still the one judged stale (`held`), as the shell's oss_take_stale does:
+ * a guard folder named by its inode and mtime (seconds, the shell's spelling, so a shell writer and the
+ * watcher exclude each other) is made with mkdir, so only one writer takes over a given stale lock.
+ */
+function takeStale(lock: string, held: fs.BigIntStats): void {
+  const guard = `${lock}.stale-${held.ino}-${held.mtimeNs / 1_000_000_000n}`;
+  try {
+    fs.mkdirSync(guard);
+  } catch {
+    return;
+  }
+  if (lockId(lock) === `${held.ino}-${held.mtimeNs}`) {
+    rmdirQuiet(lock);
+  }
+  rmdirQuiet(guard);
+}
+
+/**
+ * One entry this instance changed, to be applied on top of settings.json as it is under the lock: a set
+ * of `value` at a path such as ['apiKeys', 'openai'].
+ */
+interface PendingChange {
+  path: readonly string[];
+  value: unknown;
+}
+
+/** Apply one change to a parsed settings object; a missing or non-object parent on the way becomes {}. */
+function applyChange(root: Record<string, unknown>, change: PendingChange): void {
+  let node = root;
+  for (const key of change.path.slice(0, -1)) {
+    const next = node[key];
+    if (typeof next !== 'object' || next === null || Array.isArray(next)) {
+      node[key] = {};
+    }
+    node = node[key] as Record<string, unknown>;
+  }
+  const leaf = change.path[change.path.length - 1];
+  node[leaf] = change.value;
+}
+
+function blockingSleep(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 export class SettingsService {
   private settings: NotificationSettings;
   private settingsPath: string;
   private configDir: string;
   private modelSettings: ModelSettings;
   private apiKeys: ProviderConfig;
+  private lockTimeoutMs: number;
+  private sleep: (ms: number) => void;
+  /** what this instance changed since its last save, keyed by path: the only entries a save writes */
+  private pending = new Map<string, PendingChange>();
 
-  constructor(configDir: string) {
+  constructor(configDir: string, options: SettingsLockOptions = {}) {
     this.configDir = configDir;
+    this.lockTimeoutMs = options.lockTimeoutMs ?? 5000;
+    this.sleep = options.sleep ?? blockingSleep;
     this.settingsPath = path.join(configDir, 'settings.json');
     this.settings = this.loadSettings();
     this.modelSettings = this.loadModelSettings();
@@ -236,7 +316,45 @@ export class SettingsService {
   }
 
   /**
-   * Save settings to file
+   * Read settings.json for a merge, by the rule every OSS writer shares (oss_settings_set): a missing
+   * file is {}; a file that is a link, not a regular file, not the person's, unreadable or not exactly
+   * one JSON object is refused (null), because the hooks read such a file as "personal push off".
+   */
+  private readForMerge(): { keys: Record<string, unknown> } | null {
+    let st: fs.Stats;
+    try {
+      st = fs.lstatSync(this.settingsPath);
+    } catch {
+      return { keys: {} };
+    }
+    const uid = process.getuid?.();
+    if (!st.isFile() || (uid !== undefined && st.uid !== uid)) {
+      return null;
+    }
+    try {
+      const parsed: unknown = JSON.parse(fs.readFileSync(this.settingsPath, 'utf-8'));
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        return null;
+      }
+      // the retired telegram block (plaintext bot token) is never carried forward
+      const { telegram: _retired, ...rest } = parsed as Record<string, unknown>;
+      return { keys: rest };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Record a set at one path for the next save. */
+  private record(changePath: readonly string[], value: unknown): void {
+    this.pending.set(changePath.join('\u0000'), { path: changePath, value });
+  }
+
+  /**
+   * Save settings to file. Only the entries this instance changed (setters, recorded as pending changes)
+   * are written, on top of the file as it is under the lock, so keys another writer owns (e.g.
+   * decisionsPush from /oss:settings decisions off, or a key a concurrent instance set) are kept. A file the shared rule refuses is left as it is
+   * and nothing is saved. The whole read-merge-rename runs under the shared settings lock; if the lock
+   * cannot be had (held past the timeout, or a link in the way) nothing is saved either.
    */
   save(): void {
     // Ensure directory exists
@@ -244,14 +362,103 @@ export class SettingsService {
       fs.mkdirSync(this.configDir, { recursive: true });
     }
 
-    // Combine all settings into one object
-    const allSettings = {
-      ...this.settings,
-      models: this.modelSettings,
-      apiKeys: this.apiKeys,
-    };
+    const lock = this.acquireLock();
+    if (lock === null) {
+      return;
+    }
+    try {
+      this.saveLocked();
+    } finally {
+      // only the lock this save made: one taken over meanwhile is another writer's (or gone)
+      if (lock.id !== null && lockId(lock.path) === lock.id) {
+        rmdirQuiet(lock.path);
+      }
+    }
+  }
 
-    fs.writeFileSync(this.settingsPath, JSON.stringify(allSettings, null, 2));
+  /**
+   * Take the lock every settings.json writer shares: the directory locks/settings in ~/.oss, made
+   * atomically with mkdir. Its parent must be the person's own folder (700, not a link). A held lock is
+   * retried every 100 ms up to the timeout; one older than 30 s is stale and taken over (takeStale). Returns the
+   * lock path and its identity right after this save's mkdir, or null to refuse (timeout, a link, or not a
+   * directory).
+   */
+  private acquireLock(): { path: string; id: string | null } | null {
+    const locks = path.join(this.configDir, 'locks');
+    try {
+      if (!fs.existsSync(locks)) {
+        fs.mkdirSync(locks, { mode: 0o700 });
+      }
+      const st = fs.lstatSync(locks);
+      const uid = process.getuid?.();
+      if (!st.isDirectory() || (uid !== undefined && st.uid !== uid)) {
+        return null;
+      }
+      fs.chmodSync(locks, 0o700);
+    } catch {
+      return null;
+    }
+    const lock = path.join(locks, 'settings');
+    const retries = Math.floor(this.lockTimeoutMs / LOCK_RETRY_MS);
+    let tookOver = false;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        fs.mkdirSync(lock, { mode: 0o700 });
+        return { path: lock, id: lockId(lock) };
+      } catch {
+        // held, or a link or file in the way: look at it below
+      }
+      let held: fs.BigIntStats;
+      try {
+        held = fs.lstatSync(lock, { bigint: true });
+      } catch {
+        continue;
+      }
+      if (!held.isDirectory()) {
+        return null;
+      }
+      if (!tookOver && Date.now() - Number(held.mtimeMs) > LOCK_STALE_MS) {
+        takeStale(lock, held);
+        // a takeover does not spend a retry, once: a stale lock that will not go still times out
+        tookOver = true;
+        attempt--;
+        continue;
+      }
+      if (attempt < retries) {
+        this.sleep(LOCK_RETRY_MS);
+      }
+    }
+    return null;
+  }
+
+  /** save() under the lock: re-read, apply the pending changes, temp write at 600, rename. */
+  private saveLocked(): void {
+    if (this.readForMerge() === null) {
+      return;
+    }
+
+    const unique = `${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}`;
+    const tmp = path.join(this.configDir, `.settings.json.${unique}`);
+    try {
+      fs.writeFileSync(tmp, '', { flag: 'wx', mode: 0o600 });
+      // merge again from the file as it is now, so a write that landed since the check is kept
+      const current = this.readForMerge();
+      if (current === null) {
+        fs.rmSync(tmp, { force: true });
+        return;
+      }
+      for (const change of this.pending.values()) {
+        applyChange(current.keys, change);
+      }
+      fs.writeFileSync(tmp, JSON.stringify(current.keys, null, 2));
+      // always owner-only (600), whatever mode an older writer left: the file holds provider apiKeys
+      fs.chmodSync(tmp, 0o600);
+      fs.renameSync(tmp, this.settingsPath);
+      this.pending.clear();
+    } catch {
+      // could not write: settings.json is left as it was
+      fs.rmSync(tmp, { force: true });
+    }
   }
 
   /**
@@ -260,6 +467,7 @@ export class SettingsService {
   setNotificationStyle(style: NotificationStyle): void {
     if (normalizeStyle(style) === style) {
       this.settings.notifications.style = style;
+      this.record(['notifications', 'style'], style);
     }
   }
 
@@ -269,6 +477,7 @@ export class SettingsService {
   setVerbosity(verbosity: Verbosity): void {
     if (VALID_VERBOSITIES.includes(verbosity)) {
       this.settings.notifications.verbosity = verbosity;
+      this.record(['notifications', 'verbosity'], verbosity);
     }
   }
 
@@ -277,6 +486,7 @@ export class SettingsService {
    */
   setVoice(voice: string): void {
     this.settings.notifications.voice = voice;
+    this.record(['notifications', 'voice'], voice);
   }
 
   /**
@@ -284,6 +494,7 @@ export class SettingsService {
    */
   setSound(sound: string): void {
     this.settings.notifications.sound = sound;
+    this.record(['notifications', 'sound'], sound);
   }
 
   /**
@@ -302,6 +513,7 @@ export class SettingsService {
         this.settings.supervisor = { ...DEFAULT_SUPERVISOR_SETTINGS };
       }
       this.settings.supervisor.mode = mode;
+      this.record(['supervisor', 'mode'], mode);
     }
   }
 
@@ -314,6 +526,7 @@ export class SettingsService {
         this.settings.supervisor = { ...DEFAULT_SUPERVISOR_SETTINGS };
       }
       this.settings.supervisor.checkIntervalMs = ms;
+      this.record(['supervisor', 'checkIntervalMs'], ms);
     }
   }
 
@@ -325,6 +538,7 @@ export class SettingsService {
       this.settings.supervisor = { ...DEFAULT_SUPERVISOR_SETTINGS };
     }
     this.settings.supervisor.ironLawChecks[law] = enabled;
+    this.record(['supervisor', 'ironLawChecks', law], enabled);
   }
 
   /**
@@ -352,6 +566,7 @@ export class SettingsService {
             // If audio was enabled, set style to audio
             if (trimmedValue === 'true') {
               this.settings.notifications.style = 'audio';
+              this.record(['notifications', 'style'], 'audio');
             }
             break;
 
@@ -359,15 +574,18 @@ export class SettingsService {
             // If voice was enabled, ensure style is audio
             if (trimmedValue === 'true') {
               this.settings.notifications.style = 'audio';
+              this.record(['notifications', 'style'], 'audio');
             }
             break;
 
           case 'OSS_VOICE':
             this.settings.notifications.voice = trimmedValue;
+            this.record(['notifications', 'voice'], trimmedValue);
             break;
 
           case 'OSS_SOUND_SUCCESS':
             this.settings.notifications.sound = trimmedValue;
+            this.record(['notifications', 'sound'], trimmedValue);
             break;
         }
       }
@@ -393,6 +611,7 @@ export class SettingsService {
       this.modelSettings[typeKey] = {};
     }
     this.modelSettings[typeKey]![name] = model;
+    this.record(['models', typeKey, name], model);
     this.save();
   }
 
@@ -425,6 +644,7 @@ export class SettingsService {
    */
   async setApiKey(provider: string, key: string): Promise<void> {
     this.apiKeys[provider as keyof ProviderConfig] = key;
+    this.record(['apiKeys', provider], key);
     this.save();
   }
 

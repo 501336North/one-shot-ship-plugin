@@ -15,13 +15,24 @@ export type PromptType = 'agent' | 'command' | 'skill' | 'hook';
  * retired "telegram") reads as the default style.
  */
 export declare function normalizeStyle(style: unknown): NotificationStyle;
+/** How save() waits for the shared settings lock; injectable so tests need not sleep. */
+export interface SettingsLockOptions {
+    /** how long to wait for a held lock before refusing (default 5000 ms, retried every 100 ms) */
+    lockTimeoutMs?: number;
+    /** sleeps for the given ms (default: a blocking wait, since save() is synchronous) */
+    sleep?: (ms: number) => void;
+}
 export declare class SettingsService {
     private settings;
     private settingsPath;
     private configDir;
     private modelSettings;
     private apiKeys;
-    constructor(configDir: string);
+    private lockTimeoutMs;
+    private sleep;
+    /** what this instance changed since its last save, keyed by path: the only entries a save writes */
+    private pending;
+    constructor(configDir: string, options?: SettingsLockOptions);
     /**
      * Load settings from settings.json, falling back to defaults
      */
@@ -47,9 +58,31 @@ export declare class SettingsService {
      */
     getSettings(): NotificationSettings;
     /**
-     * Save settings to file
+     * Read settings.json for a merge, by the rule every OSS writer shares (oss_settings_set): a missing
+     * file is {}; a file that is a link, not a regular file, not the person's, unreadable or not exactly
+     * one JSON object is refused (null), because the hooks read such a file as "personal push off".
+     */
+    private readForMerge;
+    /** Record a set at one path for the next save. */
+    private record;
+    /**
+     * Save settings to file. Only the entries this instance changed (setters, recorded as pending changes)
+     * are written, on top of the file as it is under the lock, so keys another writer owns (e.g.
+     * decisionsPush from /oss:settings decisions off, or a key a concurrent instance set) are kept. A file the shared rule refuses is left as it is
+     * and nothing is saved. The whole read-merge-rename runs under the shared settings lock; if the lock
+     * cannot be had (held past the timeout, or a link in the way) nothing is saved either.
      */
     save(): void;
+    /**
+     * Take the lock every settings.json writer shares: the directory locks/settings in ~/.oss, made
+     * atomically with mkdir. Its parent must be the person's own folder (700, not a link). A held lock is
+     * retried every 100 ms up to the timeout; one older than 30 s is stale and taken over (takeStale). Returns the
+     * lock path and its identity right after this save's mkdir, or null to refuse (timeout, a link, or not a
+     * directory).
+     */
+    private acquireLock;
+    /** save() under the lock: re-read, apply the pending changes, temp write at 600, rename. */
+    private saveLocked;
     /**
      * Set notification style
      */
