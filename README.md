@@ -18,9 +18,25 @@ World-class development workflows for Claude Code. Ship software with confidence
 
 ## Does my code leave my machine?
 
-No. OSS runs on the **BYOCCA model** (Bring Your Own Claude Code Account): you keep your own
+Your code does not. OSS runs on the **BYOCCA model** (Bring Your Own Claude Code Account): you keep your own
 Claude Code subscription, execution stays local, and OSS serves the workflow layer without ever
 proxying your code to the model itself.
+
+One thing does leave by default: your **picker answers**. When you answer a question in the picker,
+the question, its options, your pick and any note you add are sent to your OSS account to build your
+team's decision record. They are redacted (secrets and tokens removed) and capped in length, and they
+are never code. Answers given outside a feature stay in your repo, and only answers you gave on this
+machine are sent, under your own account. Anyone can turn this off for themselves on this machine with
+`/oss:settings decisions off` (back on with `on`; `status` shows both your setting and your team's).
+Off is also kept in its own file, `~/.oss/decisions-push-off`, so no other tool saving your settings can switch it back on.
+When a team owner or admin runs it, it also turns the push off for the whole team.
+Answers given while the push is off are never sent, not even after it is turned back on. Turning the
+team push off also withholds every answer still waiting to be sent, including ones given earlier while
+it was on; they are never sent. Answers waiting to be sent are only ever stored under the account that
+gave them: they still go after you get a new key for that account. If you log in as someone else, they are
+sent to OSS under the new account and refused there: they are never stored under that account, and they
+are not sent again. If `~/.oss/settings.json` cannot be read
+as one JSON object, the push stays off on this machine until it can (`status` says so).
 
 Full system reference: [ARCHITECTURE.md](ARCHITECTURE.md).
 

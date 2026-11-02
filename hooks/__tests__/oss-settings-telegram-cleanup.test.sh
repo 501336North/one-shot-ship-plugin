@@ -49,7 +49,8 @@ if [[ "$(jq -S . "$S" 2>/dev/null)" == "$(printf '%s' "$EXPECTED" | jq -S .)" ]]
 else fail "every other setting unchanged" "$(jq -c . "$S" 2>&1)"; fi
 if [[ "$(mode_of "$S")" == "600" ]]; then pass "file mode 600 preserved"; else fail "file mode 600 preserved" "mode=$(mode_of "$S")"; fi
 if [[ $RC -eq 0 && -z "$OUT" ]]; then pass "exits 0 with no stdout"; else fail "exits 0 with no stdout" "rc=$RC out='$OUT'"; fi
-if ! ls -A "$T/.oss" | grep -qv '^settings.json$'; then pass "no temp file left behind"; else fail "no temp file left behind" "$(ls -A "$T/.oss")"; fi
+# (Task 16ad: ~/.oss/locks, the private folder of the settings lock, stays; the lock itself is gone)
+if ! ls -A "$T/.oss" | grep -qvE '^(settings.json|locks)$' && [[ ! -e "$T/.oss/locks/settings" ]]; then pass "no temp file or lock left behind"; else fail "no temp file or lock left behind" "$(ls -A "$T/.oss" "$T/.oss/locks" 2>&1)"; fi
 
 # 2. Running twice is a no-op (second run does not rewrite the file)
 before=$(inode_mode "$S"); bytes_before=$(cat "$S")
@@ -66,11 +67,12 @@ if [[ "$(inode_mode "$S")" == "$before" && "$(cat "$S")" == "$bytes_before" ]]; 
 else fail "file without telegram keys untouched" "inode/mode $before -> $(inode_mode "$S")"; fi
 rm -rf "$T"
 
-# 4. Only notifications.telegram present (no top-level key) is still cleaned; a 644 mode is kept
+# 4. Only notifications.telegram present (no top-level key) is still cleaned. Task 16ac: the file it writes is
+#    600 (owner only; it holds provider apiKeys), whatever mode it had: a 644 file is made private
 new_home; printf '{"notifications":{"style":"visual","telegram":{"botToken":"x"}}}' > "$S"; chmod 644 "$S"
 run_cleanup
-if [[ "$(jq -c . "$S" 2>/dev/null)" == '{"notifications":{"style":"visual"}}' && "$(mode_of "$S")" == "644" ]]; then pass "nested-only telegram removed, mode 644 kept"
-else fail "nested-only telegram removed, mode 644 kept" "$(cat "$S") mode=$(mode_of "$S")"; fi
+if [[ "$(jq -c . "$S" 2>/dev/null)" == '{"notifications":{"style":"visual"}}' && "$(mode_of "$S")" == "600" ]]; then pass "nested-only telegram removed, a 644 file left at 600"
+else fail "nested-only telegram removed, a 644 file left at 600" "$(cat "$S") mode=$(mode_of "$S")"; fi
 rm -rf "$T"
 
 # 5. A non-object notifications value does not break the top-level cleanup
@@ -94,6 +96,33 @@ before=$(inode_mode "$S"); bytes_before=$(cat "$S")
 run_cleanup
 if [[ "$(inode_mode "$S")" == "$before" && "$(cat "$S")" == "$bytes_before" && $RC -eq 0 && -z "$OUT" ]]; then pass "invalid JSON untouched, exit 0, silent"
 else fail "invalid JSON untouched, exit 0, silent" "rc=$RC out='$OUT' bytes=$(cat "$S")"; fi
+rm -rf "$T"
+
+# 7b. Task 16u: two JSON objects in one file are not one settings object: left byte-identical (the same rule
+#     as every other settings.json writer, oss_settings_mergeable)
+new_home; printf '%s\n%s\n' "$WITH_TELEGRAM" "$WITH_TELEGRAM" > "$S"; chmod 600 "$S"
+before=$(inode_mode "$S"); bytes_before=$(cat "$S")
+run_cleanup
+if [[ "$(inode_mode "$S")" == "$before" && "$(cat "$S")" == "$bytes_before" && $RC -eq 0 && -z "$OUT" ]]; then pass "two objects in one file untouched, exit 0, silent"
+else fail "two objects in one file untouched, exit 0, silent" "rc=$RC out='$OUT' bytes=$(head -c 120 "$S")"; fi
+rm -rf "$T"
+
+# 7c. Task 16u: a settings.json that is not the user's is left byte-identical. Another user's file is simulated
+#     through `test -O` (the repo's other-user seam, as project-walk.test.sh does), exported to the hook's bash.
+new_home; printf '%s\n' "$WITH_TELEGRAM" > "$S"; chmod 600 "$S"
+before=$(inode_mode "$S"); bytes_before=$(cat "$S")
+OUT=$(OSS_T_FOREIGN="$S" HOME="$T" bash -c 'test() { if [[ "${1:-}" == -O && "${2:-}" == "$OSS_T_FOREIGN" ]]; then return 1; fi; builtin test "$@"; }; export -f test; bash "$1"' _ "$CLEANUP" 2>/dev/null </dev/null); RC=$?
+if [[ "$(inode_mode "$S")" == "$before" && "$(cat "$S")" == "$bytes_before" && $RC -eq 0 && -z "$OUT" ]]; then pass "a settings.json that is not the user's is untouched"
+else fail "a settings.json that is not the user's is untouched" "rc=$RC bytes=$(head -c 120 "$S")"; fi
+rm -rf "$T"
+
+# 7d. Task 16ad: while another writer holds the settings lock (~/.oss/locks/settings) the cleanup waits, then
+#     gives up without writing: the file is byte-identical and the lock is still the other writer's
+new_home; printf '%s\n' "$WITH_TELEGRAM" > "$S"; chmod 600 "$S"; mkdir -p -m 700 "$T/.oss/locks"; mkdir "$T/.oss/locks/settings"
+bytes_before=$(cat "$S")
+OUT=$(HOME="$T" OSS_SETTINGS_LOCK_WAIT=1 bash "$CLEANUP" 2>/dev/null </dev/null); RC=$?
+if [[ "$(cat "$S")" == "$bytes_before" && -d "$T/.oss/locks/settings" && $RC -eq 0 && -z "$OUT" ]]; then pass "a held settings lock: cleanup writes nothing, exit 0, silent"
+else fail "a held settings lock: cleanup writes nothing, exit 0, silent" "rc=$RC out='$OUT' bytes=$(head -c 120 "$S")"; fi
 rm -rf "$T"
 
 # 8. No settings.json at all: exit 0, silent, nothing created

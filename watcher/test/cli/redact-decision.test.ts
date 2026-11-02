@@ -40,7 +40,7 @@ interface RedactResult {
   stderr: string;
 }
 
-type RunRedactDecision = (input: string) => RedactResult;
+type RunRedactDecision = (input: string, args?: string[]) => RedactResult;
 
 /** Module under test — dynamic import so a missing module is a clean test failure. */
 async function loadCli(): Promise<RunRedactDecision> {
@@ -361,4 +361,288 @@ describe('redact-decision CLI', () => {
     expect(result.stderr).toContain('redact-decision');
     expect(result.stderr, 'the error must not echo the bad line').not.toContain(GH_BODY_2);
   });
+});
+
+/**
+ * --push-body mode: one committed record line in, the POST /api/v1/decisions JSON body out.
+ *
+ * @behavior The push hook hands one committed decision line to the CLI and sends whatever it prints;
+ *           the body holds only the fields the API's schema accepts, sized to its limits.
+ * @business-rule A 400 is never retried, so every body the CLI prints must fit the API schema
+ *                (packages/api/src/routes/decisions.ts); identity fields (person, session) never leave.
+ */
+describe('redact-decision CLI --push-body', () => {
+  const PUSH = ['--push-body'];
+
+  async function pushBody(record: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const runRedactDecision = await loadCli();
+    const result = runRedactDecision(`${JSON.stringify(record)}\n`, PUSH);
+    expect(result.exitCode).toBe(0);
+    return JSON.parse(result.stdout) as Record<string, unknown>;
+  }
+
+  it('should send only the fields the API accepts', async () => {
+    const body = await pushBody({
+      ...baseRecord(),
+      answerText: 'Canary',
+      options: [
+        { label: 'Canary', description: 'Ship to 5% first', preview: 'deploy --canary' },
+        { label: 'Big bang', description: 'Ship to everyone' },
+      ],
+    });
+
+    expect(Object.keys(body).sort()).toEqual(
+      ['answerIndex', 'answeredAt', 'choice', 'command', 'feature', 'header', 'id', 'kind', 'notes', 'options', 'question', 'questionKey', 'recommended'],
+    );
+    expect(body.options).toEqual([
+      { label: 'Canary', description: 'Ship to 5% first' },
+      { label: 'Big bang', description: 'Ship to everyone' },
+    ]);
+    expect(body.id).toBe('7f0c1e2a-3b4c-4d5e-8f90-a1b2c3d4e5f6');
+    expect(body.answeredAt).toBe('2026-10-28T12:00:00.000Z');
+  });
+
+  // A run of prose (not one repeated letter, which a key pattern could match) cut to n units, then an
+  // emoji (a surrogate pair) placed so the cap falls between its two halves.
+  const straddle = (cap: number): string => `${'word '.repeat(Math.ceil(cap / 5)).slice(0, cap - 1)}\u{1F600}tail`;
+  const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+  it('should cap question and notes at 2000 and labels, descriptions, header, recommended and each choice at 200 UTF-16 units, without splitting a surrogate pair', async () => {
+    const body = await pushBody({
+      ...baseRecord(),
+      question: straddle(2000),
+      notes: straddle(2000),
+      header: straddle(200),
+      recommended: straddle(200),
+      options: [{ label: straddle(200), description: straddle(200) }],
+      choice: [straddle(200), 'Canary'],
+    });
+
+    const options = body.options as Array<{ label: string; description: string }>;
+    const capped: Array<[string, string, number]> = [
+      ['question', body.question as string, 2000],
+      ['notes', body.notes as string, 2000],
+      ['header', body.header as string, 200],
+      ['recommended', body.recommended as string, 200],
+      ['label', options[0].label, 200],
+      ['description', options[0].description, 200],
+      ['choice[0]', (body.choice as string[])[0], 200],
+    ];
+    for (const [field, value, cap] of capped) {
+      expect(value.length, `${field} length`).toBeLessThanOrEqual(cap);
+      expect(value.length, `${field} keeps the text up to the cut`).toBe(cap - 1);
+      expect(LONE_SURROGATE.test(value), `${field} must not end in half an emoji`).toBe(false);
+    }
+    expect((body.choice as string[])[1]).toBe('Canary');
+  });
+
+
+  it('should send at most 20 options and 20 choices', async () => {
+    const labels = Array.from({ length: 25 }, (_, index) => `Option ${index + 1}`);
+    const body = await pushBody({
+      ...baseRecord(),
+      options: labels.map((label) => ({ label, description: `About ${label}` })),
+      choice: labels,
+    });
+
+    expect(body.options).toEqual(labels.slice(0, 20).map((label) => ({ label, description: `About ${label}` })));
+    expect(body.choice).toEqual(labels.slice(0, 20));
+  });
+
+
+  it('should send a single-select choice as a one-item list', async () => {
+    // The committed line keeps a single-select answer as a string; the API takes a list for every answer.
+    const body = await pushBody({ ...baseRecord(), choice: 'Canary' });
+
+    expect(body.choice).toEqual(['Canary']);
+  });
+
+
+  it('should leave out header and recommended when they are null', async () => {
+    // The API's header and recommended are optional, not nullable: a null there is a 400. Notes may be null.
+    const body = await pushBody({ ...baseRecord(), header: null, recommended: null, notes: null });
+
+    expect(body).not.toHaveProperty('header');
+    expect(body).not.toHaveProperty('recommended');
+    expect(body.notes).toBeNull();
+  });
+
+
+  it('should print no body for a record with no feature', async () => {
+    // The API requires a feature. Contract with the bash caller: exit 0 and EMPTY stdout means
+    // "not pushable, keep the record local" — never a body the API would refuse with a 400.
+    const runRedactDecision = await loadCli();
+    for (const feature of [null, '']) {
+      const result = runRedactDecision(`${JSON.stringify({ ...baseRecord(), feature })}\n`, PUSH);
+
+      expect(result.exitCode, `feature ${JSON.stringify(feature)}`).toBe(0);
+      expect(result.stdout, `feature ${JSON.stringify(feature)}`).toBe('');
+      expect(result.stderr, `feature ${JSON.stringify(feature)}`).toBe('');
+    }
+  });
+
+
+  it('should redact the body again', async () => {
+    // The committed line was redacted when it was written, but the secret list grows: a line committed
+    // before a pattern existed is scrubbed again on its way to the server.
+    const body = await pushBody({ ...baseRecord(), question: `Rotate ${ghToken(GH_BODY_1)} now?` });
+
+    expect(body.question).toBe('Rotate [REDACTED] now?');
+  });
+
+
+  it('should redact the whole record before capping, so a secret cut at the limit leaves nothing behind', async () => {
+    // Capping first would keep "ghp_" plus the first chars of the token: too short for any pattern,
+    // so that prefix would reach the server. Redacting first replaces the whole token before the cut.
+    const runRedactDecision = await loadCli();
+    const prefix = 'word '.repeat(398); // 1990 units: the 40-unit token straddles the 2000 cut
+    const record = { ...baseRecord(), question: `${prefix}${ghToken(GH_BODY_1)}`, notes: `${prefix}${ghToken(GH_BODY_2)}` };
+
+    const result = runRedactDecision(`${JSON.stringify(record)}\n`, PUSH);
+
+    expect(result.exitCode).toBe(0);
+    for (const fragment of [GH_BODY_1.slice(0, 6), GH_BODY_2.slice(0, 6), 'ghp_']) {
+      expect(result.stdout, `no part of the token (${fragment.slice(0, 3)}...) may reach the body`).not.toContain(fragment);
+    }
+    const body = JSON.parse(result.stdout) as Record<string, unknown>;
+    expect(body.question).toBe(`${prefix}[REDACTED]`);
+  });
+
+
+  it('should exit non-zero and print nothing on stdout when the line is not JSON', async () => {
+    // Same rule as the default mode: the caller sends nothing, and the error never quotes the line.
+    const runRedactDecision = await loadCli();
+
+    const result = runRedactDecision(`{"question": "token ${ghToken(GH_BODY_2)}"\n`, PUSH);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('redact-decision');
+    expect(result.stderr, 'the error must not echo the bad line').not.toContain(GH_BODY_2);
+    expect(result.stderr, 'the error must not echo the bad line').not.toContain('question');
+  });
+
+
+  it('should send an option whose description is null, without a description', async () => {
+    // The API's description is optional, not nullable: a null is the same as no description.
+    const body = await pushBody({
+      ...baseRecord(),
+      options: [{ label: 'Canary', description: null }, { label: 'Big bang', description: 'Ship to everyone' }],
+    });
+
+    expect(body.options).toEqual([{ label: 'Canary' }, { label: 'Big bang', description: 'Ship to everyone' }]);
+  });
+
+
+  it('should exit 2 and print nothing on stdout when the line is JSON but a field has the wrong type', async () => {
+    // Exit 1 means "unreadable"; exit 2 means "readable but never sendable", so the caller can mark
+    // the record refused instead of retrying a body the API would refuse with a 400 forever.
+    const runRedactDecision = await loadCli();
+    const wrongShapes: Array<[string, Record<string, unknown>]> = [
+      ['question is a number', { question: 5 }],
+      ['question is a list', { question: ['Which rollout approach?'] }],
+      ['options is not a list', { options: 'Canary' }],
+      ['an option label is a number', { options: [{ label: 7 }] }],
+      ['an option is not an object', { options: ['Canary'] }],
+      ['an option description is a number', { options: [{ label: 'Canary', description: 3 }] }],
+      ['a choice is a number', { choice: ['Canary', 2] }],
+      ['choice is an object', { choice: { label: 'Canary' } }],
+      ['header is a number', { header: 9 }],
+      ['recommended is a list', { recommended: ['Canary'] }],
+      ['notes is a number', { notes: 4 }],
+    ];
+
+    for (const [label, change] of wrongShapes) {
+      const result = runRedactDecision(`${JSON.stringify({ ...baseRecord(), ...change })}\n`, PUSH);
+
+      expect(result.exitCode, label).toBe(2);
+      expect(result.stdout, label).toBe('');
+      expect(result.stderr, label).not.toContain('not valid JSON');
+    }
+  });
+
+
+  it('should exit 2 and print nothing on stdout when a metadata field breaks the API rules', async () => {
+    // A committed line can be hand-edited: every metadata field is checked against the API schema here,
+    // so a line the API would refuse with a 400 is refused locally instead of being retried.
+    const runRedactDecision = await loadCli();
+    const badFields: Array<[string, Record<string, unknown>]> = [
+      ['id in upper case', { id: '7F0C1E2A-3B4C-4D5E-8F90-A1B2C3D4E5F6' }],
+      ['id not version 4', { id: '7f0c1e2a-3b4c-1d5e-8f90-a1b2c3d4e5f6' }],
+      ['id with a bad variant', { id: '7f0c1e2a-3b4c-4d5e-7f90-a1b2c3d4e5f6' }],
+      ['id with text around it', { id: ' 7f0c1e2a-3b4c-4d5e-8f90-a1b2c3d4e5f6' }],
+      ['id is a number', { id: 5 }],
+      ['id is missing', { id: undefined }],
+      ['feature starts with a dot', { feature: '.hidden' }],
+      ['feature has a slash', { feature: 'demo/../x' }],
+      ['feature has a space', { feature: 'demo x' }],
+      ['feature is 129 characters', { feature: 'f'.repeat(129) }],
+      ['feature is a number', { feature: 5 }],
+      ['feature is missing', { feature: undefined }],
+      ['questionKey in upper case', { questionKey: 'A1B2C3D4E5F60718' }],
+      ['questionKey is 15 hex', { questionKey: 'a1b2c3d4e5f6071' }],
+      ['questionKey is not hex', { questionKey: 'g1b2c3d4e5f60718' }],
+      ['questionKey is a number', { questionKey: 1234567890123456 }],
+      ['answerIndex is 0', { answerIndex: 0 }],
+      ['answerIndex is 101', { answerIndex: 101 }],
+      ['answerIndex is not whole', { answerIndex: 1.5 }],
+      ['answerIndex is text', { answerIndex: '1' }],
+      ['kind is not one of risk, scope, design', { kind: 'other' }],
+      ['kind is missing', { kind: undefined }],
+      ['command has a capital', { command: 'Build' }],
+      ['command starts with a dash', { command: '-build' }],
+      ['command has a shell character', { command: 'build;rm' }],
+      ['command is 65 characters', { command: `b${'a'.repeat(64)}` }],
+      ['command is a number', { command: 7 }],
+      ['answeredAt has no seconds', { answeredAt: '2026-10-28T12:00Z' }],
+      ['answeredAt has an offset', { answeredAt: '2026-10-28T12:00:00+01:00' }],
+      ['answeredAt is not a calendar day', { answeredAt: '2026-02-30T12:00:00Z' }],
+      ['answeredAt has a 13th month', { answeredAt: '2026-13-01T12:00:00Z' }],
+      ['answeredAt is before 2020', { answeredAt: '2019-12-31T23:59:59.999Z' }],
+      ['answeredAt is not a date', { answeredAt: 'yesterday' }],
+      ['answeredAt is a number', { answeredAt: 1761652800000 }],
+    ];
+
+    for (const [label, change] of badFields) {
+      const result = runRedactDecision(`${JSON.stringify({ ...baseRecord(), ...change })}\n`, PUSH);
+
+      expect(result.exitCode, label).toBe(2);
+      expect(result.stdout, label).toBe('');
+    }
+  });
+
+
+  it('should send metadata at the edges of the API rules', async () => {
+    const edges = {
+      feature: `A.b_c-${'9'.repeat(122)}`,
+      questionKey: 'ffffffffffffffff',
+      answerIndex: 100,
+      command: `oss-${'z'.repeat(60)}`,
+      answeredAt: '2020-01-01T00:00:00Z',
+    };
+
+    const body = await pushBody({ ...baseRecord(), ...edges });
+
+    expect(body).toMatchObject(edges);
+  });
+
+
+  it('should send an answer stamped two days ahead by a fast clock, keeping the stamp as given', async () => {
+    // The user chose server time: the API clamps a future answeredAt to its receive time, so a machine
+    // whose clock runs fast must still push its answers instead of having them refused for good.
+    const inTwoDays = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString();
+
+    const body = await pushBody({ ...baseRecord(), answeredAt: inTwoDays });
+
+    expect(body.answeredAt).toBe(inTwoDays);
+  });
+
+
+  it('should send a record answered outside any workflow command, whose command is empty', async () => {
+    // The hook records command "" when no /oss command is running, and the API accepts an empty command.
+    const body = await pushBody({ ...baseRecord(), command: '' });
+
+    expect(body.command).toBe('');
+  });
+
 });

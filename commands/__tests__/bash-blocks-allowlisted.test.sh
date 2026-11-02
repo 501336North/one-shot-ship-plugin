@@ -33,6 +33,7 @@ reason() {
     case "$1" in
         pre-existing) echo "unallowlisted at HEAD f3f897b, before T57/T58: customers approve these lines today; T60 does not grow scope" ;;
         key-check) echo "T57/T58 replaced HEAD's 'cat ~/.oss/config.json | grep apiKey' (which printed the key) in the same file with a grep -q that prints no key: one approval before, one now" ;;
+        pr214-approval) echo "added by #214 (91c808e) to /oss:login and /oss:settings: oss-decisions-policy.sh changes a team setting and is kept off the allowlist on purpose (oss-session-start.sh), the rest sit in blocks that already prompt" ;;
         *) return 1 ;;
     esac
 }

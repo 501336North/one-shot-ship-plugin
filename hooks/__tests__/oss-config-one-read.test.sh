@@ -49,7 +49,10 @@ printf '%s' "$DOC_B" > "$KS/doc-b.json"
 
 # jq and node wrappers: run the real one, then, the first time a run named the case's config, replace that
 # config with document B. So a hook that reads the config twice sees A, then B.
-SWAP='for a in "$@"; do if [ "$a" = "$SHIM/home/.oss/config.json" ] && [ ! -e "$SHIM/swapped" ]; then : > "$SHIM/swapped"; cat "'"$KS"'/doc-b.json" > "$a"; fi; done; exit $rc'
+# With $SHIM/swap-each present, EVERY read swaps (A, B, A, ...): any two reads see different documents, so a
+# hook whose key-fingerprint read comes before its send still shows a second read.
+printf '%s' "$DOC_A" > "$KS/doc-a.json"
+SWAP='for a in "$@"; do if [ "$a" = "$SHIM/home/.oss/config.json" ]; then if [ -e "$SHIM/swap-each" ]; then if cmp -s "$a" "'"$KS"'/doc-b.json"; then cat "'"$KS"'/doc-a.json" > "$a"; else cat "'"$KS"'/doc-b.json" > "$a"; fi; elif [ ! -e "$SHIM/swapped" ]; then : > "$SHIM/swapped"; cat "'"$KS"'/doc-b.json" > "$a"; fi; fi; done; exit $rc'
 WARM=y
 warm_stub "$KS/jqbin/jq" '"'"$REAL_JQ"'" "$@"; rc=$?; '"$SWAP" || WARM=n
 warm_stub "$KS/bin/node" '"'"$REAL_NODE"'" "$@"; rc=$?; '"$SWAP" || WARM=n
@@ -68,7 +71,8 @@ EOF
 # for oss-notify.sh (a workflow-state CLI file present, so its analytics call runs).
 mkdir -p "$KS/plugin/hooks" "$KS/pluginN/hooks" "$KS/pluginN/watcher/dist/cli"
 for n in oss-session-start.sh oss-api-curl.sh oss-safe-path.sh oss-config.sh oss-settings-cleanup.sh \
-         fetch-iron-laws.sh oss-fetch-team-iron-laws.sh oss-push-metrics.sh oss-iron-laws-sync.sh oss-claude-md-template.sh; do
+         fetch-iron-laws.sh oss-fetch-team-iron-laws.sh oss-push-metrics.sh oss-iron-laws-sync.sh oss-claude-md-template.sh \
+         oss-decisions-policy.sh; do
     [[ -f "$HOOKS/$n" ]] && cp "$HOOKS/$n" "$KS/plugin/hooks/$n"
 done
 warm_stub "$KS/plugin/hooks/oss-notify.sh" 'exit 0' || WARM=n
@@ -86,7 +90,7 @@ site() {
     SHIM=$(mktemp -d "$KS/s.XXXXXX"); mkdir -p "$SHIM/home/.oss" "$SHIM/proj"
     printf '%s' "${3:-$DOC_A}" > "$SHIM/home/.oss/config.json"
     printf '# Mine\n' > "$SHIM/proj/CLAUDE.md"
-    local root="$KS/plugin"
+    local root="$KS/plugin" IN=/dev/null
     local -a cmd
     case "$1" in
         (fetch-iron-laws) cmd=(/bin/bash "$root/hooks/fetch-iron-laws.sh") ;;
@@ -96,10 +100,19 @@ site() {
         (claude-md-template) cmd=(/bin/bash "$root/hooks/oss-claude-md-template.sh") ;;
         (session-start) cmd=(/bin/bash "$SS_HOOK") ;;
         (notify) root="$KS/pluginN"; cmd=(/bin/bash "$root/hooks/oss-notify.sh" --workflow build start) ;;
+        (decisions-policy) cmd=(/bin/bash "$root/hooks/oss-decisions-policy.sh" status) ;;
+        (decision-record) # the push after an answer: a feature branch, an active feature, the real payload; the
+            # hook runs from this checkout (it needs watcher/dist beside it); every config read swaps
+            (cd "$SHIM/proj" && GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git init -q \
+                && GIT_CONFIG_GLOBAL=/dev/null git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init \
+                && git checkout -q -b feat/demo/build) >/dev/null 2>&1
+            mkdir -p "$SHIM/proj/.oss/dev/active/demo"; printf '{"currentCommand":"build"}\n' > "$SHIM/proj/.oss/workflow-state.json"
+            : > "$SHIM/swap-each"; IN="$SCRIPT_DIR/fixtures/ask-user-question/pick.json"
+            cmd=(/bin/bash "$HOOKS/oss-decision-record.sh") ;;
     esac
     OUT=$(cd "$SHIM/proj" && run_capped 60 env -u OSS_SKIP_HEALTH_CHECK -u CLAUDE_CODE_SESSION_ID -u OSS_RUN_HEALTH_CHECK \
         SHIM="$SHIM" HOME="$SHIM/home" CLAUDE_PLUGIN_ROOT="$root" CLAUDE_PROJECT_DIR="$SHIM/proj" PATH="$(mode_path "$2")" \
-        "${cmd[@]}" </dev/null 2>&1 3>&1)
+        "${cmd[@]}" <"$IN" 2>&1 3>&1)
     PAIRS=$(cat "$SHIM/pairs" 2>/dev/null)
 }
 
@@ -111,6 +124,16 @@ for MODE in jq nojq; do
         if [[ -n "$PAIRS" && -z "$mixed" ]]; then pass "$name"
         else fail "$name" "pairs=$(printf '%q' "$PAIRS") out=$(printf '%q' "${OUT:0:200}")"; fi
     done
+done
+
+# The two hooks origin/main #214 added that send the key (the decision push and /oss:settings decisions) follow
+# the same rule (T37, merge of 91c808e). Both need jq, so only the jq mode.
+for S in decisions-policy decision-record; do
+    name="[jq] $S: the key goes only to the URL of the same read, while the config changes"
+    site "$S" jq
+    mixed=$(printf '%s\n' "$PAIRS" | grep -vE '^(fake-key-A https://a\.example\.com|fake-key-B https://b\.example\.com)$' | grep -v '^$')
+    if [[ -n "$PAIRS" && -z "$mixed" ]]; then pass "$name"
+    else fail "$name" "pairs=$(printf '%q' "$PAIRS") out=$(printf '%q' "${OUT:0:200}")"; fi
 done
 
 # The messages stay as they were: the template hook still tells an unreadable config from a missing key.

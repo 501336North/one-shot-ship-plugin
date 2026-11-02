@@ -168,7 +168,7 @@ cat > "$H/.oss/settings.json" <<'JSON'
  "apiKeys":{"openrouter":"sk-or-test"},"supervisor":{"enabled":true,"interval":30},"zzUnrelated":[1,"two",{"3":null}],
  "notifications":{"style":"visual","voice":"Karen","sound":"Ping","verbosity":"important","extra":{"keep":true}},"version":1}
 JSON
-chmod 640 "$H/.oss/settings.json"
+chmod 644 "$H/.oss/settings.json"
 OTHERS_BEFORE=$(jq -S 'del(.notifications, .version)' "$H/.oss/settings.json")
 model_writes notify_style sound verbosity errors-only sound Pop
 LS_BEFORE=$(ls -A "$H/.oss"); run_block settings.md "$SAVE"
@@ -178,8 +178,10 @@ LS_BEFORE=$(ls -A "$H/.oss"); run_block settings.md "$SAVE"
    && "$(j .notifications.verbosity)" == errors-only && "$(jq -c .notifications.extra "$H/.oss/settings.json" 2>/dev/null)" == '{"keep":true}' && "$(j .version)" == 2 ]] \
     && pass "settings: the save sets the four choices and version 2, keeping other notification keys" || fail "settings: the save sets the four choices and version 2, keeping other notification keys" "settings=$(cat "$H/.oss/settings.json" 2>&1)"
 MODE=$(stat -c %a "$H/.oss/settings.json" 2>/dev/null || stat -f %Lp "$H/.oss/settings.json")
-[[ "$MODE" == 640 && ! -L "$H/.oss/settings.json" && "$(ls -A "$H/.oss")" == "$LS_BEFORE" ]] \
-    && pass "settings: the save keeps the file's mode and leaves no temp file" || fail "settings: the save keeps the file's mode and leaves no temp file" "mode=$MODE ls=$(ls -A "$H/.oss" | tr '\n' ' ')"
+# Task 16ac: settings.json holds provider apiKeys, so the save leaves it 600 (owner only) whatever mode it had
+# (Task 16ad: ~/.oss/locks, the private folder of the settings lock, stays; the lock itself is gone)
+[[ "$MODE" == 600 && ! -L "$H/.oss/settings.json" && "$(ls -A "$H/.oss" | grep -vx locks)" == "$LS_BEFORE" && ! -e "$H/.oss/locks/settings" ]] \
+    && pass "settings: the save leaves a 644 file at 600 and leaves no temp file or lock" || fail "settings: the save leaves a 644 file at 600 and leaves no temp file or lock" "mode=$MODE ls=$(ls -A "$H/.oss" "$H/.oss/locks" 2>&1 | tr '\n' ' ')"
 # P2R2-2: the save removes the retired Telegram settings (a plaintext bot token) and keeps the rest
 # @behavior A user whose settings.json still holds the old Telegram bot token runs /oss:settings;
 #           afterwards the token is gone and their model routing and API keys are as they were.
@@ -213,6 +215,29 @@ sandbox repo; echo '{"keep":1}' > "$H/target.json"; ln -s "$H/target.json" "$H/.
 model_writes notify_style visual verbosity all; run_block settings.md "$SAVE"
 [[ "$RC" != 0 && -L "$H/.oss/settings.json" && "$(cat "$H/target.json")" == '{"keep":1}' && "$(calls)" != *terminal-notifier* ]] \
     && pass "settings: a symlinked settings.json is refused, link and target untouched" || fail "settings: a symlinked settings.json is refused, link and target untouched" "rc=$RC out=$OUT link=$([[ -L "$H/.oss/settings.json" ]] && echo y || echo n) target=$(cat "$H/target.json")"
+# Task 16u: the save applies the one settings.json rule (oss_settings_mergeable, shared with oss_settings_set and
+# the session-start cleanup): two objects in one file, or a file that is not the user's, is refused and left
+# byte-identical. Another user's file is simulated through `test -O` (the repo's other-user seam), exported to the block.
+sandbox repo; printf '{"decisionsPush":false}\n{"notifications":{}}\n' > "$H/.oss/settings.json"; BYTES=$(cat "$H/.oss/settings.json")
+model_writes notify_style visual verbosity all; LS_BEFORE=$(ls -A "$H/.oss"); run_block settings.md "$SAVE"
+[[ "$RC" != 0 && "$(cat "$H/.oss/settings.json")" == "$BYTES" && "$(ls -A "$H/.oss")" == "$LS_BEFORE" && "$(calls)" != *terminal-notifier* ]] \
+    && pass "settings: two objects in one settings.json are refused, the file left byte-identical" || fail "settings: two objects in one settings.json are refused, the file left byte-identical" "rc=$RC out=$OUT settings=$(cat "$H/.oss/settings.json" 2>&1)"
+sandbox repo; printf '{"decisionsPush":false}\n' > "$H/.oss/settings.json"; BYTES=$(cat "$H/.oss/settings.json")
+model_writes notify_style visual verbosity all
+test() { if [[ "${1:-}" == -O && "${2:-}" == "$OSS_T_FOREIGN" ]]; then return 1; fi; builtin test "$@"; }
+export -f test; export OSS_T_FOREIGN="$H/.oss/settings.json"
+run_block settings.md "$SAVE"
+unset -f test; unset OSS_T_FOREIGN
+[[ "$RC" != 0 && "$(cat "$H/.oss/settings.json")" == "$BYTES" && "$(calls)" != *terminal-notifier* ]] \
+    && pass "settings: a settings.json that is not the user's is refused, the file left byte-identical" || fail "settings: a settings.json that is not the user's is refused, the file left byte-identical" "rc=$RC out=$OUT settings=$(cat "$H/.oss/settings.json" 2>&1)"
+# Task 16ad: while another writer holds the settings lock (~/.oss/locks/settings) the save waits, then refuses
+# with a message and writes nothing (never unlocked); the lock stays the other writer's
+sandbox repo; printf '{"decisionsPush":false}\n' > "$H/.oss/settings.json"; BYTES=$(cat "$H/.oss/settings.json")
+mkdir -p -m 700 "$H/.oss/locks"; mkdir "$H/.oss/locks/settings"
+model_writes notify_style visual verbosity all
+export OSS_SETTINGS_LOCK_WAIT=1; run_block settings.md "$SAVE"; unset OSS_SETTINGS_LOCK_WAIT
+[[ "$RC" != 0 && "$(cat "$H/.oss/settings.json")" == "$BYTES" && -d "$H/.oss/locks/settings" && "$OUT" == *"Not saved"* && "$(calls)" != *terminal-notifier* ]] \
+    && pass "settings: a held settings lock: the save refuses with a message, the file left byte-identical" || fail "settings: a held settings lock: the save refuses with a message, the file left byte-identical" "rc=$RC out=$OUT settings=$(cat "$H/.oss/settings.json" 2>&1)"
 # telegram is no longer a style: refused, settings.json untouched, nothing run, no API called
 sandbox repo; cfg ossk_k1 https://api.example.invalid; echo '{"keep":1}' > "$H/.oss/settings.json"
 model_writes notify_style telegram verbosity important; run_block settings.md "$SAVE"

@@ -624,6 +624,32 @@ It failed once with rc=125 (run_capped found a member of the process group still
 parallel, and passed 126/126 alone. Find the root cause: a real leak in the hook, or the run_capped settle wait under
 load. Fix it, prove the fix under load, or delete the case.
 
+### Task 66: signatures and tamper checks still pass (user 2026-11-02: "we will have to resign everything")
+Inventory (2026-11-02):
+(1) Server prompts: an Ed25519-signed manifest (AgenticDevWorkflow packages/api/src/prompts/prompt-manifest.json) that
+oss-decrypt checks (packages/cli-decrypt/src/manifest-verifier.ts, prompt-integrity.ts). It covers 54 agents, 59 commands
+and 15 skills. A name missing from the manifest returns `not_in_manifest`, and that still counts as valid.
+(2) Pinned binaries: hooks/oss-decrypt-checksums.txt (cli-decrypt-v1.2.4) and hooks/oss-launch-checksums.txt, which
+ensure-decrypt-cli.sh and ensure-oss-launch.sh check.
+(3) Plugin hooks and prompt .md files carry no signature: they come through the plugin marketplace, and session start
+trusts the install record by byte identity (T36/T50).
+Gate:
+(a) In T59 item 1, every fetch must show "Manifest signature: valid" and status `match`. A `not_in_manifest` result means
+no hash protects that prompt: report it and get it added and signed on the API side.
+(b) If T59 item 5 changes any server prompt, regenerate and re-sign the manifest in AgenticDevWorkflow with its own
+signing script, coordinated with that repo's session, and deploy before this plugin merges.
+(c) If the user chooses the cli-decrypt release (T45 stripping), do the new tag, the checksums in
+oss-decrypt-checksums.txt, OSS_DECRYPT_TAG and the rebuilt dist, all in one reviewed change.
+(d) Grep for any other committed hash or allowlist that covers a file this branch changed (for example the settings
+allowlist from T60, or tamper floors), and update and verify it.
+
+### Task 67: #214's ~/.oss reads cannot hang a picker answer (user 2026-11-02: "Fix now as T67", LOW security)
+Found while merging #214 (91c808e): `oss_decisions_push_off` (hooks/oss-api-curl.sh, runs on every picker answer) and
+`oss-decisions-policy.sh status` read files under ~/.oss with no regular-file check, so a FIFO in place of one hangs the
+hook. RED: a test puts a FIFO where each file is read and asserts the hook finishes in time (run_capped) with its
+fail-safe answer. GREEN: a `[[ -f ]] && [[ ! -L ]]` check (the pattern our hooks already use) before each read. Mutation:
+dropping either check must fail the test. dev-15 (#214 owner) was told.
+
 ### Task 59: RELEASE GATE: customers keep a working plugin/API combination (user, 2026-11-02: "we NEED to make SURE")
 No PR merges until each of these is proven by a run, not argued:
 1. For every prompt file changed by T57/T58, run the exact fetch command the new file tells Claude to run, read-only,

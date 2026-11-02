@@ -145,7 +145,7 @@ name='should still write a line when uuidgen or shasum is missing'
 run_hook_without() {
     local B="$T/bin-no-$1" t w
     rm -rf "$B"; mkdir -p "$B"
-    for t in bash cat cut date dirname git jq printf tr find ls pwd od head tail mkdir rmdir sleep shasum sha256sum uuidgen node; do
+    for t in bash cat cut date dirname git jq printf tr find ls pwd od head tail mkdir rmdir sleep chmod mktemp mv shasum sha256sum uuidgen node stat; do
         [[ " $* " == *" $t "* ]] && continue
         w=$(command -v "$t" 2>/dev/null) && [[ "$w" == /* ]] && ln -s "$w" "$B/$t"
     done
@@ -185,6 +185,9 @@ new_project() {
 }
 # run_in_project [payload]: the hook on <payload> (default pick.json) in Q -> RC, stderr in $T/err
 run_in_project() { (cd "$Q" && CLAUDE_PROJECT_DIR="$Q" "$HOOK" < "${1:-$FIX/pick.json}" 2>"$T/err"); RC=$?; }
+# lock_of <record>: where the record's lock lives, outside the repo (Task 16r): ~/.oss/locks/<16 hex of its
+# physical path>, the folder made 700 as the hook makes it
+lock_of() { mkdir -p -m 700 "$HOME/.oss/locks"; printf "%s/.oss/locks/%s" "$HOME" "$(printf "%s" "$1" | shasum -a 256 | cut -c1-16)"; }
 # lines_under <dir>: every decisions file under <dir> with its line count, one per row, sorted
 lines_under() { (cd "$1" && find . -name 'decision*.ndjson' -type f -exec wc -l {} + 2>/dev/null | grep -v ' total$' | awk '{print $2 ":" $1}' | sort | tr '\n' ' '); }
 
@@ -322,24 +325,24 @@ done
 # an answer that still cannot be written is never dropped silently: one stderr line says so.
 # (no upper time bound: under load a wall-clock ceiling flakes; giving up at all is what the stderr line proves)
 name='should wait about 10 seconds, then write nothing and say so once, when another session keeps the record locked'
-new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"
+new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"; L=$(lock_of "$R")
 # the lock is made 2 s old: the worst case of a second boundary falling between making it and the wait
 then_s=$(($(date +%s) - 2))
 stamp=$(date -r "$then_s" +%Y%m%d%H%M.%S 2>/dev/null || date -d "@$then_s" +%Y%m%d%H%M.%S)
-mkdir "$R.lock" && touch -t "$stamp" "$R.lock"
+mkdir "$L" && touch -t "$stamp" "$L"
 # the other session is alive: it keeps its lock fresh, as a live holder does, so the lock never turns stale
-bash -c 'while :; do touch -c "$1"; sleep 1; done' oss-lock-holder "$R.lock" & HOLDER=$!
+bash -c 'while :; do touch -c "$1"; sleep 1; done' oss-lock-holder "$L" & HOLDER=$!
 start=$SECONDS
 run_in_project; took=$((SECONDS - start))
 kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null; HOLDER=""
-[[ $RC -eq 0 && ! -e "$R" && -d "$R.lock" && $(wc -l < "$T/err") -eq 1 && "$(cat "$T/err")" == "oss: decision record skipped, "* && $took -ge 8 ]] && pass "$name" \
-    || fail "$name" "rc=$RC took=${took}s record=$(cat "$R" 2>/dev/null) lock-kept=$([[ -d "$R.lock" ]] && echo yes || echo no) stderr=$(cat "$T/err")"
+[[ $RC -eq 0 && ! -e "$R" && -d "$L" && $(wc -l < "$T/err") -eq 1 && "$(cat "$T/err")" == "oss: decision record skipped, "* && $took -ge 8 ]] && pass "$name" \
+    || fail "$name" "rc=$RC took=${took}s record=$(cat "$R" 2>/dev/null) lock-kept=$([[ -d "$L" ]] && echo yes || echo no) stderr=$(cat "$T/err")"
 
 # a lock released between a failed mkdir and the look at it is not "a foreign lock": every answer lands
 name='should record every answer, with no stderr, when eight sessions answer at once'
 bad=0; why=""
 for r in $(seq 10); do
-    new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"
+    new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"; L=$(lock_of "$R")
     for _ in $(seq 8); do (cd "$Q" && CLAUDE_PROJECT_DIR="$Q" "$HOOK" < "$FIX/pick.json" 2>>"$T/err8.$r") & done
     wait
     got=$(jq -sc '[.[].answerIndex] | sort' "$R" 2>/dev/null)
@@ -351,30 +354,67 @@ done
 # every clone: say so at once, never wait it out in silence
 name='should say so at once, and write nothing, when the lock path is a file, a symlink or a non-empty folder'
 for kind in file symlink folder; do
-    new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"
+    new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"; L=$(lock_of "$R")
     case $kind in
-        file) printf 'x\n' > "$R.lock" ;;
-        symlink) mkdir "$T/lockdir.$kind.$$" 2>/dev/null; ln -s "$T/lockdir.$kind.$$" "$R.lock" ;;
-        folder) mkdir "$R.lock"; : > "$R.lock/.gitkeep" ;;
+        file) printf 'x\n' > "$L" ;;
+        symlink) mkdir "$T/lockdir.$kind.$$" 2>/dev/null; ln -s "$T/lockdir.$kind.$$" "$L" ;;
+        folder) mkdir "$L"; : > "$L/.gitkeep" ;;
     esac
     start=$SECONDS; run_in_project; took=$((SECONDS - start))
     [[ $RC -eq 0 && ! -e "$R" && $(wc -l < "$T/err") -eq 1 && "$(cat "$T/err")" == "oss: decision record skipped, "* && $took -le 2 ]] && pass "$name ($kind)" \
         || fail "$name ($kind)" "rc=$RC took=${took}s record=$(cat "$R" 2>/dev/null) stderr=$(cat "$T/err")"
 done
 
-# a lock that turns stale while the hook waits is taken over, whenever in the wait that happens
-name='should take over a lock that becomes older than 10 seconds while the hook is waiting'
+# Task 16r: the locks folder is the person's own and private: a linked ~/.oss/locks could put the lock (and
+# its takeover guards) anywhere, so it is never used, and the answer is not written
+name='should make the locks folder 700 and use no ~/.oss/locks that is a symlink'
 new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"
-then_s=$(($(date +%s) - 6))
+rm -rf "$HOME/.oss/locks"; run_in_project
+m=$(stat -c %a "$HOME/.oss/locks" 2>/dev/null || stat -f %Lp "$HOME/.oss/locks" 2>/dev/null)
+[[ $RC -eq 0 && "$(jq -c '.answerIndex' "$R" 2>/dev/null)" == 1 && "$m" == 700 && ! -L "$HOME/.oss/locks" ]] && pass "$name (made 700)" \
+    || fail "$name (made 700)" "rc=$RC mode=$m record=$(head -c 60 "$R" 2>/dev/null)"
+new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"
+O=$(mktemp -d "$T/outside.XXXXXX"); rm -rf "$HOME/.oss/locks"; ln -s "$O" "$HOME/.oss/locks"
+run_in_project
+[[ $RC -eq 0 && ! -e "$R" && -z "$(ls -A "$O")" && $(wc -l < "$T/err") -eq 1 && "$(cat "$T/err")" == "oss: decision record skipped, "* ]] && pass "$name (linked: refused)" \
+    || fail "$name (linked: refused)" "rc=$RC record=$(head -c 60 "$R" 2>/dev/null) outside=$(ls -A "$O" | tr '\n' ' ') stderr=$(cat "$T/err")"
+rm -f "$HOME/.oss/locks"
+
+# Task 15i (PR 3 ship round 1): a live session may hold the lock without touching it (reading a big record),
+# so a lock is stale only past any possible hold (30 s), never at 10 s
+name='should not take over a lock that no one refreshes while it is younger than 30 seconds'
+new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"; L=$(lock_of "$R")
+then_s=$(($(date +%s) - 2))
 stamp=$(date -r "$then_s" +%Y%m%d%H%M.%S 2>/dev/null || date -d "@$then_s" +%Y%m%d%H%M.%S)
-mkdir "$R.lock" && touch -t "$stamp" "$R.lock"
+mkdir "$L" && touch -t "$stamp" "$L"
+run_in_project
+[[ $RC -eq 0 && ! -e "$R" && -d "$L" && $(wc -l < "$T/err") -eq 1 && "$(cat "$T/err")" == "oss: decision record skipped, "* ]] && pass "$name" \
+    || fail "$name" "rc=$RC record=$(cat "$R" 2>/dev/null | head -c 80) lock-kept=$([[ -d "$L" ]] && echo yes || echo no) stderr=$(cat "$T/err")"
+
+# Task 15i: a record over 5 MB is not parsed under the lock (it would stall every other session): the answer
+# is still written, its answerIndex is not counted (1), and one stderr line says so
+name='should not count answerIndex in a record larger than 5 MB, and say so once'
+new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"; L=$(lock_of "$R")
+run_in_project; valid=$(head -n 1 "$R" 2>/dev/null)
+{ printf '%s\n' "$valid"; head -c 5300000 /dev/zero | tr '\0' 'x'; printf '\n'; } > "$R"
+run_in_project
+got=$(tail -n 1 "$R" | jq -c '[.answerIndex, .questionKey == ($v | fromjson).questionKey]' --arg v "$valid" 2>/dev/null)
+[[ $RC -eq 0 && -n "$valid" && "$got" == '[1,true]' && $(wc -l < "$T/err" | tr -d ' ') == 1 && "$(cat "$T/err")" == oss:*"5 MB"* ]] && pass "$name" \
+    || fail "$name" "rc=$RC [index,samekey]=$got stderr=$(cat "$T/err")"
+
+# a lock that turns stale while the hook waits is taken over, whenever in the wait that happens
+name='should take over a lock that becomes older than 30 seconds while the hook is waiting'
+new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"; L=$(lock_of "$R")
+then_s=$(($(date +%s) - 25))
+stamp=$(date -r "$then_s" +%Y%m%d%H%M.%S 2>/dev/null || date -d "@$then_s" +%Y%m%d%H%M.%S)
+mkdir "$L" && touch -t "$stamp" "$L"
 run_in_project
 got=$(jq -c '.answerIndex' "$R" 2>/dev/null)
-[[ $RC -eq 0 && "$got" == 1 && ! -e "$R.lock" && ! -s "$T/err" ]] && pass "$name" \
-    || fail "$name" "rc=$RC answerIndex=$got lock-left=$([[ -e "$R.lock" ]] && echo yes || echo no) stderr=$(cat "$T/err")"
+[[ $RC -eq 0 && "$got" == 1 && ! -e "$L" && ! -s "$T/err" ]] && pass "$name" \
+    || fail "$name" "rc=$RC answerIndex=$got lock-left=$([[ -e "$L" ]] && echo yes || echo no) stderr=$(cat "$T/err")"
 
 name='should count each question of a multi-question set on its own'
-new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"
+new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"; L=$(lock_of "$R")
 run_in_project "$FIX/multi.json"; run_in_project "$FIX/multi.json"
 got=$(jq -sc '[.[].answerIndex], ([.[].questionKey] | unique | length), (.[0].questionKey == .[2].questionKey), (.[1].questionKey == .[3].questionKey)' "$R" 2>/dev/null | tr '\n' ' ')
 [[ $RC -eq 0 && "$got" == '[1,1,2,2] 2 true true ' ]] && pass "$name" || fail "$name" "rc=$RC [indexes] distinct-keys same-q1 same-q2 = $got"
@@ -382,7 +422,7 @@ got=$(jq -sc '[.[].answerIndex], ([.[].questionKey] | unique | length), (.[0].qu
 # Task 10b (ADR-003/004): a record never silently stops. A line that is not JSON (a merge-conflict
 # marker, a line cut short) is left as it is, and answers keep being recorded after it.
 name='should still record, counting only the valid lines, when the record holds a line that is not JSON'
-new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"
+new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"; L=$(lock_of "$R")
 run_in_project; valid=$(head -n 1 "$R" 2>/dev/null)
 printf '%s\n%s\n%s\n' "$valid" '<<<<<<< HEAD' "${valid:0:40}" > "$R"; before=$(cat "$R")
 run_in_project
@@ -394,7 +434,7 @@ got=$(tail -n 1 "$R" | jq -c '[.answerIndex, .questionKey == ($v | fromjson).que
 # skipped like any other foreign line, and the record goes on
 name='should still record when the record holds a JSON line that is not an object'
 for junk in '42' '"x"' '[1]'; do
-    new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"
+    new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"; L=$(lock_of "$R")
     run_in_project; valid=$(head -n 1 "$R" 2>/dev/null)
     printf '%s\n%s\n' "$valid" "$junk" > "$R"; before=$(cat "$R")
     run_in_project
@@ -406,23 +446,85 @@ done
 # a hook killed while holding the lock leaves its folder behind: once it is old, the next answer takes it
 # over, or every later answer would be skipped forever. (A fresh lock is still waited on, then skipped:
 # see "should give up quietly" above.)
-name='should take over a lock left by a crashed hook once it is older than 10 seconds'
-new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"
+name='should take over a lock left by a crashed hook once it is older than 30 seconds'
+new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"; L=$(lock_of "$R")
 then_s=$(($(date +%s) - 60))
 stamp=$(date -r "$then_s" +%Y%m%d%H%M.%S 2>/dev/null || date -d "@$then_s" +%Y%m%d%H%M.%S)
-mkdir "$R.lock" && touch -t "$stamp" "$R.lock"
+mkdir "$L" && touch -t "$stamp" "$L"
 run_in_project
 got=$(jq -c '.answerIndex' "$R" 2>/dev/null)
-[[ $RC -eq 0 && "$got" == 1 && ! -e "$R.lock" && ! -s "$T/err" ]] && pass "$name" \
-    || fail "$name" "rc=$RC answerIndex=$got lock-left=$([[ -e "$R.lock" ]] && echo yes || echo no) stderr=$(cat "$T/err")"
+[[ $RC -eq 0 && "$got" == 1 && ! -e "$L" && ! -s "$T/err" ]] && pass "$name" \
+    || fail "$name" "rc=$RC answerIndex=$got lock-left=$([[ -e "$L" ]] && echo yes || echo no) stderr=$(cat "$T/err")"
+
+# Task 15j (PR 3 ship round 1): taking over a stale lock is atomic. Sessions that all saw the same stale lock
+# must not each remove it: the second would remove the first one's fresh lock and both would write at once
+# (two answers with the same answerIndex). A `stat` that answers late after seeing an old lock (as a busy
+# machine does) opens that window wide, and a record of 40000 lines makes each hold last a moment.
+name='should let only one session at a time take over a stale lock, even when they all saw it stale'
+SB="$T/slow-stat-bin"; mkdir -p "$SB"; REAL_STAT=$(command -v stat)
+printf '#!/bin/bash\nout=$("%s" "$@"); rc=$?\nlast=${out##* }\nif [[ "$last" =~ ^[0-9]{9,10}$ ]] && (( $(date +%%s) - last > 25 )); then sleep 0.$((RANDOM %% 4 + 1)); fi\n[[ -n "$out" ]] && printf "%%s\\n" "$out"\nexit $rc\n' "$REAL_STAT" > "$SB/stat"
+chmod +x "$SB/stat"
+bad=0; why=""
+for r in $(seq 8); do
+    new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"; L=$(lock_of "$R")
+    then_s=$(($(date +%s) - 60))
+    stamp=$(date -r "$then_s" +%Y%m%d%H%M.%S 2>/dev/null || date -d "@$then_s" +%Y%m%d%H%M.%S)
+    jq -nc 'range(40000) | {questionKey: ("k" + (. % 50 | tostring)), pad: ("x" * 60)}' > "$R"
+    mkdir "$L" && touch -t "$stamp" "$L"
+    for _ in 1 2 3 4 5 6; do (cd "$Q" && CLAUDE_PROJECT_DIR="$Q" PATH="$SB:$PATH" "$HOOK" < "$FIX/pick.json" 2>/dev/null) & done
+    wait
+    got=$(jq -sc '[.[] | select(.id) | .answerIndex] | sort' "$R" 2>/dev/null)
+    [[ "$got" == '[1,2,3,4,5,6]' && ! -e "$L" ]] || { bad=$((bad + 1)); why+=" run $r: ${got:-none} lock-left=$([[ -e "$L" ]] && echo yes || echo no);"; }
+done
+[[ $bad -eq 0 ]] && pass "$name (8 races of 6)" || fail "$name (8 races of 6)" "$bad of 8 went wrong:$why"
+
+# a session killed while it took over a stale lock leaves its guard folder behind: once that guard is a
+# minute old it is cleared, or that stale lock could never be taken over again
+name='should clear a takeover guard left for over a minute, then take the stale lock over'
+for gage in 90 20; do
+    new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"; L=$(lock_of "$R")
+    then_s=$(($(date +%s) - 60)); stamp=$(date -r "$then_s" +%Y%m%d%H%M.%S 2>/dev/null || date -d "@$then_s" +%Y%m%d%H%M.%S)
+    mkdir "$L" && touch -t "$stamp" "$L"
+    id=$(stat -c '%i %Y' "$L" 2>/dev/null || stat -f '%i %m' "$L")
+    G="$L.stale-${id/ /-}"; mkdir "$G"
+    then_s=$(($(date +%s) - gage)); stamp=$(date -r "$then_s" +%Y%m%d%H%M.%S 2>/dev/null || date -d "@$then_s" +%Y%m%d%H%M.%S); touch -t "$stamp" "$G"
+    run_in_project
+    if [[ $gage == 90 ]]; then
+        [[ $RC -eq 0 && "$(jq -c '.answerIndex' "$R" 2>/dev/null)" == 1 && ! -e "$G" && ! -e "$L" ]] && pass "$name (90 s old guard: cleared)" \
+            || fail "$name (90 s old guard: cleared)" "rc=$RC record=$(head -c 60 "$R" 2>/dev/null) guard-left=$([[ -e "$G" ]] && echo yes || echo no) stderr=$(cat "$T/err")"
+    else
+        [[ $RC -eq 0 && ! -e "$R" && -d "$G" && -d "$L" ]] && pass "$name (20 s old guard: another session is on it, left alone)" \
+            || fail "$name (20 s old guard: another session is on it, left alone)" "rc=$RC record=$(head -c 60 "$R" 2>/dev/null) guard-left=$([[ -e "$G" ]] && echo yes || echo no)"
+    fi
+done
+
+# Task 16ak: only the holder releases the record lock. A session that held the lock past 30 s may have had it
+# taken over; on its way out it must leave the new holder's lock in place, or a third session would count and
+# append alongside the second one (two answers with the same answerIndex).
+name='should leave the lock in place when another session took it over while this one held it'
+new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"; L=$(lock_of "$R")
+TB="$T/takeover-bin"; mkdir -p "$TB"; REAL_JQ=$(command -v jq)
+# seam: the answerIndex count runs under the lock (jq --rawfile); right then another session replaces the lock
+# with its own fresh one (made before the old one goes, so it never reuses its inode)
+printf '#!/bin/bash
+if [[ " $* " == *" --rawfile "* ]]; then mv "%s" "%s.old" && mkdir "%s" && rmdir "%s.old" && { stat -c %%i "%s" 2>/dev/null || stat -f %%i "%s"; } > "%s.fresh"; fi
+exec "%s" "$@"
+' \
+    "$L" "$L" "$L" "$L" "$L" "$L" "$T/takeover" "$REAL_JQ" > "$TB/jq"
+chmod +x "$TB/jq"; rm -f "$T/takeover.fresh"
+(cd "$Q" && CLAUDE_PROJECT_DIR="$Q" PATH="$TB:$PATH" "$HOOK" < "$FIX/pick.json" 2>"$T/err"); RC=$?
+fresh=$(cat "$T/takeover.fresh" 2>/dev/null)
+[[ $RC -eq 0 && -n "$fresh" && -d "$L" && "$(stat -c %i "$L" 2>/dev/null || stat -f %i "$L")" == "$fresh" && "$(jq -c '.answerIndex' "$R" 2>/dev/null)" == 1 ]] && pass "$name" \
+    || fail "$name" "rc=$RC fresh=$fresh lock=$(ls -ldi "$L" 2>&1) record=$(head -c 60 "$R" 2>/dev/null) stderr=$(cat "$T/err")"
+rmdir "$L" 2>/dev/null
 
 # Task 10d (ship round 1): the path is checked again once the lock is held. A link swapped in while the
 # hook waited for the lock is refused, and nothing outside the project changes.
 name='should refuse a record that turned into a symlink while the hook waited for the lock'
-new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"
+new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"; L=$(lock_of "$R")
 O=$(mktemp -d "$T/outside.XXXXXX"); printf 'outside\n' > "$O/file"
-mkdir "$R.lock"
-( sleep 1; ln -s "$O/file" "$R"; rmdir "$R.lock" ) &
+mkdir "$L"
+( sleep 1; ln -s "$O/file" "$R"; rmdir "$L" ) &
 run_in_project; wait
 [[ $RC -eq 0 && "$(cat "$O/file")" == outside && $(wc -l < "$T/err") -eq 1 && "$(cat "$T/err")" =~ ^oss:\ refusing ]] && pass "$name" \
     || fail "$name" "rc=$RC outside=$(cat "$O/file" | tr '\n' ' ') stderr=$(cat "$T/err")"
@@ -473,6 +575,19 @@ for c in '{"currentCommand":{"a":1}}' '{"currentCommand":"ship; rm -rf /"}' '{"c
     run_in_project
     got=$(jq -c '[.command, .kind]' "$R" 2>/dev/null)
     [[ $RC -eq 0 && "$got" == '["","design"]' ]] && pass "$name ($c)" || fail "$name ($c)" "rc=$RC [command,kind]=$got"
+done
+
+# Task 15h (ship round, PR 3): the command fits the API's rule, ^[a-z][a-z-]*$ and at most 64 characters, so
+# the push never sends a command the API refuses; a longer one is no command
+name='should keep a command of up to 64 characters and drop a longer one'
+for n in 64 65; do
+    new_project feat/demo/build demo; R="$Q/.oss/dev/active/demo/decisions.ndjson"
+    c="s$(printf 'h%.0s' $(seq $((n - 1))))"
+    jq -n --arg c "$c" '{currentCommand: $c}' > "$Q/.oss/workflow-state.json"
+    run_in_project
+    got=$(jq -r '.command | length' "$R" 2>/dev/null)
+    want=$n; [[ $n == 65 ]] && want=0
+    [[ $RC -eq 0 && "$got" == "$want" ]] && pass "$name ($n)" || fail "$name ($n)" "rc=$RC command-length=$got"
 done
 
 # Task 9c (ship round 1): the feature comes from this project's own branch, git never talks on stderr, and
@@ -667,6 +782,8 @@ for r in '"x"' 'true' '{"questions":true}'; do
     run_hook "$T/notobj.json"
     [[ $RC -eq 0 && ! -e "$REC" && ! -s "$T/err" ]] && pass "$name ($r)" || fail "$name ($r)" "rc=$RC stderr=$(cat "$T/err")"
 done
+
+# Task 13 / 15 (PR 3): the push to the OSS API, from the private outbox, is tested in decision-push.test.sh.
 
 echo "$RUN run, $FAILED failed"
 [[ $FAILED -eq 0 ]]
