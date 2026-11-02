@@ -224,5 +224,14 @@ fifo_case() { # fifo_case <label> <fifo path under $KS/fiforoot> ; record 2.0.10
 fifo_case "a record whose root's plugin.json is a FIFO: never opened, installs" .claude-plugin/plugin.json
 fifo_case "a record whose root has a FIFO hook: never opened, installs" "hooks/$LAST_NAME"
 
+# T50 (pen-test re-check N1): the root's hooks and .claude-plugin folders must be real directories, not
+# symlinks. A planted root whose hooks -> ~/.oss/hooks compares every installed (tampered) hook with itself.
+make_root hooklink 9.9.9
+seed 9.9.9 hooklink 2.0.94; rm -rf "$KS/hooklink/hooks"; ln -s "$T/home/.oss/hooks" "$KS/hooklink/hooks"; run_from 2.0.95
+if installed_from 2.0.95 && [[ "$(record)" == "$(rec_of 2.0.95 2.0.95)" ]]; then pass "a record whose root's hooks folder is a symlink to ~/.oss/hooks: installs"
+else fail "a record whose root's hooks folder is a symlink to ~/.oss/hooks: installs" "record '$(record)'"; fi
+make_root cplink ""; rm -rf "$KS/cplink/.claude-plugin"; ln -s "$KS/2.0.100/.claude-plugin" "$KS/cplink/.claude-plugin"
+check_copied "a record whose root's .claude-plugin folder is a symlink (to a real 2.0.100 one): installs" 2.0.100 2.0.95 2.0.95 cplink cplink
+
 echo "Results: $((RUN-FAILED))/$RUN passed, $FAILED failed"
 [[ $FAILED -eq 0 ]]

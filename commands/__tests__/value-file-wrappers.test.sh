@@ -67,7 +67,10 @@ check "models.md set reads prompt.txt and model.txt in one call (R5-1)" line mod
 check "models.md set has no \$(...) read of its own" none models.md 'PROMPT_NAME=$('
 check "models.md set does not take \$1" none models.md 'PROMPT_NAME="$1"'
 check "models.md set does not take \$2" none models.md 'MODEL_ID="$2"'
-check "workflows.md reads workflow.txt in one call (R5-1)" line workflows.md "$V read workflow"
+# T60: the name is read from workflow.txt inside ONE allowlisted call that also fetches it (R5-1), so no
+# step pastes it into a command and no $(...) chain asks for approval
+check "workflows.md reads workflow.txt and fetches it in one allowlisted call (R5-1, T60)" line workflows.md "$V workflow"
+check "workflows.md has no \$(...) read of the name (R5-1, T60)" none workflows.md 'WORKFLOW=$('
 check "workflows.md has no {workflowName}" none workflows.md '{workflowName}'
 check "trust.md decrypts with category.txt and name.txt in one call (R5-1)" line trust.md "$V decrypt"
 check "trust.md has no \$(...) && decrypt chain" none trust.md '--type "$T" --name "$N"'
@@ -87,8 +90,13 @@ cnt() { grep -c '^```http' "$C/$1" | tr -d ' '; }
 # T33: login.md has no request of its own left; the template comes through oss-claude-md-template.sh
 # (login-config-dir.test.sh checks no step sends a request or the key itself)
 check "login.md shows no request shape (every login request goes through a hook)" test "$(cnt login.md)" -eq 0
-check "status.md has its request shape as an http fence" test "$(cnt status.md)" -ge 1
-check "workflows.md has both request shapes as http fences" test "$(cnt workflows.md)" -ge 2
+# T58/T60: status.md and workflows.md fetch through allowlisted oss-value.sh verbs (the key on curl's stdin, inside
+# the hook), so they show no request shape for the model to fill with the key and no key-handling shell of their own
+key() { grep -cE 'oss_api_curl|oss_api_creds|OSS_KEY|oss-api-curl\.sh' "$C/$1" | tr -d ' '; }
+check "status.md shows no request shape and no key-handling shell (T58, T60)" test "$(cnt status.md)" -eq 0 -a "$(key status.md)" -eq 0
+check "workflows.md shows no request shape and no key-handling shell (T58, T60)" test "$(cnt workflows.md)" -eq 0 -a "$(key workflows.md)" -eq 0
+check "status.md fetches with one allowlisted call (T60)" line status.md "$V status"
+check "workflows.md lists with one allowlisted call (T60)" line workflows.md "$V workflows"
 
 echo ""
 echo "Results: $((TESTS_RUN - TESTS_FAILED))/$TESTS_RUN passed, $TESTS_FAILED failed"

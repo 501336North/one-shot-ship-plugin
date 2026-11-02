@@ -50,26 +50,19 @@ Check your One Shot Ship subscription status and usage statistics.
 3. **Displays usage** - Commands used this month
 4. **Lists workflows** - Available in your plan
 
-## Step 1: Check Configuration
+## Step 1: Fetch Status
+
+Run this exactly as written (one allowed call). It sends the key from your OSS config to `/api/v1/auth/verify` on the API that config's `apiUrl` names, on curl's stdin (never on a command line or into this chat), and prints only the lines shown in Step 2 (`Account:`, `Plan:`, `Status:`, and `Trial ends:` when on trial):
 
 ```bash
-if [ -f ~/.oss/config.json ]; then
-    API_KEY=$(grep -o '"apiKey"[[:space:]]*:[[:space:]]*"[^"]*"' ~/.oss/config.json | sed 's/.*: *"\([^"]*\)"/\1/')
-fi
+~/.oss/hooks/oss-value.sh status
 ```
 
-## Step 2: Fetch Status
-
-```http
-URL: https://one-shot-ship-api.onrender.com/api/v1/auth/verify
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
-```
+If it fails, show its message and stop: `No API key found` or `HTTP 401` means run `/oss:login` (register at https://www.oneshotship.com); `HTTP 403` means the subscription expired (upgrade at https://www.oneshotship.com/pricing).
 
 > Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
 
-## Step 3: Display Status
+## Step 2: Display Status
 
 ```
 ==============================================
@@ -79,6 +72,7 @@ Headers:
 Account:     user@example.com
 Plan:        PRO
 Status:      ACTIVE
+Trial ends:  2026-12-01   (only when the output has a Trial ends: line)
 
 Usage This Month: 47 commands
 

@@ -111,6 +111,9 @@ oss_record_trusted() { # <version> <root>: <root> is the plugin the installed ho
     # would hang session start); then that root's version; then the hooks, cheapest checks first.
     local v=$1 r=$2 n
     [[ -d "$r" && ! -L "$r" && -O "$r" ]] || return 1
+    # Its hooks and .claude-plugin folders are not symlinks (T50): hooks -> ~/.oss/hooks would compare each
+    # installed hook with itself. (A non-directory there already fails the -f checks below.)
+    [[ ! -L "$r/hooks" && ! -L "$r/.claude-plugin" ]] || return 1
     [[ -f "$r/.claude-plugin/plugin.json" && ! -L "$r/.claude-plugin/plugin.json" && -O "$r/.claude-plugin/plugin.json" ]] || return 1
     [[ "$(oss_plugin_version "$r")" == "$v" ]] || return 1
     # Every hook this plugin installs must be a regular non-symlink file in the root AND in ~/.oss/hooks,

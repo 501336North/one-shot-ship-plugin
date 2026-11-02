@@ -10,7 +10,7 @@ Expert flutter expert powered by One Shot Ship.
 ## Step 1: Check Authentication
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
 ```
 
 If no API key found:
@@ -19,18 +19,25 @@ No API key found. Run: /oss login
 Register at https://www.oneshotship.com
 ```
 
-## Step 2: Fetch Agent Prompt from API
+## Step 2: Fetch and Decrypt Agent Prompt
 
+Ensure the decrypt CLI is installed:
+
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install the decrypt CLI (see the message above). Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."; exit 1; }
 ```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/agents/flutter-expert
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+
+Fetch and decrypt the prompt:
+
+```bash
+~/.oss/bin/oss-decrypt --type agents --name flutter-expert
 ```
+
+The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
 ## Step 3: Execute the Fetched Prompt
 
-The API returns the expert prompt which you execute directly.
+Execute the prompt returned by the decrypt CLI.
 
 ## Error Handling
 

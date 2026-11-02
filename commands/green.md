@@ -62,7 +62,7 @@ Write the minimal implementation to make failing tests pass.
 ## Step 1: Check Authentication
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
 ```
 
 If no API key found:

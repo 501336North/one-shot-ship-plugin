@@ -116,6 +116,8 @@ placeholder_lines() {
             t = l
             while (match(t, /(^|[^A-Za-z0-9_$])[A-Za-z_][A-Za-z0-9_]*\+?=/)) { n = substr(t, RSTART, RLENGTH); sub(/^[^A-Za-z_]/, "", n); sub(/\+?=$/, "", n); asg[n] = 1; t = substr(t, RSTART + RLENGTH) }
             t = l; while (match(t, /for[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]+in/)) { n = substr(t, RSTART, RLENGTH); sub(/^for[[:space:]]+/, "", n); sub(/[[:space:]]+in$/, "", n); asg[n] = 1; t = substr(t, RSTART + RLENGTH) }
+            # T58: oss_api_creds (hooks/oss-api-curl.sh) sets OSS_KEY, OSS_URL and OSS_URL_RC
+            if (l ~ /(^|[^A-Za-z0-9_])oss_api_creds([^A-Za-z0-9_]|$)/) { asg["OSS_KEY"] = 1; asg["OSS_URL"] = 1; asg["OSS_URL_RC"] = 1 }
             t = l; while (match(t, /(read|local|export|declare)([[:space:]]+-[A-Za-z]+)*([[:space:]]+[A-Za-z_][A-Za-z0-9_]*)+/)) { n = substr(t, RSTART, RLENGTH); k = split(n, w, /[[:space:]]+/); for (i = 2; i <= k; i++) if (w[i] !~ /^-/) asg[w[i]] = 1; t = substr(t, RSTART + RLENGTH) }
         }
         # prints nothing; returns 1 when the line uses a $NAME/${NAME}/$1 the fence never assigns
@@ -176,7 +178,8 @@ placeholder_lines() {
 # (${HOME}, curl -w %{...}, a json/text fence, prose <b>, a heredoc <dict>, prose `spans` that run
 # nothing, jq '{a: $x}', [ -f x ], tr '[A-Z]', <in >out, assigned and allowed variables, {apiKey},
 # a /oss: usage line, the [CHAIN] log tag; ship round 5, R5-4: the [OK] tag, {..} inside single quotes
-# (awk '{print}', jq '{name: .name}'), $1 inside a f() { ... } body, USER OSTYPE TMPDIR SHELL PATH LANG TERM).
+# (awk '{print}', jq '{name: .name}'), $1 inside a f() { ... } body, USER OSTYPE TMPDIR SHELL PATH LANG TERM;
+# T58: OSS_KEY/OSS_URL only in a fence that calls oss_api_creds).
 ctl=$(mktemp -d)
 cat > "$ctl/c.md" <<'FIXTURE'
 ```bash
@@ -229,6 +232,13 @@ cap "{y}"
 ```bash title="x"
 info "{z}"
 ```
+```bash
+oss_api_creds || exit 1
+oss_api_curl "$OSS_KEY" -s "$OSS_URL/api/v1/workflows"
+```
+```bash
+echo "$OSS_URL"
+```
 ```http
 GET https://example.invalid/api/v1/workflows/{workflowName}
 Authorization: Bearer {apiKey}
@@ -243,11 +253,11 @@ run ~/.oss/hooks/oss-log.sh test red FAIL "{MSG}"
 ```
 Prose with <b>bold</b>, a `{span}` and a `/oss-audio <option>` that run nothing.
 FIXTURE
-want=$(grep -cE '^<string>|^(x|y|z|w|sp|dot|col|msg|pipe|br|br2|def|pf|run|bare|tilde|cap|info|GET) |^echo "\$(UNSET_THING|1|3)"|^Run `|^run ~' "$ctl/c.md" | tr -d ' ')
+want=$(grep -cE '^<string>|^(x|y|z|w|sp|dot|col|msg|pipe|br|br2|def|pf|run|bare|tilde|cap|info|GET) |^echo "\$(UNSET_THING|1|3|OSS_URL)"|^Run `|^run ~' "$ctl/c.md" | tr -d ' ')
 got=$(placeholder_lines "$ctl/c.md")
 n=$(printf '%s\n' "$got" | grep -c . | tr -d ' ')
-[[ "$want" == 25 && "$n" == 25 ]] && pass "the placeholder detector flags every shell spelling and nothing else (25)" \
-    || fail "the placeholder detector flags every shell spelling and nothing else" "flagged $n, want 25 (fixture marks $want): $(printf '%s\n' "$got" | cut -d: -f2 | tr '\n' ' ')"
+[[ "$want" == 26 && "$n" == 26 ]] && pass "the placeholder detector flags every shell spelling and nothing else (26)" \
+    || fail "the placeholder detector flags every shell spelling and nothing else" "flagged $n, want 26 (fixture marks $want): $(printf '%s\n' "$got" | cut -d: -f2 | tr '\n' ' ')"
 # ship round 5, R5-4: each failure names the rule that fired (file:line:rule:text)
 rule_of() { printf '%s\n' "$got" | awk -F: -v l="$1" '$2 == l { print $3; exit }'; }
 ln_of() { grep -nF -- "$1" "$ctl/c.md" | head -1 | cut -d: -f1; }

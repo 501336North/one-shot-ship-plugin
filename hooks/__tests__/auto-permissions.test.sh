@@ -111,6 +111,20 @@ grep -qF '"Edit(~/.oss/run/**)"' "$TMPDIR_5/.claude/settings.local.json" && pass
 ! grep -qF 'oss-login.sh' "$TMPDIR_5/.claude/settings.local.json" && pass "Merged file does not allow oss-login.sh (a key change always asks, R5-8)" || fail "Merged file allows oss-login.sh (a key change must always ask, R5-8)"
 rm -rf "$TMPDIR_5"
 
+# --- Test 6: the CLAUDE.md template fetch is allowed (T60) ---
+# @behavior A user whose project has no CLAUDE.md runs the ideate skill (or /oss:login Step 4.2) and the
+#           template fetch runs without an approval prompt.
+# @business-rule oss-claude-md-template.sh takes no arguments and only GETs /api/v1/prompts/claude-md from the
+#           configured API, the key on curl's stdin; allowing it lets no prompt change what it sends or where.
+echo "Test 6: Allows ~/.oss/hooks/oss-claude-md-template.sh (fresh and merged)"
+TMPDIR_6=$(mktemp -d)
+"$SETUP_SCRIPT" "$TMPDIR_6"
+grep -qF '"Bash(~/.oss/hooks/oss-claude-md-template.sh:*)"' "$TMPDIR_6/.claude/settings.local.json" && pass "Fresh file allows oss-claude-md-template.sh" || fail "Fresh file does not allow oss-claude-md-template.sh"
+printf '{"permissions":{"allow":["WebSearch"]}}\n' > "$TMPDIR_6/.claude/settings.local.json"
+"$SETUP_SCRIPT" "$TMPDIR_6"
+grep -qF '"Bash(~/.oss/hooks/oss-claude-md-template.sh:*)"' "$TMPDIR_6/.claude/settings.local.json" && pass "Merged file allows oss-claude-md-template.sh" || fail "Merged file does not allow oss-claude-md-template.sh"
+rm -rf "$TMPDIR_6"
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

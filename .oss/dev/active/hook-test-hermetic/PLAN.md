@@ -530,6 +530,123 @@ session-start-iron-laws and session-start-notify-payload.
 4. A test of the helper itself: endless input plus a child that ignores SIGTERM; nothing outlives the cap; a mutant
    that drops the group kill is caught.
 
+## Phase H: narrow re-check after round 3 (2026-10-31; user chose "keep fixing until clean")
+
+Pen-test, security-auditor and code-reviewer re-checked T34-T49. Round-3 findings are closed, except that pen-test r3 #4
+reopened in a new form (T50). Every task below is RED first and gets a mutation check in a private copy.
+
+### Task 50: a record root whose hooks folder is a symlink is not trusted (pen-test re-check N1, LOW security)
+`oss_record_trusted` (hooks/oss-session-start.sh:119) checks `-L` only on each hook file. A planted root with
+`hooks -> ~/.oss/hooks` compares every installed hook with itself, so it is trusted and the re-copy is skipped. `$r/hooks`
+and `$r/.claude-plugin` must be real directories, not symlinks. Record in DECISIONS.md that byte-identity cannot prove
+where the hooks came from when the attacker can already write ~/.oss (same-user limit).
+
+### Task 51: /oss:login saves the key with the URL it was checked against (pen-test re-check N2, LOW security)
+hooks/oss-login.sh validates the key against `oss_api_url` (read 1, :17) and then saves it into whatever apiUrl the file
+holds at read 2 (:27). Use one value for both: the saved config's apiUrl is the URL the key was validated against. Same
+class as T37 (IRON LAW #1b: login was the site T37 did not route).
+
+### Task 52: the strip set also removes variation selectors and invisible fillers (pen-test re-check N3, LOW security)
+Add U+FE00-FE0F, U+E0100-E01EF, U+034F, U+115F, U+1160, U+3164, U+FFA0 and U+2800 at all three sites (OSS_JQ_INVISIBLE in
+oss-api-curl.sh, the template filter, packages/cli-decrypt/src/strip-control.ts), with a test at each site.
+
+### Task 53: check-updates never writes its state through a FIFO or symlink (security re-check, LOW security)
+hooks/check-updates.sh:54 (and the writes at :108, :141, :149) does `cat > "$STATE_FILE"` with no type check; a FIFO there
+blocks until oss-notify's 3 s cap. Write through the existing regular-file/atomic helpers (as T32 did for other state).
+
+### Task 54: session start's no-timeout fallback kills the whole health-check group (code-review re-check, LOW)
+`run_bounded`'s fallback branch (no timeout/gtimeout; hooks/oss-session-start.sh:357 caller) `kill -9`s only node, so the
+health check's children outlive the bound: the same orphan pattern as T49, in customer-facing code. Kill the group; a
+test with OSS_RUN_HEALTH_CHECK=1, a hanging check that forks a child, and timeout/gtimeout hidden from PATH.
+
+### Task 55: the hand-cap guard's allowlist matches the exact line (code-review re-check, LOW, vacuous test)
+hooks/__tests__/no-hand-capped-tests.test.sh:49 matches the allowlist as a substring, so a cap added to an allowed line
+passes; `CAP_RE` misses `timeout "$secs" ...`. Exact-line match and the quoted-argument form, with anchors.
+
+### Task 56: remove the unwired session-start copies (security re-check, LOW security, IRON LAW #1b)
+hooks/oss-session-start-new.sh and hooks/oss-session-start-test.sh grep-parse apiKey and send it to a hard-coded production
+URL. Nothing references them. Delete both; a guard test that no hook file reads apiKey with grep.
+
+### Task 57: no /oss command prints the API key into the chat (security re-check, security; user chose "fix now")
+Step 1 of 57 of the 68 commands/*.md files runs `cat ~/.oss/config.json 2>/dev/null | grep apiKey`, which prints the
+config line, key included, into the customer's transcript on every command. commands/visual-test.md already has the
+quiet check (`grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"`, guarded by
+commands/__tests__/visual-test-auth.test.sh, G10). RED: one guard test over every commands/*.md (and any other prompt
+file the plugin ships) that names each file with a key-printing check. GREEN: the same quiet line in each.
+Provenance grep (2026-11-02): the identical line is in 152 shipped files: 57 commands/*.md, 44 agents/*.md, 51
+skills/*.md. All are in scope.
+
+### Task 58: no prompt asks Claude to put the API key in a request header (T57 knock-on; user chose "fix now")
+103 agent and skill files (and commands/workflows.md) have a Step 2 that WebFetches the expert prompt with
+`Authorization: Bearer {apiKey}`. After T57, Claude no longer sees the key, so the step fails, or Claude reads
+config.json to get it (and leaks it). First confirm in AgenticDevWorkflow that the encrypted endpoint serves each of
+these agent and skill names. RED: a guard test that no shipped prompt contains `Bearer {apiKey}` (or any instruction
+to put the key in a header or URL). GREEN: Step 2 becomes `~/.oss/bin/oss-decrypt --type agents|skills --name <x>`,
+matching the 3 files that already do this. Names the API does not serve are reported, not guessed.
+
+### Task 60: no new approval prompts; workflow config display works (T58 follow-up a+b; user chose "fix now")
+T58 made /oss:status and /oss:workflows run a Bash block (source oss-api-curl.sh; oss_api_creds; oss_api_curl) that is not
+on the allowlist (hooks/oss-setup-permissions.sh), and skills/ideate.md calls ~/.oss/hooks/oss-claude-md-template.sh, which
+is not allowlisted either. Customers would see new approval prompts. Move each call to an allowlisted entry point:
+oss-value.sh subcommands (already allowlisted; keeps R5-1, where a value hand-off is one allowlisted call reading a value
+file), or allowlist the template hook if that is safe, and say why. `/oss:workflows <name>` gets encrypted config from
+/api/v1/workflows/:name; switch it to /api/v1/workflows/:name/editor (plain config) after confirming the route and its
+auth in AgenticDevWorkflow origin/main. RED: a test that every bash block a shipped prompt runs matches the allowlist.
+
+### Task 61: prompts promise only what the step delivers (T58 follow-up c+d)
+visionos-developer (agent and skill) still claims RAG snippets that oss-decrypt cannot request. /oss:status shows "Usage
+This Month", but /auth/verify returns no usage. Correct the text, or fetch from a real endpoint if one exists (check the
+API).
+
+### Task 62: the watcher never builds a prompt that puts the key in a header (T58 follow-up e)
+watcher/src/monitors/iron-law-log-parser.ts:111 builds `curl -s -H "Authorization: Bearer {apiKey}" .../shared/iron-laws`.
+Point it at the allowlisted ~/.oss/hooks/fetch-iron-laws.sh. Vitest RED first, run with the no-setup config (never the
+setup.ts that pkills).
+
+### Task 63: a failed prompt fetch never breaks an agent or skill (rate limits; user 2026-11-02)
+The trial tier (5 per minute, 30 per hour) and the per-IP global limiter can refuse an `oss-decrypt` fetch with a 429. The
+99 migrated agent and skill Step 2s must say: if the fetch fails for any reason (429, network, not logged in), carry on with
+this file's own instructions, which is today's behaviour, and never read config.json or retry in a loop. Check what
+oss-decrypt prints and its exit status on a 429 (packages/cli-decrypt api-client.ts) so the wording matches. RED: the
+guard test requires the fallback sentence next to every `oss-decrypt --type agents|skills|workflows` line in agents/ and
+skills/. Live check against a local stub that returns 429: the CLI exits non-zero, prints no key, and the step text
+covers it.
+
+### Task 64: the new oss-value verbs work for every customer (T60 risks)
+(a) `status`, `workflows` and `workflow` need jq, but session start treats jq as optional, so a machine without jq gets an
+error. Fall back to node the way oss_config_strings does (oss-api-curl.sh). Test with jq hidden from PATH.
+(b) When a plugin update happens mid-session, ~/.oss/hooks/oss-value.sh is still the old copy until the next session
+start, so the new verbs give a usage error. The prompt (or the old copy) must degrade to a clear message that says to
+restart the session, never a raw usage error. Find out how plugin updates refresh ~/.oss/hooks.
+
+### Task 65: oss-config-one-object never reports a survivor under load (zero-flake rule)
+It failed once with rc=125 (run_capped found a member of the process group still alive) while other tests ran in
+parallel, and passed 126/126 alone. Find the root cause: a real leak in the hook, or the run_capped settle wait under
+load. Fix it, prove the fix under load, or delete the case.
+
+### Task 59: RELEASE GATE: customers keep a working plugin/API combination (user, 2026-11-02: "we NEED to make SURE")
+No PR merges until each of these is proven by a run, not argued:
+1. For every prompt file changed by T57/T58, run the exact fetch command the new file tells Claude to run, read-only,
+   against the DEPLOYED API. It must return a valid signed prompt. Any failure blocks the merge: fix the mapping or have
+   the API serve the name. Never ship a step that fails. (Uses the user's real key, about 100 calls: ask first.)
+2. The same check against the other session's new API (it merges and deploys first). The plugin must work with BOTH
+   the current and the new API.
+3. Clean-machine smoke run with this branch installed and a fresh ~/.oss (sandbox HOME): login, session start,
+   /oss:build, /oss:ship, one agent.
+4. No API key in any output, transcript or log from those runs (scan for the key's value).
+5. First-delivery review (user heads-up 2026-11-02): T58 makes about 99 server-side agent and skill prompts reach customers
+   for the first time, so agent behaviour changes on merge. Decrypt each one (same run as item 1) and review its content
+   before merge. Check that it does not tell Claude to print the key, use `Bearer {apiKey}`, or call a dead route. Check
+   that it does not contradict the plugin's local agent file (Step 2.5 offload, the model-routing check). Check that it is
+   not stale (wrong commands, removed features). Check how long it is, since it is added to every agent call. Fix
+   problems at the source (AgenticDevWorkflow prompts, coordinated with that repo's session) or hold the migration for
+   that name.
+
+Deferred to FOLLOWUPS (re-check, not blocking or outside this change): cli-decrypt config.ts FIFO read and default-URL
+fallback (security); watcher api-credentials.ts no regular-file check and different URL rules (security); stale tracked cli-decrypt
+bundle needs a release (security, user decision); `--rawfile` needs jq >= 1.6; teamId non-string loses the key (already
+deferred as CR r3 #2).
+
 Deferred to FOLLOWUPS (not blocking): jq/node parity on BOM, NaN and deep nesting (fail closed both ways); teamId
 non-string disables the team fetch (CR r3 #2); "No API key found" shown for an invalid config (CR r3 #4); login.md:249
 path text; login.md Step 3 CREDS fallback when the helper is missing (pen-test r3 #7); TOCTOU windows in oss_is_regular

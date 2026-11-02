@@ -337,7 +337,9 @@ describe('IronLawLogParser - Intervention Task Creation', () => {
       expect(task?.prompt).toContain('IRON LAW #1 violated 3+ times');
     });
 
-    it('should include API URL in prompt for 3rd+ violation', () => {
+    // @behavior On a 3rd+ violation Claude is told to fetch the IRON LAWS via the allowlisted hook,
+    // which reads the API key itself - the prompt never asks Claude to handle the key or a hardcoded host.
+    it('should tell Claude to fetch IRON LAWS via the allowlisted hook, never with the API key', () => {
       monitor.recordViolation(2, "Using any type");
       monitor.recordViolation(2, "Using any type again");
       monitor.recordViolation(2, "Using any type still");
@@ -345,8 +347,11 @@ describe('IronLawLogParser - Intervention Task Creation', () => {
       const task = monitor.createInterventionTask(2, "Using any type still");
 
       expect(task).not.toBeNull();
-      expect(task?.prompt).toContain('https://one-shot-ship-api.onrender.com/api/v1/prompts/shared/iron-laws');
-      expect(task?.prompt).toContain('curl -s -H "Authorization: Bearer {apiKey}"');
+      expect(task?.prompt).toContain('~/.oss/hooks/fetch-iron-laws.sh');
+      expect(task?.prompt).not.toMatch(/apiKey/i);
+      expect(task?.prompt).not.toContain('Bearer');
+      expect(task?.prompt).not.toContain('onrender.com');
+      expect(task?.prompt).not.toContain('curl');
     });
 
     it('should have correct source', () => {

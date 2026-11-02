@@ -8,7 +8,7 @@ description: Rust language expert with deep borrow checker, async/tokio, and sec
 ## Step 1: Check Authentication
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
 ```
 
 If no API key found, inform the user:

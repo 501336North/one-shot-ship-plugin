@@ -43,6 +43,14 @@ fence_with() {
         inf { l = $0; if (substr(l, 1, ind) ~ /^[[:space:]]*$/) l = substr(l, ind + 1); b[++n] = l; if (index($0, lit)) hit = 1 }' "$C/$1"
 }
 
+# fence_line <file> <line>: like fence_with, for the block holding <line> as a whole line (any indent), so
+# `oss-value.sh workflow` does not pick the block that runs `oss-value.sh workflows` (T60)
+fence_line() {
+    awk -v lit="$2" '
+        /^[[:space:]]*```/ { if (!inf) { inf = 1; n = 0; hit = 0; match($0, /^[[:space:]]*/); ind = RLENGTH; next } inf = 0; if (hit) { for (i = 1; i <= n; i++) print b[i]; exit } next }
+        inf { l = $0; if (substr(l, 1, ind) ~ /^[[:space:]]*$/) l = substr(l, ind + 1); b[++n] = l; t = $0; gsub(/^[[:space:]]+|[[:space:]]+$/, "", t); if (t == lit) hit = 1 }' "$C/$1"
+}
+
 # stubs: each records "<name> <args>" in $T/calls; curl prints $T/curl.out and exits $T/curl.rc
 mkdir -p "$T/bin"
 for s in curl node say afplay terminal-notifier sips launchctl sleep npm brew; do
@@ -74,9 +82,9 @@ model_writes() {
     local d; d=$(in_sandbox "$H/.oss/hooks/oss-value.sh" dir 2>/dev/null) && [[ -n "$d" ]] || return 1
     while (( $# >= 2 )); do printf '%s\n' "$2" > "$d/$1.txt"; shift 2; done
 }
-# run_block <file> <literal>: run that wrapper block as written -> OUT, RC
+# run_block <file> <literal>: run that wrapper block as written -> OUT, RC (FENCE=fence_line: <literal> is a whole line)
 run_block() {
-    local b; b=$(fence_with "$1" "$2")
+    local b; b=$("${FENCE:-fence_with}" "$1" "$2")
     [[ -n "$b" ]] || { OUT="(no block holding '$2' in $1)"; RC=99; return; }
     OUT=$(in_sandbox "$SH" -c "$b" 2>&1 </dev/null); RC=$?
 }
@@ -93,13 +101,34 @@ for kind in norepo repo; do
     [[ "$RC" == 0 && "$(calls)" == "node $FR/watcher/dist/cli/models.js set agents oss:code-reviewer ollama/codellama" ]] \
         && pass "$kind: /oss:models set passes the prompt and model it read" || fail "$kind: /oss:models set passes the prompt and model it read" "rc=$RC out=$OUT calls=$(calls)"
 
-    sandbox "$kind"; model_writes workflow build; run_block workflows.md 'oss-value.sh read workflow'
-    [[ "$RC" == 0 && "$OUT" == build ]] && pass "$kind: /oss:workflows <name> prints the name it read" || fail "$kind: /oss:workflows <name> prints the name it read" "rc=$RC out=$OUT"
+    # T60: one allowlisted call reads workflow.txt and fetches /api/v1/workflows/<name>/editor (plain config)
+    # through oss_api_curl inside the hook (the key on stdin), printing the config
+    sandbox "$kind"; printf '{"apiKey":"ossk_wrun_key_58"}' > "$H/.oss/config.json"
+    printf '{"name":"build","chain":[],"agents":["code-simplifier"],"checkpoint":"auto"}\n200' > "$T/curl.out"
+    model_writes workflow build; FENCE=fence_line run_block workflows.md '~/.oss/hooks/oss-value.sh workflow'
+    [[ "$RC" == 0 && "$(calls)" == "curl -q --globoff --config - "*" https://one-shot-ship-api.onrender.com/api/v1/workflows/build/editor" \
+        && "$(calls)" != *ossk_wrun_key_58* && "$OUT" == *'"code-simplifier"'* && "$OUT" != *ossk_wrun_key_58* ]] \
+        && pass "$kind: /oss:workflows <name> fetches the editor config of the name it read, the key not in argv" \
+        || fail "$kind: /oss:workflows <name> fetches the editor config of the name it read, the key not in argv" "rc=$RC out=$OUT calls=$(calls)"
 
     sandbox "$kind"; model_writes category commands name build; run_block trust.md 'oss-value.sh decrypt'
     [[ "$RC" == 0 && "$(calls)" == "oss-decrypt --type commands --name build" ]] \
         && pass "$kind: /oss:trust decrypts with the category and name it read" || fail "$kind: /oss:trust decrypts with the category and name it read" "rc=$RC out=$OUT calls=$(calls)"
 done
+# T60: /oss:status and /oss:workflows run their fetch block as written: one allowlisted call each, the key not in argv
+sandbox repo; printf '{"apiKey":"ossk_wrun_key_60"}' > "$H/.oss/config.json"
+printf '{"valid":true,"userId":"u1","email":"a@example.com","plan":"PRO","subscriptionStatus":"ACTIVE"}\n200' > "$T/curl.out"
+FENCE=fence_line run_block status.md '~/.oss/hooks/oss-value.sh status'
+[[ "$RC" == 0 && "$(calls)" == *" https://one-shot-ship-api.onrender.com/api/v1/auth/verify" && "$(calls)" != *ossk_wrun_key_60* \
+   && "$OUT" == *"Account: a@example.com"* && "$OUT" == *"Plan: PRO"* && "$OUT" != *ossk_wrun_key_60* ]] \
+    && pass "status: the fetch block verifies the key and prints the account, the key not in argv" || fail "status: the fetch block verifies the key and prints the account" "rc=$RC out=$OUT calls=$(calls)"
+sandbox repo; printf '{"apiKey":"ossk_wrun_key_60"}' > "$H/.oss/config.json"
+printf '{"workflows":[{"name":"ideate","customized":false},{"name":"build","customized":true}]}\n200' > "$T/curl.out"
+FENCE=fence_line run_block workflows.md '~/.oss/hooks/oss-value.sh workflows'
+[[ "$RC" == 0 && "$(calls)" == *" https://one-shot-ship-api.onrender.com/api/v1/workflows" && "$(calls)" != *ossk_wrun_key_60* \
+   && "$OUT" == *"ideate DEFAULT"* && "$OUT" == *"build CUSTOM"* ]] \
+    && pass "workflows: the list block prints each workflow's status, the key not in argv" || fail "workflows: the list block prints each workflow's status" "rc=$RC out=$OUT calls=$(calls)"
+
 # the wrappers no longer say the folder needs a git repository
 for f in login.md models.md workflows.md trust.md; do
     grep -qiF 'inside a git repository' "$C/$f" && fail "$f does not say the value folder needs a git repository" "$(grep -niF 'inside a git repository' "$C/$f" | head -1)" \

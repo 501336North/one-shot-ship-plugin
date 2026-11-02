@@ -54,4 +54,9 @@ allow but drop the CLAUDE.md write (the key still travels in clear text).
 - **Note:** unlike oss_config_strings (T30, where a top-level `null` was a real "no apiUrl, use the default" bypass),
   here `null` and a non-object both give "", which is the safe output.
 
-## Last Updated: 2026-10-30 by /oss:build (T46, D9)
+## D10: the record's byte-identity check cannot prove provenance against the same user (T50, 2026-10-31)
+- **Decision:** byte-identity between a record root's hooks and ~/.oss/hooks cannot prove where the installed hooks
+  came from when an attacker can already write ~/.oss (the same-user limit: they could plant a matching real root
+  too), so T50 closes only the self-comparison bypass (a root whose `hooks` or `.claude-plugin` folder is a symlink).
+
+## Last Updated: 2026-10-31 by /oss:build (T50, D10)

@@ -20,6 +20,10 @@
 #   oss-value.sh models-set         the plugin's models.js set <type> <prompt> <model> from prompt.txt + model.txt.
 #   oss-value.sh cli <script> <args>  one of the fixed plugin CLI calls (webhook-setup setup [--port N],
 #                                   webhook-toggle on, update-workflow-state init) from the plugin root.
+#   oss-value.sh status | workflows | workflow
+#                                   GET /api/v1/auth/verify, /api/v1/workflows, or /api/v1/workflows/<workflow.txt>/editor
+#                                   with the configured key on curl's stdin; print only what /oss:status and
+#                                   /oss:workflows display (T60).
 # (Saving the API key is hooks/oss-login.sh, NOT a verb here: this script is allowlisted, a key
 # change must always ask - R5-8. oss-login.sh sources this file for its functions.)
 # Each value hand-off is ONE call spelled ~/.oss/hooks/oss-value.sh <verb> (the allowed prefix): a
@@ -39,7 +43,7 @@ if [[ ! -f "$_OV_HERE/oss-safe-path.sh" ]]; then
 fi
 source "$_OV_HERE/oss-safe-path.sh"
 
-_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args>" >&2; exit 2; }
+_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args> | status | workflows | workflow" >&2; exit 2; }
 
 _OV_RUN="$HOME/.oss/run"
 
@@ -168,6 +172,47 @@ _ov_cmd_cli() {
     exec node "$_OV_ROOT/watcher/dist/cli/$1.js" "${@:2}"
 }
 
+# <verb> <path> <jq filter>: GET <path> from the API the OSS config names, the key from the same read
+# (oss_api_creds) on curl's stdin (oss_api_curl, never argv); print the 200 body through <filter> (one JSON
+# object; C0 and OSS_JQ_INVISIBLE stripped from every string), so /oss:status and /oss:workflows run one
+# allowed call and never handle the key (T60).
+_ov_api() {
+    local r code body
+    source "$_OV_HERE/oss-api-curl.sh" 2>/dev/null && command -v jq >/dev/null \
+    || { echo "oss-value: $1: oss-api-curl.sh or jq missing" >&2; return 1; }
+    oss_api_creds
+    case $OSS_URL_RC in
+        0) ;;
+        2) oss_loopback_refused >&2; return 1 ;;
+        *) echo "oss-value: $1: apiUrl in your OSS config is not an https URL. Run: /oss:login" >&2; return 1 ;;
+    esac
+    [[ -n "$OSS_KEY" ]] || { echo "oss-value: $1: No API key found. Run: /oss:login" >&2; return 1; }
+    r=$(oss_api_curl "$OSS_KEY" -s -m 15 --max-filesize 262144 -w '\n%{http_code}' "$OSS_URL$2") \
+    || { echo "oss-value: $1: could not reach the API at $OSS_URL" >&2; return 1; }
+    code=${r##*$'\n'}; body=${r%$'\n'*}
+    [[ "$code" == 200 ]] || { echo "oss-value: $1: the API answered HTTP $code (401: run /oss:login; 403: subscription expired)" >&2; return 1; }
+    printf '%s' "$body" | jq -rs "$OSS_JQ_INVISIBLE"'def c: tostring | gsub("[\u0000-\u001f" + oss_invisible + "]"; "");
+        def cl: if type == "string" then c elif type == "array" then map(cl) elif type == "object" then with_entries(.key |= c | .value |= cl) else . end;
+        if length == 1 and (.[0] | type) == "object" then .[0] | '"$3"' else error("not one JSON object") end' 2>/dev/null \
+    || { echo "oss-value: $1: the API sent an answer that is not the expected JSON" >&2; return 1; }
+}
+
+_ov_cmd_status() {
+    _ov_api status /api/v1/auth/verify '"Account: \(.email // "" | c)", "Plan: \(.plan // "" | c)", "Status: \(.subscriptionStatus // "" | c)",
+        (if .trialEndsAt then "Trial ends: \(.trialEndsAt | c)" else empty end)'
+}
+
+_ov_cmd_workflows() {
+    _ov_api workflows /api/v1/workflows '.workflows[] | "\(.name | c) \(if .customized == true then "CUSTOM" else "DEFAULT" end)"'
+}
+
+# workflow: the name from workflow.txt (the read rule; argv is never used), its plain editor config.
+_ov_cmd_workflow() {
+    _ov_dir && _ov_get workflow \
+    || { echo "oss-value: workflow: refused (workflow.txt missing, unsafe or not a valid workflow name)" >&2; return 1; }
+    _ov_api workflow "/api/v1/workflows/$_OV_VAL/editor" '{name, chain, agents, parallel_agents, task_loop, quality_gates, on_pass, checkpoint} | cl'
+}
+
 _ov_cmd_agent() {
     local o t
     oss_phys_cwd; o="$_OSS_CWD"
@@ -231,5 +276,8 @@ case "${1:-}" in
     decrypt) shift; _ov_cmd_decrypt "$@" ;;
     models-set) _ov_cmd_models_set ;;
     cli) shift; _ov_cmd_cli "$@" ;;
+    status) _ov_cmd_status ;;
+    workflows) _ov_cmd_workflows ;;
+    workflow) _ov_cmd_workflow ;;
     *) _ov_usage ;;
 esac

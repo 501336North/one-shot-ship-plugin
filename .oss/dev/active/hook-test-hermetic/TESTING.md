@@ -508,3 +508,14 @@ closed, 1 equivalent), T48 via the outside-kill guard (RED 6/14).
 
 ## Last Updated: 2026-10-31 12:20 CST by /oss:build (T49)
 - Clean watcher re-run after the other session stopped its vitest (2026-10-31 12:29 CST): 268/268 files, 3606/3606 tests. (One run in between, while a sharded vitest from the other checkout was running, had 1 failure that was not captured; the cause is unproven.)
+
+## T57: no shipped prompt prints the API key (2026-11-02 08:40 CST)
+- commands/__tests__/no-key-printing.test.sh: RED 4/5 (named 152 lines: 57 commands, 44 agents, 51 skills) → GREEN 5/5.
+  Anchors: 10 printing samples flagged, 6 quiet/non-printing samples clean, scan > 150 files with each dir non-empty
+  (170 found), synthetic leaky file named. 7 mutants killed.
+- Full shell run: 85/87 files; the 2 failing (ideate-template, no-telegram-command) are the known baseline.
+
+## Last Updated: 2026-11-02 08:40 CST by /oss:build (T57)
+
+### T62
+- iron-law-log-parser 3+ violation prompt points at ~/.oss/hooks/fetch-iron-laws.sh (no apiKey/Bearer/host): RED 1 failed | 35 passed (36) -> GREEN 36 passed (36); mutant (old curl string) 1 failed; full watcher 3606/3606, tsc clean.

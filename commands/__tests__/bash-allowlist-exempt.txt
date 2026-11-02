@@ -1,0 +1,601 @@
+# Exemptions for bash-blocks-allowlisted.test.sh (T60): prompt shell lines that start with no prefix the
+# allowlist (hooks/oss-setup-permissions.sh) installs. One "<file><TAB><line>" per line, under a group the test
+# names with its reason. Seeded from HEAD f3f897b; only remove lines (the test fails on a stale one).
+
+@pre-existing
+agents/_shared/model-routing.md	AGENT_NAME="$AGENT_ID"  # Set by the agent (e.g., "oss:code-reviewer")
+agents/_shared/model-routing.md	BANNER=$(echo "$ROUTING" | jq -r '.banner // empty')
+agents/_shared/model-routing.md	MODEL=$(echo "$ROUTING" | jq -r '.model')
+agents/_shared/model-routing.md	MODEL_CHECK="$PLUGIN_ROOT/watcher/dist/cli/agent-model-check.js"
+agents/_shared/model-routing.md	PID_FILE="$HOME/.oss/proxy.pid"
+agents/_shared/model-routing.md	PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"
+agents/_shared/model-routing.md	PROVIDER=$(echo "$ROUTING" | jq -r '.provider')
+agents/_shared/model-routing.md	PROXY_URL=$(echo "$ROUTING" | jq -r '.proxyUrl')
+agents/_shared/model-routing.md	ROUTING=$(node "$MODEL_CHECK" --agent "$AGENT_NAME" 2>/dev/null)
+agents/_shared/model-routing.md	USE_PROXY=$(echo "$ROUTING" | jq -r '.useProxy // false')
+agents/_shared/model-routing.md	[[ -n "$BANNER" ]] && echo "$BANNER"
+agents/_shared/model-routing.md	curl http://localhost:8473/health
+agents/_shared/model-routing.md	fi
+agents/_shared/model-routing.md	if ! curl -s "http://localhost:8473/health" > /dev/null 2>&1; then
+agents/_shared/model-routing.md	if [[ "$USE_PROXY" == "true" ]]; then
+agents/_shared/model-routing.md	if [[ -f "$MODEL_CHECK" ]]; then
+agents/_shared/model-routing.md	if [[ -f "$PID_FILE" ]]; then
+agents/_shared/model-routing.md	kill $(cat "$PID_FILE") 2>/dev/null || true
+agents/_shared/model-routing.md	node "$PLUGIN_ROOT/watcher/dist/cli/start-proxy.js" --model "$MODEL" --port 8473 --background
+agents/backend-architect.md	AGENT_ID="oss:backend-architect"
+agents/backend-architect.md	BANNER=$(echo "$ROUTING" | jq -r '.banner // empty' 2>/dev/null)
+agents/backend-architect.md	MODEL=$(echo "$ROUTING" | jq -r '.model')
+agents/backend-architect.md	MODEL_CHECK="$PLUGIN_ROOT/watcher/dist/cli/agent-model-check.js"
+agents/backend-architect.md	OFFLOAD="$PLUGIN_ROOT/watcher/dist/cli/agent-offload.js"
+agents/backend-architect.md	PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"
+agents/backend-architect.md	PROMPT_FILE="$(mktemp /tmp/oss-offload-backend-architect.XXXXXX.md)"
+agents/backend-architect.md	ROUTING=$(node "$MODEL_CHECK" --agent "$AGENT_ID" 2>/dev/null || echo '{"useProxy":false}')
+agents/backend-architect.md	USE_PROXY=$(echo "$ROUTING" | jq -r '.useProxy // false' 2>/dev/null || echo "false")
+agents/backend-architect.md	[[ -n "$BANNER" ]] && echo "$BANNER"
+agents/backend-architect.md	echo '{"offloaded":false,"reason":"native"}'
+agents/backend-architect.md	else
+agents/backend-architect.md	fi
+agents/backend-architect.md	if [[ "$USE_PROXY" == "true" ]]; then
+agents/backend-architect.md	if [[ -f "$MODEL_CHECK" ]]; then
+agents/backend-architect.md	if [[ -f "$OFFLOAD" ]]; then
+agents/backend-architect.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file "$PROMPT_FILE" --project-dir "$(pwd)"
+agents/code-reviewer.md	AGENT_ID="oss:code-reviewer"
+agents/code-reviewer.md	BANNER=$(echo "$ROUTING" | jq -r '.banner // empty' 2>/dev/null)
+agents/code-reviewer.md	MODEL=$(echo "$ROUTING" | jq -r '.model')
+agents/code-reviewer.md	MODEL_CHECK="$PLUGIN_ROOT/watcher/dist/cli/agent-model-check.js"
+agents/code-reviewer.md	OFFLOAD="$PLUGIN_ROOT/watcher/dist/cli/agent-offload.js"
+agents/code-reviewer.md	PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"
+agents/code-reviewer.md	PROMPT_FILE="$(mktemp /tmp/oss-offload-code-reviewer.XXXXXX.md)"
+agents/code-reviewer.md	ROUTING=$(node "$MODEL_CHECK" --agent "$AGENT_ID" 2>/dev/null || echo '{"useProxy":false}')
+agents/code-reviewer.md	USE_PROXY=$(echo "$ROUTING" | jq -r '.useProxy // false' 2>/dev/null || echo "false")
+agents/code-reviewer.md	[[ -n "$BANNER" ]] && echo "$BANNER"
+agents/code-reviewer.md	echo '{"offloaded":false,"reason":"native"}'
+agents/code-reviewer.md	else
+agents/code-reviewer.md	fi
+agents/code-reviewer.md	if [[ "$USE_PROXY" == "true" ]]; then
+agents/code-reviewer.md	if [[ -f "$MODEL_CHECK" ]]; then
+agents/code-reviewer.md	if [[ -f "$OFFLOAD" ]]; then
+agents/code-reviewer.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file "$PROMPT_FILE" --project-dir "$(pwd)"
+agents/code-simplifier.md	AGENT_ID="oss:code-simplifier"
+agents/code-simplifier.md	BANNER=$(echo "$ROUTING" | jq -r '.banner // empty' 2>/dev/null)
+agents/code-simplifier.md	MODEL=$(echo "$ROUTING" | jq -r '.model')
+agents/code-simplifier.md	MODEL_CHECK="$PLUGIN_ROOT/watcher/dist/cli/agent-model-check.js"
+agents/code-simplifier.md	OFFLOAD="$PLUGIN_ROOT/watcher/dist/cli/agent-offload.js"
+agents/code-simplifier.md	PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"
+agents/code-simplifier.md	PROMPT_FILE="$(mktemp /tmp/oss-offload-code-simplifier.XXXXXX.md)"
+agents/code-simplifier.md	ROUTING=$(node "$MODEL_CHECK" --agent "$AGENT_ID" 2>/dev/null || echo '{"useProxy":false}')
+agents/code-simplifier.md	USE_PROXY=$(echo "$ROUTING" | jq -r '.useProxy // false' 2>/dev/null || echo "false")
+agents/code-simplifier.md	[[ -n "$BANNER" ]] && echo "$BANNER"
+agents/code-simplifier.md	echo '{"offloaded":false,"reason":"native"}'
+agents/code-simplifier.md	else
+agents/code-simplifier.md	fi
+agents/code-simplifier.md	if [[ "$USE_PROXY" == "true" ]]; then
+agents/code-simplifier.md	if [[ -f "$MODEL_CHECK" ]]; then
+agents/code-simplifier.md	if [[ -f "$OFFLOAD" ]]; then
+agents/code-simplifier.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file "$PROMPT_FILE" --project-dir "$(pwd)"
+agents/debugger.md	AGENT_ID="oss:debugger"
+agents/debugger.md	BANNER=$(echo "$ROUTING" | jq -r '.banner // empty' 2>/dev/null)
+agents/debugger.md	MODEL=$(echo "$ROUTING" | jq -r '.model')
+agents/debugger.md	MODEL_CHECK="$PLUGIN_ROOT/watcher/dist/cli/agent-model-check.js"
+agents/debugger.md	OFFLOAD="$PLUGIN_ROOT/watcher/dist/cli/agent-offload.js"
+agents/debugger.md	PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"
+agents/debugger.md	PROMPT_FILE="$(mktemp /tmp/oss-offload-debugger.XXXXXX.md)"
+agents/debugger.md	ROUTING=$(node "$MODEL_CHECK" --agent "$AGENT_ID" 2>/dev/null || echo '{"useProxy":false}')
+agents/debugger.md	USE_PROXY=$(echo "$ROUTING" | jq -r '.useProxy // false' 2>/dev/null || echo "false")
+agents/debugger.md	[[ -n "$BANNER" ]] && echo "$BANNER"
+agents/debugger.md	echo '{"offloaded":false,"reason":"native"}'
+agents/debugger.md	else
+agents/debugger.md	fi
+agents/debugger.md	if [[ "$USE_PROXY" == "true" ]]; then
+agents/debugger.md	if [[ -f "$MODEL_CHECK" ]]; then
+agents/debugger.md	if [[ -f "$OFFLOAD" ]]; then
+agents/debugger.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file "$PROMPT_FILE" --project-dir "$(pwd)"
+agents/figma-design-agent.md	AGENT_ID="oss:figma-design-agent"
+agents/figma-design-agent.md	BANNER=$(echo "$ROUTING" | jq -r '.banner // empty' 2>/dev/null)
+agents/figma-design-agent.md	MODEL=$(echo "$ROUTING" | jq -r '.model')
+agents/figma-design-agent.md	MODEL_CHECK="$PLUGIN_ROOT/watcher/dist/cli/agent-model-check.js"
+agents/figma-design-agent.md	OFFLOAD="$PLUGIN_ROOT/watcher/dist/cli/agent-offload.js"
+agents/figma-design-agent.md	PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"
+agents/figma-design-agent.md	PROMPT_FILE="$(mktemp /tmp/oss-offload-figma-design-agent.XXXXXX.md)"
+agents/figma-design-agent.md	ROUTING=$(node "$MODEL_CHECK" --agent "$AGENT_ID" 2>/dev/null || echo '{"useProxy":false}')
+agents/figma-design-agent.md	USE_PROXY=$(echo "$ROUTING" | jq -r '.useProxy // false' 2>/dev/null || echo "false")
+agents/figma-design-agent.md	[[ -n "$BANNER" ]] && echo "$BANNER"
+agents/figma-design-agent.md	echo '{"offloaded":false,"reason":"native"}'
+agents/figma-design-agent.md	else
+agents/figma-design-agent.md	fi
+agents/figma-design-agent.md	if [[ "$USE_PROXY" == "true" ]]; then
+agents/figma-design-agent.md	if [[ -f "$MODEL_CHECK" ]]; then
+agents/figma-design-agent.md	if [[ -f "$OFFLOAD" ]]; then
+agents/figma-design-agent.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file "$PROMPT_FILE" --project-dir "$(pwd)"
+agents/frontend-developer.md	AGENT_ID="oss:frontend-developer"
+agents/frontend-developer.md	BANNER=$(echo "$ROUTING" | jq -r '.banner // empty' 2>/dev/null)
+agents/frontend-developer.md	MODEL=$(echo "$ROUTING" | jq -r '.model')
+agents/frontend-developer.md	MODEL_CHECK="$PLUGIN_ROOT/watcher/dist/cli/agent-model-check.js"
+agents/frontend-developer.md	OFFLOAD="$PLUGIN_ROOT/watcher/dist/cli/agent-offload.js"
+agents/frontend-developer.md	PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"
+agents/frontend-developer.md	PROMPT_FILE="$(mktemp /tmp/oss-offload-frontend-developer.XXXXXX.md)"
+agents/frontend-developer.md	ROUTING=$(node "$MODEL_CHECK" --agent "$AGENT_ID" 2>/dev/null || echo '{"useProxy":false}')
+agents/frontend-developer.md	USE_PROXY=$(echo "$ROUTING" | jq -r '.useProxy // false' 2>/dev/null || echo "false")
+agents/frontend-developer.md	[[ -n "$BANNER" ]] && echo "$BANNER"
+agents/frontend-developer.md	echo '{"offloaded":false,"reason":"native"}'
+agents/frontend-developer.md	else
+agents/frontend-developer.md	fi
+agents/frontend-developer.md	if [[ "$USE_PROXY" == "true" ]]; then
+agents/frontend-developer.md	if [[ -f "$MODEL_CHECK" ]]; then
+agents/frontend-developer.md	if [[ -f "$OFFLOAD" ]]; then
+agents/frontend-developer.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file "$PROMPT_FILE" --project-dir "$(pwd)"
+agents/nextjs-developer.md	AGENT_ID="oss:nextjs-developer"
+agents/nextjs-developer.md	BANNER=$(echo "$ROUTING" | jq -r '.banner // empty' 2>/dev/null)
+agents/nextjs-developer.md	MODEL=$(echo "$ROUTING" | jq -r '.model')
+agents/nextjs-developer.md	MODEL_CHECK="$PLUGIN_ROOT/watcher/dist/cli/agent-model-check.js"
+agents/nextjs-developer.md	OFFLOAD="$PLUGIN_ROOT/watcher/dist/cli/agent-offload.js"
+agents/nextjs-developer.md	PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"
+agents/nextjs-developer.md	PROMPT_FILE="$(mktemp /tmp/oss-offload-nextjs-developer.XXXXXX.md)"
+agents/nextjs-developer.md	ROUTING=$(node "$MODEL_CHECK" --agent "$AGENT_ID" 2>/dev/null || echo '{"useProxy":false}')
+agents/nextjs-developer.md	USE_PROXY=$(echo "$ROUTING" | jq -r '.useProxy // false' 2>/dev/null || echo "false")
+agents/nextjs-developer.md	[[ -n "$BANNER" ]] && echo "$BANNER"
+agents/nextjs-developer.md	echo '{"offloaded":false,"reason":"native"}'
+agents/nextjs-developer.md	else
+agents/nextjs-developer.md	fi
+agents/nextjs-developer.md	if [[ "$USE_PROXY" == "true" ]]; then
+agents/nextjs-developer.md	if [[ -f "$MODEL_CHECK" ]]; then
+agents/nextjs-developer.md	if [[ -f "$OFFLOAD" ]]; then
+agents/nextjs-developer.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file "$PROMPT_FILE" --project-dir "$(pwd)"
+agents/python-pro.md	AGENT_ID="oss:python-pro"
+agents/python-pro.md	BANNER=$(echo "$ROUTING" | jq -r '.banner // empty' 2>/dev/null)
+agents/python-pro.md	MODEL=$(echo "$ROUTING" | jq -r '.model')
+agents/python-pro.md	MODEL_CHECK="$PLUGIN_ROOT/watcher/dist/cli/agent-model-check.js"
+agents/python-pro.md	OFFLOAD="$PLUGIN_ROOT/watcher/dist/cli/agent-offload.js"
+agents/python-pro.md	PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"
+agents/python-pro.md	PROMPT_FILE="$(mktemp /tmp/oss-offload-python-pro.XXXXXX.md)"
+agents/python-pro.md	ROUTING=$(node "$MODEL_CHECK" --agent "$AGENT_ID" 2>/dev/null || echo '{"useProxy":false}')
+agents/python-pro.md	USE_PROXY=$(echo "$ROUTING" | jq -r '.useProxy // false' 2>/dev/null || echo "false")
+agents/python-pro.md	[[ -n "$BANNER" ]] && echo "$BANNER"
+agents/python-pro.md	echo '{"offloaded":false,"reason":"native"}'
+agents/python-pro.md	else
+agents/python-pro.md	fi
+agents/python-pro.md	if [[ "$USE_PROXY" == "true" ]]; then
+agents/python-pro.md	if [[ -f "$MODEL_CHECK" ]]; then
+agents/python-pro.md	if [[ -f "$OFFLOAD" ]]; then
+agents/python-pro.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file "$PROMPT_FILE" --project-dir "$(pwd)"
+agents/react-specialist.md	AGENT_ID="oss:react-specialist"
+agents/react-specialist.md	BANNER=$(echo "$ROUTING" | jq -r '.banner // empty' 2>/dev/null)
+agents/react-specialist.md	MODEL=$(echo "$ROUTING" | jq -r '.model')
+agents/react-specialist.md	MODEL_CHECK="$PLUGIN_ROOT/watcher/dist/cli/agent-model-check.js"
+agents/react-specialist.md	OFFLOAD="$PLUGIN_ROOT/watcher/dist/cli/agent-offload.js"
+agents/react-specialist.md	PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"
+agents/react-specialist.md	PROMPT_FILE="$(mktemp /tmp/oss-offload-react-specialist.XXXXXX.md)"
+agents/react-specialist.md	ROUTING=$(node "$MODEL_CHECK" --agent "$AGENT_ID" 2>/dev/null || echo '{"useProxy":false}')
+agents/react-specialist.md	USE_PROXY=$(echo "$ROUTING" | jq -r '.useProxy // false' 2>/dev/null || echo "false")
+agents/react-specialist.md	[[ -n "$BANNER" ]] && echo "$BANNER"
+agents/react-specialist.md	echo '{"offloaded":false,"reason":"native"}'
+agents/react-specialist.md	else
+agents/react-specialist.md	fi
+agents/react-specialist.md	if [[ "$USE_PROXY" == "true" ]]; then
+agents/react-specialist.md	if [[ -f "$MODEL_CHECK" ]]; then
+agents/react-specialist.md	if [[ -f "$OFFLOAD" ]]; then
+agents/react-specialist.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file "$PROMPT_FILE" --project-dir "$(pwd)"
+agents/refactoring-specialist.md	AGENT_ID="oss:refactoring-specialist"
+agents/refactoring-specialist.md	BANNER=$(echo "$ROUTING" | jq -r '.banner // empty' 2>/dev/null)
+agents/refactoring-specialist.md	MODEL=$(echo "$ROUTING" | jq -r '.model')
+agents/refactoring-specialist.md	MODEL_CHECK="$PLUGIN_ROOT/watcher/dist/cli/agent-model-check.js"
+agents/refactoring-specialist.md	OFFLOAD="$PLUGIN_ROOT/watcher/dist/cli/agent-offload.js"
+agents/refactoring-specialist.md	PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"
+agents/refactoring-specialist.md	PROMPT_FILE="$(mktemp /tmp/oss-offload-refactoring-specialist.XXXXXX.md)"
+agents/refactoring-specialist.md	ROUTING=$(node "$MODEL_CHECK" --agent "$AGENT_ID" 2>/dev/null || echo '{"useProxy":false}')
+agents/refactoring-specialist.md	USE_PROXY=$(echo "$ROUTING" | jq -r '.useProxy // false' 2>/dev/null || echo "false")
+agents/refactoring-specialist.md	[[ -n "$BANNER" ]] && echo "$BANNER"
+agents/refactoring-specialist.md	echo '{"offloaded":false,"reason":"native"}'
+agents/refactoring-specialist.md	else
+agents/refactoring-specialist.md	fi
+agents/refactoring-specialist.md	if [[ "$USE_PROXY" == "true" ]]; then
+agents/refactoring-specialist.md	if [[ -f "$MODEL_CHECK" ]]; then
+agents/refactoring-specialist.md	if [[ -f "$OFFLOAD" ]]; then
+agents/refactoring-specialist.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file "$PROMPT_FILE" --project-dir "$(pwd)"
+agents/security-auditor.md	AGENT_ID="oss:security-auditor"
+agents/security-auditor.md	BANNER=$(echo "$ROUTING" | jq -r '.banner // empty' 2>/dev/null)
+agents/security-auditor.md	MODEL=$(echo "$ROUTING" | jq -r '.model')
+agents/security-auditor.md	MODEL_CHECK="$PLUGIN_ROOT/watcher/dist/cli/agent-model-check.js"
+agents/security-auditor.md	OFFLOAD="$PLUGIN_ROOT/watcher/dist/cli/agent-offload.js"
+agents/security-auditor.md	PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"
+agents/security-auditor.md	PROMPT_FILE="$(mktemp /tmp/oss-offload-security-auditor.XXXXXX.md)"
+agents/security-auditor.md	ROUTING=$(node "$MODEL_CHECK" --agent "$AGENT_ID" 2>/dev/null || echo '{"useProxy":false}')
+agents/security-auditor.md	USE_PROXY=$(echo "$ROUTING" | jq -r '.useProxy // false' 2>/dev/null || echo "false")
+agents/security-auditor.md	[[ -n "$BANNER" ]] && echo "$BANNER"
+agents/security-auditor.md	echo '{"offloaded":false,"reason":"native"}'
+agents/security-auditor.md	else
+agents/security-auditor.md	fi
+agents/security-auditor.md	if [[ "$USE_PROXY" == "true" ]]; then
+agents/security-auditor.md	if [[ -f "$MODEL_CHECK" ]]; then
+agents/security-auditor.md	if [[ -f "$OFFLOAD" ]]; then
+agents/security-auditor.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file "$PROMPT_FILE" --project-dir "$(pwd)"
+agents/test-engineer.md	AGENT_ID="oss:test-engineer"
+agents/test-engineer.md	BANNER=$(echo "$ROUTING" | jq -r '.banner // empty' 2>/dev/null)
+agents/test-engineer.md	MODEL=$(echo "$ROUTING" | jq -r '.model')
+agents/test-engineer.md	MODEL_CHECK="$PLUGIN_ROOT/watcher/dist/cli/agent-model-check.js"
+agents/test-engineer.md	OFFLOAD="$PLUGIN_ROOT/watcher/dist/cli/agent-offload.js"
+agents/test-engineer.md	PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"
+agents/test-engineer.md	PROMPT_FILE="$(mktemp /tmp/oss-offload-test-engineer.XXXXXX.md)"
+agents/test-engineer.md	ROUTING=$(node "$MODEL_CHECK" --agent "$AGENT_ID" 2>/dev/null || echo '{"useProxy":false}')
+agents/test-engineer.md	USE_PROXY=$(echo "$ROUTING" | jq -r '.useProxy // false' 2>/dev/null || echo "false")
+agents/test-engineer.md	[[ -n "$BANNER" ]] && echo "$BANNER"
+agents/test-engineer.md	echo '{"offloaded":false,"reason":"native"}'
+agents/test-engineer.md	else
+agents/test-engineer.md	fi
+agents/test-engineer.md	if [[ "$USE_PROXY" == "true" ]]; then
+agents/test-engineer.md	if [[ -f "$MODEL_CHECK" ]]; then
+agents/test-engineer.md	if [[ -f "$OFFLOAD" ]]; then
+agents/test-engineer.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file "$PROMPT_FILE" --project-dir "$(pwd)"
+agents/typescript-pro.md	AGENT_ID="oss:typescript-pro"
+agents/typescript-pro.md	BANNER=$(echo "$ROUTING" | jq -r '.banner // empty' 2>/dev/null)
+agents/typescript-pro.md	MODEL=$(echo "$ROUTING" | jq -r '.model')
+agents/typescript-pro.md	MODEL_CHECK="$PLUGIN_ROOT/watcher/dist/cli/agent-model-check.js"
+agents/typescript-pro.md	OFFLOAD="$PLUGIN_ROOT/watcher/dist/cli/agent-offload.js"
+agents/typescript-pro.md	PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"
+agents/typescript-pro.md	PROMPT_FILE="$(mktemp /tmp/oss-offload-typescript-pro.XXXXXX.md)"
+agents/typescript-pro.md	ROUTING=$(node "$MODEL_CHECK" --agent "$AGENT_ID" 2>/dev/null || echo '{"useProxy":false}')
+agents/typescript-pro.md	USE_PROXY=$(echo "$ROUTING" | jq -r '.useProxy // false' 2>/dev/null || echo "false")
+agents/typescript-pro.md	[[ -n "$BANNER" ]] && echo "$BANNER"
+agents/typescript-pro.md	echo '{"offloaded":false,"reason":"native"}'
+agents/typescript-pro.md	else
+agents/typescript-pro.md	fi
+agents/typescript-pro.md	if [[ "$USE_PROXY" == "true" ]]; then
+agents/typescript-pro.md	if [[ -f "$MODEL_CHECK" ]]; then
+agents/typescript-pro.md	if [[ -f "$OFFLOAD" ]]; then
+agents/typescript-pro.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file "$PROMPT_FILE" --project-dir "$(pwd)"
+commands/changelog.md	"$SCRIPT_DIR/../hooks/oss-changelog.sh"
+commands/changelog.md	SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+commands/login.md	"audio")
+commands/login.md	"command": "~/.oss/oss-statusline.sh",
+commands/login.md	"none")
+commands/login.md	"padding": 0
+commands/login.md	"sound")
+commands/login.md	"statusLine": {
+commands/login.md	"type": "command",
+commands/login.md	"visual")
+commands/login.md	. ~/.oss/hooks/oss-api-curl.sh
+commands/login.md	;;
+commands/login.md	CLAUDE_SETTINGS="${HOME}/.claude/settings.json"
+commands/login.md	CREDS="$(dirname "$(oss_config_file)")/credentials.enc"
+commands/login.md	OSS_DIR="${HOME}/.oss"
+commands/login.md	OSS_ICON_PNG="$HOME/.oss/notification-icon.png"
+commands/login.md	PLIST_PATH="${HOME}/Library/LaunchAgents/com.oneshotship.daemon.plist"
+commands/login.md	PLUGIN_ROOT=$(~/.oss/hooks/oss-value.sh root 2>/dev/null)
+commands/login.md	PLUGIN_ROOT=$(~/.oss/hooks/oss-value.sh root)
+commands/login.md	PLUGIN_ROOT=$(~/.oss/hooks/oss-value.sh root) || exit 1
+commands/login.md	SETTINGS=$(cat "$CLAUDE_SETTINGS")
+commands/login.md	SETTINGS='{}'
+commands/login.md	SOUND=$(jq -r '.notifications.sound' ~/.oss/settings.json)
+commands/login.md	STATUSLINE_SCRIPT="${HOME}/.oss/oss-statusline.sh"
+commands/login.md	STYLE=$(jq -r '.notifications.style' ~/.oss/settings.json)
+commands/login.md	STYLE=$(~/.oss/hooks/oss-value.sh read style) || exit 1
+commands/login.md	UPDATED=$(echo "$SETTINGS" | jq '. + {
+commands/login.md	VERIFY="$HOME/.oss/hooks/verify-decrypt-setup.sh"
+commands/login.md	VOICE=$(jq -r '.notifications.voice' ~/.oss/settings.json)
+commands/login.md	WORKFLOW_FILE="${HOME}/.oss/workflow-state.json"
+commands/login.md	[ -x "$VERIFY" ] || VERIFY="$(cat ~/.oss/plugin-root 2>/dev/null)/hooks/verify-decrypt-setup.sh"
+commands/login.md	afplay "/System/Library/Sounds/$SOUND.aiff"
+commands/login.md	brew install terminal-notifier
+commands/login.md	case "$STYLE" in
+commands/login.md	cat > "$PLIST_PATH" << EOF
+commands/login.md	cat > ~/.oss/settings.json << EOF
+commands/login.md	cd "$PLUGIN_ROOT/daemon" || exit 1
+commands/login.md	chmod +x "$HOME/.oss/oss-statusline.sh"
+commands/login.md	chmod +x "$STATUSLINE_SCRIPT"
+commands/login.md	cp "~/.oss/hooks/oss-statusline.sh" "$HOME/.oss/"
+commands/login.md	cp "~/.oss/hooks/oss-statusline.sh" "$STATUSLINE_SCRIPT"
+commands/login.md	curl -sL "https://www.oneshotship.com/icon.png" -o "$OSS_ICON_PNG" 2>/dev/null ||         { test -n "$PLUGIN_ROOT" && sips -s format png "$PLUGIN_ROOT/assets/icon.png" --out "$OSS_ICON_PNG" 2>/dev/null; } ||         echo "Note: Could not create notification icon. Notifications will work without branding."
+commands/login.md	echo "  Config: $(oss_config_file)"
+commands/login.md	echo ""
+commands/login.md	echo "$UPDATED" > "$CLAUDE_SETTINGS"
+commands/login.md	echo "API key updated successfully!"
+commands/login.md	echo "All existing tools and settings preserved. Ready to use."
+commands/login.md	echo "Cleared cached credentials (will refresh on next command)"
+commands/login.md	echo "Configured Claude Code status line"
+commands/login.md	echo "Created launchd plist at $PLIST_PATH"
+commands/login.md	echo "Created status line script at $STATUSLINE_SCRIPT"
+commands/login.md	echo "Credential refresh did NOT complete — see the error above. Re-run /oss:login."
+commands/login.md	echo "Daemon not included in current plugin version. Skipping daemon setup."
+commands/login.md	echo "Installing terminal-notifier for macOS notifications..."
+commands/login.md	echo "Note: Daemon didn't start. You can start it manually with: launchctl load $PLIST_PATH"
+commands/login.md	echo "Note: Status line script not found. Workflow status will not be displayed."
+commands/login.md	echo "Notifications disabled. You can change this with /oss:settings"
+commands/login.md	echo "OSS Daemon started"
+commands/login.md	echo "Setup did NOT complete — see the error above. Prompts will fall back to direct API fetch until resolved."
+commands/login.md	echo "Status line script installed at ~/.oss/oss-statusline.sh"
+commands/login.md	echo "Status line script installed successfully!"
+commands/login.md	echo "Status line script ready"
+commands/login.md	echo "Supervisor daemon is running"
+commands/login.md	echo "To enable: Claude Code Settings > Status Line > Command: ~/.oss/oss-statusline.sh"
+commands/login.md	echo "Updated encryption credentials for new key"
+commands/login.md	echo "When TDD phase is active, you'll see: [Claude] 🔴 RED 3/8"
+commands/login.md	echo '{"supervisor": "idle", "currentCommand": null, "tddPhase": null}' > "$WORKFLOW_FILE"
+commands/login.md	else
+commands/login.md	esac
+commands/login.md	fi
+commands/login.md	if ! command -v terminal-notifier &>/dev/null; then
+commands/login.md	if ! launchctl list | grep -q "com.oneshotship.daemon"; then
+commands/login.md	if [ ! -d "$PLUGIN_ROOT/daemon" ]; then
+commands/login.md	if [ ! -d "dist" ]; then
+commands/login.md	if [ ! -f "$OSS_ICON_PNG" ]; then
+commands/login.md	if [ ! -f "$PLIST_PATH" ]; then
+commands/login.md	if [ ! -f "$STATUSLINE_SCRIPT" ]; then
+commands/login.md	if [ ! -f "$WORKFLOW_FILE" ]; then
+commands/login.md	if [ -f "$CLAUDE_SETTINGS" ]; then
+commands/login.md	if [ -f "$CREDS" ]; then
+commands/login.md	if [ -x "$HOME/.oss/oss-statusline.sh" ]; then
+commands/login.md	if [ -x "$STATUSLINE_SCRIPT" ]; then
+commands/login.md	if [ -x "$VERIFY" ] && "$VERIFY"; then
+commands/login.md	if [ -x ~/.oss/bin/oss-decrypt ]; then
+commands/login.md	if launchctl list | grep -q "com.oneshotship.daemon"; then
+commands/login.md	launchctl load "$PLIST_PATH"
+commands/login.md	mkdir -p "$(dirname "$PLIST_PATH")"
+commands/login.md	mkdir -p "${HOME}/.claude"
+commands/login.md	mkdir -p ~/.oss
+commands/login.md	npm run build
+commands/login.md	rm "$CREDS"
+commands/login.md	say -v "$VOICE" "Welcome to OSS Dev Workflow!"
+commands/login.md	terminal-notifier -title "Welcome to OSS!"                 -message "Notifications configured"                 -appIcon "$HOME/.oss/notification-icon.png"
+commands/login.md	}
+commands/login.md	}')
+commands/login.md	~/.oss/hooks/oss-login.sh
+commands/models.md	PROJECT_CONFIG=.oss/config.json
+commands/models.md	PROJECT_MODELS=$(jq '.models // {}' "$PROJECT_CONFIG")
+commands/models.md	USER_CONFIG=~/.oss/config.json
+commands/models.md	USER_MODELS=$(jq '.models // {}' "$USER_CONFIG")
+commands/models.md	fi
+commands/models.md	if [[ -f "$PROJECT_CONFIG" ]]; then
+commands/models.md	if [[ -f "$USER_CONFIG" ]]; then
+commands/oss-audio.md	/oss-audio off       # Disable audio cues
+commands/oss-audio.md	/oss-audio on        # Enable audio cues
+commands/oss-audio.md	/oss-audio sound     # Use system sounds instead of voice
+commands/oss-audio.md	/oss-audio status    # Show current settings
+commands/oss-audio.md	/oss-audio voice     # Use voice notifications
+commands/oss-audio.md	OSS_AUDIO_ENABLED=$(sed -n 's/^export OSS_AUDIO_ENABLED="\([a-z]*\)"$/\1/p' ~/.oss/audio-config | tail -1)
+commands/oss-audio.md	OSS_USE_VOICE=$(sed -n 's/^export OSS_USE_VOICE="\([a-z]*\)"$/\1/p' ~/.oss/audio-config | tail -1)
+commands/oss-audio.md	OSS_VOICE=$(sed -n 's/^export OSS_VOICE="\([A-Za-z]*\)"$/\1/p' ~/.oss/audio-config | tail -1)
+commands/oss-audio.md	cat > ~/.oss/audio-config << 'EOF'
+commands/oss-audio.md	echo "  Enabled: $OSS_AUDIO_ENABLED"
+commands/oss-audio.md	echo "  Mode: $([ "$OSS_USE_VOICE" = "true" ] && echo "Voice" || echo "Sound")"
+commands/oss-audio.md	echo "  Voice: $OSS_VOICE"
+commands/oss-audio.md	echo "Audio cues disabled"
+commands/oss-audio.md	echo "Audio cues enabled"
+commands/oss-audio.md	echo "OSS Audio Settings:"
+commands/oss-audio.md	echo "OSS Audio: Using defaults (voice enabled)"
+commands/oss-audio.md	echo "Switched to sound notifications"
+commands/oss-audio.md	echo "Switched to voice notifications"
+commands/oss-audio.md	echo 'export OSS_AUDIO_ENABLED="false"' > ~/.oss/audio-config
+commands/oss-audio.md	echo 'export OSS_AUDIO_ENABLED="true"' > ~/.oss/audio-config
+commands/oss-audio.md	else
+commands/oss-audio.md	fi
+commands/oss-audio.md	if [ -f ~/.oss/audio-config ]; then
+commands/oss-audio.md	mkdir -p ~/.oss
+commands/oss.md	/oss [SUBCOMMAND] [OPTIONS]
+commands/settings.md	"audio")
+commands/settings.md	"none")
+commands/settings.md	"sound")
+commands/settings.md	"visual")
+commands/settings.md	;;
+commands/settings.md	CURRENT=$(cat "$SETTINGS_FILE") || exit 1
+commands/settings.md	CURRENT='{}'; MODE=600
+commands/settings.md	MODE=$(stat -c %a "$SETTINGS_FILE" 2>/dev/null || stat -f %Lp "$SETTINGS_FILE") || exit 1
+commands/settings.md	SETTINGS_FILE="$HOME/.oss/settings.json"
+commands/settings.md	SETTINGS_FILE=~/.oss/settings.json
+commands/settings.md	SOUND="Glass"
+commands/settings.md	SOUND=$(jq -r '.notifications.sound // "Glass"' "$SETTINGS_FILE" 2>/dev/null) || SOUND="Glass"
+commands/settings.md	SOUND=$(jq -r '.notifications.sound // "Glass"' "$SETTINGS_FILE")
+commands/settings.md	STYLE="visual"
+commands/settings.md	STYLE=$("$V" read notify_style) || exit 1
+commands/settings.md	STYLE=$(jq -r '.notifications.style // "visual"' "$SETTINGS_FILE")
+commands/settings.md	TMP=$(mktemp "$HOME/.oss/settings.json.XXXXXX") || exit 1
+commands/settings.md	V=~/.oss/hooks/oss-value.sh
+commands/settings.md	VERBOSITY="important"
+commands/settings.md	VERBOSITY=$("$V" read verbosity) || exit 1
+commands/settings.md	VERBOSITY=$(jq -r '.notifications.verbosity // "important"' "$SETTINGS_FILE")
+commands/settings.md	VOICE="Samantha"
+commands/settings.md	VOICE=$(jq -r '.notifications.voice // "Samantha"' "$SETTINGS_FILE" 2>/dev/null) || VOICE="Samantha"
+commands/settings.md	VOICE=$(jq -r '.notifications.voice // "Samantha"' "$SETTINGS_FILE")
+commands/settings.md	afplay "/System/Library/Sounds/${SOUND}.aiff"
+commands/settings.md	case "$STYLE" in
+commands/settings.md	echo "  Sound:     $SOUND"
+commands/settings.md	echo "  Style:     $STYLE"
+commands/settings.md	echo "  Verbosity: $VERBOSITY"
+commands/settings.md	echo "  Voice:     $VOICE"
+commands/settings.md	echo ""
+commands/settings.md	echo "New Configuration:"
+commands/settings.md	echo "Not saved: ~/.oss/settings.json is a symlink or not a regular file; it was left as it is." >&2; exit 1
+commands/settings.md	echo "Notifications disabled. Settings saved."
+commands/settings.md	echo "Settings saved to ~/.oss/settings.json"
+commands/settings.md	echo "Your notifications are now configured!"
+commands/settings.md	else
+commands/settings.md	esac
+commands/settings.md	fi
+commands/settings.md	if [[ "$STYLE" == "audio" ]]; then VOICE=$("$V" read voice) || exit 1; fi
+commands/settings.md	if [[ "$STYLE" == "sound" ]]; then SOUND=$("$V" read sound) || exit 1; fi
+commands/settings.md	if [[ -L "$SETTINGS_FILE" || ( -e "$SETTINGS_FILE" && ! -f "$SETTINGS_FILE" ) ]]; then
+commands/settings.md	if [[ -f "$SETTINGS_FILE" ]]; then
+commands/settings.md	jq -e 'type == "object"' "$SETTINGS_FILE" >/dev/null 2>&1          || { echo "Not saved: ~/.oss/settings.json is not valid JSON; it was left as it is. Fix or remove it, then run /oss:settings again." >&2; exit 1; }
+commands/settings.md	mkdir -p ~/.oss
+commands/settings.md	printf '%s' "$CURRENT" | jq --arg s "$STYLE" --arg v "$VOICE" --arg so "$SOUND" --arg vb "$VERBOSITY"      '.notifications = ((.notifications // {}) + {style: $s, voice: $v, sound: $so, verbosity: $vb}) | .version = 2 | del(.telegram, .notifications.telegram)' > "$TMP"      && chmod "$MODE" "$TMP" && mv -f "$TMP" "$SETTINGS_FILE" || { rm -f "$TMP"; exit 1; }
+commands/settings.md	say -v "$VOICE" "OSS settings saved successfully"
+commands/settings.md	terminal-notifier -title "Settings Saved" -message "OSS notifications configured" -sound default
+commands/ship.md	git -C /full/path/to/repo push
+commands/ship.md	git -C /full/path/to/repo status
+commands/ship.md	git add .
+commands/ship.md	git commit -m "feat: message"
+commands/ship.md	git push -u origin branch-name
+commands/ship.md	git status
+commands/test.md	HAS_PLAYWRIGHT=$(echo "$PLAYWRIGHT_RESULT" | jq -r '.detected')
+commands/test.md	PLAYWRIGHT_RESULT=$(~/.oss/hooks/oss-detect-playwright.sh)
+commands/test.md	npm test
+commands/test.md	npx playwright test --reporter=list
+commands/visual-test.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/watcher.md	PID=$(cat .oss/watcher.pid 2>/dev/null)
+commands/watcher.md	cat .oss/watcher.pid
+commands/watcher.md	cat ~/.claude-oss/plugins/cache/oss/hooks/hooks.json
+commands/watcher.md	echo "Status: Running (PID $PID)"
+commands/watcher.md	echo "Status: Stopped"
+commands/watcher.md	else
+commands/watcher.md	fi
+commands/watcher.md	if [[ "$PID" =~ ^[0-9]{1,10}$ ]] && ps -p "$PID" > /dev/null 2>&1; then
+commands/watcher.md	node --version  # Should be 18+
+commands/watcher.md	rm .oss/watcher.pid
+commands/webhook.md	brew install cloudflared
+commands/webhook.md	cloudflared tunnel --url http://localhost:3456
+commands/webhook.md	curl https://your-tunnel-url.trycloudflare.com/health
+commands/webhook.md	jq 'del(.webhook)' ~/.oss/config.json > tmp && mv tmp ~/.oss/config.json
+commands/webhook.md	lsof -i :3456
+commands/webhook.md	rm ~/.oss/config.json  # Remove old config
+skills/ideate.md	test -f CLAUDE.md && echo "EXISTS" || echo "MISSING"
+
+@key-check
+agents/ai-engineer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/analytics-expert.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/architecture-auditor.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/backend-architect.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/cloud-architect.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/code-reviewer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/code-simplifier.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/data-engineer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/database-admin.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/database-optimizer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/debugger.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/dependency-analyzer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/deployment-engineer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/devops-troubleshooter.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/docs-architect.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/figma-design-agent.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/flutter-expert.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/frontend-developer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/git-workflow-manager.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/golang-pro.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/graphql-architect.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/incident-responder.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/ios-developer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/java-pro.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/ml-engineer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/mobile-developer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/n8n-automation-specialist.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/nextjs-developer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/performance-auditor.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/performance-engineer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/python-pro.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/qa-expert.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/react-specialist.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/refactoring-specialist.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/release-manager.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/rust-pro.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/security-auditor.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/seo-aeo-expert.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/sre-engineer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/swift-macos-expert.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/test-automator.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/test-engineer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/typescript-pro.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+agents/visionos-developer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/a11y.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/acceptance.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/adr.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/api-design.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/audit.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/auto.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/bench.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/build.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/chaos.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/code-simplifier.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/context-report.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/contract.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/cost.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/data-model.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/debug.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/deploy.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/docs.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/experiment.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/feature-flag.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/green.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/ideate.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/incident.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/integration.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/iterate.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/license.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/load.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/mock.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/monitor.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/onboard.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/oss-custom.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/pause.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/plan.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/postmortem.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/privacy.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/queue.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/quick.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/red.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/refactor.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/release.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/requirements.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/resume.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/retro.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/review.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/rollback.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/ship.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/smoke.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/stage.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/tech-debt.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/test.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/trace.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/trust.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/ui-review.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/ui-ux.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/verify.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/visual-qa.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+commands/xray.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/ai-engineer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/architecture-auditor.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/backend-architect.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/build.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/cloud-architect.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/code-reviewer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/create-dev-docs.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/data-engineer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/database-admin.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/database-optimizer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/debugger.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/dependency-analyzer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/deploy-production.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/deploy-staging.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/deployment-engineer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/devops-troubleshooter.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/docs-architect.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/e2e-testing.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/emergency-rollback.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/flutter-expert.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/frontend-developer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/git-workflow-manager.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/golang-pro.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/graphql-architect.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/incident-responder.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/ios-developer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/java-pro.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/ml-engineer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/mobile-developer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/monitor.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/nextjs-developer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/performance-auditor.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/performance-benchmark.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/performance-engineer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/plan.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/python-pro.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/qa-expert.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/react-specialist.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/refactoring-specialist.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/release-manager.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/release.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/security-audit.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/security-auditor.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/ship.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/sre-engineer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/swift-macos-expert.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/test-automator.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/test-engineer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/typescript-pro.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+skills/visionos-developer.md	grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"

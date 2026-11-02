@@ -141,7 +141,7 @@ Signature verification skipped — other checks will still run.
 Standard and Full tiers require authentication to decrypt prompts.
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
 ```
 
 If no API key is found:

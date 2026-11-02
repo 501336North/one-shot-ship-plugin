@@ -108,7 +108,7 @@ export class IronLawLogParser {
       };
     }
 
-    let prompt = `IRON LAW #${law} violated 3+ times\n\nMANDATORY: Fetch IRON LAWS and place at top of context\n\ncurl -s -H "Authorization: Bearer {apiKey}" https://one-shot-ship-api.onrender.com/api/v1/prompts/shared/iron-laws`;
+    let prompt = `IRON LAW #${law} violated 3+ times\n\nMANDATORY: Fetch IRON LAWS and place at top of context\n\nRun: ~/.oss/hooks/fetch-iron-laws.sh\n(it reads your OSS config itself and prints the IRON LAWS text)`;
 
     if (correction) {
       prompt += `\n\n${correction}`;

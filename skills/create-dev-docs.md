@@ -11,19 +11,26 @@ Create feature branch with comprehensive dev docs for context preservation.
 ## Step 1: Check Authentication
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
 ```
 
 If no API key found, instruct user to run `/oss login`.
 
-## Step 2: Fetch Prompt from API
+## Step 2: Fetch and Decrypt Prompt
 
+Ensure the decrypt CLI is installed:
+
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install the decrypt CLI (see the message above). Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."; exit 1; }
 ```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/workflows/create-dev-docs
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+
+Fetch and decrypt the prompt:
+
+```bash
+~/.oss/bin/oss-decrypt --type workflows --name create-dev-docs
 ```
+
+The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
 ## Step 3: Execute the Fetched Prompt
 

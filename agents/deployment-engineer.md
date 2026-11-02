@@ -8,7 +8,7 @@ description: Configure CI/CD pipelines, Docker containers, and cloud deployments
 ## Step 1: Check Authentication
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
 ```
 
 If no API key found, inform the user:
@@ -17,20 +17,25 @@ No API key found. Run: /oss login
 Register at https://www.oneshotship.com
 ```
 
-## Step 2: Fetch Agent Prompt
+## Step 2: Fetch and Decrypt Agent Prompt
 
-Use WebFetch to get the expert prompt:
+Ensure the decrypt CLI is installed:
 
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install the decrypt CLI (see the message above). Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."; exit 1; }
 ```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/agents/deployment-engineer
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+
+Fetch and decrypt the prompt:
+
+```bash
+~/.oss/bin/oss-decrypt --type agents --name deployment-engineer
 ```
+
+The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
 ## Step 3: Execute the Fetched Prompt
 
-Execute the prompt returned by the API. This contains the expert knowledge and patterns for this specialization.
+Execute the prompt returned by the decrypt CLI. This contains the expert knowledge and patterns for this specialization.
 
 ## Error Handling
 

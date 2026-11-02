@@ -70,6 +70,46 @@
 - watcher/src/services/redaction.ts:184 `UNSAFE_CHARS` is a fourth stripping set (mirrors the API's cleanText in AgenticDevWorkflow); lacks U+2028/2029 and Cf. Cross-repo.
 - commands/login.md Step 3: `dirname`/`rm "$CREDS"` without `--` (fails closed: cached credentials not cleared for a dash-named config dir).
 
+### Phase H (T50-T57): PAUSED 2026-10-31 14:28 CST by the user until Monday (token budget)
+The branch was pushed at f3f897b, and no PR exists yet. /oss:ship's narrow re-check of T34-T49 had these results:
+- pen-test: FAIL. r3 #1-3, #5 and #6 are closed; #4 reopened as N1 (T50). N2, N3 and N4 are new.
+- security-auditor: PASS. One new LOW (T53).
+- code-reviewer: PASS. 72/72 shell files, 14/14 mutants killed. 4 LOW + 1 INFO.
+
+The user chose "keep fixing until clean", following the rule that LOW security findings get fixed, done properly once tokens are back. Do not cut scope.
+- [x] T50: done 2026-11-02 (security-auditor verified Friday's code, no changes): RED 39/41 with the guard removed →
+  GREEN 41/41; mutants per half (hooks only, .claude-plugin only) each killed by its own case; full shell 84/86 (baseline
+  2). Provenance: plugin-root readers follow a symlinked hooks/ but need write to ~/.oss (D10 limit).
+  Friday's note, kept for history: in progress, stopped mid-task. The agent added a 3-line guard in hooks/oss-session-start.sh (refuses a symlinked `$r/hooks` / `$r/.claude-plugin`), a case in session-start-no-hook-downgrade.test.sh, and a D-entry in DECISIONS.md.
+  - None of this is verified: no RED/GREEN record, no mutation check.
+  - Snapshot ref: refs/wip/hook-test-hermetic-20261031-pause (5a78792).
+  - Monday: show RED by reverting the guard, then GREEN, then the mutants. Or redo it from the snapshot.
+- [x] T56: done 2026-11-02 (security-auditor). The unwired oss-session-start-new.sh and -test.sh are deleted (nothing referenced them). New guard hooks/__tests__/no-grep-api-key.test.sh: RED 4/5 named exactly the two copies → GREEN 5/5. 2 mutants (sed and awk parse) killed. tests-hermetic-env 75/75. oss_api_key (oss-api-curl.sh:69) prints the key and has no production callers; it is left as is.
+- [x] T58: done 2026-11-02 (security-auditor). 99 agents and skills moved to oss-decrypt (42 agents, 38+6+13 skills); ideate template now goes through the hook; status and workflows use oss_api_curl. New no-key-in-request.test.sh: RED named 103 lines in 101 files → 9/9. served-prompt-names.txt has 197 pairs from origin/main 16e2e23. 13 mutants killed. Follow-ups a-e became T60-T62 (user: fix now).
+- [x] T62: done 2026-11-02 (typescript-pro). The 3rd-violation prompt in iron-law-log-parser.ts:111 now points to ~/.oss/hooks/fetch-iron-laws.sh, with no key, Bearer, curl or host. RED 35/36 → 36/36. Mutant killed. Watcher 3606/3606, tsc 0. Provenance: the other Bearer hits are real HTTP headers in code, not prompt text.
+- Merge order (user, 2026-11-02): API #404 deploys first, then plugin #214 (dev-15, 2.0.96), then THIS branch. Before T59, merge origin/main in (no force-push), resolve the 6 shared files (plugin.json, oss-api-curl.sh, oss-session-start.sh, oss-decision-record.sh, commands/login.md, redact-decision.ts), bump to 2.0.97, then run T59 on the combined plugin against the new API. dev-15 messages when #214 has merged.
+  - #214 merged 2026-11-02 (91c808e8; main is 2.0.96). NEXT: once T60 finishes, make a local WIP commit, merge origin/main, keep #214's oss_settings_update, lock helpers (oss_lock_id/oss_take_stale/oss_release_lock) and push-off marker, bump to 2.0.97, then re-run decision-push 89 / record 111 / policy 77 / api-curl 18 / login-gate 7 / telegram-cleanup 18.
+  - Rate limits (user 2026-11-02: trial limits exist to stop scraping; never hurt paying users). (1) T58 add-on: when oss-decrypt fails (429 or anything else), the agent carries on with its local text, the same as today; needs a test. (2) API change approved by the user: authenticated PRO/TEAM requests are exempt from the global per-IP limiter (index.ts:82, 100 per 15 min); trial and anonymous traffic is unchanged. Owned by dev-15 in AgenticDevWorkflow as its own PR with a security review; the user must also confirm in dev-15's session. It must deploy before this plugin merges. T59 measures the calls per agent run and the peak per 15 min, and runs a burst test.
+  - API #404 is merged (8041b35) and deployed to Render on 2026-11-02 at 10:09:53 local. It adds GET /decisions/policy {"pushEnabled","team"} and a per-account limiter of 60 requests per 60 s. For T59: (a) find which routes the limiter covers; if it covers /prompts, the ~100 checks must be paced, and check that a customer's normal agent burst stays under it; (b) re-check commands/__tests__/served-prompt-names.txt (built from 16e2e23) against the new origin/main.
+- [x] T60: done 2026-11-02 (security-auditor). New oss-value.sh verbs `status`, `workflows` and `workflow` (shared `_ov_api`: oss_api_creds, then oss_api_curl; `workflow` reads its name from workflow.txt; uses the /editor route, confirmed at routes/workflows.ts:248-251, returns plain config). Allowlisted oss-claude-md-template.sh (takes no arguments, read-only). New bash-blocks-allowlisted.test.sh (RED 7/20 → 8/8; 594 exemptions that existed before, each with a reason) and oss-value-api.test.sh (2/16 → 16/16). Wrappers 45/45, wrappers-run 61/61, auto-permissions 16/16. 9 mutants killed. Its risks became T64 (jq, mid-session update) and T65 (rc=125 under load). Watcher dist rebuilt for T62 (only iron-law-log-parser.js and .map; extra tsc output removed); dist-fresh passes.
+- [ ] T61, T63, T64, T65, T51-T55: next, after the merge of main (#214) (T60 allowlisted entry points + workflow /editor; T61 honest text; T62 watcher prompt).
+- Old T58 note: next. Brief: scratchpad t58-brief.md. The research found that the agents/skills/workflows routes return ciphertext, so these Step 2s never worked; all names are served. skills/ideate.md's claude-md URL 404s.
+- [ ] T59: release gate (after T51-T55).
+- [ ] T51-T55: not started.
+- [x] T57: done 2026-11-02 (test-engineer). New guard commands/__tests__/no-key-printing.test.sh scans all 170 shipped
+  prompt .md (commands/, agents/ incl. _shared, skills/). RED 4/5, named 152 lines (57 commands, 44 agents, 51 skills) →
+  GREEN 5/5 after a one-line swap to the quiet check in each (152 files, +152/-152). 7 mutants killed (one revert per dir,
+  jq and grep "apiKey" variants, classifier 2>/dev/null, broken glob). Open: 42 agents + 51 skills + workflows.md still
+  say WebFetch with `Bearer {apiKey}` (WebFetch takes no headers; pre-existing, follow-up); hooks oss_api_key prints the key
+  but has no caller.
+- Deferred by the user to a follow-up PR, not this one:
+  - cli-decrypt config.ts (FIFO read; production-URL fallback)
+  - watcher api-credentials.ts (no regular-file check; different URL rules)
+- Monday order: start a fresh /oss:build with T50 (finish), then T57, T56, T51, T52, T53, T54, T55, one agent at a time. Rules for the agents: scratchpad phase-h-rules.md; recreate it if /private/tmp was cleared.
+- Then: a narrow /oss:ship re-check (pen-test, security-auditor, code-reviewer), a commit, a PR (no merge), then /oss:integration.
+- The decrypted ship and build prompts in the scratchpad may be gone; re-decrypt them.
+- Leftover: /private/tmp/claude-501/secaudit-56977, a re-check sandbox (FIFO + repo copy, no keys). The agent's rm was denied. Delete it after confirming with the user.
+
 ## Crash recovery (2026-10-30 ~17:05)
 The Mac crashed during the round-3 /oss:build (started 16:56, 4 security-auditor agents). Only T36 was recorded done.
 The tree was snapshotted to the local ref refs/wip/hook-test-hermetic-20261030-crash (1c9e688). A resumed
@@ -82,4 +122,4 @@ The earlier round's banner landed in another worktree's build.log because ~/.oss
 ## Blockers
 - None
 
-## Last Updated: 2026-10-31 12:20 CST by /oss:build (T49 done: no test can leave orphan processes; committed on this branch, not pushed)
+## Last Updated: 2026-11-02 08:40 CST by /oss:build (T57 done)

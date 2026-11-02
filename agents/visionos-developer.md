@@ -10,7 +10,7 @@ Expert spatial computing developer powered by live Apple documentation via RAG.
 ## Step 1: Check Authentication
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
 ```
 
 If no API key found, inform the user:
@@ -28,21 +28,23 @@ Identify the user's specific VisionOS question or task. This will be used to fet
 - "Create an immersive space" → context=ImmersiveSpace+visionOS
 - "Add 3D models" → context=RealityKit+ModelEntity
 
-## Step 3: Fetch Agent Prompt with RAG
+## Step 3: Fetch and Decrypt Agent Prompt
 
-Use WebFetch to get the enhanced prompt:
+Ensure the decrypt CLI is installed:
 
-```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/agents/visionos-developer?context={user_context}
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install the decrypt CLI (see the message above). Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."; exit 1; }
 ```
 
-The API will:
-1. Query Pinecone for relevant Apple documentation
-2. Prepend the RAG context to the expert prompt
-3. Return the enhanced prompt with current API references
+Fetch and decrypt the prompt:
+
+```bash
+~/.oss/bin/oss-decrypt --type agents --name visionos-developer
+```
+
+The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
+
+The decrypt CLI cannot send the user context, so the prompt comes without the RAG Apple documentation snippets. Use the context from Step 2 to focus the work.
 
 ## Step 4: Execute the Enhanced Prompt
 

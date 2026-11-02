@@ -53,7 +53,7 @@ Strip a leading `team:` prefix. The remaining name must match `^[a-z0-9-]{1,100}
 ## Step 1: Check Authentication
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
 ```
 
 If no API key found:
