@@ -37,8 +37,32 @@ export declare function redactStringWithRemoved(value: string): {
 };
 /** Scrub secret-shaped substrings out of a single free-text string. */
 export declare function redactString(value: string): string;
-/** Remove invisible and control characters, so a token split by one is whole again before redaction. */
+/**
+ * Walk the text by code point: a character is masked when any of its code units is, so a mask edge never
+ * splits a surrogate pair or leaves half of one. Each run of masked characters becomes one marker, and the
+ * text of each run is reported as removed.
+ */
+export declare function collapseMasked(text: string, mask: boolean[]): {
+    text: string;
+    runs: string[];
+};
+/**
+ * Remove invisible and control characters (UNSAFE_CHARS) and lone surrogate halves, so a token split by one
+ * is whole again before redaction: the stored view of cleanAndRedactWithRemoved.
+ */
 export declare function cleanText(value: string): string;
+/**
+ * Clean and redact, mirroring the API's decision redaction. Stripping invisible characters rejoins a token
+ * they split, but it can also glue a word onto the key after it ("word" + U+3164 + "sk-..." reads
+ * "wordsk-...", which the letter look-behinds refuse). So the patterns run on both views: a code unit is
+ * masked when either finds it, by position, so another copy of a value in ordinary text is left alone.
+ * Each run of masked units becomes one [REDACTED] (two secrets that touch become one). Text with no
+ * invisible character comes out as redactString gives it.
+ */
+export declare function cleanAndRedactWithRemoved(value: string): {
+    text: string;
+    removed: string[];
+};
 /**
  * Deep-redact a context object: secret-shaped keys are fully masked, string
  * values are scrubbed, and arrays/nested objects are recursed into.
