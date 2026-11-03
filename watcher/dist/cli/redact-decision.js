@@ -27,7 +27,7 @@
  *       (id, feature, questionKey, answerIndex, kind, command, answeredAt). NOTHING is written to stdout.
  */
 import { isMainModule } from '../lib/is-main-module.js';
-import { cleanText, redactStringWithRemoved } from '../services/redaction.js';
+import { cleanAndRedactWithRemoved } from '../services/redaction.js';
 const MARKER = '[REDACTED]';
 /** Every string at any depth goes through fn; numbers, booleans, null and object keys are kept. */
 function mapStrings(value, fn) {
@@ -62,7 +62,7 @@ function redactRecord(record) {
     };
     const spans = new Set();
     mapTextFields((text) => {
-        const { text: redacted, removed } = redactStringWithRemoved(cleanText(text));
+        const { text: redacted, removed } = cleanAndRedactWithRemoved(text);
         for (const span of removed) {
             if (span.length >= MIN_SPAN)
                 spans.add(span);

@@ -28,7 +28,7 @@
  */
 
 import { isMainModule } from '../lib/is-main-module.js';
-import { cleanText, redactStringWithRemoved } from '../services/redaction.js';
+import { cleanAndRedactWithRemoved } from '../services/redaction.js';
 
 export interface RedactResult {
   exitCode: number;
@@ -74,7 +74,7 @@ function redactRecord(record: Record<string, unknown>): Record<string, unknown> 
   };
   const spans = new Set<string>();
   mapTextFields((text: string): string => {
-    const { text: redacted, removed } = redactStringWithRemoved(cleanText(text));
+    const { text: redacted, removed } = cleanAndRedactWithRemoved(text);
     for (const span of removed) {
       if (span.length >= MIN_SPAN) spans.add(span);
     }

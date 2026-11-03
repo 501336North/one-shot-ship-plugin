@@ -12,7 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
-import { cleanText, redactString, redactSecrets } from '../../src/services/redaction';
+import { cleanAndRedactWithRemoved, cleanText, collapseMasked, redactString, redactSecrets } from '../../src/services/redaction';
 
 describe('redaction service', () => {
   describe('redactString — broadened value patterns (SEC-2)', () => {
@@ -254,6 +254,326 @@ describe('redaction service', () => {
     it('leaves non-secret primitives untouched', () => {
       const out = redactSecrets({ attempt: 2, ok: true, endpoint: '/api/v1/prompts' });
       expect(out).toEqual({ attempt: 2, ok: true, endpoint: '/api/v1/prompts' });
+    });
+  });
+
+  // Shared fixture, mirrored from the API's redaction test (AgenticDevWorkflow
+  // packages/api/test/decisions/redaction.test.ts): every invisible character that can split a token when
+  // text is copied from chat or docs. Change both sides together.
+  describe('cleanText and redaction removes every invisible character that can split a secret', () => {
+    const cleanAndRedact = (text: string): string => cleanAndRedactWithRemoved(text).text;
+    const INVISIBLE_CHARS: { name: string; char: string }[] = [
+      { name: 'U+034F combining grapheme joiner', char: '\u034F' },
+      { name: 'U+115F Hangul choseong filler', char: '\u115F' },
+      { name: 'U+1160 Hangul jungseong filler', char: '\u1160' },
+      { name: 'U+3164 Hangul filler', char: '\u3164' },
+      { name: 'U+FFA0 halfwidth Hangul filler', char: '\uFFA0' },
+      { name: 'U+2800 Braille blank', char: '\u2800' },
+      { name: 'U+FE00 variation selector 1', char: '\uFE00' },
+      { name: 'U+FE0F variation selector 16', char: '\uFE0F' },
+      { name: 'U+E0100 variation selector 17', char: '\u{E0100}' },
+      { name: 'U+E01EF variation selector 256', char: '\u{E01EF}' },
+      { name: 'U+00AD soft hyphen', char: '\u00AD' },
+      { name: 'U+061C Arabic letter mark', char: '\u061C' },
+      { name: 'U+200B zero-width space', char: '\u200B' },
+      { name: 'U+200D zero-width joiner', char: '\u200D' },
+      { name: 'U+2060 word joiner', char: '\u2060' },
+      { name: 'U+2064 invisible plus', char: '\u2064' },
+      { name: 'U+FEFF byte order mark', char: '\uFEFF' },
+      { name: 'U+202E right-to-left override', char: '\u202E' },
+      { name: 'U+2069 pop directional isolate', char: '\u2069' },
+      { name: 'U+E0001 language tag', char: '\u{E0001}' },
+      { name: 'U+E007F cancel tag', char: '\u{E007F}' },
+      { name: 'U+17B4 Khmer vowel inherent aq', char: '\u17B4' },
+      { name: 'U+180B Mongolian free variation selector one', char: '\u180B' },
+      { name: 'U+FFF0 reserved default-ignorable', char: '\uFFF0' },
+      { name: 'U+E0000 reserved default-ignorable', char: '\u{E0000}' },
+      { name: 'U+E0FFF reserved default-ignorable', char: '\u{E0FFF}' },
+    ];
+    // Built from parts so no token-shaped literal is committed.
+    const GH_BODY = 'A1b2C3d4E5' + 'A1b2C3d4E5' + 'A1b2C3d4E5' + 'x9Y8z7';
+    const GH_TOKEN = 'gh' + 'p_' + GH_BODY;
+
+    it.each(INVISIBLE_CHARS)('should redact a GitHub token split by $name', ({ char }) => {
+      const split = `${GH_TOKEN.slice(0, 10)}${char}${GH_TOKEN.slice(10)}`;
+
+      const out = cleanAndRedact(`key ${split} here`);
+
+      expect(out).not.toContain(GH_BODY.slice(-12));
+      expect(out).toBe('key [REDACTED] here');
+    });
+
+    // Outside the shared fixture: format characters (\p{Cf}) that are NOT default-ignorable, so the
+    // Default_Ignorable_Code_Point class alone would let them split a token.
+    it.each([
+      { name: 'U+FFF9 interlinear annotation anchor', char: '\uFFF9' },
+      { name: 'U+0600 Arabic number sign', char: '\u0600' },
+    ])('should redact a GitHub token split by $name, a format character that is not default-ignorable', ({ char }) => {
+      const split = `${GH_TOKEN.slice(0, 10)}${char}${GH_TOKEN.slice(10)}`;
+
+      expect(cleanAndRedact(`key ${split} here`)).toBe('key [REDACTED] here');
+    });
+
+    it('should leave plain text, emoji, tabs and newlines unchanged and remove a carriage return', () => {
+      const plain = 'Plain text 123 \u{1F600} with space\ttab\nnewline';
+
+      expect(cleanAndRedact(plain)).toBe(plain);
+      expect(cleanAndRedact('line one\r\nline two')).toBe('line one\nline two');
+    });
+  });
+
+  // The function's own text must be safe: callers other than the decision CLI get no second, cross-field pass.
+  describe('cleanAndRedactWithRemoved masks what either the invisible-kept or the invisible-stripped view finds', () => {
+    const fillers = [0x115f, 0x1160, 0x3164, 0xffa0].map((codePoint: number) => ({
+      name: `U+${codePoint.toString(16).toUpperCase()}`,
+      filler: String.fromCodePoint(codePoint),
+    }));
+    const SK_BODY = 'Zq8Wm3Kt'.repeat(3);
+
+    it.each(fillers)('should redact "by" + $name + "pass=<value>" in its own text, with no filler left', ({ filler }) => {
+      const value = 'Hx7Vq2' + 'Lm9Rt4';
+
+      expect(cleanAndRedactWithRemoved(`by${filler}pass=${value}`).text).toBe('bypass=[REDACTED]');
+    });
+
+    it.each(fillers)('should redact a long sk- key split by $name after 24 characters, tail included', ({ filler }) => {
+      const out = cleanAndRedactWithRemoved(`x sk-${SK_BODY}${filler}${'TAIL' + '9xyz'} end`).text;
+
+      expect(out).toBe('x [REDACTED] end');
+    });
+
+    it('should not blank ordinary words with a value that is mostly fillers once the fillers are removed', () => {
+      // "ab" + 4 fillers is a 6-character value in the filler-kept view but only "ab" without them: masking
+      // every "ab" in the text would eat ordinary words.
+      const filler = String.fromCodePoint(0x3164);
+
+      const out = cleanAndRedactWithRemoved(`by${filler}pass=ab${filler.repeat(4)} in the lab`).text;
+
+      expect(out).toContain(' in the lab');
+    });
+
+    const ch = (codePoint: number): string => String.fromCodePoint(codePoint);
+    const KEY = 'Zq8Wm3Kt'.repeat(3);
+    const HF_BODY = 'Hf8Wm3Kt'.repeat(5);
+    const WEBHOOK = 'https://hooks.slack.com/services/T' + '0A1B2C3D4/B5E6F7G8H/' + 'Sl1Wf4Secret9XyAbCd';
+
+    // A: a stripped character other than the 4 fillers must not glue a word onto the key that follows it.
+    const PROJ_KEY = 'sk-proj-' + 'Ab3De5Gh7J'.repeat(3);
+    it.each([
+      { name: 'U+2800', input: `word${ch(0x2800)}${PROJ_KEY}`, expected: 'word[REDACTED]' },
+      { name: 'lone U+D800', input: `word${ch(0xd800)}${PROJ_KEY}`, expected: 'word[REDACTED]' },
+      { name: 'U+FE0F', input: `word${ch(0xfe0f)}${PROJ_KEY}`, expected: 'word[REDACTED]' },
+      { name: 'U+E0020', input: `word${ch(0xe0020)}${PROJ_KEY}`, expected: 'word[REDACTED]' },
+      { name: 'lone U+D800 before pass=', input: `by${ch(0xd800)}pass=${'s3cret' + 'value'}`, expected: 'bypass=[REDACTED]' },
+    ])('should redact a key glued to a word by a stripped $name', ({ input, expected }) => {
+      expect(cleanAndRedactWithRemoved(input).text).toBe(expected);
+    });
+
+    it('should not let a control character between two lone halves pair them into an invisible tag', () => {
+      // The halves are found in the original text, before the control between them is removed.
+      const token = 'gh' + 'p_' + 'A1b2C3d4E5'.repeat(3) + 'x9Y8z7';
+      const out = cleanAndRedactWithRemoved(`key ${token.slice(0, 10)}${ch(0xdb40)}${ch(0x0001)}${ch(0xdc20)}${token.slice(10)} here`).text;
+
+      expect(out).toBe('key [REDACTED] here');
+      expect(out).not.toContain(ch(0xe0020));
+      expect(out).not.toContain(ch(0xfffd));
+    });
+
+    it('should not let a control character between two lone halves pair them into a visible emoji that splits a token', () => {
+      // A high and a low half that would form U+1F600 once the control between them is gone.
+      const token = 'gh' + 'p_' + 'A1b2C3d4E5'.repeat(3) + 'x9Y8z7';
+      const out = cleanAndRedactWithRemoved(`key ${token.slice(0, 10)}${ch(0xd83d)}${ch(0x0001)}${ch(0xde00)}${token.slice(10)} here`).text;
+
+      expect(out).toBe('key [REDACTED] here');
+    });
+
+    it('should keep a U+FFFD that was already in the input', () => {
+      expect(cleanAndRedactWithRemoved(`bad byte ${ch(0xfffd)} here`).text).toBe(`bad byte ${ch(0xfffd)} here`);
+    });
+
+    // Output by code point: a mask edge never splits a surrogate pair or leaves a lone half.
+    const hasLoneHalf = (text: string): boolean =>
+      Array.from(text).some((char: string) => char.length === 1 && char.charCodeAt(0) >= 0xd800 && char.charCodeAt(0) <= 0xdfff);
+
+    it.each([
+      { name: 'a token= value', input: `token=abc123def${ch(0x1f600)} x` },
+      { name: 'a Bearer token', input: `Bearer ${PROJ_KEY}${ch(0x1f600)} x` },
+      { name: 'a GitHub token', input: `${'gh' + 'p_' + 'A1b2C3d4E5'.repeat(3)}${ch(0x1f600)} x` },
+    ])('should keep or mask an emoji right after $name whole, never half of it', ({ input }) => {
+      const out = cleanAndRedactWithRemoved(input).text;
+
+      expect(hasLoneHalf(out), JSON.stringify(out)).toBe(false);
+      expect(out).toContain('[REDACTED]');
+    });
+
+    it.each([
+      { name: 'its high half', masked: 2 },
+      { name: 'its low half', masked: 3 },
+    ])('should mask a whole emoji when a mask edge covers only $name', ({ masked }) => {
+      const text = `ab${ch(0x1f600)}cd`;
+      const mask = Array.from({ length: text.length }, (_: unknown, i: number) => i === masked);
+
+      const out = collapseMasked(text, mask).text;
+
+      expect(out).toBe('ab[REDACTED]cd');
+      expect(hasLoneHalf(out)).toBe(false);
+    });
+
+    // B: a token-like prefix and a filler must not let an earlier pattern eat the head and leave the tail.
+    it.each([
+      { name: 'AIza + filler + sk-proj- key', input: `AIza${ch(0x3164)}sk-proj-${KEY} end`, secret: KEY },
+      { name: 'xoxb- + filler + hf_ token', input: `xo${'xb-'}${ch(0x3164)}hf_${HF_BODY} end`, secret: HF_BODY },
+      { name: 'xoxb- + filler + Slack webhook URL', input: `xo${'xb-'}${ch(0x3164)}${WEBHOOK} end`, secret: 'Sl1Wf4Secret9XyAbCd' },
+    ])('should leave nothing readable of a $name', ({ input, secret }) => {
+      const out = cleanAndRedactWithRemoved(input).text;
+
+      expect(out).toContain('[REDACTED]');
+      expect(out).toMatch(/ end$/);
+      for (let i = 0; i + 6 <= secret.length; i++) {
+        expect(out, `keeps ${secret.slice(i, i + 6)}`).not.toContain(secret.slice(i, i + 6));
+      }
+    });
+
+    // C: masking is by position, so another copy of a value in ordinary text is left alone, exactly as the plain
+    // redaction does. (The plugin-only secret-param pattern takes "password=" and "TOKEN=" with the value.)
+    it.each([
+      { input: '--token 123456 issue #123456 and 1234567', expected: '--token [REDACTED] issue #123456 and 1234567' },
+      { input: 'password=example1 see examples1 and example1', expected: '[REDACTED] see examples1 and example1' },
+      { input: 'TOKEN=REDACTED here', expected: '[REDACTED] here' },
+      { input: 'password=s3cretvalue then s3cretvalue again', expected: '[REDACTED] then s3cretvalue again' },
+    ])('should give exactly the plain redaction for "$input"', ({ input, expected }) => {
+      const out = cleanAndRedactWithRemoved(input).text;
+
+      expect(out).toBe(redactString(input));
+      expect(out).toBe(expected);
+    });
+
+    // A token inside a connection-string password is masked at its full length; the 256-character cap on the
+    // password must not then stop short of the @ and leave the rest of a long password readable.
+    const longPassword = 'AK' + 'IA' + 'ABCDEFGH23456789' + '!P' + 'x'.repeat(240);
+    it.each([
+      { name: 'in plain text', password: longPassword },
+      { name: 'with a zero-width space after the AWS key', password: longPassword.slice(0, 20) + ch(0x200b) + longPassword.slice(20) },
+    ])('should redact the whole of a long connection-string password holding a token, $name', ({ password }) => {
+      expect(cleanAndRedactWithRemoved(`postgres://u:${password}@host`).text).toBe('postgres://u:[REDACTED]@host');
+    });
+
+    // Plain text goes through the plain redaction unchanged, touching secrets included; the two-view mask is
+    // only for text that holds an invisible character, where touching secrets become one marker.
+    const GH_A = 'gh' + 'p_' + 'A1b2C3d4E5'.repeat(3) + 'x9Y8z7';
+    const GH_B = 'gh' + 'p_' + 'Q7w8E9r0T1'.repeat(3) + 'm4N5b6';
+    it('should keep two touching tokens in plain text as two markers, as before', () => {
+      expect(cleanAndRedactWithRemoved(`${GH_A}${GH_B}`).text).toBe('[REDACTED][REDACTED]');
+    });
+
+    it('should merge two tokens with an invisible character between them into one marker', () => {
+      expect(cleanAndRedactWithRemoved(`${GH_A}${ch(0x200b)}${GH_B}`).text).toBe('[REDACTED]');
+    });
+
+    describe('differential check against the pre-change pipeline', () => {
+      // The pre-change pipeline (origin/main 91c808e), kept here only to compare against.
+      // eslint-disable-next-line no-control-regex -- matching control characters is the point
+      const OLD_UNSAFE_CHARS = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u00AD\u061C\u200B-\u200F\u2060\uFEFF\u202A-\u202E\u2066-\u2069]/g;
+      const oldCleanAndRedact = (text: string): string => redactString(text.replace(OLD_UNSAFE_CHARS, ''));
+
+      /** Deterministic PRNG (mulberry32), so the random corpus is the same on every run. */
+      const prng = (seed: number): (() => number) => {
+        let a = seed;
+        return () => {
+          a = (a + 0x6d2b79f5) | 0;
+          let t = Math.imul(a ^ (a >>> 15), 1 | a);
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      };
+
+      const corpus = (): string[] => {
+        const inputs: string[] = [];
+        const fixture = JSON.parse(
+          fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'api-secret-samples.json'), 'utf-8'),
+        ) as { samples: { parts: string[] }[] };
+        for (const { parts } of fixture.samples) inputs.push(parts.join(''));
+        const body = 'q7W' + 'e9R' + 't1Y' + 'u3I' + 'o5P';
+        const values = [
+          'abc' + 'DEF' + '123' + 'ghi' + '456' + 'JKL',
+          'sk' + '-' + body + 'zz',
+          'gh' + 'p_' + body + 'AbCdEfGh',
+          'AK' + 'IA' + 'Q7W9E1R3T5Y7U9I1',
+          'xo' + 'xb-' + body,
+          'AI' + 'za' + body + body,
+          'ey' + 'J' + body + '.ey' + 'J' + body + '.' + body,
+          'hf_' + HF_BODY,
+          WEBHOOK,
+        ];
+        for (const key of ['token', 'api_key', 'API_KEY', 'password', 'secret', 'access_token', 'DB_PASS', 'bypass']) {
+          for (const lead of [`${key}=`, `${key}: `, `--${key}=`, `--${key} `, `"${key}": "`]) {
+            for (const scheme of ['Bearer ', 'Basic ', '']) {
+              for (const value of values) {
+                inputs.push(`${lead}${scheme}${value}`, `x ${lead}${scheme}${value} y`, `${lead}${scheme}${value}${value}`);
+              }
+            }
+          }
+        }
+        const pieces = [
+          'INFO', 'ERROR', 'request', 'id=42', 'token=', 'Bearer ', 'password: ', '--token ', 'issue #123456', '123456',
+          'api_key=', 'secret', 'bypass=enabled', 'Authorization: ', 'TOKEN=REDACTED', '[REDACTED]', 'task-runner-v2',
+          'redis://:', '@host:6379', ...values, ' ', ' ', ' ', '\t', '\n', ',', '"', "'", '=', ':', '&', '.', '/', '-', '',
+        ];
+        const random = prng(20261102);
+        for (let n = 0; n < 400; n++) {
+          let line = '';
+          const count = 3 + Math.floor(random() * 10);
+          for (let i = 0; i < count; i++) line += pieces[Math.floor(random() * pieces.length)];
+          inputs.push(line);
+        }
+        // Only text with no invisible character: there the new pipeline must change nothing.
+        return inputs.filter((text: string) => cleanText(text) === text);
+      };
+
+      it('should give byte-identical output to the pre-change pipeline for every text with no invisible character', () => {
+        const inputs = corpus();
+        expect(inputs.length).toBeGreaterThan(1500);
+
+        const differences: string[] = [];
+        for (const input of inputs) {
+          const before = oldCleanAndRedact(input);
+          const after = cleanAndRedactWithRemoved(input).text;
+          if (after !== before) differences.push(`${JSON.stringify(input)}\n  before: ${JSON.stringify(before)}\n  after:  ${JSON.stringify(after)}`);
+        }
+
+        expect(differences.slice(0, 10), `${differences.length} differences`).toEqual([]);
+      });
+
+      it('should be byte-identical to the pre-change pipeline on 3000 fixed-seed fuzz strings with no invisible character', () => {
+        // Printable ASCII, TAB and LF, plus secret-shaped fragments so that matches, near-misses and touching
+        // secrets are common. The seed is fixed, so every run checks the same strings.
+        const fragments = [
+          'token=', 'password=', 'secret: ', 'Bearer ', 'Basic ', 'Authorization: Bearer ', '--token ', 'api_key=',
+          'sk-', 'sk-proj-', 'gh' + 'p_', 'AK' + 'IA', 'xo' + 'xb-', 'AI' + 'za', 'hf_', 'ey' + 'J', 'whsec_',
+          'https://hooks.slack.com/services/', 'postgres://user:', '@db:5432', 'Ab3De5Gh7J', 'q7We9Rt1Yu3Io5P', '123456',
+        ];
+        const random = prng(424242);
+        const differences: string[] = [];
+        let checked = 0;
+        for (let n = 0; n < 3000; n++) {
+          let input = '';
+          const length = 5 + Math.floor(random() * 60);
+          while (input.length < length) {
+            const roll = random();
+            if (roll < 0.25) input += fragments[Math.floor(random() * fragments.length)];
+            else if (roll < 0.3) input += random() < 0.5 ? '\t' : '\n';
+            else input += String.fromCharCode(32 + Math.floor(random() * 95));
+          }
+          if (cleanText(input) !== input) continue;
+          checked++;
+          const before = oldCleanAndRedact(input);
+          const after = cleanAndRedactWithRemoved(input).text;
+          if (after !== before) differences.push(`${JSON.stringify(input)}\n  before: ${JSON.stringify(before)}\n  after:  ${JSON.stringify(after)}`);
+        }
+
+        expect(checked).toBe(3000);
+        expect(differences.slice(0, 10), `${differences.length} differences`).toEqual([]);
+      });
     });
   });
 });
