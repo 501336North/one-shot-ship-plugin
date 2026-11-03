@@ -1,5 +1,5 @@
-import { promises as fs } from 'fs';
 import type { CheckResult } from '../types';
+import { readRegularFile } from '../utils/regular-file.js';
 
 interface QualityGatesCheckOptions {
   sessionLogPath: string;
@@ -13,7 +13,7 @@ interface LogEntry {
 
 async function readLogEntries(logPath: string): Promise<LogEntry[]> {
   try {
-    const content = await fs.readFile(logPath, 'utf-8');
+    const content = await readRegularFile(logPath);
     const lines = content.trim().split('\n');
     const entries: LogEntry[] = [];
 

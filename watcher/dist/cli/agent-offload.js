@@ -22,10 +22,10 @@
  * Output (JSON): OffloadResult
  */
 import * as childProcess from 'child_process';
-import * as fs from 'fs';
 import * as http from 'http';
 import * as path from 'path';
 import { checkAgentModel } from './agent-model-check.js';
+import { readRegularFileSync } from '../utils/regular-file.js';
 /**
  * Pure: build the nested-session invocation. The base URL is what diverts inference to the
  * local model; OSS_OFFLOAD_ACTIVE=1 is the depth-1 recursion guard (see agent-model-check).
@@ -37,7 +37,17 @@ export function buildOffloadInvocation(routing) {
         // ids and rejects a foreign one client-side (before any request). The OSS ModelProxy
         // (ANTHROPIC_BASE_URL) force-selects the configured local model, so the nested session runs
         // on its default id and the proxy overrides it. (live-proof finding)
-        args: ['-p', '--dangerously-skip-permissions'],
+        // Never skip permission checks (T71): the session reads repo files that may try to inject
+        // commands. File tools only (no Bash/web), edits auto-accepted inside the repo only (a `-p`
+        // run has nobody to answer any other prompt, so it is refused), and neither the repo's Claude
+        // settings (allow rules, extra dirs, hooks) nor any MCP server is loaded.
+        args: [
+            '-p',
+            '--tools', 'Read,Grep,Glob,Edit,Write',
+            '--permission-mode', 'acceptEdits',
+            '--setting-sources', 'user',
+            '--strict-mcp-config',
+        ],
         env: stripModelEnv({
             ...process.env,
             ANTHROPIC_BASE_URL: routing.proxyUrl,
@@ -130,7 +140,7 @@ export async function runAgentOffload(params, deps = {}) {
     const resolveRouting = deps.checkAgentModel ?? checkAgentModel;
     const isProxyReachable = deps.isProxyReachable ?? defaultIsProxyReachable;
     const spawnFn = deps.spawnFn ?? childProcess.spawn;
-    const readPrompt = deps.readPrompt ?? ((f) => fs.readFileSync(f, 'utf8'));
+    const readPrompt = deps.readPrompt ?? ((f) => readRegularFileSync(f));
     const startProxy = deps.startProxy ?? defaultStartProxy;
     const sleep = deps.sleep ?? defaultSleep;
     try {

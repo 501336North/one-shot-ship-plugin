@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import type { CheckResult } from '../types.js';
+import { readRegularFile } from '../utils/regular-file.js';
 
 export interface ArchiveCheckOptions {
   devActivePath: string;
@@ -31,7 +32,7 @@ export async function checkArchive(
       const progressPath = path.join(devActivePath, featureName, 'PROGRESS.md');
 
       try {
-        const content = await fs.readFile(progressPath, 'utf-8');
+        const content = await readRegularFile(progressPath);
 
         // Check for completion patterns (case-insensitive)
         const isCompleted =

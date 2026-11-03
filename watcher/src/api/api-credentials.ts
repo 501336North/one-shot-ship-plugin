@@ -8,6 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { readRegularFileSync } from '../utils/regular-file.js';
 
 export interface ApiCredentials {
   apiKey: string;
@@ -35,7 +36,7 @@ export function readApiCredentials(configDir?: string): ApiCredentials | null {
   }
 
   try {
-    const content = fs.readFileSync(configPath, 'utf8');
+    const content = readRegularFileSync(configPath);
     const config = JSON.parse(content) as { apiKey?: string; apiUrl?: string };
 
     if (!config.apiKey) {

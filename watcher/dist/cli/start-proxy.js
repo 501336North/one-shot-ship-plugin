@@ -22,6 +22,7 @@ import * as os from 'os';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { ModelProxy } from '../services/model-proxy.js';
+import { readRegularFileSync } from '../utils/regular-file.js';
 // ============================================================================
 // Constants
 // ============================================================================
@@ -124,7 +125,7 @@ export function loadApiKeyFromConfig(provider) {
     const configPath = path.join(getUserConfigDir(), 'config.json');
     try {
         if (fs.existsSync(configPath)) {
-            const content = fs.readFileSync(configPath, 'utf-8');
+            const content = readRegularFileSync(configPath);
             const config = JSON.parse(content);
             // Map provider to config key
             const keyMap = {
@@ -150,7 +151,7 @@ export function loadOllamaBaseUrlFromConfig() {
     const configPath = path.join(getUserConfigDir(), 'config.json');
     try {
         if (fs.existsSync(configPath)) {
-            const content = fs.readFileSync(configPath, 'utf-8');
+            const content = readRegularFileSync(configPath);
             const config = JSON.parse(content);
             // The model-routing config nests provider keys under `models.apiKeys`; also accept the
             // legacy top-level `apiKeys` location.
@@ -275,7 +276,7 @@ export function loadRouterConfigFromFile() {
     const configPath = path.join(getUserConfigDir(), 'config.json');
     try {
         if (fs.existsSync(configPath)) {
-            const content = fs.readFileSync(configPath, 'utf-8');
+            const content = readRegularFileSync(configPath);
             return buildRouterConfig(JSON.parse(content));
         }
     }

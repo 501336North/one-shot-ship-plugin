@@ -39,7 +39,8 @@ function createTempDir(): string {
 }
 
 /**
- * Create a test config file with model settings
+ * Create a test config file with model settings at <dir>/.oss/config.json. Passed to
+ * runAgentModelCheck as the home dir, this is the customer's own (user-level) config (T71).
  */
 function writeTestConfig(dir: string, config: Record<string, unknown>): void {
   const ossDir = path.join(dir, '.oss');
@@ -48,11 +49,13 @@ function writeTestConfig(dir: string, config: Record<string, unknown>): void {
 }
 
 /**
- * Execute agent-model-check CLI and parse JSON output
+ * Execute agent-model-check CLI and parse JSON output. `homeDir` is the customer's home (its
+ * .oss/config.json is the user config); `projectDir` is the repo being worked in (T71).
  */
 function runAgentModelCheck(
   agentName: string,
-  projectDir: string
+  homeDir: string,
+  projectDir: string = path.join(homeDir, 'project')
 ): { useProxy: boolean; model?: string; provider?: string; proxyUrl?: string } {
   try {
     const output = execSync(
@@ -60,6 +63,7 @@ function runAgentModelCheck(
       {
         encoding: 'utf-8',
         timeout: 5000,
+        env: { ...process.env, HOME: homeDir },
       }
     );
     return JSON.parse(output.trim());
@@ -512,28 +516,25 @@ describe('Config precedence', () => {
   });
 
   /**
-   * @behavior Project config takes precedence over user config
+   * @behavior A repo the customer opens cannot turn on offload or choose its model; only the
+   *           customer's own ~/.oss/config.json can (T71)
    * @acceptance-criteria AC-AMR.9
    */
-  it('should prefer project config over user config', () => {
-    // Note: We can't easily test user config precedence in integration tests
-    // because the CLI uses os.homedir() which we can't override
-    // This is tested in unit tests instead
-
-    // GIVEN: Project config with custom model
+  it("ignores a repo's own model mapping and keeps the customer's", () => {
+    // GIVEN: the repo maps the agent (and a repo-wide default) to a model of its choosing
     writeTestConfig(testDir, {
-      models: {
-        agents: {
-          'oss:test-agent': 'ollama/project-model',
-        },
-      },
+      models: { default: 'ollama/repo-chosen', agents: { 'oss:test-agent': 'ollama/repo-chosen' } },
     });
 
-    // WHEN: Checking model routing
-    const result = runAgentModelCheck('oss:test-agent', testDir);
+    // WHEN: the customer has no mapping of their own
+    // THEN: nothing is routed
+    expect(runAgentModelCheck('oss:test-agent', userConfigDir, testDir).useProxy).toBe(false);
 
-    // THEN: Project config should be used
-    expect(result.model).toBe('ollama/project-model');
+    // WHEN: the customer maps the agent themselves
+    writeTestConfig(userConfigDir, { models: { agents: { 'oss:test-agent': 'ollama/user-model' } } });
+
+    // THEN: the customer's model is used, not the repo's
+    expect(runAgentModelCheck('oss:test-agent', userConfigDir, testDir).model).toBe('ollama/user-model');
   });
 
   /**
@@ -541,7 +542,7 @@ describe('Config precedence', () => {
    * @acceptance-criteria AC-AMR.10
    */
   it('should use global default when no agent-specific config', () => {
-    // GIVEN: Project config with only global default
+    // GIVEN: The customer's config with only a global default
     writeTestConfig(testDir, {
       models: {
         default: 'ollama/default-model',

@@ -6,6 +6,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
+import { readRegularFileSync } from '../utils/regular-file.js';
 // Full chain order for sequential progression
 const CHAIN_ORDER = [
     // Discovery Chain
@@ -46,7 +47,7 @@ export class WorkflowStateService {
             if (!fs.existsSync(this.stateFilePath)) {
                 return this.getDefaultState();
             }
-            const contents = fs.readFileSync(this.stateFilePath, 'utf-8');
+            const contents = readRegularFileSync(this.stateFilePath);
             return JSON.parse(contents);
         }
         catch (error) {

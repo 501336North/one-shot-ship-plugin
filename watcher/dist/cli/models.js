@@ -21,6 +21,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { isValidModelId, SUPPORTED_PROVIDERS } from '../types/model-settings.js';
+import { readRegularFileSync } from '../utils/regular-file.js';
 /**
  * Test mode flag to simulate provider failures
  */
@@ -84,7 +85,7 @@ function loadConfig() {
     const configPath = getConfigPath();
     try {
         if (fs.existsSync(configPath)) {
-            const content = fs.readFileSync(configPath, 'utf-8');
+            const content = readRegularFileSync(configPath);
             return JSON.parse(content);
         }
     }

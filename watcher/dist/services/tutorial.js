@@ -7,6 +7,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { readRegularFileSync } from '../utils/regular-file.js';
 const LESSONS = [
     {
         id: 'intro',
@@ -176,7 +177,7 @@ export class TutorialService {
     loadProgress() {
         try {
             if (fs.existsSync(this.progressFile)) {
-                const content = fs.readFileSync(this.progressFile, 'utf-8');
+                const content = readRegularFileSync(this.progressFile);
                 const data = JSON.parse(content);
                 this.completedLessons = data.completedLessons || [];
             }

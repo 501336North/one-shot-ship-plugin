@@ -8,7 +8,6 @@
  * @acceptance-criteria AC-METRICS.1 through AC-METRICS.4
  */
 
-import * as fs from 'fs';
 import * as path from 'path';
 import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
 import type {
@@ -18,6 +17,7 @@ import type {
   VelocityMetrics,
   ReconciliationEntry,
 } from './spec-reconciler/index.js';
+import { readRegularFile } from '../utils/regular-file.js';
 
 /** Maximum number of history entries to retain per feature */
 const MAX_HISTORY_ENTRIES = 90;
@@ -73,7 +73,7 @@ export class SpecMetricsService {
     }
 
     try {
-      const content = await fs.promises.readFile(this.metricsPath, 'utf-8');
+      const content = await readRegularFile(this.metricsPath);
       this.cachedMetrics = JSON.parse(content) as SpecMetricsFile;
       return this.cachedMetrics;
     } catch {

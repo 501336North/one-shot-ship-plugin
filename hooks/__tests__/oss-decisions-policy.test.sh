@@ -194,11 +194,10 @@ mode=$(stat -c %a "$H/.oss/settings.json" 2>/dev/null || stat -f %Lp "$H/.oss/se
 # CR-R6-F2: off has already written the off marker by then, so the push IS off: the person is told so, never
 # "nothing changed"
 KEPT="Decision push is off on this machine (kept in ~/.oss/decisions-push-off); ~/.oss/settings.json could not be updated"
-name='should refuse to save through a linked or unreadable settings file, leave it alone and call nothing'
-for kind in link notjson notobject twodocs; do
+name='should refuse to save through an unreadable settings file, leave it alone and call nothing'
+for kind in notjson notobject twodocs; do
     reset; O=$(mktemp -d "$T/outside.XXXXXX"); printf '{"x":1}\n' > "$O/s.json"
     case $kind in
-        link) ln -s "$O/s.json" "$H/.oss/settings.json" ;;
         notjson) printf 'not json {\n' > "$H/.oss/settings.json" ;;
         notobject) printf '[1]\n' > "$H/.oss/settings.json" ;;
         twodocs) printf '{"x":1}\n{"y":2}\n' > "$H/.oss/settings.json" ;;
@@ -282,22 +281,17 @@ reset; : > "$MK"; chmod 600 "$MK"; answer '200 {"pushEnabled":true,"team":false}
 rm -f "$MK"
 
 # Task 67: a FIFO under ~/.oss cannot hang status, and never makes it say on
-# @behavior A person runs /oss:settings decisions status while a file under ~/.oss is a FIFO (or settings.json is
-#           a symlink); status still answers in one line, and never says the push is on for them.
+# @behavior A person runs /oss:settings decisions status while a file under ~/.oss is a FIFO; status still
+#           answers in one line, and never says the push is on for them.
 # @business-rule Fail closed (#214 Task 16al): anything at the off marker reads off and is never opened; a
 #           settings.json that is not a regular file cannot be read, and that is off; a refusal note that cannot
 #           be read is simply not shown.
-# shellcheck disable=SC2088 # the ~ is text for the person, never expanded
-LINKED="Decision push: off for you on this machine, because ~/.oss/settings.json is a link, not a file; dotfiles managers make these, and pushing stays off until it is a plain file (answers stay in your repo only)"
-name='should answer status, off for you, with no hang when a FIFO or a symlink stands in a switch file'
-for c in "fifo marker|$MK|$OFF" "fifo settings|$H/.oss/settings.json|$UNREAD" "symlinked settings|$H/.oss/settings.json|$LINKED" \
+name='should answer status, off for you, with no hang when a FIFO stands in a switch file'
+for c in "fifo marker|$MK|$OFF" "fifo settings|$H/.oss/settings.json|$UNREAD" \
          "fifo refusal note|$H/.oss/decisions-refusal.json|$ON and on for your team (answers are sent redacted to OSS)"; do
     IFS='|' read -r what at want <<< "$c"
     reset
-    case $what in
-        fifo*) mkfifo "$at" ;;
-        symlinked*) printf '{"decisionsPush":true}\n' > "$T/real-settings"; ln -s "$T/real-settings" "$at" ;;
-    esac
+    mkfifo "$at"
     [[ $what == 'fifo refusal note' ]] || want+="; your team's setting is on"
     answer '200 {"pushEnabled":true,"team":true}'
     OUT=$(HOME="$H" PATH="$API/bin:$PATH" run_capped 20 "$SCRIPT" status 2>"$T/err" </dev/null); RC=$?
@@ -305,29 +299,89 @@ for c in "fifo marker|$MK|$OFF" "fifo settings|$H/.oss/settings.json|$UNREAD" "s
     rm -f "$at"
 done
 
-# Task 68: status says when settings.json is a link, and only then
+# Task 70: a linked settings.json is followed to a regular file, as 2.0.96 did (user: "Follow the link")
 # @behavior A person whose dotfiles manager (stow, chezmoi, yadm) links ~/.oss/settings.json runs /oss:settings
-#           decisions status and reads that the push is off for them because the file is a link, not a file.
-#           A FIFO or a file that is not exactly one JSON object still reads "could not be read".
-# @business-rule Fail closed (dev-15, T67): a linked settings.json is off even when its target says
-#           decisionsPush true; only the reason shown differs, never the on/off answer.
-name='should say a linked settings file is why the push is off, and keep the could-not-be-read reason otherwise'
-for c in "link to a true file|$LINKED" "dangling link|$LINKED" "fifo|$UNREAD" "invalid JSON|$UNREAD"; do
+#           decisions status and reads the linked file's answer: on unless it says decisionsPush false.
+#           A link to a FIFO, a device or nothing, a FIFO, or a file that is not exactly one JSON object reads
+#           "could not be read", with no hang.
+# @business-rule 2.0.96 parity (as check-updates does, T53b): only a link to a regular file is read; anything
+#           else cannot tell, and that is off. No reason blames the link itself.
+name='should follow a linked settings file to a regular file, and say could-not-be-read for anything else'
+for c in "link, no decisionsPush key|$ON and on for your team (answers are sent redacted to OSS)" \
+         "link to decisionsPush false|$OFF; your team's setting is on" \
+         "link to a FIFO|$UNREAD; your team's setting is on" "link to /dev/zero|$UNREAD; your team's setting is on" \
+         "dangling link|$UNREAD; your team's setting is on" "fifo|$UNREAD; your team's setting is on" \
+         "invalid JSON|$UNREAD; your team's setting is on"; do
     IFS='|' read -r what want <<< "$c"
-    reset; at="$H/.oss/settings.json"
+    reset; at="$H/.oss/settings.json"; rm -f "$T/target"
     case $what in
-        link*) printf '{"decisionsPush":true}\n' > "$T/real-settings"; ln -s "$T/real-settings" "$at" ;;
-        dangling*) rm -f "$T/no-settings"; ln -s "$T/no-settings" "$at" ;;  # T68b: the target does not exist
+        'link, no'*) printf '{"notifications":{"style":"none"}}\n' > "$T/target"; ln -s "$T/target" "$at" ;;
+        'link to decisionsPush false') printf '{"decisionsPush":false}\n' > "$T/target"; ln -s "$T/target" "$at" ;;
+        'link to a FIFO') mkfifo "$T/target"; ln -s "$T/target" "$at" ;;
+        'link to /dev/zero') ln -s /dev/zero "$at" ;;
+        dangling*) ln -s "$T/target" "$at" ;;  # T68b: the target does not exist
         fifo) mkfifo "$at" ;;
         invalid*) printf '{"decisionsPush":true,}\n' > "$at" ;;
     esac
     answer '200 {"pushEnabled":true,"team":true}'
     OUT=$(HOME="$H" PATH="$API/bin:$PATH" run_capped 20 "$SCRIPT" status 2>"$T/err" </dev/null); RC=$?
-    if [[ $what == *link* ]]; then linked=yes; else linked=no; fi
-    [[ $RC -eq 0 && "$OUT" == "$want; your team's setting is on" && "$OUT" == "Decision push: off for you"* ]] \
-        && { [[ $linked == yes && "$OUT" == *'is a link, not a file'* ]] || [[ $linked == no && "$OUT" != *'is a link'* && "$OUT" == *'could not be read'* ]]; } \
-        && pass "$name ($what)" || fail "$name ($what)" "rc=$RC out=$OUT"
-    rm -f "$at" "$T/real-settings"
+    [[ $RC -eq 0 && "$OUT" == "$want" && "$OUT" != *'is a link'* ]] && pass "$name ($what)" || fail "$name ($what)" "rc=$RC out=$OUT"
+    rm -f "$at" "$T/target"
+done
+
+# Task 70b: off and on work through a linked settings.json (user: "Fix now as T70b")
+# @behavior A person whose dotfiles manager links ~/.oss/settings.json types /oss:settings decisions off, then on;
+#           both say done, the linked file holds the switch, the link stays a link, the file ends owner-only (600,
+#           T70c: "Make it owner-only"), and on clears the off marker.
+# @business-rule The switches write the link's regular target, never the link: a new file is renamed over the
+#           target in its own folder (never a half-written file), at most 8 links are followed (bash 3.2: no
+#           readlink -f), and every other settings.json writer still refuses a link (#214 16u).
+ino_of() { stat -c %i "$1" 2>/dev/null || stat -f %i "$1"; }
+name='should turn the push off and on through a linked settings.json, updating its target and keeping the link'
+reset; D="$T/dotfiles"; rm -rf "$D"; mkdir -p "$D"
+printf '{"notifications":{"style":"none"}}\n' > "$D/settings.json"; chmod 640 "$D/settings.json"
+ln -s settings.json "$D/hop"; ln -s "$D/hop" "$H/.oss/settings.json"   # two links, the second one relative
+ino0=$(ino_of "$D/settings.json")
+answer '200 {"pushEnabled":false}'
+OUT=$(HOME="$H" PATH="$API/bin:$PATH" run_capped 20 "$SCRIPT" off 2>"$T/err" </dev/null); rc_off=$?; said_off=$OUT
+got_off=$(jq -c . "$D/settings.json" 2>/dev/null); ino1=$(ino_of "$D/settings.json")
+answer '200 {"pushEnabled":true}'
+OUT=$(HOME="$H" PATH="$API/bin:$PATH" run_capped 20 "$SCRIPT" on 2>"$T/err" </dev/null); rc_on=$?; said_on=$OUT
+got_on=$(jq -c . "$D/settings.json" 2>/dev/null)
+mode=$(stat -c %a "$D/settings.json" 2>/dev/null || stat -f %Lp "$D/settings.json")
+[[ $rc_off -eq 0 && "$said_off" == "Decision push is now off for you on this machine and off for your team" \
+    && "$got_off" == '{"notifications":{"style":"none"},"decisionsPush":false}' && "$ino1" != "$ino0" \
+    && $rc_on -eq 0 && "$said_on" == "Decision push is now on for you on this machine and on for your team" \
+    && "$got_on" == '{"notifications":{"style":"none"},"decisionsPush":true}' \
+    && -L "$H/.oss/settings.json" && "$(readlink "$H/.oss/settings.json")" == "$D/hop" && -L "$D/hop" \
+    && "$mode" == 600 && ! -e "$MK" && ! -L "$MK" && "$(ls -A "$D" | tr '\n' ' ')" == "hop settings.json " ]] && pass "$name" \
+    || fail "$name" "rc-off=$rc_off said-off=$said_off got-off=$got_off ino=$ino0/$ino1 rc-on=$rc_on said-on=$said_on got-on=$got_on mode=$mode dir=$(ls -A "$D" | tr '\n' ' ') marker=$(ls -l "$MK" 2>&1)"
+rm -f "$H/.oss/settings.json"; rm -rf "$D"
+# shellcheck disable=SC2088 # the ~ is text for the person, never expanded
+LOOP=", because ~/.oss/settings.json is a link loop (or more than 8 links in a row); remove the link and try again"
+# shellcheck disable=SC2088
+DANGLING=", because ~/.oss/settings.json links to a file that does not exist; create that file or remove the link, and try again"
+# shellcheck disable=SC2088
+NOTPLAIN=", because ~/.oss/settings.json is not a plain file, or links to something that is not one (a folder, a FIFO or a device); replace it with a plain file and try again"
+name='should refuse off and on, with why and how to fix it and no hang, when settings.json is no regular file'
+for c in "link loop|$LOOP" "dangling link|$DANGLING" "link to a FIFO|$NOTPLAIN" "link to a folder|$NOTPLAIN" \
+         "a FIFO|$NOTPLAIN" "a folder|$NOTPLAIN"; do
+    IFS='|' read -r what why <<< "$c"
+    reset; at="$H/.oss/settings.json"; rm -rf "$T/target" "$T/loop"
+    case $what in
+        'link loop') ln -s "$T/loop" "$at"; ln -s "$at" "$T/loop" ;;
+        'dangling link') ln -s "$T/target" "$at" ;;
+        'link to a FIFO') mkfifo "$T/target"; ln -s "$T/target" "$at" ;;
+        'link to a folder') mkdir "$T/target"; ln -s "$T/target" "$at" ;;
+        'a FIFO') mkfifo "$at" ;;
+        'a folder') mkdir "$at" ;;
+    esac
+    answer '200 {"pushEnabled":false}'
+    OUT=$(HOME="$H" PATH="$API/bin:$PATH" run_capped 20 "$SCRIPT" off 2>"$T/err" </dev/null); rc_off=$?; said_off=$OUT
+    OUT=$(HOME="$H" PATH="$API/bin:$PATH" run_capped 20 "$SCRIPT" on 2>"$T/err" </dev/null); rc_on=$?; said_on=$OUT
+    [[ $rc_off -eq 1 && "$said_off" == "$KEPT$why" && $rc_on -eq 1 && "$said_on" == "$STILL$why" && -e "$MK" && "$(calls)" == 0 ]] \
+        && pass "$name ($what)" || fail "$name ($what)" "rc-off=$rc_off said-off=$said_off rc-on=$rc_on said-on=$said_on calls=$(calls)"
+    rm -rf "$at" "$T/target" "$T/loop" "$MK"
 done
 
 # 8. anything but status, on or off (alone) is a usage error, before any call

@@ -15,6 +15,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach, Mock } from 'vitest';
 import * as fs from 'fs';
+import { fakeRegularFiles } from '../helpers/fake-regular-files.js';
 import * as os from 'os';
 import * as path from 'path';
 import * as http from 'http';
@@ -41,6 +42,8 @@ describe('start-proxy CLI', () => {
     // Default: no config file exists
     (fs.existsSync as Mock).mockReturnValue(false);
     (fs.readFileSync as Mock).mockReturnValue('{}');
+    // the real hang-safe reader (T70e) runs on these fakes
+    fakeRegularFiles(fs);
     (fs.writeFileSync as Mock).mockImplementation(() => {});
     (fs.unlinkSync as Mock).mockImplementation(() => {});
     (fs.mkdirSync as Mock).mockImplementation(() => {});

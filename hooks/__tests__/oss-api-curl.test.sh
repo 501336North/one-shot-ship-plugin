@@ -274,6 +274,48 @@ test_settings_lock_not_a_folder() {
     if [[ -z "$got" ]]; then pass "$name"; else fail "$name" "each refused, file unchanged, nothing outside" "$got"; fi
     teardown
 }
+# --- Task 70c: every settings.json writer follows a link (user: "Follow the link everywhere", "owner-only") ---
+# @behavior A person whose dotfiles manager links ~/.oss/settings.json saves a setting; the linked file gets it,
+#           the links stay links, and the file ends owner-only (600) like a plain settings.json.
+# @business-rule oss_settings_update writes the file the link leads to (at most 8 links): a new file is renamed
+#           over it in its own folder (never half-written), always 600; a link to nothing, a loop or a link to
+#           something that is not a plain file is refused, nothing written, never a hang.
+upd() { HOME="$T/home" run_capped 20 bash -c 'source "$1"; shift; oss_settings_update "$@"' _ "$HELPER" "$@" 2>/dev/null; }
+ino_of() { stat -c %i "$1" 2>/dev/null || stat -f %i "$1"; }
+test_settings_update_follows_link() {
+    local name="helper: oss_settings_update writes through a two-hop link: content, a new file, links kept, 600, no temp"
+    ((TESTS_RUN++)); setup
+    local D="$T/dotfiles" f="$T/home/.oss/settings.json" ino0 rc
+    mkdir -p "$D"; printf '{"apiKeys":{"openrouter":"sk-or-x"}}\n' > "$D/settings.json"; chmod 640 "$D/settings.json"
+    ln -s settings.json "$D/hop"; ln -s "$D/hop" "$f"; ino0=$(ino_of "$D/settings.json")
+    upd --arg v 1 '.x = $v'; rc=$?
+    if [[ $rc -eq 0 && "$(jq -c . "$D/settings.json")" == '{"apiKeys":{"openrouter":"sk-or-x"},"x":"1"}' \
+        && "$(ino_of "$D/settings.json")" != "$ino0" && -L "$f" && "$(readlink "$f")" == "$D/hop" \
+        && "$(readlink "$D/hop")" == settings.json && "$(mode_of "$D/settings.json")" == 600 \
+        && "$(ls -A "$D" | tr '\n' ' ')" == "hop settings.json " && "$(ls -A "$T/home/.oss" | tr '\n' ' ')" == "config.json locks settings.json " ]]; then pass "$name"
+    else fail "$name" "rc 0, target updated, new inode, links kept, 600, no temp" \
+        "rc=$rc file=$(cat "$D/settings.json") mode=$(mode_of "$D/settings.json") dot=$(ls -A "$D" | tr '\n' ' ') oss=$(ls -A "$T/home/.oss" | tr '\n' ' ')"; fi
+    teardown
+}
+test_settings_update_refuses_bad_link() {
+    local what f rc
+    for what in 'link loop' 'dangling link' 'link to a FIFO' 'link to a folder' 'nine links'; do
+        local name="helper: oss_settings_update refuses, writing nothing and never hanging ($what)"
+        ((TESTS_RUN++)); setup; f="$T/home/.oss/settings.json"
+        case $what in
+            'link loop') ln -s "$T/loop" "$f"; ln -s "$f" "$T/loop" ;;
+            'dangling link') ln -s "$T/target" "$f" ;;
+            'link to a FIFO') mkfifo "$T/target"; ln -s "$T/target" "$f" ;;
+            'link to a folder') mkdir "$T/target"; ln -s "$T/target" "$f" ;;
+            'nine links') printf '{}\n' > "$T/l9"; for i in 8 7 6 5 4 3 2 1; do ln -s "l$((i + 1))" "$T/l$i"; done; ln -s "$T/l1" "$f" ;;
+        esac
+        upd '.x = 1'; rc=$?
+        if [[ $rc -eq 1 && -L "$f" && -z "$(find "$T" -name '.*settings*' -o -name '.l9.*' -o -name '.target.*' | head -1)" \
+            && ( $what != 'nine links' || "$(cat "$T/l9")" == '{}' ) ]]; then pass "$name"
+        else fail "$name" "rc 1, nothing written" "rc=$rc left=$(find "$T" -name '.*' | tr '\n' ' ')"; fi
+        teardown
+    done
+}
 test_sites() {
     check_site "fetch-iron-laws.sh" bash "$HOOKS_DIR/fetch-iron-laws.sh"
     check_site "oss-fetch-team-iron-laws.sh" bash "$HOOKS_DIR/oss-fetch-team-iron-laws.sh"
@@ -313,6 +355,8 @@ test_settings_lock_stale
 test_settings_lock_takeover_race
 test_settings_lock_not_a_folder
 test_settings_lock_release_only_own
+test_settings_update_follows_link
+test_settings_update_refuses_bad_link
 test_sites
 test_unparsable_sites
 echo ""

@@ -22,6 +22,7 @@ import {
 import { findMatchingFile, findExtraFiles } from '../services/spec-reconciler/file-matcher.js';
 import { parseSpecFile } from '../services/spec-reconciler/parser.js';
 import { CreateTaskInput } from '../types.js';
+import { readRegularFileOrNull } from '../utils/regular-file.js';
 
 /** Maximum number of processed signatures to retain */
 const MAX_PROCESSED_SIGNATURES = 1000;
@@ -235,9 +236,9 @@ export class SpecMonitor {
         }
       } else if (entry.isFile() && /\.test\.[jt]sx?$/.test(entry.name)) {
         // Read the test file and check for criterion reference
-        const content = await fs.promises.readFile(fullPath, 'utf-8');
+        const content = await readRegularFileOrNull(fullPath);
         // Look for patterns like @criteria SC-001 or @acceptance-criteria SC-001
-        if (content.includes(criterionId)) {
+        if (content !== null && content.includes(criterionId)) {
           return true;
         }
       }
@@ -276,11 +277,11 @@ export class SpecMonitor {
 
     // Check cache first
     let spec: ParsedSpec;
+    const content = this.specCache.has(feature) ? null : await readRegularFileOrNull(specPath);
     if (this.specCache.has(feature)) {
       spec = this.specCache.get(feature)!;
-    } else if (fs.existsSync(specPath)) {
-      // Read and parse the spec file
-      const content = await fs.promises.readFile(specPath, 'utf-8');
+    } else if (content !== null) {
+      // Parse the spec file
       spec = parseSpecFile(content, feature);
       // Cache the parsed spec
       this.specCache.set(feature, spec);

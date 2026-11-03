@@ -9,6 +9,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { execFileSync } from 'child_process';
 import { SettingsService } from '../../src/services/settings.js';
 import { NotificationSettings } from '../../src/types/notification.js';
 
@@ -227,19 +228,67 @@ describe('SettingsService', () => {
       expect(saved.decisionsPush).toBe(false);
     });
 
-    it('never writes through a symlinked settings.json', () => {
+    // Task 70c (user: "Follow the link everywhere", "Make it owner-only"): the shell's oss_settings_update twin
+    it('writes through a two-hop link to its file: a new file renamed in, links kept, 600, no temp left', () => {
       const testDir = createTestDir();
       const settingsPath = path.join(testDir, 'settings.json');
-      const target = path.join(testDir, 'elsewhere.json');
-      fs.writeFileSync(target, JSON.stringify({ decisionsPush: false }));
-      fs.symlinkSync(target, settingsPath);
+      const dot = path.join(testDir, 'dotfiles');
+      const target = path.join(dot, 'settings.json');
+      fs.mkdirSync(dot);
+      fs.writeFileSync(target, JSON.stringify({ decisionsPush: false }), { mode: 0o644 });
+      fs.chmodSync(target, 0o644);
+      fs.symlinkSync('settings.json', path.join(dot, 'hop'));
+      fs.symlinkSync(path.join(dot, 'hop'), settingsPath);
+      const before = fs.statSync(target).ino;
 
       const service = new SettingsService(testDir);
       service.setVerbosity('errors-only');
       service.save();
 
-      expect(fs.readFileSync(target, 'utf-8')).toBe(JSON.stringify({ decisionsPush: false }));
+      const saved = JSON.parse(fs.readFileSync(target, 'utf-8'));
+      expect(saved.decisionsPush).toBe(false);
+      expect(saved.notifications.verbosity).toBe('errors-only');
+      expect(fs.statSync(target).ino).not.toBe(before);
+      expect(fs.statSync(target).mode & 0o777).toBe(0o600);
+      expect(fs.readlinkSync(settingsPath)).toBe(path.join(dot, 'hop'));
+      expect(fs.readlinkSync(path.join(dot, 'hop'))).toBe('settings.json');
+      expect(fs.readdirSync(dot).sort()).toEqual(['hop', 'settings.json']);
+      expect(fs.readdirSync(testDir).filter((n) => n.startsWith('.settings'))).toEqual([]);
+    });
+
+    it.each([
+      ['a link loop', (dir: string, at: string) => {
+        fs.symlinkSync(path.join(dir, 'loop'), at);
+        fs.symlinkSync(at, path.join(dir, 'loop'));
+      }],
+      ['a dangling link', (dir: string, at: string) => fs.symlinkSync(path.join(dir, 'target'), at)],
+      ['a link to a FIFO', (dir: string, at: string) => {
+        execFileSync('mkfifo', [path.join(dir, 'target')]);
+        fs.symlinkSync(path.join(dir, 'target'), at);
+      }],
+      ['a link to a folder', (dir: string, at: string) => {
+        fs.mkdirSync(path.join(dir, 'target'));
+        fs.symlinkSync(path.join(dir, 'target'), at);
+      }],
+      ['nine links in a row', (dir: string, at: string) => {
+        fs.writeFileSync(path.join(dir, 'l9'), '{}');
+        for (let i = 8; i >= 1; i--) fs.symlinkSync(`l${i + 1}`, path.join(dir, `l${i}`));
+        fs.symlinkSync(path.join(dir, 'l1'), at);
+      }],
+    ])('refuses %s, writing nothing and never hanging', (_what, make) => {
+      const testDir = createTestDir();
+      const settingsPath = path.join(testDir, 'settings.json');
+      // made after the service has loaded: only save() meets the link (loading is not a writer)
+      const service = new SettingsService(testDir);
+      make(testDir, settingsPath);
+      service.setVerbosity('errors-only');
+      service.save();
+
       expect(fs.lstatSync(settingsPath).isSymbolicLink()).toBe(true);
+      expect(fs.readdirSync(testDir).filter((n) => n.startsWith('.'))).toEqual([]);
+      if (fs.existsSync(path.join(testDir, 'l9'))) {
+        expect(fs.readFileSync(path.join(testDir, 'l9'), 'utf-8')).toBe('{}');
+      }
     });
   });
 

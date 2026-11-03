@@ -564,22 +564,49 @@ api_reset; O=$(mktemp -d "$T/outside.XXXXXX"); printf 'keep\n' > "$O/target"; ln
 rm -f "$MK"
 
 # ===== Task 67: a FIFO under ~/.oss cannot hang a picker answer, and never turns the push on ===============
-# @behavior A person answers a question while ~/.oss/decisions-push-off or ~/.oss/settings.json is a FIFO (or
-#           settings.json is a symlink); the answer is recorded, the hook finishes, and nothing is sent.
+# @behavior A person answers a question while ~/.oss/decisions-push-off or ~/.oss/settings.json is a FIFO; the
+#           answer is recorded, the hook finishes, and nothing is sent.
 # @business-rule Fail closed (#214 Task 16al): anything at the off marker is off, and the marker is never opened;
 #           a settings.json that is not a regular file cannot be read, and that is off too.
-name='should finish, record the answer and send nothing when a FIFO or a symlink stands in a switch file'
-for c in "fifo marker|$MK" "fifo settings|$SF" "symlinked settings|$SF"; do
+name='should finish, record the answer and send nothing when a FIFO stands in a switch file'
+for c in "fifo marker|$MK" "fifo settings|$SF"; do
     IFS='|' read -r what at <<< "$c"
     api_reset; rm -f "$MK" "$SF"
-    case $what in
-        fifo*) mkfifo "$at" ;;
-        symlinked*) printf '{"decisionsPush":true}\n' > "$T/real-settings"; ln -s "$T/real-settings" "$at" ;;
-    esac
+    mkfifo "$at"
     (cd "$P" && HOME="$AH" PATH="$API/bin:$PATH" run_capped 20 "$HOOK" < "$FIX/pick.json" 2>"$T/err"); RC=$?
     [[ $RC -eq 0 && "$(calls)" == 0 && -z "$(cat "$OB" 2>/dev/null)" && $(answer_ids | wc -w) -eq 1 ]] && pass "$name ($what)" \
         || fail "$name ($what)" "rc=$RC calls=$(calls) outbox=$(head -c 100 "$OB" 2>/dev/null)"
     rm -f "$MK" "$SF"
+done
+
+# ===== Task 70: a linked settings.json is followed to a regular file, as 2.0.96 did =========================
+# @behavior A person whose dotfiles manager (stow, chezmoi, yadm) links ~/.oss/settings.json answers a question;
+#           the push reads the linked file like any settings file: on unless it says decisionsPush false.
+# @business-rule 2.0.96 parity (user: "Follow the link", as check-updates does, T53b): a link to a regular file
+#           is read; a link to a FIFO, a device, a folder or nothing cannot tell, and that is off, never a hang.
+name='should follow a linked settings.json to a regular file: on unless it says off'
+for c in 'no decisionsPush key|{"notifications":{"style":"none"}}|1' 'decisionsPush false|{"decisionsPush":false}|0'; do
+    IFS='|' read -r what content want <<< "$c"
+    api_reset; rm -f "$SF"; printf '%s\n' "$content" > "$T/real-settings"; ln -s "$T/real-settings" "$SF"
+    (cd "$P" && HOME="$AH" PATH="$API/bin:$PATH" run_capped 20 "$HOOK" < "$FIX/pick.json" 2>"$T/err"); RC=$?
+    [[ $RC -eq 0 && "$(posts)" == "$want" && ( $want == 1 || "$(calls)" == 0 ) && $(answer_ids | wc -w) -eq 1 ]] && pass "$name ($what)" \
+        || fail "$name ($what)" "rc=$RC posts=$(posts) calls=$(calls)"
+    rm -f "$SF" "$T/real-settings"
+done
+name='should finish, record the answer and send nothing when settings.json links to no regular file'
+for what in 'link to a FIFO' 'link to /dev/zero' 'dangling link' 'link to a folder' 'a folder'; do
+    api_reset; rm -rf "$SF" "$T/target"
+    case $what in
+        'link to a FIFO') mkfifo "$T/target"; ln -s "$T/target" "$SF" ;;
+        'link to /dev/zero') ln -s /dev/zero "$SF" ;;
+        'dangling link') ln -s "$T/target" "$SF" ;;
+        'link to a folder') mkdir "$T/target"; ln -s "$T/target" "$SF" ;;
+        'a folder') mkdir "$SF" ;;
+    esac
+    (cd "$P" && HOME="$AH" PATH="$API/bin:$PATH" run_capped 20 "$HOOK" < "$FIX/pick.json" 2>"$T/err"); RC=$?
+    [[ $RC -eq 0 && "$(calls)" == 0 && -z "$(cat "$OB" 2>/dev/null)" && $(answer_ids | wc -w) -eq 1 ]] && pass "$name ($what)" \
+        || fail "$name ($what)" "rc=$RC calls=$(calls) outbox=$(head -c 100 "$OB" 2>/dev/null)"
+    rm -rf "$SF" "$T/target"
 done
 
 # ===== Task 16am: a push run stops as soon as the person switches off =====================================

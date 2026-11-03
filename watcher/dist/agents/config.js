@@ -9,6 +9,7 @@ import * as path from 'path';
 import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
 import { homedir } from 'os';
 import { DEFAULT_AGENT_CONFIG } from './types';
+import { readRegularFile } from '../utils/regular-file.js';
 const EMPTY_CONFIG = { agents: {} };
 /**
  * Validate agent name (alphanumeric, hyphens, underscores only)
@@ -39,7 +40,7 @@ export async function loadGlobalConfig() {
         return EMPTY_CONFIG;
     }
     try {
-        const content = await fs.readFile(globalPath, 'utf-8');
+        const content = await readRegularFile(globalPath);
         return JSON.parse(content);
     }
     catch {
@@ -55,7 +56,7 @@ export async function loadProjectConfig() {
         return EMPTY_CONFIG;
     }
     try {
-        const content = await fs.readFile(projectPath, 'utf-8');
+        const content = await readRegularFile(projectPath);
         return JSON.parse(content);
     }
     catch {

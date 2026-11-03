@@ -19,6 +19,7 @@ import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { checkNode, decidePreflight } from '../services/node-guard.js';
 import * as startProxyModule from './start-proxy.js';
+import { readRegularFileSync } from '../utils/regular-file.js';
 /** Default proxy port — must match agent-model-check / start-proxy (NOT 3456; collides with CCR). */
 export const DEFAULT_PROXY_PORT = 8473;
 /**
@@ -136,15 +137,16 @@ export async function ensureProxy(port, deps) {
 // Composition root — build real deps and exec claude (entrypoint)
 // ============================================================================
 /**
- * Read the merged OSS config (project `.oss/config.json` overrides user `~/.oss/config.json`),
- * returning only the `models` slice the launcher cares about. Best-effort: defaults to {} on any
- * error, so a missing/malformed config simply means "no routing" (Anthropic-only, untouched).
+ * Read the user's `~/.oss/config.json`, returning only the `models` slice the launcher cares about.
+ * A repo's own `.oss/config.json` is ignored (T71b): it must not switch routing on or pick the
+ * port the session, with its real credentials, talks to. Best-effort: defaults to {} on any error,
+ * so a missing/malformed config simply means "no routing" (Anthropic-only, untouched).
  */
-function loadMergedConfig(fsImpl, pathImpl, osImpl) {
+export function loadMergedConfig(fsImpl, pathImpl, osImpl) {
     const read = (file) => {
         try {
             if (fsImpl.existsSync(file))
-                return JSON.parse(fsImpl.readFileSync(file, 'utf-8'));
+                return JSON.parse(readRegularFileSync(file));
         }
         catch {
             /* ignore malformed/unreadable config */
@@ -152,10 +154,7 @@ function loadMergedConfig(fsImpl, pathImpl, osImpl) {
         return null;
     };
     const userCfg = read(pathImpl.join(osImpl.homedir(), '.oss', 'config.json'));
-    const projectDir = process.env.CLAUDE_PROJECT_DIR;
-    const projectCfg = projectDir ? read(pathImpl.join(projectDir, '.oss', 'config.json')) : null;
-    const merged = { ...(userCfg ?? {}), ...(projectCfg ?? {}) };
-    return { models: merged.models };
+    return { models: userCfg?.models };
 }
 /**
  * Launcher entrypoint: build the real collaborators (config read, proxy health/start, claude

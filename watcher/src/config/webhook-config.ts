@@ -15,6 +15,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
+import { readRegularFileSync } from '../utils/regular-file.js';
 
 /**
  * Webhook configuration data structure
@@ -184,7 +185,7 @@ export class WebhookConfig {
   private readFullConfig(): Record<string, unknown> {
     try {
       if (fs.existsSync(this.configPath)) {
-        const content = fs.readFileSync(this.configPath, 'utf-8');
+        const content = readRegularFileSync(this.configPath);
         return JSON.parse(content);
       }
     } catch {
@@ -199,7 +200,7 @@ export class WebhookConfig {
   private loadConfigSync(): void {
     try {
       if (fs.existsSync(this.configPath)) {
-        const content = fs.readFileSync(this.configPath, 'utf-8');
+        const content = readRegularFileSync(this.configPath);
         const config = JSON.parse(content);
 
         if (config.webhook && typeof config.webhook === 'object') {

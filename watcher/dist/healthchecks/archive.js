@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs';
 import * as path from 'path';
+import { readRegularFile } from '../utils/regular-file.js';
 /**
  * @behavior Verify shipped features are being archived properly
  * @acceptance-criteria Features in "ship" or "complete" phase should be moved to dev/completed/
@@ -18,7 +19,7 @@ export async function checkArchive(options) {
             const featureName = dir.name;
             const progressPath = path.join(devActivePath, featureName, 'PROGRESS.md');
             try {
-                const content = await fs.readFile(progressPath, 'utf-8');
+                const content = await readRegularFile(progressPath);
                 // Check for completion patterns (case-insensitive)
                 const isCompleted = /## Current Phase:\s*(ship|complete)/i.test(content) ||
                     /\(complete\)/i.test(content);

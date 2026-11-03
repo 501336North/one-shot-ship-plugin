@@ -21,6 +21,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { parseProvider } from '../types/model-settings.js';
+import { readRegularFileSync } from '../utils/regular-file.js';
 
 /**
  * Default proxy port. NOT 3456 — that collides with claude-code-router's default. Resolution
@@ -28,14 +29,11 @@ import { parseProvider } from '../types/model-settings.js';
  */
 const DEFAULT_PROXY_PORT = 8473;
 
-/** Resolve the model-proxy port: env override > config (project>user) > default. */
-function resolveProxyPort(
-  projectConfig: { models?: { proxyPort?: number } },
-  userConfig: { models?: { proxyPort?: number } },
-): number {
+/** Resolve the model-proxy port: env override > user config > default. */
+function resolveProxyPort(userConfig: { models?: { proxyPort?: number } }): number {
   const fromEnv = process.env.OSS_PROXY_PORT;
   if (fromEnv && Number.isFinite(Number(fromEnv))) return Number(fromEnv);
-  return projectConfig.models?.proxyPort ?? userConfig.models?.proxyPort ?? DEFAULT_PROXY_PORT;
+  return userConfig.models?.proxyPort ?? DEFAULT_PROXY_PORT;
 }
 
 /**
@@ -88,7 +86,7 @@ interface RawConfig {
 function loadConfigFromFile(configPath: string): RawConfig {
   try {
     if (fs.existsSync(configPath)) {
-      const content = fs.readFileSync(configPath, 'utf-8');
+      const content = readRegularFileSync(configPath);
       return JSON.parse(content);
     }
   } catch {
@@ -158,7 +156,7 @@ function nativeClaudeBanner(agentName: string): string {
  * Check if custom model is configured for an agent
  */
 export async function checkAgentModel(params: CheckAgentModelParams): Promise<CheckResult> {
-  const { agentName, projectDir } = params;
+  const { agentName } = params;
 
   // Validate agent name
   if (!agentName) {
@@ -179,42 +177,24 @@ export async function checkAgentModel(params: CheckAgentModelParams): Promise<Ch
     return { useProxy: false };
   }
 
-  // Load configs with precedence: Project > User
-  const userConfigPath = path.join(getUserConfigDir(), 'config.json');
-  const projectConfigPath = path.join(projectDir, '.oss', 'config.json');
+  // Only the customer's own ~/.oss/config.json may turn offload on or pick its model (T71): offload
+  // runs a nested session in the repo on that model, so a repo's .oss/config.json must not steer it.
+  const userConfig = loadConfigFromFile(path.join(getUserConfigDir(), 'config.json'));
 
-  const userConfig = loadConfigFromFile(userConfigPath);
-  const projectConfig = loadConfigFromFile(projectConfigPath);
+  // 1. The agent's own mapping, then 2. the user's global default
+  const model = userConfig.models?.agents?.[agentName] || userConfig.models?.default;
 
-  // 1. Check project config first (highest precedence)
-  let model = projectConfig.models?.agents?.[agentName];
-
-  // 2. Fall back to user config
-  if (!model) {
-    model = userConfig.models?.agents?.[agentName];
-  }
-
-  // 3. Fall back to project global default
-  if (!model) {
-    model = projectConfig.models?.default;
-  }
-
-  // 4. Fall back to user global default
-  if (!model) {
-    model = userConfig.models?.default;
-  }
-
-  // 5. If no model or native Claude, return useProxy: false
+  // 3. If no model or native Claude, return useProxy: false
   if (isNativeClaudeModel(model)) {
     return { useProxy: false, banner: nativeClaudeBanner(agentName) };
   }
 
-  // 6. Custom model configured - return proxy info
+  // 4. Custom model configured - return proxy info
   // At this point model is guaranteed to be a non-empty string (not undefined, 'claude', or 'default')
   const modelStr = model as string;
   const provider = parseProvider(modelStr);
 
-  const proxyUrl = `http://localhost:${resolveProxyPort(projectConfig, userConfig)}`;
+  const proxyUrl = `http://localhost:${resolveProxyPort(userConfig)}`;
 
   return {
     useProxy: true,

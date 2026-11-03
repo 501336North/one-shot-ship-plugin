@@ -4,34 +4,36 @@
  * @boundary Health Check System
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { checkQualityGates } from '../../src/healthchecks/quality-gates';
-import { promises as fs } from 'fs';
-
-// Mock the fs module
-vi.mock('fs', () => ({
-  promises: {
-    readFile: vi.fn(),
-  },
-}));
-
-const mockFs = fs as {
-  readFile: ReturnType<typeof vi.fn>;
-};
 
 describe('QualityGatesHealthCheck', () => {
-  const sessionLogPath = '/tmp/session.log';
+  let tmp: string;
+  let sessionLogPath: string;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-quality-gates-check-'));
+    sessionLogPath = path.join(tmp, 'session.log');
   });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  /** A real session.log with this text. */
+  function writeLog(text: string): void {
+    fs.writeFileSync(sessionLogPath, text);
+  }
 
   it('should pass when all 3 quality gates ran in last ship', async () => {
     // GIVEN - Mock log file with all 3 gates passed
     const logContent = `[2024-12-09T10:30:00] info QUALITY_GATE code-review passed
 [2024-12-09T10:30:00] info QUALITY_GATE performance passed
 [2024-12-09T10:30:01] info QUALITY_GATE security passed`;
-    mockFs.readFile.mockResolvedValue(logContent);
+    writeLog(logContent);
 
     // WHEN - Check quality gates health
     const result = await checkQualityGates({ sessionLogPath });
@@ -45,7 +47,7 @@ describe('QualityGatesHealthCheck', () => {
   it('should warn when not all gates ran', async () => {
     // GIVEN - Mock log file with only one gate
     const logContent = `[2024-12-09T10:30:00] info QUALITY_GATE code-review passed`;
-    mockFs.readFile.mockResolvedValue(logContent);
+    writeLog(logContent);
 
     // WHEN - Check quality gates health
     const result = await checkQualityGates({ sessionLogPath });
@@ -61,7 +63,7 @@ describe('QualityGatesHealthCheck', () => {
   it('should fail when any gate failed', async () => {
     // GIVEN - Mock log file with a failed gate
     const logContent = `[2024-12-09T10:30:00] error QUALITY_GATE security failed: SQL injection vulnerabilities found`;
-    mockFs.readFile.mockResolvedValue(logContent);
+    writeLog(logContent);
 
     // WHEN - Check quality gates health
     const result = await checkQualityGates({ sessionLogPath });
@@ -80,7 +82,7 @@ describe('QualityGatesHealthCheck', () => {
     const logContent = `[2024-12-09T10:30:00] info QUALITY_GATE code-review passed
 [2024-12-09T10:30:00] info QUALITY_GATE performance passed
 [2024-12-09T10:30:01] info QUALITY_GATE security passed`;
-    mockFs.readFile.mockResolvedValue(logContent);
+    writeLog(logContent);
 
     // WHEN - Check quality gates health
     const result = await checkQualityGates({ sessionLogPath });
@@ -94,7 +96,7 @@ describe('QualityGatesHealthCheck', () => {
     const logContent = `[2024-12-09T10:30:00] info QUALITY_GATE code-review passed
 [2024-12-09T10:30:03] info QUALITY_GATE performance passed
 [2024-12-09T10:30:06] info QUALITY_GATE security passed`;
-    mockFs.readFile.mockResolvedValue(logContent);
+    writeLog(logContent);
 
     // WHEN - Check quality gates health
     const result = await checkQualityGates({ sessionLogPath });
@@ -107,7 +109,7 @@ describe('QualityGatesHealthCheck', () => {
   it('should handle no quality gate entries', async () => {
     // GIVEN - Mock log file with no gate entries
     const logContent = `[2024-12-09T10:30:00] info Some other log entry`;
-    mockFs.readFile.mockResolvedValue(logContent);
+    writeLog(logContent);
 
     // WHEN - Check quality gates health
     const result = await checkQualityGates({ sessionLogPath });

@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as childProcess from 'child_process';
 
@@ -15,26 +16,26 @@ vi.mock('child_process', () => ({
   execSync: vi.fn(),
 }));
 
-// Mock fs for state file
-vi.mock('fs', () => ({
-  existsSync: vi.fn(),
-  readFileSync: vi.fn(),
-  writeFileSync: vi.fn(),
-  mkdirSync: vi.fn(),
-}));
-
 // Import after mocks
 import { IronLawMonitor, IronLawViolation, IronLawState } from '../../src/services/iron-law-monitor.js';
 
 describe('IronLawMonitor', () => {
   let monitor: IronLawMonitor;
-  const projectDir = '/test/project';
-  const stateFile = '/Users/test/.oss/iron-law-state.json';
+  // Real files in a sandbox (T70e): the project, and HOME with the state file in its .oss
+  let sandbox: string;
+  let projectDir: string;
+  let stateFile: string;
+  let originalHome: string | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // Default: file doesn't exist
-    vi.mocked(fs.existsSync).mockReturnValue(false);
+    sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-iron-law-')));
+    projectDir = path.join(sandbox, 'project');
+    fs.mkdirSync(projectDir);
+    originalHome = process.env.HOME;
+    process.env.HOME = path.join(sandbox, 'home');
+    // Default: no state file yet
+    stateFile = path.join(sandbox, 'home', '.oss', 'iron-law-state.json');
     // Default: git branch is feature branch
     vi.mocked(childProcess.execSync).mockReturnValue('feature/test-branch');
 
@@ -43,6 +44,8 @@ describe('IronLawMonitor', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    process.env.HOME = originalHome;
+    fs.rmSync(sandbox, { recursive: true, force: true });
   });
 
   // ===========================================================================
@@ -196,11 +199,8 @@ describe('IronLawMonitor', () => {
      * @acceptance-criteria AC-IRON.10
      */
     it('should detect missing PROGRESS.md for active feature', async () => {
-      vi.mocked(fs.existsSync).mockImplementation((p) => {
-        if (String(p).includes('PROGRESS.md')) return false;
-        if (String(p).includes('dev/active/my-feature')) return true;
-        return false;
-      });
+      // the feature's dev docs folder exists, without PROGRESS.md
+      fs.mkdirSync(path.join(projectDir, '.oss', 'dev', 'active', 'my-feature'), { recursive: true });
 
       monitor.setActiveFeature('my-feature');
       const violations = await monitor.check();
@@ -214,10 +214,9 @@ describe('IronLawMonitor', () => {
      * @acceptance-criteria AC-IRON.11
      */
     it('should not flag when PROGRESS.md exists', async () => {
-      vi.mocked(fs.existsSync).mockImplementation((p) => {
-        if (String(p).includes('PROGRESS.md')) return true;
-        return false;
-      });
+      const feature = path.join(projectDir, '.oss', 'dev', 'active', 'my-feature');
+      fs.mkdirSync(feature, { recursive: true });
+      fs.writeFileSync(path.join(feature, 'PROGRESS.md'), '# Progress\n');
 
       monitor.setActiveFeature('my-feature');
       const violations = await monitor.check();
@@ -241,11 +240,7 @@ describe('IronLawMonitor', () => {
 
       await monitor.check();
 
-      expect(fs.writeFileSync).toHaveBeenCalledWith(
-        stateFile,
-        expect.stringContaining('iron_law_branch'),
-        'utf-8'
-      );
+      expect(fs.readFileSync(stateFile, 'utf-8')).toContain('iron_law_branch');
     });
 
     /**
@@ -267,8 +262,8 @@ describe('IronLawMonitor', () => {
         recentToolCalls: [],
       };
 
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(previousState));
+      fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+      fs.writeFileSync(stateFile, JSON.stringify(previousState));
 
       const newMonitor = new IronLawMonitor({ projectDir, stateFile });
       const state = newMonitor.getState();

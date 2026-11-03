@@ -1,10 +1,11 @@
 import { promises as fs } from 'fs';
+import { readRegularFile } from '../utils/regular-file.js';
 const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 export async function checkLogging(options) {
     const { sessionLogPath, sessionActive = false } = options;
     try {
         // Read log file
-        const logContent = await fs.readFile(sessionLogPath, 'utf-8');
+        const logContent = await readRegularFile(sessionLogPath);
         // Check file modification time
         const stats = await fs.stat(sessionLogPath);
         const ageMs = Date.now() - stats.mtime.getTime();

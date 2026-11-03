@@ -66,42 +66,55 @@ If this command fails for any reason (it prints an `Error:` line, for example wh
 
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
-## Step 2.5: Local-Model Offload (opt-in, config-gated)
+## Step 2.5: Local-Model Offload (opt-in, user setting)
 
-**If a custom/local model is configured for this agent, run the agent's work on THAT model
-instead of reasoning here on Claude.** This fires ONLY when `~/.oss/config.json` maps this
-agent to a non-Claude model (e.g. `ollama/gpt-oss:120b`). With no mapping (the default), this
-is a no-op — skip to Step 3 and run natively.
+**Run this step only when Step 0 set `USE_PROXY` to true** (its banner then names a non-Claude
+model, e.g. `🤖 OSS model: ollama/gpt-oss:120b (ollama)`). Otherwise (the default) this step is a
+no-op: skip to Step 3 and run natively. Decide from Step 0's output alone; do not open any settings
+or credentials file to check. The offloader checks the customer's own setting again and does
+nothing if this agent is not mapped.
 
-1. Assemble the prompt — write the **expert prompt fetched in Step 2**, a separator, then the
-   **exact task you were given** (the code/diff/files to act on) — to a temp file (use the Write tool):
+When it runs, the agent's work runs on THAT model instead of here on Claude:
+
+1. Make a private directory (mode 700) holding an empty private prompt file (mode 600):
 
    ```bash
-   PROMPT_FILE="$(mktemp /tmp/oss-offload-security-auditor.XXXXXX.md)"
-   # Write into $PROMPT_FILE:
-   #   <expert prompt from Step 2>
-   #   \n\n---\n\n
-   #   <the task/context you received>
+   umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && : > "$d/prompt.md" && chmod 600 "$d/prompt.md" && echo "$d/prompt.md"
    ```
 
-2. Run the offloader (it spawns a nested Claude session pointed at your local model via the
-   :8473 proxy, with full tools in the current repo dir):
+   Then use the Write tool to write into the printed path, and nowhere else: the **expert prompt
+   fetched in Step 2**, a separator (`\n\n---\n\n`), then the **exact task you were given** (the
+   code/diff/files to act on).
+
+2. Run the offloader, pasting the path printed in step 1 between the single quotes. The command
+   opens the prompt, deletes the file and its directory, and only then starts the offloader, which
+   reads the prompt on stdin, so nothing is left on disk whatever happens next. If you stop after
+   step 1 without running this command, still delete the file and its directory (`rm -f --` the
+   path, then `rmdir --` its directory). The offloader runs a nested Claude session on your local
+   model via the :8473 proxy; it can read and edit files in the current repo, but cannot run
+   commands, use the web or use MCP tools.
 
    ```bash
    AGENT_ID="oss:security-auditor"
    PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"
    OFFLOAD="$PLUGIN_ROOT/watcher/dist/cli/agent-offload.js"
-   if [[ -f "$OFFLOAD" ]]; then
-     node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file "$PROMPT_FILE" --project-dir "$(pwd)"
-   else
-     echo '{"offloaded":false,"reason":"native"}'
-   fi
+   PROMPT_FILE='<path printed in step 1>'
+   case "$PROMPT_FILE" in
+     */oss-offload.*/prompt.md)
+       { rm -f -- "$PROMPT_FILE"; rmdir -- "${PROMPT_FILE%/prompt.md}"
+         if [[ -f "$OFFLOAD" ]]; then
+           node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file /dev/stdin --project-dir "$(pwd)"
+         else
+           echo '{"offloaded":false,"reason":"native"}'
+         fi; } < "$PROMPT_FILE" ;;
+     *) echo '{"offloaded":false,"reason":"native"}' ;;
+   esac
    ```
 
 3. Parse the JSON result:
    - **`offloaded: true`** → the local model did the work (generative agents: file edits already
-     landed in the repo). Present its `output` as your result. **STOP — do NOT re-run the work
-     on Claude in Step 3.**
+     landed in the repo; run any tests or commands the task needs yourself). Present its `output`
+     as your result. **STOP — do NOT re-run the work on Claude in Step 3.**
    - **`offloaded: false`** → run natively: proceed to Step 3. (Covers the default
      no-model-configured case and any `fallback` after a local failure — your workflow never breaks.)
 

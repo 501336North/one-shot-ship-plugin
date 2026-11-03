@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach, Mock } from 'vitest';
 import * as fs from 'fs';
+import { fakeRegularFiles } from '../helpers/fake-regular-files.js';
 import * as os from 'os';
 
 // Mock dependencies BEFORE importing the module under test
@@ -24,6 +25,8 @@ describe('Benchmark environment checks', () => {
 
     // Mock os.homedir
     (os.homedir as Mock).mockReturnValue('/home/testuser');
+    // the real hang-safe reader (T70e) runs on the fake fs
+    fakeRegularFiles(fs);
   });
 
   afterEach(() => {
@@ -95,6 +98,8 @@ describe('Provider health checks', () => {
 
     // Mock os.homedir
     (os.homedir as Mock).mockReturnValue('/home/testuser');
+    // the real hang-safe reader (T70e) runs on the fake fs
+    fakeRegularFiles(fs);
   });
 
   afterEach(() => {

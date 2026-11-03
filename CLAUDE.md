@@ -74,12 +74,12 @@ The PR Monitor watches GitHub PRs for review comments and queues remediation tas
 
 Route specific prompts to different AI models (OpenRouter, Ollama, OpenAI, Gemini):
 
-**Configuration Precedence** (highest to lowest):
-1. CLI Override: `--model gemini/gemini-2.0-flash`
-2. User Settings: `~/.oss/settings.json`
-3. Project Config: `.oss/config.json`
-4. Frontmatter: `model:` in prompt file
-5. Default: Claude (native)
+**Configuration Precedence** (agent offload and `oss-launch` routing, T71/T71b):
+- Only the user's `~/.oss/config.json` counts: `models.agents.<agent>`, then `models.default`, then
+  Claude (native). Proxy port: `OSS_PROXY_PORT`, then `models.proxyPort` there, then 8473.
+- A project's `.oss/config.json` has no effect on either: a repo the user opens must not choose the
+  model, switch routing on, or pick the port (offload runs a session in that repo).
+- `ModelConfig`/`ModelRouter` (project over user) are not used by any shipped path.
 
 **Supported Providers:**
 | Provider | Models | Requires |
@@ -89,7 +89,7 @@ Route specific prompts to different AI models (OpenRouter, Ollama, OpenAI, Gemin
 | OpenAI | GPT-4o, o1 | `OPENAI_API_KEY` |
 | Gemini | Gemini 2.0 | `GEMINI_API_KEY` |
 
-**Example Config** (`.oss/config.json`):
+**Example Config** (`~/.oss/config.json`):
 ```json
 {
   "models": {

@@ -7,6 +7,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
+import { readRegularFileSync } from '../utils/regular-file.js';
 
 // Discovery Chain: ideate → requirements → apiDesign → dataModel → adr
 // Planning Chain: plan → acceptance
@@ -143,7 +144,7 @@ export class WorkflowStateService {
         return this.getDefaultState();
       }
 
-      const contents = fs.readFileSync(this.stateFilePath, 'utf-8');
+      const contents = readRegularFileSync(this.stateFilePath);
       return JSON.parse(contents);
     } catch (error) {
       // File corrupted or doesn't exist - return defaults

@@ -31,17 +31,17 @@ Replace the direct `claude` invocation:
 
 ```bash
 # BEFORE
-claude -p "/oss:build …" --dangerously-skip-permissions
+claude -p "/oss:build …" --permission-mode auto
 
 # AFTER — route through the launcher
-"$PLUGIN_ROOT/bin/oss-launch" -p "/oss:build …" --dangerously-skip-permissions
+"$PLUGIN_ROOT/bin/oss-launch" -p "/oss:build …" --permission-mode auto
 ```
 
 `$PLUGIN_ROOT` is the plugin checkout (the dir containing `bin/` and `watcher/`). If you prefer to
 call node directly (no bin shim):
 
 ```bash
-node "$PLUGIN_ROOT/watcher/dist/cli/oss-launch.js" -p "/oss:build …" --dangerously-skip-permissions
+node "$PLUGIN_ROOT/watcher/dist/cli/oss-launch.js" -p "/oss:build …" --permission-mode auto
 ```
 
 ## No system Node? (self-contained binary + Node preflight)

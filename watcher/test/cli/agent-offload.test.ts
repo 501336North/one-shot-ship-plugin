@@ -26,12 +26,35 @@ describe('buildOffloadInvocation', () => {
   it('targets the local model through the proxy and sets the recursion guard', () => {
     const inv = buildOffloadInvocation(ROUTED);
     expect(inv.cmd).toBe('claude');
-    expect(inv.args).toEqual(['-p', '--dangerously-skip-permissions']);
+    expect(inv.args[0]).toBe('-p');
     // Must NOT pass a foreign --model — the Claude CLI rejects unknown model ids client-side.
     expect(inv.args).not.toContain('--model');
     // The base URL is the actual offload lever; the guard prevents nested re-offload.
     expect(inv.env.ANTHROPIC_BASE_URL).toBe('http://localhost:3456');
     expect(inv.env.OSS_OFFLOAD_ACTIVE).toBe('1');
+  });
+
+  /**
+   * @behavior The offloaded agent may read and edit files in the repo, but it cannot run commands,
+   *           use the web or MCP tools, and nothing the repo ships can widen that. (T71)
+   * @business-rule A local model reading repo files can be prompt-injected by them, so the nested
+   *                session never skips permission checks.
+   */
+  it('never skips permission checks: file tools only, edits only inside the repo', () => {
+    const { args } = buildOffloadInvocation(ROUTED);
+    const valueOf = (flag: string): string | undefined => args[args.indexOf(flag) + 1];
+
+    expect(args).not.toContain('--dangerously-skip-permissions');
+    expect(args).not.toContain('--allow-dangerously-skip-permissions');
+    expect(args).not.toContain('bypassPermissions');
+    // Only the file tools exist in the nested session: no Bash, no web, no sub-agents.
+    expect(valueOf('--tools')).toBe('Read,Grep,Glob,Edit,Write');
+    // Edits inside the working directory are accepted; anything else would need a prompt, and
+    // a `-p` run has nobody to answer one, so it is refused.
+    expect(valueOf('--permission-mode')).toBe('acceptEdits');
+    // The repo's own Claude settings (allow rules, extra dirs, hooks) and MCP servers are not loaded.
+    expect(valueOf('--setting-sources')).toBe('user');
+    expect(args).toContain('--strict-mcp-config');
   });
 
   it('does not leak ANTHROPIC_MODEL into the nested session', () => {

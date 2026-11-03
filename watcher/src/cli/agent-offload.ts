@@ -23,17 +23,17 @@
  */
 
 import * as childProcess from 'child_process';
-import * as fs from 'fs';
 import * as http from 'http';
 import * as path from 'path';
 import { checkAgentModel, CheckResult } from './agent-model-check.js';
+import { readRegularFileSync } from '../utils/regular-file.js';
 
 export interface OffloadParams {
   /** Agent id, e.g. "oss:code-reviewer". */
   agent: string;
   /** Path to the assembled prompt (expert prompt + task context) fed to the nested session. */
   promptFile: string;
-  /** Project dir for config precedence. Defaults to cwd. */
+  /** Project dir (no longer used for routing: only user settings choose the model, T71). Defaults to cwd. */
   projectDir?: string;
   /** Safety net (default true): on any offload failure, degrade to native Claude. */
   fallbackEnabled?: boolean;
@@ -77,7 +77,17 @@ export function buildOffloadInvocation(
     // ids and rejects a foreign one client-side (before any request). The OSS ModelProxy
     // (ANTHROPIC_BASE_URL) force-selects the configured local model, so the nested session runs
     // on its default id and the proxy overrides it. (live-proof finding)
-    args: ['-p', '--dangerously-skip-permissions'],
+    // Never skip permission checks (T71): the session reads repo files that may try to inject
+    // commands. File tools only (no Bash/web), edits auto-accepted inside the repo only (a `-p`
+    // run has nobody to answer any other prompt, so it is refused), and neither the repo's Claude
+    // settings (allow rules, extra dirs, hooks) nor any MCP server is loaded.
+    args: [
+      '-p',
+      '--tools', 'Read,Grep,Glob,Edit,Write',
+      '--permission-mode', 'acceptEdits',
+      '--setting-sources', 'user',
+      '--strict-mcp-config',
+    ],
     env: stripModelEnv({
       ...process.env,
       ANTHROPIC_BASE_URL: routing.proxyUrl as string,
@@ -183,7 +193,7 @@ export async function runAgentOffload(
   const resolveRouting = deps.checkAgentModel ?? checkAgentModel;
   const isProxyReachable = deps.isProxyReachable ?? defaultIsProxyReachable;
   const spawnFn = deps.spawnFn ?? childProcess.spawn;
-  const readPrompt = deps.readPrompt ?? ((f: string) => fs.readFileSync(f, 'utf8'));
+  const readPrompt = deps.readPrompt ?? ((f: string) => readRegularFileSync(f));
   const startProxy = deps.startProxy ?? defaultStartProxy;
   const sleep = deps.sleep ?? defaultSleep;
 

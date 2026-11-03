@@ -200,7 +200,7 @@ oss_private_run_dir() {
 # ~/.oss/settings.json. No file is on (the default); exactly one JSON object is off only when its decisionsPush
 # is false (duplicate keys: the last wins). Task 16c: a file that cannot be read as exactly one object (unreadable,
 # bad JSON, not an object, empty, more than one document) cannot tell, and that is off: it sets
-# _OSS_SETTINGS_UNREADABLE=1 (=link when it is a symlink, T68) so status can say why. Task 16al: the off switch also lives in its own marker,
+# _OSS_SETTINGS_UNREADABLE=1 so status can say why. Task 16al: the off switch also lives in its own marker,
 # ~/.oss/decisions-push-off, which only `decisions off|on` writes, so no settings.json writer can undo it: anything
 # at that path (a file, a link, a folder) is off.
 oss_settings_file() { printf '%s\n' "$HOME/.oss/settings.json"; }
@@ -212,8 +212,9 @@ oss_decisions_push_off() {
     _OSS_SETTINGS_UNREADABLE=""
     [[ -e "$m" || -L "$m" ]] && return 0
     [[ -e "$f" || -L "$f" ]] || return 1
-    # T67: a FIFO would hang the read; a FIFO, a link or a folder cannot tell, and that is off
-    oss_is_regular "$f" || { _OSS_SETTINGS_UNREADABLE=1; [[ -L "$f" ]] && _OSS_SETTINGS_UNREADABLE="link"; return 0; }
+    # T70: a link is followed (2.0.96; dotfiles managers make these), so only -f: a FIFO (it would hang the read),
+    # a device, a folder or a dangling link, linked or not, cannot tell, and that is off (T67)
+    [[ -f "$f" ]] || { _OSS_SETTINGS_UNREADABLE=1; return 0; }
     r=$(jq -s 'if length == 1 and (.[0] | type) == "object" then .[0].decisionsPush == false else "unknown" end' "$f" 2>/dev/null)
     [[ "$r" == false ]] && return 1
     [[ "$r" == true ]] || _OSS_SETTINGS_UNREADABLE=1
@@ -237,7 +238,8 @@ oss_push_off_write() {
 # oss_settings_mergeable FILE - 0 when a writer may merge into FILE: absent, or a regular file (not a link) of the
 # person's own holding exactly one JSON object (`{}{}` is two). Task 16u: the ONE rule for every
 # ~/.oss/settings.json writer (oss_settings_set, the /oss:settings save block, oss-settings-cleanup.sh; the
-# watcher's save() is its TypeScript twin). `test -O`, not [[ -O ]]: the tests' other-user seam.
+# watcher's save() is its TypeScript twin), applied to the file a link leads to (oss_settings_writable, T70c).
+# `test -O`, not [[ -O ]]: the tests' other-user seam.
 oss_settings_mergeable() {
     [[ -L "$1" ]] && return 1
     [[ -e "$1" ]] || return 0
@@ -296,14 +298,14 @@ oss_settings_locked() (
 # oss_settings_update [JQ-ARGS...] FILTER - the one write of ~/.oss/settings.json (Task 16ac): runs FILTER on the
 # file (on null when there is none) and puts the result in its place through a temp file and a rename, holding
 # the settings lock (oss_settings_locked) from the read to the rename. The file is always left 600, whatever
-# mode it had (it holds provider apiKeys). Refuses, changing nothing, a file oss_settings_mergeable refuses or
-# a lock it cannot take. The file is shared by every OSS writer: never overwrite it.
+# mode it had (it holds provider apiKeys). A link is followed to the file it leads to (oss_settings_target,
+# T70b/T70c: dotfiles managers make these), and the new file is renamed over that one in its own folder, so the
+# links stay. Refuses, changing nothing, what oss_settings_writable refuses or a lock it cannot take. The file is shared by every OSS writer: never overwrite it.
 oss_settings_update() { oss_settings_locked _oss_settings_update "$@"; }
 _oss_settings_update() {
     local f t
-    f=$(oss_settings_file)
-    oss_settings_mergeable "$f" || return 1
-    mkdir -p "${f%/*}" 2>/dev/null && t=$(mktemp "${f%/*}/.settings.json.XXXXXX" 2>/dev/null) || return 1
+    f=$(oss_settings_target) && oss_settings_mergeable "$f" || return 1
+    mkdir -p "${f%/*}" 2>/dev/null && t=$(mktemp "${f%/*}/.${f##*/}.XXXXXX" 2>/dev/null) || return 1
     if { if [[ -e "$f" ]]; then jq "$@" "$f"; else jq -n "$@"; fi; } > "$t" 2>/dev/null \
         && chmod 600 "$t" 2>/dev/null && mv -f "$t" "$f" 2>/dev/null; then
         return 0
@@ -315,3 +317,42 @@ _oss_settings_update() {
 # oss_settings_set KEY JSON-VALUE - merges one top-level setting into ~/.oss/settings.json (every other
 # setting is kept), through oss_settings_update.
 oss_settings_set() { oss_settings_update --arg k "$1" --argjson v "$2" '.[$k] = $v'; }
+
+# oss_settings_target - T70b: prints the file ~/.oss/settings.json stands for: itself, or the file its links lead
+# to, following at most 8 (bash 3.2 on macOS has no readlink -f; relative links resolve from their own folder).
+# Nothing is opened. Returns 0 for a regular file or nothing there (not a link), 1 for a link to nothing, 2 for a
+# loop or more than 8 links, 3 for anything else (a folder, a FIFO, a device, linked or not).
+oss_settings_target() {
+    local p l n=0
+    p=$(oss_settings_file)
+    while [[ -L "$p" ]]; do
+        ((++n > 8)) && return 2
+        l=$(readlink -- "$p") || return 1
+        [[ "$l" == /* ]] || l="${p%/*}/$l"
+        p=$l
+    done
+    if [[ ! -e "$p" ]]; then ((n == 0)) || return 1
+    elif [[ ! -f "$p" ]]; then return 3
+    fi
+    printf '%s\n' "$p"
+}
+
+# oss_settings_writable - 0 when a writer may merge into ~/.oss/settings.json: oss_settings_mergeable on the file
+# it stands for (oss_settings_target). Else oss_settings_target's code (1-3), or 4 when mergeable refuses (T70c).
+oss_settings_writable() {
+    local p
+    p=$(oss_settings_target) || return
+    oss_settings_mergeable "$p" || return 4
+}
+
+# oss_settings_why - prints why ~/.oss/settings.json cannot be written and how to fix it, when it is a link to
+# nothing, a loop or no plain file (oss_settings_target 1-3); nothing otherwise (T70b, shared since T70c).
+# shellcheck disable=SC2088 # the ~ is text for the person, never expanded
+oss_settings_why() {
+    oss_settings_target >/dev/null
+    case $? in
+        1) echo "~/.oss/settings.json links to a file that does not exist; create that file or remove the link, and try again" ;;
+        2) echo "~/.oss/settings.json is a link loop (or more than 8 links in a row); remove the link and try again" ;;
+        3) echo "~/.oss/settings.json is not a plain file, or links to something that is not one (a folder, a FIFO or a device); replace it with a plain file and try again" ;;
+    esac
+}

@@ -781,3 +781,118 @@ and oss_write_atomic (same-user, INFO); oss_record_trusted cmp cost (perf INFO);
 ## Estimated Test Cases: ~35
 
 ## Last Updated: 2026-10-28 by /oss:plan (orchestrator)
+
+---
+
+## Phase I: ship re-check after Phase H (2026-11-03). User: fix everything before release.
+Reports: scratchpad/recheck-{security,codereview,pentest}.md.
+
+### Task 70: decision push follows a linked settings.json (code-review M1; user: "Follow the link")
+oss_decisions_push_off (oss-api-curl.sh ~:215) treats a symlinked settings.json as OFF since T67/T68. User decision:
+follow a link to a regular file, as 2.0.96 did and as check-updates does (T53b). A FIFO, a dangling link, a folder, or
+a link to a non-regular file (FIFO, /dev/zero) stays OFF with its reason; never hang. Remove the T68 "is a link" reason
+text and its tests' expectation for the link case (keep the dangling-link row → off). Tell dev-15 (#214 owner).
+
+### Task 71: agent offload cannot be steered by a repo (pen-test, HIGH, pre-existing; user: "Fix in this release")
+watcher/src/cli/agent-model-check.ts:182-200 lets the repo's .oss/config.json pick the offload model; agent-offload.ts:80
+runs `claude -p --dangerously-skip-permissions` in that repo. Fix: only user-level settings (~/.oss, via the existing
+precedence minus project config) may enable offload / choose its model; the nested session must not skip permissions
+(use a restricted, non-interactive permission mode or allowed-tool list that the CLI supports; verify with its --help, no
+network). Step 2.5 in the 13 agents: gate only on Step 0's result, never read ~/.oss/config.json; the prompt goes to a
+private 0600 file in a private dir (or stdin) and is deleted on every path. Tests: a hostile project config cannot
+enable or route offload; no --dangerously-skip-permissions in argv; Step 2.5 text guards (no config.json, no /tmp, rm).
+If removing the flag makes offload unusable, STOP and report (feature change = user's call).
+
+### Task 72: one supervisor owns each time limit (security S1 MEDIUM, S2 LOW, pen-test L1 LOW)
+In oss-session-start.sh run_bounded and oss-notify.sh run_with_timeout fallbacks, a timer in its own group outlives a
+killed hook and may later SIGKILL a reused group id. Replace the timer with one supervisor that waits for the command
+and kills its group itself only while the group is known alive (e.g. perl: fork, setpgrp, waitpid with alarm, kill
+-KILL -pgid before reaping; the leader is never reaped before the group kill, so the id can't be reused), and dies with
+the hook (no orphan timer). Hook killed by group/HUP/TERM → the bounded command's group is killed too. Keep exit codes,
+stdout/stderr, stdin /dev/null, bash 3.2, no added startup time. Rework T54/T54b/T54c tests; add "kill the hook's group
+mid-bound → nothing survives and nothing is signalled later".
+
+### Task 73: commands' prompt fetch has a failure rule (pen-test M1 MEDIUM)
+The 57 commands/*.md that run oss-decrypt get the same kind of rule as T63, command-shaped: on any failure tell the user
+in one line (e.g. rate limited / offline / not logged in) and STOP; do not read ~/.oss/config.json, do not retry in a
+loop, do not save the fetched prompt. Extend fetch-fallback.test.sh to commands/.
+
+### Task 74: hook hardening (pen-test L2, L3; security S3, S4, S5)
+(a) oss-changelog.sh:73-97 and check-updates.sh:99-101: manifest keys go to jq via --arg, are read with read -r, and are
+stripped of control/invisible characters before printing. (b) OSS_JQ_INVISIBLE / _OV_JS_PRE old-jq fallback list also
+covers U+17B4-17B5, U+180B-180D, U+180F, U+2065, U+FFF0-FFF8, U+E01F0-E0FFF. (c) workflow names: reject `.`/`..` (use
+oss_valid_workflow_name). (d) _ov_api caps the body it reads (head -c). (e) the prompt files' apiKey presence check
+must not hang on a FIFO and must treat an empty/null key as not configured.
+
+### Task 75: messages and tests (code-review L1, L2, INFO)
+(a) The stale-hooks restart rule matches zsh's "no such file or directory" (any case) too; add a zsh row.
+(b) fetch-fallback.test.sh verifies the decrypt binary's hash against hooks/oss-decrypt-checksums.txt before using it.
+(c) check-updates.sh:17-18 stale chmod comment; FOLLOWUPS:146 stale entry (now covered by #215).
+
+### Task 71b: oss-launch cannot be steered by a repo + docs (T71 finding; user 2026-11-03 "Fix oss-launch now")
+oss-launch.ts loadMergedConfig lets a project .oss/config.json switch proxy routing on (models.agents) and choose
+proxyPort, so a repo picks the 127.0.0.1 port the launched session (with real credentials) talks to. Same rule as T71:
+only ~/.oss (and the existing env override) may enable routing or set the port. Docs (user: "User config only + fix
+docs"): commands/models.md and the repo CLAUDE.md say agent/launch routing uses ~/.oss only; a release note line for
+customers who had per-repo mappings. Tests RED first; mutation: re-allow project config.
+
+### Task 70b: /oss:settings decisions off/on work through a linked settings.json (T70 finding; user "Fix now as T70b")
+oss_settings_update / oss_settings_mergeable refuse a linked settings.json (#214 16u), so `decisions off` says "could
+not be updated" (exit 1) and `decisions on` can't clear the marker. With a link that resolves to a regular file, update
+the RESOLVED target atomically (temp file in the target's directory + mv; keep the link and the target's mode), and
+report success; `on` clears the marker. A FIFO, a dangling link, a folder, a link to a non-regular file, or a link
+loop is still refused with a clear message, never a hang. Tell dev-15.
+
+### Task 71c: the oss-launch binary carries T71b (user 2026-11-03 "New binary in this release")
+At ship time (after the PR's gates, before the release): ask the user, then push tag oss-launch-v2.0.97 so
+.github/workflows/build-oss-launch.yml builds the binaries from current src; verify each artifact (its .sha256, a
+sandboxed `--version`/dry-run, and that a hostile project config cannot route); then pin the new checksums in
+hooks/oss-launch-checksums.txt and the tag in hooks/ensure-oss-launch.sh (OSS_LAUNCH_TAG). Part of T66.
+
+### Task 71d: docs recommend auto mode, not skipping permissions (user 2026-11-03 "Recommend auto mode")
+commands/auto.md "Zero-approval mode" and DRAIN_SH_INTEGRATION.md: recommend `claude --permission-mode auto`; mention
+--dangerously-skip-permissions only as "sandboxed machines with no internet access only". grep the repo (commands/,
+skills/, agents/, docs, README) for any other customer-facing advice to skip permissions and fix it the same way. A
+guard test: no customer-facing file recommends --dangerously-skip-permissions without the sandbox-only caveat.
+
+### Task 70c: every settings.json writer follows a link; written-through files become 600 (T70b finding; user 2026-11-03 "Follow the link everywhere", "Make it owner-only (600)")
+Writers that refuse a linked ~/.oss/settings.json today: oss_settings_update callers (commands/login.md step 9,
+commands/settings.md save block, hooks/oss-settings-cleanup.sh) and the watcher's TypeScript save()
+(watcher/src/services/settings.ts). They write to the link's resolved target the same way as T70b (oss_settings_target:
+up to 8 links, temp file in the target's folder, rename onto the target, the link stays a link; dangling link, loop,
+folder, FIFO or device refused with the T70b reasons). The mergeable checks (owned by the user, regular file, one JSON
+object) still run on the target. Whenever OSS writes through a link (T70b's off/on included), the target ends up 600,
+like a plain settings.json. oss_write_atomic stays unchanged. Tests: each writer through a two-hop link (content,
+inode changes, links remain, mode 600, no temp left) and each refusal reason; T70b's "mode kept 640" row becomes 600.
+
+### Task 70d: the watcher never hangs on a non-plain settings.json (T70c finding, pre-existing; user 2026-11-03 "Fix now as T70d")
+watcher/src/services/settings.ts loaders and watcher/src/services/notification.ts loadSettings use existsSync then
+readFileSync: a FIFO at ~/.oss/settings.json (or a link to one) hangs the watcher at startup. Every watcher read of
+settings.json resolves the link like settingsTarget (T70c) and reads only a regular file; anything else (FIFO, device,
+folder, dangling link, loop) → defaults, no hang, no throw. Tests: FIFO, link to FIFO, folder, dangling link, loop, each
+under a hard time limit; a linked regular file is still read. Rebuild dist (watcher-dist-fresh).
+
+### Task 75d: fix the flaky watcher test oss-log-health-check (T70c finding)
+test/hooks/oss-log-health-check.test.ts "should write health check output to log file" hit its 5 s timeout under load
+(about 10). Iron Law #2: find the root cause and make it event-driven or give it a generous bound; never a retry.
+
+### Task 70e: watcher reads of user files are hang-safe and owner-checked (T70d findings; user 2026-11-03 "Close it now", "Refuse, use defaults", "Audit and fix now")
+1. settings.json reads (readSettingsFile) and the T70c save path (readForMerge): open with O_NONBLOCK (no follow is
+   not needed: the target is already resolved), fstat the open fd, read only a regular file; close the swap race.
+2. The loaders refuse a settings.json (resolved target) not owned by the current user → defaults, like the hooks.
+3. Audit every readFileSync / readFile / createReadStream / existsSync+read in watcher/src on a user-writable path
+   (~/.oss, the project's .oss, ~/.claude, tmp): list each with its path and risk. Each one reads only a regular
+   file through a shared hang-safe reader (O_NONBLOCK + fstat isFile), and a FIFO / device / folder is handled as
+   "missing" by that caller. Tests per caller group with a FIFO under a hard time limit. Rebuild dist.
+
+### Task 75e: watcher test files type-check (T70e finding)
+Pre-existing TS2345 errors in watcher tests (logging-integration.test.ts:68,147, healthcheck.test.ts:60: mockExec vs
+execAsync signature; the offload acceptance test's mock typing). tsc -p . covers src only. Fix the test types (no
+`any`) and add a test-typecheck step (e.g. a tsconfig for test/ run by a shell test or npm script) so it stays clean.
+
+### Task 71e: migrate the oss-launch release build before tagging (FOLLOWUPS 2026-10-23 HIGH; user 2026-11-03 "Migrate the build first")
+.github/workflows/build-oss-launch.yml still installs pkg@5.8.1 (GHSA-22r3-9w55-cj54, unmaintained) with node18 targets
+and a deprecated softprops/action-gh-release v1. Mirror release-cli-decrypt.yml: @yao-pkg/pkg pinned from a lockfile,
+node22 targets (macOS arm64 on a native arm64 runner, x64, linux x64/arm64), current pinned release action, least
+permissions. A static test guards it (no pkg@5, no node18, actions pinned). T71c then tags with this build; verify the
+binaries (run each: --help, the T71b user-config-only behaviour) before pinning hooks/oss-launch-checksums.txt.

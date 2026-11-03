@@ -6,66 +6,55 @@
  * @boundary Service
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { HealthcheckService } from '../../src/services/healthcheck.js';
-import { promises as fs } from 'fs';
 import { execAsync } from '../../src/utils/exec.js';
-
-// Mock fs module for checkLogging, checkDevDocs, and checkArchive
-vi.mock('fs', () => ({
-  promises: {
-    readFile: vi.fn(),
-    stat: vi.fn(),
-    access: vi.fn(),
-    readdir: vi.fn(),
-  },
-}));
 
 // Mock execAsync for git-safety check
 vi.mock('../../src/utils/exec', () => ({
   execAsync: vi.fn(),
 }));
 
-const mockFs = fs as {
-  readFile: ReturnType<typeof vi.fn>;
-  stat: ReturnType<typeof vi.fn>;
-  access: ReturnType<typeof vi.fn>;
-  readdir: ReturnType<typeof vi.fn>;
-};
-
 const mockExec = vi.mocked(execAsync);
 
+type Deps = ConstructorParameters<typeof HealthcheckService>[0];
+
 describe('HealthcheckService', () => {
-  let mockLogReader: any;
-  let mockQueueManager: any;
-  let mockFileSystem: any;
+  let tmp: string;
+  let sessionLogPath: string;
   let service: HealthcheckService;
 
-  beforeEach(() => {
-    // Mock all collaborators (London TDD)
-    mockLogReader = {
-      readLogs: vi.fn().mockResolvedValue([]),
-    };
+  /** The real session.log the logging and delegation checks read. */
+  function writeLog(text: string): void {
+    fs.writeFileSync(sessionLogPath, text);
+  }
 
-    mockQueueManager = {
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    // Real files: a session.log, and an empty dev/active (no features to archive)
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-healthcheck-service-'));
+    sessionLogPath = path.join(tmp, 'session.log');
+    const devActivePath = path.join(tmp, 'dev', 'active');
+    fs.mkdirSync(devActivePath, { recursive: true });
+
+    // Mock the queue collaborator (London TDD)
+    const queueManager: Deps['queueManager'] = {
       getTasks: vi.fn().mockResolvedValue([]),
     };
 
-    mockFileSystem = {
-      exists: vi.fn().mockReturnValue(true),
-      readFile: vi.fn().mockReturnValue('{}'),
-    };
-
-    // Mock session log file for checkLogging
+    // Session log file for checkLogging
     const validSessionLog = `
 [2024-12-09 10:30:00] INIT session started
 [2024-12-09 10:30:05] PHASE build starting
 [2024-12-09 10:30:10] TOOL Read src/file.ts
 `;
-    mockFs.readFile.mockResolvedValue(validSessionLog);
-    mockFs.stat.mockResolvedValue({ mtime: new Date() });
-    mockFs.access.mockResolvedValue(undefined); // Dev docs exist
-    mockFs.readdir.mockResolvedValue([]); // Empty dev/active (no features to archive)
+    writeLog(validSessionLog);
 
     // Mock git commands for checkGitSafety (default: passing)
     mockExec.mockImplementation(async (cmd: string) => {
@@ -82,10 +71,11 @@ describe('HealthcheckService', () => {
     });
 
     service = new HealthcheckService({
-      logReader: mockLogReader,
-      queueManager: mockQueueManager,
-      fileSystem: mockFileSystem,
-      sessionLogPath: '/tmp/test-session.log',
+      logReader: {},
+      queueManager,
+      fileSystem: {},
+      sessionLogPath,
+      devActivePath,
       sessionActive: false,
     });
   });
@@ -135,7 +125,7 @@ describe('HealthcheckService', () => {
 [2024-12-09 10:30:00] INIT session started
 [2024-12-09 10:30:01] Some unstructured output
 `;
-      mockFs.readFile.mockResolvedValue(logWithNoStructure);
+      writeLog(logWithNoStructure);
 
       const report = await service.runChecks();
 
@@ -148,8 +138,8 @@ describe('HealthcheckService', () => {
     });
 
     it('should return critical when any check fails', async () => {
-      // Mock a critical failure condition - missing session log
-      mockFs.readFile.mockRejectedValue(new Error('ENOENT: no such file'));
+      // A critical failure condition - missing session log
+      fs.rmSync(sessionLogPath);
 
       const report = await service.runChecks();
 
@@ -166,7 +156,7 @@ describe('HealthcheckService', () => {
     it('should prioritize critical over warning', async () => {
       // Setup conditions for both warning and critical
       // Missing session log = fail, no structured entries = warn
-      mockFs.readFile.mockRejectedValue(new Error('ENOENT: file not found'));
+      fs.rmSync(sessionLogPath);
 
       const report = await service.runChecks();
 
@@ -179,7 +169,7 @@ describe('HealthcheckService', () => {
       const logWithNoStructure = `
 [2024-12-09 10:30:00] INIT session started
 `;
-      mockFs.readFile.mockResolvedValue(logWithNoStructure);
+      writeLog(logWithNoStructure);
 
       const report = await service.runChecks();
 
@@ -190,15 +180,18 @@ describe('HealthcheckService', () => {
 
   describe('check execution', () => {
     it('should call all check methods', async () => {
-      // Spy on individual check methods (will be implemented in GREEN phase)
-      const checkLoggingSpy = vi.spyOn(service as any, 'checkLogging');
-      const checkDevDocsSpy = vi.spyOn(service as any, 'checkDevDocs');
-      const checkDelegationSpy = vi.spyOn(service as any, 'checkDelegation');
-      const checkQueueSpy = vi.spyOn(service as any, 'checkQueue');
-      const checkArchiveSpy = vi.spyOn(service as any, 'checkArchive');
-      const checkQualityGatesSpy = vi.spyOn(service as any, 'checkQualityGates');
-      const checkNotificationsSpy = vi.spyOn(service as any, 'checkNotifications');
-      const checkGitSafetySpy = vi.spyOn(service as any, 'checkGitSafety');
+      // Spy on individual check methods (private: reached through a typed view of the service)
+      type CheckName = 'checkLogging' | 'checkDevDocs' | 'checkDelegation' | 'checkQueue' | 'checkArchive'
+        | 'checkQualityGates' | 'checkNotifications' | 'checkGitSafety';
+      const checks = service as unknown as Record<CheckName, () => Promise<unknown>>;
+      const checkLoggingSpy = vi.spyOn(checks, 'checkLogging');
+      const checkDevDocsSpy = vi.spyOn(checks, 'checkDevDocs');
+      const checkDelegationSpy = vi.spyOn(checks, 'checkDelegation');
+      const checkQueueSpy = vi.spyOn(checks, 'checkQueue');
+      const checkArchiveSpy = vi.spyOn(checks, 'checkArchive');
+      const checkQualityGatesSpy = vi.spyOn(checks, 'checkQualityGates');
+      const checkNotificationsSpy = vi.spyOn(checks, 'checkNotifications');
+      const checkGitSafetySpy = vi.spyOn(checks, 'checkGitSafety');
 
       await service.runChecks();
 

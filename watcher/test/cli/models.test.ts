@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach, Mock } from 'vitest';
 import * as fs from 'fs';
+import { fakeRegularFiles } from '../helpers/fake-regular-files.js';
 import * as os from 'os';
 
 // Mock dependencies BEFORE importing the module under test
@@ -28,6 +29,8 @@ describe('/oss:models Command', () => {
     // Default: config.json does not exist
     (fs.existsSync as Mock).mockReturnValue(false);
     (fs.readFileSync as Mock).mockReturnValue('{}');
+    // the real hang-safe reader (T70e) runs on these fakes
+    fakeRegularFiles(fs);
   });
 
   afterEach(() => {

@@ -1,20 +1,21 @@
 #!/bin/bash
-# The no-timeout-tool fallback leaves nothing running: its timer never outlives a call that ends in time, and a
-# bound that fires while the command is forking ends every child (T54c).
+# The no-timeout-tool fallback leaves nothing running: nothing that keeps its time limit (a timer, a supervisor)
+# outlives a call that ends in time, and a bound that fires while the command is forking ends every child (T54c, T72).
 #
 # @behavior Session start and every /oss command's notify step make many short bounded calls on stock macOS
-#           (no timeout tool). None of them leaves its timer's sleep running after the call returns.
+#           (no timeout tool). None of them leaves anything running after the call returns.
 # @business-rule R2-1 / T54c: cancelling the timer always ends its sleep too, with no window: the old timer
 #           could be cancelled between starting its sleep and recording the sleep's pid, so the sleep lived
 #           on until the bound (up to 30 s for chain-trigger). Applies to hooks/oss-session-start.sh run_bounded
-#           and hooks/oss-notify.sh run_with_timeout.
+#           and hooks/oss-notify.sh run_with_timeout. T72 replaced the timer with one supervisor per bound (the
+#           command's parent); the same rule holds for it.
 # @behavior A bounded command that is starting children when its bound fires leaves none of them running.
 # @business-rule T54c: on macOS a group kill can miss a child that is being forked as it lands; once the bound has
 #           fired (the command ended by SIGKILL, 137) the group is killed once more.
 #
-# How: a `sleep` wrapper first on PATH records each timer sleep's pid. CALLS instant calls per hook (the
-# shape that loses the race most often) run under run_capped; then, after a bounded poll, every recorded
-# sleep must be gone. Then FORK_RUNS bounded commands per hook fork 5 s sleeps in a loop (at most 400) until a 0.1 s
+# How: each bounded command records its parent (the hook itself, or a supervisor), and a `sleep` wrapper first on
+# PATH records each timer sleep and its parent. CALLS instant calls per hook (the shape that loses the race most
+# often) run under run_capped; then, after a bounded poll, every recorded process but the hook must be gone. Then FORK_RUNS bounded commands per hook fork 5 s sleeps in a loop (at most 400) until a 0.1 s
 # bound fires; after each, nothing may be left in the command's process group.
 #
 # Usage: /bin/bash hooks/__tests__/bounded-timer-cancel.test.sh
@@ -61,27 +62,28 @@ for d in /usr/local/bin /usr/bin /bin /usr/sbin /sbin; do
 done
 [[ -z "$(ls "$T/sys" | grep 'timeout$')" ]] && pass "no timeout tool on the test PATH (anchor)" \
     || fail "no timeout tool on the test PATH (anchor)" "$(ls "$T/sys" | grep 'timeout$' | tr '\n' ' ')"
-# The timer's `sleep`: records its pid in $SLEEP_PIDS, then becomes the real sleep (same pid). Warmed, so the
-# macOS first-exec scan happens here.
-warm_stub "$T/bin/sleep" 'echo $$ >> "$SLEEP_PIDS"; exec /bin/sleep "$@"' || fail "sleep wrapper warms up" "it did not run"
+# A timer's `sleep`: records its pid and its parent's in $SLEEP_PIDS, then becomes the real sleep (same pid).
+# Warmed, so the macOS first-exec scan happens here.
+warm_stub "$T/bin/sleep" 'echo "$$ $PPID" >> "$SLEEP_PIDS"; exec /bin/sleep "$@"' || fail "sleep wrapper warms up" "it did not run"
 
-# The driver: under the hook's own shell options, one slow call (anchor: the wrapper records the timer's sleep),
-# then CALLS instant calls; then waits (at most 3 s, by polling) for every recorded sleep to go.
+# The driver: under the hook's own shell options, one slow call, then CALLS instant calls, each command recording
+# its parent; then waits (at most 3 s, by polling) for every recorded process other than itself to go.
 cat > "$T/driver.sh" <<'DRIVER'
 fn=$1; src=$2; calls=$3; D=$4; [[ $5 == strict ]] && set -euo pipefail
 source "$src"
-SLEEP_PIDS="$D/$fn.anchor.pids" "$fn" 30 /bin/sleep 0.3; echo "anchor rc=$?"
+rec='echo $PPID >> "$1"'
+SLEEP_PIDS="$D/$fn.pids" "$fn" 30 /bin/sh -c "$rec; /bin/sleep 0.3" x "$D/$fn.parents"; echo "anchor rc=$?"
 ok=0
 for ((i = 0; i < calls; i++)); do
-    SLEEP_PIDS="$D/$fn.pids" "$fn" 30 true && ok=$((ok + 1))
+    SLEEP_PIDS="$D/$fn.pids" "$fn" 30 /bin/sh -c "$rec" x "$D/$fn.parents" && ok=$((ok + 1))
 done
 echo "calls ok=$ok"
 left=""
 for ((i = 0; i < 30; i++)); do
-    left=""; for p in $(cat "$D/$fn.anchor.pids" "$D/$fn.pids" 2>/dev/null); do kill -0 "$p" 2>/dev/null && left="$left $p"; done
+    left=""; for p in $(cat "$D/$fn.parents" "$D/$fn.pids" 2>/dev/null); do [[ $p != "$$" ]] && kill -0 "$p" 2>/dev/null && left="$left $p"; done
     [[ -z "$left" ]] && break; /bin/sleep 0.1
 done
-echo "recorded=$(cat "$D/$fn.anchor.pids" "$D/$fn.pids" 2>/dev/null | grep -c .) lingering=[${left# }]"
+echo "recorded=$(grep -c . "$D/$fn.parents" 2>/dev/null) lingering=[${left# }]"
 DRIVER
 
 # check <label> <hook file> <function> <shell options: strict|plain>
@@ -91,17 +93,17 @@ check() {
     PATH="$T/bin:$T/sys" run_capped 120 /bin/bash "$T/driver.sh" "$3" "$T/$3.sh" "$CALLS" "$T" "$4" \
         >"$T/$3.out" 2>"$T/$3.err"; local rc=$?
     local out; out="rc=$rc $(tr '\n' '|' < "$T/$3.out") err=$(head -3 "$T/$3.err" | tr '\n' '|')"
-    grep -q '^anchor rc=0$' "$T/$3.out" && [[ -s "$T/$3.anchor.pids" ]] \
-        && pass "$1: the timer's sleep is recorded through the wrapper (anchor)" \
-        || fail "$1: the timer's sleep is recorded through the wrapper (anchor)" "$out"
+    grep -q '^anchor rc=0$' "$T/$3.out" && grep -q "^recorded=$((CALLS + 1)) " "$T/$3.out" \
+        && pass "$1: every bounded command ran and recorded its parent (anchor)" \
+        || fail "$1: every bounded command ran and recorded its parent (anchor)" "$out"
     grep -qx "calls ok=$CALLS" "$T/$3.out" && pass "$1: $CALLS instant calls all return 0" \
         || fail "$1: $CALLS instant calls all return 0" "$out"
     if [[ $rc -eq 0 ]] && grep -q '^recorded=[0-9]* lingering=\[\]$' "$T/$3.out"; then
-        pass "$1: no timer sleep outlives its call ($CALLS instant calls; T54c)"
-    else fail "$1: no timer sleep outlives its call ($CALLS instant calls; T54c)" "$out"; fi
-    # A cancelled timer prints no job notice ("Terminated") into the hook's stderr.
-    grep -qE 'Terminated|Killed' "$T/$3.err" && fail "$1: cancelling the timer prints no job notice" "$out" \
-        || pass "$1: cancelling the timer prints no job notice"
+        pass "$1: no timer or supervisor outlives its call ($CALLS instant calls; T54c, T72)"
+    else fail "$1: no timer or supervisor outlives its call ($CALLS instant calls; T54c, T72)" "$out"; fi
+    # Ending a call prints no job notice ("Terminated") into the hook's stderr.
+    grep -qE 'Terminated|Killed' "$T/$3.err" && fail "$1: ending a bounded call prints no job notice" "$out" \
+        || pass "$1: ending a bounded call prints no job notice"
 }
 check "session start" "$HOOKS/oss-session-start.sh" run_bounded plain
 check "oss-notify" "$HOOKS/oss-notify.sh" run_with_timeout strict

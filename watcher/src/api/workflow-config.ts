@@ -17,6 +17,7 @@ import {
 } from '../engine/types.js';
 import { getConfigDir, readApiCredentials } from './api-credentials.js';
 import { assertValidWorkflowName } from '../utils/workflow-name.js';
+import { readRegularFileSync } from '../utils/regular-file.js';
 
 const PBKDF2_ITERATIONS = 100000;
 const KEY_LENGTH = 32;
@@ -61,7 +62,7 @@ function retrieveCredentials(): StoredCredentials | null {
     return null;
   }
   try {
-    const stored = fs.readFileSync(credentialsPath, 'utf8');
+    const stored = readRegularFileSync(credentialsPath);
     const [ivBase64, authTagBase64, encrypted] = stored.split(':');
     if (!ivBase64 || !authTagBase64 || !encrypted) {
       return null;

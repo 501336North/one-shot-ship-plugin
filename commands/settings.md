@@ -284,26 +284,25 @@ If `dir` prints nothing, tell the user the settings were not changed and show it
 
 ### Step 4: Save and Test (one Bash call)
 
-Run this block exactly as written. It reads and checks each answer (a value outside its list is refused and nothing is saved), keeps the current voice or sound when that question was not asked, merges the choices into `~/.oss/settings.json` (every other setting is kept, except the retired Telegram settings, which are removed; a file that is a symlink, is not yours or is not exactly one JSON object is refused and left as it is, and the file is saved owner-only (600): the same rule as every other settings.json writer), sends a test notification in the new style and prints the new configuration.
+Run this block exactly as written. It reads and checks each answer (a value outside its list is refused and nothing is saved), keeps the current voice or sound when that question was not asked, merges the choices into `~/.oss/settings.json` (every other setting is kept, except the retired Telegram settings, which are removed; a symlink is followed to the file it leads to, which is updated in its place; a link to nothing, a link loop, a folder, a FIFO, a file that is not yours or is not exactly one JSON object is refused and left as it is, and the file is saved owner-only (600): the same rule as every other settings.json writer), sends a test notification in the new style and prints the new configuration.
 
 ```bash
 V=~/.oss/hooks/oss-value.sh
 SETTINGS_FILE="$HOME/.oss/settings.json"
 STYLE=$("$V" read notify_style) || exit 1
 VERBOSITY=$("$V" read verbosity) || exit 1
+mkdir -p ~/.oss
+# a link is followed to its file; a link to nothing, a loop or no plain file is refused (and never read) with why
+source ~/.oss/hooks/oss-api-curl.sh || exit 1
+WHY=$(oss_settings_why); [[ -z "$WHY" ]] || { echo "Not saved: $WHY." >&2; exit 1; }
+oss_settings_writable \
+    || { echo "Not saved: ~/.oss/settings.json is not valid JSON (exactly one object) or is not yours; it was left as it is. Fix or remove it, then run /oss:settings again." >&2; exit 1; }
 VOICE=$(jq -r '.notifications.voice // "Samantha"' "$SETTINGS_FILE" 2>/dev/null) || VOICE="Samantha"
 SOUND=$(jq -r '.notifications.sound // "Glass"' "$SETTINGS_FILE" 2>/dev/null) || SOUND="Glass"
 if [[ "$STYLE" == "audio" ]]; then VOICE=$("$V" read voice) || exit 1; fi
 if [[ "$STYLE" == "sound" ]]; then SOUND=$("$V" read sound) || exit 1; fi
 
-mkdir -p ~/.oss
 # Merge: only notifications.{style,voice,sound,verbosity} and version change and the retired telegram keys are removed; every other key is kept
-if [[ -L "$SETTINGS_FILE" || ( -e "$SETTINGS_FILE" && ! -f "$SETTINGS_FILE" ) ]]; then
-    echo "Not saved: ~/.oss/settings.json is a symlink or not a regular file; it was left as it is." >&2; exit 1
-fi
-source ~/.oss/hooks/oss-api-curl.sh || exit 1
-oss_settings_mergeable "$SETTINGS_FILE" \
-    || { echo "Not saved: ~/.oss/settings.json is not valid JSON (exactly one object) or is not yours; it was left as it is. Fix or remove it, then run /oss:settings again." >&2; exit 1; }
 oss_settings_update --arg s "$STYLE" --arg v "$VOICE" --arg so "$SOUND" --arg vb "$VERBOSITY" \
     '.notifications = ((.notifications // {}) + {style: $s, voice: $v, sound: $so, verbosity: $vb}) | .version = 2 | del(.telegram, .notifications.telegram)' \
     || { echo "Not saved: ~/.oss/settings.json could not be written; it was left as it is." >&2; exit 1; }

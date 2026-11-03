@@ -100,6 +100,8 @@ Use the Write tool to write the name, with any `team:` prefix stripped, alone to
 ~/.oss/hooks/oss-value.sh decrypt custom
 ```
 
+If this command fails for any reason (it prints an `Error:` line, for example when rate limited, offline or not logged in), tell the user in one line what happened (rate limited, offline, or not logged in, so run /oss:login) and STOP this command; do not read ~/.oss/config.json, do not retry in a loop, and do not save the fetched prompt to a file.
+
 It reads the name, checks it against `^[a-z0-9-]{1,100}$`, deletes the file and runs `~/.oss/bin/oss-decrypt --type custom` with it. If it refuses (`oss-value: decrypt: refused`), the name is not valid: stop and report it.
 
 The decrypt CLI fetches the prompt from `/api/v1/prompts/custom/{name}` and returns the decrypted prompt content.

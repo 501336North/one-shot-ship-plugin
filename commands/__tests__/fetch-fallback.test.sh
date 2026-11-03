@@ -23,6 +23,15 @@
 # 4. no fetch step in agents/ and skills/ writes oss-decrypt output to a file
 # 5. oss-decrypt on a per-IP 429, a trial-cap 429, a 401 and a refused connection: non-zero exit, no prompt
 #    on stdout, the key in no output, no new file under the sandbox HOME
+# 6. (T73) control: the scan finds every command fetch step in commands/*.md
+# 7. (T73) control: the command scan names a missing, late or misplaced STOP rule, a file write, a config.json read
+# 8. (T73) every command fetch step (commands/*.md, oss-decrypt --type or oss-value.sh decrypt) is followed by
+#    the one-line STOP rule; trust.md is checked by its own tests below (T73b)
+# 11. (T73b) control: the trust scan finds the four network fetch fences of trust.md (verify, both list tiers, decrypt)
+# 12. (T73b) every trust.md network fetch fence is followed by the stop rule for rate limit, offline and login
+# 13. (T73b) trust.md never says "Do not stop the audit" outside the prompt-specific rule
+# 9. (T73) no command fetch step writes oss-decrypt output to a file
+# 10. (T73) no command fetch step tells Claude to read ~/.oss/config.json
 
 set -uo pipefail
 # T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the CLI to the real config or API.
@@ -267,6 +276,246 @@ PY
     fi
 }
 
+# T73: each command that fetches its prompt has a command-shaped rule: tell the user in one line and STOP. A command
+# has no local instructions to carry on with, so it stops where an agent or skill carries on.
+COMMAND_SENTENCE="If this command fails for any reason (it prints an \`Error:\` line, for example when rate limited, offline or not logged in), tell the user in one line what happened (rate limited, offline, or not logged in, so run /oss:login) and STOP this command; do not read ~/.oss/config.json, do not retry in a loop, and do not save the fetched prompt to a file."
+# commands/trust.md is checked by trust_problems with its own sentence (T73b): its audit loop has a different
+# failure rule from the other commands, so it is not checked against COMMAND_SENTENCE.
+TRUST_FILE="commands/trust.md"
+# The trust sentence, word for word. The CLI prints "Error: <message>" on stderr and exit 1 for every failure
+# (packages/cli-decrypt/src/cli.ts). Its messages: "Prompt not found" (404), "Unauthorized" (401), "Credentials not
+# found. Run setup first." (no login), "fetch failed" (offline), "Request failed" (a plain-text 429, or any other
+# non-JSON error). Only the first and an "Invalid prompt" message are about one prompt; the rest stop the audit.
+TRUST_SENTENCE='If this command fails, tell the user in one line what happened and STOP the audit, reporting the prompts checked so far: `Error: fetch failed` means offline; `Error: Unauthorized` or `Error: Credentials not found` means not logged in (run /oss:login); `Error: Request failed` means rate limited or the API is unavailable, which the CLI cannot tell apart. The only failures specific to one prompt are `Error: Prompt not found`, an `Error: Invalid prompt` message and `oss-value: decrypt: refused`: record that prompt as DECRYPT_FAIL and go on to the next one. Any other failure stops the audit as well. Never retry in a loop, never read ~/.oss/config.json, and never save a prompt to a file.'
+# trust.md network fetch fences: --verify-manifest, --list-prompts (standard and full tier) and the oss-value decrypt.
+MIN_TRUST_FETCHES=4
+# 57 commands fetch a prompt: 56 use oss-decrypt --type (oss-custom's line 100 is the oss-value wrapper) and trust.md
+# uses the oss-value wrapper. 62 fetch steps in all, found in ```bash blocks.
+MIN_COMMAND_FETCHES=62
+MIN_COMMAND_FILES=57
+
+# command_problems [root]: "<file>:<line>: fetch" for every command fetch step (a line in a fenced block that runs
+# oss-decrypt --type or the oss-value.sh decrypt wrapper), then "<file>:<line>: no rule right after the fetch block",
+# "<file>:<line>: writes oss-decrypt output to a file", or "<file>:<line>: reads config.json in the fetch step".
+command_problems() {
+    local root="${1:-$PLUGIN_ROOT}" file
+    for file in "$root"/commands/*.md; do
+        [[ -f "$file" ]] || continue
+        FF_CSENTENCE="$COMMAND_SENTENCE" FF_TSENTENCE="$TRUST_SENTENCE" awk -v F="${file#$root/}" -v TF="$TRUST_FILE" '
+            { line[NR] = $0 }
+            END {
+                s = ENVIRON["FF_CSENTENCE"]
+                t = ENVIRON["FF_TSENTENCE"]
+                for (i = 1; i <= NR; i++) {
+                    if (line[i] !~ /^[ \t]*```/) continue
+                    j = i + 1
+                    while (j <= NR && line[j] !~ /^[ \t]*```[ \t]*$/) j++
+                    for (f = i + 1; f < j; f++) {
+                        if (line[f] !~ /oss-decrypt[ \t]+(--type|-t)[ \t]/ && line[f] !~ /oss-value\.sh[ \t]+decrypt/) continue
+                        print F ":" f ": fetch"
+                        cmd = line[f]; g = f
+                        while (line[g] ~ /\\[ \t]*$/ && g < j - 1) { g++; cmd = cmd " " line[g] }
+                        if (cmd ~ />/ || cmd ~ /\|[ \t]*tee/ || cmd ~ /(^|[ \t])(-o|--output)([ \t=]|$)/)
+                            print F ":" f ": writes oss-decrypt output to a file"
+                        k = j + 1
+                        while (k <= NR && line[k] ~ /^[ \t]*$/) k++
+                        if (line[k] != s && F != TF) print F ":" f ": no rule right after the fetch block"
+                        for (r = f + 1; r <= NR && line[r] !~ /^## /; r++)
+                            if (line[r] ~ /config\.json/ && line[r] != s && line[r] != t)
+                                print F ":" r ": reads config.json in the fetch step"
+                    }
+                    i = j
+                }
+            }' "$file"
+    done
+}
+
+test_control_command_scan_finds_fetches() {
+    local test_name="control: the scan finds at least $MIN_COMMAND_FETCHES command fetch steps in at least $MIN_COMMAND_FILES files"
+    ((TESTS_RUN++))
+    local all n nf
+    all=$(command_problems | grep ': fetch$')
+    n=$(printf '%s\n' "$all" | grep -c . | tr -d ' ')
+    nf=$(printf '%s\n' "$all" | cut -d: -f1 | sort -u | grep -c . | tr -d ' ')
+    if [[ "$n" -ge "$MIN_COMMAND_FETCHES" && "$nf" -ge "$MIN_COMMAND_FILES" ]]; then
+        pass "$test_name ($n steps in $nf files)"
+    else
+        fail "$test_name" ">= $MIN_COMMAND_FETCHES steps, >= $MIN_COMMAND_FILES files" "$n steps in $nf files"
+    fi
+}
+
+test_control_command_scan_names_synthetic() {
+    local test_name="control: the command scan names a missing, late or misplaced rule, a file write, a config.json read, and no prose mention"
+    ((TESTS_RUN++))
+    local tmp out want missed="" fetch="~/.oss/bin/oss-decrypt --type workflows --name x"
+    tmp=$(mktemp -d)
+    mkdir -p "$tmp/commands"
+    printf '# ok\n\n```bash\n%s\n```\n\n%s\n\nThe CLI fetches it.\n' "$fetch" "$COMMAND_SENTENCE" > "$tmp/commands/good.md"
+    printf '# no\n\n```bash\n%s\n```\n\nThe CLI fetches it.\n' "$fetch" > "$tmp/commands/norule.md"
+    printf '# late\n\n```bash\n%s\n```\n\nOne.\n\nTwo.\n\nThree.\n\n%s\n' "$fetch" "$COMMAND_SENTENCE" > "$tmp/commands/late.md"
+    printf '# redir\n\n```bash\n%s > prompt.md\n```\n\n%s\n' "$fetch" "$COMMAND_SENTENCE" > "$tmp/commands/redirect.md"
+    printf '# tee\n\n```bash\n%s | tee p.md\n```\n\n%s\n' "$fetch" "$COMMAND_SENTENCE" > "$tmp/commands/tee.md"
+    printf '# cfg\n\n```bash\n%s\n```\n\n%s\n\nRead ~/.oss/config.json for the key.\n\n## Step 6\n' "$fetch" "$COMMAND_SENTENCE" > "$tmp/commands/configread.md"
+    printf '# prose\n\nThe CLI runs `oss-decrypt --type workflows --name x` in prose.\n' > "$tmp/commands/prose.md"
+    out=$(command_problems "$tmp" | grep -v ': fetch$')
+    rm -rf "$tmp"
+    for want in 'commands/norule.md:*: no rule' 'commands/late.md:*: no rule' 'commands/redirect.md:*: writes' \
+        'commands/tee.md:*: writes' 'commands/configread.md:*: reads config.json'; do
+        [[ "$out" == *$want* ]] || missed="$missed [$want]"
+    done
+    [[ "$out" == *good.md* || "$out" == *prose.md* ]] && missed="$missed [good.md or prose.md was named]"
+    if [[ -z "$missed" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "each bad command named, good.md and prose.md not" "missed:$missed; named: ${out:-nothing}"
+    fi
+}
+
+test_every_command_fetch_has_rule() {
+    local test_name="every command fetch step (but trust.md, checked below) is followed by the one-line STOP rule"
+    ((TESTS_RUN++))
+    local out n
+    out=$(command_problems | grep ': no rule' | sort)
+    if [[ -z "$out" ]]; then
+        pass "$test_name"
+    else
+        n=$(printf '%s\n' "$out" | wc -l | tr -d ' ')
+        fail "$test_name" "the closing fence, then (after blank lines) exactly: $COMMAND_SENTENCE" "$n fetch step(s) without it:"
+        printf '%s\n' "$out" | sed 's/^/    /'
+    fi
+}
+
+test_no_command_fetch_writes_a_file() {
+    local test_name="no command fetch step writes oss-decrypt output to a file (>, >>, tee, -o)"
+    ((TESTS_RUN++))
+    local out
+    out=$(command_problems | grep ': writes ' | sort)
+    if [[ -z "$out" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "output to the conversation only" "$(printf '%s\n' "$out" | wc -l | tr -d ' ') step(s):"
+        printf '%s\n' "$out" | sed 's/^/    /'
+    fi
+}
+
+test_no_command_fetch_reads_config() {
+    local test_name="no command fetch step tells Claude to read ~/.oss/config.json (the rule itself excepted)"
+    ((TESTS_RUN++))
+    local out
+    out=$(command_problems | grep ': reads config.json' | sort)
+    if [[ -z "$out" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "no config.json mention between a fetch and the next ## heading" "$(printf '%s\n' "$out" | wc -l | tr -d ' ') line(s):"
+        printf '%s\n' "$out" | sed 's/^/    /'
+    fi
+}
+
+# trust_problems [root]: for commands/trust.md only (T73b). "<file>:<line>: network fetch" for each fence that runs
+# --verify-manifest, --list-prompts or the oss-value decrypt wrapper, "... no stop rule right after the fetch block"
+# when the trust sentence does not follow that fence, and "... unqualified continue" for a "Do not stop the audit"
+# line that is not qualified by "Prompt not found".
+trust_problems() {
+    local root="${1:-$PLUGIN_ROOT}"
+    local file="$root/$TRUST_FILE"
+    [[ -f "$file" ]] || return 0
+    FF_TSENTENCE="$TRUST_SENTENCE" awk -v F="$TRUST_FILE" '
+        { line[NR] = $0 }
+        END {
+            s = ENVIRON["FF_TSENTENCE"]
+            for (i = 1; i <= NR; i++) {
+                if (line[i] !~ /^[ \t]*```/) continue
+                j = i + 1
+                while (j <= NR && line[j] !~ /^[ \t]*```[ \t]*$/) j++
+                found = 0
+                for (f = i + 1; f < j; f++) {
+                    if (line[f] !~ /oss-decrypt[ \t]+--(verify-manifest|list-prompts)/ && line[f] !~ /oss-value\.sh[ \t]+decrypt/) continue
+                    if (found) continue
+                    found = 1
+                    print F ":" f ": network fetch"
+                    k = j + 1
+                    while (k <= NR && line[k] ~ /^[ \t]*$/) k++
+                    if (line[k] != s) print F ":" f ": no stop rule right after the fetch block"
+                }
+                i = j
+            }
+            for (r = 1; r <= NR; r++)
+                if (line[r] ~ /Do not stop the audit/ && line[r] !~ /Prompt not found/)
+                    print F ":" r ": unqualified continue"
+        }' "$file"
+}
+
+test_control_trust_scan_finds_fetches() {
+    local test_name="control: the trust scan finds at least $MIN_TRUST_FETCHES network fetch fences (verify, both list tiers, decrypt)"
+    ((TESTS_RUN++))
+    local n
+    n=$(trust_problems | grep -c ': network fetch$' | tr -d ' ')
+    if [[ "$n" -ge "$MIN_TRUST_FETCHES" ]]; then
+        pass "$test_name ($n)"
+    else
+        fail "$test_name" ">= $MIN_TRUST_FETCHES" "$n"
+    fi
+}
+
+test_trust_fetch_has_stop_rule() {
+    local test_name="every trust.md network fetch (verify, list, decrypt) is followed by the stop-on-rate-limit/offline/login rule"
+    ((TESTS_RUN++))
+    local out
+    out=$(trust_problems | grep ': no stop rule' | sort)
+    if [[ -z "$out" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "the closing fence, then (after blank lines) exactly the trust sentence" "$(printf '%s\n' "$out" | wc -l | tr -d ' ') fence(s) without it:"
+        printf '%s\n' "$out" | sed 's/^/    /'
+    fi
+}
+
+test_trust_no_unqualified_continue() {
+    local test_name="trust.md never says to go on past a failure unless it is one prompt's (no unqualified 'Do not stop the audit')"
+    ((TESTS_RUN++))
+    local out
+    out=$(trust_problems | grep ': unqualified continue$' | sort)
+    if [[ -z "$out" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "no 'Do not stop the audit' outside the prompt-specific rule" "$(printf '%s\n' "$out" | wc -l | tr -d ' ') line(s):"
+        printf '%s\n' "$out" | sed 's/^/    /'
+    fi
+}
+
+# trust_report_problems [root]: the trust report region (Step 6 to Method Attribution) must cover the stopped-early path
+# (T73b). Prints one line per problem.
+trust_report_problems() {
+    local root="${1:-$PLUGIN_ROOT}"
+    local file="$root/$TRUST_FILE"
+    [[ -f "$file" ]] || return 0
+    local region
+    region=$(awk '
+        /^## Step 6:/ { on = 1 }
+        /^## Method Attribution/ { on = 0 }
+        on { print }' "$file")
+    local n
+    n=$(printf '%s\n' "$region" | grep -c 'Stopped early: <')
+    [[ "$n" -ge 2 ]] || echo "$TRUST_FILE: the stopped-early line 'Stopped early: <reason>' is missing from the terminal summary or the markdown report ($n of 2)"
+    printf '%s\n' "$region" | grep -q 'Steps 2, 4 or 5a' || echo "$TRUST_FILE: the stopped-early path names no steps (Steps 2, 4 or 5a)"
+    printf '%s\n' "$region" | grep -q 'After all prompts are audited' && echo "$TRUST_FILE: Step 6 still says 'After all prompts are audited' with no stopped-early path"
+    printf '%s\n' "$region" | grep 'prompts passed all checks' | grep -v 'audited prompts passed all checks' | sed "s#^#$TRUST_FILE: unqualified pass claim: #"
+    return 0
+}
+
+test_trust_report_covers_stopped_early() {
+    local test_name="trust.md's report (Step 6, terminal and markdown, Summary) covers a stopped-early audit and never claims a full pass"
+    ((TESTS_RUN++))
+    local out
+    out=$(trust_report_problems)
+    if [[ -z "$out" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "a stopped-early line in both reports, the Steps named, no unqualified full-audit claim" "$(printf '%s\n' "$out" | wc -l | tr -d ' ') problem(s):"
+        printf '%s\n' "$out" | sed 's/^/    /'
+    fi
+}
+
 echo "=== A Failed Prompt Fetch Never Breaks an Agent or Skill (T63) ==="
 echo ""
 
@@ -275,6 +524,16 @@ test_control_scan_names_synthetic
 test_every_fetch_has_fallback
 test_no_fetch_writes_a_file
 test_cli_refusals
+
+test_control_command_scan_finds_fetches
+test_control_command_scan_names_synthetic
+test_every_command_fetch_has_rule
+test_no_command_fetch_writes_a_file
+test_no_command_fetch_reads_config
+test_control_trust_scan_finds_fetches
+test_trust_fetch_has_stop_rule
+test_trust_no_unqualified_continue
+test_trust_report_covers_stopped_early
 
 echo ""
 echo "=== Results: $TESTS_PASSED/$TESTS_RUN passed, $TESTS_FAILED failed ==="

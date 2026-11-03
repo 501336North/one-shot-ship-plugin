@@ -1,0 +1,2 @@
+# Exact exceptions to no-skip-permissions-advice.test.sh: "<file><TAB><exact line text>", one per line.
+# Empty on purpose: no customer-facing file names the flag except with the sandbox caveat (T71d).

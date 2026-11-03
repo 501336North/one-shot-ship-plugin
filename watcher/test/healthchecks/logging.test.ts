@@ -1,26 +1,35 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { promises as fs } from 'fs';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { checkLogging } from '../../src/healthchecks/logging.js';
 
-// Mock fs module
-vi.mock('fs', () => ({
-  promises: {
-    readFile: vi.fn(),
-    stat: vi.fn(),
-  },
-}));
-
-const mockFs = fs as {
-  readFile: ReturnType<typeof vi.fn>;
-  stat: ReturnType<typeof vi.fn>;
-};
-
 describe('LoggingHealthCheck', () => {
-  const sessionLogPath = '/mock/path/session.log';
+  let tmp: string;
+  let sessionLogPath: string;
+  let mtime: Date | null;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-logging-check-'));
+    sessionLogPath = path.join(tmp, 'session.log');
+    mtime = null;
   });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  /** A real session.log with this text (and the last-modified time set by lastModified, if any). */
+  function writeLog(text: string): void {
+    fs.writeFileSync(sessionLogPath, text);
+    if (mtime) fs.utimesSync(sessionLogPath, mtime, mtime);
+  }
+
+  /** The session.log's last-modified time, now or once it is written. */
+  function lastModified(when: Date): void {
+    mtime = when;
+    if (fs.existsSync(sessionLogPath)) fs.utimesSync(sessionLogPath, when, when);
+  }
 
   /**
    * @behavior Commands log meaningful structured data to session.log
@@ -36,8 +45,8 @@ describe('LoggingHealthCheck', () => {
 [2024-12-09 10:30:10] TOOL Read src/file.ts
 [2024-12-09 10:30:20] TEST 547 tests passing
 `;
-    mockFs.readFile.mockResolvedValue(recentLogWithStructuredData);
-    mockFs.stat.mockResolvedValue({ mtime: new Date() });
+    writeLog(recentLogWithStructuredData);
+    lastModified(new Date());
 
     // WHEN - Check logging health
     const result = await checkLogging({ sessionLogPath });
@@ -57,8 +66,8 @@ describe('LoggingHealthCheck', () => {
   it('should warn when session.log is stale (>5 min old during active session)', async () => {
     // GIVEN - Stale log file (5 minutes old) during active session
     const fiveMinutesAgo = new Date(Date.now() - 6 * 60 * 1000);
-    mockFs.stat.mockResolvedValue({ mtime: fiveMinutesAgo });
-    mockFs.readFile.mockResolvedValue('[2024-12-09 10:00:00] INIT session started');
+    lastModified(fiveMinutesAgo);
+    writeLog('[2024-12-09 10:00:00] INIT session started');
 
     // WHEN - Check logging health with active session
     const result = await checkLogging({ sessionLogPath, sessionActive: true });
@@ -76,7 +85,7 @@ describe('LoggingHealthCheck', () => {
    */
   it('should fail when session.log is missing', async () => {
     // GIVEN - Missing log file
-    mockFs.readFile.mockRejectedValue(new Error('ENOENT: no such file or directory'));
+    // (no session.log is written)
 
     // WHEN - Check logging health
     const result = await checkLogging({ sessionLogPath });
@@ -100,8 +109,8 @@ describe('LoggingHealthCheck', () => {
 [2024-12-09 10:30:10] TOOL Read src/file.ts
 [2024-12-09 10:30:20] TEST 547 tests passing
 `;
-    mockFs.readFile.mockResolvedValue(logWithVariousTypes);
-    mockFs.stat.mockResolvedValue({ mtime: new Date() });
+    writeLog(logWithVariousTypes);
+    lastModified(new Date());
 
     // WHEN - Check logging health
     const result = await checkLogging({ sessionLogPath });
@@ -121,8 +130,8 @@ describe('LoggingHealthCheck', () => {
   it('should pass when session.log is stale but session is inactive', async () => {
     // GIVEN - Stale log file but inactive session
     const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
-    mockFs.stat.mockResolvedValue({ mtime: tenMinutesAgo });
-    mockFs.readFile.mockResolvedValue(`
+    lastModified(tenMinutesAgo);
+    writeLog(`
 [2024-12-09 10:00:00] INIT session started
 [2024-12-09 10:00:05] PHASE build starting
 `);
@@ -146,8 +155,8 @@ describe('LoggingHealthCheck', () => {
 [2024-12-09 10:30:00] INIT session started
 [2024-12-09 10:30:01] Some unstructured output
 `;
-    mockFs.readFile.mockResolvedValue(logWithoutStructuredEntries);
-    mockFs.stat.mockResolvedValue({ mtime: new Date() });
+    writeLog(logWithoutStructuredEntries);
+    lastModified(new Date());
 
     // WHEN - Check logging health
     const result = await checkLogging({ sessionLogPath });
@@ -175,8 +184,8 @@ describe('LoggingHealthCheck', () => {
 [14:01:24] [build] [start] totalTasks=11
 [14:03:42] [build] [task_complete] current=1, total=11
 `;
-    mockFs.readFile.mockResolvedValue(workflowLog);
-    mockFs.stat.mockResolvedValue({ mtime: new Date() });
+    writeLog(workflowLog);
+    lastModified(new Date());
 
     // WHEN - Check logging health
     const result = await checkLogging({ sessionLogPath });
@@ -208,8 +217,8 @@ describe('LoggingHealthCheck', () => {
 [16:13:02] [ship] [pr_created] prNumber=17
 [16:13:25] [ship] [merged] branch=feat/agent-feature
 `;
-    mockFs.readFile.mockResolvedValue(ironLawLog);
-    mockFs.stat.mockResolvedValue({ mtime: new Date() });
+    writeLog(ironLawLog);
+    lastModified(new Date());
 
     // WHEN - Check logging health
     const result = await checkLogging({ sessionLogPath });
@@ -239,8 +248,8 @@ describe('LoggingHealthCheck', () => {
 [10:02:00] [plan] [start]
 [10:03:00] [plan] [complete] tasks=5
 `;
-    mockFs.readFile.mockResolvedValue(workflowLog);
-    mockFs.stat.mockResolvedValue({ mtime: new Date() });
+    writeLog(workflowLog);
+    lastModified(new Date());
 
     // WHEN - Check logging health
     const result = await checkLogging({ sessionLogPath });

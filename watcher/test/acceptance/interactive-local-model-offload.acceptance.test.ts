@@ -95,7 +95,9 @@ describe('Interactive local-model offload (Acceptance)', () => {
       expect(spawnFn).toHaveBeenCalledTimes(1);
       const [cmd, args, opts] = spawnFn.mock.calls[0];
       expect(cmd).toBe('claude');
-      expect(args).toEqual(expect.arrayContaining(['-p', '--dangerously-skip-permissions']));
+      expect(args).toContain('-p');
+      // It never skips permission checks: the repo it runs in may try to inject commands (T71).
+      expect(args).not.toContain('--dangerously-skip-permissions');
       expect(args).not.toContain('--model');
       // The base URL is what makes it hit the local model instead of Anthropic
       expect(opts.env.ANTHROPIC_BASE_URL).toBe('http://localhost:3456');

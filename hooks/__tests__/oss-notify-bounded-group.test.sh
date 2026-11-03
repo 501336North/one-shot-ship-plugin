@@ -20,6 +20,7 @@ RUN=0; FAILED=0
 pass() { echo "✓ PASS: $1"; RUN=$((RUN + 1)); }
 fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
 source "$ROOT/hooks/__tests__/lib/run-capped.sh"
+source "$ROOT/hooks/__tests__/lib/warm-stub.sh"
 echo "Running oss-notify-bounded-group tests..."
 
 T=$(mktemp -d)
@@ -85,23 +86,21 @@ else fail "the caller survives the bound, leaves nothing in its own group and ke
 
 # --- End to end: `oss-notify.sh --workflow build complete` with a workflow-state call that hangs ----------------
 # Its first bounded call (completeStep, 2 s) forks a child and hangs; the bound ends both. `node` and `curl` are
-# exported bash functions: the hook's node calls run in a fork of the hook, nothing new is exec'd (no
-# first-exec lag), and no argv names a file other checkouts' test setups pkill by name. Every other node call
-# exits 0. A logged-in HOME whose loopback http URL is refused: nothing reaches a network.
+# warmed stubs first on PATH (the bound runs a program, as GNU timeout does, so not a shell function; T72): no
+# first-exec lag, and the hanging stub becomes a sleep, so no argv names a file other checkouts' test setups
+# pkill by name for more than an instant. Every other node call exits 0. A logged-in HOME whose loopback http
+# URL is refused: nothing reaches a network.
 mkdir -p "$T/home/.oss" "$T/proj"
 printf '%s' '{"apiKey":"fake-key-not-real","apiUrl":"http://127.0.0.1:9"}' > "$T/home/.oss/config.json"
+warm_stub "$T/e2ebin/node" 'case " $* " in *" completeStep "*)
+    echo $$ >> "$T54B_DIR/pids"; echo $$ >> "$T54B_DIR/wf.pids"
+    /bin/sleep 60 & echo $! >> "$T54B_DIR/pids"; echo $! >> "$T54B_DIR/wf.pids"
+    exec /bin/sleep 60;;
+esac
+exit 0' || fail "workflow-state node stub warms up" "it did not run"
+warm_stub "$T/e2ebin/curl" 'exit 0' || fail "curl stub warms up" "it did not run"
 (
-    node() {
-        case " $* " in *" completeStep "*)
-            /bin/sleep 60 & echo $! >> "$T54B_DIR/pids"; echo $! >> "$T54B_DIR/wf.pids"
-            /bin/sh -c 'echo $PPID' >> "$T54B_DIR/wf.pids"; tail -1 "$T54B_DIR/wf.pids" >> "$T54B_DIR/pids"
-            wait;;
-        esac
-        return 0
-    }
-    curl() { return 0; }
-    export -f node curl; export T54B_DIR="$T"
-    cd "$T/proj" && HOME="$T/home" CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="" PATH="$T/sys" \
+    cd "$T/proj" && T54B_DIR="$T" HOME="$T/home" CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="" PATH="$T/e2ebin:$T/sys" \
         run_capped 30 /bin/bash "$HOOK" --workflow build complete </dev/null >"$T/e2e.out" 2>"$T/e2e.err"
 ); rc=$?
 left=""; i=0

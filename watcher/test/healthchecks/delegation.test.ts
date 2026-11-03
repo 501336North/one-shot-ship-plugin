@@ -1,26 +1,35 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { promises as fs } from 'fs';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { checkDelegation } from '../../src/healthchecks/delegation.js';
 
-// Mock fs module
-vi.mock('fs', () => ({
-  promises: {
-    readFile: vi.fn(),
-    stat: vi.fn(),
-  },
-}));
-
-const mockFs = fs as {
-  readFile: ReturnType<typeof vi.fn>;
-  stat: ReturnType<typeof vi.fn>;
-};
-
 describe('DelegationHealthCheck', () => {
-  const sessionLogPath = '/mock/path/session.log';
+  let tmp: string;
+  let sessionLogPath: string;
+  let mtime: Date | null;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-delegation-check-'));
+    sessionLogPath = path.join(tmp, 'session.log');
+    mtime = null;
   });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  /** A real session.log with this text (and the last-modified time set by lastModified, if any). */
+  function writeLog(text: string): void {
+    fs.writeFileSync(sessionLogPath, text);
+    if (mtime) fs.utimesSync(sessionLogPath, mtime, mtime);
+  }
+
+  /** The session.log's last-modified time, now or once it is written. */
+  function lastModified(when: Date): void {
+    mtime = when;
+    if (fs.existsSync(sessionLogPath)) fs.utimesSync(sessionLogPath, when, when);
+  }
 
   /**
    * @behavior Agents are being delegated for specialized work
@@ -36,8 +45,8 @@ describe('DelegationHealthCheck', () => {
 [2024-12-09 10:30:20] TOOL Read src/file.ts
 [2024-12-09 10:30:30] AGENT test-engineer "Write unit tests"
 `;
-    mockFs.readFile.mockResolvedValue(logWithAgentDelegation);
-    mockFs.stat.mockResolvedValue({ mtime: new Date() });
+    writeLog(logWithAgentDelegation);
+    lastModified(new Date());
 
     // WHEN - Check delegation health
     const result = await checkDelegation({ sessionLogPath });
@@ -62,8 +71,8 @@ describe('DelegationHealthCheck', () => {
 [2024-12-09 10:00:30] TOOL Edit src/services/complex.ts
 [2024-12-09 10:30:00] TOOL Read test/services/complex.test.ts
 `;
-    mockFs.readFile.mockResolvedValue(logWithoutDelegation);
-    mockFs.stat.mockResolvedValue({ mtime: new Date() });
+    writeLog(logWithoutDelegation);
+    lastModified(new Date());
 
     // WHEN - Check delegation health with active session
     const result = await checkDelegation({ sessionLogPath, sessionActive: true });
@@ -86,8 +95,8 @@ describe('DelegationHealthCheck', () => {
 [2024-12-09 10:35:00] AGENT test-engineer "Write unit tests"
 [2024-12-09 10:40:00] AGENT typescript-pro "Refactor code"
 `;
-    mockFs.readFile.mockResolvedValue(logWithMultipleAgents);
-    mockFs.stat.mockResolvedValue({ mtime: new Date() });
+    writeLog(logWithMultipleAgents);
+    lastModified(new Date());
 
     // WHEN - Check delegation health
     const result = await checkDelegation({ sessionLogPath });
@@ -112,8 +121,8 @@ describe('DelegationHealthCheck', () => {
 [2024-12-09 10:30:20] TOOL Edit src/types.ts
 [2024-12-09 10:30:30] TOOL Edit src/services/auth.ts
 `;
-    mockFs.readFile.mockResolvedValue(logWithSpecializedWorkNoAgent);
-    mockFs.stat.mockResolvedValue({ mtime: new Date() });
+    writeLog(logWithSpecializedWorkNoAgent);
+    lastModified(new Date());
 
     // WHEN - Check delegation health with active session
     const result = await checkDelegation({ sessionLogPath, sessionActive: true });
@@ -130,7 +139,7 @@ describe('DelegationHealthCheck', () => {
    */
   it('should fail when session.log is missing', async () => {
     // GIVEN - Missing log file
-    mockFs.readFile.mockRejectedValue(new Error('ENOENT: no such file or directory'));
+    // (no session.log is written)
 
     // WHEN - Check delegation health
     const result = await checkDelegation({ sessionLogPath });
@@ -152,8 +161,8 @@ describe('DelegationHealthCheck', () => {
 [2024-12-09 10:00:00] INIT build session started
 [2024-12-09 10:00:10] PHASE build starting
 `;
-    mockFs.readFile.mockResolvedValue(logWithoutDelegation);
-    mockFs.stat.mockResolvedValue({ mtime: new Date() });
+    writeLog(logWithoutDelegation);
+    lastModified(new Date());
 
     // WHEN - Check delegation health with inactive session
     const result = await checkDelegation({ sessionLogPath, sessionActive: false });

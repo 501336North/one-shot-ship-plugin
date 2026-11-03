@@ -7,9 +7,9 @@
  * @behavior Tracks long-term spec compliance and trends
  * @acceptance-criteria AC-METRICS.1 through AC-METRICS.4
  */
-import * as fs from 'fs';
 import * as path from 'path';
 import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
+import { readRegularFile } from '../utils/regular-file.js';
 /** Maximum number of history entries to retain per feature */
 const MAX_HISTORY_ENTRIES = 90;
 /** Minimum number of history entries required for velocity calculation */
@@ -57,7 +57,7 @@ export class SpecMetricsService {
             return this.cachedMetrics;
         }
         try {
-            const content = await fs.promises.readFile(this.metricsPath, 'utf-8');
+            const content = await readRegularFile(this.metricsPath);
             this.cachedMetrics = JSON.parse(content);
             return this.cachedMetrics;
         }

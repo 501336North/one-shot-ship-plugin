@@ -32,13 +32,15 @@ if [[ "$sub" != status ]]; then
     else
         oss_settings_set decisionsPush true && rm -f "$(oss_push_off_marker)" && ! oss_decisions_push_off
     fi || {
-        # shellcheck disable=SC2088 # the ~ is text for the person, never expanded
+        # T70b: say why settings.json cannot be written when it is no regular file, and how to fix it
+        why=$(oss_settings_why); why=${why:+, because $why}
+        # shellcheck disable=SC2088
         if [[ -n "$marked" ]] && oss_decisions_push_off; then
-            echo "Decision push is off on this machine (kept in ~/.oss/decisions-push-off); ~/.oss/settings.json could not be updated"
+            echo "Decision push is off on this machine (kept in ~/.oss/decisions-push-off); ~/.oss/settings.json could not be updated$why"
         elif [[ "$want" == true ]] && oss_decisions_push_off; then
-            echo "Decision push is still off on this machine; it could not be turned on"
+            echo "Decision push is still off on this machine; it could not be turned on$why"
         else
-            echo "Could not save your setting in ~/.oss/settings.json; nothing changed"
+            echo "Could not save your setting in ~/.oss/settings.json; nothing changed$why"
         fi
         exit 1
     }
@@ -94,9 +96,6 @@ elif oss_decisions_push_off; then
     why=""
     # shellcheck disable=SC2088 # the ~ is text for the person, never expanded
     [[ -n "$_OSS_SETTINGS_UNREADABLE" ]] && why=", because ~/.oss/settings.json could not be read"
-    # T68: dotfiles managers link this file; say so, so the person knows why (still off)
-    # shellcheck disable=SC2088
-    [[ "$_OSS_SETTINGS_UNREADABLE" == link ]] && why=", because ~/.oss/settings.json is a link, not a file; dotfiles managers make these, and pushing stays off until it is a plain file"
     echo "Decision push: off for you on this machine$why (answers stay in your repo only)$other"
 elif [[ "$team" == unknown ]]; then
     echo "Decision push: on for you on this machine (answers are sent redacted to OSS)"

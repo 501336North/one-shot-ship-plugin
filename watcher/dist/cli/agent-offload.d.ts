@@ -28,7 +28,7 @@ export interface OffloadParams {
     agent: string;
     /** Path to the assembled prompt (expert prompt + task context) fed to the nested session. */
     promptFile: string;
-    /** Project dir for config precedence. Defaults to cwd. */
+    /** Project dir (no longer used for routing: only user settings choose the model, T71). Defaults to cwd. */
     projectDir?: string;
     /** Safety net (default true): on any offload failure, degrade to native Claude. */
     fallbackEnabled?: boolean;

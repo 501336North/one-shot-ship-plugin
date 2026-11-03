@@ -11,6 +11,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { readRegularFileSync } from './regular-file.js';
 
 export function resolveProjectDir(
   env: Record<string, string | undefined>,
@@ -66,7 +67,7 @@ export function sessionProjectDir(env: Record<string, string | undefined>): stri
       return (dir ? st.isDirectory() : st.isFile()) && st.uid === uid;
     };
     if (!own(sessions, true) || !own(path.join(sessions, id), true) || !own(file, false)) return null;
-    const p = fs.readFileSync(file, 'utf-8').replace(/\n+$/, '');
+    const p = readRegularFileSync(file, uid).replace(/\n+$/, '');
     // eslint-disable-next-line no-control-regex
     if (!p.startsWith('/') || /[\x00-\x1f\x7f]/.test(p)) return null;
     return isRealDir(path.join(p, '.oss')) ? p : null;

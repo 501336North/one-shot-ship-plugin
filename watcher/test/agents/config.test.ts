@@ -7,8 +7,9 @@
  * @boundary Configuration file I/O
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { promises as fs } from 'fs';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import {
   loadGlobalConfig,
@@ -19,26 +20,33 @@ import {
 } from '../../src/agents/config';
 import { DEFAULT_AGENT_CONFIG } from '../../src/agents/types';
 
-// Mock fs for testing
-vi.mock('fs', async () => {
-  const actual = await vi.importActual<typeof import('fs')>('fs');
-  return {
-    ...actual,
-    promises: {
-      ...actual.promises,
-      readFile: vi.fn(),
-      access: vi.fn(),
-    },
-  };
-});
+// Real files in a sandbox (T70e): HOME (for ~/.oss/agents.json) and the project (the cwd, for .oss/agents.json)
+let sandbox: string;
+let originalHome: string | undefined;
+let originalCwd: string;
+
+/** Write an agents.json: 'global' is ~/.oss/agents.json, 'project' is <cwd>/.oss/agents.json. */
+function writeAgents(where: 'global' | 'project', config: AgentsConfig): void {
+  const dir = path.join(sandbox, where === 'global' ? 'home' : 'project', '.oss');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'agents.json'), JSON.stringify(config));
+}
 
 describe('Agent Configuration', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-agents-config-')));
+    fs.mkdirSync(path.join(sandbox, 'home'));
+    fs.mkdirSync(path.join(sandbox, 'project'));
+    originalHome = process.env.HOME;
+    originalCwd = process.cwd();
+    process.env.HOME = path.join(sandbox, 'home');
+    process.chdir(path.join(sandbox, 'project'));
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    process.chdir(originalCwd);
+    process.env.HOME = originalHome;
+    fs.rmSync(sandbox, { recursive: true, force: true });
   });
 
   describe('AgentsConfig Type', () => {
@@ -82,8 +90,7 @@ describe('Agent Configuration', () => {
         },
       };
 
-      vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(mockConfig));
-      vi.mocked(fs.access).mockResolvedValue(undefined);
+      writeAgents('global', mockConfig);
 
       // WHEN - We load global config
       const result = await loadGlobalConfig();
@@ -94,8 +101,7 @@ describe('Agent Configuration', () => {
     });
 
     it('should return empty agents when config file is missing', async () => {
-      // GIVEN - No global config file
-      vi.mocked(fs.access).mockRejectedValue(new Error('ENOENT'));
+      // GIVEN - No global config file (the sandbox HOME has none)
 
       // WHEN - We load global config
       const result = await loadGlobalConfig();
@@ -119,8 +125,7 @@ describe('Agent Configuration', () => {
         },
       };
 
-      vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(mockConfig));
-      vi.mocked(fs.access).mockResolvedValue(undefined);
+      writeAgents('project', mockConfig);
 
       // WHEN - We load project config
       const result = await loadProjectConfig();
@@ -131,8 +136,7 @@ describe('Agent Configuration', () => {
     });
 
     it('should return empty agents when config file is missing', async () => {
-      // GIVEN - No project config file
-      vi.mocked(fs.access).mockRejectedValue(new Error('ENOENT'));
+      // GIVEN - No project config file (the sandbox project has none)
 
       // WHEN - We load project config
       const result = await loadProjectConfig();
@@ -209,15 +213,8 @@ describe('Agent Configuration', () => {
         },
       };
 
-      // Mock to return different configs based on path
-      vi.mocked(fs.access).mockResolvedValue(undefined);
-      vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
-        const pathStr = filePath.toString();
-        if (pathStr.includes('.oss/agents.json') && !pathStr.includes('~')) {
-          return JSON.stringify(projectConfig);
-        }
-        return JSON.stringify(globalConfig);
-      });
+      writeAgents('global', globalConfig);
+      writeAgents('project', projectConfig);
 
       // WHEN - We get agent config
       const result = await getAgentConfig('pr-monitor');
@@ -228,8 +225,7 @@ describe('Agent Configuration', () => {
     });
 
     it('should return defaults when config files are missing', async () => {
-      // GIVEN - No config files
-      vi.mocked(fs.access).mockRejectedValue(new Error('ENOENT'));
+      // GIVEN - No config files (neither the sandbox HOME nor the project has one)
 
       // WHEN - We get agent config
       const result = await getAgentConfig('pr-monitor');

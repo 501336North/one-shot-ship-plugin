@@ -11,6 +11,7 @@ import { LLMAnalyzer } from './detectors/llm-analyzer.js';
 import { WebhookReceiver } from './services/webhook-receiver.js';
 import { WebhookConfig } from './config/webhook-config.js';
 import { DEFAULT_CONFIG } from './types.js';
+import { readRegularFileSync, readRegularFileSyncOrNull } from './utils/regular-file.js';
 /**
  * Watcher state enum
  */
@@ -193,10 +194,11 @@ export class Watcher {
      * Check if another watcher process is running
      */
     async isAnotherWatcherRunning() {
-        if (!fs.existsSync(this.pidPath)) {
+        const pidText = readRegularFileSyncOrNull(this.pidPath);
+        if (pidText === null) {
             return false;
         }
-        const pidContent = fs.readFileSync(this.pidPath, 'utf-8').trim();
+        const pidContent = pidText.trim();
         const pid = parseInt(pidContent, 10);
         if (isNaN(pid)) {
             return false;
@@ -230,7 +232,7 @@ export class Watcher {
             return DEFAULT_CONFIG;
         }
         try {
-            const content = fs.readFileSync(this.configPath, 'utf-8');
+            const content = readRegularFileSync(this.configPath);
             const config = JSON.parse(content);
             return { ...DEFAULT_CONFIG, ...config };
         }

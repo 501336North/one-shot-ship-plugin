@@ -104,6 +104,8 @@ This auto-installs the decrypt CLI if missing. Existing installations are unaffe
 ~/.oss/bin/oss-decrypt --type workflows --name iterate
 ```
 
+If this command fails for any reason (it prints an `Error:` line, for example when rate limited, offline or not logged in), tell the user in one line what happened (rate limited, offline, or not logged in, so run /oss:login) and STOP this command; do not read ~/.oss/config.json, do not retry in a loop, and do not save the fetched prompt to a file.
+
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
 ## Step 6: Execute the Fetched Prompt

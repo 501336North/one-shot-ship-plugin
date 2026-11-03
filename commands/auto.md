@@ -38,7 +38,8 @@ estimated_tokens: 15000-50000
 /oss:auto --merge "redesign the pricing page"
 
 # Zero-approval mode: answer ideation questions, then walk away
-# Start CC with: claude --dangerously-skip-permissions
+# Start CC with: claude --permission-mode auto
+# (--dangerously-skip-permissions is for sandboxed machines with no internet access only)
 # Then run: /oss:auto --merge "your feature"
 
 # Show help
@@ -111,6 +112,8 @@ Register at https://www.oneshotship.com
 ```bash
 ~/.oss/bin/oss-decrypt --type workflows --name auto
 ```
+
+If this command fails for any reason (it prints an `Error:` line, for example when rate limited, offline or not logged in), tell the user in one line what happened (rate limited, offline, or not logged in, so run /oss:login) and STOP this command; do not read ~/.oss/config.json, do not retry in a loop, and do not save the fetched prompt to a file.
 
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 

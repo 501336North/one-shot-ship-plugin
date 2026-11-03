@@ -16,6 +16,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { readRegularFileSync } from '../utils/regular-file.js';
 
 interface CachedPrompt {
   content: string;
@@ -56,7 +57,7 @@ export class PromptCache {
 
     try {
       const cached: CachedPrompt = JSON.parse(
-        fs.readFileSync(cachePath, 'utf-8')
+        readRegularFileSync(cachePath)
       );
 
       // Check if expired

@@ -210,11 +210,40 @@ model_writes notify_style visual verbosity all; LS_BEFORE=$(ls -A "$H/.oss"); ru
 [[ "$RC" != 0 && "$(cat "$H/.oss/settings.json")" == '{"models": {"agents": BROKEN' && "$OUT" == *"not valid JSON"* \
    && "$(ls -A "$H/.oss")" == "$LS_BEFORE" && "$(calls)" != *terminal-notifier* ]] \
     && pass "settings: an invalid settings.json is refused with a message and left untouched" || fail "settings: an invalid settings.json is refused with a message and left untouched" "rc=$RC out=$OUT calls=$(calls) settings=$(cat "$H/.oss/settings.json" 2>&1)"
-# settings.json that is a symlink: refused, the link and its target left as they were
-sandbox repo; echo '{"keep":1}' > "$H/target.json"; ln -s "$H/target.json" "$H/.oss/settings.json"
+# Task 70c: a linked settings.json is saved through the link (user: "Follow the link everywhere", "owner-only"):
+# the file it leads to gets the choices in a new file renamed over it (never half-written), at 600; links stay links
+source "$ROOT/hooks/__tests__/lib/run-capped.sh"   # the one time cap a test may use (T49)
+sandbox repo; mkdir -p "$H/dot"; echo '{"keep":1}' > "$H/dot/settings.json"; chmod 644 "$H/dot/settings.json"
+ln -s settings.json "$H/dot/hop"; ln -s "$H/dot/hop" "$H/.oss/settings.json"
+INO0=$(stat -c %i "$H/dot/settings.json" 2>/dev/null || stat -f %i "$H/dot/settings.json")
 model_writes notify_style visual verbosity all; run_block settings.md "$SAVE"
-[[ "$RC" != 0 && -L "$H/.oss/settings.json" && "$(cat "$H/target.json")" == '{"keep":1}' && "$(calls)" != *terminal-notifier* ]] \
-    && pass "settings: a symlinked settings.json is refused, link and target untouched" || fail "settings: a symlinked settings.json is refused, link and target untouched" "rc=$RC out=$OUT link=$([[ -L "$H/.oss/settings.json" ]] && echo y || echo n) target=$(cat "$H/target.json")"
+INO1=$(stat -c %i "$H/dot/settings.json" 2>/dev/null || stat -f %i "$H/dot/settings.json")
+MODE=$(stat -c %a "$H/dot/settings.json" 2>/dev/null || stat -f %Lp "$H/dot/settings.json")
+[[ "$RC" == 0 && -L "$H/.oss/settings.json" && -L "$H/dot/hop" && "$(jq -c '[.keep, .notifications.style, .version]' "$H/dot/settings.json" 2>&1)" == '[1,"visual",2]' \
+   && "$INO1" != "$INO0" && "$MODE" == 600 && "$(ls -A "$H/dot" | tr '\n' ' ')" == "hop settings.json " ]] \
+    && pass "settings: a linked settings.json is saved through the link (links kept, new file, 600, no temp)" \
+    || fail "settings: a linked settings.json is saved through the link (links kept, new file, 600, no temp)" "rc=$RC out=$OUT ino=$INO0/$INO1 mode=$MODE dot=$(ls -A "$H/dot" | tr '\n' ' ') file=$(cat "$H/dot/settings.json")"
+# a link to nothing, a loop, or something that is not a plain file: refused with why and how to fix it, never a hang
+for c in "link loop|is a link loop (or more than 8 links in a row); remove the link and try again" \
+         "dangling link|links to a file that does not exist; create that file or remove the link, and try again" \
+         "link to a FIFO|is not a plain file, or links to something that is not one (a folder, a FIFO or a device); replace it with a plain file and try again" \
+         "a FIFO|is not a plain file, or links to something that is not one (a folder, a FIFO or a device); replace it with a plain file and try again" \
+         "link to a folder|is not a plain file, or links to something that is not one (a folder, a FIFO or a device); replace it with a plain file and try again"; do
+    IFS='|' read -r what why <<< "$c"
+    sandbox repo; at="$H/.oss/settings.json"
+    case $what in
+        'link loop') ln -s "$H/loop" "$at"; ln -s "$at" "$H/loop" ;;
+        'dangling link') ln -s "$H/target" "$at" ;;
+        'link to a FIFO') mkfifo "$H/target"; ln -s "$H/target" "$at" ;;
+        'a FIFO') mkfifo "$at" ;;
+        'link to a folder') mkdir "$H/target"; ln -s "$H/target" "$at" ;;
+    esac
+    model_writes notify_style visual verbosity all; b=$(fence_with settings.md "$SAVE")
+    OUT=$(cd "$W" && run_capped 20 env -u CLAUDE_PLUGIN_ROOT -u CLAUDE_PROJECT_DIR GIT_CEILING_DIRECTORIES="$T/w$N" HOME="$H" PATH="$T/bin:$PATH" "$SH" -c "$b" 2>&1 </dev/null); RC=$?
+    [[ "$RC" == 1 && "$OUT" == *"Not saved: ~/.oss/settings.json $why"* && "$(calls)" != *terminal-notifier* \
+       && -z "$(find "$H" -name '.settings.json.*' -o -name '.target.*' | head -1)" ]] \
+        && pass "settings: the save refuses ($what) with why and how to fix it" || fail "settings: the save refuses ($what) with why and how to fix it" "rc=$RC out=$OUT"
+done
 # Task 16u: the save applies the one settings.json rule (oss_settings_mergeable, shared with oss_settings_set and
 # the session-start cleanup): two objects in one file, or a file that is not the user's, is refused and left
 # byte-identical. Another user's file is simulated through `test -O` (the repo's other-user seam), exported to the block.

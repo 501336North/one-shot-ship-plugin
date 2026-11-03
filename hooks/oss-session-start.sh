@@ -17,24 +17,39 @@ run_bounded() {
     local secs=$1; shift
     if command -v gtimeout &>/dev/null; then gtimeout "$secs" "$@"      # macOS with coreutils installed
     elif command -v timeout &>/dev/null; then timeout "$secs" "$@"      # Linux or macOS with timeout available
+    elif [[ -x /usr/bin/perl ]]; then
+        # Fallback (stock macOS): one supervisor owns the time limit (T72; same code as oss-notify.sh). It is the
+        # command's parent and runs it in its own process group (like GNU timeout; stdin /dev/null). It never signals
+        # that group after reaping the leader (the id may then be reused): it polls the leader with
+        # waitpid(WNOHANG) between short sleeps (1 ms doubling to 100 ms; a SIGCHLD cuts them short), and handlers only
+        # set flags. At the bound, or once this shell is gone (HUP, INT or TERM to it, or its parent changes), it
+        # kills the group, waits for the leader's SIGCHLD, kills the group again while the zombie leader still holds
+        # the id (a child forked while the first kill landed, T54c), and only then reaps. It sits in a group of its
+        # own, so a KILL to this shell's group still leaves it to end the command's. Exit: the command's, 137 at the
+        # bound, 128+n for signal n to it.
+        /usr/bin/perl -e '
+            my ($s, $pp, $stop, $chld, $tr) = (shift, getppid, 0, 0, $ENV{OSS_TEST_BOUND_TRACE});
+            sub trace { return unless $tr; open(my $f, ">>", $tr) or return; print $f "$_[0]\n" }   # tests only (T72)
+            $SIG{CHLD} = sub { $chld = 1 };   # before the fork: an inherited SIG_IGN would let the kernel reap
+            my $p = fork; exit 125 unless defined $p;
+            if (!$p) { setpgrp(0, 0); exec { $ARGV[0] } @ARGV; exit($!{ENOENT} ? 127 : 126) }
+            setpgrp($p, $p); setpgrp(0, 0);
+            my %n = (HUP => 1, INT => 2, TERM => 15);
+            for my $g (keys %n) { $SIG{$g} = sub { $stop = $n{$g} } }
+            sub gkill { trace("kill"); kill "KILL", -$p }
+            my ($t0, $used, $tick) = (time, 0, 0.001);
+            while (1) {
+                my $r = waitpid($p, 1);   # 1: WNOHANG
+                if ($r == $p) { trace("reap"); exit($? & 127 ? 128 + ($? & 127) : $? >> 8) }
+                exit 125 if $r == -1;     # not ours to reap (never expected): signal nothing
+                last if $stop || $used >= $s || time - $t0 > $s + 1 || getppid != $pp;   # time(): whole seconds, a backstop
+                select(undef, undef, undef, $tick); $used += $tick; $tick = $tick < 0.05 ? $tick * 2 : 0.1;
+            }
+            gkill(); for (1 .. 200) { last if $chld; select(undef, undef, undef, 0.005) }
+            gkill(); waitpid($p, 0); trace("reap"); exit($stop ? 128 + $stop : 137);
+        ' "$secs" "$@" </dev/null
     else
-        # Fallback: background + sleep + kill. The timer holds no stdio, and killing it also kills its
-        # sleep (R2-1; same shape as oss-notify.sh). Like GNU timeout, the command gets its own process group
-        # (set -m, for this launch only; stdin stays /dev/null) and the bound kills that group, children too (T54).
-        local m=$-
-        set -m; "$@" </dev/null &
-        local pid=$! killer rc
-        # The timer gets its own group too and is cancelled by killing that group twice: a sleep forked while the
-        # first kill landed (macOS can miss such a child) is caught by the second, once the timer is reaped (T54c).
-        ( sleep "$secs" && kill -9 -- -$pid 2>/dev/null ) </dev/null >/dev/null 2>&1 &
-        killer=$!
-        [[ $m == *m* ]] || set +m
-        wait $pid; rc=$?
-        # Ended by SIGKILL (the bound): kill its group once more, for a child forked while the bound's kill landed
-        # (T54c). Never on a normal exit, so the id of a group that is gone is never signalled.
-        [[ $rc -eq 137 ]] && kill -9 -- -$pid 2>/dev/null
-        kill -9 -- -$killer 2>/dev/null; wait $killer 2>/dev/null; kill -9 -- -$killer 2>/dev/null
-        return $rc
+        "$@" </dev/null   # no perl either: unbounded, so nothing is ever signalled (T72)
     fi
 }
 # Run command with timeout, fail silently if it takes too long

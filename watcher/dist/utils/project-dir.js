@@ -10,6 +10,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { readRegularFileSync } from './regular-file.js';
 export function resolveProjectDir(env, cwd = process.cwd()) {
     const fromEnv = env.CLAUDE_PROJECT_DIR;
     if (fromEnv !== undefined && fromEnv !== '')
@@ -66,7 +67,7 @@ export function sessionProjectDir(env) {
         };
         if (!own(sessions, true) || !own(path.join(sessions, id), true) || !own(file, false))
             return null;
-        const p = fs.readFileSync(file, 'utf-8').replace(/\n+$/, '');
+        const p = readRegularFileSync(file, uid).replace(/\n+$/, '');
         // eslint-disable-next-line no-control-regex
         if (!p.startsWith('/') || /[\x00-\x1f\x7f]/.test(p))
             return null;

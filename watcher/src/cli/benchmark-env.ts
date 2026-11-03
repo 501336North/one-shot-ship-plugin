@@ -14,6 +14,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { readRegularFileSync } from '../utils/regular-file.js';
 
 // ============================================================================
 // Constants
@@ -107,7 +108,7 @@ function loadConfig(): Record<string, unknown> {
 
   try {
     if (fs.existsSync(configPath)) {
-      const content = fs.readFileSync(configPath, 'utf-8');
+      const content = readRegularFileSync(configPath);
       return JSON.parse(content);
     }
   } catch {

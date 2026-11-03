@@ -23,6 +23,7 @@ fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
 # Session start runs under an alias (lib/session-start-alias.sh): an outside `pkill -f oss-session-start` misses it (T48).
 source "$ROOT/hooks/__tests__/lib/session-start-alias.sh"
 source "$ROOT/hooks/__tests__/lib/run-capped.sh"
+source "$ROOT/hooks/__tests__/lib/warm-stub.sh"
 T=$(mktemp -d)
 # Every process the T54 rows start records its pid in $T/pids: killed (and its group, when it leads one) even
 # when a row fails, so a regression leaves no 60 s sleeps behind.
@@ -97,24 +98,22 @@ CALLER
         "run_capped rc=$rc out=$(tr '\n' '|' < "$T/caller.out") err=$(tr '\n' '|' < "$T/caller.err")"; fi
 
     # End to end: the opt-in health check (OSS_RUN_HEALTH_CHECK=1) hangs after forking a child; a 1 s bound
-    # ends both. `node` and `curl` are exported bash functions: the hook's node calls run in a fork of the
-    # hook itself, whose argv does not name health-check.js (other checkouts' vitest setups run
-    # `pkill -f health-check.js` machine-wide), and nothing new is exec'd (no first-exec lag). Every other
-    # node call exits 0. A logged-in HOME whose loopback http URL is refused: nothing reaches a network.
+    # ends both. `node` and `curl` are warmed stubs first on PATH (the bound runs a program, as GNU timeout does,
+    # so not a shell function; T72). The health check's stub records its pid and its child's and then becomes a
+    # sleep, so its argv names health-check.js only for an instant (other checkouts' vitest setups run
+    # `pkill -f health-check.js` machine-wide). Every other node call exits 0. A logged-in HOME whose loopback
+    # http URL is refused: nothing reaches a network.
     mkdir -p "$T/proj" "$T/hc-home/.oss"; echo '{}' > "$T/proj/package.json"
     printf '%s' '{"apiKey":"fake-key-not-real","apiUrl":"http://127.0.0.1:9"}' > "$T/hc-home/.oss/config.json"
+    warm_stub "$T/hcbin/node" 'case "$1" in *health-check.js)
+    echo $$ >> "$T54_DIR/pids"; echo $$ >> "$T54_DIR/hc.pids"
+    /bin/sleep 60 & echo $! >> "$T54_DIR/pids"; echo $! >> "$T54_DIR/hc.pids"
+    exec /bin/sleep 60;;
+esac
+exit 0' || fail "health check node stub warms up" "it did not run"
+    warm_stub "$T/hcbin/curl" 'exit 0' || fail "curl stub warms up" "it did not run"
     (
-        node() {
-            case "$1" in *health-check.js)
-                /bin/sleep 60 & echo $! >> "$T54_DIR/pids"; echo $! >> "$T54_DIR/hc.pids"
-                /bin/sh -c 'echo $PPID' >> "$T54_DIR/hc.pids"; tail -1 "$T54_DIR/hc.pids" >> "$T54_DIR/pids"
-                wait;;
-            esac
-            return 0
-        }
-        curl() { return 0; }
-        export -f node curl; export T54_DIR="$T"
-        cd "$T/proj" && HOME="$T/hc-home" CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="" PATH="$T/sys" \
+        cd "$T/proj" && T54_DIR="$T" HOME="$T/hc-home" CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="" PATH="$T/hcbin:$T/sys" \
             OSS_SKIP_HEALTH_CHECK=1 OSS_RUN_HEALTH_CHECK=1 OSS_HEALTH_CHECK_TIMEOUT=1 run_capped 30 /bin/bash "$SS_HOOK" </dev/null >/dev/null 2>"$T/hc.err"
     ); rc=$?
     i=0; while [[ ! -s "$T/hc.pids" || $(wc -l < "$T/hc.pids") -lt 2 ]] && [[ $i -lt 50 ]]; do /bin/sleep 0.1; i=$((i + 1)); done

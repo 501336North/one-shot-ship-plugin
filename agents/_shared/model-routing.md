@@ -88,7 +88,7 @@ If `useProxy` is `false` or the check is unavailable:
 
 ## Configuration Reference
 
-Users configure models in `~/.oss/config.json` or `.oss/config.json`:
+Users configure models in `~/.oss/config.json` (a project's `.oss/config.json` no longer maps agents):
 
 **Per-Command Configuration:**
 ```json
@@ -116,7 +116,9 @@ Users configure models in `~/.oss/config.json` or `.oss/config.json`:
 }
 ```
 
-**Precedence**: CLI Override > Project Config > User Config > Frontmatter > Default (Claude)
+**Precedence (agents)**: `models.agents.<agent>` > `models.default` in `~/.oss/config.json` > Default (Claude).
+Agent offload and `oss-launch` routing use the user config only: a repo's own `.oss/config.json`
+cannot turn them on, choose the model or set the proxy port (T71, T71b).
 
 ## Supported Providers
 

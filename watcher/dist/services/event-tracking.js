@@ -7,6 +7,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { readRegularFileSync } from '../utils/regular-file.js';
 /**
  * Standard event types for workflow tracking
  */
@@ -121,7 +122,7 @@ export class EventTrackingService {
     load() {
         try {
             if (fs.existsSync(this.eventsFile)) {
-                const content = fs.readFileSync(this.eventsFile, 'utf-8');
+                const content = readRegularFileSync(this.eventsFile);
                 this.events = JSON.parse(content);
             }
         }

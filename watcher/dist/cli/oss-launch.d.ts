@@ -116,6 +116,13 @@ export interface EnsureProxyDeps {
  */
 export declare function ensureProxy(port: number, deps: EnsureProxyDeps): Promise<void>;
 /**
+ * Read the user's `~/.oss/config.json`, returning only the `models` slice the launcher cares about.
+ * A repo's own `.oss/config.json` is ignored (T71b): it must not switch routing on or pick the
+ * port the session, with its real credentials, talks to. Best-effort: defaults to {} on any error,
+ * so a missing/malformed config simply means "no routing" (Anthropic-only, untouched).
+ */
+export declare function loadMergedConfig(fsImpl: typeof import('fs'), pathImpl: typeof import('path'), osImpl: typeof import('os')): LaunchConfig;
+/**
  * Launcher entrypoint: build the real collaborators (config read, proxy health/start, claude
  * resolution, spawn) and run. Resolves to the child's exit code.
  */

@@ -7,38 +7,28 @@
  * @boundary State file I/O
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { promises as fs } from 'fs';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
 import * as os from 'os';
-import * as realFs from 'fs';
+import * as fs from 'fs';
 import { PRMonitorState } from '../../src/agents/pr-monitor-state';
-
-// Mock fs for testing
-vi.mock('fs', async () => {
-  const actual = await vi.importActual<typeof import('fs')>('fs');
-  return {
-    ...actual,
-    promises: {
-      ...actual.promises,
-      readFile: vi.fn(),
-      writeFile: vi.fn(),
-      access: vi.fn(),
-      mkdir: vi.fn(),
-    },
-  };
-});
 
 describe('PRMonitorState', () => {
   let state: PRMonitorState;
+  // the state file is <cwd>/.oss/pr-monitor-state.json: each test runs in its own real temp project (T70e)
+  let project: string;
+  let originalCwd: string;
 
   beforeEach(() => {
+    project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pr-monitor-state-')));
+    originalCwd = process.cwd();
+    process.chdir(project);
     state = new PRMonitorState();
-    vi.clearAllMocks();
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    process.chdir(originalCwd);
+    fs.rmSync(project, { recursive: true, force: true });
   });
 
   describe('load', () => {
@@ -56,8 +46,8 @@ describe('PRMonitorState', () => {
         },
       };
 
-      vi.mocked(fs.access).mockResolvedValue(undefined);
-      vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(mockState));
+      fs.mkdirSync(path.join(project, '.oss'));
+      fs.writeFileSync(path.join(project, '.oss', 'pr-monitor-state.json'), JSON.stringify(mockState));
 
       // WHEN - We load state
       await state.load();
@@ -69,8 +59,7 @@ describe('PRMonitorState', () => {
     });
 
     it('should create default state if file missing', async () => {
-      // GIVEN - No state file
-      vi.mocked(fs.access).mockRejectedValue(new Error('ENOENT'));
+      // GIVEN - No state file (the temp project has none)
 
       // WHEN - We load state
       await state.load();
@@ -87,23 +76,14 @@ describe('PRMonitorState', () => {
       state.addProcessedComment('IC_789');
       state.incrementStat('commentsProcessed');
 
-      // save() writes through the shared .oss guard (sync, real fs), so run it in a temp project
-      const project = realFs.mkdtempSync(path.join(os.tmpdir(), 'pr-monitor-state-'));
-      const cwd = process.cwd();
-      process.chdir(project);
-      try {
-        // WHEN - We save state
-        await state.save();
+      // WHEN - We save state (in the temp project)
+      await state.save();
 
-        // THEN - Should write to file with proper formatting
-        const filePath = path.join(project, '.oss', 'pr-monitor-state.json');
-        expect(realFs.existsSync(filePath)).toBe(true);
-        const parsed = JSON.parse(realFs.readFileSync(filePath, 'utf-8'));
-        expect(parsed.processedCommentIds).toContain('IC_789');
-      } finally {
-        process.chdir(cwd);
-        realFs.rmSync(project, { recursive: true, force: true });
-      }
+      // THEN - Should write to file with proper formatting
+      const filePath = path.join(project, '.oss', 'pr-monitor-state.json');
+      expect(fs.existsSync(filePath)).toBe(true);
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      expect(parsed.processedCommentIds).toContain('IC_789');
     });
   });
 

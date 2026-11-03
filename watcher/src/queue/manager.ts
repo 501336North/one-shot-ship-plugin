@@ -11,6 +11,7 @@ import {
   CreateTaskInput,
   PRIORITY_ORDER,
 } from '../types.js';
+import { readRegularFileSyncOrNull } from '../utils/regular-file.js';
 
 /**
  * Queue event listener callback type
@@ -129,8 +130,8 @@ export class QueueManager {
    * Initialize the queue manager - load existing queue or create new one
    */
   async initialize(): Promise<void> {
-    if (fs.existsSync(this.queuePath)) {
-      const content = fs.readFileSync(this.queuePath, 'utf-8');
+    const content = readRegularFileSyncOrNull(this.queuePath);
+    if (content !== null) {
       this.queue = JSON.parse(content) as QueueFile;
     } else {
       this.queue = this.createEmptyQueue();
@@ -372,8 +373,8 @@ export class QueueManager {
   private async appendToArchive(archivePath: string, task: ArchivedTask): Promise<void> {
     let archive: ArchiveQueueFile;
 
-    if (fs.existsSync(archivePath)) {
-      const content = fs.readFileSync(archivePath, 'utf-8');
+    const content = readRegularFileSyncOrNull(archivePath);
+    if (content !== null) {
       archive = JSON.parse(content) as ArchiveQueueFile;
     } else {
       archive = {

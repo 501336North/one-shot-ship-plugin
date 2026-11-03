@@ -14,6 +14,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach, Mock } from 'vitest';
 import * as fs from 'fs';
+import { fakeRegularFiles } from '../helpers/fake-regular-files.js';
 import * as os from 'os';
 import * as path from 'path';
 
@@ -36,6 +37,8 @@ describe('agent-model-check CLI', () => {
     // Default: config.json does not exist
     (fs.existsSync as Mock).mockReturnValue(false);
     (fs.readFileSync as Mock).mockReturnValue('{}');
+    // the real hang-safe reader (T70e) runs on these fakes
+    fakeRegularFiles(fs);
   });
 
   afterEach(() => {
@@ -349,41 +352,56 @@ describe('agent-model-check CLI', () => {
   });
 
   /**
-   * @behavior AC-AMC.3: Respect config precedence (Project > User)
+   * @behavior AC-AMC.3: Only the customer's own (user-level) settings can turn on offload or pick
+   *           its model. A repo the customer opens must not: offload runs a nested session in that
+   *           repo, on that model, so a repo-chosen model could drive tool calls there. (T71)
+   * @business-rule The repo's .oss/config.json is ignored for agent routing.
    */
-  describe('config precedence', () => {
-    it('should prefer project config over user config', async () => {
+  describe('config precedence (user settings only, T71)', () => {
+    const USER_CONFIG = '/home/testuser/.oss/config.json';
+    const PROJECT_CONFIG = '/test/project/.oss/config.json';
+
+    /** Serve the given user and project configs; any other read (agent frontmatter) is empty. */
+    function serveConfigs(user: object, project: object): void {
       (fs.existsSync as Mock).mockReturnValue(true);
       (fs.readFileSync as Mock).mockImplementation((p: string) => {
-        if (p.includes('.oss/config.json') && !p.includes('/home/')) {
-          // Project config
-          return JSON.stringify({
-            models: {
-              agents: {
-                'oss:code-reviewer': 'ollama/codellama',
-              },
-            },
-          });
-        }
-        // User config
-        return JSON.stringify({
-          models: {
-            agents: {
-              'oss:code-reviewer': 'openrouter/deepseek/deepseek-chat',
-            },
-          },
-        });
+        if (p === USER_CONFIG) return JSON.stringify(user);
+        if (p === PROJECT_CONFIG) return JSON.stringify(project);
+        return '';
       });
+    }
 
+    it('a repo that maps this agent to a model does not turn on offload', async () => {
+      serveConfigs({}, { models: { agents: { 'oss:code-reviewer': 'ollama/repo-chosen' } } });
       const { checkAgentModel } = await import('../../src/cli/agent-model-check.js');
 
-      const result = await checkAgentModel({
-        agentName: 'oss:code-reviewer',
-        projectDir: '/test/project',
-      });
+      const result = await checkAgentModel({ agentName: 'oss:code-reviewer', projectDir: '/test/project' });
 
-      // Project config (ollama/codellama) should take precedence
-      expect(result.model).toBe('ollama/codellama');
+      expect(result.useProxy).toBe(false);
+      expect(result.model).toBeUndefined();
+    });
+
+    it('a repo-wide default model does not turn on offload', async () => {
+      serveConfigs({}, { models: { default: 'ollama/repo-chosen' } });
+      const { checkAgentModel } = await import('../../src/cli/agent-model-check.js');
+
+      const result = await checkAgentModel({ agentName: 'oss:code-reviewer', projectDir: '/test/project' });
+
+      expect(result.useProxy).toBe(false);
+    });
+
+    it("the customer's own mapping still routes, and a repo cannot change its model or port", async () => {
+      serveConfigs(
+        { models: { agents: { 'oss:code-reviewer': 'openrouter/deepseek/deepseek-chat' } } },
+        { models: { agents: { 'oss:code-reviewer': 'ollama/repo-chosen' }, proxyPort: 1234 } },
+      );
+      const { checkAgentModel } = await import('../../src/cli/agent-model-check.js');
+
+      const result = await checkAgentModel({ agentName: 'oss:code-reviewer', projectDir: '/test/project' });
+
+      expect(result.useProxy).toBe(true);
+      expect(result.model).toBe('openrouter/deepseek/deepseek-chat');
+      expect(result.proxyUrl).toBe('http://localhost:8473');
     });
   });
 

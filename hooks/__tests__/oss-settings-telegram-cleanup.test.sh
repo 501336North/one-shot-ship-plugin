@@ -18,6 +18,7 @@ unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CLEANUP="$ROOT/hooks/oss-settings-cleanup.sh"
 source "$ROOT/hooks/__tests__/lib/session-start-alias.sh"
+source "$ROOT/hooks/__tests__/lib/run-capped.sh"   # the one time cap a test may use (T49)
 SS_DIR=$(mktemp -d); trap 'rm -rf "$SS_DIR"' EXIT
 SS_HOOK=$(session_start_alias "$ROOT/hooks" "$SS_DIR/hooks") || { echo "✗ FAIL: session start alias"; exit 1; }
 RUN=0; FAILED=0
@@ -82,13 +83,30 @@ if [[ "$(jq -c . "$S" 2>/dev/null)" == '{"notifications":"off"}' ]]; then pass "
 else fail "top-level telegram removed when notifications is not an object" "$(cat "$S")"; fi
 rm -rf "$T"
 
-# 6. A symlinked settings.json is refused: link stays a link, its target is untouched
-new_home; printf '%s\n' "$WITH_TELEGRAM" > "$T/target.json"; ln -s "$T/target.json" "$S"
-target_before=$(cat "$T/target.json")
-run_cleanup
-if [[ -L "$S" && "$(cat "$T/target.json")" == "$target_before" && $RC -eq 0 && -z "$OUT" ]]; then pass "symlinked settings.json refused, target untouched"
-else fail "symlinked settings.json refused, target untouched" "link=$([[ -L $S ]] && echo y || echo n) target=$(cat "$T/target.json")"; fi
+# 6. Task 70c: a linked settings.json is cleaned through the link (user: "Follow the link everywhere"): the file it
+#    leads to loses the token, gets a new file renamed in (never half-written) at 600, and the links stay links
+new_home; mkdir -p "$T/dot"; printf '%s\n' "$WITH_TELEGRAM" > "$T/dot/settings.json"; chmod 644 "$T/dot/settings.json"
+ln -s settings.json "$T/dot/hop"; ln -s "$T/dot/hop" "$S"; ino0=$(inode_mode "$T/dot/settings.json"); ino0=${ino0% *}
+run_cleanup; ino1=$(inode_mode "$T/dot/settings.json")
+if [[ -L "$S" && -L "$T/dot/hop" && "$(jq -S . "$T/dot/settings.json" 2>/dev/null)" == "$(printf '%s' "$EXPECTED" | jq -S .)" \
+    && "${ino1% *}" != "$ino0" && "${ino1#* }" == 600 && "$(ls -A "$T/dot" | tr '\n' ' ')" == "hop settings.json " && $RC -eq 0 && -z "$OUT" ]]; then
+    pass "linked settings.json cleaned through the link: links kept, new file, 600, no temp"
+else fail "linked settings.json cleaned through the link: links kept, new file, 600, no temp" "rc=$RC out=$OUT ino=$ino0/$ino1 dot=$(ls -A "$T/dot" | tr '\n' ' ') file=$(cat "$T/dot/settings.json")"; fi
 rm -rf "$T"
+# 6b. a link to nothing, a loop or a link to a FIFO or folder: silent, exit 0, nothing written, never a hang
+for what in 'link loop' 'dangling link' 'link to a FIFO' 'link to a folder'; do
+    new_home
+    case $what in
+        'link loop') ln -s "$T/loop" "$S"; ln -s "$S" "$T/loop" ;;
+        'dangling link') ln -s "$T/target" "$S" ;;
+        'link to a FIFO') mkfifo "$T/target"; ln -s "$T/target" "$S" ;;
+        'link to a folder') mkdir "$T/target"; ln -s "$T/target" "$S" ;;
+    esac
+    OUT=$(HOME="$T" run_capped 20 bash "$CLEANUP" 2>/dev/null </dev/null); RC=$?
+    if [[ $RC -eq 0 && -z "$OUT" && -L "$S" && -z "$(find "$T" -name '.*' ! -name .oss | head -1)" ]]; then pass "cleanup leaves a $what alone, silently"
+    else fail "cleanup leaves a $what alone, silently" "rc=$RC out=$OUT left=$(find "$T" -name '.*' | tr '\n' ' ')"; fi
+    rm -rf "$T"
+done
 
 # 7. Invalid JSON is left untouched and the hook still exits 0 silently
 new_home; printf '{"telegram": {"botToken": "x"' > "$S"; chmod 600 "$S"
