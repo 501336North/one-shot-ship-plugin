@@ -93,9 +93,12 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = [
   { name: 'oss-api-key', pattern: /ak_[0-9a-f]{64}/g },
   {
     // The user may be empty (redis://:pw@host) and the password may hold / or @, so it runs to the
-    // LAST @ before the host. The cap keeps a long run of "a://:a://:..." linear.
+    // LAST @ before the host. The cap keeps a long run of "a://:a://:..." linear. A run of NULs (a token that
+    // cleanAndRedactWithRemoved's mask already covers) counts as one character, as the shorter [REDACTED]
+    // does in redactString, so the cap cannot stop short of the @ and leave the rest of the password readable.
     name: 'connection-string-password',
-    pattern: /([a-z][a-z0-9+.-]{0,20}:\/\/[^\s:/@]*:)\S{1,256}(?=@)/gi,
+    // eslint-disable-next-line no-control-regex -- the NUL is maskOf's placeholder, matched on purpose
+    pattern: /([a-z][a-z0-9+.-]{0,20}:\/\/[^\s:/@]*:)(?:\u0000+(?!\u0000)|[^\s\u0000]){1,256}(?=@)/gi,
     keepPrefix: true,
   },
   {
@@ -154,8 +157,13 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = [
 /** Keys whose values are secrets regardless of shape (apiKey-like). */
 const SECRET_KEY_PATTERN = /api[_-]?key|secret|token|password/i;
 
-/** Scrub secret-shaped substrings out of a string, and report each value removed exactly as it was matched. */
-export function redactStringWithRemoved(value: string): { text: string; removed: string[] } {
+const MARKER = '[REDACTED]';
+
+/**
+ * Run every pattern in order and replace each secret value found (a kept prefix stays), reporting each value
+ * exactly as it was matched. Later patterns see the text the earlier replacements left.
+ */
+function applySecretPatterns(value: string, replace: (secret: string) => string): { text: string; removed: string[] } {
   const removed: string[] = [];
   let text = value;
   for (const { pattern, isSecret, keepPrefix } of SECRET_PATTERNS) {
@@ -166,10 +174,15 @@ export function redactStringWithRemoved(value: string): { text: string; removed:
       const secret = match.slice(prefix.length);
       if (isSecret && !isSecret(secret, prefix, atLineEnd, next)) return match;
       removed.push(secret);
-      return `${prefix}[REDACTED]`;
+      return `${prefix}${replace(secret)}`;
     });
   }
   return { text, removed };
+}
+
+/** Scrub secret-shaped substrings out of a string, and report each value removed exactly as it was matched. */
+export function redactStringWithRemoved(value: string): { text: string; removed: string[] } {
+  return applySecretPatterns(value, () => MARKER);
 }
 
 /** Scrub secret-shaped substrings out of a single free-text string. */
@@ -177,15 +190,151 @@ export function redactString(value: string): string {
   return redactStringWithRemoved(value).text;
 }
 
-// C0 controls but tab and newline, DEL, C1, the bidi marks, and the invisible characters that split a
-// token when text is copied from chat or docs (soft hyphen, zero-width space/joiners, word joiner, BOM).
-// Mirrors the API's cleanText, which runs before its redaction.
+// The shared invisible-character list, mirrored exactly in the API's cleanText (AgenticDevWorkflow
+// packages/api/src/services/decisions/redact.ts), which runs before its redaction. Change both together.
+// C0 controls but tab and newline, DEL, C1, every format character (\p{Cf}: soft hyphen, bidi marks,
+// zero-width space/joiners, word joiner, invisible operators, BOM, tags), every default-ignorable code
+// point (combining grapheme joiner, Hangul fillers, variation selectors, reserved ignorables), and the
+// Braille blank (U+2800, not default-ignorable): each can split a token when text is copied from chat
+// or docs.
 // eslint-disable-next-line no-control-regex -- matching control characters is the point
-const UNSAFE_CHARS = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u00AD\u061C\u200B-\u200F\u2060\uFEFF\u202A-\u202E\u2066-\u2069]/g;
+const UNSAFE_CHARS = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\p{Cf}\p{Default_Ignorable_Code_Point}\u2800]/u;
 
-/** Remove invisible and control characters, so a token split by one is whole again before redaction. */
+const REPLACEMENT_CHAR = String.fromCharCode(0xfffd);
+// maskOf's placeholder for a secret code unit. Neither view holds a NUL: both drop the C0 controls.
+const NUL = String.fromCharCode(0);
+const NUL_RUN = new RegExp(`${NUL}+`, 'g');
+
+/** A C0 control but TAB and LF, DEL, or a C1 control: removed from both views. */
+function isControl(code: number): boolean {
+  return code <= 0x08 || (code >= 0x0b && code <= 0x1f) || (code >= 0x7f && code <= 0x9f);
+}
+
+const isHighSurrogate = (code: number): boolean => code >= 0xd800 && code <= 0xdbff;
+const isLowSurrogate = (code: number): boolean => code >= 0xdc00 && code <= 0xdfff;
+
+/** True when the text holds a surrogate half that is not part of a pair. */
+function hasLoneSurrogate(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (isHighSurrogate(code) && i + 1 < value.length && isLowSurrogate(value.charCodeAt(i + 1))) i++;
+    else if (isHighSurrogate(code) || isLowSurrogate(code)) return true;
+  }
+  return false;
+}
+
+interface Views {
+  /** main's old view: controls removed (TAB and LF kept), other invisible characters kept, lone halves as U+FFFD. */
+  kept: string;
+  /** What is stored: the kept view without UNSAFE_CHARS and without the U+FFFD that stand for lone halves. */
+  stored: string;
+  /** For each code unit of stored, its index in kept. */
+  storedFromKept: number[];
+}
+
+/**
+ * Build both views. A lone surrogate half is a U+FFFD in the kept view and gone from the stored view; it is
+ * never left in place, so stripping the character between two halves cannot join them into a new code point
+ * (such as an invisible tag). A U+FFFD that was already in the input is visible text and is kept in both.
+ */
+function buildViews(value: string): Views {
+  const kept: string[] = [];
+  const fromLoneHalf = new Set<number>();
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (isHighSurrogate(code) && i + 1 < value.length && isLowSurrogate(value.charCodeAt(i + 1))) {
+      kept.push(value[i], value[i + 1]);
+      i++;
+    } else if (isHighSurrogate(code) || isLowSurrogate(code)) {
+      fromLoneHalf.add(kept.length);
+      kept.push(REPLACEMENT_CHAR);
+    } else if (!isControl(code)) {
+      kept.push(value[i]);
+    }
+  }
+  const keptText = kept.join('');
+  let stored = '';
+  const storedFromKept: number[] = [];
+  for (let i = 0; i < keptText.length; ) {
+    const char = String.fromCodePoint(keptText.codePointAt(i) as number);
+    if (!fromLoneHalf.has(i) && !UNSAFE_CHARS.test(char)) {
+      stored += char;
+      for (let unit = 0; unit < char.length; unit++) storedFromKept.push(i + unit);
+    }
+    i += char.length;
+  }
+  return { kept: keptText, stored, storedFromKept };
+}
+
+/**
+ * Run the patterns on a view in redaction order, but put a NUL in place of each code unit of a secret value
+ * (so later patterns see a text of the same length), and return a per-code-unit mask: true = secret.
+ */
+function maskOf(view: string): { mask: boolean[]; removed: string[] } {
+  const { text, removed } = applySecretPatterns(view, (secret: string) => NUL.repeat(secret.length));
+  const mask: boolean[] = [];
+  for (let i = 0; i < text.length; i++) mask.push(text.charCodeAt(i) === 0);
+  // A value that held an earlier secret is reported as redaction would report it, with the marker in place.
+  return { mask, removed: removed.map((secret: string) => secret.replace(NUL_RUN, MARKER)) };
+}
+
+/**
+ * Walk the text by code point: a character is masked when any of its code units is, so a mask edge never
+ * splits a surrogate pair or leaves half of one. Each run of masked characters becomes one marker, and the
+ * text of each run is reported as removed.
+ */
+export function collapseMasked(text: string, mask: boolean[]): { text: string; runs: string[] } {
+  let out = '';
+  let run = '';
+  const runs: string[] = [];
+  for (let i = 0; i < text.length; ) {
+    const char = String.fromCodePoint(text.codePointAt(i) as number);
+    const masked = mask[i] || (char.length === 2 && mask[i + 1]);
+    if (masked) {
+      run += char;
+    } else {
+      if (run !== '') {
+        runs.push(run);
+        out += MARKER;
+        run = '';
+      }
+      out += char;
+    }
+    i += char.length;
+  }
+  if (run !== '') {
+    runs.push(run);
+    out += MARKER;
+  }
+  return { text: out, runs };
+}
+
+/**
+ * Remove invisible and control characters (UNSAFE_CHARS) and lone surrogate halves, so a token split by one
+ * is whole again before redaction: the stored view of cleanAndRedactWithRemoved.
+ */
 export function cleanText(value: string): string {
-  return value.replace(UNSAFE_CHARS, '');
+  return buildViews(value).stored;
+}
+
+/**
+ * Clean and redact, mirroring the API's decision redaction. Stripping invisible characters rejoins a token
+ * they split, but it can also glue a word onto the key after it ("word" + U+3164 + "sk-..." reads
+ * "wordsk-...", which the letter look-behinds refuse). So the patterns run on both views: a code unit is
+ * masked when either finds it, by position, so another copy of a value in ordinary text is left alone.
+ * Each run of masked units becomes one [REDACTED] (two secrets that touch become one). Text with no
+ * invisible character comes out as redactString gives it.
+ */
+export function cleanAndRedactWithRemoved(value: string): { text: string; removed: string[] } {
+  // Fast path: text with no control (but TAB and LF), no invisible character and no lone half goes through the
+  // plain redaction unchanged, so plain text, touching secrets included, comes out exactly as before.
+  if (!UNSAFE_CHARS.test(value) && !hasLoneSurrogate(value)) return redactStringWithRemoved(value);
+  const { kept, stored, storedFromKept } = buildViews(value);
+  const keptMask = maskOf(kept).mask;
+  const storedScan = maskOf(stored);
+  const mask = storedFromKept.map((keptIndex: number, i: number) => keptMask[keptIndex] || storedScan.mask[i]);
+  const { text, runs } = collapseMasked(stored, mask);
+  return { text, removed: [...storedScan.removed, ...runs] };
 }
 
 function redactValue(value: unknown): unknown {

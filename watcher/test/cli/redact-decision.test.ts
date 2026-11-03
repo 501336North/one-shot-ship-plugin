@@ -114,7 +114,7 @@ function expectNoSecret(text: unknown, label: string): void {
 describe('redact-decision CLI', () => {
   it('should redact every secret kind from the API-side list, including glued and PGP cases, in every text field of a record', async () => {
     const runRedactDecision = await loadCli();
-    const zeroWidthSplit = `ak_${AK_BODY}`.slice(0, 10) + '​' + `ak_${AK_BODY}`.slice(10);
+    const zeroWidthSplit = `ak_${AK_BODY}`.slice(0, 10) + '\u200B' + `ak_${AK_BODY}`.slice(10);
     const stringChoice = {
       ...baseRecord(),
       question: `Should we rotate the deploy token ${ghToken(GH_BODY_1)}${ghToken(GH_BODY_2)} before launch?`,
@@ -360,6 +360,93 @@ describe('redact-decision CLI', () => {
     expect(result.stdout).toBe('');
     expect(result.stderr).toContain('redact-decision');
     expect(result.stderr, 'the error must not echo the bad line').not.toContain(GH_BODY_2);
+  });
+
+  // Special characters are built from code points so the source holds no invisible or unpaired character.
+  const ch = (codePoint: number): string => String.fromCodePoint(codePoint);
+  const questionOut = (runRedactDecision: RunRedactDecision, question: string): string => {
+    const result = runRedactDecision(`${JSON.stringify({ ...baseRecord(), question })}\n`);
+    expect(result.exitCode).toBe(0);
+    return (JSON.parse(result.stdout) as { question: string }).question;
+  };
+
+  it.each([
+    { name: 'U+200B zero-width space', codePoint: 0x200b },
+    { name: 'U+0001 control character', codePoint: 0x0001 },
+  ])('should redact a GitHub token split by two unpaired surrogate halves around a $name', async ({ codePoint }) => {
+    // A high half, a stripped character and a low half: stripping the middle alone would join the halves into
+    // U+E0020 (an invisible tag) after the strip had passed, and the tag would split the token. The halves are
+    // deleted first, so nothing is left between the two parts of the token.
+    const runRedactDecision = await loadCli();
+    const token = ghToken(GH_BODY_1);
+    const injected = `${token.slice(0, 10)}${ch(0xdb40)}${ch(codePoint)}${ch(0xdc20)}${token.slice(10)}`;
+
+    const out = questionOut(runRedactDecision, `rotate ${injected} now`);
+
+    expect(out).toBe('rotate [REDACTED] now');
+    expect(out, 'no U+E0020 tag may be formed').not.toContain(ch(0xe0020));
+    expect(out, 'no replacement character may be left').not.toContain(ch(0xfffd));
+  });
+
+  it('should remove an unpaired surrogate half that stands on its own', async () => {
+    const runRedactDecision = await loadCli();
+
+    expect(questionOut(runRedactDecision, `a${ch(0xd800)}b c${ch(0xdc00)}d`)).toBe('ab cd');
+  });
+
+  it('should keep a real surrogate pair such as an emoji untouched', async () => {
+    const runRedactDecision = await loadCli();
+    const question = `Ship it ${ch(0x1f600)} today?`;
+
+    expect(questionOut(runRedactDecision, question)).toBe(question);
+  });
+
+  const HANGUL_FILLERS = [
+    { name: 'U+115F Hangul choseong filler', codePoint: 0x115f },
+    { name: 'U+1160 Hangul jungseong filler', codePoint: 0x1160 },
+    { name: 'U+3164 Hangul filler', codePoint: 0x3164 },
+    { name: 'U+FFA0 halfwidth Hangul filler', codePoint: 0xffa0 },
+  ];
+
+  it.each(HANGUL_FILLERS)('should redact an sk- key glued to a word by $name, and leave no filler behind', async ({ codePoint }) => {
+    // The filler looks like a space: deleting it first would glue "word" onto the key.
+    const runRedactDecision = await loadCli();
+
+    const out = questionOut(runRedactDecision, `word${ch(codePoint)}sk-${SK_BODY_1}`);
+
+    expect(out).toBe('word[REDACTED]');
+    expect(out).not.toContain(SK_BODY_1.slice(-8));
+  });
+
+  it.each(HANGUL_FILLERS)('should redact a pass= value that $name separates from "by", and leave no filler behind', async ({ codePoint }) => {
+    // Deleting the filler first would read "bypass=", a word the key-name rule refuses on purpose.
+    const runRedactDecision = await loadCli();
+    const value = 'Hx7Vq2' + 'Lm9Rt4';
+
+    const out = questionOut(runRedactDecision, `by${ch(codePoint)}pass=${value}`);
+
+    expect(out).toBe('bypass=[REDACTED]');
+    expect(out).not.toContain(value);
+  });
+
+  it('should redact the shortest assigned value (6 characters) that a Hangul filler separates from "by"', async () => {
+    const runRedactDecision = await loadCli();
+
+    const out = questionOut(runRedactDecision, `by${ch(0x3164)}pass=${'abc' + '123'}`);
+
+    expect(out).toBe('bypass=[REDACTED]');
+  });
+
+  it.each(HANGUL_FILLERS)('should redact the whole of a long sk- key that $name splits after its first 24 characters', async ({ codePoint }) => {
+    // Redacting with the filler kept would stop the key at the filler and leave the tail readable.
+    const runRedactDecision = await loadCli();
+    const tail = 'TAIL' + '9xyz';
+
+    const out = questionOut(runRedactDecision, `x sk-${SK_BODY_1}${ch(codePoint)}${tail} end`);
+
+    expect(out).not.toContain(tail);
+    expect(out).toContain('[REDACTED]');
+    expect(out).not.toContain(ch(codePoint));
   });
 });
 
