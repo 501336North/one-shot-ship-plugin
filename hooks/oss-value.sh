@@ -24,6 +24,8 @@
 #                                   GET /api/v1/auth/verify, /api/v1/workflows, or /api/v1/workflows/<workflow.txt>/editor
 #                                   with the configured key on curl's stdin; print only what /oss:status and
 #                                   /oss:workflows display (T60).
+#   oss-value.sh usage              GET /api/v1/analytics/usage the same way; print this month's total and the 10 most
+#                                   used command types, or one "Usage: unavailable right now" line and rc 0 (T69).
 # (Saving the API key is hooks/oss-login.sh, NOT a verb here: this script is allowlisted, a key
 # change must always ask - R5-8. oss-login.sh sources this file for its functions.)
 # Each value hand-off is ONE call spelled ~/.oss/hooks/oss-value.sh <verb> (the allowed prefix): a
@@ -43,7 +45,7 @@ if [[ ! -f "$_OV_HERE/oss-safe-path.sh" ]]; then
 fi
 source "$_OV_HERE/oss-safe-path.sh"
 
-_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args> | status | workflows | workflow" >&2; exit 2; }
+_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args> | status | usage | workflows | workflow" >&2; exit 2; }
 
 _OV_RUN="$HOME/.oss/run"
 
@@ -172,14 +174,32 @@ _ov_cmd_cli() {
     exec node "$_OV_ROOT/watcher/dist/cli/$1.js" "${@:2}"
 }
 
-# <verb> <path> <jq filter>: GET <path> from the API the OSS config names, the key from the same read
+# <verb> <path> <jq filter> <js>: GET <path> from the API the OSS config names, the key from the same read
 # (oss_api_creds) on curl's stdin (oss_api_curl, never argv); print the 200 body through <filter> (one JSON
 # object; C0 and OSS_JQ_INVISIBLE stripped from every string), so /oss:status and /oss:workflows run one
 # allowed call and never handle the key (T60).
+# Without jq (optional at session start), node runs <js>, the same filter: a function body of o (the one JSON
+# object) returning the lines to print, with h (jq's .k: null on null, an error on a non-object), d (jq's // ""),
+# t (jq's truthiness), c and cl as in jq. c strips C0 and the oss_invisible set (oss-api-curl.sh, T45, T52) after
+# tostring (JSON.stringify, with DEL escaped as jq's tojson does). L first turns lone surrogate halves into U+FFFD
+# (a no-u regex), so a strip between a lone high and a lone low half cannot join them into an astral invisible (T52b).
+# Neither: one line saying how to get jq (T64).
+_OV_JS_PRE='const S=new RegExp("[\\u0000-\\u001f\\u007f-\\u009f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069\\u2028\\u2029\\p{Cf}\\ufe00-\\ufe0f\\u{e0100}-\\u{e01ef}\\u034f\\u115f\\u1160\\u3164\\uffa0\\u2800\\p{Default_Ignorable_Code_Point}]","gu"),
+    L=new RegExp("[\\ud800-\\udbff](?![\\udc00-\\udfff])|(?<![\\ud800-\\udbff])[\\udc00-\\udfff]","g");
+const h=(v,k)=>{if(v===null)return null;if(typeof v!=="object"||Array.isArray(v))throw 0;return Object.prototype.hasOwnProperty.call(v,k)?v[k]:null;};
+const t=v=>v!==null&&v!==false, d=v=>t(v)?v:"";
+const c=v=>(typeof v==="string"?v:JSON.stringify(v).replace(new RegExp("\\x7f","g"),"\\u007f")).replace(L,"\ufffd").replace(S,"");
+const cl=v=>typeof v==="string"?c(v):Array.isArray(v)?v.map(cl):v!==null&&typeof v==="object"?Object.fromEntries(Object.entries(v).map(([k,x])=>[c(k),cl(x)])):v;
+let o;try{o=JSON.parse(require("fs").readFileSync(0,"utf8"));}catch(e){process.exit(1);}
+if(o===null||typeof o!=="object"||Array.isArray(o))process.exit(1);
+let r;try{r=(o=>{'
+_OV_JS_POST='})(o);}catch(e){process.exit(1);}
+process.stdout.write(r.map(x=>x+"\n").join(""));'
 _ov_api() {
     local r code body
-    source "$_OV_HERE/oss-api-curl.sh" 2>/dev/null && command -v jq >/dev/null \
-    || { echo "oss-value: $1: oss-api-curl.sh or jq missing" >&2; return 1; }
+    source "$_OV_HERE/oss-api-curl.sh" 2>/dev/null || { echo "oss-value: $1: oss-api-curl.sh missing" >&2; return 1; }
+    command -v jq >/dev/null || command -v node >/dev/null \
+    || { echo "oss-value: $1: this needs jq (or node), and neither is installed. Install jq (brew install jq) or ask your admin" >&2; return 1; }
     oss_api_creds
     case $OSS_URL_RC in
         0) ;;
@@ -191,26 +211,52 @@ _ov_api() {
     || { echo "oss-value: $1: could not reach the API at $OSS_URL" >&2; return 1; }
     code=${r##*$'\n'}; body=${r%$'\n'*}
     [[ "$code" == 200 ]] || { echo "oss-value: $1: the API answered HTTP $code (401: run /oss:login; 403: subscription expired)" >&2; return 1; }
-    printf '%s' "$body" | jq -rs "$OSS_JQ_INVISIBLE"'def c: tostring | gsub("[\u0000-\u001f" + oss_invisible + "]"; "");
+    if command -v jq >/dev/null; then
+        printf '%s' "$body" | jq -rs "$OSS_JQ_INVISIBLE"'def c: tostring | gsub("[\u0000-\u001f" + oss_invisible + "]"; "");
         def cl: if type == "string" then c elif type == "array" then map(cl) elif type == "object" then with_entries(.key |= c | .value |= cl) else . end;
-        if length == 1 and (.[0] | type) == "object" then .[0] | '"$3"' else error("not one JSON object") end' 2>/dev/null \
-    || { echo "oss-value: $1: the API sent an answer that is not the expected JSON" >&2; return 1; }
+        if length == 1 and (.[0] | type) == "object" then .[0] | '"$3"' else error("not one JSON object") end'
+    else
+        printf '%s' "$body" | node -e "$_OV_JS_PRE$4$_OV_JS_POST"
+    fi 2>/dev/null || { echo "oss-value: $1: the API sent an answer that is not the expected JSON" >&2; return 1; }
 }
 
+_OV_JS_STATUS='return ["Account: "+c(d(h(o,"email"))), "Plan: "+c(d(h(o,"plan"))), "Status: "+c(d(h(o,"subscriptionStatus")))]
+    .concat(t(h(o,"trialEndsAt")) ? ["Trial ends: "+c(h(o,"trialEndsAt"))] : []);'
 _ov_cmd_status() {
     _ov_api status /api/v1/auth/verify '"Account: \(.email // "" | c)", "Plan: \(.plan // "" | c)", "Status: \(.subscriptionStatus // "" | c)",
-        (if .trialEndsAt then "Trial ends: \(.trialEndsAt | c)" else empty end)'
+        (if .trialEndsAt then "Trial ends: \(.trialEndsAt | c)" else empty end)' "$_OV_JS_STATUS"
 }
 
+# usage (T69): the route's fields (AgenticDevWorkflow analytics.ts:211-216), most used type first, at most 10 lines
+# of types. Best-effort: any failure (no key, HTTP error, timeout, not the expected JSON) is one honest line and rc 0,
+# so /oss:status still shows the account section.
+_OV_JS_USAGE='const n=h(o,"totalCommands"), b=h(o,"commandsByType"), p=h(o,"periodStart");
+    if (typeof n!=="number"||b===null||typeof b!=="object"||Array.isArray(b)||!Object.values(b).every(x=>typeof x==="number")) throw 0;
+    const e=Object.entries(b).sort((x,y)=>y[1]-x[1]||(x[0]<y[0]?-1:x[0]>y[0]?1:0));
+    return ["Total commands: "+n+(t(p)?" (since "+Array.from(c(p)).slice(0,10).join("")+")":"")]
+        .concat(e.slice(0,10).map(([k,v])=>"  "+c(k)+": "+v), e.length>10?["  ("+(e.length-10)+" more command types)"]:[]);'
+_ov_cmd_usage() {
+    local o
+    o=$(_ov_api usage /api/v1/analytics/usage 'if (.totalCommands | type) == "number" and (.commandsByType | type) == "object" and all(.commandsByType[]; type == "number")
+        then "Total commands: \(.totalCommands)\(if .periodStart then " (since \(.periodStart | c | .[0:10]))" else "" end)",
+            (.commandsByType | to_entries | sort_by(-.value, .key) | (.[:10][] | "  \(.key | c): \(.value)"), (if length > 10 then "  (\(length - 10) more command types)" else empty end))
+        else error("not the usage fields") end' "$_OV_JS_USAGE" 2>/dev/null) && printf '%s\n' "$o" || echo "Usage: unavailable right now"
+}
+
+_OV_JS_WORKFLOWS='const w=h(o,"workflows");
+    if (w===null||typeof w!=="object") throw 0;
+    return (Array.isArray(w)?w:Object.values(w)).map(x=>c(h(x,"name"))+" "+(h(x,"customized")===true?"CUSTOM":"DEFAULT"));'
 _ov_cmd_workflows() {
-    _ov_api workflows /api/v1/workflows '.workflows[] | "\(.name | c) \(if .customized == true then "CUSTOM" else "DEFAULT" end)"'
+    _ov_api workflows /api/v1/workflows '.workflows[] | "\(.name | c) \(if .customized == true then "CUSTOM" else "DEFAULT" end)"' "$_OV_JS_WORKFLOWS"
 }
 
 # workflow: the name from workflow.txt (the read rule; argv is never used), its plain editor config.
+_OV_JS_WORKFLOW='const f={}; for (const k of ["name","chain","agents","parallel_agents","task_loop","quality_gates","on_pass","checkpoint"]) f[k]=h(o,k);
+    return [JSON.stringify(cl(f),null,2)];'
 _ov_cmd_workflow() {
     _ov_dir && _ov_get workflow \
     || { echo "oss-value: workflow: refused (workflow.txt missing, unsafe or not a valid workflow name)" >&2; return 1; }
-    _ov_api workflow "/api/v1/workflows/$_OV_VAL/editor" '{name, chain, agents, parallel_agents, task_loop, quality_gates, on_pass, checkpoint} | cl'
+    _ov_api workflow "/api/v1/workflows/$_OV_VAL/editor" '{name, chain, agents, parallel_agents, task_loop, quality_gates, on_pass, checkpoint} | cl' "$_OV_JS_WORKFLOW"
 }
 
 _ov_cmd_agent() {
@@ -277,6 +323,7 @@ case "${1:-}" in
     models-set) _ov_cmd_models_set ;;
     cli) shift; _ov_cmd_cli "$@" ;;
     status) _ov_cmd_status ;;
+    usage) _ov_cmd_usage ;;
     workflows) _ov_cmd_workflows ;;
     workflow) _ov_cmd_workflow ;;
     *) _ov_usage ;;

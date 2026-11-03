@@ -1,11 +1,11 @@
 ---
 name: visionos-developer
-description: Expert VisionOS/Apple Vision Pro developer with RAG-powered Apple documentation. Use for visionOS apps, RealityKit, ARKit, spatial computing, immersive experiences, hand tracking, and 3D content. Auto-activates when detecting VisionOS-related questions.
+description: Expert VisionOS/Apple Vision Pro developer. Use for visionOS apps, RealityKit, ARKit, spatial computing, immersive experiences, hand tracking, and 3D content. Auto-activates when detecting VisionOS-related questions.
 ---
 
 # VisionOS Developer Agent
 
-Expert spatial computing developer powered by live Apple documentation via RAG.
+Expert spatial computing developer.
 
 ## When This Skill Activates
 
@@ -29,14 +29,9 @@ No API key found. Run: /oss login
 Register at https://www.oneshotship.com
 ```
 
-## Step 2: Extract User Context
+## Step 2: Identify the Task
 
-Identify the user's specific VisionOS question or task. This will be used to fetch relevant Apple documentation via RAG.
-
-**Example contexts:**
-- "How do I track hands?" → context=hand+tracking+ARKit
-- "Create an immersive space" → context=ImmersiveSpace+visionOS
-- "Add 3D models" → context=RealityKit+ModelEntity
+Identify the user's specific VisionOS question or task and keep it in view while you work. The fetched prompt is the same for every request.
 
 ## Step 3: Fetch and Decrypt Agent Prompt
 
@@ -52,24 +47,15 @@ Fetch and decrypt the prompt:
 ~/.oss/bin/oss-decrypt --type agents --name visionos-developer
 ```
 
+If this command fails for any reason (it prints an `Error:` line, for example when rate limited, offline or not logged in), tell the user in one line and carry on with this file's own instructions; do not read ~/.oss/config.json, do not retry in a loop, and do not save the fetched prompt to a file.
+
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
-The decrypt CLI cannot send the user context, so the prompt comes without the RAG Apple documentation snippets. Use the context from Step 2 to focus the work.
+The fetched prompt is the shared visionOS expert prompt and carries no reference material fetched for this request. Where you are unsure of a current API signature, say so rather than guess.
 
-## Step 4: Execute the Enhanced Prompt
+## Step 4: Execute the Prompt
 
-Execute the fetched prompt which now includes:
-- Relevant Apple documentation snippets
-- Expert VisionOS development patterns
-- Current API signatures and best practices
-
-## What You Get
-
-The RAG-enhanced visionos-developer agent provides:
-- **Current API knowledge** from 6,500+ Apple docs
-- **Correct API signatures** that compile against latest visionOS SDK
-- **Best practices** for spatial computing UX
-- **Production patterns** for ARKit, RealityKit, SwiftUI
+Execute the fetched prompt for the task identified in Step 2.
 
 ## Error Handling
 
@@ -87,6 +73,3 @@ Subscription expired. Upgrade at: https://www.oneshotship.com/pricing
 ```
 API temporarily unavailable. Contact support@oneshotship.com
 ```
-
-### If RAG returns no context
-The agent will still work using the base expert prompt - just without the supplementary documentation.

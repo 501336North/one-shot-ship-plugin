@@ -11,7 +11,10 @@ set -uo pipefail
 unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CHANGELOG_SCRIPT="$SCRIPT_DIR/../oss-changelog.sh"
+# HOOKS_UNDER_TEST=/path/to/hooks-copy runs these tests against a copy (mutants).
+CHANGELOG_SCRIPT="${HOOKS_UNDER_TEST:-$SCRIPT_DIR/..}/oss-changelog.sh"
+# shellcheck source=lib/run-capped.sh
+source "$SCRIPT_DIR/lib/run-capped.sh"
 
 # Test tracking
 TESTS_RUN=0
@@ -259,6 +262,78 @@ test_missing_state_file() {
 }
 
 # =============================================================================
+# T53b: the state file is only read as a regular file
+#
+# @behavior A symlink or a FIFO at ~/.oss/update-state.json counts as no state: /oss:changelog shows the
+#           first-run baseline, never what the link points to, never hangs and never prints an error.
+# @business-rule State in ~/.oss is trusted only as a regular file (oss_is_regular, T32/T53).
+# =============================================================================
+
+# run_odd_state DIR: one capped run against DIR's sandbox (HOME, config, plugin.json and a local manifest that
+# names the linked prompt). Sets RC, OUT (stdout) and ERR (stderr).
+run_odd_state() {
+    local d="$1"
+    printf '{"prompts":{"linked/prompt":{"hash":"new"}}}\n' > "$d/manifest.json"
+    mkdir -p "$d/home"
+    run_capped 10 env HOME="$d/home" OSS_CONFIG_DIR="$d/config" OSS_PLUGIN_JSON="$d/plugin/plugin.json" \
+        OSS_MOCK_MANIFEST="$d/manifest.json" "$CHANGELOG_SCRIPT" > "$d/out" 2> "$d/err" </dev/null
+    RC=$?
+    OUT=$(cat "$d/out"); ERR=$(cat "$d/err")
+}
+# The baseline and none of the linked values: no version, no check time, no prompt from the link.
+shows_baseline_only() {
+    [[ $RC == 0 && -z "$ERR" && "$OUT" == *"Plugin: v2.0.45 (first run — no previous state)"* \
+       && "$OUT" != *"9.9.9-linked"* && "$OUT" != *"LINKED-CHECK-TIME"* && "$OUT" != *"Last checked"* \
+       && "$OUT" != *"linked/prompt"* ]]
+}
+
+test_state_symlink() {
+    local test_name="A symlinked update-state.json is never read: first-run baseline, no linked values (T53b)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env); mkdir -p "$d/outside"
+    printf '%s\n' '{"lastPluginVersion":"9.9.9-linked","lastCheckedAt":"LINKED-CHECK-TIME","manifestHashes":{"linked/prompt":"old"}}' \
+        > "$d/outside/state.json"
+    ln -s "$d/outside/state.json" "$d/config/update-state.json"
+    run_odd_state "$d"
+    if shows_baseline_only; then
+        pass "$test_name"
+    else
+        fail "$test_name" "rc=0, first-run baseline, nothing from the link, no stderr" "rc=$RC err='$ERR' out='$OUT'"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_state_fifo() {
+    local test_name="A FIFO at update-state.json: no hang, first-run baseline, no error (T53b)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    mkfifo "$d/config/update-state.json"
+    run_odd_state "$d"
+    if shows_baseline_only; then
+        pass "$test_name"
+    else
+        fail "$test_name" "rc=0 (124/125 = hung), first-run baseline, no stderr" "rc=$RC err='$ERR' out='$OUT'"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_no_helper() {
+    local test_name="Without oss-api-curl.sh beside it: no error, a regular state counts as none (T53b)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env); mkdir -p "$d/hooks"
+    cp "$CHANGELOG_SCRIPT" "$d/hooks/"
+    printf '%s\n' '{"lastPluginVersion":"9.9.9-linked","lastCheckedAt":"LINKED-CHECK-TIME"}' > "$d/config/update-state.json"
+    local saved="$CHANGELOG_SCRIPT"; CHANGELOG_SCRIPT="$d/hooks/oss-changelog.sh"
+    run_odd_state "$d"; CHANGELOG_SCRIPT="$saved"
+    if shows_baseline_only; then
+        pass "$test_name"
+    else
+        fail "$test_name" "rc=0, first-run baseline, no stderr" "rc=$RC err='$ERR' out='$OUT'"
+    fi
+    cleanup_test_env "$d"
+}
+
+# =============================================================================
 # Run all tests
 # =============================================================================
 echo "Running changelog tests..."
@@ -268,6 +343,9 @@ test_display_changed_prompts
 test_display_version_change
 test_no_updates
 test_missing_state_file
+test_state_symlink
+test_state_fifo
+test_no_helper
 
 echo ""
 echo "======================================="

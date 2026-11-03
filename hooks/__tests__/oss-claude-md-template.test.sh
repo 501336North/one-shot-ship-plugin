@@ -235,5 +235,32 @@ run_tpl OSS_ALLOW_HTTP_LOOPBACK=1
 [[ "$RC" == 0 && "$OUT" == "$INVCLEAN" ]] && pass "U+2028/2029, BOM, soft hyphen, U+061C, word joiner and tag characters are stripped" \
     || fail "U+2028/2029 and format characters (Cf) are stripped" "rc=$RC out=$(printf '%s' "$OUT" | od -c | head -8) err=$ERR"
 
+# 13. (T52) Variation selectors (U+FE00-FE0F, U+E0100-E01EF), U+034F and the invisible fillers (U+115F, U+1160,
+# U+3164, U+FFA0, U+2800) are stripped too. Plain emoji (U+2764, U+1F600) and the visible neighbours U+FE10,
+# U+2801, U+3165, U+FFA1, U+0350, U+115E are kept, as are tab and newline.
+VSBODY=$'# OSS\n\ta\xef\xb8\x80b\xef\xb8\x87c\xef\xb8\x8fd\xf3\xa0\x84\x80e\xf3\xa0\x85\x90f\xf3\xa0\x87\xafg\xcd\x8fh\xe1\x85\x9fi\xe1\x85\xa0j\xe3\x85\xa4k\xef\xbe\xa0l\xe2\xa0\x80m \xe2\x9d\xa4\xf0\x9f\x98\x80 keep:\xef\xb8\x90\xe2\xa0\x81\xe3\x85\xa5\xef\xbe\xa1\xcd\x90\xe1\x85\x9e end'
+VSCLEAN=$'# OSS\n\tabcdefghijklm \xe2\x9d\xa4\xf0\x9f\x98\x80 keep:\xef\xb8\x90\xe2\xa0\x81\xe3\x85\xa5\xef\xbe\xa1\xcd\x90\xe1\x85\x9e end'
+fresh 200 "$VSBODY"; cfg "$H/.oss" "$LOCAL"
+run_tpl OSS_ALLOW_HTTP_LOOPBACK=1
+[[ "$RC" == 0 && "$OUT" == "$VSCLEAN" ]] && pass "variation selectors, U+034F and invisible fillers are stripped; plain emoji and neighbours kept" \
+    || fail "variation selectors, U+034F and invisible fillers are stripped" "rc=$RC out=$(printf '%s' "$OUT" | od -c | head -8) err=$ERR"
+
+# 14. (T52b) The shared set, \p{Default_Ignorable_Code_Point}: U+17B4, U+180B, U+2065, U+FFF0, U+E0000 and U+E0FFF
+# are stripped; Hangul and CJK are kept. An older jq (Oniguruma without the property; the shim renames it so the
+# real one rejects it) falls back to the T52 list: the template still prints, with no error.
+DIBODY=$'# OSS\n\ta\xe1\x9e\xb4b\xe1\xa0\x8bc\xe2\x81\xa5d\xef\xbf\xb0e\xf3\xa0\x80\x80f\xf3\xa0\xbf\xbfg \xed\x95\x9c\xe4\xb8\xad end'
+DICLEAN=$'# OSS\n\tabcdefg \xed\x95\x9c\xe4\xb8\xad end'
+fresh 200 "$DIBODY"; cfg "$H/.oss" "$LOCAL"
+run_tpl OSS_ALLOW_HTTP_LOOPBACK=1
+[[ "$RC" == 0 && "$OUT" == "$DICLEAN" ]] && pass "default-ignorable characters are stripped; Hangul and CJK kept" \
+    || fail "default-ignorable characters are stripped" "rc=$RC out=$(printf '%s' "$OUT" | od -c | head -8) err=$ERR"
+mkdir -p "$T/oldjq"
+warm_stub "$T/oldjq/jq" "a=(); for x in \"\$@\"; do a+=(\"\${x//Default_Ignorable_Code_Point/Default_Ignorable_Code_PointX}\"); done
+exec '$(command -v jq)' \"\${a[@]}\"" || abort "the old-jq shim warms up" "warm-up did not run"
+fresh 200 $'# OSS\n\ta\xe2\x80\x8bb\xe1\x9e\xb4c end'; cfg "$H/.oss" "$LOCAL"
+run_tpl OSS_ALLOW_HTTP_LOOPBACK=1 PATH="$T/oldjq:$T/bin:$PATH"
+[[ "$RC" == 0 && "$OUT" == $'# OSS\n\tab\xe1\x9e\xb4c end' && -z "$ERR" ]] && pass "old jq: the T52 list still applies (U+200B stripped, U+17B4 kept), no error" \
+    || fail "old jq: falls back to the T52 list" "rc=$RC out=$(printf '%s' "$OUT" | od -c | head -8) err=$ERR"
+
 echo "Results: $((RUN - FAILED))/$RUN passed, $FAILED failed"
 [[ $FAILED -eq 0 ]]

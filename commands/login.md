@@ -168,6 +168,8 @@ This script is the **only** writer of the IRON LAWS block. Do not write, copy or
 
 It takes no arguments. It sends the key from the OSS config only to the API that config's `apiUrl` names (the API the key was just checked against), and prints the template to stdout. Do not fetch the template any other way.
 
+If it prints `No such file or directory`, the plugin was updated after this session started and `~/.oss/hooks` does not have this hook yet: skip 4.3, show only this line: `Your OSS hooks are older than the plugin; restart Claude Code (or start a new session) to update them.` (not the message below), and go on to Step 5.
+
 **If it exits non-zero, skip 4.3** (do not create or edit CLAUDE.md beyond what 4.1 wrote), tell the user "The CLAUDE.md project guidelines were not updated: {stderr reason}. Run /oss:login again to retry.", and go on to Step 5.
 
 Remove the placeholder line `<!-- IRON LAWS will be injected here by /oss:login -->` from the template. The block from 4.1 replaces it; never inject the laws into the template.

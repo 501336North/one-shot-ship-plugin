@@ -24,7 +24,10 @@ _ov_cmd_login() {
     # on GNU, whose getopt permutes).
     mkdir -p -- "${c%/*}"
     # The key reaches jq on stdin (--rawfile), never in argv, which ps shows to every local user (security r3 F3).
-    if test -f "$c"; then u=$(printf '%s' "$k" | jq --rawfile key /dev/stdin '.apiKey = $key' -- "$c")
+    # The key is saved with the URL it was checked against ($a), even if apiUrl changed since (T51). A config with no
+    # apiUrl (or null/"") that was checked against the default keeps none: the default is not pinned into it.
+    if test -f "$c"; then u=$(printf '%s' "$k" | jq --rawfile key /dev/stdin --arg url "$a" --arg dflt "$(oss_api_url_check '')" \
+        '.apiKey = $key | if (.apiUrl // "") == "" and $url == $dflt then . else .apiUrl = $url end' -- "$c")
     else u=$(printf '%s' "$k" | jq -n --rawfile key /dev/stdin --arg url "$a" '{"apiKey": $key, "apiUrl": $url}'); fi && test -n "$u" \
     || { echo "Error: could not update $c (not valid JSON, or jq missing); it was left as it was." >&2; return 1; }
     t=$(mktemp -- "$c.XXXXXX") && printf '%s\n' "$u" > "$t" && chmod -- 600 "$t" && mv -f -- "$t" "$c" \

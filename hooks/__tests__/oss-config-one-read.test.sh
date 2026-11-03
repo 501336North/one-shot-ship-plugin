@@ -85,7 +85,9 @@ warm_stub "$KS/pluginN/hooks/oss-log.sh" 'exit 0' || WARM=n
 mode_path() { case "$1" in (jq) printf '%s' "$KS/jqbin:$KS/bin:$PATH" ;; (*) printf '%s' "$KS/bin:$KS/nojq" ;; esac; }
 
 # site <name> <mode> [config] : runs one hook as its caller does, config = document A unless given; sets OUT and
-# PAIRS (one line per keyed request). The run waits for detached jobs through fd 3.
+# PAIRS (one line per keyed request). The run waits for detached jobs through fd 3, a pipe to `cat` inside the
+# capped group, so it ends at EOF, once they have exited (T65b; outside the group, run_capped killed a job still
+# running 2 s after the hook, such as oss-notify.sh's detached analytics call).
 site() {
     SHIM=$(mktemp -d "$KS/s.XXXXXX"); mkdir -p "$SHIM/home/.oss" "$SHIM/proj"
     printf '%s' "${3:-$DOC_A}" > "$SHIM/home/.oss/config.json"
@@ -110,9 +112,10 @@ site() {
             : > "$SHIM/swap-each"; IN="$SCRIPT_DIR/fixtures/ask-user-question/pick.json"
             cmd=(/bin/bash "$HOOKS/oss-decision-record.sh") ;;
     esac
-    OUT=$(cd "$SHIM/proj" && run_capped 60 env -u OSS_SKIP_HEALTH_CHECK -u CLAUDE_CODE_SESSION_ID -u OSS_RUN_HEALTH_CHECK \
+    OUT=$(cd "$SHIM/proj" && run_capped 60 /bin/bash -c '"$@" 2>&1 3>&1 | cat' _ \
+        env -u OSS_SKIP_HEALTH_CHECK -u CLAUDE_CODE_SESSION_ID -u OSS_RUN_HEALTH_CHECK \
         SHIM="$SHIM" HOME="$SHIM/home" CLAUDE_PLUGIN_ROOT="$root" CLAUDE_PROJECT_DIR="$SHIM/proj" PATH="$(mode_path "$2")" \
-        "${cmd[@]}" <"$IN" 2>&1 3>&1)
+        "${cmd[@]}" <"$IN" 2>&1)
     PAIRS=$(cat "$SHIM/pairs" 2>/dev/null)
 }
 

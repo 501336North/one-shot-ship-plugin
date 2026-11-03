@@ -25,6 +25,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT="$ROOT/hooks/oss-decisions-policy.sh"
 # shellcheck source=hooks/__tests__/fake-oss-api.sh
 source "$ROOT/hooks/__tests__/fake-oss-api.sh"
+source "$ROOT/hooks/__tests__/lib/run-capped.sh"   # the one time cap a test may use (T49)
 RUN=0; FAILED=0
 pass() { echo "✓ PASS: $1"; RUN=$((RUN + 1)); }
 fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
@@ -279,6 +280,55 @@ name='should show off in status when only the off marker says so'
 reset; : > "$MK"; chmod 600 "$MK"; answer '200 {"pushEnabled":true,"team":false}'; policy status
 [[ $RC -eq 0 && "$OUT" == "$OFF; you are not in a team" ]] && pass "$name" || fail "$name" "rc=$RC out=$OUT"
 rm -f "$MK"
+
+# Task 67: a FIFO under ~/.oss cannot hang status, and never makes it say on
+# @behavior A person runs /oss:settings decisions status while a file under ~/.oss is a FIFO (or settings.json is
+#           a symlink); status still answers in one line, and never says the push is on for them.
+# @business-rule Fail closed (#214 Task 16al): anything at the off marker reads off and is never opened; a
+#           settings.json that is not a regular file cannot be read, and that is off; a refusal note that cannot
+#           be read is simply not shown.
+# shellcheck disable=SC2088 # the ~ is text for the person, never expanded
+LINKED="Decision push: off for you on this machine, because ~/.oss/settings.json is a link, not a file; dotfiles managers make these, and pushing stays off until it is a plain file (answers stay in your repo only)"
+name='should answer status, off for you, with no hang when a FIFO or a symlink stands in a switch file'
+for c in "fifo marker|$MK|$OFF" "fifo settings|$H/.oss/settings.json|$UNREAD" "symlinked settings|$H/.oss/settings.json|$LINKED" \
+         "fifo refusal note|$H/.oss/decisions-refusal.json|$ON and on for your team (answers are sent redacted to OSS)"; do
+    IFS='|' read -r what at want <<< "$c"
+    reset
+    case $what in
+        fifo*) mkfifo "$at" ;;
+        symlinked*) printf '{"decisionsPush":true}\n' > "$T/real-settings"; ln -s "$T/real-settings" "$at" ;;
+    esac
+    [[ $what == 'fifo refusal note' ]] || want+="; your team's setting is on"
+    answer '200 {"pushEnabled":true,"team":true}'
+    OUT=$(HOME="$H" PATH="$API/bin:$PATH" run_capped 20 "$SCRIPT" status 2>"$T/err" </dev/null); RC=$?
+    [[ $RC -eq 0 && "$OUT" == "$want" ]] && pass "$name ($what)" || fail "$name ($what)" "rc=$RC out=$OUT"
+    rm -f "$at"
+done
+
+# Task 68: status says when settings.json is a link, and only then
+# @behavior A person whose dotfiles manager (stow, chezmoi, yadm) links ~/.oss/settings.json runs /oss:settings
+#           decisions status and reads that the push is off for them because the file is a link, not a file.
+#           A FIFO or a file that is not exactly one JSON object still reads "could not be read".
+# @business-rule Fail closed (dev-15, T67): a linked settings.json is off even when its target says
+#           decisionsPush true; only the reason shown differs, never the on/off answer.
+name='should say a linked settings file is why the push is off, and keep the could-not-be-read reason otherwise'
+for c in "link to a true file|$LINKED" "dangling link|$LINKED" "fifo|$UNREAD" "invalid JSON|$UNREAD"; do
+    IFS='|' read -r what want <<< "$c"
+    reset; at="$H/.oss/settings.json"
+    case $what in
+        link*) printf '{"decisionsPush":true}\n' > "$T/real-settings"; ln -s "$T/real-settings" "$at" ;;
+        dangling*) rm -f "$T/no-settings"; ln -s "$T/no-settings" "$at" ;;  # T68b: the target does not exist
+        fifo) mkfifo "$at" ;;
+        invalid*) printf '{"decisionsPush":true,}\n' > "$at" ;;
+    esac
+    answer '200 {"pushEnabled":true,"team":true}'
+    OUT=$(HOME="$H" PATH="$API/bin:$PATH" run_capped 20 "$SCRIPT" status 2>"$T/err" </dev/null); RC=$?
+    if [[ $what == *link* ]]; then linked=yes; else linked=no; fi
+    [[ $RC -eq 0 && "$OUT" == "$want; your team's setting is on" && "$OUT" == "Decision push: off for you"* ]] \
+        && { [[ $linked == yes && "$OUT" == *'is a link, not a file'* ]] || [[ $linked == no && "$OUT" != *'is a link'* && "$OUT" == *'could not be read'* ]]; } \
+        && pass "$name ($what)" || fail "$name ($what)" "rc=$RC out=$OUT"
+    rm -f "$at" "$T/real-settings"
+done
 
 # 8. anything but status, on or off (alone) is a usage error, before any call
 name='should refuse an unknown subcommand with exit 2 and call nothing'

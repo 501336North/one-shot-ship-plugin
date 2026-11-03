@@ -40,6 +40,7 @@ mkdir -p "$T/home/.oss"
 
 # shellcheck source=hooks/__tests__/fake-oss-api.sh
 source "$ROOT/hooks/__tests__/fake-oss-api.sh"
+source "$ROOT/hooks/__tests__/lib/run-capped.sh"   # the one time cap a test may use (T49)
 FAKE_KEY='fake-oss-key-0000feedface0042'
 API="$T/api-fake"; fake_api_install "$API"
 AH="$T/api-home"; mkdir -p "$AH/.oss"
@@ -561,6 +562,25 @@ api_reset; O=$(mktemp -d "$T/outside.XXXXXX"); printf 'keep\n' > "$O/target"; ln
 [[ $RC -eq 0 && "$(calls)" == 0 && -z "$(cat "$OB" 2>/dev/null)" && "$(cat "$O/target")" == keep ]] && pass "$name" \
     || fail "$name" "rc=$RC calls=$(calls) target=$(cat "$O/target")"
 rm -f "$MK"
+
+# ===== Task 67: a FIFO under ~/.oss cannot hang a picker answer, and never turns the push on ===============
+# @behavior A person answers a question while ~/.oss/decisions-push-off or ~/.oss/settings.json is a FIFO (or
+#           settings.json is a symlink); the answer is recorded, the hook finishes, and nothing is sent.
+# @business-rule Fail closed (#214 Task 16al): anything at the off marker is off, and the marker is never opened;
+#           a settings.json that is not a regular file cannot be read, and that is off too.
+name='should finish, record the answer and send nothing when a FIFO or a symlink stands in a switch file'
+for c in "fifo marker|$MK" "fifo settings|$SF" "symlinked settings|$SF"; do
+    IFS='|' read -r what at <<< "$c"
+    api_reset; rm -f "$MK" "$SF"
+    case $what in
+        fifo*) mkfifo "$at" ;;
+        symlinked*) printf '{"decisionsPush":true}\n' > "$T/real-settings"; ln -s "$T/real-settings" "$at" ;;
+    esac
+    (cd "$P" && HOME="$AH" PATH="$API/bin:$PATH" run_capped 20 "$HOOK" < "$FIX/pick.json" 2>"$T/err"); RC=$?
+    [[ $RC -eq 0 && "$(calls)" == 0 && -z "$(cat "$OB" 2>/dev/null)" && $(answer_ids | wc -w) -eq 1 ]] && pass "$name ($what)" \
+        || fail "$name ($what)" "rc=$RC calls=$(calls) outbox=$(head -c 100 "$OB" 2>/dev/null)"
+    rm -f "$MK" "$SF"
+done
 
 # ===== Task 16am: a push run stops as soon as the person switches off =====================================
 # @behavior A person turns the push off while a run is sending; no further answer leaves the machine in that run.

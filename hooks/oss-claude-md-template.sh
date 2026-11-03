@@ -42,7 +42,8 @@ if printf '%s' "$body" | grep -qiE '<!doctype html|<html[[:space:]>]'; then
     warn "the API at $url sent an HTML page (a captive portal or proxy?), not the template."; exit 1
 fi
 # Terminal control codes and invisible text never reach stdout: C0 except tab and newline, plus the set oss_json_field
-# strips (oss_invisible in oss-api-curl.sh: DEL, C1, U+2028/U+2029, every format character incl. tag characters, T45).
+# strips (oss_invisible in oss-api-curl.sh: DEL, C1, U+2028/U+2029, every format character incl. tag characters, T45;
+# variation selectors and blank fillers, T52).
 body=$(printf '%s' "$body" | jq -Rrsj "$OSS_JQ_INVISIBLE"'gsub("[\u0000-\u0008\u000b-\u001f" + oss_invisible + "]"; "")') \
     || { warn "could not clean the template (jq missing?); no template."; exit 1; }
 [[ -n "$body" ]] || { warn "the API at $url sent an empty template."; exit 1; }

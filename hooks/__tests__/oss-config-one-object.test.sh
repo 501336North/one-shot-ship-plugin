@@ -145,15 +145,19 @@ else fail "[no jq, no node] a valid config gives no key" "rc=$RC out=$(printf '%
 
 # --- every hook that sends the key: the key and the URL come from the same one object ---------------
 # A sandbox plugin root holding the real hooks, a recording curl (argv, and the --config stdin where the
-# Authorization header travels) and a no-op oss-notify.sh, all warmed once.
+# Authorization header travels), warmed once.
+# Session start detaches two jobs it never waits for: the IRON LAWS refresh and oss-notify.sh. Under load either
+# could outlive it by 2 s, and run_capped then rightly reports a survivor (rc 125, T65). So the refresh copy is
+# not executable and there is no oss-notify.sh: session start skips both (it checks -x). This file runs the
+# refresh itself with /bin/bash; session-start-iron-laws.test.sh covers the detached refresh.
 mkdir -p "$KS/plugin/hooks"
 for n in oss-session-start.sh oss-api-curl.sh oss-safe-path.sh oss-config.sh oss-settings-cleanup.sh \
          fetch-iron-laws.sh oss-fetch-team-iron-laws.sh oss-push-metrics.sh oss-iron-laws-sync.sh; do
     [[ -f "$HOOKS/$n" ]] && cp "$HOOKS/$n" "$KS/plugin/hooks/$n"
 done
+chmod a-x "$KS/plugin/hooks/oss-iron-laws-sync.sh"
 SS_HOOK=$(session_start_alias "$KS/plugin/hooks") || { echo "✗ FAIL: session start alias"; exit 1; }
 WARM=y
-warm_stub "$KS/plugin/hooks/oss-notify.sh" 'exit 0' || WARM=n
 warm_stub "$KS/bin/curl" "$(cat <<'EOF'
 printf '%s\n' "$*" >> "$SHIM/argv"
 prev=""; for a in "$@"; do [[ "$prev" == --config && "$a" == - ]] && cat >> "$SHIM/stdin"; prev="$a"; done

@@ -15,7 +15,8 @@ source "$SCRIPT_DIR/oss-safe-path.sh" # oss_single_link, for the off marker (Tas
 done_line="Decision push is now $sub for you on this machine"
 if [[ "$sub" == status ]]; then
     rf="$HOME/.oss/decisions-refusal.json"
-    at=""; [[ -L "$rf" ]] || at=$(jq -r 'select(.reason == "unsafe_path") | .at | strings' "$rf" 2>/dev/null)
+    # T67: only a regular file is read (a FIFO would hang status); anything else shows no note
+    at=""; oss_is_regular "$rf" && at=$(jq -r 'select(.reason == "unsafe_path") | .at | strings' "$rf" 2>/dev/null)
     [[ "$at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
         && echo "Decision record: an answer was last refused at $at, because .oss, its feature folder or the record file is a symlink; it was not recorded or sent"
 fi
@@ -93,6 +94,9 @@ elif oss_decisions_push_off; then
     why=""
     # shellcheck disable=SC2088 # the ~ is text for the person, never expanded
     [[ -n "$_OSS_SETTINGS_UNREADABLE" ]] && why=", because ~/.oss/settings.json could not be read"
+    # T68: dotfiles managers link this file; say so, so the person knows why (still off)
+    # shellcheck disable=SC2088
+    [[ "$_OSS_SETTINGS_UNREADABLE" == link ]] && why=", because ~/.oss/settings.json is a link, not a file; dotfiles managers make these, and pushing stays off until it is a plain file"
     echo "Decision push: off for you on this machine$why (answers stay in your repo only)$other"
 elif [[ "$team" == unknown ]]; then
     echo "Decision push: on for you on this machine (answers are sent redacted to OSS)"

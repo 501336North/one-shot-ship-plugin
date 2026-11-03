@@ -29,6 +29,8 @@ Register at https://www.oneshotship.com
 ~/.oss/bin/oss-decrypt --type agents --name rust-pro
 ```
 
+If this command fails for any reason (it prints an `Error:` line, for example when rate limited, offline or not logged in), tell the user in one line and carry on with this file's own instructions; do not read ~/.oss/config.json, do not retry in a loop, and do not save the fetched prompt to a file.
+
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
 ## Step 4: Execute the Fetched Prompt

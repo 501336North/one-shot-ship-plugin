@@ -30,14 +30,25 @@ run_with_timeout() {
     elif command -v timeout &>/dev/null; then
         timeout "$timeout_secs" "$@" || true
     else
-        "$@" &
+        # Like GNU timeout, the command gets its own process group (set -m, for this launch only; stdin stays
+        # /dev/null) and the bound kills that group, children too (T54b; as oss-session-start.sh, T54).
+        local m=$-
+        set -m; "$@" </dev/null &
         local pid=$!
         # The timer holds no stdio, and killing it also kills its sleep (R2-1; same shape as oss-session-start.sh).
-        ( trap 'kill $s 2>/dev/null; exit 0' TERM; sleep "$timeout_secs" & s=$!; wait $s && kill -9 $pid 2>/dev/null ) </dev/null >/dev/null 2>&1 &
+        # It gets its own group too and is cancelled by killing that group twice: a sleep forked while the first
+        # kill landed (macOS can miss such a child) is caught by the second, once the timer is reaped (T54c).
+        ( sleep "$timeout_secs" && kill -9 -- -$pid 2>/dev/null ) </dev/null >/dev/null 2>&1 &
         local killer=$!
-        wait $pid 2>/dev/null || true
-        kill $killer 2>/dev/null || true
+        [[ $m == *m* ]] || set +m
+        local rc=0
+        wait $pid 2>/dev/null || rc=$?
+        # Ended by SIGKILL (the bound): kill its group once more, for a child forked while the bound's kill landed
+        # (T54c). Never on a normal exit, so the id of a group that is gone is never signalled.
+        if [[ $rc -eq 137 ]]; then kill -9 -- -$pid 2>/dev/null || true; fi
+        kill -9 -- -$killer 2>/dev/null || true
         wait $killer 2>/dev/null || true
+        kill -9 -- -$killer 2>/dev/null || true
     fi
 }
 

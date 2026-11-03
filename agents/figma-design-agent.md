@@ -99,6 +99,8 @@ is a no-op — skip to Step 3 and run natively.
 ~/.oss/bin/oss-decrypt --type agents --name figma-design-agent
 ```
 
+If this command fails for any reason (it prints an `Error:` line, for example when rate limited, offline or not logged in), tell the user in one line and carry on with this file's own instructions; do not read ~/.oss/config.json, do not retry in a loop, and do not save the fetched prompt to a file.
+
 ## Step 4: Execute the Fetched Prompt
 
 Execute the agent prompt returned by the API. The proprietary prompt contains:

@@ -316,6 +316,53 @@ sandbox repo; printf 'export OSS_AUDIO_ENABLED="true"\ntouch "$HOME/PWNED"\nexpo
 sandbox repo; cfg ossk_k3 x; run_block visual-test.md '"apiKey"'
 [[ "$OUT" == "API key configured" ]] && pass "visual-test: the key check reads ~/.oss/config.json" || fail "visual-test: the key check reads ~/.oss/config.json" "rc=$RC out=$OUT"
 
+# === T64(b): a plugin update mid-session ===================================================
+# @behavior After a plugin update in a running session, the new /oss:status, /oss:workflows, skills/ideate.md and
+#           /oss:login 4.2 can meet the ~/.oss/hooks the session started with (refreshed only at session start).
+#           The customer sees one line telling them to restart, never a raw usage or "No such file" error.
+# @business-rule The old hook cannot change, so the new prompt says what its output means: the 2.0.96 oss-value.sh
+#           (91c808e, the last release before these verbs) prints `usage: oss-value.sh` (exit 2) for a verb it does
+#           not know; a hook it never installed is `No such file or directory` (exit 127). The prompt's rule maps
+#           those, and only those, to the restart line; the current hook never prints either for these steps.
+RESTART='Your OSS hooks are older than the plugin; restart Claude Code (or start a new session) to update them.'
+# shipped_hooks: the sandbox's oss-value.sh and oss-safe-path.sh replaced by plugin 2.0.96's copies (from git)
+shipped_hooks() {
+    local f; for f in oss-value.sh oss-safe-path.sh; do (cd "$ROOT" && git show "91c808e:hooks/$f") > "$H/.oss/hooks/$f" || return 1; done
+    grep -q 'cli <script> <args>" >&2; exit 2' "$H/.oss/hooks/oss-value.sh"
+}
+# user_sees <file>: what the prompt <file> tells Claude to show for OUT: its restart line when OUT holds one of the
+# markers its rule names (the line holding "show only this line: `<line>`", naming `usage: oss-value.sh` and/or
+# `No such file or directory`), else OUT
+user_sees() {
+    local rule line m
+    rule=$(grep -F 'show only this line: `' "$C/$1" | head -1)
+    line=${rule##*show only this line: \`}; line=${line%%\`*}
+    for m in 'usage: oss-value.sh' 'No such file or directory'; do
+        [[ -n "$rule" && "$rule" == *"\`$m\`"* && "$OUT" == *"$m"* ]] && { printf '%s' "$line"; return; }
+    done
+    printf '%s' "$OUT"
+}
+for c in 'status.md|~/.oss/hooks/oss-value.sh status' 'status.md|~/.oss/hooks/oss-value.sh usage' 'workflows.md|~/.oss/hooks/oss-value.sh workflows' \
+         'workflows.md|~/.oss/hooks/oss-value.sh workflow' '../skills/ideate.md|~/.oss/hooks/oss-claude-md-template.sh' 'login.md|~/.oss/hooks/oss-claude-md-template.sh'; do
+    f=${c%%|*}; l=${c#*|}
+    for old in shipped missing; do
+        sandbox repo; printf '{"apiKey":"ossk_wrun_key_64"}' > "$H/.oss/config.json"
+        if [[ $old == shipped ]]; then [[ "$l" == *oss-value.sh* ]] || continue; shipped_hooks || { fail "$f: the 2.0.96 hook comes out of git" "git show 91c808e failed"; continue; }
+        else n=${l##*/hooks/}; rm -f "${H:?}/.oss/hooks/${n%% *}"; fi
+        FENCE=fence_line run_block "$f" "$l"
+        [[ "$RC" != 0 && "$(user_sees "$f")" == "$RESTART" && "$OUT" != *ossk_wrun_key_64* && -z "$(calls)" ]] \
+            && pass "$f: '$l' against a $old hook: the customer sees only the restart line" \
+            || fail "$f: '$l' against a $old hook: the restart line" "rc=$RC out=$OUT sees=$(user_sees "$f")"
+    done
+done
+# The current hook never trips the rule: its own failure (here: no key) shows its own message
+for c in 'status.md|~/.oss/hooks/oss-value.sh status' 'workflows.md|~/.oss/hooks/oss-value.sh workflows'; do
+    f=${c%%|*}; l=${c#*|}
+    sandbox repo; FENCE=fence_line run_block "$f" "$l"
+    [[ "$RC" != 0 && "$OUT" == *"No API key found"* && "$(user_sees "$f")" == "$OUT" ]] && pass "$f: the current hook's own failure (no key) is shown as it is, not as the restart line" \
+        || fail "$f: the current hook's failure is not the restart line" "rc=$RC out=$OUT"
+done
+
 echo ""
 echo "Results: $((TESTS_RUN - TESTS_FAILED))/$TESTS_RUN passed, $TESTS_FAILED failed"
 [[ $TESTS_FAILED -eq 0 ]]

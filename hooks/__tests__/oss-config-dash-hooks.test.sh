@@ -10,10 +10,11 @@
 #           option by jq, mkdir, chmod or cp.
 # @boundary Sandbox HOME and cwd outside any repo, a local manifest file (OSS_MOCK_MANIFEST), real jq and the
 #           real coreutils. No network, never the real ~/.oss.
-#           The cases run twice: with the native tools, then with GNU coreutils chmod, mkdir and cp first on PATH
-#           (Linux behaviour: GNU getopt permutes, so `chmod 600 -cfg/x` reads -cfg as options, where BSD chmod
-#           stops at the mode). On macOS that pass needs coreutils (gchmod, gmkdir, gcp); without them it is
-#           reported SKIPPED, never counted as passed.
+#           The cases run twice: with the native tools, then with GNU coreutils chmod, mkdir, cp, mktemp, rm and mv
+#           first on PATH (Linux behaviour: GNU getopt permutes, so `chmod 600 -cfg/x` reads -cfg as options, where
+#           BSD chmod stops at the mode). On macOS that pass needs coreutils (gchmod ... gmv); without them it is
+#           reported SKIPPED, never counted as passed. oss_write_atomic (oss-api-curl.sh) is also run directly with a
+#           "-cfg/..." path: it hands the path to mktemp, rm and mv (T53b).
 #
 # Usage: /bin/bash hooks/__tests__/oss-config-dash-hooks.test.sh
 #        HOOKS_UNDER_TEST=/path/to/hooks-copy /bin/bash hooks/__tests__/oss-config-dash-hooks.test.sh  (mutants)
@@ -95,20 +96,51 @@ name="[$1] worktree-create: copies -cfg/config.json into <worktree>/.oss/config.
 if [[ $RC == 0 && -z "$ERR" ]] && cmp -s "$D/config.json" "$T/wt/.oss/config.json" \
       && [[ "$(mode_of "$T/wt/.oss/config.json")" == 600 ]]; then
     pass "$name"; else fail "$name" "rc=$RC err='$ERR' copy=$(cat "$T/wt/.oss/config.json" 2>&1)"; fi
+
+# --- 6. the shared safe-write (oss_write_atomic) with a "-cfg/..." path: saves, replaces a link, cleans up (T53b) ---
+# run_write [PATH-prefix]: oss_write_atomic -cfg/w.json "saved" from the cwd $W; sets RC and ERR.
+run_write() {
+    (cd "$W" && PATH="${1:+$1:}${GNU:+$GNU:}$PATH" run_capped 20 /bin/bash -c 'source "$1" && oss_write_atomic -cfg/w.json "$2"' \
+        _ "$HOOKS/oss-api-curl.sh" "saved"$'\n' 2>"$T/err" </dev/null); RC=$?
+    ERR=$(tr '\n' ' ' < "$T/err")
 }
+rm -rf "$D"; mkdir -p "$D"
+run_write
+name="[$1] oss_write_atomic -cfg/w.json: saved, no temp file left, nothing on stderr"
+if [[ $RC == 0 && -z "$ERR" && "$(cat "$D/w.json" 2>&1)" == saved && ! -L "$D/w.json" \
+      && -z "$(ls "$D" | grep -v '^w\.json$')" ]]; then
+    pass "$name"; else fail "$name" "rc=$RC err='$ERR' dir=$(ls -A "$D" | tr '\n' ' ') w=$(cat "$D/w.json" 2>&1)"; fi
+
+rm -rf "$D" "$T/outside"; mkdir -p "$D" "$T/outside"; printf 'outside\n' > "$T/outside/t"
+ln -s "$T/outside/t" "$D/w.json"
+run_write
+name="[$1] oss_write_atomic -cfg/w.json over a symlink: the link is replaced, its target untouched"
+if [[ $RC == 0 && -z "$ERR" && ! -L "$D/w.json" && "$(cat "$D/w.json" 2>&1)" == saved \
+      && "$(cat "$T/outside/t")" == outside ]]; then
+    pass "$name"; else fail "$name" "rc=$RC err='$ERR' link=$([[ -L "$D/w.json" ]] && echo yes) w=$(cat "$D/w.json" 2>&1) t=$(cat "$T/outside/t")"; fi
+
+# mv fails (a stub that refuses): the save reports failure and its temp file -cfg/w.json.XXXXXX is removed.
+rm -rf "$D"; mkdir -p "$D"
+run_write "$T/failmv"
+name="[$1] oss_write_atomic -cfg/w.json when mv fails: returns 1 and leaves no temp file"
+if [[ $RC == 1 && -z "$(ls -A "$D")" ]]; then
+    pass "$name"; else fail "$name" "rc=$RC err='$ERR' dir=$(ls -A "$D" | tr '\n' ' ')"; fi
+}
+source "$(dirname "${BASH_SOURCE[0]}")/lib/warm-stub.sh"
+warm_stub "$T/failmv/mv" 'exit 1' || { echo "✗ FAIL: stub warm-up — the failing mv did not run"; exit 1; }
 
 run_cases native
 # --- The same cases with GNU coreutils first on PATH ---
 if chmod --version 2>/dev/null | grep -q coreutils; then
     echo "GNU pass: the native tools are already GNU coreutils — covered by the cases above"
-elif [[ $(command -v gchmod gmkdir gcp 2>/dev/null | wc -l) -eq 3 ]]; then
+elif [[ $(command -v gchmod gmkdir gcp gmktemp grm gmv 2>/dev/null | wc -l) -eq 6 ]]; then
     GNU="$T/gnu"; mkdir -p "$GNU"
-    for b in chmod mkdir cp; do ln -s "$(command -v "g$b")" "$GNU/$b"; done
+    for b in chmod mkdir cp mktemp rm mv; do ln -s "$(command -v "g$b")" "$GNU/$b"; done
     if [[ "$(PATH="$GNU:$PATH" chmod --version 2>/dev/null | head -1)" == *coreutils* ]]; then pass "[gnu] chmod on the hook's PATH is GNU coreutils (anchor)"
     else fail "[gnu] chmod on the hook's PATH is GNU coreutils (anchor)" "$(PATH="$GNU:$PATH" command -v chmod)"; fi
     run_cases gnu
 else
-    echo "SKIPPED: GNU pass — no GNU coreutils (install coreutils for gchmod, gmkdir, gcp); NOT counted as passed"
+    echo "SKIPPED: GNU pass — no GNU coreutils (install coreutils for gchmod, gmkdir, gcp, gmktemp, grm, gmv); NOT counted as passed"
 fi
 
 echo ""

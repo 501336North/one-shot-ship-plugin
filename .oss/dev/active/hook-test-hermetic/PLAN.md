@@ -559,6 +559,21 @@ blocks until oss-notify's 3 s cap. Write through the existing regular-file/atomi
 health check's children outlive the bound: the same orphan pattern as T49, in customer-facing code. Kill the group; a
 test with OSS_RUN_HEALTH_CHECK=1, a hanging check that forks a child, and timeout/gtimeout hidden from PATH.
 
+### Task 54b: oss-notify.sh's no-timeout fallback kills the whole group too (T54 finding; user 2026-11-02 "Fix now as T54b")
+hooks/oss-notify.sh run_with_timeout (:24-40) has the same leader-only `kill -9 $pid` fallback, including the 30 s
+chain-trigger call that runs at the end of every /oss command. Apply T54's fix (own process group for the launch, kill
+the group, restore the flags); keep its `|| true` semantics and stderr. Tests extend the closest oss-notify timeout test,
+or mirror session-start-timeout-fallback: hidden timeout and gtimeout, a hanging command that forks a child, the child
+gone, the caller surviving, exit/stdout passthrough. Same mutations as T54.
+
+### Task 54c: the bound's timer can never miss its sleep (T54b finding; user 2026-11-03 "Fix now as T54c")
+In both fallbacks (oss-session-start.sh run_bounded, oss-notify.sh run_with_timeout) the timer subshell is
+`( trap 'kill $s; exit 0' TERM; sleep N & s=$!; wait $s && kill ... )`. A TERM arriving between `sleep &` and `s=$!`
+kills an empty $s, so the sleep lingers until the bound (up to 30 s for chain-trigger). Make cancelling the timer always
+take its sleep with it, with no window. Remove T54's 0.2 s workaround from the fast test rows and prove 0 lingering
+sleeps over many (≥200) instant calls per hook, event-driven, under run_capped. Behaviour otherwise unchanged; mutation:
+restore the window.
+
 ### Task 55: the hand-cap guard's allowlist matches the exact line (code-review re-check, LOW, vacuous test)
 hooks/__tests__/no-hand-capped-tests.test.sh:49 matches the allowlist as a substring, so a cap added to an allowed line
 passes; `CAP_RE` misses `timeout "$secs" ...`. Exact-line match and the quoted-argument form, with anchors.
@@ -611,6 +626,13 @@ oss-decrypt prints and its exit status on a 429 (packages/cli-decrypt api-client
 guard test requires the fallback sentence next to every `oss-decrypt --type agents|skills|workflows` line in agents/ and
 skills/. Live check against a local stub that returns 429: the CLI exits non-zero, prints no key, and the step text
 covers it.
+Constraints (dev-15, 2026-11-02): (1) "local instructions" means the public agent/skill .md text already in the plugin,
+NEVER a cached or saved copy of a served prompt; prompts must not be stored on the user's machine (IP protection). The
+guard also fails on any step that writes oss-decrypt output to a file. (2) The global limiter's 429
+(rate-limit.ts:32, express-rate-limit 7.5.1, draft-6) has a plain-text body "Too many requests from this IP, please try
+again later.", RateLimit-* headers and Retry-After; there is no JSON. The stub must serve exactly that shape, and the wording
+must key off the failure, not a parsed body (e.g. "rate limited: carry on with this file's instructions"). T59's trial
+run confirms Retry-After live.
 
 ### Task 64: the new oss-value verbs work for every customer (T60 risks)
 (a) `status`, `workflows` and `workflow` need jq, but session start treats jq as optional, so a machine without jq gets an
@@ -646,9 +668,52 @@ allowlist from T60, or tamper floors), and update and verify it.
 ### Task 67: #214's ~/.oss reads cannot hang a picker answer (user 2026-11-02: "Fix now as T67", LOW security)
 Found while merging #214 (91c808e): `oss_decisions_push_off` (hooks/oss-api-curl.sh, runs on every picker answer) and
 `oss-decisions-policy.sh status` read files under ~/.oss with no regular-file check, so a FIFO in place of one hangs the
-hook. RED: a test puts a FIFO where each file is read and asserts the hook finishes in time (run_capped) with its
-fail-safe answer. GREEN: a `[[ -f ]] && [[ ! -L ]]` check (the pattern our hooks already use) before each read. Mutation:
-dropping either check must fail the test. dev-15 (#214 owner) was told.
+hook. FAIL CLOSED (dev-15, #214 task 16al): anything at ~/.oss/decisions-push-off (file, symlink, FIFO, dir,
+unreadable) means OFF, so a guard must never turn "not a regular file" into "on" (privacy regression).
+RED: FIFO-at-marker cases (push_off and policy `status`) expect OFF / "off for you" with no hang (run_capped); a
+FIFO where a file's CONTENT is read (settings.json decisionsPush fallback) expects the fail-closed answer (off, or
+"unknown" for status) with no hang. GREEN: (1) the marker is checked by existence only, `[[ -e m || -L m ]]` → off, never
+opened; (2) `[[ -f ]] && [[ ! -L ]]` only before content reads, and a failed guard gives the fail-closed answer. #214's
+16al "anything at the marker reads off" cases must stay green. Mutation: dropping each check, and turning a failed guard
+into "on", must each fail a test.
+
+### Task 68: `decisions status` says why a linked settings.json reads off (dev-15, after T67)
+Dotfiles managers (stow, chezmoi, yadm) symlink ~/.oss/settings.json. Since T67 that reads off, and status says only
+"could not be read". RED: a test asserts that a symlinked settings.json gives a status line naming the link (e.g. "…
+~/.oss/settings.json is a link, not a file") and that a FIFO or an invalid file keeps the existing could-not-be-read
+wording. GREEN: minimal; the on/off answer does not change (fail closed). Mutation: the reason dropped or swapped must
+fail.
+
+### Task 69: /oss:status shows real monthly usage (user 2026-11-02: "Wire in real usage")
+T61 removed the "Usage This Month" section because /auth/verify has no usage. The real route is GET
+/api/v1/analytics/usage (AgenticDevWorkflow origin/main packages/api/src/routes/analytics.ts:173, requireAuth, default
+period=month; returns totalCommands, commandsByType, currentPeriod, periodStart). RED: oss-value-api.test.sh cases for a
+new `usage` verb against the fake API: the key goes on curl stdin, never in argv or output; it prints the total and the
+per-type counts; a 401/5xx/garbage reply prints one honest "usage unavailable" line and status still works. Update
+prompt-promises.test.sh's field list to this route's fields. GREEN: the verb through `_ov_api`, and status.md shows the
+section. Allowlist: the existing oss-value.sh rule covers it. Mutation: key in argv, and a missing fallback, must fail.
+T59 item 1 checks it live.
+
+### Task 53b: the shared safe-write and two symlinked reads (T53 findings, LOW; user 2026-11-02: "Fix all 3 now")
+(1) oss_write_atomic (oss-api-curl.sh:140-147, 11 callers): `mktemp -- "$1.XXXXXX"` and `rm -f -- ...`, so a relative
+dash path (e.g. OSS_CONFIG_DIR=-cfg) saves; then drop T53's one-off `./` workaround in check-updates.sh if the helper
+covers it. (2) oss-changelog.sh:31,33,66,109 reads update-state.json behind a plain -f: use oss_is_regular (link or FIFO →
+treated as missing). (3) check-updates.sh:35 reads settings.json behind -f: same. RED per site, mutation per guard;
+oss-config-dash-hooks, check-updates and changelog tests stay green.
+
+### Task 52b: the display filter uses the shared invisible list (user 2026-11-02: "Widen it in this PR")
+The final shared list agreed with the API (dev-15, user-approved) for cleanText/UNSAFE_CHARS is
+`[\u0000-\u0008\u000B-\u001F\u007F-\u009F\p{Cf}\p{Default_Ignorable_Code_Point}⠀]` (TAB/LF kept). The display filter
+(OSS_JQ_INVISIBLE, oss-api-curl.sh; node copy _OV_JS_PRE, oss-value.sh) adopts the same set (its C0 part stays as each
+site has it), escapes only, no literal invisible characters. RED: U+17B4, U+180B, U+2065, U+FFF0, U+E0000, U+E0FFF
+stripped at each site (jq and node identical). Compatibility: if the installed jq rejects \p{Default_Ignorable_Code_Point}
+(older Oniguruma), the filter must fall back to the T52 list, never error (test with a jq shim that rejects the property).
+Mutations: drop the DI property; drop the fallback.
+Surrogate rejoin (dev-15 round 2, 2026-11-02): a u-flag strip that deletes a character between a lone high half and a lone low
+half joins them into an astral invisible (e.g. "\uDB40​\uDC20" → U+E0020). The node path (_OV_JS_PRE) must first turn
+lone halves into U+FFFD with a no-u regex, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, and
+only then strip. The jq path already turns lone halves into FFFD when it parses: prove that with the same fixture. Mutation: do
+the step after the strip, or drop it.
 
 ### Task 59: RELEASE GATE: customers keep a working plugin/API combination (user, 2026-11-02: "we NEED to make SURE")
 No PR merges until each of these is proven by a run, not argued:

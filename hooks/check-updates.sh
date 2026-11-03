@@ -24,7 +24,13 @@ SETTINGS_FILE="$CONFIG_DIR/settings.json"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_JSON="${OSS_PLUGIN_JSON:-$SCRIPT_DIR/../.claude-plugin/plugin.json}"
 
-# Check if notifications are enabled
+# The state file is read only as a regular file (oss_is_regular) and written only through oss_write_atomic (temp +
+# mv, mode 0600), so a FIFO there never hangs the check and a symlink is never followed (T53, as T32). No helpers:
+# skip the check silently; it is best-effort.
+source "$SCRIPT_DIR/oss-api-curl.sh" 2>/dev/null || exit 0
+
+# Check if notifications are enabled. A symlinked settings.json is followed on purpose (user choice 2026-11-02:
+# dotfile managers such as stow or chezmoi keep notices off); -f refuses a FIFO, so it never hangs (T53b).
 if [[ -f "$SETTINGS_FILE" ]] && command -v jq &>/dev/null; then
     updates_enabled=$(jq -r 'if .notifications.updates == false then "false" else "true" end' -- "$SETTINGS_FILE" 2>/dev/null)
     if [[ "$updates_enabled" == "false" ]]; then
@@ -42,7 +48,7 @@ release_note=$(jq -r '.releaseNote // ""' "$PLUGIN_JSON" 2>/dev/null)
 # Read cached state
 cached_version=""
 first_run=false
-if [[ -f "$STATE_FILE" ]] && command -v jq &>/dev/null; then
+if oss_is_regular "$STATE_FILE" && command -v jq &>/dev/null; then   # else missing: cache again (T53)
     cached_version=$(jq -r '.lastPluginVersion // ""' -- "$STATE_FILE" 2>/dev/null)
 else
     first_run=true
@@ -52,7 +58,7 @@ fi
 if [[ "$first_run" == true || -z "$cached_version" ]]; then
     mkdir -p -- "$CONFIG_DIR"
     # Initialize state
-    cat > "$STATE_FILE" << ENDSTATE
+    oss_write_atomic "$STATE_FILE" "$(cat << ENDSTATE
 {
   "lastPluginVersion": "$current_version",
   "lastCheckedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -61,7 +67,7 @@ if [[ "$first_run" == true || -z "$cached_version" ]]; then
   "promptSignatures": {}
 }
 ENDSTATE
-    chmod -- 600 "$STATE_FILE"
+)"$'\n'
     exit 0
 fi
 
@@ -105,8 +111,7 @@ if [[ "$skip_manifest" != "1" ]]; then
             # Merge new hashes into state
             merged=$(jq -s '.[0] * .[1]' -- "$STATE_FILE" <(echo "$new_hashes") 2>/dev/null)
             if [[ -n "$merged" ]]; then
-                echo "$merged" > "$STATE_FILE"
-                chmod -- 600 "$STATE_FILE"
+                oss_write_atomic "$STATE_FILE" "$merged"$'\n'
             fi
         fi
     fi
@@ -138,16 +143,14 @@ fi
 if [[ "$plugin_changed" == true ]]; then
     updated=$(jq --arg v "$current_version" '.lastPluginVersion = $v' -- "$STATE_FILE" 2>/dev/null)
     if [[ -n "$updated" ]]; then
-        echo "$updated" > "$STATE_FILE"
-        chmod -- 600 "$STATE_FILE"
+        oss_write_atomic "$STATE_FILE" "$updated"$'\n'
     fi
 fi
 
 # Update lastCheckedAt
 updated=$(jq --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.lastCheckedAt = $t' -- "$STATE_FILE" 2>/dev/null)
 if [[ -n "$updated" ]]; then
-    echo "$updated" > "$STATE_FILE"
-    chmod -- 600 "$STATE_FILE"
+    oss_write_atomic "$STATE_FILE" "$updated"$'\n'
 fi
 
 # Output notification (consumed by caller)

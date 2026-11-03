@@ -22,7 +22,7 @@ test -f CLAUDE.md && echo "EXISTS" || echo "MISSING"
    ```bash
    ~/.oss/hooks/oss-claude-md-template.sh
    ```
-2. If it exits non-zero, the API fetch failed: see below.
+2. If it prints `No such file or directory`, the plugin was updated after this session started and `~/.oss/hooks` does not have this hook yet: do not create CLAUDE.md; show only this line: `Your OSS hooks are older than the plugin; restart Claude Code (or start a new session) to update them.` and stop. If it exits non-zero otherwise, the API fetch failed: see below.
 3. Write the template to `CLAUDE.md` in the project root with the `<!-- IRON LAWS will be injected here by /oss:login -->` placeholder line removed. Do not write any IRON LAWS markers or IRON LAWS content yourself.
 4. Install the IRON LAWS block through the single writer: `~/.oss/hooks/oss-iron-laws-sync.sh --install`. If it exits non-zero, keep the template as written and tell the user to run `/oss:login`.
 
@@ -49,6 +49,8 @@ Fetch and decrypt the prompt:
 ```bash
 ~/.oss/bin/oss-decrypt --type workflows --name ideate
 ```
+
+If this command fails for any reason (it prints an `Error:` line, for example when rate limited, offline or not logged in), tell the user in one line and carry on with this file's own instructions; do not read ~/.oss/config.json, do not retry in a loop, and do not save the fetched prompt to a file.
 
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 

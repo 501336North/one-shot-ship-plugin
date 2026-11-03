@@ -1,5 +1,5 @@
 #!/bin/bash
-# /oss:status and /oss:workflows fetch through `oss-value.sh status | workflows | workflow` (T60).
+# /oss:status and /oss:workflows fetch through `oss-value.sh status | usage | workflows | workflow` (T60, T69).
 #
 # @behavior A customer runs /oss:status or /oss:workflows [name] and sees their account or workflow config,
 #           with no approval prompt (one allowlisted call each) and their API key never on a command line,
@@ -8,6 +8,7 @@
 #           stdin (oss_api_curl). The workflow name comes from workflow.txt in the value folder (R5-1), never
 #           from argv. A workflow's config comes from GET /api/v1/workflows/<name>/editor (plain JSON;
 #           /api/v1/workflows/<name> is license-encrypted). Each verb prints only what its wrapper displays.
+#           usage (T69) is best-effort: any failure prints one honest line and exits 0, so /oss:status still shows.
 # @boundary Real curl (behind a shim that records argv and refuses any host but 127.0.0.1) against a python3
 #           http.server on a random 127.0.0.1 port that snapshots `ps` while each request is open. Sandbox
 #           HOME, a fake ak_test key. Every hook run goes through run_capped. Never production, never ~/.oss.
@@ -72,6 +73,7 @@ LOCAL="http://127.0.0.1:$PORT"
 
 REAL_CURL=$(command -v curl)
 warm_stub "$T/bin/curl" "printf '%s\n' \"\$*\" >> '$T/curl.argv'
+[ -e '$T/timeout' ] && exit 28
 for a in \"\$@\"; do case \"\$a\" in (http://*|https://*) case \"\$a\" in ($LOCAL/*) ;; (*) echo \"shim: refused \$a\" >> '$T/curl.argv'; exit 7 ;; esac ;; esac; done
 exec '$REAL_CURL' \"\$@\"" || abort "the curl shim warms up" "warm-up did not run"
 
@@ -79,7 +81,7 @@ H="$T/home"; W="$T/work"
 # fresh <status> <body>: a clean sandbox HOME (the hooks under test in ~/.oss/hooks, a config naming the local
 # API), an empty request, ps and argv log, a cwd in a git repo.
 fresh() {
-    rm -rf "$H" "$W" "$T/curl.argv" "$T/ps.log"; : > "$T/requests.log"
+    rm -rf "$H" "$W" "$T/curl.argv" "$T/ps.log" "$T/timeout"; : > "$T/requests.log"
     mkdir -p "$H/.oss/hooks" "$W"; (cd "$W" && git init -q) >/dev/null 2>&1
     cp "$HOOKS/oss-value.sh" "$HOOKS/oss-safe-path.sh" "$HOOKS/oss-api-curl.sh" "$H/.oss/hooks/"
     printf '{"apiKey":"%s","apiUrl":"%s"}\n' "$KEY" "$LOCAL" > "$H/.oss/config.json"
@@ -87,7 +89,7 @@ fresh() {
 }
 # ov <args...>: ~/.oss/hooks/oss-value.sh <args> as the wrapper runs it -> OUT, ERR, RC
 ov() {
-    OUT=$(cd "$W" && run_capped 30 env -u CLAUDE_PLUGIN_ROOT -u CLAUDE_PROJECT_DIR HOME="$H" PATH="$T/bin:$PATH" OSS_ALLOW_HTTP_LOOPBACK=1 \
+    OUT=$(cd "$W" && run_capped 30 env -u CLAUDE_PLUGIN_ROOT -u CLAUDE_PROJECT_DIR HOME="$H" PATH="$T/bin:${OV_PATH:-$PATH}" OSS_ALLOW_HTTP_LOOPBACK=1 \
         "$H/.oss/hooks/oss-value.sh" "$@" 2>"$T/err" </dev/null); RC=$?
     ERR=$(cat "$T/err")
 }
@@ -148,6 +150,152 @@ fresh 200 "$EDITOR"; ov workflow
 [[ "$RC" != 0 && -z "$(reqs)" && -z "$OUT" ]] && pass "workflow: no workflow.txt: no request, nothing on stdout" || fail "workflow: no workflow.txt" "rc=$RC requests=$(reqs) out=$OUT"
 fresh 200 "$EDITOR"; write_value workflow 'build;id' ; ov workflow
 [[ "$RC" != 0 && -z "$(reqs)" ]] && pass "workflow: a name that breaks the workflow rule: no request" || fail "workflow: an invalid name is refused" "rc=$RC requests=$(reqs)"
+
+# --- usage: this month's commands from GET /api/v1/analytics/usage (T69) ---------------------------------
+# The route's fields (AgenticDevWorkflow analytics.ts:211-216): totalCommands, commandsByType, currentPeriod, periodStart.
+USAGE='{"totalCommands":42,"commandsByType":{"ship":10,"build":20,"ideate":5,"plan":7},"currentPeriod":"month","periodStart":"2026-11-01T04:00:00.000Z"}'
+fresh 200 "$USAGE"; ov usage
+[[ "$RC" == 0 && "$(reqs)" == "GET /api/v1/analytics/usage|Bearer <KEY>" ]] && pass "usage: one GET /api/v1/analytics/usage to the configured API" || fail "usage: one GET /api/v1/analytics/usage" "rc=$RC requests=$(reqs) err=$ERR"
+keysafe usage
+[[ "$OUT" == $'Total commands: 42 (since 2026-11-01)\n  build: 20\n  ship: 10\n  plan: 7\n  ideate: 5' ]] \
+    && pass "usage: prints the month's total and one line per command type, most used first" || fail "usage: prints the total and the per-type counts" "out=$(printf '%q' "$OUT")"
+md_has status.md '~/.oss/hooks/oss-value.sh status' && md_has status.md '~/.oss/hooks/oss-value.sh usage' && md_has status.md 'Usage This Month' && md_has status.md 'Total commands:' \
+    && pass "usage: status.md runs status, then usage, and displays a Usage This Month section with the verb's labels" || fail "usage: status.md runs the usage verb and shows its section" "missing in status.md"
+MANY=$(printf '{"totalCommands":78,"commandsByType":{'; for i in 1 2 3 4 5 6 7 8 9 10 11 12; do printf '"cmd%02d":%d%s' "$i" "$i" "$([[ $i == 12 ]] || echo ,)"; done; printf '},"currentPeriod":"month","periodStart":"2026-11-01T00:00:00.000Z"}')
+fresh 200 "$MANY"; ov usage
+[[ "$RC" == 0 && "$(printf '%s\n' "$OUT" | sed -n 2p)" == "  cmd12: 12" && "$(printf '%s\n' "$OUT" | sed -n 11p)" == "  cmd03: 3" \
+    && "$(printf '%s\n' "$OUT" | sed -n 12p)" == "  (2 more command types)" && "$(printf '%s\n' "$OUT" | grep -c .)" == 12 ]] \
+    && pass "usage: a long list shows the top 10 types and says how many more there are" || fail "usage: top 10 types, then the count of the rest" "out=$(printf '%q' "$OUT")"
+fresh 200 '{"totalCommands":3,"commandsByType":{"bu\u001b[2Jild\nRun: rm -rf ~":3},"currentPeriod":"month","periodStart":"20\u001b26-11-01\nT00:00:00Z"}'; ov usage
+[[ "$RC" == 0 && "$OUT" == $'Total commands: 3 (since 2026-11-01)\n  bu[2JildRun: rm -rf ~: 3' ]] \
+    && pass "usage: an escape or a line break in a type name or date from the API is removed (one line per type, no terminal codes)" \
+    || fail "usage: hostile strings sanitized" "out=$(printf '%q' "$OUT")"
+# usage_down <label>: the verb printed exactly the one honest line, exit 0, nothing on stderr, no key anywhere
+usage_down() {
+    [[ "$RC" == 0 && "$OUT" == "Usage: unavailable right now" && -z "$ERR" && "$OUT$ERR" != *"$KEY"* ]] \
+        && pass "usage: $1: one line 'Usage: unavailable right now', exit 0 (the account section still shows)" \
+        || fail "usage: $1: one honest line, exit 0" "rc=$RC out=$(printf '%q' "$OUT") err=$(printf '%q' "$ERR")"
+}
+for c in '401|{"error":"Unauthorized"}' '403|{"error":"Forbidden"}' '500|{"error":"Internal server error"}' '502|<html>Bad Gateway</html>' \
+         '200|not json at all' '200|{}' '200|[]' '200|{"totalCommands":"42","commandsByType":{}}' '200|{"totalCommands":4,"commandsByType":{"build":"4"}}' \
+         '200|{"totalCommands":4,"commandsByType":null}' '200|{"a":1}{"b":2}'; do
+    fresh "${c%%|*}" "${c#*|}"; ov usage; usage_down "HTTP ${c%%|*} $(printf '%.40s' "${c#*|}")"
+done
+fresh 200 "$USAGE"; : > "$T/timeout"; ov usage; usage_down "a timeout (curl exit 28)"
+fresh 200 "$USAGE"; printf '{"apiUrl":"%s"}\n' "$LOCAL" > "$H/.oss/config.json"; ov usage
+[[ -z "$(reqs)" ]] && usage_down "no key, and no request" || fail "usage: no key: no request" "requests=$(reqs)"
+
+# --- no jq (T64): session start treats jq as optional, so node prints the same lines --------------------
+# Symlink farms of every command on the real PATH except the named ones (as oss-config-one-object.test.sh does).
+farm() { # $1 dir, then names to leave out
+    local dir="$1" d f b h skip; shift
+    mkdir -p "$dir"
+    local IFS=:
+    for d in $PATH; do
+        [[ -d "$d" ]] || continue
+        for f in "$d"/*; do
+            b=${f##*/}; skip=n
+            for h in "$@"; do [[ "$b" == "$h" ]] && skip=y; done
+            [[ $skip == n && -x "$f" && ! -e "$dir/$b" ]] && ln -s "$f" "$dir/$b" 2>/dev/null
+        done
+    done
+}
+farm "$T/nojq" jq; farm "$T/none" jq node
+PATH="$T/nojq" command -v jq >/dev/null 2>&1 && abort "jq is hidden from the no-jq PATH" "still found"
+PATH="$T/nojq" command -v node >/dev/null 2>&1 || abort "node is on the no-jq PATH" "not found"
+PATH="$T/none" command -v node >/dev/null 2>&1 && abort "node is hidden from the no-jq-no-node PATH" "still found"
+# clean: OUT holds no C0 (but the line breaks between lines), DEL, C1, U+2028/2029, bidi, zero-width, BOM, soft
+# hyphen or tag character (the bytes of what the hostile bodies below carry)
+clean() { ! printf '%s' "$OUT" | tr -d '\n' | LC_ALL=C grep -qE $'[\x01-\x1f\x7f]|\xc2[\x80-\x9f\xad]|\xe2\x80[\x8b-\x8f\xa8-\xae]|\xe2\x81[\xa6-\xa9]|\xef\xbb\xbf|\xf3\xa0'; }
+# raw_error: a shell or tool error the customer must never see
+raw_error() { [[ "$OUT$ERR" == *"command not found"* || "$OUT$ERR" == *"jq:"* || "$OUT$ERR" == *"No such file"* || "$OUT$ERR" == *"line "[0-9]* ]]; }
+# same_without_jq <label> <verb> <status> <body>: the verb with jq, then with jq hidden (node): same stdout,
+# stderr and exit code, nothing raw, the key safe; workflow re-writes workflow.txt before each run.
+same_without_jq() {
+    local oj ej rj
+    fresh "$3" "$4"; [[ "$2" == workflow ]] && write_value workflow build; ov "$2"; oj=$OUT; ej=$ERR; rj=$RC
+    fresh "$3" "$4"; [[ "$2" == workflow ]] && write_value workflow build; OV_PATH="$T/nojq" ov "$2"
+    if [[ "$OUT" == "$oj" && "$ERR" == "$ej" && "$RC" == "$rj" ]] && ! raw_error && clean; then
+        pass "no jq: $1: node prints exactly what jq prints (rc $RC), sanitized, no raw error"
+    else
+        fail "no jq: $1: node prints what jq prints" "jq rc=$rj out=$(printf '%q' "$oj") err=$ej | node rc=$RC out=$(printf '%q' "$OUT") err=$ERR"
+    fi
+}
+# The hostile string: ESC, CR, tab, line break, DEL, C1 (NEL), U+2028, RLO, zero-width space, soft hyphen, BOM,
+# LRI and a tag character (an astral \p{Cf}).
+X='\u001b[2J\r\t\n\u007f\u0085 ‮​­﻿⁦󠁁'
+same_without_jq "status" status 200 "$VERIFY"
+fresh 200 "$VERIFY"; OV_PATH="$T/nojq" ov status; keysafe "no jq: status"
+same_without_jq "status, hostile and odd fields" status 200 '{"email":"a'"$X"'b@example.com","plan":5,"subscriptionStatus":null,"trialEndsAt":false}'
+same_without_jq "status, a trial end that is not a string" status 200 '{"email":"x@example.com","plan":"PRO","subscriptionStatus":"TRIAL","trialEndsAt":{"at":"2026'"$X"'"}}'
+same_without_jq "workflows" workflows 200 '{"workflows":[{"name":"ideate","customized":false},{"name":"build","customized":true},{"name":"pl'"$X"'an","customized":"true"},{"customized":true},null]}'
+fresh 200 '{"workflows":[{"name":"build","customized":true}]}'; OV_PATH="$T/nojq" ov workflows; keysafe "no jq: workflows"
+same_without_jq "workflow" workflow 200 "$EDITOR"
+same_without_jq "workflow, hostile keys and values" workflow 200 '{"name":"bu'"$X"'ild","chain":[{"com'"$X"'mand":"x'"$X"'","order":1,"slot":null,"deep":[["a'"$X"'"],{}]}],"agents":[],"task_loop":{},"checkpoint":true,"extra":"dropped"}'
+fresh 200 "$EDITOR"; write_value workflow build; OV_PATH="$T/nojq" ov workflow; keysafe "no jq: workflow"
+same_without_jq "usage" usage 200 "$USAGE"
+same_without_jq "usage, a long list" usage 200 "$MANY"
+same_without_jq "usage, hostile type names and date" usage 200 '{"totalCommands":3,"commandsByType":{"bu'"$X"'ild":2,"a":2,"z":1},"currentPeriod":"month","periodStart":"20'"$X"'26-11-01T00:00:00Z"}'
+fresh 200 "$USAGE"; OV_PATH="$T/nojq" ov usage; keysafe "no jq: usage"
+for c in 'status|401|{"error":"Unauthorized"}' 'status|200|not json' 'status|200|[]' 'status|200|{"a":1}{"b":2}' 'workflows|200|{}' 'workflows|200|{"workflows":[1]}' \
+         'usage|200|{"totalCommands":4,"commandsByType":{"build":"4"}}' 'usage|200|null' 'usage|500|oops'; do
+    v=${c%%|*}; r=${c#*|}; same_without_jq "$v, HTTP ${r%%|*} $(printf '%.30s' "${r#*|}")" "$v" "${r%%|*}" "${r#*|}"
+done
+# T52: jq and node both strip variation selectors (U+FE00-FE0F, U+E0100-E01EF), U+034F and the invisible fillers
+# (U+115F, U+1160, U+3164, U+FFA0, U+2800); plain emoji (U+2764, U+1F600) and visible neighbours (U+FE10, U+2801,
+# U+3165, U+FFA1, U+0350, U+115E) are kept.
+VS='{"email":"a︀b︇c️d󠄀e󠅐f󠇯g͏hᅟiᅠjㅤkﾠl⠀m","plan":"❤😀 ︐⠁ㅥﾡ͐ᅞ","subscriptionStatus":"ACTIVE"}'
+VSWANT=$'Account: abcdefghijklm\nPlan: \xe2\x9d\xa4\xf0\x9f\x98\x80 \xef\xb8\x90\xe2\xa0\x81\xe3\x85\xa5\xef\xbe\xa1\xcd\x90\xe1\x85\x9e\nStatus: ACTIVE'
+for p in jq node; do
+    fresh 200 "$VS"; if [[ $p == jq ]]; then ov status; else OV_PATH="$T/nojq" ov status; fi
+    [[ "$RC" == 0 && "$OUT" == "$VSWANT" ]] && pass "$p: variation selectors, U+034F and invisible fillers are stripped; plain emoji and neighbours kept" \
+        || fail "$p: variation selectors, U+034F and invisible fillers are stripped" "rc=$RC out=$(printf '%q' "$OUT") err=$ERR"
+done
+# T52b: jq and node both strip the shared set (\p{Default_Ignorable_Code_Point}: U+17B4, U+180B, U+2065, U+FFF0,
+# U+E0000, U+E0FFF) and print visible text (accents, CJK, Hangul, emoji) as before; a ZWJ family and a heart with
+# U+FE0F lose U+200D and U+FE0F, as they have since T38/T52.
+DI='{"email":"a឴b᠋c⁥d￰e󠀀f󠿿g","plan":"Ascii café üñ 中文 한국어 👍🏽 👨‍👩‍👧 ❤️","subscriptionStatus":"ACTIVE"}'
+DIWANT=$'Account: abcdefg\nPlan: Ascii caf\xc3\xa9 \xc3\xbc\xc3\xb1 \xe4\xb8\xad\xe6\x96\x87 \xed\x95\x9c\xea\xb5\xad\xec\x96\xb4 \xf0\x9f\x91\x8d\xf0\x9f\x8f\xbd \xf0\x9f\x91\xa8\xf0\x9f\x91\xa9\xf0\x9f\x91\xa7 \xe2\x9d\xa4\nStatus: ACTIVE'
+for p in jq node; do
+    fresh 200 "$DI"; if [[ $p == jq ]]; then ov status; else OV_PATH="$T/nojq" ov status; fi
+    [[ "$RC" == 0 && "$OUT" == "$DIWANT" ]] && pass "$p: default-ignorable characters are stripped; visible text printed as before" \
+        || fail "$p: default-ignorable characters are stripped" "rc=$RC out=$(printf '%q' "$OUT") err=$ERR"
+done
+same_without_jq "status, default-ignorable characters" status 200 "$DI"
+# An older jq (Oniguruma without the property) falls back to the T52 list: no error, the lines still print. The shim
+# renames the property so the real Oniguruma rejects it, as an old one does.
+mkdir -p "$T/oldjq-bin"
+warm_stub "$T/oldjq-bin/jq" "a=(); for x in \"\$@\"; do a+=(\"\${x//Default_Ignorable_Code_Point/Default_Ignorable_Code_PointX}\"); done
+exec '$(command -v jq)' \"\${a[@]}\"" || abort "the old-jq shim warms up" "warm-up did not run"
+PATH="$T/oldjq-bin:$PATH" jq -n '"x" | test("\\p{Default_Ignorable_Code_Point}")' >/dev/null 2>&1 \
+    && fail "the old-jq shim rejects the property" "accepted" || pass "the old-jq shim rejects the property (anti-vacuity)"
+fresh 200 '{"email":"a​b឴c️d","plan":"PRO","subscriptionStatus":"ACTIVE"}'; OV_PATH="$T/oldjq-bin:$PATH" ov status
+[[ "$RC" == 0 && "$OUT" == $'Account: ab\xe1\x9e\xb4cd\nPlan: PRO\nStatus: ACTIVE' && -z "$ERR" ]] \
+    && pass "old jq: the T52 list still applies (U+200B, U+FE0F stripped; U+17B4 kept), no error" \
+    || fail "old jq: falls back to the T52 list" "rc=$RC out=$(printf '%q' "$OUT") err=$ERR"
+# Surrogate rejoin (T52b): a lone high half, an invisible, a lone low half. Stripping the invisible must never join the
+# halves into U+E0020 (an invisible tag). node turns lone halves into U+FFFD before the strip; jq never prints the tag
+# (jq 1.7+ rejects a lone high half as invalid JSON, older jq makes U+FFFD). A lone low half: both print U+FFFD.
+SUR=$(printf '{"email":"x\\uDB40\xe2\x80\x8b\\uDC20y","plan":"PRO","subscriptionStatus":"ACTIVE"}')
+fresh 200 "$SUR"; OV_PATH="$T/nojq" ov status
+[[ "$RC" == 0 && "$OUT" == $'Account: x\xef\xbf\xbd\xef\xbf\xbdy\nPlan: PRO\nStatus: ACTIVE' ]] \
+    && pass "node: lone surrogate halves become U+FFFD, never joined into U+E0020" \
+    || fail "node: lone surrogate halves become U+FFFD" "rc=$RC out=$(printf '%q' "$OUT") err=$ERR"
+fresh 200 "$SUR"; ov status
+[[ "$OUT" != *$'\xf3\xa0\x80\xa0'* && ( "$RC" != 0 || "$OUT" == *$'x\xef\xbf\xbd\xef\xbf\xbdy'* ) ]] \
+    && pass "jq: lone surrogate halves never join into U+E0020 (rc $RC)" || fail "jq: lone surrogate halves never join" "rc=$RC out=$(printf '%q' "$OUT")"
+same_without_jq "status, a lone low surrogate half" status 200 '{"email":"x​\udc20y","plan":"PRO","subscriptionStatus":"ACTIVE"}'
+fresh 200 "$(printf '{"email":"\\ud83d\\ude00\xe2\x80\x8b","plan":"PRO","subscriptionStatus":"ACTIVE"}')"; OV_PATH="$T/nojq" ov status
+[[ "$RC" == 0 && "$OUT" == $'Account: \xf0\x9f\x98\x80\nPlan: PRO\nStatus: ACTIVE' ]] && pass "node: a valid emoji pair is untouched by the surrogate step" \
+    || fail "node: a valid emoji pair is untouched" "rc=$RC out=$(printf '%q' "$OUT")"
+# Neither jq nor node: one clear line naming jq, never a raw shell error; usage stays one honest line, exit 0.
+for v in status workflows; do
+    fresh 200 "$VERIFY"; OV_PATH="$T/none" ov "$v"
+    [[ "$RC" != 0 && -z "$OUT" && -z "$(reqs)" && "$ERR" == *"needs jq"*"brew install jq"* && "$(printf '%s\n' "$ERR" | grep -c .)" == 1 ]] && ! raw_error \
+        && pass "no jq, no node: $v says in one line that it needs jq and how to install it, no request" \
+        || fail "no jq, no node: $v: one clear line" "rc=$RC out=$OUT err=$ERR requests=$(reqs)"
+done
+fresh 200 "$USAGE"; OV_PATH="$T/none" ov usage; usage_down "no jq and no node"
 
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed, $FAILED failed"

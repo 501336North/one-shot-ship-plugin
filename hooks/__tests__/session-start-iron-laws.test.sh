@@ -43,7 +43,8 @@ fail() {
 
 # Fixture for behavioural session-start tests: a temp HOME, a temp project, a curl shim that
 # records argv and --config stdin, and a fake plugin root whose oss-iron-laws-sync.sh is a
-# recorder stub that prints to stdout and takes 6s (an API that never answers).
+# recorder stub that prints to stdout and then blocks on a gate the test holds (an API that never
+# answers, until the test lets it go).
 # Both stubs are made and warmed once (macOS scans each new executable on its first exec, 0.3-60 s)
 # and symlinked into each case; they write into the current case's dir, $SS_T.
 source "$SCRIPT_DIR/lib/warm-stub.sh"
@@ -67,7 +68,7 @@ SHIM
 warm_stub "$KS/sync.sh" "$(cat << 'STUB'
 printf '%s|%s\n' "$$" "$*" > "$SS_T/sync-started"
 echo "SYNC STDOUT LEAK"
-sleep 6
+read -r _ <&5   # the gate (ss_run): returns only when the test closes its write end
 touch "$SS_T/sync-finished"
 STUB
 )" || STUBS_WARM=n
@@ -77,18 +78,27 @@ ss_setup() {
     mkdir -p "$T/home/.oss" "$T/proj" "$T/shim" "$T/root/hooks"
     ln -s "$KS/bin" "$T/bin"
     ln -s "$KS/sync.sh" "$T/root/hooks/oss-iron-laws-sync.sh"
+    mkfifo "$T/gate"
 }
-ss_run() { # runs the real session start (health checks ON, so the sync path is live)
+# ss_run: runs the real session start (health checks ON, so the sync path is live); output in $T/out, returns
+# run_capped's status. It waits on events, never on time (T65c; a 2 s grace and a 5 s poll raced the detached refresh):
+# - The gate: fd 5 is its read end, which the hook and the refresh it starts inherit; fd 7, its only write end, is
+#   withheld from the hook. The refresh blocks on fd 5 until the hook has returned, so $T/hook-returned proves the
+#   hook did not wait for it, and a hook that does wait never returns (the cap ends it).
+# - Fd 3 is a second writer on the pipe to `cat`, INSIDE the capped group: the hook and every job it starts inherit it,
+#   so the capped command ends only when all of them have exited. A refresh records sync-started before it blocks.
+ss_run() {
     (cd "$T/proj" && SS_T="$T" HOME="$T/home" CLAUDE_PLUGIN_ROOT="$T/root" CLAUDE_PROJECT_DIR="$T/proj" \
         OSS_SKIP_HEALTH_CHECK= OSS_TEST_CC_VERSION=2.1.99 PATH="$T/bin:$PATH" \
-        run_capped 30 bash "$SS_HOOK" </dev/null 2>&1)
+        run_capped 30 /bin/bash -c '
+            { exec 6<>"$SS_T/gate" 5<"$SS_T/gate" 7>"$SS_T/gate" 6>&-
+              "$@" </dev/null 7>&-
+              echo "$?" > "$SS_T/hook-returned"
+              [[ -e "$SS_T/sync-finished" ]] && : > "$SS_T/finished-at-return"
+              exec 7>&- 5<&-
+            } 2>&1 3>&1 | cat' _ bash "$SS_HOOK" > "$T/out" 2>&1)
 }
-ss_teardown() {
-    local pid; pid=$(cut -d'|' -f1 "$T/sync-started" 2>/dev/null)
-    [[ -n "$pid" ]] && kill "$pid" 2>/dev/null
-    rm -rf "$T"
-}
-wait_for_file() { local i; for i in $(seq 1 50); do [[ -e "$1" ]] && return 0; sleep 0.1; done; return 1; }
+ss_teardown() { rm -rf "$T"; }   # run_capped has already ended every process of the run
 
 # =============================================================================
 # TEST 1: Session start dispatches the Iron Laws refresh in the background
@@ -102,14 +112,16 @@ test_calls_sync_with_api_key() {
     ((TESTS_RUN++))
     ss_setup
     printf '{"apiKey": "fake-key-ss-0001"}\n' > "$T/home/.oss/config.json"
-    local out; out=$(ss_run)
-    local finished_at_return=n; [[ -e "$T/sync-finished" ]] && finished_at_return=y
-    local started=n args=""; wait_for_file "$T/sync-started" && started=y && args=$(cut -d'|' -f2 "$T/sync-started")
+    ss_run; local rc=$?
+    local out; out=$(cat "$T/out")
+    local returned=n; [[ -e "$T/hook-returned" ]] && returned=y
+    local finished_at_return=n; [[ -e "$T/finished-at-return" ]] && finished_at_return=y
+    local started=n args=""; [[ -e "$T/sync-started" ]] && started=y && args=$(cut -d'|' -f2 "$T/sync-started")
     local leaked=n; [[ "$out" == *"SYNC STDOUT LEAK"* ]] && leaked=y
-    if [[ "$started" == y && "$finished_at_return" == n && "$leaked" == n && -z "$args" ]]; then
+    if [[ "$rc" == 0 && "$started" == y && "$returned" == y && "$finished_at_return" == n && "$leaked" == n && -z "$args" ]]; then
         pass "$test_name"
     else
-        fail "$test_name" "started, not awaited, output discarded, no flags" "started=$started finished_at_return=$finished_at_return leaked=$leaked args=$args"
+        fail "$test_name" "rc=0, started, hook returned while it was running, output discarded, no flags" "rc=$rc started=$started returned=$returned finished_at_return=$finished_at_return leaked=$leaked args=$args"
     fi
     ss_teardown
 }
@@ -125,14 +137,13 @@ test_skips_sync_without_api_key() {
     ((TESTS_RUN++))
     ss_setup
     printf '{}\n' > "$T/home/.oss/config.json"
-    # Fd 3 is a second writer on the substitution's pipe: the hook and every job it starts (the
-    # nohup'd refresh redirects only fds 0-2) inherit it, so $(...) returns only when all of them
-    # have exited. A refresh started by mistake, however slow, has written sync-started by then.
-    local _wait; _wait=$(ss_run 3>&1 >/dev/null)
-    if [[ ! -e "$T/sync-started" ]]; then
+    # ss_run returns only when the hook and every job it started have exited (fd 3), so a refresh
+    # started by mistake, however slow, has written sync-started by then.
+    ss_run; local rc=$?
+    if [[ "$rc" == 0 && ! -e "$T/sync-started" ]]; then
         pass "$test_name"
     else
-        fail "$test_name" "no refresh started" "started"
+        fail "$test_name" "rc=0, no refresh started" "rc=$rc started=$([[ -e $T/sync-started ]] && echo y || echo n)"
     fi
     ss_teardown
 }
@@ -148,7 +159,7 @@ test_subscription_check_key_off_argv() {
     ((TESTS_RUN++))
     ss_setup
     printf '{"apiKey": "fake-key-ss-0002"}\n' > "$T/home/.oss/config.json"
-    local out; out=$(ss_run)
+    ss_run; local out; out=$(cat "$T/out")
     local in_argv=n in_cfg=n
     grep -qF "fake-key-ss-0002" "$T/shim/argv" 2>/dev/null && in_argv=y
     grep -qF "Authorization: Bearer fake-key-ss-0002" "$T/shim/stdin" 2>/dev/null && in_cfg=y

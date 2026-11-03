@@ -54,7 +54,9 @@ HOSTILE_PROJECT='p", "injected": true, "q\'
 HOSTILE_BRANCH='feat/x", "injected": true, "y": "\z'
 
 # start <project folder name> <branch or ""> <jq|nojq> : one session start; $T/state/payload.<event> is
-# what oss-notify.sh received. 3>&1: $(...) returns only after the detached notify job has exited.
+# what oss-notify.sh received. The detached notify job inherits fd 3, a pipe to `cat` INSIDE the capped
+# group, so the capped command ends only at EOF, after that job has exited: a wait on the event, not on
+# time (T65b; outside the group, run_capped killed a notify job still running 2 s after the hook).
 start() {
     T=$(mktemp -d "$KS/case.XXXXXX"); mkdir -p "$T/home/.oss" "$T/state"
     P="$T/$1"; mkdir -p "$P"
@@ -64,9 +66,10 @@ start() {
         printf '# Session Context\n\n**Branch:** %s\n\n_Saved: 2026-01-01 10:00:00_\n' "$2" > "$P/.oss/session-context.md"
     fi
     local path="$KS/bin:$PATH"; [[ $3 == nojq ]] && path="$KS/bin:$NOJQ"
-    out=$(cd "$P" && run_capped 60 env -u OSS_SKIP_HEALTH_CHECK -u OSS_CONFIG_DIR -u CLAUDE_CODE_SESSION_ID -u OSS_RUN_HEALTH_CHECK \
+    out=$(cd "$P" && run_capped 60 /bin/bash -c '"$@" 2>&1 3>&1 | cat' _ \
+        env -u OSS_SKIP_HEALTH_CHECK -u OSS_CONFIG_DIR -u CLAUDE_CODE_SESSION_ID -u OSS_RUN_HEALTH_CHECK \
         HOME="$T/home" CLAUDE_PLUGIN_ROOT="$KS/plugin" CLAUDE_PROJECT_DIR="$P" STUB_STATE="$T/state" PATH="$path" \
-        /bin/bash "$SS_HOOK" </dev/null 2>&1 3>&1)
+        /bin/bash "$SS_HOOK" </dev/null 2>&1)
 }
 payload() { cat "$T/state/payload.$1" 2>/dev/null; }
 

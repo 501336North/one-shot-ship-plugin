@@ -18,6 +18,9 @@ CONFIG_DIR="${OSS_CONFIG_DIR:-$HOME/.oss}"
 STATE_FILE="$CONFIG_DIR/update-state.json"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_JSON="${OSS_PLUGIN_JSON:-$SCRIPT_DIR/../.claude-plugin/plugin.json}"
+# oss_is_regular: the state is read only as a regular file; a link or FIFO counts as no state (T53b). Without the
+# helper, no state is trusted.
+source "$SCRIPT_DIR/oss-api-curl.sh" 2>/dev/null || oss_is_regular() { return 1; }
 
 # Read current plugin version
 current_version=""
@@ -28,7 +31,7 @@ fi
 # Read cached state
 cached_version=""
 has_state=false
-if [[ -f "$STATE_FILE" ]] && command -v jq &>/dev/null; then
+if oss_is_regular "$STATE_FILE" && command -v jq &>/dev/null; then
     has_state=true
     cached_version=$(jq -r '.lastPluginVersion // ""' -- "$STATE_FILE" 2>/dev/null)
 fi

@@ -136,23 +136,28 @@ oss_is_regular() { [[ -f "$1" && ! -L "$1" ]]; }
 
 # oss_write_atomic PATH TEXT - writes TEXT (exactly) to PATH through a temp file in PATH's directory and `mv -f`, so
 # a symlink or FIFO at PATH is replaced, never followed or opened (T32). A real directory at PATH is refused. On any
-# failure the temp file is removed and it returns 1.
+# failure the temp file is removed and it returns 1. `--` before every path: a relative "-cfg/..." is a path, never
+# options (T53b).
 oss_write_atomic() {
     local t
     [[ -d "$1" && ! -L "$1" ]] && return 1
-    t=$(mktemp "$1.XXXXXX" 2>/dev/null) || return 1
+    t=$(mktemp -- "$1.XXXXXX" 2>/dev/null) || return 1
     # A symlink to a directory would make mv move INTO that directory: drop the link first.
-    if printf '%s' "$2" > "$t" && { [[ ! -L "$1" ]] || rm -f "$1"; } && mv -f "$t" "$1"; then return 0; fi
-    rm -f "$t"
+    if printf '%s' "$2" > "$t" && { [[ ! -L "$1" ]] || rm -f -- "$1"; } && mv -f -- "$t" "$1"; then return 0; fi
+    rm -f -- "$t"
     return 1
 }
 
 # OSS_JQ_INVISIBLE - a jq definition, oss_invisible: the one set of characters removed from text shown to the user
-# or to Claude, besides C0 (each caller adds the C0 range it strips): DEL, C1, U+2028/U+2029 and every Unicode format
-# character (\p{Cf}: zero-width, bidi, BOM, soft hyphen, U+061C, word joiner, tag characters). Used by oss_json_field
-# and oss-claude-md-template.sh (T45). stripControl in packages/cli-decrypt/src/strip-control.ts is the TypeScript copy
-# of the same set; change both together.
-OSS_JQ_INVISIBLE='def oss_invisible: "\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\u2028\u2029\\p{Cf}"; '
+# or to Claude, besides C0 (each caller adds the C0 range it strips): DEL, C1, U+2028/U+2029, every Unicode format
+# character (\p{Cf}: zero-width, bidi, BOM, soft hyphen, U+061C, word joiner, tag characters), the variation selectors
+# (U+FE00-FE0F, U+E0100-E01EF), U+034F and the blank fillers U+115F, U+1160, U+3164, U+FFA0, U+2800 (T52), and
+# \p{Default_Ignorable_Code_Point}, the shared set of the API's cleanText (T52b). An older jq whose Oniguruma rejects
+# that property keeps the T52 list (the try), never an error. Used by oss_json_field and oss-claude-md-template.sh
+# (T45). _OV_JS_PRE in oss-value.sh is the node copy (T64); change them together. stripControl in
+# packages/cli-decrypt/src/strip-control.ts is the TypeScript copy; it gains the T52 additions with the next CLI release.
+OSS_JQ_INVISIBLE='def oss_invisible: "\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\u2028\u2029\\p{Cf}\ufe00-\ufe0f\udb40\udd00-\udb40\uddef\u034f\u115f\u1160\u3164\uffa0\u2800"
+    + (try ("" | test("\\p{Default_Ignorable_Code_Point}") | "\\p{Default_Ignorable_Code_Point}") catch ""); '
 
 # oss_json_field FIELD - reads JSON (a server response) on stdin and prints .FIELD of it as ONE line of text (""
 # when missing, null or false, and when stdin is not exactly one JSON object: several documents never give
@@ -195,7 +200,7 @@ oss_private_run_dir() {
 # ~/.oss/settings.json. No file is on (the default); exactly one JSON object is off only when its decisionsPush
 # is false (duplicate keys: the last wins). Task 16c: a file that cannot be read as exactly one object (unreadable,
 # bad JSON, not an object, empty, more than one document) cannot tell, and that is off: it sets
-# _OSS_SETTINGS_UNREADABLE=1 so status can say why. Task 16al: the off switch also lives in its own marker,
+# _OSS_SETTINGS_UNREADABLE=1 (=link when it is a symlink, T68) so status can say why. Task 16al: the off switch also lives in its own marker,
 # ~/.oss/decisions-push-off, which only `decisions off|on` writes, so no settings.json writer can undo it: anything
 # at that path (a file, a link, a folder) is off.
 oss_settings_file() { printf '%s\n' "$HOME/.oss/settings.json"; }
@@ -207,6 +212,8 @@ oss_decisions_push_off() {
     _OSS_SETTINGS_UNREADABLE=""
     [[ -e "$m" || -L "$m" ]] && return 0
     [[ -e "$f" || -L "$f" ]] || return 1
+    # T67: a FIFO would hang the read; a FIFO, a link or a folder cannot tell, and that is off
+    oss_is_regular "$f" || { _OSS_SETTINGS_UNREADABLE=1; [[ -L "$f" ]] && _OSS_SETTINGS_UNREADABLE="link"; return 0; }
     r=$(jq -s 'if length == 1 and (.[0] | type) == "object" then .[0].decisionsPush == false else "unknown" end' "$f" 2>/dev/null)
     [[ "$r" == false ]] && return 1
     [[ "$r" == true ]] || _OSS_SETTINGS_UNREADABLE=1
