@@ -55,10 +55,10 @@ trap cleanup EXIT
 
 # fetch MAX FILE SECS URL: downloads URL to FILE within SECS seconds and MAX bytes (T74c). --max-filesize
 # refuses a too-large Content-Length; head -c stops a body sent with none, which curl before 8.4 lets past it.
-# Over MAX is a failed download (63, curl's code for it); the EXIT trap removes FILE.
+# Over MAX is a failed download (63, curl's code for it); the EXIT trap removes FILE. HTTPS only, redirects too (T82, N5).
 fetch() {
   local max=$1 out=$2 secs=$3 url=$4 rc
-  curl -sfL --connect-timeout 15 --max-time "$secs" --max-filesize "$max" "$url" | head -c $((max + 1)) > "$out"
+  curl -sfL --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time "$secs" --max-filesize "$max" "$url" | head -c $((max + 1)) > "$out"
   rc=${PIPESTATUS[0]}
   (( rc == 0 )) || return "$rc"
   (( $(wc -c < "$out") <= max )) || return 63

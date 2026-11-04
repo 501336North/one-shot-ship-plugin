@@ -5,15 +5,21 @@
 # or have an outdated version missing critical security features.
 #
 # Usage:
-#   ~/.oss/hooks/ensure-decrypt-cli.sh
+#   ~/.oss/hooks/ensure-decrypt-cli.sh [--long-step]
+#
+#   --long-step  the caller runs this as a 10-minute Bash step (the /oss:* prompts ask for 600000 ms): a first
+#                install may download for up to 570 s instead of 100 s (T82)
 #
 # Returns:
-#   0 - Binary is available and meets minimum version
-#   1 - Installation failed
+#   0  - Binary is available and meets minimum version
+#   1  - Installation failed
+#   75 - First install still downloading: it stopped itself before the Bash step's time limit and kept what it
+#        downloaded; running it again continues the download (T82)
 #
 # Called by commands that need prompt decryption (build, ship, plan, etc.)
 
 set -euo pipefail
+SCRIPT_START=$SECONDS   # relative: an inherited SECONDS must not move the time limit below
 
 OSS_DIR="${HOME}/.oss"
 OSS_BIN_DIR="${OSS_DIR}/bin"
@@ -28,9 +34,12 @@ if [[ ! "$OSS_DECRYPT_TAG" =~ ^cli-decrypt-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 GITHUB_RELEASES="https://github.com/501336North/one-shot-ship-plugin/releases/download/${OSS_DECRYPT_TAG}"
 # -f: an HTTP error is a failure (not a saved error page); HTTPS only; abort a stalled transfer
-# (<1 KB/s for 60 s). Upgrades over a working binary get one deadline (D6), first installs the longest a Bash
-# tool call allows (T74c).
+# (<1 KB/s for 60 s). Upgrades over a working binary get one deadline (D6), first installs one that resumes (T82).
 CURL_OPTS=(-fsSL --proto '=https' --connect-timeout 15 --speed-limit 1024 --speed-time 60)
+# T82: a first install stops itself in time for the Bash step that runs it (Claude Code's default 2 min, or the
+# prompts' 10 min with --long-step) and keeps what it downloaded for the next run.
+FIRST_INSTALL_SECS=100
+[[ "${1:-}" == "--long-step" ]] && FIRST_INSTALL_SECS=570
 
 # Standardized error contract: emit a structured OSSError via the oss-error
 # emitter when available (in-band stdout JSON + project workflow.log line).
@@ -197,17 +206,55 @@ capped() {
     (( $(wc -c < "$out") <= max )) || return 63
 }
 
-# Download binary ($@ = extra curl options); 256 MiB is a few times its size today (~60 MB), room to grow
+BIN_MAX=268435456   # 256 MiB: a few times the binary's size today (~60 MB), room to grow
+binary_download_failed() {
+    keep_installed_or_fail "download"
+    echo "Error: Failed to download oss-decrypt binary"
+    echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
+    emit_oss_error --code OSS-API-003 --severity HIGH \
+        --message "oss-decrypt binary download failed: network unreachable" \
+        --retry-eligible true --retry-cost cheap
+    exit 1
+}
+# Download binary ($@ = extra curl options)
 fetch_binary() {
-    if ! capped 268435456 "$TMP_BIN" "$@" "$DOWNLOAD_URL"; then
-        keep_installed_or_fail "download"
-        echo "Error: Failed to download oss-decrypt binary"
-        echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
-        emit_oss_error --code OSS-API-003 --severity HIGH \
-            --message "oss-decrypt binary download failed: network unreachable" \
-            --retry-eligible true --retry-cost cheap
-        exit 1
-    fi
+    capped "$BIN_MAX" "$TMP_BIN" "$@" "$DOWNLOAD_URL" || binary_download_failed
+}
+
+# T82: a first install downloads into a private folder beside the binary and resumes there on the next run. The folder must be a directory of the user's own (made 700), the
+# partial a regular file of the user's own with no second name (not a link, FIFO or device, nor a hard link to
+# another file). Anything else is refused: never followed, never appended to.
+PART_DIR="$OSS_BIN_DIR/.download"
+PART="$PART_DIR/oss-decrypt-${PLATFORM}-${ARCH}-${OSS_DECRYPT_TAG}.part"
+refuse_partial() {
+    echo "Error: Refusing to use the partial download $1: it is not a regular file or folder of your own (a link, FIFO or device?)."
+    echo "Delete it, then run the command again."
+    exit 1
+}
+# resume_binary SECS: appends the rest of the binary to PART within SECS seconds and BIN_MAX bytes (head -c, as
+# in capped). Complete: PART is copied into the private TMP_BIN and deleted; the copy is what gets verified and
+# installed, so a second session still appending to PART cannot change it afterwards. Stopped at the time limit
+# after some progress: exit 75, PART kept. An HTTP error (404, 416: nothing left to send) or a server that ignores
+# the range (33) or sends past the cap deletes PART. Other failures keep it. Returns curl's code.
+resume_binary() {
+    local have rc
+    mkdir -m 700 "$PART_DIR" 2>/dev/null || true
+    [[ -d "$PART_DIR" && ! -L "$PART_DIR" && -O "$PART_DIR" ]] && chmod 700 "$PART_DIR" || refuse_partial "folder $PART_DIR"
+    [[ -e "$PART" || -L "$PART" ]] || (umask 077; : > "$PART")
+    [[ -f "$PART" && ! -L "$PART" && -O "$PART" && -n "$(find "$PART" -maxdepth 0 -links 1 2>/dev/null)" ]] || refuse_partial "$PART"
+    have=$(wc -c < "$PART" | tr -d ' ')
+    curl "${CURL_OPTS[@]}" --max-filesize "$BIN_MAX" -C "$have" --max-time "$1" "$DOWNLOAD_URL" | head -c $((BIN_MAX + 1 - have)) >> "$PART"
+    rc=${PIPESTATUS[0]}
+    (( $(wc -c < "$PART") <= BIN_MAX )) || rc=63
+    case $rc in
+        0) cat -- "$PART" > "$TMP_BIN" || rc=1; rm -f "$PART"; return "$rc" ;;
+        28) if (( $(wc -c < "$PART") > have )); then
+                echo "The decrypt CLI is still downloading ($(( $(wc -c < "$PART") / 1048576 )) MB so far); run the command again to continue."
+                exit 75
+            fi ;;
+        22|33|63) rm -f "$PART" ;;
+    esac
+    return "$rc"
 }
 
 # =============================================================================
@@ -231,15 +278,18 @@ fetch_checksum() {
 
 # The hook runs inside a ~120 s Bash tool call: an upgrade over a working binary gets ONE 100 s deadline for
 # both downloads, so a slow link fails inside the hook (and takes the soft path above) before the tool kills
-# it. The small .sha256 goes first (15 s), the binary gets the rest. A first install must finish: it gets the
-# longest a Bash tool call can last (600 s; T74c: before, none, and a trickle over 1 KB/s held it for hours).
+# it. The small .sha256 goes first (15 s), the binary gets the rest. A first install must finish: it stops itself
+# before its Bash step does (100 s, 570 s with --long-step) and continues on the next run (T82; T74c gave it 600 s,
+# which the default 2-minute step never reached, and every retry started over).
 if [[ "$HAVE_RUNNABLE" == "true" ]]; then
     DL_START=$SECONDS
     fetch_checksum --max-time 15
     fetch_binary --max-time $((100 - (SECONDS - DL_START)))
 else
-    fetch_binary --max-time 600
-    fetch_checksum --max-time 60
+    # T82: binary first, then the .sha256 (15 s), both within FIRST_INSTALL_SECS of the hook's start; the binary
+    # resumes on the next run.
+    resume_binary $((FIRST_INSTALL_SECS - 15 - (SECONDS - SCRIPT_START))) || binary_download_failed
+    fetch_checksum --max-time 15
 fi
 
 # Extract expected hash from checksum file (format: "<hash>  <filename>")
@@ -269,6 +319,7 @@ fi
 if [[ "$ACTUAL_HASH" != "$EXPECTED_HASH" ]]; then
     echo "[verify] Binary checksum: FAILED — mismatch (expected ${EXPECTED_HASH:0:12}..., got ${ACTUAL_HASH:0:12}...)"
     echo "Error: Binary integrity check failed. The download may have been tampered with."
+    echo "The download was deleted; the next run downloads it again."
     echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
     emit_oss_error --code OSS-API-002 --severity HIGH \
         --message "oss-decrypt binary integrity check failed: checksum mismatch" \
@@ -297,6 +348,7 @@ if [[ "$ACTUAL_HASH" != "$COMMITTED_HASH" ]]; then   # an absent entry is empty,
         echo "[verify] Committed hash: FAILED — no committed entry for $ARTIFACT"
     fi
     echo "Error: Binary does not match the plugin's committed checksum. Refusing to install (possible release tamper)."
+    echo "The download was deleted; the next run downloads it again."
     echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
     emit_oss_error --code OSS-API-002 --severity HIGH \
         --message "oss-decrypt binary failed committed-manifest verification" \

@@ -202,12 +202,14 @@ This list names where each part comes from, not what it says: the served text is
 After successful authentication, install the decryption CLI for secure prompt delivery:
 
 1. **Install (or update) the CLI through the verified installer hook:**
+
+   Run this step with a Bash timeout of 600000 ms (10 minutes): a first install downloads about 60 MB.
    ```bash
-   ~/.oss/hooks/ensure-decrypt-cli.sh
+   ~/.oss/hooks/ensure-decrypt-cli.sh --long-step
    ```
 
    If `~/.oss/hooks/ensure-decrypt-cli.sh` does not exist (session start has not run yet), run
-   `"${CLAUDE_PLUGIN_ROOT}/hooks/ensure-decrypt-cli.sh"` instead. If neither exists, stop and tell the user
+   `"${CLAUDE_PLUGIN_ROOT}/hooks/ensure-decrypt-cli.sh" --long-step` instead. If neither exists, stop and tell the user
    to restart Claude Code so the One Shot Ship plugin can finish installing its hooks.
 
    The hook detects your platform (macOS arm64/x64, Linux x64/arm64 incl. GB10/Graviton/GH200/Ampere),
@@ -215,9 +217,12 @@ After successful authentication, install the decryption CLI for secure prompt de
    matches both the release checksum and the hash committed in the plugin. Do not download the binary
    any other way.
 
-2. **(If the hook reported an error)** stop here and show the user its message; do not continue to setup.
+2. **(If the hook exited 75)** the download is still in progress: run the same step again (it continues where it
+   stopped) until it exits 0 or reports an error.
 
-3. **Setup credentials (requires valid API key):**
+3. **(If the hook reported an error)** stop here and show the user its message; do not continue to setup.
+
+4. **Setup credentials (requires valid API key):**
    ```bash
    ~/.oss/bin/oss-decrypt --setup
    ```
@@ -227,7 +232,7 @@ After successful authentication, install the decryption CLI for secure prompt de
    - `hardwareId` - Device-specific identifier
    - `salt` - Unique salt for key derivation
 
-4. **Verify installation (gate success on the real verifier):**
+5. **Verify installation (gate success on the real verifier):**
 
    Do NOT declare success just because the binary file exists — a binary that is
    present but crashes (e.g. a bad build) would slip through. Gate the success
@@ -568,5 +573,5 @@ Get a valid key from https://www.oneshotship.com/dashboard
 ### Network Error
 ```
 Couldn't verify the key (network or server problem). Check your connection and run /oss:login again.
-API endpoint: /api/v1/subscription/status on the apiUrl in your OSS config (default https://one-shot-ship-api.onrender.com)
+API endpoint: /api/v1/subscription/status on your OSS config's apiUrl (default https://one-shot-ship-api.onrender.com)
 ```

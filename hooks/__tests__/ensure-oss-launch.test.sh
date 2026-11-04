@@ -177,5 +177,15 @@ if [[ $rc -eq 1 && "$out" == *"checksum file unavailable"* && ! -e "$BINDIR/oss-
 else fail "T74c .sha256 over its cap" "rc=$rc out=${out:0:300}"; fi
 teardown
 
+# --- T82 (security N5): both downloads are HTTPS only, redirects included ---
+# @behavior A release URL, or a redirect from it, that leads to plain HTTP (or any other protocol) is refused by curl.
+setup
+out="$(capped_ensure)"; rc=$?
+n=$(grep -c -- "--proto =https --proto-redir =https " "$SANDBOX/argv" 2>/dev/null)
+if [[ $rc -eq 0 && "$n" == 2 && $(wc -l < "$SANDBOX/argv" | tr -d ' ') == 2 ]]; then
+  pass "T82 both downloads get --proto =https --proto-redir =https"
+else fail "T82 https-only downloads" "rc=$rc argv=$(tr '\n' '|' < "$SANDBOX/argv" 2>/dev/null)"; fi
+teardown
+
 echo "-----"; echo "passed: $TESTS_PASSED, failed: $TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]]

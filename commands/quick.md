@@ -157,8 +157,10 @@ Register at https://www.oneshotship.com
 
 ## Step 4: Ensure Decrypt CLI Installed
 
+Run this step with a Bash timeout of 600000 ms (10 minutes): a first install downloads about 60 MB. If it exits 75, the download is still in progress: run the same step again to continue.
+
 ```bash
-~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install the decrypt CLI (see the message above). Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."; exit 1; }
+~/.oss/hooks/ensure-decrypt-cli.sh --long-step || { case $? in 75) exit 75;; esac; echo "Failed to install the decrypt CLI (see the message above). Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."; exit 1; }
 ```
 
 This auto-installs the decrypt CLI if missing. Existing installations are unaffected.

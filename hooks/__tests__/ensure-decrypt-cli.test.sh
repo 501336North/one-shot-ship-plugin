@@ -211,11 +211,15 @@ setup_mock_curl() {
 ALL_ARGS="$*"
 OUTPUT_FILE=""
 URL=""
+MAX_TIME=0
+RESUME_AT=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -o) OUTPUT_FILE="$2"; shift 2 ;;
         -sL|-s|-L|-fsSL) shift ;;
-        --proto|--connect-timeout|--speed-limit|--speed-time|--max-time|--max-filesize) shift 2 ;;
+        --proto|--connect-timeout|--speed-limit|--speed-time|--max-filesize) shift 2 ;;
+        --max-time) MAX_TIME="$2"; shift 2 ;;
+        -C) RESUME_AT="$2"; shift 2 ;;
         *) URL="$1"; shift ;;
     esac
 done
@@ -236,13 +240,23 @@ if [[ "\$URL" == *.sha256 ]]; then
     cat "$staging_dir/checksum" > "\$OUTPUT_FILE"
 else
     [[ "$sha256_mode" == "BINFAIL" ]] && exit 22
+    [[ "$sha256_mode" == "NETFAIL" ]] && exit 7
     # T74c: MOCK_CURL_FLOOD=<file>: the binary is 257 MiB of zeros (a server sending far more than any release,
     # past --max-filesize as curl before 8.4 lets a body with no Content-Length); dd's exit status goes to
     # <file>: 141 (SIGPIPE) when the hook stopped reading
     if [[ -n "\${MOCK_CURL_FLOOD:-}" ]]; then
         dd if=/dev/zero bs=1048576 count=257 of="\$OUTPUT_FILE" 2>/dev/null; echo \$? > "\$MOCK_CURL_FLOOD"; exit 0
     fi
-    cat "$staging_dir/binary" > "\$OUTPUT_FILE"
+    # T82: a server that honours ranges (-C N sends from byte N on). MOCK_CURL_RATE=<bytes/s> throttles it, in
+    # virtual time (no real wait): it sends at most rate x --max-time bytes, then exits 28 as curl does at its
+    # --max-time (0 = no limit, as in curl).
+    if [[ -n "\${MOCK_CURL_RATE:-}" && "\$MAX_TIME" != 0 ]]; then
+        budget=\$(( MOCK_CURL_RATE * MAX_TIME ))
+        tail -c +\$((RESUME_AT + 1)) "$staging_dir/binary" | head -c "\$budget" > "\$OUTPUT_FILE"
+        (( \$(wc -c < "$staging_dir/binary") - RESUME_AT <= budget )) || exit 28
+        exit 0
+    fi
+    tail -c +\$((RESUME_AT + 1)) "$staging_dir/binary" > "\$OUTPUT_FILE"
 fi
 exit 0
 CURLEOF
@@ -1116,11 +1130,11 @@ test_unrunnable_or_ancient_install_takes_hard_path() {
 #           FIRST with --max-time 15, then the binary with what is left of a 100 s budget (0 < cap <= 100).
 #           (Round 2 put --max-time 90 on BOTH curls, binary first: worst case ~180 s + connect timeouts, past
 #           the tool timeout, so the soft path never ran. That test asserted "--max-time 90" on the asset; it is
-#           replaced by this one.) A first install keeps its order (binary, then .sha256) and gets the longest
-#           limits a Bash tool call allows (T74c, user decision "fix all now": before, it had no total limit, and a
-#           server trickling over 1 KB/s held it for hours): 600 s for the binary, 60 s for the .sha256.
+#           replaced by this one.) A first install keeps its order (binary, then .sha256). T82: both fit in a 100 s
+#           budget without --long-step, the .sha256 last with --max-time 15 (before: 600 s + 60 s, which a 2-minute
+#           Bash step never reached); the binary resumes on the next run (see the T82 tests).
 test_upgrade_download_has_one_deadline_first_install_does_not() {
-    local test_name="Installed 1.2.1 -> .sha256 first (--max-time 15), binary within the 100 s budget; no binary -> binary first (--max-time 600), .sha256 --max-time 60"
+    local test_name="Installed 1.2.1 -> .sha256 first (--max-time 15), binary within the 100 s budget; no binary -> binary first within 85 s, then .sha256 --max-time 15"
     ((TESTS_RUN++)); setup_test_env
     local up_first up_bin up_cap fresh_first fresh_all up_rc fresh_rc
     export MOCK_CURL_ARGS_LOG="$TEST_HOME/curl.args"; run_upgrade "1.2.1" "OK" "none"; up_rc=$RUN_RC
@@ -1136,9 +1150,10 @@ test_upgrade_download_has_one_deadline_first_install_does_not() {
     if [[ $up_rc -eq 0 && $fresh_rc -eq 0 \
         && "$up_first" == *".sha256"* && $(grep -oc -- '--max-time' <<<"$up_first") -eq 1 && "$up_first" == *"--max-time 15 "* \
         && -n "$up_bin" && $(grep -c -- '--max-time' <<<"$up_bin") -eq 1 && "$up_cap" =~ ^[0-9]+$ && $up_cap -gt 0 && $up_cap -le 100 \
-        && -n "$fresh_first" && "$fresh_first" != *".sha256"* && $(grep -o -- '--max-time [0-9]*' <<<"$fresh_first") == "--max-time 600" \
-        && $(grep -o -- '--max-time [0-9]*' <<<"$fresh_sum") == "--max-time 60" && $(grep -c -- '--max-time' <<<"$fresh_all") -eq 2 ]]; then pass "$test_name"
-    else fail "$test_name" "upgrade: first curl .sha256 with one --max-time 15, binary curl one --max-time in (0,100]; first install: binary first with --max-time 600, .sha256 --max-time 60" \
+        && -n "$fresh_first" && "$fresh_first" != *".sha256"* && "$fresh_first" =~ --max-time\ ([0-9]+) \
+        && ${BASH_REMATCH[1]} -gt 0 && ${BASH_REMATCH[1]} -le 85 \
+        && $(grep -o -- '--max-time [0-9]*' <<<"$fresh_sum") == "--max-time 15" && $(grep -c -- '--max-time' <<<"$fresh_all") -eq 2 ]]; then pass "$test_name"
+    else fail "$test_name" "upgrade: first curl .sha256 with one --max-time 15, binary curl one --max-time in (0,100]; first install: binary first with --max-time in (0,85], .sha256 --max-time 15" \
         "up_rc=$up_rc fresh_rc=$fresh_rc up_first=[$up_first] up_bin=[$up_bin] cap=[$up_cap] fresh=[$fresh_all]"; fi
     teardown_test_env
 }
@@ -1152,7 +1167,7 @@ test_upgrade_download_has_one_deadline_first_install_does_not() {
 # =============================================================================
 BIN_CAP=268435456
 # leftover_temps: temp files the hook left in ~/.oss/bin (the stamp is not one)
-leftover_temps() { find "$TEST_HOME/.oss/bin" -type f -name '.oss-decrypt.*' 2>/dev/null | wc -l | tr -d ' '; }
+leftover_temps() { find "$TEST_HOME/.oss/bin" -type f \( -name '.oss-decrypt.*' -o -name '*.part' \) 2>/dev/null | wc -l | tr -d ' '; }   # T82: a partial too
 test_downloads_are_size_capped() {
     local test_name="Both downloads get --max-filesize ($BIN_CAP binary, 4096 .sha256), on a first install and on an upgrade"
     ((TESTS_RUN++)); setup_test_env
@@ -1299,6 +1314,220 @@ test_stamp_symlink_never_followed() {
     teardown_test_env
 }
 
+# =============================================================================
+# T82: a slow first install finishes. The install step runs as a Bash tool call that Claude Code stops at
+# 2 min by default, so a ~60 MB binary below ~500 KB/s never installed and every retry started over.
+# @behavior A first install keeps its partial download in a private folder and resumes it on the next run.
+#   Without --long-step it stops itself within 100 s (exit 75, "still downloading, run the command again"),
+#   never leaving a half-installed binary; with --long-step (the prompts ask for a 600000 ms Bash step) the
+#   limit is just under 600 s. The complete file is verified before install; a partial that fails is deleted
+#   and the user told. A partial (or its folder) that is a link, FIFO or not the user's own regular file is
+#   refused: never followed, never appended to. An upgrade over a working binary keeps today's behaviour.
+# The server is the mock curl on PATH, throttled in virtual time (no real network, no real wait).
+# =============================================================================
+source "$SCRIPT_DIR/lib/run-capped.sh"
+PART_DIR_REL=".oss/bin/.download"
+STILL_DL="The decrypt CLI is still downloading"
+BIG=300000
+# stage_big_binary <dir>: a valid binary padded to $BIG bytes, with a matching .sha256 and committed manifest
+stage_big_binary() {
+    local d="$1" art h; art=$(stage_valid_binary "$d")
+    { printf '#'; head -c $((BIG - $(wc -c < "$d/binary") - 2)) /dev/zero | tr '\0' x; echo; } >> "$d/binary"
+    h=$(shasum -a 256 "$d/binary" | awk '{print $1}')
+    echo "$h  $art" > "$d/checksum"; echo "$h  $art" > "$d/manifest"
+}
+# slow_run <staging> <curl mode> [hook args...]: one run against a server sending ${RATE:-2000} B/s; sets RUN_RC, RUN_OUT.
+# SECONDS=1000: bash starts its SECONDS from an inherited one; the time limit must count from the hook's own start.
+slow_run() {
+    local st="$1" mode="$2"; shift 2
+    setup_mock_curl "$st" "$mode"
+    RUN_RC=0; RUN_OUT=$(run_capped 60 env SECONDS=1000 HOME="$TEST_HOME" OSS_DECRYPT_CHECKSUMS="$st/manifest" MOCK_CURL_RATE="${RATE:-2000}" \
+        MOCK_CURL_ARGS_LOG="$TEST_HOME/args.log" "$HOOK_SCRIPT" "$@" 2>&1) || RUN_RC=$?
+    teardown_mock_curl
+}
+partial_file() { find "$TEST_HOME/$PART_DIR_REL" -type f -name '*.part' 2>/dev/null | head -1; }
+bin_curl() { grep -v '\.sha256' "$TEST_HOME/args.log" 2>/dev/null | tail -1; }
+bin_maxtime() { bin_curl | grep -oE -- '--max-time [0-9-]+' | awk '{print $2}'; }
+bin_resume() { bin_curl | grep -oE -- '-C [0-9]+' | awk '{print $2}'; }
+mode_of() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1" 2>/dev/null; }
+installed_is() { cmp -s "$1/binary" "$TEST_HOME/.oss/bin/oss-decrypt" && echo yes || echo no; }
+
+test_slow_first_install_stops_then_resumes() {
+    local test_name="Slow first install: run 1 stops itself within 100 s (exit 75, still downloading, nothing installed); run 2 resumes from the partial to a verified install"
+    ((TESTS_RUN++)); setup_test_env
+    local st; st=$(mktemp -d); stage_big_binary "$st"
+    slow_run "$st" OK
+    local rc1=$RUN_RC out1=$RUN_OUT t1 part have mode inst1=no; t1=$(bin_maxtime); part=$(partial_file)
+    have=$(wc -c < "$part" 2>/dev/null | tr -d ' '); have=${have:-0}; mode=$(mode_of "$TEST_HOME/$PART_DIR_REL")
+    [[ -e "$TEST_HOME/.oss/bin/oss-decrypt" ]] && inst1=yes
+    : > "$TEST_HOME/args.log"
+    slow_run "$st" OK
+    local c2; c2=$(bin_resume)
+    if [[ $rc1 -eq 75 && "$out1" == *"$STILL_DL"*"run the command again to continue."* && $inst1 == no \
+          && "$t1" =~ ^[0-9]+$ && $t1 -gt 0 && $t1 -le 85 && $have -gt 0 && $have -lt $BIG && "$mode" == 700 \
+          && $RUN_RC -eq 0 && "$c2" == "$have" && $(installed_is "$st") == yes && -z "$(partial_file)" ]]; then pass "$test_name"
+    else fail "$test_name" "run 1: rc 75, still-downloading line, --max-time in (0,85], partial in a 700 folder, nothing installed; run 2: -C <partial size>, verified install, partial gone" \
+        "rc1=$rc1 t1=$t1 have=$have mode=$mode inst1=$inst1 out1=${out1:0:300} | rc2=$RUN_RC c2=$c2 installed=$(installed_is "$st") part=$(partial_file) out2=${RUN_OUT:0:300}"; fi
+    rm -rf "$st"; teardown_test_env
+}
+
+# @behavior Another session still appending to the shared partial (two first installs at once) can never change
+#   the installed binary after it was verified: the verified bytes are a private copy, not the partial itself.
+test_concurrent_writer_cannot_touch_installed_binary() {
+    local test_name="A writer still holding the partial open cannot change the binary installed from it"
+    ((TESTS_RUN++)); setup_test_env
+    local st; st=$(mktemp -d); stage_big_binary "$st"
+    slow_run "$st" OK
+    local part; part=$(partial_file) opened=no
+    if [[ -n "$part" ]]; then exec 7>>"$part" && opened=yes; fi
+    slow_run "$st" OK
+    local rc2=$RUN_RC
+    [[ $opened == yes ]] && { echo "unverified bytes" >&7; exec 7>&-; }
+    if [[ $opened == yes && $rc2 -eq 0 && $(installed_is "$st") == yes ]]; then pass "$test_name"
+    else fail "$test_name" "installed binary byte-identical to the release after the other writer wrote" "opened=$opened rc=$rc2 installed=$(installed_is "$st")"; fi
+    rm -rf "$st"; teardown_test_env
+}
+
+test_long_step_flag_lets_one_run_finish() {
+    local test_name="With --long-step the self-stop is just under 600 s: the same slow download installs in one run"
+    ((TESTS_RUN++)); setup_test_env
+    local st; st=$(mktemp -d); stage_big_binary "$st"
+    slow_run "$st" OK --long-step
+    local t; t=$(bin_maxtime)
+    if [[ $RUN_RC -eq 0 && $(installed_is "$st") == yes && "$t" =~ ^[0-9]+$ && $t -gt 100 && $t -le 555 && -z "$(partial_file)" ]]; then pass "$test_name"
+    else fail "$test_name" "rc 0, installed, binary --max-time in (100,555] (570 s less the .sha256's 15), no partial left" "rc=$RUN_RC t=$t installed=$(installed_is "$st") out=${RUN_OUT:0:300}"; fi
+    rm -rf "$st"; teardown_test_env
+}
+
+test_stalled_first_install_is_a_failure_not_progress() {
+    local test_name="A first install that receives nothing before the limit is a failed download (exit 1), not 'still downloading'"
+    ((TESTS_RUN++)); setup_test_env
+    local st; st=$(mktemp -d); stage_big_binary "$st"
+    RATE=0 slow_run "$st" OK
+    if [[ $RUN_RC -eq 1 && "$RUN_OUT" == *"Error: Failed to download oss-decrypt binary"* && "$RUN_OUT" != *"$STILL_DL"* && ! -e "$TEST_HOME/.oss/bin/oss-decrypt" ]]; then pass "$test_name"
+    else fail "$test_name" "rc 1, the download-failed message" "rc=$RUN_RC out=${RUN_OUT:0:300}"; fi
+    rm -rf "$st"; teardown_test_env
+}
+
+test_tampered_partial_deleted() {
+    local t
+    for t in partial committed; do
+        local check="[verify] Binary checksum: FAILED" what="a tampered partial (the release .sha256 disagrees)"
+        [[ $t == committed ]] && check="[verify] Committed hash: FAILED" what="a partial the committed manifest disagrees with"
+        local test_name="Resumed to the end, $what is deleted, the user is told, nothing is installed"
+        ((TESTS_RUN++)); setup_test_env
+        local st; st=$(mktemp -d); stage_big_binary "$st"
+        slow_run "$st" OK
+        local part; part=$(partial_file)
+        if [[ $t == partial ]]; then [[ -n "$part" ]] && printf 'tampered' | dd of="$part" bs=1 seek=100 conv=notrunc 2>/dev/null
+        else echo "$(printf 'f%.0s' {1..64})  $(awk '{print $2}' "$st/manifest")" > "$st/manifest"; fi
+        slow_run "$st" OK
+        if [[ -n "$part" && $RUN_RC -eq 1 && "$RUN_OUT" == *"$check"* && "$RUN_OUT" == *"The download was deleted"* \
+              && ! -e "$part" && ! -e "$TEST_HOME/.oss/bin/oss-decrypt" ]]; then pass "$test_name"
+        else fail "$test_name" "rc 1, $check, told it was deleted, partial gone, nothing installed" "part=$part rc=$RUN_RC left=$(partial_file) out=${RUN_OUT:0:400}"; fi
+        rm -rf "$st"; teardown_test_env
+    done
+}
+
+test_http_error_on_resume_deletes_partial_network_error_keeps_it() {
+    local m
+    for m in BINFAIL NETFAIL; do
+        local want=gone what="an HTTP error (curl 22: 404, 416)"; [[ $m == NETFAIL ]] && want=kept what="a network error (curl 7)"
+        local test_name="Resuming a partial: $what fails the run and the partial is $want"
+        ((TESTS_RUN++)); setup_test_env
+        local st; st=$(mktemp -d); stage_big_binary "$st"
+        slow_run "$st" OK
+        local part; part=$(partial_file)
+        slow_run "$st" "$m"
+        local got=gone; [[ -n "$part" && -f "$part" ]] && got=kept
+        if [[ -n "$part" && $RUN_RC -eq 1 && "$RUN_OUT" == *"Error: Failed to download oss-decrypt binary"* && $got == "$want" ]]; then pass "$test_name"
+        else fail "$test_name" "rc 1, download-failed message, partial $want" "part=$part rc=$RUN_RC partial=$got out=${RUN_OUT:0:300}"; fi
+        rm -rf "$st"; teardown_test_env
+    done
+}
+
+# plant <kind> <partial path> <victim>: puts a <kind> at the partial path
+plant() {
+    case "$1" in
+        symlink) ln -s "$3" "$2" ;;
+        fifo) mkfifo "$2" ;;
+        hardlink) ln "$3" "$2" ;;                  # a second name for another of the user's own files
+        foreign) ln /etc/hosts "$2" 2>/dev/null ;;  # a root-owned file (macOS allows the link; protected_hardlinks Linux does not)
+    esac
+}
+test_unsafe_partial_refused() {
+    local k
+    for k in symlink fifo hardlink foreign; do
+        local test_name="A partial that is a $k is refused: never followed or appended to, nothing installed"
+        ((TESTS_RUN++)); setup_test_env
+        local st; st=$(mktemp -d); stage_big_binary "$st"
+        slow_run "$st" OK
+        local part; part=$(partial_file); local victim="$TEST_HOME/victim"; echo "keep me" > "$victim"
+        local before hosts_before; before=$(shasum -a 256 "$victim" | awk '{print $1}'); hosts_before=$(shasum -a 256 /etc/hosts | awk '{print $1}')
+        [[ -n "$part" ]] && rm -f -- "${part:?}" && plant "$k" "$part" "$victim"
+        local planted=no; [[ -n "$part" ]] && [[ -e "$part" || -L "$part" ]] && planted=yes
+        slow_run "$st" OK
+        local same=no still=no
+        [[ "$(shasum -a 256 "$victim" | awk '{print $1}')" == "$before" && "$(shasum -a 256 /etc/hosts | awk '{print $1}')" == "$hosts_before" ]] && same=yes
+        case "$k" in symlink) [[ -L "$part" ]] && still=yes ;; fifo) [[ -p "$part" ]] && still=yes ;; *) [[ -f "$part" ]] && still=yes ;; esac
+        if [[ $planted == yes && $RUN_RC -eq 1 && "$RUN_OUT" == *"Refusing to use the partial download"* && $same == yes && $still == yes \
+              && ! -e "$TEST_HOME/.oss/bin/oss-decrypt" ]]; then pass "$test_name"
+        else fail "$test_name" "rc 1, refusal message, target untouched, the $k left as it was" "planted=$planted rc=$RUN_RC same=$same still=$still out=${RUN_OUT:0:300}"; fi
+        rm -rf "$st"; teardown_test_env
+    done
+}
+
+test_unsafe_partial_folder_refused_open_one_made_private() {
+    local test_name="A partial folder that is a symlink is refused (nothing written where it points); an open (755) folder of the user's own is made 700 and used"
+    ((TESTS_RUN++)); setup_test_env
+    local st; st=$(mktemp -d); stage_big_binary "$st"
+    local elsewhere="$TEST_HOME/elsewhere" pdir="$TEST_HOME/$PART_DIR_REL"; mkdir -p "$elsewhere" "$TEST_HOME/.oss/bin"
+    ln -s "$elsewhere" "$pdir"
+    slow_run "$st" OK
+    local rc1=$RUN_RC out1=$RUN_OUT n; n=$(find "$elsewhere" -mindepth 1 | wc -l | tr -d ' ')
+    rm -f -- "${pdir:?}"; mkdir -m 755 "$pdir"
+    slow_run "$st" OK
+    local mode; mode=$(mode_of "$pdir")
+    if [[ $rc1 -eq 1 && "$out1" == *"Refusing to use the partial download"* && "$n" == 0 && $RUN_RC -eq 75 && "$mode" == 700 && -n "$(partial_file)" ]]; then pass "$test_name"
+    else fail "$test_name" "symlinked folder: rc 1, refusal, nothing written; 755 folder: made 700, download continues" "rc1=$rc1 n=$n out1=${out1:0:200} rc2=$RUN_RC mode=$mode"; fi
+    rm -rf "$st"; teardown_test_env
+}
+
+test_slow_upgrade_keeps_todays_behaviour() {
+    local test_name="A slow upgrade over a working 1.2.1 keeps today's behaviour: one 100 s deadline, no resume, no partial, soft path"
+    ((TESTS_RUN++)); setup_test_env
+    mkdir -p "$TEST_HOME/.oss/bin"
+    printf '#!/bin/bash\n[[ "$1" == "--version" ]] && echo "oss-decrypt v1.2.1" || echo mock\n' > "$TEST_HOME/.oss/bin/oss-decrypt"; chmod +x "$TEST_HOME/.oss/bin/oss-decrypt"
+    local before; before=$(shasum -a 256 "$TEST_HOME/.oss/bin/oss-decrypt" | awk '{print $1}')
+    local st; st=$(mktemp -d); stage_big_binary "$st"
+    slow_run "$st" OK --long-step
+    local t; t=$(bin_maxtime)
+    if [[ $RUN_RC -eq 0 && "$(shasum -a 256 "$TEST_HOME/.oss/bin/oss-decrypt" | awk '{print $1}')" == "$before" && "$RUN_OUT" == *"$SOFT_WARN (download)"* \
+          && "$t" =~ ^[0-9]+$ && $t -le 100 && "$(bin_curl)" != *" -C "* && ! -e "$TEST_HOME/$PART_DIR_REL" ]]; then pass "$test_name"
+    else fail "$test_name" "rc 0, kept, soft warning, --max-time <= 100, no -C, no partial folder" "rc=$RUN_RC t=$t curl=[$(bin_curl)] out=${RUN_OUT:0:300}"; fi
+    rm -rf "$st"; teardown_test_env
+}
+
+# @behavior Every shipped prompt that runs the installer passes --long-step, asks for a 600000 ms Bash timeout
+#   just before the step, and does not call exit 75 (still downloading) a failure (T82).
+INSTALL_CALL_RE='^[[:space:]]*(~/\.oss/hooks/|"\$\{CLAUDE_PLUGIN_ROOT\}/hooks/)ensure-decrypt-cli\.sh'
+test_prompt_install_steps_ask_for_long_step() {
+    local test_name="Every shipped install step runs ensure-decrypt-cli.sh --long-step, asks for a 600000 ms Bash timeout, and handles exit 75"
+    ((TESTS_RUN++))
+    local root; root="$(cd "$SCRIPT_DIR/../.." && pwd)"
+    local bad="" calls=0 f n line
+    while IFS= read -r f; do
+        while IFS=: read -r n line; do
+            ((calls++))
+            [[ "$line" == *"ensure-decrypt-cli.sh --long-step"* ]] || { bad="$bad $f:$n(no --long-step)"; continue; }
+            [[ "$line" != *"||"* || "$line" == *'case $? in 75) exit 75;; esac;'* ]] || bad="$bad $f:$n(exit 75 not handled)"
+            sed -n "$(( n > 6 ? n - 6 : 1 )),$((n - 1))p" "$f" | grep -q "Bash timeout of 600000 ms" || bad="$bad $f:$n(no 600000 ms ask)"
+        done < <(grep -nE "$INSTALL_CALL_RE" "$f")
+    done < <(grep -rlE --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=.oss --exclude-dir=__tests__ --exclude-dir=test "$INSTALL_CALL_RE" "$root")
+    if [[ -z "$bad" && $calls -ge 150 ]]; then pass "$test_name ($calls steps)"
+    else fail "$test_name" "every step (>= 150) compliant" "calls=$calls bad:${bad:0:600}"; fi
+}
+
 echo "Running ensure-decrypt-cli.sh tests..."
 echo "======================================="
 
@@ -1351,6 +1580,16 @@ test_stamp_symlink_never_followed
 test_downloads_are_size_capped
 test_flooded_binary_fails_closed
 test_oversized_checksum_is_unavailable
+test_slow_first_install_stops_then_resumes
+test_concurrent_writer_cannot_touch_installed_binary
+test_long_step_flag_lets_one_run_finish
+test_stalled_first_install_is_a_failure_not_progress
+test_tampered_partial_deleted
+test_http_error_on_resume_deletes_partial_network_error_keeps_it
+test_unsafe_partial_refused
+test_unsafe_partial_folder_refused_open_one_made_private
+test_slow_upgrade_keeps_todays_behaviour
+test_prompt_install_steps_ask_for_long_step
 
 echo ""
 echo "======================================="
