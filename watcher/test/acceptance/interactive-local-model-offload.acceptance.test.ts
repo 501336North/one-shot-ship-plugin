@@ -53,7 +53,7 @@ const ROUTED: CheckResult = {
   useProxy: true,
   model: 'ollama/gpt-oss:120b',
   provider: 'ollama',
-  proxyUrl: 'http://localhost:3456',
+  proxyUrl: 'http://127.0.0.1:3456',
 };
 const NATIVE: CheckResult = { useProxy: false };
 
@@ -108,7 +108,7 @@ describe('Interactive local-model offload (Acceptance)', () => {
       expect(args).not.toContain('--dangerously-skip-permissions');
       expect(args).not.toContain('--model');
       // The base URL is what makes it hit the local model instead of Anthropic
-      expect(opts.env?.ANTHROPIC_BASE_URL).toBe('http://localhost:3456');
+      expect(opts.env?.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:3456');
       // Recursion guard set so the nested session never re-offloads
       expect(opts.env?.OSS_OFFLOAD_ACTIVE).toBe('1');
     });

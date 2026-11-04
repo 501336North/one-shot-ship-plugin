@@ -9,7 +9,7 @@
  *
  * Output (JSON):
  *   { "useProxy": false } - Use native Claude
- *   { "useProxy": true, "model": "ollama/codellama", "provider": "ollama", "proxyUrl": "http://localhost:8473" }
+ *   { "useProxy": true, "model": "ollama/codellama", "provider": "ollama", "proxyUrl": "http://127.0.0.1:8473" }
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, Mock } from 'vitest';
@@ -131,7 +131,7 @@ describe('agent-model-check CLI', () => {
         useProxy: true,
         model: 'ollama/codellama',
         provider: 'ollama',
-        proxyUrl: 'http://localhost:8473',
+        proxyUrl: 'http://127.0.0.1:8473',
         banner: '🤖 OSS model: ollama/codellama (ollama)',
       });
     });
@@ -213,7 +213,7 @@ describe('agent-model-check CLI', () => {
         projectDir: '/test/project',
       });
 
-      expect(result.proxyUrl).toBe('http://localhost:8456');
+      expect(result.proxyUrl).toBe('http://127.0.0.1:8456');
     });
 
     it('uses OSS_PROXY_PORT env override (highest precedence) in proxyUrl', async () => {
@@ -232,7 +232,7 @@ describe('agent-model-check CLI', () => {
         projectDir: '/test/project',
       });
 
-      expect(result.proxyUrl).toBe('http://localhost:9999');
+      expect(result.proxyUrl).toBe('http://127.0.0.1:9999');
 
       delete process.env.OSS_PROXY_PORT;
     });
@@ -258,7 +258,7 @@ describe('agent-model-check CLI', () => {
         useProxy: true,
         model: 'openrouter/deepseek/deepseek-chat',
         provider: 'openrouter',
-        proxyUrl: 'http://localhost:8473',
+        proxyUrl: 'http://127.0.0.1:8473',
         banner: '🤖 OSS model: openrouter/deepseek/deepseek-chat (openrouter)',
       });
     });
@@ -284,7 +284,7 @@ describe('agent-model-check CLI', () => {
         useProxy: true,
         model: 'gemini/gemini-2.0-flash',
         provider: 'gemini',
-        proxyUrl: 'http://localhost:8473',
+        proxyUrl: 'http://127.0.0.1:8473',
         banner: '🤖 OSS model: gemini/gemini-2.0-flash (gemini)',
       });
     });
@@ -401,7 +401,7 @@ describe('agent-model-check CLI', () => {
 
       expect(result.useProxy).toBe(true);
       expect(result.model).toBe('openrouter/deepseek/deepseek-chat');
-      expect(result.proxyUrl).toBe('http://localhost:8473');
+      expect(result.proxyUrl).toBe('http://127.0.0.1:8473');
     });
   });
 
@@ -429,7 +429,7 @@ describe('agent-model-check CLI', () => {
         useProxy: true,
         model: 'ollama/llama3.2',
         provider: 'ollama',
-        proxyUrl: 'http://localhost:8473',
+        proxyUrl: 'http://127.0.0.1:8473',
         banner: '🤖 OSS model: ollama/llama3.2 (ollama)',
       });
     });

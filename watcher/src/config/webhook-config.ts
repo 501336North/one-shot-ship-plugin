@@ -14,7 +14,8 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
+import { safeWriteFileAtomic, isUserOssDir } from '../utils/safe-project-write.js';
+import { loadConfigForSave, saveConfigFile } from '../utils/config-save.js';
 import { readRegularFileSync } from '../utils/regular-file.js';
 
 /**
@@ -74,8 +75,8 @@ export class WebhookConfig {
   async enable(options: EnableOptions): Promise<void> {
     const port = options.port ?? DEFAULT_WEBHOOK_CONFIG.port;
 
-    // Read existing config
-    const existingConfig = this.readFullConfig();
+    // Read existing config (T80): a config.json that cannot be safely updated rejects with NotSaved, nothing written
+    const existingConfig = loadConfigForSave(this.configPath);
     const existingWebhook = existingConfig.webhook as WebhookConfigData['webhook'] | undefined;
 
     // Determine secret - preserve existing or generate new
@@ -109,7 +110,7 @@ export class WebhookConfig {
    * Preserves secret and port for potential re-enable
    */
   async disable(): Promise<void> {
-    const existingConfig = this.readFullConfig();
+    const existingConfig = loadConfigForSave(this.configPath);
     const existingWebhook = existingConfig.webhook as WebhookConfigData['webhook'] | undefined;
 
     if (!existingWebhook) {
@@ -175,23 +176,14 @@ export class WebhookConfig {
    * Write config to file
    */
   private writeConfig(config: Record<string, unknown>): void {
+    if (isUserOssDir(this.ossDir)) {
+      // T80: ~/.oss/config.json (it holds the apiKey) through the shared saver: a dotfile link is followed, 600
+      fs.mkdirSync(this.ossDir, { recursive: true });
+      saveConfigFile(this.configPath, config);
+      return;
+    }
     // N2-4: a NEW config.json holds the webhook secret: 0600 (an existing file keeps its mode)
     safeWriteFileAtomic(this.ossDir, path.basename(this.configPath), JSON.stringify(config, null, 2), { newFileMode: 0o600 });
-  }
-
-  /**
-   * Read full config file, returning empty object if not exists/invalid
-   */
-  private readFullConfig(): Record<string, unknown> {
-    try {
-      if (fs.existsSync(this.configPath)) {
-        const content = readRegularFileSync(this.configPath);
-        return JSON.parse(content);
-      }
-    } catch {
-      // Invalid JSON or read error - return empty
-    }
-    return {};
   }
 
   /**

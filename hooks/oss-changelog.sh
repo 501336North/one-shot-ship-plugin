@@ -67,35 +67,25 @@ if [[ "$skip_manifest" != "1" ]]; then
     fi
 
     if [[ -n "$manifest_json" && "$has_state" == true ]] && command -v jq &>/dev/null; then
-        cached_hashes=$(jq -r '.manifestHashes // {}' -- "$STATE_FILE" 2>/dev/null)
-        changed_prompts=()
-        new_prompts=()
+        cached_hashes=$(jq -c '.manifestHashes // {}' -- "$STATE_FILE" 2>/dev/null)
 
-        # The manifest is fetched without authentication: its keys are data. Each is read whole (read -r, never
-        # word-split or glob-expanded), reaches jq only as --arg, and loses C0 and oss_invisible before it is
-        # printed (T74).
-        while IFS= read -r key; do
-            new_hash=$(printf '%s' "$manifest_json" | jq -r --arg k "$key" '.prompts[$k].hash // ""' 2>/dev/null)
-            old_hash=$(printf '%s' "$cached_hashes" | jq -r --arg k "$key" '.[$k] // ""' 2>/dev/null)
+        # The manifest is fetched without authentication: its keys are data. One jq pass over the manifest and the
+        # cached hashes (--slurpfile, never filter text) lists the updated and the new prompts in key order, each
+        # name one line without C0 (so a line break too) or oss_invisible (T74, T79). A per-key loop ran two jq
+        # per key: minutes at the 256 KB cap. Hashes compare as the text the loop compared.
+        diff_text=$(printf '%s' "$manifest_json" | jq -r --slurpfile old <(printf '%s' "$cached_hashes") "$OSS_JQ_INVISIBLE"'
+            def h: if type == "string" then . else tojson end;
+            def show: gsub("[\u0000-\u001f" + oss_invisible + "]"; "");
+            (($old[0] // {}) | if type == "object" then . else {} end) as $o
+            | [.prompts | objects | keys[] as $k
+               | ((try .[$k].hash catch null) // "" | h) as $new | (($o[$k] // "") | h) as $was
+               | if $was == "" or $was == "null" then {n: $k} elif $was != $new then {c: $k} else empty end] as $d
+            | [$d[] | .c // empty] as $c | [$d[] | .n // empty] as $n
+            | (if ($c | length) > 0 then "Updated prompts (\($c | length)):", ($c[] | "  • " + show), "" else empty end),
+              (if ($n | length) > 0 then "New prompts (\($n | length)):", ($n[] | "  + " + show), "" else empty end)' 2>/dev/null)
 
-            if [[ -z "$old_hash" || "$old_hash" == "null" ]]; then
-                new_prompts+=("$key")
-            elif [[ "$old_hash" != "$new_hash" ]]; then
-                changed_prompts+=("$key")
-            fi
-        done < <(printf '%s' "$manifest_json" | jq -r '.prompts | keys[]' 2>/dev/null)
-
-        if [[ ${#changed_prompts[@]} -gt 0 ]]; then
-            echo "Updated prompts (${#changed_prompts[@]}):"
-            printf '%s\n' "${changed_prompts[@]}" | jq -Rr "$OSS_JQ_INVISIBLE"'"  • " + gsub("[\u0000-\u001f" + oss_invisible + "]"; "")'
-            echo ""
-            changes_found=true
-        fi
-
-        if [[ ${#new_prompts[@]} -gt 0 ]]; then
-            echo "New prompts (${#new_prompts[@]}):"
-            printf '%s\n' "${new_prompts[@]}" | jq -Rr "$OSS_JQ_INVISIBLE"'"  + " + gsub("[\u0000-\u001f" + oss_invisible + "]"; "")'
-            echo ""
+        if [[ -n "$diff_text" ]]; then
+            printf '%s\n\n' "$diff_text"
             changes_found=true
         fi
     fi

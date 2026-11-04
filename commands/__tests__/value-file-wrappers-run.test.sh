@@ -341,6 +341,21 @@ sandbox repo; printf 'export OSS_AUDIO_ENABLED="true"\nexport OSS_USE_VOICE="fal
 sandbox repo; printf 'export OSS_AUDIO_ENABLED="true"\ntouch "$HOME/PWNED"\nexport OSS_VOICE="$(touch $HOME/PWNED)"\n' > "$H/.oss/audio-config"; run_block oss-audio.md 'audio-config ]'
 ! pwned && [[ "$OUT" == *"Enabled: true"* ]] && pass "oss-audio: status never runs the config file" || fail "oss-audio: status never runs the config file" "pwned=$(pwned && echo y || echo n) out=$OUT"
 
+# --- models: Step 1 loads the model config but never a provider key value (T78d, security N8) ----------
+# @behavior /oss:models shows which providers have a key (configured or not), as `models keys list` masks them; the
+#           key values never reach the conversation. The block is run as written, then what it loaded is printed
+#           (what the model builds the Step 2 table from).
+sandbox repo
+printf '{"apiKey":"ossk_wrun_oss_78","models":{"default":"claude","agents":{"oss:code-reviewer":"openrouter/x"},"apiKeys":{"openrouter":"sk-or-FAKE-user-7788","openai":"sk-FAKE-user-9911"}}}\n' > "$H/.oss/config.json"
+mkdir -p "$W/.oss"; printf '{"models":{"agents":{"oss:test-engineer":"ollama/y"},"apiKeys":{"gemini":"gm-FAKE-proj-5566"}}}\n' > "$W/.oss/config.json"
+b=$(fence_with models.md 'USER_MODELS=')
+OUT=$(in_sandbox "$SH" -c "$b"'
+printf "%s\n%s\n" "$USER_MODELS" "$PROJECT_MODELS"' 2>&1 </dev/null); RC=$?
+[[ "$RC" == 0 && "$OUT" != *FAKE* && "$OUT" != *ossk_wrun_oss_78* && "$OUT" == *'"oss:code-reviewer": "openrouter/x"'* \
+   && "$OUT" == *'"openrouter": "configured"'* && "$OUT" == *'"gemini": "configured"'* ]] \
+    && pass "models: Step 1 loads the mappings and which providers have a key, never a key value" \
+    || fail "models: Step 1 never loads a key value" "rc=$RC out=$OUT"
+
 # --- visual-test: the key check reads the fixed config path ------------------------------------
 sandbox repo; cfg ossk_k3 x; run_block visual-test.md '"apiKey"'
 [[ "$OUT" == "API key configured" ]] && pass "visual-test: the key check reads ~/.oss/config.json" || fail "visual-test: the key check reads ~/.oss/config.json" "rc=$RC out=$OUT"
@@ -388,6 +403,22 @@ for c in 'status.md|~/.oss/hooks/oss-value.sh status' 'status.md|~/.oss/hooks/os
             && pass "$f: '$l' against a $old hook: the customer sees only the restart line" \
             || fail "$f: '$l' against a $old hook: the restart line" "rc=$RC out=$OUT sees=$(user_sees "$f")"
     done
+done
+# T78b: /oss:settings save against the 2.0.96 oss-api-curl.sh (no oss_settings_why / oss_settings_writable): the block
+# prints the restart line itself and never tells the user their valid settings.json "is not valid JSON ... Fix or
+# remove it" (a user who follows that deletes a good file holding provider apiKeys). Run in bash and in zsh.
+for old in stale stale-zsh; do
+    sandbox repo; printf '{"notifications":{"style":"visual"},"apiKeys":{"openai":"sk-keep"},"version":2}\n' > "$H/.oss/settings.json"
+    BEFORE=$(cat "$H/.oss/settings.json")
+    (cd "$ROOT" && git show "91c808e:hooks/oss-api-curl.sh") > "$H/.oss/hooks/oss-api-curl.sh" || { fail "settings: the 2.0.96 oss-api-curl.sh comes out of git" "git show failed"; continue; }
+    model_writes notify_style visual verbosity all
+    if [[ $old == stale-zsh ]]; then [[ -x /bin/zsh ]] || { pass "settings: stale-zsh row skipped (no /bin/zsh)"; continue; }
+        SH=/bin/zsh run_block settings.md "$SAVE"
+    else run_block settings.md "$SAVE"; fi
+    [[ "$RC" != 0 && "$OUT" == *"$RESTART"* && "$OUT" != *"not valid JSON"* && "$OUT" != *"Fix or remove"* \
+       && "$(cat "$H/.oss/settings.json")" == "$BEFORE" && "$(calls)" != *terminal-notifier* ]] \
+        && pass "settings: the save against a $old oss-api-curl.sh shows the restart line, not 'not valid JSON', and leaves settings.json as it was" \
+        || fail "settings: the save against a $old oss-api-curl.sh shows the restart line" "rc=$RC out=$OUT"
 done
 # The current hook never trips the rule: its own failure (here: no key) shows its own message
 for c in 'status.md|~/.oss/hooks/oss-value.sh status' 'workflows.md|~/.oss/hooks/oss-value.sh workflows'; do

@@ -19,7 +19,7 @@ const ROUTED: CheckResult = {
   useProxy: true,
   model: 'ollama/gpt-oss:120b',
   provider: 'ollama',
-  proxyUrl: 'http://localhost:3456',
+  proxyUrl: 'http://127.0.0.1:3456',
 };
 
 describe('buildOffloadInvocation', () => {
@@ -30,7 +30,7 @@ describe('buildOffloadInvocation', () => {
     // Must NOT pass a foreign --model — the Claude CLI rejects unknown model ids client-side.
     expect(inv.args).not.toContain('--model');
     // The base URL is the actual offload lever; the guard prevents nested re-offload.
-    expect(inv.env.ANTHROPIC_BASE_URL).toBe('http://localhost:3456');
+    expect(inv.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:3456');
     expect(inv.env.OSS_OFFLOAD_ACTIVE).toBe('1');
   });
 
@@ -52,9 +52,30 @@ describe('buildOffloadInvocation', () => {
     // Edits inside the working directory are accepted; anything else would need a prompt, and
     // a `-p` run has nobody to answer one, so it is refused.
     expect(valueOf('--permission-mode')).toBe('acceptEdits');
-    // The repo's own Claude settings (allow rules, extra dirs, hooks) and MCP servers are not loaded.
-    expect(valueOf('--setting-sources')).toBe('user');
+    // No MCP servers are loaded.
     expect(args).toContain('--strict-mcp-config');
+  });
+
+  /**
+   * @behavior The offloaded agent cannot read or change files outside the repo, or the OSS config
+   *           copy a worktree keeps in .oss/, even when the user's own Claude settings allow broad
+   *           reads. (T76, security N1/N2)
+   * @business-rule Repo content may prompt-inject the local model, so no settings file may widen
+   *                what it can reach, and the OSS key never enters its context.
+   */
+  it('is confined to the repo and kept out of .oss, whatever the user settings allow', () => {
+    const { args } = buildOffloadInvocation(ROUTED);
+
+    // --restricted ignores every settings file (user ones included) and confines the file tools
+    // to the working directory; loading user settings would bring back their allow rules.
+    expect(args).toContain('--restricted');
+    expect(args).not.toContain('--setting-sources');
+    // The worktree's .oss/config.json copy holds the key: reads and edits there are denied
+    // (Edit, since the CLI ignores Write(path) deny rules). The flag takes several values, so
+    // it comes last and nothing after it is read as a rule.
+    const deny = args.indexOf('--disallowedTools');
+    expect(deny).toBeGreaterThan(-1);
+    expect(args.slice(deny + 1)).toEqual(['Read(./.oss/**)', 'Edit(./.oss/**)']);
   });
 
   it('does not leak ANTHROPIC_MODEL into the nested session', () => {

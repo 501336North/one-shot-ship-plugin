@@ -95,7 +95,7 @@ Run the following command to fetch and verify the manifest signature:
 ~/.oss/bin/oss-decrypt --verify-manifest
 ```
 
-If this command fails, tell the user in one line what happened and STOP the audit, reporting the prompts checked so far: `Error: fetch failed` means offline; `Error: Unauthorized` or `Error: Credentials not found` means not logged in (run /oss:login); `Error: Request failed` means rate limited or the API is unavailable, which the CLI cannot tell apart. The only failures specific to one prompt are `Error: Prompt not found`, an `Error: Invalid prompt` message and `oss-value: decrypt: refused`: record that prompt as DECRYPT_FAIL and go on to the next one. Any other failure stops the audit as well. Never retry in a loop, never read ~/.oss/config.json, and never save a prompt to a file.
+This command prints one line of JSON and exits 1, with no `Error:` line, both when the signature is invalid and when the manifest cannot be fetched, so it has its own rule. If the JSON has `"error":"Failed to fetch manifest"`, tell the user in one line that the manifest could not be fetched (offline or the API is unavailable) and STOP the audit, reporting the prompts checked so far. Otherwise, when the JSON has `signatureValid`, show it with the display rules below even though the command exited 1; when `signatureValid` is false, show the INVALID warning in full, then STOP the audit and write the report (Step 6) with `Stopped early: manifest signature invalid`. Any other output or failure stops the audit with a one-line reason. Never retry in a loop, never read ~/.oss/config.json, and never save a prompt to a file.
 
 This outputs a JSON report with:
 - `signatureValid` — whether the Ed25519 signature is valid

@@ -23,18 +23,15 @@ case $OSS_URL_RC in
 esac
 [[ -n "$key" ]] || { warn "not logged in: no apiKey in $(oss_config_file). Run /oss:login."; exit 1; }
 
-MAX_BODY_BYTES=262144   # the cap oss-iron-laws-sync.sh uses
 max_time=10
 [[ "${OSS_CLAUDE_MD_MAX_TIME:-}" =~ ^[1-9]$ ]] && max_time=$OSS_CLAUDE_MD_MAX_TIME   # tests only: shorter, never longer
 
-# --max-filesize refuses a too-large Content-Length up front; head -c bounds a body sent without one. The byte
-# past the cap and the "\n200" status line lets a cut-off body be told apart from one that fits.
-r=$(oss_api_curl "$key" -s -m "$max_time" --max-filesize "$MAX_BODY_BYTES" -w '\n%{http_code}' "$url/api/v1/prompts/claude-md" \
-    | head -c $((MAX_BODY_BYTES + 5)); exit "${PIPESTATUS[0]}")
+# The hooks' one body cap, oss_capped (T81): over OSS_BODY_MAX bytes, whether curl or the byte stop ends the read,
+# nothing and rc 63.
+r=$(oss_capped oss_api_curl "$key" -s -m "$max_time" --max-filesize "$OSS_BODY_MAX" -w '\n%{http_code}' "$url/api/v1/prompts/claude-md")
 rc=$?
-(( rc == 0 )) || { warn "the API at $url could not be read in full (curl exit $rc: unreachable, timed out, or over $MAX_BODY_BYTES bytes); no template."; exit 1; }
-bytes=$(printf '%s' "$r" | wc -c | tr -d ' ')
-(( bytes <= MAX_BODY_BYTES + 4 )) || { warn "the API at $url sent over $MAX_BODY_BYTES bytes; no template."; exit 1; }
+(( rc != 63 )) || { warn "the API at $url sent over $OSS_BODY_MAX bytes (curl exit 63); no template."; exit 1; }
+(( rc == 0 )) || { warn "the API at $url could not be read in full (curl exit $rc: unreachable, timed out, or over $OSS_BODY_MAX bytes); no template."; exit 1; }
 code=${r##*$'\n'}
 body=${r%$'\n'*}
 [[ "$code" == 200 ]] || { warn "the API at $url answered HTTP $code; no template."; exit 1; }

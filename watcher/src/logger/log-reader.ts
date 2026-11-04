@@ -99,7 +99,15 @@ export class LogReader {
   }
 
   private checkForNewEntries(): void {
-    if (!this.tailCallback || !fs.existsSync(this.logPath)) {
+    if (!this.tailCallback) {
+      return;
+    }
+    // stat'ed first (T80, regular-file.ts's rule): a device, FIFO or folder is never opened; missing is no news
+    try {
+      if (!fs.statSync(this.logPath).isFile()) {
+        return;
+      }
+    } catch {
       return;
     }
 

@@ -294,6 +294,9 @@ VERBOSITY=$("$V" read verbosity) || exit 1
 mkdir -p ~/.oss
 # a link is followed to its file; a link to nothing, a loop or no plain file is refused (and never read) with why
 source ~/.oss/hooks/oss-api-curl.sh || exit 1
+# hooks older than the plugin (updated mid-session) lack these helpers: say restart, never "not valid JSON" (T78b)
+command -v oss_settings_why >/dev/null && command -v oss_settings_writable >/dev/null \
+    || { echo "Your OSS hooks are older than the plugin; restart Claude Code (or start a new session) to update them." >&2; exit 1; }
 WHY=$(oss_settings_why); [[ -z "$WHY" ]] || { echo "Not saved: $WHY." >&2; exit 1; }
 oss_settings_writable \
     || { echo "Not saved: ~/.oss/settings.json is not valid JSON (exactly one object) or is not yours; it was left as it is. Fix or remove it, then run /oss:settings again." >&2; exit 1; }

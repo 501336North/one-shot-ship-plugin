@@ -93,18 +93,19 @@ if [[ "$skip_manifest" != "1" ]]; then
 
     if [[ -n "$manifest_json" ]] && command -v jq &>/dev/null; then
         # Get cached hashes
-        cached_hashes=$(jq -r '.manifestHashes // {}' -- "$STATE_FILE" 2>/dev/null)
+        cached_hashes=$(jq -c '.manifestHashes // {}' -- "$STATE_FILE" 2>/dev/null)
 
-        # Compare each prompt hash. The manifest is fetched without authentication: each key is read whole (read -r,
-        # never word-split or glob-expanded) and reaches jq only as --arg (T74). Only the count is printed.
-        while IFS= read -r key; do
-            new_hash=$(printf '%s' "$manifest_json" | jq -r --arg k "$key" '.prompts[$k].hash // ""' 2>/dev/null)
-            old_hash=$(printf '%s' "$cached_hashes" | jq -r --arg k "$key" '.[$k] // ""' 2>/dev/null)
-
-            if [[ -n "$old_hash" && -n "$new_hash" && "$old_hash" != "$new_hash" ]]; then
-                ((prompts_changed++))
-            fi
-        done < <(printf '%s' "$manifest_json" | jq -r '.prompts | keys[]' 2>/dev/null)
+        # Count the prompts whose cached hash changed. The manifest is fetched without authentication: its keys are
+        # data, compared in one jq pass over the manifest and the cached hashes (--slurpfile, never filter text), so
+        # a key with a line break is one key (T74, T79). A per-key loop ran two jq per key and, at the 256 KB cap,
+        # outlasted session start's 3 s bound before the hashes below were saved. Only the count is printed.
+        prompts_changed=$(printf '%s' "$manifest_json" | jq -r --slurpfile old <(printf '%s' "$cached_hashes") '
+            def h: if type == "string" then . else tojson end;
+            (($old[0] // {}) | if type == "object" then . else {} end) as $o
+            | [.prompts | objects | keys[] as $k
+               | select(((try .[$k].hash catch null) // "" | h) as $new | (($o[$k] // "") | h) as $was
+                        | $was != "" and $new != "" and $was != $new)] | length' 2>/dev/null)
+        [[ "$prompts_changed" =~ ^[0-9]+$ ]] || prompts_changed=0
 
         # Update cached manifest hashes
         new_hashes=$(echo "$manifest_json" | jq '{manifestHashes: (.prompts | to_entries | map({(.key): .value.hash}) | add // {})}' 2>/dev/null)

@@ -415,6 +415,69 @@ test_changed_keys_stripped() {
 }
 
 # =============================================================================
+# T79 (pen-test L2): the manifest diff is one jq pass, not two jq runs per key. A manifest at the 256 KB cap
+# (thousands of keys) used to take minutes, longer than the Bash call that runs /oss:changelog.
+#
+# @behavior /oss:changelog lists a large manifest's updated and new prompts in about a second; a prompt name with
+#           a line break is one entry; a normal manifest prints exactly what it printed before.
+# @business-rule A manifest from the network cannot make /oss:changelog outlast its call (T74b cap, T79).
+# =============================================================================
+
+test_big_manifest_finishes() {
+    local test_name="A 9,000-key manifest near the 256 KB cap is listed in full, well inside the cap (T79)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env); mkdir -p "$d/home"
+    jq -nc '{prompts: ([range(9000) | {key: "p/\(.)", value: {hash: "new\(.)"}}] | from_entries)}' > "$d/manifest.json"
+    # Even keys are cached with an old hash (updated), odd keys are not cached (new).
+    jq -c '{lastPluginVersion: "2.0.45", lastCheckedAt: "T",
+            manifestHashes: (.prompts | with_entries(select(.key | ltrimstr("p/") | tonumber % 2 == 0) | .value = "old"))}' \
+        "$d/manifest.json" > "$d/config/update-state.json"
+    run_capped 30 env HOME="$d/home" OSS_CONFIG_DIR="$d/config" OSS_PLUGIN_JSON="$d/plugin/plugin.json" \
+        OSS_MOCK_MANIFEST="$d/manifest.json" "$CHANGELOG_SCRIPT" > "$d/out" 2> "$d/err" </dev/null
+    RC=$?
+    local n; n=$(grep -c '^  [•+] p/' "$d/out")
+    if [[ $RC == 0 && $n == 9000 ]] && grep -q '^Updated prompts (4500):$' "$d/out" && grep -q '^New prompts (4500):$' "$d/out" \
+          && grep -q '^  • p/8998$' "$d/out" && grep -q '^  + p/8999$' "$d/out"; then
+        pass "$test_name"
+    else
+        fail "$test_name" "rc=0 (124 = still running at the 30 s cap), 4500 updated + 4500 new listed" "rc=$RC listed=$n err='$(head -c 300 "$d/err")'"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_newline_key_one_entry() {
+    local test_name="A prompt name with a line break is one entry, the break removed (T79)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"prompts":{"line\none":{"hash":"h"}}}'
+    if [[ $RC == 0 && "$OUT" == *$'New prompts (1):\n  + lineone\n'* && "$OUT" != *$'  + line\n'* ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "'New prompts (1):' then '  + lineone'" "rc=$RC out=$(printf '%q' "$OUT")"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_output_unchanged() {
+    local test_name="A normal manifest prints exactly what it printed before the one-pass diff (T79)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"prompts":{"workflows/build":{"hash":"new1"},"workflows/plan":{"hash":"same"},"commands/adr":{"hash":"new2"},"Zeta":{"hash":"newz"},"été/prompt":{"hash":"newe"},"agents/new":{"hash":"a"},"Agents/Upper":{"hash":"b"},"nul":{"hash":"n"},"日本/プロンプト":{"hash":"j"}}}' \
+        '{"workflows/plan":"same","workflows/build":"old1","commands/adr":"old2","Zeta":"oldz","été/prompt":"olde","gone/prompt":"x","nul":null}'
+    # Captured from the per-key loop (before T79) on this manifest and state.
+    local bar="━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" want
+    want="$bar"$'\n'"  OSS Changelog"$'\n'"$bar"$'\n\n'"Updated prompts (4):"$'\n'"  • Zeta"$'\n'"  • commands/adr"$'\n'
+    want+="  • workflows/build"$'\n'"  • été/prompt"$'\n\n'"New prompts (4):"$'\n'"  + Agents/Upper"$'\n'"  + agents/new"$'\n'
+    want+="  + nul"$'\n'"  + 日本/プロンプト"$'\n\n'"Last checked: T"$'\n'"$bar"
+    if [[ $RC == 0 && "$OUT" == "$want" && -z "$ERR" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "$(printf '%q' "$want")" "rc=$RC out=$(printf '%q' "$OUT") err='$ERR'"
+    fi
+    cleanup_test_env "$d"
+}
+
+# =============================================================================
 # Run all tests
 # =============================================================================
 echo "Running changelog tests..."
@@ -431,6 +494,9 @@ test_keys_never_filter_text
 test_keys_not_split_or_globbed
 test_keys_stripped_before_printing
 test_changed_keys_stripped
+test_big_manifest_finishes
+test_newline_key_one_entry
+test_output_unchanged
 
 echo ""
 echo "======================================="

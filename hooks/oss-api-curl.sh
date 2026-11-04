@@ -26,15 +26,26 @@ oss_api_curl() {
 # oss_capped CMD... - runs CMD (curl or oss_api_curl, given --max-filesize "$OSS_BODY_MAX") and prints its output,
 # read only up to OSS_BODY_MAX bytes: head -c also ends a body sent with no Content-Length, which curl before 8.4
 # lets past --max-filesize. Over the cap it prints nothing and returns 63 (curl's code for --max-filesize), so the
-# caller takes its failure path and never parses a cut-off body; otherwise CMD's output and status (T74b).
-OSS_BODY_MAX=262144   # oss-iron-laws-sync.sh's cap; real answers are a few KB
+# caller takes its failure path and never parses a cut-off body; otherwise CMD's output and status (T74b). That holds
+# too when curl 8.4+ stops at the cap itself (rc 63 with the bytes read so far, or only the -w status line) (T77).
+OSS_BODY_MAX=262144   # the hooks' one body cap (every API body, T81); real answers are a few KB
 oss_capped() {
     local out rc=0
     out=$("$@" | head -c $((OSS_BODY_MAX + 1)); rc=${PIPESTATUS[0]}; printf x; exit "$rc") || rc=$?
     out=${out%x}
-    (( $(printf '%s' "$out" | wc -c) <= OSS_BODY_MAX )) || return 63
+    (( rc != 63 && $(printf '%s' "$out" | wc -c) <= OSS_BODY_MAX )) || return 63
     printf '%s' "$out"
     return "$rc"
+}
+
+# oss_ask SECS RESP KEY CURL_ARGS...: one keyed API call through oss_capped, within SECS seconds (the decision hooks',
+# T81). The answer goes to the file RESP and its HTTP status to $code; over the cap, whether curl or the size check
+# stops the read, no answer ($code "", RESP empty), so jq never reads a cut-off body (T74c, T77).
+oss_ask() {
+    local secs=$1 resp=$2 key=$3 r
+    shift 3
+    r=$(oss_capped oss_api_curl "$key" -s --max-time "$secs" --max-filesize "$OSS_BODY_MAX" -w '\n%{http_code}' "$@")
+    printf '%s' "${r%$'\n'*}" > "$resp"; code=${r##*$'\n'}
 }
 
 # The OSS config file, as getConfigDir in packages/cli-decrypt/src/config.ts picks it: the key and the URL

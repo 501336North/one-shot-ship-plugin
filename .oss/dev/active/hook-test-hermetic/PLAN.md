@@ -915,3 +915,57 @@ and a deprecated softprops/action-gh-release v1. Mirror release-cli-decrypt.yml:
 node22 targets (macOS arm64 on a native arm64 runner, x64, linux x64/arm64), current pinned release action, least
 permissions. A static test guards it (no pkg@5, no node18, actions pinned). T71c then tags with this build; verify the
 binaries (run each: --help, the T71b user-config-only behaviour) before pinning hooks/oss-launch-checksums.txt.
+
+## Phase J: ship re-check after Phase I (2026-11-04). Findings: scratchpad recheck2-{pentest,security,codereview}.md.
+User picks: offload "Restrict + deny .oss"; the rest "Fix all now as Phase J"; duplication "Dedupe now with a match test".
+T72 cost (CR L3, ~8 ms per bounded call without timeout) was already accepted by the user on 2026-11-03 ("Accept the cost").
+
+### Task 76: offload nested session is confined (security N1 MEDIUM, N2 LOW; pen-test INFO)
+watcher/src/cli/agent-offload.ts: replace `--setting-sources user` with `--restricted`, and deny `Read(./.oss/**)` and
+`Edit(./.oss/**)` in the nested session (Write deny rules are ignored by the CLI). A user allow rule for Read must no
+longer let it read outside the repo or the worktree's .oss/config.json copy. A CLI without --restricted (non-zero exit)
+→ native fallback, as today. Use 127.0.0.1 like oss-launch (security N6). Tests RED first; mutants: drop --restricted,
+drop each deny rule. Rebuild dist.
+
+### Task 77: oss_capped never passes a partial body or a status trailer (pen-test L1, code-review L2, INFO)
+hooks/oss-api-curl.sh oss_capped: on rc 63 (curl stopped at --max-filesize, with or without Content-Length) print
+nothing. oss-login.sh checks oss_capped's status (an oversized answer never saves the key). Fix the decision-record /
+decisions-policy comments. fetch-iron-laws: an over-cap body gets its own message, not "Could not reach OSS API".
+Tests with the real curl: no-Content-Length stream stopped by curl at the cap, and a Content-Length over the cap.
+
+### Task 77b: /oss:login names a network failure (user 2026-11-04 "Separate network message")
+hooks/oss-login.sh: a failed check that is not a real 401/403 (offline, timeout, body cut short, oversized answer, any
+oss_capped failure) prints "Couldn't verify the key (network problem). Check your connection and run /oss:login again."
+and does not save the key; a real 401/403 still says "Invalid API key". Tests per case; mutants.
+
+### Task 78: prompt fixes (code-review M1, L1, L5; security N5, N8)
+(a) commands/trust.md `--verify-manifest`: its own rule. JSON with signatureValid → the display rules (an INVALID
+signature keeps its tamper warning); `error: "Failed to fetch manifest"` → one line (offline / API unavailable).
+(b) commands/settings.md save block: when the hook helpers are missing (stale hooks after an update), print the restart
+message, never "not valid JSON ... Fix or remove it" (zsh row). (c) commands/login.md icon download: --proto '=https'
+--proto-redir '=https' and a byte stop. (d) commands/models.md never prints models.apiKeys values. (e) agent Step 2.5
+(13 agents): create only the 700 folder; the Write tool creates prompt.md. Tests per part.
+
+### Task 79: manifest diff in one jq pass (pen-test L2)
+hooks/oss-changelog.sh and hooks/check-updates.sh: one jq run over the manifest and the cached hashes (--argjson), same
+output and the same display stripping; a 256 KB manifest finishes in about a second; a key with a newline is one entry.
+
+### Task 80: watcher reads and saves (security N4, code-review INFO)
+log-reader.ts:106 stats before it opens (the regular-file reader's rule). models.ts saveConfig: a FIFO or non-regular
+config.json is refused (no hang); an invalid config.json is never overwritten in a way that loses apiKey. Make the
+"LogReader tail (a folder appears)" test actually assert under load. Rebuild dist.
+
+### Task 81: dedupe (code-review L4, INFO; user "Dedupe now with a match test")
+One copy of the perl supervisor (shared file or a test that the two copies are identical), every body cap through
+oss_capped (one slack rule), one ask() helper, and no test-only env var (OSS_TEST_BOUND_TRACE) read by shipped code
+(prove the post-reap rule another way). Behaviour unchanged: the existing suites stay green.
+
+### Task 82: a slow first install of the decrypt CLI finishes (user 2026-11-04 "Resume + longer step")
+The install step runs as a Bash tool call (163 prompts), which Claude Code stops at 2 min by default; a ~60 MB binary
+below ~500 KB/s never installs and each retry starts over. hooks/ensure-decrypt-cli.sh: keep the partial download in a
+private (700, owner-checked, regular-file) folder under ~/.oss and resume it on the next run (curl -C -, same caps and
+time limits); stop itself before ~110 s with a clear "still downloading, run the command again" line and a distinct
+exit, never a half-installed binary; the checksum is verified on the complete file before install, and a partial that
+fails it is deleted. The prompts' install step asks for a 10-minute Bash timeout. Also hooks/ensure-oss-launch.sh's downloads get --proto '=https' --proto-redir '=https' (security N5; T78 leftover). Upgrades over a working binary keep
+today's behaviour. Tests: a throttled local server, a run cut at the self-limit then resumed to a verified install; a
+tampered partial; a link/FIFO/foreign-owned partial refused; the prompt wording guard. Mutants per rule.

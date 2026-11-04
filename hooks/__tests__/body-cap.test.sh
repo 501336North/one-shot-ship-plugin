@@ -8,7 +8,8 @@
 # @business-rule One cap, 262144 bytes (oss-iron-laws-sync.sh's), through oss_capped in hooks/oss-api-curl.sh:
 #           curl --max-filesize refuses a too-large Content-Length, and head -c ends the read of a body sent with
 #           none, which curl before 8.4 lets past --max-filesize. Anything over the cap is a failure, never a
-#           partial parse. Answers up to the cap behave as before.
+#           partial parse. Answers up to the cap behave as before. A current curl (8.4+) stops at the cap itself
+#           (exit 63, with what it read so far or the -w status line): that too prints nothing (T77).
 # @boundary Real curl (behind a shim that records argv, refuses any host but 127.0.0.1 and, with $T/oldcurl,
 #           drops --max-filesize as a curl before 8.4 effectively does for a body with no Content-Length) against
 #           a python3 http.server on a random 127.0.0.1 port. Sandbox HOME, a fake key. Every hook run goes through
@@ -40,7 +41,8 @@ CAP=262144
 
 # The server (T74's, plus POST): answers every request 200 with the bytes of $T/body. With $T/nolen it sends no
 # Content-Length and closes the connection to end the body; with $T/stream it then sends 800 chunks of 64 KiB of
-# `a` (52 MB) and writes to $T/sent how many of those bytes went out before the client hung up.
+# `a` (52 MB) and writes to $T/sent how many of those bytes went out before the client hung up. With $T/short the
+# Content-Length promises 1000 bytes more than the body, and the connection closes after it (curl exit 18) (T77).
 cat > "$T/api.py" << 'PY'
 import http.server, os, sys
 d = sys.argv[1]
@@ -56,10 +58,14 @@ class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         with open(os.path.join(d, 'requests.log'), 'a') as f: f.write('%s %s\n' % (self.command, self.path))
         body = rd('body', b'')
+        if os.path.exists(os.path.join(d, 'redirect')) and self.path == '/icon.png':
+            # T78c: the icon URL redirects to plain http (a relative Location on this http server)
+            self.send_response(302); self.send_header('Location', '/redirected.png'); self.send_header('Content-Length', '0')
+            self.end_headers(); return
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         if not os.path.exists(os.path.join(d, 'nolen')):
-            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Content-Length', str(len(body) + (1000 if os.path.exists(os.path.join(d, 'short')) else 0)))
         self.end_headers()
         if not os.path.exists(os.path.join(d, 'stream')):
             self.wfile.write(body)
@@ -89,6 +95,7 @@ REAL_CURL=$(command -v curl)
 warm_stub "$T/bin/curl" "printf '%s\n' \"\$*\" >> '$T/curl.argv'
 [ -e '$T/cut28' ] && { cat '$T/body'; exit 28; }
 a=(); for x in \"\$@\"; do [ \"\$x\" = https://www.oneshotship.com/icon.png ] && x='$LOCAL/icon.png'; a+=(\"\$x\"); done; set -- \"\${a[@]}\"
+case \" \$* \" in (*' $LOCAL/icon.png '*) a=(); for x in \"\$@\"; do [ \"\$x\" = =https ] && [ \"\${p:-}\" = --proto ] && x==http; p=\$x; a+=(\"\$x\"); done; set -- \"\${a[@]}\" ;; esac
 if [ -e '$T/oldcurl' ]; then a=(); s=''; for x in \"\$@\"; do if [ -n \"\$s\" ]; then s=''; continue; fi; [ \"\$x\" = --max-filesize ] && { s=1; continue; }; a+=(\"\$x\"); done; set -- \"\${a[@]}\"; fi
 for a in \"\$@\"; do case \"\$a\" in (http://*|https://*) case \"\$a\" in ($LOCAL/*) ;; (*) echo \"shim: refused \$a\" >> '$T/curl.argv'; exit 7 ;; esac ;; esac; done
 exec '$REAL_CURL' \"\$@\"" || abort "the curl shim warms up" "warm-up did not run"
@@ -108,7 +115,7 @@ H="$T/home"; W="$T/w/cwd"
 # fresh <body>: a clean sandbox HOME (a config naming the local API, the login hooks in ~/.oss/hooks), an empty
 # request and argv log, the answer <body>, normal sending (Content-Length, no stream, a current curl).
 fresh() {
-    rm -rf "$H" "$T/w" "$T/curl.argv" "$T/cut28" "$T/nolen" "$T/oldcurl" "$T/stream" "$T/sent"; : > "$T/requests.log"
+    rm -rf "$H" "$T/w" "$T/curl.argv" "$T/cut28" "$T/nolen" "$T/oldcurl" "$T/stream" "$T/sent" "$T/short" "$T/redirect"; : > "$T/requests.log"
     mkdir -p "$H/.oss/hooks" "$W"
     for n in oss-login.sh oss-value.sh oss-api-curl.sh oss-safe-path.sh; do cp "$P/hooks/$n" "$H/.oss/hooks/"; done
     printf '{"apiKey":"%s","apiUrl":"%s"}\n' "$KEY" "$LOCAL" > "$H/.oss/config.json"
@@ -177,13 +184,14 @@ stopped "changelog"
 
 # --- fetch-iron-laws.sh (keyed) ------------------------------------------------------------------------------------
 LAWS=$'# IRON LAWS\nLaw one: tests first.'
+LAWS_TOO_BIG="Error: the OSS API answer was over $CAP bytes, so it was not used (curl exit 63)"   # (T77)
 fresh "$LAWS"; : > "$T/nolen"; : > "$T/oldcurl"; hook /bin/bash "$P/hooks/fetch-iron-laws.sh"
 [[ "$RC" == 0 && "$OUT" == "$LAWS" ]] && pass "fetch-iron-laws: small laws with no Content-Length still print (control)" \
     || fail "fetch-iron-laws: small laws still print" "rc=$RC out=$OUT err=$ERR"
 fresh "$LAWS"; flood; hook /bin/bash "$P/hooks/fetch-iron-laws.sh"
-[[ "$RC" == 63 && -z "$OUT" && "$ERR" == "Error: Could not reach OSS API (curl exit 63)" ]] \
-    && pass "fetch-iron-laws: flooded laws take the could-not-reach path (curl's own exit 63), nothing printed" \
-    || fail "fetch-iron-laws: flooded laws take the could-not-reach path" "rc=$RC out=${#OUT} bytes err=${ERR:0:200}"
+[[ "$RC" == 63 && -z "$OUT" && "$ERR" == "$LAWS_TOO_BIG" ]] \
+    && pass "fetch-iron-laws: flooded laws fail as too large (exit 63), nothing printed" \
+    || fail "fetch-iron-laws: flooded laws fail as too large" "rc=$RC out=${#OUT} bytes err=${ERR:0:200}"
 stopped "fetch-iron-laws"
 
 # --- oss-fetch-team-iron-laws.sh (keyed; caches the answer) --------------------------------------------------------
@@ -212,8 +220,8 @@ fresh '{"plan":"pro"}'; : > "$T/nolen"; : > "$T/oldcurl"; login
 [[ "$RC" == 0 && "$OUT" == "Plan: pro" && "$(saved_key)" == ossk_t74b_login_key ]] && pass "login: a small answer with no Content-Length saves the key (control)" \
     || fail "login: a small answer saves the key" "rc=$RC out=$OUT err=$ERR key=$(saved_key)"
 fresh '{"plan":"pro"}'; flood; login
-[[ "$RC" == 1 && -z "$OUT" && "$ERR" == "Error: Invalid API key. Get a valid key from https://www.oneshotship.com/dashboard" && "$(saved_key)" == none ]] \
-    && pass "login: a flooded answer is a failed check: the usual error, the key not saved" \
+[[ "$RC" == 1 && -z "$OUT" && "$ERR" == "Error: Couldn't verify the key (network or server problem). Check your connection and run /oss:login again." && "$(saved_key)" == none ]] \
+    && pass "login: a flooded answer is a failed check: the network message, the key not saved" \
     || fail "login: a flooded answer is a failed check" "rc=$RC out=${OUT:0:200} err=${ERR:0:200} key=$(saved_key)"
 stopped "login"
 
@@ -238,6 +246,54 @@ fresh '{"status":"active",'; flood; hook /bin/bash "$SS_HOOK"
     && pass "session start: a flooded answer is an unknown status, as when the API is down" \
     || fail "session start: a flooded answer is an unknown status" "rc=$RC out=${OUT:0:300}"
 stopped "session start"
+
+# --- T77: a current curl stops at the cap itself (exit 63) -----------------------------------------------------------
+# No old-curl shim here: the system curl gets --max-filesize. curl 8.4+ writes exactly the cap of a body with no
+# Content-Length and exits 63, and refuses a Content-Length over the cap up front (still printing -w's "\n200").
+echo "(T77 rows: $("$REAL_CURL" --version | head -1 | cut -d' ' -f1-2))"
+# capped [-w]: oss_capped around the real curl, as the hooks call it -> OUT, RC
+capped() {
+    hook /bin/bash -c 'source "$1"; shift; oss_capped curl -s -m 10 --max-filesize "$OSS_BODY_MAX" "$@" "$LOCAL_URL/x"; echo "rc=$?" >&2' _ \
+        "$P/hooks/oss-api-curl.sh" "$@"
+    RC=${ERR##*rc=}
+}
+export LOCAL_URL=$LOCAL
+fresh '{"status":"active",'; : > "$T/nolen"; : > "$T/stream"; capped
+[[ "$RC" == 63 && -z "$OUT" ]] && pass "oss_capped: a stream with no Content-Length that curl stops at the cap prints nothing, rc 63" \
+    || fail "oss_capped: a stream curl stops at the cap prints nothing" "rc=$RC out=${#OUT} bytes"
+fresh '{"status":"active",'; : > "$T/nolen"; : > "$T/stream"; capped -w '\n%{http_code}'
+[[ "$RC" == 63 && -z "$OUT" ]] && pass "oss_capped: the same stream with a -w status line prints nothing, rc 63" \
+    || fail "oss_capped: the same stream with -w prints nothing" "rc=$RC out=${#OUT} bytes"
+fresh "$(pad '{"plan":"pro"}' $((CAP + 1)))"; capped -w '\n%{http_code}'
+[[ "$RC" == 63 && -z "$OUT" ]] && pass "oss_capped: a Content-Length over the cap prints nothing, not even the -w status line, rc 63" \
+    || fail "oss_capped: a Content-Length over the cap prints nothing" "rc=$RC out=$(printf '%q' "${OUT:0:100}")"
+fresh "$(pad '{"plan":"pro"}' $CAP)"; capped
+[[ "$RC" == 0 && "$OUT" == '{"plan":"pro"}'*' ' && ${#OUT} == $CAP ]] && pass "oss_capped: a Content-Length of exactly the cap still prints the whole body, rc 0 (control)" \
+    || fail "oss_capped: a body at the cap still prints" "rc=$RC out=${#OUT} bytes"
+# session start: the stream starts with an active status; curl's cut-off 262144 bytes must not be read as one
+fresh '{"status":"active",'; : > "$T/nolen"; : > "$T/stream"; hook /bin/bash "$SS_HOOK"
+[[ "$OUT" == *"OSS: Ready - IRON LAWS active"* && "$OUT" != *"(active)"* ]] \
+    && pass "session start: a stream curl stops at the cap is an unknown status, never parsed" \
+    || fail "session start: a stream curl stops at the cap is an unknown status" "rc=$RC out=${OUT:0:300}"
+stopped "session start (curl's own stop)"
+# login: an answer with a Content-Length over the cap and a 200 is a failed check
+fresh "$(pad '{"plan":"pro"}' $((CAP + 1)))"; login
+[[ "$RC" == 1 && -z "$OUT" && "$ERR" == "Error: Couldn't verify the key (network or server problem). Check your connection and run /oss:login again." && "$(saved_key)" == none ]] \
+    && pass "login: a 200 with a Content-Length over the cap is a failed check: the network message, the key not saved" \
+    || fail "login: a Content-Length over the cap is a failed check" "rc=$RC out=${OUT:0:200} err=${ERR:0:200} key=$(saved_key)"
+# login: a 200 whose body is cut short (curl exit 18, the -w status line still printed) is a failed check too
+fresh '{"plan":"pro"}'; : > "$T/short"; login
+[[ "$RC" == 1 && -z "$OUT" && "$ERR" == "Error: Couldn't verify the key (network or server problem). Check your connection and run /oss:login again." && "$(saved_key)" == none ]] \
+    && pass "login: a 200 whose body was cut short (curl exit 18) is a failed check, the key not saved" \
+    || fail "login: a cut-short 200 is a failed check" "rc=$RC out=${OUT:0:200} err=${ERR:0:200} key=$(saved_key)"
+# fetch-iron-laws: a Content-Length over the cap is too large; a failed read under the cap is still could-not-reach
+fresh "$(pad "$LAWS" $((CAP + 1)))"; hook /bin/bash "$P/hooks/fetch-iron-laws.sh"
+[[ "$RC" == 63 && -z "$OUT" && "$ERR" == "$LAWS_TOO_BIG" ]] && pass "fetch-iron-laws: laws with a Content-Length over the cap fail as too large (exit 63)" \
+    || fail "fetch-iron-laws: a Content-Length over the cap fails as too large" "rc=$RC out=${#OUT} bytes err=${ERR:0:200}"
+fresh "$LAWS"; : > "$T/cut28"; hook /bin/bash "$P/hooks/fetch-iron-laws.sh"
+[[ "$RC" == 28 && -z "$OUT" && "$ERR" == "Error: Could not reach OSS API (curl exit 28)" ]] \
+    && pass "fetch-iron-laws: a failed read under the cap (curl exit 28) still says it could not reach the API" \
+    || fail "fetch-iron-laws: a failed read under the cap says could not reach" "rc=$RC out=${#OUT} bytes err=${ERR:0:200}"
 
 # --- oss-iron-laws-sync.sh --install (/oss:login: writes the laws into the project's CLAUDE.md) (T74c) ------------
 # It had --max-filesize but no byte stop: a curl that lets a body with no Content-Length past it wrote all of it.
@@ -293,6 +349,21 @@ fresh "$(pad PNG $((ICON_CAP + 1)))"; : > "$T/nolen"; : > "$T/oldcurl"; icon
 fresh "$(pad PNG $ICON_CAP)"; : > "$T/nolen"; : > "$T/oldcurl"; icon
 [[ $(wc -c < "$ICON" 2>/dev/null) -eq $ICON_CAP && "$OUT" != *Note* ]] && pass "login icon: an icon of exactly $ICON_CAP bytes is saved" \
     || fail "login icon: an icon at the cap is saved" "rc=$RC out=${OUT:0:200} icon=$(wc -c < "$ICON" 2>/dev/null) bytes"
+
+# T78c: https only, redirects included (the shim lets the local server stand in for https by turning --proto =https
+# into =http for the icon URL; --proto-redir is passed as written, so real curl refuses a redirect to http), and a
+# byte stop so a curl before 8.4 cannot write more than the cap to ~/.oss for 10 s.
+grep -q -- "--proto =https --proto-redir =https" "$T/curl.argv" \
+    && pass "login icon: curl is limited to https, redirects included (--proto, --proto-redir =https)" || fail "login icon: curl is limited to https" "argv=$(cat "$T/curl.argv")"
+fresh 'PNG-T78C'; : > "$T/redirect"; icon
+[[ "$(cat "$ICON" 2>/dev/null)" != PNG-T78C && "$(cat "$T/requests.log")" != *redirected* && "$OUT" == *"$NOTE"* ]] \
+    && pass "login icon: a redirect to http is not followed: no icon from it, the note shown" \
+    || fail "login icon: a redirect to http is not followed" "rc=$RC out=${OUT:0:200} requests=$(cat "$T/requests.log" | tr '\n' ' ') icon=$(head -c 20 "$ICON" 2>/dev/null)"
+fresh 'PNG-T78C'; flood; icon
+SENT=''; i=0; while [[ ! -s "$T/sent" && $i -lt 100 ]]; do sleep 0.1; i=$((i + 1)); done; SENT=$(cat "$T/sent" 2>/dev/null)
+[[ ! -e "$ICON" && "$SENT" =~ ^[0-9]+$ && "$SENT" -lt 10485760 ]] \
+    && pass "login icon: on an old curl (no --max-filesize) the flood is cut near the cap ($SENT of 52428800 bytes sent), nothing kept" \
+    || fail "login icon: on an old curl the flood is cut near the cap" "sent=${SENT:-none} icon=$([ -e "$ICON" ] && wc -c < "$ICON") out=${OUT:0:200}"
 
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed, $FAILED failed"

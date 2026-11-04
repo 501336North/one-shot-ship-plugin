@@ -242,7 +242,7 @@ describe('Agent model routing', () => {
     expect(result.useProxy).toBe(true);
     expect(result.model).toBe('ollama/codellama');
     expect(result.provider).toBe('ollama');
-    expect(result.proxyUrl).toBe('http://localhost:8473');
+    expect(result.proxyUrl).toBe('http://127.0.0.1:8473');
   });
 
   /**
@@ -263,9 +263,9 @@ describe('Agent model routing', () => {
     const result = runAgentModelCheck('oss:test-agent', testDir);
 
     // THEN: Proxy URL should be the standard endpoint
-    expect(result.proxyUrl).toBe('http://localhost:8473');
+    expect(result.proxyUrl).toBe('http://127.0.0.1:8473');
     // The endpoint for messages would be proxyUrl + '/v1/messages'
-    expect(`${result.proxyUrl}/v1/messages`).toBe('http://localhost:8473/v1/messages');
+    expect(`${result.proxyUrl}/v1/messages`).toBe('http://127.0.0.1:8473/v1/messages');
   });
 
   /**
@@ -452,7 +452,7 @@ describe('Agent with custom model', () => {
     expect(result.useProxy).toBe(true);
     expect(result.model).toBe('openrouter/anthropic/claude-3-haiku');
     expect(result.provider).toBe('openrouter');
-    expect(result.proxyUrl).toBe('http://localhost:8473');
+    expect(result.proxyUrl).toBe('http://127.0.0.1:8473');
 
     // AND: The model string should be parseable for provider extraction
     const parts = result.model!.split('/');

@@ -31,6 +31,8 @@
 # 11. (T73b) control: the trust scan finds the four network fetch fences of trust.md (verify, both list tiers, decrypt)
 # 12. (T73b) every trust.md network fetch fence is followed by the stop rule for rate limit, offline and login
 # 13. (T73b) trust.md never says "Do not stop the audit" outside the prompt-specific rule
+#     (T78a) the --verify-manifest fence is followed by its own rule (TRUST_VERIFY_SENTENCE), and test 5 runs the CLI's
+#     --verify-manifest on a tampered manifest and a refused connection to prove that rule matches its JSON
 # 9. (T73) no command fetch step writes oss-decrypt output to a file
 # 10. (T73) no command fetch step tells Claude to read ~/.oss/config.json
 
@@ -192,7 +194,7 @@ pinned_hash_ok() {
 }
 
 test_cli_refusals() {
-    local test_name="oss-decrypt on a per-IP 429, a trial-cap 429, a 401 and a refused connection fails cleanly"
+    local test_name="oss-decrypt on a per-IP 429, a trial-cap 429, a 401 and a refused connection fails cleanly; --verify-manifest's two exit-1 shapes match trust.md's verify rule (T78a)"
     ((TESTS_RUN++))
     if [[ ! -x "$DECRYPT" ]]; then
         fail "$test_name" "an oss-decrypt binary at $DECRYPT (or set OSS_DECRYPT_UNDER_TEST)" "not found"
@@ -227,6 +229,12 @@ class H(http.server.BaseHTTPRequestHandler):
             self.reply(429, {'Content-Type': 'text/plain; charset=utf-8', 'Retry-After': '3600',
                              'X-OSS-Limit': 'trial-daily-names'},
                        b'Daily prompt limit reached for this trial account. Prompts you already fetched today still work. Upgrade at https://www.oneshotship.com/pricing')
+        elif p == '/api/v1/prompts/manifest':
+            # T78a: a tampered manifest (its signature does not verify).
+            self.reply(200, {'Content-Type': 'application/json'},
+                       json.dumps({'version': 1, 'generatedAt': '2026-01-01T00:00:00Z', 'algorithm': 'sha256',
+                                   'signing': 'ed25519', 'prompts': {'commands/plan': {'hash': 'x', 'size': 1}},
+                                   'signature': 'AAAA'}).encode())
         elif p.endswith('/unauth'):
             self.reply(401, {'Content-Type': 'application/json'}, b'{"error":"Invalid API key"}')
         else:
@@ -283,6 +291,25 @@ PY
         fi
         echo "    $label: exit $rc, stdout '${out}', stderr '${err}'"
     done
+    # T78a: --verify-manifest on a tampered manifest and on a failed fetch: exit 1, one JSON line, no Error: line,
+    # and trust.md's verify rule names the field that routes each (signatureValid to the INVALID display, the fetch
+    # error to the one-line offline stop).
+    for label in "verify-tampered" "verify-offline"; do
+        url="http://127.0.0.1:$PORT"; [[ "$label" == verify-offline ]] && url="http://127.0.0.1:9"
+        printf '{"apiKey":"%s","apiUrl":"%s"}\n' "$KEY" "$url" > "$H/.oss/config.json"
+        cli --verify-manifest
+        [[ "$rc" -eq 1 ]] || bad="$bad [$label: exit $rc, expected 1]"
+        [[ "$err" != *Error:* ]] || bad="$bad [$label: an Error: line appeared, so the shape changed: $err]"
+        [[ "$(printf '%s' "$out" | jq -r '.signatureValid' 2>/dev/null)" == false ]] || bad="$bad [$label: stdout is not JSON with signatureValid false: $out]"
+        if [[ "$label" == verify-offline ]]; then
+            [[ "$out" == *'"error":"Failed to fetch manifest"'* ]] || bad="$bad [$label: no fetch error in: $out]"
+            [[ "$TRUST_VERIFY_SENTENCE" == *'`"error":"Failed to fetch manifest"`'*offline* ]] || bad="$bad [$label: the trust verify rule does not map the fetch error to offline]"
+        else
+            [[ "$out" != *'"error"'* && "$out" == *'"promptCount":1'* ]] || bad="$bad [$label: not a signature report: $out]"
+            [[ "$TRUST_VERIFY_SENTENCE" == *'`signatureValid` is false, show the INVALID warning'* ]] || bad="$bad [$label: the trust verify rule does not route an invalid signature to the INVALID warning]"
+        fi
+        echo "    $label: exit $rc, stdout '${out}', stderr '${err}'"
+    done
     cleanup
     if [[ -z "$bad" ]]; then
         pass "$test_name"
@@ -318,6 +345,11 @@ TRUST_FILE="commands/trust.md"
 # found. Run setup first." (no login), "fetch failed" (offline), "Request failed" (a plain-text 429, or any other
 # non-JSON error). Only the first and an "Invalid prompt" message are about one prompt; the rest stop the audit.
 TRUST_SENTENCE='If this command fails, tell the user in one line what happened and STOP the audit, reporting the prompts checked so far: `Error: fetch failed` means offline; `Error: Unauthorized` or `Error: Credentials not found` means not logged in (run /oss:login); `Error: Request failed` means rate limited or the API is unavailable, which the CLI cannot tell apart. The only failures specific to one prompt are `Error: Prompt not found`, an `Error: Invalid prompt` message and `oss-value: decrypt: refused`: record that prompt as DECRYPT_FAIL and go on to the next one. Any other failure stops the audit as well. Never retry in a loop, never read ~/.oss/config.json, and never save a prompt to a file.'
+# T78a: --verify-manifest has its own rule. The CLI (packages/cli-decrypt/src/cli-entry.ts verifyManifestCommand) prints
+# one JSON line and exits 1, with no `Error:` line, both on an INVALID signature and on a failed manifest fetch
+# ({"signatureValid":false,"error":"Failed to fetch manifest"}), so the Error: mapping above can never match it and a
+# tamper warning would be lost.
+TRUST_VERIFY_SENTENCE='This command prints one line of JSON and exits 1, with no `Error:` line, both when the signature is invalid and when the manifest cannot be fetched, so it has its own rule. If the JSON has `"error":"Failed to fetch manifest"`, tell the user in one line that the manifest could not be fetched (offline or the API is unavailable) and STOP the audit, reporting the prompts checked so far. Otherwise, when the JSON has `signatureValid`, show it with the display rules below even though the command exited 1; when `signatureValid` is false, show the INVALID warning in full, then STOP the audit and write the report (Step 6) with `Stopped early: manifest signature invalid`. Any other output or failure stops the audit with a one-line reason. Never retry in a loop, never read ~/.oss/config.json, and never save a prompt to a file.'
 # trust.md network fetch fences: --verify-manifest, --list-prompts (standard and full tier) and the oss-value decrypt.
 MIN_TRUST_FETCHES=4
 # 57 commands fetch a prompt: 56 use oss-decrypt --type (oss-custom's line 100 is the oss-value wrapper) and trust.md
@@ -332,11 +364,12 @@ command_problems() {
     local root="${1:-$PLUGIN_ROOT}" file
     for file in "$root"/commands/*.md; do
         [[ -f "$file" ]] || continue
-        FF_CSENTENCE="$COMMAND_SENTENCE" FF_TSENTENCE="$TRUST_SENTENCE" awk -v F="${file#$root/}" -v TF="$TRUST_FILE" '
+        FF_CSENTENCE="$COMMAND_SENTENCE" FF_TSENTENCE="$TRUST_SENTENCE" FF_VSENTENCE="$TRUST_VERIFY_SENTENCE" awk -v F="${file#$root/}" -v TF="$TRUST_FILE" '
             { line[NR] = $0 }
             END {
                 s = ENVIRON["FF_CSENTENCE"]
                 t = ENVIRON["FF_TSENTENCE"]
+                v = ENVIRON["FF_VSENTENCE"]
                 for (i = 1; i <= NR; i++) {
                     if (line[i] !~ /^[ \t]*```/) continue
                     j = i + 1
@@ -352,7 +385,7 @@ command_problems() {
                         while (k <= NR && line[k] ~ /^[ \t]*$/) k++
                         if (line[k] != s && F != TF) print F ":" f ": no rule right after the fetch block"
                         for (r = f + 1; r <= NR && line[r] !~ /^## /; r++)
-                            if (line[r] ~ /config\.json/ && line[r] != s && line[r] != t)
+                            if (line[r] ~ /config\.json/ && line[r] != s && line[r] != t && line[r] != v)
                                 print F ":" r ": reads config.json in the fetch step"
                     }
                     i = j
@@ -450,10 +483,11 @@ trust_problems() {
     local root="${1:-$PLUGIN_ROOT}"
     local file="$root/$TRUST_FILE"
     [[ -f "$file" ]] || return 0
-    FF_TSENTENCE="$TRUST_SENTENCE" awk -v F="$TRUST_FILE" '
+    FF_TSENTENCE="$TRUST_SENTENCE" FF_VSENTENCE="$TRUST_VERIFY_SENTENCE" awk -v F="$TRUST_FILE" '
         { line[NR] = $0 }
         END {
-            s = ENVIRON["FF_TSENTENCE"]
+            t = ENVIRON["FF_TSENTENCE"]
+            v = ENVIRON["FF_VSENTENCE"]
             for (i = 1; i <= NR; i++) {
                 if (line[i] !~ /^[ \t]*```/) continue
                 j = i + 1
@@ -463,6 +497,7 @@ trust_problems() {
                     if (line[f] !~ /oss-decrypt[ \t]+--(verify-manifest|list-prompts)/ && line[f] !~ /oss-value\.sh[ \t]+decrypt/) continue
                     if (found) continue
                     found = 1
+                    s = (line[f] ~ /--verify-manifest/) ? v : t
                     print F ":" f ": network fetch"
                     k = j + 1
                     while (k <= NR && line[k] ~ /^[ \t]*$/) k++

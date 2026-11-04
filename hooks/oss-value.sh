@@ -197,7 +197,7 @@ let r;try{r=(o=>{'
 _OV_JS_POST='})(o);}catch(e){process.exit(1);}
 process.stdout.write(r.map(x=>x+"\n").join(""));'
 _ov_api() {
-    local r rc code body max=262144   # bytes: the template's and iron-laws-sync's cap; these answers are a few KB
+    local r rc code body
     source "$_OV_HERE/oss-api-curl.sh" 2>/dev/null || { echo "oss-value: $1: oss-api-curl.sh missing" >&2; return 1; }
     command -v jq >/dev/null || command -v node >/dev/null \
     || { echo "oss-value: $1: this needs jq (or node), and neither is installed. Install jq (brew install jq) or ask your admin" >&2; return 1; }
@@ -208,11 +208,11 @@ _ov_api() {
         *) echo "oss-value: $1: apiUrl in your OSS config is not an https URL. Run: /oss:login" >&2; return 1 ;;
     esac
     [[ -n "$OSS_KEY" ]] || { echo "oss-value: $1: No API key found. Run: /oss:login" >&2; return 1; }
-    # --max-filesize refuses a too-large Content-Length; head -c bounds a body sent without one, which curl before 8.4
-    # lets through. One byte past the cap plus the "\n200" line tells a cut-off body from one that fits (T74).
-    r=$(oss_api_curl "$OSS_KEY" -s -m 15 --max-filesize "$max" -w '\n%{http_code}' "$OSS_URL$2" | head -c $((max + 5)); exit "${PIPESTATUS[0]}")
+    # The hooks' one body cap, oss_capped (T74, T81): over OSS_BODY_MAX bytes, whether curl or the byte stop ends
+    # the read, nothing and rc 63; these answers are a few KB.
+    r=$(oss_capped oss_api_curl "$OSS_KEY" -s -m 15 --max-filesize "$OSS_BODY_MAX" -w '\n%{http_code}' "$OSS_URL$2")
     rc=$?
-    (( $(printf '%s' "$r" | wc -c) <= max + 4 )) || { echo "oss-value: $1: the API sent over $max bytes" >&2; return 1; }
+    (( rc != 63 )) || { echo "oss-value: $1: the API sent over $OSS_BODY_MAX bytes" >&2; return 1; }
     (( rc == 0 )) || { echo "oss-value: $1: could not reach the API at $OSS_URL" >&2; return 1; }
     code=${r##*$'\n'}; body=${r%$'\n'*}
     [[ "$code" == 200 ]] || { echo "oss-value: $1: the API answered HTTP $code (401: run /oss:login; 403: subscription expired)" >&2; return 1; }

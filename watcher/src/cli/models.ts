@@ -23,6 +23,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { isValidModelId, SUPPORTED_PROVIDERS, Provider } from '../types/model-settings.js';
 import { readRegularFileSync } from '../utils/regular-file.js';
+import { loadConfigForSave, saveConfigFile, NotSaved } from '../utils/config-save.js';
 
 /**
  * Test mode flag to simulate provider failures
@@ -116,9 +117,22 @@ function loadConfig(): Record<string, unknown> {
 }
 
 /**
- * Save config to file
+ * Load config for a save (T80, utils/config-save): {} only when there is no config.json; anything it cannot safely
+ * update (a FIFO, a device, a folder, unreadable, invalid) is the NotSaved message, and nothing is written.
  */
-function saveConfig(config: Record<string, unknown>): void {
+function loadConfigForSaveOrReason(): Record<string, unknown> | string {
+  try {
+    return loadConfigForSave(getConfigPath());
+  } catch (err) {
+    if (err instanceof NotSaved) return err.message;
+    throw err;
+  }
+}
+
+/**
+ * Save config to file (T80, utils/config-save): hang-safe, owner-only (600); the NotSaved message, or null when saved.
+ */
+function saveConfig(config: Record<string, unknown>): string | null {
   const configPath = getConfigPath();
   const configDir = path.dirname(configPath);
 
@@ -127,7 +141,13 @@ function saveConfig(config: Record<string, unknown>): void {
     fs.mkdirSync(configDir, { recursive: true });
   }
 
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+  try {
+    saveConfigFile(configPath, config);
+  } catch (err) {
+    if (err instanceof NotSaved) return err.message;
+    throw err;
+  }
+  return null;
 }
 
 /**
@@ -285,7 +305,10 @@ function setModel(promptName: string, modelId: string): string {
   const promptType = detectPromptType(promptName);
 
   // Load and update config
-  const config = loadConfig();
+  const config = loadConfigForSaveOrReason();
+  if (typeof config === 'string') {
+    return config;
+  }
   if (!config.models) {
     config.models = {};
   }
@@ -300,7 +323,10 @@ function setModel(promptName: string, modelId: string): string {
   (models[typeKey] as Record<string, string>)[promptName] = modelId;
 
   // Save config
-  saveConfig(config);
+  const refusedSave = saveConfig(config);
+  if (refusedSave !== null) {
+    return refusedSave;
+  }
 
   return `Updated: ${promptName} -> ${modelId} (${promptType})`;
 }
@@ -387,7 +413,10 @@ function setKey(provider: string, key: string): string {
   }
 
   // Load and update config
-  const config = loadConfig();
+  const config = loadConfigForSaveOrReason();
+  if (typeof config === 'string') {
+    return config;
+  }
   if (!config.apiKeys) {
     config.apiKeys = {};
   }
@@ -395,7 +424,10 @@ function setKey(provider: string, key: string): string {
   (config.apiKeys as Record<string, string>)[provider] = key;
 
   // Save config
-  saveConfig(config);
+  const refusedSave = saveConfig(config);
+  if (refusedSave !== null) {
+    return refusedSave;
+  }
 
   return `API key stored for ${provider}`;
 }

@@ -75,13 +75,14 @@ nothing if this agent is not mapped.
 
 When it runs, the agent's work runs on THAT model instead of here on Claude:
 
-1. Make a private directory (mode 700) holding an empty private prompt file (mode 600):
+1. Make a private directory (mode 700) for the prompt file:
 
    ```bash
-   umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && : > "$d/prompt.md" && chmod 600 "$d/prompt.md" && echo "$d/prompt.md"
+   umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && echo "$d/prompt.md"
    ```
 
-   Then use the Write tool to write into the printed path, and nowhere else: the **expert prompt
+   Then use the Write tool to create the printed path (it does not exist yet; only you can open the
+   directory, so the file is as private as a 600 file), and write nowhere else: the **expert prompt
    fetched in Step 2**, a separator (`\n\n---\n\n`), then the **exact task you were given** (the
    code/diff/files to act on).
 

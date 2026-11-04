@@ -41,8 +41,7 @@ LOCK_DIR="${STATE_DIR}/.iron-laws-sync.lock"
 CACHE_TTL_SECONDS=86400   # 24h after a validated write
 BACKOFF_SECONDS=3600      # 1h after a failed fetch
 LOCK_STALE_SECONDS=30
-MIN_BODY_BYTES=500
-MAX_BODY_BYTES=262144
+MIN_BODY_BYTES=500   # the most is OSS_BODY_MAX (oss-api-curl.sh)
 
 MARKER_START="<!-- IRON LAWS START - Do not edit manually, updated by /oss:login -->"
 MARKER_END="<!-- IRON LAWS END -->"
@@ -117,13 +116,13 @@ fetch_body() {
     local out="$1" raw="$WORK/raw" key rc=0 code bytes
     key=$OSS_KEY   # set beside API_URL by the one oss_api_creds read in main (T30, T37)
     if [[ -z "$key" ]]; then warn "no API key in $CONFIG_FILE"; return 1; fi
-    # head -c stops a body sent with no Content-Length, which curl before 8.4 lets past --max-filesize (T74c)
-    oss_api_curl "$key" -sS --connect-timeout 2 -m 4 --max-filesize "$MAX_BODY_BYTES" \
-        -w '\n%{http_code}' "${API_URL}${ENDPOINT}" 2>/dev/null | head -c $((MAX_BODY_BYTES + 9)) > "$raw"
-    rc=${PIPESTATUS[0]}
+    # The hooks' one body cap, oss_capped (T74c, T81): over OSS_BODY_MAX bytes, whether curl or the byte stop ends
+    # the read, nothing and rc 63
+    oss_capped oss_api_curl "$key" -sS --connect-timeout 2 -m 4 --max-filesize "$OSS_BODY_MAX" \
+        -w '\n%{http_code}' "${API_URL}${ENDPOINT}" > "$raw" 2>/dev/null
+    rc=$?
     unset key
-    bytes=$(wc -c < "$raw" | tr -d ' ')
-    if (( bytes > MAX_BODY_BYTES + 8 )); then warn "rejected: body over $MAX_BODY_BYTES bytes"; return 1; fi
+    if (( rc == 63 )); then warn "rejected: body over $OSS_BODY_MAX bytes"; return 1; fi
     if (( rc != 0 )); then warn "API unreachable or response too large (curl exit $rc)"; return 1; fi
     code=$(tail -n 1 "$raw")
     if [[ "$code" != "200" ]]; then warn "API returned HTTP $code"; return 1; fi

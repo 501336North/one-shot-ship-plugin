@@ -39,8 +39,22 @@ interface Case {
   kind?: 'fifo' | 'folder';
   /** other files the case needs, relative to HOME */
   files?: Record<string, string>;
+  /** run with an fs that counts each look at `at` (stat, lstat, existsSync) in globalThis.touched (T80) */
+  countLooks?: boolean;
   code: string;
 }
+
+// The fs for a countLooks case: AT_PATH is the case's file.
+const LOOK_SHIM = `
+  import * as real from 'node:fs';
+  export * from 'node:fs';
+  globalThis.touched = 0;
+  const look = (p) => { if (p === process.env.AT_PATH) globalThis.touched++; };
+  export function existsSync(p) { look(p); return real.existsSync(p); }
+  export function statSync(p, ...a) { look(p); return real.statSync(p, ...a); }
+  export function lstatSync(p, ...a) { look(p); return real.lstatSync(p, ...a); }
+  export default { ...real, existsSync, statSync, lstatSync };
+`;
 
 const GROUPS: Record<string, Record<string, Case>> = {
   '~/.oss/config.json': {
@@ -235,11 +249,16 @@ const GROUPS: Record<string, Record<string, Case>> = {
     'LogReader tail (a folder appears)': {
       at: '.oss/workflow.log',
       kind: 'folder',
+      countLooks: true,
+      // waits until the tail has looked at the path at least twice after the folder appeared (T80): no fixed
+      // sleep, so a busy machine cannot end the case before a poll has seen the folder
       code: `import { LogReader } from './logger/log-reader.js';
         const r = new LogReader(H + '/.oss'); const seen = [];
         r.startTailing((e) => seen.push(e));
         if (process.env.MAKE_AT) (await import('fs')).mkdirSync(process.env.MAKE_AT);
-        await new Promise((ok) => setTimeout(ok, 300)); r.stopTailing(); out(seen);`,
+        const from = globalThis.touched;
+        while (globalThis.touched < from + 4) await new Promise((ok) => setTimeout(ok, 5));
+        r.stopTailing(); out(seen);`,
     },
     'checkNotifications': {
       at: '.oss/workflow.log',
@@ -291,7 +310,13 @@ function runCase(c: Case, place: boolean): string {
   } else if (place) {
     execFileSync('mkfifo', [at]);
   }
-  const run = runInChild(PRELUDE + c.code, { home, cwd: path.join(home, 'proj'), env });
+  let fsShim: string | undefined;
+  if (c.countLooks) {
+    fsShim = path.join(home, 'fs-shim.mjs');
+    fs.writeFileSync(fsShim, LOOK_SHIM);
+    env.AT_PATH = at;
+  }
+  const run = runInChild(PRELUDE + c.code, { home, cwd: path.join(home, 'proj'), env, fsShim });
   expect(run.hung, `${place ? 'with the FIFO' : 'missing'}: the read hung`).toBe(false);
   expect(run.status, `${place ? 'with the FIFO' : 'missing'}: ${run.stderr}`).toBe(0);
   return run.stdout;

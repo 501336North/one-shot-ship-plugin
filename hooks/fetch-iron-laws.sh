@@ -70,6 +70,14 @@ RESPONSE=$(oss_capped oss_api_curl "$API_KEY" -s --max-time 10 --max-filesize "$
   -H "Content-Type: application/json" \
   "${API_URL}${ENDPOINT}") || CURL_STATUS=$?
 
+# Over the cap the API was reached: say so, not "could not reach" (T77); same exit code and error record
+if [[ "$CURL_STATUS" -eq 63 ]]; then
+  echo "Error: the OSS API answer was over $OSS_BODY_MAX bytes, so it was not used (curl exit 63)" >&2
+  emit_oss_error --code OSS-API-003 --severity HIGH \
+    --message "IRON LAWS fetch failed: answer over $OSS_BODY_MAX bytes (curl exit 63)" \
+    --retry-eligible true --retry-cost cheap
+  exit 63
+fi
 if [[ "$CURL_STATUS" -ne 0 ]]; then
   echo "Error: Could not reach OSS API (curl exit $CURL_STATUS)" >&2
   emit_oss_error --code OSS-API-003 --severity HIGH \

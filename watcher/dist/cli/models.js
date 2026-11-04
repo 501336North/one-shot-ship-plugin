@@ -22,6 +22,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { isValidModelId, SUPPORTED_PROVIDERS } from '../types/model-settings.js';
 import { readRegularFileSync } from '../utils/regular-file.js';
+import { loadConfigForSave, saveConfigFile, NotSaved } from '../utils/config-save.js';
 /**
  * Test mode flag to simulate provider failures
  */
@@ -95,7 +96,21 @@ function loadConfig() {
     return {};
 }
 /**
- * Save config to file
+ * Load config for a save (T80, utils/config-save): {} only when there is no config.json; anything it cannot safely
+ * update (a FIFO, a device, a folder, unreadable, invalid) is the NotSaved message, and nothing is written.
+ */
+function loadConfigForSaveOrReason() {
+    try {
+        return loadConfigForSave(getConfigPath());
+    }
+    catch (err) {
+        if (err instanceof NotSaved)
+            return err.message;
+        throw err;
+    }
+}
+/**
+ * Save config to file (T80, utils/config-save): hang-safe, owner-only (600); the NotSaved message, or null when saved.
  */
 function saveConfig(config) {
     const configPath = getConfigPath();
@@ -104,7 +119,15 @@ function saveConfig(config) {
     if (!fs.existsSync(configDir)) {
         fs.mkdirSync(configDir, { recursive: true });
     }
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+    try {
+        saveConfigFile(configPath, config);
+    }
+    catch (err) {
+        if (err instanceof NotSaved)
+            return err.message;
+        throw err;
+    }
+    return null;
 }
 /**
  * Mask an API key showing only the last 4 characters
@@ -233,7 +256,10 @@ function setModel(promptName, modelId) {
     // Auto-detect prompt type
     const promptType = detectPromptType(promptName);
     // Load and update config
-    const config = loadConfig();
+    const config = loadConfigForSaveOrReason();
+    if (typeof config === 'string') {
+        return config;
+    }
     if (!config.models) {
         config.models = {};
     }
@@ -244,7 +270,10 @@ function setModel(promptName, modelId) {
     }
     models[typeKey][promptName] = modelId;
     // Save config
-    saveConfig(config);
+    const refusedSave = saveConfig(config);
+    if (refusedSave !== null) {
+        return refusedSave;
+    }
     return `Updated: ${promptName} -> ${modelId} (${promptType})`;
 }
 /**
@@ -316,13 +345,19 @@ function setKey(provider, key) {
         return `Invalid provider: ${provider}\n\nSupported providers: ${validProviders.join(', ')}`;
     }
     // Load and update config
-    const config = loadConfig();
+    const config = loadConfigForSaveOrReason();
+    if (typeof config === 'string') {
+        return config;
+    }
     if (!config.apiKeys) {
         config.apiKeys = {};
     }
     config.apiKeys[provider] = key;
     // Save config
-    saveConfig(config);
+    const refusedSave = saveConfig(config);
+    if (refusedSave !== null) {
+        return refusedSave;
+    }
     return `API key stored for ${provider}`;
 }
 /**

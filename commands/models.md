@@ -85,14 +85,14 @@ the user those per-repo mappings are ignored and should move to `~/.oss/config.j
 USER_CONFIG=~/.oss/config.json
 PROJECT_CONFIG=.oss/config.json
 
-# Load user config
+# Load user config (provider keys in models.apiKeys only as "configured": a key value is never loaded or shown, T78d)
 if [[ -f "$USER_CONFIG" ]]; then
-    USER_MODELS=$(jq '.models // {}' "$USER_CONFIG")
+    USER_MODELS=$(jq '(.models // {}) | objects | if has("apiKeys") then .apiKeys |= (if type == "object" then map_values("configured") else "configured" end) else . end' "$USER_CONFIG")
 fi
 
 # Project config: no longer maps agents; read only to warn about leftover per-repo mappings
 if [[ -f "$PROJECT_CONFIG" ]]; then
-    PROJECT_MODELS=$(jq '.models // {}' "$PROJECT_CONFIG")
+    PROJECT_MODELS=$(jq '(.models // {}) | objects | if has("apiKeys") then .apiKeys |= (if type == "object" then map_values("configured") else "configured" end) else . end' "$PROJECT_CONFIG")
 fi
 ```
 

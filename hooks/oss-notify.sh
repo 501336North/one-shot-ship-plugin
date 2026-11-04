@@ -30,7 +30,8 @@ run_with_timeout() {
     elif command -v timeout &>/dev/null; then
         timeout "$timeout_secs" "$@" || true
     elif [[ -x /usr/bin/perl ]]; then
-        # Fallback (stock macOS): one supervisor owns the time limit (T72; same code as oss-session-start.sh). It is the
+        # Fallback (stock macOS): one supervisor owns the time limit (T72; the same program as oss-session-start.sh's, byte
+        # for byte: one-copy-helpers.test.sh, T81; inline, so a hook never loses its limit to a missing file). It is the
         # command's parent and runs it in its own process group (like GNU timeout; stdin /dev/null). It never signals
         # that group after reaping the leader (the id may then be reused): it polls the leader with
         # waitpid(WNOHANG) between short sleeps (1 ms doubling to 100 ms; a SIGCHLD cuts them short), and handlers only
@@ -39,25 +40,24 @@ run_with_timeout() {
         # the id (a child forked while the first kill landed, T54c), and only then reaps. It sits in a group of its
         # own, so a KILL to this shell's group still leaves it to end the command's.
         /usr/bin/perl -e '
-            my ($s, $pp, $stop, $chld, $tr) = (shift, getppid, 0, 0, $ENV{OSS_TEST_BOUND_TRACE});
-            sub trace { return unless $tr; open(my $f, ">>", $tr) or return; print $f "$_[0]\n" }   # tests only (T72)
+            my ($s, $pp, $stop, $chld) = (shift, getppid, 0, 0);
             $SIG{CHLD} = sub { $chld = 1 };   # before the fork: an inherited SIG_IGN would let the kernel reap
             my $p = fork; exit 125 unless defined $p;
             if (!$p) { setpgrp(0, 0); exec { $ARGV[0] } @ARGV; exit($!{ENOENT} ? 127 : 126) }
             setpgrp($p, $p); setpgrp(0, 0);
             my %n = (HUP => 1, INT => 2, TERM => 15);
             for my $g (keys %n) { $SIG{$g} = sub { $stop = $n{$g} } }
-            sub gkill { trace("kill"); kill "KILL", -$p }
+            sub gkill { kill "KILL", -$p }
             my ($t0, $used, $tick) = (time, 0, 0.001);
             while (1) {
                 my $r = waitpid($p, 1);   # 1: WNOHANG
-                if ($r == $p) { trace("reap"); exit($? & 127 ? 128 + ($? & 127) : $? >> 8) }
+                if ($r == $p) { exit($? & 127 ? 128 + ($? & 127) : $? >> 8) }
                 exit 125 if $r == -1;     # not ours to reap (never expected): signal nothing
                 last if $stop || $used >= $s || time - $t0 > $s + 1 || getppid != $pp;   # time(): whole seconds, a backstop
                 select(undef, undef, undef, $tick); $used += $tick; $tick = $tick < 0.05 ? $tick * 2 : 0.1;
             }
             gkill(); for (1 .. 200) { last if $chld; select(undef, undef, undef, 0.005) }
-            gkill(); waitpid($p, 0); trace("reap"); exit($stop ? 128 + $stop : 137);
+            gkill(); waitpid($p, 0); exit($stop ? 128 + $stop : 137);
         ' "$timeout_secs" "$@" </dev/null || true
     else
         "$@" </dev/null || true   # no perl either: unbounded, so nothing is ever signalled (T72)

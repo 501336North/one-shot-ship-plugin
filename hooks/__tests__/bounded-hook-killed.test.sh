@@ -22,8 +22,10 @@
 #           id may belong to an unrelated process of the user), whether the call ended in time, at its bound or
 #           with the hook.
 # @business-rule T72 follow-up: every group kill happens while the leader is unreaped (a zombie leader keeps the id
-#           reserved); the reap comes last. Proven with the supervisor's test trace: OSS_TEST_BOUND_TRACE=<file>
-#           makes it append "kill" before each group kill and "reap" after the reap (inert unless set).
+#           reserved); the reap comes last. Proven from outside (T81: the hook reads no test variable): PERL5OPT
+#           loads a test-only perl module into the supervisor that appends "kill" to $OSS_BOUND_OBSERVER_LOG before
+#           each kill of a process group and "reap" after each wait that reaps the leader. run_capped's own perl
+#           never gets it (it is set inside run_capped's command).
 #
 # Usage: /bin/bash hooks/__tests__/bounded-hook-killed.test.sh
 #        HOOKS_UNDER_TEST=/path/to/hooks-copy /bin/bash hooks/__tests__/bounded-hook-killed.test.sh  (mutants)
@@ -81,6 +83,19 @@ warm_stub "$T/bin/sleep" 'echo "$$ $PPID" >> "$SLEEP_PIDS"; exec /bin/sleep "$@"
 # macOS first-exec scan happens here.
 warm_stub "$T/hang" 'echo $PPID > "$1/super.pid"; echo $$ > "$1/leader.pid"; /bin/sleep 60 & echo $! > "$1/child.pid"; exec /bin/sleep 60' \
     || fail "the bounded command stub warms up" "it did not run"
+# The observer (T81): CORE::GLOBAL overrides of kill and waitpid, loaded through PERL5OPT, so every kill and wait the
+# supervisor makes is recorded as it happens, with the hook's code unchanged. It keeps $? as waitpid set it.
+mkdir -p "$T/plib"
+cat > "$T/plib/OssBoundObserver.pm" <<'PM'
+package OssBoundObserver;
+sub note { my $f = $ENV{OSS_BOUND_OBSERVER_LOG} or return; open(my $h, ">>", $f) or return; print $h "$_[0]\n"; close $h }
+BEGIN {
+    *CORE::GLOBAL::kill = sub { my ($sig, @to) = @_; note("kill") if grep { $_ < 0 } @to; CORE::kill($sig, @to) };
+    *CORE::GLOBAL::waitpid = sub { my $r = CORE::waitpid($_[0], $_[1]); my $st = $?; note("reap") if $r > 0 && $r == $_[0]; $? = $st; $r };
+}
+1;
+PM
+OBSERVE="-I$T/plib -MOssBoundObserver"
 # The driver (the hook): its pid, then one bounded call; it says so if the call ever returns.
 cat > "$T/driver.sh" <<'DRIVER'
 fn=$1; src=$2; secs=$3; D=$4; cmd=$5; [[ $6 == strict ]] && set -euo pipefail
@@ -94,7 +109,8 @@ DRIVER
 scenario() {
     local D="$T/$3.$5" hook i left c l bg before
     mkdir -p "$D"
-    OSS_TEST_BOUND_TRACE="$D/trace" SLEEP_PIDS="$D/sleep.pids" PATH="$T/bin:$T/sys" run_capped 30 /bin/bash "$T/driver.sh" "$3" "$2" "$BOUND" "$D" "$T/hang" "$4" \
+    SLEEP_PIDS="$D/sleep.pids" PATH="$T/bin:$T/sys" run_capped 30 \
+        /usr/bin/env PERL5OPT="$OBSERVE" OSS_BOUND_OBSERVER_LOG="$D/trace" /bin/bash "$T/driver.sh" "$3" "$2" "$BOUND" "$D" "$T/hang" "$4" \
         >"$D/out" 2>"$D/err" &
     bg=$!
     for ((i = 0; i < 100; i++)); do [[ -s "$D/child.pid" ]] && break; /bin/sleep 0.05; done
@@ -147,14 +163,14 @@ trace_check() {
 cat > "$T/bound.sh" <<'BOUND'
 fn=$1; src=$2; D=$3; cmd=$4; [[ $5 == strict ]] && set -euo pipefail
 source "$src"
-rc=0; OSS_TEST_BOUND_TRACE="$D/bound.trace" "$fn" 1 "$cmd" "$D" || rc=$?; echo "bound rc=$rc"
-rc=0; OSS_TEST_BOUND_TRACE="$D/fast.trace" "$fn" 5 /bin/sh -c 'exit 3' || rc=$?; echo "fast rc=$rc"
+rc=0; OSS_BOUND_OBSERVER_LOG="$D/bound.trace" "$fn" 1 "$cmd" "$D" || rc=$?; echo "bound rc=$rc"
+rc=0; OSS_BOUND_OBSERVER_LOG="$D/fast.trace" "$fn" 5 /bin/sh -c 'exit 3' || rc=$?; echo "fast rc=$rc"
 n=0; for ((i = 0; i < 20; i++)); do [[ "$("$fn" 0.8 /bin/sh -c '/bin/sleep 0.2; echo ok' || true)" == ok ]] && n=$((n + 1)); done
 echo "sub-second ok=$n"
 BOUND
 traced() {
     local D="$T/$3.traced"; mkdir -p "$D"
-    PATH="$T/sys" run_capped 30 /bin/bash "$T/bound.sh" "$3" "$2" "$D" "$T/hang" "$4" >"$D/out" 2>"$D/err"
+    PATH="$T/sys" run_capped 30 /usr/bin/env PERL5OPT="$OBSERVE" /bin/bash "$T/bound.sh" "$3" "$2" "$D" "$T/hang" "$4" >"$D/out" 2>"$D/err"
     local want_b=137 want_f=3; [[ "$3" == run_with_timeout ]] && { want_b=0; want_f=0; }   # oss-notify: `|| true`
     grep -qx "bound rc=$want_b" "$D/out" && grep -qx "fast rc=$want_f" "$D/out" \
         && pass "$1: exit status at the bound and in time is kept ($want_b, $want_f)" \

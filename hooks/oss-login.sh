@@ -8,7 +8,7 @@ set -u
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/oss-value.sh" || exit 1
 
 _ov_cmd_login() {
-    local k r c u t a p
+    local k r s c u t a p
     umask 077   # the key file and anything made here: owner-only (R5-6)
     _ov_dir && _ov_get key && k=$_OV_VAL \
     || { echo "Error: the key is missing or not a valid API key. Usage: /oss:login ak_xxxxx" >&2; return 1; }
@@ -17,9 +17,15 @@ _ov_cmd_login() {
     a=$(oss_api_url) || {
         test $? = 2 && { oss_loopback_refused >&2; return 1; }
         echo "Error: $c is not valid JSON, or its apiUrl is not an https URL (plain http only for localhost) with no user@, query or fragment; the key was not sent." >&2; return 1; }
-    r=$(oss_capped oss_api_curl "$k" -s -m 10 --max-filesize "$OSS_BODY_MAX" -w "\n%{http_code}" "$a/api/v1/subscription/status")   # over the cap: no answer (T74b)
-    test "$(printf '%s\n' "$r" | tail -1)" = 200 \
-    || { echo "Error: Invalid API key. Get a valid key from https://www.oneshotship.com/dashboard" >&2; return 1; }
+    # over the cap, or any curl failure (a body cut short still ends in -w's 200): no answer (T74b, T77). Only a
+    # complete 401/403 says the key is wrong; no answer or any other code is a network or server problem (T77b).
+    r=$(oss_capped oss_api_curl "$k" -s -m 10 --max-filesize "$OSS_BODY_MAX" -w "\n%{http_code}" "$a/api/v1/subscription/status") \
+    && s=$(printf '%s\n' "$r" | tail -1) || s=""
+    case "$s" in
+        200) ;;
+        401|403) echo "Error: Invalid API key. Get a valid key from https://www.oneshotship.com/dashboard" >&2; return 1 ;;
+        *) echo "Error: Couldn't verify the key (network or server problem). Check your connection and run /oss:login again." >&2; return 1 ;;
+    esac
     # `--` before every path: a relative OSS_CONFIG_DIR such as "-cfg" is a path, never options (T44; chmod needs it
     # on GNU, whose getopt permutes).
     mkdir -p -- "${c%/*}"

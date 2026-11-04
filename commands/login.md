@@ -270,9 +270,9 @@ After successful authentication, install tools if not already present:
    # Create a simple blue circle icon for OSS notifications
    OSS_ICON_PNG="$HOME/.oss/notification-icon.png"
    if [ ! -f "$OSS_ICON_PNG" ]; then
-       # Download (at most 10 s and 1 MiB; anything else is removed) or create the OSS icon
+       # Download (https only, redirects included; at most 10 s and 1 MiB, head stops an old curl's write; anything else is removed) or create the OSS icon (T78c)
        PLUGIN_ROOT=$(~/.oss/hooks/oss-value.sh root 2>/dev/null)
-       curl -sL --max-time 10 --max-filesize 1048576 "https://www.oneshotship.com/icon.png" -o "$OSS_ICON_PNG" 2>/dev/null && [ "$(wc -c < "$OSS_ICON_PNG")" -le 1048576 ] || \
+       ( set -o pipefail; curl -sL --proto '=https' --proto-redir '=https' --max-time 10 --max-filesize 1048576 "https://www.oneshotship.com/icon.png" 2>/dev/null | head -c 1048577 > "$OSS_ICON_PNG" ) && [ "$(wc -c < "$OSS_ICON_PNG")" -le 1048576 ] || \
        { rm -f "$OSS_ICON_PNG"; test -n "$PLUGIN_ROOT" && sips -s format png "$PLUGIN_ROOT/assets/icon.png" --out "$OSS_ICON_PNG" 2>/dev/null; } || \
        echo "Note: Could not create notification icon. Notifications will work without branding."
    fi
@@ -567,6 +567,6 @@ Get a valid key from https://www.oneshotship.com/dashboard
 
 ### Network Error
 ```
-Check internet connection and try again
+Couldn't verify the key (network or server problem). Check your connection and run /oss:login again.
 API endpoint: /api/v1/subscription/status on the apiUrl in your OSS config (default https://one-shot-ship-api.onrender.com)
 ```

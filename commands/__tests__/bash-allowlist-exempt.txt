@@ -312,9 +312,9 @@ commands/login.md	}
 commands/login.md	}')
 commands/login.md	~/.oss/hooks/oss-login.sh
 commands/models.md	PROJECT_CONFIG=.oss/config.json
-commands/models.md	PROJECT_MODELS=$(jq '.models // {}' "$PROJECT_CONFIG")
+commands/models.md	PROJECT_MODELS=$(jq '(.models // {}) | objects | if has("apiKeys") then .apiKeys |= (if type == "object" then map_values("configured") else "configured" end) else . end' "$PROJECT_CONFIG")
 commands/models.md	USER_CONFIG=~/.oss/config.json
-commands/models.md	USER_MODELS=$(jq '.models // {}' "$USER_CONFIG")
+commands/models.md	USER_MODELS=$(jq '(.models // {}) | objects | if has("apiKeys") then .apiKeys |= (if type == "object" then map_values("configured") else "configured" end) else . end' "$USER_CONFIG")
 commands/models.md	fi
 commands/models.md	if [[ -f "$PROJECT_CONFIG" ]]; then
 commands/models.md	if [[ -f "$USER_CONFIG" ]]; then
@@ -585,7 +585,7 @@ agents/backend-architect.md	case "$PROMPT_FILE" in
 agents/backend-architect.md	esac
 agents/backend-architect.md	fi; } < "$PROMPT_FILE" ;;
 agents/backend-architect.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file /dev/stdin --project-dir "$(pwd)"
-agents/backend-architect.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && : > "$d/prompt.md" && chmod 600 "$d/prompt.md" && echo "$d/prompt.md"
+agents/backend-architect.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && echo "$d/prompt.md"
 agents/backend-architect.md	{ rm -f -- "$PROMPT_FILE"; rmdir -- "${PROMPT_FILE%/prompt.md}"
 agents/code-reviewer.md	*) echo '{"offloaded":false,"reason":"native"}' ;;
 agents/code-reviewer.md	*/oss-offload.*/prompt.md)
@@ -594,7 +594,7 @@ agents/code-reviewer.md	case "$PROMPT_FILE" in
 agents/code-reviewer.md	esac
 agents/code-reviewer.md	fi; } < "$PROMPT_FILE" ;;
 agents/code-reviewer.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file /dev/stdin --project-dir "$(pwd)"
-agents/code-reviewer.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && : > "$d/prompt.md" && chmod 600 "$d/prompt.md" && echo "$d/prompt.md"
+agents/code-reviewer.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && echo "$d/prompt.md"
 agents/code-reviewer.md	{ rm -f -- "$PROMPT_FILE"; rmdir -- "${PROMPT_FILE%/prompt.md}"
 agents/code-simplifier.md	*) echo '{"offloaded":false,"reason":"native"}' ;;
 agents/code-simplifier.md	*/oss-offload.*/prompt.md)
@@ -603,7 +603,7 @@ agents/code-simplifier.md	case "$PROMPT_FILE" in
 agents/code-simplifier.md	esac
 agents/code-simplifier.md	fi; } < "$PROMPT_FILE" ;;
 agents/code-simplifier.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file /dev/stdin --project-dir "$(pwd)"
-agents/code-simplifier.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && : > "$d/prompt.md" && chmod 600 "$d/prompt.md" && echo "$d/prompt.md"
+agents/code-simplifier.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && echo "$d/prompt.md"
 agents/code-simplifier.md	{ rm -f -- "$PROMPT_FILE"; rmdir -- "${PROMPT_FILE%/prompt.md}"
 agents/debugger.md	*) echo '{"offloaded":false,"reason":"native"}' ;;
 agents/debugger.md	*/oss-offload.*/prompt.md)
@@ -612,7 +612,7 @@ agents/debugger.md	case "$PROMPT_FILE" in
 agents/debugger.md	esac
 agents/debugger.md	fi; } < "$PROMPT_FILE" ;;
 agents/debugger.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file /dev/stdin --project-dir "$(pwd)"
-agents/debugger.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && : > "$d/prompt.md" && chmod 600 "$d/prompt.md" && echo "$d/prompt.md"
+agents/debugger.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && echo "$d/prompt.md"
 agents/debugger.md	{ rm -f -- "$PROMPT_FILE"; rmdir -- "${PROMPT_FILE%/prompt.md}"
 agents/figma-design-agent.md	*) echo '{"offloaded":false,"reason":"native"}' ;;
 agents/figma-design-agent.md	*/oss-offload.*/prompt.md)
@@ -621,7 +621,7 @@ agents/figma-design-agent.md	case "$PROMPT_FILE" in
 agents/figma-design-agent.md	esac
 agents/figma-design-agent.md	fi; } < "$PROMPT_FILE" ;;
 agents/figma-design-agent.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file /dev/stdin --project-dir "$(pwd)"
-agents/figma-design-agent.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && : > "$d/prompt.md" && chmod 600 "$d/prompt.md" && echo "$d/prompt.md"
+agents/figma-design-agent.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && echo "$d/prompt.md"
 agents/figma-design-agent.md	{ rm -f -- "$PROMPT_FILE"; rmdir -- "${PROMPT_FILE%/prompt.md}"
 agents/frontend-developer.md	*) echo '{"offloaded":false,"reason":"native"}' ;;
 agents/frontend-developer.md	*/oss-offload.*/prompt.md)
@@ -630,7 +630,7 @@ agents/frontend-developer.md	case "$PROMPT_FILE" in
 agents/frontend-developer.md	esac
 agents/frontend-developer.md	fi; } < "$PROMPT_FILE" ;;
 agents/frontend-developer.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file /dev/stdin --project-dir "$(pwd)"
-agents/frontend-developer.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && : > "$d/prompt.md" && chmod 600 "$d/prompt.md" && echo "$d/prompt.md"
+agents/frontend-developer.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && echo "$d/prompt.md"
 agents/frontend-developer.md	{ rm -f -- "$PROMPT_FILE"; rmdir -- "${PROMPT_FILE%/prompt.md}"
 agents/nextjs-developer.md	*) echo '{"offloaded":false,"reason":"native"}' ;;
 agents/nextjs-developer.md	*/oss-offload.*/prompt.md)
@@ -639,7 +639,7 @@ agents/nextjs-developer.md	case "$PROMPT_FILE" in
 agents/nextjs-developer.md	esac
 agents/nextjs-developer.md	fi; } < "$PROMPT_FILE" ;;
 agents/nextjs-developer.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file /dev/stdin --project-dir "$(pwd)"
-agents/nextjs-developer.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && : > "$d/prompt.md" && chmod 600 "$d/prompt.md" && echo "$d/prompt.md"
+agents/nextjs-developer.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && echo "$d/prompt.md"
 agents/nextjs-developer.md	{ rm -f -- "$PROMPT_FILE"; rmdir -- "${PROMPT_FILE%/prompt.md}"
 agents/python-pro.md	*) echo '{"offloaded":false,"reason":"native"}' ;;
 agents/python-pro.md	*/oss-offload.*/prompt.md)
@@ -648,7 +648,7 @@ agents/python-pro.md	case "$PROMPT_FILE" in
 agents/python-pro.md	esac
 agents/python-pro.md	fi; } < "$PROMPT_FILE" ;;
 agents/python-pro.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file /dev/stdin --project-dir "$(pwd)"
-agents/python-pro.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && : > "$d/prompt.md" && chmod 600 "$d/prompt.md" && echo "$d/prompt.md"
+agents/python-pro.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && echo "$d/prompt.md"
 agents/python-pro.md	{ rm -f -- "$PROMPT_FILE"; rmdir -- "${PROMPT_FILE%/prompt.md}"
 agents/react-specialist.md	*) echo '{"offloaded":false,"reason":"native"}' ;;
 agents/react-specialist.md	*/oss-offload.*/prompt.md)
@@ -657,7 +657,7 @@ agents/react-specialist.md	case "$PROMPT_FILE" in
 agents/react-specialist.md	esac
 agents/react-specialist.md	fi; } < "$PROMPT_FILE" ;;
 agents/react-specialist.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file /dev/stdin --project-dir "$(pwd)"
-agents/react-specialist.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && : > "$d/prompt.md" && chmod 600 "$d/prompt.md" && echo "$d/prompt.md"
+agents/react-specialist.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && echo "$d/prompt.md"
 agents/react-specialist.md	{ rm -f -- "$PROMPT_FILE"; rmdir -- "${PROMPT_FILE%/prompt.md}"
 agents/refactoring-specialist.md	*) echo '{"offloaded":false,"reason":"native"}' ;;
 agents/refactoring-specialist.md	*/oss-offload.*/prompt.md)
@@ -666,7 +666,7 @@ agents/refactoring-specialist.md	case "$PROMPT_FILE" in
 agents/refactoring-specialist.md	esac
 agents/refactoring-specialist.md	fi; } < "$PROMPT_FILE" ;;
 agents/refactoring-specialist.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file /dev/stdin --project-dir "$(pwd)"
-agents/refactoring-specialist.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && : > "$d/prompt.md" && chmod 600 "$d/prompt.md" && echo "$d/prompt.md"
+agents/refactoring-specialist.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && echo "$d/prompt.md"
 agents/refactoring-specialist.md	{ rm -f -- "$PROMPT_FILE"; rmdir -- "${PROMPT_FILE%/prompt.md}"
 agents/security-auditor.md	*) echo '{"offloaded":false,"reason":"native"}' ;;
 agents/security-auditor.md	*/oss-offload.*/prompt.md)
@@ -675,7 +675,7 @@ agents/security-auditor.md	case "$PROMPT_FILE" in
 agents/security-auditor.md	esac
 agents/security-auditor.md	fi; } < "$PROMPT_FILE" ;;
 agents/security-auditor.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file /dev/stdin --project-dir "$(pwd)"
-agents/security-auditor.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && : > "$d/prompt.md" && chmod 600 "$d/prompt.md" && echo "$d/prompt.md"
+agents/security-auditor.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && echo "$d/prompt.md"
 agents/security-auditor.md	{ rm -f -- "$PROMPT_FILE"; rmdir -- "${PROMPT_FILE%/prompt.md}"
 agents/test-engineer.md	*) echo '{"offloaded":false,"reason":"native"}' ;;
 agents/test-engineer.md	*/oss-offload.*/prompt.md)
@@ -684,7 +684,7 @@ agents/test-engineer.md	case "$PROMPT_FILE" in
 agents/test-engineer.md	esac
 agents/test-engineer.md	fi; } < "$PROMPT_FILE" ;;
 agents/test-engineer.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file /dev/stdin --project-dir "$(pwd)"
-agents/test-engineer.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && : > "$d/prompt.md" && chmod 600 "$d/prompt.md" && echo "$d/prompt.md"
+agents/test-engineer.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && echo "$d/prompt.md"
 agents/test-engineer.md	{ rm -f -- "$PROMPT_FILE"; rmdir -- "${PROMPT_FILE%/prompt.md}"
 agents/typescript-pro.md	*) echo '{"offloaded":false,"reason":"native"}' ;;
 agents/typescript-pro.md	*/oss-offload.*/prompt.md)
@@ -693,8 +693,11 @@ agents/typescript-pro.md	case "$PROMPT_FILE" in
 agents/typescript-pro.md	esac
 agents/typescript-pro.md	fi; } < "$PROMPT_FILE" ;;
 agents/typescript-pro.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file /dev/stdin --project-dir "$(pwd)"
-agents/typescript-pro.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && : > "$d/prompt.md" && chmod 600 "$d/prompt.md" && echo "$d/prompt.md"
+agents/typescript-pro.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && echo "$d/prompt.md"
 agents/typescript-pro.md	{ rm -f -- "$PROMPT_FILE"; rmdir -- "${PROMPT_FILE%/prompt.md}"
 
 @t74c-icon
-commands/login.md	curl -sL --max-time 10 --max-filesize 1048576 "https://www.oneshotship.com/icon.png" -o "$OSS_ICON_PNG" 2>/dev/null && [ "$(wc -c < "$OSS_ICON_PNG")" -le 1048576 ] ||         { rm -f "$OSS_ICON_PNG"; test -n "$PLUGIN_ROOT" && sips -s format png "$PLUGIN_ROOT/assets/icon.png" --out "$OSS_ICON_PNG" 2>/dev/null; } ||         echo "Note: Could not create notification icon. Notifications will work without branding."
+commands/login.md	( set -o pipefail; curl -sL --proto '=https' --proto-redir '=https' --max-time 10 --max-filesize 1048576 "https://www.oneshotship.com/icon.png" 2>/dev/null | head -c 1048577 > "$OSS_ICON_PNG" ) && [ "$(wc -c < "$OSS_ICON_PNG")" -le 1048576 ] ||         { rm -f "$OSS_ICON_PNG"; test -n "$PLUGIN_ROOT" && sips -s format png "$PLUGIN_ROOT/assets/icon.png" --out "$OSS_ICON_PNG" 2>/dev/null; } ||         echo "Note: Could not create notification icon. Notifications will work without branding."
+
+@t78-stale-hooks
+commands/settings.md	command -v oss_settings_why >/dev/null && command -v oss_settings_writable >/dev/null      || { echo "Your OSS hooks are older than the plugin; restart Claude Code (or start a new session) to update them." >&2; exit 1; }

@@ -69,9 +69,9 @@ if [[ "$sub" != status ]]; then
     (umask 077; printf '{"pushEnabled":%s}\n' "$want" > "$tmp/body")
     put=(-X PUT -H 'Content-Type: application/json' --data-binary @"$tmp/body")
 fi
-# the answer is read only up to OSS_BODY_MAX bytes (oss_capped, T74c): over it, no answer (code "", resp empty)
-r=$(oss_capped oss_api_curl "$key" -s --max-time 10 --max-filesize "$OSS_BODY_MAX" -w '\n%{http_code}' ${put[@]+"${put[@]}"} "$url/api/v1/decisions/policy")
-printf '%s' "${r%$'\n'*}" > "$tmp/resp"; code=${r##*$'\n'}
+# the answer is read only up to OSS_BODY_MAX bytes (oss_ask in oss-api-curl.sh, T81): over it, whether curl or the
+# size check stops the read, no answer (code "", resp empty) (T74c, T77)
+oss_ask 10 "$tmp/resp" "$key" ${put[@]+"${put[@]}"} "$url/api/v1/decisions/policy"
 [[ "$code" == 401 ]] && team_unknown "OSS refused your key; run /oss:login again"
 # a member: their own switch changed, the team's cannot (owner or admin only); that is an answer, not an error
 [[ "$code" == 403 && "$sub" != status ]] \

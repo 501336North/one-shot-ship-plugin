@@ -657,6 +657,69 @@ test_keys_not_split_or_globbed() {
 }
 
 # =============================================================================
+# T79 (pen-test L2): the hash comparison is one jq pass, not two jq runs per key. Session start runs this hook under
+# a 3 s bound (oss-notify.sh); a manifest near the 256 KB cap used to take minutes, so the hook was killed every time
+# before it saved the new hashes.
+#
+# @behavior With a manifest of thousands of prompts the check still finishes inside session start's 3 s bound,
+#           announces the count and remembers the new hashes; a prompt name with a line break counts once.
+# @business-rule The update check never stalls session start, and a prompt is announced as improved only once (T79).
+# =============================================================================
+
+test_big_manifest_saved_in_bound() {
+    local test_name="A 9,000-key manifest near the 256 KB cap is counted and saved inside session start's 3 s bound (T79)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env); mkdir -p "$d/home"; set_version "$d" 2.0.44
+    jq -nc '{prompts: ([range(9000) | {key: "p/\(.)", value: {hash: "new\(.)"}}] | from_entries)}' > "$d/manifest.json"
+    jq -c '{lastPluginVersion: "2.0.44", lastCheckedAt: "T", manifestHashes: (.prompts | map_values("old"))}' \
+        "$d/manifest.json" > "$d/config/update-state.json"
+    # The same bound oss-notify.sh gives this hook at session start.
+    run_capped 3 env HOME="$d/home" OSS_CONFIG_DIR="$d/config" OSS_PLUGIN_JSON="$d/plugin/plugin.json" \
+        OSS_MOCK_MANIFEST="$d/manifest.json" "$CHECK_UPDATES_SCRIPT" > "$d/out" 2> "$d/err"
+    RC=$?; OUT=$(cat "$d/out"); ERR=$(cat "$d/err")
+    local saved; saved=$(jq -r '"\(.manifestHashes | length) \(.manifestHashes["p/0"]) \(.manifestHashes["p/8999"]) \(.lastCheckedAt)"' \
+        "$d/config/update-state.json" 2>/dev/null)
+    if [[ $RC == 0 && "$OUT" == "📡 OSS update: 9000 prompts improved → /oss:changelog" && -z "$ERR" \
+          && "$saved" == "9000 new0 new8999 "* && "$saved" != *" T" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "rc=0 (124 = killed at the 3 s bound), '9000 prompts improved', all 9000 new hashes saved" "rc=$RC out='$OUT' err='$(head -c 300 "$d/err")' saved='$saved'"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_newline_key_counted_once() {
+    local test_name="A changed prompt whose name has a line break is counted once (T79)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"line\none":"old"}' '{"prompts":{"line\none":{"hash":"new"}}}'
+    if [[ $RC == 0 && "$OUT" == *"1 prompts improved"* && -z "$ERR" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "rc=0, '1 prompts improved'" "rc=$RC out='$OUT' err='$ERR'"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_count_and_saved_unchanged() {
+    local test_name="A normal manifest gives the same notice and saved hashes as before the one-pass diff (T79)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    # Changed: a, num (cached "5", now 6), str-null (a cached "null" text counts as a hash). Not counted: same, new
+    # (not cached), was-null (cached null), no-hash (no hash in the manifest).
+    run_keys "$d" '{"a":"old","same":"s","num":"5","str-null":"null","was-null":null,"no-hash":"x"}' \
+        '{"prompts":{"a":{"hash":"new"},"same":{"hash":"s"},"num":{"hash":6},"str-null":{"hash":"h"},"was-null":{"hash":"w"},"new":{"hash":"n"},"no-hash":{}}}'
+    local saved; saved=$(jq -c .manifestHashes "$d/config/update-state.json" 2>/dev/null)
+    if [[ $RC == 0 && "$OUT" == "📡 OSS update: 3 prompts improved → /oss:changelog" && -z "$ERR" \
+          && "$saved" == '{"a":"new","same":"s","num":6,"str-null":"h","was-null":"w","no-hash":null,"new":"n"}' ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "'3 prompts improved', the manifest's hashes merged in" "rc=$RC out='$OUT' err='$ERR' saved='$saved'"
+    fi
+    cleanup_test_env "$d"
+}
+
+# =============================================================================
 # Run all tests
 # =============================================================================
 echo "Running check-updates tests..."
@@ -677,6 +740,9 @@ test_settings_symlink
 test_settings_fifo
 test_keys_never_filter_text
 test_keys_not_split_or_globbed
+test_big_manifest_saved_in_bound
+test_newline_key_counted_once
+test_count_and_saved_unchanged
 
 echo ""
 echo "======================================="

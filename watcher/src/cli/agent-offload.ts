@@ -79,14 +79,19 @@ export function buildOffloadInvocation(
     // on its default id and the proxy overrides it. (live-proof finding)
     // Never skip permission checks (T71): the session reads repo files that may try to inject
     // commands. File tools only (no Bash/web), edits auto-accepted inside the repo only (a `-p`
-    // run has nobody to answer any other prompt, so it is refused), and neither the repo's Claude
-    // settings (allow rules, extra dirs, hooks) nor any MCP server is loaded.
+    // run has nobody to answer any other prompt, so it is refused), and no MCP server is loaded.
+    // --restricted (T76) ignores every settings file, the user's too (their allow rules and extra
+    // dirs would widen it), and keeps the file tools in the repo. A CLI without it exits non-zero,
+    // so offload falls back to native. .oss/ is denied: a worktree keeps a copy of the OSS config
+    // (key included) there; Edit, not Write, since the CLI ignores Write(path) deny rules. The
+    // deny flag takes several values, so it stays last.
     args: [
       '-p',
       '--tools', 'Read,Grep,Glob,Edit,Write',
       '--permission-mode', 'acceptEdits',
-      '--setting-sources', 'user',
+      '--restricted',
       '--strict-mcp-config',
+      '--disallowedTools', 'Read(./.oss/**)', 'Edit(./.oss/**)',
     ],
     env: stripModelEnv({
       ...process.env,

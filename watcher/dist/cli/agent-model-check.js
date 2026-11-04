@@ -14,7 +14,7 @@
  *
  * Output (JSON):
  *   { "useProxy": false } - Use native Claude
- *   { "useProxy": true, "model": "ollama/codellama", "provider": "ollama", "proxyUrl": "http://localhost:3456" }
+ *   { "useProxy": true, "model": "ollama/codellama", "provider": "ollama", "proxyUrl": "http://127.0.0.1:3456" }
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -140,7 +140,8 @@ export async function checkAgentModel(params) {
     // At this point model is guaranteed to be a non-empty string (not undefined, 'claude', or 'default')
     const modelStr = model;
     const provider = parseProvider(modelStr);
-    const proxyUrl = `http://localhost:${resolveProxyPort(userConfig)}`;
+    // 127.0.0.1, not localhost (T76): the proxy binds only there, as oss-launch assumes.
+    const proxyUrl = `http://127.0.0.1:${resolveProxyPort(userConfig)}`;
     return {
         useProxy: true,
         model: model,
