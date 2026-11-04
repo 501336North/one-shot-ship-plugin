@@ -8,7 +8,7 @@ description: Expert iOS developer specializing in Swift 5.9+/6.0, SwiftUI, and U
 ## Step 1: Check Authentication
 
 ```bash
-grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+test -f "$HOME/.oss/config.json" && grep -qE '"apiKey"[[:space:]]*:[[:space:]]*"[A-Za-z0-9_-]' "$HOME/.oss/config.json" && echo "API key configured"
 ```
 
 If no API key found, inform the user:

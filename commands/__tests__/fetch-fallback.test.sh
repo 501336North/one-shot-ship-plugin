@@ -2,7 +2,8 @@
 # Tests that a refused or failed prompt fetch never breaks an agent or a skill (T63)
 #
 # Usage: ./fetch-fallback.test.sh
-#        OSS_DECRYPT_UNDER_TEST=/path/to/oss-decrypt ./fetch-fallback.test.sh  (default: ~/.oss/bin/oss-decrypt)
+#        OSS_DECRYPT_UNDER_TEST=/path/to/oss-decrypt ./fetch-fallback.test.sh  (default: ~/.oss/bin/oss-decrypt;
+#        either must have the pinned SHA-256 in hooks/oss-decrypt-checksums.txt, or test 5 fails without running it)
 #
 # @behavior When an agent or skill cannot get its expert prompt (the API rate limits the user, the network is
 #           down, or the user is not logged in), it says so in one line and carries on with the instructions in
@@ -180,11 +181,25 @@ test_no_fetch_writes_a_file() {
     fi
 }
 
+# pinned_hash_ok <bin>: 0 when <bin>'s SHA-256 is this platform's entry in hooks/oss-decrypt-checksums.txt (T75),
+# the release ensure-decrypt-cli.sh installs; the CLI test runs nothing else.
+pinned_hash_ok() {
+    local arch want got
+    arch=$(uname -m); [[ "$arch" == x86_64 ]] && arch=x64; [[ "$arch" == aarch64 ]] && arch=arm64
+    want=$(awk -v n="oss-decrypt-$(uname -s)-$arch" '$2 == n { print $1 }' "$PLUGIN_ROOT/hooks/oss-decrypt-checksums.txt")
+    got=$( (shasum -a 256 "$1" 2>/dev/null || sha256sum "$1" 2>/dev/null) | awk '{print $1}')
+    [[ -n "$want" && "$got" == "$want" ]]
+}
+
 test_cli_refusals() {
     local test_name="oss-decrypt on a per-IP 429, a trial-cap 429, a 401 and a refused connection fails cleanly"
     ((TESTS_RUN++))
     if [[ ! -x "$DECRYPT" ]]; then
         fail "$test_name" "an oss-decrypt binary at $DECRYPT (or set OSS_DECRYPT_UNDER_TEST)" "not found"
+        return
+    fi
+    if ! pinned_hash_ok "$DECRYPT"; then
+        fail "$test_name" "the pinned oss-decrypt release (its SHA-256 in hooks/oss-decrypt-checksums.txt)" "$DECRYPT has another hash; not run"
         return
     fi
     local PORT H KEY="test-key-not-real" bad="" label name url out err rc before after reqs
@@ -274,6 +289,22 @@ PY
     else
         fail "$test_name" "non-zero exit, empty stdout, an Error: line, no key, no new file, the stub reached" "$bad"
     fi
+}
+
+# T75 control: a binary that is not the pinned release (here a script that leaves a marker file) is refused by
+# test_cli_refusals with a clear message and never run.
+test_control_unpinned_decrypt_refused() {
+    local test_name="control: an oss-decrypt that is not the pinned release is refused and never run" d out
+    ((TESTS_RUN++))
+    d=$(mktemp -d); d=$(cd "$d" && pwd -P)
+    printf '#!/bin/sh\ntouch "%s/ran"\nexit 1\n' "$d" > "$d/oss-decrypt"; chmod +x "$d/oss-decrypt"
+    out=$(DECRYPT="$d/oss-decrypt"; TESTS_RUN=0; TESTS_FAILED=0; TESTS_PASSED=0; test_cli_refusals 2>&1)
+    if [[ ! -e "$d/ran" && "$out" == *"hooks/oss-decrypt-checksums.txt"* ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "refused by its SHA-256, not run" "ran=$([[ -e "$d/ran" ]] && echo yes || echo no) out=$out"
+    fi
+    rm -rf "${d:?}"
 }
 
 # T73: each command that fetches its prompt has a command-shaped rule: tell the user in one line and STOP. A command
@@ -523,6 +554,7 @@ test_control_scan_finds_fetches
 test_control_scan_names_synthetic
 test_every_fetch_has_fallback
 test_no_fetch_writes_a_file
+test_control_unpinned_decrypt_refused
 test_cli_refusals
 
 test_control_command_scan_finds_fetches

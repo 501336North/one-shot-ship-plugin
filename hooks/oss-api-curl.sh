@@ -23,6 +23,20 @@ oss_api_curl() {
     curl -q --globoff --config - "$@" < <(printf 'header = "Authorization: Bearer %s"\n' "$key")
 }
 
+# oss_capped CMD... - runs CMD (curl or oss_api_curl, given --max-filesize "$OSS_BODY_MAX") and prints its output,
+# read only up to OSS_BODY_MAX bytes: head -c also ends a body sent with no Content-Length, which curl before 8.4
+# lets past --max-filesize. Over the cap it prints nothing and returns 63 (curl's code for --max-filesize), so the
+# caller takes its failure path and never parses a cut-off body; otherwise CMD's output and status (T74b).
+OSS_BODY_MAX=262144   # oss-iron-laws-sync.sh's cap; real answers are a few KB
+oss_capped() {
+    local out rc=0
+    out=$("$@" | head -c $((OSS_BODY_MAX + 1)); rc=${PIPESTATUS[0]}; printf x; exit "$rc") || rc=$?
+    out=${out%x}
+    (( $(printf '%s' "$out" | wc -c) <= OSS_BODY_MAX )) || return 63
+    printf '%s' "$out"
+    return "$rc"
+}
+
 # The OSS config file, as getConfigDir in packages/cli-decrypt/src/config.ts picks it: the key and the URL
 # it may go to always come from this one file.
 oss_config_file() { printf '%s\n' "${OSS_CONFIG_DIR:-$HOME/.oss}/config.json"; }
@@ -151,12 +165,15 @@ oss_write_atomic() {
 # OSS_JQ_INVISIBLE - a jq definition, oss_invisible: the one set of characters removed from text shown to the user
 # or to Claude, besides C0 (each caller adds the C0 range it strips): DEL, C1, U+2028/U+2029, every Unicode format
 # character (\p{Cf}: zero-width, bidi, BOM, soft hyphen, U+061C, word joiner, tag characters), the variation selectors
-# (U+FE00-FE0F, U+E0100-E01EF), U+034F and the blank fillers U+115F, U+1160, U+3164, U+FFA0, U+2800 (T52), and
-# \p{Default_Ignorable_Code_Point}, the shared set of the API's cleanText (T52b). An older jq whose Oniguruma rejects
-# that property keeps the T52 list (the try), never an error. Used by oss_json_field and oss-claude-md-template.sh
-# (T45). _OV_JS_PRE in oss-value.sh is the node copy (T64); change them together. stripControl in
-# packages/cli-decrypt/src/strip-control.ts is the TypeScript copy; it gains the T52 additions with the next CLI release.
-OSS_JQ_INVISIBLE='def oss_invisible: "\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\u2028\u2029\\p{Cf}\ufe00-\ufe0f\udb40\udd00-\udb40\uddef\u034f\u115f\u1160\u3164\uffa0\u2800"
+# (U+FE00-FE0F, and U+E0100-E01EF inside the whole U+E0000-E0FFF block), U+034F and the blank fillers U+115F, U+1160,
+# U+3164, U+FFA0, U+2800 (T52), and \p{Default_Ignorable_Code_Point}, the shared set of the API's cleanText (T52b).
+# An older jq whose Oniguruma rejects that property keeps the static list (the try), never an error; that list also
+# names the ignorables that are not Cf (U+17B4-17B5, U+180B-180D, U+180F, U+2065, U+FFF0-FFF8, the unassigned rest of
+# U+E0000-E0FFF), so on its own it strips every default-ignorable code point (T74). Used by oss_json_field and
+# oss-claude-md-template.sh (T45). _OV_JS_PRE in oss-value.sh is the node copy (T64); change them together.
+# stripControl in packages/cli-decrypt/src/strip-control.ts is the TypeScript copy; it gains the T52 additions with
+# the next CLI release.
+OSS_JQ_INVISIBLE='def oss_invisible: "\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\u2028\u2029\\p{Cf}\ufe00-\ufe0f\udb40\udc00-\udb43\udfff\u034f\u115f\u1160\u3164\uffa0\u2800\u17b4-\u17b5\u180b-\u180d\u180f\u2065\ufff0-\ufff8"
     + (try ("" | test("\\p{Default_Ignorable_Code_Point}") | "\\p{Default_Ignorable_Code_Point}") catch ""); '
 
 # oss_json_field FIELD - reads JSON (a server response) on stdin and prints .FIELD of it as ONE line of text (""

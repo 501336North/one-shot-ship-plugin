@@ -10,7 +10,7 @@ Production deployment with zero downtime and comprehensive safety checks.
 ## Step 1: Check Authentication
 
 ```bash
-grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+test -f "$HOME/.oss/config.json" && grep -qE '"apiKey"[[:space:]]*:[[:space:]]*"[A-Za-z0-9_-]' "$HOME/.oss/config.json" && echo "API key configured"
 ```
 
 If no API key found:

@@ -38,9 +38,8 @@ describe('Ollama integration', () => {
       checkHealth: vi.fn(),
       getBaseUrl: vi.fn().mockReturnValue('http://localhost:11434'),
     };
-    vi.mocked(OllamaHandler).mockImplementation(function (this: Record<string, unknown>) {
-      Object.assign(this, mockHandler);
-      return this as ReturnType<typeof OllamaHandler>;
+    vi.mocked(OllamaHandler).mockImplementation(function (this: InstanceType<typeof OllamaHandler>) {
+      Object.assign(this, mockHandler); // constructor-style: `new` returns this (T75e)
     });
 
     ollamaIntegration = new OllamaIntegration({

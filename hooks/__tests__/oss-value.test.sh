@@ -391,7 +391,7 @@ setup_read() { newhome; newrepo; ov "$R" dir; VD="$OUT"; }
 pwned() { [[ -e "$T/PWNED" || -e "$R/PWNED" || -e "$H/PWNED" ]]; }
 for nv in 'key ossk_test_key_123' 'key ak_xxxxxxxx' 'style visual' 'style audio' 'style sound' 'style none' \
           'prompt oss:code-reviewer' 'prompt /oss:ship' 'model ollama/codellama' 'model openrouter/meta-llama/llama-3.2-3b:free' \
-          'workflow build' 'workflow team:deploy-v2.1' 'category commands' 'name code-simplifier' \
+          'workflow build' 'workflow deploy-v2' 'category commands' 'name code-simplifier' \
           'notify_style visual' 'notify_style none' 'voice Samantha' 'voice Moira' 'sound Glass' 'sound Pop' \
           'verbosity all' 'verbosity important' 'verbosity errors-only' 'custom review-standards' "custom $(printf 'c%.0s' {1..100})"; do
     n=${nv%% *}; v=${nv#* }
@@ -405,7 +405,8 @@ line2'
 for nv in 'key $(touch PWNED)' "key a'b'cdefgh" 'key short' "key $(printf 'k%.0s' {1..201})" \
           'style Visual' 'style loud' 'style $(touch PWNED)' \
           'prompt oss:Ship' 'prompt a b' "prompt $(printf 'p%.0s' {1..101})" 'model `touch PWNED`' 'model a;touch PWNED' \
-          'workflow ../ship' 'workflow a/b' 'workflow $(touch PWNED)' 'category a.b' 'category a:b' 'name ../x' "name x'y" 'key ' \
+          'workflow ../ship' 'workflow a/b' 'workflow $(touch PWNED)' 'workflow .' 'workflow ..' 'workflow team:deploy-v2.1' 'workflow a_b' \
+          'workflow 1build' 'category a.b' 'category a:b' 'name ../x' "name x'y" 'key ' \
           'notify_style telegram' 'notify_style Telegram' 'notify_style loud' 'notify_style $(touch PWNED)' "notify_style visual'" \
           'voice samantha' 'voice Alex' 'voice $(touch PWNED)' 'voice "Samantha"' 'sound glass' 'sound Basso' 'sound `touch PWNED`' \
           'verbosity errors_only' 'verbosity All' 'verbosity $(touch PWNED)' "verbosity all'" \

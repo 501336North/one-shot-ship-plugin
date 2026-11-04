@@ -123,7 +123,7 @@ describe('committed chain-trigger bundle carries the src behaviour', () => {
   it('the committed bundle is byte-identical to a fresh esbuild of src/cli/chain-trigger.ts', () => {
     // The very options scripts/bundle-cli.js uses (G8: one copy, IRON LAW #1b).
     const fresh = buildSync({ ...CHAIN_TRIGGER_BUNDLE_OPTIONS, write: false, logLevel: 'silent' });
-    const freshText = fresh.outputFiles[0].text;
+    const freshText = fresh.outputFiles?.[0]?.text;
     expect(
       fs.readFileSync(committedBundle, 'utf8') === freshText,
       'dist/cli/chain-trigger.cjs lags src: run `npm run build:cli-bundle` and commit it',

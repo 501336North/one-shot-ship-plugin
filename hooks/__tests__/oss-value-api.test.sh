@@ -37,7 +37,9 @@ trap '[[ -n "$SPID" ]] && { kill "$SPID" 2>/dev/null; wait "$SPID" 2>/dev/null; 
 KEY="ak_test_T60_$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')"
 
 # The API: "METHOD PATH|AUTHORIZATION" per request in $T/requests.log, a `ps` snapshot taken while the request is
-# open appended to $T/ps.log; answers $T/status (default 200) with the bytes of $T/body.
+# open appended to $T/ps.log; answers $T/status (default 200) with the bytes of $T/body. With $T/nolen it sends no
+# Content-Length and closes the connection to end the body; with $T/stream it then sends 800 chunks of 64 KiB of `a`
+# (52 MB) and writes to $T/sent how many of those bytes went out before the client hung up (T74).
 cat > "$T/api.py" << 'PY'
 import http.server, os, subprocess, sys
 d = sys.argv[1]
@@ -55,9 +57,20 @@ class H(http.server.BaseHTTPRequestHandler):
         body = rd('body', b'')
         self.send_response(int(rd('status', b'200').strip() or b'200'))
         self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(body)))
+        if not os.path.exists(os.path.join(d, 'nolen')):
+            self.send_header('Content-Length', str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        if not os.path.exists(os.path.join(d, 'stream')):
+            self.wfile.write(body)
+            return
+        sent = 0
+        try:
+            self.wfile.write(body)
+            for _ in range(800):
+                self.wfile.write(b'a' * 65536); sent += 65536
+        except OSError:
+            pass
+        with open(os.path.join(d, 'sent'), 'w') as f: f.write('%d\n' % sent)
     def log_message(self, *a): pass
 srv = http.server.HTTPServer(('127.0.0.1', 0), H)
 with open(os.path.join(d, 'portfifo'), 'w') as f: f.write('%d\n' % srv.server_address[1])
@@ -74,6 +87,7 @@ LOCAL="http://127.0.0.1:$PORT"
 REAL_CURL=$(command -v curl)
 warm_stub "$T/bin/curl" "printf '%s\n' \"\$*\" >> '$T/curl.argv'
 [ -e '$T/timeout' ] && exit 28
+if [ -e '$T/oldcurl' ]; then a=(); s=''; for x in \"\$@\"; do if [ -n \"\$s\" ]; then s=''; continue; fi; [ \"\$x\" = --max-filesize ] && { s=1; continue; }; a+=(\"\$x\"); done; set -- \"\${a[@]}\"; fi
 for a in \"\$@\"; do case \"\$a\" in (http://*|https://*) case \"\$a\" in ($LOCAL/*) ;; (*) echo \"shim: refused \$a\" >> '$T/curl.argv'; exit 7 ;; esac ;; esac; done
 exec '$REAL_CURL' \"\$@\"" || abort "the curl shim warms up" "warm-up did not run"
 
@@ -81,7 +95,7 @@ H="$T/home"; W="$T/work"
 # fresh <status> <body>: a clean sandbox HOME (the hooks under test in ~/.oss/hooks, a config naming the local
 # API), an empty request, ps and argv log, a cwd in a git repo.
 fresh() {
-    rm -rf "$H" "$W" "$T/curl.argv" "$T/ps.log" "$T/timeout"; : > "$T/requests.log"
+    rm -rf "$H" "$W" "$T/curl.argv" "$T/ps.log" "$T/timeout" "$T/nolen" "$T/oldcurl" "$T/stream" "$T/sent"; : > "$T/requests.log"
     mkdir -p "$H/.oss/hooks" "$W"; (cd "$W" && git init -q) >/dev/null 2>&1
     cp "$HOOKS/oss-value.sh" "$HOOKS/oss-safe-path.sh" "$HOOKS/oss-api-curl.sh" "$H/.oss/hooks/"
     printf '{"apiKey":"%s","apiUrl":"%s"}\n' "$KEY" "$LOCAL" > "$H/.oss/config.json"
@@ -150,6 +164,13 @@ fresh 200 "$EDITOR"; ov workflow
 [[ "$RC" != 0 && -z "$(reqs)" && -z "$OUT" ]] && pass "workflow: no workflow.txt: no request, nothing on stdout" || fail "workflow: no workflow.txt" "rc=$RC requests=$(reqs) out=$OUT"
 fresh 200 "$EDITOR"; write_value workflow 'build;id' ; ov workflow
 [[ "$RC" != 0 && -z "$(reqs)" ]] && pass "workflow: a name that breaks the workflow rule: no request" || fail "workflow: an invalid name is refused" "rc=$RC requests=$(reqs)"
+# T74 (security S3): the name is held to the shared workflow rule (oss_valid_workflow_name), so `.` and `..` never
+# reach the URL, where curl would squash /workflows/../editor into /api/v1/editor.
+for name in . .. ...; do
+    fresh 200 "$EDITOR"; write_value workflow "$name"; ov workflow
+    [[ "$RC" != 0 && -z "$(reqs)" && -z "$OUT" && "$ERR" == *refused* ]] && pass "workflow: '$name' is refused, no request" \
+        || fail "workflow: '$name' is refused, no request" "rc=$RC requests=$(reqs) out=$OUT err=$ERR"
+done
 
 # --- usage: this month's commands from GET /api/v1/analytics/usage (T69) ---------------------------------
 # The route's fields (AgenticDevWorkflow analytics.ts:211-216): totalCommands, commandsByType, currentPeriod, periodStart.
@@ -269,10 +290,43 @@ warm_stub "$T/oldjq-bin/jq" "a=(); for x in \"\$@\"; do a+=(\"\${x//Default_Igno
 exec '$(command -v jq)' \"\${a[@]}\"" || abort "the old-jq shim warms up" "warm-up did not run"
 PATH="$T/oldjq-bin:$PATH" jq -n '"x" | test("\\p{Default_Ignorable_Code_Point}")' >/dev/null 2>&1 \
     && fail "the old-jq shim rejects the property" "accepted" || pass "the old-jq shim rejects the property (anti-vacuity)"
-fresh 200 '{"email":"a​b឴c️d","plan":"PRO","subscriptionStatus":"ACTIVE"}'; OV_PATH="$T/oldjq-bin:$PATH" ov status
-[[ "$RC" == 0 && "$OUT" == $'Account: ab\xe1\x9e\xb4cd\nPlan: PRO\nStatus: ACTIVE' && -z "$ERR" ]] \
-    && pass "old jq: the T52 list still applies (U+200B, U+FE0F stripped; U+17B4 kept), no error" \
+fresh 200 $'{"email":"a\xe2\x80\x8bbc\xef\xb8\x8fd","plan":"PRO","subscriptionStatus":"ACTIVE"}'; OV_PATH="$T/oldjq-bin:$PATH" ov status
+[[ "$RC" == 0 && "$OUT" == $'Account: abcd\nPlan: PRO\nStatus: ACTIVE' && -z "$ERR" ]] \
+    && pass "old jq: the T52 list still applies (U+200B, U+FE0F stripped), no error" \
     || fail "old jq: falls back to the T52 list" "rc=$RC out=$(printf '%q' "$OUT") err=$ERR"
+# T74 (pen-test L3): the static lists alone (old jq; node with the property swapped for \p{Cf}) also strip the
+# ignorables that are not Cf: U+17B4-17B5, U+180B-180D, U+180F, U+2065, U+FFF0-FFF8, U+E0000-E0FFF (both ends of each
+# range; U+E0000 and U+E00FF are unassigned); the visible neighbours U+17B3, U+17B6 and U+180A are kept. Both copies of
+# the list must name them.
+warm_stub "$T/oldnode-bin/node" "a=(); for x in \"\$@\"; do a+=(\"\${x//Default_Ignorable_Code_Point/Cf}\"); done
+exec '$(command -v node)' \"\${a[@]}\"" || abort "the no-property node shim warms up" "warm-up did not run"
+STATIC=$'{"email":"a\xe1\x9e\xb4b\xe1\x9e\xb5c\xe1\xa0\x8bd\xe1\xa0\x8de\xe1\xa0\x8ff\xe2\x81\xa5g\xef\xbf\xb0h\xef\xbf\xb8i\xf3\xa0\x87\xb0j\xf3\xa0\xbf\xbfk\xf3\xa0\x80\x80l\xf3\xa0\x83\xbfm|\xe1\x9e\xb3\xe1\x9e\xb6\xe1\xa0\x8a","plan":"PRO","subscriptionStatus":"ACTIVE"}'
+STATICWANT=$'Account: abcdefghijklm|\xe1\x9e\xb3\xe1\x9e\xb6\xe1\xa0\x8a\nPlan: PRO\nStatus: ACTIVE'
+for p in "old jq:$T/oldjq-bin:$PATH" "node without the property:$T/oldnode-bin:$T/nojq"; do
+    fresh 200 "$STATIC"; OV_PATH="${p#*:}" ov status
+    [[ "$RC" == 0 && "$OUT" == "$STATICWANT" ]] && pass "${p%%:*}: the static list strips U+17B4-17B5, U+180B-180D, U+180F, U+2065, U+FFF0-FFF8, U+E0000-E0FFF; neighbours kept" \
+        || fail "${p%%:*}: the static list strips the non-Cf ignorables" "rc=$RC out=$(printf '%q' "$OUT") err=$ERR"
+done
+# T74 (security S4): the body read into the shell is capped with head -c at --max-filesize's 262144 bytes, so a
+# curl older than 8.4 (which lets a body with no Content-Length past --max-filesize; simulated by a shim that drops
+# the option) still never holds more than that. Too large: one line on stderr, nothing on stdout, rc 1.
+BIG="{\"email\":\"$(head -c 2000000 /dev/zero | tr '\0' a)\",\"plan\":\"PRO\",\"subscriptionStatus\":\"ACTIVE\"}"
+fresh 200 "$BIG"; : > "$T/nolen"; : > "$T/oldcurl"; ov status
+[[ "$RC" == 1 && -z "$OUT" && "$ERR" == *"over 262144 bytes"* ]] \
+    && pass "status: a 2 MB answer with no Content-Length is cut at 262144 bytes and refused, even by an old curl" \
+    || fail "status: an oversize answer is refused" "rc=$RC out=${#OUT} chars err=$ERR"
+grep -q -- '--max-filesize' "$T/curl.argv" && pass "the old-curl shim saw --max-filesize (anti-vacuity: it is the option it drops)" \
+    || fail "the old-curl shim saw --max-filesize" "$(cat "$T/curl.argv")"
+# The cap stops the read itself, not only the answer: a 52 MB stream is dropped after the first few hundred KB (plus
+# socket buffers), never read whole into the shell. 10 MB is far above what the buffers hold, far below 52 MB.
+fresh 200 '{"email":"'; : > "$T/nolen"; : > "$T/oldcurl"; : > "$T/stream"; ov status
+SENT=$(cat "$T/sent" 2>/dev/null)
+[[ "$RC" == 1 && -z "$OUT" && "$ERR" == *"over 262144 bytes"* && "$SENT" =~ ^[0-9]+$ && "$SENT" -lt 10485760 ]] \
+    && pass "status: a 52 MB stream is dropped after $SENT bytes (head -c ends the read), refused" \
+    || fail "status: the read stops at the cap" "rc=$RC sent=$SENT out=${#OUT} chars err=$ERR"
+fresh 200 "$VERIFY"; : > "$T/nolen"; : > "$T/oldcurl"; ov status
+[[ "$RC" == 0 && "$OUT" == *"Plan: PRO"* ]] && pass "status: a small answer with no Content-Length still prints (control)" \
+    || fail "status: a small answer with no Content-Length still prints" "rc=$RC out=$OUT err=$ERR"
 # Surrogate rejoin (T52b): a lone high half, an invisible, a lone low half. Stripping the invisible must never join the
 # halves into U+E0020 (an invisible tag). node turns lone halves into U+FFFD before the strip; jq never prints the tag
 # (jq 1.7+ rejects a lone high half as invalid JSON, older jq makes U+FFFD). A lone low half: both print U+FFFD.

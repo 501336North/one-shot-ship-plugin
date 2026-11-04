@@ -361,24 +361,29 @@ shipped_hooks() {
 }
 # user_sees <file>: what the prompt <file> tells Claude to show for OUT: its restart line when OUT holds one of the
 # markers its rule names (the line holding "show only this line: `<line>`", naming `usage: oss-value.sh` and/or
-# `No such file or directory`), else OUT
+# `No such file or directory`), else OUT. A marker followed by "(any case" in the rule matches in any case (T75:
+# zsh, Claude Code's shell on macOS, prints `no such file or directory: <path>`).
 user_sees() {
-    local rule line m
+    local rule line m o
     rule=$(grep -F 'show only this line: `' "$C/$1" | head -1)
     line=${rule##*show only this line: \`}; line=${line%%\`*}
     for m in 'usage: oss-value.sh' 'No such file or directory'; do
-        [[ -n "$rule" && "$rule" == *"\`$m\`"* && "$OUT" == *"$m"* ]] && { printf '%s' "$line"; return; }
+        o=$OUT; [[ "$rule" == *"\`$m\` (any case"* ]] && { o=$(printf '%s' "$OUT" | tr '[:upper:]' '[:lower:]'); m=$(printf '%s' "$m" | tr '[:upper:]' '[:lower:]'); }
+        [[ -n "$rule" && "$rule" == *"\`$m\`"* && "$o" == *"$m"* ]] && { printf '%s' "$line"; return; }
     done
     printf '%s' "$OUT"
 }
 for c in 'status.md|~/.oss/hooks/oss-value.sh status' 'status.md|~/.oss/hooks/oss-value.sh usage' 'workflows.md|~/.oss/hooks/oss-value.sh workflows' \
          'workflows.md|~/.oss/hooks/oss-value.sh workflow' '../skills/ideate.md|~/.oss/hooks/oss-claude-md-template.sh' 'login.md|~/.oss/hooks/oss-claude-md-template.sh'; do
     f=${c%%|*}; l=${c#*|}
-    for old in shipped missing; do
+    for old in shipped missing missing-zsh; do
         sandbox repo; printf '{"apiKey":"ossk_wrun_key_64"}' > "$H/.oss/config.json"
         if [[ $old == shipped ]]; then [[ "$l" == *oss-value.sh* ]] || continue; shipped_hooks || { fail "$f: the 2.0.96 hook comes out of git" "git show 91c808e failed"; continue; }
         else n=${l##*/hooks/}; rm -f "${H:?}/.oss/hooks/${n%% *}"; fi
-        FENCE=fence_line run_block "$f" "$l"
+        # missing-zsh (T75): the same block in zsh, the shell Claude Code runs commands in on macOS
+        if [[ $old == missing-zsh ]]; then [[ -x /bin/zsh ]] || { pass "$f: '$l' zsh row skipped (no /bin/zsh)"; continue; }
+            SH=/bin/zsh FENCE=fence_line run_block "$f" "$l"
+        else FENCE=fence_line run_block "$f" "$l"; fi
         [[ "$RC" != 0 && "$(user_sees "$f")" == "$RESTART" && "$OUT" != *ossk_wrun_key_64* && -z "$(calls)" ]] \
             && pass "$f: '$l' against a $old hook: the customer sees only the restart line" \
             || fail "$f: '$l' against a $old hook: the restart line" "rc=$RC out=$OUT sees=$(user_sees "$f")"

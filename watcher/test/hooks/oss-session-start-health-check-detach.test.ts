@@ -108,6 +108,13 @@ beforeEach(() => {
 afterEach(async () => {
   fs.writeFileSync(path.join(stateDir, 'release'), '');
   await Promise.all(runs.map((run) => Promise.race([run.closed, delay(MARKER_BACKSTOP_MS)])));
+  // The health check outlives the hook's output by design: wait for its background job to end before deleting
+  // the release file the stub polls for, or the stub keeps polling after the test (T75f, as T75d). The job's
+  // last act is the summary line, written only once the stub has ended: released here or in the test, or
+  // killed at the bound (the time-bound case, whose assertions are done before this release).
+  if (fs.existsSync(path.join(stateDir, 'health-received'))) {
+    await fileContains(path.join(homeDir, '.oss/logs/current-session/health-check.log'), 'Health check ');
+  }
   fs.rmSync(caseRoot, { recursive: true, force: true });
 });
 

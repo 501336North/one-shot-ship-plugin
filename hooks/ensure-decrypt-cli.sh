@@ -28,7 +28,8 @@ if [[ ! "$OSS_DECRYPT_TAG" =~ ^cli-decrypt-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 GITHUB_RELEASES="https://github.com/501336North/one-shot-ship-plugin/releases/download/${OSS_DECRYPT_TAG}"
 # -f: an HTTP error is a failure (not a saved error page); HTTPS only; abort a stalled transfer
-# (<1 KB/s for 60 s). First installs have no total-time cap; upgrades over a working binary get one deadline (D6).
+# (<1 KB/s for 60 s). Upgrades over a working binary get one deadline (D6), first installs the longest a Bash
+# tool call allows (T74c).
 CURL_OPTS=(-fsSL --proto '=https' --connect-timeout 15 --speed-limit 1024 --speed-time 60)
 
 # Standardized error contract: emit a structured OSSError via the oss-error
@@ -185,9 +186,20 @@ trap 'rm -f "$TMP_BIN" "$CHECKSUM_FILE"' EXIT
 TMP_BIN=$(mktemp "$OSS_BIN_DIR/.oss-decrypt.XXXXXX")
 CHECKSUM_FILE=$(mktemp)
 
-# Download binary ($@ = extra curl options)
+# capped MAX FILE CURL_ARGS...: curl to FILE, at most MAX bytes (T74c). --max-filesize refuses a too-large
+# Content-Length; head -c stops a body sent with none, which curl before 8.4 lets past it. Over MAX is a failed
+# download (63, curl's code for it); the EXIT trap removes FILE.
+capped() {
+    local max=$1 out=$2 rc; shift 2
+    curl "${CURL_OPTS[@]}" --max-filesize "$max" "$@" | head -c $((max + 1)) > "$out"
+    rc=${PIPESTATUS[0]}
+    (( rc == 0 )) || return "$rc"
+    (( $(wc -c < "$out") <= max )) || return 63
+}
+
+# Download binary ($@ = extra curl options); 256 MiB is a few times its size today (~60 MB), room to grow
 fetch_binary() {
-    if ! curl "${CURL_OPTS[@]}" "$@" "$DOWNLOAD_URL" -o "$TMP_BIN"; then
+    if ! capped 268435456 "$TMP_BIN" "$@" "$DOWNLOAD_URL"; then
         keep_installed_or_fail "download"
         echo "Error: Failed to download oss-decrypt binary"
         echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
@@ -204,7 +216,7 @@ fetch_binary() {
 # Fail closed: missing or mismatched checksum = reject the binary.
 # =============================================================================
 fetch_checksum() {
-    if ! curl "${CURL_OPTS[@]}" "$@" "${DOWNLOAD_URL}.sha256" -o "$CHECKSUM_FILE"; then
+    if ! capped 4096 "$CHECKSUM_FILE" "$@" "${DOWNLOAD_URL}.sha256"; then
         keep_installed_or_fail "download"
         echo "[verify] Binary checksum: FAILED — checksum file unavailable"
         rm -f "$CHECKSUM_FILE"
@@ -219,14 +231,15 @@ fetch_checksum() {
 
 # The hook runs inside a ~120 s Bash tool call: an upgrade over a working binary gets ONE 100 s deadline for
 # both downloads, so a slow link fails inside the hook (and takes the soft path above) before the tool kills
-# it. The small .sha256 goes first (15 s), the binary gets the rest. A first install has no cap: it must finish.
+# it. The small .sha256 goes first (15 s), the binary gets the rest. A first install must finish: it gets the
+# longest a Bash tool call can last (600 s; T74c: before, none, and a trickle over 1 KB/s held it for hours).
 if [[ "$HAVE_RUNNABLE" == "true" ]]; then
     DL_START=$SECONDS
     fetch_checksum --max-time 15
     fetch_binary --max-time $((100 - (SECONDS - DL_START)))
 else
-    fetch_binary
-    fetch_checksum
+    fetch_binary --max-time 600
+    fetch_checksum --max-time 60
 fi
 
 # Extract expected hash from checksum file (format: "<hash>  <filename>")

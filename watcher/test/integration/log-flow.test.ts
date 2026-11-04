@@ -11,7 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { WorkflowLogger } from '../../src/logger/workflow-logger.js';
-import { LogReader } from '../../src/logger/log-reader.js';
+import { LogReader, type ParsedLogEntry } from '../../src/logger/log-reader.js';
 import { WorkflowAnalyzer } from '../../src/analyzer/workflow-analyzer.js';
 import { InterventionGenerator } from '../../src/intervention/generator.js';
 
@@ -88,7 +88,7 @@ describe('E2E Log Flow', () => {
     });
 
     it('should receive events via tailing in real-time', async () => {
-      const receivedEntries: any[] = [];
+      const receivedEntries: ParsedLogEntry[] = [];
 
       // GIVEN: LogReader is tailing
       reader.startTailing((entry) => {

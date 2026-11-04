@@ -87,9 +87,9 @@ push_metrics() {
         return 1
     }
 
-    # Make API call with timeout
-    response=$(oss_api_curl "$api_key" -s -w "\n%{http_code}" \
-        --max-time "$TIMEOUT_SECONDS" \
+    # Make API call with timeout, the answer at most OSS_BODY_MAX bytes (over it: a failed push, T74b)
+    response=$(oss_capped oss_api_curl "$api_key" -s -w "\n%{http_code}" \
+        --max-time "$TIMEOUT_SECONDS" --max-filesize "$OSS_BODY_MAX" \
         -X POST "${API_URL}${ENDPOINT}" \
         -H "Content-Type: application/json" \
         -d "$metrics_json" 2>/dev/null) || {

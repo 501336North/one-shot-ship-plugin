@@ -11,11 +11,9 @@ vi.mock('fs', () => ({
   },
 }));
 
-const mockFs = fs as {
-  stat: ReturnType<typeof vi.fn>;
-  access: ReturnType<typeof vi.fn>;
-  readFile: ReturnType<typeof vi.fn>;
-};
+const mockFs = vi.mocked(fs);
+// partial: a fake stat answers only the field the check reads (mtime), typed by vitest, not cast (T75e)
+const mockStat = vi.mocked(fs.stat, { partial: true });
 
 describe('DevDocsHealthCheck', () => {
   const featurePath = '/Users/test/.oss/dev/active/test-feature';
@@ -33,7 +31,7 @@ describe('DevDocsHealthCheck', () => {
   it('should pass when PROGRESS.md updated within 1 hour', async () => {
     // GIVEN - Recent PROGRESS.md file (30 minutes ago)
     const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
-    mockFs.stat.mockResolvedValue({ mtime: thirtyMinutesAgo } as any);
+    mockStat.mockResolvedValue({ mtime: thirtyMinutesAgo });
     mockFs.access.mockResolvedValue(undefined);
     mockFs.readFile.mockResolvedValue('# Progress\n## Tasks\n- [x] Task 1');
 
@@ -54,7 +52,7 @@ describe('DevDocsHealthCheck', () => {
   it('should warn when PROGRESS.md is stale (>1 hour during active work)', async () => {
     // GIVEN - Stale PROGRESS.md (2 hours old) during active session
     const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
-    mockFs.stat.mockResolvedValue({ mtime: twoHoursAgo } as any);
+    mockStat.mockResolvedValue({ mtime: twoHoursAgo });
     mockFs.access.mockResolvedValue(undefined);
     mockFs.readFile.mockResolvedValue('# Progress\n## Tasks\n- [x] Task 1');
 
@@ -95,7 +93,7 @@ describe('DevDocsHealthCheck', () => {
   it('should verify all required docs exist', async () => {
     // GIVEN - All required docs exist
     mockFs.access.mockResolvedValue(undefined);
-    mockFs.stat.mockResolvedValue({ mtime: new Date() } as any);
+    mockStat.mockResolvedValue({ mtime: new Date() });
     mockFs.readFile.mockResolvedValue('# Content');
 
     // WHEN - Check dev docs health
@@ -115,7 +113,7 @@ describe('DevDocsHealthCheck', () => {
   it('should pass when PROGRESS.md is stale but session is inactive', async () => {
     // GIVEN - Stale PROGRESS.md but inactive session
     const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000);
-    mockFs.stat.mockResolvedValue({ mtime: threeHoursAgo } as any);
+    mockStat.mockResolvedValue({ mtime: threeHoursAgo });
     mockFs.access.mockResolvedValue(undefined);
     mockFs.readFile.mockResolvedValue('# Progress\n## Tasks\n- [x] Task 1');
 
@@ -134,14 +132,14 @@ describe('DevDocsHealthCheck', () => {
    */
   it('should pass when optional docs missing but required docs present', async () => {
     // GIVEN - PLAN.md and PROGRESS.md exist, DESIGN.md missing (optional)
-    mockFs.access.mockImplementation((path: any) => {
+    mockFs.access.mockImplementation((path) => {
       const pathStr = path.toString();
       if (pathStr.includes('DESIGN.md') || pathStr.includes('TESTING.md')) {
         return Promise.reject(new Error('ENOENT'));
       }
       return Promise.resolve(undefined);
     });
-    mockFs.stat.mockResolvedValue({ mtime: new Date() } as any);
+    mockStat.mockResolvedValue({ mtime: new Date() });
     mockFs.readFile.mockResolvedValue('# Content');
 
     // WHEN - Check dev docs health
@@ -162,7 +160,7 @@ describe('DevDocsHealthCheck', () => {
   it('should report presence of both required and optional docs', async () => {
     // GIVEN - All docs exist
     mockFs.access.mockResolvedValue(undefined);
-    mockFs.stat.mockResolvedValue({ mtime: new Date() } as any);
+    mockStat.mockResolvedValue({ mtime: new Date() });
     mockFs.readFile.mockResolvedValue('# Content');
 
     // WHEN - Check dev docs health
@@ -184,7 +182,7 @@ describe('DevDocsHealthCheck', () => {
   it('should fail gracefully on filesystem errors', async () => {
     // GIVEN - Filesystem error (permission denied on stat)
     mockFs.access.mockResolvedValue(undefined);
-    mockFs.stat.mockRejectedValue(new Error('EACCES: permission denied'));
+    mockStat.mockRejectedValue(new Error('EACCES: permission denied'));
 
     // WHEN - Check dev docs health
     const result = await checkDevDocs({ featurePath });

@@ -13,6 +13,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { WorkflowLogger } from '../../src/logger/workflow-logger.js';
 import { LogReader } from '../../src/logger/log-reader.js';
+import { at } from '../helpers/at.js';
 
 describe('Quality Commands Logging', () => {
   let testDir: string;
@@ -149,7 +150,7 @@ describe('Quality Commands Logging', () => {
         (e) => e.event === 'MILESTONE' && e.data.type === 'SECURITY_FINDINGS'
       );
       expect(securityFindings).toBeDefined();
-      expect(securityFindings?.data.vulnerabilities.high).toBe(1);
+      expect(at(securityFindings?.data, 'vulnerabilities', 'high')).toBe(1);
       expect(securityFindings?.data.packages_vulnerable).toBe(3);
     });
 
@@ -234,7 +235,7 @@ describe('Quality Commands Logging', () => {
       );
       expect(debtMilestone).toBeDefined();
       expect(debtMilestone?.data.items_found).toBe(15);
-      expect(debtMilestone?.data.by_category['code-smells']).toBe(8);
+      expect(at(debtMilestone?.data, 'by_category', 'code-smells')).toBe(8);
     });
 
     it('should log prioritized items', async () => {

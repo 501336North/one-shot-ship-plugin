@@ -13,7 +13,7 @@
  * - a sandbox bin/ first on PATH whose `curl` is a recording stub, so no request leaves the machine.
  * - the hook runs from a sandbox plugin root holding the real oss-session-start.sh and what it
  *   sources, plus an oss-notify.sh stub that records its argv, writes `received` and holds its
- *   inherited stdout until `release` (30 s self-exit backstop).
+ *   inherited stdout until `release` (30 s self-exit backstop), then writes `done` as it exits.
  * - stubs are created and executed once in beforeAll (writeWarmStub), never inside a test.
  * - time limits are only hang backstops; hitting one is a failure with a message. Session start
  *   does real work before it launches the notify call, so the marker backstop is generous.
@@ -56,9 +56,13 @@ beforeAll(() => {
   }
   writeWarmStub(
     path.join(pluginRoot, 'hooks/oss-notify.sh'),
-    ['printf "%s\\n" "$*" >> "$STUB_STATE/notify-argv"', ': > "$STUB_STATE/notify-received"', HOLD_UNTIL_RELEASE, 'exit 0'].join(
-      '\n',
-    ),
+    [
+      'printf "%s\\n" "$*" >> "$STUB_STATE/notify-argv"',
+      ': > "$STUB_STATE/notify-received"',
+      HOLD_UNTIL_RELEASE,
+      ': > "$STUB_STATE/notify-done"',
+      'exit 0',
+    ].join('\n'),
   );
 }, WARMUP_TIMEOUT_MS);
 
@@ -96,6 +100,9 @@ beforeEach(() => {
 afterEach(async () => {
   fs.writeFileSync(path.join(stateDir, 'release'), '');
   await Promise.all(runs.map((run) => Promise.race([run.closed, delay(MARKER_BACKSTOP_MS)])));
+  // The notify call outlives the hook's output by design: wait for the stub itself to end before deleting
+  // the release file it polls for, or it keeps polling after the test (T75f, as T75d).
+  if (fs.existsSync(path.join(stateDir, 'notify-received'))) await fileAppears(path.join(stateDir, 'notify-done'));
   fs.rmSync(caseRoot, { recursive: true, force: true });
 });
 

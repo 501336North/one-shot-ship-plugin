@@ -10,7 +10,7 @@ Real-time production health monitoring and alerting.
 ## Step 1: Check Authentication
 
 ```bash
-grep -q '"apiKey"' "$HOME/.oss/config.json" && echo "API key configured"
+test -f "$HOME/.oss/config.json" && grep -qE '"apiKey"[[:space:]]*:[[:space:]]*"[A-Za-z0-9_-]' "$HOME/.oss/config.json" && echo "API key configured"
 ```
 
 ## Step 2: Fetch and Decrypt Prompt

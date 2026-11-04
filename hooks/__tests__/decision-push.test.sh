@@ -413,7 +413,8 @@ paths=$(cat "$API"/api/bodypath.* 2>/dev/null | sort -u); modes=$(cat "$API"/api
 outs=$(cat "$API"/api/argv.* 2>/dev/null | grep -o -- '-o [^ ]*' | cut -c4- | sort -u)
 under() { local p; [[ -n "$1" ]] || return 1; while IFS= read -r p; do [[ "$p" == "$AH/.oss/run/"?*/* ]] || return 1; done <<< "$1"; }
 left=$(find "$AH/.oss/run" -mindepth 1 2>/dev/null)
-[[ $RC -eq 0 && "$(posts)" == 3 ]] && under "$paths" && under "$outs" && [[ "$modes" == "600 " && -z "$left" && -d "$AH/.oss/run" ]] \
+# T74c: the answers come through curl's stdout (oss_capped), so curl writes no -o file; one it did write would be there
+[[ $RC -eq 0 && "$(posts)" == 3 ]] && under "$paths" && { [[ -z "$outs" ]] || under "$outs"; } && [[ "$modes" == "600 " && -z "$left" && -d "$AH/.oss/run" ]] \
     && pass "$name (made 600 in a private folder under ~/.oss/run, removed on exit)" \
     || fail "$name (made 600 in a private folder under ~/.oss/run, removed on exit)" "rc=$RC posts=$(posts) modes=$modes left=$left"
 api_reset; O=$(mktemp -d "$T/outside.XXXXXX"); ln -s "$O" "$AH/.oss/run"; push_hook
@@ -666,6 +667,21 @@ push_hook
 left=$(cd "$AH/.oss/run" && ls | sort | tr '\n' ' ')
 [[ $RC -eq 0 && "$left" == "decision-push.NEW1 other.OLD1 " ]] && pass "$name" || fail "$name" "rc=$RC left=$left"
 rm -rf "$AH/.oss/run"
+
+# ===== T74c: an answer over the hooks' one body cap (262144 bytes, oss_capped) is no answer ==================
+# A policy or a POST answer that starts as a good one but runs past the cap is never parsed: no POST on such a
+# policy, no "verified" on such a POST answer (the answer stays pending for the next run); curl gets --max-filesize.
+PAD=$(head -c 262144 /dev/zero | tr '\0' ' ')
+name='should send nothing when the policy answer is over 262144 bytes'
+api_reset; api_queue policy "200 {\"pushEnabled\":true,\"team\":false}$PAD"; push_hook
+id=$(answer_ids | tr -d ' ')
+[[ $RC -eq 0 && "$(posts)" == 0 && "$(calls)" == 1 && "$(state_of "$id")" == pending ]] && grep -q -- '--max-filesize 262144 ' "$API/api/argv.1" && pass "$name" \
+    || fail "$name" "rc=$RC posts=$(posts) calls=$(calls) state=$(state_of "$id") argv=$(cat "$API/api/argv.1" 2>/dev/null)"
+name='should not mark an answer verified when the POST answer is over 262144 bytes'
+api_reset; api_queue decisions "201 {\"account\":{\"id\":\"acct-big\"}}$PAD"; push_hook
+id=$(answer_ids | tr -d ' ')
+[[ $RC -eq 0 && "$(posts)" == 1 && "$(state_of "$id")" == pending ]] && grep -q -- '--max-filesize 262144 ' "$API/api/argv.2" && pass "$name" \
+    || fail "$name" "rc=$RC posts=$(posts) state=$(state_of "$id") argv=$(cat "$API/api/argv.2" 2>/dev/null)"
 
 echo "$RUN run, $FAILED failed"
 [[ $FAILED -eq 0 ]]

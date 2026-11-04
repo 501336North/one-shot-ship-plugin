@@ -63,8 +63,14 @@ printf '#!/bin/bash\na=(); for x in "$@"; do a+=("${x//Default_Ignorable_Code_Po
     "$REAL_JQ" > "$OLDJQ/jq"; chmod 755 "$OLDJQ/jq"
 check "the old-jq shim rejects the property (anti-vacuity)" "rejected" \
     "$(PATH="$OLDJQ:$PATH" jq -n '"x" | test("\\p{Default_Ignorable_Code_Point}")' >/dev/null 2>&1 && echo accepted || echo rejected)"
-check "an old jq keeps the T52 list (U+200B and U+FE0F stripped, U+17B4 kept), no error" $'ab\xe1\x9e\xb4cd' \
-    "$(printf '%s' '{"p":"a​b឴c️d"}' | PATH="$OLDJQ:$PATH" oss_json_field p 2>&1)"
+check "an old jq keeps the T52 list (U+200B and U+FE0F stripped), no error" 'abcd' \
+    "$(printf '%s' '{"p":"a​bc️d"}' | PATH="$OLDJQ:$PATH" oss_json_field p 2>&1)"
+# T74 (pen-test L3): the fallback list also names the ignorables that are not Cf: U+17B4-17B5, U+180B-180D, U+180F,
+# U+2065, U+FFF0-FFF8 and U+E0000-E0FFF (both ends of each range; U+E0000 and U+E00FF are unassigned). Their visible
+# neighbours U+17B3, U+17B6 and U+180A are kept.
+OLDDI=$'{"p":"a\xe1\x9e\xb4b\xe1\x9e\xb5c\xe1\xa0\x8bd\xe1\xa0\x8de\xe1\xa0\x8ff\xe2\x81\xa5g\xef\xbf\xb0h\xef\xbf\xb8i\xf3\xa0\x87\xb0j\xf3\xa0\xbf\xbfk\xf3\xa0\x80\x80l\xf3\xa0\x83\xbfm|\xe1\x9e\xb3\xe1\x9e\xb6\xe1\xa0\x8a"}'
+check "an old jq strips U+17B4, U+17B5, U+180B, U+180D, U+180F, U+2065, U+FFF0, U+FFF8, U+E01F0, U+E0FFF, U+E0000 and U+E00FF; keeps U+17B3, U+17B6, U+180A" \
+    $'abcdefghijklm|\xe1\x9e\xb3\xe1\x9e\xb6\xe1\xa0\x8a' "$(printf '%s' "$OLDDI" | PATH="$OLDJQ:$PATH" oss_json_field p 2>&1)"
 
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"

@@ -12,6 +12,7 @@ import * as os from 'os';
 import { LogReader, ParsedLogEntry } from '../src/logger/log-reader.js';
 import { WorkflowLogger } from '../src/logger/workflow-logger.js';
 import { OSSError } from '../src/services/error-codes.js';
+import { at } from './helpers/at.js';
 
 describe('LogReader', () => {
   let testDir: string;
@@ -291,8 +292,8 @@ describe('LogReader', () => {
       expect(entry?.data.violations).toBeDefined();
       expect(Array.isArray(entry?.data.violations)).toBe(true);
       expect(entry?.data.violations).toHaveLength(2);
-      expect(entry?.data.violations[0].law).toBe(4);
-      expect(entry?.data.violations[1].law).toBe(1);
+      expect(at(entry?.data, 'violations', 0, 'law')).toBe(4);
+      expect(at(entry?.data, 'violations', 1, 'law')).toBe(1);
     });
   });
 

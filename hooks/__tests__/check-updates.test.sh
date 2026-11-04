@@ -610,6 +610,53 @@ test_settings_fifo() {
 }
 
 # =============================================================================
+# T74 (pen-test L2): manifest keys are data. They reach jq only through --arg and are read whole (read -r), so a
+# key that is jq code cannot hang session start and a key with a space or a `*` is still compared. This hook prints
+# only a count, never a key.
+#
+# @behavior At session start the user is told how many prompts improved, counting every changed prompt whatever
+#           its name, and a hostile manifest cannot stall the check.
+# @business-rule The update check is best-effort and must never hang session start (T53).
+# =============================================================================
+
+# run_keys DIR CACHED-HASHES MANIFEST: a capped run from a folder holding GLOBBED-FILE, the plugin unchanged.
+run_keys() {
+    local d="$1"
+    set_version "$d" 2.0.44
+    printf '{"lastPluginVersion":"2.0.44","lastCheckedAt":"T","manifestHashes":%s}\n' "$2" > "$d/config/update-state.json"
+    printf '%s\n' "$3" > "$d/manifest.json"
+    mkdir -p "$d/home" "$d/cwd"; : > "$d/cwd/GLOBBED-FILE"
+    (cd "$d/cwd" && run_state "$d" OSS_MOCK_MANIFEST="$d/manifest.json"; echo "$RC" > "$d/rc")
+    RC=$(cat "$d/rc"); OUT=$(cat "$d/out"); ERR=$(cat "$d/err")
+}
+
+test_keys_never_filter_text() {
+    local test_name="A manifest key that is jq code is looked up as a name: no hang, its change counted (T74)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"x\"]|last(range(1e12))|.[\"y":"old"}' '{"prompts":{"x\"]|last(range(1e12))|.[\"y":{"hash":"new"}}}'
+    if [[ $RC == 0 && "$OUT" == *"1 prompts improved"* && -z "$ERR" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "rc=0 (124 = jq ran the key as code until the cap), '1 prompts improved'" "rc=$RC out='$OUT' err='$ERR'"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_keys_not_split_or_globbed() {
+    local test_name="Changed prompts named with a space or a * are counted, never split or glob-expanded (T74)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"two words":"old","*":"old"}' '{"prompts":{"two words":{"hash":"new"},"*":{"hash":"new"}}}'
+    if [[ $RC == 0 && "$OUT" == *"2 prompts improved"* && -z "$ERR" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "rc=0, '2 prompts improved'" "rc=$RC out='$OUT' err='$ERR'"
+    fi
+    cleanup_test_env "$d"
+}
+
+# =============================================================================
 # Run all tests
 # =============================================================================
 echo "Running check-updates tests..."
@@ -628,6 +675,8 @@ test_state_symlink
 test_state_round_trip
 test_settings_symlink
 test_settings_fifo
+test_keys_never_filter_text
+test_keys_not_split_or_globbed
 
 echo ""
 echo "======================================="

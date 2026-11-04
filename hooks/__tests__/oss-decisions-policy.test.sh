@@ -178,6 +178,17 @@ for a in '000 x' '500 {"error":"internal"}' '503 <html>busy</html>' '200 <html>n
     done
 done
 
+# 7a. T74c: an answer over 262144 bytes (the hooks' one body cap, oss_capped) is no answer, even one that starts
+#     as a good policy: jq never reads past the cap, and the team setting is never claimed
+name='should say the team setting is unchanged when the answer is over 262144 bytes'
+BIG=$(printf '{"pushEnabled":true,"team":true}'; head -c 262144 /dev/zero | tr '\0' ' ')
+for sub in status off on; do
+    reset; answer "200 $BIG"; policy "$sub"
+    want="Could not reach OSS"; [[ $sub != status ]] && want="Decision push is now $sub for you on this machine; $UNCH $want"
+    [[ $RC -eq 1 && "$OUT" == "$want" && "$(calls)" == 1 ]] && grep -q -- '--max-filesize 262144 ' "$API/api/argv.1" && pass "$name ($sub)" \
+        || fail "$name ($sub)" "rc=$RC out=${OUT:0:200} calls=$(calls) argv=$(cat "$API/api/argv.1" 2>/dev/null)"
+done
+
 # 7b. the settings file is shared with every other OSS setting: merged, never overwritten, never written
 #     through a link, and left alone when it is not valid JSON
 # Task 16ac: the file holds provider apiKeys, so every writer leaves it 600 (owner only), whatever mode it had

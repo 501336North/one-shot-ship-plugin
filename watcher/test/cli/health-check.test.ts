@@ -68,7 +68,7 @@ describe('enhanced health-check CLI', () => {
 
     // Capture console.log
     originalConsoleLog = console.log;
-    console.log = (...args: any[]) => {
+    console.log = (...args: unknown[]) => {
       consoleOutput.push(args.join(' '));
     };
 

@@ -180,7 +180,13 @@ describe('project .oss writers do not follow committed links', () => {
   it('SpecMetricsService: a linked spec-metrics.json is not written', async () => {
     link('.oss/spec-metrics.json', victim);
     const before = snapshot();
-    const metrics: SpecMetricsFile = { version: '1.0', updated_at: '2026-01-01T00:00:00.000Z', features: {} };
+    const metrics: SpecMetricsFile = {
+      version: '1.0',
+      updated_at: '2026-01-01T00:00:00.000Z',
+      features: {},
+      reconciliations: [],
+      velocity: { weekly_drift_avg: 0, weekly_reconciliations: 0, trend: 'stable' },
+    };
     await new SpecMetricsService(project).saveMetrics(metrics);
     expect(snapshot()).toBe(before);
   });

@@ -23,6 +23,6 @@ export function fakeRegularFiles(fs: typeof fsModule): void {
     found(p);
     return p as unknown as number;
   }) as typeof fs.openSync);
-  vi.mocked(fs.fstatSync).mockImplementation((() => regular) as typeof fs.fstatSync);
+  vi.mocked(fs.fstatSync).mockImplementation(() => regular);
   vi.mocked(fs.closeSync).mockImplementation(() => undefined);
 }

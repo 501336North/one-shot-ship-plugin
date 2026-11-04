@@ -58,7 +58,7 @@ View and manage your team's customizable workflow configuration.
 
 ## Step 1: Fetch Workflow List
 
-**OSS hooks older than this plugin:** if a `~/.oss/hooks/oss-value.sh` call in this command (Step 1 or Step 3) prints `usage: oss-value.sh` or `No such file or directory`, the plugin was updated after this session started and `~/.oss/hooks` still holds the older copies. Do not show that output; show only this line: `Your OSS hooks are older than the plugin; restart Claude Code (or start a new session) to update them.` and stop.
+**OSS hooks older than this plugin:** if a `~/.oss/hooks/oss-value.sh` call in this command (Step 1 or Step 3) prints `usage: oss-value.sh` or `No such file or directory` (any case: zsh prints `no such file or directory`), the plugin was updated after this session started and `~/.oss/hooks` still holds the older copies. Do not show that output; show only this line: `Your OSS hooks are older than the plugin; restart Claude Code (or start a new session) to update them.` and stop.
 
 Run this exactly as written (one allowed call). It sends the key from your OSS config to `/api/v1/workflows` on the API that config's `apiUrl` names, on curl's stdin (never on a command line or into this chat), and prints one line per workflow, its name and `DEFAULT` or `CUSTOM`:
 
@@ -106,7 +106,7 @@ If a workflow name is provided, fetch and display its configuration. The name re
 ~/.oss/hooks/oss-value.sh workflow
 ```
 
-It reads the name from `workflow.txt` only when it is valid (lower case, digits, `_ . : -`) and deletes the file, then fetches that workflow's configuration from `/api/v1/workflows/<name>/editor` the same key-safe way and prints it as JSON (`name`, `chain`, `agents`, `parallel_agents`, `task_loop`, `quality_gates`, `on_pass`, `checkpoint`). If it says `refused`, tell the user the name is not valid and stop. If it fails otherwise, show its message and stop (`HTTP 404`: not one of ideate, plan, build, ship).
+It reads the name from `workflow.txt` only when it is a valid workflow name (a lower-case letter, then lower case, digits or `-`) and deletes the file, then fetches that workflow's configuration from `/api/v1/workflows/<name>/editor` the same key-safe way and prints it as JSON (`name`, `chain`, `agents`, `parallel_agents`, `task_loop`, `quality_gates`, `on_pass`, `checkpoint`). If it says `refused`, tell the user the name is not valid and stop. If it fails otherwise, show its message and stop (`HTTP 404`: not one of ideate, plan, build, ship).
 
 Display the configuration (Status is the `DEFAULT` or `CUSTOM` that Step 1 listed for this workflow):
 

@@ -259,7 +259,7 @@ warm_stub "$T/oldjq/jq" "a=(); for x in \"\$@\"; do a+=(\"\${x//Default_Ignorabl
 exec '$(command -v jq)' \"\${a[@]}\"" || abort "the old-jq shim warms up" "warm-up did not run"
 fresh 200 $'# OSS\n\ta\xe2\x80\x8bb\xe1\x9e\xb4c end'; cfg "$H/.oss" "$LOCAL"
 run_tpl OSS_ALLOW_HTTP_LOOPBACK=1 PATH="$T/oldjq:$T/bin:$PATH"
-[[ "$RC" == 0 && "$OUT" == $'# OSS\n\tab\xe1\x9e\xb4c end' && -z "$ERR" ]] && pass "old jq: the T52 list still applies (U+200B stripped, U+17B4 kept), no error" \
+[[ "$RC" == 0 && "$OUT" == $'# OSS\n\tabc end' && -z "$ERR" ]] && pass "old jq: the static list applies (U+200B and, since T74, U+17B4 stripped), no error" \
     || fail "old jq: falls back to the T52 list" "rc=$RC out=$(printf '%s' "$OUT" | od -c | head -8) err=$ERR"
 
 echo "Results: $((RUN - FAILED))/$RUN passed, $FAILED failed"

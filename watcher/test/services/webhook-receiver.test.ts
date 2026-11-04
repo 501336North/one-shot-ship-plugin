@@ -11,6 +11,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as crypto from 'crypto';
 import { WebhookReceiver } from '../../src/services/webhook-receiver.js';
 
+/** The receiver's JSON reply (webhook-receiver.ts res.end): { status } on success, { error } on refusal. */
+type ReceiverReply = { status?: string; error?: string };
+
+async function replyOf(response: Response): Promise<ReceiverReply> {
+  return (await response.json()) as ReceiverReply;
+}
+
 /**
  * Helper function to create valid HMAC-SHA256 signature
  */
@@ -120,7 +127,7 @@ describe('WebhookReceiver', () => {
 
       // WHEN - We call the health endpoint
       const response = await fetch(`http://localhost:${TEST_PORT}/health`);
-      const body = await response.json();
+      const body = await replyOf(response);
 
       // THEN - Should include status
       expect(body.status).toBe('ok');
@@ -178,7 +185,7 @@ describe('WebhookReceiver', () => {
 
       // THEN - Should return 401 Unauthorized
       expect(response.status).toBe(401);
-      const body = await response.json();
+      const body = await replyOf(response);
       expect(body.error).toContain('signature');
     });
 
@@ -203,7 +210,7 @@ describe('WebhookReceiver', () => {
 
       // THEN - Should return 401 Unauthorized
       expect(response.status).toBe(401);
-      const body = await response.json();
+      const body = await replyOf(response);
       expect(body.error).toContain('signature');
     });
 
@@ -309,7 +316,7 @@ describe('WebhookReceiver', () => {
      */
     it('should process pull_request_review events', async () => {
       // GIVEN - Server is running with an event handler
-      const processedEvents: object[] = [];
+      const processedEvents: unknown[] = [];
       receiver.onEvent((payload) => {
         processedEvents.push(payload);
       });
@@ -334,7 +341,7 @@ describe('WebhookReceiver', () => {
      */
     it('should ignore push events', async () => {
       // GIVEN - Server is running with an event handler
-      const processedEvents: object[] = [];
+      const processedEvents: unknown[] = [];
       receiver.onEvent((payload) => {
         processedEvents.push(payload);
       });
@@ -354,7 +361,7 @@ describe('WebhookReceiver', () => {
      */
     it('should ignore issue events', async () => {
       // GIVEN - Server is running with an event handler
-      const processedEvents: object[] = [];
+      const processedEvents: unknown[] = [];
       receiver.onEvent((payload) => {
         processedEvents.push(payload);
       });
@@ -374,7 +381,7 @@ describe('WebhookReceiver', () => {
      */
     it('should ignore pull_request events', async () => {
       // GIVEN - Server is running with an event handler
-      const processedEvents: object[] = [];
+      const processedEvents: unknown[] = [];
       receiver.onEvent((payload) => {
         processedEvents.push(payload);
       });
@@ -477,8 +484,8 @@ describe('WebhookReceiver', () => {
         expect(responses[4].status).toBe(429);
 
         // Verify response body
-        const body = await responses[3].json();
-        expect(body.error.toLowerCase()).toContain('rate');
+        const body = await replyOf(responses[3]);
+        expect(body.error?.toLowerCase()).toContain('rate');
       } finally {
         await limitedReceiver.stop();
       }
@@ -568,7 +575,7 @@ describe('WebhookReceiver', () => {
 
       // THEN - Should return 413 Payload Too Large
       expect(response.status).toBe(413);
-      const body = await response.json();
+      const body = await replyOf(response);
       expect(body.error).toContain('too large');
     });
 

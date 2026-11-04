@@ -26,7 +26,7 @@ const config = {
 };
 
 function req(system: unknown) {
-  return { model: 'claude-sonnet-4-6', system, messages: [] } as any;
+  return { model: 'claude-sonnet-4-6', system, messages: [] };
 }
 
 describe('resolveRoute: per-agent dispatch with safe pass-through default', () => {

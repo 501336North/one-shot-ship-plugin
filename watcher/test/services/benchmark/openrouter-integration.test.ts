@@ -41,9 +41,8 @@ describe('OpenRouter integration', () => {
         'Content-Type': 'application/json',
       }),
     };
-    vi.mocked(OpenRouterHandler).mockImplementation(function (this: Record<string, unknown>) {
-      Object.assign(this, mockHandler);
-      return this as ReturnType<typeof OpenRouterHandler>;
+    vi.mocked(OpenRouterHandler).mockImplementation(function (this: InstanceType<typeof OpenRouterHandler>) {
+      Object.assign(this, mockHandler); // constructor-style: `new` returns this (T75e)
     });
 
     openRouterIntegration = new OpenRouterIntegration({

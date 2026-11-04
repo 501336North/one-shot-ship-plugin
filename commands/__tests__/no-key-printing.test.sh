@@ -28,7 +28,7 @@ PLUGIN_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PROMPT_DIRS="commands agents skills"
 MIN_FILES=150
 
-QUIET_CHECK='grep -q '"'"'"apiKey"'"'"' "$HOME/.oss/config.json" && echo "API key configured"'
+QUIET_CHECK='test -f "$HOME/.oss/config.json" && grep -qE '"'"'"apiKey"[[:space:]]*:[[:space:]]*"[A-Za-z0-9_-]'"'"' "$HOME/.oss/config.json" && echo "API key configured"'
 
 TESTS_RUN=0
 TESTS_PASSED=0

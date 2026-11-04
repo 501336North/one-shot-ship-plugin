@@ -35,8 +35,8 @@ describe('Reproduction Test Generation', () => {
 
     it('should handle bugs without file location', () => {
       // GIVEN - Bug without file specified
-      const bug = {
-        type: 'error' as const,
+      const bug: Partial<ConfirmedBug> = {
+        type: 'error',
         errorType: 'TypeError',
       };
 

@@ -281,7 +281,8 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                 # but cached prompts bypass the API, so we track here as the source of truth
                 (
                     if oss_api_creds; then   # key and URL from one read (T37)
-                        oss_api_curl "$OSS_KEY" -sS -m 5 -X POST "${OSS_URL}/api/v1/analytics/track" \
+                        # the answer is discarded; oss_capped stops reading it at OSS_BODY_MAX bytes (T74c)
+                        oss_capped oss_api_curl "$OSS_KEY" -sS -m 5 --max-filesize "$OSS_BODY_MAX" -X POST "${OSS_URL}/api/v1/analytics/track" \
                             -H "Content-Type: application/json" \
                             -d "{\"command\": \"$WORKFLOW_CMD\", \"promptType\": \"command\", \"promptName\": \"$WORKFLOW_CMD\"}" \
                             >/dev/null 2>&1 || true

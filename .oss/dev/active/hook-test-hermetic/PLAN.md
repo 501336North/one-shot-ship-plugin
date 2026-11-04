@@ -824,6 +824,25 @@ covers U+17B4-17B5, U+180B-180D, U+180F, U+2065, U+FFF0-FFF8, U+E01F0-E0FFF. (c)
 oss_valid_workflow_name). (d) _ov_api caps the body it reads (head -c). (e) the prompt files' apiKey presence check
 must not hang on a FIFO and must treat an empty/null key as not configured.
 
+### Task 74b: cap every network body a hook reads (T74 finding; user "Fix now as T74b")
+These hooks read a network body bounded only by --max-time: check-updates.sh:91, oss-changelog.sh:65 (the unauthenticated
+manifest), fetch-iron-laws.sh:69, oss-fetch-team-iron-laws.sh:115, oss-login.sh:20, oss-push-metrics.sh:91,
+oss-session-start.sh:247. Each must stop reading at the same 262144-byte cap T74 used (curl --max-filesize plus head -c,
+so a body with no Content-Length or a stream is also cut) and treat an over-cap body as a failure (no partial parse, no
+partial file written, same user-visible behaviour as the existing failure path). RED-first per hook with a test server
+that streams far past the cap; mutants per hook. Sweep for any other curl/wget body read in hooks/ and report it.
+
+### Task 74c: bound every remaining download (T74b sweep; user "Fix all now as T74c")
+(a) ensure-oss-launch.sh:56,61 (binary + .sha256): total --max-time, --max-filesize and a byte stop on the binary (a
+binary-sized limit with room to grow: oss-decrypt today is ~60 MB, so e.g. 256 MB; the .sha256 gets a small cap), and a
+hang-proof connect/total time. (b) ensure-decrypt-cli.sh:190,207: add a total --max-time (keep the speed limit) and the
+same binary size limit. (c) commands/login.md:275 icon download: time limit and a small size cap (keep it allowlisted /
+update the allowlist test consistently). (d) oss-decision-record.sh:254,286 and oss-decisions-policy.sh:72: size cap the
+-o file so jq never reads more than the cap. (e) oss-iron-laws-sync.sh:120: add the byte stop (head -c / oss_capped) so an
+old curl cannot write past the cap. (f) oss-notify.sh:284: cap the discarded body. Over any limit: the existing failure
+path (no partial binary installed, no partial file kept, same message). RED-first per item, mutants per item, reuse
+hooks/__tests__/body-cap.test.sh's server/shim. Binary downloads keep their checksum verification unchanged.
+
 ### Task 75: messages and tests (code-review L1, L2, INFO)
 (a) The stale-hooks restart rule matches zsh's "no such file or directory" (any case) too; add a zsh row.
 (b) fetch-fallback.test.sh verifies the decrypt binary's hash against hooks/oss-decrypt-checksums.txt before using it.

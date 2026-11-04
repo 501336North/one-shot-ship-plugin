@@ -18,6 +18,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as http from 'http';
 import { ModelProxy, ollamaHandlerConfig } from '../../src/services/model-proxy.js';
+import type { RouteDeps } from '../../src/services/proxy-router.js';
 
 describe('ollamaHandlerConfig: router → ollama HandlerConfig (incl. per-model think)', () => {
   it('carries baseUrl AND the think map from routerConfig.models', () => {
@@ -91,7 +92,7 @@ describe('ModelProxy router mode: per-agent HTTP dispatch + passthrough + fallba
   });
 
   it('routes a local-mapped agent to the Ollama backend and streams the result back as SSE', async () => {
-    const ollamaHandle = vi.fn(async () => anthropicResponse('OLLAMA_OUTPUT'));
+    const ollamaHandle = vi.fn<RouteDeps['ollamaHandle']>(async () => anthropicResponse('OLLAMA_OUTPUT'));
     const passthrough = vi.fn(async () => anthropicUpstream('SHOULD_NOT_APPEAR'));
     proxy = makeRouterProxy({ ollamaHandle, passthrough });
     await proxy.start();

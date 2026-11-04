@@ -215,7 +215,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         -o) OUTPUT_FILE="$2"; shift 2 ;;
         -sL|-s|-L|-fsSL) shift ;;
-        --proto|--connect-timeout|--speed-limit|--speed-time|--max-time) shift 2 ;;
+        --proto|--connect-timeout|--speed-limit|--speed-time|--max-time|--max-filesize) shift 2 ;;
         *) URL="$1"; shift ;;
     esac
 done
@@ -227,14 +227,22 @@ CURLEOF
 [[ -n "\${MOCK_CURL_URL_LOG:-}" ]] && echo "\$URL" >> "\$MOCK_CURL_URL_LOG"
 [[ -n "\${MOCK_CURL_ARGS_LOG:-}" ]] && echo "\$ALL_ARGS" >> "\$MOCK_CURL_ARGS_LOG"
 [[ -n "\${MOCK_CURL_OUT_LOG:-}" ]] && echo "\$OUTPUT_FILE" >> "\$MOCK_CURL_OUT_LOG"
+# No -o: the body goes to stdout, as real curl does (T74c pipes it through head -c)
+[[ -n "\$OUTPUT_FILE" ]] || OUTPUT_FILE=/dev/stdout
 if [[ "\$URL" == *.sha256 ]]; then
     if [[ "$sha256_mode" == "FAIL" ]]; then
         exit 1
     fi
-    cp "$staging_dir/checksum" "\$OUTPUT_FILE"
+    cat "$staging_dir/checksum" > "\$OUTPUT_FILE"
 else
     [[ "$sha256_mode" == "BINFAIL" ]] && exit 22
-    cp "$staging_dir/binary" "\$OUTPUT_FILE"
+    # T74c: MOCK_CURL_FLOOD=<file>: the binary is 257 MiB of zeros (a server sending far more than any release,
+    # past --max-filesize as curl before 8.4 lets a body with no Content-Length); dd's exit status goes to
+    # <file>: 141 (SIGPIPE) when the hook stopped reading
+    if [[ -n "\${MOCK_CURL_FLOOD:-}" ]]; then
+        dd if=/dev/zero bs=1048576 count=257 of="\$OUTPUT_FILE" 2>/dev/null; echo \$? > "\$MOCK_CURL_FLOOD"; exit 0
+    fi
+    cat "$staging_dir/binary" > "\$OUTPUT_FILE"
 fi
 exit 0
 CURLEOF
@@ -810,14 +818,17 @@ test_interrupted_checksum_download_leaves_no_temp_file() {
     cat > "$mock/curl" << CURLEOF
 #!/bin/bash
 out=""; url=""; prev=""; for a in "\$@"; do [[ "\$prev" == "-o" ]] && out="\$a"; [[ "\$a" == https://* ]] && url="\$a"; prev="\$a"; done
-echo "\$out" >> "$outs"; [[ "\$url" == *.sha256 ]] && echo "\$url" >> "$outs.urls"; echo partial > "\$out"; [[ "\$url" == *.sha256 ]] && sleep 2; exit 0
+echo "\$out" >> "$outs"; [[ "\$url" == *.sha256 ]] && echo "\$url" >> "$outs.urls"; echo partial > "\${out:-/dev/stdout}"; [[ "\$url" == *.sha256 ]] && sleep 2; exit 0
 CURLEOF
     chmod +x "$mock/curl"
-    HOME="$TEST_HOME" PATH="$mock:$PATH" bash "$HOOK_SCRIPT" >/dev/null 2>&1 &
+    # T74c: the downloads go to curl's stdout, so the temp files are found where the hook makes them (its TMPDIR, ~/.oss/bin)
+    mkdir -p "$TEST_HOME/tmp"
+    HOME="$TEST_HOME" TMPDIR="$TEST_HOME/tmp" PATH="$mock:$PATH" bash "$HOOK_SCRIPT" >/dev/null 2>&1 &
     local pid=$! n=0; until grep -q sha256 "$outs.urls" 2>/dev/null || [[ $((n++)) -ge 100 ]]; do sleep 0.05; done   # wait until the checksum download is in flight
     sleep 0.2; kill -TERM "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; sleep 1
-    local left=0 f; while read -r f; do [[ -e "$f" ]] && ((left++)); done < "$outs"
-    if [[ -s "$outs" && "$left" == "0" ]]; then pass "$test_name"; else fail "$test_name" "every curl -o target removed" "$left left: $(cat "$outs" 2>/dev/null | tr '\n' ' ')"; fi
+    local left=0 f; while read -r f; do [[ -n "$f" && -e "$f" ]] && ((left++)); done < "$outs"
+    left=$((left + $(find "$TEST_HOME/tmp" "$TEST_HOME/.oss/bin" -type f -name '*.*' ! -name '.decrypt-upgrade-failed' 2>/dev/null | wc -l)))
+    if [[ -s "$outs.urls" && "$left" == "0" ]]; then pass "$test_name"; else fail "$test_name" "every temp file removed" "$left left: $(cat "$outs" 2>/dev/null | tr '\n' ' ') $(find "$TEST_HOME/tmp" "$TEST_HOME/.oss/bin" -type f 2>/dev/null | tr '\n' ' ')"; fi
     while read -r f; do rm -f "$f"; done < "$outs" 2>/dev/null
     rm -rf "$mock"; teardown_test_env
 }
@@ -957,6 +968,7 @@ run_upgrade() {
         html) printf '<!DOCTYPE html>\n<html><body>Sign in to continue to the network</body></html>\n' > "$st/checksum" ;;
         empty) : > "$st/checksum" ;;
         committed) echo "$(printf 'e%.0s' {1..64})  $art" > "$st/manifest" ;;
+        oversize) head -c 5000 /dev/zero | tr '\0' ' ' >> "$st/checksum" ;;   # T74c: a good hash line, then past 4096 bytes
     esac
     setup_mock_curl "$st" "$curl_mode"
     RUN_RC=0; HOME="$TEST_HOME" OSS_DECRYPT_CHECKSUMS="$st/manifest" "$HOOK_SCRIPT" >"$TEST_HOME/out" 2>"$TEST_HOME/err" || RUN_RC=$?
@@ -1104,27 +1116,85 @@ test_unrunnable_or_ancient_install_takes_hard_path() {
 #           FIRST with --max-time 15, then the binary with what is left of a 100 s budget (0 < cap <= 100).
 #           (Round 2 put --max-time 90 on BOTH curls, binary first: worst case ~180 s + connect timeouts, past
 #           the tool timeout, so the soft path never ran. That test asserted "--max-time 90" on the asset; it is
-#           replaced by this one.) A first install has no cap and keeps its order (binary, then .sha256): it must finish.
+#           replaced by this one.) A first install keeps its order (binary, then .sha256) and gets the longest
+#           limits a Bash tool call allows (T74c, user decision "fix all now": before, it had no total limit, and a
+#           server trickling over 1 KB/s held it for hours): 600 s for the binary, 60 s for the .sha256.
 test_upgrade_download_has_one_deadline_first_install_does_not() {
-    local test_name="Installed 1.2.1 -> .sha256 first (--max-time 15), binary within the 100 s budget; no binary -> binary first, no cap"
+    local test_name="Installed 1.2.1 -> .sha256 first (--max-time 15), binary within the 100 s budget; no binary -> binary first (--max-time 600), .sha256 --max-time 60"
     ((TESTS_RUN++)); setup_test_env
     local up_first up_bin up_cap fresh_first fresh_all up_rc fresh_rc
     export MOCK_CURL_ARGS_LOG="$TEST_HOME/curl.args"; run_upgrade "1.2.1" "OK" "none"; up_rc=$RUN_RC
     up_first=$(head -n1 "$MOCK_CURL_ARGS_LOG" 2>/dev/null)
-    up_bin=$(grep -v '\.sha256 ' "$MOCK_CURL_ARGS_LOG" 2>/dev/null)
+    up_bin=$(grep -v '\.sha256' "$MOCK_CURL_ARGS_LOG" 2>/dev/null)
     up_cap=$(grep -oE -- '--max-time [0-9]+' <<<"$up_bin" | awk '{print $2}')
     teardown_test_env; setup_test_env
     export MOCK_CURL_ARGS_LOG="$TEST_HOME/curl.args"; run_upgrade "none" "OK" "none"; fresh_rc=$RUN_RC
     fresh_first=$(head -n1 "$MOCK_CURL_ARGS_LOG" 2>/dev/null)
     fresh_all=$(cat "$MOCK_CURL_ARGS_LOG" 2>/dev/null)
+    local fresh_sum; fresh_sum=$(grep '\.sha256' "$MOCK_CURL_ARGS_LOG" 2>/dev/null)
     unset MOCK_CURL_ARGS_LOG
     if [[ $up_rc -eq 0 && $fresh_rc -eq 0 \
-        && "$up_first" == *".sha256 -o "* && $(grep -oc -- '--max-time' <<<"$up_first") -eq 1 && "$up_first" == *"--max-time 15 "* \
+        && "$up_first" == *".sha256"* && $(grep -oc -- '--max-time' <<<"$up_first") -eq 1 && "$up_first" == *"--max-time 15 "* \
         && -n "$up_bin" && $(grep -c -- '--max-time' <<<"$up_bin") -eq 1 && "$up_cap" =~ ^[0-9]+$ && $up_cap -gt 0 && $up_cap -le 100 \
-        && -n "$fresh_first" && "$fresh_first" != *".sha256 "* && "$fresh_all" != *"--max-time"* ]]; then pass "$test_name"
-    else fail "$test_name" "upgrade: first curl .sha256 with one --max-time 15, binary curl one --max-time in (0,100]; first install: binary first, no --max-time" \
+        && -n "$fresh_first" && "$fresh_first" != *".sha256"* && $(grep -o -- '--max-time [0-9]*' <<<"$fresh_first") == "--max-time 600" \
+        && $(grep -o -- '--max-time [0-9]*' <<<"$fresh_sum") == "--max-time 60" && $(grep -c -- '--max-time' <<<"$fresh_all") -eq 2 ]]; then pass "$test_name"
+    else fail "$test_name" "upgrade: first curl .sha256 with one --max-time 15, binary curl one --max-time in (0,100]; first install: binary first with --max-time 600, .sha256 --max-time 60" \
         "up_rc=$up_rc fresh_rc=$fresh_rc up_first=[$up_first] up_bin=[$up_bin] cap=[$up_cap] fresh=[$fresh_all]"; fi
     teardown_test_env
+}
+
+# =============================================================================
+# T74c: every download is capped in size. A server (or anything in its place) that sends far more than a release
+# cannot fill the disk: curl gets --max-filesize (268435456 bytes for the binary, a few times today's ~60 MB;
+# 4096 for the .sha256) and head -c stops a body curl lets past it (no Content-Length, curl before 8.4). Over a
+# cap is a failed download: the existing path (soft over a working binary, hard on a first install), nothing
+# installed, no temp file left. The checksum checks are unchanged.
+# =============================================================================
+BIN_CAP=268435456
+# leftover_temps: temp files the hook left in ~/.oss/bin (the stamp is not one)
+leftover_temps() { find "$TEST_HOME/.oss/bin" -type f -name '.oss-decrypt.*' 2>/dev/null | wc -l | tr -d ' '; }
+test_downloads_are_size_capped() {
+    local test_name="Both downloads get --max-filesize ($BIN_CAP binary, 4096 .sha256), on a first install and on an upgrade"
+    ((TESTS_RUN++)); setup_test_env
+    local ok=yes m
+    for m in none 1.2.1; do
+        export MOCK_CURL_ARGS_LOG="$TEST_HOME/args.$m"; run_upgrade "$m" "OK" "none"; unset MOCK_CURL_ARGS_LOG
+        [[ $RUN_RC -eq 0 && "$RUN_ASSET" == yes ]] || ok="rc=$RUN_RC asset=$RUN_ASSET ($m)"
+        grep -v '\.sha256' "$TEST_HOME/args.$m" | grep -q -- "--max-filesize $BIN_CAP " || ok="binary uncapped ($m): $(cat "$TEST_HOME/args.$m")"
+        grep '\.sha256' "$TEST_HOME/args.$m" | grep -q -- "--max-filesize 4096 " || ok=".sha256 uncapped ($m): $(cat "$TEST_HOME/args.$m")"
+    done
+    if [[ "$ok" == yes ]]; then pass "$test_name"; else fail "$test_name" "installed, both curls capped" "$ok"; fi
+    teardown_test_env
+}
+test_flooded_binary_fails_closed() {
+    local m
+    for m in none 1.2.1; do
+        local test_name="A 257 MiB binary (installed: $m) is cut off at $BIN_CAP bytes: the failed-download path, no partial binary, no temp file"
+        ((TESTS_RUN++)); setup_test_env
+        export MOCK_CURL_FLOOD="$TEST_HOME/flood.rc"; run_upgrade "$m" "OK" "none"; unset MOCK_CURL_FLOOD
+        local dd; dd=$(cat "$TEST_HOME/flood.rc" 2>/dev/null)
+        local want_rc=1 want_kept=no; [[ $m != none ]] && want_rc=0 want_kept=yes
+        if [[ $RUN_RC -eq $want_rc && "$RUN_KEPT" == "$want_kept" && "$dd" == 141 && "$(leftover_temps)" == 0 \
+              && ( $m != none || ( ! -e "$TEST_HOME/.oss/bin/oss-decrypt" && "$RUN_OUT" == *"Error: Failed to download oss-decrypt binary"* ) ) \
+              && ( $m == none || "$RUN_ERR" == *"$SOFT_WARN (download); keeping the installed version"* ) ]]; then pass "$test_name"
+        else fail "$test_name" "rc=$want_rc kept=$want_kept, dd stopped (141), no temp file, the download-failed message" \
+            "rc=$RUN_RC kept=$RUN_KEPT dd=$dd temps=$(leftover_temps) out=${RUN_OUT:0:300} err=${RUN_ERR:0:200}"; fi
+        teardown_test_env
+    done
+}
+test_oversized_checksum_is_unavailable() {
+    local m
+    for m in none 1.2.1; do
+        local test_name="A .sha256 over 4096 bytes (installed: $m) is an unavailable checksum, never parsed"
+        ((TESTS_RUN++)); setup_test_env
+        run_upgrade "$m" "OK" "oversize"
+        local want_rc=1; [[ $m != none ]] && want_rc=0
+        if [[ $RUN_RC -eq $want_rc && "$RUN_ASSET" == no && "$(leftover_temps)" == 0 \
+              && ( $m != none || "$RUN_OUT" == *"Error: Could not download checksum file for verification."* ) \
+              && ( $m == none || "$RUN_ERR" == *"$SOFT_WARN (download)"* ) ]]; then pass "$test_name"
+        else fail "$test_name" "rc=$want_rc, not installed, the checksum-unavailable path" "rc=$RUN_RC asset=$RUN_ASSET out=${RUN_OUT:0:300} err=${RUN_ERR:0:200}"; fi
+        teardown_test_env
+    done
 }
 
 # =============================================================================
@@ -1278,6 +1348,9 @@ test_stale_or_foreign_stamp_does_not_postpone
 test_first_install_ignores_stamp
 test_hash_mismatch_writes_no_stamp
 test_stamp_symlink_never_followed
+test_downloads_are_size_capped
+test_flooded_binary_fails_closed
+test_oversized_checksum_is_unavailable
 
 echo ""
 echo "======================================="

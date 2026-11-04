@@ -38,6 +38,7 @@ const MARKER_BACKSTOP_MS = 60_000;
 const TEST_TIMEOUT_MS = 100_000;
 
 // Waits for $STUB_STATE/release; self-exits after 30 s so a crashed test never leaks a process.
+// Each held stub writes `<name>-done` as it exits; afterEach waits for it (T75f).
 // Uses /bin/sleep explicitly because the sandbox PATH carries a `sleep` stub (scenario 2).
 const HOLD_UNTIL_RELEASE =
   'i=0; while [ ! -e "$STUB_STATE/release" ] && [ "$i" -lt 600 ]; do /bin/sleep 0.05; i=$((i+1)); done';
@@ -66,6 +67,7 @@ beforeAll(() => {
       'if [ "${CURL_STUB_HOLD:-}" = "1" ]; then',
       '  : > "$STUB_STATE/curl-received"',
       `  ${HOLD_UNTIL_RELEASE}`,
+      '  : > "$STUB_STATE/curl-done"',
       'fi',
       'exit 0',
     ].join('\n'),
@@ -90,6 +92,7 @@ beforeAll(() => {
       'if [ -z "${STUB_STATE:-}" ] || ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 10 ]; then exec /bin/sleep "$@"; fi',
       ': > "$STUB_STATE/delay-received"',
       HOLD_UNTIL_RELEASE,
+      ': > "$STUB_STATE/delay-done"',
       'exit 0',
     ].join('\n'),
   );
@@ -120,9 +123,13 @@ beforeAll(() => {
   }
   writeWarmStub(
     path.join(sessionPluginRoot, 'hooks/oss-notify.sh'),
-    ['printf "%s\\n" "$*" >> "$STUB_STATE/notify-argv"', ': > "$STUB_STATE/notify-received"', HOLD_UNTIL_RELEASE, 'exit 0'].join(
-      '\n',
-    ),
+    [
+      'printf "%s\\n" "$*" >> "$STUB_STATE/notify-argv"',
+      ': > "$STUB_STATE/notify-received"',
+      HOLD_UNTIL_RELEASE,
+      ': > "$STUB_STATE/notify-done"',
+      'exit 0',
+    ].join('\n'),
   );
 }, WARMUP_TIMEOUT_MS);
 
@@ -166,6 +173,11 @@ afterEach(async () => {
   // Let every held stub go, then wait for the hooks to finish before deleting their sandbox.
   fs.writeFileSync(path.join(sandbox.state, 'release'), '');
   await Promise.all(runs.map((run) => Promise.race([run.closed, delay(MARKER_BACKSTOP_MS)])));
+  // A held stub outlives the hook's output by design: wait for each one that was reached to end before
+  // deleting the release file it polls for, or it keeps polling after the test (T75f, as T75d).
+  for (const stub of ['curl', 'delay', 'notify']) {
+    if (fs.existsSync(path.join(sandbox.state, `${stub}-received`))) await fileAppears(path.join(sandbox.state, `${stub}-done`));
+  }
   fs.rmSync(path.dirname(sandbox.home), { recursive: true, force: true });
 });
 

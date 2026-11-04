@@ -50,6 +50,7 @@ beforeAll(() => {
       'printf "%s\\n" "$@" >> "$STUB_STATE/curl-argv"',
       ': > "$STUB_STATE/curl-received"',
       `if [ "\${CURL_STUB_HOLD:-}" = "1" ]; then ${HOLD_UNTIL_RELEASE}; fi`,
+      ': > "$STUB_STATE/curl-done"',
       'exit 0',
     ].join('\n'),
   );
@@ -95,6 +96,9 @@ beforeEach(() => {
 afterEach(async () => {
   fs.writeFileSync(path.join(stateDir, 'release'), '');
   await Promise.all(runs.map((run) => Promise.race([run.closed, delay(MARKER_BACKSTOP_MS)])));
+  // The detached request outlives the hook's output by design: wait for the curl stub itself to end before
+  // deleting the release file it polls for, or it keeps polling after the test (T75d).
+  if (fs.existsSync(path.join(stateDir, 'curl-received'))) await markerAppears('curl-done');
   fs.rmSync(caseRoot, { recursive: true, force: true });
 });
 
@@ -138,7 +142,11 @@ function startWorkflow(command: string, extraEnv: Record<string, string> = {}): 
 }
 
 async function analyticsRequestReceived(): Promise<boolean> {
-  const marker = path.join(stateDir, 'curl-received');
+  return markerAppears('curl-received');
+}
+
+async function markerAppears(name: string): Promise<boolean> {
+  const marker = path.join(stateDir, name);
   for (let waited = 0; waited < MARKER_BACKSTOP_MS; waited += 50) {
     if (fs.existsSync(marker)) return true;
     await delay(50);

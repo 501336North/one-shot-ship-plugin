@@ -110,10 +110,10 @@ fi
 # Inside the backoff after a failure, no request (skip if --force).
 if [[ "$FORCE_FETCH" == "false" ]] && younger_than "$BACKOFF_FILE" "$BACKOFF_SECONDS"; then
   RESPONSE=$'\n000'
-# Fetch from API with timeout.
+# Fetch from API with timeout, at most OSS_BODY_MAX bytes (over it: a failed fetch, T74b).
 elif [[ -n "$SRC" ]]; then
-  RESPONSE=$(oss_api_curl "$API_KEY" -s -w "\n%{http_code}" \
-    --max-time 10 \
+  RESPONSE=$(oss_capped oss_api_curl "$API_KEY" -s -w "\n%{http_code}" \
+    --max-time 10 --max-filesize "$OSS_BODY_MAX" \
     -H "Content-Type: application/json" \
     "$SRC" 2>/dev/null || echo -e "\n000")
   [[ "$(echo "$RESPONSE" | tail -n1)" == "200" ]] || oss_write_atomic "$BACKOFF_FILE" "" || true

@@ -270,12 +270,14 @@ test_missing_state_file() {
 # =============================================================================
 
 # run_odd_state DIR: one capped run against DIR's sandbox (HOME, config, plugin.json and a local manifest that
-# names the linked prompt). Sets RC, OUT (stdout) and ERR (stderr).
+# names the linked prompt). Sets RC, OUT (stdout) and ERR (stderr). The cap is generous: a run takes well under 1 s,
+# but test_no_helper runs a freshly copied script, and macOS's first-exec scan of a new file can take seconds under
+# load; a real hang (the FIFO case) still ends at the cap and fails.
 run_odd_state() {
     local d="$1"
     printf '{"prompts":{"linked/prompt":{"hash":"new"}}}\n' > "$d/manifest.json"
     mkdir -p "$d/home"
-    run_capped 10 env HOME="$d/home" OSS_CONFIG_DIR="$d/config" OSS_PLUGIN_JSON="$d/plugin/plugin.json" \
+    run_capped 60 env HOME="$d/home" OSS_CONFIG_DIR="$d/config" OSS_PLUGIN_JSON="$d/plugin/plugin.json" \
         OSS_MOCK_MANIFEST="$d/manifest.json" "$CHANGELOG_SCRIPT" > "$d/out" 2> "$d/err" </dev/null
     RC=$?
     OUT=$(cat "$d/out"); ERR=$(cat "$d/err")
@@ -334,6 +336,85 @@ test_no_helper() {
 }
 
 # =============================================================================
+# T74 (pen-test L2): manifest keys are data. The manifest is fetched without authentication, so its keys never
+# become jq filter text (--arg), are never word-split or glob-expanded (read -r), and lose C0 and the oss_invisible
+# set before they are printed.
+#
+# @behavior /oss:changelog lists every new prompt by its name as one line, even a name with a space, a quote or a
+#           `*`; a hostile name cannot hang the command, set the terminal title, or reverse the text after it.
+# @business-rule Text from the network reaches the terminal only without control and invisible characters (T45).
+# =============================================================================
+
+# run_keys DIR MANIFEST [CACHED-HASHES]: one capped run from a folder holding a file named GLOBBED-FILE (a glob would
+# list it). The cached hash list is empty by default, so every manifest key is a new prompt. Sets RC, OUT, ERR.
+run_keys() {
+    local d="$1" h="${3:-}"
+    [[ -n "$h" ]] || h='{}'
+    printf '%s\n' "$2" > "$d/manifest.json"
+    printf '{"lastPluginVersion":"2.0.45","lastCheckedAt":"T","manifestHashes":%s}\n' "$h" > "$d/config/update-state.json"
+    mkdir -p "$d/home" "$d/cwd"; : > "$d/cwd/GLOBBED-FILE"
+    (cd "$d/cwd" && run_capped 20 env HOME="$d/home" OSS_CONFIG_DIR="$d/config" OSS_PLUGIN_JSON="$d/plugin/plugin.json" \
+        OSS_MOCK_MANIFEST="$d/manifest.json" "$CHANGELOG_SCRIPT" > "$d/out" 2> "$d/err" </dev/null)
+    RC=$?
+    OUT=$(cat "$d/out"); ERR=$(cat "$d/err")
+}
+
+test_keys_never_filter_text() {
+    local test_name="A manifest key that is jq code is looked up as a name: no hang, listed as it is (T74)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"prompts":{"x\"]|last(range(1e12))|.[\"y":{"hash":"h"}}}'
+    if [[ $RC == 0 && "$OUT" == *'  + x"]|last(range(1e12))|.["y'* ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "rc=0 (124 = jq ran the key as code until the cap), the key listed as a new prompt" "rc=$RC out='$OUT' err='$ERR'"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_keys_not_split_or_globbed() {
+    local test_name="Manifest keys with a space, a * or a backslash are listed whole, never split, expanded or unescaped (T74)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"prompts":{"two words":{"hash":"h"},"*":{"hash":"h"},"back\\slash":{"hash":"h"}}}'
+    if [[ $RC == 0 && "$OUT" == *"New prompts (3):"*"  + *"*'  + back\slash'*"  + two words"* && "$OUT" != *GLOBBED-FILE* ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "New prompts (3): '*', 'back\\slash' and 'two words', no GLOBBED-FILE" "rc=$RC out='$OUT'"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_keys_stripped_before_printing() {
+    local test_name="A manifest key loses ESC, BEL, U+202E and U+200B before it is printed (T74)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"prompts":{"\u001b]0;pwned\u0007‮evil​name":{"hash":"h"}}}'
+    if [[ $RC == 0 && "$OUT" == *"  + ]0;pwnedevilname"* && "$OUT" != *$'\e'* && "$OUT" != *$'\a'* \
+          && "$OUT" != *$'\xe2\x80\xae'* && "$OUT" != *$'\xe2\x80\x8b'* ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "'  + ]0;pwnedevilname', no ESC, BEL, U+202E or U+200B" "rc=$RC out=$(printf '%q' "$OUT")"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_changed_keys_stripped() {
+    local test_name="An updated prompt's name loses ESC, BEL, U+202E and U+200B before it is printed (T74)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"prompts":{"\u001b]0;pwned\u0007\u202eevil\u200bname":{"hash":"new"}}}' \
+        '{"\u001b]0;pwned\u0007\u202eevil\u200bname":"old"}'
+    if [[ $RC == 0 && "$OUT" == *"Updated prompts (1):"*"  • ]0;pwnedevilname"* && "$OUT" != *$'\e'* && "$OUT" != *$'\a'* \
+          && "$OUT" != *$'\xe2\x80\xae'* && "$OUT" != *$'\xe2\x80\x8b'* ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "'  • ]0;pwnedevilname' under Updated prompts, no ESC, BEL, U+202E or U+200B" "rc=$RC out=$(printf '%q' "$OUT")"
+    fi
+    cleanup_test_env "$d"
+}
+
+# =============================================================================
 # Run all tests
 # =============================================================================
 echo "Running changelog tests..."
@@ -346,6 +427,10 @@ test_missing_state_file
 test_state_symlink
 test_state_fifo
 test_no_helper
+test_keys_never_filter_text
+test_keys_not_split_or_globbed
+test_keys_stripped_before_printing
+test_changed_keys_stripped
 
 echo ""
 echo "======================================="

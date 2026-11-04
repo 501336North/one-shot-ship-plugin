@@ -18,7 +18,9 @@ vi.mock('../../src/utils/exec', () => ({
   execAsync: vi.fn(),
 }));
 
-const mockExec = vi.mocked(execAsync);
+// The execAsync overload the git-safety check calls: execAsync(command) resolves to string stdout/stderr (T75e)
+const gitExec: (command: string) => Promise<{ stdout: string; stderr: string }> = execAsync;
+const mockExec = vi.mocked(gitExec);
 
 type Deps = ConstructorParameters<typeof HealthcheckService>[0];
 

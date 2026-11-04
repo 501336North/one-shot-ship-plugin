@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as net from 'net';
+import * as http from 'http';
 import * as https from 'https';
 import { execFileSync } from 'child_process';
 import {
@@ -415,7 +416,7 @@ describe('WorkflowConfigAPI', () => {
       };
     }
 
-    async function listen(handler: https.RequestListener): Promise<number> {
+    async function listen(handler: http.RequestListener): Promise<number> {
       const s = https.createServer(tlsOptions(), handler);
       servers.push(s);
       await new Promise<void>((resolve) => s.listen(0, '127.0.0.1', () => resolve()));

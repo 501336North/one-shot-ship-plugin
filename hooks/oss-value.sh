@@ -124,7 +124,7 @@ _ov_get() {
         style) re='^(visual|audio|sound|none)$' ;;
         prompt) re='^[a-z0-9_./:-]{1,100}$' ;;
         model) re='^[A-Za-z0-9_./:-]{1,100}$' ;;   # isValidModelId's ids (upper case too); no `..` (below)
-        workflow) re='^[a-z0-9_.:-]{1,100}$' ;;
+        workflow) re='^[a-z0-9_.:-]{1,100}$' ;;   # then held to oss_valid_workflow_name (below): no `.`/`..` (T74)
         category|name) re='^[a-z0-9_-]{1,100}$' ;;
         notify_style) re='^(visual|audio|sound|none)$' ;;   # /oss:settings' own lists
         voice) re='^(Samantha|Daniel|Karen|Moira)$' ;;
@@ -132,7 +132,8 @@ _ov_get() {
         verbosity) re='^(all|important|errors-only)$' ;;
         custom) re='^[a-z0-9-]{1,100}$' ;;   # oss-custom Step 0 = isSafeTeamCommandName
         *) false ;;
-    esac && _ov_take "$1.txt" "$re" && case "$1:$_OV_VAL" in model:*..*) _OV_VAL=""; false ;; esac
+    esac && _ov_take "$1.txt" "$re" && case "$1:$_OV_VAL" in model:*..*) _OV_VAL=""; false ;;
+        workflow:*) oss_valid_workflow_name "$_OV_VAL" || { _OV_VAL=""; false; } ;; esac
 }
 
 _ov_cmd_read() {
@@ -184,7 +185,7 @@ _ov_cmd_cli() {
 # tostring (JSON.stringify, with DEL escaped as jq's tojson does). L first turns lone surrogate halves into U+FFFD
 # (a no-u regex), so a strip between a lone high and a lone low half cannot join them into an astral invisible (T52b).
 # Neither: one line saying how to get jq (T64).
-_OV_JS_PRE='const S=new RegExp("[\\u0000-\\u001f\\u007f-\\u009f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069\\u2028\\u2029\\p{Cf}\\ufe00-\\ufe0f\\u{e0100}-\\u{e01ef}\\u034f\\u115f\\u1160\\u3164\\uffa0\\u2800\\p{Default_Ignorable_Code_Point}]","gu"),
+_OV_JS_PRE='const S=new RegExp("[\\u0000-\\u001f\\u007f-\\u009f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069\\u2028\\u2029\\p{Cf}\\ufe00-\\ufe0f\\u{e0000}-\\u{e0fff}\\u034f\\u115f\\u1160\\u3164\\uffa0\\u2800\\u17b4-\\u17b5\\u180b-\\u180d\\u180f\\u2065\\ufff0-\\ufff8\\p{Default_Ignorable_Code_Point}]","gu"),
     L=new RegExp("[\\ud800-\\udbff](?![\\udc00-\\udfff])|(?<![\\ud800-\\udbff])[\\udc00-\\udfff]","g");
 const h=(v,k)=>{if(v===null)return null;if(typeof v!=="object"||Array.isArray(v))throw 0;return Object.prototype.hasOwnProperty.call(v,k)?v[k]:null;};
 const t=v=>v!==null&&v!==false, d=v=>t(v)?v:"";
@@ -196,7 +197,7 @@ let r;try{r=(o=>{'
 _OV_JS_POST='})(o);}catch(e){process.exit(1);}
 process.stdout.write(r.map(x=>x+"\n").join(""));'
 _ov_api() {
-    local r code body
+    local r rc code body max=262144   # bytes: the template's and iron-laws-sync's cap; these answers are a few KB
     source "$_OV_HERE/oss-api-curl.sh" 2>/dev/null || { echo "oss-value: $1: oss-api-curl.sh missing" >&2; return 1; }
     command -v jq >/dev/null || command -v node >/dev/null \
     || { echo "oss-value: $1: this needs jq (or node), and neither is installed. Install jq (brew install jq) or ask your admin" >&2; return 1; }
@@ -207,8 +208,12 @@ _ov_api() {
         *) echo "oss-value: $1: apiUrl in your OSS config is not an https URL. Run: /oss:login" >&2; return 1 ;;
     esac
     [[ -n "$OSS_KEY" ]] || { echo "oss-value: $1: No API key found. Run: /oss:login" >&2; return 1; }
-    r=$(oss_api_curl "$OSS_KEY" -s -m 15 --max-filesize 262144 -w '\n%{http_code}' "$OSS_URL$2") \
-    || { echo "oss-value: $1: could not reach the API at $OSS_URL" >&2; return 1; }
+    # --max-filesize refuses a too-large Content-Length; head -c bounds a body sent without one, which curl before 8.4
+    # lets through. One byte past the cap plus the "\n200" line tells a cut-off body from one that fits (T74).
+    r=$(oss_api_curl "$OSS_KEY" -s -m 15 --max-filesize "$max" -w '\n%{http_code}' "$OSS_URL$2" | head -c $((max + 5)); exit "${PIPESTATUS[0]}")
+    rc=$?
+    (( $(printf '%s' "$r" | wc -c) <= max + 4 )) || { echo "oss-value: $1: the API sent over $max bytes" >&2; return 1; }
+    (( rc == 0 )) || { echo "oss-value: $1: could not reach the API at $OSS_URL" >&2; return 1; }
     code=${r##*$'\n'}; body=${r%$'\n'*}
     [[ "$code" == 200 ]] || { echo "oss-value: $1: the API answered HTTP $code (401: run /oss:login; 403: subscription expired)" >&2; return 1; }
     if command -v jq >/dev/null; then

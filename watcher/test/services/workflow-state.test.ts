@@ -56,7 +56,8 @@ describe('WorkflowStateService', () => {
      * @acceptance-criteria AC-MENUBAR.2
      */
     test('reads existing state file', async () => {
-      const existingState: WorkflowState = {
+      // A state file from before `version` and the newer chain steps existed (T75e: typed as that file)
+      const existingState: Omit<WorkflowState, 'chainState' | 'version'> & { chainState: Partial<WorkflowState['chainState']> } = {
         supervisor: 'watching',
         activeStep: 'build',
         chainState: {

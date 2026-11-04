@@ -64,9 +64,9 @@ API_URL=$OSS_URL; [[ $OSS_URL_RC == 0 ]] || {
   exit 1
 }
 
-# Fetch IRON LAWS with authentication
+# Fetch IRON LAWS with authentication: at most OSS_BODY_MAX bytes, over it curl exit 63 (T74b)
 CURL_STATUS=0
-RESPONSE=$(oss_api_curl "$API_KEY" -s --max-time 10 -w "\n%{http_code}" \
+RESPONSE=$(oss_capped oss_api_curl "$API_KEY" -s --max-time 10 --max-filesize "$OSS_BODY_MAX" -w "\n%{http_code}" \
   -H "Content-Type: application/json" \
   "${API_URL}${ENDPOINT}") || CURL_STATUS=$?
 

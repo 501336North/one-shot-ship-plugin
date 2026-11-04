@@ -14,8 +14,7 @@
 
 set -uo pipefail
 
-# Paths. `--` before each one in jq, mkdir and chmod: a relative OSS_CONFIG_DIR such as "-cfg" is a path, never
-# options (T47; chmod needs it before the mode, `chmod -- 600 "$f"`, for GNU getopt).
+# Paths. `--` before each one in jq and mkdir: a relative OSS_CONFIG_DIR such as "-cfg" is a path, never options (T47).
 CONFIG_DIR="${OSS_CONFIG_DIR:-$HOME/.oss}"
 STATE_FILE="$CONFIG_DIR/update-state.json"
 SETTINGS_FILE="$CONFIG_DIR/settings.json"
@@ -88,22 +87,24 @@ if [[ "$skip_manifest" != "1" ]]; then
         manifest_json=$(cat "$OSS_MOCK_MANIFEST")
     else
         manifest_url="${OSS_MANIFEST_URL:-https://one-shot-ship-api.onrender.com/api/v1/prompts/manifest}"
-        manifest_json=$(curl -s --max-time 3 "$manifest_url" 2>/dev/null) || manifest_json=""
+        # At most OSS_BODY_MAX bytes; a larger manifest is none (T74b)
+        manifest_json=$(oss_capped curl -s --max-time 3 --max-filesize "$OSS_BODY_MAX" "$manifest_url" 2>/dev/null) || manifest_json=""
     fi
 
     if [[ -n "$manifest_json" ]] && command -v jq &>/dev/null; then
         # Get cached hashes
         cached_hashes=$(jq -r '.manifestHashes // {}' -- "$STATE_FILE" 2>/dev/null)
 
-        # Compare each prompt hash
-        for key in $(echo "$manifest_json" | jq -r '.prompts | keys[]' 2>/dev/null); do
-            new_hash=$(echo "$manifest_json" | jq -r ".prompts[\"$key\"].hash // \"\"" 2>/dev/null)
-            old_hash=$(echo "$cached_hashes" | jq -r ".[\"$key\"] // \"\"" 2>/dev/null)
+        # Compare each prompt hash. The manifest is fetched without authentication: each key is read whole (read -r,
+        # never word-split or glob-expanded) and reaches jq only as --arg (T74). Only the count is printed.
+        while IFS= read -r key; do
+            new_hash=$(printf '%s' "$manifest_json" | jq -r --arg k "$key" '.prompts[$k].hash // ""' 2>/dev/null)
+            old_hash=$(printf '%s' "$cached_hashes" | jq -r --arg k "$key" '.[$k] // ""' 2>/dev/null)
 
             if [[ -n "$old_hash" && -n "$new_hash" && "$old_hash" != "$new_hash" ]]; then
                 ((prompts_changed++))
             fi
-        done
+        done < <(printf '%s' "$manifest_json" | jq -r '.prompts | keys[]' 2>/dev/null)
 
         # Update cached manifest hashes
         new_hashes=$(echo "$manifest_json" | jq '{manifestHashes: (.prompts | to_entries | map({(.key): .value.hash}) | add // {})}' 2>/dev/null)

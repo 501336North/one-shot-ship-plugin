@@ -62,9 +62,9 @@ function createNotification(entry: ParsedLogEntry): LogNotification {
 
   let message = '';
   if (entry.data.error) {
-    message = entry.data.error;
+    message = String(entry.data.error);
   } else if (entry.data.summary) {
-    message = entry.data.summary;
+    message = String(entry.data.summary);
   } else if (isAbandoned) {
     message = `Agent ${entry.data.agent_id || 'unknown'} was abandoned`;
   }

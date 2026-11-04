@@ -11,9 +11,17 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
+// Each test runs the real health check end to end (bash, the node CLI, `npm test`, two oss-notify.sh calls),
+// synchronously, and execSync bounds it at EXEC_TIMEOUT_MS. The first run in a file pays the cold start: 0.65 s
+// idle, 8-12 s with about 24 copies in parallel (T75d), past vitest's default 5 s. The test bound sits above the
+// command's own, so a real hang fails on the command's bound and load never fails a run that finished.
+const EXEC_TIMEOUT_MS = 60_000;
+const TEST_TIMEOUT_MS = 90_000;
+
 describe('oss-log.sh health-check', () => {
   const ossLogScript = path.join(__dirname, '../../../hooks/oss-log.sh');
-  const testProjectDir = path.join(os.tmpdir(), `oss-test-project-${Date.now()}`);
+  // mkdtemp, not Date.now(): parallel copies of this file must never share a project (T75d)
+  const testProjectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-test-project-'));
   const ossDir = path.join(os.homedir(), '.oss');
   const logsDir = path.join(ossDir, 'logs', 'current-session');
   const healthCheckLog = path.join(logsDir, 'health-check.log');
@@ -94,7 +102,7 @@ describe('oss-log.sh health-check', () => {
     try {
       execSync(`bash "${ossLogScript}" health-check`, {
         cwd: testProjectDir, // the command runs inside the project
-        timeout: 60000,
+        timeout: EXEC_TIMEOUT_MS,
         encoding: 'utf-8',
         env: {
           ...process.env,
@@ -111,7 +119,7 @@ describe('oss-log.sh health-check', () => {
 
     const logContent = fs.readFileSync(logFileToCheck, 'utf-8');
     expect(logContent.length).toBeGreaterThan(0);
-  });
+  }, TEST_TIMEOUT_MS);
 
   /**
    * @behavior Log file contains PASSED or FAILED marker for SwiftBar detection
@@ -129,7 +137,7 @@ describe('oss-log.sh health-check', () => {
     try {
       execSync(`bash "${ossLogScript}" health-check`, {
         cwd: testProjectDir, // the command runs inside the project
-        timeout: 60000,
+        timeout: EXEC_TIMEOUT_MS,
         encoding: 'utf-8',
         env: {
           ...process.env,
@@ -152,7 +160,7 @@ describe('oss-log.sh health-check', () => {
     const hasWarningMarker = logContent.includes('HEALTH CHECK WARNING') || logContent.includes('⚠️');
 
     expect(hasPassedMarker || hasFailedMarker || hasWarningMarker).toBe(true);
-  });
+  }, TEST_TIMEOUT_MS);
 
   /**
    * @behavior Exit code reflects health check result (0 = pass, 1 = fail, 2 = error)
@@ -168,7 +176,7 @@ describe('oss-log.sh health-check', () => {
     try {
       execSync(`bash "${ossLogScript}" health-check`, {
         cwd: testProjectDir, // the command runs inside the project
-        timeout: 60000,
+        timeout: EXEC_TIMEOUT_MS,
         encoding: 'utf-8',
         env: {
           ...process.env,
@@ -184,7 +192,7 @@ describe('oss-log.sh health-check', () => {
     // THEN: Exit code should be a valid health check code
     // 0 = all passed, 1 = test failures, 2 = system errors/critical issues
     expect([0, 1, 2]).toContain(exitCode);
-  });
+  }, TEST_TIMEOUT_MS);
 
   /**
    * @behavior Failed tests result in log file being written (regardless of exit code)
@@ -211,7 +219,7 @@ describe('oss-log.sh health-check', () => {
     try {
       execSync(`bash "${ossLogScript}" health-check`, {
         cwd: testProjectDir, // the command runs inside the project
-        timeout: 60000,
+        timeout: EXEC_TIMEOUT_MS,
         encoding: 'utf-8',
         env: {
           ...process.env,
@@ -227,5 +235,5 @@ describe('oss-log.sh health-check', () => {
     expect(fs.existsSync(logFileToCheck)).toBe(true);
     const logContent = fs.readFileSync(logFileToCheck, 'utf-8');
     expect(logContent.length).toBeGreaterThan(0);
-  });
+  }, TEST_TIMEOUT_MS);
 });

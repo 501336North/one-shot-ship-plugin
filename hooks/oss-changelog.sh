@@ -62,7 +62,8 @@ if [[ "$skip_manifest" != "1" ]]; then
         manifest_json=$(cat "$OSS_MOCK_MANIFEST")
     else
         manifest_url="${OSS_MANIFEST_URL:-https://one-shot-ship-api.onrender.com/api/v1/prompts/manifest}"
-        manifest_json=$(curl -s --max-time 3 "$manifest_url" 2>/dev/null) || manifest_json=""
+        # At most OSS_BODY_MAX bytes; a larger manifest is none (T74b)
+        manifest_json=$(oss_capped curl -s --max-time 3 --max-filesize "$OSS_BODY_MAX" "$manifest_url" 2>/dev/null) || manifest_json=""
     fi
 
     if [[ -n "$manifest_json" && "$has_state" == true ]] && command -v jq &>/dev/null; then
@@ -70,32 +71,30 @@ if [[ "$skip_manifest" != "1" ]]; then
         changed_prompts=()
         new_prompts=()
 
-        for key in $(echo "$manifest_json" | jq -r '.prompts | keys[]' 2>/dev/null); do
-            new_hash=$(echo "$manifest_json" | jq -r ".prompts[\"$key\"].hash // \"\"" 2>/dev/null)
-            old_hash=$(echo "$cached_hashes" | jq -r ".[\"$key\"] // \"\"" 2>/dev/null)
+        # The manifest is fetched without authentication: its keys are data. Each is read whole (read -r, never
+        # word-split or glob-expanded), reaches jq only as --arg, and loses C0 and oss_invisible before it is
+        # printed (T74).
+        while IFS= read -r key; do
+            new_hash=$(printf '%s' "$manifest_json" | jq -r --arg k "$key" '.prompts[$k].hash // ""' 2>/dev/null)
+            old_hash=$(printf '%s' "$cached_hashes" | jq -r --arg k "$key" '.[$k] // ""' 2>/dev/null)
 
             if [[ -z "$old_hash" || "$old_hash" == "null" ]]; then
                 new_prompts+=("$key")
             elif [[ "$old_hash" != "$new_hash" ]]; then
                 changed_prompts+=("$key")
             fi
-        done
+        done < <(printf '%s' "$manifest_json" | jq -r '.prompts | keys[]' 2>/dev/null)
 
         if [[ ${#changed_prompts[@]} -gt 0 ]]; then
             echo "Updated prompts (${#changed_prompts[@]}):"
-            for p in "${changed_prompts[@]}"; do
-                # Categorize by type prefix
-                echo "  • $p"
-            done
+            printf '%s\n' "${changed_prompts[@]}" | jq -Rr "$OSS_JQ_INVISIBLE"'"  • " + gsub("[\u0000-\u001f" + oss_invisible + "]"; "")'
             echo ""
             changes_found=true
         fi
 
         if [[ ${#new_prompts[@]} -gt 0 ]]; then
             echo "New prompts (${#new_prompts[@]}):"
-            for p in "${new_prompts[@]}"; do
-                echo "  + $p"
-            done
+            printf '%s\n' "${new_prompts[@]}" | jq -Rr "$OSS_JQ_INVISIBLE"'"  + " + gsub("[\u0000-\u001f" + oss_invisible + "]"; "")'
             echo ""
             changes_found=true
         fi

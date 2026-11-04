@@ -17,7 +17,7 @@ _ov_cmd_login() {
     a=$(oss_api_url) || {
         test $? = 2 && { oss_loopback_refused >&2; return 1; }
         echo "Error: $c is not valid JSON, or its apiUrl is not an https URL (plain http only for localhost) with no user@, query or fragment; the key was not sent." >&2; return 1; }
-    r=$(oss_api_curl "$k" -s -m 10 -w "\n%{http_code}" "$a/api/v1/subscription/status")
+    r=$(oss_capped oss_api_curl "$k" -s -m 10 --max-filesize "$OSS_BODY_MAX" -w "\n%{http_code}" "$a/api/v1/subscription/status")   # over the cap: no answer (T74b)
     test "$(printf '%s\n' "$r" | tail -1)" = 200 \
     || { echo "Error: Invalid API key. Get a valid key from https://www.oneshotship.com/dashboard" >&2; return 1; }
     # `--` before every path: a relative OSS_CONFIG_DIR such as "-cfg" is a path, never options (T44; chmod needs it

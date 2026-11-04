@@ -250,8 +250,15 @@ waiting() {
 # withhold: Task 16b (user decision 2026-10-30): an answer given while the team push is off is never sent, even
 # after an owner or admin turns it back on. Every answer waiting now is marked withheld, a final state.
 withhold() { waiting | jq -c '{id, state: "withheld"}' > "$tmp/withheld" 2>/dev/null && ob_ok && (umask 077; cat "$tmp/withheld" >> "$ob"); }
+# ask CURL_ARGS...: one API call; the answer goes to $resp and its HTTP status to $code, read only up to
+# OSS_BODY_MAX bytes (oss_capped, T74c): over it, no answer ($code "", $resp empty) and jq never reads it
+ask() {
+    local r
+    r=$(oss_capped oss_api_curl "$key" -s --max-time 5 --max-filesize "$OSS_BODY_MAX" -w '\n%{http_code}' "$@" 2>/dev/null)
+    printf '%s' "${r%$'\n'*}" > "$resp"; code=${r##*$'\n'}
+}
 # the team decides: only a 200 saying pushEnabled is true sends anything; one saying false withholds what waits
-[[ $(oss_api_curl "$key" -s --max-time 5 -o "$resp" -w '%{http_code}' "$url/api/v1/decisions/policy" 2>/dev/null) == 200 ]] || exit 0
+ask "$url/api/v1/decisions/policy"; [[ "$code" == 200 ]] || exit 0
 jq -e '.pushEnabled == false' "$resp" >/dev/null 2>&1 && { withhold; exit 0; }
 jq -e '.pushEnabled == true' "$resp" >/dev/null 2>&1 || exit 0
 todo=$(waiting)
@@ -283,8 +290,7 @@ while IFS= read -r e; do
     # stay pending)
     oss_decisions_push_off && break
     sent=$((sent + 1))
-    code=$(oss_api_curl "$key" -s --max-time 5 -o "$resp" -w '%{http_code}' -H 'Content-Type: application/json' \
-        --data-binary @"$body" "$url/api/v1/decisions" 2>/dev/null)
+    ask -H 'Content-Type: application/json' --data-binary @"$body" "$url/api/v1/decisions"
     case "$code" in
         200 | 201)
             # Task 15g: stored only when the API names the account (a non-empty string id), kept as text stripped

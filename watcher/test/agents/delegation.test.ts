@@ -14,6 +14,7 @@ import * as os from 'os';
 import { WorkflowLogger } from '../../src/logger/workflow-logger.js';
 import { LogReader } from '../../src/logger/log-reader.js';
 import { WorkflowAnalyzer } from '../../src/analyzer/workflow-analyzer.js';
+import { at } from '../helpers/at.js';
 
 describe('Agent Delegation Logging', () => {
   let testDir: string;
@@ -138,7 +139,7 @@ describe('Agent Delegation Logging', () => {
       expect(entries[1].event).toBe('AGENT_COMPLETE');
       expect(entries[1].data.agent_id).toBe('ts-complete-001');
       expect(entries[1].data.status).toBe('success');
-      expect(entries[1].data.result.files_created).toContain('src/auth/login.ts');
+      expect(at(entries[1].data, 'result', 'files_created')).toContain('src/auth/login.ts');
     });
 
     it('should log AGENT_COMPLETE with failure status and error', async () => {

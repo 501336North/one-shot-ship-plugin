@@ -9,8 +9,8 @@
  *   - ollama throws + !fallbackEnabled -> error propagates (no silent success).
  * @boundary Proxy routing + fallback orchestration (collaborators injected)
  */
-import { describe, it, expect, vi } from 'vitest';
-import { routeMessages } from '../../src/services/proxy-router.js';
+import { describe, it, expect, vi, type Mock } from 'vitest';
+import { routeMessages, type RouteDeps } from '../../src/services/proxy-router.js';
 
 const config = {
   models: {
@@ -24,13 +24,16 @@ function reqFor(agent?: string) {
   return { model: 'claude-x', system: agent ? `OSS-ROUTE-AGENT: ${agent}` : 'orchestrator', messages: [] };
 }
 
-function makeDeps(over: Record<string, unknown> = {}) {
+/** Each RouteDeps collaborator as a typed mock, so tests read its calls without casts (T75e). */
+type DepMocks = { [K in keyof RouteDeps]: Mock<RouteDeps[K]> };
+
+function makeDeps(over: Partial<DepMocks> = {}): DepMocks {
   return {
-    ollamaHandle: vi.fn(async () => ({ via: 'ollama' })),
-    passthrough: vi.fn(async () => ({ via: 'anthropic' })),
-    log: vi.fn(),
+    ollamaHandle: vi.fn<RouteDeps['ollamaHandle']>(async () => ({ via: 'ollama' })),
+    passthrough: vi.fn<RouteDeps['passthrough']>(async () => ({ via: 'anthropic' })),
+    log: vi.fn<RouteDeps['log']>(),
     ...over,
-  } as any;
+  };
 }
 
 describe('routeMessages: per-agent dispatch + fallback + loud log', () => {
@@ -62,7 +65,7 @@ describe('routeMessages: per-agent dispatch + fallback + loud log', () => {
   });
 
   it('falls back to Anthropic when Ollama errors and fallbackEnabled, logging the reason', async () => {
-    const deps = makeDeps({ ollamaHandle: vi.fn(async () => { throw new Error('ECONNREFUSED ollama'); }) });
+    const deps = makeDeps({ ollamaHandle: vi.fn<RouteDeps['ollamaHandle']>(async () => { throw new Error('ECONNREFUSED ollama'); }) });
     const out = await routeMessages(reqFor('oss:code-reviewer'), config, deps);
     expect(deps.passthrough).toHaveBeenCalledTimes(1);
     expect(out.route).toBe('anthropic');
@@ -73,7 +76,7 @@ describe('routeMessages: per-agent dispatch + fallback + loud log', () => {
   });
 
   it('does NOT fall back when fallbackEnabled is false (no silent success)', async () => {
-    const deps = makeDeps({ ollamaHandle: vi.fn(async () => { throw new Error('boom'); }) });
+    const deps = makeDeps({ ollamaHandle: vi.fn<RouteDeps['ollamaHandle']>(async () => { throw new Error('boom'); }) });
     const noFb = { models: { ...config.models, fallbackEnabled: false } };
     await expect(routeMessages(reqFor('oss:code-reviewer'), noFb, deps)).rejects.toThrow('boom');
     expect(deps.passthrough).not.toHaveBeenCalled();

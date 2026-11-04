@@ -32,9 +32,10 @@ export LC_ALL=C
 reason() {
     case "$1" in
         pre-existing) echo "unallowlisted at HEAD f3f897b, before T57/T58: customers approve these lines today; T60 does not grow scope" ;;
-        key-check) echo "T57/T58 replaced HEAD's 'cat ~/.oss/config.json | grep apiKey' (which printed the key) in the same file with a grep -q that prints no key: one approval before, one now" ;;
+        key-check) echo "T57/T58 replaced HEAD's 'cat ~/.oss/config.json | grep apiKey' (which printed the key) in the same file with a grep -q that prints no key (T74: after test -f, so a FIFO never hangs it, and only for a non-empty key): one approval before, one now" ;;
         t71-offload) echo "T71 rewrote Step 2.5 of the 13 offload agents (private prompt dir, deleted before the offloader runs): it replaces that step's two pre-existing unallowlisted calls (mktemp, node agent-offload.js) with two calls, so one approval each, as before" ;;
         pr214-approval) echo "added by #214 (91c808e) to /oss:login and /oss:settings: oss-decisions-policy.sh changes a team setting and is kept off the allowlist on purpose (oss-session-start.sh), the rest sit in blocks that already prompt" ;;
+        t74c-icon) echo "T74c put a time and size limit on the pre-existing icon download in /oss:login (that same line, so the same one approval as before)" ;;
         *) return 1 ;;
     esac
 }

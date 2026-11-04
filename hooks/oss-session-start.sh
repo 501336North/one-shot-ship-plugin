@@ -244,7 +244,8 @@ fi
 if [[ "${OSS_SKIP_HEALTH_CHECK:-}" == "1" ]]; then
     SUBSCRIPTION_STATUS="active"
 elif API_URL=$OSS_URL; [[ "$OSS_URL_RC" == 0 ]]; then
-    SUBSCRIPTION_STATUS=$(oss_api_curl "$API_KEY" -s -m 2 \
+    # At most OSS_BODY_MAX bytes; over it no status, as when the API is down (T74b)
+    SUBSCRIPTION_STATUS=$(oss_capped oss_api_curl "$API_KEY" -s -m 2 --max-filesize "$OSS_BODY_MAX" \
         "${API_URL}/api/v1/subscription/status" 2>/dev/null | \
         grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || echo "unknown")
 else

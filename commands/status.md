@@ -51,7 +51,7 @@ Check your One Shot Ship subscription status.
 
 ## Step 1: Fetch Status
 
-**OSS hooks older than this plugin:** if a `~/.oss/hooks/oss-value.sh` call below prints `usage: oss-value.sh` or `No such file or directory`, the plugin was updated after this session started and `~/.oss/hooks` still holds the older copies. Do not show that output; show only this line: `Your OSS hooks are older than the plugin; restart Claude Code (or start a new session) to update them.` and stop.
+**OSS hooks older than this plugin:** if a `~/.oss/hooks/oss-value.sh` call below prints `usage: oss-value.sh` or `No such file or directory` (any case: zsh prints `no such file or directory`), the plugin was updated after this session started and `~/.oss/hooks` still holds the older copies. Do not show that output; show only this line: `Your OSS hooks are older than the plugin; restart Claude Code (or start a new session) to update them.` and stop.
 
 Run this exactly as written (one allowed call). It sends the key from your OSS config to `/api/v1/auth/verify` on the API that config's `apiUrl` names, on curl's stdin (never on a command line or into this chat), and prints only the lines shown in Step 2 (`Account:`, `Plan:`, `Status:`, and `Trial ends:` when on trial):
 

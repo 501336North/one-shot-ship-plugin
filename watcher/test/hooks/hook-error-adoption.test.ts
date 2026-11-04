@@ -75,6 +75,7 @@ const CURL_STUB_BODY = [
   '        *) shift ;;',
   '      esac',
   '    done',
+  '    [[ -n "$out" ]] || out=/dev/stdout  # the hook may read the body from stdout (T74c capped download)',
   '    if [[ "$url" == *.sha256 ]]; then',
   '      printf \'0000000000000000000000000000000000000000000000000000000000000000  oss-decrypt\\n\' > "$out"',
   '    else',

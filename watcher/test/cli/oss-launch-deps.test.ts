@@ -15,7 +15,7 @@
  * @boundary oss-launch real deps (filesystem / network / spawn injected)
  */
 import { describe, it, expect, vi } from 'vitest';
-import { resolveClaudeBin, ensureProxy } from '../../src/cli/oss-launch.js';
+import { resolveClaudeBin, ensureProxy, type EnsureProxyDeps } from '../../src/cli/oss-launch.js';
 
 describe('resolveClaudeBin: find the real claude, never the launcher', () => {
   it('returns the first executable claude on PATH, skipping dirs without one', () => {
@@ -64,7 +64,7 @@ describe('ensureProxy: reuse-or-start + loud failure', () => {
     const startProxy = vi.fn();
     // down on the first probe, healthy after start
     const healthCheck = vi
-      .fn<[], Promise<boolean>>()
+      .fn<EnsureProxyDeps['healthCheck']>()
       .mockResolvedValueOnce(false)
       .mockResolvedValue(true);
 

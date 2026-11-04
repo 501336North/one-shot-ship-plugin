@@ -7,6 +7,9 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { AnthropicRequest, AnthropicResponse } from '../../src/services/api-transformer.js';
+import type { Handler, HandlerConfig } from '../../src/services/handler-registry.js';
+import { OllamaHandler } from '../../src/services/handlers/ollama-handler.js';
+import { OpenRouterHandler } from '../../src/services/handlers/openrouter-handler.js';
 
 // ============================================================================
 // Task 1.1: HandlerRegistry Types (4 tests)
@@ -14,11 +17,9 @@ import type { AnthropicRequest, AnthropicResponse } from '../../src/services/api
 
 describe('HandlerRegistry types', () => {
   it('should define Handler interface with handle() method', async () => {
-    // Import the Handler type
-    const { Handler } = await import('../../src/services/handler-registry.js');
-
     // A handler must have a handle method that takes AnthropicRequest and returns Promise<AnthropicResponse>
-    const mockHandler: typeof Handler = {
+    // (the Handler type is imported at the top: types have no runtime value to import dynamically, T75e)
+    const mockHandler: Handler = {
       handle: async (request: AnthropicRequest): Promise<AnthropicResponse> => {
         return {
           id: 'msg_123',
@@ -37,10 +38,8 @@ describe('HandlerRegistry types', () => {
   });
 
   it('should define HandlerConfig with provider and optional apiKey', async () => {
-    const { HandlerConfig } = await import('../../src/services/handler-registry.js');
-
     // HandlerConfig should have provider and optional apiKey/baseUrl
-    const config: typeof HandlerConfig = {
+    const config: HandlerConfig = {
       provider: 'ollama',
       baseUrl: 'http://localhost:11434',
     };
@@ -50,7 +49,7 @@ describe('HandlerRegistry types', () => {
   });
 
   it('should define supported providers: ollama, openrouter', async () => {
-    const { SupportedProvider, SUPPORTED_PROVIDERS } = await import('../../src/services/handler-registry.js');
+    const { SUPPORTED_PROVIDERS } = await import('../../src/services/handler-registry.js');
 
     // SupportedProvider should be a union type of 'ollama' | 'openrouter'
     expect(SUPPORTED_PROVIDERS).toContain('ollama');
@@ -101,7 +100,8 @@ describe('createHandler', () => {
     const handler = createHandler({ provider: 'openrouter', apiKey: 'sk-or-my-key' });
 
     // Verify the handler was created with the API key by checking headers
-    const headers = (handler as { getHeaders(): Record<string, string> }).getHeaders();
+    expect(handler).toBeInstanceOf(OpenRouterHandler);
+    const headers = handler instanceof OpenRouterHandler ? handler.getHeaders() : {};
     expect(headers['Authorization']).toBe('Bearer sk-or-my-key');
   });
 
@@ -111,7 +111,8 @@ describe('createHandler', () => {
     const handler = createHandler({ provider: 'ollama', baseUrl: 'http://custom:1234' });
 
     // Verify the handler was created with the custom base URL
-    const baseUrl = (handler as { getBaseUrl(): string }).getBaseUrl();
+    expect(handler).toBeInstanceOf(OllamaHandler);
+    const baseUrl = handler instanceof OllamaHandler ? handler.getBaseUrl() : '';
     expect(baseUrl).toBe('http://custom:1234');
   });
 

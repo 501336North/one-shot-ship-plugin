@@ -12,6 +12,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { WorkflowLogger } from '../../src/logger/workflow-logger.js';
 import { LogReader } from '../../src/logger/log-reader.js';
+import { at } from '../helpers/at.js';
 
 describe('TESTING.md Synchronization', () => {
   let testDir: string;
@@ -190,8 +191,8 @@ _Pending first test run_
       const entries = await reader.readAll();
 
       // THEN: Coverage logged
-      expect(entries[0].data.coverage.lines).toBe(92.3);
-      expect(entries[0].data.coverage.branches).toBe(85.0);
+      expect(at(entries[0].data, 'coverage', 'lines')).toBe(92.3);
+      expect(at(entries[0].data, 'coverage', 'branches')).toBe(85.0);
     });
   });
 
