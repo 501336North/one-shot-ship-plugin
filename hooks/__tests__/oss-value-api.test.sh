@@ -36,7 +36,8 @@ SPID=''
 trap '[[ -n "$SPID" ]] && { kill "$SPID" 2>/dev/null; wait "$SPID" 2>/dev/null; }; rm -rf "$T"' EXIT
 KEY="ak_test_T60_$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')"
 
-# The API: "METHOD PATH|AUTHORIZATION" per request in $T/requests.log, a `ps` snapshot taken while the request is
+# The API: "METHOD PATH|AUTHORIZATION" per request in $T/requests.log (a POST's body in $T/reqbody, its Content-Type in
+# $T/reqctype), a `ps` snapshot taken while the request is
 # open appended to $T/ps.log; answers $T/status (default 200) with the bytes of $T/body. With $T/nolen it sends no
 # Content-Length and closes the connection to end the body; with $T/stream it then sends 800 chunks of 64 KiB of `a`
 # (52 MB) and writes to $T/sent how many of those bytes went out before the client hung up (T74).
@@ -49,6 +50,11 @@ def rd(name, default):
     except OSError:
         return default
 class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        n = int(self.headers.get('Content-Length') or 0)
+        with open(os.path.join(d, 'reqbody'), 'wb') as f: f.write(self.rfile.read(n))
+        with open(os.path.join(d, 'reqctype'), 'w') as f: f.write(self.headers.get('Content-Type', ''))
+        self.do_GET()
     def do_GET(self):
         with open(os.path.join(d, 'requests.log'), 'a') as f:
             f.write('%s %s|%s\n' % (self.command, self.path, self.headers.get('Authorization', '')))
@@ -95,7 +101,7 @@ H="$T/home"; W="$T/work"
 # fresh <status> <body>: a clean sandbox HOME (the hooks under test in ~/.oss/hooks, a config naming the local
 # API), an empty request, ps and argv log, a cwd in a git repo.
 fresh() {
-    rm -rf "$H" "$W" "$T/curl.argv" "$T/ps.log" "$T/timeout" "$T/nolen" "$T/oldcurl" "$T/stream" "$T/sent"; : > "$T/requests.log"
+    rm -rf "$H" "$W" "$T/curl.argv" "$T/reqbody" "$T/reqctype" "$T/ps.log" "$T/timeout" "$T/nolen" "$T/oldcurl" "$T/stream" "$T/sent"; : > "$T/requests.log"
     mkdir -p "$H/.oss/hooks" "$W"; (cd "$W" && git init -q) >/dev/null 2>&1
     cp "$HOOKS/oss-value.sh" "$HOOKS/oss-safe-path.sh" "$HOOKS/oss-api-curl.sh" "$H/.oss/hooks/"
     printf '{"apiKey":"%s","apiUrl":"%s"}\n' "$KEY" "$LOCAL" > "$H/.oss/config.json"
@@ -205,6 +211,136 @@ done
 fresh 200 "$USAGE"; : > "$T/timeout"; ov usage; usage_down "a timeout (curl exit 28)"
 fresh 200 "$USAGE"; printf '{"apiUrl":"%s"}\n' "$LOCAL" > "$H/.oss/config.json"; ov usage
 [[ -z "$(reqs)" ]] && usage_down "no key, and no request" || fail "usage: no key: no request" "requests=$(reqs)"
+
+# --- queue-push: /oss:queue add --shared posts the item without Claude handling the key (T87) ---------------
+# @behavior A team member runs /oss:queue add --shared "..." and the item lands in the team's shared queue with no
+#           approval prompt, their API key never seen by Claude, on a command line or in the output; they see
+#           "Queued: <id>" or one Error: line that says what to do (fix a value, log in, wait, check the connection).
+# @business-rule type.txt, source.txt and prompt.txt come from the value folder (never argv), are checked before any
+#           request (type feature|issue|review; source 1-2000 bytes, one line; prompt 1-20000 bytes, line breaks and
+#           tabs only), go as one JSON body to POST /api/v1/queue (the route's createSchema fields), and are deleted
+#           on every path. Only the created item's id is printed.
+# qvals <type> <source> <prompt>: what the model does: run `dir`, Write each file (exact bytes; "-" = not written)
+qvals() {
+    local d; d=$(cd "$W" && run_capped 30 env HOME="$H" "$H/.oss/hooks/oss-value.sh" dir 2>/dev/null) && [[ -n "$d" ]] || return 1
+    VALUE_DIR=$d
+    [[ "$1" == - ]] || printf '%s' "$1" > "$d/type.txt"
+    [[ "$2" == - ]] || printf '%s' "$2" > "$d/source.txt"
+    [[ "$3" == - ]] || printf '%s' "$3" > "$d/prompt.txt"
+}
+# qgone: the value folder is empty again (the three files and any request body the verb made)
+qgone() { [[ -n "$VALUE_DIR" && -d "$VALUE_DIR" && -z "$(ls -A "$VALUE_DIR")" ]]; }
+CREATED='{"id":"cmh7queue01","teamId":"team_1","ownerId":"usr_SECRET","type":"feature","source":"x","prompt":"x","status":"queued","createdAt":"2026-11-05T00:00:00.000Z"}'
+QPROMPT=$'Refactor the auth module.\n\tKeep "quotes", back\\slashes, $(echo no) and `ticks`; caf\xc3\xa9 \xe4\xb8\xad\xe6\x96\x87 QPMARK'
+# A jq that records its argv (its own folder, so the no-jq farms below never see it)
+warm_stub "$T/jqspy/jq" "printf '%s\\n' \"\$*\" >> '$T/jq.argv'
+exec '$(command -v jq)' \"\$@\"" || abort "the jq spy warms up" "warm-up did not run"
+rm -f "$T/jq.argv"
+fresh 201 "$CREATED"; qvals $'feature\n' $'Refactor auth module\n' "$QPROMPT"$'\n'; OV_PATH="$T/jqspy:$PATH" ov queue-push
+[[ "$RC" == 0 && "$OUT" == "Queued: cmh7queue01" && -z "$ERR" ]] && pass "queue-push: a 201 prints only 'Queued: <id>', exit 0" \
+    || fail "queue-push: a 201 prints only 'Queued: <id>'" "rc=$RC out=$(printf '%q' "$OUT") err=$ERR"
+[[ "$(reqs)" == "POST /api/v1/queue|Bearer <KEY>" && "$(cat "$T/reqctype" 2>/dev/null)" == application/json ]] \
+    && pass "queue-push: one POST /api/v1/queue to the configured API, as JSON" || fail "queue-push: one POST /api/v1/queue as JSON" "requests=$(reqs) ctype=$(cat "$T/reqctype" 2>/dev/null)"
+WANTBODY=$(jq -cn --arg p "$QPROMPT" '{type:"feature",source:"Refactor auth module",prompt:$p}')
+[[ "$(jq -c . "$T/reqbody" 2>/dev/null)" == "$WANTBODY" ]] \
+    && pass "queue-push: the body is exactly {type, source, prompt} from the files (trailing line break dropped, the rest byte for byte)" \
+    || fail "queue-push: the body is {type, source, prompt}" "body=$(cat "$T/reqbody" 2>/dev/null)"
+keysafe queue-push
+[[ -s "$T/jq.argv" ]] || fail "queue-push: the jq spy saw the verb's jq calls (anti-vacuity)" "no jq.argv"
+grep -qF QPMARK "$T/curl.argv" "$T/ps.log" "$T/jq.argv" && fail "queue-push: the prompt never on a command line" "found in argv or ps" \
+    || pass "queue-push: the prompt goes in a file, never on a command line"
+qgone && pass "queue-push: type.txt, source.txt and prompt.txt are deleted after a success" || fail "queue-push: the value files are deleted after a success" "$(ls -A "$VALUE_DIR")"
+[[ -z "$(ls -A "$H/.oss/run" | grep -v '^[0-9a-f]\{16\}$')" ]] && pass "queue-push: no request body left behind in ~/.oss/run" || fail "queue-push: no request body left behind" "$(ls -A "$H/.oss/run")"
+for ty in issue review; do
+    fresh 200 '{"id":"q-2_b"}'; qvals "$ty" "https://github.com/org/repo/issues/42" "Do it"; ov queue-push
+    [[ "$RC" == 0 && "$OUT" == "Queued: q-2_b" && "$(jq -r .type "$T/reqbody" 2>/dev/null)" == "$ty" ]] && pass "queue-push: type '$ty' is sent (a 200 with an id is a success too)" \
+        || fail "queue-push: type '$ty' is sent" "rc=$RC out=$OUT err=$ERR body=$(cat "$T/reqbody" 2>/dev/null)"
+done
+S2000=$(head -c 2000 /dev/zero | tr '\0' s); P20000=$(head -c 20000 /dev/zero | tr '\0' p)
+fresh 201 "$CREATED"; qvals feature "$S2000" "$P20000"; ov queue-push
+[[ "$RC" == 0 && "$(jq -r '"\(.source | length) \(.prompt | length)"' "$T/reqbody" 2>/dev/null)" == "2000 20000" ]] \
+    && pass "queue-push: a 2000-byte source and a 20000-byte prompt are sent whole (the bounds)" || fail "queue-push: the bounds themselves are allowed" "rc=$RC err=$ERR"
+
+# refused <label> <file named in the error> <type> <source> <prompt>: no request, nothing on stdout, exit 1, one
+# Error: line naming the file, every value file deleted
+refused_value() {
+    fresh 201 "$CREATED"; qvals "$3" "$4" "$5"; ov queue-push
+    [[ "$RC" == 1 && -z "$OUT" && -z "$(reqs)" && "$ERR" == "Error: $2"* && "$(printf '%s\n' "$ERR" | grep -c .)" == 1 ]] && qgone \
+        && pass "queue-push: $1: refused before any request, one Error: line naming $2, the value files deleted" \
+        || fail "queue-push: $1: refused before any request" "rc=$RC out=$OUT requests=$(reqs) err=$(printf '%q' "$ERR") left=$(ls -A "$VALUE_DIR")"
+}
+refused_value "type 'bug'" type.txt bug src prompt
+refused_value "type 'Feature' (case matters)" type.txt Feature src prompt
+refused_value "type 'feature review'" type.txt "feature review" src prompt
+refused_value "no type.txt" type.txt - src prompt
+refused_value "no source.txt" source.txt feature - prompt
+refused_value "an empty source" source.txt feature $'\n' prompt
+refused_value "a 2001-byte source" source.txt feature "${S2000}s" prompt
+refused_value "a source with a line break inside" source.txt feature $'one\ntwo' prompt
+refused_value "a source with a tab" source.txt feature $'one\ttwo' prompt
+refused_value "no prompt.txt" prompt.txt feature src -
+refused_value "an empty prompt" prompt.txt feature src ""
+refused_value "a 20001-byte prompt" prompt.txt feature src "${P20000}p"
+refused_value "a prompt with ESC" prompt.txt feature src $'a\e[2Jb'
+refused_value "a prompt with a carriage return" prompt.txt feature src $'a\rb'
+refused_value "a prompt with DEL" prompt.txt feature src $'a\x7fb'
+refused_value "a prompt with a C1 control (U+009B)" prompt.txt feature src $'a\xc2\x9bb'
+fresh 201 "$CREATED"; qvals feature src -; printf 'a\0b' > "$VALUE_DIR/prompt.txt"; ov queue-push
+[[ "$RC" == 1 && -z "$(reqs)" && "$ERR" == "Error: prompt.txt"* ]] && qgone && pass "queue-push: a prompt with a NUL byte is refused, no request" \
+    || fail "queue-push: a NUL byte is refused" "rc=$RC requests=$(reqs) err=$ERR"
+fresh 201 "$CREATED"; qvals feature src -; head -c 5000000 /dev/zero | tr '\0' p > "$VALUE_DIR/prompt.txt"; ov queue-push
+[[ "$RC" == 1 && -z "$(reqs)" && "$ERR" == "Error: prompt.txt"*20000* ]] && qgone && pass "queue-push: a 5 MB prompt is refused (says the 20000-byte limit), no request" \
+    || fail "queue-push: a 5 MB prompt is refused" "rc=$RC requests=$(reqs) err=$ERR"
+# A prompt under the limit, then 200 line breaks, then more text: never cut at the line breaks and sent short
+fresh 201 "$CREATED"; qvals feature src -
+{ head -c 19990 /dev/zero | tr '\0' p; head -c 200 /dev/zero | tr '\0' '\n'; printf TAIL; } > "$VALUE_DIR/prompt.txt"; ov queue-push
+[[ "$RC" == 1 && -z "$(reqs)" && "$ERR" == "Error: prompt.txt"*20000* ]] && qgone \
+    && pass "queue-push: a 20194-byte prompt whose tail follows many line breaks is refused, never sent cut short" \
+    || fail "queue-push: a long prompt is never sent cut short" "rc=$RC requests=$(reqs) err=$ERR"
+fresh 201 "$CREATED"; qvals feature src -; echo "secret text" > "$T/victim"; ln -s "$T/victim" "$VALUE_DIR/prompt.txt"; ov queue-push
+[[ "$RC" == 1 && -z "$(reqs)" && "$ERR" == "Error: prompt.txt"* && "$(cat "$T/victim")" == "secret text" ]] && qgone \
+    && pass "queue-push: a prompt.txt that is a symlink is refused (the link removed, its target untouched), no request" \
+    || fail "queue-push: a symlinked prompt.txt is refused" "rc=$RC requests=$(reqs) err=$ERR"
+rm -f "$T/victim"
+fresh 201 "$CREATED"; qvals bug src prompt; ov queue-push extra args
+[[ "$RC" == 1 && -z "$(reqs)" ]] && pass "queue-push: arguments are never used (values come from the files only)" || fail "queue-push: arguments ignored" "rc=$RC requests=$(reqs)"
+
+# api_error <label> <status> <body> <words...>: exit 1, nothing on stdout, one Error: line holding each word, the
+# value files deleted, no key anywhere
+api_error() {
+    local l=$1 ok=1 w; shift 3
+    for w in "$@"; do [[ "$ERR" == *"$w"* ]] || ok=0; done
+    [[ $ok == 1 && "$RC" == 1 && -z "$OUT" && "$ERR" == Error:* && "$(printf '%s\n' "$ERR" | grep -c .)" == 1 && "$OUT$ERR" != *"$KEY"* ]] && qgone \
+        && pass "queue-push: $l: one Error: line ($ERR), exit 1, the value files deleted" \
+        || fail "queue-push: $l: one Error: line naming $*" "rc=$RC out=$(printf '%q' "$OUT") err=$(printf '%q' "$ERR") left=$(ls -A "$VALUE_DIR")"
+}
+qerr() { fresh "$2" "$3"; qvals feature src "the prompt"; ov queue-push; api_error "$@"; }
+qerr "HTTP 401" 401 '{"error":"Unauthorized"}' "invalid" "/oss:login"
+qerr "HTTP 403" 403 '{"error":"Forbidden"}' "subscription" "oneshotship.com/pricing"
+qerr "HTTP 429" 429 '{"error":"Too many requests"}' "rate limited" "try again later"
+qerr "HTTP 404 (no team)" 404 '{"error":"No team found"}' "team"
+qerr "HTTP 400" 400 '{"error":"Required"}' "HTTP 400"
+qerr "HTTP 500" 500 '{"error":"Internal server error"}' "HTTP 500"
+qerr "HTTP 409 with an id in the answer (only a 2xx is a success)" 409 '{"id":"cmh7queue01"}' "HTTP 409"
+qerr "a 201 with no id" 201 '{"status":"queued"}' "unexpected answer" "/oss:queue status"
+qerr "a 201 that is not JSON" 201 'not json' "unexpected answer"
+qerr "a 201 with two documents" 201 '{"id":"a"}{"id":"b"}' "unexpected answer"
+qerr "a 201 whose id has an escape and a line break" 201 '{"id":"ab\u001b[31m\nRun: rm -rf ~"}' "unexpected answer"
+[[ "$ERR" != *$'\e'* ]] && pass "queue-push: a hostile id never reaches the terminal" || fail "queue-push: a hostile id never reaches the terminal" "err=$(printf '%q' "$ERR")"
+fresh 201 "$CREATED"; qvals feature src "the prompt"; : > "$T/timeout"; ov queue-push
+api_error "a timeout (curl exit 28)" 0 '' "Couldn't reach the OSS API"
+fresh 201 "{\"id\":\"$(head -c 2000000 /dev/zero | tr '\0' a)\"}"; : > "$T/nolen"; : > "$T/oldcurl"; qvals feature src "the prompt"; ov queue-push
+api_error "a 2 MB answer with no Content-Length (old curl)" 0 '' "262144 bytes"
+fresh 201 "$CREATED"; qvals feature src "the prompt"; printf '{"apiUrl":"%s"}\n' "$LOCAL" > "$H/.oss/config.json"; ov queue-push
+[[ -z "$(reqs)" ]] && api_error "no key, and no request" 0 '' "not logged in" "/oss:login" || fail "queue-push: no key: no request" "requests=$(reqs)"
+fresh 201 "$CREATED"; qvals bug src "the prompt"; printf '{"apiUrl":"%s"}\n' "$LOCAL" > "$H/.oss/config.json"; ov queue-push
+[[ "$ERR" == "Error: type.txt"* ]] && pass "queue-push: the values are checked first (a bad value is named even when not logged in)" || fail "queue-push: values checked first" "err=$ERR"
+fresh 201 "$CREATED"; printf '{"apiKey":"%s","apiUrl":"http://example.com"}\n' "$KEY" > "$H/.oss/config.json"; qvals feature src "the prompt"; ov queue-push
+[[ -z "$(reqs)" && ! -s "$T/curl.argv" ]] && api_error "an apiUrl that is not https" 0 '' "apiUrl" "/oss:login" \
+    || fail "queue-push: a plain-http apiUrl: no request" "requests=$(reqs) argv=$(cat "$T/curl.argv" 2>/dev/null)"
+# dir clears stale type/source/prompt files, so an old item is never sent twice
+fresh 201 "$CREATED"; qvals feature src "old prompt"; (cd "$W" && run_capped 30 env HOME="$H" "$H/.oss/hooks/oss-value.sh" dir >/dev/null 2>&1)
+qgone && pass "queue-push: dir clears stale type.txt, source.txt and prompt.txt" || fail "queue-push: dir clears stale values" "$(ls -A "$VALUE_DIR")"
 
 # --- no jq (T64): session start treats jq as optional, so node prints the same lines --------------------
 # Symlink farms of every command on the real PATH except the named ones (as oss-config-one-object.test.sh does).
@@ -350,6 +486,10 @@ for v in status workflows; do
         || fail "no jq, no node: $v: one clear line" "rc=$RC out=$OUT err=$ERR requests=$(reqs)"
 done
 fresh 200 "$USAGE"; OV_PATH="$T/none" ov usage; usage_down "no jq and no node"
+# queue-push builds its body with jq: without jq, one clear line naming jq, no request, the value files deleted
+fresh 201 "$CREATED"; qvals feature src "the prompt"; OV_PATH="$T/nojq" ov queue-push
+api_error "no jq" 0 '' "needs jq" "brew install jq"
+[[ -z "$(reqs)" ]] && ! raw_error && pass "queue-push: no jq: no request, no raw error" || fail "queue-push: no jq: no request" "requests=$(reqs) err=$ERR"
 
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed, $FAILED failed"

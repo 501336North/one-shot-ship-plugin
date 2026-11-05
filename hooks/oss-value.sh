@@ -26,6 +26,8 @@
 #                                   /oss:workflows display (T60).
 #   oss-value.sh usage              GET /api/v1/analytics/usage the same way; print this month's total and the 10 most
 #                                   used command types, or one "Usage: unavailable right now" line and rc 0 (T69).
+#   oss-value.sh queue-push         POST type.txt, source.txt and prompt.txt (checked) to /api/v1/queue the same way;
+#                                   print "Queued: <id>", or one Error: line on stderr and rc 1 (T87).
 # (Saving the API key is hooks/oss-login.sh, NOT a verb here: this script is allowlisted, a key
 # change must always ask - R5-8. oss-login.sh sources this file for its functions.)
 # Each value hand-off is ONE call spelled ~/.oss/hooks/oss-value.sh <verb> (the allowed prefix): a
@@ -45,7 +47,7 @@ if [[ ! -f "$_OV_HERE/oss-safe-path.sh" ]]; then
 fi
 source "$_OV_HERE/oss-safe-path.sh"
 
-_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args> | status | usage | workflows | workflow" >&2; exit 2; }
+_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args> | status | usage | workflows | workflow | queue-push" >&2; exit 2; }
 
 _OV_RUN="$HOME/.oss/run"
 
@@ -84,7 +86,7 @@ _ov_cmd_dir() {
     && local p="$_OV_DIR" \
     && rm -f "$p/feature.txt" "$p/numbers.txt" "$p/date.txt" "$p/reason.txt" "$p/message.txt" "$p/hint.txt" "$p/error.txt" \
              "$p/agent.txt" "$p/key.txt" "$p/style.txt" "$p/prompt.txt" "$p/model.txt" "$p/workflow.txt" "$p/category.txt" "$p/name.txt" \
-             "$p/notify_style.txt" "$p/voice.txt" "$p/sound.txt" "$p/verbosity.txt" "$p/custom.txt" \
+             "$p/notify_style.txt" "$p/voice.txt" "$p/sound.txt" "$p/verbosity.txt" "$p/custom.txt" "$p/type.txt" "$p/source.txt" \
     && printf '%s\n' "$p"
 }
 
@@ -264,6 +266,75 @@ _ov_cmd_workflow() {
     _ov_api workflow "/api/v1/workflows/$_OV_VAL/editor" '{name, chain, agents, parallel_agents, task_loop, quality_gates, on_pass, checkpoint} | cl' "$_OV_JS_WORKFLOW"
 }
 
+# queue-push (T87): /oss:queue add --shared without Claude handling the key. type.txt, source.txt and prompt.txt
+# are each opened checked (_ov_open), copied (at most <max> + 64 bytes) into a private folder in the value folder
+# and deleted, valid or not; then checked (_ov_qp_check), sent as one JSON body built by jq from those files (never
+# on a command line) to POST /api/v1/queue (the route's createSchema: type, source, prompt) with the key on curl's
+# stdin, and the copies removed. Prints only the new item's id, cleaned (oss_json_field) and held to an id's
+# charset, or one Error: line on stderr and rc 1.
+_ov_qp_max() { case $1 in type) echo 16 ;; source) echo 2000 ;; prompt) echo 20000 ;; esac; }   # bytes, each file
+# <name> <line|text>: the copy of <name>.txt -> _OV_VAL (trailing line breaks dropped), or its Error: line. line: one
+# line, no tab or control character; text: line breaks and tabs only. C0, DEL and C1 (UTF-8 C2 80-9F) are refused.
+_ov_qp_check() {
+    local f="$_OV_QT/$1" e="Error: $1.txt" m; m=$(_ov_qp_max "$1")
+    local keep='\012\040-\176\200-\377' bad="must be one line of text, with no tab or control character"
+    [[ $2 == text ]] && keep="\011$keep" bad="has a control character (only line breaks and tabs are allowed)"
+    [[ -f "$f" ]] || { echo "$e is missing or not a plain file in the value folder (write it to the folder ~/.oss/hooks/oss-value.sh dir prints)" >&2; return 1; }
+    (( $(wc -c < "$f") <= m + 64 )) || { echo "$e is over $m bytes" >&2; return 1; }
+    (( $(LC_ALL=C tr -d "$keep" < "$f" | wc -c) == 0 )) && ! LC_ALL=C grep -q $'\xc2[\x80-\x9f]' "$f" || { echo "$e $bad" >&2; return 1; }
+    _OV_VAL=$(cat "$f")
+    [[ -n "$_OV_VAL" ]] || { echo "$e is empty" >&2; return 1; }
+    (( $(printf '%s' "$_OV_VAL" | wc -c) <= m )) || { echo "$e is over $m bytes" >&2; return 1; }
+    [[ $2 == text || "$_OV_VAL" != *$'\n'* ]] || { echo "$e $bad" >&2; return 1; }
+}
+_ov_qp_send() {
+    local n m r rc code id
+    for n in type source prompt; do
+        m=$(( $(_ov_qp_max "$n") + 65 ))   # a value file's read bound (not an API body: those go through oss_capped)
+        _ov_open "$n.txt" && head -c "$m" <&3 > "$_OV_QT/$n"; { exec 3<&-; } 2>/dev/null
+    done
+    rm -f "$_OV_DIR/type.txt" "$_OV_DIR/source.txt" "$_OV_DIR/prompt.txt"
+    _ov_qp_check type line && case "$_OV_VAL" in feature|issue|review) ;; *) echo "Error: type.txt must be exactly feature, issue or review" >&2; false ;; esac \
+    && _ov_qp_check source line && _ov_qp_check prompt text || return 1
+    command -v jq >/dev/null || { echo "Error: /oss:queue --shared needs jq, which is not installed. Install jq (brew install jq) or ask your admin" >&2; return 1; }
+    source "$_OV_HERE/oss-api-curl.sh" 2>/dev/null || { echo "Error: oss-api-curl.sh is missing; restart Claude Code to reinstall the OSS hooks" >&2; return 1; }
+    oss_api_creds
+    case $OSS_URL_RC in
+        0) ;;
+        2) echo "Error: $(oss_loopback_refused)" >&2; return 1 ;;
+        *) echo "Error: apiUrl in your OSS config is not an https URL. Run: /oss:login" >&2; return 1 ;;
+    esac
+    [[ -n "$OSS_KEY" ]] || { echo "Error: not logged in to OSS (no API key found). Run: /oss:login" >&2; return 1; }
+    jq -n --rawfile t "$_OV_QT/type" --rawfile s "$_OV_QT/source" --rawfile p "$_OV_QT/prompt" \
+        '{type: ($t | sub("\n+\\z"; "")), source: ($s | sub("\n+\\z"; "")), prompt: ($p | sub("\n+\\z"; ""))}' > "$_OV_QT/body.json" 2>/dev/null \
+    || { echo "Error: could not build the request (jq failed)" >&2; return 1; }
+    r=$(oss_capped oss_api_curl "$OSS_KEY" -s -m 15 --max-filesize "$OSS_BODY_MAX" -H 'Content-Type: application/json' \
+        --data-binary "@$_OV_QT/body.json" -w '\n%{http_code}' "$OSS_URL/api/v1/queue")
+    rc=$?
+    (( rc != 63 )) || { echo "Error: the OSS API sent an answer over $OSS_BODY_MAX bytes; run /oss:queue status to check whether the item was queued" >&2; return 1; }
+    (( rc == 0 )) || { echo "Error: Couldn't reach the OSS API at $OSS_URL (no connection, or no answer within 15 seconds); check your connection, then run /oss:queue status before trying again" >&2; return 1; }
+    code=${r##*$'\n'}
+    [[ "$code" == 2?? ]] && id=$(printf '%s' "${r%$'\n'*}" | oss_json_field id 2>/dev/null) \
+    && [[ "$id" =~ ^[A-Za-z0-9_-]{1,100}$ ]] && { printf 'Queued: %s\n' "$id"; return 0; }
+    case "$code" in
+        2??) echo "Error: the OSS API sent an unexpected answer; run /oss:queue status to check whether the item was queued" ;;
+        401) echo "Error: the OSS API says your API key is invalid. Run: /oss:login" ;;
+        403) echo "Error: your OSS subscription is not active (HTTP 403). Renew at https://www.oneshotship.com/pricing" ;;
+        429) echo "Error: the OSS API rate limited this request; try again later" ;;
+        404) echo "Error: your account is in no team, and the shared queue needs one (HTTP 404); add the item without --shared to keep it in your own queue" ;;
+        *) echo "Error: the OSS API answered HTTP $code; the item was not queued, try again later" ;;
+    esac >&2
+    return 1
+}
+_ov_cmd_queue_push() {
+    local rc
+    _ov_dir && _OV_QT=$(mktemp -d "$_OV_DIR/.queue-push.XXXXXX") \
+    || { echo "Error: the value folder is missing or unsafe; run ~/.oss/hooks/oss-value.sh dir, write type.txt, source.txt and prompt.txt there, then run this again" >&2; return 1; }
+    _ov_qp_send; rc=$?
+    rm -rf "$_OV_QT"
+    return $rc
+}
+
 _ov_cmd_agent() {
     local o t
     oss_phys_cwd; o="$_OSS_CWD"
@@ -331,5 +402,6 @@ case "${1:-}" in
     usage) _ov_cmd_usage ;;
     workflows) _ov_cmd_workflows ;;
     workflow) _ov_cmd_workflow ;;
+    queue-push) _ov_cmd_queue_push ;;
     *) _ov_usage ;;
 esac

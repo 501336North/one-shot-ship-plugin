@@ -1020,3 +1020,14 @@ warning; prompt guard. Mutants.
 This branch finishes with T82b, T83 and T76b only. T84, T85 and T86 move to a follow-up branch (FOLLOWUPS, security
 items). One last narrow review of the Phase K diff; only CRITICAL/HIGH/MEDIUM problems introduced by this branch are
 fixed, everything else goes to FOLLOWUPS. No further full re-check rounds. Then T71c, T59, the PR.
+
+### Task 87: /oss:queue --shared keeps working without Claude seeing the key (T59 finding; user 2026-11-05 "Plugin verb now + API prompt")
+T59 live gate: the served queue prompt (AgenticDevWorkflow packages/api/src/prompts/commands/queue.md:39) tells Claude to
+POST /api/v1/queue with `Authorization: Bearer {apiKey}`; after T57 Claude no longer sees the key. Plugin side (this
+branch): `oss-value.sh queue-push` (allowlisted like `usage`/`status`) reads type.txt (feature|issue|review),
+source.txt and prompt.txt from the value folder, checks them (type from the fixed set; source/prompt bounded length,
+no control characters), POSTs JSON built by jq with the key on curl's stdin (oss_api_curl, oss_capped, https rules),
+deletes the value files, and prints only the new item's id (cleaned) or an Error: line (401/403/429/network
+distinguished). API side (API session, brief in scratchpad t59/api-brief.md): queue.md's --shared step uses the
+verb, the manifest is re-signed, deployed; this PR merges only after that deploy and a live re-check. Tests: value
+checks, key never in argv/output, request body/route/method via the local stub, error mapping, allowlist guard.
