@@ -86,14 +86,52 @@ describe('Offload nested session against a real claude process (Acceptance)', ()
     expect(fs.readFileSync(path.join(root, 'argv.txt.stdin'), 'utf8')).toBe('EXPERT PROMPT + TASK CONTEXT');
   });
 
-  it('GIVEN a Claude Code without --restricted, WHEN offloading, THEN nothing runs unconfined and the agent falls back to native Claude', async () => {
+  /**
+   * @behavior A customer on a Claude Code too old for --restricted is told, in one line, that the agent ran on
+   *           Claude instead of their model and how to fix it. (T76b)
+   * @business-rule Keep running on Claude (never unconfined), but never drop the customer's model choice silently.
+   */
+  it('GIVEN a Claude Code without --restricted, WHEN offloading, THEN nothing runs unconfined, the agent falls back to native Claude, and the customer is told why', async () => {
     installClaude(OLD_CLI);
 
     const result = await runAgentOffload({ agent: 'oss:code-reviewer', promptFile: '/unused' }, deps());
 
     expect(result.offloaded).toBe(false);
     expect(result.fallback).toBe(true);
-    expect(result.reason).toBe('spawn_error');
+    expect(result.reason).toBe('cli_too_old');
     expect(result.output).toBeUndefined();
+    expect(result.notice).toBe(
+      'Model offload needs a newer Claude Code (update with: claude update); this agent ran on Claude instead of ollama/gpt-oss:120b.',
+    );
+  });
+
+  it.each([
+    ['another unknown option', "error: unknown option '--restricted-mode'"],
+    ['a flag mentioned in some other error', 'error: --restricted cannot be used with --resume'],
+    ['an API failure', 'API Error: connection refused'],
+  ])('GIVEN the nested CLI fails with %s, WHEN offloading, THEN it stays a spawn_error with no notice', async (_name, err) => {
+    installClaude(`#!/bin/sh\necho "${err}" >&2\nexit 1\n`);
+
+    const result = await runAgentOffload({ agent: 'oss:code-reviewer', promptFile: '/unused' }, deps());
+
+    expect(result).toMatchObject({ offloaded: false, fallback: true, reason: 'spawn_error' });
+    expect(result.notice).toBeUndefined();
+  });
+
+  it('GIVEN a model name with control characters or great length, WHEN the notice names it, THEN it is one bounded printable line', async () => {
+    installClaude(OLD_CLI);
+    const model = `ollama/evil\n\u001b[31mFAKE PROMPT\r${'x'.repeat(500)}`;
+
+    const result = await runAgentOffload(
+      { agent: 'oss:code-reviewer', promptFile: '/unused' },
+      { ...deps(), checkAgentModel: async () => ({ ...ROUTED, model }) },
+    );
+
+    expect(result.reason).toBe('cli_too_old');
+    const notice = result.notice ?? '';
+    expect(notice.startsWith('Model offload needs a newer Claude Code (update with: claude update); this agent ran on Claude instead of ollama/evil')).toBe(true);
+    expect(notice).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+    expect(notice.length).toBeLessThan(200);
+    expect(notice.endsWith('.')).toBe(true);
   });
 });

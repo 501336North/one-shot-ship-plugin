@@ -51,6 +51,14 @@ for a in $AGENTS; do
 done
 [[ -z "$diffs" ]] && pass "Step 2.5 is the same in all 13 agents apart from the agent id" || fail "Step 2.5 is the same in all 13 agents" "differs:$diffs"
 
+# --- an old Claude Code: the customer is told why the agent ran on Claude (T76b) ---------------------------------
+# @behavior When the offloader says the installed Claude Code is too old (reason cli_too_old), the agent shows its one
+#           notice line to the user once, then runs natively, so a customer who mapped a model is never switched to
+#           Claude silently.
+TOO_OLD='- **`offloaded: false` with `reason: "cli_too_old"`** → show the user the result'"'"'s `notice` line once, word for word, then run natively: proceed to Step 3.'
+[[ "$(printf '%s' "$ref" | tr -s '[:space:]' ' ')" == *"$TOO_OLD"* ]] && pass "Step 2.5 shows the cli_too_old notice once, then runs natively (13 agents)" \
+    || fail "Step 2.5 shows the cli_too_old notice once, then runs natively" "missing: $TOO_OLD"
+
 # --- run the two blocks as written (TMPDIR points into the sandbox where mktemp honours it) ---------------------------------------------------------------------------
 mkdir -p "$T/bin" "$T/plugin/watcher/dist/cli"; : > "$T/plugin/watcher/dist/cli/agent-offload.js"
 # stub node: records whether the prompt file and its folder still existed, and what came in on stdin

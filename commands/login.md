@@ -203,7 +203,7 @@ After successful authentication, install the decryption CLI for secure prompt de
 
 1. **Install (or update) the CLI through the verified installer hook:**
 
-   Run this step with a Bash timeout of 600000 ms (10 minutes): a first install downloads about 60 MB.
+   Run this step with a Bash timeout of 600000 ms (10 minutes): a first install downloads about 60 MB. Exit 0: continue. Exit 75: the download is still in progress or another session is downloading it, so run the same step again (also when Claude Code stopped the step at its time limit), at most 3 more times; if it still has not exited 0, stop and tell the user to run the command again later. Any other exit: stop and show the user the hook's message (it says what to check).
    ```bash
    ~/.oss/hooks/ensure-decrypt-cli.sh --long-step
    ```
@@ -217,10 +217,10 @@ After successful authentication, install the decryption CLI for secure prompt de
    matches both the release checksum and the hash committed in the plugin. Do not download the binary
    any other way.
 
-2. **(If the hook exited 75)** the download is still in progress: run the same step again (it continues where it
-   stopped) until it exits 0 or reports an error.
+2. **(If the hook exited 75)** follow the rule above: run the same step again (it continues where it stopped) at
+   most 3 more times; if it still exits 75, stop and tell the user to run /oss:login again later.
 
-3. **(If the hook reported an error)** stop here and show the user its message; do not continue to setup.
+3. **(If the hook exited with any other code)** stop here and show the user its message; do not continue to setup.
 
 4. **Setup credentials (requires valid API key):**
    ```bash

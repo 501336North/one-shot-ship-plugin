@@ -969,3 +969,54 @@ exit, never a half-installed binary; the checksum is verified on the complete fi
 fails it is deleted. The prompts' install step asks for a 10-minute Bash timeout. Also hooks/ensure-oss-launch.sh's downloads get --proto '=https' --proto-redir '=https' (security N5; T78 leftover). Upgrades over a working binary keep
 today's behaviour. Tests: a throttled local server, a run cut at the self-limit then resumed to a verified install; a
 tampered partial; a link/FIFO/foreign-owned partial refused; the prompt wording guard. Mutants per rule.
+
+## Phase K: ship re-check after Phase J (2026-11-05). Findings: scratchpad recheck3-{pentest,security,codereview}.md
+(pen-test 0C/0H/0M/1L/6I, security 0C/0H/0M/2L/3I, code review 0C/0H/2M/3L/4I). User picks: install line "Drop wrapper
+now"; T82 "Fix all now as T82b"; key safety "Fix both now"; small items "Fix all now".
+
+### Task 82b: concurrent first installs and honest resume messages
+hooks/ensure-decrypt-cli.sh: an exclusive lock (mkdir lock in the private .download folder, stale-safe as in the
+learnings: owner pid checked, takeover guarded) around resume_binary; a second run exits 75 with "another session is
+downloading the decrypt CLI; run the command again in a minute". A dropped connection (curl 18/56/7 after progress in
+this run) exits 75 too, not "failed". curl's --max-time is never below 1 (0 = no limit). Prompts: if the step is
+stopped by the Bash time limit, run it again; after 3 reruns that still exit 75, stop and tell the user. Tests: two
+concurrent runs (one 75 "another session", the other installs); a held lock from a dead pid is taken over; rc 56 after
+progress is 75; max-time floor; prompt guard. Mutants per rule.
+
+### Task 83: the install step runs without an approval prompt (user "Drop wrapper now")
+Real CLI check 2026-11-05 (Claude Code 2.1.318): `X || { echo "..."; exit 1; }` is refused by the permission layer
+("Contains brace with quote character"), old and new lines alike; the bare `~/.oss/hooks/ensure-decrypt-cli.sh
+--long-step` runs under the plugin's allow rule. The 157 prompts + login.md run the bare line; the text around it says
+what exit 1 (stop and show the message) and 75 (rerun, at most 3 times) mean. Guard: no install line with `||` or
+`{`, and every install step carries the exit-code text.
+
+### Task 84: config.json saves never leave a cut-off file (security R3-1, code review L3, pen-test I4)
+watcher/src/utils/config-save.ts (and WebhookConfig through it): write a 0600 temp file in the target's real folder
+(the link's target when config.json is a link the user owns), fsync, rename over it; any write error is NotSaved and
+leaves the old file byte-identical. Tests: EFBIG/ENOSPC-style failure leaves the old file; link kept as a link; 600.
+
+### Task 85: provider API keys never in argv (security R3-2, pre-existing)
+watcher/src/cli/start-proxy.ts: the background proxy gets the provider key from config or its environment, never
+`--api-key` in argv (ps). watcher/src/cli/models.ts `keys set`: the key from a value file or stdin, not argv; prompt
+text (commands/models.md) updated. Tests: spawned argv has no key; keys set from stdin/value file; old argv form
+refused with a clear message.
+
+### Task 86: small hardening (user "Fix all now")
+- hooks/oss-api-curl.sh oss_ask: any non-zero oss_capped status clears the code and the answer.
+- watcher/src/logger/log-reader.ts: read new log data in capped chunks.
+- config-save: a dangling config.json link is refused like settings.json's.
+- commands/models.md: the T78d comment says exactly what is masked (models.apiKeys); check top-level .apiKeys is never loaded.
+Each with a RED test and mutants.
+
+### Task 76b: an old Claude Code says why offload ran on Claude (user 2026-11-05 "Tell them, run on Claude")
+watcher/src/cli/agent-offload.ts: when the nested CLI rejects --restricted (unknown option), the reason is
+`cli_too_old`, not spawn_error, and one visible line is printed: "Model offload needs a newer Claude Code (update
+with: claude update); this agent ran on Claude instead of <model>." (model name sanitized). /oss:models (status/list)
+shows the same warning when the installed CLI lacks --restricted. Agents' Step 2.5 text shows that line to the user.
+Release note. Tests: stub CLI rejecting the flag -> cli_too_old + the line; other failures stay spawn_error; models
+warning; prompt guard. Mutants.
+
+### Phase K scope cut (user 2026-11-05 "Regressions only, then ship")
+This branch finishes with T82b, T83 and T76b only. T84, T85 and T86 move to a follow-up branch (FOLLOWUPS, security
+items). One last narrow review of the Phase K diff; only CRITICAL/HIGH/MEDIUM problems introduced by this branch are
+fixed, everything else goes to FOLLOWUPS. No further full re-check rounds. Then T71c, T59, the PR.

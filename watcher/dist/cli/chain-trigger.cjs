@@ -288,6 +288,11 @@ function isSafeTeamCommandName(name) {
   return /^[a-z0-9-]{1,100}$/.test(name);
 }
 
+// src/utils/safe-for-log.ts
+function safeForLog(value) {
+  return value.replace(/[^\x20-\x7e]/g, "?").slice(0, 60);
+}
+
 // src/cli/chain-trigger.ts
 var MAX_CHAIN_COMMANDS = 10;
 var MAX_STEPS_ITERATED = MAX_CHAIN_COMMANDS * 10;
@@ -296,9 +301,6 @@ var SAFE_CONDITION = /^[a-z0-9_-]{1,64}$/;
 var CHAIN_LINE_PATTERN = new RegExp(
   `^CHAIN: \\/oss:(${WORKFLOW_NAME_PATTERN.source.slice(1, -1)}|oss-custom [a-z0-9-]{1,100}) \\((always|condition: [a-z0-9_-]{1,64})\\)$`
 );
-function safeForLog(value) {
-  return value.replace(/[^\x20-\x7e]/g, "?").slice(0, 60);
-}
 function isChainItemShape(value) {
   if (typeof value !== "object" || value === null) return false;
   const { command, condition } = value;

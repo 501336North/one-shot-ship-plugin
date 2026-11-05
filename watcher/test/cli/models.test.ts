@@ -12,6 +12,10 @@ import * as os from 'os';
 // Mock dependencies BEFORE importing the module under test
 vi.mock('fs');
 vi.mock('os');
+// never the real `claude` (T76b: config/list ask `claude --help` whether offload can run); a current CLI
+vi.mock('child_process', () => ({
+  spawnSync: vi.fn(() => ({ status: 0, stdout: '  --restricted  Restricted mode\n' })),
+}));
 
 // We'll import the module after mocking
 // Import will be done after the module is created

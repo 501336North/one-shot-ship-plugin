@@ -247,6 +247,17 @@ else
     if [[ -n "\${MOCK_CURL_FLOOD:-}" ]]; then
         dd if=/dev/zero bs=1048576 count=257 of="\$OUTPUT_FILE" 2>/dev/null; echo \$? > "\$MOCK_CURL_FLOOD"; exit 0
     fi
+    # T82b: MOCK_CURL_HOLD=<dir>: the binary download writes a line to the fifo <dir>/started, then waits (at most
+    # 30 s, then curl's 28) for a line on the fifo <dir>/go. The test holds this run mid-download, no sleeps.
+    if [[ -n "\${MOCK_CURL_HOLD:-}" ]]; then
+        echo started > "\$MOCK_CURL_HOLD/started"; read -r -t 30 _ < "\$MOCK_CURL_HOLD/go" || exit 28
+    fi
+    # T82b: MOCK_CURL_DROP=<rc>: the connection drops (curl 7, 18, 56) after half of what is left was sent
+    if [[ -n "\${MOCK_CURL_DROP:-}" ]]; then
+        left=\$(( \$(wc -c < "$staging_dir/binary") - RESUME_AT ))
+        tail -c +\$((RESUME_AT + 1)) "$staging_dir/binary" | head -c \$((left / 2)) > "\$OUTPUT_FILE"
+        exit "\$MOCK_CURL_DROP"
+    fi
     # T82: a server that honours ranges (-C N sends from byte N on). MOCK_CURL_RATE=<bytes/s> throttles it, in
     # virtual time (no real wait): it sends at most rate x --max-time bytes, then exits 28 as curl does at its
     # --max-time (0 = no limit, as in curl).
@@ -1508,22 +1519,262 @@ test_slow_upgrade_keeps_todays_behaviour() {
     rm -rf "$st"; teardown_test_env
 }
 
-# @behavior Every shipped prompt that runs the installer passes --long-step, asks for a 600000 ms Bash timeout
-#   just before the step, and does not call exit 75 (still downloading) a failure (T82).
+# =============================================================================
+# T82b: two first installs at once. Before T82b both appended to the one shared partial, mixed their bytes and
+# both failed with a false "may have been tampered with" (pen-test L1, code review M1).
+# @behavior One download at a time: a run that finds another session downloading says so and exits 75 (run the
+#   command again in a minute) without touching the partial or the other run's lock. A lock whose owner has died
+#   (or one older than any run could be) is taken over, and only by one session (a guard folder named after the
+#   stale lock). The lock is released on every exit of the run that holds it.
+# =============================================================================
+BUSY="Another session is downloading the decrypt CLI; run the command again in a minute."
+LOCK_REL="$PART_DIR_REL/.lock"
+# hook_run <staging> [hook args...]: one run against a fast server (the whole binary in one go); sets RUN_RC, RUN_OUT
+hook_run() { RATE=10000000 slow_run "$@"; }
+# mk_lock <pid|""> [old]: a lock as another session left it: its pid recorded (none: "" ), "old": 2020's mtime
+mk_lock() {
+    local l="$TEST_HOME/$LOCK_REL"
+    mkdir -p "$TEST_HOME/$PART_DIR_REL" && chmod 700 "$TEST_HOME/$PART_DIR_REL" && mkdir "$l"
+    [[ -z "$1" ]] || echo "$1" > "$l/pid"
+    [[ "${2:-}" != old ]] || touch -t 202001010000 "$l"
+}
+dead_pid() { sh -c 'exit 0' & local p=$!; wait "$p"; echo "$p"; }
+lock_name() { stat -c '%i-%Y' "$1" 2>/dev/null || stat -f '%i-%m' "$1" 2>/dev/null; }
+bin_calls() { grep -v '\.sha256' "$1" 2>/dev/null | wc -l | tr -d ' '; }
+no_lock_left() { [[ -z "$(find "$TEST_HOME/$PART_DIR_REL" -mindepth 1 -maxdepth 1 -name '.lock*' 2>/dev/null)" ]] && echo yes || echo no; }
+
+test_concurrent_first_installs_one_downloads() {
+    local test_name="Two first installs at once: the second exits 75 (another session is downloading) without touching the download; the first installs"
+    ((TESTS_RUN++)); setup_test_env
+    local st hold; st=$(mktemp -d); hold=$(mktemp -d); stage_big_binary "$st"; mkfifo "$hold/started" "$hold/go"
+    exec 8<>"$hold/started" 9<>"$hold/go"   # read-write opens never block, so neither side can hang on an open
+    setup_mock_curl "$st" OK
+    ( run_capped 60 env HOME="$TEST_HOME" OSS_DECRYPT_CHECKSUMS="$st/manifest" MOCK_CURL_RATE=10000000 MOCK_CURL_HOLD="$hold" \
+        MOCK_CURL_ARGS_LOG="$TEST_HOME/argsA.log" "$HOOK_SCRIPT" > "$TEST_HOME/outA" 2>&1; echo $? > "$TEST_HOME/rcA" ) &
+    local bg=$! started=no
+    read -r -t 30 _ <&8 && started=yes   # run A is now mid-download, holding the lock
+    RUN_RC=0; RUN_OUT=$(run_capped 60 env HOME="$TEST_HOME" OSS_DECRYPT_CHECKSUMS="$st/manifest" MOCK_CURL_RATE=10000000 \
+        MOCK_CURL_ARGS_LOG="$TEST_HOME/argsB.log" "$HOOK_SCRIPT" 2>&1) || RUN_RC=$?
+    local held=no p; p=$(cat "$TEST_HOME/$LOCK_REL/pid" 2>/dev/null)
+    [[ "$p" =~ ^[0-9]+$ ]] && kill -0 "$p" 2>/dev/null && held=yes
+    local b_calls; b_calls=$(bin_calls "$TEST_HOME/argsB.log")
+    echo go >&9; wait "$bg"; exec 8>&- 9>&-
+    teardown_mock_curl
+    local rc_a; rc_a=$(cat "$TEST_HOME/rcA" 2>/dev/null)
+    if [[ $started == yes && $RUN_RC -eq 75 && "$RUN_OUT" == *"$BUSY"* && $held == yes && "$b_calls" == 0 \
+          && "$rc_a" == 0 && $(installed_is "$st") == yes && $(no_lock_left) == yes && -z "$(partial_file)" ]]; then pass "$test_name"
+    else fail "$test_name" "B: rc 75, '$BUSY', no binary download, A's lock untouched; A: rc 0, installed, lock and partial gone" \
+        "started=$started rcB=$RUN_RC held=$held b_calls=$b_calls outB=${RUN_OUT:0:200} | rcA=$rc_a installed=$(installed_is "$st") lock_gone=$(no_lock_left) outA=$(head -c 300 "$TEST_HOME/outA")"; fi
+    rm -rf "$st" "$hold"; teardown_test_env
+}
+
+test_stale_lock_taken_over_live_one_respected() {
+    local c
+    for c in dead-pid live-pid no-pid old-live-pid old-no-pid; do
+        local want=0 pid="" age=""
+        case $c in
+            dead-pid) pid=$(dead_pid) ;;
+            live-pid) pid=$$; want=75 ;;
+            no-pid) want=75 ;;   # a session between its mkdir and writing its pid
+            old-live-pid) pid=$$; age=old ;;   # older than any run: a reused pid, not a download
+            old-no-pid) age=old ;;
+        esac
+        local test_name="A download lock left with $c: $([[ $want == 0 ]] && echo "taken over, the install finishes" || echo "respected, exit 75 (another session)")"
+        ((TESTS_RUN++)); setup_test_env
+        local st; st=$(mktemp -d); stage_big_binary "$st"
+        mk_lock "$pid" "$age"
+        hook_run "$st" OK
+        local calls; calls=$(bin_calls "$TEST_HOME/args.log")
+        if [[ $want == 0 && $RUN_RC -eq 0 && $(installed_is "$st") == yes && $(no_lock_left) == yes ]] \
+           || [[ $want == 75 && $RUN_RC -eq 75 && "$RUN_OUT" == *"$BUSY"* && "$calls" == 0 && -d "$TEST_HOME/$LOCK_REL" \
+                 && "$(cat "$TEST_HOME/$LOCK_REL/pid" 2>/dev/null)" == "$pid" && ! -e "$TEST_HOME/.oss/bin/oss-decrypt" ]]; then pass "$test_name"
+        else fail "$test_name" "rc $want" "rc=$RUN_RC calls=$calls installed=$(installed_is "$st") lock_gone=$(no_lock_left) out=${RUN_OUT:0:300}"; fi
+        rm -rf "$st"; teardown_test_env
+    done
+}
+
+test_stale_lock_takeover_is_guarded() {
+    local test_name="A stale lock another session is already taking over (its guard folder exists) is left alone: exit 75"
+    ((TESTS_RUN++)); setup_test_env
+    local st; st=$(mktemp -d); stage_big_binary "$st"
+    mk_lock "$(dead_pid)"
+    local l="$TEST_HOME/$LOCK_REL" g; g="$l.stale-$(lock_name "$l")"; mkdir "$g"
+    hook_run "$st" OK
+    if [[ $RUN_RC -eq 75 && "$RUN_OUT" == *"$BUSY"* && -f "$l/pid" && -d "$g" && ! -e "$TEST_HOME/.oss/bin/oss-decrypt" ]]; then pass "$test_name"
+    else fail "$test_name" "rc 75, busy, lock and guard kept" "rc=$RUN_RC lock=$([[ -f $l/pid ]] && echo kept) guard=$([[ -d $g ]] && echo kept) out=${RUN_OUT:0:300}"; fi
+    rm -rf "$st"; teardown_test_env
+
+    test_name="A takeover guard left by a killed session (over a minute old) is removed; the next run takes the stale lock over"
+    ((TESTS_RUN++)); setup_test_env
+    st=$(mktemp -d); stage_big_binary "$st"
+    mk_lock "$(dead_pid)"
+    l="$TEST_HOME/$LOCK_REL"; g="$l.stale-$(lock_name "$l")"; mkdir "$g"; touch -t 202001010000 "$g"
+    local made=no; [[ -d "$g" ]] && made=yes
+    hook_run "$st" OK
+    local rc1=$RUN_RC out1=$RUN_OUT guard1=gone; [[ -d "$g" ]] && guard1=kept
+    hook_run "$st" OK
+    if [[ $made == yes && $rc1 -eq 75 && "$out1" == *"$BUSY"* && $guard1 == gone && $RUN_RC -eq 0 && $(installed_is "$st") == yes && $(no_lock_left) == yes ]]; then pass "$test_name"
+    else fail "$test_name" "run 1: rc 75, old guard removed; run 2: rc 0, installed, nothing left" "rc1=$rc1 guard1=$guard1 rc2=$RUN_RC installed=$(installed_is "$st") lock_gone=$(no_lock_left) out1=${out1:0:200} out2=${RUN_OUT:0:200}"; fi
+    rm -rf "$st"; teardown_test_env
+}
+
+# swap_lock <lock> <pid>: another session's fresh lock (a new folder, so a new inode) replaces <lock>
+swap_lock() { mkdir "$1.new" && echo "$2" > "$1.new/pid" && rm -f "$1/pid" && rmdir "$1" && mv "$1.new" "$1"; }
+
+# @behavior A session taking over a stale lock removes it only if it is still that same lock: when another
+#   session replaced it in the meantime (its own fresh lock), the fresh lock stays and this run exits 75.
+#   The race is made deterministic with a stat on PATH that swaps the lock just before the re-check.
+test_takeover_never_removes_a_replaced_lock() {
+    local test_name="A stale lock replaced by another session's fresh lock just before the takeover is left alone: exit 75"
+    ((TESTS_RUN++)); setup_test_env
+    local st sd; st=$(mktemp -d); sd=$(mktemp -d); stage_big_binary "$st"
+    mk_lock "$(dead_pid)"
+    local l="$TEST_HOME/$LOCK_REL"
+    # the 2nd stat of the lock that works (GNU -c or BSD -f: lock_id tries both) is the takeover's re-check (the
+    # 1st named it stale): swap it just before
+    cat > "$sd/stat" << EOF
+#!/bin/bash
+if [[ "\${@: -1}" == "$l" ]] && /usr/bin/stat "\$@" >/dev/null 2>&1; then
+    n=\$(( \$(cat "$sd/n" 2>/dev/null || echo 0) + 1 )); echo "\$n" > "$sd/n"
+    if [[ \$n == 2 ]]; then mkdir "$l.new" && echo $$ > "$l.new/pid" && rm -f "$l/pid" && rmdir "$l" && mv "$l.new" "$l"; fi
+fi
+exec /usr/bin/stat "\$@"
+EOF
+    chmod +x "$sd/stat"
+    PATH="$sd:$PATH" hook_run "$st" OK
+    local n; n=$(cat "$sd/n" 2>/dev/null)
+    if [[ "$n" -ge 2 && $RUN_RC -eq 75 && "$RUN_OUT" == *"$BUSY"* && "$(cat "$l/pid" 2>/dev/null)" == "$$" && ! -e "$TEST_HOME/.oss/bin/oss-decrypt" ]]; then pass "$test_name"
+    else fail "$test_name" "rc 75, the fresh lock (pid $$) kept" "stats=$n rc=$RUN_RC lock_pid=$(cat "$l/pid" 2>/dev/null) out=${RUN_OUT:0:300}"; fi
+    rm -rf "$st" "$sd"; teardown_test_env
+}
+
+# @behavior A run whose lock was taken over while it ran (it outlived the 900 s rule) leaves the new owner's lock
+#   in place when it ends: it releases only the lock it made.
+test_release_leaves_a_taken_over_lock() {
+    local test_name="A run whose lock another session took over leaves that session's lock when it ends"
+    ((TESTS_RUN++)); setup_test_env
+    local st hold; st=$(mktemp -d); hold=$(mktemp -d); stage_big_binary "$st"; mkfifo "$hold/started" "$hold/go"
+    exec 8<>"$hold/started" 9<>"$hold/go"
+    setup_mock_curl "$st" OK
+    ( run_capped 60 env HOME="$TEST_HOME" OSS_DECRYPT_CHECKSUMS="$st/manifest" MOCK_CURL_RATE=10000000 MOCK_CURL_HOLD="$hold" \
+        "$HOOK_SCRIPT" > "$TEST_HOME/outA" 2>&1; echo $? > "$TEST_HOME/rcA" ) &
+    local bg=$! started=no swapped=no l="$TEST_HOME/$LOCK_REL"
+    read -r -t 30 _ <&8 && started=yes
+    swap_lock "$l" $$ && swapped=yes
+    echo go >&9; wait "$bg"; exec 8>&- 9>&-
+    teardown_mock_curl
+    if [[ $started == yes && $swapped == yes && "$(cat "$TEST_HOME/rcA" 2>/dev/null)" == 0 && "$(cat "$l/pid" 2>/dev/null)" == "$$" ]]; then pass "$test_name"
+    else fail "$test_name" "A rc 0, the other session's lock (pid $$) still there" "started=$started swapped=$swapped rcA=$(cat "$TEST_HOME/rcA" 2>/dev/null) lock_pid=$(cat "$l/pid" 2>/dev/null) outA=$(head -c 300 "$TEST_HOME/outA")"; fi
+    rm -rf "$st" "$hold"; teardown_test_env
+}
+
+test_unsafe_lock_refused() {
+    local k
+    for k in symlink file; do
+        local test_name="A download lock that is a $k is refused: nothing followed, removed or downloaded"
+        ((TESTS_RUN++)); setup_test_env
+        local st; st=$(mktemp -d); stage_big_binary "$st"
+        local l="$TEST_HOME/$LOCK_REL" victim="$TEST_HOME/victim"; mkdir -p "$victim" "$TEST_HOME/$PART_DIR_REL"; echo "$(dead_pid)" > "$victim/pid"
+        case $k in symlink) ln -s "$victim" "$l" ;; file) echo "$(dead_pid)" > "$l" ;; esac
+        hook_run "$st" OK
+        local still=no; { [[ $k == symlink && -L "$l" ]] || [[ $k == file && -f "$l" ]]; } && still=yes
+        if [[ $RUN_RC -eq 1 && "$RUN_OUT" == *"Refusing to use the partial download lock"* && $still == yes && -f "$victim/pid" \
+              && "$(bin_calls "$TEST_HOME/args.log")" == 0 && ! -e "$TEST_HOME/.oss/bin/oss-decrypt" ]]; then pass "$test_name"
+        else fail "$test_name" "rc 1, refusal, the $k and its target untouched, no download" "rc=$RUN_RC still=$still victim_pid=$([[ -f $victim/pid ]] && echo kept) out=${RUN_OUT:0:300}"; fi
+        rm -rf "$st"; teardown_test_env
+    done
+}
+
+test_lock_released_on_every_exit() {
+    local c
+    for c in installed still-downloading download-failed tampered refused; do
+        local test_name="The download lock is released when a first install ends: $c"
+        ((TESTS_RUN++)); setup_test_env
+        local st; st=$(mktemp -d); stage_big_binary "$st"
+        case $c in
+            installed) hook_run "$st" OK ;;
+            still-downloading) slow_run "$st" OK ;;
+            download-failed) slow_run "$st" BINFAIL ;;
+            tampered) slow_run "$st" OK; printf 'tampered' | dd of="$(partial_file)" bs=1 seek=100 conv=notrunc 2>/dev/null; slow_run "$st" OK ;;
+            refused) slow_run "$st" OK; local part; part=$(partial_file); rm -f -- "${part:?}"; mkfifo "$part"; slow_run "$st" OK ;;
+        esac
+        local want=1; [[ $c == installed ]] && want=0; [[ $c == still-downloading ]] && want=75
+        if [[ $RUN_RC -eq $want && -d "$TEST_HOME/$PART_DIR_REL" && $(no_lock_left) == yes ]]; then pass "$test_name"
+        else fail "$test_name" "rc $want, no lock left" "rc=$RUN_RC left=$(ls -A "$TEST_HOME/$PART_DIR_REL" 2>/dev/null | tr '\n' ' ') out=${RUN_OUT:0:300}"; fi
+        rm -rf "$st"; teardown_test_env
+    done
+}
+
+# @behavior A connection that drops after this run made progress (curl 7, 18, 56) is "still downloading, run the
+#   command again" (exit 75, partial kept), not a failed install: the next run resumes (code review L1).
+test_dropped_connection_after_progress_is_still_downloading() {
+    local r
+    for r in 7 18 56; do
+        local test_name="A connection dropped after progress (curl $r) exits 75 'still downloading' and keeps the partial"
+        ((TESTS_RUN++)); setup_test_env
+        local st; st=$(mktemp -d); stage_big_binary "$st"
+        MOCK_CURL_DROP=$r slow_run "$st" OK
+        local have; have=$(wc -c < "$(partial_file)" 2>/dev/null | tr -d ' ')
+        if [[ $RUN_RC -eq 75 && "$RUN_OUT" == *"$STILL_DL"* && "$RUN_OUT" != *"Failed to download"* && "${have:-0}" -gt 0 \
+              && $(no_lock_left) == yes && ! -e "$TEST_HOME/.oss/bin/oss-decrypt" ]]; then pass "$test_name"
+        else fail "$test_name" "rc 75, still downloading, partial kept" "rc=$RUN_RC have=$have out=${RUN_OUT:0:300}"; fi
+        rm -rf "$st"; teardown_test_env
+    done
+}
+
+# @behavior curl's --max-time is never 0 (curl: no limit) or negative, however long the run took before the
+#   download (FOLLOWUPS T82 LOW): the time left is at least 1 s. Both downloads take it from time_left.
+test_curl_time_limit_never_below_one_second() {
+    local test_name="time_left floors curl's --max-time at 1 s; both downloads use it"
+    ((TESTS_RUN++))
+    local def; def=$(sed -n '/^time_left() *{/,/^}/p' "$HOOK_SCRIPT")
+    local late on_time exact
+    late=$(eval "$def"; SECONDS=500; time_left 85 0 2>&1)
+    exact=$(eval "$def"; SECONDS=85; time_left 85 0 2>&1)
+    on_time=$(eval "$def"; SECONDS=10; time_left 85 0 2>&1)
+    # both download calls take their limit from time_left, none from raw arithmetic
+    local raw; raw=$(grep -E '^[[:space:]]*(fetch_binary --max-time|resume_binary) ' "$HOOK_SCRIPT" | grep -vc 'time_left')
+    local uses; uses=$(grep -cE '^[[:space:]]*(fetch_binary --max-time|resume_binary) "\$\(time_left ' "$HOOK_SCRIPT")
+    if [[ -n "$def" && "$late" == 1 && "$exact" == 1 && "$on_time" == 75 && "$raw" == 0 && "$uses" == 2 ]]; then pass "$test_name"
+    else fail "$test_name" "late 1, exact 1, on time 75, both download calls through time_left" "def=${def:0:80} late=$late exact=$exact on_time=$on_time raw=$raw uses=$uses"; fi
+}
+
+# @behavior Now that the prompts run the bare hook (T83), every hard failure says what to check itself.
+HINT="Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
+test_every_hard_failure_says_what_to_check() {
+    local c
+    for c in "BINFAIL none" "FAIL none" "OK release" "OK committed" "OK html" "OK empty" "OK malformed" "OK none 1.2.3"; do
+        local test_name="No binary + failure [$c] -> exit 1 and the message says what to check"
+        ((TESTS_RUN++)); setup_test_env
+        # shellcheck disable=SC2086
+        run_upgrade none $c
+        if [[ $RUN_RC -eq 1 && "$RUN_OUT$RUN_ERR" == *"$HINT"* ]]; then pass "$test_name"
+        else fail "$test_name" "rc 1 and '$HINT'" "rc=$RUN_RC out=${RUN_OUT:0:300} err=${RUN_ERR:0:200}"; fi
+        teardown_test_env
+    done
+}
+
+# @behavior Every shipped prompt that runs the installer runs the bare `~/.oss/hooks/ensure-decrypt-cli.sh --long-step`
+#   (T83: Claude Code 2.1.318 asks approval for `X || { ...; }`, "Contains brace with quote character"), and the
+#   text just above the step says, in the one shared wording, the 600000 ms timeout and what exits 0, 75 and any
+#   other code mean (rerun 75 at most 3 more times, then stop and tell the user).
 INSTALL_CALL_RE='^[[:space:]]*(~/\.oss/hooks/|"\$\{CLAUDE_PLUGIN_ROOT\}/hooks/)ensure-decrypt-cli\.sh'
+INSTALL_PARA="Run this step with a Bash timeout of 600000 ms (10 minutes): a first install downloads about 60 MB. Exit 0: continue. Exit 75: the download is still in progress or another session is downloading it, so run the same step again (also when Claude Code stopped the step at its time limit), at most 3 more times; if it still has not exited 0, stop and tell the user to run the command again later. Any other exit: stop and show the user the hook's message (it says what to check)."
 test_prompt_install_steps_ask_for_long_step() {
-    local test_name="Every shipped install step runs ensure-decrypt-cli.sh --long-step, asks for a 600000 ms Bash timeout, and handles exit 75"
+    local test_name="Every shipped install step is the bare ensure-decrypt-cli.sh --long-step line (no || or {), with the shared exit-code paragraph just above it"
     ((TESTS_RUN++))
     local root; root="$(cd "$SCRIPT_DIR/../.." && pwd)"
     local bad="" calls=0 f n line
     while IFS= read -r f; do
         while IFS=: read -r n line; do
             ((calls++))
-            [[ "$line" == *"ensure-decrypt-cli.sh --long-step"* ]] || { bad="$bad $f:$n(no --long-step)"; continue; }
-            [[ "$line" != *"||"* || "$line" == *'case $? in 75) exit 75;; esac;'* ]] || bad="$bad $f:$n(exit 75 not handled)"
-            sed -n "$(( n > 6 ? n - 6 : 1 )),$((n - 1))p" "$f" | grep -q "Bash timeout of 600000 ms" || bad="$bad $f:$n(no 600000 ms ask)"
+            [[ "$line" =~ ^[[:space:]]*~/\.oss/hooks/ensure-decrypt-cli\.sh\ --long-step[[:space:]]*$ ]] || bad="$bad $f:$n(not the bare line)"
+            [[ "$line" != *"||"* && "$line" != *"{"* ]] || bad="$bad $f:$n(|| or {)"
+            sed -n "$(( n > 6 ? n - 6 : 1 )),$((n - 1))p" "$f" | grep -qF -- "$INSTALL_PARA" || bad="$bad $f:$n(no exit-code paragraph)"
         done < <(grep -nE "$INSTALL_CALL_RE" "$f")
-    done < <(grep -rlE --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=.oss --exclude-dir=__tests__ --exclude-dir=test "$INSTALL_CALL_RE" "$root")
+        # no line naming the hook wraps it (|| && { ...; }), wherever the line starts
+        while IFS=: read -r n line; do bad="$bad $f:$n(wrapped call)"; done < <(grep -nE 'ensure-decrypt-cli\.sh.*(\|\||&&|; *\})|(\{ |\|\||&&).*ensure-decrypt-cli\.sh' "$f")
+    done < <(grep -rl --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=.oss --exclude-dir=__tests__ --exclude-dir=test 'ensure-decrypt-cli\.sh' "$root/commands" "$root/agents" "$root/skills")
     if [[ -z "$bad" && $calls -ge 150 ]]; then pass "$test_name ($calls steps)"
     else fail "$test_name" "every step (>= 150) compliant" "calls=$calls bad:${bad:0:600}"; fi
 }
@@ -1589,6 +1840,16 @@ test_http_error_on_resume_deletes_partial_network_error_keeps_it
 test_unsafe_partial_refused
 test_unsafe_partial_folder_refused_open_one_made_private
 test_slow_upgrade_keeps_todays_behaviour
+test_concurrent_first_installs_one_downloads
+test_stale_lock_taken_over_live_one_respected
+test_stale_lock_takeover_is_guarded
+test_takeover_never_removes_a_replaced_lock
+test_release_leaves_a_taken_over_lock
+test_unsafe_lock_refused
+test_lock_released_on_every_exit
+test_dropped_connection_after_progress_is_still_downloading
+test_curl_time_limit_never_below_one_second
+test_every_hard_failure_says_what_to_check
 test_prompt_install_steps_ask_for_long_step
 
 echo ""

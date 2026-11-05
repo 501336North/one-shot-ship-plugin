@@ -21,9 +21,11 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { spawnSync } from 'child_process';
 import { isValidModelId, SUPPORTED_PROVIDERS, Provider } from '../types/model-settings.js';
 import { readRegularFileSync } from '../utils/regular-file.js';
 import { loadConfigForSave, saveConfigFile, NotSaved } from '../utils/config-save.js';
+import { OFFLOAD_UPDATE_HINT } from './agent-offload.js';
 
 /**
  * Test mode flag to simulate provider failures
@@ -181,6 +183,27 @@ function detectPromptType(promptName: string): 'agent' | 'command' | 'skill' | '
 
   // Default to agent for oss: prefixed names
   return 'agent';
+}
+
+const isNonClaude = (model: unknown): boolean =>
+  typeof model === 'string' && model !== '' && model !== 'claude' && model !== 'default';
+
+/**
+ * T76b: the warning line when an agent or the default is mapped to another model and the installed `claude` has no
+ * --restricted (offload then runs on Claude); '' otherwise, and when `claude --help` is missing, fails or hangs.
+ */
+function offloadCliWarning(): string {
+  const models = loadConfig().models as Record<string, unknown> | undefined;
+  const agents = models?.agents as Record<string, unknown> | undefined;
+  if (!isNonClaude(models?.default) && !Object.values(agents ?? {}).some(isNonClaude)) return '';
+  const help = spawnSync('claude', ['--help'], {
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+    timeout: 3000,
+    killSignal: 'SIGKILL',
+  });
+  if (help.status !== 0 || /(^|\s)--restricted(\s|$)/m.test(help.stdout)) return '';
+  return `${OFFLOAD_UPDATE_HINT}; agents mapped to other models run on Claude until then.\n\n`;
 }
 
 /**
@@ -470,7 +493,7 @@ export async function executeModelsCommand(args: string[]): Promise<string> {
 
   switch (subcommand) {
     case 'list':
-      return listModels();
+      return offloadCliWarning() + listModels();
 
     case 'search': {
       // Check for --free flag
@@ -480,7 +503,7 @@ export async function executeModelsCommand(args: string[]): Promise<string> {
     }
 
     case 'config':
-      return showConfig();
+      return offloadCliWarning() + showConfig();
 
     case 'set': {
       if (rest.length < 2) {

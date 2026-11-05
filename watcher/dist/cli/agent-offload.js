@@ -26,6 +26,13 @@ import * as http from 'http';
 import * as path from 'path';
 import { checkAgentModel } from './agent-model-check.js';
 import { readRegularFileSync } from '../utils/regular-file.js';
+import { safeForLog } from '../utils/safe-for-log.js';
+/** What a Claude Code too old for --restricted needs (T76b); /oss:models prints it too. */
+export const OFFLOAD_UPDATE_HINT = 'Model offload needs a newer Claude Code (update with: claude update)';
+/** True when the nested CLI refused to start because it does not know --restricted (commander's message). */
+export function rejectsRestricted(stderr) {
+    return stderr.includes("unknown option '--restricted'");
+}
 /**
  * Pure: build the nested-session invocation. The base URL is what diverts inference to the
  * local model; OSS_OFFLOAD_ACTIVE=1 is the depth-1 recursion guard (see agent-model-check).
@@ -42,9 +49,9 @@ export function buildOffloadInvocation(routing) {
         // run has nobody to answer any other prompt, so it is refused), and no MCP server is loaded.
         // --restricted (T76) ignores every settings file, the user's too (their allow rules and extra
         // dirs would widen it), and keeps the file tools in the repo. A CLI without it exits non-zero,
-        // so offload falls back to native. .oss/ is denied: a worktree keeps a copy of the OSS config
-        // (key included) there; Edit, not Write, since the CLI ignores Write(path) deny rules. The
-        // deny flag takes several values, so it stays last.
+        // so offload falls back to native as cli_too_old, with a notice for the user (T76b). .oss/ is
+        // denied: a worktree keeps a copy of the OSS config (key included) there; Edit, not Write, since
+        // the CLI ignores Write(path) deny rules. The deny flag takes several values, so it stays last.
         args: [
             '-p',
             '--tools', 'Read,Grep,Glob,Edit,Write',
@@ -192,6 +199,12 @@ export async function runAgentOffload(params, deps = {}) {
                 const verdict = classifyResult(code ?? 0, stdout);
                 if (verdict === 'success') {
                     resolve({ offloaded: true, output: stdout });
+                }
+                else if (verdict === 'spawn_error' && rejectsRestricted(stderr)) {
+                    resolve({
+                        ...degrade('cli_too_old', fallbackEnabled, stderr.trim()),
+                        notice: `${OFFLOAD_UPDATE_HINT}; this agent ran on Claude instead of ${safeForLog(routing.model)}.`,
+                    });
                 }
                 else {
                     resolve(degrade(verdict, fallbackEnabled, stderr.trim() || undefined));

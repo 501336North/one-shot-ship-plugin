@@ -13,8 +13,9 @@
 # Returns:
 #   0  - Binary is available and meets minimum version
 #   1  - Installation failed
-#   75 - First install still downloading: it stopped itself before the Bash step's time limit and kept what it
-#        downloaded; running it again continues the download (T82)
+#   75 - First install still downloading: it stopped itself before the Bash step's time limit (or the connection
+#        dropped) and kept what it downloaded; running it again continues the download (T82). Or another session
+#        is downloading it right now: run it again in a minute (T82b)
 #
 # Called by commands that need prompt decryption (build, ship, plan, etc.)
 
@@ -190,8 +191,8 @@ echo "Downloading from: $DOWNLOAD_URL"
 # use -R/--remote-time, which would stamp a live download with the server's old date). mktemp creates 0600.
 find "$OSS_BIN_DIR" -maxdepth 1 -type f -name '.oss-decrypt.*' -mmin +60 -delete 2>/dev/null || true
 # Trap first, so a failure creating either temp file never leaves the other behind.
-TMP_BIN=""; CHECKSUM_FILE=""
-trap 'rm -f "$TMP_BIN" "$CHECKSUM_FILE"' EXIT
+TMP_BIN=""; CHECKSUM_FILE=""; LOCK_ID=""
+trap 'rm -f "$TMP_BIN" "$CHECKSUM_FILE"; [[ -z "$LOCK_ID" ]] || release_lock' EXIT
 TMP_BIN=$(mktemp "$OSS_BIN_DIR/.oss-decrypt.XXXXXX")
 CHECKSUM_FILE=$(mktemp)
 
@@ -204,6 +205,14 @@ capped() {
     rc=${PIPESTATUS[0]}
     (( rc == 0 )) || return "$rc"
     (( $(wc -c < "$out") <= max )) || return 63
+}
+
+# time_left LIMIT START: seconds left of LIMIT counted from START (a $SECONDS value), at least 1: curl's
+# --max-time 0 means no limit, and a negative one is an error (T82b).
+time_left() {
+    local s=$(( $1 - (SECONDS - $2) ))
+    (( s >= 1 )) || s=1
+    echo "$s"
 }
 
 BIN_MAX=268435456   # 256 MiB: a few times the binary's size today (~60 MB), room to grow
@@ -231,15 +240,60 @@ refuse_partial() {
     echo "Delete it, then run the command again."
     exit 1
 }
+# T82b: one download at a time. Two sessions appending to the one partial mixed their bytes and both failed the
+# checksum. The lock is the folder .lock in the private PART_DIR, made with mkdir (atomic), holding the owner's pid.
+# A run that finds it held exits 75 (run again in a minute). A lock is stale when its pid is no longer running, or
+# when it is older than any run can last (900 s: the pid may have been reused; a lock still without a pid, made by
+# a session killed right after its mkdir). A stale lock is named by its inode and time; a session first makes a
+# guard folder of that name (mkdir: one session per stale lock), checks the lock is still that very folder, and
+# only then removes it (renaming a stale lock is not atomic enough: two sessions could both take it). A guard left
+# by a session killed inside these few lines is removed once it is a minute old. The EXIT trap releases the lock,
+# and only while it is still the one this run made.
+LOCK="$PART_DIR/.lock"
+lock_id() { stat -c '%i %Y' "$1" 2>/dev/null || stat -f '%i %m' "$1" 2>/dev/null; }
+lock_is_stale() {   # lock_is_stale ID
+    local p=""
+    (( $(date +%s) - ${1#* } > 900 )) && return 0
+    read -r p < "$LOCK/pid" 2>/dev/null || true
+    [[ "$p" =~ ^[0-9]{1,10}$ ]] && ! kill -0 "$p" 2>/dev/null
+}
+take_lock() {
+    local try s g gid
+    for try in 1 2; do
+        if mkdir "$LOCK" 2>/dev/null; then
+            echo $$ > "$LOCK/pid"
+            LOCK_ID=$(lock_id "$LOCK")
+            return 0
+        fi
+        [[ -L "$LOCK" || ( -e "$LOCK" && ! -d "$LOCK" ) ]] && refuse_partial "lock $LOCK"
+        s=$(lock_id "$LOCK") && [[ "$s" =~ ^[0-9]+\ [0-9]+$ ]] || continue   # released meanwhile: try again
+        lock_is_stale "$s" || break
+        g="$LOCK.stale-${s/ /-}"
+        if ! mkdir "$g" 2>/dev/null; then
+            gid=$(lock_id "$g") && [[ "$gid" =~ ^[0-9]+\ [0-9]+$ ]] && (( $(date +%s) - ${gid#* } > 60 )) && rmdir "$g" 2>/dev/null
+            break
+        fi
+        [[ $(lock_id "$LOCK") == "$s" ]] && rm -f "$LOCK/pid" && rmdir "$LOCK" 2>/dev/null
+        rmdir "$g" 2>/dev/null || true
+    done
+    echo "Another session is downloading the decrypt CLI; run the command again in a minute."
+    exit 75
+}
+release_lock() {
+    [[ $(lock_id "$LOCK") == "$LOCK_ID" ]] && rm -f "$LOCK/pid" && rmdir "$LOCK" 2>/dev/null
+    return 0
+}
 # resume_binary SECS: appends the rest of the binary to PART within SECS seconds and BIN_MAX bytes (head -c, as
 # in capped). Complete: PART is copied into the private TMP_BIN and deleted; the copy is what gets verified and
-# installed, so a second session still appending to PART cannot change it afterwards. Stopped at the time limit
-# after some progress: exit 75, PART kept. An HTTP error (404, 416: nothing left to send) or a server that ignores
+# installed, so a second session still appending to PART cannot change it afterwards. Stopped at the time limit,
+# or cut off (curl 7, 18, 56: T82b), after some progress in this run: exit 75, PART kept. Holds the lock
+# (take_lock). An HTTP error (404, 416: nothing left to send) or a server that ignores
 # the range (33) or sends past the cap deletes PART. Other failures keep it. Returns curl's code.
 resume_binary() {
     local have rc
     mkdir -m 700 "$PART_DIR" 2>/dev/null || true
     [[ -d "$PART_DIR" && ! -L "$PART_DIR" && -O "$PART_DIR" ]] && chmod 700 "$PART_DIR" || refuse_partial "folder $PART_DIR"
+    take_lock
     [[ -e "$PART" || -L "$PART" ]] || (umask 077; : > "$PART")
     [[ -f "$PART" && ! -L "$PART" && -O "$PART" && -n "$(find "$PART" -maxdepth 0 -links 1 2>/dev/null)" ]] || refuse_partial "$PART"
     have=$(wc -c < "$PART" | tr -d ' ')
@@ -248,7 +302,7 @@ resume_binary() {
     (( $(wc -c < "$PART") <= BIN_MAX )) || rc=63
     case $rc in
         0) cat -- "$PART" > "$TMP_BIN" || rc=1; rm -f "$PART"; return "$rc" ;;
-        28) if (( $(wc -c < "$PART") > have )); then
+        7|18|28|56) if (( $(wc -c < "$PART") > have )); then   # time limit, stall or a dropped connection
                 echo "The decrypt CLI is still downloading ($(( $(wc -c < "$PART") / 1048576 )) MB so far); run the command again to continue."
                 exit 75
             fi ;;
@@ -284,11 +338,11 @@ fetch_checksum() {
 if [[ "$HAVE_RUNNABLE" == "true" ]]; then
     DL_START=$SECONDS
     fetch_checksum --max-time 15
-    fetch_binary --max-time $((100 - (SECONDS - DL_START)))
+    fetch_binary --max-time "$(time_left 100 "$DL_START")"
 else
     # T82: binary first, then the .sha256 (15 s), both within FIRST_INSTALL_SECS of the hook's start; the binary
     # resumes on the next run.
-    resume_binary $((FIRST_INSTALL_SECS - 15 - (SECONDS - SCRIPT_START))) || binary_download_failed
+    resume_binary "$(time_left $((FIRST_INSTALL_SECS - 15)) "$SCRIPT_START")" || binary_download_failed
     fetch_checksum --max-time 15
 fi
 
@@ -302,6 +356,7 @@ if [[ -z "$EXPECTED_HASH" || ${#EXPECTED_HASH} -ne 64 ]]; then
     keep_installed_or_fail "download: checksum file has no hash"
     echo "[verify] Binary checksum: FAILED — invalid checksum format"
     echo "Error: Checksum file has invalid format."
+    echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
     exit 1
 fi
 
@@ -372,6 +427,7 @@ DOWNLOADED_VERSION=$("$TMP_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+
 if ! version_gte "$DOWNLOADED_VERSION" "$MINIMUM_VERSION"; then
     keep_installed_or_fail "release reports v${DOWNLOADED_VERSION}, below v${MINIMUM_VERSION}"
     echo "Error: Downloaded binary reports v${DOWNLOADED_VERSION}, below the required v${MINIMUM_VERSION}. Refusing to install."
+    echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
     exit 1
 fi
 mv -f "$TMP_BIN" "$OSS_DECRYPT"
