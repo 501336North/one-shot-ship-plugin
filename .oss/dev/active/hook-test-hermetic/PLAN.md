@@ -1031,3 +1031,13 @@ deletes the value files, and prints only the new item's id (cleaned) or an Error
 distinguished). API side (API session, brief in scratchpad t59/api-brief.md): queue.md's --shared step uses the
 verb, the manifest is re-signed, deployed; this PR merges only after that deploy and a live re-check. Tests: value
 checks, key never in argv/output, request body/route/method via the local stub, error mapping, allowlist guard.
+
+### Task 88: tell the customer when a repo's agent model mapping is ignored (T59 part 2 finding; user 2026-11-05 "Clear notice now")
+T71b (on purpose) ignores `models.agents` / `models.default` in a project's .oss/config.json, so after the 2.0.97 upgrade a
+2.0.96 customer's per-repo mapping silently runs on Claude; the only sign is the banner "OSS model: Claude (session
+default)". Fix: when agent-model-check resolves to native Claude AND the project's .oss/config.json maps this agent (or
+its default) to a non-Claude model, the banner gets a second line saying the repo's mapping is not used since 2.0.97,
+the agent ran on Claude, and how to keep it in ~/.oss/config.json via /oss:models. /oss:models list shows the same.
+The project file only feeds this notice; it never routes. Agent name and model pass through safeForLog. The read is
+regular-file only (no hang on a FIFO), and a bad or missing file gives no notice and no error. No agent prompt changes
+(Step 0 already echoes the banner).

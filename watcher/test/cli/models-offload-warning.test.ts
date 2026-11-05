@@ -37,6 +37,17 @@ exit 2
 const HANGS = `#!/bin/sh
 exec sleep 30
 `;
+// answers, but only after the production 3 s probe limit: what a busy machine does to the instant stubs
+const SLOW_OLD = `#!/bin/sh
+sleep 4
+echo "  --resume                Resume a conversation"
+`;
+
+/**
+ * The probe limit these tests give `claude --help` (production keeps 3 s): every stub but HANGS answers at once,
+ * so only a machine too busy to start a shell script in 3 s could hit the production limit (a flaky miss).
+ */
+const PROBE_MS = 8000;
 
 const AGENT_MAPPED = { models: { agents: { 'oss:code-reviewer': 'ollama/qwen2.5-coder' } } };
 const DEFAULT_MAPPED = { models: { default: 'openrouter/deepseek/deepseek-chat' } };
@@ -50,7 +61,12 @@ afterAll(() => {
 });
 
 /** Run `/oss:models <sub>` with this config and this `claude` (none: not on PATH); returns output and whether claude ran. */
-function models(sub: string, config: object, claude: string | null): { out: string; ran: boolean } {
+function models(
+  sub: string,
+  config: object,
+  claude: string | null,
+  probeMs: number | null = PROBE_MS,
+): { out: string; ran: boolean } {
   const home = fs.mkdtempSync(path.join(work, 'h-'));
   fs.mkdirSync(path.join(home, '.oss'));
   fs.writeFileSync(path.join(home, '.oss', 'config.json'), JSON.stringify(config));
@@ -58,7 +74,8 @@ function models(sub: string, config: object, claude: string | null): { out: stri
   fs.mkdirSync(bin);
   if (claude !== null) fs.writeFileSync(path.join(bin, 'claude'), claude, { mode: 0o755 });
   const run = runInChild(
-    `import { executeModelsCommand } from './cli/models.js';
+    `import { executeModelsCommand, setClaudeProbeTimeoutMs } from './cli/models.js';
+     ${probeMs === null ? '' : `setClaudeProbeTimeoutMs(${probeMs});`}
      console.log(await executeModelsCommand([${JSON.stringify(sub)}]));`,
     { home, env: { PATH: `${bin}:/usr/bin:/bin` } },
   );
@@ -76,6 +93,10 @@ describe('/oss:models warns about a Claude Code too old for offload (Task 76b)',
 
   it('warns when only the default is a non-Claude model', () => {
     expect(count(models('config', DEFAULT_MAPPED, HELP_OLD).out)).toBe(1);
+  }, TEST_LIMIT_MS);
+
+  it('warns when claude answers slower than 3 s but within the probe limit it was given', () => {
+    expect(count(models('config', AGENT_MAPPED, SLOW_OLD).out)).toBe(1);
   }, TEST_LIMIT_MS);
 
   it('does not warn when claude knows --restricted', () => {
@@ -99,6 +120,7 @@ describe('/oss:models warns about a Claude Code too old for offload (Task 76b)',
     ['fails', FAILS],
     ['hangs', HANGS],
   ])('does not warn when claude %s', (_name, claude) => {
-    expect(count(models('config', AGENT_MAPPED, claude).out)).toBe(0);
+    // the production 3 s limit: a claude that hangs costs the command 3 s, never a hang
+    expect(count(models('config', AGENT_MAPPED, claude, null).out)).toBe(0);
   }, TEST_LIMIT_MS);
 });

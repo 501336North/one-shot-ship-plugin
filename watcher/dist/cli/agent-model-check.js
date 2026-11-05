@@ -21,6 +21,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { parseProvider } from '../types/model-settings.js';
 import { readRegularFileSync } from '../utils/regular-file.js';
+import { repoAgentModelNotice } from '../utils/repo-agent-models.js';
 /**
  * Default proxy port. NOT 3456 — that collides with claude-code-router's default. Resolution
  * precedence: env OSS_PROXY_PORT > config models.proxyPort > default.
@@ -134,7 +135,10 @@ export async function checkAgentModel(params) {
     const model = userConfig.models?.agents?.[agentName] || userConfig.models?.default;
     // 3. If no model or native Claude, return useProxy: false
     if (isNativeClaudeModel(model)) {
-        return { useProxy: false, banner: nativeClaudeBanner(agentName) };
+        // T88: a repo mapping the user may still rely on is named, never used.
+        const notice = repoAgentModelNotice(params.projectDir, agentName);
+        const banner = nativeClaudeBanner(agentName);
+        return { useProxy: false, banner: notice ? `${banner}\n${notice}` : banner };
     }
     // 4. Custom model configured - return proxy info
     // At this point model is guaranteed to be a non-empty string (not undefined, 'claude', or 'default')

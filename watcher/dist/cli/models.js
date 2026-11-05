@@ -25,6 +25,7 @@ import { isValidModelId, SUPPORTED_PROVIDERS } from '../types/model-settings.js'
 import { readRegularFileSync } from '../utils/regular-file.js';
 import { loadConfigForSave, saveConfigFile, NotSaved } from '../utils/config-save.js';
 import { OFFLOAD_UPDATE_HINT } from './agent-offload.js';
+import { repoAgentModelNotices } from '../utils/repo-agent-models.js';
 /**
  * Test mode flag to simulate provider failures
  */
@@ -159,6 +160,11 @@ function detectPromptType(promptName) {
     // Default to agent for oss: prefixed names
     return 'agent';
 }
+/** How long `claude --help` may take before the probe gives up (3 s); tests set it to stay off the wall clock. */
+let claudeProbeTimeoutMs = 3000;
+export function setClaudeProbeTimeoutMs(ms) {
+    claudeProbeTimeoutMs = ms;
+}
 const isNonClaude = (model) => typeof model === 'string' && model !== '' && model !== 'claude' && model !== 'default';
 /**
  * T76b: the warning line when an agent or the default is mapped to another model and the installed `claude` has no
@@ -172,7 +178,7 @@ function offloadCliWarning() {
     const help = spawnSync('claude', ['--help'], {
         encoding: 'utf-8',
         stdio: ['ignore', 'pipe', 'ignore'],
-        timeout: 3000,
+        timeout: claudeProbeTimeoutMs,
         killSignal: 'SIGKILL',
     });
     if (help.status !== 0 || /(^|\s)--restricted(\s|$)/m.test(help.stdout))
@@ -416,8 +422,11 @@ export async function executeModelsCommand(args) {
     }
     const [subcommand, ...rest] = args;
     switch (subcommand) {
-        case 'list':
-            return offloadCliWarning() + listModels();
+        case 'list': {
+            // T88: agents the current repo still maps, which now run on Claude
+            const notes = repoAgentModelNotices(process.cwd());
+            return offloadCliWarning() + (notes.length ? `${notes.join('\n')}\n\n` : '') + listModels();
+        }
         case 'search': {
             // Check for --free flag
             const freeOnly = rest.includes('--free');
@@ -429,6 +438,16 @@ export async function executeModelsCommand(args) {
         case 'set': {
             if (rest.length < 2) {
                 return 'Usage: /oss:models set <prompt> <model>';
+            }
+            if (rest.length >= 3) {
+                // T88b: `set <agents|commands|skills> <name> <model>`, as oss-value.sh models-set sends it; the type must be
+                // the one setModel files the name under, so nothing lands under a type the name does not belong to.
+                const [type, prompt, model] = rest;
+                const typed = { agents: 'agent', commands: 'command', skills: 'skill' };
+                if (!Object.hasOwn(typed, type) || typed[type] !== detectPromptType(prompt)) {
+                    return 'Usage: /oss:models set <prompt> <model>';
+                }
+                return setModel(prompt, model);
             }
             const [prompt, model] = rest;
             return setModel(prompt, model);

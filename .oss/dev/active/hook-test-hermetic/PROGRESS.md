@@ -183,9 +183,13 @@ The earlier round's banner landed in another worktree's build.log because ~/.oss
 
 - [x] T59 part 1 done 2026-11-05 (security-auditor, real keys in sandbox HOMEs the user logged in): new-customer install 2/2 (46 s / 24 s, both hashes verified); 116 names fetched with the paid key, all valid signatures (66 hash match, 50 workflows not_in_manifest -> FOLLOWUPS); trial 8/8 (no per-minute limit since API #410); first-delivery review: no key handling in agents/skills; served queue prompt has Bearer {apiKey} -> T87 + API brief; prod = origin/main #417+; key scan 0/0. 9 transient "fetch failed" -> short diagnosis running (debugger).
 - [x] T87 plugin side done 2026-11-05 (security-auditor): oss-value.sh queue-push (type/source/prompt value files, jq --rawfile body, key on curl stdin, oss_capped, one Error: line per failure); oss-value-api 131/131, oss-value 350/350, body-cap 59/59, one-copy-helpers 12/12; 18/19 mutants (1 equivalent); full shell at baseline 2, watcher 3951/3951. API prompt switch handed to the RADICAL OBSERVABILITY session; merge waits for its deploy + live re-check.
-- [ ] T59 part 2: clean-machine run (session start, /oss:build, /oss:ship, one agent) and upgrade from 2.0.96; then T71c.
+- [x] T59 part 2 done 2026-11-05 (qa-expert): clean HOME session start, decrypt-CLI install, build/ship/code-reviewer fetch (signature valid), status; 2.0.96 -> 2.0.97 upgrade keeps config/key, hooks byte-identical, fetches work; key scan 0 files. Real `claude -p` runs not possible (no Claude login in a sandbox HOME); user picked "Ship on current evidence". Notes -> FOLLOWUPS. Next: T71c, then the API deploy re-check, then PR + merge.
 
 ## Blockers
 - None
 
-## Last Updated: 2026-11-05 17:55 CST by /oss:ship (T87 plugin side done; API brief sent; T59 part 2 next)
+- [x] T88 done 2026-11-05 (typescript-pro): agent banner + /oss:models list say when a repo's .oss/config.json mapping is ignored; suggested command only for ids /oss:models set accepts (pinned to oss-value.sh's rule), cleaned and charset-checked; models-offload-warning flake fixed (injectable probe timeout, prod 3 s). 58 notice tests, mutants all killed.
+- [x] T88b done 2026-11-05: /oss:models set via oss-value.sh models-set failed for every name since 2.0.91 (extra <type> arg); models.ts set accepts <type> <name> <model> with a type-agreement check. Real end-to-end test (8). Watcher 4018/4018, shell at baseline.
+- [x] API PR #422 (queue prompt uses queue-push) live, re-checked 2026-11-05 12:46 UTC: signature valid, hash verified, no key/Bearer/curl.
+
+## Last Updated: 2026-11-05 22:58 CST by /oss:ship (T88/T88b done; T71c tag next, then PR + merge)
