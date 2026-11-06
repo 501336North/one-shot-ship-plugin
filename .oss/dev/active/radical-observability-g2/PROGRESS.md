@@ -1,10 +1,10 @@
 # Progress: Radical Observability G2, Phase B (plugin)
 
-## Current Phase: build (acceptance test written)
+## Current Phase: build
 
 ## Tasks
 - [x] Task 1: Acceptance test at the boundary (written 2026-11-06; 8 checks RED as expected until Task 8)
-- [ ] Task 2: One copy of the feature resolution (pending)
+- [x] Task 2: One copy of the feature resolution (completed 2026-11-06)
 - [ ] Task 3: B1, the timeline writer (pending)
 - [ ] Task 4: B2, command lines from oss-notify, plus FOLLOWUPS #130 (pending)
 - [ ] Task 5: B3, agent lines from a PostToolUse hook (pending)
@@ -16,4 +16,4 @@
 ## Blockers
 - None. Plugin 2.0.97 is on main (#216, c80e004). Phase A API is live (AgenticDevWorkflow #418).
 
-## Last Updated: 2026-11-06 by /oss:acceptance
+## Last Updated: 2026-11-06 by /oss:build

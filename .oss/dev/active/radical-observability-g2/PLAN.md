@@ -58,7 +58,7 @@ The plugin writes a committed `.oss/dev/active/{feature}/timeline.ndjson` per fe
 - branch `main` with exactly one active folder gives that folder;
 - branch `main` with two active folders gives unfiled;
 - a name failing `^[A-Za-z0-9_-][A-Za-z0-9._-]*$` gives unfiled;
-- an active folder that is a symlink gives unfiled.
+- an active folder that is a symlink still resolves to its name. The write is then refused by `oss_safe_target` (AC-G2-001.5, and G1's existing refusal tests), never silently filed as unfiled.
 
 **Implementation (GREEN):**
 - `hooks/oss-safe-path.sh`: add `oss_resolve_feature PROJ` (sets `_OSS_FEATURE`, empty for unfiled), the body moved from `oss-decision-record.sh` L24-36.

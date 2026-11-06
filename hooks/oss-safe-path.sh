@@ -15,6 +15,8 @@
 #                                         the physical cwd when it finds a .oss in another repo than this
 #                                         session's pointer (oss_session_project), else the pointer, else
 #                                         the walk -> _OSS_PROJ (twin: watcher/src/utils/project-dir.ts)
+#   oss_resolve_feature <project>         the feature folder a line is filed under (ADR-009) ->
+#                                         _OSS_FEATURE ("" = unfiled)
 #   oss_session_pointer_write/_remove/_prune, oss_hook_stdin   the SessionStart/End side of the pointer
 #
 # oss_safe_mkdir sets _OSS_SAFE_DIR to the directory it checked; oss_safe_target builds the
@@ -145,6 +147,26 @@ oss_resolve_project() { # [dir] (default: the physical cwd)
         _oss_phys_cached "$p" && oss_project_walk "$_OSS_PHYS" && [[ "$_OSS_GIT" == "$g" ]] && { _OSS_PROJ="$p"; return 0; }
     fi
     _OSS_PROJ="$w"
+}
+
+# The ONE feature rule (G2 Task 2: G1's decision record and G2's timeline file under the same folder).
+# ADR-009 (the IRON LAW #4 branch convention): a <type>/<feature>/<phase> branch names the feature, filed
+# under it when that folder is active, else unfiled; any other branch takes the only active folder, else
+# none. A name is ^[A-Za-z0-9._-]+$, not starting with ".". A linked folder still resolves: the write is
+# refused by oss_safe_target (AC-G2-001.5).
+oss_resolve_feature() { # <project> -> _OSS_FEATURE ("" = unfiled)
+    local proj="${1:-}" branch feature="" active
+    local name_re='^[A-Za-z0-9_-][A-Za-z0-9._-]*$' branch_re='^[^/]+/([^/]+)/[^/]'
+    # this project's own branch: git variables inherited from the session could point at another repo
+    branch=$(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; cd "$proj" 2>/dev/null && git symbolic-ref --short -q HEAD 2>/dev/null)
+    [[ "$branch" =~ $branch_re ]] && feature=${BASH_REMATCH[1]}
+    [[ "$feature" =~ $name_re && -d "$proj/.oss/dev/active/$feature" ]] || feature=""
+    if [[ -z "$feature" && ! "$branch" =~ $branch_re ]]; then
+        active=("$proj"/.oss/dev/active/*/)
+        [[ ${#active[@]} -eq 1 && -d "${active[0]}" ]] && { feature=${active[0]%/}; feature=${feature##*/}; }
+        [[ "$feature" =~ $name_re ]] || feature=""
+    fi
+    _OSS_FEATURE="$feature"
 }
 
 # Per-session pointer ~/.oss/sessions/<id>/project (ship round 1, D2): written by the SessionStart
