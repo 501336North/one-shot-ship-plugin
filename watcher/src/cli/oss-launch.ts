@@ -107,6 +107,31 @@ export function proxySpawnArgs(opts: {
   return [...head, '--router', '--background', '--port', String(opts.port)];
 }
 
+/**
+ * Start the router proxy detached. A bundled (pkg) binary clears PKG_EXECPATH for its child: pkg
+ * sets it to the binary on every spawn, and a child that sees it runs `start-proxy` as a script path
+ * and crashes, so the proxy never answers (T89b).
+ */
+export function spawnRouterProxy(opts: {
+  bundled: boolean;
+  startProxyJs: string;
+  port: number;
+  execPath: string;
+  env: NodeJS.ProcessEnv;
+  spawn: (
+    bin: string,
+    args: string[],
+    options: { detached: boolean; stdio: 'ignore'; env?: NodeJS.ProcessEnv }
+  ) => { unref(): void };
+}): void {
+  const child = opts.spawn(opts.execPath, proxySpawnArgs(opts), {
+    detached: true,
+    stdio: 'ignore',
+    ...(opts.bundled ? { env: { ...opts.env, PKG_EXECPATH: '' } } : {}),
+  });
+  child.unref();
+}
+
 // ============================================================================
 // Exec wrapper
 // ============================================================================
@@ -337,14 +362,8 @@ export async function main(argv: string[]): Promise<number | undefined> {
     ensureProxy: (port: number) =>
       ensureProxy(port, {
         healthCheck,
-        startProxy: () => {
-          const child = spawn(
-            process.execPath,
-            proxySpawnArgs({ bundled, startProxyJs, port }),
-            { detached: true, stdio: 'ignore' }
-          );
-          child.unref();
-        },
+        startProxy: () =>
+          spawnRouterProxy({ bundled, startProxyJs, port, execPath: process.execPath, env: process.env, spawn }),
         sleep: (ms: number) => new Promise((r) => setTimeout(r, ms)),
       }),
     resolveClaudeBin: () =>

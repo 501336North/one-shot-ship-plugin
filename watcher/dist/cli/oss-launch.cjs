@@ -40,7 +40,8 @@ __export(oss_launch_exports, {
   resolveClaudeBin: () => resolveClaudeBin,
   resolveEntry: () => resolveEntry,
   resolveLaunch: () => resolveLaunch,
-  runLaunch: () => runLaunch
+  runLaunch: () => runLaunch,
+  spawnRouterProxy: () => spawnRouterProxy
 });
 module.exports = __toCommonJS(oss_launch_exports);
 var fs5 = __toESM(require("fs"), 1);
@@ -1482,7 +1483,8 @@ async function startProxyBackground(options) {
   const head = bundled ? "start-proxy" : (0, import_url.fileURLToPath)(__ossImportMetaUrl);
   const child = spawnFn(process.execPath, [head, ...args], {
     detached: true,
-    stdio: "ignore"
+    stdio: "ignore",
+    ...bundled ? { env: { ...process.env, PKG_EXECPATH: "" } } : {}
   });
   child.unref();
   const pid = child.pid || 0;
@@ -1669,6 +1671,14 @@ function proxySpawnArgs(opts) {
   const head = opts.bundled ? ["start-proxy"] : [opts.startProxyJs];
   return [...head, "--router", "--background", "--port", String(opts.port)];
 }
+function spawnRouterProxy(opts) {
+  const child = opts.spawn(opts.execPath, proxySpawnArgs(opts), {
+    detached: true,
+    stdio: "ignore",
+    ...opts.bundled ? { env: { ...opts.env, PKG_EXECPATH: "" } } : {}
+  });
+  child.unref();
+}
 async function runLaunch(argv, deps) {
   const decision = resolveLaunch(deps.loadConfig(), deps.baseEnv);
   const nodeCheck = (deps.nodeCheck ?? (() => ({ ok: true })))();
@@ -1764,14 +1774,7 @@ async function main2(argv) {
     loadConfig: () => loadMergedConfig(fs5, path4, os3),
     ensureProxy: (port) => ensureProxy(port, {
       healthCheck,
-      startProxy: () => {
-        const child = (0, import_child_process2.spawn)(
-          process.execPath,
-          proxySpawnArgs({ bundled, startProxyJs, port }),
-          { detached: true, stdio: "ignore" }
-        );
-        child.unref();
-      },
+      startProxy: () => spawnRouterProxy({ bundled, startProxyJs, port, execPath: process.execPath, env: process.env, spawn: import_child_process2.spawn }),
       sleep: (ms) => new Promise((r) => setTimeout(r, ms))
     }),
     resolveClaudeBin: () => resolveClaudeBin({
@@ -1825,5 +1828,6 @@ if (isMainModule2) {
   resolveClaudeBin,
   resolveEntry,
   resolveLaunch,
-  runLaunch
+  runLaunch,
+  spawnRouterProxy
 });

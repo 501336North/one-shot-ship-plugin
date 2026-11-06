@@ -67,6 +67,19 @@ export function proxySpawnArgs(opts) {
     return [...head, '--router', '--background', '--port', String(opts.port)];
 }
 /**
+ * Start the router proxy detached. A bundled (pkg) binary clears PKG_EXECPATH for its child: pkg
+ * sets it to the binary on every spawn, and a child that sees it runs `start-proxy` as a script path
+ * and crashes, so the proxy never answers (T89b).
+ */
+export function spawnRouterProxy(opts) {
+    const child = opts.spawn(opts.execPath, proxySpawnArgs(opts), {
+        detached: true,
+        stdio: 'ignore',
+        ...(opts.bundled ? { env: { ...opts.env, PKG_EXECPATH: '' } } : {}),
+    });
+    child.unref();
+}
+/**
  * Launch claude, routing through the proxy only when models.agents is configured.
  * Resolves to the child's exit code.
  */
@@ -216,10 +229,7 @@ export async function main(argv) {
         loadConfig: () => loadMergedConfig(fs, path, os),
         ensureProxy: (port) => ensureProxy(port, {
             healthCheck,
-            startProxy: () => {
-                const child = spawn(process.execPath, proxySpawnArgs({ bundled, startProxyJs, port }), { detached: true, stdio: 'ignore' });
-                child.unref();
-            },
+            startProxy: () => spawnRouterProxy({ bundled, startProxyJs, port, execPath: process.execPath, env: process.env, spawn }),
             sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
         }),
         resolveClaudeBin: () => resolveClaudeBin({

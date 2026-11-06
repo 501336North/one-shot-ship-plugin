@@ -357,6 +357,17 @@ describe('start-proxy CLI', () => {
         );
       });
 
+      it('in the bundled binary, clears PKG_EXECPATH for the child and keeps the rest of env (T89b)', async () => {
+        g.__OSS_BUNDLED__ = true;
+        process.env.PKG_EXECPATH = process.execPath;
+        process.env.OSS_T89B_KEEP = 'kept';
+        const mockSpawn = await spawnOnce();
+        const opts = mockSpawn.mock.calls[0][2] as { env?: NodeJS.ProcessEnv };
+        expect(opts.env?.PKG_EXECPATH).toBe('');
+        expect(opts.env?.OSS_T89B_KEEP).toBe('kept');
+        expect(opts.env?.HOME).toBe(process.env.HOME);
+      });
+
       it('in a node-script install, runs node on the start-proxy script', async () => {
         const mockSpawn = await spawnOnce();
         const [cmd, argv, opts] = mockSpawn.mock.calls[0] as [string, string[], { detached: boolean }];

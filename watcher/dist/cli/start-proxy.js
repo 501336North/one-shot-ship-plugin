@@ -334,9 +334,12 @@ export async function startProxyBackground(options) {
     // the child runs as the launcher and the proxy never binds (T89).
     const bundled = typeof __OSS_BUNDLED__ !== 'undefined' && __OSS_BUNDLED__ === true;
     const head = bundled ? 'start-proxy' : fileURLToPath(import.meta.url);
+    // pkg marks a child PKG_EXECPATH=<binary>, which makes it run `start-proxy` as a script path and
+    // crash; an empty value clears that mark (T89b).
     const child = spawnFn(process.execPath, [head, ...args], {
         detached: true,
         stdio: 'ignore',
+        ...(bundled ? { env: { ...process.env, PKG_EXECPATH: '' } } : {}),
     });
     // Unref to allow parent to exit
     child.unref();

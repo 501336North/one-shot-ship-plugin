@@ -49,6 +49,25 @@ export declare function proxySpawnArgs(opts: {
     startProxyJs: string;
     port: number;
 }): string[];
+/**
+ * Start the router proxy detached. A bundled (pkg) binary clears PKG_EXECPATH for its child: pkg
+ * sets it to the binary on every spawn, and a child that sees it runs `start-proxy` as a script path
+ * and crashes, so the proxy never answers (T89b).
+ */
+export declare function spawnRouterProxy(opts: {
+    bundled: boolean;
+    startProxyJs: string;
+    port: number;
+    execPath: string;
+    env: NodeJS.ProcessEnv;
+    spawn: (bin: string, args: string[], options: {
+        detached: boolean;
+        stdio: 'ignore';
+        env?: NodeJS.ProcessEnv;
+    }) => {
+        unref(): void;
+    };
+}): void;
 interface SpawnedChild {
     on(event: string, cb: (arg: unknown) => void): unknown;
 }
