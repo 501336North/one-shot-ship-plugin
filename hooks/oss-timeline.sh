@@ -267,16 +267,25 @@ _oss_tl_push() (
         else mark --argjson s "$s" '{id: $id, state: "retry", status: $s}'; fi
     }
     # compact: the outbox keeps only the entries of ids not yet in a final state (verified, refused, withheld,
-    # conflict, failed), rewritten in place under the writer's lock (~/.oss/locks/<rid>, tried once: a busy lock
-    # leaves the file as it is), so a push never re-reads a whole history
+    # conflict, failed), under the writer's lock (~/.oss/locks/<rid>, tried once: a busy lock leaves the file as it
+    # is; writers append only while they hold it), so a push never re-reads a whole history. The kept entries go to
+    # a temp file in the outbox folder (600, not *.ndjson, so never walked) renamed onto the outbox: a rename
+    # replaces a link swapped in at the path instead of writing through it, and a write cut short leaves the old
+    # outbox whole. An outbox with no entry left is removed, so outboxes never pile up and slow every push.
     compact() {
+        local new=""
         oss_private_dir "$HOME/.oss/locks" || return 0
         lk="$HOME/.oss/locks/$(basename "$ob" .ndjson)"
         mkdir "$lk" 2>/dev/null || { lk=""; return 0; }
         lheld=$(oss_lock_id "$lk")
-        jq -Rnc '[inputs | fromjson? | objects] | (reduce .[] as $e ({}; .[$e.id | tostring] = $e.state)) as $last
+        if jq -Rnc '[inputs | fromjson? | objects] | (reduce .[] as $e ({}; .[$e.id | tostring] = $e.state)) as $last
             | .[] | select($last[.id | tostring] | IN("verified", "refused", "withheld", "conflict", "failed") | not)' \
-            "$ob" > "$tmp/keep" 2>/dev/null && (($(wc -l < "$tmp/keep") < $(wc -l < "$ob"))) && ob_ok && cat "$tmp/keep" > "$ob"
+            "$ob" > "$tmp/keep" 2>/dev/null; then
+            if [[ ! -s "$tmp/keep" ]]; then ob_ok && rm -f "$ob"
+            elif (($(wc -l < "$tmp/keep") < $(wc -l < "$ob"))) && ob_ok; then
+                new=$(mktemp "$obd/.compact.XXXXXX") && cat "$tmp/keep" > "$new" && mv -f "$new" "$ob" || rm -f "$new"
+            fi
+        fi
         oss_release_lock "$lk" "$lheld"; lk="" lheld=""
     }
     sent=0 tried=" " compacted=" "

@@ -119,11 +119,10 @@ reset; write 3; queue timeline '503 {"error":"down"}'; push
 name='should compact an outbox once it holds only lines in a final state (verified, refused, withheld, conflict, failed), under its lock'
 reset; write 5; set -- verified refused withheld conflict failed
 for i in $(ids_of "$TL"); do final "$i" "$1"; shift; done
-ino=$(ls -i "$OB" | awk '{print $1}')
 push
-[[ $RC -eq 0 && -f "$OB" && ! -L "$OB" && ! -s "$OB" && "$(ls -i "$OB" | awk '{print $1}')" == "$ino" && ! -s "$API/api/calls" ]] \
-    && pass "$name (emptied, no call made)" \
-    || fail "$name (emptied, no call made)" "rc=$RC size=$(wc -c < "$OB" 2>/dev/null) calls=$(cat "$API/api/calls" 2>/dev/null)"
+[[ $RC -eq 0 && ! -e "$OB" && ! -L "$OB" && ! -s "$API/api/calls" ]] \
+    && pass "$name (removed, no call made)" \
+    || fail "$name (removed, no call made)" "rc=$RC size=$(wc -c < "$OB" 2>/dev/null) calls=$(cat "$API/api/calls" 2>/dev/null)"
 
 reset; write 3; read -r -a l <<< "$(ids_of "$TL")"; set -- "${l[@]}"; final "$1" verified
 queue policy '000 unreachable'; push
@@ -137,6 +136,58 @@ before=$(cat "$OB"); mkdir -p "$HOME/.oss/locks/$RID"; push
 [[ $RC -eq 0 && "$(cat "$OB")" == "$before" ]] && pass "$name (not while a writer holds its lock)" \
     || fail "$name (not while a writer holds its lock)" "rc=$RC outbox=$(cat "$OB")"
 rmdir "$HOME/.oss/locks/$RID"
+
+# --- compaction through a temp file renamed into place (ship round 2, Task 15) ----------------------------------------
+# A BASH_ENV `test` (the repo's other-user seam) sees each `test -O OUTBOX` the push runs. Armed with OSS_T_SWAP_AT=n,
+# the n-th one answers as the real check does, then puts a link to a victim file at the outbox path: a link swapped in
+# right after the check passed. OSS_T_SWAP_LOG counts the calls.
+cat > "$T/swap.sh" <<'SEAM'
+test() {
+    if [[ "${1:-}" == -O && "${2:-}" == "${OSS_T_SWAP_OB:-}" && -n "${OSS_T_SWAP_AT:-}" ]]; then
+        local rc n; builtin test "$@"; rc=$?
+        echo x >> "$OSS_T_SWAP_LOG"; n=$(wc -l < "$OSS_T_SWAP_LOG")
+        ((n == OSS_T_SWAP_AT)) && { rm -f "$2"; ln -s "$OSS_T_SWAP_VICTIM" "$2"; }
+        return $rc
+    fi
+    builtin test "$@"
+}
+SEAM
+# a `cat` that, when armed, copies one line and fails, as a write cut short by a full disk or a kill
+mkdir -p "$T/failcat"
+printf '#!/bin/bash\nif [[ -e "%s" ]]; then /bin/cat "$@" | head -n 1; exit 1; fi\nexec /bin/cat "$@"\n' "$T/failcat.on" > "$T/failcat/cat"
+chmod +x "$T/failcat/cat"
+name='should compact through a temp file in the outbox folder renamed into place'
+VICTIM="$T/victim"
+reset; write 3; read -r -a l <<< "$(ids_of "$TL")"; final "${l[0]}" verified
+printf 'precious\n' > "$VICTIM"; vsum=$(cksum < "$VICTIM")
+queue policy '000 unreachable'
+rm -f "$T/swap.log"
+(cd "$P" && BASH_ENV="$T/swap.sh" OSS_T_SWAP_OB="$OB" OSS_T_SWAP_AT=2 OSS_T_SWAP_LOG="$T/swap.log" OSS_T_SWAP_VICTIM="$VICTIM" \
+    run_capped 120 "$HOOK" push </dev/null >/dev/null 2>"$T/err"); RC=$?
+left=$(jq -r '.id' "$OB" 2>/dev/null | sort -u | tr '\n' ' ')
+want=$(printf '%s\n' "${l[1]}" "${l[2]}" | sort | tr '\n' ' ')
+[[ $RC -eq 0 && "$(cksum < "$VICTIM")" == "$vsum" && -f "$OB" && ! -L "$OB" && "$left" == "$want" && "$(stat -f %Lp "$OB" 2>/dev/null || stat -c %a "$OB")" == 600 ]] \
+    && pass "$name (a link swapped in after the check is replaced, the victim untouched)" \
+    || fail "$name (a link swapped in after the check is replaced, the victim untouched)" \
+        "rc=$RC victim=$(cat "$VICTIM") link=$([[ -L "$OB" ]] && echo yes) left=$left want=$want swaps=$(wc -l < "$T/swap.log" 2>/dev/null)"
+
+reset; write 3; read -r -a l <<< "$(ids_of "$TL")"; final "${l[0]}" verified
+before=$(cat "$OB"); queue policy '000 unreachable'
+touch "$T/failcat.on"
+(cd "$P" && PATH="$T/failcat:$PATH" run_capped 120 "$HOOK" push </dev/null >/dev/null 2>"$T/err"); RC=$?
+rm -f "$T/failcat.on"
+extra=$(find "$OB_DIR" -mindepth 1 -maxdepth 1 ! -name '*.ndjson' ! -name '*.ndjson.push' -print)
+[[ $RC -eq 0 && "$(cat "$OB")" == "$before" && -z "$extra" ]] \
+    && pass "$name (a write cut short leaves the old outbox whole, no temp file left)" \
+    || fail "$name (a write cut short leaves the old outbox whole, no temp file left)" "rc=$RC outbox=$(cat "$OB") extra=$extra"
+
+name='should remove an outbox left with no waiting line'
+reset; write 2; push; push
+[[ $RC -eq 0 && ! -e "$OB" && ! -L "$OB" && "$(posts)" == 2 ]] && pass "$name (every line verified, the next push removes it)" \
+    || fail "$name (every line verified, the next push removes it)" "rc=$RC posts=$(posts) outbox=$(cat "$OB" 2>/dev/null)"
+reset; mkdir -p "$OB_DIR"; chmod 700 "$OB_DIR"; (umask 077; : > "$OB"); push
+[[ $RC -eq 0 && ! -e "$OB" && ! -s "$API/api/calls" ]] && pass "$name (a 0-byte outbox an earlier version left)" \
+    || fail "$name (a 0-byte outbox an earlier version left)" "rc=$RC size=$(wc -c < "$OB" 2>/dev/null) calls=$(cat "$API/api/calls" 2>/dev/null)"
 
 # --- a mark that cannot be written ---------------------------------------------------------------------------------
 name='should stop the run when a state mark cannot be written'

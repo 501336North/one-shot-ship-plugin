@@ -73,7 +73,7 @@ The design-level ADRs (ADR-001 to ADR-010) live in AgenticDevWorkflow `.oss/dev/
 ## P-13: Delivery rules (Task 10, 2026-11-06)
 - **Every outbox:** a push walks `~/.oss/timeline-outbox/*.ndjson`, each under its own push lock, so a branch switch or the ship archive never strands a line. The feature need not resolve; the switch and the policy GET (once per run, asked only when a line waits) are unchanged.
 - **Retry:** any reply that is not final (5xx, 401, 403, 404, 413, 422, 429, an unknown 409, a 2xx naming no account, a timeout, no answer) is a retry; the third marks the line failed. A run sends each line at most once and goes on to the lines behind it, so a 5xx no longer stops the run either.
-- **Compaction:** once per outbox per run, before it sends, under the writer's lock (tried once, never waited on), the outbox is rewritten in place to the entries of ids not in a final state. What a run marks stays readable until the next run.
+- **Compaction:** once per outbox per run, before it sends, under the writer's lock (tried once, never waited on), the outbox is cut to the entries of ids not in a final state. What a run marks stays readable until the next run. Since Task 15 (ship round 2) the kept entries go to a temp file in the outbox folder (`mktemp`, 600, `.compact.*`, never walked) that `mv -f` renames onto the outbox, so a link swapped in at the path is replaced, never written through, and a write cut short leaves the old outbox whole; an outbox with no entry left is removed (`rm -f`), so 0-byte outboxes never pile up.
 - **A failed write** of a mark or a withhold stops the run.
 
 ## P-14: What a merge line trusts (Task 11, 2026-11-06)
