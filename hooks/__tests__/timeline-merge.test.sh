@@ -215,6 +215,33 @@ before=$(lines); approve chat-instruction; ago 540 "$D/approval.txt"; merge
 [[ $ok -eq 1 ]] && pass "should refuse an approval.txt older than 10 minutes, and delete it" \
     || fail "should refuse an approval.txt older than 10 minutes, and delete it" "$bad (err=$ERR)"
 
+# --- a value file is read only up to 4 KB (a 200 MB file must not be read whole) --------------------------------
+# A valid approval, then more than 4 KB of newlines, then a tail outside the rule: read whole, the tail makes the
+# value invalid; read up to 4 KB, the newlines are all that follow the approval, and the approval stands.
+ok=1 bad=""
+before=$(lines); { printf 'chat-instruction'; head -c 8192 /dev/zero | tr '\0' '\n'; printf 'not-an-approval\n'; } > "$D/approval.txt"
+merge
+[[ $RC -eq 0 && $(lines) -eq $((before + 1)) && "$(last | jq -c .approval)" == '{"type":"chat-instruction"}' ]] || { ok=0; bad="$bad big-tail-read: rc=$RC line=$(last)"; }
+[[ ! -e "$D/approval.txt" ]] || { ok=0; bad="$bad big-file-left"; }
+[[ $ok -eq 1 ]] && pass "should read at most 4 KB of a gate or merge value file" \
+    || fail "should read at most 4 KB of a gate or merge value file" "$bad (err=$ERR)"
+
+# --- a value file last written in the future is never used ------------------------------------------------------
+# ahead <seconds> <file>: sets the file's mtime that many seconds ahead (BSD date -r, else GNU date -d)
+ahead() {
+    local t=$(($(date +%s) + $1)) s
+    s=$(date -r "$t" +%Y%m%d%H%M.%S 2>/dev/null || date -d "@$t" +%Y%m%d%H%M.%S) && touch -t "$s" "$2"
+}
+ok=1 bad=""
+before=$(lines); approve chat-instruction; ahead 3600 "$D/approval.txt"; merge; refused_merge future-1-hour
+before=$(lines); approve chat-instruction; touch -t 209901010000 "$D/approval.txt"; merge; refused_merge future-2099
+for s in 30 0; do   # small clock skew, and now: still accepted
+    before=$(lines); approve chat-instruction; ahead "$s" "$D/approval.txt"; merge
+    [[ $RC -eq 0 && $(lines) -eq $((before + 1)) && "$(last | jq -c .approval)" == '{"type":"chat-instruction"}' ]] || { ok=0; bad="$bad skew-$s: rc=$RC"; }
+done
+[[ $ok -eq 1 ]] && pass "should refuse a value file last written in the future (more than 60 s ahead of now)" \
+    || fail "should refuse a value file last written in the future (more than 60 s ahead of now)" "$bad (err=$ERR)"
+
 # --- gh runs with every GIT_* variable unset ---------------------------------------------------------------------
 rm -f "$T/gh/env"; approve merge-flag
 (export GIT_DIR="$T/elsewhere/.git" GIT_WORK_TREE="$T/elsewhere" GIT_INDEX_FILE="$T/elsewhere/index" GIT_COMMON_DIR="$T/elsewhere/.git" \

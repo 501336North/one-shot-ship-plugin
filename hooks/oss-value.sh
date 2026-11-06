@@ -117,13 +117,14 @@ _ov_read_value() {
     _ov_open "$1" && _OV_VAL=$(LC_ALL=C tr -cd 'A-Za-z0-9 ._,:()/-' <&3 | cut -c1-200); local r=$?; exec 3<&-; return $r
 }
 
-# <file> <regex> [max-age]: the checked file, read whole, deleted at once (valid or not: a key never
+# <file> <regex> [max-age]: the checked file, read up to 4 KB, deleted at once (valid or not: a key never
 # lingers), then held to <regex> -> _OV_VAL. A refused open leaves the path alone. With max-age (seconds),
-# an opened file last written longer ago is refused too: value folders are per repo, not per session.
+# an opened file last written longer ago, or more than 60 s ahead of now, is refused too: value folders are
+# per repo, not per session.
 _ov_take() {
     _OV_VAL=""; _ov_open "$1" || { { exec 3<&-; } 2>/dev/null; return 1; }   # braces: a bare exec 2>/dev/null would silence the caller
-    local v m; v=$(cat <&3); m=$(stat -L -c %Y /dev/fd/3 2>/dev/null || stat -L -f %m /dev/fd/3); exec 3<&-; rm -f "$_OV_DIR/$1"
-    [[ -z "${3:-}" ]] || { [[ "$m" =~ ^[0-9]+$ ]] && (( $(date +%s) - m <= $3 )); } || return 1
+    local v m n; v=$(head -c 4096 <&3); m=$(stat -L -c %Y /dev/fd/3 2>/dev/null || stat -L -f %m /dev/fd/3); exec 3<&-; rm -f "$_OV_DIR/$1"
+    [[ -z "${3:-}" ]] || { n=$(date +%s); [[ "$m" =~ ^[0-9]+$ ]] && (( n - m <= $3 && m <= n + 60 )); } || return 1
     [[ "$v" =~ $2 ]] && _OV_VAL=$v
 }
 
