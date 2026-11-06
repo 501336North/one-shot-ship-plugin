@@ -166,7 +166,7 @@ rm -f "$T/swap.log"
     run_capped 120 "$HOOK" push </dev/null >/dev/null 2>"$T/err"); RC=$?
 left=$(jq -r '.id' "$OB" 2>/dev/null | sort -u | tr '\n' ' ')
 want=$(printf '%s\n' "${l[1]}" "${l[2]}" | sort | tr '\n' ' ')
-[[ $RC -eq 0 && "$(cksum < "$VICTIM")" == "$vsum" && -f "$OB" && ! -L "$OB" && "$left" == "$want" && "$(stat -f %Lp "$OB" 2>/dev/null || stat -c %a "$OB")" == 600 ]] \
+[[ $RC -eq 0 && "$(cksum < "$VICTIM")" == "$vsum" && -f "$OB" && ! -L "$OB" && "$left" == "$want" && "$(stat -c %a "$OB" 2>/dev/null || stat -f %Lp "$OB")" == 600 ]] \
     && pass "$name (a link swapped in after the check is replaced, the victim untouched)" \
     || fail "$name (a link swapped in after the check is replaced, the victim untouched)" \
         "rc=$RC victim=$(cat "$VICTIM") link=$([[ -L "$OB" ]] && echo yes) left=$left want=$want swaps=$(wc -l < "$T/swap.log" 2>/dev/null)"
