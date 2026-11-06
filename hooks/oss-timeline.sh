@@ -75,6 +75,12 @@ def re($r): type == "string" and test("\\A(?:" + $r + ")\\z");
 def int($lo; $hi): type == "number" and . == floor and . >= $lo and . <= $hi;
 def stamp: re("[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]+)?Z")
     and . >= "2020";
+# the bare-key check of the API, copied from holdsBareSecret (AgenticDevWorkflow 574a772,
+# packages/api/src/routes/timeline.ts): in a free-pattern field (session, repo, feature, agent, gate, command,
+# mergedBy) a run of 32 or more letters and digits with a digit reads as a key body sent without its prefix, and
+# the API refuses the line (400 Holds a secret). Refused here, so such a line never reaches the committed file.
+def keyless: [scan("[A-Za-z0-9]{32,}")] | all(test("[0-9]") | not);
+def free($r): re($r) and keyless;
 def uuid4: re("[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}");
 def counts: type == "object" and all(to_entries[];
     (.key | IN("critical", "high", "medium", "low", "info")) and (.value | int(0; 1000)));
@@ -89,25 +95,25 @@ def own: {
     merge: {req: ["pr", "sha", "mergedAt", "mergedBy", "approval"], opt: []},
     "merge-unknown": {req: [], opt: ["pr"]}};
 def field($key):
-    if $key == "command" then re("[a-z][a-z0-9-]{0,40}")
+    if $key == "command" then free("[a-z][a-z0-9-]{0,40}")
     elif $key == "status" then IN("start", "complete", "failed")
-    elif $key == "agent" then re("[a-z0-9:_-]{1,64}")
+    elif $key == "agent" then free("[a-z0-9:_-]{1,64}")
     elif $key == "round" then int(1; 20)
-    elif $key == "gate" then re("[a-z0-9-]{1,40}")
+    elif $key == "gate" then free("[a-z0-9-]{1,40}")
     elif $key == "verdict" then IN("pass", "fail")
     elif $key == "findings" or $key == "fixed" then counts
     elif $key == "mode" then IN("full", "quick", "no-checks", "team")
     elif $key == "pr" then int(1; 10000000)
     elif $key == "sha" then re("[0-9a-f]{40}")
     elif $key == "mergedAt" then stamp
-    elif $key == "mergedBy" then re("[A-Za-z0-9-]{1,39}")
+    elif $key == "mergedBy" then free("[A-Za-z0-9-]{1,39}")
     elif $key == "approval" then approval
     else false end;
 def fields_ok($kind): own[$kind] as $o | type == "object" and $o != null
     and (keys - $o.req - $o.opt == []) and ($o.req - keys == [])
     and all(to_entries[]; .key as $k | .value | field($k));
-def base_ok: .v == 1 and (.id | uuid4) and (.ts | stamp) and (.session | re("[A-Za-z0-9-]{1,64}"))
-    and ((has("feature") | not) or (.feature | re("(?!\\.)[A-Za-z0-9._-]{1,128}")));
+def base_ok: .v == 1 and (.id | uuid4) and (.ts | stamp) and (.session | free("[A-Za-z0-9-]{1,64}"))
+    and ((has("feature") | not) or (.feature | free("(?!\\.)[A-Za-z0-9._-]{1,128}")));
 '
 
 # _oss_tl_sha256: sha-256 of stdin, with shasum (macOS) or sha256sum (Linux)
@@ -121,6 +127,8 @@ oss_timeline_append() (
     proj="$_OSS_PROJ"
     # a repo that never used OSS gains nothing, not even a stderr line
     [[ -n "$proj" && -d "$proj/.oss" ]] || exit 0
+    # no repo: the project resolved to $HOME, whose ~/.oss is the person's own settings, never a timeline
+    _oss_phys_dir "$proj" && p="$_OSS_PD" && _oss_phys_dir "$HOME" && [[ "$p" != "$_OSS_PD" ]] || exit 0
     command -v jq >/dev/null 2>&1 || refuse "jq not found"
     command -v shasum >/dev/null 2>&1 || command -v sha256sum >/dev/null 2>&1 || refuse "no sha-256 tool"
     case "$kind" in command | agent | gate | merge | merge-unknown) ;; *) refuse "unknown kind" ;; esac
@@ -132,6 +140,7 @@ oss_timeline_append() (
     done
     oss_resolve_feature "$proj"
     feature="$_OSS_FEATURE"
+    ((${#feature} <= 128)) || feature=""   # longer than the API's feature pattern allows: filed as unfiled
     rec=".oss/dev/timeline-unfiled.ndjson"
     [[ -n "$feature" ]] && rec=".oss/dev/active/$feature/timeline.ndjson"
     # the uuid and time as G1's decision record makes them
@@ -172,6 +181,10 @@ oss_timeline_append() (
     held=$(oss_lock_id "$lock")
     # the path again, now that no other writer can touch it: a link swapped in during the wait is refused
     oss_safe_target "$proj" "$rec" || { oss_refuse_unsafe "$rec"; exit 1; }
+    # another person's file is never appended to (`test -O`: the tests' other-user seam)
+    [[ ! -e "$file" ]] || test -O "$file" || refuse "$rec is not yours"
+    # the unfiled file stops growing at 1 MB (it is never pushed or trimmed)
+    [[ -n "$feature" || -z "$(find "$file" -prune -size +1048575c 2>/dev/null)" ]] || exit 0
     # the outbox entry (B5), made from the line this machine writes: the push never reads the committed file
     entry=$(jq -c --arg fp "$(k=$(oss_api_key) && printf '%s' "$k" | _oss_tl_sha256 | cut -c1-16)" \
         '{id, state: "pending", fp: $fp, body: .}' <<< "$line")
@@ -223,7 +236,7 @@ _oss_tl_push() (
     # waiting [TRIED]: the outbox ids whose latest state is pending or retry, oldest first, each with its stored body
     # and fp; ids in TRIED (" id id ") are left out, so no line is sent twice in a run
     waiting() {
-        jq -Rnc --arg t "${1:-}" '[inputs | fromjson? | objects | select((.id | type) == "string" and (.id | test("^[0-9a-f-]{36}$")))]
+        jq -Rnc --arg t "${1:-}" '[inputs | fromjson? | objects | select((.id | type) == "string" and (.id | test("\\A[0-9a-f-]{36}\\z")))]
         | reduce .[] as $e ({order: [], last: {}, body: {}, fp: {}}; (if .last[$e.id] == null then .order += [$e.id] else . end)
             | .last[$e.id] = $e.state | if .body[$e.id] == null and ($e.body | type) == "object" then .body[$e.id] = $e.body | .fp[$e.id] = $e.fp else . end)
         | .last as $last | .body as $b | .fp as $f | .order[] | select($last[.] == "pending" or $last[.] == "retry")
@@ -353,20 +366,24 @@ case "${1:-}" in
     # oss-timeline.sh merge APPROVAL: only from oss-value.sh timeline merge (B4b), which read APPROVAL from
     # approval.txt and checked it (merge-flag, chat-instruction, none or decision:<uuid>). decision:<uuid> counts only
     # when that id is a line's id in this feature's G1 record (decisions.ndjson, read only as a single-link regular
-    # file); otherwise the approval is refused and nothing is written (Task 11). The PR facts come from `gh pr view`
+    # file, and only its first 1 MB); otherwise the approval is refused: exit 1, and only a local merge-unknown line
+    # is written, so a real merge always leaves a trace (Task 12; an empty APPROVAL, which oss-value passes for a
+    # refused approval.txt, gives the same line). The PR facts come from `gh pr view`
     # for the current branch, bounded at 10 s (P-9), run with every GIT_* variable unset (the session's could name
     # another repo); nothing from a value file reaches gh's argv. No gh, a failed or hung gh, a PR that is not merged,
     # or facts outside the merge schema (a bot login, a null mergeCommit, a mergedAt before 2020) give a local
     # merge-unknown line (P-2), with the PR number when it is valid. The line's own rules check every field again.
     merge)
         oss_resolve_project
+        refused=""
         if [[ "${2:-}" == decision:* ]]; then
             oss_resolve_feature "$_OSS_PROJ"
             drec="$_OSS_PROJ/.oss/dev/active/$_OSS_FEATURE/decisions.ndjson"
+            # the record is read only up to 1 MB
             [[ -n "$_OSS_FEATURE" ]] && oss_is_regular "$drec" && oss_single_link "$drec" \
-                && [[ -n "$(jq -nR --arg id "${2#decision:}" \
-                    'first(inputs | fromjson? | objects | select(.id == $id)) | 1' "$drec" 2>/dev/null)" ]] \
-                || { echo "oss: timeline merge refused, the decision is not in this feature's decision record" >&2; exit 1; }
+                && [[ -n "$(head -c 1048576 "$drec" | jq -nR --arg id "${2#decision:}" \
+                    'first(inputs | fromjson? | objects | select(.id == $id)) | 1' 2>/dev/null)" ]] \
+                || { echo "oss: timeline merge refused, the decision is not in this feature's decision record" >&2; refused=1; }
         fi
         out=""
         command -v gh >/dev/null 2>&1 \
@@ -374,21 +391,21 @@ case "${1:-}" in
                 && oss_tl_bounded 10 gh pr view --json number,mergeCommit,mergedAt,mergedBy 2>/dev/null) \
             || out=""
         # shellcheck disable=SC2016 # jq's $ variables, not the shell's
-        fields=$(printf '%s' "$out" | jq -c --arg a "${2:-}" "$_OSS_TL_RULES"'
+        fields=$(printf '%s' "$out" | jq -c --arg a "${2:-}" --arg r "$refused" "$_OSS_TL_RULES"'
             (if $a | startswith("decision:") then {type: "decision", decisionId: $a[9:]} else {type: $a} end) as $ap
             | {pr: .number, sha: .mergeCommit.oid, mergedAt: .mergedAt, mergedBy: .mergedBy.login, approval: $ap} as $m
-            | if $m | fields_ok("merge") then ["merge", $m]
+            | if $r == "" and ($m | fields_ok("merge")) then ["merge", $m]
               else ["merge-unknown", (if .number | field("pr") then {pr: .number} else {} end)] end' 2>/dev/null) || fields=""
         [[ -n "$fields" ]] || fields='["merge-unknown",{}]'
         oss_timeline_append "$(jq -r '.[0]' <<< "$fields")" "$(jq -c '.[1]' <<< "$fields")"
-        rc=$?; _oss_tl_push_bg; exit "$rc" ;;
+        rc=$?; [[ -z "$refused" ]] || rc=1; _oss_tl_push_bg; exit "$rc" ;;
     # no verb: the PostToolUse hook for Agent|Task (B3), the hook JSON on stdin. One agent line with the type,
     # lower-cased (P-5), and the running command when the project's own workflow-state.json names one. Never
     # disturbs the tool run: exit 0 whatever happens.
     "")
         export LC_ALL=C
         in=""
-        [[ -t 0 ]] || IFS= read -r -d '' -t 2 in || true
+        [[ -t 0 ]] || IFS= read -r -d '' -t 2 in < <(head -c 1048576) || true   # at most 1 MB, at most 2 s
         tool=$(printf '%s' "$in" | jq -r '.tool_name | strings' 2>/dev/null)
         [[ "$tool" == Agent || "$tool" == Task ]] || exit 0
         agent=$(printf '%s' "$in" | jq -r '.tool_input.subagent_type | strings | ascii_downcase' 2>/dev/null)
@@ -397,7 +414,8 @@ case "${1:-}" in
         # FIFO, T32) and only a plain command name: anything else is no command
         oss_resolve_project
         ws="$_OSS_PROJ/.oss/workflow-state.json" cmd=""
-        oss_is_regular "$ws" && cmd=$(jq -r '.currentCommand | strings' "$ws" 2>/dev/null)
+        oss_is_regular "$ws" && oss_single_link "$ws" && [[ -z "$(find "$ws" -prune -size +65536c 2>/dev/null)" ]] \
+            && cmd=$(head -c 65536 "$ws" | jq -r '.currentCommand | strings' 2>/dev/null)
         [[ "$cmd" =~ ^[a-z][a-z0-9-]{0,40}$ ]] || cmd=""
         # P-8: the hook's session_id first; the writer falls back to CLAUDE_CODE_SESSION_ID, then "unknown"
         OSS_TL_SESSION=$(printf '%s' "$in" | jq -r '.session_id | strings' 2>/dev/null) \

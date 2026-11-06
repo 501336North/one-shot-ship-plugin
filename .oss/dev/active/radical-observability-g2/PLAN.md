@@ -229,6 +229,8 @@ Every task: RED first, then GREEN, the same rules as Tasks 1-9. G1 and every G2 
 - `should write nothing when the project resolves to $HOME`.
 - `should file a line for a feature folder name over 128 characters as unfiled`, and `should stop appending to timeline-unfiled.ndjson once it reaches 1 MB`.
 - The outbox id check uses `\A…\z`.
+- `should read the feature's decisions.ndjson only up to 1 MB` for the decision-id check (Task 11).
+- `should still write a local merge-unknown line when the approval is refused` (a decision id not in the record, or a stale or malformed approval.txt), so a real merge always leaves a trace; nothing is queued for the API.
 
 ### Task 13: Gate lines are consistent, and the gate map test can fail
 - `should refuse verdict pass when a critical or high count exceeds its fixed count`.

@@ -367,11 +367,12 @@ _ov_cmd_timeline() {
     if [[ $1 == merge ]]; then   # B4b: approval.txt (taken: read and deleted, valid or not), none when there is none
         _OV_VAL=none
         if [[ -e "$_OV_DIR/approval.txt" || -L "$_OV_DIR/approval.txt" ]]; then
+            # refused: no approval reaches the line, which can then only be the local merge-unknown trace (Task 12)
             _ov_take approval.txt '^(merge-flag|chat-instruction|none|decision:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$' 600 \
-                || { echo "oss-value: timeline merge: refused (approval.txt unsafe, older than 10 minutes or outside its rule)" >&2; return 1; }
+                || { echo "oss-value: timeline merge: refused (approval.txt unsafe, older than 10 minutes or outside its rule), a local merge-unknown line only" >&2; ok=0; }
         fi
         _ov_walk "$o"
-        CLAUDE_PROJECT_DIR="$_OV_PROJ" "$_OV_HERE/oss-timeline.sh" merge "$_OV_VAL"
+        CLAUDE_PROJECT_DIR="$_OV_PROJ" "$_OV_HERE/oss-timeline.sh" merge "$_OV_VAL" && (( ok ))
         return
     fi
     for n in round gate verdict findings fixed mode; do

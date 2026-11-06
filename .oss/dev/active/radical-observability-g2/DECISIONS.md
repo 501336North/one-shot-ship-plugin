@@ -77,7 +77,14 @@ The design-level ADRs (ADR-001 to ADR-010) live in AgenticDevWorkflow `.oss/dev/
 - **A failed write** of a mark or a withhold stops the run.
 
 ## P-14: What a merge line trusts (Task 11, 2026-11-06)
-- **decision:<uuid>:** accepted only when that id is the `id` of a line in this feature's G1 record (`.oss/dev/active/<feature>/decisions.ndjson`, read only as a single-link regular file). Otherwise the merge verb refuses the approval: exit 1, one stderr line, no line written and nothing for the API (the same as an approval.txt outside its rule). It does not fall back to `none`. merge-flag and chat-instruction stay self-reported (DESIGN.md).
+- **decision:<uuid>:** accepted only when that id is the `id` of a line in this feature's G1 record (`.oss/dev/active/<feature>/decisions.ndjson`, read only as a single-link regular file). Otherwise the merge verb refuses the approval: exit 1, one stderr line, and nothing for the API (the same as an approval.txt outside its rule). It does not fall back to `none`. Since Task 12 a refusal still writes a local merge-unknown line (P-15). merge-flag and chat-instruction stay self-reported (DESIGN.md).
 - **Value-file age:** the gate and merge verbs refuse, and still delete, a value file last written more than 10 minutes ago (`_ov_take`'s optional max age, the opened file's mtime, GNU `stat -c` first as stat-order requires).
 - **gh:** runs with every GIT_* variable unset.
 - **Facts outside the merge schema** (a bot login, a null mergeCommit, a mergedAt before 2020) give a local merge-unknown line, with the pr when it is valid.
+
+## P-15: Bounds on what the timeline writes and reads (Task 12, 2026-11-06)
+- **Bare key:** the API's holdsBareSecret rule (AgenticDevWorkflow 574a772, routes/timeline.ts) is copied into `_OSS_TL_RULES` as `keyless`: in session, feature, agent, gate, command and mergedBy, a run of 32+ letters and digits with a digit refuses the line before the committed file is written. In mergedBy it fails the merge schema, so a real merge still gives a local merge-unknown line.
+- **Reads:** the hook's stdin only up to 1 MB (still within the 2 s read); workflow-state.json only as a single-link regular file of at most 64 KB; decisions.ndjson only its first 1 MB for the decision-id check.
+- **Writes:** never to a timeline.ndjson the person does not own (`test -O`, checked under the lock in oss-timeline.sh; the shared `oss_safe_target` is unchanged); nothing at all when the project resolves to $HOME; a feature folder name over 128 characters files the line as unfiled; timeline-unfiled.ndjson stops growing at 1 MB.
+- **Refused approval:** a decision id not in the record, or an approval.txt that is stale, unsafe or outside its rule, still writes a local merge-unknown line (exit 1, never queued), so a real merge always leaves a trace.
+- **Outbox ids:** matched with `\A..\z` (jq's `$` let a trailing newline through).

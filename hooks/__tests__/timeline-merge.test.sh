@@ -124,7 +124,9 @@ for a in MERGE-FLAG merged approved '' 'none none' 'merge-flag;x' decision "deci
     "decision:3f2b8c1e-9a4d-1c7b-8e21-5d6f7a8b9c0d" "decision:3f2b8c1e-9a4d-4c7b-7e21-5d6f7a8b9c0d" "decision:$UUID " "decision: $UUID" \
     "decision:${UUID}0" "type:merge-flag"; do
     before=$(lines); approve "$a"; merge
-    [[ $RC -ne 0 && $(lines) -eq $before && ! -e "$D/approval.txt" ]] || { ok=0; bad="$bad refused=[$a] rc=$RC left=$([[ -e "$D/approval.txt" ]] && echo yes)"; }
+    # refused: no merge line, only the local merge-unknown trace (Task 12)
+    [[ $RC -ne 0 && $(lines) -eq $((before + 1)) && "$(last | jq -r .kind)" == merge-unknown && ! -e "$D/approval.txt" ]] \
+        || { ok=0; bad="$bad refused=[$a] rc=$RC left=$([[ -e "$D/approval.txt" ]] && echo yes)"; }
 done
 [[ $ok -eq 1 ]] && pass "should read approval.txt as merge-flag, chat-instruction, none or decision:<lower-case uuid v4>, and refuse anything else" \
     || fail "should read approval.txt as merge-flag, chat-instruction, none or decision:<lower-case uuid v4>, and refuse anything else" "$bad (err=$ERR)"
@@ -178,8 +180,11 @@ reply "$MERGED"; before=$(lines); merge
 # --- decision:<uuid> only when the id is in this feature's decision record ---------------------------------------
 ok=1 bad=""
 OTHER=7a1c2e3f-4b5d-4e6f-9a0b-1c2d3e4f5a6b
-# refused_merge <case>: rc != 0, no new line, approval.txt gone
-refused_merge() { [[ $RC -ne 0 && $(lines) -eq $before && ! -e "$D/approval.txt" ]] || { ok=0; bad="$bad $1: rc=$RC line=$(last)"; }; }
+# refused_merge <case>: rc != 0, no merge line but one local merge-unknown line (Task 12), approval.txt gone
+refused_merge() {
+    [[ $RC -ne 0 && $(lines) -eq $((before + 1)) && "$(last | jq -r .kind)" == merge-unknown && ! -e "$D/approval.txt" ]] \
+        || { ok=0; bad="$bad $1: rc=$RC line=$(last)"; }
+}
 before=$(lines); approve "decision:$UUID"; merge
 [[ $RC -eq 0 && $(lines) -eq $((before + 1)) && "$(last | jq -c .approval)" == '{"type":"decision","decisionId":"'$UUID'"}' ]] \
     || { ok=0; bad="$bad in-record: rc=$RC"; }
@@ -198,8 +203,8 @@ rm -f "$T/drec-hardlink"
 # no record at all
 mv "$DREC" "$T/drec-keep"; before=$(lines); approve "decision:$UUID"; merge; refused_merge no-record
 mv "$T/drec-keep" "$DREC"
-[[ $ok -eq 1 ]] && pass "should accept decision:<uuid> only when that id is in this feature's decision record, and otherwise refuse the approval and write nothing" \
-    || fail "should accept decision:<uuid> only when that id is in this feature's decision record, and otherwise refuse the approval and write nothing" "$bad (err=$ERR)"
+[[ $ok -eq 1 ]] && pass "should accept decision:<uuid> only when that id is in this feature's decision record, and otherwise refuse the approval and write only a local merge-unknown line" \
+    || fail "should accept decision:<uuid> only when that id is in this feature's decision record, and otherwise refuse the approval and write only a local merge-unknown line" "$bad (err=$ERR)"
 
 # --- a value file older than 10 minutes is never reused ----------------------------------------------------------
 ok=1 bad=""
