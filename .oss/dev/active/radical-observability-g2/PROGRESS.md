@@ -28,7 +28,7 @@
 - [x] Task 15: compaction never follows a link and never loses a line (ship round 2) (completed 2026-11-06)
 - [x] Task 16: gh reports this repo's PR only (ship round 2) (completed 2026-11-06)
 - [x] Task 17: value files are bounded in size and age (ship round 2) (completed 2026-11-06)
-- [ ] Task 18: a line goes out only under the key it was written with (ship round 2)
+- [x] Task 18: a line goes out only under the key it was written with (ship round 2) (completed 2026-11-06)
 
 ## Blockers
 - None. Plugin 2.0.97 is on main (#216, c80e004). Phase A API is live (AgenticDevWorkflow #418).

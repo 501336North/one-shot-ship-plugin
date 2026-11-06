@@ -237,14 +237,18 @@ _oss_tl_push() (
     ob_ok() { _oss_tl_ob_ok "$ob"; }
     oss_decisions_push_off && exit 0
     oss_api_creds || exit 0; key=$OSS_KEY url=$OSS_URL   # key and URL from one read (T37)
+    # the current key's fp, as the writer makes it: only lines written under this key (or under none) are taken
+    cfp=$(printf '%s' "$key" | _oss_tl_sha256 | cut -c1-16)
     # waiting [TRIED]: the outbox ids whose latest state is pending or retry, oldest first, each with its stored body
-    # and fp; ids in TRIED (" id id ") are left out, so no line is sent twice in a run
+    # and fp; ids in TRIED (" id id ") are left out, so no line is sent twice in a run. A line written under another
+    # key is left out and left alone (still pending), so switching back to that key sends it.
     waiting() {
-        jq -Rnc --arg t "${1:-}" '[inputs | fromjson? | objects | select((.id | type) == "string" and (.id | test("\\A[0-9a-f-]{36}\\z")))]
+        jq -Rnc --arg t "${1:-}" --arg c "$cfp" '[inputs | fromjson? | objects | select((.id | type) == "string" and (.id | test("\\A[0-9a-f-]{36}\\z")))]
         | reduce .[] as $e ({order: [], last: {}, body: {}, fp: {}}; (if .last[$e.id] == null then .order += [$e.id] else . end)
             | .last[$e.id] = $e.state | if .body[$e.id] == null and ($e.body | type) == "object" then .body[$e.id] = $e.body | .fp[$e.id] = $e.fp else . end)
         | .last as $last | .body as $b | .fp as $f | .order[] | select($last[.] == "pending" or $last[.] == "retry")
-        | . as $i | select($t | contains(" " + $i + " ") | not) | {id: ., body: $b[.], fp: $f[.]}' "$ob" 2>/dev/null
+        | . as $i | select($t | contains(" " + $i + " ") | not) | select(($f[.] // "") | . == $c or . == "")
+        | {id: ., body: $b[.], fp: $f[.]}' "$ob" 2>/dev/null
     }
     plock="" pheld="" lk="" lheld="" tmp="" policy=""
     # shellcheck disable=SC2329 # run by the EXIT trap
@@ -304,7 +308,7 @@ _oss_tl_push() (
             [[ "$compacted" == *" $obid "* ]] || { compact; compacted="$compacted$obid "; }
             todo=$(waiting "$tried")
             # the team decides, as for decisions (P-7), asked once per run: only a 200 saying pushEnabled is true
-            # sends anything; false withholds every waiting line
+            # sends anything; false withholds every waiting line of the current key
             if [[ -n "$todo" && -z "$policy" ]]; then
                 ask "$url/api/v1/decisions/policy"; [[ "$code" == 200 ]] || exit 0
                 if jq -e '.pushEnabled == false' "$resp" >/dev/null 2>&1; then policy=off

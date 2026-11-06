@@ -233,5 +233,39 @@ posted=" $(posted_ids)"
 [[ "$posted" == *" $p4 "* && "$posted" == *" $valid "* ]] && pass "$name (a <16 hex>.ndjson outbox still sent)" \
     || fail "$name (a <16 hex>.ndjson outbox still sent)" "posted=$posted p4=$p4 valid=$valid"
 
+# --- a line goes out only under the key it was written with (ship round 2, Task 18) ---------------------------------
+KEY_A='fake-oss-key-timeline-delivery-0042' KEY_B='fake-oss-key-timeline-delivery-0099'
+# use_key KEY: the config now holds KEY, as after a /oss:login to another account
+use_key() { printf '{"apiKey":"%s","apiUrl":"http://127.0.0.1:9"}\n' "$1" > "$HOME/.oss/config.json"; }
+entries_of() { jq -Rr --arg id "$1" 'fromjson? | select(.id == $id) | .id' "$OB" 2>/dev/null | wc -l | tr -d ' '; }
+
+name='should send only lines whose fp is the current key'"'"'s'
+reset; use_key "$KEY_A"; write 1; a=$(ids_of "$TL" | tr -d ' ')
+use_key "$KEY_B"; write 1; b=$(ids_of "$TL" | tr -d ' '); b=${b#"$a"}
+push
+[[ $RC -eq 0 && "$(posted_ids)" == "$b " && "$(state_of "$a")" == pending && "$(entries_of "$a")" == 1 \
+    && "$(state_of "$b")" == verified ]] && pass "$name (another key's line is never POSTed and stays pending, no mark)" \
+    || fail "$name (another key's line is never POSTed and stays pending, no mark)" \
+        "rc=$RC posted=$(posted_ids) a=$(state_of "$a")/$(entries_of "$a") b=$(state_of "$b")"
+use_key "$KEY_A"; push
+[[ $RC -eq 0 && "$(posted_ids)" == "$b $a " && "$(state_of "$a")" == verified ]] \
+    && pass "$name (switched back to that key, a later push sends it)" \
+    || fail "$name (switched back to that key, a later push sends it)" "rc=$RC posted=$(posted_ids) a=$(state_of "$a")"
+
+name='should withhold, on a policy-off answer, only the lines of the current key'
+reset; use_key "$KEY_A"; write 1; a=$(ids_of "$TL" | tr -d ' ')
+use_key "$KEY_B"; write 1; b=$(ids_of "$TL" | tr -d ' '); b=${b#"$a"}
+queue policy '200 {"pushEnabled":false,"team":true}'; push
+[[ $RC -eq 0 && "$(posts)" == 0 && "$(state_of "$b")" == withheld && "$(state_of "$a")" == pending && "$(entries_of "$a")" == 1 ]] \
+    && pass "$name" || fail "$name" "rc=$RC posts=$(posts) a=$(state_of "$a")/$(entries_of "$a") b=$(state_of "$b")"
+
+name='should not ask the policy when no line of the current key waits'
+reset; use_key "$KEY_A"; write 1; a=$(ids_of "$TL" | tr -d ' ')
+use_key "$KEY_B"; push
+[[ $RC -eq 0 && "$(policies)" == 0 && "$(posts)" == 0 && "$(state_of "$a")" == pending ]] \
+    && pass "$name (no policy GET, no POST)" \
+    || fail "$name (no policy GET, no POST)" "rc=$RC policies=$(policies) posts=$(posts) a=$(state_of "$a")"
+use_key "$KEY_A"
+
 echo "$RUN run, $FAILED failed"
 [[ $FAILED -eq 0 ]]
