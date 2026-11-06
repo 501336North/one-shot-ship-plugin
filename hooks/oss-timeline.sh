@@ -9,6 +9,9 @@
 #                                          schema, then appends it under the G1 lock. Returns non-zero and
 #                                          writes nothing on any refusal, with one stderr line; 0 and nothing
 #                                          written in a project with no .oss folder.
+#
+# Run with no verb, it is the PostToolUse hook for Agent|Task (hooks.json): the hook JSON on stdin, one agent line,
+# exit 0 always. Run with a verb (command; gate, merge and push follow), it writes that verb's line.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=hooks/oss-api-curl.sh
@@ -132,6 +135,28 @@ case "${1:-}" in
     # oss-timeline.sh command NAME STATUS: oss-notify's --workflow NAME start|complete|failed (B2); both values
     # are checked by the line's own rules
     command) oss_timeline_append command "$(jq -nc --arg c "${2:-}" --arg s "${3:-}" '{command: $c, status: $s}' 2>/dev/null)"; exit ;;
+    # no verb: the PostToolUse hook for Agent|Task (B3), the hook JSON on stdin. One agent line with the type,
+    # lower-cased (P-5), and the running command when the project's own workflow-state.json names one. Never
+    # disturbs the tool run: exit 0 whatever happens.
+    "")
+        export LC_ALL=C
+        in=""
+        [[ -t 0 ]] || IFS= read -r -d '' -t 2 in || true
+        tool=$(printf '%s' "$in" | jq -r '.tool_name | strings' 2>/dev/null)
+        [[ "$tool" == Agent || "$tool" == Task ]] || exit 0
+        agent=$(printf '%s' "$in" | jq -r '.tool_input.subagent_type | strings | ascii_downcase' 2>/dev/null)
+        [[ "$agent" =~ ^[a-z0-9:_-]{1,64}$ ]] || { echo "oss: timeline agent line skipped, type outside the API pattern" >&2; exit 0; }
+        # the command from the project's own state file, only when it is a regular file (never a link or a
+        # FIFO, T32) and only a plain command name: anything else is no command
+        oss_resolve_project
+        ws="$_OSS_PROJ/.oss/workflow-state.json" cmd=""
+        oss_is_regular "$ws" && cmd=$(jq -r '.currentCommand | strings' "$ws" 2>/dev/null)
+        [[ "$cmd" =~ ^[a-z][a-z0-9-]{0,40}$ ]] || cmd=""
+        # P-8: the hook's session_id first; the writer falls back to CLAUDE_CODE_SESSION_ID, then "unknown"
+        OSS_TL_SESSION=$(printf '%s' "$in" | jq -r '.session_id | strings' 2>/dev/null) \
+            oss_timeline_append agent "$(jq -nc --arg a "$agent" --arg c "$cmd" \
+                '{agent: $a} + (if $c == "" then {} else {command: $c} end)')"
+        exit 0 ;;
 esac
-echo "usage: oss-timeline.sh command NAME STATUS (or source it for oss_timeline_append)" >&2
+echo "usage: oss-timeline.sh command NAME STATUS, or no verb with PostToolUse JSON on stdin (or source it for oss_timeline_append)" >&2
 exit 2

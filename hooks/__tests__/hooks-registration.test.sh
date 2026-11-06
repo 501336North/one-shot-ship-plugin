@@ -72,5 +72,13 @@ got=$(jq -c '[.hooks.PostToolUse[]? | select(.hooks[]?.command | strings | endsw
 want='[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/oss-decision-record.sh","async":true}]}]'
 if [[ "$got" == "$want" ]]; then pass "$name"; else fail "$name" "PostToolUse entries for the hook = ${got:-none}"; fi
 
+# (f) radical-observability G2 B3: every Agent or Task tool run reaches the feature timeline, without the tool
+#     run waiting on it. Exactly one PostToolUse entry, matching Agent|Task, runs oss-timeline.sh (no verb) async.
+name='(f) hooks.json should run oss-timeline.sh after Agent or Task, in the background'
+got=$(jq -c '[.hooks.PostToolUse[]? | select(.hooks[]?.command | strings | endswith("/hooks/oss-timeline.sh"))
+             | {matcher, hooks}]' "$HOOKS_JSON" 2>/dev/null)
+want='[{"matcher":"Agent|Task","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/oss-timeline.sh","async":true}]}]'
+if [[ "$got" == "$want" ]]; then pass "$name"; else fail "$name" "PostToolUse entries for the hook = ${got:-none}"; fi
+
 echo "Results: $((RUN-FAILED))/$RUN passed, $FAILED failed"
 [[ $FAILED -eq 0 ]]

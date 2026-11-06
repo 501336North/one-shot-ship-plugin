@@ -7,7 +7,7 @@
 - [x] Task 2: One copy of the feature resolution (completed 2026-11-06)
 - [x] Task 3: B1, the timeline writer (completed 2026-11-06)
 - [x] Task 4: B2, command lines from oss-notify, plus FOLLOWUPS #130 (completed 2026-11-06)
-- [ ] Task 5: B3, agent lines from a PostToolUse hook (pending)
+- [x] Task 5: B3, agent lines from a PostToolUse hook (completed 2026-11-06)
 - [ ] Task 6: B4a, the gate verb (pending)
 - [ ] Task 7: B4b, the merge verb (pending)
 - [ ] Task 8: B5, background push (pending)
