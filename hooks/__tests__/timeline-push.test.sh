@@ -101,14 +101,14 @@ first=$(head -n 1 "$API/api/calls" 2>/dev/null)
     || fail "$name" "rc=$RC first=$first posts=$(posts) states=$(states)"
 
 # --- the POST -------------------------------------------------------------------------------------------------------
-name='should POST each waiting line to /api/v1/timeline with keyFp, the key on stdin and --max-time 5'
+name='should POST each waiting line to /api/v1/timeline with keyFp, the key on stdin and --max-time 15 (a slow route still answers)'
 reset; write 2; push
 n=$(grep -n '^timeline ' "$API/api/calls" 2>/dev/null | head -n 1 | cut -d: -f1)
 want=$(jq -sc --arg fp "$FP" 'map(.keyFp = $fp)' "$TL")
 got=$(jq -sc . "$API/api/bodies" 2>/dev/null)
 leak=$(cat "$API"/api/argv.* 2>/dev/null | grep -c "$FAKE_KEY")
 [[ $RC -eq 0 && "$(posts)" == 2 && "$got" == "$want" && "$leak" == 0 && -n "$n" ]] \
-    && grep -q -- '--max-time 5' "$API/api/argv.$n" && grep -q "Bearer $FAKE_KEY" "$API/api/config.$n" \
+    && grep -q -- '--max-time 15 ' "$API/api/argv.$n" && grep -q "Bearer $FAKE_KEY" "$API/api/config.$n" \
     && [[ "$(sed -n "${n}p" "$API/api/calls")" == "timeline http://127.0.0.1:9/api/v1/timeline" && "$(states)" == "verified verified " ]] && pass "$name" \
     || fail "$name" "rc=$RC posts=$(posts) got=$got want=$want leak=$leak argv=$(cat "$API/api/argv.$n" 2>/dev/null) states=$(states)"
 
@@ -127,10 +127,10 @@ reply 409-answered_while_off '409 {"error":"answered_while_off"}' withheld
 reply 409-account_mismatch '409 {"error":"account_mismatch"}' withheld
 
 reset; write 1; queue timeline '400 {"error":"Invalid request data","details":[{"path":["agent"],"message":"Holds a secret","code":"custom"}]}'; push
-id=$(ids | tr -d ' '); err=$(cat "$T/err"); before=$(posts); push
-[[ $RC -eq 0 && "$(state_of "$id")" == refused && $(grep -c . <<< "$err") == 1 && "$err" == *"$id"* && "$(posts)" == "$before" ]] \
+id=$(ids | tr -d ' '); err=$(cat "$T/err"); before=$(posts); s=$(state_of "$id"); push
+[[ $RC -eq 0 && "$s" == refused && $(grep -c . <<< "$err") == 1 && "$err" == *"$id"* && "$(posts)" == "$before" ]] \
     && pass "$name (400 -> refused, never retried, one stderr line naming the line id)" \
-    || fail "$name (400 -> refused, never retried, one stderr line naming the line id)" "state=$(state_of "$id") err=$err posts $before -> $(posts)"
+    || fail "$name (400 -> refused, never retried, one stderr line naming the line id)" "state=$s err=$err posts $before -> $(posts)"
 
 reset; write 3; queue timeline '409 {"error":"policy_off"}'; push
 [[ $RC -eq 0 && "$(posts)" == 1 && "$(states)" == "withheld withheld withheld " ]] && pass "$name (409 policy_off -> everything waiting withheld, then stop)" \
@@ -140,10 +140,11 @@ reset; write 2; queue timeline '409 {"error":"account_mismatch"}'; push
 [[ $RC -eq 0 && "$(posts)" == 2 && "$(states)" == "withheld verified " ]] && pass "$name (409 account_mismatch withholds that line only and goes on)" \
     || fail "$name (409 account_mismatch withholds that line only and goes on)" "posts=$(posts) states=$(states)"
 
-reset; write 2; queue timeline '503 {"error":"down"}'; push; s1=$(states); p1=$(posts)
+# (the lines behind a retrying one still go in the same run: timeline-delivery.test.sh)
+reset; write 1; queue timeline '503 {"error":"down"}'; push; s1=$(states); p1=$(posts)
 queue timeline '500 {"error":"down"}'; push; s2=$(states)
 queue timeline '502 {"error":"down"}'; push; s3=$(states)
-[[ "$p1" == 1 && "$s1" == "retry pending " && "$s2" == "retry pending " && "$s3" == "failed pending " ]] \
+[[ "$p1" == 1 && "$s1" == "retry " && "$s2" == "retry " && "$s3" == "failed " ]] \
     && pass "$name (5xx -> retry, the third 5xx marks it failed)" \
     || fail "$name (5xx -> retry, the third 5xx marks it failed)" "posts-first-run=$p1 states: $s1 / $s2 / $s3"
 

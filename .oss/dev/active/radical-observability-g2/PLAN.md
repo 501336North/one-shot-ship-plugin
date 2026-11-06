@@ -206,6 +206,34 @@ The plugin writes a committed `.oss/dev/active/{feature}/timeline.ndjson` per fe
 - No product change is expected. If a test fails, fix the script it names.
 - `.claude-plugin/plugin.json`: `2.0.97` → `2.0.98`. `__tests__/plugin-version-bump.test.sh` passes.
 
+## Ship fix round 1 (2026-11-06, from the four quality gates)
+Every task: RED first, then GREEN, the same rules as Tasks 1-9. G1 and every G2 test stay green.
+
+### Task 10: Delivery never stalls or strands a line
+- `should send waiting lines of every outbox, not only the current feature's` (a branch switch or the ship archive must not strand a pending merge or gate line). The push walks `~/.oss/timeline-outbox/*.ndjson`, each under its own lock; the switch and policy checks are unchanged.
+- `should count 401, 403, 404, 413, 422, 429, an unknown 409, a 2xx with no account.id and a curl timeout or 000 as a retry, and mark the line failed after the retry cap`; `should not let one retrying line block the lines behind it`.
+- `should compact an outbox once it holds only lines in a final state (verified, refused, withheld, conflict, failed), under its lock`, so a push never re-parses a whole history.
+- `should stop the run when a state mark cannot be written` (no 40 s spin, no double POST).
+
+### Task 11: A merge line says only what is true
+- `should accept decision:<uuid> only when that id is in this feature's decision record` (G1's decisions.ndjson); otherwise refuse the approval.
+- `should refuse a value file older than 10 minutes` for the gate and merge verbs (a file left by another session is never reused), and delete it.
+- `should run gh with every GIT_* variable unset`.
+- `should write a local merge-unknown line when gh's facts fail the schema` (a bot login, a null mergeCommit, a mergedAt before 2020).
+- No `repo` field is added (user decision 2026-11-06: no repo name leaves the machine, as in the approved plan and G1; the same-feature-name collision goes to FOLLOWUPS for G3).
+
+### Task 12: Nothing unsafe or unbounded is written or read
+- `should refuse a line holding the API's bare-secret run` (32+ letters and digits with a digit, in session, repo, feature, agent, gate, command, mergedBy), before the committed file is written.
+- `should read workflow-state.json only when it is a single-link regular file of at most 64 KB`, and the hook's stdin only up to 1 MB.
+- `should refuse a timeline.ndjson the person does not own`.
+- `should write nothing when the project resolves to $HOME`.
+- `should file a line for a feature folder name over 128 characters as unfiled`, and `should stop appending to timeline-unfiled.ndjson once it reaches 1 MB`.
+- The outbox id check uses `\A…\z`.
+
+### Task 13: Gate lines are consistent, and the gate map test can fail
+- `should refuse verdict pass when a critical or high count exceeds its fixed count`.
+- The G3 map test checks something the product decides (each mapped gate and agent name is accepted, a prefixed or misspelled-case name is refused) and its title says what the code does.
+
 ## Implementation Sequence
 1. **Boundary first:** Task 1 (RED until Task 8).
 2. **Shared rules:** Task 2, a refactor with G1 green.

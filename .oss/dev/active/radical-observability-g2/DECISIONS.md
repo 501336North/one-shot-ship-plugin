@@ -60,8 +60,18 @@ The design-level ADRs (ADR-001 to ADR-010) live in AgenticDevWorkflow `.oss/dev/
 
 ## P-11: Where the push starts, and how
 - **Starts:** oss-notify after its `command` line (`oss-timeline.sh push --detach`); the `gate` and `merge` verbs and the Agent|Task PostToolUse hook after their line. The `command` verb starts none itself, so oss-notify starts exactly one.
-- **How:** `_oss_tl_push_bg` runs `oss-timeline.sh push` in a process group of its own (`perl setpgrp`, else a plain `&`), stdin, stdout and stderr closed. A hook whose group is killed, or a caller that waits on its group (Claude Code, `run_capped`), neither cuts a POST short nor waits for one. The push bounds itself: 8 POSTs of 5 s, none started after 40 s.
+- **How:** `_oss_tl_push_bg` runs `oss-timeline.sh push` in a process group of its own (`perl setpgrp`, else a plain `&`), stdin, stdout and stderr closed. A hook whose group is killed, or a caller that waits on its group (Claude Code, `run_capped`), neither cuts a POST short nor waits for one. The push bounds itself: 8 POSTs of 15 s (Task 10: the 1.5-6.5 s China route), none started after 40 s.
 - **Overlap:** a push that finds the push lock busy leaves its lines pending; the holder, after releasing the lock, reads the outbox again and runs once more while lines wait and the bounds allow. Without that, the last line of a burst (a ship's gate and merge) could wait until the next command.
 - **Decided by:** the Task 8 build, 2026-11-06.
 
 ## Last Updated: 2026-11-06 by /oss:build
+
+## P-12: No repo name on timeline lines (2026-11-06, user)
+- **Context:** ship round 1 gates noted that lines carry no `repo`, so the same feature name in two repos shows as one timeline in the team view. The fix round briefly planned to send `owner/name` from origin; a heads-up flagged that as new customer data the approved plan had left out.
+- **Decision:** the user chose to leave it out. No repo name leaves the machine (as in G1). The collision is a G3 follow-up.
+
+## P-13: Delivery rules (Task 10, 2026-11-06)
+- **Every outbox:** a push walks `~/.oss/timeline-outbox/*.ndjson`, each under its own push lock, so a branch switch or the ship archive never strands a line. The feature need not resolve; the switch and the policy GET (once per run, asked only when a line waits) are unchanged.
+- **Retry:** any reply that is not final (5xx, 401, 403, 404, 413, 422, 429, an unknown 409, a 2xx naming no account, a timeout, no answer) is a retry; the third marks the line failed. A run sends each line at most once and goes on to the lines behind it, so a 5xx no longer stops the run either.
+- **Compaction:** once per outbox per run, before it sends, under the writer's lock (tried once, never waited on), the outbox is rewritten in place to the entries of ids not in a final state. What a run marks stays readable until the next run.
+- **A failed write** of a mark or a withhold stops the run.

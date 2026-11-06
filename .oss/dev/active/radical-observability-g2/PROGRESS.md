@@ -1,6 +1,6 @@
 # Progress: Radical Observability G2, Phase B (plugin)
 
-## Current Phase: build (Tasks 1-9 done; next /oss:ship)
+## Current Phase: ship (fix round 1: Tasks 10-13 via /oss:build)
 
 ## Tasks
 - [x] Task 1: Acceptance test at the boundary (written 2026-11-06; 8 checks RED as expected until Task 8)
@@ -19,6 +19,11 @@
   - `oss-archive-check.sh` moves a whole feature folder to `.oss/dev/completed/` on ship; its timeline goes with it, so the file is kept, and the guard does not flag it.
 
 - [x] REFACTOR (code-simplifier): one sha-256 helper in oss-timeline.sh, no behavior change (completed 2026-11-06)
+
+- [x] Task 10: delivery never stalls or strands a line (ship round 1) (completed 2026-11-06)
+- [ ] Task 11: a merge line says only what is true (ship round 1, pending)
+- [ ] Task 12: nothing unsafe or unbounded is written or read (ship round 1, pending)
+- [ ] Task 13: gate lines are consistent, and the gate map test can fail (ship round 1, pending)
 
 ## Blockers
 - None. Plugin 2.0.97 is on main (#216, c80e004). Phase A API is live (AgenticDevWorkflow #418).
