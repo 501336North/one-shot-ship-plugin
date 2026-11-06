@@ -145,5 +145,42 @@ reset; write 3; chmod 400 "$OB"; start=$SECONDS; push; took=$((SECONDS - start))
     || fail "$name (one POST, no spin)" "rc=$RC posts=$(posts) took=${took}s"
 chmod 600 "$OB"
 
+# --- a stored body is held to the writer's rules (ship round 2, Task 14) -----------------------------------------------
+# plant OUTBOX JQ: appends to OUTBOX a pending entry with a fresh id, the fp of the line the writer made, and the
+# writer's body changed by JQ (as a planted outbox line could be) -> $PID
+uuid() { uuidgen | tr '[:upper:]' '[:lower:]'; }
+plant() {
+    PID=$(uuid)
+    head -n 1 "$OB" | jq -c --arg id "$PID" "{id: \$id, state: \"pending\", fp, body: (.body | .id = \$id | $2)}" >> "$1"
+}
+name='should not send a stored body that fails the writer'"'"'s rules for its kind'
+for c in 'a made-up kind|.kind = "rumour"' \
+    'a field outside its kind'"'"'s own fields|.note = "ship it, the tests are fine"' \
+    'free text in a field|.command = "ship it now"' \
+    'a pass gate with an open high|del(.command, .status) | .kind = "gate" | . + {round: 1, gate: "security", verdict: "pass", findings: {high: 2}, fixed: {high: 1}, mode: "full"}' \
+    'a merge-unknown line, never pushed (P-2)|del(.command, .status) | .kind = "merge-unknown"'; do
+    reset; write 1; valid=$(ids_of "$TL" | tr -d ' '); plant "$OB" "${c#*|}"; push
+    [[ $RC -eq 0 && "$(state_of "$PID")" == failed && " $(posted_ids)" != *" $PID "* && "$(posted_ids)" == "$valid " \
+        && "$(state_of "$valid")" == verified ]] && pass "$name (${c%%|*}: failed, never POSTed, the valid line sent)" \
+        || fail "$name (${c%%|*}: failed, never POSTed, the valid line sent)" \
+            "rc=$RC planted=$(state_of "$PID") valid=$(state_of "$valid") posted=$(posted_ids)"
+done
+
+name='should walk only outbox files named as a 16-hex id'
+reset; write 1; valid=$(ids_of "$TL" | tr -d ' ')
+UP=${RID:0:15}   # 15 hex (an upper-case name would be the same file on macOS)
+plant "$OB_DIR/planted.ndjson" '.'; p1=$PID
+plant "$OB_DIR/${RID}0.ndjson" '.'; p2=$PID
+plant "$OB_DIR/$UP.ndjson" '.'; p3=$PID
+plant "$OB_DIR/0123456789abcdef.ndjson" '.'; p4=$PID
+snap() { local f; for f in planted "${RID}0" "$UP"; do cksum < "$OB_DIR/$f.ndjson"; done; }
+before=$(snap); push
+posted=" $(posted_ids)"
+[[ $RC -eq 0 && "$posted" != *" $p1 "* && "$posted" != *" $p2 "* && "$posted" != *" $p3 "* && "$(snap)" == "$before" \
+    && ! -e "$OB_DIR/planted.ndjson.push" ]] && pass "$name (planted.ndjson and close names left untouched, never POSTed)" \
+    || fail "$name (planted.ndjson and close names left untouched, never POSTed)" "rc=$RC posted=$posted"
+[[ "$posted" == *" $p4 "* && "$posted" == *" $valid "* ]] && pass "$name (a <16 hex>.ndjson outbox still sent)" \
+    || fail "$name (a <16 hex>.ndjson outbox still sent)" "posted=$posted p4=$p4 valid=$valid"
+
 echo "$RUN run, $FAILED failed"
 [[ $FAILED -eq 0 ]]

@@ -1,6 +1,6 @@
 # Progress: Radical Observability G2, Phase B (plugin)
 
-## Current Phase: ship (fix round 1: Tasks 10-13 via /oss:build)
+## Current Phase: ship (fix round 2: Tasks 14-18 via /oss:build)
 
 ## Tasks
 - [x] Task 1: Acceptance test at the boundary (written 2026-11-06; 8 checks RED as expected until Task 8)
@@ -24,6 +24,11 @@
 - [x] Task 11: a merge line says only what is true (ship round 1) (completed 2026-11-06)
 - [x] Task 12: nothing unsafe or unbounded is written or read (ship round 1) (completed 2026-11-06)
 - [x] Task 13: gate lines are consistent, and the gate map test can fail (ship round 1) (completed 2026-11-06)
+- [x] Task 14: the push sends only lines the writer's rules accept (ship round 2) (completed 2026-11-06)
+- [ ] Task 15: compaction never follows a link and never loses a line (ship round 2)
+- [ ] Task 16: gh reports this repo's PR only (ship round 2)
+- [ ] Task 17: value files are bounded in size and age (ship round 2)
+- [ ] Task 18: a line goes out only under the key it was written with (ship round 2)
 
 ## Blockers
 - None. Plugin 2.0.97 is on main (#216, c80e004). Phase A API is live (AgenticDevWorkflow #418).

@@ -221,7 +221,7 @@ _oss_tl_push_bg() {
     fi
 }
 
-# _oss_tl_push: B5, G1's push over every timeline outbox on this machine (~/.oss/timeline-outbox/*.ndjson, each the
+# _oss_tl_push: B5, G1's push over every timeline outbox on this machine (~/.oss/timeline-outbox/<rid>.ndjson, each the
 # person's own single file, under its own push lock), so a branch switch or the ship archive never strands a line:
 # each entry holds its own body and fp. Each waiting line (pending, or retry) goes at most once per run to
 # POST /api/v1/timeline as the body stored when it was written, plus keyFp, the fingerprint of the key it was
@@ -285,7 +285,8 @@ _oss_tl_push() (
     while ((sent < 8 && SECONDS < 40)); do
         more=""
         for ob in "$obd"/*.ndjson; do
-            [[ -f "$ob" ]] && ob_ok || continue
+            # only the writer's names (<rid>.ndjson, 16 hex): any other file in the folder is never read or sent
+            [[ "${ob##*/}" =~ ^[0-9a-f]{16}\.ndjson$ && -f "$ob" ]] && ob_ok || continue
             plock="$ob.push"
             mkdir "$plock" 2>/dev/null || { oss_take_stale "$plock" 120 && mkdir "$plock" 2>/dev/null; } || { plock=""; continue; }
             pheld=$(oss_lock_id "$plock")
@@ -309,7 +310,13 @@ _oss_tl_push() (
                 id=$(printf '%s' "$e" | jq -r '.id')
                 tried="$tried$id "
                 efp=$(printf '%s' "$e" | jq -r '.fp | strings')
-                if ! (umask 077; printf '%s' "$e" | jq -ce --arg fp "$efp" '.body | objects | .keyFp = $fp' > "$body" 2>/dev/null); then
+                # the stored body is held to the writer's rules again (_OSS_TL_RULES), so a line planted in an outbox
+                # is marked failed, never sent: an unknown kind, a field outside its kind's, free text, a pass gate
+                # with an open critical or high (P-16), or a merge-unknown line (P-2)
+                if ! (umask 077; printf '%s' "$e" | jq -ce --arg fp "$efp" "$_OSS_TL_RULES"'.body | objects
+                    | select(.kind as $k | $k != "merge-unknown" and base_ok
+                        and (del(.v, .id, .ts, .kind, .feature, .session) | fields_ok($k)))
+                    | .keyFp = $fp' > "$body" 2>/dev/null); then
                     mark '{id: $id, state: "failed", status: 0}'
                     continue
                 fi
