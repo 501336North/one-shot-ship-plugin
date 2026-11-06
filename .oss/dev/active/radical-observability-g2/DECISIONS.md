@@ -79,7 +79,7 @@ The design-level ADRs (ADR-001 to ADR-010) live in AgenticDevWorkflow `.oss/dev/
 ## P-14: What a merge line trusts (Task 11, 2026-11-06)
 - **decision:<uuid>:** accepted only when that id is the `id` of a line in this feature's G1 record (`.oss/dev/active/<feature>/decisions.ndjson`, read only as a single-link regular file). Otherwise the merge verb refuses the approval: exit 1, one stderr line, and nothing for the API (the same as an approval.txt outside its rule). It does not fall back to `none`. Since Task 12 a refusal still writes a local merge-unknown line (P-15). merge-flag and chat-instruction stay self-reported (DESIGN.md).
 - **Value-file age:** the gate and merge verbs refuse, and still delete, a value file last written more than 10 minutes ago (`_ov_take`'s optional max age, the opened file's mtime, GNU `stat -c` first as stat-order requires).
-- **gh:** runs with every GIT_* variable unset.
+- **gh:** runs with every GIT_* variable unset, and since Task 16 (ship round 2) GH_REPO and GH_HOST too: a session's GH_REPO or GH_HOST made gh report another repo's merged PR, whose facts formed a schema-valid merge line that was pushed. gh then takes the repo and host from this repo's remote. GH_TOKEN and GH_ENTERPRISE_TOKEN stay: they choose who is signed in, not which repo.
 - **Facts outside the merge schema** (a bot login, a null mergeCommit, a mergedAt before 2020) give a local merge-unknown line, with the pr when it is valid.
 
 ## P-15: Bounds on what the timeline writes and reads (Task 12, 2026-11-06)

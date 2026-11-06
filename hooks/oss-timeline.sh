@@ -389,10 +389,11 @@ case "${1:-}" in
     # file, and only its first 1 MB); otherwise the approval is refused: exit 1, and only a local merge-unknown line
     # is written, so a real merge always leaves a trace (Task 12; an empty APPROVAL, which oss-value passes for a
     # refused approval.txt, gives the same line). The PR facts come from `gh pr view`
-    # for the current branch, bounded at 10 s (P-9), run with every GIT_* variable unset (the session's could name
-    # another repo); nothing from a value file reaches gh's argv. No gh, a failed or hung gh, a PR that is not merged,
-    # or facts outside the merge schema (a bot login, a null mergeCommit, a mergedAt before 2020) give a local
-    # merge-unknown line (P-2), with the PR number when it is valid. The line's own rules check every field again.
+    # for the current branch, bounded at 10 s (P-9), run with every GIT_* variable and GH_REPO and GH_HOST unset (the
+    # session's could name another repo or host, and that PR's facts would be pushed; GH_TOKEN and GH_ENTERPRISE_TOKEN
+    # stay: they choose who is signed in, not which repo); nothing from a value file reaches gh's argv. No gh, a
+    # failed or hung gh, a PR that is not merged, or facts outside the merge schema (a bot login, a null mergeCommit,
+    # a mergedAt before 2020) give a local merge-unknown line (P-2), with the PR number when it is valid. The line's own rules check every field again.
     merge)
         oss_resolve_project
         refused=""
@@ -408,6 +409,7 @@ case "${1:-}" in
         out=""
         command -v gh >/dev/null 2>&1 \
             && out=$(cd "${_OSS_PROJ:-.}" && for v in $(compgen -e); do [[ $v != GIT_* ]] || unset "$v"; done \
+                && unset GH_REPO GH_HOST \
                 && oss_tl_bounded 10 gh pr view --json number,mergeCommit,mergedAt,mergedBy 2>/dev/null) \
             || out=""
         # shellcheck disable=SC2016 # jq's $ variables, not the shell's

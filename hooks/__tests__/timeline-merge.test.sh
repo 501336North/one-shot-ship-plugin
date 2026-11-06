@@ -34,8 +34,8 @@ source "$ROOT/hooks/__tests__/fake-oss-api.sh"
 source "$ROOT/hooks/__tests__/lib/run-capped.sh"   # the one time cap a test may use (T49)
 API="$T/api-fake"; fake_api_install "$API"   # no config.json: nothing is sent, and any curl reaches only the fake
 
-# The fake gh (the acceptance test's interface): it records each argv in $T/gh/argv (and its GIT_* variables in
-# $T/gh/env) and answers `pr view` from
+# The fake gh (the acceptance test's interface): it records each argv in $T/gh/argv (its GIT_* variables in
+# $T/gh/env, its GH_* variables in $T/gh/ghenv) and answers `pr view` from
 # $T/gh/reply (a JSON document), with exit status $T/gh/rc; when $T/gh/hang exists it sleeps 60 s instead.
 mkdir -p "$T/gh/bin"
 cat > "$T/gh/bin/gh" << 'GH'
@@ -43,6 +43,7 @@ cat > "$T/gh/bin/gh" << 'GH'
 d="$(dirname "$0")/.."
 printf '%s\n' "$*" >> "$d/argv"
 env | grep '^GIT_' > "$d/env"
+env | grep '^GH_' > "$d/ghenv"
 [[ -e "$d/hang" ]] && exec sleep 60
 [[ "$1 $2" == "pr view" ]] || exit 1
 cat "$d/reply"
@@ -221,6 +222,16 @@ rm -f "$T/gh/env"; approve merge-flag
 genv=$(cat "$T/gh/env" 2>/dev/null)
 [[ -f "$T/gh/env" && -z "$genv" && "$(last | jq -r .kind)" == merge ]] && pass "should run gh with every GIT_* variable unset" \
     || fail "should run gh with every GIT_* variable unset" "gh saw: [$genv] line=$(last)"
+
+# --- gh runs with GH_REPO and GH_HOST unset, so it reports this repo's PR; the sign-in tokens stay ----------------
+rm -f "$T/gh/ghenv"; approve merge-flag
+(export GH_REPO=evil/other GH_HOST=evil.example GH_TOKEN=tok-signed-in GH_ENTERPRISE_TOKEN=tok-enterprise; merge)
+ghenv=$(cat "$T/gh/ghenv" 2>/dev/null)
+[[ -f "$T/gh/ghenv" && "$ghenv" != *GH_REPO=* && "$ghenv" != *GH_HOST=* \
+    && $'\n'"$ghenv"$'\n' == *$'\n'GH_TOKEN=tok-signed-in$'\n'* \
+    && $'\n'"$ghenv"$'\n' == *$'\n'GH_ENTERPRISE_TOKEN=tok-enterprise$'\n'* \
+    && "$(last | jq -r .kind)" == merge ]] && pass "should run gh with GH_REPO and GH_HOST unset" \
+    || fail "should run gh with GH_REPO and GH_HOST unset" "gh saw: [$ghenv] line=$(last)"
 
 # --- nothing from a value file on gh's command line ---------------------------------------------------------------
 : > "$T/gh/argv"
