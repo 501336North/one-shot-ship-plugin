@@ -1,0 +1,46 @@
+# Decisions: Radical Observability G2, Phase B (plugin)
+
+The design-level ADRs (ADR-001 to ADR-010) live in AgenticDevWorkflow `.oss/dev/active/radical-observability-g2/DECISIONS.md`. These are the plugin-side choices made while planning, 2026-11-06.
+
+## P-1: One script, `hooks/oss-timeline.sh`, with fixed verbs
+- **Decision:** one script handles everything.
+  - Verbs: `command`, `gate`, `merge` and `push`, plus the PostToolUse entry when it is called with no verb.
+  - The gate and merge values arrive only through `oss-value.sh timeline gate|merge`.
+- **Why:** there is one writer, one lock and one validation table, so nothing can disagree about a field's rules.
+
+## P-2: `merge-unknown` is a local line, never pushed
+- **Context:** REQUIREMENTS asks for a `merge-unknown` event when `gh` is unavailable, but the shipped API schema has only `command`, `agent`, `gate` and `merge`.
+- **Problem:** a pushed `merge-unknown` line would get a 400 and stay `refused`.
+- **Decision:** write `kind: merge-unknown` to the repo copy only, never queue it, and never send it.
+- **Consequence:** G3 sees no merge line, which already shows as unverified.
+- **Later:** if the dashboard should show it, add the kind to the API schema first, in a separate change.
+
+## P-3: Unfiled lines are never pushed
+- **Decision:** a line with no feature folder goes to `.oss/dev/timeline-unfiled.ndjson` and never into the outbox, the same as G1's unfiled decisions.
+- **Why:** the API requires `feature`.
+- **Not done:** REQUIREMENTS' "attached on the next feature commit" is not built. G1 does not do it either. Revisit both together.
+
+## P-4: No client-side redaction
+- **Decision:** the plugin does not redact timeline lines.
+- **Why:** every field is checked against a closed pattern before the write, so no field can carry a secret or free text. The API runs `redactRecord` on every field anyway (AC-G2-005.4).
+- **What would change it:** a free-text field would need G1's `redact-decision.js` step first.
+
+## P-5: Agent types are lower-cased before the check
+- **Why:** built-in types such as `Explore` or `Plan` have capitals, and the API pattern is `^[a-z0-9:_-]{1,64}$`.
+- **Decision:** lower-case the type, then check it. A type that still fails is skipped with one stderr line.
+
+## P-6: The gate verb refuses names outside the G3 contract
+- **Decision:** a gate name must be one of the four standard names, or match `^[a-z0-9-]{1,40}$` as a quality-gate agent name without its plugin prefix.
+- **Pinned by a test:** the gate-to-agent map, copied from G3 `flags.ts`.
+- **Why:** a gate named any other way shows as unverified in G3, so the plugin refuses it at write time.
+
+## P-7: The push uses the decisions switch and team policy
+- **Decision:** the same local switch (`oss_decisions_push_off`) and the same `GET /api/v1/decisions/policy` apply. There is no second setting.
+- **Why:** AC-G2-005.2 says the push is refused "the same way as a decision push". One switch means a user who opted out of decisions is never surprised by a timeline push.
+
+## P-8: Session id
+- **Source:** the hook's `.session_id`, then `CLAUDE_CODE_SESSION_ID`, then the fixed value `unknown`.
+- **Check:** each candidate must match `^[A-Za-z0-9-]{1,64}$`.
+- **Why:** oss-notify has no hook stdin, and the API requires a valid `session`.
+
+## Last Updated: 2026-11-06 by /oss:plan
