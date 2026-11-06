@@ -110,6 +110,9 @@ def base_ok: .v == 1 and (.id | uuid4) and (.ts | stamp) and (.session | re("[A-
     and ((has("feature") | not) or (.feature | re("(?!\\.)[A-Za-z0-9._-]{1,128}")));
 '
 
+# _oss_tl_sha256: sha-256 of stdin, with shasum (macOS) or sha256sum (Linux)
+_oss_tl_sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256; else sha256sum; fi; }
+
 oss_timeline_append() (
     export LC_ALL=C   # the bash patterns below are byte ranges, whatever the locale
     kind="${1:-}" fields="${2:-}"
@@ -119,7 +122,6 @@ oss_timeline_append() (
     # a repo that never used OSS gains nothing, not even a stderr line
     [[ -n "$proj" && -d "$proj/.oss" ]] || exit 0
     command -v jq >/dev/null 2>&1 || refuse "jq not found"
-    sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256; else sha256sum; fi; }
     command -v shasum >/dev/null 2>&1 || command -v sha256sum >/dev/null 2>&1 || refuse "no sha-256 tool"
     case "$kind" in command | agent | gate | merge | merge-unknown) ;; *) refuse "unknown kind" ;; esac
 
@@ -152,7 +154,7 @@ oss_timeline_append() (
     file="$_OSS_SAFE_DIR/${rec##*/}"
     # the G1 lock: ~/.oss/locks/<rid> (700, the person's own), named by the file's physical path, waited on for
     # 10 s; one older than 30 s was left by a writer that died and is taken over (oss_take_stale)
-    rid=$(printf '%s' "$file" | sha256 | cut -c1-16)
+    rid=$(printf '%s' "$file" | _oss_tl_sha256 | cut -c1-16)
     # shellcheck disable=SC2088 # the ~ is text for the person, never expanded
     oss_private_dir "$HOME/.oss/locks" || refuse "~/.oss/locks is a symlink or not yours: remove it"
     lock="$HOME/.oss/locks/$rid" held=""
@@ -171,7 +173,7 @@ oss_timeline_append() (
     # the path again, now that no other writer can touch it: a link swapped in during the wait is refused
     oss_safe_target "$proj" "$rec" || { oss_refuse_unsafe "$rec"; exit 1; }
     # the outbox entry (B5), made from the line this machine writes: the push never reads the committed file
-    entry=$(jq -c --arg fp "$(k=$(oss_api_key) && printf '%s' "$k" | sha256 | cut -c1-16)" \
+    entry=$(jq -c --arg fp "$(k=$(oss_api_key) && printf '%s' "$k" | _oss_tl_sha256 | cut -c1-16)" \
         '{id, state: "pending", fp: $fp, body: .}' <<< "$line")
     # a file whose last line has no newline gets one first, so the new line never glues onto it
     [[ -s "$file" && -n "$(tail -c 1 "$file")" ]] && line=$'\n'"$line"
@@ -211,13 +213,12 @@ _oss_tl_push() (
     proj="$_OSS_PROJ"
     [[ -n "$proj" && -d "$proj/.oss" ]] || exit 0
     command -v jq >/dev/null 2>&1 || exit 0
-    sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256; else sha256sum; fi; }
     oss_resolve_feature "$proj"
     feature="$_OSS_FEATURE"
     [[ -n "$feature" ]] || exit 0   # unfiled lines are never queued (P-3)
     rec=".oss/dev/active/$feature/timeline.ndjson"
     oss_safe_target "$proj" "$rec" || exit 0
-    rid=$(printf '%s' "$_OSS_SAFE_DIR/${rec##*/}" | sha256 | cut -c1-16)
+    rid=$(printf '%s' "$_OSS_SAFE_DIR/${rec##*/}" | _oss_tl_sha256 | cut -c1-16)
     ob="$HOME/.oss/timeline-outbox/$rid.ndjson"
     ob_ok() { _oss_tl_ob_ok "$ob"; }
     [[ -f "$ob" ]] && ob_ok || exit 0

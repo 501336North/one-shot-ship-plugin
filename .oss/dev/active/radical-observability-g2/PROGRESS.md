@@ -18,6 +18,8 @@
   - Found, not fixed (outside this task): `oss-log.sh purge --force` only prints the warning, because purge reads `--force` as its third word (`purge <anything> --force` purges). The usage line documents the two-word form.
   - `oss-archive-check.sh` moves a whole feature folder to `.oss/dev/completed/` on ship; its timeline goes with it, so the file is kept, and the guard does not flag it.
 
+- [x] REFACTOR (code-simplifier): one sha-256 helper in oss-timeline.sh, no behavior change (completed 2026-11-06)
+
 ## Blockers
 - None. Plugin 2.0.97 is on main (#216, c80e004). Phase A API is live (AgenticDevWorkflow #418).
 
