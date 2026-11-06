@@ -115,6 +115,22 @@ put 1 security pass '' '' full; rm -f "$D/verdict.txt"; before=$(lines); gate; l
 [[ $ok -eq 1 ]] && pass "should delete every value file it read, whether it accepted or refused them" \
     || fail "should delete every value file it read, whether it accepted or refused them" "$bad"
 
+# --- a value file older than 10 minutes is never reused ----------------------------------------------------------
+# ago <seconds> <file>: sets the file's mtime that many seconds back (BSD date -r, else GNU date -d)
+ago() {
+    local t=$(($(date +%s) - $1)) s
+    s=$(date -r "$t" +%Y%m%d%H%M.%S 2>/dev/null || date -d "@$t" +%Y%m%d%H%M.%S) && touch -t "$s" "$2"
+}
+ok=1 bad=""
+for n in round mode; do   # the first file read and the last
+    before=$(lines); put 1 security pass '' '' full; ago 660 "$D/$n.txt"; gate; l=$(left)
+    [[ $RC -ne 0 && $(lines) -eq $before && -z "$l" ]] || { ok=0; bad="$bad stale-$n: rc=$RC left=[$l]"; }
+done
+before=$(lines); put 1 security pass '' '' full; for n in $FILES; do ago 540 "$D/$n.txt"; done; gate
+[[ $RC -eq 0 && $(lines) -eq $((before + 1)) ]] || { ok=0; bad="$bad fresh-9-min: rc=$RC"; }
+[[ $ok -eq 1 ]] && pass "should refuse a gate value file older than 10 minutes, and delete every file it read" \
+    || fail "should refuse a gate value file older than 10 minutes, and delete every file it read" "$bad (err=$ERR)"
+
 # --- the G3 gate-to-agent map -------------------------------------------------------------------------------------
 # GATE_AGENTS, copied verbatim from AgenticDevWorkflow packages/web/app/dashboard/observability/lib/flags.ts at
 # c6f64a6efce02f1c943dd084df5be1722afa1e2a (G3 ADR-005). G3 reads a gate line's `gate` through this table (any other

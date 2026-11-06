@@ -75,3 +75,9 @@ The design-level ADRs (ADR-001 to ADR-010) live in AgenticDevWorkflow `.oss/dev/
 - **Retry:** any reply that is not final (5xx, 401, 403, 404, 413, 422, 429, an unknown 409, a 2xx naming no account, a timeout, no answer) is a retry; the third marks the line failed. A run sends each line at most once and goes on to the lines behind it, so a 5xx no longer stops the run either.
 - **Compaction:** once per outbox per run, before it sends, under the writer's lock (tried once, never waited on), the outbox is rewritten in place to the entries of ids not in a final state. What a run marks stays readable until the next run.
 - **A failed write** of a mark or a withhold stops the run.
+
+## P-14: What a merge line trusts (Task 11, 2026-11-06)
+- **decision:<uuid>:** accepted only when that id is the `id` of a line in this feature's G1 record (`.oss/dev/active/<feature>/decisions.ndjson`, read only as a single-link regular file). Otherwise the merge verb refuses the approval: exit 1, one stderr line, no line written and nothing for the API (the same as an approval.txt outside its rule). It does not fall back to `none`. merge-flag and chat-instruction stay self-reported (DESIGN.md).
+- **Value-file age:** the gate and merge verbs refuse, and still delete, a value file last written more than 10 minutes ago (`_ov_take`'s optional max age, the opened file's mtime, GNU `stat -c` first as stat-order requires).
+- **gh:** runs with every GIT_* variable unset.
+- **Facts outside the merge schema** (a bot login, a null mergeCommit, a mergedAt before 2020) give a local merge-unknown line, with the pr when it is valid.

@@ -34,13 +34,15 @@ source "$ROOT/hooks/__tests__/fake-oss-api.sh"
 source "$ROOT/hooks/__tests__/lib/run-capped.sh"   # the one time cap a test may use (T49)
 API="$T/api-fake"; fake_api_install "$API"   # no config.json: nothing is sent, and any curl reaches only the fake
 
-# The fake gh (the acceptance test's interface): it records each argv in $T/gh/argv and answers `pr view` from
+# The fake gh (the acceptance test's interface): it records each argv in $T/gh/argv (and its GIT_* variables in
+# $T/gh/env) and answers `pr view` from
 # $T/gh/reply (a JSON document), with exit status $T/gh/rc; when $T/gh/hang exists it sleeps 60 s instead.
 mkdir -p "$T/gh/bin"
 cat > "$T/gh/bin/gh" << 'GH'
 #!/bin/bash
 d="$(dirname "$0")/.."
 printf '%s\n' "$*" >> "$d/argv"
+env | grep '^GIT_' > "$d/env"
 [[ -e "$d/hang" ]] && exec sleep 60
 [[ "$1 $2" == "pr view" ]] || exit 1
 cat "$d/reply"
@@ -88,6 +90,14 @@ lines() { local c=0; [[ -f "$TL" ]] && c=$(wc -l < "$TL" | tr -d ' '); echo "$c"
 last() { tail -n 1 "$TL" 2>/dev/null; }
 facts() { last | jq -c '{kind, feature, session, pr, sha, mergedAt, mergedBy, approval}' 2>/dev/null; }
 UUID=3f2b8c1e-9a4d-4c7b-8e21-5d6f7a8b9c0d
+# G1's decision record for the demo feature, as oss-decision-record.sh writes it: the one decision this feature has
+DREC="$P/.oss/dev/active/demo/decisions.ndjson"
+printf '%s\n' '{"v":1,"id":"'$UUID'","feature":"demo","question":"Ship it?","answer":"Yes"}' > "$DREC"
+# ago <seconds> <file>: sets the file's mtime that many seconds back (BSD date -r, else GNU date -d)
+ago() {
+    local t=$(($(date +%s) - $1)) s
+    s=$(date -r "$t" +%Y%m%d%H%M.%S 2>/dev/null || date -d "@$t" +%Y%m%d%H%M.%S) && touch -t "$s" "$2"
+}
 
 # --- the facts come from gh pr view -------------------------------------------------------------------------------
 : > "$T/gh/argv"; approve merge-flag; merge
@@ -146,17 +156,66 @@ calls=$(grep -c '^timeline ' "$API/api/calls" 2>/dev/null)
 reply "$MERGED"
 
 # --- GitHub's facts are held to the API's patterns ----------------------------------------------------------------
+# A merged PR whose facts fail the schema is still a merge that happened: a local merge-unknown line (P-2), with the
+# PR number when that number is valid, never a merge line and never nothing (Task 11).
 ok=1 bad=""
 for r in "${MERGED/$SHA/${SHA:0:39}}" "${MERGED/$SHA/${SHA}0}" "${MERGED/$SHA/0123456789ABCDEF0123456789ABCDEF01234567}" \
     "${MERGED/octo-dev/octo_dev}" "${MERGED/octo-dev/$(printf 'a%.0s' {1..40})}" "${MERGED/octo-dev/octo dev}" "${MERGED/octo-dev/}" \
-    "${MERGED/2026-11-06T09:30:00Z/yesterday}" "${MERGED/4242/0}" "${MERGED/4242/\"4242\"}"; do
-    reply "$r"; before=$(lines); approve merge-flag; merge
-    [[ $RC -ne 0 && $(lines) -eq $before ]] || { ok=0; bad="$bad reply=[$r] rc=$RC"; }
+    "${MERGED/octo-dev/renovate[bot]}" "${MERGED/\{\"oid\":\"$SHA\"\}/null}" "${MERGED/2026-11-06T09:30:00Z/2019-12-31T23:59:59Z}" \
+    "${MERGED/2026-11-06T09:30:00Z/yesterday}"; do
+    reply "$r"; before=$(lines); approve merge-flag; merge; unknown "reply=[$r]" '{"pr":4242}'
 done
+for r in "${MERGED/4242/0}" "${MERGED/4242/\"4242\"}"; do
+    reply "$r"; before=$(lines); approve merge-flag; merge; unknown "reply=[$r]" '{}'
+done
+queued=$(cat "$HOME"/.oss/timeline-outbox/*.ndjson 2>/dev/null | grep -c 'merge-unknown')
+[[ "${queued:-0}" -eq 0 ]] || { ok=0; bad="$bad queued=$queued"; }
 reply "$MERGED"; before=$(lines); merge
 [[ $RC -eq 0 && $(lines) -eq $((before + 1)) && "$(last | jq -r .mergedBy)" == octo-dev ]] || { ok=0; bad="$bad anchor rc=$RC"; }
-[[ $ok -eq 1 ]] && pass "should refuse a sha that is not 40 hex characters, or a login outside ^[A-Za-z0-9-]{1,39}$" \
-    || fail "should refuse a sha that is not 40 hex characters, or a login outside ^[A-Za-z0-9-]{1,39}$" "$bad (err=$ERR)"
+[[ $ok -eq 1 ]] && pass "should write a local merge-unknown line when gh's facts fail the schema (a bad sha, a bot or bad login, a null mergeCommit, a mergedAt before 2020 or not a time), with the pr when it is valid" \
+    || fail "should write a local merge-unknown line when gh's facts fail the schema (a bad sha, a bot or bad login, a null mergeCommit, a mergedAt before 2020 or not a time), with the pr when it is valid" "$bad (err=$ERR)"
+
+# --- decision:<uuid> only when the id is in this feature's decision record ---------------------------------------
+ok=1 bad=""
+OTHER=7a1c2e3f-4b5d-4e6f-9a0b-1c2d3e4f5a6b
+# refused_merge <case>: rc != 0, no new line, approval.txt gone
+refused_merge() { [[ $RC -ne 0 && $(lines) -eq $before && ! -e "$D/approval.txt" ]] || { ok=0; bad="$bad $1: rc=$RC line=$(last)"; }; }
+before=$(lines); approve "decision:$UUID"; merge
+[[ $RC -eq 0 && $(lines) -eq $((before + 1)) && "$(last | jq -c .approval)" == '{"type":"decision","decisionId":"'$UUID'"}' ]] \
+    || { ok=0; bad="$bad in-record: rc=$RC"; }
+before=$(lines); approve "decision:$OTHER"; merge; refused_merge not-in-record
+# the id named only inside another field, or only in another feature's record, is not this feature's decision
+mkdir -p "$P/.oss/dev/active/other"; printf '%s\n' '{"v":1,"id":"'$OTHER'","feature":"other"}' > "$P/.oss/dev/active/other/decisions.ndjson"
+printf '%s\n' '{"v":1,"id":"0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e","question":"'$OTHER'"}' >> "$DREC"
+before=$(lines); approve "decision:$OTHER"; merge; refused_merge other-field-or-feature
+rm -rf "$P/.oss/dev/active/other"
+# a record that is a symlink or has a second hard link is never read
+cp "$DREC" "$T/drec-real"; mv "$DREC" "$T/drec-keep"; ln -s "$T/drec-real" "$DREC"
+before=$(lines); approve "decision:$UUID"; merge; refused_merge symlinked-record
+rm -f "$DREC"; cp "$T/drec-keep" "$DREC"; ln "$DREC" "$T/drec-hardlink"
+before=$(lines); approve "decision:$UUID"; merge; refused_merge hard-linked-record
+rm -f "$T/drec-hardlink"
+# no record at all
+mv "$DREC" "$T/drec-keep"; before=$(lines); approve "decision:$UUID"; merge; refused_merge no-record
+mv "$T/drec-keep" "$DREC"
+[[ $ok -eq 1 ]] && pass "should accept decision:<uuid> only when that id is in this feature's decision record, and otherwise refuse the approval and write nothing" \
+    || fail "should accept decision:<uuid> only when that id is in this feature's decision record, and otherwise refuse the approval and write nothing" "$bad (err=$ERR)"
+
+# --- a value file older than 10 minutes is never reused ----------------------------------------------------------
+ok=1 bad=""
+before=$(lines); approve chat-instruction; ago 660 "$D/approval.txt"; merge; refused_merge stale-11-min
+before=$(lines); approve chat-instruction; ago 540 "$D/approval.txt"; merge
+[[ $RC -eq 0 && $(lines) -eq $((before + 1)) && "$(last | jq -c .approval)" == '{"type":"chat-instruction"}' ]] || { ok=0; bad="$bad fresh-9-min: rc=$RC"; }
+[[ $ok -eq 1 ]] && pass "should refuse an approval.txt older than 10 minutes, and delete it" \
+    || fail "should refuse an approval.txt older than 10 minutes, and delete it" "$bad (err=$ERR)"
+
+# --- gh runs with every GIT_* variable unset ---------------------------------------------------------------------
+rm -f "$T/gh/env"; approve merge-flag
+(export GIT_DIR="$T/elsewhere/.git" GIT_WORK_TREE="$T/elsewhere" GIT_INDEX_FILE="$T/elsewhere/index" GIT_COMMON_DIR="$T/elsewhere/.git" \
+    GIT_NAMESPACE=x GIT_OBJECT_DIRECTORY="$T/elsewhere/objects" GIT_CEILING_DIRECTORIES=/ GIT_SOME_FUTURE_VAR=1; merge)
+genv=$(cat "$T/gh/env" 2>/dev/null)
+[[ -f "$T/gh/env" && -z "$genv" && "$(last | jq -r .kind)" == merge ]] && pass "should run gh with every GIT_* variable unset" \
+    || fail "should run gh with every GIT_* variable unset" "gh saw: [$genv] line=$(last)"
 
 # --- nothing from a value file on gh's command line ---------------------------------------------------------------
 : > "$T/gh/argv"

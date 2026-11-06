@@ -351,22 +351,34 @@ case "${1:-}" in
             {round: $r, gate: $g, verdict: $v, findings: ($f | counts), fixed: ($x | counts), mode: $m}' 2>/dev/null)"
         rc=$?; _oss_tl_push_bg; exit "$rc" ;;
     # oss-timeline.sh merge APPROVAL: only from oss-value.sh timeline merge (B4b), which read APPROVAL from
-    # approval.txt and checked it (merge-flag, chat-instruction, none or decision:<uuid>). The PR facts come from
-    # `gh pr view` for the current branch, bounded at 10 s (P-9); nothing from a value file reaches gh's argv. No gh,
-    # a failed or hung gh, or a PR that is not merged gives a local merge-unknown line (P-2), with the PR number
-    # when gh named one. The line's own rules check every field again.
+    # approval.txt and checked it (merge-flag, chat-instruction, none or decision:<uuid>). decision:<uuid> counts only
+    # when that id is a line's id in this feature's G1 record (decisions.ndjson, read only as a single-link regular
+    # file); otherwise the approval is refused and nothing is written (Task 11). The PR facts come from `gh pr view`
+    # for the current branch, bounded at 10 s (P-9), run with every GIT_* variable unset (the session's could name
+    # another repo); nothing from a value file reaches gh's argv. No gh, a failed or hung gh, a PR that is not merged,
+    # or facts outside the merge schema (a bot login, a null mergeCommit, a mergedAt before 2020) give a local
+    # merge-unknown line (P-2), with the PR number when it is valid. The line's own rules check every field again.
     merge)
         oss_resolve_project
+        if [[ "${2:-}" == decision:* ]]; then
+            oss_resolve_feature "$_OSS_PROJ"
+            drec="$_OSS_PROJ/.oss/dev/active/$_OSS_FEATURE/decisions.ndjson"
+            [[ -n "$_OSS_FEATURE" ]] && oss_is_regular "$drec" && oss_single_link "$drec" \
+                && [[ -n "$(jq -nR --arg id "${2#decision:}" \
+                    'first(inputs | fromjson? | objects | select(.id == $id)) | 1' "$drec" 2>/dev/null)" ]] \
+                || { echo "oss: timeline merge refused, the decision is not in this feature's decision record" >&2; exit 1; }
+        fi
         out=""
         command -v gh >/dev/null 2>&1 \
-            && out=$(cd "${_OSS_PROJ:-.}" && oss_tl_bounded 10 gh pr view --json number,mergeCommit,mergedAt,mergedBy 2>/dev/null) \
+            && out=$(cd "${_OSS_PROJ:-.}" && for v in $(compgen -e); do [[ $v != GIT_* ]] || unset "$v"; done \
+                && oss_tl_bounded 10 gh pr view --json number,mergeCommit,mergedAt,mergedBy 2>/dev/null) \
             || out=""
         # shellcheck disable=SC2016 # jq's $ variables, not the shell's
-        fields=$(printf '%s' "$out" | jq -c --arg a "${2:-}" '
+        fields=$(printf '%s' "$out" | jq -c --arg a "${2:-}" "$_OSS_TL_RULES"'
             (if $a | startswith("decision:") then {type: "decision", decisionId: $a[9:]} else {type: $a} end) as $ap
-            | if .mergedAt == null then ["merge-unknown", (if .number | type == "number" then {pr: .number} else {} end)]
-              else ["merge", {pr: .number, sha: .mergeCommit.oid, mergedAt: .mergedAt, mergedBy: .mergedBy.login,
-                  approval: $ap}] end' 2>/dev/null) || fields=""
+            | {pr: .number, sha: .mergeCommit.oid, mergedAt: .mergedAt, mergedBy: .mergedBy.login, approval: $ap} as $m
+            | if $m | fields_ok("merge") then ["merge", $m]
+              else ["merge-unknown", (if .number | field("pr") then {pr: .number} else {} end)] end' 2>/dev/null) || fields=""
         [[ -n "$fields" ]] || fields='["merge-unknown",{}]'
         oss_timeline_append "$(jq -r '.[0]' <<< "$fields")" "$(jq -c '.[1]' <<< "$fields")"
         rc=$?; _oss_tl_push_bg; exit "$rc" ;;
