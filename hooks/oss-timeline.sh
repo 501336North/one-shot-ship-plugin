@@ -6,9 +6,9 @@
 #   oss_timeline_append KIND FIELDS_JSON   KIND: command, agent, gate, merge or merge-unknown (P-2, local only);
 #                                          FIELDS_JSON: that kind's own fields. Adds v, id, ts, kind, feature
 #                                          and session (P-8), checks the whole line against the API's strict
-#                                          schema, then appends it under the G1 lock. Returns non-zero and
-#                                          writes nothing on any refusal, with one stderr line; 0 and nothing
-#                                          written in a project with no .oss folder.
+#                                          schema (and a pass gate line against P-16), then appends it under the G1
+#                                          lock. Returns non-zero and writes nothing on any refusal, with one stderr
+#                                          line; 0 and nothing written in a project with no .oss folder.
 #
 # Run with no verb, it is the PostToolUse hook for Agent|Task (hooks.json): the hook JSON on stdin, one agent line,
 # exit 0 always. Run with a verb (command, gate, merge), it writes that verb's line; the gate and merge verbs and
@@ -109,9 +109,13 @@ def field($key):
     elif $key == "mergedBy" then free("[A-Za-z0-9-]{1,39}")
     elif $key == "approval" then approval
     else false end;
+# a plugin rule beyond the API (P-16): a gate line says pass only when no critical or high finding is left unfixed
+# (a missing count is 0); a fail verdict may carry any counts
+def settled: .verdict != "pass" or (. as $g | all("critical", "high"; ($g.findings[.] // 0) <= ($g.fixed[.] // 0)));
 def fields_ok($kind): own[$kind] as $o | type == "object" and $o != null
     and (keys - $o.req - $o.opt == []) and ($o.req - keys == [])
-    and all(to_entries[]; .key as $k | .value | field($k));
+    and all(to_entries[]; .key as $k | .value | field($k))
+    and ($kind != "gate" or settled);
 def base_ok: .v == 1 and (.id | uuid4) and (.ts | stamp) and (.session | free("[A-Za-z0-9-]{1,64}"))
     and ((has("feature") | not) or (.feature | free("(?!\\.)[A-Za-z0-9._-]{1,128}")));
 '
@@ -157,7 +161,7 @@ oss_timeline_append() (
         | ({v: 1, id: $id, ts: $ts, kind: $kind} + (if $feature == "" then {} else {feature: $feature} end)
             + {session: $session} + $f)
         | select(base_ok)' 2>/dev/null)
-    [[ -n "$line" ]] || refuse "$kind fields outside the API schema"
+    [[ -n "$line" ]] || refuse "$kind fields outside the API schema or the plugin gate rule (P-16)"
 
     oss_safe_target "$proj" "$rec" || { oss_refuse_unsafe "$rec"; exit 1; }
     file="$_OSS_SAFE_DIR/${rec##*/}"

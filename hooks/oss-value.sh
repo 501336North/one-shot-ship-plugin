@@ -28,7 +28,8 @@
 #                                   used command types, or one "Usage: unavailable right now" line and rc 0 (T69).
 #   oss-value.sh timeline gate      one gate line on the feature timeline (oss-timeline.sh gate) from round.txt
 #                                   gate.txt verdict.txt findings.txt fixed.txt mode.txt, each held to its rule in
-#                                   _ov_cmd_timeline; all six deleted once read, accepted or refused (G2 B4a).
+#                                   _ov_cmd_timeline; all six deleted once read, accepted or refused (G2 B4a); a pass
+#                                   with a critical or high count above its fixed count is refused by the writer (P-16).
 #   oss-value.sh timeline merge     one merge line (oss-timeline.sh merge, the PR facts from gh) with the approval
 #                                   from approval.txt (merge-flag, chat-instruction, none or decision:<uuid v4>;
 #                                   none when missing); deleted once read, accepted or refused (G2 B4b).

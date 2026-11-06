@@ -6,14 +6,17 @@
 #           timeline.ndjson gains one `gate` line with those values. Any value outside its rule adds nothing,
 #           and every value file read is deleted, whether the values were accepted or refused.
 # @business-rule AC-G2-002.1 and 002.2 (one gate line per gate, every value checked), P-1 (values reach the gate
-#           verb only through value files), P-6 (a gate name is one of the four standard names or a quality-gate
-#           agent name without its plugin prefix, as G3 ADR-005 reads it), the API's severity counts (critical,
-#           high, medium, low, info, each 0..1000, any of them omitted).
+#           verb only through value files), P-6 (a gate name is any lower-case name of letters, digits and
+#           hyphens up to 40 characters: the four standard names of G3 ADR-005, or a quality-gate agent name
+#           without its plugin prefix), the API's severity counts (critical, high, medium, low, info, each
+#           0..1000, any of them omitted), and P-16 (a pass verdict leaves no critical or high finding unfixed).
 # Usage: /bin/bash hooks/__tests__/timeline-gate.test.sh
+#        HOOKS_UNDER_TEST=/path/to/hooks-copy /bin/bash hooks/__tests__/timeline-gate.test.sh  (mutant copies)
 set -uo pipefail
 unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-OV="$ROOT/hooks/oss-value.sh"
+HOOKS="${HOOKS_UNDER_TEST:-$ROOT/hooks}"
+OV="$HOOKS/oss-value.sh"
 RUN=0; FAILED=0
 pass() { echo "✓ PASS: $1"; RUN=$((RUN + 1)); }
 fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
@@ -86,8 +89,8 @@ done
 for g in oss:code-reviewer Code-Review 'code review' code_review '' "$(printf 'a%.0s' {1..41})" '../x' 'pen-test;x'; do
     refused 1 "$g" pass '' '' full || { ok=0; bad="$bad gate=[$g]"; }
 done
-[[ $ok -eq 1 ]] && pass "should refuse a gate name that is neither one of security, code-review, performance or pen-test nor a quality-gate agent name without its prefix" \
-    || fail "should refuse a gate name that is neither one of security, code-review, performance or pen-test nor a quality-gate agent name without its prefix" "$bad (err=$ERR)"
+[[ $ok -eq 1 ]] && pass "should accept any lower-case gate name of letters, digits and hyphens up to 40 characters, and refuse a prefixed, upper-case, spaced, underscored, empty, over-long or path-like one" \
+    || fail "should accept any lower-case gate name of letters, digits and hyphens up to 40 characters, and refuse a prefixed, upper-case, spaced, underscored, empty, over-long or path-like one" "$bad (err=$ERR)"
 
 # --- severity counts ----------------------------------------------------------------------------------------------
 ok=1 bad=""
@@ -131,10 +134,32 @@ before=$(lines); put 1 security pass '' '' full; for n in $FILES; do ago 540 "$D
 [[ $ok -eq 1 ]] && pass "should refuse a gate value file older than 10 minutes, and delete every file it read" \
     || fail "should refuse a gate value file older than 10 minutes, and delete every file it read" "$bad (err=$ERR)"
 
+# --- P-16: a pass verdict leaves no critical or high finding unfixed --------------------------------------------
+ok=1 bad=""
+# pass while a critical or high finding is still open: refused, by the verb and by the writer itself
+for c in 'critical=9|' 'high=2|high=1' 'critical=1 high=1|critical=1' 'critical=3 high=0|critical=2 high=5'; do
+    refused 1 code-review pass "${c%%|*}" "${c#*|}" full || { ok=0; bad="$bad refused=[$c]"; }
+    l=$(left); [[ -z "$l" ]] || { ok=0; bad="$bad left-after=[$c]:[$l]"; }
+done
+before=$(lines)
+(cd "$P" && run_capped 20 "$HOOKS/oss-timeline.sh" gate 1 code-review pass 'critical=9' '' full > /dev/null 2>&1); rc=$?
+[[ $rc -ne 0 && $(lines) -eq $before ]] || { ok=0; bad="$bad writer-wrote-it rc=$rc"; }
+# every critical and high fixed (medium, low and info may stay open), or a fail verdict with any counts: accepted
+for c in 'critical=2 high=1 medium=4 low=5 info=6|critical=2 high=1' 'medium=3 low=1|' 'high=1|high=2' 'critical=0|'; do
+    accepted 1 code-review pass "${c%%|*}" "${c#*|}" full || { ok=0; bad="$bad pass-accepted=[$c]"; }
+done
+for c in 'critical=9|' 'critical=9 high=9|critical=1' '|'; do
+    accepted 1 code-review fail "${c%%|*}" "${c#*|}" full || { ok=0; bad="$bad fail-accepted=[$c]"; }
+done
+[[ $ok -eq 1 ]] && pass "should refuse verdict pass when a critical or high count exceeds its fixed count" \
+    || fail "should refuse verdict pass when a critical or high count exceeds its fixed count" "$bad (err=$ERR)"
+
 # --- the G3 gate-to-agent map -------------------------------------------------------------------------------------
 # GATE_AGENTS, copied verbatim from AgenticDevWorkflow packages/web/app/dashboard/observability/lib/flags.ts at
-# c6f64a6efce02f1c943dd084df5be1722afa1e2a (G3 ADR-005). G3 reads a gate line's `gate` through this table (any other
-# gate is backed by the agent of the same name), so the names the verb accepts must be the names it lists.
+# c6f64a6efce02f1c943dd084df5be1722afa1e2a (G3 ADR-005), the documented source of the names. G3 reads a gate
+# line's `gate` through this table (any other gate is backed by the agent of the same name), so every gate and
+# every agent it lists must be a name the verb writes as given, and an agent name as Claude Code spells it (with
+# its oss: prefix), in upper case or as a path must be refused: G3 would show such a gate as unverified.
 G3_FLAGS_TABLE=$(cat << 'TS'
 const GATE_AGENTS: Record<string, string[]> = {
   security: ['security-auditor'],
@@ -144,20 +169,25 @@ const GATE_AGENTS: Record<string, string[]> = {
 };
 TS
 )
-# the map this plugin's ship gates follow (PLAN.md Task 6), one "gate=agent agent" line per gate
-want='security=security-auditor
-code-review=code-reviewer
-performance=performance-auditor performance-engineer
-pen-test=penetration-tester'
-have=$(printf '%s\n' "$G3_FLAGS_TABLE" | sed -n "s/^  '\{0,1\}\([a-z-]*\)'\{0,1\}: \[\(.*\)\],\$/\1=\2/p" | tr -d "'," )
+# "gate agent agent" per line, read from the table
+rows=$(printf '%s\n' "$G3_FLAGS_TABLE" | sed -n "s/^  '\{0,1\}\([a-z-]*\)'\{0,1\}: \[\(.*\)\],\$/\1 \2/p" | tr -d "'," )
+gates=$(printf '%s\n' "$rows" | awk '{print $1}')
+agents=$(printf '%s\n' "$rows" | awk '{for (i = 2; i <= NF; i++) print $i}')
 ok=1 bad=""
-[[ "$have" == "$want" ]] || { ok=0; bad="map differs: have=[$have]"; }
-# every gate and every agent the map names is a name the verb accepts
-for g in $(printf '%s\n' "$want" | tr '= ' '\n\n'); do
-    accepted 1 "$g" pass '' '' full && [[ $(last | jq -r .gate) == "$g" ]] || { ok=0; bad="$bad not-accepted=$g"; }
+# the table was read whole: four gates, five agents (else the checks below would pass on nothing)
+[[ $(printf '%s\n' "$gates" | grep -c .) -eq 4 && $(printf '%s\n' "$agents" | grep -c .) -eq 5 ]] \
+    || { ok=0; bad="table not read: rows=[$rows]"; }
+for g in $gates $agents; do
+    accepted 1 "$g" pass '' '' full && [[ $(last | jq -r .gate) == "$g" ]] || { ok=0; bad="$bad not-written-as-given=$g"; }
 done
-[[ $ok -eq 1 ]] && pass "should pin the gate-to-agent map of G3 ADR-005" \
-    || fail "should pin the gate-to-agent map of G3 ADR-005" "$bad (err=$ERR)"
+for a in $agents; do
+    up=$(printf '%s' "$a" | tr '[:lower:]' '[:upper:]')
+    for g in "oss:$a" "$up" "agents/$a" "../$a"; do
+        refused 1 "$g" pass '' '' full || { ok=0; bad="$bad not-refused=[$g]"; }
+    done
+done
+[[ $ok -eq 1 ]] && pass "should write every gate and agent name of the G3 ADR-005 map as given, and refuse each agent name with its oss: prefix, in upper case or as a path" \
+    || fail "should write every gate and agent name of the G3 ADR-005 map as given, and refuse each agent name with its oss: prefix, in upper case or as a path" "$bad (err=$ERR)"
 
 echo "$RUN run, $FAILED failed"
 [[ $FAILED -eq 0 ]]

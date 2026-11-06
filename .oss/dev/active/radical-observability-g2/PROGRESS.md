@@ -23,7 +23,7 @@
 - [x] Task 10: delivery never stalls or strands a line (ship round 1) (completed 2026-11-06)
 - [x] Task 11: a merge line says only what is true (ship round 1) (completed 2026-11-06)
 - [x] Task 12: nothing unsafe or unbounded is written or read (ship round 1) (completed 2026-11-06)
-- [ ] Task 13: gate lines are consistent, and the gate map test can fail (ship round 1, pending)
+- [x] Task 13: gate lines are consistent, and the gate map test can fail (ship round 1) (completed 2026-11-06)
 
 ## Blockers
 - None. Plugin 2.0.97 is on main (#216, c80e004). Phase A API is live (AgenticDevWorkflow #418).

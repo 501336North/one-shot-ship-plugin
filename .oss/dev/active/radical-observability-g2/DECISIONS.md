@@ -29,9 +29,9 @@ The design-level ADRs (ADR-001 to ADR-010) live in AgenticDevWorkflow `.oss/dev/
 - **Why:** built-in types such as `Explore` or `Plan` have capitals, and the API pattern is `^[a-z0-9:_-]{1,64}$`.
 - **Decision:** lower-case the type, then check it. A type that still fails is skipped with one stderr line.
 
-## P-6: The gate verb refuses names outside the G3 contract
-- **Decision:** a gate name must be one of the four standard names, or match `^[a-z0-9-]{1,40}$` as a quality-gate agent name without its plugin prefix.
-- **Pinned by a test:** the gate-to-agent map, copied from G3 `flags.ts`.
+## P-6: The gate verb accepts the G3 names and refuses prefixed, upper-case or path-like ones
+- **Decision:** a gate name must match `^[a-z0-9-]{1,40}$`: one of the four standard names, or a quality-gate agent name without its plugin prefix. Any other name of that shape is also accepted (the verb has no list); a prefixed (`oss:code-reviewer`), upper-case, spaced or path-like name is refused.
+- **Pinned by a test:** `timeline-gate.test.sh` reads the gate-to-agent map pasted from G3 `flags.ts` (c6f64a6e) and runs every gate and agent name in it through `oss-value.sh timeline gate`: each is written as given, and each agent name with `oss:`, in upper case or as a path is refused. Since Task 13 this check fails on a hooks copy that loosens or tightens the rule (`HOOKS_UNDER_TEST`).
 - **Why:** a gate named any other way shows as unverified in G3, so the plugin refuses it at write time.
 
 ## P-7: The push uses the decisions switch and team policy
@@ -88,3 +88,8 @@ The design-level ADRs (ADR-001 to ADR-010) live in AgenticDevWorkflow `.oss/dev/
 - **Writes:** never to a timeline.ndjson the person does not own (`test -O`, checked under the lock in oss-timeline.sh; the shared `oss_safe_target` is unchanged); nothing at all when the project resolves to $HOME; a feature folder name over 128 characters files the line as unfiled; timeline-unfiled.ndjson stops growing at 1 MB.
 - **Refused approval:** a decision id not in the record, or an approval.txt that is stale, unsafe or outside its rule, still writes a local merge-unknown line (exit 1, never queued), so a real merge always leaves a trace.
 - **Outbox ids:** matched with `\A..\z` (jq's `$` let a trailing newline through).
+
+## P-16: A pass gate line leaves no critical or high finding unfixed (Task 13, 2026-11-06)
+- **Decision:** a gate line with verdict `pass` is refused when findings.critical > fixed.critical or findings.high > fixed.high (a missing count is 0). A `fail` verdict may carry any counts; medium, low and info may stay open on a pass.
+- **Where:** in the writer's rules (`_OSS_TL_RULES` `settled`, applied in `fields_ok` for kind gate), the one place every gate line passes through, so `oss-timeline.sh gate` run directly is held to it too. It is a plugin rule beyond the API schema.
+- **Value files:** `oss-value.sh timeline gate` has already taken (read and deleted) the six files when the writer refuses, so they are gone, as for any refusal.
