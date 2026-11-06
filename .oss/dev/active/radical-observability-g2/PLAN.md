@@ -236,6 +236,28 @@ Every task: RED first, then GREEN, the same rules as Tasks 1-9. G1 and every G2 
 - `should refuse verdict pass when a critical or high count exceeds its fixed count`.
 - The G3 map test checks something the product decides (each mapped gate and agent name is accepted, a prefixed or misspelled-case name is refused) and its title says what the code does.
 
+## Ship fix round 2 (2026-11-06, from the four round-2 gates)
+Every task: RED first, then GREEN, the same rules as Tasks 1-9. G1 and every G2 test stay green. Not in this round, by user decision: the decision-id provenance check (P-17, an API read-time flag later) and key runs split by `-` or `_` (P-18, kept equal to the API's rule).
+
+### Task 14: The push sends only lines the writer's rules accept
+- `should not send a stored body that fails the writer's rules for its kind` (a made-up kind, free text, a pass gate with an open high): it is marked failed, never POSTed.
+- `should walk only outbox files named as a 16-hex id` (`<rid>.ndjson`); any other `*.ndjson` in the folder is left alone.
+
+### Task 15: Compaction never follows a link and never loses a line
+- `should compact through a temp file in the outbox folder renamed into place`, so a link swapped in at the path is replaced, never written through, and an interrupted write leaves the old outbox whole.
+- `should remove an outbox left with no waiting line`, so outboxes do not pile up and slow every push (perf round 2).
+
+### Task 16: gh reports this repo's PR only
+- `should run gh with GH_REPO and GH_HOST unset` as well as every GIT_* variable (gh then takes the repo and host from this repo's remote). GH_TOKEN and GH_ENTERPRISE_TOKEN stay: they choose who is signed in, not which repo.
+
+### Task 17: Value files are bounded in size and age
+- `should read at most 4 KB of a gate or merge value file`.
+- `should refuse a value file last written in the future` (more than 60 s ahead of now), and delete it.
+
+### Task 18: A line goes out only under the key it was written with
+- `should send only lines whose fp is the current key's`; a line written under another key stays pending (not withheld), so switching back sends it.
+- `should withhold, on a policy-off answer, only the lines of the current key`, and `should not ask the policy when no line of the current key waits`.
+
 ## Implementation Sequence
 1. **Boundary first:** Task 1 (RED until Task 8).
 2. **Shared rules:** Task 2, a refactor with G1 green.

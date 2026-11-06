@@ -93,3 +93,11 @@ The design-level ADRs (ADR-001 to ADR-010) live in AgenticDevWorkflow `.oss/dev/
 - **Decision:** a gate line with verdict `pass` is refused when findings.critical > fixed.critical or findings.high > fixed.high (a missing count is 0). A `fail` verdict may carry any counts; medium, low and info may stay open on a pass.
 - **Where:** in the writer's rules (`_OSS_TL_RULES` `settled`, applied in `fields_ok` for kind gate), the one place every gate line passes through, so `oss-timeline.sh gate` run directly is held to it too. It is a plugin rule beyond the API schema.
 - **Value files:** `oss-value.sh timeline gate` has already taken (read and deleted) the six files when the writer refuses, so they are gone, as for any refusal.
+
+## P-17: The decision-id check stays as it is (ship round 2, user decision 2026-11-06)
+- **Context:** three round-2 gates showed that `decision:<uuid>` passes when any line of the feature's decisions.ndjson carries that id. The file is a writable repo file, so an agent or anyone who commits can plant one.
+- **Decision:** the user chose to keep the plugin check (P-14) and add the real check in the API later: at read time, flag a decision approval whose id the account never pushed as a G1 decision. Logged in FOLLOWUPS and listed in the PR body as a known limit.
+
+## P-18: The bare-key rule stays equal to the API's (ship round 2, user decision 2026-11-06)
+- **Context:** the pen test passed a key-like value broken by `-` or `_` in agent, session and mergedBy. A stricter rule would refuse long hyphenated feature names and drift from the API's holdsBareSecret.
+- **Decision:** the user chose to keep `keyless` equal to the API's rule and improve both together later (for example known key prefixes). Logged in FOLLOWUPS and listed in the PR body.
