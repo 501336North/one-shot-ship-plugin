@@ -1,6 +1,6 @@
 # Progress: Radical Observability G2, Phase B (plugin)
 
-## Current Phase: build
+## Current Phase: build (Tasks 1-9 done; next /oss:ship)
 
 ## Tasks
 - [x] Task 1: Acceptance test at the boundary (written 2026-11-06; 8 checks RED as expected until Task 8)
@@ -14,7 +14,9 @@
 - [x] Task 8: B5, background push (completed 2026-11-06; `timeline.acceptance` GREEN 8/8; two copies of the outbox code, P-10; push starts and overlap, P-11)
   - The push starts detached, in its own process group, from oss-notify (after its command line, `oss-timeline.sh push --detach`), the gate and merge verbs and the Agent|Task hook. The "API hangs" check sits in notify-timeline.test.sh.
   - For Task 9: `~/.oss/timeline-outbox/` is outside the repo; nothing there is a timeline file.
-- [ ] Task 9: B6, timeline files are never removed, plus release 2.0.98 (pending)
+- [x] Task 9: B6, timeline files are never removed, plus release 2.0.98 (completed 2026-11-06; no product change needed; plugin.json 2.0.98)
+  - Found, not fixed (outside this task): `oss-log.sh purge --force` only prints the warning, because purge reads `--force` as its third word (`purge <anything> --force` purges). The usage line documents the two-word form.
+  - `oss-archive-check.sh` moves a whole feature folder to `.oss/dev/completed/` on ship; its timeline goes with it, so the file is kept, and the guard does not flag it.
 
 ## Blockers
 - None. Plugin 2.0.97 is on main (#216, c80e004). Phase A API is live (AgenticDevWorkflow #418).
