@@ -9,6 +9,7 @@
 #                            (the real GET answers 200 for everyone, "team" saying whether the caller is in one;
 #                            only the PUT answers 404 no_team)
 #   $D/api/queue.decisions   POST .../api/v1/decisions         (empty queue: 201 with a fake account)
+#   $D/api/queue.timeline    POST .../api/v1/timeline          (empty queue: 201 with a fake account)
 # A status of 000 is an unreachable API: curl prints 000 for -w and exits 7, as real curl does.
 # It writes the -w code to stdout and the body to the -o file (or stdout), like real curl (a \n in -w is a newline).
 #
@@ -55,6 +56,7 @@ fi
 case "$url" in
     */api/v1/decisions/policy) q=policy; dflt='200 {"pushEnabled":true,"team":false}' ;;
     */api/v1/decisions) q=decisions; sleep "${FAKE_DELAY_DECISIONS:-0}"; dflt='201 {"account":{"id":"acct-fake-1","email":"dev@example.invalid"}}' ;;
+    */api/v1/timeline) q=timeline; dflt='201 {"account":{"id":"acct-fake-1"}}' ;;
     *) q=other; dflt='404 {"error":"not_found"}' ;;
 esac
 printf '%s %s\n' "$q" "$url" >> "$A/calls"

@@ -14,6 +14,6 @@
 - **Never** run the watcher's vitest suite: its setup kills OSS processes machine-wide.
 
 ## Results
-- None yet (plan phase).
+- 2026-11-06 `/oss:acceptance`: `timeline.acceptance.test.sh` 8 run, 8 failed (expected: nothing built yet). The fake API gained a `/api/v1/timeline` route (queue `timeline`, 201 default); G1's `decision-record.acceptance` (5/5) and `decision-push` (100/100) still pass. Guards: `tests-hermetic-env` 90/90, `no-hand-capped-tests` 35/35.
 
-## Last Updated: 2026-11-06 by /oss:plan
+## Last Updated: 2026-11-06 by /oss:acceptance
