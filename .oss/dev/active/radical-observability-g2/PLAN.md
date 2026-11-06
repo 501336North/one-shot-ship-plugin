@@ -179,7 +179,7 @@ The plugin writes a committed `.oss/dev/active/{feature}/timeline.ndjson` per fe
   | Reply | Result |
   |---|---|
   | 200/201 | `verified` |
-  | 400 | `refused`, never retried |
+  | 400 | `refused`, never retried; one stderr line names the line id (a "Holds a secret" refusal is reported, never dropped silently) |
   | 409 `policy_off` | withhold everything waiting, then stop |
   | 409 `answered_while_off` / `account_mismatch` | `withheld` |
   | 409 `conflict` | `conflict` |
@@ -239,6 +239,7 @@ The plugin writes a committed `.oss/dev/active/{feature}/timeline.ndjson` per fe
 - [ ] Symlinks and hard links are refused for the timeline file, the feature folder, the outbox and the value files.
 - [ ] The server runs `redactRecord` on every field. No client redaction is needed because no field can hold free text (P-4).
 - [ ] The lock lives outside the repo (`~/.oss/locks`), so a repo cannot plant it.
+- [ ] Header auth only (no `?token=`). Each body stays far under the API's 16 KB limit. `repo` is omitted, since it is optional.
 
 ## Performance Considerations
 - [ ] Each hook does a local append only: one jq call plus one locked append, well under 100 ms.
