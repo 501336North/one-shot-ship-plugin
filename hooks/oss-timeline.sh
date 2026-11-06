@@ -247,7 +247,7 @@ _oss_tl_push() (
         | reduce .[] as $e ({order: [], last: {}, body: {}, fp: {}}; (if .last[$e.id] == null then .order += [$e.id] else . end)
             | .last[$e.id] = $e.state | if .body[$e.id] == null and ($e.body | type) == "object" then .body[$e.id] = $e.body | .fp[$e.id] = $e.fp else . end)
         | .last as $last | .body as $b | .fp as $f | .order[] | select($last[.] == "pending" or $last[.] == "retry")
-        | . as $i | select($t | contains(" " + $i + " ") | not) | select(($f[.] // "") | . == $c or . == "")
+        | . as $i | select($t | contains(" " + $i + " ") | not) | select(($f[.] // "") | IN($c, ""))
         | {id: ., body: $b[.], fp: $f[.]}' "$ob" 2>/dev/null
     }
     plock="" pheld="" lk="" lheld="" tmp="" policy=""
@@ -397,7 +397,8 @@ case "${1:-}" in
     # session's could name another repo or host, and that PR's facts would be pushed; GH_TOKEN and GH_ENTERPRISE_TOKEN
     # stay: they choose who is signed in, not which repo); nothing from a value file reaches gh's argv. No gh, a
     # failed or hung gh, a PR that is not merged, or facts outside the merge schema (a bot login, a null mergeCommit,
-    # a mergedAt before 2020) give a local merge-unknown line (P-2), with the PR number when it is valid. The line's own rules check every field again.
+    # a mergedAt before 2020) give a local merge-unknown line (P-2), with the PR number when it is valid. The line's
+    # own rules check every field again.
     merge)
         oss_resolve_project
         refused=""
