@@ -193,6 +193,8 @@ The earlier round's banner landed in another worktree's build.log because ~/.oss
 - [x] API PR #422 (queue prompt uses queue-push) live, re-checked 2026-11-05 12:46 UTC: signature valid, hash verified, no key/Bearer/curl.
 
 - [x] T89 done 2026-11-06 (typescript-pro): bundled oss-launch's background proxy spawns `start-proxy` (was a script path, so the child ran as the launcher; also in 2.0.78). Unit + bundled integration test, mutant killed; watcher 4021/4021, shell at baseline. Sandboxes with real keys deleted 2026-11-06.
-- [ ] T71c: tag oss-launch-v2.0.97-1, verify, pin (oss-launch-v2.0.97 built before T89; not pinned).
+- [x] T89b done 2026-11-06: pkg self-spawn sets PKG_EXECPATH, so the child treated 'start-proxy' as a script; both bundled self-spawns pass PKG_EXECPATH=''. Verified on a locally built pkg binary and the released one.
+- [x] T71c done 2026-11-06: oss-launch-v2.0.97-2 (commit 26c1ac7) built, 4 checksums verified, sandbox: version 2.0.97, hostile repo config does not route, user config routes and the background proxy is healthy; real ensure-oss-launch install verified. Pinned OSS_LAUNCH_TAG + hooks/oss-launch-checksums.txt. Latest stays cli-decrypt-v1.2.4. (v2.0.97 and v2.0.97-1 were built during the fix and are not pinned.)
+- [x] API #423 (/oss:plan Step 0 check-and-report, deploy no global installs) live, re-checked 2026-11-06 03:25 UTC.
 
-## Last Updated: 2026-11-06 11:08 CST by /oss:ship (T89 done; T71c next)
+## Last Updated: 2026-11-06 by /oss:ship (T71c pinned; merging PR #216)
