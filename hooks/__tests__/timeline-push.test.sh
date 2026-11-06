@@ -120,8 +120,8 @@ reply() {
     local id; id=$(ids | tr -d ' ')
     [[ $RC -eq 0 && "$(state_of "$id")" == "$3" ]] && pass "$name ($1 -> $3)" || fail "$name ($1 -> $3)" "rc=$RC state=$(state_of "$id") err=$(cat "$T/err")"
 }
-reply 200 '200 {"account":{"id":"acct-fake-1"}}' verified
-reply 201 '201 {"account":{"id":"acct-fake-1"}}' verified
+reply 200 '200 {"account":{"id":"acct-fake-1","email":"dev@example.invalid"}}' verified
+reply 201 '201 {"account":{"id":"acct-fake-1","email":"dev@example.invalid"}}' verified
 reply 409-conflict '409 {"error":"conflict"}' conflict
 reply 409-answered_while_off '409 {"error":"answered_while_off"}' withheld
 reply 409-account_mismatch '409 {"error":"account_mismatch"}' withheld

@@ -57,7 +57,7 @@ fi
 case "$url" in
     */api/v1/decisions/policy) q=policy; dflt='200 {"pushEnabled":true,"team":false}' ;;
     */api/v1/decisions) q=decisions; sleep "${FAKE_DELAY_DECISIONS:-0}"; dflt='201 {"account":{"id":"acct-fake-1","email":"dev@example.invalid"}}' ;;
-    */api/v1/timeline) q=timeline; sleep "${FAKE_DELAY_TIMELINE:-0}"; dflt='201 {"account":{"id":"acct-fake-1"}}' ;;
+    */api/v1/timeline) q=timeline; sleep "${FAKE_DELAY_TIMELINE:-0}"; dflt='201 {"account":{"id":"acct-fake-1","email":"dev@example.invalid"}}' ;;
     *) q=other; dflt='404 {"error":"not_found"}' ;;
 esac
 printf '%s %s\n' "$q" "$url" >> "$A/calls"
