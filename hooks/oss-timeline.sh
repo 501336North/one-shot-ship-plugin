@@ -11,7 +11,7 @@
 #                                          written in a project with no .oss folder.
 #
 # Run with no verb, it is the PostToolUse hook for Agent|Task (hooks.json): the hook JSON on stdin, one agent line,
-# exit 0 always. Run with a verb (command; gate, merge and push follow), it writes that verb's line.
+# exit 0 always. Run with a verb (command, gate; merge and push follow), it writes that verb's line.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=hooks/oss-api-curl.sh
@@ -135,6 +135,16 @@ case "${1:-}" in
     # oss-timeline.sh command NAME STATUS: oss-notify's --workflow NAME start|complete|failed (B2); both values
     # are checked by the line's own rules
     command) oss_timeline_append command "$(jq -nc --arg c "${2:-}" --arg s "${3:-}" '{command: $c, status: $s}' 2>/dev/null)"; exit ;;
+    # oss-timeline.sh gate ROUND GATE VERDICT FINDINGS FIXED MODE: only from oss-value.sh timeline gate (B4a), which
+    # read the values from value files and checked them; FINDINGS and FIXED in the form "critical=0 high=2" (or
+    # empty). The line's own rules check every field again.
+    gate)
+        # shellcheck disable=SC2016 # jq's $ variables, not the shell's
+        oss_timeline_append gate "$(jq -nc --argjson r "${2:-}" --arg g "${3:-}" --arg v "${4:-}" --arg f "${5:-}" \
+            --arg x "${6:-}" --arg m "${7:-}" 'def counts: [splits(" ") | select(. != "") | split("=")
+                | {(.[0]): (.[1] | tonumber)}] | add // {};
+            {round: $r, gate: $g, verdict: $v, findings: ($f | counts), fixed: ($x | counts), mode: $m}' 2>/dev/null)"
+        exit ;;
     # no verb: the PostToolUse hook for Agent|Task (B3), the hook JSON on stdin. One agent line with the type,
     # lower-cased (P-5), and the running command when the project's own workflow-state.json names one. Never
     # disturbs the tool run: exit 0 whatever happens.
@@ -158,5 +168,5 @@ case "${1:-}" in
                 '{agent: $a} + (if $c == "" then {} else {command: $c} end)')"
         exit 0 ;;
 esac
-echo "usage: oss-timeline.sh command NAME STATUS, or no verb with PostToolUse JSON on stdin (or source it for oss_timeline_append)" >&2
+echo "usage: oss-timeline.sh command NAME STATUS | gate ROUND GATE VERDICT FINDINGS FIXED MODE, or no verb with PostToolUse JSON on stdin (or source it for oss_timeline_append)" >&2
 exit 2

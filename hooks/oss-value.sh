@@ -26,6 +26,9 @@
 #                                   /oss:workflows display (T60).
 #   oss-value.sh usage              GET /api/v1/analytics/usage the same way; print this month's total and the 10 most
 #                                   used command types, or one "Usage: unavailable right now" line and rc 0 (T69).
+#   oss-value.sh timeline gate      one gate line on the feature timeline (oss-timeline.sh gate) from round.txt
+#                                   gate.txt verdict.txt findings.txt fixed.txt mode.txt, each held to its rule in
+#                                   _ov_cmd_timeline; all six deleted once read, accepted or refused (G2 B4a).
 #   oss-value.sh queue-push         POST type.txt, source.txt and prompt.txt (checked) to /api/v1/queue the same way;
 #                                   print "Queued: <id>", or one Error: line on stderr and rc 1 (T87).
 # (Saving the API key is hooks/oss-login.sh, NOT a verb here: this script is allowlisted, a key
@@ -47,7 +50,7 @@ if [[ ! -f "$_OV_HERE/oss-safe-path.sh" ]]; then
 fi
 source "$_OV_HERE/oss-safe-path.sh"
 
-_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args> | status | usage | workflows | workflow | queue-push" >&2; exit 2; }
+_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args> | status | usage | workflows | workflow | queue-push | timeline gate" >&2; exit 2; }
 
 _OV_RUN="$HOME/.oss/run"
 
@@ -87,6 +90,7 @@ _ov_cmd_dir() {
     && rm -f "$p/feature.txt" "$p/numbers.txt" "$p/date.txt" "$p/reason.txt" "$p/message.txt" "$p/hint.txt" "$p/error.txt" \
              "$p/agent.txt" "$p/key.txt" "$p/style.txt" "$p/prompt.txt" "$p/model.txt" "$p/workflow.txt" "$p/category.txt" "$p/name.txt" \
              "$p/notify_style.txt" "$p/voice.txt" "$p/sound.txt" "$p/verbosity.txt" "$p/custom.txt" "$p/type.txt" "$p/source.txt" \
+             "$p/round.txt" "$p/gate.txt" "$p/verdict.txt" "$p/findings.txt" "$p/fixed.txt" "$p/mode.txt" \
     && printf '%s\n' "$p"
 }
 
@@ -346,6 +350,34 @@ _ov_cmd_agent() {
     CLAUDE_PROJECT_DIR="$_OV_PROJ" "$_OV_HERE/oss-log.sh" agent "$1" "$_OV_VAL" "$t"
 }
 
+# timeline gate (G2 B4a): the six gate value files, each taken (_ov_take: read and deleted, valid or not) and held
+# to its rule, then one oss-timeline.sh gate line. Every file is taken before any verdict, so a refusal leaves none.
+# Counts: critical, high, medium, low, info (the API's severityCounts), each 0..1000, each at most once, or none.
+_OV_COUNTS='^((critical|high|medium|low|info)=(0|[1-9][0-9]{0,2}|1000)( (critical|high|medium|low|info)=(0|[1-9][0-9]{0,2}|1000))*)?$'
+_ov_cmd_timeline() {
+    local o n re ok=1 v=() k seen
+    oss_phys_cwd; o="$_OSS_CWD"
+    [[ "${1:-}" == gate ]] && _ov_dir || { echo "oss-value: timeline: refused (not timeline gate, or no safe value folder)" >&2; return 1; }
+    for n in round gate verdict findings fixed mode; do
+        case $n in
+            round) re='^([1-9]|1[0-9]|20)$' ;;
+            gate) re='^[a-z0-9-]{1,40}$' ;;   # P-6: a standard gate name or an agent name without its prefix
+            verdict) re='^(pass|fail)$' ;;
+            findings|fixed) re=$_OV_COUNTS ;;
+            mode) re='^(full|quick|no-checks|team)$' ;;
+        esac
+        _ov_take "$n.txt" "$re" || ok=0
+        v+=("$_OV_VAL")
+    done
+    for n in "${v[3]}" "${v[4]}"; do   # no severity named twice
+        seen=" "
+        for k in $n; do k=${k%%=*}; [[ "$seen" == *" $k "* ]] && ok=0; seen="$seen$k "; done
+    done
+    (( ok )) || { echo "oss-value: timeline gate: refused (a value file missing, unsafe or outside its rule)" >&2; return 1; }
+    _ov_walk "$o"
+    CLAUDE_PROJECT_DIR="$_OV_PROJ" "$_OV_HERE/oss-timeline.sh" gate "${v[@]}"
+}
+
 _ov_cmd_failed() {
     local o r
     oss_phys_cwd; o="$_OSS_CWD"
@@ -403,5 +435,6 @@ case "${1:-}" in
     workflows) _ov_cmd_workflows ;;
     workflow) _ov_cmd_workflow ;;
     queue-push) _ov_cmd_queue_push ;;
+    timeline) _ov_cmd_timeline "${2:-}" ;;
     *) _ov_usage ;;
 esac
