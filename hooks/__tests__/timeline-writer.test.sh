@@ -116,8 +116,10 @@ append command "$CMD"
     && pass "should write to .oss/dev/timeline-unfiled.ndjson with feature omitted when no feature folder resolves" \
     || fail "should write to .oss/dev/timeline-unfiled.ndjson with feature omitted when no feature folder resolves" \
         "rc=$RC unfiled=$(cat "$UN" 2>/dev/null) err=$ERR"
-[[ ! -f "$API/api/calls" && ! -e "$HOME/.oss/timeline-outbox" ]] && pass "should never queue or send an unfiled line" \
-    || fail "should never queue or send an unfiled line" "calls=$(cat "$API/api/calls" 2>/dev/null)"
+# (the filed lines above are queued since Task 8, so the outbox folder may exist: the unfiled line's id is in none)
+uid=$(last "$UN" | jq -r '.id')
+[[ ! -f "$API/api/calls" && -n "$uid" ]] && ! grep -qsF "$uid" "$HOME"/.oss/timeline-outbox/*.ndjson && pass "should never queue or send an unfiled line" \
+    || fail "should never queue or send an unfiled line" "calls=$(cat "$API/api/calls" 2>/dev/null) id=$uid outbox=$(cat "$HOME"/.oss/timeline-outbox/*.ndjson 2>/dev/null | head -c 300)"
 
 # --- refusals: links ----------------------------------------------------------------------------------------------
 # refused <name> <file that must stay as it is> <outside file that must stay empty>

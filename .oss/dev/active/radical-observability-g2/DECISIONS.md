@@ -48,4 +48,20 @@ The design-level ADRs (ADR-001 to ADR-010) live in AgenticDevWorkflow `.oss/dev/
 - **Context:** PLAN.md Task 7 assumed `run_with_timeout` could be reached. It cannot: it and `run_bounded` live inline in oss-notify.sh and oss-session-start.sh, which run their hook body when loaded and cannot be sourced.
 - **Decided by:** the build orchestrator, 2026-11-06, when Task 7 found no reachable bounded helper.
 
+## P-10: Two short copies of the outbox and reply code, not one `oss_outbox_*`
+- **Decision:** `oss-timeline.sh` keeps its own copy of G1's outbox state log (`waiting()`, `mark()`, `withhold()`) and reply table (`_oss_tl_push`); nothing moved into `oss-api-curl.sh`.
+- **Why it is not line for line:**
+  - G1's push is the top level of `oss-decision-record.sh`, sharing globals, its EXIT trap and its record lock with the writer above it; the timeline push is a verb of its own that finds its outbox from the project, not from a record it just wrote.
+  - The bodies differ: G1 makes its body through the watcher's redactor (`--push-body`), the timeline stores the checked line as it is (P-4).
+  - The timeline push loops: pushes start detached and overlap, so the push-lock holder looks again after it lets the lock go (P-11). G1 runs once per answer and does not.
+  - The 400 reply names the line id on stderr (PLAN.md); G1's names nothing.
+- **Shared already:** `oss_ask`, `oss_api_creds`, `oss_private_dir`, `oss_private_run_dir`, `oss_take_stale`, `oss_lock_id`, `oss_release_lock`, `oss_json_field`, `oss_decisions_push_off`, `oss_single_link`.
+- **Cost:** a change to the reply table must be made in both places. Moving G1 onto shared functions would touch 200+ G1 checks for no behaviour change.
+
+## P-11: Where the push starts, and how
+- **Starts:** oss-notify after its `command` line (`oss-timeline.sh push --detach`); the `gate` and `merge` verbs and the Agent|Task PostToolUse hook after their line. The `command` verb starts none itself, so oss-notify starts exactly one.
+- **How:** `_oss_tl_push_bg` runs `oss-timeline.sh push` in a process group of its own (`perl setpgrp`, else a plain `&`), stdin, stdout and stderr closed. A hook whose group is killed, or a caller that waits on its group (Claude Code, `run_capped`), neither cuts a POST short nor waits for one. The push bounds itself: 8 POSTs of 5 s, none started after 40 s.
+- **Overlap:** a push that finds the push lock busy leaves its lines pending; the holder, after releasing the lock, reads the outbox again and runs once more while lines wait and the bounds allow. Without that, the last line of a burst (a ship's gate and merge) could wait until the next command.
+- **Decided by:** the Task 8 build, 2026-11-06.
+
 ## Last Updated: 2026-11-06 by /oss:build

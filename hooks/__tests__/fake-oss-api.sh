@@ -20,6 +20,7 @@
 # set to a file, every call N copies it to $D/api/each.N (what it held when request N went out).
 # Every POST body is also appended, as one line, to $D/api/bodies (safe when two hooks call at once).
 # FAKE_DELAY_DECISIONS=<s>: each POST to .../api/v1/decisions takes that long to answer.
+# FAKE_DELAY_TIMELINE=<s>: each POST to .../api/v1/timeline takes that long to answer.
 # FAKE_ON_CALL=<script>: run as `<script> N` at the start of call N (to change files while a hook is mid-run).
 # FAKE_ACCOUNT_FPS="<fp> ...": the key fingerprints of the caller's account, as the real POST checks them (Task
 # 16w): a POST whose body has a keyFp not in the list answers 409 account_mismatch (no queue line is used); one
@@ -56,7 +57,7 @@ fi
 case "$url" in
     */api/v1/decisions/policy) q=policy; dflt='200 {"pushEnabled":true,"team":false}' ;;
     */api/v1/decisions) q=decisions; sleep "${FAKE_DELAY_DECISIONS:-0}"; dflt='201 {"account":{"id":"acct-fake-1","email":"dev@example.invalid"}}' ;;
-    */api/v1/timeline) q=timeline; dflt='201 {"account":{"id":"acct-fake-1"}}' ;;
+    */api/v1/timeline) q=timeline; sleep "${FAKE_DELAY_TIMELINE:-0}"; dflt='201 {"account":{"id":"acct-fake-1"}}' ;;
     *) q=other; dflt='404 {"error":"not_found"}' ;;
 esac
 printf '%s %s\n' "$q" "$url" >> "$A/calls"

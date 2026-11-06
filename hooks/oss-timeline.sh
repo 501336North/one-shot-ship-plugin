@@ -11,7 +11,9 @@
 #                                          written in a project with no .oss folder.
 #
 # Run with no verb, it is the PostToolUse hook for Agent|Task (hooks.json): the hook JSON on stdin, one agent line,
-# exit 0 always. Run with a verb (command, gate, merge; push follows), it writes that verb's line.
+# exit 0 always. Run with a verb (command, gate, merge), it writes that verb's line; the gate and merge verbs and
+# the hook then start the push detached (oss-notify starts it after its command line). `push` copies the
+# feature's waiting lines to the API (B5).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=hooks/oss-api-curl.sh
@@ -168,14 +170,149 @@ oss_timeline_append() (
     held=$(oss_lock_id "$lock")
     # the path again, now that no other writer can touch it: a link swapped in during the wait is refused
     oss_safe_target "$proj" "$rec" || { oss_refuse_unsafe "$rec"; exit 1; }
+    # the outbox entry (B5), made from the line this machine writes: the push never reads the committed file
+    entry=$(jq -c --arg fp "$(k=$(oss_api_key) && printf '%s' "$k" | sha256 | cut -c1-16)" \
+        '{id, state: "pending", fp: $fp, body: .}' <<< "$line")
     # a file whose last line has no newline gets one first, so the new line never glues onto it
     [[ -s "$file" && -n "$(tail -c 1 "$file")" ]] && line=$'\n'"$line"
-    printf '%s\n' "$line" >> "$file"
+    printf '%s\n' "$line" >> "$file" || exit 1
+    # B5, as G1's outbox: the line's id and body go, under the same lock, to a private outbox outside the repo
+    # (~/.oss/timeline-outbox/<rid>.ndjson, folder 700, file 600; refused when it is a link, has another hard link
+    # or is not the person's). Never for an unfiled line (P-3) or a merge-unknown one (P-2), and never while the
+    # person's push switch is off (P-7), so a line written while it was off is never sent later.
+    [[ -n "$feature" && "$kind" != merge-unknown ]] || exit 0
+    oss_decisions_push_off && exit 0
+    ob="$HOME/.oss/timeline-outbox/$rid.ndjson"
+    oss_private_dir "${ob%/*}" && _oss_tl_ob_ok "$ob" && (umask 077; printf '%s\n' "$entry" >> "$ob")
+    exit 0
+)
+
+# _oss_tl_ob_ok OUTBOX: absent, or a single-link regular file of the person's own (`test -O`: the tests' other-user
+# seam). Checked before every append to it.
+_oss_tl_ob_ok() { oss_single_link "$1" && { [[ ! -e "$1" ]] || test -O "$1"; }; }
+
+# _oss_tl_push_bg: starts `oss-timeline.sh push` detached, in a process group of its own (so killing the hook's
+# group, or a caller waiting on it, never cuts a POST short or waits for one), stdin, stdout and stderr closed.
+# The push bounds itself: 8 POSTs of 5 s at most, none started after 40 s.
+_oss_tl_push_bg() {
+    if [[ -x /usr/bin/perl ]]; then
+        /usr/bin/perl -e 'setpgrp(0, 0); exec { $ARGV[0] } @ARGV' "$SCRIPT_DIR/oss-timeline.sh" push </dev/null >/dev/null 2>&1 &
+    else
+        "$SCRIPT_DIR/oss-timeline.sh" push </dev/null >/dev/null 2>&1 &
+    fi
+}
+
+# _oss_tl_push: B5, G1's push for the current feature's timeline outbox. Each waiting line (pending, or retry
+# after a 5xx) goes to POST /api/v1/timeline as the body stored when it was written, plus keyFp, the fingerprint
+# of the key it was written under; the reply is written to the outbox, never to the committed file. Exit 0 always.
+_oss_tl_push() (
+    export LC_ALL=C
+    oss_resolve_project
+    proj="$_OSS_PROJ"
+    [[ -n "$proj" && -d "$proj/.oss" ]] || exit 0
+    command -v jq >/dev/null 2>&1 || exit 0
+    sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256; else sha256sum; fi; }
+    oss_resolve_feature "$proj"
+    feature="$_OSS_FEATURE"
+    [[ -n "$feature" ]] || exit 0   # unfiled lines are never queued (P-3)
+    rec=".oss/dev/active/$feature/timeline.ndjson"
+    oss_safe_target "$proj" "$rec" || exit 0
+    rid=$(printf '%s' "$_OSS_SAFE_DIR/${rec##*/}" | sha256 | cut -c1-16)
+    ob="$HOME/.oss/timeline-outbox/$rid.ndjson"
+    ob_ok() { _oss_tl_ob_ok "$ob"; }
+    [[ -f "$ob" ]] && ob_ok || exit 0
+    oss_decisions_push_off && exit 0
+    oss_api_creds || exit 0; key=$OSS_KEY url=$OSS_URL   # key and URL from one read (T37)
+    # waiting: the outbox ids whose latest state is pending or retry, oldest first, each with its stored body and fp
+    waiting() {
+        jq -Rnc '[inputs | fromjson? | objects | select((.id | type) == "string" and (.id | test("^[0-9a-f-]{36}$")))]
+        | reduce .[] as $e ({order: [], last: {}, body: {}, fp: {}}; (if .last[$e.id] == null then .order += [$e.id] else . end)
+            | .last[$e.id] = $e.state | if .body[$e.id] == null and ($e.body | type) == "object" then .body[$e.id] = $e.body | .fp[$e.id] = $e.fp else . end)
+        | .last as $last | .body as $b | .fp as $f | .order[] | select($last[.] == "pending" or $last[.] == "retry") | {id: ., body: $b[.], fp: $f[.]}' "$ob" 2>/dev/null
+    }
+    [[ -n "$(waiting)" ]] || exit 0
+    plock="$ob.push" pheld="" tmp="" asked=""
+    # shellcheck disable=SC2329 # run by the EXIT trap
+    cleanup() { oss_release_lock "$plock" "$pheld"; [[ -n "$tmp" ]] && rm -rf "$tmp"; }
+    trap cleanup EXIT
+    tmp=$(oss_private_run_dir timeline-push) || exit 0
+    find "$HOME/.oss/run" -mindepth 1 -maxdepth 1 -type d -name 'timeline-push.*' -mmin +10 -exec rm -rf {} + 2>/dev/null
+    body="$tmp/body" resp="$tmp/resp"
+    withhold() { waiting | jq -c '{id, state: "withheld"}' > "$tmp/withheld" 2>/dev/null && ob_ok && (umask 077; cat "$tmp/withheld" >> "$ob"); }
+    ask() { oss_ask 5 "$resp" "$key" "$@" 2>/dev/null; }
+    mark() { ob_ok || exit 0; (umask 077; jq -nc --arg id "$id" "$@" >> "$ob"); }
+    sent=0
+    # Pushes start detached and may overlap: one that finds the push lock busy leaves its lines pending, so the
+    # holder looks again after it lets the lock go, and goes on while new lines wait and the run's bounds allow.
+    while ((sent < 8 && SECONDS < 40)); do
+        mkdir "$plock" 2>/dev/null || { oss_take_stale "$plock" 120 && mkdir "$plock" 2>/dev/null; } || exit 0
+        pheld=$(oss_lock_id "$plock")
+        # the team decides, as for decisions (P-7): only a 200 saying pushEnabled is true sends anything
+        if [[ -z "$asked" ]]; then
+            ask "$url/api/v1/decisions/policy"; [[ "$code" == 200 ]] || exit 0
+            jq -e '.pushEnabled == false' "$resp" >/dev/null 2>&1 && { withhold; exit 0; }
+            jq -e '.pushEnabled == true' "$resp" >/dev/null 2>&1 || exit 0
+            asked=1
+        fi
+        todo=$(waiting)
+        [[ -n "$todo" ]] || exit 0
+        # shellcheck disable=SC2016 # the $id and $a in the marks are jq's, never the shell's
+        while IFS= read -r e; do
+            [[ -n "$e" ]] || continue
+            ((sent < 8 && SECONDS < 40)) || exit 0
+            id=$(printf '%s' "$e" | jq -r '.id')
+            efp=$(printf '%s' "$e" | jq -r '.fp | strings')
+            if ! (umask 077; printf '%s' "$e" | jq -ce --arg fp "$efp" '.body | objects | .keyFp = $fp' > "$body" 2>/dev/null); then
+                mark '{id: $id, state: "failed", status: 0}'
+                continue
+            fi
+            # a line written with no key in the config names no key: withheld, a final state
+            if [[ -z "$efp" ]]; then
+                mark '{id: $id, state: "withheld"}'
+                continue
+            fi
+            oss_decisions_push_off && exit 0
+            sent=$((sent + 1))
+            ask -H 'Content-Type: application/json' --data-binary @"$body" "$url/api/v1/timeline"
+            case "$code" in
+                200 | 201)
+                    acct=$(jq -c '.account | objects | select(.id | type == "string")' "$resp" 2>/dev/null | oss_json_field id)
+                    [[ -n "$acct" ]] || exit 0
+                    mark --arg a "$acct" '{id: $id, state: "verified", account: $a}' ;;
+                # the API's schema (or its secret check) refused the line: never sent again, and said once
+                400)
+                    mark '{id: $id, state: "refused", status: 400}'
+                    echo "oss: timeline line $id was refused by the OSS API (400) and will not be sent again" >&2 ;;
+                409)
+                    case "$(oss_json_field error < "$resp" 2>/dev/null)" in
+                        policy_off) withhold; exit 0 ;;
+                        account_mismatch | answered_while_off) mark '{id: $id, state: "withheld"}' ;;
+                        conflict)
+                            mark '{id: $id, state: "conflict"}'
+                            echo "oss: timeline line $id was not sent: your OSS account already holds a different line with the same id" >&2 ;;
+                        *) exit 0 ;;
+                    esac ;;
+                # a 5xx stops the run; the third one a line gets marks it failed
+                5??)
+                    n=$(jq -Rr --arg id "$id" 'fromjson? | select(.id == $id and .state == "retry") | .state' "$ob" 2>/dev/null | wc -l)
+                    if ((n >= 2)); then mark --argjson s "$code" '{id: $id, state: "failed", status: $s}'
+                    else mark --argjson s "$code" '{id: $id, state: "retry", status: $s}'; fi
+                    exit 0 ;;
+                *) exit 0 ;;
+            esac
+        done <<< "$todo"
+        oss_release_lock "$plock" "$pheld"; pheld=""
+        [[ -n "$(waiting)" ]] || exit 0
+    done
+    exit 0
 )
 
 [[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
 
 case "${1:-}" in
+    # oss-timeline.sh push [--detach]: B5, copy this feature's waiting lines to the API (_oss_tl_push); --detach
+    # starts it in the background and returns at once (oss-notify, after its command line)
+    push) if [[ "${2:-}" == --detach ]]; then _oss_tl_push_bg; else _oss_tl_push; fi; exit 0 ;;
     # oss-timeline.sh command NAME STATUS: oss-notify's --workflow NAME start|complete|failed (B2); both values
     # are checked by the line's own rules
     command) oss_timeline_append command "$(jq -nc --arg c "${2:-}" --arg s "${3:-}" '{command: $c, status: $s}' 2>/dev/null)"; exit ;;
@@ -188,7 +325,7 @@ case "${1:-}" in
             --arg x "${6:-}" --arg m "${7:-}" 'def counts: [splits(" ") | select(. != "") | split("=")
                 | {(.[0]): (.[1] | tonumber)}] | add // {};
             {round: $r, gate: $g, verdict: $v, findings: ($f | counts), fixed: ($x | counts), mode: $m}' 2>/dev/null)"
-        exit ;;
+        rc=$?; _oss_tl_push_bg; exit "$rc" ;;
     # oss-timeline.sh merge APPROVAL: only from oss-value.sh timeline merge (B4b), which read APPROVAL from
     # approval.txt and checked it (merge-flag, chat-instruction, none or decision:<uuid>). The PR facts come from
     # `gh pr view` for the current branch, bounded at 10 s (P-9); nothing from a value file reaches gh's argv. No gh,
@@ -208,7 +345,7 @@ case "${1:-}" in
                   approval: $ap}] end' 2>/dev/null) || fields=""
         [[ -n "$fields" ]] || fields='["merge-unknown",{}]'
         oss_timeline_append "$(jq -r '.[0]' <<< "$fields")" "$(jq -c '.[1]' <<< "$fields")"
-        exit ;;
+        rc=$?; _oss_tl_push_bg; exit "$rc" ;;
     # no verb: the PostToolUse hook for Agent|Task (B3), the hook JSON on stdin. One agent line with the type,
     # lower-cased (P-5), and the running command when the project's own workflow-state.json names one. Never
     # disturbs the tool run: exit 0 whatever happens.
@@ -230,7 +367,8 @@ case "${1:-}" in
         OSS_TL_SESSION=$(printf '%s' "$in" | jq -r '.session_id | strings' 2>/dev/null) \
             oss_timeline_append agent "$(jq -nc --arg a "$agent" --arg c "$cmd" \
                 '{agent: $a} + (if $c == "" then {} else {command: $c} end)')"
+        _oss_tl_push_bg
         exit 0 ;;
 esac
-echo "usage: oss-timeline.sh command NAME STATUS | gate ROUND GATE VERDICT FINDINGS FIXED MODE | merge APPROVAL, or no verb with PostToolUse JSON on stdin (or source it for oss_timeline_append)" >&2
+echo "usage: oss-timeline.sh command NAME STATUS | push [--detach] | gate ROUND GATE VERDICT FINDINGS FIXED MODE | merge APPROVAL, or no verb with PostToolUse JSON on stdin (or source it for oss_timeline_append)" >&2
 exit 2

@@ -258,9 +258,12 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
     fi
 
     # G2 B2: one command line in the feature timeline (AC-G2-001.1), before the watcher check so it is written
-    # without watcher/dist; the name passed oss_valid_workflow_name above. A refusal never stops this hook.
+    # without watcher/dist; the name passed oss_valid_workflow_name above. A refusal never stops this hook. G2 B5:
+    # then the copy to the API starts detached, in a process group of its own, so it never delays this hook.
     case "$WORKFLOW_EVENT" in
-        start | complete | failed) "$SCRIPT_DIR/oss-timeline.sh" command "$WORKFLOW_CMD" "$WORKFLOW_EVENT" </dev/null >/dev/null 2>&1 || true ;;
+        start | complete | failed)
+            "$SCRIPT_DIR/oss-timeline.sh" command "$WORKFLOW_CMD" "$WORKFLOW_EVENT" </dev/null >/dev/null 2>&1 || true
+            "$SCRIPT_DIR/oss-timeline.sh" push --detach </dev/null >/dev/null 2>&1 || true ;;
     esac
 
     # Update workflow state based on workflow event

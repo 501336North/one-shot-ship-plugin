@@ -109,6 +109,28 @@ got=$(commands)
     || fail "should append the line from the ~/.oss/hooks copy that session start installs" \
         "rc=$RC got=$got installed=$(ls "$HOME/.oss/hooks" 2>/dev/null | tr '\n' ' ')"
 
+# --- the copy to the API never delays oss-notify (G2 B5) ---------------------------------------------------------
+# the push starts detached; with an API that takes 10 s to answer, oss-notify ends no more than 1 s later than it
+# does with no API at all, and the POST is still in flight when it has ended
+ms() { /usr/bin/perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000'; }
+timed() { local t0; t0=$(ms); (cd "$P" && CLAUDE_PROJECT_DIR="$P" CLAUDE_PLUGIN_ROOT="$BARE" OSS_ALLOW_HTTP_LOOPBACK=1 FAKE_DELAY_TIMELINE=10 \
+    FAKE_ON_CALL="$T/on-call" run_capped 3 /bin/bash "$BARE/hooks/oss-notify.sh" --workflow build start '{}' </dev/null >/dev/null 2>&1); RC=$?; TOOK=$(($(ms) - t0)); }
+printf '#!/bin/bash\nps -o pgid= -p $$ | tr -d " " > "%s"\n' "$T/push.pgid" > "$T/on-call"; chmod +x "$T/on-call"
+rm -rf "$API/api"; mkdir -p "$API/api"
+timed; base_rc=$RC base=$TOOK
+printf '{"apiKey":"fake-oss-key-notify-0000","apiUrl":"http://127.0.0.1:9"}\n' > "$HOME/.oss/config.json"
+timed
+inflight=no
+# (the fake records a call in api/calls once it answers; its argv as soon as it starts)
+for _ in $(seq 1 50); do grep -qs '/api/v1/timeline' "$API"/api/argv.* && { inflight=yes; break; }; sleep 0.1; done
+pg=$(cat "$T/push.pgid" 2>/dev/null)
+[[ "$pg" =~ ^[0-9]+$ ]] && kill -0 -- "-$pg" 2>/dev/null || inflight="no (push gone: pgid=$pg)"
+[[ $base_rc -eq 0 && $RC -eq 0 && $TOOK -le $((base + 1000)) && "$inflight" == yes ]] \
+    && pass "should not delay oss-notify by more than 1 s when the API hangs" \
+    || fail "should not delay oss-notify by more than 1 s when the API hangs" "rc=$base_rc/$RC took=${TOOK}ms base=${base}ms post-in-flight=$inflight"
+[[ "$pg" =~ ^[0-9]+$ ]] && kill -KILL -- "-$pg" 2>/dev/null
+rm -f "$HOME/.oss/config.json"; rm -rf "$HOME/.oss/timeline-outbox"
+
 # --- #130: non-JSON input never ends the hook before its state update -------------------------------------------
 rm -f "$T/node.calls"
 FAKE_COPY_OUT='not json' notify "$WATCHED" --workflow build start '{}'
