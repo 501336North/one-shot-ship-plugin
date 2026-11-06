@@ -180,9 +180,10 @@ if [[ "$USE_COPY_SERVICE" == true ]] && [[ -f "$COPY_CLI" ]]; then
     COPY_JSON=$(run_with_timeout 3 node "$COPY_CLI" "$COPY_TYPE" "${COPY_ARGS[@]}" 2>/dev/null || echo '{}')
 
     if command -v jq &>/dev/null; then
-        TITLE=$(echo "$COPY_JSON" | jq -r '.title // "OSS"')
-        MESSAGE=$(echo "$COPY_JSON" | jq -r '.message // ""')
-        SUBTITLE=$(echo "$COPY_JSON" | jq -r '.subtitle // ""')
+        # || a default: under set -e a non-JSON answer (FOLLOWUPS #130) must not end the hook here
+        TITLE=$(echo "$COPY_JSON" | jq -r '.title // "OSS"' 2>/dev/null) || TITLE="OSS"
+        MESSAGE=$(echo "$COPY_JSON" | jq -r '.message // ""' 2>/dev/null) || MESSAGE=""
+        SUBTITLE=$(echo "$COPY_JSON" | jq -r '.subtitle // ""' 2>/dev/null) || SUBTITLE=""
     else
         # Fallback parsing
         TITLE=$(echo "$COPY_JSON" | grep -o '"title":"[^"]*"' | cut -d'"' -f4 || echo "OSS")
@@ -255,6 +256,12 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
         fi
         "$LOG_SCRIPT" write "$WORKFLOW_CMD" "$LOG_MSG" 2>/dev/null || true
     fi
+
+    # G2 B2: one command line in the feature timeline (AC-G2-001.1), before the watcher check so it is written
+    # without watcher/dist; the name passed oss_valid_workflow_name above. A refusal never stops this hook.
+    case "$WORKFLOW_EVENT" in
+        start | complete | failed) "$SCRIPT_DIR/oss-timeline.sh" command "$WORKFLOW_CMD" "$WORKFLOW_EVENT" </dev/null >/dev/null 2>&1 || true ;;
+    esac
 
     # Update workflow state based on workflow event
     if [[ -f "$WORKFLOW_STATE_CLI" ]]; then
@@ -337,10 +344,10 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
             task_complete)
                 # Extract progress from context
                 if command -v jq &>/dev/null; then
-                    CURRENT=$(echo "$WORKFLOW_CONTEXT" | jq -r '.current // ""' 2>/dev/null)
-                    TOTAL=$(echo "$WORKFLOW_CONTEXT" | jq -r '.total // ""' 2>/dev/null)
-                    TASK_NAME=$(echo "$WORKFLOW_CONTEXT" | jq -r '.taskName // ""' 2>/dev/null)
-                    TDD_PHASE=$(echo "$WORKFLOW_CONTEXT" | jq -r '.tddPhase // ""' 2>/dev/null)
+                    CURRENT=$(echo "$WORKFLOW_CONTEXT" | jq -r '.current // ""' 2>/dev/null) || CURRENT=""
+                    TOTAL=$(echo "$WORKFLOW_CONTEXT" | jq -r '.total // ""' 2>/dev/null) || TOTAL=""
+                    TASK_NAME=$(echo "$WORKFLOW_CONTEXT" | jq -r '.taskName // ""' 2>/dev/null) || TASK_NAME=""
+                    TDD_PHASE=$(echo "$WORKFLOW_CONTEXT" | jq -r '.tddPhase // ""' 2>/dev/null) || TDD_PHASE=""
 
                     if [[ -n "$TDD_PHASE" && "$TDD_PHASE" != "null" ]]; then
                         wf_state setTddPhase "$TDD_PHASE" 2>/dev/null || true
@@ -420,7 +427,7 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "issue" ]]; then
         wf_state setSupervisor intervening 2>/dev/null || true
         # Extract message from context if available
         if command -v jq &>/dev/null; then
-            ISSUE_MSG=$(echo "$ISSUE_CONTEXT" | jq -r '.message // ""' 2>/dev/null)
+            ISSUE_MSG=$(echo "$ISSUE_CONTEXT" | jq -r '.message // ""' 2>/dev/null) || ISSUE_MSG=""
             if [[ -n "$ISSUE_MSG" && "$ISSUE_MSG" != "null" ]]; then
                 wf_state setIssue "$ISSUE_TYPE" "$ISSUE_MSG" 2>/dev/null || true
             fi

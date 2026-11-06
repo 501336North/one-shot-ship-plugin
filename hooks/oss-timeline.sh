@@ -128,5 +128,10 @@ oss_timeline_append() (
 
 [[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
 
-echo "usage: oss-timeline.sh (verbs come in later tasks; source it for oss_timeline_append)" >&2
+case "${1:-}" in
+    # oss-timeline.sh command NAME STATUS: oss-notify's --workflow NAME start|complete|failed (B2); both values
+    # are checked by the line's own rules
+    command) oss_timeline_append command "$(jq -nc --arg c "${2:-}" --arg s "${3:-}" '{command: $c, status: $s}' 2>/dev/null)"; exit ;;
+esac
+echo "usage: oss-timeline.sh command NAME STATUS (or source it for oss_timeline_append)" >&2
 exit 2
