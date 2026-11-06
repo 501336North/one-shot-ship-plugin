@@ -192,4 +192,7 @@ The earlier round's banner landed in another worktree's build.log because ~/.oss
 - [x] T88b done 2026-11-05: /oss:models set via oss-value.sh models-set failed for every name since 2.0.91 (extra <type> arg); models.ts set accepts <type> <name> <model> with a type-agreement check. Real end-to-end test (8). Watcher 4018/4018, shell at baseline.
 - [x] API PR #422 (queue prompt uses queue-push) live, re-checked 2026-11-05 12:46 UTC: signature valid, hash verified, no key/Bearer/curl.
 
-## Last Updated: 2026-11-05 22:58 CST by /oss:ship (T88/T88b done; T71c tag next, then PR + merge)
+- [x] T89 done 2026-11-06 (typescript-pro): bundled oss-launch's background proxy spawns `start-proxy` (was a script path, so the child ran as the launcher; also in 2.0.78). Unit + bundled integration test, mutant killed; watcher 4021/4021, shell at baseline. Sandboxes with real keys deleted 2026-11-06.
+- [ ] T71c: tag oss-launch-v2.0.97-1, verify, pin (oss-launch-v2.0.97 built before T89; not pinned).
+
+## Last Updated: 2026-11-06 11:08 CST by /oss:ship (T89 done; T71c next)

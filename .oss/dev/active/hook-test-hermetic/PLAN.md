@@ -1041,3 +1041,13 @@ the agent ran on Claude, and how to keep it in ~/.oss/config.json via /oss:model
 The project file only feeds this notice; it never routes. Agent name and model pass through safeForLog. The read is
 regular-file only (no hang on a FIFO), and a bad or missing file gives no notice and no error. No agent prompt changes
 (Step 0 already echoes the banner).
+
+### Task 89: the self-contained oss-launch starts its proxy in the background (T71c finding, also in 2.0.78; user 2026-11-06 "Fix now, new tag")
+In the bundled binary, start-proxy's background mode spawns `process.execPath [selfPath, --router, --port N]`. The
+binary sees a script path as argv[0], resolveEntry() picks "launch", and the child runs as the launcher instead of the
+proxy, so `oss-launch` with an agent mapped to a local model always ends with "OSS proxy did not become healthy".
+Fix: when bundled, the background child is spawned as `process.execPath start-proxy --router --port N` (as
+oss-launch's own proxySpawnArgs does); the node-script path keeps `[selfPath, ...]`. Tests first. Then tag
+oss-launch-v2.0.97-1, verify all four downloads, and run a sandbox test: version, a hostile repo config does not route,
+the user's own config routes, and the proxy comes up healthy in the background. Then pin that tag and its checksums
+(T71c).

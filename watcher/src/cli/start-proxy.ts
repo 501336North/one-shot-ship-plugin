@@ -25,6 +25,9 @@ import { fileURLToPath } from 'url';
 import { ModelProxy } from '../services/model-proxy.js';
 import { readRegularFileSync } from '../utils/regular-file.js';
 
+/** True ONLY in the esbuild bundle that the pkg binary wraps; undefined under tsc/ESM (node-script). */
+declare const __OSS_BUNDLED__: boolean | undefined;
+
 // ============================================================================
 // Constants
 // ============================================================================
@@ -487,8 +490,11 @@ export async function startProxyBackground(options: BackgroundStartOptions): Pro
 
   // Spawn detached child process. Use a real filesystem path — `node <file:// URL>` cannot be
   // loaded as a script, so the child would crash instantly and the proxy would never bind.
-  const selfPath = fileURLToPath(import.meta.url);
-  const child = spawnFn(process.execPath, [selfPath, ...args], {
+  // In the bundled binary process.execPath IS oss-launch: it needs the `start-proxy` subcommand, or
+  // the child runs as the launcher and the proxy never binds (T89).
+  const bundled = typeof __OSS_BUNDLED__ !== 'undefined' && __OSS_BUNDLED__ === true;
+  const head = bundled ? 'start-proxy' : fileURLToPath(import.meta.url);
+  const child = spawnFn(process.execPath, [head, ...args], {
     detached: true,
     stdio: 'ignore',
   });

@@ -1478,8 +1478,9 @@ async function startProxyBackground(options) {
   if (!router && baseUrl) {
     args.push("--base-url", baseUrl);
   }
-  const selfPath = (0, import_url.fileURLToPath)(__ossImportMetaUrl);
-  const child = spawnFn(process.execPath, [selfPath, ...args], {
+  const bundled = true;
+  const head = bundled ? "start-proxy" : (0, import_url.fileURLToPath)(__ossImportMetaUrl);
+  const child = spawnFn(process.execPath, [head, ...args], {
     detached: true,
     stdio: "ignore"
   });

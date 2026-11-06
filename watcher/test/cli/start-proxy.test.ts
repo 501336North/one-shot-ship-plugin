@@ -325,6 +325,48 @@ describe('start-proxy CLI', () => {
       expect(scriptArg).toMatch(/start-proxy\.(js|ts)$/);
     });
 
+    /**
+     * @behavior T89: the self-contained oss-launch binary brings up a background router proxy.
+     * In that binary process.execPath IS oss-launch, so the child must be told `start-proxy`;
+     * handed a script path it would run as the launcher and the proxy would never answer.
+     */
+    describe('which process the background child runs as (T89)', () => {
+      const g = globalThis as { __OSS_BUNDLED__?: boolean };
+      afterEach(() => {
+        delete g.__OSS_BUNDLED__;
+      });
+      const spawnOnce = async (): Promise<Mock> => {
+        const { startProxyBackground } = await import('../../src/cli/start-proxy.js');
+        const mockChild = { pid: 4242, unref: vi.fn(), on: vi.fn() };
+        const mockSpawn = vi.fn().mockReturnValue(mockChild);
+        await startProxyBackground({
+          port: 18999,
+          router: true,
+          _testSpawn: mockSpawn as unknown as typeof childProcess.spawn,
+        });
+        return mockSpawn;
+      };
+
+      it('in the bundled binary, re-runs the binary with the start-proxy subcommand', async () => {
+        g.__OSS_BUNDLED__ = true;
+        const mockSpawn = await spawnOnce();
+        expect(mockSpawn).toHaveBeenCalledWith(
+          process.execPath,
+          ['start-proxy', '--router', '--port', '18999'],
+          expect.objectContaining({ detached: true })
+        );
+      });
+
+      it('in a node-script install, runs node on the start-proxy script', async () => {
+        const mockSpawn = await spawnOnce();
+        const [cmd, argv, opts] = mockSpawn.mock.calls[0] as [string, string[], { detached: boolean }];
+        expect(cmd).toBe(process.execPath);
+        expect(argv[0]).toMatch(/start-proxy\.(js|ts)$/);
+        expect(argv.slice(1)).toEqual(['--router', '--port', '18999']);
+        expect(opts.detached).toBe(true);
+      });
+    });
+
     it('should write pid file to .oss/proxy.pid', async () => {
       const { writePidFile, getPidFilePath } = await import('../../src/cli/start-proxy.js');
 
