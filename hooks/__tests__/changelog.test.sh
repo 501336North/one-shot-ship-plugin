@@ -7,9 +7,14 @@
 # Usage: ./changelog.test.sh
 
 set -uo pipefail
+# T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CHANGELOG_SCRIPT="$SCRIPT_DIR/../oss-changelog.sh"
+# HOOKS_UNDER_TEST=/path/to/hooks-copy runs these tests against a copy (mutants).
+CHANGELOG_SCRIPT="${HOOKS_UNDER_TEST:-$SCRIPT_DIR/..}/oss-changelog.sh"
+# shellcheck source=lib/run-capped.sh
+source "$SCRIPT_DIR/lib/run-capped.sh"
 
 # Test tracking
 TESTS_RUN=0
@@ -257,6 +262,222 @@ test_missing_state_file() {
 }
 
 # =============================================================================
+# T53b: the state file is only read as a regular file
+#
+# @behavior A symlink or a FIFO at ~/.oss/update-state.json counts as no state: /oss:changelog shows the
+#           first-run baseline, never what the link points to, never hangs and never prints an error.
+# @business-rule State in ~/.oss is trusted only as a regular file (oss_is_regular, T32/T53).
+# =============================================================================
+
+# run_odd_state DIR: one capped run against DIR's sandbox (HOME, config, plugin.json and a local manifest that
+# names the linked prompt). Sets RC, OUT (stdout) and ERR (stderr). The cap is generous: a run takes well under 1 s,
+# but test_no_helper runs a freshly copied script, and macOS's first-exec scan of a new file can take seconds under
+# load; a real hang (the FIFO case) still ends at the cap and fails.
+run_odd_state() {
+    local d="$1"
+    printf '{"prompts":{"linked/prompt":{"hash":"new"}}}\n' > "$d/manifest.json"
+    mkdir -p "$d/home"
+    run_capped 60 env HOME="$d/home" OSS_CONFIG_DIR="$d/config" OSS_PLUGIN_JSON="$d/plugin/plugin.json" \
+        OSS_MOCK_MANIFEST="$d/manifest.json" "$CHANGELOG_SCRIPT" > "$d/out" 2> "$d/err" </dev/null
+    RC=$?
+    OUT=$(cat "$d/out"); ERR=$(cat "$d/err")
+}
+# The baseline and none of the linked values: no version, no check time, no prompt from the link.
+shows_baseline_only() {
+    [[ $RC == 0 && -z "$ERR" && "$OUT" == *"Plugin: v2.0.45 (first run — no previous state)"* \
+       && "$OUT" != *"9.9.9-linked"* && "$OUT" != *"LINKED-CHECK-TIME"* && "$OUT" != *"Last checked"* \
+       && "$OUT" != *"linked/prompt"* ]]
+}
+
+test_state_symlink() {
+    local test_name="A symlinked update-state.json is never read: first-run baseline, no linked values (T53b)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env); mkdir -p "$d/outside"
+    printf '%s\n' '{"lastPluginVersion":"9.9.9-linked","lastCheckedAt":"LINKED-CHECK-TIME","manifestHashes":{"linked/prompt":"old"}}' \
+        > "$d/outside/state.json"
+    ln -s "$d/outside/state.json" "$d/config/update-state.json"
+    run_odd_state "$d"
+    if shows_baseline_only; then
+        pass "$test_name"
+    else
+        fail "$test_name" "rc=0, first-run baseline, nothing from the link, no stderr" "rc=$RC err='$ERR' out='$OUT'"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_state_fifo() {
+    local test_name="A FIFO at update-state.json: no hang, first-run baseline, no error (T53b)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    mkfifo "$d/config/update-state.json"
+    run_odd_state "$d"
+    if shows_baseline_only; then
+        pass "$test_name"
+    else
+        fail "$test_name" "rc=0 (124/125 = hung), first-run baseline, no stderr" "rc=$RC err='$ERR' out='$OUT'"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_no_helper() {
+    local test_name="Without oss-api-curl.sh beside it: no error, a regular state counts as none (T53b)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env); mkdir -p "$d/hooks"
+    cp "$CHANGELOG_SCRIPT" "$d/hooks/"
+    printf '%s\n' '{"lastPluginVersion":"9.9.9-linked","lastCheckedAt":"LINKED-CHECK-TIME"}' > "$d/config/update-state.json"
+    local saved="$CHANGELOG_SCRIPT"; CHANGELOG_SCRIPT="$d/hooks/oss-changelog.sh"
+    run_odd_state "$d"; CHANGELOG_SCRIPT="$saved"
+    if shows_baseline_only; then
+        pass "$test_name"
+    else
+        fail "$test_name" "rc=0, first-run baseline, no stderr" "rc=$RC err='$ERR' out='$OUT'"
+    fi
+    cleanup_test_env "$d"
+}
+
+# =============================================================================
+# T74 (pen-test L2): manifest keys are data. The manifest is fetched without authentication, so its keys never
+# become jq filter text (--arg), are never word-split or glob-expanded (read -r), and lose C0 and the oss_invisible
+# set before they are printed.
+#
+# @behavior /oss:changelog lists every new prompt by its name as one line, even a name with a space, a quote or a
+#           `*`; a hostile name cannot hang the command, set the terminal title, or reverse the text after it.
+# @business-rule Text from the network reaches the terminal only without control and invisible characters (T45).
+# =============================================================================
+
+# run_keys DIR MANIFEST [CACHED-HASHES]: one capped run from a folder holding a file named GLOBBED-FILE (a glob would
+# list it). The cached hash list is empty by default, so every manifest key is a new prompt. Sets RC, OUT, ERR.
+run_keys() {
+    local d="$1" h="${3:-}"
+    [[ -n "$h" ]] || h='{}'
+    printf '%s\n' "$2" > "$d/manifest.json"
+    printf '{"lastPluginVersion":"2.0.45","lastCheckedAt":"T","manifestHashes":%s}\n' "$h" > "$d/config/update-state.json"
+    mkdir -p "$d/home" "$d/cwd"; : > "$d/cwd/GLOBBED-FILE"
+    (cd "$d/cwd" && run_capped 20 env HOME="$d/home" OSS_CONFIG_DIR="$d/config" OSS_PLUGIN_JSON="$d/plugin/plugin.json" \
+        OSS_MOCK_MANIFEST="$d/manifest.json" "$CHANGELOG_SCRIPT" > "$d/out" 2> "$d/err" </dev/null)
+    RC=$?
+    OUT=$(cat "$d/out"); ERR=$(cat "$d/err")
+}
+
+test_keys_never_filter_text() {
+    local test_name="A manifest key that is jq code is looked up as a name: no hang, listed as it is (T74)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"prompts":{"x\"]|last(range(1e12))|.[\"y":{"hash":"h"}}}'
+    if [[ $RC == 0 && "$OUT" == *'  + x"]|last(range(1e12))|.["y'* ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "rc=0 (124 = jq ran the key as code until the cap), the key listed as a new prompt" "rc=$RC out='$OUT' err='$ERR'"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_keys_not_split_or_globbed() {
+    local test_name="Manifest keys with a space, a * or a backslash are listed whole, never split, expanded or unescaped (T74)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"prompts":{"two words":{"hash":"h"},"*":{"hash":"h"},"back\\slash":{"hash":"h"}}}'
+    if [[ $RC == 0 && "$OUT" == *"New prompts (3):"*"  + *"*'  + back\slash'*"  + two words"* && "$OUT" != *GLOBBED-FILE* ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "New prompts (3): '*', 'back\\slash' and 'two words', no GLOBBED-FILE" "rc=$RC out='$OUT'"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_keys_stripped_before_printing() {
+    local test_name="A manifest key loses ESC, BEL, U+202E and U+200B before it is printed (T74)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"prompts":{"\u001b]0;pwned\u0007‮evil​name":{"hash":"h"}}}'
+    if [[ $RC == 0 && "$OUT" == *"  + ]0;pwnedevilname"* && "$OUT" != *$'\e'* && "$OUT" != *$'\a'* \
+          && "$OUT" != *$'\xe2\x80\xae'* && "$OUT" != *$'\xe2\x80\x8b'* ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "'  + ]0;pwnedevilname', no ESC, BEL, U+202E or U+200B" "rc=$RC out=$(printf '%q' "$OUT")"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_changed_keys_stripped() {
+    local test_name="An updated prompt's name loses ESC, BEL, U+202E and U+200B before it is printed (T74)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"prompts":{"\u001b]0;pwned\u0007\u202eevil\u200bname":{"hash":"new"}}}' \
+        '{"\u001b]0;pwned\u0007\u202eevil\u200bname":"old"}'
+    if [[ $RC == 0 && "$OUT" == *"Updated prompts (1):"*"  • ]0;pwnedevilname"* && "$OUT" != *$'\e'* && "$OUT" != *$'\a'* \
+          && "$OUT" != *$'\xe2\x80\xae'* && "$OUT" != *$'\xe2\x80\x8b'* ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "'  • ]0;pwnedevilname' under Updated prompts, no ESC, BEL, U+202E or U+200B" "rc=$RC out=$(printf '%q' "$OUT")"
+    fi
+    cleanup_test_env "$d"
+}
+
+# =============================================================================
+# T79 (pen-test L2): the manifest diff is one jq pass, not two jq runs per key. A manifest at the 256 KB cap
+# (thousands of keys) used to take minutes, longer than the Bash call that runs /oss:changelog.
+#
+# @behavior /oss:changelog lists a large manifest's updated and new prompts in about a second; a prompt name with
+#           a line break is one entry; a normal manifest prints exactly what it printed before.
+# @business-rule A manifest from the network cannot make /oss:changelog outlast its call (T74b cap, T79).
+# =============================================================================
+
+test_big_manifest_finishes() {
+    local test_name="A 9,000-key manifest near the 256 KB cap is listed in full, well inside the cap (T79)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env); mkdir -p "$d/home"
+    jq -nc '{prompts: ([range(9000) | {key: "p/\(.)", value: {hash: "new\(.)"}}] | from_entries)}' > "$d/manifest.json"
+    # Even keys are cached with an old hash (updated), odd keys are not cached (new).
+    jq -c '{lastPluginVersion: "2.0.45", lastCheckedAt: "T",
+            manifestHashes: (.prompts | with_entries(select(.key | ltrimstr("p/") | tonumber % 2 == 0) | .value = "old"))}' \
+        "$d/manifest.json" > "$d/config/update-state.json"
+    run_capped 30 env HOME="$d/home" OSS_CONFIG_DIR="$d/config" OSS_PLUGIN_JSON="$d/plugin/plugin.json" \
+        OSS_MOCK_MANIFEST="$d/manifest.json" "$CHANGELOG_SCRIPT" > "$d/out" 2> "$d/err" </dev/null
+    RC=$?
+    local n; n=$(grep -c '^  [•+] p/' "$d/out")
+    if [[ $RC == 0 && $n == 9000 ]] && grep -q '^Updated prompts (4500):$' "$d/out" && grep -q '^New prompts (4500):$' "$d/out" \
+          && grep -q '^  • p/8998$' "$d/out" && grep -q '^  + p/8999$' "$d/out"; then
+        pass "$test_name"
+    else
+        fail "$test_name" "rc=0 (124 = still running at the 30 s cap), 4500 updated + 4500 new listed" "rc=$RC listed=$n err='$(head -c 300 "$d/err")'"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_newline_key_one_entry() {
+    local test_name="A prompt name with a line break is one entry, the break removed (T79)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"prompts":{"line\none":{"hash":"h"}}}'
+    if [[ $RC == 0 && "$OUT" == *$'New prompts (1):\n  + lineone\n'* && "$OUT" != *$'  + line\n'* ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "'New prompts (1):' then '  + lineone'" "rc=$RC out=$(printf '%q' "$OUT")"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_output_unchanged() {
+    local test_name="A normal manifest prints exactly what it printed before the one-pass diff (T79)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"prompts":{"workflows/build":{"hash":"new1"},"workflows/plan":{"hash":"same"},"commands/adr":{"hash":"new2"},"Zeta":{"hash":"newz"},"été/prompt":{"hash":"newe"},"agents/new":{"hash":"a"},"Agents/Upper":{"hash":"b"},"nul":{"hash":"n"},"日本/プロンプト":{"hash":"j"}}}' \
+        '{"workflows/plan":"same","workflows/build":"old1","commands/adr":"old2","Zeta":"oldz","été/prompt":"olde","gone/prompt":"x","nul":null}'
+    # Captured from the per-key loop (before T79) on this manifest and state.
+    local bar="━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" want
+    want="$bar"$'\n'"  OSS Changelog"$'\n'"$bar"$'\n\n'"Updated prompts (4):"$'\n'"  • Zeta"$'\n'"  • commands/adr"$'\n'
+    want+="  • workflows/build"$'\n'"  • été/prompt"$'\n\n'"New prompts (4):"$'\n'"  + Agents/Upper"$'\n'"  + agents/new"$'\n'
+    want+="  + nul"$'\n'"  + 日本/プロンプト"$'\n\n'"Last checked: T"$'\n'"$bar"
+    if [[ $RC == 0 && "$OUT" == "$want" && -z "$ERR" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "$(printf '%q' "$want")" "rc=$RC out=$(printf '%q' "$OUT") err='$ERR'"
+    fi
+    cleanup_test_env "$d"
+}
+
+# =============================================================================
 # Run all tests
 # =============================================================================
 echo "Running changelog tests..."
@@ -266,6 +487,16 @@ test_display_changed_prompts
 test_display_version_change
 test_no_updates
 test_missing_state_file
+test_state_symlink
+test_state_fifo
+test_no_helper
+test_keys_never_filter_text
+test_keys_not_split_or_globbed
+test_keys_stripped_before_printing
+test_changed_keys_stripped
+test_big_manifest_finishes
+test_newline_key_one_entry
+test_output_unchanged
 
 echo ""
 echo "======================================="

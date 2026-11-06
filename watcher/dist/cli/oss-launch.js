@@ -19,6 +19,7 @@ import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { checkNode, decidePreflight } from '../services/node-guard.js';
 import * as startProxyModule from './start-proxy.js';
+import { readRegularFileSync } from '../utils/regular-file.js';
 /** Default proxy port — must match agent-model-check / start-proxy (NOT 3456; collides with CCR). */
 export const DEFAULT_PROXY_PORT = 8473;
 /**
@@ -64,6 +65,19 @@ export function isVersionRequest(argv) {
 export function proxySpawnArgs(opts) {
     const head = opts.bundled ? ['start-proxy'] : [opts.startProxyJs];
     return [...head, '--router', '--background', '--port', String(opts.port)];
+}
+/**
+ * Start the router proxy detached. A bundled (pkg) binary clears PKG_EXECPATH for its child: pkg
+ * sets it to the binary on every spawn, and a child that sees it runs `start-proxy` as a script path
+ * and crashes, so the proxy never answers (T89b).
+ */
+export function spawnRouterProxy(opts) {
+    const child = opts.spawn(opts.execPath, proxySpawnArgs(opts), {
+        detached: true,
+        stdio: 'ignore',
+        ...(opts.bundled ? { env: { ...opts.env, PKG_EXECPATH: '' } } : {}),
+    });
+    child.unref();
 }
 /**
  * Launch claude, routing through the proxy only when models.agents is configured.
@@ -136,15 +150,16 @@ export async function ensureProxy(port, deps) {
 // Composition root — build real deps and exec claude (entrypoint)
 // ============================================================================
 /**
- * Read the merged OSS config (project `.oss/config.json` overrides user `~/.oss/config.json`),
- * returning only the `models` slice the launcher cares about. Best-effort: defaults to {} on any
- * error, so a missing/malformed config simply means "no routing" (Anthropic-only, untouched).
+ * Read the user's `~/.oss/config.json`, returning only the `models` slice the launcher cares about.
+ * A repo's own `.oss/config.json` is ignored (T71b): it must not switch routing on or pick the
+ * port the session, with its real credentials, talks to. Best-effort: defaults to {} on any error,
+ * so a missing/malformed config simply means "no routing" (Anthropic-only, untouched).
  */
-function loadMergedConfig(fsImpl, pathImpl, osImpl) {
+export function loadMergedConfig(fsImpl, pathImpl, osImpl) {
     const read = (file) => {
         try {
             if (fsImpl.existsSync(file))
-                return JSON.parse(fsImpl.readFileSync(file, 'utf-8'));
+                return JSON.parse(readRegularFileSync(file));
         }
         catch {
             /* ignore malformed/unreadable config */
@@ -152,10 +167,7 @@ function loadMergedConfig(fsImpl, pathImpl, osImpl) {
         return null;
     };
     const userCfg = read(pathImpl.join(osImpl.homedir(), '.oss', 'config.json'));
-    const projectDir = process.env.CLAUDE_PROJECT_DIR;
-    const projectCfg = projectDir ? read(pathImpl.join(projectDir, '.oss', 'config.json')) : null;
-    const merged = { ...(userCfg ?? {}), ...(projectCfg ?? {}) };
-    return { models: merged.models };
+    return { models: userCfg?.models };
 }
 /**
  * Launcher entrypoint: build the real collaborators (config read, proxy health/start, claude
@@ -217,10 +229,7 @@ export async function main(argv) {
         loadConfig: () => loadMergedConfig(fs, path, os),
         ensureProxy: (port) => ensureProxy(port, {
             healthCheck,
-            startProxy: () => {
-                const child = spawn(process.execPath, proxySpawnArgs({ bundled, startProxyJs, port }), { detached: true, stdio: 'ignore' });
-                child.unref();
-            },
+            startProxy: () => spawnRouterProxy({ bundled, startProxyJs, port, execPath: process.execPath, env: process.env, spawn }),
             sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
         }),
         resolveClaudeBin: () => resolveClaudeBin({

@@ -13,12 +13,16 @@
  * @boundary CLI (oss-launch entrypoint)
  */
 import { describe, it, expect } from 'vitest';
-import { resolveLaunch } from '../../src/cli/oss-launch.js';
+import { resolveLaunch, type LaunchConfig } from '../../src/cli/oss-launch.js';
+
+/** The user's config file: LaunchConfig plus fields it does not read, such as models.default (T75e). */
+type UserConfig = LaunchConfig & { models?: { default?: string } };
 
 describe('oss-launch: Anthropic-only users (no local models) are unaffected', () => {
   it('AC1: does NOT route through the proxy when models.agents is absent', () => {
     const baseEnv = { PATH: '/usr/bin', ANTHROPIC_API_KEY: 'sk-real' } as NodeJS.ProcessEnv;
-    const decision = resolveLaunch({ models: { default: 'claude' } }, baseEnv);
+    const userConfig: UserConfig = { models: { default: 'claude' } };
+    const decision = resolveLaunch(userConfig, baseEnv);
 
     expect(decision.useProxy).toBe(false);
     // The env handed to the real claude must NOT be redirected or flagged.

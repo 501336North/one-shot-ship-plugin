@@ -6,11 +6,16 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach, Mock } from 'vitest';
 import * as fs from 'fs';
+import { fakeRegularFiles } from '../helpers/fake-regular-files.js';
 import * as os from 'os';
 
 // Mock dependencies BEFORE importing the module under test
 vi.mock('fs');
 vi.mock('os');
+// never the real `claude` (T76b: config/list ask `claude --help` whether offload can run); a current CLI
+vi.mock('child_process', () => ({
+  spawnSync: vi.fn(() => ({ status: 0, stdout: '  --restricted  Restricted mode\n' })),
+}));
 
 // We'll import the module after mocking
 // Import will be done after the module is created
@@ -28,6 +33,8 @@ describe('/oss:models Command', () => {
     // Default: config.json does not exist
     (fs.existsSync as Mock).mockReturnValue(false);
     (fs.readFileSync as Mock).mockReturnValue('{}');
+    // the real hang-safe reader (T70e) runs on these fakes
+    fakeRegularFiles(fs);
   });
 
   afterEach(() => {

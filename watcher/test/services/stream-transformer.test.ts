@@ -72,7 +72,7 @@ describe('StreamTransformer', () => {
 
       const result = transformer.transform(chunk);
 
-      expect(result.startsWith('data: ')).toBe(true);
+      expect(result?.startsWith('data: ')).toBe(true);
     });
 
     it('should transform tool call delta', () => {
@@ -197,7 +197,7 @@ describe('StreamTransformer', () => {
 
       const results = chunks
         .map((c) => transformer.transform(c))
-        .filter((r) => r);
+        .filter((r): r is string => Boolean(r));
 
       // All should have incrementing indices
       const indices = results.map((r) => {
@@ -222,7 +222,7 @@ describe('StreamTransformer', () => {
       const result = transformer.transform(toolChunk);
 
       // Should have different index for tool block
-      const parsed = JSON.parse(result.replace('data: ', '').trim());
+      const parsed = JSON.parse((result ?? '').replace('data: ', '').trim());
       expect(parsed.index).toBe(1);
     });
   });

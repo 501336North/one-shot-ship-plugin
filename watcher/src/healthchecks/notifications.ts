@@ -4,6 +4,7 @@ import { promisify } from 'util';
 import { homedir } from 'os';
 import { join } from 'path';
 import type { CheckResult } from '../types.js';
+import { readRegularFile } from '../utils/regular-file.js';
 
 const execAsync = promisify(exec);
 
@@ -73,7 +74,7 @@ export async function checkNotifications(
   let lastStateUpdateAge: number | null = null;
 
   try {
-    const content = await fs.readFile(logPath, 'utf-8');
+    const content = await readRegularFile(logPath);
     const lines = content.trim().split('\n');
 
     // Parse log entries for workflow state updates (new format)

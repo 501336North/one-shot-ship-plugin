@@ -5,15 +5,22 @@
 # or have an outdated version missing critical security features.
 #
 # Usage:
-#   ~/.oss/hooks/ensure-decrypt-cli.sh
+#   ~/.oss/hooks/ensure-decrypt-cli.sh [--long-step]
+#
+#   --long-step  the caller runs this as a 10-minute Bash step (the /oss:* prompts ask for 600000 ms): a first
+#                install may download for up to 570 s instead of 100 s (T82)
 #
 # Returns:
-#   0 - Binary is available and meets minimum version
-#   1 - Installation failed
+#   0  - Binary is available and meets minimum version
+#   1  - Installation failed
+#   75 - First install still downloading: it stopped itself before the Bash step's time limit (or the connection
+#        dropped) and kept what it downloaded; running it again continues the download (T82). Or another session
+#        is downloading it right now: run it again in a minute (T82b)
 #
 # Called by commands that need prompt decryption (build, ship, plan, etc.)
 
 set -euo pipefail
+SCRIPT_START=$SECONDS   # relative: an inherited SECONDS must not move the time limit below
 
 OSS_DIR="${HOME}/.oss"
 OSS_BIN_DIR="${OSS_DIR}/bin"
@@ -28,8 +35,12 @@ if [[ ! "$OSS_DECRYPT_TAG" =~ ^cli-decrypt-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 GITHUB_RELEASES="https://github.com/501336North/one-shot-ship-plugin/releases/download/${OSS_DECRYPT_TAG}"
 # -f: an HTTP error is a failure (not a saved error page); HTTPS only; abort a stalled transfer
-# (<1 KB/s for 60 s). First installs have no total-time cap; upgrades over a working binary get one deadline (D6).
+# (<1 KB/s for 60 s). Upgrades over a working binary get one deadline (D6), first installs one that resumes (T82).
 CURL_OPTS=(-fsSL --proto '=https' --connect-timeout 15 --speed-limit 1024 --speed-time 60)
+# T82: a first install stops itself in time for the Bash step that runs it (Claude Code's default 2 min, or the
+# prompts' 10 min with --long-step) and keeps what it downloaded for the next run.
+FIRST_INSTALL_SECS=100
+[[ "${1:-}" == "--long-step" ]] && FIRST_INSTALL_SECS=570
 
 # Standardized error contract: emit a structured OSSError via the oss-error
 # emitter when available (in-band stdout JSON + project workflow.log line).
@@ -180,22 +191,124 @@ echo "Downloading from: $DOWNLOAD_URL"
 # use -R/--remote-time, which would stamp a live download with the server's old date). mktemp creates 0600.
 find "$OSS_BIN_DIR" -maxdepth 1 -type f -name '.oss-decrypt.*' -mmin +60 -delete 2>/dev/null || true
 # Trap first, so a failure creating either temp file never leaves the other behind.
-TMP_BIN=""; CHECKSUM_FILE=""
-trap 'rm -f "$TMP_BIN" "$CHECKSUM_FILE"' EXIT
+TMP_BIN=""; CHECKSUM_FILE=""; LOCK_ID=""
+trap 'rm -f "$TMP_BIN" "$CHECKSUM_FILE"; [[ -z "$LOCK_ID" ]] || release_lock' EXIT
 TMP_BIN=$(mktemp "$OSS_BIN_DIR/.oss-decrypt.XXXXXX")
 CHECKSUM_FILE=$(mktemp)
 
+# capped MAX FILE CURL_ARGS...: curl to FILE, at most MAX bytes (T74c). --max-filesize refuses a too-large
+# Content-Length; head -c stops a body sent with none, which curl before 8.4 lets past it. Over MAX is a failed
+# download (63, curl's code for it); the EXIT trap removes FILE.
+capped() {
+    local max=$1 out=$2 rc; shift 2
+    curl "${CURL_OPTS[@]}" --max-filesize "$max" "$@" | head -c $((max + 1)) > "$out"
+    rc=${PIPESTATUS[0]}
+    (( rc == 0 )) || return "$rc"
+    (( $(wc -c < "$out") <= max )) || return 63
+}
+
+# time_left LIMIT START: seconds left of LIMIT counted from START (a $SECONDS value), at least 1: curl's
+# --max-time 0 means no limit, and a negative one is an error (T82b).
+time_left() {
+    local s=$(( $1 - (SECONDS - $2) ))
+    (( s >= 1 )) || s=1
+    echo "$s"
+}
+
+BIN_MAX=268435456   # 256 MiB: a few times the binary's size today (~60 MB), room to grow
+binary_download_failed() {
+    keep_installed_or_fail "download"
+    echo "Error: Failed to download oss-decrypt binary"
+    echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
+    emit_oss_error --code OSS-API-003 --severity HIGH \
+        --message "oss-decrypt binary download failed: network unreachable" \
+        --retry-eligible true --retry-cost cheap
+    exit 1
+}
 # Download binary ($@ = extra curl options)
 fetch_binary() {
-    if ! curl "${CURL_OPTS[@]}" "$@" "$DOWNLOAD_URL" -o "$TMP_BIN"; then
-        keep_installed_or_fail "download"
-        echo "Error: Failed to download oss-decrypt binary"
-        echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
-        emit_oss_error --code OSS-API-003 --severity HIGH \
-            --message "oss-decrypt binary download failed: network unreachable" \
-            --retry-eligible true --retry-cost cheap
-        exit 1
-    fi
+    capped "$BIN_MAX" "$TMP_BIN" "$@" "$DOWNLOAD_URL" || binary_download_failed
+}
+
+# T82: a first install downloads into a private folder beside the binary and resumes there on the next run. The folder must be a directory of the user's own (made 700), the
+# partial a regular file of the user's own with no second name (not a link, FIFO or device, nor a hard link to
+# another file). Anything else is refused: never followed, never appended to.
+PART_DIR="$OSS_BIN_DIR/.download"
+PART="$PART_DIR/oss-decrypt-${PLATFORM}-${ARCH}-${OSS_DECRYPT_TAG}.part"
+refuse_partial() {
+    echo "Error: Refusing to use the partial download $1: it is not a regular file or folder of your own (a link, FIFO or device?)."
+    echo "Delete it, then run the command again."
+    exit 1
+}
+# T82b: one download at a time. Two sessions appending to the one partial mixed their bytes and both failed the
+# checksum. The lock is the folder .lock in the private PART_DIR, made with mkdir (atomic), holding the owner's pid.
+# A run that finds it held exits 75 (run again in a minute). A lock is stale when its pid is no longer running, or
+# when it is older than any run can last (900 s: the pid may have been reused; a lock still without a pid, made by
+# a session killed right after its mkdir). A stale lock is named by its inode and time; a session first makes a
+# guard folder of that name (mkdir: one session per stale lock), checks the lock is still that very folder, and
+# only then removes it (renaming a stale lock is not atomic enough: two sessions could both take it). A guard left
+# by a session killed inside these few lines is removed once it is a minute old. The EXIT trap releases the lock,
+# and only while it is still the one this run made.
+LOCK="$PART_DIR/.lock"
+lock_id() { stat -c '%i %Y' "$1" 2>/dev/null || stat -f '%i %m' "$1" 2>/dev/null; }
+lock_is_stale() {   # lock_is_stale ID
+    local p=""
+    (( $(date +%s) - ${1#* } > 900 )) && return 0
+    read -r p < "$LOCK/pid" 2>/dev/null || true
+    [[ "$p" =~ ^[0-9]{1,10}$ ]] && ! kill -0 "$p" 2>/dev/null
+}
+take_lock() {
+    local try s g gid
+    for try in 1 2; do
+        if mkdir "$LOCK" 2>/dev/null; then
+            echo $$ > "$LOCK/pid"
+            LOCK_ID=$(lock_id "$LOCK")
+            return 0
+        fi
+        [[ -L "$LOCK" || ( -e "$LOCK" && ! -d "$LOCK" ) ]] && refuse_partial "lock $LOCK"
+        s=$(lock_id "$LOCK") && [[ "$s" =~ ^[0-9]+\ [0-9]+$ ]] || continue   # released meanwhile: try again
+        lock_is_stale "$s" || break
+        g="$LOCK.stale-${s/ /-}"
+        if ! mkdir "$g" 2>/dev/null; then
+            gid=$(lock_id "$g") && [[ "$gid" =~ ^[0-9]+\ [0-9]+$ ]] && (( $(date +%s) - ${gid#* } > 60 )) && rmdir "$g" 2>/dev/null
+            break
+        fi
+        [[ $(lock_id "$LOCK") == "$s" ]] && rm -f "$LOCK/pid" && rmdir "$LOCK" 2>/dev/null
+        rmdir "$g" 2>/dev/null || true
+    done
+    echo "Another session is downloading the decrypt CLI; run the command again in a minute."
+    exit 75
+}
+release_lock() {
+    [[ $(lock_id "$LOCK") == "$LOCK_ID" ]] && rm -f "$LOCK/pid" && rmdir "$LOCK" 2>/dev/null
+    return 0
+}
+# resume_binary SECS: appends the rest of the binary to PART within SECS seconds and BIN_MAX bytes (head -c, as
+# in capped). Complete: PART is copied into the private TMP_BIN and deleted; the copy is what gets verified and
+# installed, so a second session still appending to PART cannot change it afterwards. Stopped at the time limit,
+# or cut off (curl 7, 18, 56: T82b), after some progress in this run: exit 75, PART kept. Holds the lock
+# (take_lock). An HTTP error (404, 416: nothing left to send) or a server that ignores
+# the range (33) or sends past the cap deletes PART. Other failures keep it. Returns curl's code.
+resume_binary() {
+    local have rc
+    mkdir -m 700 "$PART_DIR" 2>/dev/null || true
+    [[ -d "$PART_DIR" && ! -L "$PART_DIR" && -O "$PART_DIR" ]] && chmod 700 "$PART_DIR" || refuse_partial "folder $PART_DIR"
+    take_lock
+    [[ -e "$PART" || -L "$PART" ]] || (umask 077; : > "$PART")
+    [[ -f "$PART" && ! -L "$PART" && -O "$PART" && -n "$(find "$PART" -maxdepth 0 -links 1 2>/dev/null)" ]] || refuse_partial "$PART"
+    have=$(wc -c < "$PART" | tr -d ' ')
+    curl "${CURL_OPTS[@]}" --max-filesize "$BIN_MAX" -C "$have" --max-time "$1" "$DOWNLOAD_URL" | head -c $((BIN_MAX + 1 - have)) >> "$PART"
+    rc=${PIPESTATUS[0]}
+    (( $(wc -c < "$PART") <= BIN_MAX )) || rc=63
+    case $rc in
+        0) cat -- "$PART" > "$TMP_BIN" || rc=1; rm -f "$PART"; return "$rc" ;;
+        7|18|28|56) if (( $(wc -c < "$PART") > have )); then   # time limit, stall or a dropped connection
+                echo "The decrypt CLI is still downloading ($(( $(wc -c < "$PART") / 1048576 )) MB so far); run the command again to continue."
+                exit 75
+            fi ;;
+        22|33|63) rm -f "$PART" ;;
+    esac
+    return "$rc"
 }
 
 # =============================================================================
@@ -204,7 +317,7 @@ fetch_binary() {
 # Fail closed: missing or mismatched checksum = reject the binary.
 # =============================================================================
 fetch_checksum() {
-    if ! curl "${CURL_OPTS[@]}" "$@" "${DOWNLOAD_URL}.sha256" -o "$CHECKSUM_FILE"; then
+    if ! capped 4096 "$CHECKSUM_FILE" "$@" "${DOWNLOAD_URL}.sha256"; then
         keep_installed_or_fail "download"
         echo "[verify] Binary checksum: FAILED — checksum file unavailable"
         rm -f "$CHECKSUM_FILE"
@@ -219,14 +332,18 @@ fetch_checksum() {
 
 # The hook runs inside a ~120 s Bash tool call: an upgrade over a working binary gets ONE 100 s deadline for
 # both downloads, so a slow link fails inside the hook (and takes the soft path above) before the tool kills
-# it. The small .sha256 goes first (15 s), the binary gets the rest. A first install has no cap: it must finish.
+# it. The small .sha256 goes first (15 s), the binary gets the rest. A first install must finish: it stops itself
+# before its Bash step does (100 s, 570 s with --long-step) and continues on the next run (T82; T74c gave it 600 s,
+# which the default 2-minute step never reached, and every retry started over).
 if [[ "$HAVE_RUNNABLE" == "true" ]]; then
     DL_START=$SECONDS
     fetch_checksum --max-time 15
-    fetch_binary --max-time $((100 - (SECONDS - DL_START)))
+    fetch_binary --max-time "$(time_left 100 "$DL_START")"
 else
-    fetch_binary
-    fetch_checksum
+    # T82: binary first, then the .sha256 (15 s), both within FIRST_INSTALL_SECS of the hook's start; the binary
+    # resumes on the next run.
+    resume_binary "$(time_left $((FIRST_INSTALL_SECS - 15)) "$SCRIPT_START")" || binary_download_failed
+    fetch_checksum --max-time 15
 fi
 
 # Extract expected hash from checksum file (format: "<hash>  <filename>")
@@ -239,6 +356,7 @@ if [[ -z "$EXPECTED_HASH" || ${#EXPECTED_HASH} -ne 64 ]]; then
     keep_installed_or_fail "download: checksum file has no hash"
     echo "[verify] Binary checksum: FAILED — invalid checksum format"
     echo "Error: Checksum file has invalid format."
+    echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
     exit 1
 fi
 
@@ -256,6 +374,7 @@ fi
 if [[ "$ACTUAL_HASH" != "$EXPECTED_HASH" ]]; then
     echo "[verify] Binary checksum: FAILED — mismatch (expected ${EXPECTED_HASH:0:12}..., got ${ACTUAL_HASH:0:12}...)"
     echo "Error: Binary integrity check failed. The download may have been tampered with."
+    echo "The download was deleted; the next run downloads it again."
     echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
     emit_oss_error --code OSS-API-002 --severity HIGH \
         --message "oss-decrypt binary integrity check failed: checksum mismatch" \
@@ -284,6 +403,7 @@ if [[ "$ACTUAL_HASH" != "$COMMITTED_HASH" ]]; then   # an absent entry is empty,
         echo "[verify] Committed hash: FAILED — no committed entry for $ARTIFACT"
     fi
     echo "Error: Binary does not match the plugin's committed checksum. Refusing to install (possible release tamper)."
+    echo "The download was deleted; the next run downloads it again."
     echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
     emit_oss_error --code OSS-API-002 --severity HIGH \
         --message "oss-decrypt binary failed committed-manifest verification" \
@@ -307,6 +427,7 @@ DOWNLOADED_VERSION=$("$TMP_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+
 if ! version_gte "$DOWNLOADED_VERSION" "$MINIMUM_VERSION"; then
     keep_installed_or_fail "release reports v${DOWNLOADED_VERSION}, below v${MINIMUM_VERSION}"
     echo "Error: Downloaded binary reports v${DOWNLOADED_VERSION}, below the required v${MINIMUM_VERSION}. Refusing to install."
+    echo "Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."
     exit 1
 fi
 mv -f "$TMP_BIN" "$OSS_DECRYPT"

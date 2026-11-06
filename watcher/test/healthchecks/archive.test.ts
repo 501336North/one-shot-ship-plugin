@@ -1,30 +1,34 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { checkArchive } from '../../src/healthchecks/archive.js';
-import { promises as fs } from 'fs';
-
-vi.mock('fs', () => ({
-  promises: {
-    readFile: vi.fn(),
-    readdir: vi.fn(),
-  },
-}));
 
 describe('ArchiveHealthCheck', () => {
-  const mockFs = vi.mocked(fs);
+  let devActivePath: string;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    devActivePath = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-archive-check-'));
   });
+
+  afterEach(() => {
+    fs.rmSync(devActivePath, { recursive: true, force: true });
+  });
+
+  /** Real feature folders in dev/active: each with this PROGRESS.md text, or none (null). */
+  function features(progress: Record<string, string | null>): void {
+    for (const [name, text] of Object.entries(progress)) {
+      fs.mkdirSync(path.join(devActivePath, name));
+      if (text !== null) fs.writeFileSync(path.join(devActivePath, name, 'PROGRESS.md'), text);
+    }
+  }
 
   it('should pass when no completed features remain in dev/active/', async () => {
     // GIVEN - Feature in progress (not completed)
-    mockFs.readdir.mockResolvedValue([
-      { name: 'in-progress-feature', isDirectory: () => true },
-    ] as any);
-    mockFs.readFile.mockResolvedValue('## Current Phase: build\n\n- [ ] Task 1');
+    features({ 'in-progress-feature': '## Current Phase: build\n\n- [ ] Task 1' });
 
     // WHEN
-    const result = await checkArchive({ devActivePath: 'dev/active' });
+    const result = await checkArchive({ devActivePath });
 
     // THEN - Should pass (no completed features to archive)
     expect(result.status).toBe('pass');
@@ -33,13 +37,10 @@ describe('ArchiveHealthCheck', () => {
 
   it('should warn when shipped feature still in dev/active/', async () => {
     // GIVEN - Completed feature not archived
-    mockFs.readdir.mockResolvedValue([
-      { name: 'completed-feature', isDirectory: () => true },
-    ] as any);
-    mockFs.readFile.mockResolvedValue('## Current Phase: ship\n\n- [x] All done');
+    features({ 'completed-feature': '## Current Phase: ship\n\n- [x] All done' });
 
     // WHEN
-    const result = await checkArchive({ devActivePath: 'dev/active' });
+    const result = await checkArchive({ devActivePath });
 
     // THEN - Should warn about unarchived feature
     expect(result.status).toBe('warn');
@@ -49,13 +50,10 @@ describe('ArchiveHealthCheck', () => {
 
   it('should detect "ship" completion pattern', async () => {
     // GIVEN - Feature with "ship" phase
-    mockFs.readdir.mockResolvedValue([
-      { name: 'feature-1', isDirectory: () => true },
-    ] as any);
-    mockFs.readFile.mockResolvedValue('## Current Phase: ship');
+    features({ 'feature-1': '## Current Phase: ship' });
 
     // WHEN
-    const result = await checkArchive({ devActivePath: 'dev/active' });
+    const result = await checkArchive({ devActivePath });
 
     // THEN - Should detect as completed
     expect(result.details?.completedFeatures).toContain('feature-1');
@@ -63,13 +61,10 @@ describe('ArchiveHealthCheck', () => {
 
   it('should detect "SHIP" completion pattern (case insensitive)', async () => {
     // GIVEN - Feature with uppercase "SHIP" phase
-    mockFs.readdir.mockResolvedValue([
-      { name: 'feature-2', isDirectory: () => true },
-    ] as any);
-    mockFs.readFile.mockResolvedValue('## Current Phase: SHIP');
+    features({ 'feature-2': '## Current Phase: SHIP' });
 
     // WHEN
-    const result = await checkArchive({ devActivePath: 'dev/active' });
+    const result = await checkArchive({ devActivePath });
 
     // THEN - Should detect as completed
     expect(result.details?.completedFeatures).toContain('feature-2');
@@ -77,13 +72,10 @@ describe('ArchiveHealthCheck', () => {
 
   it('should detect "complete" completion pattern', async () => {
     // GIVEN - Feature with "complete" phase
-    mockFs.readdir.mockResolvedValue([
-      { name: 'feature-3', isDirectory: () => true },
-    ] as any);
-    mockFs.readFile.mockResolvedValue('## Current Phase: complete');
+    features({ 'feature-3': '## Current Phase: complete' });
 
     // WHEN
-    const result = await checkArchive({ devActivePath: 'dev/active' });
+    const result = await checkArchive({ devActivePath });
 
     // THEN - Should detect as completed
     expect(result.details?.completedFeatures).toContain('feature-3');
@@ -91,13 +83,10 @@ describe('ArchiveHealthCheck', () => {
 
   it('should detect "COMPLETE" completion pattern', async () => {
     // GIVEN - Feature with uppercase "COMPLETE" phase
-    mockFs.readdir.mockResolvedValue([
-      { name: 'feature-4', isDirectory: () => true },
-    ] as any);
-    mockFs.readFile.mockResolvedValue('## Current Phase: COMPLETE');
+    features({ 'feature-4': '## Current Phase: COMPLETE' });
 
     // WHEN
-    const result = await checkArchive({ devActivePath: 'dev/active' });
+    const result = await checkArchive({ devActivePath });
 
     // THEN - Should detect as completed
     expect(result.details?.completedFeatures).toContain('feature-4');
@@ -105,13 +94,10 @@ describe('ArchiveHealthCheck', () => {
 
   it('should detect "(COMPLETE)" completion pattern', async () => {
     // GIVEN - Feature with phase marked as complete with parentheses
-    mockFs.readdir.mockResolvedValue([
-      { name: 'feature-5', isDirectory: () => true },
-    ] as any);
-    mockFs.readFile.mockResolvedValue('## Current Phase: build (COMPLETE)');
+    features({ 'feature-5': '## Current Phase: build (COMPLETE)' });
 
     // WHEN
-    const result = await checkArchive({ devActivePath: 'dev/active' });
+    const result = await checkArchive({ devActivePath });
 
     // THEN - Should detect as completed
     expect(result.details?.completedFeatures).toContain('feature-5');
@@ -119,13 +105,10 @@ describe('ArchiveHealthCheck', () => {
 
   it('should detect "(complete)" completion pattern (lowercase)', async () => {
     // GIVEN - Feature with phase marked as complete with lowercase parentheses
-    mockFs.readdir.mockResolvedValue([
-      { name: 'feature-6', isDirectory: () => true },
-    ] as any);
-    mockFs.readFile.mockResolvedValue('## Current Phase: build (complete)');
+    features({ 'feature-6': '## Current Phase: build (complete)' });
 
     // WHEN
-    const result = await checkArchive({ devActivePath: 'dev/active' });
+    const result = await checkArchive({ devActivePath });
 
     // THEN - Should detect as completed
     expect(result.details?.completedFeatures).toContain('feature-6');
@@ -133,13 +116,10 @@ describe('ArchiveHealthCheck', () => {
 
   it('should provide archive command suggestion', async () => {
     // GIVEN - Any scenario
-    mockFs.readdir.mockResolvedValue([
-      { name: 'feature', isDirectory: () => true },
-    ] as any);
-    mockFs.readFile.mockResolvedValue('## Current Phase: build');
+    features({ 'feature': '## Current Phase: build' });
 
     // WHEN
-    const result = await checkArchive({ devActivePath: 'dev/active' });
+    const result = await checkArchive({ devActivePath });
 
     // THEN - Should suggest using /oss:plan for auto-archive
     expect(result.details?.suggestedAction).toContain('/oss:plan');
@@ -147,10 +127,10 @@ describe('ArchiveHealthCheck', () => {
 
   it('should handle empty dev/active/ directory', async () => {
     // GIVEN - No features in dev/active
-    mockFs.readdir.mockResolvedValue([] as any);
+    // (dev/active exists and is empty)
 
     // WHEN
-    const result = await checkArchive({ devActivePath: 'dev/active' });
+    const result = await checkArchive({ devActivePath });
 
     // THEN - Should pass (nothing to archive)
     expect(result.status).toBe('pass');
@@ -158,32 +138,24 @@ describe('ArchiveHealthCheck', () => {
 
   it('should skip non-directory entries', async () => {
     // GIVEN - Mix of files and directories
-    mockFs.readdir.mockResolvedValue([
-      { name: 'feature-1', isDirectory: () => true },
-      { name: 'README.md', isDirectory: () => false },
-    ] as any);
-    mockFs.readFile.mockResolvedValue('## Current Phase: build');
+    features({ 'feature-1': '## Current Phase: build' });
+    // a file that reads as completed, but is not a feature folder
+    fs.writeFileSync(path.join(devActivePath, 'README.md'), '## Current Phase: ship');
 
     // WHEN
-    const result = await checkArchive({ devActivePath: 'dev/active' });
+    const result = await checkArchive({ devActivePath });
 
     // THEN - Should only check directories
-    expect(mockFs.readFile).toHaveBeenCalledTimes(1);
-    expect(mockFs.readFile).toHaveBeenCalledWith(
-      'dev/active/feature-1/PROGRESS.md',
-      'utf-8'
-    );
+    expect(result.details?.completedFeatures).toEqual([]);
+    expect(result.status).toBe('pass');
   });
 
   it('should handle missing PROGRESS.md file', async () => {
     // GIVEN - Feature directory without PROGRESS.md
-    mockFs.readdir.mockResolvedValue([
-      { name: 'feature-no-progress', isDirectory: () => true },
-    ] as any);
-    mockFs.readFile.mockRejectedValue(new Error('ENOENT: no such file'));
+    features({ 'feature-no-progress': null });
 
     // WHEN
-    const result = await checkArchive({ devActivePath: 'dev/active' });
+    const result = await checkArchive({ devActivePath });
 
     // THEN - Should skip feature (treat as not completed)
     expect(result.status).toBe('pass');
@@ -192,22 +164,19 @@ describe('ArchiveHealthCheck', () => {
 
   it('should detect multiple completed features', async () => {
     // GIVEN - Multiple completed features
-    mockFs.readdir.mockResolvedValue([
-      { name: 'feature-1', isDirectory: () => true },
-      { name: 'feature-2', isDirectory: () => true },
-      { name: 'feature-3', isDirectory: () => true },
-    ] as any);
-    mockFs.readFile
-      .mockResolvedValueOnce('## Current Phase: ship') // feature-1
-      .mockResolvedValueOnce('## Current Phase: build') // feature-2 (not complete)
-      .mockResolvedValueOnce('## Current Phase: complete'); // feature-3
+    features({
+      'feature-1': '## Current Phase: ship',
+      'feature-2': '## Current Phase: build', // not complete
+      'feature-3': '## Current Phase: complete',
+    });
 
     // WHEN
-    const result = await checkArchive({ devActivePath: 'dev/active' });
+    const result = await checkArchive({ devActivePath });
 
     // THEN - Should detect both completed features
     expect(result.status).toBe('warn');
-    expect(result.details?.completedFeatures).toEqual(['feature-1', 'feature-3']);
-    expect(result.details?.unarchived).toEqual(['feature-1', 'feature-3']);
+    // (folder order is the filesystem's, so compared as sets)
+    expect([...(result.details?.completedFeatures as string[])].sort()).toEqual(['feature-1', 'feature-3']);
+    expect([...(result.details?.unarchived as string[])].sort()).toEqual(['feature-1', 'feature-3']);
   });
 });

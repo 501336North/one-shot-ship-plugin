@@ -111,27 +111,24 @@ describe('Benchmark Execution - Phase 3', () => {
       getTasks: vi.fn().mockReturnValue(standardTasks),
     };
 
-    vi.mocked(BenchmarkRunner).mockImplementation(function (this: Record<string, unknown>) {
-      Object.assign(this, mockRunner);
-      return this as unknown as BenchmarkRunner;
+    vi.mocked(BenchmarkRunner).mockImplementation(function (this: BenchmarkRunner) {
+      Object.assign(this, mockRunner); // constructor-style: `new` returns this (T75e)
     });
 
     // Setup mock LLM evaluator
     mockLLMEvaluator = {
       evaluate: vi.fn(),
     };
-    vi.mocked(LLMJudgeEvaluator).mockImplementation(function (this: Record<string, unknown>) {
-      Object.assign(this, mockLLMEvaluator);
-      return this as unknown as LLMJudgeEvaluator;
+    vi.mocked(LLMJudgeEvaluator).mockImplementation(function (this: LLMJudgeEvaluator) {
+      Object.assign(this, mockLLMEvaluator); // constructor-style: `new` returns this (T75e)
     });
 
     // Setup mock composite evaluator
     mockCompositeEvaluator = {
       evaluate: vi.fn(),
     };
-    vi.mocked(CompositeEvaluator).mockImplementation(function (this: Record<string, unknown>) {
-      Object.assign(this, mockCompositeEvaluator);
-      return this as unknown as CompositeEvaluator;
+    vi.mocked(CompositeEvaluator).mockImplementation(function (this: CompositeEvaluator) {
+      Object.assign(this, mockCompositeEvaluator); // constructor-style: `new` returns this (T75e)
     });
   });
 

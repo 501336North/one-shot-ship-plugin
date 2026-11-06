@@ -49,6 +49,25 @@ export declare function proxySpawnArgs(opts: {
     startProxyJs: string;
     port: number;
 }): string[];
+/**
+ * Start the router proxy detached. A bundled (pkg) binary clears PKG_EXECPATH for its child: pkg
+ * sets it to the binary on every spawn, and a child that sees it runs `start-proxy` as a script path
+ * and crashes, so the proxy never answers (T89b).
+ */
+export declare function spawnRouterProxy(opts: {
+    bundled: boolean;
+    startProxyJs: string;
+    port: number;
+    execPath: string;
+    env: NodeJS.ProcessEnv;
+    spawn: (bin: string, args: string[], options: {
+        detached: boolean;
+        stdio: 'ignore';
+        env?: NodeJS.ProcessEnv;
+    }) => {
+        unref(): void;
+    };
+}): void;
 interface SpawnedChild {
     on(event: string, cb: (arg: unknown) => void): unknown;
 }
@@ -115,6 +134,13 @@ export interface EnsureProxyDeps {
  * all-cloud session when local routing was requested.
  */
 export declare function ensureProxy(port: number, deps: EnsureProxyDeps): Promise<void>;
+/**
+ * Read the user's `~/.oss/config.json`, returning only the `models` slice the launcher cares about.
+ * A repo's own `.oss/config.json` is ignored (T71b): it must not switch routing on or pick the
+ * port the session, with its real credentials, talks to. Best-effort: defaults to {} on any error,
+ * so a missing/malformed config simply means "no routing" (Anthropic-only, untouched).
+ */
+export declare function loadMergedConfig(fsImpl: typeof import('fs'), pathImpl: typeof import('path'), osImpl: typeof import('os')): LaunchConfig;
 /**
  * Launcher entrypoint: build the real collaborators (config read, proxy health/start, claude
  * resolution, spawn) and run. Resolves to the child's exit code.

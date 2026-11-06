@@ -14,6 +14,7 @@ import {
   parseProvider,
   Provider,
 } from '../types/model-settings.js';
+import { readRegularFileSync } from '../utils/regular-file.js';
 
 /**
  * Raw config file structure
@@ -66,7 +67,7 @@ export class ModelConfig {
 
     try {
       if (fs.existsSync(configPath)) {
-        const content = fs.readFileSync(configPath, 'utf-8');
+        const content = readRegularFileSync(configPath);
         this.userConfig = JSON.parse(content);
         return this.userConfig;
       }
@@ -86,7 +87,7 @@ export class ModelConfig {
 
     try {
       if (fs.existsSync(configPath)) {
-        const content = fs.readFileSync(configPath, 'utf-8');
+        const content = readRegularFileSync(configPath);
         this.projectConfig = JSON.parse(content);
         return this.projectConfig;
       }

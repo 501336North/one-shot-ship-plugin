@@ -35,7 +35,7 @@ describe('LLMAnalyzer', () => {
     };
 
     mockFetch = vi.fn();
-    global.fetch = mockFetch;
+    vi.stubGlobal('fetch', mockFetch); // a partial fake Response per test; afterEach restores the real fetch (T75e)
 
     analyzer = new LLMAnalyzer(
       mockQueueManager as unknown as QueueManager,

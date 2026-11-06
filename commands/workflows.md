@@ -56,44 +56,29 @@ View and manage your team's customizable workflow configuration.
 3. **Shows agent configuration** - Which agents are spawned
 4. **Indicates customization** - Whether using default or custom config
 
-## Step 1: Check Authentication
+## Step 1: Fetch Workflow List
+
+**OSS hooks older than this plugin:** if a `~/.oss/hooks/oss-value.sh` call in this command (Step 1 or Step 3) prints `usage: oss-value.sh` or `No such file or directory` (any case: zsh prints `no such file or directory`), the plugin was updated after this session started and `~/.oss/hooks` still holds the older copies. Do not show that output; show only this line: `Your OSS hooks are older than the plugin; restart Claude Code (or start a new session) to update them.` and stop.
+
+Run this exactly as written (one allowed call). It sends the key from your OSS config to `/api/v1/workflows` on the API that config's `apiUrl` names, on curl's stdin (never on a command line or into this chat), and prints one line per workflow, its name and `DEFAULT` or `CUSTOM`:
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+~/.oss/hooks/oss-value.sh workflows
 ```
 
-If no API key found:
-```
-No API key found. Run: /oss:login
-Register at https://www.oneshotship.com
-```
+If it fails, show its message and stop (see Error Handling; `No API key found` means run `/oss:login`).
 
-## Step 2: Fetch Workflow List
-
-Call the workflows API endpoint to get the list:
-
-```http
-URL: https://one-shot-ship-api.onrender.com/api/v1/workflows
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
-```
-
-Response:
-```json
-{
-  "workflows": [
-    { "name": "ideate", "customized": false },
-    { "name": "plan", "customized": false },
-    { "name": "build", "customized": true },
-    { "name": "ship", "customized": false }
-  ]
-}
+Output:
+```text
+ideate DEFAULT
+plan DEFAULT
+build CUSTOM
+ship DEFAULT
 ```
 
 > Iron Laws are loaded from CLAUDE.md at session start. No per-command fetch needed.
 
-## Step 3: Display Workflow List
+## Step 2: Display Workflow List
 
 ```text
 ==============================================
@@ -113,24 +98,17 @@ Dashboard: https://www.oneshotship.com/dashboard
 ==============================================
 ```
 
-## Step 4: Show Specific Workflow (Optional)
+## Step 3: Show Specific Workflow (Optional)
 
-If a workflow name is provided, fetch and display its configuration. The name reaches the shell through the value folder: run `~/.oss/hooks/oss-value.sh dir`, use the Write tool to write the name alone to `workflow.txt` in the folder it printed, then run:
+If a workflow name is provided, fetch and display its configuration. The name reaches the shell through the value folder: run `~/.oss/hooks/oss-value.sh dir`, use the Write tool to write the name alone to `workflow.txt` in the folder it printed, then run this exactly as written (one allowed call):
 
 ```bash
-~/.oss/hooks/oss-value.sh read workflow
+~/.oss/hooks/oss-value.sh workflow
 ```
 
-It prints the name only when it is valid (lower case, digits, `_ . : -`) and deletes the file; if it prints nothing, tell the user the name is not valid and stop. Fetch with `$WORKFLOW` below replaced by exactly the name it printed:
+It reads the name from `workflow.txt` only when it is a valid workflow name (a lower-case letter, then lower case, digits or `-`) and deletes the file, then fetches that workflow's configuration from `/api/v1/workflows/<name>/editor` the same key-safe way and prints it as JSON (`name`, `chain`, `agents`, `parallel_agents`, `task_loop`, `quality_gates`, `on_pass`, `checkpoint`). If it says `refused`, tell the user the name is not valid and stop. If it fails otherwise, show its message and stop (`HTTP 404`: not one of ideate, plan, build, ship).
 
-```http
-URL: https://one-shot-ship-api.onrender.com/api/v1/workflows/$WORKFLOW
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
-```
-
-Display the decrypted configuration:
+Display the configuration (Status is the `DEFAULT` or `CUSTOM` that Step 1 listed for this workflow):
 
 ```
 ==============================================

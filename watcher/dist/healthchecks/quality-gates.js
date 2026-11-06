@@ -1,7 +1,7 @@
-import { promises as fs } from 'fs';
+import { readRegularFile } from '../utils/regular-file.js';
 async function readLogEntries(logPath) {
     try {
-        const content = await fs.readFile(logPath, 'utf-8');
+        const content = await readRegularFile(logPath);
         const lines = content.trim().split('\n');
         const entries = [];
         for (const line of lines) {

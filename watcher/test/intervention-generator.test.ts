@@ -5,11 +5,14 @@
  * @acceptance-criteria AC-006.1 through AC-006.12
  */
 
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach, type Mock } from 'vitest';
 import {
   InterventionGenerator,
   Intervention,
   ResponseType,
+  type EscalationNotifier,
+  type RetryStatusLine,
+  type RecoveryLogger,
 } from '../src/intervention/generator.js';
 import { WorkflowIssue, IssueType } from '../src/analyzer/workflow-analyzer.js';
 import { OSS_ERROR_MAX_RETRIES } from '../src/services/error-codes.js';
@@ -574,15 +577,15 @@ describe('InterventionGenerator', () => {
   });
 
   describe('severity-based escalation + retry visibility (US-005/US-006)', () => {
-    let mockNotifier: { sendErrorEscalation: ReturnType<typeof vi.fn> };
-    let mockStatusLine: { setRetryStatus: ReturnType<typeof vi.fn> };
-    let mockRecoveryLogger: { logRecovery: ReturnType<typeof vi.fn> };
+    let mockNotifier: { sendErrorEscalation: Mock<EscalationNotifier['sendErrorEscalation']> };
+    let mockStatusLine: { setRetryStatus: Mock<RetryStatusLine['setRetryStatus']> };
+    let mockRecoveryLogger: { logRecovery: Mock<RecoveryLogger['logRecovery']> };
     let wiredGenerator: InterventionGenerator;
 
     beforeEach(() => {
-      mockNotifier = { sendErrorEscalation: vi.fn().mockResolvedValue(undefined) };
-      mockStatusLine = { setRetryStatus: vi.fn().mockResolvedValue(undefined) };
-      mockRecoveryLogger = { logRecovery: vi.fn() };
+      mockNotifier = { sendErrorEscalation: vi.fn<EscalationNotifier['sendErrorEscalation']>().mockResolvedValue(undefined) };
+      mockStatusLine = { setRetryStatus: vi.fn<RetryStatusLine['setRetryStatus']>().mockResolvedValue(undefined) };
+      mockRecoveryLogger = { logRecovery: vi.fn<RecoveryLogger['logRecovery']>() };
       wiredGenerator = new InterventionGenerator({
         notifier: mockNotifier,
         statusLine: mockStatusLine,

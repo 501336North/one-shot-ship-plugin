@@ -15,6 +15,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { readRegularFileSync } from '../utils/regular-file.js';
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const DEFAULT_VERSION = '1.4.0';
 export class PromptCache {
@@ -40,7 +41,7 @@ export class PromptCache {
             return null;
         }
         try {
-            const cached = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+            const cached = JSON.parse(readRegularFileSync(cachePath));
             // Check if expired
             if (Date.now() > cached.expiresAt) {
                 return null;

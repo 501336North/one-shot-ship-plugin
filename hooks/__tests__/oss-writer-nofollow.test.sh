@@ -14,6 +14,9 @@
 # Usage: ./hooks/__tests__/oss-writer-nofollow.test.sh
 #        BASH_UNDER_TEST=/opt/local/bin/bash ./hooks/__tests__/oss-writer-nofollow.test.sh
 set -uo pipefail
+# The hooks read the API key and URL from $OSS_CONFIG_DIR/config.json: a developer's exported
+# override must not lead them to the real key and the real API (T19).
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SH="${BASH_UNDER_TEST:-/bin/bash}"
 DIST="$ROOT/watcher/dist"

@@ -8,6 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { readRegularFileSync } from '../utils/regular-file.js';
 
 interface StartupOptimizerOptions {
   authCacheTtl?: number;
@@ -103,7 +104,7 @@ export class StartupOptimizer {
 
     try {
       if (fs.existsSync(configPath)) {
-        const content = fs.readFileSync(configPath, 'utf-8');
+        const content = readRegularFileSync(configPath);
         const config = JSON.parse(content);
         const result: AuthResult = {
           authenticated: !!config.apiKey,

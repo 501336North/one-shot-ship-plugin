@@ -4,10 +4,9 @@
  * @behavior Notifications are dispatched based on user settings
  * @acceptance-criteria AC-NOTIF.1 through AC-NOTIF.12
  */
-import * as fs from 'fs';
 import * as path from 'path';
 import { DEFAULT_NOTIFICATION_SETTINGS, EVENT_TYPE_PRIORITIES, } from '../types/notification.js';
-import { normalizeStyle } from './settings.js';
+import { normalizeStyle, readSettingsFile } from './settings.js';
 export class NotificationService {
     settings;
     settingsPath;
@@ -20,8 +19,8 @@ export class NotificationService {
      */
     loadSettings() {
         try {
-            if (fs.existsSync(this.settingsPath)) {
-                const content = fs.readFileSync(this.settingsPath, 'utf-8');
+            const content = readSettingsFile(this.settingsPath);
+            if (content !== null) {
                 const parsed = JSON.parse(content);
                 // Merge with defaults for missing fields
                 return {

@@ -11,10 +11,11 @@
  */
 
 import { buildSync } from 'esbuild';
-import { readFileSync, writeFileSync } from 'fs';
+import { writeFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { CHAIN_TRIGGER_BUNDLE_OPTIONS } from './chain-trigger-bundle-options.mjs';
+import { OSS_LAUNCH_BUNDLE_OPTIONS } from './oss-launch-bundle-options.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const watcherRoot = resolve(__dirname, '..');
@@ -47,30 +48,7 @@ console.log('  Wrapper: dist/cli/chain-trigger.js (ESM compat)');
 // routing. It flattens oss-launch's relative imports into one file (static imports → require, which
 // pkg's snapshot can execute — dynamic import() cannot). Node built-ins stay external (provided by
 // the wrapped runtime). target=node18 to match the pkg base (vercel/pkg tops out at node18).
-const ossVersion = JSON.parse(
-  readFileSync(resolve(watcherRoot, '..', '.claude-plugin', 'plugin.json'), 'utf-8')
-).version;
-const launchResult = buildSync({
-  entryPoints: [resolve(watcherRoot, 'src/cli/oss-launch.ts')],
-  bundle: true,
-  platform: 'node',
-  target: 'node18',
-  format: 'cjs',
-  outfile: resolve(watcherRoot, 'dist/cli/oss-launch.cjs'),
-  // In a CJS bundle `import.meta.url` does not exist. Map it to a banner-declared identifier that
-  // computes a __filename-based file URL, so the launcher's self-path / main-module detection works
-  // in the bundled binary too. (esbuild `define` values must be an identifier or JSON, not an
-  // expression — hence the banner.) Also embed the version — a relocated binary can't read plugin.json.
-  define: {
-    'import.meta.url': '__ossImportMetaUrl',
-    __OSS_LAUNCH_VERSION__: JSON.stringify(ossVersion),
-    __OSS_BUNDLED__: 'true',
-  },
-  banner: {
-    js: "const __ossImportMetaUrl = require('url').pathToFileURL(__filename).href;",
-  },
-  write: true,
-});
+const launchResult = buildSync({ ...OSS_LAUNCH_BUNDLE_OPTIONS, write: true });
 
 if (launchResult.errors.length > 0) {
   console.error('oss-launch bundle failed:', launchResult.errors);

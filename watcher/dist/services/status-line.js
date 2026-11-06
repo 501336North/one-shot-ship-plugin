@@ -9,9 +9,9 @@
  *
  * State is persisted to ~/.oss/status-line.json for SwiftBar/Claude Code status line
  */
-import { promises as fs } from 'fs';
 import * as path from 'path';
 import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
+import { readRegularFile } from '../utils/regular-file.js';
 const DEFAULT_STATE = {
     phase: null,
     task: null,
@@ -45,7 +45,7 @@ export class StatusLineService {
      */
     async initialize() {
         try {
-            const content = await fs.readFile(this.stateFile, 'utf-8');
+            const content = await readRegularFile(this.stateFile);
             this.state = JSON.parse(content);
         }
         catch {

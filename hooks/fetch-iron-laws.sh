@@ -8,13 +8,12 @@
 #   --raw    Output raw JSON response (default: extract content)
 #
 # Returns the IRON LAWS content from the API endpoint.
-# Uses API key from ~/.oss/config.json
+# Uses apiKey and apiUrl from the OSS config ($OSS_CONFIG_DIR/config.json, else ~/.oss/config.json)
 
 set -euo pipefail
 if [[ -f "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh" ]]; then source "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh"; fi  # oss_api_curl: API key via stdin, never argv
 
-CONFIG_FILE="${HOME}/.oss/config.json"
-API_URL="https://one-shot-ship-api.onrender.com"
+CONFIG_FILE=$(oss_config_file)
 ENDPOINT="/api/v1/prompts/shared/iron-laws"
 
 # Standardized error contract: emit a structured OSSError via the oss-error
@@ -51,7 +50,7 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
 fi
 
 # Extract API key from config
-API_KEY=$(grep -o '"apiKey"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" | sed 's/.*: *"\([^"]*\)"/\1/')
+oss_api_creds || true; API_KEY=$OSS_KEY   # key and URL from one read of one object (T30, T37)
 
 if [[ -z "$API_KEY" ]]; then
   echo "Error: No API key found in config" >&2
@@ -59,12 +58,26 @@ if [[ -z "$API_KEY" ]]; then
   exit 1
 fi
 
-# Fetch IRON LAWS with authentication
+# The key goes only to the API configured beside it
+API_URL=$OSS_URL; [[ $OSS_URL_RC == 0 ]] || {
+  echo "Error: apiUrl in $CONFIG_FILE must be an https URL (plain http only for localhost) with no user@, query or fragment" >&2
+  exit 1
+}
+
+# Fetch IRON LAWS with authentication: at most OSS_BODY_MAX bytes, over it curl exit 63 (T74b)
 CURL_STATUS=0
-RESPONSE=$(oss_api_curl "$API_KEY" -s -w "\n%{http_code}" \
+RESPONSE=$(oss_capped oss_api_curl "$API_KEY" -s --max-time 10 --max-filesize "$OSS_BODY_MAX" -w "\n%{http_code}" \
   -H "Content-Type: application/json" \
   "${API_URL}${ENDPOINT}") || CURL_STATUS=$?
 
+# Over the cap the API was reached: say so, not "could not reach" (T77); same exit code and error record
+if [[ "$CURL_STATUS" -eq 63 ]]; then
+  echo "Error: the OSS API answer was over $OSS_BODY_MAX bytes, so it was not used (curl exit 63)" >&2
+  emit_oss_error --code OSS-API-003 --severity HIGH \
+    --message "IRON LAWS fetch failed: answer over $OSS_BODY_MAX bytes (curl exit 63)" \
+    --retry-eligible true --retry-cost cheap
+  exit 63
+fi
 if [[ "$CURL_STATUS" -ne 0 ]]; then
   echo "Error: Could not reach OSS API (curl exit $CURL_STATUS)" >&2
   emit_oss_error --code OSS-API-003 --severity HIGH \

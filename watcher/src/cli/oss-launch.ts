@@ -20,6 +20,7 @@ import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { checkNode, decidePreflight, type NodeCheck } from '../services/node-guard.js';
 import * as startProxyModule from './start-proxy.js';
+import { readRegularFileSync } from '../utils/regular-file.js';
 
 /** Injected at bundle time by esbuild `define` (scripts/bundle-cli.js). Undefined under tsc/ESM. */
 declare const __OSS_LAUNCH_VERSION__: string | undefined;
@@ -104,6 +105,31 @@ export function proxySpawnArgs(opts: {
 }): string[] {
   const head = opts.bundled ? ['start-proxy'] : [opts.startProxyJs];
   return [...head, '--router', '--background', '--port', String(opts.port)];
+}
+
+/**
+ * Start the router proxy detached. A bundled (pkg) binary clears PKG_EXECPATH for its child: pkg
+ * sets it to the binary on every spawn, and a child that sees it runs `start-proxy` as a script path
+ * and crashes, so the proxy never answers (T89b).
+ */
+export function spawnRouterProxy(opts: {
+  bundled: boolean;
+  startProxyJs: string;
+  port: number;
+  execPath: string;
+  env: NodeJS.ProcessEnv;
+  spawn: (
+    bin: string,
+    args: string[],
+    options: { detached: boolean; stdio: 'ignore'; env?: NodeJS.ProcessEnv }
+  ) => { unref(): void };
+}): void {
+  const child = opts.spawn(opts.execPath, proxySpawnArgs(opts), {
+    detached: true,
+    stdio: 'ignore',
+    ...(opts.bundled ? { env: { ...opts.env, PKG_EXECPATH: '' } } : {}),
+  });
+  child.unref();
 }
 
 // ============================================================================
@@ -248,26 +274,24 @@ export async function ensureProxy(port: number, deps: EnsureProxyDeps): Promise<
 // ============================================================================
 
 /**
- * Read the merged OSS config (project `.oss/config.json` overrides user `~/.oss/config.json`),
- * returning only the `models` slice the launcher cares about. Best-effort: defaults to {} on any
- * error, so a missing/malformed config simply means "no routing" (Anthropic-only, untouched).
+ * Read the user's `~/.oss/config.json`, returning only the `models` slice the launcher cares about.
+ * A repo's own `.oss/config.json` is ignored (T71b): it must not switch routing on or pick the
+ * port the session, with its real credentials, talks to. Best-effort: defaults to {} on any error,
+ * so a missing/malformed config simply means "no routing" (Anthropic-only, untouched).
  */
-function loadMergedConfig(fsImpl: typeof import('fs'), pathImpl: typeof import('path'), osImpl: typeof import('os')): LaunchConfig {
+export function loadMergedConfig(fsImpl: typeof import('fs'), pathImpl: typeof import('path'), osImpl: typeof import('os')): LaunchConfig {
   const read = (file: string): Record<string, unknown> | null => {
     try {
-      if (fsImpl.existsSync(file)) return JSON.parse(fsImpl.readFileSync(file, 'utf-8'));
+      if (fsImpl.existsSync(file)) return JSON.parse(readRegularFileSync(file));
     } catch {
       /* ignore malformed/unreadable config */
     }
     return null;
   };
 
-  const userCfg = read(pathImpl.join(osImpl.homedir(), '.oss', 'config.json'));
-  const projectDir = process.env.CLAUDE_PROJECT_DIR;
-  const projectCfg = projectDir ? read(pathImpl.join(projectDir, '.oss', 'config.json')) : null;
-  const merged = { ...(userCfg ?? {}), ...(projectCfg ?? {}) } as { models?: LaunchConfig['models'] };
+  const userCfg = read(pathImpl.join(osImpl.homedir(), '.oss', 'config.json')) as { models?: LaunchConfig['models'] } | null;
 
-  return { models: merged.models };
+  return { models: userCfg?.models };
 }
 
 /**
@@ -338,14 +362,8 @@ export async function main(argv: string[]): Promise<number | undefined> {
     ensureProxy: (port: number) =>
       ensureProxy(port, {
         healthCheck,
-        startProxy: () => {
-          const child = spawn(
-            process.execPath,
-            proxySpawnArgs({ bundled, startProxyJs, port }),
-            { detached: true, stdio: 'ignore' }
-          );
-          child.unref();
-        },
+        startProxy: () =>
+          spawnRouterProxy({ bundled, startProxyJs, port, execPath: process.execPath, env: process.env, spawn }),
         sleep: (ms: number) => new Promise((r) => setTimeout(r, ms)),
       }),
     resolveClaudeBin: () =>

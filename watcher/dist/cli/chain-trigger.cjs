@@ -39,7 +39,7 @@ __export(chain_trigger_exports, {
 module.exports = __toCommonJS(chain_trigger_exports);
 
 // src/api/workflow-config.ts
-var fs2 = __toESM(require("fs"), 1);
+var fs3 = __toESM(require("fs"), 1);
 var path2 = __toESM(require("path"), 1);
 var os2 = __toESM(require("os"), 1);
 var crypto = __toESM(require("crypto"), 1);
@@ -83,20 +83,46 @@ var DEFAULT_WORKFLOW_CONFIGS = {
 };
 
 // src/api/api-credentials.ts
-var fs = __toESM(require("fs"), 1);
+var fs2 = __toESM(require("fs"), 1);
 var path = __toESM(require("path"), 1);
 var os = __toESM(require("os"), 1);
+
+// src/utils/regular-file.ts
+var fs = __toESM(require("fs"), 1);
+var FLAGS = fs.constants.O_RDONLY | fs.constants.O_NONBLOCK;
+function notRegular(file) {
+  return Object.assign(new Error(`ENOENT: not a regular file, open '${file}'`), { code: "ENOENT" });
+}
+function refused(st, owner) {
+  return !st.isFile() || owner !== void 0 && st.uid !== owner;
+}
+function readRegularFileSync(file, owner) {
+  if (!fs.statSync(file).isFile()) {
+    throw notRegular(file);
+  }
+  const fd = fs.openSync(file, FLAGS);
+  try {
+    if (refused(fs.fstatSync(fd), owner)) {
+      throw notRegular(file);
+    }
+    return fs.readFileSync(fd, "utf-8");
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// src/api/api-credentials.ts
 var DEFAULT_API_URL = "https://one-shot-ship-api.onrender.com";
 function getConfigDir() {
   return process.env.OSS_CONFIG_DIR || path.join(os.homedir(), ".oss");
 }
 function readApiCredentials(configDir) {
   const configPath = path.join(configDir || getConfigDir(), "config.json");
-  if (!fs.existsSync(configPath)) {
+  if (!fs2.existsSync(configPath)) {
     return null;
   }
   try {
-    const content = fs.readFileSync(configPath, "utf8");
+    const content = readRegularFileSync(configPath);
     const config = JSON.parse(content);
     if (!config.apiKey) {
       return null;
@@ -146,11 +172,11 @@ function getMachineKey() {
 }
 function retrieveCredentials() {
   const credentialsPath = path2.join(getConfigDir(), "credentials.enc");
-  if (!fs2.existsSync(credentialsPath)) {
+  if (!fs3.existsSync(credentialsPath)) {
     return null;
   }
   try {
-    const stored = fs2.readFileSync(credentialsPath, "utf8");
+    const stored = readRegularFileSync(credentialsPath);
     const [ivBase64, authTagBase64, encrypted] = stored.split(":");
     if (!ivBase64 || !authTagBase64 || !encrypted) {
       return null;
@@ -262,6 +288,11 @@ function isSafeTeamCommandName(name) {
   return /^[a-z0-9-]{1,100}$/.test(name);
 }
 
+// src/utils/safe-for-log.ts
+function safeForLog(value) {
+  return value.replace(/[^\x20-\x7e]/g, "?").slice(0, 60);
+}
+
 // src/cli/chain-trigger.ts
 var MAX_CHAIN_COMMANDS = 10;
 var MAX_STEPS_ITERATED = MAX_CHAIN_COMMANDS * 10;
@@ -270,9 +301,6 @@ var SAFE_CONDITION = /^[a-z0-9_-]{1,64}$/;
 var CHAIN_LINE_PATTERN = new RegExp(
   `^CHAIN: \\/oss:(${WORKFLOW_NAME_PATTERN.source.slice(1, -1)}|oss-custom [a-z0-9-]{1,100}) \\((always|condition: [a-z0-9_-]{1,64})\\)$`
 );
-function safeForLog(value) {
-  return value.replace(/[^\x20-\x7e]/g, "?").slice(0, 60);
-}
 function isChainItemShape(value) {
   if (typeof value !== "object" || value === null) return false;
   const { command, condition } = value;

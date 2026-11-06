@@ -7,6 +7,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { readRegularFileSync } from '../utils/regular-file.js';
 const DEFAULT_RETENTION_DAYS = 30;
 export class MetricsCollector {
     metricsFile;
@@ -223,7 +224,7 @@ export class MetricsCollector {
     load() {
         try {
             if (fs.existsSync(this.metricsFile)) {
-                const content = fs.readFileSync(this.metricsFile, 'utf-8');
+                const content = readRegularFileSync(this.metricsFile);
                 this.data = JSON.parse(content);
                 this.pruneOldData();
             }

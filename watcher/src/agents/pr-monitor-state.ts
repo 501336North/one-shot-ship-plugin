@@ -8,6 +8,7 @@
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
+import { readRegularFile } from '../utils/regular-file.js';
 
 /**
  * Stats tracked by the PR monitor
@@ -71,7 +72,7 @@ export class PRMonitorState {
 
     try {
       await fs.access(filePath);
-      const content = await fs.readFile(filePath, 'utf-8');
+      const content = await readRegularFile(filePath);
       const data: PRMonitorStateData = JSON.parse(content);
 
       // Load processedComments with TTL support

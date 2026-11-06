@@ -5,57 +5,82 @@
  * @boundary Shell script (oss-notify.sh)
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { execSync } from 'child_process';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { execSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { writeWarmStub, WARMUP_TIMEOUT_MS } from './helpers/warm-stub';
 
 describe('oss-notify.sh - Project State Updates', () => {
   const hooksDir = path.join(__dirname, '../../../hooks');
   const notifyScript = path.join(hooksDir, 'oss-notify.sh');
-  const ossDir = path.join(os.homedir(), '.oss');
-  const currentProjectFile = path.join(ossDir, 'current-project');
-  const globalWorkflowFile = path.join(ossDir, 'workflow-state.json');
-  const testProjectDir = path.join(os.tmpdir(), `oss-notify-test-${Date.now()}`);
-  const projectOssDir = path.join(testProjectDir, '.oss');
-  const projectWorkflowFile = path.join(projectOssDir, 'workflow-state.json');
 
-  // Save original state
-  let originalCurrentProject: string | null = null;
-  let originalGlobalWorkflow: string | null = null;
+  // This file owns its HOME (no apiKey, so no analytics call is possible) and a recording curl,
+  // so it stays hermetic even without setup.ts.
+  let fileRoot = '';
+  let fileHome = '';
+  let stubBin = '';
+  let ossDir = '';
+  let currentProjectFile = '';
+  let globalWorkflowFile = '';
+  let testProjectDir = '';
+  let projectWorkflowFile = '';
+  let curlCalls = '';
+
+  beforeAll(() => {
+    fileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-notify-project-'));
+    fileHome = path.join(fileRoot, 'home');
+    ossDir = path.join(fileHome, '.oss');
+    fs.mkdirSync(ossDir, { recursive: true, mode: 0o700 });
+    currentProjectFile = path.join(ossDir, 'current-project');
+    globalWorkflowFile = path.join(ossDir, 'workflow-state.json');
+    stubBin = path.join(fileRoot, 'bin');
+    writeWarmStub(path.join(stubBin, 'curl'), 'printf "%s\\n" "$*" >> "$CURL_CALLS"\nexit 0\n');
+  }, WARMUP_TIMEOUT_MS);
+
+  afterAll(() => {
+    fs.rmSync(fileRoot, { recursive: true, force: true });
+  });
 
   beforeEach(() => {
-    // Save original files
-    if (fs.existsSync(currentProjectFile)) {
-      originalCurrentProject = fs.readFileSync(currentProjectFile, 'utf-8');
-    }
-    if (fs.existsSync(globalWorkflowFile)) {
-      originalGlobalWorkflow = fs.readFileSync(globalWorkflowFile, 'utf-8');
-    }
-
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    testProjectDir = path.join(fileRoot, `project-${id}`);
+    projectWorkflowFile = path.join(testProjectDir, '.oss', 'workflow-state.json');
+    curlCalls = path.join(fileRoot, `curl-calls-${id}`);
     // Create test project (a git repo) with .oss
-    fs.mkdirSync(projectOssDir, { recursive: true });
+    fs.mkdirSync(path.join(testProjectDir, '.oss'), { recursive: true });
     execSync('git init -q', { cwd: testProjectDir });
   });
 
   afterEach(() => {
-    // Restore original files
-    if (originalCurrentProject !== null) {
-      fs.writeFileSync(currentProjectFile, originalCurrentProject);
-    } else if (fs.existsSync(currentProjectFile)) {
-      fs.unlinkSync(currentProjectFile);
-    }
-
-    if (originalGlobalWorkflow !== null) {
-      fs.writeFileSync(globalWorkflowFile, originalGlobalWorkflow);
-    }
-
-    // Clean up test project
-    if (fs.existsSync(testProjectDir)) {
-      fs.rmSync(testProjectDir, { recursive: true, force: true });
-    }
+    fs.rmSync(testProjectDir, { recursive: true, force: true });
+    fs.rmSync(currentProjectFile, { force: true });
+    fs.rmSync(globalWorkflowFile, { force: true });
   });
+
+  function runNotify(args: string[]): void {
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: fileHome,
+      PATH: `${stubBin}:${process.env.PATH ?? ''}`,
+      CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..'),
+      CURL_CALLS: curlCalls,
+    };
+    // The Bash tool does not set CLAUDE_PROJECT_DIR; the live session id must never reach the hook;
+    // OSS_CONFIG_DIR would move the config (and its apiKey) out of fileHome.
+    delete env.CLAUDE_PROJECT_DIR;
+    delete env.CLAUDE_CODE_SESSION_ID;
+    delete env.OSS_CONFIG_DIR;
+    // fd 3 is a pipe that the hook's detached jobs inherit (they redirect only 0-2), so spawnSync
+    // returns only once every one of them has exited: the curl record is complete, not racing.
+    spawnSync('bash', [notifyScript, ...args], {
+      cwd: testProjectDir,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
+      timeout: 15000,
+    });
+  }
 
   /**
    * @behavior oss-notify.sh workflow start updates project state via CLI
@@ -63,29 +88,16 @@ describe('oss-notify.sh - Project State Updates', () => {
    */
   it('should write workflow state to project .oss when run inside the project', () => {
     // GIVEN: the command runs inside the test project; current-project names another (never used, D1)
-    fs.writeFileSync(currentProjectFile, os.homedir());
+    fs.writeFileSync(currentProjectFile, fileHome);
 
     // WHEN: Running notify script with workflow start
-    try {
-      // Delete CLAUDE_PROJECT_DIR: the Bash tool does not set it
-      const env = { ...process.env, CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..') };
-      delete env.CLAUDE_PROJECT_DIR;
-
-      execSync(`bash "${notifyScript}" --workflow build start '{}'`, {
-        cwd: testProjectDir,
-        timeout: 10000,
-        encoding: 'utf-8',
-        env,
-      });
-    } catch {
-      // Ignore exit code, we care about state file
-    }
+    runNotify(['--workflow', 'build', 'start', '{}']);
 
     // THEN: Project workflow-state.json should have build as active step
     expect(fs.existsSync(projectWorkflowFile)).toBe(true);
     const state = JSON.parse(fs.readFileSync(projectWorkflowFile, 'utf-8'));
     expect(state.activeStep).toBe('build');
-  });
+  }, 20000);
 
   /**
    * @behavior oss-notify.sh does NOT write workflow state to global when project is set
@@ -94,7 +106,7 @@ describe('oss-notify.sh - Project State Updates', () => {
    */
   it('should NOT modify global workflow-state.json when run inside the project', () => {
     // GIVEN: the command runs inside the test project; current-project names another (never used, D1)
-    fs.writeFileSync(currentProjectFile, os.homedir());
+    fs.writeFileSync(currentProjectFile, fileHome);
 
     // AND: Global state has a known version
     const globalStateBefore = fs.existsSync(globalWorkflowFile)
@@ -103,19 +115,7 @@ describe('oss-notify.sh - Project State Updates', () => {
     const globalVersionBefore = globalStateBefore.version ?? 0;
 
     // WHEN: Running notify with workflow start (writes activeStep, currentCommand, etc.)
-    try {
-      const env = { ...process.env, CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..') };
-      delete env.CLAUDE_PROJECT_DIR;
-
-      execSync(`bash "${notifyScript}" --workflow build start '{}'`, {
-        cwd: testProjectDir,
-        timeout: 10000,
-        encoding: 'utf-8',
-        env,
-      });
-    } catch {
-      // Ignore exit code
-    }
+    runNotify(['--workflow', 'build', 'start', '{}']);
 
     // THEN: Global state version should NOT have changed
     const globalStateAfter = fs.existsSync(globalWorkflowFile)
@@ -127,7 +127,7 @@ describe('oss-notify.sh - Project State Updates', () => {
     expect(fs.existsSync(projectWorkflowFile)).toBe(true);
     const projectState = JSON.parse(fs.readFileSync(projectWorkflowFile, 'utf-8'));
     expect(projectState.activeStep).toBe('build');
-  });
+  }, 20000);
 
   /**
    * @behavior oss-notify.sh task_complete updates project progress
@@ -135,7 +135,7 @@ describe('oss-notify.sh - Project State Updates', () => {
    */
   it('should update project progress on task_complete', () => {
     // GIVEN: the command runs inside the test project; current-project names another (never used, D1)
-    fs.writeFileSync(currentProjectFile, os.homedir());
+    fs.writeFileSync(currentProjectFile, fileHome);
 
     // AND: Project has initial state from build start
     fs.writeFileSync(projectWorkflowFile, JSON.stringify({
@@ -144,23 +144,23 @@ describe('oss-notify.sh - Project State Updates', () => {
     }));
 
     // WHEN: Running notify script with task_complete
-    try {
-      // Delete CLAUDE_PROJECT_DIR: the Bash tool does not set it
-      const env = { ...process.env, CLAUDE_PLUGIN_ROOT: path.join(hooksDir, '..') };
-      delete env.CLAUDE_PROJECT_DIR;
-
-      execSync(`bash "${notifyScript}" --workflow build task_complete '{"current": 3, "total": 10, "taskName": "Test task"}'`, {
-        cwd: testProjectDir,
-        timeout: 10000,
-        encoding: 'utf-8',
-        env,
-      });
-    } catch {
-      // Ignore exit code
-    }
+    runNotify(['--workflow', 'build', 'task_complete', '{"current": 3, "total": 10, "taskName": "Test task"}']);
 
     // THEN: Project state should have progress updated
     const state = JSON.parse(fs.readFileSync(projectWorkflowFile, 'utf-8'));
     expect(state.progress).toContain('3/10');
-  });
+  }, 20000);
+
+  /**
+   * @behavior a test run of the workflow hook never reaches the OSS API
+   * @business-rule `start` posts analytics when a key is configured; tests run logged out, so nothing is sent
+   */
+  it('should send nothing to the network', () => {
+    // WHEN: the hook takes its only network path (workflow start -> analytics POST)
+    runNotify(['--workflow', 'build', 'start', '{}']);
+
+    // THEN: the curl stub recorded no call
+    const calls = fs.existsSync(curlCalls) ? fs.readFileSync(curlCalls, 'utf-8') : '';
+    expect(calls).toBe('');
+  }, 20000);
 });

@@ -15,6 +15,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach, Mock } from 'vitest';
 import * as fs from 'fs';
+import { fakeRegularFiles } from '../helpers/fake-regular-files.js';
 import * as os from 'os';
 import * as path from 'path';
 import * as http from 'http';
@@ -41,6 +42,8 @@ describe('start-proxy CLI', () => {
     // Default: no config file exists
     (fs.existsSync as Mock).mockReturnValue(false);
     (fs.readFileSync as Mock).mockReturnValue('{}');
+    // the real hang-safe reader (T70e) runs on these fakes
+    fakeRegularFiles(fs);
     (fs.writeFileSync as Mock).mockImplementation(() => {});
     (fs.unlinkSync as Mock).mockImplementation(() => {});
     (fs.mkdirSync as Mock).mockImplementation(() => {});
@@ -320,6 +323,59 @@ describe('start-proxy CLI', () => {
       const scriptArg = (mockSpawn.mock.calls[0][1] as string[])[0];
       expect(scriptArg.startsWith('file:')).toBe(false);
       expect(scriptArg).toMatch(/start-proxy\.(js|ts)$/);
+    });
+
+    /**
+     * @behavior T89: the self-contained oss-launch binary brings up a background router proxy.
+     * In that binary process.execPath IS oss-launch, so the child must be told `start-proxy`;
+     * handed a script path it would run as the launcher and the proxy would never answer.
+     */
+    describe('which process the background child runs as (T89)', () => {
+      const g = globalThis as { __OSS_BUNDLED__?: boolean };
+      afterEach(() => {
+        delete g.__OSS_BUNDLED__;
+      });
+      const spawnOnce = async (): Promise<Mock> => {
+        const { startProxyBackground } = await import('../../src/cli/start-proxy.js');
+        const mockChild = { pid: 4242, unref: vi.fn(), on: vi.fn() };
+        const mockSpawn = vi.fn().mockReturnValue(mockChild);
+        await startProxyBackground({
+          port: 18999,
+          router: true,
+          _testSpawn: mockSpawn as unknown as typeof childProcess.spawn,
+        });
+        return mockSpawn;
+      };
+
+      it('in the bundled binary, re-runs the binary with the start-proxy subcommand', async () => {
+        g.__OSS_BUNDLED__ = true;
+        const mockSpawn = await spawnOnce();
+        expect(mockSpawn).toHaveBeenCalledWith(
+          process.execPath,
+          ['start-proxy', '--router', '--port', '18999'],
+          expect.objectContaining({ detached: true })
+        );
+      });
+
+      it('in the bundled binary, clears PKG_EXECPATH for the child and keeps the rest of env (T89b)', async () => {
+        g.__OSS_BUNDLED__ = true;
+        process.env.PKG_EXECPATH = process.execPath;
+        process.env.OSS_T89B_KEEP = 'kept';
+        const mockSpawn = await spawnOnce();
+        const opts = mockSpawn.mock.calls[0][2] as { env?: NodeJS.ProcessEnv };
+        expect(opts.env?.PKG_EXECPATH).toBe('');
+        expect(opts.env?.OSS_T89B_KEEP).toBe('kept');
+        expect(opts.env?.HOME).toBe(process.env.HOME);
+      });
+
+      it('in a node-script install, runs node on the start-proxy script', async () => {
+        const mockSpawn = await spawnOnce();
+        const [cmd, argv, opts] = mockSpawn.mock.calls[0] as [string, string[], { detached: boolean }];
+        expect(cmd).toBe(process.execPath);
+        expect(argv[0]).toMatch(/start-proxy\.(js|ts)$/);
+        expect(argv.slice(1)).toEqual(['--router', '--port', '18999']);
+        expect(opts.detached).toBe(true);
+      });
     });
 
     it('should write pid file to .oss/proxy.pid', async () => {

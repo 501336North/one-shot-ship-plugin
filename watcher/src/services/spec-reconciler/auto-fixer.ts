@@ -10,6 +10,7 @@
 
 import * as fs from 'fs';
 import { AutoFixResult } from './types.js';
+import { readRegularFile } from '../../utils/regular-file.js';
 
 /**
  * Auto-fix a checkbox in a spec file by changing - [ ] to - [x].
@@ -33,7 +34,7 @@ export async function autoFixCheckbox(specPath: string, itemId: string): Promise
   // Read the spec file
   let content: string;
   try {
-    content = await fs.promises.readFile(specPath, 'utf-8');
+    content = await readRegularFile(specPath);
   } catch {
     return {
       success: false,

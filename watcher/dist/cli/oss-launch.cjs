@@ -34,15 +34,17 @@ __export(oss_launch_exports, {
   DEFAULT_PROXY_PORT: () => DEFAULT_PROXY_PORT,
   ensureProxy: () => ensureProxy,
   isVersionRequest: () => isVersionRequest,
+  loadMergedConfig: () => loadMergedConfig,
   main: () => main2,
   proxySpawnArgs: () => proxySpawnArgs,
   resolveClaudeBin: () => resolveClaudeBin,
   resolveEntry: () => resolveEntry,
   resolveLaunch: () => resolveLaunch,
-  runLaunch: () => runLaunch
+  runLaunch: () => runLaunch,
+  spawnRouterProxy: () => spawnRouterProxy
 });
 module.exports = __toCommonJS(oss_launch_exports);
-var fs4 = __toESM(require("fs"), 1);
+var fs5 = __toESM(require("fs"), 1);
 var path4 = __toESM(require("path"), 1);
 var os3 = __toESM(require("os"), 1);
 var http3 = __toESM(require("http"), 1);
@@ -79,7 +81,7 @@ function decidePreflight(input) {
 }
 
 // src/cli/start-proxy.ts
-var fs3 = __toESM(require("fs"), 1);
+var fs4 = __toESM(require("fs"), 1);
 var path3 = __toESM(require("path"), 1);
 var os2 = __toESM(require("os"), 1);
 var import_child_process = require("child_process");
@@ -245,8 +247,10 @@ function generateId() {
 // src/services/handlers/ollama-handler.ts
 var OllamaHandler = class {
   baseUrl;
+  think;
   constructor(config) {
     this.baseUrl = config.baseUrl || "http://localhost:11434";
+    this.think = config.think;
   }
   /**
    * Get the base URL for the Ollama server
@@ -348,6 +352,10 @@ var OllamaHandler = class {
         top_p: request2.top_p
       }
     };
+    const bareModel = request2.model.replace(/^ollama\//, "");
+    if (this.think && Object.prototype.hasOwnProperty.call(this.think, bareModel)) {
+      ollamaRequest.think = this.think[bareModel];
+    }
     if (request2.tools && request2.tools.length > 0) {
       ollamaRequest.tools = request2.tools.map((t) => ({
         type: "function",
@@ -571,7 +579,8 @@ function createHandler(config) {
   switch (config.provider) {
     case "ollama":
       return new OllamaHandler({
-        baseUrl: config.baseUrl
+        baseUrl: config.baseUrl,
+        think: config.think
       });
     case "openrouter":
       if (!config.apiKey) {
@@ -726,6 +735,13 @@ function generateId3() {
     result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return result;
+}
+function ollamaHandlerConfig(routerConfig) {
+  return {
+    provider: "ollama",
+    baseUrl: routerConfig.models?.apiKeys?.ollama,
+    think: routerConfig.models?.think
+  };
 }
 var ModelProxy = class {
   config;
@@ -1130,10 +1146,7 @@ data: ${JSON.stringify(data)}
         return;
       }
       const deps = this.testRouteDeps ?? {
-        ollamaHandle: async (model, body) => createHandler({
-          provider: "ollama",
-          baseUrl: routerConfig.models?.apiKeys?.ollama
-        }).handle({ ...body, model }),
+        ollamaHandle: async (model, body) => createHandler(ollamaHandlerConfig(routerConfig)).handle({ ...body, model }),
         passthrough: async () => forwardToAnthropic({
           path: req.url || "/",
           method: req.method || "POST",
@@ -1229,6 +1242,30 @@ data: ${JSON.stringify(data)}
   }
 };
 
+// src/utils/regular-file.ts
+var fs3 = __toESM(require("fs"), 1);
+var FLAGS = fs3.constants.O_RDONLY | fs3.constants.O_NONBLOCK;
+function notRegular(file) {
+  return Object.assign(new Error(`ENOENT: not a regular file, open '${file}'`), { code: "ENOENT" });
+}
+function refused(st, owner) {
+  return !st.isFile() || owner !== void 0 && st.uid !== owner;
+}
+function readRegularFileSync(file, owner) {
+  if (!fs3.statSync(file).isFile()) {
+    throw notRegular(file);
+  }
+  const fd = fs3.openSync(file, FLAGS);
+  try {
+    if (refused(fs3.fstatSync(fd), owner)) {
+      throw notRegular(file);
+    }
+    return fs3.readFileSync(fd, "utf-8");
+  } finally {
+    fs3.closeSync(fd);
+  }
+}
+
 // src/cli/start-proxy.ts
 var DEFAULT_PORT = 8473;
 var SUPPORTED_PROVIDERS2 = ["ollama", "openrouter"];
@@ -1296,8 +1333,8 @@ function getUserConfigDir() {
 function loadApiKeyFromConfig(provider) {
   const configPath = path3.join(getUserConfigDir(), "config.json");
   try {
-    if (fs3.existsSync(configPath)) {
-      const content = fs3.readFileSync(configPath, "utf-8");
+    if (fs4.existsSync(configPath)) {
+      const content = readRegularFileSync(configPath);
       const config = JSON.parse(content);
       const keyMap = {
         openrouter: "openrouterApiKey"
@@ -1314,8 +1351,8 @@ function loadApiKeyFromConfig(provider) {
 function loadOllamaBaseUrlFromConfig() {
   const configPath = path3.join(getUserConfigDir(), "config.json");
   try {
-    if (fs3.existsSync(configPath)) {
-      const content = fs3.readFileSync(configPath, "utf-8");
+    if (fs4.existsSync(configPath)) {
+      const content = readRegularFileSync(configPath);
       const config = JSON.parse(content);
       const url = config?.models?.apiKeys?.ollama ?? config?.apiKeys?.ollama;
       if (typeof url === "string" && url.length > 0) {
@@ -1335,14 +1372,14 @@ function getPidFilePath(port) {
 }
 function writePidFile(pid, port) {
   const ossDir = getUserConfigDir();
-  fs3.mkdirSync(ossDir, { recursive: true });
-  fs3.writeFileSync(getPidFilePath(port), String(pid));
+  fs4.mkdirSync(ossDir, { recursive: true });
+  fs4.writeFileSync(getPidFilePath(port), String(pid));
 }
 function cleanupPidFile(port) {
   const pidPath = getPidFilePath(port);
   try {
-    if (fs3.existsSync(pidPath)) {
-      fs3.unlinkSync(pidPath);
+    if (fs4.existsSync(pidPath)) {
+      fs4.unlinkSync(pidPath);
     }
   } catch {
   }
@@ -1395,15 +1432,17 @@ function buildRouterConfig(raw) {
       default: models.default,
       agents: models.agents ?? {},
       fallbackEnabled: models.fallbackEnabled !== false,
-      apiKeys: { ollama: models.apiKeys?.ollama ?? r.apiKeys?.ollama }
+      apiKeys: { ollama: models.apiKeys?.ollama ?? r.apiKeys?.ollama },
+      // Opt-in: carry the think map only when configured (absent ⇒ undefined ⇒ unchanged behavior).
+      think: models.think
     }
   };
 }
 function loadRouterConfigFromFile() {
   const configPath = path3.join(getUserConfigDir(), "config.json");
   try {
-    if (fs3.existsSync(configPath)) {
-      const content = fs3.readFileSync(configPath, "utf-8");
+    if (fs4.existsSync(configPath)) {
+      const content = readRegularFileSync(configPath);
       return buildRouterConfig(JSON.parse(content));
     }
   } catch {
@@ -1440,10 +1479,12 @@ async function startProxyBackground(options) {
   if (!router && baseUrl) {
     args.push("--base-url", baseUrl);
   }
-  const selfPath = (0, import_url.fileURLToPath)(__ossImportMetaUrl);
-  const child = spawnFn(process.execPath, [selfPath, ...args], {
+  const bundled = true;
+  const head = bundled ? "start-proxy" : (0, import_url.fileURLToPath)(__ossImportMetaUrl);
+  const child = spawnFn(process.execPath, [head, ...args], {
     detached: true,
-    stdio: "ignore"
+    stdio: "ignore",
+    ...bundled ? { env: { ...process.env, PKG_EXECPATH: "" } } : {}
   });
   child.unref();
   const pid = child.pid || 0;
@@ -1630,6 +1671,14 @@ function proxySpawnArgs(opts) {
   const head = opts.bundled ? ["start-proxy"] : [opts.startProxyJs];
   return [...head, "--router", "--background", "--port", String(opts.port)];
 }
+function spawnRouterProxy(opts) {
+  const child = opts.spawn(opts.execPath, proxySpawnArgs(opts), {
+    detached: true,
+    stdio: "ignore",
+    ...opts.bundled ? { env: { ...opts.env, PKG_EXECPATH: "" } } : {}
+  });
+  child.unref();
+}
 async function runLaunch(argv, deps) {
   const decision = resolveLaunch(deps.loadConfig(), deps.baseEnv);
   const nodeCheck = (deps.nodeCheck ?? (() => ({ ok: true })))();
@@ -1676,21 +1725,18 @@ async function ensureProxy(port, deps) {
 function loadMergedConfig(fsImpl, pathImpl, osImpl) {
   const read = (file) => {
     try {
-      if (fsImpl.existsSync(file)) return JSON.parse(fsImpl.readFileSync(file, "utf-8"));
+      if (fsImpl.existsSync(file)) return JSON.parse(readRegularFileSync(file));
     } catch {
     }
     return null;
   };
   const userCfg = read(pathImpl.join(osImpl.homedir(), ".oss", "config.json"));
-  const projectDir = process.env.CLAUDE_PROJECT_DIR;
-  const projectCfg = projectDir ? read(pathImpl.join(projectDir, ".oss", "config.json")) : null;
-  const merged = { ...userCfg ?? {}, ...projectCfg ?? {} };
-  return { models: merged.models };
+  return { models: userCfg?.models };
 }
 async function main2(argv) {
   const selfPath = (() => {
     try {
-      return fs4.realpathSync(process.argv[1] ?? (0, import_url2.fileURLToPath)(__ossImportMetaUrl));
+      return fs5.realpathSync(process.argv[1] ?? (0, import_url2.fileURLToPath)(__ossImportMetaUrl));
     } catch {
       return process.argv[1] ?? "";
     }
@@ -1702,11 +1748,11 @@ async function main2(argv) {
     return void 0;
   }
   if (isVersionRequest(argv)) {
-    let version = "2.0.78" ? "2.0.78" : "unknown";
+    let version = "2.0.97" ? "2.0.97" : "unknown";
     if (version === "unknown") {
       try {
         const manifest = path4.join(path4.dirname((0, import_url2.fileURLToPath)(__ossImportMetaUrl)), "..", "..", "..", ".claude-plugin", "plugin.json");
-        version = JSON.parse(fs4.readFileSync(manifest, "utf-8")).version ?? version;
+        version = JSON.parse(fs5.readFileSync(manifest, "utf-8")).version ?? version;
       } catch {
       }
     }
@@ -1725,17 +1771,10 @@ async function main2(argv) {
     });
   });
   const deps = {
-    loadConfig: () => loadMergedConfig(fs4, path4, os3),
+    loadConfig: () => loadMergedConfig(fs5, path4, os3),
     ensureProxy: (port) => ensureProxy(port, {
       healthCheck,
-      startProxy: () => {
-        const child = (0, import_child_process2.spawn)(
-          process.execPath,
-          proxySpawnArgs({ bundled, startProxyJs, port }),
-          { detached: true, stdio: "ignore" }
-        );
-        child.unref();
-      },
+      startProxy: () => spawnRouterProxy({ bundled, startProxyJs, port, execPath: process.execPath, env: process.env, spawn: import_child_process2.spawn }),
       sleep: (ms) => new Promise((r) => setTimeout(r, ms))
     }),
     resolveClaudeBin: () => resolveClaudeBin({
@@ -1743,15 +1782,15 @@ async function main2(argv) {
       selfPath,
       isExecutable: (p) => {
         try {
-          fs4.accessSync(p, fs4.constants.X_OK);
-          return fs4.statSync(p).isFile();
+          fs5.accessSync(p, fs5.constants.X_OK);
+          return fs5.statSync(p).isFile();
         } catch {
           return false;
         }
       },
       realpath: (p) => {
         try {
-          return fs4.realpathSync(p);
+          return fs5.realpathSync(p);
         } catch {
           return p;
         }
@@ -1783,10 +1822,12 @@ if (isMainModule2) {
   DEFAULT_PROXY_PORT,
   ensureProxy,
   isVersionRequest,
+  loadMergedConfig,
   main,
   proxySpawnArgs,
   resolveClaudeBin,
   resolveEntry,
   resolveLaunch,
-  runLaunch
+  runLaunch,
+  spawnRouterProxy
 });

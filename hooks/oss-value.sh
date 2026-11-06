@@ -20,6 +20,14 @@
 #   oss-value.sh models-set         the plugin's models.js set <type> <prompt> <model> from prompt.txt + model.txt.
 #   oss-value.sh cli <script> <args>  one of the fixed plugin CLI calls (webhook-setup setup [--port N],
 #                                   webhook-toggle on, update-workflow-state init) from the plugin root.
+#   oss-value.sh status | workflows | workflow
+#                                   GET /api/v1/auth/verify, /api/v1/workflows, or /api/v1/workflows/<workflow.txt>/editor
+#                                   with the configured key on curl's stdin; print only what /oss:status and
+#                                   /oss:workflows display (T60).
+#   oss-value.sh usage              GET /api/v1/analytics/usage the same way; print this month's total and the 10 most
+#                                   used command types, or one "Usage: unavailable right now" line and rc 0 (T69).
+#   oss-value.sh queue-push         POST type.txt, source.txt and prompt.txt (checked) to /api/v1/queue the same way;
+#                                   print "Queued: <id>", or one Error: line on stderr and rc 1 (T87).
 # (Saving the API key is hooks/oss-login.sh, NOT a verb here: this script is allowlisted, a key
 # change must always ask - R5-8. oss-login.sh sources this file for its functions.)
 # Each value hand-off is ONE call spelled ~/.oss/hooks/oss-value.sh <verb> (the allowed prefix): a
@@ -39,7 +47,7 @@ if [[ ! -f "$_OV_HERE/oss-safe-path.sh" ]]; then
 fi
 source "$_OV_HERE/oss-safe-path.sh"
 
-_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args>" >&2; exit 2; }
+_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args> | status | usage | workflows | workflow | queue-push" >&2; exit 2; }
 
 _OV_RUN="$HOME/.oss/run"
 
@@ -78,7 +86,7 @@ _ov_cmd_dir() {
     && local p="$_OV_DIR" \
     && rm -f "$p/feature.txt" "$p/numbers.txt" "$p/date.txt" "$p/reason.txt" "$p/message.txt" "$p/hint.txt" "$p/error.txt" \
              "$p/agent.txt" "$p/key.txt" "$p/style.txt" "$p/prompt.txt" "$p/model.txt" "$p/workflow.txt" "$p/category.txt" "$p/name.txt" \
-             "$p/notify_style.txt" "$p/voice.txt" "$p/sound.txt" "$p/verbosity.txt" "$p/custom.txt" \
+             "$p/notify_style.txt" "$p/voice.txt" "$p/sound.txt" "$p/verbosity.txt" "$p/custom.txt" "$p/type.txt" "$p/source.txt" \
     && printf '%s\n' "$p"
 }
 
@@ -118,7 +126,7 @@ _ov_get() {
         style) re='^(visual|audio|sound|none)$' ;;
         prompt) re='^[a-z0-9_./:-]{1,100}$' ;;
         model) re='^[A-Za-z0-9_./:-]{1,100}$' ;;   # isValidModelId's ids (upper case too); no `..` (below)
-        workflow) re='^[a-z0-9_.:-]{1,100}$' ;;
+        workflow) re='^[a-z0-9_.:-]{1,100}$' ;;   # then held to oss_valid_workflow_name (below): no `.`/`..` (T74)
         category|name) re='^[a-z0-9_-]{1,100}$' ;;
         notify_style) re='^(visual|audio|sound|none)$' ;;   # /oss:settings' own lists
         voice) re='^(Samantha|Daniel|Karen|Moira)$' ;;
@@ -126,7 +134,8 @@ _ov_get() {
         verbosity) re='^(all|important|errors-only)$' ;;
         custom) re='^[a-z0-9-]{1,100}$' ;;   # oss-custom Step 0 = isSafeTeamCommandName
         *) false ;;
-    esac && _ov_take "$1.txt" "$re" && case "$1:$_OV_VAL" in model:*..*) _OV_VAL=""; false ;; esac
+    esac && _ov_take "$1.txt" "$re" && case "$1:$_OV_VAL" in model:*..*) _OV_VAL=""; false ;;
+        workflow:*) oss_valid_workflow_name "$_OV_VAL" || { _OV_VAL=""; false; } ;; esac
 }
 
 _ov_cmd_read() {
@@ -166,6 +175,164 @@ _ov_cmd_cli() {
     esac && _ov_root && test -f "$_OV_ROOT/watcher/dist/cli/$1.js" \
     || { echo "oss-value: cli: refused (not one of the fixed plugin CLI calls, or no plugin root)" >&2; return 1; }
     exec node "$_OV_ROOT/watcher/dist/cli/$1.js" "${@:2}"
+}
+
+# <verb> <path> <jq filter> <js>: GET <path> from the API the OSS config names, the key from the same read
+# (oss_api_creds) on curl's stdin (oss_api_curl, never argv); print the 200 body through <filter> (one JSON
+# object; C0 and OSS_JQ_INVISIBLE stripped from every string), so /oss:status and /oss:workflows run one
+# allowed call and never handle the key (T60).
+# Without jq (optional at session start), node runs <js>, the same filter: a function body of o (the one JSON
+# object) returning the lines to print, with h (jq's .k: null on null, an error on a non-object), d (jq's // ""),
+# t (jq's truthiness), c and cl as in jq. c strips C0 and the oss_invisible set (oss-api-curl.sh, T45, T52) after
+# tostring (JSON.stringify, with DEL escaped as jq's tojson does). L first turns lone surrogate halves into U+FFFD
+# (a no-u regex), so a strip between a lone high and a lone low half cannot join them into an astral invisible (T52b).
+# Neither: one line saying how to get jq (T64).
+_OV_JS_PRE='const S=new RegExp("[\\u0000-\\u001f\\u007f-\\u009f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069\\u2028\\u2029\\p{Cf}\\ufe00-\\ufe0f\\u{e0000}-\\u{e0fff}\\u034f\\u115f\\u1160\\u3164\\uffa0\\u2800\\u17b4-\\u17b5\\u180b-\\u180d\\u180f\\u2065\\ufff0-\\ufff8\\p{Default_Ignorable_Code_Point}]","gu"),
+    L=new RegExp("[\\ud800-\\udbff](?![\\udc00-\\udfff])|(?<![\\ud800-\\udbff])[\\udc00-\\udfff]","g");
+const h=(v,k)=>{if(v===null)return null;if(typeof v!=="object"||Array.isArray(v))throw 0;return Object.prototype.hasOwnProperty.call(v,k)?v[k]:null;};
+const t=v=>v!==null&&v!==false, d=v=>t(v)?v:"";
+const c=v=>(typeof v==="string"?v:JSON.stringify(v).replace(new RegExp("\\x7f","g"),"\\u007f")).replace(L,"\ufffd").replace(S,"");
+const cl=v=>typeof v==="string"?c(v):Array.isArray(v)?v.map(cl):v!==null&&typeof v==="object"?Object.fromEntries(Object.entries(v).map(([k,x])=>[c(k),cl(x)])):v;
+let o;try{o=JSON.parse(require("fs").readFileSync(0,"utf8"));}catch(e){process.exit(1);}
+if(o===null||typeof o!=="object"||Array.isArray(o))process.exit(1);
+let r;try{r=(o=>{'
+_OV_JS_POST='})(o);}catch(e){process.exit(1);}
+process.stdout.write(r.map(x=>x+"\n").join(""));'
+_ov_api() {
+    local r rc code body
+    source "$_OV_HERE/oss-api-curl.sh" 2>/dev/null || { echo "oss-value: $1: oss-api-curl.sh missing" >&2; return 1; }
+    command -v jq >/dev/null || command -v node >/dev/null \
+    || { echo "oss-value: $1: this needs jq (or node), and neither is installed. Install jq (brew install jq) or ask your admin" >&2; return 1; }
+    oss_api_creds
+    case $OSS_URL_RC in
+        0) ;;
+        2) oss_loopback_refused >&2; return 1 ;;
+        *) echo "oss-value: $1: apiUrl in your OSS config is not an https URL. Run: /oss:login" >&2; return 1 ;;
+    esac
+    [[ -n "$OSS_KEY" ]] || { echo "oss-value: $1: No API key found. Run: /oss:login" >&2; return 1; }
+    # The hooks' one body cap, oss_capped (T74, T81): over OSS_BODY_MAX bytes, whether curl or the byte stop ends
+    # the read, nothing and rc 63; these answers are a few KB.
+    r=$(oss_capped oss_api_curl "$OSS_KEY" -s -m 15 --max-filesize "$OSS_BODY_MAX" -w '\n%{http_code}' "$OSS_URL$2")
+    rc=$?
+    (( rc != 63 )) || { echo "oss-value: $1: the API sent over $OSS_BODY_MAX bytes" >&2; return 1; }
+    (( rc == 0 )) || { echo "oss-value: $1: could not reach the API at $OSS_URL" >&2; return 1; }
+    code=${r##*$'\n'}; body=${r%$'\n'*}
+    [[ "$code" == 200 ]] || { echo "oss-value: $1: the API answered HTTP $code (401: run /oss:login; 403: subscription expired)" >&2; return 1; }
+    if command -v jq >/dev/null; then
+        printf '%s' "$body" | jq -rs "$OSS_JQ_INVISIBLE"'def c: tostring | gsub("[\u0000-\u001f" + oss_invisible + "]"; "");
+        def cl: if type == "string" then c elif type == "array" then map(cl) elif type == "object" then with_entries(.key |= c | .value |= cl) else . end;
+        if length == 1 and (.[0] | type) == "object" then .[0] | '"$3"' else error("not one JSON object") end'
+    else
+        printf '%s' "$body" | node -e "$_OV_JS_PRE$4$_OV_JS_POST"
+    fi 2>/dev/null || { echo "oss-value: $1: the API sent an answer that is not the expected JSON" >&2; return 1; }
+}
+
+_OV_JS_STATUS='return ["Account: "+c(d(h(o,"email"))), "Plan: "+c(d(h(o,"plan"))), "Status: "+c(d(h(o,"subscriptionStatus")))]
+    .concat(t(h(o,"trialEndsAt")) ? ["Trial ends: "+c(h(o,"trialEndsAt"))] : []);'
+_ov_cmd_status() {
+    _ov_api status /api/v1/auth/verify '"Account: \(.email // "" | c)", "Plan: \(.plan // "" | c)", "Status: \(.subscriptionStatus // "" | c)",
+        (if .trialEndsAt then "Trial ends: \(.trialEndsAt | c)" else empty end)' "$_OV_JS_STATUS"
+}
+
+# usage (T69): the route's fields (AgenticDevWorkflow analytics.ts:211-216), most used type first, at most 10 lines
+# of types. Best-effort: any failure (no key, HTTP error, timeout, not the expected JSON) is one honest line and rc 0,
+# so /oss:status still shows the account section.
+_OV_JS_USAGE='const n=h(o,"totalCommands"), b=h(o,"commandsByType"), p=h(o,"periodStart");
+    if (typeof n!=="number"||b===null||typeof b!=="object"||Array.isArray(b)||!Object.values(b).every(x=>typeof x==="number")) throw 0;
+    const e=Object.entries(b).sort((x,y)=>y[1]-x[1]||(x[0]<y[0]?-1:x[0]>y[0]?1:0));
+    return ["Total commands: "+n+(t(p)?" (since "+Array.from(c(p)).slice(0,10).join("")+")":"")]
+        .concat(e.slice(0,10).map(([k,v])=>"  "+c(k)+": "+v), e.length>10?["  ("+(e.length-10)+" more command types)"]:[]);'
+_ov_cmd_usage() {
+    local o
+    o=$(_ov_api usage /api/v1/analytics/usage 'if (.totalCommands | type) == "number" and (.commandsByType | type) == "object" and all(.commandsByType[]; type == "number")
+        then "Total commands: \(.totalCommands)\(if .periodStart then " (since \(.periodStart | c | .[0:10]))" else "" end)",
+            (.commandsByType | to_entries | sort_by(-.value, .key) | (.[:10][] | "  \(.key | c): \(.value)"), (if length > 10 then "  (\(length - 10) more command types)" else empty end))
+        else error("not the usage fields") end' "$_OV_JS_USAGE" 2>/dev/null) && printf '%s\n' "$o" || echo "Usage: unavailable right now"
+}
+
+_OV_JS_WORKFLOWS='const w=h(o,"workflows");
+    if (w===null||typeof w!=="object") throw 0;
+    return (Array.isArray(w)?w:Object.values(w)).map(x=>c(h(x,"name"))+" "+(h(x,"customized")===true?"CUSTOM":"DEFAULT"));'
+_ov_cmd_workflows() {
+    _ov_api workflows /api/v1/workflows '.workflows[] | "\(.name | c) \(if .customized == true then "CUSTOM" else "DEFAULT" end)"' "$_OV_JS_WORKFLOWS"
+}
+
+# workflow: the name from workflow.txt (the read rule; argv is never used), its plain editor config.
+_OV_JS_WORKFLOW='const f={}; for (const k of ["name","chain","agents","parallel_agents","task_loop","quality_gates","on_pass","checkpoint"]) f[k]=h(o,k);
+    return [JSON.stringify(cl(f),null,2)];'
+_ov_cmd_workflow() {
+    _ov_dir && _ov_get workflow \
+    || { echo "oss-value: workflow: refused (workflow.txt missing, unsafe or not a valid workflow name)" >&2; return 1; }
+    _ov_api workflow "/api/v1/workflows/$_OV_VAL/editor" '{name, chain, agents, parallel_agents, task_loop, quality_gates, on_pass, checkpoint} | cl' "$_OV_JS_WORKFLOW"
+}
+
+# queue-push (T87): /oss:queue add --shared without Claude handling the key. type.txt, source.txt and prompt.txt
+# are each opened checked (_ov_open), copied (at most <max> + 64 bytes) into a private folder in the value folder
+# and deleted, valid or not; then checked (_ov_qp_check), sent as one JSON body built by jq from those files (never
+# on a command line) to POST /api/v1/queue (the route's createSchema: type, source, prompt) with the key on curl's
+# stdin, and the copies removed. Prints only the new item's id, cleaned (oss_json_field) and held to an id's
+# charset, or one Error: line on stderr and rc 1.
+_ov_qp_max() { case $1 in type) echo 16 ;; source) echo 2000 ;; prompt) echo 20000 ;; esac; }   # bytes, each file
+# <name> <line|text>: the copy of <name>.txt -> _OV_VAL (trailing line breaks dropped), or its Error: line. line: one
+# line, no tab or control character; text: line breaks and tabs only. C0, DEL and C1 (UTF-8 C2 80-9F) are refused.
+_ov_qp_check() {
+    local f="$_OV_QT/$1" e="Error: $1.txt" m; m=$(_ov_qp_max "$1")
+    local keep='\012\040-\176\200-\377' bad="must be one line of text, with no tab or control character"
+    [[ $2 == text ]] && keep="\011$keep" bad="has a control character (only line breaks and tabs are allowed)"
+    [[ -f "$f" ]] || { echo "$e is missing or not a plain file in the value folder (write it to the folder ~/.oss/hooks/oss-value.sh dir prints)" >&2; return 1; }
+    (( $(wc -c < "$f") <= m + 64 )) || { echo "$e is over $m bytes" >&2; return 1; }
+    (( $(LC_ALL=C tr -d "$keep" < "$f" | wc -c) == 0 )) && ! LC_ALL=C grep -q $'\xc2[\x80-\x9f]' "$f" || { echo "$e $bad" >&2; return 1; }
+    _OV_VAL=$(cat "$f")
+    [[ -n "$_OV_VAL" ]] || { echo "$e is empty" >&2; return 1; }
+    (( $(printf '%s' "$_OV_VAL" | wc -c) <= m )) || { echo "$e is over $m bytes" >&2; return 1; }
+    [[ $2 == text || "$_OV_VAL" != *$'\n'* ]] || { echo "$e $bad" >&2; return 1; }
+}
+_ov_qp_send() {
+    local n m r rc code id
+    for n in type source prompt; do
+        m=$(( $(_ov_qp_max "$n") + 65 ))   # a value file's read bound (not an API body: those go through oss_capped)
+        _ov_open "$n.txt" && head -c "$m" <&3 > "$_OV_QT/$n"; { exec 3<&-; } 2>/dev/null
+    done
+    rm -f "$_OV_DIR/type.txt" "$_OV_DIR/source.txt" "$_OV_DIR/prompt.txt"
+    _ov_qp_check type line && case "$_OV_VAL" in feature|issue|review) ;; *) echo "Error: type.txt must be exactly feature, issue or review" >&2; false ;; esac \
+    && _ov_qp_check source line && _ov_qp_check prompt text || return 1
+    command -v jq >/dev/null || { echo "Error: /oss:queue --shared needs jq, which is not installed. Install jq (brew install jq) or ask your admin" >&2; return 1; }
+    source "$_OV_HERE/oss-api-curl.sh" 2>/dev/null || { echo "Error: oss-api-curl.sh is missing; restart Claude Code to reinstall the OSS hooks" >&2; return 1; }
+    oss_api_creds
+    case $OSS_URL_RC in
+        0) ;;
+        2) echo "Error: $(oss_loopback_refused)" >&2; return 1 ;;
+        *) echo "Error: apiUrl in your OSS config is not an https URL. Run: /oss:login" >&2; return 1 ;;
+    esac
+    [[ -n "$OSS_KEY" ]] || { echo "Error: not logged in to OSS (no API key found). Run: /oss:login" >&2; return 1; }
+    jq -n --rawfile t "$_OV_QT/type" --rawfile s "$_OV_QT/source" --rawfile p "$_OV_QT/prompt" \
+        '{type: ($t | sub("\n+\\z"; "")), source: ($s | sub("\n+\\z"; "")), prompt: ($p | sub("\n+\\z"; ""))}' > "$_OV_QT/body.json" 2>/dev/null \
+    || { echo "Error: could not build the request (jq failed)" >&2; return 1; }
+    r=$(oss_capped oss_api_curl "$OSS_KEY" -s -m 15 --max-filesize "$OSS_BODY_MAX" -H 'Content-Type: application/json' \
+        --data-binary "@$_OV_QT/body.json" -w '\n%{http_code}' "$OSS_URL/api/v1/queue")
+    rc=$?
+    (( rc != 63 )) || { echo "Error: the OSS API sent an answer over $OSS_BODY_MAX bytes; run /oss:queue status to check whether the item was queued" >&2; return 1; }
+    (( rc == 0 )) || { echo "Error: Couldn't reach the OSS API at $OSS_URL (no connection, or no answer within 15 seconds); check your connection, then run /oss:queue status before trying again" >&2; return 1; }
+    code=${r##*$'\n'}
+    [[ "$code" == 2?? ]] && id=$(printf '%s' "${r%$'\n'*}" | oss_json_field id 2>/dev/null) \
+    && [[ "$id" =~ ^[A-Za-z0-9_-]{1,100}$ ]] && { printf 'Queued: %s\n' "$id"; return 0; }
+    case "$code" in
+        2??) echo "Error: the OSS API sent an unexpected answer; run /oss:queue status to check whether the item was queued" ;;
+        401) echo "Error: the OSS API says your API key is invalid. Run: /oss:login" ;;
+        403) echo "Error: your OSS subscription is not active (HTTP 403). Renew at https://www.oneshotship.com/pricing" ;;
+        429) echo "Error: the OSS API rate limited this request; try again later" ;;
+        404) echo "Error: your account is in no team, and the shared queue needs one (HTTP 404); add the item without --shared to keep it in your own queue" ;;
+        *) echo "Error: the OSS API answered HTTP $code; the item was not queued, try again later" ;;
+    esac >&2
+    return 1
+}
+_ov_cmd_queue_push() {
+    local rc
+    _ov_dir && _OV_QT=$(mktemp -d "$_OV_DIR/.queue-push.XXXXXX") \
+    || { echo "Error: the value folder is missing or unsafe; run ~/.oss/hooks/oss-value.sh dir, write type.txt, source.txt and prompt.txt there, then run this again" >&2; return 1; }
+    _ov_qp_send; rc=$?
+    rm -rf "$_OV_QT"
+    return $rc
 }
 
 _ov_cmd_agent() {
@@ -231,5 +398,10 @@ case "${1:-}" in
     decrypt) shift; _ov_cmd_decrypt "$@" ;;
     models-set) _ov_cmd_models_set ;;
     cli) shift; _ov_cmd_cli "$@" ;;
+    status) _ov_cmd_status ;;
+    usage) _ov_cmd_usage ;;
+    workflows) _ov_cmd_workflows ;;
+    workflow) _ov_cmd_workflow ;;
+    queue-push) _ov_cmd_queue_push ;;
     *) _ov_usage ;;
 esac

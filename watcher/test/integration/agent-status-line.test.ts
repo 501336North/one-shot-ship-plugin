@@ -128,6 +128,25 @@ describe('E2E: Agent Status Line Integration', () => {
     return false;
   };
 
+  // Wait for the supervisor to reach a given value
+  const waitForSupervisor = async (value: string, maxMs = 2000): Promise<boolean> => {
+    const start = Date.now();
+    while (Date.now() - start < maxMs) {
+      if (fs.existsSync(workflowStateFile)) {
+        try {
+          const state = JSON.parse(fs.readFileSync(workflowStateFile, 'utf-8'));
+          if (state.supervisor === value) {
+            return true;
+          }
+        } catch {
+          // File might be partially written
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    return false;
+  };
+
   /**
    * @behavior Full E2E: oss-log.sh agent starting → status line shows agent
    * @acceptance-criteria Running oss-log.sh agent with "starting:" shows agent in status line
@@ -174,6 +193,10 @@ describe('E2E: Agent Status Line Integration', () => {
     // AND: Waiting for agent to be cleared
     const agentCleared = await waitForAgentCleared();
     expect(agentCleared).toBe(true);
+    // The update runs detached and clears the agent BEFORE it sets the supervisor, so also wait
+    // for the supervisor value the status line is asserted on.
+    const watching = await waitForSupervisor('watching');
+    expect(watching).toBe(true);
 
     // THEN: Status line should NOT show the agent
     output = runStatusLine();

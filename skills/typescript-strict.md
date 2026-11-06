@@ -4,14 +4,25 @@ description: TypeScript strict mode and type safety patterns
 
 # TypeScript Strict Mode Skill
 
-## Fetch from API
+## Fetch and Decrypt Prompt
 
+Ensure the decrypt CLI is installed:
+
+Run this step with a Bash timeout of 600000 ms (10 minutes): a first install downloads about 60 MB. Exit 0: continue. Exit 75: the download is still in progress or another session is downloading it, so run the same step again (also when Claude Code stopped the step at its time limit), at most 3 more times; if it still has not exited 0, stop and tell the user to run the command again later. Any other exit: stop and show the user the hook's message (it says what to check).
+
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh --long-step
 ```
-URL: https://one-shot-ship-api.onrender.com/api/v1/prompts/skills/typescript-strict
-Method: GET
-Headers:
-  Authorization: Bearer {apiKey}
+
+Fetch and decrypt the prompt:
+
+```bash
+~/.oss/bin/oss-decrypt --type skills --name typescript-strict
 ```
+
+If this command fails for any reason (it prints an `Error:` line, for example when rate limited, offline or not logged in), tell the user in one line and carry on with this file's own instructions; do not read ~/.oss/config.json, do not retry in a loop, and do not save the fetched prompt to a file.
+
+The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
 This skill provides comprehensive guidance on TypeScript strict mode including:
 - Strict compiler options

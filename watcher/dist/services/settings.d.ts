@@ -22,6 +22,13 @@ export interface SettingsLockOptions {
     /** sleeps for the given ms (default: a blocking wait, since save() is synchronous) */
     sleep?: (ms: number) => void;
 }
+/**
+ * The text of settings.json for a load (T70d): read only when it, or the file its links lead to (settingsTarget),
+ * is a regular file the person owns, checked on the open file (T70e, readRegularFileSync); anything else (missing,
+ * a FIFO, a device, a folder, a dangling link, a loop, more than 8 links, someone else's file) is null, so a
+ * loader uses its defaults, as the hooks do, and never blocks on a FIFO.
+ */
+export declare function readSettingsFile(file: string): string | null;
 export declare class SettingsService {
     private settings;
     private settingsPath;
@@ -58,9 +65,10 @@ export declare class SettingsService {
      */
     getSettings(): NotificationSettings;
     /**
-     * Read settings.json for a merge, by the rule every OSS writer shares (oss_settings_set): a missing
-     * file is {}; a file that is a link, not a regular file, not the person's, unreadable or not exactly
-     * one JSON object is refused (null), because the hooks read such a file as "personal push off".
+     * Read settings.json for a merge, by the rule every OSS writer shares (oss_settings_update): a link is
+     * followed to the file it leads to (settingsTarget, T70c), which is returned as `file`; a missing file is {};
+     * a link to nothing, a loop, a file that is not regular, not the person's, unreadable or not exactly one JSON
+     * object is refused (null), because the hooks read such a file as "personal push off".
      */
     private readForMerge;
     /** Record a set at one path for the next save. */
@@ -81,7 +89,10 @@ export declare class SettingsService {
      * directory).
      */
     private acquireLock;
-    /** save() under the lock: re-read, apply the pending changes, temp write at 600, rename. */
+    /**
+     * save() under the lock: re-read, apply the pending changes, temp write at 600 in the folder of the file
+     * settings.json stands for (itself, or where its links lead, T70c), rename onto that file, so links stay.
+     */
     private saveLocked;
     /**
      * Set notification style

@@ -30,7 +30,8 @@ function realHome(home: string): string {
   return homeCache.real;
 }
 
-function isUserOssDir(ossDir: string): boolean {
+/** ossDir is $HOME/.oss (the person's own folder, out of this guard's scope). */
+export function isUserOssDir(ossDir: string): boolean {
   const home = process.env.HOME;
   if (!home) return false;
   if (path.resolve(ossDir) === path.resolve(home, '.oss')) return true;

@@ -22,6 +22,7 @@ import { SettingsService } from '../services/settings.js';
 import { HealthcheckService } from '../services/healthcheck.js';
 import { HealthReport, CheckResult } from '../types.js';
 import { BoundedLruSet } from './lru-set.js';
+import { readRegularFileSync } from '../utils/regular-file.js';
 
 /**
  * Perf bounds (Phase A-perf). Long-running watcher sessions must stay responsive
@@ -649,7 +650,7 @@ export class WatcherSupervisor {
     // Try to load existing state
     if (fs.existsSync(this.statePath)) {
       try {
-        const data = fs.readFileSync(this.statePath, 'utf-8');
+        const data = readRegularFileSync(this.statePath);
         this.state = JSON.parse(data);
         // Restore persisted anchors; if the state file predates anchors, rebuild
         // them from the full log so session-lifetime detectors stay correct.

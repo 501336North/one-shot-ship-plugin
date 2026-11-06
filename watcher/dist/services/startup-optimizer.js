@@ -7,6 +7,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { readRegularFileSync } from '../utils/regular-file.js';
 const DEFAULT_AUTH_CACHE_TTL = 60000; // 1 minute
 const DEFAULT_IRON_LAWS_CACHE_TTL = 300000; // 5 minutes
 const MAX_STARTUP_TIMES = 100; // Cap startup times array to prevent unbounded growth
@@ -44,7 +45,7 @@ export class StartupOptimizer {
         const configPath = path.join(os.homedir(), '.oss', 'config.json');
         try {
             if (fs.existsSync(configPath)) {
-                const content = fs.readFileSync(configPath, 'utf-8');
+                const content = readRegularFileSync(configPath);
                 const config = JSON.parse(content);
                 const result = {
                     authenticated: !!config.apiKey,

@@ -28,12 +28,12 @@ export interface OffloadParams {
     agent: string;
     /** Path to the assembled prompt (expert prompt + task context) fed to the nested session. */
     promptFile: string;
-    /** Project dir for config precedence. Defaults to cwd. */
+    /** Project dir (no longer used for routing: only user settings choose the model, T71). Defaults to cwd. */
     projectDir?: string;
     /** Safety net (default true): on any offload failure, degrade to native Claude. */
     fallbackEnabled?: boolean;
 }
-export type OffloadReason = 'native' | 'proxy_down' | 'spawn_error' | 'empty_output';
+export type OffloadReason = 'native' | 'proxy_down' | 'spawn_error' | 'empty_output' | 'cli_too_old';
 export interface OffloadResult {
     /** True only when the local model actually produced the work. */
     offloaded: boolean;
@@ -45,7 +45,13 @@ export interface OffloadResult {
     reason?: OffloadReason;
     /** Error detail (failures only). */
     error?: string;
+    /** One line to show the user (cli_too_old only). */
+    notice?: string;
 }
+/** What a Claude Code too old for --restricted needs (T76b); /oss:models prints it too. */
+export declare const OFFLOAD_UPDATE_HINT = "Model offload needs a newer Claude Code (update with: claude update)";
+/** True when the nested CLI refused to start because it does not know --restricted (commander's message). */
+export declare function rejectsRestricted(stderr: string): boolean;
 /** Injectable collaborators (London TDD — mirrors the repo's `_testSpawn` idiom). */
 export interface OffloadDeps {
     checkAgentModel?: (p: {

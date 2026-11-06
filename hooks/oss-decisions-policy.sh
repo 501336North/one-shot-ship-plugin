@@ -15,7 +15,8 @@ source "$SCRIPT_DIR/oss-safe-path.sh" # oss_single_link, for the off marker (Tas
 done_line="Decision push is now $sub for you on this machine"
 if [[ "$sub" == status ]]; then
     rf="$HOME/.oss/decisions-refusal.json"
-    at=""; [[ -L "$rf" ]] || at=$(jq -r 'select(.reason == "unsafe_path") | .at | strings' "$rf" 2>/dev/null)
+    # T67: only a regular file is read (a FIFO would hang status); anything else shows no note
+    at=""; oss_is_regular "$rf" && at=$(jq -r 'select(.reason == "unsafe_path") | .at | strings' "$rf" 2>/dev/null)
     [[ "$at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
         && echo "Decision record: an answer was last refused at $at, because .oss, its feature folder or the record file is a symlink; it was not recorded or sent"
 fi
@@ -31,13 +32,15 @@ if [[ "$sub" != status ]]; then
     else
         oss_settings_set decisionsPush true && rm -f "$(oss_push_off_marker)" && ! oss_decisions_push_off
     fi || {
-        # shellcheck disable=SC2088 # the ~ is text for the person, never expanded
+        # T70b: say why settings.json cannot be written when it is no regular file, and how to fix it
+        why=$(oss_settings_why); why=${why:+, because $why}
+        # shellcheck disable=SC2088
         if [[ -n "$marked" ]] && oss_decisions_push_off; then
-            echo "Decision push is off on this machine (kept in ~/.oss/decisions-push-off); ~/.oss/settings.json could not be updated"
+            echo "Decision push is off on this machine (kept in ~/.oss/decisions-push-off); ~/.oss/settings.json could not be updated$why"
         elif [[ "$want" == true ]] && oss_decisions_push_off; then
-            echo "Decision push is still off on this machine; it could not be turned on"
+            echo "Decision push is still off on this machine; it could not be turned on$why"
         else
-            echo "Could not save your setting in ~/.oss/settings.json; nothing changed"
+            echo "Could not save your setting in ~/.oss/settings.json; nothing changed$why"
         fi
         exit 1
     }
@@ -47,8 +50,11 @@ team_unknown() {
     if [[ "$sub" == status ]]; then echo "$1"; else echo "$done_line; your team's setting is unchanged. $1"; fi
     exit 1
 }
-key=$(oss_api_key) || team_unknown "Run /oss:login first"
-url=$(oss_api_url) || team_unknown "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"
+# the key and the URL from ONE read of the config (oss_api_creds, T37); plain http to a local API needs the opt-in (T20)
+oss_api_creds; key=$OSS_KEY url=$OSS_URL
+[[ -n "$key" ]] || team_unknown "Run /oss:login first"
+[[ "$OSS_URL_RC" == 2 ]] && team_unknown "$(oss_loopback_refused)"
+[[ -n "$url" ]] || team_unknown "apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment"
 # the body and the response live in a private folder under ~/.oss/run, removed on exit (as the decision
 # record hook keeps them); a linked or foreign ~/.oss/run could put them anywhere, so it means no request
 tmp=""
@@ -63,7 +69,9 @@ if [[ "$sub" != status ]]; then
     (umask 077; printf '{"pushEnabled":%s}\n' "$want" > "$tmp/body")
     put=(-X PUT -H 'Content-Type: application/json' --data-binary @"$tmp/body")
 fi
-code=$(oss_api_curl "$key" -s --max-time 10 -o "$tmp/resp" -w '%{http_code}' ${put[@]+"${put[@]}"} "$url/api/v1/decisions/policy")
+# the answer is read only up to OSS_BODY_MAX bytes (oss_ask in oss-api-curl.sh, T81): over it, whether curl or the
+# size check stops the read, no answer (code "", resp empty) (T74c, T77)
+oss_ask 10 "$tmp/resp" "$key" ${put[@]+"${put[@]}"} "$url/api/v1/decisions/policy"
 [[ "$code" == 401 ]] && team_unknown "OSS refused your key; run /oss:login again"
 # a member: their own switch changed, the team's cannot (owner or admin only); that is an answer, not an error
 [[ "$code" == 403 && "$sub" != status ]] \

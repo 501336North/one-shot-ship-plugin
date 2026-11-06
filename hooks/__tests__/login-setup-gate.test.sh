@@ -8,6 +8,8 @@
 # Usage: ./login-setup-gate.test.sh
 
 set -uo pipefail
+# T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOGIN_MD="$SCRIPT_DIR/../../commands/login.md"

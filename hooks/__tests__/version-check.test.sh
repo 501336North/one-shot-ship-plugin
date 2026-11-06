@@ -10,6 +10,8 @@
 # 4. Should parse version correctly from "X.Y.Z (Claude Code)" format
 
 set -uo pipefail
+# T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VERSION_CHECK_SCRIPT="$SCRIPT_DIR/../oss-version-check.sh"

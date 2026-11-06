@@ -3,6 +3,7 @@ import * as path from 'path';
 import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
 import { execSync } from 'child_process';
 import { PRIORITY_ORDER, } from '../types.js';
+import { readRegularFileSyncOrNull } from '../utils/regular-file.js';
 /**
  * Queue Manager - Handles task persistence and ordering
  *
@@ -98,8 +99,8 @@ export class QueueManager {
      * Initialize the queue manager - load existing queue or create new one
      */
     async initialize() {
-        if (fs.existsSync(this.queuePath)) {
-            const content = fs.readFileSync(this.queuePath, 'utf-8');
+        const content = readRegularFileSyncOrNull(this.queuePath);
+        if (content !== null) {
             this.queue = JSON.parse(content);
         }
         else {
@@ -308,8 +309,8 @@ export class QueueManager {
     }
     async appendToArchive(archivePath, task) {
         let archive;
-        if (fs.existsSync(archivePath)) {
-            const content = fs.readFileSync(archivePath, 'utf-8');
+        const content = readRegularFileSyncOrNull(archivePath);
+        if (content !== null) {
             archive = JSON.parse(content);
         }
         else {

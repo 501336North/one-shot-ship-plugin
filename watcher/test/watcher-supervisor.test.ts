@@ -18,6 +18,7 @@ import { WorkflowAnalyzer } from '../src/analyzer/workflow-analyzer.js';
 import type { ParsedLogEntry } from '../src/logger/log-reader.js';
 import { WorkflowLogger } from '../src/logger/workflow-logger.js';
 import { QueueManager } from '../src/queue/manager.js';
+import { HealthcheckService } from '../src/services/healthcheck.js';
 
 describe('WatcherSupervisor', () => {
   let testDir: string;
@@ -298,22 +299,22 @@ describe('WatcherSupervisor', () => {
      * @boundary Supervisor loop
      */
     it('should run healthchecks on configurable interval', async () => {
-      const mockHealthcheck = {
-        runChecks: vi.fn().mockResolvedValue({
-          timestamp: new Date().toISOString(),
-          overall_status: 'healthy',
-          checks: {
-            logging: { status: 'pass', message: 'OK' },
-            dev_docs: { status: 'pass', message: 'OK' },
-            delegation: { status: 'pass', message: 'OK' },
-            queue: { status: 'pass', message: 'OK' },
-            archive: { status: 'pass', message: 'OK' },
-            quality_gates: { status: 'pass', message: 'OK' },
-            notifications: { status: 'pass', message: 'OK' },
-            git_safety: { status: 'pass', message: 'OK' },
-          },
-        }),
-      };
+      // A real HealthcheckService answering a canned report, not a partial object posing as one (T75e)
+      const mockHealthcheck = new HealthcheckService({});
+      const runChecks = vi.spyOn(mockHealthcheck, 'runChecks').mockResolvedValue({
+        timestamp: new Date().toISOString(),
+        overall_status: 'healthy',
+        checks: {
+          logging: { status: 'pass', message: 'OK' },
+          dev_docs: { status: 'pass', message: 'OK' },
+          delegation: { status: 'pass', message: 'OK' },
+          queue: { status: 'pass', message: 'OK' },
+          archive: { status: 'pass', message: 'OK' },
+          quality_gates: { status: 'pass', message: 'OK' },
+          notifications: { status: 'pass', message: 'OK' },
+          git_safety: { status: 'pass', message: 'OK' },
+        },
+      });
 
       const customSupervisor = new WatcherSupervisor(ossDir, queueManager, {
         healthcheckService: mockHealthcheck,
@@ -328,8 +329,8 @@ describe('WatcherSupervisor', () => {
       await customSupervisor.stop();
 
       // Should have run multiple times
-      expect(mockHealthcheck.runChecks).toHaveBeenCalled();
-      expect(mockHealthcheck.runChecks.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(runChecks).toHaveBeenCalled();
+      expect(runChecks.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
 
     /**
@@ -339,22 +340,22 @@ describe('WatcherSupervisor', () => {
      * @boundary Supervisor -> QueueManager
      */
     it('should queue corrective action when check warns', async () => {
-      const mockHealthcheck = {
-        runChecks: vi.fn().mockResolvedValue({
-          timestamp: new Date().toISOString(),
-          overall_status: 'warning',
-          checks: {
-            logging: { status: 'pass', message: 'OK' },
-            dev_docs: { status: 'warn', message: 'PROGRESS.md stale (>1 hour)', details: { action: 'Update dev docs' } },
-            delegation: { status: 'pass', message: 'OK' },
-            queue: { status: 'pass', message: 'OK' },
-            archive: { status: 'pass', message: 'OK' },
-            quality_gates: { status: 'pass', message: 'OK' },
-            notifications: { status: 'pass', message: 'OK' },
-            git_safety: { status: 'pass', message: 'OK' },
-          },
-        }),
-      };
+      // A real HealthcheckService answering a canned report, not a partial object posing as one (T75e)
+      const mockHealthcheck = new HealthcheckService({});
+      const runChecks = vi.spyOn(mockHealthcheck, 'runChecks').mockResolvedValue({
+        timestamp: new Date().toISOString(),
+        overall_status: 'warning',
+        checks: {
+          logging: { status: 'pass', message: 'OK' },
+          dev_docs: { status: 'warn', message: 'PROGRESS.md stale (>1 hour)', details: { action: 'Update dev docs' } },
+          delegation: { status: 'pass', message: 'OK' },
+          queue: { status: 'pass', message: 'OK' },
+          archive: { status: 'pass', message: 'OK' },
+          quality_gates: { status: 'pass', message: 'OK' },
+          notifications: { status: 'pass', message: 'OK' },
+          git_safety: { status: 'pass', message: 'OK' },
+        },
+      });
 
       const customSupervisor = new WatcherSupervisor(ossDir, queueManager, {
         healthcheckService: mockHealthcheck,
@@ -382,22 +383,22 @@ describe('WatcherSupervisor', () => {
      * @boundary Supervisor -> Notification System
      */
     it('should notify user when critical issue detected', async () => {
-      const mockHealthcheck = {
-        runChecks: vi.fn().mockResolvedValue({
-          timestamp: new Date().toISOString(),
-          overall_status: 'critical',
-          checks: {
-            logging: { status: 'pass', message: 'OK' },
-            dev_docs: { status: 'pass', message: 'OK' },
-            delegation: { status: 'pass', message: 'OK' },
-            queue: { status: 'pass', message: 'OK' },
-            archive: { status: 'pass', message: 'OK' },
-            quality_gates: { status: 'pass', message: 'OK' },
-            notifications: { status: 'pass', message: 'OK' },
-            git_safety: { status: 'fail', message: 'Agent pushed to main branch!' },
-          },
-        }),
-      };
+      // A real HealthcheckService answering a canned report, not a partial object posing as one (T75e)
+      const mockHealthcheck = new HealthcheckService({});
+      const runChecks = vi.spyOn(mockHealthcheck, 'runChecks').mockResolvedValue({
+        timestamp: new Date().toISOString(),
+        overall_status: 'critical',
+        checks: {
+          logging: { status: 'pass', message: 'OK' },
+          dev_docs: { status: 'pass', message: 'OK' },
+          delegation: { status: 'pass', message: 'OK' },
+          queue: { status: 'pass', message: 'OK' },
+          archive: { status: 'pass', message: 'OK' },
+          quality_gates: { status: 'pass', message: 'OK' },
+          notifications: { status: 'pass', message: 'OK' },
+          git_safety: { status: 'fail', message: 'Agent pushed to main branch!' },
+        },
+      });
 
       const customSupervisor = new WatcherSupervisor(ossDir, queueManager, {
         healthcheckService: mockHealthcheck,
@@ -429,22 +430,22 @@ describe('WatcherSupervisor', () => {
      * @boundary Supervisor notification logic
      */
     it('should deduplicate same issue notifications', async () => {
-      const mockHealthcheck = {
-        runChecks: vi.fn().mockResolvedValue({
-          timestamp: new Date().toISOString(),
-          overall_status: 'warning',
-          checks: {
-            logging: { status: 'pass', message: 'OK' },
-            dev_docs: { status: 'warn', message: 'PROGRESS.md stale (>1 hour)' },
-            delegation: { status: 'pass', message: 'OK' },
-            queue: { status: 'pass', message: 'OK' },
-            archive: { status: 'pass', message: 'OK' },
-            quality_gates: { status: 'pass', message: 'OK' },
-            notifications: { status: 'pass', message: 'OK' },
-            git_safety: { status: 'pass', message: 'OK' },
-          },
-        }),
-      };
+      // A real HealthcheckService answering a canned report, not a partial object posing as one (T75e)
+      const mockHealthcheck = new HealthcheckService({});
+      const runChecks = vi.spyOn(mockHealthcheck, 'runChecks').mockResolvedValue({
+        timestamp: new Date().toISOString(),
+        overall_status: 'warning',
+        checks: {
+          logging: { status: 'pass', message: 'OK' },
+          dev_docs: { status: 'warn', message: 'PROGRESS.md stale (>1 hour)' },
+          delegation: { status: 'pass', message: 'OK' },
+          queue: { status: 'pass', message: 'OK' },
+          archive: { status: 'pass', message: 'OK' },
+          quality_gates: { status: 'pass', message: 'OK' },
+          notifications: { status: 'pass', message: 'OK' },
+          git_safety: { status: 'pass', message: 'OK' },
+        },
+      });
 
       const customSupervisor = new WatcherSupervisor(ossDir, queueManager, {
         healthcheckService: mockHealthcheck,

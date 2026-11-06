@@ -23,6 +23,10 @@ import * as os from 'os';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { ModelProxy } from '../services/model-proxy.js';
+import { readRegularFileSync } from '../utils/regular-file.js';
+
+/** True ONLY in the esbuild bundle that the pkg binary wraps; undefined under tsc/ESM (node-script). */
+declare const __OSS_BUNDLED__: boolean | undefined;
 
 // ============================================================================
 // Constants
@@ -219,7 +223,7 @@ export function loadApiKeyFromConfig(provider: string): string | undefined {
 
   try {
     if (fs.existsSync(configPath)) {
-      const content = fs.readFileSync(configPath, 'utf-8');
+      const content = readRegularFileSync(configPath);
       const config = JSON.parse(content);
 
       // Map provider to config key
@@ -249,7 +253,7 @@ export function loadOllamaBaseUrlFromConfig(): string | undefined {
 
   try {
     if (fs.existsSync(configPath)) {
-      const content = fs.readFileSync(configPath, 'utf-8');
+      const content = readRegularFileSync(configPath);
       const config = JSON.parse(content);
       // The model-routing config nests provider keys under `models.apiKeys`; also accept the
       // legacy top-level `apiKeys` location.
@@ -411,7 +415,7 @@ export function loadRouterConfigFromFile(): RouterProxyConfig {
   const configPath = path.join(getUserConfigDir(), 'config.json');
   try {
     if (fs.existsSync(configPath)) {
-      const content = fs.readFileSync(configPath, 'utf-8');
+      const content = readRegularFileSync(configPath);
       return buildRouterConfig(JSON.parse(content));
     }
   } catch {
@@ -486,10 +490,16 @@ export async function startProxyBackground(options: BackgroundStartOptions): Pro
 
   // Spawn detached child process. Use a real filesystem path — `node <file:// URL>` cannot be
   // loaded as a script, so the child would crash instantly and the proxy would never bind.
-  const selfPath = fileURLToPath(import.meta.url);
-  const child = spawnFn(process.execPath, [selfPath, ...args], {
+  // In the bundled binary process.execPath IS oss-launch: it needs the `start-proxy` subcommand, or
+  // the child runs as the launcher and the proxy never binds (T89).
+  const bundled = typeof __OSS_BUNDLED__ !== 'undefined' && __OSS_BUNDLED__ === true;
+  const head = bundled ? 'start-proxy' : fileURLToPath(import.meta.url);
+  // pkg marks a child PKG_EXECPATH=<binary>, which makes it run `start-proxy` as a script path and
+  // crash; an empty value clears that mark (T89b).
+  const child = spawnFn(process.execPath, [head, ...args], {
     detached: true,
     stdio: 'ignore',
+    ...(bundled ? { env: { ...process.env, PKG_EXECPATH: '' } } : {}),
   });
 
   // Unref to allow parent to exit

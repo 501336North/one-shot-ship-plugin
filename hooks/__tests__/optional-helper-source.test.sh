@@ -9,32 +9,49 @@
 #
 # Usage: ./hooks/__tests__/optional-helper-source.test.sh
 #        BASH_UNDER_TEST=/opt/local/bin/bash ./hooks/__tests__/optional-helper-source.test.sh
+#        HOOKS_UNDER_TEST=/path/to/hooks-copy ./hooks/__tests__/optional-helper-source.test.sh   (mutants)
 set -uo pipefail
+# T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+HOOKS="${HOOKS_UNDER_TEST:-$ROOT/hooks}"
 SH="${BASH_UNDER_TEST:-/bin/bash}"
+source "$ROOT/hooks/__tests__/lib/warm-stub.sh"
+# Session start runs under an alias (lib/session-start-alias.sh): an outside `pkill -f oss-session-start` misses it (T48).
+source "$ROOT/hooks/__tests__/lib/session-start-alias.sh"
 RUN=0; FAILED=0
 pass() { echo "✓ PASS: $1"; ((RUN++)); }
 fail() { echo "✗ FAIL: $1 — $2"; ((RUN++)); ((FAILED++)); }
 echo "Running optional-helper-source tests under $("$SH" -c 'echo "$BASH_VERSION"') ($SH)..."
 
+# Stubs made and warmed once (macOS scans each new executable on its first exec). oss-log.sh and
+# curl record what the hook asked them to do into the current case's dir, $SHIM.
+KS=$(mktemp -d); KS=$(cd "$KS" && pwd -P)
+STUBS_WARM=y
+warm_stub "$KS/oss-log.sh" 'echo "$*" >> "$SHIM/log.calls"' || STUBS_WARM=n
+warm_stub "$KS/bin/node" 'exit 0' || STUBS_WARM=n
+warm_stub "$KS/bin/curl" "$(printf '%s\n' 'echo "$*" >> "$SHIM/curl.calls"' 'cat >/dev/null')" || STUBS_WARM=n
+if [[ $STUBS_WARM != y ]]; then echo "✗ FAIL: stub warm-up — a stub did not run"; rm -rf "$KS"; exit 1; fi
+
 # A sandbox: temp HOME, a hooks dir holding only what the case copies in, and a fake plugin root
-# whose oss-log.sh / node / curl record what the hook asked them to do.
+# whose oss-log.sh / node / curl (the warm stubs) record what the hook asked them to do.
 sandbox() {
     T=$(mktemp -d)
-    mkdir -p "$T/home/.oss" "$T/hooks" "$T/plugin/hooks" "$T/plugin/watcher/dist/cli" "$T/bin"
-    printf '#!/bin/sh\necho "$*" >> "%s/log.calls"\n' "$T" > "$T/plugin/hooks/oss-log.sh"
-    printf '#!/bin/sh\nexit 0\n' > "$T/bin/node"
-    printf '#!/bin/sh\necho "$*" >> "%s/curl.calls"\ncat >/dev/null\n' "$T" > "$T/bin/curl"
-    chmod +x "$T/plugin/hooks/oss-log.sh" "$T/bin/node" "$T/bin/curl"
-    cp "$ROOT/hooks/oss-notify.sh" "$T/hooks/"
+    mkdir -p "$T/home/.oss" "$T/hooks" "$T/plugin/hooks" "$T/plugin/watcher/dist/cli"
+    ln -s "$KS/oss-log.sh" "$T/plugin/hooks/oss-log.sh"
+    ln -s "$KS/bin" "$T/bin"
+    cp "$HOOKS/oss-notify.sh" "$T/hooks/"
     # oss-safe-path.sh always ships beside oss-notify.sh (HOOKS_TO_COPY); without it workflow
     # names cannot be validated and every --workflow event is refused (fail closed, v2.0.87).
-    cp "$ROOT/hooks/oss-safe-path.sh" "$T/hooks/"
+    cp "$HOOKS/oss-safe-path.sh" "$T/hooks/"
 }
-# $(...) waits for the hook's backgrounded analytics subshell too (it inherits stdout).
+# The hook detaches its analytics job from stdin/stdout/stderr (T1). Fd 3 is a second writer on
+# the command substitution's pipe that the hook, the detached job and its curl all inherit, so
+# $(run_notify ...) returns only after the analytics job is done. Without it, "analytics skipped"
+# (case 2) would pass by racing the job, and case 3 would read curl.calls before curl ran.
 run_notify() {
-    (cd "$T" && HOME="$T/home" CLAUDE_PLUGIN_ROOT="$T/plugin" CLAUDE_PROJECT_DIR="" PATH="$T/bin:$PATH" \
-        "$SH" "$T/hooks/oss-notify.sh" "$@" 2>&1 </dev/null)
+    (cd "$T" && SHIM="$T" HOME="$T/home" CLAUDE_PLUGIN_ROOT="$T/plugin" CLAUDE_PROJECT_DIR="" PATH="$T/bin:$PATH" \
+        "$SH" "$T/hooks/oss-notify.sh" "$@" 2>&1 </dev/null 3>&1)
 }
 logged_in() {
     echo '{"apiKey":"ossk_test_key","apiUrl":"https://example.invalid"}' > "$T/home/.oss/config.json"
@@ -58,7 +75,7 @@ else fail "notify without oss-api-curl.sh: start event exits 0, is logged, analy
 rm -rf "$T"
 
 # 3. Helper present: oss_api_curl is defined and used (-q first, --globoff, key on stdin via --config -, not argv).
-sandbox; logged_in; cp "$ROOT/hooks/oss-api-curl.sh" "$T/hooks/"
+sandbox; logged_in; cp "$HOOKS/oss-api-curl.sh" "$T/hooks/"
 out=$(run_notify --workflow build start); rc=$?
 calls=$(cat "$T/curl.calls" 2>/dev/null)
 if [[ $rc -eq 0 ]] && [[ "$calls" == "-q --globoff --config - "*"/api/v1/analytics/track"* ]] && [[ "$calls" != *ossk_test_key* ]]; then
@@ -68,7 +85,8 @@ rm -rf "$T"
 
 # 4. Session start without the helper beside it still copies the hooks into ~/.oss/hooks.
 T=$(mktemp -d); mkdir -p "$T/home" "$T/hooks"; cp "$ROOT/hooks/oss-session-start.sh" "$T/hooks/"
-(cd "$T" && HOME="$T/home" CLAUDE_PLUGIN_ROOT="$ROOT" "$SH" "$T/hooks/oss-session-start.sh" >/dev/null 2>&1 </dev/null); rc=$?
+SS_HOOK=$(session_start_alias "$T/hooks") || SS_HOOK="$T/no-alias"
+(cd "$T" && HOME="$T/home" CLAUDE_PLUGIN_ROOT="$ROOT" "$SH" "$SS_HOOK" >/dev/null 2>&1 </dev/null); rc=$?
 if [[ $rc -eq 0 && -f "$T/home/.oss/hooks/oss-notify.sh" && -f "$T/home/.oss/hooks/oss-api-curl.sh" ]]; then
     pass "session start without oss-api-curl.sh beside it: exits 0 and installs the hooks"
 else fail "session start without oss-api-curl.sh beside it: exits 0 and installs the hooks" "rc=$rc"; fi
@@ -85,5 +103,6 @@ done < <(cd "$ROOT" && git ls-files '*.sh' | grep -v '/__tests__/')
 if [[ -z "$offenders" ]]; then pass "no errexit script relies on a '|| fallback' after source"
 else fail "no errexit script relies on a '|| fallback' after source" "offenders:$offenders"; fi
 
+rm -rf "$KS"
 echo "Results: $((RUN-FAILED))/$RUN passed, $FAILED failed"
 [[ $FAILED -eq 0 ]]

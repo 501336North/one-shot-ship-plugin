@@ -8,7 +8,7 @@ description: Rust language expert with deep borrow checker, async/tokio, and sec
 ## Step 1: Check Authentication
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+test -f "$HOME/.oss/config.json" && grep -qE '"apiKey"[[:space:]]*:[[:space:]]*"[A-Za-z0-9_-]' "$HOME/.oss/config.json" && echo "API key configured"
 ```
 
 If no API key found, inform the user:
@@ -19,8 +19,10 @@ Register at https://www.oneshotship.com
 
 ## Step 2: Ensure Decrypt CLI Installed
 
+Run this step with a Bash timeout of 600000 ms (10 minutes): a first install downloads about 60 MB. Exit 0: continue. Exit 75: the download is still in progress or another session is downloading it, so run the same step again (also when Claude Code stopped the step at its time limit), at most 3 more times; if it still has not exited 0, stop and tell the user to run the command again later. Any other exit: stop and show the user the hook's message (it says what to check).
+
 ```bash
-~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install the decrypt CLI (see the message above). Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."; exit 1; }
+~/.oss/hooks/ensure-decrypt-cli.sh --long-step
 ```
 
 ## Step 3: Fetch and Decrypt Agent Prompt
@@ -28,6 +30,8 @@ Register at https://www.oneshotship.com
 ```bash
 ~/.oss/bin/oss-decrypt --type agents --name rust-pro
 ```
+
+If this command fails for any reason (it prints an `Error:` line, for example when rate limited, offline or not logged in), tell the user in one line and carry on with this file's own instructions; do not read ~/.oss/config.json, do not retry in a loop, and do not save the fetched prompt to a file.
 
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 

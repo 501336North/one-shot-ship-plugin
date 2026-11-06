@@ -8,6 +8,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { readRegularFileSync } from '../utils/regular-file.js';
 
 /**
  * Usage record for a single API request
@@ -210,7 +211,7 @@ export class CostTracker {
 
     if (fs.existsSync(usagePath)) {
       try {
-        const content = fs.readFileSync(usagePath, 'utf-8');
+        const content = readRegularFileSync(usagePath);
         const data = JSON.parse(content);
         this.records = data.records || [];
       } catch {

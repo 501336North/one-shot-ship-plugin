@@ -14,7 +14,7 @@
  *
  * Output (JSON):
  *   { "useProxy": false } - Use native Claude
- *   { "useProxy": true, "model": "ollama/codellama", "provider": "ollama", "proxyUrl": "http://localhost:3456" }
+ *   { "useProxy": true, "model": "ollama/codellama", "provider": "ollama", "proxyUrl": "http://127.0.0.1:3456" }
  */
 /**
  * Result from checking agent model configuration

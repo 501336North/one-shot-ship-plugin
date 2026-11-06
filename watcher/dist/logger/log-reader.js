@@ -6,6 +6,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { OSSError } from '../services/error-codes.js';
+import { readRegularFileSyncOrNull } from '../utils/regular-file.js';
 export class LogReader {
     logPath;
     tailCallback = null;
@@ -18,10 +19,10 @@ export class LogReader {
      * Read all entries from the log file
      */
     async readAll() {
-        if (!fs.existsSync(this.logPath)) {
+        const content = readRegularFileSyncOrNull(this.logPath);
+        if (content === null) {
             return [];
         }
-        const content = fs.readFileSync(this.logPath, 'utf-8');
         return this.parseContent(content);
     }
     /**
@@ -69,18 +70,33 @@ export class LogReader {
         return null;
     }
     checkForNewEntries() {
-        if (!this.tailCallback || !fs.existsSync(this.logPath)) {
+        if (!this.tailCallback) {
             return;
         }
-        const stats = fs.statSync(this.logPath);
-        if (stats.size <= this.lastReadPosition) {
+        // stat'ed first (T80, regular-file.ts's rule): a device, FIFO or folder is never opened; missing is no news
+        try {
+            if (!fs.statSync(this.logPath).isFile()) {
+                return;
+            }
+        }
+        catch {
             return;
         }
-        // Read new content
-        const fd = fs.openSync(this.logPath, 'r');
-        const buffer = Buffer.alloc(stats.size - this.lastReadPosition);
-        fs.readSync(fd, buffer, 0, buffer.length, this.lastReadPosition);
-        fs.closeSync(fd);
+        // Read new content from a regular file only (T70e): opened non-blocking, checked on the open file
+        const fd = fs.openSync(this.logPath, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        let stats;
+        let buffer;
+        try {
+            stats = fs.fstatSync(fd);
+            if (!stats.isFile() || stats.size <= this.lastReadPosition) {
+                return;
+            }
+            buffer = Buffer.alloc(stats.size - this.lastReadPosition);
+            fs.readSync(fd, buffer, 0, buffer.length, this.lastReadPosition);
+        }
+        finally {
+            fs.closeSync(fd);
+        }
         this.lastReadPosition = stats.size;
         const newContent = buffer.toString('utf-8');
         const entries = this.parseContent(newContent);

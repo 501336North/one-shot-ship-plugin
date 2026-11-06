@@ -14,9 +14,13 @@
 # 7. Should update Iron Laws between markers when hash differs
 
 set -uo pipefail
+# The hook reads apiKey and apiUrl from $OSS_CONFIG_DIR/config.json: a developer's exported override must not
+# lead it to their real config and API instead of each test's sandbox HOME (T29).
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOOK_SCRIPT="$SCRIPT_DIR/../oss-iron-laws-sync.sh"
+# HOOKS_UNDER_TEST=/path/to/hooks-copy runs these tests against a copy (mutants).
+HOOK_SCRIPT="${HOOKS_UNDER_TEST:-$SCRIPT_DIR/..}/oss-iron-laws-sync.sh"
 
 # Test tracking
 TESTS_RUN=0
@@ -98,7 +102,8 @@ EOF
 
     # Create fresh cache file (touched now = <24h old)
     echo "abc123" > "$TEST_HOME/.oss/.iron-laws-hash"
-    touch "$TEST_HOME/.oss/.iron-laws-last-check"
+    # The fresh stamp names the API that wrote the block (the default API: no apiUrl in the config)
+    echo "https://one-shot-ship-api.onrender.com" > "$TEST_HOME/.oss/.iron-laws-last-check"
 
     # Create mock curl that should NOT be called
     MOCK_BIN_DIR=$(mktemp -d)
@@ -309,7 +314,8 @@ EOF
 
     # Fresh cache
     echo "abc123" > "$TEST_HOME/.oss/.iron-laws-hash"
-    touch "$TEST_HOME/.oss/.iron-laws-last-check"
+    # The fresh stamp names the API that wrote the block (the default API: no apiUrl in the config)
+    echo "https://one-shot-ship-api.onrender.com" > "$TEST_HOME/.oss/.iron-laws-last-check"
 
     MOCK_BIN_DIR=$(mktemp -d)
     create_mock_curl "$MOCK_BIN_DIR"

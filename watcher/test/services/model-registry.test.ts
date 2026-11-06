@@ -6,6 +6,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ModelRegistry } from '../../src/services/model-registry.js';
+import type { Provider } from '../../src/types/model-settings.js';
 
 describe('ModelRegistry', () => {
   let registry: ModelRegistry;
@@ -59,7 +60,8 @@ describe('ModelRegistry', () => {
     });
 
     it('should return empty array for unknown provider', () => {
-      const models = registry.listModels('unknown' as any);
+      // a provider name from a user's config that is not a Provider: deliberately outside the type (T75e)
+      const models = registry.listModels('unknown' as Provider);
       expect(models).toEqual([]);
     });
   });

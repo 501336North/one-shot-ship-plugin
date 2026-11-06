@@ -20,7 +20,7 @@ describe('update-workflow-state CLI - refused write (F10)', () => {
   let original: string;
 
   function sandboxEnv(): NodeJS.ProcessEnv {
-    const env = { ...process.env, HOME: path.join(root, 'home') };
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: path.join(root, 'home') };
     delete env.CLAUDE_PROJECT_DIR;
     return env;
   }

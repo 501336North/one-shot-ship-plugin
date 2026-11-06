@@ -73,10 +73,6 @@ export declare class WebhookConfig {
      */
     private writeConfig;
     /**
-     * Read full config file, returning empty object if not exists/invalid
-     */
-    private readFullConfig;
-    /**
      * Load webhook config from file into cache synchronously
      */
     private loadConfigSync;

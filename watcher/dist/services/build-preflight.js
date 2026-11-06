@@ -11,6 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { parseSpecFile } from './spec-reconciler/parser.js';
 import { autoFixCheckbox } from './spec-reconciler/auto-fixer.js';
+import { readRegularFileOrNull } from '../utils/regular-file.js';
 /**
  * BuildPreflightService - Runs pre-flight checks before builds.
  *
@@ -35,8 +36,9 @@ export class BuildPreflightService {
     async runPreflightCheck(feature) {
         const timestamp = new Date().toISOString();
         const specPath = this.specMonitor.getSpecPath(feature);
-        // Check if spec file exists
-        if (!fs.existsSync(specPath)) {
+        // Read the spec file (T70e: anything but a regular file counts as missing)
+        const content = await readRegularFileOrNull(specPath);
+        if (content === null) {
             return {
                 status: 'error',
                 feature,
@@ -50,8 +52,7 @@ export class BuildPreflightService {
                 timestamp,
             };
         }
-        // Read and parse the spec file
-        const content = await fs.promises.readFile(specPath, 'utf-8');
+        // Parse the spec file
         const spec = parseSpecFile(content, feature);
         // Calculate coverage for each section
         const componentsCoverage = this.specMonitor.calculateCoverage(spec.components);

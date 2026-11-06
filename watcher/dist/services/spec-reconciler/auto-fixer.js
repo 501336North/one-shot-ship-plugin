@@ -8,6 +8,7 @@
  * @acceptance-criteria AC-AUTO-FIXER.1 through AC-AUTO-FIXER.7
  */
 import * as fs from 'fs';
+import { readRegularFile } from '../../utils/regular-file.js';
 /**
  * Auto-fix a checkbox in a spec file by changing - [ ] to - [x].
  *
@@ -29,7 +30,7 @@ export async function autoFixCheckbox(specPath, itemId) {
     // Read the spec file
     let content;
     try {
-        content = await fs.promises.readFile(specPath, 'utf-8');
+        content = await readRegularFile(specPath);
     }
     catch {
         return {

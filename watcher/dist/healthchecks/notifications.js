@@ -3,6 +3,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { homedir } from 'os';
 import { join } from 'path';
+import { readRegularFile } from '../utils/regular-file.js';
 const execAsync = promisify(exec);
 const RECENT_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
 /**
@@ -55,7 +56,7 @@ export async function checkNotifications(options) {
     // Read last workflow state updates from log
     let lastStateUpdateAge = null;
     try {
-        const content = await fs.readFile(logPath, 'utf-8');
+        const content = await readRegularFile(logPath);
         const lines = content.trim().split('\n');
         // Parse log entries for workflow state updates (new format)
         // or NOTIFICATION events (legacy format)

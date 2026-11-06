@@ -17,6 +17,7 @@ import { StatusLineService } from '../services/status-line.js';
 import { IronLawMonitor } from '../services/iron-law-monitor.js';
 import { SettingsService } from '../services/settings.js';
 import { BoundedLruSet } from './lru-set.js';
+import { readRegularFileSync } from '../utils/regular-file.js';
 /**
  * Perf bounds (Phase A-perf). Long-running watcher sessions must stay responsive
  * and memory-stable regardless of how many log lines have streamed through.
@@ -520,7 +521,7 @@ export class WatcherSupervisor {
         // Try to load existing state
         if (fs.existsSync(this.statePath)) {
             try {
-                const data = fs.readFileSync(this.statePath, 'utf-8');
+                const data = readRegularFileSync(this.statePath);
                 this.state = JSON.parse(data);
                 // Restore persisted anchors; if the state file predates anchors, rebuild
                 // them from the full log so session-lifetime detectors stay correct.

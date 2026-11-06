@@ -31,6 +31,9 @@ T=$(cd "$(mktemp -d /tmp/oss-wrun.XXXXXX)" && pwd -P)
 trap 'rm -rf "$T"' EXIT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+# The hooks read and /oss:login writes $OSS_CONFIG_DIR/config.json: a developer's exported override must
+# not lead them to the real key, or let the login block overwrite it with a test key (T22).
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL
 
 # fence_with <file> <literal>: the body of the first fenced block in commands/<file> holding <literal>,
 # less the indent of its opening fence (a block inside a list item)
@@ -38,6 +41,14 @@ fence_with() {
     awk -v lit="$2" '
         /^[[:space:]]*```/ { if (!inf) { inf = 1; n = 0; hit = 0; match($0, /^[[:space:]]*/); ind = RLENGTH; next } inf = 0; if (hit) { for (i = 1; i <= n; i++) print b[i]; exit } next }
         inf { l = $0; if (substr(l, 1, ind) ~ /^[[:space:]]*$/) l = substr(l, ind + 1); b[++n] = l; if (index($0, lit)) hit = 1 }' "$C/$1"
+}
+
+# fence_line <file> <line>: like fence_with, for the block holding <line> as a whole line (any indent), so
+# `oss-value.sh workflow` does not pick the block that runs `oss-value.sh workflows` (T60)
+fence_line() {
+    awk -v lit="$2" '
+        /^[[:space:]]*```/ { if (!inf) { inf = 1; n = 0; hit = 0; match($0, /^[[:space:]]*/); ind = RLENGTH; next } inf = 0; if (hit) { for (i = 1; i <= n; i++) print b[i]; exit } next }
+        inf { l = $0; if (substr(l, 1, ind) ~ /^[[:space:]]*$/) l = substr(l, ind + 1); b[++n] = l; t = $0; gsub(/^[[:space:]]+|[[:space:]]+$/, "", t); if (t == lit) hit = 1 }' "$C/$1"
 }
 
 # stubs: each records "<name> <args>" in $T/calls; curl prints $T/curl.out and exits $T/curl.rc
@@ -71,9 +82,9 @@ model_writes() {
     local d; d=$(in_sandbox "$H/.oss/hooks/oss-value.sh" dir 2>/dev/null) && [[ -n "$d" ]] || return 1
     while (( $# >= 2 )); do printf '%s\n' "$2" > "$d/$1.txt"; shift 2; done
 }
-# run_block <file> <literal>: run that wrapper block as written -> OUT, RC
+# run_block <file> <literal>: run that wrapper block as written -> OUT, RC (FENCE=fence_line: <literal> is a whole line)
 run_block() {
-    local b; b=$(fence_with "$1" "$2")
+    local b; b=$("${FENCE:-fence_with}" "$1" "$2")
     [[ -n "$b" ]] || { OUT="(no block holding '$2' in $1)"; RC=99; return; }
     OUT=$(in_sandbox "$SH" -c "$b" 2>&1 </dev/null); RC=$?
 }
@@ -90,13 +101,34 @@ for kind in norepo repo; do
     [[ "$RC" == 0 && "$(calls)" == "node $FR/watcher/dist/cli/models.js set agents oss:code-reviewer ollama/codellama" ]] \
         && pass "$kind: /oss:models set passes the prompt and model it read" || fail "$kind: /oss:models set passes the prompt and model it read" "rc=$RC out=$OUT calls=$(calls)"
 
-    sandbox "$kind"; model_writes workflow build; run_block workflows.md 'oss-value.sh read workflow'
-    [[ "$RC" == 0 && "$OUT" == build ]] && pass "$kind: /oss:workflows <name> prints the name it read" || fail "$kind: /oss:workflows <name> prints the name it read" "rc=$RC out=$OUT"
+    # T60: one allowlisted call reads workflow.txt and fetches /api/v1/workflows/<name>/editor (plain config)
+    # through oss_api_curl inside the hook (the key on stdin), printing the config
+    sandbox "$kind"; printf '{"apiKey":"ossk_wrun_key_58"}' > "$H/.oss/config.json"
+    printf '{"name":"build","chain":[],"agents":["code-simplifier"],"checkpoint":"auto"}\n200' > "$T/curl.out"
+    model_writes workflow build; FENCE=fence_line run_block workflows.md '~/.oss/hooks/oss-value.sh workflow'
+    [[ "$RC" == 0 && "$(calls)" == "curl -q --globoff --config - "*" https://one-shot-ship-api.onrender.com/api/v1/workflows/build/editor" \
+        && "$(calls)" != *ossk_wrun_key_58* && "$OUT" == *'"code-simplifier"'* && "$OUT" != *ossk_wrun_key_58* ]] \
+        && pass "$kind: /oss:workflows <name> fetches the editor config of the name it read, the key not in argv" \
+        || fail "$kind: /oss:workflows <name> fetches the editor config of the name it read, the key not in argv" "rc=$RC out=$OUT calls=$(calls)"
 
     sandbox "$kind"; model_writes category commands name build; run_block trust.md 'oss-value.sh decrypt'
     [[ "$RC" == 0 && "$(calls)" == "oss-decrypt --type commands --name build" ]] \
         && pass "$kind: /oss:trust decrypts with the category and name it read" || fail "$kind: /oss:trust decrypts with the category and name it read" "rc=$RC out=$OUT calls=$(calls)"
 done
+# T60: /oss:status and /oss:workflows run their fetch block as written: one allowlisted call each, the key not in argv
+sandbox repo; printf '{"apiKey":"ossk_wrun_key_60"}' > "$H/.oss/config.json"
+printf '{"valid":true,"userId":"u1","email":"a@example.com","plan":"PRO","subscriptionStatus":"ACTIVE"}\n200' > "$T/curl.out"
+FENCE=fence_line run_block status.md '~/.oss/hooks/oss-value.sh status'
+[[ "$RC" == 0 && "$(calls)" == *" https://one-shot-ship-api.onrender.com/api/v1/auth/verify" && "$(calls)" != *ossk_wrun_key_60* \
+   && "$OUT" == *"Account: a@example.com"* && "$OUT" == *"Plan: PRO"* && "$OUT" != *ossk_wrun_key_60* ]] \
+    && pass "status: the fetch block verifies the key and prints the account, the key not in argv" || fail "status: the fetch block verifies the key and prints the account" "rc=$RC out=$OUT calls=$(calls)"
+sandbox repo; printf '{"apiKey":"ossk_wrun_key_60"}' > "$H/.oss/config.json"
+printf '{"workflows":[{"name":"ideate","customized":false},{"name":"build","customized":true}]}\n200' > "$T/curl.out"
+FENCE=fence_line run_block workflows.md '~/.oss/hooks/oss-value.sh workflows'
+[[ "$RC" == 0 && "$(calls)" == *" https://one-shot-ship-api.onrender.com/api/v1/workflows" && "$(calls)" != *ossk_wrun_key_60* \
+   && "$OUT" == *"ideate DEFAULT"* && "$OUT" == *"build CUSTOM"* ]] \
+    && pass "workflows: the list block prints each workflow's status, the key not in argv" || fail "workflows: the list block prints each workflow's status" "rc=$RC out=$OUT calls=$(calls)"
+
 # the wrappers no longer say the folder needs a git repository
 for f in login.md models.md workflows.md trust.md; do
     grep -qiF 'inside a git repository' "$C/$f" && fail "$f does not say the value folder needs a git repository" "$(grep -niF 'inside a git repository' "$C/$f" | head -1)" \
@@ -178,11 +210,40 @@ model_writes notify_style visual verbosity all; LS_BEFORE=$(ls -A "$H/.oss"); ru
 [[ "$RC" != 0 && "$(cat "$H/.oss/settings.json")" == '{"models": {"agents": BROKEN' && "$OUT" == *"not valid JSON"* \
    && "$(ls -A "$H/.oss")" == "$LS_BEFORE" && "$(calls)" != *terminal-notifier* ]] \
     && pass "settings: an invalid settings.json is refused with a message and left untouched" || fail "settings: an invalid settings.json is refused with a message and left untouched" "rc=$RC out=$OUT calls=$(calls) settings=$(cat "$H/.oss/settings.json" 2>&1)"
-# settings.json that is a symlink: refused, the link and its target left as they were
-sandbox repo; echo '{"keep":1}' > "$H/target.json"; ln -s "$H/target.json" "$H/.oss/settings.json"
+# Task 70c: a linked settings.json is saved through the link (user: "Follow the link everywhere", "owner-only"):
+# the file it leads to gets the choices in a new file renamed over it (never half-written), at 600; links stay links
+source "$ROOT/hooks/__tests__/lib/run-capped.sh"   # the one time cap a test may use (T49)
+sandbox repo; mkdir -p "$H/dot"; echo '{"keep":1}' > "$H/dot/settings.json"; chmod 644 "$H/dot/settings.json"
+ln -s settings.json "$H/dot/hop"; ln -s "$H/dot/hop" "$H/.oss/settings.json"
+INO0=$(stat -c %i "$H/dot/settings.json" 2>/dev/null || stat -f %i "$H/dot/settings.json")
 model_writes notify_style visual verbosity all; run_block settings.md "$SAVE"
-[[ "$RC" != 0 && -L "$H/.oss/settings.json" && "$(cat "$H/target.json")" == '{"keep":1}' && "$(calls)" != *terminal-notifier* ]] \
-    && pass "settings: a symlinked settings.json is refused, link and target untouched" || fail "settings: a symlinked settings.json is refused, link and target untouched" "rc=$RC out=$OUT link=$([[ -L "$H/.oss/settings.json" ]] && echo y || echo n) target=$(cat "$H/target.json")"
+INO1=$(stat -c %i "$H/dot/settings.json" 2>/dev/null || stat -f %i "$H/dot/settings.json")
+MODE=$(stat -c %a "$H/dot/settings.json" 2>/dev/null || stat -f %Lp "$H/dot/settings.json")
+[[ "$RC" == 0 && -L "$H/.oss/settings.json" && -L "$H/dot/hop" && "$(jq -c '[.keep, .notifications.style, .version]' "$H/dot/settings.json" 2>&1)" == '[1,"visual",2]' \
+   && "$INO1" != "$INO0" && "$MODE" == 600 && "$(ls -A "$H/dot" | tr '\n' ' ')" == "hop settings.json " ]] \
+    && pass "settings: a linked settings.json is saved through the link (links kept, new file, 600, no temp)" \
+    || fail "settings: a linked settings.json is saved through the link (links kept, new file, 600, no temp)" "rc=$RC out=$OUT ino=$INO0/$INO1 mode=$MODE dot=$(ls -A "$H/dot" | tr '\n' ' ') file=$(cat "$H/dot/settings.json")"
+# a link to nothing, a loop, or something that is not a plain file: refused with why and how to fix it, never a hang
+for c in "link loop|is a link loop (or more than 8 links in a row); remove the link and try again" \
+         "dangling link|links to a file that does not exist; create that file or remove the link, and try again" \
+         "link to a FIFO|is not a plain file, or links to something that is not one (a folder, a FIFO or a device); replace it with a plain file and try again" \
+         "a FIFO|is not a plain file, or links to something that is not one (a folder, a FIFO or a device); replace it with a plain file and try again" \
+         "link to a folder|is not a plain file, or links to something that is not one (a folder, a FIFO or a device); replace it with a plain file and try again"; do
+    IFS='|' read -r what why <<< "$c"
+    sandbox repo; at="$H/.oss/settings.json"
+    case $what in
+        'link loop') ln -s "$H/loop" "$at"; ln -s "$at" "$H/loop" ;;
+        'dangling link') ln -s "$H/target" "$at" ;;
+        'link to a FIFO') mkfifo "$H/target"; ln -s "$H/target" "$at" ;;
+        'a FIFO') mkfifo "$at" ;;
+        'link to a folder') mkdir "$H/target"; ln -s "$H/target" "$at" ;;
+    esac
+    model_writes notify_style visual verbosity all; b=$(fence_with settings.md "$SAVE")
+    OUT=$(cd "$W" && run_capped 20 env -u CLAUDE_PLUGIN_ROOT -u CLAUDE_PROJECT_DIR GIT_CEILING_DIRECTORIES="$T/w$N" HOME="$H" PATH="$T/bin:$PATH" "$SH" -c "$b" 2>&1 </dev/null); RC=$?
+    [[ "$RC" == 1 && "$OUT" == *"Not saved: ~/.oss/settings.json $why"* && "$(calls)" != *terminal-notifier* \
+       && -z "$(find "$H" -name '.settings.json.*' -o -name '.target.*' | head -1)" ]] \
+        && pass "settings: the save refuses ($what) with why and how to fix it" || fail "settings: the save refuses ($what) with why and how to fix it" "rc=$RC out=$OUT"
+done
 # Task 16u: the save applies the one settings.json rule (oss_settings_mergeable, shared with oss_settings_set and
 # the session-start cleanup): two objects in one file, or a file that is not the user's, is refused and left
 # byte-identical. Another user's file is simulated through `test -O` (the repo's other-user seam), exported to the block.
@@ -280,9 +341,92 @@ sandbox repo; printf 'export OSS_AUDIO_ENABLED="true"\nexport OSS_USE_VOICE="fal
 sandbox repo; printf 'export OSS_AUDIO_ENABLED="true"\ntouch "$HOME/PWNED"\nexport OSS_VOICE="$(touch $HOME/PWNED)"\n' > "$H/.oss/audio-config"; run_block oss-audio.md 'audio-config ]'
 ! pwned && [[ "$OUT" == *"Enabled: true"* ]] && pass "oss-audio: status never runs the config file" || fail "oss-audio: status never runs the config file" "pwned=$(pwned && echo y || echo n) out=$OUT"
 
+# --- models: Step 1 loads the model config but never a provider key value (T78d, security N8) ----------
+# @behavior /oss:models shows which providers have a key (configured or not), as `models keys list` masks them; the
+#           key values never reach the conversation. The block is run as written, then what it loaded is printed
+#           (what the model builds the Step 2 table from).
+sandbox repo
+printf '{"apiKey":"ossk_wrun_oss_78","models":{"default":"claude","agents":{"oss:code-reviewer":"openrouter/x"},"apiKeys":{"openrouter":"sk-or-FAKE-user-7788","openai":"sk-FAKE-user-9911"}}}\n' > "$H/.oss/config.json"
+mkdir -p "$W/.oss"; printf '{"models":{"agents":{"oss:test-engineer":"ollama/y"},"apiKeys":{"gemini":"gm-FAKE-proj-5566"}}}\n' > "$W/.oss/config.json"
+b=$(fence_with models.md 'USER_MODELS=')
+OUT=$(in_sandbox "$SH" -c "$b"'
+printf "%s\n%s\n" "$USER_MODELS" "$PROJECT_MODELS"' 2>&1 </dev/null); RC=$?
+[[ "$RC" == 0 && "$OUT" != *FAKE* && "$OUT" != *ossk_wrun_oss_78* && "$OUT" == *'"oss:code-reviewer": "openrouter/x"'* \
+   && "$OUT" == *'"openrouter": "configured"'* && "$OUT" == *'"gemini": "configured"'* ]] \
+    && pass "models: Step 1 loads the mappings and which providers have a key, never a key value" \
+    || fail "models: Step 1 never loads a key value" "rc=$RC out=$OUT"
+
 # --- visual-test: the key check reads the fixed config path ------------------------------------
 sandbox repo; cfg ossk_k3 x; run_block visual-test.md '"apiKey"'
 [[ "$OUT" == "API key configured" ]] && pass "visual-test: the key check reads ~/.oss/config.json" || fail "visual-test: the key check reads ~/.oss/config.json" "rc=$RC out=$OUT"
+
+# === T64(b): a plugin update mid-session ===================================================
+# @behavior After a plugin update in a running session, the new /oss:status, /oss:workflows, skills/ideate.md and
+#           /oss:login 4.2 can meet the ~/.oss/hooks the session started with (refreshed only at session start).
+#           The customer sees one line telling them to restart, never a raw usage or "No such file" error.
+# @business-rule The old hook cannot change, so the new prompt says what its output means: the 2.0.96 oss-value.sh
+#           (91c808e, the last release before these verbs) prints `usage: oss-value.sh` (exit 2) for a verb it does
+#           not know; a hook it never installed is `No such file or directory` (exit 127). The prompt's rule maps
+#           those, and only those, to the restart line; the current hook never prints either for these steps.
+RESTART='Your OSS hooks are older than the plugin; restart Claude Code (or start a new session) to update them.'
+# shipped_hooks: the sandbox's oss-value.sh and oss-safe-path.sh replaced by plugin 2.0.96's copies (from git)
+shipped_hooks() {
+    local f; for f in oss-value.sh oss-safe-path.sh; do (cd "$ROOT" && git show "91c808e:hooks/$f") > "$H/.oss/hooks/$f" || return 1; done
+    grep -q 'cli <script> <args>" >&2; exit 2' "$H/.oss/hooks/oss-value.sh"
+}
+# user_sees <file>: what the prompt <file> tells Claude to show for OUT: its restart line when OUT holds one of the
+# markers its rule names (the line holding "show only this line: `<line>`", naming `usage: oss-value.sh` and/or
+# `No such file or directory`), else OUT. A marker followed by "(any case" in the rule matches in any case (T75:
+# zsh, Claude Code's shell on macOS, prints `no such file or directory: <path>`).
+user_sees() {
+    local rule line m o
+    rule=$(grep -F 'show only this line: `' "$C/$1" | head -1)
+    line=${rule##*show only this line: \`}; line=${line%%\`*}
+    for m in 'usage: oss-value.sh' 'No such file or directory'; do
+        o=$OUT; [[ "$rule" == *"\`$m\` (any case"* ]] && { o=$(printf '%s' "$OUT" | tr '[:upper:]' '[:lower:]'); m=$(printf '%s' "$m" | tr '[:upper:]' '[:lower:]'); }
+        [[ -n "$rule" && "$rule" == *"\`$m\`"* && "$o" == *"$m"* ]] && { printf '%s' "$line"; return; }
+    done
+    printf '%s' "$OUT"
+}
+for c in 'status.md|~/.oss/hooks/oss-value.sh status' 'status.md|~/.oss/hooks/oss-value.sh usage' 'workflows.md|~/.oss/hooks/oss-value.sh workflows' \
+         'workflows.md|~/.oss/hooks/oss-value.sh workflow' '../skills/ideate.md|~/.oss/hooks/oss-claude-md-template.sh' 'login.md|~/.oss/hooks/oss-claude-md-template.sh'; do
+    f=${c%%|*}; l=${c#*|}
+    for old in shipped missing missing-zsh; do
+        sandbox repo; printf '{"apiKey":"ossk_wrun_key_64"}' > "$H/.oss/config.json"
+        if [[ $old == shipped ]]; then [[ "$l" == *oss-value.sh* ]] || continue; shipped_hooks || { fail "$f: the 2.0.96 hook comes out of git" "git show 91c808e failed"; continue; }
+        else n=${l##*/hooks/}; rm -f "${H:?}/.oss/hooks/${n%% *}"; fi
+        # missing-zsh (T75): the same block in zsh, the shell Claude Code runs commands in on macOS
+        if [[ $old == missing-zsh ]]; then [[ -x /bin/zsh ]] || { pass "$f: '$l' zsh row skipped (no /bin/zsh)"; continue; }
+            SH=/bin/zsh FENCE=fence_line run_block "$f" "$l"
+        else FENCE=fence_line run_block "$f" "$l"; fi
+        [[ "$RC" != 0 && "$(user_sees "$f")" == "$RESTART" && "$OUT" != *ossk_wrun_key_64* && -z "$(calls)" ]] \
+            && pass "$f: '$l' against a $old hook: the customer sees only the restart line" \
+            || fail "$f: '$l' against a $old hook: the restart line" "rc=$RC out=$OUT sees=$(user_sees "$f")"
+    done
+done
+# T78b: /oss:settings save against the 2.0.96 oss-api-curl.sh (no oss_settings_why / oss_settings_writable): the block
+# prints the restart line itself and never tells the user their valid settings.json "is not valid JSON ... Fix or
+# remove it" (a user who follows that deletes a good file holding provider apiKeys). Run in bash and in zsh.
+for old in stale stale-zsh; do
+    sandbox repo; printf '{"notifications":{"style":"visual"},"apiKeys":{"openai":"sk-keep"},"version":2}\n' > "$H/.oss/settings.json"
+    BEFORE=$(cat "$H/.oss/settings.json")
+    (cd "$ROOT" && git show "91c808e:hooks/oss-api-curl.sh") > "$H/.oss/hooks/oss-api-curl.sh" || { fail "settings: the 2.0.96 oss-api-curl.sh comes out of git" "git show failed"; continue; }
+    model_writes notify_style visual verbosity all
+    if [[ $old == stale-zsh ]]; then [[ -x /bin/zsh ]] || { pass "settings: stale-zsh row skipped (no /bin/zsh)"; continue; }
+        SH=/bin/zsh run_block settings.md "$SAVE"
+    else run_block settings.md "$SAVE"; fi
+    [[ "$RC" != 0 && "$OUT" == *"$RESTART"* && "$OUT" != *"not valid JSON"* && "$OUT" != *"Fix or remove"* \
+       && "$(cat "$H/.oss/settings.json")" == "$BEFORE" && "$(calls)" != *terminal-notifier* ]] \
+        && pass "settings: the save against a $old oss-api-curl.sh shows the restart line, not 'not valid JSON', and leaves settings.json as it was" \
+        || fail "settings: the save against a $old oss-api-curl.sh shows the restart line" "rc=$RC out=$OUT"
+done
+# The current hook never trips the rule: its own failure (here: no key) shows its own message
+for c in 'status.md|~/.oss/hooks/oss-value.sh status' 'workflows.md|~/.oss/hooks/oss-value.sh workflows'; do
+    f=${c%%|*}; l=${c#*|}
+    sandbox repo; FENCE=fence_line run_block "$f" "$l"
+    [[ "$RC" != 0 && "$OUT" == *"No API key found"* && "$(user_sees "$f")" == "$OUT" ]] && pass "$f: the current hook's own failure (no key) is shown as it is, not as the restart line" \
+        || fail "$f: the current hook's failure is not the restart line" "rc=$RC out=$OUT"
+done
 
 echo ""
 echo "Results: $((TESTS_RUN - TESTS_FAILED))/$TESTS_RUN passed, $TESTS_FAILED failed"

@@ -46,11 +46,11 @@ describe('WatcherSupervisor - IRON LAW Monitoring', () => {
    */
   it('should detect IRON LAW violations from log entries', async () => {
     // GIVEN - Setup onAnalyze callback to capture analysis
-    let capturedAnalysis: WorkflowAnalysis | null = null;
+    const captured: { analysis: WorkflowAnalysis | null } = { analysis: null }; // set by the callback (T75e)
     let capturedEntries: ParsedLogEntry[] | null = null;
 
     supervisor.onAnalyze((analysis, entries) => {
-      capturedAnalysis = analysis;
+      captured.analysis = analysis;
       capturedEntries = entries;
     });
 
@@ -79,6 +79,7 @@ describe('WatcherSupervisor - IRON LAW Monitoring', () => {
     await new Promise((resolve) => setTimeout(resolve, 150));
 
     // THEN - Analysis should contain iron_law_violation issue
+    const capturedAnalysis = captured.analysis;
     expect(capturedAnalysis).not.toBeNull();
     expect(capturedAnalysis?.issues).toBeDefined();
 
@@ -97,10 +98,10 @@ describe('WatcherSupervisor - IRON LAW Monitoring', () => {
    */
   it('should escalate to iron_law_repeated on multiple violations', async () => {
     // GIVEN - Setup onAnalyze callback to capture analysis
-    let capturedAnalysis: WorkflowAnalysis | null = null;
+    const captured: { analysis: WorkflowAnalysis | null } = { analysis: null }; // set by the callback (T75e)
 
     supervisor.onAnalyze((analysis) => {
-      capturedAnalysis = analysis;
+      captured.analysis = analysis;
     });
 
     // WHEN - Start supervisor first (starts tailing)
@@ -149,6 +150,7 @@ describe('WatcherSupervisor - IRON LAW Monitoring', () => {
     await new Promise((resolve) => setTimeout(resolve, 150));
 
     // THEN - Analysis should contain iron_law_repeated issue
+    const capturedAnalysis = captured.analysis;
     expect(capturedAnalysis).not.toBeNull();
     expect(capturedAnalysis?.issues).toBeDefined();
 

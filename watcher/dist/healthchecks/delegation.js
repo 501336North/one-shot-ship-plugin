@@ -1,4 +1,4 @@
-import { promises as fs } from 'fs';
+import { readRegularFile } from '../utils/regular-file.js';
 const NO_DELEGATION_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
 // Map file extensions to suggested agent types
 const FILE_TYPE_TO_AGENT = {
@@ -14,7 +14,7 @@ export async function checkDelegation(options) {
     const { sessionLogPath, sessionActive = false } = options;
     try {
         // Read log file
-        const logContent = await fs.readFile(sessionLogPath, 'utf-8');
+        const logContent = await readRegularFile(sessionLogPath);
         const lines = logContent.split('\n');
         // Parse AGENT entries
         const agentEntries = [];

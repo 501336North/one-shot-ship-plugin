@@ -21,6 +21,7 @@
  * Set test mode for provider failure simulation
  */
 export declare function setTestModeProviderFail(fail: boolean): void;
+export declare function setClaudeProbeTimeoutMs(ms: number): void;
 /**
  * Execute the models command with given arguments
  */

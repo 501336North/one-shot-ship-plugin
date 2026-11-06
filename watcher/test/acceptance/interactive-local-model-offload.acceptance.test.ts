@@ -16,27 +16,34 @@
  * THIS TEST IS EXPECTED TO FAIL until watcher/src/cli/agent-offload.ts exists (RED).
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { EventEmitter } from 'events';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
+import { ChildProcess, spawn } from 'child_process';
+import { PassThrough } from 'stream';
+
+// spawn is the nested-session boundary. Injected as itself (typeof spawn, every overload) and driven
+// through vi.mocked, so the double has the real collaborator's type (T75e).
+vi.mock('child_process', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('child_process')>()),
+  spawn: vi.fn(),
+}));
 
 // Module under test does not exist yet — this import is the meaningful RED.
-import { runAgentOffload } from '../../src/cli/agent-offload';
+import { runAgentOffload, type OffloadDeps } from '../../src/cli/agent-offload';
 import type { CheckResult } from '../../src/cli/agent-model-check';
 
 /** Build a fake child process that emits stdout/stderr then 'close' with the given exit code. */
-function makeFakeChild(exitCode: number, stdout = '', stderr = '') {
-  const child = new EventEmitter() as EventEmitter & {
-    stdout: EventEmitter;
-    stderr: EventEmitter;
-    stdin: { write: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> };
-  };
-  child.stdout = new EventEmitter();
-  child.stderr = new EventEmitter();
-  child.stdin = { write: vi.fn(), end: vi.fn() };
+function makeFakeChild(exitCode: number, stdout = '', stderr = ''): ChildProcess {
+  // A real (unspawned) ChildProcess with in-memory pipes, so it is what spawn returns (T75e).
+  const child = new ChildProcess();
+  const out = new PassThrough();
+  const err = new PassThrough();
+  child.stdout = out;
+  child.stderr = err;
+  child.stdin = new PassThrough();
   // Emit asynchronously so the awaiting runner has attached its listeners.
   process.nextTick(() => {
-    if (stdout) child.stdout.emit('data', Buffer.from(stdout));
-    if (stderr) child.stderr.emit('data', Buffer.from(stderr));
+    if (stdout) out.emit('data', Buffer.from(stdout));
+    if (stderr) err.emit('data', Buffer.from(stderr));
     child.emit('close', exitCode);
   });
   return child;
@@ -46,33 +53,34 @@ const ROUTED: CheckResult = {
   useProxy: true,
   model: 'ollama/gpt-oss:120b',
   provider: 'ollama',
-  proxyUrl: 'http://localhost:3456',
+  proxyUrl: 'http://127.0.0.1:3456',
 };
 const NATIVE: CheckResult = { useProxy: false };
 
 describe('Interactive local-model offload (Acceptance)', () => {
-  let spawnFn: ReturnType<typeof vi.fn>;
-  let checkAgentModel: ReturnType<typeof vi.fn>;
-  let isProxyReachable: ReturnType<typeof vi.fn>;
-  let readPrompt: ReturnType<typeof vi.fn>;
-  let startProxy: ReturnType<typeof vi.fn>;
-  let sleep: ReturnType<typeof vi.fn>;
+  // Each mock has the signature of the OffloadDeps collaborator it stands in for (T75e).
+  const spawnFn = vi.mocked(spawn);
+  let checkAgentModel: Mock<NonNullable<OffloadDeps['checkAgentModel']>>;
+  let isProxyReachable: Mock<NonNullable<OffloadDeps['isProxyReachable']>>;
+  let readPrompt: Mock<NonNullable<OffloadDeps['readPrompt']>>;
+  let startProxy: Mock<NonNullable<OffloadDeps['startProxy']>>;
+  let sleep: Mock<NonNullable<OffloadDeps['sleep']>>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    spawnFn = vi.fn();
-    checkAgentModel = vi.fn();
-    isProxyReachable = vi.fn().mockResolvedValue(true);
-    readPrompt = vi.fn().mockReturnValue('EXPERT PROMPT + TASK CONTEXT');
-    startProxy = vi.fn().mockResolvedValue(undefined);
-    sleep = vi.fn().mockResolvedValue(undefined); // no real delay in tests
+    spawnFn.mockReset();
+    checkAgentModel = vi.fn<NonNullable<OffloadDeps['checkAgentModel']>>();
+    isProxyReachable = vi.fn<NonNullable<OffloadDeps['isProxyReachable']>>().mockResolvedValue(true);
+    readPrompt = vi.fn<NonNullable<OffloadDeps['readPrompt']>>().mockReturnValue('EXPERT PROMPT + TASK CONTEXT');
+    startProxy = vi.fn<NonNullable<OffloadDeps['startProxy']>>().mockResolvedValue(undefined);
+    sleep = vi.fn<NonNullable<OffloadDeps['sleep']>>().mockResolvedValue(undefined); // no real delay in tests
   });
 
   afterEach(() => {
     delete process.env.OSS_OFFLOAD_ACTIVE;
   });
 
-  const deps = () => ({ spawnFn, checkAgentModel, isProxyReachable, readPrompt, startProxy, sleep });
+  const deps = (): OffloadDeps => ({ spawnFn: spawn, checkAgentModel, isProxyReachable, readPrompt, startProxy, sleep });
 
   describe('AC-OFFLOAD.1: offload runs on the configured local model', () => {
     it('GIVEN the agent is mapped to gpt-oss, WHEN run, THEN it spawns a nested claude session pointed at the proxy and returns the local output', async () => {
@@ -95,12 +103,14 @@ describe('Interactive local-model offload (Acceptance)', () => {
       expect(spawnFn).toHaveBeenCalledTimes(1);
       const [cmd, args, opts] = spawnFn.mock.calls[0];
       expect(cmd).toBe('claude');
-      expect(args).toEqual(expect.arrayContaining(['-p', '--dangerously-skip-permissions']));
+      expect(args).toContain('-p');
+      // It never skips permission checks: the repo it runs in may try to inject commands (T71).
+      expect(args).not.toContain('--dangerously-skip-permissions');
       expect(args).not.toContain('--model');
       // The base URL is what makes it hit the local model instead of Anthropic
-      expect(opts.env.ANTHROPIC_BASE_URL).toBe('http://localhost:3456');
+      expect(opts.env?.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:3456');
       // Recursion guard set so the nested session never re-offloads
-      expect(opts.env.OSS_OFFLOAD_ACTIVE).toBe('1');
+      expect(opts.env?.OSS_OFFLOAD_ACTIVE).toBe('1');
     });
   });
 

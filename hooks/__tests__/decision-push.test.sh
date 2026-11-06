@@ -16,6 +16,10 @@
 # obviously fake key.
 # Usage: ./hooks/__tests__/decision-push.test.sh
 set -uo pipefail
+# T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
+# The fake API (fake-oss-api.sh) stands at a plain-http loopback apiUrl: that needs the opt-in (T20).
+export OSS_ALLOW_HTTP_LOOPBACK=1
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HOOK="$ROOT/hooks/oss-decision-record.sh"
 FIX="$ROOT/hooks/__tests__/fixtures/ask-user-question"
@@ -36,6 +40,7 @@ mkdir -p "$T/home/.oss"
 
 # shellcheck source=hooks/__tests__/fake-oss-api.sh
 source "$ROOT/hooks/__tests__/fake-oss-api.sh"
+source "$ROOT/hooks/__tests__/lib/run-capped.sh"   # the one time cap a test may use (T49)
 FAKE_KEY='fake-oss-key-0000feedface0042'
 API="$T/api-fake"; fake_api_install "$API"
 AH="$T/api-home"; mkdir -p "$AH/.oss"
@@ -408,7 +413,8 @@ paths=$(cat "$API"/api/bodypath.* 2>/dev/null | sort -u); modes=$(cat "$API"/api
 outs=$(cat "$API"/api/argv.* 2>/dev/null | grep -o -- '-o [^ ]*' | cut -c4- | sort -u)
 under() { local p; [[ -n "$1" ]] || return 1; while IFS= read -r p; do [[ "$p" == "$AH/.oss/run/"?*/* ]] || return 1; done <<< "$1"; }
 left=$(find "$AH/.oss/run" -mindepth 1 2>/dev/null)
-[[ $RC -eq 0 && "$(posts)" == 3 ]] && under "$paths" && under "$outs" && [[ "$modes" == "600 " && -z "$left" && -d "$AH/.oss/run" ]] \
+# T74c: the answers come through curl's stdout (oss_capped), so curl writes no -o file; one it did write would be there
+[[ $RC -eq 0 && "$(posts)" == 3 ]] && under "$paths" && { [[ -z "$outs" ]] || under "$outs"; } && [[ "$modes" == "600 " && -z "$left" && -d "$AH/.oss/run" ]] \
     && pass "$name (made 600 in a private folder under ~/.oss/run, removed on exit)" \
     || fail "$name (made 600 in a private folder under ~/.oss/run, removed on exit)" "rc=$RC posts=$(posts) modes=$modes left=$left"
 api_reset; O=$(mktemp -d "$T/outside.XXXXXX"); ln -s "$O" "$AH/.oss/run"; push_hook
@@ -558,6 +564,52 @@ api_reset; O=$(mktemp -d "$T/outside.XXXXXX"); printf 'keep\n' > "$O/target"; ln
     || fail "$name" "rc=$RC calls=$(calls) target=$(cat "$O/target")"
 rm -f "$MK"
 
+# ===== Task 67: a FIFO under ~/.oss cannot hang a picker answer, and never turns the push on ===============
+# @behavior A person answers a question while ~/.oss/decisions-push-off or ~/.oss/settings.json is a FIFO; the
+#           answer is recorded, the hook finishes, and nothing is sent.
+# @business-rule Fail closed (#214 Task 16al): anything at the off marker is off, and the marker is never opened;
+#           a settings.json that is not a regular file cannot be read, and that is off too.
+name='should finish, record the answer and send nothing when a FIFO stands in a switch file'
+for c in "fifo marker|$MK" "fifo settings|$SF"; do
+    IFS='|' read -r what at <<< "$c"
+    api_reset; rm -f "$MK" "$SF"
+    mkfifo "$at"
+    (cd "$P" && HOME="$AH" PATH="$API/bin:$PATH" run_capped 20 "$HOOK" < "$FIX/pick.json" 2>"$T/err"); RC=$?
+    [[ $RC -eq 0 && "$(calls)" == 0 && -z "$(cat "$OB" 2>/dev/null)" && $(answer_ids | wc -w) -eq 1 ]] && pass "$name ($what)" \
+        || fail "$name ($what)" "rc=$RC calls=$(calls) outbox=$(head -c 100 "$OB" 2>/dev/null)"
+    rm -f "$MK" "$SF"
+done
+
+# ===== Task 70: a linked settings.json is followed to a regular file, as 2.0.96 did =========================
+# @behavior A person whose dotfiles manager (stow, chezmoi, yadm) links ~/.oss/settings.json answers a question;
+#           the push reads the linked file like any settings file: on unless it says decisionsPush false.
+# @business-rule 2.0.96 parity (user: "Follow the link", as check-updates does, T53b): a link to a regular file
+#           is read; a link to a FIFO, a device, a folder or nothing cannot tell, and that is off, never a hang.
+name='should follow a linked settings.json to a regular file: on unless it says off'
+for c in 'no decisionsPush key|{"notifications":{"style":"none"}}|1' 'decisionsPush false|{"decisionsPush":false}|0'; do
+    IFS='|' read -r what content want <<< "$c"
+    api_reset; rm -f "$SF"; printf '%s\n' "$content" > "$T/real-settings"; ln -s "$T/real-settings" "$SF"
+    (cd "$P" && HOME="$AH" PATH="$API/bin:$PATH" run_capped 20 "$HOOK" < "$FIX/pick.json" 2>"$T/err"); RC=$?
+    [[ $RC -eq 0 && "$(posts)" == "$want" && ( $want == 1 || "$(calls)" == 0 ) && $(answer_ids | wc -w) -eq 1 ]] && pass "$name ($what)" \
+        || fail "$name ($what)" "rc=$RC posts=$(posts) calls=$(calls)"
+    rm -f "$SF" "$T/real-settings"
+done
+name='should finish, record the answer and send nothing when settings.json links to no regular file'
+for what in 'link to a FIFO' 'link to /dev/zero' 'dangling link' 'link to a folder' 'a folder'; do
+    api_reset; rm -rf "$SF" "$T/target"
+    case $what in
+        'link to a FIFO') mkfifo "$T/target"; ln -s "$T/target" "$SF" ;;
+        'link to /dev/zero') ln -s /dev/zero "$SF" ;;
+        'dangling link') ln -s "$T/target" "$SF" ;;
+        'link to a folder') mkdir "$T/target"; ln -s "$T/target" "$SF" ;;
+        'a folder') mkdir "$SF" ;;
+    esac
+    (cd "$P" && HOME="$AH" PATH="$API/bin:$PATH" run_capped 20 "$HOOK" < "$FIX/pick.json" 2>"$T/err"); RC=$?
+    [[ $RC -eq 0 && "$(calls)" == 0 && -z "$(cat "$OB" 2>/dev/null)" && $(answer_ids | wc -w) -eq 1 ]] && pass "$name ($what)" \
+        || fail "$name ($what)" "rc=$RC calls=$(calls) outbox=$(head -c 100 "$OB" 2>/dev/null)"
+    rm -rf "$SF" "$T/target"
+done
+
 # ===== Task 16am: a push run stops as soon as the person switches off =====================================
 # @behavior A person turns the push off while a run is sending; no further answer leaves the machine in that run.
 # @business-rule The personal switch is read again before every POST; off stops the run, and what was not sent
@@ -615,6 +667,21 @@ push_hook
 left=$(cd "$AH/.oss/run" && ls | sort | tr '\n' ' ')
 [[ $RC -eq 0 && "$left" == "decision-push.NEW1 other.OLD1 " ]] && pass "$name" || fail "$name" "rc=$RC left=$left"
 rm -rf "$AH/.oss/run"
+
+# ===== T74c: an answer over the hooks' one body cap (262144 bytes, oss_capped) is no answer ==================
+# A policy or a POST answer that starts as a good one but runs past the cap is never parsed: no POST on such a
+# policy, no "verified" on such a POST answer (the answer stays pending for the next run); curl gets --max-filesize.
+PAD=$(head -c 262144 /dev/zero | tr '\0' ' ')
+name='should send nothing when the policy answer is over 262144 bytes'
+api_reset; api_queue policy "200 {\"pushEnabled\":true,\"team\":false}$PAD"; push_hook
+id=$(answer_ids | tr -d ' ')
+[[ $RC -eq 0 && "$(posts)" == 0 && "$(calls)" == 1 && "$(state_of "$id")" == pending ]] && grep -q -- '--max-filesize 262144 ' "$API/api/argv.1" && pass "$name" \
+    || fail "$name" "rc=$RC posts=$(posts) calls=$(calls) state=$(state_of "$id") argv=$(cat "$API/api/argv.1" 2>/dev/null)"
+name='should not mark an answer verified when the POST answer is over 262144 bytes'
+api_reset; api_queue decisions "201 {\"account\":{\"id\":\"acct-big\"}}$PAD"; push_hook
+id=$(answer_ids | tr -d ' ')
+[[ $RC -eq 0 && "$(posts)" == 1 && "$(state_of "$id")" == pending ]] && grep -q -- '--max-filesize 262144 ' "$API/api/argv.2" && pass "$name" \
+    || fail "$name" "rc=$RC posts=$(posts) state=$(state_of "$id") argv=$(cat "$API/api/argv.2" 2>/dev/null)"
 
 echo "$RUN run, $FAILED failed"
 [[ $FAILED -eq 0 ]]

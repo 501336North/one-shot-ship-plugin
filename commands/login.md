@@ -51,7 +51,7 @@ Configure your API key for OSS Dev Workflow access.
 
 ## API Configuration
 
-**API Base URL:** `https://one-shot-ship-api.onrender.com`
+**API Base URL:** the `apiUrl` in the OSS config (`$OSS_CONFIG_DIR/config.json` when that is set, else `~/.oss/config.json`); default `https://one-shot-ship-api.onrender.com`. Every request login makes goes through a hook that reads it; never send the key to a URL yourself.
 
 ## Quick Key Update Mode (`--key`)
 
@@ -63,16 +63,18 @@ Configure your API key for OSS Dev Workflow access.
    - Run `~/.oss/hooks/oss-value.sh dir` and note the folder it prints. If it prints nothing, show the user its error and stop.
    - Use the Write tool to write the key alone to `key.txt` in that folder. If no key was given, tell the user "Error: --key requires an API key value. Usage: /oss:login --key ak_xxxxx" and stop.
 
-2. **Read, validate and save the key** in ONE Bash call (it checks the key's shape and deletes `key.txt` at once, checks the key against `/api/v1/subscription/status`, saves it to `~/.oss/config.json` keeping the other settings, and prints the plan):
+2. **Read, validate and save the key** in ONE Bash call (it checks the key's shape and deletes `key.txt` at once, checks the key against `/api/v1/subscription/status` on the API in that config's `apiUrl` (default `https://one-shot-ship-api.onrender.com`), saves it to the OSS config (`$OSS_CONFIG_DIR/config.json` when that is set, else `~/.oss/config.json`) keeping the other settings, and prints the plan):
    ```bash
    ~/.oss/hooks/oss-login.sh
    ```
    If it prints an error instead of `Plan: ...`, show the user that error and stop.
 
-3. **Clear cached credentials** so the decrypt CLI picks up the new key:
+3. **Clear cached credentials** so the decrypt CLI picks up the new key (they sit beside the OSS config: `$OSS_CONFIG_DIR` when that is set, else `~/.oss`):
    ```bash
-   if [ -f ~/.oss/credentials.enc ]; then
-       rm ~/.oss/credentials.enc
+   . ~/.oss/hooks/oss-api-curl.sh
+   CREDS="$(dirname "$(oss_config_file)")/credentials.enc"
+   if [ -f "$CREDS" ]; then
+       rm "$CREDS"
        echo "Cleared cached credentials (will refresh on next command)"
    fi
    ```
@@ -94,8 +96,9 @@ Configure your API key for OSS Dev Workflow access.
 
 5. **Confirm success** (the plan was printed in step 2):
    ```bash
+   . ~/.oss/hooks/oss-api-curl.sh
    echo "API key updated successfully!"
-   echo "  Config: ~/.oss/config.json"
+   echo "  Config: $(oss_config_file)"
    echo ""
    echo "All existing tools and settings preserved. Ready to use."
    ```
@@ -109,8 +112,8 @@ Configure your API key for OSS Dev Workflow access.
 ## What This Command Does
 
 1. **Prompts for API key** - Or accepts as argument
-2. **Validates key** - Tests against API at `https://one-shot-ship-api.onrender.com/api/v1/subscription/status`
-3. **Stores securely** - Saves to `~/.oss/config.json`
+2. **Validates key** - Tests against `/api/v1/subscription/status` on the API in that config's `apiUrl` (default `https://one-shot-ship-api.onrender.com`)
+3. **Stores securely** - Saves to the OSS config (`$OSS_CONFIG_DIR/config.json` when that is set, else `~/.oss/config.json`)
 4. **Confirms access** - Shows subscription status
 
 ## Step 1: Get API Key
@@ -125,7 +128,7 @@ The key reaches the shell through the value folder, never typed into a command (
 
 1. Run `~/.oss/hooks/oss-value.sh dir` and note the folder it prints. If it prints nothing, show the user its error and stop.
 2. Use the Write tool to write the key alone to `key.txt` in that folder.
-3. Run this one call. It checks the key's shape and deletes `key.txt` at once, checks the key against `https://one-shot-ship-api.onrender.com/api/v1/subscription/status`, saves it to `~/.oss/config.json` (with `apiUrl` `https://one-shot-ship-api.onrender.com` when the file is new; other settings are kept) and prints the plan:
+3. Run this one call. It checks the key's shape and deletes `key.txt` at once, checks the key against `/api/v1/subscription/status` on the API in that config's `apiUrl` (default `https://one-shot-ship-api.onrender.com`), saves it to the OSS config (`$OSS_CONFIG_DIR/config.json` when that is set, else `~/.oss/config.json`) (with `apiUrl` `https://one-shot-ship-api.onrender.com` when the file is new; other settings are kept) and prints the plan:
    ```bash
    ~/.oss/hooks/oss-login.sh
    ```
@@ -159,11 +162,15 @@ This script is the **only** writer of the IRON LAWS block. Do not write, copy or
 
 ### 4.2: Fetch the CLAUDE.md template
 
-```http
-GET https://one-shot-ship-api.onrender.com/api/v1/prompts/claude-md
-Headers:
-  Authorization: Bearer {apiKey}
+```bash
+~/.oss/hooks/oss-claude-md-template.sh
 ```
+
+It takes no arguments. It sends the key from the OSS config only to the API that config's `apiUrl` names (the API the key was just checked against), and prints the template to stdout. Do not fetch the template any other way.
+
+If it prints `No such file or directory` (any case: zsh prints `no such file or directory`), the plugin was updated after this session started and `~/.oss/hooks` does not have this hook yet: skip 4.3, show only this line: `Your OSS hooks are older than the plugin; restart Claude Code (or start a new session) to update them.` (not the message below), and go on to Step 5.
+
+**If it exits non-zero, skip 4.3** (do not create or edit CLAUDE.md beyond what 4.1 wrote), tell the user "The CLAUDE.md project guidelines were not updated: {stderr reason}. Run /oss:login again to retry.", and go on to Step 5.
 
 Remove the placeholder line `<!-- IRON LAWS will be injected here by /oss:login -->` from the template. The block from 4.1 replaces it; never inject the laws into the template.
 
@@ -176,22 +183,17 @@ Remove the placeholder line `<!-- IRON LAWS will be injected here by /oss:login 
 
 ### 4.4: What Gets Synced
 
-**From IRON LAWS (shared/iron-laws endpoint):**
-- IRON LAW #1: TDD (with MINIMAL emphasis in GREEN phase)
-- IRON LAW #2: Test Philosophy
-- IRON LAW #3: Loop Detection Protocol
-- IRON LAW #4: Agent Git Flow
-- IRON LAW #5: Agent Delegation
-- IRON LAW #6: Dev Docs Synchronization
-- PROHIBITED section
-- Pre-Command Check Summary
+**From IRON LAWS (`/api/v1/prompts/shared/iron-laws`):** the block that
+`oss-iron-laws-sync.sh --install` writes: every numbered IRON LAW, the
+dev-docs symlink guard, the Decisions rules and the Enforcement pre-check. Session start refreshes
+this block in projects that already have one; never edit it by hand.
 
-**From Template (claude-md endpoint):**
-- London TDD methodology overview
-- Agent delegation table (which agents to use for what)
-- All available `/oss:` commands reference
-- Git workflow guidelines
-- Quality standards
+**From the template (`/api/v1/prompts/claude-md`):** the `# OSS Dev Workflow - Project Guidelines`
+section: workflow command boundaries and the `/oss:` command reference. Put
+project-specific guidance under its own top-level `# ` heading, since login replaces only this
+section and the laws block.
+
+This list names where each part comes from, not what it says: the served text is the reference.
 
 **Note:** IRON LAWS are the single source of truth. Every `/oss:login` pulls the latest version from the API.
 
@@ -200,12 +202,14 @@ Remove the placeholder line `<!-- IRON LAWS will be injected here by /oss:login 
 After successful authentication, install the decryption CLI for secure prompt delivery:
 
 1. **Install (or update) the CLI through the verified installer hook:**
+
+   Run this step with a Bash timeout of 600000 ms (10 minutes): a first install downloads about 60 MB. Exit 0: continue. Exit 75: the download is still in progress or another session is downloading it, so run the same step again (also when Claude Code stopped the step at its time limit), at most 3 more times; if it still has not exited 0, stop and tell the user to run the command again later. Any other exit: stop and show the user the hook's message (it says what to check).
    ```bash
-   ~/.oss/hooks/ensure-decrypt-cli.sh
+   ~/.oss/hooks/ensure-decrypt-cli.sh --long-step
    ```
 
    If `~/.oss/hooks/ensure-decrypt-cli.sh` does not exist (session start has not run yet), run
-   `"${CLAUDE_PLUGIN_ROOT}/hooks/ensure-decrypt-cli.sh"` instead. If neither exists, stop and tell the user
+   `"${CLAUDE_PLUGIN_ROOT}/hooks/ensure-decrypt-cli.sh" --long-step` instead. If neither exists, stop and tell the user
    to restart Claude Code so the One Shot Ship plugin can finish installing its hooks.
 
    The hook detects your platform (macOS arm64/x64, Linux x64/arm64 incl. GB10/Graviton/GH200/Ampere),
@@ -213,9 +217,12 @@ After successful authentication, install the decryption CLI for secure prompt de
    matches both the release checksum and the hash committed in the plugin. Do not download the binary
    any other way.
 
-2. **(If the hook reported an error)** stop here and show the user its message; do not continue to setup.
+2. **(If the hook exited 75)** follow the rule above: run the same step again (it continues where it stopped) at
+   most 3 more times; if it still exits 75, stop and tell the user to run /oss:login again later.
 
-3. **Setup credentials (requires valid API key):**
+3. **(If the hook exited with any other code)** stop here and show the user its message; do not continue to setup.
+
+4. **Setup credentials (requires valid API key):**
    ```bash
    ~/.oss/bin/oss-decrypt --setup
    ```
@@ -225,7 +232,7 @@ After successful authentication, install the decryption CLI for secure prompt de
    - `hardwareId` - Device-specific identifier
    - `salt` - Unique salt for key derivation
 
-4. **Verify installation (gate success on the real verifier):**
+5. **Verify installation (gate success on the real verifier):**
 
    Do NOT declare success just because the binary file exists — a binary that is
    present but crashes (e.g. a bad build) would slip through. Gate the success
@@ -268,10 +275,10 @@ After successful authentication, install tools if not already present:
    # Create a simple blue circle icon for OSS notifications
    OSS_ICON_PNG="$HOME/.oss/notification-icon.png"
    if [ ! -f "$OSS_ICON_PNG" ]; then
-       # Download or create the OSS icon
+       # Download (https only, redirects included; at most 10 s and 1 MiB, head stops an old curl's write; anything else is removed) or create the OSS icon (T78c)
        PLUGIN_ROOT=$(~/.oss/hooks/oss-value.sh root 2>/dev/null)
-       curl -sL "https://www.oneshotship.com/icon.png" -o "$OSS_ICON_PNG" 2>/dev/null || \
-       { test -n "$PLUGIN_ROOT" && sips -s format png "$PLUGIN_ROOT/assets/icon.png" --out "$OSS_ICON_PNG" 2>/dev/null; } || \
+       ( set -o pipefail; curl -sL --proto '=https' --proto-redir '=https' --max-time 10 --max-filesize 1048576 "https://www.oneshotship.com/icon.png" 2>/dev/null | head -c 1048577 > "$OSS_ICON_PNG" ) && [ "$(wc -c < "$OSS_ICON_PNG")" -le 1048576 ] || \
+       { rm -f "$OSS_ICON_PNG"; test -n "$PLUGIN_ROOT" && sips -s format png "$PLUGIN_ROOT/assets/icon.png" --out "$OSS_ICON_PNG" 2>/dev/null; } || \
        echo "Note: Could not create notification icon. Notifications will work without branding."
    fi
    ```
@@ -548,7 +555,7 @@ After tools are installed, if `~/.oss/settings.json` does NOT exist:
 
 ## Config File Format
 
-After login, `~/.oss/config.json` will contain:
+After login, the OSS config (`$OSS_CONFIG_DIR/config.json` when that is set, else `~/.oss/config.json`) will contain (a new file gets the default `apiUrl`; an existing one keeps its own):
 ```json
 {
   "apiKey": "ak_xxxxx",
@@ -565,6 +572,6 @@ Get a valid key from https://www.oneshotship.com/dashboard
 
 ### Network Error
 ```
-Check internet connection and try again
-API endpoint: https://one-shot-ship-api.onrender.com/api/v1/subscription/status
+Couldn't verify the key (network or server problem). Check your connection and run /oss:login again.
+API endpoint: /api/v1/subscription/status on your OSS config's apiUrl (default https://one-shot-ship-api.onrender.com)
 ```

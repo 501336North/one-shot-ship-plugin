@@ -1,5 +1,5 @@
-import { promises as fs } from 'fs';
 import type { CheckResult } from '../types.js';
+import { readRegularFile } from '../utils/regular-file.js';
 
 interface DelegationCheckOptions {
   sessionLogPath: string;
@@ -26,7 +26,7 @@ export async function checkDelegation(
 
   try {
     // Read log file
-    const logContent = await fs.readFile(sessionLogPath, 'utf-8');
+    const logContent = await readRegularFile(sessionLogPath);
     const lines = logContent.split('\n');
 
     // Parse AGENT entries

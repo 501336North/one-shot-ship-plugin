@@ -20,6 +20,7 @@
 import { getCachedOrFetch } from '../api/workflow-config.js';
 import { readApiCredentials, type ApiCredentials } from '../api/api-credentials.js';
 import { isSafeTeamCommandName } from '../utils/safe-chain-name.js';
+import { safeForLog } from '../utils/safe-for-log.js';
 import { WORKFLOW_NAME_PATTERN, isValidWorkflowName } from '../utils/workflow-name.js';
 import { DEFAULT_WORKFLOW_CONFIGS, type ChainItem } from '../engine/types.js';
 
@@ -49,11 +50,6 @@ const SAFE_CONDITION = /^[a-z0-9_-]{1,64}$/;
 export const CHAIN_LINE_PATTERN = new RegExp(
   `^CHAIN: \\/oss:(${WORKFLOW_NAME_PATTERN.source.slice(1, -1)}|oss-custom [a-z0-9-]{1,100}) \\((always|condition: [a-z0-9_-]{1,64})\\)$`
 );
-
-/** Keep printable ASCII only and truncate so a rejected value cannot shape stderr (G4) */
-function safeForLog(value: string): string {
-  return value.replace(/[^\x20-\x7e]/g, '?').slice(0, 60);
-}
 
 /** G3: config is untrusted JSON - a step must be an object with a string command and string-or-absent condition */
 function isChainItemShape(value: unknown): value is ChainItem {

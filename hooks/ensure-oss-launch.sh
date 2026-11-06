@@ -14,7 +14,7 @@ set -uo pipefail
 BIN_DIR="${OSS_LAUNCH_BIN_DIR:-$HOME/.oss/bin}"
 # Pin to a SPECIFIC release tag (not `latest`) so a fresh/unknown release can't auto-roll out to
 # every box. The default tag is bumped (with the committed checksum manifest) at each release.
-OSS_LAUNCH_TAG="${OSS_LAUNCH_TAG:-oss-launch-v2.0.78}"
+OSS_LAUNCH_TAG="${OSS_LAUNCH_TAG:-oss-launch-v2.0.97-2}"
 RELEASES="${OSS_LAUNCH_RELEASES_URL:-https://github.com/501336North/one-shot-ship-plugin/releases/download/$OSS_LAUNCH_TAG}"
 
 # Detect OS + arch (overridable for tests).
@@ -53,12 +53,24 @@ SUM="$(mktemp)"
 cleanup() { rm -f "$TMP" "$SUM"; }
 trap cleanup EXIT
 
-if ! curl -sfL "$URL" -o "$TMP"; then
+# fetch MAX FILE SECS URL: downloads URL to FILE within SECS seconds and MAX bytes (T74c). --max-filesize
+# refuses a too-large Content-Length; head -c stops a body sent with none, which curl before 8.4 lets past it.
+# Over MAX is a failed download (63, curl's code for it); the EXIT trap removes FILE. HTTPS only, redirects too (T82, N5).
+fetch() {
+  local max=$1 out=$2 secs=$3 url=$4 rc
+  curl -sfL --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time "$secs" --max-filesize "$max" "$url" | head -c $((max + 1)) > "$out"
+  rc=${PIPESTATUS[0]}
+  (( rc == 0 )) || return "$rc"
+  (( $(wc -c < "$out") <= max )) || return 63
+}
+
+# 256 MiB: a few times the binary's size today, room to grow; a .sha256 line is under 100 bytes.
+if ! fetch 268435456 "$TMP" 300 "$URL"; then
   echo "[ensure-oss-launch] download failed: $URL" >&2
   exit 1
 fi
 
-if ! curl -sfL "$URL.sha256" -o "$SUM"; then
+if ! fetch 4096 "$SUM" 30 "$URL.sha256"; then
   echo "[ensure-oss-launch] checksum file unavailable — refusing (fail closed)" >&2
   exit 1
 fi

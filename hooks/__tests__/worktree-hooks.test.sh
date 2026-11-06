@@ -13,10 +13,13 @@
 # 7. oss-worktree-remove.sh should preserve dev docs
 
 set -uo pipefail
+# The hooks read the API key and URL from $OSS_CONFIG_DIR/config.json: a developer's exported
+# override must not lead them to the real key (worktree-create would copy it into a test worktree, T22).
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOKS_JSON="$SCRIPT_DIR/../../hooks.json"  # the root file plugin.json loads
-CREATE_SCRIPT="$SCRIPT_DIR/../oss-worktree-create.sh"
+CREATE_SCRIPT="${HOOKS_UNDER_TEST:-$SCRIPT_DIR/..}/oss-worktree-create.sh"
 REMOVE_SCRIPT="$SCRIPT_DIR/../oss-worktree-remove.sh"
 
 # Test tracking
@@ -197,6 +200,34 @@ test_copy_config() {
 }
 
 # =============================================================================
+# TEST 5b: oss-worktree-create.sh copies the config the hooks read (T22)
+#
+# @behavior With OSS_CONFIG_DIR set, a new worktree gets that config (the key the hooks
+#           and /oss:login use), not a stale ~/.oss/config.json
+# @acceptance-criteria worktree .oss/config.json holds $OSS_CONFIG_DIR's key, not ~/.oss's
+# =============================================================================
+test_copy_config_dir() {
+    local test_name="oss-worktree-create.sh copies \$OSS_CONFIG_DIR/config.json when it is set (T22)"
+    ((TESTS_RUN++))
+
+    local test_dir test_home cfg_dir
+    test_dir=$(mktemp -d); test_home=$(mktemp -d); cfg_dir=$(mktemp -d)
+    mkdir -p "$test_home/.oss"
+    echo '{"apiKey":"test-key-home"}' > "$test_home/.oss/config.json"
+    echo '{"apiKey":"test-key-cfgdir"}' > "$cfg_dir/config.json"
+
+    CLAUDE_WORKTREE_PATH="$test_dir" HOME="$test_home" OSS_CONFIG_DIR="$cfg_dir" "$CREATE_SCRIPT" 2>/dev/null
+
+    if grep -q 'test-key-cfgdir' "$test_dir/.oss/config.json" 2>/dev/null && ! grep -q 'test-key-home' "$test_dir/.oss/config.json"; then
+        pass "$test_name"
+    else
+        fail "$test_name" "the OSS_CONFIG_DIR config" "$(cat "$test_dir/.oss/config.json" 2>&1)"
+    fi
+
+    rm -rf "$test_dir" "$test_home" "$cfg_dir"
+}
+
+# =============================================================================
 # TEST 6: oss-worktree-remove.sh should clean up .oss/ state
 #
 # @behavior Worktree cleanup removes state files to avoid clutter
@@ -271,6 +302,7 @@ test_hooks_json_worktree_remove
 test_create_oss_dir
 test_create_workflow_state
 test_copy_config
+test_copy_config_dir
 test_remove_cleanup
 test_preserve_dev_docs
 

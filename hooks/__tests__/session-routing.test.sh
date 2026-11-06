@@ -18,6 +18,9 @@
 # Usage: ./hooks/__tests__/session-routing.test.sh
 #        BASH_UNDER_TEST=/opt/local/bin/bash ./hooks/__tests__/session-routing.test.sh
 set -uo pipefail
+# The hooks read the API key and URL from $OSS_CONFIG_DIR/config.json: a developer's exported
+# override must not lead them to the real key and the real API (T19).
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SH="${BASH_UNDER_TEST:-/bin/bash}"
 RUN=0; FAILED=0
@@ -27,6 +30,9 @@ echo "Running session-routing tests under $("$SH" -c 'echo "$BASH_VERSION"') ($S
 
 T=$(cd "$(mktemp -d /tmp/oss-sessions.XXXXXX)" && pwd -P)
 trap 'rm -rf "$T"' EXIT
+# Session start runs under an alias (lib/session-start-alias.sh): an outside `pkill -f oss-session-start` misses it (T48).
+source "$ROOT/hooks/__tests__/lib/session-start-alias.sh"
+SS_HOOK=$(session_start_alias "$ROOT/hooks" "$T/ss-alias/hooks") || { echo "✗ FAIL: session start alias"; exit 1; }
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR CLAUDE_CODE_SESSION_ID
 H="$T/home"; mkdir -p "$H/.oss"
@@ -46,7 +52,7 @@ prod() { eval "printf '%s' \"\$P$1\""; }
 # the pointer is aged to <days-ago> (sessions started days apart).
 start_session() {
     (cd "$2" && env HOME="$H" CLAUDE_PLUGIN_ROOT="$ROOT" OSS_SKIP_HEALTH_CHECK=1 CLAUDE_PROJECT_DIR="$2" CLAUDE_CODE_SESSION_ID="$1" \
-        "$SH" "$ROOT/hooks/oss-session-start.sh" >/dev/null 2>&1 <<< "{\"session_id\":\"$1\",\"source\":\"startup\",\"hook_event_name\":\"SessionStart\"}")
+        "$SH" "$SS_HOOK" >/dev/null 2>&1 <<< "{\"session_id\":\"$1\",\"source\":\"startup\",\"hook_event_name\":\"SessionStart\"}")
     [[ "$3" == 0 ]] || touch -t "$(date -v-"$3"d +%Y%m%d%H%M 2>/dev/null || date -d "-$3 days" +%Y%m%d%H%M)" "$SESS/$1/project" 2>/dev/null
 }
 # Shuffled order, days apart.
@@ -172,7 +178,7 @@ fb "the session id has characters outside [A-Za-z0-9-]" "S1/../S1"
 
 # --- the stdin session_id, when it differs, gets a pointer too -----------------------------------
 start_stdin() { (cd "$P4" && env HOME="$H" CLAUDE_PLUGIN_ROOT="$ROOT" OSS_SKIP_HEALTH_CHECK=1 CLAUDE_PROJECT_DIR="$P4" CLAUDE_CODE_SESSION_ID=S4 \
-    "$SH" "$ROOT/hooks/oss-session-start.sh" >/dev/null 2>&1 <<< "{\"session_id\":\"$1\",\"source\":\"clear\",\"hook_event_name\":\"SessionStart\"}"); }
+    "$SH" "$SS_HOOK" >/dev/null 2>&1 <<< "{\"session_id\":\"$1\",\"source\":\"clear\",\"hook_event_name\":\"SessionStart\"}"); }
 start_stdin S4b
 [[ "$(cat "$SESS/S4b/project" 2>/dev/null)" == "$P4" && "$(cat "$SESS/S4/project" 2>/dev/null)" == "$P4" ]] \
     && pass "SessionStart also writes the pointer under a different stdin session_id" || fail "SessionStart also writes the pointer under a different stdin session_id" "$(ls "$SESS" | tr '\n' ' ')"
@@ -184,7 +190,7 @@ age() { touch -t "$(date -v-"$2"d +%Y%m%d%H%M 2>/dev/null || date -d "-$2 days" 
 for id in OLD31 YNG29; do mkdir -m 700 "$SESS/$id"; printf '%s\n' "$P1" > "$SESS/$id/project"; chmod 600 "$SESS/$id/project"; done
 age OLD31 31; age YNG29 29; age S1 40
 (cd "$P1" && env HOME="$H" CLAUDE_PLUGIN_ROOT="$ROOT" OSS_SKIP_HEALTH_CHECK=1 CLAUDE_PROJECT_DIR="$P1" CLAUDE_CODE_SESSION_ID=S1 \
-    "$SH" "$ROOT/hooks/oss-session-start.sh" >/dev/null 2>&1 <<< '{"session_id":"S1","source":"resume","hook_event_name":"SessionStart"}')
+    "$SH" "$SS_HOOK" >/dev/null 2>&1 <<< '{"session_id":"S1","source":"resume","hook_event_name":"SessionStart"}')
 [[ ! -e "$SESS/OLD31" ]] && pass "a 31-day-old pointer is pruned" || fail "a 31-day-old pointer is pruned" "$(ls "$SESS" | tr '\n' ' ')"
 [[ -f "$SESS/YNG29/project" ]] && pass "a 29-day-old pointer is kept" || fail "a 29-day-old pointer is kept" "$(ls "$SESS" | tr '\n' ' ')"
 [[ -f "$SESS/S1/project" && -n "$(find "$SESS/S1/project" -mmin -5)" ]] && pass "the starting session's own (40-day-old) pointer is rewritten, not pruned" || fail "the starting session's own (40-day-old) pointer is rewritten, not pruned" "$(ls -la "$SESS/S1" 2>&1 | tr '\n' ' ')"
@@ -208,7 +214,7 @@ rm -rf "$SESS/bad.id" "$SESS/FOREIGN1"
 # --- a linked ~/.oss/sessions is refused by the writer ---------------------------------------------
 H3="$T/home3"; mkdir -p "$H3/.oss" "$T/elsewhere"; ln -s "$T/elsewhere" "$H3/.oss/sessions"
 (cd "$P1" && env HOME="$H3" CLAUDE_PLUGIN_ROOT="$ROOT" OSS_SKIP_HEALTH_CHECK=1 CLAUDE_PROJECT_DIR="$P1" CLAUDE_CODE_SESSION_ID=S1 \
-    "$SH" "$ROOT/hooks/oss-session-start.sh" >/dev/null 2>&1 <<< '{"session_id":"S1"}')
+    "$SH" "$SS_HOOK" >/dev/null 2>&1 <<< '{"session_id":"S1"}')
 [[ -z "$(ls -A "$T/elsewhere")" ]] && pass "the writer refuses a linked ~/.oss/sessions (nothing written through it)" || fail "the writer refuses a linked ~/.oss/sessions (nothing written through it)" "$(ls -A "$T/elsewhere")"
 
 echo ""

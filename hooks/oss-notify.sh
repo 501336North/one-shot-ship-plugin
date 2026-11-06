@@ -29,15 +29,38 @@ run_with_timeout() {
         gtimeout "$timeout_secs" "$@" || true
     elif command -v timeout &>/dev/null; then
         timeout "$timeout_secs" "$@" || true
+    elif [[ -x /usr/bin/perl ]]; then
+        # Fallback (stock macOS): one supervisor owns the time limit (T72; the same program as oss-session-start.sh's, byte
+        # for byte: one-copy-helpers.test.sh, T81; inline, so a hook never loses its limit to a missing file). It is the
+        # command's parent and runs it in its own process group (like GNU timeout; stdin /dev/null). It never signals
+        # that group after reaping the leader (the id may then be reused): it polls the leader with
+        # waitpid(WNOHANG) between short sleeps (1 ms doubling to 100 ms; a SIGCHLD cuts them short), and handlers only
+        # set flags. At the bound, or once this shell is gone (HUP, INT or TERM to it, or its parent changes), it
+        # kills the group, waits for the leader's SIGCHLD, kills the group again while the zombie leader still holds
+        # the id (a child forked while the first kill landed, T54c), and only then reaps. It sits in a group of its
+        # own, so a KILL to this shell's group still leaves it to end the command's.
+        /usr/bin/perl -e '
+            my ($s, $pp, $stop, $chld) = (shift, getppid, 0, 0);
+            $SIG{CHLD} = sub { $chld = 1 };   # before the fork: an inherited SIG_IGN would let the kernel reap
+            my $p = fork; exit 125 unless defined $p;
+            if (!$p) { setpgrp(0, 0); exec { $ARGV[0] } @ARGV; exit($!{ENOENT} ? 127 : 126) }
+            setpgrp($p, $p); setpgrp(0, 0);
+            my %n = (HUP => 1, INT => 2, TERM => 15);
+            for my $g (keys %n) { $SIG{$g} = sub { $stop = $n{$g} } }
+            sub gkill { kill "KILL", -$p }
+            my ($t0, $used, $tick) = (time, 0, 0.001);
+            while (1) {
+                my $r = waitpid($p, 1);   # 1: WNOHANG
+                if ($r == $p) { exit($? & 127 ? 128 + ($? & 127) : $? >> 8) }
+                exit 125 if $r == -1;     # not ours to reap (never expected): signal nothing
+                last if $stop || $used >= $s || time - $t0 > $s + 1 || getppid != $pp;   # time(): whole seconds, a backstop
+                select(undef, undef, undef, $tick); $used += $tick; $tick = $tick < 0.05 ? $tick * 2 : 0.1;
+            }
+            gkill(); for (1 .. 200) { last if $chld; select(undef, undef, undef, 0.005) }
+            gkill(); waitpid($p, 0); exit($stop ? 128 + $stop : 137);
+        ' "$timeout_secs" "$@" </dev/null || true
     else
-        "$@" &
-        local pid=$!
-        # The timer holds no stdio, and killing it also kills its sleep (R2-1; same shape as oss-session-start.sh).
-        ( trap 'kill $s 2>/dev/null; exit 0' TERM; sleep "$timeout_secs" & s=$!; wait $s && kill -9 $pid 2>/dev/null ) </dev/null >/dev/null 2>&1 &
-        local killer=$!
-        wait $pid 2>/dev/null || true
-        kill $killer 2>/dev/null || true
-        wait $killer 2>/dev/null || true
+        "$@" </dev/null || true   # no perl either: unbounded, so nothing is ever signalled (T72)
     fi
 }
 
@@ -108,7 +131,7 @@ wf_state_timeout() {
 LOG_SCRIPT="$PLUGIN_ROOT/hooks/oss-log.sh"
 # LOG_SCRIPT fallback: check plugin cache if not found at PLUGIN_ROOT
 if [[ ! -f "$LOG_SCRIPT" ]]; then
-    _found_log=$(find "$HOME/.claude/plugins/cache/one-shot-ship-plugin" -name "oss-log.sh" -path "*/hooks/*" -type f 2>/dev/null | sort -V | tail -1)
+    _found_log=$(find "$HOME/.claude/plugins/cache/one-shot-ship-plugin" -name "oss-log.sh" -path "*/hooks/*" -type f 2>/dev/null | sort -V | tail -1 || true)
     [[ -n "$_found_log" ]] && LOG_SCRIPT="$_found_log"
 fi
 
@@ -257,13 +280,14 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                 # Note: oss-decrypt also tracks when prompts are fetched from API,
                 # but cached prompts bypass the API, so we track here as the source of truth
                 (
-                    if API_KEY=$(oss_api_key) && API_URL=$(oss_api_url); then
-                        oss_api_curl "$API_KEY" -sS -X POST "${API_URL}/api/v1/analytics/track" \
+                    if oss_api_creds; then   # key and URL from one read (T37)
+                        # the answer is discarded; oss_capped stops reading it at OSS_BODY_MAX bytes (T74c)
+                        oss_capped oss_api_curl "$OSS_KEY" -sS -m 5 --max-filesize "$OSS_BODY_MAX" -X POST "${OSS_URL}/api/v1/analytics/track" \
                             -H "Content-Type: application/json" \
                             -d "{\"command\": \"$WORKFLOW_CMD\", \"promptType\": \"command\", \"promptName\": \"$WORKFLOW_CMD\"}" \
                             >/dev/null 2>&1 || true
                     fi
-                ) &
+                ) </dev/null >/dev/null 2>&1 &
                 ;;
             merged)
                 # When ship merged, reset the entire workflow chain to start fresh
@@ -361,7 +385,7 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "session" ]]; then
                             sleep 11
                             wf_state_timeout 2 setNotification "$update_msg" 30 2>/dev/null
                         fi
-                    ) &
+                    ) </dev/null >/dev/null 2>&1 &
                 fi
                 ;;
             context_saved)

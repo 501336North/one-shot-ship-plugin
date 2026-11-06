@@ -19,19 +19,63 @@ const ROUTED: CheckResult = {
   useProxy: true,
   model: 'ollama/gpt-oss:120b',
   provider: 'ollama',
-  proxyUrl: 'http://localhost:3456',
+  proxyUrl: 'http://127.0.0.1:3456',
 };
 
 describe('buildOffloadInvocation', () => {
   it('targets the local model through the proxy and sets the recursion guard', () => {
     const inv = buildOffloadInvocation(ROUTED);
     expect(inv.cmd).toBe('claude');
-    expect(inv.args).toEqual(['-p', '--dangerously-skip-permissions']);
+    expect(inv.args[0]).toBe('-p');
     // Must NOT pass a foreign --model — the Claude CLI rejects unknown model ids client-side.
     expect(inv.args).not.toContain('--model');
     // The base URL is the actual offload lever; the guard prevents nested re-offload.
-    expect(inv.env.ANTHROPIC_BASE_URL).toBe('http://localhost:3456');
+    expect(inv.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:3456');
     expect(inv.env.OSS_OFFLOAD_ACTIVE).toBe('1');
+  });
+
+  /**
+   * @behavior The offloaded agent may read and edit files in the repo, but it cannot run commands,
+   *           use the web or MCP tools, and nothing the repo ships can widen that. (T71)
+   * @business-rule A local model reading repo files can be prompt-injected by them, so the nested
+   *                session never skips permission checks.
+   */
+  it('never skips permission checks: file tools only, edits only inside the repo', () => {
+    const { args } = buildOffloadInvocation(ROUTED);
+    const valueOf = (flag: string): string | undefined => args[args.indexOf(flag) + 1];
+
+    expect(args).not.toContain('--dangerously-skip-permissions');
+    expect(args).not.toContain('--allow-dangerously-skip-permissions');
+    expect(args).not.toContain('bypassPermissions');
+    // Only the file tools exist in the nested session: no Bash, no web, no sub-agents.
+    expect(valueOf('--tools')).toBe('Read,Grep,Glob,Edit,Write');
+    // Edits inside the working directory are accepted; anything else would need a prompt, and
+    // a `-p` run has nobody to answer one, so it is refused.
+    expect(valueOf('--permission-mode')).toBe('acceptEdits');
+    // No MCP servers are loaded.
+    expect(args).toContain('--strict-mcp-config');
+  });
+
+  /**
+   * @behavior The offloaded agent cannot read or change files outside the repo, or the OSS config
+   *           copy a worktree keeps in .oss/, even when the user's own Claude settings allow broad
+   *           reads. (T76, security N1/N2)
+   * @business-rule Repo content may prompt-inject the local model, so no settings file may widen
+   *                what it can reach, and the OSS key never enters its context.
+   */
+  it('is confined to the repo and kept out of .oss, whatever the user settings allow', () => {
+    const { args } = buildOffloadInvocation(ROUTED);
+
+    // --restricted ignores every settings file (user ones included) and confines the file tools
+    // to the working directory; loading user settings would bring back their allow rules.
+    expect(args).toContain('--restricted');
+    expect(args).not.toContain('--setting-sources');
+    // The worktree's .oss/config.json copy holds the key: reads and edits there are denied
+    // (Edit, since the CLI ignores Write(path) deny rules). The flag takes several values, so
+    // it comes last and nothing after it is read as a rule.
+    const deny = args.indexOf('--disallowedTools');
+    expect(deny).toBeGreaterThan(-1);
+    expect(args.slice(deny + 1)).toEqual(['Read(./.oss/**)', 'Edit(./.oss/**)']);
   });
 
   it('does not leak ANTHROPIC_MODEL into the nested session', () => {

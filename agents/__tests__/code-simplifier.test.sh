@@ -3,7 +3,7 @@
 #
 # Verifies:
 # 1. code-simplifier.md exists in agents directory
-# 2. Contains API fetch URL for code-simplifier
+# 2. Fetches the code-simplifier prompt through oss-decrypt (T58)
 # 3. Contains auth check step
 # 4. Contains error handling (401, 403, 500)
 #
@@ -52,16 +52,17 @@ test_file_exists() {
 }
 
 # =============================================================================
-# TEST 2: Contains API fetch URL
+# TEST 2: Fetches the prompt through oss-decrypt (T58)
 # =============================================================================
 test_api_fetch_url() {
-    local test_name="should contain API fetch URL for code-simplifier"
+    # T58: the prompt comes through the decrypt CLI (the agents route serves only ciphertext)
+    local test_name="should fetch the code-simplifier prompt through oss-decrypt"
     ((TESTS_RUN++))
 
-    if grep -q "/api/v1/prompts/agents/code-simplifier" "$FILE" 2>/dev/null; then
+    if grep -qx '~/.oss/bin/oss-decrypt --type agents --name code-simplifier' "$FILE" 2>/dev/null; then
         pass "$test_name"
     else
-        fail "$test_name" "contains /api/v1/prompts/agents/code-simplifier" "URL not found"
+        fail "$test_name" "the line ~/.oss/bin/oss-decrypt --type agents --name code-simplifier" "not found"
     fi
 }
 

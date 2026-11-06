@@ -20,7 +20,7 @@ check "no command puts the API key on a curl command line (Authorization: Bearer
 check "no command reads .apiUrl itself (use oss_api_url)" \
     "$(grep -n '\.apiUrl' "$ROOT"/commands/*.md)"
 check "no command reads .apiKey itself (use oss_api_key: same config dir as oss_api_url and the CLI)" \
-    "$(grep -n '\.apiKey' "$ROOT"/commands/*.md)"
+    "$(grep -nE '\.apiKey([^s]|$)' "$ROOT"/commands/*.md)"
 check "every apiUrl error in a command uses the current rule wording" \
     "$(grep -n 'apiUrl in ' "$ROOT"/commands/*.md | grep -vF 'apiUrl in your OSS config must be an https URL (plain http only for localhost) with no user@, query or fragment')"
 check "every API_URL= in a command comes from oss_api_url" \

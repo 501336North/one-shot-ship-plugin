@@ -95,6 +95,8 @@ Run the following command to fetch and verify the manifest signature:
 ~/.oss/bin/oss-decrypt --verify-manifest
 ```
 
+This command prints one line of JSON and exits 1, with no `Error:` line, both when the signature is invalid and when the manifest cannot be fetched, so it has its own rule. If the JSON has `"error":"Failed to fetch manifest"`, tell the user in one line that the manifest could not be fetched (offline or the API is unavailable) and STOP the audit, reporting the prompts checked so far. Otherwise, when the JSON has `signatureValid`, show it with the display rules below even though the command exited 1; when `signatureValid` is false, show the INVALID warning in full, then STOP the audit and write the report (Step 6) with `Stopped early: manifest signature invalid`. Any other output or failure stops the audit with a one-line reason. Never retry in a loop, never read ~/.oss/config.json, and never save a prompt to a file.
+
 This outputs a JSON report with:
 - `signatureValid` — whether the Ed25519 signature is valid
 - `promptCount` — number of prompts in the manifest
@@ -141,7 +143,7 @@ Signature verification skipped — other checks will still run.
 Standard and Full tiers require authentication to decrypt prompts.
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+test -f "$HOME/.oss/config.json" && grep -qE '"apiKey"[[:space:]]*:[[:space:]]*"[A-Za-z0-9_-]' "$HOME/.oss/config.json" && echo "API key configured"
 ```
 
 If no API key is found:
@@ -162,10 +164,14 @@ Determine which prompts to audit based on tier and scope:
 ~/.oss/bin/oss-decrypt --list-prompts --category hooks
 ```
 
+If this command fails, tell the user in one line what happened and STOP the audit, reporting the prompts checked so far: `Error: fetch failed` means offline; `Error: Unauthorized` or `Error: Credentials not found` means not logged in (run /oss:login); `Error: Request failed` means rate limited or the API is unavailable, which the CLI cannot tell apart. The only failures specific to one prompt are `Error: Prompt not found`, an `Error: Invalid prompt` message and `oss-value: decrypt: refused`: record that prompt as DECRYPT_FAIL and go on to the next one. Any other failure stops the audit as well. Never retry in a loop, never read ~/.oss/config.json, and never save a prompt to a file.
+
 **Full tier (`--full`):**
 ```bash
 ~/.oss/bin/oss-decrypt --list-prompts
 ```
+
+If this command fails, tell the user in one line what happened and STOP the audit, reporting the prompts checked so far: `Error: fetch failed` means offline; `Error: Unauthorized` or `Error: Credentials not found` means not logged in (run /oss:login); `Error: Request failed` means rate limited or the API is unavailable, which the CLI cannot tell apart. The only failures specific to one prompt are `Error: Prompt not found`, an `Error: Invalid prompt` message and `oss-value: decrypt: refused`: record that prompt as DECRYPT_FAIL and go on to the next one. Any other failure stops the audit as well. Never retry in a loop, never read ~/.oss/config.json, and never save a prompt to a file.
 
 **Single prompt (`--prompt build`):**
 Only audit the prompt matching the given name. Search the manifest for prompts whose name portion (after the `/`) matches.
@@ -198,11 +204,13 @@ The category and the name reach the shell through the value folder, never typed 
 ~/.oss/hooks/oss-value.sh decrypt
 ```
 
+If this command fails, tell the user in one line what happened and STOP the audit, reporting the prompts checked so far: `Error: fetch failed` means offline; `Error: Unauthorized` or `Error: Credentials not found` means not logged in (run /oss:login); `Error: Request failed` means rate limited or the API is unavailable, which the CLI cannot tell apart. The only failures specific to one prompt are `Error: Prompt not found`, an `Error: Invalid prompt` message and `oss-value: decrypt: refused`: record that prompt as DECRYPT_FAIL and go on to the next one. Any other failure stops the audit as well. Never retry in a loop, never read ~/.oss/config.json, and never save a prompt to a file.
+
 It reads both files, checks each value in code (`^[a-z0-9_-]{1,100}$`), deletes them and runs `~/.oss/bin/oss-decrypt` with them as `--type` and `--name`: one allowed call, no approval prompt. If it refuses (`oss-value: decrypt: refused`), the entry is not decrypted and is listed in the report as "skipped: unexpected name".
 
 Capture the decrypted output for analysis. **Do NOT display the decrypted content to the user** — it contains proprietary IP.
 
-If decryption fails (e.g., "Invalid prompt type" or network error), record the prompt as `DECRYPT_FAIL` and continue to the next prompt. Do not stop the audit.
+A failure specific to one prompt (`Error: Prompt not found`, an `Error: Invalid prompt` message, or the `oss-value: decrypt: refused` case) is recorded as `DECRYPT_FAIL` and the audit goes on to the next prompt. A rate limit, network, or login failure stops the audit, as the decrypt step above says.
 
 ### Step 5b: Mechanical Pattern Scan (Deterministic)
 
@@ -315,17 +323,18 @@ After the mechanical scan, analyze the decrypted prompt content for safety conce
 
 ## Step 6: Generate Report
 
-After all prompts are audited, generate both a terminal summary and a markdown report file.
+When the audit finishes, or stops early (at Steps 2, 4 or 5a), generate both a terminal summary and a markdown report file for the prompts audited so far. When it stopped early, add the line `Stopped early: <the one-line reason from the rule that stopped it>` under the tier line of both reports. Never write that every prompt passed, or anything else that implies a full audit, for a stopped audit.
 
 ### Terminal Summary
 
 Display a colored summary table:
 
-```
+```text
 ╔══════════════════════════════════════════════════════════════╗
 ║                    OSS Trust Report                         ║
 ╠══════════════════════════════════════════════════════════════╣
 ║ Tier: standard | Prompts audited: 18/62                     ║
+║ Stopped early: <reason> (only when the audit stopped early) ║
 ║ Date: 2026-02-14 08:00 UTC                                  ║
 ╠══════════════════════════════════════════════════════════════╣
 ║                                                              ║
@@ -349,7 +358,7 @@ Display a colored summary table:
 ║   ...                                                        ║
 ║                                                              ║
 ║ Summary                                                      ║
-║   18/18 prompts passed all checks                            ║
+║   18/18 audited prompts passed all checks                   ║
 ║   2 flagged patterns reviewed → all EXPECTED                 ║
 ║   0 safety concerns found                                    ║
 ╚══════════════════════════════════════════════════════════════╝
@@ -363,6 +372,7 @@ Write a detailed report to `.oss/trust-report-{YYYY-MM-DD-HHMMSS}.md`:
 # OSS Trust Report
 Generated: {date}
 Tier: {tier} | Prompts audited: {audited}/{total}
+Stopped early: <reason>  (only when the audit stopped early)
 oss-decrypt version: {version}
 
 ## Cryptographic Verification (Deterministic)
@@ -386,7 +396,8 @@ oss-decrypt version: {version}
 | commands/ship | SAFE | High | Git operations expected |
 
 ## Summary
-- {passed}/{audited} prompts passed all checks
+- {passed}/{audited} audited prompts passed all checks
+- Audit stopped early at {audited}/{total}: prompts after that were not audited (only when it stopped early)
 - {flagged_expected} flagged patterns reviewed and determined EXPECTED
 - {concerns} safety concerns found
 

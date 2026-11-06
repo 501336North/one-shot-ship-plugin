@@ -4,6 +4,8 @@ export interface SafeWriteOptions {
     /** Mode for a NEW file (default 0o666, masked by the umask). Existing files keep theirs. */
     newFileMode?: number;
 }
+/** ossDir is $HOME/.oss (the person's own folder, out of this guard's scope). */
+export declare function isUserOssDir(ossDir: string): boolean;
 /** Ensure ossDir/relDir exists safely. */
 export declare function safeMkdirOss(ossDir: string, relDir?: string): boolean;
 /** Replace ossDir/rel with data: O_EXCL temp file in the same directory, then rename. */

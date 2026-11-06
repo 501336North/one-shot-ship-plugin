@@ -13,13 +13,16 @@
 import { describe, it, expect, vi } from 'vitest';
 import { forwardToAnthropic } from '../../src/services/anthropic-passthrough.js';
 
+/** The injectable fetch forwardToAnthropic takes (its second parameter) (T75e). */
+type FetchImpl = NonNullable<Parameters<typeof forwardToAnthropic>[1]>;
+
 function fakeFetch() {
-  return vi.fn(async () => ({
+  return vi.fn<FetchImpl>(async () => ({
     status: 200,
     headers: new Map([['content-type', 'application/json']]),
     body: null,
     text: async () => '{}',
-  })) as any;
+  }));
 }
 
 describe('forwardToAnthropic: OAuth-safe pass-through', () => {

@@ -5,7 +5,7 @@
  * @boundary Service (MetricsCollector)
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -22,6 +22,7 @@ describe('Metrics Collector Service', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     if (originalHome) {
       process.env.HOME = originalHome;
     }
@@ -38,17 +39,17 @@ describe('Metrics Collector Service', () => {
     it('should track session duration', async () => {
       const { MetricsCollector } = await import('../../src/services/metrics-collector');
 
+      // The clock is faked: a real timer can fire before Date.now() has moved as far (T26)
+      vi.useFakeTimers({ now: 1_000_000 });
       const collector = new MetricsCollector();
       collector.startSession();
 
-      // Simulate some work - use 60ms to account for timer precision variance
-      await new Promise(resolve => setTimeout(resolve, 60));
+      vi.advanceTimersByTime(60);
 
       collector.endSession();
 
       const metrics = collector.getSessionMetrics();
-      // Allow 10ms variance for timer precision (60ms - 10ms = 50ms minimum)
-      expect(metrics.duration).toBeGreaterThanOrEqual(50);
+      expect(metrics.duration).toBe(60);
     });
 
     /**
@@ -99,15 +100,16 @@ describe('Metrics Collector Service', () => {
     it('should track command execution time', async () => {
       const { MetricsCollector } = await import('../../src/services/metrics-collector');
 
+      vi.useFakeTimers({ now: 1_000_000 });
       const collector = new MetricsCollector();
       collector.startSession();
 
       collector.startCommand('build');
-      await new Promise(resolve => setTimeout(resolve, 30));
+      vi.advanceTimersByTime(30);
       collector.endCommand('build', 'success');
 
       const commandMetrics = collector.getCommandMetrics('build');
-      expect(commandMetrics.averageDuration).toBeGreaterThanOrEqual(30);
+      expect(commandMetrics.averageDuration).toBe(30);
       expect(commandMetrics.count).toBe(1);
     });
 
@@ -218,20 +220,21 @@ describe('Metrics Collector Service', () => {
     it('should track TDD phase time', async () => {
       const { MetricsCollector } = await import('../../src/services/metrics-collector');
 
+      vi.useFakeTimers({ now: 1_000_000 });
       const collector = new MetricsCollector();
       collector.startSession();
 
       collector.startTddPhase('red');
-      await new Promise(resolve => setTimeout(resolve, 20));
+      vi.advanceTimersByTime(20);
       collector.endTddPhase('red');
 
       collector.startTddPhase('green');
-      await new Promise(resolve => setTimeout(resolve, 30));
+      vi.advanceTimersByTime(30);
       collector.endTddPhase('green');
 
       const tddMetrics = collector.getTddMetrics();
-      expect(tddMetrics.redPhaseTime).toBeGreaterThanOrEqual(20);
-      expect(tddMetrics.greenPhaseTime).toBeGreaterThanOrEqual(30);
+      expect(tddMetrics.redPhaseTime).toBe(20);
+      expect(tddMetrics.greenPhaseTime).toBe(30);
     });
   });
 });

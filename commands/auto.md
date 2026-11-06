@@ -38,7 +38,8 @@ estimated_tokens: 15000-50000
 /oss:auto --merge "redesign the pricing page"
 
 # Zero-approval mode: answer ideation questions, then walk away
-# Start CC with: claude --dangerously-skip-permissions
+# Start CC with: claude --permission-mode auto
+# (--dangerously-skip-permissions is for sandboxed machines with no internet access only)
 # Then run: /oss:auto --merge "your feature"
 
 # Show help
@@ -75,7 +76,7 @@ Run the complete ideate→plan→build→ship pipeline in one command.
 ## Step 2: Check Authentication
 
 ```bash
-cat ~/.oss/config.json 2>/dev/null | grep apiKey
+test -f "$HOME/.oss/config.json" && grep -qE '"apiKey"[[:space:]]*:[[:space:]]*"[A-Za-z0-9_-]' "$HOME/.oss/config.json" && echo "API key configured"
 ```
 
 If no API key found:
@@ -102,8 +103,10 @@ Register at https://www.oneshotship.com
 
 ## Step 5: Ensure Decrypt CLI Installed
 
+Run this step with a Bash timeout of 600000 ms (10 minutes): a first install downloads about 60 MB. Exit 0: continue. Exit 75: the download is still in progress or another session is downloading it, so run the same step again (also when Claude Code stopped the step at its time limit), at most 3 more times; if it still has not exited 0, stop and tell the user to run the command again later. Any other exit: stop and show the user the hook's message (it says what to check).
+
 ```bash
-~/.oss/hooks/ensure-decrypt-cli.sh || { echo "Failed to install the decrypt CLI (see the message above). Check that github.com is reachable and the plugin is up to date (/plugin update), then retry."; exit 1; }
+~/.oss/hooks/ensure-decrypt-cli.sh --long-step
 ```
 
 ## Step 6: Fetch and Decrypt Prompt
@@ -111,6 +114,8 @@ Register at https://www.oneshotship.com
 ```bash
 ~/.oss/bin/oss-decrypt --type workflows --name auto
 ```
+
+If this command fails for any reason (it prints an `Error:` line, for example when rate limited, offline or not logged in), tell the user in one line what happened (rate limited, offline, or not logged in, so run /oss:login) and STOP this command; do not read ~/.oss/config.json, do not retry in a loop, and do not save the fetched prompt to a file.
 
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 

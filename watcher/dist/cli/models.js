@@ -20,7 +20,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { spawnSync } from 'child_process';
 import { isValidModelId, SUPPORTED_PROVIDERS } from '../types/model-settings.js';
+import { readRegularFileSync } from '../utils/regular-file.js';
+import { loadConfigForSave, saveConfigFile, NotSaved } from '../utils/config-save.js';
+import { OFFLOAD_UPDATE_HINT } from './agent-offload.js';
+import { repoAgentModelNotices } from '../utils/repo-agent-models.js';
 /**
  * Test mode flag to simulate provider failures
  */
@@ -84,7 +89,7 @@ function loadConfig() {
     const configPath = getConfigPath();
     try {
         if (fs.existsSync(configPath)) {
-            const content = fs.readFileSync(configPath, 'utf-8');
+            const content = readRegularFileSync(configPath);
             return JSON.parse(content);
         }
     }
@@ -94,7 +99,21 @@ function loadConfig() {
     return {};
 }
 /**
- * Save config to file
+ * Load config for a save (T80, utils/config-save): {} only when there is no config.json; anything it cannot safely
+ * update (a FIFO, a device, a folder, unreadable, invalid) is the NotSaved message, and nothing is written.
+ */
+function loadConfigForSaveOrReason() {
+    try {
+        return loadConfigForSave(getConfigPath());
+    }
+    catch (err) {
+        if (err instanceof NotSaved)
+            return err.message;
+        throw err;
+    }
+}
+/**
+ * Save config to file (T80, utils/config-save): hang-safe, owner-only (600); the NotSaved message, or null when saved.
  */
 function saveConfig(config) {
     const configPath = getConfigPath();
@@ -103,7 +122,15 @@ function saveConfig(config) {
     if (!fs.existsSync(configDir)) {
         fs.mkdirSync(configDir, { recursive: true });
     }
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+    try {
+        saveConfigFile(configPath, config);
+    }
+    catch (err) {
+        if (err instanceof NotSaved)
+            return err.message;
+        throw err;
+    }
+    return null;
 }
 /**
  * Mask an API key showing only the last 4 characters
@@ -132,6 +159,31 @@ function detectPromptType(promptName) {
     }
     // Default to agent for oss: prefixed names
     return 'agent';
+}
+/** How long `claude --help` may take before the probe gives up (3 s); tests set it to stay off the wall clock. */
+let claudeProbeTimeoutMs = 3000;
+export function setClaudeProbeTimeoutMs(ms) {
+    claudeProbeTimeoutMs = ms;
+}
+const isNonClaude = (model) => typeof model === 'string' && model !== '' && model !== 'claude' && model !== 'default';
+/**
+ * T76b: the warning line when an agent or the default is mapped to another model and the installed `claude` has no
+ * --restricted (offload then runs on Claude); '' otherwise, and when `claude --help` is missing, fails or hangs.
+ */
+function offloadCliWarning() {
+    const models = loadConfig().models;
+    const agents = models?.agents;
+    if (!isNonClaude(models?.default) && !Object.values(agents ?? {}).some(isNonClaude))
+        return '';
+    const help = spawnSync('claude', ['--help'], {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: claudeProbeTimeoutMs,
+        killSignal: 'SIGKILL',
+    });
+    if (help.status !== 0 || /(^|\s)--restricted(\s|$)/m.test(help.stdout))
+        return '';
+    return `${OFFLOAD_UPDATE_HINT}; agents mapped to other models run on Claude until then.\n\n`;
 }
 /**
  * List subcommand - show available models grouped by provider
@@ -232,7 +284,10 @@ function setModel(promptName, modelId) {
     // Auto-detect prompt type
     const promptType = detectPromptType(promptName);
     // Load and update config
-    const config = loadConfig();
+    const config = loadConfigForSaveOrReason();
+    if (typeof config === 'string') {
+        return config;
+    }
     if (!config.models) {
         config.models = {};
     }
@@ -243,7 +298,10 @@ function setModel(promptName, modelId) {
     }
     models[typeKey][promptName] = modelId;
     // Save config
-    saveConfig(config);
+    const refusedSave = saveConfig(config);
+    if (refusedSave !== null) {
+        return refusedSave;
+    }
     return `Updated: ${promptName} -> ${modelId} (${promptType})`;
 }
 /**
@@ -315,13 +373,19 @@ function setKey(provider, key) {
         return `Invalid provider: ${provider}\n\nSupported providers: ${validProviders.join(', ')}`;
     }
     // Load and update config
-    const config = loadConfig();
+    const config = loadConfigForSaveOrReason();
+    if (typeof config === 'string') {
+        return config;
+    }
     if (!config.apiKeys) {
         config.apiKeys = {};
     }
     config.apiKeys[provider] = key;
     // Save config
-    saveConfig(config);
+    const refusedSave = saveConfig(config);
+    if (refusedSave !== null) {
+        return refusedSave;
+    }
     return `API key stored for ${provider}`;
 }
 /**
@@ -358,8 +422,11 @@ export async function executeModelsCommand(args) {
     }
     const [subcommand, ...rest] = args;
     switch (subcommand) {
-        case 'list':
-            return listModels();
+        case 'list': {
+            // T88: agents the current repo still maps, which now run on Claude
+            const notes = repoAgentModelNotices(process.cwd());
+            return offloadCliWarning() + (notes.length ? `${notes.join('\n')}\n\n` : '') + listModels();
+        }
         case 'search': {
             // Check for --free flag
             const freeOnly = rest.includes('--free');
@@ -367,10 +434,20 @@ export async function executeModelsCommand(args) {
             return searchModels(query, freeOnly);
         }
         case 'config':
-            return showConfig();
+            return offloadCliWarning() + showConfig();
         case 'set': {
             if (rest.length < 2) {
                 return 'Usage: /oss:models set <prompt> <model>';
+            }
+            if (rest.length >= 3) {
+                // T88b: `set <agents|commands|skills> <name> <model>`, as oss-value.sh models-set sends it; the type must be
+                // the one setModel files the name under, so nothing lands under a type the name does not belong to.
+                const [type, prompt, model] = rest;
+                const typed = { agents: 'agent', commands: 'command', skills: 'skill' };
+                if (!Object.hasOwn(typed, type) || typed[type] !== detectPromptType(prompt)) {
+                    return 'Usage: /oss:models set <prompt> <model>';
+                }
+                return setModel(prompt, model);
             }
             const [prompt, model] = rest;
             return setModel(prompt, model);

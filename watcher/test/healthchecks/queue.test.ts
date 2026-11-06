@@ -28,9 +28,9 @@ vi.mock('fs', () => ({
   },
 }));
 
-const mockFs = fs as {
-  stat: ReturnType<typeof vi.fn>;
-};
+const mockFs = vi.mocked(fs);
+// partial: a fake stat answers only the field the check reads (mtime), typed by vitest, not cast (T75e)
+const mockStat = vi.mocked(fs.stat, { partial: true });
 
 describe('QueueHealthCheck', () => {
   let mockQueueManager: QueueManager;
@@ -53,7 +53,7 @@ describe('QueueHealthCheck', () => {
       { id: 'task-2', created_at: new Date(Date.now() - 3000).toISOString(), status: 'pending' as const },
     ];
     vi.mocked(mockQueueManager.getPendingCount).mockResolvedValue(2);
-    vi.mocked(mockQueueManager.getTasks).mockResolvedValue(tasks as any);
+    vi.mocked(mockQueueManager.getTasks, { partial: true, deep: true }).mockResolvedValue(tasks);
 
     // WHEN - Check queue health
     const result = await checkQueue({ queueManager: mockQueueManager });
@@ -75,7 +75,7 @@ describe('QueueHealthCheck', () => {
       { id: 'task-2', created_at: new Date(Date.now() - 5000).toISOString(), status: 'pending' as const },
     ];
     vi.mocked(mockQueueManager.getPendingCount).mockResolvedValue(2);
-    vi.mocked(mockQueueManager.getTasks).mockResolvedValue(tasks as any);
+    vi.mocked(mockQueueManager.getTasks, { partial: true, deep: true }).mockResolvedValue(tasks);
 
     // WHEN - Check queue health
     const result = await checkQueue({ queueManager: mockQueueManager });
@@ -102,7 +102,7 @@ describe('QueueHealthCheck', () => {
       { id: 'task-6', status: 'failed' as const, created_at: new Date().toISOString() },
     ];
     vi.mocked(mockQueueManager.getPendingCount).mockResolvedValue(0);
-    vi.mocked(mockQueueManager.getTasks).mockResolvedValue(tasks as any);
+    vi.mocked(mockQueueManager.getTasks, { partial: true, deep: true }).mockResolvedValue(tasks);
 
     // WHEN - Check queue health
     const result = await checkQueue({ queueManager: mockQueueManager });
@@ -125,7 +125,7 @@ describe('QueueHealthCheck', () => {
       { id: 'task-3', status: 'failed' as const, created_at: new Date().toISOString() },
     ];
     vi.mocked(mockQueueManager.getPendingCount).mockResolvedValue(2);
-    vi.mocked(mockQueueManager.getTasks).mockResolvedValue(tasks as any);
+    vi.mocked(mockQueueManager.getTasks, { partial: true, deep: true }).mockResolvedValue(tasks);
 
     // WHEN - Check queue health
     const result = await checkQueue({ queueManager: mockQueueManager });
@@ -147,13 +147,13 @@ describe('QueueHealthCheck', () => {
   it('should verify supervisor heartbeat is recent', async () => {
     // GIVEN - Stale supervisor state file (10 minutes old)
     const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
-    mockFs.stat.mockResolvedValue({ mtime: tenMinutesAgo } as any);
+    mockStat.mockResolvedValue({ mtime: tenMinutesAgo });
 
     const tasks = [
       { id: 'task-1', created_at: new Date(Date.now() - 5000).toISOString(), status: 'pending' as const },
     ];
     vi.mocked(mockQueueManager.getPendingCount).mockResolvedValue(1);
-    vi.mocked(mockQueueManager.getTasks).mockResolvedValue(tasks as any);
+    vi.mocked(mockQueueManager.getTasks, { partial: true, deep: true }).mockResolvedValue(tasks);
 
     // WHEN - Check queue health with state path
     const statePath = '/mock/path/workflow-state.json';
@@ -172,13 +172,13 @@ describe('QueueHealthCheck', () => {
    */
   it('should warn when supervisor state file is missing', async () => {
     // GIVEN - Missing supervisor state file
-    mockFs.stat.mockRejectedValue(new Error('ENOENT: no such file or directory'));
+    mockStat.mockRejectedValue(new Error('ENOENT: no such file or directory'));
 
     const tasks = [
       { id: 'task-1', created_at: new Date(Date.now() - 5000).toISOString(), status: 'pending' as const },
     ];
     vi.mocked(mockQueueManager.getPendingCount).mockResolvedValue(1);
-    vi.mocked(mockQueueManager.getTasks).mockResolvedValue(tasks as any);
+    vi.mocked(mockQueueManager.getTasks, { partial: true, deep: true }).mockResolvedValue(tasks);
 
     // WHEN - Check queue health with state path
     const statePath = '/mock/path/workflow-state.json';
@@ -198,13 +198,13 @@ describe('QueueHealthCheck', () => {
   it('should pass when supervisor heartbeat is recent', async () => {
     // GIVEN - Recent supervisor state file (2 minutes old)
     const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
-    mockFs.stat.mockResolvedValue({ mtime: twoMinutesAgo } as any);
+    mockStat.mockResolvedValue({ mtime: twoMinutesAgo });
 
     const tasks = [
       { id: 'task-1', created_at: new Date(Date.now() - 5000).toISOString(), status: 'pending' as const },
     ];
     vi.mocked(mockQueueManager.getPendingCount).mockResolvedValue(1);
-    vi.mocked(mockQueueManager.getTasks).mockResolvedValue(tasks as any);
+    vi.mocked(mockQueueManager.getTasks, { partial: true, deep: true }).mockResolvedValue(tasks);
 
     // WHEN - Check queue health with state path
     const statePath = '/mock/path/workflow-state.json';

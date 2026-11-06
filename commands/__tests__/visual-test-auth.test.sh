@@ -18,7 +18,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WRAPPER="$SCRIPT_DIR/../visual-test.md"
 
-QUIET_CHECK='grep -q '"'"'"apiKey"'"'"' "$HOME/.oss/config.json" && echo "API key configured"'
+QUIET_CHECK='test -f "$HOME/.oss/config.json" && grep -qE '"'"'"apiKey"[[:space:]]*:[[:space:]]*"[A-Za-z0-9_-]'"'"' "$HOME/.oss/config.json" && echo "API key configured"'
 PRINTING_CHECK='grep apiKey'
 NO_KEY_TEXT='No API key found. Run: /oss:login'
 

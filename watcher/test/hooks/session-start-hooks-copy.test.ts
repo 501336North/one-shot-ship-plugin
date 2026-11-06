@@ -34,4 +34,19 @@ describe('oss-session-start.sh: HOOKS_TO_COPY', () => {
     const content = fs.readFileSync(sessionStartPath, 'utf-8');
     expect(content).toContain('"oss-login.sh"');
   });
+
+  // A command runs ~/.oss/hooks/<name>.sh, which exists only if session start copied it there.
+  // A hook missing from HOOKS_TO_COPY works in the repo and is "No such file" for every user.
+  it('should copy every hook a command runs from ~/.oss/hooks', () => {
+    const content = fs.readFileSync(sessionStartPath, 'utf-8');
+    const commandsDir = path.resolve(__dirname, '../../../commands');
+    const named = new Set<string>();
+    for (const f of fs.readdirSync(commandsDir).filter((n) => n.endsWith('.md'))) {
+      const text = fs.readFileSync(path.join(commandsDir, f), 'utf-8');
+      for (const m of text.matchAll(/~\/\.oss\/hooks\/([a-z0-9-]+\.sh)/g)) named.add(m[1]);
+    }
+    expect(named.size).toBeGreaterThan(5);
+    const missing = [...named].filter((h) => !content.includes(`"${h}"`));
+    expect(missing).toEqual([]);
+  });
 });

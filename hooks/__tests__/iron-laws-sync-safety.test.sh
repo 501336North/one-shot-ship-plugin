@@ -14,9 +14,14 @@
 # Usage: ./hooks/__tests__/iron-laws-sync-safety.test.sh
 
 set -uo pipefail
+# T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOOK_SCRIPT="$SCRIPT_DIR/../oss-iron-laws-sync.sh"
+source "$SCRIPT_DIR/lib/run-capped.sh"   # the one time cap a test may use (T49)
+# HOOKS_UNDER_TEST=/path/to/hooks-copy runs these tests against a copy (mutants).
+HOOK_SCRIPT="${HOOKS_UNDER_TEST:-$SCRIPT_DIR/..}/oss-iron-laws-sync.sh"
+source "$SCRIPT_DIR/lib/warm-stub.sh"
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -47,8 +52,8 @@ setup() {
     T=$(cd "$T" && pwd -P)
     mkdir -p "$T/home/.oss" "$T/proj" "$T/bin" "$T/shim"
     printf '{"apiKey": "%s"}\n' "$FAKE_KEY" > "$T/home/.oss/config.json"
-    cat > "$T/bin/curl" << SHIM
-#!/bin/bash
+    # Warmed, so the macOS first-exec scan of the new file is not inside the sync's timed call.
+    warm_stub "$T/bin/curl" "$(cat << SHIM
 S="$T/shim"
 printf '%s\n' "\$*" >> "\$S/argv"
 prev=""
@@ -61,7 +66,7 @@ done
 printf '\n%s\n' "\$(cat "\$S/code" 2>/dev/null || echo 200)"
 exit 0
 SHIM
-    chmod +x "$T/bin/curl"
+)" || echo "setup: curl shim did not warm" >&2
     valid_body > "$T/shim/body"
 }
 teardown() { rm -rf "$T"; }
@@ -85,8 +90,8 @@ stale() { touch -t 202601010000 "$T/home/.oss/.iron-laws-last-check"; rm -f "$T/
 run_sync() {
     local proj="${PROJ:-$T/proj}"
     RC=0
-    (cd "$T" && HOME="$T/home" CLAUDE_PROJECT_DIR="$proj" PATH="$T/bin:$PATH" \
-        perl -e 'alarm 30; exec @ARGV' bash "$HOOK_SCRIPT" "$@" </dev/null >"$T/out" 2>"$T/err") || RC=$?
+    (cd "$T" && OSS_ALLOW_HTTP_LOOPBACK=1 HOME="$T/home" OSS_CONFIG_DIR="${CFG_DIR:-}" CLAUDE_PROJECT_DIR="$proj" PATH="$T/bin:$PATH" \
+        run_capped 30 bash "$HOOK_SCRIPT" "$@" </dev/null >"$T/out" 2>"$T/err") || RC=$?
     OUT=$(cat "$T/out"); ERR=$(cat "$T/err")
 }
 curl_calls() { [[ -f "$T/shim/argv" ]] && wc -l < "$T/shim/argv" | tr -d ' ' || echo 0; }
@@ -344,7 +349,7 @@ test_concurrent_installs_one_block() {
     local i pids=()
     for i in 1 2 3; do
         (cd "$T" && HOME="$T/home" CLAUDE_PROJECT_DIR="$T/proj" PATH="$T/bin:$PATH" \
-            perl -e 'alarm 30; exec @ARGV' bash "$HOOK_SCRIPT" --install </dev/null >/dev/null 2>&1) & pids+=($!)
+            run_capped 30 bash "$HOOK_SCRIPT" --install </dev/null >/dev/null 2>&1) & pids+=($!)
     done
     wait "${pids[@]}"
     local s e; s=$(count_line "$START" "$T/proj/CLAUDE.md"); e=$(count_line "$END" "$T/proj/CLAUDE.md")
@@ -353,18 +358,29 @@ test_concurrent_installs_one_block() {
     teardown
 }
 
+# The sync waits for a held lock by sleeping between tries. A `sleep` stub first on PATH is the
+# handshake: on the first sleep it records whether CLAUDE.md was already written, then releases the
+# lock. So "no write while locked" is checked at the moment the sync is known to be waiting, not
+# after a fixed delay, and the test then waits for the sync itself to exit. A sync that never waits
+# (ignores the lock) never sleeps, so the lock is never released by the stub: that is a failure too.
 test_lock_held_blocks_write() {
     local name="R6: a sync holding the lock blocks the write until it is released"; ((TESTS_RUN++)); setup
     mkdir "$T/home/.oss/.iron-laws-sync.lock"
-    (cd "$T" && HOME="$T/home" CLAUDE_PROJECT_DIR="$T/proj" PATH="$T/bin:$PATH" \
-        perl -e 'alarm 30; exec @ARGV' bash "$HOOK_SCRIPT" --install </dev/null >/dev/null 2>&1) & local pid=$!
-    sleep 1
-    local early=n; [[ -e "$T/proj/CLAUDE.md" ]] && early=y
-    rmdir "$T/home/.oss/.iron-laws-sync.lock"
-    wait "$pid"
+    warm_stub "$T/lockbin/sleep" "$(cat << 'STUB'
+if [[ ! -e "$LOCK_PROBE" && -d "$LOCK_HELD" ]]; then
+    { [[ -e "$CLAUDE_PROJECT_DIR/CLAUDE.md" ]] && echo y || echo n; } > "$LOCK_PROBE"
+    rmdir "$LOCK_HELD"
+fi
+exec /bin/sleep "$@"
+STUB
+)" || echo "lock test: sleep stub did not warm" >&2
+    (cd "$T" && HOME="$T/home" CLAUDE_PROJECT_DIR="$T/proj" PATH="$T/lockbin:$T/bin:$PATH" \
+        LOCK_HELD="$T/home/.oss/.iron-laws-sync.lock" LOCK_PROBE="$T/lock-probe" \
+        run_capped 30 bash "$HOOK_SCRIPT" --install </dev/null >/dev/null 2>&1)
+    local early; early=$(cat "$T/lock-probe" 2>/dev/null || echo never-waited)
     local later=n; [[ "$(count_line "$START" "$T/proj/CLAUDE.md")" == "1" ]] && later=y
     if [[ "$early" == n && "$later" == y && ! -e "$T/home/.oss/.iron-laws-sync.lock" ]]; then pass "$name"
-    else fail "$name" "no write while locked, one block after release, lock removed" "written_while_locked=$early block_after=$later"; fi
+    else fail "$name" "waited with no write while locked, one block after release, lock removed" "written_while_locked=$early block_after=$later"; fi
     teardown
 }
 
@@ -459,8 +475,8 @@ test_crlf_install_appends_crlf() {
 }
 
 # =============================================================================================
-# S3 Node-free config parsing (ship gate round 2)
-# node → python3 → strict flat-shape fallback. The key is never printed and never in argv.
+# S3 config parsing without node, without jq (ship gate round 2; T30: the hook reads the key with
+# oss_api_key, the reader oss_api_url uses: jq, else node, else no key). The key is never printed and never in argv.
 # =============================================================================================
 # hide_tools <names...>: sets HIDDEN_PATH to the system dirs minus those tools (plus T/bin's curl).
 hide_tools() {
@@ -475,58 +491,49 @@ hide_tools() {
     done
     HIDDEN_PATH="$T/bin:$T/sys"
 }
-# A python3 on HIDDEN_PATH that records its argv, so the test can prove the key is not in it.
-python3_recorder() {
-    local real; real=$(command -v python3)
-    mkdir -p "$T/py"
-    printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s/python3-argv"\nexec "%s" "$@"\n' "$T/shim" "$real" > "$T/py/python3"
-    chmod +x "$T/py/python3"
-    HIDDEN_PATH="$HIDDEN_PATH:$T/py"
-}
 # The JSON text "fake\"quo\\te-KEY" decodes to fake"quo\te-KEY, which curl's config file
 # receives re-escaped as fake\"quo\\te-KEY.
 ESC_JSON="fake\\\"quo\\\\te-$FAKE_KEY"
 ESC_CURLCFG="Authorization: Bearer fake\\\"quo\\\\te-$FAKE_KEY"
 run_hidden() { # like run_sync, with PATH=HIDDEN_PATH
     RC=0
-    (cd "$T" && HOME="$T/home" CLAUDE_PROJECT_DIR="$T/proj" PATH="$HIDDEN_PATH" \
-        /usr/bin/perl -e 'alarm 30; exec @ARGV' bash "$HOOK_SCRIPT" "$@" </dev/null >"$T/out" 2>"$T/err") || RC=$?
+    (cd "$T" && HOME="$T/home" OSS_CONFIG_DIR="" CLAUDE_PROJECT_DIR="$T/proj" PATH="$HIDDEN_PATH" \
+        run_capped 30 bash "$HOOK_SCRIPT" "$@" </dev/null >"$T/out" 2>"$T/err") || RC=$?
     OUT=$(cat "$T/out"); ERR=$(cat "$T/err")
 }
 
 test_key_without_node() {
-    local name="S3: node absent → python3 reads the key (incl. escaped quote and backslash), path not key in argv"; ((TESTS_RUN++)); setup
+    local name="S3: node absent → jq reads the key (incl. escaped quote and backslash), key never in argv or output"; ((TESTS_RUN++)); setup
     printf '{\n  "apiUrl": "https://example.invalid",\n  "apiKey": "%s"\n}\n' "$ESC_JSON" > "$T/home/.oss/config.json"
-    block_file "$T/proj/CLAUDE.md"; stale
-    hide_tools node python python3; python3_recorder
-    run_hidden
-    local py_used=n key_in_argv=n printed=n
-    [[ -s "$T/shim/python3-argv" ]] && py_used=y
-    grep -qF "$FAKE_KEY" "$T/shim/python3-argv" "$T/shim/argv" 2>/dev/null && key_in_argv=y
-    [[ "$OUT$ERR" == *"$FAKE_KEY"* ]] && printed=y
-    if grep -qF "$ESC_CURLCFG" "$T/shim/stdin" 2>/dev/null && [[ $py_used == y && $key_in_argv == n && $printed == n ]] \
-        && grep -q "FRESH FROM API" "$T/proj/CLAUDE.md"; then pass "$name"
-    else fail "$name" "decoded key in curl config, python3 used, key not in argv/output" "py_used=$py_used key_in_argv=$key_in_argv printed=$printed err=${ERR//$FAKE_KEY/<KEY>}"; fi
-    teardown
-}
-
-test_key_without_node_or_python() {
-    local name="S3: node and python3 absent → strict fallback reads the key (incl. escaped quote and backslash)"; ((TESTS_RUN++)); setup
-    printf '{\n  "apiUrl" : "https://example.invalid",\n  "apiKey"  :  "%s",\n  "userId": "u1"\n}\n' "$ESC_JSON" > "$T/home/.oss/config.json"
     block_file "$T/proj/CLAUDE.md"; stale
     hide_tools node python python3
     run_hidden
-    if grep -qF "$ESC_CURLCFG" "$T/shim/stdin" 2>/dev/null && [[ "$OUT$ERR" != *"$FAKE_KEY"* ]] \
+    local key_in_argv=n printed=n
+    grep -qF "$FAKE_KEY" "$T/shim/argv" 2>/dev/null && key_in_argv=y
+    [[ "$OUT$ERR" == *"$FAKE_KEY"* ]] && printed=y
+    if grep -qF "$ESC_CURLCFG" "$T/shim/stdin" 2>/dev/null && [[ $key_in_argv == n && $printed == n ]] \
         && grep -q "FRESH FROM API" "$T/proj/CLAUDE.md"; then pass "$name"
+    else fail "$name" "decoded key in curl config, key not in argv/output" "key_in_argv=$key_in_argv printed=$printed err=${ERR//$FAKE_KEY/<KEY>}"; fi
+    teardown
+}
+
+test_key_without_jq() {
+    local name="S3: jq absent → node reads the key (incl. escaped quote and backslash), key never in argv or output"; ((TESTS_RUN++)); setup
+    printf '{\n  "apiUrl" : "https://example.invalid",\n  "apiKey"  :  "%s",\n  "userId": "u1"\n}\n' "$ESC_JSON" > "$T/home/.oss/config.json"
+    block_file "$T/proj/CLAUDE.md"; stale
+    hide_tools jq node python python3; ln -s "$(command -v node)" "$T/sys/node"
+    run_hidden
+    if grep -qF "$ESC_CURLCFG" "$T/shim/stdin" 2>/dev/null && [[ "$OUT$ERR" != *"$FAKE_KEY"* ]] \
+        && ! grep -qF "$FAKE_KEY" "$T/shim/argv" 2>/dev/null && grep -q "FRESH FROM API" "$T/proj/CLAUDE.md"; then pass "$name"
     else fail "$name" "decoded key in curl config, key not printed, refreshed" "rc=$RC err=${ERR//$FAKE_KEY/<KEY>} stdin=$(sed "s/$FAKE_KEY/<KEY>/" "$T/shim/stdin" 2>/dev/null | head -2)"; fi
     teardown
 }
 
-test_fallback_fails_closed() {
-    local name="S3: fallback meets an escape it does not handle (a JSON unicode escape) → no curl call, file unchanged"; ((TESTS_RUN++)); setup
-    printf '{"apiKey": "abc\\u0041-%s"}\n' "$FAKE_KEY" > "$T/home/.oss/config.json"
+test_no_reader_fails_closed() {
+    local name="S3: neither jq nor node → no key: no curl call, file unchanged"; ((TESTS_RUN++)); setup
+    printf '{"apiKey": "%s"}\n' "$FAKE_KEY" > "$T/home/.oss/config.json"
     block_file "$T/proj/CLAUDE.md"; local before; before=$(sum "$T/proj/CLAUDE.md"); stale
-    hide_tools node python python3
+    hide_tools jq node python python3
     run_hidden
     if [[ "$(curl_calls)" == "0" && "$(sum "$T/proj/CLAUDE.md")" == "$before" && "$OUT$ERR" != *"$FAKE_KEY"* ]]; then pass "$name"
     else fail "$name" "no curl, unchanged, key not printed" "curl=$(curl_calls) err=${ERR//$FAKE_KEY/<KEY>}"; fi
@@ -574,6 +581,81 @@ test_install_no_laws_exit_4() {
     done
 }
 
+# =============================================================================================
+# T4g The key goes only to the configured API, with that config's key
+# @behavior The fetch goes to <apiUrl>/api/v1/prompts/shared/iron-laws, apiUrl and apiKey both read
+#           from the one OSS config file (OSS_CONFIG_DIR, else ~/.oss); no apiUrl → the default API;
+#           an apiUrl the CLI would refuse → no request, nothing written (refresh exits 0, --install 4).
+# @business-rule The API key is only ever sent to the API the user configured.
+# =============================================================================================
+LAWS_PATH="/api/v1/prompts/shared/iron-laws"
+sent_key() { grep -qF "Authorization: Bearer $1\"" "$T/shim/stdin" 2>/dev/null; }
+argv_line() { tr '\n' '|' < "$T/shim/argv" 2>/dev/null; }
+
+test_api_url_from_config() {
+    local name="T4g: apiUrl in the config → the one fetch goes there with the config's key, never to onrender"; ((TESTS_RUN++)); setup
+    printf '{"apiKey":"fake-key-K","apiUrl":"http://127.0.0.1:9"}' > "$T/home/.oss/config.json"
+    block_file "$T/proj/CLAUDE.md"; stale; run_sync
+    if [[ $RC -eq 0 && "$(curl_calls)" == 1 && "$(argv_line)" == *" http://127.0.0.1:9$LAWS_PATH|" && "$(argv_line)" != *onrender* ]] \
+        && sent_key fake-key-K && grep -q "FRESH FROM API" "$T/proj/CLAUDE.md"; then pass "$name"
+    else fail "$name" "1 call to http://127.0.0.1:9$LAWS_PATH with fake-key-K, block refreshed" "rc=$RC calls=$(curl_calls) argv=$(argv_line) err=$ERR"; fi
+    teardown
+}
+
+test_oss_config_dir_key_and_url() {
+    local name="T4g: OSS_CONFIG_DIR set → its key (KB) and apiUrl; ~/.oss's key (KA) never sent"; ((TESTS_RUN++)); setup
+    printf '{"apiKey":"fake-key-KA"}' > "$T/home/.oss/config.json"
+    mkdir -p "$T/alt"; printf '{"apiKey":"fake-key-KB","apiUrl":"http://127.0.0.1:9"}' > "$T/alt/config.json"
+    block_file "$T/proj/CLAUDE.md"; stale; CFG_DIR="$T/alt" run_sync
+    if [[ $RC -eq 0 && "$(curl_calls)" == 1 && "$(argv_line)" == *" http://127.0.0.1:9$LAWS_PATH|" ]] \
+        && sent_key fake-key-KB && ! grep -qF fake-key-KA "$T/shim/stdin" "$T/shim/argv"; then pass "$name"
+    else fail "$name" "1 call to 127.0.0.1:9 carrying fake-key-KB only" "rc=$RC calls=$(curl_calls) argv=$(argv_line) sent=$(grep -o 'Bearer [^"]*' "$T/shim/stdin" 2>/dev/null)"; fi
+    teardown
+}
+
+test_refused_api_url_no_request() {
+    local mode
+    for mode in refresh install; do
+        local name="T4g: apiUrl the CLI refuses (http://evil.example), $mode → no request, nothing written, warned"; ((TESTS_RUN++)); setup
+        printf '{"apiKey":"fake-key-K","apiUrl":"http://evil.example"}' > "$T/home/.oss/config.json"
+        local want=0
+        if [[ $mode == refresh ]]; then block_file "$T/proj/CLAUDE.md"; stale; else printf '# Mine\n' > "$T/proj/CLAUDE.md"; want=4; fi
+        local before; before=$(sum "$T/proj/CLAUDE.md")
+        if [[ $mode == refresh ]]; then run_sync; else run_sync --install; fi
+        if [[ $RC -eq $want && "$(curl_calls)" == 0 && "$(sum "$T/proj/CLAUDE.md")" == "$before" && -n "$ERR" && -z "$OUT" ]]; then pass "$name"
+        else fail "$name" "exit $want, no curl call, unchanged, reason on stderr" "rc=$RC calls=$(curl_calls) argv=$(argv_line) err=$ERR"; fi
+        teardown
+    done
+}
+
+test_no_api_url_default_host() {
+    local name="T4g: control: no apiUrl in the config → the default API"; ((TESTS_RUN++)); setup
+    printf '{"apiKey":"fake-key-K"}' > "$T/home/.oss/config.json"
+    block_file "$T/proj/CLAUDE.md"; stale; run_sync
+    if [[ $RC -eq 0 && "$(curl_calls)" == 1 && "$(argv_line)" == *" https://one-shot-ship-api.onrender.com$LAWS_PATH|" ]] && sent_key fake-key-K; then pass "$name"
+    else fail "$name" "1 call to the default API with fake-key-K" "rc=$RC calls=$(curl_calls) argv=$(argv_line)"; fi
+    teardown
+}
+
+# T25: the 24 h "fresh" stamp belongs to the API that wrote the block. A new apiUrl (local dev API
+# -> production) refreshes the block from the new API on the next session start.
+test_api_url_change_refreshes() {
+    local same
+    for same in n y; do
+        local name="T25: block refreshed from API A, then apiUrl $([[ $same == y ]] && echo "unchanged → no request inside the 24 h" || echo "changed to B → the next run fetches from B")"
+        ((TESTS_RUN++)); setup
+        printf '{"apiKey":"fake-key-K","apiUrl":"http://127.0.0.1:9"}' > "$T/home/.oss/config.json"
+        block_file "$T/proj/CLAUDE.md"; stale; run_sync
+        [[ $same == y ]] || printf '{"apiKey":"fake-key-K","apiUrl":"http://localhost:9"}' > "$T/home/.oss/config.json"
+        run_sync
+        local last; last=$(tail -n 1 "$T/shim/argv" 2>/dev/null)
+        if [[ $same == n && $RC -eq 0 && "$(curl_calls)" == 2 && "$last" == *" http://localhost:9$LAWS_PATH" ]] \
+            || [[ $same == y && $RC -eq 0 && "$(curl_calls)" == 1 ]]; then pass "$name"
+        else fail "$name" "$([[ $same == y ]] && echo "1 call in all" || echo "2 calls, the last to localhost:9")" "rc=$RC calls=$(curl_calls) argv=$(argv_line)"; fi
+        teardown
+    done
+}
+
 echo "Running oss-iron-laws-sync.sh safety tests..."
 echo "======================================="
 test_refresh_never_creates
@@ -605,10 +687,15 @@ test_crlf_block_refreshed_in_place
 test_trailing_space_marker_counts
 test_crlf_install_appends_crlf
 test_key_without_node
-test_key_without_node_or_python
-test_fallback_fails_closed
+test_key_without_jq
+test_no_reader_fails_closed
 test_install_refusal_exit_3
 test_install_no_laws_exit_4
+test_api_url_from_config
+test_oss_config_dir_key_and_url
+test_refused_api_url_no_request
+test_no_api_url_default_host
+test_api_url_change_refreshes
 echo ""
 echo "======================================="
 echo "Results: $TESTS_PASSED/$TESTS_RUN passed, $TESTS_FAILED failed"

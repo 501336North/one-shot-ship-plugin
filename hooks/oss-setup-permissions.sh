@@ -31,6 +31,8 @@ OSS_PERMISSIONS=(
     'Bash(~/.oss/hooks/oss-write-learning.sh:*)'
     'Bash(~/.oss/hooks/oss-changelog.sh:*)'
     'Bash(~/.oss/hooks/fetch-iron-laws.sh:*)'
+    # takes no arguments; only GETs the CLAUDE.md template from the configured API, key on curl's stdin (T60)
+    'Bash(~/.oss/hooks/oss-claude-md-template.sh:*)'
     'Bash(~/.oss/hooks/oss-onboard-check.sh:*)'
     'Bash(~/.oss/hooks/oss-setup-permissions.sh:*)'
     'Bash(~/.oss/hooks/oss-detect-playwright.sh:*)'

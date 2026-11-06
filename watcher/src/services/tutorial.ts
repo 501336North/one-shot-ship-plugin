@@ -8,6 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { readRegularFileSync } from '../utils/regular-file.js';
 
 export interface Exercise {
   instruction: string;
@@ -208,7 +209,7 @@ export class TutorialService {
   loadProgress(): void {
     try {
       if (fs.existsSync(this.progressFile)) {
-        const content = fs.readFileSync(this.progressFile, 'utf-8');
+        const content = readRegularFileSync(this.progressFile);
         const data: ProgressData = JSON.parse(content);
         this.completedLessons = data.completedLessons || [];
       }

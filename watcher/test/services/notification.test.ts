@@ -34,7 +34,10 @@ describe('NotificationService', () => {
 
   describe('settings loading', () => {
     it('should load settings from settings.json', () => {
-      const settings: NotificationSettings = {
+      // A settings.json written before notifications.updates existed (T75e: typed as the file, not the loaded settings)
+      const settings: Omit<NotificationSettings, 'notifications'> & {
+        notifications: Omit<NotificationSettings['notifications'], 'updates'>;
+      } = {
         notifications: {
           style: 'audio',
           voice: 'Daniel',

@@ -7,6 +7,7 @@
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { readRegularFileSync } from '../utils/regular-file.js';
 // =============================================================================
 // Service
 // =============================================================================
@@ -248,7 +249,7 @@ export class IronLawMonitor {
     loadState() {
         try {
             if (fs.existsSync(this.stateFile)) {
-                const content = fs.readFileSync(this.stateFile, 'utf-8');
+                const content = readRegularFileSync(this.stateFile);
                 return JSON.parse(content);
             }
         }

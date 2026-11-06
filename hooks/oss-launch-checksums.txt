@@ -7,8 +7,8 @@
 # Populated by scripts/verify-release.sh <tag> (recomputes + cross-checks the published .sha256) and
 # committed via a reviewed PR. Update on every release, in lockstep with OSS_LAUNCH_TAG.
 #
-# Release: oss-launch-v2.0.78
-b9aa898b36a81feabbeb0fe729c439d4f46a2ca78f3e3da6558035c9ac573f84  oss-launch-Darwin-arm64
-5b72931ff119d9eba7b753418ef98013d9fef8a9039f3d8418b3392398dc9f0a  oss-launch-Darwin-x64
-58659d53c3aba889541246fa383a5b7e346d3a78648a43aa08ea390390d6631c  oss-launch-Linux-x64
-b9e2a82734e904d212aa0e9df2c4a44d5f8b1ee8ece842ba0ec9e7cef3016636  oss-launch-Linux-arm64
+# Release: oss-launch-v2.0.97-2
+0ba9ea9cf5d6e74e2b74c2bac982d0b9d8c0da2fd0c71f59d5389e4c4e3d5f97  oss-launch-Darwin-arm64
+fc0f61a9aaa180b06954aba138efdf64a204d9714b43fd10ed5af8de484044cb  oss-launch-Darwin-x64
+0c9ad79c600c8c1a9a8580c8e9e4e7113d948b03816ec32d5cd9d2703750a830  oss-launch-Linux-x64
+d7793e754bfc4a8f7d632e1989cf6b54812fecf189242a77f7fd877f2ab0615b  oss-launch-Linux-arm64

@@ -22,7 +22,8 @@ function realHome(home) {
         homeCache = { home, real: fs.realpathSync(home) };
     return homeCache.real;
 }
-function isUserOssDir(ossDir) {
+/** ossDir is $HOME/.oss (the person's own folder, out of this guard's scope). */
+export function isUserOssDir(ossDir) {
     const home = process.env.HOME;
     if (!home)
         return false;

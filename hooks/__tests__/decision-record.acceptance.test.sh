@@ -16,6 +16,10 @@
 # whose OSS config points at a fake API (a `curl` first on PATH: hooks/__tests__/fake-oss-api.sh).
 # Usage: ./hooks/__tests__/decision-record.acceptance.test.sh
 set -uo pipefail
+# T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
+# The fake API (fake-oss-api.sh) stands at a plain-http loopback apiUrl: that needs the opt-in (T20).
+export OSS_ALLOW_HTTP_LOOPBACK=1
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HOOK="$ROOT/hooks/oss-decision-record.sh"
 FIX="$ROOT/hooks/__tests__/fixtures/ask-user-question"

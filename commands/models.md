@@ -77,20 +77,22 @@ When user runs `/oss:models`:
 
 ### Step 1: Load Current Configuration
 
-Read model config from `~/.oss/config.json` and project `.oss/config.json`:
+Read model config from `~/.oss/config.json`. Agent offload and launch routing (`oss-launch`) use this
+file only. A project's `.oss/config.json` no longer maps agents: if it still has `models.agents`, tell
+the user those per-repo mappings are ignored and should move to `~/.oss/config.json`.
 
 ```bash
 USER_CONFIG=~/.oss/config.json
 PROJECT_CONFIG=.oss/config.json
 
-# Load user config
+# Load user config (provider keys in models.apiKeys only as "configured": a key value is never loaded or shown, T78d)
 if [[ -f "$USER_CONFIG" ]]; then
-    USER_MODELS=$(jq '.models // {}' "$USER_CONFIG")
+    USER_MODELS=$(jq '(.models // {}) | objects | if has("apiKeys") then .apiKeys |= (if type == "object" then map_values("configured") else "configured" end) else . end' "$USER_CONFIG")
 fi
 
-# Load project config (takes precedence)
+# Project config: no longer maps agents; read only to warn about leftover per-repo mappings
 if [[ -f "$PROJECT_CONFIG" ]]; then
-    PROJECT_MODELS=$(jq '.models // {}' "$PROJECT_CONFIG")
+    PROJECT_MODELS=$(jq '(.models // {}) | objects | if has("apiKeys") then .apiKeys |= (if type == "object" then map_values("configured") else "configured" end) else . end' "$PROJECT_CONFIG")
 fi
 ```
 
@@ -187,13 +189,20 @@ Note: Ollama models are free (local). Cost only for API models.
 
 ### Step 4: Configuration Precedence
 
-Model selection follows this precedence (highest to lowest):
+Agent offload and launch routing (`oss-launch`) read your own `~/.oss/config.json` only. A
+project's `.oss/config.json` no longer maps agents, sets their default model, or sets the proxy port:
+a repo you open must not choose the model or the port your session uses.
 
-1. **CLI Override**: `--model gemini/gemini-2.0-flash`
-2. **User Settings**: `~/.oss/settings.json`
-3. **Project Config**: `.oss/config.json`
-4. **Frontmatter**: Model in prompt file frontmatter
-5. **Default**: Claude (native execution)
+For an agent, the model is (highest to lowest):
+
+1. **Agent mapping**: `models.agents.<agent>` in `~/.oss/config.json`
+2. **Default**: `models.default` in `~/.oss/config.json`
+3. **Claude**: native execution (no mapping)
+
+The proxy port is `OSS_PROXY_PORT` if set, else `models.proxyPort` in `~/.oss/config.json`, else 8473.
+
+> **Changed in this release:** per-repo agent mappings in a project's `.oss/config.json` no longer
+> apply. If you had any, move them to `~/.oss/config.json` (e.g. `/oss:models set oss:code-reviewer ollama/codellama`).
 
 ### Step 5: Provider Setup
 

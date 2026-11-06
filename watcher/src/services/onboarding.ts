@@ -8,6 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
+import { readRegularFileSyncOrNull } from '../utils/regular-file.js';
 
 interface OnboardingStep {
   id: string;
@@ -271,11 +272,17 @@ export class OnboardingService {
 
     // Check config file
     const configPath = path.join(this.configDir, 'config.json');
-    if (!fs.existsSync(configPath)) {
+    let configText: string | null;
+    try {
+      configText = readRegularFileSyncOrNull(configPath);
+    } catch {
+      configText = ''; // found but unreadable: reported as corrupted below, as before T70e
+    }
+    if (configText === null) {
       issues.push('OSS config file not found - run /oss:login');
     } else {
       try {
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        const config = JSON.parse(configText);
         if (!config.apiKey) {
           issues.push('API key not configured - run /oss:login');
         }

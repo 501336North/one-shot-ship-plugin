@@ -6,7 +6,7 @@
  * @boundary CLI (oss-launch exec wrapper) — collaborators injected for determinism.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { runLaunch, type LaunchDeps } from '../../src/cli/oss-launch.js';
+import { runLaunch, type LaunchConfig, type LaunchDeps } from '../../src/cli/oss-launch.js';
 
 function fakeChild() {
   const handlers: Record<string, (arg: unknown) => void> = {};
@@ -20,26 +20,30 @@ function fakeChild() {
   };
 }
 
-function deps(overrides: Partial<LaunchDeps> = {}): LaunchDeps {
+/** The user's config file: LaunchConfig plus fields it does not read, such as models.default (T75e). */
+type UserConfig = LaunchConfig & { models?: { default?: string } };
+
+// spawn and ensureProxy are typed mocks of the LaunchDeps collaborators, so tests read their calls without casts (T75e).
+function deps(overrides: Partial<Omit<LaunchDeps, 'spawn' | 'ensureProxy'>> = {}) {
   return {
-    loadConfig: () => ({ models: {} }),
-    ensureProxy: vi.fn(async () => {}),
+    loadConfig: (): LaunchConfig => ({ models: {} }),
+    ensureProxy: vi.fn<LaunchDeps['ensureProxy']>(async () => {}),
     resolveClaudeBin: () => '/real/bin/claude',
-    spawn: vi.fn(() => fakeChild() as any),
+    spawn: vi.fn<LaunchDeps['spawn']>(() => fakeChild()),
     baseEnv: { PATH: '/usr/bin', ANTHROPIC_API_KEY: 'sk-real' },
     ...overrides,
-  };
+  } satisfies LaunchDeps;
 }
 
 describe('runLaunch: exec wrapper', () => {
   it('Anthropic-only (no models.agents): execs claude unchanged, no proxy', async () => {
-    const d = deps({ loadConfig: () => ({ models: { default: 'claude' } }) });
+    const d = deps({ loadConfig: (): UserConfig => ({ models: { default: 'claude' } }) });
     const code = await runLaunch(['-p', '/oss:queue drain', '--dangerously-skip-permissions'], d);
 
     expect(code).toBe(0);
     expect(d.ensureProxy).not.toHaveBeenCalled();
     expect(d.spawn).toHaveBeenCalledTimes(1);
-    const [bin, args, opts] = (d.spawn as any).mock.calls[0];
+    const [bin, args, opts] = d.spawn.mock.calls[0];
     expect(bin).toBe('/real/bin/claude');
     expect(args).toEqual(['-p', '/oss:queue drain', '--dangerously-skip-permissions']);
     expect(opts.env.ANTHROPIC_BASE_URL).toBeUndefined();
@@ -55,8 +59,8 @@ describe('runLaunch: exec wrapper', () => {
 
     expect(code).toBe(0);
     expect(d.ensureProxy).toHaveBeenCalledTimes(1);
-    expect((d.ensureProxy as any).mock.calls[0][0]).toBe(8473);
-    const [bin, , opts] = (d.spawn as any).mock.calls[0];
+    expect(d.ensureProxy.mock.calls[0][0]).toBe(8473);
+    const [bin, , opts] = d.spawn.mock.calls[0];
     expect(bin).toBe('/real/bin/claude');
     expect(opts.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:8473');
     expect(opts.env.OSS_PROXY_ROUTING).toBe('1');
@@ -76,7 +80,7 @@ describe('runLaunch: exec wrapper', () => {
     expect(d.ensureProxy).not.toHaveBeenCalled(); // no routing attempted
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0][0]).toMatch(/all-cloud/i); // loud, not silent
-    const [bin, , opts] = (d.spawn as any).mock.calls[0];
+    const [bin, , opts] = d.spawn.mock.calls[0];
     expect(bin).toBe('/real/bin/claude');
     expect(opts.env.ANTHROPIC_BASE_URL).toBeUndefined(); // env UNCHANGED → all-cloud
     expect(opts.env.OSS_PROXY_ROUTING).toBeUndefined();

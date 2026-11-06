@@ -21,6 +21,7 @@ import {
   ProviderConfig,
   DEFAULT_MODEL_SETTINGS,
 } from '../types/model-settings.js';
+import { readRegularFileSync } from '../utils/regular-file.js';
 
 /**
  * Prompt type for model configuration
@@ -59,6 +60,55 @@ export interface SettingsLockOptions {
 
 const LOCK_RETRY_MS = 100;
 const LOCK_STALE_MS = 30_000;
+
+/** The most links a settings.json writer follows, as the shell's oss_settings_target (T70c). */
+const MAX_SETTINGS_LINKS = 8;
+
+/**
+ * The file settings.json stands for (T70c, the shell's oss_settings_target): itself, or the file its links lead
+ * to, following at most 8; a relative link resolves from its own folder (no normalising, so `..` means what the
+ * system means). Nothing is opened. null for a link to nothing, a loop or more than 8 links; the caller's lstat
+ * then refuses a folder, a FIFO or a device.
+ */
+function settingsTarget(file: string): string | null {
+  let p = file;
+  for (let links = 0; ; links++) {
+    let st: fs.Stats;
+    try {
+      st = fs.lstatSync(p);
+    } catch {
+      return links === 0 ? p : null;
+    }
+    if (!st.isSymbolicLink()) {
+      return p;
+    }
+    if (links === MAX_SETTINGS_LINKS) {
+      return null;
+    }
+    let next: string;
+    try {
+      next = fs.readlinkSync(p);
+    } catch {
+      return null;
+    }
+    p = next.startsWith('/') ? next : `${path.dirname(p)}/${next}`;
+  }
+}
+
+/**
+ * The text of settings.json for a load (T70d): read only when it, or the file its links lead to (settingsTarget),
+ * is a regular file the person owns, checked on the open file (T70e, readRegularFileSync); anything else (missing,
+ * a FIFO, a device, a folder, a dangling link, a loop, more than 8 links, someone else's file) is null, so a
+ * loader uses its defaults, as the hooks do, and never blocks on a FIFO.
+ */
+export function readSettingsFile(file: string): string | null {
+  const target = settingsTarget(file);
+  try {
+    return target !== null ? readRegularFileSync(target, process.getuid?.()) : null;
+  } catch {
+    return null;
+  }
+}
 
 /** A lock's identity: its inode and mtime (ns), so a lock removed and made again is a different one. */
 function lockId(lock: string): string | null {
@@ -149,8 +199,8 @@ export class SettingsService {
    */
   private loadSettings(): NotificationSettings {
     try {
-      if (fs.existsSync(this.settingsPath)) {
-        const content = fs.readFileSync(this.settingsPath, 'utf-8');
+      const content = readSettingsFile(this.settingsPath);
+      if (content !== null) {
         const parsed = JSON.parse(content);
 
         // Validate and merge with defaults
@@ -182,8 +232,8 @@ export class SettingsService {
    */
   private loadModelSettings(): ModelSettings {
     try {
-      if (fs.existsSync(this.settingsPath)) {
-        const content = fs.readFileSync(this.settingsPath, 'utf-8');
+      const content = readSettingsFile(this.settingsPath);
+      if (content !== null) {
         const parsed = JSON.parse(content);
 
         if (parsed.models && typeof parsed.models === 'object') {
@@ -219,8 +269,8 @@ export class SettingsService {
    */
   private loadApiKeys(): ProviderConfig {
     try {
-      if (fs.existsSync(this.settingsPath)) {
-        const content = fs.readFileSync(this.settingsPath, 'utf-8');
+      const content = readSettingsFile(this.settingsPath);
+      if (content !== null) {
         const parsed = JSON.parse(content);
 
         if (parsed.apiKeys && typeof parsed.apiKeys === 'object') {
@@ -316,29 +366,30 @@ export class SettingsService {
   }
 
   /**
-   * Read settings.json for a merge, by the rule every OSS writer shares (oss_settings_set): a missing
-   * file is {}; a file that is a link, not a regular file, not the person's, unreadable or not exactly
-   * one JSON object is refused (null), because the hooks read such a file as "personal push off".
+   * Read settings.json for a merge, by the rule every OSS writer shares (oss_settings_update): a link is
+   * followed to the file it leads to (settingsTarget, T70c), which is returned as `file`; a missing file is {};
+   * a link to nothing, a loop, a file that is not regular, not the person's, unreadable or not exactly one JSON
+   * object is refused (null), because the hooks read such a file as "personal push off".
    */
-  private readForMerge(): { keys: Record<string, unknown> } | null {
-    let st: fs.Stats;
-    try {
-      st = fs.lstatSync(this.settingsPath);
-    } catch {
-      return { keys: {} };
-    }
-    const uid = process.getuid?.();
-    if (!st.isFile() || (uid !== undefined && st.uid !== uid)) {
+  private readForMerge(): { keys: Record<string, unknown>; file: string } | null {
+    const file = settingsTarget(this.settingsPath);
+    if (file === null) {
       return null;
     }
     try {
-      const parsed: unknown = JSON.parse(fs.readFileSync(this.settingsPath, 'utf-8'));
+      fs.lstatSync(file);
+    } catch {
+      return { keys: {}, file };
+    }
+    try {
+      // a regular file the person owns, checked on the open file (T70e): a FIFO swapped in is refused, not read
+      const parsed: unknown = JSON.parse(readRegularFileSync(file, process.getuid?.()));
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
         return null;
       }
       // the retired telegram block (plaintext bot token) is never carried forward
       const { telegram: _retired, ...rest } = parsed as Record<string, unknown>;
-      return { keys: rest };
+      return { keys: rest, file };
     } catch {
       return null;
     }
@@ -431,19 +482,23 @@ export class SettingsService {
     return null;
   }
 
-  /** save() under the lock: re-read, apply the pending changes, temp write at 600, rename. */
+  /**
+   * save() under the lock: re-read, apply the pending changes, temp write at 600 in the folder of the file
+   * settings.json stands for (itself, or where its links lead, T70c), rename onto that file, so links stay.
+   */
   private saveLocked(): void {
-    if (this.readForMerge() === null) {
+    const first = this.readForMerge();
+    if (first === null) {
       return;
     }
 
     const unique = `${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}`;
-    const tmp = path.join(this.configDir, `.settings.json.${unique}`);
+    const tmp = path.join(path.dirname(first.file), `.${path.basename(first.file)}.${unique}`);
     try {
       fs.writeFileSync(tmp, '', { flag: 'wx', mode: 0o600 });
       // merge again from the file as it is now, so a write that landed since the check is kept
       const current = this.readForMerge();
-      if (current === null) {
+      if (current === null || current.file !== first.file) {
         fs.rmSync(tmp, { force: true });
         return;
       }
@@ -453,7 +508,7 @@ export class SettingsService {
       fs.writeFileSync(tmp, JSON.stringify(current.keys, null, 2));
       // always owner-only (600), whatever mode an older writer left: the file holds provider apiKeys
       fs.chmodSync(tmp, 0o600);
-      fs.renameSync(tmp, this.settingsPath);
+      fs.renameSync(tmp, first.file);
       this.pending.clear();
     } catch {
       // could not write: settings.json is left as it was
@@ -552,7 +607,7 @@ export class SettingsService {
     }
 
     try {
-      const content = fs.readFileSync(audioConfigPath, 'utf-8');
+      const content = readRegularFileSync(audioConfigPath);
       const lines = content.split('\n');
 
       for (const line of lines) {

@@ -10,7 +10,7 @@
 #                            only the PUT answers 404 no_team)
 #   $D/api/queue.decisions   POST .../api/v1/decisions         (empty queue: 201 with a fake account)
 # A status of 000 is an unreachable API: curl prints 000 for -w and exits 7, as real curl does.
-# It writes the -w code to stdout and the body to the -o file (or stdout), like real curl.
+# It writes the -w code to stdout and the body to the -o file (or stdout), like real curl (a \n in -w is a newline).
 #
 # It records, for call N: $D/api/calls (one "<queue> <url>" line per call), argv.N (its argv),
 # config.N (what it read from `--config -`), and for `--data-binary @file`: body.N (the file's content AT
@@ -71,9 +71,9 @@ if [[ -z "$line" && -s "$A/queue.$q" ]]; then
 fi
 [[ -n "$line" ]] || line=$dflt
 code=${line%% *}; resp=${line#* }
-if [[ "$code" == 000 ]]; then [[ -n "$fmt" ]] && printf '%s' "${fmt//%\{http_code\}/000}"; exit 7; fi
+if [[ "$code" == 000 ]]; then [[ -n "$fmt" ]] && printf '%b' "${fmt//%\{http_code\}/000}"; exit 7; fi
 if [[ -n "$out" ]]; then printf '%s' "$resp" > "$out"; else printf '%s' "$resp"; fi
-[[ -n "$fmt" ]] && printf '%s' "${fmt//%\{http_code\}/$code}"
+[[ -n "$fmt" ]] && printf '%b' "${fmt//%\{http_code\}/$code}"
 exit 0
 SHIM
     chmod +x "$1/bin/curl"

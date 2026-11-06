@@ -7,7 +7,7 @@
  * @boundary CLI
  */
 
-import { describe, test, expect, beforeEach, vi, afterEach } from 'vitest';
+import { describe, test, expect, beforeEach, vi, afterEach, type MockInstance } from 'vitest';
 
 vi.mock('../../src/api/workflow-config.js', () => ({
   getCachedOrFetch: vi.fn(),
@@ -24,7 +24,7 @@ import {
 import { DEFAULT_WORKFLOW_CONFIGS } from '../../src/engine/types.js';
 
 describe('Chain Trigger CLI', () => {
-  let consoleSpy: ReturnType<typeof vi.spyOn>;
+  let consoleSpy: MockInstance<typeof console.log>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -333,7 +333,7 @@ describe('Chain Trigger CLI', () => {
      */
     const creds = { apiKey: 'test-key', apiUrl: 'https://api.example.com' };
 
-    let errorSpy: ReturnType<typeof vi.spyOn>;
+    let errorSpy: MockInstance<typeof console.error>;
 
     beforeEach(() => {
       errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

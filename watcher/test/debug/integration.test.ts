@@ -8,6 +8,7 @@ import * as debugIndex from '../../src/debug/index.js';
 import type { ParsedBug } from '../../src/debug/bug-parser.js';
 import type { RootCause } from '../../src/debug/investigation.js';
 import type { ConfirmedBug } from '../../src/debug/reproduction.js';
+import type { FixTask } from '../../src/debug/progress-update.js';
 
 describe('Debug Module Integration', () => {
   describe('Module Exports', () => {
@@ -76,11 +77,10 @@ describe('Debug Module Integration', () => {
         component: 'auth',
       };
 
+      // RootCause as investigation.ts defines it: { cause, evidence } (T75e)
       const rootCause: RootCause = {
-        description: 'Missing null check',
-        likelihood: 'high',
-        evidence: ['Line 42'],
-        affectedFiles: ['src/auth.ts'],
+        cause: 'Missing null check',
+        evidence: 'Line 42',
       };
 
       const confirmedBug: ConfirmedBug = {
@@ -91,27 +91,16 @@ describe('Debug Module Integration', () => {
 
       // If types compile, test passes
       expect(parsedBug.type).toBe('error');
-      expect(rootCause.likelihood).toBe('high');
+      expect(rootCause.cause).toBe('Missing null check');
       expect(confirmedBug.severity).toBe('high');
     });
 
     it('should validate debug → build handoff', () => {
       // Test that debug output format is compatible with build input format
-      const fixTasks = [
-        {
-          objective: 'Add null check',
-          tests: 'reproduction test passes',
-          implementation: 'Add if statement in auth.ts',
-          acceptance: 'Test passes',
-          phase: 'green' as const,
-        },
-        {
-          objective: 'Extract validation logic',
-          tests: 'All tests still pass',
-          implementation: 'Move to validation module',
-          acceptance: 'No duplication',
-          phase: 'refactor' as const,
-        },
+      // FixTask as progress-update.ts defines it: { id, description, phase } (T75e)
+      const fixTasks: FixTask[] = [
+        { id: 1, description: 'Add null check', phase: 'green' },
+        { id: 2, description: 'Extract validation logic', phase: 'refactor' },
       ];
 
       const buildTasks = debugIndex.formatForBuild(fixTasks);

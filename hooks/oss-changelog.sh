@@ -12,11 +12,15 @@
 
 set -uo pipefail
 
-# Paths
+# Paths. `--` before the state file in every jq call: a relative OSS_CONFIG_DIR such as "-cfg" is a path, never
+# options (T47).
 CONFIG_DIR="${OSS_CONFIG_DIR:-$HOME/.oss}"
 STATE_FILE="$CONFIG_DIR/update-state.json"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_JSON="${OSS_PLUGIN_JSON:-$SCRIPT_DIR/../.claude-plugin/plugin.json}"
+# oss_is_regular: the state is read only as a regular file; a link or FIFO counts as no state (T53b). Without the
+# helper, no state is trusted.
+source "$SCRIPT_DIR/oss-api-curl.sh" 2>/dev/null || oss_is_regular() { return 1; }
 
 # Read current plugin version
 current_version=""
@@ -27,9 +31,9 @@ fi
 # Read cached state
 cached_version=""
 has_state=false
-if [[ -f "$STATE_FILE" ]] && command -v jq &>/dev/null; then
+if oss_is_regular "$STATE_FILE" && command -v jq &>/dev/null; then
     has_state=true
-    cached_version=$(jq -r '.lastPluginVersion // ""' "$STATE_FILE" 2>/dev/null)
+    cached_version=$(jq -r '.lastPluginVersion // ""' -- "$STATE_FILE" 2>/dev/null)
 fi
 
 # Header
@@ -58,41 +62,30 @@ if [[ "$skip_manifest" != "1" ]]; then
         manifest_json=$(cat "$OSS_MOCK_MANIFEST")
     else
         manifest_url="${OSS_MANIFEST_URL:-https://one-shot-ship-api.onrender.com/api/v1/prompts/manifest}"
-        manifest_json=$(curl -s --max-time 3 "$manifest_url" 2>/dev/null) || manifest_json=""
+        # At most OSS_BODY_MAX bytes; a larger manifest is none (T74b)
+        manifest_json=$(oss_capped curl -s --max-time 3 --max-filesize "$OSS_BODY_MAX" "$manifest_url" 2>/dev/null) || manifest_json=""
     fi
 
     if [[ -n "$manifest_json" && "$has_state" == true ]] && command -v jq &>/dev/null; then
-        cached_hashes=$(jq -r '.manifestHashes // {}' "$STATE_FILE" 2>/dev/null)
-        changed_prompts=()
-        new_prompts=()
+        cached_hashes=$(jq -c '.manifestHashes // {}' -- "$STATE_FILE" 2>/dev/null)
 
-        for key in $(echo "$manifest_json" | jq -r '.prompts | keys[]' 2>/dev/null); do
-            new_hash=$(echo "$manifest_json" | jq -r ".prompts[\"$key\"].hash // \"\"" 2>/dev/null)
-            old_hash=$(echo "$cached_hashes" | jq -r ".[\"$key\"] // \"\"" 2>/dev/null)
+        # The manifest is fetched without authentication: its keys are data. One jq pass over the manifest and the
+        # cached hashes (--slurpfile, never filter text) lists the updated and the new prompts in key order, each
+        # name one line without C0 (so a line break too) or oss_invisible (T74, T79). A per-key loop ran two jq
+        # per key: minutes at the 256 KB cap. Hashes compare as the text the loop compared.
+        diff_text=$(printf '%s' "$manifest_json" | jq -r --slurpfile old <(printf '%s' "$cached_hashes") "$OSS_JQ_INVISIBLE"'
+            def h: if type == "string" then . else tojson end;
+            def show: gsub("[\u0000-\u001f" + oss_invisible + "]"; "");
+            (($old[0] // {}) | if type == "object" then . else {} end) as $o
+            | [.prompts | objects | keys[] as $k
+               | ((try .[$k].hash catch null) // "" | h) as $new | (($o[$k] // "") | h) as $was
+               | if $was == "" or $was == "null" then {n: $k} elif $was != $new then {c: $k} else empty end] as $d
+            | [$d[] | .c // empty] as $c | [$d[] | .n // empty] as $n
+            | (if ($c | length) > 0 then "Updated prompts (\($c | length)):", ($c[] | "  • " + show), "" else empty end),
+              (if ($n | length) > 0 then "New prompts (\($n | length)):", ($n[] | "  + " + show), "" else empty end)' 2>/dev/null)
 
-            if [[ -z "$old_hash" || "$old_hash" == "null" ]]; then
-                new_prompts+=("$key")
-            elif [[ "$old_hash" != "$new_hash" ]]; then
-                changed_prompts+=("$key")
-            fi
-        done
-
-        if [[ ${#changed_prompts[@]} -gt 0 ]]; then
-            echo "Updated prompts (${#changed_prompts[@]}):"
-            for p in "${changed_prompts[@]}"; do
-                # Categorize by type prefix
-                echo "  • $p"
-            done
-            echo ""
-            changes_found=true
-        fi
-
-        if [[ ${#new_prompts[@]} -gt 0 ]]; then
-            echo "New prompts (${#new_prompts[@]}):"
-            for p in "${new_prompts[@]}"; do
-                echo "  + $p"
-            done
-            echo ""
+        if [[ -n "$diff_text" ]]; then
+            printf '%s\n\n' "$diff_text"
             changes_found=true
         fi
     fi
@@ -105,7 +98,7 @@ fi
 
 # Footer
 if [[ "$has_state" == true ]]; then
-    last_checked=$(jq -r '.lastCheckedAt // "unknown"' "$STATE_FILE" 2>/dev/null)
+    last_checked=$(jq -r '.lastCheckedAt // "unknown"' -- "$STATE_FILE" 2>/dev/null)
     echo "Last checked: $last_checked"
 fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

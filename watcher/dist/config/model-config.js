@@ -7,6 +7,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { DEFAULT_MODEL_SETTINGS, parseProvider, } from '../types/model-settings.js';
+import { readRegularFileSync } from '../utils/regular-file.js';
 /**
  * Environment variable names for API keys
  */
@@ -37,7 +38,7 @@ export class ModelConfig {
         const configPath = path.join(this.userConfigDir, 'config.json');
         try {
             if (fs.existsSync(configPath)) {
-                const content = fs.readFileSync(configPath, 'utf-8');
+                const content = readRegularFileSync(configPath);
                 this.userConfig = JSON.parse(content);
                 return this.userConfig;
             }
@@ -55,7 +56,7 @@ export class ModelConfig {
         const configPath = path.join(projectPath, '.oss', 'config.json');
         try {
             if (fs.existsSync(configPath)) {
-                const content = fs.readFileSync(configPath, 'utf-8');
+                const content = readRegularFileSync(configPath);
                 this.projectConfig = JSON.parse(content);
                 return this.projectConfig;
             }

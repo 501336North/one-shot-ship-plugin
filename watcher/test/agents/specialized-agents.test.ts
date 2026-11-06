@@ -13,6 +13,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { WorkflowLogger } from '../../src/logger/workflow-logger.js';
 import { LogReader } from '../../src/logger/log-reader.js';
+import { at } from '../helpers/at.js';
 
 describe('Specialized Agents Logging', () => {
   let testDir: string;
@@ -93,7 +94,7 @@ describe('Specialized Agents Logging', () => {
       // THEN: Test actions logged
       expect(milestones.some((m) => m.data.action === 'test_written')).toBe(true);
       expect(milestones.some((m) => m.data.action === 'tests_run')).toBe(true);
-      expect(entries[entries.length - 1].data.result.tests_passing).toBe(5);
+      expect(at(entries[entries.length - 1].data, 'result', 'tests_passing')).toBe(5);
     });
   });
 
@@ -159,7 +160,7 @@ describe('Specialized Agents Logging', () => {
       // THEN: Code changes logged
       expect(milestones.some((m) => m.data.action === 'file_created')).toBe(true);
       expect(milestones.some((m) => m.data.action === 'file_modified')).toBe(true);
-      expect(entries[entries.length - 1].data.result.files_created).toContain(
+      expect(at(entries[entries.length - 1].data, 'result', 'files_created')).toContain(
         'src/services/user.ts'
       );
     });
@@ -251,7 +252,7 @@ describe('Specialized Agents Logging', () => {
       expect(milestones.some((m) => m.data.step === 'investigation')).toBe(true);
       expect(milestones.some((m) => m.data.step === 'finding')).toBe(true);
       expect(milestones.some((m) => m.data.step === 'resolution')).toBe(true);
-      expect(entries[entries.length - 1].data.result.issue_resolved).toBe(true);
+      expect(at(entries[entries.length - 1].data, 'result', 'issue_resolved')).toBe(true);
     });
   });
 
@@ -321,7 +322,7 @@ describe('Specialized Agents Logging', () => {
       // THEN: Review findings logged
       expect(findings.length).toBe(1);
       expect(findings[0].data.severity).toBe('high');
-      expect(entries[entries.length - 1].data.result.findings).toBe(3);
+      expect(at(entries[entries.length - 1].data, 'result', 'findings')).toBe(3);
     });
   });
 
@@ -387,7 +388,7 @@ describe('Specialized Agents Logging', () => {
 
       // WHEN: LogReader reads entries
       const entries = await reader.readAll();
-      const benchmarks = entries.filter((e) => e.data.step?.startsWith('benchmark'));
+      const benchmarks = entries.filter((e) => typeof e.data.step === 'string' && e.data.step.startsWith('benchmark'));
 
       // THEN: Performance metrics logged
       expect(benchmarks.length).toBe(2);

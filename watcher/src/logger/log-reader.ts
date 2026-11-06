@@ -8,6 +8,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { WorkflowEvent, AgentInfo } from './workflow-logger.js';
 import { OSSError } from '../services/error-codes.js';
+import { readRegularFileSyncOrNull } from '../utils/regular-file.js';
 
 export interface ParsedLogEntry {
   ts: string;
@@ -40,11 +41,11 @@ export class LogReader {
    * Read all entries from the log file
    */
   async readAll(): Promise<ParsedLogEntry[]> {
-    if (!fs.existsSync(this.logPath)) {
+    const content = readRegularFileSyncOrNull(this.logPath);
+    if (content === null) {
       return [];
     }
 
-    const content = fs.readFileSync(this.logPath, 'utf-8');
     return this.parseContent(content);
   }
 
@@ -98,20 +99,32 @@ export class LogReader {
   }
 
   private checkForNewEntries(): void {
-    if (!this.tailCallback || !fs.existsSync(this.logPath)) {
+    if (!this.tailCallback) {
+      return;
+    }
+    // stat'ed first (T80, regular-file.ts's rule): a device, FIFO or folder is never opened; missing is no news
+    try {
+      if (!fs.statSync(this.logPath).isFile()) {
+        return;
+      }
+    } catch {
       return;
     }
 
-    const stats = fs.statSync(this.logPath);
-    if (stats.size <= this.lastReadPosition) {
-      return;
+    // Read new content from a regular file only (T70e): opened non-blocking, checked on the open file
+    const fd = fs.openSync(this.logPath, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    let stats: fs.Stats;
+    let buffer: Buffer;
+    try {
+      stats = fs.fstatSync(fd);
+      if (!stats.isFile() || stats.size <= this.lastReadPosition) {
+        return;
+      }
+      buffer = Buffer.alloc(stats.size - this.lastReadPosition);
+      fs.readSync(fd, buffer, 0, buffer.length, this.lastReadPosition);
+    } finally {
+      fs.closeSync(fd);
     }
-
-    // Read new content
-    const fd = fs.openSync(this.logPath, 'r');
-    const buffer = Buffer.alloc(stats.size - this.lastReadPosition);
-    fs.readSync(fd, buffer, 0, buffer.length, this.lastReadPosition);
-    fs.closeSync(fd);
 
     this.lastReadPosition = stats.size;
 

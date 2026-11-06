@@ -7,6 +7,7 @@
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { safeWriteFileAtomic } from '../utils/safe-project-write.js';
+import { readRegularFile } from '../utils/regular-file.js';
 /**
  * TTL for processed comment IDs (30 days in milliseconds)
  */
@@ -36,7 +37,7 @@ export class PRMonitorState {
         const filePath = path.join(process.cwd(), STATE_FILE);
         try {
             await fs.access(filePath);
-            const content = await fs.readFile(filePath, 'utf-8');
+            const content = await readRegularFile(filePath);
             const data = JSON.parse(content);
             // Load processedComments with TTL support
             if (data.processedComments) {

@@ -111,7 +111,7 @@ describe('ApiTransformer - Anthropic to OpenAI', () => {
 
       const openaiRequest = transformToOpenAI(anthropicRequest);
 
-      expect((openaiRequest as Record<string, unknown>).metadata).toBeUndefined();
+      expect('metadata' in openaiRequest).toBe(false);
     });
 
     it('should transform system parameter to system message', () => {

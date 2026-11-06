@@ -226,7 +226,7 @@ release_lock
 # its key is another account's: never sent again); anything else (403, 429, unreachable) stops this run and the rest wait for the next. Never a
 # failure.
 [[ -n "$ob" ]] || exit 0
-key=$(oss_api_key) && url=$(oss_api_url) || exit 0
+oss_api_creds || exit 0; key=$OSS_KEY url=$OSS_URL   # key and URL from one read (T37)
 # one push at a time per outbox (mkdir is atomic): a session that finds it busy leaves its answers pending
 # for the next run, so no id is ever sent twice. A push lock older than 2 minutes (a run lasts under a
 # minute) was left by a hook that was killed, and is taken over.
@@ -250,8 +250,11 @@ waiting() {
 # withhold: Task 16b (user decision 2026-10-30): an answer given while the team push is off is never sent, even
 # after an owner or admin turns it back on. Every answer waiting now is marked withheld, a final state.
 withhold() { waiting | jq -c '{id, state: "withheld"}' > "$tmp/withheld" 2>/dev/null && ob_ok && (umask 077; cat "$tmp/withheld" >> "$ob"); }
+# ask CURL_ARGS...: one API call within 5 s; the answer goes to $resp and its HTTP status to $code, read only up to
+# OSS_BODY_MAX bytes (oss_ask in oss-api-curl.sh, T81): over it no answer ($code "", $resp empty) (T74c, T77)
+ask() { oss_ask 5 "$resp" "$key" "$@" 2>/dev/null; }
 # the team decides: only a 200 saying pushEnabled is true sends anything; one saying false withholds what waits
-[[ $(oss_api_curl "$key" -s --max-time 5 -o "$resp" -w '%{http_code}' "$url/api/v1/decisions/policy" 2>/dev/null) == 200 ]] || exit 0
+ask "$url/api/v1/decisions/policy"; [[ "$code" == 200 ]] || exit 0
 jq -e '.pushEnabled == false' "$resp" >/dev/null 2>&1 && { withhold; exit 0; }
 jq -e '.pushEnabled == true' "$resp" >/dev/null 2>&1 || exit 0
 todo=$(waiting)
@@ -283,8 +286,7 @@ while IFS= read -r e; do
     # stay pending)
     oss_decisions_push_off && break
     sent=$((sent + 1))
-    code=$(oss_api_curl "$key" -s --max-time 5 -o "$resp" -w '%{http_code}' -H 'Content-Type: application/json' \
-        --data-binary @"$body" "$url/api/v1/decisions" 2>/dev/null)
+    ask -H 'Content-Type: application/json' --data-binary @"$body" "$url/api/v1/decisions"
     case "$code" in
         200 | 201)
             # Task 15g: stored only when the API names the account (a non-empty string id), kept as text stripped

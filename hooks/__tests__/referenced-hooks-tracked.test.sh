@@ -10,6 +10,8 @@
 #
 # Usage: ./hooks/__tests__/referenced-hooks-tracked.test.sh
 set -uo pipefail
+# T29: a developer's exported OSS_CONFIG_DIR / OSS_MANIFEST_URL must not lead the hooks to their real config or API.
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SESSION_START="$ROOT/hooks/oss-session-start.sh"
 RUN=0; FAILED=0
