@@ -11,13 +11,57 @@
 #                                          written in a project with no .oss folder.
 #
 # Run with no verb, it is the PostToolUse hook for Agent|Task (hooks.json): the hook JSON on stdin, one agent line,
-# exit 0 always. Run with a verb (command, gate; merge and push follow), it writes that verb's line.
+# exit 0 always. Run with a verb (command, gate, merge; push follows), it writes that verb's line.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=hooks/oss-api-curl.sh
 source "$SCRIPT_DIR/oss-api-curl.sh" || return 1 2>/dev/null || exit 1
 # shellcheck source=hooks/oss-safe-path.sh
 source "$SCRIPT_DIR/oss-safe-path.sh" || return 1 2>/dev/null || exit 1
+
+# oss_tl_bounded <secs> <cmd...>: run a command, killed after <secs>; keeps its output and exit status (ended by the
+# bound: non-zero). The merge verb bounds `gh pr view` with it (P-9). The supervisor is inline, the same program as
+# oss-session-start.sh's run_bounded and oss-notify.sh's run_with_timeout, byte for byte (one-copy-helpers.test.sh,
+# T81): a sourced copy missing mid-update would leave the call with no limit.
+oss_tl_bounded() {
+    local secs=$1; shift
+    if command -v gtimeout &>/dev/null; then gtimeout "$secs" "$@"      # macOS with coreutils installed
+    elif command -v timeout &>/dev/null; then timeout "$secs" "$@"      # Linux or macOS with timeout available
+    elif [[ -x /usr/bin/perl ]]; then
+        # Fallback (stock macOS): one supervisor owns the time limit (T72; the same program as the other two copies, byte
+        # for byte: one-copy-helpers.test.sh, T81; inline, so a hook never loses its limit to a missing file). It is the
+        # command's parent and runs it in its own process group (like GNU timeout; stdin /dev/null). It never signals
+        # that group after reaping the leader (the id may then be reused): it polls the leader with
+        # waitpid(WNOHANG) between short sleeps (1 ms doubling to 100 ms; a SIGCHLD cuts them short), and handlers only
+        # set flags. At the bound, or once this shell is gone (HUP, INT or TERM to it, or its parent changes), it
+        # kills the group, waits for the leader's SIGCHLD, kills the group again while the zombie leader still holds
+        # the id (a child forked while the first kill landed, T54c), and only then reaps. It sits in a group of its
+        # own, so a KILL to this shell's group still leaves it to end the command's. Exit: the command's, 137 at the
+        # bound, 128+n for signal n to it.
+        /usr/bin/perl -e '
+            my ($s, $pp, $stop, $chld) = (shift, getppid, 0, 0);
+            $SIG{CHLD} = sub { $chld = 1 };   # before the fork: an inherited SIG_IGN would let the kernel reap
+            my $p = fork; exit 125 unless defined $p;
+            if (!$p) { setpgrp(0, 0); exec { $ARGV[0] } @ARGV; exit($!{ENOENT} ? 127 : 126) }
+            setpgrp($p, $p); setpgrp(0, 0);
+            my %n = (HUP => 1, INT => 2, TERM => 15);
+            for my $g (keys %n) { $SIG{$g} = sub { $stop = $n{$g} } }
+            sub gkill { kill "KILL", -$p }
+            my ($t0, $used, $tick) = (time, 0, 0.001);
+            while (1) {
+                my $r = waitpid($p, 1);   # 1: WNOHANG
+                if ($r == $p) { exit($? & 127 ? 128 + ($? & 127) : $? >> 8) }
+                exit 125 if $r == -1;     # not ours to reap (never expected): signal nothing
+                last if $stop || $used >= $s || time - $t0 > $s + 1 || getppid != $pp;   # time(): whole seconds, a backstop
+                select(undef, undef, undef, $tick); $used += $tick; $tick = $tick < 0.05 ? $tick * 2 : 0.1;
+            }
+            gkill(); for (1 .. 200) { last if $chld; select(undef, undef, undef, 0.005) }
+            gkill(); waitpid($p, 0); exit($stop ? 128 + $stop : 137);
+        ' "$secs" "$@" </dev/null
+    else
+        "$@" </dev/null   # no perl either: unbounded, so nothing is ever signalled (T72)
+    fi
+}
 
 # The one table of field rules, a copy of the API's schema (AgenticDevWorkflow
 # packages/api/src/services/timeline/schema.ts): per kind its required and optional own fields, then the check of
@@ -145,6 +189,26 @@ case "${1:-}" in
                 | {(.[0]): (.[1] | tonumber)}] | add // {};
             {round: $r, gate: $g, verdict: $v, findings: ($f | counts), fixed: ($x | counts), mode: $m}' 2>/dev/null)"
         exit ;;
+    # oss-timeline.sh merge APPROVAL: only from oss-value.sh timeline merge (B4b), which read APPROVAL from
+    # approval.txt and checked it (merge-flag, chat-instruction, none or decision:<uuid>). The PR facts come from
+    # `gh pr view` for the current branch, bounded at 10 s (P-9); nothing from a value file reaches gh's argv. No gh,
+    # a failed or hung gh, or a PR that is not merged gives a local merge-unknown line (P-2), with the PR number
+    # when gh named one. The line's own rules check every field again.
+    merge)
+        oss_resolve_project
+        out=""
+        command -v gh >/dev/null 2>&1 \
+            && out=$(cd "${_OSS_PROJ:-.}" && oss_tl_bounded 10 gh pr view --json number,mergeCommit,mergedAt,mergedBy 2>/dev/null) \
+            || out=""
+        # shellcheck disable=SC2016 # jq's $ variables, not the shell's
+        fields=$(printf '%s' "$out" | jq -c --arg a "${2:-}" '
+            (if $a | startswith("decision:") then {type: "decision", decisionId: $a[9:]} else {type: $a} end) as $ap
+            | if .mergedAt == null then ["merge-unknown", (if .number | type == "number" then {pr: .number} else {} end)]
+              else ["merge", {pr: .number, sha: .mergeCommit.oid, mergedAt: .mergedAt, mergedBy: .mergedBy.login,
+                  approval: $ap}] end' 2>/dev/null) || fields=""
+        [[ -n "$fields" ]] || fields='["merge-unknown",{}]'
+        oss_timeline_append "$(jq -r '.[0]' <<< "$fields")" "$(jq -c '.[1]' <<< "$fields")"
+        exit ;;
     # no verb: the PostToolUse hook for Agent|Task (B3), the hook JSON on stdin. One agent line with the type,
     # lower-cased (P-5), and the running command when the project's own workflow-state.json names one. Never
     # disturbs the tool run: exit 0 whatever happens.
@@ -168,5 +232,5 @@ case "${1:-}" in
                 '{agent: $a} + (if $c == "" then {} else {command: $c} end)')"
         exit 0 ;;
 esac
-echo "usage: oss-timeline.sh command NAME STATUS | gate ROUND GATE VERDICT FINDINGS FIXED MODE, or no verb with PostToolUse JSON on stdin (or source it for oss_timeline_append)" >&2
+echo "usage: oss-timeline.sh command NAME STATUS | gate ROUND GATE VERDICT FINDINGS FIXED MODE | merge APPROVAL, or no verb with PostToolUse JSON on stdin (or source it for oss_timeline_append)" >&2
 exit 2

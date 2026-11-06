@@ -9,7 +9,8 @@
 - [x] Task 4: B2, command lines from oss-notify, plus FOLLOWUPS #130 (completed 2026-11-06)
 - [x] Task 5: B3, agent lines from a PostToolUse hook (completed 2026-11-06)
 - [x] Task 6: B4a, the gate verb (completed 2026-11-06)
-- [ ] Task 7: B4b, the merge verb (pending)
+- [x] Task 7: B4b, the merge verb (completed 2026-11-06; gh bounded by a third inline supervisor, DECISIONS.md P-9)
+  - For Task 8: never queue a `merge-unknown` line (P-2); timeline-merge.test.sh already checks `~/.oss/timeline-outbox/*.ndjson` holds none.
 - [ ] Task 8: B5, background push (pending)
   - Moved here from Task 4: oss-notify starts the push detached after its `oss-timeline.sh command` call, and the test "should not delay oss-notify by more than 1 s when the API hangs" (fake API waits 10 s, call returns under `run_capped 3`) goes in this task.
 - [ ] Task 9: B6, timeline files are never removed, plus release 2.0.98 (pending)

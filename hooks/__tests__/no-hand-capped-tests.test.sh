@@ -35,6 +35,9 @@ ALLOW=(
     'hooks/__tests__/session-start-timeout-fallback.test.sh|[[ "$n" == timeout || "$n" == gtimeout || -e "$T/sys/$n" ]] && continue'
     'hooks/__tests__/session-start-timeout-fallback.test.sh|if PATH="$T/bin:$T/sys" command -v timeout >/dev/null || PATH="$T/bin:$T/sys" command -v gtimeout >/dev/null; then'
     'hooks/__tests__/session-start-timeout-fallback.test.sh|fail "fallback timer setup hides timeout and gtimeout" "a timeout tool is still on the PATH"'
+    # The same for oss-timeline.sh's merge verb (G2 P-9): its gh bound is tested on a PATH without either tool.
+    'hooks/__tests__/timeline-merge.test.sh|path_without "$T/stock" gh gtimeout timeout   # stock macOS (the fake gh goes first): the bound is the inline perl supervisor (P-9)'
+    'hooks/__tests__/timeline-merge.test.sh|&& ! -e "$T/stock/timeout" && ! -e "$T/stock/gtimeout" ]] \'
 )
 COMMENT_RE='^[[:space:]]*#'
 

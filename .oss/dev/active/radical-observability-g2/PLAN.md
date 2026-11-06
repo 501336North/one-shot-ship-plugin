@@ -161,7 +161,7 @@ The plugin writes a committed `.oss/dev/active/{feature}/timeline.ndjson` per fe
 - `should write a local merge-unknown line, and queue nothing for the API, when gh is missing, fails or reports the PR is not merged`.
 - `should refuse a sha that is not 40 hex characters, or a login outside ^[A-Za-z0-9-]{1,39}$`.
 - `should never pass a value file's content to gh`: the fake gh records its argv.
-- `should give up on gh after 10 s` (`run_capped` in the test; the script's own call is bounded by `run_with_timeout`).
+- `should give up on gh after 10 s` (`run_capped` in the test; the script's own call is bounded by `oss_tl_bounded`, a third inline copy of the supervisor: see DECISIONS.md P-9).
 
 **Implementation (GREEN):** `oss-value.sh timeline merge` plus `oss-timeline.sh merge`.
 

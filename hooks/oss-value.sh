@@ -29,6 +29,9 @@
 #   oss-value.sh timeline gate      one gate line on the feature timeline (oss-timeline.sh gate) from round.txt
 #                                   gate.txt verdict.txt findings.txt fixed.txt mode.txt, each held to its rule in
 #                                   _ov_cmd_timeline; all six deleted once read, accepted or refused (G2 B4a).
+#   oss-value.sh timeline merge     one merge line (oss-timeline.sh merge, the PR facts from gh) with the approval
+#                                   from approval.txt (merge-flag, chat-instruction, none or decision:<uuid v4>;
+#                                   none when missing); deleted once read, accepted or refused (G2 B4b).
 #   oss-value.sh queue-push         POST type.txt, source.txt and prompt.txt (checked) to /api/v1/queue the same way;
 #                                   print "Queued: <id>", or one Error: line on stderr and rc 1 (T87).
 # (Saving the API key is hooks/oss-login.sh, NOT a verb here: this script is allowlisted, a key
@@ -50,7 +53,7 @@ if [[ ! -f "$_OV_HERE/oss-safe-path.sh" ]]; then
 fi
 source "$_OV_HERE/oss-safe-path.sh"
 
-_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args> | status | usage | workflows | workflow | queue-push | timeline gate" >&2; exit 2; }
+_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args> | status | usage | workflows | workflow | queue-push | timeline gate|merge" >&2; exit 2; }
 
 _OV_RUN="$HOME/.oss/run"
 
@@ -90,7 +93,7 @@ _ov_cmd_dir() {
     && rm -f "$p/feature.txt" "$p/numbers.txt" "$p/date.txt" "$p/reason.txt" "$p/message.txt" "$p/hint.txt" "$p/error.txt" \
              "$p/agent.txt" "$p/key.txt" "$p/style.txt" "$p/prompt.txt" "$p/model.txt" "$p/workflow.txt" "$p/category.txt" "$p/name.txt" \
              "$p/notify_style.txt" "$p/voice.txt" "$p/sound.txt" "$p/verbosity.txt" "$p/custom.txt" "$p/type.txt" "$p/source.txt" \
-             "$p/round.txt" "$p/gate.txt" "$p/verdict.txt" "$p/findings.txt" "$p/fixed.txt" "$p/mode.txt" \
+             "$p/round.txt" "$p/gate.txt" "$p/verdict.txt" "$p/findings.txt" "$p/fixed.txt" "$p/mode.txt" "$p/approval.txt" \
     && printf '%s\n' "$p"
 }
 
@@ -357,7 +360,18 @@ _OV_COUNTS='^((critical|high|medium|low|info)=(0|[1-9][0-9]{0,2}|1000)( (critica
 _ov_cmd_timeline() {
     local o n re ok=1 v=() k seen
     oss_phys_cwd; o="$_OSS_CWD"
-    [[ "${1:-}" == gate ]] && _ov_dir || { echo "oss-value: timeline: refused (not timeline gate, or no safe value folder)" >&2; return 1; }
+    [[ "${1:-}" == gate || "${1:-}" == merge ]] && _ov_dir \
+        || { echo "oss-value: timeline: refused (not timeline gate or merge, or no safe value folder)" >&2; return 1; }
+    if [[ $1 == merge ]]; then   # B4b: approval.txt (taken: read and deleted, valid or not), none when there is none
+        _OV_VAL=none
+        if [[ -e "$_OV_DIR/approval.txt" || -L "$_OV_DIR/approval.txt" ]]; then
+            _ov_take approval.txt '^(merge-flag|chat-instruction|none|decision:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$' \
+                || { echo "oss-value: timeline merge: refused (approval.txt unsafe or outside its rule)" >&2; return 1; }
+        fi
+        _ov_walk "$o"
+        CLAUDE_PROJECT_DIR="$_OV_PROJ" "$_OV_HERE/oss-timeline.sh" merge "$_OV_VAL"
+        return
+    fi
     for n in round gate verdict findings fixed mode; do
         case $n in
             round) re='^([1-9]|1[0-9]|20)$' ;;

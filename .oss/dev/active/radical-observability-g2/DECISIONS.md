@@ -43,4 +43,9 @@ The design-level ADRs (ADR-001 to ADR-010) live in AgenticDevWorkflow `.oss/dev/
 - **Check:** each candidate must match `^[A-Za-z0-9-]{1,64}$`.
 - **Why:** oss-notify has no hook stdin, and the API requires a valid `session`.
 
-## Last Updated: 2026-11-06 by /oss:plan
+## P-9: The merge verb bounds gh with a third inline supervisor
+- **Decision:** the merge verb bounds gh with a third inline copy of the supervisor in oss-timeline.sh (`oss_tl_bounded`), checked byte-identical by one-copy-helpers (T81's inline rule; a sourced copy could be missing mid-update).
+- **Context:** PLAN.md Task 7 assumed `run_with_timeout` could be reached. It cannot: it and `run_bounded` live inline in oss-notify.sh and oss-session-start.sh, which run their hook body when loaded and cannot be sourced.
+- **Decided by:** the build orchestrator, 2026-11-06, when Task 7 found no reachable bounded helper.
+
+## Last Updated: 2026-11-06 by /oss:build
