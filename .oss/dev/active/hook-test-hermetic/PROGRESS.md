@@ -1,6 +1,6 @@
 # Progress: hook-test-hermetic
 
-## Current Phase: build (ship keep-fixing round after the cap)
+## Current Phase: ship (COMPLETE: 2.0.97, PR #216)
 
 ## Tasks
 - [x] T1: Analytics POST on workflow start is detached and time-limited (completed 2026-10-29)
@@ -197,4 +197,6 @@ The earlier round's banner landed in another worktree's build.log because ~/.oss
 - [x] T71c done 2026-11-06: oss-launch-v2.0.97-2 (commit 26c1ac7) built, 4 checksums verified, sandbox: version 2.0.97, hostile repo config does not route, user config routes and the background proxy is healthy; real ensure-oss-launch install verified. Pinned OSS_LAUNCH_TAG + hooks/oss-launch-checksums.txt. Latest stays cli-decrypt-v1.2.4. (v2.0.97 and v2.0.97-1 were built during the fix and are not pinned.)
 - [x] API #423 (/oss:plan Step 0 check-and-report, deploy no global installs) live, re-checked 2026-11-06 03:25 UTC.
 
-## Last Updated: 2026-11-06 by /oss:ship (T71c pinned; merging PR #216)
+- [x] Ship gate 2026-11-06: full shell suite 115 files at baseline (ideate-template, no-telegram-command), watcher 284 files 4024/4024, no orphans, on final commit 1ca6dde. GitHub runs no tests on PRs (only the launcher builds), so this local run is the gate. PR #216 merged by Claude with the user's authorization (2026-11-05: "you can merge, I'm OK with it").
+
+## Last Updated: 2026-11-06 by /oss:ship (shipped as 2.0.97)
