@@ -43,3 +43,10 @@
 timeline-archived, timeline-merge, timeline-writer, timeline-gate, timeline-push, timeline-delivery, timeline-bounds, timeline-kept, timeline-agent-hook, notify-timeline, timeline.acceptance, decision-record.acceptance, version-check.
 
 ## Last Updated: 2026-11-07 10:33 CST by /oss:integration
+
+## Ship gate (/oss:ship --merge)
+- Round 1 fixes (S1 full ref, S2-S4 find-based pick with a date-shaped, not-future date, S5 own decision record, Q3 setup checks): timeline-archived 31/0, timeline-merge 14/0, timeline-writer 23/0, decision-record.acceptance 5/0, timeline-gate 8/0, notify-timeline 9/0, timeline.acceptance 8/0.
+- Round 2 fixes: fixed past dates in timeline-archived (no case depends on today); detached HEAD and many-unrelated-entries guards; feature-resolve guards for a HEAD on refs/remotes and refs/tags (both fail against the pre-S1 oss-safe-path.sh); failglob RED in feature-resolve (`no match: .../active/*/`), GREEN by turning failglob off around the one glob and restoring it.
+- After round 2, one file at a time: timeline-archived 33/0, feature-resolve 12/0, timeline-merge 14/0, timeline-writer 23/0, decision-record.acceptance 5/0, timeline-gate 8/0, notify-timeline 9/0, timeline.acceptance 8/0, oss-safe-path 25/25. shellcheck: no new codes in the two hooks. No orphans.
+
+## Last Updated: 2026-11-07 11:41 CST by /oss:ship (round 2)

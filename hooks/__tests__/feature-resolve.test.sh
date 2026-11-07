@@ -74,4 +74,35 @@ new_project main
 O=$(mktemp -d "$T/outside.XXXXXX"); ln -s "$O" "$Q/.oss/dev/active/demo"
 expect 'should still resolve the only active folder to its name when it is a symlink' demo
 
+# HEAD pointing at a ref that is not a branch (a tag, a remote) names no feature: the same fallback as a detached HEAD,
+# the only active folder or unfiled, never the ref's type or its second part (ship gate S1, F3)
+# head_at <ref>: HEAD as a symbolic ref to <ref>, made to exist at the current commit
+# (a setup that did not take fails the case)
+head_at() { (cd "$Q" && git update-ref "$1" HEAD && git symbolic-ref HEAD "$1") && [[ "$(cd "$Q" && git symbolic-ref -q HEAD)" == "$1" ]]; }
+name='should give unfiled when HEAD points at a remote ref, never its type or feature part'
+new_project main feat evil
+if head_at refs/remotes/origin/feat/evil/ship; then expect "$name" ''; else fail "$name" "setup: HEAD not at the remote ref"; fi
+name='should take the only active folder when HEAD points at a tag, as on a detached HEAD'
+new_project main demo
+if head_at refs/tags/feat/evil/ship; then expect "$name" demo; else fail "$name" "setup: HEAD not at the tag"; fi
+
+# Sourced into a shell with failglob on (G1 and G2 both source this file into shells they do not own), the fallback
+# for a branch that names no feature must still finish: the caller goes on, and gets the only active folder or
+# unfiled (ship gate round 2, pen-test)
+# resolve_failglob -> GOT: what the caller prints after the call, MARK[<feature>] when it went on, and whether its
+# failglob is still on (the call leaves the caller's options as they were)
+resolve_failglob() {
+    GOT=$(run_capped 20 /bin/bash -c 'shopt -s failglob; source "$1" || exit 99; oss_resolve_feature "$2"; printf "MARK[%s]" "${_OSS_FEATURE-UNSET}"; shopt -q failglob && printf " failglob"' \
+        _ "$SAFE" "$Q" 2>"$T/err")
+    RC=$?
+}
+name='should let the caller go on with unfiled when failglob is on and no folder is active'
+new_project main
+resolve_failglob
+[[ $RC -eq 0 && "$GOT" == 'MARK[] failglob' ]] && pass "$name" || fail "$name" "rc=$RC got='$GOT' stderr=$(cat "$T/err")"
+name='should still take the only active folder when failglob is on'
+new_project main demo
+resolve_failglob
+[[ $RC -eq 0 && "$GOT" == 'MARK[demo] failglob' ]] && pass "$name" || fail "$name" "rc=$RC got='$GOT' stderr=$(cat "$T/err")"
+
 echo "$RUN run, $FAILED failed"; [[ $FAILED -eq 0 ]]
