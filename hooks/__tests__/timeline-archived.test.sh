@@ -8,7 +8,9 @@
 #           queued as pending in the private outbox (~/.oss/timeline-outbox/<rid>.ndjson) so it reaches the API.
 #           It is not dropped into .oss/dev/timeline-unfiled.ndjson. Archived twice, the newest dated folder wins;
 #           a folder that only looks like the feature's is never used; while the active folder exists it still
-#           wins. Only the merge verb looks in completed/: gate, command and agent lines stay unfiled (B2-1).
+#           wins. Only the merge verb looks in completed/: gate, command and agent lines stay unfiled (B2-1). A
+#           decision recorded before the move still approves the merge (B8), and a decision record reached through
+#           a linked folder, active or archived, never does (FOLLOWUPS #197).
 # @business-rule AC-G2-003.3 as amended / API ADR-017 (the merge line reaches the API after the archive move),
 #           P-3 (unfiled lines are never pushed, so a merge filed as unfiled would never reach the API).
 # Usage: /bin/bash hooks/__tests__/timeline-archived.test.sh
@@ -251,6 +253,77 @@ fresh main .oss/dev/completed/demo-2026-11-07
 CMP="$P/.oss/dev/completed"; before=$(snap "$CMP")
 approve merge-flag; merge
 refused_unfiled "$before" "$CMP" && pass "$name" || fail "$name" "$(udiag)"
+
+# --- B8: a decision recorded before the archive move still approves the merge after it ----------------------------
+UUID=3f2b8c1e-9a4d-4c7b-8e21-5d6f7a8b9c0d
+UNKNOWN=9d8c7b6a-5f4e-4d3c-a2b1-0f9e8d7c6b5a
+# record <file>: G1's decision record holding the one decision $UUID, as oss-decision-record.sh writes it
+record() { printf '%s\n' '{"v":1,"id":"'$UUID'","feature":"demo","question":"Ship it?","answer":"Yes"}' > "$1"; }
+ARC=.oss/dev/completed/demo-2026-11-07
+# archived_unknown: rc 1, one merge-unknown line for demo in the archived folder (B2-3), nothing in unfiled, no
+# outbox entry (P-2)
+archived_unknown() {
+    local tl="$P/$ARC/timeline.ndjson"
+    [[ $RC -eq 1 && $(lines "$tl") -eq 1 && "$(tail -n 1 "$tl" | jq -r '.kind + " " + .feature' 2>/dev/null)" == "merge-unknown demo" \
+        && ! -e "$UNF" && -z "$(outbox)" ]]
+}
+adiag() { echo "rc=$RC archived=[$(cat "$P/$ARC/timeline.ndjson" 2>/dev/null)] $(udiag)"; }
+
+name='should accept a decision id recorded before the archive move'
+fresh feat/demo/ship "$ARC"; record "$P/$ARC/decisions.ndjson"
+approve "decision:$UUID"; merge
+ATL="$P/$ARC/timeline.ndjson"; last=$(tail -n 1 "$ATL" 2>/dev/null); nid=$(jq -r '.id' <<< "$last" 2>/dev/null)
+if [[ $RC -eq 0 && $(lines "$ATL") -eq 1 && "$(jq -c '{kind, feature, approval}' <<< "$last" 2>/dev/null)" \
+        == '{"kind":"merge","feature":"demo","approval":{"type":"decision","decisionId":"'$UUID'"}}' \
+    && "$(outbox | jq -sc 'map({id, state})' 2>/dev/null)" == '[{"id":"'$nid'","state":"pending"}]' ]]; then
+    pass "$name"
+else
+    fail "$name" "$(adiag)"
+fi
+
+name='should still refuse an unknown decision id after the archive move'
+fresh feat/demo/ship "$ARC"; record "$P/$ARC/decisions.ndjson"
+approve "decision:$UNKNOWN"; merge
+archived_unknown && pass "$name" || fail "$name" "$(adiag)"
+
+name='should refuse a decision record that is a symlink or has another hard link in the archived folder'
+ok=1 bad=""
+for how in symlink hardlink; do
+    fresh feat/demo/ship "$ARC"
+    OUT="$T/out-drec-$how"; mkdir -p "$OUT"; record "$OUT/d"
+    if [[ $how == symlink ]]; then ln -s "$OUT/d" "$P/$ARC/decisions.ndjson"; else ln "$OUT/d" "$P/$ARC/decisions.ndjson"; fi
+    approve "decision:$UUID"; merge
+    archived_unknown || { ok=0; bad="$bad $how: $(adiag)"; }
+done
+[[ $ok -eq 1 ]] && pass "$name" || fail "$name" "$bad"
+
+# --- FOLLOWUPS #197: no link on the way to decisions.ndjson, active or archived (B2-5) ------------------------------
+# linked_refused <before snap>: the decision is not accepted (rc 1, the decision refusal on stderr), nothing is
+# queued, and the outside folder the link points to is exactly as it was
+linked_refused() {
+    [[ $RC -eq 1 && "$ERR" == *"the decision is not in this feature's decision record"* && -z "$(outbox)" \
+        && "$(snap "$OUT")" == "$1" ]]
+}
+ldiag() { echo "outside=[$(snap "$OUT")] $(udiag)"; }
+
+name='should refuse a decision when .oss/dev/active is a link'
+fresh feat/demo/ship; rmdir "$P/.oss/dev/active"
+OUT="$T/out-active"; mkdir -p "$OUT/demo"; record "$OUT/demo/decisions.ndjson"; ln -s "$OUT" "$P/.oss/dev/active"
+before=$(snap "$OUT"); approve "decision:$UUID"; merge
+linked_refused "$before" && pass "$name" || fail "$name" "$(ldiag)"
+
+name='should refuse a decision when .oss/dev/active/demo is a link'
+fresh feat/demo/ship
+OUT="$T/out-active-demo"; mkdir -p "$OUT"; record "$OUT/decisions.ndjson"; ln -s "$OUT" "$P/.oss/dev/active/demo"
+before=$(snap "$OUT"); approve "decision:$UUID"; merge
+linked_refused "$before" && pass "$name" || fail "$name" "$(ldiag)"
+
+name='should refuse a decision when .oss/dev is a link (archived case)'
+fresh feat/demo/ship; rm -rf "$P/.oss/dev"
+OUT="$T/out-dev"; mkdir -p "$OUT/active" "$OUT/completed/demo-2026-11-07"
+record "$OUT/completed/demo-2026-11-07/decisions.ndjson"; ln -s "$OUT" "$P/.oss/dev"
+before=$(snap "$OUT"); approve "decision:$UUID"; merge
+linked_refused "$before" && pass "$name" || fail "$name" "$(ldiag)"
 
 echo "$RUN run, $FAILED failed"
 [[ $FAILED -eq 0 ]]

@@ -434,10 +434,11 @@ case "${1:-}" in
         rc=$?; _oss_tl_push_bg; exit "$rc" ;;
     # oss-timeline.sh merge APPROVAL: only from oss-value.sh timeline merge (B4b), which read APPROVAL from
     # approval.txt and checked it (merge-flag, chat-instruction, none or decision:<uuid>). decision:<uuid> counts only
-    # when that id is a line's id in this feature's G1 record (decisions.ndjson, read only as a single-link regular
-    # file, and only its first 1 MB); otherwise the approval is refused: exit 1, and only a local merge-unknown line
-    # is written, so a real merge always leaves a trace (Task 12; an empty APPROVAL, which oss-value passes for a
-    # refused approval.txt, gives the same line). The PR facts come from `gh pr view`
+    # when that id is a line's id in this feature's G1 record (decisions.ndjson in the active folder, or after the
+    # archive move in the archived one, B8; read only as a single-link regular file, and only its first 1 MB);
+    # otherwise the approval is refused: exit 1, and only a local merge-unknown line is written, so a real merge
+    # always leaves a trace (Task 12; an empty APPROVAL, which oss-value passes for a refused approval.txt, gives the
+    # same line). The PR facts come from `gh pr view`
     # for the current branch, bounded at 10 s (P-9), run with every GIT_* variable and GH_REPO and GH_HOST unset (the
     # session's could name another repo or host, and that PR's facts would be pushed; GH_TOKEN and GH_ENTERPRISE_TOKEN
     # stay: they choose who is signed in, not which repo); nothing from a value file reaches gh's argv. No gh, a
@@ -449,9 +450,14 @@ case "${1:-}" in
         refused=""
         if [[ "${2:-}" == decision:* ]]; then
             oss_resolve_feature "$_OSS_PROJ"
-            drec="$_OSS_PROJ/.oss/dev/active/$_OSS_FEATURE/decisions.ndjson"
+            # the record's folder: the active one, else, after the archive move, the archived one (B8); read only when
+            # every folder on the way is a real directory, never a link (FOLLOWUPS #197, B2-5)
+            if [[ -n "$_OSS_FEATURE" ]]; then ddir=".oss/dev/active/$_OSS_FEATURE"
+            else _oss_tl_archived "$_OSS_PROJ"; ddir=$_OSS_TL_DIR; fi
+            [[ -n "$ddir" ]] && _oss_tl_real_dirs "$_OSS_PROJ" "$ddir" || ddir=""
+            drec="$_OSS_PROJ/$ddir/decisions.ndjson"
             # the record is read only up to 1 MB
-            [[ -n "$_OSS_FEATURE" ]] && oss_is_regular "$drec" && oss_single_link "$drec" \
+            [[ -n "$ddir" ]] && oss_is_regular "$drec" && oss_single_link "$drec" \
                 && [[ -n "$(head -c 1048576 "$drec" | jq -nR --arg id "${2#decision:}" \
                     'first(inputs | fromjson? | objects | select(.id == $id)) | 1' 2>/dev/null)" ]] \
                 || { echo "oss: timeline merge refused, the decision is not in this feature's decision record" >&2; refused=1; }

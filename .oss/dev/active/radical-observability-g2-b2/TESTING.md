@@ -26,9 +26,11 @@
 - 2026-11-07 Task 3: timeline-archived 16/0; timeline-merge 13/0; timeline-writer 23/0.
   - RED (5 failed): linked newest folder, linked completed/, hard-linked and symlinked timeline gave rc 1 (oss_safe_target refusal) instead of rc 0 + unfiled (B2-4); a foreign-owned folder took the line and queued it.
   - Guards that never went red: bad feature name (`feat/de+mo/ship`), non-convention branch (`main`).
+- 2026-11-07 Task 5: RED 19 run, 1 failed (a decision recorded before the move was refused). Guards that never went red: unknown id, symlinked or hard-linked archived record (the record was only read from active/). GREEN 19/0.
+- 2026-11-07 Task 6: RED 22 run, 2 failed (a linked active/ or active/demo let the decision be read through the link). Guard that never went red: linked .oss/dev (archived case). GREEN: timeline-archived 22/0, timeline-merge 13/0, decision-record.acceptance 5/0.
 (the rest filled in by /oss:build)
 
 ## Regression set (Task 8)
 timeline-archived, timeline-merge, timeline-writer, timeline-gate, timeline-push, timeline-delivery, timeline-bounds, timeline-kept, timeline-agent-hook, notify-timeline, timeline.acceptance, decision-record.acceptance, version-check.
 
-## Last Updated: 2026-11-07 10:20 CST by /oss:build
+## Last Updated: 2026-11-07 10:40 CST by /oss:build

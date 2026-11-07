@@ -10,3 +10,4 @@
 ## Last Updated: 2026-11-07 09:34 CST by /oss:plan
 
 - Task 3: git refuses a branch like `feat/.demo/ship` (invalid ref), so a dot-led feature can never come from a real branch. The name-rule case uses `feat/de+mo/ship` instead (git accepts `+`, our rule does not).
+- Task 6: with a linked .oss/dev/active or active/<f>, the merge-unknown line is refused by oss_safe_target too, so that merge leaves no local trace (rc 1). That is the existing writer refusal, unchanged here.
