@@ -20,6 +20,9 @@
 ## Results
 - 2026-11-07 /oss:acceptance: `timeline-archived.test.sh` 1 run, 1 failed (RED as planned: rc 0, merge line in timeline-unfiled.ndjson with no feature, outbox empty). Harness check: `timeline-merge.test.sh` 13 run, 0 failed.
 - Outbox note: no config.json is needed for an outbox entry (fp is the hash of an empty key), and the detached push exits at `oss_api_creds` before touching the outbox, so `pending` is stable. A test that adds a key must turn the push off or wait for it.
+- 2026-11-07 Task 4 + Task 2: timeline-archived 9 run, 0 failed; timeline-merge 13/0; timeline-writer 23/0; timeline-gate 8/0.
+  - RED: Task 1 case and "newest dated folder wins" failed (line in unfiled, outbox empty).
+  - Guards that never went red (expected, they pin unchanged behaviour): the 4 Task 4 cases (gate, command, agent unfiled; oss_resolve_feature ""), and Task 2's look-alike names, no completed/, active wins.
 (the rest filled in by /oss:build)
 
 ## Regression set (Task 8)

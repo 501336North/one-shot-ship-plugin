@@ -6,7 +6,9 @@
 #           before it merges. When the prompt then runs `oss-value.sh timeline merge`, the merge line still belongs
 #           to that feature: it is appended to the archived folder's timeline.ndjson with feature "<f>", and it is
 #           queued as pending in the private outbox (~/.oss/timeline-outbox/<rid>.ndjson) so it reaches the API.
-#           It is not dropped into .oss/dev/timeline-unfiled.ndjson.
+#           It is not dropped into .oss/dev/timeline-unfiled.ndjson. Archived twice, the newest dated folder wins;
+#           a folder that only looks like the feature's is never used; while the active folder exists it still
+#           wins. Only the merge verb looks in completed/: gate, command and agent lines stay unfiled (B2-1).
 # @business-rule AC-G2-003.3 as amended / API ADR-017 (the merge line reaches the API after the archive move),
 #           P-3 (unfiled lines are never pushed, so a merge filed as unfiled would never reach the API).
 # Usage: /bin/bash hooks/__tests__/timeline-archived.test.sh
@@ -94,6 +96,90 @@ if [[ $RC -eq 0 && $(lines "$CTL") -eq 2 \
     pass "$name"
 else
     fail "$name" "$(diag)"
+fi
+
+# fresh <branch> [folder...]: a new product repo on <branch> holding .oss/dev/active and each folder given (relative
+# to the repo), with its own value folder and an empty outbox, so no case sees another's files -> P, D, UNF
+N=0
+fresh() {
+    N=$((N + 1)); P="$T/product$N"; mkdir -p "$P/.oss/dev/active"
+    (cd "$P" && git init -q && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && git checkout -q -b "$1")
+    shift; local f; for f in "$@"; do mkdir -p "$P/$f"; done
+    UNF="$P/.oss/dev/timeline-unfiled.ndjson"
+    export CLAUDE_PROJECT_DIR="$P"
+    D=$(cd "$P" && "$OV" dir 2>/dev/null)
+    rm -rf "$OB_DIR"
+}
+# timelines: every timeline.ndjson under completed/, so a case can say none was written there
+timelines() { find "$P/.oss/dev/completed" -name timeline.ndjson 2>/dev/null; }
+# unfiled_only <kind>: rc 0, one <kind> line in the unfiled file with no feature, nothing under completed/, no outbox
+unfiled_only() {
+    local got; got=$(tail -n 1 "$UNF" 2>/dev/null | jq -r '.kind + " feature=" + (has("feature") | tostring)' 2>/dev/null)
+    [[ $RC -eq 0 && $(lines "$UNF") -eq 1 && "$got" == "$1 feature=false" && -z "$(timelines)" && -z "$(outbox)" ]]
+}
+udiag() { echo "rc=$RC unfiled=[$(cat "$UNF" 2>/dev/null)] completed=[$(timelines)] outbox=[$(outbox | head -c 300)] err=$ERR"; }
+
+# --- the fallback is merge-only: every other kind is unchanged after the archive move (DESIGN, B2-1) --------------
+name='should still file a gate line as unfiled when only the archived folder exists'
+fresh feat/demo/ship .oss/dev/completed/demo-2026-11-07
+for kv in round=1 gate=code-review verdict=pass findings= fixed= mode=full; do printf '%s\n' "${kv#*=}" > "$D/${kv%%=*}.txt"; done
+(cd "$P" && run_capped 20 "$OV" timeline gate > /dev/null 2> "$T/err"); RC=$?; ERR=$(cat "$T/err")
+unfiled_only gate && pass "$name" || fail "$name" "$(udiag)"
+
+name='should still file a command line as unfiled when only the archived folder exists'
+fresh feat/demo/ship .oss/dev/completed/demo-2026-11-07
+(cd "$P" && run_capped 30 /bin/bash -c 'source "$1" || exit 99; oss_timeline_append command "$2"' _ \
+    "$ROOT/hooks/oss-timeline.sh" '{"command":"ship","status":"start"}' 2> "$T/err"); RC=$?; ERR=$(cat "$T/err")
+unfiled_only command && pass "$name" || fail "$name" "$(udiag)"
+
+name='should still file an agent line as unfiled when only the archived folder exists'
+fresh feat/demo/ship .oss/dev/completed/demo-2026-11-07
+jq -nc --arg cwd "$P" '{cwd: $cwd, hook_event_name: "PostToolUse", session_id: "archived-sess-2", tool_name: "Agent",
+    tool_input: {subagent_type: "oss:code-reviewer", description: "d", prompt: "p"}}' > "$T/in"
+(cd "$P" && run_capped 20 /bin/bash "$ROOT/hooks/oss-timeline.sh" < "$T/in" > /dev/null 2> "$T/err"); RC=$?; ERR=$(cat "$T/err")
+unfiled_only agent && pass "$name" || fail "$name" "$(udiag)"
+
+name='should leave oss_resolve_feature returning no feature when only the archived folder exists'
+fresh feat/demo/ship .oss/dev/completed/demo-2026-11-07
+got=$(cd "$P" && run_capped 10 /bin/bash -c 'source "$1" || exit 99; oss_resolve_feature "$2"; printf "[%s]" "$_OSS_FEATURE"' _ \
+    "$ROOT/hooks/oss-safe-path.sh" "$P" 2>&1)
+[[ "$got" == "[]" ]] && pass "$name" || fail "$name" "got=$got"
+
+# --- B7: which archived folder the merge line goes to -------------------------------------------------------------
+name='should use the newest dated folder when the feature was archived twice'
+fresh feat/demo/ship .oss/dev/completed/demo-2026-11-01 .oss/dev/completed/demo-2026-11-07
+approve merge-flag; merge
+NEW="$P/.oss/dev/completed/demo-2026-11-07/timeline.ndjson"
+last=$(tail -n 1 "$NEW" 2>/dev/null)
+nid=$(jq -r '.id' <<< "$last" 2>/dev/null)
+if [[ $RC -eq 0 && $(lines "$NEW") -eq 1 && "$(jq -r '.kind + " " + .feature' <<< "$last" 2>/dev/null)" == "merge demo" \
+    && ! -e "$P/.oss/dev/completed/demo-2026-11-01/timeline.ndjson" && ! -e "$UNF" \
+    && "$(outbox | jq -sc 'map({id, state})' 2>/dev/null)" == '[{"id":"'$nid'","state":"pending"}]' ]]; then
+    pass "$name"
+else
+    fail "$name" "$(udiag)"
+fi
+
+name="should ignore folders that only look like the feature's"
+fresh feat/demo/ship .oss/dev/completed/demo-extra-2026-11-07 .oss/dev/completed/demo-2026-1-7 \
+    .oss/dev/completed/demo-2026-11-07-x .oss/dev/completed/demox-2026-11-07
+approve merge-flag; merge
+unfiled_only merge && pass "$name" || fail "$name" "$(udiag)"
+
+name='should stay unfiled and never push when no archived folder matches'
+fresh feat/demo/ship
+approve merge-flag; merge
+[[ ! -e "$P/.oss/dev/completed" ]] && unfiled_only merge && pass "$name" || fail "$name" "$(udiag)"
+
+name='should keep filing in the active folder when it still exists'
+fresh feat/demo/ship .oss/dev/active/demo .oss/dev/completed/demo-2026-11-07
+approve merge-flag; merge
+ATL="$P/.oss/dev/active/demo/timeline.ndjson"
+if [[ $RC -eq 0 && $(lines "$ATL") -eq 1 && "$(tail -n 1 "$ATL" | jq -r '.kind + " " + .feature' 2>/dev/null)" == "merge demo" \
+    && -z "$(timelines)" && ! -e "$UNF" && "$(outbox | jq -s 'length' 2>/dev/null)" == 1 ]]; then
+    pass "$name"
+else
+    fail "$name" "rc=$RC active=[$(cat "$ATL" 2>/dev/null)] $(udiag)"
 fi
 
 echo "$RUN run, $FAILED failed"

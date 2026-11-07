@@ -1,7 +1,9 @@
 #!/bin/bash
 # OSS feature timeline (radical-observability G2, P-1): one checked line per command, agent run, gate or merge,
 # appended to the feature's committed .oss/dev/active/<feature>/timeline.ndjson, or .oss/dev/timeline-unfiled.ndjson
-# when no feature folder resolves (P-3: no feature field, never pushed). Sourced, it only defines functions:
+# when no feature folder resolves (P-3: no feature field, never pushed). A merge or merge-unknown line written after
+# the ship archive move, when the active folder is gone, goes to the newest .oss/dev/completed/<feature>-YYYY-MM-DD/
+# timeline.ndjson instead (B7, B2-3), so the merge still reaches the API. Sourced, it only defines functions:
 #
 #   oss_timeline_append KIND FIELDS_JSON   KIND: command, agent, gate, merge or merge-unknown (P-2, local only);
 #                                          FIELDS_JSON: that kind's own fields. Adds v, id, ts, kind, feature
@@ -123,6 +125,26 @@ def base_ok: .v == 1 and (.id | uuid4) and (.ts | stamp) and (.session | free("[
 # _oss_tl_sha256: sha-256 of stdin, with shasum (macOS) or sha256sum (Linux)
 _oss_tl_sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256; else sha256sum; fi; }
 
+# _oss_tl_archived <proj>: B7, the feature's archived folder after the ship archive move. The feature comes only from
+# the project's own branch (<type>/<feature>/<phase>, read as oss_resolve_feature reads it), never from a value
+# file; the folder is the newest .oss/dev/completed/<feature>-YYYY-MM-DD by name (the date sorts lexically).
+# Sets _OSS_TL_FEATURE and _OSS_TL_DIR (relative to <proj>), or both "" when none matches. Kept here, beside its
+# only caller, so oss_resolve_feature and its other users see no change (B2-1).
+_oss_tl_archived() {
+    local proj="${1:-}" branch f="" m newest
+    local name_re='^[A-Za-z0-9_-][A-Za-z0-9._-]*$' branch_re='^[^/]+/([^/]+)/[^/]'
+    _OSS_TL_FEATURE="" _OSS_TL_DIR=""
+    branch=$(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; cd "$proj" 2>/dev/null && git symbolic-ref --short -q HEAD 2>/dev/null)
+    [[ "$branch" =~ $branch_re ]] && f=${BASH_REMATCH[1]}
+    [[ "$f" =~ $name_re && ${#f} -le 128 ]] || return 0
+    # the glob's own order is lexical (the writer runs under LC_ALL=C), so the last match is the newest; with no
+    # match the pattern stays as it is and is no folder
+    m=("$proj/.oss/dev/completed/$f-"[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9])
+    newest=${m[${#m[@]}-1]}
+    [[ -d "$newest" ]] || return 0
+    _OSS_TL_FEATURE=$f _OSS_TL_DIR=".oss/dev/completed/${newest##*/}"
+}
+
 oss_timeline_append() (
     export LC_ALL=C   # the bash patterns below are byte ranges, whatever the locale
     kind="${1:-}" fields="${2:-}"
@@ -145,8 +167,16 @@ oss_timeline_append() (
     oss_resolve_feature "$proj"
     feature="$_OSS_FEATURE"
     ((${#feature} <= 128)) || feature=""   # longer than the API's feature pattern allows: filed as unfiled
+    dir=""
+    [[ -n "$feature" ]] && dir=".oss/dev/active/$feature"
+    # B7: a merge written after the ship archive move belongs to the archived folder, and merge-unknown follows it
+    # (B2-3); every other kind, and any merge while the active folder still exists, is unchanged
+    if [[ -z "$feature" && ("$kind" == merge || "$kind" == merge-unknown) ]]; then
+        _oss_tl_archived "$proj"
+        feature=$_OSS_TL_FEATURE dir=$_OSS_TL_DIR
+    fi
     rec=".oss/dev/timeline-unfiled.ndjson"
-    [[ -n "$feature" ]] && rec=".oss/dev/active/$feature/timeline.ndjson"
+    [[ -n "$feature" ]] && rec="$dir/timeline.ndjson"
     # the uuid and time as G1's decision record makes them
     id=$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]')
     if [[ -z "$id" ]]; then # no uuidgen (Linux): a v4 uuid from 16 random bytes
