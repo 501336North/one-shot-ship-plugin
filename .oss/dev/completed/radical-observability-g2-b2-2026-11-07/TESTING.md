@@ -1,0 +1,54 @@
+# Testing: Radical Observability G2, Phase B2
+
+## Strategy
+- Hermetic hook tests only: sandbox HOME, fake API, fake `gh`, `run_capped`, `GIT_CONFIG_GLOBAL=/dev/null`.
+- One file at a time: `/bin/bash hooks/__tests__/<name>.test.sh`. Never npm, vitest or `watcher/`.
+- New file: `hooks/__tests__/timeline-archived.test.sh` (Tasks 1 to 6). Task 7 adds one case to `timeline-merge.test.sh`.
+- After each agent round: `pgrep -fl "oss-timeline|run-capped|sleep 60"` to check for orphans.
+
+## Planned cases (24)
+| Task | Cases |
+|------|-------|
+| 1 | merge after the move goes to completed/ and is queued |
+| 2 | newest wins; look-alike names ignored; no match gives unfiled; active still wins |
+| 3 | linked folder (no fallback to older); linked completed/; hard-linked timeline; symlinked timeline; foreign owner; bad name; non-convention branch |
+| 4 | gate, command, agent still unfiled; oss_resolve_feature unchanged |
+| 5 | decision before the move accepted; unknown id refused (merge-unknown in completed/, not pushed); unsafe record refused |
+| 6 | linked active/; linked active/demo; linked .oss/dev |
+| 7 | bot login gives a local merge-unknown with pr |
+
+## Results
+- 2026-11-07 /oss:acceptance: `timeline-archived.test.sh` 1 run, 1 failed (RED as planned: rc 0, merge line in timeline-unfiled.ndjson with no feature, outbox empty). Harness check: `timeline-merge.test.sh` 13 run, 0 failed.
+- Outbox note: no config.json is needed for an outbox entry (fp is the hash of an empty key), and the detached push exits at `oss_api_creds` before touching the outbox, so `pending` is stable. A test that adds a key must turn the push off or wait for it.
+- 2026-11-07 Task 4 + Task 2: timeline-archived 9 run, 0 failed; timeline-merge 13/0; timeline-writer 23/0; timeline-gate 8/0.
+  - RED: Task 1 case and "newest dated folder wins" failed (line in unfiled, outbox empty).
+  - Guards that never went red (expected, they pin unchanged behaviour): the 4 Task 4 cases (gate, command, agent unfiled; oss_resolve_feature ""), and Task 2's look-alike names, no completed/, active wins.
+- 2026-11-07 Task 3: timeline-archived 16/0; timeline-merge 13/0; timeline-writer 23/0.
+  - RED (5 failed): linked newest folder, linked completed/, hard-linked and symlinked timeline gave rc 1 (oss_safe_target refusal) instead of rc 0 + unfiled (B2-4); a foreign-owned folder took the line and queued it.
+  - Guards that never went red: bad feature name (`feat/de+mo/ship`), non-convention branch (`main`).
+- 2026-11-07 Task 5: RED 19 run, 1 failed (a decision recorded before the move was refused). Guards that never went red: unknown id, symlinked or hard-linked archived record (the record was only read from active/). GREEN 19/0.
+- 2026-11-07 Task 6: RED 22 run, 2 failed (a linked active/ or active/demo let the decision be read through the link). Guard that never went red: linked .oss/dev (archived case). GREEN: timeline-archived 22/0, timeline-merge 13/0, decision-record.acceptance 5/0.
+- 2026-11-07 Task 7: bot login `renovate[bot]` gives a local merge-unknown with pr 4242 and nothing queued. Guard that never went red (timeline-merge 14/0); FOLLOWUPS #186 was already handled.
+- 2026-11-07 Regression set, one file at a time, all green: timeline-archived 22, timeline-merge 14, timeline-writer 23, timeline-gate 8, timeline-push 22, timeline-delivery 35, timeline-bounds 10, timeline-kept 3, timeline-agent-hook 7, notify-timeline 9, timeline.acceptance 8, decision-record.acceptance 5 (166 run, 0 failed). No orphans.
+- 2026-11-07 Simplifier: no changes. Its note led to one hardening: `_oss_tl_archived` sets `local LC_ALL=C` itself (the decision path ran in the session's locale, so the 128 cap counted characters there and bytes in the writer). Guard `feat/démo/ship` under en_US.UTF-8 never went red (bash 3.2 regex refuses é either way). timeline-archived 23/0, timeline-merge 14/0, timeline-writer 23/0.
+
+## Integration (/oss:integration, one-off, not committed: real GitHub)
+- Sandbox clone (no hard links) on `feat/radical-observability-g2/build-b1-b8` (PR #217, merged) with only `completed/radical-observability-g2-2026-11-07/`, sandbox HOME, real gh (GH_TOKEN), the worktree's hooks.
+- Real `gh pr view --json number,mergeCommit,mergedAt,mergedBy`: the four fields the verb reads match the fake's shape. Real mergedBy also has id, is_bot and name (ignored); the fake's extra `state` is never read.
+- `oss-value.sh timeline merge` (merge-flag): rc 0, one `merge` line in the archived timeline.ndjson (feature radical-observability-g2, pr 217, real sha, mergedAt and login), one pending outbox entry, no unfiled file. The push exited at `oss_api_creds` (no key), so nothing was sent.
+- Not tried for real: a decision approval (that archive has no decisions.ndjson); covered by the hermetic B8 tests.
+- Real ~/.oss/timeline-outbox and the worktree unchanged.
+
+## Regression set (Task 8)
+timeline-archived, timeline-merge, timeline-writer, timeline-gate, timeline-push, timeline-delivery, timeline-bounds, timeline-kept, timeline-agent-hook, notify-timeline, timeline.acceptance, decision-record.acceptance, version-check.
+
+- Task 9 (B10): RED with agent-penetration-tester 4 run, 3 failed (no file; the control case passed); agent-offload-step 1/5; bash-blocks-allowlisted 7/32 (stale exemptions). GREEN: agent-penetration-tester 4/0, agent-offload-step 5/5, bash-blocks-allowlisted 8/8, no-key-in-request 9/9, no-key-printing 5/5, wrapper-complete 95/95, value-file-wrappers-run 90/90, agent-frontmatter 5/5, code-simplifier 6/6. The wrapper's diff against security-auditor.md is its 7 identity lines only.
+
+## Last Updated: 2026-11-07 10:33 CST by /oss:integration
+
+## Ship gate (/oss:ship --merge)
+- Round 1 fixes (S1 full ref, S2-S4 find-based pick with a date-shaped, not-future date, S5 own decision record, Q3 setup checks): timeline-archived 31/0, timeline-merge 14/0, timeline-writer 23/0, decision-record.acceptance 5/0, timeline-gate 8/0, notify-timeline 9/0, timeline.acceptance 8/0.
+- Round 2 fixes: fixed past dates in timeline-archived (no case depends on today); detached HEAD and many-unrelated-entries guards; feature-resolve guards for a HEAD on refs/remotes and refs/tags (both fail against the pre-S1 oss-safe-path.sh); failglob RED in feature-resolve (`no match: .../active/*/`), GREEN by turning failglob off around the one glob and restoring it.
+- After round 2, one file at a time: timeline-archived 33/0, feature-resolve 12/0, timeline-merge 14/0, timeline-writer 23/0, decision-record.acceptance 5/0, timeline-gate 8/0, notify-timeline 9/0, timeline.acceptance 8/0, oss-safe-path 25/25. shellcheck: no new codes in the two hooks. No orphans.
+
+## Last Updated: 2026-11-07 11:50 CST by /oss:ship (Task 9)

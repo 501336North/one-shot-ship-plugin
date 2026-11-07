@@ -37,6 +37,7 @@ reason() {
         pr214-approval) echo "added by #214 (91c808e) to /oss:login and /oss:settings: oss-decisions-policy.sh changes a team setting and is kept off the allowlist on purpose (oss-session-start.sh), the rest sit in blocks that already prompt" ;;
         t74c-icon) echo "T74c put a time and size limit on the pre-existing icon download in /oss:login, T78c https-only and a byte stop (that same line, so the same one approval as before)" ;;
         t78-stale-hooks) echo "T78b: the stale-hooks guard sits in the /oss:settings save block, one Bash call that already prompts (its pr214-approval lines), so no new approval" ;;
+        b10-pen-tester) echo "B10 (API ADR-018) added agents/penetration-tester.md, security-auditor.md's wrapper with its own name: the same lines that agent's pre-existing, key-check and t71-offload exemptions cover, so one approval each, as for security-auditor" ;;
         *) return 1 ;;
     esac
 }

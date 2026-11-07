@@ -1,12 +1,12 @@
 #!/bin/bash
-# The Local-Model Offload step (Step 2.5) of the 13 routable agents, run as written (T78e, code-review L5).
+# The Local-Model Offload step (Step 2.5) of the 14 routable agents, run as written (T78e, code-review L5).
 #
 # @behavior When a customer maps an agent to a local model, Claude makes a private folder, writes the prompt into it
 #           with the Write tool on the first try, and the offloader gets that prompt with nothing left on disk.
 # @business-rule Step 1 makes only the owner-only (700) folder and prints a prompt path that does not exist yet:
 #           Claude Code's Write refuses to overwrite a file it has not Read, so a pre-made empty file costs a failed
 #           Write (or a native run). Step 2 deletes the file and its folder before node runs; the prompt reaches the
-#           offloader on stdin. All 13 agents carry the same step apart from their own id, and none may drop it.
+#           offloader on stdin. All 14 agents carry the same step apart from their own id, and none may drop it.
 # @boundary The two bash blocks of each agent's Step 2.5, run unchanged in bash and zsh, with TMPDIR in a sandbox and
 #           a stub node and agent-offload.js. Never the real ~/.oss.
 #
@@ -24,8 +24,9 @@ gone() { local d; [[ -f "$T/made" ]] && while IFS= read -r d; do case "$d" in */
 trap gone EXIT
 trap 'gone; exit 1' HUP INT TERM
 
+# penetration-tester: B10 (API ADR-018), a copy of security-auditor's wrapper
 AGENTS="backend-architect code-reviewer code-simplifier debugger figma-design-agent frontend-developer nextjs-developer
-python-pro react-specialist refactoring-specialist security-auditor test-engineer typescript-pro"
+penetration-tester python-pro react-specialist refactoring-specialist security-auditor test-engineer typescript-pro"
 
 # step <agent>: the Step 2.5 section, up to the next ## heading
 step() { awk '/^## Step 2\.5/ { f = 1; print; next } f && /^## / { exit } f' "$ROOT/agents/$1.md"; }
@@ -40,8 +41,8 @@ block() {
 # --- every routable agent has the step, and all are the same apart from the id ---------------------------------
 have=$(cd "$ROOT/agents" && grep -l '^## Step 2\.5' *.md | sed 's/\.md$//' | sort | tr '\n' ' ')
 want=$(printf '%s\n' $AGENTS | sort | tr '\n' ' ')
-[[ "$have" == "$want" ]] && pass "exactly the 13 routable agents carry Step 2.5" \
-    || fail "exactly the 13 routable agents carry Step 2.5" "missing: $(comm -13 <(printf '%s\n' $have) <(printf '%s\n' $want) | tr '\n' ' ') extra: $(comm -23 <(printf '%s\n' $have) <(printf '%s\n' $want) | tr '\n' ' ')"
+[[ "$have" == "$want" ]] && pass "exactly the 14 routable agents carry Step 2.5" \
+    || fail "exactly the 14 routable agents carry Step 2.5" "missing: $(comm -13 <(printf '%s\n' $have) <(printf '%s\n' $want) | tr '\n' ' ') extra: $(comm -23 <(printf '%s\n' $have) <(printf '%s\n' $want) | tr '\n' ' ')"
 ref=''; diffs=''
 for a in $AGENTS; do
     s=$(step "$a" | sed "s/oss:$a/oss:<agent>/g")
@@ -49,14 +50,14 @@ for a in $AGENTS; do
     [[ -z "$ref" ]] && { ref=$s; continue; }
     [[ "$s" == "$ref" ]] || diffs="$diffs $a"
 done
-[[ -z "$diffs" ]] && pass "Step 2.5 is the same in all 13 agents apart from the agent id" || fail "Step 2.5 is the same in all 13 agents" "differs:$diffs"
+[[ -z "$diffs" ]] && pass "Step 2.5 is the same in all 14 agents apart from the agent id" || fail "Step 2.5 is the same in all 14 agents" "differs:$diffs"
 
 # --- an old Claude Code: the customer is told why the agent ran on Claude (T76b) ---------------------------------
 # @behavior When the offloader says the installed Claude Code is too old (reason cli_too_old), the agent shows its one
 #           notice line to the user once, then runs natively, so a customer who mapped a model is never switched to
 #           Claude silently.
 TOO_OLD='- **`offloaded: false` with `reason: "cli_too_old"`** → show the user the result'"'"'s `notice` line once, word for word, then run natively: proceed to Step 3.'
-[[ "$(printf '%s' "$ref" | tr -s '[:space:]' ' ')" == *"$TOO_OLD"* ]] && pass "Step 2.5 shows the cli_too_old notice once, then runs natively (13 agents)" \
+[[ "$(printf '%s' "$ref" | tr -s '[:space:]' ' ')" == *"$TOO_OLD"* ]] && pass "Step 2.5 shows the cli_too_old notice once, then runs natively (14 agents)" \
     || fail "Step 2.5 shows the cli_too_old notice once, then runs natively" "missing: $TOO_OLD"
 
 # --- run the two blocks as written (TMPDIR points into the sandbox where mktemp honours it) ---------------------------------------------------------------------------
@@ -91,7 +92,7 @@ for sh in /bin/bash /bin/zsh; do
         [[ "$(cat "$T/node.stdin" 2>/dev/null)" == *EXPERT-PROMPT-78*TASK-78* ]] || bad="$bad [$a: the prompt did not reach node on stdin]"
         [[ ! -e "$PF" && ! -e "$d" ]] || bad="$bad [$a: the prompt or its folder is left behind]"
     done
-    [[ -z "$bad" ]] && pass "$sh: step 1 makes only the 700 folder (the prompt path is new for Write); step 2 deletes both before node runs and feeds the prompt on stdin (13 agents)" \
+    [[ -z "$bad" ]] && pass "$sh: step 1 makes only the 700 folder (the prompt path is new for Write); step 2 deletes both before node runs and feeds the prompt on stdin (14 agents)" \
         || fail "$sh: Step 2.5 runs as written" "$bad"
 done
 

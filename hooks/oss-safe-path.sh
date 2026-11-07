@@ -155,14 +155,19 @@ oss_resolve_project() { # [dir] (default: the physical cwd)
 # none. A name is ^[A-Za-z0-9._-]+$, not starting with ".". A linked folder still resolves: the write is
 # refused by oss_safe_target (AC-G2-001.5).
 oss_resolve_feature() { # <project> -> _OSS_FEATURE ("" = unfiled)
-    local proj="${1:-}" branch feature="" active
+    local proj="${1:-}" branch feature="" active fg=""
     local name_re='^[A-Za-z0-9_-][A-Za-z0-9._-]*$' branch_re='^[^/]+/([^/]+)/[^/]'
     # this project's own branch: git variables inherited from the session could point at another repo
-    branch=$(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; cd "$proj" 2>/dev/null && git symbolic-ref --short -q HEAD 2>/dev/null)
+    branch=$(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; cd "$proj" 2>/dev/null && git symbolic-ref -q HEAD 2>/dev/null)
+    # the full ref, never --short: a tag of the same name makes --short print heads/<branch> (ship gate S1)
+    if [[ "$branch" == refs/heads/* ]]; then branch=${branch#refs/heads/}; else branch=""; fi
     [[ "$branch" =~ $branch_re ]] && feature=${BASH_REMATCH[1]}
     [[ "$feature" =~ $name_re && -d "$proj/.oss/dev/active/$feature" ]] || feature=""
     if [[ -z "$feature" && ! "$branch" =~ $branch_re ]]; then
+        # the caller's failglob would abort it on no match: off around this one glob, then as it was (round 2)
+        shopt -q failglob && fg=1; shopt -u failglob
         active=("$proj"/.oss/dev/active/*/)
+        [[ -z "$fg" ]] || shopt -s failglob
         [[ ${#active[@]} -eq 1 && -d "${active[0]}" ]] && { feature=${active[0]%/}; feature=${feature##*/}; }
         [[ "$feature" =~ $name_re ]] || feature=""
     fi

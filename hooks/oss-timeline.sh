@@ -1,7 +1,9 @@
 #!/bin/bash
 # OSS feature timeline (radical-observability G2, P-1): one checked line per command, agent run, gate or merge,
 # appended to the feature's committed .oss/dev/active/<feature>/timeline.ndjson, or .oss/dev/timeline-unfiled.ndjson
-# when no feature folder resolves (P-3: no feature field, never pushed). Sourced, it only defines functions:
+# when no feature folder resolves (P-3: no feature field, never pushed). A merge or merge-unknown line written after
+# the ship archive move, when the active folder is gone, goes to the newest .oss/dev/completed/<feature>-YYYY-MM-DD/
+# timeline.ndjson instead (B7, B2-3), so the merge still reaches the API. Sourced, it only defines functions:
 #
 #   oss_timeline_append KIND FIELDS_JSON   KIND: command, agent, gate, merge or merge-unknown (P-2, local only);
 #                                          FIELDS_JSON: that kind's own fields. Adds v, id, ts, kind, feature
@@ -123,6 +125,55 @@ def base_ok: .v == 1 and (.id | uuid4) and (.ts | stamp) and (.session | free("[
 # _oss_tl_sha256: sha-256 of stdin, with shasum (macOS) or sha256sum (Linux)
 _oss_tl_sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256; else sha256sum; fi; }
 
+# _oss_tl_archived <proj>: B7, the feature's archived folder after the ship archive move. The feature comes only from
+# the project's own branch (<type>/<feature>/<phase>, read as oss_resolve_feature reads it), never from a value
+# file; the folder is the newest .oss/dev/completed/<feature>-YYYY-MM-DD by name (the date sorts lexically), with a
+# date-shaped date (2026-02-31 passes, and that is fine) no later than today.
+# Sets _OSS_TL_FEATURE and _OSS_TL_DIR (relative to <proj>), or both "" when none matches or the newest one is
+# refused. oss_safe_target still guards the write after it, against a swap after this check. Kept here, beside its
+# only caller, so oss_resolve_feature and its other users see no change (B2-1).
+_oss_tl_archived() {
+    # byte rules here, whoever calls: the merge verb's decision check runs in the session's locale, the writer under
+    # LC_ALL=C, and both must judge the name, its length and the folder names the same way
+    local LC_ALL=C
+    local proj="${1:-}" branch f="" e n d today newest rel
+    local name_re='^[A-Za-z0-9_-][A-Za-z0-9._-]*$' branch_re='^[^/]+/([^/]+)/[^/]'
+    local date_re='^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$'
+    _OSS_TL_FEATURE="" _OSS_TL_DIR=""
+    branch=$(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; cd "$proj" 2>/dev/null && git symbolic-ref -q HEAD 2>/dev/null)
+    # the full ref, never --short: a tag of the same name makes --short print heads/<branch> (ship gate S1)
+    if [[ "$branch" == refs/heads/* ]]; then branch=${branch#refs/heads/}; else branch=""; fi
+    [[ "$branch" =~ $branch_re ]] && f=${BASH_REMATCH[1]}
+    [[ "$f" =~ $name_re && ${#f} -le 128 ]] || return 0
+    # the folder's entries from find, never a glob, so no glob option of the caller's shell (nullglob, failglob,
+    # BASHOPTS) changes the pick (ship gate S2). find lists only names starting <f>- (f passed name_re, so it holds
+    # no pattern character), so other features' entries cost nothing however many there are (round 2). Of those,
+    # only <f>-YYYY-MM-DD, date-shaped (month 01-12, day 01-31) and dated no later than today by the archive step's
+    # clock (local `date`), counts (S3, S4), and the greatest name (LC_ALL=C, set above) is the newest
+    today=$(date +%Y-%m-%d) newest=""
+    while IFS= read -r -d '' e; do
+        n=${e##*/}; d=${n#"$f"-}
+        [[ "$n" == "$f-$d" && "$d" =~ $date_re && ! "$d" > "$today" && "$n" > "$newest" ]] && newest=$n
+    done < <(find "$proj/.oss/dev/completed" -mindepth 1 -maxdepth 1 -name "$f-*" -print0 2>/dev/null)
+    [[ -n "$newest" ]] || return 0
+    rel=".oss/dev/completed/$newest"
+    # the newest is checked and never swapped for an older one (B2-2): a link anywhere on the way, someone else's
+    # folder (`test -O`: the tests' other-user seam) or a linked timeline file gives "" and an unfiled line (B2-4)
+    _oss_tl_real_dirs "$proj" "$rel" && test -O "$proj/$rel" && oss_single_link "$proj/$rel/timeline.ndjson" || return 0
+    _OSS_TL_FEATURE=$f _OSS_TL_DIR=$rel
+}
+
+# _oss_tl_real_dirs <proj> <rel-dir>: 0 only when every folder from <proj> down to <rel-dir> is a real directory,
+# not a link. Read-only, unlike oss_safe_target, which makes missing folders (B2-5).
+_oss_tl_real_dirs() {
+    local p="${1:-}" c rest="${2:-}/"
+    while [[ -n "$rest" ]]; do
+        c=${rest%%/*} rest=${rest#*/}
+        p="$p/$c"
+        [[ -d "$p" && ! -L "$p" ]] || return 1
+    done
+}
+
 oss_timeline_append() (
     export LC_ALL=C   # the bash patterns below are byte ranges, whatever the locale
     kind="${1:-}" fields="${2:-}"
@@ -145,8 +196,16 @@ oss_timeline_append() (
     oss_resolve_feature "$proj"
     feature="$_OSS_FEATURE"
     ((${#feature} <= 128)) || feature=""   # longer than the API's feature pattern allows: filed as unfiled
+    dir=""
+    [[ -n "$feature" ]] && dir=".oss/dev/active/$feature"
+    # B7: a merge written after the ship archive move belongs to the archived folder, and merge-unknown follows it
+    # (B2-3); every other kind, and any merge while the active folder still exists, is unchanged
+    if [[ -z "$feature" && ("$kind" == merge || "$kind" == merge-unknown) ]]; then
+        _oss_tl_archived "$proj"
+        feature=$_OSS_TL_FEATURE dir=$_OSS_TL_DIR
+    fi
     rec=".oss/dev/timeline-unfiled.ndjson"
-    [[ -n "$feature" ]] && rec=".oss/dev/active/$feature/timeline.ndjson"
+    [[ -n "$feature" ]] && rec="$dir/timeline.ndjson"
     # the uuid and time as G1's decision record makes them
     id=$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]')
     if [[ -z "$id" ]]; then # no uuidgen (Linux): a v4 uuid from 16 random bytes
@@ -389,10 +448,12 @@ case "${1:-}" in
         rc=$?; _oss_tl_push_bg; exit "$rc" ;;
     # oss-timeline.sh merge APPROVAL: only from oss-value.sh timeline merge (B4b), which read APPROVAL from
     # approval.txt and checked it (merge-flag, chat-instruction, none or decision:<uuid>). decision:<uuid> counts only
-    # when that id is a line's id in this feature's G1 record (decisions.ndjson, read only as a single-link regular
-    # file, and only its first 1 MB); otherwise the approval is refused: exit 1, and only a local merge-unknown line
-    # is written, so a real merge always leaves a trace (Task 12; an empty APPROVAL, which oss-value passes for a
-    # refused approval.txt, gives the same line). The PR facts come from `gh pr view`
+    # when that id is a line's id in this feature's G1 record (decisions.ndjson in the active folder, or after the
+    # archive move in the archived one, B8; read only as a single-link regular file of the person's own, S5, and
+    # only its first 1 MB);
+    # otherwise the approval is refused: exit 1, and only a local merge-unknown line is written, so a real merge
+    # always leaves a trace (Task 12; an empty APPROVAL, which oss-value passes for a refused approval.txt, gives the
+    # same line). The PR facts come from `gh pr view`
     # for the current branch, bounded at 10 s (P-9), run with every GIT_* variable and GH_REPO and GH_HOST unset (the
     # session's could name another repo or host, and that PR's facts would be pushed; GH_TOKEN and GH_ENTERPRISE_TOKEN
     # stay: they choose who is signed in, not which repo); nothing from a value file reaches gh's argv. No gh, a
@@ -404,9 +465,14 @@ case "${1:-}" in
         refused=""
         if [[ "${2:-}" == decision:* ]]; then
             oss_resolve_feature "$_OSS_PROJ"
-            drec="$_OSS_PROJ/.oss/dev/active/$_OSS_FEATURE/decisions.ndjson"
+            # the record's folder: the active one, else, after the archive move, the archived one (B8); read only when
+            # every folder on the way is a real directory, never a link (FOLLOWUPS #197, B2-5)
+            if [[ -n "$_OSS_FEATURE" ]]; then ddir=".oss/dev/active/$_OSS_FEATURE"
+            else _oss_tl_archived "$_OSS_PROJ"; ddir=$_OSS_TL_DIR; fi
+            [[ -n "$ddir" ]] && _oss_tl_real_dirs "$_OSS_PROJ" "$ddir" || ddir=""
+            drec="$_OSS_PROJ/$ddir/decisions.ndjson"
             # the record is read only up to 1 MB
-            [[ -n "$_OSS_FEATURE" ]] && oss_is_regular "$drec" && oss_single_link "$drec" \
+            [[ -n "$ddir" ]] && oss_is_regular "$drec" && oss_single_link "$drec" && test -O "$drec" \
                 && [[ -n "$(head -c 1048576 "$drec" | jq -nR --arg id "${2#decision:}" \
                     'first(inputs | fromjson? | objects | select(.id == $id)) | 1' 2>/dev/null)" ]] \
                 || { echo "oss: timeline merge refused, the decision is not in this feature's decision record" >&2; refused=1; }
