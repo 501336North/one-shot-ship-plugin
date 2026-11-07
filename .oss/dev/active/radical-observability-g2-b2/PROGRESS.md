@@ -15,4 +15,4 @@
 ## Blockers
 - None. Phase C (API repo) waits on Task 8 for its C1 merge assertions.
 
-## Last Updated: 2026-11-07 10:55 CST by /oss:build
+## Last Updated: 2026-11-07 10:30 CST by /oss:build (build complete; Task 8's PR, merge and tag wait for /oss:ship and the user's OK)

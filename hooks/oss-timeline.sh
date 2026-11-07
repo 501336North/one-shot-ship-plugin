@@ -132,13 +132,16 @@ _oss_tl_sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256; els
 # refused. oss_safe_target still guards the write after it, against a swap after this check. Kept here, beside its
 # only caller, so oss_resolve_feature and its other users see no change (B2-1).
 _oss_tl_archived() {
+    # byte rules here, whoever calls: the merge verb's decision check runs in the session's locale, the writer under
+    # LC_ALL=C, and both must judge the name, its length and the glob the same way
+    local LC_ALL=C
     local proj="${1:-}" branch f="" m newest rel
     local name_re='^[A-Za-z0-9_-][A-Za-z0-9._-]*$' branch_re='^[^/]+/([^/]+)/[^/]'
     _OSS_TL_FEATURE="" _OSS_TL_DIR=""
     branch=$(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; cd "$proj" 2>/dev/null && git symbolic-ref --short -q HEAD 2>/dev/null)
     [[ "$branch" =~ $branch_re ]] && f=${BASH_REMATCH[1]}
     [[ "$f" =~ $name_re && ${#f} -le 128 ]] || return 0
-    # the glob's own order is lexical (the writer runs under LC_ALL=C), so the last match is the newest; with no
+    # the glob's own order is lexical (LC_ALL=C, set above), so the last match is the newest; with no
     # match the pattern stays as it is and is no folder
     m=("$proj/.oss/dev/completed/$f-"[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9])
     newest=${m[${#m[@]}-1]}

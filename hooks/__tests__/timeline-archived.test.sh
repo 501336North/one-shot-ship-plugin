@@ -325,5 +325,17 @@ record "$OUT/completed/demo-2026-11-07/decisions.ndjson"; ln -s "$OUT" "$P/.oss/
 before=$(snap "$OUT"); approve "decision:$UUID"; merge
 linked_refused "$before" && pass "$name" || fail "$name" "$(ldiag)"
 
+# --- the name rule is byte rules on the decision path too, whatever the caller's locale ---------------------------
+# The merge verb's decision check runs in the session's locale (oss-value.sh sets none); a UTF-8 locale must not let
+# a non-ASCII feature name through there when the writer, under LC_ALL=C, would refuse it.
+name='should judge the archived feature name by byte rules on the decision path too'
+fresh feat/démo/ship .oss/dev/completed/démo-2026-11-07; record "$P/.oss/dev/completed/démo-2026-11-07/decisions.ndjson"
+[[ "$(cd "$P" && git symbolic-ref --short -q HEAD)" == feat/démo/ship ]] || echo "setup: branch feat/démo/ship not made"
+approve "decision:$UUID"
+(export LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8; cd "$P" && run_capped 40 "$OV" timeline merge > /dev/null 2> "$T/err"); RC=$?
+ERR=$(cat "$T/err")
+[[ $RC -eq 1 && "$ERR" == *"the decision is not in this feature's decision record"* && -z "$(outbox)" && -z "$(timelines)" ]] \
+    && pass "$name" || fail "$name" "$(udiag)"
+
 echo "$RUN run, $FAILED failed"
 [[ $FAILED -eq 0 ]]

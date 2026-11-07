@@ -30,8 +30,9 @@
 - 2026-11-07 Task 6: RED 22 run, 2 failed (a linked active/ or active/demo let the decision be read through the link). Guard that never went red: linked .oss/dev (archived case). GREEN: timeline-archived 22/0, timeline-merge 13/0, decision-record.acceptance 5/0.
 - 2026-11-07 Task 7: bot login `renovate[bot]` gives a local merge-unknown with pr 4242 and nothing queued. Guard that never went red (timeline-merge 14/0); FOLLOWUPS #186 was already handled.
 - 2026-11-07 Regression set, one file at a time, all green: timeline-archived 22, timeline-merge 14, timeline-writer 23, timeline-gate 8, timeline-push 22, timeline-delivery 35, timeline-bounds 10, timeline-kept 3, timeline-agent-hook 7, notify-timeline 9, timeline.acceptance 8, decision-record.acceptance 5 (166 run, 0 failed). No orphans.
+- 2026-11-07 Simplifier: no changes. Its note led to one hardening: `_oss_tl_archived` sets `local LC_ALL=C` itself (the decision path ran in the session's locale, so the 128 cap counted characters there and bytes in the writer). Guard `feat/démo/ship` under en_US.UTF-8 never went red (bash 3.2 regex refuses é either way). timeline-archived 23/0, timeline-merge 14/0, timeline-writer 23/0.
 
 ## Regression set (Task 8)
 timeline-archived, timeline-merge, timeline-writer, timeline-gate, timeline-push, timeline-delivery, timeline-bounds, timeline-kept, timeline-agent-hook, notify-timeline, timeline.acceptance, decision-record.acceptance, version-check.
 
-## Last Updated: 2026-11-07 10:55 CST by /oss:build
+## Last Updated: 2026-11-07 10:30 CST by /oss:build
