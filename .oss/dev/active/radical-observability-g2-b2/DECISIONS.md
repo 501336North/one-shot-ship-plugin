@@ -34,3 +34,6 @@ This matches the design ("refused, staying unfiled and never pushed"). The looku
 
 ## B2-9: B10, the penetration-tester agent wrapper, joins 2.0.99 (user picker, 2026-11-07)
 API ADR-018 (user picker "Separate pen-test agent") plans `agents/penetration-tester.md` for 2.0.99, so that Phase C's ship Step 1.4 can spawn it and G3 can back pen-test gate lines with a real penetration-tester run. It was added to the API plan during the Phase C build, after this plan. The user chose to add it here (Task 9) rather than in 2.0.100: one wrapper file with the same shape as `security-auditor.md`, plus a test.
+
+## B2-10: The penetration-tester wrapper gets its own 25-line bash exemption group (ship, 2026-11-07)
+`bash-allowlist-exempt.txt` is meant to only shrink. But B10's spec is "identical to security-auditor.md apart from its identity", and that wrapper's Step 0 and Step 2.5 shell lines are exempt, not allowlisted. So the new group `@b10-pen-tester` repeats them for `agents/penetration-tester.md` only. Customers see the same approval prompts for the pen-test agent as for security-auditor. The alternatives were rejected: allowlisting wrapper lines in general widens permissions for every agent, and dropping the routing steps breaks the identity rule and offload. `agent-offload-step.test.sh` now pins 14 routable agents.

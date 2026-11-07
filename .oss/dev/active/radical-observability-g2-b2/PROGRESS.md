@@ -1,6 +1,6 @@
 # Progress: Radical Observability G2, Phase B2 (plugin 2.0.99)
 
-## Current Phase: build
+## Current Phase: ship
 
 ## Tasks
 - [x] Task 1: Acceptance test, merge after the archive move is filed and queued (RED) (completed 2026-11-07: fails as planned, the line goes to unfiled and no outbox entry is made)
@@ -9,10 +9,11 @@
 - [x] Task 4: Every other kind unchanged (guards) (completed 2026-11-07)
 - [x] Task 5: Decision approval reads the archived record (B8) (completed 2026-11-07)
 - [x] Task 6: No links on the way to decisions.ndjson (FOLLOWUPS #197) (completed 2026-11-07)
-- [ ] Task 7: Bot-style merger login leaves a local trace (FOLLOWUPS #186) (completed 2026-11-07: guard test, already handled by the merge verb)
+- [x] Task 7: Bot-style merger login leaves a local trace (FOLLOWUPS #186) (completed 2026-11-07: guard test, already handled by the merge verb)
 - [ ] Task 8: Release 2.0.99 (B9) (in progress: plugin.json bumped and regression set green 2026-11-07; PR, merge and tag at /oss:ship with the user's OK)
+- [x] Task 9: penetration-tester agent wrapper (B10) (completed 2026-11-07: added at ship by user picker)
 
 ## Blockers
 - None. Phase C (API repo) waits on Task 8 for its C1 merge assertions.
 
-## Last Updated: 2026-11-07 10:30 CST by /oss:build (build complete; Task 8's PR, merge and tag wait for /oss:ship and the user's OK)
+## Last Updated: 2026-11-07 11:50 CST by /oss:ship (Task 9 done; PR next)

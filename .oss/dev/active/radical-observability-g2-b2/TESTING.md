@@ -42,6 +42,8 @@
 ## Regression set (Task 8)
 timeline-archived, timeline-merge, timeline-writer, timeline-gate, timeline-push, timeline-delivery, timeline-bounds, timeline-kept, timeline-agent-hook, notify-timeline, timeline.acceptance, decision-record.acceptance, version-check.
 
+- Task 9 (B10): RED with agent-penetration-tester 4 run, 3 failed (no file; the control case passed); agent-offload-step 1/5; bash-blocks-allowlisted 7/32 (stale exemptions). GREEN: agent-penetration-tester 4/0, agent-offload-step 5/5, bash-blocks-allowlisted 8/8, no-key-in-request 9/9, no-key-printing 5/5, wrapper-complete 95/95, value-file-wrappers-run 90/90, agent-frontmatter 5/5, code-simplifier 6/6. The wrapper's diff against security-auditor.md is its 7 identity lines only.
+
 ## Last Updated: 2026-11-07 10:33 CST by /oss:integration
 
 ## Ship gate (/oss:ship --merge)
@@ -49,4 +51,4 @@ timeline-archived, timeline-merge, timeline-writer, timeline-gate, timeline-push
 - Round 2 fixes: fixed past dates in timeline-archived (no case depends on today); detached HEAD and many-unrelated-entries guards; feature-resolve guards for a HEAD on refs/remotes and refs/tags (both fail against the pre-S1 oss-safe-path.sh); failglob RED in feature-resolve (`no match: .../active/*/`), GREEN by turning failglob off around the one glob and restoring it.
 - After round 2, one file at a time: timeline-archived 33/0, feature-resolve 12/0, timeline-merge 14/0, timeline-writer 23/0, decision-record.acceptance 5/0, timeline-gate 8/0, notify-timeline 9/0, timeline.acceptance 8/0, oss-safe-path 25/25. shellcheck: no new codes in the two hooks. No orphans.
 
-## Last Updated: 2026-11-07 11:41 CST by /oss:ship (round 2)
+## Last Updated: 2026-11-07 11:50 CST by /oss:ship (Task 9)

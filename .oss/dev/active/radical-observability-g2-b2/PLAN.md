@@ -125,13 +125,21 @@ These pass immediately if Task 2 is merge-only. They are regression guards, so w
 - [ ] Through `/oss:ship` (normal review rounds): PR from `feat/radical-observability-g2-b2/build` to main, then the tag `v2.0.99` per the usual release flow. The user's 2.0.97 release authority does not carry over (CLAUDE.md: approval in one context doesn't extend), so ask before merging or tagging.
 - [ ] Tell the API session (Phase C) that 2.0.99 is out, so C1's merge assertions can run.
 
+### Task 9: penetration-tester agent wrapper (B10, added at ship, user picker 2026-11-07)
+**Objective:** Phase C's ship Step 1.4 can spawn `penetration-tester`, so G3 backs a pen-test gate line with a real penetration-tester run (API ADR-018).
+
+**Steps:**
+- [ ] RED: a hook test showing `agents/penetration-tester.md` exists, carries the `penetration-tester` name, route marker, AGENT_ID and decrypt name, and otherwise matches `security-auditor.md` byte for byte (plus any manifest entry).
+- [ ] GREEN: add the wrapper.
+- [ ] A narrow ship-gate check of the new file, before the PR.
+
 ## Implementation Sequence
 1. **Boundary:** Task 1 (RED).
 2. **Guards:** Task 4 tests written (green, must stay green).
 3. **Core:** Task 2, then Task 3 (depends on 2's helper).
 4. **Decision check:** Task 5 (depends on 2), then Task 6 (depends on 5's read path).
 5. **Independent:** Task 7 (any time; it touches only `timeline-merge.test.sh`).
-6. **Release:** Task 8 last.
+6. **Release:** Task 8 last; Task 9 (added at ship) lands before its PR.
 
 ## Testing Strategy
 ### Unit / hook tests
@@ -160,5 +168,5 @@ These pass immediately if Task 2 is merge-only. They are regression guards, so w
 - [ ] Older plugins (2.0.98) keep filing the merge line unfiled (API PLAN B9 says Phase C still works there).
 - [ ] Rollback: revert the PR. Archived lines already written stay local and are harmless.
 
-## Estimated Tasks: 8
+## Estimated Tasks: 9
 ## Estimated Test Cases: 24

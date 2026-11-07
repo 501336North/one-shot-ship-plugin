@@ -701,3 +701,30 @@ commands/login.md	( set -o pipefail; curl -sL --proto '=https' --proto-redir '=h
 
 @t78-stale-hooks
 commands/settings.md	command -v oss_settings_why >/dev/null && command -v oss_settings_writable >/dev/null      || { echo "Your OSS hooks are older than the plugin; restart Claude Code (or start a new session) to update them." >&2; exit 1; }
+
+@b10-pen-tester
+agents/penetration-tester.md	*) echo '{"offloaded":false,"reason":"native"}' ;;
+agents/penetration-tester.md	*/oss-offload.*/prompt.md)
+agents/penetration-tester.md	AGENT_ID="oss:penetration-tester"
+agents/penetration-tester.md	BANNER=$(echo "$ROUTING" | jq -r '.banner // empty' 2>/dev/null)
+agents/penetration-tester.md	MODEL=$(echo "$ROUTING" | jq -r '.model')
+agents/penetration-tester.md	MODEL_CHECK="$PLUGIN_ROOT/watcher/dist/cli/agent-model-check.js"
+agents/penetration-tester.md	OFFLOAD="$PLUGIN_ROOT/watcher/dist/cli/agent-offload.js"
+agents/penetration-tester.md	PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"
+agents/penetration-tester.md	PROMPT_FILE='<path printed in step 1>'
+agents/penetration-tester.md	ROUTING=$(node "$MODEL_CHECK" --agent "$AGENT_ID" 2>/dev/null || echo '{"useProxy":false}')
+agents/penetration-tester.md	USE_PROXY=$(echo "$ROUTING" | jq -r '.useProxy // false' 2>/dev/null || echo "false")
+agents/penetration-tester.md	[[ -n "$BANNER" ]] && echo "$BANNER"
+agents/penetration-tester.md	case "$PROMPT_FILE" in
+agents/penetration-tester.md	echo '{"offloaded":false,"reason":"native"}'
+agents/penetration-tester.md	else
+agents/penetration-tester.md	esac
+agents/penetration-tester.md	fi
+agents/penetration-tester.md	fi; } < "$PROMPT_FILE" ;;
+agents/penetration-tester.md	if [[ "$USE_PROXY" == "true" ]]; then
+agents/penetration-tester.md	if [[ -f "$MODEL_CHECK" ]]; then
+agents/penetration-tester.md	if [[ -f "$OFFLOAD" ]]; then
+agents/penetration-tester.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file /dev/stdin --project-dir "$(pwd)"
+agents/penetration-tester.md	test -f "$HOME/.oss/config.json" && grep -qE '"apiKey"[[:space:]]*:[[:space:]]*"[A-Za-z0-9_-]' "$HOME/.oss/config.json" && echo "API key configured"
+agents/penetration-tester.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && echo "$d/prompt.md"
+agents/penetration-tester.md	{ rm -f -- "$PROMPT_FILE"; rmdir -- "${PROMPT_FILE%/prompt.md}"
