@@ -26,6 +26,13 @@
 #                                   /oss:workflows display (T60).
 #   oss-value.sh usage              GET /api/v1/analytics/usage the same way; print this month's total and the 10 most
 #                                   used command types, or one "Usage: unavailable right now" line and rc 0 (T69).
+#   oss-value.sh timeline gate      one gate line on the feature timeline (oss-timeline.sh gate) from round.txt
+#                                   gate.txt verdict.txt findings.txt fixed.txt mode.txt, each held to its rule in
+#                                   _ov_cmd_timeline; all six deleted once read, accepted or refused (G2 B4a); a pass
+#                                   with a critical or high count above its fixed count is refused by the writer (P-16).
+#   oss-value.sh timeline merge     one merge line (oss-timeline.sh merge, the PR facts from gh) with the approval
+#                                   from approval.txt (merge-flag, chat-instruction, none or decision:<uuid v4>;
+#                                   none when missing); deleted once read, accepted or refused (G2 B4b).
 #   oss-value.sh queue-push         POST type.txt, source.txt and prompt.txt (checked) to /api/v1/queue the same way;
 #                                   print "Queued: <id>", or one Error: line on stderr and rc 1 (T87).
 # (Saving the API key is hooks/oss-login.sh, NOT a verb here: this script is allowlisted, a key
@@ -47,7 +54,7 @@ if [[ ! -f "$_OV_HERE/oss-safe-path.sh" ]]; then
 fi
 source "$_OV_HERE/oss-safe-path.sh"
 
-_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args> | status | usage | workflows | workflow | queue-push" >&2; exit 2; }
+_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args> | status | usage | workflows | workflow | queue-push | timeline gate|merge" >&2; exit 2; }
 
 _OV_RUN="$HOME/.oss/run"
 
@@ -87,6 +94,7 @@ _ov_cmd_dir() {
     && rm -f "$p/feature.txt" "$p/numbers.txt" "$p/date.txt" "$p/reason.txt" "$p/message.txt" "$p/hint.txt" "$p/error.txt" \
              "$p/agent.txt" "$p/key.txt" "$p/style.txt" "$p/prompt.txt" "$p/model.txt" "$p/workflow.txt" "$p/category.txt" "$p/name.txt" \
              "$p/notify_style.txt" "$p/voice.txt" "$p/sound.txt" "$p/verbosity.txt" "$p/custom.txt" "$p/type.txt" "$p/source.txt" \
+             "$p/round.txt" "$p/gate.txt" "$p/verdict.txt" "$p/findings.txt" "$p/fixed.txt" "$p/mode.txt" "$p/approval.txt" \
     && printf '%s\n' "$p"
 }
 
@@ -109,11 +117,14 @@ _ov_read_value() {
     _ov_open "$1" && _OV_VAL=$(LC_ALL=C tr -cd 'A-Za-z0-9 ._,:()/-' <&3 | cut -c1-200); local r=$?; exec 3<&-; return $r
 }
 
-# <file> <regex>: the checked file, read whole, deleted at once (valid or not: a key never
-# lingers), then held to <regex> -> _OV_VAL. A refused open leaves the path alone.
+# <file> <regex> [max-age]: the checked file, read up to 4 KB, deleted at once (valid or not: a key never
+# lingers), then held to <regex> -> _OV_VAL. A refused open leaves the path alone. With max-age (seconds),
+# an opened file last written longer ago, or more than 60 s ahead of now, is refused too: value folders are
+# per repo, not per session.
 _ov_take() {
     _OV_VAL=""; _ov_open "$1" || { { exec 3<&-; } 2>/dev/null; return 1; }   # braces: a bare exec 2>/dev/null would silence the caller
-    local v; v=$(cat <&3); exec 3<&-; rm -f "$_OV_DIR/$1"
+    local v m n; v=$(head -c 4096 <&3); m=$(stat -L -c %Y /dev/fd/3 2>/dev/null || stat -L -f %m /dev/fd/3); exec 3<&-; rm -f "$_OV_DIR/$1"
+    [[ -z "${3:-}" ]] || { n=$(date +%s); [[ "$m" =~ ^[0-9]+$ ]] && (( n - m <= $3 && m <= n + 60 )); } || return 1
     [[ "$v" =~ $2 ]] && _OV_VAL=$v
 }
 
@@ -346,6 +357,46 @@ _ov_cmd_agent() {
     CLAUDE_PROJECT_DIR="$_OV_PROJ" "$_OV_HERE/oss-log.sh" agent "$1" "$_OV_VAL" "$t"
 }
 
+# timeline gate (G2 B4a): the six gate value files, each taken (_ov_take: read and deleted, valid or not) and held
+# to its rule, then one oss-timeline.sh gate line. Every file is taken before any verdict, so a refusal leaves none.
+# Counts: critical, high, medium, low, info (the API's severityCounts), each 0..1000, each at most once, or none.
+_OV_COUNTS='^((critical|high|medium|low|info)=(0|[1-9][0-9]{0,2}|1000)( (critical|high|medium|low|info)=(0|[1-9][0-9]{0,2}|1000))*)?$'
+_ov_cmd_timeline() {
+    local o n re ok=1 v=() k seen
+    oss_phys_cwd; o="$_OSS_CWD"
+    [[ "${1:-}" == gate || "${1:-}" == merge ]] && _ov_dir \
+        || { echo "oss-value: timeline: refused (not timeline gate or merge, or no safe value folder)" >&2; return 1; }
+    if [[ $1 == merge ]]; then   # B4b: approval.txt (taken: read and deleted, valid or not), none when there is none
+        _OV_VAL=none
+        if [[ -e "$_OV_DIR/approval.txt" || -L "$_OV_DIR/approval.txt" ]]; then
+            # refused: no approval reaches the line, which can then only be the local merge-unknown trace (Task 12)
+            _ov_take approval.txt '^(merge-flag|chat-instruction|none|decision:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$' 600 \
+                || { echo "oss-value: timeline merge: refused (approval.txt unsafe, older than 10 minutes or outside its rule), a local merge-unknown line only" >&2; ok=0; }
+        fi
+        _ov_walk "$o"
+        CLAUDE_PROJECT_DIR="$_OV_PROJ" "$_OV_HERE/oss-timeline.sh" merge "$_OV_VAL" && (( ok ))
+        return
+    fi
+    for n in round gate verdict findings fixed mode; do
+        case $n in
+            round) re='^([1-9]|1[0-9]|20)$' ;;
+            gate) re='^[a-z0-9-]{1,40}$' ;;   # P-6: a standard gate name or an agent name without its prefix
+            verdict) re='^(pass|fail)$' ;;
+            findings|fixed) re=$_OV_COUNTS ;;
+            mode) re='^(full|quick|no-checks|team)$' ;;
+        esac
+        _ov_take "$n.txt" "$re" 600 || ok=0
+        v+=("$_OV_VAL")
+    done
+    for n in "${v[3]}" "${v[4]}"; do   # no severity named twice
+        seen=" "
+        for k in $n; do k=${k%%=*}; [[ "$seen" == *" $k "* ]] && ok=0; seen="$seen$k "; done
+    done
+    (( ok )) || { echo "oss-value: timeline gate: refused (a value file missing, unsafe, older than 10 minutes or outside its rule)" >&2; return 1; }
+    _ov_walk "$o"
+    CLAUDE_PROJECT_DIR="$_OV_PROJ" "$_OV_HERE/oss-timeline.sh" gate "${v[@]}"
+}
+
 _ov_cmd_failed() {
     local o r
     oss_phys_cwd; o="$_OSS_CWD"
@@ -403,5 +454,6 @@ case "${1:-}" in
     workflows) _ov_cmd_workflows ;;
     workflow) _ov_cmd_workflow ;;
     queue-push) _ov_cmd_queue_push ;;
+    timeline) _ov_cmd_timeline "${2:-}" ;;
     *) _ov_usage ;;
 esac

@@ -5,10 +5,12 @@
 # @behavior A fix to the stock-macOS time limit, to the body cap or to the decision hooks' API call reaches every
 #           hook that uses it, so no hook is left with an older, weaker copy.
 # @business-rule T81 (user 2026-11-05 "Dedupe now with a match test"):
-#   - The perl supervisor stays inline in oss-session-start.sh (run_bounded) and oss-notify.sh (run_with_timeout):
-#     it IS the time limit, and a sourced copy that is missing or stale mid-update would leave a hook with no
-#     limit. So the two programs must be byte-identical, and the supervisor reads no environment variable (no
-#     test seam in shipped code; bounded-hook-killed.test.sh observes it from outside).
+#   - The perl supervisor stays inline in oss-session-start.sh (run_bounded), oss-notify.sh (run_with_timeout) and
+#     oss-timeline.sh (oss_tl_bounded): it IS the time limit, and a sourced copy that is missing or stale mid-update
+#     would leave a hook with no limit. So the three programs must be byte-identical, and the supervisor reads no
+#     environment variable (no test seam in shipped code; bounded-hook-killed.test.sh observes it from outside).
+#     The third copy (G2 P-9, 2026-11-06): the timeline merge verb must bound its `gh pr view` call at 10 s, and
+#     neither of the first two hooks can be sourced, so T81's inline rule gives it its own copy, held identical here.
 #   - Every network body a hook reads is capped by oss_capped (oss-api-curl.sh), one slack rule: no hook has a
 #     head -c byte stop of its own, and every --max-filesize is "$OSS_BODY_MAX" inside an oss_capped call. The
 #     binary downloads (ensure-*.sh, 256 MiB, written to a file) and the login icon (commands/login.md, 1 MiB)
@@ -34,14 +36,15 @@ supervisor() {
     sed -n "/^$2() {/,/^}/p" "$HOOKS/$1" | awk '/^ *\/usr\/bin\/perl -e .$/ { f = 1; next } f && /^ *. "\$/ { exit } f'
 }
 A=$(supervisor oss-session-start.sh run_bounded); B=$(supervisor oss-notify.sh run_with_timeout)
-for v in "oss-session-start.sh run_bounded|$A" "oss-notify.sh run_with_timeout|$B"; do
+C=$(supervisor oss-timeline.sh oss_tl_bounded)
+for v in "oss-session-start.sh run_bounded|$A" "oss-notify.sh run_with_timeout|$B" "oss-timeline.sh oss_tl_bounded|$C"; do
     [[ "${v#*|}" == *'waitpid($p, 1)'* && "${v#*|}" == *'kill "KILL", -$p'* ]] && pass "${v%%|*}: the supervisor is found (anchor)" \
         || fail "${v%%|*}: the supervisor is found (anchor)" "got $(printf '%s' "${v#*|}" | wc -l | tr -d ' ') lines"
 done
-if [[ -n "$A" && "$A" == "$B" ]]; then pass "the two supervisors are byte-identical ($(printf '%s\n' "$A" | wc -l | tr -d ' ') lines)"
-else fail "the two supervisors are byte-identical" "$(diff <(printf '%s\n' "$A") <(printf '%s\n' "$B") | head -6 | tr '\n' '|')"; fi
-[[ -n "$A$B" && "$A$B" != *'$ENV'* && "$A$B" != *'%ENV'* ]] && pass "the supervisor reads no environment variable (no test seam)" \
-    || fail "the supervisor reads no environment variable (no test seam)" "$(printf '%s\n%s\n' "$A" "$B" | grep -n 'ENV' | head -2 | tr '\n' '|')"
+if [[ -n "$A" && "$A" == "$B" && "$A" == "$C" ]]; then pass "the three supervisors are byte-identical ($(printf '%s\n' "$A" | wc -l | tr -d ' ') lines)"
+else fail "the three supervisors are byte-identical" "notify: $(diff <(printf '%s\n' "$A") <(printf '%s\n' "$B") | head -3 | tr '\n' '|') timeline: $(diff <(printf '%s\n' "$A") <(printf '%s\n' "$C") | head -3 | tr '\n' '|')"; fi
+[[ -n "$A$B$C" && "$A$B$C" != *'$ENV'* && "$A$B$C" != *'%ENV'* ]] && pass "the supervisor reads no environment variable (no test seam)" \
+    || fail "the supervisor reads no environment variable (no test seam)" "$(printf '%s\n%s\n%s\n' "$A" "$B" "$C" | grep -n 'ENV' | head -2 | tr '\n' '|')"
 seam=$(grep -l 'OSS_TEST_BOUND_TRACE' "$HOOKS"/*.sh 2>/dev/null | tr '\n' ' ')
 [[ -z "$seam" ]] && pass "no hook reads OSS_TEST_BOUND_TRACE" || fail "no hook reads OSS_TEST_BOUND_TRACE" "in: $seam"
 

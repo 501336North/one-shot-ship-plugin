@@ -20,21 +20,8 @@ in=""
 [[ -t 0 ]] || IFS= read -r -d '' -t 2 in || true
 [[ $(printf '%s' "$in" | jq -r '.tool_name' 2>/dev/null) == AskUserQuestion ]] || exit 0
 
-# this project's own branch: git variables inherited from the session could point at another repo
-branch=$(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; cd "$proj" 2>/dev/null && git symbolic-ref --short -q HEAD 2>/dev/null)
-# ADR-009 (the IRON LAW #4 branch convention): a <type>/<feature>/<phase> branch names the feature, filed
-# under it when that folder is active, else unfiled; any other branch takes the only active folder, else
-# none. A name is ^[A-Za-z0-9._-]+$, not starting with "."
-name_re='^[A-Za-z0-9_-][A-Za-z0-9._-]*$'
-branch_re='^[^/]+/([^/]+)/[^/]'
-feature=""
-[[ "$branch" =~ $branch_re ]] && feature=${BASH_REMATCH[1]}
-[[ "$feature" =~ $name_re && -d "$proj/.oss/dev/active/$feature" ]] || feature=""
-if [[ -z "$feature" && ! "$branch" =~ $branch_re ]]; then
-    active=("$proj"/.oss/dev/active/*/)
-    [[ ${#active[@]} -eq 1 && -d "${active[0]}" ]] && { feature=${active[0]%/}; feature=${feature##*/}; }
-    [[ "$feature" =~ $name_re ]] || feature=""
-fi
+oss_resolve_feature "$proj"
+feature="$_OSS_FEATURE"
 rec=".oss/dev/decisions-unfiled.ndjson"
 [[ -n "$feature" ]] && rec=".oss/dev/active/$feature/decisions.ndjson"
 # the command from the project's own state file only (a link could point at /dev/zero or outside), and

@@ -117,6 +117,16 @@
             "async": true
           }
         ]
+      },
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-timeline.sh",
+            "async": true
+          }
+        ]
       }
     ]
   }
