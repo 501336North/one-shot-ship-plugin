@@ -1,0 +1,5 @@
+{"v":1,"id":"fe4f39c9-0296-4775-8867-d81dab642229","ts":"2026-11-07T01:59:43Z","kind":"command","feature":"radical-observability-g2-b2","session":"25e24200-c911-4d25-bca1-203636861f0e","command":"build","status":"start"}
+{"v":1,"id":"1aeefb2a-4843-4451-92d5-53b84092b9e3","ts":"2026-11-07T02:31:07Z","kind":"command","feature":"radical-observability-g2-b2","session":"25e24200-c911-4d25-bca1-203636861f0e","command":"build","status":"complete"}
+{"v":1,"id":"9bdec113-c6ea-4e82-8ba6-41af8c521222","ts":"2026-11-07T02:31:22Z","kind":"command","feature":"radical-observability-g2-b2","session":"25e24200-c911-4d25-bca1-203636861f0e","command":"integration","status":"start"}
+{"v":1,"id":"861a9bcb-f664-4373-96c9-38063051dac4","ts":"2026-11-07T02:33:38Z","kind":"command","feature":"radical-observability-g2-b2","session":"25e24200-c911-4d25-bca1-203636861f0e","command":"integration","status":"complete"}
+{"v":1,"id":"9cd79863-cd36-43f1-b9e3-390b58910668","ts":"2026-11-07T02:43:42Z","kind":"command","feature":"radical-observability-g2-b2","session":"25e24200-c911-4d25-bca1-203636861f0e","command":"ship","status":"start"}
