@@ -182,5 +182,75 @@ else
     fail "$name" "rc=$RC active=[$(cat "$ATL" 2>/dev/null)] $(udiag)"
 fi
 
+# --- B7 safety: a refused archived folder means an unfiled line, rc 0, never pushed (B2-2, B2-4) ------------------
+# snap <path...>: every regular file under the paths (links not followed) with its content, to show nothing changed
+snap() { find "$@" -type f -print -exec cat {} + 2>/dev/null; }
+# refused_unfiled <before snap> <path...>: rc 0, one merge line in unfiled with no feature, no outbox entry, and the
+# archived and outside files exactly as they were
+refused_unfiled() {
+    local before=$1 got; shift
+    got=$(tail -n 1 "$UNF" 2>/dev/null | jq -r '.kind + " feature=" + (has("feature") | tostring)' 2>/dev/null)
+    [[ $RC -eq 0 && $(lines "$UNF") -eq 1 && "$got" == "merge feature=false" && -z "$(outbox)" \
+        && "$(snap "$@")" == "$before" ]]
+}
+
+name='should refuse a symlinked archived folder, and never fall back to an older real one'
+fresh feat/demo/ship .oss/dev/completed/demo-2026-11-01
+OUT="$T/out-link-folder"; mkdir -p "$OUT"; ln -s "$OUT" "$P/.oss/dev/completed/demo-2026-11-07"
+CMP="$P/.oss/dev/completed"; before=$(snap "$CMP" "$OUT")
+approve merge-flag; merge
+refused_unfiled "$before" "$CMP" "$OUT" && [[ ! -e "$CMP/demo-2026-11-01/timeline.ndjson" && -z "$(ls -A "$OUT")" ]] \
+    && pass "$name" || fail "$name" "outside=[$(ls -A "$OUT")] $(udiag)"
+
+name='should refuse a linked .oss/dev/completed'
+fresh feat/demo/ship
+OUT="$T/out-link-completed"; mkdir -p "$OUT/demo-2026-11-07"; ln -s "$OUT" "$P/.oss/dev/completed"
+before=$(snap "$OUT")
+approve merge-flag; merge
+refused_unfiled "$before" "$OUT" && pass "$name" || fail "$name" "outside=[$(snap "$OUT")] $(udiag)"
+
+name='should refuse an archived timeline file with another hard link'
+fresh feat/demo/ship .oss/dev/completed/demo-2026-11-07
+OUT="$T/out-hard-link"; mkdir -p "$OUT"; printf '%s\n' '{"elsewhere":1}' > "$OUT/tl"
+ln "$OUT/tl" "$P/.oss/dev/completed/demo-2026-11-07/timeline.ndjson"
+CMP="$P/.oss/dev/completed"; before=$(snap "$CMP" "$OUT")
+approve merge-flag; merge
+refused_unfiled "$before" "$CMP" "$OUT" && pass "$name" || fail "$name" "outside=[$(cat "$OUT/tl")] $(udiag)"
+
+name='should refuse an archived timeline file that is a symlink'
+fresh feat/demo/ship .oss/dev/completed/demo-2026-11-07
+OUT="$T/out-link-file"; mkdir -p "$OUT"; printf '%s\n' '{"elsewhere":1}' > "$OUT/tl"
+ln -s "$OUT/tl" "$P/.oss/dev/completed/demo-2026-11-07/timeline.ndjson"
+CMP="$P/.oss/dev/completed"; before=$(snap "$CMP" "$OUT")
+approve merge-flag; merge
+refused_unfiled "$before" "$CMP" "$OUT" && pass "$name" || fail "$name" "outside=[$(cat "$OUT/tl")] $(udiag)"
+
+name='should refuse an archived folder owned by someone else'
+fresh feat/demo/ship .oss/dev/completed/demo-2026-11-07
+CMP="$P/.oss/dev/completed"; before=$(snap "$CMP")
+approve merge-flag
+# someone else's folder, through `test -O` (the repo's other-user seam): exported, so the verb's own bash sees it
+(export OSS_T_FOREIGN="/.oss/dev/completed/demo-2026-11-07"
+    # shellcheck disable=SC2329 # run by the verb's bash, through export -f
+    test() { if [[ "${1:-}" == -O && "${2%/}" == *"$OSS_T_FOREIGN" ]]; then return 1; fi; builtin test "$@"; }
+    export -f test
+    cd "$P" && run_capped 40 "$OV" timeline merge > /dev/null 2> "$T/err"); RC=$?; ERR=$(cat "$T/err")
+refused_unfiled "$before" "$CMP" && pass "$name" || fail "$name" "$(udiag)"
+
+name='should refuse a branch whose feature fails the name rule'
+# git itself refuses a branch part that starts with "." (feat/.demo/ship cannot be made or read), so the name rule is
+# shown with a name git allows and the rule does not: "+" is outside [A-Za-z0-9._-]
+fresh feat/de+mo/ship .oss/dev/completed/de+mo-2026-11-07
+[[ "$(cd "$P" && git symbolic-ref --short -q HEAD)" == feat/de+mo/ship ]] || echo "setup: branch feat/de+mo/ship not made"
+CMP="$P/.oss/dev/completed"; before=$(snap "$CMP")
+approve merge-flag; merge
+refused_unfiled "$before" "$CMP" && pass "$name" || fail "$name" "$(udiag)"
+
+name='should refuse a branch that is not <type>/<feature>/<phase>'
+fresh main .oss/dev/completed/demo-2026-11-07
+CMP="$P/.oss/dev/completed"; before=$(snap "$CMP")
+approve merge-flag; merge
+refused_unfiled "$before" "$CMP" && pass "$name" || fail "$name" "$(udiag)"
+
 echo "$RUN run, $FAILED failed"
 [[ $FAILED -eq 0 ]]

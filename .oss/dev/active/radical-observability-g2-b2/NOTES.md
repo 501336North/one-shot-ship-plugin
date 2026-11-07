@@ -8,3 +8,5 @@
 - Step 0 of the served plan prompt (PM2, CI, ecosystem.config.js) was not re-run: settled per API #426 (memory, 2026-11-06).
 
 ## Last Updated: 2026-11-07 09:34 CST by /oss:plan
+
+- Task 3: git refuses a branch like `feat/.demo/ship` (invalid ref), so a dot-led feature can never come from a real branch. The name-rule case uses `feat/de+mo/ship` instead (git accepts `+`, our rule does not).

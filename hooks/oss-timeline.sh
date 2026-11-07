@@ -128,10 +128,11 @@ _oss_tl_sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256; els
 # _oss_tl_archived <proj>: B7, the feature's archived folder after the ship archive move. The feature comes only from
 # the project's own branch (<type>/<feature>/<phase>, read as oss_resolve_feature reads it), never from a value
 # file; the folder is the newest .oss/dev/completed/<feature>-YYYY-MM-DD by name (the date sorts lexically).
-# Sets _OSS_TL_FEATURE and _OSS_TL_DIR (relative to <proj>), or both "" when none matches. Kept here, beside its
+# Sets _OSS_TL_FEATURE and _OSS_TL_DIR (relative to <proj>), or both "" when none matches or the newest one is
+# refused. oss_safe_target still guards the write after it, against a swap after this check. Kept here, beside its
 # only caller, so oss_resolve_feature and its other users see no change (B2-1).
 _oss_tl_archived() {
-    local proj="${1:-}" branch f="" m newest
+    local proj="${1:-}" branch f="" m newest rel
     local name_re='^[A-Za-z0-9_-][A-Za-z0-9._-]*$' branch_re='^[^/]+/([^/]+)/[^/]'
     _OSS_TL_FEATURE="" _OSS_TL_DIR=""
     branch=$(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; cd "$proj" 2>/dev/null && git symbolic-ref --short -q HEAD 2>/dev/null)
@@ -141,8 +142,22 @@ _oss_tl_archived() {
     # match the pattern stays as it is and is no folder
     m=("$proj/.oss/dev/completed/$f-"[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9])
     newest=${m[${#m[@]}-1]}
-    [[ -d "$newest" ]] || return 0
-    _OSS_TL_FEATURE=$f _OSS_TL_DIR=".oss/dev/completed/${newest##*/}"
+    rel=".oss/dev/completed/${newest##*/}"
+    # the newest is checked and never swapped for an older one (B2-2): a link anywhere on the way, someone else's
+    # folder (`test -O`: the tests' other-user seam) or a linked timeline file gives "" and an unfiled line (B2-4)
+    _oss_tl_real_dirs "$proj" "$rel" && test -O "$proj/$rel" && oss_single_link "$proj/$rel/timeline.ndjson" || return 0
+    _OSS_TL_FEATURE=$f _OSS_TL_DIR=$rel
+}
+
+# _oss_tl_real_dirs <proj> <rel-dir>: 0 only when every folder from <proj> down to <rel-dir> is a real directory,
+# not a link. Read-only, unlike oss_safe_target, which makes missing folders (B2-5).
+_oss_tl_real_dirs() {
+    local p="${1:-}" c rest="${2:-}/"
+    while [[ -n "$rest" ]]; do
+        c=${rest%%/*} rest=${rest#*/}
+        p="$p/$c"
+        [[ -d "$p" && ! -L "$p" ]] || return 1
+    done
 }
 
 oss_timeline_append() (

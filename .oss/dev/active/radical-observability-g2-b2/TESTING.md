@@ -23,9 +23,12 @@
 - 2026-11-07 Task 4 + Task 2: timeline-archived 9 run, 0 failed; timeline-merge 13/0; timeline-writer 23/0; timeline-gate 8/0.
   - RED: Task 1 case and "newest dated folder wins" failed (line in unfiled, outbox empty).
   - Guards that never went red (expected, they pin unchanged behaviour): the 4 Task 4 cases (gate, command, agent unfiled; oss_resolve_feature ""), and Task 2's look-alike names, no completed/, active wins.
+- 2026-11-07 Task 3: timeline-archived 16/0; timeline-merge 13/0; timeline-writer 23/0.
+  - RED (5 failed): linked newest folder, linked completed/, hard-linked and symlinked timeline gave rc 1 (oss_safe_target refusal) instead of rc 0 + unfiled (B2-4); a foreign-owned folder took the line and queued it.
+  - Guards that never went red: bad feature name (`feat/de+mo/ship`), non-convention branch (`main`).
 (the rest filled in by /oss:build)
 
 ## Regression set (Task 8)
 timeline-archived, timeline-merge, timeline-writer, timeline-gate, timeline-push, timeline-delivery, timeline-bounds, timeline-kept, timeline-agent-hook, notify-timeline, timeline.acceptance, decision-record.acceptance, version-check.
 
-## Last Updated: 2026-11-07 09:34 CST by /oss:plan
+## Last Updated: 2026-11-07 10:20 CST by /oss:build
