@@ -18,7 +18,9 @@
 | 7 | bot login gives a local merge-unknown with pr |
 
 ## Results
-(filled in by /oss:build)
+- 2026-11-07 /oss:acceptance: `timeline-archived.test.sh` 1 run, 1 failed (RED as planned: rc 0, merge line in timeline-unfiled.ndjson with no feature, outbox empty). Harness check: `timeline-merge.test.sh` 13 run, 0 failed.
+- Outbox note: no config.json is needed for an outbox entry (fp is the hash of an empty key), and the detached push exits at `oss_api_creds` before touching the outbox, so `pending` is stable. A test that adds a key must turn the push off or wait for it.
+(the rest filled in by /oss:build)
 
 ## Regression set (Task 8)
 timeline-archived, timeline-merge, timeline-writer, timeline-gate, timeline-push, timeline-delivery, timeline-bounds, timeline-kept, timeline-agent-hook, notify-timeline, timeline.acceptance, decision-record.acceptance, version-check.
