@@ -178,6 +178,19 @@ reply "$MERGED"; before=$(lines); merge
 [[ $ok -eq 1 ]] && pass "should write a local merge-unknown line when gh's facts fail the schema (a bad sha, a bot or bad login, a null mergeCommit, a mergedAt before 2020 or not a time), with the pr when it is valid" \
     || fail "should write a local merge-unknown line when gh's facts fail the schema (a bad sha, a bot or bad login, a null mergeCommit, a mergedAt before 2020 or not a time), with the pr when it is valid" "$bad (err=$ERR)"
 
+# FOLLOWUPS #186: a bot merged the PR (a login outside the API's pattern). The merge still leaves a local trace with
+# its PR number, and nothing about it is queued for the API (P-2).
+name='should write a local merge-unknown line with the PR number when gh reports a bot login'
+reply "${MERGED/octo-dev/renovate[bot]}"; before=$(lines); approve merge-flag; merge
+bot=$(last); bid=$(jq -r '.id' <<< "$bot" 2>/dev/null)
+if [[ $RC -eq 0 && $(lines) -eq $((before + 1)) && "$(jq -c '[.kind, .pr, has("mergedBy"), has("sha")]' <<< "$bot" 2>/dev/null)" == '["merge-unknown",4242,false,false]' \
+    && -n "$bid" ]] && ! cat "$HOME"/.oss/timeline-outbox/*.ndjson 2>/dev/null | grep -qF "$bid"; then
+    pass "$name"
+else
+    fail "$name" "rc=$RC line=$bot err=$ERR"
+fi
+reply "$MERGED"
+
 # --- decision:<uuid> only when the id is in this feature's decision record ---------------------------------------
 ok=1 bad=""
 OTHER=7a1c2e3f-4b5d-4e6f-9a0b-1c2d3e4f5a6b
