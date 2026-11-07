@@ -28,9 +28,10 @@
   - Guards that never went red: bad feature name (`feat/de+mo/ship`), non-convention branch (`main`).
 - 2026-11-07 Task 5: RED 19 run, 1 failed (a decision recorded before the move was refused). Guards that never went red: unknown id, symlinked or hard-linked archived record (the record was only read from active/). GREEN 19/0.
 - 2026-11-07 Task 6: RED 22 run, 2 failed (a linked active/ or active/demo let the decision be read through the link). Guard that never went red: linked .oss/dev (archived case). GREEN: timeline-archived 22/0, timeline-merge 13/0, decision-record.acceptance 5/0.
-(the rest filled in by /oss:build)
+- 2026-11-07 Task 7: bot login `renovate[bot]` gives a local merge-unknown with pr 4242 and nothing queued. Guard that never went red (timeline-merge 14/0); FOLLOWUPS #186 was already handled.
+- 2026-11-07 Regression set, one file at a time, all green: timeline-archived 22, timeline-merge 14, timeline-writer 23, timeline-gate 8, timeline-push 22, timeline-delivery 35, timeline-bounds 10, timeline-kept 3, timeline-agent-hook 7, notify-timeline 9, timeline.acceptance 8, decision-record.acceptance 5 (166 run, 0 failed). No orphans.
 
 ## Regression set (Task 8)
 timeline-archived, timeline-merge, timeline-writer, timeline-gate, timeline-push, timeline-delivery, timeline-bounds, timeline-kept, timeline-agent-hook, notify-timeline, timeline.acceptance, decision-record.acceptance, version-check.
 
-## Last Updated: 2026-11-07 10:40 CST by /oss:build
+## Last Updated: 2026-11-07 10:55 CST by /oss:build

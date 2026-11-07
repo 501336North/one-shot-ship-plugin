@@ -9,10 +9,10 @@
 - [x] Task 4: Every other kind unchanged (guards) (completed 2026-11-07)
 - [x] Task 5: Decision approval reads the archived record (B8) (completed 2026-11-07)
 - [x] Task 6: No links on the way to decisions.ndjson (FOLLOWUPS #197) (completed 2026-11-07)
-- [ ] Task 7: Bot-style merger login leaves a local trace (FOLLOWUPS #186) (in progress)
-- [ ] Task 8: Release 2.0.99 (B9) (pending)
+- [ ] Task 7: Bot-style merger login leaves a local trace (FOLLOWUPS #186) (completed 2026-11-07: guard test, already handled by the merge verb)
+- [ ] Task 8: Release 2.0.99 (B9) (in progress: plugin.json bumped and regression set green 2026-11-07; PR, merge and tag at /oss:ship with the user's OK)
 
 ## Blockers
 - None. Phase C (API repo) waits on Task 8 for its C1 merge assertions.
 
-## Last Updated: 2026-11-07 10:40 CST by /oss:build
+## Last Updated: 2026-11-07 10:55 CST by /oss:build
