@@ -32,7 +32,14 @@
 - 2026-11-07 Regression set, one file at a time, all green: timeline-archived 22, timeline-merge 14, timeline-writer 23, timeline-gate 8, timeline-push 22, timeline-delivery 35, timeline-bounds 10, timeline-kept 3, timeline-agent-hook 7, notify-timeline 9, timeline.acceptance 8, decision-record.acceptance 5 (166 run, 0 failed). No orphans.
 - 2026-11-07 Simplifier: no changes. Its note led to one hardening: `_oss_tl_archived` sets `local LC_ALL=C` itself (the decision path ran in the session's locale, so the 128 cap counted characters there and bytes in the writer). Guard `feat/démo/ship` under en_US.UTF-8 never went red (bash 3.2 regex refuses é either way). timeline-archived 23/0, timeline-merge 14/0, timeline-writer 23/0.
 
+## Integration (/oss:integration, one-off, not committed: real GitHub)
+- Sandbox clone (no hard links) on `feat/radical-observability-g2/build-b1-b8` (PR #217, merged) with only `completed/radical-observability-g2-2026-11-07/`, sandbox HOME, real gh (GH_TOKEN), the worktree's hooks.
+- Real `gh pr view --json number,mergeCommit,mergedAt,mergedBy`: the four fields the verb reads match the fake's shape. Real mergedBy also has id, is_bot and name (ignored); the fake's extra `state` is never read.
+- `oss-value.sh timeline merge` (merge-flag): rc 0, one `merge` line in the archived timeline.ndjson (feature radical-observability-g2, pr 217, real sha, mergedAt and login), one pending outbox entry, no unfiled file. The push exited at `oss_api_creds` (no key), so nothing was sent.
+- Not tried for real: a decision approval (that archive has no decisions.ndjson); covered by the hermetic B8 tests.
+- Real ~/.oss/timeline-outbox and the worktree unchanged.
+
 ## Regression set (Task 8)
 timeline-archived, timeline-merge, timeline-writer, timeline-gate, timeline-push, timeline-delivery, timeline-bounds, timeline-kept, timeline-agent-hook, notify-timeline, timeline.acceptance, decision-record.acceptance, version-check.
 
-## Last Updated: 2026-11-07 10:30 CST by /oss:build
+## Last Updated: 2026-11-07 10:33 CST by /oss:integration
