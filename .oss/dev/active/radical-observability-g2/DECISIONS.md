@@ -102,3 +102,7 @@ The design-level ADRs (ADR-001 to ADR-010) live in AgenticDevWorkflow `.oss/dev/
 ## P-18: The bare-key rule stays equal to the API's (ship round 2, user decision 2026-11-06)
 - **Context:** the pen test passed a key-like value broken by `-` or `_` in agent, session and mergedBy. A stricter rule would refuse long hyphenated feature names and drift from the API's holdsBareSecret.
 - **Decision:** the user chose to keep `keyless` equal to the API's rule and improve both together later (for example known key prefixes). Logged in FOLLOWUPS and listed in the PR body.
+
+## P-19: Ship after round 3 with the outbox `>>` race deferred (user decision 2026-11-07)
+- **Context:** all three round-3 gates passed; one security LOW stayed open: the outbox appends check for a link, then write with bash `>>`, so a same-user process can swap a link in between (1 of 15). It is the same class as the plugin-wide `>>` item in FOLLOWUPS since 2026-10-19 (oss-safe-path.sh notes it) and G1's outbox. Round 3 was the last round.
+- **Decision:** the user chose to stop and ship. The outbox appends join the plugin-wide no-follow follow-up (fix every `>>` through an O_NOFOLLOW open together); the PR body lists it.
