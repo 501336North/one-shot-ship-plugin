@@ -300,3 +300,8 @@
 - "Anything at this path" for a marker needs `-e || -L`: `-e` misses a dangling symlink, `-f` follows one.
 - To fake a lock takeover in a test, create the new lock before removing the old one, or the new folder can reuse the inode and match the holder's id.
 - The record hook now calls `stat` on every run (oss_lock_id); a test PATH without it never releases the lock.
+
+## 2026-11-07 | Process | radical-observability-g2
+- **Context:** ship
+- **Insight:** Take the ship fix-loop's `fix-base` snapshot BEFORE each fix round starts; round 2 here had to fall back to the round-1 `fix-head` (same tree, checked) because the base was not taken. Each round's gates also find bugs in the previous round's own tests (a BSD-first `stat` slipped into a Task 15 test; the stat-order guard caught it), so run every guard after every task, not just the task's files.
+- **Insight:** A bash `>>` after a link check is always racy against a same-user process; there is no O_NOFOLLOW in bash. Rather than fix it file by file, fix every append together (an inline perl `sysopen ... O_NOFOLLOW` helper), or the gates will raise it on each new writer.

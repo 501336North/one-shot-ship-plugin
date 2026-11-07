@@ -1,6 +1,6 @@
 # Progress: Radical Observability G2, Phase B (plugin)
 
-## Current Phase: ship (round 3 gates, after fix round 2: Tasks 14-18)
+## Current Phase: shipped (PR #217, merged 2026-11-07 as f7a2314; plugin 2.0.98)
 
 ## Tasks
 - [x] Task 1: Acceptance test at the boundary (written 2026-11-06; 8 checks RED as expected until Task 8)
@@ -33,4 +33,4 @@
 ## Blockers
 - None. Plugin 2.0.97 is on main (#216, c80e004). Phase A API is live (AgenticDevWorkflow #418).
 
-## Last Updated: 2026-11-06 by /oss:build (ship fix round 2)
+## Last Updated: 2026-11-07 by /oss:ship
