@@ -1,9 +1,10 @@
 #!/bin/bash
 # OSS feature timeline (radical-observability G2, P-1): one checked line per command, agent run, gate or merge,
 # appended to the feature's committed .oss/dev/active/<feature>/timeline.ndjson, or .oss/dev/timeline-unfiled.ndjson
-# when no feature folder resolves (P-3: no feature field, never pushed). A merge or merge-unknown line written after
-# the ship archive move, when the active folder is gone, goes to the newest .oss/dev/completed/<feature>-YYYY-MM-DD/
-# timeline.ndjson instead (B7, B2-3), so the merge still reaches the API. Sourced, it only defines functions:
+# when no feature folder resolves (P-3: no feature field, never pushed). A line of any kind written after the ship
+# archive move, when the active folder is gone, goes to the newest .oss/dev/completed/<feature>-YYYY-MM-DD/
+# timeline.ndjson instead (B7, B2-3), so the merge and ship's own later lines still reach the API. Sourced, it only
+# defines functions:
 #
 #   oss_timeline_append KIND FIELDS_JSON   KIND: command, agent, gate, merge or merge-unknown (P-2, local only);
 #                                          FIELDS_JSON: that kind's own fields. Adds v, id, ts, kind, feature
@@ -198,11 +199,16 @@ oss_timeline_append() (
     ((${#feature} <= 128)) || feature=""   # longer than the API's feature pattern allows: filed as unfiled
     dir=""
     [[ -n "$feature" ]] && dir=".oss/dev/active/$feature"
-    # B7: a merge written after the ship archive move belongs to the archived folder, and merge-unknown follows it
-    # (B2-3); every other kind, and any merge while the active folder still exists, is unchanged
-    if [[ -z "$feature" && ("$kind" == merge || "$kind" == merge-unknown) ]]; then
+    # B7: a line of any kind written after the ship archive move belongs to the archived folder. Ship archives inside
+    # the feature PR, before its own later lines (the merge, merge-unknown (B2-3), `command ship complete`, a gate
+    # run after the move); any line while the active folder still exists is unchanged
+    if [[ -z "$feature" ]]; then
         _oss_tl_archived "$proj"
         feature=$_OSS_TL_FEATURE dir=$_OSS_TL_DIR
+        # TA-3: only the merge (and merge-unknown) follows an archive older than today; a command, agent or gate line
+        # goes only into a folder archived today, so a branch kept after its PR merged, or a new branch reusing the
+        # feature name, never files its lines into (and pushes them under) an old archive
+        case "$kind" in merge | merge-unknown) ;; *) [[ "${dir: -10}" == "$(date +%Y-%m-%d)" ]] || feature="" dir="" ;; esac
     fi
     rec=".oss/dev/timeline-unfiled.ndjson"
     [[ -n "$feature" ]] && rec="$dir/timeline.ndjson"
