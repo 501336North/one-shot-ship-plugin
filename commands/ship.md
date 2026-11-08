@@ -1,5 +1,5 @@
 ---
-description: Quality check, commit, create PR, and optionally auto-merge
+description: Quality check, commit, create PR, and optionally merge
 ---
 
 ## Help
@@ -26,7 +26,7 @@ description: Quality check, commit, create PR, and optionally auto-merge
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--help` | `-h` | Show this help message |
-| `--merge` | `-m` | Auto-merge PR when CI passes |
+| `--merge` | `-m` | Merge the PR once its checks pass |
 | `--message` | | Custom commit message (overrides auto-generated) |
 | `--quick` | `-q` | Skip agent-based quality gates, only run tests and build |
 | `--no-checks` | | Skip ALL quality checks (emergency hotfixes only) |
@@ -38,7 +38,7 @@ description: Quality check, commit, create PR, and optionally auto-merge
 # Ship with manual merge (default)
 /oss:ship
 
-# Ship and auto-merge when CI passes
+# Ship and merge once the PR's checks pass
 /oss:ship --merge
 
 # Ship with custom commit message
@@ -73,7 +73,7 @@ Complete finalization workflow - quality check, docs, commit, PR, and optional m
 3. **Updates documentation** - Ensures docs are current
 4. **Creates commit** - Proper conventional commit message
 5. **Opens PR** - With comprehensive description
-6. **Auto-merges** - Optional with `--merge` flag
+6. **Merges** - Optional with `--merge` flag
 
 ## Step 1: Check Authentication
 
@@ -205,11 +205,8 @@ git -C /full/path/to/repo push
 
 The working directory is already set to your project. Using `-C` with full paths creates unique command strings that each require separate approval in Claude Code.
 
-### Optional: Auto-Merge
-With `--merge` flag:
-- Wait for CI checks
-- Auto-merge when green
-- Delete feature branch
+### Optional: Merge
+With `--merge` flag, the PR is merged in this session once its required checks pass and any approval branch protection asks for is in. The merge never uses `--auto` or `--admin`, and the feature branch is deleted after it.
 
 ## Step 7: Update Status Line (Progress)
 
@@ -236,7 +233,7 @@ After PR is merged (with `--merge` flag):
 
 **You MUST send `complete` exactly once, as the last event of a successful ship:** right after `pr_created` when there is no `--merge`, or right after `merged` with `--merge` (never before `merged`: `merged` resets the workflow state). Do not send it if shipping failed.
 
-With `--merge`, `gh pr merge --squash --auto` may only queue the merge, which then lands after this session ends. If auto-merge is enabled but the PR has not merged yet, send `complete` once right after `pr_created` and do not send `merged`. Send `merged` then `complete` only if the merge landed in this session. For the merge step, send `failed` only if enabling auto-merge fails (a queued merge is not a failure).
+With `--merge`, send `merged` then `complete` only if the merge landed in this session. If the merge step stopped or could not merge (required checks still running, an approval missing, a conflict, the head moved), send neither `merged` nor `complete` yet: `complete` runs your team's chain (a deploy, for example) and the PR has not merged. Tell the user which merge step to run again, and send `merged` then `complete` once that re-run merges.
 
 ```bash
 ~/.oss/hooks/oss-notify.sh --workflow ship complete '{}'
@@ -309,7 +306,7 @@ Quality checks failed. Fix issues before shipping:
 # Ship with manual merge
 /oss:ship
 
-# Ship and auto-merge when CI passes
+# Ship and merge once the PR's checks pass
 /oss:ship --merge
 
 # Ship with custom commit message
@@ -318,7 +315,7 @@ Quality checks failed. Fix issues before shipping:
 
 ## Flags
 
-- `--merge` - Auto-merge PR when CI passes
+- `--merge` - Merge the PR once its checks pass
 - `--message <msg>` - Custom commit message (overrides auto-generated)
 - `--quick` - Skip agent-based quality gates, only run `npm test` and `npm run build`
 - `--no-checks` - Skip ALL quality checks (not recommended, use for hotfixes only)

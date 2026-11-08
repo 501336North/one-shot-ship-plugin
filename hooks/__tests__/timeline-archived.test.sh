@@ -8,7 +8,11 @@
 #           queued as pending in the private outbox (~/.oss/timeline-outbox/<rid>.ndjson) so it reaches the API.
 #           It is not dropped into .oss/dev/timeline-unfiled.ndjson. Archived twice, the newest dated folder wins;
 #           a folder that only looks like the feature's is never used; while the active folder exists it still
-#           wins. Only the merge verb looks in completed/: gate, command and agent lines stay unfiled (B2-1). A
+#           wins. Every kind follows the move, not only the merge: ship archives inside the feature PR, so its own
+#           later lines (the `command ship complete` line, a gate run after the move, an agent run) are filed and
+#           queued the same way, under the same refusals, but only into a folder archived today (TA-3): an older
+#           archive (a branch kept after its PR merged, a new branch reusing the feature name) gets no command,
+#           agent or gate line; those stay unfiled and are never pushed. A
 #           decision recorded before the move still approves the merge (B8), and a decision record reached through
 #           a linked folder, active or archived, never does (FOLLOWUPS #197).
 # @business-rule AC-G2-003.3 as amended / API ADR-017 (the merge line reaches the API after the archive move),
@@ -54,6 +58,14 @@ cat "$d/reply"
 exit "$(cat "$d/rc")"
 GH
 chmod +x "$T/gh/bin/gh"
+# The fake date: "today" is the fixture's archive day, 2026-11-01, for the `+%Y-%m-%d` form the archive lookup asks
+# for, so the today-only rule (TA-3) never depends on the clock or on midnight; every other form is the real date.
+cat > "$T/gh/bin/date" << 'DATE'
+#!/bin/bash
+[[ "$*" == "+%Y-%m-%d" ]] && { echo 2026-11-01; exit 0; }
+exec /bin/date "$@"
+DATE
+chmod +x "$T/gh/bin/date"
 SHA=0123456789abcdef0123456789abcdef01234567
 MERGED='{"number":4242,"state":"MERGED","mergeCommit":{"oid":"'$SHA'"},"mergedAt":"2026-11-06T09:30:00Z","mergedBy":{"login":"octo-dev"}}'
 # reply <json> [rc]: what the fake gh answers next
@@ -128,25 +140,103 @@ unfiled_only() {
 }
 udiag() { echo "rc=$RC unfiled=[$(cat "$UNF" 2>/dev/null)] completed=[$(timelines)] outbox=[$(outbox | head -c 300)] err=$ERR"; }
 
-# --- the fallback is merge-only: every other kind is unchanged after the archive move (DESIGN, B2-1) --------------
-name='should still file a gate line as unfiled when only the archived folder exists'
-fresh feat/demo/ship .oss/dev/completed/demo-2026-11-01
-for kv in round=1 gate=code-review verdict=pass findings= fixed= mode=full; do printf '%s\n' "${kv#*=}" > "$D/${kv%%=*}.txt"; done
+# --- every kind follows the archive move: ship archives the docs inside the feature PR, before its own later lines
+# (the `command ship complete` line from oss-notify, a gate run after the move), so those lines are filed in the
+# archived folder and queued for push like the merge, never dropped into unfiled (API ADR-017) -----------------------
+ARC1=.oss/dev/completed/demo-2026-11-01
+# archived_filed <kind>: rc 0, one <kind> line for demo in the archived folder, no unfiled file, and that line's id
+# pending in the outbox (pushed like any filed line)
+archived_filed() {
+    local tl="$P/$ARC1/timeline.ndjson" last nid
+    last=$(tail -n 1 "$tl" 2>/dev/null); nid=$(jq -r '.id' <<< "$last" 2>/dev/null)
+    [[ $RC -eq 0 && $(lines "$tl") -eq 1 && "$(jq -r '.kind + " " + .feature' <<< "$last" 2>/dev/null)" == "$1 demo" \
+        && ! -e "$UNF" && -n "$nid" \
+        && "$(outbox | jq -sc 'map({id, state})' 2>/dev/null)" == '[{"id":"'$nid'","state":"pending"}]' ]]
+}
+# gate_values: valid gate value files, as the served prompt writes them
+gate_values() { for kv in round=1 gate=code-review verdict=pass findings= fixed= mode=full; do printf '%s\n' "${kv#*=}" > "$D/${kv%%=*}.txt"; done; }
+# ship_complete: the command line oss-notify writes for `--workflow ship complete`
+ship_complete() {
+    (cd "$P" && run_capped 30 /bin/bash -c 'source "$1" || exit 99; oss_timeline_append command "$2"' _ \
+        "$ROOT/hooks/oss-timeline.sh" '{"command":"ship","status":"complete"}' 2> "$T/err"); RC=$?; ERR=$(cat "$T/err")
+}
+
+name='should file the ship complete command line in the archived folder and queue it when only the archived folder exists'
+fresh feat/demo/ship "$ARC1"
+ship_complete
+archived_filed command && pass "$name" || fail "$name" "$(udiag)"
+
+name='should file a gate line in the archived folder and queue it when only the archived folder exists'
+fresh feat/demo/ship "$ARC1"; gate_values
 (cd "$P" && run_capped 20 "$OV" timeline gate > /dev/null 2> "$T/err"); RC=$?; ERR=$(cat "$T/err")
-unfiled_only gate && pass "$name" || fail "$name" "$(udiag)"
+archived_filed gate && pass "$name" || fail "$name" "$(udiag)"
 
-name='should still file a command line as unfiled when only the archived folder exists'
-fresh feat/demo/ship .oss/dev/completed/demo-2026-11-01
-(cd "$P" && run_capped 30 /bin/bash -c 'source "$1" || exit 99; oss_timeline_append command "$2"' _ \
-    "$ROOT/hooks/oss-timeline.sh" '{"command":"ship","status":"start"}' 2> "$T/err"); RC=$?; ERR=$(cat "$T/err")
-unfiled_only command && pass "$name" || fail "$name" "$(udiag)"
-
-name='should still file an agent line as unfiled when only the archived folder exists'
-fresh feat/demo/ship .oss/dev/completed/demo-2026-11-01
+name='should file an agent line in the archived folder and queue it when only the archived folder exists'
+fresh feat/demo/ship "$ARC1"
 jq -nc --arg cwd "$P" '{cwd: $cwd, hook_event_name: "PostToolUse", session_id: "archived-sess-2", tool_name: "Agent",
     tool_input: {subagent_type: "oss:code-reviewer", description: "d", prompt: "p"}}' > "$T/in"
 (cd "$P" && run_capped 20 /bin/bash "$ROOT/hooks/oss-timeline.sh" < "$T/in" > /dev/null 2> "$T/err"); RC=$?; ERR=$(cat "$T/err")
+archived_filed agent && pass "$name" || fail "$name" "$(udiag)"
+
+name='should still file the ship complete command line as unfiled when no archived folder matches'
+fresh feat/demo/ship
+ship_complete
+unfiled_only command && pass "$name" || fail "$name" "$(udiag)"
+
+name='should still file the ship complete command line as unfiled when the archived folder is a link'
+fresh feat/demo/ship .oss/dev/completed
+OUT="$T/out-link-folder-cmd"; mkdir -p "$OUT"; ln -s "$OUT" "$P/$ARC1"
+ship_complete
+unfiled_only command && [[ -z "$(ls -A "$OUT")" ]] && pass "$name" || fail "$name" "outside=[$(ls -A "$OUT")] $(udiag)"
+
+name='should still file a gate line as unfiled when the archived timeline file has another hard link'
+fresh feat/demo/ship "$ARC1"; gate_values
+OUT="$T/out-hard-link-gate"; mkdir -p "$OUT"; printf '%s\n' '{"elsewhere":1}' > "$OUT/tl"; ln "$OUT/tl" "$P/$ARC1/timeline.ndjson"
+(cd "$P" && run_capped 20 "$OV" timeline gate > /dev/null 2> "$T/err"); RC=$?; ERR=$(cat "$T/err")
+got=$(tail -n 1 "$UNF" 2>/dev/null | jq -r '.kind + " feature=" + (has("feature") | tostring)' 2>/dev/null)
+[[ $RC -eq 0 && $(lines "$UNF") -eq 1 && "$got" == "gate feature=false" && -z "$(outbox)" \
+    && "$(cat "$OUT/tl")" == '{"elsewhere":1}' ]] && pass "$name" || fail "$name" "outside=[$(cat "$OUT/tl")] $(udiag)"
+
+# --- TA-3: only the merge follows an archive older than today; command, agent and gate lines stay local ----------
+OLD=.oss/dev/completed/demo-2026-10-25
+name='should keep the ship complete command line unfiled and unpushed when the only archive is older than today'
+fresh feat/demo/ship "$OLD"
+ship_complete
+unfiled_only command && pass "$name" || fail "$name" "$(udiag)"
+
+name='should keep a gate line unfiled and unpushed when the only archive is older than today'
+fresh feat/demo/ship "$OLD"; gate_values
+(cd "$P" && run_capped 20 "$OV" timeline gate > /dev/null 2> "$T/err"); RC=$?; ERR=$(cat "$T/err")
+unfiled_only gate && pass "$name" || fail "$name" "$(udiag)"
+
+name='should keep an agent line unfiled and unpushed when the only archive is older than today'
+fresh feat/demo/ship "$OLD"
+jq -nc --arg cwd "$P" '{cwd: $cwd, hook_event_name: "PostToolUse", session_id: "archived-sess-3", tool_name: "Agent",
+    tool_input: {subagent_type: "oss:code-reviewer", description: "d", prompt: "p"}}' > "$T/in"
+(cd "$P" && run_capped 20 /bin/bash "$ROOT/hooks/oss-timeline.sh" < "$T/in" > /dev/null 2> "$T/err"); RC=$?; ERR=$(cat "$T/err")
 unfiled_only agent && pass "$name" || fail "$name" "$(udiag)"
+
+name='should still file the merge line in an archive older than today (a merge step re-run on a later day)'
+fresh feat/demo/ship "$OLD"; reply "$MERGED"; approve merge-flag
+merge
+OTL="$P/$OLD/timeline.ndjson"
+if [[ $RC -eq 0 && $(lines "$OTL") -eq 1 && "$(tail -n 1 "$OTL" | jq -r '.kind + " " + .feature' 2>/dev/null)" == "merge demo" \
+    && ! -e "$UNF" && "$(outbox | jq -s 'length' 2>/dev/null)" == 1 ]]; then
+    pass "$name"
+else
+    fail "$name" "rc=$RC old=[$(cat "$OTL" 2>/dev/null)] $(udiag)"
+fi
+
+name='should keep filing the ship complete command line in the active folder while it still exists'
+fresh feat/demo/ship .oss/dev/active/demo "$ARC1"
+ship_complete
+ATL="$P/.oss/dev/active/demo/timeline.ndjson"
+if [[ $RC -eq 0 && $(lines "$ATL") -eq 1 && "$(tail -n 1 "$ATL" | jq -r '.kind + " " + .feature' 2>/dev/null)" == "command demo" \
+    && -z "$(timelines)" && ! -e "$UNF" && "$(outbox | jq -s 'length' 2>/dev/null)" == 1 ]]; then
+    pass "$name"
+else
+    fail "$name" "rc=$RC active=[$(cat "$ATL" 2>/dev/null)] $(udiag)"
+fi
 
 name='should leave oss_resolve_feature returning no feature when only the archived folder exists'
 fresh feat/demo/ship .oss/dev/completed/demo-2026-11-01
