@@ -244,12 +244,12 @@ AC-005.5 (runs no tests) is held by design: the recorder has no process-spawning
 
 ### Task 15: RED rule (US-004)
 **Tests (RED):** `watcher/test/tool-gate/rules/red-cycle.test.ts`, with `WorkflowState` and `StateStore` mocked:
-- [ ] `should refuse a source edit in build with no recorded run, with the "No failing test recorded…" text` (AC-004.1, AC-004.8)
-- [ ] `should allow any source edit after red and add the file to the cycle` (AC-004.2)
-- [ ] `should allow a cycle file and refuse a new file after green` (AC-004.3, AC-004.4)
-- [ ] `should never cover test files, .md, .json, .yml/.yaml or .oss/dev/**` (AC-004.5)
-- [ ] `should not apply when currentCommand is not build or workflow-state.json is missing` (AC-004.6)
-- [ ] `should treat a cycle stamped with another build's start as no run yet` (ADR-008)
+- [x] `should refuse a source edit in build with no recorded run, with the "No failing test recorded…" text` (AC-004.1, AC-004.8)
+- [x] `should allow any source edit after red and add the file to the cycle` (AC-004.2)
+- [x] `should allow a cycle file and refuse a new file after green` (AC-004.3, AC-004.4)
+- [x] `should never cover test files, .md, .json, .yml/.yaml or .oss/dev/**` (AC-004.5)
+- [x] `should not apply when currentCommand is not build or workflow-state.json is missing` (AC-004.6)
+- [x] `should treat a cycle stamped with another build's start as no run yet` (ADR-008)
 Not covered: Bash writes onto source files. The design applies the RED rule to Edit/Write/MultiEdit/NotebookEdit only (see NOTES.md).
 
 ### Task 16: Runner adoption (US-004 amendment, ADR-002)

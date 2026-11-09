@@ -79,5 +79,14 @@
   - **Unknown:** piped, `|| true`, an interrupt, or failure text other than `Exit code N`. The event is logged and the cycle is left unchanged.
   - **What a red resets:** only `files`. `adoptedCommand` is kept within the same build. A cycle from another build stamp is replaced.
   - **For Task 16:** `cycle.adoptedCommand` isn't yet treated as a test command, and adoption needs `currentCommand` plus the non-zero exit of an unlisted command.
+- **T15 (rules/red-cycle.ts):**
+  - Signature: `checkRedCycle(call, settings, root, home, workflow: WorkflowState, store)`.
+  - `workflow-state.ts` holds only types: `WorkflowState { read(): WorkflowSnapshot | null }` and `WorkflowSnapshot { currentCommand, currentCommandStartedAt }`. Task 17 adds the real reader.
+  - **Which files it covers:** those with an extension in `sourceExtensions` that are not test files and not under `.oss/dev/**`. `.oss/dev/**` is a code constant, `DEV_DOCS`, because it is the fixed OSS location and a repo file must not be able to change it.
+  - **Refusal texts:**
+    - No run yet: `Refused: ` followed by the design text, word for word.
+    - After green, a new file: "Refused: `<rel>` is not in this cycle and the last test run was green. Write a failing test and run it before editing a new source file."
+  - **What it records:** the cycle stores `filePath` as given, raw `..` included. That is stricter, never a bypass.
+  - **Refusal events:** the rule doesn't log them; Task 17 logs them centrally.
 
-## Last Updated: 2026-11-09 21:00 CST by /oss:build
+## Last Updated: 2026-11-09 21:30 CST by /oss:build

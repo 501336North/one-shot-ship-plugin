@@ -27,7 +27,8 @@
 - [x] Build T12: build start stamp `currentCommandStartedAt` in `.oss/workflow-state.json`; 2 tests (completed 2026-11-09, 9af1738/0689a31)
 - [x] Build T13: state store and events, no reads or writes through file symlinks; 7 tests (completed 2026-11-09, 6b1af61/3c4f04c, b18b57a/1cb96ec)
 - [x] Build T14: post-call recorder, red only when the test ran last; 7 tests (completed 2026-11-09, 6852ab8/537f710, 1e552dd/6e5a1b3)
-- [ ] Build T15: RED rule (in progress)
+- [x] Build T15: RED rule, `.oss/dev/**` code constant; 7 tests (completed 2026-11-09, 8c980bb/9b274e0, 68aece7/6e634e0)
+- [ ] Build T16: runner adoption (in progress)
 - [ ] Build T12: build start stamp in workflow state (pending)
 - [ ] Build T13: state store + events (pending)
 - [ ] Build T14: post-call recorder (pending)
@@ -41,4 +42,4 @@
 ## Blockers
 - None. All PRs target `feat/determinism-sprint/build`.
 
-## Last Updated: 2026-11-09 21:00 CST by /oss:build
+## Last Updated: 2026-11-09 21:30 CST by /oss:build
