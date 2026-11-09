@@ -1,3 +1,7 @@
+import type { GitReader } from './git-reader.js';
+
+export type { GitReader };
+
 export type GateMode = 'pre' | 'post';
 
 export interface GateRequest {
@@ -10,10 +14,6 @@ export interface GateResult {
   exitCode: number;
   stdout: string;
   stderr: string;
-}
-
-export interface GitReader {
-  currentBranch(dir: string): string | null;
 }
 
 export interface GateDeps {
