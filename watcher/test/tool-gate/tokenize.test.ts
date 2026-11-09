@@ -170,3 +170,42 @@ describe('tokenize: reading an agent shell command', () => {
     expect(wordsOf('git commit -m ""')).toEqual(['git', 'commit', '-m', '']);
   });
 });
+
+describe('tokenize: bash $\'…\' (ANSI-C) and $"…" quoting', () => {
+  it('should decode $\'…\' so a hidden branch name is seen as written', () => {
+    expect(wordsOf("git push origin $'HEAD:main'")).toEqual(['git', 'push', 'origin', 'HEAD:main']);
+  });
+
+  it('should join $\'…\' with the parts next to it', () => {
+    expect(wordsOf("echo a$'b'c")).toEqual(['echo', 'abc']);
+  });
+
+  it('should decode the simple backslash escapes', () => {
+    expect(wordsOf(String.raw`echo $'\\\'\"\n\t\r\a\b\e\E\f\v\?'`)).toEqual([
+      'echo', '\\\'"\n\t\r\x07\b\x1b\x1b\f\v?',
+    ]);
+  });
+
+  it('should decode hex, octal, unicode and control-character escapes', () => {
+    expect(wordsOf(String.raw`echo $'m\x61in'`)).toEqual(['echo', 'main']);
+    expect(wordsOf(String.raw`echo $'\155ain'`)).toEqual(['echo', 'main']);
+    expect(wordsOf(String.raw`echo $'\x6'`)).toEqual(['echo', '\x06']);
+    expect(wordsOf(String.raw`echo $'\0'`)).toEqual(['echo', '\0']);
+    expect(wordsOf(String.raw`echo $'main'`)).toEqual(['echo', 'main']);
+    expect(wordsOf(String.raw`echo $'\U0000006dain'`)).toEqual(['echo', 'main']);
+    expect(wordsOf(String.raw`echo $'\cA'`)).toEqual(['echo', '\x01']);
+  });
+
+  it('should mark an unterminated $\'… quote unreadable', () => {
+    expect(isUnreadable("git push origin $'main")).toBe(true);
+    expect(isUnreadable(String.raw`echo $'abc\'`)).toBe(true);
+  });
+
+  it('should keep $\' as plain text inside double quotes', () => {
+    expect(wordsOf(`echo "$'x'"`)).toEqual(['echo', "$'x'"]);
+  });
+
+  it('should read $"…" like an ordinary double-quoted string', () => {
+    expect(wordsOf('git push origin $"main"')).toEqual(['git', 'push', 'origin', 'main']);
+  });
+});
