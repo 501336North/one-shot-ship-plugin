@@ -44,7 +44,11 @@ describe('base settings file', () => {
         'bash *test*.sh',
       ],
       sourceExtensions: ['.ts', '.tsx', '.js', '.mjs', '.cjs', '.sh', '.py', '.go', '.rs', '.swift'],
-      protectedPaths: ['.oss/tool-gates.json', '.oss/tool-gates/**', '~/.oss/hooks/**', '.claude/settings*.json'],
+      // DESIGN.md build amendment 2026-11-09, user pick
+      protectedPaths: [
+        '.oss/tool-gates.json', '.oss/tool-gates/**', '~/.oss/hooks/**', '.claude/settings*.json',
+        '~/.claude/settings*.json', '~/.claude/plugins/**',
+      ],
       productionHosts: [],
       tagsAllowed: true,
     });
