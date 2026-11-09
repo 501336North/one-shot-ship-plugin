@@ -47,6 +47,61 @@ function isCommandStringFlag(value: string): boolean {
   return /^-[A-Za-z]*c[A-Za-z]*$/.test(value);
 }
 
+/** Single-character escapes inside bash `$'…'`. */
+const ANSI_C_ESCAPES: Record<string, string> = {
+  n: '\n', t: '\t', r: '\r', a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', v: '\v',
+  '\\': '\\', "'": "'", '"': '"', '?': '?',
+};
+/** Escapes that take a run of digits: `\NNN` octal, `\xHH`, `\uHHHH`, `\UHHHHHHHH`. */
+const ANSI_C_NUMERIC: Record<string, { digits: RegExp; radix: number; skip: number }> = {
+  '0': { digits: /[0-7]{1,3}/y, radix: 8, skip: 1 },
+  x: { digits: /[0-9A-Fa-f]{1,2}/y, radix: 16, skip: 2 },
+  u: { digits: /[0-9A-Fa-f]{1,4}/y, radix: 16, skip: 2 },
+  U: { digits: /[0-9A-Fa-f]{1,8}/y, radix: 16, skip: 2 },
+};
+for (const d of '1234567') ANSI_C_NUMERIC[d] = ANSI_C_NUMERIC['0'];
+
+/**
+ * Decodes a bash `$'…'` string whose body starts at `start`; returns the text and the index
+ * after the closing quote. Like bash, a NUL ends the text (the rest up to the quote is dropped).
+ */
+function readAnsiCQuote(cmd: string, start: number): { text: string; end: number } {
+  let text = '';
+  let ended = false;
+  let i = start;
+  while (i < cmd.length) {
+    const c = cmd[i];
+    if (c === "'") return { text, end: i + 1 };
+    let decoded = c;
+    let length = 1;
+    if (c === '\\' && i + 1 < cmd.length) {
+      const e = cmd[i + 1];
+      const numeric = ANSI_C_NUMERIC[e];
+      decoded = c + e;
+      length = 2;
+      if (e in ANSI_C_ESCAPES) {
+        decoded = ANSI_C_ESCAPES[e];
+      } else if (e === 'c' && i + 2 < cmd.length) {
+        decoded = String.fromCharCode(cmd[i + 2].toUpperCase().charCodeAt(0) ^ 0x40);
+        length = 3;
+      } else if (numeric !== undefined) {
+        numeric.digits.lastIndex = i + numeric.skip;
+        const digits = numeric.digits.exec(cmd)?.[0];
+        if (digits !== undefined) {
+          const codePoint = parseInt(digits, numeric.radix);
+          if (codePoint > 0x10ffff) throw new Unreadable(`escape \\${e}${digits} is not a character`);
+          decoded = String.fromCodePoint(codePoint);
+          length = numeric.skip + digits.length;
+        }
+      }
+    }
+    if (decoded === '\0') ended = true;
+    if (!ended) text += decoded;
+    i += length;
+  }
+  throw new Unreadable("unterminated $' quote");
+}
+
 function scan(cmd: string): Token[] {
   const tokens: Token[] = [];
   const heredocs: { delimiter: string; stripTabs: boolean }[] = [];
@@ -125,6 +180,20 @@ function scan(cmd: string): Token[] {
       } else {
         word += c;
       }
+      i++;
+      continue;
+    }
+
+    if (c === '$' && next === "'") {
+      const { text, end } = readAnsiCQuote(cmd, i + 2);
+      word += text;
+      inWord = true;
+      i = end;
+      continue;
+    }
+
+    // `$"…"` (locale translation) reads as a plain double-quoted string.
+    if (c === '$' && next === '"') {
       i++;
       continue;
     }
