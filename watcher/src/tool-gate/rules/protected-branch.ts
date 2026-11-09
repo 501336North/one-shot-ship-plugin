@@ -9,9 +9,7 @@ import type { CommandPart } from '../command-reader.js';
 import type { GateSettings } from '../rule-file.js';
 import type { GitReader } from '../git-reader.js';
 import type { Refusal } from './refusal.js';
-
-/** `git push` options that take the next word as their value. */
-const PUSH_VALUE_OPTIONS = new Set(['-o', '--push-option', '--receive-pack', '--exec', '--repo']);
+import { readPushWords } from './push-words.js';
 
 /** The remote branch a refspec writes to (or deletes). */
 function destination(refspec: string): string {
@@ -36,17 +34,13 @@ export function checkProtectedBranch(part: CommandPart, settings: GateSettings, 
   }
   if (facts.subcommand !== 'push') return null;
 
-  const positional: string[] = [];
-  for (let i = 0; i < facts.args.length; i++) {
-    const word = facts.args[i];
-    if (word === '--all' || word === '--mirror') {
-      return {
-        rule: 'protected-branch',
-        reason: `Refused: \`${command} ${word}\` can push protected branches (${protectedList.map((b) => `\`${b}\``).join(', ')}). Push one feature branch instead.`,
-      };
-    }
-    if (PUSH_VALUE_OPTIONS.has(word)) i++;
-    else if (!word.startsWith('-')) positional.push(word);
+  const { options, positional } = readPushWords(facts.args);
+  const everything = options.find((word) => word === '--all' || word === '--mirror');
+  if (everything !== undefined) {
+    return {
+      rule: 'protected-branch',
+      reason: `Refused: \`${command} ${everything}\` can push protected branches (${protectedList.map((b) => `\`${b}\``).join(', ')}). Push one feature branch instead.`,
+    };
   }
   const target = positional.slice(1).map(destination).find((dst) => protectedList.includes(dst));
   if (target === undefined) return null;
