@@ -63,5 +63,9 @@
     - `ln`/`install --target-directory=` isn't read.
     - `python -c` / `node -e` writes aren't read.
     - A symlink swapped in after the check (time-of-check race).
+- **T12 (9af1738/0689a31):**
+  - The stamp is `$.currentCommandStartedAt` in `<project>/.oss/workflow-state.json`. It is set in `WorkflowStateService.setCurrentCommand` (`watcher/src/services/workflow-state.ts`), only when the command changes.
+  - `oss-notify.sh` clears `currentCommand` on complete, so a re-run of `/oss:build` gets a fresh stamp. `clearCurrentCommand` leaves the old stamp in place.
+  - `watcher/dist` is committed. The agent rebuilt it and committed only `dist/services/workflow-state.*`.
 
-## Last Updated: 2026-11-09 19:45 CST by /oss:build
+## Last Updated: 2026-11-09 20:00 CST by /oss:build

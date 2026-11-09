@@ -219,8 +219,8 @@ Collaborators (git, fs state, workflow state) are mocked at their interface in u
 
 ### Task 12: Build start stamp in workflow state (ADR-008)
 **Tests (RED):** `watcher/test/cli/update-workflow-state-command-started.test.ts` (new file; existing tests untouched)
-- [ ] `should set currentCommandStartedAt when currentCommand changes`
-- [ ] `should keep currentCommandStartedAt when currentCommand is set to the same value`
+- [x] `should set currentCommandStartedAt when currentCommand changes`
+- [x] `should keep currentCommandStartedAt when currentCommand is set to the same value`
 
 **Implementation (GREEN):** `watcher/src/cli/update-workflow-state.ts`, adding the field only alongside `currentCommand`.
 

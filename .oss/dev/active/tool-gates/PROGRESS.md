@@ -24,7 +24,8 @@
 - [x] Build T10: skip/only/todo rule + edit-call reader; 41 tests (completed 2026-11-09, b03053d/fdab419)
 - [x] Build T11: protected-path rule + path resolver, user-level tamper paths; 67 tests (completed 2026-11-09, e350946/3d5c146)
 - [x] Build T11b: `..` after a symlink, plus common Bash writers; 59 tests (completed 2026-11-09, 5cb82a7/f6d628f)
-- [ ] Build T12: build start stamp `currentCommandStartedAt` (in progress)
+- [x] Build T12: build start stamp `currentCommandStartedAt` in `.oss/workflow-state.json`; 2 tests (completed 2026-11-09, 9af1738/0689a31)
+- [ ] Build T13: state store and events (in progress)
 - [ ] Build T12: build start stamp in workflow state (pending)
 - [ ] Build T13: state store + events (pending)
 - [ ] Build T14: post-call recorder (pending)
@@ -38,4 +39,4 @@
 ## Blockers
 - None. All PRs target `feat/determinism-sprint/build`.
 
-## Last Updated: 2026-11-09 19:45 CST by /oss:build
+## Last Updated: 2026-11-09 20:00 CST by /oss:build
