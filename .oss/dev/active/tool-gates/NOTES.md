@@ -98,14 +98,14 @@
 
 - **T17 (gate.ts, cli/tool-gate.ts; 775da0b/cac6292):**
   - Hook output contract: re-used the 2026-11-09 check above ("Hook output contract checked"); `claude-code-guide` was not asked again.
-  - **Repo root** = the nearest folder at or above the hook's `cwd` holding `.git` (a folder, or a worktree's file); `cwd` when there is none. No git process, so a broken git can still be logged. **Project dir** = the repo root: rule file, `.oss/tool-gates/` and `.oss/workflow-state.json` all live there. `CLAUDE_PROJECT_DIR` is not read (hermetic hooks rule). Outside a repo, git rules see no branch and the other rules apply.
+  - **Root / project dir** (second cycle, 6a98847/234cd1a): Claude Code's `CLAUDE_PROJECT_DIR` when it is an existing absolute folder, whatever the `cwd`. Otherwise the nearest folder at or above the hook's `cwd` holding `.git` (a folder, or a worktree's file), or `cwd` outside a repo. The first version used only the `.git` walk, so `mkdir -p sub/.git && cd sub` moved the rule files, protected paths and workflow state to `sub/`. Rule file, `.oss/tool-gates/`, `.oss/workflow-state.json`, protected-path and RED-rule roots all use this root. Git branch reads still use each part's own dir. The test setup unsets `CLAUDE_PROJECT_DIR` for hygiene only; the 14 acceptance tests exercise the fallback.
   - **Interface change:** `GitReader.currentBranch(dir)` returns `Promise<string | null>` (`execFile`, 1.5 s timeout); `checkProtectedBranch` is async. Its tests and the git-reader tests now await.
   - **2 s timer** lives in `runToolGate` (`Promise.race`), so a hung async git read is cut off. A synchronous hang can't be; the hooks.json `timeout: 5` covers that. After a timeout the decision may still finish in-process and log; the CLI exits first.
   - `GateDeps = { gitReader?: GitReader }`: git is the only collaborator that starts a process, and post mode never touches it (AC-005.5 test). State, workflow state and rule files use the real fs under the repo root.
   - Events: `refusal` (with `command` for Bash only), `unreadable` (pre mode only), `rule-file-rejected` once per call with the call's result, `gate-error` (best effort). A corrupt `workflow-state.json` throws, which is a `gate-error`; a missing one is null.
   - Rejected repo file: on allow, stdout `additionalContext` carries its one line; on refuse, it follows the reason on stderr.
   - Tell JSON uses the input's `hook_event_name` (PreToolUse / PostToolUse / PostToolUseFailure), or falls back to the mode's event.
-  - **CLI:** `node tool-gate.cjs pre|post < hook.json`; `CLAUDE_PLUGIN_ROOT` and `HOME` come from the environment. Any other argument exits 1 with a usage line, which the T19 wrapper maps to allow + tell + log. Logic is in the exported `runCli(argv, input, env)`, tested directly; the direct-run block only reads stdin and exits after the streams flush.
-  - Not changed: the recorder still uses `call.cwd` as the test-file glob root (adding a root would change `RecordContext`, and no test needs it).
+  - **CLI:** `node tool-gate.cjs pre|post < hook.json`; `CLAUDE_PLUGIN_ROOT`, `HOME` and (optional) `CLAUDE_PROJECT_DIR` come from the environment. Any other argument exits 1 with a usage line, which the T19 wrapper maps to allow + tell + log. Logic is in the exported `runCli(argv, input, env)`, tested directly; the direct-run block only reads stdin and exits after the streams flush.
+  - The recorder anchors test-file globs at the root: `RecordContext.root?` (the command's `cwd` when absent). This matters for repo-anchored patterns such as `e2e/*.js` run from `e2e/`.
 
-## Last Updated: 2026-11-09 17:45 CST by /oss:build (T17)
+## Last Updated: 2026-11-09 17:51 CST by /oss:build (T17)

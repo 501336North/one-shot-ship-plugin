@@ -29,7 +29,7 @@
 - [x] Build T14: post-call recorder, red only when the test ran last; 7 tests (completed 2026-11-09, 6852ab8/537f710, 1e552dd/6e5a1b3)
 - [x] Build T15: RED rule, `.oss/dev/**` code constant; 7 tests (completed 2026-11-09, 8c980bb/9b274e0, 68aece7/6e634e0)
 - [x] Build T16: runner adoption, never adopt test/grep/git etc., one runner per build; 8 tests (completed 2026-11-09, 308a203/ef68f21/7527406, ca2808c/493b627)
-- [x] Build T17: runToolGate + CLI + failure handling, async GitReader, workflow-state reader; 14 acceptance + 6 failure + 2 CLI tests (completed 2026-11-09, 775da0b/cac6292)
+- [x] Build T17: runToolGate + CLI + failure handling, async GitReader, workflow-state reader; project dir from CLAUDE_PROJECT_DIR; 14 acceptance + 6 failure + 4 project-dir + 3 CLI tests (completed 2026-11-09, 775da0b/cac6292, 6a98847/234cd1a)
 - [ ] Build T18: bundle, dist guard, speed (pending)
 - [ ] Build T19: hook wrapper + hooks.json (pending)
 - [ ] Build T20: full suite + dev-docs close-out (pending)
@@ -37,4 +37,4 @@
 ## Blockers
 - None. All PRs target `feat/determinism-sprint/build`.
 
-## Last Updated: 2026-11-09 17:45 CST by /oss:build (T17)
+## Last Updated: 2026-11-09 17:51 CST by /oss:build (T17)
