@@ -63,3 +63,36 @@ describe('real path resolver', () => {
     expect(realPathResolver.realpath(looped)).toBe(looped);
   });
 });
+
+describe('real path resolver: .. after a symlink', () => {
+  // The disk resolves `link/..` as the parent of where `link` points, not of where it sits.
+  it('should climb from where a symlinked folder points, to an existing file', () => {
+    const dir = tempDir();
+    fs.mkdirSync(path.join(dir, 'real', 'inner'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'real', 'a.json'), '{}');
+    fs.symlinkSync(path.join(dir, 'real', 'inner'), path.join(dir, 'link'));
+    expect(realPathResolver.realpath(`${dir}/link/../a.json`)).toBe(path.join(fs.realpathSync(dir), 'real', 'a.json'));
+  });
+
+  it('should climb from where a symlinked folder points, to a file that does not exist yet', () => {
+    const dir = tempDir();
+    fs.mkdirSync(path.join(dir, 'real', 'inner'), { recursive: true });
+    fs.symlinkSync(path.join(dir, 'real', 'inner'), path.join(dir, 'link'));
+    expect(realPathResolver.realpath(`${dir}/link/../new.json`)).toBe(path.join(fs.realpathSync(dir), 'real', 'new.json'));
+  });
+
+  it('should climb a relative symlink the same way', () => {
+    const dir = tempDir();
+    fs.mkdirSync(path.join(dir, 'real', 'inner'), { recursive: true });
+    fs.symlinkSync('real/inner', path.join(dir, 'link'));
+    expect(realPathResolver.realpath(`${dir}/link/../b.json`)).toBe(path.join(fs.realpathSync(dir), 'real', 'b.json'));
+  });
+
+  it('should climb an ordinary folder as before, whether or not it exists', () => {
+    const dir = tempDir();
+    fs.mkdirSync(path.join(dir, 'sub'));
+    const real = fs.realpathSync(dir);
+    expect(realPathResolver.realpath(`${dir}/sub/../a.json`)).toBe(path.join(real, 'a.json'));
+    expect(realPathResolver.realpath(`${dir}/missing/../a.json`)).toBe(path.join(real, 'a.json'));
+  });
+});

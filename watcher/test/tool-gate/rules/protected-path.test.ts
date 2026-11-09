@@ -202,3 +202,46 @@ describe('protected-path rule: path display', () => {
     );
   });
 });
+
+describe('protected-path rule: .. after a symlinked folder', () => {
+  // `link` → `.oss/tool-gates`, so on disk `link/../tool-gates.json` is `.oss/tool-gates.json`.
+  const throughLink: PathResolver = {
+    realpath: (p) => (p === `${ROOT}/link/../tool-gates.json` ? `${ROOT}/.oss/tool-gates.json` : p),
+  };
+
+  for (const tool of ['Edit', 'Write']) {
+    it(`should refuse ${tool} on link/../tool-gates.json when the disk puts it at a protected file`, () => {
+      expect(checkEdit(tool, 'link/../tool-gates.json', throughLink)?.rule).toBe('protected-path');
+    });
+  }
+
+  it('should refuse a redirect to link/../tool-gates.json when the disk puts it at a protected file', () => {
+    expect(checkBash('echo x > link/../tool-gates.json', throughLink)?.rule).toBe('protected-path');
+  });
+
+  it('should name the path as the agent wrote it', () => {
+    expect(checkEdit('Write', 'link/../tool-gates.json', throughLink)?.reason).toContain('`link/../tool-gates.json`');
+  });
+
+  it('should allow an ordinary path that climbs with .. to an ordinary file', () => {
+    expect(checkEdit('Edit', 'sub/../src/app.ts')).toBeNull();
+    expect(checkBash('echo x > sub/../src/app.ts')).toBeNull();
+  });
+});
+
+describe('protected-path rule: Bash programs that write in place', () => {
+  for (const cmd of [
+    "sed -i 's/x/y/' .claude/settings.local.json",
+    'tee ~/.claude/settings.json',
+    'echo x | sudo tee -a .oss/tool-gates.json',
+    'git checkout -- .oss/tool-gates.json',
+  ]) {
+    it(`should refuse: ${cmd}`, () => {
+      expect(checkBash(cmd)?.rule).toBe('protected-path');
+    });
+  }
+
+  it('should allow sed -i on an ordinary source file', () => {
+    expect(checkBash('sed -i s/a/b/ src/app.ts')).toBeNull();
+  });
+});

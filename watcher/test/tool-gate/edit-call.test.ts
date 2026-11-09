@@ -151,3 +151,24 @@ describe('reading an edit-tool call', () => {
     expect(readEditCall(tool, input, CWD, HOME, NO_FILES)).toBeNull();
   });
 });
+
+describe('reading an edit-tool call: .. is kept for the disk to resolve', () => {
+  // `link/..` is the folder that holds what `link` points to, not the folder `link` sits in, so
+  // only the disk can say where it lands; the path keeps its `..` for the protected-path check.
+  it('should keep a .. that follows a folder name in a relative path', () => {
+    const call = readEditCall('Write', { file_path: 'link/../tool-gates.json', content: 'x' }, CWD, HOME, NO_FILES);
+    expect(call?.filePath).toBe('/work/repo/link/../tool-gates.json');
+  });
+
+  it('should keep a .. in an absolute path and in a ~/ path', () => {
+    const abs = readEditCall('Edit', { file_path: '/work/repo/a/../b.ts', old_string: 'x', new_string: 'y' }, CWD, HOME, NO_FILES);
+    const home = readEditCall('Edit', { file_path: '~/a/../b.md', old_string: 'x', new_string: 'y' }, CWD, HOME, NO_FILES);
+    expect(abs?.filePath).toBe('/work/repo/a/../b.ts');
+    expect(home?.filePath).toBe('/home/dev/a/../b.md');
+  });
+
+  it('should still drop . and doubled slashes', () => {
+    const call = readEditCall('Edit', { file_path: './src//a.ts', old_string: 'x', new_string: 'y' }, CWD, HOME, NO_FILES);
+    expect(call?.filePath).toBe('/work/repo/src/a.ts');
+  });
+});

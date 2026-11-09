@@ -591,3 +591,109 @@ describe('readCommand: other ways to change directory', () => {
     expect(gitOf('builtin git push -f')).toEqual([{ subcommand: 'push', args: ['-f'], dir: '/work/repo' }]);
   });
 });
+
+describe('readCommand: write targets keep .. for the disk to resolve', () => {
+  it('should keep a .. that follows a folder name in a redirect target', () => {
+    expect(writesOf('echo x > link/../tool-gates.json')).toEqual(['/work/repo/link/../tool-gates.json']);
+  });
+
+  it('should keep a .. read against the part\'s directory', () => {
+    expect(writesOf('cd sub && rm ../x')).toEqual(['/work/repo/sub/../x']);
+  });
+
+  it('should drop a .. at the top of the file system, as the disk does', () => {
+    expect(writesOf('rm /../etc/x')).toEqual(['/etc/x']);
+  });
+});
+
+describe('readCommand: more programs that write files', () => {
+  it.each([
+    ['tee f', ['f']],
+    ['tee -a f1 f2', ['f1', 'f2']],
+    ['sudo tee f', ['f']],
+    ['/usr/bin/tee f', ['f']],
+  ])('should list every file tee writes: %s', (cmd, files) => {
+    expect(writesOf(cmd)).toEqual(files.map((f) => `/work/repo/${f}`));
+  });
+
+  it.each([
+    ["sed -i 's/a/b/' f", ['f']],
+    ["sed -i.bak 's/a/b/' f", ['f']],
+    ["sed --in-place=.bak 's/a/b/' f", ['f']],
+    ["sed -E -i 's/a/b/' f1 f2", ['f1', 'f2']],
+    ["sed -i -e 's/a/b/' f1 f2", ['f1', 'f2']],
+    ['sed -i -f edits.sed f', ['f']],
+    ["sed -i '' 's/a/b/' f", ['f']],
+  ])('should list the files sed edits in place: %s', (cmd, files) => {
+    expect(writesOf(cmd)).toEqual(files.map((f) => `/work/repo/${f}`));
+  });
+
+  it('should list nothing for sed that only prints', () => {
+    expect(writesOf("sed 's/a/b/' f")).toEqual([]);
+  });
+
+  it.each([
+    ["perl -i -pe 's/a/b/' f", ['f']],
+    ["perl -pi -e 's/a/b/' f", ['f']],
+    ["perl -i.bak -p -e 's/a/b/' f1 f2", ['f1', 'f2']],
+  ])('should list the files perl edits in place: %s', (cmd, files) => {
+    expect(writesOf(cmd)).toEqual(files.map((f) => `/work/repo/${f}`));
+  });
+
+  it('should list nothing for perl that only prints', () => {
+    expect(writesOf("perl -pe 's/a/b/' f")).toEqual([]);
+  });
+
+  it('should list the output file of dd', () => {
+    expect(writesOf('dd if=x of=f bs=1')).toEqual(['/work/repo/f']);
+  });
+
+  it.each([
+    ['truncate -s 0 f', ['f']],
+    ['truncate --size=0 f g', ['f', 'g']],
+  ])('should list the files truncate cuts, not the size: %s', (cmd, files) => {
+    expect(writesOf(cmd)).toEqual(files.map((f) => `/work/repo/${f}`));
+  });
+
+  it('should list every file touch creates', () => {
+    expect(writesOf('touch f g')).toEqual(['/work/repo/f', '/work/repo/g']);
+  });
+
+  it.each([
+    ['ln -s target linkname', 'linkname'],
+    ['ln -sf target dir/', 'dir'],
+    ['ln -s -t dir a b', 'dir'],
+  ])('should list the link ln makes, not its target: %s', (cmd, file) => {
+    expect(writesOf(cmd)).toEqual([`/work/repo/${file}`]);
+  });
+
+  it.each([
+    ['install -m 644 src dest', 'dest'],
+    ['install -t dir a b', 'dir'],
+  ])('should list the destination of install: %s', (cmd, file) => {
+    expect(writesOf(cmd)).toEqual([`/work/repo/${file}`]);
+  });
+
+  it.each([
+    ['chmod 600 f', ['f']],
+    ['chmod -R 755 a b', ['a', 'b']],
+    ['chown u:g f', ['f']],
+  ])('should list the files chmod and chown change, not the mode or owner: %s', (cmd, files) => {
+    expect(writesOf(cmd)).toEqual(files.map((f) => `/work/repo/${f}`));
+  });
+
+  it.each([
+    ['git checkout -- f', ['f']],
+    ['git checkout HEAD -- f g', ['f', 'g']],
+    ['git restore f', ['f']],
+    ['git restore --source=HEAD f', ['f']],
+    ['git restore -s HEAD f', ['f']],
+    ['git -C sub restore f', ['sub/f']],
+  ])('should list the files git puts back: %s', (cmd, files) => {
+    expect(writesOf(cmd)).toEqual(files.map((f) => `/work/repo/${f}`));
+  });
+
+  it('should list nothing for git checkout of a branch', () => {
+    expect(writesOf('git checkout main')).toEqual([]);
+  });
+});
