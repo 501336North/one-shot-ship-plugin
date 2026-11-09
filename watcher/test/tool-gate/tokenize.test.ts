@@ -209,6 +209,10 @@ describe('tokenize: bash $\'…\' (ANSI-C) and $"…" quoting', () => {
     expect(isUnreadable(String.raw`echo $'abc\'`)).toBe(true);
   });
 
+  it('should mark a $\'…\' escape beyond the last Unicode character unreadable', () => {
+    expect(isUnreadable(String.raw`git push origin $'\UFFFFFFFF'`)).toBe(true);
+  });
+
   it('should keep $\' as plain text inside double quotes', () => {
     expect(wordsOf(`echo "$'x'"`)).toEqual(['echo', "$'x'"]);
   });
