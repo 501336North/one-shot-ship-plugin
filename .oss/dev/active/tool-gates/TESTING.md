@@ -37,4 +37,56 @@
 - **End to end** (`node dist/cli/tool-gate.cjs pre`, `git status`): median **57.0 ms**, max 63.4 ms over 10 spawns. The test asserts a median under 300 ms.
 - **Bundle size:** 57,308 bytes.
 
-## Last Updated: 2026-11-09 17:58 CST by /oss:build
+## Final results (T20)
+
+Run 2026-11-09 18:14 CST, on `feat/tool-gates/build` after T19 (commit 5d81560).
+
+**Full suite** (`cd watcher && npx vitest run`): 313 files, 4716 tests, 3 failed. All 3 already fail on `main` and are fixed in PR #221 (`fix/main-test-drift/build`, not merged):
+- `test/agents/model-frontmatter.test.ts`
+- `test/agents/offload-step-safety.test.ts`
+- `test/commands/chain-step-contract.test.ts`
+
+**Other checks:**
+- Hooks with `CLAUDE_PROJECT_DIR` unset (`env -u CLAUDE_PROJECT_DIR npx vitest run test/hooks`): 217 of 217 passed.
+- `tsc --noEmit`: clean.
+- `.skip` / `.only` / `.todo`: no calls in the code. The only matches are inside string literals used as test data.
+
+**Tool-gate areas** (`cd watcher && npx vitest run test/tool-gate test/cli/tool-gate.acceptance.test.ts test/cli/tool-gate.cli.test.ts test/cli/tool-gate.speed.test.ts test/hooks/oss-tool-gate.test.ts test/hooks/hooks-json-tool-gate.test.ts`): 27 files, 678 tests, 678 passed.
+
+| Area | File | Tests |
+|---|---|---|
+| Tokenizer | `test/tool-gate/tokenize.test.ts` | 33 |
+| Command reader | `test/tool-gate/command-reader.test.ts` | 200 |
+| Edit-call reader | `test/tool-gate/edit-call.test.ts` | 29 |
+| Pattern matchers | `test/tool-gate/patterns.test.ts` | 23 |
+| Rule file | `test/tool-gate/rule-file.test.ts` | 39 |
+| Provenance | `test/tool-gate/provenance.test.ts` | 2 |
+| Rule: protected branch | `test/tool-gate/rules/protected-branch.test.ts` | 46 |
+| Push words | `test/tool-gate/rules/push-words.test.ts` | 23 |
+| Rule: force push | `test/tool-gate/rules/force-push.test.ts` | 26 |
+| Rule: tags | `test/tool-gate/rules/tags.test.ts` | 77 |
+| Rule: production host | `test/tool-gate/rules/production-host.test.ts` | 11 |
+| Rule: focused tests | `test/tool-gate/rules/focused-tests.test.ts` | 15 |
+| Rule: protected path | `test/tool-gate/rules/protected-path.test.ts` | 71 |
+| Rule: protected path (integration) | `test/tool-gate/rules/protected-path.integration.test.ts` | 4 |
+| Rule: RED cycle | `test/tool-gate/rules/red-cycle.test.ts` | 7 |
+| Recorder | `test/tool-gate/recorder.test.ts` | 7 |
+| Runner adoption | `test/tool-gate/runner-adoption.test.ts` | 8 |
+| State store (integration) | `test/tool-gate/state-store.integration.test.ts` | 7 |
+| Git reader (integration) | `test/tool-gate/git-reader.integration.test.ts` | 6 |
+| Path resolver (integration) | `test/tool-gate/path-resolver.integration.test.ts` | 8 |
+| Failure handling | `test/tool-gate/failure.test.ts` | 6 |
+| Project folder | `test/tool-gate/project-dir.test.ts` | 4 |
+| Acceptance | `test/cli/tool-gate.acceptance.test.ts` | 14 |
+| CLI | `test/cli/tool-gate.cli.test.ts` | 3 |
+| Speed | `test/cli/tool-gate.speed.test.ts` | 2 |
+| Wrapper | `test/hooks/oss-tool-gate.test.ts` | 5 |
+| hooks.json entries | `test/hooks/hooks-json-tool-gate.test.ts` | 2 |
+
+**Speed** (T18 measurement, 2026-11-09 17:58 CST, Mac, in isolation; not re-measured at T20):
+- In-process decision: median 12.1 ms, max 13.4 ms over 20 calls.
+- End to end (`node dist/cli/tool-gate.cjs pre`): median 57.0 ms, max 63.4 ms over 10 spawns.
+- Bundle: 57,308 bytes.
+- Naming gap: the in-process test is titled "under 100 ms ... (max of 20 calls)", but its assertions are median under 100 ms and max under 1000 ms. The criterion is ticked on the test that exists; the title and the assertion disagree and should be aligned in a follow-up.
+
+## Last Updated: 2026-11-09 18:17 CST by /oss:build

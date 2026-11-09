@@ -1,6 +1,6 @@
 # Progress: tool-gates (R-253)
 
-## Current Phase: build
+## Current Phase: build (complete, ready for ship)
 
 ## Tasks
 - [x] Ideate: design committed (completed 2026-11-09)
@@ -31,10 +31,10 @@
 - [x] Build T16: runner adoption, never adopt test/grep/git etc., one runner per build; 8 tests (completed 2026-11-09, 308a203/ef68f21/7527406, ca2808c/493b627)
 - [x] Build T17: runToolGate + CLI + failure handling, async GitReader, workflow-state reader; project dir from CLAUDE_PROJECT_DIR; 14 acceptance + 6 failure + 4 project-dir + 3 CLI tests (completed 2026-11-09, 775da0b/cac6292, 6a98847/234cd1a)
 - [x] Build T18: bundle `dist/cli/tool-gate.cjs` (57 KB), dist guard, speed (median 12 ms in-process, 57 ms end-to-end); 3 tests (completed 2026-11-09, 947d603/b0d2e93)
-- [ ] Build T19: hook wrapper + hooks.json (in progress)
-- [ ] Build T20: full suite + dev-docs close-out (pending)
+- [x] Build T19: hook wrapper `hooks/oss-tool-gate.sh` + root `hooks.json` entries (PreToolUse on Bash|Edit|Write|MultiEdit|NotebookEdit runs pre; PostToolUse and PostToolUseFailure on Bash run post; timeout 5); 7 tests (completed 2026-11-09, d72642c/5d81560)
+- [x] Build T20: full suite + dev-docs close-out (completed 2026-11-09). Full run: 4716 tests, 3 failed, all 3 already failing on main (fix in PR #221, not merged; must merge before ship). Hooks with CLAUDE_PROJECT_DIR unset 217/217, tsc clean, no `.skip`/`.only`/`.todo`.
 
 ## Blockers
 - None. All PRs target `feat/determinism-sprint/build`.
 
-## Last Updated: 2026-11-09 17:58 CST by /oss:build
+## Last Updated: 2026-11-09 18:17 CST by /oss:build

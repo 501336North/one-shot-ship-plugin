@@ -108,4 +108,16 @@
   - **CLI:** `node tool-gate.cjs pre|post < hook.json`; `CLAUDE_PLUGIN_ROOT`, `HOME` and (optional) `CLAUDE_PROJECT_DIR` come from the environment. Any other argument exits 1 with a usage line, which the T19 wrapper maps to allow + tell + log. Logic is in the exported `runCli(argv, input, env)`, tested directly; the direct-run block only reads stdin and exits after the streams flush.
   - The recorder anchors test-file globs at the root: `RecordContext.root?` (the command's `cwd` when absent). This matters for repo-anchored patterns such as `e2e/*.js` run from `e2e/`.
 
-## Last Updated: 2026-11-09 17:51 CST by /oss:build (T17)
+## From /oss:build (T19, 2026-11-09)
+- **Commits:** d72642c (RED: `hooks-json-tool-gate.test.ts`, `oss-tool-gate.test.ts`, 7 tests), 5d81560 (GREEN: `hooks/oss-tool-gate.sh`, `hooks.json`).
+- **Gate-error log:** the wrapper appends one fixed line to `<project>/.oss/tool-gates/events.ndjson`. It finds the project folder the same way the gate does: `CLAUDE_PROJECT_DIR` when it is an existing absolute folder, else the nearest folder at or above `$PWD` holding `.git`, else `$PWD`.
+- **Symlink skip:** the log is skipped when `.oss`, `.oss/tool-gates` or `events.ndjson` is a symlink, or when the state folder resolves outside the project. Bash has no O_NOFOLLOW, so a check-then-append race remains. At worst one fixed line lands in a file swapped in after the check (ADR-005, as cited in the wrapper).
+- **No plugin-cache fallback:** the CLI is found at `${CLAUDE_PLUGIN_ROOT:-<script dir>/..}/watcher/dist/cli/tool-gate.cjs`. The wrapper never looks under `~/.claude/plugins/cache`.
+- **`ts` precision:** the gate-error line's `ts` has whole-second precision (`date -u +%Y-%m-%dT%H:%M:%SZ`). The line carries no command text and no tool input, only `"tool":"unknown"`.
+- **Exit mapping:** CLI exit 0 returns its stdout; exit 2 returns exit 2 with its stderr; any other outcome (other exit, killed, missing CLI, no node) allows the call, prints `additionalContext` "tool-gate failed, rules not checked.", and logs gate-error. The wrapper never prints `permissionDecision`.
+- **Timeout:** each hooks.json entry has `timeout: 5`. The gate's own 2 s limit sits inside it.
+
+## Ship todo
+- File each of these as a FOLLOWUPS entry at ship (none is fixed on this branch): the T11b gaps (`git -C link/..` and `env -C` collapse `..` as text; `chmod --reference=` and `chmod -w` list nothing; `ln`/`install --target-directory=` not read; `python -c` / `node -e` writes not read; a symlink swapped in after the check); the T13 gap (`cycle.json.<pid>.tmp` with O_EXCL can block writes after a crash until removed, so a random temp name); the T19 gaps (the wrapper's check-then-append race, whole-second `ts`, no plugin-cache fallback); the shell-reading limits in DESIGN.md Known Limits (variables as program or git argument, stdin- or file-fed shells, long-tail wrappers, git aliases, `xargs` stdin, `coproc`, hidden test results, `for ((…))` and `;&` fall-through); and the registry flake (`test/agents/registry.test.ts` "should emit event when agent exceeds error threshold", fixed 100 ms wait under load, not ours).
+
+## Last Updated: 2026-11-09 18:17 CST by /oss:build (T19, T20)

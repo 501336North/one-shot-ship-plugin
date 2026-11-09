@@ -291,12 +291,12 @@ Not covered: Bash writes onto source files. The design applies the RED rule to E
 ### Task 19: Hook wrapper and hooks.json
 **Tests (RED):**
 - `watcher/test/hooks/oss-tool-gate.test.ts`, which runs the real `hooks/oss-tool-gate.sh` with `CLAUDE_PLUGIN_ROOT` pointed at a temp plugin root:
-  - [ ] `should pass stdin through and return the CLI's exit 0 / exit 2 + stderr`
-  - [ ] `should allow, log gate-error and tell when the CLI exits 1, is missing, or node is missing from PATH` (AC-010.1)
-  - [ ] `should run with CLAUDE_PROJECT_DIR unset` (hermetic hooks rule)
+  - [x] `should pass stdin through and return the CLI's exit 0 / exit 2 + stderr`
+  - [x] `should allow, log gate-error and tell when the CLI exits 1, is missing, or node is missing from PATH` (AC-010.1)
+  - [x] `should run with CLAUDE_PROJECT_DIR unset` (hermetic hooks rule)
 - `watcher/test/hooks/hooks-json-tool-gate.test.ts`:
-  - [ ] `should register PreToolUse Bash|Edit|Write|MultiEdit|NotebookEdit → oss-tool-gate.sh pre, and PostToolUse / PostToolUseFailure Bash → post, with a timeout`
-  - [ ] `should keep every existing hooks.json entry unchanged`
+  - [x] `should register PreToolUse Bash|Edit|Write|MultiEdit|NotebookEdit → oss-tool-gate.sh pre, and PostToolUse / PostToolUseFailure Bash → post, with a timeout`
+  - [x] `should keep every existing hooks.json entry unchanged`
 
 **Implementation (GREEN):**
 - `hooks/oss-tool-gate.sh`: resolve the CLI the way `resolve_cli` does, `exec`-free so it can map exit codes, with a fixed-string gate-error line.
@@ -304,8 +304,8 @@ Not covered: Bash writes onto source files. The design applies the RED rule to E
 
 ### Task 20: Full-suite run and dev-docs close-out
 - [ ] Whole `watcher` suite green (including all of `test/hooks`, `CLAUDE_PROJECT_DIR` unset), with no `.skip`/`.only`/`.todo`.
-- [ ] TESTING.md has results and the measured speed. PROGRESS.md updated.
-- [ ] The DESIGN.md success criteria are each ticked, with the test name that proves them.
+- [x] TESTING.md has results and the measured speed. PROGRESS.md updated.
+- [x] The DESIGN.md success criteria are each ticked, with the test name that proves them.
 
 ---
 
@@ -349,4 +349,4 @@ Agents for `/oss:build`: `typescript-pro` (T2–T18), `test-engineer` (acceptanc
 ## Estimated Tasks: 24
 ## Estimated Test Cases: ~110
 
-## Last Updated: 2026-11-09 14:22 CST by /oss:plan
+## Last Updated: 2026-11-09 18:17 CST by /oss:build
