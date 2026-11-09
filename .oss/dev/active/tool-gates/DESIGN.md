@@ -106,7 +106,7 @@ Active in every Claude Code session with the plugin installed, not only during `
 - [x] A repo file can add and tighten; a loosening or malformed repo file is ignored and reported, base rules still apply. — proven by `watcher/test/tool-gate/rule-file.test.ts`: "should add a repo protectedPath, productionHost and pattern together", "should apply tagsAllowed false from the repo file", "should reject the whole repo file when it omits a base value from a list it sets", "should reject tagsAllowed true over a base false", "should reject %s and keep the base settings" (malformed cases); `watcher/test/cli/tool-gate.acceptance.test.ts`: "ignores and reports a repo rule file that drops main from the protected branches (AC-009.3)"
 - [x] A crash or timeout allows the call, logs `gate-error` and tells the agent. — proven by `watcher/test/tool-gate/failure.test.ts`: "should allow, log gate-error and print the tell line when a collaborator throws", "should allow, log gate-error and tell when the decision takes over 2 s"; `watcher/test/hooks/oss-tool-gate.test.ts`: "should allow, log gate-error and tell when the CLI exits 1, is missing, or node is missing from PATH"
 - [x] Rule values exist only in the rule files (provenance check: no list duplicated in code). — proven by `watcher/test/tool-gate/provenance.test.ts`: "should find none of the base file's list values as literals in watcher/src/tool-gate/**"
-- [x] Under 100 ms per call in the test environment. — proven by `watcher/test/cli/tool-gate.speed.test.ts`: "should decide a Bash call in under 100 ms in-process (max of 20 calls)" (asserts median under 100 ms and max under 1000 ms; see TESTING.md)
+- [x] Under 100 ms per call in the test environment. — proven by `watcher/test/cli/tool-gate.speed.test.ts`: "should decide a Bash call in under 100 ms in-process (median of 20 calls)" (asserts median under 100 ms and max under 1000 ms; see TESTING.md)
 
 ## TDD Test Plan
 
@@ -127,7 +127,7 @@ Hermetic: hook JSON fed to `tool-gate` on stdin in a throwaway git repo; no real
 - [x] `git tag v1` with `tagsAllowed: false` → refused; default → allowed. — proven by `watcher/test/cli/tool-gate.acceptance.test.ts`: "refuses creating a tag when the repo turns tags off (AC-008.1)"; `watcher/test/tool-gate/rules/tags.test.ts`: "should allow %s" (describe "tags rule: a repo that allows tags (the default)")
 - [x] Repo file adding a protected path → applied; repo file removing `main` from `protectedBranches` → whole file ignored, reported, base applies; malformed JSON → same. — proven by `watcher/test/tool-gate/rule-file.test.ts`: "should add a repo protectedPath, productionHost and pattern together", "should reject the whole repo file when it omits a base value from a list it sets", "should reject %s and keep the base settings" (malformed cases); `watcher/test/cli/tool-gate.acceptance.test.ts`: "ignores and reports a repo rule file that drops main from the protected branches (AC-009.3)"
 - [x] Simulated crash / timeout → allowed, `gate-error` logged, agent told. — proven by `watcher/test/tool-gate/failure.test.ts`: "should allow, log gate-error and print the tell line when a collaborator throws", "should allow, log gate-error and tell when the decision takes over 2 s"
-- [x] Speed: under 100 ms per call (generous threshold, not a tight timing assertion). — proven by `watcher/test/cli/tool-gate.speed.test.ts`: "should decide a Bash call in under 100 ms in-process (max of 20 calls)"
+- [x] Speed: under 100 ms per call (generous threshold, not a tight timing assertion). — proven by `watcher/test/cli/tool-gate.speed.test.ts`: "should decide a Bash call in under 100 ms in-process (median of 20 calls)"
 
 ## Out of Scope
 
@@ -185,4 +185,4 @@ No dissent records: the user overrode no concern.
 - **User-level Claude settings and the installed plugin are protected** (user pick, before T11): `~/.claude/settings*.json` and `~/.claude/plugins/**` are added to the base `protectedPaths`. Either one could switch every gate off: `disableAllHooks`, or editing the cached `hooks.json` / `tool-gate.cjs`. The user changes them with `!`. This plugin repo's own `hooks.json` is a repo path and stays editable.
 - **ANSI-C quoting** (`$'…'`) is decoded by the tokenizer, so `$'HEAD:main'` is read as `HEAD:main`.
 
-## Last Updated: 2026-11-09 18:17 CST by /oss:build
+## Last Updated: 2026-11-09 18:21 CST by code-simplifier (speed test title)

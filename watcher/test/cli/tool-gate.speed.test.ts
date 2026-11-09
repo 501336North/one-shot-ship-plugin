@@ -64,7 +64,7 @@ describe('tool-gate speed', () => {
     while (tempDirs.length > 0) fs.rmSync(tempDirs.pop()!, { recursive: true, force: true });
   });
 
-  it('should decide a Bash call in under 100 ms in-process (max of 20 calls)', async () => {
+  it('should decide a Bash call in under 100 ms in-process (median of 20 calls)', async () => {
     const repo = makeRepo();
     const req = {
       mode: 'pre' as const,

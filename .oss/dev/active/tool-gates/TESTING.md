@@ -87,6 +87,6 @@ Run 2026-11-09 18:14 CST, on `feat/tool-gates/build` after T19 (commit 5d81560).
 - In-process decision: median 12.1 ms, max 13.4 ms over 20 calls.
 - End to end (`node dist/cli/tool-gate.cjs pre`): median 57.0 ms, max 63.4 ms over 10 spawns.
 - Bundle: 57,308 bytes.
-- Naming gap: the in-process test is titled "under 100 ms ... (max of 20 calls)", but its assertions are median under 100 ms and max under 1000 ms. The criterion is ticked on the test that exists; the title and the assertion disagree and should be aligned in a follow-up.
+- Naming gap closed (refactor, 2026-11-09): the in-process test was titled "(max of 20 calls)" while it asserts median under 100 ms and max under 1000 ms. It is now "(median of 20 calls)", matching what it asserts.
 
-## Last Updated: 2026-11-09 18:17 CST by /oss:build
+## Last Updated: 2026-11-09 18:21 CST by code-simplifier (speed test title)
