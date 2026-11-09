@@ -3,8 +3,9 @@
  *
  * Reads a shell command the way the shell would, for the parts the rules need:
  * words (quotes removed), control operators, and redirects with their target.
- * Anything it cannot read safely (substitution, eval, a nested `sh -c` script,
- * an unterminated quote) is reported as unreadable instead of guessed at.
+ * Anything it cannot read safely (substitution, an unterminated quote) is reported as
+ * unreadable instead of guessed at. `eval` and `sh -c` scripts are returned as words: the
+ * command reader decides whether they can be read (ADR-009).
  */
 
 export type Token =
@@ -19,7 +20,6 @@ const REDIRECT_OPERATORS = ['&>>', '<<<', '<<-', '&>', '>>', '>|', '<<', '<>', '
 /** Longest first, so `&&` wins over `&` and `>>` over `>`. */
 const ALL_OPERATORS = [...CONTROL_OPERATORS, ...REDIRECT_OPERATORS].sort((a, b) => b.length - a.length);
 const HEREDOC_OPERATORS = ['<<', '<<-'];
-const NESTED_SHELLS = new Set(['bash', 'sh', 'zsh']);
 /** Characters a backslash escapes inside double quotes (a newline is a line continuation). */
 const DOUBLE_QUOTE_ESCAPABLE = '$`"\\\n';
 
@@ -36,15 +36,6 @@ export function tokenize(cmd: string): TokenizeResult {
 
 function matchOperator(cmd: string, i: number): string | undefined {
   return ALL_OPERATORS.find((op) => cmd.startsWith(op, i));
-}
-
-function isAssignment(value: string): boolean {
-  return /^[A-Za-z_][A-Za-z0-9_]*=/.test(value);
-}
-
-/** A shell flag cluster that includes `-c` (`-c`, `-lc`, `-ec`). */
-function isCommandStringFlag(value: string): boolean {
-  return /^-[A-Za-z]*c[A-Za-z]*$/.test(value);
 }
 
 /** Single-character escapes inside bash `$'…'`. */
@@ -110,19 +101,6 @@ function scan(cmd: string): Token[] {
   let quote: '' | "'" | '"' = '';
   let pendingRedirect: string | null = null;
   let pendingRedirectEnd = -1;
-  let atCommandStart = true;
-  let program: string | null = null;
-
-  const checkReadable = (value: string): void => {
-    if (atCommandStart) {
-      if (isAssignment(value)) return;
-      program = value.slice(value.lastIndexOf('/') + 1);
-      atCommandStart = false;
-      if (program === 'eval') throw new Unreadable('eval runs text the gate cannot read');
-    } else if (program !== null && NESTED_SHELLS.has(program) && isCommandStringFlag(value)) {
-      throw new Unreadable(`${program} -c runs a nested script the gate cannot read`);
-    }
-  };
 
   const endWord = (): void => {
     if (!inWord) return;
@@ -137,7 +115,6 @@ function scan(cmd: string): Token[] {
       pendingRedirect = null;
       return;
     }
-    checkReadable(value);
     tokens.push({ kind: 'word', value });
   };
 
@@ -236,10 +213,12 @@ function scan(cmd: string): Token[] {
     }
 
     // `2>&1`, `>&2`: an `&` right after a redirect names another output, not a file.
+    // `>& out.txt`: with a space, the next word is the target (`&out.txt`).
     if (c === '&' && pendingRedirect !== null && !inWord && i === pendingRedirectEnd) {
       word = '&';
       inWord = true;
       i++;
+      while (cmd[i] === ' ' || cmd[i] === '\t') i++;
       continue;
     }
 
@@ -271,8 +250,6 @@ function scan(cmd: string): Token[] {
     }
 
     tokens.push({ kind: 'op', value: operator });
-    atCommandStart = true;
-    program = null;
     if (operator === '\n') i = skipHeredocBodies(i);
   }
 

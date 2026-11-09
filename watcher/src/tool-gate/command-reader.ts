@@ -4,7 +4,8 @@
  * Turns a tokenized shell command into one set of facts per part: the program and its words,
  * the directory it runs in (after `cd`, `( … )` and `git -C`), the files it writes or removes,
  * the hosts it talks to, and whether its result is hidden by a pipe or `|| true`.
- * Pure: it never touches the filesystem.
+ * It looks through wrappers (`sudo`, `env`, `timeout` …) and reads literal `sh -c` / `eval`
+ * scripts recursively (ADR-009). Pure: it never touches the filesystem.
  */
 
 import path from 'node:path';
@@ -32,15 +33,69 @@ export interface CommandFacts {
   parts: CommandPart[];
 }
 
+/** An operator that ends a segment (or a `( … )` group holding it), and the index of the segment after it. */
+interface Exit {
+  op: string | null;
+  following: number;
+}
+
 interface Segment {
   words: string[];
   redirects: { op: string; target: string }[];
   cwd: string;
-  /** The operator that ends this segment, or null at the end of the command. */
-  next: string | null;
+  /** The segment's own exit first, then those of the `( … )` groups it sits in. */
+  exits: Exit[];
 }
 
-const OUTPUT_REDIRECT = /^[0-9]*(?:>|>>|>\|)$|^&>>?$/;
+/** How a wrapper program's options are read before the program it runs. */
+interface WrapperSpec {
+  /** Options that take a value (`-u root`, `-uroot`, `--user=root`). */
+  values: string[];
+  /** Options whose value is the directory the program runs in. */
+  dir?: string[];
+  /** Options whose value is split into the program's words (`env -S`). */
+  split?: string[];
+  /** `VAR=value` words are skipped. */
+  assignments?: boolean;
+  /** Words to skip after the options (`timeout 10`). */
+  operands?: number;
+}
+
+const WRAPPERS = new Map<string, WrapperSpec>([
+  ['env', {
+    values: ['-u', '--unset', '-C', '--chdir', '-S', '--split-string'],
+    dir: ['-C', '--chdir'], split: ['-S', '--split-string'], assignments: true,
+  }],
+  ['sudo', {
+    values: ['-u', '--user', '-g', '--group', '-C', '--close-from', '-D', '--chdir', '-h', '--host', '-p', '--prompt',
+      '-r', '--role', '-t', '--type', '-T', '--command-timeout', '-U', '--other-user'],
+    dir: ['-D', '--chdir'], assignments: true,
+  }],
+  ['command', { values: [] }],
+  ['nice', { values: ['-n', '--adjustment'] }],
+  ['nohup', { values: [] }],
+  ['time', { values: ['-f', '--format', '-o', '--output'] }],
+  ['xargs', { values: ['-a', '--arg-file', '-d', '--delimiter', '-E', '-I', '-L', '--max-lines', '-n', '--max-args',
+    '-P', '--max-procs', '-s', '--max-chars'] }],
+  ['exec', { values: ['-a'] }],
+  ['doas', { values: ['-u', '-C'] }],
+  ['stdbuf', { values: ['-i', '--input', '-o', '--output', '-e', '--error'] }],
+  ['timeout', { values: ['-s', '--signal', '-k', '--kill-after'], operands: 1 }],
+]);
+
+const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh']);
+/** Shell options that take the next word as their value. */
+const SHELL_VALUE_OPTIONS = new Set(['-o', '-O', '+o', '+O', '--rcfile', '--init-file']);
+/** A shell flag cluster that includes `c` (`-c`, `-lc`, `-ec`). */
+const COMMAND_STRING_FLAG = /^-[A-Za-z]*c/;
+/** A script that substitutes a command or expands a variable is not literal. */
+const DYNAMIC_SCRIPT = /\$\(|`|\$[A-Za-z_{]/;
+const MAX_NESTED_DEPTH = 5;
+const PIPES = ['|', '|&'];
+
+class Unreadable extends Error {}
+
+const OUTPUT_REDIRECT = /^[0-9]*(?:>|>>|>\||<>)$|^&>>?$/;
 /** `&1`, `&2-`, `&-`: duplicates or closes another output; not a file. */
 const FD_DUPLICATION = /^&(?:[0-9]+-?|-)$/;
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -51,16 +106,30 @@ const BARE_HOST = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 const GIT_VALUE_OPTIONS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env']);
 
 export function readCommand(cmd: string, cwd: string, home: string): CommandFacts | { unreadable: true; reason: string } {
-  const result = tokenize(cmd);
-  if ('unreadable' in result) return result;
-  const segments = split(result.tokens, cwd, home);
-  return { parts: segments.map((segment, i) => toPart(segment, segments[i + 1], home)) };
+  try {
+    return { parts: readScript(cmd, cwd, home, 0) };
+  } catch (err) {
+    if (err instanceof Unreadable) return { unreadable: true, reason: err.message };
+    throw err;
+  }
 }
 
-/** Splits tokens into segments on control operators, tracking the directory through `cd` and `( … )`. */
+function readScript(cmd: string, cwd: string, home: string, depth: number): CommandPart[] {
+  const result = tokenize(cmd);
+  if ('unreadable' in result) throw new Unreadable(result.reason);
+  const segments = split(result.tokens, cwd, home);
+  return segments.flatMap((segment) => toParts(segment, segments, home, depth));
+}
+
+/**
+ * Splits tokens into segments on control operators, tracking the directory through `cd` and `( … )`.
+ * A `cd` that is piped or backgrounded runs apart, so it does not move later segments.
+ */
 function split(tokens: Token[], cwd: string, home: string): Segment[] {
   const segments: Segment[] = [];
-  const outer: string[] = [];
+  const groups: { dir: string; start: number }[] = [];
+  let closedGroupStart: number | null = null;
+  let afterPipe = false;
   let dir = cwd;
   let words: string[] = [];
   let redirects: Segment['redirects'] = [];
@@ -68,8 +137,9 @@ function split(tokens: Token[], cwd: string, home: string): Segment[] {
   const close = (next: string | null): void => {
     if (words.length === 0 && redirects.length === 0) return;
     const commandWords = stripAssignments(words);
-    segments.push({ words: commandWords, redirects, cwd: dir, next });
-    if (commandWords[0] === 'cd') dir = cdTarget(commandWords.slice(1), dir, home);
+    segments.push({ words: commandWords, redirects, cwd: dir, exits: [{ op: next, following: segments.length + 1 }] });
+    const apart = afterPipe || next === '|' || next === '|&' || next === '&';
+    if (commandWords[0] === 'cd' && !apart) dir = cdTarget(commandWords.slice(1), dir, home);
     words = [];
     redirects = [];
   };
@@ -79,30 +149,110 @@ function split(tokens: Token[], cwd: string, home: string): Segment[] {
     else if (token.kind === 'redirect') redirects.push({ op: token.op, target: token.target });
     else {
       close(token.value);
-      if (token.value === '(') outer.push(dir);
-      if (token.value === ')') dir = outer.pop() ?? dir;
+      if (closedGroupStart !== null && token.value !== ')') {
+        for (const inner of segments.slice(closedGroupStart)) inner.exits.push({ op: token.value, following: segments.length });
+        closedGroupStart = null;
+      }
+      afterPipe = PIPES.includes(token.value);
+      if (token.value === '(') groups.push({ dir, start: segments.length });
+      if (token.value === ')') {
+        const group = groups.pop();
+        if (group !== undefined) {
+          dir = group.dir;
+          closedGroupStart = group.start;
+        }
+      }
     }
   }
   close(null);
   return segments;
 }
 
-function toPart(segment: Segment, following: Segment | undefined, home: string): CommandPart {
-  const { words, cwd, next } = segment;
+/** The part for a segment, followed by the parts of the script it runs (`sh -c`, `eval`). */
+function toParts(segment: Segment, segments: Segment[], home: string, depth: number): CommandPart[] {
+  const { words, cwd } = unwrap(segment.words, segment.cwd, home);
   const program = words[0] ?? null;
   const name = program === null ? null : path.posix.basename(program);
   const args = words.slice(1);
-  const nextWords = following?.words ?? [];
-  return {
+  const part: CommandPart = {
     words,
     program,
     cwd,
     writeTargets: [...redirectWrites(segment), ...operandWrites(name, args)].map((p) => resolvePath(p, cwd, home)),
     hosts: args.flatMap(hostOf),
     git: name === 'git' ? readGit(args, cwd, home) : null,
-    pipedOut: next === '|' || next === '|&',
-    orTrue: next === '||' && nextWords.length === 1 && (nextWords[0] === 'true' || nextWords[0] === ':'),
+    pipedOut: segment.exits.some((e) => e.op !== null && PIPES.includes(e.op)),
+    orTrue: segment.exits.some((e) => e.op === '||' && isTrue(segments[e.following]?.words ?? [])),
   };
+  const script = scriptOf(name, args);
+  if (script === null) return [part];
+  if (DYNAMIC_SCRIPT.test(script)) throw new Unreadable(`${name} runs a script that is not literal`);
+  if (depth >= MAX_NESTED_DEPTH) throw new Unreadable(`scripts nested deeper than ${MAX_NESTED_DEPTH}`);
+  const nested = readScript(script, cwd, home, depth + 1);
+  return [part, ...nested.map((p) => ({ ...p, pipedOut: p.pipedOut || part.pipedOut, orTrue: p.orTrue || part.orTrue }))];
+}
+
+function isTrue(words: string[]): boolean {
+  return words.length === 1 && (words[0] === 'true' || words[0] === ':');
+}
+
+function nameOf(word: string | undefined): string {
+  return word === undefined ? '' : path.posix.basename(word);
+}
+
+/** The words of the program a wrapper runs, recursively, and the directory it runs in. */
+function unwrap(words: string[], cwd: string, home: string): { words: string[]; cwd: string } {
+  let dir = cwd;
+  let rest = words;
+  for (let spec = WRAPPERS.get(nameOf(rest[0])); spec !== undefined; spec = WRAPPERS.get(nameOf(rest[0]))) {
+    let split: string[] = [];
+    let i = 1;
+    for (; i < rest.length; i++) {
+      const w = rest[i];
+      if (w === '--') {
+        i++;
+        break;
+      }
+      if (spec.assignments === true && ASSIGNMENT.test(w)) continue;
+      if (!w.startsWith('-') || w === '-') break;
+      const long = w.startsWith('--');
+      const eq = long ? w.indexOf('=') : -1;
+      const flag = long ? (eq === -1 ? w : w.slice(0, eq)) : w.slice(0, 2);
+      if (!spec.values.includes(flag)) continue;
+      let value: string | undefined;
+      if (eq !== -1) value = w.slice(eq + 1);
+      else if (!long && w.length > 2) value = w.slice(2);
+      else value = rest[++i];
+      if (value === undefined) break;
+      if (spec.dir?.includes(flag)) dir = resolvePath(value, dir, home);
+      if (spec.split?.includes(flag)) split = splitWords(value);
+    }
+    const next = [...split, ...rest.slice(i + (spec.operands ?? 0))];
+    if (next.length === 0) break;
+    rest = next;
+  }
+  return { words: rest, cwd: dir };
+}
+
+/** The words of an `env -S` string. */
+function splitWords(value: string): string[] {
+  const result = tokenize(value);
+  if ('unreadable' in result) throw new Unreadable(result.reason);
+  return result.tokens.flatMap((t) => (t.kind === 'word' ? [t.value] : []));
+}
+
+/** The script a part runs: the `-c` script of a shell, or the joined words of `eval`; else null. */
+function scriptOf(name: string | null, args: string[]): string | null {
+  if (name === 'eval') return args.length > 0 ? args.join(' ') : null;
+  if (name === null || !SHELLS.has(name)) return null;
+  let command = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (SHELL_VALUE_OPTIONS.has(a)) i++;
+    else if (a.startsWith('-') || a.startsWith('+')) command ||= COMMAND_STRING_FLAG.test(a);
+    else return command ? a : null;
+  }
+  return null;
 }
 
 function stripAssignments(words: string[]): string[] {
