@@ -5,8 +5,9 @@
  *   with no stdout (never a permission decision); refuse is exit 2 with the reason on stderr.
  * - `post` (PostToolUse / PostToolUseFailure on Bash): records a test run.
  *
- * Rules and state are found from the hook's `cwd`: the repo root is the nearest folder holding
- * `.git` (or `cwd` outside a repo). Rule files, `.oss/tool-gates/` and `.oss/workflow-state.json`
+ * Rules and state are found from the project folder: Claude Code's `CLAUDE_PROJECT_DIR` when it is
+ * an existing absolute folder (so a `.git` planted in a subfolder can't move it), else the nearest
+ * folder at or above the hook's `cwd` holding `.git` (or `cwd` outside a repo). Rule files, `.oss/tool-gates/` and `.oss/workflow-state.json`
  * all live there. A crash or a decision slower than 2 s allows the call, logs `gate-error` and
  * tells the agent (ADR-005). A rejected repo rule file is reported on every call.
  */
@@ -37,7 +38,7 @@ export type GateMode = 'pre' | 'post';
 export interface GateRequest {
   mode: GateMode;
   input: string;
-  env: { HOME: string; CLAUDE_PLUGIN_ROOT: string };
+  env: { HOME: string; CLAUDE_PLUGIN_ROOT: string; CLAUDE_PROJECT_DIR?: string };
 }
 
 export interface GateResult {
@@ -97,6 +98,15 @@ function repoRootOf(cwd: string): string {
     if (fs.existsSync(path.join(dir, '.git'))) return dir;
     if (path.dirname(dir) === dir) return cwd;
   }
+}
+
+/** CLAUDE_PROJECT_DIR when it is an existing absolute folder, else the nearest `.git` above `cwd`. */
+function projectRootOf(projectDir: string | undefined, cwd: string): string {
+  const usable =
+    projectDir !== undefined &&
+    path.isAbsolute(projectDir) &&
+    fs.statSync(projectDir, { throwIfNoEntry: false })?.isDirectory() === true;
+  return usable ? projectDir : repoRootOf(cwd);
 }
 
 function readFileOrNull(absPath: string): string | null {
@@ -161,6 +171,7 @@ function record(ctx: Context, command: string): void {
       store: ctx.store,
       home: ctx.home,
       ts: ctx.ts,
+      root: ctx.root,
       buildStartedAt: workflow?.currentCommandStartedAt ?? null,
       currentCommand: workflow?.currentCommand ?? null,
     },
@@ -213,7 +224,7 @@ export async function runToolGate(req: GateRequest, deps: GateDeps = {}): Promis
   });
   try {
     hook = readHook(req.input);
-    const root = repoRootOf(hook.cwd);
+    const root = projectRootOf(req.env.CLAUDE_PROJECT_DIR, hook.cwd);
     store = fileStateStore(root);
     const call = { hook, root, home: req.env.HOME, store, git: deps.gitReader ?? realGitReader, ts: new Date().toISOString() };
     const result = await Promise.race([decide(req, call), timedOut]);

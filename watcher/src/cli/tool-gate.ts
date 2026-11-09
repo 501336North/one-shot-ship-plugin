@@ -21,7 +21,8 @@ export async function runCli(
 ): Promise<GateResult> {
   const mode = argv[0];
   if (mode !== 'pre' && mode !== 'post') return { exitCode: 1, stdout: '', stderr: USAGE };
-  return runToolGate({ mode, input, env: { HOME: env.HOME ?? '', CLAUDE_PLUGIN_ROOT: env.CLAUDE_PLUGIN_ROOT ?? '' } });
+  const { HOME = '', CLAUDE_PLUGIN_ROOT = '', CLAUDE_PROJECT_DIR } = env;
+  return runToolGate({ mode, input, env: { HOME, CLAUDE_PLUGIN_ROOT, CLAUDE_PROJECT_DIR } });
 }
 
 async function readStdin(): Promise<string> {

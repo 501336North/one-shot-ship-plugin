@@ -31,6 +31,8 @@ export interface RecordContext {
   settings: GateSettings;
   store: StateStore;
   home: string;
+  /** The project root that test-file globs are anchored at (the command's `cwd` when absent). */
+  root?: string;
   /** The event time, set by the caller. */
   ts: string;
   /** The current build's `currentCommandStartedAt` (null when absent). */
@@ -93,7 +95,7 @@ export function recordTestRun(call: PostCall, ctx: RecordContext): void {
       last === undefined ||
       NEVER_ADOPTED.has(path.basename(last.program ?? '')) ||
       facts.parts.some((part) => part.pipedOut || part.orTrue) ||
-      !isTestLike(last, ctx.settings, call.cwd, ctx.home)
+      !isTestLike(last, ctx.settings, ctx.root ?? call.cwd, ctx.home)
     ) {
       return;
     }
