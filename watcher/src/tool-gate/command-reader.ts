@@ -9,6 +9,7 @@
  */
 
 import path from 'node:path';
+import { joinRaw } from './raw-path.js';
 import { tokenize, type Token } from './tokenize.js';
 
 export interface CommandPart {
@@ -18,7 +19,7 @@ export interface CommandPart {
   program: string | null;
   /** Absolute directory this part runs in. */
   cwd: string;
-  /** Absolute paths this part writes or removes. */
+  /** Absolute paths this part writes or removes, joined as text: a `..` after a folder name is kept for the disk to resolve. */
   writeTargets: string[];
   /** Lowercased hostnames, without ports. */
   hosts: string[];
@@ -237,13 +238,17 @@ function toParts(segment: Segment, segments: Segment[], home: string, depth: num
   const program = words[0] ?? null;
   const name = program === null ? null : path.posix.basename(program);
   const args = words.slice(1);
+  const git = name === 'git' ? readGit(args, cwd, home) : null;
   const part: CommandPart = {
     words,
     program,
     cwd,
-    writeTargets: [...redirectWrites(segment), ...operandWrites(name, args)].map((p) => resolvePath(p, cwd, home)),
+    writeTargets: [
+      ...[...redirectWrites(segment), ...operandWrites(name, args)].map((p) => joinRaw(cwd, expandTilde(p, home))),
+      ...(git === null ? [] : gitWrites(git).map((p) => joinRaw(git.dir, expandTilde(p, home)))),
+    ],
     hosts: args.flatMap(hostOf),
-    git: name === 'git' ? readGit(args, cwd, home) : null,
+    git,
     pipedOut: segment.exits.some((e) => isPipe(e.op)),
     orTrue: segment.exits.some((e) => e.op === '||' && isTrue(segments[e.following]?.words ?? [])),
   };
@@ -375,21 +380,131 @@ function redirectWrites(segment: Segment): string[] {
     .map((r) => (r.target.startsWith('&') ? r.target.slice(1) : r.target));
 }
 
-/** Non-flag operands; everything after `--` is an operand. */
-function operands(args: string[]): string[] {
-  const end = args.indexOf('--');
-  const before = end === -1 ? args : args.slice(0, end);
-  const after = end === -1 ? [] : args.slice(end + 1);
-  return [...before.filter((a) => !a.startsWith('-')), ...after];
+/**
+ * Non-flag operands; everything after `--` is an operand. The options in `values` take a value
+ * (`-s 0`, `-s0`, `--size=0`, `--size 0`), which is not an operand.
+ */
+function operands(args: string[], values: string[] = []): string[] {
+  const result: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--') return [...result, ...args.slice(i + 1)];
+    if (!a.startsWith('-')) result.push(a);
+    else if (a.startsWith('--')) {
+      if (values.includes(a)) i++;
+    } else {
+      const at = [...a.slice(1)].findIndex((l) => values.includes(`-${l}`));
+      if (at !== -1 && at === a.length - 2) i++;
+    }
+  }
+  return result;
 }
 
+/** The `-t` directory, else the last operand: the destination of cp, ln and install. */
+function destination(args: string[], values: string[] = []): string[] {
+  const t = args.indexOf('-t');
+  if (t !== -1 && t + 1 < args.length) return [args[t + 1]];
+  return operands(args, values).slice(-1);
+}
+
+const TRUNCATE_VALUES = ['-s', '-r', '--size', '--reference'];
+const LN_VALUES = ['-t', '-S', '--target-directory', '--suffix'];
+const INSTALL_VALUES = ['-m', '-o', '-g', '-t', '-S', '--mode', '--owner', '--group', '--target-directory', '--suffix'];
+const RESTORE_VALUES = ['-s', '--source', '--pathspec-from-file'];
+
 function operandWrites(name: string | null, args: string[]): string[] {
-  if (name === 'rm' || name === 'mv') return operands(args);
-  if (name === 'cp') {
-    const t = args.indexOf('-t');
-    if (t !== -1 && t + 1 < args.length) return [args[t + 1]];
-    return operands(args).slice(-1);
+  switch (name) {
+    case 'rm':
+    case 'mv':
+    case 'tee':
+    case 'touch':
+      return operands(args);
+    case 'cp':
+      return destination(args);
+    case 'ln':
+      return destination(args, LN_VALUES);
+    case 'install':
+      return destination(args, INSTALL_VALUES);
+    case 'truncate':
+      return operands(args, TRUNCATE_VALUES);
+    case 'chmod':
+    case 'chown':
+      return operands(args).slice(1);
+    case 'dd':
+      return args.filter((a) => a.startsWith('of=')).map((a) => a.slice('of='.length));
+    case 'sed':
+      return inPlaceFiles(args, SED);
+    case 'perl':
+      return inPlaceFiles(args, PERL);
+    default:
+      return [];
   }
+}
+
+/** How an in-place editor's options are read. */
+interface InPlaceSpec {
+  /** Long options that switch in-place editing on (`--in-place`, `--in-place=.bak`). */
+  inPlaceLong: string[];
+  /** Options whose value is the script, so every operand is a file. */
+  script: string[];
+  /** Other options whose value is the next word when not attached. */
+  values: string[];
+  /** Short options whose value is the rest of their cluster only (`perl -I/x`). */
+  attached: string[];
+}
+
+const SED: InPlaceSpec = {
+  inPlaceLong: ['--in-place'],
+  script: ['-e', '-f', '--expression', '--file'],
+  values: ['-l', '--line-length'],
+  attached: [],
+};
+const PERL: InPlaceSpec = { inPlaceLong: [], script: ['-e', '-E'], values: [], attached: ['-I', '-M', '-m', '-F', '-C', '-d', '-x'] };
+
+/**
+ * The files `sed -i` / `perl -i` edit in place: the operands after the script, or every operand
+ * when the script comes from an option (`-e`, `-f`). `-i` takes the rest of its cluster as the
+ * backup suffix. An empty word (BSD `sed -i ''`) is a suffix, not a file. Nothing without `-i`.
+ */
+function inPlaceFiles(args: string[], spec: InPlaceSpec): string[] {
+  let inPlace = false;
+  let scriptGiven = false;
+  const words: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--') {
+      words.push(...args.slice(i + 1));
+      break;
+    }
+    if (!a.startsWith('-') || a === '-') {
+      if (a !== '') words.push(a);
+    } else if (a.startsWith('--')) {
+      const flag = a.includes('=') ? a.slice(0, a.indexOf('=')) : a;
+      if (spec.inPlaceLong.includes(flag)) inPlace = true;
+      if (spec.script.includes(flag)) scriptGiven = true;
+      if (!a.includes('=') && (spec.script.includes(flag) || spec.values.includes(flag))) i++;
+    } else {
+      for (let j = 1; j < a.length; j++) {
+        const flag = `-${a[j]}`;
+        if (flag === '-i') inPlace = true;
+        if (spec.script.includes(flag)) scriptGiven = true;
+        const takesNext = spec.script.includes(flag) || spec.values.includes(flag);
+        if (takesNext && j === a.length - 1) i++;
+        if (flag === '-i' || takesNext || spec.attached.includes(flag)) break;
+      }
+    }
+  }
+  if (!inPlace) return [];
+  return scriptGiven ? words : words.slice(1);
+}
+
+/** The paths `git checkout -- <paths>` and `git restore <paths>` put back. */
+function gitWrites(git: NonNullable<CommandPart['git']>): string[] {
+  if (git.subcommand === 'checkout') {
+    const end = git.args.indexOf('--');
+    return end === -1 ? [] : git.args.slice(end + 1);
+  }
+  if (git.subcommand === 'restore') return operands(git.args, RESTORE_VALUES);
   return [];
 }
 

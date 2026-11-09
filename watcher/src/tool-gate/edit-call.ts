@@ -1,16 +1,17 @@
 /**
  * Reads a Claude Code edit-tool call (Edit, MultiEdit, Write, NotebookEdit) into one shape: the
- * tool, the absolute file path (resolved against cwd, `~/` expanded) and each change as the text
+ * tool, the absolute file path (joined onto cwd, `~/` expanded, `..` kept) and each change as the text
  * before and after. For Write, "before" is the file's current content ('' when missing). Any
  * other tool, or input not shaped as expected, gives null.
  */
 
-import path from 'node:path';
+import { joinRaw } from './raw-path.js';
 
 export type EditTool = 'Edit' | 'Write' | 'MultiEdit' | 'NotebookEdit';
 
 export interface EditCall {
   tool: EditTool;
+  /** Absolute, joined onto cwd as text: a `..` after a folder name is kept for the disk to resolve. */
   filePath: string;
   changes: { before: string; after: string }[];
 }
@@ -22,7 +23,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function resolvePath(filePath: string, cwd: string, home: string): string {
-  return filePath.startsWith('~/') ? path.join(home, filePath.slice(2)) : path.resolve(cwd, filePath);
+  return filePath.startsWith('~/') ? joinRaw(home, filePath.slice(2)) : joinRaw(cwd, filePath);
 }
 
 function readChange(edit: unknown): Change | null {

@@ -1,45 +1,56 @@
 /**
- * Finds where an absolute path really lands on disk, following symlinks. A path that doesn't
- * exist yet resolves through its deepest existing ancestor, and a symlink whose target doesn't
- * exist yet resolves to that target (writing through it creates the target). Never throws: a
- * path it can't resolve (a symlink loop, say) comes back as given.
+ * Finds where an absolute path really lands on disk. It walks the path one name at a time, as
+ * the kernel does: a symlink is followed before the next name is read, so a `..` after a
+ * symlinked folder climbs from where the link points, not from where it sits. A name that
+ * doesn't exist yet is kept as is (the agent is about to create it), so a symlink whose target
+ * doesn't exist yet resolves to that target. Never throws: a path it can't resolve (a symlink
+ * loop, say) comes back as given.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 
 export interface PathResolver {
+  /** `absPath` may hold `..`; the result is absolute, with no `..` and no symlinks that exist. */
   realpath(absPath: string): string;
 }
 
-/** Symlinks followed through missing targets before giving up, as the kernel's loop limit. */
+/** Symlinks followed before giving up, as the kernel's loop limit. */
 const MAX_LINKS = 40;
 
-function resolve(absPath: string, links: number): string | null {
-  const rest: string[] = [];
-  for (let current = absPath; ; current = path.dirname(current)) {
-    try {
-      return path.join(fs.realpathSync(current), ...rest);
-    } catch {
-      // missing, or a symlink to something missing: follow the link, else try the parent
+function names(p: string): string[] {
+  return p.split('/').filter((name) => name !== '' && name !== '.');
+}
+
+function resolve(absPath: string): string | null {
+  let resolved = '/';
+  let links = 0;
+  const todo = names(absPath);
+  for (let name = todo.shift(); name !== undefined; name = todo.shift()) {
+    if (name === '..') {
+      resolved = path.dirname(resolved);
+      continue;
     }
+    const next = path.join(resolved, name);
     let target: string | null = null;
     try {
-      target = fs.readlinkSync(current);
+      target = fs.readlinkSync(next);
     } catch {
-      // not a symlink
+      // missing, or not a symlink
     }
-    if (target !== null) {
-      if (links >= MAX_LINKS) return null;
-      return resolve(path.resolve(path.dirname(current), target, ...rest), links + 1);
+    if (target === null) {
+      resolved = next;
+      continue;
     }
-    if (path.dirname(current) === current) return null;
-    rest.unshift(path.basename(current));
+    if (++links > MAX_LINKS) return null;
+    if (target.startsWith('/')) resolved = '/';
+    todo.unshift(...names(target));
   }
+  return resolved;
 }
 
 export const realPathResolver: PathResolver = {
   realpath(absPath: string): string {
-    return resolve(absPath, 0) ?? absPath;
+    return resolve(absPath) ?? absPath;
   },
 };

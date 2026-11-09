@@ -1,7 +1,8 @@
 /**
  * Protected-path rule (US-006): refuses an edit-tool call, or a Bash redirect / `rm` / `mv` /
  * `cp`, that writes a path matching `protectedPaths`. Each path is checked as written (already
- * absolute, `..` resolved) and as it really is on disk (symlinks followed), against the repo
+ * absolute, `..` collapsed as text) and as it really is on disk (symlinks followed, then `..`
+ * climbed from where they point), against the repo
  * root and home both as given and as resolved, so a link can't hide a protected file. A Bash
  * write onto a folder that holds protected files (the fixed folder part of a glob, or one of its
  * ancestors) is refused too: removing the folder removes the protected files in it.
@@ -31,10 +32,9 @@ function placesOf(root: string, home: string, paths: PathResolver): Places[] {
   ];
 }
 
-/** The path as written and as it really is on disk. */
+/** The path as written (`..` collapsed as text) and as it really is on disk (from the raw path, `..` kept). */
 function formsOf(absPath: string, paths: PathResolver): string[] {
-  const written = path.normalize(absPath);
-  return [written, paths.realpath(written)];
+  return [path.normalize(absPath), paths.realpath(absPath)];
 }
 
 function isProtected(absPath: string, settings: GateSettings, places: Places[], paths: PathResolver): boolean {
@@ -67,12 +67,12 @@ function holdsProtected(absPath: string, settings: GateSettings, places: Places[
   );
 }
 
-/** The path relative to the repo, as `~/…` under home, else in full. */
+/** The path as the agent wrote it (`..` kept): relative to the repo, as `~/…` under home, else in full. */
 function displayPath(absPath: string, root: string, home: string): string {
-  const written = path.normalize(absPath);
-  if (isSameOrAncestor(root, written)) return path.relative(root, written) || '.';
-  if (isSameOrAncestor(home, written)) return HOME_PREFIX + path.relative(home, written);
-  return written;
+  if (absPath === root) return '.';
+  if (absPath.startsWith(`${root}/`)) return absPath.slice(root.length + 1);
+  if (absPath.startsWith(`${home}/`)) return HOME_PREFIX + absPath.slice(home.length + 1);
+  return absPath;
 }
 
 function refusal(absPath: string, what: string, root: string, home: string): Refusal {
