@@ -10,11 +10,8 @@ import type { EditCall } from '../edit-call.js';
 import { matchPath } from '../patterns.js';
 import type { GateSettings } from '../rule-file.js';
 import type { StateStore } from '../state-store.js';
-import type { WorkflowState } from '../workflow-state.js';
+import { BUILD_COMMAND, type WorkflowState } from '../workflow-state.js';
 import type { Refusal } from './refusal.js';
-
-/** The `/oss:*` command the rule is limited to (a workflow name, not a rule value). */
-const BUILD_COMMAND = 'build';
 
 const NO_RUN =
   "Refused: No failing test recorded. Write a failing test and run it. If your tests run with a command the gate doesn't recognize, ask the user to add it to .oss/tool-gates.json with `!`.";

@@ -15,6 +15,7 @@ import { readCommand, type CommandPart } from './command-reader.js';
 import { matchCommand, matchPath } from './patterns.js';
 import type { GateSettings } from './rule-file.js';
 import type { CycleRecord, StateStore } from './state-store.js';
+import { BUILD_COMMAND } from './workflow-state.js';
 
 export interface PostCall {
   hookEvent: 'PostToolUse' | 'PostToolUseFailure';
@@ -39,9 +40,6 @@ export interface RecordContext {
 }
 
 const EXIT_CODE = /^Exit code \d+/;
-
-/** The `/oss:*` command adoption is limited to (a workflow name, not a rule value). */
-const BUILD_COMMAND = 'build';
 
 /**
  * Plan decision 4: the words that make an unlisted command test-like. A code constant, not a

@@ -3,6 +3,9 @@
  * `<project>/.oss/workflow-state.json`. A collaborator, mocked in the RED-rule tests.
  */
 
+/** The `/oss:*` command the RED rule and runner adoption apply in (a workflow name, not a rule value). */
+export const BUILD_COMMAND = 'build';
+
 export interface WorkflowSnapshot {
   /** Top-level `currentCommand`, e.g. "build" (null when absent). */
   currentCommand: string | null;
