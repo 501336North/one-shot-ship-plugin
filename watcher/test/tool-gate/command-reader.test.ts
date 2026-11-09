@@ -451,3 +451,135 @@ describe('readCommand: a cd that runs apart from the rest of the command', () =>
     expect(cwdsOf('cd x & git push')).toEqual(['/work/repo', '/work/repo']);
   });
 });
+
+describe('readCommand: commands inside shell keywords (if, loops, case, braces, functions)', () => {
+  it('should read the condition and the body of an if as parts', () => {
+    expect(programsOf('if x; then git push -f; fi')).toEqual(['x', 'git']);
+    expect(gitOf('if x; then git push -f; fi')).toEqual([{ subcommand: 'push', args: ['-f'], dir: '/work/repo' }]);
+  });
+
+  it('should read every branch of an if with elif and else', () => {
+    expect(programsOf('if a; then b; elif git push -f; then c; else git push; fi')).toEqual(['a', 'b', 'git', 'c', 'git']);
+  });
+
+  it('should read the condition and the body of while and until loops', () => {
+    expect(programsOf('while x; do git push -f; done')).toEqual(['x', 'git']);
+    expect(programsOf('until x; do git push -f; done')).toEqual(['x', 'git']);
+  });
+
+  it('should read the body of a for loop and not its header', () => {
+    expect(programsOf('for i in a b; do git push; done')).toEqual(['git']);
+    expect(programsOf('for i in a b\ndo git push -f\ndone')).toEqual(['git']);
+  });
+
+  it('should read the commands of a case and not its patterns', () => {
+    expect(programsOf('case $x in a) git push -f;; b|c) ls;; esac')).toEqual(['git', 'ls']);
+    expect(programsOf('case $x in (a) git push -f;; esac')).toEqual(['git']);
+    expect(programsOf('case $x in a) ls;; *) git push -f; esac; pwd')).toEqual(['ls', 'git', 'pwd']);
+  });
+
+  it('should read the commands inside { … }, after ! and after time', () => {
+    expect(programsOf('{ git push -f; }')).toEqual(['git']);
+    expect(programsOf('! git push -f')).toEqual(['git']);
+    expect(programsOf('time git push')).toEqual(['git']);
+  });
+
+  it('should read the body of a function definition as parts', () => {
+    expect(programsOf('function f { git push; }')).toEqual(['git']);
+    expect(programsOf('f() { git push; }')).toEqual(['git']);
+    expect(programsOf('function f() { git push; }')).toEqual(['git']);
+  });
+
+  it('should read keywords nested inside each other', () => {
+    expect(programsOf('if x; then while y; do { ! git push -f; }; done; fi')).toEqual(['x', 'y', 'git']);
+  });
+
+  it('should treat a keyword as a plain word when it is not where a command starts', () => {
+    expect(partsOf('echo then')[0].words).toEqual(['echo', 'then']);
+    expect(partsOf('echo if fi done { } !')[0].words).toEqual(['echo', 'if', 'fi', 'done', '{', '}', '!']);
+  });
+});
+
+describe('readCommand: output of a { … } group hidden by a pipe or by || true', () => {
+  it('should flag the parts inside { … } as piped when the group\'s output goes into |', () => {
+    expect(partsOf('{ npm test; } | tail').map((p) => p.pipedOut)).toEqual([true, false]);
+  });
+
+  it('should flag the parts inside { … } when the group is followed by || true', () => {
+    expect(partsOf('{ cd sub && npm test; } || true').map((p) => p.orTrue)).toEqual([true, true, false]);
+  });
+
+  it('should carry a cd inside { … } to later parts, but not a cd inside ( … )', () => {
+    expect(cwdsOf('{ cd sub; } && git push')).toEqual(['/work/repo', '/work/repo/sub']);
+    expect(cwdsOf('(cd sub) && git push')).toEqual(['/work/repo', '/work/repo']);
+  });
+});
+
+describe('readCommand: positional and special parameters in a nested script', () => {
+  it.each([
+    "bash -c '\"$@\"' _ git push -f",
+    "sh -c '$1' sh x",
+    "bash -c 'git push $*'",
+    "bash -c 'echo $#'",
+    "bash -c 'echo $?'",
+    "bash -c 'echo $!'",
+    "bash -c 'echo $$'",
+    "bash -c 'echo $-'",
+    'eval "$@"',
+  ])('should stay unreadable when the script uses a positional or special parameter: %s', (cmd) => {
+    expect(isUnreadable(cmd)).toBe(true);
+  });
+
+  it('should keep a program that is a variable as it is (documented limit)', () => {
+    const [part] = partsOf('$G push -f');
+    expect(part.words).toEqual(['$G', 'push', '-f']);
+    expect(part.git).toBeNull();
+  });
+});
+
+describe('readCommand: grouped options where one takes a value', () => {
+  it.each([
+    'sudo -Eu root git push',
+    'sudo -uroot git push',
+    'sudo -HEu root git push',
+    'env -iu HOME git push',
+  ])('should find git behind %s', (cmd) => {
+    const [part] = partsOf(cmd);
+    expect(part.program).toBe('git');
+    expect(part.words).toEqual(['git', 'push']);
+  });
+
+  it('should run the program in the directory a grouped sudo -D names', () => {
+    expect(partsOf('sudo -ED /srv/app git push')[0].git?.dir).toBe('/srv/app');
+  });
+
+  it.each([
+    "bash -eo pipefail -c 'git push -f'",
+    "bash -oc pipefail 'git push -f'",
+    "bash -eO extglob -c 'git push -f'",
+  ])('should read %s as a git push part', (cmd) => {
+    expect(gitOf(cmd)).toEqual([{ subcommand: 'push', args: ['-f'], dir: '/work/repo' }]);
+  });
+});
+
+describe('readCommand: other ways to change directory', () => {
+  it.each(['command cd sub', 'builtin cd sub', 'time cd sub', 'pushd sub'])(
+    'should move later parts after %s',
+    (cd) => {
+      expect(cwdsOf(`${cd} && git push`)).toEqual(['/work/repo', '/work/repo/sub']);
+    },
+  );
+
+  it('should go back to the directory before the matching pushd on popd', () => {
+    expect(cwdsOf('pushd sub && popd && git push')).toEqual(['/work/repo', '/work/repo/sub', '/work/repo']);
+    expect(partsOf('cd a && pushd b && pushd c; popd; git push').at(-1)?.cwd).toBe('/work/repo/a/b');
+  });
+
+  it('should stay in the same directory on a popd with no matching pushd', () => {
+    expect(cwdsOf('cd a; popd; git push')).toEqual(['/work/repo', '/work/repo/a', '/work/repo/a']);
+  });
+
+  it('should find the program behind builtin', () => {
+    expect(gitOf('builtin git push -f')).toEqual([{ subcommand: 'push', args: ['-f'], dir: '/work/repo' }]);
+  });
+});
