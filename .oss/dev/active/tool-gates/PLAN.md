@@ -181,6 +181,9 @@ Collaborators (git, fs state, workflow state) are mocked at their interface in u
 - [ ] `should refuse --force, -f, --force-with-lease, combined short flags like -fu, and a +refspec`
 - [ ] `should allow a plain push on a feature branch` (AC-002.2)
 
+### Task 7b: Abbreviated push options (added in build)
+- [ ] `readPushWords` expands unambiguous prefixes of git push long options (`--forc` → `--force`, `--mir` → `--mirror`, `--del` → `--delete`, `--tag` → `--tags`). An ambiguous prefix is left as written.
+
 ### Task 8: Tags rule (US-008)
 **Tests (RED):** `rules/tags.test.ts`
 - [ ] `should refuse git tag v1 and git push --tags when tagsAllowed is false` (AC-008.1)

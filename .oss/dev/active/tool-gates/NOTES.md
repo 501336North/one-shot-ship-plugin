@@ -47,6 +47,8 @@
   - `env -C` / `sudo -D` change the part's directory.
   - The wrapper and shell-option tables are code constants. They describe what the shell does; they aren't rule values.
   - `>& file` with a space is read as a write to `file`.
+- **T7b:** git itself calls `--forc` ambiguous. We expand it to `--force` because `--force` is a prefix of the other matches. This can only add refusals, for commands git would reject anyway. Gap: `--recurse-submodules <value>` isn't in the value-skip set. It doesn't weaken any rule today.
+- **Flake outside this branch:** `test/agents/registry.test.ts` "should emit event when agent exceeds error threshold" failed once in a full run under load. It uses a fixed 100 ms wait with 10 ms polls, and passes alone. Not ours: it goes to FOLLOWUPS and its own fix branch, and is raised with the user at ship.
 - **Ship todo:** add a FOLLOWUPS entry for the shell-reading limits in DESIGN.md Known Limits.
 - `feat/tool-gates/build` is stacked on `feat/tool-gates/plan`, because the plan isn't merged into the sprint branch yet. The PR still targets `feat/determinism-sprint/build`.
 
