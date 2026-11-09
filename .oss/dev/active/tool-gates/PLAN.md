@@ -226,10 +226,10 @@ Collaborators (git, fs state, workflow state) are mocked at their interface in u
 
 ### Task 13: State store and events (US-011)
 **Tests (RED):** `watcher/test/tool-gate/state-store.integration.test.ts` (temp dir)
-- [ ] `should write cycle.json atomically (temp + rename) and read it back`
-- [ ] `should treat a missing or corrupt cycle.json as no run yet`
-- [ ] `should append one JSON line per event with ts, tool, kind, rule|command, result` (AC-011.1)
-- [ ] `should create .oss/tool-gates/ when missing, and refuse to write through a symlinked .oss or .oss/tool-gates`
+- [x] `should write cycle.json atomically (temp + rename) and read it back`
+- [x] `should treat a missing or corrupt cycle.json as no run yet`
+- [x] `should append one JSON line per event with ts, tool, kind, rule|command, result` (AC-011.1)
+- [x] `should create .oss/tool-gates/ when missing, and refuse to write through a symlinked .oss or .oss/tool-gates`
 
 ### Task 14: Post-call recorder (US-005)
 **Tests (RED):** `watcher/test/tool-gate/recorder.test.ts`, with `StateStore` mocked:

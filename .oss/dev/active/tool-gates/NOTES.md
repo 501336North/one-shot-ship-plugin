@@ -67,5 +67,11 @@
   - The stamp is `$.currentCommandStartedAt` in `<project>/.oss/workflow-state.json`. It is set in `WorkflowStateService.setCurrentCommand` (`watcher/src/services/workflow-state.ts`), only when the command changes.
   - `oss-notify.sh` clears `currentCommand` on complete, so a re-run of `/oss:build` gets a fresh stamp. `clearCurrentCommand` leaves the old stamp in place.
   - `watcher/dist` is committed. The agent rebuilt it and committed only `dist/services/workflow-state.*`.
+- **T13 (state-store.ts):**
+  - `fileStateStore(repoRoot)` gives `readCycle`/`writeCycle`/`appendEvent`.
+  - `CycleRecord {startedAt, lastResult, files, adoptedCommand}`.
+  - `EventKind` is one of `refusal | test-run | runner-adopted | unreadable | gate-error | rule-file-rejected`. The `result` union is `red | green | unknown | refused | allowed`. The caller sets `ts`.
+  - A second cycle (b18b57a/1cb96ec) added `O_NOFOLLOW` on `events.ndjson`, `cycle.json` reads and the temp file (`O_EXCL`). Reads through a linked `.oss/tool-gates` return null. A refused write throws, and Task 17 turns that into `gate-error`.
+  - **Known gap (FOLLOWUPS at ship):** the temp name is `cycle.json.<pid>.tmp` with `O_EXCL`. If a crash leaves it behind and a later process reuses the pid, `writeCycle` throws (a `gate-error`, so the call is allowed) until the file is removed. A random temp name fixes this.
 
-## Last Updated: 2026-11-09 20:00 CST by /oss:build
+## Last Updated: 2026-11-09 20:30 CST by /oss:build
