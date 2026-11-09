@@ -28,6 +28,6 @@
 | `watcher/test/cli/tool-gate.speed.test.ts` | Speed |
 
 ## Results
-_Not run yet (plan phase)._
+- 2026-11-09 `/oss:acceptance`: `watcher/test/cli/tool-gate.acceptance.test.ts` has 14 tests (12 scenarios; scenarios 7 and 12 are 2 tests each). `Tests 14 failed (14)`, all with `Error: not implemented` from the `runToolGate` stub, as expected for RED. tsc clean.
 
-## Last Updated: 2026-11-09 14:22 CST by /oss:plan
+## Last Updated: 2026-11-09 14:45 CST by /oss:acceptance

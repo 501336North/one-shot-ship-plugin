@@ -1,6 +1,6 @@
 # Progress: tool-gates (R-253)
 
-## Current Phase: plan
+## Current Phase: plan (acceptance tests written)
 
 ## Tasks
 - [x] Ideate: design committed (completed 2026-11-09)
@@ -8,7 +8,7 @@
 - [x] RED rule amended: wider runner list, no lockout (completed 2026-11-09)
 - [x] No-lockout switch replaced by runner adoption (completed 2026-11-09)
 - [x] Plan: 20 TDD tasks in 5 phases, ADR-007/008, `.oss/tool-gates/**` protected (completed 2026-11-09)
-- [ ] Build T1: acceptance tests at the gate boundary (pending)
+- [x] Build T1: acceptance tests at the gate boundary, 14 tests, all RED on `not implemented` (completed 2026-11-09, /oss:acceptance)
 - [ ] Build T2: shell tokenizer (pending)
 - [ ] Build T3: command reader (pending)
 - [ ] Build T4: pattern matchers (pending)
@@ -32,4 +32,4 @@
 ## Blockers
 - None. All PRs target `feat/determinism-sprint/build`.
 
-## Last Updated: 2026-11-09 14:22 CST by /oss:plan
+## Last Updated: 2026-11-09 14:45 CST by /oss:acceptance
