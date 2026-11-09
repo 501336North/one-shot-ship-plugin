@@ -52,7 +52,9 @@ Per cycle, covering source files only (`sourceExtensions`); test files, Markdown
 - **Negative:** the "deliberately failing test" loophole remains until R-257; the rule trusts the model-set `currentCommand` until R-254.
 
 ## Amendment (2026-11-09): no lockout on unknown test runners
-A heads-up flagged that the rule only recognizes test commands from a fixed list, so a build whose tests run another way would have every code edit refused, and the agent can't add its command (the rule file is protected). The user chose: widen the default list (pnpm/yarn/bun, `npm run test*`, make, swift, gradle, mvn, dotnet, rspec, phpunit); the refusal names the fix; and if 3 source edits are refused in a build with no recognized test run, the rule switches off for that build and logs `red-rule-unarmed`, which R-267 counts. Rejected: wider list with no fallback (a repo with an unlisted runner stays blocked until the user acts), and fallback only (unarms too often).
+A heads-up flagged that the rule only recognizes test commands from a fixed list, so a build whose tests run another way would have every code edit refused, and the agent can't add its command (the rule file is protected). The user chose: widen the default list (pnpm/yarn/bun, `npm run test*`, make, swift, gradle, mvn, dotnet, rspec, phpunit) and make the refusal name the fix.
+
+The first fallback (rule off after 3 refused edits with no recognized run) was replaced the same day: a second heads-up showed it also frees an agent that runs no tests at all. **Decision:** adopt the runner. During a build, an unlisted command that names a test file or contains test/spec/check and exits non-zero becomes the build's test command (`runner-adopted`, counted by R-267). An agent that runs no tests stays refused; a runner with no test hint waits for the user to add it with `!`. Rejected: keeping the switch-off but requiring a test-looking run first (rule off for the whole build instead of working), and strict with no fallback (every unlisted runner waits for the user).
 
 ---
 

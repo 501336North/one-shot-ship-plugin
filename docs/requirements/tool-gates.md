@@ -52,9 +52,10 @@ The IRON LAWS become refusals at the tool-call level. Before an agent's Bash, Ed
 - **AC-004.5** Given any state, when the agent edits a test file, Markdown, JSON, YAML or anything under `.oss/dev/`, then the RED rule does not apply.
 - **AC-004.6** Given `currentCommand` is not `build`, the RED rule does not apply.
 - **AC-004.7** A red run starts a new cycle: the cycle's file list resets.
-- **AC-004.8** Given no recorded run, the refusal tells the agent how to add an unlisted test command (the user adds it to `.oss/tool-gates.json` with `!`).
-- **AC-004.9** Given a build where no test run has been recognized, when a 3rd source edit is refused, then the RED rule switches off for the rest of that build, one `red-rule-unarmed` event is logged with the Bash commands run so far, and the agent is told once.
-- **AC-004.10** Given a recognized test run earlier in the build, the switch-off never happens.
+- **AC-004.8** Given no recorded run, the refusal tells the agent to write and run a failing test, or to ask the user to add an unrecognized test command to `.oss/tool-gates.json` with `!`.
+- **AC-004.9** Given a build, when an unlisted Bash command that names a test file or contains `test`/`spec`/`check` exits non-zero, then it becomes the build's test command (`runner-adopted` logged once), that run counts red, and its later runs count red/green.
+- **AC-004.10** Given an agent that runs no test-like command, source edits stay refused no matter how many are attempted.
+- **AC-004.11** An unlisted command with no test hint (e.g. `make`) is never adopted.
 
 ### US-005: Test runs recorded as red, green or unknown
 **As a** user **I want** each test run recorded from the hook events **so that** the RED rule and later cards (R-257, R-265, R-267) have a trustworthy record.
@@ -126,7 +127,7 @@ The IRON LAWS become refusals at the tool-call level. Before an agent's Bash, Ed
 | No `.oss/workflow-state.json` | RED rule doesn't apply |
 | `cycle.json` missing or corrupt | Treated as "no run yet" during build |
 | Two parallel sessions in one folder | Atomic writes; shared cycle (accepted limit) |
-| Tests run with a command not in `testCommandPatterns` | After 3 refused source edits, RED rule off for the build + `red-rule-unarmed` (no lockout) |
+| Tests run with a command not in `testCommandPatterns` | Adopted for the build if it names a test file or test/spec/check and fails; otherwise refused with "ask the user to add it with `!`" |
 | User runs `! git push` | Outside the hooks; not checked (intended escape hatch) |
 
 ## Non-Functional Requirements
