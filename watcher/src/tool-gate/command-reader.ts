@@ -72,6 +72,7 @@ const WRAPPERS = new Map<string, WrapperSpec>([
     dir: ['-D', '--chdir'], assignments: true,
   }],
   ['command', { values: [] }],
+  ['builtin', { values: [] }],
   ['nice', { values: ['-n', '--adjustment'] }],
   ['nohup', { values: [] }],
   ['time', { values: ['-f', '--format', '-o', '--output'] }],
@@ -84,14 +85,19 @@ const WRAPPERS = new Map<string, WrapperSpec>([
 ]);
 
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh']);
-/** Shell options that take the next word as their value. */
-const SHELL_VALUE_OPTIONS = new Set(['-o', '-O', '+o', '+O', '--rcfile', '--init-file']);
+/** Shell options that take the next word as their value; in a cluster (`-eo`), each such letter takes one. */
+const SHELL_VALUE_OPTIONS = new Set(['-o', '-O', '--rcfile', '--init-file']);
+const SHORT_OPTION_CLUSTER = /^[-+][A-Za-z]+$/;
 /** A shell flag cluster that includes `c` (`-c`, `-lc`, `-ec`). */
 const COMMAND_STRING_FLAG = /^-[A-Za-z]*c/;
-/** A script that substitutes a command or expands a variable is not literal. */
-const DYNAMIC_SCRIPT = /\$\(|`|\$[A-Za-z_{]/;
+/** A script that substitutes a command or expands a variable or a positional or special parameter is not literal. */
+const DYNAMIC_SCRIPT = /\$\(|`|\$[A-Za-z_{0-9@*#?!$-]/;
 const MAX_NESTED_DEPTH = 5;
 const PIPES = ['|', '|&'];
+/** Reserved words that start or end a compound command; skipped where a command starts. */
+const KEYWORDS = new Set(['if', 'then', 'elif', 'else', 'fi', 'do', 'done', 'while', 'until', '!']);
+/** Words before `cd` that still change the shell's own directory. */
+const CD_PREFIXES = new Set(['command', 'builtin', 'time']);
 
 class Unreadable extends Error {}
 
@@ -127,7 +133,13 @@ function readScript(cmd: string, cwd: string, home: string, depth: number): Comm
  */
 function split(tokens: Token[], cwd: string, home: string): Segment[] {
   const segments: Segment[] = [];
-  const groups: { dir: string; start: number }[] = [];
+  /** `( … )` groups restore the directory they started in; `{ … }` groups (dir null) do not. */
+  const groups: { dir: string | null; start: number }[] = [];
+  const pushed: string[] = [];
+  /** Words skipped up to the next operator (`for` header), up to `in` (`case` header), or one (function name). */
+  let header: 'for' | 'case' | 'name' | null = null;
+  let casePatterns = false;
+  let caseDepth = 0;
   let closedGroupStart: number | null = null;
   let afterPipe = false;
   let dir = cwd;
@@ -139,15 +151,70 @@ function split(tokens: Token[], cwd: string, home: string): Segment[] {
     const commandWords = stripAssignments(words);
     segments.push({ words: commandWords, redirects, cwd: dir, exits: [{ op: next, following: segments.length + 1 }] });
     const apart = afterPipe || isPipe(next) || next === '&';
-    if (commandWords[0] === 'cd' && !apart) dir = cdTarget(commandWords.slice(1), dir, home);
+    let p = 0;
+    while (CD_PREFIXES.has(commandWords[p])) p++;
+    const [verb, ...args] = commandWords.slice(p);
+    if (!apart && verb === 'cd') dir = cdTarget(args, dir, home);
+    if (!apart && verb === 'pushd' && args.length > 0) {
+      pushed.push(dir);
+      dir = cdTarget(args, dir, home);
+    }
+    if (!apart && verb === 'popd') dir = pushed.pop() ?? dir;
     words = [];
     redirects = [];
   };
 
-  for (const token of tokens) {
-    if (token.kind === 'word') words.push(token.value);
+  const atCommandStart = (): boolean => words.length === 0 && redirects.length === 0;
+
+  const readWord = (w: string): void => {
+    if (casePatterns) {
+      if (w === 'esac') {
+        caseDepth--;
+        casePatterns = false;
+      }
+    } else if (header === 'case') {
+      if (w === 'in') {
+        header = null;
+        casePatterns = true;
+      }
+    } else if (header === 'name') {
+      header = null;
+    } else if (header === 'for') {
+      // the loop's variable and list are not commands
+    } else if (!atCommandStart()) {
+      words.push(w);
+    } else if (w === 'for' || w === 'select') {
+      header = 'for';
+    } else if (w === 'case') {
+      header = 'case';
+      caseDepth++;
+    } else if (w === 'esac') {
+      caseDepth = Math.max(0, caseDepth - 1);
+    } else if (w === 'function') {
+      header = 'name';
+    } else if (w === '{') {
+      groups.push({ dir: null, start: segments.length });
+    } else if (w === '}') {
+      const group = groups.pop();
+      if (group !== undefined) closedGroupStart = group.start;
+    } else if (!KEYWORDS.has(w)) {
+      words.push(w);
+    }
+  };
+
+  for (let k = 0; k < tokens.length; k++) {
+    const token = tokens[k];
+    if (token.kind === 'word') readWord(token.value);
     else if (token.kind === 'redirect') redirects.push({ op: token.op, target: token.target });
-    else {
+    else if (casePatterns || header === 'case') {
+      // a case pattern list: `a|b)`, `(a)`
+      if (casePatterns && token.value === ')') casePatterns = false;
+    } else if (token.value === '(' && isOp(tokens[k + 1], ')')) {
+      // `f()`: a function definition; its body follows
+      words = [];
+      k++;
+    } else {
+      if (header === 'for') header = null;
       close(token.value);
       if (closedGroupStart !== null && token.value !== ')') {
         for (const inner of segments.slice(closedGroupStart)) inner.exits.push({ op: token.value, following: segments.length });
@@ -158,10 +225,11 @@ function split(tokens: Token[], cwd: string, home: string): Segment[] {
       if (token.value === ')') {
         const group = groups.pop();
         if (group !== undefined) {
-          dir = group.dir;
+          dir = group.dir ?? dir;
           closedGroupStart = group.start;
         }
       }
+      if (token.value === ';;' && caseDepth > 0) casePatterns = true;
     }
   }
   close(null);
@@ -190,6 +258,10 @@ function toParts(segment: Segment, segments: Segment[], home: string, depth: num
   if (depth >= MAX_NESTED_DEPTH) throw new Unreadable(`scripts nested deeper than ${MAX_NESTED_DEPTH}`);
   const nested = readScript(script, cwd, home, depth + 1);
   return [part, ...nested.map((p) => ({ ...p, pipedOut: p.pipedOut || part.pipedOut, orTrue: p.orTrue || part.orTrue }))];
+}
+
+function isOp(token: Token | undefined, value: string): boolean {
+  return token?.kind === 'op' && token.value === value;
 }
 
 function isPipe(op: string | null): boolean {
@@ -221,11 +293,14 @@ function unwrap(words: string[], cwd: string, home: string): { words: string[]; 
       if (!w.startsWith('-') || w === '-') break;
       const long = w.startsWith('--');
       const eq = long ? w.indexOf('=') : -1;
-      const flag = long ? (eq === -1 ? w : w.slice(0, eq)) : w.slice(0, 2);
+      // In a short cluster (`-Eu`), the first letter that takes a value takes the rest of it, or the next word.
+      const at = long ? 0 : [...w.slice(1)].findIndex((l) => spec.values.includes(`-${l}`)) + 1;
+      if (at === 0 && !long) continue;
+      const flag = long ? (eq === -1 ? w : w.slice(0, eq)) : `-${w[at]}`;
       if (!spec.values.includes(flag)) continue;
       let value: string | undefined;
       if (eq !== -1) value = w.slice(eq + 1);
-      else if (!long && w.length > 2) value = w.slice(2);
+      else if (!long && w.length > at + 1) value = w.slice(at + 1);
       else value = rest[++i];
       if (value === undefined) break;
       if (spec.dir?.includes(flag)) dir = resolvePath(value, dir, home);
@@ -253,7 +328,11 @@ function scriptOf(name: string | null, args: string[]): string | null {
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (SHELL_VALUE_OPTIONS.has(a)) i++;
-    else if (a.startsWith('-') || a.startsWith('+')) command ||= COMMAND_STRING_FLAG.test(a);
+    else if (a.startsWith('-') || a.startsWith('+')) {
+      command ||= COMMAND_STRING_FLAG.test(a);
+      // like bash, each value-taking letter of a cluster (`-eo pipefail`, `-oc pipefail 'x'`) takes the next word
+      if (SHORT_OPTION_CLUSTER.test(a)) i += [...a.slice(1)].filter((l) => SHELL_VALUE_OPTIONS.has(`-${l}`)).length;
+    }
     else return command ? a : null;
   }
   return null;
