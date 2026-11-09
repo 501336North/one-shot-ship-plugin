@@ -130,6 +130,35 @@ describe('runner adoption during a build', () => {
     }
   });
 
+  it('should not adopt shell tests, searches or git commands that fail', () => {
+    // These fail easily and hold a test word, so adopting them would hand out a red with no failing test.
+    for (const command of ['test -f missing.txt', '[ -f x ]', 'grep -r check src', 'rg spec', 'git check-ignore x']) {
+      const store = memoryStore();
+      record(failure(command), store);
+      expect(store.writeCycle).not.toHaveBeenCalled();
+      expect(store.appendEvent).not.toHaveBeenCalled();
+    }
+
+    const runner = memoryStore();
+    record(failure('./run-tests.sh'), runner);
+    expect(runner.readCycle()).toEqual({ startedAt: BUILD, lastResult: 'red', files: [], adoptedCommand: './run-tests.sh' });
+  });
+
+  it('should keep the first adopted runner for the rest of the build', () => {
+    const store = memoryStore();
+    record(failure('./run-tests.sh'), store);
+
+    // Another unlisted test-like command fails later in the same build: the first runner stays.
+    record(failure('./check-all.sh'), store);
+    expect(store.readCycle()?.adoptedCommand).toBe('./run-tests.sh');
+    expect(events(store, 'runner-adopted')).toHaveLength(1);
+    expect(events(store, 'test-run').map((event) => event.command)).toEqual(['./run-tests.sh']);
+
+    // The adopted runner still counts.
+    record(success('./run-tests.sh'), store);
+    expect(store.readCycle()).toEqual({ startedAt: BUILD, lastResult: 'green', files: [], adoptedCommand: './run-tests.sh' });
+  });
+
   it('should not adopt outside build or from a piped / || true run', () => {
     // Outside a build (another command, or none running).
     for (const currentCommand of ['plan', null]) {
