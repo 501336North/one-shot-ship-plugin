@@ -107,7 +107,8 @@ const FD_DUPLICATION = /^&(?:[0-9]+-?|-)$/;
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const URL_AUTHORITY = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/?#]*)/;
 const USER_AT_HOST = /^[^@/\s]+@([^:/\s]+)/;
-const BARE_HOST = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
+/** A bare dotted hostname, alone or followed by a path (`api.example.com/x`, as HTTPie takes it). */
+const BARE_HOST = /^([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)(?:\/|$)/;
 /** git global options that take the next word as their value. */
 const GIT_VALUE_OPTIONS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env']);
 
@@ -397,7 +398,7 @@ function hostOf(arg: string): string[] {
   const url = URL_AUTHORITY.exec(value);
   let host: string | undefined;
   if (url) host = url[1].slice(url[1].lastIndexOf('@') + 1).replace(/:[0-9]*$/, '');
-  else host = USER_AT_HOST.exec(value)?.[1] ?? (!value.startsWith('-') && BARE_HOST.test(value) ? value : undefined);
+  else host = USER_AT_HOST.exec(value)?.[1] ?? (value.startsWith('-') ? undefined : BARE_HOST.exec(value)?.[1]);
   return host ? [host.toLowerCase()] : [];
 }
 
