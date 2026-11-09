@@ -222,3 +222,17 @@ The design allowed any command the tokenizer can't read (logged `unreadable`). D
 ## Consequences
 - **Positive:** the git, host and protected-path rules can't be dodged with a one-word wrapper.
 - **Negative:** `bash -c "$(…)"` and `eval "$X"` remain a known gap.
+
+---
+
+# Note (2026-11-09, `/oss:build`): the production-host rule stays in R-253
+During T9 the user asked whether US-007 belongs in a determinism sprint.
+
+**What US-007 guards:** it refuses an agent's Bash calls to the customer's own production hosts listed in `.oss/tool-gates.json`. An example is a `/oss:load` or `/oss:bench` agent curling the live API from the dev box. It is unrelated to model routing.
+
+**Decision:** the user chose to keep it. It is a no-op unless a repo lists hosts.
+
+**Matching:** the host must match exactly. A host that only shares a suffix doesn't match, and neither does one inside a multi-word commit message.
+
+# Amendment to ADR-003 (2026-11-09, `/oss:build`, user pick): user-level tamper paths
+`~/.claude/settings*.json` and `~/.claude/plugins/**` join the base `protectedPaths`. Without them, an agent could set `disableAllHooks: true`, or edit the installed plugin's `hooks.json` / `tool-gate.cjs`, and switch off every gate.

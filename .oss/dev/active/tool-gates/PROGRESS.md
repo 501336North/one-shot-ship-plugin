@@ -20,9 +20,11 @@
 - [x] Build T7: force-push rule; shared push-words helper (completed 2026-11-09, 7128b1f/488af28)
 - [x] Build T7b: abbreviated git push long options; `--branches` refused (completed 2026-11-09, 9000d1f/2a0a968)
 - [x] Build T8: tags rule; 77 tests (completed 2026-11-09, 5e9d8d0/d04e961)
-- [ ] Build T9: production-host rule (in progress)
-- [ ] Build T10: skip/only/todo rule (pending)
-- [ ] Build T11: protected-path rule (pending)
+- [x] Build T9: production-host rule; 11 tests + reader bare-host fix (completed 2026-11-09, c3c59c0/5ad71cf)
+- [x] Build T10: skip/only/todo rule + edit-call reader; 41 tests (completed 2026-11-09, b03053d/fdab419)
+- [x] Build T11: protected-path rule + path resolver, user-level tamper paths; 67 tests (completed 2026-11-09, e350946/3d5c146)
+- [x] Build T11b: `..` after a symlink, plus common Bash writers; 59 tests (completed 2026-11-09, 5cb82a7/f6d628f)
+- [ ] Build T12: build start stamp `currentCommandStartedAt` (in progress)
 - [ ] Build T12: build start stamp in workflow state (pending)
 - [ ] Build T13: state store + events (pending)
 - [ ] Build T14: post-call recorder (pending)
@@ -36,4 +38,4 @@
 ## Blockers
 - None. All PRs target `feat/determinism-sprint/build`.
 
-## Last Updated: 2026-11-09 18:10 CST by /oss:build
+## Last Updated: 2026-11-09 19:45 CST by /oss:build

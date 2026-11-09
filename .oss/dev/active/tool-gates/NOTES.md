@@ -52,4 +52,16 @@
 - **Ship todo:** add a FOLLOWUPS entry for the shell-reading limits in DESIGN.md Known Limits.
 - `feat/tool-gates/build` is stacked on `feat/tool-gates/plan`, because the plan isn't merged into the sprint branch yet. The PR still targets `feat/determinism-sprint/build`.
 
-## Last Updated: 2026-11-09 15:05 CST by /oss:build
+- **T11b (5cb82a7/f6d628f):**
+  - Write targets and `EditCall.filePath` keep `..` as written (`raw-path.ts` `joinRaw`). `realPathResolver` walks one name at a time, following each link before it climbs `..`.
+  - Refusals name the path as the agent wrote it.
+  - BSD `sed -i ''`: the empty word is the backup suffix, not a file.
+  - **Stricter than before:** `git checkout -- .`, `git restore .`, `chmod -R … .` and `touch .` at the repo root are refused ("holds protected files"), the same as `rm -rf .`. The agent should name the files instead.
+  - **Known gaps (FOLLOWUPS at ship):**
+    - `git -C link/..` and `env -C` still collapse `..` as text.
+    - `chmod --reference=` and `chmod -w` list nothing.
+    - `ln`/`install --target-directory=` isn't read.
+    - `python -c` / `node -e` writes aren't read.
+    - A symlink swapped in after the check (time-of-check race).
+
+## Last Updated: 2026-11-09 19:45 CST by /oss:build

@@ -210,6 +210,11 @@ Collaborators (git, fs state, workflow state) are mocked at their interface in u
 - [ ] `should refuse echo x > .oss/tool-gates.json, rm ~/.oss/hooks/x.sh, mv/cp onto a protected path, and a heredoc redirect` (AC-006.2)
 - [ ] `should allow cat .oss/tool-gates.json and cp from a protected path to elsewhere` (AC-006.3)
 
+### Task 11b: Raw paths through symlinks, and common Bash writers (added in build, user pick)
+- [x] Edit and Bash paths keep their raw form. `..` is resolved through the filesystem, not as text, so `link/../tool-gates.json` is caught when `link` → `.oss/tool-gates`.
+- [x] `writeTargets` also lists: `tee` (and `-a`), `sed -i` / `perl -i`, `dd of=`, `truncate`, `touch`, `ln` (link name), `install` (destination), `chmod` / `chown`, and `git checkout -- <file>` / `git restore <file>`.
+- [x] Interpreter writes (`python -c`, `node -e`) stay a known limit.
+
 ### Phase 4 — Test-run record and RED rule
 
 ### Task 12: Build start stamp in workflow state (ADR-008)
@@ -341,7 +346,7 @@ Agents for `/oss:build`: `typescript-pro` (T2–T18), `test-engineer` (acceptanc
 - Real-session proof is the R-267 deepblue benchmark (events log counts refusals, `runner-adopted` and `gate-error`).
 - Rollback: revert the hooks.json entries (one commit) on the sprint branch.
 
-## Estimated Tasks: 23
+## Estimated Tasks: 24
 ## Estimated Test Cases: ~110
 
 ## Last Updated: 2026-11-09 14:22 CST by /oss:plan

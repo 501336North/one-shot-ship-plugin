@@ -43,7 +43,7 @@ Settings, not a rule language: the rules are code; the file turns them on and gi
   "testFilePatterns": ["**/*.test.*", "**/*.spec.*", "**/__tests__/**", "**/test_*.sh", "**/*_test.go"],
   "testCommandPatterns": ["npm test", "npm run test*", "pnpm test", "pnpm run test*", "yarn test", "yarn run test*", "bun test", "npx vitest", "npx jest", "vitest", "jest", "pytest", "python -m pytest", "go test", "cargo test", "swift test", "make test", "make check", "./gradlew test", "gradle test", "mvn test", "dotnet test", "rspec", "bundle exec rspec", "phpunit", "bash *test*.sh"],
   "sourceExtensions": [".ts", ".tsx", ".js", ".mjs", ".cjs", ".sh", ".py", ".go", ".rs", ".swift"],
-  "protectedPaths": [".oss/tool-gates.json", ".oss/tool-gates/**", "~/.oss/hooks/**", ".claude/settings*.json"],
+  "protectedPaths": [".oss/tool-gates.json", ".oss/tool-gates/**", "~/.oss/hooks/**", ".claude/settings*.json", "~/.claude/settings*.json", "~/.claude/plugins/**"],
   "productionHosts": [],
   "tagsAllowed": true
 }
@@ -144,7 +144,7 @@ Hermetic: hook JSON fed to `tool-gate` on stdin in a throwaway git repo; no real
 - An agent could run a failing command named like a test to get it adopted. Same class as the deliberately failing test above; every adoption is logged, counted by R-267, and closed by R-257.
 - A runner whose command has no test hint (e.g. plain `make`) is never adopted; the user adds it with `!`.
 - Two sessions in the same folder share `cycle.json`: no corruption (atomic writes), but one session's red can unlock the other's edits. Rare; OSS works per worktree.
-- Protected-path checks on Bash cover redirects and `rm`/`mv`/`cp`, not every possible write.
+- Protected-path checks on Bash cover redirects, `rm`/`mv`/`cp`, and (T11b, user pick) `tee`, `sed -i`/`perl -i`, `dd of=`, `truncate`, `touch`, `ln`, `install`, `chmod`/`chown`, `git checkout --`/`git restore`. Interpreter writes (`python -c`, `node -e`) are not covered, and neither is a symlink swapped in after the check (a time-of-check race).
 - **Shell reading has limits** (user, 2026-11-09, T3b review). The gate guards against an agent drifting from the laws; it is not a sandbox against a determined adversary. These forms are not read:
   - variables as the program or a git argument (`G=git; $G push -f`, `git $SUB -f`)
   - shells fed by stdin or a file (`echo … | bash`, `bash <<<`, `bash script.sh`, `source`)
@@ -182,4 +182,5 @@ No dissent records: the user overrode no concern.
 - **Wrappers are looked through.** Known wrappers (`env`, `sudo`, `command`, `nice`, `nohup`, `time`, `xargs`) are skipped to find the real program.
 - **Still unreadable:** only truly dynamic scripts, which are allowed and logged as `unreadable`.
 - **Why:** without this, `bash -c 'git push --force'` or `env git push origin main` bypassed every git rule.
+- **User-level Claude settings and the installed plugin are protected** (user pick, before T11): `~/.claude/settings*.json` and `~/.claude/plugins/**` are added to the base `protectedPaths`. Either one could switch every gate off: `disableAllHooks`, or editing the cached `hooks.json` / `tool-gate.cjs`. The user changes them with `!`. This plugin repo's own `hooks.json` is a repo path and stays editable.
 - **ANSI-C quoting** (`$'…'`) is decoded by the tokenizer, so `$'HEAD:main'` is read as `HEAD:main`.
