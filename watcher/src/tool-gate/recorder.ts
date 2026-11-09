@@ -1,8 +1,10 @@
 /**
  * Post-call recorder for the tool gate (US-005). After a Bash call, a command with a part
  * matching `testCommandPatterns` is a test run: PostToolUse is green, PostToolUseFailure with
- * "Exit code N" is red (and starts a new cycle), and a hidden result (piped, `|| true` / `|| :`,
- * interrupted, or any other failure) is unknown and leaves the cycle unchanged. It never runs
+ * "Exit code N" is red (and starts a new cycle) when a test part is the last part that ran
+ * (parts are in run order, nested `-c` parts included), and a hidden result (piped,
+ * `|| true` / `|| :`, interrupted, a command after the test, or any other failure) is unknown
+ * and leaves the cycle unchanged. It never runs
  * anything itself; the state store is its only collaborator.
  */
 
@@ -46,7 +48,7 @@ export function recordTestRun(call: PostCall, ctx: RecordContext): void {
     ? 'unknown'
     : call.hookEvent === 'PostToolUse'
       ? 'green'
-      : EXIT_CODE.test(call.error ?? '')
+      : EXIT_CODE.test(call.error ?? '') && testParts.includes(facts.parts[facts.parts.length - 1]!)
         ? 'red'
         : 'unknown';
   ctx.store.appendEvent({ ts: ctx.ts, tool: 'Bash', kind: 'test-run', command: call.command, result });
