@@ -71,6 +71,25 @@ describe('force-push rule: refusing a push that rewrites history', () => {
   );
 });
 
+describe('force-push rule: shortened force options', () => {
+  it.each([
+    ['git push --forc', '--force'],
+    ['git push --force-w', '--force-with-lease'],
+  ])('should refuse %s, which git reads as %s', (cmd, full) => {
+    const refusal = check(cmd);
+    expect(refusal?.rule).toBe('force-push');
+    expect(refusal?.reason).toContain(`\`git push ${full}\``);
+  });
+
+  it('should allow git push --f, which could mean --force or --follow-tags', () => {
+    expect(check('git push --f')).toBeNull();
+  });
+
+  it('should allow git push --no-force, which turns force off', () => {
+    expect(check('git push --no-force')).toBeNull();
+  });
+});
+
 describe('force-push rule: pushes without force and other commands', () => {
   it.each([
     'git push',

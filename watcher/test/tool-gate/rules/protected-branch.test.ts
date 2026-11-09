@@ -128,6 +128,29 @@ describe('protected-branch rule: pushing to a protected branch from anywhere', (
   });
 });
 
+describe('protected-branch rule: shortened and alias options', () => {
+  it.each([
+    ['git push --mir', '--mirror'],
+    ['git push --branches', '--branches'],
+    ['git push --bra', '--branches'],
+    ['git push --al', '--all'],
+  ])('should refuse %s, which pushes every branch, naming %s', (cmd, full) => {
+    const refusal = check(cmd, gitOn({ [CWD]: 'feature/x' }));
+    expect(refusal?.rule).toBe('protected-branch');
+    expect(refusal?.reason).toContain(`\`git push ${full}\``);
+  });
+
+  it('should refuse git push --del origin main from a feature branch', () => {
+    const refusal = check('git push --del origin main', gitOn({ [CWD]: 'feature/x' }));
+    expect(refusal?.rule).toBe('protected-branch');
+    expect(refusal?.reason).toContain('main');
+  });
+
+  it('should allow git push --push-opt main origin feature/x, where main is only the option value', () => {
+    expect(check('git push --push-opt main origin feature/x', gitOn({ [CWD]: 'feature/x' }))).toBeNull();
+  });
+});
+
 describe('protected-branch rule: detached HEAD, other commands and settings', () => {
   it('should allow a commit on a detached HEAD', () => {
     expect(check('git commit -m "wip"', gitOn({ [CWD]: null }))).toBeNull();
