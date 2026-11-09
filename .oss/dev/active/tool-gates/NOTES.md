@@ -73,5 +73,11 @@
   - `EventKind` is one of `refusal | test-run | runner-adopted | unreadable | gate-error | rule-file-rejected`. The `result` union is `red | green | unknown | refused | allowed`. The caller sets `ts`.
   - A second cycle (b18b57a/1cb96ec) added `O_NOFOLLOW` on `events.ndjson`, `cycle.json` reads and the temp file (`O_EXCL`). Reads through a linked `.oss/tool-gates` return null. A refused write throws, and Task 17 turns that into `gate-error`.
   - **Known gap (FOLLOWUPS at ship):** the temp name is `cycle.json.<pid>.tmp` with `O_EXCL`. If a crash leaves it behind and a later process reuses the pid, `writeCycle` throws (a `gate-error`, so the call is allowed) until the file is removed. A random temp name fixes this.
+- **T14 (recorder.ts):**
+  - Signature: `recordTestRun(call: PostCall, ctx: RecordContext)`. `ctx` carries `settings`, `store`, `home`, `ts` and `buildStartedAt`, all passed in by Task 17.
+  - **Red:** only a PostToolUseFailure with `Exit code N`, and only when the test is the last part that runs. `npm test; false`, `npm test && lint` and `bash -c 'npm test; false'` are recorded unknown. This was closed in a second cycle (1e552dd/6e5a1b3).
+  - **Unknown:** piped, `|| true`, an interrupt, or failure text other than `Exit code N`. The event is logged and the cycle is left unchanged.
+  - **What a red resets:** only `files`. `adoptedCommand` is kept within the same build. A cycle from another build stamp is replaced.
+  - **For Task 16:** `cycle.adoptedCommand` isn't yet treated as a test command, and adoption needs `currentCommand` plus the non-zero exit of an unlisted command.
 
-## Last Updated: 2026-11-09 20:30 CST by /oss:build
+## Last Updated: 2026-11-09 21:00 CST by /oss:build

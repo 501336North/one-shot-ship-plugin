@@ -233,12 +233,12 @@ Collaborators (git, fs state, workflow state) are mocked at their interface in u
 
 ### Task 14: Post-call recorder (US-005)
 **Tests (RED):** `watcher/test/tool-gate/recorder.test.ts`, with `StateStore` mocked:
-- [ ] `should record green for a listed test command on PostToolUse` (AC-005.1)
-- [ ] `should record red on PostToolUseFailure with "Exit code N"` (AC-005.2), starting a new cycle (AC-004.7)
-- [ ] `should record unknown for piped, || true, || : and is_interrupt runs, and leave the cycle unchanged` (AC-005.3)
-- [ ] `should record nothing for a non-test command` (AC-005.4)
-- [ ] `should recognize pnpm test, npm run test:unit, make test, swift test, ./gradlew test, dotnet test` (AC-005.6)
-- [ ] `should stamp the cycle with the current build's currentCommandStartedAt`
+- [x] `should record green for a listed test command on PostToolUse` (AC-005.1)
+- [x] `should record red on PostToolUseFailure with "Exit code N"` (AC-005.2), starting a new cycle (AC-004.7)
+- [x] `should record unknown for piped, || true, || : and is_interrupt runs, and leave the cycle unchanged` (AC-005.3)
+- [x] `should record nothing for a non-test command` (AC-005.4)
+- [x] `should recognize pnpm test, npm run test:unit, make test, swift test, ./gradlew test, dotnet test` (AC-005.6)
+- [x] `should stamp the cycle with the current build's currentCommandStartedAt`
 
 AC-005.5 (runs no tests) is held by design: the recorder has no process-spawning collaborator. A test asserts that `runToolGate` deps expose none.
 
