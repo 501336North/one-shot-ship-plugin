@@ -130,4 +130,60 @@ describe('tool-gate state store', () => {
     expect(fs.readdirSync(outsideOss)).toEqual([]);
     expect(fs.readdirSync(outsideState)).toEqual([]);
   });
+
+  it('should refuse to append an event through a symlinked events.ndjson', () => {
+    const repo = tempDir();
+    const outsideFile = path.join(tempDir(), 'victim.txt');
+    fs.writeFileSync(outsideFile, 'untouched\n');
+    const stateDir = path.join(repo, '.oss', 'tool-gates');
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.symlinkSync(outsideFile, path.join(stateDir, 'events.ndjson'));
+
+    const event: GateEvent = {
+      ts: '2026-11-09T20:04:00.000Z',
+      tool: 'Bash',
+      kind: 'test-run',
+      command: 'npm test',
+      result: 'green',
+    };
+    expect(() => fileStateStore(repo).appendEvent(event)).toThrow();
+    expect(fs.readFileSync(outsideFile, 'utf8')).toBe('untouched\n');
+  });
+
+  it('should refuse to write cycle.json through a planted symlink at the temp path', () => {
+    const repo = tempDir();
+    const outsideFile = path.join(tempDir(), 'victim.txt');
+    fs.writeFileSync(outsideFile, 'untouched\n');
+    const stateDir = path.join(repo, '.oss', 'tool-gates');
+    fs.mkdirSync(stateDir, { recursive: true });
+    // The store writes its temp file next to cycle.json, named after this process.
+    fs.symlinkSync(outsideFile, path.join(stateDir, `cycle.json.${process.pid}.tmp`));
+
+    try {
+      fileStateStore(repo).writeCycle(redCycle);
+    } catch {
+      // Refusing is fine; writing through the link is not.
+    }
+    expect(fs.readFileSync(outsideFile, 'utf8')).toBe('untouched\n');
+  });
+
+  it('should treat a symlinked .oss/tool-gates or cycle.json as no run yet when reading', () => {
+    const recorded = JSON.stringify(redCycle);
+
+    // `.oss/tool-gates` links to an outside folder holding a red cycle.
+    const outsideState = tempDir();
+    fs.writeFileSync(path.join(outsideState, 'cycle.json'), recorded);
+    const dirLinked = tempDir();
+    fs.mkdirSync(path.join(dirLinked, '.oss'));
+    fs.symlinkSync(outsideState, path.join(dirLinked, '.oss', 'tool-gates'));
+    expect(fileStateStore(dirLinked).readCycle()).toBeNull();
+
+    // `cycle.json` itself links to an outside file holding a red cycle.
+    const outsideFile = path.join(tempDir(), 'fake-cycle.json');
+    fs.writeFileSync(outsideFile, recorded);
+    const fileLinked = tempDir();
+    fs.mkdirSync(path.join(fileLinked, '.oss', 'tool-gates'), { recursive: true });
+    fs.symlinkSync(outsideFile, path.join(fileLinked, '.oss', 'tool-gates', 'cycle.json'));
+    expect(fileStateStore(fileLinked).readCycle()).toBeNull();
+  });
 });
