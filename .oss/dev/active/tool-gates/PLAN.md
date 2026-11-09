@@ -265,11 +265,11 @@ Not covered: Bash writes onto source files. The design applies the RED rule to E
 
 ### Task 17: `runToolGate` + CLI entry + failure handling (US-010)
 **Tests (RED):** Task 1's acceptance file goes green, plus `watcher/test/tool-gate/failure.test.ts`:
-- [ ] `should allow, log gate-error and print the tell line when a collaborator throws` (AC-010.1)
-- [ ] `should allow, log gate-error and tell when the decision takes over 2 s` (AC-010.2), using a mocked GitReader that never resolves (fake timers, no real 2 s wait)
-- [ ] `should allow and log unreadable for eval / $( … ) commands`
-- [ ] `should print rule-file-rejected's one line once per call and still apply base rules`
-- [ ] `should emit no stdout on allow and never a permissionDecision` (contract 5)
+- [x] `should allow, log gate-error and print the tell line when a collaborator throws` (AC-010.1)
+- [x] `should allow, log gate-error and tell when the decision takes over 2 s` (AC-010.2), using a mocked GitReader that never resolves (fake timers, no real 2 s wait)
+- [x] `should allow and log unreadable for eval / $( … ) commands`
+- [x] `should print rule-file-rejected's one line once per call and still apply base rules`
+- [x] `should emit no stdout on allow and never a permissionDecision` (contract 5)
 
 **Implementation (GREEN):**
 - `watcher/src/tool-gate/gate.ts` and `watcher/src/cli/tool-gate.ts`: read stdin, pick `pre`/`post` from argv, run under a 2 s timer and a top-level catch.
