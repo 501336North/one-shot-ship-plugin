@@ -32,4 +32,9 @@
 
 - 2026-11-09 after T3c: `watcher/test/tool-gate/` has 193 tests (tokenizer 33, reader 160), all passing. The whole suite: 4242 tests, 17 failed. These are the 14 RED acceptance tests plus the 3 failures already on the base branch (fixed separately in PR #221). tsc is clean.
 
-## Last Updated: 2026-11-09 16:55 CST by /oss:build
+## Speed (T18, measured 2026-11-09 17:58 CST, Mac, in isolation)
+- **In-process decision** (`git push origin feat/speed` on a feature branch, which includes a real git branch read): median 12.1 ms, max 13.4 ms over 20 calls. The test asserts a median under 100 ms and a max under 1000 ms. That is looser than the plan's "max under 100 ms", per the flakiness law.
+- **End to end** (`node dist/cli/tool-gate.cjs pre`, `git status`): median **57.0 ms**, max 63.4 ms over 10 spawns. The test asserts a median under 300 ms.
+- **Bundle size:** 57,308 bytes.
+
+## Last Updated: 2026-11-09 17:58 CST by /oss:build

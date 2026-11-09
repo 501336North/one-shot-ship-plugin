@@ -278,10 +278,10 @@ Not covered: Bash writes onto source files. The design applies the RED rule to E
 ### Task 18: Bundle, dist guard, speed
 **Tests (RED):**
 - `watcher/test/hooks/tool-gate-dist.test.ts`, mirroring `chain-trigger-dist.test.ts`:
-  - [ ] `should match the committed dist/cli/tool-gate.cjs to a fresh bundle`
+  - [x] `should match the committed dist/cli/tool-gate.cjs to a fresh bundle`
 - `watcher/test/cli/tool-gate.speed.test.ts`:
-  - [ ] `should decide a Bash call in under 100 ms in-process (max of 20 calls)`. This is the design's target for the gate's own work.
-  - [ ] `should answer end-to-end through node tool-gate.cjs with a median under 300 ms over 10 spawns`. The generous threshold covers Node start-up, per the flakiness law. The measured median goes in TESTING.md.
+  - [x] `should decide a Bash call in under 100 ms in-process (max of 20 calls)`. This is the design's target for the gate's own work.
+  - [x] `should answer end-to-end through node tool-gate.cjs with a median under 300 ms over 10 spawns`. The generous threshold covers Node start-up, per the flakiness law. The measured median goes in TESTING.md.
 
 **Implementation (GREEN):**
 - `watcher/scripts/tool-gate-bundle-options.mjs`.
