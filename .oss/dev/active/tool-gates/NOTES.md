@@ -88,5 +88,12 @@
     - After green, a new file: "Refused: `<rel>` is not in this cycle and the last test run was green. Write a failing test and run it before editing a new source file."
   - **What it records:** the cycle stores `filePath` as given, raw `..` included. That is stricter, never a bypass.
   - **Refusal events:** the rule doesn't log them; Task 17 logs them centrally.
+- **T16 (recorder.ts):**
+  - `RecordContext` gains `currentCommand`. `BUILD_COMMAND` is exported from `workflow-state.ts`.
+  - **Adoption:** the command must be the last part that ran, failing with `Exit code N` in build. No part may be piped or followed by `|| true`.
+    - It must contain a test word (the `TEST_WORDS` code constant) or name a test file (from settings).
+    - Its program must not be in `NEVER_ADOPTED`: `test`, `[`, `[[`, `grep`, `egrep`, `fgrep`, `rg`, `git`, `find`, `echo`, `printf`, `ls`, `cat`. This list is a code constant and can only narrow adoption. It closes fake reds from `test -f x`, `grep check` and `git check-ignore`.
+    - One adopted runner per build. `adoptedCommand` stores the last part's words, matched later with `matchCommand`.
+  - The recorder uses `call.cwd` as the root for test-file globs. Task 17 may pass the real root.
 
-## Last Updated: 2026-11-09 21:30 CST by /oss:build
+## Last Updated: 2026-11-09 22:00 CST by /oss:build

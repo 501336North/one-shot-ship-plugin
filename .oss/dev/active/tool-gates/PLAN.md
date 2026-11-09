@@ -254,12 +254,12 @@ Not covered: Bash writes onto source files. The design applies the RED rule to E
 
 ### Task 16: Runner adoption (US-004 amendment, ADR-002)
 **Tests (RED):** `watcher/test/tool-gate/runner-adoption.test.ts`, with `StateStore` mocked:
-- [ ] `should adopt ./run-tests.sh that exits non-zero during build, log runner-adopted once and count red` (AC-004.9)
-- [ ] `should count later runs of the adopted command red or green`
-- [ ] `should adopt a command that names a test file (node foo.test.js)`
-- [ ] `should not adopt plain make, git checkout, or npm run typecheck` (AC-004.11, decision 4)
-- [ ] `should not adopt outside build or from a piped / || true run`
-- [ ] `should keep source edits refused for an agent that runs no test-like command, after 20 attempts` (AC-004.10)
+- [x] `should adopt ./run-tests.sh that exits non-zero during build, log runner-adopted once and count red` (AC-004.9)
+- [x] `should count later runs of the adopted command red or green`
+- [x] `should adopt a command that names a test file (node foo.test.js)`
+- [x] `should not adopt plain make, git checkout, or npm run typecheck` (AC-004.11, decision 4)
+- [x] `should not adopt outside build or from a piped / || true run`
+- [x] `should keep source edits refused for an agent that runs no test-like command, after 20 attempts` (AC-004.10)
 
 ### Phase 5 — Boundary, failure, wiring
 
