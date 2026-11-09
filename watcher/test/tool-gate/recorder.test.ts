@@ -110,6 +110,26 @@ describe('post-call test-run recorder', () => {
     }
   });
 
+  it('should only count a failure as red when the test is the last command that ran', () => {
+    const cycle: CycleRecord = { startedAt: BUILD, lastResult: 'green', files: ['/work/repo/src/a.ts'], adoptedCommand: null };
+
+    // Something ran after the test, so the failure may not be the test's: a red run can't be made up this way.
+    for (const command of ['npm test; false', 'npm test && npm run lint', "bash -c 'npm test; false'"]) {
+      const store = mockStore(cycle);
+      record(failure(command), store);
+      expect(store.appendEvent).toHaveBeenCalledWith(testRun(command, 'unknown'));
+      expect(store.writeCycle).not.toHaveBeenCalled();
+    }
+
+    // The test ran last, so its failure is a real red run.
+    for (const command of ['cd watcher && npm test', 'npm test']) {
+      const store = mockStore(cycle);
+      record(failure(command), store);
+      expect(store.appendEvent).toHaveBeenCalledWith(testRun(command, 'red'));
+      expect(store.writeCycle).toHaveBeenCalledWith({ startedAt: BUILD, lastResult: 'red', files: [], adoptedCommand: null });
+    }
+  });
+
   it('should record nothing for a non-test command', () => {
     for (const call of [success('git status'), failure('npm run lint'), failure('ls missing | wc -l')]) {
       const store = mockStore({ startedAt: BUILD, lastResult: 'red', files: [], adoptedCommand: null });
