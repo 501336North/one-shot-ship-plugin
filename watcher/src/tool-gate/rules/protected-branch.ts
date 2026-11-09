@@ -1,7 +1,7 @@
 /**
  * Protected-branch rule (US-001): refuses `git commit` / `git push` while the part's
  * directory is on a protected branch, and a push whose destination is a protected branch
- * (explicit refspec, `--all` or `--mirror`) from any branch. Branch names come only from
+ * (explicit refspec, `--all`, `--branches` or `--mirror`) from any branch. Branch names come only from
  * the settings.
  */
 
@@ -35,7 +35,7 @@ export function checkProtectedBranch(part: CommandPart, settings: GateSettings, 
   if (facts.subcommand !== 'push') return null;
 
   const { options, positional } = readPushWords(facts.args);
-  const everything = options.find((word) => word === '--all' || word === '--mirror');
+  const everything = options.find((word) => word === '--all' || word === '--branches' || word === '--mirror');
   if (everything !== undefined) {
     return {
       rule: 'protected-branch',
