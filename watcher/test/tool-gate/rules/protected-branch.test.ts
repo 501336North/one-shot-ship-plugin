@@ -29,7 +29,7 @@ const SETTINGS: GateSettings = {
 
 /** A git reader where each directory is on the given branch (null = detached or not a repo). */
 function gitOn(branches: Record<string, string | null>): GitReader & { currentBranch: ReturnType<typeof vi.fn> } {
-  return { currentBranch: vi.fn((dir: string) => branches[dir] ?? null) };
+  return { currentBranch: vi.fn(async (dir: string) => branches[dir] ?? null) };
 }
 
 function partsOf(cmd: string): CommandPart[] {
@@ -38,16 +38,19 @@ function partsOf(cmd: string): CommandPart[] {
   return result.parts;
 }
 
-function check(cmd: string, git: GitReader, settings: GateSettings = SETTINGS) {
-  const parts = partsOf(cmd);
-  return parts.map((part) => checkProtectedBranch(part, settings, git)).find((r) => r !== null) ?? null;
+async function check(cmd: string, git: GitReader, settings: GateSettings = SETTINGS) {
+  for (const part of partsOf(cmd)) {
+    const refusal = await checkProtectedBranch(part, settings, git);
+    if (refusal !== null) return refusal;
+  }
+  return null;
 }
 
 describe('protected-branch rule: committing or pushing while on a protected branch', () => {
   it.each(['git push', 'git commit -m "wip"', 'git push origin feature/x'])(
     'should refuse %s when the directory is on main, naming the branch and the command',
-    (cmd) => {
-      const refusal = check(cmd, gitOn({ [CWD]: 'main' }));
+    async (cmd) => {
+      const refusal = await check(cmd, gitOn({ [CWD]: 'main' }));
       expect(refusal).not.toBeNull();
       expect(refusal?.rule).toBe('protected-branch');
       expect(refusal?.reason).toMatch(/^Refused: /);
@@ -56,32 +59,32 @@ describe('protected-branch rule: committing or pushing while on a protected bran
     },
   );
 
-  it('should refuse on master too', () => {
-    expect(check('git commit', gitOn({ [CWD]: 'master' }))?.reason).toContain('master');
+  it('should refuse on master too', async () => {
+    expect(await check('git commit', gitOn({ [CWD]: 'master' }))?.reason).toContain('master');
   });
 
   it.each(['git push', 'git commit -m "wip"', 'git push origin feature/x'])(
     'should allow %s on a feature branch',
-    (cmd) => {
-      expect(check(cmd, gitOn({ [CWD]: 'feature/x' }))).toBeNull();
+    async (cmd) => {
+      expect(await check(cmd, gitOn({ [CWD]: 'feature/x' }))).toBeNull();
     },
   );
 
   it.each(['cd sub && git push', 'git -C sub push'])(
     'should use the branch of the directory the command really runs in: %s',
-    (cmd) => {
+    async (cmd) => {
       const git = gitOn({ [CWD]: 'feature/x', [`${CWD}/sub`]: 'main' });
-      expect(check(cmd, git)?.reason).toContain('main');
+      expect(await check(cmd, git)?.reason).toContain('main');
       expect(git.currentBranch).toHaveBeenCalledWith(`${CWD}/sub`);
     },
   );
 
-  it('should allow pushing from a feature-branch subfolder while the outer folder is on main', () => {
-    expect(check('git -C sub push', gitOn({ [CWD]: 'main', [`${CWD}/sub`]: 'feature/x' }))).toBeNull();
+  it('should allow pushing from a feature-branch subfolder while the outer folder is on main', async () => {
+    expect(await check('git -C sub push', gitOn({ [CWD]: 'main', [`${CWD}/sub`]: 'feature/x' }))).toBeNull();
   });
 
-  it('should allow a commit whose message mentions pushing to main on a feature branch', () => {
-    expect(check('git commit -m "stop push to main"', gitOn({ [CWD]: 'feature/x' }))).toBeNull();
+  it('should allow a commit whose message mentions pushing to main on a feature branch', async () => {
+    expect(await check('git commit -m "stop push to main"', gitOn({ [CWD]: 'feature/x' }))).toBeNull();
   });
 });
 
@@ -103,8 +106,8 @@ describe('protected-branch rule: pushing to a protected branch from anywhere', (
     'git push --receive-pack git-receive-pack origin main',
     'git push --exec git-receive-pack origin main',
     'git push --repo origin origin main',
-  ])('should refuse %s from a feature branch', (cmd) => {
-    const refusal = check(cmd, gitOn({ [CWD]: 'feature/x' }));
+  ])('should refuse %s from a feature branch', async (cmd) => {
+    const refusal = await check(cmd, gitOn({ [CWD]: 'feature/x' }));
     expect(refusal?.rule).toBe('protected-branch');
     expect(refusal?.reason).toMatch(/^Refused: /);
     expect(refusal?.reason).toContain('main');
@@ -119,12 +122,12 @@ describe('protected-branch rule: pushing to a protected branch from anywhere', (
     'git push --push-option main origin feature/x',
     'git push --repo main origin feature/x',
     'git push main',
-  ])('should allow %s, which does not push to a protected branch', (cmd) => {
-    expect(check(cmd, gitOn({ [CWD]: 'feature/x' }))).toBeNull();
+  ])('should allow %s, which does not push to a protected branch', async (cmd) => {
+    expect(await check(cmd, gitOn({ [CWD]: 'feature/x' }))).toBeNull();
   });
 
-  it('should allow a plain push from a feature branch whose upstream may be main', () => {
-    expect(check('git push', gitOn({ [CWD]: 'feature/x' }))).toBeNull();
+  it('should allow a plain push from a feature branch whose upstream may be main', async () => {
+    expect(await check('git push', gitOn({ [CWD]: 'feature/x' }))).toBeNull();
   });
 });
 
@@ -134,51 +137,51 @@ describe('protected-branch rule: shortened and alias options', () => {
     ['git push --branches', '--branches'],
     ['git push --bra', '--branches'],
     ['git push --al', '--all'],
-  ])('should refuse %s, which pushes every branch, naming %s', (cmd, full) => {
-    const refusal = check(cmd, gitOn({ [CWD]: 'feature/x' }));
+  ])('should refuse %s, which pushes every branch, naming %s', async (cmd, full) => {
+    const refusal = await check(cmd, gitOn({ [CWD]: 'feature/x' }));
     expect(refusal?.rule).toBe('protected-branch');
     expect(refusal?.reason).toContain(`\`git push ${full}\``);
   });
 
-  it('should refuse git push --del origin main from a feature branch', () => {
-    const refusal = check('git push --del origin main', gitOn({ [CWD]: 'feature/x' }));
+  it('should refuse git push --del origin main from a feature branch', async () => {
+    const refusal = await check('git push --del origin main', gitOn({ [CWD]: 'feature/x' }));
     expect(refusal?.rule).toBe('protected-branch');
     expect(refusal?.reason).toContain('main');
   });
 
-  it('should allow git push --push-opt main origin feature/x, where main is only the option value', () => {
-    expect(check('git push --push-opt main origin feature/x', gitOn({ [CWD]: 'feature/x' }))).toBeNull();
+  it('should allow git push --push-opt main origin feature/x, where main is only the option value', async () => {
+    expect(await check('git push --push-opt main origin feature/x', gitOn({ [CWD]: 'feature/x' }))).toBeNull();
   });
 });
 
 describe('protected-branch rule: detached HEAD, other commands and settings', () => {
-  it('should allow a commit on a detached HEAD', () => {
-    expect(check('git commit -m "wip"', gitOn({ [CWD]: null }))).toBeNull();
+  it('should allow a commit on a detached HEAD', async () => {
+    expect(await check('git commit -m "wip"', gitOn({ [CWD]: null }))).toBeNull();
   });
 
-  it('should still refuse a push to main from a detached HEAD', () => {
-    expect(check('git push origin HEAD:main', gitOn({ [CWD]: null }))?.reason).toContain('main');
+  it('should still refuse a push to main from a detached HEAD', async () => {
+    expect(await check('git push origin HEAD:main', gitOn({ [CWD]: null }))?.reason).toContain('main');
   });
 
-  it('should not apply to a command that is not git', () => {
+  it('should not apply to a command that is not git', async () => {
     const git = gitOn({ [CWD]: 'main' });
-    expect(check('echo git push', git)).toBeNull();
+    expect(await check('echo git push', git)).toBeNull();
     expect(git.currentBranch).not.toHaveBeenCalled();
   });
 
-  it('should not apply to other git commands, even on main', () => {
+  it('should not apply to other git commands, even on main', async () => {
     const git = gitOn({ [CWD]: 'main' });
-    expect(check('git status', git)).toBeNull();
-    expect(check('git log --oneline main', git)).toBeNull();
+    expect(await check('git status', git)).toBeNull();
+    expect(await check('git log --oneline main', git)).toBeNull();
   });
 
-  it('should take the protected branches only from the settings', () => {
+  it('should take the protected branches only from the settings', async () => {
     const settings: GateSettings = { ...SETTINGS, protectedBranches: ['release'] };
-    expect(check('git push', gitOn({ [CWD]: 'main' }), settings)).toBeNull();
-    expect(check('git commit', gitOn({ [CWD]: 'release' }), settings)?.reason).toContain('release');
-    expect(check('git push origin HEAD:release', gitOn({ [CWD]: 'feature/x' }), settings)?.reason).toContain(
+    expect(await check('git push', gitOn({ [CWD]: 'main' }), settings)).toBeNull();
+    expect(await check('git commit', gitOn({ [CWD]: 'release' }), settings)?.reason).toContain('release');
+    expect(await check('git push origin HEAD:release', gitOn({ [CWD]: 'feature/x' }), settings)?.reason).toContain(
       'release',
     );
-    expect(check('git push origin HEAD:main', gitOn({ [CWD]: 'feature/x' }), settings)).toBeNull();
+    expect(await check('git push origin HEAD:main', gitOn({ [CWD]: 'feature/x' }), settings)).toBeNull();
   });
 });

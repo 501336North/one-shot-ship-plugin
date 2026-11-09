@@ -40,33 +40,33 @@ afterEach(() => {
 });
 
 describe('realGitReader: which branch a folder is on', () => {
-  it('should return main for a repo on main', () => {
-    expect(realGitReader.currentBranch(repoOnMain())).toBe('main');
+  it('should return main for a repo on main', async () => {
+    expect(await realGitReader.currentBranch(repoOnMain())).toBe('main');
   });
 
-  it('should return the feature branch name for a repo on a feature branch', () => {
+  it('should return the feature branch name for a repo on a feature branch', async () => {
     const repo = repoOnMain();
     git(repo, ['checkout', '-q', '-b', 'feat/x/build']);
-    expect(realGitReader.currentBranch(repo)).toBe('feat/x/build');
+    expect(await realGitReader.currentBranch(repo)).toBe('feat/x/build');
   });
 
-  it('should return the branch for a subfolder of a repo', () => {
+  it('should return the branch for a subfolder of a repo', async () => {
     const repo = repoOnMain();
     fs.mkdirSync(path.join(repo, 'sub'));
-    expect(realGitReader.currentBranch(path.join(repo, 'sub'))).toBe('main');
+    expect(await realGitReader.currentBranch(path.join(repo, 'sub'))).toBe('main');
   });
 
-  it('should return no branch for a detached HEAD', () => {
+  it('should return no branch for a detached HEAD', async () => {
     const repo = repoOnMain();
     git(repo, ['checkout', '-q', '--detach']);
-    expect(realGitReader.currentBranch(repo)).toBeNull();
+    expect(await realGitReader.currentBranch(repo)).toBeNull();
   });
 
-  it('should return no branch for a folder that is not a git repo', () => {
-    expect(realGitReader.currentBranch(tempDir())).toBeNull();
+  it('should return no branch for a folder that is not a git repo', async () => {
+    expect(await realGitReader.currentBranch(tempDir())).toBeNull();
   });
 
-  it('should return no branch for a folder that does not exist', () => {
-    expect(realGitReader.currentBranch(path.join(tempDir(), 'missing'))).toBeNull();
+  it('should return no branch for a folder that does not exist', async () => {
+    expect(await realGitReader.currentBranch(path.join(tempDir(), 'missing'))).toBeNull();
   });
 });
