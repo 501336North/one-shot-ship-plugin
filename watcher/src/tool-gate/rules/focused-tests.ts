@@ -6,7 +6,7 @@
 
 import path from 'node:path';
 import type { EditCall } from '../edit-call.js';
-import { matchPath } from '../patterns.js';
+import { matchAnyPath } from '../patterns.js';
 import type { GateSettings } from '../rule-file.js';
 import type { Refusal } from './refusal.js';
 
@@ -37,7 +37,7 @@ function displayPath(filePath: string, root: string): string {
 }
 
 export function checkFocusedTests(call: EditCall, settings: GateSettings, root: string, home: string): Refusal | null {
-  if (!settings.testFilePatterns.some((glob) => matchPath(glob, call.filePath, { home, root }))) return null;
+  if (!matchAnyPath(settings.testFilePatterns, call.filePath, { home, root })) return null;
   for (const { before, after } of call.changes) {
     const marker = addedMarker(before, after);
     if (marker !== undefined) {

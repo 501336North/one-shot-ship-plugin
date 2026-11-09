@@ -7,8 +7,8 @@
  *
  * Rules and state are found from the project folder: Claude Code's `CLAUDE_PROJECT_DIR` when it is
  * an existing absolute folder (so a `.git` planted in a subfolder can't move it), else the nearest
- * folder at or above the hook's `cwd` holding `.git` (or `cwd` outside a repo). Rule files, `.oss/tool-gates/` and `.oss/workflow-state.json`
- * all live there. A crash or a decision slower than 2 s allows the call, logs `gate-error` and
+ * folder at or above the hook's `cwd` holding `.git` (or `cwd` outside a repo). Rule files,
+ * `.oss/tool-gates/` and `.oss/workflow-state.json` all live there. A crash or a decision slower than 2 s allows the call, logs `gate-error` and
  * tells the agent (ADR-005). A rejected repo rule file is reported on every call.
  */
 
@@ -121,6 +121,12 @@ function bashCommand(toolInput: unknown): string | null {
   if (typeof toolInput !== 'object' || toolInput === null) return null;
   const command = (toolInput as Record<string, unknown>).command;
   return typeof command === 'string' ? command : null;
+}
+
+/** The event name for the allow-and-tell JSON: the input's own, else the mode's. */
+function tellEvent(hook: HookCall | null, mode: GateMode): string {
+  if (hook !== null && HOOK_EVENTS.has(hook.hookEventName)) return hook.hookEventName;
+  return mode === 'pre' ? 'PreToolUse' : 'PostToolUse';
 }
 
 /** Exit 0, with the text as context for the agent (no permission decision), or nothing at all. */
@@ -241,13 +247,7 @@ export async function runToolGate(req: GateRequest, deps: GateDeps = {}): Promis
     } catch {
       // Logging is best effort; the call is allowed either way.
     }
-    const event =
-      hook !== null && HOOK_EVENTS.has(hook.hookEventName)
-        ? hook.hookEventName
-        : req.mode === 'pre'
-          ? 'PreToolUse'
-          : 'PostToolUse';
-    return allow(event, TELL);
+    return allow(tellEvent(hook, req.mode), TELL);
   } finally {
     clearTimeout(timer);
   }

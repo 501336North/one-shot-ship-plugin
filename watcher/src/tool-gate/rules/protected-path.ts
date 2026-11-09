@@ -12,7 +12,7 @@ import path from 'node:path';
 import type { CommandPart } from '../command-reader.js';
 import type { EditCall } from '../edit-call.js';
 import type { PathResolver } from '../path-resolver.js';
-import { matchPath } from '../patterns.js';
+import { matchAnyPath } from '../patterns.js';
 import type { GateSettings } from '../rule-file.js';
 import type { Refusal } from './refusal.js';
 
@@ -38,9 +38,7 @@ function formsOf(absPath: string, paths: PathResolver): string[] {
 }
 
 function isProtected(absPath: string, settings: GateSettings, places: Places[], paths: PathResolver): boolean {
-  return formsOf(absPath, paths).some((p) =>
-    places.some((at) => settings.protectedPaths.some((glob) => matchPath(glob, p, at))),
-  );
+  return formsOf(absPath, paths).some((p) => places.some((at) => matchAnyPath(settings.protectedPaths, p, at)));
 }
 
 /** The absolute folder part of a glob before its first wildcard segment. */

@@ -7,7 +7,7 @@
 
 import path from 'node:path';
 import type { EditCall } from '../edit-call.js';
-import { matchPath } from '../patterns.js';
+import { matchAnyPath, matchPath } from '../patterns.js';
 import type { GateSettings } from '../rule-file.js';
 import type { StateStore } from '../state-store.js';
 import { BUILD_COMMAND, type WorkflowState } from '../workflow-state.js';
@@ -26,7 +26,7 @@ function isSourceFile(filePath: string, settings: GateSettings, root: string, ho
   return (
     settings.sourceExtensions.includes(path.extname(filePath)) &&
     !matchPath(DEV_DOCS, filePath, { home, root }) &&
-    !settings.testFilePatterns.some((glob) => matchPath(glob, filePath, { home, root }))
+    !matchAnyPath(settings.testFilePatterns, filePath, { home, root })
   );
 }
 

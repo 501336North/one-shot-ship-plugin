@@ -818,6 +818,9 @@ function matchPath(glob, absPath, opts) {
   else full = import_node_path3.default.join(opts.root, glob);
   return globToRegex(full).test(import_node_path3.default.normalize(absPath));
 }
+function matchAnyPath(globs, absPath, opts) {
+  return globs.some((glob) => matchPath(glob, absPath, opts));
+}
 function wordMatches(patternWord, word) {
   const source = patternWord.split("*").map(escape).join(".*");
   return new RegExp(`^${source}$`).test(word);
@@ -856,8 +859,14 @@ var TEST_WORDS = /* @__PURE__ */ new Set(["test", "tests", "spec", "specs", "che
 var NEVER_ADOPTED = /* @__PURE__ */ new Set(["test", "[", "[[", "grep", "egrep", "fgrep", "rg", "git", "find", "echo", "printf", "ls", "cat"]);
 function isTestLike(part, settings, root, home) {
   return part.words.some(
-    (word) => word.toLowerCase().split(/[^a-z0-9]+/).some((piece) => TEST_WORDS.has(piece)) || settings.testFilePatterns.some((glob) => matchPath(glob, import_node_path5.default.resolve(part.cwd, word), { home, root }))
+    (word) => word.toLowerCase().split(/[^a-z0-9]+/).some((piece) => TEST_WORDS.has(piece)) || matchAnyPath(settings.testFilePatterns, import_node_path5.default.resolve(part.cwd, word), { home, root })
   );
+}
+function runResult(call, testParts, last, failedWithExitCode) {
+  const hidden = call.isInterrupt === true || testParts.some((part) => part.pipedOut || part.orTrue);
+  if (hidden) return "unknown";
+  if (call.hookEvent === "PostToolUse") return "green";
+  return failedWithExitCode && last !== void 0 && testParts.includes(last) ? "red" : "unknown";
 }
 function recordTestRun(call, ctx) {
   const facts = readCommand(call.command, call.cwd, ctx.home);
@@ -877,8 +886,7 @@ function recordTestRun(call, ctx) {
     testParts = [last];
     ctx.store.appendEvent({ ts: ctx.ts, tool: "Bash", kind: "runner-adopted", command: call.command, result: "red" });
   }
-  const hidden = call.isInterrupt === true || testParts.some((part) => part.pipedOut || part.orTrue);
-  const result = hidden ? "unknown" : call.hookEvent === "PostToolUse" ? "green" : failedWithExitCode && last !== void 0 && testParts.includes(last) ? "red" : "unknown";
+  const result = runResult(call, testParts, last, failedWithExitCode);
   ctx.store.appendEvent({ ts: ctx.ts, tool: "Bash", kind: "test-run", command: call.command, result });
   if (result === "unknown") return;
   ctx.store.writeCycle({
@@ -990,7 +998,7 @@ function displayPath(filePath, root) {
   return relative === ".." || relative.startsWith(`..${import_node_path7.default.sep}`) || import_node_path7.default.isAbsolute(relative) ? filePath : relative;
 }
 function checkFocusedTests(call, settings, root, home) {
-  if (!settings.testFilePatterns.some((glob) => matchPath(glob, call.filePath, { home, root }))) return null;
+  if (!matchAnyPath(settings.testFilePatterns, call.filePath, { home, root })) return null;
   for (const { before, after } of call.changes) {
     const marker = addedMarker(before, after);
     if (marker !== void 0) {
@@ -1140,9 +1148,7 @@ function formsOf(absPath, paths) {
   return [import_node_path8.default.normalize(absPath), paths.realpath(absPath)];
 }
 function isProtected(absPath, settings, places, paths) {
-  return formsOf(absPath, paths).some(
-    (p) => places.some((at) => settings.protectedPaths.some((glob) => matchPath(glob, p, at)))
-  );
+  return formsOf(absPath, paths).some((p) => places.some((at) => matchAnyPath(settings.protectedPaths, p, at)));
 }
 function fixedFolder(glob, at) {
   let full;
@@ -1196,7 +1202,7 @@ var import_node_path9 = __toESM(require("node:path"), 1);
 var NO_RUN = "Refused: No failing test recorded. Write a failing test and run it. If your tests run with a command the gate doesn't recognize, ask the user to add it to .oss/tool-gates.json with `!`.";
 var DEV_DOCS = ".oss/dev/**";
 function isSourceFile(filePath, settings, root, home) {
-  return settings.sourceExtensions.includes(import_node_path9.default.extname(filePath)) && !matchPath(DEV_DOCS, filePath, { home, root }) && !settings.testFilePatterns.some((glob) => matchPath(glob, filePath, { home, root }));
+  return settings.sourceExtensions.includes(import_node_path9.default.extname(filePath)) && !matchPath(DEV_DOCS, filePath, { home, root }) && !matchAnyPath(settings.testFilePatterns, filePath, { home, root });
 }
 function checkRedCycle(call, settings, root, home, workflow, store) {
   const state = workflow.read();
@@ -1404,6 +1410,10 @@ function bashCommand(toolInput) {
   const command = toolInput.command;
   return typeof command === "string" ? command : null;
 }
+function tellEvent(hook, mode) {
+  if (hook !== null && HOOK_EVENTS.has(hook.hookEventName)) return hook.hookEventName;
+  return mode === "pre" ? "PreToolUse" : "PostToolUse";
+}
 function allow(hookEventName, context) {
   if (context === void 0) return { exitCode: 0, stdout: "", stderr: "" };
   const output = { hookSpecificOutput: { hookEventName, additionalContext: context } };
@@ -1508,8 +1518,7 @@ async function runToolGate(req, deps = {}) {
       });
     } catch {
     }
-    const event = hook !== null && HOOK_EVENTS.has(hook.hookEventName) ? hook.hookEventName : req.mode === "pre" ? "PreToolUse" : "PostToolUse";
-    return allow(event, TELL);
+    return allow(tellEvent(hook, req.mode), TELL);
   } finally {
     clearTimeout(timer);
   }

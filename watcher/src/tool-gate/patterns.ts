@@ -2,7 +2,7 @@
  * Pattern matchers for the tool gate. The patterns themselves come from the rule file
  * (config/tool-gates.json and the repo's .oss/tool-gates.json); this module holds none.
  *
- * - matchPath: path globs. `~/` is the user's home, a leading `**\/` matches at any depth
+ * - matchPath / matchAnyPath: path globs. `~/` is the user's home, a leading `**\/` matches at any depth
  *   (also outside the repo, by the path's tail), other relative globs are anchored at the
  *   repo root. `*` and `?` stay within one segment and match dotfiles; `**` crosses
  *   segments; a trailing `/**` matches what is under a folder, not the folder itself.
@@ -36,6 +36,11 @@ export function matchPath(glob: string, absPath: string, opts: { home: string; r
   else if (glob.startsWith('**/') || path.isAbsolute(glob)) full = path.normalize(glob);
   else full = path.join(opts.root, glob);
   return globToRegex(full).test(path.normalize(absPath));
+}
+
+/** True when any of the globs matches the path (see matchPath). */
+export function matchAnyPath(globs: readonly string[], absPath: string, opts: { home: string; root: string }): boolean {
+  return globs.some((glob) => matchPath(glob, absPath, opts));
 }
 
 function wordMatches(patternWord: string, word: string): boolean {
