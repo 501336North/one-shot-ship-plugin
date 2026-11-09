@@ -13,13 +13,14 @@
 import path from 'node:path';
 
 const REGEX_CHARS = /[.+^${}()|[\]\\]/g;
+const GLOB_TOKENS = new RegExp(`\\*\\*/|/\\*\\*$|\\*|\\?|${REGEX_CHARS.source}`, 'g');
 
 function escape(text: string): string {
   return text.replace(REGEX_CHARS, '\\$&');
 }
 
 function globToRegex(glob: string): RegExp {
-  const source = glob.replace(/\*\*\/|\/\*\*$|\*|\?|[.+^${}()|[\]\\]/g, (token) => {
+  const source = glob.replace(GLOB_TOKENS, (token) => {
     if (token === '**/') return '(?:.*/)?';
     if (token === '/**') return '/.+';
     if (token === '*') return '[^/]*';
