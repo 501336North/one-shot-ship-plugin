@@ -19,9 +19,16 @@ const BUILD_COMMAND = 'build';
 const NO_RUN =
   "Refused: No failing test recorded. Write a failing test and run it. If your tests run with a command the gate doesn't recognize, ask the user to add it to .oss/tool-gates.json with `!`.";
 
+/**
+ * The OSS dev docs are never covered (AC-004.5). A code constant, not a rule value: it is the
+ * fixed OSS dev-docs location, and a repo rule file must not be able to change it.
+ */
+const DEV_DOCS = '.oss/dev/**';
+
 function isSourceFile(filePath: string, settings: GateSettings, root: string, home: string): boolean {
   return (
     settings.sourceExtensions.includes(path.extname(filePath)) &&
+    !matchPath(DEV_DOCS, filePath, { home, root }) &&
     !settings.testFilePatterns.some((glob) => matchPath(glob, filePath, { home, root }))
   );
 }
