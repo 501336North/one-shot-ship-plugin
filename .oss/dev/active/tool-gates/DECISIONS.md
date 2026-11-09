@@ -151,3 +151,47 @@ The event kind decides. Piped runs, `|| true` / `|| :` and interrupted runs are 
 ## Consequences
 - **Positive:** runner-independent.
 - **Negative:** `npm test | tail` never counts; agents must run tests unpiped to unlock edits.
+
+---
+
+# ADR-007: Own shell tokenizer, no npm package
+
+**Date:** 2026-11-09
+**Status:** Accepted (user, `/oss:plan`)
+
+## Context
+ADR-004 left the tokenizer choice to the plan. `watcher/` has no runtime dependencies today.
+
+## Research
+| Option | Pros | Cons | Fit |
+|--------|------|------|-----|
+| Own tokenizer (~200 lines, own tests) | Zero dependencies; reads exactly what the rules need (quotes, operators, redirects, heredocs, `$(`/`eval` as unreadable) | Our code to get right | Best |
+| `shell-quote` package | Established `parse()` | First runtime dependency; past CVE in `quote()`; still needs our code for heredocs, `-C`, redirect targets | Decent |
+
+## Decision
+Own tokenizer in `watcher/src/tool-gate/tokenize.ts`. Anything it can't read is `unreadable` (allowed and logged).
+
+---
+
+# ADR-008: "This build" is the build's start stamp
+
+**Date:** 2026-11-09
+**Status:** Accepted (`/oss:plan`)
+
+## Context
+The RED rule refuses source edits until a test goes red "in this build". `workflow-state.json` has `currentCommand` but no build identity, so a red from yesterday's build would still unlock edits.
+
+## Research
+| Option | Pros | Cons | Fit |
+|--------|------|------|-----|
+| `update-workflow-state` writes `currentCommandStartedAt` when `currentCommand` changes; `cycle.json` stores the stamp it was made under | Deterministic; works for subagents | Touches one more file (new field only) | Best |
+| Key the cycle by hook `session_id` | No change elsewhere | Subagents' payloads may carry different ids, so the parent's red wouldn't count for a subagent | Poor |
+| Never reset | Trivial | An old red unlocks a new build | Poor |
+
+## Decision
+A cycle whose stamp doesn't match the current `currentCommandStartedAt` counts as "no run yet". If the field is absent (older state file), stamps are compared as absent = absent.
+
+---
+
+# Amendment to ADR-003 (2026-11-09, `/oss:plan`): state files are protected
+The gate's state (`.oss/tool-gates/cycle.json`, `events.ndjson`) was not in `protectedPaths`, so an agent could write `cycle.json` to fake a red run or rewrite the events R-267 counts. The user chose to add `.oss/tool-gates/**` to the base `protectedPaths`. The gate writes these files through fs, not through tool calls, so this doesn't affect it.

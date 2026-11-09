@@ -26,7 +26,7 @@ Rules refuse for real (block mode). **No warn mode** (user, 2026-11-09): nothing
 | `git push --force` / `-f` / `--force-with-lease` | always |
 | `.skip` / `.only` / `.todo` written into a test file | always |
 | Source file edited with no red run in the current cycle (RED rule, below) | only while `/oss:build` runs |
-| Edit, Write, or Bash redirect / `rm` / `mv` / `cp` onto a protected path (the rule files, `~/.oss/hooks/**`, `.claude/settings*.json`) | always |
+| Edit, Write, or Bash redirect / `rm` / `mv` / `cp` onto a protected path (the rule files, the gate's state in `.oss/tool-gates/**`, `~/.oss/hooks/**`, `.claude/settings*.json`) | always |
 | Bash call to a host listed as production in the repo file | always |
 | `git tag` / `git push --tags` in a repo whose file sets `tagsAllowed: false` | always |
 
@@ -43,7 +43,7 @@ Settings, not a rule language: the rules are code; the file turns them on and gi
   "testFilePatterns": ["**/*.test.*", "**/*.spec.*", "**/__tests__/**", "**/test_*.sh", "**/*_test.go"],
   "testCommandPatterns": ["npm test", "npm run test*", "pnpm test", "pnpm run test*", "yarn test", "yarn run test*", "bun test", "npx vitest", "npx jest", "vitest", "jest", "pytest", "python -m pytest", "go test", "cargo test", "swift test", "make test", "make check", "./gradlew test", "gradle test", "mvn test", "dotnet test", "rspec", "bundle exec rspec", "phpunit", "bash *test*.sh"],
   "sourceExtensions": [".ts", ".tsx", ".js", ".mjs", ".cjs", ".sh", ".py", ".go", ".rs", ".swift"],
-  "protectedPaths": [".oss/tool-gates.json", "~/.oss/hooks/**", ".claude/settings*.json"],
+  "protectedPaths": [".oss/tool-gates.json", ".oss/tool-gates/**", "~/.oss/hooks/**", ".claude/settings*.json"],
   "productionHosts": [],
   "tagsAllowed": true
 }
@@ -156,3 +156,9 @@ All five concerns were accepted by the user and folded into the design above:
 5. Shared `cycle.json` → atomic writes; cross-session unlock accepted as rare.
 
 No dissent records: the user overrode no concern.
+
+## Plan amendment (2026-11-09, `/oss:plan`)
+
+- `.oss/tool-gates/**` added to the base `protectedPaths` (user pick): otherwise an agent could write `cycle.json` to fake a red run or rewrite the events R-267 counts.
+- Shell tokenizer: our own (ADR-007).
+- "This build" = `currentCommandStartedAt` written by `update-workflow-state` (ADR-008).
