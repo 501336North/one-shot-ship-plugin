@@ -30,4 +30,6 @@
 ## Results
 - 2026-11-09 `/oss:acceptance`: `watcher/test/cli/tool-gate.acceptance.test.ts` has 14 tests (12 scenarios; scenarios 7 and 12 are 2 tests each). `Tests 14 failed (14)`, all with `Error: not implemented` from the `runToolGate` stub, as expected for RED. tsc clean.
 
-## Last Updated: 2026-11-09 14:45 CST by /oss:acceptance
+- 2026-11-09 after T3c: `watcher/test/tool-gate/` has 193 tests (tokenizer 33, reader 160), all passing. The whole suite: 4242 tests, 17 failed. These are the 14 RED acceptance tests plus the 3 failures already on the base branch (fixed separately in PR #221). tsc is clean.
+
+## Last Updated: 2026-11-09 16:55 CST by /oss:build

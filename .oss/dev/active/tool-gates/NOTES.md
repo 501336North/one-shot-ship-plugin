@@ -40,6 +40,14 @@
   - A redirect target starting with `&` duplicates a file descriptor; it is not a file.
 - **T2b:** a NUL ends a `$'…'` part, as in bash 5.3. An out-of-range `\U` makes the command unreadable. Unknown escapes stay as written.
   - **Test-writing gotcha:** an agent's written `\u006d` can arrive in the file as the letter `m`. Build such backslashes at runtime in tests, and check the file's bytes.
+- **T3b decisions:**
+  - The outer `bash` / `eval` part is kept, and the nested parts follow it.
+  - Nesting is read 5 levels deep.
+  - Nested parts take on the outer part's `pipedOut` / `orTrue`.
+  - `env -C` / `sudo -D` change the part's directory.
+  - The wrapper and shell-option tables are code constants. They describe what the shell does; they aren't rule values.
+  - `>& file` with a space is read as a write to `file`.
+- **Ship todo:** add a FOLLOWUPS entry for the shell-reading limits in DESIGN.md Known Limits.
 - `feat/tool-gates/build` is stacked on `feat/tool-gates/plan`, because the plan isn't merged into the sprint branch yet. The PR still targets `feat/determinism-sprint/build`.
 
 ## Last Updated: 2026-11-09 15:05 CST by /oss:build

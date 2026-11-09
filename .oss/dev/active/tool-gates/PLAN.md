@@ -120,6 +120,12 @@ Collaborators (git, fs state, workflow state) are mocked at their interface in u
 - [ ] `should keep the outer cwd for a nested script`, and apply `cd` inside the script only within it
 - The tokenizer's command-position `eval` / `-c` unreadable flag moves to the reader: the tokenizer returns tokens, and the reader decides.
 
+### Task 3c: Keywords, special parameters, option clusters, cd variants (added in build, user pick)
+- [ ] Shell keywords in command position (`if`/`then`/`while`/`do`/`for`/`case`/`{ }`/`!`/`time`/functions) are looked through.
+- [ ] `$@`, `$1` and the other special parameters make a `-c` script dynamic (unreadable).
+- [ ] Value-taking options inside a cluster are read (`sudo -Eu root`, `bash -eo pipefail -c`).
+- [ ] `command cd`, `builtin cd`, `time cd`, `pushd` and `popd` change the directory like `cd`.
+
 ### Task 4: Pattern matchers
 **Objective:** One matcher for path globs and one for command patterns. Both read their patterns from settings only.
 
@@ -297,7 +303,7 @@ Not covered: Bash writes onto source files. The design applies the RED rule to E
 
 ## Implementation Sequence
 1. **Boundary:** T1. Its acceptance tests stay red until T17.
-2. **Foundation** (pure, parallel-safe): T2 → T2b → T3 → T3b, and T4. T5 depends on T4.
+2. **Foundation** (pure, parallel-safe): T2 → T2b → T3 → T3b → T3c, and T4. T5 depends on T4.
 3. **Pre-call rules** (depend on T3–T5): T6, T7, T8, T9, T10, T11. These are independent of each other.
 4. **Record + RED** (depend on T3–T5): T12, then T13 → T14 → T15 → T16.
 5. **Boundary + wiring** (depends on everything): T17 → T18 → T19 → T20.
@@ -332,7 +338,7 @@ Agents for `/oss:build`: `typescript-pro` (T2–T18), `test-engineer` (acceptanc
 - Real-session proof is the R-267 deepblue benchmark (events log counts refusals, `runner-adopted` and `gate-error`).
 - Rollback: revert the hooks.json entries (one commit) on the sprint branch.
 
-## Estimated Tasks: 22
+## Estimated Tasks: 23
 ## Estimated Test Cases: ~110
 
 ## Last Updated: 2026-11-09 14:22 CST by /oss:plan

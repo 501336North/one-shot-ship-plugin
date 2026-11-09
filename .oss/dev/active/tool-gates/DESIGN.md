@@ -145,6 +145,19 @@ Hermetic: hook JSON fed to `tool-gate` on stdin in a throwaway git repo; no real
 - A runner whose command has no test hint (e.g. plain `make`) is never adopted; the user adds it with `!`.
 - Two sessions in the same folder share `cycle.json`: no corruption (atomic writes), but one session's red can unlock the other's edits. Rare; OSS works per worktree.
 - Protected-path checks on Bash cover redirects and `rm`/`mv`/`cp`, not every possible write.
+- **Shell reading has limits** (user, 2026-11-09, T3b review). The gate guards against an agent drifting from the laws; it is not a sandbox against a determined adversary. These forms are not read:
+  - variables as the program or a git argument (`G=git; $G push -f`, `git $SUB -f`)
+  - shells fed by stdin or a file (`echo … | bash`, `bash <<<`, `bash script.sh`, `source`)
+  - long-tail wrappers (`ssh host cmd`, `find -exec`, `chroot`, `flock`, `watch`, `script -c`, `parallel`, `python -c`, `node -e`, `npx`, `make` targets)
+  - git aliases (`git -c alias.p=push p -f`)
+  - arguments that `xargs` reads from stdin
+
+  Dynamic `-c` / `eval` scripts are logged `unreadable`, and R-267 counts them. Also left open after T3c, all low risk:
+  - `coproc git push`
+  - a test result hidden behind `if … fi || true` or `while … done | tail` (it can only record a wrong green, which restricts edits)
+  - `for ((…))` headers, and `;&` / `;;&` case fall-through (these over-report, never hide)
+
+  Closed in T2b, T3b and T3c: ANSI-C quoting, literal `-c` / `eval` scripts, wrappers, shell keywords, positional parameters, option clusters, and `command cd` / `pushd`.
 
 ## Stress Test (2026-11-09)
 
