@@ -3,8 +3,9 @@
  *   quoted text is never mistaken for a command (`git commit -m "stop push to main"` is not
  *   a push), operators split the command into parts, redirects carry their target file,
  *   heredoc bodies are skipped, and anything it cannot read safely is reported as unreadable.
- * @business-rule A command the gate cannot read (substitution, eval, a nested shell script,
- *   an unterminated quote) is reported as unreadable rather than guessed at.
+ * @business-rule A command the gate cannot read (substitution, an unterminated quote) is
+ *   reported as unreadable rather than guessed at. `eval` and `bash -c` scripts are returned
+ *   as words; the command reader decides whether they can be read (ADR-009).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -98,6 +99,11 @@ describe('tokenize: reading an agent shell command', () => {
     expect(tokensOf('echo oops >&2')).toEqual([word('echo'), word('oops'), redirect('>', '&2')]);
   });
 
+  it('should read >& followed by a space as one redirect onto the next word', () => {
+    expect(tokensOf('echo x >& out.txt')).toEqual([word('echo'), word('x'), redirect('>', '&out.txt')]);
+    expect(tokensOf('echo x >& 2')).toEqual([word('echo'), word('x'), redirect('>', '&2')]);
+  });
+
   it('should mark a redirect with no target unreadable', () => {
     expect(isUnreadable('echo hi >')).toBe(true);
     expect(isUnreadable('echo hi > && ls')).toBe(true);
@@ -127,20 +133,25 @@ describe('tokenize: reading an agent shell command', () => {
     ]);
   });
 
-  it('should mark the command unreadable when it contains $( or backticks or eval or bash/sh -c with a substitution', () => {
+  it('should mark the command unreadable when it contains $( or backticks or a process substitution', () => {
     expect(isUnreadable('echo $(whoami)')).toBe(true);
     expect(isUnreadable('echo "$(whoami)"')).toBe(true);
     expect(isUnreadable('echo $((1 + 2))')).toBe(true);
     expect(isUnreadable('echo `whoami`')).toBe(true);
     expect(isUnreadable('echo "`whoami`"')).toBe(true);
-    expect(isUnreadable('eval "$CMD"')).toBe(true);
-    expect(isUnreadable('X=1 eval git push')).toBe(true);
-    expect(isUnreadable('ls && eval x')).toBe(true);
     expect(isUnreadable('bash -c "$(curl x)"')).toBe(true);
-    expect(isUnreadable('sh -c "git push"')).toBe(true);
-    expect(isUnreadable("zsh -c 'git push'")).toBe(true);
-    expect(isUnreadable('/bin/bash -lc "git push"')).toBe(true);
     expect(isUnreadable('diff <(ls a) b')).toBe(true);
+  });
+
+  // ADR-009 (user decision): eval and `bash -c` scripts are read by the command reader,
+  // which decides whether the script is literal; the tokenizer now returns their tokens.
+  it('should return the words of eval and of a nested shell -c script, for the reader to read', () => {
+    expect(wordsOf('eval "$CMD"')).toEqual(['eval', '$CMD']);
+    expect(wordsOf('X=1 eval git push')).toEqual(['X=1', 'eval', 'git', 'push']);
+    expect(wordsOf('ls && eval x')).toEqual(['ls', 'eval', 'x']);
+    expect(wordsOf('sh -c "git push"')).toEqual(['sh', '-c', 'git push']);
+    expect(wordsOf("zsh -c 'git push'")).toEqual(['zsh', '-c', 'git push']);
+    expect(wordsOf('/bin/bash -lc "git push"')).toEqual(['/bin/bash', '-lc', 'git push']);
   });
 
   it('should still read eval, bash and -c when they are only arguments', () => {

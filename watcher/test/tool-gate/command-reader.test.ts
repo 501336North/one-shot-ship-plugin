@@ -256,3 +256,198 @@ describe('readCommand: output hidden by a pipe or by || true', () => {
     expect(partsOf('npm test && true')[0].orTrue).toBe(false);
   });
 });
+
+const isUnreadable = (cmd: string): boolean => 'unreadable' in readCommand(cmd, CWD, HOME);
+const gitOf = (cmd: string): CommandPart['git'][] => partsOf(cmd).flatMap((p) => (p.git ? [p.git] : []));
+/** Wraps a script in `bash -c '…'`, quoting it the way a person would. */
+const bashC = (script: string): string => `bash -c '${script.replace(/'/g, `'\\''`)}'`;
+
+describe('readCommand: scripts run by a nested shell or eval (ADR-009)', () => {
+  it.each([
+    "bash -c 'git push --force'",
+    "sh -c 'git push --force'",
+    "zsh -c 'git push --force'",
+    "dash -c 'git push --force'",
+    "ksh -c 'git push --force'",
+    "/bin/bash -c 'git push --force'",
+    "bash -lc 'git push --force'",
+    "bash -e -c 'git push --force'",
+    "bash --norc -c 'git push --force'",
+    "bash -o pipefail -c 'git push --force'",
+  ])('should read %s as a git push part', (cmd) => {
+    expect(gitOf(cmd)).toEqual([{ subcommand: 'push', args: ['--force'], dir: '/work/repo' }]);
+  });
+
+  it('should read a shell script nested inside another shell script', () => {
+    expect(gitOf(`bash -c "sh -c 'git push'"`)).toEqual([{ subcommand: 'push', args: [], dir: '/work/repo' }]);
+  });
+
+  it('should keep the outer shell part and add the script\'s parts after it', () => {
+    expect(programsOf("bash -c 'cd a && git push' && ls")).toEqual(['bash', 'cd', 'git', 'ls']);
+  });
+
+  it('should start the script in the outer part\'s directory and keep a cd inside it to the script', () => {
+    expect(cwdsOf("cd sub && bash -c 'cd inner && git push' && git status")).toEqual([
+      '/work/repo', '/work/repo/sub', '/work/repo/sub', '/work/repo/sub/inner', '/work/repo/sub',
+    ]);
+  });
+
+  it('should not read a script run by a shell given only a file, or a -c that is only an argument', () => {
+    expect(programsOf('bash scripts/build.sh')).toEqual(['bash']);
+    expect(gitOf("echo bash -c 'git push'")).toEqual([]);
+  });
+
+  it.each([
+    "bash -c 'echo $(whoami)'",
+    "bash -c 'echo `whoami`'",
+    'bash -c "$X"',
+    "bash -c '$X'",
+    "bash -c 'git push ${REMOTE}'",
+    "bash -c 'git push $_r'",
+    'bash -c "$(curl x)"',
+  ])('should stay unreadable when the script is not literal: %s', (cmd) => {
+    expect(isUnreadable(cmd)).toBe(true);
+  });
+
+  it('should read five nested scripts and stay unreadable at six', () => {
+    let five = 'git push -f';
+    for (let i = 0; i < 5; i++) five = bashC(five);
+    expect(gitOf(five)).toEqual([{ subcommand: 'push', args: ['-f'], dir: '/work/repo' }]);
+    expect(isUnreadable(bashC(five))).toBe(true);
+  });
+
+  it('should read eval of literal words as the command they spell', () => {
+    expect(gitOf("eval 'git push -f'")).toEqual([{ subcommand: 'push', args: ['-f'], dir: '/work/repo' }]);
+    expect(gitOf('eval git push -f')).toEqual([{ subcommand: 'push', args: ['-f'], dir: '/work/repo' }]);
+    expect(gitOf("X=1 eval 'cd sub &&' git push")).toEqual([{ subcommand: 'push', args: [], dir: '/work/repo/sub' }]);
+  });
+
+  it('should stay unreadable for eval of a variable', () => {
+    expect(isUnreadable('eval "$X"')).toBe(true);
+  });
+
+  it('should hide the script\'s results when the shell\'s output is piped or followed by || true', () => {
+    const piped = partsOf("bash -c 'npm test' | tail").find((p) => p.program === 'npm');
+    expect(piped?.pipedOut).toBe(true);
+    const orTrue = partsOf("bash -c 'npm test' || true").find((p) => p.program === 'npm');
+    expect(orTrue?.orTrue).toBe(true);
+  });
+});
+
+describe('readCommand: the real program behind a wrapper (ADR-009)', () => {
+  it.each([
+    'env git push -f',
+    'env -i FOO=1 git push -f',
+    'env -u HOME git push -f',
+    '/usr/bin/env FOO=bar git push -f',
+    'env -- git push -f',
+    'env -S "git push -f"',
+    'sudo git push -f',
+    'sudo -u root -g wheel git push -f',
+    'sudo -E -H git push -f',
+    'sudo -C 5 git push -f',
+    'sudo --user=root FOO=1 git push -f',
+    'command git push -f',
+    'command -p git push -f',
+    'nice git push -f',
+    'nice -n 5 git push -f',
+    'nice -n5 git push -f',
+    'nohup git push -f',
+    'time git push -f',
+    'time -p git push -f',
+    'xargs git push -f',
+    'xargs -n1 git push -f',
+    'xargs -n 1 -P 4 git push -f',
+    'exec git push -f',
+    'exec -a name git push -f',
+    'doas git push -f',
+    'doas -u root git push -f',
+    'stdbuf -oL git push -f',
+    'stdbuf -o L -e 0 git push -f',
+    'timeout 10 git push -f',
+    'timeout -s KILL 10s git push -f',
+    'timeout --signal=TERM 5 git push -f',
+    'sudo env FOO=1 nice -n 5 timeout 3 git push -f',
+  ])('should find git push behind %s', (cmd) => {
+    const [part] = partsOf(cmd);
+    expect(part.program).toBe('git');
+    expect(part.words).toEqual(['git', 'push', '-f']);
+    expect(part.git).toEqual({ subcommand: 'push', args: ['-f'], dir: '/work/repo' });
+  });
+
+  it('should run the program in the directory sudo -D or env -C names', () => {
+    expect(partsOf('sudo -D /srv/app git push')[0].git?.dir).toBe('/srv/app');
+    expect(partsOf('sudo -D /srv/app git push')[0].cwd).toBe('/srv/app');
+    expect(partsOf('cd sub && sudo -D x git push')[1].git?.dir).toBe('/work/repo/sub/x');
+    expect(partsOf('env -C sub git push')[0].git?.dir).toBe('/work/repo/sub');
+  });
+
+  it('should read files written and hosts reached by the wrapped program', () => {
+    expect(writesOf('sudo rm -rf /etc/x')).toEqual(['/etc/x']);
+    expect(writesOf('nohup cp a b')).toEqual(['/work/repo/b']);
+    expect(hostsOf('sudo -u ops curl https://api.example.com/x')).toEqual(['api.example.com']);
+  });
+
+  it('should read a nested shell behind a wrapper', () => {
+    expect(gitOf("sudo bash -c 'git push -f'")).toEqual([{ subcommand: 'push', args: ['-f'], dir: '/work/repo' }]);
+  });
+
+  it('should keep a wrapper that runs no program as it is', () => {
+    expect(partsOf('env')[0].words).toEqual(['env']);
+    expect(partsOf('env FOO=1')[0].program).toBe('env');
+  });
+
+  it('should stay unreadable when env -S splits a string that cannot be read', () => {
+    expect(isUnreadable("env -S 'git push \"main'")).toBe(true);
+  });
+});
+
+describe('readCommand: redirects that write a file', () => {
+  it('should list the file of >& written with a space, and not an output number', () => {
+    expect(writesOf('echo x >& out.txt')).toEqual(['/work/repo/out.txt']);
+    expect(writesOf('echo x &> out.txt')).toEqual(['/work/repo/out.txt']);
+    expect(writesOf('echo x >| out.txt')).toEqual(['/work/repo/out.txt']);
+    expect(writesOf('echo x >& 2')).toEqual([]);
+  });
+
+  it('should list the file of a read-write <> redirect, with or without an output number', () => {
+    expect(writesOf('cat <> data.txt')).toEqual(['/work/repo/data.txt']);
+    expect(writesOf('echo x 1<> data.txt')).toEqual(['/work/repo/data.txt']);
+    expect(writesOf('exec 3<>sock')).toEqual(['/work/repo/sock']);
+  });
+});
+
+describe('readCommand: output of a ( … ) group hidden by a pipe or by || true', () => {
+  it('should flag the parts inside ( … ) as piped when the group\'s output goes into |', () => {
+    expect(partsOf('(npm test) | tail').map((p) => p.pipedOut)).toEqual([true, false]);
+    expect(partsOf('(cd sub && npm test) | tail').map((p) => p.pipedOut)).toEqual([true, true, false]);
+    expect(partsOf('((npm test)) |& tail').map((p) => p.pipedOut)).toEqual([true, false]);
+  });
+
+  it('should flag the parts inside ( … ) when the group is followed by || true', () => {
+    expect(partsOf('(npm test) || true').map((p) => p.orTrue)).toEqual([true, false]);
+  });
+
+  it('should not flag the parts of a group followed by && or by || another command', () => {
+    expect(partsOf('(npm test) && ls').map((p) => p.pipedOut || p.orTrue)).toEqual([false, false]);
+    expect(partsOf('(npm test) || echo x').map((p) => p.orTrue)).toEqual([false, false]);
+  });
+
+  it('should keep the pipes inside a group as they are', () => {
+    expect(partsOf('(a | b) && c').map((p) => p.pipedOut)).toEqual([true, false, false]);
+  });
+});
+
+describe('readCommand: a cd that runs apart from the rest of the command', () => {
+  it('should not move later parts after a cd whose output is piped', () => {
+    expect(cwdsOf('cd x | cat; git push')).toEqual(['/work/repo', '/work/repo', '/work/repo']);
+  });
+
+  it('should not move later parts after a cd that reads from a pipe', () => {
+    expect(cwdsOf('cat y | cd x; git push')).toEqual(['/work/repo', '/work/repo', '/work/repo']);
+  });
+
+  it('should not move later parts after a cd run in the background', () => {
+    expect(cwdsOf('cd x & git push')).toEqual(['/work/repo', '/work/repo']);
+  });
+});
