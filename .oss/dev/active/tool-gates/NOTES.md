@@ -10,4 +10,36 @@
 - **`watcher/` test config runs single-fork and sequential.** Temp repos must be unique per test (`mkdtemp`), never shared paths.
 - **Ship gates for `hooks/*.sh`:** run all of `watcher/test/hooks` with `CLAUDE_PROJECT_DIR` unset (FOLLOWUPS #64 lesson).
 
-## Last Updated: 2026-11-09 14:22 CST by /oss:plan
+## From /oss:build (2026-11-09)
+- **Baseline before T2** (`feat/tool-gates/build` at 199a078): 4049 tests, 17 failed.
+  - 14 are our RED acceptance tests.
+  - 3 already fail on the sprint base, not from this branch:
+    - `test/agents/model-frontmatter.test.ts` and `test/agents/offload-step-safety.test.ts` fail on agent counts, apparently since `penetration-tester` was added in 2.0.99.
+    - `test/commands/chain-step-contract.test.ts` has 1 failure.
+  - Left alone per the small-releases rule; they need their own follow-up.
+  - **Fixed separately** (user pick): PR #221 (`fix/main-test-drift/build`, 297a5af, tests only, no release). All 3 were stale tests. Not merged.
+    - **Before the tool-gates ship:** merge #221 to main, then merge main into `feat/determinism-sprint/build`.
+- **Hook output contract checked** against https://code.claude.com/docs/en/hooks (2026-11-09, via `claude-code-guide`):
+  - `hookSpecificOutput.additionalContext` is supported on PreToolUse. Claude sees it as a system reminder.
+    - Write it as a factual statement ("tool-gate failed, rules not checked."), not an imperative, or Claude's injection defences may surface it to the user instead.
+    - Combining it with no `permissionDecision` isn't stated explicitly. R-267 confirms it in a real session.
+  - Exit 0 with no output means no decision; the normal permission flow continues. Exit 2 blocks the call, and the stderr is the reason.
+  - Any other non-zero exit is non-blocking: the user sees a notice, and the docs don't say Claude does. The wrapper therefore maps it to exit 0 plus additionalContext.
+  - `permissionDecision: "allow"` skips the prompt. Never use it.
+  - Timeouts:
+    - The hook `timeout` is in seconds; the default is 600.
+    - A timed-out PreToolUse hook doesn't block the call, which matches ADR-005.
+    - hooks.json sets `timeout: 5`, so a hung gate costs 5 s, not 10 min.
+  - PostToolUseFailure carries `error`, an optional `is_interrupt` and `duration_ms`.
+  - Subagent calls carry `agent_id` / `agent_type`. Whether they share the parent's `session_id` isn't documented, which supports ADR-008's build-stamp choice.
+- **T2 tokenizer notes from the agent:**
+  - `eval` and `-c` count as unreadable only in command position.
+  - `&`, `(`, `)`, `;;` and `|&` are operators. A `cd` inside `( … )` must not carry over past the `)` (T3).
+  - Heredoc bodies are never scanned. An unquoted delimiter can hide `$(…)` in the body, but that would be "unreadable → allowed" anyway.
+  - `<<`, `<<-`, `<<<` and `<` are inputs, not writes.
+  - A redirect target starting with `&` duplicates a file descriptor; it is not a file.
+- **T2b:** a NUL ends a `$'…'` part, as in bash 5.3. An out-of-range `\U` makes the command unreadable. Unknown escapes stay as written.
+  - **Test-writing gotcha:** an agent's written `\u006d` can arrive in the file as the letter `m`. Build such backslashes at runtime in tests, and check the file's bytes.
+- `feat/tool-gates/build` is stacked on `feat/tool-gates/plan`, because the plan isn't merged into the sprint branch yet. The PR still targets `feat/determinism-sprint/build`.
+
+## Last Updated: 2026-11-09 15:05 CST by /oss:build

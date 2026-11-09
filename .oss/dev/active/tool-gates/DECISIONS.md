@@ -195,3 +195,30 @@ A cycle whose stamp doesn't match the current `currentCommandStartedAt` counts a
 
 # Amendment to ADR-003 (2026-11-09, `/oss:plan`): state files are protected
 The gate's state (`.oss/tool-gates/cycle.json`, `events.ndjson`) was not in `protectedPaths`, so an agent could write `cycle.json` to fake a red run or rewrite the events R-267 counts. The user chose to add `.oss/tool-gates/**` to the base `protectedPaths`. The gate writes these files through fs, not through tool calls, so this doesn't affect it.
+
+---
+
+# ADR-009: Read literal nested shells and look through wrappers
+
+**Date:** 2026-11-09
+**Status:** Accepted (user, `/oss:build`)
+
+## Context
+The design allowed any command the tokenizer can't read (logged `unreadable`). During T2, the tokenizer agent found that this made `bash -c 'git push --force'`, `sh -c 'git push origin main'` and wrapper forms (`env git push -f`, `sudo git push`) bypass every git rule.
+
+## Research
+| Option | Pros | Cons | Fit |
+|--------|------|------|-----|
+| Read literal `-c` scripts recursively + skip known wrappers | Closes the trivial bypasses; only dynamic scripts stay unreadable | One more task (T3b) | Best |
+| Same + refuse any unreadable command mentioning `git` | Strictest | Wrong refusals on lines like `eval "$(ssh-agent)" && git push` | Decent |
+| Keep as designed | No work | Trivial bypass of every git rule until a later card | Poor |
+
+## Decision
+- Literal `-c` scripts are read and checked recursively.
+- The wrappers `env`, `sudo`, `command`, `nice`, `nohup`, `time` and `xargs` are skipped, along with their options. The `env` options include `VAR=value` assignments.
+- Dynamic scripts stay unreadable: they are allowed and logged, and R-267 counts them.
+- The tokenizer decodes `$'…'` (T2b).
+
+## Consequences
+- **Positive:** the git, host and protected-path rules can't be dodged with a one-word wrapper.
+- **Negative:** `bash -c "$(…)"` and `eval "$X"` remain a known gap.

@@ -162,3 +162,11 @@ No dissent records: the user overrode no concern.
 - `.oss/tool-gates/**` added to the base `protectedPaths` (user pick): otherwise an agent could write `cycle.json` to fake a red run or rewrite the events R-267 counts.
 - Shell tokenizer: our own (ADR-007).
 - "This build" = `currentCommandStartedAt` written by `update-workflow-state` (ADR-008).
+
+## Build amendment (2026-11-09, `/oss:build`, user pick)
+
+- **Nested shells are read.** A `bash`/`sh`/`zsh -c` script that is a plain literal (no `$(`, no backticks) is tokenized and checked like a top-level command, recursively.
+- **Wrappers are looked through.** Known wrappers (`env`, `sudo`, `command`, `nice`, `nohup`, `time`, `xargs`) are skipped to find the real program.
+- **Still unreadable:** only truly dynamic scripts, which are allowed and logged as `unreadable`.
+- **Why:** without this, `bash -c 'git push --force'` or `env git push origin main` bypassed every git rule.
+- **ANSI-C quoting** (`$'…'`) is decoded by the tokenizer, so `$'HEAD:main'` is read as `HEAD:main`.

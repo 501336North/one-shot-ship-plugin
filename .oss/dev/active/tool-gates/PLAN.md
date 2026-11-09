@@ -109,6 +109,17 @@ Collaborators (git, fs state, workflow state) are mocked at their interface in u
 
 **Implementation (GREEN):** `readCommand(cmd, cwd): CommandFacts | {unreadable:true}`.
 
+### Task 2b: ANSI-C quoting in the tokenizer (added in build, ADR-009)
+- [ ] `$'HEAD:main'` → `HEAD:main`; escapes decoded (`\xHH`, octal, `\u`, `\c`); unterminated → unreadable; literal inside double quotes; `$"…"` = double-quoted.
+
+### Task 3b: Nested shells and wrappers (added in build, ADR-009)
+**Tests (RED):** `watcher/test/tool-gate/command-reader.test.ts` (new describe)
+- [ ] `should read bash -c 'git push --force' as a git push part` (also `sh -c`, `zsh -c`, `bash -lc`, `/bin/bash -c`), recursively (`bash -c "sh -c 'git push'"`)
+- [ ] `should stay unreadable when the -c script contains $( or backticks`
+- [ ] `should find git behind env, sudo, command, nice, nohup, time, xargs (with their options and env VAR=value)`
+- [ ] `should keep the outer cwd for a nested script`, and apply `cd` inside the script only within it
+- The tokenizer's command-position `eval` / `-c` unreadable flag moves to the reader: the tokenizer returns tokens, and the reader decides.
+
 ### Task 4: Pattern matchers
 **Objective:** One matcher for path globs and one for command patterns. Both read their patterns from settings only.
 
@@ -286,7 +297,7 @@ Not covered: Bash writes onto source files. The design applies the RED rule to E
 
 ## Implementation Sequence
 1. **Boundary:** T1. Its acceptance tests stay red until T17.
-2. **Foundation** (pure, parallel-safe): T2 → T3, and T4. T5 depends on T4.
+2. **Foundation** (pure, parallel-safe): T2 → T2b → T3 → T3b, and T4. T5 depends on T4.
 3. **Pre-call rules** (depend on T3–T5): T6, T7, T8, T9, T10, T11. These are independent of each other.
 4. **Record + RED** (depend on T3–T5): T12, then T13 → T14 → T15 → T16.
 5. **Boundary + wiring** (depends on everything): T17 → T18 → T19 → T20.
@@ -321,7 +332,7 @@ Agents for `/oss:build`: `typescript-pro` (T2–T18), `test-engineer` (acceptanc
 - Real-session proof is the R-267 deepblue benchmark (events log counts refusals, `runner-adopted` and `gate-error`).
 - Rollback: revert the hooks.json entries (one commit) on the sprint branch.
 
-## Estimated Tasks: 20
+## Estimated Tasks: 22
 ## Estimated Test Cases: ~110
 
 ## Last Updated: 2026-11-09 14:22 CST by /oss:plan
