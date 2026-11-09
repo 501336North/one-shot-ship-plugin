@@ -225,6 +225,14 @@ describe('readCommand: hosts a part talks to', () => {
     expect(hostsOf('ping Prod.Example.com')).toEqual(['prod.example.com']);
   });
 
+  it('should read a bare dotted hostname followed by a path, as HTTPie takes it', () => {
+    expect(hostsOf('http POST API.example.com/x')).toEqual(['api.example.com']);
+  });
+
+  it('should not read a host from a commit message that only mentions one', () => {
+    expect(hostsOf('git commit -m "fix api.example.com timeout"')).toEqual([]);
+  });
+
   it('should not read a path, a flag, a plain word or a sentence as a host', () => {
     expect(hostsOf('cat ./notes/a.b src/x.ts -v.x')).toEqual([]);
     expect(hostsOf('echo hello')).toEqual([]);
