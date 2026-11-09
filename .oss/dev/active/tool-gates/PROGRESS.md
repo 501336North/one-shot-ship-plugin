@@ -34,7 +34,9 @@
 - [x] Build T19: hook wrapper `hooks/oss-tool-gate.sh` + root `hooks.json` entries (PreToolUse on Bash|Edit|Write|MultiEdit|NotebookEdit runs pre; PostToolUse and PostToolUseFailure on Bash run post; timeout 5); 7 tests (completed 2026-11-09, d72642c/5d81560)
 - [x] Build T20: full suite + dev-docs close-out (completed 2026-11-09). Full run: 4716 tests, 3 failed, all 3 already failing on main (fix in PR #221, not merged; must merge before ship). Hooks with CLAUDE_PROJECT_DIR unset 217/217, tsc clean, no `.skip`/`.only`/`.todo`.
 
+- [x] Integration: WorkflowState writer and reader agree (7f978b6); every mock checked against reality
+
 ## Blockers
 - None. All PRs target `feat/determinism-sprint/build`.
 
-## Last Updated: 2026-11-09 18:17 CST by /oss:build
+## Last Updated: 2026-11-09 18:28 CST by /oss:integration

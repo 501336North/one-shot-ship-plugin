@@ -89,4 +89,26 @@ Run 2026-11-09 18:14 CST, on `feat/tool-gates/build` after T19 (commit 5d81560).
 - Bundle: 57,308 bytes.
 - Naming gap closed (refactor, 2026-11-09): the in-process test was titled "(max of 20 calls)" while it asserts median under 100 ms and max under 1000 ms. It is now "(median of 20 calls)", matching what it asserts.
 
-## Last Updated: 2026-11-09 18:21 CST by code-simplifier (speed test title)
+## Integration (/oss:integration, 2026-11-09 18:28 CST)
+Every mocked collaborator is now checked against its real version:
+
+| Collaborator | Test against the real version |
+|---|---|
+| GitReader | `git-reader.integration.test.ts` |
+| StateStore | `state-store.integration.test.ts` |
+| PathResolver | `path-resolver.integration.test.ts` and `rules/protected-path.integration.test.ts` |
+| Rule-file reader | runs on the real `config/tool-gates.json` |
+| WorkflowState | `workflow-state.integration.test.ts` (5 tests, added 7f978b6) |
+
+The workflow-state tests drive the real `dist/cli/update-workflow-state.js` (the writer `oss-notify.sh` uses), then the real `fileWorkflowState` and `runToolGate`. They cover:
+- the build stamp reaching the gate
+- the stamp kept when the same command is set again
+- a new stamp for a new build
+- a refused source edit before red, allowed after red
+- the RED rule off once the build ends
+
+No mock/reality mismatch was found.
+
+**Note:** `clearCurrentCommand` leaves the old `currentCommandStartedAt` in place. It does no harm today, because the gate checks `currentCommand` first.
+
+## Last Updated: 2026-11-09 18:28 CST by /oss:integration
