@@ -48,6 +48,26 @@ describe('tool-gate command line', () => {
     expect(result.stderr).toContain('`main`');
   });
 
+  it("should take the project folder from CLAUDE_PROJECT_DIR, so a planted .git can't unprotect the rule file", async () => {
+    const repo = repoOnMain();
+    const sub = path.join(repo, 'sub');
+    fs.mkdirSync(path.join(sub, '.git'), { recursive: true });
+    const write = JSON.stringify({
+      cwd: sub,
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Write',
+      tool_input: { file_path: path.join(repo, '.oss', 'tool-gates.json'), content: '{}' },
+    });
+
+    const result = await runCli(['pre'], write, {
+      HOME: process.env.HOME,
+      CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT,
+      CLAUDE_PROJECT_DIR: repo,
+    });
+
+    expect(result.exitCode).toBe(2);
+  });
+
   it('should exit 1 with a usage line when the first argument is neither pre nor post', async () => {
     const repo = repoOnMain();
 
