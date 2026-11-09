@@ -116,6 +116,14 @@ describe('RED rule: no source edit without a failing test', () => {
     expect(store.writeCycle).not.toHaveBeenCalled();
   });
 
+  it('should allow editing a script or code file kept with the dev docs, even with no recorded run', () => {
+    const store = mockStore(null);
+
+    expect(check('.oss/dev/active/x/check.sh', mockWorkflow(), store)).toBeNull();
+    expect(check('.oss/dev/active/x/helper.ts', mockWorkflow(), store)).toBeNull();
+    expect(store.writeCycle).not.toHaveBeenCalled();
+  });
+
   it('should not apply when currentCommand is not build or workflow-state.json is missing', () => {
     const store = mockStore(null);
 
