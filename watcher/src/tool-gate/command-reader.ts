@@ -138,7 +138,7 @@ function split(tokens: Token[], cwd: string, home: string): Segment[] {
     if (words.length === 0 && redirects.length === 0) return;
     const commandWords = stripAssignments(words);
     segments.push({ words: commandWords, redirects, cwd: dir, exits: [{ op: next, following: segments.length + 1 }] });
-    const apart = afterPipe || next === '|' || next === '|&' || next === '&';
+    const apart = afterPipe || isPipe(next) || next === '&';
     if (commandWords[0] === 'cd' && !apart) dir = cdTarget(commandWords.slice(1), dir, home);
     words = [];
     redirects = [];
@@ -153,7 +153,7 @@ function split(tokens: Token[], cwd: string, home: string): Segment[] {
         for (const inner of segments.slice(closedGroupStart)) inner.exits.push({ op: token.value, following: segments.length });
         closedGroupStart = null;
       }
-      afterPipe = PIPES.includes(token.value);
+      afterPipe = isPipe(token.value);
       if (token.value === '(') groups.push({ dir, start: segments.length });
       if (token.value === ')') {
         const group = groups.pop();
@@ -181,7 +181,7 @@ function toParts(segment: Segment, segments: Segment[], home: string, depth: num
     writeTargets: [...redirectWrites(segment), ...operandWrites(name, args)].map((p) => resolvePath(p, cwd, home)),
     hosts: args.flatMap(hostOf),
     git: name === 'git' ? readGit(args, cwd, home) : null,
-    pipedOut: segment.exits.some((e) => e.op !== null && PIPES.includes(e.op)),
+    pipedOut: segment.exits.some((e) => isPipe(e.op)),
     orTrue: segment.exits.some((e) => e.op === '||' && isTrue(segments[e.following]?.words ?? [])),
   };
   const script = scriptOf(name, args);
@@ -190,6 +190,10 @@ function toParts(segment: Segment, segments: Segment[], home: string, depth: num
   if (depth >= MAX_NESTED_DEPTH) throw new Unreadable(`scripts nested deeper than ${MAX_NESTED_DEPTH}`);
   const nested = readScript(script, cwd, home, depth + 1);
   return [part, ...nested.map((p) => ({ ...p, pipedOut: p.pipedOut || part.pipedOut, orTrue: p.orTrue || part.orTrue }))];
+}
+
+function isPipe(op: string | null): boolean {
+  return op !== null && PIPES.includes(op);
 }
 
 function isTrue(words: string[]): boolean {
