@@ -50,6 +50,7 @@ export interface WorkflowState {
   supervisor: SupervisorStatus;
   activeStep: ChainStep | null;
   currentCommand?: string;  // Currently executing command (ideate/plan/build/ship)
+  currentCommandStartedAt?: string;  // ISO time currentCommand last changed (ADR-008 build identity)
   nextCommand?: string | null;  // Next recommended command
   notification?: Notification;  // Non-sticky notification with auto-expiry
   sessionId?: string;  // Unique session identifier for staleness detection
@@ -396,6 +397,9 @@ export class WorkflowStateService {
    */
   async setCurrentCommand(command: string): Promise<void> {
     const state = await this.getState();
+    if (state.currentCommand !== command) {
+      state.currentCommandStartedAt = new Date().toISOString();
+    }
     state.currentCommand = command;
     await this.writeState(state);
   }
