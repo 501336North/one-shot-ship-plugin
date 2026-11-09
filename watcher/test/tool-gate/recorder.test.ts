@@ -46,7 +46,7 @@ function failure(command: string, error = 'Exit code 1\nFAIL src/a.test.ts', isI
 }
 
 function record(call: PostCall, store: StateStore, buildStartedAt: string | null = BUILD) {
-  recordTestRun(call, { settings: SETTINGS, store, home: HOME, ts: TS, buildStartedAt });
+  recordTestRun(call, { settings: SETTINGS, store, home: HOME, ts: TS, buildStartedAt, currentCommand: null });
 }
 
 function testRun(command: string, result: GateEvent['result']): GateEvent {
