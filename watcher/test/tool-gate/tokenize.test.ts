@@ -50,7 +50,7 @@ describe('tokenize: reading an agent shell command', () => {
   });
 
   it('should honour backslash escapes outside quotes', () => {
-    expect(wordsOf('echo a\\ b \\"c\\" \\$(x)')).toEqual(['echo', 'a b', '"c"', '$(x)']);
+    expect(wordsOf('echo a\\ b \\"c\\" \\$\\(x\\)')).toEqual(['echo', 'a b', '"c"', '$(x)']);
   });
 
   it('should join a backslash-newline continuation into one line', () => {
