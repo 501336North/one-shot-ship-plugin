@@ -1,0 +1,82 @@
+/**
+ * Reads a Claude Code edit-tool call (Edit, MultiEdit, Write, NotebookEdit) into one shape: the
+ * tool, the absolute file path (resolved against cwd, `~/` expanded) and each change as the text
+ * before and after. For Write, "before" is the file's current content ('' when missing). Any
+ * other tool, or input not shaped as expected, gives null.
+ */
+
+import path from 'node:path';
+
+export type EditTool = 'Edit' | 'Write' | 'MultiEdit' | 'NotebookEdit';
+
+export interface EditCall {
+  tool: EditTool;
+  filePath: string;
+  changes: { before: string; after: string }[];
+}
+
+type Change = EditCall['changes'][number];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function resolvePath(filePath: string, cwd: string, home: string): string {
+  return filePath.startsWith('~/') ? path.join(home, filePath.slice(2)) : path.resolve(cwd, filePath);
+}
+
+function readChange(edit: unknown): Change | null {
+  if (!isRecord(edit) || typeof edit.old_string !== 'string' || typeof edit.new_string !== 'string') return null;
+  return { before: edit.old_string, after: edit.new_string };
+}
+
+function readChanges(
+  tool: EditTool,
+  input: Record<string, unknown>,
+  absPath: string,
+  readFile: (p: string) => string | null,
+): Change[] | null {
+  switch (tool) {
+    case 'Edit': {
+      const change = readChange(input);
+      return change === null ? null : [change];
+    }
+    case 'MultiEdit': {
+      if (!Array.isArray(input.edits)) return null;
+      const changes = input.edits.map(readChange);
+      return changes.every((change): change is Change => change !== null) ? changes : null;
+    }
+    case 'Write':
+      if (typeof input.content !== 'string') return null;
+      return [{ before: readFile(absPath) ?? '', after: input.content }];
+    case 'NotebookEdit':
+      if (typeof input.new_source !== 'string') return null;
+      return [{ before: '', after: input.edit_mode === 'delete' ? '' : input.new_source }];
+  }
+}
+
+const PATH_FIELD: Record<EditTool, string> = {
+  Edit: 'file_path',
+  MultiEdit: 'file_path',
+  Write: 'file_path',
+  NotebookEdit: 'notebook_path',
+};
+
+function isEditTool(toolName: string): toolName is EditTool {
+  return Object.hasOwn(PATH_FIELD, toolName);
+}
+
+export function readEditCall(
+  toolName: string,
+  toolInput: unknown,
+  cwd: string,
+  home: string,
+  readFile: (p: string) => string | null,
+): EditCall | null {
+  if (!isEditTool(toolName) || !isRecord(toolInput)) return null;
+  const rawPath = toolInput[PATH_FIELD[toolName]];
+  if (typeof rawPath !== 'string') return null;
+  const filePath = resolvePath(rawPath, cwd, home);
+  const changes = readChanges(toolName, toolInput, filePath, readFile);
+  return changes === null ? null : { tool: toolName, filePath, changes };
+}
