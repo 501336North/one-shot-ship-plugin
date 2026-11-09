@@ -19,13 +19,17 @@ function destination(refspec: string): string {
   return dst.startsWith('refs/heads/') ? dst.slice('refs/heads/'.length) : dst;
 }
 
-export function checkProtectedBranch(part: CommandPart, settings: GateSettings, git: GitReader): Refusal | null {
+export async function checkProtectedBranch(
+  part: CommandPart,
+  settings: GateSettings,
+  git: GitReader,
+): Promise<Refusal | null> {
   const facts = part.git;
   if (!facts || (facts.subcommand !== 'commit' && facts.subcommand !== 'push')) return null;
   const command = `git ${facts.subcommand}`;
   const protectedList = settings.protectedBranches;
 
-  const branch = git.currentBranch(facts.dir);
+  const branch = await git.currentBranch(facts.dir);
   if (branch !== null && protectedList.includes(branch)) {
     return {
       rule: 'protected-branch',

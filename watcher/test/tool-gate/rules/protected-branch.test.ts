@@ -60,7 +60,7 @@ describe('protected-branch rule: committing or pushing while on a protected bran
   );
 
   it('should refuse on master too', async () => {
-    expect(await check('git commit', gitOn({ [CWD]: 'master' }))?.reason).toContain('master');
+    expect((await check('git commit', gitOn({ [CWD]: 'master' })))?.reason).toContain('master');
   });
 
   it.each(['git push', 'git commit -m "wip"', 'git push origin feature/x'])(
@@ -74,7 +74,7 @@ describe('protected-branch rule: committing or pushing while on a protected bran
     'should use the branch of the directory the command really runs in: %s',
     async (cmd) => {
       const git = gitOn({ [CWD]: 'feature/x', [`${CWD}/sub`]: 'main' });
-      expect(await check(cmd, git)?.reason).toContain('main');
+      expect((await check(cmd, git))?.reason).toContain('main');
       expect(git.currentBranch).toHaveBeenCalledWith(`${CWD}/sub`);
     },
   );
@@ -160,7 +160,7 @@ describe('protected-branch rule: detached HEAD, other commands and settings', ()
   });
 
   it('should still refuse a push to main from a detached HEAD', async () => {
-    expect(await check('git push origin HEAD:main', gitOn({ [CWD]: null }))?.reason).toContain('main');
+    expect((await check('git push origin HEAD:main', gitOn({ [CWD]: null })))?.reason).toContain('main');
   });
 
   it('should not apply to a command that is not git', async () => {
@@ -178,8 +178,8 @@ describe('protected-branch rule: detached HEAD, other commands and settings', ()
   it('should take the protected branches only from the settings', async () => {
     const settings: GateSettings = { ...SETTINGS, protectedBranches: ['release'] };
     expect(await check('git push', gitOn({ [CWD]: 'main' }), settings)).toBeNull();
-    expect(await check('git commit', gitOn({ [CWD]: 'release' }), settings)?.reason).toContain('release');
-    expect(await check('git push origin HEAD:release', gitOn({ [CWD]: 'feature/x' }), settings)?.reason).toContain(
+    expect((await check('git commit', gitOn({ [CWD]: 'release' }), settings))?.reason).toContain('release');
+    expect((await check('git push origin HEAD:release', gitOn({ [CWD]: 'feature/x' }), settings))?.reason).toContain(
       'release',
     );
     expect(await check('git push origin HEAD:main', gitOn({ [CWD]: 'feature/x' }), settings)).toBeNull();
