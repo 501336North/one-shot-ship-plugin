@@ -16,6 +16,7 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { CHAIN_TRIGGER_BUNDLE_OPTIONS } from './chain-trigger-bundle-options.mjs';
 import { OSS_LAUNCH_BUNDLE_OPTIONS } from './oss-launch-bundle-options.mjs';
+import { TOOL_GATE_BUNDLE_OPTIONS } from './tool-gate-bundle-options.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const watcherRoot = resolve(__dirname, '..');
@@ -56,3 +57,13 @@ if (launchResult.errors.length > 0) {
 }
 
 console.log('  Bundled: dist/cli/oss-launch.cjs (standalone — runtime-wrap input)');
+
+// Bundle tool-gate into a standalone CJS file, run by hooks/oss-tool-gate.sh on every gated call.
+const gateResult = buildSync({ ...TOOL_GATE_BUNDLE_OPTIONS, write: true });
+
+if (gateResult.errors.length > 0) {
+  console.error('tool-gate bundle failed:', gateResult.errors);
+  process.exit(1);
+}
+
+console.log('  Bundled: dist/cli/tool-gate.cjs (standalone)');
