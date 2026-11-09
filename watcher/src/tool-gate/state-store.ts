@@ -62,13 +62,20 @@ export function fileStateStore(repoRoot: string): StateStore {
   const cycleFile = path.join(stateDir, 'cycle.json');
   const eventsFile = path.join(stateDir, 'events.ndjson');
 
-  /** Creates the state folder, refusing a symlinked `.oss` / `.oss/tool-gates` or one outside the repo. */
-  function safeStateDir(): void {
+  const { O_APPEND, O_CREAT, O_EXCL, O_NOFOLLOW, O_RDONLY, O_WRONLY } = fs.constants;
+
+  /** Throws when `.oss` or `.oss/tool-gates` is a symlink. */
+  function refuseSymlinkedDirs(): void {
     for (const dir of [ossDir, stateDir]) {
       if (fs.lstatSync(dir, { throwIfNoEntry: false })?.isSymbolicLink()) {
         throw new Error(`tool-gate state: ${dir} is a symlink`);
       }
     }
+  }
+
+  /** Creates the state folder, refusing a symlinked `.oss` / `.oss/tool-gates` or one outside the repo. */
+  function safeStateDir(): void {
+    refuseSymlinkedDirs();
     fs.mkdirSync(stateDir, { recursive: true });
     const real = fs.realpathSync(stateDir);
     if (!real.startsWith(fs.realpathSync(repoRoot) + path.sep)) {
@@ -79,7 +86,15 @@ export function fileStateStore(repoRoot: string): StateStore {
   return {
     readCycle() {
       try {
-        const parsed: unknown = JSON.parse(fs.readFileSync(cycleFile, 'utf8'));
+        refuseSymlinkedDirs();
+        const fd = fs.openSync(cycleFile, O_RDONLY | O_NOFOLLOW);
+        let text: string;
+        try {
+          text = fs.readFileSync(fd, 'utf8');
+        } finally {
+          fs.closeSync(fd);
+        }
+        const parsed: unknown = JSON.parse(text);
         return isCycleRecord(parsed) ? parsed : null;
       } catch {
         return null;
@@ -88,12 +103,22 @@ export function fileStateStore(repoRoot: string): StateStore {
     writeCycle(cycle) {
       safeStateDir();
       const temp = `${cycleFile}.${process.pid}.tmp`;
-      fs.writeFileSync(temp, JSON.stringify(cycle));
+      const fd = fs.openSync(temp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW);
+      try {
+        fs.writeFileSync(fd, JSON.stringify(cycle));
+      } finally {
+        fs.closeSync(fd);
+      }
       fs.renameSync(temp, cycleFile);
     },
     appendEvent(event) {
       safeStateDir();
-      fs.appendFileSync(eventsFile, JSON.stringify(event) + '\n');
+      const fd = fs.openSync(eventsFile, O_APPEND | O_CREAT | O_WRONLY | O_NOFOLLOW);
+      try {
+        fs.writeFileSync(fd, JSON.stringify(event) + '\n');
+      } finally {
+        fs.closeSync(fd);
+      }
     },
   };
 }
