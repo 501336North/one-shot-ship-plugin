@@ -190,10 +190,18 @@ describe('tokenize: bash $\'…\' (ANSI-C) and $"…" quoting', () => {
     expect(wordsOf(String.raw`echo $'m\x61in'`)).toEqual(['echo', 'main']);
     expect(wordsOf(String.raw`echo $'\155ain'`)).toEqual(['echo', 'main']);
     expect(wordsOf(String.raw`echo $'\x6'`)).toEqual(['echo', '\x06']);
-    expect(wordsOf(String.raw`echo $'\0'`)).toEqual(['echo', '\0']);
-    expect(wordsOf(String.raw`echo $'main'`)).toEqual(['echo', 'main']);
+    expect(wordsOf(String.raw`git push origin $'main\0junk'`)).toEqual(['git', 'push', 'origin', 'main']);
+    expect(wordsOf(String.raw`echo a$'b\0c'd`)).toEqual(['echo', 'abd']);
+    const backslash = '\\';
+    expect(wordsOf(`echo $'${backslash}u006dain'`)).toEqual(['echo', 'main']);
+    expect(wordsOf(String.raw`echo $'\u6d'`)).toEqual(['echo', 'm']);
     expect(wordsOf(String.raw`echo $'\U0000006dain'`)).toEqual(['echo', 'main']);
     expect(wordsOf(String.raw`echo $'\cA'`)).toEqual(['echo', '\x01']);
+    expect(wordsOf(String.raw`echo $'\c?'`)).toEqual(['echo', '\x7f']);
+  });
+
+  it('should keep an unknown escape as written, like bash', () => {
+    expect(wordsOf(String.raw`echo $'\q\xZ'`)).toEqual(['echo', String.raw`\q\xZ`]);
   });
 
   it('should mark an unterminated $\'… quote unreadable', () => {
