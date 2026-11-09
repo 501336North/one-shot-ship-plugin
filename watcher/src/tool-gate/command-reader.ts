@@ -128,8 +128,10 @@ function readScript(cmd: string, cwd: string, home: string, depth: number): Comm
 }
 
 /**
- * Splits tokens into segments on control operators, tracking the directory through `cd` and `( … )`.
- * A `cd` that is piped or backgrounded runs apart, so it does not move later segments.
+ * Splits tokens into segments on control operators, tracking the directory through `cd`,
+ * `pushd`/`popd` and `( … )`. A `cd` that is piped or backgrounded runs apart, so it does not
+ * move later segments. Shell keywords where a command starts (`if`, `do`, `{`, `case … in a)`,
+ * `for … ;`, `function f`) are skipped, so the commands inside them are read as segments.
  */
 function split(tokens: Token[], cwd: string, home: string): Segment[] {
   const segments: Segment[] = [];
@@ -146,25 +148,17 @@ function split(tokens: Token[], cwd: string, home: string): Segment[] {
   let words: string[] = [];
   let redirects: Segment['redirects'] = [];
 
+  const atCommandStart = (): boolean => words.length === 0 && redirects.length === 0;
+
   const close = (next: string | null): void => {
-    if (words.length === 0 && redirects.length === 0) return;
+    if (atCommandStart()) return;
     const commandWords = stripAssignments(words);
     segments.push({ words: commandWords, redirects, cwd: dir, exits: [{ op: next, following: segments.length + 1 }] });
     const apart = afterPipe || isPipe(next) || next === '&';
-    let p = 0;
-    while (CD_PREFIXES.has(commandWords[p])) p++;
-    const [verb, ...args] = commandWords.slice(p);
-    if (!apart && verb === 'cd') dir = cdTarget(args, dir, home);
-    if (!apart && verb === 'pushd' && args.length > 0) {
-      pushed.push(dir);
-      dir = cdTarget(args, dir, home);
-    }
-    if (!apart && verb === 'popd') dir = pushed.pop() ?? dir;
+    if (!apart) dir = dirAfter(commandWords, dir, pushed, home);
     words = [];
     redirects = [];
   };
-
-  const atCommandStart = (): boolean => words.length === 0 && redirects.length === 0;
 
   const readWord = (w: string): void => {
     if (casePatterns) {
@@ -351,6 +345,20 @@ function expandTilde(p: string, home: string): string {
 
 function resolvePath(p: string, cwd: string, home: string): string {
   return path.resolve(cwd, expandTilde(p, home));
+}
+
+/** The shell's directory after a command: moved by `cd`, `pushd` and `popd` (also after `command`, `builtin`, `time`). */
+function dirAfter(words: string[], dir: string, pushed: string[], home: string): string {
+  let p = 0;
+  while (CD_PREFIXES.has(words[p])) p++;
+  const [verb, ...args] = words.slice(p);
+  if (verb === 'cd') return cdTarget(args, dir, home);
+  if (verb === 'pushd' && args.length > 0) {
+    pushed.push(dir);
+    return cdTarget(args, dir, home);
+  }
+  if (verb === 'popd') return pushed.pop() ?? dir;
+  return dir;
 }
 
 /** The directory after `cd <args>`: home with no argument, unchanged for `cd -` or several arguments. */
