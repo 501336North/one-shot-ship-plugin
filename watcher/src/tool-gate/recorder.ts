@@ -48,6 +48,14 @@ const EXIT_CODE = /^Exit code \d+/;
  */
 const TEST_WORDS = new Set(['test', 'tests', 'spec', 'specs', 'check', 'checks']);
 
+/**
+ * Programs never adopted, however they are worded: shell tests, searches, VCS and output tools
+ * fail easily (`test -f missing`, `grep -r check src`, `git check-ignore x`), so adopting them
+ * would hand out a red with no failing test. A code constant, not a rule value: it says what
+ * each program is, and it can only narrow adoption.
+ */
+const NEVER_ADOPTED = new Set(['test', '[', '[[', 'grep', 'egrep', 'fgrep', 'rg', 'git', 'find', 'echo', 'printf', 'ls', 'cat']);
+
 /** A word, split on non-alphanumerics, is a test word, or a word names a test file. */
 function isTestLike(part: CommandPart, settings: GateSettings, root: string, home: string): boolean {
   return part.words.some(
@@ -76,12 +84,14 @@ export function recordTestRun(call: PostCall, ctx: RecordContext): void {
   let adoptedCommand = thisBuild.adoptedCommand;
 
   if (testParts.length === 0) {
-    // Runner adoption (AC-004.9): an unlisted, test-like command that failed last, unhidden, in a build.
+    // Runner adoption (AC-004.9): the build's first unlisted, test-like command that failed last, unhidden.
     if (
       ctx.currentCommand !== BUILD_COMMAND ||
+      thisBuild.adoptedCommand !== null ||
       !failedWithExitCode ||
       call.isInterrupt === true ||
       last === undefined ||
+      NEVER_ADOPTED.has(path.basename(last.program ?? '')) ||
       facts.parts.some((part) => part.pipedOut || part.orTrue) ||
       !isTestLike(last, ctx.settings, call.cwd, ctx.home)
     ) {
