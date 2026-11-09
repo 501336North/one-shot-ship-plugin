@@ -52,6 +52,9 @@ The IRON LAWS become refusals at the tool-call level. Before an agent's Bash, Ed
 - **AC-004.5** Given any state, when the agent edits a test file, Markdown, JSON, YAML or anything under `.oss/dev/`, then the RED rule does not apply.
 - **AC-004.6** Given `currentCommand` is not `build`, the RED rule does not apply.
 - **AC-004.7** A red run starts a new cycle: the cycle's file list resets.
+- **AC-004.8** Given no recorded run, the refusal tells the agent how to add an unlisted test command (the user adds it to `.oss/tool-gates.json` with `!`).
+- **AC-004.9** Given a build where no test run has been recognized, when a 3rd source edit is refused, then the RED rule switches off for the rest of that build, one `red-rule-unarmed` event is logged with the Bash commands run so far, and the agent is told once.
+- **AC-004.10** Given a recognized test run earlier in the build, the switch-off never happens.
 
 ### US-005: Test runs recorded as red, green or unknown
 **As a** user **I want** each test run recorded from the hook events **so that** the RED rule and later cards (R-257, R-265, R-267) have a trustworthy record.
@@ -62,6 +65,7 @@ The IRON LAWS become refusals at the tool-call level. Before an agent's Bash, Ed
 - **AC-005.3** A test command piped into another command, followed by `|| true` / `|| :`, or interrupted is recorded unknown and does not change the cycle.
 - **AC-005.4** A Bash command that is not a test run records nothing.
 - **AC-005.5** `tool-gate` never runs tests itself.
+- **AC-005.6** Common runners are recognized by default: `pnpm test`, `yarn test`, `bun test`, `npm run test*`, `make test`, `swift test`, `gradle`/`mvn`/`dotnet test`, `rspec`, `phpunit` and the rest of `testCommandPatterns`.
 
 ### US-006: Protected paths can't be changed by the agent
 **As a** user **I want** agent writes to the rule files, OSS hook copies and Claude settings refused **so that** an agent can't switch a law off.
@@ -122,6 +126,7 @@ The IRON LAWS become refusals at the tool-call level. Before an agent's Bash, Ed
 | No `.oss/workflow-state.json` | RED rule doesn't apply |
 | `cycle.json` missing or corrupt | Treated as "no run yet" during build |
 | Two parallel sessions in one folder | Atomic writes; shared cycle (accepted limit) |
+| Tests run with a command not in `testCommandPatterns` | After 3 refused source edits, RED rule off for the build + `red-rule-unarmed` (no lockout) |
 | User runs `! git push` | Outside the hooks; not checked (intended escape hatch) |
 
 ## Non-Functional Requirements

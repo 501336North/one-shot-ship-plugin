@@ -48,6 +48,14 @@ Original prompt: `/oss:ideate R-253 (Sprint D #1, oss-lab ROADMAP): IRON LAWS be
 ## Q8: Stress test: agree with all five concerns, especially #2 (RED rule covers source files only)?
 **Answer:** "yes"
 
+## Q9 (after commit, from a heads-up): The RED rule only recognizes test commands from a fixed list; a build whose tests run another way would have every code edit refused. How should the design handle it?
+**Choices offered:**
+- A) Widen + don't lock out (Recommended)
+- B) Widen + strict
+- C) Fallback only
+
+**Selected: A** — Widen + don't lock out
+
 ## Design Decisions Summary
 - **Block mode on the sprint branch, no warn mode** (Q1): the sprint branch is Sprint D's trunk and reaches no customer before R-267, which counts wrong refusals.
 - **Per-cycle RED rule** (Q2): red unlocks source edits; after green only the cycle's files may change; works without task ids.
@@ -56,3 +64,4 @@ Original prompt: `/oss:ideate R-253 (Sprint D #1, oss-lab ROADMAP): IRON LAWS be
 - **Crash = allow + log + tell** (Q6): a broken gate must not block every session; R-267 counts gate errors.
 - **Served-prompt cleanup and real-session check deferred** (Q7): need the API sprint branch / R-267 respectively.
 - **RED rule covers source files only** (Q8): dev docs, Markdown, JSON and YAML stay editable during build.
+- **No lockout on unknown test runners** (Q9): wider default runner list; after 3 refused edits with no recognized test run, the rule is off for that build and logs `red-rule-unarmed`.

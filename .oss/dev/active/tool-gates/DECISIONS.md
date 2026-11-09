@@ -51,6 +51,9 @@ Per cycle, covering source files only (`sourceExtensions`); test files, Markdown
 - **Positive:** the TDD cycle is enforced now; refactors stay possible.
 - **Negative:** the "deliberately failing test" loophole remains until R-257; the rule trusts the model-set `currentCommand` until R-254.
 
+## Amendment (2026-11-09): no lockout on unknown test runners
+A heads-up flagged that the rule only recognizes test commands from a fixed list, so a build whose tests run another way would have every code edit refused, and the agent can't add its command (the rule file is protected). The user chose: widen the default list (pnpm/yarn/bun, `npm run test*`, make, swift, gradle, mvn, dotnet, rspec, phpunit); the refusal names the fix; and if 3 source edits are refused in a build with no recognized test run, the rule switches off for that build and logs `red-rule-unarmed`, which R-267 counts. Rejected: wider list with no fallback (a repo with an unlisted runner stays blocked until the user acts), and fallback only (unarms too often).
+
 ---
 
 # ADR-003: Settings-only rule file, plugin base plus add-only repo file
