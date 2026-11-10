@@ -290,6 +290,7 @@ fixture; sshrepo; MT_PRE="export GIT_SSH_COMMAND='ssh -oKnownHostsCommand=%d/x'"
 fixture; sshrepo; MT_PRE="export GIT_ASKPASS='$R/tools/ssh.sh'"; mt; MT_PRE=; stopv "15: an askpass program inside the repo is refused" GIT_ASKPASS
 fixture; sshrepo; MT_PRE="export GIT_SSH_COMMAND='ssh -o \"ProxyCommand=/bin/sh $R/tools/ssh.sh\"'"; mt; MT_PRE=; stopv "15: an ssh option value with spaces that runs a repo script is refused" GIT_SSH_COMMAND
 has "$R/tools/ssh.sh" && has 'started with' && pass "15: the STOP names the refused word and says the setting comes from the environment Claude Code was started with" || fail "15: the STOP names the refused word and says the setting comes from the environment Claude Code was started with" "$OUT"
+has 'other than $HOME,' && pass "15: the STOP names \$HOME as written, not the user's home folder" || fail "15: the STOP names \$HOME as written, not the user's home folder" "$OUT"
 fixture; VS="$T/Visual Studio Code$N.app/Contents/Resources/app/extensions/git/dist"; mkdir -p "$VS"; printf '#!/bin/sh\nexit 1\n' > "$VS/askpass.sh"; printf '#!/bin/sh\nexit 1\n' > "$VS/ssh-askpass.sh"; chmod +x "$VS/askpass.sh" "$VS/ssh-askpass.sh"
 MT_PRE="export GIT_ASKPASS='$VS/askpass.sh' SSH_ASKPASS='$VS/ssh-askpass.sh'"; mt; MT_PRE=
 [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "15: VS Code's askpass paths (with spaces) still pass" || fail "15: VS Code's askpass paths (with spaces) still pass" "rc=$RC out=$OUT"

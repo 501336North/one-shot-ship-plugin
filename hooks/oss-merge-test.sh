@@ -67,7 +67,7 @@ _rin() { # 0 if the path, symlinks followed, is inside an excluded folder
     while [[ -L $_q && $_n -lt 40 ]]; do _l=$(/usr/bin/readlink "$_q") || break; [[ $_l == /* ]] || _l=${_q%/*}/$_l; _q=$_l; _n=$((_n + 1)); done
     { _ir "$_q"; [[ $? == 0 ]]; } || { _ir "${_q%/*}/"; [[ $? == 0 ]]; }
 }
-_stop() { printf "STOP: %s is not allowed for this step: '%s' is a command chain, a glob, a variable other than $HOME, a relative or .. path, or a file or folder inside the repo. Nothing was tested or merged. The setting comes from the environment Claude Code was started with: point it outside the repo with absolute paths (ssh options as -o Option=value), or restart Claude Code without it, then run this step again from item 2.\n" "$1" "$2" >&2; exit 2; }
+_stop() { printf "STOP: %s is not allowed for this step: '%s' is a command chain, a glob, a variable other than \$HOME, a relative or .. path, or a file or folder inside the repo. Nothing was tested or merged. The setting comes from the environment Claude Code was started with: point it outside the repo with absolute paths (ssh options as -o Option=value), or restart Claude Code without it, then run this step again from item 2.\n" "$1" "$2" >&2; exit 2; }
 _ckp() { # <var> <path>
     case $2 in /*) ;; *) _stop "$1" "$2" ;; esac
     case /$2/ in */../*|*$'\n'*) _stop "$1" "$2" ;; esac
