@@ -325,6 +325,13 @@ if command -v npm >/dev/null 2>&1; then
     [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16: a project .npmrc script-shell that always fails does not stop a passing test (real npm, offline)" || fail "16: a project .npmrc script-shell that always fails does not stop a passing test (real npm, offline)" "rc=$RC out=$OUT"
     fixture; npmproj 'exit 1' 'script-shell=/usr/bin/true'; mt
     [[ "$RC" != 0 ]] && ! has READY_TO_MERGE && [[ ! -e "$(G)/tested.txt" ]] && pass "16: a project .npmrc script-shell that always succeeds does not make a failing test pass" || fail "16: a project .npmrc script-shell that always succeeds does not make a failing test pass" "rc=$RC out=$OUT"
+    # D24: a project .npmrc naming a standard shell is honoured (a test that passes only in full, non-posix bash)
+    fixture; npmproj 'test -n \"$BASH_VERSION\" && ! shopt -oq posix' 'script-shell=/bin/bash'; mt
+    [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16: a project .npmrc script-shell=/bin/bash runs the tests with bash" || fail "16: a project .npmrc script-shell=/bin/bash runs the tests with bash" "rc=$RC out=$OUT"
+    # round 2 (pen-test MEDIUM): node-options loads a file that turns the failing exit code into 0
+    fixture; printf 'process.exit(1)\n' > "$R/t.js"; printf 'process.on("exit",()=>{process.exitCode=0})\n' > "$R/p.js"
+    npmproj 'node t.js' 'node-options=--require ./p.js'; mt
+    [[ "$RC" != 0 ]] && ! has READY_TO_MERGE && [[ ! -e "$(G)/tested.txt" ]] && pass "16: a project .npmrc node-options does not make a failing test pass" || fail "16: a project .npmrc node-options does not make a failing test pass" "rc=$RC out=$OUT"
 else
     fail "16: real npm is needed for the .npmrc cases" "npm not on PATH"
 fi
@@ -338,6 +345,16 @@ spygit; MT_PATH="$R/bin:$B:$PATH"; mt; MT_PATH=
 [[ ! -e "$T/repo-git-ran$N" ]] && pass "17: a git in the work tree is never run when .git is a folder with a commondir file" || fail "17: a git in the work tree is never run when .git is a folder with a commondir file" "rc=$RC out=$OUT"
 # a path setting naming a file in a folder inside the repo that does not exist yet
 fixture; sshrepo; MT_PRE="export GIT_SSH='$R/not-yet/ssh'"; mt; MT_PRE=; stopv "17: a GIT_SSH path inside the repo that does not exist yet is refused" GIT_SSH
+# the same, through a folder outside the repo that is a dangling symlink into it (round 2, code review LOW)
+fixture; sshrepo; ln -s "$R/not-yet" "$T/dangle$N"; MT_PRE="export GIT_SSH='$T/dangle$N/ssh'"; mt; MT_PRE=; stopv "17: a GIT_SSH path through a dangling symlink into the repo is refused" GIT_SSH
+# round 2 (pen-test MEDIUM): a .git folder whose HEAD git rejects, so git goes on up to the real repo
+fixture; spygit; mkdir -p "$R/sub/.git/objects" "$R/sub/.git/refs"; printf 'garbage\n' > "$R/sub/.git/HEAD"
+MT_DIR="$R/sub"; MT_PATH="$R/bin:$B:$PATH"; mt; MT_DIR=; MT_PATH=
+[[ ! -e "$T/repo-git-ran$N" ]] && pass "17: a .git folder with an invalid HEAD does not hide the real repo from the PATH filter" || fail "17: a .git folder with an invalid HEAD does not hide the real repo from the PATH filter" "rc=$RC out=$OUT"
+# round 2 (audit LOW): a PATH folder whose resolved name holds a ':' must not split into a folder inside the repo
+fixture; spygit; mkdir -p "$T/c$N/b:$R/bin"; ln -s "$T/c$N/b:$R/bin" "$T/colon$N"
+MT_PATH="$T/colon$N:$B:$PATH"; mt; MT_PATH=
+[[ ! -e "$T/repo-git-ran$N" ]] && pass "17: a PATH folder resolving to a name with ':' never puts the repo's bin on PATH" || fail "17: a PATH folder resolving to a name with ':' never puts the repo's bin on PATH" "rc=$RC out=$OUT"
 # a PATH entry that is a symlink, pointed into the repo after the PATH check (here by gh, which runs after it)
 fixture; spygit; ln -s "$B" "$T/lnk$N"; mv "$B/gh" "$B/gh.real"
 printf '#!/bin/sh\nln -sfn "%s" "%s"\nexec "%s" "$@"\n' "$R/bin" "$T/lnk$N" "$B/gh.real" > "$B/gh"; chmod +x "$B/gh"; cp "$B/npm" "$R/bin/npm"
