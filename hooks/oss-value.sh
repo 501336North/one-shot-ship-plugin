@@ -39,7 +39,7 @@ unset POSIXLY_CORRECT
 #   oss-value.sh timeline merge     one merge line (oss-timeline.sh merge, the PR facts from gh) with the approval
 #                                   from approval.txt (merge-flag, chat-instruction, none or decision:<uuid v4>;
 #                                   none when missing); deleted once read, accepted or refused (G2 B4b).
-#   oss-value.sh merge-test         the ship merge step's final test: runs hooks/oss-merge-test.sh (no arguments), which
+#   oss-value.sh merge-test         the ship merge step's final test: runs hooks/oss-merge-test.sh --v2 (D26), which
 #                                   records branch.txt and head.txt, tests the squash result in a throwaway clone and
 #                                   writes tested.txt and prints READY_TO_MERGE only on success (merge-test-hook).
 #   oss-value.sh queue-push         POST type.txt, source.txt and prompt.txt (checked) to /api/v1/queue the same way;
@@ -471,6 +471,6 @@ case "${1:-}" in
         # arguments; it removes its own throwaway clone, so the served command holds no rm -rf.
         _ov_mt="$_OV_HERE/oss-merge-test.sh"
         [[ $# == 1 && -f "$_ov_mt" && ! -L "$_ov_mt" ]] || { echo "STOP: oss-value merge-test refuses (an argument, or oss-merge-test.sh is missing or not a plain file beside it); nothing was tested or merged. Update the OSS plugin, then run the merge step again from item 2." >&2; exit 2; }
-        exec /bin/bash -p "$_ov_mt" ;;
+        exec /bin/bash -p "$_ov_mt" --v2 ;;
     *) _ov_usage ;;
 esac

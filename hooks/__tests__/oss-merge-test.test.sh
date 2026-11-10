@@ -65,7 +65,7 @@ clones() { ls "$(G)" 2>/dev/null | grep '^t\.' || true; }
 # mt [args...]: run the hook in R as the served call does; sets OUT (stdout+stderr) and RC. MT_PRE runs first in the
 # same shell (to export functions); MT_PATH replaces PATH's tail.
 mt() {
-    OUT=$(cd "${MT_DIR:-$R}" && env HOME="$H" PATH="${MT_PATH:-$B:$PATH}" "$SH" -c "${MT_PRE:-:}; \"\$0\" \"\$@\"" "$SH" "$HOOK" "$@" 2>&1 </dev/null); RC=$?
+    OUT=$(cd "${MT_DIR:-$R}" && env HOME="$H" PATH="${MT_PATH:-$B:$PATH}" "$SH" -c "${MT_PRE:-:}; \"\$0\" \"\$@\"" "$SH" "$HOOK" ${MT_RAW-"--v2"} "$@" 2>&1 </dev/null); RC=$?
 }
 has() { printf '%s\n' "$OUT" | grep -qF -- "$1"; }
 
@@ -111,6 +111,9 @@ fixture; (cd "$R" && git checkout -q main); mt; not_recorded "5: on main it refu
 fixture; (cd "$R" && git checkout -q -b MASTER); mt; not_recorded "5: on MASTER it refuses before recording"
 fixture; (cd "$R" && git checkout -q --detach); mt; not_recorded "5: on a detached HEAD it refuses before recording"
 fixture; mt extra; not_recorded "5: any argument is refused before recording"
+# D26: only the served contract argument runs it, so served item 4 can tell 2.1.2 from 2.1.1 (which takes none)
+fixture; MT_RAW= ; mt; unset MT_RAW; not_recorded "5: without --v2 it refuses before recording"
+fixture; MT_RAW=--v3; mt; unset MT_RAW; not_recorded "5: another contract argument is refused before recording"
 
 # --- 6. npm sees only the allowlisted environment ------------------------------------------------------------------
 fixture; MT_PRE='export SECRET_X=leak NODE_OPTIONS=--inspect HTTPS_PROXY=http://proxy.test:3128'; mt; MT_PRE=
@@ -192,7 +195,7 @@ MT_PATH="$R/tools:$B:$PATH"; mt; MT_PATH=
 
 # --- 12 (ship round 1): an interrupted run (Ctrl-C, a timeout) still removes its throwaway clone --------------------
 fixture; touch "$B/npm.sleep"
-( cd "$R" && exec env HOME="$H" PATH="$B:$PATH" perl -e '$SIG{INT}="DEFAULT"; setpgrp(0,0); exec @ARGV or die' "$HOOK" >/dev/null 2>&1 </dev/null ) & MTP=$!
+( cd "$R" && exec env HOME="$H" PATH="$B:$PATH" perl -e '$SIG{INT}="DEFAULT"; setpgrp(0,0); exec @ARGV or die' "$HOOK" --v2 >/dev/null 2>&1 </dev/null ) & MTP=$!
 for _i in $(seq 1 100); do [[ -s "$B/npm.log" ]] && break; sleep 0.2; done
 had=$(clones); kill -INT -- "-$MTP" 2>/dev/null; wait "$MTP" 2>/dev/null
 after=$(clones); [[ -n "$had" && -z "$after" && ! -e "$(G)/tested.txt" ]] && pass "12: an interrupted run removes its throwaway clone and writes no tested.txt" || fail "12: an interrupted run removes its throwaway clone and writes no tested.txt" "clone during run=$had after(at check)=$after tested=$([[ -e $(G)/tested.txt ]] && echo y || echo n) now=$(clones)"
@@ -270,7 +273,7 @@ MT_PRE="export GIT_SSH_COMMAND='$B/sshspy -i ~/.ssh/k -o BatchMode=yes' GH_CONFI
 e="$T/ssh-env$N"; grep -qx 'GH_CONFIG_DIR=/gh/cfg' "$e" 2>/dev/null && grep -qx 'ALL_PROXY=socks5://proxy.test:1080' "$e" && grep -qx 'GIT_SSL_CAINFO=/ca/bundle.pem' "$e" && grep -qx 'SSL_CERT_FILE=/ca/cert.pem' "$e" \
   && pass "14: a GIT_SSH_COMMAND outside the repo runs, and GH_CONFIG_DIR, ALL_PROXY and the CA settings reach the fetch" || fail "14: a GIT_SSH_COMMAND outside the repo runs, and GH_CONFIG_DIR, ALL_PROXY and the CA settings reach the fetch" "env=$(tr '\n' ' ' < "$e" 2>&1 | cut -c1-300)"
 fixture; touch "$B/npm.sleeptest"; printf 'planted\n' > "$B/npm.plant"; G > "$B/npm.plant.to"; sed -i '' 's|$|/tested.txt|' "$B/npm.plant.to"
-( cd "$R" && exec env HOME="$H" PATH="$B:$PATH" perl -e '$SIG{INT}="DEFAULT"; setpgrp(0,0); exec @ARGV or die' "$HOOK" >/dev/null 2>&1 </dev/null ) & MTP=$!
+( cd "$R" && exec env HOME="$H" PATH="$B:$PATH" perl -e '$SIG{INT}="DEFAULT"; setpgrp(0,0); exec @ARGV or die' "$HOOK" --v2 >/dev/null 2>&1 </dev/null ) & MTP=$!
 for _i in $(seq 1 100); do [[ -e "$(G)/tested.txt" ]] && break; sleep 0.2; done
 had=$([[ -e "$(G)/tested.txt" ]] && echo y); kill -INT -- "-$MTP" 2>/dev/null; wait "$MTP" 2>/dev/null
 [[ -n "$had" && ! -e "$(G)/tested.txt" ]] && pass "14: an interrupted run leaves no tested.txt, even one the tests wrote" || fail "14: an interrupted run leaves no tested.txt, even one the tests wrote" "planted=$had now=$([[ -e $(G)/tested.txt ]] && echo y || echo n)"
@@ -367,15 +370,24 @@ else
     [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16b: .NPMRC is not .npmrc on a case-sensitive disk and is tested as usual" || fail "16b: .NPMRC is not .npmrc on a case-sensitive disk and is tested as usual" "rc=$RC out=$OUT"
 fi
 # (needs a git built with iconv for working-tree-encoding, as macOS and Linux distribution gits are)
-# round 4 (pen-test MEDIUM): the branch's .gitattributes cannot re-encode main's .npmrc so npm ignores it: main's
-# .npmrc (script-shell=/bin/bash) must still be what npm reads (real npm; a bash-only test passes only then)
-if command -v npm >/dev/null 2>&1; then
-    fixture; npmproj 'test -n \"$BASH_VERSION\" && ! shopt -oq posix' 'script-shell=/bin/bash'
-    (cd "$R" && printf '.npmrc working-tree-encoding=UTF-16\n' > .gitattributes && git add .gitattributes && git "${GITID[@]}" commit -qm attr) >/dev/null 2>&1; mt
-    [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16b: a branch .gitattributes cannot re-encode main's .npmrc away" || fail "16b: a branch .gitattributes cannot re-encode main's .npmrc away" "rc=$RC out=$OUT"
-else
-    fail "16b: real npm is needed for the .gitattributes case" "npm not on PATH"
-fi
+# round 4 (pen-test MEDIUM), round 6: a branch .gitattributes that re-encodes main's .npmrc changes what npm reads
+fixture; mainrc 'fund=false'; (cd "$R" && printf '.npmrc working-tree-encoding=UTF-16\n' > .gitattributes && git add .gitattributes && git "${GITID[@]}" commit -qm attr) >/dev/null 2>&1; mt
+rcstop && pass "16b: a branch .gitattributes that re-encodes main's .npmrc STOPs before npm runs" || fail "16b: a branch .gitattributes that re-encodes main's .npmrc STOPs before npm runs" "rc=$RC out=$OUT"
+# round 6 (pen-test, audit MEDIUM): main's .npmrc is a link; the branch edits the file it points to
+fixture; (cd "$R" && git checkout -q main && printf 'fund=false\n' > npmrc.shared && ln -s npmrc.shared .npmrc && git add .npmrc npmrc.shared \
+  && git "${GITID[@]}" commit -qm rc && git push -q origin main && git checkout -q feat/x && git "${GITID[@]}" merge -q --no-edit main \
+  && printf 'workspaces=true\n' > npmrc.shared && git add npmrc.shared && git "${GITID[@]}" commit -qm edit) >/dev/null 2>&1; mt
+rcstop && pass "16b: a branch that edits the file main's .npmrc links to STOPs before npm runs" || fail "16b: a branch that edits the file main's .npmrc links to STOPs before npm runs" "rc=$RC out=$OUT"
+# round 6 (audit LOW): the tests run on the squash result as a fresh checkout writes it (the branch's attributes)
+fixture; (cd "$R" && git checkout -q main && printf 'x\n' > g.txt && git add g.txt && git "${GITID[@]}" commit -qm g && git push -q origin main \
+  && git checkout -q feat/x && git "${GITID[@]}" merge -q --no-edit main && printf 'g.txt eol=crlf\n' > .gitattributes && git add .gitattributes \
+  && git "${GITID[@]}" commit -qm attr) >/dev/null 2>&1
+cat > "$B/npm" <<'NPM'
+#!/bin/sh
+case "$1" in test) test "$(wc -c < g.txt | tr -d ' ')" = 3 ;; *) exit 0 ;; esac
+NPM
+chmod +x "$B/npm"; mt
+[[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16b: the tests see a file the way a fresh checkout of the squash result writes it" || fail "16b: the tests see a file the way a fresh checkout of the squash result writes it" "rc=$RC out=$OUT"
 # heads-up (no silent tightening): a branch that never touches .npmrc is tested, whatever main's .npmrc setup
 fixture; (cd "$R" && git checkout -q main && printf 'fund=false\n' > .npmrc && printf '.npmrc eol=crlf\n' > .gitattributes && git add .npmrc .gitattributes \
   && git "${GITID[@]}" commit -qm rc && git push -q origin main && git checkout -q feat/x && git "${GITID[@]}" merge -q --no-edit main) >/dev/null 2>&1; mt
