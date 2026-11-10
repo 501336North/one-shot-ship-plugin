@@ -65,7 +65,7 @@ clones() { ls "$(G)" 2>/dev/null | grep '^t\.' || true; }
 # mt [args...]: run the hook in R as the served call does; sets OUT (stdout+stderr) and RC. MT_PRE runs first in the
 # same shell (to export functions); MT_PATH replaces PATH's tail.
 mt() {
-    OUT=$(cd "${MT_DIR:-$R}" && env HOME="$H" PATH="${MT_PATH:-$B:$PATH}" "$SH" -c "${MT_PRE:-:}; \"\$0\" \"\$@\"" "$SH" "$HOOK" "$@" 2>&1 </dev/null); RC=$?
+    OUT=$(cd "${MT_DIR:-$R}" && env HOME="$H" PATH="${MT_PATH:-$B:$PATH}" "$SH" -c "${MT_PRE:-:}; \"\$0\" \"\$@\"" "$SH" "$HOOK" ${MT_RAW-"--v2"} "$@" 2>&1 </dev/null); RC=$?
 }
 has() { printf '%s\n' "$OUT" | grep -qF -- "$1"; }
 
@@ -76,7 +76,8 @@ fixture; mt
 head=$(rev feat/x); main=$(rev main)
 [[ "$RC" == 0 ]] && has BRANCH_RECORDED && has READY_TO_MERGE && pass "1: a clean run prints BRANCH_RECORDED and READY_TO_MERGE" || fail "1: a clean run prints BRANCH_RECORDED and READY_TO_MERGE" "rc=$RC out=$OUT"
 [[ "$(cat "$(G)/branch.txt" 2>/dev/null)" == feat/x && "$(cat "$(G)/head.txt" 2>/dev/null)" == "$head" ]] && pass "1: branch.txt and head.txt name the branch and its head" || fail "1: branch.txt and head.txt name the branch and its head" "$(ls "$(G)" 2>&1)"
-[[ "$(cat "$(G)/tested.txt" 2>/dev/null)" == "$head $main" ]] && pass "1: tested.txt holds '<head> <main>'" || fail "1: tested.txt holds '<head> <main>'" "got '$(cat "$(G)/tested.txt" 2>&1)'"
+# D28: tagged v2, so served item 4b never accepts a proof an older merge check wrote
+[[ "$(cat "$(G)/tested.txt" 2>/dev/null)" == "v2 $head $main" ]] && pass "1: tested.txt holds 'v2 <head> <main>'" || fail "1: tested.txt holds 'v2 <head> <main>'" "got '$(cat "$(G)/tested.txt" 2>&1)'"
 [[ "$(cat "$B/npm.log" 2>/dev/null | tr '\n' '|')" == "ci|run build --if-present|test|" ]] && pass "1: npm ci, build, test ran once each" || fail "1: npm ci, build, test ran once each" "$(cat "$B/npm.log" 2>&1)"
 [[ -z "$(clones)" ]] && pass "1: no throwaway clone is left" || fail "1: no throwaway clone is left" "$(clones)"
 [[ "$(cd "$R" && git branch --show-current)" == feat/x ]] && pass "1: the work tree stays on the branch" || fail "1: the work tree stays on the branch" "$(cd "$R" && git branch --show-current)"
@@ -110,7 +111,10 @@ not_recorded() { # <label>
 fixture; (cd "$R" && git checkout -q main); mt; not_recorded "5: on main it refuses before recording"
 fixture; (cd "$R" && git checkout -q -b MASTER); mt; not_recorded "5: on MASTER it refuses before recording"
 fixture; (cd "$R" && git checkout -q --detach); mt; not_recorded "5: on a detached HEAD it refuses before recording"
-fixture; mt extra; not_recorded "5: any argument is refused before recording"
+fixture; mt extra; if has 'takes one argument, --v2'; then not_recorded "5: an extra argument after --v2 is refused before recording"; else fail "5: an extra argument after --v2 is refused before recording" "out=$OUT"; fi
+# D26: only the served contract argument runs it, so served item 4 can tell 2.1.2 from 2.1.1 (which takes none)
+fixture; MT_RAW= ; mt; unset MT_RAW; if has 'takes one argument, --v2'; then not_recorded "5: without --v2 it refuses before recording"; else fail "5: without --v2 it refuses before recording" "out=$OUT"; fi
+fixture; MT_RAW=--v3; mt; unset MT_RAW; if has 'takes one argument, --v2'; then not_recorded "5: another contract argument is refused before recording"; else fail "5: another contract argument is refused before recording" "out=$OUT"; fi
 
 # --- 6. npm sees only the allowlisted environment ------------------------------------------------------------------
 fixture; MT_PRE='export SECRET_X=leak NODE_OPTIONS=--inspect HTTPS_PROXY=http://proxy.test:3128'; mt; MT_PRE=
@@ -140,7 +144,7 @@ MT_PATH=":.:$B:$PATH"; mt; MT_PATH=
 hk() { K="$T/hk$N"; rm -rf "$K"; mkdir -p "$K"; cp "$ROOT/hooks/oss-value.sh" "$ROOT/hooks/oss-safe-path.sh" "$ROOT/hooks/oss-merge-test.sh" "$K/"; }
 ovmt() { OUT=$(cd "$R" && env HOME="$H" PATH="$B:$PATH" "$SH" "$K/oss-value.sh" merge-test "$@" 2>&1 </dev/null); RC=$?; }
 fixture; hk; ovmt
-[[ "$RC" == 0 && "$(cat "$(G)/tested.txt" 2>/dev/null)" == "$(rev feat/x) $(rev main)" ]] && has READY_TO_MERGE && pass "9: oss-value.sh merge-test runs the hook: READY_TO_MERGE and tested.txt" || fail "9: oss-value.sh merge-test runs the hook: READY_TO_MERGE and tested.txt" "rc=$RC out=$OUT"
+[[ "$RC" == 0 && "$(cat "$(G)/tested.txt" 2>/dev/null)" == "v2 $(rev feat/x) $(rev main)" ]] && has READY_TO_MERGE && pass "9: oss-value.sh merge-test runs the hook: READY_TO_MERGE and tested.txt" || fail "9: oss-value.sh merge-test runs the hook: READY_TO_MERGE and tested.txt" "rc=$RC out=$OUT"
 fixture; hk; ovmt extra
 [[ "$RC" != 0 && ! -e "$(G)/branch.txt" ]] && ! has READY_TO_MERGE && pass "9: oss-value.sh merge-test refuses any argument before recording" || fail "9: oss-value.sh merge-test refuses any argument before recording" "rc=$RC out=$OUT"
 fixture; hk; rm "$K/oss-merge-test.sh"; ovmt
@@ -192,7 +196,7 @@ MT_PATH="$R/tools:$B:$PATH"; mt; MT_PATH=
 
 # --- 12 (ship round 1): an interrupted run (Ctrl-C, a timeout) still removes its throwaway clone --------------------
 fixture; touch "$B/npm.sleep"
-( cd "$R" && exec env HOME="$H" PATH="$B:$PATH" perl -e '$SIG{INT}="DEFAULT"; setpgrp(0,0); exec @ARGV or die' "$HOOK" >/dev/null 2>&1 </dev/null ) & MTP=$!
+( cd "$R" && exec env HOME="$H" PATH="$B:$PATH" perl -e '$SIG{INT}="DEFAULT"; setpgrp(0,0); exec @ARGV or die' "$HOOK" --v2 >/dev/null 2>&1 </dev/null ) & MTP=$!
 for _i in $(seq 1 100); do [[ -s "$B/npm.log" ]] && break; sleep 0.2; done
 had=$(clones); kill -INT -- "-$MTP" 2>/dev/null; wait "$MTP" 2>/dev/null
 after=$(clones); [[ -n "$had" && -z "$after" && ! -e "$(G)/tested.txt" ]] && pass "12: an interrupted run removes its throwaway clone and writes no tested.txt" || fail "12: an interrupted run removes its throwaway clone and writes no tested.txt" "clone during run=$had after(at check)=$after tested=$([[ -e $(G)/tested.txt ]] && echo y || echo n) now=$(clones)"
@@ -270,7 +274,7 @@ MT_PRE="export GIT_SSH_COMMAND='$B/sshspy -i ~/.ssh/k -o BatchMode=yes' GH_CONFI
 e="$T/ssh-env$N"; grep -qx 'GH_CONFIG_DIR=/gh/cfg' "$e" 2>/dev/null && grep -qx 'ALL_PROXY=socks5://proxy.test:1080' "$e" && grep -qx 'GIT_SSL_CAINFO=/ca/bundle.pem' "$e" && grep -qx 'SSL_CERT_FILE=/ca/cert.pem' "$e" \
   && pass "14: a GIT_SSH_COMMAND outside the repo runs, and GH_CONFIG_DIR, ALL_PROXY and the CA settings reach the fetch" || fail "14: a GIT_SSH_COMMAND outside the repo runs, and GH_CONFIG_DIR, ALL_PROXY and the CA settings reach the fetch" "env=$(tr '\n' ' ' < "$e" 2>&1 | cut -c1-300)"
 fixture; touch "$B/npm.sleeptest"; printf 'planted\n' > "$B/npm.plant"; G > "$B/npm.plant.to"; sed -i '' 's|$|/tested.txt|' "$B/npm.plant.to"
-( cd "$R" && exec env HOME="$H" PATH="$B:$PATH" perl -e '$SIG{INT}="DEFAULT"; setpgrp(0,0); exec @ARGV or die' "$HOOK" >/dev/null 2>&1 </dev/null ) & MTP=$!
+( cd "$R" && exec env HOME="$H" PATH="$B:$PATH" perl -e '$SIG{INT}="DEFAULT"; setpgrp(0,0); exec @ARGV or die' "$HOOK" --v2 >/dev/null 2>&1 </dev/null ) & MTP=$!
 for _i in $(seq 1 100); do [[ -e "$(G)/tested.txt" ]] && break; sleep 0.2; done
 had=$([[ -e "$(G)/tested.txt" ]] && echo y); kill -INT -- "-$MTP" 2>/dev/null; wait "$MTP" 2>/dev/null
 [[ -n "$had" && ! -e "$(G)/tested.txt" ]] && pass "14: an interrupted run leaves no tested.txt, even one the tests wrote" || fail "14: an interrupted run leaves no tested.txt, even one the tests wrote" "planted=$had now=$([[ -e $(G)/tested.txt ]] && echo y || echo n)"
@@ -311,6 +315,135 @@ MT_PATH="$T/ghw$N:$B:$PATH"; mt; MT_PATH=
 fixture; RG=$(command -v git); mkdir -p "$T/gw$N"; printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s"\nexec "%s" "$@"\n' "$T/gw$N.log" "$RG" > "$T/gw$N/git"; chmod +x "$T/gw$N/git"
 MT_PATH="$T/gw$N:$B:$PATH"; mt; MT_PATH=
 grep 'fetch' "$T/gw$N.log" 2>/dev/null | grep -q '+refs/heads/main:refs/oss/main' && grep 'fetch' "$T/gw$N.log" | grep '+refs/heads/main:refs/oss/main' | grep -q -- '--no-recurse-submodules' && pass "15: the fetch of main never recurses into submodules" || fail "15: the fetch of main never recurses into submodules" "$(grep fetch "$T/gw$N.log" 2>&1 | head -3)"
+
+# --- 16. the branch's own .npmrc cannot choose the shell npm runs the scripts with (API ship pen-test) ------------
+# Real npm, not the stub: a project .npmrc `script-shell` that exits 0 would make every npm script "pass".
+mainrc() { # <npmrc line>: commit an .npmrc on main and push it (main's .npmrc is trusted; D25 STOPs on a branch's)
+    ( cd "$R" && git checkout -q main && printf '%s\n' "$1" > .npmrc && git add .npmrc && git "${GITID[@]}" commit -qm rc \
+      && git push -q origin main && git checkout -q feat/x && git "${GITID[@]}" merge -q --no-edit main ) >/dev/null 2>&1
+}
+npmproj() { # <test script> [npmrc line]: an optional .npmrc on main, then a package.json and an empty lockfile on feat/x
+    [[ -z ${2:-} ]] || mainrc "$2"
+    printf '{"name":"x","version":"1.0.0","scripts":{"test":"%s"}}\n' "$1" > "$R/package.json"
+    printf '{"name":"x","version":"1.0.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"x","version":"1.0.0"}}}\n' > "$R/package-lock.json"
+    ( cd "$R" && git add -A && git "${GITID[@]}" commit -qm npm ) >/dev/null 2>&1; rm -f "$B/npm"
+}
+if command -v npm >/dev/null 2>&1; then
+    fixture; npmproj 'exit 0' 'script-shell=/usr/bin/false'; mt
+    [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16: a project .npmrc script-shell that always fails does not stop a passing test (real npm, offline)" || fail "16: a project .npmrc script-shell that always fails does not stop a passing test (real npm, offline)" "rc=$RC out=$OUT"
+    fixture; npmproj 'exit 1' 'script-shell=/usr/bin/true'; mt
+    [[ "$RC" != 0 ]] && ! has READY_TO_MERGE && has "STOP: npm ci, the build or the tests failed" && [[ ! -e "$(G)/tested.txt" ]] && pass "16: a project .npmrc script-shell that always succeeds does not make a failing test pass" || fail "16: a project .npmrc script-shell that always succeeds does not make a failing test pass" "rc=$RC out=$OUT"
+    # D24: a project .npmrc naming a standard shell is honoured (a test that passes only in full, non-posix bash)
+    fixture; npmproj 'test -n \"$BASH_VERSION\" && ! shopt -oq posix' 'script-shell=/bin/bash'; mt
+    [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16: a project .npmrc script-shell=/bin/bash runs the tests with bash" || fail "16: a project .npmrc script-shell=/bin/bash runs the tests with bash" "rc=$RC out=$OUT"
+    # round 3 (code review LOW): a CRLF .npmrc with a trailing space still names bash
+    fixture; npmproj 'test -n \"$BASH_VERSION\" && ! shopt -oq posix' $'script-shell=/bin/bash \r'; mt
+    [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16: a CRLF .npmrc script-shell=/bin/bash with a trailing space runs the tests with bash" || fail "16: a CRLF .npmrc script-shell=/bin/bash with a trailing space runs the tests with bash" "rc=$RC out=$OUT"
+    # round 3 (code review LOW): with script-shell=/bin/zsh, the caller's ~/.zshenv never runs in the clean run
+    # (needs /bin/zsh: it fails, never skips, without it; macOS ships it, a Linux CI image must install zsh)
+    fixture; printf 'exit 0\n' > "$H/.zshenv"; npmproj 'exit 1' 'script-shell=/bin/zsh'; mt; rm -f "$H/.zshenv"
+    [[ -x /bin/zsh ]] && [[ "$RC" != 0 ]] && ! has READY_TO_MERGE && has "STOP: npm ci, the build or the tests failed" && [[ ! -e "$(G)/tested.txt" ]] && pass "16: with script-shell=/bin/zsh, ~/.zshenv does not make a failing test pass" || fail "16: with script-shell=/bin/zsh, ~/.zshenv does not make a failing test pass" "rc=$RC out=$OUT"
+    # round 2 (pen-test MEDIUM): node-options loads a file that turns the failing exit code into 0
+    fixture; printf 'process.exit(1)\n' > "$R/t.js"; printf 'process.on("exit",()=>{process.exitCode=0})\n' > "$R/p.js"
+    npmproj 'node t.js' 'node-options=--require ./p.js'; mt
+    [[ "$RC" != 0 ]] && ! has READY_TO_MERGE && has "STOP: npm ci, the build or the tests failed" && [[ ! -e "$(G)/tested.txt" ]] && pass "16: a project .npmrc node-options does not make a failing test pass" || fail "16: a project .npmrc node-options does not make a failing test pass" "rc=$RC out=$OUT"
+else
+    fail "16: real npm is needed for the .npmrc cases" "npm not on PATH"
+fi
+
+# --- 16b. D25: a branch that changes the root .npmrc is never tested or merged by this step ---------------------------
+branchrc() { ( cd "$R" && if [[ -n $1 ]]; then printf '%s\n' "$1" > .npmrc; else rm -f .npmrc; fi && git add -A && git "${GITID[@]}" commit -qm rc ) >/dev/null 2>&1; }
+rcstop() { [[ "$RC" != 0 ]] && ! has READY_TO_MERGE && has "changes the root .npmrc" && [[ ! -e "$(G)/tested.txt" ]] && [[ ! -s "$B/npm.log" ]]; }
+fixture; branchrc 'workspaces=true'; mt
+rcstop && pass "16b: a branch that adds a root .npmrc STOPs before npm runs" || fail "16b: a branch that adds a root .npmrc STOPs before npm runs" "rc=$RC out=$OUT"
+fixture; mainrc 'fund=false'; branchrc 'workspace=a'; mt
+rcstop && pass "16b: a branch that edits main's .npmrc STOPs before npm runs" || fail "16b: a branch that edits main's .npmrc STOPs before npm runs" "rc=$RC out=$OUT"
+fixture; mainrc 'fund=false'; branchrc ''; mt
+rcstop && pass "16b: a branch that removes main's .npmrc STOPs before npm runs" || fail "16b: a branch that removes main's .npmrc STOPs before npm runs" "rc=$RC out=$OUT"
+fixture; mainrc 'fund=false'; (cd "$R" && rm .npmrc && ln -s /dev/null .npmrc && git add -A && git "${GITID[@]}" commit -qm link) >/dev/null 2>&1; mt
+rcstop && pass "16b: a branch that turns .npmrc into a link STOPs before npm runs" || fail "16b: a branch that turns .npmrc into a link STOPs before npm runs" "rc=$RC out=$OUT"
+# round 4 (pen-test HIGH): .NPMRC is another file to git but the same file to npm on a case-insensitive disk
+fixture; branchrc ''; (cd "$R" && printf 'workspaces=true\n' > .NPMRC && git add -A && git "${GITID[@]}" commit -qm rc) >/dev/null 2>&1; mt
+# on a case-sensitive disk .NPMRC is another file that npm never reads, so the run is tested as usual
+touch "$T/casepr$N"; if [[ -e "$T/CASEPR$N" ]]; then
+    rcstop && pass "16b: a branch that adds .NPMRC (another case) STOPs before npm runs (case-insensitive disk)" || fail "16b: a branch that adds .NPMRC (another case) STOPs before npm runs (case-insensitive disk)" "rc=$RC out=$OUT"
+else
+    [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16b: .NPMRC is not .npmrc on a case-sensitive disk and is tested as usual" || fail "16b: .NPMRC is not .npmrc on a case-sensitive disk and is tested as usual" "rc=$RC out=$OUT"
+fi
+# (needs a git built with iconv for working-tree-encoding, as macOS and Linux distribution gits are)
+# round 4 (pen-test MEDIUM), round 6: a branch .gitattributes that re-encodes main's .npmrc changes what npm reads
+fixture; mainrc 'fund=false'; (cd "$R" && printf '.npmrc working-tree-encoding=UTF-16\n' > .gitattributes && git add .gitattributes && git "${GITID[@]}" commit -qm attr) >/dev/null 2>&1; mt
+rcstop && pass "16b: a branch .gitattributes that re-encodes main's .npmrc STOPs before npm runs" || fail "16b: a branch .gitattributes that re-encodes main's .npmrc STOPs before npm runs" "rc=$RC out=$OUT"
+# round 6 (pen-test, audit MEDIUM): main's .npmrc is a link; the branch edits the file it points to
+fixture; (cd "$R" && git checkout -q main && printf 'fund=false\n' > npmrc.shared && ln -s npmrc.shared .npmrc && git add .npmrc npmrc.shared \
+  && git "${GITID[@]}" commit -qm rc && git push -q origin main && git checkout -q feat/x && git "${GITID[@]}" merge -q --no-edit main \
+  && printf 'workspaces=true\n' > npmrc.shared && git add npmrc.shared && git "${GITID[@]}" commit -qm edit) >/dev/null 2>&1; mt
+rcstop && pass "16b: a branch that edits the file main's .npmrc links to STOPs before npm runs" || fail "16b: a branch that edits the file main's .npmrc links to STOPs before npm runs" "rc=$RC out=$OUT"
+# round 6 (audit LOW): the tests run on the squash result as a fresh checkout writes it (the branch's attributes)
+fixture; (cd "$R" && git checkout -q main && printf 'x\n' > g.txt && git add g.txt && git "${GITID[@]}" commit -qm g && git push -q origin main \
+  && git checkout -q feat/x && git "${GITID[@]}" merge -q --no-edit main && printf 'g.txt eol=crlf\n' > .gitattributes && git add .gitattributes \
+  && git "${GITID[@]}" commit -qm attr) >/dev/null 2>&1
+cat > "$B/npm" <<'NPM'
+#!/bin/sh
+case "$1" in test) test "$(wc -c < g.txt | tr -d ' ')" = 3 ;; *) exit 0 ;; esac
+NPM
+chmod +x "$B/npm"; mt
+[[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16b: the tests see a file the way a fresh checkout of the squash result writes it" || fail "16b: the tests see a file the way a fresh checkout of the squash result writes it" "rc=$RC out=$OUT"
+# D27 (owner, after a heads-up): a project whose own install or build scripts write .npmrc is tested, not stopped;
+# D25 checks only the committed .npmrc (scripts the branch runs are the D11 sandbox follow-up)
+fixture; mainrc 'fund=false'
+cat > "$B/npm" <<NPM
+#!/bin/sh
+printf '%s\n' "\$*" >> "$B/npm.log"
+test "\$*" = 'run build --if-present' && printf '//registry.example/:_authToken=x\n' >> .npmrc
+exit 0
+NPM
+chmod +x "$B/npm"; mt
+[[ "$RC" == 0 ]] && has READY_TO_MERGE && grep -qx test "$B/npm.log" && pass "16b: a project build that writes .npmrc is tested as before" || fail "16b: a project build that writes .npmrc is tested as before" "rc=$RC npm=$(cat "$B/npm.log" 2>/dev/null) out=$OUT"
+# round 8 (audit LOW): a step before npm that fails without its own STOP still keeps npm from running
+fixture; printf '#!/bin/sh\nfor a; do test "$a" = commit-tree && exit 1; done\nexec %s "$@"\n' "$(command -v git)" > "$B/git"; chmod +x "$B/git"; mt
+[[ "$RC" != 0 ]] && ! has READY_TO_MERGE && [[ ! -e "$(G)/tested.txt" && ! -s "$B/npm.log" ]] && pass "16b: a failed squash commit stops before npm runs" || fail "16b: a failed squash commit stops before npm runs" "rc=$RC npm=$(cat "$B/npm.log" 2>/dev/null) out=$OUT"
+# heads-up (no silent tightening): a branch that never touches .npmrc is tested, whatever main's .npmrc setup
+fixture; (cd "$R" && git checkout -q main && printf 'fund=false\n' > .npmrc && printf '.npmrc eol=crlf\n' > .gitattributes && git add .npmrc .gitattributes \
+  && git "${GITID[@]}" commit -qm rc && git push -q origin main && git checkout -q feat/x && git "${GITID[@]}" merge -q --no-edit main) >/dev/null 2>&1; mt
+[[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16b: main's .gitattributes converting its .npmrc (eol=crlf) does not stop an untouched branch" || fail "16b: main's .gitattributes converting its .npmrc (eol=crlf) does not stop an untouched branch" "rc=$RC out=$OUT"
+fixture; (cd "$R" && git checkout -q main && printf 'fund=false\n' > npmrc.shared && ln -s npmrc.shared .npmrc && git add .npmrc npmrc.shared \
+  && git "${GITID[@]}" commit -qm rc && git push -q origin main && git checkout -q feat/x && git "${GITID[@]}" merge -q --no-edit main) >/dev/null 2>&1; mt
+[[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16b: main's .npmrc as a link does not stop an untouched branch" || fail "16b: main's .npmrc as a link does not stop an untouched branch" "rc=$RC out=$OUT"
+fixture; mainrc 'fund=false'; mt
+[[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16b: main's own .npmrc, unchanged by the branch, is tested as before" || fail "16b: main's own .npmrc, unchanged by the branch, is tested as before" "rc=$RC out=$OUT"
+
+# --- 17. hook security audit (D18): unusual .git layouts, missing in-repo paths, PATH swapped after the check ---------
+# a git the repo ships in bin/: records that it ran, then does the real work
+spygit() { mkdir -p "$R/bin"; printf '#!/bin/sh\n/usr/bin/touch "%s"\nexec %s "$@"\n' "$T/repo-git-ran$N" "$(command -v git)" > "$R/bin/git"; chmod +x "$R/bin/git"; }
+# a .git folder with HEAD and a commondir file (objects and refs live elsewhere), which git accepts
+fixture; mv "$R/.git" "$T/common$N"; mkdir "$R/.git"; mv "$T/common$N/HEAD" "$T/common$N/index" "$R/.git/"; printf '%s\n' "$T/common$N" > "$R/.git/commondir"
+spygit; MT_PATH="$R/bin:$B:$PATH"; mt; MT_PATH=
+[[ ! -e "$T/repo-git-ran$N" ]] && pass "17: a git in the work tree is never run when .git is a folder with a commondir file" || fail "17: a git in the work tree is never run when .git is a folder with a commondir file" "rc=$RC out=$OUT"
+# a path setting naming a file in a folder inside the repo that does not exist yet
+fixture; sshrepo; MT_PRE="export GIT_SSH='$R/not-yet/ssh'"; mt; MT_PRE=; stopv "17: a GIT_SSH path inside the repo that does not exist yet is refused" GIT_SSH
+# the same, through a folder outside the repo that is a dangling symlink into it (round 2, code review LOW)
+fixture; sshrepo; ln -s "$R/not-yet" "$T/dangle$N"; MT_PRE="export GIT_SSH='$T/dangle$N/ssh'"; mt; MT_PRE=; stopv "17: a GIT_SSH path through a dangling symlink into the repo is refused" GIT_SSH
+# round 2 (pen-test MEDIUM): a .git folder whose HEAD git rejects, so git goes on up to the real repo
+fixture; spygit; mkdir -p "$R/sub/.git/objects" "$R/sub/.git/refs"; printf 'garbage\n' > "$R/sub/.git/HEAD"
+MT_DIR="$R/sub"; MT_PATH="$R/bin:$B:$PATH"; mt; MT_DIR=; MT_PATH=
+[[ ! -e "$T/repo-git-ran$N" ]] && pass "17: a .git folder with an invalid HEAD does not hide the real repo from the PATH filter" || fail "17: a .git folder with an invalid HEAD does not hide the real repo from the PATH filter" "rc=$RC out=$OUT"
+# round 3 (audit MEDIUM): HEAD a link to something not under refs/, or an objects folder git cannot enter
+fixture; spygit; mkdir -p "$R/sub/.git/objects" "$R/sub/.git/refs"; ln -s garbage "$R/sub/.git/HEAD"
+MT_DIR="$R/sub"; MT_PATH="$R/bin:$B:$PATH"; mt; MT_DIR=; MT_PATH=
+[[ ! -e "$T/repo-git-ran$N" ]] && pass "17: a .git folder whose HEAD links outside refs/ does not hide the real repo from the PATH filter" || fail "17: a .git folder whose HEAD links outside refs/ does not hide the real repo from the PATH filter" "rc=$RC out=$OUT"
+fixture; spygit; mkdir -p "$R/sub/.git/objects" "$R/sub/.git/refs"; printf 'ref: refs/heads/main\n' > "$R/sub/.git/HEAD"; chmod 600 "$R/sub/.git/objects"
+MT_DIR="$R/sub"; MT_PATH="$R/bin:$B:$PATH"; mt; MT_DIR=; MT_PATH=; chmod 700 "$R/sub/.git/objects"
+[[ ! -e "$T/repo-git-ran$N" ]] && pass "17: a .git folder whose objects folder git cannot enter does not hide the real repo from the PATH filter" || fail "17: a .git folder whose objects folder git cannot enter does not hide the real repo from the PATH filter" "rc=$RC out=$OUT"
+# round 2 (audit LOW): a PATH folder whose resolved name holds a ':' must not split into a folder inside the repo
+fixture; spygit; mkdir -p "$T/c$N/b:$R/bin"; ln -s "$T/c$N/b:$R/bin" "$T/colon$N"
+MT_PATH="$T/colon$N:$B:$PATH"; mt; MT_PATH=
+[[ ! -e "$T/repo-git-ran$N" ]] && pass "17: a PATH folder resolving to a name with ':' never puts the repo's bin on PATH" || fail "17: a PATH folder resolving to a name with ':' never puts the repo's bin on PATH" "rc=$RC out=$OUT"
+# a PATH entry that is a symlink, pointed into the repo after the PATH check (here by gh, which runs after it)
+fixture; spygit; ln -s "$B" "$T/lnk$N"; mv "$B/gh" "$B/gh.real"
+printf '#!/bin/sh\nln -sfn "%s" "%s"\nexec "%s" "$@"\n' "$R/bin" "$T/lnk$N" "$B/gh.real" > "$B/gh"; chmod +x "$B/gh"; cp "$B/npm" "$R/bin/npm"
+MT_PATH="$T/lnk$N:$PATH"; mt; MT_PATH=
+[[ ! -e "$T/repo-git-ran$N" ]] && pass "17: a PATH symlink re-pointed into the repo after the check never runs the repo's git" || fail "17: a PATH symlink re-pointed into the repo after the check never runs the repo's git" "rc=$RC out=$OUT"
 
 echo ""
 echo "oss-merge-test: $RUN run, $FAILED failed"
