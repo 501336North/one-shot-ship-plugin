@@ -336,6 +336,7 @@ if command -v npm >/dev/null 2>&1; then
     fixture; npmproj 'test -n \"$BASH_VERSION\" && ! shopt -oq posix' $'script-shell=/bin/bash \r'; mt
     [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16: a CRLF .npmrc script-shell=/bin/bash with a trailing space runs the tests with bash" || fail "16: a CRLF .npmrc script-shell=/bin/bash with a trailing space runs the tests with bash" "rc=$RC out=$OUT"
     # round 3 (code review LOW): with script-shell=/bin/zsh, the caller's ~/.zshenv never runs in the clean run
+    # (needs /bin/zsh: it fails, never skips, without it; macOS ships it, a Linux CI image must install zsh)
     fixture; printf 'exit 0\n' > "$H/.zshenv"; npmproj 'exit 1' 'script-shell=/bin/zsh'; mt; rm -f "$H/.zshenv"
     [[ -x /bin/zsh ]] && [[ "$RC" != 0 ]] && ! has READY_TO_MERGE && has "STOP: npm ci, the build or the tests failed" && [[ ! -e "$(G)/tested.txt" ]] && pass "16: with script-shell=/bin/zsh, ~/.zshenv does not make a failing test pass" || fail "16: with script-shell=/bin/zsh, ~/.zshenv does not make a failing test pass" "rc=$RC out=$OUT"
     # round 2 (pen-test MEDIUM): node-options loads a file that turns the failing exit code into 0
@@ -359,10 +360,29 @@ fixture; mainrc 'fund=false'; (cd "$R" && rm .npmrc && ln -s /dev/null .npmrc &&
 rcstop && pass "16b: a branch that turns .npmrc into a link STOPs before npm runs" || fail "16b: a branch that turns .npmrc into a link STOPs before npm runs" "rc=$RC out=$OUT"
 # round 4 (pen-test HIGH): .NPMRC is another file to git but the same file to npm on a case-insensitive disk
 fixture; branchrc ''; (cd "$R" && printf 'workspaces=true\n' > .NPMRC && git add -A && git "${GITID[@]}" commit -qm rc) >/dev/null 2>&1; mt
-rcstop && pass "16b: a branch that adds .NPMRC (another case) STOPs before npm runs" || fail "16b: a branch that adds .NPMRC (another case) STOPs before npm runs" "rc=$RC out=$OUT"
-# round 4 (pen-test MEDIUM): the branch's .gitattributes re-encodes main's .npmrc so npm ignores it
-fixture; mainrc 'fund=false'; (cd "$R" && printf '.npmrc working-tree-encoding=UTF-16\n' > .gitattributes && git add .gitattributes && git "${GITID[@]}" commit -qm attr) >/dev/null 2>&1; mt
-rcstop && pass "16b: a branch .gitattributes that re-encodes main's .npmrc STOPs before npm runs" || fail "16b: a branch .gitattributes that re-encodes main's .npmrc STOPs before npm runs" "rc=$RC out=$OUT"
+# on a case-sensitive disk .NPMRC is another file that npm never reads, so the run is tested as usual
+touch "$T/casepr$N"; if [[ -e "$T/CASEPR$N" ]]; then
+    rcstop && pass "16b: a branch that adds .NPMRC (another case) STOPs before npm runs (case-insensitive disk)" || fail "16b: a branch that adds .NPMRC (another case) STOPs before npm runs (case-insensitive disk)" "rc=$RC out=$OUT"
+else
+    [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16b: .NPMRC is not .npmrc on a case-sensitive disk and is tested as usual" || fail "16b: .NPMRC is not .npmrc on a case-sensitive disk and is tested as usual" "rc=$RC out=$OUT"
+fi
+# (needs a git built with iconv for working-tree-encoding, as macOS and Linux distribution gits are)
+# round 4 (pen-test MEDIUM): the branch's .gitattributes cannot re-encode main's .npmrc so npm ignores it: main's
+# .npmrc (script-shell=/bin/bash) must still be what npm reads (real npm; a bash-only test passes only then)
+if command -v npm >/dev/null 2>&1; then
+    fixture; npmproj 'test -n \"$BASH_VERSION\" && ! shopt -oq posix' 'script-shell=/bin/bash'
+    (cd "$R" && printf '.npmrc working-tree-encoding=UTF-16\n' > .gitattributes && git add .gitattributes && git "${GITID[@]}" commit -qm attr) >/dev/null 2>&1; mt
+    [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16b: a branch .gitattributes cannot re-encode main's .npmrc away" || fail "16b: a branch .gitattributes cannot re-encode main's .npmrc away" "rc=$RC out=$OUT"
+else
+    fail "16b: real npm is needed for the .gitattributes case" "npm not on PATH"
+fi
+# heads-up (no silent tightening): a branch that never touches .npmrc is tested, whatever main's .npmrc setup
+fixture; (cd "$R" && git checkout -q main && printf 'fund=false\n' > .npmrc && printf '.npmrc eol=crlf\n' > .gitattributes && git add .npmrc .gitattributes \
+  && git "${GITID[@]}" commit -qm rc && git push -q origin main && git checkout -q feat/x && git "${GITID[@]}" merge -q --no-edit main) >/dev/null 2>&1; mt
+[[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16b: main's .gitattributes converting its .npmrc (eol=crlf) does not stop an untouched branch" || fail "16b: main's .gitattributes converting its .npmrc (eol=crlf) does not stop an untouched branch" "rc=$RC out=$OUT"
+fixture; (cd "$R" && git checkout -q main && printf 'fund=false\n' > npmrc.shared && ln -s npmrc.shared .npmrc && git add .npmrc npmrc.shared \
+  && git "${GITID[@]}" commit -qm rc && git push -q origin main && git checkout -q feat/x && git "${GITID[@]}" merge -q --no-edit main) >/dev/null 2>&1; mt
+[[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16b: main's .npmrc as a link does not stop an untouched branch" || fail "16b: main's .npmrc as a link does not stop an untouched branch" "rc=$RC out=$OUT"
 fixture; mainrc 'fund=false'; mt
 [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16b: main's own .npmrc, unchanged by the branch, is tested as before" || fail "16b: main's own .npmrc, unchanged by the branch, is tested as before" "rc=$RC out=$OUT"
 
