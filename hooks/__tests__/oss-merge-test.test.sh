@@ -328,7 +328,7 @@ if command -v npm >/dev/null 2>&1; then
     fixture; npmproj 'exit 0' 'script-shell=/usr/bin/false'; mt
     [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16: a project .npmrc script-shell that always fails does not stop a passing test (real npm, offline)" || fail "16: a project .npmrc script-shell that always fails does not stop a passing test (real npm, offline)" "rc=$RC out=$OUT"
     fixture; npmproj 'exit 1' 'script-shell=/usr/bin/true'; mt
-    [[ "$RC" != 0 ]] && ! has READY_TO_MERGE && [[ ! -e "$(G)/tested.txt" ]] && pass "16: a project .npmrc script-shell that always succeeds does not make a failing test pass" || fail "16: a project .npmrc script-shell that always succeeds does not make a failing test pass" "rc=$RC out=$OUT"
+    [[ "$RC" != 0 ]] && ! has READY_TO_MERGE && has "STOP: npm ci, the build or the tests failed" && [[ ! -e "$(G)/tested.txt" ]] && pass "16: a project .npmrc script-shell that always succeeds does not make a failing test pass" || fail "16: a project .npmrc script-shell that always succeeds does not make a failing test pass" "rc=$RC out=$OUT"
     # D24: a project .npmrc naming a standard shell is honoured (a test that passes only in full, non-posix bash)
     fixture; npmproj 'test -n \"$BASH_VERSION\" && ! shopt -oq posix' 'script-shell=/bin/bash'; mt
     [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16: a project .npmrc script-shell=/bin/bash runs the tests with bash" || fail "16: a project .npmrc script-shell=/bin/bash runs the tests with bash" "rc=$RC out=$OUT"
@@ -337,18 +337,18 @@ if command -v npm >/dev/null 2>&1; then
     [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16: a CRLF .npmrc script-shell=/bin/bash with a trailing space runs the tests with bash" || fail "16: a CRLF .npmrc script-shell=/bin/bash with a trailing space runs the tests with bash" "rc=$RC out=$OUT"
     # round 3 (code review LOW): with script-shell=/bin/zsh, the caller's ~/.zshenv never runs in the clean run
     fixture; printf 'exit 0\n' > "$H/.zshenv"; npmproj 'exit 1' 'script-shell=/bin/zsh'; mt; rm -f "$H/.zshenv"
-    [[ "$RC" != 0 ]] && ! has READY_TO_MERGE && [[ ! -e "$(G)/tested.txt" ]] && pass "16: with script-shell=/bin/zsh, ~/.zshenv does not make a failing test pass" || fail "16: with script-shell=/bin/zsh, ~/.zshenv does not make a failing test pass" "rc=$RC out=$OUT"
+    [[ -x /bin/zsh ]] && [[ "$RC" != 0 ]] && ! has READY_TO_MERGE && has "STOP: npm ci, the build or the tests failed" && [[ ! -e "$(G)/tested.txt" ]] && pass "16: with script-shell=/bin/zsh, ~/.zshenv does not make a failing test pass" || fail "16: with script-shell=/bin/zsh, ~/.zshenv does not make a failing test pass" "rc=$RC out=$OUT"
     # round 2 (pen-test MEDIUM): node-options loads a file that turns the failing exit code into 0
     fixture; printf 'process.exit(1)\n' > "$R/t.js"; printf 'process.on("exit",()=>{process.exitCode=0})\n' > "$R/p.js"
     npmproj 'node t.js' 'node-options=--require ./p.js'; mt
-    [[ "$RC" != 0 ]] && ! has READY_TO_MERGE && [[ ! -e "$(G)/tested.txt" ]] && pass "16: a project .npmrc node-options does not make a failing test pass" || fail "16: a project .npmrc node-options does not make a failing test pass" "rc=$RC out=$OUT"
+    [[ "$RC" != 0 ]] && ! has READY_TO_MERGE && has "STOP: npm ci, the build or the tests failed" && [[ ! -e "$(G)/tested.txt" ]] && pass "16: a project .npmrc node-options does not make a failing test pass" || fail "16: a project .npmrc node-options does not make a failing test pass" "rc=$RC out=$OUT"
 else
     fail "16: real npm is needed for the .npmrc cases" "npm not on PATH"
 fi
 
 # --- 16b. D25: a branch that changes the root .npmrc is never tested or merged by this step ---------------------------
 branchrc() { ( cd "$R" && if [[ -n $1 ]]; then printf '%s\n' "$1" > .npmrc; else rm -f .npmrc; fi && git add -A && git "${GITID[@]}" commit -qm rc ) >/dev/null 2>&1; }
-rcstop() { [[ "$RC" != 0 ]] && ! has READY_TO_MERGE && has .npmrc && [[ ! -e "$(G)/tested.txt" ]] && [[ ! -s "$B/npm.log" ]]; }
+rcstop() { [[ "$RC" != 0 ]] && ! has READY_TO_MERGE && has "changes the root .npmrc" && [[ ! -e "$(G)/tested.txt" ]] && [[ ! -s "$B/npm.log" ]]; }
 fixture; branchrc 'workspaces=true'; mt
 rcstop && pass "16b: a branch that adds a root .npmrc STOPs before npm runs" || fail "16b: a branch that adds a root .npmrc STOPs before npm runs" "rc=$RC out=$OUT"
 fixture; mainrc 'fund=false'; branchrc 'workspace=a'; mt
@@ -357,6 +357,12 @@ fixture; mainrc 'fund=false'; branchrc ''; mt
 rcstop && pass "16b: a branch that removes main's .npmrc STOPs before npm runs" || fail "16b: a branch that removes main's .npmrc STOPs before npm runs" "rc=$RC out=$OUT"
 fixture; mainrc 'fund=false'; (cd "$R" && rm .npmrc && ln -s /dev/null .npmrc && git add -A && git "${GITID[@]}" commit -qm link) >/dev/null 2>&1; mt
 rcstop && pass "16b: a branch that turns .npmrc into a link STOPs before npm runs" || fail "16b: a branch that turns .npmrc into a link STOPs before npm runs" "rc=$RC out=$OUT"
+# round 4 (pen-test HIGH): .NPMRC is another file to git but the same file to npm on a case-insensitive disk
+fixture; branchrc ''; (cd "$R" && printf 'workspaces=true\n' > .NPMRC && git add -A && git "${GITID[@]}" commit -qm rc) >/dev/null 2>&1; mt
+rcstop && pass "16b: a branch that adds .NPMRC (another case) STOPs before npm runs" || fail "16b: a branch that adds .NPMRC (another case) STOPs before npm runs" "rc=$RC out=$OUT"
+# round 4 (pen-test MEDIUM): the branch's .gitattributes re-encodes main's .npmrc so npm ignores it
+fixture; mainrc 'fund=false'; (cd "$R" && printf '.npmrc working-tree-encoding=UTF-16\n' > .gitattributes && git add .gitattributes && git "${GITID[@]}" commit -qm attr) >/dev/null 2>&1; mt
+rcstop && pass "16b: a branch .gitattributes that re-encodes main's .npmrc STOPs before npm runs" || fail "16b: a branch .gitattributes that re-encodes main's .npmrc STOPs before npm runs" "rc=$RC out=$OUT"
 fixture; mainrc 'fund=false'; mt
 [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16b: main's own .npmrc, unchanged by the branch, is tested as before" || fail "16b: main's own .npmrc, unchanged by the branch, is tested as before" "rc=$RC out=$OUT"
 
