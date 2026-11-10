@@ -6,6 +6,7 @@
 # merges. The value folder key is the served one (the git dir alone), so item 4b finds the proof (D6).
 # npm in the clone ignores the branch's .npmrc node-options (D23) and runs scripts with /bin/sh, or with the shell the
 # root .npmrc script-shell names when it is a standard shell by absolute path (D24), so .npmrc cannot fake a pass.
+# A branch that changes the root .npmrc against main (any key: workspaces, registry...) STOPs before npm runs (D25).
 #
 # Exported shell functions named like a builtin or a tool (command, test, rm, git...) must not fake a pass (D8,
 # FOLLOWUPS 143/144/153). `-p` keeps BASH_ENV out and stops this shell importing them, but they stay in the environment
@@ -18,7 +19,7 @@ unset POSIXLY_CORRECT
 # PATH keeps only absolute entries outside the repo: an empty or relative entry, or a folder inside the work tree (or,
 # from a linked worktree, the main checkout; from a submodule, the superproject) could run a git or npm the repo ships
 # (D8, FOLLOWUPS 146; D10). The repo is found as git finds it, builtins only, before any git runs: the first folder up
-# whose .git is a real git dir (objects, refs and a HEAD git accepts: a link, `ref: refs/...` or a hash) or a gitdir file (from a submodule, on up to the repo holding
+# whose .git is a real git dir (objects and refs it can enter, and a HEAD git accepts: a link to refs/..., `ref: refs/...` or a hash) or a gitdir file (from a submodule, on up to the repo holding
 # it). Any other .git entry on the way up (a folder with a commondir file, a reftable layout, a link) marks a repo
 # folder too, and the walk goes on (D18). PATH keeps each folder as resolved when checked, and drops one whose resolved
 # name holds a `:`. A worktree of a bare repo
@@ -29,7 +30,8 @@ _x=() _w=$(pwd -P) _more=1
 while [[ -n $_w && -n $_more ]]; do
     _more=
     _h=; [[ -f $_w/.git/HEAD && ! -L $_w/.git/HEAD ]] && { IFS= read -r _h < "$_w/.git/HEAD" || :; }; _h=${_h%$'\r'}
-    if [[ -d $_w/.git && -d $_w/.git/objects && -d $_w/.git/refs ]] && { [[ -L $_w/.git/HEAD ]] || [[ $_h == 'ref: refs/'* ]] || [[ $_h =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]]; }; then _x+=("$_w")
+    _t=; [[ -L $_w/.git/HEAD ]] && _t=$(/usr/bin/readlink "$_w/.git/HEAD")
+    if [[ -d $_w/.git && -d $_w/.git/objects && -x $_w/.git/objects && -d $_w/.git/refs && -x $_w/.git/refs ]] && { [[ $_t == refs/* ]] || [[ $_h == 'ref: refs/'* ]] || [[ $_h =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]]; }; then _x+=("$_w")
     elif [[ -f $_w/.git ]] && { IFS= read -r _l < "$_w/.git" || [[ -n $_l ]]; } && [[ $_l == 'gitdir: '* ]]; then
         _x+=("$_w"); _l=${_l%$'\r'}; _d=${_l#gitdir: }; [[ $_d == /* ]] || _d=$_w/$_d
         # a submodule (its git dir under some .git/.../modules/): keep walking up to the repo that holds it
@@ -117,7 +119,7 @@ if _x0=$(printenv GIT_SSH_COMMAND) && [[ -n $_x0 ]]; then
     _n=0
     while IFS= read -r _w; do _n=$((_n + 1)); [[ $_n -le 256 ]] || _stop GIT_SSH_COMMAND "(over 256 words)"; _ckw GIT_SSH_COMMAND "$_w"; done <<< "$_ws"
 fi
-unset _x _w _l _d _c _h _p _e _y _i _v _x0 _ws _q _n _r _more _sw _s
+unset _x _w _l _d _c _h _t _p _e _y _i _v _x0 _ws _q _n _r _more _sw _s
 # Every git run on the work tree runs the way the tests do: under env -i with the same allowlist, plus the user's own
 # git settings (which global config, which ssh, which proxy and CA, where gh keeps its login), so a command the repo's
 # .git/config starts (core.fsmonitor, a remote uploadpack, a url insteadOf to ext:: or git://) never sees the caller's
@@ -138,11 +140,12 @@ rm -f "$G/head.txt" && printf '%s\n' "$h" >| "$G/head.txt" &&
 { o=$(git config --get-all remote.origin.url) && R=${o#*github.com[/:]} && case "$o" in https://github.com/"$R"|git@github.com:"$R"|ssh://git@github.com/"$R") ;; *) false ;; esac && R=${R%.git} && case "$R" in */*/*|[.-]*|*/[.-]*|*[!A-Za-z0-9/._-]*) false ;; ?*/?*) ;; *) false ;; esac || { S 'origin is not one github.com repository URL; nothing was merged. Fix it, then run this step again from item 2.'; }; } &&
 { m=$(cd / && command gh api "repos/$R/git/ref/heads/main" --jq .object.sha 2>/dev/null) && git -c core.hooksPath=/dev/null update-ref --no-deref -d refs/oss/main && gitf -c core.hooksPath=/dev/null fetch -q --no-tags --no-recurse-submodules origin +refs/heads/main:refs/oss/main && test "$(git rev-parse --verify refs/oss/main)" = "$m" || { S 'main on GitHub could not be read, or origin did not fetch it; nothing was tested or merged. Run this step again from item 2.'; }; } &&
 set -- && for v in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy SSH_AUTH_SOCK LANG NODE_EXTRA_CA_CERTS; do if x=$(command printenv "$v"); then set -- "$@" "$v=$x"; fi; done &&
-t=$(mktemp -d "$G/t.$$.XXXXXX") && trap 'rm -rf "$t"; rm -f "$G/tested.txt"; exit 130' INT TERM HUP && { command /usr/bin/env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1 XDG_CONFIG_HOME="$t/x" npm_config_userconfig="$t/u" npm_config_globalconfig="$t/g" npm_config_script_shell=/bin/sh npm_config_node_options=" " "$@" /bin/sh -c 'S() { printf "STOP: %s\n" "$*" >&2; exit 1; }; { git clone --no-local --no-checkout --reject-shallow -q -- "$1" "$2/w" && cd "$2/w" && git fetch -q origin refs/oss/main && git cat-file -e "$3^0" && git cat-file -e "$4^0" || S "the throwaway clone failed; nothing was tested or merged. Run this step again from item 2."; } &&
+t=$(mktemp -d "$G/t.$$.XXXXXX") && trap 'rm -rf "$t"; rm -f "$G/tested.txt"; exit 130' INT TERM HUP && { command /usr/bin/env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1 XDG_CONFIG_HOME="$t/x" ZDOTDIR="$t/z" npm_config_userconfig="$t/u" npm_config_globalconfig="$t/g" npm_config_script_shell=/bin/sh npm_config_node_options=" " "$@" /bin/sh -c 'S() { printf "STOP: %s\n" "$*" >&2; exit 1; }; { git clone --no-local --no-checkout --reject-shallow -q -- "$1" "$2/w" && cd "$2/w" && git fetch -q origin refs/oss/main && git cat-file -e "$3^0" && git cat-file -e "$4^0" || S "the throwaway clone failed; nothing was tested or merged. Run this step again from item 2."; } &&
 { r=$(git merge-tree --write-tree "$3" "$4") || S "the branch does not merge cleanly into main, or this git has no merge-tree --write-tree (git 2.38 or later); nothing was tested or merged."; } &&
 c=$(git -c user.name=oss -c user.email=oss@localhost commit-tree "$r" -p "$3" -p "$4" -m "oss ship: final test of the squash result") &&
+{ test "$(git ls-tree "$3" -- .npmrc)" = "$(git ls-tree "$c" -- .npmrc)" || S "the branch changes the root .npmrc, which can change how npm runs the final tests; nothing was tested or merged. Review the .npmrc change and merge this PR by hand, or take the .npmrc change out of the branch and run /oss:ship again from the start."; } &&
 git -c core.hooksPath=/dev/null checkout -q --detach "$c" &&
-{ ss=$(sed -n "s/^[[:space:]]*script-shell[[:space:]]*=[[:space:]]*//p" .npmrc 2>/dev/null | tail -n 1); case "$ss" in /bin/sh|/bin/bash|/bin/zsh|/usr/bin/bash|/usr/bin/zsh|/usr/local/bin/bash|/opt/homebrew/bin/bash) npm_config_script_shell=$ss ;; esac; :; } &&
+{ ss=$(sed -n "s/^[[:space:]]*script-shell[[:space:]]*=[[:space:]]*//p" .npmrc 2>/dev/null | tail -n 1 | tr -d "\r" | sed "s/[[:space:]]*\$//"); case "$ss" in /bin/sh|/bin/bash|/bin/zsh|/usr/bin/bash|/usr/bin/zsh|/usr/local/bin/bash|/opt/homebrew/bin/bash) npm_config_script_shell=$ss ;; esac; :; } &&
 { npm ci && npm run build --if-present && npm test || S "npm ci, the build or the tests failed; nothing was merged. They saw only PATH, HOME, TMPDIR and any set proxy, SSH_AUTH_SOCK, LANG or NODE_EXTRA_CA_CERTS variable; npm ignored any .npmrc node-options and ran scripts with /bin/sh unless .npmrc names a standard shell. If the fix needs new commits, run /oss:ship again from the start."; }' sh "$top" "$t" "$m" "$h"; e=$?; rm -rf "$t"; test "$e" = 0; } &&
 printf '%s %s\n' "$h" "$m" >| "$G/tested.txt" &&
 echo READY_TO_MERGE || {

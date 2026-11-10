@@ -314,10 +314,14 @@ grep 'fetch' "$T/gw$N.log" 2>/dev/null | grep -q '+refs/heads/main:refs/oss/main
 
 # --- 16. the branch's own .npmrc cannot choose the shell npm runs the scripts with (API ship pen-test) ------------
 # Real npm, not the stub: a project .npmrc `script-shell` that exits 0 would make every npm script "pass".
-npmproj() { # <test script> [npmrc line]: commit a package.json, an empty lockfile and an optional .npmrc on feat/x
+mainrc() { # <npmrc line>: commit an .npmrc on main and push it (main's .npmrc is trusted; D25 STOPs on a branch's)
+    ( cd "$R" && git checkout -q main && printf '%s\n' "$1" > .npmrc && git add .npmrc && git "${GITID[@]}" commit -qm rc \
+      && git push -q origin main && git checkout -q feat/x && git "${GITID[@]}" merge -q --no-edit main ) >/dev/null 2>&1
+}
+npmproj() { # <test script> [npmrc line]: an optional .npmrc on main, then a package.json and an empty lockfile on feat/x
+    [[ -z ${2:-} ]] || mainrc "$2"
     printf '{"name":"x","version":"1.0.0","scripts":{"test":"%s"}}\n' "$1" > "$R/package.json"
     printf '{"name":"x","version":"1.0.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"x","version":"1.0.0"}}}\n' > "$R/package-lock.json"
-    [[ -z ${2:-} ]] || printf '%s\n' "$2" > "$R/.npmrc"
     ( cd "$R" && git add -A && git "${GITID[@]}" commit -qm npm ) >/dev/null 2>&1; rm -f "$B/npm"
 }
 if command -v npm >/dev/null 2>&1; then
@@ -328,6 +332,12 @@ if command -v npm >/dev/null 2>&1; then
     # D24: a project .npmrc naming a standard shell is honoured (a test that passes only in full, non-posix bash)
     fixture; npmproj 'test -n \"$BASH_VERSION\" && ! shopt -oq posix' 'script-shell=/bin/bash'; mt
     [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16: a project .npmrc script-shell=/bin/bash runs the tests with bash" || fail "16: a project .npmrc script-shell=/bin/bash runs the tests with bash" "rc=$RC out=$OUT"
+    # round 3 (code review LOW): a CRLF .npmrc with a trailing space still names bash
+    fixture; npmproj 'test -n \"$BASH_VERSION\" && ! shopt -oq posix' $'script-shell=/bin/bash \r'; mt
+    [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16: a CRLF .npmrc script-shell=/bin/bash with a trailing space runs the tests with bash" || fail "16: a CRLF .npmrc script-shell=/bin/bash with a trailing space runs the tests with bash" "rc=$RC out=$OUT"
+    # round 3 (code review LOW): with script-shell=/bin/zsh, the caller's ~/.zshenv never runs in the clean run
+    fixture; printf 'exit 0\n' > "$H/.zshenv"; npmproj 'exit 1' 'script-shell=/bin/zsh'; mt; rm -f "$H/.zshenv"
+    [[ "$RC" != 0 ]] && ! has READY_TO_MERGE && [[ ! -e "$(G)/tested.txt" ]] && pass "16: with script-shell=/bin/zsh, ~/.zshenv does not make a failing test pass" || fail "16: with script-shell=/bin/zsh, ~/.zshenv does not make a failing test pass" "rc=$RC out=$OUT"
     # round 2 (pen-test MEDIUM): node-options loads a file that turns the failing exit code into 0
     fixture; printf 'process.exit(1)\n' > "$R/t.js"; printf 'process.on("exit",()=>{process.exitCode=0})\n' > "$R/p.js"
     npmproj 'node t.js' 'node-options=--require ./p.js'; mt
@@ -335,6 +345,20 @@ if command -v npm >/dev/null 2>&1; then
 else
     fail "16: real npm is needed for the .npmrc cases" "npm not on PATH"
 fi
+
+# --- 16b. D25: a branch that changes the root .npmrc is never tested or merged by this step ---------------------------
+branchrc() { ( cd "$R" && if [[ -n $1 ]]; then printf '%s\n' "$1" > .npmrc; else rm -f .npmrc; fi && git add -A && git "${GITID[@]}" commit -qm rc ) >/dev/null 2>&1; }
+rcstop() { [[ "$RC" != 0 ]] && ! has READY_TO_MERGE && has .npmrc && [[ ! -e "$(G)/tested.txt" ]] && [[ ! -s "$B/npm.log" ]]; }
+fixture; branchrc 'workspaces=true'; mt
+rcstop && pass "16b: a branch that adds a root .npmrc STOPs before npm runs" || fail "16b: a branch that adds a root .npmrc STOPs before npm runs" "rc=$RC out=$OUT"
+fixture; mainrc 'fund=false'; branchrc 'workspace=a'; mt
+rcstop && pass "16b: a branch that edits main's .npmrc STOPs before npm runs" || fail "16b: a branch that edits main's .npmrc STOPs before npm runs" "rc=$RC out=$OUT"
+fixture; mainrc 'fund=false'; branchrc ''; mt
+rcstop && pass "16b: a branch that removes main's .npmrc STOPs before npm runs" || fail "16b: a branch that removes main's .npmrc STOPs before npm runs" "rc=$RC out=$OUT"
+fixture; mainrc 'fund=false'; (cd "$R" && rm .npmrc && ln -s /dev/null .npmrc && git add -A && git "${GITID[@]}" commit -qm link) >/dev/null 2>&1; mt
+rcstop && pass "16b: a branch that turns .npmrc into a link STOPs before npm runs" || fail "16b: a branch that turns .npmrc into a link STOPs before npm runs" "rc=$RC out=$OUT"
+fixture; mainrc 'fund=false'; mt
+[[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16b: main's own .npmrc, unchanged by the branch, is tested as before" || fail "16b: main's own .npmrc, unchanged by the branch, is tested as before" "rc=$RC out=$OUT"
 
 # --- 17. hook security audit (D18): unusual .git layouts, missing in-repo paths, PATH swapped after the check ---------
 # a git the repo ships in bin/: records that it ran, then does the real work
@@ -351,6 +375,13 @@ fixture; sshrepo; ln -s "$R/not-yet" "$T/dangle$N"; MT_PRE="export GIT_SSH='$T/d
 fixture; spygit; mkdir -p "$R/sub/.git/objects" "$R/sub/.git/refs"; printf 'garbage\n' > "$R/sub/.git/HEAD"
 MT_DIR="$R/sub"; MT_PATH="$R/bin:$B:$PATH"; mt; MT_DIR=; MT_PATH=
 [[ ! -e "$T/repo-git-ran$N" ]] && pass "17: a .git folder with an invalid HEAD does not hide the real repo from the PATH filter" || fail "17: a .git folder with an invalid HEAD does not hide the real repo from the PATH filter" "rc=$RC out=$OUT"
+# round 3 (audit MEDIUM): HEAD a link to something not under refs/, or an objects folder git cannot enter
+fixture; spygit; mkdir -p "$R/sub/.git/objects" "$R/sub/.git/refs"; ln -s garbage "$R/sub/.git/HEAD"
+MT_DIR="$R/sub"; MT_PATH="$R/bin:$B:$PATH"; mt; MT_DIR=; MT_PATH=
+[[ ! -e "$T/repo-git-ran$N" ]] && pass "17: a .git folder whose HEAD links outside refs/ does not hide the real repo from the PATH filter" || fail "17: a .git folder whose HEAD links outside refs/ does not hide the real repo from the PATH filter" "rc=$RC out=$OUT"
+fixture; spygit; mkdir -p "$R/sub/.git/objects" "$R/sub/.git/refs"; printf 'ref: refs/heads/main\n' > "$R/sub/.git/HEAD"; chmod 600 "$R/sub/.git/objects"
+MT_DIR="$R/sub"; MT_PATH="$R/bin:$B:$PATH"; mt; MT_DIR=; MT_PATH=; chmod 700 "$R/sub/.git/objects"
+[[ ! -e "$T/repo-git-ran$N" ]] && pass "17: a .git folder whose objects folder git cannot enter does not hide the real repo from the PATH filter" || fail "17: a .git folder whose objects folder git cannot enter does not hide the real repo from the PATH filter" "rc=$RC out=$OUT"
 # round 2 (audit LOW): a PATH folder whose resolved name holds a ':' must not split into a folder inside the repo
 fixture; spygit; mkdir -p "$T/c$N/b:$R/bin"; ln -s "$T/c$N/b:$R/bin" "$T/colon$N"
 MT_PATH="$T/colon$N:$B:$PATH"; mt; MT_PATH=
