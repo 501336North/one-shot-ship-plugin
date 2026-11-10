@@ -389,20 +389,20 @@ case "$1" in test) test "$(wc -c < g.txt | tr -d ' ')" = 3 ;; *) exit 0 ;; esac
 NPM
 chmod +x "$B/npm"; mt
 [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16b: the tests see a file the way a fresh checkout of the squash result writes it" || fail "16b: the tests see a file the way a fresh checkout of the squash result writes it" "rc=$RC out=$OUT"
-# D27 (round-7 pen-test LOW): an install or build script that rewrites .npmrc STOPs before the next npm step runs
-rewritten() { [[ "$RC" != 0 ]] && ! has READY_TO_MERGE && has "the root .npmrc changed while npm ran" && [[ ! -e "$(G)/tested.txt" ]] && ! grep -qx "$1" "$B/npm.log"; }
-for step in ci 'run build --if-present'; do
-    next=$([[ $step == ci ]] && echo 'run build --if-present' || echo test)
-    fixture; mainrc 'fund=false'
-    cat > "$B/npm" <<NPM
+# D27 (owner, after a heads-up): a project whose own install or build scripts write .npmrc is tested, not stopped;
+# D25 checks only the committed .npmrc (scripts the branch runs are the D11 sandbox follow-up)
+fixture; mainrc 'fund=false'
+cat > "$B/npm" <<NPM
 #!/bin/sh
 printf '%s\n' "\$*" >> "$B/npm.log"
-test "\$*" = "$step" && printf 'workspace=a\n' >> .npmrc
+test "\$*" = 'run build --if-present' && printf '//registry.example/:_authToken=x\n' >> .npmrc
 exit 0
 NPM
-    chmod +x "$B/npm"; mt
-    rewritten "$next" && pass "16b: \`npm $step\` rewriting .npmrc STOPs before \`npm $next\`" || fail "16b: \`npm $step\` rewriting .npmrc STOPs before \`npm $next\`" "rc=$RC npm=$(cat "$B/npm.log" 2>/dev/null) out=$OUT"
-done
+chmod +x "$B/npm"; mt
+[[ "$RC" == 0 ]] && has READY_TO_MERGE && grep -qx test "$B/npm.log" && pass "16b: a project build that writes .npmrc is tested as before" || fail "16b: a project build that writes .npmrc is tested as before" "rc=$RC npm=$(cat "$B/npm.log" 2>/dev/null) out=$OUT"
+# round 8 (audit LOW): a step before npm that fails without its own STOP still keeps npm from running
+fixture; printf '#!/bin/sh\nfor a; do test "$a" = commit-tree && exit 1; done\nexec %s "$@"\n' "$(command -v git)" > "$B/git"; chmod +x "$B/git"; mt
+[[ "$RC" != 0 ]] && ! has READY_TO_MERGE && [[ ! -e "$(G)/tested.txt" && ! -s "$B/npm.log" ]] && pass "16b: a failed squash commit stops before npm runs" || fail "16b: a failed squash commit stops before npm runs" "rc=$RC npm=$(cat "$B/npm.log" 2>/dev/null) out=$OUT"
 # heads-up (no silent tightening): a branch that never touches .npmrc is tested, whatever main's .npmrc setup
 fixture; (cd "$R" && git checkout -q main && printf 'fund=false\n' > .npmrc && printf '.npmrc eol=crlf\n' > .gitattributes && git add .npmrc .gitattributes \
   && git "${GITID[@]}" commit -qm rc && git push -q origin main && git checkout -q feat/x && git "${GITID[@]}" merge -q --no-edit main) >/dev/null 2>&1; mt
