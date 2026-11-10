@@ -90,6 +90,7 @@ HOOKS_TO_COPY=(
     "oss-notify.sh"
     "oss-safe-path.sh"            # sourced by oss-log.sh and oss-notify.sh: the project-write guard
     "oss-value.sh"                # served prompts' value files: dir / failed / error (G21); needs the two above
+    "oss-merge-test.sh"           # run by oss-value.sh merge-test: the ship merge step's final test (merge-test-hook)
     "oss-timeline.sh"             # run by oss-notify.sh: the feature timeline's command line (G2 B2)
     "oss-login.sh"                # /oss:login saves the key; sources oss-value.sh; NOT allowlisted (R5-8)
     "oss-api-curl.sh"             # sourced by oss-notify.sh, oss-iron-laws-sync.sh and oss-decisions-policy.sh: API key via curl stdin
