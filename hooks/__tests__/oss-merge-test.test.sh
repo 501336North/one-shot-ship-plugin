@@ -76,7 +76,8 @@ fixture; mt
 head=$(rev feat/x); main=$(rev main)
 [[ "$RC" == 0 ]] && has BRANCH_RECORDED && has READY_TO_MERGE && pass "1: a clean run prints BRANCH_RECORDED and READY_TO_MERGE" || fail "1: a clean run prints BRANCH_RECORDED and READY_TO_MERGE" "rc=$RC out=$OUT"
 [[ "$(cat "$(G)/branch.txt" 2>/dev/null)" == feat/x && "$(cat "$(G)/head.txt" 2>/dev/null)" == "$head" ]] && pass "1: branch.txt and head.txt name the branch and its head" || fail "1: branch.txt and head.txt name the branch and its head" "$(ls "$(G)" 2>&1)"
-[[ "$(cat "$(G)/tested.txt" 2>/dev/null)" == "$head $main" ]] && pass "1: tested.txt holds '<head> <main>'" || fail "1: tested.txt holds '<head> <main>'" "got '$(cat "$(G)/tested.txt" 2>&1)'"
+# D28: tagged v2, so served item 4b never accepts a proof an older merge check wrote
+[[ "$(cat "$(G)/tested.txt" 2>/dev/null)" == "v2 $head $main" ]] && pass "1: tested.txt holds 'v2 <head> <main>'" || fail "1: tested.txt holds 'v2 <head> <main>'" "got '$(cat "$(G)/tested.txt" 2>&1)'"
 [[ "$(cat "$B/npm.log" 2>/dev/null | tr '\n' '|')" == "ci|run build --if-present|test|" ]] && pass "1: npm ci, build, test ran once each" || fail "1: npm ci, build, test ran once each" "$(cat "$B/npm.log" 2>&1)"
 [[ -z "$(clones)" ]] && pass "1: no throwaway clone is left" || fail "1: no throwaway clone is left" "$(clones)"
 [[ "$(cd "$R" && git branch --show-current)" == feat/x ]] && pass "1: the work tree stays on the branch" || fail "1: the work tree stays on the branch" "$(cd "$R" && git branch --show-current)"
@@ -110,10 +111,10 @@ not_recorded() { # <label>
 fixture; (cd "$R" && git checkout -q main); mt; not_recorded "5: on main it refuses before recording"
 fixture; (cd "$R" && git checkout -q -b MASTER); mt; not_recorded "5: on MASTER it refuses before recording"
 fixture; (cd "$R" && git checkout -q --detach); mt; not_recorded "5: on a detached HEAD it refuses before recording"
-fixture; mt extra; not_recorded "5: any argument is refused before recording"
+fixture; mt extra; if has 'takes one argument, --v2'; then not_recorded "5: an extra argument after --v2 is refused before recording"; else fail "5: an extra argument after --v2 is refused before recording" "out=$OUT"; fi
 # D26: only the served contract argument runs it, so served item 4 can tell 2.1.2 from 2.1.1 (which takes none)
-fixture; MT_RAW= ; mt; unset MT_RAW; not_recorded "5: without --v2 it refuses before recording"
-fixture; MT_RAW=--v3; mt; unset MT_RAW; not_recorded "5: another contract argument is refused before recording"
+fixture; MT_RAW= ; mt; unset MT_RAW; if has 'takes one argument, --v2'; then not_recorded "5: without --v2 it refuses before recording"; else fail "5: without --v2 it refuses before recording" "out=$OUT"; fi
+fixture; MT_RAW=--v3; mt; unset MT_RAW; if has 'takes one argument, --v2'; then not_recorded "5: another contract argument is refused before recording"; else fail "5: another contract argument is refused before recording" "out=$OUT"; fi
 
 # --- 6. npm sees only the allowlisted environment ------------------------------------------------------------------
 fixture; MT_PRE='export SECRET_X=leak NODE_OPTIONS=--inspect HTTPS_PROXY=http://proxy.test:3128'; mt; MT_PRE=
@@ -143,7 +144,7 @@ MT_PATH=":.:$B:$PATH"; mt; MT_PATH=
 hk() { K="$T/hk$N"; rm -rf "$K"; mkdir -p "$K"; cp "$ROOT/hooks/oss-value.sh" "$ROOT/hooks/oss-safe-path.sh" "$ROOT/hooks/oss-merge-test.sh" "$K/"; }
 ovmt() { OUT=$(cd "$R" && env HOME="$H" PATH="$B:$PATH" "$SH" "$K/oss-value.sh" merge-test "$@" 2>&1 </dev/null); RC=$?; }
 fixture; hk; ovmt
-[[ "$RC" == 0 && "$(cat "$(G)/tested.txt" 2>/dev/null)" == "$(rev feat/x) $(rev main)" ]] && has READY_TO_MERGE && pass "9: oss-value.sh merge-test runs the hook: READY_TO_MERGE and tested.txt" || fail "9: oss-value.sh merge-test runs the hook: READY_TO_MERGE and tested.txt" "rc=$RC out=$OUT"
+[[ "$RC" == 0 && "$(cat "$(G)/tested.txt" 2>/dev/null)" == "v2 $(rev feat/x) $(rev main)" ]] && has READY_TO_MERGE && pass "9: oss-value.sh merge-test runs the hook: READY_TO_MERGE and tested.txt" || fail "9: oss-value.sh merge-test runs the hook: READY_TO_MERGE and tested.txt" "rc=$RC out=$OUT"
 fixture; hk; ovmt extra
 [[ "$RC" != 0 && ! -e "$(G)/branch.txt" ]] && ! has READY_TO_MERGE && pass "9: oss-value.sh merge-test refuses any argument before recording" || fail "9: oss-value.sh merge-test refuses any argument before recording" "rc=$RC out=$OUT"
 fixture; hk; rm "$K/oss-merge-test.sh"; ovmt
@@ -388,6 +389,20 @@ case "$1" in test) test "$(wc -c < g.txt | tr -d ' ')" = 3 ;; *) exit 0 ;; esac
 NPM
 chmod +x "$B/npm"; mt
 [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16b: the tests see a file the way a fresh checkout of the squash result writes it" || fail "16b: the tests see a file the way a fresh checkout of the squash result writes it" "rc=$RC out=$OUT"
+# D27 (round-7 pen-test LOW): an install or build script that rewrites .npmrc STOPs before the next npm step runs
+rewritten() { [[ "$RC" != 0 ]] && ! has READY_TO_MERGE && has "the root .npmrc changed while npm ran" && [[ ! -e "$(G)/tested.txt" ]] && ! grep -qx "$1" "$B/npm.log"; }
+for step in ci 'run build --if-present'; do
+    next=$([[ $step == ci ]] && echo 'run build --if-present' || echo test)
+    fixture; mainrc 'fund=false'
+    cat > "$B/npm" <<NPM
+#!/bin/sh
+printf '%s\n' "\$*" >> "$B/npm.log"
+test "\$*" = "$step" && printf 'workspace=a\n' >> .npmrc
+exit 0
+NPM
+    chmod +x "$B/npm"; mt
+    rewritten "$next" && pass "16b: \`npm $step\` rewriting .npmrc STOPs before \`npm $next\`" || fail "16b: \`npm $step\` rewriting .npmrc STOPs before \`npm $next\`" "rc=$RC npm=$(cat "$B/npm.log" 2>/dev/null) out=$OUT"
+done
 # heads-up (no silent tightening): a branch that never touches .npmrc is tested, whatever main's .npmrc setup
 fixture; (cd "$R" && git checkout -q main && printf 'fund=false\n' > .npmrc && printf '.npmrc eol=crlf\n' > .gitattributes && git add .npmrc .gitattributes \
   && git "${GITID[@]}" commit -qm rc && git push -q origin main && git checkout -q feat/x && git "${GITID[@]}" merge -q --no-edit main) >/dev/null 2>&1; mt

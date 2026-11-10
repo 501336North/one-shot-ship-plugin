@@ -467,8 +467,9 @@ case "${1:-}" in
     queue-push) _ov_cmd_queue_push ;;
     timeline) _ov_cmd_timeline "${2:-}" ;;
     merge-test)
-        # The ship merge step's final test (merge-test-hook): the sibling hook, a regular file and not a link, with no
-        # arguments; it removes its own throwaway clone, so the served command holds no rm -rf.
+        # The ship merge step's final test (merge-test-hook): the sibling hook, a regular file and not a link, run with
+        # its one contract argument --v2 (D26); merge-test itself takes no further arguments. The hook removes its own
+        # throwaway clone, so the served command holds no rm -rf.
         _ov_mt="$_OV_HERE/oss-merge-test.sh"
         [[ $# == 1 && -f "$_ov_mt" && ! -L "$_ov_mt" ]] || { echo "STOP: oss-value merge-test refuses (an argument, or oss-merge-test.sh is missing or not a plain file beside it); nothing was tested or merged. Update the OSS plugin, then run the merge step again from item 2." >&2; exit 2; }
         exec /bin/bash -p "$_ov_mt" --v2 ;;

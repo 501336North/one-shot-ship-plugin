@@ -5,11 +5,14 @@
 # clone under env -i, removes the clone, and only on success writes tested.txt and prints READY_TO_MERGE; item 4b
 # merges. The value folder key is the served one (the git dir alone), so item 4b finds the proof (D6).
 # npm in the clone ignores the branch's .npmrc node-options (D23) and runs scripts with /bin/sh, or with the shell the
-# root .npmrc script-shell names when it is a standard shell by absolute path (D24), so .npmrc cannot fake a pass.
+# root .npmrc script-shell names when it is a standard shell by absolute path (D24), so those keys cannot fake a pass.
 # A branch that changes the root .npmrc against main (any key: workspaces, registry...) STOPs before npm runs (D25): the
 # tree entry must match main's, and the clone checks out main first (main's own attributes) and then the squash result,
 # rewritten as a fresh checkout would write it (the branch's own attributes, so the tests run on exactly the squash
 # result), and the .npmrc on disk (bytes, also behind a link, or none, in any letter case) must not change between the two.
+# It is checked again before `npm run build` and before `npm test`, so an install or build script that rewrites it STOPs
+# (D27); a process the branch leaves running could still race those checks, and branch scripts run here anyway.
+# tested.txt holds `v2 <head> <main>`: served item 4b accepts only that form, never an older check's proof (D28).
 #
 # Exported shell functions named like a builtin or a tool (command, test, rm, git...) must not fake a pass (D8,
 # FOLLOWUPS 143/144/153). `-p` keeps BASH_ENV out and stops this shell importing them, but they stay in the environment
@@ -150,8 +153,8 @@ c=$(git -c user.name=oss -c user.email=oss@localhost commit-tree "$r" -p "$3" -p
 { git -c core.hooksPath=/dev/null checkout -q --detach "$3" && a=$(N) && git -c core.hooksPath=/dev/null checkout -q --detach "$c" && git rm -rq --cached . && git -c core.hooksPath=/dev/null reset -q --hard "$c" || S "the throwaway checkout failed; nothing was tested or merged. Run this step again from item 2."; } &&
 { test "$(git ls-tree "$3" -- .npmrc)" = "$(git ls-tree "$c" -- .npmrc)" && test "$a" = "$(N)" || S "the branch changes the root .npmrc, which can change how npm runs the final tests; nothing was tested or merged. Review the .npmrc change and merge this PR by hand, or move the .npmrc change into its own reviewed PR, merge that to main first, then run /oss:ship again from the start."; } &&
 { ss=$(sed -n "s/^[[:space:]]*script-shell[[:space:]]*=[[:space:]]*//p" .npmrc 2>/dev/null | tail -n 1 | tr -d "\r" | sed "s/[[:space:]]*\$//"); case "$ss" in /bin/sh|/bin/bash|/bin/zsh|/usr/bin/bash|/usr/bin/zsh|/usr/local/bin/bash|/opt/homebrew/bin/bash) npm_config_script_shell=$ss ;; esac; :; } &&
-{ npm ci && npm run build --if-present && npm test || S "npm ci, the build or the tests failed; nothing was merged. They saw only PATH, HOME, TMPDIR and any set proxy, SSH_AUTH_SOCK, LANG or NODE_EXTRA_CA_CERTS variable; npm ignored any .npmrc node-options and ran scripts with /bin/sh unless .npmrc names a standard shell. If the fix needs new commits, run /oss:ship again from the start."; }' sh "$top" "$t" "$m" "$h"; e=$?; rm -rf "$t"; test "$e" = 0; } &&
-printf '%s %s\n' "$h" "$m" >| "$G/tested.txt" &&
+R() { test "$a" = "$(N)" || S "the root .npmrc changed while npm ran (an install or build script rewrote it), which can change how npm runs the final tests; nothing was tested or merged. Review the branch scripts that write .npmrc."; }; { npm ci && R && npm run build --if-present && R && npm test || S "npm ci, the build or the tests failed; nothing was merged. They saw only PATH, HOME, TMPDIR and any set proxy, SSH_AUTH_SOCK, LANG or NODE_EXTRA_CA_CERTS variable; npm ignored any .npmrc node-options and ran scripts with /bin/sh unless .npmrc names a standard shell. If the fix needs new commits, run /oss:ship again from the start."; }' sh "$top" "$t" "$m" "$h"; e=$?; rm -rf "$t"; test "$e" = 0; } &&
+printf 'v2 %s %s\n' "$h" "$m" >| "$G/tested.txt" &&
 echo READY_TO_MERGE || {
 # Any failure leaves no tested.txt, not even one the tests or a repo command wrote after the one removed above.
 [[ -n $G ]] && rm -f "$G/tested.txt"; exit 1; }
