@@ -1,4 +1,10 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
+# A fixed /bin/bash, never one found on PATH (a repo could put its own `bash` there), and `-p` keeps BASH_ENV out.
+# Exported functions named like a builtin or tool are removed before anything runs: bash 3.2 imports them even under
+# `-p`. POSIXLY_CORRECT is a plain assignment no function can shadow, and in posix mode `unset` is the special builtin.
+POSIXLY_CORRECT=1
+unset -f unset command builtin type test printf echo cd pwd set read kill true false exit return trap eval exec export shift source local declare dirname git gh mkdir chmod find rm touch cut tr mktemp env printenv cat grep npm sh S
+unset POSIXLY_CORRECT
 # oss-value.sh - the one plugin script that owns the per-repo value folder (G21 cut 1, ADR-001).
 #
 #   oss-value.sh dir                print the physical ~/.oss/run/<key> for the cwd's repo (outside any
@@ -33,6 +39,9 @@
 #   oss-value.sh timeline merge     one merge line (oss-timeline.sh merge, the PR facts from gh) with the approval
 #                                   from approval.txt (merge-flag, chat-instruction, none or decision:<uuid v4>;
 #                                   none when missing); deleted once read, accepted or refused (G2 B4b).
+#   oss-value.sh merge-test         the ship merge step's final test: runs hooks/oss-merge-test.sh (no arguments), which
+#                                   records branch.txt and head.txt, tests the squash result in a throwaway clone and
+#                                   writes tested.txt and prints READY_TO_MERGE only on success (merge-test-hook).
 #   oss-value.sh queue-push         POST type.txt, source.txt and prompt.txt (checked) to /api/v1/queue the same way;
 #                                   print "Queued: <id>", or one Error: line on stderr and rc 1 (T87).
 # (Saving the API key is hooks/oss-login.sh, NOT a verb here: this script is allowlisted, a key
@@ -47,14 +56,16 @@ set -u
 
 case "${HOME:-}" in /*) ;; *) echo "oss-value: HOME is not an absolute path; refusing" >&2; exit 1 ;; esac
 
-_OV_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The folder of this script, from builtins only (no `dirname` found on PATH).
+case "${BASH_SOURCE[0]}" in */*) _OV_HERE="${BASH_SOURCE[0]%/*}" ;; *) _OV_HERE=. ;; esac
+_OV_HERE="$(cd -P -- "${_OV_HERE:-/}" && pwd -P)"
 if [[ ! -f "$_OV_HERE/oss-safe-path.sh" ]]; then
     echo "oss-value: oss-safe-path.sh missing beside $_OV_HERE/oss-value.sh; refusing" >&2
     exit 1
 fi
 source "$_OV_HERE/oss-safe-path.sh"
 
-_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args> | status | usage | workflows | workflow | queue-push | timeline gate|merge" >&2; exit 2; }
+_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args> | status | usage | workflows | workflow | queue-push | timeline gate|merge | merge-test" >&2; exit 2; }
 
 _OV_RUN="$HOME/.oss/run"
 
@@ -455,5 +466,11 @@ case "${1:-}" in
     workflow) _ov_cmd_workflow ;;
     queue-push) _ov_cmd_queue_push ;;
     timeline) _ov_cmd_timeline "${2:-}" ;;
+    merge-test)
+        # The ship merge step's final test (merge-test-hook): the sibling hook, a regular file and not a link, with no
+        # arguments; it removes its own throwaway clone, so the served command holds no rm -rf.
+        _ov_mt="$_OV_HERE/oss-merge-test.sh"
+        [[ $# == 1 && -f "$_ov_mt" && ! -L "$_ov_mt" ]] || { echo "STOP: oss-value merge-test refuses (an argument, or oss-merge-test.sh is missing or not a plain file beside it); nothing was tested or merged. Update the OSS plugin, then run the merge step again from item 2." >&2; exit 2; }
+        exec /bin/bash -p "$_ov_mt" ;;
     *) _ov_usage ;;
 esac
