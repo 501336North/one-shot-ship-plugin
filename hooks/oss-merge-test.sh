@@ -17,7 +17,9 @@ unset POSIXLY_CORRECT
 # from a linked worktree, the main checkout; from a submodule, the superproject) could run a git or npm the repo ships
 # (D8, FOLLOWUPS 146; D10). The repo is found as git finds it, builtins only, before any git runs: the first folder up
 # whose .git is a real git dir (HEAD, objects and refs) or a gitdir file (from a submodule, on up to the repo holding
-# it). A worktree of a bare repo excludes the bare
+# it). Any other .git entry on the way up (a folder with a commondir file, a reftable layout, a link) marks a repo
+# folder too, and the walk goes on (D18). PATH keeps each folder as resolved when checked. A worktree of a bare repo
+# excludes the bare
 # repo, not the folder holding it. Folders are compared as files (-ef), so a // prefix, another letter case or a
 # firmlink spelling of the same folder is still caught.
 _x=() _w=$(pwd -P) _more=1
@@ -32,7 +34,7 @@ while [[ -n $_w && -n $_more ]]; do
             _c=${_c%$'\r'}; [[ $_c == /* ]] || _c=$_d/$_c
             if [[ $_c/../.git -ef $_c ]]; then _x+=("$_c/.."); else _x+=("$_c"); fi
         fi
-    else _more=1
+    else [[ -e $_w/.git || -L $_w/.git ]] && _x+=("$_w"); _more=1
     fi
     _w=${_w%/*}
 done
@@ -50,6 +52,7 @@ _p=$PATH; PATH=
 while [[ -n $_p ]]; do
     _e=${_p%%:*}; if [[ $_p == *:* ]]; then _p=${_p#*:}; else _p=; fi
     [[ $_e == /* ]] || continue
+    _e=$(cd -P -- "$_e" 2>/dev/null && pwd -P) || continue
     _ir "$_e"; [[ $? == 1 ]] && PATH=${PATH:+$PATH:}$_e
 done
 [[ -n $PATH ]] || { echo 'STOP: PATH has no absolute entry outside the repo; nothing was tested or merged.' >&2; exit 2; }
@@ -62,10 +65,11 @@ done
 # stops. Each word, and each part of a word that holds spaces (ssh's -o 'Option value'), must be a plain word with no
 # / or ~, an absolute or ~/ path, or KEY=one of those, with every path outside the repo. Host git and gh run from /
 # (below), so nothing relative reaches the work tree.
-_rin() { # 0 if the path, symlinks followed, is inside an excluded folder
+_rin() { # 0 if the path, symlinks followed, is inside an excluded folder (a missing path: its nearest existing folder)
     _q=$1 _n=0
     while [[ -L $_q && $_n -lt 40 ]]; do _l=$(/usr/bin/readlink "$_q") || break; [[ $_l == /* ]] || _l=${_q%/*}/$_l; _q=$_l; _n=$((_n + 1)); done
-    { _ir "$_q"; [[ $? == 0 ]]; } || { _ir "${_q%/*}/"; [[ $? == 0 ]]; }
+    while :; do _ir "$_q"; _r=$?; [[ $_r == 2 && -n $_q && $_q != / ]] || break; _q=${_q%/*}; [[ -n $_q ]] || _q=/; done
+    [[ $_r == 0 ]]
 }
 _stop() { printf "STOP: %s is not allowed for this step: '%s' is a command chain, a glob, a variable other than \$HOME, a relative or .. path, or a file or folder inside the repo. Nothing was tested or merged. The setting comes from the environment Claude Code was started with: point it outside the repo with absolute paths (ssh options as -o Option=value), or restart Claude Code without it, then run this step again from item 2.\n" "$1" "$2" >&2; exit 2; }
 _ckp() { # <var> <path>
@@ -104,7 +108,7 @@ if _x0=$(printenv GIT_SSH_COMMAND) && [[ -n $_x0 ]]; then
     _n=0
     while IFS= read -r _w; do _n=$((_n + 1)); [[ $_n -le 256 ]] || _stop GIT_SSH_COMMAND "(over 256 words)"; _ckw GIT_SSH_COMMAND "$_w"; done <<< "$_ws"
 fi
-unset _x _w _l _d _c _p _e _y _i _v _x0 _ws _q _n _more _sw _s
+unset _x _w _l _d _c _p _e _y _i _v _x0 _ws _q _n _r _more _sw _s
 # Every git run on the work tree runs the way the tests do: under env -i with the same allowlist, plus the user's own
 # git settings (which global config, which ssh, which proxy and CA, where gh keeps its login), so a command the repo's
 # .git/config starts (core.fsmonitor, a remote uploadpack, a url insteadOf to ext:: or git://) never sees the caller's
@@ -125,7 +129,7 @@ rm -f "$G/head.txt" && printf '%s\n' "$h" >| "$G/head.txt" &&
 { o=$(git config --get-all remote.origin.url) && R=${o#*github.com[/:]} && case "$o" in https://github.com/"$R"|git@github.com:"$R"|ssh://git@github.com/"$R") ;; *) false ;; esac && R=${R%.git} && case "$R" in */*/*|[.-]*|*/[.-]*|*[!A-Za-z0-9/._-]*) false ;; ?*/?*) ;; *) false ;; esac || { S 'origin is not one github.com repository URL; nothing was merged. Fix it, then run this step again from item 2.'; }; } &&
 { m=$(cd / && command gh api "repos/$R/git/ref/heads/main" --jq .object.sha 2>/dev/null) && git -c core.hooksPath=/dev/null update-ref --no-deref -d refs/oss/main && gitf -c core.hooksPath=/dev/null fetch -q --no-tags --no-recurse-submodules origin +refs/heads/main:refs/oss/main && test "$(git rev-parse --verify refs/oss/main)" = "$m" || { S 'main on GitHub could not be read, or origin did not fetch it; nothing was tested or merged. Run this step again from item 2.'; }; } &&
 set -- && for v in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy SSH_AUTH_SOCK LANG NODE_EXTRA_CA_CERTS; do if x=$(command printenv "$v"); then set -- "$@" "$v=$x"; fi; done &&
-t=$(mktemp -d "$G/t.$$.XXXXXX") && trap 'rm -rf "$t"; rm -f "$G/tested.txt"; exit 130' INT TERM HUP && { command /usr/bin/env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1 XDG_CONFIG_HOME="$t/x" npm_config_userconfig="$t/u" npm_config_globalconfig="$t/g" "$@" /bin/sh -c 'S() { printf "STOP: %s\n" "$*" >&2; exit 1; }; { git clone --no-local --no-checkout --reject-shallow -q -- "$1" "$2/w" && cd "$2/w" && git fetch -q origin refs/oss/main && git cat-file -e "$3^0" && git cat-file -e "$4^0" || S "the throwaway clone failed; nothing was tested or merged. Run this step again from item 2."; } &&
+t=$(mktemp -d "$G/t.$$.XXXXXX") && trap 'rm -rf "$t"; rm -f "$G/tested.txt"; exit 130' INT TERM HUP && { command /usr/bin/env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1 XDG_CONFIG_HOME="$t/x" npm_config_userconfig="$t/u" npm_config_globalconfig="$t/g" npm_config_script_shell=/bin/sh "$@" /bin/sh -c 'S() { printf "STOP: %s\n" "$*" >&2; exit 1; }; { git clone --no-local --no-checkout --reject-shallow -q -- "$1" "$2/w" && cd "$2/w" && git fetch -q origin refs/oss/main && git cat-file -e "$3^0" && git cat-file -e "$4^0" || S "the throwaway clone failed; nothing was tested or merged. Run this step again from item 2."; } &&
 { r=$(git merge-tree --write-tree "$3" "$4") || S "the branch does not merge cleanly into main, or this git has no merge-tree --write-tree (git 2.38 or later); nothing was tested or merged."; } &&
 c=$(git -c user.name=oss -c user.email=oss@localhost commit-tree "$r" -p "$3" -p "$4" -m "oss ship: final test of the squash result") &&
 git -c core.hooksPath=/dev/null checkout -q --detach "$c" &&

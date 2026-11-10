@@ -312,6 +312,38 @@ fixture; RG=$(command -v git); mkdir -p "$T/gw$N"; printf '#!/bin/sh\nprintf "%%
 MT_PATH="$T/gw$N:$B:$PATH"; mt; MT_PATH=
 grep 'fetch' "$T/gw$N.log" 2>/dev/null | grep -q '+refs/heads/main:refs/oss/main' && grep 'fetch' "$T/gw$N.log" | grep '+refs/heads/main:refs/oss/main' | grep -q -- '--no-recurse-submodules' && pass "15: the fetch of main never recurses into submodules" || fail "15: the fetch of main never recurses into submodules" "$(grep fetch "$T/gw$N.log" 2>&1 | head -3)"
 
+# --- 16. the branch's own .npmrc cannot choose the shell npm runs the scripts with (API ship pen-test) ------------
+# Real npm, not the stub: a project .npmrc `script-shell` that exits 0 would make every npm script "pass".
+npmproj() { # <test script> [npmrc line]: commit a package.json, an empty lockfile and an optional .npmrc on feat/x
+    printf '{"name":"x","version":"1.0.0","scripts":{"test":"%s"}}\n' "$1" > "$R/package.json"
+    printf '{"name":"x","version":"1.0.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"x","version":"1.0.0"}}}\n' > "$R/package-lock.json"
+    [[ -z ${2:-} ]] || printf '%s\n' "$2" > "$R/.npmrc"
+    ( cd "$R" && git add -A && git "${GITID[@]}" commit -qm npm ) >/dev/null 2>&1; rm -f "$B/npm"
+}
+if command -v npm >/dev/null 2>&1; then
+    fixture; npmproj 'exit 0' 'script-shell=/usr/bin/false'; mt
+    [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "16: a project .npmrc script-shell that always fails does not stop a passing test (real npm, offline)" || fail "16: a project .npmrc script-shell that always fails does not stop a passing test (real npm, offline)" "rc=$RC out=$OUT"
+    fixture; npmproj 'exit 1' 'script-shell=/usr/bin/true'; mt
+    [[ "$RC" != 0 ]] && ! has READY_TO_MERGE && [[ ! -e "$(G)/tested.txt" ]] && pass "16: a project .npmrc script-shell that always succeeds does not make a failing test pass" || fail "16: a project .npmrc script-shell that always succeeds does not make a failing test pass" "rc=$RC out=$OUT"
+else
+    fail "16: real npm is needed for the .npmrc cases" "npm not on PATH"
+fi
+
+# --- 17. hook security audit (D18): unusual .git layouts, missing in-repo paths, PATH swapped after the check ---------
+# a git the repo ships in bin/: records that it ran, then does the real work
+spygit() { mkdir -p "$R/bin"; printf '#!/bin/sh\n/usr/bin/touch "%s"\nexec %s "$@"\n' "$T/repo-git-ran$N" "$(command -v git)" > "$R/bin/git"; chmod +x "$R/bin/git"; }
+# a .git folder with HEAD and a commondir file (objects and refs live elsewhere), which git accepts
+fixture; mv "$R/.git" "$T/common$N"; mkdir "$R/.git"; mv "$T/common$N/HEAD" "$T/common$N/index" "$R/.git/"; printf '%s\n' "$T/common$N" > "$R/.git/commondir"
+spygit; MT_PATH="$R/bin:$B:$PATH"; mt; MT_PATH=
+[[ ! -e "$T/repo-git-ran$N" ]] && pass "17: a git in the work tree is never run when .git is a folder with a commondir file" || fail "17: a git in the work tree is never run when .git is a folder with a commondir file" "rc=$RC out=$OUT"
+# a path setting naming a file in a folder inside the repo that does not exist yet
+fixture; sshrepo; MT_PRE="export GIT_SSH='$R/not-yet/ssh'"; mt; MT_PRE=; stopv "17: a GIT_SSH path inside the repo that does not exist yet is refused" GIT_SSH
+# a PATH entry that is a symlink, pointed into the repo after the PATH check (here by gh, which runs after it)
+fixture; spygit; ln -s "$B" "$T/lnk$N"; mv "$B/gh" "$B/gh.real"
+printf '#!/bin/sh\nln -sfn "%s" "%s"\nexec "%s" "$@"\n' "$R/bin" "$T/lnk$N" "$B/gh.real" > "$B/gh"; chmod +x "$B/gh"; cp "$B/npm" "$R/bin/npm"
+MT_PATH="$T/lnk$N:$PATH"; mt; MT_PATH=
+[[ ! -e "$T/repo-git-ran$N" ]] && pass "17: a PATH symlink re-pointed into the repo after the check never runs the repo's git" || fail "17: a PATH symlink re-pointed into the repo after the check never runs the repo's git" "rc=$RC out=$OUT"
+
 echo ""
 echo "oss-merge-test: $RUN run, $FAILED failed"
 [[ "$FAILED" == 0 ]]
