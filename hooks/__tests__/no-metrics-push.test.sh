@@ -28,5 +28,16 @@ refs=$(grep -rlE 'oss-push-metrics|push-metrics' --exclude-dir=__tests__ \
     && pass "no hook, command, skill or hooks.json entry references the metrics push" \
     || fail "no hook, command, skill or hooks.json entry references the metrics push" "referenced in: $(echo $refs | sed "s#$ROOT/##g")"
 
+# D4 (owner, 2026-11-11): the log analyzer existed only to feed the push (`oss-log-analyzer.sh build |
+# oss-push-metrics.sh`) and has no other caller, so it goes too.
+[[ ! -e "$ROOT/hooks/oss-log-analyzer.sh" ]] \
+    && pass "the plugin has no hooks/oss-log-analyzer.sh (it only fed the push)" \
+    || fail "the plugin has no hooks/oss-log-analyzer.sh (it only fed the push)" "the file still exists"
+refs=$(grep -rl 'oss-log-analyzer' --exclude-dir=__tests__ \
+    "$ROOT/hooks" "$ROOT/commands" "$ROOT/skills" "$ROOT/hooks.json" "$ROOT/watcher/src" 2>/dev/null)
+[[ -z "$refs" ]] \
+    && pass "no hook, command, skill, hooks.json entry or watcher code references the log analyzer" \
+    || fail "no hook, command, skill, hooks.json entry or watcher code references the log analyzer" "referenced in: $(echo $refs | sed "s#$ROOT/##g")"
+
 echo "Results: $((RUN-FAILED))/$RUN passed, $FAILED failed"
 [[ $FAILED -eq 0 ]]
