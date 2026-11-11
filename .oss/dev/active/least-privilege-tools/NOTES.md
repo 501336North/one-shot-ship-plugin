@@ -23,4 +23,16 @@ Method: throwaway git project in the session scratchpad, `claude -p ... --settin
 - **Served ship runs the four review agents in the foreground, in parallel, and waits** (`run_in_background: false`, ship Step 1). So during ship a repo change in a review run can only come from a review agent; overlapping review runs all void (as planned). A review run in the background outside ship, while the main agent edits, also voids: the code changed under the review, so its report is stale either way. The message says "the repo changed while the review ran", not "the reviewer changed it".
 - Served ship's code-reviewer runs "tests, lint, types, build". A build that rewrites tracked output (e.g. `watcher/dist/*.cjs`) with different bytes would void the run. Same bytes = no change. Watch for it in Task 16; ask before widening.
 
-## Last Updated: 2026-11-11 by /oss:build (Task 1)
+## Build notes
+- Task 3: `watcher/dist/cli/tool-gate.cjs` is a tracked bundle built from source (`npm run build:cli-bundle`). A new required key in `config/tool-gates.json` with a stale bundle makes the gate fail open ("tool-gate failed, rules not checked"), so config and bundle change in one commit. `hooks/__tests__/watcher-dist-fresh.test.sh` checks only the `.js` files, not the `.cjs` bundles: that gap let the stale bundle pass. Candidate FOLLOWUP.
+- Task 3: `npm run build:cli-bundle` also rewrote `oss-launch.cjs` (embedded version 2.0.97 → 2.1.2, stale from an earlier release). Not R-266; restored, left for the release.
+- Task 4: the snippet's 19 lines in `commands/__tests__/bash-allowlist-exempt.txt` were removed, not re-pathed: the check only scans `commands/`, `agents/`, `skills/`, and the list only shrinks.
+- Task 5: in Claude Code 2.1.322 WebFetch/WebSearch are deferred tools (need ToolSearch). Check in the Task 16 live row that the pen tester can still reach them with its narrow list.
+
+- Task 8: a review agent's Bash write to a path known only at run time (`"$d/f"`, `"$TMPDIR/f"`) is refused with "write the path out in full": the reader places such paths under the repo. The served pen-tester prompt writes no variable-path sandbox, and the offload step prints its mktemp path and writes it with the Write tool (literal path), so nothing served breaks. Also refuses a path that holds the repo (`rm -rf ..`).
+- Task 13: offload reads gateAgents through `watcher/src/utils/gate-agents.ts`, not tool-gate (dist/tool-gate is gitignored; the shipped agent-offload.js would fail to load). Unreadable list → every offload loses edit tools (fail closed).
+- Task 14: the security row was in 5 served files (plan named 3): also `commands/build-team.md` and `prompts/CLAUDE.md`. Not served and unchanged: API root `CLAUDE.md:515`, `docs/AGENT_ARCHITECTURE.md:74`.
+- Task 15: nothing in the API reads the served `tools:` field. Manifest re-signed once for both API commits (key from the main checkout's packages/api/.env through the environment only).
+- Task 12: snapshot timing on this repo (1,814 files): start ~240 ms (545 ms cold), stop ~238 ms; hook timeout 10 s. git child calls have no own timeout (killed hook may leave git running briefly). The plan's "timeline event" for a void is not written yet (state file + systemMessage + additionalContext are). Candidate FOLLOWUPs.
+
+## Last Updated: 2026-11-11 by /oss:build (Tasks 7-15)
