@@ -1,6 +1,6 @@
 # Progress: plugin-main-fixes
 
-## Current Phase: ship (gate rounds 1-6 done; D7, D8 accepted as known limits)
+## Current Phase: ship (PR #227 open, merging with --merge; gate rounds 1-6 done; D7, D8 accepted as known limits)
 
 ## Tasks
 - [x] Task 1: Fix ideate-template test (completed 2026-11-11, 8154de7 + f15451d): option (a), the template left commands/ideate.md on purpose in #161; test 2 now asserts the hook call and no inline template
