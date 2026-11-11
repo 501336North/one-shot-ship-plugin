@@ -1,6 +1,6 @@
 # Progress: tool-gates (R-253)
 
-## Current Phase: build (complete, ready for ship)
+## Current Phase: ship (complete): PR #224 merged into feat/determinism-sprint/build (c008d9a) on 2026-11-11; reaches main only with the rest of Sprint D after DeepBlue testing
 
 ## Tasks
 - [x] Ideate: design committed (completed 2026-11-09)
@@ -39,4 +39,4 @@
 ## Blockers
 - None. All PRs target `feat/determinism-sprint/build`.
 
-## Last Updated: 2026-11-09 18:28 CST by /oss:integration
+## Last Updated: 2026-11-11 by /oss:ship (archived)
