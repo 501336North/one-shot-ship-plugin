@@ -8,10 +8,14 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { EventEmitter } from 'events';
+import type * as childProcess from 'child_process';
 import {
   buildOffloadInvocation,
   classifyResult,
   parseOffloadArgs,
+  runAgentOffload,
+  type OffloadDeps,
 } from '../../src/cli/agent-offload';
 import type { CheckResult } from '../../src/cli/agent-model-check';
 
@@ -108,6 +112,70 @@ describe('buildOffloadInvocation', () => {
       if (prevKey === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = prevKey;
       if (prevTok === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN; else process.env.ANTHROPIC_AUTH_TOKEN = prevTok;
     }
+  });
+});
+
+/** Runs the offloader with a fake nested session and returns the args it was started with. */
+async function spawnedArgs(agent: string, extra: OffloadDeps = {}): Promise<string[]> {
+  let captured: string[] = [];
+  const spawnFn = ((_cmd: string, args: readonly string[]) => {
+    captured = [...args];
+    const child = Object.assign(new EventEmitter(), {
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      stdin: { write: (): boolean => true, end: (): void => undefined },
+    });
+    setImmediate(() => {
+      child.stdout.emit('data', 'review done');
+      child.emit('close', 0);
+    });
+    return child;
+  }) as unknown as typeof childProcess.spawn;
+  await runAgentOffload(
+    { agent, promptFile: '/unused' },
+    {
+      checkAgentModel: async () => ROUTED,
+      isProxyReachable: async () => true,
+      readPrompt: () => 'task',
+      spawnFn,
+      ...extra,
+    },
+  );
+  return captured;
+}
+
+const denied = (args: string[]): string[] => args.slice(args.indexOf('--disallowedTools') + 1);
+
+/**
+ * @behavior A review agent whose work is offloaded to a local model cannot change the repo it
+ *           judges: the nested session has no edit tools. Builders keep theirs. (Task 13)
+ * @business-rule A review must not alter the code under review; the review agents are the
+ *                plugin's gateAgents list, the single source of who reviews.
+ */
+describe('offloaded review agents stay read-only', () => {
+  it.each(['oss:code-reviewer', 'code-reviewer', 'oss:security-auditor', 'oss:penetration-tester', 'oss:performance-auditor'])(
+    '%s gets no edit tools',
+    async (agent) => {
+      const args = await spawnedArgs(agent);
+      expect(denied(args)).toEqual(['Read(./.oss/**)', 'Edit(./.oss/**)', 'Edit', 'Write', 'NotebookEdit']);
+      expect(args).not.toContain('MultiEdit');
+    },
+  );
+
+  it('a builder agent keeps its edit tools', async () => {
+    const args = await spawnedArgs('oss:typescript-pro');
+    expect(denied(args)).toEqual(['Read(./.oss/**)', 'Edit(./.oss/**)']);
+    expect(args).not.toContain('MultiEdit');
+  });
+
+  it('when the review list cannot be read, every offload is read-only (fails closed)', async () => {
+    const args = await spawnedArgs('oss:typescript-pro', {
+      readGateAgents: () => {
+        throw new Error('config missing');
+      },
+    });
+    expect(denied(args)).toEqual(['Read(./.oss/**)', 'Edit(./.oss/**)', 'Edit', 'Write', 'NotebookEdit']);
+    expect(args).not.toContain('MultiEdit');
   });
 });
 

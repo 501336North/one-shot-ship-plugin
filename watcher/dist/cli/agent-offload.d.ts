@@ -66,12 +66,19 @@ export interface OffloadDeps {
         port: number;
     }) => Promise<void>;
     sleep?: (ms: number) => Promise<void>;
+    /** The review (gate) agents; throws when the list cannot be read. */
+    readGateAgents?: (projectDir: string) => string[];
 }
+/**
+ * A review agent's offload gets no edit tools. If the list cannot be read, every offload does:
+ * that only narrows a builder's offload, while failing open would let a reviewer edit.
+ */
+export declare function isReadOnlyOffload(agent: string, projectDir: string, read: (dir: string) => string[]): boolean;
 /**
  * Pure: build the nested-session invocation. The base URL is what diverts inference to the
  * local model; OSS_OFFLOAD_ACTIVE=1 is the depth-1 recursion guard (see agent-model-check).
  */
-export declare function buildOffloadInvocation(routing: CheckResult): {
+export declare function buildOffloadInvocation(routing: CheckResult, readOnly?: boolean): {
     cmd: string;
     args: string[];
     env: NodeJS.ProcessEnv;

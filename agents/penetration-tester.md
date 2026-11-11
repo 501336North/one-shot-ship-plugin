@@ -95,8 +95,8 @@ When it runs, the agent's work runs on THAT model instead of here on Claude:
    reads the prompt on stdin, so nothing is left on disk whatever happens next. If you stop after
    step 1 without running this command, still delete the file and its directory (`rm -f --` the
    path, then `rmdir --` its directory). The offloader runs a nested Claude session on your local
-   model via the :8473 proxy; it can read and edit files in the current repo, but cannot run
-   commands, use the web or use MCP tools.
+   model via the :8473 proxy; it can read files in the current repo but has no edit tools, and
+   cannot run commands, use the web or use MCP tools.
 
    ```bash
    AGENT_ID="oss:penetration-tester"

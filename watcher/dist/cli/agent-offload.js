@@ -24,8 +24,10 @@
 import * as childProcess from 'child_process';
 import * as http from 'http';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 import { checkAgentModel } from './agent-model-check.js';
 import { readRegularFileSync } from '../utils/regular-file.js';
+import { readGateAgents } from '../utils/gate-agents.js';
 import { safeForLog } from '../utils/safe-for-log.js';
 /** What a Claude Code too old for --restricted needs (T76b); /oss:models prints it too. */
 export const OFFLOAD_UPDATE_HINT = 'Model offload needs a newer Claude Code (update with: claude update)';
@@ -33,11 +35,28 @@ export const OFFLOAD_UPDATE_HINT = 'Model offload needs a newer Claude Code (upd
 export function rejectsRestricted(stderr) {
     return stderr.includes("unknown option '--restricted'");
 }
+/** This file sits at <plugin>/watcher/{src,dist}/cli/, so the plugin root is three levels up. */
+const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+function defaultReadGateAgents(projectDir) {
+    return readGateAgents(PLUGIN_ROOT, projectDir);
+}
+/**
+ * A review agent's offload gets no edit tools. If the list cannot be read, every offload does:
+ * that only narrows a builder's offload, while failing open would let a reviewer edit.
+ */
+export function isReadOnlyOffload(agent, projectDir, read) {
+    try {
+        return read(projectDir).includes(agent.replace(/^oss:/, ''));
+    }
+    catch {
+        return true;
+    }
+}
 /**
  * Pure: build the nested-session invocation. The base URL is what diverts inference to the
  * local model; OSS_OFFLOAD_ACTIVE=1 is the depth-1 recursion guard (see agent-model-check).
  */
-export function buildOffloadInvocation(routing) {
+export function buildOffloadInvocation(routing, readOnly = false) {
     return {
         cmd: 'claude',
         // Deliberately NO `--model <local>`: the Claude CLI validates --model against known Claude
@@ -59,6 +78,9 @@ export function buildOffloadInvocation(routing) {
             '--restricted',
             '--strict-mcp-config',
             '--disallowedTools', 'Read(./.oss/**)', 'Edit(./.oss/**)',
+            // A review agent must not change what it judges (Task 13). No MultiEdit: the CLI no longer
+            // has that tool and warns on the rule.
+            ...(readOnly ? ['Edit', 'Write', 'NotebookEdit'] : []),
         ],
         env: stripModelEnv({
             ...process.env,
@@ -155,12 +177,10 @@ export async function runAgentOffload(params, deps = {}) {
     const readPrompt = deps.readPrompt ?? ((f) => readRegularFileSync(f));
     const startProxy = deps.startProxy ?? defaultStartProxy;
     const sleep = deps.sleep ?? defaultSleep;
+    const projectDir = params.projectDir ?? process.cwd();
     try {
         // 1. Resolve routing. No mapping → native (default-OFF for every customer).
-        const routing = await resolveRouting({
-            agentName: params.agent,
-            projectDir: params.projectDir ?? process.cwd(),
-        });
+        const routing = await resolveRouting({ agentName: params.agent, projectDir });
         if (!routing.useProxy || !routing.model || !routing.proxyUrl) {
             return { offloaded: false, reason: 'native' };
         }
@@ -181,7 +201,8 @@ export async function runAgentOffload(params, deps = {}) {
         }
         // 3. Assemble the prompt and spawn the nested session.
         const promptText = readPrompt(params.promptFile);
-        const { cmd, args, env } = buildOffloadInvocation(routing);
+        const readOnly = isReadOnlyOffload(params.agent, projectDir, deps.readGateAgents ?? defaultReadGateAgents);
+        const { cmd, args, env } = buildOffloadInvocation(routing, readOnly);
         const child = spawnFn(cmd, args, { env });
         return await new Promise((resolve) => {
             let stdout = '';
