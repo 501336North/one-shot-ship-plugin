@@ -1,0 +1,8 @@
+{
+  "name": "one-shot-ship-plugin-repo",
+  "private": true,
+  "description": "Repo-level test entry for the /oss:ship merge step (D6). Not part of the installed plugin.",
+  "scripts": {
+    "test": "npm --prefix watcher ci --no-audit --no-fund && bash scripts/run-shell-tests.sh"
+  }
+}
