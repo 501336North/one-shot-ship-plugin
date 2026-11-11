@@ -21,4 +21,9 @@
 - **Live row (`agents/__tests__/agent-tools.live.sh`, Claude Code 2.1.322, this branch via `--plugin-dir`): 5/5.** Review agent's Edit refused; builder's Edit applied; review agent's `echo > target.txt` refused and the refusal names `gate-agent-write`; review agent's `python3 -c` write voided the review. Separately: the pen tester lists WebFetch and WebSearch with its narrow `tools:` (the fetch stopped only at the headless permission prompt).
 - **No `.skip`/`.only`/`.todo`** added (the hits in tool-gate tests are test strings the focused-test rule checks).
 
-## Last Updated: 2026-11-11 by /oss:build (Task 16)
+## Integration (2026-11-11, /oss:integration)
+- Mocked boundaries checked against reality: hook input `agent_type`/`agent_id` (probe P1 + live gate refusals with real `oss:code-reviewer`), SubagentStart/SubagentStop/Agent PostToolUse shapes (probe + live foreground and background runs), offload `--disallowedTools` (probe P4). Everything else in the feature's tests already runs on real git repos and real symlinks.
+- **Found:** a false void in a live background run: OSS's own hooks write `.oss/dev/timeline-unfiled.ndjson`, logs and workflow state during every run. Fixed by leaving out top-level `.oss/` (ADR-010, user's pick; 5c20f67), tests RED then GREEN.
+- **Live row re-run: 8/8** (adds a clean-review control: not voided, no void record; and a background review run's script write voided at its real end).
+
+## Last Updated: 2026-11-11 by /oss:integration
