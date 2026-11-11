@@ -125,22 +125,6 @@ printf '{"permissions":{"allow":["WebSearch"]}}\n' > "$TMPDIR_6/.claude/settings
 grep -qF '"Bash(~/.oss/hooks/oss-claude-md-template.sh:*)"' "$TMPDIR_6/.claude/settings.local.json" && pass "Merged file allows oss-claude-md-template.sh" || fail "Merged file does not allow oss-claude-md-template.sh"
 rm -rf "$TMPDIR_6"
 
-# --- Test 7: the ship merge step's final test is allowed, exactly as served (D5) ---
-# @behavior A user in Claude Code's normal permission mode runs /oss:ship --merge and the served merge step
-#           (`~/.oss/hooks/oss-merge-test.sh --v2`) runs without a second "allow this command?" prompt.
-# @business-rule D5 (owner, 2026-11-11): --merge is the user's consent to test and merge; the prompt added a
-#           click, not protection. Only the exact served call is allowed (no `:*` prefix rule), so any other
-#           argument still asks.
-echo "Test 7: Allows exactly ~/.oss/hooks/oss-merge-test.sh --v2 (fresh and merged)"
-TMPDIR_7=$(mktemp -d)
-"$SETUP_SCRIPT" "$TMPDIR_7"
-grep -qF '"Bash(~/.oss/hooks/oss-merge-test.sh --v2)"' "$TMPDIR_7/.claude/settings.local.json" && pass "Fresh file allows oss-merge-test.sh --v2" || fail "Fresh file does not allow oss-merge-test.sh --v2"
-! grep -qF 'oss-merge-test.sh:*' "$TMPDIR_7/.claude/settings.local.json" && pass "Fresh file has no prefix rule for oss-merge-test.sh" || fail "Fresh file allows oss-merge-test.sh with any arguments"
-printf '{"permissions":{"allow":["WebSearch"]}}\n' > "$TMPDIR_7/.claude/settings.local.json"
-"$SETUP_SCRIPT" "$TMPDIR_7"
-grep -qF '"Bash(~/.oss/hooks/oss-merge-test.sh --v2)"' "$TMPDIR_7/.claude/settings.local.json" && pass "Merged file allows oss-merge-test.sh --v2" || fail "Merged file does not allow oss-merge-test.sh --v2"
-rm -rf "$TMPDIR_7"
-
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

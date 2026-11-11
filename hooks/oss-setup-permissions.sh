@@ -36,8 +36,6 @@ OSS_PERMISSIONS=(
     'Bash(~/.oss/hooks/oss-onboard-check.sh:*)'
     'Bash(~/.oss/hooks/oss-setup-permissions.sh:*)'
     'Bash(~/.oss/hooks/oss-detect-playwright.sh:*)'
-    # the served /oss:ship merge step, exactly as served; --merge is the consent (D5). No :* rule: other args ask
-    'Bash(~/.oss/hooks/oss-merge-test.sh --v2)'
     'Bash(~/.oss/bin/oss-decrypt:*)'
     'Bash(~/.oss/oss-statusline.sh:*)'
 )
