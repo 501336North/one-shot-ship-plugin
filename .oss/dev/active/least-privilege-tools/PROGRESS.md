@@ -1,6 +1,6 @@
 # Progress: least-privilege-tools (R-266)
 
-## Current Phase: build (Task 16 next)
+## Current Phase: build (complete, ready for ship)
 
 ## Tasks
 - [x] Ideate: design committed, 6 questions + stress test (completed 2026-11-11)
@@ -20,9 +20,10 @@
 - [x] Task 13: review offload without edit tools (completed 2026-11-11, 32d8b23)
 - [x] Task 14: API security row split in 5 served copies (completed 2026-11-11, API dc2052a9)
 - [x] Task 15: API served agent headers drop tools: (completed 2026-11-11, API d555cdbd; manifest re-signed)
-- [ ] Tasks 16-17: integration, oss-lab ROADMAP (pending)
+- [x] Task 16: integration, pinned tests, live row 5/5 (completed 2026-11-11, 5d145b2); code-simplifier refactor (completed 2026-11-11)
+- [x] Task 17: oss-lab ROADMAP R-266 results + R-267 note (completed 2026-11-11, oss-lab 5cedbc5 on chore/determinism-sprint/r266-results, local; docs PR to oss-lab main like #188/#210)
 
 ## Blockers
-- None. Plugin, API and oss-lab PRs go into each repo's `feat/determinism-sprint/build`, never `main`.
+- None. Ship opens: plugin PR into feat/determinism-sprint/build; API PR (feat/least-privilege-tools/build) into the API's feat/determinism-sprint/build; oss-lab docs PR into main. Never plugin/API main.
 
-## Last Updated: 2026-11-11 by /oss:build (Tasks 7-15)
+## Last Updated: 2026-11-11 by /oss:build (complete)
