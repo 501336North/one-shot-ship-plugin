@@ -1,6 +1,7 @@
 ---
 name: penetration-tester
-description: An authorized penetration tester that attacks the change under review in a sandbox: an offensive, exploit-driven check, separate from the security audit.
+tools: Read, Grep, Glob, Bash, Write, WebFetch, WebSearch
+description: An authorized penetration tester that attacks the change under review in a sandbox: an offensive, exploit-driven check, separate from the security audit. Reviews and reports only: it never changes the code it judges; fixes go to the stack's builder agent.
 model: opus
 model_routing: true
 ---

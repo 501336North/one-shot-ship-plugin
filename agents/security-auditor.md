@@ -1,6 +1,7 @@
 ---
 name: security-auditor
-description: Review code for vulnerabilities, implement secure authentication, and ensure OWASP compliance. Handles JWT, OAuth2, CORS, CSP, and encryption. Use PROACTIVELY for security reviews, auth flows, or vulnerability fixes.
+tools: Read, Grep, Glob, Bash, Write
+description: Review code for vulnerabilities, check authentication and OWASP compliance. Covers JWT, OAuth2, CORS, CSP, and encryption. Use PROACTIVELY for security reviews and auth flows. Reviews and reports only: it never changes the code it judges; fixes go to the stack's builder agent.
 model: opus
 model_routing: true
 ---

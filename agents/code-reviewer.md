@@ -1,6 +1,7 @@
 ---
 name: code-reviewer
-description: Expert code review specialist. Proactively reviews code for quality, security, and maintainability. Use immediately after writing or modifying code.
+tools: Read, Grep, Glob, Bash, Write
+description: Expert code review specialist. Proactively reviews code for quality, security, and maintainability. Use immediately after writing or modifying code. Reviews and reports only: it never changes the code it judges; fixes go to the stack's builder agent.
 model: opus
 model_routing: true
 context: fork
