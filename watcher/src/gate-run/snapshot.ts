@@ -13,7 +13,7 @@ import path from 'node:path';
 import { callingAgentOf, isGateAgent } from '../tool-gate/calling-agent.js';
 
 const STATE_FOLDER = 'oss-gate-run';
-const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+export const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 
 /** The session's environment without `GIT_*` (which could pick another repo or index). */
 function gitEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -22,7 +22,7 @@ function gitEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   return { ...env, ...extra };
 }
 
-function git(cwd: string, args: string[], extra?: Record<string, string>): string {
+export function git(cwd: string, args: string[], extra?: Record<string, string>): string {
   return execFileSync('git', ['-c', 'core.fsmonitor=false', ...args], {
     cwd,
     env: gitEnv(extra),
@@ -32,7 +32,7 @@ function git(cwd: string, args: string[], extra?: Record<string, string>): strin
 }
 
 /** The repo's files written as a tree through a throwaway index. */
-function writeTree(top: string): string {
+export function writeTree(top: string): string {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-gate-run-'));
   try {
     const index = { GIT_INDEX_FILE: path.join(scratch, 'index') };
@@ -43,9 +43,28 @@ function writeTree(top: string): string {
   }
 }
 
+/** Where the state folder is: in the repo's git dir. */
+export function stateFolderPath(top: string): string {
+  return path.join(git(top, ['rev-parse', '--absolute-git-dir']), STATE_FOLDER);
+}
+
+/** Writes a state file without following a symlink in its place. */
+export function writeStateFile(file: string, text: string): void {
+  const fd = fs.openSync(
+    file,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW,
+    0o600,
+  );
+  try {
+    fs.writeSync(fd, text);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 /** The state folder in the git dir, made if missing; refused when it is a symlink or not a folder. */
 function stateFolder(top: string): string {
-  const dir = path.join(git(top, ['rev-parse', '--absolute-git-dir']), STATE_FOLDER);
+  const dir = stateFolderPath(top);
   try {
     fs.mkdirSync(dir, { mode: 0o700 });
   } catch (err) {
@@ -65,15 +84,6 @@ export function snapshotOnStart(input: Record<string, unknown>, gateAgents: read
   if (typeof id !== 'string' || !SAFE_ID.test(id)) throw new Error('agent_id is not a safe file name');
   const top = git(String(input.cwd), ['rev-parse', '--show-toplevel']);
   const tree = writeTree(top);
-  const fd = fs.openSync(
-    path.join(stateFolder(top), id),
-    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW,
-    0o600,
-  );
-  try {
-    fs.writeSync(fd, `${tree}\n`);
-  } finally {
-    fs.closeSync(fd);
-  }
+  writeStateFile(path.join(stateFolder(top), id), `${tree}\n`);
   return tree;
 }
