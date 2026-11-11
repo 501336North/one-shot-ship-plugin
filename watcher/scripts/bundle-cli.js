@@ -17,6 +17,7 @@ import { fileURLToPath } from 'url';
 import { CHAIN_TRIGGER_BUNDLE_OPTIONS } from './chain-trigger-bundle-options.mjs';
 import { OSS_LAUNCH_BUNDLE_OPTIONS } from './oss-launch-bundle-options.mjs';
 import { TOOL_GATE_BUNDLE_OPTIONS } from './tool-gate-bundle-options.mjs';
+import { GATE_RUN_BUNDLE_OPTIONS } from './gate-run-bundle-options.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const watcherRoot = resolve(__dirname, '..');
@@ -67,3 +68,13 @@ if (gateResult.errors.length > 0) {
 }
 
 console.log('  Bundled: dist/cli/tool-gate.cjs (standalone)');
+
+// Bundle gate-run into a standalone CJS file, run by hooks/oss-gate-run.sh around review-agent runs.
+const gateRunResult = buildSync({ ...GATE_RUN_BUNDLE_OPTIONS, write: true });
+
+if (gateRunResult.errors.length > 0) {
+  console.error('gate-run bundle failed:', gateRunResult.errors);
+  process.exit(1);
+}
+
+console.log('  Bundled: dist/cli/gate-run.cjs (standalone)');

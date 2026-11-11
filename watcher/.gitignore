@@ -13,3 +13,11 @@ dist/cli/tool-gate.js
 dist/cli/tool-gate.js.map
 dist/cli/tool-gate.d.ts
 dist/cli/tool-gate.d.ts.map
+
+# tsc output for the review-run check: it ships only as the tracked bundle dist/cli/gate-run.cjs,
+# which hooks/oss-gate-run.sh runs.
+dist/gate-run/
+dist/cli/gate-run.js
+dist/cli/gate-run.js.map
+dist/cli/gate-run.d.ts
+dist/cli/gate-run.d.ts.map
