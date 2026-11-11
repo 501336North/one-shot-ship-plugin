@@ -4,7 +4,7 @@
  * @behavior Validates that agents can integrate with the model proxy using the documented flow
  * @acceptance-criteria AC-AMR.1 through AC-AMR.8
  *
- * These tests validate the documented agent integration flow from agents/_shared/model-routing.md:
+ * These tests validate the documented agent integration flow from docs/agents/model-routing.md:
  * 1. Agent checks for custom model config via agent-model-check CLI
  * 2. If useProxy is true, agent starts the proxy via start-proxy CLI
  * 3. Agent makes requests to the proxy

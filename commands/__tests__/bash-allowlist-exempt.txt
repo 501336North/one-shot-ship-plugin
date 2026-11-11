@@ -3,25 +3,6 @@
 # names with its reason. Seeded from HEAD f3f897b; only remove lines (the test fails on a stale one).
 
 @pre-existing
-agents/_shared/model-routing.md	AGENT_NAME="$AGENT_ID"  # Set by the agent (e.g., "oss:code-reviewer")
-agents/_shared/model-routing.md	BANNER=$(echo "$ROUTING" | jq -r '.banner // empty')
-agents/_shared/model-routing.md	MODEL=$(echo "$ROUTING" | jq -r '.model')
-agents/_shared/model-routing.md	MODEL_CHECK="$PLUGIN_ROOT/watcher/dist/cli/agent-model-check.js"
-agents/_shared/model-routing.md	PID_FILE="$HOME/.oss/proxy.pid"
-agents/_shared/model-routing.md	PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"
-agents/_shared/model-routing.md	PROVIDER=$(echo "$ROUTING" | jq -r '.provider')
-agents/_shared/model-routing.md	PROXY_URL=$(echo "$ROUTING" | jq -r '.proxyUrl')
-agents/_shared/model-routing.md	ROUTING=$(node "$MODEL_CHECK" --agent "$AGENT_NAME" 2>/dev/null)
-agents/_shared/model-routing.md	USE_PROXY=$(echo "$ROUTING" | jq -r '.useProxy // false')
-agents/_shared/model-routing.md	[[ -n "$BANNER" ]] && echo "$BANNER"
-agents/_shared/model-routing.md	curl http://localhost:8473/health
-agents/_shared/model-routing.md	fi
-agents/_shared/model-routing.md	if ! curl -s "http://localhost:8473/health" > /dev/null 2>&1; then
-agents/_shared/model-routing.md	if [[ "$USE_PROXY" == "true" ]]; then
-agents/_shared/model-routing.md	if [[ -f "$MODEL_CHECK" ]]; then
-agents/_shared/model-routing.md	if [[ -f "$PID_FILE" ]]; then
-agents/_shared/model-routing.md	kill $(cat "$PID_FILE") 2>/dev/null || true
-agents/_shared/model-routing.md	node "$PLUGIN_ROOT/watcher/dist/cli/start-proxy.js" --model "$MODEL" --port 8473 --background
 agents/backend-architect.md	AGENT_ID="oss:backend-architect"
 agents/backend-architect.md	BANNER=$(echo "$ROUTING" | jq -r '.banner // empty' 2>/dev/null)
 agents/backend-architect.md	MODEL=$(echo "$ROUTING" | jq -r '.model')

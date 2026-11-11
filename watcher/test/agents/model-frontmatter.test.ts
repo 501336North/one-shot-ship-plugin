@@ -136,9 +136,9 @@ describe('Agent Model Frontmatter (Acceptance)', () => {
 
   describe('Completeness and validity', () => {
     it('should account for all agent .md files across the three tiers', () => {
-      // GIVEN - All agent .md files (excluding _shared directory)
+      // GIVEN - All agent .md files
       const allAgentFiles = readdirSync(AGENTS_DIR)
-        .filter((f) => f.endsWith('.md') && !f.startsWith('_'))
+        .filter((f) => f.endsWith('.md'))
         .map((f) => f.replace('.md', ''));
 
       // WHEN - I combine all three tier lists
@@ -152,7 +152,7 @@ describe('Agent Model Frontmatter (Acceptance)', () => {
     it('should only use valid model values (opus, sonnet, haiku)', () => {
       // GIVEN - All agent .md files
       const allAgentFiles = readdirSync(AGENTS_DIR).filter(
-        (f) => f.endsWith('.md') && !f.startsWith('_')
+        (f) => f.endsWith('.md')
       );
 
       // WHEN - I check model values in all agents
@@ -169,7 +169,7 @@ describe('Agent Model Frontmatter (Acceptance)', () => {
     it('should allow model and model_routing to coexist', () => {
       // GIVEN - Agents that have both model and model_routing
       const allAgentFiles = readdirSync(AGENTS_DIR).filter(
-        (f) => f.endsWith('.md') && !f.startsWith('_')
+        (f) => f.endsWith('.md')
       );
 
       // WHEN - I find agents with model_routing: true
