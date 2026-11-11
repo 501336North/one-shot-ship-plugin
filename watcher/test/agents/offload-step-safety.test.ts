@@ -29,7 +29,7 @@ function offloadStep(agent: string): string {
 
 describe('Local-model offload step safety (T71)', () => {
   it('covers every agent that offloads', () => {
-    expect(offloadAgents.length).toBe(13);
+    expect(offloadAgents.length).toBe(14);
   });
 
   describe.each(offloadAgents)('%s.md', (agent) => {

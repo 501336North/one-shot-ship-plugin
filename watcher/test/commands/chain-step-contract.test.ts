@@ -2,12 +2,14 @@
  * @behavior Every command wrapper that runs a team's chain tells the model to execute ONLY
  *           well-formed `CHAIN:` lines and to ignore and report anything else, so text smuggled
  *           into the chain block is never followed as an instruction.
- * @behavior /oss:ship --merge with an auto-merge that is only queued still ends the workflow
- *           (complete once, no merged), and the wrappers do not promise condition evaluation the
+ * @behavior /oss:ship --merge sends `merged` then `complete` only when the merge landed in the
+ *           session; a stopped or failed merge sends neither, so the team's chain never runs on an
+ *           unmerged PR (2.1.0, #220). The wrappers do not promise condition evaluation the
  *           plugin does not perform: the model skips a line whose condition it can check from the
  *           session (and logs why) and runs it when it cannot tell (G2).
  * @business-rule A team's chain runs exactly the configured commands, nothing an attacker or a
- *           malformed config injects; a queued auto-merge is a successful ship, not a failure.
+ *           malformed config injects; `complete` (which runs the chain) never precedes a merge
+ *           that landed when --merge is set.
  * @boundary commands/*.md (the wrapper text the model follows).
  */
 
@@ -123,11 +125,11 @@ describe('chain step contract in command wrappers', () => {
     },
   );
 
-  it('ship.md Step 8 says what to send when --merge only queued the auto-merge', () => {
+  it('ship.md Step 8 sends merged and complete only once the --merge merge landed', () => {
     const step8 = section(readCommand('ship.md'), '## Step 8');
-    expect(step8).toContain('auto-merge is enabled but the PR has not merged yet');
-    expect(step8).toContain('send `complete` once right after `pr_created` and do not send `merged`');
-    expect(step8).toContain('Send `merged` then `complete` only if the merge landed in this session');
-    expect(step8).toContain('send `failed` only if enabling auto-merge fails');
+    expect(step8).toContain('send `merged` then `complete` only if the merge landed in this session');
+    expect(step8).toContain('If the merge step stopped or could not merge');
+    expect(step8).toContain('send neither `merged` nor `complete` yet');
+    expect(step8).not.toMatch(/auto-merge/i);
   });
 });
