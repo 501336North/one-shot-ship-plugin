@@ -4119,3 +4119,102 @@ describe('tool-gate acceptance: fix part K13', () => {
     });
   });
 });
+
+/**
+ * R-266 least-privilege-tools, US-004: a review (gate) agent judges the repo, so it may not change it.
+ * Claude Code puts the calling subagent's name in `agent_type` (plugin agents as `oss:<name>`);
+ * the main agent's calls carry no `agent_type` (probe P1, NOTES.md).
+ */
+describe('tool-gate acceptance: review agents cannot change the repo they judge (R-266)', () => {
+  afterEach(() => {
+    while (tempDirs.length > 0) {
+      const dir = tempDirs.pop()!;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  /** A repo on a feature branch with no build running, so no other rule has a say. */
+  function featureRepo(): string {
+    const repo = makeRepo();
+    onBranch(repo, 'feat/review');
+    writeRepoFile(repo, 'src/app.ts', 'export const a = 1;\n');
+    return repo;
+  }
+
+  function fromAgent(hook: object, agentType: string): object {
+    return { ...hook, agent_type: agentType, agent_id: 'a1b2c3d4' };
+  }
+
+  it('refuses a review agent writing a file inside the repo, names the rule and says fixes go to a builder (AC-004.1)', async () => {
+    const repo = featureRepo();
+
+    const result = await gate('pre', fromAgent(preWrite(repo, path.join(repo, 'src/app.ts'), 'x'), 'oss:code-reviewer'));
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('gate-agent-write');
+    expect(result.stderr).toContain('builder');
+  });
+
+  it('refuses a review agent editing a file inside the repo (AC-004.1)', async () => {
+    const repo = featureRepo();
+
+    const hook = preEdit(repo, path.join(repo, 'src/app.ts'), 'a = 1', 'a = 2');
+    const result = await gate('pre', fromAgent(hook, 'oss:code-reviewer'));
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('gate-agent-write');
+  });
+
+  it('refuses a review agent writing inside the repo through a shell redirect (AC-004.2)', async () => {
+    const repo = featureRepo();
+
+    const result = await gate('pre', fromAgent(preBash(repo, 'echo x > file.txt'), 'oss:code-reviewer'));
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('gate-agent-write');
+  });
+
+  it('knows a review agent by its bare name too', async () => {
+    const repo = featureRepo();
+
+    const result = await gate('pre', fromAgent(preWrite(repo, path.join(repo, 'src/app.ts'), 'x'), 'security-auditor'));
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('gate-agent-write');
+  });
+
+  it('allows a review agent writing into its own temp folder outside the repo (AC-004.3)', async () => {
+    const repo = featureRepo();
+    const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-offload.')));
+    tempDirs.push(scratch);
+
+    const hook = preWrite(repo, path.join(scratch, 'prompt.md'), 'expert prompt');
+    const result = await gate('pre', fromAgent(hook, 'oss:code-reviewer'));
+
+    expect(result).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  });
+
+  it('allows a builder agent writing the same file inside the repo (AC-004.4)', async () => {
+    const repo = featureRepo();
+
+    const result = await gate('pre', fromAgent(preWrite(repo, path.join(repo, 'src/app.ts'), 'x'), 'oss:typescript-pro'));
+
+    expect(result).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  });
+
+  it('allows the main agent (no agent name) writing the same file (AC-004.5)', async () => {
+    const repo = featureRepo();
+
+    const result = await gate('pre', preWrite(repo, path.join(repo, 'src/app.ts'), 'x'));
+
+    expect(result).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  });
+
+  it('allows an agent with a name the gate does not know writing the same file (AC-004.5)', async () => {
+    const repo = featureRepo();
+
+    const result = await gate('pre', fromAgent(preWrite(repo, path.join(repo, 'src/app.ts'), 'x'), 'my-own-helper'));
+
+    expect(result).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  });
+});
