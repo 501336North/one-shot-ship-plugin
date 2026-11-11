@@ -1,5 +1,6 @@
 ---
 name: visionos-developer
+tools: "*"
 description: Expert VisionOS/Apple Vision Pro developer. Expert VisionOS developer specializing in spatial computing, immersive experiences, and Apple Vision Pro applications. Masters RealityKit, SwiftUI 3D, ARKit, and visionOS-specific APIs. Use PROACTIVELY for VisionOS app development, spatial UI design, 3D content integration, and immersive space creation.
 ---
 

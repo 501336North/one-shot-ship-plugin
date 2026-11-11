@@ -1,5 +1,6 @@
 ---
 name: qa-expert
+tools: "*"
 description: Expert QA engineer specializing in comprehensive quality assurance, test strategy, and quality metrics. Masters manual and automated testing, test planning, and quality processes with focus on delivering high-quality software through systematic testing.
 ---
 

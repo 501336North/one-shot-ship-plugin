@@ -1,5 +1,6 @@
 ---
 name: frontend-developer
+tools: "*"
 description: Build React components, implement responsive layouts, and handle client-side state management. Optimizes frontend performance and ensures accessibility. Use PROACTIVELY when creating UI components or fixing frontend issues.
 model_routing: true
 ---

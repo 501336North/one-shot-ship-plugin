@@ -1,5 +1,6 @@
 ---
 name: release-manager
+tools: "*"
 description: Release preparation and deployment specialist handling versioning, changelogs, deployments, and rollbacks. MUST BE USED for all production releases. Use PROACTIVELY to prepare releases and ensure smooth deployments.
 model: haiku
 ---

@@ -1,5 +1,6 @@
 ---
 name: test-engineer
+tools: "*"
 description: Automated test generation and coverage specialist. Use PROACTIVELY when new code is written or modified. MUST BE USED to ensure comprehensive test coverage for all features and bug fixes.
 model_routing: true
 context: fork

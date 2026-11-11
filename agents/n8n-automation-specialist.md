@@ -1,5 +1,6 @@
 ---
 name: n8n-automation-specialist
+tools: "*"
 description: n8n workflow automation expert. Creates, debugs, and extends n8n workflows with production-ready JSON output. Use for any n8n automation tasks.
 ---
 
