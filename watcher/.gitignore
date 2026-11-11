@@ -5,3 +5,11 @@ node_modules/
 
 # Project-level OSS state (workflow state, queue, watcher pid)
 .oss/
+
+# tsc output for the tool gate (npm run build): the gate ships only as the tracked bundle
+# dist/cli/tool-gate.cjs, which hooks/oss-tool-gate.sh runs, so these files are never committed.
+dist/tool-gate/
+dist/cli/tool-gate.js
+dist/cli/tool-gate.js.map
+dist/cli/tool-gate.d.ts
+dist/cli/tool-gate.d.ts.map

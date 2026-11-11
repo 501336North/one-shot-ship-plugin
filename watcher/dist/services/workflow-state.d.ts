@@ -29,6 +29,7 @@ export interface WorkflowState {
     supervisor: SupervisorStatus;
     activeStep: ChainStep | null;
     currentCommand?: string;
+    currentCommandStartedAt?: string;
     nextCommand?: string | null;
     notification?: Notification;
     sessionId?: string;

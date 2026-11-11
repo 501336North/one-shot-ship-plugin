@@ -260,6 +260,9 @@ export class WorkflowStateService {
      */
     async setCurrentCommand(command) {
         const state = await this.getState();
+        if (state.currentCommand !== command) {
+            state.currentCommandStartedAt = new Date().toISOString();
+        }
         state.currentCommand = command;
         await this.writeState(state);
     }
