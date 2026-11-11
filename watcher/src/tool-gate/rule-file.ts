@@ -1,6 +1,6 @@
 /**
- * Rule file loader for the tool gate. The rule values live only in the plugin's
- * config/tool-gates.json; a repo's .oss/tool-gates.json may add to the lists (except
+ * Rule file loader for the tool gate. The rule values, including the one list of review (gate)
+ * agents, live only in the plugin's config/tool-gates.json; a repo's .oss/tool-gates.json may add to the lists (except
  * testFilePatterns and testCommandPatterns: only the plugin decides what a test file and a test
  * run are) or set tagsAllowed to false.
  * A repo file that drops a base value, adds a test-file or test-command pattern or more than 64 values to a list,
@@ -18,6 +18,7 @@ export interface GateSettings {
   sourceExtensions: string[];
   protectedPaths: string[];
   productionHosts: string[];
+  gateAgents: string[];
   tagsAllowed: boolean;
 }
 
@@ -39,6 +40,7 @@ const LIST_KEYS: readonly ListKey[] = [
   'sourceExtensions',
   'protectedPaths',
   'productionHosts',
+  'gateAgents',
 ];
 const KNOWN_KEYS: ReadonlySet<string> = new Set(['version', 'tagsAllowed', ...LIST_KEYS]);
 const MAX_REPO_BYTES = 64 * 1024;

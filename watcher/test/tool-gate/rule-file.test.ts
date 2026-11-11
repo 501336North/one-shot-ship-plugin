@@ -9,6 +9,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import { loadSettings, type GateSettings, type ReadFile } from '../../src/tool-gate/rule-file.js';
 
 const PLUGIN_ROOT = '/plugin';
@@ -24,6 +26,7 @@ const BASE: GateSettings = {
   sourceExtensions: ['.ts', '.js'],
   protectedPaths: ['.oss/tool-gates.json', '.oss/tool-gates/**'],
   productionHosts: [],
+  gateAgents: ['code-reviewer', 'security-auditor', 'penetration-tester', 'performance-auditor'],
   tagsAllowed: true,
 };
 
@@ -34,6 +37,7 @@ const LIST_KEYS = [
   'sourceExtensions',
   'protectedPaths',
   'productionHosts',
+  'gateAgents',
 ] as const;
 
 function files(base: string | null, repo: string | null): ReadFile {
@@ -219,4 +223,31 @@ describe('loadSettings: a repo file may add only so many values to a list', () =
       expect(expectRejected(load({ version: 1, [key]: added(65) }))).toContain(`${key} adds more than 64 values`);
     },
   );
+});
+
+describe('loadSettings: the gate agents are listed once, in the rule file', () => {
+  const GATE_AGENTS = ['code-reviewer', 'security-auditor', 'penetration-tester', 'performance-auditor'];
+
+  it("should read the four gate agents from the plugin's own base file", () => {
+    const pluginRoot = path.resolve(__dirname, '..', '..', '..');
+    const read: ReadFile = (absPath) => (absPath.startsWith(pluginRoot) ? fs.readFileSync(absPath, 'utf8') : null);
+    const result = loadSettings(read, pluginRoot, REPO_ROOT);
+    expect(result.settings.gateAgents).toEqual(GATE_AGENTS);
+  });
+
+  it('should fail as a gate error when the base file has no gateAgents', () => {
+    const { gateAgents: _dropped, ...incomplete } = BASE;
+    expect(() => loadSettings(files(JSON.stringify(incomplete), null), PLUGIN_ROOT, REPO_ROOT)).toThrow(/gateAgents/);
+  });
+
+  it('should let a repo file add a gate agent, without duplicates', () => {
+    const result = load({ version: 1, gateAgents: [...GATE_AGENTS, 'architecture-auditor', 'code-reviewer'] });
+    expect(result.rejected).toBeUndefined();
+    expect(result.settings.gateAgents).toEqual([...GATE_AGENTS, 'architecture-auditor']);
+  });
+
+  it('should ignore a repo file that drops a base gate agent, naming the key', () => {
+    const reason = expectRejected(load({ version: 1, gateAgents: ['code-reviewer', 'security-auditor'] }));
+    expect(reason).toContain('gateAgents');
+  });
 });

@@ -3364,7 +3364,8 @@ var LIST_KEYS = [
   "testCommandPatterns",
   "sourceExtensions",
   "protectedPaths",
-  "productionHosts"
+  "productionHosts",
+  "gateAgents"
 ];
 var KNOWN_KEYS = /* @__PURE__ */ new Set(["version", "tagsAllowed", ...LIST_KEYS]);
 var MAX_REPO_BYTES = 64 * 1024;

@@ -6,5 +6,6 @@
   "sourceExtensions": [".ts", ".tsx", ".js", ".mjs", ".cjs", ".sh", ".py", ".go", ".rs", ".swift"],
   "protectedPaths": [".oss/tool-gates.json", ".oss/tool-gates/**", "~/.oss/hooks/**", ".claude/settings*.json", "~/.claude/settings*.json", "~/.claude/plugins/**", ".oss/workflow-state.json", "**/.git/config", "**/.git/config.worktree", "**/.git/worktrees/*/config.worktree", "~/.gitconfig", "~/.config/git/config", "**/.git/hooks/**", "**/.git", "**/.git/HEAD", "**/.git/commondir", "**/.git/refs/**", "**/.git/packed-refs", "**/.git/worktrees/*/HEAD", "**/.git/worktrees/*/commondir", "**/.git/worktrees/*/gitdir", "**/.git/modules/**/config"],
   "productionHosts": [],
+  "gateAgents": ["code-reviewer", "security-auditor", "penetration-tester", "performance-auditor"],
   "tagsAllowed": true
 }
