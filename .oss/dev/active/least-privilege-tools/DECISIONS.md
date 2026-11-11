@@ -127,3 +127,15 @@ Picks are recorded by the hook in `decisions.ndjson`; the full Q&A is in `IDEATE
 **Decision.** Remove the lines on the API Sprint D branch, with a test that keeps them out. The local agent file is the only tool list.
 
 **Alternative rejected.** Keeping served lists in sync with the local ones: two sources for one fact.
+
+---
+
+## ADR-009: The tree check hangs off SubagentStart/SubagentStop, not the `Agent` call
+
+**Date:** 2026-11-11 · **Status:** Accepted (build, Task 1 probe finding; refines ADR-007's mechanism, not its promise)
+
+**Context.** Probe (Claude Code 2.1.322): for an agent run with `run_in_background: true`, PostToolUse on `Agent` fires at launch (`status: "async_launched"`), before the agent does anything. A compare there would always pass. `SubagentStart` and `SubagentStop` fire at the run's real start and end, foreground and background, with `agent_id` and `agent_type`.
+
+**Decision.** Snapshot on `SubagentStart` and compare on `SubagentStop` for gate agents, keyed by `agent_id`. For a foreground run, the main agent is told through the `Agent` PostToolUse (`additionalContext`), found by `tool_response.agentId`. For a background run, `SubagentStop` records the void (state + timeline) and tells the user (`systemMessage`). The message says the repo changed while the review ran, since the change may come from any writer during the run.
+
+**Consequences.** + Background review runs are covered. + The plan's Task 10-12 tests stay the same in substance; their trigger events change. − Two more hook events in `hooks.json`.
