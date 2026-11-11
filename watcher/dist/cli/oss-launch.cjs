@@ -1748,7 +1748,7 @@ async function main2(argv) {
     return void 0;
   }
   if (isVersionRequest(argv)) {
-    let version = "2.0.97" ? "2.0.97" : "unknown";
+    let version = "2.1.2" ? "2.1.2" : "unknown";
     if (version === "unknown") {
       try {
         const manifest = path4.join(path4.dirname((0, import_url2.fileURLToPath)(__ossImportMetaUrl)), "..", "..", "..", ".claude-plugin", "plugin.json");

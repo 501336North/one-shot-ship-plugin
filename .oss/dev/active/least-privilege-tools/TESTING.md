@@ -26,4 +26,9 @@
 - **Found:** a false void in a live background run: OSS's own hooks write `.oss/dev/timeline-unfiled.ndjson`, logs and workflow state during every run. Fixed by leaving out top-level `.oss/` (ADR-010, user's pick; 5c20f67), tests RED then GREEN.
 - **Live row re-run: 8/8** (adds a clean-review control: not voided, no void record; and a background review run's script write voided at its real end).
 
-## Last Updated: 2026-11-11 by /oss:integration
+## Build rewrites a tracked file (2026-11-11, after integration)
+- Heads-up: ship's code-reviewer runs the plugin build, and the build rewrote tracked `watcher/dist/cli/oss-launch.cjs` (stale embedded version 2.0.97 vs plugin 2.1.2), which would void that review.
+- New `watcher/test/hooks/oss-launch-dist.test.ts`: RED on the stale bundle, GREEN after `npm run build:cli-bundle`. All four bundle tests + oss-launch proxy test 5 files / 8 tests pass; tsc clean; watcher-dist-fresh PASS.
+- Snapshot check (same temp-index `write-tree` the review check uses): `npm run build` before/after gives the same tree (b7fe4dfd).
+
+## Last Updated: 2026-11-11 by heads-up fix (stale oss-launch bundle)
