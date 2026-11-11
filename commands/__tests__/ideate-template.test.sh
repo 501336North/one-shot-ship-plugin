@@ -13,6 +13,7 @@
 # 4. skills/ideate.md should contain API template fetch instruction
 
 set -uo pipefail
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMMANDS_IDEATE="${COMMANDS_IDEATE:-$SCRIPT_DIR/../ideate.md}"   # override: fixture runs only
