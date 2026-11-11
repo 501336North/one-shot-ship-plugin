@@ -63,6 +63,8 @@ describe('base settings file', () => {
         '**/.git/worktrees/*/HEAD', '**/.git/worktrees/*/commondir', '**/.git/worktrees/*/gitdir', '**/.git/modules/**/config',
       ],
       productionHosts: [],
+      // R-266 DESIGN item 3 (AC-004.6): the review agents whose runs the gate tracks
+      gateAgents: ['code-reviewer', 'security-auditor', 'penetration-tester', 'performance-auditor'],
       tagsAllowed: true,
     });
   });

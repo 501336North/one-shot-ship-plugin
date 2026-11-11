@@ -14,6 +14,7 @@ import * as path from 'path';
 
 const HOOKS_JSON = path.join(__dirname, '../../../hooks.json');
 const GATE = '${CLAUDE_PLUGIN_ROOT}/hooks/oss-tool-gate.sh';
+const GATE_RUN = '${CLAUDE_PLUGIN_ROOT}/hooks/oss-gate-run.sh';
 
 interface HookCommand {
   type: string;
@@ -33,6 +34,11 @@ function readHooks(): HookMap {
 
 function isGateEntry(entry: HookEntry): boolean {
   return entry.hooks.some((h) => h.command.startsWith(GATE));
+}
+
+/** R-266 (US-005, US-008): the entries that record a review agent's run for the gate. */
+function isGateRunEntry(entry: HookEntry): boolean {
+  return entry.hooks.some((h) => h.command.startsWith(GATE_RUN));
 }
 
 const command = (script: string): HookEntry => ({
@@ -77,10 +83,26 @@ describe('hooks.json tool-gate entries', () => {
     }
   });
 
+  it('should register SubagentStart, SubagentStop and PostToolUse Agent|Task → oss-gate-run.sh with its event, a 10 s timeout and not async', () => {
+    const hooks = readHooks();
+    const gateRunEntries: HookMap = {};
+    for (const [event, entries] of Object.entries(hooks)) {
+      const kept = entries.filter(isGateRunEntry);
+      if (kept.length > 0) gateRunEntries[event] = kept;
+    }
+    expect(gateRunEntries).toEqual({
+      PostToolUse: [
+        { matcher: 'Agent|Task', hooks: [{ type: 'command', command: `${GATE_RUN} agent-post`, timeout: 10 }] },
+      ],
+      SubagentStart: [{ hooks: [{ type: 'command', command: `${GATE_RUN} subagent-start`, timeout: 10 }] }],
+      SubagentStop: [{ hooks: [{ type: 'command', command: `${GATE_RUN} subagent-stop`, timeout: 10 }] }],
+    });
+  });
+
   it('should keep every existing hooks.json entry unchanged', () => {
     const withoutGate: HookMap = {};
     for (const [event, entries] of Object.entries(readHooks())) {
-      const kept = entries.filter((e) => !isGateEntry(e));
+      const kept = entries.filter((e) => !isGateEntry(e) && !isGateRunEntry(e));
       if (kept.length > 0) withoutGate[event] = kept;
     }
     expect(withoutGate).toEqual(EXISTING);
