@@ -7,8 +7,10 @@
 - [x] Task 2: Fix no-telegram-command test (completed 2026-11-11, 6382204): fails any Telegram offer, allows only the exact retired-key cleanup
 - [x] Task 3: Delete the metrics push (completed 2026-11-11, 10f7360; D2) and the orphaned log analyzer (cee1750; D4)
 - [x] Task 4: Bump to 2.1.3 (completed 2026-11-11, f13b545; D1)
+- [x] D5: pre-approve the merge test (cc49e7f) then WITHDRAWN by the owner (reverted in 5cb799e): an allow entry is not tied to --merge
+- [x] D6: root package.json; `npm test` = watcher `npm ci` + scripts/run-shell-tests.sh over every __tests__/*.test.sh (completed 2026-11-11, df06f23)
 
 ## Blockers
-- Ship: the plugin repo has no root package.json, so the served merge step STOPs; the owner merges the PR by hand.
+- None (D6 lets /oss:ship --merge run the merge test on plugin PRs)
 
-## Last Updated: 2026-11-11 11:05 CST by /oss:build
+## Last Updated: 2026-11-11 by /oss:build (D5 withdrawn, D6)
