@@ -10,10 +10,16 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { callingAgentOf, isGateAgent } from '../tool-gate/calling-agent.js';
+import { callingAgentOf } from '../tool-gate/calling-agent.js';
+import { isGateAgent } from '../utils/gate-agents.js';
 
 const STATE_FOLDER = 'oss-gate-run';
-export const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+/** True when the agent id is a plain one, safe to use as a file name. */
+export function isSafeId(id: unknown): id is string {
+  return typeof id === 'string' && SAFE_ID.test(id);
+}
 
 /** The session's environment without `GIT_*` (which could pick another repo or index). */
 function gitEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -29,6 +35,11 @@ export function git(cwd: string, args: string[], extra?: Record<string, string>)
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
   }).trim();
+}
+
+/** The top folder of the repo holding `cwd`. */
+export function repoTop(cwd: string): string {
+  return git(cwd, ['rev-parse', '--show-toplevel']);
 }
 
 /** The repo's files written as a tree through a throwaway index. */
@@ -81,8 +92,8 @@ function stateFolder(top: string): string {
 export function snapshotOnStart(input: Record<string, unknown>, gateAgents: readonly string[]): string | null {
   if (!isGateAgent(callingAgentOf(input), gateAgents)) return null;
   const id = input.agent_id;
-  if (typeof id !== 'string' || !SAFE_ID.test(id)) throw new Error('agent_id is not a safe file name');
-  const top = git(String(input.cwd), ['rev-parse', '--show-toplevel']);
+  if (!isSafeId(id)) throw new Error('agent_id is not a safe file name');
+  const top = repoTop(String(input.cwd));
   const tree = writeTree(top);
   writeStateFile(path.join(stateFolder(top), id), `${tree}\n`);
   return tree;

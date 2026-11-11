@@ -15,6 +15,13 @@ function namesIn(file) {
         return null;
     }
 }
+/** True when the agent is one of the gate (review) agents, with or without one leading `oss:`. */
+export function isGateAgent(agent, gateAgents) {
+    if (agent === undefined)
+        return false;
+    const bare = agent.startsWith('oss:') ? agent.slice('oss:'.length) : agent;
+    return gateAgents.includes(bare);
+}
 export function readGateAgents(pluginRoot, repoRoot) {
     const base = namesIn(path.join(pluginRoot, 'config', 'tool-gates.json'));
     if (base === null)

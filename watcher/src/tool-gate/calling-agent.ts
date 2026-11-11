@@ -8,10 +8,3 @@ export function callingAgentOf(record: Record<string, unknown>): string | undefi
   const name = record.agent_type;
   return typeof name === 'string' && name !== '' ? name : undefined;
 }
-
-/** True when the agent is one of the gate (review) agents, with or without one leading `oss:`. */
-export function isGateAgent(agent: string | undefined, gateAgents: readonly string[]): boolean {
-  if (agent === undefined) return false;
-  const bare = agent.startsWith('oss:') ? agent.slice('oss:'.length) : agent;
-  return gateAgents.includes(bare);
-}

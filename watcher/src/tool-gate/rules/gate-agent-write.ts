@@ -14,7 +14,7 @@ import type { EditCall } from '../edit-call.js';
 import type { PathResolver } from '../path-resolver.js';
 import type { GateSettings } from '../rule-file.js';
 import { UNKNOWN } from '../tokenize.js';
-import { isGateAgent } from '../calling-agent.js';
+import { isGateAgent } from '../../utils/gate-agents.js';
 import { isSameOrAncestor } from './protected-path.js';
 import type { Refusal } from './refusal.js';
 

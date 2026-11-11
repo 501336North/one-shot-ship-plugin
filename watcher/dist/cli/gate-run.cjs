@@ -175,6 +175,11 @@ function namesIn(file) {
     return null;
   }
 }
+function isGateAgent(agent, gateAgents) {
+  if (agent === void 0) return false;
+  const bare = agent.startsWith("oss:") ? agent.slice("oss:".length) : agent;
+  return gateAgents.includes(bare);
+}
 function readGateAgents(pluginRoot, repoRoot) {
   const base = namesIn(path2.join(pluginRoot, "config", "tool-gates.json"));
   if (base === null) throw new Error("plugin gateAgents is missing or invalid");
@@ -196,15 +201,13 @@ function callingAgentOf(record) {
   const name = record.agent_type;
   return typeof name === "string" && name !== "" ? name : void 0;
 }
-function isGateAgent(agent, gateAgents) {
-  if (agent === void 0) return false;
-  const bare = agent.startsWith("oss:") ? agent.slice("oss:".length) : agent;
-  return gateAgents.includes(bare);
-}
 
 // src/gate-run/snapshot.ts
 var STATE_FOLDER = "oss-gate-run";
 var SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+function isSafeId(id) {
+  return typeof id === "string" && SAFE_ID.test(id);
+}
 function gitEnv(extra = {}) {
   const env = {};
   for (const [name, value] of Object.entries(process.env)) if (!name.startsWith("GIT_")) env[name] = value;
@@ -217,6 +220,9 @@ function git(cwd, args, extra) {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"]
   }).trim();
+}
+function repoTop(cwd) {
+  return git(cwd, ["rev-parse", "--show-toplevel"]);
 }
 function writeTree(top) {
   const scratch = import_node_fs3.default.mkdtempSync(import_node_path2.default.join(import_node_os.default.tmpdir(), "oss-gate-run-"));
@@ -256,8 +262,8 @@ function stateFolder(top) {
 function snapshotOnStart(input, gateAgents) {
   if (!isGateAgent(callingAgentOf(input), gateAgents)) return null;
   const id = input.agent_id;
-  if (typeof id !== "string" || !SAFE_ID.test(id)) throw new Error("agent_id is not a safe file name");
-  const top = git(String(input.cwd), ["rev-parse", "--show-toplevel"]);
+  if (!isSafeId(id)) throw new Error("agent_id is not a safe file name");
+  const top = repoTop(String(input.cwd));
   const tree = writeTree(top);
   writeStateFile(import_node_path2.default.join(stateFolder(top), id), `${tree}
 `);
@@ -298,8 +304,8 @@ function changedPaths(top, before, after) {
 function compareOnStop(input) {
   try {
     const id = input.agent_id;
-    if (typeof id !== "string" || !SAFE_ID.test(id)) return { kind: "none" };
-    const top = git(String(input.cwd), ["rev-parse", "--show-toplevel"]);
+    if (!isSafeId(id)) return { kind: "none" };
+    const top = repoTop(String(input.cwd));
     const before = takeStateFile(top, id);
     if (before === null) return { kind: "none" };
     const files = changedPaths(top, before.trim(), writeTree(top));
@@ -312,8 +318,8 @@ function compareOnStop(input) {
 }
 function takePendingVoid(input) {
   const id = input.tool_response?.agentId;
-  if (typeof id !== "string" || !SAFE_ID.test(id)) return null;
-  const top = git(String(input.cwd), ["rev-parse", "--show-toplevel"]);
+  if (!isSafeId(id)) return null;
+  const top = repoTop(String(input.cwd));
   const text = takeStateFile(top, `${id}.void`);
   return text === null ? null : JSON.parse(text);
 }
@@ -344,7 +350,7 @@ function folderOf(projectDir, cwd) {
 }
 function logError(folder) {
   try {
-    const top = git(folder, ["rev-parse", "--show-toplevel"]);
+    const top = repoTop(folder);
     fileStateStore(top).appendEvent({ ts: (/* @__PURE__ */ new Date()).toISOString(), tool: "gate-run", kind: "gate-error", result: "allowed" });
   } catch {
   }
@@ -353,7 +359,7 @@ function check(req, hook, folder) {
   const input = { ...hook, cwd: folder };
   switch (req.event) {
     case "subagent-start": {
-      const gateAgents = readGateAgents(req.env.CLAUDE_PLUGIN_ROOT, git(folder, ["rev-parse", "--show-toplevel"]));
+      const gateAgents = readGateAgents(req.env.CLAUDE_PLUGIN_ROOT, repoTop(folder));
       snapshotOnStart(input, gateAgents);
       return SILENT;
     }

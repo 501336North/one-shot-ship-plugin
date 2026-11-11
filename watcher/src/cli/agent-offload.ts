@@ -28,7 +28,7 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { checkAgentModel, CheckResult } from './agent-model-check.js';
 import { readRegularFileSync } from '../utils/regular-file.js';
-import { readGateAgents } from '../utils/gate-agents.js';
+import { isGateAgent, readGateAgents } from '../utils/gate-agents.js';
 import { safeForLog } from '../utils/safe-for-log.js';
 
 export interface OffloadParams {
@@ -92,7 +92,7 @@ function defaultReadGateAgents(projectDir: string): string[] {
  */
 export function isReadOnlyOffload(agent: string, projectDir: string, read: (dir: string) => string[]): boolean {
   try {
-    return read(projectDir).includes(agent.replace(/^oss:/, ''));
+    return isGateAgent(agent, read(projectDir));
   } catch {
     return true;
   }

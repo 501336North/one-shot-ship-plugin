@@ -17,6 +17,13 @@ function namesIn(file: string): string[] | null {
   }
 }
 
+/** True when the agent is one of the gate (review) agents, with or without one leading `oss:`. */
+export function isGateAgent(agent: string | undefined, gateAgents: readonly string[]): boolean {
+  if (agent === undefined) return false;
+  const bare = agent.startsWith('oss:') ? agent.slice('oss:'.length) : agent;
+  return gateAgents.includes(bare);
+}
+
 export function readGateAgents(pluginRoot: string, repoRoot: string): string[] {
   const base = namesIn(path.join(pluginRoot, 'config', 'tool-gates.json'));
   if (base === null) throw new Error('plugin gateAgents is missing or invalid');

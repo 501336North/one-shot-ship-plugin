@@ -8,7 +8,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { SAFE_ID, git, stateFolderPath, writeStateFile, writeTree } from './snapshot.js';
+import { git, isSafeId, repoTop, stateFolderPath, writeStateFile, writeTree } from './snapshot.js';
 
 export type CompareResult = { kind: 'none' } | { kind: 'void'; files: string[] } | { kind: 'error'; error: string };
 
@@ -51,8 +51,8 @@ function changedPaths(top: string, before: string, after: string): string[] {
 export function compareOnStop(input: Record<string, unknown>): CompareResult {
   try {
     const id = input.agent_id;
-    if (typeof id !== 'string' || !SAFE_ID.test(id)) return { kind: 'none' };
-    const top = git(String(input.cwd), ['rev-parse', '--show-toplevel']);
+    if (!isSafeId(id)) return { kind: 'none' };
+    const top = repoTop(String(input.cwd));
     const before = takeStateFile(top, id);
     if (before === null) return { kind: 'none' };
     const files = changedPaths(top, before.trim(), writeTree(top));
@@ -67,8 +67,8 @@ export function compareOnStop(input: Record<string, unknown>): CompareResult {
 /** For the `Agent` PostToolUse: the changed paths kept for `tool_response.agentId`, once; null when none. */
 export function takePendingVoid(input: Record<string, unknown>): string[] | null {
   const id = (input.tool_response as { agentId?: unknown } | undefined)?.agentId;
-  if (typeof id !== 'string' || !SAFE_ID.test(id)) return null;
-  const top = git(String(input.cwd), ['rev-parse', '--show-toplevel']);
+  if (!isSafeId(id)) return null;
+  const top = repoTop(String(input.cwd));
   const text = takeStateFile(top, `${id}.void`);
   return text === null ? null : (JSON.parse(text) as string[]);
 }

@@ -3453,14 +3453,20 @@ function callingAgentOf(record2) {
   const name = record2.agent_type;
   return typeof name === "string" && name !== "" ? name : void 0;
 }
+
+// src/tool-gate/rules/gate-agent-write.ts
+var import_node_path12 = __toESM(require("node:path"), 1);
+
+// src/utils/regular-file.ts
+var fs7 = __toESM(require("fs"), 1);
+var FLAGS = fs7.constants.O_RDONLY | fs7.constants.O_NONBLOCK;
+
+// src/utils/gate-agents.ts
 function isGateAgent(agent, gateAgents) {
   if (agent === void 0) return false;
   const bare = agent.startsWith("oss:") ? agent.slice("oss:".length) : agent;
   return gateAgents.includes(bare);
 }
-
-// src/tool-gate/rules/gate-agent-write.ts
-var import_node_path12 = __toESM(require("node:path"), 1);
 
 // src/tool-gate/rules/protected-path.ts
 var import_node_path11 = __toESM(require("node:path"), 1);

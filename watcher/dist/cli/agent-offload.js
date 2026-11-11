@@ -27,7 +27,7 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { checkAgentModel } from './agent-model-check.js';
 import { readRegularFileSync } from '../utils/regular-file.js';
-import { readGateAgents } from '../utils/gate-agents.js';
+import { isGateAgent, readGateAgents } from '../utils/gate-agents.js';
 import { safeForLog } from '../utils/safe-for-log.js';
 /** What a Claude Code too old for --restricted needs (T76b); /oss:models prints it too. */
 export const OFFLOAD_UPDATE_HINT = 'Model offload needs a newer Claude Code (update with: claude update)';
@@ -46,7 +46,7 @@ function defaultReadGateAgents(projectDir) {
  */
 export function isReadOnlyOffload(agent, projectDir, read) {
     try {
-        return read(projectDir).includes(agent.replace(/^oss:/, ''));
+        return isGateAgent(agent, read(projectDir));
     }
     catch {
         return true;

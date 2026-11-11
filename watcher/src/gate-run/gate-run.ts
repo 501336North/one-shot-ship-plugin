@@ -17,7 +17,7 @@ import path from 'node:path';
 import { fileStateStore } from '../tool-gate/state-store.js';
 import { readGateAgents } from '../utils/gate-agents.js';
 import { compareOnStop, takePendingVoid, voidMessage } from './compare.js';
-import { git, snapshotOnStart } from './snapshot.js';
+import { repoTop, snapshotOnStart } from './snapshot.js';
 
 export type GateRunEvent = 'subagent-start' | 'subagent-stop' | 'agent-post';
 
@@ -55,7 +55,7 @@ function folderOf(projectDir: string | undefined, cwd: unknown): string {
 /** Logs `gate-error` in the repo's tool-gate event log where it can (best effort). */
 function logError(folder: string): void {
   try {
-    const top = git(folder, ['rev-parse', '--show-toplevel']);
+    const top = repoTop(folder);
     fileStateStore(top).appendEvent({ ts: new Date().toISOString(), tool: 'gate-run', kind: 'gate-error', result: 'allowed' });
   } catch {
     // Nowhere to log: the user is still told.
@@ -68,7 +68,7 @@ function check(req: GateRunRequest, hook: Record<string, unknown>, folder: strin
     case 'subagent-start': {
       // An unreadable gate list fails open (allow + tell) rather than snapshotting every subagent
       // run: a snapshot per builder run would cost every session, and the user is told either way.
-      const gateAgents = readGateAgents(req.env.CLAUDE_PLUGIN_ROOT, git(folder, ['rev-parse', '--show-toplevel']));
+      const gateAgents = readGateAgents(req.env.CLAUDE_PLUGIN_ROOT, repoTop(folder));
       snapshotOnStart(input, gateAgents);
       return SILENT;
     }
