@@ -36,12 +36,12 @@ __export(tool_gate_exports, {
   runCli: () => runCli
 });
 module.exports = __toCommonJS(tool_gate_exports);
-var import_node_path19 = __toESM(require("node:path"), 1);
+var import_node_path20 = __toESM(require("node:path"), 1);
 var import_node_worker_threads = require("node:worker_threads");
 
 // src/tool-gate/gate.ts
 var import_node_fs9 = __toESM(require("node:fs"), 1);
-var import_node_path18 = __toESM(require("node:path"), 1);
+var import_node_path19 = __toESM(require("node:path"), 1);
 
 // src/tool-gate/command-reader.ts
 var import_node_path3 = __toESM(require("node:path"), 1);
@@ -3453,9 +3453,251 @@ function callingAgentOf(record2) {
   const name = record2.agent_type;
   return typeof name === "string" && name !== "" ? name : void 0;
 }
+function isGateAgent(agent, gateAgents) {
+  if (agent === void 0) return false;
+  const bare = agent.startsWith("oss:") ? agent.slice("oss:".length) : agent;
+  return gateAgents.includes(bare);
+}
+
+// src/tool-gate/rules/gate-agent-write.ts
+var import_node_path12 = __toESM(require("node:path"), 1);
+
+// src/tool-gate/rules/protected-path.ts
+var import_node_path11 = __toESM(require("node:path"), 1);
+var HOME_PREFIX = "~/";
+var MAX_PATH_CHARS = 4096;
+var MAX_PATH_SEGMENTS = 512;
+function isTooLong(p) {
+  return p.length > MAX_PATH_CHARS || p.split("/").length > MAX_PATH_SEGMENTS;
+}
+var TOO_LONG = {
+  rule: "protected-path",
+  reason: "Refused: writes a path too long for the gate to check (over 4096 characters or 512 folders)."
+};
+var WILDCARD = /[*?]/;
+function placesOf(root, home, paths, caseInsensitive) {
+  return [
+    { home, root, caseInsensitive },
+    { home: paths.realpath(home), root: paths.realpath(root), caseInsensitive }
+  ];
+}
+function formsOf(absPath, paths) {
+  return [import_node_path11.default.normalize(absPath), paths.realpath(absPath)];
+}
+function isProtected(absPath, settings, places, paths) {
+  return formsOf(absPath, paths).some((p) => places.some((at) => matchAnyPath(settings.protectedPaths, p, at)));
+}
+function fixedFolder(glob, at) {
+  let full;
+  if (glob.startsWith(HOME_PREFIX)) full = import_node_path11.default.join(at.home, glob.slice(HOME_PREFIX.length));
+  else if (import_node_path11.default.isAbsolute(glob)) full = import_node_path11.default.normalize(glob);
+  else full = import_node_path11.default.join(at.root, glob);
+  const segments = full.split(import_node_path11.default.sep);
+  const first = segments.findIndex((segment) => WILDCARD.test(segment));
+  return first === -1 ? full : segments.slice(0, first).join(import_node_path11.default.sep) || import_node_path11.default.sep;
+}
+function isSameOrAncestor(dir, of, caseInsensitive) {
+  const relative = caseInsensitive ? import_node_path11.default.relative(dir.toLowerCase(), of.toLowerCase()) : import_node_path11.default.relative(dir, of);
+  return relative !== ".." && !relative.startsWith(`..${import_node_path11.default.sep}`) && !import_node_path11.default.isAbsolute(relative);
+}
+var fixedFolders = /* @__PURE__ */ new WeakMap();
+function fixedFoldersOf(globs, at) {
+  let lists = fixedFolders.get(at);
+  if (lists === void 0) {
+    lists = /* @__PURE__ */ new WeakMap();
+    fixedFolders.set(at, lists);
+  }
+  let folders = lists.get(globs);
+  if (folders === void 0) {
+    folders = globs.map((glob) => fixedFolder(glob, at));
+    lists.set(globs, folders);
+  }
+  return folders;
+}
+function holdsProtected(absPath, settings, places, paths) {
+  return formsOf(absPath, paths).some(
+    (p) => places.some(
+      (at) => fixedFoldersOf(settings.protectedPaths, at).some((folder) => isSameOrAncestor(p, folder, at.caseInsensitive === true))
+    )
+  );
+}
+function splitPattern(pattern) {
+  const segments = pattern.split("/");
+  const first = segments.findIndex((segment) => /(?:^|[^\\])[*?[]/.test(segment));
+  if (first === -1) return null;
+  return { prefix: segments.slice(0, first).join("/") || "/", rest: segments.slice(first).join("/") };
+}
+function patternReachesProtected(pattern, settings, places, paths, exemptAnchor = false, dots = false) {
+  const forms = [pattern];
+  const split2 = splitPattern(pattern);
+  if (split2 !== null && !split2.prefix.includes("\\")) forms.push(`${escapeGlob(paths.realpath(split2.prefix))}/${split2.rest}`);
+  return forms.some((form) => places.some((at) => shellGlobMayMatch(form, settings.protectedPaths, at, exemptAnchor, dots)));
+}
+function displayPath(absPath, root, home) {
+  if (absPath === root) return ".";
+  if (absPath.startsWith(`${root}/`)) return absPath.slice(root.length + 1);
+  if (absPath.startsWith(`${home}/`)) return HOME_PREFIX + absPath.slice(home.length + 1);
+  return absPath;
+}
+function refusal(absPath, what, root, home) {
+  return {
+    rule: "protected-path",
+    reason: `Refused: writes \`${displayPath(absPath, root, home)}\`, ${what}. Ask the user to change it with \`!\`.`
+  };
+}
+function checkProtectedPathEdit(call, settings, root, home, paths, caseInsensitive = false) {
+  if (isTooLong(call.filePath)) return TOO_LONG;
+  const places = placesOf(root, home, paths, caseInsensitive);
+  if (isProtected(call.filePath, settings, places, paths)) return refusal(call.filePath, "a protected file", root, home);
+  if (holdsProtected(call.filePath, settings, places, paths)) {
+    return refusal(call.filePath, "which holds protected files", root, home);
+  }
+  return null;
+}
+function checkProtectedPathBash(part, settings, root, home, paths, caseInsensitive = false, places = placesOf(root, home, paths, caseInsensitive), tree = createTreeFinder()) {
+  for (const target of part.writeTargets) {
+    if (isTooLong(target)) return TOO_LONG;
+    if (isProtected(target, settings, places, paths)) return refusal(target, "a protected file", root, home);
+    if (holdsProtected(target, settings, places, paths)) {
+      return refusal(target, "which holds protected files", root, home);
+    }
+  }
+  for (const pattern of part.writeGlobs) {
+    if (isTooLong(pattern)) return TOO_LONG;
+    if (patternReachesProtected(pattern, settings, places, paths, false, part.dotGlob)) {
+      return refusal(pattern, "a wildcard the shell could expand to a protected path", root, home);
+    }
+  }
+  const lost = part.lostDir === null ? null : lostPatternWrite(part, settings, places, paths, root, home) ?? lostTail(part, settings, places);
+  return lost ?? nestedProtected(part, settings, paths, tree, caseInsensitive, root, home);
+}
+function lostPatternWrite(part, settings, places, paths, root, home) {
+  const at = part.lostDir?.pattern ?? null;
+  if (at === null) return null;
+  const folder = `${part.cwd}/`;
+  for (const target of part.writeTargets) {
+    if (!target.startsWith(folder)) continue;
+    const pattern = `${at}/${escapeGlob(target.slice(folder.length))}`;
+    if (patternReachesProtected(pattern, settings, places, paths, false, part.dotGlob)) {
+      return refusal(pattern, `after \`${part.lostDir?.why}\`, a path that could be protected`, root, home);
+    }
+  }
+  return null;
+}
+function everythingBelow(rel) {
+  return rel === "" ? "**" : `${rel}/**`;
+}
+function below(p, folder) {
+  if (p === folder) return "";
+  return p.startsWith(`${folder}/`) ? p.slice(folder.length + 1) : null;
+}
+function foldersDownTo(start, found2) {
+  const rel = found2.slice(start.length + 1).split("/");
+  return rel.map((_, n) => `${start}/${rel.slice(0, n + 1).join("/")}`);
+}
+function unescapeGlob(pattern) {
+  return pattern.replace(/\\(.)/g, "$1");
+}
+function unreadableFolder(part) {
+  return {
+    rule: "protected-path",
+    reason: `Refused: \`${import_node_path11.default.basename(part.program ?? "")}\` changes everything in a folder the gate can't read (a variable or command output). A recursive write must name its folder literally, so the gate can check it holds no .git or other protected file. Write the path out, for example \`/tmp/tmp.abc123\` instead of \`"$d"\`.`
+  };
+}
+function nestedRefusal(target, found2, root, home) {
+  return {
+    rule: "protected-path",
+    reason: `Refused: removes or changes \`${displayPath(target, root, home)}\` with everything in it, including \`${displayPath(found2, root, home)}\`, a protected path. Ask the user to run it with \`!\`.`
+  };
+}
+function nestedProtected(part, settings, paths, tree, caseInsensitive, root, home) {
+  const wanted = floatingNames(settings.protectedPaths, caseInsensitive);
+  if (wanted === null) return null;
+  const lostIn = (p) => part.lostDir !== null && below(p, part.cwd) !== null;
+  const realRoot = paths.realpath(root);
+  const realHome = paths.realpath(home);
+  for (const target of part.recursiveTargets) {
+    if (lostIn(target)) continue;
+    if (isTooLong(target)) return TOO_LONG;
+    if (target.includes(UNKNOWN)) return unreadableFolder(part);
+    const [found2] = tree.namedBelow(paths.realpath(target), wanted);
+    if (found2 !== void 0) return nestedRefusal(target, found2, realRoot, realHome);
+  }
+  for (const pattern of part.recursiveGlobs) {
+    const split2 = splitPattern(pattern);
+    if (split2 === null || lostIn(unescapeGlob(split2.prefix))) continue;
+    if (isTooLong(pattern)) return TOO_LONG;
+    if (pattern.includes(UNKNOWN)) return unreadableFolder(part);
+    const start = paths.realpath(unescapeGlob(split2.prefix));
+    const real = `${escapeGlob(start)}/${split2.rest}`;
+    for (const found2 of tree.namedBelow(start, wanted)) {
+      const reached = foldersDownTo(start, found2).find((p) => shellPatternMatchesPath(real, p, { caseInsensitive }, part.dotGlob));
+      if (reached !== void 0) return nestedRefusal(reached, found2, realRoot, realHome);
+    }
+  }
+  return null;
+}
+function lostTail(part, settings, places) {
+  const folder = `${part.cwd}/`;
+  const patternFolder = escapeGlob(part.cwd);
+  const relative = (paths, to) => paths.flatMap((p) => {
+    const rel = below(p, to);
+    return rel === null ? [] : [rel];
+  });
+  const tails = [
+    ...part.writeTargets.filter((t) => t.startsWith(folder)).map((t) => [escapeGlob(t.slice(folder.length)), false, part.dotGlob]),
+    // a wildcard, or a whole folder, could cover what any protected folder holds; rm -r and find reach dot entries
+    ...relative(part.writeGlobs, patternFolder).map((g) => [g, true, part.dotGlob]),
+    ...relative(part.recursiveTargets, part.cwd).map((t) => [everythingBelow(escapeGlob(t)), true, true]),
+    ...relative(part.recursiveGlobs, patternFolder).map((g) => [everythingBelow(g), true, true])
+  ];
+  const tail = tails.find(([t, contents, dots]) => places.some((at) => tailMayBeProtected(t, settings.protectedPaths, at, dots, contents)))?.[0];
+  if (tail === void 0) return null;
+  return {
+    rule: "protected-path",
+    reason: `Refused: writes \`${tail}\` after \`${part.lostDir?.why}\`, in a folder the gate can't follow, where it could be a protected file. Run it after a \`cd\` to a plain path, or ask the user to run it with \`!\`.`
+  };
+}
+
+// src/tool-gate/rules/gate-agent-write.ts
+var WILDCARD_SEGMENT = /[*?[]/;
+var REPORT_ONLY = "Review agents review and report only: report the problem and the fix, and the stack's builder agent (for example oss:typescript-pro) makes the change.";
+function fixedPart(p) {
+  const segments = p.split("/");
+  const first = segments.findIndex((segment) => WILDCARD_SEGMENT.test(segment));
+  return first === -1 ? p : segments.slice(0, first).join("/") || "/";
+}
+function touchesRepo(absPath, root, paths, caseInsensitive) {
+  const fixed = fixedPart(absPath);
+  const forms = [import_node_path12.default.normalize(fixed), paths.realpath(fixed)];
+  const roots = [root, paths.realpath(root)];
+  return forms.some(
+    (p) => roots.some((r) => isSameOrAncestor(r, p, caseInsensitive) || isSameOrAncestor(p, r, caseInsensitive))
+  );
+}
+function refusal2(what) {
+  return { rule: "gate-agent-write", reason: `Refused by gate-agent-write: ${what}. ${REPORT_ONLY}` };
+}
+function checkGateAgentEdit(call, agent, settings, root, paths, caseInsensitive = false) {
+  if (!isGateAgent(agent, settings.gateAgents)) return null;
+  if (!touchesRepo(call.filePath, root, paths, caseInsensitive)) return null;
+  return refusal2(`a review agent may not write \`${call.filePath}\`, inside the repo it reviews`);
+}
+function checkGateAgentBash(part, agent, settings, root, paths, caseInsensitive = false) {
+  if (!isGateAgent(agent, settings.gateAgents)) return null;
+  for (const target of [...part.writeTargets, ...part.writeGlobs]) {
+    if (target.includes(UNKNOWN)) {
+      return refusal2("a review agent may not write a path only known when the command runs; write the path out in full");
+    }
+    if (touchesRepo(target, root, paths, caseInsensitive)) {
+      return refusal2(`a review agent may not write \`${target}\`, inside the repo it reviews`);
+    }
+  }
+  return null;
+}
 
 // src/tool-gate/rules/focused-tests.ts
-var import_node_path11 = __toESM(require("node:path"), 1);
+var import_node_path13 = __toESM(require("node:path"), 1);
 var MARKER = /\.(skip|only|todo)(If)?(?:\.concurrent)?(?:\.each)?\s*[(`]/g;
 var PREFIXED_CALL = /(?<![\w$.])(xit|fit|xdescribe|fdescribe|xtest)\s*\(/g;
 function countMarkers(text) {
@@ -3474,9 +3716,9 @@ function addedMarker(before, after) {
   }
   return void 0;
 }
-function displayPath(filePath, root) {
-  const relative = import_node_path11.default.relative(root, filePath);
-  return relative === ".." || relative.startsWith(`..${import_node_path11.default.sep}`) || import_node_path11.default.isAbsolute(relative) ? filePath : relative;
+function displayPath2(filePath, root) {
+  const relative = import_node_path13.default.relative(root, filePath);
+  return relative === ".." || relative.startsWith(`..${import_node_path13.default.sep}`) || import_node_path13.default.isAbsolute(relative) ? filePath : relative;
 }
 function checkFocusedTests(call, settings, root, home, caseInsensitive = false) {
   if (!matchAnyPath(settings.testFilePatterns, call.filePath, { home, root, caseInsensitive })) return null;
@@ -3485,7 +3727,7 @@ function checkFocusedTests(call, settings, root, home, caseInsensitive = false) 
     if (marker !== void 0) {
       return {
         rule: "focused-tests",
-        reason: `Refused: adds \`${marker}(\` to the test file \`${displayPath(call.filePath, root)}\`. IRON LAW #1: never skip or focus tests. Fix or delete the test instead.`
+        reason: `Refused: adds \`${marker}(\` to the test file \`${displayPath2(call.filePath, root)}\`. IRON LAW #1: never skip or focus tests. Fix or delete the test instead.`
       };
     }
   }
@@ -3566,206 +3808,7 @@ function checkForcePush(part, _settings) {
 
 // src/tool-gate/rules/git-clean.ts
 var import_node_fs7 = __toESM(require("node:fs"), 1);
-var import_node_path13 = __toESM(require("node:path"), 1);
-
-// src/tool-gate/rules/protected-path.ts
-var import_node_path12 = __toESM(require("node:path"), 1);
-var HOME_PREFIX = "~/";
-var MAX_PATH_CHARS = 4096;
-var MAX_PATH_SEGMENTS = 512;
-function isTooLong(p) {
-  return p.length > MAX_PATH_CHARS || p.split("/").length > MAX_PATH_SEGMENTS;
-}
-var TOO_LONG = {
-  rule: "protected-path",
-  reason: "Refused: writes a path too long for the gate to check (over 4096 characters or 512 folders)."
-};
-var WILDCARD = /[*?]/;
-function placesOf(root, home, paths, caseInsensitive) {
-  return [
-    { home, root, caseInsensitive },
-    { home: paths.realpath(home), root: paths.realpath(root), caseInsensitive }
-  ];
-}
-function formsOf(absPath, paths) {
-  return [import_node_path12.default.normalize(absPath), paths.realpath(absPath)];
-}
-function isProtected(absPath, settings, places, paths) {
-  return formsOf(absPath, paths).some((p) => places.some((at) => matchAnyPath(settings.protectedPaths, p, at)));
-}
-function fixedFolder(glob, at) {
-  let full;
-  if (glob.startsWith(HOME_PREFIX)) full = import_node_path12.default.join(at.home, glob.slice(HOME_PREFIX.length));
-  else if (import_node_path12.default.isAbsolute(glob)) full = import_node_path12.default.normalize(glob);
-  else full = import_node_path12.default.join(at.root, glob);
-  const segments = full.split(import_node_path12.default.sep);
-  const first = segments.findIndex((segment) => WILDCARD.test(segment));
-  return first === -1 ? full : segments.slice(0, first).join(import_node_path12.default.sep) || import_node_path12.default.sep;
-}
-function isSameOrAncestor(dir, of, caseInsensitive) {
-  const relative = caseInsensitive ? import_node_path12.default.relative(dir.toLowerCase(), of.toLowerCase()) : import_node_path12.default.relative(dir, of);
-  return relative !== ".." && !relative.startsWith(`..${import_node_path12.default.sep}`) && !import_node_path12.default.isAbsolute(relative);
-}
-var fixedFolders = /* @__PURE__ */ new WeakMap();
-function fixedFoldersOf(globs, at) {
-  let lists = fixedFolders.get(at);
-  if (lists === void 0) {
-    lists = /* @__PURE__ */ new WeakMap();
-    fixedFolders.set(at, lists);
-  }
-  let folders = lists.get(globs);
-  if (folders === void 0) {
-    folders = globs.map((glob) => fixedFolder(glob, at));
-    lists.set(globs, folders);
-  }
-  return folders;
-}
-function holdsProtected(absPath, settings, places, paths) {
-  return formsOf(absPath, paths).some(
-    (p) => places.some(
-      (at) => fixedFoldersOf(settings.protectedPaths, at).some((folder) => isSameOrAncestor(p, folder, at.caseInsensitive === true))
-    )
-  );
-}
-function splitPattern(pattern) {
-  const segments = pattern.split("/");
-  const first = segments.findIndex((segment) => /(?:^|[^\\])[*?[]/.test(segment));
-  if (first === -1) return null;
-  return { prefix: segments.slice(0, first).join("/") || "/", rest: segments.slice(first).join("/") };
-}
-function patternReachesProtected(pattern, settings, places, paths, exemptAnchor = false, dots = false) {
-  const forms = [pattern];
-  const split2 = splitPattern(pattern);
-  if (split2 !== null && !split2.prefix.includes("\\")) forms.push(`${escapeGlob(paths.realpath(split2.prefix))}/${split2.rest}`);
-  return forms.some((form) => places.some((at) => shellGlobMayMatch(form, settings.protectedPaths, at, exemptAnchor, dots)));
-}
-function displayPath2(absPath, root, home) {
-  if (absPath === root) return ".";
-  if (absPath.startsWith(`${root}/`)) return absPath.slice(root.length + 1);
-  if (absPath.startsWith(`${home}/`)) return HOME_PREFIX + absPath.slice(home.length + 1);
-  return absPath;
-}
-function refusal(absPath, what, root, home) {
-  return {
-    rule: "protected-path",
-    reason: `Refused: writes \`${displayPath2(absPath, root, home)}\`, ${what}. Ask the user to change it with \`!\`.`
-  };
-}
-function checkProtectedPathEdit(call, settings, root, home, paths, caseInsensitive = false) {
-  if (isTooLong(call.filePath)) return TOO_LONG;
-  const places = placesOf(root, home, paths, caseInsensitive);
-  if (isProtected(call.filePath, settings, places, paths)) return refusal(call.filePath, "a protected file", root, home);
-  if (holdsProtected(call.filePath, settings, places, paths)) {
-    return refusal(call.filePath, "which holds protected files", root, home);
-  }
-  return null;
-}
-function checkProtectedPathBash(part, settings, root, home, paths, caseInsensitive = false, places = placesOf(root, home, paths, caseInsensitive), tree = createTreeFinder()) {
-  for (const target of part.writeTargets) {
-    if (isTooLong(target)) return TOO_LONG;
-    if (isProtected(target, settings, places, paths)) return refusal(target, "a protected file", root, home);
-    if (holdsProtected(target, settings, places, paths)) {
-      return refusal(target, "which holds protected files", root, home);
-    }
-  }
-  for (const pattern of part.writeGlobs) {
-    if (isTooLong(pattern)) return TOO_LONG;
-    if (patternReachesProtected(pattern, settings, places, paths, false, part.dotGlob)) {
-      return refusal(pattern, "a wildcard the shell could expand to a protected path", root, home);
-    }
-  }
-  const lost = part.lostDir === null ? null : lostPatternWrite(part, settings, places, paths, root, home) ?? lostTail(part, settings, places);
-  return lost ?? nestedProtected(part, settings, paths, tree, caseInsensitive, root, home);
-}
-function lostPatternWrite(part, settings, places, paths, root, home) {
-  const at = part.lostDir?.pattern ?? null;
-  if (at === null) return null;
-  const folder = `${part.cwd}/`;
-  for (const target of part.writeTargets) {
-    if (!target.startsWith(folder)) continue;
-    const pattern = `${at}/${escapeGlob(target.slice(folder.length))}`;
-    if (patternReachesProtected(pattern, settings, places, paths, false, part.dotGlob)) {
-      return refusal(pattern, `after \`${part.lostDir?.why}\`, a path that could be protected`, root, home);
-    }
-  }
-  return null;
-}
-function everythingBelow(rel) {
-  return rel === "" ? "**" : `${rel}/**`;
-}
-function below(p, folder) {
-  if (p === folder) return "";
-  return p.startsWith(`${folder}/`) ? p.slice(folder.length + 1) : null;
-}
-function foldersDownTo(start, found2) {
-  const rel = found2.slice(start.length + 1).split("/");
-  return rel.map((_, n) => `${start}/${rel.slice(0, n + 1).join("/")}`);
-}
-function unescapeGlob(pattern) {
-  return pattern.replace(/\\(.)/g, "$1");
-}
-function unreadableFolder(part) {
-  return {
-    rule: "protected-path",
-    reason: `Refused: \`${import_node_path12.default.basename(part.program ?? "")}\` changes everything in a folder the gate can't read (a variable or command output). A recursive write must name its folder literally, so the gate can check it holds no .git or other protected file. Write the path out, for example \`/tmp/tmp.abc123\` instead of \`"$d"\`.`
-  };
-}
-function nestedRefusal(target, found2, root, home) {
-  return {
-    rule: "protected-path",
-    reason: `Refused: removes or changes \`${displayPath2(target, root, home)}\` with everything in it, including \`${displayPath2(found2, root, home)}\`, a protected path. Ask the user to run it with \`!\`.`
-  };
-}
-function nestedProtected(part, settings, paths, tree, caseInsensitive, root, home) {
-  const wanted = floatingNames(settings.protectedPaths, caseInsensitive);
-  if (wanted === null) return null;
-  const lostIn = (p) => part.lostDir !== null && below(p, part.cwd) !== null;
-  const realRoot = paths.realpath(root);
-  const realHome = paths.realpath(home);
-  for (const target of part.recursiveTargets) {
-    if (lostIn(target)) continue;
-    if (isTooLong(target)) return TOO_LONG;
-    if (target.includes(UNKNOWN)) return unreadableFolder(part);
-    const [found2] = tree.namedBelow(paths.realpath(target), wanted);
-    if (found2 !== void 0) return nestedRefusal(target, found2, realRoot, realHome);
-  }
-  for (const pattern of part.recursiveGlobs) {
-    const split2 = splitPattern(pattern);
-    if (split2 === null || lostIn(unescapeGlob(split2.prefix))) continue;
-    if (isTooLong(pattern)) return TOO_LONG;
-    if (pattern.includes(UNKNOWN)) return unreadableFolder(part);
-    const start = paths.realpath(unescapeGlob(split2.prefix));
-    const real = `${escapeGlob(start)}/${split2.rest}`;
-    for (const found2 of tree.namedBelow(start, wanted)) {
-      const reached = foldersDownTo(start, found2).find((p) => shellPatternMatchesPath(real, p, { caseInsensitive }, part.dotGlob));
-      if (reached !== void 0) return nestedRefusal(reached, found2, realRoot, realHome);
-    }
-  }
-  return null;
-}
-function lostTail(part, settings, places) {
-  const folder = `${part.cwd}/`;
-  const patternFolder = escapeGlob(part.cwd);
-  const relative = (paths, to) => paths.flatMap((p) => {
-    const rel = below(p, to);
-    return rel === null ? [] : [rel];
-  });
-  const tails = [
-    ...part.writeTargets.filter((t) => t.startsWith(folder)).map((t) => [escapeGlob(t.slice(folder.length)), false, part.dotGlob]),
-    // a wildcard, or a whole folder, could cover what any protected folder holds; rm -r and find reach dot entries
-    ...relative(part.writeGlobs, patternFolder).map((g) => [g, true, part.dotGlob]),
-    ...relative(part.recursiveTargets, part.cwd).map((t) => [everythingBelow(escapeGlob(t)), true, true]),
-    ...relative(part.recursiveGlobs, patternFolder).map((g) => [everythingBelow(g), true, true])
-  ];
-  const tail = tails.find(([t, contents, dots]) => places.some((at) => tailMayBeProtected(t, settings.protectedPaths, at, dots, contents)))?.[0];
-  if (tail === void 0) return null;
-  return {
-    rule: "protected-path",
-    reason: `Refused: writes \`${tail}\` after \`${part.lostDir?.why}\`, in a folder the gate can't follow, where it could be a protected file. Run it after a \`cd\` to a plain path, or ask the user to run it with \`!\`.`
-  };
-}
-
-// src/tool-gate/rules/git-clean.ts
+var import_node_path14 = __toESM(require("node:path"), 1);
 var CHOOSING_LETTERS = /* @__PURE__ */ new Set(["d", "x", "X"]);
 var OTHER_LETTERS = /* @__PURE__ */ new Set(["i", "q"]);
 var FORCE_LONG = { full: "--force", shortest: 3 };
@@ -3852,7 +3895,7 @@ function staleningPart(earlier, count) {
   for (let i = 0; i < count; i++) {
     const part = earlier[i];
     if (part.git !== null && !LEAVES_INDEX.has(part.git.subcommand)) return part;
-    if (part.writeTargets.some((t) => IGNORE_FILES.has(import_node_path13.default.posix.basename(t)) || t.includes("/.git/"))) return part;
+    if (part.writeTargets.some((t) => IGNORE_FILES.has(import_node_path14.default.posix.basename(t)) || t.includes("/.git/"))) return part;
     if (part.writeGlobs.some((g) => g.includes("gitignore") || g.includes("/.git/"))) return part;
   }
   return null;
@@ -3866,7 +3909,7 @@ function onDiskFolder(p) {
 }
 function holdsRepo(dir) {
   try {
-    return import_node_fs7.default.lstatSync(import_node_path13.default.join(dir, ".git"), { throwIfNoEntry: false }) !== void 0;
+    return import_node_fs7.default.lstatSync(import_node_path14.default.join(dir, ".git"), { throwIfNoEntry: false }) !== void 0;
   } catch {
     return false;
   }
@@ -3914,7 +3957,7 @@ async function checkGitClean(part, settings, root, home, paths, gitReader, caseI
     if (hit === void 0) return null;
     return {
       rule: "protected-path",
-      reason: `Refused: \`git clean\` would remove \`${displayPath2(hit, root, home)}\`, a protected path or a folder holding one. Ask the user to run it with \`!\`.`
+      reason: `Refused: \`git clean\` would remove \`${displayPath(hit, root, home)}\`, a protected path or a folder holding one. Ask the user to run it with \`!\`.`
     };
   }
   const pathspecs = words === "unknown" ? git.args.filter((a) => !a.startsWith("-")) : words.pathspecs;
@@ -3928,7 +3971,7 @@ async function checkGitClean(part, settings, root, home, paths, gitReader, caseI
   if (reached === void 0) return null;
   return {
     rule: "protected-path",
-    reason: `Refused: \`git clean\` can reach \`${displayPath2(reached, root, home)}\`, which holds protected paths, and the gate can't tell what it would remove. Clean a narrower folder (\`git clean -fd build/\`), or ask the user to run it with \`!\`.`
+    reason: `Refused: \`git clean\` can reach \`${displayPath(reached, root, home)}\`, which holds protected paths, and the gate can't tell what it would remove. Clean a narrower folder (\`git clean -fd build/\`), or ask the user to run it with \`!\`.`
   };
 }
 
@@ -3949,7 +3992,7 @@ function checkProductionHost(part, settings) {
 
 // src/tool-gate/rules/protected-branch.ts
 var import_node_fs8 = __toESM(require("node:fs"), 1);
-var import_node_path14 = __toESM(require("node:path"), 1);
+var import_node_path15 = __toESM(require("node:path"), 1);
 var BRANCH_REF_PREFIXES = ["refs/heads/", "heads/"];
 function rawDestination(refspec) {
   const spec = refspec.startsWith("+") ? refspec.slice(1) : refspec;
@@ -4255,7 +4298,7 @@ function resetMoves(args, dir, exists) {
   const [target] = before;
   if (HEAD_NAMES.has(target)) return false;
   if (dash !== -1) return true;
-  return !PATHSPEC_ONLY.test(target) && !exists(import_node_path14.default.resolve(dir, target));
+  return !PATHSPEC_ONLY.test(target) && !exists(import_node_path15.default.resolve(dir, target));
 }
 var BRANCH_RENAME = /^(?:-(?=[A-Za-z]*[mM])[A-Za-z]+|--move)$/;
 function historyMove(git, exists) {
@@ -4306,7 +4349,7 @@ var REMOTE_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
 function ownUpstream(git, branch, branches, exists) {
   const [repo, ...specs] = positionalsOf(git.args, PULL_VALUES);
   if (repo === void 0) return true;
-  if (!REMOTE_NAME.test(repo) || exists(import_node_path14.default.resolve(git.dir, repo))) return false;
+  if (!REMOTE_NAME.test(repo) || exists(import_node_path15.default.resolve(git.dir, repo))) return false;
   const name = (ref) => folded(ref.replace(/^(?:refs\/heads\/|heads\/)/, ""), branches);
   return specs.every((spec) => !spec.includes(":") && !spec.startsWith("+") && name(spec) === name(branch));
 }
@@ -4339,7 +4382,7 @@ async function checkHistoryMove(part, settings, git, created = null, exists = ex
 }
 
 // src/tool-gate/rules/protected-path-mention.ts
-var import_node_path15 = __toESM(require("node:path"), 1);
+var import_node_path16 = __toESM(require("node:path"), 1);
 var READ_ONLY = /* @__PURE__ */ new Set([
   "cat",
   "less",
@@ -4471,7 +4514,7 @@ function namedPath(word, dir, ctx, folders = true) {
   if (isProtected(absPath, ctx.settings, ctx.places, ctx.paths)) return absPath;
   if (!folders) return null;
   const holds = holdsProtected(absPath, ctx.settings, ctx.places, ctx.paths);
-  return holds && !isRootOrAbove(import_node_path15.default.normalize(absPath), ctx.places) ? absPath : null;
+  return holds && !isRootOrAbove(import_node_path16.default.normalize(absPath), ctx.places) ? absPath : null;
 }
 function protectedPathNamed(word, dir, settings, places, paths, home) {
   const ctx = { settings, places, paths, home };
@@ -4494,7 +4537,7 @@ function wordsOf(part, name) {
     return { words: args.filter((a) => !files.has(a)), scripts: [] };
   }
   const interpreter = isInterpreter(name);
-  if (!interpreter && !SCRIPT_RUNNERS.has(import_node_path15.default.posix.basename(part.program ?? ""))) return { words: args, scripts: [] };
+  if (!interpreter && !SCRIPT_RUNNERS.has(import_node_path16.default.posix.basename(part.program ?? ""))) return { words: args, scripts: [] };
   const words = [];
   const scripts = [];
   let scriptSeen = false;
@@ -4552,14 +4595,14 @@ function literalsOf(part) {
   return [...new Set(partLiterals(part).filter((literal2) => literal2 !== ""))];
 }
 function matchesOutsideRoot(glob) {
-  return glob.startsWith("~/") || glob.startsWith("**/") || import_node_path15.default.isAbsolute(glob);
+  return glob.startsWith("~/") || glob.startsWith("**/") || import_node_path16.default.isAbsolute(glob);
 }
 function namedInScript(literals, dir, ctx) {
   const tails = ctx.settings.protectedPaths.filter(matchesOutsideRoot).map((glob) => `**/${glob.startsWith("~/") ? glob.slice(2) : glob}`);
   for (const literal2 of literals) {
     const named2 = namedPath(literal2, dir, ctx);
     if (named2 !== null) return named2;
-    const tail = import_node_path15.default.posix.normalize(`/${literal2}`);
+    const tail = import_node_path16.default.posix.normalize(`/${literal2}`);
     if (ctx.places.some((at) => matchAnyPath(tails, tail, at))) return literal2;
   }
   return null;
@@ -4586,7 +4629,7 @@ function checkCallSize(parts) {
 function lostTailNamed(part, words, ctx) {
   if (part.lostDir === null || part.name === null || safeInProtectedFolder(part, part.name)) return null;
   const relative = words.filter(
-    (w) => /[./]/.test(w) && !w.startsWith("-") && !w.startsWith("~") && !import_node_path15.default.isAbsolute(w) && !w.includes(UNKNOWN)
+    (w) => /[./]/.test(w) && !w.startsWith("-") && !w.startsWith("~") && !import_node_path16.default.isAbsolute(w) && !w.includes(UNKNOWN)
   );
   const globOf2 = (w) => part.globs.get(w) ?? escapeGlob(w);
   return relative.find((w) => ctx.places.some((at) => tailMayBeProtected(globOf2(w), ctx.settings.protectedPaths, at, part.dotGlob))) ?? null;
@@ -4602,7 +4645,7 @@ function checkProtectedPathMention(part, settings, root, home, paths, caseInsens
   if (here !== null) {
     return {
       rule: "protected-path-mention",
-      reason: `Refused: \`${name}\` runs in \`${displayPath2(here, root, home)}\`, which holds protected paths, and only read-only programs may run there. Ask the user to run it with \`!\`.`
+      reason: `Refused: \`${name}\` runs in \`${displayPath(here, root, home)}\`, which holds protected paths, and only read-only programs may run there. Ask the user to run it with \`!\`.`
     };
   }
   const lost = part.lostDir?.pattern ?? null;
@@ -4627,12 +4670,12 @@ function checkProtectedPathMention(part, settings, root, home, paths, caseInsens
   if (found2 !== null) {
     return {
       rule: "protected-path-mention",
-      reason: `Refused: this \`find\` deletes, writes or runs a command from \`${displayPath2(found2, root, home)}\`, which holds protected paths. Start it from a folder that holds none, or ask the user to run it with \`!\`.`
+      reason: `Refused: this \`find\` deletes, writes or runs a command from \`${displayPath(found2, root, home)}\`, which holds protected paths. Start it from a folder that holds none, or ask the user to run it with \`!\`.`
     };
   }
   const named2 = words.flatMap(valuesOf).map((w) => namedPath(w, dir, ctx, !FOLDER_MAKERS.has(name))).find((p) => p !== null) ?? words.map((w) => namedPattern(part, w, dir, ctx)).find((p) => p !== null) ?? namedInScript(literals, dir, ctx) ?? lostTailNamed(part, [...words.flatMap(valuesOf), ...literals], ctx);
   if (named2 === null) return null;
-  const shown2 = import_node_path15.default.isAbsolute(named2) ? displayPath2(named2, root, home) : named2;
+  const shown2 = import_node_path16.default.isAbsolute(named2) ? displayPath(named2, root, home) : named2;
   return {
     rule: "protected-path-mention",
     reason: `Refused: \`${name}\` names \`${shown2}\`, a protected path, and only read-only programs may. To read it, use the Read tool or \`cat ${shown2} | ${name}\`. Ask the user to run it with \`!\`.`
@@ -5331,14 +5374,14 @@ function fakeTtyPager(part, earlier, count) {
 }
 
 // src/tool-gate/rules/red-cycle.ts
-var import_node_path16 = __toESM(require("node:path"), 1);
+var import_node_path17 = __toESM(require("node:path"), 1);
 var NO_RUN = "Refused: No failing test recorded in this build. Write a failing test and run it on its own with a test command, unpiped (for example `npx vitest run <file>` or `pytest <file>`). Another command that names a test file or has the word test, spec or check in it, and fails, is taken as this build's test command.";
 var DEV_DOCS = ".oss/dev/**";
 function isSourceFile(filePath, settings, root, home) {
   return (
     // Any case: `foo.TS` is the same kind of file. Test-file patterns and the dev-docs folder stay
     // case-sensitive here, since matching them more widely would exempt more files from the rule.
-    settings.sourceExtensions.some((ext) => ext.toLowerCase() === import_node_path16.default.extname(filePath).toLowerCase()) && !matchPath(DEV_DOCS, filePath, { home, root }) && !matchAnyPath(settings.testFilePatterns, filePath, { home, root })
+    settings.sourceExtensions.some((ext) => ext.toLowerCase() === import_node_path17.default.extname(filePath).toLowerCase()) && !matchPath(DEV_DOCS, filePath, { home, root }) && !matchAnyPath(settings.testFilePatterns, filePath, { home, root })
   );
 }
 function checkRedCycle(call, settings, root, home, workflow, store) {
@@ -5353,7 +5396,7 @@ function checkRedCycle(call, settings, root, home, workflow, store) {
   if (cycle.lastResult === "green") {
     return {
       rule: "red-cycle",
-      reason: `Refused: \`${import_node_path16.default.relative(root, call.filePath)}\` is not in this cycle and the last test run was green. Write a failing test and run it before editing a new source file.`
+      reason: `Refused: \`${import_node_path17.default.relative(root, call.filePath)}\` is not in this cycle and the last test run was green. Write a failing test and run it before editing a new source file.`
     };
   }
   store.writeCycle({ ...cycle, files: [...cycle.files, call.filePath] });
@@ -5444,7 +5487,7 @@ function checkTags(part, settings) {
 }
 
 // src/tool-gate/rules/unreadable.ts
-var import_node_path17 = __toESM(require("node:path"), 1);
+var import_node_path18 = __toESM(require("node:path"), 1);
 var GIT_WRITES = /* @__PURE__ */ new Set([
   "push",
   "commit",
@@ -5506,7 +5549,7 @@ var INTERPRETERS2 = /* @__PURE__ */ new Set([
   "expect"
 ]);
 var PYTHON3 = /^python[0-9.]*$/;
-var TEXT_ONLY = { realpath: (p) => import_node_path17.default.normalize(p) };
+var TEXT_ONLY = { realpath: (p) => import_node_path18.default.normalize(p) };
 function tooComplex(reason) {
   return {
     rule: "unreadable",
@@ -5568,9 +5611,9 @@ function readHook(input) {
   };
 }
 function repoRootOf(cwd) {
-  for (let dir = cwd; ; dir = import_node_path18.default.dirname(dir)) {
-    if (import_node_fs9.default.existsSync(import_node_path18.default.join(dir, ".git"))) return dir;
-    if (import_node_path18.default.dirname(dir) === dir) return cwd;
+  for (let dir = cwd; ; dir = import_node_path19.default.dirname(dir)) {
+    if (import_node_fs9.default.existsSync(import_node_path19.default.join(dir, ".git"))) return dir;
+    if (import_node_path19.default.dirname(dir) === dir) return cwd;
   }
 }
 function toplevelOf(dir) {
@@ -5578,7 +5621,7 @@ function toplevelOf(dir) {
   return repo.kind === "repo" ? repo.top : null;
 }
 function projectRootOf(projectDir, cwd) {
-  const usable = projectDir !== void 0 && import_node_path18.default.isAbsolute(projectDir) && import_node_fs9.default.statSync(projectDir, { throwIfNoEntry: false })?.isDirectory() === true;
+  const usable = projectDir !== void 0 && import_node_path19.default.isAbsolute(projectDir) && import_node_fs9.default.statSync(projectDir, { throwIfNoEntry: false })?.isDirectory() === true;
   return usable ? projectDir : repoRootOf(cwd);
 }
 var MAX_WRITE_BEFORE_BYTES = 5 * 1024 * 1024;
@@ -5629,8 +5672,8 @@ async function checkBash(ctx, command) {
   const places = placesOf(root, home, paths, ctx.caseInsensitive);
   const trustOf = trustForCall(repoTrust);
   for (const [index, part] of facts.parts.entries()) {
-    const refusal2 = checkUnknownGitOption(part) ?? checkPushSetup(part, facts.parts, index) ?? checkRepoTrust(part, trustOf) ?? checkBranchSwitch(part, facts.parts, index, settings, void 0, ctx.caseInsensitive) ?? await checkBranchRefs(part, settings, ctx.git, ctx.caseInsensitive) ?? await checkProtectedBranch(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), ctx.caseInsensitive) ?? await checkHistoryMove(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), void 0, ctx.caseInsensitive) ?? checkForcePush(part, settings) ?? checkTags(part, settings) ?? checkProductionHost(part, settings) ?? checkProtectedPathBash(part, settings, root, home, paths, ctx.caseInsensitive, places, ctx.tree) ?? await checkGitClean(part, settings, root, home, paths, ctx.git, ctx.caseInsensitive, places, { earlier: facts.parts, count: index, tree: ctx.tree }) ?? checkProtectedPathMention(part, settings, root, home, paths, ctx.caseInsensitive, places);
-    if (refusal2 !== null) return { refusal: refusal2, program: part.program };
+    const refusal3 = checkUnknownGitOption(part) ?? checkPushSetup(part, facts.parts, index) ?? checkRepoTrust(part, trustOf) ?? checkBranchSwitch(part, facts.parts, index, settings, void 0, ctx.caseInsensitive) ?? await checkBranchRefs(part, settings, ctx.git, ctx.caseInsensitive) ?? await checkProtectedBranch(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), ctx.caseInsensitive) ?? await checkHistoryMove(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), void 0, ctx.caseInsensitive) ?? checkForcePush(part, settings) ?? checkTags(part, settings) ?? checkProductionHost(part, settings) ?? checkProtectedPathBash(part, settings, root, home, paths, ctx.caseInsensitive, places, ctx.tree) ?? checkGateAgentBash(part, hook.agent, settings, root, paths, ctx.caseInsensitive) ?? await checkGitClean(part, settings, root, home, paths, ctx.git, ctx.caseInsensitive, places, { earlier: facts.parts, count: index, tree: ctx.tree }) ?? checkProtectedPathMention(part, settings, root, home, paths, ctx.caseInsensitive, places);
+    if (refusal3 !== null) return { refusal: refusal3, program: part.program };
   }
   if ("unreadable" in facts) {
     const risky = checkUnreadable(facts.reason, facts.parts, settings, root, home, ctx.caseInsensitive);
@@ -5648,10 +5691,12 @@ function checkEdit(ctx) {
   if (target === null) return null;
   const guarded = checkProtectedPathEdit(target, settings, root, home, ctx.paths, ctx.caseInsensitive);
   if (guarded !== null) return { refusal: guarded };
+  const reviewed = checkGateAgentEdit(target, hook.agent, settings, root, ctx.paths, ctx.caseInsensitive);
+  if (reviewed !== null) return { refusal: reviewed };
   const call = readEditCall(hook.toolName, hook.toolInput, hook.cwd, home, readRegularFileOrNull);
   if (call === null) return null;
-  const refusal2 = checkFocusedTests(call, settings, root, home, ctx.caseInsensitive) ?? checkRedCycle(call, settings, root, home, fileWorkflowState(root), ctx.store);
-  return refusal2 === null ? null : { refusal: refusal2 };
+  const refusal3 = checkFocusedTests(call, settings, root, home, ctx.caseInsensitive) ?? checkRedCycle(call, settings, root, home, fileWorkflowState(root), ctx.store);
+  return refusal3 === null ? null : { refusal: refusal3 };
 }
 function record(ctx, command) {
   const { hook } = ctx;
@@ -5686,7 +5731,7 @@ async function decide(req, call) {
       refused = { refusal: tooComplex(error.what) };
     }
   }
-  const refusal2 = refused?.refusal ?? null;
+  const refusal3 = refused?.refusal ?? null;
   if (refused !== null) {
     logDecision(ctx.store, {
       ts: ctx.ts,
@@ -5702,11 +5747,11 @@ async function decide(req, call) {
       ts: ctx.ts,
       tool: hook.toolName,
       kind: "rule-file-rejected",
-      result: refusal2 !== null ? "refused" : "allowed"
+      result: refusal3 !== null ? "refused" : "allowed"
     });
   }
-  if (refusal2 !== null) {
-    const reason = shown(refusal2.reason);
+  if (refusal3 !== null) {
+    const reason = shown(refusal3.reason);
     const stderr = loaded.rejected === void 0 ? reason : `${reason}
 ${loaded.rejected}`;
     return { exitCode: 2, stdout: "", stderr: `${stderr}
@@ -5774,7 +5819,7 @@ async function runToolGate(req, deps = {}) {
 var USAGE = "Usage: tool-gate pre|post < hook.json\n";
 var HARD_LIMIT_MS = 2500;
 function ownPluginRoot() {
-  return typeof __dirname === "string" ? import_node_path19.default.resolve(__dirname, "..", "..", "..") : "";
+  return typeof __dirname === "string" ? import_node_path20.default.resolve(__dirname, "..", "..", "..") : "";
 }
 function modeOf(argv) {
   const mode = argv[0];
@@ -5879,7 +5924,7 @@ if (isWorkerRequest(request)) {
     () => import_node_worker_threads.parentPort?.postMessage(null)
   );
 } else if (import_node_worker_threads.isMainThread && /tool-gate\.(js|cjs)$/.test(process.argv[1] || "")) {
-  const script = import_node_path19.default.resolve(process.argv[1]);
+  const script = import_node_path20.default.resolve(process.argv[1]);
   readStdin().then((input) => decideInWorker(script, process.argv.slice(2), input, process.env)).then(answer, () => answer({ exitCode: 1, stdout: "", stderr: "tool-gate: could not read the hook input\n" }));
 }
 // Annotate the CommonJS export names for ESM import in node:

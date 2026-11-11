@@ -28,6 +28,7 @@ import { recordTestRun } from './recorder.js';
 import { createTreeFinder, type TreeFinder } from './tree-finder.js';
 import { loadSettings, type GateSettings } from './rule-file.js';
 import { callingAgentOf } from './calling-agent.js';
+import { checkGateAgentBash, checkGateAgentEdit } from './rules/gate-agent-write.js';
 import { checkFocusedTests } from './rules/focused-tests.js';
 import { checkForcePush } from './rules/force-push.js';
 import { checkGitClean } from './rules/git-clean.js';
@@ -263,6 +264,7 @@ async function checkBash(ctx: Context, command: string): Promise<Refused | null>
       checkTags(part, settings) ??
       checkProductionHost(part, settings) ??
       checkProtectedPathBash(part, settings, root, home, paths, ctx.caseInsensitive, places, ctx.tree) ??
+      checkGateAgentBash(part, hook.agent, settings, root, paths, ctx.caseInsensitive) ??
       (await checkGitClean(part, settings, root, home, paths, ctx.git, ctx.caseInsensitive, places, { earlier: facts.parts, count: index, tree: ctx.tree })) ??
       checkProtectedPathMention(part, settings, root, home, paths, ctx.caseInsensitive, places);
     if (refusal !== null) return { refusal, program: part.program };
@@ -288,6 +290,8 @@ function checkEdit(ctx: Context): Refused | null {
   if (target === null) return null;
   const guarded = checkProtectedPathEdit(target, settings, root, home, ctx.paths, ctx.caseInsensitive);
   if (guarded !== null) return { refusal: guarded };
+  const reviewed = checkGateAgentEdit(target, hook.agent, settings, root, ctx.paths, ctx.caseInsensitive);
+  if (reviewed !== null) return { refusal: reviewed };
   const call = readEditCall(hook.toolName, hook.toolInput, hook.cwd, home, readRegularFileOrNull);
   if (call === null) return null;
   const refusal =
