@@ -28,7 +28,8 @@
 
 ## Build rewrites a tracked file (2026-11-11, after integration)
 - Heads-up: ship's code-reviewer runs the plugin build, and the build rewrote tracked `watcher/dist/cli/oss-launch.cjs` (stale embedded version 2.0.97 vs plugin 2.1.2), which would void that review.
-- New `watcher/test/hooks/oss-launch-dist.test.ts`: RED on the stale bundle, GREEN after `npm run build:cli-bundle`. All four bundle tests + oss-launch proxy test 5 files / 8 tests pass; tsc clean; watcher-dist-fresh PASS.
-- Snapshot check (same temp-index `write-tree` the review check uses): `npm run build` before/after gives the same tree (b7fe4dfd).
+- First fix (614e547) rebuilt and committed the bundle with a freshness test; heads-up: that test fails on every version bump until rebuilt. Replaced (dcd0fc2): bundle untracked and gitignored (only the binary workflow ships it, built from source).
+- `watcher/test/hooks/oss-launch-dist.test.ts` (untracked + ignored): RED 2/2 before, GREEN after. Bundle tests + oss-launch proxy test 5 files / 9 tests pass; watcher-dist-fresh PASS; referenced-hooks-tracked 50/50.
+- Version-bump check: plugin.json set to 9.9.9, `npm run build`, snapshot (same temp-index `write-tree` the review check uses) before and after is identical; plugin.json restored.
 
-## Last Updated: 2026-11-11 by heads-up fix (stale oss-launch bundle)
+## Last Updated: 2026-11-11 by heads-up fix (oss-launch bundle untracked)
