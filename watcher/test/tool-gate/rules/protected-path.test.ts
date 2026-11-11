@@ -152,6 +152,7 @@ describe('protected-path rule: Bash', () => {
     'mv .oss/tool-gates.json x',
     'mv x .oss/tool-gates.json',
     'cp x ~/.claude/settings.json',
+    'cp x ~/.claude/plugins/foo',
     'cd sub && echo x > ../.claude/settings.local.json',
   ]) {
     it(`should refuse: ${cmd.split('\n')[0]}`, () => {
@@ -244,4 +245,100 @@ describe('protected-path rule: Bash programs that write in place', () => {
   it('should allow sed -i on an ordinary source file', () => {
     expect(checkBash('sed -i s/a/b/ src/app.ts')).toBeNull();
   });
+});
+
+describe('protected-path rule: write targets written as shell wildcards', () => {
+  it.each([
+    'echo x > .oss/workflow-state.jso?',
+    'rm .oss/tool-gates.jso?',
+    'rm -rf .oss/*',
+    'rm -rf .os?',
+    'rm -rf .oss/tool-gate[s]',
+    'cp x ~/.claude/settings.js?n',
+    'rm -rf ~/.claude/plugi*',
+    'mv .o* /tmp/',
+    'tee .o?s/tool-gates.json',
+  ])('should refuse %s, which the shell could expand to a protected path', (cmd) => {
+    expect(checkBash(cmd)?.rule).toBe('protected-path');
+  });
+
+  it.each(['rm -rf dist/*', "rm '.oss/*'", 'rm -rf *', 'mv src/*.ts lib/'])('should allow %s', (cmd) => {
+    expect(checkBash(cmd)).toBeNull();
+  });
+});
+
+describe('protected-path rule: a relative write after a cd the gate cannot follow (fix round 4, K2)', () => {
+  /** Runs the command from `src/`, so a write the gate joins to the folder it last knew is not protected as written. */
+  function fromSrc(cmd: string) {
+    const facts = readCommand(cmd, `${ROOT}/src`, HOME);
+    return facts.parts.map((part) => checkProtectedPathBash(part, SETTINGS, ROOT, HOME, NO_LINKS)).find((r) => r !== null) ?? null;
+  }
+
+  it.each([
+    'cd "$X" && echo x > .oss/workflow-state.json',
+    'cd ${X:-.oss} && rm workflow-state.json',
+    'cd "$X" && echo {} > .claude/settings.local.json',
+    'cd "$X" && rm tool-gates/cycle.json',
+    'cd - && cp x tool-gates.json',
+    'popd && rm -f config',
+    'cd "$X" && rm -f .oss/tool-gate?.json',
+  ])('should refuse %s', (cmd) => {
+    const refusal = fromSrc(cmd);
+    expect(refusal?.rule).toBe('protected-path');
+    expect(refusal?.reason).toContain("can't follow");
+  });
+
+  it.each(['cd "$X" && echo x > out.txt', 'cd "$X" && rm -f build/out.js', 'cd "$X" && npm test', 'cd "$X" && echo x > /tmp/out.txt'])(
+    'should allow %s',
+    (cmd) => {
+      expect(fromSrc(cmd)).toBeNull();
+    },
+  );
+});
+
+describe('protected-path rule: a write in a folder known only as a pattern (fix round 4, K8, item 13)', () => {
+  it.each(['CDPATH=.git cd hooks && echo x > pre-commit', 'cd .gi? && cd hooks && touch pre-commit'])('should refuse %s: the folder may be .git/hooks', (cmd) => {
+    expect(checkBash(cmd)?.rule).toBe('protected-path');
+  });
+
+  it.each(['CDPATH=src cd lib && echo x > out.txt', 'cd sr? && echo x > out.txt'])('should allow %s', (cmd) => {
+    expect(checkBash(cmd)).toBeNull();
+  });
+});
+
+describe('protected-path rule: a recursive write to a folder known only when it runs (fix part K13)', () => {
+  /** A tree finder that fails the test if it is ever asked to search. */
+  const NEVER_SEARCHED = {
+    namedBelow(dir: string): string[] {
+      throw new Error(`searched ${JSON.stringify(dir)}`);
+    },
+  };
+
+  function checkRecursive(cmd: string) {
+    const facts = readCommand(cmd, ROOT, HOME);
+    if ('unreadable' in facts) throw new Error('expected a readable command');
+    return facts.parts
+      .map((part: CommandPart) => checkProtectedPathBash(part, SETTINGS, ROOT, HOME, NO_LINKS, false, undefined, NEVER_SEARCHED))
+      .find((refusal) => refusal !== null) ?? null;
+  }
+
+  it.each(['rm -rf "$d"', 'chmod -R u+w "$X"', 'chown -R me "$X/sub"', 'find "$X" -delete', 'rm -rf "$d"/*'])(
+    'should refuse %s before any search on disk, saying to name the folder literally',
+    (cmd) => {
+      const refusal = checkRecursive(cmd);
+      expect(refusal?.rule).toBe('protected-path');
+      expect(refusal?.reason).toContain("a folder the gate can't read");
+      expect(refusal?.reason).toContain('name its folder literally');
+    },
+  );
+
+  it.each(['rm -rf .${d}*', 'rm -rf "$d"*', 'chmod -R u+w */"$d"', 'find ${d}* -delete'])(
+    'should refuse %s before any search on disk: the variable sits in the wildcard part (fix part K14)',
+    (cmd) => {
+      const refusal = checkRecursive(cmd);
+      expect(refusal?.rule).toBe('protected-path');
+      expect(refusal?.reason).toContain("a folder the gate can't read");
+      expect(refusal?.reason).toContain('name its folder literally');
+    },
+  );
 });

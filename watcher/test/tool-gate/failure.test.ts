@@ -1,7 +1,8 @@
 /**
  * @behavior When the tool gate itself breaks (a collaborator throws, or deciding takes over
  *   2 s), the agent's call goes ahead, a gate-error is logged and the agent is told the rules
- *   were not checked. A command the gate can't read is allowed and logged as unreadable. A
+ *   were not checked. A command holding a piece the gate can't read, next to nothing risky, is
+ *   allowed and logged as unreadable (ADR-010). A
  *   rejected repo rule file is reported once per call while the base rules keep applying. An
  *   allowed call prints nothing and the gate never makes a permission decision.
  * @business-rule US-010 / ADR-005: a broken gate never blocks the session. Plan decision 5:
@@ -10,7 +11,7 @@
  */
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawn, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -21,6 +22,7 @@ const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 const TELL = 'tool-gate failed, rules not checked.';
 
 const tempDirs: string[] = [];
+const children: ChildProcess[] = [];
 
 function git(repo: string, args: string[]): void {
   execFileSync('git', args, { cwd: repo, stdio: 'ignore' });
@@ -93,6 +95,16 @@ const TELL_STDOUT = { hookSpecificOutput: { hookEventName: 'PreToolUse', additio
 describe('tool-gate failure handling (US-010)', () => {
   afterEach(() => {
     vi.useRealTimers();
+    for (const child of children.splice(0)) {
+      // The writer runs in its own process group: end the shell and its sleep together.
+      if (child.pid !== undefined && child.exitCode === null) {
+        try {
+          process.kill(-child.pid, 'SIGKILL');
+        } catch {
+          // Already gone.
+        }
+      }
+    }
     while (tempDirs.length > 0) fs.rmSync(tempDirs.pop()!, { recursive: true, force: true });
   });
 
@@ -133,27 +145,23 @@ describe('tool-gate failure handling (US-010)', () => {
     expect(events(repo).map((event) => event.kind)).toEqual(['gate-error']);
   });
 
-  it('should allow and log unreadable for eval / $( … ) commands', async () => {
+  it('should allow and log unreadable for commands whose unreadable piece sits next to nothing risky (ADR-010)', async () => {
     // Given: a repo on main
     const repo = makeRepo();
 
-    // When: the agent runs commands whose words are only known when they run
-    const viaEval = await gate('pre', preBash(repo, 'eval "$CMD"'));
-    const viaSubstitution = await gate('pre', preBash(repo, 'git push origin $(git branch --show-current)'));
+    // When: the agent runs commands holding a piece the gate can't read, with no git write,
+    // protected path or interpreter next to it
+    const viaEval = await gate('pre', preBash(repo, 'echo ${CMD:-$(date)}'));
+    const viaSubstitution = await gate('pre', preBash(repo, 'echo $(( $(date +%s) + 1 ))'));
 
-    // Then: both go ahead silently and each is logged as unreadable with its command
+    // Then: both go ahead silently and each is logged as unreadable, without its command text
     expect([viaEval, viaSubstitution]).toEqual([
       { exitCode: 0, stdout: '', stderr: '' },
       { exitCode: 0, stdout: '', stderr: '' },
     ]);
     expect(events(repo)).toEqual([
-      expect.objectContaining({ tool: 'Bash', kind: 'unreadable', command: 'eval "$CMD"', result: 'allowed' }),
-      expect.objectContaining({
-        tool: 'Bash',
-        kind: 'unreadable',
-        command: 'git push origin $(git branch --show-current)',
-        result: 'allowed',
-      }),
+      { ts: expect.any(String), tool: 'Bash', kind: 'unreadable', result: 'allowed' },
+      { ts: expect.any(String), tool: 'Bash', kind: 'unreadable', result: 'allowed' },
     ]);
   });
 
@@ -231,7 +239,73 @@ describe('tool-gate failure handling (US-010)', () => {
     expect(result).toEqual({ exitCode: 0, stdout: '', stderr: '' });
     expect(currentBranch).not.toHaveBeenCalled();
     expect(events(repo)).toEqual([
-      expect.objectContaining({ tool: 'Bash', kind: 'test-run', command: 'npm test', result: 'red' }),
+      expect.objectContaining({ tool: 'Bash', kind: 'test-run', program: 'npm', result: 'red' }),
     ]);
   });
+
+  it('should answer a Write to a named pipe at once, without waiting to read it', async () => {
+    // Given: notes.txt is a named pipe whose only writer shows up after 4 s
+    const repo = makeRepo();
+    git(repo, ['checkout', '-q', '-b', 'feat/x']);
+    const fifo = path.join(repo, 'notes.txt');
+    execFileSync('mkfifo', [fifo]);
+    const writer = spawn('/bin/sh', ['-c', 'sleep 4; printf x > "$1"', 'sh', fifo], { detached: true, stdio: 'ignore' });
+    children.push(writer);
+
+    // When: the agent writes notes.txt
+    const started = Date.now();
+    const result = await gate('pre', {
+      session_id: 's1',
+      cwd: repo,
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Write',
+      tool_input: { file_path: fifo, content: 'hello' },
+    });
+
+    // Then: the gate answers well before the writer shows up, and allows the write
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(result).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  }, 10_000);
+
+  /** Puts a named pipe at `relPath` whose only writer shows up after 4 s. */
+  function slowPipe(repo: string, relPath: string): void {
+    const fifo = path.join(repo, relPath);
+    fs.mkdirSync(path.dirname(fifo), { recursive: true });
+    execFileSync('mkfifo', [fifo]);
+    children.push(spawn('/bin/sh', ['-c', 'sleep 4; printf x > "$1"', 'sh', fifo], { detached: true, stdio: 'ignore' }));
+  }
+
+  it('should answer an edit at once when the workflow state is a named pipe, as a gate error', async () => {
+    // Given: .oss/workflow-state.json is a named pipe whose writer shows up after 4 s
+    const repo = makeRepo();
+    git(repo, ['checkout', '-q', '-b', 'feat/x']);
+    const appFile = writeRepoFile(repo, 'src/app.ts', 'export const a = 1;\n');
+    slowPipe(repo, '.oss/workflow-state.json');
+
+    // When: the agent edits a source file
+    const started = Date.now();
+    const result = await gate('pre', preEdit(repo, appFile));
+
+    // Then: the gate answers well before the writer shows up: it can't read the state, so it tells
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(result).toEqual({ exitCode: 0, stdout: `${JSON.stringify(TELL_STDOUT)}\n`, stderr: '' });
+  }, 10_000);
+
+  it('should answer an edit at once when the cycle file is a named pipe, as no test run yet', async () => {
+    // Given: a build is running and .oss/tool-gates/cycle.json is a named pipe whose writer shows up after 4 s
+    const repo = makeRepo();
+    git(repo, ['checkout', '-q', '-b', 'feat/x']);
+    const appFile = writeRepoFile(repo, 'src/app.ts', 'export const a = 1;\n');
+    writeRepoFile(repo, '.oss/workflow-state.json', JSON.stringify({ currentCommand: 'build', currentCommandStartedAt: 't1' }));
+    slowPipe(repo, '.oss/tool-gates/cycle.json');
+
+    // When: the agent edits a source file
+    const started = Date.now();
+    const result = await gate('pre', preEdit(repo, appFile));
+
+    // Then: the gate answers well before the writer shows up, and the RED rule refuses (no run yet)
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('Refused');
+  }, 10_000);
 });

@@ -14,7 +14,7 @@ import path from 'node:path';
 import { readCommand, type CommandPart } from './command-reader.js';
 import { matchAnyPath, matchCommand } from './patterns.js';
 import type { GateSettings } from './rule-file.js';
-import type { CycleRecord, StateStore } from './state-store.js';
+import { programField, type CycleRecord, type StateStore } from './state-store.js';
 import { BUILD_COMMAND } from './workflow-state.js';
 
 export interface PostCall {
@@ -70,6 +70,19 @@ function isTestLike(part: CommandPart, settings: GateSettings, root: string, hom
   );
 }
 
+/** The most of an adopted command kept in cycle.json, so a huge command can't bloat the state. */
+const MAX_ADOPTED_LENGTH = 512;
+
+/** The leading words that fit in MAX_ADOPTED_LENGTH: still a word-by-word prefix, so later runs match. */
+function adoptedPattern(words: string[]): string {
+  let kept = words[0] ?? '';
+  for (const word of words.slice(1)) {
+    if (kept.length + 1 + word.length > MAX_ADOPTED_LENGTH) break;
+    kept = `${kept} ${word}`;
+  }
+  return kept.slice(0, MAX_ADOPTED_LENGTH);
+}
+
 /** Green on success; red only when a test part ran last and failed with an exit code; else unknown. */
 function runResult(
   call: PostCall,
@@ -112,13 +125,13 @@ export function recordTestRun(call: PostCall, ctx: RecordContext): void {
     ) {
       return;
     }
-    adoptedCommand = last.words.join(' ');
+    adoptedCommand = adoptedPattern(last.words);
     testParts = [last];
-    ctx.store.appendEvent({ ts: ctx.ts, tool: 'Bash', kind: 'runner-adopted', command: call.command, result: 'red' });
+    ctx.store.appendEvent({ ts: ctx.ts, tool: 'Bash', kind: 'runner-adopted', ...programField(last.program), result: 'red' });
   }
 
   const result = runResult(call, testParts, last, failedWithExitCode);
-  ctx.store.appendEvent({ ts: ctx.ts, tool: 'Bash', kind: 'test-run', command: call.command, result });
+  ctx.store.appendEvent({ ts: ctx.ts, tool: 'Bash', kind: 'test-run', ...programField(testParts[0]?.program), result });
   if (result === 'unknown') return;
 
   ctx.store.writeCycle({

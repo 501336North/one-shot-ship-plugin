@@ -31,7 +31,7 @@ const { settings: SETTINGS } = loadSettings(
 );
 
 const NO_RUN_TEXT =
-  "No failing test recorded. Write a failing test and run it. If your tests run with a command the gate doesn't recognize, ask the user to add it to .oss/tool-gates.json with `!`.";
+  "No failing test recorded in this build. Write a failing test and run it on its own with a test command, unpiped (for example `npx vitest run <file>` or `pytest <file>`). Another command that names a test file or has the word test, spec or check in it, and fails, is taken as this build's test command.";
 
 function mockWorkflow(snapshot: WorkflowSnapshot | null = { currentCommand: 'build', currentCommandStartedAt: BUILD }) {
   return { read: vi.fn<WorkflowState['read']>(() => snapshot) };

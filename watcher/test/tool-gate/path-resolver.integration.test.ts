@@ -95,4 +95,20 @@ describe('real path resolver: .. after a symlink', () => {
     expect(realPathResolver.realpath(`${dir}/sub/../a.json`)).toBe(path.join(real, 'a.json'));
     expect(realPathResolver.realpath(`${dir}/missing/../a.json`)).toBe(path.join(real, 'a.json'));
   });
+
+  it('should still follow a symlink reached by climbing back out of a missing folder', () => {
+    const dir = tempDir();
+    fs.mkdirSync(path.join(dir, 'real'));
+    fs.symlinkSync(path.join(dir, 'real'), path.join(dir, 'link'));
+    expect(realPathResolver.realpath(`${dir}/missing/deeper/../../link/a.json`)).toBe(path.join(fs.realpathSync(dir), 'real', 'a.json'));
+  });
+
+  it('should resolve a path 20000 folders deep that does not exist within 1 s', () => {
+    const dir = tempDir();
+    const deep = `${dir}/${'a/'.repeat(20_000)}x`;
+    const started = performance.now();
+    const resolved = realPathResolver.realpath(deep);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(resolved.endsWith(`${'a/'.repeat(3)}x`)).toBe(true);
+  });
 });

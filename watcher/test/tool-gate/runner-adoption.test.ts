@@ -75,16 +75,30 @@ describe('runner adoption during a build', () => {
 
     expect(store.readCycle()).toEqual({ startedAt: BUILD, lastResult: 'red', files: [], adoptedCommand: './run-tests.sh' });
     expect(events(store, 'runner-adopted')).toEqual([
-      { ts: TS, tool: 'Bash', kind: 'runner-adopted', command: './run-tests.sh', result: 'red' },
+      { ts: TS, tool: 'Bash', kind: 'runner-adopted', program: 'run-tests.sh', result: 'red' },
     ]);
     expect(events(store, 'test-run')).toEqual([
-      { ts: TS, tool: 'Bash', kind: 'test-run', command: './run-tests.sh', result: 'red' },
+      { ts: TS, tool: 'Bash', kind: 'test-run', program: 'run-tests.sh', result: 'red' },
     ]);
 
     // Failing again: still red, but the runner was already adopted, so it is not logged again.
     record(failure('./run-tests.sh'), store);
     expect(events(store, 'runner-adopted')).toHaveLength(1);
     expect(events(store, 'test-run').map((event) => event.result)).toEqual(['red', 'red']);
+  });
+
+  it('should store at most 512 characters of an adopted command, and still count its later runs', () => {
+    const store = memoryStore();
+    const long = `./run-tests.sh ${Array.from({ length: 120 }, (_, i) => `--case-${i}`).join(' ')}`;
+    expect(long.length).toBeGreaterThan(512);
+
+    record(failure(long), store);
+    const adopted = store.readCycle()?.adoptedCommand ?? '';
+    expect(adopted.length).toBeGreaterThan(0);
+    expect(adopted.length).toBeLessThanOrEqual(512);
+
+    record(success(long), store);
+    expect(store.readCycle()?.lastResult).toBe('green');
   });
 
   it('should count later runs of the adopted command red or green', () => {
@@ -152,7 +166,7 @@ describe('runner adoption during a build', () => {
     record(failure('./check-all.sh'), store);
     expect(store.readCycle()?.adoptedCommand).toBe('./run-tests.sh');
     expect(events(store, 'runner-adopted')).toHaveLength(1);
-    expect(events(store, 'test-run').map((event) => event.command)).toEqual(['./run-tests.sh']);
+    expect(events(store, 'test-run').map((event) => event.program)).toEqual(['run-tests.sh']);
 
     // The adopted runner still counts.
     record(success('./run-tests.sh'), store);

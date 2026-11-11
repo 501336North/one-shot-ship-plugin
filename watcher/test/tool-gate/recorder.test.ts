@@ -49,8 +49,9 @@ function record(call: PostCall, store: StateStore, buildStartedAt: string | null
   recordTestRun(call, { settings: SETTINGS, store, home: HOME, ts: TS, buildStartedAt, currentCommand: null });
 }
 
-function testRun(command: string, result: GateEvent['result']): GateEvent {
-  return { ts: TS, tool: 'Bash', kind: 'test-run', command, result };
+/** The logged test run: the program's name only, never the command text. */
+function testRun(program: string, result: GateEvent['result']): GateEvent {
+  return { ts: TS, tool: 'Bash', kind: 'test-run', program, result };
 }
 
 describe('post-call test-run recorder', () => {
@@ -60,7 +61,7 @@ describe('post-call test-run recorder', () => {
 
     record(success('npm test'), store);
 
-    expect(store.appendEvent).toHaveBeenCalledWith(testRun('npm test', 'green'));
+    expect(store.appendEvent).toHaveBeenCalledWith(testRun('npm', 'green'));
     expect(store.writeCycle).toHaveBeenCalledWith({ ...cycle, lastResult: 'green' });
   });
 
@@ -75,7 +76,7 @@ describe('post-call test-run recorder', () => {
 
     record(failure('cd sub && npx vitest run'), store);
 
-    expect(store.appendEvent).toHaveBeenCalledWith(testRun('cd sub && npx vitest run', 'red'));
+    expect(store.appendEvent).toHaveBeenCalledWith(testRun('npx', 'red'));
     // A red run starts a new cycle: the file list empties; the build's adopted runner stays.
     expect(store.writeCycle).toHaveBeenCalledWith({
       startedAt: BUILD,
@@ -87,25 +88,25 @@ describe('post-call test-run recorder', () => {
     // A failure that is not a test's exit code (e.g. a hook timeout) is not counted red.
     const other = mockStore(cycle);
     record(failure('npm test', 'Command timed out after 2m'), other);
-    expect(other.appendEvent).toHaveBeenCalledWith(testRun('npm test', 'unknown'));
+    expect(other.appendEvent).toHaveBeenCalledWith(testRun('npm', 'unknown'));
     expect(other.writeCycle).not.toHaveBeenCalled();
   });
 
   it('should record unknown for piped, || true, || : and is_interrupt runs, and leave the cycle unchanged', () => {
     const cycle: CycleRecord = { startedAt: BUILD, lastResult: 'green', files: ['/work/repo/src/a.ts'], adoptedCommand: null };
-    const hidden: PostCall[] = [
-      failure('npm test | tail -5'),
-      success('npm test | tail -5'),
-      failure('pytest || true'),
-      success('pytest || true'),
-      success('go test ./... || :'),
-      failure('cargo test', 'Exit code 130', true),
+    const hidden: Array<[PostCall, string]> = [
+      [failure('npm test | tail -5'), 'npm'],
+      [success('npm test | tail -5'), 'npm'],
+      [failure('pytest || true'), 'pytest'],
+      [success('pytest || true'), 'pytest'],
+      [success('go test ./... || :'), 'go'],
+      [failure('cargo test', 'Exit code 130', true), 'cargo'],
     ];
 
-    for (const call of hidden) {
+    for (const [call, program] of hidden) {
       const store = mockStore(cycle);
       record(call, store);
-      expect(store.appendEvent).toHaveBeenCalledWith(testRun(call.command, 'unknown'));
+      expect(store.appendEvent).toHaveBeenCalledWith(testRun(program, 'unknown'));
       expect(store.writeCycle).not.toHaveBeenCalled();
     }
   });
@@ -117,7 +118,7 @@ describe('post-call test-run recorder', () => {
     for (const command of ['npm test; false', 'npm test && npm run lint', "bash -c 'npm test; false'"]) {
       const store = mockStore(cycle);
       record(failure(command), store);
-      expect(store.appendEvent).toHaveBeenCalledWith(testRun(command, 'unknown'));
+      expect(store.appendEvent).toHaveBeenCalledWith(testRun('npm', 'unknown'));
       expect(store.writeCycle).not.toHaveBeenCalled();
     }
 
@@ -125,7 +126,7 @@ describe('post-call test-run recorder', () => {
     for (const command of ['cd watcher && npm test', 'npm test']) {
       const store = mockStore(cycle);
       record(failure(command), store);
-      expect(store.appendEvent).toHaveBeenCalledWith(testRun(command, 'red'));
+      expect(store.appendEvent).toHaveBeenCalledWith(testRun('npm', 'red'));
       expect(store.writeCycle).toHaveBeenCalledWith({ startedAt: BUILD, lastResult: 'red', files: [], adoptedCommand: null });
     }
   });
@@ -140,10 +141,18 @@ describe('post-call test-run recorder', () => {
   });
 
   it('should recognize pnpm test, npm run test:unit, make test, swift test, ./gradlew test, dotnet test', () => {
-    for (const command of ['pnpm test', 'npm run test:unit', 'make test', 'swift test', './gradlew test', 'dotnet test']) {
+    const runs: Array<[string, string]> = [
+      ['pnpm test', 'pnpm'],
+      ['npm run test:unit', 'npm'],
+      ['make test', 'make'],
+      ['swift test', 'swift'],
+      ['./gradlew test', 'gradlew'],
+      ['dotnet test', 'dotnet'],
+    ];
+    for (const [command, program] of runs) {
       const store = mockStore();
       record(failure(command), store);
-      expect(store.appendEvent).toHaveBeenCalledWith(testRun(command, 'red'));
+      expect(store.appendEvent).toHaveBeenCalledWith(testRun(program, 'red'));
       expect(store.writeCycle).toHaveBeenCalledWith({ startedAt: BUILD, lastResult: 'red', files: [], adoptedCommand: null });
     }
   });

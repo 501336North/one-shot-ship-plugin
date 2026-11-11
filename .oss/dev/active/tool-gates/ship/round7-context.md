@@ -1,0 +1,90 @@
+# /oss:ship round 7 (final) narrow re-check context (tool-gates, R-253)
+
+**Read-only gate. Do not edit, stage, commit or push anything. Do not run `git -C`. Leave no processes running (check `pgrep -fl tool-gate.cjs; pgrep -fl vitest` before you finish; vitest runs under `/Users/ysl/dev/AgenticDevWorkflow-ship-followups` belong to another session — leave them alone).**
+
+- **Repo and branch.** The repo is `/Users/ysl/dev/oss-plugin-tool-gates`, branch `feat/tool-gates/build`.
+- **What is under review.** Two parts:
+  - the commits since the merge base with `origin/feat/determinism-sprint/build`;
+  - the uncommitted working tree, which is all of ship fix rounds 1-4.
+
+  The feature is a Node CLI `tool-gate`. It refuses IRON LAW violations in Claude Code PreToolUse (Bash/Edit/Write/MultiEdit/NotebookEdit) with exit 2, and records test runs for a per-cycle RED rule.
+  - Code: `watcher/src/cli/tool-gate.ts` and `watcher/src/tool-gate/**`.
+  - Bundle: `watcher/dist/cli/tool-gate.cjs`, run by `hooks/oss-tool-gate.sh`.
+  - Rules: `config/tool-gates.json`.
+- **Allow and refuse.**
+  - Allow is exit 0 with no stdout.
+  - Refuse is exit 2, with the reason on stderr.
+  - A crash, or the 2 s hard timer, allows by design (ADR-005).
+  - Since round 4, going over the per-call work budget refuses as too complex.
+- **This is the round-7 FINAL narrow re-check. It covers only fix part K12 (plan `ship/round6-k12.md`), made after the round-6 re-check of K11.**
+  - The round-4 fix diff is `/private/tmp/claude-501/-Users-ysl-dev-oss-plugin-tool-gates/ac0a5463-1408-4cbc-a165-5ef79dd9a6bc/scratchpad/round7.diff` (about 1160 lines, 18 files). Focus there.
+  - What each part did is in `.oss/dev/active/tool-gates/NOTES.md`, entry "Fix part K12". The plan is `ship/round6-k12.md`.
+  - **Scope (user decision): report ONLY (a) a K12 item that does not actually close its class (items 1-4, 5a, 5c, 6, 7 in the plan, tested with several spellings), (b) a bug or regression K12 introduced (including over-refusal of ordinary commands), or (c) any input that makes the gate decision run past the hard limit (allowed with gate-error). Other new bypass variants: list them briefly at the end under "out of scope, for FOLLOWUPS" with severity, but they do not fail the gate.**
+- **Design docs.** `.oss/dev/active/tool-gates/DESIGN.md` (Known Limits), `DECISIONS.md` (ADR-001..011; ADR-011 sets the scope: agent mistakes and shortcuts, not a determined adversary) and `NOTES.md`. These are claims, not evidence: a documented "known limit" is still a finding if it is a real bypass. Say whether it is listed.
+- **Since K12:** a per-call deadline (1.0 s, checked every 256 steps in the hot loops) and per-call budgets refuse as too complex. Only a real crash still allows.
+- **Already deferred, round 6 and K12:**
+  - the 6 lines in `.oss/dev/FOLLOWUPS.md` ending "(round 6)";
+  - `credential.helper 'store --file <path>'` is still refused (user decision: keep refusing);
+  - two apostrophes far apart pair up as one fake string;
+  - a script with apostrophes more than 4 KB apart is refused as "writes a path too long".
+- **Already deferred, round 5:** the 12 lines in `.oss/dev/FOLLOWUPS.md` ending "from: tool-gates (round 5)". They cover pull/fetch refspec and `-c` forms from a feature branch, filter-branch ranges and globs, command strings run by git subcommands, awk pipe concatenation and case, `op --account`, `-c` on pull, pull case folding, script long-option prefixes, cdable_vars, and writable standard bin folders. K11 also reported these as already known: `export GIT_DIR+=…`, `emulate zsh -c`, `git config --global` writing `~/.gitconfig`, and `rebase --update-refs`.
+- **Already deferred, round 4.** All 24 lines in `.oss/dev/FOLLOWUPS.md` ending "from: tool-gates (round 4)" count as already deferred. So does the long tail of `!` credential-helper programs that run their arguments but sit on no list (`rsync -e`, `emacs`, `gdb`, `Rscript`, `julia`, `swift`, `go run`, `npx`/`npm exec`, `!git <alias>`).
+- **User decisions in K8-K10 that are intended behaviour:**
+  - An exported CDPATH makes every later `cd <name>` lost.
+  - `cd "$X" && git pull origin main` is refused.
+  - On a protected branch, pull is allowed only from main's own upstream.
+  - `checkout -B`/`switch -C` into a protected branch is refused, as are fetch refspecs into one and filter-branch-style rewrites.
+  - ssh values are allowlisted. Plain flags, `-p -l -i -c -m -b`, and `-o` with these keys are allowed:
+    - StrictHostKeyChecking, UserKnownHostsFile, BatchMode, ConnectTimeout, IdentitiesOnly, IdentityFile, Port, User, ServerAliveInterval, ServerAliveCountMax;
+    - LogLevel, Compression, HostKeyAlias, PreferredAuthentications, PubkeyAuthentication, PasswordAuthentication, AddKeysToAgent;
+    - ControlMaster, ControlPath, ControlPersist;
+    - ForwardAgent, ConnectionAttempts, HostKeyAlgorithms, PubkeyAcceptedKeyTypes/Algorithms, KexAlgorithms, Ciphers, MACs.
+  - `!` helpers whose program is a wrapper, shell, interpreter or runner from the lists are refused. `!gh auth git-credential` and `!op plugin run -- gh` stay allowed.
+- **Cleanup rule (mandatory).** Remove ONLY the exact `mktemp -d` paths you stored, after checking each is non-empty and matches. Never a parent, `dirname`, `$TMPDIR`, `/tmp`, `/private/tmp` or a glob. In round 4 a reviewer wiped part of `$TMPDIR` this way.
+- **Already deferred by the user, by name.** Re-report these only as "already deferred":
+  - `cd "$X" && rm <single-file>` after a cd the gate can't follow;
+  - dotglob set in shell rc files;
+  - `mv`/`rsync --delete` over a folder holding a nested `.git`;
+  - `source "$F"` / `. "$F"`;
+  - `find -exec rm` after a cd the gate can't follow;
+  - `git send-pack --receive-pack`, `git archive --exec`;
+  - aliases already defined in git config;
+  - plus the lines in `.oss/dev/FOLLOWUPS.md` ending "from: tool-gates (round 1)" or "(round 2)".
+- **User decisions that are intended behaviour.** Report one only if the implementation is wrong or opens a real bypass. Earlier rounds:
+  - refuse only real writes to protected files;
+  - reads of `.oss/workflow-state.json` are allowed, writes refused;
+  - mkdir of folders is allowed;
+  - `git checkout -b X && git push -u origin X` is allowed for a new non-protected X, joined by `&&` only;
+  - GIT_AUTHOR_*/GIT_COMMITTER_*/GIT_TRACE* (literal values) are allowed on commit/push;
+  - `cd "$(git rev-parse --show-toplevel)"` is read as the project root only when the repo is validated;
+  - unreadable shell parts are refused only when risky (ADR-010).
+- **User decisions from round 4:**
+  - Refuse when the 1.2 s git budget runs out.
+  - Refuse a `git clean -f` whose dry run lists more than 2048 paths.
+  - Refuse a recursive delete of a tree with more than 10000 folders (too complex).
+  - After a cd the gate can't follow, refuse wildcard and recursive writes.
+  - A sed script holding a variable is unreadable; `sed -f`/`awk -f` are allowed.
+  - On a protected branch, refuse merge, rebase, reset (HEAD-moving), cherry-pick, revert, am and `branch -m X`. Allow pull and fetch.
+  - Refuse `-c`, `--config-env` and `GIT_CONFIG_*` that make git run a program, on every subcommand. Editor keys with a real command are refused. `core.hooksPath` is refused with any value, including `/dev/null`. `core.pager` is allowed unless under `script`/`unbuffer`/`expect`.
+  - `credential.helper`: refuse a `!` helper whose program is relative, a shell or interpreter, a function or substitution, or an absolute path outside the standard bin folders. PATH commands like `!gh auth git-credential` are allowed.
+  - `GIT_SSH_COMMAND`/`GIT_SSH`/`core.sshCommand`: allow only `ssh`, or an absolute standard-bin ssh, with safe options. The user loosened push to carry such a checked value; every other `GIT_*`/`-c` on push stays refused.
+  - Program-running git variables (`GIT_EDITOR`, `GIT_PAGER`, `EDITOR`, …) are refused unless the value is `''`, `true`, `false`, `:` or (pagers) `cat`.
+  - Unwrap `script`, `unbuffer`, `expect`, `flock`, `faketime`, `caffeinate`, `ionice` and `chrt`. The files script and flock write count as write targets. expect script files are read from disk.
+- **Tests.**
+  - Full suite: `cd watcher && npx vitest run`. Scoped: `npx vitest run test/tool-gate test/cli test/hooks`.
+  - Exactly 3 failures are known and fixed elsewhere (PR #221): model-frontmatter, offload-step-safety and chain-step-contract. Don't count them.
+  - Type check: `cd watcher && ./node_modules/.bin/tsc --noEmit -p .`.
+  - Do NOT run `npm run build`. The bundle check is `test/hooks/tool-gate-dist.test.ts`.
+- **To exercise the real gate.**
+  - Build hook JSON (`{"tool_name":"Bash","tool_input":{"command":"..."},"hook_event_name":"PreToolUse","cwd":"<dir>"}`) and pipe it to `node watcher/dist/cli/tool-gate.cjs pre`. For the exact argv and env, such as `CLAUDE_PROJECT_DIR`, see `watcher/src/cli/tool-gate.ts` and `hooks/oss-tool-gate.sh`.
+  - Do it in a fresh `mktemp -d` git repo, never against this checkout's real state.
+  - The gate only decides; it never runs the command. Never run the attack commands themselves.
+
+Report format:
+- PASS or FAIL first.
+- Then, for each finding:
+  - severity (critical/high/medium/low/info), and "security" if it is one;
+  - file:line;
+  - a one-sentence failure (input → wrong result);
+  - whether you reproduced it through the real gate;
+  - whether it is new in round 4's fixes, older, or already deferred.

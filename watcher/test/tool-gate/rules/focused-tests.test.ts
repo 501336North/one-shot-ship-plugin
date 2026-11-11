@@ -143,6 +143,29 @@ describe('skipped and focused tests rule', () => {
     expect(refusal?.reason).toContain('`.skipIf(`');
   });
 
+  // Built at runtime too: `xit(`, `fdescribe(` …, the table forms and the concurrent forms.
+  const X_AND_F_CALLS = ['x' + 'it', 'f' + 'it', 'x' + 'describe', 'f' + 'describe', 'x' + 'test'];
+  const CHAINED = [
+    '.' + 'only.each([1])(', '.' + 'skip.each([1])(', '.' + 'only.each`a`', '.' + 'skip.each`a`',
+    '.concurrent' + '.only(', '.concurrent' + '.skip(', '.' + 'skip.concurrent(',
+  ];
+
+  it.each(X_AND_F_CALLS)('should refuse adding a %s( call that skips or focuses a test', (name) => {
+    const refusal = check(edit('src/foo.test.ts', 'a', `${name}('x', () => {});`));
+    expect(refusal?.rule).toBe('focused-tests');
+    expect(refusal?.reason).toContain(`\`${name}(\``);
+  });
+
+  it.each(CHAINED)('should refuse adding the chained form test%s', (form) => {
+    expect(check(edit('src/foo.test.ts', 'a', `test${form}'x', () => {})`))?.rule).toBe('focused-tests');
+  });
+
+  it('should not mistake calls whose names end in a marker word', () => {
+    for (const call of ['submit(', 'profit(', 'exit(', 'obj.' + 'xit(', 'fitness(', 'my_' + 'xtest(']) {
+      expect(check(edit('src/foo.test.ts', 'a', `${call}1);`))).toBeNull();
+    }
+  });
+
   it('should name a test file outside the repo by its full path', () => {
     const refusal = check(editCall('Write', { file_path: '/elsewhere/bar.test.ts', content: `it${ONLY}'x')` }));
     expect(refusal?.reason).toContain('`/elsewhere/bar.test.ts`');

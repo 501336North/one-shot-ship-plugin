@@ -8,6 +8,7 @@
 import type { CommandPart } from '../command-reader.js';
 import type { GateSettings } from '../rule-file.js';
 import type { Refusal } from './refusal.js';
+import { rawDestination } from './protected-branch.js';
 import { readPushWords } from './push-words.js';
 
 /** `git tag` long options that take the next word as their value (a shortened form counts too). */
@@ -61,7 +62,19 @@ function pushedTags(args: string[]): string | undefined {
   const refspecs = positional.slice(1);
   const tagWord = refspecs.indexOf('tag');
   if (tagWord !== -1 && tagWord + 1 < refspecs.length) return `tag ${refspecs[tagWord + 1]}`;
-  return refspecs.find((spec) => spec.slice(spec.indexOf(':') + 1).replace(/^\+/, '').startsWith(TAGS_REF));
+  return refspecs.find((spec) => spec.slice(spec.indexOf(':') + 1).replace(/^\+/, '').startsWith(TAGS_REF) || wildcardTags(spec));
+}
+
+/**
+ * A wildcard destination (git's `*`, any text) that can name a tag: the text before its first `*`
+ * is on the way to `refs/tags/` (`*`, `refs/*`, `refs/t*`) or already inside it.
+ */
+function wildcardTags(refspec: string): boolean {
+  const dst = rawDestination(refspec);
+  const star = dst.indexOf('*');
+  if (star === -1) return false;
+  const known = dst.slice(0, star);
+  return TAGS_REF.startsWith(known) || known.startsWith(TAGS_REF);
 }
 
 function refuse(what: string): Refusal {

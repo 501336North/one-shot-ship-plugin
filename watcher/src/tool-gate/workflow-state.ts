@@ -3,8 +3,8 @@
  * `<project>/.oss/workflow-state.json`. A collaborator, mocked in the RED-rule tests.
  */
 
-import fs from 'node:fs';
 import path from 'node:path';
+import { readRegularFile } from './regular-file.js';
 
 /** The `/oss:*` command the RED rule and runner adoption apply in (a workflow name, not a rule value). */
 export const BUILD_COMMAND = 'build';
@@ -21,17 +21,21 @@ export interface WorkflowState {
   read(): WorkflowSnapshot | null;
 }
 
-/** Reads `<projectDir>/.oss/workflow-state.json` on each call; a missing file is null, a corrupt one throws. */
+/** Largest workflow-state.json read (a read limit, not a rule value). */
+const MAX_STATE_BYTES = 1024 * 1024;
+
+/**
+ * Reads `<projectDir>/.oss/workflow-state.json` on each call; a missing file is null. A corrupt
+ * one throws, and so does anything but a regular file (a named pipe would stall the gate; a
+ * symlink is not followed): the caller's gate-error.
+ */
 export function fileWorkflowState(projectDir: string): WorkflowState {
   return {
     read() {
-      let text: string;
-      try {
-        text = fs.readFileSync(path.join(projectDir, '.oss', 'workflow-state.json'), 'utf8');
-      } catch {
-        return null;
-      }
-      const data: unknown = JSON.parse(text);
+      const read = readRegularFile(path.join(projectDir, '.oss', 'workflow-state.json'), MAX_STATE_BYTES, true);
+      if (read === 'missing') return null;
+      if (read === 'not-regular') throw new Error('workflow state is not a regular file under 1 MB');
+      const data: unknown = JSON.parse(read.text);
       const record: Record<string, unknown> = typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : {};
       return {
         currentCommand: typeof record.currentCommand === 'string' ? record.currentCommand : null,

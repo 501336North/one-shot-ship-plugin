@@ -17,6 +17,9 @@ EVENT=PreToolUse
 
 SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" 2>/dev/null && pwd)"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
+# The gate reads its base rules from CLAUDE_PLUGIN_ROOT: always hand it the plugin's root, never
+# leave it unset (the base rules must not come from the working folder, which the repo controls).
+export CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT"
 CLI="$PLUGIN_ROOT/watcher/dist/cli/tool-gate.cjs"
 
 # The project folder, as the gate finds it: CLAUDE_PROJECT_DIR when it is an existing absolute
@@ -56,8 +59,31 @@ log_gate_error() {
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$state/events.ndjson" 2>/dev/null
 }
 
-OUT="$(node "$CLI" "$MODE")"
-RC=$?
+# The gate runs in the background so this script can end it: when Claude Code ends this hook
+# (its timeout), a TERM, INT or HUP here ends the gate too, instead of leaving node running.
+# (The gate also ends itself at its own hard limit, which covers a KILL that no trap sees.)
+# `<&0` keeps the hook input on the gate's stdin; a background job would get /dev/null.
+CHILD=""
+OUT_FILE="$(mktemp "${TMPDIR:-/tmp}/oss-tool-gate.XXXXXX" 2>/dev/null)" || OUT_FILE=""
+end_gate() {
+    if [ -n "$CHILD" ]; then kill -TERM "$CHILD" 2>/dev/null; fi
+    if [ -n "$OUT_FILE" ]; then rm -f "$OUT_FILE"; fi
+    exit 143
+}
+trap end_gate TERM INT HUP
+
+if [ -n "$OUT_FILE" ]; then
+    node "$CLI" "$MODE" <&0 >"$OUT_FILE" &
+    CHILD=$!
+    wait "$CHILD"
+    RC=$?
+    OUT="$(cat "$OUT_FILE")"
+    rm -f "$OUT_FILE"
+else
+    # No temp file (mktemp missing or failing): run in the foreground as before.
+    OUT="$(node "$CLI" "$MODE")"
+    RC=$?
+fi
 
 case "$RC" in
     0)

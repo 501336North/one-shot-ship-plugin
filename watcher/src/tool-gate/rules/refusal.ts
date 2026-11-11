@@ -5,7 +5,9 @@ export type RuleId =
   | 'production-host'
   | 'focused-tests'
   | 'protected-path'
-  | 'red-cycle';
+  | 'protected-path-mention'
+  | 'red-cycle'
+  | 'unreadable';
 
 export interface Refusal {
   rule: RuleId;

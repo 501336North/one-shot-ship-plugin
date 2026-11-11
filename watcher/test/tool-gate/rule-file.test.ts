@@ -70,6 +70,17 @@ describe('loadSettings: the base file alone', () => {
     expect(() => loadSettings(files(null, null), PLUGIN_ROOT, REPO_ROOT)).toThrow();
   });
 
+  it('should fail as a gate error, never reading a folder-relative base file, when the plugin root is empty or relative', () => {
+    const read: string[] = [];
+    const recording: ReadFile = (absPath) => {
+      read.push(absPath);
+      return JSON.stringify(BASE);
+    };
+    expect(() => loadSettings(recording, '', REPO_ROOT)).toThrow();
+    expect(() => loadSettings(recording, 'plugin', REPO_ROOT)).toThrow();
+    expect(read).toEqual([]);
+  });
+
   it('should fail as a gate error when the base file is malformed or incomplete', () => {
     expect(() => loadSettings(files('{ not json', null), PLUGIN_ROOT, REPO_ROOT)).toThrow();
     const { tagsAllowed: _dropped, ...incomplete } = BASE;
@@ -78,24 +89,23 @@ describe('loadSettings: the base file alone', () => {
 });
 
 describe('loadSettings: a repo file that adds or tightens (AC-009.1, AC-009.2)', () => {
-  it.each(LIST_KEYS)('should add new %s values after the base ones, without duplicates', (key) => {
+  // testFilePatterns and testCommandPatterns are left out: only the plugin decides what a test file and a test run are (see below).
+  it.each(LIST_KEYS.filter((key) => key !== 'testFilePatterns' && key !== 'testCommandPatterns'))('should add new %s values after the base ones, without duplicates', (key) => {
     const repo = { version: 1, [key]: [...BASE[key], 'added-one', 'added-two', 'added-one'] };
     const result = load(repo);
     expect(result.rejected).toBeUndefined();
     expect(result.settings[key]).toEqual([...BASE[key], 'added-one', 'added-two']);
   });
 
-  it('should add a repo protectedPath, productionHost and pattern together', () => {
+  it('should add a repo protectedPath and productionHost together', () => {
     const result = load({
       version: 1,
       protectedPaths: ['deploy/**', ...BASE.protectedPaths],
       productionHosts: ['api.example.com'],
-      testCommandPatterns: [...BASE.testCommandPatterns, 'make verify'],
     });
     expect(result.rejected).toBeUndefined();
     expect(result.settings.protectedPaths).toEqual([...BASE.protectedPaths, 'deploy/**']);
     expect(result.settings.productionHosts).toEqual(['api.example.com']);
-    expect(result.settings.testCommandPatterns).toEqual([...BASE.testCommandPatterns, 'make verify']);
     expect(result.settings.protectedBranches).toEqual(BASE.protectedBranches);
   });
 
@@ -128,6 +138,20 @@ describe('loadSettings: a repo file that tries to loosen is ignored as a whole (
       expect(reason).not.toContain('secret-value-xyz');
     },
   );
+
+  it('should reject a repo file that adds test-file patterns, so it cannot turn every file into a test file', () => {
+    const reason = expectRejected(load({ version: 1, testFilePatterns: [...BASE.testFilePatterns, '**/*'] }));
+    expect(reason).toContain('testFilePatterns');
+  });
+
+  it('should reject a repo file that adds test-command patterns, so it cannot turn any failing command into a red test run', () => {
+    const reason = expectRejected(load({ version: 1, testCommandPatterns: [...BASE.testCommandPatterns, '*'] }));
+    expect(reason).toContain('testCommandPatterns');
+  });
+
+  it('should accept a repo file that repeats the base test-command patterns', () => {
+    expect(load({ version: 1, testCommandPatterns: [...BASE.testCommandPatterns] }).rejected).toBeUndefined();
+  });
 
   it('should reject tagsAllowed true over a base false', () => {
     const strictBase: GateSettings = { ...BASE, tagsAllowed: false };
@@ -184,4 +208,15 @@ describe('loadSettings: a malformed repo file is ignored as a whole (AC-009.4)',
     expect(result.rejected).toBeUndefined();
     expect(result.settings.productionHosts).toEqual(['api.example.com']);
   });
+});
+
+describe('loadSettings: a repo file may add only so many values to a list', () => {
+  it.each(['protectedPaths', 'protectedBranches', 'sourceExtensions', 'productionHosts'] as const)(
+    'should accept 64 added %s values and reject the whole repo file at 65',
+    (key) => {
+      const added = (n: number) => [...BASE[key], ...Array.from({ length: n }, (_, i) => `added-${i}`)];
+      expect(load({ version: 1, [key]: added(64) }).rejected).toBeUndefined();
+      expect(expectRejected(load({ version: 1, [key]: added(65) }))).toContain(`${key} adds more than 64 values`);
+    },
+  );
 });

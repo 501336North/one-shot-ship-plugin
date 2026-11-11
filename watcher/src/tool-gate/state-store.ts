@@ -6,6 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { readRegularFile } from './regular-file.js';
 import type { RuleId } from './rules/refusal.js';
 
 export type TestResult = 'red' | 'green';
@@ -33,9 +34,25 @@ export interface GateEvent {
   tool: string;
   kind: EventKind;
   rule?: RuleId;
-  command?: string;
+  /** The program's file name (`git`, `npm`), never the command text, which can hold secrets. */
+  program?: string;
   result: 'red' | 'green' | 'unknown' | 'refused' | 'allowed';
 }
+
+/**
+ * What a program name may look like to be logged: a plain file name of at most 64 characters.
+ * A code constant (filesystem syntax), not a rule value: anything else might be a secret.
+ */
+const LOGGABLE_PROGRAM = /^[A-Za-z0-9._+-]{1,64}$/;
+
+/** `{ program }` with the program's file name when it is loggable, else nothing. */
+export function programField(program: string | null | undefined): { program?: string } {
+  const name = path.basename(program ?? '');
+  return LOGGABLE_PROGRAM.test(name) ? { program: name } : {};
+}
+
+/** Largest cycle.json read (a read limit, not a rule value); a bigger one is no cycle. */
+const MAX_CYCLE_BYTES = 1024 * 1024;
 
 export interface StateStore {
   /** The current cycle, or null for "no run yet" (missing or corrupt file). */
@@ -62,7 +79,7 @@ export function fileStateStore(repoRoot: string): StateStore {
   const cycleFile = path.join(stateDir, 'cycle.json');
   const eventsFile = path.join(stateDir, 'events.ndjson');
 
-  const { O_APPEND, O_CREAT, O_EXCL, O_NOFOLLOW, O_RDONLY, O_WRONLY } = fs.constants;
+  const { O_APPEND, O_CREAT, O_EXCL, O_NOFOLLOW, O_WRONLY } = fs.constants;
 
   /** Throws when `.oss` or `.oss/tool-gates` is a symlink. */
   function refuseSymlinkedDirs(): void {
@@ -87,14 +104,10 @@ export function fileStateStore(repoRoot: string): StateStore {
     readCycle() {
       try {
         refuseSymlinkedDirs();
-        const fd = fs.openSync(cycleFile, O_RDONLY | O_NOFOLLOW);
-        let text: string;
-        try {
-          text = fs.readFileSync(fd, 'utf8');
-        } finally {
-          fs.closeSync(fd);
-        }
-        const parsed: unknown = JSON.parse(text);
+        // Never blocks: a named pipe (or a symlink) here is no cycle, not a stalled gate.
+        const read = readRegularFile(cycleFile, MAX_CYCLE_BYTES, true);
+        if (typeof read !== 'object') return null;
+        const parsed: unknown = JSON.parse(read.text);
         return isCycleRecord(parsed) ? parsed : null;
       } catch {
         return null;

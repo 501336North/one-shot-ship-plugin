@@ -2,9 +2,9 @@
   "version": 1,
   "protectedBranches": ["main", "master"],
   "testFilePatterns": ["**/*.test.*", "**/*.spec.*", "**/__tests__/**", "**/test_*.sh", "**/*_test.go"],
-  "testCommandPatterns": ["npm test", "npm run test*", "pnpm test", "pnpm run test*", "yarn test", "yarn run test*", "bun test", "npx vitest", "npx jest", "vitest", "jest", "pytest", "python -m pytest", "go test", "cargo test", "swift test", "make test", "make check", "./gradlew test", "gradle test", "mvn test", "dotnet test", "rspec", "bundle exec rspec", "phpunit", "bash *test*.sh"],
+  "testCommandPatterns": ["npm test", "npm run test*", "pnpm test", "pnpm run test*", "yarn test", "yarn run test*", "bun test", "npx vitest", "npx jest", "pnpm vitest", "pnpm exec vitest", "pnpm jest", "pnpm exec jest", "yarn vitest", "yarn jest", "bunx vitest", "./node_modules/.bin/vitest", "./node_modules/.bin/jest", "vitest", "jest", "pytest", "python -m pytest", "python3 -m pytest", "uv run pytest", "poetry run pytest", "python -m unittest", "python3 -m unittest", "go test", "cargo test", "swift test", "make test", "make check", "./gradlew test", "gradle test", "mvn test", "dotnet test", "rspec", "bundle exec rspec", "phpunit", "bash *test*.sh"],
   "sourceExtensions": [".ts", ".tsx", ".js", ".mjs", ".cjs", ".sh", ".py", ".go", ".rs", ".swift"],
-  "protectedPaths": [".oss/tool-gates.json", ".oss/tool-gates/**", "~/.oss/hooks/**", ".claude/settings*.json", "~/.claude/settings*.json", "~/.claude/plugins/**"],
+  "protectedPaths": [".oss/tool-gates.json", ".oss/tool-gates/**", "~/.oss/hooks/**", ".claude/settings*.json", "~/.claude/settings*.json", "~/.claude/plugins/**", ".oss/workflow-state.json", "**/.git/config", "**/.git/config.worktree", "**/.git/worktrees/*/config.worktree", "~/.gitconfig", "~/.config/git/config", "**/.git/hooks/**", "**/.git", "**/.git/HEAD", "**/.git/commondir", "**/.git/refs/**", "**/.git/packed-refs", "**/.git/worktrees/*/HEAD", "**/.git/worktrees/*/commondir", "**/.git/worktrees/*/gitdir", "**/.git/modules/**/config"],
   "productionHosts": [],
   "tagsAllowed": true
 }

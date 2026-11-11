@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { spawnSync } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -27,6 +27,11 @@ const HANG_BACKSTOP_MS = 15_000;
 // Echoes what it received (mode, stdin, env) on stdout, or a refusal on stderr, then exits STUB_EXIT.
 const STUB_CLI = `
 const input = require('fs').readFileSync(0, 'utf8');
+if (process.env.STUB_HANG) {
+  require('fs').writeFileSync(process.env.STUB_HANG, String(process.pid));
+  setInterval(() => {}, 1000);
+  return;
+}
 const code = Number(process.env.STUB_EXIT || '0');
 if (code === 2) process.stderr.write('Refused: stub refusal\\n');
 else process.stdout.write(JSON.stringify({
@@ -61,7 +66,31 @@ beforeEach(() => {
   }
 });
 
+/** Stub gate processes started by a test; any still alive is killed after it. */
+const stubPids: number[] = [];
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+async function waitFor<T>(probe: () => T | null, ms: number): Promise<T | null> {
+  const until = Date.now() + ms;
+  for (;;) {
+    const value = probe();
+    if (value !== null || Date.now() > until) return value;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 afterEach(() => {
+  for (const pid of stubPids.splice(0)) {
+    if (isAlive(pid)) process.kill(pid, 'SIGKILL');
+  }
   fs.rmSync(caseRoot, { recursive: true, force: true });
 });
 
@@ -219,4 +248,67 @@ describe('hooks/oss-tool-gate.sh', () => {
     expect(failed.stderr).not.toContain('unbound variable');
     expect(eventsLog(project)).toContain('"gate-error"');
   });
+});
+
+describe('hooks/oss-tool-gate.sh with CLAUDE_PLUGIN_ROOT unset', () => {
+  const REAL_WRAPPER = path.join(__dirname, '../../../hooks/oss-tool-gate.sh');
+  const REAL_BASE = path.join(__dirname, '../../../config/tool-gates.json');
+  let repo: string;
+
+  beforeEach(() => {
+    repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-tool-gate-unset-root-')));
+    for (const args of [
+      ['init', '-q', '-b', 'main'],
+      ['-c', 'user.name=T', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'initial'],
+    ]) {
+      spawnSync('git', args, { cwd: repo, stdio: 'ignore' });
+    }
+  });
+
+  afterEach(() => {
+    fs.rmSync(repo, { recursive: true, force: true });
+  });
+
+  it("should still refuse a push to main when the repo holds a lax config/tool-gates.json", () => {
+    // Given: the repo on main ships its own config/tool-gates.json that protects no real branch
+    const base = JSON.parse(fs.readFileSync(REAL_BASE, 'utf8')) as object;
+    fs.mkdirSync(path.join(repo, 'config'));
+    fs.writeFileSync(path.join(repo, 'config', 'tool-gates.json'), JSON.stringify({ ...base, protectedBranches: ['nothing'] }));
+
+    // When: the real wrapper runs from the repo with no CLAUDE_PLUGIN_ROOT
+    const result = spawnSync('/bin/bash', [REAL_WRAPPER, 'pre'], {
+      input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git push origin main' }, cwd: repo }),
+      env: { HOME: process.env.HOME, PATH: `${NODE_DIR}:/usr/bin:/bin` },
+      cwd: repo,
+      encoding: 'utf8',
+      timeout: HANG_BACKSTOP_MS,
+    });
+
+    // Then: the plugin's own rules refuse it
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('`main`');
+  });
+
+  it('should leave no gate process behind when the wrapper itself is ended with SIGTERM', async () => {
+    // Given: a gate that never answers, behind the wrapper
+    const pidFile = path.join(caseRoot, 'stub.pid');
+    const wrapper = spawn('/bin/bash', [WRAPPER, 'pre'], {
+      env: { HOME: process.env.HOME, PATH: `${NODE_DIR}:/usr/bin:/bin`, CLAUDE_PLUGIN_ROOT: pluginRoot, STUB_HANG: pidFile },
+      cwd: project,
+      stdio: ['pipe', 'ignore', 'ignore'],
+    });
+    wrapper.stdin.end(hookInput('PreToolUse'));
+    const gatePid = await waitFor(() => (fs.existsSync(pidFile) && fs.readFileSync(pidFile, 'utf8') !== '' ? Number(fs.readFileSync(pidFile, 'utf8')) : null), 5000);
+    expect(gatePid).not.toBeNull();
+    stubPids.push(gatePid!);
+    const exited = new Promise((resolve) => wrapper.once('exit', resolve));
+
+    // When: Claude Code ends the wrapper (its hook timeout)
+    wrapper.kill('SIGTERM');
+    await exited;
+
+    // Then: the gate process is gone too
+    await waitFor(() => (isAlive(gatePid!) ? null : true), 3000);
+    expect(isAlive(gatePid!)).toBe(false);
+  }, HANG_BACKSTOP_MS);
 });

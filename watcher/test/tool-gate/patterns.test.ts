@@ -156,3 +156,47 @@ describe('matchCommand', () => {
     expect(matchCommand('jest', [])).toBe(false);
   });
 });
+
+describe('matching time stays small whatever the pattern', () => {
+  // The hook gives up after 5 s and then allows the call, so a pattern must never be able to
+  // make one match slow. 200 ms is far above a normal match and far below the hook's limit.
+  const LIMIT_MS = 200;
+
+  function timed(match: () => boolean): { ms: number; result: boolean } {
+    const start = performance.now();
+    const result = match();
+    return { ms: performance.now() - start, result };
+  }
+
+  it('should match **/**/**/**/**/**/x against a 100-folder path quickly', () => {
+    const deep = `/work/repo/${Array.from({ length: 100 }, () => 'a').join('/')}/y`;
+    const { ms, result } = timed(() => path('**/**/**/**/**/**/x', deep));
+    expect(result).toBe(false);
+    expect(ms).toBeLessThan(LIMIT_MS);
+  });
+
+  it('should match a*a*a*a*b against a 400-character name quickly', () => {
+    const { ms, result } = timed(() => path('src/a*a*a*a*b', `/work/repo/src/${'a'.repeat(400)}`));
+    expect(result).toBe(false);
+    expect(ms).toBeLessThan(LIMIT_MS);
+  });
+
+  it('should match a command pattern a*a*a*a*b against a 400-character word quickly', () => {
+    const { ms, result } = timed(() => matchCommand('a*a*a*a*a*a*b', ['a'.repeat(400)]));
+    expect(result).toBe(false);
+    expect(ms).toBeLessThan(LIMIT_MS);
+  });
+
+  it('should still find a match through many ** folders', () => {
+    expect(path('**/**/**/x', '/work/repo/a/b/c/d/x')).toBe(true);
+    expect(path('src/a*a*b', '/work/repo/src/aaxab')).toBe(true);
+  });
+});
+
+describe('matchPath: letter case', () => {
+  it('should ignore case when asked to, for a case-insensitive file system', () => {
+    const ci = { ...opts, caseInsensitive: true };
+    expect(matchPath('.oss/tool-gates/**', '/work/repo/.OSS/Tool-Gates/cycle.json', ci)).toBe(true);
+    expect(matchPath('~/.claude/settings*.json', '/Users/dev/.Claude/Settings.json', ci)).toBe(true);
+  });
+});

@@ -67,6 +67,23 @@ function isEditTool(toolName: string): toolName is EditTool {
   return Object.hasOwn(PATH_FIELD, toolName);
 }
 
+/**
+ * The tool and file an edit-tool call targets, read from the path field alone, so a call whose
+ * other fields are missing or unexpected (a NotebookEdit delete with no new_source) still gets
+ * the protected-path check.
+ */
+export function readEditTarget(
+  toolName: string,
+  toolInput: unknown,
+  cwd: string,
+  home: string,
+): Pick<EditCall, 'tool' | 'filePath'> | null {
+  if (!isEditTool(toolName) || !isRecord(toolInput)) return null;
+  const rawPath = toolInput[PATH_FIELD[toolName]];
+  if (typeof rawPath !== 'string') return null;
+  return { tool: toolName, filePath: resolvePath(rawPath, cwd, home) };
+}
+
 export function readEditCall(
   toolName: string,
   toolInput: unknown,
@@ -74,10 +91,8 @@ export function readEditCall(
   home: string,
   readFile: (p: string) => string | null,
 ): EditCall | null {
-  if (!isEditTool(toolName) || !isRecord(toolInput)) return null;
-  const rawPath = toolInput[PATH_FIELD[toolName]];
-  if (typeof rawPath !== 'string') return null;
-  const filePath = resolvePath(rawPath, cwd, home);
-  const changes = readChanges(toolName, toolInput, filePath, readFile);
-  return changes === null ? null : { tool: toolName, filePath, changes };
+  const target = readEditTarget(toolName, toolInput, cwd, home);
+  if (target === null || !isRecord(toolInput)) return null;
+  const changes = readChanges(target.tool, toolInput, target.filePath, readFile);
+  return changes === null ? null : { ...target, changes };
 }

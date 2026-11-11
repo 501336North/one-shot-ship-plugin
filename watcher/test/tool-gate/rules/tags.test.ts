@@ -155,3 +155,16 @@ describe('tags rule: a repo that allows tags (the default)', () => {
     expect(check(cmd, TAGS_OK)).toBeNull();
   });
 });
+
+describe('tags rule: wildcard refspecs', () => {
+  it.each(["git push origin 'refs/*:refs/*'", "git push origin '*:*'", "git push origin 'refs/t*:refs/t*'", "git push origin 'refs/tags/v*'"])(
+    'should refuse %s when tags are off, since the wildcard can name a tag',
+    (cmd) => {
+      expect(check(cmd)?.rule).toBe('tags');
+    },
+  );
+
+  it('should allow a wildcard that names branches only', () => {
+    expect(check("git push origin 'refs/heads/feat/*:refs/heads/feat/*'")).toBeNull();
+  });
+});

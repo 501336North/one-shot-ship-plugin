@@ -69,7 +69,7 @@ describe('tool-gate state store', () => {
     expect(store.readCycle()).toBeNull();
   });
 
-  it('should append one JSON line per event with ts, tool, kind, rule|command, result', () => {
+  it('should append one JSON line per event with ts, tool, kind, rule|program, result', () => {
     const repo = tempDir();
     const store = fileStateStore(repo);
     const refusal: GateEvent = {
@@ -83,7 +83,7 @@ describe('tool-gate state store', () => {
       ts: '2026-11-09T20:02:00.000Z',
       tool: 'Bash',
       kind: 'test-run',
-      command: 'npm test',
+      program: 'npm',
       result: 'red',
     };
     store.appendEvent(refusal);
@@ -143,7 +143,7 @@ describe('tool-gate state store', () => {
       ts: '2026-11-09T20:04:00.000Z',
       tool: 'Bash',
       kind: 'test-run',
-      command: 'npm test',
+      program: 'npm',
       result: 'green',
     };
     expect(() => fileStateStore(repo).appendEvent(event)).toThrow();

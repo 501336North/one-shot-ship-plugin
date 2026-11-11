@@ -236,3 +236,57 @@ During T9 the user asked whether US-007 belongs in a determinism sprint.
 
 # Amendment to ADR-003 (2026-11-09, `/oss:build`, user pick): user-level tamper paths
 `~/.claude/settings*.json` and `~/.claude/plugins/**` join the base `protectedPaths`. Without them, an agent could set `disableAllHooks: true`, or edit the installed plugin's `hooks.json` / `tool-gate.cjs`, and switch off every gate.
+
+---
+
+# ADR-010: Unreadable commands are refused only when risky; reading limits are refused
+
+**Date:** 2026-11-10
+**Status:** Accepted (user decision, `/oss:ship` fix round 2). Supersedes ADR-009's "dynamic scripts stay unreadable: they are allowed and logged" and ADR-007's "anything it can't read is unreadable (allowed and logged)".
+
+## Context
+Under ADR-009 a command the gate couldn't read was allowed as a whole, readable parts included. Any piece the reader gave up on was a way past every rule: a brace word over the cap after `git push origin main`, `echo ${x:-$(true)}; git push origin main`, `bash -c 'echo $0; git push --force'`, `eval 'echo $x; rm -rf .oss/tool-gates'`. Reading limits were also a way to make the gate slow, and a slow gate allows the call (ADR-005).
+
+## Research
+| Option | Pros | Cons | Fit |
+|--------|------|------|-----|
+| Refuse a reading limit; read every readable part; refuse an unreadable piece only next to something risky | Closes the bypasses; ordinary unreadable commands (`echo ${x:-$(date)}`) still run | A risky command next to an unreadable piece must be split | Best |
+| Refuse every unreadable command | Simplest, strictest | Over-refuses harmless commands that use `${…}` or `$((…))` | Poor |
+| Keep ADR-009 | No work | The bypasses above stay open | Poor |
+
+## Decision
+- **(a) A reading limit refuses the call** ("too complex for the gate to check; split it into simpler commands"): nesting (substitutions or brace groups over 64, groups over 64, wrappers over 64, scripts over 5 deep), input over 1 MB, a word expanding to over 256 words, a call over 2048 words or over 64 KB of words after expansion.
+- **(b) Otherwise every readable part is read and checked.** An unreadable piece (a `-c` / `eval` script that is not literal, a `${…}` or `$((…))` that runs a command, a syntax error) is read past: the commands inside `${…}` / `$((…))` are still read as parts, and the tokens before a syntax error are kept. If anything stayed unreadable, the call is refused when it also runs git that pushes, commits, changes config or writes refs; names a protected path (judged on the word's text, no links followed); or runs an interpreter or shell (`bash`, `sh`, `zsh`, `python*`, `node`, `perl`, `ruby`, `eval`, `source` …). Rule id `unreadable`.
+- **(c) Otherwise** the call is allowed and logged `unreadable`, as before.
+
+## Consequences
+- **Positive:** an unreadable piece can no longer carry a forbidden command past the rules, and no reading limit can be used to make the gate slow.
+- **Negative:** `eval "$(ssh-agent)" && git push` and `bash -c "$CMD"` are now refused; the agent splits them or the user runs them with `!`.
+
+---
+
+# ADR-011: The gate stops agent mistakes and shortcuts, not a determined adversary
+
+**Date:** 2026-11-10
+**Status:** Accepted (user decision, `/oss:ship` fix round 4). Narrows ADR-005 for timeouts: going past the per-call deadline now refuses.
+
+## Context
+Four ship review rounds and two pen-tests found a long tail of shell, git and interpreter tricks that get a forbidden call past a static reader. Examples: wrapper options, awk and expect scripts, `CDPATH`, dotglob, git keys that run programs, and `fast-import` streams. Each round closed one batch and found the next. A reader of shell text that never runs the command can't be complete against someone who sets out to beat it. The real threat model is an agent that slips (`git push origin main`, `rm -rf .oss/tool-gates`, skipping RED). That agent takes a shortcut or reaches for a common wrapper. It doesn't build exploits.
+
+## Research
+| Option | Pros | Cons | Fit |
+|--------|------|------|-----|
+| Scope the gate to mistakes and shortcuts; fail safe on time; defer the long tail by name | Ships; every known gap is listed; no input can make the gate slow enough to allow | Determined bypasses stay possible and are documented | Best |
+| Keep fixing until no reviewer finds a bypass | Strongest reader | Doesn't end: each round finds new variants, and each fix risks over-refusing | Poor |
+| Run commands in a sandbox and watch what they do | Complete | A different product (OS-level), heavy, not in R-253 | Poor |
+
+## Decision
+- The gate's promise is: **an agent's ordinary mistakes and common shortcuts around the IRON LAWS are refused**, and every refusal says why and what to do instead. It is not a security boundary against a hostile agent or user.
+- **Fail-safe on time:** a per-call deadline (1.0 s, checked every 256 steps inside every hot loop; 1.5 s and every 1024 steps until fix part K12) and per-call budgets (tree entries, script bytes, git time) refuse as too complex. No input can push the decision past the worker's hard limit. A real crash still allows, per ADR-005.
+- Medium- and low-severity findings from the round-4 re-check, and every gap the user named, are deferred by name to `.oss/dev/FOLLOWUPS.md` and the PR body. Nothing is deferred silently.
+- New bypass reports are triaged against this scope. A shortcut an agent might plausibly take is a fix; a constructed exploit chain is a follow-up.
+
+## Consequences
+- **Positive:** the review loop ends with a known, listed set of limits; time-based fail-open is closed.
+- **Negative:** a determined adversary can still get past the gate with a listed trick. Real protection for `main` stays with branch protection on the server.
+- **Neutral:** the pen-test record for round 4 is partial (surfaces 5-9 were not pen-tested; the security auditor's probes cover 5-7 and 9).

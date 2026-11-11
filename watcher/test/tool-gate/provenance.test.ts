@@ -30,7 +30,7 @@ function baseListValues(): string[] {
 }
 
 describe('base settings file', () => {
-  it('should ship the design settings, with the gate state folder protected', () => {
+  it('should ship the design settings, with the gate state folder, the workflow state and git config files protected', () => {
     const base: unknown = JSON.parse(fs.readFileSync(BASE_FILE, 'utf8'));
     expect(base).toEqual({
       version: 1,
@@ -38,7 +38,12 @@ describe('base settings file', () => {
       testFilePatterns: ['**/*.test.*', '**/*.spec.*', '**/__tests__/**', '**/test_*.sh', '**/*_test.go'],
       testCommandPatterns: [
         'npm test', 'npm run test*', 'pnpm test', 'pnpm run test*', 'yarn test', 'yarn run test*',
-        'bun test', 'npx vitest', 'npx jest', 'vitest', 'jest', 'pytest', 'python -m pytest',
+        'bun test', 'npx vitest', 'npx jest',
+        // fix part K13: common runner spellings, so their runs are recorded
+        'pnpm vitest', 'pnpm exec vitest', 'pnpm jest', 'pnpm exec jest', 'yarn vitest', 'yarn jest', 'bunx vitest',
+        './node_modules/.bin/vitest', './node_modules/.bin/jest',
+        'vitest', 'jest', 'pytest', 'python -m pytest',
+        'python3 -m pytest', 'uv run pytest', 'poetry run pytest', 'python -m unittest', 'python3 -m unittest',
         'go test', 'cargo test', 'swift test', 'make test', 'make check', './gradlew test',
         'gradle test', 'mvn test', 'dotnet test', 'rspec', 'bundle exec rspec', 'phpunit',
         'bash *test*.sh',
@@ -47,7 +52,15 @@ describe('base settings file', () => {
       // DESIGN.md build amendment 2026-11-09, user pick
       protectedPaths: [
         '.oss/tool-gates.json', '.oss/tool-gates/**', '~/.oss/hooks/**', '.claude/settings*.json',
-        '~/.claude/settings*.json', '~/.claude/plugins/**',
+        '~/.claude/settings*.json', '~/.claude/plugins/**', '.oss/workflow-state.json',
+        // ship round 2 (R2b): git's own config files, which can change where a push goes or make git run a command;
+        // `**/` so a worktree's shared config (in the main checkout's .git) is covered too
+        '**/.git/config', '**/.git/config.worktree', '**/.git/worktrees/*/config.worktree', '~/.gitconfig', '~/.config/git/config',
+        // fix round 4 (K2): hooks run on commit and push; the files that decide which repository, branch
+        // and settings git uses (a `.git` file, HEAD, refs, commondir) can't be planted by the call that
+        // then commits or pushes; a submodule's settings, like a repo's
+        '**/.git/hooks/**', '**/.git', '**/.git/HEAD', '**/.git/commondir', '**/.git/refs/**', '**/.git/packed-refs',
+        '**/.git/worktrees/*/HEAD', '**/.git/worktrees/*/commondir', '**/.git/worktrees/*/gitdir', '**/.git/modules/**/config',
       ],
       productionHosts: [],
       tagsAllowed: true,

@@ -9,7 +9,7 @@ import type { Refusal } from './refusal.js';
 import { readPushWords } from './push-words.js';
 
 /** A single-dash cluster of short flags that includes `f` (`-f`, `-fu`, `-uf`). */
-const SHORT_FORCE = /^-[A-Za-z]*f[A-Za-z]*$/;
+const SHORT_FORCE = /^-(?=[A-Za-z]*f)[A-Za-z]+$/;
 
 function isForce(option: string): boolean {
   return option === '--force' || option.startsWith('--force-') || SHORT_FORCE.test(option);

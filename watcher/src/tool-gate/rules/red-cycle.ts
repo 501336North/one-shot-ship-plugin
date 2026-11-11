@@ -14,7 +14,7 @@ import { BUILD_COMMAND, type WorkflowState } from '../workflow-state.js';
 import type { Refusal } from './refusal.js';
 
 const NO_RUN =
-  "Refused: No failing test recorded. Write a failing test and run it. If your tests run with a command the gate doesn't recognize, ask the user to add it to .oss/tool-gates.json with `!`.";
+  "Refused: No failing test recorded in this build. Write a failing test and run it on its own with a test command, unpiped (for example `npx vitest run <file>` or `pytest <file>`). Another command that names a test file or has the word test, spec or check in it, and fails, is taken as this build's test command.";
 
 /**
  * The OSS dev docs are never covered (AC-004.5). A code constant, not a rule value: it is the
@@ -24,7 +24,9 @@ const DEV_DOCS = '.oss/dev/**';
 
 function isSourceFile(filePath: string, settings: GateSettings, root: string, home: string): boolean {
   return (
-    settings.sourceExtensions.includes(path.extname(filePath)) &&
+    // Any case: `foo.TS` is the same kind of file. Test-file patterns and the dev-docs folder stay
+    // case-sensitive here, since matching them more widely would exempt more files from the rule.
+    settings.sourceExtensions.some((ext) => ext.toLowerCase() === path.extname(filePath).toLowerCase()) &&
     !matchPath(DEV_DOCS, filePath, { home, root }) &&
     !matchAnyPath(settings.testFilePatterns, filePath, { home, root })
   );

@@ -136,37 +136,4 @@ describe('tool-gate project folder: CLAUDE_PROJECT_DIR first, the nearest .git o
     // Then: each write is refused, the repo being found from its .git
     expect(results.map((result) => result.exitCode)).toEqual([2, 2, 2]);
   });
-
-  it("should match a repo-anchored test-file pattern from a subfolder when adopting a build's runner", async () => {
-    // Given: the repo adds e2e/*.js to the test-file patterns, and a build runs
-    const repo = makeRepo();
-    const base = JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, 'config', 'tool-gates.json'), 'utf8')) as {
-      testFilePatterns: string[];
-    };
-    writeRepoFile(
-      repo,
-      '.oss/tool-gates.json',
-      JSON.stringify({ version: 1, testFilePatterns: [...base.testFilePatterns, 'e2e/*.js'] }),
-    );
-    startBuild(repo);
-    const e2e = path.join(repo, 'e2e');
-    writeRepoFile(repo, 'e2e/flow.js', '');
-
-    // When: `node flow.js`, run in e2e/, fails
-    await gate(
-      'post',
-      {
-        cwd: e2e,
-        hook_event_name: 'PostToolUseFailure',
-        tool_name: 'Bash',
-        tool_input: { command: 'node flow.js' },
-        error: 'Exit code 1',
-        is_interrupt: false,
-      },
-      repo,
-    );
-
-    // Then: it is adopted as the build's test runner and counted red
-    expect(eventKinds(repo)).toEqual(['runner-adopted', 'test-run']);
-  });
 });

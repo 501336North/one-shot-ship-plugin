@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readEditCall } from '../../src/tool-gate/edit-call.js';
+import { readEditCall, readEditTarget } from '../../src/tool-gate/edit-call.js';
 
 const CWD = '/work/repo';
 const HOME = '/home/dev';
@@ -170,5 +170,27 @@ describe('reading an edit-tool call: .. is kept for the disk to resolve', () => 
   it('should still drop . and doubled slashes', () => {
     const call = readEditCall('Edit', { file_path: './src//a.ts', old_string: 'x', new_string: 'y' }, CWD, HOME, NO_FILES);
     expect(call?.filePath).toBe('/work/repo/src/a.ts');
+  });
+});
+
+describe('reading the file an edit-tool call targets, whatever the rest of its input looks like', () => {
+  it('should find the notebook of a NotebookEdit delete that has no new source', () => {
+    const input = { notebook_path: '.oss/tool-gates/x.ipynb', edit_mode: 'delete', cell_id: 'a' };
+    expect(readEditTarget('NotebookEdit', input, CWD, HOME)).toEqual({
+      tool: 'NotebookEdit',
+      filePath: '/work/repo/.oss/tool-gates/x.ipynb',
+    });
+  });
+
+  it('should find the file of a Write that has no content', () => {
+    expect(readEditTarget('Write', { file_path: '~/.gitconfig' }, CWD, HOME)).toEqual({
+      tool: 'Write',
+      filePath: '/home/dev/.gitconfig',
+    });
+  });
+
+  it('should find nothing when the call names no file or is not an edit tool', () => {
+    expect(readEditTarget('Write', { content: 'x' }, CWD, HOME)).toBeNull();
+    expect(readEditTarget('Read', { file_path: 'a.ts' }, CWD, HOME)).toBeNull();
   });
 });
