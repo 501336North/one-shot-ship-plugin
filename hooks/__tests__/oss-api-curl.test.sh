@@ -319,7 +319,7 @@ test_settings_update_refuses_bad_link() {
 test_sites() {
     check_site "fetch-iron-laws.sh" bash "$HOOKS_DIR/fetch-iron-laws.sh"
     check_site "oss-fetch-team-iron-laws.sh" bash "$HOOKS_DIR/oss-fetch-team-iron-laws.sh"
-    check_site "oss-push-metrics.sh" bash "$HOOKS_DIR/oss-push-metrics.sh" '{"command":"build"}'
+    # oss-push-metrics.sh is no longer a site: plugin-main-fixes D2 deleted it (no-metrics-push.test.sh).
 }
 
 # T21 (security S3): a config jq cannot parse still yields the key to a grep, so its apiUrl must not fall back
@@ -335,7 +335,7 @@ check_unparsable_no_call() { # $1 label, then the command
 }
 test_unparsable_sites() {
     check_unparsable_no_call "fetch-iron-laws.sh" bash "$HOOKS_DIR/fetch-iron-laws.sh"
-    check_unparsable_no_call "oss-push-metrics.sh" bash "$HOOKS_DIR/oss-push-metrics.sh" '{"command":"build"}'
+    # oss-push-metrics.sh is no longer a site: plugin-main-fixes D2 deleted it (no-metrics-push.test.sh).
 }
 
 echo "Running oss-api-curl.sh tests..."

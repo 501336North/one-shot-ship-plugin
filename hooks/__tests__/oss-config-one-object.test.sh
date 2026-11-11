@@ -152,7 +152,7 @@ else fail "[no jq, no node] a valid config gives no key" "rc=$RC out=$(printf '%
 # refresh itself with /bin/bash; session-start-iron-laws.test.sh covers the detached refresh.
 mkdir -p "$KS/plugin/hooks"
 for n in oss-session-start.sh oss-api-curl.sh oss-safe-path.sh oss-config.sh oss-settings-cleanup.sh \
-         fetch-iron-laws.sh oss-fetch-team-iron-laws.sh oss-push-metrics.sh oss-iron-laws-sync.sh; do
+         fetch-iron-laws.sh oss-fetch-team-iron-laws.sh oss-iron-laws-sync.sh; do   # oss-push-metrics.sh deleted (D2)
     [[ -f "$HOOKS/$n" ]] && cp "$HOOKS/$n" "$KS/plugin/hooks/$n"
 done
 chmod a-x "$KS/plugin/hooks/oss-iron-laws-sync.sh"
@@ -179,7 +179,6 @@ site() {
     case "$1" in
         (fetch-iron-laws) cmd=(/bin/bash "$KS/plugin/hooks/fetch-iron-laws.sh") ;;
         (team-iron-laws) cmd=(/bin/bash "$KS/plugin/hooks/oss-fetch-team-iron-laws.sh" --force) ;;
-        (push-metrics) cmd=(/bin/bash "$KS/plugin/hooks/oss-push-metrics.sh" '{"command":"build"}') ;;
         (iron-laws-sync) cmd=(/bin/bash "$KS/plugin/hooks/oss-iron-laws-sync.sh" --install) ;;
         (session-start) cmd=(/bin/bash "$SS_HOOK") ;;
     esac
@@ -190,7 +189,8 @@ site() {
     TO=$(grep -oE 'https?://[^ ]+' "$SHIM/argv" 2>/dev/null | tr '\n' ' ')
 }
 
-SITES=(fetch-iron-laws team-iron-laws push-metrics iron-laws-sync)
+# The metrics push is no longer a site: plugin-main-fixes D2 deleted it (no-metrics-push.test.sh).
+SITES=(fetch-iron-laws team-iron-laws iron-laws-sync)
 for MODE in jq nojq; do
     for S in "${SITES[@]}"; do
         site "$S" "$MODE" "$NESTED"

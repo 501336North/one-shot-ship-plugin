@@ -8,14 +8,15 @@
 #
 # Tests:
 # 1. commands/ideate.md should NOT contain hardcoded 'cat > CLAUDE.md' pattern
-# 2. commands/ideate.md should contain API template fetch instruction
+# 2. commands/ideate.md hands CLAUDE.md setup to an OSS hook and holds no template text
 # 3. skills/ideate.md should NOT contain hardcoded 'cat > CLAUDE.md' pattern
 # 4. skills/ideate.md should contain API template fetch instruction
 
 set -uo pipefail
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-COMMANDS_IDEATE="$SCRIPT_DIR/../ideate.md"
+COMMANDS_IDEATE="$SCRIPT_DIR/../ideate.md"   # never from the environment: an exported value would check another file
 SKILLS_IDEATE="$SCRIPT_DIR/../../skills/ideate.md"
 
 # Test tracking
@@ -63,13 +64,24 @@ test_commands_no_hardcoded_template() {
 }
 
 # =============================================================================
-# TEST 2: commands/ideate.md should contain API template fetch instruction
+# TEST 2: commands/ideate.md hands CLAUDE.md setup to an OSS hook, holds no template
 #
-# @behavior The ideate command fetches CLAUDE.md template from API
-# @acceptance-criteria commands/ideate.md references API template endpoint
+# ⚠ changes existing test (D3). Replaces the spec line:
+#   "commands/ideate.md should contain API template fetch instruction"
+# Why: #161 (9368730) intentionally removed the in-command template fetch
+# (bash key grep + WebFetch /api/v1/prompts/claude-md + merge + inline
+# fallback) and replaced it with one call to ~/.oss/hooks/oss-iron-laws-sync.sh.
+# The template fetch now lives only in ~/.oss/hooks/oss-claude-md-template.sh
+# (#216, covered by hooks/__tests__/oss-claude-md-template.test.sh), which
+# skills/ideate.md calls (TEST 4).
+#
+# @behavior /oss:ideate sets up CLAUDE.md only through an OSS hook script
+# @business-rule Ideate must NOT hardcode CLAUDE.md content inline (no template
+#   heading, no IRON LAWS markers or placeholder); the template comes from the API
+#   via the hooks, never from text in the command
 # =============================================================================
-test_commands_has_api_fetch() {
-    local test_name="commands/ideate.md should contain API template fetch instruction"
+test_commands_delegates_claude_md_to_hook() {
+    local test_name="commands/ideate.md hands CLAUDE.md setup to an OSS hook and holds no template text"
     ((TESTS_RUN++))
 
     if [[ ! -f "$COMMANDS_IDEATE" ]]; then
@@ -77,10 +89,17 @@ test_commands_has_api_fetch() {
         return
     fi
 
-    if grep -q 'prompts/claude-md\|prompts/templates/claude-md\|template.*API\|fetch.*template' "$COMMANDS_IDEATE"; then
-        pass "$test_name"
+    if ! grep -qE '~/\.oss/hooks/oss-(iron-laws-sync|claude-md-template)\.sh' "$COMMANDS_IDEATE"; then
+        fail "$test_name" "a call to ~/.oss/hooks/oss-iron-laws-sync.sh or oss-claude-md-template.sh" "no OSS hook call for CLAUDE.md"
+        return
+    fi
+
+    local inline
+    inline=$(grep -nE 'IRON LAWS START|IRON LAWS END|IRON LAWS will be injected here|^# Project Development Guide' "$COMMANDS_IDEATE" | head -1)
+    if [[ -n "$inline" ]]; then
+        fail "$test_name" "no inline CLAUDE.md template text" "$inline"
     else
-        fail "$test_name" "API template fetch instruction" "no API template fetch found"
+        pass "$test_name"
     fi
 }
 
@@ -135,7 +154,7 @@ echo "Running ideate CLAUDE.md template tests..."
 echo "======================================="
 
 test_commands_no_hardcoded_template
-test_commands_has_api_fetch
+test_commands_delegates_claude_md_to_hook
 test_skills_no_hardcoded_template
 test_skills_has_api_fetch
 

@@ -103,7 +103,7 @@ exec '$REAL_CURL' \"\$@\"" || abort "the curl shim warms up" "warm-up did not ru
 # The plugin as installed: the hooks under test and their helpers, oss-notify.sh a no-op; session start by its alias.
 P="$T/plugin"; mkdir -p "$P/hooks"
 for n in check-updates.sh oss-changelog.sh fetch-iron-laws.sh oss-fetch-team-iron-laws.sh oss-login.sh oss-value.sh \
-         oss-push-metrics.sh oss-session-start.sh oss-api-curl.sh oss-safe-path.sh oss-config.sh oss-settings-cleanup.sh \
+         oss-session-start.sh oss-api-curl.sh oss-safe-path.sh oss-config.sh oss-settings-cleanup.sh \
          oss-iron-laws-sync.sh; do
     [[ -f "$HOOKS/$n" ]] && cp "$HOOKS/$n" "$P/hooks/$n"
 done
@@ -225,17 +225,7 @@ fresh '{"plan":"pro"}'; flood; login
     || fail "login: a flooded answer is a failed check" "rc=$RC out=${OUT:0:200} err=${ERR:0:200} key=$(saved_key)"
 stopped "login"
 
-# --- oss-push-metrics.sh (POST; only the status is used) ------------------------------------------------------------
-pm_log() { cat "$H/.oss/logs/metrics-push.log" 2>/dev/null; }
-pm_pending() { ls "$H/.oss/pending-metrics" 2>/dev/null | grep -c '\.json$'; }
-fresh '{"ok":true}'; : > "$T/nolen"; : > "$T/oldcurl"; hook /bin/bash "$P/hooks/oss-push-metrics.sh" '{"command":"build"}'
-[[ "$RC" == 0 && "$(pm_log)" == *"Metrics pushed successfully (HTTP 200)"* && "$(pm_pending)" == 0 ]] \
-    && pass "push-metrics: a small answer with no Content-Length is a push (control)" || fail "push-metrics: a small answer is a push" "rc=$RC log=$(pm_log)"
-fresh '{"ok":true}'; flood; hook /bin/bash "$P/hooks/oss-push-metrics.sh" '{"command":"build"}'
-[[ "$RC" == 0 && "$(pm_log)" == *"curl failed (network error or timeout)"* && "$(pm_log)" != *"pushed successfully"* && "$(pm_pending)" == 1 ]] \
-    && pass "push-metrics: a flooded answer is a failed push: logged as such, the metrics kept for retry" \
-    || fail "push-metrics: a flooded answer is a failed push" "rc=$RC pending=$(pm_pending) log=$(pm_log)"
-stopped "push-metrics"
+# --- oss-push-metrics.sh: no longer shipped, plugin-main-fixes D2 deleted it (no-metrics-push.test.sh) ---------------
 
 # --- oss-session-start.sh (the subscription check) -------------------------------------------------------------------
 fresh '{"status":"active"}'; : > "$T/nolen"; : > "$T/oldcurl"; hook /bin/bash "$SS_HOOK"
