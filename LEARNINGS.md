@@ -305,3 +305,9 @@
 - **Context:** ship
 - **Insight:** Take the ship fix-loop's `fix-base` snapshot BEFORE each fix round starts; round 2 here had to fall back to the round-1 `fix-head` (same tree, checked) because the base was not taken. Each round's gates also find bugs in the previous round's own tests (a BSD-first `stat` slipped into a Task 15 test; the stat-order guard caught it), so run every guard after every task, not just the task's files.
 - **Insight:** A bash `>>` after a link check is always racy against a same-user process; there is no O_NOFOLLOW in bash. Rather than fix it file by file, fix every append together (an inline perl `sysopen ... O_NOFOLLOW` helper), or the gates will raise it on each new writer.
+
+## 2026-11-11 | Process | plugin-main-fixes
+- **Context:** ship
+- **Insight:** A test runner that gates merges is itself attack surface: six gate rounds were spent on fail-open paths (nothing found, symlinks, a test killing `sort` or rewriting the runner) and on signals (blocked SIGALRM, Ctrl-C to a separate process group, the fork-to-handler window). Design new runners fail-closed from the start: load the whole list before any test, put the body in a function, block signals across fork.
+- **Insight:** Every test check must also pass when the suite runs in the background (`& wait`): a non-interactive shell starts background jobs with SIGINT ignored, and the merge step runs `npm test` that way. Never kill by a bare name in a test (`pkill -f '^sleep 300$'` hit other runs); mark your own processes and kill only the mark.
+- **Insight:** A same-user test can always SIGSTOP its watchdog; only an outer timeout bounds that (D8). Decide such limits with the owner early instead of chasing them round after round.
