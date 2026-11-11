@@ -42,6 +42,15 @@ if [[ -x "$V" && -n "$out" && -d "$out" ]]; then pass "oss-value.sh copied, exec
 else fail "oss-value.sh copied, executable, and its dir verb works from ~/.oss/hooks" "exists=$([[ -f $V ]] && echo y || echo n) exec=$([[ -x $V ]] && echo y || echo n) dir='$out'"; fi
 rm -rf "$T"
 
+# merge-test-hook Task 3: the ship merge step runs ~/.oss/hooks/oss-value.sh merge-test, which runs the sibling
+#         oss-merge-test.sh, so session start installs it beside oss-value.sh, a plain executable file.
+T=$(mktemp -d)
+HOME="$T" CLAUDE_PLUGIN_ROOT="$ROOT" bash "$SS_HOOK" >/dev/null 2>&1 </dev/null
+MT="$T/.oss/hooks/oss-merge-test.sh"
+if [[ -f "$MT" && ! -L "$MT" && -x "$MT" && -x "$T/.oss/hooks/oss-value.sh" ]]; then pass "oss-merge-test.sh copied beside oss-value.sh, a plain executable file"
+else fail "oss-merge-test.sh copied beside oss-value.sh, a plain executable file" "exists=$([[ -f $MT ]] && echo y || echo n) exec=$([[ -x $MT ]] && echo y || echo n)"; fi
+rm -rf "$T"
+
 # radical-observability Task 14: /oss:settings decisions calls ~/.oss/hooks/oss-decisions-policy.sh, so
 #         session start installs it, runnable, beside the oss-api-curl.sh it sources (no key: it says so).
 T=$(mktemp -d)
