@@ -72,6 +72,36 @@ allowed "the comment naming the retired keys being removed" \
 allowed "the prose naming the retired settings being removed" \
     'merges the choices (every other setting is kept, except the retired Telegram settings, which are removed; ...)'
 
+# Ship round 1 (pen test): the same rules hold for every command and skill file, not only settings.md, in any
+# letter case, and for any file named after Telegram. Checked on a temp copy of commands/ and skills/.
+P="$T/plugin"; mkdir -p "$P"; cp -R "$C" "$P/commands"; cp -R "$C/../skills" "$P/skills"
+plugin_offers() {
+    # NUL-separated names, and names never pasted into a sed or awk program (ship round 2): a name holding #, \ or
+    # a newline must still be scanned and reported.
+    local f l
+    while IFS= read -r -d '' f; do
+        while IFS= read -r l; do printf '%s:%s\n' "${f#"$1"/}" "$l"; done < <(telegram_offers "$f")
+    done < <(find "$1/commands" "$1/skills" -name __tests__ -prune -o -type f -name '*.md' -print0)
+    while IFS= read -r -d '' f; do printf '%s\n' "${f#"$1"/}"; done \
+        < <(find "$1/commands" "$1/skills" -name __tests__ -prune -o -iname '*telegram*' -print0)
+    grep -rniE '/oss:telegram|/api/v1/telegram' --include='*.md' --exclude-dir=__tests__ "$1/commands" "$1/skills"
+}
+check "no command or skill offers or calls Telegram" "$(plugin_offers "$P")"
+caught_in() {  # $1 = description, $2 = file under the copy, $3 = line added; passes when flagged
+    cp "$P/$2" "$T/keep" 2>/dev/null || : > "$T/keep"
+    printf '%s\n' "$3" >> "$P/$2"
+    local o; o="$(plugin_offers "$P")"   # captured first: under pipefail, grep -q would SIGPIPE the search
+    check "the check flags $1" "$([[ -n "$o" ]] || echo "not flagged in $2")"
+    if [[ -s "$T/keep" ]]; then cp "$T/keep" "$P/$2"; else rm -f "$P/$2"; fi
+}
+caught_in "a Telegram menu option in another command (status.md)" commands/status.md '   - label: "Telegram", description: "Get notifications in Telegram"'
+caught_in "/oss:Telegram in any letter case" commands/login.md 'For phone alerts, run /oss:Telegram.'
+caught_in "a command file named after Telegram (telegram-setup.md)" commands/telegram-setup.md 'Set up notifications.'
+caught_in "a Telegram offer in a skill" skills/ideate.md 'Tip: connect Telegram to get notified when the design is ready.'
+caught_in "a Telegram offer in a file whose name holds # (ship round 2)" 'commands/a#b.md' '   - label: "Telegram", description: "Get notifications in Telegram"'
+caught_in "a Telegram offer in a file whose name holds a backslash (ship round 2)" 'commands/a\1b.md' '   - label: "Telegram", description: "Get notifications in Telegram"'
+caught_in "a Telegram offer in a file whose name holds a newline (ship round 2)" $'commands/x\ny.md' '   - label: "Telegram", description: "Get notifications in Telegram"'
+
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
 [[ $FAILED -eq 0 ]]

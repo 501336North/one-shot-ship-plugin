@@ -108,6 +108,28 @@ rc_run 30 /usr/bin/true
 [[ $RC -eq 0 && ! -s "$T/out" && ! -s "$T/err" ]] && pass "normal run: status 0 and no output of its own" \
     || fail "normal run: status 0" "rc=$RC out=$(cat "$T/out") err=$(cat "$T/err")"
 
+# 5. a caller that blocks SIGALRM must not pass that block on to the command: a hook's own `read -t 2`
+#    would never time out, and the test would hang until the cap (ship round 4).
+LIB="${RUN_CAPPED_LIB:-$SCRIPT_DIR/lib/run-capped.sh}"
+# The same watchdog as rc_run: a run_capped that lost its cap here would otherwise hang this file forever.
+RCAP_MARK="$MARK" /usr/bin/perl -e 'sleep 30; exec "/usr/bin/pkill", "-KILL", "-f", $ENV{RCAP_MARK}' </dev/null >/dev/null 2>&1 &
+wd=$!
+s0=$SECONDS
+/usr/bin/perl -MPOSIX -e 'sigprocmask(SIG_BLOCK, POSIX::SigSet->new(SIGALRM)); exec @ARGV' \
+    /bin/bash -c 'source "$1"; mkfifo "$3/fifo-$2" && run_capped 20 /bin/bash -c "exec 3<>\"\$0\"; read -t 1 -u 3" "$3/fifo-$2"' _ "$LIB" "$MARK" "$T" \
+    </dev/null >"$T/out" 2>"$T/err"; RC=$?
+left=$(survivors)
+[[ $RC -ne 0 && $RC -ne $RUN_CAPPED_CAP_RC && $((SECONDS - s0)) -lt 8 ]] && pass "caller blocks SIGALRM: the command's own read -t timeout still fires" \
+    || fail "caller blocks SIGALRM: the command's own read -t timeout still fires" "rc=$RC after $((SECONDS - s0)) s"
+[[ -z "$left" ]] && pass "caller blocks SIGALRM: nothing left" || fail "caller blocks SIGALRM: nothing left" "$left"
+/usr/bin/perl -MPOSIX -e 'sigprocmask(SIG_BLOCK, POSIX::SigSet->new(SIGALRM)); exec @ARGV' \
+    /bin/bash -c 'source "$1"; run_capped 20 /usr/bin/perl -e "\$SIG{INT} = q(DEFAULT); kill q(INT), \$\$; sleep 10" "$2"' _ "$LIB" "$MARK" \
+    </dev/null >"$T/out" 2>"$T/err"; RC=$?
+left=$(survivors)
+[[ $RC -eq 130 ]] && pass "the command still gets its own Ctrl-C (run_capped holds INT back only from itself)" \
+    || fail "the command still gets its own Ctrl-C (run_capped holds INT back only from itself)" "rc=$RC"
+kill "$wd" 2>/dev/null; wait "$wd" 2>/dev/null
+
 [[ "$RUN_CAPPED_CAP_RC" != "$RUN_CAPPED_LEAK_RC" && "$RUN_CAPPED_CAP_RC" != 0 && "$RUN_CAPPED_LEAK_RC" != 0 ]] \
     && pass "cap and leak codes are distinct and non-zero" || fail "distinct codes" "cap=$RUN_CAPPED_CAP_RC leak=$RUN_CAPPED_LEAK_RC"
 

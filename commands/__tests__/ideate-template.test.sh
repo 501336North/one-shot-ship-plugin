@@ -16,7 +16,7 @@ set -uo pipefail
 unset OSS_CONFIG_DIR OSS_MANIFEST_URL
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-COMMANDS_IDEATE="${COMMANDS_IDEATE:-$SCRIPT_DIR/../ideate.md}"   # override: fixture runs only
+COMMANDS_IDEATE="$SCRIPT_DIR/../ideate.md"   # never from the environment: an exported value would check another file
 SKILLS_IDEATE="$SCRIPT_DIR/../../skills/ideate.md"
 
 # Test tracking
