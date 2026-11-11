@@ -32,6 +32,7 @@ const OPUS_AGENTS = [
   'security-auditor',
   'incident-responder',
   'performance-auditor',
+  'penetration-tester',
   'backend-architect',
   'cloud-architect',
   'debugger',
