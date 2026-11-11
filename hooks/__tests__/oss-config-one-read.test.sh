@@ -1,13 +1,14 @@
 #!/bin/bash
 # Every hook that sends the API key takes the key and the URL from ONE read of the config (T37).
 #
-# @behavior The template hook, oss-iron-laws-sync.sh, fetch-iron-laws.sh, oss-push-metrics.sh, session start,
+# @behavior The template hook, oss-iron-laws-sync.sh, fetch-iron-laws.sh, session start,
 #           oss-notify.sh's analytics call and the team-laws hook send key A only to URL A: when the config is
 #           replaced between two reads (here: right after the first one, by the jq or node that read it), no
 #           request carries the first file's key to the second file's URL, or the reverse. With jq and without.
 # @business-rule The key goes only to the API configured beside it in the same file, even while the file changes.
 # @boundary each hook run as its caller runs it (system boundary); curl is faked, jq and node are the real ones
 #           wrapped so the config changes after the first read.
+# The metrics push (oss-push-metrics.sh) is no longer a site: plugin-main-fixes D2 deleted it (no-metrics-push.test.sh).
 #
 # Usage:   /bin/bash hooks/__tests__/oss-config-one-read.test.sh
 #          HOOKS_UNDER_TEST=/path/to/hooks-copy /bin/bash ...   (runs against a copy, for mutants)
@@ -71,7 +72,7 @@ EOF
 # for oss-notify.sh (a workflow-state CLI file present, so its analytics call runs).
 mkdir -p "$KS/plugin/hooks" "$KS/pluginN/hooks" "$KS/pluginN/watcher/dist/cli"
 for n in oss-session-start.sh oss-api-curl.sh oss-safe-path.sh oss-config.sh oss-settings-cleanup.sh \
-         fetch-iron-laws.sh oss-fetch-team-iron-laws.sh oss-push-metrics.sh oss-iron-laws-sync.sh oss-claude-md-template.sh \
+         fetch-iron-laws.sh oss-fetch-team-iron-laws.sh oss-iron-laws-sync.sh oss-claude-md-template.sh \
          oss-decisions-policy.sh; do
     [[ -f "$HOOKS/$n" ]] && cp "$HOOKS/$n" "$KS/plugin/hooks/$n"
 done
@@ -97,7 +98,6 @@ site() {
     case "$1" in
         (fetch-iron-laws) cmd=(/bin/bash "$root/hooks/fetch-iron-laws.sh") ;;
         (team-iron-laws) cmd=(/bin/bash "$root/hooks/oss-fetch-team-iron-laws.sh" --force) ;;
-        (push-metrics) cmd=(/bin/bash "$root/hooks/oss-push-metrics.sh" '{"command":"build"}') ;;
         (iron-laws-sync) cmd=(/bin/bash "$root/hooks/oss-iron-laws-sync.sh" --install) ;;
         (claude-md-template) cmd=(/bin/bash "$root/hooks/oss-claude-md-template.sh") ;;
         (session-start) cmd=(/bin/bash "$SS_HOOK") ;;
@@ -120,7 +120,7 @@ site() {
 }
 
 for MODE in jq nojq; do
-    for S in fetch-iron-laws team-iron-laws push-metrics iron-laws-sync claude-md-template session-start notify; do
+    for S in fetch-iron-laws team-iron-laws iron-laws-sync claude-md-template session-start notify; do
         name="[$MODE] $S: the key goes only to the URL of the same read, while the config changes"
         site "$S" "$MODE"
         mixed=$(printf '%s\n' "$PAIRS" | grep -vE '^(fake-key-A https://a\.example\.com|fake-key-B https://b\.example\.com)$' | grep -v '^$')
