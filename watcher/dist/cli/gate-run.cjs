@@ -224,11 +224,12 @@ function git(cwd, args, extra) {
 function repoTop(cwd) {
   return git(cwd, ["rev-parse", "--show-toplevel"]);
 }
+var SNAPSHOT_PATHS = ["--", ":(top)", ":(top,exclude).oss"];
 function writeTree(top) {
   const scratch = import_node_fs3.default.mkdtempSync(import_node_path2.default.join(import_node_os.default.tmpdir(), "oss-gate-run-"));
   try {
     const index = { GIT_INDEX_FILE: import_node_path2.default.join(scratch, "index") };
-    git(top, ["add", "-A"], index);
+    git(top, ["add", "-A", ...SNAPSHOT_PATHS], index);
     return git(top, ["write-tree"], index);
   } finally {
     import_node_fs3.default.rmSync(scratch, { recursive: true, force: true });

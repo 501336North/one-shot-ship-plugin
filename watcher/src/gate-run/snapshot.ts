@@ -1,7 +1,9 @@
 /**
  * Snapshot at the start of a review (gate) agent's run (R-266, ADR-007, ADR-009): the repo's files as
  * they stand, tracked changes and new non-ignored files, written as a git tree through a temporary
- * index (`git add -A`, `git write-tree`), so the real index is never touched. The tree id is kept in
+ * index (`git add -A`, `git write-tree`), so the real index is never touched. The top-level `.oss/`
+ * folder is left out (user decision): it holds OSS's own workflow state, logs and dev docs, which OSS's
+ * hooks write during any run, not the code under review. The tree id is kept in
  * `<git-dir>/oss-gate-run/<agent_id>`. git runs from argv only, never a shell; the agent id is used as a
  * file name only when it is a plain one, and a symlinked state folder or file is refused.
  */
@@ -42,12 +44,15 @@ export function repoTop(cwd: string): string {
   return git(cwd, ['rev-parse', '--show-toplevel']);
 }
 
-/** The repo's files written as a tree through a throwaway index. */
+/** Every path from the repo's top except the top-level `.oss/` folder (git pathspec magic, argv only). */
+const SNAPSHOT_PATHS = ['--', ':(top)', ':(top,exclude).oss'];
+
+/** The repo's files, without the top-level `.oss/`, written as a tree through a throwaway index. */
 export function writeTree(top: string): string {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-gate-run-'));
   try {
     const index = { GIT_INDEX_FILE: path.join(scratch, 'index') };
-    git(top, ['add', '-A'], index);
+    git(top, ['add', '-A', ...SNAPSHOT_PATHS], index);
     return git(top, ['write-tree'], index);
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });

@@ -164,3 +164,52 @@ describe('the void message', () => {
     expect(message.split('\n').find((line) => line.includes('Ignore the above'))).toMatch(/evil/);
   });
 });
+
+/** Writes a file, making its folders. */
+function put(repo: string, rel: string, text: string): void {
+  fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+  fs.writeFileSync(path.join(repo, rel), text);
+}
+
+describe("OSS's own workflow folder (.oss/) is not code under review (user decision, live false void)", () => {
+  afterEach(() => {
+    while (tempDirs.length > 0) fs.rmSync(tempDirs.pop()!, { recursive: true, force: true });
+  });
+
+  /** A repo with a tracked dev doc under .oss/. */
+  function repoWithDevDocs(): string {
+    const repo = makeRepo();
+    put(repo, '.oss/dev/active/x/PLAN.md', '# Plan\n');
+    git(repo, ['add', '-A']);
+    git(repo, ['commit', '-q', '-m', 'dev docs']);
+    return repo;
+  }
+
+  it('does not void a run when only files under .oss/ change (tracked and untracked)', () => {
+    const repo = repoWithDevDocs();
+    start(repo, 'agent-o1');
+    put(repo, '.oss/dev/timeline-unfiled.ndjson', '{"event":"agent"}\n');
+    put(repo, '.oss/dev/active/x/PLAN.md', '# Plan, updated\n');
+    put(repo, '.oss/logs/session.log', 'log\n');
+
+    expect(stop(repo, 'agent-o1')).toEqual({ kind: 'none' });
+  });
+
+  it('reports only the source file when both .oss/ and source change', () => {
+    const repo = repoWithDevDocs();
+    start(repo, 'agent-o2');
+    put(repo, '.oss/dev/timeline-unfiled.ndjson', '{"event":"agent"}\n');
+    put(repo, 'src/app.ts', 'export const a = 9;\n');
+
+    expect(stop(repo, 'agent-o2')).toEqual({ kind: 'void', files: ['src/app.ts'] });
+  });
+
+  it('still checks folders that only look like it: a root .ossfoo/ and a nested src/.oss/', () => {
+    const repo = repoWithDevDocs();
+    start(repo, 'agent-o3');
+    put(repo, '.ossfoo/a.txt', 'a\n');
+    put(repo, 'src/.oss/b.txt', 'b\n');
+
+    expect(stop(repo, 'agent-o3')).toEqual({ kind: 'void', files: ['.ossfoo/a.txt', 'src/.oss/b.txt'] });
+  });
+});

@@ -139,3 +139,20 @@ Picks are recorded by the hook in `decisions.ndjson`; the full Q&A is in `IDEATE
 **Decision.** Snapshot on `SubagentStart` and compare on `SubagentStop` for gate agents, keyed by `agent_id`. For a foreground run, the main agent is told through the `Agent` PostToolUse (`additionalContext`), found by `tool_response.agentId`. For a background run, `SubagentStop` records the void (state + timeline) and tells the user (`systemMessage`). The message says the repo changed while the review ran, since the change may come from any writer during the run.
 
 **Consequences.** + Background review runs are covered. + The plan's Task 10-12 tests stay the same in substance; their trigger events change. − Two more hook events in `hooks.json`.
+
+---
+
+## ADR-010: The review tree check leaves out the top-level `.oss/` folder
+
+**Date:** 2026-11-11 · **Status:** Accepted (user pick at /oss:integration: "Ignore all of .oss/")
+
+**Context.** A live background review run was voided although the review agent changed nothing: while it ran, OSS's own hooks wrote `.oss/dev/timeline-unfiled.ndjson` (they also write `.oss/logs/**`, `.oss/workflow-state.json`, `.oss/session-context.md`). Untracked, non-ignored, so the tree changed. Nearly every ship review would have been voided.
+
+| Option | Pros | Cons |
+|--------|------|------|
+| Leave out all of top-level `.oss/` (chosen) | Simple; holds as hooks change | A review agent's edit to `.oss/dev` docs goes unseen by this check (the gate rule still refuses its known writes) |
+| Leave out only OSS-written files | Tighter | List must track every hook writing under `.oss/`; a new one brings false voids back |
+
+**Decision.** Start and stop trees both omit the top-level `.oss/` folder. `.oss` folders deeper in the tree and look-alikes (`.ossfoo/`) are still checked. The live row gets a control: a clean review run is not voided.
+
+**Heads-up answered (2026-11-11):** "the before/after check may compare too early when review agents run in the background." Covered by ADR-009: the compare runs on SubagentStop, which fires at the end of a background run (probe: after the agent's command finished), not on the `Agent` PostToolUse that fires at launch.
