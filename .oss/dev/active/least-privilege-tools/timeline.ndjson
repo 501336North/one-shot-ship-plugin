@@ -1,0 +1,6 @@
+{"v":1,"id":"8c655ce9-b85c-458c-81aa-acc8729dcd31","ts":"2026-11-11T06:37:49Z","kind":"command","feature":"least-privilege-tools","session":"223b2e2d-1a83-4cc9-9f06-b5c0dbafc9eb","command":"ideate","status":"complete"}
+{"v":1,"id":"20300cf0-dabc-42f3-8e9c-f149abde9c9e","ts":"2026-11-11T06:38:09Z","kind":"command","feature":"least-privilege-tools","session":"223b2e2d-1a83-4cc9-9f06-b5c0dbafc9eb","command":"requirements","status":"start"}
+{"v":1,"id":"e70224dc-9295-4f9d-bbca-1308be841c08","ts":"2026-11-11T06:38:54Z","kind":"command","feature":"least-privilege-tools","session":"223b2e2d-1a83-4cc9-9f06-b5c0dbafc9eb","command":"requirements","status":"complete"}
+{"v":1,"id":"93ac3f9f-00c2-4325-99fc-2eeeedac77ff","ts":"2026-11-11T06:39:05Z","kind":"command","feature":"least-privilege-tools","session":"223b2e2d-1a83-4cc9-9f06-b5c0dbafc9eb","command":"adr","status":"start"}
+{"v":1,"id":"3b215b27-4527-460b-bf2c-4cda5fafa3cb","ts":"2026-11-11T06:39:36Z","kind":"command","feature":"least-privilege-tools","session":"223b2e2d-1a83-4cc9-9f06-b5c0dbafc9eb","command":"adr","status":"complete"}
+{"v":1,"id":"d469b102-49c4-446e-a6b1-4f5ccc986fca","ts":"2026-11-11T06:43:09Z","kind":"command","feature":"least-privilege-tools","session":"223b2e2d-1a83-4cc9-9f06-b5c0dbafc9eb","command":"plan","status":"start"}
