@@ -21,3 +21,8 @@ dist/cli/gate-run.js
 dist/cli/gate-run.js.map
 dist/cli/gate-run.d.ts
 dist/cli/gate-run.d.ts.map
+
+# The oss-launch bundle embeds the plugin version and ships only inside the binary, which
+# .github/workflows/build-oss-launch.yml builds from source. Never committed, so a build at any
+# version leaves the tracked tree unchanged (R-266 review check).
+dist/cli/oss-launch.cjs
