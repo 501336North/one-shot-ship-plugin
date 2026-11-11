@@ -3448,6 +3448,12 @@ function loadSettings(readFile, pluginRoot, repoRoot) {
   return { settings: merged };
 }
 
+// src/tool-gate/calling-agent.ts
+function callingAgentOf(record2) {
+  const name = record2.agent_type;
+  return typeof name === "string" && name !== "" ? name : void 0;
+}
+
 // src/tool-gate/rules/focused-tests.ts
 var import_node_path11 = __toESM(require("node:path"), 1);
 var MARKER = /\.(skip|only|todo)(If)?(?:\.concurrent)?(?:\.each)?\s*[(`]/g;
@@ -5557,7 +5563,8 @@ function readHook(input) {
     toolName: record2.tool_name,
     toolInput: record2.tool_input,
     error: typeof record2.error === "string" ? record2.error : void 0,
-    isInterrupt: record2.is_interrupt === true
+    isInterrupt: record2.is_interrupt === true,
+    agent: callingAgentOf(record2)
   };
 }
 function repoRootOf(cwd) {

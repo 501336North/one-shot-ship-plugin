@@ -27,6 +27,7 @@ import { findRepo, repoTrust } from './repo-finder.js';
 import { recordTestRun } from './recorder.js';
 import { createTreeFinder, type TreeFinder } from './tree-finder.js';
 import { loadSettings, type GateSettings } from './rule-file.js';
+import { callingAgentOf } from './calling-agent.js';
 import { checkFocusedTests } from './rules/focused-tests.js';
 import { checkForcePush } from './rules/force-push.js';
 import { checkGitClean } from './rules/git-clean.js';
@@ -106,6 +107,8 @@ interface HookCall {
   toolInput: unknown;
   error?: string;
   isInterrupt?: boolean;
+  /** The calling subagent's name; undefined for the main agent. */
+  agent?: string;
 }
 
 interface Context {
@@ -139,6 +142,7 @@ function readHook(input: string): HookCall {
     toolInput: record.tool_input,
     error: typeof record.error === 'string' ? record.error : undefined,
     isInterrupt: record.is_interrupt === true,
+    agent: callingAgentOf(record),
   };
 }
 
