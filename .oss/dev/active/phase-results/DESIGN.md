@@ -61,6 +61,16 @@ Common fields:
 - oss-lab (D3, after plugin slice A): lab-ship's `verdict_gate` validates `results/ship.json` against the plugin schema and fails on missing, malformed or empty diff. The `pass:true`-only writers are retired.
 - Held for after R-266: the `hooks.json` entries, the SubagentStop capture plus the review-agent JSON block, and slice B.
 
+### Decision sites (provenance test)
+The sites that decide on a phase's output. Each reads `results/<phase>.json`, never PROGRESS.md prose. `watcher/test/phase-results/provenance.test.ts` compares its list with this one.
+<!-- provenance-decision-sites:start -->
+- `hooks/oss-archive-check.sh`
+- `watcher/src/healthchecks/archive.ts`
+- `hooks/checkpoint.sh`
+- `hooks/oss-notify.sh`
+- `hooks/oss-stop-dispatch.sh`
+<!-- provenance-decision-sites:end -->
+
 ## Success Criteria
 - [ ] For each phase, `oss-notify complete` with a missing result exits 1, records `failed` and prints no `CHAIN:` line.
 - [ ] For each phase, a result failing its schema (unknown field, wrong enum, over-long text, bad pattern) is refused with the field named.
