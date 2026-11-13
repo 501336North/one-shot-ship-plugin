@@ -34,11 +34,11 @@ __export(phase_result_exports, {
   main: () => main
 });
 module.exports = __toCommonJS(phase_result_exports);
-var import_node_child_process3 = require("node:child_process");
+var import_node_child_process4 = require("node:child_process");
 var import_node_crypto4 = require("node:crypto");
-var fs7 = __toESM(require("node:fs"), 1);
+var fs8 = __toESM(require("node:fs"), 1);
 var os2 = __toESM(require("node:os"), 1);
-var path7 = __toESM(require("node:path"), 1);
+var path8 = __toESM(require("node:path"), 1);
 
 // src/phase-results/assemble-build.ts
 var import_node_fs = __toESM(require("node:fs"), 1);
@@ -1115,30 +1115,12 @@ function loadPhaseSchema(phase, pluginRoot2) {
   return loadSchema(readSchemaFile(dir, phase), { "common.schema.json": common });
 }
 
-// src/cli/phase-result.ts
-var USAGE = "usage: oss-phase-result.sh assemble <ideate|plan|build|ship>\n       oss-phase-result.sh check <ideate|plan|build|ship> [--repo <path>] [--all]\n";
+// src/phase-results/feature.ts
+var import_node_child_process3 = require("node:child_process");
+var fs7 = __toESM(require("node:fs"), 1);
+var path7 = __toESM(require("node:path"), 1);
 var FEATURE_RE2 = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 var BRANCH_RE = /^[^/]+\/([^/]+)\/[^/]/;
-var Refusal = class extends Error {
-  id;
-  field;
-  constructor(id, field) {
-    super(id);
-    this.id = id;
-    this.field = field;
-  }
-};
-function parseArgs(argv) {
-  const [verb, phase, ...rest] = argv;
-  if (verb !== "assemble" && verb !== "check" || !PHASES2.includes(phase ?? "")) return null;
-  const args = { verb, phase, repo: null, all: false };
-  for (let i = 0; i < rest.length; i++) {
-    if (verb === "check" && rest[i] === "--all") args.all = true;
-    else if (verb === "check" && rest[i] === "--repo" && rest[i + 1] !== void 0) args.repo = rest[++i];
-    else return null;
-  }
-  return args;
-}
 function gitOut2(cwd, args) {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
@@ -1148,29 +1130,6 @@ function gitOut2(cwd, args) {
   } catch {
     return null;
   }
-}
-function shipBase(repo) {
-  const env = {};
-  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
-  env.GIT_CONFIG_NOSYSTEM = "1";
-  const r = (0, import_node_child_process3.spawnSync)("git", ["config", "--local", "--get", "oss.shipBase"], {
-    cwd: repo,
-    env,
-    encoding: "utf-8",
-    stdio: ["ignore", "pipe", "ignore"],
-    timeout: 1e4,
-    maxBuffer: 64 * 1024
-  });
-  if (r.error === void 0 && r.status === 1) return "main";
-  if (r.error === void 0 && r.status === 0) return r.stdout.replace(/\n$/, "");
-  return "";
-}
-function pluginRoot() {
-  return path7.resolve(path7.dirname(fs7.realpathSync(process.argv[1] ?? "")), "..", "..", "..");
-}
-function isDirOf(p, uid) {
-  const st = fs7.lstatSync(p, { throwIfNoEntry: false });
-  return st !== void 0 && !st.isSymbolicLink() && st.isDirectory() && st.uid === uid;
 }
 function activeFeatures(repo) {
   const dir = path7.join(repo, ".oss", "dev", "active");
@@ -1194,13 +1153,69 @@ function resolveFeature(repo) {
   const active = activeFeatures(repo);
   return active.length === 1 ? active[0] : null;
 }
+
+// src/cli/phase-result.ts
+var USAGE = "usage: oss-phase-result.sh assemble <ideate|plan|build|ship>\n       oss-phase-result.sh check <ideate|plan|build|ship> [--repo <path>] [--all]\n";
+var Refusal = class extends Error {
+  id;
+  field;
+  constructor(id, field) {
+    super(id);
+    this.id = id;
+    this.field = field;
+  }
+};
+function parseArgs(argv) {
+  const [verb, phase, ...rest] = argv;
+  if (verb !== "assemble" && verb !== "check" || !PHASES2.includes(phase ?? "")) return null;
+  const args = { verb, phase, repo: null, all: false };
+  for (let i = 0; i < rest.length; i++) {
+    if (verb === "check" && rest[i] === "--all") args.all = true;
+    else if (verb === "check" && rest[i] === "--repo" && rest[i + 1] !== void 0) args.repo = rest[++i];
+    else return null;
+  }
+  return args;
+}
+function gitOut3(cwd, args) {
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
+  try {
+    const out = (0, import_node_child_process4.execFileSync)("git", args, { cwd, env, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return out === "" ? null : out;
+  } catch {
+    return null;
+  }
+}
+function shipBase(repo) {
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
+  env.GIT_CONFIG_NOSYSTEM = "1";
+  const r = (0, import_node_child_process4.spawnSync)("git", ["config", "--local", "--get", "oss.shipBase"], {
+    cwd: repo,
+    env,
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 1e4,
+    maxBuffer: 64 * 1024
+  });
+  if (r.error === void 0 && r.status === 1) return "main";
+  if (r.error === void 0 && r.status === 0) return r.stdout.replace(/\n$/, "");
+  return "";
+}
+function pluginRoot() {
+  return path8.resolve(path8.dirname(fs8.realpathSync(process.argv[1] ?? "")), "..", "..", "..");
+}
+function isDirOf(p, uid) {
+  const st = fs8.lstatSync(p, { throwIfNoEntry: false });
+  return st !== void 0 && !st.isSymbolicLink() && st.isDirectory() && st.uid === uid;
+}
 function valueDir(repo) {
   const key2 = ledgerKey(repo);
   if (key2 === null) return null;
   const uid = process.getuid?.();
-  const run = path7.join(os2.homedir(), ".oss", "run");
-  const dir = path7.join(run, key2);
-  return isDirOf(run, uid) && isDirOf(dir, uid) ? fs7.realpathSync(dir) : null;
+  const run = path8.join(os2.homedir(), ".oss", "run");
+  const dir = path8.join(run, key2);
+  return isDirOf(run, uid) && isDirOf(dir, uid) ? fs8.realpathSync(dir) : null;
 }
 function runStartedAt(ledger, phase) {
   const startedAt = ledger.lastRow(`run/${phase}`)?.startedAt;
@@ -1233,7 +1248,7 @@ function assemble(repo, feature, phase) {
     repo,
     feature,
     startedAt,
-    headSha: gitOut2(repo, ["rev-parse", "--verify", "HEAD^{commit}"]) ?? "",
+    headSha: gitOut3(repo, ["rev-parse", "--verify", "HEAD^{commit}"]) ?? "",
     valueDir: valueDir(repo),
     now: () => /* @__PURE__ */ new Date()
   };
@@ -1258,10 +1273,10 @@ function reassemble(repo, feature, phase, stored) {
   let tmp = null;
   let dir = valueDir(repo);
   if (phase === "ship") {
-    tmp = fs7.mkdtempSync(path7.join(os2.tmpdir(), "oss-phase-result-"));
+    tmp = fs8.mkdtempSync(path8.join(os2.tmpdir(), "oss-phase-result-"));
     const requested = Array.isArray(stored.overrides) ? stored.overrides : [];
     const overrides = requested.map((o) => ({ finding: o.finding, decisionId: o.decisionId }));
-    fs7.writeFileSync(path7.join(tmp, "overrides.json"), JSON.stringify(overrides), { mode: 384 });
+    fs8.writeFileSync(path8.join(tmp, "overrides.json"), JSON.stringify(overrides), { mode: 384 });
     dir = tmp;
   }
   try {
@@ -1274,13 +1289,13 @@ function reassemble(repo, feature, phase, stored) {
       now: () => /* @__PURE__ */ new Date()
     });
   } finally {
-    if (tmp !== null) fs7.rmSync(tmp, { recursive: true, force: true });
+    if (tmp !== null) fs8.rmSync(tmp, { recursive: true, force: true });
   }
 }
 function check(repo, feature, phase) {
   const ledger = openLedger(repo);
-  const marker = path7.join(repo, ".oss", "dev", "active", feature, "results", `${phase}.unverified.json`);
-  if (fs7.lstatSync(marker, { throwIfNoEntry: false }) !== void 0) throw new Refusal("unverified", "marker");
+  const marker = path8.join(repo, ".oss", "dev", "active", feature, "results", `${phase}.unverified.json`);
+  if (fs8.lstatSync(marker, { throwIfNoEntry: false }) !== void 0) throw new Refusal("unverified", "marker");
   for (const kind of ["pending", "unverified"]) {
     if (ledger.hasMarker(`${kind}/${feature}/${phase}`)) throw new Refusal("unverified", `${kind} marker`);
   }
@@ -1296,7 +1311,7 @@ function check(repo, feature, phase) {
   }
   checkSchema(phase, stored);
   if (stored.startedAt !== runStartedAt(ledger, phase)) throw new Refusal("stale_result", "startedAt");
-  if (phase === "ship" && stored.headSha !== gitOut2(repo, ["rev-parse", "--verify", "HEAD^{commit}"])) {
+  if (phase === "ship" && stored.headSha !== gitOut3(repo, ["rev-parse", "--verify", "HEAD^{commit}"])) {
     throw new Refusal("stale_result", "headSha");
   }
   if (stored.verification !== "verified") throw new Refusal("unverified", "verification");

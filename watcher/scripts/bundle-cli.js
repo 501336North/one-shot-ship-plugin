@@ -19,6 +19,7 @@ import { OSS_LAUNCH_BUNDLE_OPTIONS } from './oss-launch-bundle-options.mjs';
 import { TOOL_GATE_BUNDLE_OPTIONS } from './tool-gate-bundle-options.mjs';
 import { GATE_RUN_BUNDLE_OPTIONS } from './gate-run-bundle-options.mjs';
 import { PHASE_RESULT_BUNDLE_OPTIONS } from './phase-result-bundle-options.mjs';
+import { STOP_DISPATCH_BUNDLE_OPTIONS } from './stop-dispatch-bundle-options.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const watcherRoot = resolve(__dirname, '..');
@@ -89,3 +90,13 @@ if (phaseResult.errors.length > 0) {
 }
 
 console.log('  Bundled: dist/cli/phase-result.cjs (standalone)');
+
+// Bundle stop-dispatch into a standalone CJS file, run by hooks/oss-stop-dispatch.sh (R-257 T11).
+const stopDispatch = buildSync({ ...STOP_DISPATCH_BUNDLE_OPTIONS, write: true });
+
+if (stopDispatch.errors.length > 0) {
+  console.error('stop-dispatch bundle failed:', stopDispatch.errors);
+  process.exit(1);
+}
+
+console.log('  Bundled: dist/cli/stop-dispatch.cjs (standalone)');

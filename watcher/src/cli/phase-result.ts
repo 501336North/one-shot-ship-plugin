@@ -28,14 +28,13 @@ import { assemblePlan } from '../phase-results/assemble-plan.js';
 import { assembleShip } from '../phase-results/assemble-ship.js';
 import { LedgerError, ledgerKey, openLedger, type Ledger } from '../phase-results/ledger.js';
 import { loadPhaseSchema, PHASES, type Phase } from '../phase-results/schemas.js';
+import { activeFeatures, resolveFeature } from '../phase-results/feature.js';
 import { readResult, resolveRepo, writeResult } from '../phase-results/store.js';
 import { validate } from '../phase-results/validate.js';
 
 const USAGE =
   'usage: oss-phase-result.sh assemble <ideate|plan|build|ship>\n' +
   '       oss-phase-result.sh check <ideate|plan|build|ship> [--repo <path>] [--all]\n';
-const FEATURE_RE = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
-const BRANCH_RE = /^[^/]+\/([^/]+)\/[^/]/;
 
 type Verdict = { ok: true } | { ok: false; id: string; field: string };
 
@@ -108,34 +107,6 @@ function pluginRoot(): string {
 function isDirOf(p: string, uid: number | undefined): boolean {
   const st = fs.lstatSync(p, { throwIfNoEntry: false });
   return st !== undefined && !st.isSymbolicLink() && st.isDirectory() && st.uid === uid;
-}
-
-/** Active feature folders (real dirs with a valid name). */
-function activeFeatures(repo: string): string[] {
-  const dir = path.join(repo, '.oss', 'dev', 'active');
-  let names: string[];
-  try {
-    names = fs.readdirSync(dir);
-  } catch {
-    return [];
-  }
-  return names
-    .filter((n) => FEATURE_RE.test(n) && fs.lstatSync(path.join(dir, n), { throwIfNoEntry: false })?.isDirectory())
-    .sort();
-}
-
-/** Mirrors oss_resolve_feature (hooks/oss-safe-path.sh): the branch's feature with an active dir, else the single one. */
-function resolveFeature(repo: string): string | null {
-  const ref = gitOut(repo, ['symbolic-ref', '-q', 'HEAD']);
-  const branch = ref !== null && ref.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : '';
-  const m = BRANCH_RE.exec(branch);
-  if (m !== null) {
-    const f = m[1];
-    const st = fs.lstatSync(path.join(repo, '.oss', 'dev', 'active', f), { throwIfNoEntry: false });
-    return FEATURE_RE.test(f) && st?.isDirectory() ? f : null;
-  }
-  const active = activeFeatures(repo);
-  return active.length === 1 ? active[0] : null;
 }
 
 /** $HOME/.oss/run/<key> when it exists, is owned and is not a link (lookup only, never created); else null. */
