@@ -46,8 +46,21 @@ function runGit(repo: string, args: string[], okCodes: number[] = [0]): { status
   return { status: r.status, out: r.stdout.trim() };
 }
 
+/** True when `name` passes `check-ref-format --branch` and `refs/heads/<name>` exists (fixed argv, never an option). */
+export function isLocalBranch(repo: string, name: string): boolean {
+  if (name === '' || name.startsWith('-')) return false;
+  try {
+    runGit(repo, ['check-ref-format', '--branch', name]);
+    runGit(repo, ['rev-parse', '--verify', '--quiet', '--end-of-options', `refs/heads/${name}^{commit}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 interface Diff {
   base: string;
+  baseRef: string;
   files: number;
   insertions: number;
   deletions: number;
@@ -67,6 +80,7 @@ function readDiff(repo: string, base: string): Diff {
   const files = num(/(\d+) files? changed/);
   return {
     base: mergeBase,
+    baseRef: branch,
     files,
     insertions: num(/(\d+) insertions?\(\+\)/),
     deletions: num(/(\d+) deletions?\(-\)/),
@@ -206,7 +220,7 @@ export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): A
       ...baseFields(ctx, 'ship'),
       headSha: diff.headSha,
       sources: { diff: 'code', gates: 'model', overrides: 'code', blockers: 'code', verdict: 'code', summary: 'model' },
-      diff: { base: diff.base, files: diff.files, insertions: diff.insertions, deletions: diff.deletions },
+      diff: { base: diff.base, baseRef: diff.baseRef, files: diff.files, insertions: diff.insertions, deletions: diff.deletions },
       gates,
       overrides,
       blockers,

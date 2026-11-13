@@ -210,7 +210,7 @@ describe('assembleShip: diff', () => {
     allPass();
     const diff = result(ship()).diff as Record<string, number>;
     expect(diff).toMatchObject({ files: 5000, insertions: 5000, deletions: 0 });
-  });
+  }, 60_000); // writing and committing 5k files outlives the 5 s default on a loaded machine
 
   // Behaviour: ship works on a machine with no GitHub CLI.
   // Rule: S9, the base comes from a local ref only, never gh or fetch.

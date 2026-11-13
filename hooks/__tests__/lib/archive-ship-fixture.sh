@@ -12,7 +12,7 @@ ship_result() {
         v: 1, phase: "ship", feature: $f, startedAt: "2026-11-13T00:00:00Z", assembledAt: "2026-11-13T00:00:01Z",
         headSha: $sha, sources: {diff: "code", gates: "code", verdict: "code", summary: "model"},
         verification: "verified", claims: [], chain: [],
-        diff: {base: $sha, files: 1, insertions: 1, deletions: 0}, gates: [], overrides: [], blockers: [],
+        diff: {base: $sha, baseRef: "main", files: 1, insertions: 1, deletions: 0}, gates: [], overrides: [], blockers: [],
         verdict: "ready_to_merge", summary: "shipped"
     }' | jq -c "${3:-.}" > "$dir/ship.json"
 }

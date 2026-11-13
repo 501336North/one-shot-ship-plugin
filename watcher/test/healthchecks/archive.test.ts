@@ -35,7 +35,7 @@ describe('ArchiveHealthCheck', () => {
     const result = {
       v: 1, phase: 'ship', feature, startedAt: '2026-11-13T00:00:00Z', assembledAt: '2026-11-13T00:00:01Z',
       headSha: sha, sources: { diff: 'code', verdict: 'code', summary: 'model' }, verification: 'verified',
-      claims: [], chain: [], diff: { base: sha, files: 1, insertions: 1, deletions: 0 }, gates: [], overrides: [],
+      claims: [], chain: [], diff: { base: sha, baseRef: 'main', files: 1, insertions: 1, deletions: 0 }, gates: [], overrides: [],
       blockers: [], verdict: 'ready_to_merge', summary: 'shipped', ...fields,
     };
     const dir = path.join(devActivePath, feature, 'results');

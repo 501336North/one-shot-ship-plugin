@@ -27,7 +27,7 @@ value_files() {
         ideate) echo "open-questions.json" ;;
         plan) echo "tasks.json" ;;
         build) echo "notes.txt" ;;
-        ship) echo "summary.txt overrides.json" ;;
+        ship) echo "summary.txt overrides.json base.txt" ;;
     esac
 }
 
@@ -62,10 +62,18 @@ for phase in ideate plan build ship; do
     # No value file ever reaches a command: not inside $(cat ...), not as an argument on a fenced line.
     bad=$(awk '
         /^[ \t]*```/ { fence = !fence; next }
-        fence && /(open-questions|tasks|overrides)\.json|notes\.txt|summary\.txt/ { print NR ": " $0 }
-        /\$\(cat[^)]*(open-questions|tasks|overrides)\.json/ || /\$\(cat[^)]*(notes|summary)\.txt/ { print NR ": " $0 }' "$f")
+        fence && /(open-questions|tasks|overrides)\.json|(notes|summary|base)\.txt/ { print NR ": " $0 }
+        /\$\(cat[^)]*(open-questions|tasks|overrides)\.json/ || /\$\(cat[^)]*(notes|summary|base)\.txt/ { print NR ": " $0 }' "$f")
     if [ -z "$bad" ]; then pass "$phase: no value file in a command"; else fail "$phase: no value file in a command" "$bad"; fi
 done
+
+# D19: ship's model writes base.txt naming the PR's base branch (the one it passes to `gh pr create --base`), so a
+# feature cut from an integration branch diffs against it; the user is no longer asked to set oss.shipBase.
+ship_step=$(awk 'tolower($0) ~ /^#+ .*assemble the phase result/ { on = 1 } on && /oss-phase-result.sh assemble ship/ { exit } on' "$CMDS/ship.md")
+case "$ship_step" in *"base.txt"*"gh pr create --base"*|*"gh pr create --base"*"base.txt"*) pass "ship: base.txt names the gh pr create --base branch" ;;
+    *) fail "ship: base.txt names the gh pr create --base branch" "missing" ;; esac
+case "$ship_step" in *"oss.shipBase"*) fail "ship: step no longer asks the user to set oss.shipBase" "still there" ;;
+    *) pass "ship: step no longer asks the user to set oss.shipBase" ;; esac
 
 # Review agents run only from R-266's Bash allowlist, so the tool gate would refuse oss-phase-result.sh: only the main
 # agent and builders assemble a phase result. No review agent prompt may tell it to run.

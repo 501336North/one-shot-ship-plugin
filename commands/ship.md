@@ -237,11 +237,9 @@ With `--merge`, send `merged` then `complete` only if the merge landed in this s
 
 ### Assemble the phase result
 
-If the PR's base branch is not `main`, first ask the user to set the repo's local git config `oss.shipBase` to that base branch themselves (never set it yourself: the branch name would be a value you put into a command); with it unset the result diffs against `main`.
-
 Before sending `complete`:
 1. Run `~/.oss/hooks/oss-value.sh dir` and keep the folder it prints.
-2. Use the Write tool to write the value files in that folder: `summary.txt`: a short plain-text summary of what ships; `overrides.json` (optional): a JSON array of `{"finding", "decisionId"}`, one per finding the user chose to override, where `decisionId` is the `id` of that picker's decision record (`[]` if none). Never put any of this content into a command.
+2. Use the Write tool to write the value files in that folder: `summary.txt`: a short plain-text summary of what ships; `overrides.json` (optional): a JSON array of `{"finding", "decisionId"}`, one per finding the user chose to override, where `decisionId` is the `id` of that picker's decision record (`[]` if none); `base.txt`: the name of the branch the PR targets, the same branch you pass to `gh pr create --base` (e.g. `main`). Never put any of this content into a command.
 3. Run exactly:
 ```bash
 ~/.oss/hooks/oss-phase-result.sh assemble ship

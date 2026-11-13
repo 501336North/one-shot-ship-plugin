@@ -768,6 +768,16 @@ function runGit(repo, args, okCodes = [0]) {
   if (r.error !== void 0 || r.status === null || !okCodes.includes(r.status)) throw new GitError(args[0]);
   return { status: r.status, out: r.stdout.trim() };
 }
+function isLocalBranch(repo, name) {
+  if (name === "" || name.startsWith("-")) return false;
+  try {
+    runGit(repo, ["check-ref-format", "--branch", name]);
+    runGit(repo, ["rev-parse", "--verify", "--quiet", "--end-of-options", `refs/heads/${name}^{commit}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
 function readDiff(repo, base) {
   if (base.startsWith("-")) throw new GitError("base");
   const branch = runGit(repo, ["check-ref-format", "--branch", base]).out;
@@ -780,6 +790,7 @@ function readDiff(repo, base) {
   const files = num2(/(\d+) files? changed/);
   return {
     base: mergeBase,
+    baseRef: branch,
     files,
     insertions: num2(/(\d+) insertions?\(\+\)/),
     deletions: num2(/(\d+) deletions?\(-\)/),
@@ -899,7 +910,7 @@ function assembleShip(ctx, opts) {
       ...baseFields(ctx, "ship"),
       headSha: diff.headSha,
       sources: { diff: "code", gates: "model", overrides: "code", blockers: "code", verdict: "code", summary: "model" },
-      diff: { base: diff.base, files: diff.files, insertions: diff.insertions, deletions: diff.deletions },
+      diff: { base: diff.base, baseRef: diff.baseRef, files: diff.files, insertions: diff.insertions, deletions: diff.deletions },
       gates,
       overrides,
       blockers,
@@ -1209,7 +1220,9 @@ function gitOut3(cwd, args) {
     return null;
   }
 }
-function shipBase(repo) {
+function shipBase(repo, dir) {
+  const named = dir === null ? null : readValueFile(dir, "base.txt")?.replace(/\n$/, "");
+  if (named != null && !named.includes("\n") && isLocalBranch(repo, named)) return named;
   const env = {};
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
   env.GIT_CONFIG_NOSYSTEM = "1";
@@ -1245,7 +1258,7 @@ function runStartedAt(ledger, phase) {
   if (typeof startedAt !== "string") throw new Refusal("no_run_started", `run/${phase}`);
   return startedAt;
 }
-function runAssembler(phase, ctx) {
+function runAssembler(phase, ctx, base) {
   switch (phase) {
     case "ideate":
       return assembleIdeate(ctx);
@@ -1254,7 +1267,7 @@ function runAssembler(phase, ctx) {
     case "build":
       return assembleBuild(ctx);
     case "ship":
-      return assembleShip(ctx, { base: shipBase(ctx.repo) });
+      return assembleShip(ctx, { base: base ?? shipBase(ctx.repo, ctx.valueDir) });
   }
 }
 function checkSchema(phase, value) {
@@ -1295,7 +1308,10 @@ function assemble(repo, feature, phase) {
 function reassemble(repo, feature, phase, stored) {
   let tmp = null;
   let dir = valueDir(repo);
+  let base;
   if (phase === "ship") {
+    const recorded = stored.diff?.baseRef;
+    base = typeof recorded === "string" ? recorded : "";
     tmp = fs9.mkdtempSync(path9.join(os2.tmpdir(), "oss-phase-result-"));
     const requested = Array.isArray(stored.overrides) ? stored.overrides : [];
     const overrides = requested.map((o) => ({ finding: o.finding, decisionId: o.decisionId }));
@@ -1310,7 +1326,7 @@ function reassemble(repo, feature, phase, stored) {
       headSha: String(stored.headSha),
       valueDir: dir,
       now: () => /* @__PURE__ */ new Date()
-    });
+    }, base);
   } finally {
     if (tmp !== null) fs9.rmSync(tmp, { recursive: true, force: true });
   }

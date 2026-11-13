@@ -363,7 +363,7 @@ describe('phase-result CLI: the ship base comes from repo config oss.shipBase, e
     startRun('ship', '2026-11-13T09:00:00.000Z');
     const a = cli('assemble', 'ship');
     expect(a.status, a.stderr).toBe(0);
-    expect(shipResult().diff).toEqual({ base: cut, files: 1, insertions: 1, deletions: 0 });
+    expect(shipResult().diff).toEqual({ base: cut, baseRef: INTEGRATION, files: 1, insertions: 1, deletions: 0 });
     const c = cli('check', 'ship');
     expect(c.status, c.stderr).toBe(0);
   });
@@ -377,7 +377,7 @@ describe('phase-result CLI: the ship base comes from repo config oss.shipBase, e
     startRun('ship', '2026-11-13T09:00:00.000Z');
     const a = cli('assemble', 'ship');
     expect(a.status, a.stderr).toBe(0);
-    expect(shipResult().diff).toEqual({ base: git('rev-parse', 'main'), files: 3, insertions: 6, deletions: 0 });
+    expect(shipResult().diff).toEqual({ base: git('rev-parse', 'main'), baseRef: 'main', files: 3, insertions: 6, deletions: 0 });
   });
 
   // User behaviour: a bad ship base stops ship with a named refusal instead of a wrong diff.
@@ -408,6 +408,104 @@ describe('phase-result CLI: the ship base comes from repo config oss.shipBase, e
     const r = cli('assemble', 'ship');
     expect(r.status).toBe(1);
     expect(r.stderr).toContain('empty_diff');
+  });
+});
+
+describe('phase-result CLI: the ship base comes from the PR base value file base.txt (D19)', () => {
+  const INTEGRATION = 'feat/sprint/build';
+
+  /** Recuts the feature branch from an integration branch that already has commits main lacks. */
+  function featureFromIntegration(): string {
+    git('checkout', '-q', 'main');
+    git('checkout', '-q', '-b', INTEGRATION);
+    commitFile('sprint1.txt', 'a\nb\nc\n');
+    commitFile('sprint2.txt', 'd\ne\n');
+    const cut = git('rev-parse', 'HEAD');
+    git('branch', '-q', '-D', `feat/${FEATURE}/build`);
+    git('checkout', '-q', '-b', `feat/${FEATURE}/build`);
+    commitFile('feature.txt', 'work\n');
+    passGates(FEATURE);
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    return cut;
+  }
+
+  function writeBase(content: string): string {
+    const f = path.join(valueDir(), 'base.txt');
+    fs.writeFileSync(f, content);
+    return f;
+  }
+
+  function shippedDiff(): Record<string, unknown> {
+    const a = cli('assemble', 'ship');
+    expect(a.status, a.stderr).toBe(0);
+    const r = JSON.parse(fs.readFileSync(resultFile(FEATURE, 'ship'), 'utf-8')) as Record<string, unknown>;
+    return r.diff as Record<string, unknown>;
+  }
+
+  // User behaviour: a feature whose PR targets an integration branch ships with a diff of only its own commits,
+  // without the user setting any repo config.
+  // Business rule: base.txt naming an existing local branch is the ship base, recorded as diff.baseRef.
+  it('base.txt naming the integration branch gives baseRef, its merge-base, and only the feature totals', () => {
+    const cut = featureFromIntegration();
+    writeBase(`${INTEGRATION}\n`);
+    expect(shippedDiff()).toEqual({ base: cut, baseRef: INTEGRATION, files: 1, insertions: 1, deletions: 0 });
+  });
+
+  // User behaviour: a PR base the repo does not have locally does not stop ship; the repo setting applies.
+  // Business rule: base.txt not naming a local branch falls back to oss.shipBase.
+  it('base.txt naming a branch that does not exist locally falls back to oss.shipBase', () => {
+    featureFromIntegration();
+    git('config', '--local', 'oss.shipBase', INTEGRATION);
+    writeBase('feat/gone/build\n');
+    expect(shippedDiff().baseRef).toBe(INTEGRATION);
+  });
+
+  // User behaviour: with no repo setting either, ship keeps diffing against main.
+  // Business rule: base.txt not naming a local branch, with oss.shipBase unset, falls back to main.
+  it('base.txt naming a branch that does not exist locally, with no oss.shipBase, falls back to main', () => {
+    featureFromIntegration();
+    writeBase('feat/gone/build\n');
+    expect(shippedDiff()).toMatchObject({ base: git('rev-parse', 'main'), baseRef: 'main' });
+  });
+
+  // User behaviour: a hostile base value cannot make git write files or change its behaviour.
+  // Business rule: base.txt that fails the branch-name check falls back and never reaches git as an option.
+  it('base.txt containing --output=x falls back to main and never reaches git as an option', () => {
+    featureFromIntegration();
+    writeBase('--output=x\n');
+    expect(shippedDiff().baseRef).toBe('main');
+    expect(fs.existsSync(path.join(repo, 'x'))).toBe(false);
+  });
+
+  // User behaviour: a malformed base value is ignored rather than half-read.
+  // Business rule: base.txt must be exactly one line; two lines fall back.
+  it('base.txt with two lines falls back', () => {
+    featureFromIntegration();
+    writeBase(`${INTEGRATION}\n${INTEGRATION}\n`);
+    expect(shippedDiff().baseRef).toBe('main');
+  });
+
+  // User behaviour: the ship result stays valid after the short-lived value file is gone.
+  // Business rule: check re-derives from the recorded diff.baseRef, never from base.txt.
+  it('check passes after base.txt is deleted, using the recorded baseRef', () => {
+    featureFromIntegration();
+    const f = writeBase(`${INTEGRATION}\n`);
+    expect(shippedDiff().baseRef).toBe(INTEGRATION);
+    fs.rmSync(f);
+    const c = cli('check', 'ship');
+    expect(c.status, c.stderr).toBe(0);
+  });
+
+  // User behaviour: a result whose base branch has gone can no longer be trusted.
+  // Business rule: the recorded baseRef must still be an existing local branch, else evidence_mismatch.
+  it('check gives evidence_mismatch when the recorded baseRef branch is deleted', () => {
+    featureFromIntegration();
+    writeBase(`${INTEGRATION}\n`);
+    expect(shippedDiff().baseRef).toBe(INTEGRATION);
+    git('branch', '-q', '-D', INTEGRATION);
+    const c = cli('check', 'ship');
+    expect(c.status).toBe(1);
+    expect(c.stderr).toContain('evidence_mismatch');
   });
 });
 

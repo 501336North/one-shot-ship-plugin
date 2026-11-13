@@ -26,12 +26,12 @@ import { assembleBuild } from '../phase-results/assemble-build.js';
 import type { AssembleContext, AssembleOutcome } from '../phase-results/assemble-common.js';
 import { assembleIdeate } from '../phase-results/assemble-ideate.js';
 import { assemblePlan } from '../phase-results/assemble-plan.js';
-import { assembleShip } from '../phase-results/assemble-ship.js';
+import { assembleShip, isLocalBranch } from '../phase-results/assemble-ship.js';
 import { LedgerError, ledgerKey, openLedger, type Ledger } from '../phase-results/ledger.js';
 import { loadPhaseSchema, PHASES, type Phase } from '../phase-results/schemas.js';
 import { shipArchivable } from '../phase-results/archivable.js';
 import { activeFeatures, resolveFeature } from '../phase-results/feature.js';
-import { readResult, resolveRepo, writeResult } from '../phase-results/store.js';
+import { readResult, readValueFile, resolveRepo, writeResult } from '../phase-results/store.js';
 import { validate } from '../phase-results/validate.js';
 
 const USAGE =
@@ -81,10 +81,14 @@ function gitOut(cwd: string, args: string[]): string | null {
 }
 
 /**
- * The local branch ship diffs against: repo-local `oss.shipBase`, else `main` (local ref only, never gh or fetch).
- * assembleShip's ref checks validate the value; a failed read gives '' so it is refused, never silently `main`.
+ * The local branch ship diffs against (D19): the model's `base.txt` (the PR's base) when it is one line naming an
+ * existing local branch; else repo-local `oss.shipBase`, else `main` (local ref only, never gh or fetch). A bad
+ * base.txt falls back; assembleShip's ref checks validate the config value, and a failed read gives '' so it is
+ * refused, never silently `main`.
  */
-function shipBase(repo: string): string {
+function shipBase(repo: string, dir: string | null): string {
+  const named = dir === null ? null : readValueFile(dir, 'base.txt')?.replace(/\n$/, '');
+  if (named != null && !named.includes('\n') && isLocalBranch(repo, named)) return named;
   const env: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('GIT_')) env[k] = v;
   env.GIT_CONFIG_NOSYSTEM = '1';
@@ -127,7 +131,7 @@ function runStartedAt(ledger: Ledger, phase: Phase): string {
   return startedAt;
 }
 
-function runAssembler(phase: Phase, ctx: AssembleContext): AssembleOutcome {
+function runAssembler(phase: Phase, ctx: AssembleContext, base?: string): AssembleOutcome {
   switch (phase) {
     case 'ideate':
       return assembleIdeate(ctx);
@@ -136,7 +140,7 @@ function runAssembler(phase: Phase, ctx: AssembleContext): AssembleOutcome {
     case 'build':
       return assembleBuild(ctx);
     case 'ship':
-      return assembleShip(ctx, { base: shipBase(ctx.repo) });
+      return assembleShip(ctx, { base: base ?? shipBase(ctx.repo, ctx.valueDir) });
   }
 }
 
@@ -185,7 +189,12 @@ function assemble(repo: string, feature: string, phase: Phase): Record<string, u
 function reassemble(repo: string, feature: string, phase: Phase, stored: Record<string, unknown>): AssembleOutcome {
   let tmp: string | null = null;
   let dir = valueDir(repo);
+  let base: string | undefined;
   if (phase === 'ship') {
+    // Re-derive from the recorded base (never base.txt, which ages out); assembleShip's ref checks refuse a gone or
+    // malformed one, which check reports as evidence_mismatch.
+    const recorded = (stored.diff as Record<string, unknown> | undefined)?.baseRef;
+    base = typeof recorded === 'string' ? recorded : '';
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-phase-result-'));
     const requested = Array.isArray(stored.overrides) ? (stored.overrides as Array<Record<string, unknown>>) : [];
     const overrides = requested.map((o) => ({ finding: o.finding, decisionId: o.decisionId }));
@@ -200,7 +209,7 @@ function reassemble(repo: string, feature: string, phase: Phase, stored: Record<
       headSha: String(stored.headSha),
       valueDir: dir,
       now: () => new Date(),
-    });
+    }, base);
   } finally {
     if (tmp !== null) fs.rmSync(tmp, { recursive: true, force: true });
   }

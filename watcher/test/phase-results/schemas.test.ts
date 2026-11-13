@@ -156,6 +156,20 @@ describe('common fields', () => {
     expect(rejected(check('ship', v))).toEqual({ path: '$.chain[0].initEventId', rule: 'required' });
   });
 
+  // Behaviour: a ship result names the branch its diff was taken against, so check can re-derive it.
+  // Rule: diff.baseRef is required, a branch-name shape (no `..`, not starting with `-`).
+  it('should accept the ship fixture with diff.baseRef and refuse a missing or malformed one', () => {
+    const v = fixture('ship');
+    expect((v.diff as Json).baseRef).toBe('feat/sprint-d/build');
+    expect(check('ship', v)).toEqual({ ok: true });
+    delete (v.diff as Json).baseRef;
+    expect(rejected(check('ship', v))).toEqual({ path: '$.diff.baseRef', rule: 'required' });
+    for (const bad of ['main..x', '-main', '', 'a b', 'x'.repeat(201)]) {
+      (v.diff as Json).baseRef = bad;
+      expect(check('ship', v).ok, bad).toBe(false);
+    }
+  });
+
   // Behaviour: a field's source says who produced it. Rule: sources values are code|model|agent, keys are the phase's fields.
   it('should reject an unknown sources key or source value', () => {
     const v = fixture('build');
@@ -181,13 +195,13 @@ describe('common fields', () => {
 
 describe('ship specifics', () => {
   // Behaviour: the ship diff is pinned to a real commit. Rule: diff.base is 40 lowercase hex, counts are integers >= 0.
-  it('should require ship.diff {base: 40-hex, files, insertions, deletions}', () => {
+  it('should require ship.diff {base: 40-hex, baseRef, files, insertions, deletions}', () => {
     const v = fixture('ship');
     (v.diff as Json).base = 'main';
     expect(rejected(check('ship', v))).toEqual({ path: '$.diff.base', rule: 'pattern' });
-    v.diff = { base: 'fedcba9876543210fedcba9876543210fedcba98', files: 1, insertions: 1 };
+    v.diff = { base: 'fedcba9876543210fedcba9876543210fedcba98', baseRef: 'main', files: 1, insertions: 1 };
     expect(rejected(check('ship', v))).toEqual({ path: '$.diff.deletions', rule: 'required' });
-    v.diff = { base: 'fedcba9876543210fedcba9876543210fedcba98', files: -1, insertions: 1, deletions: 0 };
+    v.diff = { base: 'fedcba9876543210fedcba9876543210fedcba98', baseRef: 'main', files: -1, insertions: 1, deletions: 0 };
     expect(rejected(check('ship', v))).toEqual({ path: '$.diff.files', rule: 'minimum' });
   });
 

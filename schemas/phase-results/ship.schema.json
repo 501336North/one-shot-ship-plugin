@@ -120,6 +120,7 @@
       "additionalProperties": false,
       "required": [
         "base",
+        "baseRef",
         "files",
         "insertions",
         "deletions"
@@ -127,6 +128,11 @@
       "properties": {
         "base": {
           "$ref": "common.schema.json#/$defs/sha"
+        },
+        "baseRef": {
+          "type": "string",
+          "maxLength": 200,
+          "pattern": "(?!-)(?!.*\\.\\.)[A-Za-z0-9._/-]{1,200}"
         },
         "files": {
           "$ref": "common.schema.json#/$defs/count"
