@@ -129,7 +129,9 @@ for cwd in "$P2" "$P2/work"; do
     clean; ev 1 "$cwd" node "$ROOT/watcher/dist/cli/oss-error.js" "${ERR_ARGS[@]}";    check "R2-1 S1 (pointer=product 1) from $w: oss-error lands in product 2"
     clean; ev 1 "$cwd" node "$ROOT/watcher/dist/cli/update-workflow-state.js" setSupervisor intervening; check "R2-1 S1 (pointer=product 1) from $w: update-workflow-state lands in product 2"
 done
-for n in 1 2; do mkdir -p "$(prod $n)/.oss/dev/active/feat-done"; printf '# P\n## Current Phase: complete\n' > "$(prod $n)/.oss/dev/active/feat-done/PROGRESS.md"; done
+# R-257 T13 (AC-006.1): only a valid ship result archives a feature, so each finished feature gets one
+source "$ROOT/hooks/__tests__/lib/archive-ship-fixture.sh"   # archivable_ship: a valid, bound ship result (R-257 T13)
+for n in 1 2; do mkdir -p "$(prod $n)/.oss/dev/active/feat-done"; printf '# P\n## Current Phase: complete\n' > "$(prod $n)/.oss/dev/active/feat-done/PROGRESS.md"; HOME="$H" archivable_ship "$(prod $n)" feat-done; done
 ev 1 "$P2/work" "$SH" "$ROOT/hooks/oss-archive-check.sh"
 [[ ! -d "$P2/.oss/dev/active/feat-done" && -n "$(ls "$P2/.oss/dev/completed" 2>/dev/null)" && -d "$P1/.oss/dev/active/feat-done" && ! -e "$P1/.oss/dev/completed" ]] \
     && pass "R2-1 S1 (pointer=product 1) from product 2: archive-check archives product 2's feature, never product 1's" \

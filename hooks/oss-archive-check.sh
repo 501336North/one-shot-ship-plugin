@@ -8,11 +8,11 @@
 #
 # Called by: /oss:plan, /oss:ship
 #
-# Completion Detection Patterns:
-# 1. PROGRESS.md contains "Current Phase: ship" AND has merged/complete status
-# 2. PROGRESS.md contains "Current Phase:" with (COMPLETE) suffix
-# 3. PROGRESS.md contains "Current Phase: completed" or "Current Phase: complete"
-# 4. All tasks in PROGRESS.md are checked off [x] (100% complete)
+# Completion rule (R-257 T13; D13, D14, AC-006.1): only a ship phase result archives a feature. Features with no
+# results/ship.json are never moved; they are named once, on one "no phase result, move by hand" line. The rest go
+# through ONE bounded `oss-phase-result.sh check ship --all` call (the archive rule in
+# watcher/src/phase-results/archivable.ts), and only features it prints as `<feature> ok` move. A timeout or an
+# error archives nothing. PROGRESS.md prose never decides.
 
 set -euo pipefail
 
@@ -74,81 +74,35 @@ if [[ ! -d "$DEV_ACTIVE" ]]; then
     exit 0
 fi
 
-# Function to check if a feature is complete
-is_feature_complete() {
-    local feature_dir="$1"
-    local progress_file="$feature_dir/PROGRESS.md"
-
-    if [[ ! -f "$progress_file" ]]; then
-        return 1  # No PROGRESS.md = not complete
-    fi
-
-    local content
-    content=$(cat "$progress_file")
-
-    # Pattern 1: "Current Phase: ship" with merged/complete indicators
-    if echo "$content" | grep -qi "Current Phase:.*ship" && \
-       echo "$content" | grep -qi "merged\|shipped\|complete"; then
-        return 0
-    fi
-
-    # Pattern 2: "Current Phase:" with (COMPLETE) suffix (case insensitive)
-    if echo "$content" | grep -qiE "Current Phase:.*\(COMPLETE\)"; then
-        return 0
-    fi
-
-    # Pattern 3: "Current Phase: completed" or "Current Phase: complete" (with or without emoji)
-    if echo "$content" | grep -qiE "Current Phase:.*complete"; then
-        return 0
-    fi
-
-    # Pattern 4: "Current Phase:" contains emoji checkmark (✅) and COMPLETE
-    if echo "$content" | grep -q "Current Phase:.*✅.*COMPLETE\|Current Phase:.*COMPLETE.*✅"; then
-        return 0
-    fi
-
-    # Pattern 5: "Current Phase:" just has ✅ followed by anything suggesting done
-    if echo "$content" | grep -q "Current Phase:.*✅"; then
-        return 0
-    fi
-
-    # Pattern 4: All tasks checked off
-    # Count total tasks: lines starting with "- [ ]" or "- [x]"
-    local total_tasks
-    local completed_tasks
-    total_tasks=$(echo "$content" | grep -cE "^\s*-\s*\[[ x]\]" 2>/dev/null || true)
-    completed_tasks=$(echo "$content" | grep -cE "^\s*-\s*\[x\]" 2>/dev/null || true)
-
-    # Default to 0 if empty
-    total_tasks=${total_tasks:-0}
-    completed_tasks=${completed_tasks:-0}
-
-    if [[ "$total_tasks" -gt 0 ]] && [[ "$total_tasks" == "$completed_tasks" ]]; then
-        return 0
-    fi
-
-    return 1  # Not complete
-}
-
-# Function to get feature status
-get_feature_status() {
-    local feature_dir="$1"
-    local progress_file="$feature_dir/PROGRESS.md"
-
-    if [[ ! -f "$progress_file" ]]; then
-        echo "no-progress-file"
-        return
-    fi
-
-    # Extract current phase
-    local phase
-    phase=$(grep -i "Current Phase:" "$progress_file" | head -1 | sed 's/.*Current Phase:\s*//' | tr -d '#*')
-
-    if [[ -z "$phase" ]]; then
-        echo "unknown"
+# Features with and without a ship result (a link in dev/active is skipped: never move what it points at)
+SHIP_CANDIDATES=()
+NO_RESULT=()
+for feature_dir in "$DEV_ACTIVE"/*/; do
+    feature_dir="${feature_dir%/}"
+    [[ -L "$feature_dir" || ! -d "$feature_dir" ]] && continue
+    if [[ -e "$feature_dir/results/ship.json" || -L "$feature_dir/results/ship.json" ]]; then
+        SHIP_CANDIDATES+=("$(basename "$feature_dir")")
     else
-        echo "$phase"
+        NO_RESULT+=("$(basename "$feature_dir")")
     fi
+done
+
+# One bounded CLI call for all candidates: lines "<feature> ok" or "<feature> <reason>". Results live only in the
+# project's .oss/dev, so other dev docs locations have nothing to check.
+VERDICTS=""
+if [[ ${#SHIP_CANDIDATES[@]} -gt 0 && -n "$PROJECT_DIR" && "$DEV_DOCS_BASE" == "$PROJECT_DIR/.oss/dev" \
+      && -f "$_AC_DIR/oss-phase-result.sh" ]]; then
+    source "$_AC_DIR/oss-phase-result.sh"
+    VERDICTS=$(oss_phase_result_main check ship --all --repo "$PROJECT_DIR" 2>/dev/null) || VERDICTS=""
+fi
+
+# verdict_of <feature>: the CLI's word for it ("ok", a reason id, or "unchecked")
+verdict_of() {
+    local f reason
+    while read -r f reason; do
+        if [[ "$f" == "$1" ]]; then echo "$reason"; return; fi
+    done <<< "$VERDICTS"
+    echo "unchecked"
 }
 
 # Function to archive a feature
@@ -178,10 +132,11 @@ archive_feature() {
     fi
 
     # Handle duplicate archives (same day)
-    if [[ -d "$archive_dir" ]]; then
+    # A link there (even a dangling one) counts as taken: never follow it (FOLLOWUPS 40)
+    if [[ -e "$archive_dir" || -L "$archive_dir" ]]; then
         local counter=1
-        while [[ -d "${archive_dir}-${counter}" ]]; do
-            ((counter++))
+        while [[ -e "${archive_dir}-${counter}" || -L "${archive_dir}-${counter}" ]]; do
+            counter=$((counter + 1))
         done
         archive_dir="${archive_dir}-${counter}"
     fi
@@ -195,31 +150,30 @@ archive_feature() {
 if $LIST_ONLY; then
     echo "Feature Status:"
     echo "───────────────────────────────────────"
-    for feature_dir in "$DEV_ACTIVE"/*/; do
-        if [[ -d "$feature_dir" ]]; then
-            feature_name=$(basename "$feature_dir")
-            status=$(get_feature_status "$feature_dir")
-            if is_feature_complete "$feature_dir"; then
-                echo "  ✅ $feature_name - $status (READY TO ARCHIVE)"
-            else
-                echo "  🔄 $feature_name - $status"
-            fi
+    for feature_name in ${SHIP_CANDIDATES[@]+"${SHIP_CANDIDATES[@]}"}; do
+        verdict=$(verdict_of "$feature_name")
+        if [[ "$verdict" == ok ]]; then
+            echo "  ✅ $feature_name - ship result ok (READY TO ARCHIVE)"
+        else
+            echo "  🔄 $feature_name - ship result: $verdict"
         fi
+    done
+    for feature_name in ${NO_RESULT[@]+"${NO_RESULT[@]}"}; do
+        echo "  🔄 $feature_name - no phase result"
     done
     exit 0
 fi
 
-# Check for and archive completed features
+if [[ ${#NO_RESULT[@]} -gt 0 ]]; then
+    echo "no phase result, move by hand: ${NO_RESULT[*]}"
+fi
+
+# Archive the features the archive rule passed
 archived_count=0
-for feature_dir in "$DEV_ACTIVE"/*/; do
-    feature_dir="${feature_dir%/}"
-    [[ -L "$feature_dir" ]] && continue   # a committed link: never move what it points at
-    if [[ -d "$feature_dir" ]]; then
-        if is_feature_complete "$feature_dir"; then
-            archive_feature "$feature_dir" || continue   # refused: not archived, not counted
-            ((archived_count++))
-        fi
-    fi
+for feature_name in ${SHIP_CANDIDATES[@]+"${SHIP_CANDIDATES[@]}"}; do
+    [[ "$(verdict_of "$feature_name")" == ok ]] || continue
+    archive_feature "$DEV_ACTIVE/$feature_name" || continue   # refused: not archived, not counted
+    archived_count=$((archived_count + 1))
 done
 
 if [[ $archived_count -eq 0 ]]; then

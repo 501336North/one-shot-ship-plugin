@@ -35,10 +35,10 @@ __export(phase_result_exports, {
 });
 module.exports = __toCommonJS(phase_result_exports);
 var import_node_child_process4 = require("node:child_process");
-var import_node_crypto4 = require("node:crypto");
-var fs8 = __toESM(require("node:fs"), 1);
+var import_node_crypto5 = require("node:crypto");
+var fs9 = __toESM(require("node:fs"), 1);
 var os2 = __toESM(require("node:os"), 1);
-var path8 = __toESM(require("node:path"), 1);
+var path9 = __toESM(require("node:path"), 1);
 
 // src/phase-results/assemble-build.ts
 var import_node_fs = __toESM(require("node:fs"), 1);
@@ -1115,10 +1115,33 @@ function loadPhaseSchema(phase, pluginRoot2) {
   return loadSchema(readSchemaFile(dir, phase), { "common.schema.json": common });
 }
 
-// src/phase-results/feature.ts
-var import_node_child_process3 = require("node:child_process");
+// src/phase-results/archivable.ts
+var import_node_crypto4 = require("node:crypto");
 var fs7 = __toESM(require("node:fs"), 1);
 var path7 = __toESM(require("node:path"), 1);
+function shipArchivable(repo, feature, pluginRoot2) {
+  const marker = path7.join(repo, ".oss", "dev", "active", feature, "results", "ship.unverified.json");
+  if (fs7.lstatSync(marker, { throwIfNoEntry: false }) !== void 0) return { ok: false, reason: "unverified" };
+  const read = readResult(repo, feature, "ship");
+  if (!read.ok) return { ok: false, reason: read.error };
+  const ledger = openLedger(repo);
+  for (const kind of ["pending", "unverified"]) {
+    if (ledger.hasMarker(`${kind}/${feature}/ship`)) return { ok: false, reason: "unverified" };
+  }
+  const sha = (0, import_node_crypto4.createHash)("sha256").update(read.bytes).digest("hex");
+  if (ledger.lastRow(`results/${feature}/ship`)?.sha256 !== sha) return { ok: false, reason: "unbound_result" };
+  const v = validate(loadPhaseSchema("ship", pluginRoot2), read.value);
+  if (!v.ok) return { ok: false, reason: "invalid_result" };
+  const stored = read.value;
+  if (stored.verification !== "verified") return { ok: false, reason: "unverified" };
+  if (stored.verdict !== "ready_to_merge") return { ok: false, reason: "not_ready_to_merge" };
+  return { ok: true };
+}
+
+// src/phase-results/feature.ts
+var import_node_child_process3 = require("node:child_process");
+var fs8 = __toESM(require("node:fs"), 1);
+var path8 = __toESM(require("node:path"), 1);
 var FEATURE_RE2 = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 var BRANCH_RE = /^[^/]+\/([^/]+)\/[^/]/;
 function gitOut2(cwd, args) {
@@ -1132,14 +1155,14 @@ function gitOut2(cwd, args) {
   }
 }
 function activeFeatures(repo) {
-  const dir = path7.join(repo, ".oss", "dev", "active");
+  const dir = path8.join(repo, ".oss", "dev", "active");
   let names;
   try {
-    names = fs7.readdirSync(dir);
+    names = fs8.readdirSync(dir);
   } catch {
     return [];
   }
-  return names.filter((n) => FEATURE_RE2.test(n) && fs7.lstatSync(path7.join(dir, n), { throwIfNoEntry: false })?.isDirectory()).sort();
+  return names.filter((n) => FEATURE_RE2.test(n) && fs8.lstatSync(path8.join(dir, n), { throwIfNoEntry: false })?.isDirectory()).sort();
 }
 function resolveFeature(repo) {
   const ref = gitOut2(repo, ["symbolic-ref", "-q", "HEAD"]);
@@ -1147,7 +1170,7 @@ function resolveFeature(repo) {
   const m = BRANCH_RE.exec(branch);
   if (m !== null) {
     const f = m[1];
-    const st = fs7.lstatSync(path7.join(repo, ".oss", "dev", "active", f), { throwIfNoEntry: false });
+    const st = fs8.lstatSync(path8.join(repo, ".oss", "dev", "active", f), { throwIfNoEntry: false });
     return FEATURE_RE2.test(f) && st?.isDirectory() ? f : null;
   }
   const active = activeFeatures(repo);
@@ -1203,19 +1226,19 @@ function shipBase(repo) {
   return "";
 }
 function pluginRoot() {
-  return path8.resolve(path8.dirname(fs8.realpathSync(process.argv[1] ?? "")), "..", "..", "..");
+  return path9.resolve(path9.dirname(fs9.realpathSync(process.argv[1] ?? "")), "..", "..", "..");
 }
 function isDirOf(p, uid) {
-  const st = fs8.lstatSync(p, { throwIfNoEntry: false });
+  const st = fs9.lstatSync(p, { throwIfNoEntry: false });
   return st !== void 0 && !st.isSymbolicLink() && st.isDirectory() && st.uid === uid;
 }
 function valueDir(repo) {
   const key2 = ledgerKey(repo);
   if (key2 === null) return null;
   const uid = process.getuid?.();
-  const run = path8.join(os2.homedir(), ".oss", "run");
-  const dir = path8.join(run, key2);
-  return isDirOf(run, uid) && isDirOf(dir, uid) ? fs8.realpathSync(dir) : null;
+  const run = path9.join(os2.homedir(), ".oss", "run");
+  const dir = path9.join(run, key2);
+  return isDirOf(run, uid) && isDirOf(dir, uid) ? fs9.realpathSync(dir) : null;
 }
 function runStartedAt(ledger, phase) {
   const startedAt = ledger.lastRow(`run/${phase}`)?.startedAt;
@@ -1239,7 +1262,7 @@ function checkSchema(phase, value) {
   if (!v.ok) throw new Refusal(`invalid_result (${v.rule})`, v.path);
 }
 function sha2562(bytes) {
-  return (0, import_node_crypto4.createHash)("sha256").update(bytes).digest("hex");
+  return (0, import_node_crypto5.createHash)("sha256").update(bytes).digest("hex");
 }
 function assemble(repo, feature, phase) {
   const ledger = openLedger(repo);
@@ -1273,10 +1296,10 @@ function reassemble(repo, feature, phase, stored) {
   let tmp = null;
   let dir = valueDir(repo);
   if (phase === "ship") {
-    tmp = fs8.mkdtempSync(path8.join(os2.tmpdir(), "oss-phase-result-"));
+    tmp = fs9.mkdtempSync(path9.join(os2.tmpdir(), "oss-phase-result-"));
     const requested = Array.isArray(stored.overrides) ? stored.overrides : [];
     const overrides = requested.map((o) => ({ finding: o.finding, decisionId: o.decisionId }));
-    fs8.writeFileSync(path8.join(tmp, "overrides.json"), JSON.stringify(overrides), { mode: 384 });
+    fs9.writeFileSync(path9.join(tmp, "overrides.json"), JSON.stringify(overrides), { mode: 384 });
     dir = tmp;
   }
   try {
@@ -1289,13 +1312,13 @@ function reassemble(repo, feature, phase, stored) {
       now: () => /* @__PURE__ */ new Date()
     });
   } finally {
-    if (tmp !== null) fs8.rmSync(tmp, { recursive: true, force: true });
+    if (tmp !== null) fs9.rmSync(tmp, { recursive: true, force: true });
   }
 }
 function check(repo, feature, phase) {
   const ledger = openLedger(repo);
-  const marker = path8.join(repo, ".oss", "dev", "active", feature, "results", `${phase}.unverified.json`);
-  if (fs8.lstatSync(marker, { throwIfNoEntry: false }) !== void 0) throw new Refusal("unverified", "marker");
+  const marker = path9.join(repo, ".oss", "dev", "active", feature, "results", `${phase}.unverified.json`);
+  if (fs9.lstatSync(marker, { throwIfNoEntry: false }) !== void 0) throw new Refusal("unverified", "marker");
   for (const kind of ["pending", "unverified"]) {
     if (ledger.hasMarker(`${kind}/${feature}/${phase}`)) throw new Refusal("unverified", `${kind} marker`);
   }
@@ -1354,7 +1377,11 @@ function main(argv) {
   if (repo === null) return refuse(args, "no_repo", "repo");
   if (args.all) {
     for (const feature2 of activeFeatures(repo)) {
-      const v2 = verdictOf(() => check(repo, feature2, args.phase));
+      const v2 = verdictOf(() => {
+        if (args.phase !== "ship") return check(repo, feature2, args.phase);
+        const a = shipArchivable(repo, feature2, pluginRoot());
+        if (!a.ok) throw new Refusal(a.reason, "archive");
+      });
       process.stdout.write(`${feature2} ${v2.ok ? "ok" : v2.id}
 `);
     }

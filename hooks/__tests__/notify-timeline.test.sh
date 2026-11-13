@@ -38,11 +38,13 @@ export PATH="$API/bin:$PATH"
 # PATH only for these runs) records every call; get-copy.js prints $FAKE_COPY_OUT.
 BARE="$T/bare"; mkdir -p "$BARE"; cp -R "$ROOT/hooks" "$BARE/hooks"
 WATCHED="$T/watched"; mkdir -p "$WATCHED/watcher/dist/cli" "$T/bin"; cp -R "$ROOT/hooks" "$WATCHED/hooks"
-for f in update-workflow-state.js chain-trigger.cjs get-copy.js; do : > "$WATCHED/watcher/dist/cli/$f"; done
+# R-257 AC-001.3: build complete needs a valid build result; the fake phase-result CLI answers that it is verified.
+for f in update-workflow-state.js chain-trigger.cjs get-copy.js phase-result.cjs; do : > "$WATCHED/watcher/dist/cli/$f"; done
 cat > "$T/bin/node" << EOF
 #!/bin/bash
 echo "\$*" >> "$T/node.calls"
 [[ "\$1" == *get-copy.js ]] && printf '%s\n' "\${FAKE_COPY_OUT:-}"
+[[ "\$1" == *phase-result.cjs ]] && echo '{"verification":"verified"}'
 exit 0
 EOF
 chmod +x "$T/bin/node"

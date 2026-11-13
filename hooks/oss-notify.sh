@@ -68,7 +68,8 @@ run_with_timeout() {
 # CLI PATH RESOLUTION - Version-agnostic lookup with plugin cache fallback
 # =============================================================================
 # Priority 1: CLAUDE_PLUGIN_ROOT (set by Claude Code hook system)
-# Priority 2: find in ~/.claude/plugins/cache/ (fallback for command prompts)
+# Priority 2: the plugin named by ~/.oss/plugin-root (R-257 T10c: `claude --plugin-dir` has no plugin cache)
+# Priority 3: find in ~/.claude/plugins/cache/ (fallback for command prompts)
 resolve_cli() {
     local cli_name="$1"
     local cli_subpath="$2"
@@ -76,6 +77,13 @@ resolve_cli() {
     local direct_path="$PLUGIN_ROOT/$cli_subpath"
     if [[ -f "$direct_path" ]]; then
         echo "$direct_path"
+        return
+    fi
+    # ~/.oss/plugin-root: a regular file, not a link, owned, one absolute line naming an owned dir that is not a link
+    local pr="$HOME/.oss/plugin-root" r=""
+    if [[ -f "$pr" && ! -L "$pr" ]] && test -O "$pr" && r=$(cat "$pr" 2>/dev/null) \
+        && [[ "$r" == /* && "$r" != *$'\n'* && -d "$r" && ! -L "$r" ]] && test -O "$r" && [[ -f "$r/$cli_subpath" ]]; then
+        echo "$r/$cli_subpath"
         return
     fi
     # Fallback: search plugin cache (version-agnostic)
@@ -127,6 +135,47 @@ wf_state_timeout() {
         run_with_timeout "$timeout_secs" node "$WORKFLOW_STATE_CLI" "$@"
     fi
 }
+
+# =============================================================================
+# PHASE RESULTS (R-257) - the start gate (D16, D17) and the ledger run row (D14)
+# =============================================================================
+# oss_run_bounded_rc and oss_phase_gate_ok; absent, every gate fails closed.
+if [[ -f "$SCRIPT_DIR/oss-phase-result.sh" ]]; then source "$SCRIPT_DIR/oss-phase-result.sh"; else oss_run_bounded_rc() { OSS_BOUNDED_OUT=""; return 127; }; oss_phase_gate_ok() { echo "cli_missing" >&2; return 1; }; fi
+
+# _oss_phase_check <phase> <project>: rc 0 when that phase's result is valid and verified; else the reason class
+# (timeout, cli_missing, exit_<rc>, ...) in _OSS_GATE_WHY. The CLI's own reason goes to stderr.
+_oss_phase_check() {
+    local rc=0
+    oss_run_bounded_rc 15 "$BASH" "$SCRIPT_DIR/oss-phase-result.sh" check "$1" --repo "$2" || rc=$?
+    _OSS_GATE_WHY=$(oss_phase_gate_ok "$rc" "$OSS_BOUNDED_OUT" 2>&1) && return 0
+    return 1
+}
+
+# _oss_ledger_run <phase>: appends {"startedAt","session","headSha"} to ~/.oss/ledger/<key>/run/<phase> (NOTES.md
+# ledger contract). startedAt is read back from the workflow state this start just wrote; the key is _ov_key's, from
+# the physical cwd's repo. Dirs 700, file 600, links refused, one append.
+_oss_ledger_run() (
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+    local sf="$HOME/.oss/workflow-state.json" s top g k d c f sid head row
+    local iso='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?Z$' sre='^[A-Za-z0-9-]{1,100}$'
+    [[ -n "$_OSS_PROJECT_DIR" && -d "$_OSS_PROJECT_DIR/.oss" ]] && sf="$_OSS_PROJECT_DIR/.oss/workflow-state.json"
+    s=$(jq -r '.currentCommandStartedAt // empty' "$sf" 2>/dev/null) && [[ "$s" =~ $iso ]] || return 1
+    oss_phys_cwd; cd "$_OSS_CWD" 2>/dev/null && top=$(git rev-parse --show-toplevel 2>/dev/null) \
+        && g=$(git rev-parse --absolute-git-dir 2>/dev/null) || return 1
+    k=$(printf '%s\n%s\n' "$top" "$g" | git hash-object --stdin | cut -c1-16) && [[ ${#k} == 16 ]] || return 1
+    d="$HOME/.oss"
+    for c in ledger "$k" run; do
+        d="$d/$c"
+        [[ -e "$d" || -L "$d" ]] || mkdir -m 700 "$d" 2>/dev/null
+        [[ -d "$d" && ! -L "$d" ]] && test -O "$d" || return 1
+    done
+    f="$d/$1"
+    oss_single_link "$f" && { [[ ! -e "$f" ]] || test -O "$f"; } || return 1
+    sid="${CLAUDE_CODE_SESSION_ID:-}"; [[ "$sid" =~ $sre ]] || sid=""
+    head=$(git rev-parse -q --verify HEAD 2>/dev/null) || head=""
+    row=$(jq -cn --arg a "$s" --arg b "$sid" --arg c "$head" '{startedAt: $a, session: $b, headSha: $c}') || return 1
+    (umask 077; printf '%s\n' "$row" >> "$f")
+)
 
 LOG_SCRIPT="$PLUGIN_ROOT/hooks/oss-log.sh"
 # LOG_SCRIPT fallback: check plugin cache if not found at PLUGIN_ROOT
@@ -242,6 +291,55 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
     WORKFLOW_CONTEXT="${COPY_ARGS[2]:-}"
     [[ -n "$WORKFLOW_CONTEXT" ]] || WORKFLOW_CONTEXT='{}'
 
+    # R-257: the phase this command runs (a -team variant is gated like its main command)
+    _OSS_PHASE=""
+    case "$WORKFLOW_CMD" in
+        ideate | plan | build | ship) _OSS_PHASE="$WORKFLOW_CMD" ;;
+        ideate-team | plan-team | build-team | ship-team) _OSS_PHASE="${WORKFLOW_CMD%-team}" ;;
+    esac
+
+    # Start gate (D16), before any log line or state change: plan, build and ship need the previous phase's valid
+    # result. D17: a feature with no results/ folder at all (made before R-257) starts with a one-line notice.
+    if [[ "$WORKFLOW_EVENT" == start ]]; then
+        _OSS_PREV=""
+        case "$_OSS_PHASE" in plan) _OSS_PREV=ideate ;; build) _OSS_PREV=plan ;; ship) _OSS_PREV=build ;; esac
+        if [[ -n "$_OSS_PREV" ]]; then
+            _OSS_FEATURE=""
+            # `|| true`: under set -e its git call would end the hook outside a repo (rc 128)
+            [[ -n "$_OSS_PROJECT_DIR" ]] && { oss_resolve_feature "$_OSS_PROJECT_DIR" || true; }
+            _OSS_RD="$_OSS_PROJECT_DIR/.oss/dev/active/$_OSS_FEATURE/results"
+            if [[ -z "$_OSS_FEATURE" ]] || [[ ! -e "$_OSS_RD" && ! -L "$_OSS_RD" ]]; then
+                echo "no phase results for ${_OSS_FEATURE:-this project}: start gate skipped; run /oss:$_OSS_PREV to enable it"
+            elif ! _oss_phase_check "$_OSS_PREV" "$_OSS_PROJECT_DIR"; then
+                echo "oss-notify: $WORKFLOW_CMD start refused: no valid $_OSS_PREV result for $_OSS_FEATURE ($_OSS_GATE_WHY); run /oss:$_OSS_PREV to build it" >&2
+                exit 1
+            fi
+        fi
+    fi
+
+    # Complete gate (US-001), before any log line, completeStep, setNextCommand, the checklist and the chain: the phase's
+    # result must be valid, verified and bound to this run, in the project this command is for, which must be the
+    # physical cwd's repo (repo_mismatch). A refusal takes the failed path (supervisor intervening), prints no CHAIN
+    # and exits 1.
+    if [[ "$WORKFLOW_EVENT" == complete && -n "$_OSS_PHASE" ]]; then
+        _OSS_GATE_WHY=""
+        oss_phys_cwd
+        _OSS_TOP_CWD=$(unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR; cd "$_OSS_CWD" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null) || _OSS_TOP_CWD=""
+        _OSS_TOP_PROJ=$(unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR; cd "$_OSS_PROJECT_DIR" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null) || _OSS_TOP_PROJ=""
+        if [[ -z "$_OSS_PROJECT_DIR" ]]; then _OSS_GATE_WHY="no_repo"
+        elif [[ -z "$_OSS_TOP_CWD" || "$_OSS_TOP_CWD" != "$_OSS_TOP_PROJ" ]]; then _OSS_GATE_WHY="repo_mismatch"
+        fi
+        if [[ -n "$_OSS_GATE_WHY" ]] || ! _oss_phase_check "$_OSS_PHASE" "$_OSS_PROJECT_DIR"; then
+            _OSS_MSG="oss-notify: $WORKFLOW_CMD complete refused: no valid $_OSS_PHASE result ($_OSS_GATE_WHY); build it with oss-phase-result.sh assemble $_OSS_PHASE, then complete again"
+            [[ "$_OSS_PHASE" == build ]] && _OSS_MSG="$_OSS_MSG; build evidence is from repo files (not ledger-checked)"
+            echo "$_OSS_MSG" >&2
+            if [[ -x "$LOG_SCRIPT" ]]; then "$LOG_SCRIPT" write "$WORKFLOW_CMD" "[failed] phase result refused ($_OSS_GATE_WHY)" 2>/dev/null || true; fi
+            "$SCRIPT_DIR/oss-timeline.sh" command "$WORKFLOW_CMD" failed </dev/null >/dev/null 2>&1 || true
+            if [[ -f "$WORKFLOW_STATE_CLI" ]]; then wf_state_timeout 2 setSupervisor intervening >/dev/null 2>&1 || true; fi
+            exit 1
+        fi
+    fi
+
     # Write to workflow log file
     if [[ -x "$LOG_SCRIPT" && -n "$WORKFLOW_CMD" ]]; then
         LOG_MSG="[$WORKFLOW_EVENT]"
@@ -286,6 +384,10 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                     ship)   wf_state clearNextCommand 2>/dev/null || true ;;
                     *)      ;; # Non-chain commands don't affect nextCommand
                 esac
+                # R-257 D14: this phase's private run start; a ledger failure never blocks the start
+                if [[ -n "$_OSS_PHASE" ]]; then
+                    _oss_ledger_run "$_OSS_PHASE" || echo "oss-notify: ledger run row not written for $_OSS_PHASE" >&2
+                fi
                 # Track ALL command invocations via analytics API
                 # Note: oss-decrypt also tracks when prompts are fetched from API,
                 # but cached prompts bypass the API, so we track here as the source of truth

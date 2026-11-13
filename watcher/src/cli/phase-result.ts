@@ -10,7 +10,8 @@
  * assemble builds the result from evidence (the phase assembler), validates it against the phase schema, writes it and
  * binds its bytes to this run in the owner-only ledger (`results/<feature>/<phase>`), then clears the `pending` marker.
  * A failed assemble writes nothing. check passes only for that exact file, from this run (`run/<phase>`), still matching
- * the evidence, with no unverified marker; for ship, made at the current HEAD. Exit 0 on pass, 1 on refusal (stderr
+ * the evidence, with no unverified marker; for ship, made at the current HEAD. `check ship --all` instead applies the
+ * archive rule (phase-results/archivable.ts) to every active feature. Exit 0 on pass, 1 on refusal (stderr
  * names the reason id, the field and the rebuild command), 2 on wrong usage.
  *
  * Repo: the physical cwd's git toplevel, or --repo; never CLAUDE_PROJECT_DIR. Schemas: the plugin root this bundle sits
@@ -28,6 +29,7 @@ import { assemblePlan } from '../phase-results/assemble-plan.js';
 import { assembleShip } from '../phase-results/assemble-ship.js';
 import { LedgerError, ledgerKey, openLedger, type Ledger } from '../phase-results/ledger.js';
 import { loadPhaseSchema, PHASES, type Phase } from '../phase-results/schemas.js';
+import { shipArchivable } from '../phase-results/archivable.js';
 import { activeFeatures, resolveFeature } from '../phase-results/feature.js';
 import { readResult, resolveRepo, writeResult } from '../phase-results/store.js';
 import { validate } from '../phase-results/validate.js';
@@ -271,7 +273,11 @@ export function main(argv: string[]): number {
 
   if (args.all) {
     for (const feature of activeFeatures(repo)) {
-      const v = verdictOf(() => check(repo, feature, args.phase));
+      const v = verdictOf(() => {
+        if (args.phase !== 'ship') return check(repo, feature, args.phase);
+        const a = shipArchivable(repo, feature, pluginRoot());
+        if (!a.ok) throw new Refusal(a.reason, 'archive');
+      });
       process.stdout.write(`${feature} ${v.ok ? 'ok' : v.id}\n`);
     }
     return 0;

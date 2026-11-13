@@ -319,6 +319,9 @@ rm -rf "$T"
 
 world; clean_repo p-okarch
 mkdir -p "$P/.oss/dev/active/feat"; printf '# Progress\n\n## Current Phase: ship (COMPLETE)\n\n- [x] done\n' > "$P/.oss/dev/active/feat/PROGRESS.md"
+# R-257 T13 (AC-006.1): only a valid ship result archives a feature
+source "$ROOT/hooks/__tests__/lib/archive-ship-fixture.sh"   # archivable_ship: a valid, bound ship result (R-257 T13)
+HOME="$T/home" archivable_ship "$P" feat
 (cd "$P" && HOME="$T/home" "$SH" "$ROOT/hooks/oss-archive-check.sh" --project-dir="$P" >/dev/null 2>&1 </dev/null)
 if ls -d "$P/.oss/dev/completed/feat-"* >/dev/null 2>&1 && [[ ! -d "$P/.oss/dev/active/feat" ]]; then pass "control: a normal repo still archives completed features"
 else fail "control: a normal repo still archives completed features" "$(ls -R "$P/.oss/dev" 2>&1 | tr '\n' ' ')"; fi

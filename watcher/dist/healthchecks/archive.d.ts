@@ -4,7 +4,9 @@ export interface ArchiveCheckOptions {
 }
 /**
  * @behavior Verify shipped features are being archived properly
- * @acceptance-criteria Features in "ship" or "complete" phase should be moved to dev/completed/
+ * @acceptance-criteria A feature whose ship phase result passes the archive rule (phase-results/archivable.ts:
+ *   valid, bound, verified, ready_to_merge) should be moved to dev/completed/. PROGRESS.md prose never decides
+ *   (R-257 AC-006.1).
  * @boundary Healthcheck
  */
 export declare function checkArchive(options: ArchiveCheckOptions): Promise<CheckResult>;

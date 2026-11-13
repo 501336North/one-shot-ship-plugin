@@ -34,6 +34,9 @@ export CLAUDE_CODE_SESSION_ID=acc-session-1
 export HOME="$T/home"; mkdir -p "$HOME/.oss"
 PLUGIN="$T/plugin"; mkdir -p "$PLUGIN"; cp -R "$ROOT/hooks" "$PLUGIN/hooks"; cp "$ROOT/hooks.json" "$PLUGIN/hooks.json"
 export CLAUDE_PLUGIN_ROOT="$PLUGIN"
+# R-257 AC-001.3: build complete needs a valid build result; this phase-result CLI (a collaborator here) answers verified
+mkdir -p "$PLUGIN/watcher/dist/cli"
+printf 'console.log(JSON.stringify({verification: "verified"}))\n' > "$PLUGIN/watcher/dist/cli/phase-result.cjs"
 # shellcheck source=hooks/__tests__/fake-oss-api.sh
 source "$ROOT/hooks/__tests__/fake-oss-api.sh"
 API="$T/api"; fake_api_install "$API"

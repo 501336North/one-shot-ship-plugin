@@ -1,0 +1,1 @@
+{"version":3,"file":"archivable.d.ts","sourceRoot":"","sources":["../../src/phase-results/archivable.ts"],"names":[],"mappings":"AAiBA,MAAM,MAAM,cAAc,GAAG;IAAE,EAAE,EAAE,IAAI,CAAA;CAAE,GAAG;IAAE,EAAE,EAAE,KAAK,CAAC;IAAC,MAAM,EAAE,MAAM,CAAA;CAAE,CAAC;AAE1E,yFAAyF;AACzF,wBAAgB,cAAc,CAAC,IAAI,EAAE,MAAM,EAAE,OAAO,EAAE,MAAM,EAAE,UAAU,EAAE,MAAM,GAAG,cAAc,CAiBhG"}

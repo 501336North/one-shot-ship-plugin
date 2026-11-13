@@ -89,7 +89,8 @@ log_case() {
 }
 for ev in start complete failed; do
     ctx='{}'; [[ "$ev" == failed ]] && ctx='{"reason":"r"}'
-    log_case "notify $ev" "[$ev]" "$SH" "$HOOKS/oss-notify.sh" --workflow build "$ev" "$ctx"
+    want="[$ev]"; [[ "$ev" == complete ]] && want="[failed]"   # R-257 AC-001.1: build complete with no result is refused
+    log_case "notify $ev" "$want" "$SH" "$HOOKS/oss-notify.sh" --workflow build "$ev" "$ctx"
 done
 log_case "oss-log write" "hello-routing" "$SH" "$HOOKS/oss-log.sh" write build hello-routing
 log_case "oss-log test" "PASS" "$SH" "$HOOKS/oss-log.sh" test build PASS "1/1"
@@ -191,7 +192,9 @@ hc_world; OUT=$(cd "$C" && env HOME="$H" CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJE
 
 # --- T6: oss-archive-check.sh (run by the served /oss:plan via the Bash tool) -------------------
 world
-for p in "$A" "$B"; do mkdir -p "$p/.oss/dev/active/feat-done"; printf '# P\n## Current Phase: complete\n' > "$p/.oss/dev/active/feat-done/PROGRESS.md"; done
+# R-257 T13 (AC-006.1): only a valid ship result archives a feature, so each finished feature gets one
+source "$ROOT/hooks/__tests__/lib/archive-ship-fixture.sh"   # archivable_ship: a valid, bound ship result (R-257 T13)
+for p in "$A" "$B"; do mkdir -p "$p/.oss/dev/active/feat-done"; printf '# P\n## Current Phase: complete\n' > "$p/.oss/dev/active/feat-done/PROGRESS.md"; HOME="$H" archivable_ship "$p" feat-done; done
 run "$A/sub/deep" "$SH" "$HOOKS/oss-archive-check.sh"
 [[ ! -d "$A/.oss/dev/active/feat-done" && -n "$(ls "$A/.oss/dev/completed" 2>/dev/null)" && -d "$B/.oss/dev/active/feat-done" && ! -e "$B/.oss/dev/completed" ]] \
     && pass "T6: archive-check from A/sub/deep (current-project = B) archives A's finished feature, never B's" \
