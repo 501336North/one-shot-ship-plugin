@@ -1119,7 +1119,6 @@ function loadPhaseSchema(phase, pluginRoot2) {
 var USAGE = "usage: oss-phase-result.sh assemble <ideate|plan|build|ship>\n       oss-phase-result.sh check <ideate|plan|build|ship> [--repo <path>] [--all]\n";
 var FEATURE_RE2 = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 var BRANCH_RE = /^[^/]+\/([^/]+)\/[^/]/;
-var SHIP_BASE = "main";
 var Refusal = class extends Error {
   id;
   field;
@@ -1149,6 +1148,22 @@ function gitOut2(cwd, args) {
   } catch {
     return null;
   }
+}
+function shipBase(repo) {
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
+  env.GIT_CONFIG_NOSYSTEM = "1";
+  const r = (0, import_node_child_process3.spawnSync)("git", ["config", "--local", "--get", "oss.shipBase"], {
+    cwd: repo,
+    env,
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 1e4,
+    maxBuffer: 64 * 1024
+  });
+  if (r.error === void 0 && r.status === 1) return "main";
+  if (r.error === void 0 && r.status === 0) return r.stdout.replace(/\n$/, "");
+  return "";
 }
 function pluginRoot() {
   return path7.resolve(path7.dirname(fs7.realpathSync(process.argv[1] ?? "")), "..", "..", "..");
@@ -1201,7 +1216,7 @@ function runAssembler(phase, ctx) {
     case "build":
       return assembleBuild(ctx);
     case "ship":
-      return assembleShip(ctx, { base: SHIP_BASE });
+      return assembleShip(ctx, { base: shipBase(ctx.repo) });
   }
 }
 function checkSchema(phase, value) {

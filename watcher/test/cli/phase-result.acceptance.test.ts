@@ -334,6 +334,83 @@ describe('phase-result CLI: check refuses anything not bound to this run', () =>
   });
 });
 
+describe('phase-result CLI: the ship base comes from repo config oss.shipBase, else main', () => {
+  const INTEGRATION = 'feat/sprint/build';
+
+  /** Recuts the feature branch from an integration branch that already has commits main lacks. */
+  function featureFromIntegration(): string {
+    git('checkout', '-q', 'main');
+    git('checkout', '-q', '-b', INTEGRATION);
+    commitFile('sprint1.txt', 'a\nb\nc\n');
+    commitFile('sprint2.txt', 'd\ne\n');
+    const cut = git('rev-parse', 'HEAD');
+    git('branch', '-q', '-D', `feat/${FEATURE}/build`);
+    git('checkout', '-q', '-b', `feat/${FEATURE}/build`);
+    return cut;
+  }
+
+  function shipResult(): Record<string, unknown> {
+    return JSON.parse(fs.readFileSync(resultFile(FEATURE, 'ship'), 'utf-8')) as Record<string, unknown>;
+  }
+
+  // User behaviour: a feature cut from an integration branch ships with a diff of only its own commits.
+  // Business rule: the ship base is the repo-local `oss.shipBase` (a local ref, never gh or fetch); check agrees.
+  it('with oss.shipBase set to the integration branch, diff.base is its merge-base and totals cover only the feature', () => {
+    const cut = featureFromIntegration();
+    git('config', '--local', 'oss.shipBase', INTEGRATION);
+    commitFile('feature.txt', 'work\n');
+    passGates(FEATURE);
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    const a = cli('assemble', 'ship');
+    expect(a.status, a.stderr).toBe(0);
+    expect(shipResult().diff).toEqual({ base: cut, files: 1, insertions: 1, deletions: 0 });
+    const c = cli('check', 'ship');
+    expect(c.status, c.stderr).toBe(0);
+  });
+
+  // User behaviour: a repo with no ship base configured keeps shipping against main.
+  // Business rule: unset `oss.shipBase` falls back to `main`.
+  it('unset oss.shipBase still diffs against main', () => {
+    featureFromIntegration();
+    commitFile('feature.txt', 'work\n');
+    passGates(FEATURE);
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    const a = cli('assemble', 'ship');
+    expect(a.status, a.stderr).toBe(0);
+    expect(shipResult().diff).toEqual({ base: git('rev-parse', 'main'), files: 3, insertions: 6, deletions: 0 });
+  });
+
+  // User behaviour: a bad ship base stops ship with a named refusal instead of a wrong diff.
+  // Business rule: the configured value passes the ref checks or the result is refused; never a silent fallback.
+  it('oss.shipBase set to an option-like value refuses with diff_unavailable and exit 1', () => {
+    commitFile('feature.txt', 'work\n');
+    passGates(FEATURE);
+    git('config', '--local', 'oss.shipBase', '--output=x');
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    const r = cli('assemble', 'ship');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('diff_unavailable');
+    expect(fs.existsSync(path.join(repo, 'x'))).toBe(false);
+  });
+
+  // User behaviour: a branch already squash-merged into its integration branch cannot ship again.
+  // Business rule: a tree equal to the configured base tip is `empty_diff`.
+  it('a branch squash-merged into the integration branch gives empty_diff', () => {
+    featureFromIntegration();
+    git('config', '--local', 'oss.shipBase', INTEGRATION);
+    commitFile('feature.txt', 'work\n');
+    git('checkout', '-q', INTEGRATION);
+    git('merge', '-q', '--squash', `feat/${FEATURE}/build`);
+    git('commit', '-q', '-m', 'squash feature');
+    git('checkout', '-q', `feat/${FEATURE}/build`);
+    passGates(FEATURE);
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    const r = cli('assemble', 'ship');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('empty_diff');
+  });
+});
+
 describe('phase-result CLI: usage, --all, budgets', () => {
   it('an unknown phase or verb exits 2 with usage', () => {
     for (const args of [['check', 'deploy'], ['assemble', 'review'], ['frob', 'plan'], []]) {

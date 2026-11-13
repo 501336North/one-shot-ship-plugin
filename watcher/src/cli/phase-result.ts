@@ -16,7 +16,7 @@
  * Repo: the physical cwd's git toplevel, or --repo; never CLAUDE_PROJECT_DIR. Schemas: the plugin root this bundle sits
  * in (<root>/watcher/dist/cli/phase-result.cjs), never the repo. No network; the only child process is git.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -36,8 +36,6 @@ const USAGE =
   '       oss-phase-result.sh check <ideate|plan|build|ship> [--repo <path>] [--all]\n';
 const FEATURE_RE = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 const BRANCH_RE = /^[^/]+\/([^/]+)\/[^/]/;
-/** The local branch ship diffs against (local ref only, never gh or fetch). */
-const SHIP_BASE = 'main';
 
 type Verdict = { ok: true } | { ok: false; id: string; field: string };
 
@@ -79,6 +77,27 @@ function gitOut(cwd: string, args: string[]): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The local branch ship diffs against: repo-local `oss.shipBase`, else `main` (local ref only, never gh or fetch).
+ * assembleShip's ref checks validate the value; a failed read gives '' so it is refused, never silently `main`.
+ */
+function shipBase(repo: string): string {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('GIT_')) env[k] = v;
+  env.GIT_CONFIG_NOSYSTEM = '1';
+  const r = spawnSync('git', ['config', '--local', '--get', 'oss.shipBase'], {
+    cwd: repo,
+    env,
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+    timeout: 10_000,
+    maxBuffer: 64 * 1024,
+  });
+  if (r.error === undefined && r.status === 1) return 'main';
+  if (r.error === undefined && r.status === 0) return r.stdout.replace(/\n$/, '');
+  return '';
 }
 
 /** The plugin root this bundle sits in: <root>/watcher/dist/cli/phase-result.cjs. */
@@ -144,7 +163,7 @@ function runAssembler(phase: Phase, ctx: AssembleContext): AssembleOutcome {
     case 'build':
       return assembleBuild(ctx);
     case 'ship':
-      return assembleShip(ctx, { base: SHIP_BASE });
+      return assembleShip(ctx, { base: shipBase(ctx.repo) });
   }
 }
 
