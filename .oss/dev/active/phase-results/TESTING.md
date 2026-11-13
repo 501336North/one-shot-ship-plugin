@@ -40,4 +40,20 @@ Not committed while red (IRON LAW #1: no commit with failing tests). The test la
 - API (T17): 4 targeted files / 73 tests green; 921/921 across 19 targeted files; `manifest:verify` 138 prompts match.
   test/manifest.test.ts does not load here: @agentic/mcp-time is not built in this worktree (environment, pre-existing).
 
-## Last Updated: 2026-11-13 19:10 CST by /oss:build
+### /oss:integration, 2026-11-13
+Each faked boundary compared with the real collaborator:
+
+| Fake | Real | Result |
+|------|------|--------|
+| API `ship-check-fake.ts` (`check ship --all`) | plugin hook + CLI, run from plan.md's archive block in a fixture repo | **Mismatch fixed** (API f9a2a122): the real CLI prints `<f> missing` for a feature with no ship.json; the fake skipped it. No behavior impact, because only `ok` lines move a feature. |
+| notify tests' phase-result CLI (`{"verification":"verified"}`, exit 0) | `check` success output in watcher/src/cli/phase-result.ts | Match. phase-results.acceptance runs the real path 7/7. |
+| Assemblers, ledger, store | real git repos and files in temp dirs, with no mocks | Nothing to validate. |
+
+Run against the real hook (fixture with a hand-written ship.json and a feature with no results):
+- old plugin: `NOT ARCHIVED: auto-archive needs a newer OSS plugin`;
+- real hook: `handwritten unbound_result` / `noresult missing`, rc 0;
+- archive: nothing moved, `no phase result, move by hand: noresult`.
+
+Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watcher-dist-fresh are all green after it.
+
+## Last Updated: 2026-11-13 19:23 CST by /oss:integration
