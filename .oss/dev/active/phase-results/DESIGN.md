@@ -37,7 +37,7 @@ Common fields:
 
 | Phase | Code-assembled from | Model (validated) |
 |---|---|---|
-| ideate | Decision records in `decisions.ndjson` whose feature matches (D10); DESIGN.md `Status: COMMITTED` present | `openQuestions[]` |
+| ideate | Decision records in `decisions.ndjson` whose feature matches and are in the ledger (D10, D14); zero is allowed, recorded as `decisionsRecorded: 0` (D18); DESIGN.md `Status: COMMITTED` present | `openQuestions[]` |
 | plan | none | `tasks[]` `{id, title, testIds[≥1]}`, source `model`. Code checks unique ids and at least one test id per task (D11). |
 | build | R-253 recorder events for this build (`.oss/tool-gates/events.ndjson`, `cycle.json`): red seen, then green, last result. Per task in slice B. | `notes` |
 | ship | Git: `diff.base` (merge-base sha with the PR base branch), `diff.files`, `diff.insertions`, `diff.deletions`; an empty diff fails. Gates: per-gate `{gate, verdict, findings{critical..info}, fixed, source}` from the timeline gate lines (source `model`) until the SubagentStop capture of each agent's JSON block lands (source `agent`) (D6). Overrides: `{finding, decisionId, person}`, copied from the hook's decision record; the model never writes a name (D12). | `summary` |

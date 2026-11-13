@@ -38,6 +38,7 @@
 - D15 Recorder: **label build evidence, fix in B**. Slice A's build result carries `evidenceTrust: "repo-file"` and the notice says so. The recorder hash chain lands in slice B after R-266 merges. This is an open security item, decided by the user, not self-deferred.
 - D17 Start-gate migration: **legacy pass + notice**. A feature with no results/ dir starts with a notice. Once any result exists, the gate applies. /oss:quick is never gated; --team is gated like its main command; refusals name the command to run. Goes in the release notes.
 - Ledger location (coordinator conflict fix): `~/.oss/ledger/<key>/`, outside the `~/.oss/run` value folder. T18b deny rules cover the ledger and results/ only, after R-266 merges, as R-257's own PR.
+- D18 Zero picks (user, 2026-11-13, after a heads-up that headless runs like the DeepBlue benchmark would fail at ideate): **allow zero decisions**. The ideate result may have `decisions: []`, recorded as `decisionsRecorded: 0` (code-sourced). Ideate still fails without DESIGN.md `Status: COMMITTED`. Planted picks are excluded, not counted.
 - D16 Start gate: **added**. `oss-notify start` for plan, build and ship refuses without a valid previous-phase result. This widens D4 by the user's choice.
 
 ---

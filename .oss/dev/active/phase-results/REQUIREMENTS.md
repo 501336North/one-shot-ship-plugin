@@ -27,7 +27,8 @@ Source: DESIGN.md (COMMITTED 2026-11-13), D1-D12.
 ### US-003: Per-phase content (Must)
 - **AC-003.1 ideate:**
   - decisions come from the `decisions.ndjson` records whose feature matches;
-  - none matching fails with `no_decisions`;
+  - none matching is allowed: `decisions: []` with `decisionsRecorded: 0` (source code), so headless runs (R-267 benchmark, oss-lab cage) and chat-answered ideation still pass (D18);
+  - planted records (not in the ledger) are excluded, not counted;
   - DESIGN.md without `Status: COMMITTED` fails with `design_not_committed`.
 - **AC-003.2 plan:**
   - the model's `tasks[]` have unique ids and at least one test id each;

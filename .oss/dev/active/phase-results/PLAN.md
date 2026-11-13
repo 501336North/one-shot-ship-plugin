@@ -113,7 +113,8 @@ DESIGN.md (COMMITTED), REQUIREMENTS.md (US-001 to US-006), DECISIONS.md (SD-1, S
 **Tests (RED)**, file `assemble-ideate.test.ts`:
 - records whose `feature` matches **and** whose id is in the private ledger become `decisions[]` with `source: code`.
 - a planted record (repo file only, id not in the ledger) is excluded.
-- no matching records fails with `no_decisions`.
+- no matching records gives a valid result with `decisions: []` and `decisionsRecorded: 0` (D18: headless and chat-answered ideation pass).
+- only planted records (not in the ledger) gives `decisionsRecorded: 0`, never a failure and never counted.
 - DESIGN.md without the `Status: COMMITTED` line fails with `design_not_committed` (an exact line match `^Status: COMMITTED$`, a single fixed token, not a prose grep).
 - `openQuestions[]` come from the value file, with `source: model`.
 
@@ -406,7 +407,7 @@ A result counts only if this machine's assembler wrote it for this run, and it s
 
 #### Tasks 7 and 8, assemblers (amended: S2, S6, S9, S10, F5, P4)
 - Decisions and gate lines count only when their line hash **and** feature match a ledger row:
-  - an edited `feature` gives `no_decisions`;
+  - an edited `feature` excludes that record (`decisionsRecorded` drops by one);
   - an edited `person` gives `override_unrecorded`;
   - a planted gate line gives `gate_missing`.
 - **Ship diff:**
