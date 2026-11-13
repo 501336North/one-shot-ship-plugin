@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ship.schema.json",
+  "title": "Phase result: ship",
+  "description": "Ship result: git diff, gates, overrides and verdict (code), summary (model).",
+  "$defs": {
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "critical",
+        "high",
+        "medium",
+        "low",
+        "info"
+      ],
+      "properties": {
+        "critical": {
+          "$ref": "common.schema.json#/$defs/count"
+        },
+        "high": {
+          "$ref": "common.schema.json#/$defs/count"
+        },
+        "medium": {
+          "$ref": "common.schema.json#/$defs/count"
+        },
+        "low": {
+          "$ref": "common.schema.json#/$defs/count"
+        },
+        "info": {
+          "$ref": "common.schema.json#/$defs/count"
+        }
+      }
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "phase",
+    "feature",
+    "startedAt",
+    "assembledAt",
+    "headSha",
+    "sources",
+    "verification",
+    "claims",
+    "chain",
+    "diff",
+    "gates",
+    "overrides",
+    "blockers",
+    "verdict",
+    "summary"
+  ],
+  "properties": {
+    "v": {
+      "$ref": "common.schema.json#/$defs/v"
+    },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "ship"
+      ]
+    },
+    "feature": {
+      "$ref": "common.schema.json#/$defs/feature"
+    },
+    "startedAt": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "assembledAt": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "headSha": {
+      "$ref": "common.schema.json#/$defs/sha"
+    },
+    "sources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "diff": {
+          "$ref": "common.schema.json#/$defs/source"
+        },
+        "gates": {
+          "$ref": "common.schema.json#/$defs/source"
+        },
+        "overrides": {
+          "$ref": "common.schema.json#/$defs/source"
+        },
+        "blockers": {
+          "$ref": "common.schema.json#/$defs/source"
+        },
+        "verdict": {
+          "$ref": "common.schema.json#/$defs/source"
+        },
+        "summary": {
+          "$ref": "common.schema.json#/$defs/source"
+        },
+        "claims": {
+          "$ref": "common.schema.json#/$defs/source"
+        }
+      }
+    },
+    "verification": {
+      "$ref": "common.schema.json#/$defs/verification"
+    },
+    "verificationError": {
+      "$ref": "common.schema.json#/$defs/verificationError"
+    },
+    "claims": {
+      "$ref": "common.schema.json#/$defs/claims"
+    },
+    "chain": {
+      "$ref": "common.schema.json#/$defs/chain"
+    },
+    "diff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "files",
+        "insertions",
+        "deletions"
+      ],
+      "properties": {
+        "base": {
+          "$ref": "common.schema.json#/$defs/sha"
+        },
+        "files": {
+          "$ref": "common.schema.json#/$defs/count"
+        },
+        "insertions": {
+          "$ref": "common.schema.json#/$defs/count"
+        },
+        "deletions": {
+          "$ref": "common.schema.json#/$defs/count"
+        }
+      }
+    },
+    "gates": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "gate",
+          "verdict",
+          "findings",
+          "fixed",
+          "source"
+        ],
+        "properties": {
+          "gate": {
+            "$ref": "common.schema.json#/$defs/token"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "pass",
+              "fail"
+            ]
+          },
+          "findings": {
+            "$ref": "#/$defs/counts"
+          },
+          "fixed": {
+            "$ref": "#/$defs/counts"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "model",
+              "agent"
+            ]
+          }
+        }
+      }
+    },
+    "overrides": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "finding",
+          "decisionId",
+          "person"
+        ],
+        "properties": {
+          "finding": {
+            "$ref": "common.schema.json#/$defs/shortText"
+          },
+          "decisionId": {
+            "$ref": "common.schema.json#/$defs/id"
+          },
+          "person": {
+            "$ref": "common.schema.json#/$defs/shortText"
+          }
+        }
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "$ref": "common.schema.json#/$defs/shortText"
+      }
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "ready_to_merge",
+        "blocked"
+      ]
+    },
+    "summary": {
+      "$ref": "common.schema.json#/$defs/modelText"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "v": 1,
+  "feature": "phase-results",
+  "startedAt": "2026-11-13T09:00:00.000Z",
+  "assembledAt": "2026-11-13T09:30:00.000Z",
+  "headSha": "0123456789abcdef0123456789abcdef01234567",
+  "verification": "verified",
+  "claims": [{ "text": "All tests pass", "kind": "test", "label": "VERIFIED", "evidence": "vitest run: 12 passed" }, { "text": "No network calls", "kind": "behaviour" }],
+  "chain": [{ "command": "ideate", "ranAt": "2026-11-12T10:00:00Z", "initEventId": "evt-0001" }],
+  "phase": "ship",
+  "sources": { "diff": "code", "gates": "code", "overrides": "code", "blockers": "code", "verdict": "code", "summary": "model" },
+  "diff": { "base": "fedcba9876543210fedcba9876543210fedcba98", "files": 12, "insertions": 340, "deletions": 25 },
+  "gates": [
+    { "gate": "security", "verdict": "pass", "findings": { "critical": 0, "high": 0, "medium": 1, "low": 2, "info": 0 }, "fixed": { "critical": 0, "high": 0, "medium": 1, "low": 2, "info": 0 }, "source": "model" },
+    { "gate": "code-review", "verdict": "pass", "findings": { "critical": 0, "high": 0, "medium": 0, "low": 0, "info": 3 }, "fixed": { "critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0 }, "source": "agent" }
+  ],
+  "overrides": [{ "finding": "LOW: verbose log line", "decisionId": "D21", "person": "Owner Name" }],
+  "blockers": [],
+  "verdict": "ready_to_merge",
+  "summary": "Ships the phase-result schemas."
+}

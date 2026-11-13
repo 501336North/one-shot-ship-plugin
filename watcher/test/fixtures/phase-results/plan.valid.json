@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "feature": "phase-results",
+  "startedAt": "2026-11-13T09:00:00.000Z",
+  "assembledAt": "2026-11-13T09:30:00.000Z",
+  "headSha": "0123456789abcdef0123456789abcdef01234567",
+  "verification": "verified",
+  "claims": [{ "text": "All tests pass", "kind": "test", "label": "VERIFIED", "evidence": "vitest run: 12 passed" }, { "text": "No network calls", "kind": "behaviour" }],
+  "chain": [{ "command": "ideate", "ranAt": "2026-11-12T10:00:00Z", "initEventId": "evt-0001" }],
+  "phase": "plan",
+  "sources": { "tasks": "model" },
+  "tasks": [
+    { "id": "T1", "title": "Keyword-subset validator", "testIds": ["validate.test.ts > should accept a valid value"] },
+    { "id": "T3b", "title": "Owner-only run ledger", "testIds": ["ledger.test.ts > mode 700", "ledger.test.ts > rows under 512 bytes"] }
+  ]
+}

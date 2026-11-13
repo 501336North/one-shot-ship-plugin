@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ideate.schema.json",
+  "title": "Phase result: ideate",
+  "description": "Ideate result: decisions from the hook records (code), design committed (code), open questions (model).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "phase",
+    "feature",
+    "startedAt",
+    "assembledAt",
+    "headSha",
+    "sources",
+    "verification",
+    "claims",
+    "chain",
+    "decisions",
+    "decisionsRecorded",
+    "designCommitted",
+    "openQuestions"
+  ],
+  "properties": {
+    "v": {
+      "$ref": "common.schema.json#/$defs/v"
+    },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "ideate"
+      ]
+    },
+    "feature": {
+      "$ref": "common.schema.json#/$defs/feature"
+    },
+    "startedAt": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "assembledAt": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "headSha": {
+      "$ref": "common.schema.json#/$defs/sha"
+    },
+    "sources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "decisions": {
+          "$ref": "common.schema.json#/$defs/source"
+        },
+        "decisionsRecorded": {
+          "$ref": "common.schema.json#/$defs/source"
+        },
+        "designCommitted": {
+          "$ref": "common.schema.json#/$defs/source"
+        },
+        "openQuestions": {
+          "$ref": "common.schema.json#/$defs/source"
+        },
+        "claims": {
+          "$ref": "common.schema.json#/$defs/source"
+        }
+      }
+    },
+    "verification": {
+      "$ref": "common.schema.json#/$defs/verification"
+    },
+    "verificationError": {
+      "$ref": "common.schema.json#/$defs/verificationError"
+    },
+    "claims": {
+      "$ref": "common.schema.json#/$defs/claims"
+    },
+    "chain": {
+      "$ref": "common.schema.json#/$defs/chain"
+    },
+    "decisions": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "common.schema.json#/$defs/id"
+          },
+          "question": {
+            "$ref": "common.schema.json#/$defs/modelText"
+          },
+          "answer": {
+            "$ref": "common.schema.json#/$defs/modelText"
+          },
+          "kind": {
+            "$ref": "common.schema.json#/$defs/token"
+          }
+        }
+      }
+    },
+    "decisionsRecorded": {
+      "$ref": "common.schema.json#/$defs/count"
+    },
+    "designCommitted": {
+      "type": "boolean",
+      "enum": [
+        true
+      ]
+    },
+    "openQuestions": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "$ref": "common.schema.json#/$defs/modelText"
+      }
+    }
+  }
+}
