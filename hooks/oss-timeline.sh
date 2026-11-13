@@ -257,9 +257,14 @@ oss_timeline_append() (
     # the outbox entry (B5), made from the line this machine writes: the push never reads the committed file
     entry=$(jq -c --arg fp "$(k=$(oss_api_key) && printf '%s' "$k" | _oss_tl_sha256 | cut -c1-16)" \
         '{id, state: "pending", fp: $fp, body: .}' <<< "$line")
+    gate_hash=$(printf '%s' "$line" | _oss_tl_sha256 | cut -d' ' -f1)
     # a file whose last line has no newline gets one first, so the new line never glues onto it
     [[ -s "$file" && -n "$(tail -c 1 "$file")" ]] && line=$'\n'"$line"
     printf '%s\n' "$line" >> "$file" || exit 1
+    # R-257 S2/P4: a filed gate line's hash goes to the ledger, so a gate line planted by hand has none. Never
+    # changes the timeline write or the exit code; a failure is one stderr line.
+    [[ "$kind" == gate && -n "$feature" ]] && { _oss_tl_ledger_gate "$proj" "$feature" "$gate_hash" \
+        || echo "oss: gate ledger row not written for $feature" >&2; }
     # B5, as G1's outbox: the line's id and body go, under the same lock, to a private outbox outside the repo
     # (~/.oss/timeline-outbox/<rid>.ndjson, folder 700, file 600; refused when it is a link, has another hard link
     # or is not the person's). Never for an unfiled line (P-3) or a merge-unknown one (P-2), and never while the
@@ -269,6 +274,28 @@ oss_timeline_append() (
     ob="$HOME/.oss/timeline-outbox/$rid.ndjson"
     oss_private_dir "${ob%/*}" && _oss_tl_ob_ok "$ob" && (umask 077; printf '%s\n' "$entry" >> "$ob")
     exit 0
+)
+
+# _oss_tl_ledger_gate <proj> <feature> <sha256>: appends {"sha256"} to $HOME/.oss/ledger/<key>/gates/<feature>
+# (NOTES.md ledger contract, D14). The key is _ov_key's: 16 hex of the blob id of "<toplevel>\n<git-dir>\n". Each
+# folder is made 700 and must be no link and the person's own; the file is 600 and refused when it is a link.
+_oss_tl_ledger_gate() (
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+    cd "$1" 2>/dev/null || exit 1
+    top=$(git rev-parse --show-toplevel 2>/dev/null) && test -n "$top" || exit 1
+    g=$(git rev-parse --absolute-git-dir 2>/dev/null) && test -n "$g" || exit 1
+    k=$(printf '%s\n%s\n' "$top" "$g" | git hash-object --stdin | cut -c1-16) && test "${#k}" = 16 || exit 1
+    d="$HOME/.oss"
+    for c in ledger "$k" gates; do
+        d="$d/$c"
+        [[ -L "$d" ]] && exit 1
+        # shellcheck disable=SC2174 # one folder per step, each made private
+        [[ -d "$d" ]] || mkdir -m 700 "$d" 2>/dev/null || exit 1
+        [[ ! -L "$d" ]] && test -O "$d" || exit 1
+    done
+    f="$d/$2"
+    oss_single_link "$f" && { [[ ! -e "$f" ]] || test -O "$f"; } || exit 1
+    (umask 077; printf '{"sha256":"%s"}\n' "$3" >> "$f") 2>/dev/null
 )
 
 # _oss_tl_ob_ok OUTBOX: absent, or a single-link regular file of the person's own (`test -O`: the tests' other-user
