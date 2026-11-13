@@ -785,5 +785,78 @@ done
 
 # Task 13 / 15 (PR 3): the push to the OSS API, from the private outbox, is tested in decision-push.test.sh.
 
+# R-257 Task 6 (D10, FOLLOWUPS 305): a session started in one folder that works in a worktree files its picks
+# under the worktree's feature, not the start folder's. The hook input's cwd names the repo.
+WT="$T/wt"
+(cd "$P" && git worktree add -q -b feat/wtfeat/build "$WT" 2>/dev/null)
+mkdir -p "$WT/.oss/dev/active/wtfeat"
+WREC="$WT/.oss/dev/active/wtfeat/decisions.ndjson"
+name='should file the record under the worktree feature when CLAUDE_PROJECT_DIR is the session start folder and the hook input cwd is in the worktree'
+jq --arg c "$WT" '.cwd = $c' "$FIX/pick.json" > "$T/cwd-wt.json"
+rm -f "$WREC"; run_hook "$T/cwd-wt.json"
+got=$(jq -r '.feature' "$WREC" 2>/dev/null)
+[[ $RC -eq 0 && "$got" == wtfeat && ! -e "$REC" ]] && pass "$name" \
+    || fail "$name" "rc=$RC worktree-feature=$got start-folder-record=$(cat "$REC" 2>/dev/null | head -c 80)"
+
+name="should keep today's behaviour when the input cwd is not in a git repo"
+mkdir -p "$T/not-a-repo"
+jq --arg c "$T/not-a-repo" '.cwd = $c' "$FIX/pick.json" > "$T/cwd-norepo.json"
+run_hook "$T/cwd-norepo.json"
+got=$(jq -r '.feature' "$REC" 2>/dev/null)
+[[ $RC -eq 0 && "$got" == demo ]] && pass "$name" || fail "$name" "rc=$RC feature=$got"
+
+# FOLLOWUPS 184: a FIFO in place of workflow-state.json is never opened
+name='should not hang when workflow-state.json is a FIFO'
+mv "$P/.oss/workflow-state.json" "$T/ws.saved"; mkfifo "$P/.oss/workflow-state.json"
+rm -f "$REC"
+(cd "$P" && run_capped 5 "$HOOK" < "$FIX/pick.json" 2>"$T/err"); RC=$?
+rm -f "$P/.oss/workflow-state.json"; mv "$T/ws.saved" "$P/.oss/workflow-state.json"
+got=$(jq -r '.command' "$REC" 2>/dev/null)
+[[ $RC -eq 0 && -f "$REC" && -z "$got" ]] && pass "$name" || fail "$name" "rc=$RC command=$got"
+
+# The private ledger (NOTES.md Ledger contract): one row {id, feature, sha256(line)} per written line
+fmode() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1" 2>/dev/null; }
+LKEY=$(cd "$P" && printf '%s\n%s\n' "$(git rev-parse --show-toplevel)" "$(git rev-parse --absolute-git-dir)" | git hash-object --stdin | cut -c1-16)
+LDIR="$HOME/.oss/ledger/$LKEY/decisions"; LED="$LDIR/demo"
+name='should append each written record id to the owner-only ledger ~/.oss/ledger/<key>/decisions/<feature>'
+rm -f "$LED"; run_hook "$FIX/multi.json"
+ok=1; n=0
+while IFS= read -r l; do
+    n=$((n + 1))
+    id=$(printf '%s' "$l" | jq -r '.id'); s=$(printf '%s' "$l" | shasum -a 256 | cut -d' ' -f1)
+    row=$(jq -c --arg id "$id" 'select(.id == $id)' "$LED" 2>/dev/null)
+    [[ "$row" == "$(jq -nc --arg id "$id" --arg s "$s" '{id: $id, feature: "demo", sha256: $s}')" ]] || ok=0
+done < "$REC"
+[[ $RC -eq 0 && $ok == 1 && $n -eq 2 && $(wc -l < "$LED" 2>/dev/null) -eq 2 ]] && pass "$name (rows match the lines)" \
+    || fail "$name (rows match the lines)" "rc=$RC ok=$ok lines=$n ledger=$(cat "$LED" 2>/dev/null)"
+m="$(fmode "$LED") $(fmode "$HOME/.oss/ledger") $(fmode "$HOME/.oss/ledger/$LKEY") $(fmode "$LDIR")"
+[[ "$m" == "600 700 700 700" ]] && pass "$name (file 600, dirs 700)" || fail "$name (file 600, dirs 700)" "modes=$m"
+
+name='should refuse a symlinked ledger file and still exit 0'
+rm -f "$LED"; : > "$T/ledger-target"; ln -s "$T/ledger-target" "$LED"
+run_hook "$FIX/pick.json"
+[[ $RC -eq 0 && ! -s "$T/ledger-target" && -L "$LED" && -s "$REC" && $(grep -c . "$T/err") -eq 1 ]] && pass "$name" \
+    || fail "$name" "rc=$RC target=$(cat "$T/ledger-target") record=$(wc -l < "$REC" 2>/dev/null) stderr=$(cat "$T/err")"
+rm -f "$LED"
+
+# (the record's own lock may turn some of 50 simultaneous answers away after its 10 s wait, with a stderr line:
+# every line that IS written has exactly one intact row, appended outside that lock)
+name='should keep one intact ledger row per written line when 50 hooks run at once'
+rm -f "$REC" "$LED"
+pids=()
+for ((k = 0; k < 50; k++)); do (cd "$P" && "$HOOK" < "$FIX/pick.json" 2>/dev/null) & pids+=($!); done
+for p in "${pids[@]}"; do wait "$p"; done
+rows=$(jq -c 'select((.id | test("^[0-9a-f-]{36}$")) and .feature == "demo" and (.sha256 | test("^[0-9a-f]{64}$")))' "$LED" 2>/dev/null | wc -l | tr -d ' ')
+want=$(while IFS= read -r l; do printf '%s' "$l" | shasum -a 256 | cut -d' ' -f1; done < "$REC" | sort)
+have=$(jq -r '.sha256' "$LED" 2>/dev/null | sort)
+nrec=$(wc -l < "$REC" 2>/dev/null | tr -d ' ')
+[[ ${nrec:-0} -ge 1 && "$rows" == "$nrec" && $(wc -l < "$LED" | tr -d ' ') == "$nrec" && "$want" == "$have" ]] && pass "$name" \
+    || fail "$name" "valid-rows=$rows ledger-lines=$(wc -l < "$LED" 2>/dev/null) record-lines=$nrec"
+
+# the shared resolver keeps its rule for every other caller (timeline, notify, log...)
+name='should leave oss_resolve_project returning CLAUDE_PROJECT_DIR for other callers'
+got=$(cd "$WT" && source "$ROOT/hooks/oss-safe-path.sh" && oss_resolve_project && printf '%s' "$_OSS_PROJ")
+[[ "$got" == "$P" ]] && pass "$name" || fail "$name" "got=$got"
+
 echo "$RUN run, $FAILED failed"
 [[ $FAILED -eq 0 ]]
