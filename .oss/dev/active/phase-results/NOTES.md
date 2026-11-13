@@ -1,0 +1,99 @@
+# Notes: phase-results (R-257)
+
+## Shared contracts for build (2026-11-13)
+
+Every task that reads or writes these must use exactly this shape. Change it here first.
+
+### Ledger (D14, T3b)
+- Root: `$HOME/.oss/ledger/<key>/`. Key: the first 16 hex of the git blob id of
+  `"<toplevel>\n<absolute-git-dir>\n"` (what `printf '%s\n%s\n' "$top" "$gitdir" | git hash-object --stdin | cut -c1-16`
+  prints). The same derivation as `_ov_key` in `hooks/oss-value.sh`, so a worktree gets its own key. `toplevel` is the
+  **physical cwd's** `git rev-parse --show-toplevel`, never `CLAUDE_PROJECT_DIR`.
+- `$HOME/.oss/ledger` and every dir below it: mode 700, owned by the current uid, not a link. Files: mode 600, same checks.
+  Created with `mkdir -m 700` (bash) / `mkdirSync({mode: 0o700})` (TS), then checked.
+- Row files are ndjson, one JSON object per line, each row written with one `O_APPEND` write of under 512 bytes.
+  For "current value" files the **last valid row wins**. Unknown row shapes are ignored.
+- Read caps: `results/**` and `decisions/**` at 1 MB, everything else at 4 MB. Over a cap: `ledger_too_large`.
+- Files:
+  | Path (under the key dir) | Row | Writer |
+  |---|---|---|
+  | `run/<phase>` | `{"startedAt","session","headSha"}` | `oss-notify start` (T10b) |
+  | `results/<feature>/<phase>` | `{"sha256","feature","phase","startedAt","headSha","session"}`; `sha256` = hex sha256 of the result file bytes | assembler (T9) |
+  | `pending/<feature>/<phase>` | marker file, content `{"check","at"}` | Stop dispatcher (T11); cleared by a successful assemble |
+  | `unverified/<feature>/<phase>` | marker file, content `{"check","errorClass","at","session"}` (`session` drives "a second fail-open in one session blocks") | Stop dispatcher (T11) |
+  | `decisions/<feature>` | `{"id","feature","sha256"}`; `sha256` = hex sha256 of the exact record line written to `decisions.ndjson`, without its trailing newline | decision hook (T6) |
+  | `gates/<feature>` | `{"sha256"}` of the exact timeline gate line, without its newline | `oss-timeline.sh` (T8a) |
+
+### Results (T2, T3)
+- `<repo>/.oss/dev/active/<feature>/results/<phase>.json`, phase in ideate|plan|build|ship.
+- Feature name: `^[A-Za-z0-9._-]+$`, not starting with `.`.
+- Repo marker for the fail-open path: `results/<phase>.unverified.json`.
+
+### Error ids (stable strings, tests match them)
+`unsupported_keyword`, `unsafe_path`, `bad_feature`, `too_large`, `ledger_too_large`, `unbound_result`, `stale_result`,
+`evidence_mismatch`, `repo_mismatch`, `no_red`, `no_test_runs`, `not_green`, `events_truncated`, `no_tasks`,
+`duplicate_task`, `task_without_test`, `design_not_committed`, `empty_diff`, `diff_unavailable`, `gate_missing`,
+`override_unrecorded`, `no_feature`, `timeout`.
+Added by T9 (CLI): `no_run_started` (no ledger `run/<phase>` row: assemble and check both refuse), `missing`,
+`invalid_json`, `invalid_result (<rule>)` (schema; field = JSON path), `unverified` (repo marker, ledger
+pending/unverified marker, or `verification` not verified), `no_repo`, `cli_missing` (shell entry, exit 127).
+CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-phase-result.sh assemble <phase>`.
+
+## Rebase on R-266 (coordinator, 2026-11-13)
+- `watcher/scripts/bundle-cli.js` will conflict: R-266 adds tool-gate and gate-run entries. Keep both theirs and ours.
+- After the rebase, run the watcher-dist-fresh and bundle tests (targeted) and keep them green.
+- Commits stay local; no PR until reported to the coordinator.
+- R-266 moves hooks onto a fixed node (`oss_node` in `hooks/oss-node.sh`, recorded in `~/.oss/node-path`). Until then,
+  use plain `node`. After the rebase, switch `oss-notify.sh` and `oss-phase-result.sh` to `oss_node` wherever they run the CLI.
+- Review agents (code-reviewer, security-auditor, penetration-tester, performance-auditor) run only from R-266's
+  Bash allowlist and must never be told to run `oss-phase-result.sh`; a guard row in
+  `commands/__tests__/phase-result-step.test.sh` enforces this. The main agent and builders run it freely.
+- T10c (oss-notify.sh resolve_cli) needs no pre-commit diff for the coordinator (R-266 doesn't touch oss-notify.sh); it
+  goes in the report.
+
+## R-267 headless findings (2026-11-13), what R-257 owes
+- CLI resolution in arms loaded via `--plugin-dir`: `oss-phase-result.sh` (T9) and `oss-notify.sh resolve_cli` (T10) look
+  in `CLAUDE_PLUGIN_ROOT`, then `~/.oss/plugin-root`, then the plugin cache. Today's order falls back to the cache, which
+  arms don't have, so setCurrentCommand never runs and the gate would see `cli_missing`.
+- A failed assemble writes nothing, and it does not create `results/`, so the D17 legacy pass still applies (T9 test row).
+- Ideate is never run by the R-267 seam; `start plan` with no `results/` takes the legacy pass.
+
+## Implementation notes
+- Ship base: repo-local git config `oss.shipBase` (`git config --local --get`, hardened env, 10 s timeout), else `main` when
+  unset; assemble and check both use it, and a bad value is refused by assemble-ship's ref checks as `diff_unavailable`.
+- The ledger tests import `.ts` from `node -e` child processes, which relies on Node's type stripping (Node 22.6+; Node 26
+  here).
+- `readResult`/`writeResult` throw `bad_feature`; an unknown phase throws `unsafe_path`.
+- The validator's `$ref` forms: `common.schema.json#/$defs/<name>` (through the refs map) or `#/$defs/<name>`. Patterns use
+  the `u` flag.
+
+## T9 notes (2026-11-13)
+- check order: markers -> file read -> feature/phase fields (`stale_result`) -> ledger sha (`unbound_result`) ->
+  schema -> run startedAt (`stale_result`) -> ship HEAD (`stale_result`) -> verification -> evidence re-run.
+  Binding is checked before the schema so a hand-written result reads `unbound_result` (acceptance row 3).
+- Ship diffs against the local branch `main` (constant `SHIP_BASE` in src/cli/phase-result.ts). No config yet.
+- The ship evidence re-run feeds the stored overrides back (temp value dir), since overrides.json ages out after 10 min.
+- `check <phase> --all` runs the full check per active feature against the repo's single `run/<phase>` row and the
+  current HEAD, so only the feature shipped in this run can read `ok` (T13 must decide what archive needs).
+
+## T11 notes (2026-11-13)
+- The dispatcher spawns the phase-result bundle for `check` (bounded spawnSync, plan amendment P5); importing
+  src/cli/phase-result.ts would run its main(). Feature resolution moved to src/phase-results/feature.ts (shared).
+- Pending is written only when the started phase has no bound result: writing it before a CLI `check` of a bound
+  result would make that check refuse. The bash fast path never starts node for a bound result.
+- The stop-check-error event is the workflow logger's `STOP_CHECK_ERROR` in `<repo>/.oss/workflow.log`.
+- Shell bound test seam: `OSS_STOP_DISPATCH_TEST_BOUND` (seconds, default 5).
+
+## T13/T14 notes (2026-11-13)
+- One archive rule, `watcher/src/phase-results/archivable.ts` (`shipArchivable`): repo marker, readResult, ledger
+  pending/unverified markers, sha bound (last row, any session), schema, verified, verdict `ready_to_merge`. No
+  startedAt or HEAD check. Reasons: `unverified`, `missing`/`unsafe_path`/..., `unbound_result`, `invalid_result`,
+  `not_ready_to_merge`.
+- `check ship --all` now applies that rule (other phases' `--all` keep the full check).
+- `oss-archive-check.sh`: no prose; one CLI call only when some feature has results/ship.json and the dev docs are the
+  project's `.oss/dev`. `--list` shows the result verdict instead of the "Current Phase" line.
+- `healthchecks/archive.ts` imports `phase-results/archivable.js`, so dist/phase-results/{archivable,ledger,schemas,
+  store,validate}.js must be committed (watcher-dist-fresh only checks cli/services/queue imports, so it misses this).
+- Test fixture: `hooks/__tests__/lib/archive-ship-fixture.sh` (`archivable_ship <repo> <feature>`, HOME = sandbox).
+
+## Last Updated: 2026-11-13 19:10 CST by /oss:build

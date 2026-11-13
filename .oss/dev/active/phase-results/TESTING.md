@@ -19,4 +19,25 @@
 
 Not committed while red (IRON LAW #1: no commit with failing tests). The test lands with the build commits that turn it green.
 
-## Last Updated: 2026-11-13 15:55 CST by /oss:acceptance
+### T9, 2026-11-13
+- RED: `watcher/test/cli/phase-result.acceptance.test.ts` 16/16 failing (no bundle), dist test failing (no options);
+  `hooks/__tests__/oss-phase-result.test.sh` 4/6 failing (bad-phase and provenance rows are guards, passed on the stub).
+- GREEN: vitest 12 files / 181 tests (phase-result acceptance 18, dist 1, test/phase-results/*, tool-gate and
+  chain-trigger dist); oss-phase-result.test.sh 6/6 (bash 3.2 and 5); runner test 24/24; watcher-dist-fresh PASS.
+- Fixed a flake in oss-phase-result-runner.test.sh: macOS scans a new executable on first exec, which ate the 1 s bound
+  before the slow CLI recorded its child pid; the case now runs it through /bin/sh.
+- System acceptance: 0/7 still (rows 2 and 6 fail only on `no_run_started`: notify start does not write `run/<phase>`
+  until T10b; with the row written by hand, assemble plan + check plan pass and ship gives empty_diff).
+- Bench (`node watcher/scripts/bench-phase-result.mjs`, 10k events, median of 5): assemble build 191 ms, check build 165 ms.
+
+### T10-T17 and D19, 2026-11-13
+- System acceptance `hooks/__tests__/phase-results.acceptance.test.sh`: **7/7 passing** (bash 3.2), committed with T10.
+- Vitest targeted: 13 files / 224 tests green (phase-results, cli, stop, healthchecks/archive, provenance).
+- Hook sweep green under bash 3.2, including session-start-copy, oss-archive-check, phase-result-step, runner, notify.
+- watcher-dist-fresh PASS (125 files).
+- Changed existing tests rest on AC-001.1 and AC-006.1; the list is in commit 178c68c's message.
+- Flakes fixed at the root: runner bound (exec via /bin/sh); the 5k-file ship test gets a 60 s timeout (load, not logic).
+- API (T17): 4 targeted files / 73 tests green; 921/921 across 19 targeted files; `manifest:verify` 138 prompts match.
+  test/manifest.test.ts does not load here: @agentic/mcp-time is not built in this worktree (environment, pre-existing).
+
+## Last Updated: 2026-11-13 19:10 CST by /oss:build

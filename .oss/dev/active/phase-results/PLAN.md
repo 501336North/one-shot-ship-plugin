@@ -198,6 +198,7 @@ DESIGN.md (COMMITTED), REQUIREMENTS.md (US-001 to US-006), DECISIONS.md (SD-1, S
 - a valid ship result gives a "completed, not archived" issue; PROGRESS.md prose alone gives no issue; an unverified result gives no issue.
 
 **Implementation:** `healthchecks/archive.ts` uses `readResult` and `validate`.
+**⚠ changes existing test (marked at build, 2026-11-13):** `watcher/test/healthchecks/archive.test.ts` has six "should detect ship/SHIP/complete/COMPLETE/(COMPLETE)/(complete)" cases that assert the PROGRESS.md prose detection. They now expect no issue. Spec line (REQUIREMENTS AC-006.1): "`oss-archive-check.sh` and `healthchecks/archive.ts` decide "shipped" from `results/ship.json` (valid, verdict `ready_to_merge` or merged), not from PROGRESS.md." The "warn when shipped" and "multiple completed" cases keep their expectations, and their fixtures add a valid ship result.
 
 ### Task 15: checkpoint.sh counts tasks from results
 **Tests (RED)**, file `hooks/__tests__/checkpoint-task-count.test.sh`:
@@ -369,6 +370,21 @@ A result counts only if this machine's assembler wrote it for this run, and it s
   - with a valid result, start proceeds;
   - `start ideate` and non-phase commands are not gated.
 
+#### NEW Task 10c: resolve_cli reads ~/.oss/plugin-root before the plugin cache (user pick via coordinator, 2026-11-13; R-267 finding c)
+- **Why:** under `claude --plugin-dir` (R-267 benchmark arms) the plugin cache dir does not exist. `oss-notify.sh`
+  started from `~/.oss/hooks` sets PLUGIN_ROOT=~/.oss, and `resolve_cli` falls back to the cache, so `setCurrentCommand`
+  never runs: build `startedAt` stays null, and the phase-result gate would see `cli_missing`.
+- **Order:** `CLAUDE_PLUGIN_ROOT` (when it holds the CLI), then `~/.oss/plugin-root`, then the cache. `~/.oss/plugin-root`
+  gets the same checks used elsewhere: a regular file owned by the user, not a link; the dir it names is owned by the user,
+  not a link, and inside an expected root. `oss-phase-result.sh` (T9) uses the same order.
+- **Tests (RED):** a `--plugin-dir`-style layout with no cache dir and `~/.oss/plugin-root` naming the plugin. Today
+  `notify build start` leaves `currentCommandStartedAt` null; after the fix it is set. Also: a symlinked or foreign-owned
+  `plugin-root` is ignored, and the existing cache layout still resolves.
+- **Constraints:** no change to hooks.json or oss-value.sh (R-266). Tell the coordinator before committing the
+  `oss-notify.sh` change, so it can check for overlap with R-266.
+- **(a) recorded by the same pick:** design_not_committed stays strict. R-267's seam stamps `Status: COMMITTED` into the
+  copied DESIGN.md.
+
 #### Task 11, Stop dispatcher (amended: F2, F3, S3, P5)
 - **Bash fast path:** node is called only when the git toplevel has `.oss`, `workflow-state.json` is a regular file, and the ledger `run/` shows a started phase without a result. Test (RED): with no phase started, a node shim on PATH is never called and the notification still runs.
 - **Before any check runs**, the dispatcher writes `pending/<feature>/<phase>` to the ledger. Only a successful assemble clears it.
@@ -468,4 +484,4 @@ A result counts only if this machine's assembler wrote it for this run, and it s
 ## Estimated Tasks: 21 in slice A (T1-T17, plus new T3b, T8a, T9a, T10b), plus 5 tracked (T18, T18b, T19, T20, T21)
 ## Estimated Test Cases: about 160
 
-## Last Updated: 2026-11-13 15:15 CST by /oss:plan
+## Last Updated: 2026-11-13 19:10 CST by /oss:build (T10c, T14 note)

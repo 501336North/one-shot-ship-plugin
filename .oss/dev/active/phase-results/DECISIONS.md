@@ -41,6 +41,14 @@
 - D18 Zero picks (user, 2026-11-13, after a heads-up that headless runs like the DeepBlue benchmark would fail at ideate): **allow zero decisions**. The ideate result may have `decisions: []`, recorded as `decisionsRecorded: 0` (code-sourced). Ideate still fails without DESIGN.md `Status: COMMITTED`. Planted picks are excluded, not counted.
 - D16 Start gate: **added**. `oss-notify start` for plan, build and ship refuses without a valid previous-phase result. This widens D4 by the user's choice.
 
+## Build decisions (2026-11-13)
+- D19 Ship base (user picker, after the heads-up "Ship's new result compares your branch against `main` unless you set a base per repo, so Sprint D features may get the wrong diff"): **PR base value file**.
+  - Ship's assemble step writes `base.txt` with the Write tool, naming the branch the PR will target.
+  - Code accepts it only when it names an existing local branch (`refs/heads/<name>`) that passes `check-ref-format`; otherwise it uses the repo setting `oss.shipBase`, then `main`.
+  - The result records the base branch it used as `diff.baseRef` (source code), and `check` re-derives from that recorded branch, so the short-lived value file is not needed at check time.
+  - The base is named by the model but checked against real git; oss-lab's T21 recomputes the diff on its own.
+- Coordinator (user picks relayed, 2026-11-13): R-267 finding (a) keeps design_not_committed strict, and the R-267 seam stamps `Status: COMMITTED`; finding (c) adds T10c (resolve_cli reads `~/.oss/plugin-root` before the cache).
+
 ---
 
 ## ADR-1: One Stop dispatcher, extended by R-265
@@ -100,4 +108,4 @@ Evidence: the provenance survey (only one Stop hook exists, and it never blocks)
 - D4 (complete refuses and Stop blocks), D9 (R-266 gap: wire on rebase).
 - R-265 (c) extends this dispatcher. R-254's oss-lab state machine may later read the same result files.
 
-## Last Updated: 2026-11-13 14:47 CST by /oss:ideate
+## Last Updated: 2026-11-13 19:10 CST by /oss:build (D19)
