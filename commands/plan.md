@@ -133,6 +133,17 @@ The prompt guides creation of a TDD plan with:
 
 **You MUST update the workflow status on completion.**
 
+### Assemble the phase result
+
+Before sending `complete`:
+1. Run `~/.oss/hooks/oss-value.sh dir` and keep the folder it prints.
+2. Use the Write tool to write the value files in that folder: `tasks.json`: a JSON array of `{"id", "title", "testIds": [...]}`, one per PLAN.md task, each with at least one test id and no repeated `id`. Never put any of this content into a command.
+3. Run exactly:
+```bash
+~/.oss/hooks/oss-phase-result.sh assemble plan
+```
+4. If it exits non-zero, read the reason it prints, fix the evidence (e.g. give every task its tests in PLAN.md, then rewrite `tasks.json`) and run the same call again. Never write `results/*.json` by hand. If it still fails, tell the user the reason and do not treat the phase as passed: the `complete` call below refuses and reports it.
+
 After plan is complete:
 ```bash
 ~/.oss/hooks/oss-notify.sh --workflow plan complete '{}'

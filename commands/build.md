@@ -202,6 +202,17 @@ After each task completes:
 ~/.oss/hooks/oss-notify.sh --workflow build task_complete '{}'
 ```
 
+### Assemble the phase result
+
+Before sending `complete`:
+1. Run `~/.oss/hooks/oss-value.sh dir` and keep the folder it prints.
+2. Use the Write tool to write the value files in that folder: `notes.txt` (optional): a short plain-text note on the build. Never put any of this content into a command.
+3. Run exactly:
+```bash
+~/.oss/hooks/oss-phase-result.sh assemble build
+```
+4. If it exits non-zero, read the reason it prints, fix the evidence (e.g. run the missing tests, or finish the open task) and run the same call again. Never write `results/*.json` by hand. If it still fails, tell the user the reason and do not treat the phase as passed: the `complete` call below refuses and reports it.
+
 After all tasks complete:
 ```bash
 ~/.oss/hooks/oss-notify.sh --workflow build complete '{}'

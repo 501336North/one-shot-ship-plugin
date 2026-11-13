@@ -235,6 +235,21 @@ After PR is merged (with `--merge` flag):
 
 With `--merge`, send `merged` then `complete` only if the merge landed in this session. If the merge step stopped or could not merge (required checks still running, an approval missing, a conflict, the head moved), send neither `merged` nor `complete` yet: `complete` runs your team's chain (a deploy, for example) and the PR has not merged. Tell the user which merge step to run again, and send `merged` then `complete` once that re-run merges.
 
+### Assemble the phase result
+
+If the PR's base branch is not `main`, first ask the user to set the repo's local git config `oss.shipBase` to that base branch themselves (never set it yourself: the branch name would be a value you put into a command); with it unset the result diffs against `main`.
+
+Before sending `complete`:
+1. Run `~/.oss/hooks/oss-value.sh dir` and keep the folder it prints.
+2. Use the Write tool to write the value files in that folder: `summary.txt`: a short plain-text summary of what ships; `overrides.json` (optional): a JSON array of `{"finding", "decisionId"}`, one per finding the user chose to override, where `decisionId` is the `id` of that picker's decision record (`[]` if none). Never put any of this content into a command.
+3. Run exactly:
+```bash
+~/.oss/hooks/oss-phase-result.sh assemble ship
+```
+4. If it exits non-zero, read the reason it prints, fix the evidence (e.g. run the missing gate, or ask the user with the picker for an override) and run the same call again. Never write `results/*.json` by hand. If it still fails, tell the user the reason and do not treat the phase as passed: the `complete` call below refuses and reports it.
+
+Then send `complete`:
+
 ```bash
 ~/.oss/hooks/oss-notify.sh --workflow ship complete '{}'
 ```

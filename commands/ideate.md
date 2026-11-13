@@ -170,6 +170,17 @@ When `--figma` flag is active, the proprietary prompt additionally contains:
 
 **You MUST update the workflow status on completion.**
 
+### Assemble the phase result
+
+Before sending `complete`:
+1. Run `~/.oss/hooks/oss-value.sh dir` and keep the folder it prints.
+2. Use the Write tool to write the value files in that folder: `open-questions.json` (optional): a JSON array of strings, one per question the design leaves open (`[]` if none). Never put any of this content into a command.
+3. Run exactly:
+```bash
+~/.oss/hooks/oss-phase-result.sh assemble ideate
+```
+4. If it exits non-zero, read the reason it prints, fix the evidence (e.g. record the missing decision with the picker, or finish DESIGN.md) and run the same call again. Never write `results/*.json` by hand. If it still fails, tell the user the reason and do not treat the phase as passed: the `complete` call below refuses and reports it.
+
 After ideation is complete:
 ```bash
 ~/.oss/hooks/oss-notify.sh --workflow ideate complete '{}'
