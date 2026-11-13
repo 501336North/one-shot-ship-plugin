@@ -18,6 +18,7 @@ import { CHAIN_TRIGGER_BUNDLE_OPTIONS } from './chain-trigger-bundle-options.mjs
 import { OSS_LAUNCH_BUNDLE_OPTIONS } from './oss-launch-bundle-options.mjs';
 import { TOOL_GATE_BUNDLE_OPTIONS } from './tool-gate-bundle-options.mjs';
 import { GATE_RUN_BUNDLE_OPTIONS } from './gate-run-bundle-options.mjs';
+import { PHASE_RESULT_BUNDLE_OPTIONS } from './phase-result-bundle-options.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const watcherRoot = resolve(__dirname, '..');
@@ -78,3 +79,13 @@ if (gateRunResult.errors.length > 0) {
 }
 
 console.log('  Bundled: dist/cli/gate-run.cjs (standalone)');
+
+// Bundle phase-result into a standalone CJS file, run by hooks/oss-phase-result.sh (R-257 T9).
+const phaseResult = buildSync({ ...PHASE_RESULT_BUNDLE_OPTIONS, write: true });
+
+if (phaseResult.errors.length > 0) {
+  console.error('phase-result bundle failed:', phaseResult.errors);
+  process.exit(1);
+}
+
+console.log('  Bundled: dist/cli/phase-result.cjs (standalone)');

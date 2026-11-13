@@ -1,0 +1,386 @@
+/**
+ * @behavior At the end of a phase the model runs `oss-phase-result.sh assemble <phase>`: the plugin's own code builds
+ *           the result from evidence, checks it against the phase schema and writes it, binding its bytes to this run
+ *           in the owner-only ledger. `check <phase>` (what complete, start and archive ask) passes only for that
+ *           exact file, from this run, still matching the evidence, with no unverified marker. Every refusal names
+ *           its reason id, the field and the command that rebuilds the result.
+ * @business-rule R-257 US-001/US-002 and D14: a missing, malformed, hand-written, edited, copied, stale or unverified
+ *           result fails the phase; a failed assemble writes nothing (no results/ dir, so the D17 legacy pass still
+ *           applies); the CLI never touches the network.
+ * @boundary the committed bundle watcher/dist/cli/phase-result.cjs, spawned as hooks/oss-phase-result.sh runs it.
+ */
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { execFileSync, spawnSync } from 'child_process';
+import { createHash, randomUUID } from 'crypto';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { fileURLToPath } from 'url';
+import { ledgerKey, openLedger } from '../../src/phase-results/ledger.js';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const CLI = path.resolve(HERE, '../../dist/cli/phase-result.cjs');
+const FEATURE = 'feat-a';
+const OTHER = 'feat-b';
+const GATES = ['code-reviewer', 'performance-engineer', 'security-auditor'];
+
+let tmp: string;
+let repo: string;
+let home: string;
+let shimDir: string;
+let netCalls: string;
+let savedHome: string | undefined;
+
+function cleanEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('GIT_') && k !== 'CLAUDE_PROJECT_DIR') env[k] = v;
+  return env;
+}
+
+function git(...args: string[]): string {
+  return execFileSync('git', args, { cwd: repo, env: cleanEnv(), encoding: 'utf-8' }).trim();
+}
+
+function commitFile(name: string, content: string): void {
+  fs.writeFileSync(path.join(repo, name), content);
+  git('add', name);
+  git('commit', '-q', '-m', `add ${name}`);
+}
+
+function activeDir(feature: string): string {
+  return path.join(repo, '.oss', 'dev', 'active', feature);
+}
+
+function resultFile(feature: string, phase: string): string {
+  return path.join(activeDir(feature), 'results', `${phase}.json`);
+}
+
+interface Run {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  ms: number;
+}
+
+/** Runs the committed CLI from the repo with the sandbox HOME and a PATH whose curl/gh/wget only record calls. */
+function cli(...args: string[]): Run {
+  const env = cleanEnv();
+  env.HOME = home;
+  env.PATH = `${shimDir}:${process.env.PATH ?? ''}`;
+  env.CLAUDE_CODE_SESSION_ID = 'sess-accept-1';
+  env.CLAUDE_PROJECT_DIR = '/nonexistent-project-dir';
+  const t0 = Date.now();
+  const r = spawnSync(process.execPath, [CLI, ...args], { cwd: repo, env, encoding: 'utf-8', timeout: 20_000 });
+  return { status: r.status, stdout: r.stdout, stderr: r.stderr, ms: Date.now() - t0 };
+}
+
+/** The start gate's ledger row (T10b writes it in production). */
+function startRun(phase: string, startedAt: string): void {
+  openLedger(repo).appendRow(`run/${phase}`, { startedAt, session: 'sess-accept-1', headSha: git('rev-parse', 'HEAD') });
+}
+
+/** The model's value folder ($HOME/.oss/run/<key>), created as `oss-value.sh dir` does. */
+function valueDir(): string {
+  const d = path.join(home, '.oss', 'run', ledgerKey(repo) as string);
+  fs.mkdirSync(d, { recursive: true, mode: 0o700 });
+  fs.chmodSync(path.join(home, '.oss', 'run'), 0o700);
+  return d;
+}
+
+function writeTasks(): void {
+  fs.writeFileSync(
+    path.join(valueDir(), 'tasks.json'),
+    JSON.stringify([{ id: 'T1', title: 'first task', testIds: ['validate.test.ts:accepts'] }]),
+  );
+}
+
+function sha256(s: string): string {
+  return createHash('sha256').update(s).digest('hex');
+}
+
+function event(ts: string, result: 'red' | 'green'): string {
+  return JSON.stringify({ ts, tool: 'Bash', kind: 'test-run', program: 'npm', result });
+}
+
+function writeEvents(lines: string[]): void {
+  const d = path.join(repo, '.oss', 'tool-gates');
+  fs.mkdirSync(d, { recursive: true });
+  fs.appendFileSync(path.join(d, 'events.ndjson'), lines.map((l) => `${l}\n`).join(''));
+}
+
+/** Ledger-backed passing gate lines for the required gates, as oss-timeline.sh writes them. */
+function passGates(feature: string): void {
+  for (const gate of GATES) {
+    const line = JSON.stringify({
+      v: 1,
+      id: randomUUID(),
+      ts: '2026-11-13T09:30:00Z',
+      kind: 'gate',
+      feature,
+      session: 'sess-accept-1',
+      round: 1,
+      gate,
+      verdict: 'pass',
+      findings: {},
+      fixed: {},
+      mode: 'full',
+    });
+    fs.appendFileSync(path.join(activeDir(feature), 'timeline.ndjson'), `${line}\n`);
+    openLedger(repo).appendRow(`gates/${feature}`, { sha256: sha256(line) });
+  }
+}
+
+function assembledPlan(): void {
+  startRun('plan', '2026-11-13T09:00:00.000Z');
+  writeTasks();
+  const r = cli('assemble', 'plan');
+  expect(r.status, r.stderr).toBe(0);
+}
+
+beforeEach(() => {
+  savedHome = process.env.HOME;
+  tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'phase-result-cli-')));
+  home = path.join(tmp, 'home');
+  repo = path.join(tmp, 'repo');
+  shimDir = path.join(tmp, 'shims');
+  netCalls = path.join(tmp, 'net.calls');
+  for (const d of [home, repo, shimDir]) fs.mkdirSync(d, { recursive: true });
+  for (const bin of ['curl', 'gh', 'wget']) {
+    const p = path.join(shimDir, bin);
+    fs.writeFileSync(p, `#!/bin/sh\necho "${bin} $*" >> "${netCalls}"\nexit 1\n`);
+    fs.chmodSync(p, 0o755);
+  }
+  process.env.HOME = home;
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.email', 'test@example.com');
+  git('config', 'user.name', 'Test');
+  git('config', 'commit.gpgsign', 'false');
+  git('config', 'gc.auto', '0');
+  git('config', 'maintenance.auto', 'false');
+  commitFile('base.txt', 'base\n');
+  git('checkout', '-q', '-b', `feat/${FEATURE}/build`);
+  for (const f of [FEATURE, OTHER]) {
+    fs.mkdirSync(activeDir(f), { recursive: true });
+    fs.writeFileSync(path.join(activeDir(f), 'DESIGN.md'), '# Design\n\nStatus: COMMITTED\n');
+  }
+});
+
+afterEach(() => {
+  process.env.HOME = savedHome;
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+describe('phase-result CLI: assemble', () => {
+  it('writes a valid result bound to this run, clears the pending marker, and check then passes', () => {
+    startRun('plan', '2026-11-13T09:00:00.000Z');
+    writeTasks();
+    openLedger(repo).writeMarker(`pending/${FEATURE}/plan`, { check: 'phase-result-missing', at: 'x' });
+
+    const a = cli('assemble', 'plan');
+    expect(a.status, a.stderr).toBe(0);
+    expect(JSON.parse(a.stdout)).toEqual({ verification: 'verified', phase: 'plan' });
+    expect(fs.existsSync(resultFile(FEATURE, 'plan'))).toBe(true);
+    expect(openLedger(repo).hasMarker(`pending/${FEATURE}/plan`)).toBe(false);
+    const row = openLedger(repo).lastRow(`results/${FEATURE}/plan`);
+    expect(row).toMatchObject({
+      sha256: createHash('sha256').update(fs.readFileSync(resultFile(FEATURE, 'plan'))).digest('hex'),
+      feature: FEATURE,
+      phase: 'plan',
+      startedAt: '2026-11-13T09:00:00.000Z',
+      session: 'sess-accept-1',
+    });
+
+    const c = cli('check', 'plan');
+    expect(c.status, c.stderr).toBe(0);
+    expect(JSON.parse(c.stdout)).toEqual({ verification: 'verified' });
+  });
+
+  it('a failed assemble exits 1, names the rule and the rebuild command, and creates no results/ dir', () => {
+    startRun('plan', '2026-11-13T09:00:00.000Z');
+    const r = cli('assemble', 'plan');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('no_tasks');
+    expect(r.stderr).toContain('oss-phase-result.sh assemble plan');
+    expect(fs.existsSync(path.join(activeDir(FEATURE), 'results'))).toBe(false);
+  });
+
+  it('assemble with no started run refuses with no_run_started and writes nothing', () => {
+    writeTasks();
+    const r = cli('assemble', 'plan');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('no_run_started');
+    expect(fs.existsSync(path.join(activeDir(FEATURE), 'results'))).toBe(false);
+  });
+});
+
+describe('phase-result CLI: check refuses anything not bound to this run', () => {
+  it('no result file gives missing', () => {
+    startRun('plan', '2026-11-13T09:00:00.000Z');
+    const r = cli('check', 'plan');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('missing');
+    expect(r.stderr).toContain('oss-phase-result.sh assemble plan');
+  });
+
+  it('a hand-written schema-valid result gives unbound_result', () => {
+    startRun('plan', '2026-11-13T09:00:00.000Z');
+    fs.mkdirSync(path.join(activeDir(FEATURE), 'results'), { recursive: true });
+    fs.writeFileSync(
+      resultFile(FEATURE, 'plan'),
+      JSON.stringify({
+        v: 1,
+        phase: 'plan',
+        feature: FEATURE,
+        startedAt: '2026-11-13T09:00:00.000Z',
+        assembledAt: '2026-11-13T09:10:00.000Z',
+        headSha: git('rev-parse', 'HEAD'),
+        verification: 'verified',
+        sources: { tasks: 'model' },
+        claims: [],
+        chain: [],
+        tasks: [{ id: 'T1', title: 'forged', testIds: ['x.test.ts:y'] }],
+      }),
+    );
+    const r = cli('check', 'plan');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('unbound_result');
+  });
+
+  it('a result edited after assemble gives unbound_result', () => {
+    assembledPlan();
+    const file = resultFile(FEATURE, 'plan');
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf-8').replace('first task', 'edited task'));
+    const r = cli('check', 'plan');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('unbound_result');
+  });
+
+  it('a result copied from another feature gives stale_result', () => {
+    assembledPlan();
+    fs.mkdirSync(path.join(activeDir(OTHER), 'results'), { recursive: true });
+    fs.copyFileSync(resultFile(FEATURE, 'plan'), resultFile(OTHER, 'plan'));
+    git('checkout', '-q', '-b', `feat/${OTHER}/build`);
+    const r = cli('check', 'plan');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('stale_result');
+  });
+
+  it('a result from an older run gives stale_result', () => {
+    assembledPlan();
+    startRun('plan', '2026-11-13T11:00:00.000Z');
+    const r = cli('check', 'plan');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('stale_result');
+    expect(r.stderr).toContain('startedAt');
+  });
+
+  it('a code field that no longer matches the evidence gives evidence_mismatch', () => {
+    startRun('build', '2026-11-13T09:00:00.000Z');
+    writeEvents([event('2026-11-13T09:01:00.000Z', 'red'), event('2026-11-13T09:02:00.000Z', 'green')]);
+    const a = cli('assemble', 'build');
+    expect(a.status, a.stderr).toBe(0);
+    writeEvents([event('2026-11-13T09:03:00.000Z', 'green')]);
+    const r = cli('check', 'build');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('evidence_mismatch');
+    expect(r.stderr).toContain('testRuns');
+  });
+
+  it('a ship result made before a new commit gives stale_result', () => {
+    commitFile('feature.txt', 'work\n');
+    passGates(FEATURE);
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    const a = cli('assemble', 'ship');
+    expect(a.status, a.stderr).toBe(0);
+    expect(cli('check', 'ship').status).toBe(0);
+    commitFile('later.txt', 'more\n');
+    const r = cli('check', 'ship');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('stale_result');
+    expect(r.stderr).toContain('headSha');
+  });
+
+  it('a ship result with a recorded override still checks after the value file has aged out', () => {
+    commitFile('feature.txt', 'work\n');
+    passGates(FEATURE);
+    const id = randomUUID();
+    const line = JSON.stringify({ v: 1, id, feature: FEATURE, question: 'Defer the LOW finding?', person: 'Pat' });
+    fs.appendFileSync(path.join(activeDir(FEATURE), 'decisions.ndjson'), `${line}\n`);
+    openLedger(repo).appendRow(`decisions/${FEATURE}`, { id, feature: FEATURE, sha256: sha256(line) });
+    const overrides = path.join(valueDir(), 'overrides.json');
+    fs.writeFileSync(overrides, JSON.stringify([{ finding: 'LOW: naming', decisionId: id }]));
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    const a = cli('assemble', 'ship');
+    expect(a.status, a.stderr).toBe(0);
+    const old = new Date(Date.now() - 60 * 60 * 1000);
+    fs.utimesSync(overrides, old, old);
+    const r = cli('check', 'ship');
+    expect(r.status, r.stderr).toBe(0);
+  });
+
+  it('a repo unverified marker or a ledger pending marker gives unverified', () => {
+    assembledPlan();
+    fs.writeFileSync(path.join(activeDir(FEATURE), 'results', 'plan.unverified.json'), '{}');
+    const repoMarker = cli('check', 'plan');
+    expect(repoMarker.status).toBe(1);
+    expect(repoMarker.stderr).toContain('unverified');
+
+    fs.rmSync(path.join(activeDir(FEATURE), 'results', 'plan.unverified.json'));
+    expect(cli('check', 'plan').status).toBe(0);
+    openLedger(repo).writeMarker(`pending/${FEATURE}/plan`, { check: 'phase-result-missing', at: 'x' });
+    const ledgerMarker = cli('check', 'plan');
+    expect(ledgerMarker.status).toBe(1);
+    expect(ledgerMarker.stderr).toContain('unverified');
+  });
+});
+
+describe('phase-result CLI: usage, --all, budgets', () => {
+  it('an unknown phase or verb exits 2 with usage', () => {
+    for (const args of [['check', 'deploy'], ['assemble', 'review'], ['frob', 'plan'], []]) {
+      const r = cli(...args);
+      expect(r.status, args.join(' ')).toBe(2);
+      expect(r.stderr.toLowerCase()).toContain('usage');
+    }
+  });
+
+  it('check ship --all prints one line per active feature and exits 0', () => {
+    commitFile('feature.txt', 'work\n');
+    passGates(FEATURE);
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    expect(cli('assemble', 'ship').status).toBe(0);
+    const r = cli('check', 'ship', '--all');
+    expect(r.status, r.stderr).toBe(0);
+    const lines = r.stdout.trim().split('\n').sort();
+    expect(lines).toEqual([`${FEATURE} ok`, `${OTHER} missing`]);
+  });
+
+  it('check --repo checks the named repo, not the cwd', () => {
+    assembledPlan();
+    const env = cleanEnv();
+    env.HOME = home;
+    env.PATH = `${shimDir}:${process.env.PATH ?? ''}`;
+    const r = spawnSync(process.execPath, [CLI, 'check', 'plan', '--repo', repo], { cwd: tmp, env, encoding: 'utf-8' });
+    expect(r.status, r.stderr).toBe(0);
+  });
+
+  it('stays under loose hang ceilings: check < 1.5 s, assemble < 6 s', () => {
+    startRun('plan', '2026-11-13T09:00:00.000Z');
+    writeTasks();
+    const a = cli('assemble', 'plan');
+    expect(a.status, a.stderr).toBe(0);
+    expect(a.ms).toBeLessThan(6000);
+    const c = cli('check', 'plan');
+    expect(c.status, c.stderr).toBe(0);
+    expect(c.ms).toBeLessThan(1500);
+  });
+
+  it('never calls a network binary (curl, gh, wget) on assemble or check, ship included', () => {
+    commitFile('feature.txt', 'work\n');
+    passGates(FEATURE);
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    expect(cli('assemble', 'ship').status).toBe(0);
+    expect(cli('check', 'ship').status).toBe(0);
+    expect(cli('check', 'ship', '--all').status).toBe(0);
+    expect(fs.existsSync(netCalls)).toBe(false);
+  });
+});

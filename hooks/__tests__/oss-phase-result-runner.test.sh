@@ -89,7 +89,9 @@ wait
 EOF
 chmod +x "$T/slow-cli"
 start=$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%d", time*1000')
-oss_run_bounded_rc 1 "$T/slow-cli"; rc=$?
+# Run through /bin/sh: macOS scans a freshly written executable on its first exec, which can take most of the 1 s
+# bound before the script records its child (seen as a flaky "pid not recorded").
+oss_run_bounded_rc 1 /bin/sh "$T/slow-cli"; rc=$?
 end=$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%d", time*1000')
 ms=$((end - start))
 [[ $rc -eq 124 ]] && pass "a CLI past its bound gives 124" || fail "a CLI past its bound gives 124" "rc=$rc"
