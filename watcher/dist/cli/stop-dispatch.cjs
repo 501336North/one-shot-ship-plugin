@@ -271,7 +271,6 @@ var PHASES = ["ideate", "plan", "build", "ship"];
 var fs3 = __toESM(require("fs"), 1);
 var path3 = __toESM(require("path"), 1);
 var import_child_process = require("child_process");
-var PHASES2 = ["ideate", "plan", "build", "ship"];
 var FEATURE_RE2 = /^[A-Za-z0-9._-]+$/;
 var RESULT_CAP = 256 * 1024;
 var VALUE_CAP = 64 * 1024;
@@ -294,7 +293,7 @@ function resolveRepo(cwd) {
 }
 function checkNames(feature, phase) {
   if (!FEATURE_RE2.test(feature) || feature.startsWith(".")) throw new Error(`bad_feature: ${JSON.stringify(feature)}`);
-  if (!PHASES2.includes(phase)) throw new Error(`unsafe_path: unknown phase ${JSON.stringify(phase)}`);
+  if (!PHASES.includes(phase)) throw new Error(`unsafe_path: unknown phase ${JSON.stringify(phase)}`);
 }
 function resultsDir(repo, feature, create) {
   let cur = repo;
@@ -674,6 +673,9 @@ function toOutput(o) {
   if (o.kind === "allow") return null;
   return o.systemMessage === void 0 ? { decision: "block", reason: o.reason } : { decision: "block", reason: o.reason, systemMessage: o.systemMessage };
 }
+function phaseName(ctx) {
+  return ctx.subject?.phase ?? "current";
+}
 function recordUnverified(ctx, check, cls) {
   const s = ctx.subject;
   if (s === null) return;
@@ -696,7 +698,7 @@ function recordUnverified(ctx, check, cls) {
 }
 async function failOpen(ctx, check, cls) {
   const s = ctx.subject;
-  const phase = s?.phase ?? "current";
+  const phase = phaseName(ctx);
   if (s !== null && !ctx.input.stopHookActive && ctx.input.sessionId !== "") {
     let prev = null;
     try {
@@ -728,11 +730,15 @@ async function failOpen(ctx, check, cls) {
     systemMessage: `OSS: the ${check} stop check could not run for the ${phase} phase (${cls}). ${phase} is marked unverified and will not pass until you run oss-phase-result.sh assemble ${phase}.`
   };
 }
-function loopGuard(ctx, check, phase) {
+function loopGuard(ctx, check) {
   recordUnverified(ctx, check, "loop_guard");
+  const phase = phaseName(ctx);
   return {
     systemMessage: `OSS: stop allowed by the loop guard while the ${phase} phase has no valid result (${check}). ${phase} is marked unverified; run oss-phase-result.sh assemble ${phase}.`
   };
+}
+function blockOrGuard(ctx, check, outcome) {
+  return ctx.input.stopHookActive ? loopGuard(ctx, check) : toOutput(outcome);
 }
 async function dispatch(input, opts) {
   const checks = opts.checks ?? CHECKS;
@@ -740,7 +746,7 @@ async function dispatch(input, opts) {
   const ctx = { input, subject: null, phaseResultCli: opts.phaseResultCli };
   try {
     const r = resolveSubject(input.cwd);
-    if (r.kind === "block") return input.stopHookActive ? loopGuard(ctx, "stop-dispatch", "current") : toOutput(r.outcome);
+    if (r.kind === "block") return blockOrGuard(ctx, "stop-dispatch", r.outcome);
     if (r.kind === "subject") {
       ctx.subject = r.subject;
       if (!r.subject.bound) {
@@ -752,8 +758,7 @@ async function dispatch(input, opts) {
     }
   } catch (e) {
     if (!isPathProblem(e)) return failOpen(ctx, "stop-dispatch", errorClass(e));
-    const out = toOutput(blockFor(ctx.subject?.phase ?? "current", pathCode(e), true));
-    return input.stopHookActive ? loopGuard(ctx, "stop-dispatch", ctx.subject?.phase ?? "current") : out;
+    return blockOrGuard(ctx, "stop-dispatch", blockFor(phaseName(ctx), pathCode(e), true));
   }
   for (const check of checks) {
     const t0 = Date.now();
@@ -762,12 +767,10 @@ async function dispatch(input, opts) {
       outcome = check.run(ctx);
     } catch (e) {
       if (!isPathProblem(e)) return failOpen(ctx, check.id, errorClass(e));
-      outcome = blockFor(ctx.subject?.phase ?? "current", pathCode(e), true);
+      outcome = blockFor(phaseName(ctx), pathCode(e), true);
     }
     if (Date.now() - t0 > budget) return failOpen(ctx, check.id, "timeout");
-    if (outcome.kind === "block") {
-      return input.stopHookActive ? loopGuard(ctx, check.id, ctx.subject?.phase ?? "current") : toOutput(outcome);
-    }
+    if (outcome.kind === "block") return blockOrGuard(ctx, check.id, outcome);
   }
   return null;
 }

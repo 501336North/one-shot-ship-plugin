@@ -73,6 +73,11 @@ function toOutput(o: CheckOutcome): StopOutput | null {
     : { decision: 'block', reason: o.reason, systemMessage: o.systemMessage };
 }
 
+/** The started phase's name for messages, or 'current' before one is resolved. */
+function phaseName(ctx: StopContext): string {
+  return ctx.subject?.phase ?? 'current';
+}
+
 function recordUnverified(ctx: StopContext, check: string, cls: string): void {
   const s = ctx.subject;
   if (s === null) return;
@@ -97,7 +102,7 @@ function recordUnverified(ctx: StopContext, check: string, cls: string): void {
 
 async function failOpen(ctx: StopContext, check: string, cls: string): Promise<StopOutput> {
   const s = ctx.subject;
-  const phase = s?.phase ?? 'current';
+  const phase = phaseName(ctx);
   if (s !== null && !ctx.input.stopHookActive && ctx.input.sessionId !== '') {
     let prev: Record<string, unknown> | null = null;
     try {
@@ -135,13 +140,19 @@ async function failOpen(ctx: StopContext, check: string, cls: string): Promise<S
   };
 }
 
-function loopGuard(ctx: StopContext, check: string, phase: string): StopOutput {
+function loopGuard(ctx: StopContext, check: string): StopOutput {
   recordUnverified(ctx, check, 'loop_guard');
+  const phase = phaseName(ctx);
   return {
     systemMessage:
       `OSS: stop allowed by the loop guard while the ${phase} phase has no valid result (${check}). ` +
       `${phase} is marked unverified; run oss-phase-result.sh assemble ${phase}.`,
   };
+}
+
+/** A block goes out as is, except under stop_hook_active, where the loop guard turns it into an unverified allow. */
+function blockOrGuard(ctx: StopContext, check: string, outcome: CheckOutcome): StopOutput | null {
+  return ctx.input.stopHookActive ? loopGuard(ctx, check) : toOutput(outcome);
 }
 
 export async function dispatch(input: StopInput, opts: DispatchOptions): Promise<StopOutput | null> {
@@ -150,7 +161,7 @@ export async function dispatch(input: StopInput, opts: DispatchOptions): Promise
   const ctx: StopContext = { input, subject: null, phaseResultCli: opts.phaseResultCli };
   try {
     const r = resolveSubject(input.cwd);
-    if (r.kind === 'block') return input.stopHookActive ? loopGuard(ctx, 'stop-dispatch', 'current') : toOutput(r.outcome);
+    if (r.kind === 'block') return blockOrGuard(ctx, 'stop-dispatch', r.outcome);
     if (r.kind === 'subject') {
       ctx.subject = r.subject;
       if (!r.subject.bound) {
@@ -162,8 +173,7 @@ export async function dispatch(input: StopInput, opts: DispatchOptions): Promise
     }
   } catch (e) {
     if (!isPathProblem(e)) return failOpen(ctx, 'stop-dispatch', errorClass(e));
-    const out = toOutput(blockFor(ctx.subject?.phase ?? 'current', pathCode(e), true));
-    return input.stopHookActive ? loopGuard(ctx, 'stop-dispatch', ctx.subject?.phase ?? 'current') : out;
+    return blockOrGuard(ctx, 'stop-dispatch', blockFor(phaseName(ctx), pathCode(e), true));
   }
 
   for (const check of checks) {
@@ -173,12 +183,10 @@ export async function dispatch(input: StopInput, opts: DispatchOptions): Promise
       outcome = check.run(ctx);
     } catch (e) {
       if (!isPathProblem(e)) return failOpen(ctx, check.id, errorClass(e));
-      outcome = blockFor(ctx.subject?.phase ?? 'current', pathCode(e), true);
+      outcome = blockFor(phaseName(ctx), pathCode(e), true);
     }
     if (Date.now() - t0 > budget) return failOpen(ctx, check.id, 'timeout');
-    if (outcome.kind === 'block') {
-      return input.stopHookActive ? loopGuard(ctx, check.id, ctx.subject?.phase ?? 'current') : toOutput(outcome);
-    }
+    if (outcome.kind === 'block') return blockOrGuard(ctx, check.id, outcome);
   }
   return null;
 }

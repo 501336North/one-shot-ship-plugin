@@ -22,19 +22,12 @@ _OSD_BOUND="${OSS_STOP_DISPATCH_TEST_BOUND:-5}"
 
 _osd_notify() { "$_OSD_DIR/oss-stop.sh" </dev/null >/dev/null 2>&1; exit 0; }
 
-# The dispatcher CLI, in oss-phase-result.sh's order: CLAUDE_PLUGIN_ROOT, ~/.oss/plugin-root, this plugin, the cache.
+# The dispatcher CLI, found by oss_plugin_cli (oss-phase-result.sh): CLAUDE_PLUGIN_ROOT, ~/.oss/plugin-root, this
+# plugin, the cache.
 _osd_cli() {
-    local f="$HOME/.oss/plugin-root" r="" found
     _OSD_CLI=""
-    if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" && -f "$CLAUDE_PLUGIN_ROOT/$_OSD_SUB" ]]; then _OSD_CLI="$CLAUDE_PLUGIN_ROOT/$_OSD_SUB"; return 0; fi
-    if [[ -f "$f" && ! -L "$f" && -O "$f" ]] && IFS= read -r -d '' r <"$f"; [[ -n "$r" ]]; then
-        r="${r%$'\n'}"
-        if [[ "$r" == /* && "$r" != *$'\n'* && -d "$r" && -f "$r/$_OSD_SUB" ]]; then _OSD_CLI="$r/$_OSD_SUB"; return 0; fi
-    fi
-    if [[ -f "$_OSD_DIR/../$_OSD_SUB" ]]; then _OSD_CLI="$(cd -P "$_OSD_DIR/.." && pwd -P)/$_OSD_SUB"; return 0; fi
-    found=$(find "$HOME/.claude/plugins/cache/one-shot-ship-plugin" -name stop-dispatch.cjs -path "*/$_OSD_SUB" -type f 2>/dev/null | sort -V | tail -1)
-    [[ -n "$found" ]] && { _OSD_CLI="$found"; return 0; }
-    return 1
+    oss_plugin_cli "$_OSD_SUB" || return 1
+    _OSD_CLI="$_OSS_PLUGIN_CLI"
 }
 
 _osd_started_at() { # <run file> -> the last row's startedAt

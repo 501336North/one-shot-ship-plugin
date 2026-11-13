@@ -10,7 +10,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { readValueFile } from './store.js';
 import { LedgerError, openLedger } from './ledger.js';
-import { baseFields, redactModelText, type AssembleContext, type AssembleOutcome } from './assemble-common.js';
+import { baseFields, parseJsonObject, redactModelText, type AssembleContext, type AssembleOutcome } from './assemble-common.js';
 
 const FILE_CAP = 1024 * 1024;
 const MAX_DECISIONS = 200;
@@ -41,15 +41,6 @@ function readRepoFile(p: string): FileRead {
 
 function clipText(v: unknown, cap: number): string | undefined {
   return typeof v === 'string' ? redactModelText(v).slice(0, cap) : undefined;
-}
-
-function parseRecord(line: string): Record<string, unknown> | null {
-  try {
-    const v: unknown = JSON.parse(line);
-    return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
 }
 
 function ledgerKeys(ctx: AssembleContext): Set<string> {
@@ -96,7 +87,7 @@ export function assembleIdeate(ctx: AssembleContext): AssembleOutcome {
     }
     for (const line of records.text.split('\n')) {
       if (decisions.length >= MAX_DECISIONS) break;
-      const rec = parseRecord(line);
+      const rec = parseJsonObject(line);
       if (rec === null || rec.feature !== ctx.feature || typeof rec.id !== 'string') continue;
       const sha = createHash('sha256').update(line).digest('hex');
       if (!keys.has(`${rec.id}\n${sha}`)) continue;

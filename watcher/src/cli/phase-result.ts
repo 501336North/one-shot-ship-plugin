@@ -80,6 +80,11 @@ function gitOut(cwd: string, args: string[]): string | null {
   }
 }
 
+/** The commit HEAD points at; assemble records it and check for ship compares against it. */
+function headSha(repo: string): string | null {
+  return gitOut(repo, ['rev-parse', '--verify', 'HEAD^{commit}']);
+}
+
 /**
  * The local branch ship diffs against (D19): the model's `base.txt` (the PR's base) when it is one line naming an
  * existing local branch; else repo-local `oss.shipBase`, else `main` (local ref only, never gh or fetch). A bad
@@ -160,7 +165,7 @@ function assemble(repo: string, feature: string, phase: Phase): Record<string, u
     repo,
     feature,
     startedAt,
-    headSha: gitOut(repo, ['rev-parse', '--verify', 'HEAD^{commit}']) ?? '',
+    headSha: headSha(repo) ?? '',
     valueDir: valueDir(repo),
     now: () => new Date(),
   };
@@ -235,7 +240,7 @@ function check(repo: string, feature: string, phase: Phase): void {
   }
   checkSchema(phase, stored);
   if (stored.startedAt !== runStartedAt(ledger, phase)) throw new Refusal('stale_result', 'startedAt');
-  if (phase === 'ship' && stored.headSha !== gitOut(repo, ['rev-parse', '--verify', 'HEAD^{commit}'])) {
+  if (phase === 'ship' && stored.headSha !== headSha(repo)) {
     throw new Refusal('stale_result', 'headSha');
   }
   if (stored.verification !== 'verified') throw new Refusal('unverified', 'verification');

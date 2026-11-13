@@ -1,4 +1,4 @@
-export type Phase = 'ideate' | 'plan' | 'build' | 'ship';
+import { type Phase } from './schemas.js';
 export type ReadResult = {
     ok: true;
     bytes: Buffer;

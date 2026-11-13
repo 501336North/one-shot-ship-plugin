@@ -35,6 +35,16 @@ export function baseFields(ctx: AssembleContext, phase: Phase): Record<string, u
   };
 }
 
+/** One JSON line as a plain object; null when it does not parse or is not an object. */
+export function parseJsonObject(line: string): Record<string, unknown> | null {
+  try {
+    const v: unknown = JSON.parse(line);
+    return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Scrub secrets out of model text. Control characters are left for the schema to refuse. */
 export function redactModelText(s: string): string {
   return redactString(s);

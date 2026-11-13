@@ -10,7 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { execFileSync } from 'child_process';
-const PHASES = ['ideate', 'plan', 'build', 'ship'];
+import { PHASES } from './schemas.js';
 const FEATURE_RE = /^[A-Za-z0-9._-]+$/;
 const RESULT_CAP = 256 * 1024;
 const VALUE_CAP = 64 * 1024;

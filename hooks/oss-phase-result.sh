@@ -51,26 +51,34 @@ oss_phase_gate_ok() {
 
 _OSS_PR_SUB="watcher/dist/cli/phase-result.cjs"
 
-# oss_phase_result_cli -> _OSS_PR_CLI. Order (R-267 finding c, user pick 2026-11-13): $CLAUDE_PLUGIN_ROOT, the plugin
-# named by ~/.oss/plugin-root (not a link, owned, absolute, one line, a folder: the same checks as the value script's root verb), this
-# script's own plugin, then the plugin cache. Returns 1 when none holds the CLI.
-oss_phase_result_cli() {
-    local f="$HOME/.oss/plugin-root" r="" here found
-    _OSS_PR_CLI=""
-    if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" && -f "$CLAUDE_PLUGIN_ROOT/$_OSS_PR_SUB" ]]; then
-        _OSS_PR_CLI="$CLAUDE_PLUGIN_ROOT/$_OSS_PR_SUB"; return 0
+# oss_plugin_cli <sub> -> _OSS_PLUGIN_CLI, the plugin file <sub> (e.g. watcher/dist/cli/phase-result.cjs).
+#   Order (R-267 finding c, user pick 2026-11-13): $CLAUDE_PLUGIN_ROOT, the plugin named by ~/.oss/plugin-root (not a
+#   link, owned, absolute, one line, a folder: the same checks as the value script's root verb), this script's own
+#   plugin, then the plugin cache. Returns 1 when none holds it. Shared by oss_phase_result_cli and oss-stop-dispatch.sh.
+oss_plugin_cli() {
+    local sub="$1" f="$HOME/.oss/plugin-root" r="" here found
+    _OSS_PLUGIN_CLI=""
+    if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" && -f "$CLAUDE_PLUGIN_ROOT/$sub" ]]; then
+        _OSS_PLUGIN_CLI="$CLAUDE_PLUGIN_ROOT/$sub"; return 0
     fi
     if [[ -f "$f" && ! -L "$f" && -O "$f" ]] && IFS= read -r -d '' r <"$f"; [[ -n "$r" ]]; then
         r="${r%$'\n'}"
-        if [[ "$r" == /* && "$r" != *$'\n'* && -d "$r" && -f "$r/$_OSS_PR_SUB" ]]; then
-            _OSS_PR_CLI="$r/$_OSS_PR_SUB"; return 0
+        if [[ "$r" == /* && "$r" != *$'\n'* && -d "$r" && -f "$r/$sub" ]]; then
+            _OSS_PLUGIN_CLI="$r/$sub"; return 0
         fi
     fi
     here="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd -P)"
-    if [[ -n "$here" && -f "$here/$_OSS_PR_SUB" ]]; then _OSS_PR_CLI="$here/$_OSS_PR_SUB"; return 0; fi
-    found=$(find "$HOME/.claude/plugins/cache/one-shot-ship-plugin" -name phase-result.cjs -path "*/$_OSS_PR_SUB" -type f 2>/dev/null | sort -V | tail -1)
-    if [[ -n "$found" ]]; then _OSS_PR_CLI="$found"; return 0; fi
+    if [[ -n "$here" && -f "$here/$sub" ]]; then _OSS_PLUGIN_CLI="$here/$sub"; return 0; fi
+    found=$(find "$HOME/.claude/plugins/cache/one-shot-ship-plugin" -name "${sub##*/}" -path "*/$sub" -type f 2>/dev/null | sort -V | tail -1)
+    if [[ -n "$found" ]]; then _OSS_PLUGIN_CLI="$found"; return 0; fi
     return 1
+}
+
+# oss_phase_result_cli -> _OSS_PR_CLI: the phase-result CLI, found by oss_plugin_cli. Returns 1 when none holds it.
+oss_phase_result_cli() {
+    _OSS_PR_CLI=""
+    oss_plugin_cli "$_OSS_PR_SUB" || return 1
+    _OSS_PR_CLI="$_OSS_PLUGIN_CLI"
 }
 
 _oss_phase_result_usage() {

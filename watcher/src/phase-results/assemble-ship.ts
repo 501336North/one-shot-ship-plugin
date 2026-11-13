@@ -15,7 +15,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { openLedger, LedgerError } from './ledger.js';
 import { readValueFile } from './store.js';
-import { baseFields, redactModelText, type AssembleContext, type AssembleOutcome } from './assemble-common.js';
+import { baseFields, parseJsonObject, redactModelText, type AssembleContext, type AssembleOutcome } from './assemble-common.js';
 
 /** The default `quality_gates.agents` of /oss:ship (commands/ship.md); gate lines name an agent without its prefix. */
 export const DEFAULT_REQUIRED_GATES: readonly string[] = ['code-reviewer', 'performance-engineer', 'security-auditor'];
@@ -110,15 +110,6 @@ function sha256(s: string): string {
   return createHash('sha256').update(s).digest('hex');
 }
 
-function parse(line: string): Record<string, unknown> | null {
-  try {
-    const v: unknown = JSON.parse(line);
-    return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
-}
-
 function counts(v: unknown): Record<string, number> {
   const src = typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {};
   const out: Record<string, number> = {};
@@ -158,7 +149,7 @@ export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): A
   const backed: Array<Record<string, unknown>> = [];
   for (const line of repoLines(path.join(featureDir, 'timeline.ndjson'))) {
     if (!gateHashes.has(sha256(line))) continue;
-    const rec = parse(line);
+    const rec = parseJsonObject(line);
     if (rec !== null && rec.kind === 'gate' && rec.feature === ctx.feature && typeof rec.round === 'number') {
       backed.push(rec);
     }
@@ -184,7 +175,7 @@ export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): A
   const recorded = new Map<string, unknown>();
   const lines = repoLines(path.join(featureDir, 'decisions.ndjson'));
   for (const line of lines) {
-    const rec = parse(line);
+    const rec = parseJsonObject(line);
     if (rec === null || rec.feature !== ctx.feature || typeof rec.id !== 'string') continue;
     const h = sha256(line);
     const ok = decisionRows.some((r) => r.id === rec.id && r.feature === ctx.feature && r.sha256 === h);

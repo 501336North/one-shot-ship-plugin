@@ -10,15 +10,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { execFileSync } from 'child_process';
+import { PHASES, type Phase } from './schemas.js';
 
-export type Phase = 'ideate' | 'plan' | 'build' | 'ship';
 export type ReadResult = { ok: true; bytes: Buffer; value: unknown } | { ok: false; error: string };
 export interface WriteHooks {
   /** Test seam: runs after the temp file is complete and before it is renamed over the target. */
   beforeRename?: (tmp: string) => void;
 }
 
-const PHASES: readonly string[] = ['ideate', 'plan', 'build', 'ship'];
 const FEATURE_RE = /^[A-Za-z0-9._-]+$/;
 const RESULT_CAP = 256 * 1024;
 const VALUE_CAP = 64 * 1024;
@@ -44,7 +43,7 @@ export function resolveRepo(cwd: string): string | null {
 
 function checkNames(feature: string, phase: string): void {
   if (!FEATURE_RE.test(feature) || feature.startsWith('.')) throw new Error(`bad_feature: ${JSON.stringify(feature)}`);
-  if (!PHASES.includes(phase)) throw new Error(`unsafe_path: unknown phase ${JSON.stringify(phase)}`);
+  if (!(PHASES as readonly string[]).includes(phase)) throw new Error(`unsafe_path: unknown phase ${JSON.stringify(phase)}`);
 }
 
 /**
