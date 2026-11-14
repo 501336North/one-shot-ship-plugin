@@ -101,5 +101,9 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 - After R-266, the tool gate REFUSES builders and main on a gate timeout. It also refuses a relative write after a `cd` to a folder it can't know.
   - Audit every hook-run step and command block for `cd "$VAR" && <write>`, and use full paths.
   - Known site: plan Phase 0's archive block, `cd "$top"` then `mv -n`. Fixed in API 0af2d521: the moves use `"$top/..."`.
+  - **After-rebase check (coordinator, 2026-11-14):** `top=$(git rev-parse --show-toplevel)` is a command substitution, so the gate may not know `$top` either.
+    - Run plan Phase 0's archive block through R-266's real tool-gate CLI as the main agent.
+    - Confirm the `"$top/..."` mkdir and mv are allowed.
+    - If they are refused, report to the coordinator to choose a form the gate can follow. Do not loosen the gate.
 
-## Last Updated: 2026-11-14 08:09 CST by /oss:build (D20)
+## Last Updated: 2026-11-14 08:10 CST by /oss:build (rebase check)
