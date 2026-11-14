@@ -64,4 +64,11 @@ Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watche
   - old plugin: notice, then `ARCHIVED noresult` (PROGRESS says ship);
   - new plugin with the same prose and no result: `no phase result, move by hand: prose`, nothing moved.
 
-## Last Updated: 2026-11-14 08:09 CST by /oss:build (D20)
+### D20 narrowed, 2026-11-14
+- RED: 5 failing (the prose, plus the installed-hook-exits-127 and dangling-symlink cases in bash and zsh). GREEN: plan-archive-step 27/27; 4 targeted files 83/83; manifest 138 verified.
+- Real-hook fixture, three states:
+  - absent: notice, then `ARCHIVED prose`;
+  - installed with no CLI: `NOT ARCHIVED: the ship result check failed (exit 127)`, nothing moved;
+  - current: `no phase result, move by hand: prose`.
+
+## Last Updated: 2026-11-14 08:24 CST by /oss:build (D20 narrowed)

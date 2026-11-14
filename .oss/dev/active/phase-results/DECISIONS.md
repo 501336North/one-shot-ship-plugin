@@ -54,6 +54,7 @@
   - Why: the API serves one prompt to all plugin versions, so this is the only way old-plugin users keep today's behavior. Their trust is the same as today's.
   - Follow-on pick (2026-11-14): US-004's plan prompt size base moves to 36,416 bytes for T17 and D20, keeping the +1,000 growth budget.
   - Built in API 0af2d521.
+  - Narrowed 2026-11-14 after a heads-up, to keep D20's intent. The new hook also exits 127 (`cli_missing`) when its CLI is missing. So the fallback now runs only when `~/.oss/hooks/oss-phase-result.sh` is not installed. An installed hook that exits non-zero, 127 included, archives nothing. API cf01dc28.
 
 ---
 
@@ -114,4 +115,4 @@ Evidence: the provenance survey (only one Stop hook exists, and it never blocks)
 - D4 (complete refuses and Stop blocks), D9 (R-266 gap: wire on rebase).
 - R-265 (c) extends this dispatcher. R-254's oss-lab state machine may later read the same result files.
 
-## Last Updated: 2026-11-14 08:09 CST by /oss:build (D20)
+## Last Updated: 2026-11-14 08:24 CST by /oss:build (D20 narrowed)
