@@ -32,6 +32,7 @@
 - [x] D19: ship base from the PR base value file base.txt (completed 2026-11-13, 6bb26b8; user pick)
 - [x] Session start copies oss-phase-result.sh to ~/.oss/hooks (completed 2026-11-13, 178c68c; found at T10)
 - [x] T17: API plan archive step reads results; dead schemas removed (completed 2026-11-13, AgenticDevWorkflow-r257 2e3bc57e, local only)
+- [x] D20: older plugins keep the old PROGRESS.md archive rule when the check is missing or exits 127 (completed 2026-11-14, API 0af2d521; user pick)
 
 ### Later
 - [ ] Ship slice A into feat/determinism-sprint/build (SD-1)
@@ -41,4 +42,4 @@
 ## Blockers
 - T18-T20 wait for R-266 to merge.
 
-## Last Updated: 2026-11-13 19:23 CST by /oss:integration
+## Last Updated: 2026-11-14 08:09 CST by /oss:build (D20)

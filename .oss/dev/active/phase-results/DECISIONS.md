@@ -48,6 +48,12 @@
   - The result records the base branch it used as `diff.baseRef` (source code), and `check` re-derives from that recorded branch, so the short-lived value file is not needed at check time.
   - The base is named by the model but checked against real git; oss-lab's T21 recomputes the diff on its own.
 - Coordinator (user picks relayed, 2026-11-13): R-267 finding (a) keeps design_not_committed strict, and the R-267 seam stamps `Status: COMMITTED`; finding (c) adds T10c (resolve_cli reads `~/.oss/plugin-root` before the cache).
+- D20 Old-plugin auto-archive (user picker 2026-11-14, after the heads-up "Once the API change goes live, everyone on an older OSS plugin stops getting auto-archive until they update"): **Old rule on old plugins**.
+  - Only when `oss-phase-result.sh check ship --all` is missing or exits 127, plan Phase 0 archives with the pre-R-257 PROGRESS.md rule. It prints one notice to update the plugin.
+  - With the check present, D13 holds unchanged: results only, PROGRESS.md never decides, and any other failure archives nothing.
+  - Why: the API serves one prompt to all plugin versions, so this is the only way old-plugin users keep today's behavior. Their trust is the same as today's.
+  - Follow-on pick (2026-11-14): US-004's plan prompt size base moves to 36,416 bytes for T17 and D20, keeping the +1,000 growth budget.
+  - Built in API 0af2d521.
 
 ---
 
@@ -108,4 +114,4 @@ Evidence: the provenance survey (only one Stop hook exists, and it never blocks)
 - D4 (complete refuses and Stop blocks), D9 (R-266 gap: wire on rebase).
 - R-265 (c) extends this dispatcher. R-254's oss-lab state machine may later read the same result files.
 
-## Last Updated: 2026-11-13 19:10 CST by /oss:build (D19)
+## Last Updated: 2026-11-14 08:09 CST by /oss:build (D20)

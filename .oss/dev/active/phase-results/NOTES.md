@@ -96,4 +96,10 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
   store,validate}.js must be committed (watcher-dist-fresh only checks cli/services/queue imports, so it misses this).
 - Test fixture: `hooks/__tests__/lib/archive-ship-fixture.sh` (`archivable_ship <repo> <feature>`, HOME = sandbox).
 
-## Last Updated: 2026-11-13 19:10 CST by /oss:build
+## Rebase notes from the coordinator (2026-11-14)
+- R-266 adds oss-node.sh and oss-node-path.sh to HOOKS_TO_COPY. Keep all entries; ours is oss-phase-result.sh.
+- After R-266, the tool gate REFUSES builders and main on a gate timeout. It also refuses a relative write after a `cd` to a folder it can't know.
+  - Audit every hook-run step and command block for `cd "$VAR" && <write>`, and use full paths.
+  - Known site: plan Phase 0's archive block, `cd "$top"` then `mv -n`. Fixed in API 0af2d521: the moves use `"$top/..."`.
+
+## Last Updated: 2026-11-14 08:09 CST by /oss:build (D20)

@@ -56,4 +56,12 @@ Run against the real hook (fixture with a hand-written ship.json and a feature w
 
 Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watcher-dist-fresh are all green after it.
 
-## Last Updated: 2026-11-13 19:23 CST by /oss:integration
+### D20, 2026-11-14
+- RED: plan-archive-step had 8 failing (the notice and the fallback, in bash and zsh). GREEN: 25/25, and 4 targeted files 81/81.
+- US-004 size base raised by user pick.
+- Manifest verified: 138 prompts.
+- Real-hook fixture:
+  - old plugin: notice, then `ARCHIVED noresult` (PROGRESS says ship);
+  - new plugin with the same prose and no result: `no phase result, move by hand: prose`, nothing moved.
+
+## Last Updated: 2026-11-14 08:09 CST by /oss:build (D20)
