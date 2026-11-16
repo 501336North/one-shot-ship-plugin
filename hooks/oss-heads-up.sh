@@ -13,7 +13,8 @@ done
 # No store: the built-in heads-ups may be off (they are by default). Tell the user once per machine how to turn them
 # on, as a systemMessage (shown to the user; session start output only reaches the agent). Never with HEADS_UP=off.
 [ "$(printf '%s' "${HEADS_UP:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')" = off ] && exit 0
-marker="$HOME/.oss/heads-up-hint-shown"
+# heads-up-hint-seen, not 2.2.0's heads-up-hint-shown: 2.2.0 set that at session start, where the user never saw it.
+marker="$HOME/.oss/heads-up-hint-seen"
 [ -e "$marker" ] && exit 0
 command -v node >/dev/null 2>&1 || exit 0   # the relay needs node; without it there is nothing to turn on
 proj="${CLAUDE_PROJECT_DIR:-$PWD}"

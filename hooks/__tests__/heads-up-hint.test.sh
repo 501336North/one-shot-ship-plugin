@@ -4,7 +4,8 @@
 #   never see it, and it is never spent on a message only the agent reads.
 # @business-rule The heads-up hook (hooks/oss-heads-up.sh), when there is no built-in store, shows the hint as a
 #   systemMessage (shown to the user) when cc-plugin-you-should-know@builtin is not enabled in the settings that win
-#   (local > project > user enabledPlugins), at most once per machine (~/.oss/heads-up-hint-shown), never with
+#   (local > project > user enabledPlugins), at most once per machine (~/.oss/heads-up-hint-seen; the 2.2.0 marker heads-up-hint-shown was set without the
+#   user seeing anything, so it is ignored), never with
 #   HEADS_UP=off. Session start (whose output only the agent reads) does not print it.
 set -uo pipefail
 unset OSS_CONFIG_DIR OSS_MANIFEST_URL OSS_ALLOW_HTTP_LOOPBACK
@@ -36,6 +37,11 @@ out=$(shown "$T")
 if ! grep -qF "$HINT" <<<"$out"; then pass "the hint is shown only once per machine"
 else fail "the hint is shown only once per machine" "shown again"; fi
 
+T=$(fresh); mkdir -p "$T/.oss"; : > "$T/.oss/heads-up-hint-shown"
+out=$(shown "$T")
+if grep -qF "$HINT" <<<"$out"; then pass "a machine marked by 2.2.0 (hint never seen by the user) is still shown it"
+else fail "a machine marked by 2.2.0 (hint never seen by the user) is still shown it" "no hint"; fi
+
 T=$(fresh); enabled true > "$T/.claude/settings.json"
 out=$(shown "$T")
 if ! grep -qF "$HINT" <<<"$out"; then pass "built-in on in user settings: no hint"
@@ -53,13 +59,13 @@ else fail "built-in on in project settings: no hint" "hint shown"; fi
 
 T=$(fresh)
 out=$(shown "$T" HEADS_UP=off)
-if ! grep -qF "$HINT" <<<"$out" && [[ ! -e "$T/.oss/heads-up-hint-shown" ]]; then pass "HEADS_UP=off: no hint, and it is not used up"
+if ! grep -qF "$HINT" <<<"$out" && [[ ! -e "$T/.oss/heads-up-hint-seen" ]]; then pass "HEADS_UP=off: no hint, and it is not used up"
 else fail "HEADS_UP=off: no hint, and it is not used up" "hint shown or marked"; fi
 
 T=$(fresh)
 out=$(env HOME="$T" CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$T/proj" OSS_SKIP_HEALTH_CHECK=1 \
     bash -c 'cd "$CLAUDE_PROJECT_DIR" && bash "$0"' "$SS_HOOK" 2>/dev/null </dev/null)
-if ! grep -qF "$HINT" <<<"$out" && [[ ! -e "$T/.oss/heads-up-hint-shown" ]]; then pass "session start (read only by the agent) does not print or use up the hint"
+if ! grep -qF "$HINT" <<<"$out" && [[ ! -e "$T/.oss/heads-up-hint-seen" ]]; then pass "session start (read only by the agent) does not print or use up the hint"
 else fail "session start (read only by the agent) does not print or use up the hint" "printed or marked"; fi
 
 echo "Results: $((RUN-FAILED))/$RUN passed, $FAILED failed"
