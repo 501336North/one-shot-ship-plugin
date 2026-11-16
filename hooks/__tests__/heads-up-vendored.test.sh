@@ -70,7 +70,8 @@ check "a changed store format is reported with the pinned version" \
 
 rm -f "$work/node-starts"
 out="$(run_hook "" "oss-$$-c" "$work/empty-home")"
-check "without a built-in store, node is never started" '[ -z "$out" ] && [ ! -e "$work/node-starts" ]'
+check "without a built-in store, node is never started and nothing reaches the agent" \
+    '! grep -q additionalContext <<<"$out" && [ ! -e "$work/node-starts" ]'
 mkdir -p "$work/home2/.claude/plugins/store"
 printf '{"sessions":[{"id":"oss-%s-d","view":{"kind":"offer","line":"Built-in on %s","shownAt":1}}]}\n' "$$" "$$" \
     > "$work/home2/.claude/plugins/store/cc-plugin-you-should-know_builtin-x.json"
