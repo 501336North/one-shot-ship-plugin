@@ -774,8 +774,12 @@ function deliver(hookEventName, { text: additionalContext, claimed, path, delive
     const reason = clearOff ? undefined : cannotClear || claimed.logProblem;
     const note = reason ? ` (not cleared: ${reason}; dismiss it yourself)` : '';
     // The line is quoted, and quote characters in it become ', so it can never pose as the plugin's own text.
-    const quoted = oneLine(delivered.view.line, LINE_MAX).replace(QUOTE_MARKS, "'");
-    output.systemMessage = `✓ heads-up relayed to the agent${note}: “${quoted}”`;
+    const quoted = `“${oneLine(delivered.view.line, LINE_MAX).replace(QUOTE_MARKS, "'")}”`;
+    const label = `✓ heads-up relayed to the agent${note}:`;
+    // The label in Claude Code's teal, the heads-up in bold (user choice, v1.2.1); plain text with NO_COLOR. The
+    // only escape codes are these: oneLine turned any in the line into spaces.
+    const teal = process.env.NO_COLOR ? undefined : labelColor();
+    output.systemMessage = teal ? `${teal}${label}${SGR_RESET} ${SGR_BOLD}${quoted}${SGR_RESET}` : `${label} ${quoted}`;
   }
   const payload = Buffer.from(JSON.stringify(output));
   try {
@@ -803,6 +807,24 @@ function deliver(hookEventName, { text: additionalContext, claimed, path, delive
 // Every opening or closing quote character, plus look-alikes outside those classes (ASCII and fullwidth double
 // quote, low-9 and reversed quotes, primes, ornamental and CJK quotes).
 const QUOTE_MARKS = /[\p{Pi}\p{Pf}"＂„‟〝〞〟″‶❝❞🙶🙷]/gu;
+
+const SGR_RESET = '\u001b[0m';
+const SGR_BOLD = '\u001b[1m';
+
+/**
+ * The 24-bit color of Claude Code's "background" teal (the status bar's shell count) for the user's theme: the light
+ * themes' rgb(0,153,153) when ~/.claude/settings.json names a theme starting with "light", else the dark default's
+ * rgb(0,204,204).
+ */
+function labelColor() {
+  let theme;
+  try {
+    theme = JSON.parse(readFileSync(join(homedir(), '.claude', 'settings.json'), 'utf8')).theme;
+  } catch {
+    // No settings: the default (dark) theme.
+  }
+  return isString(theme) && theme.startsWith('light') ? '\u001b[38;2;0;153;153m' : '\u001b[38;2;0;204;204m';
+}
 
 /** Run `fn` with the verified session dir of `claimed` as the cwd (root, then session dir, each re-verified). */
 function inSession({ root, stat, session }, fn) {
