@@ -219,6 +219,31 @@ if [[ "${OSS_SKIP_HEALTH_CHECK:-}" != "1" ]]; then
     fi
 fi
 
+# heads-up (hooks/oss-heads-up.sh) relays Claude Code's built-in "You should know" heads-ups, which are off by
+# default. Say once per machine how to turn them on; never with HEADS_UP=off. Placed before the login checks so it
+# shows whether or not the user is logged in.
+heads_up_hint() {
+    local off
+    off=$(printf '%s' "${HEADS_UP:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    [[ "$off" == "off" ]] && return 0
+    local marker="$HOME/.oss/heads-up-hint-shown"
+    [[ -e "$marker" ]] && return 0
+    command -v node >/dev/null 2>&1 || return 0   # the relay needs node; without it there is nothing to turn on
+    local proj="${CLAUDE_PROJECT_DIR:-$PWD}"
+    # The built-in counts as on when the settings file that names it and wins (local > project > user) sets it to
+    # true. grep, not node: session start runs no interpreter for this.
+    local key='"cc-plugin-you-should-know@builtin"' f
+    for f in "$proj/.claude/settings.local.json" "$proj/.claude/settings.json" "$HOME/.claude/settings.json"; do
+        [[ -f "$f" ]] && grep -qF "$key" "$f" 2>/dev/null || continue
+        grep -qE "$key[[:space:]]*:[[:space:]]*true" "$f" 2>/dev/null && return 0
+        break
+    done
+    echo "OSS: the heads-up relay is idle because Claude Code's \"You should know\" heads-ups are off." \
+        "Turn them on with: /plugin enable cc-plugin-you-should-know@builtin"
+    mkdir -p "$HOME/.oss" 2>/dev/null && : > "$marker"
+}
+heads_up_hint
+
 # Check for API key configuration
 if ! declare -F oss_config_file >/dev/null; then
     echo "OSS: install incomplete (oss-api-curl.sh missing) — reinstall the plugin."
