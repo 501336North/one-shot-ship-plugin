@@ -25,6 +25,15 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-context-inject.sh"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-heads-up.sh",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "SessionStart": [
@@ -125,6 +134,16 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-timeline.sh",
             "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-heads-up.sh",
+            "timeout": 5
           }
         ]
       }
