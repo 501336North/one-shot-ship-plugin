@@ -1,10 +1,8 @@
 /**
- * @behavior The main agent's and builders' Bash calls (zsh on macOS, bash elsewhere): a script that makes a scratch
- *   file or folder with `mktemp "${TMPDIR:-/tmp}/x.XXXXXX"` (and then `cd`s into it or writes to it) runs, as it did
- *   before round 21; a mktemp whose template or folder could name a protected path stays refused.
+ * @behavior The main agent's and builders' Bash calls (zsh on macOS, bash elsewhere): a mktemp whose template or
+ *   folder could name a protected path, including one written as `${TMPDIR:-…}/…`, is refused.
  * @business-rule R-266 round 22 (PLAN Phase 8): fix only ordinary commands that round 21 newly refuses.
- *   Task 18 (CR LOW-1 round 21): a mktemp template already judged as inside the temp folder (`${TMPDIR:-/tmp}/…`,
- *   with no `..` after the temp head) is a temp write, not a write the gate cannot read.
+ *   Task 18 (CR LOW-1 round 21) is reverted (ADR-068): a `${TMPDIR:-…}` template is not read as a temp write.
  * @boundary runToolGate (the gate as the hook calls it), with a scratch home and repo, on darwin (zsh) and linux (bash).
  */
 
@@ -39,7 +37,7 @@ afterAll(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-function call(command: string, agent: string | null, platform: NodeJS.Platform): Promise<GateResult> {
+function call(command: string, agent: string | null, platform: NodeJS.Platform, withTmpdir = true): Promise<GateResult> {
   return runToolGate(
     {
       mode: 'pre',
@@ -51,7 +49,7 @@ function call(command: string, agent: string | null, platform: NodeJS.Platform):
         tool_input: { command },
         ...(agent === null ? {} : { agent_type: agent }),
       }),
-      env: { HOME: home, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PROJECT_DIR: repo, TMPDIR: os.tmpdir() },
+      env: { HOME: home, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PROJECT_DIR: repo, ...(withTmpdir ? { TMPDIR: os.tmpdir() } : {}) },
       hookEnv: { PATH: '/usr/bin:/bin', HOME: home },
     },
     { platform },
@@ -64,8 +62,8 @@ async function allowed(command: string, agent: string | null, platform: NodeJS.P
   expect(result.exitCode, command).toBe(0);
 }
 
-async function refuse(command: string, agent: string | null, platform: NodeJS.Platform): Promise<void> {
-  const result = await call(command, agent, platform);
+async function refuse(command: string, agent: string | null, platform: NodeJS.Platform, withTmpdir = true): Promise<void> {
+  const result = await call(command, agent, platform, withTmpdir);
   expect(result.exitCode, command).toBe(2);
   expect(result.stderr, command).toMatch(/^Refused/);
 }
@@ -85,13 +83,29 @@ function exactClimb(): string {
 
 describe.each(PLATFORMS)('on %s', (platform) => {
   describe.each(AGENTS)('%s', (_who, agent) => {
-    describe('Task 18: mktemp with a ${TMPDIR:-/tmp} template', () => {
+    describe('Task 18 reverted: a mktemp template written with ${TMPDIR:-…} is refused (ADR-068)', () => {
+      // R-266 round 22, Task 23 (ADR-068): the one-shot security review of Task 18 found that the `${TMPDIR:-…}`
+      // fallback is the command's own text and a spelled-around TMPDIR change goes unseen, so Task 18 is reverted.
       it.each([
+        // accepted over-refusal, ADR-068; OS write-sandbox card
         'tmp=$(mktemp "${TMPDIR:-/tmp}/x.XXXXXX")',
         'tmp=$(mktemp -d "${TMPDIR:-/tmp}/x.XXXXXX") && cd "$tmp"',
         'tmp=$(mktemp "${TMPDIR:-/tmp}/x.XXXXXX"); echo hi > "$tmp"',
-      ])('allows a scratch file or folder made in the temp folder, as before round 21: %s', (command) =>
-        allowed(command, agent, platform));
+      ])('refuses a scratch file or folder made through a ${TMPDIR:-/tmp} template, as at round 21: %s', (command) =>
+        refuse(command, agent, platform));
+
+      describe.each([['with TMPDIR set', true], ['with no TMPDIR', false]])('%s', (_env, withTmpdir) => {
+        it.each([
+          // the security review's commands: the fallback after `:-` or `-` is the command's own text
+          'export TMP\\DIR=; f=$(mktemp "${TMPDIR:-.git/hooks}/pre-commit"); echo PWNED > "$f"; chmod +x "$f"',
+          'X=TMP; unset ${X}DIR; f=$(mktemp "${TMPDIR:-.git/hooks}/pre-commit")',
+          'mktemp -d "${TMPDIR:-.git/hooks}/x.XXX"',
+          'command mktemp "${TMPDIR:-.git/hooks}/pre-commit"',
+          'env mktemp "${TMPDIR:-.git/hooks}/pre-commit"',
+          'xargs mktemp "${TMPDIR:-.git/hooks}/pre-commit" < /dev/null',
+        ])('refuses a mktemp whose ${TMPDIR…} fallback names a protected folder: %s', (command) =>
+          refuse(command, agent, platform, withTmpdir));
+      });
 
       it.each([
         'mktemp -p .oss x',
@@ -205,6 +219,45 @@ describe.each(PLATFORMS)('on %s', (platform) => {
         'mkdir -p .git/hooks',
         'ls .git/hooks',
       ])('keeps allowing ordinary git housekeeping and reads: %s', (command) => allowed(command, agent, platform));
+    });
+
+    describe('Task 24: writes through array variables and colon-less defaults (ADR-069)', () => {
+      // R-266 round 22, Task 24 (ADR-069): an array's words and a `${NAME-…}` / `${NAME=…}` / `${NAME?…}` value are
+      // only known when the command runs, so a write target that reads one is refused, as `${arr[1]}` and `${NAME:-…}` are.
+      it.each([
+        'arr=(.git/hooks/pre-commit); echo hi > $arr',
+        'arr=(~/.claude/settings.json); cp /dev/null $arr',
+        'arr=(.git/hooks/pre-commit); echo hi > ${arr}',
+        'arr=(.git/hooks/pre-commit); echo hi > $arr[1]',
+        'arr=(.git/hooks/pre-commit); echo hi > ${arr[@]}',
+        'typeset -a arr=(.git/hooks/pre-commit); echo hi > $arr',
+        'arr+=(.git/hooks/pre-commit); echo hi > $arr',
+        'arr=(.git/hooks/pre-commit); cp x $arr',
+        'arr=(.git/hooks/pre-commit); echo hi | tee $arr',
+        'arr=(.git/hooks/pre-commit); mv x $arr',
+      ])('refuses a write whose target expands an array the command sets: %s', (command) =>
+        refuse(command, agent, platform));
+
+      it.each([
+        'echo hi > "${FOO-.git/hooks}/pre-commit"',
+        'cp x "${FOO-.git/hooks}/pre-commit"',
+        'echo hi > ${FOO-.git/hooks/pre-commit}',
+        'touch "${FOO=.git/hooks}/pre-commit"',
+        'touch "${FOO?x}.git/hooks/pre-commit"',
+        'mktemp "${TMPDIR-.git/hooks}/pre-push"',
+        'FOO=1; echo hi > "${FOO+.git/hooks}/pre-commit"',
+        'echo hi > ${FOO+.git/hooks/pre-commit}',
+        'FOO=1; cp x "${FOO+.git/hooks}/pre-commit"',
+      ])('refuses a write whose target holds a colon-less default, as the `:-` form is: %s', (command) =>
+        refuse(command, agent, platform));
+
+      it.each([
+        'arr=(a b); echo $arr',
+        'arr=(a b); for f in $arr; do cat $f; done',
+        'arr=(a b); ls $arr',
+        'echo "${FOO-default}"',
+        'echo "${FOO+set}"',
+      ])('keeps allowing a read of an array or a colon-less default: %s', (command) => allowed(command, agent, platform));
     });
 
     describe('Task 19: quoted or expanded assignment values before arr=(', () => {

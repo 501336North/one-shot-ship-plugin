@@ -283,3 +283,22 @@ The one-shot security review of `deletesSingleFile` FAILED (HIGH): the skip also
 - RED: in round22-regressions.test.ts, turn the Task 20 block into keep-refused rows. Add the reviewer's three redirect commands and the three submodule-file deletes. Move `rm -f .git/modules/sub/index.lock` and `rm .git/modules/sub/index.lock` to refused (accepted over-refusal, sandbox card). `rm -f .git/worktrees/foo/index.lock` keeps today's verdict. Keep all the other Task 20 rows as they are.
 - GREEN: remove `deletesSingleFile`, `rmMayRemoveFolders` and `isPlainFile`, and their two call sites (protected-path.ts, protected-path-mention.ts), restoring the round-21 behaviour. No other change.
 - Verify: before/after against f37331b shows no refused→allowed change outside Tasks 18/19, and the Task 20 rows are back to their round-21 verdicts.
+
+
+### Task 23: Revert Task 18 (ADR-068 outcome, 2026-11-18)
+
+The one-shot review of Tasks 18 and 19 FAILED Task 18 (HIGH): the `${TMPDIR:-…}` fallback is attacker text and `tmpdirSet` misses spelled-around TMPDIR changes, so `export TMP\DIR=; f=$(mktemp "${TMPDIR:-.git/hooks}/pre-commit"); echo PWNED > "$f"; chmod +x "$f"` and `mktemp "${TMPDIR-.git/hooks}/pre-push"` were allowed. Task 19 PASSED and stays.
+
+- RED: in round22-regressions.test.ts, add the reviewer's commands as keep-refused rows (all forms: `TMP\DIR`, `unset ${X}DIR`, `-d`, `command`/`env`/`xargs`, `${TMPDIR-…}`), and flip Task 18's allowed rows to refused (accepted over-refusal, sandbox card).
+- GREEN: remove `markTempHeads`, `MKTEMP_IN_TMPDIR`, the `tempHead`/`tempArgs`/`wordTokens` plumbing, `inTempFolder`/`writtenInTemp` where only Task 18 needs them, restoring round-21 mktemp behaviour, EXCEPT Task 21's refusal (temp-folder templates holding `/` → UNKNOWN), which stays.
+- Verify: Task 21 and Task 19 rows unchanged; before/after vs f37331b shows no refused→allowed except Task 19.
+
+
+### Task 24: Refuse writes through array variables (ADR-069, 2026-11-18)
+
+- RED: keep-refused rows (main and builder, darwin and linux): `arr=(.git/hooks/pre-commit); echo hi > $arr`, `arr=(~/.claude/settings.json); cp /dev/null $arr`, `arr=(.git/hooks/pre-commit); echo hi > ${arr}`, `… > $arr[1]`, `… > ${arr[@]}`, `typeset -a arr=(.git/hooks/pre-commit); echo hi > $arr`, `arr+=(.git/hooks/pre-commit); echo hi > $arr`, and `cp x $arr` / `tee $arr` / `mv x $arr` forms. Keep-allowed: `arr=(a b); echo $arr`, `arr=(a b); for f in $arr; do cat $f; done`, `arr=(a b); ls $arr`.
+- GREEN: minimal — where the reader records an array assignment, mark the name; a write target that expands a marked array name becomes UNKNOWN (refused like `${arr[1]}`).
+- Before/after vs HEAD over the ORDINARY SAMPLE (r22-brief.md): only the new array-write rows go allowed→refused; any other allowed→refused STOPS for a user decision.
+
+- Added to Task 24 (user pick "Add it to Task 24", 2026-11-18): writes through colon-less defaults. RED keep-refused: `echo hi > "${FOO-.git/hooks}/pre-commit"`, `cp x "${FOO-.git/hooks}/pre-commit"`, `echo hi > ${FOO-.git/hooks/pre-commit}`, `touch "${FOO=.git/hooks}/pre-commit"`, `touch "${FOO?x}.git/hooks/pre-commit"`, `mktemp "${TMPDIR-.git/hooks}/pre-push"`. GREEN: a write target holding `${NAME-…}`, `${NAME=…}` or `${NAME?…}` is UNKNOWN, as `${NAME:-…}` already is.
+- Added to Task 24 (user pick "Close it in Task 24", 2026-11-18): `${NAME+…}` too. RED keep-refused: `FOO=1; echo hi > "${FOO+.git/hooks}/pre-commit"`, `echo hi > ${FOO+.git/hooks/pre-commit}`, `FOO=1; cp x "${FOO+.git/hooks}/pre-commit"`. Keep-allowed: `echo "${FOO+set}"`. GREEN: same UNKNOWN path as `${NAME:+…}`.

@@ -163,7 +163,9 @@ interface Reading {
   raw: WeakMap<Token, string>;
   /** The words and redirect targets read through a zsh modifier, subscript or flag (R-266 round 13, CR H-1). */
   opaque: WeakSet<Token>;
-  /** The words written as a template in the temp folder (`"${TMPDIR:-/tmp}/x.XXXXXX"`, no `..`), when the call sets no TMPDIR (round 22). */
+  /** The names the call assigns as arrays (`arr=(…)`, `arr+=(…)`, `typeset -a arr=(…)`): their words are only known when it runs (Task 24, ADR-069). */
+  arrays: Set<string>;
+  /** The words written in the temp folder (`"$TMPDIR"`, `"${TMPDIR:-/tmp}/x"`, no `..`), when the call sets no TMPDIR: a mktemp `-p` folder there (round 22, Task 21). */
   tempHead: WeakSet<Token>;
   /** The environment the gate sees (D-R12-1 item 3). */
   env: Readonly<Record<string, string | undefined>>;
@@ -439,6 +441,7 @@ export function readCommand(
     trustedSources: { ...trustedSources, pluginRootVariable: trustedSources.pluginRootVariable && !PLUGIN_ROOT_SET.test(cmd) },
     raw: new WeakMap(),
     opaque: new WeakSet(),
+    arrays: new Set(),
     tempHead: new WeakSet(),
     env,
     follow,
@@ -463,12 +466,13 @@ function tokensOf(cmd: string, reading: Reading): Token[] {
     const at = token.kind === 'word' ? sourceOf(token) : undefined;
     if (at !== undefined) reading.raw.set(token, cmd.slice(at.start, at.end));
   }
-  if (modifiedVariable(cmd)) markOpaque(result.tokens, cmd, reading.opaque);
+  addArrayNames(result.tokens, reading.arrays);
+  if (modifiedVariable(cmd) || readsArray(cmd, reading.arrays)) markOpaque(result.tokens, cmd, reading.opaque, reading.arrays);
   if (!reading.tmpdirSet) markTempHeads(result.tokens, cmd, reading.tempHead);
   return result.tokens;
 }
 
-/** Marks each word, in any substitution too, written as a template in the temp folder with no `..` (round 22, CR LOW-1). */
+/** Marks each word, in any substitution too, written in the temp folder with no `..` (round 22, Task 21). */
 function markTempHeads(tokens: Token[], cmd: string, tempHead: WeakSet<Token>): void {
   for (const token of tokens) {
     if (token.kind !== 'word') continue;
@@ -482,9 +486,9 @@ function markTempHeads(tokens: Token[], cmd: string, tempHead: WeakSet<Token>): 
 /**
  * A variable read through more than its value (R-266 round 13, CR H-1), outside single quotes: zsh's
  * `$X:h` / `$X[…]` (a modifier or subscript), `$~X` / `$=X` / `$^X` / `$+X` / `$#X` (flags), and
- * `${X:…}` / `${X[…]}` in either shell. Its value is not modelled: the word is unknown from there on.
+ * `${X:…}` / `${X[…]}` in either shell, and the colon-less `${X-…}` / `${X=…}` / `${X?…}` / `${X+…}` (Task 24, ADR-069). Its value is not modelled: the word is unknown from there on.
  */
-const MODIFIED_VARIABLE = /\$(?:[~=^+#]+\{?[A-Za-z_0-9@*#?!$-]|(?:[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?!$-])[:[]|\{[~=^+#]*(?:[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?!$-])[:[])/;
+const MODIFIED_VARIABLE = /\$(?:[~=^+#]+\{?[A-Za-z_0-9@*#?!$-]|(?:[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?!$-])[:[]|\{[~=^+#]*(?:[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?!$-])[:[=?+-])/;
 /** Exactly one variable with one subscript (`"$X[1,-1]"`): a bare variable, the accepted limit of ADR-036. */
 const BARE_SUBSCRIPT = /^"?\$([A-Za-z_][A-Za-z0-9_]*)\[[^\]"$`\\]*\]"?$/;
 
@@ -513,16 +517,38 @@ function modifiedVariable(text: string): boolean {
   return MODIFIED_VARIABLE.test(expandedText(text));
 }
 
+/** A variable read as `$NAME` or `${NAME…`. */
+const VARIABLE_READ = /\$\{?([A-Za-z_][A-Za-z0-9_]*)/g;
+/** A word `name=` or `name+=`, which the tokenizer ends right before an array's `(`. */
+const ARRAY_ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)\+?=$/;
+
+/** Adds each name a word `name=` or `name+=` right before `(` assigns as an array, in any substitution too (Task 24, ADR-069). */
+function addArrayNames(tokens: Token[], arrays: Set<string>): void {
+  tokens.forEach((token, n) => {
+    if (token.kind !== 'word') return;
+    if (token.scripts !== undefined) for (const script of token.scripts) addArrayNames(script, arrays);
+    const next = tokens[n + 1];
+    const name = ARRAY_ASSIGNMENT.exec(token.value)?.[1];
+    if (name !== undefined && next?.kind === 'op' && next.value === '(') arrays.add(name);
+  });
+}
+
+/** True when the text reads, outside single quotes, a variable the call assigns as an array. */
+function readsArray(text: string, arrays: Set<string>): boolean {
+  if (arrays.size === 0) return false;
+  return [...expandedText(text).matchAll(VARIABLE_READ)].some((m) => arrays.has(m[1]));
+}
+
 /**
  * Marks each word and redirect target written with a modified variable (a bare subscript of a variable
- * the shell doesn't keep excepted). One read without its own text (a brace expansion's words) is
+ * the shell doesn't keep excepted), or reading an array the call assigns (Task 24, ADR-069). One read without its own text (a brace expansion's words) is
  * marked when the text holds one anywhere: fail closed.
  */
-function markOpaque(tokens: Token[], cmd: string, opaque: WeakSet<Token>): void {
+function markOpaque(tokens: Token[], cmd: string, opaque: WeakSet<Token>, arrays: Set<string>): void {
   for (const token of tokens) {
     tick();
     if (token.kind === 'op') continue;
-    if (token.scripts !== undefined) for (const script of token.scripts) markOpaque(script, cmd, opaque);
+    if (token.scripts !== undefined) for (const script of token.scripts) markOpaque(script, cmd, opaque, arrays);
     if (token.kind === 'redirect' && (token.op === '<<' || token.op === '<<-')) continue;
     const at = sourceOf(token);
     const raw = at === undefined ? null : cmd.slice(at.start, at.end);
@@ -531,7 +557,7 @@ function markOpaque(tokens: Token[], cmd: string, opaque: WeakSet<Token>): void 
       continue;
     }
     const bare = BARE_SUBSCRIPT.exec(raw);
-    if (modifiedVariable(raw) && (bare === null || neverFollowed(bare[1]))) opaque.add(token);
+    if ((modifiedVariable(raw) && (bare === null || neverFollowed(bare[1]))) || readsArray(raw, arrays)) opaque.add(token);
   }
 }
 
@@ -1149,8 +1175,6 @@ function mktempWrites(args: string[], tempArgs: boolean[]): string[] {
   if (read === null) return [];
   const { dir } = read;
   const writtenInTemp = (w: string): boolean => tempArgs[args.lastIndexOf(w)];
-  // a template written in the temp folder (`"${TMPDIR:-/tmp}/x.XXXXXX"`): a temp write (round 22, CR LOW-1)
-  if (dir === undefined && read.suffix === undefined && read.template !== undefined && writtenInTemp(read.template)) return [];
   const template = (read.template ?? MKTEMP_DEFAULT) + (read.suffix ?? '');
   // a template holding `/` in the temp folder can climb out of it to any path: unknown (round 22, CR MEDIUM-1)
   if ((dir === undefined ? read.inTemp : writtenInTemp(dir)) && template.includes('/')) return [UNKNOWN];
@@ -2436,7 +2460,8 @@ function split(
       const value = scriptOperandNext(words)
         ? expandedScript(token)
         : opaque ?? top ?? underToplevel(token, token.value) ?? followedValue(token, token.value, true) ?? token.value;
-      readWord(value, wildGlob ?? zshGlobOf(token) ?? globOf(token));
+      // an opaque word is unknown from its first variable on, so its pattern is too (Task 24: `$arr[1]` is no `[1]` glob)
+      readWord(value, opaque !== null ? undefined : wildGlob ?? zshGlobOf(token) ?? globOf(token));
       if (words.length > wordTokens.length) {
         wordTokens.push(token);
         if (value.includes(UNKNOWN) && !isNewTempFile(token, tmpdirSet)) {
@@ -2456,7 +2481,7 @@ function split(
         if (anyUnknownWrites) unknownRedirects.add(target);
       }
       redirects.push({ op: token.op, target, ...(body === undefined ? {} : { body }) });
-      const glob = wildGlob ?? zshGlobOf(token) ?? globOf(token);
+      const glob = opaque !== null ? undefined : wildGlob ?? zshGlobOf(token) ?? globOf(token);
       if (glob !== undefined) globs.set(target, glob);
     }
     else if (casePatterns || header === 'case') {

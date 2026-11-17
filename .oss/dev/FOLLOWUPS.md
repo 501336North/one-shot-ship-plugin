@@ -405,3 +405,5 @@
 
 - [ ] 2026-11-17 · INFO · tool gate · watcher/src/tool-gate/command-reader.ts · over-refusal: allow `git -c 'user.name=A (B)' …` (quoted parentheses in a git config value that git does not run through a shell). Before loosening, list every git config key whose value git runs through a shell (credential.helper, core.sshCommand, core.editor, core.pager, core.fsmonitor, sequence.editor, gpg.program, alias.*, diff.*.textconv, filter.*, …). · from: least-privilege-tools (round 20; code review round 19 I-3)
 - [ ] 2026-11-17 · low · security · zselect -aF and zstat -HF set F; only reachable after `zmodload`, which is refused after a trap · from: least-privilege-tools (round 20; security round 19 INFO-2)
+
+- **OS write-sandbox card, round-22 additions (2026-11-18):** over-refusals `mktemp "${TMPDIR:-/tmp}/x.XXXXXX"` (Task 18 reverted, ADR-068: the fallback text is attacker-chosen) and writes through array variables like `files=(a b); rm $files` (refused since Task 24, ADR-069); the OS sandbox can allow both safely.

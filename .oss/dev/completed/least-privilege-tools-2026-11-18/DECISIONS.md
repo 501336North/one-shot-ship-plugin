@@ -1387,3 +1387,19 @@ Newly refused beyond the RED list: `setopt extendedglob` and `IFS=x` after a fil
 **Decision:** One security audit scoped to `deletesSingleFile` and its two callers. If it finds a hole, Task 20 is reverted (the lock-file delete goes back to refused, as in round 21, and is filed on the sandbox card) instead of opening a fix round. Either way, no further round.
 
 **Consequences:** The loop stays bounded; nothing new ships without a review.
+
+## ADR-068: One-shot security review of Tasks 18 and 19 (2026-11-18)
+
+**Status:** Accepted (user pick "One-shot review, revert on a hole")
+
+**Context:** Round 22's Tasks 18 (mktemp `${TMPDIR:-/tmp}` templates) and 19 (quoted or expanded assignments before `arr=(`) loosened the gate without an independent review; the only reviewed loosening (Task 20) had a hole (ADR-067).
+
+**Decision:** Same rule as ADR-067: one security audit scoped to Task 18's and Task 19's changes. A hole in either task reverts that task (its command goes back to refused and onto the sandbox card); no fix round. The merges into the Sprint D branches wait for the result.
+
+## ADR-069: Refuse writes through array variables (2026-11-18)
+
+**Status:** Accepted (user pick "Fix now: refuse array writes")
+
+**Context:** The ADR-068 review found an older HIGH outside round 22: `arr=(.git/hooks/pre-commit); echo hi > $arr` and `arr=(~/.claude/settings.json); cp /dev/null $arr` are allowed for the main agent and builders, while `x=…; echo hi > $x` is refused and `${arr[1]}` is refused as run-time-only. Confirmed against the bundle.
+
+**Decision:** One /oss:build task (Task 24): a write target that expands an array variable (`$arr`, `${arr}`, `$arr[1]`, `${arr[@]}`, `$arr[@]`) is refused as only known at run time. It only refuses more, so it cannot open a hole; no review round follows. Any newly refused ordinary command in the sample stops the build for a user decision.

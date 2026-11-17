@@ -2131,6 +2131,7 @@ function readCommand(cmd, cwd, home, caseInsensitive = false, toplevel, readFile
     trustedSources: { ...trustedSources, pluginRootVariable: trustedSources.pluginRootVariable && !PLUGIN_ROOT_SET.test(cmd) },
     raw: /* @__PURE__ */ new WeakMap(),
     opaque: /* @__PURE__ */ new WeakSet(),
+    arrays: /* @__PURE__ */ new Set(),
     tempHead: /* @__PURE__ */ new WeakSet(),
     env,
     follow
@@ -2153,7 +2154,8 @@ function tokensOf(cmd, reading) {
     const at = token.kind === "word" ? sourceOf(token) : void 0;
     if (at !== void 0) reading.raw.set(token, cmd.slice(at.start, at.end));
   }
-  if (modifiedVariable(cmd)) markOpaque(result.tokens, cmd, reading.opaque);
+  addArrayNames(result.tokens, reading.arrays);
+  if (modifiedVariable(cmd) || readsArray(cmd, reading.arrays)) markOpaque(result.tokens, cmd, reading.opaque, reading.arrays);
   if (!reading.tmpdirSet) markTempHeads(result.tokens, cmd, reading.tempHead);
   return result.tokens;
 }
@@ -2166,7 +2168,7 @@ function markTempHeads(tokens, cmd, tempHead) {
     if (MKTEMP_IN_TMPDIR.test(raw) && !raw.includes("..")) tempHead.add(token);
   }
 }
-var MODIFIED_VARIABLE = /\$(?:[~=^+#]+\{?[A-Za-z_0-9@*#?!$-]|(?:[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?!$-])[:[]|\{[~=^+#]*(?:[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?!$-])[:[])/;
+var MODIFIED_VARIABLE = /\$(?:[~=^+#]+\{?[A-Za-z_0-9@*#?!$-]|(?:[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?!$-])[:[]|\{[~=^+#]*(?:[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?!$-])[:[=?+-])/;
 var BARE_SUBSCRIPT = /^"?\$([A-Za-z_][A-Za-z0-9_]*)\[[^\]"$`\\]*\]"?$/;
 function expandedText(text) {
   let out = "";
@@ -2189,11 +2191,26 @@ function expandedText(text) {
 function modifiedVariable(text) {
   return MODIFIED_VARIABLE.test(expandedText(text));
 }
-function markOpaque(tokens, cmd, opaque) {
+var VARIABLE_READ = /\$\{?([A-Za-z_][A-Za-z0-9_]*)/g;
+var ARRAY_ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)\+?=$/;
+function addArrayNames(tokens, arrays) {
+  tokens.forEach((token, n) => {
+    if (token.kind !== "word") return;
+    if (token.scripts !== void 0) for (const script of token.scripts) addArrayNames(script, arrays);
+    const next = tokens[n + 1];
+    const name = ARRAY_ASSIGNMENT.exec(token.value)?.[1];
+    if (name !== void 0 && next?.kind === "op" && next.value === "(") arrays.add(name);
+  });
+}
+function readsArray(text, arrays) {
+  if (arrays.size === 0) return false;
+  return [...expandedText(text).matchAll(VARIABLE_READ)].some((m) => arrays.has(m[1]));
+}
+function markOpaque(tokens, cmd, opaque, arrays) {
   for (const token of tokens) {
     tick();
     if (token.kind === "op") continue;
-    if (token.scripts !== void 0) for (const script of token.scripts) markOpaque(script, cmd, opaque);
+    if (token.scripts !== void 0) for (const script of token.scripts) markOpaque(script, cmd, opaque, arrays);
     if (token.kind === "redirect" && (token.op === "<<" || token.op === "<<-")) continue;
     const at = sourceOf(token);
     const raw = at === void 0 ? null : cmd.slice(at.start, at.end);
@@ -2202,7 +2219,7 @@ function markOpaque(tokens, cmd, opaque) {
       continue;
     }
     const bare = BARE_SUBSCRIPT.exec(raw);
-    if (modifiedVariable(raw) && (bare === null || neverFollowed(bare[1]))) opaque.add(token);
+    if (modifiedVariable(raw) && (bare === null || neverFollowed(bare[1])) || readsArray(raw, arrays)) opaque.add(token);
   }
 }
 function opaqueValue(value, raw) {
@@ -2599,7 +2616,6 @@ function mktempWrites(args, tempArgs) {
   if (read === null) return [];
   const { dir } = read;
   const writtenInTemp = (w) => tempArgs[args.lastIndexOf(w)];
-  if (dir === void 0 && read.suffix === void 0 && read.template !== void 0 && writtenInTemp(read.template)) return [];
   const template = (read.template ?? MKTEMP_DEFAULT) + (read.suffix ?? "");
   if ((dir === void 0 ? read.inTemp : writtenInTemp(dir)) && template.includes("/")) return [UNKNOWN];
   if (dir === void 0 && (read.template === void 0 || read.inTemp)) return [];
@@ -3525,7 +3541,7 @@ ${copy}
       const opaque = opaqueOf(token);
       wildGlob = void 0;
       const value = scriptOperandNext(words) ? expandedScript(token) : opaque ?? top ?? underToplevel(token, token.value) ?? followedValue(token, token.value, true) ?? token.value;
-      readWord(value, wildGlob ?? zshGlobOf(token) ?? globOf(token));
+      readWord(value, opaque !== null ? void 0 : wildGlob ?? zshGlobOf(token) ?? globOf(token));
       if (words.length > wordTokens.length) {
         wordTokens.push(token);
         if (value.includes(UNKNOWN) && !isNewTempFile(token, tmpdirSet)) {
@@ -3543,7 +3559,7 @@ ${copy}
         if (anyUnknownWrites) unknownRedirects.add(target);
       }
       redirects.push({ op: token.op, target, ...body === void 0 ? {} : { body } });
-      const glob = wildGlob ?? zshGlobOf(token) ?? globOf(token);
+      const glob = opaque !== null ? void 0 : wildGlob ?? zshGlobOf(token) ?? globOf(token);
       if (glob !== void 0) globs.set(target, glob);
     } else if (casePatterns || header === "case") {
       if (casePatterns && token.value === ")") casePatterns = false;

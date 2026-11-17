@@ -1,6 +1,6 @@
 # Progress: least-privilege-tools (R-266)
 
-## Current Phase: ship
+## Current Phase: ship (complete: plugin #232, API #441, oss-lab #225 into the Sprint D branches)
 
 ## Tasks
 - [x] Ideate: design committed, 6 questions + stress test (completed 2026-11-11)
@@ -80,16 +80,18 @@
 - [x] User decision D-R22-1 "Fix all three in round 22" (2026-11-17): superseded the same day by ADR-066
 - [x] User decision D-R22-2 "Folders only, single files free" (2026-11-17): Task 20
 - [x] User decision "Stop: ship + sandbox card" (2026-11-17, ADR-066): round 22 is the last fix round, run through /oss:build (PLAN.md Phase 8); no more gate rounds; the other round-21 findings go to the OS write-sandbox card
-- [x] Task 18: mktemp `${TMPDIR:-/tmp}` template regression (completed 2026-11-17: RED 12 failing; GREEN 630/630 targeted, tsc clean; before/after 57 rows: 5 temp-head mktemp rows refused→allowed, no allowed→refused; raw template marked in tokensOf, ADR-066)
+- [x] Task 18 (REVERTED by Task 23, ADR-068): mktemp `${TMPDIR:-/tmp}` template regression (completed 2026-11-17: RED 12 failing; GREEN 630/630 targeted, tsc clean; before/after 57 rows: 5 temp-head mktemp rows refused→allowed, no allowed→refused; raw template marked in tokensOf, ADR-066)
 - [x] Task 19: quoted or expanded assignment values before `arr=(` (completed 2026-11-18: RED 12 failing; GREEN `namedPlainly` checks only an assignment's `name=`; round21a `A=$B` row moved to allowed after a real-zsh check (no write; `\typeset` and `'A=1'` controls do write); 1,667/1,667 targeted, tsc clean; before/after 80 rows, no allowed→refused; REFACTOR shared `NOT_PLAIN`)
 - [x] Task 20 (REVERTED by Task 22, ADR-067): D-R22-2, folder rule only for whole-folder writes (completed 2026-11-18: RED 8 failing; GREEN `deletesSingleFile`: non-recursive `rm` of a target that `lstat` shows is a regular file skips the folder check, everything else keeps it; a coordinator check found `rm -f .git/hooks`/`.git/refs`/`.git/modules/sub` allowed by the first version, fixed test-first (16 failing → green); `cd` forms checked; 2,233/2,233 targeted, tsc clean; REFACTOR one shared check for both rules)
 - [x] Task 22: revert Task 20 after the ADR-067 review FAILED (HIGH: redirect on an `rm` part skipped the folder rule) (completed 2026-11-18: RED 32 failing; GREEN rule files byte-identical to f37331b; 9,869/9,869 targeted across 186 files; bundle rebuilt and probed)
+- [x] Task 23: revert Task 18 after the ADR-068 review FAILED it (HIGH: `${TMPDIR:-.git/hooks}` fallback); Task 19 PASSED (completed 2026-11-18: RED 68 failing; GREEN removed the `${TMPDIR:-…}` early return, plumbing kept for Task 21; 3,430/3,430 across 14 files; before/after 200×8: only Task 19 refused→allowed and Task 21 allowed→refused; the `${TMPDIR-…}` row predates round 22 → Task 24)
+- [x] Task 24: refuse writes through array variables (ADR-069) and through `${NAME-…}`/`${NAME=…}`/`${NAME?…}`/`${NAME+…}` (completed 2026-11-18: RED 56 + 12 failing; GREEN `MODIFIED_VARIABLE` colon-less forms + array names → UNKNOWN; before/after: only the 17 hole rows allowed→refused, 0 refused→allowed; 3,812/3,812 across 16 files)
 - [x] Task 21: mktemp temp-folder template holding `/` (completed 2026-11-17: RED 20 failing after reshaping the climb to the exact TMPDIR depth; GREEN 1,953/1,953 targeted incl. tool-gate.acceptance, tsc clean; before/after 72 rows: allowed→refused only the 5 RED rows; mktemp's unknown write refused like a bare `$(…)`)
-- [ ] Final verify, then ship into the Sprint D branches (no gate round)
+- [x] Final verify, then ship into the Sprint D branches, no gate round (completed 2026-11-18: 186 files / 10,013 tests after Tasks 23-24; PRs plugin #232, API #441, oss-lab #225)
 - [ ] New card: OS write-sandbox for main-agent and builder Bash (FOLLOWUPS, round 15)
 - [ ] New Sprint D card (R-272 in the oss-lab ROADMAP): five served command blocks refused before R-266. It BLOCKS Sprint D's merge into main, together with the R-267 benchmark (FOLLOWUPS, round 11).
 
 ## Blockers
 - None. Ship opens: plugin PR into feat/determinism-sprint/build; API PR (feat/least-privilege-tools/build) into the API's feat/determinism-sprint/build; oss-lab results PR (chore/determinism-sprint/r266-results) into oss-lab feat/determinism-sprint/build. Never main.
 
-## Last Updated: 2026-11-18 01:32 CST by /oss:build --phase 8 (Tasks 18,19,21 done; 20 reverted by 22; next: commit + Sprint D PRs)
+## Last Updated: 2026-11-18 07:22 CST by /oss:ship (Tasks 22-24 done; final verify 186 files / 10,013 tests; merging into Sprint D)

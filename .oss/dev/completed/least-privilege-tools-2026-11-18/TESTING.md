@@ -773,4 +773,11 @@ Decision ADR-066 ("Stop: ship + sandbox card"): only the round-21 regressions ar
 - Task 22 reverted Task 20: RED 32 failing (8 rows × 2 agents × 2 platforms); GREEN protected-path.ts and protected-path-mention.ts byte-identical to f37331b. The bundle refuses the review's commands; `rm -f .git/modules/sub/index.lock` is refused again (accepted over-refusal, sandbox card).
 - Final targeted verify after the revert: 186 files, 9,869 tests, all pass; both tsc configs clean; `npm run build` OK.
 
-## Last Updated: 2026-11-18 01:32 CST by /oss:build --phase 8 (Task 22 revert; round 22 complete)
+## ADR-068 review, Tasks 23-24 and final verify (2026-11-18)
+
+- Review of Tasks 18/19: Task 18 FAIL (HIGH: `${TMPDIR:-.git/hooks}` fallback with a spelled-around `TMP\DIR` change), Task 19 PASS. Older HIGHs found: writes through array variables and through colon-less defaults.
+- Task 23 reverted Task 18 (RED 68; Task 21 kept; before/after 200x8 commands: only Task 19 refused->allowed, Task 21 allowed->refused).
+- Task 24 (ADR-069 + user picks): array-variable writes and `${NAME-…}`, `${NAME=…}`, `${NAME?…}`, `${NAME+…}` writes are UNKNOWN (refused). Only the 17 hole rows changed allowed->refused.
+- Final verify: 186 files, 10,013 tests pass; both tsc configs clean; bundle rebuilt and probed (main and builder): hole rows refused; `A="x y" arr=(a b)`, `arr=(a b); ls $arr`, `echo "${FOO+set}"`, `rm -f .git/index.lock`, `git status`, `npm test` allowed.
+
+## Last Updated: 2026-11-18 07:22 CST by /oss:ship (final verify after Tasks 22-24)
