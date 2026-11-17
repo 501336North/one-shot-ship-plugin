@@ -15,12 +15,15 @@ function namesIn(file) {
         return null;
     }
 }
-/** True when the agent is one of the gate (review) agents, with or without one leading `oss:`. */
+/**
+ * True when the agent is one of the gate (review) agents: its name after the last `:` (any plugin
+ * prefix, any number of them), trimmed, matched against the list ignoring letter case.
+ */
 export function isGateAgent(agent, gateAgents) {
     if (agent === undefined)
         return false;
-    const bare = agent.startsWith('oss:') ? agent.slice('oss:'.length) : agent;
-    return gateAgents.includes(bare);
+    const bare = agent.slice(agent.lastIndexOf(':') + 1).trim().toLowerCase();
+    return gateAgents.some((name) => name.trim().toLowerCase() === bare);
 }
 export function readGateAgents(pluginRoot, repoRoot) {
     const base = namesIn(path.join(pluginRoot, 'config', 'tool-gates.json'));

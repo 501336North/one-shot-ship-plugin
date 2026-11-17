@@ -279,7 +279,7 @@ describe('readCommand: output hidden by a pipe or by || true', () => {
 });
 
 const isUnreadable = (cmd: string): boolean => 'unreadable' in readCommand(cmd, CWD, HOME);
-const gitOf = (cmd: string): CommandPart['git'][] => partsOf(cmd).flatMap((p) => (p.git ? [p.git] : []));
+const gitOf = (cmd: string): NonNullable<CommandPart['git']>[] => partsOf(cmd).flatMap((p) => (p.git ? [p.git] : []));
 /** Wraps a script in `bash -c '…'`, quoting it the way a person would. */
 const bashC = (script: string): string => `bash -c '${script.replace(/'/g, `'\\''`)}'`;
 
@@ -989,7 +989,8 @@ describe('readCommand: directories the reader cannot follow', () => {
     ['pushd +1 && x', 'pushd +1'],
     ['pushd -2 && x', 'pushd -2'],
     ['pushd sub && popd && x', 'popd'],
-    ['D=x; cd "$D" && x', 'cd …'],
+    // R-266 round 11 (D-R11-1): a plain value set in the call is followed; one only known when it runs is not
+    ['D=$(x); cd "$D" && x', 'cd …'],
     ['pushd "$D" && x', 'pushd …'],
   ])('should mark the part after %s as running in a folder it cannot follow', (cmd, why) => {
     expect(lostOf(cmd).at(-1)).toBe(why);
@@ -1096,9 +1097,15 @@ describe('readCommand: a cd to the top of the repo (R2c)', () => {
     expect(part?.lostDir).toBeNull();
   });
 
+  // R-266 round 11: the top folder with a plain path after it is that folder below the top
+  it('should read cd "$(git rev-parse --show-toplevel)/sub" as running in that folder', () => {
+    const part = read('cd "$(git rev-parse --show-toplevel)/sub" && git push');
+    expect(part?.cwd).toBe(`${CWD}/sub`);
+    expect(part?.lostDir).toBeNull();
+  });
+
   it.each([
     ['another command substituted', 'cd "$(git rev-parse --git-dir)" && git push'],
-    ['more text around it', 'cd "$(git rev-parse --show-toplevel)/sub" && git push'],
     ['a folder outside any repo', 'cd /tmp && cd "$(git rev-parse --show-toplevel)" && git push'],
     ['a folder the gate already lost', 'cd "$D" && cd "$(git rev-parse --show-toplevel)" && git push'],
     // fix round 4, K2: git's variables change where (or whether) git finds a repo
@@ -1755,5 +1762,83 @@ describe('readCommand: thousands of CDPATH appends in one call (fix part K12, it
   it('keeps the CDPATH the gate runs with, however many folders it names', () => {
     expect(lastLost('cd hooks && echo x', `${':'.repeat(10_000)}.git`)).toMatchObject({ pattern: `${CWD}/.git/hooks` });
     expect(lastLost('cd ./src && echo x', `${':'.repeat(10_000)}.git`)).toBeNull();
+  });
+});
+
+describe('readCommand: work started in the background (R-266 review-agent launches)', () => {
+  const backgroundedOf = (cmd: string): boolean[] => partsOf(cmd).map((p) => p.backgrounded);
+
+  it.each([
+    ['sleep 9 &', [true]],
+    ['sleep 9 & echo done', [true, false]],
+    ['sleep 9 && echo done', [false, false]],
+    ['a | b &', [false, true]],
+    ['(cd /tmp && make) & wait', [true, true, false]],
+    ['a; b', [false, false]],
+  ])('%s marks the parts that run in the background: %j', (cmd, expected) => {
+    expect(backgroundedOf(cmd)).toEqual(expected);
+  });
+
+  it('marks a part of a script run by a shell when the script sends it to the background', () => {
+    expect(backgroundedOf("bash -c 'sleep 9 &'")).toEqual([false, true]);
+  });
+});
+
+describe('readCommand: wrappers a part runs under', () => {
+  it.each([
+    ['nohup make', ['nohup']],
+    ['env A=1 nohup make', ['env', 'nohup']],
+    ['make', []],
+  ])('%s names the wrappers it was read through: %j', (cmd, expected) => {
+    const [part] = partsOf(cmd);
+    expect(part.program).toBe('make');
+    expect(part.wrappers).toEqual(expected);
+  });
+
+  it.each([
+    ['sudo -b make', [['-b']]],
+    ['sudo -u root -b make', [['-u', 'root', '-b']]],
+    ['env -i A=1 nohup make', [['-i', 'A=1'], []]],
+    ['make', []],
+  ])('%s keeps each wrapper\'s own options: %j', (cmd, expected) => {
+    expect(partsOf(cmd)[0].wrapperOptions).toEqual(expected);
+  });
+});
+
+describe('readCommand: a script run by a shell that is itself launched or backgrounded', () => {
+  it('gives each part of `nohup bash -c "…" &` the launcher and the background of the shell that runs it', () => {
+    const [shell, cd, npm] = partsOf('nohup bash -c "cd /work/repo && npm run dev" &');
+    expect(shell.program).toBe('bash');
+    expect([cd.program, npm.program]).toEqual(['cd', 'npm']);
+    for (const inner of [cd, npm]) {
+      expect(inner.backgrounded).toBe(true);
+      expect(inner.wrappers).toContain('nohup');
+    }
+  });
+});
+
+/**
+ * @behavior Once a call sets HOME (alone, inline, or through export and the like), `~` and `$HOME`
+ *   are only known when the command runs: a write through them is not read as the real home folder.
+ * @business-rule R-253 / R-266 round 3 (C): `HOME=<protected folder>; echo x > ~/config` must not read as a write to the real home.
+ */
+describe('readCommand: a call that sets HOME', () => {
+  it.each([
+    'HOME=/work/repo/.git; echo x > ~/config',
+    'export HOME=/work/repo/.git; echo x > $HOME/config',
+    'HOME=/x echo y > ~/f',
+  ])('%s writes a path only known when it runs', (cmd) => {
+    const targets = partsOf(cmd).flatMap((p) => p.writeTargets);
+    expect(targets.length).toBeGreaterThan(0);
+    expect(targets.every((t) => t.includes(UNKNOWN))).toBe(true);
+  });
+
+  it('loses the folder after `cd` with no argument once HOME is set', () => {
+    const parts = partsOf('HOME=/work/repo; cd; echo x > f');
+    expect(parts[parts.length - 1].lostDir).not.toBeNull();
+  });
+
+  it('still reads ~ as the home folder in a call that does not set HOME', () => {
+    expect(writesOf('echo x > ~/f && echo "$HOME"')).toEqual([`${HOME}/f`]);
   });
 });

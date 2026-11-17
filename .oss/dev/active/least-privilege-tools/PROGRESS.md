@@ -1,6 +1,6 @@
 # Progress: least-privilege-tools (R-266)
 
-## Current Phase: build (complete, ready for ship)
+## Current Phase: ship
 
 ## Tasks
 - [x] Ideate: design committed, 6 questions + stress test (completed 2026-11-11)
@@ -21,9 +21,75 @@
 - [x] Task 14: API security row split in 5 served copies (completed 2026-11-11, API dc2052a9)
 - [x] Task 15: API served agent headers drop tools: (completed 2026-11-11, API d555cdbd; manifest re-signed)
 - [x] Task 16: integration, pinned tests, live row 5/5 (completed 2026-11-11, 5d145b2); code-simplifier refactor (completed 2026-11-11)
-- [x] Task 17: oss-lab ROADMAP R-266 results + R-267 note (completed 2026-11-11, oss-lab 5cedbc5 on chore/determinism-sprint/r266-results, local; docs PR to oss-lab main like #188/#210)
+- [x] Task 17: oss-lab ROADMAP R-266 results + R-267 note (completed 2026-11-11, oss-lab 5cedbc5 on chore/determinism-sprint/r266-results, local; results PR into oss-lab feat/determinism-sprint/build, user pick 2026-11-17)
+
+- [x] Ship round 8 gates: pen PASS; code review, security and performance FAIL (completed 2026-11-13, see TESTING.md)
+- [x] Ship round 9 fixes: part A (sandbox, read gate, rules) and part B (parser, hooks, gate run) (completed 2026-11-13, see TESTING.md and ADR-022 to ADR-026)
+- [x] Ship round 9 re-check: the four gates; pen PASS, performance PASS, code review FAIL, security FAIL (completed 2026-11-13, see TESTING.md)
+- [x] Ship round 10 fixes: part A (sandbox, read gate, ADR-027 to ADR-030) and part B (nested index, tick, protected-path speed, lost cd) (completed 2026-11-14, see TESTING.md and DECISIONS.md)
+- [x] Ship round 10 gates: pen PASS; performance PASS; code review FAIL; security FAIL (completed 2026-11-14, see TESTING.md "Round 10 gate results")
+- [x] Ship round 11 fixes: all round-10 findings (completed 2026-11-15, see TESTING.md "Round 11 fixes" and ADR-031 to ADR-034)
+- [x] User decision D-R11-1: narrow ADR-029 and follow safe variables (2026-11-14, ADR-031)
+- [x] User decision: move the /oss:login status-line write into a hook (2026-11-15, ADR-034)
+- [x] Ship round 11 re-check: all four gates FAIL (see TESTING.md "Round 11 gate results")
+- [x] Ship round 12 fixes: all round-11 findings, parts A and B (completed 2026-11-16, see TESTING.md "Round 12 fixes" and ADR-035 to ADR-039)
+- [x] User decision D-R12-1 "Follow or refuse" (2026-11-15, ADR-035)
+- [x] User decision D-R12-2 "Skip ignored folders" (2026-11-15, ADR-037)
+- [x] User decision ADR-036: bare unknown-variable writes stay allowed, recorded as a limit (2026-11-16)
+- [x] Ship round 12 re-check: pen test PASS, performance PASS, code review FAIL, security FAIL (completed 2026-11-16, see TESTING.md "Round 12 gate results")
+- [x] Ship round 13 fixes: all round-12 findings, parts A and B (completed 2026-11-16, see TESTING.md "Round 13 fixes" and ADR-040 to ADR-042)
+- [x] User decision D-R13-1 "Drop cache, accept slow" (2026-11-16, ADR-040)
+- [x] User decision D-R13-2 "Void only new mounts" (2026-11-16, ADR-041)
+- [x] Ship round 13 re-check: pen test PASS, performance PASS, code review FAIL, security FAIL (completed 2026-11-16, see TESTING.md "Round 13 gate results")
+- [x] Ship round 14 fixes: parts A, B and C (completed 2026-11-16, see TESTING.md "Round 14 fixes" and ADR-043 to ADR-046)
+- [x] User decision D-R14-1 "Record on Linux only" (2026-11-16, ADR-043)
+- [x] User decision D-R14-2 "Cheap fixes + wider text" (2026-11-16, ADR-044)
+- [x] User decision D-R14-3 "Move gate state out" (2026-11-16, ADR-045)
+- [x] User decision "All cards incl. R-272" (2026-11-16): this defines "Sprint D complete" for the R-267 benchmark
+- [x] Ship round 14 re-check: pen test PASS, performance PASS, code review FAIL, security FAIL (completed 2026-11-16, see TESTING.md "Round 14 gate results")
+- [x] Ship round 15 fixes: all round-14 findings, parts A and B, and the nested-repo flake fix (completed 2026-11-16, see TESTING.md "Round 15 fixes" and ADR-047 to ADR-051)
+- [x] User decision D-R14-4 "Loosen the safe cases" (2026-11-16, ADR-047)
+- [x] User decision D-R15-1 "Fix r15, then new card" (2026-11-16, ADR-048)
+- [x] User decision D-R15-2 "Linux only, accept on macOS" (2026-11-16, ADR-049)
+- [x] User decision D-R15-3 "Keep the refusal" (2026-11-16, ADR-050)
+- [x] Ship round 15 re-check: pen test PASS, performance PASS, code review FAIL, security FAIL (recorded 2026-11-17, see TESTING.md "Round 15 gate results")
+- [x] User decision D-R16-1 "Allow own servers only" (2026-11-17): the macOS profile can't express it; superseded by D-R16-2 (ADR-052)
+- [x] User decision D-R16-2 "Accept as limit" (2026-11-17, ADR-052): loopback stays open for review agents
+- [x] User decision D-R16-3 "Keep the carve-out" (2026-11-17, ADR-054)
+- [x] User decision D-R16-4 "Keep all three refused" (2026-11-17, ADR-055)
+- [x] Ship round 16 fixes: part A (sandbox tty, clock) and part B (shell forms, ADR-053 to ADR-055) (see TESTING.md "Round 16 fixes")
+- [x] Ship round 16 re-check: pen test PASS, performance PASS, code review PASS, security FAIL (recorded 2026-11-17, see TESTING.md "Round 16 gate results")
+- [x] User decision D-R17-1 "Fix A+B, file C" (2026-11-17, ADR-056): option C goes to the OS write-sandbox card
+- [x] User decision D-R17-2 "Loosen safe builtins" (2026-11-17, ADR-057)
+- [x] Ship round 17 fixes: SEC MEDIUM-1, SEC/PEN LOW-1, code-review limits A and B, pen INFO, CR INFO-1 and INFO-2 (completed 2026-11-17, see TESTING.md "Round 17 fixes")
+- [x] Ship round 17 re-check: pen test FAIL, performance PASS, code review FAIL, security FAIL; containment held (recorded 2026-11-17, see TESTING.md "Round 17 gate results")
+- [x] User decision D-R18-1 "Refuse only risky setters" (2026-11-17, ADR-058; supersedes ADR-057)
+- [x] User decision D-R18-2 "Check the end only" (2026-11-17, ADR-060)
+- [x] Ship round 18 fixes: part A (glob groups, ADR-059), part B (filled trap, ADR-058) and part C (destinations, scratch home, ADR-060) (completed 2026-11-17, see TESTING.md "Round 18 fixes")
+- [x] Ship round 18 gates: pen FAIL, performance FAIL, code review FAIL, security FAIL; containment held (recorded 2026-11-17, see TESTING.md "Round 18 gate results")
+- [x] User decision D-R19-1 "Follow later values" (2026-11-17, ADR-062)
+- [x] User decision D-R19-2 "Keep refused" (2026-11-17, ADR-063)
+- [x] User decision D-R19-3 "Refuse all groups" (2026-11-17, ADR-061)
+- [x] Ship round 19 fixes: parts A (glob groups), B (trap rules, setters, performance) and C (destinations) (see TESTING.md "Round 19 fixes")
+- [x] Ship round 19 verify and gate re-check (completed 2026-11-17: verify green after 3 test-only fixes; gates: performance PASS, pen test, code review and security FAIL; see TESTING.md "Round 19 gate results")
+- [x] Ship round 20 fixes: part A (glob groups and `name=(`, ADR-064) and part B (IFS, mktemp and trap targets, GNU names, ADR-064) (completed 2026-11-17, see TESTING.md "Round 20 fixes")
+- [x] Ship round 20 verify and gate re-check (verify green; gates: all four FAIL, see TESTING.md "Round 20 gate results")
+- [x] Ship round 21 fixes: part A (arrays, disable -r, nocorrect, ADR-065) and part B (IFS speed, gfind/gxargs, tar --cd, mktemp options, D-R21-1 protected folders, ADR-065) (see TESTING.md "Round 21 fixes")
+- [x] User decision D-R21-1 "Keep the wider check" (2026-11-17, ADR-065): protected folders at any depth count as protected
+- [x] Ship round 21 verify and gate re-check (verify 8,901/8,901 green; gates: performance PASS, pen test PASS, code review FAIL, security FAIL; containment held; see TESTING.md "Round 21 gate results")
+- [x] User decision D-R22-1 "Fix all three in round 22" (2026-11-17): superseded the same day by ADR-066
+- [x] User decision D-R22-2 "Folders only, single files free" (2026-11-17): Task 20
+- [x] User decision "Stop: ship + sandbox card" (2026-11-17, ADR-066): round 22 is the last fix round, run through /oss:build (PLAN.md Phase 8); no more gate rounds; the other round-21 findings go to the OS write-sandbox card
+- [x] Task 18: mktemp `${TMPDIR:-/tmp}` template regression (completed 2026-11-17: RED 12 failing; GREEN 630/630 targeted, tsc clean; before/after 57 rows: 5 temp-head mktemp rows refused→allowed, no allowed→refused; raw template marked in tokensOf, ADR-066)
+- [x] Task 19: quoted or expanded assignment values before `arr=(` (completed 2026-11-18: RED 12 failing; GREEN `namedPlainly` checks only an assignment's `name=`; round21a `A=$B` row moved to allowed after a real-zsh check (no write; `\typeset` and `'A=1'` controls do write); 1,667/1,667 targeted, tsc clean; before/after 80 rows, no allowed→refused; REFACTOR shared `NOT_PLAIN`)
+- [x] Task 20 (REVERTED by Task 22, ADR-067): D-R22-2, folder rule only for whole-folder writes (completed 2026-11-18: RED 8 failing; GREEN `deletesSingleFile`: non-recursive `rm` of a target that `lstat` shows is a regular file skips the folder check, everything else keeps it; a coordinator check found `rm -f .git/hooks`/`.git/refs`/`.git/modules/sub` allowed by the first version, fixed test-first (16 failing → green); `cd` forms checked; 2,233/2,233 targeted, tsc clean; REFACTOR one shared check for both rules)
+- [x] Task 22: revert Task 20 after the ADR-067 review FAILED (HIGH: redirect on an `rm` part skipped the folder rule) (completed 2026-11-18: RED 32 failing; GREEN rule files byte-identical to f37331b; 9,869/9,869 targeted across 186 files; bundle rebuilt and probed)
+- [x] Task 21: mktemp temp-folder template holding `/` (completed 2026-11-17: RED 20 failing after reshaping the climb to the exact TMPDIR depth; GREEN 1,953/1,953 targeted incl. tool-gate.acceptance, tsc clean; before/after 72 rows: allowed→refused only the 5 RED rows; mktemp's unknown write refused like a bare `$(…)`)
+- [ ] Final verify, then ship into the Sprint D branches (no gate round)
+- [ ] New card: OS write-sandbox for main-agent and builder Bash (FOLLOWUPS, round 15)
+- [ ] New Sprint D card (R-272 in the oss-lab ROADMAP): five served command blocks refused before R-266. It BLOCKS Sprint D's merge into main, together with the R-267 benchmark (FOLLOWUPS, round 11).
 
 ## Blockers
-- None. Ship opens: plugin PR into feat/determinism-sprint/build; API PR (feat/least-privilege-tools/build) into the API's feat/determinism-sprint/build; oss-lab docs PR into main. Never plugin/API main.
+- None. Ship opens: plugin PR into feat/determinism-sprint/build; API PR (feat/least-privilege-tools/build) into the API's feat/determinism-sprint/build; oss-lab results PR (chore/determinism-sprint/r266-results) into oss-lab feat/determinism-sprint/build. Never main.
 
-## Last Updated: 2026-11-11 by /oss:build (complete)
+## Last Updated: 2026-11-18 01:32 CST by /oss:build --phase 8 (Tasks 18,19,21 done; 20 reverted by 22; next: commit + Sprint D PRs)

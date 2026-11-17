@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -185,5 +186,31 @@ describe('tool-gate state store', () => {
     fs.mkdirSync(path.join(fileLinked, '.oss', 'tool-gates'), { recursive: true });
     fs.symlinkSync(outsideFile, path.join(fileLinked, '.oss', 'tool-gates', 'cycle.json'));
     expect(fileStateStore(fileLinked).readCycle()).toBeNull();
+  });
+
+  it('should skip a named pipe planted at events.ndjson without blocking or writing into it (round 8, HIGH-2)', async () => {
+    const repo = tempDir();
+    const store = fileStateStore(repo);
+    const fifo = path.join(repo, '.oss/tool-gates/events.ndjson');
+    fs.mkdirSync(path.dirname(fifo), { recursive: true });
+    spawnSync('/usr/bin/mkfifo', [fifo]);
+    // a reader on the pipe, so a write into it would not block this test: it shows up in `got`
+    const reader = spawn('/bin/cat', [fifo]);
+    let got = '';
+    reader.stdout.on('data', (chunk: Buffer) => (got += chunk.toString()));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const started = performance.now();
+    try {
+      store.appendEvent({ ts: '2026-11-13T00:00:00.000Z', tool: 'Bash', kind: 'gate-error', result: 'refused' });
+    } catch {
+      // skipping it by refusing is fine too
+    }
+    const ms = performance.now() - started;
+    reader.kill();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(got).toBe('');
+    expect(ms).toBeLessThan(500);
   });
 });

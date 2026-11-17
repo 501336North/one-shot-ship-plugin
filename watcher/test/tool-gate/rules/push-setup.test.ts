@@ -192,7 +192,7 @@ describe('push-setup rule: variables that point git at other config, for a push 
 });
 
 describe('push-setup rule: a push or commit in a folder the gate cannot follow', () => {
-  it.each(['cd - && git push', 'D=x; cd "$D" && git push', 'cd "$D" && git commit -m x', 'pushd +1 && git push', 'popd; git commit -m x', 'git -C "$D" push'])(
+  it.each(['cd - && git push', 'D=$(x); cd "$D" && git push', 'cd "$D" && git commit -m x', 'pushd +1 && git push', 'popd; git commit -m x', 'git -C "$D" push'])(
     'should refuse %s',
     (cmd) => {
       expect(check(cmd)?.reason).toContain("can't be checked");
@@ -726,10 +726,16 @@ describe('push-setup rule: a credential helper without ! that holds shell syntax
     "git -c 'credential.helper=store&x' fetch",
     "git -c 'credential.helper=store<x' fetch",
     "git -c 'credential.helper=store>x' fetch",
-    "git -c 'credential.helper=store (x)' fetch",
     "git -c $'credential.helper=store\\nx' fetch",
   ])('should refuse %s: git runs `git credential-<value>` through a shell', (cmd) => {
     expect(check(cmd)?.reason).toContain('credential.helper');
+  });
+
+  it("should refuse git -c 'credential.helper=store (x)' fetch, whose value zsh would read as a glob group (round 17; round 19, D-R19-3: the read stops at the group)", () => {
+    const result = readCommand("git -c 'credential.helper=store (x)' fetch", CWD, HOME);
+    const refusal = result.parts.map((part, i) => checkPushSetup(part, result.parts.slice(0, i))).find((r) => r !== null);
+    const readRefused = 'limit' in result && result.limit === true;
+    expect(readRefused || (refusal?.reason ?? '').includes('credential.helper')).toBe(true);
   });
 
   it.each(["git -c 'credential.helper=cache --timeout=3600' fetch", 'git -c credential.helper=store fetch'])('should allow %s', (cmd) => {

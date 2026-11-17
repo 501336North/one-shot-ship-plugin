@@ -2,7 +2,8 @@
  * Behavior: the tool gate knows which agent made a tool call. A subagent's call carries its name
  * in `agent_type` (plugin agents as `oss:<name>`, project agents as `<name>`); the main agent's
  * call carries none. Business rule: only the review agents named in the plugin's gateAgents list
- * (with or without one leading `oss:`) count as gate agents.
+ * count as gate agents, matched on the name after the last `:`, trimmed, ignoring letter case, so
+ * no prefix or spelling of a review agent's name escapes the review-only rules.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -32,7 +33,15 @@ describe('calling agent from hook input', () => {
 });
 
 describe('gate agents', () => {
-  it.each(['oss:code-reviewer', 'code-reviewer'])('should count %s as a gate agent', (name) => {
+  it.each([
+    'oss:code-reviewer',
+    'code-reviewer',
+    'OSS:code-reviewer',
+    'oss:oss:code-reviewer',
+    'other-plugin:code-reviewer',
+    ' code-reviewer ',
+    'oss: Code-Reviewer',
+  ])('should count %j as a gate agent', (name) => {
     expect(isGateAgent(name, gateAgents)).toBe(true);
   });
 
@@ -40,8 +49,8 @@ describe('gate agents', () => {
     ['a non-review plugin agent', 'oss:typescript-pro'],
     ['the main agent', undefined],
     ['an unknown agent', 'nobody'],
-    ['a doubled oss: prefix', 'oss:oss:code-reviewer'],
-    ['another plugin prefix', 'other:code-reviewer'],
+    ['a review name with a suffix', 'oss:code-reviewer-2'],
+    ['a review name as a prefix only', 'code-reviewer:helper'],
   ])('should not count %s as a gate agent', (_label, name) => {
     expect(isGateAgent(name, gateAgents)).toBe(false);
   });

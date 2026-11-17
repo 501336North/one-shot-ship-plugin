@@ -201,16 +201,11 @@ agents/typescript-pro.md	if [[ -f "$OFFLOAD" ]]; then
 commands/changelog.md	"$SCRIPT_DIR/../hooks/oss-changelog.sh"
 commands/changelog.md	SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 commands/login.md	"audio")
-commands/login.md	"command": "~/.oss/oss-statusline.sh",
 commands/login.md	"none")
-commands/login.md	"padding": 0
 commands/login.md	"sound")
-commands/login.md	"statusLine": {
-commands/login.md	"type": "command",
 commands/login.md	"visual")
 commands/login.md	. ~/.oss/hooks/oss-api-curl.sh
 commands/login.md	;;
-commands/login.md	CLAUDE_SETTINGS="${HOME}/.claude/settings.json"
 commands/login.md	CREDS="$(dirname "$(oss_config_file)")/credentials.enc"
 commands/login.md	OSS_DIR="${HOME}/.oss"
 commands/login.md	OSS_ICON_PNG="$HOME/.oss/notification-icon.png"
@@ -218,13 +213,10 @@ commands/login.md	PLIST_PATH="${HOME}/Library/LaunchAgents/com.oneshotship.daemo
 commands/login.md	PLUGIN_ROOT=$(~/.oss/hooks/oss-value.sh root 2>/dev/null)
 commands/login.md	PLUGIN_ROOT=$(~/.oss/hooks/oss-value.sh root)
 commands/login.md	PLUGIN_ROOT=$(~/.oss/hooks/oss-value.sh root) || exit 1
-commands/login.md	SETTINGS=$(cat "$CLAUDE_SETTINGS")
-commands/login.md	SETTINGS='{}'
 commands/login.md	SOUND=$(jq -r '.notifications.sound' ~/.oss/settings.json)
 commands/login.md	STATUSLINE_SCRIPT="${HOME}/.oss/oss-statusline.sh"
 commands/login.md	STYLE=$(jq -r '.notifications.style' ~/.oss/settings.json)
 commands/login.md	STYLE=$(~/.oss/hooks/oss-value.sh read style) || exit 1
-commands/login.md	UPDATED=$(echo "$SETTINGS" | jq '. + {
 commands/login.md	VERIFY="$HOME/.oss/hooks/verify-decrypt-setup.sh"
 commands/login.md	VOICE=$(jq -r '.notifications.voice' ~/.oss/settings.json)
 commands/login.md	WORKFLOW_FILE="${HOME}/.oss/workflow-state.json"
@@ -240,11 +232,9 @@ commands/login.md	cp "~/.oss/hooks/oss-statusline.sh" "$HOME/.oss/"
 commands/login.md	cp "~/.oss/hooks/oss-statusline.sh" "$STATUSLINE_SCRIPT"
 commands/login.md	echo "  Config: $(oss_config_file)"
 commands/login.md	echo ""
-commands/login.md	echo "$UPDATED" > "$CLAUDE_SETTINGS"
 commands/login.md	echo "API key updated successfully!"
 commands/login.md	echo "All existing tools and settings preserved. Ready to use."
 commands/login.md	echo "Cleared cached credentials (will refresh on next command)"
-commands/login.md	echo "Configured Claude Code status line"
 commands/login.md	echo "Created launchd plist at $PLIST_PATH"
 commands/login.md	echo "Created status line script at $STATUSLINE_SCRIPT"
 commands/login.md	echo "Credential refresh did NOT complete — see the error above. Re-run /oss:login."
@@ -274,7 +264,6 @@ commands/login.md	if [ ! -f "$OSS_ICON_PNG" ]; then
 commands/login.md	if [ ! -f "$PLIST_PATH" ]; then
 commands/login.md	if [ ! -f "$STATUSLINE_SCRIPT" ]; then
 commands/login.md	if [ ! -f "$WORKFLOW_FILE" ]; then
-commands/login.md	if [ -f "$CLAUDE_SETTINGS" ]; then
 commands/login.md	if [ -f "$CREDS" ]; then
 commands/login.md	if [ -x "$HOME/.oss/oss-statusline.sh" ]; then
 commands/login.md	if [ -x "$STATUSLINE_SCRIPT" ]; then
@@ -283,14 +272,11 @@ commands/login.md	if [ -x ~/.oss/bin/oss-decrypt ]; then
 commands/login.md	if launchctl list | grep -q "com.oneshotship.daemon"; then
 commands/login.md	launchctl load "$PLIST_PATH"
 commands/login.md	mkdir -p "$(dirname "$PLIST_PATH")"
-commands/login.md	mkdir -p "${HOME}/.claude"
 commands/login.md	mkdir -p ~/.oss
 commands/login.md	npm run build
 commands/login.md	rm "$CREDS"
 commands/login.md	say -v "$VOICE" "Welcome to OSS Dev Workflow!"
 commands/login.md	terminal-notifier -title "Welcome to OSS!"                 -message "Notifications configured"                 -appIcon "$HOME/.oss/notification-icon.png"
-commands/login.md	}
-commands/login.md	}')
 commands/login.md	~/.oss/hooks/oss-login.sh
 commands/models.md	PROJECT_CONFIG=.oss/config.json
 commands/models.md	PROJECT_MODELS=$(jq '(.models // {}) | objects | if has("apiKeys") then .apiKeys |= (if type == "object" then map_values("configured") else "configured" end) else . end' "$PROJECT_CONFIG")

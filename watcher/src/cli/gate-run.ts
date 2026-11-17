@@ -3,16 +3,20 @@
  * gate-run CLI: called by hooks/oss-gate-run.sh with the hook JSON on stdin (R-266, ADR-009).
  *
  * Usage:
- *   node gate-run.cjs subagent-start|subagent-stop|agent-post < hook.json
+ *   node gate-run.cjs subagent-start|subagent-stop|agent-post|main-post < hook.json
+ *   node gate-run.cjs add-repo [< path]   (the path on stdin, else <session>/repo-request.txt; session
+ *                                          from CLAUDE_CODE_SESSION_ID)
  *
  * Exit 0 with the check's stdout (empty, or one JSON line). Exit 1 for wrong usage, which the hook
- * wrapper turns into allow + log + tell. Ships only as the standalone bundle dist/cli/gate-run.cjs.
+ * wrapper turns into allow + tell; add-repo exits 1 with the reason on stderr when it refuses. The whole run gets 7 s from process start (the hook timeout is 10 s). Ships only as the standalone bundle dist/cli/gate-run.cjs.
  */
 
 import path from 'node:path';
+
 import { runGateRun, type GateRunEvent } from '../gate-run/gate-run.js';
 
-const EVENTS: readonly string[] = ['subagent-start', 'subagent-stop', 'agent-post'];
+const EVENTS: readonly string[] = ['subagent-start', 'subagent-stop', 'agent-post', 'main-post', 'add-repo'];
+const BUDGET_MS = 7000;
 
 /** The plugin root when CLAUDE_PLUGIN_ROOT is missing: three folders above dist/cli (the cjs bundle). */
 function ownPluginRoot(): string {
@@ -26,9 +30,10 @@ async function readStdin(): Promise<string> {
 }
 
 async function main(): Promise<void> {
+  const deadline = Date.now() + BUDGET_MS;
   const event = process.argv[2] ?? '';
   if (!EVENTS.includes(event)) {
-    process.stderr.write('Usage: gate-run subagent-start|subagent-stop|agent-post < hook.json\n', () => process.exit(1));
+    process.stderr.write('Usage: gate-run subagent-start|subagent-stop|agent-post|main-post < hook.json, or gate-run add-repo\n', () => process.exit(1));
     return;
   }
   const result = await runGateRun({
@@ -38,8 +43,14 @@ async function main(): Promise<void> {
       HOME: process.env.HOME ?? '',
       CLAUDE_PLUGIN_ROOT: process.env.CLAUDE_PLUGIN_ROOT || ownPluginRoot(),
       CLAUDE_PROJECT_DIR: process.env.CLAUDE_PROJECT_DIR,
+      CLAUDE_CODE_SESSION_ID: process.env.CLAUDE_CODE_SESSION_ID,
+      CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
+      PATH: process.env.PATH,
     },
+    bundleRoot: ownPluginRoot() || undefined,
+    deadline,
   });
+  process.stderr.write(result.stderr);
   process.stdout.write(result.stdout, () => process.exit(result.exitCode));
 }
 

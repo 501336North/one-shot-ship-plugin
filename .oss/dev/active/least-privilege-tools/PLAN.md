@@ -183,6 +183,65 @@ Every plugin agent gets an explicit `tools:` list. The four review agents (code-
 - R-266: probe results, the Write narrowing (ADR-002), the tree check (ADR-007).
 - R-267: the candidate run serves the API Sprint D prompts; count refused security-fix delegations and voided review runs.
 
+## Phase 8: Ship round 22, final regression fixes (user pick 2026-11-17 "Stop: ship + sandbox card", ADR-066)
+
+**Scope:** fix only ordinary commands that round 21 newly refuses (the regressions), plus D-R22-2.
+- **Out of scope:** every other main/builder finding from round 21 goes to the OS write-sandbox card (FOLLOWUPS).
+- **No more gate rounds after this.** A final verify, then ship.
+
+**Shared rules for every task in this phase:**
+- strict TDD with RED evidence;
+- targeted vitest only, never the full watcher suite;
+- both tsc configs clean; served-commands.acceptance green (only the 5 R-272 blocks refused);
+- a BEFORE/AFTER gate-decision table (tree f37331b vs head; main agent and builder; darwin and linux) over the ORDINARY SAMPLE in /private/tmp/claude-501/-Users-ysl-dev/223b2e2d-1a83-4cc9-9f06-b5c0dbafc9eb/scratchpad/r22-brief.md;
+- any refused → allowed change other than the listed GREEN rows: STOP and report.
+
+### Task 18: mktemp with a `${TMPDIR:-/tmp}` template (CR LOW-1 round 21)
+- **RED:** these were allowed at tree 80f6cd1 and are refused now, for main and builder:
+  - `tmp=$(mktemp "${TMPDIR:-/tmp}/x.XXXXXX")`
+  - `tmp=$(mktemp -d "${TMPDIR:-/tmp}/x.XXXXXX") && cd "$tmp"`
+  - `tmp=$(mktemp "${TMPDIR:-/tmp}/x.XXXXXX"); echo hi > "$tmp"`
+- **GREEN:** `mktempWrites` (watcher/src/tool-gate/command-reader.ts ~1132) treats a template already judged as temp (the `MKTEMP_IN_TMPDIR` shape, with no `..` after the temp head) as a temp write. Build note (2026-11-17): inside `$(…)` the template reaches `mktempWrites` as one unknown placeholder, so the raw template text is passed from `operandWrites` (~3747) as well.
+- **Keep refused:** `mktemp -p .oss x`, `mktemp -t ../../.claude/plugins/p` in a trap, `mktemp .git/hooks/pre-commit`.
+- Tests: watcher/test/tool-gate/round22-regressions.test.ts.
+
+### Task 19: assignments with quoted or expanded values before `arr=(` (CR LOW-2 round 21)
+- **RED:** these were allowed at tree 80f6cd1 and are refused now, for main and builder: `A="x y" arr=(a b)`, `A=$HOME arr=(a)`, `A=$(pwd) arr=(a)`.
+- **GREEN:** `writtenPlainly` (watcher/src/tool-gate/tokenize.ts ~606): for an earlier assignment word, only the `name=` part must be written plainly.
+- **Keep refused:** `\typeset x=(a|b)…`, `'A=1' x=(…)`, `A\=1 x=(…)`, `{A=1,B=2} x=(…)` and `{A=1} x=(…)`, as in round21a.
+- Tests: the same file.
+
+### Task 20: D-R22-2 "Folders only, single files free" (user pick 2026-11-17; CR LOW-3 round 21)
+- **RED:** `rm -f .git/modules/sub/index.lock` is refused now and must be allowed, for main and builder.
+- **GREEN:** the D-R21-1 folder heads (`holdsProtected`, watcher/src/tool-gate/rules/protected-path.ts ~174) apply only to writes that can affect a whole folder:
+  - recursive deletes (`rm -r/-R`, `find … -delete`, `-exec rm -r`);
+  - moving or renaming the folder;
+  - `rsync --delete` into it;
+  - `ln -sfn` onto it;
+  - `git clean -d`.
+  A single-file write is judged only against the protected file patterns.
+- **Keep refused:**
+  - `rm -rf .git/hooks`, `rm -rf .git/modules/sub`, `rm -rf .git/worktrees/foo`;
+  - `find .git/hooks -delete`, `mv .git/hooks x`;
+  - `rm -f .git/hooks/pre-commit`, which is a protected file itself.
+- **Keep allowed:** `rm -f .git/index.lock`, `rm -rf .git/rebase-merge`, `mkdir -p .git/hooks`, `ls .git/hooks`.
+- If needed, update the reference copy in protected-path-equivalence.test.ts the same way.
+- Tests: the same file.
+
+### Task 21: mktemp temp-folder template with `/` (CR MEDIUM-1 / SEC LOW-1 round 21; user pick 2026-11-17 "Add it to round 22")
+- **RED:** these must be refused, for main and builder, darwin and linux:
+  - `F=$(mktemp -u --tmpdir ../../../../../../../../<abs-repo>/.oss/tool-gates.json); echo x > "$F"`
+  - the same with `-p "$TMPDIR"` instead of `--tmpdir`
+  - `mktemp -d --tmpdir ../../…/.claude/plugins/p.XXX`
+  - `trap 'cp -R src/. "$F"' EXIT; F=$(mktemp -d --tmpdir ../../x/.oss/p.XXX)`, which was refused at tree 80f6cd1 (the regression)
+  - `mktemp --tmpdir "../../../../../../../../../../../../..$PWD/.git/hooks/pre-commit"`
+- **GREEN:** `mktempPattern` / `mktempWrites` (command-reader.ts ~1112/~1132): when the folder is the temp folder (`--tmpdir` with no value, `-p "$TMPDIR"`, `-t`) and the template holds `/`, the value and mktemp's own write are unknown, and the call is refused.
+- **Keep allowed:**
+  - `mktemp --tmpdir x.XXXX`, `mktemp -p "$TMPDIR" x.XXXX`, `mktemp -d --tmpdir x.XXXX`;
+  - `mktemp -d`, `mktemp`, `mktemp -t x`;
+  - Task 18's `${TMPDIR:-/tmp}/x.XXXXXX` rows.
+- Tests: the same file.
+
 ---
 
 ## Testing Strategy
@@ -211,7 +270,16 @@ Every plugin agent gets an explicit `tools:` list. The four review agents (code-
 - Sprint branch only; reaches customers when the whole sprint passes R-267 and the user gives the go.
 - Rollback: revert the R-266 PR on the sprint branch.
 
-## Estimated Tasks: 17
+## Estimated Tasks: 21 (17 planned + 4 ship round-22 tasks)
 ## Estimated Test Cases: ~55
 
-## Last Updated: 2026-11-11 by /oss:plan
+## Last Updated: 2026-11-17 23:15 CST by /oss:ship (Phase 8: round-22 regression fixes via /oss:build)
+
+
+### Task 22: Revert Task 20 (ADR-067 outcome, 2026-11-18)
+
+The one-shot security review of `deletesSingleFile` FAILED (HIGH): the skip also applied to an `rm` part's redirect targets, so `touch "echo PWNED"; rm -v "echo PWNED" >> .git/modules/sub/hooks/pre-commit` and `rm -f x > .git/modules/sub/HEAD` were allowed. It also allowed `rm -f .git/modules/sub/hooks/pre-commit`, `.../HEAD` and `.../refs/heads/main`. Per ADR-067, Task 20 is reverted, not fixed.
+
+- RED: in round22-regressions.test.ts, turn the Task 20 block into keep-refused rows. Add the reviewer's three redirect commands and the three submodule-file deletes. Move `rm -f .git/modules/sub/index.lock` and `rm .git/modules/sub/index.lock` to refused (accepted over-refusal, sandbox card). `rm -f .git/worktrees/foo/index.lock` keeps today's verdict. Keep all the other Task 20 rows as they are.
+- GREEN: remove `deletesSingleFile`, `rmMayRemoveFolders` and `isPlainFile`, and their two call sites (protected-path.ts, protected-path-mention.ts), restoring the round-21 behaviour. No other change.
+- Verify: before/after against f37331b shows no refused→allowed change outside Tasks 18/19, and the Task 20 rows are back to their round-21 verdicts.

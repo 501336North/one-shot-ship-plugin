@@ -42,6 +42,11 @@ unset POSIXLY_CORRECT
 #   oss-value.sh merge-test         the ship merge step's final test: runs hooks/oss-merge-test.sh --v2 (D26), which
 #                                   records branch.txt and head.txt, tests the squash result in a throwaway clone and
 #                                   writes tested.txt and prints READY_TO_MERGE only on success (merge-test-hook).
+#   oss-value.sh review-repo        repo.txt (one absolute path, one optional trailing newline, no ' or control
+#                                   character; deleted once read, accepted or refused) to the plugin's gate-run
+#                                   add-repo, on its stdin, for this session (CLAUDE_CODE_SESSION_ID): its review
+#                                   runs check that repo too (R-266). Prints "review repo added", or a refusal
+#                                   reason on stderr and rc 1; never the path.
 #   oss-value.sh queue-push         POST type.txt, source.txt and prompt.txt (checked) to /api/v1/queue the same way;
 #                                   print "Queued: <id>", or one Error: line on stderr and rc 1 (T87).
 # (Saving the API key is hooks/oss-login.sh, NOT a verb here: this script is allowlisted, a key
@@ -56,6 +61,30 @@ set -u
 
 case "${HOME:-}" in /*) ;; *) echo "oss-value: HOME is not an absolute path; refusing" >&2; exit 1 ;; esac
 
+# rm, mkdir, date, tr, head and cut from fixed paths, never PATH (CR L1, sec LOW-2): the first of /bin and
+# /usr/bin that has it, the order hooks/oss-node.sh and the review check's fingerprint use. git is _ov_git.
+_ov_pick() { if [ -x "$2" ]; then printf -v "$1" '%s' "$2"; else printf -v "$1" '%s' "$3"; fi; }
+_ov_pick _OV_RM /bin/rm /usr/bin/rm
+_ov_pick _OV_MKDIR /bin/mkdir /usr/bin/mkdir
+_ov_pick _OV_DATE /bin/date /usr/bin/date
+_ov_pick _OV_TR /usr/bin/tr /bin/tr
+_ov_pick _OV_HEAD /usr/bin/head /bin/head
+_ov_pick _OV_CUT /usr/bin/cut /bin/cut
+# git from a fixed path, never PATH's (security CRITICAL-1): on macOS the developer git in xcode-select's
+# folder (run with an empty environment), not the /usr/bin/git shim and its xcrun cache in the user's temp
+# folder (INFO-1); elsewhere /usr/bin/git, else /bin/git. _ov_git_bin resolves it once (call it outside $( )).
+_OV_GIT=""
+_ov_git_bin() {
+    [ -n "$_OV_GIT" ] && return 0
+    local d
+    case "${OSTYPE:-}" in
+        darwin*) d=$(/usr/bin/env -i /usr/bin/xcode-select -p 2>/dev/null) && case "$d" in /*) _OV_GIT="$d/usr/bin/git" ;; esac ;;
+        *) _ov_pick _OV_GIT /usr/bin/git /bin/git ;;
+    esac
+    [ -n "$_OV_GIT" ] && [ -f "$_OV_GIT" ] && [ -x "$_OV_GIT" ] || { _OV_GIT=""; echo "oss-value: no git at a fixed path" >&2; return 1; }
+}
+_ov_git() { _ov_git_bin && "$_OV_GIT" "$@"; }
+
 # The folder of this script, from builtins only (no `dirname` found on PATH).
 case "${BASH_SOURCE[0]}" in */*) _OV_HERE="${BASH_SOURCE[0]%/*}" ;; *) _OV_HERE=. ;; esac
 _OV_HERE="$(cd -P -- "${_OV_HERE:-/}" && pwd -P)"
@@ -65,7 +94,7 @@ if [[ ! -f "$_OV_HERE/oss-safe-path.sh" ]]; then
 fi
 source "$_OV_HERE/oss-safe-path.sh"
 
-_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args> | status | usage | workflows | workflow | queue-push | timeline gate|merge | merge-test" >&2; exit 2; }
+_ov_usage() { echo "usage: oss-value.sh dir | failed <workflow> | error cmd:<name> | read <name> | agent <workflow> start|complete | root | decrypt [custom] | models-set | cli <script> <args> | status | usage | workflows | workflow | queue-push | timeline gate|merge | merge-test | review-repo" >&2; exit 2; }
 
 _OV_RUN="$HOME/.oss/run"
 
@@ -73,7 +102,8 @@ _OV_RUN="$HOME/.oss/run"
 # _OV_TOP is empty: the one per-user folder (ship round 4, R4-1).
 _ov_repo() {
     unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
-    _OV_TOP=$(git rev-parse --show-toplevel 2>/dev/null) || { _OV_TOP=""; return 0; }
+    _ov_git_bin 2>/dev/null || { _OV_TOP=""; return 0; }
+    _OV_TOP=$(_ov_git rev-parse --show-toplevel 2>/dev/null) || { _OV_TOP=""; return 0; }
     cd "$_OV_TOP" >/dev/null
 }
 # Toplevel + git dir, so a .git file naming another repo's git dir gets its own key; an empty
@@ -82,8 +112,8 @@ _ov_repo() {
 _ov_key() {
     local g k
     test -n "$_OV_TOP" || { echo home; return 0; }
-    g=$(git rev-parse --absolute-git-dir) && test -n "$g" \
-    && k=$(printf '%s\n%s\n' "$_OV_TOP" "$g" | git hash-object --stdin | cut -c1-16) && test "${#k}" = 16 && printf '%s\n' "$k"
+    g=$(_ov_git rev-parse --absolute-git-dir) && test -n "$g" \
+    && k=$(printf '%s\n%s\n' "$_OV_TOP" "$g" | _ov_git hash-object --stdin | "$_OV_CUT" -c1-16) && test "${#k}" = 16 && printf '%s\n' "$k"
 }
 _ov_safe() { test ! -L "$1" && test -O "$1"; }   # the served not-link + owner checks
 
@@ -98,14 +128,15 @@ _ov_dir() {
 
 _ov_cmd_dir() {
     _ov_repo \
-    && mkdir -p -m 700 "$HOME/.oss" "$_OV_RUN" && _ov_safe "$_OV_RUN" && chmod 700 "$_OV_RUN" \
+    && "$_OV_MKDIR" -p -m 700 "$HOME/.oss" "$_OV_RUN" && _ov_safe "$_OV_RUN" && chmod 700 "$_OV_RUN" \
     && { find "$_OV_RUN" -mindepth 2 -maxdepth 2 -type f -name '*.txt' -mtime +7 -delete; find "$_OV_RUN" -mindepth 1 -maxdepth 1 -type d -empty -mtime +1 -delete || true; } 2>/dev/null \
-    && local k && k=$(_ov_key) && mkdir -p -m 700 "$_OV_RUN/$k" && _ov_dir && chmod 700 "$_OV_DIR" && touch "$_OV_DIR" \
+    && local k && k=$(_ov_key) && "$_OV_MKDIR" -p -m 700 "$_OV_RUN/$k" && _ov_dir && chmod 700 "$_OV_DIR" && touch "$_OV_DIR" \
     && local p="$_OV_DIR" \
-    && rm -f "$p/feature.txt" "$p/numbers.txt" "$p/date.txt" "$p/reason.txt" "$p/message.txt" "$p/hint.txt" "$p/error.txt" \
+    && "$_OV_RM" -f "$p/feature.txt" "$p/numbers.txt" "$p/date.txt" "$p/reason.txt" "$p/message.txt" "$p/hint.txt" "$p/error.txt" \
              "$p/agent.txt" "$p/key.txt" "$p/style.txt" "$p/prompt.txt" "$p/model.txt" "$p/workflow.txt" "$p/category.txt" "$p/name.txt" \
              "$p/notify_style.txt" "$p/voice.txt" "$p/sound.txt" "$p/verbosity.txt" "$p/custom.txt" "$p/type.txt" "$p/source.txt" \
              "$p/round.txt" "$p/gate.txt" "$p/verdict.txt" "$p/findings.txt" "$p/fixed.txt" "$p/mode.txt" "$p/approval.txt" \
+             "$p/repo.txt" \
     && printf '%s\n' "$p"
 }
 
@@ -125,7 +156,7 @@ _ov_open() {
 }
 # Checked <file>, kept to the served charset, at most 200 characters -> _OV_VAL.
 _ov_read_value() {
-    _ov_open "$1" && _OV_VAL=$(LC_ALL=C tr -cd 'A-Za-z0-9 ._,:()/-' <&3 | cut -c1-200); local r=$?; exec 3<&-; return $r
+    _ov_open "$1" && _OV_VAL=$(LC_ALL=C "$_OV_TR" -cd 'A-Za-z0-9 ._,:()/-' <&3 | "$_OV_CUT" -c1-200); local r=$?; exec 3<&-; return $r
 }
 
 # <file> <regex> [max-age]: the checked file, read up to 4 KB, deleted at once (valid or not: a key never
@@ -134,8 +165,8 @@ _ov_read_value() {
 # per repo, not per session.
 _ov_take() {
     _OV_VAL=""; _ov_open "$1" || { { exec 3<&-; } 2>/dev/null; return 1; }   # braces: a bare exec 2>/dev/null would silence the caller
-    local v m n; v=$(head -c 4096 <&3); m=$(stat -L -c %Y /dev/fd/3 2>/dev/null || stat -L -f %m /dev/fd/3); exec 3<&-; rm -f "$_OV_DIR/$1"
-    [[ -z "${3:-}" ]] || { n=$(date +%s); [[ "$m" =~ ^[0-9]+$ ]] && (( n - m <= $3 && m <= n + 60 )); } || return 1
+    local v m n; v=$("$_OV_HEAD" -c 4096 <&3); m=$(stat -L -c %Y /dev/fd/3 2>/dev/null || stat -L -f %m /dev/fd/3); exec 3<&-; "$_OV_RM" -f "$_OV_DIR/$1"
+    [[ -z "${3:-}" ]] || { n=$("$_OV_DATE" +%s); [[ "$m" =~ ^[0-9]+$ ]] && (( n - m <= $3 && m <= n + 60 )); } || return 1
     [[ "$v" =~ $2 ]] && _OV_VAL=$v
 }
 
@@ -303,7 +334,7 @@ _ov_qp_check() {
     [[ $2 == text ]] && keep="\011$keep" bad="has a control character (only line breaks and tabs are allowed)"
     [[ -f "$f" ]] || { echo "$e is missing or not a plain file in the value folder (write it to the folder ~/.oss/hooks/oss-value.sh dir prints)" >&2; return 1; }
     (( $(wc -c < "$f") <= m + 64 )) || { echo "$e is over $m bytes" >&2; return 1; }
-    (( $(LC_ALL=C tr -d "$keep" < "$f" | wc -c) == 0 )) && ! LC_ALL=C grep -q $'\xc2[\x80-\x9f]' "$f" || { echo "$e $bad" >&2; return 1; }
+    (( $(LC_ALL=C "$_OV_TR" -d "$keep" < "$f" | wc -c) == 0 )) && ! LC_ALL=C grep -q $'\xc2[\x80-\x9f]' "$f" || { echo "$e $bad" >&2; return 1; }
     _OV_VAL=$(cat "$f")
     [[ -n "$_OV_VAL" ]] || { echo "$e is empty" >&2; return 1; }
     (( $(printf '%s' "$_OV_VAL" | wc -c) <= m )) || { echo "$e is over $m bytes" >&2; return 1; }
@@ -313,9 +344,9 @@ _ov_qp_send() {
     local n m r rc code id
     for n in type source prompt; do
         m=$(( $(_ov_qp_max "$n") + 65 ))   # a value file's read bound (not an API body: those go through oss_capped)
-        _ov_open "$n.txt" && head -c "$m" <&3 > "$_OV_QT/$n"; { exec 3<&-; } 2>/dev/null
+        _ov_open "$n.txt" && "$_OV_HEAD" -c "$m" <&3 > "$_OV_QT/$n"; { exec 3<&-; } 2>/dev/null
     done
-    rm -f "$_OV_DIR/type.txt" "$_OV_DIR/source.txt" "$_OV_DIR/prompt.txt"
+    "$_OV_RM" -f "$_OV_DIR/type.txt" "$_OV_DIR/source.txt" "$_OV_DIR/prompt.txt"
     _ov_qp_check type line && case "$_OV_VAL" in feature|issue|review) ;; *) echo "Error: type.txt must be exactly feature, issue or review" >&2; false ;; esac \
     && _ov_qp_check source line && _ov_qp_check prompt text || return 1
     command -v jq >/dev/null || { echo "Error: /oss:queue --shared needs jq, which is not installed. Install jq (brew install jq) or ask your admin" >&2; return 1; }
@@ -353,8 +384,42 @@ _ov_cmd_queue_push() {
     _ov_dir && _OV_QT=$(mktemp -d "$_OV_DIR/.queue-push.XXXXXX") \
     || { echo "Error: the value folder is missing or unsafe; run ~/.oss/hooks/oss-value.sh dir, write type.txt, source.txt and prompt.txt there, then run this again" >&2; return 1; }
     _ov_qp_send; rc=$?
-    rm -rf "$_OV_QT"
+    "$_OV_RM" -rf "$_OV_QT"
     return $rc
+}
+
+# review-repo (R-266): repo.txt taken (opened checked, read with NUL kept visible, deleted, valid or not),
+# then held to one absolute path of at most 1024 bytes with no ' or control character (one trailing
+# newline allowed), and handed on stdin to gate-run.cjs add-repo from the checked plugin root, run by the
+# node in ~/.oss/node-path (the plugin's hooks/oss-node.sh; never PATH's node, which a review agent could
+# plant; none usable: refused). The CLI
+# checks it is a repo's top folder and records it for the session. Its own output is never printed as is:
+# "review repo added: <the top folder it recorded>" (a path with no control character), or its refusal
+# reason held to a plain charset.
+_ov_cmd_review_repo() {
+    local LC_ALL=C v e g re="^/[^'[:cntrl:]]*\$"
+    _ov_dir && _ov_open repo.txt && v=$("$_OV_TR" '\000' '\001' <&3 | "$_OV_HEAD" -c 1100; printf x); { exec 3<&-; } 2>/dev/null
+    [[ -n "$_OV_DIR" ]] && "$_OV_RM" -f "$_OV_DIR/repo.txt"
+    [[ -n "${v:-}" ]] || { echo "oss-value: review-repo: refused (repo.txt missing or unsafe in the value folder; write it to the folder ~/.oss/hooks/oss-value.sh dir prints)" >&2; return 1; }
+    v=${v%x}; v=${v%$'\n'}
+    [[ "$v" =~ $re ]] && (( ${#v} <= 1024 )) \
+    || { echo "oss-value: review-repo: refused (repo.txt must hold one absolute path, with no ' or control character)" >&2; return 1; }
+    [[ "${CLAUDE_CODE_SESSION_ID:-}" =~ ^[A-Za-z0-9_-]{1,128}$ ]] \
+    || { echo "oss-value: review-repo: refused (no plain session id in CLAUDE_CODE_SESSION_ID)" >&2; return 1; }
+    _ov_root && g="$_OV_ROOT/watcher/dist/cli/gate-run.cjs" && test -f "$g" && test ! -L "$g" \
+    || { echo "oss-value: review-repo: refused (no checked plugin root, or its gate-run.cjs is missing)" >&2; return 1; }
+    # node from ~/.oss/node-path and env from /usr/bin, never PATH's (security C1): a fake one could print nothing, exit 0, and
+    # leave the repo unchecked while this says it was added.
+    { test -f "$_OV_ROOT/hooks/oss-node.sh" && test ! -L "$_OV_ROOT/hooks/oss-node.sh" && source "$_OV_ROOT/hooks/oss-node.sh" && oss_node; } \
+    || { echo "oss-value: review-repo: refused (no usable node recorded in ~/.oss/node-path; start a new Claude session to record it)" >&2; return 1; }
+    local added="^OSS will check (/[^[:cntrl:]]*) too in this session's review runs\.\$"
+    if e=$(printf '%s\n' "$v" | /usr/bin/env -u CLAUDE_PLUGIN_ROOT "$OSS_NODE" "$g" add-repo 2>&1); then
+        if [[ "$e" =~ $added ]]; then echo "review repo added: ${BASH_REMATCH[1]}"; else echo "review repo added"; fi
+        return 0
+    fi
+    e=$(printf '%s' "$e" | "$_OV_TR" -cd 'A-Za-z0-9 ._,:()-' | "$_OV_CUT" -c1-300)
+    echo "oss-value: review-repo: refused (${e:-the review-run check could not record it})" >&2
+    return 1
 }
 
 _ov_cmd_agent() {
@@ -415,7 +480,7 @@ _ov_cmd_failed() {
     || { echo "oss-value: failed: refused (bad workflow name, or reason.txt missing or unsafe)" >&2; return 1; }
     _ov_walk "$o"
     CLAUDE_PROJECT_DIR="$_OV_PROJ" "$_OV_HERE/oss-notify.sh" --workflow "$1" failed "$(printf '{"reason": "%s", "blocker": "%s"}' "$r" "$r")" \
-    && rm -f "$_OV_DIR/reason.txt"
+    && "$_OV_RM" -f "$_OV_DIR/reason.txt"
 }
 
 # The plugin root named by ~/.oss/plugin-root (not a link, owned, absolute, one line, a folder)
@@ -437,7 +502,7 @@ _ov_cmd_error() {
     case "${1:-}" in cmd:*) ;; *) false ;; esac && oss_valid_workflow_name "${1#cmd:}" \
     && _ov_root && R=$_OV_ROOT && test -f "$R/watcher/dist/cli/oss-error.js" \
     && _ov_dir && _ov_read_value message.txt && m="$_OV_VAL" && _ov_read_value hint.txt && h="$_OV_VAL" \
-    && _ov_open error.txt && e=$(LC_ALL=C tr -c 'A-Za-z0-9-' ' ' <&3 | cut -c1-120) && exec 3<&- \
+    && _ov_open error.txt && e=$(LC_ALL=C "$_OV_TR" -c 'A-Za-z0-9-' ' ' <&3 | "$_OV_CUT" -c1-120) && exec 3<&- \
     && read -r c s y k a x <<< "$e" && test -z "$x" \
     && case "$c" in OSS-API-001|OSS-API-002|OSS-API-003|OSS-AUTH-001|OSS-AUTH-002|OSS-AUTH-003|OSS-CONFIG-001|OSS-CONFIG-002|OSS-GIT-001|OSS-GIT-002|OSS-GIT-003|OSS-TDD-001|OSS-TDD-002|OSS-TDD-003|OSS-WORKFLOW-001|OSS-WORKFLOW-002|OSS-WORKFLOW-901|OSS-WORKFLOW-902) ;; *) false ;; esac \
     && case "$s" in CRITICAL|HIGH|MEDIUM|LOW) ;; *) false ;; esac && case "$y" in true|false) ;; *) false ;; esac \
@@ -446,7 +511,7 @@ _ov_cmd_error() {
     _ov_walk "$o"
     CLAUDE_PROJECT_DIR="$_OV_PROJ" node "$R/watcher/dist/cli/oss-error.js" --code "$c" --severity "$s" --message "$m" --source "$1" \
         --retry-eligible "$y" --retry-cost "$k" --retry-hint "$h" --attempt "$a" \
-    && rm -f "$_OV_DIR/message.txt" "$_OV_DIR/hint.txt" "$_OV_DIR/error.txt"
+    && "$_OV_RM" -f "$_OV_DIR/message.txt" "$_OV_DIR/hint.txt" "$_OV_DIR/error.txt"
 }
 
 [[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0   # sourced (oss-login.sh): the functions only, no verb
@@ -465,6 +530,7 @@ case "${1:-}" in
     workflows) _ov_cmd_workflows ;;
     workflow) _ov_cmd_workflow ;;
     queue-push) _ov_cmd_queue_push ;;
+    review-repo) _ov_cmd_review_repo ;;
     timeline) _ov_cmd_timeline "${2:-}" ;;
     merge-test)
         # The ship merge step's final test (merge-test-hook): the sibling hook, a regular file and not a link, run with

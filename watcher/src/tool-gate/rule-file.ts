@@ -20,6 +20,20 @@ export interface GateSettings {
   productionHosts: string[];
   gateAgents: string[];
   tagsAllowed: boolean;
+  /** Review agents that may run background work outside the reviewed repos (plugin only). */
+  backgroundAgents?: string[];
+  /**
+   * Programs a review agent may run besides the forms the gate knows (git, gh, build, test …), by
+   * name, or by path when the entry holds a `/` (`~` is the home folder). Plugin only.
+   */
+  reviewPrograms?: string[];
+  /**
+   * Options that make a reviewPrograms program (or a known form) write: an option alone counts for
+   * any program, `prog -x` for that program only. Plugin only.
+   */
+  reviewWriteOptions?: string[];
+  /** Packages npx and bunx may run for a review agent besides the JS tools the gate knows and the repo's own. Plugin only. */
+  reviewNpxPackages?: string[];
 }
 
 /** The file's text, or null when it is missing. Throws for a file it won't read (a pipe, a folder, too big). */
@@ -31,7 +45,11 @@ export interface LoadedSettings {
   rejected?: string;
 }
 
-type ListKey = Exclude<keyof GateSettings, 'version' | 'tagsAllowed'>;
+/** Lists only the plugin's base file may set: a repo file naming one is ignored, since it could only loosen. */
+const PLUGIN_ONLY_KEYS = ['backgroundAgents', 'reviewPrograms', 'reviewWriteOptions', 'reviewNpxPackages'] as const;
+type PluginOnlyKey = (typeof PLUGIN_ONLY_KEYS)[number];
+
+type ListKey = Exclude<keyof GateSettings, 'version' | 'tagsAllowed' | PluginOnlyKey>;
 
 const LIST_KEYS: readonly ListKey[] = [
   'protectedBranches',
@@ -42,7 +60,7 @@ const LIST_KEYS: readonly ListKey[] = [
   'productionHosts',
   'gateAgents',
 ];
-const KNOWN_KEYS: ReadonlySet<string> = new Set(['version', 'tagsAllowed', ...LIST_KEYS]);
+const KNOWN_KEYS: ReadonlySet<string> = new Set(['version', 'tagsAllowed', ...PLUGIN_ONLY_KEYS, ...LIST_KEYS]);
 const MAX_REPO_BYTES = 64 * 1024;
 /**
  * Most values a repo file may add to one list (a reading limit, not a rule value): every added
@@ -74,6 +92,15 @@ function parse(text: string, requireAll: boolean): Parsed {
     value.tagsAllowed = record.tagsAllowed;
   } else if (requireAll) {
     return { ok: false, reason: 'tagsAllowed is missing' };
+  }
+  for (const key of PLUGIN_ONLY_KEYS) {
+    if (!(key in record)) continue;
+    if (!requireAll) return { ok: false, reason: `${key} is set by the plugin only` };
+    const list = record[key];
+    if (!Array.isArray(list) || !list.every((item) => typeof item === 'string' && item.length > 0)) {
+      return { ok: false, reason: `${key} must be a list of non-empty strings` };
+    }
+    value[key] = list;
   }
   for (const key of LIST_KEYS) {
     if (!(key in record)) {
@@ -136,4 +163,29 @@ export function loadSettings(readFile: ReadFile, pluginRoot: string, repoRoot: s
   const merged = merge(base, repoParsed.value);
   if (typeof merged === 'string') return reject(merged);
   return { settings: merged };
+}
+
+/** Most programs the user's own config may add, and the longest entry (reading limits, not rule values). */
+const MAX_USER_PROGRAMS = 256;
+const MAX_USER_PROGRAM_CHARS = 200;
+
+/**
+ * The settings with the review programs the user added in their own ~/.oss/config.json
+ * (`toolGates.reviewPrograms`: program names, or `prog subcommand`). Only the user's file is read
+ * for this, never a repo's; a missing or broken file, or a value that isn't a list of names, adds
+ * nothing.
+ */
+export function withUserReviewPrograms(settings: GateSettings, userConfigText: string | null): GateSettings {
+  if (userConfigText === null) return settings;
+  let added: unknown;
+  try {
+    const config: unknown = JSON.parse(userConfigText);
+    const gates: unknown = typeof config === 'object' && config !== null ? (config as Record<string, unknown>).toolGates : undefined;
+    added = typeof gates === 'object' && gates !== null ? (gates as Record<string, unknown>).reviewPrograms : undefined;
+  } catch {
+    return settings;
+  }
+  const isName = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '' && v.length <= MAX_USER_PROGRAM_CHARS && !/[\u0000-\u001f]/.test(v);
+  if (!Array.isArray(added) || added.length > MAX_USER_PROGRAMS || !added.every(isName)) return settings;
+  return { ...settings, reviewPrograms: [...new Set([...(settings.reviewPrograms ?? []), ...added.map((v) => v.trim())])] };
 }

@@ -61,6 +61,14 @@ if [[ -x "$D" && $rc -eq 1 && "$out" == "Run /oss:login first" ]]; then pass "os
 else fail "oss-decisions-policy.sh copied, executable, and runs from ~/.oss/hooks" "exists=$([[ -f $D ]] && echo y || echo n) exec=$([[ -x $D ]] && echo y || echo n) rc=$rc out='$out'"; fi
 rm -rf "$T"
 
+# R-266: /oss:login step 3 runs ~/.oss/hooks/oss-statusline-settings.sh, so session start installs it, runnable.
+T=$(mktemp -d)
+HOME="$T" CLAUDE_PLUGIN_ROOT="$ROOT" bash "$SS_HOOK" >/dev/null 2>&1 </dev/null
+SL="$T/.oss/hooks/oss-statusline-settings.sh"
+if [[ -f "$SL" && ! -L "$SL" && -x "$SL" ]]; then pass "oss-statusline-settings.sh copied, a plain executable file"
+else fail "oss-statusline-settings.sh copied, a plain executable file" "exists=$([[ -f $SL ]] && echo y || echo n) exec=$([[ -x $SL ]] && echo y || echo n)"; fi
+rm -rf "$T"
+
 # F11: every session-start variant that copies the installer also copies its manifest
 for f in "$ROOT"/hooks/oss-session-start*.sh; do
   if grep -q '"ensure-decrypt-cli.sh"' "$f" && ! grep -q '"oss-decrypt-checksums.txt"' "$f"; then

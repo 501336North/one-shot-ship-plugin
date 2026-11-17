@@ -28,6 +28,8 @@ OSS_PERMISSIONS=(
     'Bash(~/.oss/hooks/ensure-decrypt-cli.sh:*)'
     'Bash(~/.oss/hooks/learn-extractor.sh:*)'
     'Bash(~/.oss/hooks/oss-statusline.sh:*)'
+    # takes no arguments; only merges the fixed OSS statusLine into ~/.claude/settings.json (R-266)
+    'Bash(~/.oss/hooks/oss-statusline-settings.sh:*)'
     'Bash(~/.oss/hooks/oss-write-learning.sh:*)'
     'Bash(~/.oss/hooks/oss-changelog.sh:*)'
     'Bash(~/.oss/hooks/fetch-iron-laws.sh:*)'

@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { readGateAgents } from '../../src/utils/gate-agents';
+import { isGateAgent, readGateAgents } from '../../src/utils/gate-agents';
 
 let plugin: string;
 let repo: string;
@@ -65,5 +65,22 @@ describe('readGateAgents', () => {
   it.each([undefined, 'code-reviewer', ['code-reviewer', ''], [3]])('throws when the plugin list is %j', (agents) => {
     base(agents);
     expect(() => readGateAgents(plugin, repo)).toThrow();
+  });
+});
+
+describe('isGateAgent', () => {
+  it.each(['OSS:code-reviewer', 'oss:oss:code-reviewer', 'other-plugin:code-reviewer', '  oss:code-reviewer  ', 'CODE-REVIEWER'])(
+    'counts %j as the review agent code-reviewer, whatever its prefix, spaces or letter case',
+    (name) => {
+      expect(isGateAgent(name, ['code-reviewer'])).toBe(true);
+    },
+  );
+
+  it('matches a gate list name written in another letter case', () => {
+    expect(isGateAgent('oss:code-reviewer', ['Code-Reviewer'])).toBe(true);
+  });
+
+  it.each([undefined, '', 'oss:typescript-pro', 'code-reviewer:helper'])('does not count %j', (name) => {
+    expect(isGateAgent(name, ['code-reviewer'])).toBe(false);
   });
 });

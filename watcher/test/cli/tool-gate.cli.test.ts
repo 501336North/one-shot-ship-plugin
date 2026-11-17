@@ -9,7 +9,7 @@
  * @business-rule US-010: a broken gate never blocks the session; exit 2 is reserved for refusals.
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -109,13 +109,10 @@ describe('tool-gate command line', () => {
     expect(result).toEqual({ exitCode: 2, stdout: '', stderr: 'Refused: x\n' });
   });
 
-  it.each([
-    ['stuck in synchronous work', 'for (;;) {}\n'],
-    ['that crashes', "throw new Error('boom');\n"],
-  ])('should end a decision %s within about 3 s, allow the call, tell the agent and log gate-error', async (_what, body) => {
+  it('should end a decision that crashes, allow the call, tell the agent and log gate-error', async () => {
     const repo = repoOnMain();
     const decision = path.join(repo, 'bad-decision.cjs');
-    fs.writeFileSync(decision, body);
+    fs.writeFileSync(decision, "throw new Error('boom');\n");
 
     const started = performance.now();
     const result = await decideInWorker(decision, ['pre'], pushHook(repo), { HOME: process.env.HOME, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT });
@@ -128,28 +125,93 @@ describe('tool-gate command line', () => {
   });
 
   /**
-   * A fake git for the decision to ask for: it starts a child that carries a unique token (so pgrep
-   * can find it), records its process group (written whole, via a rename), and waits; ending its
-   * group ends both. Run with `warm` it just exits.
+   * Round 9 (D-R9-4): @behavior a builder's or the main agent's call whose decision is still running
+   * at the hard limit is refused as too complex to check in time, and gate-error is logged.
+   * @business-rule a call the gate can't finish checking in time is never let through unchecked; only
+   * a broken gate (crash, no node) still fails open for builders and the main agent (ADR-005).
    */
-  function fakeGit(dir: string, token: string): { git: string; started: string } {
-    const started = path.join(dir, 'started');
-    const git = path.join(dir, 'git');
+  it('should end a decision stuck in synchronous work within about 3 s, refuse the call as too complex to check in time, and log gate-error', async () => {
+    const repo = repoOnMain();
+    const decision = path.join(repo, 'bad-decision.cjs');
+    fs.writeFileSync(decision, 'for (;;) {}\n');
+
+    const started = performance.now();
+    const result = await decideInWorker(decision, ['pre'], pushHook(repo), { HOME: process.env.HOME, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT });
+
+    expect(performance.now() - started).toBeLessThan(3000);
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toMatch(/^Refused.*too complex to check in time; split it into simpler commands/);
+    const log = fs.readFileSync(path.join(repo, '.oss', 'tool-gates', 'events.ndjson'), 'utf8');
+    expect(log).toContain('"kind":"gate-error"');
+  });
+
+  /**
+   * Round 6 (user choice 1): @behavior a review agent's call is refused when its decision is stuck
+   * past the hard limit or crashes; a builder's keeps ADR-005's allow-and-tell on a crash, and is
+   * refused past the hard limit (round 9, D-R9-4).
+   * @business-rule review agents fail closed: an unchecked review call could change what it judges.
+   */
+  it.each([
+    ['stuck in synchronous work', 'for (;;) {}\n'],
+    ['that crashes', "throw new Error('boom');\n"],
+  ])("should refuse a review agent's call whose decision is %s, and log gate-error", async (_what, body) => {
+    const repo = repoOnMain();
+    const decision = path.join(repo, 'bad-decision.cjs');
+    fs.writeFileSync(decision, body);
+    const hook = (agent: string): string => JSON.stringify({ cwd: repo, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' }, agent_type: agent });
+
+    const reviewer = await decideInWorker(decision, ['pre'], hook('oss:code-reviewer'), { HOME: process.env.HOME, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT });
+    const builder = await decideInWorker(decision, ['pre'], hook('oss:typescript-pro'), { HOME: process.env.HOME, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT });
+
+    expect(reviewer.exitCode).toBe(2);
+    expect(reviewer.stderr).toContain('could not finish checking');
+    if (body.startsWith('for')) {
+      // round 9 (D-R9-4): past the hard limit a builder is refused too
+      expect(builder.exitCode).toBe(2);
+      expect(builder.stderr).toContain('too complex to check in time');
+    } else {
+      expect(builder.exitCode).toBe(0);
+      expect(builder.stdout).toContain('rules not checked');
+    }
+    const log = fs.readFileSync(path.join(repo, '.oss', 'tool-gates', 'events.ndjson'), 'utf8');
+    expect(log).toContain('"result":"refused"');
+  }, 15_000);
+
+  /**
+   * A fake git for the decisions to ask for: it starts a sleeper that carries the git's own arguments,
+   * so a unique token passed to git lands in the sleeper's command line (pgrep finds it even orphaned:
+   * round 14, CR INFO-3), records its process group in `started` in its working folder (written whole,
+   * via a rename), and waits; ending its group ends both. Run with `warm` it just exits.
+   * It is written once for the file: macOS checks a newly written program the first time it runs,
+   * which usually takes about 0.4 s and has taken over 3 s under load. Run once here, that check
+   * stays out of every test's own time.
+   */
+  let fakeGitDir = '';
+  let sharedFakeGit = '';
+  beforeAll(() => {
+    fakeGitDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-fake-git-')));
+    sharedFakeGit = path.join(fakeGitDir, 'git');
     fs.writeFileSync(
-      git,
-      `#!/bin/sh\n[ "$1" = warm ] && exit 0\n/bin/sh -c 'sleep 300; :' ${token} &\necho $$ > '${started}.tmp' && mv '${started}.tmp' '${started}'\nwait\n`,
+      sharedFakeGit,
+      `#!/bin/sh\n[ "$1" = warm ] && exit 0\n/usr/bin/perl -e 'sleep 300' -- "$@" &\necho $$ > started.tmp && mv started.tmp started\nwait\n`,
       { mode: 0o755 },
     );
-    // macOS checks a newly written program the first time it runs, which can take 0.5-1 s under load
-    // and eat the whole time limit before the fake git starts its child: run it once, untimed, first.
-    execFileSync(git, ['warm']);
-    return { git, started };
+    execFileSync(sharedFakeGit, ['warm']);
+  });
+  afterAll(() => {
+    fs.rmSync(fakeGitDir, { recursive: true, force: true });
+  });
+
+  /** The fake git, run in `dir`, and where it records its process group. */
+  function fakeGit(dir: string): { git: string; started: string } {
+    return { git: sharedFakeGit, started: path.join(dir, 'started') };
   }
 
   /** A decision (worker) that asks the main thread to run `git`, then does `then` (JavaScript). */
-  function decisionAsking(dir: string, git: string, then: string): string {
+  function decisionAsking(dir: string, git: string, then: string, args: string[] = ['status']): string {
     const file = path.join(dir, 'decision.cjs');
-    const run = { gitRun: { id: 1, gitBin: git, args: ['status'], cwd: dir, timeoutMs: 60000, maxLines: 10 } };
+    const run = { gitRun: { id: 1, gitBin: git, args, cwd: dir, timeoutMs: 60000, maxLines: 10 } };
     fs.writeFileSync(file, [
       "const fs = require('node:fs');",
       "const { parentPort } = require('node:worker_threads');",
@@ -184,14 +246,14 @@ describe('tool-gate command line', () => {
     const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-pg-')));
     tempDirs.push(dir);
     const token = `oss-pg-token-${path.basename(dir)}`;
-    const { git, started } = fakeGit(dir, token);
-    const decision = decisionAsking(dir, git, `while (!fs.existsSync(${JSON.stringify(started)})) {} for (;;) {}`);
+    const { git, started } = fakeGit(dir);
+    const decision = decisionAsking(dir, git, `while (!fs.existsSync(${JSON.stringify(started)})) {} for (;;) {}`, ['status', token]);
 
     // When: the worker is ended at the hard limit (generous, so a loaded machine still starts the git in time)
     const result = await decideInWorker(decision, ['pre'], pushHook(repoOnMain()), { HOME: process.env.HOME, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT }, 5000);
 
-    // Then: the call is allowed with the tell line, the git ran, and nothing of its group is left
-    expect(result.exitCode).toBe(0);
+    // Then: the call is refused as too complex to check in time (D-R9-4), the git ran, and nothing of its group is left
+    expect(result.exitCode).toBe(2);
     expect(fs.existsSync(started), 'the fake git started its child before the hard limit').toBe(true);
     const group = fs.readFileSync(started, 'utf8').trim();
     expect(Number(group)).toBeGreaterThan(0);
@@ -204,8 +266,8 @@ describe('tool-gate command line', () => {
     const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-pg-')));
     tempDirs.push(dir);
     const token = `oss-pg-token-${path.basename(dir)}`;
-    const { git } = fakeGit(dir, token);
-    const decision = decisionAsking(dir, git, 'parentPort.postMessage({ not: "an answer" });');
+    const { git, started } = fakeGit(dir);
+    const decision = decisionAsking(dir, git, 'parentPort.postMessage({ not: "an answer" });', ['status', token]);
 
     // When: the decision ends on the garbage
     const result = await decideInWorker(decision, ['pre'], pushHook(repoOnMain()), { HOME: process.env.HOME, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT });
@@ -214,6 +276,9 @@ describe('tool-gate command line', () => {
     expect(result.exitCode).toBe(0);
     expect(await settled(['-f', token])).toBe('');
     expect(await settled(['-f', git])).toBe('');
+    // round 14, CR INFO-3: and its whole process group, when the git got as far as recording it
+    const group = fs.existsSync(started) ? fs.readFileSync(started, 'utf8').trim() : '';
+    if (group !== '') expect(await settled(['-g', group])).toBe('');
   });
 
   it('should answer the git a decision asks for with what git prints (fix round 4, K2)', async () => {

@@ -116,6 +116,7 @@ describe('tool-gate failure handling (US-010)', () => {
         currentBranch: () => {
           throw new Error('git exploded');
         },
+        wouldClean: async () => null,
       },
     };
 
@@ -128,21 +129,27 @@ describe('tool-gate failure handling (US-010)', () => {
     expect(events(repo)).toEqual([expect.objectContaining({ tool: 'Bash', kind: 'gate-error', result: 'allowed' })]);
   });
 
-  it('should allow, log gate-error and tell when the decision takes over 2 s', async () => {
+  /**
+   * Round 9 (D-R9-4): @behavior a builder's or the main agent's call whose decision runs past the
+   * gate's 2 s timer is refused as too complex to check in time, and gate-error is logged as refused.
+   * @business-rule a call the gate can't finish checking in time is never let through unchecked.
+   */
+  it('should refuse as too complex to check in time, and log gate-error, when the decision takes over 2 s', async () => {
     // Given: reading the current branch never finishes
     const repo = makeRepo();
     vi.useFakeTimers();
-    const deps: GateDeps = { gitReader: { currentBranch: () => new Promise<string | null>(() => {}) } };
+    const deps: GateDeps = { gitReader: { currentBranch: () => new Promise<string | null>(() => {}), wouldClean: async () => null } };
 
     // When: the agent runs git push and 2 s pass
     const pending = gate('pre', preBash(repo, 'git push'), deps);
     await vi.advanceTimersByTimeAsync(2000);
     const result = await pending;
 
-    // Then: the call goes ahead, the agent is told, and a gate-error is logged
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual(TELL_STDOUT);
-    expect(events(repo).map((event) => event.kind)).toEqual(['gate-error']);
+    // Then: the call is refused as too complex to check in time, and a refused gate-error is logged
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('too complex to check in time; split it into simpler commands');
+    expect(events(repo)).toEqual([expect.objectContaining({ kind: 'gate-error', result: 'refused' })]);
   });
 
   it('should allow and log unreadable for commands whose unreadable piece sits next to nothing risky (ADR-010)', async () => {
@@ -199,6 +206,7 @@ describe('tool-gate failure handling (US-010)', () => {
         currentBranch: () => {
           throw new Error('git exploded');
         },
+        wouldClean: async () => null,
       },
     };
 
@@ -233,7 +241,7 @@ describe('tool-gate failure handling (US-010)', () => {
     });
 
     // When: npm test fails
-    const result = await gate('post', postBashFailed(repo, 'npm test'), { gitReader: { currentBranch } });
+    const result = await gate('post', postBashFailed(repo, 'npm test'), { gitReader: { currentBranch, wouldClean: async () => null } });
 
     // Then: the run is recorded red from the hook event alone
     expect(result).toEqual({ exitCode: 0, stdout: '', stderr: '' });

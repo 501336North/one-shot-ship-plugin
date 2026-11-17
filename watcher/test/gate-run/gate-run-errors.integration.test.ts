@@ -1,7 +1,7 @@
 /**
- * @behavior When the review-run check itself fails (an unreadable gate list, unreadable hook input),
- *   the session is never blocked: the hook exits 0, the user is told the review is unverified, and
- *   one gate-error line is logged in the repo's tool-gate event log.
+ * @behavior When the review-run check itself fails (an unreadable gate list, unreadable hook input,
+ *   no snapshot at stop), the session is never blocked: the hook exits 0, the user is told the review
+ *   is unverified, and one gate-error line is logged in the repo's tool-gate event log.
  * @business-rule AC-008.4 / R-253 crash policy: allow, log, tell; never a silent allow.
  * @boundary runGateRun (watcher/src/gate-run/gate-run.ts), real temp git repo and plugin root
  */
@@ -11,7 +11,10 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 import { CHECK_FAILED, runGateRun } from '../../src/gate-run/gate-run.js';
+
+const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 
 const tempDirs: string[] = [];
 
@@ -45,7 +48,7 @@ describe('gate-run check failures: allow, log, tell (AC-008.4)', () => {
     const result = await runGateRun({
       event: 'subagent-start',
       input: JSON.stringify({ cwd: repo, hook_event_name: 'SubagentStart', agent_id: 'x1', agent_type: 'oss:code-reviewer' }),
-      env: { HOME: os.homedir(), CLAUDE_PLUGIN_ROOT: brokenPlugin },
+      env: { HOME: tempDir('oss-gate-run-home-'), CLAUDE_PLUGIN_ROOT: brokenPlugin },
     });
 
     expect(result.exitCode).toBe(0);
@@ -57,10 +60,25 @@ describe('gate-run check failures: allow, log, tell (AC-008.4)', () => {
     const result = await runGateRun({
       event: 'subagent-stop',
       input: 'not json',
-      env: { HOME: os.homedir(), CLAUDE_PLUGIN_ROOT: tempDir('oss-gate-run-plugin-') },
+      env: { HOME: tempDir('oss-gate-run-home-'), CLAUDE_PLUGIN_ROOT: tempDir('oss-gate-run-plugin-') },
     });
 
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({ systemMessage: CHECK_FAILED });
+  });
+
+  it("an unverified review run logs one gate-error line in the repo's tool-gate event log", async () => {
+    const repo = makeRepo();
+    const home = tempDir('oss-gate-run-home-');
+    const hook = { session_id: 's1', cwd: repo, agent_id: 'x2', agent_type: 'oss:code-reviewer' };
+
+    const result = await runGateRun({
+      event: 'subagent-stop',
+      input: JSON.stringify({ ...hook, hook_event_name: 'SubagentStop' }),
+      env: { HOME: home, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT },
+    });
+
+    expect(JSON.parse(result.stdout)).toEqual({ systemMessage: expect.stringMatching(/unverified/i) });
+    expect(events(repo)).toEqual([expect.objectContaining({ tool: 'gate-run', kind: 'gate-error', result: 'allowed' })]);
   });
 });

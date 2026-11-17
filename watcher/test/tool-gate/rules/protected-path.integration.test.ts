@@ -138,12 +138,16 @@ describe('protected-path rule on a real disk: recursive deletes of a folder hold
     'cd "$X" && chmod -R 755 lib',
     'cd "$X" && rm *.log',
     'cd "$X" && rm -rf ..',
+    // R-266 round 10: the folder could itself be inside a nested `.git`
+    'cd "$X" && rm out.txt',
+    'cd "$X" && echo x > out.txt',
+    'cd "$X" && rm -f build/out.js',
   ])('should refuse %s: after a cd the gate cannot follow, the folder could hold protected files', (cmd) => {
     const repo = repoWithNestedGit();
     expect(repo.checkBash(cmd, path.join(repo.root, 'dist'))?.rule).toBe('protected-path');
   });
 
-  it.each(['cd "$X" && rm out.txt', 'cd "$X" && echo x > out.txt', 'cd "$X" && rm -f build/out.js'])('should allow %s after a cd the gate cannot follow', (cmd) => {
+  it.each(['cd "$X" && ls', 'cd "$X" && echo x > /tmp/out.txt'])('should allow %s after a cd the gate cannot follow', (cmd) => {
     const repo = repoWithNestedGit();
     expect(repo.checkBash(cmd, path.join(repo.root, 'dist'))).toBeNull();
   });

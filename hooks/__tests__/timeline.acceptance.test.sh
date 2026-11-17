@@ -64,7 +64,7 @@ await_sent() { local i; for i in $(seq 1 100); do [[ $(sent) -ge $1 ]] && return
 
 notify() { (cd "$1" && CLAUDE_PROJECT_DIR="$1" run_capped 20 /bin/bash "$PLUGIN/hooks/oss-notify.sh" --workflow build "$2" '{}' > /dev/null 2>&1); }
 # the PostToolUse command hooks.json registers for the Agent tool, as Claude Code runs it
-AGENT_CMD=$(jq -r '.hooks.PostToolUse[] | select(.matcher | split("|") | index("Agent")) | .hooks[0].command' "$PLUGIN/hooks.json" 2>/dev/null)
+AGENT_CMD=$(jq -r '.hooks.PostToolUse[] | select((.matcher // "") | split("|") | index("Agent")) | .hooks[0].command' "$PLUGIN/hooks.json" 2>/dev/null)
 AGENT_CMD=${AGENT_CMD//\$\{CLAUDE_PLUGIN_ROOT\}/$PLUGIN}
 agent_run() {
     jq -nc --arg cwd "$1" '{session_id: "acc-session-1", cwd: $cwd, hook_event_name: "PostToolUse", tool_name: "Agent",

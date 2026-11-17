@@ -11,7 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadSettings, type GateSettings, type ReadFile } from '../../src/tool-gate/rule-file.js';
+import { loadSettings, withUserReviewPrograms, type GateSettings, type ReadFile } from '../../src/tool-gate/rule-file.js';
 
 const PLUGIN_ROOT = '/plugin';
 const REPO_ROOT = '/work/repo';
@@ -249,5 +249,78 @@ describe('loadSettings: the gate agents are listed once, in the rule file', () =
   it('should ignore a repo file that drops a base gate agent, naming the key', () => {
     const reason = expectRejected(load({ version: 1, gateAgents: ['code-reviewer', 'security-auditor'] }));
     expect(reason).toContain('gateAgents');
+  });
+});
+
+/**
+ * @behavior The review agents that may leave work running in a sandbox outside the reviewed repos
+ *   are named in the plugin's base file (`backgroundAgents`, today only the penetration tester). A
+ *   repo file may not name any: that would only loosen the review rules.
+ * @business-rule R-266 user decision 2026-11-12: the pen-test exception is a plugin decision, kept
+ *   with the other rule values in config/tool-gates.json.
+ */
+describe('loadSettings: the agents that may run background work outside the repos', () => {
+  it("should read the penetration tester from the plugin's own base file", () => {
+    const pluginRoot = path.resolve(__dirname, '..', '..', '..');
+    const read: ReadFile = (absPath) => (absPath.startsWith(pluginRoot) ? fs.readFileSync(absPath, 'utf8') : null);
+    expect(loadSettings(read, pluginRoot, REPO_ROOT).settings.backgroundAgents).toEqual(['penetration-tester']);
+  });
+
+  it('should read the list from a base file and leave it out when the base file has none', () => {
+    const base = { ...BASE, backgroundAgents: ['penetration-tester'] };
+    expect(loadSettings(files(JSON.stringify(base), null), PLUGIN_ROOT, REPO_ROOT).settings.backgroundAgents).toEqual(['penetration-tester']);
+    expect(loadSettings(files(JSON.stringify(BASE), null), PLUGIN_ROOT, REPO_ROOT).settings.backgroundAgents).toBeUndefined();
+  });
+
+  it.each([[['code-reviewer']], [[]]])('should ignore a repo file that names background agents (%j)', (list) => {
+    const reason = expectRejected(load({ version: 1, backgroundAgents: list }));
+    expect(reason).toContain('backgroundAgents');
+  });
+});
+
+/**
+ * @behavior The programs a review agent may run (beyond git, gh, the build and test forms the gate
+ *   knows) are named in the plugin's base file (`reviewPrograms`). A repo file may not name any: it
+ *   could only widen what a reviewer runs.
+ * @business-rule R-266 round 3 (user decision 2026-11-12, "allowlist"): the review allowlist is a plugin decision.
+ */
+describe('loadSettings: the review program allowlist', () => {
+  it("should read the review programs from the plugin's own base file", () => {
+    const pluginRoot = path.resolve(__dirname, '..', '..', '..');
+    const read: ReadFile = (absPath) => (absPath.startsWith(pluginRoot) ? fs.readFileSync(absPath, 'utf8') : null);
+    const programs = loadSettings(read, pluginRoot, REPO_ROOT).settings.reviewPrograms ?? [];
+    expect(programs).toEqual(expect.arrayContaining(['cat', 'grep', 'rg', 'ls', 'jq', 'sleep']));
+    expect(programs).not.toEqual(expect.arrayContaining(['awk']));
+  });
+
+  it.each([[['awk']], [[]]])('should ignore a repo file that names review programs (%j)', (list) => {
+    const reason = expectRejected(load({ version: 1, reviewPrograms: list }));
+    expect(reason).toContain('reviewPrograms');
+  });
+});
+
+/**
+ * @behavior a user adds programs to the review allowlist in their own ~/.oss/config.json
+ *   (toolGates.reviewPrograms); a missing or broken file, or a value that isn't a list of
+ *   program names, adds nothing.
+ * @business-rule only the user (and the plugin) decide what a review agent may run.
+ */
+describe('withUserReviewPrograms: the user\'s own additions', () => {
+  const BASE = { reviewPrograms: ['cat'] } as GateSettings;
+
+  it('should add the programs the user names, a program and its subcommand included', () => {
+    const text = JSON.stringify({ apiKey: 'k', toolGates: { reviewPrograms: ['awk', 'just test'] } });
+    expect(withUserReviewPrograms(BASE, text).reviewPrograms).toEqual(['cat', 'awk', 'just test']);
+  });
+
+  it.each([
+    ['no file', null],
+    ['broken JSON', '{'],
+    ['no toolGates', '{"apiKey":"k"}'],
+    ['not a list', '{"toolGates":{"reviewPrograms":"awk"}}'],
+    ['a list with a non-name', '{"toolGates":{"reviewPrograms":["awk",3]}}'],
+    ['an empty name', '{"toolGates":{"reviewPrograms":[""]}}'],
+  ])('should add nothing for %s', (_why, text) => {
+    expect(withUserReviewPrograms(BASE, text).reviewPrograms).toEqual(['cat']);
   });
 });

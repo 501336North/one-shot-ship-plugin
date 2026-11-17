@@ -41,11 +41,13 @@ function setup() {
     PLUGIN_ROOT,
     root,
   ).settings;
-  const checkEdit = (filePath: string) => checkGateAgentEdit({ filePath }, REVIEWER, settings, root, realPathResolver);
+  // round 11, SEC LOW-2: the folder the agent's own mktemp step made, as the gate recorded it
+  const checkEdit = (filePath: string) =>
+    checkGateAgentEdit({ filePath }, REVIEWER, settings, { repos: [root], home, exists: fs.existsSync, temp: [os.tmpdir(), fs.realpathSync(os.tmpdir())], offloadFolders: [scratch] }, realPathResolver);
   const checkBash = (cmd: string) => {
     const facts = readCommand(cmd, root, home);
     if ('unreadable' in facts) throw new Error('expected a readable command');
-    return facts.parts.map((part) => checkGateAgentBash(part, REVIEWER, settings, root, realPathResolver)).find((r) => r !== null) ?? null;
+    return facts.parts.map((part) => checkGateAgentBash(part, REVIEWER, settings, { repos: [root], home, exists: fs.existsSync, temp: [os.tmpdir(), fs.realpathSync(os.tmpdir())] }, realPathResolver)).find((r) => r !== null) ?? null;
   };
   return { scratch, checkEdit, checkBash };
 }

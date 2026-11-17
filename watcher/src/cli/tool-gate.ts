@@ -6,19 +6,23 @@
  *   node tool-gate.cjs pre  < hook.json   # PreToolUse: allow (exit 0) or refuse (exit 2 + stderr)
  *   node tool-gate.cjs post < hook.json   # PostToolUse / PostToolUseFailure: record a test run
  *
- * Exit codes: 0 allow (stdout empty, or one allow-and-tell JSON line), 2 refuse, 1 wrong usage
+ * Exit codes: 0 allow (stdout empty, one allow-and-tell JSON line, or for a review agent on macOS the
+ * call rewritten to run in the review sandbox: permissionDecision allow + updatedInput), 2 refuse, 1 wrong usage
  * (the hook wrapper turns any exit other than 0 or 2 into allow-and-tell).
  *
  * The decision runs in a worker thread (this same file), ended at a hard time limit: the gate's
  * own 2 s timer can't interrupt synchronous work, and a decision that kept running would leave a
  * process spinning after Claude Code gives up on the hook. At the limit (or if the worker
- * crashes) the call is allowed, `gate-error` is logged and the agent is told (ADR-005).
+ * crashes) `gate-error` is logged and a review agent's call is refused (round 6, user choice 1). A
+ * builder's or the main agent's call is refused as too complex to check in time at the limit (round
+ * 9, D-R9-4), and allowed with the tell line when the worker crashes (ADR-005).
  */
 
 import path from 'node:path';
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { gateErrorResult, runToolGate, type GateResult } from '../tool-gate/gate.js';
 import { killGroup, runGit, setGitRunner } from '../tool-gate/git-reader.js';
+import { answerNestedGit, nestedGitViaPort } from '../tool-gate/nested-repos.js';
 
 const USAGE = 'Usage: tool-gate pre|post < hook.json\n';
 
@@ -52,15 +56,21 @@ function modeOf(argv: readonly string[]): 'pre' | 'post' | null {
   return mode === 'pre' || mode === 'post' ? mode : null;
 }
 
-function gateEnv(env: Env): { HOME: string; CLAUDE_PLUGIN_ROOT: string; CLAUDE_PROJECT_DIR?: string; CDPATH?: string } {
-  const { HOME = '', CLAUDE_PROJECT_DIR, CDPATH } = env;
-  return { HOME, CLAUDE_PLUGIN_ROOT: env.CLAUDE_PLUGIN_ROOT || ownPluginRoot(), CLAUDE_PROJECT_DIR, CDPATH };
+/**
+ * The hook's own environment the gate reads. OSS_TOOL_GATE_SANDBOX=off (the session's, set before
+ * Claude Code starts; an agent's Bash call can't change a hook's environment) turns the review
+ * sandbox off, so review agents get the stricter fallback rules.
+ */
+function gateEnv(env: Env): { HOME: string; CLAUDE_PLUGIN_ROOT: string; CLAUDE_PROJECT_DIR?: string; CDPATH?: string; TMPDIR?: string; OSS_TOOL_GATE_SANDBOX?: string } {
+  const { HOME = '', CLAUDE_PROJECT_DIR, CDPATH, TMPDIR, OSS_TOOL_GATE_SANDBOX } = env;
+  return { HOME, CLAUDE_PLUGIN_ROOT: env.CLAUDE_PLUGIN_ROOT || ownPluginRoot(), CLAUDE_PROJECT_DIR, CDPATH, TMPDIR, OSS_TOOL_GATE_SANDBOX };
 }
 
 export async function runCli(argv: readonly string[], input: string, env: Env): Promise<GateResult> {
   const mode = modeOf(argv);
   if (mode === null) return { exitCode: 1, stdout: '', stderr: USAGE };
-  return runToolGate({ mode, input, env: gateEnv(env) });
+  const bundleRoot = ownPluginRoot();
+  return runToolGate({ mode, input, env: gateEnv(env), ...(bundleRoot === '' ? {} : { bundleRoot }) });
 }
 
 function isGateResult(value: unknown): value is GateResult {
@@ -115,13 +125,18 @@ function isWorkerRequest(value: unknown): value is WorkerRequest {
   return Array.isArray(v.argv) && typeof v.input === 'string' && typeof v.env === 'object' && v.env !== null;
 }
 
+/** Every git process group this process has started and not yet ended: killed when the CLI is sent TERM. */
+const liveGroups = new Set<number>();
+
 /**
  * Runs the decision in a worker running `script`, and answers with what it posts. A worker that
- * posts nothing usable, crashes, or is still running after `limitMs` is ended: the call is
- * allowed with gate-error and the tell line. The worker never starts git itself: it asks this
- * thread, which starts git in its own process group and knows that group the moment it starts, so
- * every group still running when the decision ends is killed (ending the worker would leave them
- * running), and nothing is started once it has ended.
+ * posts nothing usable or crashes is ended: gate-error, and the call is allowed with the tell line
+ * (a review agent's refused). One still running after `limitMs` is ended and its call refused as too
+ * complex to check in time. The worker never starts git itself, neither the branch and clean reads
+ * nor the nested-repo scan's two runs (round 15, PERF INFO-1): it asks this thread, which starts git
+ * in its own process group and knows that group the moment it starts, so every group still running
+ * when the decision ends, or when the CLI is sent TERM (runMain), is killed (ending the worker would
+ * leave them running), and nothing is started once it has ended.
  */
 export function decideInWorker(
   script: string,
@@ -137,18 +152,34 @@ export function decideInWorker(
     const worker = new Worker(script, { workerData: { toolGate: request } });
     let done = false;
     const running = new Set<number>();
-    const finish = (result: GateResult | null): void => {
+    const finish = (result: GateResult | null, timedOut = false): void => {
       if (done) return;
       done = true;
       clearTimeout(timer);
       worker.removeAllListeners('message');
       void worker.terminate();
-      for (const pid of running) killGroup(pid);
-      resolve(result ?? gateErrorResult({ mode, input, env: gateEnv(env) }));
+      for (const pid of running) {
+        killGroup(pid);
+        liveGroups.delete(pid);
+      }
+      const bundleRoot = ownPluginRoot();
+      // past the hard limit, a builder's or the main agent's call is refused, not let through (D-R9-4)
+      resolve(result ?? gateErrorResult({ mode, input, env: gateEnv(env), ...(bundleRoot === '' ? {} : { bundleRoot }) }, timedOut));
     };
-    const timer = setTimeout(() => finish(null), limitMs);
-    const tracker = { started: (pid: number) => running.add(pid), ended: (pid: number) => running.delete(pid) };
+    const timer = setTimeout(() => finish(null, true), limitMs);
+    const tracker = {
+      started: (pid: number) => {
+        running.add(pid);
+        liveGroups.add(pid);
+      },
+      ended: (pid: number) => {
+        running.delete(pid);
+        liveGroups.delete(pid);
+      },
+    };
     worker.on('message', (message: unknown) => {
+      // started synchronously, so its group is known before anything else can end the decision
+      if (answerNestedGit(message, tracker, (reply) => !done && worker.postMessage(reply))) return;
       const run = gitRunOf(message);
       if (run === null) {
         finish(isGateResult(message) ? message : null);
@@ -177,6 +208,26 @@ function answer(result: GateResult): void {
   });
 }
 
+/**
+ * The CLI's main thread: reads the hook input, decides in a worker running `script`, answers. Sent
+ * TERM (the hook's deadline, or Claude Code ending the hook), it first kills every git group still
+ * running, then ends as TERM would have ended it (round 15, PERF INFO-1).
+ */
+export function runMain(script: string, argv: readonly string[]): void {
+  const killAll = (): void => {
+    for (const pid of liveGroups) killGroup(pid);
+    liveGroups.clear();
+  };
+  process.once('exit', killAll);
+  process.once('SIGTERM', () => {
+    killAll();
+    process.kill(process.pid, 'SIGTERM');
+  });
+  readStdin()
+    .then((input) => decideInWorker(script, argv, input, process.env))
+    .then(answer, () => answer({ exitCode: 1, stdout: '', stderr: 'tool-gate: could not read the hook input\n' }));
+}
+
 const request: unknown = isMainThread ? undefined : (workerData as { toolGate?: unknown } | null)?.toolGate;
 
 if (isWorkerRequest(request)) {
@@ -189,6 +240,7 @@ if (isWorkerRequest(request)) {
     waiting.get(result.id)?.(result.out);
     waiting.delete(result.id);
   });
+  if (parentPort !== null) nestedGitViaPort(parentPort);
   setGitRunner(
     (gitBin, args, cwd, timeoutMs, maxLines) =>
       new Promise((resolve) => {
@@ -203,8 +255,5 @@ if (isWorkerRequest(request)) {
   );
 } else if (isMainThread && /tool-gate\.(js|cjs)$/.test(process.argv[1] || '')) {
   // Only run when executed directly (not imported by tests); .js (tsc) and .cjs (bundle).
-  const script = path.resolve(process.argv[1]);
-  readStdin()
-    .then((input) => decideInWorker(script, process.argv.slice(2), input, process.env))
-    .then(answer, () => answer({ exitCode: 1, stdout: '', stderr: 'tool-gate: could not read the hook input\n' }));
+  runMain(path.resolve(process.argv[1]), process.argv.slice(2));
 }
