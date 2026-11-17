@@ -7,7 +7,8 @@ export type RuleId =
   | 'protected-path'
   | 'protected-path-mention'
   | 'red-cycle'
-  | 'unreadable';
+  | 'unreadable'
+  | 'gate-agent-write';
 
 export interface Refusal {
   rule: RuleId;

@@ -16,13 +16,15 @@
  * @boundary runToolGate (watcher/src/tool-gate/gate.ts), fed Claude Code hook JSON
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import fsDefault from 'node:fs';
 import { execFileSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { runToolGate, type GateDeps, type GateMode, type GateResult } from '../../src/tool-gate/gate.js';
+import { IN_SANDBOX, OUTSIDE_SANDBOX_NOTE, runToolGate as runToolGateRaw, type GateDeps, type GateMode, type GateRequest, type GateResult } from '../../src/tool-gate/gate.js';
+import { addReviewedRepo } from '../../src/gate-run/run-store.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 
@@ -80,12 +82,39 @@ function readEventLines(repo: string): string[] {
     .filter((line) => line.trim() !== '');
 }
 
+/**
+ * runToolGate, with a sandbox rewrite read as a plain allow (see asDecision). Claude Code's sandbox
+ * setting is read only from the call's own (temp) HOME, never the real ~/.claude (round 12, CR L2).
+ */
+async function runToolGate(req: GateRequest, deps: GateDeps = {}): Promise<GateResult> {
+  return asDecision(await runToolGateRaw(req, { ...deps, sandbox: { settingsHomes: [req.env.HOME], ...deps.sandbox } }));
+}
+
+/**
+ * The gate's decision on the rules: a review agent's call allowed rewritten to run in the macOS
+ * review sandbox (round 8, tested in tool-gate.sandbox.acceptance.test.ts) reads here as a plain allow.
+ */
+function asDecision(result: GateResult): GateResult {
+  // round 10: a review agent's call allowed outside the sandbox carries one fixed note (review-round10.test.ts)
+  if (result.exitCode === 0 && result.stdout === `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: OUTSIDE_SANDBOX_NOTE } })}\n`) return { ...result, stdout: '' };
+  if (result.exitCode !== 0 || !result.stdout.includes('"updatedInput"')) return result;
+  const output = JSON.parse(result.stdout) as { hookSpecificOutput: { permissionDecision?: string; updatedInput?: { command?: unknown }; additionalContext?: string } };
+  const { permissionDecision, updatedInput, additionalContext } = output.hookSpecificOutput;
+  expect(permissionDecision).toBe('allow');
+  expect(String(updatedInput?.command)).toMatch(/^\/usr\/bin\/sandbox-exec -p '/);
+  // round 10 (CR MEDIUM-3): every wrapped call carries the fixed sandbox line; only what follows it is the decision's own
+  expect(additionalContext?.startsWith(IN_SANDBOX)).toBe(true);
+  const rest = (additionalContext ?? '').slice(IN_SANDBOX.length).replace(/^\n/, '');
+  if (rest === '') return { exitCode: 0, stdout: '', stderr: result.stderr };
+  return { exitCode: 0, stdout: `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: rest } })}\n`, stderr: result.stderr };
+}
+
 function gate(mode: GateMode, hook: object, deps: GateDeps = {}): Promise<GateResult> {
   return runToolGate(
     {
       mode,
       input: JSON.stringify(hook),
-      env: { HOME: process.env.HOME!, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT },
+      env: { TMPDIR: os.tmpdir(), HOME: process.env.HOME!, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT },
     },
     deps
   );
@@ -536,6 +565,7 @@ describe('tool-gate acceptance: IRON LAW gates at the hook boundary', () => {
           currentBranch: () => {
             throw new Error('git exploded');
           },
+          wouldClean: async () => null,
         },
       };
 
@@ -925,7 +955,8 @@ describe('tool-gate acceptance: shapes an agent could use to slip past the rules
 
     it.each([
       'cd /tmp; cd /; cd - && git push',
-      'D=x; cd "$D" && git push',
+      // a variable set to a plain folder is followed (round 11, D-R11-1); one set by a command is not
+      'D=$(x); cd "$D" && git push',
       'cd "$D" && git commit -m x',
       'pushd +1 && git push',
       'cd "$D" && curl -sO http://example.com/x',
@@ -1653,7 +1684,7 @@ describe('tool-gate acceptance: command reading the agent could slip past (fix r
   /** As Claude Code runs it: with CLAUDE_PROJECT_DIR set to the project (so a planted .git can't move it). */
   async function runInProject(repo: string, command: string, cwd: string): Promise<GateResult> {
     return runToolGate(
-      { mode: 'pre', input: JSON.stringify(preBash(cwd, command)), env: { HOME: process.env.HOME!, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PROJECT_DIR: repo } },
+      { mode: 'pre', input: JSON.stringify(preBash(cwd, command)), env: { TMPDIR: os.tmpdir(), HOME: process.env.HOME!, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PROJECT_DIR: repo } },
       { platform: 'darwin' },
     );
   }
@@ -1698,12 +1729,16 @@ describe('tool-gate acceptance: command reading the agent could slip past (fix r
       'cd "$X" && rm tool-gates/cycle.json',
       'cd "$X" && curl -so workflow-state.json https://example.com/x',
       `cd "$X" && python3 -c "open('tool-gates.json', 'w')"`,
+      // R-266 round 10: the folder could itself be a protected folder such as `.oss/tool-gates`
+      'cd "$X" && echo x > out.txt',
+      'cd "$X" && rm -f build/out.js',
+      'cd "$X" && curl -so out.json https://example.com/x',
     ])('refuses %s from a subfolder', async (command) => {
       const repo = featureRepo();
       refused(await run(repo, command, path.join(repo, 'src')));
     });
 
-    it.each(['cd "$X" && echo x > out.txt', 'cd "$X" && npm test', 'cd "$X" && rm -f build/out.js', 'cd "$X" && git config user.name x', 'cd "$X" && curl -so out.json https://example.com/x'])('still allows %s from a subfolder', async (command) => {
+    it.each(['cd "$X" && npm test', 'cd "$X" && git config user.name x', 'cd src && echo x > out.txt', 'cd src && rm -f build/out.js'])('still allows %s from a subfolder', async (command) => {
       const repo = featureRepo();
       allowed(await run(repo, command, path.join(repo, 'src')));
     });
@@ -2094,18 +2129,19 @@ describe('tool-gate acceptance: fix round 4, K3', () => {
       "cd \"$X\" && find . -name '*.json' -delete",
       'cd "$X" && rm -rf ..',
       'cd "$X" && rm ../workflow-state.json',
+      // R-266 round 10: the folder could itself be a protected folder such as `.oss/tool-gates`
+      'cd "$X" && echo x > out.txt',
+      'cd "$X" && rm out.txt',
+      'cd "$X" && rm -f build/out.js',
     ])('refuses %s from a subfolder', async (command) => {
       const repo = featureRepo();
       refused(await run(repo, command, path.join(repo, 'src')));
     });
 
     it.each([
-      'cd "$X" && echo x > out.txt',
-      'cd "$X" && rm out.txt',
       'cd "$X" && npm test',
       'cd "$X" && ls *.log',
       "cd \"$X\" && find . -name '*.log'",
-      'cd "$X" && rm -f build/out.js',
     ])('still allows %s from a subfolder', async (command) => {
       const repo = featureRepo();
       allowed(await run(repo, command, path.join(repo, 'src')));
@@ -3071,9 +3107,14 @@ describe('tool-gate acceptance: fix round 4, K8', () => {
       "git -c 'credential.helper=store$(x)' fetch",
       "git -c 'credential.helper=store`x`' fetch",
       "git -c 'credential.helper=store>x' fetch",
-      "git -c 'credential.helper=store (x)' fetch",
     ])('refuses %s', async (command) => {
       refused(await run(featureRepo(), command), /hook folder or program/);
+    });
+
+    // git runs the helper value through a shell, so its `(x)` is a mid-command zsh glob group: since round 19
+    // (ADR-061, D-R19-3) that refusal comes first. Still refused, with the glob-group reason.
+    it("refuses git -c 'credential.helper=store (x)' fetch", async () => {
+      refused(await run(featureRepo(), "git -c 'credential.helper=store (x)' fetch"), /zsh glob groups/);
     });
 
     it.each(['git -c credential.helper=store fetch', "git -c 'credential.helper=cache --timeout=3600' fetch", 'git -c credential.helper=osxkeychain fetch'])(
@@ -3097,7 +3138,7 @@ describe('tool-gate acceptance: fix round 4, K8', () => {
     it('refuses a cd through the CDPATH the gate itself runs with', async () => {
       const repo = featureRepo();
       const result = await runToolGate(
-        { mode: 'pre', input: JSON.stringify(preBash(repo, 'cd hooks && echo x > pre-commit')), env: { HOME: process.env.HOME!, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CDPATH: '.git' } },
+        { mode: 'pre', input: JSON.stringify(preBash(repo, 'cd hooks && echo x > pre-commit')), env: { TMPDIR: os.tmpdir(), HOME: process.env.HOME!, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CDPATH: '.git' } },
         { platform: 'darwin' },
       );
       refused(result);
@@ -3132,7 +3173,7 @@ describe('tool-gate acceptance: fix round 4, K8', () => {
       refused(await run(featureRepo(), command));
     });
 
-    it.each(["bash -c 'rm -rf *'", "bash -O extglob -c 'rm -rf *'", "zsh -o extendedglob -c 'rm -rf *'", 'rm -rf *', "eval 'echo hi'; rm -rf *"])(
+    it.each(["bash -c 'rm -rf *'", "bash -O extglob -c 'rm -rf *'", "zsh -o nullglob -c 'rm -rf *'", 'rm -rf *', "eval 'echo hi'; rm -rf *"])(
       'still allows %s at the project root',
       async (command) => {
         allowed(await run(featureRepo(), command));
@@ -3402,7 +3443,7 @@ describe('tool-gate acceptance: fix part K11', () => {
       const start = performance.now();
       const result = spawnSync(process.execPath, [BUNDLE, 'pre'], {
         cwd: repo,
-        env: { PATH: process.env.PATH, HOME: process.env.HOME, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT },
+        env: { TMPDIR: os.tmpdir(), PATH: process.env.PATH, HOME: process.env.HOME, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT },
         input: JSON.stringify(preBash(repo, `${unclosedPython(100_000)}git push origin HEAD:main`)),
         encoding: 'utf8',
         timeout: 20_000,
@@ -3426,7 +3467,7 @@ describe('tool-gate acceptance: fix part K11', () => {
       const start = performance.now();
       const result = spawnSync(process.execPath, [BUNDLE, 'pre'], {
         cwd: repo,
-        env: { PATH: process.env.PATH, HOME: process.env.HOME, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT },
+        env: { TMPDIR: os.tmpdir(), PATH: process.env.PATH, HOME: process.env.HOME, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT },
         input: JSON.stringify(preBash(repo, `${first}; git push origin HEAD:main`)),
         encoding: 'utf8',
         timeout: 20_000,
@@ -3554,9 +3595,11 @@ describe('tool-gate acceptance: fix part K11', () => {
     it.each([
       "bash -e -c 'rm -rf *'",
       "bash -eO extglob -c 'rm -rf *'",
-      "zsh -eo extendedglob -c 'rm -rf *'",
+      // round 14, SEC HIGH-2: extendedglob is an option the reader doesn't model; nullglob is safe
+      "zsh -eo nullglob -c 'rm -rf *'",
       "bash --rcfile x -c 'rm -rf *'",
-      'options[extendedglob]=on; rm -rf *',
+      // round 14, SEC HIGH-2: extendedglob is an option the reader doesn't model (refused in round14-shell-forms); nullglob is safe
+      'options[nullglob]=on; rm -rf *',
       'options[globdots]=off; rm -rf *',
       'emulate zsh; rm -rf *',
       "GLOBIGNORE= bash -c 'rm -rf *'",
@@ -3692,7 +3735,7 @@ describe('tool-gate acceptance: fix part K12', () => {
     const start = performance.now();
     const result = spawnSync(process.execPath, [BUNDLE, 'pre'], {
       cwd: repo,
-      env: { PATH: process.env.PATH, HOME: process.env.HOME, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT },
+      env: { TMPDIR: os.tmpdir(), PATH: process.env.PATH, HOME: process.env.HOME, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT },
       input: JSON.stringify(preBash(repo, command)),
       encoding: 'utf8',
       timeout: 20_000,
@@ -3907,7 +3950,9 @@ describe('tool-gate acceptance: fix part K12', () => {
 
     it('refuses a git clean -ffd whose folder search runs past the call deadline', async () => {
       const repo = featureRepo();
-      for (let n = 0; n < 20; n++) fs.mkdirSync(path.join(repo, 't', `d${n}`), { recursive: true });
+      // enough folders that the search alone takes several clock looks (one per 256 steps): before round
+      // 10 the protected-path check's own steps reached the first look, so 20 folders were enough
+      for (let n = 0; n < 600; n++) fs.mkdirSync(path.join(repo, 't', `d${n}`), { recursive: true });
       refused(await run(repo, 'git clean -ffd t', { gitReader: gitListing(['t/']), clock: jumpsTo(1e12) }), /too complex/);
     }, 30_000);
   });
@@ -4079,7 +4124,8 @@ describe('tool-gate acceptance: fix part K13', () => {
       return gate('pre', preBash(repo, command), { platform: 'darwin' });
     }
 
-    it.each(['d=$(mktemp -d) && rm -rf "$d"', 'chmod -R u+w "$X"', 'find "$X" -delete', 'rm -rf "$d"/*', 'chown -R me "$X/sub"'])(
+    // a `$(mktemp -d)` folder is a new temp folder (round 11, D-R11-1 item 3); one a command names is not
+    it.each(['d=$(make-dir) && rm -rf "$d"', 'chmod -R u+w "$X"', 'find "$X" -delete', 'rm -rf "$d"/*', 'chown -R me "$X/sub"'])(
       'refuses `%s` with its own reason: name the folder literally (not "too complex")',
       async (command) => {
         const result = await run(featureRepo(), command);
@@ -4117,5 +4163,891 @@ describe('tool-gate acceptance: fix part K13', () => {
     it.each(['rm -rf build/*', 'rm -rf dist*', 'rm "$d"*'])('leaves `%s` as it was: allowed', async (command) => {
       expect(await run(featureRepo(), command)).toEqual({ exitCode: 0, stdout: '', stderr: '' });
     });
+  });
+});
+
+/**
+ * R-266 least-privilege-tools, US-004: a review (gate) agent judges the repo, so it may not change it.
+ * Claude Code puts the calling subagent's name in `agent_type` (plugin agents as `oss:<name>`);
+ * the main agent's calls carry no `agent_type` (probe P1, NOTES.md).
+ */
+describe('tool-gate acceptance: review agents cannot change the repo they judge (R-266)', () => {
+  afterEach(() => {
+    while (tempDirs.length > 0) {
+      const dir = tempDirs.pop()!;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  /** A repo on a feature branch with no build running, so no other rule has a say. */
+  function featureRepo(): string {
+    const repo = makeRepo();
+    onBranch(repo, 'feat/review');
+    writeRepoFile(repo, 'src/app.ts', 'export const a = 1;\n');
+    return repo;
+  }
+
+  function fromAgent(hook: object, agentType: string): object {
+    return { ...hook, agent_type: agentType, agent_id: 'a1b2c3d4' };
+  }
+
+  it('refuses a review agent writing a file inside the repo, names the rule and says fixes go to a builder (AC-004.1)', async () => {
+    const repo = featureRepo();
+
+    const result = await gate('pre', fromAgent(preWrite(repo, path.join(repo, 'src/app.ts'), 'x'), 'oss:code-reviewer'));
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('gate-agent-write');
+    expect(result.stderr).toContain('builder');
+  });
+
+  it('refuses a review agent editing a file inside the repo (AC-004.1)', async () => {
+    const repo = featureRepo();
+
+    const hook = preEdit(repo, path.join(repo, 'src/app.ts'), 'a = 1', 'a = 2');
+    const result = await gate('pre', fromAgent(hook, 'oss:code-reviewer'));
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('gate-agent-write');
+  });
+
+  it('refuses a review agent writing inside the repo through a shell redirect (AC-004.2)', async () => {
+    const repo = featureRepo();
+
+    const result = await gate('pre', fromAgent(preBash(repo, 'echo x > file.txt'), 'oss:code-reviewer'));
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('gate-agent-write');
+  });
+
+  it('knows a review agent by its bare name too', async () => {
+    const repo = featureRepo();
+
+    const result = await gate('pre', fromAgent(preWrite(repo, path.join(repo, 'src/app.ts'), 'x'), 'security-auditor'));
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('gate-agent-write');
+  });
+
+  /** A user temp folder of the test's own, so the agent's private folder is made under it, never the real one. */
+  function ownUserTemp(): string {
+    const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-usertemp-')));
+    fs.chmodSync(temp, 0o700);
+    tempDirs.push(temp);
+    return temp;
+  }
+
+  it('allows a review agent writing into its own private folder outside the repo (AC-004.3, ADR-028)', async () => {
+    const repo = featureRepo();
+    const userTemp = ownUserTemp();
+    const own = path.join(userTemp, 'oss-review', 's1', 'a1b2c3d4');
+
+    const hook = preWrite(repo, path.join(own, 'prompt.md'), 'expert prompt');
+    const result = await gate('pre', fromAgent(hook, 'oss:code-reviewer'), { sandbox: { userTemp } });
+
+    expect(result).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  });
+
+  it('refuses a review agent writing to plain /tmp and names its own private folder instead (AC-004.3, ADR-028)', async () => {
+    const repo = featureRepo();
+    const userTemp = ownUserTemp();
+    const own = path.join(userTemp, 'oss-review', 's1', 'a1b2c3d4');
+
+    const hook = preWrite(repo, path.join('/tmp', `oss-ac0043-${process.pid}.md`), 'expert prompt');
+    const result = await gate('pre', fromAgent(hook, 'oss:code-reviewer'), { sandbox: { userTemp } });
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('gate-agent-write');
+    expect(result.stderr).toContain(own);
+  });
+
+  it('allows a builder agent writing the same file inside the repo (AC-004.4)', async () => {
+    const repo = featureRepo();
+
+    const result = await gate('pre', fromAgent(preWrite(repo, path.join(repo, 'src/app.ts'), 'x'), 'oss:typescript-pro'));
+
+    expect(result).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  });
+
+  it('allows the main agent (no agent name) writing the same file (AC-004.5)', async () => {
+    const repo = featureRepo();
+
+    const result = await gate('pre', preWrite(repo, path.join(repo, 'src/app.ts'), 'x'));
+
+    expect(result).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  });
+
+  it('allows an agent with a name the gate does not know writing the same file (AC-004.5)', async () => {
+    const repo = featureRepo();
+
+    const result = await gate('pre', fromAgent(preWrite(repo, path.join(repo, 'src/app.ts'), 'x'), 'my-own-helper'));
+
+    expect(result).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  });
+});
+
+/**
+ * R-266 ship-gate fixes: a review agent stays a reviewer wherever the review runs. It may not write
+ * a sibling worktree under review, change the repo with git, start work that outlives its run,
+ * hard-link repo files, or hand its work to another agent's name. Builders are never affected.
+ */
+describe('tool-gate acceptance: review agents stay read-only (R-266 ship-gate fixes)', () => {
+  afterEach(() => {
+    while (tempDirs.length > 0) {
+      const dir = tempDirs.pop()!;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  const REVIEWER = 'oss:code-reviewer';
+
+  function featureRepo(): string {
+    const repo = makeRepo();
+    onBranch(repo, 'feat/review');
+    writeRepoFile(repo, 'src/app.ts', 'export const a = 1;\n');
+    return repo;
+  }
+
+  function fromAgent(hook: object, agentType: string): object {
+    return { ...hook, agent_type: agentType, agent_id: 'a1b2c3d4' };
+  }
+
+  /** The gate with Claude Code's CLAUDE_PROJECT_DIR set, as in a session started in the main checkout. */
+  function gateIn(projectDir: string, hook: object): Promise<GateResult> {
+    return runToolGate({
+      mode: 'pre',
+      input: JSON.stringify(hook),
+      env: { TMPDIR: os.tmpdir(), HOME: process.env.HOME!, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PROJECT_DIR: projectDir },
+    });
+  }
+
+  /** The main checkout and a sibling worktree of it, the review running in the worktree. */
+  function mainAndWorktree(): { main: string; worktree: string } {
+    const main = featureRepo();
+    const worktree = `${main}-wt`;
+    tempDirs.push(worktree);
+    git(main, ['worktree', 'add', '-q', '-b', 'feat/review-wt', worktree]);
+    return { main, worktree };
+  }
+
+  it('refuses a review agent writing a file in the worktree it reviews when the session started in the main checkout', async () => {
+    const { main, worktree } = mainAndWorktree();
+
+    const result = await gateIn(main, fromAgent(preWrite(worktree, path.join(worktree, 'src/app.ts'), 'x'), REVIEWER));
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('gate-agent-write');
+  });
+
+  it('refuses a review agent writing the worktree it reviews from the shell', async () => {
+    const { main, worktree } = mainAndWorktree();
+
+    const result = await gateIn(main, fromAgent(preBash(worktree, 'echo x > src/app.ts'), REVIEWER));
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('gate-agent-write');
+  });
+
+  it('allows a builder writing the same worktree file', async () => {
+    const { main, worktree } = mainAndWorktree();
+
+    const result = await gateIn(main, fromAgent(preWrite(worktree, path.join(worktree, 'src/app.ts'), 'x'), 'oss:typescript-pro'));
+
+    expect(result).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  });
+
+  it.each([
+    'git commit --allow-empty -m review',
+    'git add src/app.ts',
+    'git checkout -b fix',
+    'git branch fix',
+    'git -c core.pager=cat log',
+    'git diff --output=review.txt',
+  ])('refuses a review agent running `%s` in the repo it reviews', async (command) => {
+    const result = await gate('pre', fromAgent(preBash(featureRepo(), command), REVIEWER));
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('gate-agent-write');
+    expect(result.stderr).toContain('read-only git');
+  });
+
+  it('allows a review agent reading the repo with git', async () => {
+    const command = 'git status && git log --oneline -3 && git diff HEAD && git branch -a && git show HEAD';
+
+    const result = await gate('pre', fromAgent(preBash(featureRepo(), command), REVIEWER));
+
+    expect(result).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  });
+
+  it('allows a builder committing in the same repo', async () => {
+    const result = await gate('pre', fromAgent(preBash(featureRepo(), 'git commit --allow-empty -m fix'), 'oss:typescript-pro'));
+
+    expect(result).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  });
+
+  it.each(['sleep 60 &', 'nohup sleep 60', 'setsid sleep 60', 'claude -p "fix the bug"', 'tmux new -d make'])(
+    'refuses a review agent starting work that outlives its run: `%s`',
+    async (command) => {
+      const result = await gate('pre', fromAgent(preBash(featureRepo(), command), REVIEWER));
+
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain('gate-agent-write');
+      expect(result.stderr).toContain('outlives its run');
+    },
+  );
+
+  it('refuses a review agent hard-linking a repo file to a folder outside the repo', async () => {
+    const repo = featureRepo();
+    const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-review-')));
+    tempDirs.push(scratch);
+
+    const result = await gate('pre', fromAgent(preBash(repo, `ln src/app.ts ${scratch}/app.ts`), REVIEWER));
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('gate-agent-write');
+  });
+
+  it('refuses a review agent running git with git config exported earlier in the call', async () => {
+    const repo = featureRepo();
+
+    const command = 'export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0=cat; git log';
+    const result = await gate('pre', fromAgent(preBash(repo, command), REVIEWER));
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('gate-agent-write');
+    expect(result.stderr).toContain('GIT_CONFIG_COUNT');
+  });
+
+  it.each(['npm install', 'pip install requests'])('refuses a review agent changing the repo\'s dependencies: `%s`', async (command) => {
+    const result = await gate('pre', fromAgent(preBash(featureRepo(), command), REVIEWER));
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('installed dependencies');
+  });
+
+  it('allows a review agent running the repo\'s tests', async () => {
+    const result = await gate('pre', fromAgent(preBash(featureRepo(), 'npm test'), REVIEWER));
+
+    expect(result).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  });
+
+  it.each([
+    'constructor; printf x > f.txt',
+    'git constructor',
+    'G=git; $G commit -m x',
+    'gh pr merge 1 --squash',
+    'echo pass > ~/.oss/run/r1/verdict.txt',
+    'npm isntall',
+    'docker run -d nginx',
+    'git-commit -m x',
+  ])('refuses a review agent running `%s` and never fails open', async (command) => {
+    const result = await gate('pre', fromAgent(preBash(featureRepo(), command), REVIEWER));
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('gate-agent-write');
+  });
+
+  it('allows a review agent reading a pull request with gh where no sandbox holds it (round 9, CR LOW-1: gh has no login inside the macOS sandbox)', async () => {
+    const result = await gate('pre', fromAgent(preBash(featureRepo(), 'gh pr view 1 && gh pr diff 1'), REVIEWER), { platform: 'linux' });
+
+    expect(result).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  });
+
+  /** A Bash call sent with the Bash tool's `run_in_background: true`. */
+  function backgroundBash(cwd: string, command: string): object {
+    const hook = preBash(cwd, command) as { tool_input: object };
+    return { ...hook, tool_input: { ...hook.tool_input, run_in_background: true } };
+  }
+
+  it('refuses a review agent running a Bash call in the background (run_in_background)', async () => {
+    const result = await gate('pre', fromAgent(backgroundBash(featureRepo(), 'npm test'), REVIEWER));
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('outlives its run');
+  });
+
+  it('allows the penetration tester a background server in a sandbox outside the repo', async () => {
+    const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-pentest-')));
+    tempDirs.push(sandbox);
+    const repo = featureRepo();
+
+    const PEN = 'oss:penetration-tester';
+
+    expect(await gateIn(repo, fromAgent(backgroundBash(sandbox, 'node server.js'), PEN))).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+    expect(await gateIn(repo, fromAgent(preBash(repo, `cd ${sandbox} && node server.js &`), PEN))).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+    expect((await gateIn(repo, fromAgent(backgroundBash(repo, 'node server.js'), PEN))).exitCode).toBe(2);
+    expect((await gateIn(repo, fromAgent(backgroundBash(sandbox, 'node server.js'), REVIEWER))).exitCode).toBe(2);
+  });
+
+  /** Step 2.5 of agents/code-reviewer.md, run with another agent's name. */
+  function offloadAs(agentId: string, promptFile: string): string {
+    return [
+      `AGENT_ID="${agentId}"`,
+      'PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"',
+      'OFFLOAD="$PLUGIN_ROOT/watcher/dist/cli/agent-offload.js"',
+      `PROMPT_FILE='${promptFile}'`,
+      'case "$PROMPT_FILE" in',
+      '  */oss-offload.*/prompt.md)',
+      '    { rm -f -- "$PROMPT_FILE"; rmdir -- "${PROMPT_FILE%/prompt.md}"',
+      '      if [[ -f "$OFFLOAD" ]]; then',
+      '        node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file /dev/stdin --project-dir "$(pwd)"',
+      '      else',
+      `        echo '{"offloaded":false,"reason":"native"}'`,
+      '      fi; } < "$PROMPT_FILE" ;;',
+      `  *) echo '{"offloaded":false,"reason":"native"}' ;;`,
+      'esac',
+    ].join('\n');
+  }
+
+  it('refuses a review agent running the offload step under a builder agent\'s name', async () => {
+    const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-offload.')));
+    tempDirs.push(scratch);
+
+    const command = offloadAs('oss:typescript-pro', path.join(scratch, 'prompt.md'));
+    const result = await gate('pre', fromAgent(preBash(featureRepo(), command), REVIEWER));
+
+    expect(result.exitCode).toBe(2);
+  });
+
+  it('refuses a review agent calling the offloader directly under a builder agent\'s name', async () => {
+    const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-offload.')));
+    tempDirs.push(scratch);
+    const offloader = path.join(PLUGIN_ROOT, 'watcher/dist/cli/agent-offload.js');
+
+    const command = `node ${offloader} --agent oss:typescript-pro --prompt-file /dev/stdin < ${scratch}/prompt.md`;
+    const result = await gate('pre', fromAgent(preBash(featureRepo(), command), REVIEWER));
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('another agent');
+  });
+
+  /**
+   * Round 3 (allowlist): a review agent's call is read in full and every program is on the review
+   * allowlist. @behavior the six ways the security review ran a write through xargs or find -exec are refused.
+   * @business-rule a reviewer may not change the repo it judges, whatever program does the writing.
+   */
+  it.each([
+    'echo src | xargs rm -rf',
+    "ls src | xargs sh -c 'echo hi > src/app.ts'",
+    'ls src | xargs -I{} cp /etc/hosts src/{}',
+    'find . -name app.ts -exec rm {} \\;',
+    "find . -name app.ts -exec sh -c 'echo x > {}' \\;",
+    'find . -name app.ts -execdir mv {} gone.ts \\;',
+  ])('refuses a review agent writing through xargs or find: %s', async (command) => {
+    const result = await gate('pre', fromAgent(preBash(featureRepo(), command), REVIEWER));
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('gate-agent-write');
+  });
+
+  it('allows a review agent searching with find and grep through xargs', async () => {
+    const repo = featureRepo();
+
+    expect(await gate('pre', fromAgent(preBash(repo, "find . -name '*.ts' | xargs grep -n export"), REVIEWER))).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+    expect(await gate('pre', fromAgent(preBash(repo, 'find src -name app.ts -exec grep -n export {} \\;'), REVIEWER))).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  });
+
+  it('refuses a review agent a call the gate cannot read in full', async () => {
+    const result = await gate('pre', fromAgent(preBash(featureRepo(), 'P=rm; "$P" -rf src'), REVIEWER));
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('gate-agent-write');
+  });
+
+  it('refuses a review agent a program off the review allowlist and names the setting', async () => {
+    const result = await gate('pre', fromAgent(preBash(featureRepo(), "perl -e 'print 1'"), REVIEWER));
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('reviewPrograms');
+  });
+
+  it('refuses a review agent setting a loop variable that moves the shell (for HOME in …)', async () => {
+    const result = await gate('pre', fromAgent(preBash(featureRepo(), 'for HOME in /tmp; do ls ~; done'), REVIEWER));
+
+    expect(result.exitCode).toBe(2);
+  });
+
+  /** @behavior any agent, builders included, may not write through ~ in a call that sets HOME. @business-rule HOME= can point ~ at a protected folder. */
+  it('refuses a builder writing through ~ in a call that sets HOME', async () => {
+    const repo = featureRepo();
+    const result = await gate('pre', fromAgent(preBash(repo, `HOME=${repo}/.git; echo x > ~/config`), 'oss:typescript-pro'));
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('sets HOME');
+  });
+
+  /** The gate run with a home folder of the test's own (where ~/.oss/config.json lives). */
+  function gateWithHome(home: string, hook: object): Promise<GateResult> {
+    return runToolGate({ mode: 'pre', input: JSON.stringify(hook), env: { TMPDIR: os.tmpdir(), HOME: home, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT } });
+  }
+
+  function tempHome(): string {
+    const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-home-')));
+    tempDirs.push(home);
+    return home;
+  }
+
+  it('allows a review agent a program the user added in ~/.oss/config.json', async () => {
+    const home = tempHome();
+    const repo = featureRepo();
+    const hook = fromAgent(preBash(repo, "awk '{print $1}' src/app.ts"), REVIEWER);
+    expect((await gateWithHome(home, hook)).stderr).toContain('toolGates.reviewPrograms in ~/.oss/config.json');
+
+    // the first call already made ~/.oss (its mount baseline, round 13 D-R13-2)
+    fs.mkdirSync(path.join(home, '.oss'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.oss', 'config.json'), JSON.stringify({ toolGates: { reviewPrograms: ['awk'] } }));
+    expect(await gateWithHome(home, hook)).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  });
+
+  it("ignores a repo's own files adding review programs", async () => {
+    const home = tempHome();
+    const repo = featureRepo();
+    writeRepoFile(repo, '.oss/config.json', JSON.stringify({ toolGates: { reviewPrograms: ['awk'] } }));
+    writeRepoFile(repo, '.oss/tool-gates.json', JSON.stringify({ version: 1, reviewPrograms: ['awk'] }));
+
+    const result = await gateWithHome(home, fromAgent(preBash(repo, "awk '{print $1}' src/app.ts"), REVIEWER));
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('review allowlist');
+  });
+
+  /** The bash blocks of an agent file, as the agent runs them (the block's indent removed). */
+  function setupBlocks(agentFile: string): string[] {
+    const text = fs.readFileSync(path.join(PLUGIN_ROOT, 'agents', agentFile), 'utf8');
+    return [...text.matchAll(/^( *)```bash\n([\s\S]*?)^\1```/gm)].map(([, indent, body]) =>
+      body.split('\n').map((line) => (line.startsWith(indent) ? line.slice(indent.length) : line)).join('\n').trimEnd(),
+    );
+  }
+
+  /** The gate as the CLI runs it: the plugin root it runs from is the bundle's own. */
+  function gateFromBundle(projectDir: string, hook: object): Promise<GateResult> {
+    return runToolGate({
+      mode: 'pre',
+      input: JSON.stringify(hook),
+      env: { TMPDIR: os.tmpdir(), HOME: process.env.HOME!, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PROJECT_DIR: projectDir },
+      bundleRoot: PLUGIN_ROOT,
+    });
+  }
+
+  /**
+   * @behavior a review agent's own setup steps (model check, key check, decrypt, offload) run under
+   *   the review allowlist, exactly as its agent file writes them.
+   * @business-rule the allowlist keeps reviewers read-only without breaking the reviewers themselves.
+   */
+  it.each([
+    ['code-reviewer.md', 'oss:code-reviewer'],
+    ['security-auditor.md', 'oss:security-auditor'],
+    ['performance-auditor.md', 'oss:performance-auditor'],
+    ['penetration-tester.md', 'oss:penetration-tester'],
+  ])('allows every setup step of %s run by %s', async (file, agent) => {
+    const repo = featureRepo();
+    const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-offload.')));
+    tempDirs.push(scratch);
+    const blocks = setupBlocks(file);
+    expect(blocks.length).toBeGreaterThanOrEqual(3);
+
+    for (const block of blocks) {
+      const command = block.replace('<path printed in step 1>', path.join(scratch, 'prompt.md'));
+      expect(await gateFromBundle(repo, fromAgent(preBash(repo, command), agent)), command).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+    }
+  });
+
+  it("refuses another agent's setup step that runs the offloader under a different name", async () => {
+    const repo = featureRepo();
+    const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-offload.')));
+    tempDirs.push(scratch);
+    const offload = setupBlocks('code-reviewer.md').find((b) => b.includes('agent-offload.js'))!;
+
+    const command = offload.replace('<path printed in step 1>', path.join(scratch, 'prompt.md'));
+    expect((await gateFromBundle(repo, fromAgent(preBash(repo, command), 'oss:security-auditor'))).exitCode).toBe(2);
+  });
+
+  it('refuses a setup-step look-alike that runs something else', async () => {
+    const repo = featureRepo();
+    const step0 = setupBlocks('code-reviewer.md')[0]!;
+
+    const command = step0.replace('agent-model-check.js', '../../../../tmp/evil.js');
+    expect((await gateFromBundle(repo, fromAgent(preBash(repo, command), REVIEWER))).exitCode).toBe(2);
+  });
+
+  /**
+   * @behavior a repo the main agent named for this session's review runs gets the same refusals for
+   *   a review agent as the project repo.
+   * @business-rule a reviewer may not change any repo it reviews, not only the one the session started in.
+   */
+  it("refuses a review agent writing a repo named in the session's review record", async () => {
+    const home = tempHome();
+    const project = featureRepo();
+    const other = featureRepo();
+    const write = (session: string): object => ({ ...fromAgent(preBash(project, `echo x > ${other}/src/app.ts`), REVIEWER), session_id: session });
+    const run = (hook: object): Promise<GateResult> =>
+      runToolGate({ mode: 'pre', input: JSON.stringify(hook), env: { TMPDIR: os.tmpdir(), HOME: home, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PROJECT_DIR: project } });
+
+    expect(await run(write('sess-1'))).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+    addReviewedRepo(home, 'sess-1', other);
+    const refused = await run(write('sess-1'));
+    expect(refused.exitCode).toBe(2);
+    expect(refused.stderr).toContain('gate-agent-write');
+    expect(await run(write('sess-2'))).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  });
+
+  /**
+   * Round 4 (B): @behavior a review agent can't write the user's ~/.oss/config.json through an
+   * allowed program (sort -o), so it can't add programs to its own allowlist.
+   * @business-rule only the user adds review programs.
+   */
+  it('refuses the write to ~/.oss/config.json through sort -o, so perl stays off the allowlist', async () => {
+    const home = tempHome();
+    const repo = featureRepo();
+    writeRepoFile(repo, 'list.txt', '{"toolGates":{"reviewPrograms":["perl"]}}\n');
+
+    const write = await gateWithHome(home, fromAgent(preBash(repo, `sort -o ${home}/.oss/config.json list.txt`), REVIEWER));
+    expect(write.exitCode).toBe(2);
+    expect(write.stderr).toContain('gate-agent-write');
+    const perl = await gateWithHome(home, fromAgent(preBash(repo, "perl -e 'print 1'"), REVIEWER));
+    expect(perl.exitCode).toBe(2);
+  });
+
+  /**
+   * Round 4 (I): @behavior every bash block a served review agent's prompt gives it runs under the
+   * review allowlist (copied in test/fixtures/served-review-agent-blocks.json).
+   * @business-rule the allowlist never blocks a reviewer's own instructions.
+   */
+  const served = JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, 'watcher', 'test', 'fixtures', 'served-review-agent-blocks.json'), 'utf8')) as {
+    agents: Record<string, string[]>;
+  };
+  it.each(Object.entries(served.agents).flatMap(([agent, blocks]) => blocks.map((block) => [agent, block] as const)))(
+    'allows the served %s block: %s',
+    async (agent, block) => {
+      const repo = featureRepo();
+      git(repo, ['remote', 'add', 'origin', repo]);
+      const result = await gate('pre', fromAgent(preBash(repo, block), `oss:${agent}`));
+      if (block.includes('npx gitleaks')) {
+        // round 5 (CR H2): on npm, `gitleaks` and `trufflehog` are unrelated packages; the served
+        // prompt should run the scanners themselves (`gitleaks git .`), which the allowlist has
+        expect(result.exitCode).toBe(2);
+        expect(result.stderr).toContain('`npx gitleaks` is not on the review allowlist');
+        return;
+      }
+      if (block.includes('-exec ls -lh {}')) {
+        // `find . … -exec` from the repo root is refused for every agent by the older protected-path
+        // rule (a find that runs a command from a folder holding protected paths), not by the allowlist
+        expect(result.stderr).toContain('this `find` deletes, writes or runs a command');
+        expect((await gate('pre', fromAgent(preBash(repo, block), 'oss:typescript-pro'))).stderr).toBe(result.stderr);
+        return;
+      }
+      expect(result).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+    },
+  );
+
+  /** The real bundle, run as Claude Code runs it, with a home folder of the test's own. */
+  function throughRealBundle(home: string, repo: string, agent: string, command: string): { status: number | null; stderr: string } {
+    const hook = fromAgent(preBash(repo, command), agent);
+    const result = spawnSync(process.execPath, [path.join(PLUGIN_ROOT, 'watcher', 'dist', 'cli', 'tool-gate.cjs'), 'pre'], {
+      input: JSON.stringify(hook),
+      // round 12, CR L2: no real ~/.claude settings read by the real CLI (see realBundleAnswer)
+      env: { TMPDIR: os.tmpdir(), PATH: process.env.PATH, HOME: home, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PROJECT_DIR: repo, OSS_TOOL_GATE_SANDBOX: 'off' },
+      encoding: 'utf8',
+    });
+    return { status: result.status, stderr: result.stderr };
+  }
+
+  /**
+   * Round 4 (L): @behavior a builder's own setup steps (model check, offload) and a call naming a
+   * plugin script through variables it sets itself run, through the real bundle.
+   * @business-rule the plugin's own instructions never trip the gate; a changed instruction does.
+   */
+  it("allows a builder's own Step 0 and offload, and a plugin script named through the call's own variables", () => {
+    const home = tempHome();
+    const repo = featureRepo();
+    const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-offload.')));
+    tempDirs.push(scratch);
+    const BUILDER = 'oss:typescript-pro';
+    const blocks = setupBlocks('typescript-pro.md');
+    const step0 = blocks.find((b) => b.includes('agent-model-check.js'))!;
+    const offload = blocks.find((b) => b.includes('agent-offload.js'))!.replace('<path printed in step 1>', path.join(scratch, 'prompt.md'));
+    const workflow = [
+      'PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"',
+      'WORKFLOW_STATE_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js"',
+      'node "$WORKFLOW_STATE_CLI" clearActiveAgent',
+    ].join('\n');
+
+    for (const command of [step0, offload, workflow]) {
+      expect(throughRealBundle(home, repo, BUILDER, command), command).toEqual({ status: 0, stderr: '' });
+    }
+    // one changed character: the plugin folder is no longer certain, so the script isn't either
+    expect(throughRealBundle(home, repo, BUILDER, workflow.replace('$HOME/', '$HOMF/')).status).toBe(2);
+    expect(throughRealBundle(home, repo, BUILDER, step0.replace('$HOME/', '$HOMF/')).status).toBe(2);
+  });
+
+  /** The real bundle's whole answer: exit code and both streams. */
+  function realBundleAnswer(
+    home: string,
+    repo: string,
+    agent: string,
+    command: string,
+    env: Record<string, string> = {},
+  ): { status: number | null; stdout: string; stderr: string } {
+    const hook = fromAgent(preBash(repo, command), agent);
+    const result = spawnSync(process.execPath, [path.join(PLUGIN_ROOT, 'watcher', 'dist', 'cli', 'tool-gate.cjs'), 'pre'], {
+      input: JSON.stringify(hook),
+      // round 12, CR L2: the real CLI reads Claude Code's sandbox setting from the password-database
+      // home too; with the review sandbox off it reads no settings at all
+      env: { TMPDIR: os.tmpdir(), PATH: process.env.PATH, HOME: home, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PROJECT_DIR: repo, OSS_TOOL_GATE_SANDBOX: 'off', ...env },
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  }
+
+  /**
+   * Round 5 (perf F1/F2): @behavior a huge call built from the call's own variables is still
+   * checked: it never comes back allowed with "rules not checked".
+   * @business-rule the gate never fails open.
+   */
+  it.each([
+    ['a 50,000-character variable referenced 20,000 times', `X="${'a'.repeat(50_000)}"; echo${' $X'.repeat(20_000)}`],
+    ['20,000 assignments', `${Array.from({ length: 20_000 }, (_, i) => `A${i}="v"`).join('\n')}\necho "$A1"`],
+  ])('never lets %s through unchecked', (_what, command) => {
+    const answer = realBundleAnswer(tempHome(), featureRepo(), 'oss:typescript-pro', command);
+    expect(answer.stdout).not.toContain('rules not checked');
+    expect(answer.status === 0 && answer.stdout.includes('failed')).toBe(false);
+  }, 60_000);
+
+  /**
+   * Round 5 (CR H1, sec H7): @behavior a review agent's variables are never filled in, so a script
+   * named through one stays unknown and is refused.
+   * @business-rule the review agents' served steps don't need it, and it is one more thing to trust.
+   */
+  it("leaves a review agent's own variables unknown", () => {
+    const repo = featureRepo();
+    writeRepoFile(repo, 'src/a.py', 'print(1)\n');
+    expect(realBundleAnswer(tempHome(), repo, REVIEWER, 'S="src/a.py"; python3 "$S"').status).toBe(2);
+    expect(realBundleAnswer(tempHome(), repo, REVIEWER, 'python3 src/a.py').status).toBe(0);
+  });
+
+  /**
+   * Round 5 (sec M3): @behavior the plugin folder is filled in only when both places it can mean
+   * (CLAUDE_PLUGIN_ROOT and ~/.claude/plugins/oss) are the folder the gate runs from, or the second is missing.
+   */
+  /**
+   * Round 6 (user choice 1): @behavior through the real bundle, a review agent's call is refused
+   * when the gate times out (the worker's hard limit) or crashes; a builder's call keeps ADR-005's
+   * allow-and-tell on a crash (round 9, D-R9-4: refused on a timeout).
+   * @business-rule review agents fail closed.
+   */
+  describe('round 6: review agents fail closed', () => {
+    /** A preload that makes the decision's worker thread hang or throw, so the real CLI meets a timeout or a crash. */
+    function preload(body: string): string {
+      const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-preload-')));
+      tempDirs.push(dir);
+      const file = path.join(dir, 'worker-fault.cjs');
+      fs.writeFileSync(file, `if (!require('node:worker_threads').isMainThread) { ${body} }\n`);
+      return file;
+    }
+
+    it('refuses a review agent when the gate crashes, and allows a builder with the tell line', () => {
+      const env = { NODE_OPTIONS: `--require ${preload("throw new Error('boom');")}` };
+      const repo = featureRepo();
+      const reviewer = realBundleAnswer(tempHome(), repo, REVIEWER, 'ls', env);
+      expect(reviewer.status).toBe(2);
+      expect(reviewer.stdout).not.toContain('rules not checked');
+      const builder = realBundleAnswer(tempHome(), repo, 'oss:typescript-pro', 'ls', env);
+      expect(builder.status).toBe(0);
+      expect(builder.stdout).toContain('rules not checked');
+    }, 30_000);
+
+    /**
+     * Round 9 (D-R9-4): @behavior through the real bundle, a builder's call whose decision is still
+     * running at the hard limit is refused as too complex to check in time, like a review agent's.
+     * @business-rule a call the gate can't finish checking in time is never let through unchecked.
+     */
+    it('refuses a review agent and a builder when the gate times out at the hard limit', () => {
+      const env = { NODE_OPTIONS: `--require ${preload('for (;;) {}')}` };
+      const repo = featureRepo();
+      const reviewer = realBundleAnswer(tempHome(), repo, REVIEWER, 'ls', env);
+      expect(reviewer.status).toBe(2);
+      expect(reviewer.stdout).not.toContain('rules not checked');
+      const builder = realBundleAnswer(tempHome(), repo, 'oss:typescript-pro', 'ls', env);
+      expect(builder.status).toBe(2);
+      expect(builder.stdout).not.toContain('rules not checked');
+    }, 30_000);
+
+    it("refuses a review agent when the plugin's rule file is broken, and allows a builder with the tell line", () => {
+      const broken = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-broken-plugin-')));
+      tempDirs.push(broken);
+      fs.mkdirSync(path.join(broken, 'config'));
+      fs.writeFileSync(path.join(broken, 'config', 'tool-gates.json'), '{ not json');
+      const repo = featureRepo();
+      expect(realBundleAnswer(tempHome(), repo, REVIEWER, 'ls', { CLAUDE_PLUGIN_ROOT: broken }).status).toBe(2);
+      const builder = realBundleAnswer(tempHome(), repo, 'oss:typescript-pro', 'ls', { CLAUDE_PLUGIN_ROOT: broken });
+      expect(builder.status).toBe(0);
+      expect(builder.stdout).toContain('rules not checked');
+    });
+  });
+
+  /**
+   * Round 6 (perf M1): @behavior a review agent's 64 KB single-word call is refused quickly, and a
+   * builder's or the main agent's chain of doubling assignments is never let through unchecked.
+   * @business-rule the gate answers within its time, and never fails open on a call's size.
+   */
+  it("refuses a review agent's 64 KB single-word call in under 1.5 s", () => {
+    const started = performance.now();
+    const answer = realBundleAnswer(tempHome(), featureRepo(), REVIEWER, 'a'.repeat(64 * 1024));
+    expect(performance.now() - started).toBeLessThan(1500);
+    expect(answer.status).toBe(2);
+  });
+
+  /** The real bundle answering the main agent (no agent name in the hook input). */
+  function mainBundleAnswer(home: string, repo: string, command: string): { status: number | null; stdout: string } {
+    const result = spawnSync(process.execPath, [path.join(PLUGIN_ROOT, 'watcher', 'dist', 'cli', 'tool-gate.cjs'), 'pre'], {
+      input: JSON.stringify(preBash(repo, command)),
+      env: { TMPDIR: os.tmpdir(), PATH: process.env.PATH, HOME: home, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PROJECT_DIR: repo },
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    return { status: result.status, stdout: result.stdout };
+  }
+
+  it.each(['oss:typescript-pro', 'main'])('never lets a chain of doubling assignments from %s through unchecked', (agent) => {
+    const names = Array.from({ length: 60 }, (_, i) => `V${i}`);
+    const command = [`V0="${'a'.repeat(1_000)}"`, ...names.slice(1).map((n, i) => `${n}="$${names[i]}$${names[i]}"`), 'echo "$V59"'].join('\n');
+    const answer = agent === 'main' ? mainBundleAnswer(tempHome(), featureRepo(), command) : realBundleAnswer(tempHome(), featureRepo(), agent, command);
+    expect(answer.stdout).not.toContain('rules not checked');
+  }, 30_000);
+
+  /**
+   * Round 6 (user choice 2, CR I3): @behavior a review agent's own offload step, its prompt file in
+   * a real mktemp folder under the session's TMPDIR, still runs; the same step with the prompt path
+   * outside the temp folders is refused.
+   * @business-rule the temp-only rule never blocks a reviewer's own setup steps.
+   */
+  /**
+   * Round 6 (user choice 2): @behavior a TMPDIR that holds the home folder (as written or through a
+   *   link, /var vs /private/var on macOS) is not a temp folder: a review agent's write to its home
+   *   folder is refused, also a plain write and a write through an allowed program to ~/.oss/node-path.
+   * @business-rule the temp-only rule never opens the home folder.
+   */
+  it('refuses a review agent writing its home folder when TMPDIR holds it', () => {
+    const home = tempHome();
+    const repo = featureRepo();
+    for (const command of ['echo x > ~/x', 'echo /tmp/evil > ~/.oss/node-path', 'sort -o ~/.oss/node-path package.json']) {
+      expect(realBundleAnswer(home, repo, REVIEWER, command, { TMPDIR: os.tmpdir() }).status).toBe(2);
+    }
+  });
+
+  /**
+   * Round 7 (user pick): @behavior through the real bundle, a builder's and the main agent's writes
+   *   to ~/.oss/node-path are refused (as `~`, `$HOME`, the home folder written out, and its form on
+   *   disk); writing ~/.oss/config.json stays allowed.
+   * @business-rule the node the hooks run is protected for every agent; the rest of ~/.oss is not.
+   */
+  it("refuses a builder's and the main agent's writes to ~/.oss/node-path, and leaves ~/.oss/config.json alone", () => {
+    const real = tempHome();
+    fs.mkdirSync(path.join(real, '.oss'), { recursive: true });
+    // the home folder as the session names it (/var/…) when it is a link to the real one (/private/var/…)
+    const named = real.startsWith('/private/') ? real.slice('/private'.length) : real;
+    const repo = featureRepo();
+    const writes = [
+      'echo /tmp/evil > ~/.oss/node-path',
+      'echo /tmp/evil > "$HOME/.oss/node-path"',
+      `echo /tmp/evil > ${named}/.oss/node-path`,
+      `echo /tmp/evil > ${real}/.oss/node-path`,
+      'cp /tmp/evil ~/.oss/node-path',
+      'echo /tmp/evil | tee ~/.oss/node-path',
+      'ln -sf /tmp/evil ~/.oss/node-path',
+    ];
+    for (const command of writes) {
+      expect(realBundleAnswer(named, repo, 'oss:typescript-pro', command).status, command).toBe(2);
+      expect(mainBundleAnswer(named, repo, command).status, command).toBe(2);
+    }
+    expect(realBundleAnswer(named, repo, 'oss:typescript-pro', 'echo {} > ~/.oss/config.json')).toEqual({ status: 0, stdout: '', stderr: '' });
+  }, 60_000);
+
+  it("allows a review agent's own offload step with its prompt in TMPDIR, and refuses it elsewhere", () => {
+    const repo = featureRepo();
+    const tmpdir = os.tmpdir();
+    const scratch = execFileSync('mktemp', ['-d', path.join(tmpdir, 'oss-offload.XXXXXX')], { encoding: 'utf8' }).trim();
+    tempDirs.push(scratch);
+    const offload = setupBlocks('code-reviewer.md').find((b) => b.includes('agent-offload.js'))!;
+    const inTemp = offload.replace('<path printed in step 1>', path.join(scratch, 'prompt.md'));
+    // round 10: its own step runs as it is, marked with the one fixed note
+    expect(realBundleAnswer(tempHome(), repo, REVIEWER, inTemp, { TMPDIR: tmpdir })).toEqual({ status: 0, stdout: `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: OUTSIDE_SANDBOX_NOTE } })}\n`, stderr: '' });
+    const outside = offload.replace('<path printed in step 1>', path.join(repo, 'oss-offload.Ab12', 'prompt.md'));
+    expect(realBundleAnswer(tempHome(), repo, REVIEWER, outside, { TMPDIR: tmpdir }).status).toBe(2);
+  });
+
+  it('leaves the plugin folder unknown when ~/.claude/plugins/oss is another folder', () => {
+    const home = tempHome();
+    fs.mkdirSync(path.join(home, '.claude', 'plugins', 'oss', 'watcher', 'dist', 'cli'), { recursive: true });
+    const workflow = [
+      'PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}"',
+      'WORKFLOW_STATE_CLI="$PLUGIN_ROOT/watcher/dist/cli/update-workflow-state.js"',
+      'node "$WORKFLOW_STATE_CLI" clearActiveAgent',
+    ].join('\n');
+    expect(realBundleAnswer(home, featureRepo(), 'oss:typescript-pro', workflow).status).toBe(2);
+  });
+});
+
+/**
+ * Round 12, CR L2: @behavior these tests never read the user's own Claude Code settings: a review
+ * agent's call on macOS checks whether Claude Code's sandbox is on in the settings of the homes the
+ * test names (its temp HOME), never the real ~/.claude.
+ * @business-rule tests are hermetic: the user's real settings can't change their outcome.
+ */
+describe('round 12, CR L2: no real ~/.claude settings are read', () => {
+  it("a review agent's Bash call through gate() reads no file under the real ~/.claude", async () => {
+    const repo = makeRepo();
+    onBranch(repo, 'feat/x');
+    const userTemp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-usertemp-')));
+    fs.chmodSync(userTemp, 0o700);
+    tempDirs.push(userTemp);
+    const realHome = os.userInfo().homedir;
+    const realClaude = [path.join(realHome, '.claude'), path.join(fs.realpathSync(realHome), '.claude')];
+    const spy = vi.spyOn(fsDefault, 'readFileSync');
+    let read: string[];
+    try {
+      await gate('pre', { ...preBash(repo, 'ls'), agent_type: 'oss:code-reviewer', agent_id: 'a1b2c3d4' }, { platform: 'darwin', sandbox: { userTemp } });
+      read = spy.mock.calls.map((call) => String(call[0]));
+    } finally {
+      spy.mockRestore();
+    }
+    expect(read.filter((file) => realClaude.some((dir) => file.startsWith(`${dir}/`)))).toEqual([]);
+  });
+});
+
+/**
+ * Round 14 C (D-R14-3, SEC INFO-1): @behavior the review check's own state (tamper marks, ledger,
+ *   notices, the Linux mount baseline) lives in ~/.oss/gate-state, and neither the main agent nor a
+ *   builder can write, remove or sweep it; the served /oss:plan clean-up of ~/.oss/run stays allowed.
+ * @business-rule a review run's void marks can't be erased by the agents it reports to.
+ */
+describe('round 14 C: the gate state folder is protected for the main agent and builders', () => {
+  function featureRepo(): string {
+    const repo = makeRepo();
+    onBranch(repo, 'feat/x');
+    return repo;
+  }
+
+  const builder = (hook: object): object => ({ ...hook, agent_type: 'oss:typescript-pro', agent_id: 'b1b2c3d4' });
+
+  it.each([
+    'echo x > ~/.oss/gate-state/s1/a1b2c3d4.tamper',
+    'rm ~/.oss/gate-state/s1/a.tamper',
+    'rm -rf ~/.oss/gate-state',
+    'find ~/.oss/gate-state -delete',
+    'find "$HOME/.oss/gate-state" -name "*.tamper" -delete',
+    'echo [] > ~/.oss/gate-state/s1/mounts.a1b2c3d4.mounts',
+  ])('refuses `%s` for the main agent and a builder', async (command) => {
+    const repo = featureRepo();
+    expect((await gate('pre', preBash(repo, command), { platform: 'darwin' })).exitCode, `main: ${command}`).toBe(2);
+    expect((await gate('pre', builder(preBash(repo, command)), { platform: 'darwin' })).exitCode, `builder: ${command}`).toBe(2);
+  });
+
+  it('allows the served /oss:plan clean-up of ~/.oss/run for the main agent and a builder', async () => {
+    const repo = featureRepo();
+    const command =
+      'V="$HOME/.oss/run" && { find "$V" -mindepth 2 -maxdepth 2 -type f -name \'*.txt\' -mtime +7 -delete; find "$V" -mindepth 1 -maxdepth 1 -type d -empty -mtime +1 -delete || true; }';
+    expect((await gate('pre', preBash(repo, command), { platform: 'darwin' })).exitCode).toBe(0);
+    expect((await gate('pre', builder(preBash(repo, command)), { platform: 'darwin' })).exitCode).toBe(0);
   });
 });

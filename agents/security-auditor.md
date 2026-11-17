@@ -1,6 +1,7 @@
 ---
 name: security-auditor
-description: Review code for vulnerabilities, implement secure authentication, and ensure OWASP compliance. Handles JWT, OAuth2, CORS, CSP, and encryption. Use PROACTIVELY for security reviews, auth flows, or vulnerability fixes.
+tools: Read, Grep, Glob, Bash, Write
+description: Review code for vulnerabilities, check authentication and OWASP compliance. Covers JWT, OAuth2, CORS, CSP, and encryption. Use PROACTIVELY for security reviews and auth flows. Reviews and reports only: it never changes the code it judges; fixes go to the stack's builder agent.
 model: opus
 model_routing: true
 ---
@@ -94,8 +95,8 @@ When it runs, the agent's work runs on THAT model instead of here on Claude:
    reads the prompt on stdin, so nothing is left on disk whatever happens next. If you stop after
    step 1 without running this command, still delete the file and its directory (`rm -f --` the
    path, then `rmdir --` its directory). The offloader runs a nested Claude session on your local
-   model via the :8473 proxy; it can read and edit files in the current repo, but cannot run
-   commands, use the web or use MCP tools.
+   model via the :8473 proxy; it can read files in the current repo but has no edit tools, and
+   cannot run commands, use the web or use MCP tools.
 
    ```bash
    AGENT_ID="oss:security-auditor"

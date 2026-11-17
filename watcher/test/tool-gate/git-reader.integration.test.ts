@@ -5,7 +5,7 @@
  *   protected-branch rule treats them as "not on a protected branch".
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -186,24 +186,37 @@ describe('realGitReader: never fails the gate, never runs repo programs, leaves 
     const dir = tempDir();
     const pidFile = path.join(dir, 'child.pid');
     // A fake git that starts a child, records the child's pid (written whole, via a rename), then
-    // waits 30 s for it. Run with `warm` it just exits.
+    // waits 30 s for it.
     const slowGit = script(
       path.join(dir, 'git'),
-      `[ "$1" = warm ] && exit 0\nsleep 30 & echo $! > '${pidFile}.tmp' && mv '${pidFile}.tmp' '${pidFile}'; wait`,
+      `sleep 30 & echo $! > '${pidFile}.tmp' && mv '${pidFile}.tmp' '${pidFile}'; wait`,
     );
-    // macOS checks a newly written program the first time it runs, which can take 0.5-1 s and would
-    // eat the whole time limit before the fake git starts its child. Run it once, untimed, first.
-    execFileSync(slowGit, ['warm']);
     const reader = gitReaderFor(dir, slowGit);
 
-    const started = performance.now();
-    expect(await reader.currentBranch(dir, 1000)).toBeNull();
-    // well short of the 30 s the fake git would run on its own
-    expect(performance.now() - started).toBeLessThan(10_000);
-    expect(fs.existsSync(pidFile), 'the fake git started its child before the time limit').toBe(true);
-    const child = Number(fs.readFileSync(pidFile, 'utf8'));
-    expect(child).toBeGreaterThan(0);
-    expect(await waitUntil(() => gone(child), 5000)).toBe(true);
+    // The test, not the machine's speed, decides when the time limit is reached: only after the
+    // fake git has started its child. (With a real clock, a slow start under load, such as macOS
+    // checking the new program on its first run, could use up the limit before the child exists.)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let limitReached = false;
+    try {
+      const answer = reader.currentBranch(dir, 1000);
+      while (!fs.existsSync(pidFile)) await new Promise((resolve) => setImmediate(resolve));
+      const child = Number(fs.readFileSync(pidFile, 'utf8'));
+      expect(child).toBeGreaterThan(0);
+
+      vi.advanceTimersByTime(999);
+      expect(gone(child), 'the child still runs just before the time limit').toBe(false);
+      vi.advanceTimersByTime(1);
+      limitReached = true;
+      expect(await answer).toBeNull();
+
+      vi.useRealTimers();
+      expect(await waitUntil(() => gone(child), 5000)).toBe(true);
+    } finally {
+      // on a failed check, still reach the limit so the fake git and its child are ended
+      if (!limitReached) vi.runOnlyPendingTimers();
+      vi.useRealTimers();
+    }
   }, 30_000);
 
   it('should give no answer when a dry run would list more than 2048 paths, so the gate falls back', async () => {
@@ -235,3 +248,23 @@ describe('realGitReader: never fails the gate, never runs repo programs, leaves 
     expect(await gitReaderFor(worktree).wouldClean(worktree, [], [])).toEqual(['notes.tmp']);
   });
 });
+
+describe('git reader: never the git first on PATH (round 8, part B finding)', () => {
+  it('reads the branch with the checked git, not a fake git placed first on PATH', async () => {
+    const repo = repoOnMain();
+    git(repo, ['checkout', '-q', '-b', 'feat/real']);
+    const fake = tempDir();
+    const marker = path.join(fake, 'ran');
+    fs.writeFileSync(path.join(fake, 'git'), `#!/bin/sh\necho ran > '${marker}'\necho main\n`, { mode: 0o755 });
+    const before = process.env.PATH;
+    process.env.PATH = `${fake}:${before ?? ''}`;
+    try {
+      expect(await gitReaderFor(repo).currentBranch(repo)).toBe('feat/real');
+      expect(await realGitReader.currentBranch(repo)).toBe('feat/real');
+    } finally {
+      process.env.PATH = before;
+    }
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+});
+

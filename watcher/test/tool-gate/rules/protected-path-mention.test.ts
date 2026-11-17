@@ -18,6 +18,7 @@ import { readCommand, type CommandPart } from '../../../src/tool-gate/command-re
 import { loadSettings, type GateSettings } from '../../../src/tool-gate/rule-file.js';
 import type { PathResolver } from '../../../src/tool-gate/path-resolver.js';
 import { checkCallSize, checkProtectedPathMention } from '../../../src/tool-gate/rules/protected-path-mention.js';
+import { checkProtectedPathBash } from '../../../src/tool-gate/rules/protected-path.js';
 import { withDeadline } from '../../../src/tool-gate/deadline.js';
 import { OverBudget } from '../../../src/tool-gate/budget.js';
 
@@ -406,12 +407,25 @@ describe('protected-path-mention rule: a name used after a cd the gate cannot fo
   it.each([
     'cd "$X" && curl -so workflow-state.json https://example.com/x',
     `cd "$X" && python3 -c "open('tool-gates.json', 'w')"`,
-    'cd "$X" && ln -sf x .claude/settings.json',
+    // R-266 round 10: the folder could itself be a protected folder such as `.oss/tool-gates`
+    'cd "$X" && curl -so out.json https://example.com/x',
   ])('should refuse %s', (cmd) => {
     expect(fromSrc(cmd)?.rule).toBe('protected-path-mention');
   });
 
-  it.each(['cd "$X" && curl -so out.json https://example.com/x', 'cd "$X" && npm run build', `cd "$X" && python3 -c "print('x')"`])(
+  // R-266 round 11 (D-R11-1): ln's link is a write target, so the protected-path rule refuses it
+  it.each(['cd "$X" && ln -sf x .claude/settings.json', 'cd "$X" && ln -sf x lib/settings.json'])('should refuse %s by the write rule', (cmd) => {
+    const facts = readCommand(cmd, `${ROOT}/src`, HOME);
+    const refusal = facts.parts.map((part) => checkProtectedPathBash(part, SETTINGS, ROOT, HOME, NO_LINKS) ?? checkProtectedPathMention(part, SETTINGS, ROOT, HOME, NO_LINKS)).find((r) => r !== null);
+    expect(refusal?.rule).toBe('protected-path');
+  });
+
+  // R-266 round 11 (D-R11-1): a read-only argument is not a write, even after a cd the gate can't follow
+  it.each(['cd "$X" && npx vitest run lib/settings.json', 'cd "$X" && node check.js .claude/settings.json', 'cd "$X" && go test ./...'])('should allow %s', (cmd) => {
+    expect(fromSrc(cmd)).toBeNull();
+  });
+
+  it.each(['cd "$X" && npm run build', 'cd "$X" && curl -s http://x/health', `cd "$X" && python3 -c "print('x')"`])(
     'should allow %s',
     (cmd) => {
       expect(fromSrc(cmd)).toBeNull();
@@ -436,7 +450,7 @@ describe('protected-path-mention rule: patterns that also match dot entries (fix
     },
   );
 
-  it.each(['chmod -R 000 *', 'ln -sf x *', 'shopt -s dotglob; chmod 644 src/*.ts', 'cd "$X" && ln -sf x lib/settings.json'])('should allow %s', (cmd) => {
+  it.each(['chmod -R 000 *', 'ln -sf x *', 'shopt -s dotglob; chmod 644 src/*.ts'])('should allow %s', (cmd) => {
     expect(check(cmd)).toBeNull();
   });
 });
@@ -483,5 +497,24 @@ describe('protected-path-mention rule: a quote with no closing match (fix part K
     withDeadline(1000, counting, () => checkCallSize(parts));
     // Then: a few steps a character in all (one look every 256 steps), not one pass per quote
     expect(looks * 256).toBeLessThan(40_000 * 4);
+  });
+});
+
+describe('protected-path-mention rule: a script a launcher runs later (R-266 round 18, CR I-2, SEC INFO-2)', () => {
+  it.each([
+    ['trap .oss/tool-gates.json EXIT', 'trap', '.oss/tool-gates.json'],
+    ['trap -- .oss/tool-gates.json EXIT', 'trap', '.oss/tool-gates.json'],
+    ["trap '~/.oss/hooks/x.sh' EXIT", 'trap', '~/.oss/hooks/x.sh'],
+    ['emulate zsh -c .oss/tool-gates.json', 'emulate', '.oss/tool-gates.json'],
+    ['emulate -L zsh -c .oss/tool-gates.json', 'emulate', '.oss/tool-gates.json'],
+  ])('says which launcher runs which script: %s', (cmd, launcher, script) => {
+    expect(check(cmd)?.reason).toBe(`Refused: \`${launcher}\` runs a script that names a protected path: \`${script}\`. Ask the user to run it with \`!\`.`);
+  });
+
+  it('cuts a long script to about 60 characters', () => {
+    const script = `~/.oss/hooks/${'a'.repeat(80)}.sh`;
+    const reason = check(`trap '${script}' EXIT`)?.reason ?? '';
+    expect(reason).toContain(`\`${script.slice(0, 59)}…\``);
+    expect(reason).not.toContain('a'.repeat(80));
   });
 });

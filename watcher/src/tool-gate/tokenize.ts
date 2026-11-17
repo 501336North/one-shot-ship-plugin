@@ -11,6 +11,15 @@
  * What it can't read is reported in two ways (ADR-010):
  * - a reading limit (input over 1 MB, nesting over 64, a word expanding to over 256 words, a
  *   call over 2048 words or 64 KB of words) stops the read at once: the gate refuses the call;
+ *   so does a form the gate never reads (round 14, CR HIGH-1): zsh parameter flags `${(…)…}`, an
+ *   unquoted `(` right after a word that is no pattern (a zsh glob qualifier or modifier,
+ *   `src(:s#a#b#)`; outside `[[ … ]]`, `name=(…)` and `f()`), a glob qualifier that runs code, a zsh
+ *   glob group `(a|b)` in the middle of a command (round 19, D-R19-3), a `name=(…)` that is no assignment,
+ *   or a group after a pattern that holds a newline, comment, redirect or separator, or never closes (round 20),
+ *   a `name=(` after a typeset-family word, reserved word or assignment that is not written plainly, and
+ *   `disable -r` / `enable -r`, which change the reserved words (round 21);
+ * - a `~` form other than `~`, `~/…` and `~user` (`~+`, `~-`, `~N`, `~[…]`) is an unknown head that
+ *   counts as a substitution, so a bare one is refused as a write target (round 14, CR HIGH-2);
  * - anything else (an unterminated quote, a `${…}` or `$((…))` that runs a command) is
  *   unreadable, but the tokens around it are still returned (the commands inside `${…}` and
  *   `$((…))` included, and those before an unterminated quote), so they are still checked.
@@ -54,6 +63,21 @@ export function globOf(token: Token): string | undefined {
   return GLOBS.get(token);
 }
 
+/**
+ * The pattern of each word or redirect target written with an unquoted `#`, `^` or `~` (after its
+ * first character), each as `*`: zsh's EXTENDED_GLOB operators, read only after a shell option the
+ * reader doesn't model (round 14, SEC HIGH-2).
+ */
+const ZSH_GLOBS = new WeakMap<Token, string>();
+
+/** The pattern a word or redirect target stands for when zsh's extended glob operators are on, when it has one. */
+export function extendedGlobOf(token: Token): string | undefined {
+  return ZSH_GLOBS.get(token);
+}
+
+/** Stands, in a word's extended pattern, for a character a `^` or `~` covers: dropped once braces are expanded. */
+const SKIPPED = '\u0001';
+
 /** The words and redirect targets written with a glob qualifier (zsh `*(D)`), which may also match dot entries. */
 const DOTS = new WeakSet<Token>();
 
@@ -68,10 +92,59 @@ export function dotsOf(token: Token): boolean {
  */
 const EXTGLOB_START = /[!@+]$/;
 /**
- * Glob qualifier letters (zsh) that run code: `e:…:` / `estring` runs a command for each name and
- * `+name` calls a function. Any qualifier holding one is not read (ADR-010).
+ * The characters a zsh glob qualifier list may start with (zsh 5.9): at any other first character zsh
+ * stops with an error before it reads the rest, so nothing in it runs (`!(keep.txt)`, `!(keeper)`).
  */
-const CODE_QUALIFIER = /[e+]/;
+const QUALIFIER_START = new Set('/.@=p*%rwxAIERWXsStfedlUGugamcLMTNDnoOYF^-[P:+#');
+/**
+ * Characters that make a qualifier list run code or rewrite the names wherever they sit, since an
+ * argument before them may end anywhere (`u_name_` …): `+name` and `o+name` call a function, `:` starts
+ * a modifier (`:s/a/b/`), `#` an extended-glob `(#q…)` list, `(` a nested group.
+ */
+const REWRITING_CHARS = /[+:#(]/;
+/**
+ * A `[…]` subscript in a qualifier list holding more than digits, `,` and `-` (R-266 round 16, ADR-047):
+ * zsh evaluates it as arithmetic, so a variable there runs any `$(…)` its value holds (`*([X])`).
+ */
+const SUBSCRIPT_NOT_NUMBERS = /\[(?![0-9,-]*\])/;
+/** Qualifiers that take a string: `e` runs it as code (`oe` too), `P` adds it as a word before each name. */
+const STRING_QUALIFIERS = new Set(['e', 'P']);
+/** A string qualifier's delimiter closes with the same character, or with its pair for these. */
+const CLOSING: Readonly<Record<string, string>> = { '(': ')', '[': ']', '{': '}', '<': '>' };
+
+/**
+ * True when zsh may read a `(…)` after a pattern (a glob qualifier list, or what bash reads as an
+ * extended pattern: `!(…)`, `@(…)`, `*(…)`) as qualifiers that run code or rewrite the names (R-266
+ * round 15, D-R14-4): a `+`, `:`, `#` or `(` anywhere, or an `e` or `P` whose delimiter (the character
+ * after it) closes later in the list, wherever it sits (`!(tests)` runs `t`; `!(test)` and
+ * `!(node_modules)` never close, so zsh stops with an error). Not when the list starts with a character
+ * no qualifier starts with, or holds `|` (an alternation, not qualifiers). Always when it holds a `$` or
+ * a backtick, whose text is only known when it runs (round 17, CR limit B).
+ */
+function qualifierRewrites(inside: string): boolean {
+  // round 17, CR limit B: a `$` or backtick puts text known only when it runs in the list (`*($X)`, `*($(…))`)
+  if (/[$`]/.test(inside)) return true;
+  if (inside.includes('|') || !QUALIFIER_START.has(inside[0] ?? '')) return false;
+  if (REWRITING_CHARS.test(inside) || SUBSCRIPT_NOT_NUMBERS.test(inside)) return true;
+  for (let i = 0; i < inside.length; i++) {
+    const open = inside[i + 1];
+    if (!STRING_QUALIFIERS.has(inside[i]) || open === undefined) continue;
+    if (inside.indexOf(CLOSING[open] ?? open, i + 2) !== -1) return true;
+  }
+  return false;
+}
+
+/**
+ * Where each word token stands in the text it was read from (its first character and the one after
+ * its last), for a word that brace expansion left whole: the command reader reads a variable's
+ * assignment and use as written there (R-266 round 11, D-R11-1).
+ */
+const SOURCES = new WeakMap<Token, { start: number; end: number }>();
+
+/** Where a word token stands in the text it was read from, when known. */
+export function sourceOf(token: Token): { start: number; end: number } | undefined {
+  return SOURCES.get(token);
+}
 
 /** The body of each heredoc (`<<EOF`, `<<-EOF`), by its redirect token (kept beside the tokens, as GLOBS). */
 const HEREDOC_BODIES = new WeakMap<Token, string>();
@@ -103,7 +176,27 @@ const HEREDOC_OPERATORS = ['<<', '<<-'];
  * Words after which a command starts, so a `case` there is the keyword (shell grammar, not a
  * rule value). Reading `case` only there keeps `echo case in a)` an ordinary command.
  */
+/** A function name as a definition `name()` writes it (bash allows more; these are the common ones). */
+const FUNCTION_NAME = /^[A-Za-z_][A-Za-z0-9_.:-]*$/;
 const COMMAND_START_WORDS = new Set(['then', 'do', 'else', 'elif', 'if', 'while', 'until', '{', '!', 'time']);
+/** A word zsh reads as `name=(…)`, an array, where an assignment can stand (round 20, SEC HIGH-2). */
+const ARRAY_NAME = /^[A-Za-z_][A-Za-z0-9_]*\+?=$/;
+/** A word the shell reads as an assignment before a command's name. */
+/** What makes a word not written plainly for zsh's reserved words and assignments: quotes, backslashes, `$`, backticks, braces. */
+const NOT_PLAIN = /['"\\$`{}]/;
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=/;
+/** Commands whose `name=(…)` arguments zsh reads as arrays (round 20, SEC HIGH-2). */
+const TYPESET_FAMILY = new Set(['typeset', 'declare', 'local', 'export', 'readonly', 'integer', 'float']);
+/** Words before a command's name that leave it the command: reserved words and precommand modifiers (round 21). */
+const PRECOMMANDS = new Set([...COMMAND_START_WORDS, 'builtin', 'command', 'noglob', 'nocorrect', 'exec', '-']);
+/** Words that may stand before an array assignment where a command starts: reserved words and `nocorrect` (round 21, CR INFO-1). */
+const ARRAY_PREFIXES = new Set([...COMMAND_START_WORDS, 'nocorrect']);
+/**
+ * What ends or splits a zsh glob group after a pattern, or hides a command in it (round 20, PEN HIGH-1 =
+ * SEC HIGH-1): zsh ends the word at a `<`, `>`, `&` or `;` (the rest runs as a command) and reads the group
+ * across newlines; a backtick runs a command.
+ */
+const GROUP_HIDES = new Set(['\n', '<', '>', '&', ';', '`']);
 /** Characters a backslash escapes inside double quotes (a newline is a line continuation). */
 const DOUBLE_QUOTE_ESCAPABLE = '$`"\\\n';
 
@@ -111,6 +204,13 @@ const DOUBLE_QUOTE_ESCAPABLE = '$`"\\\n';
 class Unreadable extends Error {}
 /** A reading limit: the read stops and the call is refused as too complex to check. */
 class ReadingLimit extends Error {}
+/**
+ * A form the gate never reads (R-266 round 14, CR HIGH-1): zsh parameter flags `${(…)…}`, a zsh glob
+ * qualifier or modifier on a word that is no pattern (`src(:s#a#b#)`), or a qualifier that runs code.
+ * They can rewrite a path or run a command, and in bash they are a syntax error: the read stops and the
+ * call is refused, as at a reading limit.
+ */
+class NeverRead extends Error {}
 
 /**
  * Reading limits (not rule values): a bigger command, deeper nesting or a brace word that
@@ -134,6 +234,15 @@ export const MAX_CALL_CHARS = 64 * 1024;
 export class ReadBudget {
   private words = 0;
   private chars = 0;
+  private operators = 0;
+
+  /**
+   * Counts one more operator (round 18): a flood of `(`, `;` or newlines makes no words, so without
+   * this the whole input was read before any limit stopped it.
+   */
+  takeOperator(): void {
+    if (++this.operators > MAX_CALL_WORDS) throw new ReadingLimit(`too many operators: over ${MAX_CALL_WORDS}`);
+  }
 
   /** Counts `count` more words of `chars` characters; a reading limit when the call goes over. */
   take(count: number, chars: number): void {
@@ -162,6 +271,11 @@ const NAME = /[A-Za-z0-9_]*/y;
 const SPECIAL_PARAMETER = /[0-9@*#?$!-]/;
 /** A user name after `~`, up to `/` or the end of the word. */
 const TILDE_USER = /[A-Za-z0-9._-]+/y;
+const TILDE_USER_START = /[A-Za-z0-9._-]/;
+/** zsh's one-character parameter flags right after `${`: `~` (globsubst), `=` (word splitting), `^` (rcexpandparam). */
+const PARAMETER_FLAG_CHARS = new Set(['~', '=', '^']);
+/** `~+`, `~-`, `~N`, `~+N`, `~-N`, up to `/` or the end of the word: a folder of the shell's stack. */
+const STACK_TILDE = /~(?:[+-][0-9]*|[0-9]+)(?=$|[\/ \t\n;&|()<>])/y;
 
 export function tokenize(cmd: string, home?: string, budget: ReadBudget = new ReadBudget()): TokenizeResult {
   if (cmd.length > MAX_INPUT_CHARS) return { unreadable: true, reason: 'command larger than 1 MB', limit: true, tokens: [] };
@@ -171,7 +285,7 @@ export function tokenize(cmd: string, home?: string, budget: ReadBudget = new Re
     const tokens = scanner.script(0, false);
     return flags.unreadable === null ? { tokens } : { unreadable: true, reason: flags.unreadable, limit: false, tokens };
   } catch (err) {
-    if (err instanceof ReadingLimit) return { unreadable: true, reason: err.message, limit: true, tokens: [] };
+    if (err instanceof ReadingLimit || err instanceof NeverRead) return { unreadable: true, reason: err.message, limit: true, tokens: [] };
     if (err instanceof Unreadable) return { unreadable: true, reason: err.message, limit: false, tokens: scanner.top };
     throw err;
   }
@@ -246,31 +360,85 @@ class Word {
   braces: number[] = [];
   /** The same braces' indices in `glob`. */
   globBraces: number[] = [];
+  /**
+   * `glob` as zsh reads it with EXTENDED_GLOB, same length (brace positions line up): each unquoted `#`
+   * as `*`; an unquoted `^` (anything but what follows) as `*` for the rest of its path segment, and a
+   * non-leading `~` (what is left of it, less what follows) as `*` for the rest of the word (round 16,
+   * CR HIGH-1); the characters they cover kept as SKIPPED, dropped once braces are expanded. And whether it has one.
+   */
+  extended = '';
+  extendedWild = false;
+  /** Covered by a `^` (`segment`, to the next `/`) or a `~` (`word`, to its end): what is read there adds SKIPPED. */
+  private covered: 'none' | 'segment' | 'word' = 'none';
+  /** `extended` ends in an unescaped `*`, so a `^` or `~` right after adds nothing (no `**`, which crosses folders). */
+  private endsInStar = false;
   scripts: Token[][] = [];
   started = false;
   /** Any part was quoted or escaped: then a heredoc delimiter makes its body literal, and the word is no keyword. */
   quoted = false;
   /** A glob qualifier (`*(D)`) may make the pattern match dot entries too. */
   dots = false;
+  /** The pattern was seen to hold a wildcard: it only grows, so it keeps it (round 9, perf HIGH-1). */
+  private wild = false;
+
+  /** True when the pattern holds a wildcard; once true, never searched again. */
+  hasWildcard(): boolean {
+    this.wild ||= hasShellWildcard(this.glob);
+    return this.wild;
+  }
 
   /** Quoted, escaped or expanded text: never a wildcard. */
   add(text: string): void {
     this.text += text;
     this.glob += escapeGlob(text);
+    for (const c of escapeGlob(text)) this.extend(c);
     this.started = true;
   }
 
   /** An unquoted character as typed: `*`, `?` and `[` in it are wildcards. */
   addPlain(c: string): void {
+    const operator = c === '#' || c === '^' || (c === '~' && this.started);
+    this.extendedWild ||= operator;
+    if (operator && c !== '#') {
+      // round 16, CR HIGH-1: `^x` is any name but x (not a dot name, as zsh 5.9 reads it); `x~y` is what x matches, less y
+      this.extend(this.endsInStar ? SKIPPED : '*', true);
+      if (this.covered !== 'word') this.covered = c === '^' ? 'segment' : 'word';
+    } else if (c === '#' && this.covered === 'none' && this.extended.length > 0 && !this.extended.endsWith(SKIPPED)) {
+      // `x#` is zero or more `x`: the character before a `#` may be missing too
+      this.extended = `${this.extended.slice(0, -1)}*`;
+      this.extend(SKIPPED);
+      this.endsInStar = true;
+    } else {
+      this.extend(c === '#' ? '*' : c, c === '*' || c === '#');
+    }
     this.text += c;
     this.glob += c;
     this.started = true;
   }
 
+  /**
+   * Adds one character to `extended`: SKIPPED where a `^` or `~` covers it (a `/` ends a `^`'s cover).
+   * `star`: it is a `*` wildcard as read, which a `^` or `~` right after needs no other `*` for.
+   */
+  private extend(c: string, star = false): void {
+    if (this.covered === 'segment' && c === '/') this.covered = 'none';
+    if (this.covered !== 'none') {
+      this.extended += SKIPPED;
+      return;
+    }
+    this.extended += c;
+    this.endsInStar = star || (c === SKIPPED && this.endsInStar);
+  }
+
   addBrace(c: string): void {
     this.braces.push(this.text.length);
     this.globBraces.push(this.glob.length);
-    this.addPlain(c);
+    this.text += c;
+    this.glob += c;
+    // a brace stays where expansion looks for it, even under a `^` or `~`
+    this.extended += c;
+    this.endsInStar = false;
+    this.started = true;
   }
 
   addUnknown(script?: Token[]): void {
@@ -312,6 +480,17 @@ class Scanner {
     let pendingRedirect: string | null = null;
     let pendingRedirectEnd = -1;
     let parens = 0;
+    /** Open `[[ … ]]` tests: in one, an unquoted `(` in a word is part of a pattern or regex. */
+    let tests = 0;
+    /**
+     * Open `(` of a `[[ … ]]` test or a case pattern: in one, zsh reads a `#` as pattern text, never as a
+     * comment (round 18, CR limit 2).
+     */
+    let patternParens = 0;
+    /** The `for` and `coproc` words read where a command starts: the keywords, not arguments (round 18, SEC MEDIUM-2). */
+    const keywords = new WeakSet<Token>();
+    /** Where the word being read starts in `cmd`. */
+    let wordStart = this.i;
 
     const endWord = (): void => {
       if (!word.started) return;
@@ -322,10 +501,13 @@ class Scanner {
       const values = heredoc ? [done.text] : expandBraces(done.text, done.braces, this.budget);
       this.budget.take(values.length, values.reduce((n, v) => n + v.length, 0));
       const globs = !heredoc && hasShellWildcard(done.glob) ? expandBraces(done.glob, done.globBraces, new ReadBudget()) : [];
+      const extendedGlobs = !heredoc && done.extendedWild ? expandBraces(done.extended, done.globBraces, new ReadBudget()) : [];
       /** Records the pattern of the n-th expanded word, when it still has a wildcard. */
       const withGlob = <T extends Token>(token: T, n: number): T => {
         const glob = globs.length === values.length ? globs[n] : undefined;
         if (glob !== undefined && hasShellWildcard(glob)) GLOBS.set(token, glob);
+        const extended = extendedGlobs.length === values.length ? extendedGlobs[n] : undefined;
+        if (extended !== undefined) ZSH_GLOBS.set(token, extended.replaceAll(SKIPPED, ''));
         if (done.dots) DOTS.add(token);
         return token;
       };
@@ -335,18 +517,102 @@ class Scanner {
         const redirects = values.map((target, n): RedirectToken => withGlob({ kind: 'redirect', op, target, ...(n === 0 ? scripts : {}) }, n));
         if (heredoc) {
           heredocs.push({ delimiter: done.text, stripTabs: op === '<<-', token: redirects[0], literal: done.quoted });
+        } else if (redirects.length === 1) {
+          // the target word as written, so the reader can follow a variable in it (R-266 round 12, D-R12-1)
+          SOURCES.set(redirects[0], { start: wordStart, end: this.i });
         }
         tokens.push(...redirects);
         pendingRedirect = null;
         return;
       }
-      if (!done.quoted) readCaseWord(done.text);
-      tokens.push(...values.map((value, n): Token => withGlob({ kind: 'word', value, ...(n === 0 ? scripts : {}) }, n)));
+      if (!done.quoted) {
+        readCaseWord(done.text);
+        if (done.text === '[[' && atCommandStart()) tests++;
+        else if (done.text === ']]' && tests > 0) tests--;
+      }
+      const words = values.map((value, n): Token => withGlob({ kind: 'word', value, ...(n === 0 ? scripts : {}) }, n));
+      if (values.some((v) => /^-[A-Za-z]*r/.test(v)) && changesReservedWords()) {
+        throw new NeverRead("`disable -r` and `enable -r` change zsh's reserved words; the gate doesn't run calls that use them");
+      }
+      if (words.length === 1) SOURCES.set(words[0], { start: wordStart, end: this.i });
+      if (!done.quoted && (done.text === 'for' || done.text === 'coproc') && atCommandStart()) keywords.add(words[0]);
+      tokens.push(...words);
+    };
+
+    /** The command being read is `disable` or `enable` (after assignments and precommand words): with a `-r` it changes the reserved words (round 21). */
+    const changesReservedWords = (): boolean => {
+      let n = tokens.length;
+      while (n > 0 && tokens[n - 1].kind !== 'op') n--;
+      for (const t of tokens.slice(n)) {
+        if (t.kind !== 'word') continue;
+        if (t.value === 'disable' || t.value === 'enable') return true;
+        if (!ASSIGNMENT.test(t.value) && !PRECOMMANDS.has(t.value) && !t.value.startsWith('-')) return false;
+      }
+      return false;
     };
 
     const atCommandStart = (): boolean => {
       const last = tokens[tokens.length - 1];
       return last === undefined || last.kind === 'op' || (last.kind === 'word' && COMMAND_START_WORDS.has(last.value));
+    };
+
+    /** The word being read names a function being defined: `f()` where a command starts, or after `function`. */
+    const definesFunction = (): boolean => {
+      const last = tokens[tokens.length - 1];
+      return !word.quoted && FUNCTION_NAME.test(word.text) && (atCommandStart() || (last?.kind === 'word' && last.value === 'function'));
+    };
+
+    /**
+     * A `(` at `i`, where no word is being read, opens a zsh glob group (`ls (a|b)`, `> (x|y)/z`), which the
+     * gate never reads (round 19, D-R19-3): the command already has words or a redirect waits for its target
+     * (round 17, CR limit A). Not where a
+     * command starts (a subshell, `((`), in `[[ … ]]` or a case pattern, for `for ((…))` / zsh's
+     * `for x (…)` and `coproc (…)` (only after the keyword, read where a command starts: round 18,
+     * SEC MEDIUM-2), or before `)` (`f ()`, `function f ()`).
+     */
+    const globGroupHere = (i: number): boolean => {
+      if (tests > 0 || cases[cases.length - 1] === 'pattern' || /^\(\s*\)/.test(cmd.slice(i, i + 64))) return false;
+      if (pendingRedirect !== null) return true;
+      if (atCommandStart()) return false;
+      const last = tokens[tokens.length - 1];
+      const before = tokens[tokens.length - 2];
+      const isKeyword = (t: Token | undefined, value: string): boolean => t !== undefined && keywords.has(t) && t.kind === 'word' && t.value === value;
+      return !(isKeyword(last, 'for') || isKeyword(before, 'for') || isKeyword(last, 'coproc'));
+    };
+
+    /**
+     * The word being read, which ends in `=` right before a `(`, is an array assignment: written as one,
+     * where a command starts (after other assignments) or as an argument of the typeset family. Anywhere
+     * else zsh reads the `(` as a glob group (round 20, SEC HIGH-2).
+     */
+    const assignsArray = (): boolean => {
+      if (word.quoted || !ARRAY_NAME.test(word.text)) return false;
+      let n = tokens.length;
+      while (n > 0 && tokens[n - 1].kind !== 'op') n--;
+      const words = tokens.slice(n).filter((t) => t.kind === 'word');
+      let first = 0;
+      while (first < words.length && ARRAY_PREFIXES.has(words[first].value) && writtenPlainly(words[first])) first++;
+      const command = words.slice(first).find((w) => !namedPlainly(w));
+      return command === undefined || (TYPESET_FAMILY.has(command.value) && writtenPlainly(command));
+    };
+
+    /**
+     * zsh reads a reserved word (`typeset`, `time`, `{` …) or an assignment only when written plainly: no
+     * quotes, backslashes, braces or `$` (round 21, PEN HIGH = SEC HIGH-1). A word brace expansion split has
+     * no source, so it is never plain.
+     */
+    const writtenPlainly = (token: Token): boolean => {
+      const source = SOURCES.get(token);
+      if (source === undefined || token.kind !== 'word') return false;
+      const raw = cmd.slice(source.start, source.end);
+      return raw === token.value && (raw === '{' || !NOT_PLAIN.test(raw));
+    };
+
+    /** An assignment whose `name=` part is written plainly; its value may be quoted or expanded (round 22, CR LOW-2). */
+    const namedPlainly = (token: Token): boolean => {
+      const source = SOURCES.get(token);
+      const name = token.kind === 'word' ? ASSIGNMENT.exec(token.value)?.[0] : undefined;
+      return source !== undefined && name !== undefined && cmd.startsWith(name, source.start) && !NOT_PLAIN.test(name);
     };
 
     /** Follows `case … in`, its patterns and `esac`, for an unquoted word about to be added. */
@@ -394,6 +660,7 @@ class Scanner {
       const i = this.i;
       const c = cmd[i];
       const next = cmd[i + 1];
+      if (!word.started) wordStart = i;
 
       if (quote === "'") {
         if (c === "'") quote = '';
@@ -480,7 +747,7 @@ class Scanner {
         continue;
       }
 
-      if (c === '#' && !word.started) {
+      if (c === '#' && !word.started && patternParens === 0) {
         const end = cmd.indexOf('\n', i);
         this.i = end === -1 ? cmd.length : end;
         continue;
@@ -501,9 +768,20 @@ class Scanner {
         continue;
       }
 
-      if (c === '(' && word.started && (hasShellWildcard(word.glob) || EXTGLOB_START.test(word.glob))) {
+      if (c === '(' && word.started && (word.hasWildcard() || EXTGLOB_START.test(word.glob))) {
         this.qualifier(word);
         continue;
+      }
+      if (c === '(' && word.started && tests === 0 && word.text.endsWith('=') && !assignsArray()) {
+        throw new NeverRead(groupRefusal(cmd, i));
+      }
+      if (c === '(' && word.started && tests === 0 && !word.text.endsWith('=') && !(next === ')' && definesFunction())) {
+        throw new NeverRead('a `(` right after a word: a zsh glob qualifier or modifier');
+      }
+      if (c === '(' && !word.started && globGroupHere(i)) {
+        // round 19, D-R19-3 ("Refuse all groups"): zsh reads a group across newlines and ends its word at a `<`
+        // or `>` (PEN HIGH-1, SEC HIGH-1); rather than follow each way, no group in the middle of a command is read
+        throw new NeverRead(groupRefusal(cmd, i));
       }
 
       const operator = matchOperator(cmd, i);
@@ -534,9 +812,12 @@ class Scanner {
       }
 
       const caseTop = cases[cases.length - 1];
+      if (operator === '(' && (tests > 0 || caseTop === 'pattern')) patternParens++;
+      else if (operator === ')' && patternParens > 0) patternParens--;
       if (caseTop === 'pattern' && (operator === ')' || operator === '(')) {
         // `a)` / `(a)`: the parentheses of a case pattern, not a subshell or the substitution's end
         if (operator === ')') cases[cases.length - 1] = 'body';
+        this.budget.takeOperator();
         tokens.push({ kind: 'op', value: operator });
         continue;
       }
@@ -544,6 +825,7 @@ class Scanner {
       if (closed && operator === ')' && parens === 0) return tokens;
       if (operator === '(') parens++;
       if (operator === ')') parens--;
+      this.budget.takeOperator();
       tokens.push({ kind: 'op', value: operator });
       if (operator === '\n') this.i = skipHeredocBodies(this.i);
     }
@@ -613,6 +895,9 @@ class Scanner {
       return;
     }
     if (next === '{') {
+      if (cmd[i + 2] === '(') throw new NeverRead('zsh parameter flags `${(…)…}`');
+      // round 15, CR MEDIUM-1: `${~X}` makes the value a pattern, `${=X}` splits it into words, `${^X}` joins it to its neighbours
+      if (PARAMETER_FLAG_CHARS.has(cmd[i + 2] ?? '')) throw new NeverRead(`zsh \`\${${cmd[i + 2]}…}\` reads a value as a pattern or as several words`);
       const end = parameterEndOf(cmd, i + 2);
       const body = cmd.slice(i + 2, end);
       if (/\$\(|`/.test(body)) {
@@ -644,23 +929,39 @@ class Scanner {
    * Reads the `(…)` right after a pattern into its word: a zsh glob qualifier (`*(D)`, `*(.N)`) or
    * a bash extended glob (`!(x)`, `@(a|b)`). Either way the word stands for any names its start
    * allows, so its pattern ends in `*`; a qualifier may add dot entries (`D`), and one that runs
-   * code (`e:…:`, `+name`) makes the call unreadable (ADR-010).
+   * code (`e:…:`, `+name`) is never read. Nor is a group that never closes, or that holds an unquoted
+   * newline, `<`, `>`, `&`, `;`, backtick, `$(` or comment `#` (round 20, PEN HIGH-1 = SEC HIGH-1): zsh
+   * ends the word at a redirect or separator, so the rest runs as a command, and reads past newlines.
    */
   private qualifier(word: Word): void {
     const { cmd } = this;
     let depth = 0;
+    let quote = '';
     let end = this.i;
     for (; end < cmd.length; end++) {
       tick();
-      if (cmd[end] === '(') depth++;
-      else if (cmd[end] === ')' && --depth === 0) break;
+      const c = cmd[end];
+      if (quote !== '') {
+        if (c === quote) quote = '';
+        else if (c === '\\' && quote === '"') end++;
+      } else if (c === '\\') end++;
+      else if (c === "'" || c === '"') quote = c;
+      else if (c === '(') depth++;
+      else if (c === ')' && --depth === 0) break;
+      else if (GROUP_HIDES.has(c) || (c === '$' && cmd[end + 1] === '(') || (c === '#' && /[ \t]/.test(cmd[end - 1]))) break;
     }
-    if (end >= cmd.length) throw new Unreadable('unterminated glob qualifier');
+    // round 20, PEN HIGH-1 = SEC HIGH-1: a group that never closes, or holds what ends its word or hides a command
+    if (cmd[end] !== ')') {
+      throw new NeverRead(`a zsh glob group holds a newline, comment, redirect or separator, or never closes; list the names instead: ${clip(cmd.slice(this.i, this.i + 61).split('\n')[0])}`);
+    }
     const inside = cmd.slice(this.i + 1, end);
-    if (CODE_QUALIFIER.test(inside)) this.flags.unreadable ??= `the glob qualifier (${inside}) can run a command`;
+    if (qualifierRewrites(inside)) throw new NeverRead(`zsh reads ${clip(`(${inside})`)} after a pattern as glob qualifiers that can run a command or rewrite the names`);
     const extglob = EXTGLOB_START.test(word.glob);
     const start = extglob ? word.glob.slice(0, -1) : word.glob;
-    word.glob = start.endsWith('*') ? start : `${start}*`;
+    const star = start.endsWith('*') ? '' : '*';
+    word.glob = start + star;
+    // round 16, CR HIGH-1: the zsh pattern keeps the `^` and `~` read before the qualifier, the same length as glob
+    word.extended = (extglob ? word.extended.slice(0, -1) : word.extended) + star;
     word.text += `(${inside})`;
     word.dots ||= !extglob;
     this.i = end + 1;
@@ -687,6 +988,17 @@ class Scanner {
    */
   private tilde(word: Word): void {
     const { cmd } = this;
+    // `~+`, `~-`, `~N`, `~+N`, `~-N` (a folder of the shell's stack), `~[…]` (a zsh named folder), or
+    // `~` before any other character: a head the gate can't know, refused bare like `$(…)` (round 14)
+    STACK_TILDE.lastIndex = this.i;
+    const stack = STACK_TILDE.exec(cmd)?.[0];
+    const following = cmd[this.i + 1];
+    if (stack !== undefined || (following !== undefined && following !== '/' && !WORD_END.has(following) && !TILDE_USER_START.test(following))) {
+      const end = following === '[' ? cmd.indexOf(']', this.i) : -1;
+      this.i = stack !== undefined ? this.i + stack.length : end !== -1 ? end + 1 : this.i + 1;
+      word.addUnknown([]);
+      return;
+    }
     TILDE_USER.lastIndex = this.i + 1;
     const user = TILDE_USER.exec(cmd)?.[0];
     const after = this.i + 1 + (user?.length ?? 0);
@@ -709,6 +1021,16 @@ class Scanner {
       return false;
     }
   }
+}
+
+/** The refusal for a zsh glob group in the middle of a command (ADR-061), quoting the group's first line. */
+function groupRefusal(cmd: string, at: number): string {
+  return `zsh glob groups like \`(a|b)\` in the middle of a command aren't read by the gate; list the names instead: ${clip(cmd.slice(at, at + 61).split('\n')[0])}`;
+}
+
+/** A piece of the command quoted in a refusal: at most about 60 characters (round 18, PERF INFO-1). */
+function clip(text: string): string {
+  return text.length > 60 ? `${text.slice(0, 59)}…` : text;
 }
 
 /**

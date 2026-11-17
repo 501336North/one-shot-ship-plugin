@@ -23,6 +23,7 @@ const SETTINGS: GateSettings = {
   sourceExtensions: [],
   protectedPaths: [],
   productionHosts: [],
+  gateAgents: [],
   tagsAllowed: true,
 };
 

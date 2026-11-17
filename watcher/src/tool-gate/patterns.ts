@@ -108,12 +108,21 @@ export function matchPath(glob: string, absPath: string, opts: PathMatchOptions)
 }
 
 /**
+ * A compiled glob, and its segments with no wildcard: each of those matches only a name equal to it,
+ * so a path lacking one of them can't match, and the wildcard walk is skipped (round 10, PERF MEDIUM-1).
+ */
+interface CompiledGlob {
+  segments: string[];
+  literals: string[];
+}
+
+/**
  * Compiled glob lists, per anchoring and per list. The gate makes its anchorings once per call,
  * so each glob is compiled once per call, not once per word it is matched against.
  */
-const compiled = new WeakMap<PathMatchOptions, WeakMap<readonly string[], string[][]>>();
+const compiled = new WeakMap<PathMatchOptions, WeakMap<readonly string[], CompiledGlob[]>>();
 
-function compiledList(globs: readonly string[], opts: PathMatchOptions): string[][] {
+function compiledList(globs: readonly string[], opts: PathMatchOptions): CompiledGlob[] {
   let lists = compiled.get(opts);
   if (lists === undefined) {
     lists = new WeakMap();
@@ -121,7 +130,10 @@ function compiledList(globs: readonly string[], opts: PathMatchOptions): string[
   }
   let list = lists.get(globs);
   if (list === undefined) {
-    list = globs.map((glob) => compile(glob, opts));
+    list = globs.map((glob) => {
+      const segments = compile(glob, opts);
+      return { segments, literals: [...new Set(segments.filter((s) => !s.includes('*') && !s.includes('?')))] };
+    });
     lists.set(globs, list);
   }
   return list;
@@ -130,7 +142,8 @@ function compiledList(globs: readonly string[], opts: PathMatchOptions): string[
 /** True when any of the globs matches the path (see matchPath). */
 export function matchAnyPath(globs: readonly string[], absPath: string, opts: PathMatchOptions): boolean {
   const target = targetOf(absPath, opts);
-  return compiledList(globs, opts).some((glob) => segmentsMatch(glob, target));
+  const names = new Set(target);
+  return compiledList(globs, opts).some(({ segments, literals }) => literals.every((name) => names.has(name)) && segmentsMatch(segments, target));
 }
 
 /** A whole word against a pattern word where `*` is any run of characters (`?` is plain text). */
@@ -188,23 +201,43 @@ function literal(c: string): Atom {
   return { run: false, char: c, test: (d) => d === c };
 }
 
-/** Where the `]` that closes a bracket expression opened at `open` is, or -1 (then `[` is plain text). */
-function classEnd(segment: string, open: number): number {
-  let j = open + 1;
-  if (segment[j] === '!' || segment[j] === '^') j++;
-  if (segment[j] === ']') j++;
-  while (j < segment.length && segment[j] !== ']') {
-    if (segment[j] === '\\') {
-      j += 2;
-    } else if (segment[j] === '[' && ':.='.includes(segment[j + 1] ?? '')) {
+/**
+ * Where the `]` that closes a bracket expression opened at `open` is, or -1 (then `[` is plain text),
+ * for every `[` of one segment. The walk inside a class only ever moves forward and depends only on
+ * where it stands, so where a walk from each position ends is worked out once, from the end of the
+ * segment back (R-266 round 9, perf CRITICAL-1: a walk per `[`, with a search per `[:` in it, was
+ * cubic in the segment's length).
+ */
+function classEnds(segment: string): (open: number) => number {
+  const n = segment.length;
+  // the next `:]`, `.]`, `=]` at or after each position
+  const nextPair = { ':': new Int32Array(n + 2).fill(-1), '.': new Int32Array(n + 2).fill(-1), '=': new Int32Array(n + 2).fill(-1) };
+  // where a walk standing at each position stops: its `]`, or -1
+  const stop = new Int32Array(n + 2).fill(-1);
+  for (let j = n - 1; j >= 0; j--) {
+    tick();
+    for (const mark of [':', '.', '='] as const) {
+      nextPair[mark][j] = segment[j] === mark && segment[j + 1] === ']' ? j : nextPair[mark][j + 1];
+    }
+    const c = segment[j];
+    if (c === ']') {
+      stop[j] = j;
+    } else if (c === '\\') {
+      stop[j] = stop[j + 2];
+    } else if (c === '[' && (segment[j + 1] === ':' || segment[j + 1] === '.' || segment[j + 1] === '=')) {
       // `[:alpha:]`, `[.a.]`, `[=a=]` inside the class: their `]` doesn't close it
-      const close = segment.indexOf(`${segment[j + 1]}]`, j + 2);
-      j = close === -1 ? j + 1 : close + 2;
+      const close = nextPair[segment[j + 1] as ':' | '.' | '='][j + 2];
+      stop[j] = close === -1 ? stop[j + 1] : stop[close + 2];
     } else {
-      j++;
+      stop[j] = stop[j + 1];
     }
   }
-  return j < segment.length ? j : -1;
+  return (open) => {
+    let j = open + 1;
+    if (segment[j] === '!' || segment[j] === '^') j++;
+    if (segment[j] === ']') j++;
+    return j < n ? stop[j] : -1;
+  };
 }
 
 /** The test of a bracket expression's body (`a-z`, `!x`); a character class (`[:alpha:]`) accepts anything. */
@@ -232,6 +265,7 @@ function classTest(body: string): (c: string) => boolean {
 /** The atoms of one shell pattern segment: `\x` is x, `*`, `?`, and `[…]`; a `[` with no `]` is plain. */
 function shellAtoms(segment: string): Atom[] {
   const atoms: Atom[] = [];
+  let classEnd: ((open: number) => number) | null = null;
   for (let i = 0; i < segment.length; i++) {
     const c = segment[i];
     if (c === '\\' && i + 1 < segment.length) {
@@ -240,8 +274,8 @@ function shellAtoms(segment: string): Atom[] {
       if (atoms[atoms.length - 1]?.run !== true) atoms.push({ run: true });
     } else if (c === '?') {
       atoms.push({ run: false, char: null, test: ANY_CHAR });
-    } else if (c === '[' && classEnd(segment, i) !== -1) {
-      const end = classEnd(segment, i);
+    } else if (c === '[' && (classEnd ??= classEnds(segment))(i) !== -1) {
+      const end = classEnd(i);
       atoms.push({ run: false, char: null, test: classTest(segment.slice(i + 1, end)) });
       i = end;
     } else {
@@ -329,7 +363,7 @@ function shapesOf(globs: readonly string[], opts: PathMatchOptions): GlobShape[]
   if (list === undefined) {
     const segmentLists = compiledList(globs, opts);
     list = globs.map((glob, n): GlobShape => {
-      const segments = segmentLists[n];
+      const { segments } = segmentLists[n];
       const wild = segments.findIndex((s) => /[*?]/.test(s));
       let anchor = 0;
       if (glob.startsWith('~/')) anchor = path.normalize(opts.home).split('/').length;
@@ -361,12 +395,19 @@ function pathMeets(g: (Atom[] | null)[], p: GlobShape, exemptAnchor: boolean, do
  * Walks the shell pattern `g` against the glob segments `atoms` (null is `**` on either side) and
  * says whether all of `g` can be matched with `accept(j)` true for the glob segments used up.
  */
-function walk(g: (Atom[] | null)[], atoms: (Atom[] | null)[], accept: (j: number) => boolean, dots = false): boolean {
+function walk(
+  g: (Atom[] | null)[],
+  atoms: (Atom[] | null)[],
+  accept: (j: number) => boolean,
+  dots = false,
+  starts: readonly number[] = [0],
+  ends?: Set<number>,
+): boolean {
   const n = g.length;
   const m = atoms.length;
   const seen = new Uint8Array((n + 1) * (m + 1));
-  const todo: number[] = [0];
-  seen[0] = 1;
+  const todo: number[] = [...starts];
+  for (const j of starts) seen[j] = 1;
   const visit = (i: number, j: number): void => {
     const k = i * (m + 1) + j;
     if (seen[k] === 0) {
@@ -378,7 +419,11 @@ function walk(g: (Atom[] | null)[], atoms: (Atom[] | null)[], accept: (j: number
     tick();
     const i = Math.floor(k / (m + 1));
     const j = k % (m + 1);
-    if (i === n && accept(j)) return true;
+    if (i === n) {
+      // `ends`: collect every glob position the whole of `g` can stop at, without deciding
+      if (ends !== undefined) ends.add(j);
+      else if (accept(j)) return true;
+    }
     const x = i < n ? g[i] : undefined;
     const y = j < m ? atoms[j] : undefined;
     if (x === null) {
@@ -412,6 +457,40 @@ export function shellGlobMayMatch(
   return shapesOf(globs, opts).some((p) => pathMeets(g, p, exemptAnchor, dots));
 }
 
+/**
+ * shellGlobMayMatch for many patterns `<prefix>/<tail>` that share one prefix: the prefix is walked
+ * once, and each tail (relative, no `.` or `..` segments) only from where the prefix can stop
+ * (R-266 round 11, PERF LOW-1). Same answer as shellGlobMayMatch(`${prefix}/${tail}`, …).
+ */
+export function shellGlobTailMatcher(
+  prefix: string,
+  globs: readonly string[],
+  opts: PathMatchOptions,
+  exemptAnchor = false,
+  dots = false,
+): (tail: string) => boolean {
+  const g = shellSegments(prefix, opts);
+  // a prefix ending in `/` (the root) ends in an empty segment the joined pattern doesn't have
+  const last = g[g.length - 1];
+  if (g.length > 1 && last !== null && last !== undefined && last.length === 0) g.pop();
+  const plans = shapesOf(globs, opts).map((p) => {
+    const fixedAtoms = p.atoms.slice(0, p.fixed);
+    const full = new Set<number>();
+    const held = new Set<number>();
+    walk(g, p.atoms, () => false, dots, [0], full);
+    walk(g, fixedAtoms, () => false, dots, [0], held);
+    return { p, fixedAtoms, full: [...full], held: [...held] };
+  });
+  return (tail) => {
+    const t = shellSegments(tail, opts);
+    return plans.some(
+      ({ p, fixedAtoms, full, held }) =>
+        (full.length > 0 && walk(t, p.atoms, (j) => j === p.atoms.length, dots, full)) ||
+        (held.length > 0 && walk(t, fixedAtoms, (j) => j >= 1 && (!exemptAnchor || j > p.anchor), dots, held)),
+    );
+  };
+}
+
 /** A shell pattern's segments as atoms (null for `**`), lowercased when letter case doesn't matter. */
 function shellSegments(pattern: string, opts: PathMatchOptions): (Atom[] | null)[] {
   const normal = path.posix.normalize(opts.caseInsensitive === true ? pattern.toLowerCase() : pattern);
@@ -431,7 +510,11 @@ function named(b: Atom[] | null): boolean {
  */
 export function tailMayBeProtected(tail: string, globs: readonly string[], opts: PathMatchOptions, dots = false, contents = false): boolean {
   const g = shellSegments(belowClimb(tail), opts).filter((s, n) => n > 0 || s === null || s.length > 0);
+  const gLast = g[g.length - 1];
   return shapesOf(globs, opts).some((p) => {
+    // every cut ends in the glob's last segment: when it names something the tail's last can't be, none matches (round 11, PERF LOW-1)
+    const pLast = p.atoms[p.atoms.length - 1];
+    if (!contents && gLast != null && pLast != null && !segmentsMeet(gLast, pLast, dots)) return false;
     // `contents`: a name any protected folder's `/**` covers counts too (a wildcard, a whole folder), fix round 4, K3
     let last = contents ? p.atoms.length - 1 : -1;
     p.atoms.forEach((b, j) => {
@@ -443,6 +526,36 @@ export function tailMayBeProtected(tail: string, globs: readonly string[], opts:
     }
     return false;
   });
+}
+
+/**
+ * True when a relative shell pattern written after a folder only known when it runs (`"$dir"/.oss`)
+ * could be a folder holding a protected path (round 17, SEC LOW-1): some protected glob, cut anywhere up
+ * to its last named segment, matches it up to a named segment before the glob's end (`.oss` holds
+ * a protected file in it, `.git/hooks` holds `**\/.git/hooks/**`; `build` held under a `**` doesn't count).
+ */
+export function tailMayHoldProtected(tail: string, globs: readonly string[], opts: PathMatchOptions, dots = false): boolean {
+  const g = shellSegments(belowClimb(tail), opts).filter((s, n) => n > 0 || s === null || s.length > 0);
+  return shapesOf(globs, opts).some((p) => {
+    let last = -1;
+    p.atoms.forEach((b, j) => {
+      if (named(b)) last = Math.max(last, j);
+    });
+    for (let from = 0; from <= last; from++) {
+      const rest = p.atoms.slice(from);
+      if (walk(g, rest, (j) => j >= 1 && j < rest.length && named(rest[j - 1]), dots)) return true;
+    }
+    return false;
+  });
+}
+
+/**
+ * True when the absolute shell pattern could be a folder on the way to a protected glob's fixed folder,
+ * the repo root and home included (`~/*` could be `~/.oss`; `<repo>/../*` the repo itself): round 17, SEC LOW-1.
+ */
+export function shellGlobMayHold(globPath: string, globs: readonly string[], opts: PathMatchOptions, dots = false): boolean {
+  const g = shellSegments(globPath, opts);
+  return shapesOf(globs, opts).some((p) => walk(g, p.atoms.slice(0, p.fixed), (j) => j >= 1, dots));
 }
 
 /**
@@ -486,10 +599,11 @@ export function floatingNames(globs: readonly string[], caseInsensitive: boolean
 
 /** True when `glob` (a shell pattern) holds an unescaped wildcard: `*`, `?`, or a closed `[…]`. */
 export function hasShellWildcard(glob: string): boolean {
+  let classEnd: ((open: number) => number) | null = null;
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i];
     if (c === '\\') i++;
-    else if (c === '*' || c === '?' || (c === '[' && classEnd(glob, i) !== -1)) return true;
+    else if (c === '*' || c === '?' || (c === '[' && (classEnd ??= classEnds(glob))(i) !== -1)) return true;
   }
   return false;
 }

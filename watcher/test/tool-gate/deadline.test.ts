@@ -7,12 +7,13 @@
  * @boundary withDeadline + the gate's hot loops, with an injected clock (no wall-clock assertions).
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { OverBudget } from '../../src/tool-gate/budget.js';
-import { withDeadline } from '../../src/tool-gate/deadline.js';
+import { tick, timeLeft, withDeadline } from '../../src/tool-gate/deadline.js';
 import { tokenize } from '../../src/tool-gate/tokenize.js';
 import { readCommand } from '../../src/tool-gate/command-reader.js';
 import { matchAnyPath, shellGlobMayMatch } from '../../src/tool-gate/patterns.js';
@@ -35,6 +36,29 @@ const stopped = (): number => 0;
 const dirs: string[] = [];
 afterEach(() => {
   for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
+
+/**
+ * Round 9 (PERF LOW-1): @behavior a program the gate starts and waits for (the sandbox self-test,
+ * getconf, xcode-select) gets at most the time left in the decision, so it can't carry the call past
+ * its deadline; never 0, which would mean no limit at all.
+ * @business-rule the gate answers within its time.
+ */
+describe('the time a started program may take', () => {
+  it('is its own cap outside a call', () => {
+    expect(timeLeft(500)).toBe(500);
+  });
+
+  it('is the time left in the decision when that is shorter than the cap', () => {
+    let t = 0;
+    const clock = (): number => t;
+    expect(withDeadline(1000, clock, () => { t = 700; return timeLeft(500); })).toBe(300);
+    expect(withDeadline(1000, clock, () => { t = 100; return timeLeft(500); })).toBe(500);
+  });
+
+  it('is at least 1 ms once the deadline has passed (a 0 timeout would wait forever)', () => {
+    expect(withDeadline(1000, pastAfterStart(), () => timeLeft(500))).toBe(1);
+  });
 });
 
 describe('the per-call deadline', () => {
@@ -96,5 +120,30 @@ describe('the per-call deadline, looked at every 256 steps (fix part K12, item 7
 
   it('lets a very short command finish even when the clock has run out', () => {
     expect(withDeadline(1000, pastAfterStart(), () => tokenize('git status'))).toHaveProperty('tokens');
+  });
+});
+
+/**
+ * Round 10 (PERF INFO-1): @behavior a step of work looks up the call's deadline only every so often,
+ * not on every step, so the gate's hot loops stay cheap; the deadline still stops a long loop.
+ * @business-rule the gate answers within its time, without slowing every call down.
+ */
+describe('the cost of one step of work', () => {
+  it('looks up the call\'s deadline about once per 256 steps, not once per step', () => {
+    const spy = vi.spyOn(AsyncLocalStorage.prototype, 'getStore');
+    try {
+      withDeadline(1000, stopped, () => {
+        for (let n = 0; n < 25_600; n++) tick();
+      });
+      expect(spy.mock.calls.length).toBeLessThanOrEqual(25_600 / 256 + 2);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('still stops a long loop once the deadline has passed', () => {
+    expect(() => withDeadline(1000, pastAfterStart(), () => {
+      for (let n = 0; n < 1000; n++) tick();
+    })).toThrow(OverBudget);
   });
 });

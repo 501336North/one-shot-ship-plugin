@@ -12,6 +12,7 @@
  * group still running when it ends the decision (fix round 4, K2).
  */
 
+import { gitBinary } from '../gate-run/git-bin.js';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -150,11 +151,27 @@ function nearestFolder(dir: string): string {
   return at;
 }
 
-/** A git reader for a project (`null`: no project root, so every `.git` file counts as planted). */
-export function gitReaderFor(projectRoot: string | null, gitBin = 'git'): GitReader {
+/** The git the gate runs: the checked one at a fixed path (gate-run/git-bin.ts), never PATH's; null when there is none. */
+function checkedGit(): string | null {
+  try {
+    return gitBinary();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A git reader for a project (`null`: no project root, so every `.git` file counts as planted). git is
+ * `gitBin` when given (tests), else the checked git, found when first needed; with none, every answer is unknown.
+ */
+export function gitReaderFor(projectRoot: string | null, gitBin?: string): GitReader {
+  const run: GitRunner = async (_bin, args, cwd, timeoutMs, maxLines) => {
+    const bin = gitBin ?? checkedGit();
+    return bin === null ? null : runner(bin, args, cwd, timeoutMs, maxLines);
+  };
   return {
     async currentBranch(dir, timeoutMs = TIMEOUT_MS) {
-      const out = await runner(gitBin, ['symbolic-ref', '--short', '-q', 'HEAD'], nearestFolder(dir), timeoutMs, Infinity);
+      const out = await run('', ['symbolic-ref', '--short', '-q', 'HEAD'], nearestFolder(dir), timeoutMs, Infinity);
       const branch = out?.trim() ?? '';
       return branch === '' ? null : branch;
     },
@@ -166,7 +183,7 @@ export function gitReaderFor(projectRoot: string | null, gitBin = 'git'): GitRea
       }
       // `--dry-run` after the options, so no option (`--no-dry-run`) can turn it off.
       const args = ['-c', 'core.quotePath=false', 'clean', ...options, '--dry-run', '--', ...pathspecs];
-      const out = await runner(gitBin, args, dir, timeoutMs, MAX_DRY_RUN_LINES);
+      const out = await run('', args, dir, timeoutMs, MAX_DRY_RUN_LINES);
       if (out === null) return null;
       const removed = out.split('\n').filter((line) => line.startsWith(WOULD_REMOVE)).map((line) => line.slice(WOULD_REMOVE.length));
       // a name with a quote, backslash or control character is printed quoted and escaped

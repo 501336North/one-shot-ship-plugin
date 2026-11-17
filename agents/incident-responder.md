@@ -1,5 +1,6 @@
 ---
 name: incident-responder
+tools: "*"
 description: Handles production incidents with urgency and precision. Use IMMEDIATELY when production issues occur. Coordinates debugging, implements fixes, and documents post-mortems.
 model: opus
 ---

@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readRegularFile } from './regular-file.js';
+import { appendPrivateFile } from '../gate-run/run-store.js';
 import type { RuleId } from './rules/refusal.js';
 
 export type TestResult = 'red' | 'green';
@@ -27,7 +28,9 @@ export type EventKind =
   | 'runner-adopted'
   | 'unreadable'
   | 'gate-error'
-  | 'rule-file-rejected';
+  | 'rule-file-rejected'
+  /** A review agent's Bash call held only by the fallback rules, no OS sandbox (round 9, SEC INFO-3). */
+  | 'review-fallback';
 
 export interface GateEvent {
   ts: string;
@@ -79,7 +82,7 @@ export function fileStateStore(repoRoot: string): StateStore {
   const cycleFile = path.join(stateDir, 'cycle.json');
   const eventsFile = path.join(stateDir, 'events.ndjson');
 
-  const { O_APPEND, O_CREAT, O_EXCL, O_NOFOLLOW, O_WRONLY } = fs.constants;
+  const { O_CREAT, O_EXCL, O_NOFOLLOW, O_WRONLY } = fs.constants;
 
   /** Throws when `.oss` or `.oss/tool-gates` is a symlink. */
   function refuseSymlinkedDirs(): void {
@@ -126,12 +129,9 @@ export function fileStateStore(repoRoot: string): StateStore {
     },
     appendEvent(event) {
       safeStateDir();
-      const fd = fs.openSync(eventsFile, O_APPEND | O_CREAT | O_WRONLY | O_NOFOLLOW);
-      try {
-        fs.writeFileSync(fd, JSON.stringify(event) + '\n');
-      } finally {
-        fs.closeSync(fd);
-      }
+      // never blocks (round 8, HIGH-2): no symlink followed, a named pipe opens without waiting for a
+      // reader, and anything but a regular file throws (the callers' logging is best effort)
+      appendPrivateFile(eventsFile, JSON.stringify(event) + '\n');
     },
   };
 }

@@ -1,5 +1,6 @@
 ---
 name: swift-macos-expert
+tools: "*"
 description: Use proactively for Swift and macOS desktop application development, debugging, testing, and architecture. Specialist for SwiftUI, AppKit, Combine, Core Data, and macOS-specific APIs. Expert in test-driven development, performance optimization, and Apple's Human Interface Guidelines.
 ---
 

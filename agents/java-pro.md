@@ -1,5 +1,6 @@
 ---
 name: java-pro
+tools: "*"
 description: Write modern, performant Java code leveraging the latest JDK features. Expert in Spring Boot, enterprise patterns, JVM tuning, and comprehensive testing. Use PROACTIVELY for Java development, Spring Boot applications, and enterprise Java.
 ---
 

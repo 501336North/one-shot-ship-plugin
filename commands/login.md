@@ -428,28 +428,9 @@ Set up the status line script to show TDD phase in Claude Code's terminal:
    ```
 
 3. **Configure Claude Code settings (automatic):**
+   This merges the OSS status line into `~/.claude/settings.json`, keeping every other setting.
    ```bash
-   CLAUDE_SETTINGS="${HOME}/.claude/settings.json"
-
-   # Read existing settings or create empty object
-   if [ -f "$CLAUDE_SETTINGS" ]; then
-       SETTINGS=$(cat "$CLAUDE_SETTINGS")
-   else
-       mkdir -p "${HOME}/.claude"
-       SETTINGS='{}'
-   fi
-
-   # Add statusLine configuration using jq
-   UPDATED=$(echo "$SETTINGS" | jq '. + {
-       "statusLine": {
-           "type": "command",
-           "command": "~/.oss/oss-statusline.sh",
-           "padding": 0
-       }
-   }')
-
-   echo "$UPDATED" > "$CLAUDE_SETTINGS"
-   echo "Configured Claude Code status line"
+   ~/.oss/hooks/oss-statusline-settings.sh
    ```
 
 4. **Verify status line:**

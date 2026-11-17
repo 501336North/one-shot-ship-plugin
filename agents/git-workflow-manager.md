@@ -1,5 +1,6 @@
 ---
 name: git-workflow-manager
+tools: "*"
 description: Expert Git workflow manager specializing in branching strategies, automation, and team collaboration. Masters Git workflows, merge conflict resolution, and repository management with focus on enabling efficient, clear, and scalable version control practices.
 model: haiku
 ---

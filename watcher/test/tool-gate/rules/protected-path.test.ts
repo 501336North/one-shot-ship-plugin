@@ -282,13 +282,16 @@ describe('protected-path rule: a relative write after a cd the gate cannot follo
     'cd - && cp x tool-gates.json',
     'popd && rm -f config',
     'cd "$X" && rm -f .oss/tool-gate?.json',
+    // R-266 round 10: the folder could itself be a protected folder such as `.oss/tool-gates`
+    'cd "$X" && echo x > out.txt',
+    'cd "$X" && rm -f build/out.js',
   ])('should refuse %s', (cmd) => {
     const refusal = fromSrc(cmd);
     expect(refusal?.rule).toBe('protected-path');
     expect(refusal?.reason).toContain("can't follow");
   });
 
-  it.each(['cd "$X" && echo x > out.txt', 'cd "$X" && rm -f build/out.js', 'cd "$X" && npm test', 'cd "$X" && echo x > /tmp/out.txt'])(
+  it.each(['cd "$X" && npm test', 'cd "$X" && echo x > /tmp/out.txt'])(
     'should allow %s',
     (cmd) => {
       expect(fromSrc(cmd)).toBeNull();
@@ -341,4 +344,61 @@ describe('protected-path rule: a recursive write to a folder known only when it 
       expect(refusal?.reason).toContain('name its folder literally');
     },
   );
+});
+
+/**
+ * @behavior Any agent's write through `~` or `$HOME` in a call that also sets HOME is refused: the
+ *   folder HOME names could be a protected one (`HOME=<repo>/.git; echo x > ~/config`). Writes
+ *   through `~` in a call that leaves HOME alone, and writes to other unknown paths, are unchanged.
+ * @business-rule R-253 / R-266 round 3 (C): a reassigned HOME must not hide a write to a protected path.
+ */
+describe('protected-path rule: a write through a HOME the call sets', () => {
+  it.each([
+    'HOME=/work/repo/.git; echo x > ~/config',
+    'export HOME=/work/repo/.git && echo x > "$HOME/config"',
+    'HOME=/work/repo/.git; cp /tmp/a ~/hooks/pre-commit',
+  ])('should refuse `%s`', (cmd) => {
+    expect(checkBash(cmd)?.rule).toBe('protected-path');
+  });
+
+  it('should leave a call that does not set HOME, and other unknown writes, as before', () => {
+    expect(checkBash('echo x > ~/notes.txt')).toBeNull();
+    expect(checkBash('echo x > "$OUT/f"')).toBeNull();
+  });
+});
+
+/**
+ * @behavior Every agent's write to ~/.oss/node-path (the node the plugin's hooks run, written at
+ *   SessionStart) is refused: a redirect, cp, tee, ln -sf, the edit tools, through `~`, `$HOME`, the
+ *   expanded home folder and a link that resolves to it. The rest of ~/.oss stays writable.
+ * @business-rule R-266 round 7 (user pick): the hooks' node is protected for every agent; only
+ *   that one path, not all of ~/.oss.
+ */
+describe('protected-path rule: ~/.oss/node-path', () => {
+  it.each([
+    'echo /tmp/evil > ~/.oss/node-path',
+    'echo /tmp/evil > "$HOME/.oss/node-path"',
+    `echo /tmp/evil > ${HOME}/.oss/node-path`,
+    'cp /tmp/evil ~/.oss/node-path',
+    'echo /tmp/evil | tee ~/.oss/node-path',
+    'ln -sf /tmp/evil ~/.oss/node-path',
+  ])('should refuse `%s`', (cmd) => {
+    expect(checkBash(cmd)?.rule).toBe('protected-path');
+  });
+
+  it('should refuse a write through a link that resolves to it', () => {
+    const paths = linkedDisk({ '/tmp/np': `${HOME}/.oss/node-path` });
+    expect(checkBash('echo x > /tmp/np', paths)?.rule).toBe('protected-path');
+    expect(checkEdit('Write', '/tmp/np', paths)?.rule).toBe('protected-path');
+  });
+
+  it.each(['Edit', 'Write', 'MultiEdit'])('should refuse %s on it', (tool) => {
+    expect(checkEdit(tool, `${HOME}/.oss/node-path`)?.rule).toBe('protected-path');
+    expect(checkEdit(tool, '~/.oss/node-path')?.rule).toBe('protected-path');
+  });
+
+  it('should still allow writing the other ~/.oss files', () => {
+    expect(checkBash('echo {} > ~/.oss/config.json')).toBeNull();
+    expect(checkEdit('Write', `${HOME}/.oss/config.json`)).toBeNull();
+  });
 });

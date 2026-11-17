@@ -125,6 +125,19 @@ printf '{"permissions":{"allow":["WebSearch"]}}\n' > "$TMPDIR_6/.claude/settings
 grep -qF '"Bash(~/.oss/hooks/oss-claude-md-template.sh:*)"' "$TMPDIR_6/.claude/settings.local.json" && pass "Merged file allows oss-claude-md-template.sh" || fail "Merged file does not allow oss-claude-md-template.sh"
 rm -rf "$TMPDIR_6"
 
+# --- Test 7: the status-line settings hook is allowed (R-266) ---
+# @behavior /oss:login turns on the OSS status line with no approval prompt.
+# @business-rule oss-statusline-settings.sh takes no arguments and only merges the fixed OSS statusLine into
+#           ~/.claude/settings.json; allowing it lets no prompt choose what is written or where.
+echo "Test 7: Allows ~/.oss/hooks/oss-statusline-settings.sh (fresh and merged)"
+TMPDIR_7=$(mktemp -d)
+"$SETUP_SCRIPT" "$TMPDIR_7"
+grep -qF '"Bash(~/.oss/hooks/oss-statusline-settings.sh:*)"' "$TMPDIR_7/.claude/settings.local.json" && pass "Fresh file allows oss-statusline-settings.sh" || fail "Fresh file does not allow oss-statusline-settings.sh"
+printf '{"permissions":{"allow":["WebSearch"]}}\n' > "$TMPDIR_7/.claude/settings.local.json"
+"$SETUP_SCRIPT" "$TMPDIR_7"
+grep -qF '"Bash(~/.oss/hooks/oss-statusline-settings.sh:*)"' "$TMPDIR_7/.claude/settings.local.json" && pass "Merged file allows oss-statusline-settings.sh" || fail "Merged file does not allow oss-statusline-settings.sh"
+rm -rf "$TMPDIR_7"
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

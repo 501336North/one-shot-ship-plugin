@@ -17,7 +17,7 @@
  */
 
 import path from 'node:path';
-import { cpOperands, findStarts, type CommandPart } from '../command-reader.js';
+import { cpOperands, findStarts, plainWriterName, type CommandPart } from '../command-reader.js';
 import type { PathResolver } from '../path-resolver.js';
 import { escapeGlob, globPathOf, matchAnyPath, tailMayBeProtected } from '../patterns.js';
 import { awkFacts, longOption, runsScriptFile } from '../sed-awk.js';
@@ -26,9 +26,25 @@ import type { GateSettings } from '../rule-file.js';
 import { MAX_CALL_CHARS, UNKNOWN } from '../tokenize.js';
 import { tick } from '../deadline.js';
 import {
-  displayPath, holdsProtected, isProtected, isSameOrAncestor, isTooLong, patternReachesProtected, placesOf, TOO_LONG, type Places,
+  displayPath, holdsProtected, isProtected, isSameOrAncestor, isTooLong, LOST_CD_HINT, patternReachesProtected, placesOf, TOO_LONG, unfirm, type Places,
 } from './protected-path.js';
 import type { Refusal } from './refusal.js';
+
+/** Builtins that run their argument as a script later or in this shell: what it names is no file to read (round 17, PEN INFO). */
+const SCRIPT_LAUNCHERS = new Set(['trap', 'emulate', 'sched']);
+
+/** The script a launcher runs later, as written: trap's first operand, emulate's `-c` value, sched's command words. */
+function launchedScript(name: string, words: string[]): string {
+  const args = words.slice(1);
+  if (name === 'trap') return args[args[0] === '--' ? 1 : 0] ?? '';
+  if (name === 'emulate') return args[args.indexOf('-c') + 1] ?? '';
+  return args.slice(args.findIndex((a) => !a.startsWith('-')) + 1).join(' ');
+}
+
+/** A text cut to about 60 characters for a refusal (round 18). */
+function shortened(text: string): string {
+  return text.length > 60 ? `${text.slice(0, 59)}…` : text;
+}
 
 /**
  * Programs that only read the paths they name (a code constant, not a rule value: it is what
@@ -130,7 +146,7 @@ const QUOTES = new Set(["'", '"', '`']);
  * `find . -name tool-gates.json -delete` reaches the protected files without naming them.
  */
 function foundPath(part: CommandPart, ctx: Context, dir: string): string | null {
-  if (part.name !== 'find') return null;
+  if (plainWriterName(part.name ?? '') !== 'find') return null;
   const writing = WRITING_OPTIONS.get('find') ?? [];
   if (!part.words.slice(1).some((w) => writing.includes(w))) return null;
   const starts = findStarts(part.words.slice(1)).map((start) => joinRaw(dir, expandTilde(start, ctx.home)));
@@ -180,7 +196,8 @@ function expandTilde(p: string, home: string): string {
   return p.startsWith('~/') ? home + p.slice(1) : p;
 }
 
-function isRootOrAbove(absPath: string, places: Places[]): boolean {
+function isRootOrAbove(given: string, places: Places[]): boolean {
+  const absPath = unfirm(given);
   return places.some((at) => {
     const ci = at.caseInsensitive === true;
     return isSameOrAncestor(absPath, at.root, ci) || isSameOrAncestor(absPath, at.home, ci);
@@ -396,20 +413,83 @@ export function checkCallSize(parts: CommandPart[]): Refusal | null {
 }
 
 /**
- * After a `cd` the gate can't follow, a relative word or literal could name a file in any folder, a
+ * Options whose value is a file the program writes (`-o out`, `-so out`, `-oout`, `--output=out`):
+ * after a `cd` the gate can't follow, these values are real writes (R-266 round 11, D-R11-1). Matched
+ * by name in any letter case, with one dash or two, dashes and underscores inside the name ignored
+ * (round 12, CR M1: `--outputFile`, `-coverprofile=`, `--outFile`, `--junitxml`; round 13: `--output_file`).
+ */
+const OUTPUT_NAMES = new Set([
+  'out', 'output', 'outfile', 'outputfile', 'outdir', 'outputdir', 'report', 'reportpath', 'junit', 'junitxml', 'coverprofile',
+  'dest', 'write', 'logfile', 'outputpath', 'reportdir', 'coveragedir', 'declarationdir',
+]);
+const OUTPUT_OPTION = /^--?([A-Za-z][A-Za-z_-]*)(?:=([\s\S]*))?$/;
+/** Short options that make one program write the files it is given (round 13, CR M1 leftovers): `prettier -w`. */
+const PROGRAM_WRITE_OPTIONS: ReadonlyMap<string, readonly string[]> = new Map([['prettier', ['-w']]]);
+const OUTPUT_SHORT = /^-[A-Za-z]*o$/;
+const OUTPUT_ATTACHED = /^-o(.+)$/;
+
+/** A value an output option names, and whether it names a folder the program writes into (a `*dir` option). */
+interface OutputValue {
+  value: string;
+  folder: boolean;
+}
+
+/** The output option's normalized name, when the word is one: `--outputFile` → `outputfile`. */
+function outputName(word: string): { name: string; value: string | undefined } | null {
+  const match = OUTPUT_OPTION.exec(word);
+  if (match === null) return null;
+  const name = match[1].toLowerCase().replace(/[-_]/g, '');
+  return OUTPUT_NAMES.has(name) ? { name, value: match[2] } : null;
+}
+
+/**
+ * The values of the output options among the words, and the files given to a program run with an
+ * option that makes it write them (`prettier --write`, `eslint --fix`): the bare options of the
+ * settings file's `reviewWriteOptions` (round 12, CR M1).
+ */
+function outputValues(words: string[], settings: GateSettings): OutputValue[] {
+  const values: OutputValue[] = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    const named = outputName(w);
+    if (named !== null) {
+      const value = named.value ?? (i + 1 < words.length ? words[++i] : undefined);
+      if (value !== undefined) values.push({ value, folder: named.name.endsWith('dir') });
+    } else if (OUTPUT_SHORT.test(w) && i + 1 < words.length) values.push({ value: words[++i], folder: false });
+    else if (OUTPUT_ATTACHED.test(w)) values.push({ value: w.slice(2), folder: false });
+  }
+  const writeOptions = (settings.reviewWriteOptions ?? []).filter((o) => o.startsWith('-') && !o.includes(' '));
+  const programOptions = words.flatMap((w) => PROGRAM_WRITE_OPTIONS.get(path.basename(w)) ?? []);
+  if (words.some((w) => writeOptions.includes(w) || programOptions.includes(w))) {
+    values.push(...words.slice(1).filter((w) => !w.startsWith('-')).map((value) => ({ value, folder: false })));
+  }
+  return values;
+}
+
+/**
+ * After a `cd` the gate can't follow, a relative path a part writes could land in any folder, a
  * protected one included: the first one whose relative path could end a protected path (by a name
  * the protected path is named by, as the protected-path rule's tail check does), else null (fix round 4, K2).
+ * Only real writes count (R-266 round 11, D-R11-1): the values of output options and the literals of
+ * an interpreter's script; a read-only argument (a test file given to a test runner) does not.
  * Programs that may run in a protected folder (`mkdir`, `git add`) are left out, as there.
  */
-function lostTailNamed(part: CommandPart, words: string[], ctx: Context): string | null {
+function lostTailNamed(part: CommandPart, written: OutputValue[], ctx: Context): string | null {
   if (part.lostDir === null || part.name === null || safeInProtectedFolder(part, part.name)) return null;
   // A bare name with no `.` or `/` (`config`, `HEAD`) is far more often a word than a file (`git
   // config`, `make config`); the protected-path rule still checks the files a part writes by any name.
-  const relative = words.filter(
-    (w) => /[./]/.test(w) && !w.startsWith('-') && !w.startsWith('~') && !path.isAbsolute(w) && !w.includes(UNKNOWN),
+  // A folder an option names is one the program writes into (`--outdir=hooks`): what it may hold counts.
+  const relative = written.filter(
+    ({ value: w, folder }) => (folder || /[./]/.test(w)) && !w.startsWith('-') && !w.startsWith('~') && !path.isAbsolute(w) && !w.includes(UNKNOWN),
   );
-  const globOf = (w: string): string => part.globs.get(w) ?? escapeGlob(w);
-  return relative.find((w) => ctx.places.some((at) => tailMayBeProtected(globOf(w), ctx.settings.protectedPaths, at, part.dotGlob))) ?? null;
+  const globOf = ({ value, folder }: OutputValue): string => {
+    const glob = part.globs.get(value) ?? escapeGlob(value);
+    return folder ? `${glob.replace(/\/+$/, '')}/*` : glob;
+  };
+  // A folder known by no pattern could itself be any protected folder, so what its `/**` covers counts
+  // too (round 10); not for a URL, or for git, which names keys and refs, not files in its folder.
+  const contents = (w: string): boolean => part.lostDir?.pattern === null && part.git === null && !w.includes('://');
+  return relative.find((w) => ctx.places.some((at) => tailMayBeProtected(globOf(w), ctx.settings.protectedPaths, at, part.dotGlob, contents(w.value))))?.value ?? null;
 }
 
 export function checkProtectedPathMention(
@@ -467,10 +547,23 @@ export function checkProtectedPathMention(
   const named =
     words.flatMap(valuesOf).map((w) => namedPath(w, dir, ctx, !FOLDER_MAKERS.has(name))).find((p) => p !== null) ??
     words.map((w) => namedPattern(part, w, dir, ctx)).find((p) => p !== null) ??
-    namedInScript(literals, dir, ctx) ??
-    lostTailNamed(part, [...words.flatMap(valuesOf), ...literals], ctx);
+    namedInScript(literals, dir, ctx);
+  const lostNamed = named === null ? lostTailNamed(part, [...outputValues(words, settings), ...literals.map((value) => ({ value, folder: false }))], ctx) : null;
+  if (lostNamed !== null) {
+    return {
+      rule: 'protected-path-mention',
+      reason: `Refused: \`${name}\` names \`${lostNamed}\` after \`${part.lostDir?.why}\`, in a folder the gate can't follow, where it could be a protected path. Instead, ${LOST_CD_HINT}, or ask the user to run it with \`!\`.`,
+    };
+  }
   if (named === null) return null;
   const shown = path.isAbsolute(named) ? displayPath(named, root, home) : named;
+  // round 17, PEN INFO: a script a launcher runs later is no file to read; the hint would name the script as one
+  if (SCRIPT_LAUNCHERS.has(name)) {
+    return {
+      rule: 'protected-path-mention',
+      reason: `Refused: \`${name}\` runs a script that names a protected path: \`${shortened(launchedScript(name, part.words))}\`. Ask the user to run it with \`!\`.`,
+    };
+  }
   return {
     rule: 'protected-path-mention',
     reason: `Refused: \`${name}\` names \`${shown}\`, a protected path, and only read-only programs may. To read it, use the Read tool or \`cat ${shown} | ${name}\`. Ask the user to run it with \`!\`.`,

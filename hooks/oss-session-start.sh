@@ -96,6 +96,7 @@ HOOKS_TO_COPY=(
     "oss-api-curl.sh"             # sourced by oss-notify.sh, oss-iron-laws-sync.sh and oss-decisions-policy.sh: API key via curl stdin
     "oss-decisions-policy.sh"     # /oss:settings decisions off|on|status; sources oss-api-curl.sh; NOT allowlisted (changes a team setting)
     "oss-statusline.sh"
+    "oss-statusline-settings.sh"  # /oss:login step 3: merges the status line into ~/.claude/settings.json (R-266)
     "oss-detect-playwright.sh"
     "ensure-decrypt-cli.sh"
     "oss-decrypt-checksums.txt"   # committed hash manifest ensure-decrypt-cli.sh verifies against

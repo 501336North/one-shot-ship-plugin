@@ -1,5 +1,6 @@
 ---
 name: figma-design-agent
+tools: "*"
 description: Reads and interprets Figma designs via MCP for pixel-perfect implementation
 model_routing: true
 context: fork

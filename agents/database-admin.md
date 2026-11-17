@@ -1,5 +1,6 @@
 ---
 name: database-admin
+tools: "*"
 description: Manage database operations, backups, replication, and monitoring. Handles user permissions, maintenance tasks, and disaster recovery. Use PROACTIVELY for database setup, operational issues, or recovery procedures.
 ---
 

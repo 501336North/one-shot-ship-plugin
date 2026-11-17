@@ -25,12 +25,13 @@ const SETTINGS: GateSettings = {
   sourceExtensions: [],
   protectedPaths: [],
   productionHosts: [],
+  gateAgents: [],
   tagsAllowed: true,
 };
 
 /** A git reader where each directory is on the given branch (null = detached or not a repo). */
 function gitOn(branches: Record<string, string | null>): GitReader & { currentBranch: ReturnType<typeof vi.fn> } {
-  return { currentBranch: vi.fn(async (dir: string) => branches[dir] ?? null) };
+  return { currentBranch: vi.fn(async (dir: string) => branches[dir] ?? null), wouldClean: async () => null };
 }
 
 function partsOf(cmd: string): CommandPart[] {
@@ -440,14 +441,14 @@ describe('protected-branch rule: commands that move history on a protected branc
 
 describe('protected-branch rule: vouching for repositories within one call (fix round 4, K8, item 4)', () => {
   it('asks about each folder once per call, however many parts commit there', () => {
-    const trust = vi.fn(() => 'trusted' as const);
+    const trust = vi.fn((_dir: string) => 'trusted' as const);
     const trustOf = trustForCall(trust);
     for (const part of partsOf('(cd a && git commit -m x); (cd a && git commit -m y); git push origin feat/x')) checkRepoTrust(part, trustOf);
     expect(trust.mock.calls.map(([dir]) => dir)).toEqual([`${CWD}/a`, CWD]);
   });
 
   it('refuses, as too complex (OverBudget), git in a folder path over 4096 characters', () => {
-    const trust = vi.fn(() => 'trusted' as const);
+    const trust = vi.fn((_dir: string) => 'trusted' as const);
     expect(() => trustForCall(trust)(`${CWD}/${'g'.repeat(4100)}`)).toThrow(OverBudget);
     expect(trust).not.toHaveBeenCalled();
   });

@@ -76,6 +76,8 @@ function riskIn(part: CommandPart, settings: GateSettings, places: Places[], hom
   const { name } = part;
   if (name === 'git' && part.git !== null && GIT_WRITES.has(part.git.subcommand)) return `runs \`git ${part.git.subcommand}\``;
   if (name !== null && (INTERPRETERS.has(name) || PYTHON.test(name))) return `runs \`${name}\``;
+  // round 16, SEC HIGH-1: a trap, emulate -c or sched script, or a zsh function, the gate can't read in full runs like eval's text
+  if (part.hiddenScript !== undefined) return part.hiddenScript;
   // a sed or awk script that runs (or writes) what the gate can't read is an interpreter too
   if (scriptFactsOf(name, part.words.slice(1))?.unreadable != null) return `runs a \`${name}\` script the gate can't read`;
   const dir = part.git?.dir ?? part.cwd;

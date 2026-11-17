@@ -17,7 +17,7 @@ const HOME = '/home/dev';
 
 function tokensOf(cmd: string): Token[] {
   const result = tokenize(cmd, HOME);
-  if (!('tokens' in result)) {
+  if ('unreadable' in result) {
     throw new Error(`expected a readable command, got unreadable: ${result.reason}`);
   }
   return result.tokens;

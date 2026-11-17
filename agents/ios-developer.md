@@ -1,5 +1,6 @@
 ---
 name: ios-developer
+tools: "*"
 description: Expert iOS developer specializing in Swift 5.9+/6.0, SwiftUI, and UIKit. Masters @Observable patterns, Swift concurrency (actors, async/await, Sendable), SwiftData, MVVM architecture, and Instruments profiling. Use PROACTIVELY for iOS development, Swift programming, and native Apple platform work.
 ---
 

@@ -140,6 +140,7 @@ describe('unreadable rule: a wildcard word judged on its text (fix round 4, K2)'
     sourceExtensions: [],
     protectedPaths: ['.oss/tool-gates.json', '.oss/tool-gates/**', '~/.claude/settings*.json'],
     productionHosts: [],
+    gateAgents: [],
     tagsAllowed: true,
   };
   const ROOT = '/work/repo';
@@ -176,6 +177,7 @@ describe('unreadable rule: a sed or awk script that runs a command the gate cann
     sourceExtensions: [],
     protectedPaths: ['.oss/tool-gates.json'],
     productionHosts: [],
+    gateAgents: [],
     tagsAllowed: true,
   };
   const check = (cmd: string) => {
@@ -202,6 +204,7 @@ describe('unreadable rule: a sed script or interpreter script only known when it
     sourceExtensions: [],
     protectedPaths: ['.oss/tool-gates.json'],
     productionHosts: [],
+    gateAgents: [],
     tagsAllowed: true,
   };
   const read = (cmd: string) => readCommand(cmd, '/work/repo', '/home/dev');

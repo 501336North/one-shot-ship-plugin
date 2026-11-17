@@ -1,5 +1,6 @@
 ---
 name: seo-aeo-expert
+tools: "*"
 description: World-class SEO/AEO specialist mastering search engine optimization, answer engine optimization, schema markup, Core Web Vitals, and E-E-A-T enhancement. Automatically optimizes frontend work for both traditional search engines and AI-powered answer engines.
 model: haiku
 ---

@@ -43,9 +43,19 @@ have=$(cd "$ROOT/agents" && grep -l '^## Step 2\.5' *.md | sed 's/\.md$//' | sor
 want=$(printf '%s\n' $AGENTS | sort | tr '\n' ' ')
 [[ "$have" == "$want" ]] && pass "exactly the 14 routable agents carry Step 2.5" \
     || fail "exactly the 14 routable agents carry Step 2.5" "missing: $(comm -13 <(printf '%s\n' $have) <(printf '%s\n' $want) | tr '\n' ' ') extra: $(comm -23 <(printf '%s\n' $have) <(printf '%s\n' $want) | tr '\n' ' ')"
+GATE="code-reviewer security-auditor penetration-tester"
+RO1='it can read files in the current repo but has no edit tools, and$'
+RW1='it can read and edit files in the current repo, but cannot run'
+RO2='^   cannot run commands, use the web or use MCP tools\.$'
+RW2='   commands, use the web or use MCP tools.'
 ref=''; diffs=''
 for a in $AGENTS; do
     s=$(step "$a" | sed "s/oss:$a/oss:<agent>/g")
+    # A review (gate) agent's offload has no edit tools (Task 13), and its step says so.
+    case " $GATE " in *" $a "*)
+        grep -q "$RO1" <<<"$s" || { diffs="$diffs $a(no read-only line)"; continue; }
+        s=$(sed -e "s/$RO1/$RW1/" -e "s/$RO2/$RW2/" <<<"$s") ;;
+    esac
     [[ -n "$s" ]] || { diffs="$diffs $a(no step)"; continue; }
     [[ -z "$ref" ]] && { ref=$s; continue; }
     [[ "$s" == "$ref" ]] || diffs="$diffs $a"

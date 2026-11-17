@@ -13,6 +13,19 @@ import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 
 const AGENTS_DIR = join(__dirname, '..', '..', '..', 'agents');
+const TOOL_GATES = join(__dirname, '..', '..', '..', 'config', 'tool-gates.json');
+
+/** Review agents (R-266 gateAgents): their offloaded model has no edit tools (US-004). */
+const gateAgents = new Set(
+  (JSON.parse(readFileSync(TOOL_GATES, 'utf-8')) as { gateAgents: string[] }).gateAgents,
+);
+
+// The one sentence that differs: what the offloaded model may do with the repo.
+const READ_ONLY =
+  'it can read files in the current repo but has no edit tools, and\n   cannot run commands, use the web or use MCP tools.';
+const READ_EDIT =
+  'it can read and edit files in the current repo, but cannot run\n   commands, use the web or use MCP tools.';
+const TOOLS_PLACEHOLDER = '<offload-tools>';
 
 const offloadAgents = readdirSync(AGENTS_DIR)
   .filter((f) => f.endsWith('.md'))
@@ -66,8 +79,30 @@ describe('Local-model offload step safety (T71)', () => {
     });
   });
 
-  it('is identical across agents apart from the agent id', () => {
-    const normalized = offloadAgents.map((agent) => offloadStep(agent).split(`oss:${agent}`).join('oss:<agent>'));
+  it('tells review agents their offloaded model is read-only, and builders it can read and edit', () => {
+    const reviewers = offloadAgents.filter((agent) => gateAgents.has(agent));
+    expect(reviewers.length).toBeGreaterThan(0);
+    for (const agent of offloadAgents) {
+      const step = offloadStep(agent);
+      if (gateAgents.has(agent)) {
+        expect(step, agent).toContain(READ_ONLY);
+        expect(step, agent).not.toContain(READ_EDIT);
+      } else {
+        expect(step, agent).toContain(READ_EDIT);
+        expect(step, agent).not.toContain(READ_ONLY);
+      }
+    }
+  });
+
+  it('is identical across agents apart from the agent id and the read-only sentence', () => {
+    const normalized = offloadAgents.map((agent) =>
+      offloadStep(agent)
+        .split(`oss:${agent}`)
+        .join('oss:<agent>')
+        .split(gateAgents.has(agent) ? READ_ONLY : READ_EDIT)
+        .join(TOOLS_PLACEHOLDER),
+    );
+    for (const text of normalized) expect(text).toContain(TOOLS_PLACEHOLDER);
     for (const text of normalized) expect(text).toBe(normalized[0]);
   });
 });

@@ -1,5 +1,6 @@
 ---
 name: architecture-auditor
+tools: "*"
 description: Software architecture and design pattern specialist. Use PROACTIVELY when adding new features, refactoring code, or reviewing system design. MUST BE USED for architectural decisions and major code structure changes.
 model: opus
 context: fork

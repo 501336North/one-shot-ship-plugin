@@ -1,5 +1,6 @@
 ---
 name: dependency-analyzer
+tools: "*"
 description: Analyzes project dependencies, identifies conflicts, and manages dependency updates for optimal project health.
 model: haiku
 ---

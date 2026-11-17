@@ -148,12 +148,22 @@ ov "$V" dir; vout="$OUT"; ov "$X" dir
     && pass "7b: a repo whose .git file points at another repo's git dir gets its own folder" \
     || fail "7b: a repo whose .git file points at another repo's git dir gets its own folder" "rc=$RC victim='$vout' gitfile repo='$OUT'"
 
-# --- 7c. a failed git lookup is refused, not hashed as empty input (R1-4) ---------------------
-newhome; newrepo; REAL_GIT=$(command -v git); mkdir -p "$T/gitfail"
-printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = --absolute-git-dir ] && exit 128; done\nexec "%s" "$@"\n' "$REAL_GIT" > "$T/gitfail/git"; chmod +x "$T/gitfail/git"
-OV_PATH="$T/gitfail:$PATH" ov "$R" dir
-refused "7c: a failed git-dir lookup is refused"
-[[ -z "$(ls -A "$H/.oss/run" 2>/dev/null)" ]] && pass "7c: no key folder is created from a failed lookup" || fail "7c: no key folder is created from a failed lookup" "$(ls -A "$H/.oss/run")"
+# --- 7c. git, rm, mkdir, date, tr, head and cut come from fixed paths, never PATH (CR L1, sec LOW-2) ----
+# A fake one first on PATH (here: one that fails, so any use shows) never runs: dir still keys the repo,
+# read still reads, the value is still deleted.
+newhome; newrepo; mkdir -p "$T/fakes7c"
+for t in git rm mkdir date tr head cut; do
+    printf '#!/bin/sh\necho %s >> "%s/fakes7c.ran"\nexit 1\n' "$t" "$T" > "$T/fakes7c/$t"; chmod +x "$T/fakes7c/$t"
+done
+OV_PATH="$T/fakes7c:$PATH" ov "$R" dir
+[[ "$RC" == 0 && "$OUT" == "$H/.oss/run/$(key_of "$R")" && ! -e "$T/fakes7c.ran" ]] \
+    && pass "7c: dir runs no git, rm, mkdir, date, tr, head or cut from PATH" \
+    || fail "7c: dir runs no git, rm, mkdir, date, tr, head or cut from PATH" "rc=$RC out=$OUT ran=$(cat "$T/fakes7c.ran" 2>&1)"
+printf 'build\n' > "$OUT/workflow.txt"; VD7="$OUT"
+OV_PATH="$T/fakes7c:$PATH" ov "$R" read workflow
+[[ "$RC" == 0 && "$OUT" == build && ! -e "$VD7/workflow.txt" && ! -e "$T/fakes7c.ran" ]] \
+    && pass "7c: read runs no rm, tr, head, cut or date from PATH" \
+    || fail "7c: read runs no rm, tr, head, cut or date from PATH" "rc=$RC out=$OUT err=$ERR ran=$(cat "$T/fakes7c.ran" 2>&1)"
 
 # --- 7d. a HOME that is not absolute is refused (ship round 2, R2-4) --------------------------
 # A relative HOME would put ~/.oss/run (and the value files) inside whatever folder the cwd is.
@@ -691,6 +701,85 @@ ove "$NLD" error cmd:build
 [[ "$RC" == 0 && -s "$NLD/.oss/workflow.log" && ! -e "$A/.oss/workflow.log" ]] \
     && pass "24: error from that folder lands in that folder's .oss, not the repo's" \
     || fail "24: error from that folder lands in that folder's .oss, not the repo's" "rc=$RC err=$ERR"
+
+# --- 25. review-repo: the ship names one more repo for this session's review-run check (R-266) ----
+# @behavior The main agent writes one absolute repo path to repo.txt in the value folder, then runs
+#           `oss-value.sh review-repo`: the plugin's gate-run add-repo flow records it for this session
+#           (CLAUDE_CODE_SESSION_ID), so review runs check that repo too. One fixed line on success; a
+#           refusal reason on failure, never the path itself.
+# @business-rule A review is void when any repo the ship relies on changes during it; the path is a
+#           value file, never a command-line word (G21).
+# Runs the REAL watcher/dist/cli/gate-run.cjs through ~/.oss/plugin-root (= this checkout), with the
+# node recorded in ~/.oss/node-path (the plugin's hooks/oss-node.sh), never PATH's node: a fake node a
+# review agent placed first on PATH must not run (security C1). No usable node: refused, naming it.
+RR_SID=rr-session
+RR_NODE="$(node -p 'require("fs").realpathSync(process.execPath)')"
+RR_PATH="$PATH"
+ovr() {   # ovr <cwd> [session id]: review-repo with only that session id; sets OUT, ERR, RC
+    local cwd="$1" sid="${2-$RR_SID}"
+    OUT=$(cd "$cwd" && env -u CLAUDE_PLUGIN_ROOT -u CLAUDE_PROJECT_DIR -u CLAUDE_CODE_SESSION_ID ${sid:+CLAUDE_CODE_SESSION_ID="$sid"} HOME="$H" PATH="$RR_PATH" "$SH" "$SCRIPT" review-repo 2>"$T/err" </dev/null); RC=$?
+    ERR=$(cat "$T/err")
+}
+setup_rr() {   # -> H with a plugin root, R (cwd repo) with its value folder VD, TGT (the repo to name)
+    newhome; mkdir -p "$H/.oss"; printf '%s\n' "$ROOT" > "$H/.oss/plugin-root"
+    printf '%s\n' "$RR_NODE" > "$H/.oss/node-path"
+    newrepo; TGT="$R"; newrepo
+    VD=$(cd "$R" && HOME="$H" "$SH" "$SCRIPT" dir)
+}
+rr_repos() { cat "$H/.oss/gate-state/$RR_SID/repos.json" 2>/dev/null; }
+
+setup_rr; printf '%s\n' "$TGT" > "$VD/repo.txt"; ovr "$R"
+[[ "$RC" == 0 && "$OUT" == "review repo added: $TGT" && ! -e "$VD/repo.txt" && "$(rr_repos)" == "[\"$TGT\"]" ]] \
+    && pass "25: review-repo records repo.txt's repo for this session, echoes the top folder it added, deletes repo.txt" \
+    || fail "25: review-repo records repo.txt's repo for this session, echoes the top folder it added, deletes repo.txt" "rc=$RC out=$OUT err=$ERR repos=$(rr_repos)"
+setup_rr; printf '%s\n' "$TGT" > "$VD/repo.txt"; ovr "$R"
+[[ "$RC" == 0 && "$OUT" == "review repo added: $(cd -P "$TGT" && pwd -P)" ]] \
+    && pass "25: the folder echoed is the repo top the check recorded" \
+    || fail "25: the folder echoed is the repo top the check recorded" "rc=$RC out=$OUT"
+setup_rr; printf '%s' "$TGT" > "$VD/repo.txt"; ovr "$R"
+[[ "$RC" == 0 && "$(rr_repos)" == "[\"$TGT\"]" ]] && pass "25: review-repo takes a path with no trailing newline" \
+    || fail "25: review-repo takes a path with no trailing newline" "rc=$RC err=$ERR"
+
+rr_refused() {   # <name>: refused, nothing printed on stdout, repo.txt gone, nothing recorded, no path echoed
+    if [[ "$RC" == 0 || "$RC" == 126 || "$RC" == 127 || -n "$OUT" ]]; then fail "$1" "rc=$RC out=$OUT err=$ERR"
+    elif [[ -e "$VD/repo.txt" || -n "$(rr_repos)" && "$(rr_repos)" != "[]" ]]; then fail "$1" "repo.txt kept or repo recorded: $(rr_repos)"
+    elif [[ "$ERR" == *ZQXMARK* || -z "$ERR" ]]; then fail "$1" "no reason, or the path echoed: $ERR"
+    else pass "$1"; fi
+}
+setup_rr; mkdir -p "$TGT/sub-ZQXMARK"; printf '%s\n' "$TGT/sub-ZQXMARK" > "$VD/repo.txt"; ovr "$R"
+rr_refused "25: review-repo refuses a folder that is not a repo top, and never echoes the path"
+setup_rr; printf 'rel/ZQXMARK\n' > "$VD/repo.txt"; ovr "$R"
+rr_refused "25: review-repo refuses a relative path"
+setup_rr; printf "%s/q'ZQXMARK\n" "$TGT" > "$VD/repo.txt"; ovr "$R"
+rr_refused "25: review-repo refuses a path with a ' in it"
+setup_rr; printf '%s\n\n' "$TGT" > "$VD/repo.txt"; ovr "$R"
+rr_refused "25: review-repo refuses more than one trailing newline"
+setup_rr; printf '%s\n/ZQXMARK\n' "$TGT" > "$VD/repo.txt"; ovr "$R"
+rr_refused "25: review-repo refuses two paths"
+setup_rr; printf '%s\tZQXMARK\n' "$TGT" > "$VD/repo.txt"; ovr "$R"
+rr_refused "25: review-repo refuses a control character"
+setup_rr; printf '%s\n' "$TGT" > "$VD/repo.txt"; ovr "$R" ""
+rr_refused "25: review-repo refuses without a session id"
+setup_rr; printf '%s\n' "$TGT" > "$VD/repo.txt"; ovr "$R" '../x'
+rr_refused "25: review-repo refuses a session id that is not a plain name"
+setup_rr; rm -f "$H/.oss/plugin-root"; printf '%s\n' "$TGT" > "$VD/repo.txt"; ovr "$R"
+rr_refused "25: review-repo refuses without a checked plugin root"
+setup_rr; ovr "$R"
+[[ "$RC" != 0 && -z "$OUT" && -n "$ERR" ]] && pass "25: review-repo refuses when repo.txt is missing" || fail "25: review-repo refuses when repo.txt is missing" "rc=$RC out=$OUT"
+setup_rr; ln -s "$T/elsewhere$N" "$VD/repo.txt"; printf '%s\n' "$TGT" > "$T/elsewhere$N"; ovr "$R"
+[[ "$RC" != 0 && -z "$(rr_repos)" ]] && pass "25: review-repo refuses a linked repo.txt" || fail "25: review-repo refuses a linked repo.txt" "rc=$RC repos=$(rr_repos)"
+RR_FAKE="$T/rr-fake-bin"; RR_RAN="$T/rr-fake-ran"; mkdir -p "$RR_FAKE"
+for t in node env rm tr head cut git mkdir date; do printf '#!/bin/sh\necho ran >> "%s"\nexit 0\n' "$RR_RAN" > "$RR_FAKE/$t"; chmod +x "$RR_FAKE/$t"; done
+setup_rr; printf '%s\n' "$TGT" > "$VD/repo.txt"; RR_PATH="$RR_FAKE:$PATH"; ovr "$R"; RR_PATH="$PATH"
+[[ "$RC" == 0 && "$OUT" == "review repo added: $TGT" && "$(rr_repos)" == "[\"$TGT\"]" && ! -e "$RR_RAN" ]] \
+    && pass "25: review-repo runs the node in ~/.oss/node-path, never a fake node, env, rm, tr, head, cut, git, mkdir or date first on PATH" \
+    || fail "25: review-repo runs the node in ~/.oss/node-path, never a fake node, env, rm, tr, head, cut, git, mkdir or date first on PATH" "rc=$RC out=$OUT err=$ERR repos=$(rr_repos) ran=$(cat "$RR_RAN" 2>&1)"
+rm -f "$RR_RAN"; setup_rr; rm -f "$H/.oss/node-path"; printf '%s\n' "$TGT" > "$VD/repo.txt"; RR_PATH="$RR_FAKE:$PATH"; ovr "$R"; RR_PATH="$PATH"
+rr_refused "25: review-repo with no ~/.oss/node-path is refused"
+[[ "$ERR" == *node-path* && ! -e "$RR_RAN" ]] && pass "25: the refusal names ~/.oss/node-path and PATH's node is never tried" \
+    || fail "25: the refusal names ~/.oss/node-path and PATH's node is never tried" "err=$ERR ran=$(cat "$RR_RAN" 2>&1)"
+setup_rr; printf '%s\n' "$TGT" > "$VD/repo.txt"; VD2=$(cd "$R" && HOME="$H" "$SH" "$SCRIPT" dir)
+[[ ! -e "$VD2/repo.txt" ]] && pass "25: dir clears a stale repo.txt" || fail "25: dir clears a stale repo.txt" "kept"
 
 echo
 echo "Results: $((RUN - FAILED))/$RUN passed, $FAILED failed"

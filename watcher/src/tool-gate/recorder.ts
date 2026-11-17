@@ -97,7 +97,8 @@ function runResult(
 }
 
 export function recordTestRun(call: PostCall, ctx: RecordContext): void {
-  const facts = readCommand(call.command, call.cwd, ctx.home);
+  // a test command is matched by its own words: the call's variables are not followed (round 12, CR L4)
+  const facts = readCommand(call.command, call.cwd, ctx.home, false, undefined, undefined, undefined, false);
   if ('unreadable' in facts) return;
   const previous = ctx.store.readCycle();
   const thisBuild: Pick<CycleRecord, 'files' | 'adoptedCommand'> =
