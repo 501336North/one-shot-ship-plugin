@@ -6,7 +6,16 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-import { fetchCredentials, fetchEncryptedPrompt, fetchCustomPrompt } from '../src/api-client.js';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http';
+import type { AddressInfo } from 'net';
+
+import {
+  PROMPT_FETCH_TIMEOUT_MS,
+  PROMPT_MAX_BYTES,
+  fetchCredentials,
+  fetchEncryptedPrompt,
+  fetchCustomPrompt,
+} from '../src/api-client.js';
 
 // Keep the real fetch so header-validation tests run undici's own checks
 const realFetch = globalThis.fetch;
@@ -383,6 +392,146 @@ describe('API Client', () => {
       expect(message).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
       expect(message).toContain('bad');
       expect(message).toContain('red');
+    });
+  });
+
+  /**
+   * @behavior A server that never answers cannot hang an /oss command forever
+   * @business-rule R-273 ship round 1: the prompt fetch gives up after PROMPT_FETCH_TIMEOUT_MS (30 s) and says why
+   * @boundary HTTP (a local 127.0.0.1 server that accepts the request and never answers)
+   */
+  describe('prompt fetch timeout', () => {
+    let server: Server;
+    let apiUrl: string;
+
+    beforeEach(async () => {
+      global.fetch = realFetch;
+      server = createServer(() => {
+        // accept the request, never answer
+      });
+      await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
+      apiUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    });
+
+    afterEach(async () => {
+      global.fetch = mockFetch;
+      server.closeAllConnections();
+      await new Promise<void>(done => server.close(() => done()));
+    });
+
+    it('is 30 seconds', () => {
+      expect(PROMPT_FETCH_TIMEOUT_MS).toBe(30_000);
+    });
+
+    it('rejects with a clear reason when the server does not answer in time', async () => {
+      const error = await fetchEncryptedPrompt('ak_test', apiUrl, 'commands', 'plan', 200).then(
+        () => undefined,
+        (err: unknown) => err
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/did not answer/);
+    }, 10_000);
+  });
+
+  /**
+   * @behavior A keyed API call can neither hang an /oss command nor make it buffer an unbounded answer
+   * @business-rule R-273 ship round 2 (pen F4, F5): the credentials, prompt and custom prompt fetches each give up
+   *   after PROMPT_FETCH_TIMEOUT_MS (request and body), and refuse a body over PROMPT_MAX_BYTES (2 MiB: the
+   *   largest live prompt is 61,272 bytes, about 82 KB as encrypted base64 JSON, so 2 MiB is over 20x headroom)
+   * @boundary HTTP (a local 127.0.0.1 server)
+   */
+  describe('response size and time bounds', () => {
+    let server: Server;
+    let apiUrl: string;
+    let handle: (req: IncomingMessage, res: ServerResponse) => void;
+
+    beforeEach(async () => {
+      global.fetch = realFetch;
+      handle = () => undefined;
+      server = createServer((req, res) => handle(req, res));
+      await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
+      apiUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    });
+
+    afterEach(async () => {
+      global.fetch = mockFetch;
+      server.closeAllConnections();
+      await new Promise<void>(done => server.close(() => done()));
+    });
+
+    const OK_BODY = JSON.stringify({
+      userId: 'u', salt: 's', hardwareId: 'h', encrypted: 'e', iv: 'i', authTag: 'a',
+      prompt: 'p', name: 'n', displayName: 'd', isBlocking: false,
+    });
+
+    const calls: Array<[string, (timeoutMs?: number) => Promise<unknown>]> = [
+      ['fetchCredentials', (t) => fetchCredentials('ak_test', apiUrl, 'hw-1', t)],
+      ['fetchEncryptedPrompt', (t) => fetchEncryptedPrompt('ak_test', apiUrl, 'commands', 'plan', t)],
+      ['fetchCustomPrompt', (t) => fetchCustomPrompt('ak_test', apiUrl, 'deploy', t)],
+    ];
+
+    const outcome = (run: Promise<unknown>): Promise<unknown> => run.then(value => value, (err: unknown) => err);
+
+    it('the body cap is 2 MiB', () => {
+      expect(PROMPT_MAX_BYTES).toBe(2 * 1024 * 1024);
+    });
+
+    it.each(calls)('%s accepts a normal body', async (_name, call) => {
+      handle = (_req, res) => res.end(OK_BODY);
+
+      expect(await outcome(call())).not.toBeInstanceOf(Error);
+    });
+
+    it.each(calls)('%s refuses a body announced (Content-Length) as larger than the cap', async (_name, call) => {
+      handle = (_req, res) => {
+        res.writeHead(200, { 'Content-Length': String(PROMPT_MAX_BYTES + 1) });
+        res.end(Buffer.alloc(PROMPT_MAX_BYTES + 1, 0x20));
+      };
+
+      const error = await outcome(call());
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/larger than/);
+    });
+
+    it.each(calls)('%s refuses a streamed body that grows past the cap', async (_name, call) => {
+      handle = (_req, res) => {
+        res.writeHead(200);
+        const chunk = Buffer.alloc(64 * 1024, 0x20);
+        for (let sent = 0; sent <= PROMPT_MAX_BYTES; sent += chunk.length) res.write(chunk);
+        res.end();
+      };
+
+      const error = await outcome(call());
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/larger than/);
+    });
+
+    it.each(calls)('%s gives up with a clear reason when the server never answers', async (_name, call) => {
+      const error = await outcome(call(200));
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/did not answer/);
+    }, 5_000);
+
+    it.each(calls)('%s gives up with a clear reason when the body stops half-way', async (_name, call) => {
+      handle = (_req, res) => {
+        res.writeHead(200, { 'Content-Length': '1000' });
+        res.write('{"userId":');
+      };
+
+      const error = await outcome(call(200));
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/did not answer/);
+    }, 5_000);
+
+    it.each(calls)('%s gives up after PROMPT_FETCH_TIMEOUT_MS when no timeout is passed', async (_name, call) => {
+      handle = (_req, res) => res.end(OK_BODY);
+      const timeouts = vi.spyOn(AbortSignal, 'timeout');
+
+      await call();
+
+      expect(timeouts).toHaveBeenCalledWith(PROMPT_FETCH_TIMEOUT_MS);
     });
   });
 });
