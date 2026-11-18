@@ -467,6 +467,37 @@ describe('assembleShip: captured agent verdicts (T19)', () => {
     expect(r.blockers).toEqual(['gate:security']);
   });
 
+  // D24 (user pick 2026-11-18): ship's rule counts the round's fixes ("left unfixed at the end of the round");
+  // `fixed` comes from that round's timeline line.
+  function fixedCase(capturedVerdict: 'pass' | 'fail', findings: Record<string, number>, fixed: Record<string, number>): Record<string, unknown> {
+    gateLine({ round: 1, gate: 'code-review', verdict: 'pass' });
+    gateLine({ round: 1, gate: 'security', verdict: 'pass', fixed });
+    captured({ gate: 'security', verdict: capturedVerdict, findings: { ...ZERO, ...findings }, ts: '2026-11-13T09:10:00.000Z' });
+    return result(shipReview());
+  }
+
+  it('D24: captured high=2 all fixed on the timeline line gives pass, source agent, no blocker', () => {
+    const r = fixedCase('pass', { high: 2 }, { high: 2 });
+    expect(gatesOf(shipReview()).security).toMatchObject({ verdict: 'pass', source: 'agent', fixed: { ...ZERO, high: 2 } });
+    expect(r.blockers).toEqual([]);
+  });
+
+  it('D24: captured high=2 with one fixed gives fail', () => {
+    const r = fixedCase('pass', { high: 2 }, { high: 1 });
+    expect(gatesOf(shipReview()).security).toMatchObject({ verdict: 'fail', source: 'agent' });
+    expect(r.blockers).toEqual(['gate:security']);
+  });
+
+  it("D24: the agent's fail about a high finding that was fixed gives pass", () => {
+    fixedCase('fail', { high: 1 }, { high: 1 });
+    expect(gatesOf(shipReview()).security).toMatchObject({ verdict: 'pass', source: 'agent' });
+  });
+
+  it('D24: a fix counted under the wrong severity does not clear a critical finding', () => {
+    fixedCase('pass', { critical: 1 }, { high: 1 });
+    expect(gatesOf(shipReview()).security).toMatchObject({ verdict: 'fail', source: 'agent' });
+  });
+
   it('a captured fail with zero critical and high still fails', () => {
     gateLine({ round: 1, gate: 'code-review', verdict: 'pass' });
     gateLine({ round: 1, gate: 'security', verdict: 'pass' });

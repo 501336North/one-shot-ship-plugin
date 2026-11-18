@@ -60,6 +60,13 @@
   - If the recorded node was removed and PATH has a different one, the check exits 127 with one `node_missing` line telling the user to delete `~/.oss/node-path`. The complete gate refuses, Stop marks the phase unverified, and checkpoint counts 0.
   - Why: a verdict must never come from an unrecorded node. The cost is rare, since nvm switches and brew upgrades keep the recorded path usable.
   - Not chosen: re-recording PATH's node (a fake node could become the recorded one), and falling back with an unverified label.
+- D24 Captured-verdict gate rule (user picker 2026-11-18): **count the round's fixes**, as ship.md's rule says ("left unfixed at the end of the round").
+  - For a gate with a captured agent row: unfixed = max(0, critical − fixed.critical) + max(0, high − fixed.high), with `fixed` taken from that round's timeline line.
+  - unfixed > 0 → fail.
+  - Otherwise, if the agent reported any critical or high finding, all of them were fixed → pass. The agent's `fail` was about those findings.
+  - Otherwise the agent's own verdict counts.
+  - The fix count is model-claimed; the next round's re-review checks it.
+  - This replaces T19's first rule, "any critical or high finding fails", which would have forced an extra ship round whenever something serious was found and fixed.
 - D23 T20 owner (user picker 2026-11-18): **Ship R-257 now, T20 later**.
   - R-257 ships slice A plus T18–T28.
   - The recorder hash chain (D15) becomes an R-266 follow-up card, with its own one-shot security review, because it changes R-253/R-266's recorder (state-store.ts, oss-tool-gate.sh). The coordinator files it.

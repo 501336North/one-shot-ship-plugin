@@ -1087,8 +1087,10 @@ function assembleShip(ctx, opts) {
     const row = agentRow(raw2);
     const gate = row === null ? void 0 : byName.get(row.gate);
     if (row === null || gate === void 0 || !(row.at >= runStart)) continue;
-    const blocking = row.findings.critical + row.findings.high > 0;
-    byName.set(row.gate, { ...gate, verdict: blocking ? "fail" : row.verdict, findings: row.findings, source: "agent" });
+    const { critical, high } = row.findings;
+    const unfixed = Math.max(0, critical - gate.fixed.critical) + Math.max(0, high - gate.fixed.high);
+    const verdict = unfixed > 0 ? "fail" : critical + high > 0 ? "pass" : row.verdict;
+    byName.set(row.gate, { ...gate, verdict, findings: row.findings, source: "agent" });
   }
   for (const required of opts.requiredGates ?? DEFAULT_REQUIRED_GATES) {
     if (!byName.has(required)) return { ok: false, error: "gate_missing", detail: required };

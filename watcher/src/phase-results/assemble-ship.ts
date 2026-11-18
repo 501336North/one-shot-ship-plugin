@@ -8,7 +8,8 @@
  * Gates: the feature's timeline gate lines whose sha256 is in the ledger `gates/<feature>`, latest round only
  * (`source: model`). T19: a review agent's captured verdict (ledger `verdicts/<feature>`, verdict-capture.ts) written
  * at or after this run's start replaces that gate's verdict and findings (`source: agent`); `fixed` stays from the
- * line, and critical or high findings fail the gate whatever the block said (ship.md's rule).
+ * line. D24 (ship.md: "fail whenever critical or high findings ... are left unfixed at the end of the round"): any
+ * unfixed critical or high finding fails the gate; all of them fixed passes it; with none, the block's verdict counts.
  * Overrides: each decisionId must be a decisions.ndjson record whose line hash, id and feature match a ledger row;
  * `person` is copied from that record, never from the model.
  */
@@ -191,14 +192,17 @@ export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): A
     });
   }
   // T19: an agent's captured verdict from this ship run supplies verdict and findings; the latest row of a gate wins.
-  // Ship's rule still holds: critical or high findings fail the gate, whatever the block said.
+  // D24: unfixed critical or high findings (captured counts minus the line's `fixed`, per severity) fail the gate;
+  // reported ones all fixed pass it, whatever the block said; with none reported, the block's own verdict counts.
   const runStart = Date.parse(ctx.startedAt);
   for (const raw of verdictRows) {
     const row = agentRow(raw);
     const gate = row === null ? undefined : byName.get(row.gate);
     if (row === null || gate === undefined || !(row.at >= runStart)) continue;
-    const blocking = row.findings.critical + row.findings.high > 0;
-    byName.set(row.gate, { ...gate, verdict: blocking ? 'fail' : row.verdict, findings: row.findings, source: 'agent' });
+    const { critical, high } = row.findings;
+    const unfixed = Math.max(0, critical - gate.fixed.critical) + Math.max(0, high - gate.fixed.high);
+    const verdict = unfixed > 0 ? 'fail' : critical + high > 0 ? 'pass' : row.verdict;
+    byName.set(row.gate, { ...gate, verdict, findings: row.findings, source: 'agent' });
   }
   for (const required of opts.requiredGates ?? DEFAULT_REQUIRED_GATES) {
     if (!byName.has(required)) return { ok: false, error: 'gate_missing', detail: required };
