@@ -381,7 +381,7 @@ function unknownWrite(part: CommandPart, settings: GateSettings, places: Places[
 }
 
 /** Git's pointer files: a write to one moves a branch or the repo's HEAD (hook-env-refs Task 3). */
-const GIT_POINTER_FILES = ['head', 'orig_head', 'fetch_head', 'packed-refs', 'commondir', 'gitdir'];
+const GIT_POINTER_FILES = ['head', 'orig_head', 'fetch_head', 'packed-refs', 'commondir', 'gitdir', 'grafts', 'alternates', 'shallow'];
 
 /**
  * True when the readable last part after an unknown part (`"$x/main"`, `"$d/HEAD"`) is, in any case, a
