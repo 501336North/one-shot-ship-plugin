@@ -312,8 +312,22 @@ function inPluginCheckout(word: string, cwd: string): boolean {
   }
 }
 
+/**
+ * True when a word or assignment value of the part names a hook script from the part's cwd (hook-env-refs
+ * Task 10): a relative path is read from the cwd, and in a cwd the reader lost, a relative program it runs
+ * from a folder (`./x.sh`, `hooks/x`) could be one.
+ */
+function partNamesHook(part: CommandPart): boolean {
+  const lost = part.lostDir !== null && part.lostDir.plainKnown !== true;
+  return [...part.words, ...part.assignmentValues].some((w, i) => {
+    if (namesHook(w, part.cwd)) return true;
+    if (/^[/~-]/.test(w)) return false;
+    return lost ? i === 0 && part.words.length > 0 && w.includes('/') : namesHook(path.resolve(part.cwd, w), part.cwd);
+  });
+}
+
 export function checkOssHookEnv(part: CommandPart, command: string, home: string, sources: TrustedSources): Refusal | null {
-  if (!part.words.some((w) => namesHook(w, part.cwd)) && !PLUGIN_HOOK.test(command)) return null;
+  if (!partNamesHook(part) && !PLUGIN_HOOK.test(command)) return null;
   const clears = part.wrappers.some((w, i) => w === 'env' || (w === 'exec' && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o))));
   if (!clears && !setsRefusedVariable(command, 0, { home, sources: sourcesFor(command, sources) })) return null;
   return {
