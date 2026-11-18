@@ -65,6 +65,8 @@ const COMMAND_MAPS = /^(?:dis_)?(?:aliases|galiases|saliases|functions|commands|
 function optionName(word: string | undefined): string {
   return (word ?? '').toLowerCase().replace(/_/g, '');
 }
+/** The `set -o` options served commands use, as `optionName` reads them with any `no` dropped (hook-env-refs Task 15). */
+const SERVED_OPTIONS = new Set(['pipefail', 'errexit', 'unset', 'xtrace', 'clobber']);
 /** Words that may start a simple command before its assignments. */
 const RESERVED = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '{', '!', 'time']);
 /** A word that sets one of them, or names one for a builtin to set: `HOME=x`, `PATH+=x`, `path[1]=x`, `HOME`. */
@@ -78,7 +80,7 @@ const NAMEREF_SETTERS = new Set(['declare', 'typeset', 'local']);
 /** Programs that set the variables their operands name (`let X=1`, `env X=1 …`), the name setters included. */
 const OPERAND_SETTERS = new Set([...NAME_SETTERS, 'let', 'env']);
 /** Words before a builtin that still run it. */
-const PREFIXES = new Set(['builtin', 'command']);
+const PREFIXES = new Set(['builtin', 'command', 'noglob', 'nocorrect', '-']);
 /** How deep scripts in scripts are read; deeper counts as setting (fail closed). */
 const MAX_DEPTH = 5;
 
@@ -237,11 +239,14 @@ function setsFromElsewhere(words: string[], depth: number, call: Call, raws: Arr
   }
   // hook-env-refs Task 9: `set -a` / `-o allexport` exports every later assignment; a function can stand in for a program the hook runs
   if (name === 'function') return true;
-  if (name === 'set') return args.some((a, i) => /^-[A-Za-z]*[kTa]/.test(a) || (a === '-o' && ['keyword', 'functrace', 'allexport'].includes(optionName(args[i + 1]))));
+  // hook-env-refs Task 15: `set -A` / `+A` sets any array; `-o` / `+o` only for the options served commands use
+  if (name === 'set') {
+    return args.some((a, i) => /^-[A-Za-z]*[kTa]/.test(a) || /^[-+][A-Za-z]*A/.test(a) || (/^[-+][A-Za-z]*o/.test(a) && !SERVED_OPTIONS.has(optionName(args[i + 1]).replace(/^no/, ''))));
+  }
   // hook-env-refs Task 13: an alias, a hashed path or a switched builtin stands in for a program the hook runs; allexport in any spelling
   if (name === 'alias' || name === 'enable' || name === 'disable') return true;
   if (name === 'hash') return args.some((a) => a.includes('=') || /^-[A-Za-z]*p/.test(a));
-  if (name === 'setopt') return args.some((a) => /^[-+][A-Za-z]*a/.test(a) || optionName(a) === 'allexport');
+  if (name === 'setopt' || name === 'unsetopt' || name === 'emulate') return true;
   if (name === 'shopt') return args.some((a) => optionName(a) === 'allexport');
   if (name === 'trap') return args.some((a) => !a.startsWith('-') && setsRefusedVariable(a, depth + 1, call));
   return false;
@@ -343,7 +348,7 @@ function partNamesHook(part: CommandPart): boolean {
 }
 
 /** Programs whose first operand is a script they run. */
-const SCRIPT_RUNNERS = new Set(['bash', 'sh', 'zsh', '.', 'source']);
+const SCRIPT_RUNNERS = new Set(['bash', 'sh', 'zsh', 'dash', '.', 'source']);
 
 /**
  * True when a word of a part run from a folder known only at run time could be an OSS hook (hook-env-refs
@@ -365,7 +370,7 @@ function couldBeOssHook(word: string, runs: boolean): boolean {
   // the part before its first glob character: `oss-` must start it, or it must start `oss-`
   const literal = last.split(GLOB)[0];
   const ossName = GLOB.test(last) ? literal.startsWith('oss-') || 'oss-'.startsWith(literal) : last.startsWith('oss-');
-  return (bare && ossName) || (runs && parts[parts.length - 1].includes(UNKNOWN)) || parts.some((p) => ['hooks', '.oss'].some((name) => (GLOB.test(p) ? globMatches(p, name) : p.toLowerCase() === name)));
+  return (bare && ossName) || (runs && (parts[parts.length - 1].includes(UNKNOWN) || parts.some((p) => ['hooks', '.oss'].some((name) => (GLOB.test(p) ? globMatches(p, name) : p.toLowerCase() === name)))));
 }
 
 export function checkOssHookEnv(part: CommandPart, command: string, home: string, sources: TrustedSources): Refusal | null {
