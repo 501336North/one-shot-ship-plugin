@@ -19,7 +19,10 @@ import { heredocBodyOf, ReadBudget, tokenize, UNKNOWN, type Token } from '../tok
 import type { Refusal } from './refusal.js';
 
 /** A word naming a file in OSS's hook folder, as read (`~` and `$HOME` filled in, or a HOME the call set). */
-const HOOK_FILE = /\/\.oss\/hooks\/[^/]/;
+const HOOK_FILE =
+  /\/\.oss\/hooks\/[^/]|\/\.claude\/plugins\/cache\/[^/]+\/oss\/[^/]+\/hooks\/[^/]|(?:^|\/)hooks\/oss-[^/]*\.sh$/;
+/** `$CLAUDE_PLUGIN_ROOT/hooks/<file>` as written: the reader leaves the variable unknown, so it is read from the command. */
+const PLUGIN_HOOK = /\$\{?CLAUDE_PLUGIN_ROOT\}?\/hooks\/[^/]/;
 /** The names that move where a hook looks: HOME, PATH, and zsh's `path` array tied to PATH. */
 const MOVERS = new Set(['HOME', 'PATH', 'path']);
 /** A word that sets one of them, or names one for a builtin to set: `HOME=x`, `PATH+=x`, `path[1]=x`, `HOME`. */
@@ -155,7 +158,7 @@ function tokensSet(tokens: Token[], depth: number): boolean {
 }
 
 export function checkOssHookEnv(part: CommandPart, command: string): Refusal | null {
-  if (!part.words.some((w) => HOOK_FILE.test(w))) return null;
+  if (!part.words.some((w) => HOOK_FILE.test(w)) && !PLUGIN_HOOK.test(command)) return null;
   if (!part.wrappers.includes('env') && !setsMover(command, 0)) return null;
   return {
     rule: 'protected-path',
