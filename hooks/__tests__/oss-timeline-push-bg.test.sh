@@ -33,6 +33,9 @@ source "$ROOT/hooks/__tests__/lib/run-capped.sh"   # the one time cap a test may
 
 T=$(cd "$(mktemp -d /tmp/oss-timeline-push-bg.XXXXXX)" && pwd -P)
 trap 'rm -rf "$T"' EXIT
+# The hook runs through a link to this checkout's hooks folder under $T: its SCRIPT_DIR (pwd, not pwd -P) and so
+# the detached push's command line carry $T, so the snapshot and reap can only match pushes this test started.
+ln -s "$ROOT/hooks" "$T/hooks"; HOOK="$T/hooks/oss-timeline.sh"
 export HOME="$T/home"; mkdir -p "$HOME/.oss"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR OSS_TL_SESSION CLAUDE_PLUGIN_ROOT
