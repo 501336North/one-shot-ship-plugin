@@ -185,7 +185,17 @@ stopped "changelog"
 # --- fetch-iron-laws.sh (keyed) ------------------------------------------------------------------------------------
 LAWS=$'# IRON LAWS\nLaw one: tests first.'
 LAWS_TOO_BIG="Error: the OSS API answer was over $CAP bytes, so it was not used (curl exit 63)"   # (T77)
-fresh "$LAWS"; : > "$T/nolen"; : > "$T/oldcurl"; hook /bin/bash "$P/hooks/fetch-iron-laws.sh"
+# R-273 D12: the IRON LAWS hooks ask for ?split=1 ({base}) and use only laws that oss-decrypt --verify-body
+# passes: the answer is that JSON, and ~/.oss/bin/oss-decrypt is the verifying stub whose fixture manifest signs
+# exactly these laws (vb_laws).
+source "$SCRIPT_DIR/lib/verify-body-stub.sh"
+verify_body_stub "$T/vb/bin/oss-decrypt" "$T/vb" || abort "the oss-decrypt stub warms up" "warm-up did not run"
+# vb_laws <laws>: fresh, answering {base: laws}, with the stub in the sandbox HOME and laws signed.
+vb_laws() {
+    printf '%s' "$1" > "$T/vb/laws"; served_hash "$T/vb" shared/iron-laws "$T/vb/laws"
+    fresh "$(jq -n --rawfile b "$T/vb/laws" '{base: $b}')"; mkdir -p "$H/.oss/bin"; ln -s "$T/vb/bin/oss-decrypt" "$H/.oss/bin/oss-decrypt"
+}
+vb_laws "$LAWS"; : > "$T/nolen"; : > "$T/oldcurl"; hook /bin/bash "$P/hooks/fetch-iron-laws.sh"
 [[ "$RC" == 0 && "$OUT" == "$LAWS" ]] && pass "fetch-iron-laws: small laws with no Content-Length still print (control)" \
     || fail "fetch-iron-laws: small laws still print" "rc=$RC out=$OUT err=$ERR"
 fresh "$LAWS"; flood; hook /bin/bash "$P/hooks/fetch-iron-laws.sh"
@@ -288,13 +298,8 @@ fresh "$LAWS"; : > "$T/cut28"; hook /bin/bash "$P/hooks/fetch-iron-laws.sh"
 # --- oss-iron-laws-sync.sh --install (/oss:login: writes the laws into the project's CLAUDE.md) (T74c) ------------
 # It had --max-filesize but no byte stop: a curl that lets a body with no Content-Length past it wrote all of it.
 SYNC_LAWS="# IRON LAWS"$'\n'"$(pad 'Law one: tests first.' 600)"
-# R-273 D12: the sync asks for ?split=1 ({base}) and writes only laws that oss-decrypt --verify-body passes: the
-# answer is that JSON, and ~/.oss/bin/oss-decrypt is the verifying stub whose fixture manifest signs these laws.
-source "$SCRIPT_DIR/lib/verify-body-stub.sh"
-verify_body_stub "$T/vb/bin/oss-decrypt" "$T/vb" || abort "the oss-decrypt stub warms up" "warm-up did not run"
-printf '%s' "$SYNC_LAWS" > "$T/vb/laws"; served_hash "$T/vb" shared/iron-laws "$T/vb/laws"
-fresh "$(jq -n --rawfile b "$T/vb/laws" '{base: $b}')"; mkdir -p "$H/.oss/bin"; ln -s "$T/vb/bin/oss-decrypt" "$H/.oss/bin/oss-decrypt"
-: > "$T/nolen"; : > "$T/oldcurl"; hook /bin/bash "$P/hooks/oss-iron-laws-sync.sh" --install
+# R-273 D12: the split JSON and the verifying stub (vb_laws, at the fetch-iron-laws rows above).
+vb_laws "$SYNC_LAWS"; : > "$T/nolen"; : > "$T/oldcurl"; hook /bin/bash "$P/hooks/oss-iron-laws-sync.sh" --install
 [[ "$RC" == 0 && "$(cat "$W/CLAUDE.md" 2>/dev/null)" == *"Law one: tests first."* ]] && pass "iron-laws-sync: small laws with no Content-Length are installed (control)" \
     || fail "iron-laws-sync: small laws are installed" "rc=$RC err=$ERR"
 fresh "$SYNC_LAWS"; flood; hook /bin/bash "$P/hooks/oss-iron-laws-sync.sh" --install

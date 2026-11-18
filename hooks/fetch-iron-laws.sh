@@ -5,16 +5,19 @@
 #   fetch-iron-laws.sh [--raw]
 #
 # Options:
-#   --raw    Output raw JSON response (default: extract content)
+#   --raw    Output the verified ?split=1 JSON reply (default: the laws, base + team)
 #
-# Returns the IRON LAWS content from the API endpoint.
+# Returns the IRON LAWS content from the API endpoint: GET .../shared/iron-laws?split=1 answers {base, team?}.
+# The raw base bytes must pass `~/.oss/bin/oss-decrypt --verify-body shared/iron-laws` (R-273 D12); only its
+# exit 0 prints anything. A reply that is not that JSON is refused (exit 1), never retried unsplit. Team laws are
+# printed as served, under the server's advisory note (unverified, DR-3).
 # Uses apiKey and apiUrl from the OSS config ($OSS_CONFIG_DIR/config.json, else ~/.oss/config.json)
 
 set -euo pipefail
 if [[ -f "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh" ]]; then source "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh"; fi  # oss_api_curl: API key via stdin, never argv
 
 CONFIG_FILE=$(oss_config_file)
-ENDPOINT="/api/v1/prompts/shared/iron-laws"
+ENDPOINT="/api/v1/prompts/shared/iron-laws?split=1"   # JSON {base, team?}: base is the signed file
 
 # Standardized error contract: emit a structured OSSError via the oss-error
 # emitter when available (in-band stdout JSON + project workflow.log line).
@@ -116,16 +119,27 @@ if [[ "$HTTP_CODE" != "200" ]]; then
   exit 1
 fi
 
+# Verify the base laws before anything is printed (R-273 D12). The JSON escapes every newline, so BODY holds the
+# reply whole; base and team are taken from it byte for byte into a private work dir.
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/oss-fetch-iron-laws.XXXXXX")
+trap 'rm -rf "$WORK"' EXIT
+printf '%s\n' "$BODY" > "$WORK/reply"
+if ! oss_split_field base < "$WORK/reply" > "$WORK/base" || ! oss_split_field team < "$WORK/reply" > "$WORK/team"; then
+  echo "Error: the OSS API answer is not the ?split=1 JSON {base, team}; no laws printed" >&2
+  exit 1
+fi
+# Only exit 0 prints: a mismatch, any other code, no oss-decrypt (127) or one older than 1.2.5 (no --verify-body)
+# prints nothing.
+VERIFY_STATUS=0
+"$HOME/.oss/bin/oss-decrypt" --verify-body shared/iron-laws < "$WORK/base" > /dev/null || VERIFY_STATUS=$?
+if [[ "$VERIFY_STATUS" -ne 0 ]]; then
+  echo "Error: the laws did not pass verification (oss-decrypt --verify-body exit $VERIFY_STATUS: not the signed laws, or oss-decrypt is older than 1.2.5 and the next /oss command updates it); no laws printed" >&2
+  exit 1
+fi
+
 # Output result
 if [[ "$RAW_OUTPUT" == "true" ]]; then
-  echo "$BODY"
+  cat "$WORK/reply"
 else
-  # Extract content field if present, otherwise output body
-  CONTENT=$(echo "$BODY" | grep -o '"content"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*: *"\([^"]*\)"/\1/' | head -1 || true)
-  if [[ -n "$CONTENT" ]]; then
-    # Unescape JSON string
-    echo -e "$CONTENT"
-  else
-    echo "$BODY"
-  fi
+  cat "$WORK/base" "$WORK/team"
 fi
