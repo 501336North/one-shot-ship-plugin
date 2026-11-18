@@ -567,7 +567,7 @@ test_no_reader_fails_closed() {
 }
 
 # =============================================================================================
-# S2 --install exit codes: /oss:login stops Step 4 on either, with a different message
+# S2 --install exit codes: /oss:login stops Step 5 on either, with a different message
 #    3 = refused, CLAUDE.md is unsafe to write   4 = no valid laws to write (login/API/body)
 # =============================================================================================
 test_install_refusal_exit_3() {

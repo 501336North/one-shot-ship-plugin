@@ -101,7 +101,7 @@ HOOKS_TO_COPY=(
     "oss-decrypt-checksums.txt"   # committed hash manifest ensure-decrypt-cli.sh verifies against
     "verify-decrypt-setup.sh"
     "oss-iron-laws-sync.sh"
-    "oss-claude-md-template.sh"   # /oss:login Step 4.2: the CLAUDE.md template from the configured API
+    "oss-claude-md-template.sh"   # /oss:login Step 5.2: the CLAUDE.md template from the configured API
     "oss-onboard-check.sh"
     "oss-setup-permissions.sh"
 )

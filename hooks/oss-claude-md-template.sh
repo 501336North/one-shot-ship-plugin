@@ -1,5 +1,5 @@
 #!/bin/bash
-# oss-claude-md-template.sh - prints the CLAUDE.md template (/oss:login Step 4.2). Takes no arguments.
+# oss-claude-md-template.sh - prints the CLAUDE.md template (/oss:login Step 5.2). Takes no arguments.
 #
 # The key and the API it goes to come from one file, the OSS config (oss_config_file: $OSS_CONFIG_DIR/config.json,
 # else ~/.oss/config.json): GET <oss_api_url>/api/v1/prompts/claude-md, the key fed to curl on stdin

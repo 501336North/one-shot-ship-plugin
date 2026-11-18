@@ -30,21 +30,23 @@ section() { # $1 file, $2 heading prefix of the section; prints until the next "
     awk -v h="$2" 'index($0, h) == 1 { on = 1; print; next } on && /^## / { exit } on { print }' "$1"
 }
 
-LOGIN_STEP4=$(section "$COMMANDS_DIR/login.md" "## Step 4")
-IDEATE_STEP1=$(section "$COMMANDS_DIR/ideate.md" "## Step 1")
+# The CLAUDE.md sync is login Step 5 and ideate Step 2: each runs after the oss-decrypt install that verifies the laws
+# (R-273 P5, decrypt-before-laws.test.sh).
+LOGIN_STEP5=$(section "$COMMANDS_DIR/login.md" "## Step 5")
+IDEATE_STEP2=$(section "$COMMANDS_DIR/ideate.md" "## Step 2")
 
 test_login_uses_install() {
-    local name="login Step 4 runs oss-iron-laws-sync.sh --install"; ((TESTS_RUN++))
-    if grep -qE 'oss-iron-laws-sync\.sh --install' <<< "$LOGIN_STEP4"; then pass "$name"
-    else fail "$name" "a --install invocation in Step 4" "none"; fi
+    local name="login Step 5 runs oss-iron-laws-sync.sh --install"; ((TESTS_RUN++))
+    if grep -qE 'oss-iron-laws-sync\.sh --install' <<< "$LOGIN_STEP5"; then pass "$name"
+    else fail "$name" "a --install invocation in Step 5" "none"; fi
 }
 
 test_login_does_not_write_block_itself() {
-    local name="login Step 4 does not also write the IRON LAWS block itself"; ((TESTS_RUN++))
+    local name="login Step 5 does not also write the IRON LAWS block itself"; ((TESTS_RUN++))
     local hits
-    hits=$(grep -nE 'IRON LAWS START|\{IRON_LAWS_CONTENT\}|IRON LAWS END' <<< "$LOGIN_STEP4")
+    hits=$(grep -nE 'IRON LAWS START|\{IRON_LAWS_CONTENT\}|IRON LAWS END' <<< "$LOGIN_STEP5")
     if [[ -z "$hits" ]]; then pass "$name"
-    else fail "$name" "no marker lines or {IRON_LAWS_CONTENT} in Step 4" "$hits"; fi
+    else fail "$name" "no marker lines or {IRON_LAWS_CONTENT} in Step 5" "$hits"; fi
 }
 
 test_only_login_installs() {
@@ -56,32 +58,32 @@ test_only_login_installs() {
 }
 
 test_ideate_claims_match_script() {
-    local name="ideate Step 1 makes no claim the script does not keep"; ((TESTS_RUN++))
+    local name="ideate Step 2 makes no claim the script does not keep"; ((TESTS_RUN++))
     local bad=""
-    grep -qiE '^- *Creates CLAUDE\.md' <<< "$IDEATE_STEP1" && bad+="claims it creates CLAUDE.md (refresh never creates); "
+    grep -qiE '^- *Creates CLAUDE\.md' <<< "$IDEATE_STEP2" && bad+="claims it creates CLAUDE.md (refresh never creates); "
     # The script reads the key through oss_api_creds, whose one reader (oss-api-curl.sh) parses with jq or node (T30, T37).
-    if grep -qi 'JSON pars' <<< "$IDEATE_STEP1" && ! { grep -qF 'oss_api_creds' "$SYNC" && grep -qF 'JSON.parse(' "$CURL"; }; then
+    if grep -qi 'JSON pars' <<< "$IDEATE_STEP2" && ! { grep -qF 'oss_api_creds' "$SYNC" && grep -qF 'JSON.parse(' "$CURL"; }; then
         bad+="claims JSON parsing but the script does not read the key through the JSON reader; "
     fi
     if [[ -z "$bad" ]]; then pass "$name"
     else fail "$name" "accurate description" "$bad"; fi
 }
 
-# S2 (ship gate round 2): a refused or failed --install must stop Step 4, so the template merge
-# (4.2-4.3) cannot create or rewrite a CLAUDE.md the script declined to touch, or leave the
+# S2 (ship gate round 2): a refused or failed --install must stop Step 5, so the template merge
+# (5.2-5.3) cannot create or rewrite a CLAUDE.md the script declined to touch, or leave the
 # project with a template and no laws. The exit codes the doc names must be the script's own.
 test_login_stops_when_install_fails() {
-    local name="login Step 4 stops (skips 4.2-4.3) when --install exits 3 or 4, and says why"; ((TESTS_RUN++))
+    local name="login Step 5 stops (skips 5.2-5.3) when --install exits 3 or 4, and says why"; ((TESTS_RUN++))
     local bad=""
-    grep -qF 'skip 4.2 and 4.3' <<< "$LOGIN_STEP4" || bad+="no 'skip 4.2 and 4.3' instruction; "
-    grep -qiE 'exit(s)? 3' <<< "$LOGIN_STEP4" || bad+="exit 3 (refused) not handled; "
-    grep -qiE 'exit(s)? 4' <<< "$LOGIN_STEP4" || bad+="exit 4 (no laws) not handled; "
-    grep -qi 'continue with 4.2' <<< "$LOGIN_STEP4" && bad+="still says 'continue with 4.2'; "
-    grep -qi '4.1 refused' <<< "$LOGIN_STEP4" && bad+="4.3 still handles a refused 4.1; "
+    grep -qF 'skip 5.2 and 5.3' <<< "$LOGIN_STEP5" || bad+="no 'skip 5.2 and 5.3' instruction; "
+    grep -qiE 'exit(s)? 3' <<< "$LOGIN_STEP5" || bad+="exit 3 (refused) not handled; "
+    grep -qiE 'exit(s)? 4' <<< "$LOGIN_STEP5" || bad+="exit 4 (no laws) not handled; "
+    grep -qi 'continue with 5.2' <<< "$LOGIN_STEP5" && bad+="still says 'continue with 5.2'; "
+    grep -qi '5.1 refused' <<< "$LOGIN_STEP5" && bad+="5.3 still handles a refused 5.1; "
     grep -qE '^#[[:space:]]+3[[:space:]].*refus' "$SYNC" || bad+="script header does not define exit 3 as refusal; "
     grep -qE '^#[[:space:]]+4[[:space:]].*laws' "$SYNC" || bad+="script header does not define exit 4 as no laws; "
     if [[ -z "$bad" ]]; then pass "$name"
-    else fail "$name" "Step 4 stops on exit 3/4 with a reason; codes match the script" "$bad"; fi
+    else fail "$name" "Step 5 stops on exit 3/4 with a reason; codes match the script" "$bad"; fi
 }
 
 test_no_other_doc_builds_markers() {

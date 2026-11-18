@@ -1,5 +1,5 @@
 #!/bin/bash
-# /oss:login Step 4.2 fetches the CLAUDE.md template with ~/.oss/hooks/oss-claude-md-template.sh.
+# /oss:login Step 5.2 fetches the CLAUDE.md template with ~/.oss/hooks/oss-claude-md-template.sh.
 #
 # @behavior A user whose OSS config names an API (apiUrl, in $OSS_CONFIG_DIR/config.json or
 #           ~/.oss/config.json) gets the template from THAT API; their key is never sent anywhere else.

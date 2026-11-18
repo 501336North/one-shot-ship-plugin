@@ -112,7 +112,7 @@ grep -qF '"Edit(~/.oss/run/**)"' "$TMPDIR_5/.claude/settings.local.json" && pass
 rm -rf "$TMPDIR_5"
 
 # --- Test 6: the CLAUDE.md template fetch is allowed (T60) ---
-# @behavior A user whose project has no CLAUDE.md runs the ideate skill (or /oss:login Step 4.2) and the
+# @behavior A user whose project has no CLAUDE.md runs the ideate skill (or /oss:login Step 5.2) and the
 #           template fetch runs without an approval prompt.
 # @business-rule oss-claude-md-template.sh takes no arguments and only GETs /api/v1/prompts/claude-md from the
 #           configured API, the key on curl's stdin; allowing it lets no prompt change what it sends or where.
