@@ -260,4 +260,46 @@ describe('Decrypt Command', () => {
       expect(consoleSpy).toHaveBeenCalledWith(body);
     });
   });
+  /**
+   * @behavior A team custom prompt is delivered as-is, labelled as outside the OSS manifest
+   * @business-rule R-273 D6: team custom prompts are not verified and never claim to be
+   * @boundary CLI Commands (only the custom-prompt fetch and the manifest fetch are stubbed)
+   */
+  describe('team custom prompts (R-273 P2)', () => {
+    const customBody = 'Team custom prompt body';
+
+    beforeEach(() => {
+      vi.mocked(apiClient.fetchCustomPrompt).mockResolvedValue({
+        prompt: customBody,
+        name: 'team-review',
+        displayName: 'Team Review',
+        isBlocking: false,
+      });
+    });
+
+    it('labels a custom prompt on stderr with "[verify] Team custom prompt — not covered by the OSS manifest"', async () => {
+      await decryptCommand('custom', 'team-review');
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith('[verify] Team custom prompt — not covered by the OSS manifest');
+    });
+
+    it('prints only the custom prompt text on stdout', async () => {
+      await decryptCommand('custom', 'team-review');
+
+      expect(consoleSpy.mock.calls).toEqual([[customBody]]);
+    });
+
+    it('never fetches the manifest for a custom prompt', async () => {
+      await decryptCommand('custom', 'team-review');
+
+      expect(manifestVerifier.fetchManifest).not.toHaveBeenCalled();
+    });
+
+    it('never prints "Prompt hash: verified" for a custom prompt', async () => {
+      await decryptCommand('custom', 'team-review');
+
+      const output = [...consoleErrorSpy.mock.calls, ...consoleSpy.mock.calls].map(c => String(c[0]));
+      expect(output.some(m => m.includes('Prompt hash: verified'))).toBe(false);
+    });
+  });
 });
