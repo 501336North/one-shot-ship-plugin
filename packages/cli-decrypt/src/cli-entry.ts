@@ -175,6 +175,12 @@ async function listPromptsCommand(category?: string): Promise<void> {
     return;
   }
 
+  if (!verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY)) {
+    console.log(JSON.stringify([]));
+    process.exitCode = 1;
+    return;
+  }
+
   let entries = Object.entries(manifest.prompts).map(([key, value]) => ({
     name: key,
     category: key.split('/')[0],

@@ -11,6 +11,8 @@ import crypto from 'crypto';
 export interface ManifestPromptEntry {
   hash: string;
   size: number;
+  /** sha256 hex of the exact served plaintext (watermarked, unstripped). R-273. */
+  servedHash?: string;
 }
 
 export interface SignedManifest {
@@ -34,8 +36,11 @@ export function verifyManifestSignature(
   publicKey: string
 ): boolean {
   try {
+    if (Object.hasOwn(manifest.prompts, '__proto__')) {
+      return false;
+    }
     const sortedKeys = Object.keys(manifest.prompts).sort();
-    const sortedPrompts: Record<string, ManifestPromptEntry> = {};
+    const sortedPrompts: Record<string, ManifestPromptEntry> = Object.create(null);
     for (const key of sortedKeys) {
       sortedPrompts[key] = manifest.prompts[key];
     }

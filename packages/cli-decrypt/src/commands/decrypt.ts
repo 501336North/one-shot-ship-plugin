@@ -150,28 +150,30 @@ export async function decryptCommand(
     clearTimeout(timeout);
   }
 
-  if (manifest) {
-    if (!verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY)) {
-      console.error('[verify] Manifest signature: FAILED — prompt blocked');
-      throw new Error('[SECURITY] Manifest signature verification FAILED. Prompt delivery blocked.');
-    }
-    console.error('[verify] Manifest signature: valid');
-
-    const integrity = await verifyDecryptedPrompt(plaintext, type, name, manifest);
-    if (!integrity.verified && !integrity.skipped) {
-      console.error('[verify] Prompt hash: FAILED — prompt blocked');
-      throw new Error('[SECURITY] Prompt integrity check FAILED. Content may have been tampered with.');
-    }
-    if (!integrity.skipped) {
-      console.error('[verify] Prompt hash: verified');
-    }
-  } else {
-    console.error('[verify] Manifest unavailable — skipping verification');
+  if (!manifest) {
+    console.error('[verify] Manifest unavailable — prompt blocked');
+    throw new Error('[SECURITY] Could not verify prompt: manifest unavailable. Prompt delivery blocked.');
   }
+
+  if (!verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY)) {
+    console.error('[verify] Manifest signature: FAILED — prompt blocked');
+    throw new Error('[SECURITY] Manifest signature verification FAILED. Prompt delivery blocked.');
+  }
+  console.error('[verify] Manifest signature: valid');
+
+  const integrity = await verifyDecryptedPrompt(plaintext, type, name, manifest);
+  if (integrity.verified !== true) {
+    if (integrity.reason === 'not_in_manifest') {
+      console.error(`[verify] No manifest entry for ${type}/${name} — prompt blocked`);
+    }
+    console.error('[verify] Prompt hash: FAILED — prompt blocked');
+    throw new Error('[SECURITY] Prompt integrity check FAILED. Content may have been tampered with.');
+  }
+  console.error('[verify] Prompt hash: verified');
 
   // Detect prompt hash changes for update notifications
   const manifestKey = `${type}/${name}`;
-  const currentHash = manifest?.prompts[manifestKey]?.hash ?? null;
+  const currentHash = manifest.prompts[manifestKey]?.hash ?? null;
   const statePath = join(getConfigDir(), 'update-state.json');
   const updateState = readUpdateState(statePath);
   const detection = detectPromptChange(updateState, type, name, currentHash);
@@ -190,6 +192,6 @@ export async function decryptCommand(
     });
   }
 
-  // Only output if verification passed (or was gracefully skipped)
+  // Only output a verified prompt
   console.log(plaintext);
 }
