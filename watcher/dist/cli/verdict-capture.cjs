@@ -226,21 +226,28 @@ function openLedger(cwd, opts = {}) {
 }
 
 // src/phase-results/feature.ts
-var import_node_child_process2 = require("node:child_process");
 var fs2 = __toESM(require("node:fs"), 1);
 var path2 = __toESM(require("node:path"), 1);
-var FEATURE_RE = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
-var BRANCH_RE = /^[^/]+\/([^/]+)\/[^/]/;
-function gitOut2(cwd, args) {
+
+// src/phase-results/git.ts
+var import_node_child_process2 = require("node:child_process");
+function gitEnv() {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
+  return env;
+}
+function gitOut2(cwd, args) {
   try {
-    const out = (0, import_node_child_process2.execFileSync)("git", args, { cwd, env, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const out = (0, import_node_child_process2.execFileSync)("git", args, { cwd, env: gitEnv(), encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
     return out === "" ? null : out;
   } catch {
     return null;
   }
 }
+
+// src/phase-results/feature.ts
+var FEATURE_RE = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
+var BRANCH_RE = /^[^/]+\/([^/]+)\/[^/]/;
 function activeFeatures(repo) {
   const dir = path2.join(repo, ".oss", "dev", "active");
   let names;

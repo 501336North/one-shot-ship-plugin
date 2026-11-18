@@ -35,7 +35,6 @@ __export(phase_result_exports, {
 });
 module.exports = __toCommonJS(phase_result_exports);
 var import_node_child_process4 = require("node:child_process");
-var import_node_crypto5 = require("node:crypto");
 var fs9 = __toESM(require("node:fs"), 1);
 var os2 = __toESM(require("node:os"), 1);
 var path9 = __toESM(require("node:path"), 1);
@@ -43,6 +42,131 @@ var path9 = __toESM(require("node:path"), 1);
 // src/phase-results/assemble-build.ts
 var import_node_fs = __toESM(require("node:fs"), 1);
 var import_node_path = __toESM(require("node:path"), 1);
+
+// src/phase-results/assemble-common.ts
+var import_node_crypto = require("node:crypto");
+
+// src/services/redaction.ts
+var hasDigit = (match) => /[0-9]/.test(match);
+var isAssignedSecret = (value, prefix, atLineEnd, next) => !(/^(?:bearer|basic)$/i.test(value) && /\s/.test(next)) && value.length >= 6 && (/["'=>]\s*$/.test(prefix) || prefix.startsWith("--") || atLineEnd && /:\s*$/.test(prefix) || hasDigit(value));
+var SECRET_KEY_NAME = "(?:PASSWORD|PASSWD|PASSPHRASE|(?<!by|com|over|under|sur|tres)PASS|PWD|SECRET|TOKEN|CREDENTIALS|(?:API|SECRET|PRIVATE|ACCESS|SIGNING|ENCRYPTION|[_-])KEY)(?:[_-][A-Za-z0-9]+){0,2}";
+function hasJwtShape(run) {
+  const segments = run.split(".");
+  for (let i = 0; i + 2 < segments.length; i++) {
+    const header = segments[i];
+    const start = header.indexOf("eyJ");
+    if (start !== -1 && header.length - start >= 13 && segments[i + 1].startsWith("eyJ") && segments[i + 1].length >= 13 && segments[i + 2].length >= 10) {
+      return true;
+    }
+  }
+  return false;
+}
+var SECRET_PATTERNS = [
+  // RSA/EC/OPENSSH/ENCRYPTED/PGP; through END, or to the end of the text when there is no END.
+  {
+    name: "private-key-block",
+    pattern: /----- *BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)? *-----[\s\S]*?(?:----- *END [A-Z ]*PRIVATE KEY(?: BLOCK)? *-----|$)/gi
+  },
+  // The whole dotted run is redacted, so two glued JWTs go together and no fragment survives.
+  { name: "jwt", pattern: /eyJ[A-Za-z0-9_.-]*/g, isSecret: hasJwtShape },
+  { name: "google-api-key", pattern: /AIza[0-9A-Za-z_-]{35}/g },
+  { name: "github-fine-grained-pat", pattern: /github_pat_[A-Za-z0-9_]{20,}/g },
+  { name: "github-token", pattern: /gh[pousr]_(?:(?!gh[pousr]_)[A-Za-z0-9]){20,}/g },
+  { name: "stripe-key", pattern: /[rs]k_(?:live|test)_(?:(?![rs]k_(?:live|test)_)[A-Za-z0-9]){16,}/g },
+  { name: "aws-access-key-id", pattern: /A[KS]IA[0-9A-Z]{16}/g },
+  { name: "npm-token", pattern: /npm_[A-Za-z0-9]{36}/g },
+  { name: "gitlab-pat", pattern: /glpat-[A-Za-z0-9_-]{20,}/g },
+  { name: "slack-app-token", pattern: /xapp-[A-Za-z0-9-]+/g },
+  { name: "slack-token", pattern: /(?:xoxe\.)?xox[abeprs]-[A-Za-z0-9-]+/g },
+  { name: "oss-api-key", pattern: /ak_[0-9a-f]{64}/g },
+  {
+    // The user may be empty (redis://:pw@host) and the password may hold / or @, so it runs to the
+    // LAST @ before the host. The cap keeps a long run of "a://:a://:..." linear. A run of NULs (a token that
+    // cleanAndRedactWithRemoved's mask already covers) counts as one character, as the shorter [REDACTED]
+    // does in redactString, so the cap cannot stop short of the @ and leave the rest of the password readable.
+    name: "connection-string-password",
+    // eslint-disable-next-line no-control-regex -- the NUL is maskOf's placeholder, matched on purpose
+    pattern: /([a-z][a-z0-9+.-]{0,20}:\/\/[^\s:/@]*:)(?:\u0000+(?!\u0000)|[^\s\u0000]){1,256}(?=@)/gi,
+    keepPrefix: true
+  },
+  {
+    // A secret-named key, then :, =, =>, :=, ?= or +=, or a --flag. The value decides, not the key: a
+    // quoted value (taken whole, \" escapes included), a value after = or a --flag, a lone value ending its
+    // line after :, or one holding a digit is a secret; anything else is prose ("Password: see vault").
+    // Group 2 is set when the value ends its line. An unquoted value runs to the next space or quote, & included
+    // (as in the API): a secret may itself hold "&k=", so ?api_key=x&foo=bar loses foo=bar on purpose.
+    name: "secret-assignment",
+    pattern: new RegExp(
+      `((?<![A-Za-z0-9_-])(?:--[A-Za-z0-9_-]*${SECRET_KEY_NAME}\\s+|[A-Za-z0-9_-]*${SECRET_KEY_NAME}["']?\\s*(?:[:?+]?=>?|:)\\s*)["']?)(?:(?<=")(?:[^"\\\\\\n]|\\\\.)+(?=")|(?<=')(?:[^'\\\\\\n]|\\\\.)+(?=')|[^\\s"']+)(?=([ \\t]*(?:\\n|$))|)`,
+      "gi"
+    ),
+    isSecret: isAssignedSecret,
+    keepPrefix: true
+  },
+  { name: "bearer-token", pattern: /(Bearer\s+)[A-Za-z0-9._~+/=-]{20,}/gi, keepPrefix: true },
+  {
+    // After an Authorization (or Proxy-Authorization) key the value is always the credential. Elsewhere,
+    // base64 of user:password nearly always holds a digit, + / or =; "Basic Authentication" does not.
+    name: "basic-auth",
+    pattern: /((?:Authorization["']?[ \t]*[:=][ \t]*["']?)?Basic\s+)[A-Za-z0-9+/]{12,}={0,2}/gi,
+    isSecret: (value, prefix) => /^Authorization/i.test(prefix) || /[0-9+/=]/.test(value),
+    keepPrefix: true
+  },
+  { name: "slack-webhook", pattern: /https:\/\/hooks\.slack\.com\/(?:services|workflows|triggers)\/[A-Za-z0-9/]+/g },
+  { name: "discord-webhook", pattern: /https:\/\/(?:ptb\.|canary\.)?(?:discord|discordapp)\.com\/api\/(?:v[0-9]+\/)?webhooks\/[0-9]+\/[A-Za-z0-9_-]+/g },
+  { name: "google-oauth-token", pattern: /ya29\.(?:(?!ya29\.)[A-Za-z0-9_-]){20,}/g },
+  { name: "sendgrid-key", pattern: /SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}/g },
+  { name: "stripe-webhook-secret", pattern: /whsec_(?:(?!whsec_)[A-Za-z0-9+/=]){32,}/g },
+  { name: "huggingface-token", pattern: /hf_(?:(?!hf_)[A-Za-z0-9]){34,}/g },
+  { name: "telegram-bot-token", pattern: /[0-9]{8,10}:[A-Za-z0-9_-]{35}/g },
+  // sk- refuses only a preceding letter: without it "task-runner-v2-..." would match; "9sk-..." is a glued key.
+  { name: "sk-api-key", pattern: /(?<![A-Za-z])sk-[A-Za-z0-9_-]{20,}/g, isSecret: hasDigit },
+  // --- the plugin's original list ---
+  // Anthropic + generic `sk-` style keys (sk-ant-..., sk-...)
+  { name: "sk-key", pattern: /sk-[A-Za-z0-9_-]{12,}/g },
+  // Authorization header, ANY scheme (Bearer, Basic, Digest, Token, ...)
+  { name: "authorization-header", pattern: /Authorization:\s*[A-Za-z]+\s+[^\s"']+/gi },
+  // Bare bearer token
+  { name: "bare-bearer", pattern: /Bearer\s+[^\s"']+/g },
+  // JWTs: three base64url segments
+  { name: "jwt-segments", pattern: /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g },
+  // Query-string / form secret params (access_token before token to win leftmost)
+  { name: "secret-param", pattern: /(?:api[_-]?key|access[_-]?token|token|secret|password)=[^\s"'&]+/gi },
+  // GitHub personal access tokens
+  { name: "ghp", pattern: /ghp_[A-Za-z0-9]{20,}/g },
+  // AWS access key IDs
+  { name: "akia", pattern: /AKIA[A-Z0-9]{12,}/g },
+  // Slack bot/user tokens
+  { name: "slack-bot-user", pattern: /xox[bp]-[A-Za-z0-9-]+/g },
+  // Google API keys
+  { name: "google-api-key-legacy", pattern: /AIza[A-Za-z0-9_-]{20,}/g }
+];
+var MARKER = "[REDACTED]";
+function applySecretPatterns(value, replace) {
+  const removed = [];
+  let text = value;
+  for (const { pattern, isSecret, keepPrefix } of SECRET_PATTERNS) {
+    text = text.replace(pattern, (match, ...groups) => {
+      const prefix = keepPrefix ? String(groups[0]) : "";
+      const atLineEnd = keepPrefix === true && typeof groups[1] === "string";
+      const next = String(groups[groups.length - 1]).charAt(Number(groups[groups.length - 2]) + match.length);
+      const secret = match.slice(prefix.length);
+      if (isSecret && !isSecret(secret, prefix, atLineEnd, next)) return match;
+      removed.push(secret);
+      return `${prefix}${replace(secret)}`;
+    });
+  }
+  return { text, removed };
+}
+function redactStringWithRemoved(value) {
+  return applySecretPatterns(value, () => MARKER);
+}
+function redactString(value) {
+  return redactStringWithRemoved(value).text;
+}
+var REPLACEMENT_CHAR = String.fromCharCode(65533);
+var NUL = String.fromCharCode(0);
+var NUL_RUN = new RegExp(`${NUL}+`, "g");
 
 // src/phase-results/store.ts
 var fs2 = __toESM(require("fs"), 1);
@@ -387,128 +511,6 @@ function readValueFile(dir, name) {
   }
 }
 
-// src/services/redaction.ts
-var hasDigit = (match) => /[0-9]/.test(match);
-var isAssignedSecret = (value, prefix, atLineEnd, next) => !(/^(?:bearer|basic)$/i.test(value) && /\s/.test(next)) && value.length >= 6 && (/["'=>]\s*$/.test(prefix) || prefix.startsWith("--") || atLineEnd && /:\s*$/.test(prefix) || hasDigit(value));
-var SECRET_KEY_NAME = "(?:PASSWORD|PASSWD|PASSPHRASE|(?<!by|com|over|under|sur|tres)PASS|PWD|SECRET|TOKEN|CREDENTIALS|(?:API|SECRET|PRIVATE|ACCESS|SIGNING|ENCRYPTION|[_-])KEY)(?:[_-][A-Za-z0-9]+){0,2}";
-function hasJwtShape(run) {
-  const segments = run.split(".");
-  for (let i = 0; i + 2 < segments.length; i++) {
-    const header = segments[i];
-    const start = header.indexOf("eyJ");
-    if (start !== -1 && header.length - start >= 13 && segments[i + 1].startsWith("eyJ") && segments[i + 1].length >= 13 && segments[i + 2].length >= 10) {
-      return true;
-    }
-  }
-  return false;
-}
-var SECRET_PATTERNS = [
-  // RSA/EC/OPENSSH/ENCRYPTED/PGP; through END, or to the end of the text when there is no END.
-  {
-    name: "private-key-block",
-    pattern: /----- *BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)? *-----[\s\S]*?(?:----- *END [A-Z ]*PRIVATE KEY(?: BLOCK)? *-----|$)/gi
-  },
-  // The whole dotted run is redacted, so two glued JWTs go together and no fragment survives.
-  { name: "jwt", pattern: /eyJ[A-Za-z0-9_.-]*/g, isSecret: hasJwtShape },
-  { name: "google-api-key", pattern: /AIza[0-9A-Za-z_-]{35}/g },
-  { name: "github-fine-grained-pat", pattern: /github_pat_[A-Za-z0-9_]{20,}/g },
-  { name: "github-token", pattern: /gh[pousr]_(?:(?!gh[pousr]_)[A-Za-z0-9]){20,}/g },
-  { name: "stripe-key", pattern: /[rs]k_(?:live|test)_(?:(?![rs]k_(?:live|test)_)[A-Za-z0-9]){16,}/g },
-  { name: "aws-access-key-id", pattern: /A[KS]IA[0-9A-Z]{16}/g },
-  { name: "npm-token", pattern: /npm_[A-Za-z0-9]{36}/g },
-  { name: "gitlab-pat", pattern: /glpat-[A-Za-z0-9_-]{20,}/g },
-  { name: "slack-app-token", pattern: /xapp-[A-Za-z0-9-]+/g },
-  { name: "slack-token", pattern: /(?:xoxe\.)?xox[abeprs]-[A-Za-z0-9-]+/g },
-  { name: "oss-api-key", pattern: /ak_[0-9a-f]{64}/g },
-  {
-    // The user may be empty (redis://:pw@host) and the password may hold / or @, so it runs to the
-    // LAST @ before the host. The cap keeps a long run of "a://:a://:..." linear. A run of NULs (a token that
-    // cleanAndRedactWithRemoved's mask already covers) counts as one character, as the shorter [REDACTED]
-    // does in redactString, so the cap cannot stop short of the @ and leave the rest of the password readable.
-    name: "connection-string-password",
-    // eslint-disable-next-line no-control-regex -- the NUL is maskOf's placeholder, matched on purpose
-    pattern: /([a-z][a-z0-9+.-]{0,20}:\/\/[^\s:/@]*:)(?:\u0000+(?!\u0000)|[^\s\u0000]){1,256}(?=@)/gi,
-    keepPrefix: true
-  },
-  {
-    // A secret-named key, then :, =, =>, :=, ?= or +=, or a --flag. The value decides, not the key: a
-    // quoted value (taken whole, \" escapes included), a value after = or a --flag, a lone value ending its
-    // line after :, or one holding a digit is a secret; anything else is prose ("Password: see vault").
-    // Group 2 is set when the value ends its line. An unquoted value runs to the next space or quote, & included
-    // (as in the API): a secret may itself hold "&k=", so ?api_key=x&foo=bar loses foo=bar on purpose.
-    name: "secret-assignment",
-    pattern: new RegExp(
-      `((?<![A-Za-z0-9_-])(?:--[A-Za-z0-9_-]*${SECRET_KEY_NAME}\\s+|[A-Za-z0-9_-]*${SECRET_KEY_NAME}["']?\\s*(?:[:?+]?=>?|:)\\s*)["']?)(?:(?<=")(?:[^"\\\\\\n]|\\\\.)+(?=")|(?<=')(?:[^'\\\\\\n]|\\\\.)+(?=')|[^\\s"']+)(?=([ \\t]*(?:\\n|$))|)`,
-      "gi"
-    ),
-    isSecret: isAssignedSecret,
-    keepPrefix: true
-  },
-  { name: "bearer-token", pattern: /(Bearer\s+)[A-Za-z0-9._~+/=-]{20,}/gi, keepPrefix: true },
-  {
-    // After an Authorization (or Proxy-Authorization) key the value is always the credential. Elsewhere,
-    // base64 of user:password nearly always holds a digit, + / or =; "Basic Authentication" does not.
-    name: "basic-auth",
-    pattern: /((?:Authorization["']?[ \t]*[:=][ \t]*["']?)?Basic\s+)[A-Za-z0-9+/]{12,}={0,2}/gi,
-    isSecret: (value, prefix) => /^Authorization/i.test(prefix) || /[0-9+/=]/.test(value),
-    keepPrefix: true
-  },
-  { name: "slack-webhook", pattern: /https:\/\/hooks\.slack\.com\/(?:services|workflows|triggers)\/[A-Za-z0-9/]+/g },
-  { name: "discord-webhook", pattern: /https:\/\/(?:ptb\.|canary\.)?(?:discord|discordapp)\.com\/api\/(?:v[0-9]+\/)?webhooks\/[0-9]+\/[A-Za-z0-9_-]+/g },
-  { name: "google-oauth-token", pattern: /ya29\.(?:(?!ya29\.)[A-Za-z0-9_-]){20,}/g },
-  { name: "sendgrid-key", pattern: /SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}/g },
-  { name: "stripe-webhook-secret", pattern: /whsec_(?:(?!whsec_)[A-Za-z0-9+/=]){32,}/g },
-  { name: "huggingface-token", pattern: /hf_(?:(?!hf_)[A-Za-z0-9]){34,}/g },
-  { name: "telegram-bot-token", pattern: /[0-9]{8,10}:[A-Za-z0-9_-]{35}/g },
-  // sk- refuses only a preceding letter: without it "task-runner-v2-..." would match; "9sk-..." is a glued key.
-  { name: "sk-api-key", pattern: /(?<![A-Za-z])sk-[A-Za-z0-9_-]{20,}/g, isSecret: hasDigit },
-  // --- the plugin's original list ---
-  // Anthropic + generic `sk-` style keys (sk-ant-..., sk-...)
-  { name: "sk-key", pattern: /sk-[A-Za-z0-9_-]{12,}/g },
-  // Authorization header, ANY scheme (Bearer, Basic, Digest, Token, ...)
-  { name: "authorization-header", pattern: /Authorization:\s*[A-Za-z]+\s+[^\s"']+/gi },
-  // Bare bearer token
-  { name: "bare-bearer", pattern: /Bearer\s+[^\s"']+/g },
-  // JWTs: three base64url segments
-  { name: "jwt-segments", pattern: /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g },
-  // Query-string / form secret params (access_token before token to win leftmost)
-  { name: "secret-param", pattern: /(?:api[_-]?key|access[_-]?token|token|secret|password)=[^\s"'&]+/gi },
-  // GitHub personal access tokens
-  { name: "ghp", pattern: /ghp_[A-Za-z0-9]{20,}/g },
-  // AWS access key IDs
-  { name: "akia", pattern: /AKIA[A-Z0-9]{12,}/g },
-  // Slack bot/user tokens
-  { name: "slack-bot-user", pattern: /xox[bp]-[A-Za-z0-9-]+/g },
-  // Google API keys
-  { name: "google-api-key-legacy", pattern: /AIza[A-Za-z0-9_-]{20,}/g }
-];
-var MARKER = "[REDACTED]";
-function applySecretPatterns(value, replace) {
-  const removed = [];
-  let text = value;
-  for (const { pattern, isSecret, keepPrefix } of SECRET_PATTERNS) {
-    text = text.replace(pattern, (match, ...groups) => {
-      const prefix = keepPrefix ? String(groups[0]) : "";
-      const atLineEnd = keepPrefix === true && typeof groups[1] === "string";
-      const next = String(groups[groups.length - 1]).charAt(Number(groups[groups.length - 2]) + match.length);
-      const secret = match.slice(prefix.length);
-      if (isSecret && !isSecret(secret, prefix, atLineEnd, next)) return match;
-      removed.push(secret);
-      return `${prefix}${replace(secret)}`;
-    });
-  }
-  return { text, removed };
-}
-function redactStringWithRemoved(value) {
-  return applySecretPatterns(value, () => MARKER);
-}
-function redactString(value) {
-  return redactStringWithRemoved(value).text;
-}
-var REPLACEMENT_CHAR = String.fromCharCode(65533);
-var NUL = String.fromCharCode(0);
-var NUL_RUN = new RegExp(`${NUL}+`, "g");
-
 // src/phase-results/assemble-common.ts
 function baseFields(ctx, phase) {
   return {
@@ -523,13 +525,22 @@ function baseFields(ctx, phase) {
     chain: []
   };
 }
-function parseJsonObject(line) {
+function parseJsonOr(text, fallback) {
   try {
-    const v = JSON.parse(line);
-    return typeof v === "object" && v !== null && !Array.isArray(v) ? v : null;
+    return JSON.parse(text);
   } catch {
-    return null;
+    return fallback;
   }
+}
+function parseJsonObject(line) {
+  const v = parseJsonOr(line, null);
+  return typeof v === "object" && v !== null && !Array.isArray(v) ? v : null;
+}
+function readValue(ctx, name) {
+  return ctx.valueDir === null ? null : readValueFile(ctx.valueDir, name);
+}
+function sha256(data) {
+  return (0, import_node_crypto.createHash)("sha256").update(data).digest("hex");
 }
 function redactModelText(s) {
   return redactString(s);
@@ -611,7 +622,7 @@ function assembleBuild(ctx, opts = {}) {
     if (lastResult === "red") return { ok: false, error: "not_green" };
     if (!sawRed) return { ok: false, error: "no_red" };
   }
-  const notes = ctx.valueDir === null ? null : readValueFile(ctx.valueDir, "notes.txt");
+  const notes = readValue(ctx, "notes.txt");
   const result = {
     ...baseFields(ctx, "build"),
     sources: { testRuns: "code", evidenceTrust: "code", ...notes === null ? {} : { notes: "model" } },
@@ -627,13 +638,12 @@ function assembleBuild(ctx, opts = {}) {
 }
 
 // src/phase-results/assemble-ideate.ts
-var import_node_crypto2 = require("node:crypto");
 var fs5 = __toESM(require("node:fs"), 1);
 var path5 = __toESM(require("node:path"), 1);
 
 // src/phase-results/ledger.ts
 var import_node_child_process = require("node:child_process");
-var import_node_crypto = require("node:crypto");
+var import_node_crypto2 = require("node:crypto");
 var fs4 = __toESM(require("node:fs"), 1);
 var os = __toESM(require("node:os"), 1);
 var path4 = __toESM(require("node:path"), 1);
@@ -674,7 +684,7 @@ function ledgerKey(cwd) {
   const content = Buffer.from(`${top}
 ${gitDir}
 `, "utf8");
-  return (0, import_node_crypto.createHash)("sha1").update(`blob ${content.length}\0`).update(content).digest("hex").slice(0, 16);
+  return (0, import_node_crypto2.createHash)("sha1").update(`blob ${content.length}\0`).update(content).digest("hex").slice(0, 16);
 }
 function splitRel(relPath) {
   const parts = relPath.split("/");
@@ -863,13 +873,8 @@ ${row.sha256}`);
   return keys;
 }
 function readOpenQuestions(ctx) {
-  const raw = ctx.valueDir === null ? null : readValueFile(ctx.valueDir, "open-questions.json");
-  let parsed;
-  try {
-    parsed = raw === null ? [] : JSON.parse(raw);
-  } catch {
-    parsed = [];
-  }
+  const raw = readValue(ctx, "open-questions.json");
+  const parsed = raw === null ? [] : parseJsonOr(raw, []);
   if (!Array.isArray(parsed)) return [];
   return parsed.filter((q) => typeof q === "string").map((q) => clipText(q, TEXT_CAP) ?? "");
 }
@@ -894,9 +899,8 @@ function assembleIdeate(ctx) {
       if (decisions.length >= MAX_DECISIONS) break;
       const rec = parseJsonObject(line);
       if (rec === null || rec.feature !== ctx.feature || typeof rec.id !== "string") continue;
-      const sha = (0, import_node_crypto2.createHash)("sha256").update(line).digest("hex");
       if (!keys.has(`${rec.id}
-${sha}`)) continue;
+${sha256(line)}`)) continue;
       const d = { id: rec.id };
       const question = clipText(rec.question, TEXT_CAP);
       const answer = clipText(rec.answer, TEXT_CAP);
@@ -925,13 +929,8 @@ function redactIfString(v) {
   return typeof v === "string" ? redactModelText(v) : v;
 }
 function assemblePlan(ctx) {
-  const raw = ctx.valueDir === null ? null : readValueFile(ctx.valueDir, "tasks.json");
-  let parsed;
-  try {
-    parsed = raw === null ? null : JSON.parse(raw);
-  } catch {
-    parsed = null;
-  }
+  const raw = readValue(ctx, "tasks.json");
+  const parsed = raw === null ? null : parseJsonOr(raw, null);
   if (!Array.isArray(parsed)) return { ok: false, error: "no_tasks" };
   const seen = /* @__PURE__ */ new Set();
   const tasks = [];
@@ -951,20 +950,36 @@ function assemblePlan(ctx) {
 }
 
 // src/phase-results/assemble-ship.ts
-var import_node_child_process2 = require("node:child_process");
-var import_node_crypto3 = require("node:crypto");
+var import_node_child_process3 = require("node:child_process");
 var fs6 = __toESM(require("node:fs"), 1);
 var path6 = __toESM(require("node:path"), 1);
+
+// src/phase-results/git.ts
+var import_node_child_process2 = require("node:child_process");
+function gitEnv() {
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
+  return env;
+}
+function gitOut2(cwd, args) {
+  try {
+    const out = (0, import_node_child_process2.execFileSync)("git", args, { cwd, env: gitEnv(), encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return out === "" ? null : out;
+  } catch {
+    return null;
+  }
+}
+
+// src/phase-results/assemble-ship.ts
 var DEFAULT_REQUIRED_GATES = ["code-review", "performance", "security"];
 var SEVERITIES = ["critical", "high", "medium", "low", "info"];
 var REPO_FILE_CAP = 4 * 1024 * 1024;
 var GitError = class extends Error {
 };
 function runGit(repo, args, okCodes = [0]) {
-  const env = {};
-  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
+  const env = gitEnv();
   env.GIT_CONFIG_NOSYSTEM = "1";
-  const r = (0, import_node_child_process2.spawnSync)("git", ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", ...args], {
+  const r = (0, import_node_child_process3.spawnSync)("git", ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", ...args], {
     cwd: repo,
     env,
     encoding: "utf-8",
@@ -1020,9 +1035,6 @@ function repoLines(file) {
     fs6.closeSync(fd);
   }
 }
-function sha256(s) {
-  return (0, import_node_crypto3.createHash)("sha256").update(s).digest("hex");
-}
 function counts(v) {
   const src = typeof v === "object" && v !== null ? v : {};
   const out = {};
@@ -1034,13 +1046,74 @@ function agentRow(row) {
   const at = typeof row.ts === "string" ? Date.parse(row.ts) : NaN;
   if (typeof row.gate !== "string" || row.verdict !== "pass" && row.verdict !== "fail" || Number.isNaN(at)) return null;
   if (typeof f !== "object" || f === null || Array.isArray(f)) return null;
-  const counts2 = {};
+  const findings = {};
   for (const s of SEVERITIES) {
     const n = f[s];
     if (typeof n !== "number" || !Number.isInteger(n) || n < 0) return null;
-    counts2[s] = n;
+    findings[s] = n;
   }
-  return { gate: row.gate, verdict: row.verdict, findings: counts2, at };
+  return { gate: row.gate, verdict: row.verdict, findings, at };
+}
+function timelineGates(ctx, featureDir, gateHashes) {
+  const backed = [];
+  for (const line of repoLines(path6.join(featureDir, "timeline.ndjson"))) {
+    if (!gateHashes.has(sha256(line))) continue;
+    const rec = parseJsonObject(line);
+    if (rec !== null && rec.kind === "gate" && rec.feature === ctx.feature && typeof rec.round === "number") {
+      backed.push(rec);
+    }
+  }
+  const latest = Math.max(0, ...backed.map((r) => r.round));
+  const byName = /* @__PURE__ */ new Map();
+  for (const rec of backed) {
+    if (rec.round !== latest || typeof rec.gate !== "string") continue;
+    byName.set(rec.gate, {
+      gate: rec.gate,
+      verdict: rec.verdict === "pass" ? "pass" : "fail",
+      findings: counts(rec.findings),
+      fixed: counts(rec.fixed),
+      source: "model"
+    });
+  }
+  return byName;
+}
+function applyAgentVerdicts(byName, verdictRows, runStart) {
+  for (const raw of verdictRows) {
+    const row = agentRow(raw);
+    const gate = row === null ? void 0 : byName.get(row.gate);
+    if (row === null || gate === void 0 || !(row.at >= runStart)) continue;
+    const { critical, high } = row.findings;
+    const unfixed = Math.max(0, critical - gate.fixed.critical) + Math.max(0, high - gate.fixed.high);
+    let verdict = row.verdict;
+    if (unfixed > 0) verdict = "fail";
+    else if (critical + high > 0) verdict = "pass";
+    byName.set(row.gate, { ...gate, verdict, findings: row.findings, source: "agent" });
+  }
+}
+function readOverrides(ctx, featureDir, decisionRows) {
+  const recorded = /* @__PURE__ */ new Map();
+  for (const line of repoLines(path6.join(featureDir, "decisions.ndjson"))) {
+    const rec = parseJsonObject(line);
+    if (rec === null || rec.feature !== ctx.feature || typeof rec.id !== "string") continue;
+    const h = sha256(line);
+    const ok = decisionRows.some((r) => r.id === rec.id && r.feature === ctx.feature && r.sha256 === h);
+    if (ok) recorded.set(rec.id, rec.person);
+  }
+  const raw = readValue(ctx, "overrides.json");
+  const requested = raw === null ? [] : parseJsonOr(raw, null);
+  if (!Array.isArray(requested)) return { ok: false, error: "override_unrecorded", detail: "overrides.json" };
+  const overrides = [];
+  for (const item of requested) {
+    const id = item?.decisionId;
+    if (typeof id !== "string" || !recorded.has(id)) return { ok: false, error: "override_unrecorded" };
+    const person = recorded.get(id);
+    overrides.push({
+      finding: redactModelText(typeof item?.finding === "string" ? item.finding : ""),
+      decisionId: id,
+      person: typeof person === "string" ? person : JSON.stringify(person ?? null)
+    });
+  }
+  return { ok: true, overrides };
 }
 function assembleShip(ctx, opts) {
   let diff;
@@ -1062,72 +1135,16 @@ function assembleShip(ctx, opts) {
   } catch (e) {
     return { ok: false, error: e instanceof LedgerError ? e.code : "unsafe_path" };
   }
-  const backed = [];
-  for (const line of repoLines(path6.join(featureDir, "timeline.ndjson"))) {
-    if (!gateHashes.has(sha256(line))) continue;
-    const rec = parseJsonObject(line);
-    if (rec !== null && rec.kind === "gate" && rec.feature === ctx.feature && typeof rec.round === "number") {
-      backed.push(rec);
-    }
-  }
-  const latest = Math.max(0, ...backed.map((r) => r.round));
-  const byName = /* @__PURE__ */ new Map();
-  for (const rec of backed) {
-    if (rec.round !== latest || typeof rec.gate !== "string") continue;
-    byName.set(rec.gate, {
-      gate: rec.gate,
-      verdict: rec.verdict === "pass" ? "pass" : "fail",
-      findings: counts(rec.findings),
-      fixed: counts(rec.fixed),
-      source: "model"
-    });
-  }
-  const runStart = Date.parse(ctx.startedAt);
-  for (const raw2 of verdictRows) {
-    const row = agentRow(raw2);
-    const gate = row === null ? void 0 : byName.get(row.gate);
-    if (row === null || gate === void 0 || !(row.at >= runStart)) continue;
-    const { critical, high } = row.findings;
-    const unfixed = Math.max(0, critical - gate.fixed.critical) + Math.max(0, high - gate.fixed.high);
-    const verdict = unfixed > 0 ? "fail" : critical + high > 0 ? "pass" : row.verdict;
-    byName.set(row.gate, { ...gate, verdict, findings: row.findings, source: "agent" });
-  }
+  const byName = timelineGates(ctx, featureDir, gateHashes);
+  applyAgentVerdicts(byName, verdictRows, Date.parse(ctx.startedAt));
   for (const required of opts.requiredGates ?? DEFAULT_REQUIRED_GATES) {
     if (!byName.has(required)) return { ok: false, error: "gate_missing", detail: required };
   }
   const gates = [...byName.values()];
-  const recorded = /* @__PURE__ */ new Map();
-  const lines = repoLines(path6.join(featureDir, "decisions.ndjson"));
-  for (const line of lines) {
-    const rec = parseJsonObject(line);
-    if (rec === null || rec.feature !== ctx.feature || typeof rec.id !== "string") continue;
-    const h = sha256(line);
-    const ok = decisionRows.some((r) => r.id === rec.id && r.feature === ctx.feature && r.sha256 === h);
-    if (ok) recorded.set(rec.id, rec.person);
-  }
-  const raw = ctx.valueDir === null ? null : readValueFile(ctx.valueDir, "overrides.json");
-  let requested = [];
-  if (raw !== null) {
-    try {
-      requested = JSON.parse(raw);
-    } catch {
-      requested = null;
-    }
-  }
-  if (!Array.isArray(requested)) return { ok: false, error: "override_unrecorded", detail: "overrides.json" };
-  const overrides = [];
-  for (const item of requested) {
-    const id = item?.decisionId;
-    if (typeof id !== "string" || !recorded.has(id)) return { ok: false, error: "override_unrecorded" };
-    const person = recorded.get(id);
-    overrides.push({
-      finding: redactModelText(typeof item?.finding === "string" ? item.finding : ""),
-      decisionId: id,
-      person: typeof person === "string" ? person : JSON.stringify(person ?? null)
-    });
-  }
+  const read = readOverrides(ctx, featureDir, decisionRows);
+  if (!read.ok) return read;
   const blockers = gates.filter((g) => g.verdict !== "pass").map((g) => `gate:${g.gate}`);
-  const summary = ctx.valueDir === null ? null : readValueFile(ctx.valueDir, "summary.txt");
+  const summary = readValue(ctx, "summary.txt");
   return {
     ok: true,
     result: {
@@ -1136,7 +1153,7 @@ function assembleShip(ctx, opts) {
       sources: { diff: "code", gates: "model", overrides: "code", blockers: "code", verdict: "code", summary: "model" },
       diff: { base: diff.base, baseRef: diff.baseRef, files: diff.files, insertions: diff.insertions, deletions: diff.deletions },
       gates,
-      overrides,
+      overrides: read.overrides,
       blockers,
       verdict: blockers.length === 0 ? "ready_to_merge" : "blocked",
       summary: summary === null ? "" : redactModelText(summary)
@@ -1145,7 +1162,7 @@ function assembleShip(ctx, opts) {
 }
 
 // src/phase-results/archivable.ts
-var import_node_crypto4 = require("node:crypto");
+var import_node_crypto3 = require("node:crypto");
 var fs7 = __toESM(require("node:fs"), 1);
 var path7 = __toESM(require("node:path"), 1);
 function shipArchivable(repo, feature, pluginRoot2) {
@@ -1157,7 +1174,7 @@ function shipArchivable(repo, feature, pluginRoot2) {
   for (const kind of ["pending", "unverified"]) {
     if (ledger.hasMarker(`${kind}/${feature}/ship`)) return { ok: false, reason: "unverified" };
   }
-  const sha = (0, import_node_crypto4.createHash)("sha256").update(read.bytes).digest("hex");
+  const sha = (0, import_node_crypto3.createHash)("sha256").update(read.bytes).digest("hex");
   if (ledger.lastRow(`results/${feature}/ship`)?.sha256 !== sha) return { ok: false, reason: "unbound_result" };
   const v = validate(loadPhaseSchema("ship", pluginRoot2), read.value);
   if (!v.ok) return { ok: false, reason: "invalid_result" };
@@ -1168,21 +1185,10 @@ function shipArchivable(repo, feature, pluginRoot2) {
 }
 
 // src/phase-results/feature.ts
-var import_node_child_process3 = require("node:child_process");
 var fs8 = __toESM(require("node:fs"), 1);
 var path8 = __toESM(require("node:path"), 1);
 var FEATURE_RE2 = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 var BRANCH_RE = /^[^/]+\/([^/]+)\/[^/]/;
-function gitOut2(cwd, args) {
-  const env = {};
-  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
-  try {
-    const out = (0, import_node_child_process3.execFileSync)("git", args, { cwd, env, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    return out === "" ? null : out;
-  } catch {
-    return null;
-  }
-}
 function activeFeatures(repo) {
   const dir = path8.join(repo, ".oss", "dev", "active");
   let names;
@@ -1228,24 +1234,13 @@ function parseArgs(argv) {
   }
   return args;
 }
-function gitOut3(cwd, args) {
-  const env = {};
-  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
-  try {
-    const out = (0, import_node_child_process4.execFileSync)("git", args, { cwd, env, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    return out === "" ? null : out;
-  } catch {
-    return null;
-  }
-}
 function headSha(repo) {
-  return gitOut3(repo, ["rev-parse", "--verify", "HEAD^{commit}"]);
+  return gitOut2(repo, ["rev-parse", "--verify", "HEAD^{commit}"]);
 }
 function shipBase(repo, dir) {
   const named = dir === null ? null : readValueFile(dir, "base.txt")?.replace(/\n$/, "");
   if (named != null && !named.includes("\n") && isLocalBranch(repo, named)) return named;
-  const env = {};
-  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
+  const env = gitEnv();
   env.GIT_CONFIG_NOSYSTEM = "1";
   const r = (0, import_node_child_process4.spawnSync)("git", ["config", "--local", "--get", "oss.shipBase"], {
     cwd: repo,
@@ -1295,9 +1290,6 @@ function checkSchema(phase, value) {
   const v = validate(loadPhaseSchema(phase, pluginRoot()), value);
   if (!v.ok) throw new Refusal(`invalid_result (${v.rule})`, v.path);
 }
-function sha2562(bytes) {
-  return (0, import_node_crypto5.createHash)("sha256").update(bytes).digest("hex");
-}
 function assemble(repo, feature, phase) {
   const ledger = openLedger(repo);
   const startedAt = runStartedAt(ledger, phase);
@@ -1316,7 +1308,7 @@ function assemble(repo, feature, phase) {
   const read = readResult(repo, feature, phase);
   if (!read.ok) throw new Refusal(read.error, `results/${phase}.json`);
   ledger.appendRow(`results/${feature}/${phase}`, {
-    sha256: sha2562(read.bytes),
+    sha256: sha256(read.bytes),
     feature,
     phase,
     startedAt,
@@ -1366,7 +1358,7 @@ function check(repo, feature, phase) {
   const stored = value;
   if (stored.feature !== feature) throw new Refusal("stale_result", "feature");
   if (stored.phase !== phase) throw new Refusal("stale_result", "phase");
-  if (ledger.lastRow(`results/${feature}/${phase}`)?.sha256 !== sha2562(read.bytes)) {
+  if (ledger.lastRow(`results/${feature}/${phase}`)?.sha256 !== sha256(read.bytes)) {
     throw new Refusal("unbound_result", "sha256");
   }
   checkSchema(phase, stored);

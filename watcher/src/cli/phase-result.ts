@@ -17,13 +17,12 @@
  * Repo: the physical cwd's git toplevel, or --repo; never CLAUDE_PROJECT_DIR. Schemas: the plugin root this bundle sits
  * in (<root>/watcher/dist/cli/phase-result.cjs), never the repo. No network; the only child process is git.
  */
-import { execFileSync, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { assembleBuild } from '../phase-results/assemble-build.js';
-import type { AssembleContext, AssembleOutcome } from '../phase-results/assemble-common.js';
+import { sha256, type AssembleContext, type AssembleOutcome } from '../phase-results/assemble-common.js';
 import { assembleIdeate } from '../phase-results/assemble-ideate.js';
 import { assemblePlan } from '../phase-results/assemble-plan.js';
 import { assembleShip, isLocalBranch } from '../phase-results/assemble-ship.js';
@@ -31,6 +30,7 @@ import { LedgerError, ledgerKey, openLedger, type Ledger } from '../phase-result
 import { loadPhaseSchema, PHASES, type Phase } from '../phase-results/schemas.js';
 import { shipArchivable } from '../phase-results/archivable.js';
 import { activeFeatures, resolveFeature } from '../phase-results/feature.js';
+import { gitEnv, gitOut } from '../phase-results/git.js';
 import { readResult, readValueFile, resolveRepo, writeResult } from '../phase-results/store.js';
 import { validate } from '../phase-results/validate.js';
 
@@ -69,17 +69,6 @@ function parseArgs(argv: string[]): Args | null {
   return args;
 }
 
-function gitOut(cwd: string, args: string[]): string | null {
-  const env: NodeJS.ProcessEnv = {};
-  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('GIT_')) env[k] = v;
-  try {
-    const out = execFileSync('git', args, { cwd, env, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    return out === '' ? null : out;
-  } catch {
-    return null;
-  }
-}
-
 /** The commit HEAD points at; assemble records it and check for ship compares against it. */
 function headSha(repo: string): string | null {
   return gitOut(repo, ['rev-parse', '--verify', 'HEAD^{commit}']);
@@ -94,8 +83,7 @@ function headSha(repo: string): string | null {
 function shipBase(repo: string, dir: string | null): string {
   const named = dir === null ? null : readValueFile(dir, 'base.txt')?.replace(/\n$/, '');
   if (named != null && !named.includes('\n') && isLocalBranch(repo, named)) return named;
-  const env: NodeJS.ProcessEnv = {};
-  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('GIT_')) env[k] = v;
+  const env = gitEnv();
   env.GIT_CONFIG_NOSYSTEM = '1';
   const r = spawnSync('git', ['config', '--local', '--get', 'oss.shipBase'], {
     cwd: repo,
@@ -152,10 +140,6 @@ function runAssembler(phase: Phase, ctx: AssembleContext, base?: string): Assemb
 function checkSchema(phase: Phase, value: unknown): void {
   const v = validate(loadPhaseSchema(phase, pluginRoot()), value);
   if (!v.ok) throw new Refusal(`invalid_result (${v.rule})`, v.path);
-}
-
-function sha256(bytes: Buffer): string {
-  return createHash('sha256').update(bytes).digest('hex');
 }
 
 function assemble(repo: string, feature: string, phase: Phase): Record<string, unknown> {

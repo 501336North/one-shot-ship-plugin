@@ -4,8 +4,7 @@
  * Reads the model's task list from the `tasks.json` value file and returns the plan result. Task ids must be unique
  * and each task needs at least one test id. Model text is redacted; the CLI validates the result against the schema.
  */
-import { readValueFile } from './store.js';
-import { baseFields, redactModelText, type AssembleContext, type AssembleOutcome } from './assemble-common.js';
+import { baseFields, parseJsonOr, readValue, redactModelText, type AssembleContext, type AssembleOutcome } from './assemble-common.js';
 
 interface TaskInput {
   id?: unknown;
@@ -18,13 +17,8 @@ function redactIfString(v: unknown): unknown {
 }
 
 export function assemblePlan(ctx: AssembleContext): AssembleOutcome {
-  const raw = ctx.valueDir === null ? null : readValueFile(ctx.valueDir, 'tasks.json');
-  let parsed: unknown;
-  try {
-    parsed = raw === null ? null : (JSON.parse(raw) as unknown);
-  } catch {
-    parsed = null;
-  }
+  const raw = readValue(ctx, 'tasks.json');
+  const parsed = raw === null ? null : parseJsonOr(raw, null);
   if (!Array.isArray(parsed)) return { ok: false, error: 'no_tasks' };
 
   const seen = new Set<unknown>();

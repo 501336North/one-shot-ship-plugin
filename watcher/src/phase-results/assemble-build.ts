@@ -8,8 +8,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { readValueFile } from './store.js';
-import { baseFields, redactModelText, type AssembleContext, type AssembleOutcome } from './assemble-common.js';
+import { baseFields, readValue, redactModelText, type AssembleContext, type AssembleOutcome } from './assemble-common.js';
 import type { GateEvent, TestResult } from '../tool-gate/state-store.js';
 
 const CHUNK = 64 * 1024;
@@ -105,7 +104,7 @@ export function assembleBuild(ctx: AssembleContext, opts: AssembleBuildOptions =
     if (!sawRed) return { ok: false, error: 'no_red' };
   }
 
-  const notes = ctx.valueDir === null ? null : readValueFile(ctx.valueDir, 'notes.txt');
+  const notes = readValue(ctx, 'notes.txt');
   const result: Record<string, unknown> = {
     ...baseFields(ctx, 'build'),
     sources: { testRuns: 'code', evidenceTrust: 'code', ...(notes === null ? {} : { notes: 'model' }) },

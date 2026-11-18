@@ -14,12 +14,20 @@
  * `person` is copied from that record, never from the model.
  */
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { openLedger, LedgerError } from './ledger.js';
-import { readValueFile } from './store.js';
-import { baseFields, parseJsonObject, redactModelText, type AssembleContext, type AssembleOutcome } from './assemble-common.js';
+import { openLedger, LedgerError, type LedgerRow } from './ledger.js';
+import { gitEnv } from './git.js';
+import {
+  baseFields,
+  parseJsonObject,
+  parseJsonOr,
+  readValue,
+  redactModelText,
+  sha256,
+  type AssembleContext,
+  type AssembleOutcome,
+} from './assemble-common.js';
 
 /**
  * The gates ship requires (AC-003.5): the timeline gate line names, i.e. the `gate.txt` values of the served ship.md
@@ -39,8 +47,7 @@ const REPO_FILE_CAP = 4 * 1024 * 1024;
 class GitError extends Error {}
 
 function runGit(repo: string, args: string[], okCodes: number[] = [0]): { status: number; out: string } {
-  const env: NodeJS.ProcessEnv = {};
-  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('GIT_')) env[k] = v;
+  const env = gitEnv();
   env.GIT_CONFIG_NOSYSTEM = '1';
   const r = spawnSync('git', ['-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', ...args], {
     cwd: repo,
@@ -114,10 +121,6 @@ function repoLines(file: string): string[] {
   }
 }
 
-function sha256(s: string): string {
-  return createHash('sha256').update(s).digest('hex');
-}
-
 function counts(v: unknown): Record<string, number> {
   const src = typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {};
   const out: Record<string, number> = {};
@@ -139,38 +142,17 @@ function agentRow(row: Record<string, unknown>): { gate: string; verdict: 'pass'
   const at = typeof row.ts === 'string' ? Date.parse(row.ts) : NaN;
   if (typeof row.gate !== 'string' || (row.verdict !== 'pass' && row.verdict !== 'fail') || Number.isNaN(at)) return null;
   if (typeof f !== 'object' || f === null || Array.isArray(f)) return null;
-  const counts: Record<string, number> = {};
+  const findings: Record<string, number> = {};
   for (const s of SEVERITIES) {
     const n = (f as Record<string, unknown>)[s];
     if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) return null;
-    counts[s] = n;
+    findings[s] = n;
   }
-  return { gate: row.gate, verdict: row.verdict, findings: counts, at };
+  return { gate: row.gate, verdict: row.verdict, findings, at };
 }
 
-export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): AssembleOutcome {
-  let diff: Diff;
-  try {
-    diff = readDiff(ctx.repo, opts.base);
-  } catch {
-    return { ok: false, error: 'diff_unavailable' };
-  }
-  if (diff.empty) return { ok: false, error: 'empty_diff' };
-
-  const featureDir = path.join(ctx.repo, '.oss', 'dev', 'active', ctx.feature);
-  let gateHashes: Set<unknown>;
-  let decisionRows: Array<Record<string, unknown>>;
-  let verdictRows: Array<Record<string, unknown>>;
-  try {
-    const ledger = openLedger(ctx.repo);
-    gateHashes = new Set(ledger.readRows(`gates/${ctx.feature}`).map((r) => r.sha256));
-    decisionRows = ledger.readRows(`decisions/${ctx.feature}`);
-    verdictRows = ledger.readRows(`verdicts/${ctx.feature}`);
-  } catch (e) {
-    return { ok: false, error: e instanceof LedgerError ? e.code : 'unsafe_path' };
-  }
-
-  // Gates: ledger-backed lines of this feature, latest round only; a later line of the same gate wins.
+/** Gates from the feature's ledger-backed timeline lines, latest round only; a later line of the same gate wins. */
+function timelineGates(ctx: AssembleContext, featureDir: string, gateHashes: Set<unknown>): Map<string, Gate> {
   const backed: Array<Record<string, unknown>> = [];
   for (const line of repoLines(path.join(featureDir, 'timeline.ndjson'))) {
     if (!gateHashes.has(sha256(line))) continue;
@@ -191,43 +173,42 @@ export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): A
       source: 'model',
     });
   }
-  // T19: an agent's captured verdict from this ship run supplies verdict and findings; the latest row of a gate wins.
-  // D24: unfixed critical or high findings (captured counts minus the line's `fixed`, per severity) fail the gate;
-  // reported ones all fixed pass it, whatever the block said; with none reported, the block's own verdict counts.
-  const runStart = Date.parse(ctx.startedAt);
+  return byName;
+}
+
+/**
+ * T19: an agent's captured verdict from this ship run supplies verdict and findings; the latest row of a gate wins.
+ * D24: unfixed critical or high findings (captured counts minus the line's `fixed`, per severity) fail the gate;
+ * reported ones all fixed pass it, whatever the block said; with none reported, the block's own verdict counts.
+ */
+function applyAgentVerdicts(byName: Map<string, Gate>, verdictRows: LedgerRow[], runStart: number): void {
   for (const raw of verdictRows) {
     const row = agentRow(raw);
     const gate = row === null ? undefined : byName.get(row.gate);
     if (row === null || gate === undefined || !(row.at >= runStart)) continue;
     const { critical, high } = row.findings;
     const unfixed = Math.max(0, critical - gate.fixed.critical) + Math.max(0, high - gate.fixed.high);
-    const verdict = unfixed > 0 ? 'fail' : critical + high > 0 ? 'pass' : row.verdict;
+    let verdict = row.verdict;
+    if (unfixed > 0) verdict = 'fail';
+    else if (critical + high > 0) verdict = 'pass';
     byName.set(row.gate, { ...gate, verdict, findings: row.findings, source: 'agent' });
   }
-  for (const required of opts.requiredGates ?? DEFAULT_REQUIRED_GATES) {
-    if (!byName.has(required)) return { ok: false, error: 'gate_missing', detail: required };
-  }
-  const gates = [...byName.values()];
+}
 
-  // Overrides: person comes from the ledger-backed record only.
+type OverridesOutcome = { ok: true; overrides: Array<Record<string, string>> } | Extract<AssembleOutcome, { ok: false }>;
+
+/** The model's `overrides.json`, each checked against a ledger-backed decision record; person comes from that record. */
+function readOverrides(ctx: AssembleContext, featureDir: string, decisionRows: LedgerRow[]): OverridesOutcome {
   const recorded = new Map<string, unknown>();
-  const lines = repoLines(path.join(featureDir, 'decisions.ndjson'));
-  for (const line of lines) {
+  for (const line of repoLines(path.join(featureDir, 'decisions.ndjson'))) {
     const rec = parseJsonObject(line);
     if (rec === null || rec.feature !== ctx.feature || typeof rec.id !== 'string') continue;
     const h = sha256(line);
     const ok = decisionRows.some((r) => r.id === rec.id && r.feature === ctx.feature && r.sha256 === h);
     if (ok) recorded.set(rec.id, rec.person);
   }
-  const raw = ctx.valueDir === null ? null : readValueFile(ctx.valueDir, 'overrides.json');
-  let requested: unknown = [];
-  if (raw !== null) {
-    try {
-      requested = JSON.parse(raw) as unknown;
-    } catch {
-      requested = null;
-    }
-  }
+  const raw = readValue(ctx, 'overrides.json');
+  const requested = raw === null ? [] : parseJsonOr(raw, null);
   if (!Array.isArray(requested)) return { ok: false, error: 'override_unrecorded', detail: 'overrides.json' };
   const overrides: Array<Record<string, string>> = [];
   for (const item of requested as Array<Record<string, unknown> | null>) {
@@ -240,9 +221,43 @@ export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): A
       person: typeof person === 'string' ? person : JSON.stringify(person ?? null),
     });
   }
+  return { ok: true, overrides };
+}
+
+export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): AssembleOutcome {
+  let diff: Diff;
+  try {
+    diff = readDiff(ctx.repo, opts.base);
+  } catch {
+    return { ok: false, error: 'diff_unavailable' };
+  }
+  if (diff.empty) return { ok: false, error: 'empty_diff' };
+
+  const featureDir = path.join(ctx.repo, '.oss', 'dev', 'active', ctx.feature);
+  let gateHashes: Set<unknown>;
+  let decisionRows: LedgerRow[];
+  let verdictRows: LedgerRow[];
+  try {
+    const ledger = openLedger(ctx.repo);
+    gateHashes = new Set(ledger.readRows(`gates/${ctx.feature}`).map((r) => r.sha256));
+    decisionRows = ledger.readRows(`decisions/${ctx.feature}`);
+    verdictRows = ledger.readRows(`verdicts/${ctx.feature}`);
+  } catch (e) {
+    return { ok: false, error: e instanceof LedgerError ? e.code : 'unsafe_path' };
+  }
+
+  const byName = timelineGates(ctx, featureDir, gateHashes);
+  applyAgentVerdicts(byName, verdictRows, Date.parse(ctx.startedAt));
+  for (const required of opts.requiredGates ?? DEFAULT_REQUIRED_GATES) {
+    if (!byName.has(required)) return { ok: false, error: 'gate_missing', detail: required };
+  }
+  const gates = [...byName.values()];
+
+  const read = readOverrides(ctx, featureDir, decisionRows);
+  if (!read.ok) return read;
 
   const blockers = gates.filter((g) => g.verdict !== 'pass').map((g) => `gate:${g.gate}`);
-  const summary = ctx.valueDir === null ? null : readValueFile(ctx.valueDir, 'summary.txt');
+  const summary = readValue(ctx, 'summary.txt');
   return {
     ok: true,
     result: {
@@ -251,7 +266,7 @@ export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): A
       sources: { diff: 'code', gates: 'model', overrides: 'code', blockers: 'code', verdict: 'code', summary: 'model' },
       diff: { base: diff.base, baseRef: diff.baseRef, files: diff.files, insertions: diff.insertions, deletions: diff.deletions },
       gates,
-      overrides,
+      overrides: read.overrides,
       blockers,
       verdict: blockers.length === 0 ? 'ready_to_merge' : 'blocked',
       summary: summary === null ? '' : redactModelText(summary),

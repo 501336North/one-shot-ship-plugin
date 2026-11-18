@@ -5,12 +5,19 @@
  * row with the same feature and id, and the record's own feature is this feature. Zero decisions is valid (D18).
  * DESIGN.md needs a whole line `Status: COMMITTED`. Open questions are model text from `open-questions.json`.
  */
-import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { readValueFile } from './store.js';
 import { LedgerError, openLedger } from './ledger.js';
-import { baseFields, parseJsonObject, redactModelText, type AssembleContext, type AssembleOutcome } from './assemble-common.js';
+import {
+  baseFields,
+  parseJsonObject,
+  parseJsonOr,
+  readValue,
+  redactModelText,
+  sha256,
+  type AssembleContext,
+  type AssembleOutcome,
+} from './assemble-common.js';
 
 const FILE_CAP = 1024 * 1024;
 const MAX_DECISIONS = 200;
@@ -54,13 +61,8 @@ function ledgerKeys(ctx: AssembleContext): Set<string> {
 }
 
 function readOpenQuestions(ctx: AssembleContext): string[] {
-  const raw = ctx.valueDir === null ? null : readValueFile(ctx.valueDir, 'open-questions.json');
-  let parsed: unknown;
-  try {
-    parsed = raw === null ? [] : (JSON.parse(raw) as unknown);
-  } catch {
-    parsed = [];
-  }
+  const raw = readValue(ctx, 'open-questions.json');
+  const parsed = raw === null ? [] : parseJsonOr(raw, []);
   if (!Array.isArray(parsed)) return [];
   return parsed.filter((q): q is string => typeof q === 'string').map((q) => clipText(q, TEXT_CAP) ?? '');
 }
@@ -89,8 +91,7 @@ export function assembleIdeate(ctx: AssembleContext): AssembleOutcome {
       if (decisions.length >= MAX_DECISIONS) break;
       const rec = parseJsonObject(line);
       if (rec === null || rec.feature !== ctx.feature || typeof rec.id !== 'string') continue;
-      const sha = createHash('sha256').update(line).digest('hex');
-      if (!keys.has(`${rec.id}\n${sha}`)) continue;
+      if (!keys.has(`${rec.id}\n${sha256(line)}`)) continue;
       const d: Record<string, unknown> = { id: rec.id };
       const question = clipText(rec.question, TEXT_CAP);
       const answer = clipText(rec.answer, TEXT_CAP);

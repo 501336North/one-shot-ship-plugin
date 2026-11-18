@@ -2,23 +2,12 @@
  * Feature resolution for phase results (R-257): which active feature folder a repo's phase belongs to.
  * Shared by the phase-result CLI (T9) and the Stop dispatcher (T11). Mirrors oss_resolve_feature (hooks/oss-safe-path.sh).
  */
-import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { gitOut } from './git.js';
 
 const FEATURE_RE = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 const BRANCH_RE = /^[^/]+\/([^/]+)\/[^/]/;
-
-function gitOut(cwd: string, args: string[]): string | null {
-  const env: NodeJS.ProcessEnv = {};
-  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('GIT_')) env[k] = v;
-  try {
-    const out = execFileSync('git', args, { cwd, env, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    return out === '' ? null : out;
-  } catch {
-    return null;
-  }
-}
 
 /** Active feature folders (real dirs with a valid name). */
 export function activeFeatures(repo: string): string[] {
