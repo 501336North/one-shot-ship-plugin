@@ -23,6 +23,8 @@
  * protected-path rule: the hook folder is protected.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { sourcesFor, trustedSourceWord, type CommandPart, type TrustedSources } from '../command-reader.js';
 import { expansionSet } from '../expansion-scan.js';
 import { heredocBodyOf, ReadBudget, sourceOf, tokenize, UNKNOWN, type Token } from '../tokenize.js';
@@ -30,7 +32,9 @@ import type { Refusal } from './refusal.js';
 
 /** A word naming a file in OSS's hook folder, as read (`~` and `$HOME` filled in, or a HOME the call set). */
 const HOOK_FILE =
-  /\/\.oss\/hooks\/[^/]|\/\.claude\/plugins\/cache\/[^/]+\/oss\/[^/]+\/hooks\/[^/]|(?:^|\/)hooks\/oss-[^/]*\.sh$/;
+  /\/\.oss\/hooks\/[^/]|\/\.claude\/plugins\/cache\/.*\/hooks\/[^/]|(?:^|\/)hooks\/oss-[^/]*\.sh$/i;
+/** A `hooks/<file>` part of a path, in any case. */
+const HOOKS_PART = /(?:^|\/)hooks\/[^/]/i;
 /** `$CLAUDE_PLUGIN_ROOT/hooks/<file>` as written: the reader leaves the variable unknown, so it is read from the command. */
 const PLUGIN_HOOK = /\$\{?CLAUDE_PLUGIN_ROOT\}?\/hooks\/[^/]/;
 /** The names that move where a hook looks: HOME, PATH, and zsh's `path` array tied to PATH. */
@@ -230,8 +234,53 @@ function tokensSet(tokens: Token[], depth: number, call: Call, text?: string): b
   return setsIndirectly(words) || setsUnlisted(words) || setsFromElsewhere(words, depth, call, raws);
 }
 
+/** The names a glob part could stand for that make a path a hook path. */
+const HOOK_PATH_NAMES = ['.oss', 'hooks', '.claude', 'plugins', 'cache', 'oss-x.sh'];
+/** A shell glob character. */
+const GLOB = /[*?[]/;
+/** How many readings of a glob word are checked; more counts as a hook path (fail closed). */
+const MAX_GLOB_READINGS = 256;
+
+/** True when a glob part could match the name, in any case; a leading dot only when the pattern writes one. */
+function globMatches(part: string, name: string): boolean {
+  if (name.startsWith('.') && !part.startsWith('.')) return false;
+  const pattern = part.replace(/\[[^\]]*\]?|[*?]|[^*?[]/g, (c) => (c === '*' ? '.*' : c === '?' || c.startsWith('[') ? '.' : c.replace(/[.*+?^${}()|\\]/g, '\\$&')));
+  return new RegExp(`^${pattern}$`, 'i').test(name);
+}
+
+/** The paths a glob word could stand for: each glob part as itself or a hook-path name it matches (`**` also as several folders); null past the cap. */
+function globReadings(word: string): string[] | null {
+  let readings: string[] = [];
+  for (const [i, part] of word.split('/').entries()) {
+    const options = GLOB.test(part) ? [part, ...HOOK_PATH_NAMES.filter((n) => globMatches(part, n)), ...(part === '**' ? ['plugins/cache'] : [])] : [part];
+    readings = i === 0 ? options : readings.flatMap((r) => options.map((o) => `${r}/${o}`));
+    if (readings.length > MAX_GLOB_READINGS) return null;
+  }
+  return readings;
+}
+
+/** True when the word names a hook script, or is a glob that could expand to one. */
+function namesHook(word: string, cwd: string): boolean {
+  const readings = GLOB.test(word) ? globReadings(word) : [word];
+  return readings === null || readings.some((w) => HOOK_FILE.test(w) || inPluginCheckout(w, cwd));
+}
+
+/** True when the word is a file in the `hooks/` folder of a plugin checkout: a folder above it holds `.claude-plugin/plugin.json`. */
+function inPluginCheckout(word: string, cwd: string): boolean {
+  const hooks = HOOKS_PART.exec(word);
+  if (hooks === null) return false;
+  // the folder that holds `hooks/`, then each folder above it
+  let dir = path.dirname(path.resolve(cwd, word.slice(0, hooks.index + hooks[0].length - 1)));
+  for (;;) {
+    if (fs.existsSync(path.join(dir, '.claude-plugin', 'plugin.json'))) return true;
+    const up = path.dirname(dir);
+    if (up === dir) return false;
+    dir = up;
+  }
+}
+
 export function checkOssHookEnv(part: CommandPart, command: string, home: string, sources: TrustedSources): Refusal | null {
-  if (!part.words.some((w) => HOOK_FILE.test(w)) && !PLUGIN_HOOK.test(command)) return null;
+  if (!part.words.some((w) => namesHook(w, part.cwd)) && !PLUGIN_HOOK.test(command)) return null;
   const clears = part.wrappers.some((w, i) => w === 'env' || (w === 'exec' && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o))));
   if (!clears && !setsRefusedVariable(command, 0, { home, sources: sourcesFor(command, sources) })) return null;
   return {
