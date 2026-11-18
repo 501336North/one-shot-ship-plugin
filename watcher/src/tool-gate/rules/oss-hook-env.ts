@@ -19,9 +19,9 @@
  * one (round 14, CR LOW-1). Reported under the protected-path rule: the hook folder is protected.
  */
 
-import type { CommandPart } from '../command-reader.js';
+import { sourcesFor, trustedSourceWord, type CommandPart, type TrustedSources } from '../command-reader.js';
 import { expansionSet } from '../expansion-scan.js';
-import { heredocBodyOf, ReadBudget, tokenize, UNKNOWN, type Token } from '../tokenize.js';
+import { heredocBodyOf, ReadBudget, sourceOf, tokenize, UNKNOWN, type Token } from '../tokenize.js';
 import type { Refusal } from './refusal.js';
 
 /** A word naming a file in OSS's hook folder, as read (`~` and `$HOME` filled in, or a HOME the call set). */
@@ -59,11 +59,24 @@ const PREFIXES = new Set(['builtin', 'command']);
 const MAX_DEPTH = 5;
 
 /** True when the text, as the shell reads it, may set HOME or PATH or a variable not on the hook-call list. */
-function setsRefusedVariable(text: string, depth: number): boolean {
+/** The call's home and the files a `source` / `.` may run (OSS's own hook files). */
+interface Call {
+  home: string;
+  sources: TrustedSources;
+}
+
+function setsRefusedVariable(text: string, depth: number, call: Call): boolean {
   if (depth > MAX_DEPTH || expansionSet(text, (name) => !HOOK_CALL_VARIABLES.has(name)) !== null || arithmeticReadsVariable(text)) return true;
-  const result = tokenize(text, undefined, new ReadBudget());
+  const result = tokenize(text, call.home, new ReadBudget());
   if ('unreadable' in result && result.limit) return true;
-  return tokensSet(result.tokens, depth);
+  return tokensSet(result.tokens, depth, call, text);
+}
+
+/** True when a sourced word is a file directly in ~/.oss/hooks, written out in full: no variable, pattern or `.` / `..` part. */
+function sourcesOssHook(word: string | undefined, home: string): boolean {
+  if (word === undefined || word.includes(UNKNOWN) || /[*?[]/.test(word) || word.split('/').some((p) => p === '.' || p === '..')) return false;
+  const name = word.startsWith('~/.oss/hooks/') ? word.slice('~/.oss/hooks/'.length) : word.startsWith(`${home}/.oss/hooks/`) ? word.slice(`${home}/.oss/hooks/`.length) : '';
+  return name !== '' && !name.includes('/');
 }
 
 /**
@@ -168,34 +181,55 @@ function arithmeticReadsVariable(text: string): boolean {
   return false;
 }
 
-function tokensSet(tokens: Token[], depth: number): boolean {
+/** True when a simple command sets variables from elsewhere: a sourced file, keyword words (`set -k`), a function trace (`set -T`), a trap body. */
+function setsFromElsewhere(words: string[], depth: number, call: Call, raws: Array<string | undefined>): boolean {
+  let p = 0;
+  while (RESERVED.has(words[p])) p++;
+  while (p < words.length && ASSIGNMENT.test(words[p])) p++;
+  while (PREFIXES.has(words[p])) p++;
+  const [name, ...args] = words.slice(p);
+  if (name === 'source' || name === '.') {
+    return !sourcesOssHook(args[0], call.home) && !(args[0] !== undefined && trustedSourceWord(args[0], raws[p + 1], call.home, call.sources));
+  }
+  if (name === 'set') return args.some((a, i) => /^-[A-Za-z]*[kT]/.test(a) || (a === '-o' && (args[i + 1] === 'keyword' || args[i + 1] === 'functrace')));
+  if (name === 'trap') return args.some((a) => !a.startsWith('-') && setsRefusedVariable(a, depth + 1, call));
+  return false;
+}
+
+/** `text`: what the tokens were read from, so a word's raw text is known; a script inside a word has none. */
+function tokensSet(tokens: Token[], depth: number, call: Call, text?: string): boolean {
   let previous: string | null = null;
   let words: string[] = [];
+  let raws: Array<string | undefined> = [];
   for (const token of tokens) {
     if (token.kind === 'op') {
-      if (setsIndirectly(words) || setsUnlisted(words)) return true;
+      if (setsIndirectly(words) || setsUnlisted(words) || setsFromElsewhere(words, depth, call, raws)) return true;
       words = [];
+      raws = [];
     } else if (token.kind === 'word') {
       words.push(token.value);
+      const at = sourceOf(token);
+      raws.push(text === undefined || at === undefined ? undefined : text.slice(at.start, at.end));
     }
-    if (token.kind !== 'op' && token.scripts?.some((script) => tokensSet(script, depth))) return true;
+    if (token.kind !== 'op' && token.scripts?.some((script) => tokensSet(script, depth, call))) return true;
     if (token.kind === 'redirect') {
       const body = heredocBodyOf(token);
-      if (body !== undefined && setsRefusedVariable(body, depth + 1)) return true;
+      if (body !== undefined && setsRefusedVariable(body, depth + 1, call)) return true;
     } else if (token.kind === 'word') {
       if (SETTING_WORD.test(token.value)) return true;
-      if (previous !== null && (previous === 'eval' || SCRIPT_FLAG.test(previous)) && setsRefusedVariable(token.value, depth + 1)) return true;
+      if (previous !== null && (previous === 'eval' || SCRIPT_FLAG.test(previous)) && setsRefusedVariable(token.value, depth + 1, call)) return true;
       previous = token.value;
     } else {
       previous = null;
     }
   }
-  return setsIndirectly(words) || setsUnlisted(words);
+  return setsIndirectly(words) || setsUnlisted(words) || setsFromElsewhere(words, depth, call, raws);
 }
 
-export function checkOssHookEnv(part: CommandPart, command: string): Refusal | null {
+export function checkOssHookEnv(part: CommandPart, command: string, home: string, sources: TrustedSources): Refusal | null {
   if (!part.words.some((w) => HOOK_FILE.test(w)) && !PLUGIN_HOOK.test(command)) return null;
-  if (!part.wrappers.includes('env') && !setsRefusedVariable(command, 0)) return null;
+  const clears = part.wrappers.some((w, i) => w === 'env' || (w === 'exec' && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o))));
+  if (!clears && !setsRefusedVariable(command, 0, { home, sources: sourcesFor(command, sources) })) return null;
   return {
     rule: 'protected-path',
     reason: 'Refused: runs an OSS hook script (`~/.oss/hooks/…`) with a HOME or PATH, or another variable, this command sets or changes (`X=`, `export`, `env`) that is not on the list of variables OSS\'s own commands set on a hook call. Run the hook script as it is, in a command that sets no other variable.',

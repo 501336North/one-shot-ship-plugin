@@ -252,6 +252,7 @@ describe.each(AGENTS.slice(0, 2))('%s, setting a variable on a hook call', (_who
     `. ~/.oss/hooks/oss-*.sh; ${LOG_HOOK}`,
     `. "$H/oss-api-curl.sh"; ${LOG_HOOK}`,
     `. /tmp/oss/hooks/oss-api-curl.sh; ${LOG_HOOK}`,
+    `CLAUDE_PLUGIN_ROOT=/tmp/m; . "$CLAUDE_PLUGIN_ROOT/hooks/oss-value.sh"`,
   ])('refuses a hook script run with variables from a file, keyword words, a trap or a cleared env: %s', async (command) => {
     const result = await call(command, agent);
     expect(result.exitCode, command).toBe(2);
