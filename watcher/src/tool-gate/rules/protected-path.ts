@@ -380,7 +380,7 @@ function unknownWrite(part: CommandPart, settings: GateSettings, places: Places[
   return null;
 }
 
-/** Git's pointer files: a write to one moves a branch or the repo's HEAD (hook-env-refs Task 3). */
+/** Git's pointer files: a write to one moves a branch or the repo's HEAD (hook-env-refs Task 3), or changes which commits the repo sees (grafts, alternates, shallow: Task 11). */
 const GIT_POINTER_FILES = ['head', 'orig_head', 'fetch_head', 'packed-refs', 'commondir', 'gitdir', 'grafts', 'alternates', 'shallow'];
 
 /**
