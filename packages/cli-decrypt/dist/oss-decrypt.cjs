@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/index.ts
-var VERSION = "1.2.4";
+var VERSION = "1.2.5";
 
 // src/commands/setup.ts
 var import_fs4 = require("fs");
@@ -217,7 +217,7 @@ var CacheService = class {
 
 // src/strip-control.ts
 function stripControl(text) {
-  return text.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, "");
+  return text.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\u2028\u2029\p{Cf}\ufe00-\ufe0f\u{e0000}-\u{e0fff}\u034f\u115f\u1160\u3164\uffa0\u2800\u17b4\u17b5\u180b-\u180d\u180f\u2065\ufff0-\ufff8\p{Default_Ignorable_Code_Point}]/gu, "");
 }
 
 // src/api-client.ts
@@ -455,8 +455,11 @@ async function setupCommand() {
   console.log("Note: Any previously cached prompts have been cleared for security.");
 }
 
+// src/cli-entry.ts
+var import_crypto8 = require("crypto");
+
 // src/commands/decrypt.ts
-var import_path7 = require("path");
+var import_path8 = require("path");
 
 // src/encryption.ts
 var import_crypto4 = __toESM(require("crypto"), 1);
@@ -541,8 +544,11 @@ var DebugLogger = class {
 var import_crypto5 = __toESM(require("crypto"), 1);
 function verifyManifestSignature(manifest, publicKey) {
   try {
+    if (Object.hasOwn(manifest.prompts, "__proto__")) {
+      return false;
+    }
     const sortedKeys = Object.keys(manifest.prompts).sort();
-    const sortedPrompts = {};
+    const sortedPrompts = /* @__PURE__ */ Object.create(null);
     for (const key of sortedKeys) {
       sortedPrompts[key] = manifest.prompts[key];
     }
@@ -582,63 +588,67 @@ async function fetchManifest(apiUrl, signal) {
   }
 }
 
-// src/watermark.ts
-var HOMOGLYPH_MAP = {
-  "\u03BF": "o",
-  // Greek small letter omicron → ASCII 'o'
-  "\u039F": "O",
-  // Greek capital letter omicron → ASCII 'O'
-  "\u0455": "s",
-  // Cyrillic small letter dze → ASCII 's'
-  "\u0405": "S",
-  // Cyrillic capital letter dze → ASCII 'S'
-  "\u0435": "e",
-  // Cyrillic small letter ie → ASCII 'e'
-  "\u0415": "E"
-  // Cyrillic capital letter ie → ASCII 'E'
-};
-function stripWatermark(content) {
-  let result = content;
-  for (const [homoglyph, ascii] of Object.entries(HOMOGLYPH_MAP)) {
-    result = result.replaceAll(homoglyph, ascii);
-  }
-  return result;
-}
-
 // src/prompt-integrity.ts
 var import_crypto6 = __toESM(require("crypto"), 1);
 function hashContent(content) {
   return import_crypto6.default.createHash("sha256").update(content).digest("hex");
 }
-function verifyPromptHash(strippedContent, type, name, manifest) {
-  const key = `${type}/${name}`;
-  const entry = manifest.prompts[key];
-  if (!entry) {
-    return { valid: true, status: "not_in_manifest" };
-  }
-  const hash = hashContent(strippedContent);
-  if (hash === entry.hash) {
-    return { valid: true, status: "match" };
-  }
-  return { valid: false, status: "mismatch" };
-}
 
 // src/integrity-pipeline.ts
-async function verifyDecryptedPrompt(watermarkedContent, type, name, manifest) {
+async function verifyDecryptedPrompt(plaintext, type, name, manifest) {
   if (!manifest) {
-    return { verified: true, skipped: true };
+    return { verified: false, skipped: false };
   }
-  const stripped = stripWatermark(watermarkedContent);
-  const result = verifyPromptHash(stripped, type, name, manifest);
-  if (result.status === "not_in_manifest") {
-    return { verified: true, skipped: true };
+  const key = `${type}/${name}`;
+  if (!Object.hasOwn(manifest.prompts, key)) {
+    return { verified: false, skipped: false, reason: "not_in_manifest" };
   }
-  return { verified: result.valid, skipped: false };
+  const servedHash = manifest.prompts[key].servedHash;
+  if (!servedHash) {
+    return { verified: false, skipped: false };
+  }
+  return { verified: hashContent(plaintext) === servedHash, skipped: false };
+}
+
+// src/manifest-floor.ts
+var import_fs5 = require("fs");
+var import_path6 = require("path");
+var import_crypto7 = require("crypto");
+var MIN_MANIFEST_VERSION = 1794940034;
+function floorPath() {
+  return (0, import_path6.join)(getConfigDir(), "manifest-floor.json");
+}
+function readFloors() {
+  try {
+    const parsed = JSON.parse((0, import_fs5.readFileSync)(floorPath(), "utf8"));
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed;
+    }
+  } catch {
+  }
+  return {};
+}
+function floorFrom(floors, apiUrl) {
+  const stored = Object.hasOwn(floors, apiUrl) ? floors[apiUrl] : void 0;
+  return Number.isSafeInteger(stored) ? Math.max(MIN_MANIFEST_VERSION, stored) : MIN_MANIFEST_VERSION;
+}
+function checkAndRecordManifestVersion(apiUrl, version) {
+  if (!Number.isSafeInteger(version)) return "invalid";
+  const v = version;
+  const floors = readFloors();
+  const floor = floorFrom(floors, apiUrl);
+  if (v < floor) return "older";
+  if (v > floor) {
+    const tmp = `${floorPath()}.${process.pid}.${(0, import_crypto7.randomUUID)()}.tmp`;
+    (0, import_fs5.writeFileSync)(tmp, JSON.stringify({ ...floors, [apiUrl]: v }), { mode: 384 });
+    (0, import_fs5.renameSync)(tmp, floorPath());
+  }
+  return "accepted";
 }
 
 // src/update-state.ts
-var import_fs5 = require("fs");
-var import_path6 = require("path");
+var import_fs6 = require("fs");
+var import_path7 = require("path");
 function defaultState() {
   return {
     lastPluginVersion: "",
@@ -649,11 +659,11 @@ function defaultState() {
   };
 }
 function readUpdateState(filePath) {
-  if (!(0, import_fs5.existsSync)(filePath)) {
+  if (!(0, import_fs6.existsSync)(filePath)) {
     return defaultState();
   }
   try {
-    const content = (0, import_fs5.readFileSync)(filePath, "utf8");
+    const content = (0, import_fs6.readFileSync)(filePath, "utf8");
     const parsed = JSON.parse(content);
     return {
       lastPluginVersion: parsed.lastPluginVersion ?? "",
@@ -667,11 +677,11 @@ function readUpdateState(filePath) {
   }
 }
 function writeUpdateState(filePath, state) {
-  const dir = (0, import_path6.dirname)(filePath);
-  if (!(0, import_fs5.existsSync)(dir)) {
-    (0, import_fs5.mkdirSync)(dir, { recursive: true });
+  const dir = (0, import_path7.dirname)(filePath);
+  if (!(0, import_fs6.existsSync)(dir)) {
+    (0, import_fs6.mkdirSync)(dir, { recursive: true });
   }
-  (0, import_fs5.writeFileSync)(filePath, JSON.stringify(state, null, 2), { mode: 384 });
+  (0, import_fs6.writeFileSync)(filePath, JSON.stringify(state, null, 2), { mode: 384 });
 }
 
 // src/change-detection.ts
@@ -694,7 +704,27 @@ function detectPromptChange(state, type, name, currentHash) {
 // src/commands/decrypt.ts
 var MANIFEST_PUBLIC_KEY = "MCowBQYDK2VwAyEAAwFG32b8TuiVTxrDnXzNrb2v68YN5U9epLnZ3O7pQaI=";
 function getCacheDir3() {
-  return (0, import_path7.join)(getConfigDir(), "prompt-cache");
+  return (0, import_path8.join)(getConfigDir(), "prompt-cache");
+}
+var MANIFEST_UNREACHABLE = "[SECURITY] Could not verify prompt: manifest unreachable \u2014 check your connection and run the command again";
+async function fetchManifestOnce(apiUrl, ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetchManifest(apiUrl, controller.signal);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function fetchManifestWithRetry(apiUrl) {
+  const manifest = await fetchManifestOnce(apiUrl, 3e3) ?? await fetchManifestOnce(apiUrl, 1e4);
+  if (!manifest) {
+    console.error(MANIFEST_UNREACHABLE);
+    throw new Error(MANIFEST_UNREACHABLE);
+  }
+  return manifest;
 }
 async function decryptCommand(type, name, debug = false, options = {}) {
   const logger = new DebugLogger(debug);
@@ -719,6 +749,7 @@ async function decryptCommand(type, name, debug = false, options = {}) {
     const startFetch2 = Date.now();
     const customPrompt = await fetchCustomPrompt(credentials.apiKey, apiUrl, name);
     logger.log("FETCH", `Custom command fetched in ${Date.now() - startFetch2}ms`);
+    console.error("[verify] Team custom prompt \u2014 not covered by the OSS manifest");
     console.log(customPrompt.prompt);
     return;
   }
@@ -751,35 +782,30 @@ async function decryptCommand(type, name, debug = false, options = {}) {
   );
   logger.log("DECRYPT", `Decryption completed in ${Date.now() - startDecrypt}ms`);
   console.error("[verify] Checking prompt integrity...");
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 3e3);
-  let manifest = null;
-  try {
-    manifest = await fetchManifest(apiUrl, controller.signal);
-  } catch {
-  } finally {
-    clearTimeout(timeout);
+  const manifest = await fetchManifestWithRetry(apiUrl);
+  if (!verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY)) {
+    console.error("[verify] Manifest signature: FAILED \u2014 prompt blocked");
+    throw new Error("[SECURITY] Manifest signature verification FAILED. Prompt delivery blocked.");
   }
-  if (manifest) {
-    if (!verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY)) {
-      console.error("[verify] Manifest signature: FAILED \u2014 prompt blocked");
-      throw new Error("[SECURITY] Manifest signature verification FAILED. Prompt delivery blocked.");
-    }
-    console.error("[verify] Manifest signature: valid");
-    const integrity = await verifyDecryptedPrompt(plaintext, type, name, manifest);
-    if (!integrity.verified && !integrity.skipped) {
-      console.error("[verify] Prompt hash: FAILED \u2014 prompt blocked");
-      throw new Error("[SECURITY] Prompt integrity check FAILED. Content may have been tampered with.");
-    }
-    if (!integrity.skipped) {
-      console.error("[verify] Prompt hash: verified");
-    }
-  } else {
-    console.error("[verify] Manifest unavailable \u2014 skipping verification");
+  console.error("[verify] Manifest signature: valid");
+  const floorVerdict = checkAndRecordManifestVersion(apiUrl, manifest.version);
+  if (floorVerdict !== "accepted") {
+    const message = floorVerdict === "older" ? "[SECURITY] Manifest is older than one already seen \u2014 prompt blocked" : "[SECURITY] Manifest has no valid version \u2014 prompt blocked";
+    console.error(message);
+    throw new Error(message);
   }
+  const integrity = await verifyDecryptedPrompt(plaintext, type, name, manifest);
+  if (integrity.verified !== true) {
+    if (integrity.reason === "not_in_manifest") {
+      console.error(`[verify] No manifest entry for ${type}/${name} \u2014 prompt blocked`);
+    }
+    console.error("[verify] Prompt hash: FAILED \u2014 prompt blocked");
+    throw new Error("[SECURITY] Prompt integrity check FAILED. Content may have been tampered with.");
+  }
+  console.error("[verify] Prompt hash: verified");
   const manifestKey = `${type}/${name}`;
-  const currentHash = manifest?.prompts[manifestKey]?.hash ?? null;
-  const statePath = (0, import_path7.join)(getConfigDir(), "update-state.json");
+  const currentHash = manifest.prompts[manifestKey]?.hash ?? null;
+  const statePath = (0, import_path8.join)(getConfigDir(), "update-state.json");
   const updateState = readUpdateState(statePath);
   const detection = detectPromptChange(updateState, type, name, currentHash);
   if (detection.changed) {
@@ -830,6 +856,9 @@ function parseArgs(args) {
       case "--list-prompts":
         result.listPrompts = true;
         break;
+      case "--verify-body":
+        result.verifyBody = args[++i] ?? "";
+        break;
       case "--category":
         result.category = args[++i];
         break;
@@ -855,6 +884,7 @@ Usage:
   oss-decrypt --verify-manifest    Verify prompt manifest signature
   oss-decrypt --list-prompts       List all prompts in the manifest
   oss-decrypt --list-prompts --category <cat>  List prompts filtered by category
+  oss-decrypt --verify-body <key> < body  Check a fetched body against the signed manifest
 
 Options:
   --setup              Run initial setup (fetch credentials)
@@ -866,6 +896,8 @@ Options:
   --verify-manifest    Fetch and verify the signed prompt manifest
   --list-prompts       List all prompts from the manifest
   --category <cat>     Filter --list-prompts by category
+  --verify-body <key>  Exit 0 only if stdin's sha256 equals the signed servedHash of <key>
+                       (shared/iron-laws or templates/claude-md); needs no credentials
   --help, -h           Show this help
   --version, -v        Show version
 
@@ -915,6 +947,11 @@ async function listPromptsCommand(category) {
     console.log(JSON.stringify([]));
     return;
   }
+  if (!verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY2)) {
+    console.log(JSON.stringify([]));
+    process.exitCode = 1;
+    return;
+  }
   let entries = Object.entries(manifest.prompts).map(([key, value]) => ({
     name: key,
     category: key.split("/")[0],
@@ -925,6 +962,51 @@ async function listPromptsCommand(category) {
     entries = entries.filter((entry) => entry.category === category);
   }
   console.log(stripControl(JSON.stringify(entries)));
+}
+var VERIFIABLE_BODIES = /* @__PURE__ */ new Set(["shared/iron-laws", "templates/claude-md"]);
+var OSS_BODY_MAX = 1024 * 1024;
+async function readStdinCapped() {
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of process.stdin) {
+    total += chunk.length;
+    if (total > OSS_BODY_MAX) return null;
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+async function verifyBodyReason(key) {
+  if (!VERIFIABLE_BODIES.has(key)) return "[SECURITY] --verify-body: key is not a verifiable body";
+  const body = await readStdinCapped();
+  if (body === null) return `[SECURITY] --verify-body: body is larger than ${OSS_BODY_MAX} bytes`;
+  const apiUrl = getApiUrl();
+  let manifest;
+  try {
+    manifest = await fetchManifestWithRetry(apiUrl);
+  } catch {
+    return "";
+  }
+  if (!verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY2)) {
+    return "[SECURITY] Manifest signature verification FAILED \u2014 body not verified";
+  }
+  const floorVerdict = checkAndRecordManifestVersion(apiUrl, manifest.version);
+  if (floorVerdict !== "accepted") {
+    return floorVerdict === "older" ? "[SECURITY] Manifest is older than one already seen \u2014 body not verified" : "[SECURITY] Manifest has no valid version \u2014 body not verified";
+  }
+  const entry = Object.hasOwn(manifest.prompts, key) ? manifest.prompts[key] : void 0;
+  if (typeof entry?.servedHash !== "string") {
+    return `[SECURITY] No servedHash in the manifest for ${key} \u2014 body not verified`;
+  }
+  if ((0, import_crypto8.createHash)("sha256").update(body).digest("hex") !== entry.servedHash) {
+    return `[SECURITY] Body hash does not match the signed manifest for ${key} \u2014 body not verified`;
+  }
+  return null;
+}
+async function verifyBodyCommand(key) {
+  const reason = await verifyBodyReason(key);
+  if (reason === null) return;
+  if (reason !== "") console.error(reason);
+  process.exitCode = 1;
 }
 async function runCli(args) {
   const parsed = parseArgs(args);
@@ -946,6 +1028,10 @@ async function runCli(args) {
   }
   if (parsed.verifyManifest) {
     await verifyManifestCommand();
+    return;
+  }
+  if (parsed.verifyBody !== void 0) {
+    await verifyBodyCommand(parsed.verifyBody);
     return;
   }
   if (parsed.listPrompts) {
