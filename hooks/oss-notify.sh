@@ -309,7 +309,9 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
             [[ -n "$_OSS_PROJECT_DIR" ]] && { oss_resolve_feature "$_OSS_PROJECT_DIR" || true; }
             _OSS_RD="$_OSS_PROJECT_DIR/.oss/dev/active/$_OSS_FEATURE/results"
             if [[ -z "$_OSS_FEATURE" ]] || [[ ! -e "$_OSS_RD" && ! -L "$_OSS_RD" ]]; then
-                echo "no phase results for ${_OSS_FEATURE:-this project}: start gate skipped; run /oss:$_OSS_PREV to enable it"
+                # The notice is for OSS projects only: a folder with no .oss starts silently, as before R-257.
+                [[ -n "$_OSS_PROJECT_DIR" && -d "$_OSS_PROJECT_DIR/.oss" ]] && \
+                    echo "no phase results for ${_OSS_FEATURE:-this project}: start gate skipped; run /oss:$_OSS_PREV to enable it"
             elif ! _oss_phase_check "$_OSS_PREV" "$_OSS_PROJECT_DIR"; then
                 echo "oss-notify: $WORKFLOW_CMD start refused: no valid $_OSS_PREV result for $_OSS_FEATURE ($_OSS_GATE_WHY); run /oss:$_OSS_PREV to build it" >&2
                 exit 1
@@ -386,7 +388,9 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                 esac
                 # R-257 D14: this phase's private run start; a ledger failure never blocks the start
                 if [[ -n "$_OSS_PHASE" ]]; then
-                    _oss_ledger_run "$_OSS_PHASE" || echo "oss-notify: ledger run row not written for $_OSS_PHASE" >&2
+                    # The warning, like the D17 notice, is for OSS projects only (a folder with no .oss starts silently).
+                    _oss_ledger_run "$_OSS_PHASE" || { [[ -n "$_OSS_PROJECT_DIR" && -d "$_OSS_PROJECT_DIR/.oss" ]] \
+                        && echo "oss-notify: ledger run row not written for $_OSS_PHASE" >&2; }
                 fi
                 # Track ALL command invocations via analytics API
                 # Note: oss-decrypt also tracks when prompts are fetched from API,
