@@ -720,6 +720,43 @@ test_count_and_saved_unchanged() {
 }
 
 # =============================================================================
+# R-273 P6: the signed manifest also lists each command under its workflow aliases (`workflows/<name>`), the same
+# file with the same hash. A `workflows/*` key whose hash equals a non-workflow key's hash is that file again.
+#
+# @behavior When one command changes, session start says 1 prompt improved, not once per alias of that command.
+# @business-rule A prompt is counted once, whatever names the manifest serves it under; a workflow that is its own
+#                file (its hash matches no other key) is still counted.
+# =============================================================================
+
+test_workflow_alias_counted_once() {
+    local test_name="A changed command served under two workflow aliases with the same hash counts as 1 prompt (R-273 P6)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"commands/deploy":"old","workflows/deploy":"old","workflows/deploy-x":"old"}' \
+        '{"prompts":{"commands/deploy":{"hash":"new"},"workflows/deploy":{"hash":"new"},"workflows/deploy-x":{"hash":"new"}}}'
+    if [[ $RC == 0 && "$OUT" == "📡 OSS update: 1 prompts improved → /oss:changelog" && -z "$ERR" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "'1 prompts improved'" "rc=$RC out='$OUT' err='$ERR'"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_workflow_own_file_counted() {
+    local test_name="A changed workflow whose hash matches no command is still counted (R-273 P6)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"commands/deploy":"c","workflows/x":"old"}' \
+        '{"prompts":{"commands/deploy":{"hash":"c"},"workflows/x":{"hash":"new"}}}'
+    if [[ $RC == 0 && "$OUT" == "📡 OSS update: 1 prompts improved → /oss:changelog" && -z "$ERR" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "'1 prompts improved'" "rc=$RC out='$OUT' err='$ERR'"
+    fi
+    cleanup_test_env "$d"
+}
+
+# =============================================================================
 # Run all tests
 # =============================================================================
 echo "Running check-updates tests..."
@@ -743,6 +780,8 @@ test_keys_not_split_or_globbed
 test_big_manifest_saved_in_bound
 test_newline_key_counted_once
 test_count_and_saved_unchanged
+test_workflow_alias_counted_once
+test_workflow_own_file_counted
 
 echo ""
 echo "======================================="

@@ -478,6 +478,43 @@ test_output_unchanged() {
 }
 
 # =============================================================================
+# R-273 P6: the signed manifest also lists each command under its workflow aliases (`workflows/<name>`), the same
+# file with the same hash. A `workflows/*` key whose hash equals a non-workflow key's hash is that file again.
+#
+# @behavior /oss:changelog lists a changed command once, by its command name, not once per workflow alias.
+# @business-rule A prompt is listed once, whatever names the manifest serves it under; a workflow that is its own
+#                file (its hash matches no other key) is still listed.
+# =============================================================================
+
+test_workflow_alias_listed_once() {
+    local test_name="A changed command served under two workflow aliases with the same hash is listed once, as the command (R-273 P6)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"prompts":{"commands/deploy":{"hash":"new"},"workflows/deploy":{"hash":"new"},"workflows/deploy-x":{"hash":"new"}}}' \
+        '{"commands/deploy":"old","workflows/deploy":"old","workflows/deploy-x":"old"}'
+    if [[ $RC == 0 && "$OUT" == *$'Updated prompts (1):\n  • commands/deploy\n'* && "$OUT" != *workflows/* && -z "$ERR" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "'Updated prompts (1):' then '  • commands/deploy', no workflows/ line" "rc=$RC out=$(printf '%q' "$OUT") err='$ERR'"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_workflow_own_file_listed() {
+    local test_name="A changed workflow whose hash matches no command is still listed (R-273 P6)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"prompts":{"commands/deploy":{"hash":"c"},"workflows/x":{"hash":"new"}}}' \
+        '{"commands/deploy":"c","workflows/x":"old"}'
+    if [[ $RC == 0 && "$OUT" == *$'Updated prompts (1):\n  • workflows/x\n'* && -z "$ERR" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "'Updated prompts (1):' then '  • workflows/x'" "rc=$RC out=$(printf '%q' "$OUT") err='$ERR'"
+    fi
+    cleanup_test_env "$d"
+}
+
+# =============================================================================
 # Run all tests
 # =============================================================================
 echo "Running changelog tests..."
@@ -497,6 +534,8 @@ test_changed_keys_stripped
 test_big_manifest_finishes
 test_newline_key_one_entry
 test_output_unchanged
+test_workflow_alias_listed_once
+test_workflow_own_file_listed
 
 echo ""
 echo "======================================="
