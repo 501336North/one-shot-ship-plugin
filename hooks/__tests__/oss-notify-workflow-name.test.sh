@@ -58,12 +58,17 @@ done
 # shellcheck source=lib/phase-result-fixture.sh
 source "$ROOT/hooks/__tests__/lib/phase-result-fixture.sh"
 REAL_NODE=$(command -v node)
+# T26 (D21): the phase-result check runs on the node recorded in ~/.oss/node-path (the real one, resolved: outside temp
+# folders), through the plugin's own hooks/oss-node.sh (a regular file, not a link).
+RECORDED_NODE="$(node -p 'require("fs").realpathSync(process.execPath)')"
 sandbox_result() { # <phase>: sandbox plus a git repo on feat/wn-feature/build and the real watcher CLIs
     sandbox
     rm -f "$T/plugin/watcher/dist/cli/update-workflow-state.js" "$T/plugin/watcher/dist/cli/chain-trigger.cjs"
     for f in "$ROOT"/watcher/dist/cli/*; do [[ "${f##*/}" == chain-trigger.* ]] || ln -s "$f" "$T/plugin/watcher/dist/cli/"; done
     : > "$T/plugin/watcher/dist/cli/chain-trigger.cjs"
     printf '#!/bin/bash\necho "$*" >> "%s"\nexec "%s" "$@"\n' "$T/node.calls" "$REAL_NODE" > "$T/bin/node"
+    cp "$ROOT/hooks/oss-node.sh" "$T/plugin/hooks/oss-node.sh"
+    printf '%s\n' "$RECORDED_NODE" > "$T/home/.oss/node-path"
     mkdir -p "$T/repo"; PRF_REPO="$T/repo"
     ( cd "$T/repo" && git init -q -b main && git config user.email t@example.invalid && git config user.name t \
         && git commit -q --allow-empty -m base && git checkout -q -b feat/wn-feature/build \

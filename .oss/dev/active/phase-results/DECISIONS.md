@@ -60,6 +60,11 @@
   - If the recorded node was removed and PATH has a different one, the check exits 127 with one `node_missing` line telling the user to delete `~/.oss/node-path`. The complete gate refuses, Stop marks the phase unverified, and checkpoint counts 0.
   - Why: a verdict must never come from an unrecorded node. The cost is rare, since nvm switches and brew upgrades keep the recorded path usable.
   - Not chosen: re-recording PATH's node (a fake node could become the recorded one), and falling back with an unverified label.
+- D23 T20 owner (user picker 2026-11-18): **Ship R-257 now, T20 later**.
+  - R-257 ships slice A plus T18–T28.
+  - The recorder hash chain (D15) becomes an R-266 follow-up card, with its own one-shot security review, because it changes R-253/R-266's recorder (state-store.ts, oss-tool-gate.sh). The coordinator files it.
+  - Until it lands, build results keep `evidenceTrust: "repo-file"` and the notice says so. D15's open item stays logged, not self-deferred.
+  - Consumer step for later: assemble-build.ts trusts only chained events, and `evidenceTrust` becomes `ledger` (`events_tampered` on mismatch).
 - D22 T18b scope (user picker 2026-11-18): **Ledger only**.
   - `~/.oss/ledger/**` joins R-266's `protectedPaths`. `.oss/dev/active/*/results/**` does not.
   - Why results/ is left out: R-266's gate refuses a write to any folder that holds protected files. So the archive `mv` of a feature folder, and ship's dev-docs guard `pwd` in `.oss/dev`, would be refused.

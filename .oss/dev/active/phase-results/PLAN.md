@@ -246,6 +246,9 @@ cd packages/api && DOTENV_CONFIG_PATH=/Users/ysl/dev/AgenticDevWorkflow/packages
     - Ship's rule holds, in code: a gate is `fail` whenever the captured critical or high count is above zero, whatever the agent's own verdict says (ship.md: "Write `fail` whenever critical or high findings of that agent are left unfixed at the end of the round, whatever the agent said"). Otherwise it takes the agent's verdict. A later round's re-review reports the state after the fixes. (Corrected 2026-11-18 after a heads-up: an earlier draft let the agent's "pass" override its own high findings.)
   - **API:** the four review-agent prompts (packages/api/src/prompts/agents/) end with the block. They are never told to run oss-phase-result.sh (coordinator ruling). The manifest is regenerated.
   - **Task 27 (found during T19, 2026-11-18):** the ship assembler requires the agent names (code-reviewer, performance-engineer, security-auditor) as gates. The timeline holds ship.md's gate.txt names (code-review, performance, security), so a real ship always failed `gate_missing`. Fix: the required gates become the gate.txt names, the same set as R-266's quality-gates healthcheck, with an end-to-end test through the real timeline writer. ⚠ changes existing tests whose fixtures used agent names, quoting AC-003.5 ("timeline gate lines ... become `gates[]`").
+  - **Task 28 (found during T27, 2026-11-18):** three test files broken by R-257's own tasks get their setup fixed. No expectation changes; the code stays as specified (AC-001.1, D21).
+    - ship-wrapper-chain.test.ts and oss-notify-telegram.test.ts: T10's complete gate refuses with repo_mismatch, because they run from a non-git temp folder with no bound ship result. T10's list of tests to update missed them.
+    - oss-notify-workflow-name.test.sh: T26's recorded node is missing from its sandbox (cli_missing).
   - ⚠ changes existing test: R-266's hooks.json EXISTING map gains the SubagentStop capture entry. DESIGN.md D9: "The `hooks.json` entries (Stop to the dispatcher, SubagentStop capture) are added on a rebase after R-266 merges, as a tracked task."
 - **Task 20 (slice B):** R-253's recorder is tracked per task, so a task is valid only with a green after its last production edit. Branched from the Sprint D branch after R-266 merges.
 
@@ -487,6 +490,7 @@ A result counts only if this machine's assembler wrote it for this run, and it s
     - a Write to the value folder `~/.oss/run/<key>/verdict.txt` still passes;
     - Write, Edit, `cp`, `tee` and `>` to the ledger or to results/ are refused;
     - an ordinary builder session still runs `oss-value.sh timeline gate`, `oss-phase-result.sh assemble` and `oss-notify complete`.
+- **T20: MOVED OUT of R-257 by D23 (user pick 2026-11-18)**, to an R-266 follow-up card. The text below is kept for that card.
 - **T20 (slice B), amended (P2, D15):** the recorder keeps a hash chain (each line's sha256 includes the previous one), with the chain head and line count in the ledger. The build assembler trusts only events whose chain matches, and `evidenceTrust` becomes `ledger`.
   - Test: an event appended without a matching chain head gives `events_tampered`.
   - Open security item (user decision D15, 2026-11-13): it is logged, not silently deferred.

@@ -23,6 +23,7 @@ import * as https from 'https';
 import * as os from 'os';
 import * as path from 'path';
 import type { AddressInfo } from 'net';
+import { assemblePhaseResult, makeFeatureRepo, recordNodePath } from './helpers/phase-result-fixture';
 
 const run = promisify(execFile);
 
@@ -67,6 +68,7 @@ describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-ship-chain-'));
     home = path.join(tmp, 'home');
     fs.mkdirSync(path.join(home, '.oss'), { recursive: true });
+    recordNodePath(home);
 
     // Self-signed cert for the local API stand-in (chain-trigger only accepts https).
     const key = path.join(tmp, 'key.pem');
@@ -127,15 +129,18 @@ describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
     if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  /** A fresh project dir, so each run's workflow-state is its own. */
+  /**
+   * A fresh project dir, so each run's workflow-state is its own. ship complete needs a git repo on a ship branch
+   * with a valid ship result bound to the run (R-257 AC-001.1), so the project is one.
+   */
   function newProject(): string {
-    const dir = fs.mkdtempSync(path.join(home, 'proj-'));
-    fs.mkdirSync(path.join(dir, '.oss'));
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(home, 'proj-')));
+    makeFeatureRepo(dir, 'chain-feature', 'ship');
     return dir;
   }
 
-  async function notify(project: string, event: string, context: string): Promise<string> {
-    const env: NodeJS.ProcessEnv = {
+  function hookEnv(project: string): NodeJS.ProcessEnv {
+    return {
       PATH: process.env.PATH,
       USER: process.env.USER,
       TMPDIR: process.env.TMPDIR,
@@ -146,6 +151,10 @@ describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
       NODE_NO_WARNINGS: '1',
       OSS_SKIP_WATCHER: '1',
     };
+  }
+
+  async function notify(project: string, event: string, context: string): Promise<string> {
+    const env = hookEnv(project);
     const { stdout } = await run('/bin/bash', [notifyScript, '--workflow', 'ship', event, context], {
       env,
       cwd: project,
@@ -158,6 +167,8 @@ describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
     const project = newProject();
     const outputs: Array<{ event: string; stdout: string }> = [];
     for (const { event, context } of events) {
+      // The ship's work (commit, review gates, assembled result) happens between its start and its complete.
+      if (event === 'complete') assemblePhaseResult('ship', project, hookEnv(project), true);
       outputs.push({ event, stdout: await notify(project, event, context) });
     }
     const state = JSON.parse(fs.readFileSync(path.join(project, '.oss', 'workflow-state.json'), 'utf8'));
@@ -171,6 +182,7 @@ describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
    */
   it('control: oss-notify.sh prints one chain block for ship complete, none for ship merged', async () => {
     const project = newProject();
+    assemblePhaseResult('ship', project, hookEnv(project));
     const completeOut = await notify(project, 'complete', '{}');
     const mergedOut = await notify(project, 'merged', '{}');
 
