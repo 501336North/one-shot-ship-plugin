@@ -14,6 +14,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runToolGate, type GateResult } from '../../src/tool-gate/gate.js';
+import { HOOK_CALL_VARIABLES } from '../../src/tool-gate/rules/oss-hook-env.js';
+import { heredocBodyOf, tokenize, type Token } from '../../src/tool-gate/tokenize.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const AGENTS: Array<[string, string | null]> = [
@@ -25,6 +27,7 @@ const AGENTS: Array<[string, string | null]> = [
 let root: string;
 let repo: string;
 let home: string;
+let plugin: string;
 
 beforeAll(() => {
   root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-r12-hookenv-')));
@@ -33,19 +36,24 @@ beforeAll(() => {
   fs.mkdirSync(path.join(home, '.oss', 'hooks'), { recursive: true });
   fs.mkdirSync(repo);
   execFileSync('git', ['init', '-q', '-b', 'feat/x'], { cwd: repo });
+  // a plugin checkout: a folder with .claude-plugin/plugin.json (hook-env-refs Task 7)
+  plugin = path.join(root, 'some-plugin');
+  fs.mkdirSync(path.join(plugin, '.claude-plugin'), { recursive: true });
+  fs.mkdirSync(path.join(plugin, 'hooks'));
+  fs.writeFileSync(path.join(plugin, '.claude-plugin', 'plugin.json'), '{"name":"some-plugin"}');
 });
 
 afterAll(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-function call(command: string, agent: string | null): Promise<GateResult> {
+function call(command: string, agent: string | null, cwd: string = repo): Promise<GateResult> {
   return runToolGate(
     {
       mode: 'pre',
       input: JSON.stringify({
         session_id: 'r12-hook-env',
-        cwd: repo,
+        cwd,
         hook_event_name: 'PreToolUse',
         tool_name: 'Bash',
         tool_input: { command },
@@ -79,6 +87,29 @@ describe.each(AGENTS)('%s', (_who, agent) => {
     expect(result.stderr, command).toMatch(agent === 'oss:code-reviewer' ? /^Refused/ : /^Refused.*HOME or PATH/);
   });
 
+  // hook-env-refs Task 1: OSS hook scripts in the plugin cache, a --plugin-dir copy or checkout, and $CLAUDE_PLUGIN_ROOT
+  it.each([
+    'HOME=/tmp/elsewhere ~/.claude/plugins/cache/one-shot-ship-plugin/oss/2.2.2/hooks/oss-log.sh phase build RED start',
+    'HOME=/tmp/elsewhere /Users/someone/.claude/plugins/cache/my-market/oss/2.1.3/hooks/check-updates.sh',
+    'HOME=/tmp/elsewhere /tmp/oss-dev-copy/hooks/oss-log.sh phase build RED start',
+    'HOME=/tmp/elsewhere ./hooks/oss-heads-up.sh',
+    'HOME=/tmp/elsewhere "$CLAUDE_PLUGIN_ROOT/hooks/check-updates.sh"',
+    'HOME=/tmp/elsewhere "${CLAUDE_PLUGIN_ROOT}/hooks/check-updates.sh"',
+  ])('refuses an OSS hook script wherever it lives, run with a HOME it chose: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(agent === 'oss:code-reviewer' ? /^Refused/ : /^Refused.*HOME or PATH/);
+  });
+
+  it.each([
+    'HOME=/tmp/elsewhere ./hooks/pre-commit.sh',
+    'HOME=/tmp/elsewhere scripts/hooks/lint.sh',
+    'HOME=/tmp/elsewhere /tmp/other-plugin/hooks/check.sh',
+  ])('leaves a script that is not an OSS hook to the other rules: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.stderr, command).not.toMatch(/OSS hook script/);
+  });
+
   it('runs the hook script as it is', async () => {
     const result = await call(HOOK, agent);
     expect(result.stderr).toBe('');
@@ -109,5 +140,368 @@ describe.each(AGENTS)('%s', (_who, agent) => {
     expect(result.stderr, command).not.toMatch(/HOME or PATH/);
     // a review agent may run only its listed hook scripts (gate-agent-write), so only the others run it
     if (agent !== 'oss:code-reviewer') expect(result.exitCode, command).toBe(0);
+  });
+});
+
+// hook-env-refs Task 2: a hook call may set only the variables OSS's served commands set on one
+/** Builtins that set the variables their operands name. */
+const SETTERS = new Set(['declare', 'typeset', 'export', 'local', 'readonly', 'read', 'integer', 'float', 'let', 'env']);
+/** Words that may start a simple command before its assignments. */
+const RESERVED = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '{', '!', 'time']);
+const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=/;
+const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const SERVED_HOOK = /\/\.oss\/hooks\/[^/\s"']|\/\.claude\/plugins\/cache\/[^/]+\/oss\/[^/]+\/hooks\/|hooks\/oss-[^/\s"']*\.sh|\$\{?CLAUDE_PLUGIN_ROOT\}?\/hooks\//;
+
+/** The variable names one simple command sets: its assignments, and the operands of a setter, `for` or `printf -v`. */
+function namesSetBy(words: string[]): string[] {
+  let at = 0;
+  while (RESERVED.has(words[at])) at++;
+  const names: string[] = [];
+  while (at < words.length && ASSIGNMENT.test(words[at])) names.push(words[at++]);
+  while (words[at] === 'builtin' || words[at] === 'command') at++;
+  const [program, ...args] = words.slice(at);
+  if (program === 'for' || program === 'select') names.push(args[0] ?? '');
+  else if (program === 'printf' || program === 'print') args.forEach((a, i) => a === '-v' && names.push(args[i + 1] ?? ''));
+  else if (program !== undefined && SETTERS.has(program)) names.push(...args.filter((a) => !a.startsWith('-')));
+  return names.map((n) => n.split(/[=[+]/)[0]).filter((n) => NAME.test(n));
+}
+
+function collectNames(tokens: Token[], into: Set<string>): void {
+  let words: string[] = [];
+  const end = (): void => {
+    for (const name of namesSetBy(words)) into.add(name);
+    words = [];
+  };
+  for (const token of tokens) {
+    if (token.kind === 'op') end();
+    else if (token.kind === 'word') words.push(token.value);
+    if (token.kind !== 'op') token.scripts?.forEach((script) => collectNames(script, into));
+    const body = token.kind === 'redirect' ? heredocBodyOf(token) : undefined;
+    if (body !== undefined) collectNames(tokenize(body).tokens, into);
+  }
+  end();
+}
+
+/** Every variable a served block sets when the block runs an OSS hook script. */
+function servedHookVariables(): Set<string> {
+  const fixture = JSON.parse(
+    fs.readFileSync(path.join(PLUGIN_ROOT, 'watcher/test/fixtures/served-command-blocks.json'), 'utf8'),
+  ) as { files: Record<string, string[]> };
+  const served = new Set<string>();
+  for (const block of Object.values(fixture.files).flat()) {
+    if (SERVED_HOOK.test(block)) collectNames(tokenize(block).tokens, served);
+  }
+  return served;
+}
+
+const SERVED_HOOK_VARIABLES = servedHookVariables();
+
+const LOG_HOOK = '~/.oss/hooks/oss-log.sh write build x';
+
+describe.each(AGENTS.slice(0, 2))('%s, setting a variable on a hook call', (_who, agent) => {
+  it.each([
+    `CLAUDE_PLUGIN_ROOT=/tmp/x ${LOG_HOOK}`,
+    `BASH_ENV=./x.sh ${LOG_HOOK}`,
+    `ENV=./x ${LOG_HOOK}`,
+    `NODE_OPTIONS=--require=./x.js ${LOG_HOOK}`,
+    `SHELLOPTS=xtrace PS4='$(id)' ${LOG_HOOK}`,
+    `GIT_DIR=x ${LOG_HOOK}`,
+    `DYLD_INSERT_LIBRARIES=x ${LOG_HOOK}`,
+    `export NODE_OPTIONS=--require=./x.js; ${LOG_HOOK}`,
+    `env BASH_ENV=x ${LOG_HOOK}`,
+  ])('refuses a hook script run with a variable the served commands never set: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(/^Refused.*OSS hook script.*variable.*not on the list/);
+  });
+
+  it.each([...SERVED_HOOK_VARIABLES].map((name) => `${name}=x ${LOG_HOOK}`))(
+    'runs a hook script with a variable a served command sets on one: %s',
+    async (command) => {
+      const result = await call(command, agent);
+      expect(result.stderr, command).not.toMatch(/OSS hook script/);
+    },
+  );
+
+  // R-257 pen test: a hook script run through a shell, from the plugin cache, a --plugin-dir copy or $CLAUDE_PLUGIN_ROOT
+  it.each([
+    'HOME=/tmp/m bash ~/.claude/plugins/cache/my-market/oss/2.3.0/hooks/oss-notify.sh x',
+    'HOME=/tmp/m sh ~/.claude/plugins/cache/my-market/oss/2.3.0/hooks/oss-notify.sh x',
+    'PATH=/tmp/m sh /tmp/oss-dev-copy/hooks/oss-log.sh x',
+    "export HOME=/tmp/m; bash -c '~/.claude/plugins/cache/my-market/oss/2.3.0/hooks/oss-notify.sh'",
+    'HOME=/tmp/m bash "$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh"',
+  ])('refuses a hook script run through a shell with a HOME or PATH it chose: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(/^Refused.*OSS hook script/);
+  });
+
+  // hook-env-refs Task 6: variables set from other places (a sourced file, keyword words, a trap, exec -c)
+  it.each([
+    `. /tmp/e; ${LOG_HOOK}`,
+    `source /tmp/e; ${LOG_HOOK}`,
+    `builtin source /tmp/e; ${LOG_HOOK}`,
+    `command . /tmp/e; ${LOG_HOOK}`,
+    `set -a; . /tmp/e; ${LOG_HOOK}`,
+    `${LOG_HOOK}; source /tmp/e`,
+    `bash -c '. /tmp/e; ${LOG_HOOK}'`,
+    `eval 'source /tmp/e'; ${LOG_HOOK}`,
+    `${LOG_HOOK}; bash <<'EOF'\nsource /tmp/e\nEOF`,
+    `bash -c 'set -k; ${LOG_HOOK} BASH_ENV=/tmp/x'`,
+    `set -o keyword; ${LOG_HOOK} BASH_ENV=/tmp/x`,
+    `set -T; ${LOG_HOOK}`,
+    `set -o functrace; ${LOG_HOOK}`,
+    `bash -c 'trap "export BASH_ENV=/tmp/x" DEBUG; ${LOG_HOOK}'`,
+    `trap 'NODE_OPTIONS=--require=/tmp/x.js' DEBUG; ${LOG_HOOK}`,
+    `exec -c ${LOG_HOOK}`,
+    `. ~/.oss/hooks/../x; ${LOG_HOOK}`,
+    `. ~/.oss/hooks/oss-*.sh; ${LOG_HOOK}`,
+    `. "$H/oss-api-curl.sh"; ${LOG_HOOK}`,
+    `. /tmp/oss/hooks/oss-api-curl.sh; ${LOG_HOOK}`,
+    `CLAUDE_PLUGIN_ROOT=/tmp/m; . "$CLAUDE_PLUGIN_ROOT/hooks/oss-value.sh"`,
+  ])('refuses a hook script run with variables from a file, keyword words, a trap or a cleared env: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(/^Refused.*OSS hook script/);
+  });
+
+  it.each([LOG_HOOK, `. ~/.oss/hooks/oss-api-curl.sh; ${LOG_HOOK}`, `set -e; ${LOG_HOOK}`, `set -u; ${LOG_HOOK}`, `set -o pipefail; ${LOG_HOOK}`, `set -euo pipefail; ${LOG_HOOK}`])(
+    'runs a hook script after shell options that set no variable, or after sourcing an OSS hook file: %s',
+    async (command) => {
+      const result = await call(command, agent);
+      expect(result.stderr, command).not.toMatch(/OSS hook script/);
+    },
+  );
+
+  it('leaves `source` alone in a command that runs no hook script', async () => {
+    const result = await call('source /tmp/e; echo hi', agent);
+    expect(result.stderr).not.toMatch(/OSS hook script/);
+  });
+
+  it('still lets a hook call unset a variable', async () => {
+    const result = await call(`unset GIT_DIR NODE_OPTIONS; ${LOG_HOOK}`, agent);
+    expect(result.stderr).not.toMatch(/OSS hook script/);
+  });
+
+  // hook-env-refs Task 9: variables exported without `source` (set -a, functions, indirect setters)
+  it.each([
+    `set -a; git() { /tmp/evil; }; ${LOG_HOOK}`,
+    `set -o allexport; x=1; ${LOG_HOOK}`,
+    `set -a; printf -vBASH_ENV /tmp/e; ${LOG_HOOK}`,
+    `printf -v BASH_ENV /tmp/e; export BASH_ENV; ${LOG_HOOK}`,
+    `git() { /tmp/evil; }; ${LOG_HOOK}`,
+    `function git { /tmp/evil; }; ${LOG_HOOK}`,
+    `mapfile BASH_ENV </tmp/e; export BASH_ENV; ${LOG_HOOK}`,
+    `readarray BASH_ENV </tmp/e; export BASH_ENV; ${LOG_HOOK}`,
+    `getopts a BASH_ENV; export BASH_ENV; ${LOG_HOOK}`,
+  ])('refuses a hook script run after variables or functions reach its environment without source: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(/^Refused.*OSS hook script/);
+  });
+
+  it.each([`n=3; ~/.oss/hooks/oss-log.sh checkpoint "$n"`, `for f in *.ts; do ~/.oss/hooks/oss-log.sh x "$f"; done`])(
+    'runs a hook script after a plain variable that is never exported: %s',
+    async (command) => {
+      const result = await call(command, agent);
+      expect(result.stderr, command).not.toMatch(/OSS hook script/);
+    },
+  );
+});
+
+// hook-env-refs Task 13: aliases, command hashes, zsh's special maps, enable/disable, allexport spellings, tied arrays
+const API_HOOK = '~/.oss/hooks/oss-api-curl.sh';
+describe.each(AGENTS.slice(0, 2))('%s, a hook script run after a command name or option is redirected', (_who, agent) => {
+  it.each([
+    `alias curl=/tmp/e; source ${API_HOOK}; oss_api_curl x`,
+    `hash curl=/tmp/e; . ${API_HOOK}`,
+    `hash -p /tmp/e curl; . ${API_HOOK}`,
+    ...['aliases', 'galiases', 'saliases', 'functions', 'commands', 'builtins', 'options', 'dis_aliases', 'dis_galiases', 'dis_saliases', 'dis_functions', 'dis_builtins'].map(
+      (map) => `${map}[curl]=/tmp/e; . ${API_HOOK}`,
+    ),
+    `enable -n echo; ${LOG_HOOK}`,
+    `disable echo; ${LOG_HOOK}`,
+    ...['setopt allexport', 'setopt ALL_EXPORT', 'setopt -a', 'set -o all_export', 'set -o ALLEXPORT', 'shopt -os allexport', 'options[allexport]=on'].map(
+      (spelling) => `${spelling}; foo=1; ${LOG_HOOK}`,
+    ),
+    ...['manpath', 'fpath', 'cdpath', 'module_path', 'mailpath', 'psvar', 'fignore'].map((tied) => `${tied}=(/x); ${LOG_HOOK}`),
+  ])('refuses a hook script run after a command name, option or tied array is redirected: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(/^Refused.*OSS hook script/);
+  });
+
+  it.each([LOG_HOOK, `foo=1; ${LOG_HOOK}`, `source ${API_HOOK}; oss_api_curl x`])(
+    'runs a hook script when no command name, option or tied array is redirected: %s',
+    async (command) => {
+      const result = await call(command, agent);
+      expect(result.stderr, command).not.toMatch(/OSS hook script/);
+    },
+  );
+});
+
+// hook-env-refs Task 7: a hook path written through a glob, in any case, or under any plugin's hooks folder
+describe.each(AGENTS.slice(0, 2))('%s, a hook path through a glob, in any case, or of any plugin', (_who, agent) => {
+  it.each([
+    'BASH_ENV=/tmp/x bash ~/.oss/hook?/oss-log.sh',
+    'BASH_ENV=/tmp/x ~/.oss/hoo*/oss-log.sh',
+    'BASH_ENV=/tmp/x ~/.oss/hook[s]/oss-log.sh',
+    'BASH_ENV=/tmp/x hooks/OSS-log.sh',
+    'BASH_ENV=/tmp/x ~/.OSS/hooks/x',
+    'BASH_ENV=/tmp/x ~/.claude/plugins/cache/my-market/other-plugin/1.0.0/hooks/check.sh',
+  ])('refuses a hook script run with a variable the served commands never set: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(/^Refused.*OSS hook script/);
+  });
+
+  it.each(['<checkout>/hooks/checkpoint.sh', './hooks/checkpoint.sh'])(
+    'refuses any hook script of a plugin checkout run with a variable it chose: %s',
+    async (hook) => {
+      const command = `BASH_ENV=/tmp/x ${hook.replace('<checkout>', plugin)}`;
+      const result = await call(command, agent, plugin);
+      expect(result.exitCode, command).toBe(2);
+      expect(result.stderr, command).toMatch(/^Refused.*OSS hook script/);
+    },
+  );
+
+  it.each(['BASH_ENV=/tmp/x ./hooks/pre-commit.sh', 'BASH_ENV=/tmp/x scripts/hooks/lint.sh'])(
+    'leaves a hooks script of a repo that is not a plugin to the other rules: %s',
+    async (command) => {
+      const result = await call(command, agent);
+      expect(result.stderr, command).not.toMatch(/OSS hook script/);
+    },
+  );
+});
+
+// hook-env-refs Task 10: a hook path reached through `cd` or a variable
+describe.each(AGENTS.slice(0, 2))('%s, a hook path reached through cd or a variable', (_who, agent) => {
+  it.each([
+    'cd ~; BASH_ENV=/tmp/e .oss/hooks/x.sh',
+    'cd ~ && BASH_ENV=/tmp/e bash .oss/hooks/x.sh',
+    'cd ~/.oss && BASH_ENV=/tmp/e hooks/oss-log.sh',
+    'h=~/.oss/hooks/x.sh; BASH_ENV=/tmp/e $h',
+    'h=~/.oss/hooks/x.sh; BASH_ENV=/tmp/e bash "$h"',
+    'h=$HOME/.oss/hooks/oss-log.sh; X_Y=1 $h',
+    // Task 10b: in a folder known only at run time, a program that could be an OSS hook
+    'cd "$D"; X=1 ./oss-log.sh',
+    'cd "$D"; X=1 hooks/x.sh',
+    'cd "$D"; X=1 ./OSS-l?g.sh',
+    'cd "$D"; X=1 .oss/hooks/x.sh',
+    // Task 14: every word of a command that sets a variable, the script of bash, sh, zsh, `.` and `source` included
+    'cd "$D"; X=1 bash oss-log.sh',
+    'cd "$D"; X=1 bash ./OSS-log.sh',
+    'cd "$D"; X=1 . ./oss-log.sh',
+    'cd "$D"; X=1 source oss-log.sh',
+    'cd "$D"; X=1 ./$(echo oss-log.sh)',
+    'cd "$D"; X=1 ./$F',
+  ])('refuses a hook script reached through cd or a variable, run with a variable it chose: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(/^Refused.*OSS hook script/);
+  });
+
+  it.each([
+    'cd ~/proj && ./hooks/pre-commit.sh',
+    'cd ~/proj && BASH_ENV=/tmp/e ./hooks/pre-commit.sh',
+    'h=~/.oss/hooks/oss-log.sh; $h write build x',
+    'n=3; ~/.oss/hooks/oss-log.sh checkpoint "$n"',
+    'cd "$D"; ./x.sh',
+    // Task 10b: in a folder known only at run time, a program that can't be an OSS hook by its name or folders
+    'cd "$D" && NODE_ENV=test ./scripts/test.sh',
+    'cd "$D" && FOO=1 ./run.sh',
+    // Task 14: an `oss-` name inside an ordinary folder is not a hook; an unknown word outside the program or script position is not either
+    'cd "$W" && FOO=1 ./scripts/oss-release.sh',
+    'cd "$D"; X=1 ./run.sh "$F"',
+    'cd "$D" && npm test',
+    'cd "$D" && NODE_ENV=test npm test',
+  ])('leaves a call that sets no refused variable, or runs no hook script, as it was: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.stderr, command).not.toMatch(/OSS hook script/);
+  });
+
+  // a plugin hook not named oss-* run from a folder known only at run time is not caught
+  it('accepted residual (user pick 2026-11-18): cd "$D"; X=1 ./checkpoint.sh', async () => {
+    const result = await call('cd "$D"; X=1 ./checkpoint.sh', agent);
+    expect(result.stderr).not.toMatch(/OSS hook script/);
+  });
+
+  // Task 14: a `Hooks` folder is refused, though it may be a repo's own: it could be `hooks`
+  it('accepted over-refusal: macOS folders ignore case (user pick 2026-11-18): cd "$W"; LOG=1 ./Hooks/x', async () => {
+    const result = await call('cd "$W"; LOG=1 ./Hooks/x', agent);
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/^Refused.*OSS hook script/);
+  });
+});
+
+// hook-env-refs Task 15: any zsh option command, any `set -A`/`+A`, any `set -o`/`+o` outside the served options, seen through zsh's precommand modifiers
+describe.each(AGENTS.slice(0, 2))('%s, a hook script run after a shell option or array is changed', (_who, agent) => {
+  it.each([
+    `unsetopt noallexport; foo=1; ${LOG_HOOK}`,
+    `unsetopt NO_ALL_EXPORT; foo=1; ${LOG_HOOK}`,
+    `set +o noallexport; foo=1; ${LOG_HOOK}`,
+    `emulate zsh -o allexport; foo=1; ${LOG_HOOK}`,
+    `emulate sh; ${LOG_HOOK}`,
+    `setopt globsubst; ${LOG_HOOK}`,
+    `set -o monitor; ${LOG_HOOK}`,
+    `set -euo allexport; foo=1; ${LOG_HOOK}`,
+    `set -o errexit -o no_all_export; ${LOG_HOOK}`,
+    `set -A aliases curl /tmp/e; source ${API_HOOK}; oss_api_curl x`,
+    `set -A manpath /x; ${LOG_HOOK}`,
+    `set +A psvar x; ${LOG_HOOK}`,
+    `noglob alias curl=/tmp/e; source ${API_HOOK}; oss_api_curl x`,
+    `nocorrect hash curl=/tmp/e; . ${API_HOOK}`,
+    `- enable -n echo; ${LOG_HOOK}`,
+    `noglob setopt allexport; foo=1; ${LOG_HOOK}`,
+  ])('refuses a hook script run after a shell option, a zsh array or a command name is changed: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(/^Refused.*OSS hook script/);
+  });
+
+  it.each([
+    LOG_HOOK,
+    `set -e; ${LOG_HOOK}`,
+    `set -euo pipefail; ${LOG_HOOK}`,
+    `( set -o pipefail; ${LOG_HOOK} )`,
+    `set -o errexit -o nounset -o xtrace -o noclobber; ${LOG_HOOK}`,
+    `set +o NO_CLOBBER; ${LOG_HOOK}`,
+  ])('runs a hook script after the shell options the served commands use: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.stderr, command).not.toMatch(/OSS hook script/);
+  });
+
+  // after an unknown cd, a `hooks` / `.oss` part counts only in a word that runs: the program, or a shell's or `source`'s script
+  it.each([
+    'cd "$APP_DIR" && CI=1 npx vitest run src/hooks/useAuth.test.ts',
+    'cd "$D" && CI=1 npx eslint src/hooks',
+    'cd "$D" && TZ=UTC git log --oneline -- .oss/dev/active',
+  ])('leaves a hooks or .oss folder that is only an argument, after an unknown cd: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.stderr, command).not.toMatch(/OSS hook script/);
+  });
+
+  it.each([
+    'cd "$D"; X=1 bash hooks/x.sh',
+    'cd "$D"; X=1 ./hooks/x.sh',
+    'cd "$D"; X=1 . .oss/hooks/x.sh',
+    'cd "$D"; X=1 dash hooks/x.sh',
+    'cd "$D"; X=1 noglob ./hooks/x.sh',
+    'cd "$D"; X=1 npm run oss-build',
+  ])('still refuses a hooks or .oss script that runs, or a bare oss- word, after an unknown cd: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(/^Refused.*OSS hook script/);
+  });
+});
+
+describe('the hook-call variable list', () => {
+  it('is exactly the variables the served commands set in a block that runs an OSS hook script', () => {
+    expect([...HOOK_CALL_VARIABLES].sort()).toEqual([...SERVED_HOOK_VARIABLES].sort());
+  });
+
+  it('never holds a variable that moves where a hook looks or what its shell and tools run', () => {
+    const refused = /^(?:HOME|PATH|path|CLAUDE_PLUGIN_ROOT|BASH_ENV|ENV|NODE_OPTIONS|SHELLOPTS|BASHOPTS|PS4|GIT_.*|LD_.*|DYLD_.*)$/;
+    expect([...HOOK_CALL_VARIABLES].filter((name) => refused.test(name))).toEqual([]);
   });
 });

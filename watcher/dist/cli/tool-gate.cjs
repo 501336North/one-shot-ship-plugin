@@ -37,12 +37,12 @@ __export(tool_gate_exports, {
   runMain: () => runMain
 });
 module.exports = __toCommonJS(tool_gate_exports);
-var import_node_path29 = __toESM(require("node:path"), 1);
+var import_node_path30 = __toESM(require("node:path"), 1);
 var import_node_worker_threads = require("node:worker_threads");
 
 // src/tool-gate/gate.ts
-var import_node_fs17 = __toESM(require("node:fs"), 1);
-var import_node_path28 = __toESM(require("node:path"), 1);
+var import_node_fs18 = __toESM(require("node:fs"), 1);
+var import_node_path29 = __toESM(require("node:path"), 1);
 
 // src/tool-gate/expansion-scan.ts
 var MAX_INDEX = 256;
@@ -2127,8 +2127,7 @@ function readCommand(cmd, cwd, home, caseInsensitive = false, toplevel, readFile
     cdpath: cdpath === void 0 ? null : compactCdpath(cdpath.split(":")),
     cdpathSetUnseen: cdpathSetUnseen(cmd),
     tmpdirSet: /(^|[^$\w{])TMPDIR\b/.test(cmd),
-    // `$CLAUDE_PLUGIN_ROOT` is trusted only when nothing in the call could set it (a bare name, `${…:=…}`, eval)
-    trustedSources: { ...trustedSources, pluginRootVariable: trustedSources.pluginRootVariable && !PLUGIN_ROOT_SET.test(cmd) },
+    trustedSources: sourcesFor(cmd, trustedSources),
     raw: /* @__PURE__ */ new WeakMap(),
     opaque: /* @__PURE__ */ new WeakSet(),
     arrays: /* @__PURE__ */ new Set(),
@@ -2231,15 +2230,17 @@ var PLUGIN_ROOT_SET = /(?:^|[^${\w])CLAUDE_PLUGIN_ROOT\b|\$\{CLAUDE_PLUGIN_ROOT:
 var PLUGIN_HOOK_WORD = /^(["']?)\$(?:CLAUDE_PLUGIN_ROOT|\{CLAUDE_PLUGIN_ROOT\})\/hooks\/([A-Za-z0-9_][A-Za-z0-9._-]*)\1$/;
 function trustedSource(token, reading) {
   if (token === void 0 || token.kind !== "word") return false;
-  const word = token.value;
-  if (word.includes(UNKNOWN)) {
-    const raw = reading.raw.get(token);
-    return reading.trustedSources.pluginRootVariable && raw !== void 0 && PLUGIN_HOOK_WORD.test(raw);
-  }
+  return trustedSourceWord(token.value, reading.raw.get(token), reading.home, reading.trustedSources);
+}
+function trustedSourceWord(word, raw, home, trustedSources) {
+  if (word.includes(UNKNOWN)) return trustedSources.pluginRootVariable && raw !== void 0 && PLUGIN_HOOK_WORD.test(raw);
   if (!(word.startsWith("/") || word.startsWith("~/")) || /[*?[]/.test(word) || word.split("/").some((p) => p === "." || p === "..")) return false;
-  if (word.startsWith("~/") && reading.home === HOME_UNKNOWN) return false;
-  const file = expandTilde(word, reading.home);
-  return reading.trustedSources.folders.some((folder) => file.startsWith(`${folder}/`) && file.length > folder.length + 1);
+  if (word.startsWith("~/") && home === HOME_UNKNOWN) return false;
+  const file = expandTilde(word, home);
+  return trustedSources.folders.some((folder) => file.startsWith(`${folder}/`) && file.length > folder.length + 1);
+}
+function sourcesFor(cmd, trustedSources) {
+  return { ...trustedSources, pluginRootVariable: trustedSources.pluginRootVariable && !PLUGIN_ROOT_SET.test(cmd) };
 }
 function readScript(cmd, cwd, reading, depth, dots = false, optionSet = null) {
   return readTokens(tokensOf(cmd, reading), cwd, reading, depth, dots, null, optionSet);
@@ -5963,8 +5964,10 @@ function unknownWrite(part, settings, places, paths) {
       };
     }
     if (tail === null) {
-      if (!substituted.includes(target) && !literalHeadReaches(pattern, part.cwd, settings, places, paths)) continue;
-    } else if (!places.some((at) => tailMayBeProtected(tail, settings.protectedPaths, at, true, false))) {
+      const after = pattern.slice(pattern.lastIndexOf(UNKNOWN) + UNKNOWN.length);
+      const wildcardsOnly = after.startsWith("/") && endsInGitRef(after.replace(/^\/+/, ""), settings);
+      if (!wildcardsOnly && !substituted.includes(target) && !literalHeadReaches(pattern, part.cwd, settings, places, paths)) continue;
+    } else if (!endsInGitRef(tail, settings) && !places.some((at) => tailMayBeProtected(tail, settings.protectedPaths, at, true, false))) {
       continue;
     }
     return {
@@ -5973,6 +5976,15 @@ function unknownWrite(part, settings, places, paths) {
     };
   }
   return null;
+}
+var GIT_POINTER_FILES = ["head", "orig_head", "fetch_head", "packed-refs", "commondir", "gitdir", "grafts", "alternates", "shallow"];
+function endsInGitRef(tail, settings) {
+  const trimmed = tail.replace(/\/+$/, "");
+  const pattern = trimmed.slice(trimmed.lastIndexOf("/") + 1).replace(/\.lock$/i, "");
+  const branches = settings.protectedBranches.map((b) => b.slice(b.lastIndexOf("/") + 1).toLowerCase());
+  const names = [...GIT_POINTER_FILES, ...branches];
+  if (hasShellWildcard(pattern)) return names.some((name) => shellPatternMatchesPath(pattern, name, { caseInsensitive: true }, true));
+  return names.includes(unescapeGlob(pattern).toLowerCase());
 }
 function unknownTailOf(pattern) {
   const after = pattern.slice(pattern.lastIndexOf(UNKNOWN) + UNKNOWN.length);
@@ -8066,19 +8078,63 @@ function checkProductionHost(part, settings) {
 }
 
 // src/tool-gate/rules/oss-hook-env.ts
-var HOOK_FILE = /\/\.oss\/hooks\/[^/]/;
-var MOVERS = /* @__PURE__ */ new Set(["HOME", "PATH", "path"]);
+var import_node_fs13 = __toESM(require("node:fs"), 1);
+var import_node_path21 = __toESM(require("node:path"), 1);
+var HOOK_FILE = /\/\.oss\/hooks\/[^/]|\/\.claude\/plugins\/cache\/.*\/hooks\/[^/]|(?:^|\/)hooks\/oss-[^/]*\.sh$/i;
+var HOOKS_PART = /(?:^|\/)hooks\/[^/]/i;
+var PLUGIN_HOOK = /\$\{?CLAUDE_PLUGIN_ROOT\}?\/hooks\/[^/]/;
+var HOOK_CALL_VARIABLES = /* @__PURE__ */ new Set([
+  "CLAUDE_PROJECT_DIR",
+  "CREDS",
+  "HAS_PLAYWRIGHT",
+  "OSS_DIR",
+  "OSS_ICON_PNG",
+  "PLAYWRIGHT_RESULT",
+  "PLIST_PATH",
+  "PLUGIN_ROOT",
+  "SCRIPT_DIR",
+  "SETTINGS_FILE",
+  "SOUND",
+  "STATUSLINE_SCRIPT",
+  "STYLE",
+  "V",
+  "VERBOSITY",
+  "VERIFY",
+  "VOICE",
+  "WHY",
+  "d",
+  "encoding",
+  "o",
+  "top",
+  "version",
+  "w"
+]);
+var ASSIGNMENT3 = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=/;
+var VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+var MAYBE_EXPORTED = /[A-Z]|_proxy$|^(?:manpath|fpath|cdpath|module_path|mailpath|psvar|fignore)$/;
+var COMMAND_MAPS = /^(?:dis_)?(?:aliases|galiases|saliases|functions|commands|builtins|options)$/;
+function optionName2(word) {
+  return (word ?? "").toLowerCase().replace(/_/g, "");
+}
+var SERVED_OPTIONS = /* @__PURE__ */ new Set(["pipefail", "errexit", "unset", "xtrace", "clobber"]);
+var RESERVED = /* @__PURE__ */ new Set(["if", "then", "else", "elif", "do", "while", "until", "{", "!", "time"]);
 var SETTING_WORD = /^(?:HOME|PATH|path)(?:$|\[[^\]]*\])?(?:\+?=|$)/;
 var SCRIPT_FLAG = /^-[A-Za-z]*c$/;
 var NAME_SETTERS2 = /* @__PURE__ */ new Set(["declare", "typeset", "export", "local", "readonly", "read", "integer", "float"]);
 var NAMEREF_SETTERS = /* @__PURE__ */ new Set(["declare", "typeset", "local"]);
-var PREFIXES = /* @__PURE__ */ new Set(["builtin", "command"]);
+var OPERAND_SETTERS = /* @__PURE__ */ new Set([...NAME_SETTERS2, "let", "env"]);
+var PREFIXES = /* @__PURE__ */ new Set(["builtin", "command", "noglob", "nocorrect", "-"]);
 var MAX_DEPTH = 5;
-function setsMover(text, depth) {
-  if (depth > MAX_DEPTH || expansionSet(text, (name) => MOVERS.has(name)) !== null || arithmeticReadsVariable(text)) return true;
-  const result = tokenize(text, void 0, new ReadBudget());
+function setsRefusedVariable(text, depth, call) {
+  if (depth > MAX_DEPTH || expansionSet(text, (name) => !HOOK_CALL_VARIABLES.has(name)) !== null || arithmeticReadsVariable(text)) return true;
+  const result = tokenize(text, call.home, new ReadBudget());
   if ("unreadable" in result && result.limit) return true;
-  return tokensSet(result.tokens, depth);
+  return tokensSet(result.tokens, depth, call, text);
+}
+function sourcesOssHook(word, home) {
+  if (word === void 0 || word.includes(UNKNOWN) || /[*?[]/.test(word) || word.split("/").some((p) => p === "." || p === "..")) return false;
+  const name = word.startsWith("~/.oss/hooks/") ? word.slice("~/.oss/hooks/".length) : word.startsWith(`${home}/.oss/hooks/`) ? word.slice(`${home}/.oss/hooks/`.length) : "";
+  return name !== "" && !name.includes("/");
 }
 function setsIndirectly(words) {
   let p = 0;
@@ -8098,6 +8154,31 @@ function setsIndirectly(words) {
   if (name === void 0 || !NAME_SETTERS2.has(name)) return false;
   if (NAMEREF_SETTERS.has(name) && args.some((a) => /^-[A-Za-z]*n/.test(a))) return true;
   return args.some((a) => !a.startsWith("-") && a.split("=")[0].includes(UNKNOWN));
+}
+function variableOf(word) {
+  return word.split(/[=[+]/)[0];
+}
+function setsUnlisted(words) {
+  let p = 0;
+  while (RESERVED.has(words[p])) p++;
+  const assigned = [];
+  while (p < words.length && ASSIGNMENT3.test(words[p])) assigned.push(words[p++]);
+  while (PREFIXES.has(words[p])) p++;
+  const [name, ...args] = words.slice(p);
+  if (name === void 0 || name === "for" || name === "select") {
+    const plain = name === void 0 ? assigned : [...assigned, args[0] ?? ""];
+    return plain.some((w) => (MAYBE_EXPORTED.test(variableOf(w)) || COMMAND_MAPS.test(variableOf(w))) && unlisted(w));
+  }
+  const names = [...assigned];
+  if (OPERAND_SETTERS.has(name)) names.push(...args.filter((a) => !a.startsWith("-")));
+  else if (name === "printf" || name === "print") args.forEach((a, i) => a === "-v" ? names.push(args[i + 1] ?? "") : /^-v./.test(a) && names.push(a.slice(2)));
+  else if (name === "mapfile" || name === "readarray") names.push(...arrayOperands(args));
+  else if (name === "getopts") names.push(args[1] ?? "");
+  return names.some(unlisted);
+}
+function unlisted(word) {
+  const variable = variableOf(word);
+  return VARIABLE_NAME.test(variable) && !HOOK_CALL_VARIABLES.has(variable);
 }
 var ARRAY_VALUE_OPTIONS = /* @__PURE__ */ new Set(["-d", "-n", "-O", "-s", "-u", "-C", "-c"]);
 function arrayOperands(args) {
@@ -8146,42 +8227,127 @@ function arithmeticReadsVariable(text) {
   }
   return false;
 }
-function tokensSet(tokens, depth) {
+function setsFromElsewhere(words, depth, call, raws) {
+  let p = 0;
+  while (RESERVED.has(words[p])) p++;
+  while (p < words.length && ASSIGNMENT3.test(words[p])) p++;
+  while (PREFIXES.has(words[p])) p++;
+  const [name, ...args] = words.slice(p);
+  if (name === "source" || name === ".") {
+    return !sourcesOssHook(args[0], call.home) && !(args[0] !== void 0 && trustedSourceWord(args[0], raws[p + 1], call.home, call.sources));
+  }
+  if (name === "function") return true;
+  if (name === "set") {
+    return args.some((a, i) => /^-[A-Za-z]*[kTa]/.test(a) || /^[-+][A-Za-z]*A/.test(a) || /^[-+][A-Za-z]*o/.test(a) && !SERVED_OPTIONS.has(optionName2(args[i + 1]).replace(/^no/, "")));
+  }
+  if (name === "alias" || name === "enable" || name === "disable") return true;
+  if (name === "hash") return args.some((a) => a.includes("=") || /^-[A-Za-z]*p/.test(a));
+  if (name === "setopt" || name === "unsetopt" || name === "emulate") return true;
+  if (name === "shopt") return args.some((a) => optionName2(a) === "allexport");
+  if (name === "trap") return args.some((a) => !a.startsWith("-") && setsRefusedVariable(a, depth + 1, call));
+  return false;
+}
+function tokensSet(tokens, depth, call, text) {
   let previous = null;
   let words = [];
+  let raws = [];
+  let afterNameParen = false;
   for (const token of tokens) {
+    if (afterNameParen && token.kind === "op" && token.value === ")") return true;
+    afterNameParen = token.kind === "op" && token.value === "(" && words.length > 0;
     if (token.kind === "op") {
-      if (setsIndirectly(words)) return true;
+      if (setsIndirectly(words) || setsUnlisted(words) || setsFromElsewhere(words, depth, call, raws)) return true;
       words = [];
+      raws = [];
     } else if (token.kind === "word") {
       words.push(token.value);
+      const at = sourceOf(token);
+      raws.push(text === void 0 || at === void 0 ? void 0 : text.slice(at.start, at.end));
     }
-    if (token.kind !== "op" && token.scripts?.some((script) => tokensSet(script, depth))) return true;
+    if (token.kind !== "op" && token.scripts?.some((script) => tokensSet(script, depth, call))) return true;
     if (token.kind === "redirect") {
       const body = heredocBodyOf(token);
-      if (body !== void 0 && setsMover(body, depth + 1)) return true;
+      if (body !== void 0 && setsRefusedVariable(body, depth + 1, call)) return true;
     } else if (token.kind === "word") {
       if (SETTING_WORD.test(token.value)) return true;
-      if (previous !== null && (previous === "eval" || SCRIPT_FLAG.test(previous)) && setsMover(token.value, depth + 1)) return true;
+      if (previous !== null && (previous === "eval" || SCRIPT_FLAG.test(previous)) && setsRefusedVariable(token.value, depth + 1, call)) return true;
       previous = token.value;
     } else {
       previous = null;
     }
   }
-  return setsIndirectly(words);
+  return setsIndirectly(words) || setsUnlisted(words) || setsFromElsewhere(words, depth, call, raws);
 }
-function checkOssHookEnv(part, command) {
-  if (!part.words.some((w) => HOOK_FILE.test(w))) return null;
-  if (!part.wrappers.includes("env") && !setsMover(command, 0)) return null;
+var HOOK_PATH_NAMES = [".oss", "hooks", ".claude", "plugins", "cache", "oss-x.sh"];
+var GLOB = /[*?[]/;
+var MAX_GLOB_READINGS = 256;
+function globMatches(part, name) {
+  if (name.startsWith(".") && !part.startsWith(".")) return false;
+  const pattern = part.replace(/\[[^\]]*\]?|[*?]|[^*?[]/g, (c) => c === "*" ? ".*" : c === "?" || c.startsWith("[") ? "." : c.replace(/[.*+?^${}()|\\]/g, "\\$&"));
+  return new RegExp(`^${pattern}$`, "i").test(name);
+}
+function globReadings(word) {
+  let readings = [];
+  for (const [i, part] of word.split("/").entries()) {
+    const options = GLOB.test(part) ? [part, ...HOOK_PATH_NAMES.filter((n) => globMatches(part, n)), ...part === "**" ? ["plugins/cache"] : []] : [part];
+    readings = i === 0 ? options : readings.flatMap((r) => options.map((o) => `${r}/${o}`));
+    if (readings.length > MAX_GLOB_READINGS) return null;
+  }
+  return readings;
+}
+function namesHook(word, cwd) {
+  const readings = GLOB.test(word) ? globReadings(word) : [word];
+  return readings === null || readings.some((w) => HOOK_FILE.test(w) || inPluginCheckout(w, cwd));
+}
+function inPluginCheckout(word, cwd) {
+  const hooks = HOOKS_PART.exec(word);
+  if (hooks === null) return false;
+  let dir = import_node_path21.default.dirname(import_node_path21.default.resolve(cwd, word.slice(0, hooks.index + hooks[0].length - 1)));
+  for (; ; ) {
+    if (import_node_fs13.default.existsSync(import_node_path21.default.join(dir, ".claude-plugin", "plugin.json"))) return true;
+    const up = import_node_path21.default.dirname(dir);
+    if (up === dir) return false;
+    dir = up;
+  }
+}
+function partNamesHook(part) {
+  const lost = part.lostDir !== null && part.lostDir.plainKnown !== true;
+  if (lost && lostWordsCouldBeHook(part.words)) return true;
+  return [...part.words, ...part.assignmentValues].some((w) => {
+    if (namesHook(w, part.cwd)) return true;
+    if (lost || /^[/~-]/.test(w)) return false;
+    return namesHook(import_node_path21.default.resolve(part.cwd, w), part.cwd);
+  });
+}
+var SCRIPT_RUNNERS = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", ".", "source"]);
+function lostWordsCouldBeHook(words) {
+  const script = SCRIPT_RUNNERS.has(words[0]) ? words.findIndex((w, i) => i > 0 && !w.startsWith("-")) : -1;
+  return words.some((w, i) => couldBeOssHook(w, i === 0 || i === script));
+}
+function couldBeOssHook(word, runs) {
+  const parts = word.split("/");
+  const last = parts[parts.length - 1].toLowerCase();
+  const bare = parts.length === 1 || parts.length === 2 && parts[0] === ".";
+  const literal2 = last.split(GLOB)[0];
+  const ossName = GLOB.test(last) ? literal2.startsWith("oss-") || "oss-".startsWith(literal2) : last.startsWith("oss-");
+  if (bare && ossName) return true;
+  if (!runs) return false;
+  const hookFolder = parts.some((p) => ["hooks", ".oss"].some((name) => GLOB.test(p) ? globMatches(p, name) : p.toLowerCase() === name));
+  return hookFolder || parts[parts.length - 1].includes(UNKNOWN);
+}
+function checkOssHookEnv(part, command, home, sources) {
+  if (!partNamesHook(part) && !PLUGIN_HOOK.test(command)) return null;
+  const clears = part.wrappers.some((w, i) => w === "env" || w === "exec" && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o)));
+  if (!clears && !setsRefusedVariable(command, 0, { home, sources: sourcesFor(command, sources) })) return null;
   return {
     rule: "protected-path",
-    reason: "Refused: runs an OSS hook script (`~/.oss/hooks/\u2026`) with a HOME or PATH this command sets or changes (`HOME=`, `PATH=`, `export`, `env`). Run the hook script as it is, in a command that leaves HOME and PATH alone."
+    reason: "Refused: runs an OSS hook script (`~/.oss/hooks/\u2026`) with a HOME or PATH, or another variable, this command sets or changes (`X=`, `export`, `env`) that is not on the list of variables OSS's own commands set on a hook call. Run the hook script as it is, in a command that sets no other variable."
   };
 }
 
 // src/tool-gate/rules/protected-branch.ts
-var import_node_fs13 = __toESM(require("node:fs"), 1);
-var import_node_path21 = __toESM(require("node:path"), 1);
+var import_node_fs14 = __toESM(require("node:fs"), 1);
+var import_node_path22 = __toESM(require("node:path"), 1);
 var BRANCH_REF_PREFIXES = ["refs/heads/", "heads/"];
 function rawDestination(refspec) {
   const spec = refspec.startsWith("+") ? refspec.slice(1) : refspec;
@@ -8469,7 +8635,7 @@ function checkRepoTrust(part, trustOf) {
   };
 }
 function existsOnDisk(absPath) {
-  return import_node_fs13.default.lstatSync(absPath, { throwIfNoEntry: false }) !== void 0;
+  return import_node_fs14.default.lstatSync(absPath, { throwIfNoEntry: false }) !== void 0;
 }
 var HISTORY_MOVERS = /* @__PURE__ */ new Set(["merge", "rebase", "cherry-pick", "revert", "am"]);
 var STOPS_WITHOUT_MOVING = /* @__PURE__ */ new Set(["--abort", "--quit", "--edit-todo", "--show-current-patch"]);
@@ -8487,7 +8653,7 @@ function resetMoves(args, dir, exists) {
   const [target] = before;
   if (HEAD_NAMES.has(target)) return false;
   if (dash !== -1) return true;
-  return !PATHSPEC_ONLY.test(target) && !exists(import_node_path21.default.resolve(dir, target));
+  return !PATHSPEC_ONLY.test(target) && !exists(import_node_path22.default.resolve(dir, target));
 }
 var BRANCH_RENAME = /^(?:-(?=[A-Za-z]*[mM])[A-Za-z]+|--move)$/;
 function historyMove(git, exists) {
@@ -8538,7 +8704,7 @@ var REMOTE_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
 function ownUpstream(git, branch, branches, exists) {
   const [repo, ...specs] = positionalsOf(git.args, PULL_VALUES);
   if (repo === void 0) return true;
-  if (!REMOTE_NAME.test(repo) || exists(import_node_path21.default.resolve(git.dir, repo))) return false;
+  if (!REMOTE_NAME.test(repo) || exists(import_node_path22.default.resolve(git.dir, repo))) return false;
   const name = (ref) => folded(ref.replace(/^(?:refs\/heads\/|heads\/)/, ""), branches);
   return specs.every((spec) => !spec.includes(":") && !spec.startsWith("+") && name(spec) === name(branch));
 }
@@ -8571,7 +8737,7 @@ async function checkHistoryMove(part, settings, git, created = null, exists = ex
 }
 
 // src/tool-gate/rules/protected-path-mention.ts
-var import_node_path22 = __toESM(require("node:path"), 1);
+var import_node_path23 = __toESM(require("node:path"), 1);
 var SCRIPT_LAUNCHERS = /* @__PURE__ */ new Set(["trap", "emulate", "sched"]);
 function launchedScript(name, words) {
   const args = words.slice(1);
@@ -8652,7 +8818,7 @@ var PYTHON3 = /^python[0-9.]*$/;
 function isInterpreter2(name) {
   return INTERPRETERS2.has(name) || PYTHON3.test(name);
 }
-var SCRIPT_RUNNERS = /* @__PURE__ */ new Set(["source", "."]);
+var SCRIPT_RUNNERS2 = /* @__PURE__ */ new Set(["source", "."]);
 var SCRIPT_FLAG2 = /^(?:-[A-Za-z]*[ceE]|--eval|-p|--print)$/;
 var QUOTES = /* @__PURE__ */ new Set(["'", '"', "`"]);
 function foundPath(part, ctx, dir) {
@@ -8714,7 +8880,7 @@ function namedPath(word, dir, ctx, folders = true) {
   if (isProtected(absPath, ctx.settings, ctx.places, ctx.paths)) return absPath;
   if (!folders) return null;
   const holds = holdsProtected(absPath, ctx.settings, ctx.places, ctx.paths);
-  return holds && !isRootOrAbove(import_node_path22.default.normalize(absPath), ctx.places) ? absPath : null;
+  return holds && !isRootOrAbove(import_node_path23.default.normalize(absPath), ctx.places) ? absPath : null;
 }
 function protectedPathNamed(word, dir, settings, places, paths, home) {
   const ctx = { settings, places, paths, home };
@@ -8737,7 +8903,7 @@ function wordsOf(part, name) {
     return { words: args.filter((a) => !files.has(a)), scripts: [] };
   }
   const interpreter = isInterpreter2(name);
-  if (!interpreter && !SCRIPT_RUNNERS.has(import_node_path22.default.posix.basename(part.program ?? ""))) return { words: args, scripts: [] };
+  if (!interpreter && !SCRIPT_RUNNERS2.has(import_node_path23.default.posix.basename(part.program ?? ""))) return { words: args, scripts: [] };
   const words = [];
   const scripts = [];
   let scriptSeen = false;
@@ -8795,14 +8961,14 @@ function literalsOf(part) {
   return [...new Set(partLiterals(part).filter((literal2) => literal2 !== ""))];
 }
 function matchesOutsideRoot(glob) {
-  return glob.startsWith("~/") || glob.startsWith("**/") || import_node_path22.default.isAbsolute(glob);
+  return glob.startsWith("~/") || glob.startsWith("**/") || import_node_path23.default.isAbsolute(glob);
 }
 function namedInScript(literals, dir, ctx) {
   const tails = ctx.settings.protectedPaths.filter(matchesOutsideRoot).map((glob) => `**/${glob.startsWith("~/") ? glob.slice(2) : glob}`);
   for (const literal2 of literals) {
     const named2 = namedPath(literal2, dir, ctx);
     if (named2 !== null) return named2;
-    const tail = import_node_path22.default.posix.normalize(`/${literal2}`);
+    const tail = import_node_path23.default.posix.normalize(`/${literal2}`);
     if (ctx.places.some((at) => matchAnyPath(tails, tail, at))) return literal2;
   }
   return null;
@@ -8868,7 +9034,7 @@ function outputValues2(words, settings) {
     else if (OUTPUT_ATTACHED.test(w)) values.push({ value: w.slice(2), folder: false });
   }
   const writeOptions = (settings.reviewWriteOptions ?? []).filter((o) => o.startsWith("-") && !o.includes(" "));
-  const programOptions = words.flatMap((w) => PROGRAM_WRITE_OPTIONS.get(import_node_path22.default.basename(w)) ?? []);
+  const programOptions = words.flatMap((w) => PROGRAM_WRITE_OPTIONS.get(import_node_path23.default.basename(w)) ?? []);
   if (words.some((w) => writeOptions.includes(w) || programOptions.includes(w))) {
     values.push(...words.slice(1).filter((w) => !w.startsWith("-")).map((value) => ({ value, folder: false })));
   }
@@ -8877,7 +9043,7 @@ function outputValues2(words, settings) {
 function lostTailNamed(part, written, ctx) {
   if (part.lostDir === null || part.name === null || safeInProtectedFolder(part, part.name)) return null;
   const relative = written.filter(
-    ({ value: w, folder }) => (folder || /[./]/.test(w)) && !w.startsWith("-") && !w.startsWith("~") && !import_node_path22.default.isAbsolute(w) && !w.includes(UNKNOWN)
+    ({ value: w, folder }) => (folder || /[./]/.test(w)) && !w.startsWith("-") && !w.startsWith("~") && !import_node_path23.default.isAbsolute(w) && !w.includes(UNKNOWN)
   );
   const globOf2 = ({ value, folder }) => {
     const glob = part.globs.get(value) ?? escapeGlob(value);
@@ -8934,7 +9100,7 @@ function checkProtectedPathMention(part, settings, root, home, paths, caseInsens
     };
   }
   if (named2 === null) return null;
-  const shown2 = import_node_path22.default.isAbsolute(named2) ? displayPath(named2, root, home) : named2;
+  const shown2 = import_node_path23.default.isAbsolute(named2) ? displayPath(named2, root, home) : named2;
   if (SCRIPT_LAUNCHERS.has(name)) {
     return {
       rule: "protected-path-mention",
@@ -9639,14 +9805,14 @@ function fakeTtyPager(part, earlier, count) {
 }
 
 // src/tool-gate/rules/red-cycle.ts
-var import_node_path23 = __toESM(require("node:path"), 1);
+var import_node_path24 = __toESM(require("node:path"), 1);
 var NO_RUN = "Refused: No failing test recorded in this build. Write a failing test and run it on its own with a test command, unpiped (for example `npx vitest run <file>` or `pytest <file>`). Another command that names a test file or has the word test, spec or check in it, and fails, is taken as this build's test command.";
 var DEV_DOCS = ".oss/dev/**";
 function isSourceFile(filePath, settings, root, home) {
   return (
     // Any case: `foo.TS` is the same kind of file. Test-file patterns and the dev-docs folder stay
     // case-sensitive here, since matching them more widely would exempt more files from the rule.
-    settings.sourceExtensions.some((ext) => ext.toLowerCase() === import_node_path23.default.extname(filePath).toLowerCase()) && !matchPath(DEV_DOCS, filePath, { home, root }) && !matchAnyPath(settings.testFilePatterns, filePath, { home, root })
+    settings.sourceExtensions.some((ext) => ext.toLowerCase() === import_node_path24.default.extname(filePath).toLowerCase()) && !matchPath(DEV_DOCS, filePath, { home, root }) && !matchAnyPath(settings.testFilePatterns, filePath, { home, root })
   );
 }
 function checkRedCycle(call, settings, root, home, workflow, store) {
@@ -9661,7 +9827,7 @@ function checkRedCycle(call, settings, root, home, workflow, store) {
   if (cycle.lastResult === "green") {
     return {
       rule: "red-cycle",
-      reason: `Refused: \`${import_node_path23.default.relative(root, call.filePath)}\` is not in this cycle and the last test run was green. Write a failing test and run it before editing a new source file.`
+      reason: `Refused: \`${import_node_path24.default.relative(root, call.filePath)}\` is not in this cycle and the last test run was green. Write a failing test and run it before editing a new source file.`
     };
   }
   store.writeCycle({ ...cycle, files: [...cycle.files, call.filePath] });
@@ -9752,7 +9918,7 @@ function checkTags(part, settings) {
 }
 
 // src/tool-gate/rules/unreadable.ts
-var import_node_path24 = __toESM(require("node:path"), 1);
+var import_node_path25 = __toESM(require("node:path"), 1);
 var GIT_WRITES = /* @__PURE__ */ new Set([
   "push",
   "commit",
@@ -9814,7 +9980,7 @@ var INTERPRETERS3 = /* @__PURE__ */ new Set([
   "expect"
 ]);
 var PYTHON4 = /^python[0-9.]*$/;
-var TEXT_ONLY = { realpath: (p) => import_node_path24.default.normalize(p) };
+var TEXT_ONLY = { realpath: (p) => import_node_path25.default.normalize(p) };
 function tooComplex(reason) {
   return {
     rule: "unreadable",
@@ -9855,9 +10021,9 @@ var import_node_os5 = __toESM(require("node:os"), 1);
 
 // src/tool-gate/sandbox.ts
 var import_node_child_process3 = require("node:child_process");
-var import_node_fs14 = __toESM(require("node:fs"), 1);
+var import_node_fs15 = __toESM(require("node:fs"), 1);
 var import_node_os3 = __toESM(require("node:os"), 1);
-var import_node_path25 = __toESM(require("node:path"), 1);
+var import_node_path26 = __toESM(require("node:path"), 1);
 var SANDBOX_EXEC = "/usr/bin/sandbox-exec";
 var ENV = "/usr/bin/env";
 var SHELL = ["/bin/bash", "--norc", "--noprofile", "-c"];
@@ -9896,9 +10062,9 @@ function inside(dir, root) {
 }
 function ancestorsUpTo(dir, top) {
   const out = [];
-  for (let at = import_node_path25.default.dirname(dir); inside(at, top); at = import_node_path25.default.dirname(at)) {
+  for (let at = import_node_path26.default.dirname(dir); inside(at, top); at = import_node_path26.default.dirname(at)) {
     out.push(at);
-    if (at === top || at === import_node_path25.default.dirname(at)) break;
+    if (at === top || at === import_node_path26.default.dirname(at)) break;
   }
   return out;
 }
@@ -9954,7 +10120,7 @@ function shellQuote2(word) {
   return `'${word.replaceAll("'", "'\\''")}'`;
 }
 function cacheEnv(root) {
-  const at = (name) => import_node_path25.default.join(root, name);
+  const at = (name) => import_node_path26.default.join(root, name);
   return {
     npm_config_cache: at("npm"),
     GOCACHE: at("go-build"),
@@ -9977,7 +10143,7 @@ function wrapCommand(command, profile, env) {
 }
 function realOrNull2(dir) {
   try {
-    return import_node_fs14.default.realpathSync(dir);
+    return import_node_fs15.default.realpathSync(dir);
   } catch {
     return null;
   }
@@ -9985,7 +10151,7 @@ function realOrNull2(dir) {
 function passwordHome() {
   try {
     const dir = import_node_os3.default.userInfo().homedir;
-    return import_node_path25.default.isAbsolute(dir) ? realOrNull2(dir) ?? dir : void 0;
+    return import_node_path26.default.isAbsolute(dir) ? realOrNull2(dir) ?? dir : void 0;
   } catch {
     return void 0;
   }
@@ -9993,19 +10159,19 @@ function passwordHome() {
 function darwinUserTemp() {
   const read = (0, import_node_child_process3.spawnSync)("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], { encoding: "utf8", timeout: timeLeft(500) });
   const dir = read.status === 0 ? read.stdout.trim() : "";
-  return import_node_path25.default.isAbsolute(dir) ? realOrNull2(dir) : null;
+  return import_node_path26.default.isAbsolute(dir) ? realOrNull2(dir) : null;
 }
 function ownPrivateFolder(dir) {
   try {
-    import_node_fs14.default.mkdirSync(dir, { mode: 448 });
+    import_node_fs15.default.mkdirSync(dir, { mode: 448 });
   } catch (error) {
     if (error.code !== "EEXIST") return false;
   }
   try {
-    const stat = import_node_fs14.default.lstatSync(dir);
+    const stat = import_node_fs15.default.lstatSync(dir);
     if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid?.()) return false;
-    if ((stat.mode & 511) !== 448) import_node_fs14.default.chmodSync(dir, 448);
-    return (import_node_fs14.default.lstatSync(dir).mode & 511) === 448;
+    if ((stat.mode & 511) !== 448) import_node_fs15.default.chmodSync(dir, 448);
+    return (import_node_fs15.default.lstatSync(dir).mode & 511) === 448;
   } catch {
     return false;
   }
@@ -10013,24 +10179,24 @@ function ownPrivateFolder(dir) {
 var SAFE_ID2 = /^[A-Za-z0-9_-]{1,128}$/;
 function privateFolderPath(userTemp, sessionId, agentId) {
   const session = typeof sessionId === "string" && SAFE_ID2.test(sessionId) ? sessionId : "session";
-  const dir = import_node_path25.default.join(userTemp, "oss-review", session);
-  return typeof agentId === "string" && SAFE_ID2.test(agentId) ? import_node_path25.default.join(dir, agentId) : dir;
+  const dir = import_node_path26.default.join(userTemp, "oss-review", session);
+  return typeof agentId === "string" && SAFE_ID2.test(agentId) ? import_node_path26.default.join(dir, agentId) : dir;
 }
 function privateFolder2(userTemp, sessionId, agentId) {
   const dir = privateFolderPath(userTemp, sessionId, agentId);
-  const levels = [import_node_path25.default.join(userTemp, "oss-review"), ...import_node_path25.default.dirname(dir) === import_node_path25.default.join(userTemp, "oss-review") ? [] : [import_node_path25.default.dirname(dir)], dir];
+  const levels = [import_node_path26.default.join(userTemp, "oss-review"), ...import_node_path26.default.dirname(dir) === import_node_path26.default.join(userTemp, "oss-review") ? [] : [import_node_path26.default.dirname(dir)], dir];
   return levels.every(ownPrivateFolder) && realOrNull2(dir) === dir ? dir : null;
 }
 function reviewUserTemp(platform, tmpdir, override) {
   if (override !== void 0) return realOrNull2(override);
   if (platform === "darwin") return darwinUserTemp();
-  const given = tmpdir !== void 0 && import_node_path25.default.isAbsolute(tmpdir) ? tmpdir : "/tmp";
+  const given = tmpdir !== void 0 && import_node_path26.default.isAbsolute(tmpdir) ? tmpdir : "/tmp";
   const real = realOrNull2(given);
   return real === "/" ? null : real;
 }
 function sandboxSetting(file) {
   try {
-    const data = JSON.parse(import_node_fs14.default.readFileSync(file, "utf8"));
+    const data = JSON.parse(import_node_fs15.default.readFileSync(file, "utf8"));
     const sandbox = typeof data === "object" && data !== null ? data.sandbox : void 0;
     const enabled = typeof sandbox === "object" && sandbox !== null ? sandbox.enabled : void 0;
     return typeof enabled === "boolean" ? enabled : void 0;
@@ -10040,7 +10206,7 @@ function sandboxSetting(file) {
 }
 function hostSandboxOn(homes, env) {
   if (env.SANDBOX_RUNTIME === "1") return true;
-  const files = [...homes.flatMap((home) => [import_node_path25.default.join(home, ".claude", "settings.json"), import_node_path25.default.join(home, ".claude", "settings.local.json")]), MANAGED_SETTINGS];
+  const files = [...homes.flatMap((home) => [import_node_path26.default.join(home, ".claude", "settings.json"), import_node_path26.default.join(home, ".claude", "settings.local.json")]), MANAGED_SETTINGS];
   return files.map(sandboxSetting).reduce((on, setting) => setting ?? on, false);
 }
 var realRunner = (args) => {
@@ -10056,7 +10222,7 @@ function reviewContainment(opts, run = realRunner) {
   const homes = [...new Set([realOrNull2(opts.home) ?? opts.home, pwHome].filter((dir) => dir !== void 0))];
   if (!optedOut && hostSandboxOn(opts.settingsHomes ?? homes, opts.env)) return { kind: "fallback", why: "host-sandbox" };
   const refused3 = (why) => ({ kind: "refused", reason: `${UNSAFE} (${why})` });
-  if (!import_node_path25.default.isAbsolute(opts.home) || !import_node_fs14.default.existsSync(SANDBOX_EXEC)) return refused3("no sandbox-exec, or HOME is not a full path");
+  if (!import_node_path26.default.isAbsolute(opts.home) || !import_node_fs15.default.existsSync(SANDBOX_EXEC)) return refused3("no sandbox-exec, or HOME is not a full path");
   const temp = opts.userTemp !== void 0 ? realOrNull2(opts.userTemp) : darwinUserTemp();
   if (temp === null) return refused3("no user temp folder");
   const privateDir = privateFolder2(temp, opts.sessionId, opts.agentId);
@@ -10077,14 +10243,14 @@ function reviewContainment(opts, run = realRunner) {
 // src/tool-gate/mounts.ts
 var import_node_child_process4 = require("node:child_process");
 var import_node_crypto = __toESM(require("node:crypto"), 1);
-var import_node_fs15 = __toESM(require("node:fs"), 1);
-var import_node_path26 = __toESM(require("node:path"), 1);
+var import_node_fs16 = __toESM(require("node:fs"), 1);
+var import_node_path27 = __toESM(require("node:path"), 1);
 var MOUNT_LINE = /^(.+?) on (.+?) (?:type \S+ )?\([^()]*\)$/;
 var unescape = (field) => field.replace(/\\([0-7]{3})/g, (_m, oct) => String.fromCharCode(parseInt(oct, 8)));
 function mountTable(platform, capMs) {
   if (platform === "linux") {
     try {
-      return import_node_fs15.default.readFileSync("/proc/self/mounts", "utf8").split("\n").flatMap((line) => {
+      return import_node_fs16.default.readFileSync("/proc/self/mounts", "utf8").split("\n").flatMap((line) => {
         const [device, at] = line.split(" ");
         return device === void 0 || at === void 0 || at === "" ? [] : [{ device: unescape(device), at: unescape(at) }];
       });
@@ -10117,21 +10283,21 @@ function notIn(a, b) {
 }
 function baselineFile(home, sessionId, agentId) {
   const owner = typeof agentId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(agentId) ? agentId : "session";
-  return import_node_path26.default.join(sessionFolder(home, String(sessionId)), `${owner}.mounts`);
+  return import_node_path27.default.join(sessionFolder(home, String(sessionId)), `${owner}.mounts`);
 }
 function recordMountBaseline(home, sessionId, agentId, points) {
   const file = baselineFile(home, sessionId, agentId);
-  if (import_node_fs15.default.lstatSync(file, { throwIfNoEntry: false })?.isFile() === true) return;
+  if (import_node_fs16.default.lstatSync(file, { throwIfNoEntry: false })?.isFile() === true) return;
   const draft = `${file}.draft-${process.pid}-${import_node_crypto.default.randomBytes(6).toString("hex")}`;
   try {
     writePrivateFile(draft, JSON.stringify(points));
     try {
-      import_node_fs15.default.linkSync(draft, file);
+      import_node_fs16.default.linkSync(draft, file);
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
     }
   } finally {
-    import_node_fs15.default.rmSync(draft, { force: true });
+    import_node_fs16.default.rmSync(draft, { force: true });
   }
 }
 var isEntry = (value) => typeof value === "object" && value !== null && typeof value.device === "string" && typeof value.at === "string";
@@ -10146,9 +10312,9 @@ function readMountBaseline(home, sessionId, agentId) {
 
 // src/tool-gate/nested-repos.ts
 var import_node_child_process5 = require("node:child_process");
-var import_node_fs16 = __toESM(require("node:fs"), 1);
+var import_node_fs17 = __toESM(require("node:fs"), 1);
 var import_node_os4 = __toESM(require("node:os"), 1);
-var import_node_path27 = __toESM(require("node:path"), 1);
+var import_node_path28 = __toESM(require("node:path"), 1);
 var NOT_WALKED = ["node_modules", "target", ".venv", "venv", "__pycache__", ".gradle", "Pods", "DerivedData", ".build", ".tox"];
 var CHUNK_BYTES = 1024 * 1024;
 var GITLINK = Buffer.from("160000 ");
@@ -10166,7 +10332,7 @@ function keptEntries(fd, keep) {
   const buffer = Buffer.alloc(CHUNK_BYTES);
   let rest = Buffer.alloc(0);
   let at = 0;
-  for (let read = import_node_fs16.default.readSync(fd, buffer, 0, CHUNK_BYTES, at); read > 0; read = import_node_fs16.default.readSync(fd, buffer, 0, CHUNK_BYTES, at)) {
+  for (let read = import_node_fs17.default.readSync(fd, buffer, 0, CHUNK_BYTES, at); read > 0; read = import_node_fs17.default.readSync(fd, buffer, 0, CHUNK_BYTES, at)) {
     at += read;
     let data = Buffer.concat([rest, buffer.subarray(0, read)]);
     for (let end = data.indexOf(0); end !== -1; end = data.indexOf(0)) {
@@ -10179,17 +10345,17 @@ function keptEntries(fd, keep) {
   return kept;
 }
 function tempParent(tempRoot) {
-  const parent = import_node_path27.default.join(tempRoot, `${TEMP_PREFIX}${process.getuid?.() ?? "user"}`);
+  const parent = import_node_path28.default.join(tempRoot, `${TEMP_PREFIX}${process.getuid?.() ?? "user"}`);
   try {
-    import_node_fs16.default.mkdirSync(parent, { mode: 448 });
+    import_node_fs17.default.mkdirSync(parent, { mode: 448 });
   } catch {
   }
-  const stat = import_node_fs16.default.lstatSync(parent, { throwIfNoEntry: false });
+  const stat = import_node_fs17.default.lstatSync(parent, { throwIfNoEntry: false });
   if (stat === void 0 || !stat.isDirectory() || stat.uid !== process.getuid?.() || (stat.mode & 63) !== 0) return tempRoot;
-  for (const name of import_node_fs16.default.readdirSync(parent)) {
-    const dir = import_node_path27.default.join(parent, name);
-    const age = Date.now() - (import_node_fs16.default.lstatSync(dir, { throwIfNoEntry: false })?.mtimeMs ?? Date.now());
-    if (name.startsWith(TEMP_PREFIX) && age > STALE_MS) import_node_fs16.default.rmSync(dir, { recursive: true, force: true });
+  for (const name of import_node_fs17.default.readdirSync(parent)) {
+    const dir = import_node_path28.default.join(parent, name);
+    const age = Date.now() - (import_node_fs17.default.lstatSync(dir, { throwIfNoEntry: false })?.mtimeMs ?? Date.now());
+    if (name.startsWith(TEMP_PREFIX) && age > STALE_MS) import_node_fs17.default.rmSync(dir, { recursive: true, force: true });
   }
   return parent;
 }
@@ -10251,12 +10417,12 @@ function answerNestedGit(message, tracker, reply) {
 }
 function realGitRunIn(parent, gitBin) {
   return async (args, cwd, keep, limitMs) => {
-    const dir = import_node_fs16.default.mkdtempSync(import_node_path27.default.join(parent, TEMP_PREFIX));
+    const dir = import_node_fs17.default.mkdtempSync(import_node_path28.default.join(parent, TEMP_PREFIX));
     let fd;
     try {
-      fd = import_node_fs16.default.openSync(import_node_path27.default.join(dir, "out"), "w+", 384);
+      fd = import_node_fs17.default.openSync(import_node_path28.default.join(dir, "out"), "w+", 384);
     } finally {
-      import_node_fs16.default.rmSync(dir, { recursive: true, force: true });
+      import_node_fs17.default.rmSync(dir, { recursive: true, force: true });
     }
     try {
       const run = await fileRunner(gitBin ?? gitBinary(), args, cwd, fd, limitMs);
@@ -10264,7 +10430,7 @@ function realGitRunIn(parent, gitBin) {
       if (run.failed || run.status !== 0) return { status: run.status, stdout: "", timedOut: false };
       return { status: 0, stdout: keptEntries(fd, keep).map((entry) => `${entry}\0`).join(""), timedOut: false };
     } finally {
-      import_node_fs16.default.closeSync(fd);
+      import_node_fs17.default.closeSync(fd);
     }
   };
 }
@@ -10273,17 +10439,17 @@ function inside2(p, root) {
   return p.startsWith(`${root}/`);
 }
 function worktrees(commonDir) {
-  const dir = import_node_path27.default.join(commonDir, "worktrees");
+  const dir = import_node_path28.default.join(commonDir, "worktrees");
   let names;
   try {
-    names = import_node_fs16.default.readdirSync(dir);
+    names = import_node_fs17.default.readdirSync(dir);
   } catch {
     return [];
   }
   return names.flatMap((name) => {
     try {
-      const text = import_node_fs16.default.readFileSync(import_node_path27.default.join(dir, name, "gitdir"), "utf8").trim();
-      return import_node_path27.default.isAbsolute(text) ? [import_node_fs16.default.realpathSync(import_node_path27.default.dirname(text))] : [];
+      const text = import_node_fs17.default.readFileSync(import_node_path28.default.join(dir, name, "gitdir"), "utf8").trim();
+      return import_node_path28.default.isAbsolute(text) ? [import_node_fs17.default.realpathSync(import_node_path28.default.dirname(text))] : [];
     } catch {
       return [];
     }
@@ -10307,7 +10473,7 @@ async function askGit(top, run) {
 async function nestedRepos(top, dirs, named2, opts = {}) {
   let real;
   try {
-    real = import_node_fs16.default.realpathSync(dirs.commonDir);
+    real = import_node_fs17.default.realpathSync(dirs.commonDir);
   } catch {
     return { kind: "unknown" };
   }
@@ -10315,7 +10481,7 @@ async function nestedRepos(top, dirs, named2, opts = {}) {
   if (entries === "timeout") return { kind: "timeout" };
   if (entries === "unknown") return { kind: "unknown" };
   const trees = worktrees(real).filter((dir) => inside2(dir, top));
-  const repos = [.../* @__PURE__ */ new Set([...entries.map((entry) => import_node_path27.default.join(top, entry)), ...trees])].filter((dir) => !named2.includes(dir));
+  const repos = [.../* @__PURE__ */ new Set([...entries.map((entry) => import_node_path28.default.join(top, entry)), ...trees])].filter((dir) => !named2.includes(dir));
   return { kind: "found", repos };
 }
 
@@ -10331,11 +10497,11 @@ var HOOK_EVENTS = /* @__PURE__ */ new Set(["PreToolUse", "PostToolUse", "PostToo
 function tempRoots(ctx) {
   const roots = ["/tmp", "/private/tmp"];
   const tmpdir = ctx.tmpdir;
-  if (tmpdir === void 0 || !import_node_path28.default.isAbsolute(tmpdir)) return roots;
-  const given = import_node_path28.default.normalize(tmpdir).replace(/(.)\/+$/, "$1");
+  if (tmpdir === void 0 || !import_node_path29.default.isAbsolute(tmpdir)) return roots;
+  const given = import_node_path29.default.normalize(tmpdir).replace(/(.)\/+$/, "$1");
   let real = given;
   try {
-    real = import_node_fs17.default.realpathSync(given);
+    real = import_node_fs18.default.realpathSync(given);
   } catch {
   }
   return given === "/" || real === "/" ? roots : [...roots, given, real];
@@ -10365,9 +10531,9 @@ function readHook(input) {
   };
 }
 function repoRootOf(cwd) {
-  for (let dir = cwd; ; dir = import_node_path28.default.dirname(dir)) {
-    if (import_node_fs17.default.existsSync(import_node_path28.default.join(dir, ".git"))) return dir;
-    if (import_node_path28.default.dirname(dir) === dir) return cwd;
+  for (let dir = cwd; ; dir = import_node_path29.default.dirname(dir)) {
+    if (import_node_fs18.default.existsSync(import_node_path29.default.join(dir, ".git"))) return dir;
+    if (import_node_path29.default.dirname(dir) === dir) return cwd;
   }
 }
 function toplevelOf(dir) {
@@ -10375,7 +10541,7 @@ function toplevelOf(dir) {
   return repo.kind === "repo" ? repo.top : null;
 }
 function projectRootOf(projectDir, cwd) {
-  const usable = projectDir !== void 0 && import_node_path28.default.isAbsolute(projectDir) && import_node_fs17.default.statSync(projectDir, { throwIfNoEntry: false })?.isDirectory() === true;
+  const usable = projectDir !== void 0 && import_node_path29.default.isAbsolute(projectDir) && import_node_fs18.default.statSync(projectDir, { throwIfNoEntry: false })?.isDirectory() === true;
   return usable ? projectDir : repoRootOf(cwd);
 }
 function reviewedRepos(ctx) {
@@ -10383,24 +10549,24 @@ function reviewedRepos(ctx) {
   const top = toplevelOf(ctx.hook.cwd);
   let named2 = [];
   try {
-    named2 = import_node_path28.default.isAbsolute(ctx.home) ? reviewedReposFor(ctx.home, ctx.hook.sessionId) : [];
+    named2 = import_node_path29.default.isAbsolute(ctx.home) ? reviewedReposFor(ctx.home, ctx.hook.sessionId) : [];
   } catch {
   }
   return [.../* @__PURE__ */ new Set([ctx.root, ...top === null ? [] : [top], ...named2])];
 }
 function homesOf(home) {
-  return [...new Set([home, import_node_os5.default.userInfo().homedir].filter((dir) => import_node_path28.default.isAbsolute(dir)))];
+  return [...new Set([home, import_node_os5.default.userInfo().homedir].filter((dir) => import_node_path29.default.isAbsolute(dir)))];
 }
 function isToplevel(dir) {
   try {
-    return toplevelOf(dir) === import_node_fs17.default.realpathSync(dir);
+    return toplevelOf(dir) === import_node_fs18.default.realpathSync(dir);
   } catch {
     return false;
   }
 }
 function namedRepos(ctx) {
   try {
-    return import_node_path28.default.isAbsolute(ctx.home) ? reviewedReposFor(ctx.home, ctx.hook.sessionId) : [];
+    return import_node_path29.default.isAbsolute(ctx.home) ? reviewedReposFor(ctx.home, ctx.hook.sessionId) : [];
   } catch {
     return [];
   }
@@ -10412,7 +10578,7 @@ async function readableRepos(ctx) {
   const tops = [.../* @__PURE__ */ new Set([...isToplevel(ctx.root) ? [ctx.root] : [], ...top === null ? [] : [top], ...named2.filter(isToplevel)])];
   const repos = [.../* @__PURE__ */ new Set([...tops, ...tops.flatMap(gitFoldersOf)])];
   const hidden = [];
-  for (const top2 of new Set(tops.map((dir) => import_node_fs17.default.realpathSync(dir)))) {
+  for (const top2 of new Set(tops.map((dir) => import_node_fs18.default.realpathSync(dir)))) {
     const repo = findRepo(top2);
     const nested = repo.kind === "repo" ? await nestedRepos(top2, repo, tops, ctx.nestedGit === void 0 ? {} : { run: ctx.nestedGit }) : { kind: "unknown" };
     if (nested.kind === "timeout") return { repos, hidden, problem: `the nested-repo check timed out for the reviewed repo \`${top2}\`; ${RETRY_ALONE}`, timedOut: true };
@@ -10426,7 +10592,7 @@ function gitFoldersOf(top) {
   if (repo.kind !== "repo") return [];
   return [repo.gitDir, repo.commonDir].flatMap((dir) => {
     try {
-      return [import_node_fs17.default.realpathSync(dir)];
+      return [import_node_fs18.default.realpathSync(dir)];
     } catch {
       return [];
     }
@@ -10452,21 +10618,21 @@ function recordOffloadFolder(ctx, command) {
   const { hook } = ctx;
   const printed = OFFLOAD_PRINTED.exec(hook.stdout ?? "");
   if (printed === null || !command.includes("mktemp -d -t oss-offload.") || !isSafeId(hook.agentId) || !isSafeId(hook.sessionId)) return;
-  const folder = import_node_path28.default.normalize(printed[1] ?? "");
+  const folder = import_node_path29.default.normalize(printed[1] ?? "");
   const temp = tempRoots(ctx);
   if (!temp.some((root) => folder.startsWith(`${root}/`)) || !offloadFolderSafe(folder, temp) || !isOwnStep(ctx, command)) return;
   try {
-    appendPrivateFile(import_node_path28.default.join(sessionFolder(ctx.home, hook.sessionId), `${hook.agentId}.${OFFLOAD_RECORD}`), `${folder}
+    appendPrivateFile(import_node_path29.default.join(sessionFolder(ctx.home, hook.sessionId), `${hook.agentId}.${OFFLOAD_RECORD}`), `${folder}
 `);
   } catch {
   }
 }
 function offloadFoldersOf(ctx) {
   const { sessionId, agentId } = ctx.hook;
-  if (!import_node_path28.default.isAbsolute(ctx.home) || !isSafeId(agentId) || sessionState(ctx.home, sessionId) !== "ok") return [];
+  if (!import_node_path29.default.isAbsolute(ctx.home) || !isSafeId(agentId) || sessionState(ctx.home, sessionId) !== "ok") return [];
   try {
-    const text = readPrivateFile(import_node_path28.default.join(runRoot(ctx.home), sessionId, `${agentId}.${OFFLOAD_RECORD}`));
-    return text === null ? [] : text.split("\n").filter((line) => import_node_path28.default.isAbsolute(line));
+    const text = readPrivateFile(import_node_path29.default.join(runRoot(ctx.home), sessionId, `${agentId}.${OFFLOAD_RECORD}`));
+    return text === null ? [] : text.split("\n").filter((line) => import_node_path29.default.isAbsolute(line));
   } catch {
     return [];
   }
@@ -10489,8 +10655,8 @@ function readRuleFile(absPath) {
   return read.text;
 }
 function userConfigText(home) {
-  if (!import_node_path28.default.isAbsolute(home)) return null;
-  const read = readRegularFile(import_node_path28.default.join(home, ".oss", "config.json"), MAX_RULE_FILE_BYTES);
+  if (!import_node_path29.default.isAbsolute(home)) return null;
+  const read = readRegularFile(import_node_path29.default.join(home, ".oss", "config.json"), MAX_RULE_FILE_BYTES);
   return typeof read === "object" ? read.text : null;
 }
 function logDecision(store, event) {
@@ -10518,17 +10684,17 @@ var MAX_AGENT_FILE_BYTES = 256 * 1024;
 var SETUP_SCRIPTS = ["agent-model-check.js", "agent-offload.js"];
 function isOwnStep(ctx, command) {
   const file = ownAgentFile(ctx.hook.agent);
-  if (file === null || ctx.bundleRoot === void 0 || !import_node_path28.default.isAbsolute(ctx.bundleRoot)) return false;
-  const read = readRegularFile(import_node_path28.default.join(ctx.bundleRoot, "agents", file), MAX_AGENT_FILE_BYTES);
+  if (file === null || ctx.bundleRoot === void 0 || !import_node_path29.default.isAbsolute(ctx.bundleRoot)) return false;
+  const read = readRegularFile(import_node_path29.default.join(ctx.bundleRoot, "agents", file), MAX_AGENT_FILE_BYTES);
   const temp = tempRoots(ctx);
   if (typeof read !== "object" || !isOwnSetupStep(command, read.text, temp, [...reviewedRepos(ctx), ctx.home], (folder) => offloadFolderSafe(folder, temp))) return false;
   try {
-    const own = import_node_fs17.default.realpathSync(ctx.bundleRoot);
-    const roots = [ctx.pluginRoot, import_node_path28.default.join(ctx.home, ".claude", "plugins", "oss")].filter((root) => import_node_path28.default.isAbsolute(root));
+    const own = import_node_fs18.default.realpathSync(ctx.bundleRoot);
+    const roots = [ctx.pluginRoot, import_node_path29.default.join(ctx.home, ".claude", "plugins", "oss")].filter((root) => import_node_path29.default.isAbsolute(root));
     return roots.every(
       (root) => SETUP_SCRIPTS.every((script) => {
-        const at = import_node_path28.default.join(root, "watcher", "dist", "cli", script);
-        return !import_node_fs17.default.existsSync(at) || import_node_fs17.default.realpathSync(at).startsWith(`${own}${import_node_path28.default.sep}`);
+        const at = import_node_path29.default.join(root, "watcher", "dist", "cli", script);
+        return !import_node_fs18.default.existsSync(at) || import_node_fs18.default.realpathSync(at).startsWith(`${own}${import_node_path29.default.sep}`);
       })
     );
   } catch {
@@ -10536,24 +10702,24 @@ function isOwnStep(ctx, command) {
   }
 }
 function trustedPluginRoot(ctx) {
-  if (ctx.bundleRoot === void 0 || !import_node_path28.default.isAbsolute(ctx.bundleRoot)) return null;
-  const installed = import_node_path28.default.join(ctx.home, ".claude", "plugins", "oss");
+  if (ctx.bundleRoot === void 0 || !import_node_path29.default.isAbsolute(ctx.bundleRoot)) return null;
+  const installed = import_node_path29.default.join(ctx.home, ".claude", "plugins", "oss");
   const named2 = ctx.pluginRoot !== "" ? ctx.pluginRoot : installed;
-  if (!import_node_path28.default.isAbsolute(named2) || !import_node_path28.default.isAbsolute(installed)) return null;
+  if (!import_node_path29.default.isAbsolute(named2) || !import_node_path29.default.isAbsolute(installed)) return null;
   try {
-    const own = import_node_fs17.default.realpathSync(ctx.bundleRoot);
-    const installedOk = !import_node_fs17.default.existsSync(installed) || import_node_fs17.default.realpathSync(installed) === own;
-    return import_node_fs17.default.realpathSync(named2) === own && installedOk ? own : null;
+    const own = import_node_fs18.default.realpathSync(ctx.bundleRoot);
+    const installedOk = !import_node_fs18.default.existsSync(installed) || import_node_fs18.default.realpathSync(installed) === own;
+    return import_node_fs18.default.realpathSync(named2) === own && installedOk ? own : null;
   } catch {
     return null;
   }
 }
 function pluginInRepo(ctx) {
   try {
-    const plugin = import_node_fs17.default.realpathSync(ctx.pluginRoot);
+    const plugin = import_node_fs18.default.realpathSync(ctx.pluginRoot);
     return [ctx.root, ...reviewedRepos(ctx)].some((repo) => {
-      const real = import_node_fs17.default.realpathSync(repo);
-      return plugin === real || plugin.startsWith(`${real}${import_node_path28.default.sep}`);
+      const real = import_node_fs18.default.realpathSync(repo);
+      return plugin === real || plugin.startsWith(`${real}${import_node_path29.default.sep}`);
     });
   } catch {
     return true;
@@ -10561,7 +10727,7 @@ function pluginInRepo(ctx) {
 }
 function pluginProtected(ctx) {
   try {
-    const hookFile = import_node_path28.default.join(import_node_fs17.default.realpathSync(ctx.pluginRoot), "hooks", "oss-hook.sh");
+    const hookFile = import_node_path29.default.join(import_node_fs18.default.realpathSync(ctx.pluginRoot), "hooks", "oss-hook.sh");
     return isProtected(hookFile, ctx.settings, placesOf(ctx.root, ctx.home, ctx.paths, ctx.caseInsensitive), ctx.paths);
   } catch (error) {
     if (error instanceof OverBudget) throw error;
@@ -10569,8 +10735,8 @@ function pluginProtected(ctx) {
   }
 }
 function trustedSourcesOf(ctx) {
-  const plugin = import_node_path28.default.isAbsolute(ctx.pluginRoot) && pluginProtected(ctx) && !pluginInRepo(ctx) ? [import_node_path28.default.join(ctx.pluginRoot, "hooks")] : [];
-  return { folders: [...homesOf(ctx.home).map((home) => import_node_path28.default.join(home, ".oss", "hooks")), ...plugin], pluginRootVariable: plugin.length > 0 };
+  const plugin = import_node_path29.default.isAbsolute(ctx.pluginRoot) && pluginProtected(ctx) && !pluginInRepo(ctx) ? [import_node_path29.default.join(ctx.pluginRoot, "hooks")] : [];
+  return { folders: [...homesOf(ctx.home).map((home) => import_node_path29.default.join(home, ".oss", "hooks")), ...plugin], pluginRootVariable: plugin.length > 0 };
 }
 function withCallVariables(ctx, command) {
   if (!command.includes("$") || isGateAgent(ctx.hook.agent, ctx.settings.gateAgents)) return command;
@@ -10595,9 +10761,10 @@ async function checkBash(ctx, command) {
   const { paths } = ctx;
   const places = placesOf(root, home, paths, ctx.caseInsensitive);
   const trustOf = trustForCall(repoTrust);
+  const sources = trustedSourcesOf(ctx);
   const repos = reviewedRepos(ctx);
   for (const [index, part] of facts.parts.entries()) {
-    const refusal3 = checkUnknownGitOption(part) ?? checkPushSetup(part, facts.parts, index) ?? checkRepoTrust(part, trustOf) ?? checkBranchSwitch(part, facts.parts, index, settings, void 0, ctx.caseInsensitive) ?? await checkBranchRefs(part, settings, ctx.git, ctx.caseInsensitive) ?? await checkProtectedBranch(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), ctx.caseInsensitive) ?? await checkHistoryMove(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), void 0, ctx.caseInsensitive) ?? checkForcePush(part, settings) ?? checkTags(part, settings) ?? checkProductionHost(part, settings) ?? checkOssHookEnv(part, command) ?? checkProtectedPathBash(part, settings, root, home, paths, ctx.caseInsensitive, places, ctx.tree) ?? (ownStep ? null : checkGateAgentBash(part, hook.agent, settings, { repos, home, exists: import_node_fs17.default.existsSync, temp: tempRoots(ctx), fallback: ctx.containment?.kind === "fallback", darwin: ctx.platform === "darwin", sandboxed: ctx.containment?.kind === "sandbox" }, paths, ctx.caseInsensitive, { earlier: facts.parts.slice(0, index), background: hook.background })) ?? await checkGitClean(part, settings, root, home, paths, ctx.git, ctx.caseInsensitive, places, { earlier: facts.parts, count: index, tree: ctx.tree }) ?? checkProtectedPathMention(part, settings, root, home, paths, ctx.caseInsensitive, places);
+    const refusal3 = checkUnknownGitOption(part) ?? checkPushSetup(part, facts.parts, index) ?? checkRepoTrust(part, trustOf) ?? checkBranchSwitch(part, facts.parts, index, settings, void 0, ctx.caseInsensitive) ?? await checkBranchRefs(part, settings, ctx.git, ctx.caseInsensitive) ?? await checkProtectedBranch(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), ctx.caseInsensitive) ?? await checkHistoryMove(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), void 0, ctx.caseInsensitive) ?? checkForcePush(part, settings) ?? checkTags(part, settings) ?? checkProductionHost(part, settings) ?? checkOssHookEnv(part, command, home, sources) ?? checkProtectedPathBash(part, settings, root, home, paths, ctx.caseInsensitive, places, ctx.tree) ?? (ownStep ? null : checkGateAgentBash(part, hook.agent, settings, { repos, home, exists: import_node_fs18.default.existsSync, temp: tempRoots(ctx), fallback: ctx.containment?.kind === "fallback", darwin: ctx.platform === "darwin", sandboxed: ctx.containment?.kind === "sandbox" }, paths, ctx.caseInsensitive, { earlier: facts.parts.slice(0, index), background: hook.background })) ?? await checkGitClean(part, settings, root, home, paths, ctx.git, ctx.caseInsensitive, places, { earlier: facts.parts, count: index, tree: ctx.tree }) ?? checkProtectedPathMention(part, settings, root, home, paths, ctx.caseInsensitive, places);
     if (refusal3 !== null) return { refusal: refusal3, program: part.program };
   }
   if ("unreadable" in facts && !ownStep) {
@@ -10617,7 +10784,7 @@ function checkEdit(ctx) {
   const guarded = checkProtectedPathEdit(target, settings, root, home, ctx.paths, ctx.caseInsensitive);
   if (guarded !== null) return { refusal: guarded };
   const reviewer = isGateAgent(hook.agent, settings.gateAgents);
-  const reviewed = checkGateAgentEdit(target, hook.agent, settings, { repos: reviewedRepos(ctx), home, exists: import_node_fs17.default.existsSync, temp: tempRoots(ctx), privateDir: reviewer ? ownFolder(ctx) : null, offloadFolders: reviewer ? offloadFoldersOf(ctx) : [] }, ctx.paths, ctx.caseInsensitive);
+  const reviewed = checkGateAgentEdit(target, hook.agent, settings, { repos: reviewedRepos(ctx), home, exists: import_node_fs18.default.existsSync, temp: tempRoots(ctx), privateDir: reviewer ? ownFolder(ctx) : null, offloadFolders: reviewer ? offloadFoldersOf(ctx) : [] }, ctx.paths, ctx.caseInsensitive);
   if (reviewed !== null) return { refusal: reviewed };
   const call = readEditCall(hook.toolName, hook.toolInput, hook.cwd, home, readRegularFileOrNull);
   if (call === null) return null;
@@ -10674,12 +10841,12 @@ var MOUNT_TABLE_MS = 1200;
 function mountPlaces(ctx, table) {
   const mountedOn = new Set(table.map((entry) => entry.at));
   const top = toplevelOf(ctx.hook.cwd);
-  const candidates = withReal([ctx.root, ...top === null ? [] : [top], ...namedRepos(ctx)].filter((dir) => import_node_path28.default.isAbsolute(dir) && dir !== import_node_path28.default.parse(dir).root));
+  const candidates = withReal([ctx.root, ...top === null ? [] : [top], ...namedRepos(ctx)].filter((dir) => import_node_path29.default.isAbsolute(dir) && dir !== import_node_path29.default.parse(dir).root));
   const roots = candidates.filter((dir) => mountedOn.has(dir) || isToplevel(dir));
   const temp = reviewUserTemp(ctx.platform, ctx.tmpdir, ctx.sandboxDeps?.userTemp);
   const own = temp === null ? [] : [privateFolderPath(temp, ctx.hook.sessionId, ctx.hook.agentId)];
-  const gate = [...import_node_path28.default.isAbsolute(ctx.home) ? [import_node_path28.default.join(ctx.home, ".claude"), import_node_path28.default.join(ctx.home, ".oss")] : [], ctx.pluginRoot, ...ctx.bundleRoot === void 0 ? [] : [ctx.bundleRoot]];
-  const fixed = [...own, ...gate.filter((dir) => import_node_path28.default.isAbsolute(dir) && dir !== import_node_path28.default.parse(dir).root)];
+  const gate = [...import_node_path29.default.isAbsolute(ctx.home) ? [import_node_path29.default.join(ctx.home, ".claude"), import_node_path29.default.join(ctx.home, ".oss")] : [], ctx.pluginRoot, ...ctx.bundleRoot === void 0 ? [] : [ctx.bundleRoot]];
+  const fixed = [...own, ...gate.filter((dir) => import_node_path29.default.isAbsolute(dir) && dir !== import_node_path29.default.parse(dir).root)];
   return { watched: withReal([...roots, ...roots.flatMap(gitFoldersOf), ...fixed]), above: withReal([...candidates, ...fixed]) };
 }
 function readMountTable(mounts, now) {
@@ -10694,7 +10861,7 @@ function readMountTable(mounts, now) {
 function voidRun(ctx) {
   const { sessionId, agentId } = ctx.hook;
   try {
-    if (isSafeId(sessionId) && isSafeId(agentId) && import_node_path28.default.isAbsolute(ctx.home)) mark(ctx.home, sessionId, agentId, "tamper");
+    if (isSafeId(sessionId) && isSafeId(agentId) && import_node_path29.default.isAbsolute(ctx.home)) mark(ctx.home, sessionId, agentId, "tamper");
   } catch {
   }
 }
@@ -10715,7 +10882,7 @@ function mountRefusal(ctx, mode) {
       return refusedFor("the gate couldn't record the mount table in its state under ~/.oss/gate-state, which it needs before a review agent's call so it can tell later whether anything was mounted over the code under review. Try again, or report this to the main agent.");
     }
   }
-  const baseline = !linux ? [] : import_node_path28.default.isAbsolute(ctx.home) ? readMountBaseline(ctx.home, ctx.hook.sessionId, ctx.hook.agentId) : null;
+  const baseline = !linux ? [] : import_node_path29.default.isAbsolute(ctx.home) ? readMountBaseline(ctx.home, ctx.hook.sessionId, ctx.hook.agentId) : null;
   let found2;
   try {
     const places = mountPlaces(ctx, table);
@@ -10828,7 +10995,7 @@ var UNCHECKED_REVIEW = "Refused by gate-agent-write: the gate could not finish c
 function reviewerOrUnknown(req, hook) {
   if (hook === null || hook.agent === void 0) return false;
   for (const root of [req.env.CLAUDE_PLUGIN_ROOT, req.bundleRoot]) {
-    if (root === void 0 || !import_node_path28.default.isAbsolute(root)) continue;
+    if (root === void 0 || !import_node_path29.default.isAbsolute(root)) continue;
     try {
       return isGateAgent(hook.agent, readGateAgents(root, projectRootOf(req.env.CLAUDE_PROJECT_DIR, hook.cwd)));
     } catch {
@@ -10916,7 +11083,7 @@ async function runToolGate(req, deps = {}) {
 var USAGE = "Usage: tool-gate pre|post < hook.json\n";
 var HARD_LIMIT_MS = 2500;
 function ownPluginRoot() {
-  return typeof __dirname === "string" ? import_node_path29.default.resolve(__dirname, "..", "..", "..") : "";
+  return typeof __dirname === "string" ? import_node_path30.default.resolve(__dirname, "..", "..", "..") : "";
 }
 function modeOf(argv) {
   const mode = argv[0];
@@ -11050,7 +11217,7 @@ if (isWorkerRequest(request)) {
     () => import_node_worker_threads.parentPort?.postMessage(null)
   );
 } else if (import_node_worker_threads.isMainThread && /tool-gate\.(js|cjs)$/.test(process.argv[1] || "")) {
-  runMain(import_node_path29.default.resolve(process.argv[1]), process.argv.slice(2));
+  runMain(import_node_path30.default.resolve(process.argv[1]), process.argv.slice(2));
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {

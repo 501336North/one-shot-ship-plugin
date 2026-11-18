@@ -14,7 +14,7 @@ import path from 'node:path';
 import { HOME_UNKNOWN, plainWriterName, type CommandPart } from '../command-reader.js';
 import type { EditCall } from '../edit-call.js';
 import type { PathResolver } from '../path-resolver.js';
-import { escapeGlob, floatingNames, matchAnyPath, shellGlobMayHold, shellGlobMayMatch, shellGlobTailMatcher, shellPatternMatchesPath, tailMayBeProtected, tailMayHoldProtected, type PathMatchOptions } from '../patterns.js';
+import { escapeGlob, floatingNames, hasShellWildcard, matchAnyPath, shellGlobMayHold, shellGlobMayMatch, shellGlobTailMatcher, shellPatternMatchesPath, tailMayBeProtected, tailMayHoldProtected, type PathMatchOptions } from '../patterns.js';
 import { createTreeFinder, type TreeFinder } from '../tree-finder.js';
 import { withoutFirmlink } from '../review-places.js';
 import { UNKNOWN } from '../tokenize.js';
@@ -335,6 +335,9 @@ function lostPatternWrite(part: CommandPart, settings: GateSettings, places: Pla
  * the user's call). For a program that writes into, or moves, a folder (cp, mv, ln, install, ditto,
  * rsync, `tar -C`, `unzip -d`), a target whose literal end could be a folder holding protected files
  * is refused too (`"$D"/.claude`, `mv "$X"/.oss …`: round 18, SEC MEDIUM-3; only the end, D-R18-2).
+ * A target whose last part names a protected branch or a git pointer file (`"$x/main"`, `"$d/ORIG_HEAD"`)
+ * is refused as well, since the unknown part could be `.git/refs/heads` or `.git` (hook-env-refs Task 3);
+ * so is a wildcard-only last part (`"$x"/*`, `"$x"/?*`), which matches every such name (Task 8).
  */
 function unknownWrite(part: CommandPart, settings: GateSettings, places: Places[], paths: PathResolver): Refusal | null {
   const substituted = part.substitutedWrites ?? [];
@@ -363,8 +366,10 @@ function unknownWrite(part: CommandPart, settings: GateSettings, places: Places[
       };
     }
     if (tail === null) {
-      if (!substituted.includes(target) && !literalHeadReaches(pattern, part.cwd, settings, places, paths)) continue;
-    } else if (!places.some((at) => tailMayBeProtected(tail, settings.protectedPaths, at, true, false))) {
+      const after = pattern.slice(pattern.lastIndexOf(UNKNOWN) + UNKNOWN.length);
+      const wildcardsOnly = after.startsWith('/') && endsInGitRef(after.replace(/^\/+/, ''), settings);
+      if (!wildcardsOnly && !substituted.includes(target) && !literalHeadReaches(pattern, part.cwd, settings, places, paths)) continue;
+    } else if (!endsInGitRef(tail, settings) && !places.some((at) => tailMayBeProtected(tail, settings.protectedPaths, at, true, false))) {
       continue;
     }
     return {
@@ -373,6 +378,25 @@ function unknownWrite(part: CommandPart, settings: GateSettings, places: Places[
     };
   }
   return null;
+}
+
+/** Git's pointer files: a write to one moves a branch or the repo's HEAD (hook-env-refs Task 3), or changes which commits the repo sees (grafts, alternates, shallow: Task 11). */
+const GIT_POINTER_FILES = ['head', 'orig_head', 'fetch_head', 'packed-refs', 'commondir', 'gitdir', 'grafts', 'alternates', 'shallow'];
+
+/**
+ * True when the readable last part after an unknown part (`"$x/main"`, `"$d/HEAD"`) is, in any case, a
+ * protected branch's name or a git pointer file: the unknown part could be `.git/refs/heads` or `.git`
+ * (hook-env-refs Task 3). A branch named with slashes (`release/x`) counts by its last part only.
+ * Trailing slashes and one `.lock` are dropped first, and a last part with wildcards (`mai?`, `m[a]in`)
+ * counts when it matches one of those names (Task 8).
+ */
+function endsInGitRef(tail: string, settings: GateSettings): boolean {
+  const trimmed = tail.replace(/\/+$/, '');
+  const pattern = trimmed.slice(trimmed.lastIndexOf('/') + 1).replace(/\.lock$/i, '');
+  const branches = settings.protectedBranches.map((b) => b.slice(b.lastIndexOf('/') + 1).toLowerCase());
+  const names = [...GIT_POINTER_FILES, ...branches];
+  if (hasShellWildcard(pattern)) return names.some((name) => shellPatternMatchesPath(pattern, name, { caseInsensitive: true }, true));
+  return names.includes(unescapeGlob(pattern).toLowerCase());
 }
 
 /**

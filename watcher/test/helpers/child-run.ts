@@ -32,6 +32,8 @@ export interface ChildOptions {
   env?: Record<string, string>;
   /** a module that replaces `fs` for the bundled code (it may re-export node:fs) */
   fsShim?: string;
+  /** this call's time limit (default CHILD_LIMIT_MS) */
+  limitMs?: number;
 }
 
 export function runInChild(code: string, options: ChildOptions): ChildRun {
@@ -51,7 +53,7 @@ export function runInChild(code: string, options: ChildOptions): ChildRun {
     const run = spawnSync(process.execPath, [path.join(work, 'run.mjs')], {
       cwd: options.cwd ?? options.home,
       encoding: 'utf-8',
-      timeout: CHILD_LIMIT_MS,
+      timeout: options.limitMs ?? CHILD_LIMIT_MS,
       killSignal: 'SIGKILL',
       env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: options.home, ...options.env },
     });
