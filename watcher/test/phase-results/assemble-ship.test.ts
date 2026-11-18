@@ -97,6 +97,7 @@ interface GateLine {
   verdict: 'pass' | 'fail';
   findings?: Record<string, number>;
   fixed?: Record<string, number>;
+  ts?: string;
 }
 
 /** Appends a timeline gate line; `ledger: true` also writes its hash row, as oss-timeline.sh does. */
@@ -104,7 +105,7 @@ function gateLine(g: GateLine, opts: { ledger: boolean } = { ledger: true }): vo
   const line = JSON.stringify({
     v: 1,
     id: randomUUID(),
-    ts: '2026-11-13T09:30:00Z',
+    ts: g.ts ?? '2026-11-13T09:30:00Z',
     kind: 'gate',
     feature: FEATURE,
     session: 'sess-1',
@@ -390,8 +391,12 @@ describe('assembleShip: captured agent verdicts (T19)', () => {
   const REVIEW_GATES = ['code-review', 'security'];
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
 
+  // ⚠ changes existing test: finding 4 (round 1 security, coordinator fix) — a captured row counts only when its
+  //   reviewed tree is the shipped tree, so the helper records the current (clean) tree, as both `tree` and
+//   `trackedTree`, as the capture CLI does.
   function captured(row: { gate: string; verdict: 'pass' | 'fail'; findings: Record<string, number>; ts: string }): void {
-    openLedger(repo).appendRow(`verdicts/${FEATURE}`, { ...row, agent: 'agent-1', session: 'sess-1' });
+    const tree = git('rev-parse', 'HEAD^{tree}');
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, { tree, trackedTree: tree, ...row, agent: 'agent-1', session: 'sess-1' });
   }
 
   function gatesOf(o: AssembleOutcome): Record<string, Record<string, unknown>> {
@@ -540,5 +545,330 @@ describe('assembleShip: captured agent verdicts (T19)', () => {
     gateLine({ round: 1, gate: 'security', verdict: 'pass' });
     captured({ gate: 'code-review', verdict: 'pass', findings: ZERO, ts: '2026-11-13T09:10:00.000Z' });
     expect(validate(loadPhaseSchema('ship', PLUGIN_ROOT), result(shipReview()))).toEqual({ ok: true });
+  });
+});
+
+/**
+ * D26 (user pick 2026-11-18, "Pass, but label it"): a required gate with no captured agent row keeps its timeline
+ * line (`source: model`) and still passes, but the ship result must not look agent-verified. `gateEvidence` says
+ * whether every gate (agent), some (partial) or none (model) came from a captured agent verdict, and
+ * `uncapturedGates` names the gates that did not, so the complete notice can name them (like D15's evidenceTrust).
+ */
+describe('assembleShip: gate evidence label (D26)', () => {
+  const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
+
+  function captured(gate: string): void {
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+      gate, verdict: 'pass', findings: ZERO, agent: 'a', session: 's', ts: '2026-11-13T09:10:00.000Z',
+      tree: git('rev-parse', 'HEAD^{tree}'),
+      trackedTree: git('rev-parse', 'HEAD^{tree}'),
+    });
+  }
+
+  it('no captured row: passes, labelled model, every gate named', () => {
+    allPass();
+    const r = result(ship());
+    expect(r.verdict).toBe('ready_to_merge');
+    expect(r.gateEvidence).toBe('model');
+    expect(r.uncapturedGates).toEqual(GATES);
+    expect(r.sources).toMatchObject({ gateEvidence: 'code', uncapturedGates: 'code' });
+  });
+
+  it('some captured rows: labelled partial, naming only the uncaptured gates', () => {
+    allPass();
+    captured('security');
+    const r = result(ship());
+    expect(r.gateEvidence).toBe('partial');
+    expect(r.uncapturedGates).toEqual(['code-review', 'performance']);
+  });
+
+  it('every gate captured: labelled agent, none named', () => {
+    allPass();
+    for (const g of GATES) captured(g);
+    const r = result(ship());
+    expect(r.gateEvidence).toBe('agent');
+    expect(r.uncapturedGates).toEqual([]);
+  });
+
+  it('a labelled result passes the ship schema', () => {
+    allPass();
+    captured('security');
+    expect(validate(loadPhaseSchema('ship', PLUGIN_ROOT), result(ship()))).toEqual({ ok: true });
+  });
+});
+
+describe('assembleShip: security and pen-test gates fail on LOW or above (D27)', () => {
+  const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
+
+  function captured(gate: string, verdict: 'pass' | 'fail', findings: Record<string, number>): void {
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+      gate, verdict, findings: { ...ZERO, ...findings }, agent: 'a', session: 's', ts: '2026-11-13T09:40:00.000Z',
+      tree: git('rev-parse', 'HEAD^{tree}'),
+      trackedTree: git('rev-parse', 'HEAD^{tree}'),
+    });
+  }
+
+  function gateOf(name: string, fixed: Record<string, number> = {}): Record<string, unknown> | undefined {
+    for (const gate of GATES) gateLine({ round: 1, gate, verdict: 'pass', fixed: gate === name ? fixed : {} });
+    const r = result(ship());
+    return (r.gates as Array<Record<string, unknown>>).find((g) => g.gate === name);
+  }
+
+  // Rule: D27, ship.md "security findings at LOW or above" block; unfixed = sum of max(0, found - fixed) over LOW+.
+  it('security: an unfixed LOW finding fails, even when the agent said pass', () => {
+    captured('security', 'pass', { low: 1 });
+    expect(gateOf('security')).toMatchObject({ verdict: 'fail', source: 'agent' });
+  });
+
+  it('security: MEDIUM and LOW findings all fixed in the round pass', () => {
+    captured('security', 'pass', { medium: 1, low: 2 });
+    expect(gateOf('security', { medium: 1, low: 2 })).toMatchObject({ verdict: 'pass' });
+  });
+
+  it("security: the agent's fail about a LOW finding that was fixed gives pass", () => {
+    captured('security', 'fail', { low: 1 });
+    expect(gateOf('security', { low: 1 })).toMatchObject({ verdict: 'pass' });
+  });
+
+  it("security: with only INFO findings the agent's own fail counts", () => {
+    captured('security', 'fail', { info: 2 });
+    expect(gateOf('security')).toMatchObject({ verdict: 'fail' });
+  });
+
+  it('security: a fix under the wrong severity does not clear a MEDIUM finding', () => {
+    captured('security', 'pass', { medium: 1 });
+    expect(gateOf('security', { low: 1 })).toMatchObject({ verdict: 'fail' });
+  });
+
+  // Rule: D24 is unchanged for code-review and performance: only critical and high are counted.
+  it('code-review: an unfixed LOW finding with the agent passing still passes (D24)', () => {
+    captured('code-review', 'pass', { low: 3, medium: 1 });
+    expect(gateOf('code-review')).toMatchObject({ verdict: 'pass', source: 'agent' });
+  });
+
+  // Rule: D27, a captured pen-test fail blocks even though pen-test is optional and has no timeline line.
+  it('pen-test: a captured row with an unfixed LOW finding adds a failing pen-test gate and blocks', () => {
+    allPass();
+    captured('pen-test', 'pass', { low: 1 });
+    const r = result(ship());
+    expect((r.gates as Array<Record<string, unknown>>).find((g) => g.gate === 'pen-test')).toEqual({
+      gate: 'pen-test', verdict: 'fail', findings: { ...ZERO, low: 1 }, fixed: ZERO, source: 'agent',
+    });
+    expect(r.verdict).toBe('blocked');
+    expect(r.blockers).toEqual(['gate:pen-test']);
+  });
+
+  it('pen-test: a captured clean pass adds a passing pen-test gate', () => {
+    allPass();
+    captured('pen-test', 'pass', {});
+    const r = result(ship());
+    expect((r.gates as Array<Record<string, unknown>>).find((g) => g.gate === 'pen-test')).toMatchObject({ verdict: 'pass', source: 'agent' });
+    expect(r.verdict).toBe('ready_to_merge');
+  });
+
+  it('pen-test: a row from before the run started adds nothing', () => {
+    allPass();
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+      gate: 'pen-test', verdict: 'fail', findings: { ...ZERO, high: 1 }, agent: 'a', session: 's',
+      ts: '2026-11-13T08:00:00.000Z', tree: git('rev-parse', 'HEAD^{tree}'), trackedTree: git('rev-parse', 'HEAD^{tree}'),
+    });
+    expect((result(ship()).gates as Array<Record<string, unknown>>).map((g) => g.gate)).toEqual(GATES);
+  });
+
+  // Only a captured pen-test row adds a gate; any other captured gate still needs its timeline line.
+  it('a captured row for another gate with no line still gives gate_missing', () => {
+    gateLine({ round: 1, gate: 'code-review', verdict: 'pass' });
+    gateLine({ round: 1, gate: 'performance', verdict: 'pass' });
+    captured('security', 'pass', {});
+    expect(errorOf(ship())).toBe('gate_missing');
+  });
+});
+
+/**
+ * Round 1 security finding 4 (replay and re-roll): a captured row counts only when the tree it reviewed is the tree
+ * being shipped (outside .oss), and a captured fail is erased only by a later pass taken after a NEWER timeline round line for that gate
+ * (a real re-review), never by re-running the agent inside the same round.
+ */
+describe('assembleShip: captured rows cannot be replayed or re-rolled (finding 4)', () => {
+  const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
+
+  function captured(verdict: 'pass' | 'fail', ts: string, tree = git('rev-parse', 'HEAD^{tree}')): void {
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+      gate: 'code-review', verdict, findings: ZERO, agent: 'a', session: 's', ts, tree, trackedTree: tree,
+    });
+  }
+
+  function codeReview(): Record<string, unknown> | undefined {
+    return (result(ship()).gates as Array<Record<string, unknown>>).find((g) => g.gate === 'code-review');
+  }
+
+  function otherGates(round: number, ts: string): void {
+    for (const gate of ['performance', 'security']) gateLine({ round, gate, verdict: 'pass', ts });
+  }
+
+  it('a fail then a pass in the same round still fails', () => {
+    captured('fail', '2026-11-13T09:10:00.000Z');
+    captured('pass', '2026-11-13T09:12:00.000Z');
+    gateLine({ round: 1, gate: 'code-review', verdict: 'pass', ts: '2026-11-13T09:20:00Z' });
+    otherGates(1, '2026-11-13T09:20:00Z');
+    expect(codeReview()).toMatchObject({ verdict: 'fail', source: 'agent' });
+  });
+
+  it('a fail in round 1, then a round 2 line, then a pass passes', () => {
+    captured('fail', '2026-11-13T09:10:00.000Z');
+    gateLine({ round: 1, gate: 'code-review', verdict: 'fail', ts: '2026-11-13T09:20:00Z' });
+    otherGates(1, '2026-11-13T09:20:00Z');
+    captured('pass', '2026-11-13T09:30:00.000Z');
+    gateLine({ round: 2, gate: 'code-review', verdict: 'pass', ts: '2026-11-13T09:40:00Z' });
+    otherGates(2, '2026-11-13T09:40:00Z');
+    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'agent' });
+  });
+
+  it("another gate's newer line is not a re-review of this gate: the fail stays", () => {
+    captured('fail', '2026-11-13T09:10:00.000Z');
+    otherGates(1, '2026-11-13T09:15:00Z');
+    captured('pass', '2026-11-13T09:17:00.000Z');
+    gateLine({ round: 1, gate: 'code-review', verdict: 'pass', ts: '2026-11-13T09:20:00Z' });
+    expect(codeReview()).toMatchObject({ verdict: 'fail' });
+  });
+
+  it('a row captured on an older tree is ignored', () => {
+    const old = git('rev-parse', 'HEAD^{tree}');
+    captured('fail', '2026-11-13T09:10:00.000Z', old);
+    commitFile('c.txt', 'y\n', 'more');
+    for (const gate of GATES) gateLine({ round: 1, gate, verdict: 'pass' });
+    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  it('a row with no tree (only a headSha) is ignored', () => {
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+      gate: 'code-review', verdict: 'fail', findings: ZERO, agent: 'a', session: 's', ts: '2026-11-13T09:10:00.000Z',
+      headSha: git('rev-parse', 'HEAD'),
+    });
+    for (const gate of GATES) gateLine({ round: 1, gate, verdict: 'pass' });
+    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+});
+
+/**
+ * Coordinator fix to finding 4 (2026-11-18): review agents run on the uncommitted working tree in ship Step 1, and ship
+ * commits afterwards, so a captured row is bound to the reviewed TREE (working tree minus .oss), never HEAD. A row
+ * counts only when that tree equals the shipped HEAD's tree outside .oss; otherwise it is ignored and the gate keeps
+ * its timeline line (D26 label).
+ */
+describe('assembleShip: captured rows are bound to the reviewed tree', () => {
+  const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  const FAIL_BLOCK = '```oss-verdict\n' + JSON.stringify({ verdict: 'fail', findings: { ...ZERO, medium: 1 } }) + '\n```';
+
+  function review(): void {
+    featureDir();
+    const out = captureVerdict(
+      { session_id: 's1', agent_id: 'a1', agent_type: 'oss:code-reviewer', cwd: repo, last_assistant_message: FAIL_BLOCK },
+      { now: () => new Date('2026-11-13T09:10:00.000Z') },
+    );
+    expect(out.captured).toBe(true);
+  }
+
+  function codeReview(): Record<string, unknown> | undefined {
+    for (const gate of GATES) gateLine({ round: 1, gate, verdict: 'pass' });
+    return (result(ship()).gates as Array<Record<string, unknown>>).find((g) => g.gate === 'code-review');
+  }
+
+  it('a row captured on an uncommitted tree that is then committed unchanged counts', () => {
+    fs.writeFileSync(path.join(repo, 'b.txt'), 'reviewed\n');
+    review();
+    git('add', 'b.txt');
+    git('commit', '-q', '-m', 'ship commit');
+    expect(codeReview()).toMatchObject({ verdict: 'fail', source: 'agent' });
+  });
+
+  it('a row whose tree differs by a later code change does not count', () => {
+    fs.writeFileSync(path.join(repo, 'b.txt'), 'reviewed\n');
+    review();
+    fs.writeFileSync(path.join(repo, 'b.txt'), 'changed after review\n');
+    git('add', 'b.txt');
+    git('commit', '-q', '-m', 'ship commit');
+    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  it('a change only under .oss after the review still counts', () => {
+    fs.writeFileSync(path.join(repo, 'b.txt'), 'reviewed\n');
+    review();
+    fs.writeFileSync(path.join(featureDir(), 'PROGRESS.md'), '# done\n');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'ship commit with dev docs');
+    expect(codeReview()).toMatchObject({ verdict: 'fail', source: 'agent' });
+  });
+
+  // Coordinator gap fix: ship commits only the files it picks, so an untracked file the reviewer saw but ship left out
+  // must not void the row; anything else that differs still does.
+  it('an untracked scratch file present at review, then left out of the commit, still counts', () => {
+    fs.writeFileSync(path.join(repo, 'b.txt'), 'reviewed\n');
+    fs.mkdirSync(path.join(repo, 'dist'));
+    fs.writeFileSync(path.join(repo, 'dist', 'out.js'), 'build output\n');
+    fs.writeFileSync(path.join(repo, 'scratch.txt'), 'notes\n');
+    review();
+    git('add', 'b.txt');
+    git('commit', '-q', '-m', 'ship commit');
+    expect(codeReview()).toMatchObject({ verdict: 'fail', source: 'agent' });
+  });
+
+  it('a tracked file deleted after the review does not count', () => {
+    commitFile('keep.txt', 'tracked\n', 'tracked file');
+    fs.writeFileSync(path.join(repo, 'b.txt'), 'reviewed\n');
+    review();
+    git('rm', '-q', 'keep.txt');
+    git('add', 'b.txt');
+    git('commit', '-q', '-m', 'ship commit');
+    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  it('a new file added to the commit that was not in the reviewed tree does not count', () => {
+    fs.writeFileSync(path.join(repo, 'b.txt'), 'reviewed\n');
+    review();
+    fs.writeFileSync(path.join(repo, 'unreviewed.ts'), 'export const x = 1;\n');
+    git('add', 'b.txt', 'unreviewed.ts');
+    git('commit', '-q', '-m', 'ship commit');
+    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  it('a row with tree but no trackedTree does not count', () => {
+    commitFile('b.txt', 'x\n', 'add');
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+      gate: 'code-review', verdict: 'fail', findings: ZERO, agent: 'a', session: 's', ts: '2026-11-13T09:10:00.000Z',
+      tree: git('rev-parse', 'HEAD^{tree}'),
+    });
+    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  it('a row without tree does not count', () => {
+    commitFile('b.txt', 'x\n', 'add');
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+      gate: 'code-review', verdict: 'fail', findings: ZERO, agent: 'a', session: 's', ts: '2026-11-13T09:10:00.000Z',
+      headSha: git('rev-parse', 'HEAD'),
+    });
+    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  it('a row whose tree is not a hex object id (an option, say) does not count and never reaches git', () => {
+    commitFile('b.txt', 'x\n', 'add');
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+      gate: 'code-review', verdict: 'fail', findings: ZERO, agent: 'a', session: 's', ts: '2026-11-13T09:10:00.000Z',
+      tree: '--output=planted',
+    });
+    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'model' });
+    expect(fs.existsSync(path.join(repo, 'planted'))).toBe(false);
+  });
+
+  it('a row whose tree is a hex id git does not have does not count', () => {
+    commitFile('b.txt', 'x\n', 'add');
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+      gate: 'code-review', verdict: 'fail', findings: ZERO, agent: 'a', session: 's', ts: '2026-11-13T09:10:00.000Z',
+      tree: 'a'.repeat(40),
+    });
+    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'model' });
   });
 });

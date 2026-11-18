@@ -394,7 +394,8 @@ function resolveRepo(cwd) {
       cwd,
       env,
       encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"]
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2e3
     }).trim();
     return top === "" ? null : fs2.realpathSync(top);
   } catch {
@@ -432,12 +433,29 @@ function readCapped(fd, cap) {
   }
   return buf.subarray(0, n);
 }
+function sameDir(p, realDir, dirStat) {
+  try {
+    const st = fs2.lstatSync(p);
+    return !st.isSymbolicLink() && st.isDirectory() && st.dev === dirStat.dev && st.ino === dirStat.ino && fs2.realpathSync(p) === realDir;
+  } catch {
+    return false;
+  }
+}
+function isOurFile(p, ours) {
+  try {
+    const st = fs2.lstatSync(p);
+    return st.isFile() && st.dev === ours.dev && st.ino === ours.ino;
+  } catch {
+    return false;
+  }
+}
 function writeResult(repo, feature, phase, obj, hooks = {}) {
   checkNames(feature, phase);
   const data = JSON.stringify(obj);
   if (Buffer.byteLength(data) > RESULT_CAP) throw new Error("too_large: result over 256 KB");
   const dir = resultsDir(repo, feature, true);
   const realDir = fs2.realpathSync(dir);
+  const dirStat = fs2.lstatSync(dir);
   const target = path2.join(dir, `${phase}.json`);
   try {
     if (fs2.lstatSync(target).isSymbolicLink()) throw new Error(`unsafe_path: ${phase}.json`);
@@ -446,23 +464,43 @@ function writeResult(repo, feature, phase, obj, hooks = {}) {
   }
   const tmp = path2.join(dir, `.${phase}.${crypto.randomBytes(8).toString("hex")}.tmp`);
   const fd = fs2.openSync(tmp, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, 384);
+  let ours;
   try {
     fs2.writeSync(fd, data);
     fs2.fsyncSync(fd);
+    ours = fs2.fstatSync(fd);
   } finally {
     fs2.closeSync(fd);
   }
   try {
     hooks.beforeRename?.(tmp);
+  } catch (e) {
+    if (isOurFile(tmp, ours)) fs2.unlinkSync(tmp);
+    throw e;
+  }
+  if (!sameDir(path2.dirname(tmp), realDir, dirStat) || !sameDir(path2.dirname(target), realDir, dirStat) || !isOurFile(tmp, ours)) {
+    throw new Error("unsafe_path: results/ moved during write");
+  }
+  try {
     fs2.renameSync(tmp, target);
   } catch (e) {
-    fs2.rmSync(tmp, { force: true });
+    if (isOurFile(tmp, ours)) fs2.unlinkSync(tmp);
     throw e;
   }
   const realTarget = fs2.realpathSync(target);
   if (path2.dirname(realTarget) !== realDir) {
-    fs2.unlinkSync(realTarget);
+    if (isOurFile(realTarget, ours)) fs2.unlinkSync(realTarget);
     throw new Error("unsafe_path: results/ moved during write");
+  }
+}
+function clearUnverifiedMarker(repo, feature, phase) {
+  checkNames(feature, phase);
+  const dir = resultsDir(repo, feature, false);
+  if (dir === null) return;
+  try {
+    fs2.unlinkSync(path2.join(dir, `${phase}.unverified.json`));
+  } catch (e) {
+    if (e.code !== "ENOENT") throw e;
   }
 }
 function readResult(repo, feature, phase) {
@@ -659,11 +697,19 @@ var MAX_ROW_BYTES = 512;
 var SMALL_CAP = 1024 * 1024;
 var LARGE_CAP = 4 * 1024 * 1024;
 var SEGMENT = /^[A-Za-z0-9._-]+$/;
+var TAIL_BYTES = 4096;
+var GIT_TIMEOUT_MS = 2e3;
 function gitOut(cwd, args) {
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith("GIT_")) delete env[k];
   try {
-    const out = (0, import_node_child_process.execFileSync)("git", args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const out = (0, import_node_child_process.execFileSync)("git", args, {
+      cwd,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: GIT_TIMEOUT_MS
+    });
     const v = out.replace(/\n$/, "");
     return v === "" ? null : v;
   } catch {
@@ -805,8 +851,24 @@ function openLedger(cwd, opts = {}) {
     },
     readRows,
     lastRow(relPath) {
-      const rows = readRows(relPath);
-      return rows.length > 0 ? rows[rows.length - 1] : null;
+      const parts = splitRel(relPath);
+      if (!ensureDirs(parts.slice(0, -1), false)) return null;
+      const fd = openChecked(parts, fs4.constants.O_RDONLY);
+      if (fd === null) return null;
+      try {
+        const size = fs4.fstatSync(fd).size;
+        const len = Math.min(size, TAIL_BYTES);
+        const buf = Buffer.alloc(len);
+        fs4.readSync(fd, buf, 0, len, size - len);
+        const lines = buf.toString("utf8").split("\n");
+        for (let i = lines.length - 1; i >= (len < size ? 1 : 0); i--) {
+          const row = parseObject(lines[i]);
+          if (row !== null) return row;
+        }
+        return null;
+      } finally {
+        fs4.closeSync(fd);
+      }
     },
     writeMarker(relPath, obj) {
       writeFile(splitRel(relPath), `${JSON.stringify(obj)}
@@ -963,7 +1025,13 @@ function gitEnv() {
 }
 function gitOut2(cwd, args) {
   try {
-    const out = (0, import_node_child_process2.execFileSync)("git", args, { cwd, env: gitEnv(), encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const out = (0, import_node_child_process2.execFileSync)("git", args, {
+      cwd,
+      env: gitEnv(),
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2e3
+    }).trim();
     return out === "" ? null : out;
   } catch {
     return null;
@@ -976,7 +1044,7 @@ var SEVERITIES = ["critical", "high", "medium", "low", "info"];
 var REPO_FILE_CAP = 4 * 1024 * 1024;
 var GitError = class extends Error {
 };
-function runGit(repo, args, okCodes = [0]) {
+function runGit(repo, args, okCodes = [0], raw = false) {
   const env = gitEnv();
   env.GIT_CONFIG_NOSYSTEM = "1";
   const r = (0, import_node_child_process3.spawnSync)("git", ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", ...args], {
@@ -988,13 +1056,21 @@ function runGit(repo, args, okCodes = [0]) {
     maxBuffer: 1024 * 1024
   });
   if (r.error !== void 0 || r.status === null || !okCodes.includes(r.status)) throw new GitError(args[0]);
-  return { status: r.status, out: r.stdout.trim() };
+  return { status: r.status, out: raw ? r.stdout : r.stdout.trim() };
 }
 function isLocalBranch(repo, name) {
   if (name === "" || name.startsWith("-")) return false;
   try {
     runGit(repo, ["check-ref-format", "--branch", name]);
     runGit(repo, ["rev-parse", "--verify", "--quiet", "--end-of-options", `refs/heads/${name}^{commit}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function hasOriginBranch(repo, name) {
+  try {
+    runGit(repo, ["rev-parse", "--verify", "--quiet", "--end-of-options", `refs/remotes/origin/${name}^{commit}`]);
     return true;
   } catch {
     return false;
@@ -1052,7 +1128,36 @@ function agentRow(row) {
     if (typeof n !== "number" || !Number.isInteger(n) || n < 0) return null;
     findings[s] = n;
   }
-  return { gate: row.gate, verdict: row.verdict, findings, at };
+  const hex = (v) => typeof v === "string" && TREE_RE.test(v) ? v : null;
+  return { gate: row.gate, verdict: row.verdict, findings, at, tree: hex(row.tree), trackedTree: hex(row.trackedTree) };
+}
+var TREE_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+function reviewedIsShipped(repo, tree, trackedTree) {
+  try {
+    const status = runGit(
+      repo,
+      ["diff", "--name-status", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", "--end-of-options", tree, "HEAD", "--", ".", ":(exclude).oss"],
+      [0],
+      true
+    ).out.split("\0");
+    if (status[status.length - 1] === "") status.pop();
+    const deleted = [];
+    for (let k = 0; k + 1 < status.length; k += 2) {
+      if (status[k] !== "D") return false;
+      deleted.push(status[k + 1]);
+    }
+    if (status.length % 2 !== 0) return false;
+    if (deleted.length === 0) return true;
+    const tracked = runGit(
+      repo,
+      ["--literal-pathspecs", "ls-tree", "-r", "--name-only", "-z", "--end-of-options", trackedTree, "--", ...deleted],
+      [0],
+      true
+    ).out;
+    return tracked === "";
+  } catch {
+    return false;
+  }
 }
 function timelineGates(ctx, featureDir, gateHashes) {
   const backed = [];
@@ -1065,8 +1170,12 @@ function timelineGates(ctx, featureDir, gateHashes) {
   }
   const latest = Math.max(0, ...backed.map((r) => r.round));
   const byName = /* @__PURE__ */ new Map();
+  const rounds = /* @__PURE__ */ new Map();
   for (const rec of backed) {
-    if (rec.round !== latest || typeof rec.gate !== "string") continue;
+    if (typeof rec.gate !== "string") continue;
+    const at = typeof rec.ts === "string" ? Date.parse(rec.ts) : NaN;
+    if (!Number.isNaN(at)) rounds.set(rec.gate, [...rounds.get(rec.gate) ?? [], { round: rec.round, at }]);
+    if (rec.round !== latest) continue;
     byName.set(rec.gate, {
       gate: rec.gate,
       verdict: rec.verdict === "pass" ? "pass" : "fail",
@@ -1075,19 +1184,43 @@ function timelineGates(ctx, featureDir, gateHashes) {
       source: "model"
     });
   }
-  return byName;
+  return { byName, rounds };
 }
-function applyAgentVerdicts(byName, verdictRows, runStart) {
+var LOW_PLUS_GATES = /* @__PURE__ */ new Set(["security", "pen-test"]);
+var CAPTURE_ADDS_GATE = "pen-test";
+function ruleVerdict(gate, row, fixed) {
+  const counted = LOW_PLUS_GATES.has(gate) ? ["critical", "high", "medium", "low"] : ["critical", "high"];
+  const unfixed = counted.reduce((n, s) => n + Math.max(0, row.findings[s] - fixed[s]), 0);
+  if (unfixed > 0) return "fail";
+  if (counted.some((s) => row.findings[s] > 0)) return "pass";
+  return row.verdict;
+}
+function roundAt(lines, at) {
+  return Math.max(0, ...lines.filter((l) => l.at <= at).map((l) => l.round));
+}
+function applyAgentVerdicts(tl, verdictRows, runStart, repo) {
+  const byGate = /* @__PURE__ */ new Map();
+  const shipped = /* @__PURE__ */ new Map();
   for (const raw of verdictRows) {
     const row = agentRow(raw);
-    const gate = row === null ? void 0 : byName.get(row.gate);
-    if (row === null || gate === void 0 || !(row.at >= runStart)) continue;
-    const { critical, high } = row.findings;
-    const unfixed = Math.max(0, critical - gate.fixed.critical) + Math.max(0, high - gate.fixed.high);
-    let verdict = row.verdict;
-    if (unfixed > 0) verdict = "fail";
-    else if (critical + high > 0) verdict = "pass";
-    byName.set(row.gate, { ...gate, verdict, findings: row.findings, source: "agent" });
+    if (row === null || !(row.at >= runStart) || row.tree === null || row.trackedTree === null) continue;
+    const key2 = `${row.tree} ${row.trackedTree}`;
+    if (!shipped.has(key2)) shipped.set(key2, reviewedIsShipped(repo, row.tree, row.trackedTree));
+    if (shipped.get(key2) !== true) continue;
+    byGate.set(row.gate, [...byGate.get(row.gate) ?? [], row]);
+  }
+  for (const [name, rows] of byGate) {
+    const zero = counts({});
+    const gate = tl.byName.get(name) ?? (name === CAPTURE_ADDS_GATE ? { gate: name, verdict: "pass", findings: zero, fixed: zero, source: "agent" } : void 0);
+    if (gate === void 0) continue;
+    const lines = tl.rounds.get(name) ?? [];
+    const judged = rows.sort((a, b) => a.at - b.at).map((row) => ({ row, verdict: ruleVerdict(name, row, gate.fixed), round: roundAt(lines, row.at) }));
+    let pick = judged[judged.length - 1];
+    if (pick.verdict === "pass") {
+      const kept = judged.filter((j) => j.verdict === "fail" && j.round >= pick.round);
+      if (kept.length > 0) pick = kept[kept.length - 1];
+    }
+    tl.byName.set(name, { ...gate, verdict: pick.verdict, findings: pick.row.findings, source: "agent" });
   }
 }
 function readOverrides(ctx, featureDir, decisionRows) {
@@ -1135,8 +1268,9 @@ function assembleShip(ctx, opts) {
   } catch (e) {
     return { ok: false, error: e instanceof LedgerError ? e.code : "unsafe_path" };
   }
-  const byName = timelineGates(ctx, featureDir, gateHashes);
-  applyAgentVerdicts(byName, verdictRows, Date.parse(ctx.startedAt));
+  const timeline = timelineGates(ctx, featureDir, gateHashes);
+  applyAgentVerdicts(timeline, verdictRows, Date.parse(ctx.startedAt), ctx.repo);
+  const byName = timeline.byName;
   for (const required of opts.requiredGates ?? DEFAULT_REQUIRED_GATES) {
     if (!byName.has(required)) return { ok: false, error: "gate_missing", detail: required };
   }
@@ -1144,15 +1278,28 @@ function assembleShip(ctx, opts) {
   const read = readOverrides(ctx, featureDir, decisionRows);
   if (!read.ok) return read;
   const blockers = gates.filter((g) => g.verdict !== "pass").map((g) => `gate:${g.gate}`);
+  const uncapturedGates = gates.filter((g) => g.source !== "agent").map((g) => g.gate);
+  const gateEvidence = uncapturedGates.length === 0 ? "agent" : uncapturedGates.length === gates.length ? "model" : "partial";
   const summary = readValue(ctx, "summary.txt");
   return {
     ok: true,
     result: {
       ...baseFields(ctx, "ship"),
       headSha: diff.headSha,
-      sources: { diff: "code", gates: "model", overrides: "code", blockers: "code", verdict: "code", summary: "model" },
+      sources: {
+        diff: "code",
+        gates: "model",
+        gateEvidence: "code",
+        uncapturedGates: "code",
+        overrides: "code",
+        blockers: "code",
+        verdict: "code",
+        summary: "model"
+      },
       diff: { base: diff.base, baseRef: diff.baseRef, files: diff.files, insertions: diff.insertions, deletions: diff.deletions },
       gates,
+      gateEvidence,
+      uncapturedGates,
       overrides: read.overrides,
       blockers,
       verdict: blockers.length === 0 ? "ready_to_merge" : "blocked",
@@ -1180,6 +1327,8 @@ function shipArchivable(repo, feature, pluginRoot2) {
   if (!v.ok) return { ok: false, reason: "invalid_result" };
   const stored = read.value;
   if (stored.verification !== "verified") return { ok: false, reason: "unverified" };
+  const runs = ledger.readRows("run/ship").filter((r) => r.feature === feature);
+  if (runs.length > 0 && stored.startedAt !== runs[runs.length - 1].startedAt) return { ok: false, reason: "stale_result" };
   if (stored.verdict !== "ready_to_merge") return { ok: false, reason: "not_ready_to_merge" };
   return { ok: true };
 }
@@ -1238,8 +1387,15 @@ function headSha(repo) {
   return gitOut2(repo, ["rev-parse", "--verify", "HEAD^{commit}"]);
 }
 function shipBase(repo, dir) {
+  const configured = shipBaseConfig(repo);
   const named = dir === null ? null : readValueFile(dir, "base.txt")?.replace(/\n$/, "");
-  if (named != null && !named.includes("\n") && isLocalBranch(repo, named)) return named;
+  if (named != null && !named.includes("\n") && isLocalBranch(repo, named)) {
+    if (named === "main" || named === configured || hasOriginBranch(repo, named)) return named;
+    throw new Refusal("unsafe_base", "base.txt");
+  }
+  return configured;
+}
+function shipBaseConfig(repo) {
   const env = gitEnv();
   env.GIT_CONFIG_NOSYSTEM = "1";
   const r = (0, import_node_child_process4.spawnSync)("git", ["config", "--local", "--get", "oss.shipBase"], {
@@ -1316,6 +1472,8 @@ function assemble(repo, feature, phase) {
     session: process.env.CLAUDE_CODE_SESSION_ID ?? ""
   });
   ledger.clearMarker(`pending/${feature}/${phase}`);
+  ledger.clearMarker(`unverified/${feature}/${phase}`);
+  clearUnverifiedMarker(repo, feature, phase);
   return outcome.result;
 }
 function reassemble(repo, feature, phase, stored) {
@@ -1376,6 +1534,7 @@ function check(repo, feature, phase) {
       throw new Refusal("evidence_mismatch", field);
     }
   }
+  return stored;
 }
 function verdictOf(fn) {
   try {
@@ -1396,6 +1555,9 @@ function refuse(args, id, field) {
   );
   return 1;
 }
+function gateLabel(phase, result) {
+  return phase === "ship" ? { gateEvidence: result.gateEvidence, uncapturedGates: result.uncapturedGates } : {};
+}
 function main(argv) {
   const args = parseArgs(argv);
   if (args === null) {
@@ -1407,7 +1569,10 @@ function main(argv) {
   if (args.all) {
     for (const feature2 of activeFeatures(repo)) {
       const v2 = verdictOf(() => {
-        if (args.phase !== "ship") return check(repo, feature2, args.phase);
+        if (args.phase !== "ship") {
+          check(repo, feature2, args.phase);
+          return;
+        }
         const a = shipArchivable(repo, feature2, pluginRoot());
         if (!a.ok) throw new Refusal(a.reason, "archive");
       });
@@ -1424,13 +1589,16 @@ function main(argv) {
       result = assemble(repo, feature, args.phase);
     });
     if (!v2.ok) return refuse(args, v2.id, v2.field);
-    process.stdout.write(`${JSON.stringify({ verification: result.verification, phase: args.phase })}
+    process.stdout.write(`${JSON.stringify({ verification: result.verification, phase: args.phase, ...gateLabel(args.phase, result) })}
 `);
     return 0;
   }
-  const v = verdictOf(() => check(repo, feature, args.phase));
+  let stored = {};
+  const v = verdictOf(() => {
+    stored = check(repo, feature, args.phase);
+  });
   if (!v.ok) return refuse(args, v.id, v.field);
-  process.stdout.write(`${JSON.stringify({ verification: "verified" })}
+  process.stdout.write(`${JSON.stringify({ verification: "verified", ...gateLabel(args.phase, stored) })}
 `);
   return 0;
 }

@@ -17,6 +17,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$SCRIPT_DIR/oss-api-curl.sh" ]]; then source "$SCRIPT_DIR/oss-api-curl.sh"; fi  # oss_api_curl: API key via stdin, never argv
 if [[ -f "$SCRIPT_DIR/oss-safe-path.sh" ]]; then source "$SCRIPT_DIR/oss-safe-path.sh"; else oss_safe_mkdir() { return 1; }; oss_safe_target() { return 1; }; oss_valid_workflow_name() { return 1; }; oss_refuse_unsafe() { echo "oss: refusing unsafe .oss path ${1:-} (oss-safe-path.sh missing)" >&2; }; fi  # oss_valid_workflow_name (fail closed if absent)
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
+# R-257: oss_run_bounded_rc, oss_phase_gate_ok, oss_plugin_root_file and the fixed git and jq (OSS_GIT_BIN,
+# OSS_JQ_BIN); absent, every gate fails closed.
+if [[ -f "$SCRIPT_DIR/oss-phase-result.sh" ]]; then source "$SCRIPT_DIR/oss-phase-result.sh"; else oss_run_bounded_rc() { OSS_BOUNDED_OUT=""; return 127; }; oss_phase_gate_ok() { echo "cli_missing" >&2; return 1; }; oss_plugin_root_file() { return 1; }; OSS_GIT_BIN=/usr/bin/git; OSS_JQ_BIN=/usr/bin/jq; fi
 
 # =============================================================================
 # TIMEOUT WRAPPER - Prevents blocking on slow/hanging node calls
@@ -79,11 +82,9 @@ resolve_cli() {
         echo "$direct_path"
         return
     fi
-    # ~/.oss/plugin-root: a regular file, not a link, owned, one absolute line naming an owned dir that is not a link
-    local pr="$HOME/.oss/plugin-root" r=""
-    if [[ -f "$pr" && ! -L "$pr" ]] && test -O "$pr" && r=$(cat "$pr" 2>/dev/null) \
-        && [[ "$r" == /* && "$r" != *$'\n'* && -d "$r" && ! -L "$r" ]] && test -O "$r" && [[ -f "$r/$cli_subpath" ]]; then
-        echo "$r/$cli_subpath"
+    # ~/.oss/plugin-root only as session-start writes it (oss_plugin_root_file: not a link, owned, mode 600; D25 c)
+    if oss_plugin_root_file && [[ -f "$_OSS_ROOT_FILE/$cli_subpath" ]]; then
+        echo "$_OSS_ROOT_FILE/$cli_subpath"
         return
     fi
     # Fallback: search plugin cache (version-agnostic)
@@ -139,8 +140,6 @@ wf_state_timeout() {
 # =============================================================================
 # PHASE RESULTS (R-257) - the start gate (D16, D17) and the ledger run row (D14)
 # =============================================================================
-# oss_run_bounded_rc and oss_phase_gate_ok; absent, every gate fails closed.
-if [[ -f "$SCRIPT_DIR/oss-phase-result.sh" ]]; then source "$SCRIPT_DIR/oss-phase-result.sh"; else oss_run_bounded_rc() { OSS_BOUNDED_OUT=""; return 127; }; oss_phase_gate_ok() { echo "cli_missing" >&2; return 1; }; fi
 
 # _oss_phase_check <phase> <project>: rc 0 when that phase's result is valid and verified; else the reason class
 # (timeout, cli_missing, exit_<rc>, ...) in _OSS_GATE_WHY. The CLI's own reason goes to stderr.
@@ -151,18 +150,35 @@ _oss_phase_check() {
     return 1
 }
 
-# _oss_ledger_run <phase>: appends {"startedAt","session","headSha"} to ~/.oss/ledger/<key>/run/<phase> (NOTES.md
-# ledger contract). startedAt is read back from the workflow state this start just wrote; the key is _ov_key's, from
-# the physical cwd's repo. Dirs 700, file 600, links refused, one append.
+# _oss_ledger_key <dir> -> stdout: the ledger key of <dir>'s repo, as watcher/src/phase-results/ledger.ts ledgerKey
+# derives it (the first 16 hex of the git blob id of "<toplevel>\n<absolute git dir>\n"); fails outside a repo.
+_oss_ledger_key() (
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+    local top g k
+    cd -P -- "$1" 2>/dev/null && top=$("$OSS_GIT_BIN" rev-parse --show-toplevel 2>/dev/null) && cd -- "$top" 2>/dev/null \
+        && g=$("$OSS_GIT_BIN" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+    k=$(printf '%s\n%s\n' "$top" "$g" | "$OSS_GIT_BIN" hash-object --stdin | cut -c1-16) && [[ ${#k} == 16 ]] || return 1
+    printf '%s\n' "$k"
+)
+
+# _oss_ledger_has_results <project> <feature>: true when the ledger holds results rows for <feature> in this repo
+# (~/.oss/ledger/<key>/results/<feature>, any kind of entry), i.e. the feature is not a pre-R-257 one (D17).
+_oss_ledger_has_results() {
+    local k
+    k=$(_oss_ledger_key "$1") || return 1
+    [[ -e "$HOME/.oss/ledger/$k/results/$2" || -L "$HOME/.oss/ledger/$k/results/$2" ]]
+}
+
+# _oss_ledger_run <phase>: appends {"startedAt","session","headSha","feature"} to ~/.oss/ledger/<key>/run/<phase> (NOTES.md
+# ledger contract). startedAt is read back from the workflow state this start just wrote; the key is _oss_ledger_key's
+# (the same as _ov_key's), from the physical cwd's repo. Dirs 700, file 600, links refused, one append.
 _oss_ledger_run() (
     unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
-    local sf="$HOME/.oss/workflow-state.json" s top g k d c f sid head row
+    local sf="$HOME/.oss/workflow-state.json" s k top feat d c f sid head row
     local iso='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?Z$' sre='^[A-Za-z0-9-]{1,100}$'
     [[ -n "$_OSS_PROJECT_DIR" && -d "$_OSS_PROJECT_DIR/.oss" ]] && sf="$_OSS_PROJECT_DIR/.oss/workflow-state.json"
-    s=$(jq -r '.currentCommandStartedAt // empty' "$sf" 2>/dev/null) && [[ "$s" =~ $iso ]] || return 1
-    oss_phys_cwd; cd "$_OSS_CWD" 2>/dev/null && top=$(git rev-parse --show-toplevel 2>/dev/null) \
-        && g=$(git rev-parse --absolute-git-dir 2>/dev/null) || return 1
-    k=$(printf '%s\n%s\n' "$top" "$g" | git hash-object --stdin | cut -c1-16) && [[ ${#k} == 16 ]] || return 1
+    s=$("$OSS_JQ_BIN" -r '.currentCommandStartedAt // empty' "$sf" 2>/dev/null) && [[ "$s" =~ $iso ]] || return 1
+    oss_phys_cwd; k=$(_oss_ledger_key "$_OSS_CWD") && cd "$_OSS_CWD" 2>/dev/null || return 1
     d="$HOME/.oss"
     for c in ledger "$k" run; do
         d="$d/$c"
@@ -172,8 +188,11 @@ _oss_ledger_run() (
     f="$d/$1"
     oss_single_link "$f" && { [[ ! -e "$f" ]] || test -O "$f"; } || return 1
     sid="${CLAUDE_CODE_SESSION_ID:-}"; [[ "$sid" =~ $sre ]] || sid=""
-    head=$(git rev-parse -q --verify HEAD 2>/dev/null) || head=""
-    row=$(jq -cn --arg a "$s" --arg b "$sid" --arg c "$head" '{startedAt: $a, session: $b, headSha: $c}') || return 1
+    head=$("$OSS_GIT_BIN" rev-parse -q --verify HEAD 2>/dev/null) || head=""
+    # the feature resolved for this repo and branch now ("" when none); the Stop shell reads the compact row by regex
+    feat=""; top=$("$OSS_GIT_BIN" rev-parse --show-toplevel 2>/dev/null) && { oss_resolve_feature "$top" || true; feat="${_OSS_FEATURE:-}"; }
+    row=$("$OSS_JQ_BIN" -cn --arg a "$s" --arg b "$sid" --arg c "$head" --arg d "$feat" \
+        '{startedAt: $a, session: $b, headSha: $c, feature: $d}') || return 1
     (umask 077; printf '%s\n' "$row" >> "$f")
 )
 
@@ -299,7 +318,8 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
     esac
 
     # Start gate (D16), before any log line or state change: plan, build and ship need the previous phase's valid
-    # result. D17: a feature with no results/ folder at all (made before R-257) starts with a one-line notice.
+    # result. D17: a feature with no results/ folder at all and no results rows in the ledger (made before R-257) starts
+    # with a one-line notice.
     if [[ "$WORKFLOW_EVENT" == start ]]; then
         _OSS_PREV=""
         case "$_OSS_PHASE" in plan) _OSS_PREV=ideate ;; build) _OSS_PREV=plan ;; ship) _OSS_PREV=build ;; esac
@@ -308,7 +328,9 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
             # `|| true`: under set -e its git call would end the hook outside a repo (rc 128)
             [[ -n "$_OSS_PROJECT_DIR" ]] && { oss_resolve_feature "$_OSS_PROJECT_DIR" || true; }
             _OSS_RD="$_OSS_PROJECT_DIR/.oss/dev/active/$_OSS_FEATURE/results"
-            if [[ -z "$_OSS_FEATURE" ]] || [[ ! -e "$_OSS_RD" && ! -L "$_OSS_RD" ]]; then
+            # Legacy only when the ledger never saw a result for it either: deleting results/ skips nothing.
+            if [[ -z "$_OSS_FEATURE" ]] || { [[ ! -e "$_OSS_RD" && ! -L "$_OSS_RD" ]] \
+                && ! _oss_ledger_has_results "$_OSS_PROJECT_DIR" "$_OSS_FEATURE"; }; then
                 # The notice is for OSS projects only: a folder with no .oss starts silently, as before R-257.
                 [[ -n "$_OSS_PROJECT_DIR" && -d "$_OSS_PROJECT_DIR/.oss" ]] && \
                     echo "no phase results for ${_OSS_FEATURE:-this project}: start gate skipped; run /oss:$_OSS_PREV to enable it"
@@ -326,8 +348,8 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
     if [[ "$WORKFLOW_EVENT" == complete && -n "$_OSS_PHASE" ]]; then
         _OSS_GATE_WHY=""
         oss_phys_cwd
-        _OSS_TOP_CWD=$(unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR; cd "$_OSS_CWD" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null) || _OSS_TOP_CWD=""
-        _OSS_TOP_PROJ=$(unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR; cd "$_OSS_PROJECT_DIR" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null) || _OSS_TOP_PROJ=""
+        _OSS_TOP_CWD=$(unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR; cd "$_OSS_CWD" 2>/dev/null && "$OSS_GIT_BIN" rev-parse --show-toplevel 2>/dev/null) || _OSS_TOP_CWD=""
+        _OSS_TOP_PROJ=$(unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR; cd "$_OSS_PROJECT_DIR" 2>/dev/null && "$OSS_GIT_BIN" rev-parse --show-toplevel 2>/dev/null) || _OSS_TOP_PROJ=""
         if [[ -z "$_OSS_PROJECT_DIR" ]]; then _OSS_GATE_WHY="no_repo"
         elif [[ -z "$_OSS_TOP_CWD" || "$_OSS_TOP_CWD" != "$_OSS_TOP_PROJ" ]]; then _OSS_GATE_WHY="repo_mismatch"
         fi
@@ -339,6 +361,12 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
             "$SCRIPT_DIR/oss-timeline.sh" command "$WORKFLOW_CMD" failed </dev/null >/dev/null 2>&1 || true
             if [[ -f "$WORKFLOW_STATE_CLI" ]]; then wf_state_timeout 2 setSupervisor intervening >/dev/null 2>&1 || true; fi
             exit 1
+        fi
+        # D26: a ship result whose gate evidence is not all captured reviewer verdicts passes, labelled (like D15)
+        if [[ "$_OSS_PHASE" == ship ]] && _OSS_UNC=$(printf '%s' "$OSS_BOUNDED_OUT" \
+            | "$OSS_JQ_BIN" -er 'select(.gateEvidence != "agent") | .uncapturedGates | join(", ")' 2>/dev/null) \
+            && [[ -n "$_OSS_UNC" ]]; then
+            echo "ship gates without a captured reviewer verdict: $_OSS_UNC (model-reported)"
         fi
     fi
 

@@ -43,8 +43,15 @@ function resultsDir(): string {
   return path.join(repo, '.oss', 'dev', 'active', FEATURE, 'results');
 }
 
+// ⚠ changes existing test: R-257 ship round 1 finding 1 — the run row now records its feature, and only a run of this
+// session for this checkout's feature blocks.
 function startPhase(phase: string, startedAt = new Date().toISOString()): string {
-  openLedger(repo).appendRow(`run/${phase}`, { startedAt, session: 'sess-1', headSha: git('rev-parse', 'HEAD') });
+  openLedger(repo).appendRow(`run/${phase}`, {
+    startedAt,
+    session: 'sess-1',
+    headSha: git('rev-parse', 'HEAD'),
+    feature: FEATURE,
+  });
   return startedAt;
 }
 

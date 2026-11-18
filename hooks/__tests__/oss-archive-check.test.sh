@@ -32,13 +32,14 @@ TODAY=$(date +%Y%m%d)
 
 sandbox() {
     T=$(mktemp -d); T=$(cd "$T" && pwd -P)
-    mkdir -p "$T/home/.oss" "$T/bin" "$T/repo"
+    mkdir -p "$T/home/.oss/hooks" "$T/bin" "$T/repo"
     export HOME="$T/home"
     printf '#!/bin/bash\necho x >> "%s/node.calls"\nexec "%s" "$@"\n' "$T" "$REAL_NODE" > "$T/bin/node"
     chmod +x "$T/bin/node"
     printf '%s\n' "$RECORDED_NODE" > "$T/home/.oss/node-path"
     mkdir -p "$T/cplugin/hooks" "$T/cplugin/watcher/dist/cli"
     cp "$ROOT/hooks/oss-node.sh" "$T/cplugin/hooks/oss-node.sh"
+    cp "$ROOT/hooks/oss-node.sh" "$T/home/.oss/hooks/oss-node.sh"   # D25 (e): the copy the gate sources
     printf 'require("fs").appendFileSync(%s, "x\\n"); process.argv[1] = %s; require(%s);\n' \
         "\"$T/node.calls\"" "\"$REAL_CLI\"" "\"$REAL_CLI\"" > "$T/cplugin/watcher/dist/cli/phase-result.cjs"
     ( cd "$T/repo" && git init -q -b main && git config user.email t@example.invalid && git config user.name t \
@@ -48,6 +49,9 @@ sandbox() {
 }
 feature() { mkdir -p "$A/$1"; printf '# Progress\n\n## Current Phase: %s\n' "${2:-build}" > "$A/$1/PROGRESS.md"; }
 archive() { # runs the hook from the repo; OUT and RC
+    # D25 (b, c): the plugin in CLAUDE_PLUGIN_ROOT counts only as the one ~/.oss/plugin-root names (mode 600, as
+    # session-start writes it), so each run first records the plugin it uses there.
+    printf '%s\n' "${PLUGIN:-$T/cplugin}" > "$T/home/.oss/plugin-root"; chmod 600 "$T/home/.oss/plugin-root"
     OUT=$(cd "$R" && PATH="$T/bin:$PATH" CLAUDE_PLUGIN_ROOT="${PLUGIN:-$T/cplugin}" CLAUDE_CODE_SESSION_ID="${SESSION:-s2}" \
         "$SH" "$ROOT/hooks/oss-archive-check.sh" --project-dir="$R" "$@" 2>&1 </dev/null); RC=$?
 }

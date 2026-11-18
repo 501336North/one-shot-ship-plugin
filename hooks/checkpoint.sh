@@ -137,7 +137,7 @@ count_completed_tasks() {
     oss_run_bounded_rc 10 "$OSS_NODE" "$_OSS_PR_CLI" check plan --repo "$repo" 2>/dev/null || rc=$?
     f="$repo/.oss/dev/active/$feature/results/plan.json"
     if oss_phase_gate_ok "$rc" "$OSS_BOUNDED_OUT" 2>/dev/null && [[ -f "$f" && ! -L "$f" ]]; then
-        n=$(jq '.tasks | length' "$f" 2>/dev/null) || n=0
+        n=$("$OSS_JQ_BIN" '.tasks | length' "$f" 2>/dev/null) || n=0
         [[ "$n" =~ ^[0-9]+$ ]] || n=0
         echo "$n"
     else

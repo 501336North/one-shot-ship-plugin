@@ -19,7 +19,8 @@ import { fileURLToPath } from 'url';
 import { ledgerKey, openLedger } from '../../src/phase-results/ledger.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const CLI = path.resolve(HERE, '../../dist/cli/phase-result.cjs');
+// OSS_TEST_PHASE_RESULT_CLI: a bundle built from src outside dist (fix rounds build dist once, at the end).
+const CLI = process.env.OSS_TEST_PHASE_RESULT_CLI ?? path.resolve(HERE, '../../dist/cli/phase-result.cjs');
 const FEATURE = 'feat-a';
 const OTHER = 'feat-b';
 // ⚠ changes existing test: REQUIREMENTS AC-003.5 — gates are the timeline gate lines, whose names are ship.md's gate.txt values
@@ -212,6 +213,51 @@ describe('phase-result CLI: assemble', () => {
     expect(r.stderr).toContain('no_run_started');
     expect(fs.existsSync(path.join(activeDir(FEATURE), 'results'))).toBe(false);
   });
+  // Behaviour: once the Stop hook marked a phase unverified, re-running assemble is the documented way out, so a
+  //            successful assemble clears both unverified markers and check then passes.
+  // Rule: R-257 ship fix round 1, finding 1 (HIGH): a marked phase could never pass check again.
+  it('a successful assemble clears the ledger and repo unverified markers, and check then passes', () => {
+    startRun('plan', '2026-11-13T09:00:00.000Z');
+    writeTasks();
+    openLedger(repo).writeMarker(`unverified/${FEATURE}/plan`, { reason: 'stop-check' });
+    fs.mkdirSync(path.join(activeDir(FEATURE), 'results'), { recursive: true });
+    fs.writeFileSync(path.join(activeDir(FEATURE), 'results', 'plan.unverified.json'), '{}');
+    expect(cli('check', 'plan').status).toBe(1);
+
+    const a = cli('assemble', 'plan');
+    expect(a.status, a.stderr).toBe(0);
+    expect(openLedger(repo).hasMarker(`unverified/${FEATURE}/plan`)).toBe(false);
+    expect(fs.existsSync(path.join(activeDir(FEATURE), 'results', 'plan.unverified.json'))).toBe(false);
+    const c = cli('check', 'plan');
+    expect(c.status, c.stderr).toBe(0);
+  });
+
+  // Behaviour: the complete notice can name the ship gates whose verdict no review agent backed (D26).
+  // Rule: D26, assemble ship prints gateEvidence and uncapturedGates beside verification.
+  it('assemble ship prints gateEvidence and uncapturedGates for the complete notice', () => {
+    commitFile('feature.txt', 'work\n');
+    passGates(FEATURE);
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    const a = cli('assemble', 'ship');
+    expect(a.status, a.stderr).toBe(0);
+    expect(JSON.parse(a.stdout)).toEqual({
+      verification: 'verified',
+      phase: 'ship',
+      gateEvidence: 'model',
+      uncapturedGates: GATES,
+    });
+    // oss-notify's complete gate runs check, so check ship prints the same label from the bound result.
+    const c = cli('check', 'ship');
+    expect(c.status, c.stderr).toBe(0);
+    expect(JSON.parse(c.stdout)).toEqual({ verification: 'verified', gateEvidence: 'model', uncapturedGates: GATES });
+  });
+
+  it('a failed assemble leaves the unverified markers in place', () => {
+    startRun('plan', '2026-11-13T09:00:00.000Z');
+    openLedger(repo).writeMarker(`unverified/${FEATURE}/plan`, { reason: 'stop-check' });
+    expect(cli('assemble', 'plan').status).toBe(1);
+    expect(openLedger(repo).hasMarker(`unverified/${FEATURE}/plan`)).toBe(true);
+  });
 });
 
 describe('phase-result CLI: check refuses anything not bound to this run', () => {
@@ -338,13 +384,18 @@ describe('phase-result CLI: check refuses anything not bound to this run', () =>
 describe('phase-result CLI: the ship base comes from repo config oss.shipBase, else main', () => {
   const INTEGRATION = 'feat/sprint/build';
 
-  /** Recuts the feature branch from an integration branch that already has commits main lacks. */
-  function featureFromIntegration(): string {
+  /**
+   * Recuts the feature branch from an integration branch that already has commits main lacks.
+   * ⚠ changes existing test: finding 7 (round 1 security) — base.txt is accepted only for a branch on origin (or
+   *   oss.shipBase, or main), so the integration branch is also given its refs/remotes/origin ref unless `pushed` is false.
+   */
+  function featureFromIntegration(pushed = true): string {
     git('checkout', '-q', 'main');
     git('checkout', '-q', '-b', INTEGRATION);
     commitFile('sprint1.txt', 'a\nb\nc\n');
     commitFile('sprint2.txt', 'd\ne\n');
     const cut = git('rev-parse', 'HEAD');
+    if (pushed) git('update-ref', `refs/remotes/origin/${INTEGRATION}`, cut);
     git('branch', '-q', '-D', `feat/${FEATURE}/build`);
     git('checkout', '-q', '-b', `feat/${FEATURE}/build`);
     return cut;
@@ -415,13 +466,18 @@ describe('phase-result CLI: the ship base comes from repo config oss.shipBase, e
 describe('phase-result CLI: the ship base comes from the PR base value file base.txt (D19)', () => {
   const INTEGRATION = 'feat/sprint/build';
 
-  /** Recuts the feature branch from an integration branch that already has commits main lacks. */
-  function featureFromIntegration(): string {
+  /**
+   * Recuts the feature branch from an integration branch that already has commits main lacks.
+   * ⚠ changes existing test: finding 7 (round 1 security) — base.txt is accepted only for a branch on origin (or
+   *   oss.shipBase, or main), so the integration branch is also given its refs/remotes/origin ref unless `pushed` is false.
+   */
+  function featureFromIntegration(pushed = true): string {
     git('checkout', '-q', 'main');
     git('checkout', '-q', '-b', INTEGRATION);
     commitFile('sprint1.txt', 'a\nb\nc\n');
     commitFile('sprint2.txt', 'd\ne\n');
     const cut = git('rev-parse', 'HEAD');
+    if (pushed) git('update-ref', `refs/remotes/origin/${INTEGRATION}`, cut);
     git('branch', '-q', '-D', `feat/${FEATURE}/build`);
     git('checkout', '-q', '-b', `feat/${FEATURE}/build`);
     commitFile('feature.txt', 'work\n');
@@ -450,6 +506,31 @@ describe('phase-result CLI: the ship base comes from the PR base value file base
     const cut = featureFromIntegration();
     writeBase(`${INTEGRATION}\n`);
     expect(shippedDiff()).toEqual({ base: cut, baseRef: INTEGRATION, files: 1, insertions: 1, deletions: 0 });
+  });
+
+  // User behaviour: a PR base must be a branch the team shares, so the model cannot pick a private local branch to
+  //   shrink the reviewed diff.
+  // Business rule: finding 7, base.txt naming a local-only branch (no origin ref, not oss.shipBase, not main) is refused.
+  it('base.txt naming a local-only branch refuses with unsafe_base and writes no result', () => {
+    featureFromIntegration(false);
+    writeBase(`${INTEGRATION}\n`);
+    const a = cli('assemble', 'ship');
+    expect(a.status).toBe(1);
+    expect(a.stderr).toContain('unsafe_base');
+    expect(fs.existsSync(resultFile(FEATURE, 'ship'))).toBe(false);
+  });
+
+  it('base.txt naming a local-only branch that equals oss.shipBase is accepted', () => {
+    featureFromIntegration(false);
+    git('config', '--local', 'oss.shipBase', INTEGRATION);
+    writeBase(`${INTEGRATION}\n`);
+    expect(shippedDiff().baseRef).toBe(INTEGRATION);
+  });
+
+  it('base.txt naming main is accepted with no origin ref', () => {
+    featureFromIntegration(false);
+    writeBase('main\n');
+    expect(shippedDiff().baseRef).toBe('main');
   });
 
   // User behaviour: a PR base the repo does not have locally does not stop ship; the repo setting applies.
@@ -528,6 +609,33 @@ describe('phase-result CLI: usage, --all, budgets', () => {
     expect(r.status, r.stderr).toBe(0);
     const lines = r.stdout.trim().split('\n').sort();
     expect(lines).toEqual([`${FEATURE} ok`, `${OTHER} missing`]);
+  });
+
+  // User behaviour: a feature whose ship was started again (say after more work) is not archived on the old result.
+  // Business rule: finding 8, the archive rule needs the ship result of the feature's LAST ship run: its startedAt
+  //   equals the last run/ship row naming that feature (the start gate writes `feature` on each run row). run/ship is
+  //   per repo, so another feature's later ship run never blocks this one's archive.
+  function shipRunOf(feature: string, startedAt: string): void {
+    openLedger(repo).appendRow('run/ship', { startedAt, session: 'sess-accept-1', headSha: git('rev-parse', 'HEAD'), feature });
+  }
+
+  it('check ship --all refuses an older ship result once a later ship run of that feature started', () => {
+    commitFile('feature.txt', 'work\n');
+    passGates(FEATURE);
+    shipRunOf(FEATURE, '2026-11-13T09:00:00.000Z');
+    expect(cli('assemble', 'ship').status).toBe(0);
+    shipRunOf(FEATURE, '2026-11-13T11:00:00.000Z');
+    const r = cli('check', 'ship', '--all');
+    expect(r.stdout).toContain(`${FEATURE} stale_result`);
+  });
+
+  it("check ship --all still archives after another feature's later ship run", () => {
+    commitFile('feature.txt', 'work\n');
+    passGates(FEATURE);
+    shipRunOf(FEATURE, '2026-11-13T09:00:00.000Z');
+    expect(cli('assemble', 'ship').status).toBe(0);
+    shipRunOf(OTHER, '2026-11-13T11:00:00.000Z');
+    expect(cli('check', 'ship', '--all').stdout).toContain(`${FEATURE} ok`);
   });
 
   it('check --repo checks the named repo, not the cwd', () => {

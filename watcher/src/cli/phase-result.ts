@@ -8,7 +8,8 @@
  *   phase-result check <phase> [--repo <path>] [--all]
  *
  * assemble builds the result from evidence (the phase assembler), validates it against the phase schema, writes it and
- * binds its bytes to this run in the owner-only ledger (`results/<feature>/<phase>`), then clears the `pending` marker.
+ * binds its bytes to this run in the owner-only ledger (`results/<feature>/<phase>`), then clears the `pending` marker
+ * and both `unverified` markers (ledger and repo `results/<phase>.unverified.json`), so a rebuilt phase can pass again.
  * A failed assemble writes nothing. check passes only for that exact file, from this run (`run/<phase>`), still matching
  * the evidence, with no unverified marker; for ship, made at the current HEAD. `check ship --all` instead applies the
  * archive rule (phase-results/archivable.ts) to every active feature. Exit 0 on pass, 1 on refusal (stderr
@@ -25,13 +26,13 @@ import { assembleBuild } from '../phase-results/assemble-build.js';
 import { sha256, type AssembleContext, type AssembleOutcome } from '../phase-results/assemble-common.js';
 import { assembleIdeate } from '../phase-results/assemble-ideate.js';
 import { assemblePlan } from '../phase-results/assemble-plan.js';
-import { assembleShip, isLocalBranch } from '../phase-results/assemble-ship.js';
+import { assembleShip, hasOriginBranch, isLocalBranch } from '../phase-results/assemble-ship.js';
 import { LedgerError, ledgerKey, openLedger, type Ledger } from '../phase-results/ledger.js';
 import { loadPhaseSchema, PHASES, type Phase } from '../phase-results/schemas.js';
 import { shipArchivable } from '../phase-results/archivable.js';
 import { activeFeatures, resolveFeature } from '../phase-results/feature.js';
 import { gitEnv, gitOut } from '../phase-results/git.js';
-import { readResult, readValueFile, resolveRepo, writeResult } from '../phase-results/store.js';
+import { clearUnverifiedMarker, readResult, readValueFile, resolveRepo, writeResult } from '../phase-results/store.js';
 import { validate } from '../phase-results/validate.js';
 
 const USAGE =
@@ -78,11 +79,22 @@ function headSha(repo: string): string | null {
  * The local branch ship diffs against (D19): the model's `base.txt` (the PR's base) when it is one line naming an
  * existing local branch; else repo-local `oss.shipBase`, else `main` (local ref only, never gh or fetch). A bad
  * base.txt falls back; assembleShip's ref checks validate the config value, and a failed read gives '' so it is
- * refused, never silently `main`.
+ * refused, never silently `main`. Finding 7: a base.txt local branch counts only when it is on origin
+ * (`refs/remotes/origin/<name>`), or is oss.shipBase or `main`; a local-only branch is refused (`unsafe_base`), so the
+ * model cannot pick a private branch that hides part of the change from the diff.
  */
 function shipBase(repo: string, dir: string | null): string {
+  const configured = shipBaseConfig(repo);
   const named = dir === null ? null : readValueFile(dir, 'base.txt')?.replace(/\n$/, '');
-  if (named != null && !named.includes('\n') && isLocalBranch(repo, named)) return named;
+  if (named != null && !named.includes('\n') && isLocalBranch(repo, named)) {
+    if (named === 'main' || named === configured || hasOriginBranch(repo, named)) return named;
+    throw new Refusal('unsafe_base', 'base.txt');
+  }
+  return configured;
+}
+
+/** Repo-local `oss.shipBase`, `main` when unset, '' when git fails (so assembleShip refuses it). */
+function shipBaseConfig(repo: string): string {
   const env = gitEnv();
   env.GIT_CONFIG_NOSYSTEM = '1';
   const r = spawnSync('git', ['config', '--local', '--get', 'oss.shipBase'], {
@@ -168,6 +180,8 @@ function assemble(repo: string, feature: string, phase: Phase): Record<string, u
     session: process.env.CLAUDE_CODE_SESSION_ID ?? '',
   });
   ledger.clearMarker(`pending/${feature}/${phase}`);
+  ledger.clearMarker(`unverified/${feature}/${phase}`);
+  clearUnverifiedMarker(repo, feature, phase);
   return outcome.result;
 }
 
@@ -204,7 +218,7 @@ function reassemble(repo: string, feature: string, phase: Phase, stored: Record<
   }
 }
 
-function check(repo: string, feature: string, phase: Phase): void {
+function check(repo: string, feature: string, phase: Phase): Record<string, unknown> {
   const ledger = openLedger(repo);
   const marker = path.join(repo, '.oss', 'dev', 'active', feature, 'results', `${phase}.unverified.json`);
   if (fs.lstatSync(marker, { throwIfNoEntry: false }) !== undefined) throw new Refusal('unverified', 'marker');
@@ -238,6 +252,7 @@ function check(repo: string, feature: string, phase: Phase): void {
       throw new Refusal('evidence_mismatch', field);
     }
   }
+  return stored;
 }
 
 function verdictOf(fn: () => void): Verdict {
@@ -260,6 +275,11 @@ function refuse(args: Args, id: string, field: string): number {
   return 1;
 }
 
+/** D26: ship prints its gate evidence label, so the complete notice can name the gates no captured agent row backs. */
+function gateLabel(phase: Phase, result: Record<string, unknown>): Record<string, unknown> {
+  return phase === 'ship' ? { gateEvidence: result.gateEvidence, uncapturedGates: result.uncapturedGates } : {};
+}
+
 export function main(argv: string[]): number {
   const args = parseArgs(argv);
   if (args === null) {
@@ -272,7 +292,10 @@ export function main(argv: string[]): number {
   if (args.all) {
     for (const feature of activeFeatures(repo)) {
       const v = verdictOf(() => {
-        if (args.phase !== 'ship') return check(repo, feature, args.phase);
+        if (args.phase !== 'ship') {
+          check(repo, feature, args.phase);
+          return;
+        }
         const a = shipArchivable(repo, feature, pluginRoot());
         if (!a.ok) throw new Refusal(a.reason, 'archive');
       });
@@ -289,12 +312,15 @@ export function main(argv: string[]): number {
       result = assemble(repo, feature, args.phase);
     });
     if (!v.ok) return refuse(args, v.id, v.field);
-    process.stdout.write(`${JSON.stringify({ verification: result.verification, phase: args.phase })}\n`);
+    process.stdout.write(`${JSON.stringify({ verification: result.verification, phase: args.phase, ...gateLabel(args.phase, result) })}\n`);
     return 0;
   }
-  const v = verdictOf(() => check(repo, feature, args.phase));
+  let stored: Record<string, unknown> = {};
+  const v = verdictOf(() => {
+    stored = check(repo, feature, args.phase);
+  });
   if (!v.ok) return refuse(args, v.id, v.field);
-  process.stdout.write(`${JSON.stringify({ verification: 'verified' })}\n`);
+  process.stdout.write(`${JSON.stringify({ verification: 'verified', ...gateLabel(args.phase, stored) })}\n`);
   return 0;
 }
 

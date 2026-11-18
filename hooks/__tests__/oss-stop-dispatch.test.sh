@@ -34,6 +34,10 @@ sandbox() {
     mkdir -p "$T/home/.oss" "$T/bin" "$T/repo"
     chmod 700 "$T/home/.oss"
     printf '%s\n' "$RECORDED_NODE" > "$T/home/.oss/node-path"
+    # D25 (round 1): the CLI is found through the protected ~/.oss/plugin-root (600) and node through
+    # ~/.oss/hooks/oss-node.sh, never through an untrusted CLAUDE_PLUGIN_ROOT or the plugin's own copy.
+    plugin_root "$ROOT"
+    mkdir -p "$T/home/.oss/hooks"; cp "$ROOT/hooks/oss-node.sh" "$T/home/.oss/hooks/oss-node.sh"
     # The notification: terminal-notifier only records that it ran.
     printf '#!/bin/bash\necho notified >> "%s"\n' "$T/notified" > "$T/bin/terminal-notifier"
     chmod +x "$T/bin/terminal-notifier"
@@ -43,17 +47,34 @@ sandbox() {
         && echo '{}' > .oss/workflow-state.json )
 }
 cleanup() { rm -rf "$T"; }
+plugin_root() { (umask 077; printf '%s\n' "$1" > "$T/home/.oss/plugin-root"); chmod 600 "$T/home/.oss/plugin-root"; }
 ledger_dir() { # -> the ledger key dir (NOTES "Ledger (D14, T3b)")
     local top gd key
     top=$(cd "$T/repo" && git rev-parse --show-toplevel); gd=$(cd "$top" && git rev-parse --absolute-git-dir)
     key=$(printf '%s\n%s\n' "$top" "$gd" | git hash-object --stdin | cut -c1-16)
     echo "$T/home/.oss/ledger/$key"
 }
-start_phase() { # <phase>: the row oss-notify start writes
+# ⚠ changes existing test: R-257 ship round 1 finding 1 — the run row records its feature; only this session's run
+# for this checkout's feature blocks.
+start_phase() { # <phase> [session] [feature]: the row oss-notify start writes
     local d; d=$(ledger_dir)
     mkdir -m 700 -p "$d/run"; chmod 700 "$T/home/.oss/ledger" "$d"
-    (umask 077; printf '{"startedAt":"%s","session":"s1","headSha":"x"}\n' "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" >> "$d/run/$1")
+    (umask 077; printf '{"startedAt":"%s","session":"%s","headSha":"x","feature":"%s"}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "${2:-s1}" "${3-$FEATURE}" >> "$d/run/$1")
 }
+# bind_result <phase>: a results file and the ledger results row bound to the phase's last run (what assemble leaves)
+bind_result() {
+    local d f at sha; d=$(ledger_dir); f="$T/repo/.oss/dev/active/$FEATURE/results/$1.json"
+    mkdir -p "${f%/*}"; printf '{"phase":"%s"}\n' "$1" > "$f"
+    at=$(tail -n 1 "$d/run/$1" | sed -n 's/.*"startedAt":"\([^"]*\)".*/\1/p')
+    sha=$(shasum -a 256 "$f" | cut -c1-64)
+    mkdir -m 700 -p "$d/results/$FEATURE"; chmod 700 "$d/results"
+    (umask 077; printf '{"sha256":"%s","feature":"%s","phase":"%s","startedAt":"%s","headSha":"x","session":"s1"}\n' \
+        "$sha" "$FEATURE" "$1" "$at" >> "$d/results/$FEATURE/$1")
+}
+# wait_file <file>: the notification runs in the background (finding 7); wait up to 5 s for its trace
+wait_file() { local i; for i in $(seq 50); do [[ -s "$1" ]] && return 0; sleep 0.1; done; return 1; }
+now_ms() { /usr/bin/perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000'; }
 # stop <stop_hook_active> [extra env...]: runs the hook as Claude Code does (JSON on stdin, cwd = repo)
 stop() {
     local active="$1"; shift
@@ -70,6 +91,7 @@ sandbox_plugin() {
     mkdir -p "$T/plugin/hooks" "$T/plugin/watcher/dist/cli"
     cp "$ROOT/hooks/oss-node.sh" "$T/plugin/hooks/oss-node.sh"
     printf '%s\n' "$1" > "$T/plugin/watcher/dist/cli/stop-dispatch.cjs"
+    plugin_root "$T/plugin"
 }
 # A dispatcher that only records that it ran (T26: PATH's node shim no longer shows whether the dispatcher started).
 CLI_RECORDER='require("fs").appendFileSync(process.env.HOME + "/../cli.calls", "ran\n")'
@@ -77,7 +99,7 @@ CLI_RECORDER='require("fs").appendFileSync(process.env.HOME + "/../cli.calls", "
 # 1. No phase started: node is never called and the notification still runs.
 sandbox; node_shim_recorder; sandbox_plugin "$CLI_RECORDER"
 out=$(stop false CLAUDE_PLUGIN_ROOT="$T/plugin"); rc=$?
-if [[ $rc -eq 0 && -z "$out" && ! -e "$T/node.calls" && ! -e "$T/cli.calls" && -s "$T/notified" ]]; then
+if [[ $rc -eq 0 && -z "$out" && ! -e "$T/node.calls" && ! -e "$T/cli.calls" ]] && wait_file "$T/notified"; then
     pass "no phase started: fast path, no node, notification runs"
 else fail "no phase started: fast path, no node, notification runs" "rc=$rc out=$out node=$(cat "$T/node.calls" 2>/dev/null) notified=$(cat "$T/notified" 2>/dev/null)"; fi
 cleanup
@@ -85,7 +107,7 @@ cleanup
 # 1b. Not an OSS repo at all: same, no node.
 sandbox; node_shim_recorder; sandbox_plugin "$CLI_RECORDER"; rm -rf "$T/repo/.oss"
 out=$(stop false CLAUDE_PLUGIN_ROOT="$T/plugin"); rc=$?
-if [[ $rc -eq 0 && -z "$out" && ! -e "$T/node.calls" && ! -e "$T/cli.calls" && -s "$T/notified" ]]; then
+if [[ $rc -eq 0 && -z "$out" && ! -e "$T/node.calls" && ! -e "$T/cli.calls" ]] && wait_file "$T/notified"; then
     pass "no .oss: fast path, no node, notification runs"
 else fail "no .oss: fast path, no node, notification runs" "rc=$rc out=$out"; fi
 cleanup
@@ -171,6 +193,123 @@ if [[ $rc -eq 0 && ! -e "$T/node.calls" && -f "$(ledger_dir)/unverified/$FEATURE
     && printf '%s' "$out" | jq -e '.systemMessage | test("node_missing")' >/dev/null 2>&1; then
     pass "no usable node recorded: phase marked unverified (node_missing), PATH's temp node not run"
 else fail "no usable node recorded: phase marked unverified (node_missing), PATH's temp node not run" "rc=$rc out=$out node=$(cat "$T/node.calls" 2>/dev/null) err=$(cat "$T/stderr")"; fi
+cleanup
+
+# --- R-257 ship fix round 1 ------------------------------------------------------------------------------------
+# no_node_allow <name> [extra env...]: the stop is allowed with nothing on stdout, the dispatcher never starts, no
+# ledger marker is written, and the notification runs.
+no_node_allow() {
+    local name="$1"; shift
+    sandbox_plugin "$CLI_RECORDER"
+    out=$(stop false CLAUDE_PLUGIN_ROOT="$T/plugin" "$@"); rc=$?
+    if [[ $rc -eq 0 && -z "$out" && ! -e "$T/cli.calls" && ! -e "$(ledger_dir)/pending" && ! -e "$(ledger_dir)/unverified" ]] \
+        && wait_file "$T/notified"; then pass "$name"
+    else fail "$name" "rc=$rc out=$out cli=$(cat "$T/cli.calls" 2>/dev/null) err=$(cat "$T/stderr")"; fi
+}
+# node_runs <name> [extra env...]: the fast path does not allow on its own; the dispatcher starts.
+node_runs() {
+    local name="$1"; shift
+    sandbox_plugin "$CLI_RECORDER"
+    stop false CLAUDE_PLUGIN_ROOT="$T/plugin" "$@" >/dev/null
+    if [[ -s "$T/cli.calls" ]]; then pass "$name"; else fail "$name" "the dispatcher never ran; err=$(cat "$T/stderr")"; fi
+}
+
+# 9. Finding 1, repro 1: a ship run of a feature since archived, back on main: allowed, no marker, no node.
+sandbox; start_phase ship
+( cd "$T/repo" && git checkout -q main && rm -rf ".oss/dev/active/$FEATURE" )
+no_node_allow "archived feature's ship run, back on main: allowed, no marker, no node"
+cleanup
+
+# 10. Finding 1, repro 2: a new feature branch with no run of its own is not blocked by the last feature's run.
+sandbox; start_phase ship
+( cd "$T/repo" && git checkout -q -b feat/next/ideate && mkdir -p .oss/dev/active/next )
+no_node_allow "another feature's run on a new branch: allowed, no marker, no node"
+cleanup
+
+# 11. Finding 2: another session's run never blocks this session.
+sandbox; start_phase plan other-session
+no_node_allow "another session's run: allowed, no marker, no node"
+cleanup
+
+# 12. Finding 3: cd into a nested repo (git init in a subfolder): the project's own run still blocks.
+sandbox; start_phase plan
+( cd "$T/repo" && mkdir sub && cd sub && git init -q -b main )
+out=$(cd "$T/repo/sub" && printf '{"session_id":"s1","stop_hook_active":false,"cwd":"%s"}' "$T/repo/sub" \
+    | env HOME="$T/home" PATH="$T/bin:$PATH" CLAUDE_PROJECT_DIR="$T/repo" "$SH" "$HOOK" 2>"$T/stderr"); rc=$?
+if [[ $rc -eq 0 ]] && printf '%s' "$out" | jq -e '.decision == "block" and (.reason | test("plan"))' >/dev/null 2>&1; then
+    pass "nested repo cwd: the project dir's unfinished run still blocks"
+else fail "nested repo cwd: the project dir's unfinished run still blocks" "rc=$rc out=$out err=$(cat "$T/stderr")"; fi
+cleanup
+
+# 13. Finding 4: the fast path allows a bound result only when nothing marks it and its bytes match the ledger hash.
+sandbox; start_phase plan; bind_result plan
+no_node_allow "bound result, hash matches, no marker: fast path allows with no node"
+cleanup
+sandbox; start_phase plan; bind_result plan
+echo '{"phase":"plan","edited":true}' > "$T/repo/.oss/dev/active/$FEATURE/results/plan.json"
+node_runs "bound result edited by hand (hash differs): the dispatcher runs"
+cleanup
+for kind in unverified pending; do
+    sandbox; start_phase plan; bind_result plan
+    mkdir -m 700 -p "$(ledger_dir)/$kind/$FEATURE"; chmod 700 "$(ledger_dir)/$kind"
+    (umask 077; echo '{"check":"x"}' > "$(ledger_dir)/$kind/$FEATURE/plan")
+    node_runs "bound result with a ledger $kind marker: the dispatcher runs"
+    cleanup
+done
+sandbox; start_phase plan; bind_result plan
+echo '{}' > "$T/repo/.oss/dev/active/$FEATURE/results/plan.unverified.json"
+node_runs "bound result with the repo unverified marker: the dispatcher runs"
+cleanup
+
+# 14. Finding 5: outside an OSS project the hook runs neither jq nor git (the .oss check comes first).
+sandbox; rm -rf "$T/repo/.oss"
+for tool in jq git; do printf '#!/bin/bash\necho %s >> "%s"\nexit 1\n' "$tool" "$T/tools.calls" > "$T/bin/$tool"; chmod +x "$T/bin/$tool"; done
+out=$(stop false); rc=$?
+if [[ $rc -eq 0 && -z "$out" && ! -e "$T/tools.calls" ]]; then pass "no .oss: no jq, no git"
+else fail "no .oss: no jq, no git" "rc=$rc calls=$(tr '\n' ' ' < "$T/tools.calls" 2>/dev/null)"; fi
+cleanup
+
+# 15. Finding 6: a git that never answers does not hold the stop (the shell's git runs under the bounded runner).
+#     A FIFO for HEAD makes git itself block on reading it.
+sandbox; start_phase plan
+rm -f "$T/repo/.git/HEAD"; mkfifo "$T/repo/.git/HEAD"
+t0=$(now_ms); stop false >/dev/null; el=$(( $(now_ms) - t0 ))
+if [[ $el -lt 6000 ]]; then pass "hung git: the stop returns within the bound (${el} ms)"
+else fail "hung git: the stop returns within the bound" "took ${el} ms"; fi
+cleanup
+
+# 16. Finding 7: a slow notification never holds the stop (it runs in the background).
+sandbox
+printf '#!/bin/bash\necho notified >> "%s"\nexec sleep 3\n' "$T/notified" > "$T/bin/terminal-notifier"
+t0=$(now_ms); out=$(stop false); rc=$?; el=$(( $(now_ms) - t0 ))
+if [[ $rc -eq 0 && -z "$out" && $el -lt 2000 ]] && wait_file "$T/notified"; then pass "slow notifier: the stop returns at once (${el} ms), the notification still runs"
+else fail "slow notifier: the stop returns at once, the notification still runs" "rc=$rc el=${el} ms"; fi
+cleanup
+
+# 17-20. D30: a run with an empty feature (an ideate started on main before its folder existed) binds its own session.
+sandbox; start_phase ideate s1 ""
+out=$(stop false); rc=$?
+if [[ $rc -eq 0 ]] && printf '%s' "$out" | jq -e '.decision == "block" and (.reason | test("assemble ideate"))' >/dev/null 2>&1; then
+    pass "D30: same session's empty-feature run, feature resolves, no result: block"
+else fail "D30: same session's empty-feature run, feature resolves, no result: block" "rc=$rc out=$out err=$(cat "$T/stderr")"; fi
+cleanup
+
+sandbox; start_phase ideate s1 ""; bind_result ideate
+no_node_allow "D30: same session's empty-feature run with a bound result: fast path allows, no node"
+cleanup
+
+sandbox; start_phase ideate s1 ""
+( cd "$T/repo" && git checkout -q main && rm -rf ".oss/dev/active/$FEATURE" && mkdir -p .oss/dev/active/a .oss/dev/active/b )
+out=$(stop false); rc=$?
+if [[ $rc -eq 0 && -f "$(ledger_dir)/unverified/_no_feature/ideate" ]] \
+    && printf '%s' "$out" | jq -e '(.decision // "") != "block" and (.systemMessage | test("no_feature")) and (.systemMessage | test("ideate")) and (tostring | test("current") | not)' >/dev/null 2>&1 \
+    && wait_file "$T/notified"; then
+    pass "D30: empty-feature run and no feature resolves: allowed, unverified marker, systemMessage"
+else fail "D30: empty-feature run and no feature resolves: allowed, unverified marker, systemMessage" "rc=$rc out=$out err=$(cat "$T/stderr")"; fi
+cleanup
+
+sandbox; start_phase ideate other-session ""
+no_node_allow "D30: another session's empty-feature run: allowed, no marker, no node"
 cleanup
 
 echo; echo "Ran $RUN, failed $FAILED"

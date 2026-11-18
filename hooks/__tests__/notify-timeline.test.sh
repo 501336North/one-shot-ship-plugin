@@ -43,6 +43,10 @@ WATCHED="$T/watched"; mkdir -p "$WATCHED/watcher/dist/cli" "$T/bin"; cp -R "$ROO
 for f in update-workflow-state.js chain-trigger.cjs get-copy.js; do : > "$WATCHED/watcher/dist/cli/$f"; done
 ln -s "$ROOT/watcher/dist/cli/phase-result.cjs" "$WATCHED/watcher/dist/cli/phase-result.cjs"
 node -p 'require("fs").realpathSync(process.execPath)' > "$HOME/.oss/node-path"
+# D25: the gate's CLI comes from the plugin ~/.oss/plugin-root names (mode 600, as session-start writes it; here the
+# checkout, whose CLI WATCHED links) and oss-node.sh only from ~/.oss/hooks
+printf '%s\n' "$ROOT" > "$HOME/.oss/plugin-root"; chmod 600 "$HOME/.oss/plugin-root"
+mkdir -p "$HOME/.oss/hooks"; cp "$ROOT/hooks/oss-node.sh" "$HOME/.oss/hooks/oss-node.sh"
 cat > "$T/bin/node" << EOF
 #!/bin/bash
 echo "\$*" >> "$T/node.calls"
@@ -83,6 +87,9 @@ got=$(commands)
     && pass "should append one command line for start, complete and failed" \
     || fail "should append one command line for start, complete and failed" "rcs=$rcs got=$got err=$(cat "$T/err")"
 rm -rf "$P/.oss/dev/active/demo/results"   # the cases below run on a feature from before R-257 (no results/)
+# ⚠ changes existing test: R-257 ship round 1 LOW security (D17 legacy pass) — a pre-R-257 feature also has no
+#   results rows in the ledger; deleting results/ alone no longer skips the start gate
+rm -rf "$HOME"/.oss/ledger/*/results/demo
 
 # --- other events add nothing -----------------------------------------------------------------------------------
 before=$(count)

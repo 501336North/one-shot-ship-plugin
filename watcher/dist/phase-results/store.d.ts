@@ -14,6 +14,8 @@ export interface WriteHooks {
 /** Physical git toplevel of cwd (GIT_* env removed, CLAUDE_PROJECT_DIR ignored), or null outside a repo. */
 export declare function resolveRepo(cwd: string): string | null;
 export declare function writeResult(repo: string, feature: string, phase: Phase, obj: unknown, hooks?: WriteHooks): void;
+/** Removes results/<phase>.unverified.json (the Stop hook's repo marker) under the checked results/ dir; no-op if absent. */
+export declare function clearUnverifiedMarker(repo: string, feature: string, phase: Phase): void;
 export declare function readResult(repo: string, feature: string, phase: Phase): ReadResult;
 /** A value file the model wrote: regular, not a link, at most 64 KB, written in the last 10 minutes; else null. */
 export declare function readValueFile(dir: string, name: string): string | null;

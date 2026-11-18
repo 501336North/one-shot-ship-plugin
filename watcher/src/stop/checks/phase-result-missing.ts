@@ -45,6 +45,8 @@ export const phaseResultMissing: StopCheck = {
     if (r.status === 0) return { kind: 'allow' };
     if (r.status === 1) {
       const id = /^phase-result: \S+ \S+: ([a-z_]+)/m.exec(r.stderr)?.[1] ?? 'refused';
+      // assemble cannot shrink the ledger, so a block would ask for the impossible: fail open instead (finding 8).
+      if (id === 'ledger_too_large') throw namedError(id);
       return blockFor(s.phase, id, PATH_PROBLEMS.includes(id));
     }
     throw namedError('cli_failed');

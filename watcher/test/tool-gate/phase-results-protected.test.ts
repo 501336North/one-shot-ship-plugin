@@ -7,6 +7,8 @@
  *   `~/.oss/ledger/**`. A feature's `results/` folder is not gate-protected: a result written there by
  *   hand doesn't match its ledger binding, which is the guard. `~/.oss/run/**` stays writable because
  *   the model writes value files there by design.
+ * @business-rule R-257 ship round 1, D25 (user pick 2026-11-18, "Lock it down"): `~/.oss/plugin-root`, which
+ *   names the folder the phase gate runs its checker from, can't be written by an edit tool or a shell write either.
  * @boundary runToolGate (the gate as the hook calls it), with the plugin's real config/tool-gates.json.
  */
 
@@ -27,6 +29,7 @@ let repo: string;
 let home: string;
 let resultFile: string;
 let ledgerFile: string;
+let pluginRootFile: string;
 
 beforeAll(() => {
   root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-r257-results-')));
@@ -34,12 +37,14 @@ beforeAll(() => {
   home = path.join(root, 'home');
   resultFile = path.join(repo, '.oss', 'dev', 'active', 'feat-x', 'results', 'ship.json');
   ledgerFile = path.join(home, '.oss', 'ledger', 'feat-x', 'ship.json');
+  pluginRootFile = path.join(home, '.oss', 'plugin-root');
   fs.mkdirSync(path.dirname(resultFile), { recursive: true });
   fs.mkdirSync(path.dirname(ledgerFile), { recursive: true });
   fs.mkdirSync(path.join(repo, '.oss', 'dev', 'completed'), { recursive: true });
   fs.mkdirSync(path.join(home, '.oss', 'run', 'k1'), { recursive: true });
   fs.writeFileSync(resultFile, '{}');
   fs.writeFileSync(ledgerFile, '{}');
+  fs.writeFileSync(pluginRootFile, '/real/plugin\n');
   fs.writeFileSync(path.join(repo, 'forged.json'), '{}');
   execFileSync('git', ['init', '-q', '-b', 'feat/x'], { cwd: repo });
 });
@@ -93,6 +98,24 @@ describe.each(AGENTS)('%s', (_who, agent) => {
       ['cp into the ledger', () => 'cp forged.json ~/.oss/ledger/feat-x/ship.json'],
       ['tee into the ledger', () => 'echo {} | tee ~/.oss/ledger/feat-x/build.json'],
       ['> into the ledger', () => 'echo {} > "$HOME/.oss/ledger/feat-x/plan.json"'],
+    ])('%s is refused', async (_what, command) => {
+      await refused('Bash', { command: command() }, agent);
+    });
+  });
+
+  describe('D25: can not repoint the gate code location (~/.oss/plugin-root)', () => {
+    it('Write to ~/.oss/plugin-root is refused', async () => {
+      await refused('Write', { file_path: pluginRootFile, content: '/tmp/forged-plugin\n' }, agent);
+    });
+
+    it('Edit of ~/.oss/plugin-root is refused', async () => {
+      await refused('Edit', { file_path: pluginRootFile, old_string: '/real/plugin', new_string: '/tmp/forged-plugin' }, agent);
+    });
+
+    it.each([
+      ['> into plugin-root', () => 'echo /tmp/forged-plugin > ~/.oss/plugin-root'],
+      ['tee into plugin-root', () => 'echo /tmp/forged-plugin | tee "$HOME/.oss/plugin-root"'],
+      ['cp onto plugin-root', () => 'cp forged.json ~/.oss/plugin-root'],
     ])('%s is refused', async (_what, command) => {
       await refused('Bash', { command: command() }, agent);
     });

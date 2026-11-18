@@ -94,6 +94,10 @@ EOF
     ln -s "$ROOT/watcher/dist/cli/phase-result.cjs" "$T/plugin/watcher/dist/cli/phase-result.cjs"
     cp "$ROOT/hooks/oss-node.sh" "$T/plugin/hooks/oss-node.sh"
     printf '%s\n' "$RECORDED_NODE" > "$T/home/.oss/node-path"
+    # D25: CLAUDE_PLUGIN_ROOT counts only as the plugin ~/.oss/plugin-root names (mode 600, as session-start writes it),
+    # and oss-node.sh comes only from ~/.oss/hooks (here the checkout, whose CLI the sandbox plugin links)
+    printf '%s\n' "$ROOT" > "$T/home/.oss/plugin-root"; chmod 600 "$T/home/.oss/plugin-root"
+    mkdir -p "$T/home/.oss/hooks"; cp "$ROOT/hooks/oss-node.sh" "$T/home/.oss/hooks/oss-node.sh"
     mkdir -p "$T/.oss"; (unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE; git init -q "$T")
 }
 # with_result <build|ship>: the sandbox repo goes on feat/cb-feature/<phase> and gets a valid assembled result for that

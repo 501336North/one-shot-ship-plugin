@@ -9,9 +9,14 @@ export interface StopInput {
   sessionId: string;
   stopHookActive: boolean;
   cwd: string;
+  /** CLAUDE_PROJECT_DIR: its repo is checked too, so a nested repo the model cd's into does not hide the project's run. */
+  projectDir?: string;
 }
 
-/** The phase started in this repo: the latest ledger `run/<phase>`, and whether a result row is bound to it. */
+/**
+ * The phase this session started for this checkout's feature: the latest ledger `run/<phase>` whose feature and
+ * session match, and whether a result row is bound to it.
+ */
 export interface StopSubject {
   repo: string;
   feature: string;

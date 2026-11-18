@@ -28,21 +28,25 @@ RECORDED_NODE=$(node -p 'require("fs").realpathSync(process.execPath)')
 # holds the real hooks/oss-node.sh and ~/.oss/node-path records the real node (T26: the CLI runs on that node only).
 sandbox() {
     T=$(mktemp -d); T=$(cd "$T" && pwd -P)
-    mkdir -p "$T/home/.oss" "$T/hooks" "$T/plugin/watcher/dist/cli" "$T/plugin/hooks" "$T/bin"
+    mkdir -p "$T/home/.oss/hooks" "$T/hooks" "$T/plugin/watcher/dist/cli" "$T/plugin/hooks" "$T/bin"
     cp "$SCRIPT" "$T/hooks/oss-phase-result.sh"
     cp "$ROOT/hooks/oss-node.sh" "$T/plugin/hooks/oss-node.sh"
+    # D25 (e): the oss-node.sh the CLI's node comes from is the protected ~/.oss/hooks copy
+    cp "$ROOT/hooks/oss-node.sh" "$T/home/.oss/hooks/oss-node.sh"
     printf '%s\n' "$RECORDED_NODE" > "$T/home/.oss/node-path"
     printf 'require("fs").appendFileSync(%s, process.argv.slice(2).join(" ") + "\\n"); console.log(JSON.stringify({verification: "verified"}))\n' \
         "\"$T/cli.calls\"" > "$T/plugin/watcher/dist/cli/phase-result.cjs"
     printf '#!/bin/sh\necho x >> "%s"\nexec "%s" "$@"\n' "$T/node.calls" "$REAL_NODE" > "$T/bin/node"
     chmod +x "$T/bin/node"
 }
+# set_root <dir>: ~/.oss/plugin-root as session-start writes it (one line, mode 600).
+set_root() { printf '%s\n' "$1" > "$T/home/.oss/plugin-root"; chmod 600 "$T/home/.oss/plugin-root"; }
 entry() { (cd "$T" && HOME="$T/home" PATH="$T/bin:$PATH" CLAUDE_PLUGIN_ROOT="$T/home/.oss" "$SH" "$T/hooks/oss-phase-result.sh" "$@" </dev/null); }
 node_starts() { [[ -f "$T/node.calls" ]] && wc -l <"$T/node.calls" | tr -d ' ' || echo 0; }
 
 # 1. --plugin-dir layout: no cache, CLAUDE_PLUGIN_ROOT=~/.oss, ~/.oss/plugin-root names the plugin -> CLI runs.
 sandbox
-printf '%s\n' "$T/plugin" > "$T/home/.oss/plugin-root"
+set_root "$T/plugin"
 out=$(entry check plan 2>"$T/err"); rc=$?
 if [[ $rc -eq 0 && "$out" == *verified* && "$(cat "$T/cli.calls" 2>/dev/null)" == "check plan" ]]; then
     pass "a --plugin-dir layout resolves the CLI through ~/.oss/plugin-root"
@@ -69,7 +73,7 @@ rm -rf "$T"
 
 # 4. a bad phase or verb exits 2 before node starts.
 sandbox
-printf '%s\n' "$T/plugin" > "$T/home/.oss/plugin-root"
+set_root "$T/plugin"
 bad=""
 for args in "check deploy" "assemble ../plan" "frob plan" "check" ""; do
     # shellcheck disable=SC2086
@@ -85,7 +89,7 @@ rm -rf "$T"
 
 # 5. the CLI's exit code and stderr are forwarded; check flags pass through.
 sandbox
-printf '%s\n' "$T/plugin" > "$T/home/.oss/plugin-root"
+set_root "$T/plugin"
 printf 'console.error("phase-result: stale_result: startedAt"); process.exit(1)\n' > "$T/plugin/watcher/dist/cli/phase-result.cjs"
 out=$(entry check ship --repo "$T" --all 2>"$T/err"); rc=$?
 if [[ $rc -eq 1 ]] && grep -q stale_result "$T/err"; then
@@ -95,7 +99,7 @@ rm -rf "$T"
 
 # 7. T26 (security C1): a fake node first on PATH that forges a verdict is never started; the recorded node runs the CLI.
 sandbox
-printf '%s\n' "$T/plugin" > "$T/home/.oss/plugin-root"
+set_root "$T/plugin"
 printf '#!/bin/sh\necho x >> "%s"\necho %s\nexit 0\n' "$T/fake.calls" "'{\"verification\":\"verified\"}'" > "$T/bin/node"
 chmod +x "$T/bin/node"
 out=$(entry check plan 2>"$T/err"); rc=$?
@@ -104,29 +108,31 @@ if [[ $rc -eq 0 && ! -e "$T/fake.calls" && "$(cat "$T/cli.calls" 2>/dev/null)" =
 else fail "a fake node first on PATH is never started; the CLI runs on the node in ~/.oss/node-path" "rc=$rc out=$out fake=$(cat "$T/fake.calls" 2>/dev/null) calls=$(cat "$T/cli.calls" 2>/dev/null) err=$(cat "$T/err")"; fi
 rm -rf "$T"
 
-# 8. T26: a plugin root with no hooks/oss-node.sh: exit 127 with node_missing, the CLI never runs.
+# 8. T26: no ~/.oss/hooks/oss-node.sh: exit 127 with node_missing, the CLI never runs.
+# ⚠ changes existing test: D25 (e) — oss-node.sh comes from the protected ~/.oss/hooks copy, not the plugin root
 sandbox
-printf '%s\n' "$T/plugin" > "$T/home/.oss/plugin-root"
-rm -f "$T/plugin/hooks/oss-node.sh"
+set_root "$T/plugin"
+rm -f "$T/home/.oss/hooks/oss-node.sh"
 out=$(entry check plan 2>"$T/err"); rc=$?
 if [[ $rc -eq 127 && ! -e "$T/cli.calls" ]] && grep -q 'node_missing' "$T/err"; then
-    pass "a plugin root without hooks/oss-node.sh exits 127 with node_missing"
-else fail "a plugin root without hooks/oss-node.sh exits 127 with node_missing" "rc=$rc out=$out err=$(cat "$T/err")"; fi
+    pass "no ~/.oss/hooks/oss-node.sh exits 127 with node_missing"
+else fail "no ~/.oss/hooks/oss-node.sh exits 127 with node_missing" "rc=$rc out=$out err=$(cat "$T/err")"; fi
 rm -rf "$T"
 
-# 8b. T26: a linked hooks/oss-node.sh is refused the same way.
+# 8b. T26: a linked ~/.oss/hooks/oss-node.sh is refused the same way.
+# ⚠ changes existing test: D25 (e) — the link checked is the ~/.oss/hooks copy
 sandbox
-printf '%s\n' "$T/plugin" > "$T/home/.oss/plugin-root"
-mv "$T/plugin/hooks/oss-node.sh" "$T/real-oss-node.sh"; ln -s "$T/real-oss-node.sh" "$T/plugin/hooks/oss-node.sh"
+set_root "$T/plugin"
+mv "$T/home/.oss/hooks/oss-node.sh" "$T/real-oss-node.sh"; ln -s "$T/real-oss-node.sh" "$T/home/.oss/hooks/oss-node.sh"
 out=$(entry check plan 2>"$T/err"); rc=$?
 if [[ $rc -eq 127 && ! -e "$T/cli.calls" ]] && grep -q 'node_missing' "$T/err"; then
-    pass "a symlinked hooks/oss-node.sh is refused: 127 with node_missing"
-else fail "a symlinked hooks/oss-node.sh is refused: 127 with node_missing" "rc=$rc out=$out err=$(cat "$T/err")"; fi
+    pass "a symlinked ~/.oss/hooks/oss-node.sh is refused: 127 with node_missing"
+else fail "a symlinked ~/.oss/hooks/oss-node.sh is refused: 127 with node_missing" "rc=$rc out=$out err=$(cat "$T/err")"; fi
 rm -rf "$T"
 
 # 9. T26: an empty ~/.oss/node-path and no usable node (PATH's only node is in a temp folder): 127, node_missing.
 sandbox
-printf '%s\n' "$T/plugin" > "$T/home/.oss/plugin-root"
+set_root "$T/plugin"
 : > "$T/home/.oss/node-path"
 out=$(cd "$T" && HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" CLAUDE_PLUGIN_ROOT="$T/home/.oss" "$SH" "$T/hooks/oss-phase-result.sh" check plan </dev/null 2>"$T/err"); rc=$?
 if [[ $rc -eq 127 && ! -e "$T/cli.calls" && "$(node_starts)" == 0 ]] && grep -q 'node_missing: no usable node recorded in ~/.oss/node-path' "$T/err"; then
@@ -136,12 +142,85 @@ rm -rf "$T"
 
 # 10. T26: a recorded node that is gone while PATH has another one: 127, and the line says the recorded node changed.
 sandbox
-printf '%s\n' "$T/plugin" > "$T/home/.oss/plugin-root"
+set_root "$T/plugin"
 printf '%s\n' "/nonexistent/old/node" > "$T/home/.oss/node-path"
 out=$(cd "$T" && HOME="$T/home" PATH="${RECORDED_NODE%/*}:/usr/bin:/bin" CLAUDE_PLUGIN_ROOT="$T/home/.oss" "$SH" "$T/hooks/oss-phase-result.sh" check plan </dev/null 2>"$T/err"); rc=$?
 if [[ $rc -eq 127 && ! -e "$T/cli.calls" ]] && grep -q 'node_missing' "$T/err" && grep -q 'changed' "$T/err"; then
     pass "a recorded node that changed: exit 127, node_missing says it changed"
 else fail "a recorded node that changed: exit 127, node_missing says it changed" "rc=$rc out=$out err=$(cat "$T/err")"; fi
+rm -rf "$T"
+
+# ---------------------------------------------------------------- D25 (CRITICAL security 1+2): the gate's code location
+# A fake checker that always says "verified", next to a copy of oss-node.sh: what a model would plant to forge a verdict.
+fake_checker() { # <dir>: <dir>/watcher/dist/cli/phase-result.cjs records its start in $T/fake.calls and says verified
+    mkdir -p "$1/watcher/dist/cli" "$1/hooks"
+    cp "$ROOT/hooks/oss-node.sh" "$1/hooks/oss-node.sh"   # a copy of the real one: the model can make that too
+    printf 'require("fs").appendFileSync(%s, "x\\n"); console.log(JSON.stringify({verification: "verified"}))\n' \
+        "\"$T/fake.calls\"" > "$1/watcher/dist/cli/phase-result.cjs"
+}
+
+# 11. a model-written ~/.oss/plugin-root (the Write tool's mode 644) naming a fake checker is not used: 127, it never runs.
+sandbox
+fake_checker "$T/forged"
+printf '%s\n' "$T/forged" > "$T/home/.oss/plugin-root"; chmod 644 "$T/home/.oss/plugin-root"
+out=$(entry check plan 2>"$T/err"); rc=$?
+if [[ $rc -ne 0 && ! -e "$T/fake.calls" ]]; then
+    pass "D25: a model-written ~/.oss/plugin-root (not mode 600) naming a fake checker is ignored"
+else fail "D25: a model-written ~/.oss/plugin-root (not mode 600) naming a fake checker is ignored" "rc=$rc out=$out err=$(cat "$T/err")"; fi
+rm -rf "$T"
+
+# 12. a CLAUDE_PLUGIN_ROOT prefix naming a model folder with a fake checker is ignored; the protected plugin-root's
+#     CLI runs instead.
+sandbox
+set_root "$T/plugin"
+fake_checker "$T/forged"
+out=$(cd "$T" && HOME="$T/home" PATH="$T/bin:$PATH" CLAUDE_PLUGIN_ROOT="$T/forged" "$SH" "$T/hooks/oss-phase-result.sh" check plan </dev/null 2>"$T/err"); rc=$?
+if [[ $rc -eq 0 && ! -e "$T/fake.calls" && "$(cat "$T/cli.calls" 2>/dev/null)" == "check plan" ]]; then
+    pass "D25: a CLAUDE_PLUGIN_ROOT outside the protected plugin-root and ~/.claude/plugins is ignored"
+else fail "D25: a CLAUDE_PLUGIN_ROOT outside the protected plugin-root and ~/.claude/plugins is ignored" "rc=$rc out=$out fake=$(cat "$T/fake.calls" 2>/dev/null) err=$(cat "$T/err")"; fi
+rm -rf "$T"
+
+# 13. the ~/.oss/hooks copy never falls back to its own "plugin" (~/.oss): a checker planted at ~/.oss/watcher never runs.
+sandbox
+cp "$SCRIPT" "$T/home/.oss/hooks/oss-phase-result.sh"
+fake_checker "$T/home/.oss"
+out=$(cd "$T" && HOME="$T/home" PATH="$T/bin:$PATH" "$SH" "$T/home/.oss/hooks/oss-phase-result.sh" check plan </dev/null 2>"$T/err"); rc=$?
+if [[ $rc -eq 127 && ! -e "$T/fake.calls" ]] && grep -q cli_missing "$T/err"; then
+    pass "D25: the ~/.oss/hooks copy never runs a checker planted under ~/.oss/watcher"
+else fail "D25: the ~/.oss/hooks copy never runs a checker planted under ~/.oss/watcher" "rc=$rc out=$out err=$(cat "$T/err")"; fi
+rm -rf "$T"
+
+# 14. the chosen plugin root's own hooks/oss-node.sh is never sourced: a planted one naming a fake node is not used.
+sandbox
+set_root "$T/plugin"
+printf '#!/bin/sh\necho x >> "%s"\necho %s\n' "$T/fake.calls" "'{\"verification\":\"verified\"}'" > "$T/fakenode"; chmod +x "$T/fakenode"
+printf 'oss_node() { OSS_NODE="%s"; }\n' "$T/fakenode" > "$T/plugin/hooks/oss-node.sh"
+out=$(entry check plan 2>"$T/err"); rc=$?
+if [[ $rc -eq 0 && ! -e "$T/fake.calls" && "$(cat "$T/cli.calls" 2>/dev/null)" == "check plan" ]]; then
+    pass "D25: oss-node.sh is sourced from ~/.oss/hooks, never from the plugin root"
+else fail "D25: oss-node.sh is sourced from ~/.oss/hooks, never from the plugin root" "rc=$rc out=$out fake=$(cat "$T/fake.calls" 2>/dev/null) err=$(cat "$T/err")"; fi
+rm -rf "$T"
+
+# 15. the real install still works: the plugin under ~/.claude/plugins, CLAUDE_PLUGIN_ROOT naming it, and
+#     ~/.oss/plugin-root as session-start writes it.
+sandbox
+P="$T/home/.claude/plugins/cache/one-shot-ship-plugin/oss/2.3.0"; mkdir -p "$P"; mv "$T/plugin/watcher" "$P/watcher"
+set_root "$P"
+out=$(cd "$T" && HOME="$T/home" PATH="$T/bin:$PATH" CLAUDE_PLUGIN_ROOT="$P" "$SH" "$T/hooks/oss-phase-result.sh" check plan </dev/null 2>"$T/err"); rc=$?
+if [[ $rc -eq 0 && "$(cat "$T/cli.calls" 2>/dev/null)" == "check plan" ]]; then
+    pass "D25: the real install (plugin under ~/.claude/plugins, plugin-root mode 600) runs the CLI"
+else fail "D25: the real install (plugin under ~/.claude/plugins, plugin-root mode 600) runs the CLI" "rc=$rc out=$out err=$(cat "$T/err")"; fi
+rm -rf "$T"
+
+# 16. (finding 2) a fake jq first on PATH that says yes to anything does not turn an unverified answer into a pass.
+sandbox
+set_root "$T/plugin"
+printf 'console.log(JSON.stringify({verification: "unverified"}))\n' > "$T/plugin/watcher/dist/cli/phase-result.cjs"
+printf '#!/bin/sh\nexit 0\n' > "$T/bin/jq"; chmod +x "$T/bin/jq"
+res=$(cd "$T" && HOME="$T/home" PATH="$T/bin:$PATH" "$SH" -c 'source "$1"; oss_phase_gate_ok 0 "{\"verification\":\"unverified\"}" && echo PASSED || echo REFUSED' _ "$T/hooks/oss-phase-result.sh" 2>/dev/null)
+if [[ "$res" == REFUSED ]]; then
+    pass "a fake jq first on PATH does not change the gate verdict"
+else fail "a fake jq first on PATH does not change the gate verdict" "res=$res"; fi
 rm -rf "$T"
 
 # 6. provenance: the script reads no value file and passes no file content as an argument. The one file it reads

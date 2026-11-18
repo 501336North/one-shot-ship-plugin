@@ -4,8 +4,10 @@
  *
  * A feature's ship result is archivable when results/ship.json reads safely, its bytes are bound in the ledger
  * (`results/<feature>/ship`, last row, written by this machine's assembler in any session), it is schema-valid and
- * verified, there is no repo or ledger unverified/pending marker, and the verdict is ready_to_merge. It does not
- * compare startedAt or HEAD: archive runs in a later session, after the merge moved HEAD on.
+ * verified, there is no repo or ledger unverified/pending marker, it comes from the feature's LAST ship run (round 1
+ * finding 8: its startedAt equals that of the last `run/ship` row naming this feature, so a later ship run of the
+ * feature with no new result is not archivable; run/ship is per repo, so other features' runs are ignored), and the
+ * verdict is ready_to_merge. It does not compare HEAD: archive runs in a later session, after the merge moved HEAD on.
  */
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
@@ -36,6 +38,9 @@ export function shipArchivable(repo, feature, pluginRoot) {
     const stored = read.value;
     if (stored.verification !== 'verified')
         return { ok: false, reason: 'unverified' };
+    const runs = ledger.readRows('run/ship').filter((r) => r.feature === feature);
+    if (runs.length > 0 && stored.startedAt !== runs[runs.length - 1].startedAt)
+        return { ok: false, reason: 'stale_result' };
     if (stored.verdict !== 'ready_to_merge')
         return { ok: false, reason: 'not_ready_to_merge' };
     return { ok: true };

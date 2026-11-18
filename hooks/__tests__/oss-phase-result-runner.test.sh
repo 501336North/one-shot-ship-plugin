@@ -57,9 +57,11 @@ gate_case "exit 2 names exit_2" 2 "" refused exit_2
 gate_case "empty output is refused" 0 "" refused no_output
 gate_case "non-JSON output is refused" 0 "verified" refused not_verified
 
-# No jq on PATH: refused even for verified JSON.
+# No usable jq: refused even for verified JSON. jq is the fixed-path one (OSS_JQ_BIN), never PATH's.
+# ⚠ changes existing test: R-257 ship round 1 LOW security (git and jq from a fixed path) — "no jq" is now a missing
+#   fixed jq, not an empty PATH
 mkdir -p "$T/nojq"
-if (PATH="$T/nojq"; oss_phase_gate_ok 0 "$VERIFIED") 2>/dev/null; then
+if (OSS_JQ_BIN="$T/nojq/jq"; oss_phase_gate_ok 0 "$VERIFIED") 2>/dev/null; then
     fail "without jq the gate refuses" "passed"
 else pass "without jq the gate refuses"; fi
 

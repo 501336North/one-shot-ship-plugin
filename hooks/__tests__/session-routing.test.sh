@@ -132,6 +132,10 @@ done
 # R-257 T13 (AC-006.1): only a valid ship result archives a feature, so each finished feature gets one
 source "$ROOT/hooks/__tests__/lib/archive-ship-fixture.sh"   # archivable_ship: a valid, bound ship result (R-257 T13)
 for n in 1 2; do mkdir -p "$(prod $n)/.oss/dev/active/feat-done"; printf '# P\n## Current Phase: complete\n' > "$(prod $n)/.oss/dev/active/feat-done/PROGRESS.md"; HOME="$H" archivable_ship "$(prod $n)" feat-done; done
+# D25: the gate's CLI comes only from a trusted plugin root, here the one ~/.oss/plugin-root names (mode 600, as
+# session-start writes it: the checkout), and oss-node.sh only from ~/.oss/hooks
+printf '%s\n' "$ROOT" > "$H/.oss/plugin-root"; chmod 600 "$H/.oss/plugin-root"
+mkdir -p "$H/.oss/hooks"; cp "$ROOT/hooks/oss-node.sh" "$H/.oss/hooks/oss-node.sh"
 ev 1 "$P2/work" "$SH" "$ROOT/hooks/oss-archive-check.sh"
 [[ ! -d "$P2/.oss/dev/active/feat-done" && -n "$(ls "$P2/.oss/dev/completed" 2>/dev/null)" && -d "$P1/.oss/dev/active/feat-done" && ! -e "$P1/.oss/dev/completed" ]] \
     && pass "R2-1 S1 (pointer=product 1) from product 2: archive-check archives product 2's feature, never product 1's" \

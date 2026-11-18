@@ -117,3 +117,9 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 ### T31 real-transcript note (2026-11-18)
 - Where a harness ends subagents with a handback tool (this machine: SubagentHandback), the review agent's final message has no text, so its oss-verdict block is never captured and its gate stays `source: model`, as before T19. That's fail-safe: no gate gets stricter or looser. Plain Claude Code subagents end with a text message, so the capture works there. The served agent prompts already say to write the block as plain text in the reply.
 - Unchecked: what `last_assistant_message` holds when the final message is a tool_use.
+
+## Ship round 1: session ID match is unverified (2026-11-18)
+- The Stop subject (round 1, finding 1, and D30) blocks only when the run row's `session` equals the Stop hook's stdin `session_id`.
+- The row is written from `$CLAUDE_CODE_SESSION_ID`, which equals the transcript UUID here. Claude Code documents the hook's `session_id` as the same transcript ID.
+- No local log has captured a real Stop stdin, so this is not proven. Verify it in round 2 integration against a real stop.
+- If they differ, Stop never blocks (fail-open). The complete and start gates still refuse a missing result.

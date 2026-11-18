@@ -16,7 +16,13 @@ export function gitEnv(): NodeJS.ProcessEnv {
 /** Trimmed stdout of `git <args>` in cwd; null when git fails or prints nothing. */
 export function gitOut(cwd: string, args: string[]): string | null {
   try {
-    const out = execFileSync('git', args, { cwd, env: gitEnv(), encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const out = execFileSync('git', args, {
+      cwd,
+      env: gitEnv(),
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 2000,
+    }).trim();
     return out === '' ? null : out;
   } catch {
     return null;

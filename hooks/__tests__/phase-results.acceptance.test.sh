@@ -29,8 +29,12 @@ FEATURE=accept-feature
 # hooks, schemas and watcher CLIs except chain-trigger, which only records that it was called.
 sandbox() {
     T=$(mktemp -d); T=$(cd "$T" && pwd -P)
-    mkdir -p "$T/home/.oss" "$T/plugin/watcher/dist/cli" "$T/repo"
+    mkdir -p "$T/home/.oss/hooks" "$T/plugin/watcher/dist/cli" "$T/repo"
     ln -s "$ROOT/hooks" "$T/plugin/hooks"
+    # D25: CLAUDE_PLUGIN_ROOT counts only as the plugin ~/.oss/plugin-root names (mode 600, as session-start writes
+    # it), and oss-node.sh comes only from ~/.oss/hooks.
+    printf '%s\n' "$T/plugin" > "$T/home/.oss/plugin-root"; chmod 600 "$T/home/.oss/plugin-root"
+    cp "$ROOT/hooks/oss-node.sh" "$T/home/.oss/hooks/oss-node.sh"
     [[ -d "$ROOT/schemas" ]] && ln -s "$ROOT/schemas" "$T/plugin/schemas"
     for f in "$ROOT"/watcher/dist/cli/*; do ln -s "$f" "$T/plugin/watcher/dist/cli/"; done
     rm -f "$T/plugin/watcher/dist/cli/chain-trigger.cjs" "$T/plugin/watcher/dist/cli/chain-trigger.js"

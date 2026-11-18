@@ -34,6 +34,10 @@ export CLAUDE_CODE_SESSION_ID=acc-session-1
 export HOME="$T/home"; mkdir -p "$HOME/.oss"
 PLUGIN="$T/plugin"; mkdir -p "$PLUGIN"; cp -R "$ROOT/hooks" "$PLUGIN/hooks"; cp "$ROOT/hooks.json" "$PLUGIN/hooks.json"
 export CLAUDE_PLUGIN_ROOT="$PLUGIN"
+# D25: the phase gate takes CLAUDE_PLUGIN_ROOT only as the plugin ~/.oss/plugin-root names (mode 600, as session-start
+# writes it) and sources oss-node.sh only from ~/.oss/hooks
+printf '%s\n' "$PLUGIN" > "$HOME/.oss/plugin-root"; chmod 600 "$HOME/.oss/plugin-root"
+mkdir -p "$HOME/.oss/hooks"; cp "$ROOT/hooks/oss-node.sh" "$HOME/.oss/hooks/oss-node.sh"
 # R-257 AC-001.3: build complete needs a valid build result; this phase-result CLI (a collaborator here) answers verified
 mkdir -p "$PLUGIN/watcher/dist/cli"
 printf 'console.log(JSON.stringify({verification: "verified"}))\n' > "$PLUGIN/watcher/dist/cli/phase-result.cjs"

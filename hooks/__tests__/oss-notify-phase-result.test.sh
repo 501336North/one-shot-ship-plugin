@@ -29,8 +29,12 @@ FEATURE=gate-feature
 SESSION=pr-session-1
 sandbox() {
     T=$(mktemp -d); T=$(cd "$T" && pwd -P)
-    mkdir -p "$T/home/.oss" "$T/plugin/watcher/dist/cli" "$T/repo"
+    mkdir -p "$T/home/.oss/hooks" "$T/plugin/watcher/dist/cli" "$T/repo"
     ln -s "$ROOT/hooks" "$T/plugin/hooks"
+    # D25: the gate takes CLAUDE_PLUGIN_ROOT only when it is the folder ~/.oss/plugin-root names (written as
+    # session-start writes it, mode 600), and sources oss-node.sh only from ~/.oss/hooks (as installed there).
+    printf '%s\n' "$T/plugin" > "$T/home/.oss/plugin-root"; chmod 600 "$T/home/.oss/plugin-root"
+    cp "$ROOT/hooks/oss-node.sh" "$T/home/.oss/hooks/oss-node.sh"
     [[ -d "$ROOT/schemas" ]] && ln -s "$ROOT/schemas" "$T/plugin/schemas"
     for f in "$ROOT"/watcher/dist/cli/*; do ln -s "$f" "$T/plugin/watcher/dist/cli/"; done
     rm -f "$T/plugin/watcher/dist/cli/chain-trigger.cjs" "$T/plugin/watcher/dist/cli/chain-trigger.js"
@@ -220,6 +224,65 @@ sandbox
 out=$(notify requirements complete '{}' 2>&1); rc=$?
 check "requirements complete is unaffected (no result needed, CHAIN printed)" '[[ $rc -eq 0 && "$out" == *"CHAIN:"* ]] && chain_fired' "rc=$rc out=$out"
 rm -rf "$T"
+
+# ---------------------------------------------------------------- R-257 ship round 1
+# 18. D25 (CRITICAL security 2): a CLAUDE_PLUGIN_ROOT prefix naming a model folder with a fake "verified" checker
+#     does not complete the phase: the gate ignores it and checks with the protected plugin's CLI (no result: refused).
+sandbox
+notify plan start '{}' >/dev/null 2>&1
+mkdir -p "$T/forged/watcher/dist/cli" "$T/forged/hooks"; cp "$ROOT/hooks/oss-node.sh" "$T/forged/hooks/oss-node.sh"
+printf 'console.log(JSON.stringify({verification: "verified"}))\n' > "$T/forged/watcher/dist/cli/phase-result.cjs"
+out=$(cd "$T/repo" && HOME="$T/home" CLAUDE_PLUGIN_ROOT="$T/forged" CLAUDE_PROJECT_DIR="$T/repo" CLAUDE_CODE_SESSION_ID="$SESSION" \
+    "$SH" "$ROOT/hooks/oss-notify.sh" --workflow plan complete '{}' 2>&1 </dev/null); rc=$?
+check "D25: a CLAUDE_PLUGIN_ROOT prefix with a fake checker does not complete the phase" \
+    '[[ $rc -eq 1 && "$out" != *"CHAIN:"* ]] && not_done plan' "rc=$rc out=$out"
+rm -rf "$T"
+
+# 19. (LOW security, finding 2) a fake git first on PATH that names project A's toplevel from repo B does not get
+#     past the repo check: complete for A, run from B, is still refused (repo_mismatch).
+sandbox
+PRF_REPO="$T/repo" prf_plan
+B="$T/repo-b"; mkdir -p "$B"; make_repo "$B" "$FEATURE"
+REAL_GIT=$(command -v git); mkdir -p "$T/fakebin"
+printf '#!/bin/sh\nif [ "$(pwd -P)" = "%s" ] && [ "$1 $2" = "rev-parse --show-toplevel" ]; then echo "%s"; exit 0; fi\nexec "%s" "$@"\n' \
+    "$B" "$T/repo" "$REAL_GIT" > "$T/fakebin/git"; chmod +x "$T/fakebin/git"
+out=$(PATH="$T/fakebin:$PATH" REPO_RUN="$B" PROJECT_RUN="$T/repo" notify plan complete '{}' 2>&1); rc=$?
+check "a fake git first on PATH does not get past the repo check (repo_mismatch)" \
+    '[[ -f "$(results_dir)/plan.json" && $rc -eq 1 && "$out" == *repo_mismatch* && "$out" != *"CHAIN:"* ]]' "rc=$rc out=$out"
+rm -rf "$T"
+
+# 20. (LOW security, finding 3) D17's legacy pass needs a feature the ledger has never seen: deleting results/ of a
+#     feature with results rows in the ledger does not skip the start gate.
+sandbox
+PRF_REPO="$T/repo" prf_plan
+rows=$(ls "$T"/home/.oss/ledger/*/results/"$FEATURE"/plan 2>/dev/null | head -1)
+rm -rf "$(results_dir)"
+before=$(state)
+out=$(notify build start '{}' 2>&1); rc=$?
+check "a feature with ledger results rows and results/ deleted is refused at start" \
+    '[[ -n "$rows" && $rc -eq 1 && "$out" == *"/oss:plan"* && "$out" != *"start gate skipped"* && "$(state)" == "$before" ]]' "rows=$rows rc=$rc out=$out"
+rm -rf "$T"
+
+# 21. D26: a ship complete that passes on model-reported gate evidence says which gates had no captured reviewer
+#     verdict (one notice line, D15 style) and still completes; agent evidence prints no such line.
+for ev in model agent; do
+    sandbox
+    notify ship start '{}' >/dev/null 2>&1
+    rm -f "$T/plugin/watcher/dist/cli/phase-result.cjs"
+    if [[ $ev == model ]]; then unc='["code-review","performance","security"]'; else unc='[]'; fi
+    printf 'console.log(JSON.stringify({verification: "verified", gateEvidence: "%s", uncapturedGates: %s}))\n' "$ev" "$unc" \
+        > "$T/plugin/watcher/dist/cli/phase-result.cjs"
+    out=$(notify ship complete '{}' 2>&1); rc=$?
+    line="ship gates without a captured reviewer verdict: code-review, performance, security (model-reported)"
+    if [[ $ev == model ]]; then
+        check "D26: ship complete on model gate evidence names the uncaptured gates and completes" \
+            '[[ $rc -eq 0 && "$out" == *"$line"* && "$out" == *"CHAIN:"* ]]' "rc=$rc out=$out"
+    else
+        check "D26: ship complete on agent gate evidence prints no uncaptured-gates line" \
+            '[[ $rc -eq 0 && "$out" != *"without a captured reviewer verdict"* && "$out" == *"CHAIN:"* ]]' "rc=$rc out=$out"
+    fi
+    rm -rf "$T"
+done
 
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"

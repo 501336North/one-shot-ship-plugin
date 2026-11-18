@@ -195,6 +195,10 @@ world
 # R-257 T13 (AC-006.1): only a valid ship result archives a feature, so each finished feature gets one
 source "$ROOT/hooks/__tests__/lib/archive-ship-fixture.sh"   # archivable_ship: a valid, bound ship result (R-257 T13)
 for p in "$A" "$B"; do mkdir -p "$p/.oss/dev/active/feat-done"; printf '# P\n## Current Phase: complete\n' > "$p/.oss/dev/active/feat-done/PROGRESS.md"; HOME="$H" archivable_ship "$p" feat-done; done
+# D25: CLAUDE_PLUGIN_ROOT counts only as the plugin ~/.oss/plugin-root names (mode 600, as session-start writes it),
+# and oss-node.sh comes only from ~/.oss/hooks (here the checkout)
+printf '%s\n' "$ROOT" > "$H/.oss/plugin-root"; chmod 600 "$H/.oss/plugin-root"
+mkdir -p "$H/.oss/hooks"; cp "$ROOT/hooks/oss-node.sh" "$H/.oss/hooks/oss-node.sh"
 run "$A/sub/deep" "$SH" "$HOOKS/oss-archive-check.sh"
 [[ ! -d "$A/.oss/dev/active/feat-done" && -n "$(ls "$A/.oss/dev/completed" 2>/dev/null)" && -d "$B/.oss/dev/active/feat-done" && ! -e "$B/.oss/dev/completed" ]] \
     && pass "T6: archive-check from A/sub/deep (current-project = B) archives A's finished feature, never B's" \

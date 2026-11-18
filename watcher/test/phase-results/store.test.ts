@@ -117,7 +117,9 @@ describe('writeResult', () => {
   });
 
   // Behaviour: swapping results/ for a link mid-write cannot plant a result elsewhere.
-  // Rule: after the rename the target's realpath must be inside results/'s realpath, else it is deleted (unsafe_path).
+  // Rule: results/ is re-checked right before the rename, and a swap is unsafe_path with nothing renamed.
+  // ⚠ changes existing test: finding 9 (round 1 security) — the write refuses before the rename and never unlinks a
+  //   path it did not create, so the earlier v1 result the swap moved out stays as it was; v2 never lands there.
   it('should detect results/ swapped for a symlink during the write', () => {
     writeResult(repo, 'feat-a', 'build', { v: 1 });
     const outside = path.join(root, 'outside');
@@ -129,8 +131,80 @@ describe('writeResult', () => {
         },
       }),
     ).toThrow(/unsafe_path/);
-    expect(fs.existsSync(path.join(outside, 'build.json'))).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(outside, 'build.json'), 'utf-8'))).toEqual({ v: 1 });
   });
+});
+
+/**
+ * Round 1 finding 9 (TOCTOU): between the confinement check and the rename, a process can swap results/ for a link or
+ * for another folder. The write re-checks the folder (realpath, device and inode) right before the rename, refuses on
+ * any change, and never unlinks or overwrites a path it did not create.
+ */
+describe('writeResult: results/ swapped between check and rename (finding 9)', () => {
+  it('a symlink swapped in never overwrites a file the store did not create', () => {
+    fs.mkdirSync(resultsDir(), { recursive: true });
+    const outside = path.join(root, 'outside');
+    const theirs = path.join(root, 'theirs');
+    fs.mkdirSync(theirs);
+    fs.writeFileSync(path.join(theirs, 'build.json'), 'theirs');
+    expect(() =>
+      writeResult(repo, 'feat-a', 'build', { v: 2 }, {
+        beforeRename: () => {
+          fs.renameSync(resultsDir(), outside);
+          fs.symlinkSync(theirs, resultsDir());
+        },
+      }),
+    ).toThrow(/unsafe_path/);
+    expect(fs.readFileSync(path.join(theirs, 'build.json'), 'utf-8')).toBe('theirs');
+  });
+
+  it('a different real folder swapped in at the same path is refused, and nothing lands in it', () => {
+    fs.mkdirSync(resultsDir(), { recursive: true });
+    expect(() =>
+      writeResult(repo, 'feat-a', 'build', { v: 2 }, {
+        beforeRename: () => {
+          fs.renameSync(resultsDir(), `${resultsDir()}.old`);
+          fs.mkdirSync(resultsDir());
+        },
+      }),
+    ).toThrow(/unsafe_path/);
+    expect(fs.readdirSync(resultsDir())).toEqual([]);
+  });
+
+  it('a file planted at the temp name in a swapped folder is neither moved nor deleted', () => {
+    fs.mkdirSync(resultsDir(), { recursive: true });
+    let planted = '';
+    expect(() =>
+      writeResult(repo, 'feat-a', 'build', { v: 2 }, {
+        beforeRename: (tmp: string) => {
+          fs.renameSync(resultsDir(), `${resultsDir()}.old`);
+          fs.mkdirSync(resultsDir());
+          planted = tmp;
+          fs.writeFileSync(tmp, 'theirs');
+        },
+      }),
+    ).toThrow(/unsafe_path/);
+    expect(fs.readFileSync(planted, 'utf-8')).toBe('theirs');
+    expect(fs.existsSync(path.join(resultsDir(), 'build.json'))).toBe(false);
+  });
+});
+
+describe('resolveRepo: bounded git (finding 9)', () => {
+  it('gives null within the 2 s bound when git hangs', () => {
+    const shims = path.join(root, 'shims');
+    fs.mkdirSync(shims);
+    fs.writeFileSync(path.join(shims, 'git'), '#!/bin/sh\nexec sleep 10\n');
+    fs.chmodSync(path.join(shims, 'git'), 0o755);
+    const saved = process.env.PATH;
+    process.env.PATH = `${shims}:${saved ?? ''}`;
+    const t0 = Date.now();
+    try {
+      expect(resolveRepo(repo)).toBeNull();
+    } finally {
+      process.env.PATH = saved;
+    }
+    expect(Date.now() - t0).toBeLessThan(5000);
+  }, 15_000);
 });
 
 describe('readResult', () => {

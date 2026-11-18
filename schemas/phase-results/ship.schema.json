@@ -86,6 +86,12 @@
         "gates": {
           "$ref": "common.schema.json#/$defs/source"
         },
+        "gateEvidence": {
+          "$ref": "common.schema.json#/$defs/source"
+        },
+        "uncapturedGates": {
+          "$ref": "common.schema.json#/$defs/source"
+        },
         "overrides": {
           "$ref": "common.schema.json#/$defs/source"
         },
@@ -183,6 +189,23 @@
             ]
           }
         }
+      }
+    },
+    "gateEvidence": {
+      "description": "D26: whether the gates' verdicts came from captured review-agent rows: every gate (agent), some (partial) or none (model). Not agent means the gate verdict is the main model's timeline line.",
+      "type": "string",
+      "enum": [
+        "agent",
+        "partial",
+        "model"
+      ]
+    },
+    "uncapturedGates": {
+      "description": "D26: the gates with no captured agent verdict (source model), named by the complete notice.",
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "$ref": "common.schema.json#/$defs/token"
       }
     },
     "overrides": {

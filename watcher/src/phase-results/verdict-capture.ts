@@ -4,28 +4,37 @@
  *
  * Contract (PLAN T19, fixed 2026-11-18): the agent's final message ends with one fenced block whose info string is
  * `oss-verdict`, holding `{"verdict":"pass"|"fail","findings":{"critical":N,"high":N,"medium":N,"low":N,"info":N}}`.
- * The LAST such block of the final message counts; nothing else in the message is read. The gate name comes from the
+ * The block must be the final non-blank text of the final message, and a message with more than one oss-verdict block
+ * records nothing (round 1 finding 6); nothing else in the message is read. The gate name comes from the
  * hook input's agent_type (REVIEW_AGENT_GATES), never from the block. One row goes to the owner-only ledger
- * `verdicts/<feature>`; the model never writes it. assemble-ship.ts reads it.
+ * `verdicts/<feature>`; the model never writes it. assemble-ship.ts reads it. The row records the tree the agent
+ * reviewed (working tree minus .oss, from a temp index copy; the real index is never touched), which binds it.
  *
  * The final message: the input's last_assistant_message when it is a string, else the text of the last assistant
  * message in agent_transcript_path: its trailing entries that share one message.id, and nothing when they hold no text
  * (T31). The transcript is JSONL, opened with O_NOFOLLOW, a regular file only, and only its last TRANSCRIPT_TAIL_BYTES
  * are read. Either one over that cap records nothing.
  */
+import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { openLedger } from './ledger.js';
 import { resolveFeature } from './feature.js';
+import { gitEnv, gitOut } from './git.js';
 import { resolveRepo } from './store.js';
 import { loadSchema, validate } from './validate.js';
 
-/** Review agent (bare subagent_type) -> the gate name ship's timeline uses (gate.txt table in commands/ship.md). */
+/**
+ * Review agent (exact agent_type) -> the gate name ship's timeline uses (gate.txt table in commands/ship.md). Claude
+ * Code sends a plugin agent's agent_type as `oss:<name>`; a project agent (.claude/agents) has no prefix and another
+ * plugin has its own, so only these exact types record a verdict (finding 5).
+ */
 export const REVIEW_AGENT_GATES: Readonly<Record<string, string>> = {
-  'code-reviewer': 'code-review',
-  'performance-auditor': 'performance',
-  'security-auditor': 'security',
-  'penetration-tester': 'pen-test',
+  'oss:code-reviewer': 'code-review',
+  'oss:performance-auditor': 'performance',
+  'oss:security-auditor': 'security',
+  'oss:penetration-tester': 'pen-test',
 };
 
 export const TRANSCRIPT_TAIL_BYTES = 256 * 1024;
@@ -55,17 +64,16 @@ const VERDICT_SCHEMA = loadSchema({
 });
 
 const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
-const BLOCK_RE = /^```oss-verdict[ \t]*\n([\s\S]*?)\n```[ \t]*$/gm;
+const OPENER_RE = /^```oss-verdict[ \t]*$/;
 
 function plainId(v: unknown): string {
   return typeof v === 'string' && ID_RE.test(v) ? v : '';
 }
 
-/** The gate for a review agent's agent_type (with or without a plugin prefix), else null. */
+/** The gate for an exact review agent_type, else null. */
 export function gateForAgent(agentType: unknown): string | null {
   if (typeof agentType !== 'string') return null;
-  const bare = agentType.slice(agentType.lastIndexOf(':') + 1).toLowerCase();
-  return Object.prototype.hasOwnProperty.call(REVIEW_AGENT_GATES, bare) ? REVIEW_AGENT_GATES[bare] : null;
+  return Object.prototype.hasOwnProperty.call(REVIEW_AGENT_GATES, agentType) ? REVIEW_AGENT_GATES[agentType] : null;
 }
 
 /** The text of the last assistant entry with text in the tail of a JSONL transcript; null when unsafe or absent. */
@@ -124,18 +132,79 @@ function finalMessage(input: Record<string, unknown>): string | null {
   return transcriptMessage(input.agent_transcript_path);
 }
 
-/** The last `oss-verdict` block of the text: 'none' when there is none, 'invalid' when it is not the contract. */
-export function lastVerdictBlock(text: string): { verdict: 'pass' | 'fail'; findings: Record<string, number> } | 'none' | 'invalid' {
-  const matches = [...text.replace(/\r\n/g, '\n').matchAll(BLOCK_RE)];
-  if (matches.length === 0) return 'none';
+/**
+ * The `oss-verdict` block that ends the text (its final non-blank lines): 'none' when the text does not end with one,
+ * 'multiple' when the text holds more than one oss-verdict opener line, 'invalid' when the block is not the contract.
+ * Linear: the closing fence is the last line, its opener the nearest earlier fence line (finding 6, no regex scan).
+ */
+export function lastVerdictBlock(
+  text: string,
+): { verdict: 'pass' | 'fail'; findings: Record<string, number> } | 'none' | 'multiple' | 'invalid' {
+  const lines = text.replace(/\r\n/g, '\n').trimEnd().split('\n');
+  if (lines.filter((l) => OPENER_RE.test(l)).length > 1) return 'multiple';
+  const close = lines.length - 1;
+  if (close < 1 || lines[close].trimEnd() !== '```') return 'none';
+  let open = close - 1;
+  while (open >= 0 && !lines[open].startsWith('```')) open--;
+  if (open < 0 || !OPENER_RE.test(lines[open])) return 'none';
   let value: unknown;
   try {
-    value = JSON.parse(matches[matches.length - 1][1]);
+    value = JSON.parse(lines.slice(open + 1, close).join('\n'));
   } catch {
     return 'invalid';
   }
   if (!validate(VERDICT_SCHEMA, value).ok) return 'invalid';
   return value as { verdict: 'pass' | 'fail'; findings: Record<string, number> };
+}
+
+const TREE_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+
+/** `git <args>` in repo with GIT_* removed plus `extra`, no fsmonitor or hooks, bounded; trimmed stdout or null. */
+function boundedGit(repo: string, args: string[], extra: NodeJS.ProcessEnv, timeout: number): string | null {
+  const env = { ...gitEnv(), GIT_CONFIG_NOSYSTEM: '1', ...extra };
+  const r = spawnSync('git', ['-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', ...args], {
+    cwd: repo,
+    env,
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+    timeout,
+    maxBuffer: 64 * 1024,
+  });
+  return r.error === undefined && r.status === 0 ? r.stdout.trim() : null;
+}
+
+/**
+ * The tree the agent reviewed, written from a temp copy of the real index so the real index is never
+ * touched: `all` stages tracked and untracked (not ignored) files (`add -A`, .oss excluded), `tracked` only tracked
+ * ones (`add -u`, .oss included but never consulted).
+ * '' when git cannot build it (that row never counts).
+ */
+function reviewedTree(repo: string, index: string, which: 'all' | 'tracked'): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-verdict-tree-'));
+  try {
+    const tmpIndex = path.join(dir, 'index');
+    try {
+      fs.copyFileSync(index, tmpIndex);
+    } catch {
+      // no index yet (a repo with nothing staged): start from an empty one
+    }
+    const env = { GIT_INDEX_FILE: tmpIndex };
+    // `add -u` takes no pathspec: with nothing tracked yet any pathspec errors. Its .oss entries are harmless, since
+    // trackedTree is only asked about paths outside .oss.
+    const args = which === 'all' ? ['add', '-A', '--', '.', ':(exclude).oss'] : ['add', '-u'];
+    if (boundedGit(repo, args, env, 3000) === null) return '';
+    const tree = boundedGit(repo, ['write-tree'], env, 2000);
+    return tree !== null && TREE_RE.test(tree) ? tree : '';
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** Both reviewed trees (see reviewedTree); both '' when the index path cannot be read. */
+function reviewedTrees(repo: string): { tree: string; trackedTree: string } {
+  const index = boundedGit(repo, ['rev-parse', '--path-format=absolute', '--git-path', 'index'], {}, 2000);
+  if (index === null) return { tree: '', trackedTree: '' };
+  return { tree: reviewedTree(repo, index, 'all'), trackedTree: reviewedTree(repo, index, 'tracked') };
 }
 
 /** Records the review agent's verdict block from a SubagentStop hook input. Never throws. */
@@ -149,6 +218,7 @@ export function captureVerdict(input: unknown, opts: CaptureOptions = {}): Captu
     if (text === null) return { captured: false, reason: 'no_message' };
     const block = lastVerdictBlock(text);
     if (block === 'none') return { captured: false, reason: 'no_block' };
+    if (block === 'multiple') return { captured: false, reason: 'multiple_blocks' };
     if (block === 'invalid') return { captured: false, reason: 'invalid_block' };
 
     const cwd = typeof hook.cwd === 'string' && path.isAbsolute(hook.cwd) ? hook.cwd : process.cwd();
@@ -162,6 +232,11 @@ export function captureVerdict(input: unknown, opts: CaptureOptions = {}): Captu
       agent: plainId(hook.agent_id),
       session: plainId(hook.session_id),
       ts: (opts.now ?? (() => new Date()))().toISOString(),
+      // For information only: the HEAD at capture (ship commits after its reviews, so HEAD never decides).
+      headSha: gitOut(repo, ['rev-parse', '--verify', 'HEAD^{commit}']) ?? '',
+      // The trees the agent reviewed (all files / tracked only); assemble-ship counts the row only when the shipped tree
+      // outside .oss differs from `tree` by nothing but files that were untracked at review and left out (finding 4).
+      ...reviewedTrees(repo),
     });
     return { captured: true, gate, feature };
   } catch {

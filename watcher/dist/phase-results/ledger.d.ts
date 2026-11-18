@@ -4,6 +4,18 @@ export declare class LedgerError extends Error {
     readonly code: LedgerErrorCode;
     constructor(code: LedgerErrorCode, detail?: string);
 }
+/**
+ * A `run/<phase>` row, written by `oss-notify start` (`_oss_ledger_run`): when the run started, the Claude session
+ * that started it, HEAD then, and the feature resolved for the repo and branch then ("" when none).
+ */
+export interface RunRow {
+    startedAt: string;
+    session: string;
+    headSha: string;
+    feature: string;
+}
+/** A run row with every field a string; null otherwise (a row from before `feature` was recorded, for one). */
+export declare function parseRunRow(row: LedgerRow | null): RunRow | null;
 export interface LedgerOptions {
     getuid?: () => number;
 }

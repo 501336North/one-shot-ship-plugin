@@ -27,7 +27,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var fs5 = __toESM(require("node:fs"), 1);
 
 // src/phase-results/verdict-capture.ts
+var import_node_child_process3 = require("node:child_process");
 var fs4 = __toESM(require("node:fs"), 1);
+var os2 = __toESM(require("node:os"), 1);
 var path3 = __toESM(require("node:path"), 1);
 
 // src/phase-results/ledger.ts
@@ -48,11 +50,19 @@ var MAX_ROW_BYTES = 512;
 var SMALL_CAP = 1024 * 1024;
 var LARGE_CAP = 4 * 1024 * 1024;
 var SEGMENT = /^[A-Za-z0-9._-]+$/;
+var TAIL_BYTES = 4096;
+var GIT_TIMEOUT_MS = 2e3;
 function gitOut(cwd, args) {
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith("GIT_")) delete env[k];
   try {
-    const out = (0, import_node_child_process.execFileSync)("git", args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const out = (0, import_node_child_process.execFileSync)("git", args, {
+      cwd,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: GIT_TIMEOUT_MS
+    });
     const v = out.replace(/\n$/, "");
     return v === "" ? null : v;
   } catch {
@@ -194,8 +204,24 @@ function openLedger(cwd, opts = {}) {
     },
     readRows,
     lastRow(relPath) {
-      const rows = readRows(relPath);
-      return rows.length > 0 ? rows[rows.length - 1] : null;
+      const parts = splitRel(relPath);
+      if (!ensureDirs(parts.slice(0, -1), false)) return null;
+      const fd = openChecked(parts, fs.constants.O_RDONLY);
+      if (fd === null) return null;
+      try {
+        const size = fs.fstatSync(fd).size;
+        const len = Math.min(size, TAIL_BYTES);
+        const buf = Buffer.alloc(len);
+        fs.readSync(fd, buf, 0, len, size - len);
+        const lines = buf.toString("utf8").split("\n");
+        for (let i = lines.length - 1; i >= (len < size ? 1 : 0); i--) {
+          const row = parseObject(lines[i]);
+          if (row !== null) return row;
+        }
+        return null;
+      } finally {
+        fs.closeSync(fd);
+      }
     },
     writeMarker(relPath, obj) {
       writeFile(splitRel(relPath), `${JSON.stringify(obj)}
@@ -238,7 +264,13 @@ function gitEnv() {
 }
 function gitOut2(cwd, args) {
   try {
-    const out = (0, import_node_child_process2.execFileSync)("git", args, { cwd, env: gitEnv(), encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const out = (0, import_node_child_process2.execFileSync)("git", args, {
+      cwd,
+      env: gitEnv(),
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2e3
+    }).trim();
     return out === "" ? null : out;
   } catch {
     return null;
@@ -476,7 +508,8 @@ function resolveRepo(cwd) {
       cwd,
       env,
       encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"]
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2e3
     }).trim();
     return top === "" ? null : fs3.realpathSync(top);
   } catch {
@@ -486,10 +519,10 @@ function resolveRepo(cwd) {
 
 // src/phase-results/verdict-capture.ts
 var REVIEW_AGENT_GATES = {
-  "code-reviewer": "code-review",
-  "performance-auditor": "performance",
-  "security-auditor": "security",
-  "penetration-tester": "pen-test"
+  "oss:code-reviewer": "code-review",
+  "oss:performance-auditor": "performance",
+  "oss:security-auditor": "security",
+  "oss:penetration-tester": "pen-test"
 };
 var TRANSCRIPT_TAIL_BYTES = 256 * 1024;
 var COUNT = { type: "integer", minimum: 0 };
@@ -508,14 +541,13 @@ var VERDICT_SCHEMA = loadSchema({
   }
 });
 var ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
-var BLOCK_RE = /^```oss-verdict[ \t]*\n([\s\S]*?)\n```[ \t]*$/gm;
+var OPENER_RE = /^```oss-verdict[ \t]*$/;
 function plainId(v) {
   return typeof v === "string" && ID_RE.test(v) ? v : "";
 }
 function gateForAgent(agentType) {
   if (typeof agentType !== "string") return null;
-  const bare = agentType.slice(agentType.lastIndexOf(":") + 1).toLowerCase();
-  return Object.prototype.hasOwnProperty.call(REVIEW_AGENT_GATES, bare) ? REVIEW_AGENT_GATES[bare] : null;
+  return Object.prototype.hasOwnProperty.call(REVIEW_AGENT_GATES, agentType) ? REVIEW_AGENT_GATES[agentType] : null;
 }
 function transcriptMessage(file) {
   if (typeof file !== "string" || !path3.isAbsolute(file)) return null;
@@ -567,16 +599,56 @@ function finalMessage(input) {
   return transcriptMessage(input.agent_transcript_path);
 }
 function lastVerdictBlock(text) {
-  const matches = [...text.replace(/\r\n/g, "\n").matchAll(BLOCK_RE)];
-  if (matches.length === 0) return "none";
+  const lines = text.replace(/\r\n/g, "\n").trimEnd().split("\n");
+  if (lines.filter((l) => OPENER_RE.test(l)).length > 1) return "multiple";
+  const close = lines.length - 1;
+  if (close < 1 || lines[close].trimEnd() !== "```") return "none";
+  let open = close - 1;
+  while (open >= 0 && !lines[open].startsWith("```")) open--;
+  if (open < 0 || !OPENER_RE.test(lines[open])) return "none";
   let value;
   try {
-    value = JSON.parse(matches[matches.length - 1][1]);
+    value = JSON.parse(lines.slice(open + 1, close).join("\n"));
   } catch {
     return "invalid";
   }
   if (!validate(VERDICT_SCHEMA, value).ok) return "invalid";
   return value;
+}
+var TREE_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+function boundedGit(repo, args, extra, timeout) {
+  const env = { ...gitEnv(), GIT_CONFIG_NOSYSTEM: "1", ...extra };
+  const r = (0, import_node_child_process3.spawnSync)("git", ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", ...args], {
+    cwd: repo,
+    env,
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout,
+    maxBuffer: 64 * 1024
+  });
+  return r.error === void 0 && r.status === 0 ? r.stdout.trim() : null;
+}
+function reviewedTree(repo, index, which) {
+  const dir = fs4.mkdtempSync(path3.join(os2.tmpdir(), "oss-verdict-tree-"));
+  try {
+    const tmpIndex = path3.join(dir, "index");
+    try {
+      fs4.copyFileSync(index, tmpIndex);
+    } catch {
+    }
+    const env = { GIT_INDEX_FILE: tmpIndex };
+    const args = which === "all" ? ["add", "-A", "--", ".", ":(exclude).oss"] : ["add", "-u"];
+    if (boundedGit(repo, args, env, 3e3) === null) return "";
+    const tree = boundedGit(repo, ["write-tree"], env, 2e3);
+    return tree !== null && TREE_RE.test(tree) ? tree : "";
+  } finally {
+    fs4.rmSync(dir, { recursive: true, force: true });
+  }
+}
+function reviewedTrees(repo) {
+  const index = boundedGit(repo, ["rev-parse", "--path-format=absolute", "--git-path", "index"], {}, 2e3);
+  if (index === null) return { tree: "", trackedTree: "" };
+  return { tree: reviewedTree(repo, index, "all"), trackedTree: reviewedTree(repo, index, "tracked") };
 }
 function captureVerdict(input, opts = {}) {
   try {
@@ -588,6 +660,7 @@ function captureVerdict(input, opts = {}) {
     if (text === null) return { captured: false, reason: "no_message" };
     const block = lastVerdictBlock(text);
     if (block === "none") return { captured: false, reason: "no_block" };
+    if (block === "multiple") return { captured: false, reason: "multiple_blocks" };
     if (block === "invalid") return { captured: false, reason: "invalid_block" };
     const cwd = typeof hook.cwd === "string" && path3.isAbsolute(hook.cwd) ? hook.cwd : process.cwd();
     const repo = resolveRepo(cwd);
@@ -599,7 +672,12 @@ function captureVerdict(input, opts = {}) {
       findings: block.findings,
       agent: plainId(hook.agent_id),
       session: plainId(hook.session_id),
-      ts: (opts.now ?? (() => /* @__PURE__ */ new Date()))().toISOString()
+      ts: (opts.now ?? (() => /* @__PURE__ */ new Date()))().toISOString(),
+      // For information only: the HEAD at capture (ship commits after its reviews, so HEAD never decides).
+      headSha: gitOut2(repo, ["rev-parse", "--verify", "HEAD^{commit}"]) ?? "",
+      // The trees the agent reviewed (all files / tracked only); assemble-ship counts the row only when the shipped tree
+      // outside .oss differs from `tree` by nothing but files that were untracked at review and left out (finding 4).
+      ...reviewedTrees(repo)
     });
     return { captured: true, gate, feature };
   } catch {

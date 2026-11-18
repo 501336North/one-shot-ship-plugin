@@ -2,8 +2,9 @@
  * Phase result store (R-257 Task 3, amended P7, P8, S10).
  *
  * Results live at `<repo>/.oss/dev/active/<feature>/results/<phase>.json`. Writes are atomic (O_EXCL|O_NOFOLLOW
- * temp file, then rename) and confined (no symlink at any level under .oss; after the rename the target's realpath
- * must still be inside results/). Reads are hang-safe (O_NONBLOCK|O_NOFOLLOW) and accept only a regular file with one
+ * temp file, then rename) and confined (no symlink at any level under .oss; right before the rename results/ must still
+ * be the checked folder by realpath, device and inode, and after it the target's realpath must still be inside
+ * results/). A write never unlinks a path that is not the file it created (round 1 finding 9). Reads are hang-safe (O_NONBLOCK|O_NOFOLLOW) and accept only a regular file with one
  * link owned by the current user. Error ids are the stable strings in NOTES.md.
  */
 import * as fs from 'fs';
@@ -34,6 +35,7 @@ export function resolveRepo(cwd: string): string | null {
       env,
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 2000,
     }).trim();
     return top === '' ? null : fs.realpathSync(top);
   } catch {
@@ -80,12 +82,33 @@ function readCapped(fd: number, cap: number): Buffer {
   return buf.subarray(0, n);
 }
 
+/** True when `p` is still the checked folder: same realpath, not a link, same device and inode. */
+function sameDir(p: string, realDir: string, dirStat: fs.Stats): boolean {
+  try {
+    const st = fs.lstatSync(p);
+    return !st.isSymbolicLink() && st.isDirectory() && st.dev === dirStat.dev && st.ino === dirStat.ino && fs.realpathSync(p) === realDir;
+  } catch {
+    return false;
+  }
+}
+
+/** True when `p` is (still) the very file the store created: same device and inode, not a link. */
+function isOurFile(p: string, ours: fs.Stats): boolean {
+  try {
+    const st = fs.lstatSync(p);
+    return st.isFile() && st.dev === ours.dev && st.ino === ours.ino;
+  } catch {
+    return false;
+  }
+}
+
 export function writeResult(repo: string, feature: string, phase: Phase, obj: unknown, hooks: WriteHooks = {}): void {
   checkNames(feature, phase);
   const data = JSON.stringify(obj);
   if (Buffer.byteLength(data) > RESULT_CAP) throw new Error('too_large: result over 256 KB');
   const dir = resultsDir(repo, feature, true) as string;
   const realDir = fs.realpathSync(dir);
+  const dirStat = fs.lstatSync(dir);
   const target = path.join(dir, `${phase}.json`);
   try {
     if (fs.lstatSync(target).isSymbolicLink()) throw new Error(`unsafe_path: ${phase}.json`);
@@ -94,23 +117,47 @@ export function writeResult(repo: string, feature: string, phase: Phase, obj: un
   }
   const tmp = path.join(dir, `.${phase}.${crypto.randomBytes(8).toString('hex')}.tmp`);
   const fd = fs.openSync(tmp, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, 0o600);
+  let ours: fs.Stats;
   try {
     fs.writeSync(fd, data);
     fs.fsyncSync(fd);
+    ours = fs.fstatSync(fd);
   } finally {
     fs.closeSync(fd);
   }
+  // Finding 9: re-check right before the rename that results/ (the temp file's and the target's folder) is still the
+  // checked folder, and the temp name still holds our file. On any change, refuse and touch nothing we did not create.
   try {
     hooks.beforeRename?.(tmp);
+  } catch (e) {
+    if (isOurFile(tmp, ours)) fs.unlinkSync(tmp);
+    throw e;
+  }
+  if (!sameDir(path.dirname(tmp), realDir, dirStat) || !sameDir(path.dirname(target), realDir, dirStat) || !isOurFile(tmp, ours)) {
+    throw new Error('unsafe_path: results/ moved during write');
+  }
+  try {
     fs.renameSync(tmp, target);
   } catch (e) {
-    fs.rmSync(tmp, { force: true });
+    if (isOurFile(tmp, ours)) fs.unlinkSync(tmp);
     throw e;
   }
   const realTarget = fs.realpathSync(target);
   if (path.dirname(realTarget) !== realDir) {
-    fs.unlinkSync(realTarget);
+    if (isOurFile(realTarget, ours)) fs.unlinkSync(realTarget);
     throw new Error('unsafe_path: results/ moved during write');
+  }
+}
+
+/** Removes results/<phase>.unverified.json (the Stop hook's repo marker) under the checked results/ dir; no-op if absent. */
+export function clearUnverifiedMarker(repo: string, feature: string, phase: Phase): void {
+  checkNames(feature, phase);
+  const dir = resultsDir(repo, feature, false);
+  if (dir === null) return;
+  try {
+    fs.unlinkSync(path.join(dir, `${phase}.unverified.json`));
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
   }
 }
 

@@ -39,11 +39,15 @@ notify_start() { # build start from the ~/.oss/hooks copy, no CLAUDE_PLUGIN_ROOT
     (cd "$T/repo" && HOME="$T/home" CLAUDE_PROJECT_DIR="$T/repo" CLAUDE_CODE_SESSION_ID="rc-session-1" \
         "$SH" "$T/home/.oss/hooks/oss-notify.sh" --workflow build start '{}' </dev/null >"$T/out" 2>"$T/err")
 }
+# root_file <text>: ~/.oss/plugin-root holding <text>, mode 600 as session-start writes it, so each case below tests
+# only what it names (D25 c: a plugin-root not mode 600 is never used).
+# ⚠ changes existing test: D25 (c) — the plugin-root fixtures are written mode 600
+root_file() { printf '%s' "$1" > "$T/home/.oss/plugin-root"; chmod 600 "$T/home/.oss/plugin-root"; }
 started_at() { jq -r '.currentCommandStartedAt // empty' "$T/repo/.oss/workflow-state.json" 2>/dev/null; }
 
 # 1. --plugin-dir layout: ~/.oss/plugin-root names the plugin -> the state CLI runs and the start time is set.
 sandbox
-printf '%s\n' "$T/plugin" > "$T/home/.oss/plugin-root"
+root_file "$T/plugin"$'\n'
 notify_start
 if [[ -n "$(started_at)" ]]; then pass "a --plugin-dir layout resolves the state CLI through ~/.oss/plugin-root"
 else fail "a --plugin-dir layout resolves the state CLI through ~/.oss/plugin-root" "state=$(cat "$T/repo/.oss/workflow-state.json" 2>/dev/null) err=$(cat "$T/err")"; fi
@@ -51,7 +55,7 @@ rm -rf "$T"
 
 # 2. a plugin-root file that is a link is ignored.
 sandbox
-printf '%s\n' "$T/plugin" > "$T/elsewhere"
+printf '%s\n' "$T/plugin" > "$T/elsewhere"; chmod 600 "$T/elsewhere"
 ln -s "$T/elsewhere" "$T/home/.oss/plugin-root"
 notify_start
 if [[ -z "$(started_at)" ]]; then pass "a symlinked ~/.oss/plugin-root is ignored"
@@ -60,7 +64,7 @@ rm -rf "$T"
 
 # 3. a relative path is ignored, even one that resolves from the cwd.
 sandbox
-printf '../plugin\n' > "$T/home/.oss/plugin-root"
+root_file "../plugin"$'\n'
 notify_start
 if [[ -z "$(started_at)" ]]; then pass "a relative ~/.oss/plugin-root is ignored"
 else fail "a relative ~/.oss/plugin-root is ignored" "startedAt=$(started_at)"; fi
@@ -69,7 +73,7 @@ rm -rf "$T"
 # 4. a plugin dir that is a link is ignored.
 sandbox
 ln -s "$T/plugin" "$T/plugin-link"
-printf '%s\n' "$T/plugin-link" > "$T/home/.oss/plugin-root"
+root_file "$T/plugin-link"$'\n'
 notify_start
 if [[ -z "$(started_at)" ]]; then pass "a plugin-root naming a linked dir is ignored"
 else fail "a plugin-root naming a linked dir is ignored" "startedAt=$(started_at)"; fi
@@ -77,7 +81,7 @@ rm -rf "$T"
 
 # 5. a plugin-root of two lines is ignored.
 sandbox
-printf '%s\n%s\n' "$T/plugin" "$T/plugin" > "$T/home/.oss/plugin-root"
+root_file "$T/plugin"$'\n'"$T/plugin"$'\n'
 notify_start
 if [[ -z "$(started_at)" ]]; then pass "a two-line ~/.oss/plugin-root is ignored"
 else fail "a two-line ~/.oss/plugin-root is ignored" "startedAt=$(started_at)"; fi

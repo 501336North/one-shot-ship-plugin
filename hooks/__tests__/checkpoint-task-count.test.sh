@@ -22,8 +22,12 @@ FEATURE=count-feature
 RECORDED_NODE=$(node -p 'require("fs").realpathSync(process.execPath)')
 sandbox() {
     T=$(mktemp -d); T=$(cd "$T" && pwd -P)
-    mkdir -p "$T/home/.oss" "$T/plugin/watcher/dist/cli" "$T/repo" "$T/bin"
+    mkdir -p "$T/home/.oss/hooks" "$T/plugin/watcher/dist/cli" "$T/repo" "$T/bin"
     printf '%s\n' "$RECORDED_NODE" > "$T/home/.oss/node-path"
+    # D25: CLAUDE_PLUGIN_ROOT counts only as the plugin ~/.oss/plugin-root names (mode 600, as session-start writes
+    # it), and oss-node.sh comes only from ~/.oss/hooks.
+    printf '%s\n' "$T/plugin" > "$T/home/.oss/plugin-root"; chmod 600 "$T/home/.oss/plugin-root"
+    cp "$ROOT/hooks/oss-node.sh" "$T/home/.oss/hooks/oss-node.sh"
     ln -s "$ROOT/hooks" "$T/plugin/hooks"
     [[ -d "$ROOT/schemas" ]] && ln -s "$ROOT/schemas" "$T/plugin/schemas"
     for f in "$ROOT"/watcher/dist/cli/*; do ln -s "$f" "$T/plugin/watcher/dist/cli/"; done
@@ -129,6 +133,19 @@ f=$(ls "$T/repo/.oss/dev/active/$FEATURE/checkpoints/"*.json 2>/dev/null | head 
 n=$([[ -n "$f" ]] && jq -r '.tasks_completed' "$f" 2>/dev/null || echo "no-checkpoint")
 if [[ "$n" == 0 && ! -e "$T/fake.calls" ]]; then pass "a fake node first on PATH never runs the plan check (recorded node used, counts 0)"
 else fail "a fake node first on PATH never runs the plan check (recorded node used, counts 0)" "got $n fake=$(cat "$T/fake.calls" 2>/dev/null)"; fi
+cleanup
+
+# 8. (R-257 ship round 1, LOW security) a fake jq first on PATH can't change the count read from the checked result.
+sandbox
+assemble_plan 3
+REAL_JQ=$(command -v jq)
+printf '#!/bin/sh\nif [ "$1" = ".tasks | length" ]; then echo 99; exit 0; fi\nexec "%s" "$@"\n' "$REAL_JQ" > "$T/bin/jq"
+chmod +x "$T/bin/jq"
+envrun env PATH="$T/bin:$PATH" OSS_DEV_ROOT="$T/repo" "$SH" "$ROOT/hooks/checkpoint.sh" create "$FEATURE" cp >/dev/null 2>&1
+f=$(ls "$T/repo/.oss/dev/active/$FEATURE/checkpoints/"*.json 2>/dev/null | head -1)
+n=$([[ -n "$f" ]] && jq -r '.tasks_completed' "$f" 2>/dev/null || echo "no-checkpoint")
+[[ "$n" == 3 ]] && pass "a fake jq first on PATH does not change the task count (3)" \
+    || fail "a fake jq first on PATH does not change the task count (3)" "got $n"
 cleanup
 
 echo; echo "Ran $RUN, failed $FAILED"

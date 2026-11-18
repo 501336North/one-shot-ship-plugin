@@ -60,6 +60,27 @@
   - If the recorded node was removed and PATH has a different one, the check exits 127 with one `node_missing` line telling the user to delete `~/.oss/node-path`. The complete gate refuses, Stop marks the phase unverified, and checkpoint counts 0.
   - Why: a verdict must never come from an unrecorded node. The cost is rare, since nvm switches and brew upgrades keep the recorded path usable.
   - Not chosen: re-recording PATH's node (a fake node could become the recorded one), and falling back with an unverified label.
+- D25-D29: ship round 1 decisions (user pickers, 2026-11-18), from four failing gates.
+  - **D25 Gate code location: lock it down.**
+    - `~/.oss/plugin-root` and `~/.oss/watcher/**` join the tool gate's protectedPaths. This changes R-266's exact-list test, as the user's pick allows.
+    - Gate scripts ignore a caller's CLAUDE_PLUGIN_ROOT unless it matches the protected plugin-root or resolves under ~/.claude/plugins.
+    - oss-node.sh is always sourced from the protected ~/.oss/hooks copy.
+    - Fixes round-1 CRITICAL security 1+2: a forged checker through plugin-root or a CLAUDE_PLUGIN_ROOT prefix.
+  - **D26 No captured verdict: pass, but label it.**
+    - A required gate with no captured agent row keeps the timeline line (source model).
+    - The ship result marks gate evidence unverified, and the complete notice names those gates, like D15.
+    - The gap stays as a security follow-up. Fixes the "verified" wording of round-1 HIGH security 3.
+  - **D27 Security and pen-test gates: LOW+.**
+    - For security and pen-test, any finding at LOW or above that is unfixed (net of the round's fixes) fails, matching ship.md.
+    - D24 is unchanged for code-review and performance.
+    - A captured pen-test fail blocks even though pen-test is optional.
+  - **D28 Dependency CVEs:** pre-existing picomatch/micromatch ReDoS in dev and test tools, in both repos. They go to a Sprint D-wide card (the coordinator), not R-257, and are listed in the PR body as user-accepted.
+  - **D29 Old-plugin archive fallback:** plan.md's archive step on a plugin without oss-phase-result.sh archives nothing and prints one update line. The PROGRESS.md prose rule is removed.
+  - **D30 A run with no feature still blocks its own session's Stop** (user pick 2026-11-18, "Same session still blocks").
+    - Round 1 changed the Stop subject to "same session and same feature". An ideate started on main has `feature: ""`.
+    - A same-session run with an empty feature is checked against the feature resolved now.
+    - If no feature resolves, the stop is allowed with the unverified marker and a systemMessage, never an instruction the model can't follow.
+    - Other sessions and other features are never blocked.
 - D24 Captured-verdict gate rule (user picker 2026-11-18): **count the round's fixes**, as ship.md's rule says ("left unfixed at the end of the round").
   - For a gate with a captured agent row: unfixed = max(0, critical − fixed.critical) + max(0, high − fixed.high), with `fixed` taken from that round's timeline line.
   - unfixed > 0 → fail.

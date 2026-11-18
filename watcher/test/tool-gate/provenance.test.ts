@@ -72,6 +72,8 @@ describe('base settings file', () => {
         '**/.git/worktrees/*/HEAD', '**/.git/worktrees/*/commondir', '**/.git/worktrees/*/gitdir', '**/.git/modules/**/config',
         // R-257 T18b, D22 (user pick 2026-11-18): the phase-result ledger is protected
         '~/.oss/ledger/**',
+        // R-257 ship round 1, D25 (user pick 2026-11-18): the gate's code location is protected
+        '~/.oss/plugin-root', '~/.oss/watcher/**',
       ],
       productionHosts: [],
       // R-266 DESIGN item 3 (AC-004.6): the review agents whose runs the gate tracks

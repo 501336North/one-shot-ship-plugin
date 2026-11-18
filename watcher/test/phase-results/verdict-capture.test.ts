@@ -16,6 +16,7 @@ import * as path from 'path';
 import { openLedger } from '../../src/phase-results/ledger.js';
 import {
   captureVerdict,
+  lastVerdictBlock,
   TRANSCRIPT_TAIL_BYTES,
   type CaptureOutcome,
 } from '../../src/phase-results/verdict-capture.js';
@@ -27,10 +28,14 @@ let repo: string;
 let home: string;
 let savedHome: string | undefined;
 
-function git(...args: string[]): void {
+function git(...args: string[]): string {
   const env: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('GIT_')) env[k] = v;
-  execFileSync('git', args, { cwd: repo, env, encoding: 'utf-8' });
+  return execFileSync('git', args, { cwd: repo, env, encoding: 'utf-8' }).trim();
+}
+
+function headNow(): string {
+  return git('rev-parse', 'HEAD');
 }
 
 beforeEach(() => {
@@ -39,6 +44,9 @@ beforeEach(() => {
   process.env.HOME = home;
   repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'verdict-capture-repo-')));
   git('init', '-q', '-b', 'main');
+  // no detached auto gc/maintenance: it would still be writing .git when the temp repo is removed (the 2,000-file test)
+  git('config', 'gc.auto', '0');
+  git('config', 'maintenance.auto', 'false');
   git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init');
   git('checkout', '-q', '-b', `feat/${FEATURE}/ship`);
   fs.mkdirSync(path.join(repo, '.oss', 'dev', 'active', FEATURE), { recursive: true });
@@ -101,15 +109,22 @@ describe('captureVerdict: what gets recorded', () => {
         agent: 'agent-7',
         session: 'sess-1',
         ts: NOW.toISOString(),
+        // ⚠ changes existing test: finding 4 (round 1 security, coordinator fix) — the row records the reviewed tree
+        //   (working tree minus .oss) that assemble binds it by, and the HEAD for information only
+        headSha: headNow(),
+        tree: git('rev-parse', 'HEAD^{tree}'),
+        trackedTree: git('rev-parse', 'HEAD^{tree}'),
       },
     ]);
   });
 
-  it('maps each review agent to the gate name ship writes on its timeline, with or without the oss: prefix', () => {
+  // ⚠ changes existing test: finding 5 (round 1 security) — only the exact oss: plugin agent types count; Claude Code
+  //   sends plugin agents as `oss:<name>` (real subagent meta.json agentType), so bare names no longer map.
+  it('maps each oss: review agent to the gate name ship writes on its timeline', () => {
     const pairs: Array<[string, string]> = [
-      ['code-reviewer', 'code-review'],
+      ['oss:code-reviewer', 'code-review'],
       ['oss:security-auditor', 'security'],
-      ['penetration-tester', 'pen-test'],
+      ['oss:penetration-tester', 'pen-test'],
       ['oss:performance-auditor', 'performance'],
     ];
     for (const [agentType, gate] of pairs) {
@@ -118,12 +133,40 @@ describe('captureVerdict: what gets recorded', () => {
     expect(rows().map((r) => r.gate)).toEqual(pairs.map(([, g]) => g));
   });
 
-  it('uses the last oss-verdict block when the message holds more than one', () => {
+  // ⚠ changes existing test: finding 6 (round 1 security, INFO) — a message with more than one oss-verdict block
+  //   records nothing, so a quoted or earlier block can never be mistaken for the agent's verdict.
+  it('records nothing when the message holds more than one oss-verdict block', () => {
     const first = block({ verdict: 'fail', findings: { ...COUNTS, critical: 9 } });
     const last = block({ verdict: 'pass', findings: COUNTS });
-    capture({ last_assistant_message: message(first, '```json\n{"verdict":"fail"}\n```', last) });
-    expect(rows()).toHaveLength(1);
-    expect(rows()[0]).toMatchObject({ verdict: 'pass', findings: COUNTS });
+    expect(capture({ last_assistant_message: message(first, '```json\n{"verdict":"fail"}\n```', last) })).toEqual({
+      captured: false,
+      reason: 'multiple_blocks',
+    });
+    expect(rows()).toEqual([]);
+  });
+
+  it('accepts a block followed only by blank lines, and CRLF line ends', () => {
+    expect(capture({ last_assistant_message: message(block({ verdict: 'pass', findings: COUNTS })).replace(/\n/g, '\r\n') + '\r\n\n  \n' }).captured).toBe(true);
+  });
+
+  // Finding 6 (INFO): the verdict is the final non-blank text of the final message, never a block with prose after it.
+  it('records nothing when text follows the block', () => {
+    const text = message(block({ verdict: 'pass', findings: COUNTS })) + '\n\nActually, one more thing.';
+    expect(capture({ last_assistant_message: text })).toEqual({ captured: false, reason: 'no_block' });
+  });
+
+  it('records nothing when the final fenced block is another language', () => {
+    const text = message(block({ verdict: 'pass', findings: COUNTS }), '```json\n{}\n```');
+    expect(capture({ last_assistant_message: text }).captured).toBe(false);
+    expect(rows()).toEqual([]);
+  });
+
+  // Finding 6 (LOW, ReDoS): the scan is linear, so a hostile final message cannot stall the SubagentStop hook.
+  it('scans 256 KB of unclosed openers in under 50 ms', () => {
+    const hostile = '```oss-verdict\n'.repeat(Math.floor((256 * 1024) / 15));
+    const t0 = performance.now();
+    lastVerdictBlock(hostile);
+    expect(performance.now() - t0).toBeLessThan(50);
   });
 
   it('reads the final assistant message from the agent transcript when last_assistant_message is absent', () => {
@@ -194,6 +237,65 @@ describe('captureVerdict: what gets recorded', () => {
   });
 });
 
+/**
+ * Coordinator fix to finding 4: the row records `tree`, the working tree the agent reviewed (tracked and untracked,
+ * not ignored, .oss excluded), built in a temporary index so the real index is never touched.
+ */
+describe('captureVerdict: the reviewed tree', () => {
+  const VALID_BLOCK = block({ verdict: 'pass', findings: COUNTS });
+
+  function treeOfCommitted(): string {
+    git('add', '-A', '--', '.', ':(exclude).oss');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'snap');
+    return git('rev-parse', 'HEAD^{tree}');
+  }
+
+  it('records the tree of uncommitted and untracked changes, leaving the real index untouched', () => {
+    fs.writeFileSync(path.join(repo, 'tracked.txt'), 'one\n');
+    git('add', 'tracked.txt');
+    fs.writeFileSync(path.join(repo, 'tracked.txt'), 'one, edited\n');
+    fs.writeFileSync(path.join(repo, 'untracked.txt'), 'new\n');
+    fs.writeFileSync(path.join(repo, '.oss', 'dev', 'active', FEATURE, 'notes.md'), 'dev docs\n');
+    const indexBefore = git('ls-files', '-s');
+    const stagedBefore = git('diff', '--cached', '--name-status');
+
+    expect(capture({ last_assistant_message: VALID_BLOCK }).captured).toBe(true);
+    const tree = rows()[0].tree;
+
+    expect(git('ls-files', '-s')).toBe(indexBefore);
+    expect(git('diff', '--cached', '--name-status')).toBe(stagedBefore);
+    const trackedTree = rows()[0].trackedTree;
+    expect(tree).toBe(treeOfCommitted());
+    // trackedTree: tracked files only (git add -u), so the untracked file is not in it, the edit is
+    git('rm', '-q', '--cached', 'untracked.txt');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'tracked only');
+    expect(trackedTree).toBe(git('rev-parse', 'HEAD^{tree}'));
+  });
+
+  it('a hook git cannot read the repo still records the row, with an empty tree that never counts', () => {
+    fs.rmSync(path.join(repo, '.git', 'index'), { force: true });
+    fs.writeFileSync(path.join(repo, '.git', 'index'), 'not an index');
+    expect(capture({ last_assistant_message: VALID_BLOCK }).captured).toBe(true);
+    expect(rows()[0].tree).toBe('');
+    expect(rows()[0].trackedTree).toBe('');
+  });
+
+  it('a review-agent stop records its tree within a loose 1.5 s budget on a 2,000-file repo', () => {
+    fs.mkdirSync(path.join(repo, 'src'));
+    for (let i = 0; i < 2000; i++) fs.writeFileSync(path.join(repo, 'src', `f${i}.ts`), `export const v${i} = ${i};\n`);
+    git('add', '-A');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'many');
+    fs.writeFileSync(path.join(repo, 'src', 'f1.ts'), 'edited\n');
+    const t0 = performance.now();
+    expect(capture({ last_assistant_message: VALID_BLOCK }).captured).toBe(true);
+    const ms = performance.now() - t0;
+    console.log(`capture cost, 2,000-file repo with one edit: ${ms.toFixed(0)} ms`);
+    expect(ms).toBeLessThan(1500);
+    expect(rows()[0].tree).toMatch(/^[0-9a-f]{40}$/);
+    expect(rows()[0].trackedTree).toMatch(/^[0-9a-f]{40}$/);
+  });
+});
+
 describe('captureVerdict: what records nothing', () => {
   const cases: Array<[string, Record<string, unknown>, string]> = [
     ['no block', { last_assistant_message: 'All good, no issues.' }, 'no_block'],
@@ -218,6 +320,19 @@ describe('captureVerdict: what records nothing', () => {
     }, 'invalid_block'],
     ['an agent that is not a review agent', {
       agent_type: 'oss:typescript-pro', last_assistant_message: block({ verdict: 'pass', findings: COUNTS }),
+    }, 'not_review_agent'],
+    // Finding 5: a project agent (.claude/agents, no plugin prefix) or another plugin's agent named like a reviewer.
+    ['a bare reviewer name (a project agent)', {
+      agent_type: 'security-auditor', last_assistant_message: block({ verdict: 'pass', findings: COUNTS }),
+    }, 'not_review_agent'],
+    ['another plugin prefix', {
+      agent_type: 'evil:code-reviewer', last_assistant_message: block({ verdict: 'pass', findings: COUNTS }),
+    }, 'not_review_agent'],
+    ['a nested prefix', {
+      agent_type: 'x:oss:code-reviewer', last_assistant_message: block({ verdict: 'pass', findings: COUNTS }),
+    }, 'not_review_agent'],
+    ['a different case', {
+      agent_type: 'oss:Code-Reviewer', last_assistant_message: block({ verdict: 'pass', findings: COUNTS }),
     }, 'not_review_agent'],
     ['no agent_type', {
       agent_type: undefined, last_assistant_message: block({ verdict: 'pass', findings: COUNTS }),

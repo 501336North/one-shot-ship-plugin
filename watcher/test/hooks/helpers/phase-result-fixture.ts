@@ -14,6 +14,20 @@ export function recordNodePath(home: string): void {
   fs.writeFileSync(path.join(home, '.oss', 'node-path'), `${fs.realpathSync(process.execPath)}\n`);
 }
 
+/**
+ * The gate's code location as session-start installs it (R-257 D25): `~/.oss/plugin-root` naming `pluginRoot`, mode
+ * 600, and `~/.oss/hooks/oss-node.sh`. The phase gate takes CLAUDE_PLUGIN_ROOT only when it is that folder (or under
+ * ~/.claude/plugins) and sources oss-node.sh only from ~/.oss/hooks.
+ */
+export function installGateCode(home: string, pluginRoot: string): void {
+  const hooks = path.join(home, '.oss', 'hooks');
+  fs.mkdirSync(hooks, { recursive: true });
+  const rootFile = path.join(home, '.oss', 'plugin-root');
+  fs.writeFileSync(rootFile, `${pluginRoot}\n`, { mode: 0o600 });
+  fs.chmodSync(rootFile, 0o600);
+  fs.copyFileSync(path.join(PLUGIN_ROOT, 'hooks', 'oss-node.sh'), path.join(hooks, 'oss-node.sh'));
+}
+
 /** `dir` becomes a git repo with one commit, on feat/<feature>/<phase>, holding that feature's dev-docs folder. */
 export function makeFeatureRepo(dir: string, feature: string, phase: 'build' | 'ship'): void {
   const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
@@ -36,7 +50,7 @@ const RUN_FIXTURE = [
 
 /**
  * Assemble a valid `phase` result in `repo`, run with `env` (the same HOME, plugin root and session the
- * hook under test will see). By default the fixture starts the phase itself; `alreadyStarted` skips that.
+ * hook under test will see), after installing the gate's code location for that HOME and plugin root (installGateCode). By default the fixture starts the phase itself; `alreadyStarted` skips that.
  */
 export function assemblePhaseResult(
   phase: 'build' | 'ship',
@@ -44,6 +58,7 @@ export function assemblePhaseResult(
   env: NodeJS.ProcessEnv,
   alreadyStarted = false,
 ): void {
+  if (env.HOME !== undefined && env.CLAUDE_PLUGIN_ROOT !== undefined) installGateCode(env.HOME, env.CLAUDE_PLUGIN_ROOT);
   execFileSync('/bin/bash', ['-c', RUN_FIXTURE, 'prf', phase, alreadyStarted ? 'started' : 'fresh'], {
     env: { ...env, ROOT: PLUGIN_ROOT, SH: '/bin/bash', PRF_REPO: repo },
     stdio: ['ignore', 'ignore', 'pipe'],

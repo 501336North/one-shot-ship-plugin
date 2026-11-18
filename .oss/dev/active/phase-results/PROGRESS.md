@@ -54,6 +54,37 @@
 - [x] T30: setup for four more hook tests broken by T10/T26, found by the final sweep (notify-timeline, oss-archive-check, oss-notify-bounded-group, oss-notify-complete-bounds) (completed 2026-11-18)
 - [-] T20: recorder hash chain, MOVED to an R-266 follow-up card by D23 (user pick); D15's "repo-file" label stays
 
+- [x] Ship round 1 fixes (all 4 gates failed; D25-D30, user picks 2026-11-18) (completed 2026-11-18)
+  - A, gate code (D25):
+    - plugin-root and ~/.oss/watcher are protected;
+    - CLAUDE_PLUGIN_ROOT is trusted only for the installed plugin;
+    - oss-node.sh comes only from ~/.oss/hooks, and session start now copies it there;
+    - git and jq come from fixed paths;
+    - the D17 legacy bypass is closed;
+    - run rows record their feature;
+    - the D26 notice.
+  - B, Stop:
+    - the subject is the same session and feature, plus D30;
+    - the nested repo is checked through CLAUDE_PROJECT_DIR;
+    - the fast path checks markers and the hash;
+    - the .oss check comes first;
+    - git is bounded;
+    - the notifier runs in the background;
+    - lastRow reads the tail only;
+    - a large ledger fails open.
+  - C, ship evidence:
+    - unverified markers are cleared after an assemble;
+    - D26 gateEvidence;
+    - D27 LOW+;
+    - verdicts are bound to the reviewed tree (tree, plus trackedTree for untracked leftovers);
+    - a re-roll can't erase a fail;
+    - only the exact oss: agent types count;
+    - the block parser is linear;
+    - base must exist on origin;
+    - archive uses the feature's latest ship;
+    - writeResult re-checks before the rename.
+  - D, API: D29 archives nothing on old plugins; verdict-block wording for D27; manifest at 138.
+
 ### Later
 - [ ] Ship into feat/determinism-sprint/build (SD-1)
 - [ ] T21 oss-lab (after the plugin ships)
@@ -61,4 +92,4 @@
 ## Blockers
 - None. R-266's 4 red base tests are fixed in #233 (4458bddb), and R-257 is rebased onto it.
 
-## Last Updated: 2026-11-18 11:05 CST by /oss:build (T30, final sweep)
+## Last Updated: 2026-11-18 14:33 CST by /oss:ship (round 1 fixes)

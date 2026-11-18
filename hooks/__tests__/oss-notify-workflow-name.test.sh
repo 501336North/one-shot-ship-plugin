@@ -69,6 +69,10 @@ sandbox_result() { # <phase>: sandbox plus a git repo on feat/wn-feature/build a
     printf '#!/bin/bash\necho "$*" >> "%s"\nexec "%s" "$@"\n' "$T/node.calls" "$REAL_NODE" > "$T/bin/node"
     cp "$ROOT/hooks/oss-node.sh" "$T/plugin/hooks/oss-node.sh"
     printf '%s\n' "$RECORDED_NODE" > "$T/home/.oss/node-path"
+    # D25: CLAUDE_PLUGIN_ROOT counts only as the plugin ~/.oss/plugin-root names (mode 600, as session-start writes it),
+    # and oss-node.sh comes only from ~/.oss/hooks
+    printf '%s\n' "$T/plugin" > "$T/home/.oss/plugin-root"; chmod 600 "$T/home/.oss/plugin-root"
+    mkdir -p "$T/home/.oss/hooks"; cp "$ROOT/hooks/oss-node.sh" "$T/home/.oss/hooks/oss-node.sh"
     mkdir -p "$T/repo"; PRF_REPO="$T/repo"
     ( cd "$T/repo" && git init -q -b main && git config user.email t@example.invalid && git config user.name t \
         && git commit -q --allow-empty -m base && git checkout -q -b feat/wn-feature/build \

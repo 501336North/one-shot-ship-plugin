@@ -31,11 +31,17 @@ sandbox() {
     mkdir -p "$T/home/.oss" "$T/repo"
     chmod 700 "$T/home/.oss"
     printf '%s\n' "$RECORDED_NODE" > "$T/home/.oss/node-path"
+    plugin_root "$ROOT"
+    # D25 e: the recorded node is read only through the protected ~/.oss/hooks copy of oss-node.sh.
+    mkdir -p "$T/home/.oss/hooks" && cp "$ROOT/hooks/oss-node.sh" "$T/home/.oss/hooks/oss-node.sh"
     ( cd "$T/repo" && git init -q -b main && git config user.email t@example.invalid && git config user.name t \
         && echo base > base.txt && git add base.txt && git commit -q -m base \
         && git checkout -q -b "feat/$FEATURE/ship" && mkdir -p ".oss/dev/active/$FEATURE" )
 }
 cleanup() { rm -rf "$T"; }
+# plugin_root <dir>: names the plugin in ~/.oss/plugin-root as session-start writes it (mode 600, one absolute line).
+#   D25: the hook trusts only this file or ~/.claude/plugins, never a caller's CLAUDE_PLUGIN_ROOT or its own folder.
+plugin_root() { printf '%s\n' "$1" > "$T/home/.oss/plugin-root"; chmod 600 "$T/home/.oss/plugin-root"; }
 rows_file() { # -> the ledger verdicts file of the feature (NOTES "Ledger (D14, T3b)")
     local top gd key
     top=$(cd "$T/repo" && git rev-parse --show-toplevel); gd=$(cd "$top" && git rev-parse --absolute-git-dir)
@@ -56,6 +62,7 @@ sandbox_plugin() {
     mkdir -p "$T/plugin/hooks" "$T/plugin/watcher/dist/cli"
     cp "$ROOT/hooks/oss-node.sh" "$ROOT/hooks/oss-phase-result.sh" "$T/plugin/hooks/"
     printf '%s\n' "$1" > "$T/plugin/watcher/dist/cli/verdict-capture.cjs"
+    plugin_root "$T/plugin"
 }
 
 # 1. A review agent with a valid block: one row with the gate from agent_type; exit 0, nothing printed.
@@ -68,10 +75,12 @@ if [[ $RC -eq 0 && -z "$OUT" && -f "$f" ]] \
 else fail "review agent with a block: one ledger row, gate from agent_type, exit 0, no output" "rc=$RC out=$OUT rows=$(cat "$f" 2>/dev/null)"; fi
 cleanup
 
+# ⚠ changes existing test: finding 5 (round 1 security) — only the exact oss: review agent types record or start
+#   node, so the cases below that need the CLI to run name "oss:code-reviewer" instead of the bare name.
 # 2. The transcript route: no last_assistant_message, the final assistant entry of agent_transcript_path.
 sandbox
 printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"%s"}]}}\n' "Done.\n\n$BLOCK" > "$T/agent.jsonl"
-capture < <(printf '{"session_id":"s1","cwd":"%s","hook_event_name":"SubagentStop","agent_id":"a2","agent_type":"code-reviewer","agent_transcript_path":"%s"}' "$T/repo" "$T/agent.jsonl")
+capture < <(printf '{"session_id":"s1","cwd":"%s","hook_event_name":"SubagentStop","agent_id":"a2","agent_type":"oss:code-reviewer","agent_transcript_path":"%s"}' "$T/repo" "$T/agent.jsonl")
 f=$(rows_file)
 if [[ $RC -eq 0 && -z "$OUT" ]] && jq -e -s 'length == 1 and .[0].gate == "code-review"' "$f" >/dev/null 2>&1; then
     pass "transcript route: row written, exit 0, no output"
@@ -84,8 +93,8 @@ f=$(rows_file)
 for c in other noblock malformed garbage empty; do
     case "$c" in
         other) capture < <(input "oss:typescript-pro" "Done.\n\n$BLOCK") ;;
-        noblock) capture < <(input "code-reviewer" "All good.") ;;
-        malformed) capture < <(input "code-reviewer" '```oss-verdict\n{\"verdict\":\n```') ;;
+        noblock) capture < <(input "oss:code-reviewer" "All good.") ;;
+        malformed) capture < <(input "oss:code-reviewer" '```oss-verdict\n{\"verdict\":\n```') ;;
         garbage) capture < <(printf 'not json "agent_type":"code-reviewer"') ;;
         empty) capture < /dev/null ;;
     esac
@@ -97,7 +106,7 @@ cleanup
 # 4. No usable recorded node (D21): nothing runs, exit 0, no output.
 sandbox
 printf '/nonexistent/node\n' > "$T/home/.oss/node-path"
-capture < <(input "code-reviewer" "$BLOCK")
+capture < <(input "oss:code-reviewer" "$BLOCK")
 f=$(rows_file)
 if [[ $RC -eq 0 && -z "$OUT" && ! -e "$f" ]]; then pass "no recorded node: no row, exit 0, no output"
 else fail "no recorded node: no row, exit 0, no output" "rc=$RC out=$OUT"; fi
@@ -106,7 +115,7 @@ cleanup
 # 5. A capture CLI that prints and crashes: its stdout never reaches Claude Code; exit 0.
 sandbox
 sandbox_plugin 'process.stdout.write("{\"decision\":\"block\",\"reason\":\"x\"}\n"); process.exit(3)'
-capture CLAUDE_PLUGIN_ROOT="$T/plugin" < <(input "code-reviewer" "$BLOCK")
+capture CLAUDE_PLUGIN_ROOT="$T/plugin" < <(input "oss:code-reviewer" "$BLOCK")
 if [[ $RC -eq 0 && -z "$OUT" ]]; then pass "crashing CLI that prints: exit 0, no output"
 else fail "crashing CLI that prints: exit 0, no output" "rc=$RC out=$OUT"; fi
 cleanup
@@ -115,7 +124,7 @@ cleanup
 sandbox
 sandbox_plugin 'setInterval(() => {}, 1000)'
 start=$(date +%s)
-capture CLAUDE_PLUGIN_ROOT="$T/plugin" < <(input "code-reviewer" "$BLOCK")
+capture CLAUDE_PLUGIN_ROOT="$T/plugin" < <(input "oss:code-reviewer" "$BLOCK")
 took=$(( $(date +%s) - start ))
 if [[ $RC -eq 0 && -z "$OUT" && $took -lt 9 ]]; then pass "hanging CLI: bounded (${took}s), exit 0, no output"
 else fail "hanging CLI: bounded, exit 0, no output" "rc=$RC out=$OUT took=${took}s"; fi
@@ -127,6 +136,25 @@ sandbox_plugin 'require("fs").writeFileSync(process.env.HOME + "/../cli.calls", 
 capture CLAUDE_PLUGIN_ROOT="$T/plugin" < <(input "oss:typescript-pro" "$BLOCK")
 if [[ $RC -eq 0 && -z "$OUT" && ! -e "$T/cli.calls" ]]; then pass "non-review agent: the CLI never starts"
 else fail "non-review agent: the CLI never starts" "rc=$RC out=$OUT calls=$(cat "$T/cli.calls" 2>/dev/null)"; fi
+cleanup
+
+# 8. Finding 5: a bare reviewer name (a project agent in .claude/agents), another plugin's prefix, a nested prefix or
+#    another case never starts node.
+for t in "security-auditor" "evil:code-reviewer" "x:oss:code-reviewer" "OSS:code-reviewer"; do
+    sandbox
+    sandbox_plugin 'require("fs").writeFileSync(process.env.HOME + "/../cli.calls", "ran\n")'
+    capture CLAUDE_PLUGIN_ROOT="$T/plugin" < <(input "$t" "$BLOCK")
+    if [[ $RC -eq 0 && -z "$OUT" && ! -e "$T/cli.calls" ]]; then pass "agent_type $t: the CLI never starts"
+    else fail "agent_type $t: the CLI never starts" "rc=$RC out=$OUT calls=$(cat "$T/cli.calls" 2>/dev/null)"; fi
+    cleanup
+done
+
+# 9. The exact oss: review agent does start the CLI (the fast path lets it through).
+sandbox
+sandbox_plugin 'require("fs").writeFileSync(process.env.HOME + "/../cli.calls", "ran\n")'
+capture CLAUDE_PLUGIN_ROOT="$T/plugin" < <(input "oss:penetration-tester" "$BLOCK")
+if [[ $RC -eq 0 && -z "$OUT" && -e "$T/cli.calls" ]]; then pass "agent_type oss:penetration-tester: the CLI starts"
+else fail "agent_type oss:penetration-tester: the CLI starts" "rc=$RC out=$OUT"; fi
 cleanup
 
 echo "Results: $((RUN-FAILED))/$RUN passed, $FAILED failed"

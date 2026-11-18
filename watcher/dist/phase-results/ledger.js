@@ -16,17 +16,35 @@ export class LedgerError extends Error {
         this.code = code;
     }
 }
+/** A run row with every field a string; null otherwise (a row from before `feature` was recorded, for one). */
+export function parseRunRow(row) {
+    if (row === null)
+        return null;
+    const { startedAt, session, headSha, feature } = row;
+    if (typeof startedAt !== 'string' || typeof session !== 'string' || typeof feature !== 'string')
+        return null;
+    return { startedAt, session, headSha: typeof headSha === 'string' ? headSha : '', feature };
+}
 const MAX_ROW_BYTES = 512;
 const SMALL_CAP = 1024 * 1024;
 const LARGE_CAP = 4 * 1024 * 1024;
 const SEGMENT = /^[A-Za-z0-9._-]+$/;
+/** lastRow reads this much of the file's end: rows are under MAX_ROW_BYTES, so the last row is always inside it. */
+const TAIL_BYTES = 4096;
+const GIT_TIMEOUT_MS = 2000;
 function gitOut(cwd, args) {
     const env = { ...process.env };
     for (const k of Object.keys(env))
         if (k.startsWith('GIT_'))
             delete env[k];
     try {
-        const out = execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+        const out = execFileSync('git', args, {
+            cwd,
+            env,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+            timeout: GIT_TIMEOUT_MS,
+        });
         const v = out.replace(/\n$/, '');
         return v === '' ? null : v;
     }
@@ -196,8 +214,29 @@ export function openLedger(cwd, opts = {}) {
         },
         readRows,
         lastRow(relPath) {
-            const rows = readRows(relPath);
-            return rows.length > 0 ? rows[rows.length - 1] : null;
+            const parts = splitRel(relPath);
+            if (!ensureDirs(parts.slice(0, -1), false))
+                return null;
+            const fd = openChecked(parts, fs.constants.O_RDONLY);
+            if (fd === null)
+                return null;
+            try {
+                const size = fs.fstatSync(fd).size;
+                const len = Math.min(size, TAIL_BYTES);
+                const buf = Buffer.alloc(len);
+                fs.readSync(fd, buf, 0, len, size - len);
+                const lines = buf.toString('utf8').split('\n');
+                // A tail that starts mid-file starts mid-row: its first line is never a whole row.
+                for (let i = lines.length - 1; i >= (len < size ? 1 : 0); i--) {
+                    const row = parseObject(lines[i]);
+                    if (row !== null)
+                        return row;
+                }
+                return null;
+            }
+            finally {
+                fs.closeSync(fd);
+            }
         },
         writeMarker(relPath, obj) {
             writeFile(splitRel(relPath), `${JSON.stringify(obj)}\n`, fs.constants.O_TRUNC);

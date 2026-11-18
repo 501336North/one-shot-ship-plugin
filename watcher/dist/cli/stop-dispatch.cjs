@@ -43,7 +43,13 @@ function gitEnv() {
 }
 function gitOut(cwd, args) {
   try {
-    const out = (0, import_node_child_process.execFileSync)("git", args, { cwd, env: gitEnv(), encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const out = (0, import_node_child_process.execFileSync)("git", args, {
+      cwd,
+      env: gitEnv(),
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2e3
+    }).trim();
     return out === "" ? null : out;
   } catch {
     return null;
@@ -90,15 +96,29 @@ var LedgerError = class extends Error {
     this.code = code;
   }
 };
+function parseRunRow(row) {
+  if (row === null) return null;
+  const { startedAt, session, headSha, feature } = row;
+  if (typeof startedAt !== "string" || typeof session !== "string" || typeof feature !== "string") return null;
+  return { startedAt, session, headSha: typeof headSha === "string" ? headSha : "", feature };
+}
 var MAX_ROW_BYTES = 512;
 var SMALL_CAP = 1024 * 1024;
 var LARGE_CAP = 4 * 1024 * 1024;
 var SEGMENT = /^[A-Za-z0-9._-]+$/;
+var TAIL_BYTES = 4096;
+var GIT_TIMEOUT_MS = 2e3;
 function gitOut2(cwd, args) {
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith("GIT_")) delete env[k];
   try {
-    const out = (0, import_node_child_process2.execFileSync)("git", args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const out = (0, import_node_child_process2.execFileSync)("git", args, {
+      cwd,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: GIT_TIMEOUT_MS
+    });
     const v = out.replace(/\n$/, "");
     return v === "" ? null : v;
   } catch {
@@ -240,8 +260,24 @@ function openLedger(cwd, opts = {}) {
     },
     readRows,
     lastRow(relPath) {
-      const rows = readRows(relPath);
-      return rows.length > 0 ? rows[rows.length - 1] : null;
+      const parts = splitRel(relPath);
+      if (!ensureDirs(parts.slice(0, -1), false)) return null;
+      const fd = openChecked(parts, fs2.constants.O_RDONLY);
+      if (fd === null) return null;
+      try {
+        const size = fs2.fstatSync(fd).size;
+        const len = Math.min(size, TAIL_BYTES);
+        const buf = Buffer.alloc(len);
+        fs2.readSync(fd, buf, 0, len, size - len);
+        const lines = buf.toString("utf8").split("\n");
+        for (let i = lines.length - 1; i >= (len < size ? 1 : 0); i--) {
+          const row = parseObject(lines[i]);
+          if (row !== null) return row;
+        }
+        return null;
+      } finally {
+        fs2.closeSync(fd);
+      }
     },
     writeMarker(relPath, obj) {
       writeFile(splitRel(relPath), `${JSON.stringify(obj)}
@@ -291,7 +327,8 @@ function resolveRepo(cwd) {
       cwd,
       env,
       encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"]
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2e3
     }).trim();
     return top === "" ? null : fs3.realpathSync(top);
   } catch {
@@ -641,6 +678,7 @@ var phaseResultMissing = {
     if (r.status === 0) return { kind: "allow" };
     if (r.status === 1) {
       const id = /^phase-result: \S+ \S+: ([a-z_]+)/m.exec(r.stderr)?.[1] ?? "refused";
+      if (id === "ledger_too_large") throw namedError(id);
       return blockFor(s.phase, id, PATH_PROBLEMS.includes(id));
     }
     throw namedError("cli_failed");
@@ -651,37 +689,64 @@ var phaseResultMissing = {
 var CHECKS = [phaseResultMissing];
 var DEFAULT_BUDGET_MS = 4e3;
 var CLASS_RE = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
-function isPathProblem(e) {
-  return e instanceof LedgerError || e instanceof Error && /^(unsafe_path|too_large|ledger_too_large)\b/.test(e.message);
-}
 function pathCode(e) {
   if (e instanceof LedgerError) return e.code;
   return e instanceof Error ? /^([a-z_]+)/.exec(e.message)?.[1] ?? "unsafe_path" : "unsafe_path";
 }
+function isPathProblem(e) {
+  const known = e instanceof LedgerError || e instanceof Error && /^(unsafe_path|too_large|ledger_too_large)\b/.test(e.message);
+  return known && pathCode(e) !== "ledger_too_large";
+}
 function errorClass(e) {
+  if (e instanceof LedgerError) return e.code;
   return e instanceof Error && CLASS_RE.test(e.name) ? e.name : "unknown";
 }
-function resolveSubject(cwd) {
-  const repo = resolveRepo(cwd);
-  if (repo === null) return { kind: "none" };
+var NO_FEATURE_DIR = "_no_feature";
+function resolveSubject(repo, sessionId) {
+  const feature = resolveFeature(repo);
   const ledger = openLedger(repo);
   let latest = null;
   for (const phase of PHASES) {
-    const startedAt = ledger.lastRow(`run/${phase}`)?.startedAt;
-    if (typeof startedAt === "string" && (latest === null || startedAt > latest.startedAt)) latest = { phase, startedAt };
+    const run = parseRunRow(ledger.lastRow(`run/${phase}`));
+    if (run === null || run.session !== sessionId || run.feature !== "" && run.feature !== feature) continue;
+    if (latest === null || run.startedAt > latest.startedAt) latest = { phase, startedAt: run.startedAt };
   }
   if (latest === null) return { kind: "none" };
-  const feature = resolveFeature(repo);
-  if (feature === null) return { kind: "block", outcome: blockFor(latest.phase, "no_feature", false) };
+  if (feature === null) return { kind: "unfiled", ledger, phase: latest.phase };
   const bound = ledger.lastRow(`results/${feature}/${latest.phase}`)?.startedAt === latest.startedAt;
   return { kind: "subject", subject: { repo, feature, ledger, bound, ...latest } };
+}
+function unfiled(ledger, phase, sessionId) {
+  try {
+    ledger.writeMarker(`unverified/${NO_FEATURE_DIR}/${phase}`, {
+      check: "stop-dispatch",
+      errorClass: "no_feature",
+      at: (/* @__PURE__ */ new Date()).toISOString(),
+      session: sessionId
+    });
+  } catch {
+  }
+  return {
+    systemMessage: `OSS: the ${phase} phase started in this session has no feature folder to check its result against (no_feature). ${phase} is marked unverified; once its feature folder exists, run oss-phase-result.sh assemble ${phase}.`
+  };
+}
+function ledgerBlock(code) {
+  return {
+    kind: "block",
+    reason: `OSS: the stop check could not read this repo's run ledger under ~/.oss/ledger (${code}): a linked, special or oversized file. Remove that file before stopping.`,
+    systemMessage: `OSS: run ledger refused (${code}): a linked, special or oversized file`
+  };
 }
 function toOutput(o) {
   if (o.kind === "allow") return null;
   return o.systemMessage === void 0 ? { decision: "block", reason: o.reason } : { decision: "block", reason: o.reason, systemMessage: o.systemMessage };
 }
-function phaseName(ctx) {
-  return ctx.subject?.phase ?? "current";
+function forPhase(ctx) {
+  return ctx.subject === null ? "" : ` for the ${ctx.subject.phase} phase`;
+}
+function remedy(ctx) {
+  const s = ctx.subject;
+  return s === null ? "" : ` ${s.phase} is marked unverified and will not pass until you run oss-phase-result.sh assemble ${s.phase}.`;
 }
 function recordUnverified(ctx, check, cls) {
   const s = ctx.subject;
@@ -705,7 +770,6 @@ function recordUnverified(ctx, check, cls) {
 }
 async function failOpen(ctx, check, cls) {
   const s = ctx.subject;
-  const phase = phaseName(ctx);
   if (s !== null && !ctx.input.stopHookActive && ctx.input.sessionId !== "") {
     let prev = null;
     try {
@@ -716,8 +780,8 @@ async function failOpen(ctx, check, cls) {
     if (prev?.session === ctx.input.sessionId) {
       return {
         decision: "block",
-        reason: `OSS: the ${check} stop check failed again for the ${phase} phase in this session (${cls}). Run ~/.oss/hooks/oss-phase-result.sh assemble ${phase} before stopping.`,
-        systemMessage: `OSS: ${check} failed twice for ${phase} (${cls}); the stop is blocked`
+        reason: `OSS: the ${check} stop check failed again for the ${s.phase} phase in this session (${cls}). Run ~/.oss/hooks/oss-phase-result.sh assemble ${s.phase} before stopping.`,
+        systemMessage: `OSS: ${check} failed twice for ${s.phase} (${cls}); the stop is blocked`
       };
     }
   }
@@ -734,38 +798,37 @@ async function failOpen(ctx, check, cls) {
     }
   }
   return {
-    systemMessage: `OSS: the ${check} stop check could not run for the ${phase} phase (${cls}). ${phase} is marked unverified and will not pass until you run oss-phase-result.sh assemble ${phase}.`
+    systemMessage: `OSS: the ${check} stop check could not run${forPhase(ctx)} (${cls}).${remedy(ctx)}`
   };
 }
 function loopGuard(ctx, check) {
   recordUnverified(ctx, check, "loop_guard");
-  const phase = phaseName(ctx);
   return {
-    systemMessage: `OSS: stop allowed by the loop guard while the ${phase} phase has no valid result (${check}). ${phase} is marked unverified; run oss-phase-result.sh assemble ${phase}.`
+    systemMessage: `OSS: stop allowed by the loop guard without a valid result${forPhase(ctx)} (${check}).${remedy(ctx)}`
   };
 }
 function blockOrGuard(ctx, check, outcome) {
   return ctx.input.stopHookActive ? loopGuard(ctx, check) : toOutput(outcome);
 }
-async function dispatch(input, opts) {
+async function dispatchRepo(repo, input, opts) {
   const checks = opts.checks ?? CHECKS;
   const budget = opts.checkBudgetMs ?? DEFAULT_BUDGET_MS;
   const ctx = { input, subject: null, phaseResultCli: opts.phaseResultCli };
+  let allowed = null;
   try {
-    const r = resolveSubject(input.cwd);
-    if (r.kind === "block") return blockOrGuard(ctx, "stop-dispatch", r.outcome);
-    if (r.kind === "subject") {
-      ctx.subject = r.subject;
-      if (!r.subject.bound) {
-        r.subject.ledger.writeMarker(`pending/${r.subject.feature}/${r.subject.phase}`, {
-          check: "stop-dispatch",
-          at: (/* @__PURE__ */ new Date()).toISOString()
-        });
-      }
+    const r = resolveSubject(repo, input.sessionId);
+    if (r.kind === "unfiled") allowed = unfiled(r.ledger, r.phase, input.sessionId);
+    if (r.kind === "subject") ctx.subject = r.subject;
+    if (ctx.subject !== null && !ctx.subject.bound) {
+      ctx.subject.ledger.writeMarker(`pending/${ctx.subject.feature}/${ctx.subject.phase}`, {
+        check: "stop-dispatch",
+        at: (/* @__PURE__ */ new Date()).toISOString()
+      });
     }
   } catch (e) {
     if (!isPathProblem(e)) return failOpen(ctx, "stop-dispatch", errorClass(e));
-    return blockOrGuard(ctx, "stop-dispatch", blockFor(phaseName(ctx), pathCode(e), true));
+    const s = ctx.subject;
+    return blockOrGuard(ctx, "stop-dispatch", s === null ? ledgerBlock(pathCode(e)) : blockFor(s.phase, pathCode(e), true));
   }
   for (const check of checks) {
     const t0 = Date.now();
@@ -774,12 +837,26 @@ async function dispatch(input, opts) {
       outcome = check.run(ctx);
     } catch (e) {
       if (!isPathProblem(e)) return failOpen(ctx, check.id, errorClass(e));
-      outcome = blockFor(phaseName(ctx), pathCode(e), true);
+      outcome = ctx.subject === null ? ledgerBlock(pathCode(e)) : blockFor(ctx.subject.phase, pathCode(e), true);
     }
     if (Date.now() - t0 > budget) return failOpen(ctx, check.id, "timeout");
     if (outcome.kind === "block") return blockOrGuard(ctx, check.id, outcome);
   }
-  return null;
+  return allowed;
+}
+async function dispatch(input, opts) {
+  const repos = [];
+  for (const dir of [input.cwd, input.projectDir]) {
+    const repo = dir === void 0 || dir === "" ? null : resolveRepo(dir);
+    if (repo !== null && !repos.includes(repo)) repos.push(repo);
+  }
+  let first = null;
+  for (const repo of repos) {
+    const out = await dispatchRepo(repo, input, opts);
+    if (out?.decision === "block") return out;
+    first ??= out;
+  }
+  return first;
 }
 
 // src/cli/stop-dispatch.ts
@@ -789,16 +866,16 @@ function parse(argv) {
   const cwd = m.get("--cwd");
   const active = m.get("--stop-hook-active");
   if (cwd === void 0 || active !== "true" && active !== "false") return null;
-  return { cwd, session: m.get("--session") ?? "", active: active === "true" };
+  return { cwd, projectDir: m.get("--project-dir"), session: m.get("--session") ?? "", active: active === "true" };
 }
 async function main(argv) {
   const a = parse(argv);
   if (a === null) {
-    process.stderr.write("usage: stop-dispatch --cwd <dir> --session <id> --stop-hook-active <true|false>\n");
+    process.stderr.write("usage: stop-dispatch --cwd <dir> [--project-dir <dir>] --session <id> --stop-hook-active <true|false>\n");
     return 2;
   }
   const phaseResultCli = path7.join(path7.dirname(fs5.realpathSync(process.argv[1] ?? "")), "phase-result.cjs");
-  const out = await dispatch({ cwd: a.cwd, sessionId: a.session, stopHookActive: a.active }, { phaseResultCli });
+  const out = await dispatch({ cwd: a.cwd, projectDir: a.projectDir, sessionId: a.session, stopHookActive: a.active }, { phaseResultCli });
   if (out !== null) process.stdout.write(`${JSON.stringify(out)}
 `);
   return 0;
