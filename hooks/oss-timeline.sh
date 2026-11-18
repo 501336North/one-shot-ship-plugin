@@ -282,8 +282,8 @@ _oss_tl_ob_ok() { oss_single_link "$1" && { [[ ! -e "$1" ]] || test -O "$1"; }; 
 # (whichever runs first wins the race the other loses), and the parent exits at once. With no perl, bash's job
 # control (`set -m`, in a subshell) does the same: it calls setpgid in both the parent and the job.
 _oss_tl_push_bg() {
-    if command -v perl >/dev/null 2>&1; then
-        perl -e 'my $p = fork; exit 1 unless defined $p;
+    if [[ -x /usr/bin/perl ]]; then
+        /usr/bin/perl -e 'my $p = fork; exit 1 unless defined $p;
             if (!$p) { setpgrp(0, 0); exec { $ARGV[0] } @ARGV; exit 127 }
             setpgrp($p, $p); setpgrp(0, 0)' "$SCRIPT_DIR/oss-timeline.sh" push </dev/null >/dev/null 2>&1
     else

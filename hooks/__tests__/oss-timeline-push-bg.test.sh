@@ -46,21 +46,13 @@ API="$T/api-fake"; fake_api_install "$API"
 export PATH="$API/bin:$PATH"
 printf '{"apiKey":"%s","apiUrl":"http://127.0.0.1:9"}\n' 'fake-oss-key-timeline-push-bg-0042' > "$HOME/.oss/config.json"
 
-# path_without <dir> <name>...: a folder of links to every tool on this PATH except those names, first one wins
-path_without() {
-    local out=$1 dir f n; shift
-    mkdir -p "$out"
-    IFS=: read -r -a dirs <<< "$PATH"
-    for dir in "${dirs[@]}"; do
-        for f in "$dir"/*; do
-            n=${f##*/}
-            [[ " $* " == *" $n "* || -e "$out/$n" || ! -x "$f" || -d "$f" ]] || ln -s "$f" "$out/$n"
-        done
-    done
-}
-path_without "$T/noperl" perl
-WITH_PERL="$PATH"
-NO_PERL="$T/noperl"
+# A machine with no perl: a sandbox COPY of the hooks in which oss-timeline.sh names a perl that does not exist
+# (the hook runs /usr/bin/perl by absolute path, never a perl found on PATH, so PATH cannot hide it).
+NOPERL=/nonexistent-oss-t/bin/perl
+mkdir -p "$T/fallback"; cp "$ROOT"/hooks/*.sh "$T/fallback/"
+sed "s#/usr/bin/perl#$NOPERL#g" "$ROOT/hooks/oss-timeline.sh" > "$T/fallback/oss-timeline.sh"
+chmod 755 "$T/fallback/oss-timeline.sh"
+NOPERL_HOOK="$T/fallback/oss-timeline.sh"
 
 # the gate: loaded by every perl under the holder, it waits for the holder's snapshot (2 s at most)
 mkdir -p "$T/plib"
@@ -77,23 +69,23 @@ export CLAUDE_PROJECT_DIR="$P"
 TL="$P/.oss/dev/active/demo/timeline.ndjson"
 OB_DIR="$HOME/.oss/timeline-outbox"
 
-# hold <path>: one waiting line, then a holder group (run_capped puts its command in a group of its own) runs
-# `push --detach` with that PATH and snapshots every process (pgid pid command) the instant it returns.
+# hold: with the hook $H, one waiting line, then a holder group (run_capped puts its command in a group of its own)
+# runs `push --detach` and snapshots every process (pgid pid command) the instant it returns.
 # -> $T/snap, $T/holder (the holder's pid = its group)
 hold() {
     rm -rf "$API/api" "$OB_DIR" "$TL" "$T/snap" "$T/holder" "$T/released"; mkdir -p "$API/api"
-    (cd "$P" && run_capped 20 "$HOOK" command build start </dev/null >/dev/null 2>&1)
+    (cd "$P" && run_capped 20 "$H" command build start </dev/null >/dev/null 2>&1)
     (cd "$P" && FAKE_DELAY_TIMELINE=30 run_capped 30 /bin/bash -c '
         echo $$ > "$1/holder"
-        PATH="$3" PERL5LIB="$1/plib" PERL5OPT=-MOssTlGate OSS_T_GATE="$1/released" "$2" push --detach </dev/null >/dev/null 2>&1
+        PERL5LIB="$1/plib" PERL5OPT=-MOssTlGate OSS_T_GATE="$1/released" "$2" push --detach </dev/null >/dev/null 2>&1
         ps -A -o pgid=,pid=,command= > "$1/snap"
-        : > "$1/released"' _ "$T" "$HOOK" "$1" </dev/null >/dev/null 2>&1)
+        : > "$1/released"' _ "$T" "$H" </dev/null >/dev/null 2>&1)
     G=$(cat "$T/holder" 2>/dev/null)
 }
 # in_group: the push's processes (perl or the hook) still in the holder's group at the snapshot
-in_group() { awk -v g="$G" -v h="$HOOK" '$1 == g && $2 != g && (index($0, h) || index($0, "perl"))' "$T/snap"; }
+in_group() { awk -v g="$G" -v h="$H" '$1 == g && $2 != g && (index($0, h) || index($0, "perl"))' "$T/snap"; }
 # pushes: "pgid pid" of each process of the detached push at the snapshot
-pushes() { awk -v h="$HOOK push" 'index($0, h) && !index($0, "awk") { print $1, $2 }' "$T/snap"; }
+pushes() { awk -v h="$H push" 'index($0, h) && !index($0, "awk") { print $1, $2 }' "$T/snap"; }
 # own_group: every detached push process found is the leader of its own group, and there is at least one
 own_group() { local n=0 g p; while read -r g p; do n=$((n + 1)); [[ "$g" == "$p" ]] || return 1; done < <(pushes); [[ $n -gt 0 ]]; }
 # reap: kill the group of each push this test started (its pid from the snapshot, still running the hook)
@@ -101,14 +93,21 @@ reap() {
     local g p now
     while read -r g p; do
         now=$(ps -o pgid= -p "$p" 2>/dev/null | tr -d ' ')
-        ps -o command= -p "$p" 2>/dev/null | grep -qF "$HOOK" || continue
+        ps -o command= -p "$p" 2>/dev/null | grep -qF "$H" || continue
         if [[ "$now" == "$p" ]]; then kill -KILL -- "-$p" 2>/dev/null; else kill -KILL "$p" 2>/dev/null; fi
     done < <(pushes)
     rm -rf "$OB_DIR"
 }
 
+# the no-perl rows mean something only if the copy really has no perl to run
+name='setup: the no-perl copy of oss-timeline.sh names no /usr/bin/perl, only a perl that does not exist'
+[[ $(grep -c /usr/bin/perl "$NOPERL_HOOK") == 0 && $(grep -c "$NOPERL" "$NOPERL_HOOK") -gt 0 && ! -e "$NOPERL" \
+    && $(grep -c /usr/bin/perl "$ROOT/hooks/oss-timeline.sh") -gt 0 ]] && pass "$name" \
+    || fail "$name" "copy names /usr/bin/perl $(grep -c /usr/bin/perl "$NOPERL_HOOK") times, $NOPERL $(grep -c "$NOPERL" "$NOPERL_HOOK") times"
+
 for how in perl no-perl; do
-    if [[ $how == perl ]]; then hold "$WITH_PERL"; else hold "$NO_PERL"; fi
+    if [[ $how == perl ]]; then H="$HOOK"; else H="$NOPERL_HOOK"; fi
+    hold
     name="should leave nothing of the detached push in the caller's process group when push --detach returns ($how)"
     left=$(in_group)
     [[ -n "$G" && -s "$T/snap" && -z "$left" ]] && pass "$name" || fail "$name" "holder=$G still in its group: $(echo "$left" | cut -c1-160 | tr '\n' '|')"
