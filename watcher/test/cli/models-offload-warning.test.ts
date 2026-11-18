@@ -48,6 +48,10 @@ echo "  --resume                Resume a conversation"
  * so only a machine too busy to start a shell script in 3 s could hit the production limit (a flaky miss).
  */
 const PROBE_MS = 8000;
+/** SLOW_OLD's probe limit: its 4 s sleep plus a slow shell start on a busy machine (8 s was SIGKILLed under load). */
+const SLOW_PROBE_MS = 25_000;
+/** The child limit for a SLOW_OLD run: room for SLOW_PROBE_MS. */
+const SLOW_CHILD_MS = 30_000;
 
 const AGENT_MAPPED = { models: { agents: { 'oss:code-reviewer': 'ollama/qwen2.5-coder' } } };
 const DEFAULT_MAPPED = { models: { default: 'openrouter/deepseek/deepseek-chat' } };
@@ -66,6 +70,7 @@ function models(
   config: object,
   claude: string | null,
   probeMs: number | null = PROBE_MS,
+  childMs?: number,
 ): { out: string; ran: boolean } {
   const home = fs.mkdtempSync(path.join(work, 'h-'));
   fs.mkdirSync(path.join(home, '.oss'));
@@ -77,7 +82,7 @@ function models(
     `import { executeModelsCommand, setClaudeProbeTimeoutMs } from './cli/models.js';
      ${probeMs === null ? '' : `setClaudeProbeTimeoutMs(${probeMs});`}
      console.log(await executeModelsCommand([${JSON.stringify(sub)}]));`,
-    { home, env: { PATH: `${bin}:/usr/bin:/bin` } },
+    { home, env: { PATH: `${bin}:/usr/bin:/bin` }, limitMs: childMs },
   );
   expect(run.hung, 'the command hung').toBe(false);
   expect(run.status, run.stderr).toBe(0);
@@ -96,8 +101,8 @@ describe('/oss:models warns about a Claude Code too old for offload (Task 76b)',
   }, TEST_LIMIT_MS);
 
   it('warns when claude answers slower than 3 s but within the probe limit it was given', () => {
-    expect(count(models('config', AGENT_MAPPED, SLOW_OLD).out)).toBe(1);
-  }, TEST_LIMIT_MS);
+    expect(count(models('config', AGENT_MAPPED, SLOW_OLD, SLOW_PROBE_MS, SLOW_CHILD_MS).out)).toBe(1);
+  }, 45_000);
 
   it('does not warn when claude knows --restricted', () => {
     const r = models('config', AGENT_MAPPED, HELP_NEW);

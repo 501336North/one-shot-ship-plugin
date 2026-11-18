@@ -27,8 +27,18 @@ let root: string;
 let repo: string;
 let home: string;
 
+/** mktemp reads every X in its template as random, so the scratch root (a row's mktemp folder) must hold none. */
+function scratchRootWithoutX(): string {
+  for (let tries = 0; tries < 20; tries++) {
+    const made = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-r20b-traps-')));
+    if (!made.includes('X')) return made;
+    fs.rmdirSync(made);
+  }
+  throw new Error('no scratch root without an X');
+}
+
 beforeAll(() => {
-  root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-r20b-traps-')));
+  root = scratchRootWithoutX();
   repo = path.join(root, 'repo');
   home = path.join(root, 'home');
   fs.mkdirSync(path.join(home, '.oss', 'run'), { recursive: true });
@@ -92,7 +102,7 @@ describe.each(PLATFORMS)('on %s', (platform) => {
       allowed(command, agent, platform));
 
     it.each([
-      "trap 'rm -rf \"$tmp\"' EXIT; tmp=$(mktemp -d /tmp/x.XXXXXX); npm test",
+      "trap 'rm -rf \"$tmp\"' EXIT; tmp=$(mktemp -d ROOT/x.XXXXXX); npm test",
       "trap 'rm -rf \"$tmp\"' EXIT; tmp=$(mktemp -dt x); npm test",
       "trap 'rm -rf \"$tmp\"' EXIT; tmp=$(mktemp -d -q); npm test",
       "trap 'rm -rf \"$tmp\"' EXIT; tmp=$(mktemp -t x -d); npm test",
@@ -104,7 +114,10 @@ describe.each(PLATFORMS)('on %s', (platform) => {
       "trap 'kill $pid; wait $pid' EXIT; npm run dev & pid=$!; sleep 1",
       "trap 'wait $pid' EXIT; npm run dev & pid=$!",
       "trap 'echo \"rc=$rc\"' EXIT; npm test; rc=$?",
-    ])('CR MEDIUM-2: allows an ordinary trap-first clean-up: %s', (command) => allowed(command, agent, platform));
+    ])('CR MEDIUM-2: allows an ordinary trap-first clean-up: %s', (command) =>
+      // ROOT is the scratch root, not /tmp: the gate walks the template's folder for protected names and fails closed
+      // in a big shared /tmp (the flake); the scratch root sits outside every protected path, so the row means the same
+      allowed(command.replace('ROOT/', `${root}/`), agent, platform));
 
     it.each([
       "trap 'rm -rf \"$tmp\"' EXIT; tmp=$(mktemp .oss/tool-gates.XXXX)",

@@ -437,8 +437,7 @@ export function readCommand(
     cdpath: cdpath === undefined ? null : compactCdpath(cdpath.split(':')),
     cdpathSetUnseen: cdpathSetUnseen(cmd),
     tmpdirSet: /(^|[^$\w{])TMPDIR\b/.test(cmd),
-    // `$CLAUDE_PLUGIN_ROOT` is trusted only when nothing in the call could set it (a bare name, `${…:=…}`, eval)
-    trustedSources: { ...trustedSources, pluginRootVariable: trustedSources.pluginRootVariable && !PLUGIN_ROOT_SET.test(cmd) },
+    trustedSources: sourcesFor(cmd, trustedSources),
     raw: new WeakMap(),
     opaque: new WeakSet(),
     arrays: new Set(),
@@ -580,15 +579,21 @@ const PLUGIN_HOOK_WORD = /^(["']?)\$(?:CLAUDE_PLUGIN_ROOT|\{CLAUDE_PLUGIN_ROOT\}
  */
 function trustedSource(token: Token | undefined, reading: Reading): boolean {
   if (token === undefined || token.kind !== 'word') return false;
-  const word = token.value;
-  if (word.includes(UNKNOWN)) {
-    const raw = reading.raw.get(token);
-    return reading.trustedSources.pluginRootVariable && raw !== undefined && PLUGIN_HOOK_WORD.test(raw);
-  }
+  return trustedSourceWord(token.value, reading.raw.get(token), reading.home, reading.trustedSources);
+}
+
+/** `trustedSource` for a word read elsewhere: its value, the text it was read from, the call's home and trusted sources (as `sourcesFor` gives them). */
+export function trustedSourceWord(word: string, raw: string | undefined, home: string, trustedSources: TrustedSources): boolean {
+  if (word.includes(UNKNOWN)) return trustedSources.pluginRootVariable && raw !== undefined && PLUGIN_HOOK_WORD.test(raw);
   if (!(word.startsWith('/') || word.startsWith('~/')) || /[*?[]/.test(word) || word.split('/').some((p) => p === '.' || p === '..')) return false;
-  if (word.startsWith('~/') && reading.home === HOME_UNKNOWN) return false;
-  const file = expandTilde(word, reading.home);
-  return reading.trustedSources.folders.some((folder) => file.startsWith(`${folder}/`) && file.length > folder.length + 1);
+  if (word.startsWith('~/') && home === HOME_UNKNOWN) return false;
+  const file = expandTilde(word, home);
+  return trustedSources.folders.some((folder) => file.startsWith(`${folder}/`) && file.length > folder.length + 1);
+}
+
+/** The trusted sources for one call: `$CLAUDE_PLUGIN_ROOT` only when nothing in the call could set it (a bare name, `${…:=…}`, eval). */
+export function sourcesFor(cmd: string, trustedSources: TrustedSources): TrustedSources {
+  return { ...trustedSources, pluginRootVariable: trustedSources.pluginRootVariable && !PLUGIN_ROOT_SET.test(cmd) };
 }
 
 /** `dots`: the shell's patterns already match dot entries (the script runs where `dotglob` is on). */
