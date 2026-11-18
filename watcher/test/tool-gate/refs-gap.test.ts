@@ -84,11 +84,35 @@ const REFUSED = [
   'echo x | tee "$d/ORIG_HEAD"',
 ];
 
-const CONTROLS_ALLOWED = [`${REFS}echo > "$x/notes.txt"`, `${REFS}echo > "$x/mainline.txt"`];
+const REFUSED_GLOB_LOCK_SLASH = [
+  `${REFS}echo x > "$x"/mai?`,
+  `${REFS}tee "$x"/m[a]in`,
+  `${REFS}cp /tmp/a "$x"/mai*`,
+  `${REFS}ln -sf /tmp/a "$x"/ORIG_HEA?`,
+  `${REFS}echo x > "$x"/main.lock`,
+  `${REFS}echo x > "$x"/HEAD.lock`,
+  `${REFS}echo x > "$x"/packed-refs.lock`,
+  `${REFS}echo x > "$x"/main/`,
+  `${REFS}echo x > "$x"/HEAD/`,
+];
+
+const CONTROLS_ALLOWED = [
+  `${REFS}echo > "$x/notes.txt"`,
+  `${REFS}echo > "$x/mainline.txt"`,
+  `${REFS}echo x > "$x"/notes.txt`,
+  `${REFS}echo x > "$x"/mainline.txt`,
+  `${REFS}echo x > "$x"/*.txt`,
+  `${REFS}echo x > "$x"/m*.md`,
+  `${REFS}echo x > "$x"/*`,
+];
 const CONTROLS_REFUSED = ['echo > .git/refs/heads/feature'];
 
 describe.each(AGENTS)('refs gap: %s', (_label, agent) => {
   it.each(REFUSED)('should refuse a git ref or pointer file after an unknown part: %s', async (command) => {
+    await refused(command, agent);
+  });
+
+  it.each(REFUSED_GLOB_LOCK_SLASH)('should refuse a ref name written as a glob, with .lock or a trailing slash: %s', async (command) => {
     await refused(command, agent);
   });
 
