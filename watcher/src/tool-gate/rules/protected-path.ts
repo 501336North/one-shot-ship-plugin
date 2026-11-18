@@ -336,7 +336,8 @@ function lostPatternWrite(part: CommandPart, settings: GateSettings, places: Pla
  * rsync, `tar -C`, `unzip -d`), a target whose literal end could be a folder holding protected files
  * is refused too (`"$D"/.claude`, `mv "$X"/.oss …`: round 18, SEC MEDIUM-3; only the end, D-R18-2).
  * A target whose last part names a protected branch or a git pointer file (`"$x/main"`, `"$d/ORIG_HEAD"`)
- * is refused as well, since the unknown part could be `.git/refs/heads` or `.git` (hook-env-refs Task 3).
+ * is refused as well, since the unknown part could be `.git/refs/heads` or `.git` (hook-env-refs Task 3);
+ * so is a wildcard-only last part (`"$x"/*`, `"$x"/?*`), which matches every such name (Task 8).
  */
 function unknownWrite(part: CommandPart, settings: GateSettings, places: Places[], paths: PathResolver): Refusal | null {
   const substituted = part.substitutedWrites ?? [];
