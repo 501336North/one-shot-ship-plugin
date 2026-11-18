@@ -10,6 +10,7 @@ import { join } from 'path';
 import { getConfigDir } from './config.js';
 import { CacheService, validateType, validateName } from './cache.js';
 import { stripControl } from './strip-control.js';
+import { readCapped } from './capped-body.js';
 
 /**
  * Get cache directory path
@@ -87,41 +88,80 @@ async function fetchNoRedirect(
   }
 }
 
+/** How long a prompt fetch (request and body) may take before it gives up. */
+export const PROMPT_FETCH_TIMEOUT_MS = 30_000;
+
+/** Largest API response body read: 2 MiB, over 20x the largest live prompt as encrypted base64 JSON. */
+export const PROMPT_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * The JSON body, read with the PROMPT_MAX_BYTES cap. A larger body is refused. A response object without a
+ * body stream has nothing to cap and is parsed as it is.
+ */
+async function readJsonCapped(response: Response): Promise<unknown> {
+  if (!response.body) return response.json();
+  const text = await readCapped(response, PROMPT_MAX_BYTES);
+  if (text === null) {
+    throw new Error(`The API answer was larger than ${PROMPT_MAX_BYTES / (1024 * 1024)} MiB; refusing it.`);
+  }
+  return JSON.parse(text);
+}
+
+/** Run one API call (request and body) with a deadline; running out of time is reported as such. */
+async function withinTimeout<T>(timeoutMs: number, call: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const signal = AbortSignal.timeout(timeoutMs);
+  try {
+    return await call(signal);
+  } catch (err: unknown) {
+    if (signal.aborted) {
+      throw new Error(
+        `The API did not answer within ${Math.round(timeoutMs / 1000)} s; check your connection and run the command again.`
+      );
+    }
+    throw err;
+  }
+}
+
 /**
  * Fetch decryption credentials from the API
  *
  * @param apiKey - User's API key
  * @param apiUrl - Base API URL
  * @param hardwareId - Hardware ID to register
+ * @param timeoutMs - Give up after this long (PROMPT_FETCH_TIMEOUT_MS)
  * @returns Credentials including userId, salt, and hardwareId
- * @throws Error if authentication fails
+ * @throws Error if authentication fails, the API does not answer in time or answers more than PROMPT_MAX_BYTES
  */
 export async function fetchCredentials(
   apiKey: string,
   apiUrl: string,
-  hardwareId: string
+  hardwareId: string,
+  timeoutMs: number = PROMPT_FETCH_TIMEOUT_MS
 ): Promise<CredentialsResponse> {
   const url = `${apiUrl}/api/v1/auth/credentials?hardwareId=${encodeURIComponent(hardwareId)}`;
 
-  const response = await fetchNoRedirect(url, {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
+  return withinTimeout(timeoutMs, async (signal) => {
+    const response = await fetchNoRedirect(url, {
+      method: 'GET',
+      signal,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      // SECURITY: Check for cache clear directive on auth failures
+      await handleCacheClearDirective(response);
+
+      const error = (await readJsonCapped(response).catch(() => ({ error: 'Request failed' }))) as {
+        error?: string;
+      };
+      throw new Error(stripControl(error.error || 'Request failed'));
+    }
+
+    return (await readJsonCapped(response)) as CredentialsResponse;
   });
-
-  if (!response.ok) {
-    // SECURITY: Check for cache clear directive on auth failures
-    await handleCacheClearDirective(response);
-
-    const error = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
-      error?: string;
-    };
-    throw new Error(stripControl(error.error || 'Request failed'));
-  }
-
-  return response.json() as Promise<CredentialsResponse>;
 }
 
 /**
@@ -131,14 +171,27 @@ export async function fetchCredentials(
  * @param apiUrl - Base API URL
  * @param type - Prompt type (commands, workflows, skills, agents, hooks, custom)
  * @param name - Prompt name
+ * @param timeoutMs - Give up after this long (PROMPT_FETCH_TIMEOUT_MS)
  * @returns Encrypted prompt with iv and authTag
- * @throws Error if prompt not found or authentication fails
+ * @throws Error if prompt not found, authentication fails, the API does not answer in time or answers
+ *   more than PROMPT_MAX_BYTES
  */
 export async function fetchEncryptedPrompt(
   apiKey: string,
   apiUrl: string,
   type: 'commands' | 'workflows' | 'skills' | 'agents' | 'hooks' | 'custom',
-  name: string
+  name: string,
+  timeoutMs: number = PROMPT_FETCH_TIMEOUT_MS
+): Promise<EncryptedPromptResponse> {
+  return withinTimeout(timeoutMs, (signal) => fetchEncryptedPromptWithin(apiKey, apiUrl, type, name, signal));
+}
+
+async function fetchEncryptedPromptWithin(
+  apiKey: string,
+  apiUrl: string,
+  type: 'commands' | 'workflows' | 'skills' | 'agents' | 'hooks' | 'custom',
+  name: string,
+  signal: AbortSignal
 ): Promise<EncryptedPromptResponse> {
   validateType(type);
   validateName(name);
@@ -155,6 +208,7 @@ export async function fetchEncryptedPrompt(
 
   const response = await fetchNoRedirect(endpoint, {
     method: 'GET',
+    signal,
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
@@ -171,13 +225,13 @@ export async function fetchEncryptedPrompt(
     if (response.status === 401) {
       throw new Error('Unauthorized');
     }
-    const error = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
+    const error = (await readJsonCapped(response).catch(() => ({ error: 'Request failed' }))) as {
       error?: string;
     };
     throw new Error(stripControl(error.error || 'Request failed'));
   }
 
-  return response.json() as Promise<EncryptedPromptResponse>;
+  return (await readJsonCapped(response)) as EncryptedPromptResponse;
 }
 
 /**
@@ -189,40 +243,46 @@ export async function fetchEncryptedPrompt(
  * @param apiKey - User's API key
  * @param apiUrl - Base API URL
  * @param name - Custom command name
+ * @param timeoutMs - Give up after this long (PROMPT_FETCH_TIMEOUT_MS)
  * @returns Custom prompt with name, displayName, prompt content, and isBlocking flag
- * @throws Error if prompt not found or authentication fails
+ * @throws Error if prompt not found, authentication fails, the API does not answer in time or answers
+ *   more than PROMPT_MAX_BYTES
  */
 export async function fetchCustomPrompt(
   apiKey: string,
   apiUrl: string,
-  name: string
+  name: string,
+  timeoutMs: number = PROMPT_FETCH_TIMEOUT_MS
 ): Promise<CustomPromptResponse> {
   validateName(name);
   const endpoint = `${apiUrl}/api/v1/prompts/custom/${encodeURIComponent(name)}`;
 
-  const response = await fetchNoRedirect(endpoint, {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
+  return withinTimeout(timeoutMs, async (signal) => {
+    const response = await fetchNoRedirect(endpoint, {
+      method: 'GET',
+      signal,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      // SECURITY: Check for cache clear directive on any error (especially 401)
+      await handleCacheClearDirective(response);
+
+      if (response.status === 404) {
+        throw new Error('Prompt not found');
+      }
+      if (response.status === 401) {
+        throw new Error('Unauthorized');
+      }
+      const error = (await readJsonCapped(response).catch(() => ({ error: 'Request failed' }))) as {
+        error?: string;
+      };
+      throw new Error(stripControl(error.error || 'Request failed'));
+    }
+
+    return (await readJsonCapped(response)) as CustomPromptResponse;
   });
-
-  if (!response.ok) {
-    // SECURITY: Check for cache clear directive on any error (especially 401)
-    await handleCacheClearDirective(response);
-
-    if (response.status === 404) {
-      throw new Error('Prompt not found');
-    }
-    if (response.status === 401) {
-      throw new Error('Unauthorized');
-    }
-    const error = (await response.json().catch(() => ({ error: 'Request failed' }))) as {
-      error?: string;
-    };
-    throw new Error(stripControl(error.error || 'Request failed'));
-  }
-
-  return response.json() as Promise<CustomPromptResponse>;
 }
