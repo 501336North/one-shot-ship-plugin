@@ -31,7 +31,7 @@ fail() { echo "✗ FAIL: $1 — $2"; ((RUN++)); ((FAILED++)); }
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 WANT='{"type":"command","command":"~/.oss/oss-statusline.sh","padding":0}'
-mode_of() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1" 2>/dev/null; }
+mode_of() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1" 2>/dev/null; }
 # A copy of the hook with marked lines swapped: copy_hook <name> <marker> <replacement> [<marker> <replacement>]...
 copy_hook() {
     local name="$1"; shift

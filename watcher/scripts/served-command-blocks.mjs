@@ -6,8 +6,8 @@
  *
  * `node scripts/served-command-blocks.mjs` (from watcher/) rewrites
  * test/fixtures/served-command-blocks.json; served-commands.acceptance.test.ts fails when the
- * fixture no longer matches the files. The API checkout is OSS_API_REPO, else DEFAULT_API_REPO
- * (round 12, CR L3); when it is missing, the fixture's API entries are kept, never dropped.
+ * fixture no longer matches the files. The API checkout is OSS_API_REPO, with no default path
+ * (round 12, CR L3); when it is unset, empty or missing, the fixture's API entries are kept, never dropped.
  */
 
 import fs from 'node:fs';
@@ -16,8 +16,6 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const PLUGIN_ROOT = path.resolve(HERE, '..', '..');
-/** The API checkout these prompts are served from when OSS_API_REPO is not set (the R-266 worktree). */
-export const DEFAULT_API_REPO = '/Users/ysl/dev/AgenticDevWorkflow-least-privilege-tools';
 const API_PROMPTS = 'packages/api/src/prompts/commands';
 export const API_FILES = ['plan.md', 'ship.md', 'ship-team.md', 'build.md', 'ideate.md'];
 export const FIXTURE = path.join(PLUGIN_ROOT, 'watcher', 'test', 'fixtures', 'served-command-blocks.json');
@@ -50,16 +48,16 @@ export function pluginCommandFiles() {
   return fs.readdirSync(dir).filter((f) => f.endsWith('.md')).sort().map((f) => ({ key: `commands/${f}`, file: path.join(dir, f) }));
 }
 
-/** The API's served command prompts folder: under OSS_API_REPO, else DEFAULT_API_REPO. */
+/** The API's served command prompts folder under OSS_API_REPO; null when it is unset or empty. */
 export function apiCommandsDir(env = process.env) {
-  const repo = env.OSS_API_REPO !== undefined && env.OSS_API_REPO !== '' ? env.OSS_API_REPO : DEFAULT_API_REPO;
-  return path.join(repo, API_PROMPTS);
+  const repo = env.OSS_API_REPO;
+  return repo === undefined || repo === '' ? null : path.join(repo, API_PROMPTS);
 }
 
 /** The API's served command files, when the API checkout is here. */
 export function apiCommandFiles(env = process.env) {
   const dir = apiCommandsDir(env);
-  if (!fs.existsSync(dir)) return [];
+  if (dir === null || !fs.existsSync(dir)) return [];
   return API_FILES.map((f) => ({ key: `api/commands/${f}`, file: path.join(dir, f) }));
 }
 
@@ -89,7 +87,7 @@ if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLTo
     source: 'every ```bash block of the plugin commands/*.md and the API prompts/commands/{plan,ship,ship-team,build,ideate}.md; regenerate with `node scripts/served-command-blocks.mjs` (OSS_API_REPO names the API checkout) (R-266 round 11)',
     files: fixtureFiles(old, blocksOf(pluginCommandFiles()), api.length > 0 ? blocksOf(api) : null),
   };
-  if (api.length === 0) console.warn(`API checkout missing (${apiCommandsDir()}); kept the fixture's API entries`);
+  if (api.length === 0) console.warn(`API checkout missing (${apiCommandsDir() ?? 'OSS_API_REPO not set'}); kept the fixture's API entries`);
   fs.writeFileSync(FIXTURE, `${JSON.stringify(fixture, null, 2)}\n`);
   console.log(`wrote ${Object.values(fixture.files).flat().length} blocks to ${path.relative(process.cwd(), FIXTURE)}`);
 }

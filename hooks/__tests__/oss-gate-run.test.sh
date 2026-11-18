@@ -38,9 +38,9 @@ check_entry() { # event matcher arg label
     found="$(entry "$1" "$2" "$3")"
     if [[ "$(jq 'length' <<<"$found")" == 1 && "$(jq '.[0].timeout' <<<"$found")" == 10 &&
           "$(jq '.[0].async // false' <<<"$found")" == false ]]; then
-        pass "hooks.json: $4 runs oss-gate-run.sh $3 (timeout 10, not async)"
+        pass "hooks.json: $4 runs oss-gate-run.sh $3 (timeout: 10, not async)"
     else
-        fail "hooks.json: $4 runs oss-gate-run.sh $3 (timeout 10, not async)" "found: $found"
+        fail "hooks.json: $4 runs oss-gate-run.sh $3 (timeout: 10, not async)" "found: $found"
     fi
 }
 check_entry SubagentStart "" subagent-start "SubagentStart"
@@ -244,7 +244,7 @@ else
     fail "no usable node, a review agent: the user is told the run is unverified and a notice is kept for the main agent" "rc=$rc out=$out notices=$(nn_notices)"
 fi
 f="$(ls "$NN_HOME/.oss/gate-state/nn/"*.notice.json 2>/dev/null | head -1)"
-mode="$(stat -f %Lp "$f" 2>/dev/null || stat -c %a "$f" 2>/dev/null)"
+mode="$(stat -c %a "$f" 2>/dev/null || stat -f %Lp "$f" 2>/dev/null)"
 if [[ "$f" == */rv-1.*.notice.json && "$mode" == 600 ]] && jq -e '.kind == "unverified" and (.reason | type == "string")' "$f" >/dev/null 2>&1; then
     pass "the notice is the review run's own (rv-1), private (600), an unverified notice the check reads"
 else

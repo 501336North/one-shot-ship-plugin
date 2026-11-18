@@ -1,6 +1,6 @@
 /**
  * @behavior Round 12, CR L3: the served-blocks fixture generator finds the API checkout from
- *   OSS_API_REPO (else the R-266 worktree path), and never drops the API's blocks from the fixture
+ *   OSS_API_REPO only (no default path), and never drops the API's blocks from the fixture
  *   when that checkout is missing; the staleness check then says the API blocks were checked against
  *   the fixture only, instead of skipping them silently.
  * @business-rule R-266: every served block stays covered by the served-commands acceptance test, on
@@ -12,7 +12,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { apiCommandsDir, apiCommandFiles, DEFAULT_API_REPO, fixtureFiles, apiStatus } from '../../scripts/served-command-blocks.mjs';
+import { apiCommandsDir, apiCommandFiles, fixtureFiles, apiStatus } from '../../scripts/served-command-blocks.mjs';
 
 const temps: string[] = [];
 afterAll(() => {
@@ -20,9 +20,13 @@ afterAll(() => {
 });
 
 describe('CR L3: the API checkout for the served-blocks fixture', () => {
-  it('comes from OSS_API_REPO, else the default worktree path', () => {
+  it('comes from OSS_API_REPO only; unset or empty means no checkout', () => {
     expect(apiCommandsDir({ OSS_API_REPO: '/x/api' })).toBe('/x/api/packages/api/src/prompts/commands');
-    expect(apiCommandsDir({})).toBe(path.join(DEFAULT_API_REPO, 'packages/api/src/prompts/commands'));
+    expect(apiCommandsDir({})).toBeNull();
+    expect(apiCommandsDir({ OSS_API_REPO: '' })).toBeNull();
+    expect(apiCommandFiles({})).toEqual([]);
+    const source = fs.readFileSync(path.join(__dirname, '../../scripts/served-command-blocks.mjs'), 'utf8');
+    expect(source).not.toContain('/Users/');
   });
 
   it('lists the API files from the checkout named by OSS_API_REPO', () => {
