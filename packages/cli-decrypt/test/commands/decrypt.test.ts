@@ -5,7 +5,7 @@
  * @boundary CLI Commands
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdirSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import crypto from 'crypto';
@@ -60,7 +60,7 @@ describe('Decrypt Command', () => {
 
     // Default: manifest fetch succeeds, signature valid, hash matches
     vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue({
-      version: 1,
+      version: 1794940034,
       generatedAt: new Date().toISOString(),
       algorithm: 'sha256',
       signing: 'ed25519',
@@ -228,7 +228,7 @@ describe('Decrypt Command', () => {
 
     function manifestWith(prompts: manifestVerifier.SignedManifest['prompts']): manifestVerifier.SignedManifest {
       return {
-        version: 1,
+        version: 1794940034,
         generatedAt: new Date().toISOString(),
         algorithm: 'sha256',
         signing: 'ed25519',
@@ -313,7 +313,7 @@ describe('Decrypt Command', () => {
    */
   describe('unreachable manifest retry (R-273 P3)', () => {
     const manifest: manifestVerifier.SignedManifest = {
-      version: 1,
+      version: 1794940034,
       generatedAt: new Date().toISOString(),
       algorithm: 'sha256',
       signing: 'ed25519',
@@ -392,6 +392,168 @@ describe('Decrypt Command', () => {
       expect((err as Error).message).toBe(MANIFEST_UNREACHABLE);
       expect(consoleSpy).not.toHaveBeenCalled();
       expect(vi.getTimerCount()).toBe(0);
+    });
+  });
+  /**
+   * @behavior A signed manifest older than the newest one already accepted from the same API is refused
+   * @business-rule R-273 D11 / ADR-007: anti-rollback floor in ~/.oss/manifest-floor.json, keyed by apiUrl,
+   *   starting at the compiled live version, recorded only after the signature verifies
+   * @boundary CLI Commands (manifest fetch and signature stubbed; the floor file is real, in a temp config dir)
+   */
+  describe('anti-rollback floor (R-273 P4)', () => {
+    const LIVE = 1794940034;
+    const API = 'https://one-shot-ship-api.onrender.com';
+    const OLDER = '[SECURITY] Manifest is older than one already seen — prompt blocked';
+    const floorPath = (): string => join(testDir, 'manifest-floor.json');
+    const floorOf = (api: string): number | undefined =>
+      existsSync(floorPath()) ? (JSON.parse(readFileSync(floorPath(), 'utf8')) as Record<string, number>)[api] : undefined;
+
+    function serve(version: unknown, prompts: manifestVerifier.SignedManifest['prompts'] = {}): void {
+      vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue({
+        version: version as number,
+        generatedAt: new Date().toISOString(),
+        algorithm: 'sha256',
+        signing: 'ed25519',
+        prompts,
+        signature: 'valid-sig',
+      });
+    }
+
+    const stderr = (): string[] => consoleErrorSpy.mock.calls.map(c => String(c[0]));
+
+    it('blocks a manifest below the floor with the older-manifest message and prints no prompt', async () => {
+      writeFileSync(floorPath(), JSON.stringify({ [API]: LIVE + 10 }));
+      serve(LIVE + 5);
+
+      await expect(decryptCommand('commands', 'plan')).rejects.toThrow('[SECURITY]');
+      expect(stderr()).toContain(OLDER);
+      expect(consoleSpy).not.toHaveBeenCalled();
+    });
+
+    it('accepts a newer manifest and records it as the floor', async () => {
+      serve(LIVE + 10);
+
+      await decryptCommand('commands', 'plan');
+
+      expect(consoleSpy).toHaveBeenCalledWith('Decrypted prompt content!');
+      expect(floorOf(API)).toBe(LIVE + 10);
+    });
+
+    it('accepts an equal manifest without rewriting the floor file', async () => {
+      writeFileSync(floorPath(), JSON.stringify({ [API]: LIVE + 10 }));
+      const past = new Date('2020-01-01T00:00:00Z');
+      utimesSync(floorPath(), past, past);
+      serve(LIVE + 10);
+
+      await decryptCommand('commands', 'plan');
+
+      expect(consoleSpy).toHaveBeenCalledWith('Decrypted prompt content!');
+      expect(statSync(floorPath()).mtimeMs).toBe(past.getTime());
+    });
+
+    it('blocks a bad signature with a higher version and leaves the floor unchanged', async () => {
+      writeFileSync(floorPath(), JSON.stringify({ [API]: LIVE + 10 }));
+      serve(LIVE + 1000);
+      vi.mocked(manifestVerifier.verifyManifestSignature).mockReturnValue(false);
+
+      await expect(decryptCommand('commands', 'plan')).rejects.toThrow('[SECURITY]');
+      expect(floorOf(API)).toBe(LIVE + 10);
+      expect(consoleSpy).not.toHaveBeenCalled();
+    });
+
+    it('still refuses a lower version after update-state.json is re-initialised (check-updates first run)', async () => {
+      serve(LIVE + 10);
+      await decryptCommand('commands', 'plan');
+      writeFileSync(
+        join(testDir, 'update-state.json'),
+        JSON.stringify({ lastPluginVersion: '', lastCheckedAt: '', manifestVersion: 0, manifestHashes: {}, promptSignatures: {} })
+      );
+      consoleSpy.mockClear();
+      serve(LIVE + 5);
+
+      await expect(decryptCommand('commands', 'plan')).rejects.toThrow('[SECURITY]');
+      expect(stderr()).toContain(OLDER);
+      expect(consoleSpy).not.toHaveBeenCalled();
+    });
+
+    it('a torn floor file falls back to the compiled floor: below it is refused', async () => {
+      writeFileSync(floorPath(), `{"${API}": 17949`);
+      serve(LIVE - 1);
+
+      await expect(decryptCommand('commands', 'plan')).rejects.toThrow('[SECURITY]');
+      expect(stderr()).toContain(OLDER);
+      expect(consoleSpy).not.toHaveBeenCalled();
+    });
+
+    it('a torn floor file falls back to the compiled floor: above it is accepted', async () => {
+      writeFileSync(floorPath(), `{"${API}": 17949`);
+      serve(LIVE + 1);
+
+      await decryptCommand('commands', 'plan');
+
+      expect(consoleSpy).toHaveBeenCalledWith('Decrypted prompt content!');
+      expect(floorOf(API)).toBe(LIVE + 1);
+    });
+
+    it('parallel decrypts never leave the floor below an accepted version nor accept one below the floor', async () => {
+      const versions = [5, 1, 9, 3, 7].map(d => LIVE + d);
+      const fetchMock = vi.mocked(manifestVerifier.fetchManifest);
+      for (const v of versions) {
+        fetchMock.mockResolvedValueOnce({
+          version: v,
+          generatedAt: new Date().toISOString(),
+          algorithm: 'sha256',
+          signing: 'ed25519',
+          prompts: {},
+          signature: 'valid-sig',
+        });
+      }
+
+      const results = await Promise.allSettled(versions.map(() => decryptCommand('commands', 'plan')));
+
+      const accepted = versions.filter((_v, i) => results[i].status === 'fulfilled');
+      const refused = versions.filter((_v, i) => results[i].status === 'rejected');
+      expect(accepted.length).toBeGreaterThan(0);
+      expect(floorOf(API)).toBe(Math.max(...accepted));
+      expect(consoleSpy).toHaveBeenCalledTimes(accepted.length);
+      for (const v of refused) expect(v).toBeLessThan(Math.max(...accepted));
+      const firstAccepted = versions.findIndex((_v, i) => results[i].status === 'fulfilled');
+      expect(versions[firstAccepted]).toBeGreaterThanOrEqual(LIVE);
+    });
+
+    it('switching apiUrl does not block: another API has its own floor starting at the compiled value', async () => {
+      writeFileSync(floorPath(), JSON.stringify({ [API]: LIVE + 1000 }));
+      writeFileSync(join(testDir, 'config.json'), JSON.stringify({ apiUrl: 'https://sprint-d.example.com' }));
+      serve(LIVE);
+
+      await decryptCommand('commands', 'plan');
+
+      expect(consoleSpy).toHaveBeenCalledWith('Decrypted prompt content!');
+      expect(floorOf(API)).toBe(LIVE + 1000);
+    });
+
+    it('blocks a pre-R-273 manifest snapshot (version 1, no servedHash)', async () => {
+      const actual = await vi.importActual<typeof integrityPipeline>('../../src/integrity-pipeline.js');
+      vi.mocked(integrityPipeline.verifyDecryptedPrompt).mockImplementation(actual.verifyDecryptedPrompt);
+      serve(1, { 'commands/plan': { hash: 'old-stripped-hash', size: 25 } });
+
+      await expect(decryptCommand('commands', 'plan')).rejects.toThrow('[SECURITY]');
+      expect(stderr()).toContain(OLDER);
+      expect(consoleSpy).not.toHaveBeenCalled();
+      expect(existsSync(floorPath())).toBe(false);
+    });
+
+    it.each([
+      ['missing', undefined],
+      ['a fraction', 1794940034.5],
+      ['a numeric string', '1794940099'],
+      ['null', null],
+    ])('blocks a manifest whose version is %s and prints no prompt', async (_label, version) => {
+      serve(version);
+
+      await expect(decryptCommand('commands', 'plan')).rejects.toThrow('[SECURITY]');
+      expect(consoleSpy).not.toHaveBeenCalled();
+      expect(existsSync(floorPath())).toBe(false);
     });
   });
 });
