@@ -24,6 +24,9 @@ vi.mock('../../src/encryption.js');
 vi.mock('../../src/manifest-verifier.js');
 vi.mock('../../src/integrity-pipeline.js');
 
+const MANIFEST_UNREACHABLE =
+  '[SECURITY] Could not verify prompt: manifest unreachable — check your connection and run the command again';
+
 describe('Decrypt Command', () => {
   const testDir = join(tmpdir(), 'oss-decrypt-decrypt-test-' + Date.now());
   let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -174,7 +177,7 @@ describe('Decrypt Command', () => {
     it('should NOT output prompt when manifest is unavailable', async () => {
       vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(null);
 
-      await expect(decryptCommand('commands', 'plan')).rejects.toThrow('[SECURITY]');
+      await expect(decryptCommand('commands', 'plan')).rejects.toThrow(MANIFEST_UNREACHABLE);
       expect(consoleSpy).not.toHaveBeenCalledWith('Decrypted prompt content!');
     });
 
@@ -202,8 +205,8 @@ describe('Decrypt Command', () => {
     it('should show a blocked message when manifest unavailable', async () => {
       vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(null);
 
-      await expect(decryptCommand('commands', 'plan')).rejects.toThrow('[SECURITY]');
-      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('prompt blocked'));
+      await expect(decryptCommand('commands', 'plan')).rejects.toThrow(MANIFEST_UNREACHABLE);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(MANIFEST_UNREACHABLE);
       expect(consoleErrorSpy).not.toHaveBeenCalledWith(expect.stringContaining('skipping'));
     });
   });
@@ -300,6 +303,95 @@ describe('Decrypt Command', () => {
 
       const output = [...consoleErrorSpy.mock.calls, ...consoleSpy.mock.calls].map(c => String(c[0]));
       expect(output.some(m => m.includes('Prompt hash: verified'))).toBe(false);
+    });
+  });
+
+  /**
+   * @behavior A manifest that can't be reached gets one longer retry, then the prompt is blocked
+   * @business-rule R-273 D7: first attempt 3 s, one retry 10 s; both failing blocks delivery (never fail-open)
+   * @boundary CLI Commands (fetchManifest is the network boundary; it rejects when its signal aborts, like fetch)
+   */
+  describe('unreachable manifest retry (R-273 P3)', () => {
+    const manifest: manifestVerifier.SignedManifest = {
+      version: 1,
+      generatedAt: new Date().toISOString(),
+      algorithm: 'sha256',
+      signing: 'ed25519',
+      prompts: {},
+      signature: 'valid-sig',
+    };
+
+    function hangUntilAborted(_apiUrl: string, signal?: AbortSignal): Promise<manifestVerifier.SignedManifest | null> {
+      return new Promise((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(new Error('This operation was aborted')));
+      });
+    }
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('verifies and prints the prompt when the first attempt fails and the retry succeeds', async () => {
+      vi.useFakeTimers();
+      vi.mocked(manifestVerifier.fetchManifest)
+        .mockRejectedValueOnce(new Error('fetch failed'))
+        .mockResolvedValueOnce(manifest);
+
+      await decryptCommand('commands', 'plan');
+
+      expect(manifestVerifier.fetchManifest).toHaveBeenCalledTimes(2);
+      expect(consoleErrorSpy).toHaveBeenCalledWith('[verify] Prompt hash: verified');
+      expect(consoleSpy).toHaveBeenCalledWith('Decrypted prompt content!');
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('blocks with the unreachable message when both attempts reject', async () => {
+      vi.mocked(manifestVerifier.fetchManifest).mockRejectedValue(new Error('fetch failed'));
+
+      await expect(decryptCommand('commands', 'plan')).rejects.toThrow(MANIFEST_UNREACHABLE);
+      expect(manifestVerifier.fetchManifest).toHaveBeenCalledTimes(2);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(MANIFEST_UNREACHABLE);
+      expect(consoleSpy).not.toHaveBeenCalled();
+    });
+
+    it('blocks with the unreachable message when both attempts return null', async () => {
+      vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(null);
+
+      await expect(decryptCommand('commands', 'plan')).rejects.toThrow(MANIFEST_UNREACHABLE);
+      expect(manifestVerifier.fetchManifest).toHaveBeenCalledTimes(2);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(MANIFEST_UNREACHABLE);
+      expect(consoleSpy).not.toHaveBeenCalled();
+    });
+
+    it('the first attempt aborts at 3 s and the retry at 10 s', async () => {
+      vi.useFakeTimers();
+      vi.mocked(manifestVerifier.fetchManifest).mockImplementation(hangUntilAborted);
+
+      const run = decryptCommand('commands', 'plan');
+      const outcome = run.then(() => 'resolved', (err: unknown) => err);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const signalOf = (call: number): AbortSignal | undefined =>
+        vi.mocked(manifestVerifier.fetchManifest).mock.calls[call]?.[1];
+
+      expect(manifestVerifier.fetchManifest).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(2900);
+      expect(signalOf(0)?.aborted).toBe(false);
+      expect(manifestVerifier.fetchManifest).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(signalOf(0)?.aborted).toBe(true);
+
+      expect(manifestVerifier.fetchManifest).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(9900);
+      expect(signalOf(1)?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(signalOf(1)?.aborted).toBe(true);
+
+      const err = await outcome;
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toBe(MANIFEST_UNREACHABLE);
+      expect(consoleSpy).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
     });
   });
 });
