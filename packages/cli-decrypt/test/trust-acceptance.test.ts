@@ -250,6 +250,26 @@ describe('/oss:trust - Acceptance Tests', () => {
     });
 
     /**
+     * @behavior --list-prompts never lists a manifest whose signature fails
+     * @business-rule R-273 P1 (Revision 3, user decision): --list-prompts verifies the signature;
+     *   on failure it prints [] and exits non-zero
+     */
+    it('prints [] and exits non-zero when the manifest signature fails', async () => {
+      vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(validManifest);
+      vi.mocked(manifestVerifier.verifyManifestSignature).mockReturnValue(false);
+      process.exitCode = undefined;
+
+      await runCli(['--list-prompts']);
+
+      const output = consoleSpy.mock.calls.map(c => c[0]).join('\n');
+      const exitCode = process.exitCode;
+      process.exitCode = undefined;
+      expect(JSON.parse(output)).toEqual([]);
+      expect(exitCode).not.toBe(0);
+      expect(exitCode).toBeDefined();
+    });
+
+    /**
      * @behavior List prompts works without auth (uses public manifest)
      * @acceptance-criteria AC-TRUST-010
      */

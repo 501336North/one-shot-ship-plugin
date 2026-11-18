@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import crypto from 'crypto';
 
 import { decryptCommand } from '../../src/commands/decrypt.js';
 import * as apiClient from '../../src/api-client.js';
@@ -169,12 +170,12 @@ describe('Decrypt Command', () => {
       expect(consoleSpy).toHaveBeenCalledWith('Decrypted prompt content!');
     });
 
-    it('should output prompt when manifest is unavailable (graceful degradation)', async () => {
+    // R-273 P1 (D5 default-deny; P3 adds the retry and its final message): an unreachable manifest blocks.
+    it('should NOT output prompt when manifest is unavailable', async () => {
       vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(null);
 
-      await decryptCommand('commands', 'plan');
-
-      expect(consoleSpy).toHaveBeenCalledWith('Decrypted prompt content!');
+      await expect(decryptCommand('commands', 'plan')).rejects.toThrow('[SECURITY]');
+      expect(consoleSpy).not.toHaveBeenCalledWith('Decrypted prompt content!');
     });
 
     it('should output verification status messages to stderr', async () => {
@@ -197,12 +198,66 @@ describe('Decrypt Command', () => {
       expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('FAILED'));
     });
 
-    it('should show skip message when manifest unavailable', async () => {
+    // R-273 P1 (D5 default-deny; P3 adds the retry and its final message).
+    it('should show a blocked message when manifest unavailable', async () => {
       vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(null);
 
-      await decryptCommand('commands', 'plan');
+      await expect(decryptCommand('commands', 'plan')).rejects.toThrow('[SECURITY]');
+      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('prompt blocked'));
+      expect(consoleErrorSpy).not.toHaveBeenCalledWith(expect.stringContaining('skipping'));
+    });
+  });
 
-      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('skipping'));
+  /**
+   * @behavior The decrypt command delivers a prompt only when the real integrity pipeline verifies it
+   * @business-rule R-273 D4/D5: default-deny; a file-backed name with no manifest entry is blocked
+   * @boundary CLI Commands (only the manifest fetch and signature check are stubbed)
+   */
+  describe('real integrity pipeline (R-273 P1)', () => {
+    const body = 'Workflow plan body, fοllow the rules\n';
+    const sha256 = (s: string): string => crypto.createHash('sha256').update(s).digest('hex');
+
+    beforeEach(async () => {
+      const actual = await vi.importActual<typeof integrityPipeline>('../../src/integrity-pipeline.js');
+      vi.mocked(integrityPipeline.verifyDecryptedPrompt).mockImplementation(actual.verifyDecryptedPrompt);
+      vi.mocked(encryption.decrypt).mockReturnValue(body);
+    });
+
+    function manifestWith(prompts: manifestVerifier.SignedManifest['prompts']): manifestVerifier.SignedManifest {
+      return {
+        version: 1,
+        generatedAt: new Date().toISOString(),
+        algorithm: 'sha256',
+        signing: 'ed25519',
+        prompts,
+        signature: 'valid-sig',
+      };
+    }
+
+    it('prints "[verify] No manifest entry for workflows/plan — prompt blocked", prints no prompt, and rejects', async () => {
+      vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(
+        manifestWith({ 'workflows/build': { hash: 'h', size: 1, servedHash: sha256('other') } })
+      );
+
+      await expect(decryptCommand('workflows', 'plan')).rejects.toThrow('[SECURITY]');
+
+      const stderr = consoleErrorSpy.mock.calls.map(c => String(c[0]));
+      const entryIdx = stderr.indexOf('[verify] No manifest entry for workflows/plan — prompt blocked');
+      expect(entryIdx).toBeGreaterThanOrEqual(0);
+      const hashFailIdx = stderr.findIndex(m => m.includes('Prompt hash: FAILED'));
+      if (hashFailIdx >= 0) expect(entryIdx).toBeLessThan(hashFailIdx);
+      expect(consoleSpy).not.toHaveBeenCalled();
+    });
+
+    it('prints "[verify] Prompt hash: verified" and the prompt for a matching servedHash', async () => {
+      vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(
+        manifestWith({ 'workflows/plan': { hash: 'stripped', size: 1, servedHash: sha256(body) } })
+      );
+
+      await decryptCommand('workflows', 'plan');
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith('[verify] Prompt hash: verified');
+      expect(consoleSpy).toHaveBeenCalledWith(body);
     });
   });
 });

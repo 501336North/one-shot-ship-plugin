@@ -120,6 +120,25 @@ describe('Manifest Signature Verifier', () => {
     expect(verifyManifestSignature(manifest, keypair.publicKey)).toBe(true);
   });
 
+  /**
+   * @behavior A manifest carrying an own "__proto__" prompt key is refused
+   * @business-rule R-273 P1 (Revision 3): a "__proto__" key could otherwise be dropped from the
+   *   signed data and later turn into inherited prompt entries
+   */
+  it('rejects a signed manifest whose prompts has its own "__proto__" key', () => {
+    const keypair = generateTestKeypair();
+    const signed = createTestManifest(keypair.privateKey);
+    const withProto = JSON.parse(
+      JSON.stringify(signed).replace(
+        '"prompts":{',
+        '"prompts":{"__proto__":{"workflows/plan":{"hash":"evil","size":1}},'
+      )
+    ) as SignedManifest;
+    expect(Object.prototype.hasOwnProperty.call(withProto.prompts, '__proto__')).toBe(true);
+
+    expect(verifyManifestSignature(withProto, keypair.publicKey)).toBe(false);
+  });
+
   describe('fetchManifest', () => {
     beforeEach(() => {
       vi.restoreAllMocks();
