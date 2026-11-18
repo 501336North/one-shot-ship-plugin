@@ -92,16 +92,25 @@ for a in \"\$@\"; do case \"\$a\" in (http://*|https://*) case \"\$a\" in (http:
 exec '$REAL_CURL' \"\$@\"" || abort "the curl shim warms up" "warm-up did not run"
 
 H="$T/home"; CFG="$T/cfg"
+# oss-decrypt: a stub (lib/verify-body-stub.sh) that hashes its stdin against the fixture servedHash in
+# $T/vb/served-hashes; every sandbox HOME gets it at ~/.oss/bin/oss-decrypt (R-273 D12).
+source "$SCRIPT_DIR/lib/verify-body-stub.sh"
+verify_body_stub "$T/vb/bin/oss-decrypt" "$T/vb" || abort "the oss-decrypt stub warms up" "warm-up did not run"
+old_decrypt_stub "$T/vb/old/oss-decrypt" "$T/vb" || abort "the old oss-decrypt stub warms up" "warm-up did not run"
 # run_tpl [VAR=value...]: run the hook with the sandbox HOME, the shim first on PATH; OUT, ERR, RC.
 run_tpl() {
     OUT=$(env -u CLAUDE_PLUGIN_ROOT -u CLAUDE_PROJECT_DIR HOME="$H" PATH="$T/bin:$PATH" "$@" "$SH" "$HOOKS/oss-claude-md-template.sh" 2>"$T/err" </dev/null); RC=$?
     ERR=$(cat "$T/err")
 }
 # fresh <status> <body> [mode]: empty request log and shim log, a clean sandbox HOME and config dir.
-# mode: normal (default), stall, nolength or flood (see api.py).
+# mode: normal (default), stall, nolength or flood (see api.py). The body is what the fixture manifest signs
+# (its servedHash), and the sandbox HOME has the verifying oss-decrypt stub.
 fresh() {
-    rm -rf "$H" "$CFG" "$T/curl.argv"; : > "$T/requests.log"; mkdir -p "$H/.oss" "$CFG"
+    rm -rf "$H" "$CFG" "$T/curl.argv" "$T/vb/verify.stdin" "$T/vb/verify.calls" "$T/vb/verify.exit"
+    : > "$T/requests.log"; mkdir -p "$H/.oss/bin" "$CFG"
+    ln -s "$T/vb/bin/oss-decrypt" "$H/.oss/bin/oss-decrypt"
     printf '%s' "$1" > "$T/status"; printf '%s' "$2" > "$T/body"; printf '%s' "${3:-normal}" > "$T/mode"
+    served_hash "$T/vb" templates/claude-md "$T/body"
 }
 reqs() { cat "$T/requests.log"; }
 cfg() { printf '{"apiKey":"%s","apiUrl":"%s"}\n' "$KEY" "$2" > "$1/config.json"; }
@@ -261,6 +270,45 @@ fresh 200 $'# OSS\n\ta\xe2\x80\x8bb\xe1\x9e\xb4c end'; cfg "$H/.oss" "$LOCAL"
 run_tpl OSS_ALLOW_HTTP_LOOPBACK=1 PATH="$T/oldjq:$T/bin:$PATH"
 [[ "$RC" == 0 && "$OUT" == $'# OSS\n\tabc end' && -z "$ERR" ]] && pass "old jq: the static list applies (U+200B and, since T74, U+17B4 stripped), no error" \
     || fail "old jq: falls back to the T52 list" "rc=$RC out=$(printf '%s' "$OUT" | od -c | head -8) err=$ERR"
+
+# =============================================================================================
+# 15. (R-273 D12) The template is checked against the signed manifest before it is used.
+# @behavior /oss:login merges the template into CLAUDE.md only when its exact bytes are the ones the manifest
+#           signs (oss-decrypt --verify-body templates/claude-md exits 0); otherwise nothing on stdout, a warning.
+# @business-rule A tampered template never reaches a committed CLAUDE.md; only exit 0 from oss-decrypt prints.
+# =============================================================================================
+# 15a. The raw bytes, before the invisible-character cleaning, are what is verified: a template with a zero-width
+# space and a final newline reaches oss-decrypt byte for byte, and the cleaned template is printed.
+RAWTPL=$'# OSS\n\ta\xe2\x80\x8bb end\n'
+fresh 200 "$RAWTPL"; cfg "$H/.oss" "$LOCAL"
+run_tpl OSS_ALLOW_HTTP_LOOPBACK=1
+[[ "$RC" == 0 && "$OUT" == $'# OSS\n\tab end' && "$(cat "$T/vb/verify.calls" 2>/dev/null)" == templates/claude-md ]] && cmp -s "$T/vb/verify.stdin" "$T/body" \
+    && pass "verified template: oss-decrypt --verify-body templates/claude-md got the raw bytes (zero-width space, final newline), the cleaned template printed" \
+    || fail "verified template: the raw bytes are verified, then printed" "rc=$RC calls=$(cat "$T/vb/verify.calls" 2>/dev/null) stdin=$(od -c "$T/vb/verify.stdin" 2>/dev/null | head -3) out=$OUT err=$ERR"
+# 15b. A template that does not match the signed servedHash: nothing on stdout, exit non-zero, a warning.
+fresh 200 "$TEMPLATE"; cfg "$H/.oss" "$LOCAL"
+printf 'templates/claude-md %s\n' "$(printf 'the signed template' | { sha256sum 2>/dev/null || shasum -a 256; } | cut -d' ' -f1)" > "$T/vb/served-hashes"
+run_tpl OSS_ALLOW_HTTP_LOOPBACK=1
+[[ "$RC" != 0 && -z "$OUT" && "$ERR" == *verif* && -s "$T/vb/verify.calls" ]] \
+    && pass "a template that fails verification: exit non-zero, no stdout, a warning on stderr" \
+    || fail "a template that fails verification is not printed" "rc=$RC out=$OUT err=$ERR"
+# 15c. Only exit 0 prints: oss-decrypt exiting 1, 4, 124 or 3 (any other code) prints nothing.
+for vrc in 1 4 124 3; do
+    fresh 200 "$TEMPLATE"; cfg "$H/.oss" "$LOCAL"; printf '%s' "$vrc" > "$T/vb/verify.exit"
+    run_tpl OSS_ALLOW_HTTP_LOOPBACK=1
+    [[ "$RC" != 0 && -z "$OUT" && "$ERR" == *verif* ]] && pass "oss-decrypt exit $vrc: no template, exit non-zero, a warning" \
+        || fail "oss-decrypt exit $vrc: no template" "rc=$RC out=$OUT err=$ERR"
+done
+# 15d. No oss-decrypt at all (exit 127): no template.
+fresh 200 "$TEMPLATE"; cfg "$H/.oss" "$LOCAL"; rm -f "$H/.oss/bin/oss-decrypt"
+run_tpl OSS_ALLOW_HTTP_LOOPBACK=1
+[[ "$RC" != 0 && -z "$OUT" && "$ERR" == *verif* ]] && pass "no oss-decrypt (exit 127): no template, exit non-zero, a warning" \
+    || fail "no oss-decrypt (exit 127): no template" "rc=$RC out=$OUT err=$ERR"
+# 15e. oss-decrypt 1.2.4 (no --verify-body: its help on stdout, exit 1): no template, and its help is not printed.
+fresh 200 "$TEMPLATE"; cfg "$H/.oss" "$LOCAL"; ln -sf "$T/vb/old/oss-decrypt" "$H/.oss/bin/oss-decrypt"
+run_tpl OSS_ALLOW_HTTP_LOOPBACK=1
+[[ "$RC" != 0 && -z "$OUT" && "$ERR" == *verif* ]] && pass "oss-decrypt older than 1.2.5 (no --verify-body): no template, its help not on stdout" \
+    || fail "an old oss-decrypt: no template" "rc=$RC out=$OUT err=$ERR"
 
 echo "Results: $((RUN - FAILED))/$RUN passed, $FAILED failed"
 [[ $FAILED -eq 0 ]]
