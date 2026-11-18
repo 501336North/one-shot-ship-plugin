@@ -51,6 +51,8 @@ export const HOOK_CALL_VARIABLES: ReadonlySet<string> = new Set([
 const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=/;
 /** A variable name. */
 const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** A name the agent's environment may already export, so a plain assignment reaches a child: upper case, or a `*_proxy` name. */
+const MAYBE_EXPORTED = /[A-Z]|_proxy$/;
 /** Words that may start a simple command before its assignments. */
 const RESERVED = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '{', '!', 'time']);
 /** A word that sets one of them, or names one for a builtin to set: `HOME=x`, `PATH+=x`, `path[1]=x`, `HOME`. */
@@ -123,8 +125,15 @@ function setsUnlisted(words: string[]): boolean {
   while (p < words.length && ASSIGNMENT.test(words[p])) names.push(words[p++]);
   while (PREFIXES.has(words[p])) p++;
   const [name, ...args] = words.slice(p);
-  if (name === 'for' || name === 'select') names.push(args[0] ?? '');
-  else if (name !== undefined && OPERAND_SETTERS.has(name)) names.push(...args.filter((a) => !a.startsWith('-')));
+  // hook-env-refs Task 9: a plain assignment or loop variable is not exported, so it reaches the hook
+  // only when the agent's environment already exports the name: an upper-case or `*_proxy` name may be
+  if (name === undefined || name === 'for' || name === 'select') {
+    const plain = name === undefined ? names : [...names, args[0] ?? ''];
+    names.splice(0, names.length, ...plain.filter((n) => MAYBE_EXPORTED.test(n.split(/[=[+]/)[0])));
+  } else if (OPERAND_SETTERS.has(name)) names.push(...args.filter((a) => !a.startsWith('-')));
+  else if (name === 'printf' || name === 'print') args.forEach((a, i) => (a === '-v' ? names.push(args[i + 1] ?? '') : /^-v./.test(a) && names.push(a.slice(2))));
+  else if (name === 'mapfile' || name === 'readarray') names.push(...arrayOperands(args));
+  else if (name === 'getopts') names.push(args[1] ?? '');
   return names.some((word) => {
     const variable = word.split(/[=[+]/)[0];
     return VARIABLE_NAME.test(variable) && !HOOK_CALL_VARIABLES.has(variable);
@@ -201,7 +210,9 @@ function setsFromElsewhere(words: string[], depth: number, call: Call, raws: Arr
   if (name === 'source' || name === '.') {
     return !sourcesOssHook(args[0], call.home) && !(args[0] !== undefined && trustedSourceWord(args[0], raws[p + 1], call.home, call.sources));
   }
-  if (name === 'set') return args.some((a, i) => /^-[A-Za-z]*[kT]/.test(a) || (a === '-o' && (args[i + 1] === 'keyword' || args[i + 1] === 'functrace')));
+  // hook-env-refs Task 9: `set -a` / `-o allexport` exports every later assignment; a function can stand in for a program the hook runs
+  if (name === 'function') return true;
+  if (name === 'set') return args.some((a, i) => /^-[A-Za-z]*[kTa]/.test(a) || (a === '-o' && ['keyword', 'functrace', 'allexport'].includes(args[i + 1])));
   if (name === 'trap') return args.some((a) => !a.startsWith('-') && setsRefusedVariable(a, depth + 1, call));
   return false;
 }
@@ -211,7 +222,12 @@ function tokensSet(tokens: Token[], depth: number, call: Call, text?: string): b
   let previous: string | null = null;
   let words: string[] = [];
   let raws: Array<string | undefined> = [];
+  /** True right after a word and `(`: a `)` next defines a function. */
+  let afterNameParen = false;
   for (const token of tokens) {
+    // hook-env-refs Task 9: `name() …` defines a function, which can stand in for a program the hook runs
+    if (afterNameParen && token.kind === 'op' && token.value === ')') return true;
+    afterNameParen = token.kind === 'op' && token.value === '(' && words.length > 0;
     if (token.kind === 'op') {
       if (setsIndirectly(words) || setsUnlisted(words) || setsFromElsewhere(words, depth, call, raws)) return true;
       words = [];
