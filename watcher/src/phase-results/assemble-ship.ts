@@ -5,7 +5,10 @@
  * diff or textconv, 10 s timeout). The base is a local branch only (never gh or fetch), checked with
  * `check-ref-format --branch` and passed after `--end-of-options`. Empty when the tree equals the base tip (covers a
  * squash-merged branch) or nothing changed since the merge-base. Totals come from `--shortstat` against the merge-base.
- * Gates: the feature's timeline gate lines whose sha256 is in the ledger `gates/<feature>`, latest round only.
+ * Gates: the feature's timeline gate lines whose sha256 is in the ledger `gates/<feature>`, latest round only
+ * (`source: model`). T19: a review agent's captured verdict (ledger `verdicts/<feature>`, verdict-capture.ts) written
+ * at or after this run's start replaces that gate's verdict and findings (`source: agent`); `fixed` stays from the
+ * line, and critical or high findings fail the gate whatever the block said (ship.md's rule).
  * Overrides: each decisionId must be a decisions.ndjson record whose line hash, id and feature match a ledger row;
  * `person` is copied from that record, never from the model.
  */
@@ -122,7 +125,22 @@ interface Gate {
   verdict: 'pass' | 'fail';
   findings: Record<string, number>;
   fixed: Record<string, number>;
-  source: 'model';
+  source: 'model' | 'agent';
+}
+
+/** A captured agent verdict row (T19, verdict-capture.ts): null when the row's shape is not one. */
+function agentRow(row: Record<string, unknown>): { gate: string; verdict: 'pass' | 'fail'; findings: Record<string, number>; at: number } | null {
+  const f = row.findings;
+  const at = typeof row.ts === 'string' ? Date.parse(row.ts) : NaN;
+  if (typeof row.gate !== 'string' || (row.verdict !== 'pass' && row.verdict !== 'fail') || Number.isNaN(at)) return null;
+  if (typeof f !== 'object' || f === null || Array.isArray(f)) return null;
+  const counts: Record<string, number> = {};
+  for (const s of SEVERITIES) {
+    const n = (f as Record<string, unknown>)[s];
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) return null;
+    counts[s] = n;
+  }
+  return { gate: row.gate, verdict: row.verdict, findings: counts, at };
 }
 
 export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): AssembleOutcome {
@@ -137,10 +155,12 @@ export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): A
   const featureDir = path.join(ctx.repo, '.oss', 'dev', 'active', ctx.feature);
   let gateHashes: Set<unknown>;
   let decisionRows: Array<Record<string, unknown>>;
+  let verdictRows: Array<Record<string, unknown>>;
   try {
     const ledger = openLedger(ctx.repo);
     gateHashes = new Set(ledger.readRows(`gates/${ctx.feature}`).map((r) => r.sha256));
     decisionRows = ledger.readRows(`decisions/${ctx.feature}`);
+    verdictRows = ledger.readRows(`verdicts/${ctx.feature}`);
   } catch (e) {
     return { ok: false, error: e instanceof LedgerError ? e.code : 'unsafe_path' };
   }
@@ -165,6 +185,16 @@ export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): A
       fixed: counts(rec.fixed),
       source: 'model',
     });
+  }
+  // T19: an agent's captured verdict from this ship run supplies verdict and findings; the latest row of a gate wins.
+  // Ship's rule still holds: critical or high findings fail the gate, whatever the block said.
+  const runStart = Date.parse(ctx.startedAt);
+  for (const raw of verdictRows) {
+    const row = agentRow(raw);
+    const gate = row === null ? undefined : byName.get(row.gate);
+    if (row === null || gate === undefined || !(row.at >= runStart)) continue;
+    const blocking = row.findings.critical + row.findings.high > 0;
+    byName.set(row.gate, { ...gate, verdict: blocking ? 'fail' : row.verdict, findings: row.findings, source: 'agent' });
   }
   for (const required of opts.requiredGates ?? DEFAULT_REQUIRED_GATES) {
     if (!byName.has(required)) return { ok: false, error: 'gate_missing', detail: required };

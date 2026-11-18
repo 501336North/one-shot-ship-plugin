@@ -73,6 +73,9 @@ const EXISTING: HookMap = {
       hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/hooks/oss-timeline.sh', async: true }],
     },
   ],
+  // R-257 T19 (DESIGN D9): the SubagentStop verdict capture, additive to the gate-run entry above.
+  // Its timeout is explained in hooks-json-verdict-capture.test.ts.
+  SubagentStop: [{ hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/hooks/oss-verdict-capture.sh', timeout: 10 }] }],
 };
 
 describe('hooks.json tool-gate entries', () => {

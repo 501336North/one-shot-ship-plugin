@@ -371,3 +371,120 @@ describe('assembleShip: summary and schema', () => {
     expect(r.sources).toMatchObject({ diff: 'code', gates: 'model', overrides: 'code', summary: 'model' });
   });
 });
+
+/**
+ * R-257 T19 (D6): a review agent's own verdict block, captured at SubagentStop into the ledger `verdicts/<feature>`,
+ * supplies the gate's verdict and findings (`source: agent`). `fixed` stays from the timeline line. A row from before
+ * this ship run started, or no row, leaves the timeline line as it is (`source: model`). Ship's rule still holds: a
+ * gate with critical or high findings fails, whatever the agent's block said.
+ */
+describe('assembleShip: captured agent verdicts (T19)', () => {
+  const REVIEW_GATES = ['code-review', 'security'];
+  const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+
+  function captured(row: { gate: string; verdict: 'pass' | 'fail'; findings: Record<string, number>; ts: string }): void {
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, { ...row, agent: 'agent-1', session: 'sess-1' });
+  }
+
+  function gatesOf(o: AssembleOutcome): Record<string, Record<string, unknown>> {
+    const out: Record<string, Record<string, unknown>> = {};
+    for (const g of result(o).gates as Array<Record<string, unknown>>) out[g.gate as string] = g;
+    return out;
+  }
+
+  const shipReview = (): AssembleOutcome => ship({ requiredGates: REVIEW_GATES });
+
+  beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
+
+  // Behaviour: the person sees the review agent's own verdict and counts, not the main model's retelling of them.
+  it('a captured row after the run start overrides the verdict and findings, keeps fixed, and marks source agent', () => {
+    gateLine({ round: 1, gate: 'code-review', verdict: 'pass', findings: { low: 1 }, fixed: { low: 1 } });
+    gateLine({ round: 1, gate: 'security', verdict: 'pass' });
+    captured({ gate: 'code-review', verdict: 'fail', findings: { ...ZERO, medium: 3, low: 2 }, ts: '2026-11-13T09:10:00.000Z' });
+    const g = gatesOf(shipReview());
+    expect(g['code-review']).toEqual({
+      gate: 'code-review',
+      verdict: 'fail',
+      findings: { ...ZERO, medium: 3, low: 2 },
+      fixed: { ...ZERO, low: 1 },
+      source: 'agent',
+    });
+    expect(g.security.source).toBe('model');
+  });
+
+  // Behaviour: an agent's verdict from an earlier ship run never speaks for this one.
+  it('a captured row from before the ship run started is ignored', () => {
+    gateLine({ round: 1, gate: 'code-review', verdict: 'pass' });
+    gateLine({ round: 1, gate: 'security', verdict: 'pass' });
+    captured({ gate: 'code-review', verdict: 'fail', findings: { ...ZERO, high: 1 }, ts: '2026-11-13T08:59:59.000Z' });
+    const g = gatesOf(shipReview());
+    expect(g['code-review']).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  // Behaviour: an agent that left no block does not stop the ship; today's timeline line still counts.
+  it('with no captured row the timeline line stays, with source model', () => {
+    gateLine({ round: 1, gate: 'code-review', verdict: 'pass', findings: { info: 1 } });
+    gateLine({ round: 1, gate: 'security', verdict: 'pass' });
+    const g = gatesOf(shipReview());
+    expect(g['code-review']).toEqual({
+      gate: 'code-review',
+      verdict: 'pass',
+      findings: { ...ZERO, info: 1 },
+      fixed: ZERO,
+      source: 'model',
+    });
+  });
+
+  // Behaviour: a later re-review reports the state after the fixes, so the newest captured row counts.
+  it('the latest captured row of a gate wins', () => {
+    gateLine({ round: 2, gate: 'code-review', verdict: 'fail' });
+    gateLine({ round: 2, gate: 'security', verdict: 'pass' });
+    captured({ gate: 'code-review', verdict: 'fail', findings: { ...ZERO, medium: 1 }, ts: '2026-11-13T09:10:00.000Z' });
+    captured({ gate: 'code-review', verdict: 'pass', findings: ZERO, ts: '2026-11-13T09:40:00.000Z' });
+    const r = result(shipReview());
+    expect(gatesOf(shipReview())['code-review']).toMatchObject({ verdict: 'pass', findings: ZERO, source: 'agent' });
+    expect(r.verdict).toBe('ready_to_merge');
+  });
+
+  // Behaviour: ship's rule holds for the agent too: unfixed critical or high findings fail the gate.
+  // Rule: ship.md "Write fail whenever critical or high findings of that agent are left unfixed ... whatever the
+  //       agent said" (coordinator correction 2026-11-18).
+  it('a captured pass with high findings gives a failing gate, source agent, and blocks the ship', () => {
+    gateLine({ round: 1, gate: 'code-review', verdict: 'pass' });
+    gateLine({ round: 1, gate: 'security', verdict: 'pass' });
+    captured({ gate: 'security', verdict: 'pass', findings: { ...ZERO, high: 2 }, ts: '2026-11-13T09:10:00.000Z' });
+    const r = result(shipReview());
+    expect(gatesOf(shipReview()).security).toMatchObject({ verdict: 'fail', findings: { ...ZERO, high: 2 }, source: 'agent' });
+    expect(r.verdict).toBe('blocked');
+    expect(r.blockers).toEqual(['gate:security']);
+  });
+
+  it('a captured fail with zero critical and high still fails', () => {
+    gateLine({ round: 1, gate: 'code-review', verdict: 'pass' });
+    gateLine({ round: 1, gate: 'security', verdict: 'pass' });
+    captured({ gate: 'code-review', verdict: 'fail', findings: ZERO, ts: '2026-11-13T09:10:00.000Z' });
+    expect(gatesOf(shipReview())['code-review']).toMatchObject({ verdict: 'fail', source: 'agent' });
+  });
+
+  // Behaviour: a captured row never adds a gate the timeline does not show, so a required gate still needs its line.
+  it('a captured row alone does not satisfy a required gate', () => {
+    gateLine({ round: 1, gate: 'code-review', verdict: 'pass' });
+    captured({ gate: 'security', verdict: 'pass', findings: ZERO, ts: '2026-11-13T09:10:00.000Z' });
+    expect(errorOf(shipReview())).toBe('gate_missing');
+  });
+
+  // Behaviour: a garbled ledger row is ignored rather than trusted.
+  it('a captured row with a malformed shape is ignored', () => {
+    gateLine({ round: 1, gate: 'code-review', verdict: 'pass' });
+    gateLine({ round: 1, gate: 'security', verdict: 'pass' });
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, { gate: 'code-review', verdict: 'fail', findings: 'lots', ts: '2026-11-13T09:10:00.000Z' });
+    expect(gatesOf(shipReview())['code-review']).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  it('a result with agent gates passes the ship schema', () => {
+    gateLine({ round: 1, gate: 'code-review', verdict: 'pass' });
+    gateLine({ round: 1, gate: 'security', verdict: 'pass' });
+    captured({ gate: 'code-review', verdict: 'pass', findings: ZERO, ts: '2026-11-13T09:10:00.000Z' });
+    expect(validate(loadPhaseSchema('ship', PLUGIN_ROOT), result(shipReview()))).toEqual({ ok: true });
+  });
+});

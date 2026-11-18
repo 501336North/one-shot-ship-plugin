@@ -20,6 +20,7 @@ import { TOOL_GATE_BUNDLE_OPTIONS } from './tool-gate-bundle-options.mjs';
 import { GATE_RUN_BUNDLE_OPTIONS } from './gate-run-bundle-options.mjs';
 import { PHASE_RESULT_BUNDLE_OPTIONS } from './phase-result-bundle-options.mjs';
 import { STOP_DISPATCH_BUNDLE_OPTIONS } from './stop-dispatch-bundle-options.mjs';
+import { VERDICT_CAPTURE_BUNDLE_OPTIONS } from './verdict-capture-bundle-options.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const watcherRoot = resolve(__dirname, '..');
@@ -100,3 +101,13 @@ if (stopDispatch.errors.length > 0) {
 }
 
 console.log('  Bundled: dist/cli/stop-dispatch.cjs (standalone)');
+
+// Bundle verdict-capture into a standalone CJS file, run by hooks/oss-verdict-capture.sh at SubagentStop (R-257 T19).
+const verdictCapture = buildSync({ ...VERDICT_CAPTURE_BUNDLE_OPTIONS, write: true });
+
+if (verdictCapture.errors.length > 0) {
+  console.error('verdict-capture bundle failed:', verdictCapture.errors);
+  process.exit(1);
+}
+
+console.log('  Bundled: dist/cli/verdict-capture.cjs (standalone)');

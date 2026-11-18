@@ -212,6 +212,15 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-verdict-capture.sh",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }

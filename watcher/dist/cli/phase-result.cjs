@@ -1029,6 +1029,19 @@ function counts(v) {
   for (const s of SEVERITIES) out[s] = typeof src[s] === "number" ? src[s] : 0;
   return out;
 }
+function agentRow(row) {
+  const f = row.findings;
+  const at = typeof row.ts === "string" ? Date.parse(row.ts) : NaN;
+  if (typeof row.gate !== "string" || row.verdict !== "pass" && row.verdict !== "fail" || Number.isNaN(at)) return null;
+  if (typeof f !== "object" || f === null || Array.isArray(f)) return null;
+  const counts2 = {};
+  for (const s of SEVERITIES) {
+    const n = f[s];
+    if (typeof n !== "number" || !Number.isInteger(n) || n < 0) return null;
+    counts2[s] = n;
+  }
+  return { gate: row.gate, verdict: row.verdict, findings: counts2, at };
+}
 function assembleShip(ctx, opts) {
   let diff;
   try {
@@ -1040,10 +1053,12 @@ function assembleShip(ctx, opts) {
   const featureDir = path6.join(ctx.repo, ".oss", "dev", "active", ctx.feature);
   let gateHashes;
   let decisionRows;
+  let verdictRows;
   try {
     const ledger = openLedger(ctx.repo);
     gateHashes = new Set(ledger.readRows(`gates/${ctx.feature}`).map((r) => r.sha256));
     decisionRows = ledger.readRows(`decisions/${ctx.feature}`);
+    verdictRows = ledger.readRows(`verdicts/${ctx.feature}`);
   } catch (e) {
     return { ok: false, error: e instanceof LedgerError ? e.code : "unsafe_path" };
   }
@@ -1066,6 +1081,14 @@ function assembleShip(ctx, opts) {
       fixed: counts(rec.fixed),
       source: "model"
     });
+  }
+  const runStart = Date.parse(ctx.startedAt);
+  for (const raw2 of verdictRows) {
+    const row = agentRow(raw2);
+    const gate = row === null ? void 0 : byName.get(row.gate);
+    if (row === null || gate === void 0 || !(row.at >= runStart)) continue;
+    const blocking = row.findings.critical + row.findings.high > 0;
+    byName.set(row.gate, { ...gate, verdict: blocking ? "fail" : row.verdict, findings: row.findings, source: "agent" });
   }
   for (const required of opts.requiredGates ?? DEFAULT_REQUIRED_GATES) {
     if (!byName.has(required)) return { ok: false, error: "gate_missing", detail: required };
