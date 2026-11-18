@@ -64,7 +64,8 @@ describe('stripControl removes invisible spoofing characters', () => {
 
   it('keeps the visible neighbours of those ranges', () => {
     // U+2029 and U+206A were neighbours before T45; U+2029 (Zp) and U+206A (Cf) are stripped now.
-    const neighbours = '\u200a\u2010\u2027\u202f\u2065\u2070';
+    // U+2065 (unassigned, default-ignorable) is stripped since #216's hook set; user, 2026-11-18: "Strip U+2065, fix row".
+    const neighbours = '\u200a\u2010\u2027\u202f\u2070';
     expect(stripControl(neighbours)).toBe(neighbours);
   });
 });
