@@ -96,6 +96,14 @@ const REFUSED_GLOB_LOCK_SLASH = [
   `${REFS}echo x > "$x"/HEAD/`,
 ];
 
+const REFUSED_WILDCARD_ONLY = [
+  `${REFS}tee "$x"/* </dev/null`,
+  `${REFS}echo > "$x"/?*`,
+  `${REFS}cp /tmp/a "$x"/*`,
+  `${REFS}rm "$x"/*`,
+  `${REFS}echo x > "$x"/[a-z]*`,
+];
+
 const CONTROLS_ALLOWED = [
   `${REFS}echo > "$x/notes.txt"`,
   `${REFS}echo > "$x/mainline.txt"`,
@@ -103,7 +111,7 @@ const CONTROLS_ALLOWED = [
   `${REFS}echo x > "$x"/mainline.txt`,
   `${REFS}echo x > "$x"/*.txt`,
   `${REFS}echo x > "$x"/m*.md`,
-  `${REFS}echo x > "$x"/*`,
+  'tee build/* </dev/null',
 ];
 const CONTROLS_REFUSED = ['echo > .git/refs/heads/feature'];
 
@@ -113,6 +121,10 @@ describe.each(AGENTS)('refs gap: %s', (_label, agent) => {
   });
 
   it.each(REFUSED_GLOB_LOCK_SLASH)('should refuse a ref name written as a glob, with .lock or a trailing slash: %s', async (command) => {
+    await refused(command, agent);
+  });
+
+  it.each(REFUSED_WILDCARD_ONLY)('should refuse a wildcard-only last part, which matches every ref name: %s', async (command) => {
     await refused(command, agent);
   });
 
