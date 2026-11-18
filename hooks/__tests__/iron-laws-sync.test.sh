@@ -44,16 +44,31 @@ fail() {
     ((TESTS_FAILED++))
 }
 
+# The API answers /shared/iron-laws?split=1 with {"base": <laws>} (R-273 D12), and the sync writes the laws only
+# after ~/.oss/bin/oss-decrypt --verify-body passes. That oss-decrypt is a stub that hashes its stdin against the
+# fixture servedHash (lib/verify-body-stub.sh); the fixture manifest signs exactly the laws the mock serves.
+source "$SCRIPT_DIR/lib/verify-body-stub.sh"
+
+# serve_laws <mock_dir> <laws file>: the mock's JSON reply, the fixture servedHash, and the stub in $TEST_HOME.
+serve_laws() {
+    jq -n --rawfile b "$2" '{base: $b}' > "$1/reply.json"
+    served_hash "$1" shared/iron-laws "$2"
+    verify_body_stub "$TEST_HOME/.oss/bin/oss-decrypt" "$1"
+}
+
 # Helper: create a mock curl that returns Iron Laws content
 create_mock_curl() {
     local mock_dir="$1"
     local iron_laws_content="${2:-# IRON LAWS\n\n## LAW 1: TDD\nNo code without tests.}"
+    { echo -e "$iron_laws_content"
+      for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo "IRON LAW padding line $i: a real laws body is several KB, the sync rejects anything under 500 bytes."; done
+    } > "$mock_dir/laws"
+    serve_laws "$mock_dir" "$mock_dir/laws"
     cat > "$mock_dir/curl" << CURLEOF
 #!/bin/bash
-# Mock curl: return Iron Laws markdown + 200 status
-echo -e "$iron_laws_content"
-for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo "IRON LAW padding line \$i: a real laws body is several KB, the sync rejects anything under 500 bytes."; done
-echo "200"
+# Mock curl: return the ?split=1 JSON + 200 status
+cat "$mock_dir/reply.json"
+printf '\n200\n'
 CURLEOF
     chmod +x "$mock_dir/curl"
 }
@@ -63,12 +78,15 @@ create_tracking_mock_curl() {
     local mock_dir="$1"
     local marker_file="$2"
     local iron_laws_content="${3:-# IRON LAWS - UPDATED\n\n## LAW 1: TDD}"
+    { echo -e "$iron_laws_content"
+      for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo "IRON LAW padding line $i: a real laws body is several KB, the sync rejects anything under 500 bytes."; done
+    } > "$mock_dir/laws"
+    serve_laws "$mock_dir" "$mock_dir/laws"
     cat > "$mock_dir/curl" << CURLEOF
 #!/bin/bash
 echo "CURL_WAS_CALLED" > "$marker_file"
-echo -e "$iron_laws_content"
-for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo "IRON LAW padding line \$i: a real laws body is several KB, the sync rejects anything under 500 bytes."; done
-echo "200"
+cat "$mock_dir/reply.json"
+printf '\n200\n'
 CURLEOF
     chmod +x "$mock_dir/curl"
 }
@@ -369,15 +387,7 @@ EOF
 
     # Mock curl returns UPDATED content
     MOCK_BIN_DIR=$(mktemp -d)
-    cat > "$MOCK_BIN_DIR/curl" << 'CURLEOF'
-#!/bin/bash
-echo "# IRON LAWS - UPDATED VERSION"
-echo ""
-echo "## LAW 1: TDD is mandatory"
-for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo "IRON LAW padding line $i: a real laws body is several KB, the sync rejects anything under 500 bytes."; done
-echo "200"
-CURLEOF
-    chmod +x "$MOCK_BIN_DIR/curl"
+    create_mock_curl "$MOCK_BIN_DIR" "# IRON LAWS - UPDATED VERSION\n\n## LAW 1: TDD is mandatory"
 
     local result exit_code=0
     result=$(HOME="$TEST_HOME" CLAUDE_PROJECT_DIR="$TEST_PROJECT" PATH="$MOCK_BIN_DIR:$PATH" "$HOOK_SCRIPT" 2>&1) || exit_code=$?

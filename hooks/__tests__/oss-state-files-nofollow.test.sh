@@ -42,19 +42,28 @@ cat > /dev/null
 last=""; for a in "$@"; do last="$a"; done
 case "$last" in
     (*/iron-laws/*) printf '{"law1_tdd":{"enabled":true,"locked":true},"from":"stub"}\n' ;;
-    (*) printf '# IRON LAWS from stub\n'
-       for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo "IRON LAW padding line $i: a real laws body is several KB, the sync rejects anything under 500 bytes."; done ;;
+    (*) cat "$LAWS_REPLY" ;;   # the sync's ?split=1 answer, {base: laws} (R-273 D12)
 esac
 printf '%s' "$(cat "$SHIM/code" 2>/dev/null || echo 200)"
 EOF
 )" || WARM=n
 [[ $WARM == y ]] || fail "curl stub warms up" "warm_stub returned non-zero"
+# The laws the shared endpoint serves (over the sync's 500-byte floor), as its ?split=1 JSON, and an oss-decrypt
+# --verify-body stub (lib/verify-body-stub.sh) whose fixture manifest signs exactly those laws; every case HOME links it.
+source "$SCRIPT_DIR/lib/verify-body-stub.sh"
+{ printf '# IRON LAWS from stub\n'
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo "IRON LAW padding line $i: a real laws body is several KB, the sync rejects anything under 500 bytes."; done
+} > "$KS/laws"
+export LAWS_REPLY="$KS/laws.json"; jq -n --rawfile b "$KS/laws" '{base: $b}' > "$LAWS_REPLY"
+verify_body_stub "$KS/vb/bin/oss-decrypt" "$KS/vb" || fail "oss-decrypt stub warms up" "warm_stub returned non-zero"
+served_hash "$KS/vb" shared/iron-laws "$KS/laws"
 
 URL="http://127.0.0.1:9"
 SRC_URL="$URL/api/v1/iron-laws/defaults"
 mtime_of() { perl -e 'print((lstat $ARGV[0])[9])' "$1"; }
 new_case() { # a fresh sandbox: HOME with a config naming $URL, a project whose CLAUDE.md has one laws block
-    C=$(mktemp -d "$KS/case.XXXXXX"); mkdir -p "$C/home/.oss" "$C/proj" "$C/outside/dir"
+    C=$(mktemp -d "$KS/case.XXXXXX"); mkdir -p "$C/home/.oss/bin" "$C/proj" "$C/outside/dir"
+    ln -s "$KS/vb/bin/oss-decrypt" "$C/home/.oss/bin/oss-decrypt"
     printf '{"apiKey":"fake-key-K","apiUrl":"%s"}' "$URL" > "$C/home/.oss/config.json"
     printf '# P\n\n<!-- IRON LAWS START - Do not edit manually, updated by /oss:login -->\nold laws\n<!-- IRON LAWS END -->\n' > "$C/proj/CLAUDE.md"
     TL="$C/home/.oss/team-iron-laws.json"; SRCF="$TL.src"; TB="$C/home/.oss/.team-iron-laws-backoff"

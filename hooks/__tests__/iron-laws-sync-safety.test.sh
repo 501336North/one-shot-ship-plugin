@@ -22,6 +22,14 @@ source "$SCRIPT_DIR/lib/run-capped.sh"   # the one time cap a test may use (T49)
 # HOOKS_UNDER_TEST=/path/to/hooks-copy runs these tests against a copy (mutants).
 HOOK_SCRIPT="${HOOKS_UNDER_TEST:-$SCRIPT_DIR/..}/oss-iron-laws-sync.sh"
 source "$SCRIPT_DIR/lib/warm-stub.sh"
+# oss-decrypt --verify-body is a stub that hashes its stdin against the fixture servedHash (R-273 D12). Warmed
+# once here; each sandbox HOME links to it, and VB holds its record (verify.stdin, verify.calls) and the fixture.
+source "$SCRIPT_DIR/lib/verify-body-stub.sh"
+VB=$(mktemp -d); VB=$(cd "$VB" && pwd -P)
+trap 'rm -rf "$VB"' EXIT
+verify_body_stub "$VB/bin/oss-decrypt" "$VB" || echo "oss-decrypt stub did not warm" >&2
+old_decrypt_stub "$VB/old/oss-decrypt" "$VB" || echo "old oss-decrypt stub did not warm" >&2
+SPLIT_FIXTURE="$SCRIPT_DIR/fixtures/iron-laws-split"
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -46,11 +54,16 @@ FAKE_KEY='fake-key-0123456789abcdef'
 # T/home   HOME with .oss/config.json
 # T/proj   CLAUDE_PROJECT_DIR
 # T/bin    curl shim
-# T/shim   shim control: body, code, sleep; records argv (one line per call) and stdin
+# T/shim   shim control: body (the laws: the ?split=1 reply's base), team (its team part), raw (served as is,
+#          instead of the JSON reply), pin (the fixture servedHash is already set: don't derive it from body),
+#          code, sleep; records argv (one line per call) and stdin
+# T/home/.oss/bin/oss-decrypt  the verifying stub (VB)
 setup() {
     T=$(mktemp -d)
     T=$(cd "$T" && pwd -P)
-    mkdir -p "$T/home/.oss" "$T/proj" "$T/bin" "$T/shim"
+    mkdir -p "$T/home/.oss/bin" "$T/proj" "$T/bin" "$T/shim"
+    ln -s "$VB/bin/oss-decrypt" "$T/home/.oss/bin/oss-decrypt"
+    rm -f "$VB/verify.stdin" "$VB/verify.calls" "$VB/verify.exit" "$VB/served-hashes"
     printf '{"apiKey": "%s"}\n' "$FAKE_KEY" > "$T/home/.oss/config.json"
     # Warmed, so the macOS first-exec scan of the new file is not inside the sync's timed call.
     warm_stub "$T/bin/curl" "$(cat << SHIM
@@ -62,14 +75,25 @@ for a in "\$@"; do
     prev="\$a"
 done
 [[ -f "\$S/sleep" ]] && sleep "\$(cat "\$S/sleep")"
-[[ -f "\$S/body" ]] && cat "\$S/body"
+[[ -f "\$S/reply" ]] && cat "\$S/reply"
 printf '\n%s\n' "\$(cat "\$S/code" 2>/dev/null || echo 200)"
 exit 0
 SHIM
 )" || echo "setup: curl shim did not warm" >&2
     valid_body > "$T/shim/body"
+    prep_reply
 }
 teardown() { rm -rf "$T"; }
+
+# prep_reply: what the shim serves, made here (the shim may run on a PATH without jq): the ?split=1 JSON
+# {base: body[, team: team]}, or raw as is. Unless pinned, the fixture manifest signs exactly body.
+prep_reply() {
+    local S="$T/shim"
+    if [[ -f "$S/raw" ]]; then cp "$S/raw" "$S/reply"
+    elif [[ -f "$S/team" ]]; then jq -n --rawfile b "$S/body" --rawfile t "$S/team" '{base: $b, team: $t}' > "$S/reply"
+    else jq -n --rawfile b "$S/body" '{base: $b}' > "$S/reply"; fi
+    [[ -f "$S/pin" ]] || served_hash "$VB" shared/iron-laws "$S/body"
+}
 
 # A realistic laws body: a heading, "IRON LAW", and well over 500 bytes.
 valid_body() {
@@ -89,6 +113,7 @@ stale() { touch -t 202601010000 "$T/home/.oss/.iron-laws-last-check"; rm -f "$T/
 # run_sync [args...]  -> sets RC, OUT, ERR; project dir defaults to T/proj
 run_sync() {
     local proj="${PROJ:-$T/proj}"
+    prep_reply
     RC=0
     (cd "$T" && OSS_ALLOW_HTTP_LOOPBACK=1 HOME="$T/home" OSS_CONFIG_DIR="${CFG_DIR:-}" CLAUDE_PROJECT_DIR="$proj" PATH="$T/bin:$PATH" \
         run_capped 30 bash "$HOOK_SCRIPT" "$@" </dev/null >"$T/out" 2>"$T/err") || RC=$?
@@ -496,6 +521,7 @@ hide_tools() {
 ESC_JSON="fake\\\"quo\\\\te-$FAKE_KEY"
 ESC_CURLCFG="Authorization: Bearer fake\\\"quo\\\\te-$FAKE_KEY"
 run_hidden() { # like run_sync, with PATH=HIDDEN_PATH
+    prep_reply
     RC=0
     (cd "$T" && HOME="$T/home" OSS_CONFIG_DIR="" CLAUDE_PROJECT_DIR="$T/proj" PATH="$HIDDEN_PATH" \
         run_capped 30 bash "$HOOK_SCRIPT" "$@" </dev/null >"$T/out" 2>"$T/err") || RC=$?
@@ -588,7 +614,7 @@ test_install_no_laws_exit_4() {
 #           an apiUrl the CLI would refuse → no request, nothing written (refresh exits 0, --install 4).
 # @business-rule The API key is only ever sent to the API the user configured.
 # =============================================================================================
-LAWS_PATH="/api/v1/prompts/shared/iron-laws"
+LAWS_PATH="/api/v1/prompts/shared/iron-laws?split=1"   # R-273 D12: base and team apart
 sent_key() { grep -qF "Authorization: Bearer $1\"" "$T/shim/stdin" 2>/dev/null; }
 argv_line() { tr '\n' '|' < "$T/shim/argv" 2>/dev/null; }
 
@@ -656,6 +682,128 @@ test_api_url_change_refreshes() {
     done
 }
 
+
+# =============================================================================================
+# R7 (R-273 D12) The base laws are verified before they are written
+# @behavior The sync asks for /shared/iron-laws?split=1 ({base, team}), pipes the exact base bytes to
+#           `~/.oss/bin/oss-decrypt --verify-body shared/iron-laws`, and writes base + team only on exit 0.
+#           Anything else leaves CLAUDE.md byte-identical, warns on stderr, and backs off 1 h like a failed fetch.
+# @business-rule A tampered IRON LAWS body never lands in a committed CLAUDE.md; team users get exactly the block
+#           they got before the split (no one-time rewrite).
+# =============================================================================================
+verify_calls() { cat "$VB/verify.calls" 2>/dev/null | tr '\n' ' '; }
+lc_fresh() { [[ -n "$(find "$T/home/.oss/.iron-laws-last-check" -newer "$T/shim/body" 2>/dev/null)" ]] && echo y || echo n; }
+
+test_split_verified_writes() {
+    local name="R7: a verified base is written; one ?split=1 request; oss-decrypt --verify-body shared/iron-laws called once"; ((TESTS_RUN++)); setup
+    block_file "$T/proj/CLAUDE.md"; stale; run_sync
+    local a; a=$(argv_line)
+    if [[ $RC -eq 0 && "$(curl_calls)" == 1 && "$a" == *"$LAWS_PATH|" && "$(verify_calls)" == "shared/iron-laws " ]] \
+        && grep -q "FRESH FROM API" "$T/proj/CLAUDE.md"; then pass "$name"
+    else fail "$name" "1 ?split=1 call, 1 verify call, refreshed" "rc=$RC calls=$(curl_calls) argv=${a//$FAKE_KEY/<KEY>} verify=$(verify_calls) err=$ERR"; fi
+    teardown
+}
+
+test_split_bytes_exact() {
+    local name="R7: the bytes piped to oss-decrypt are exactly .base (its final newline neither lost nor doubled), not team"; ((TESTS_RUN++)); setup
+    cp "$SPLIT_FIXTURE/base" "$T/shim/body"; cp "$SPLIT_FIXTURE/team" "$T/shim/team"
+    block_file "$T/proj/CLAUDE.md"; stale; run_sync
+    if [[ "$(tail -c 1 "$SPLIT_FIXTURE/base" | od -An -c | tr -d ' ')" == '\n' ]] && cmp -s "$VB/verify.stdin" "$SPLIT_FIXTURE/base"; then pass "$name"
+    else fail "$name" "verify.stdin == fixture base (ends in \\n)" "rc=$RC stdin_bytes=$(wc -c < "$VB/verify.stdin" 2>/dev/null) base_bytes=$(wc -c < "$SPLIT_FIXTURE/base") err=$ERR"; fi
+    teardown
+}
+
+test_split_team_matches_legacy() {
+    local name="R7 (A6): base + team written by --install is byte-identical to what the legacy body base+team gave"; ((TESTS_RUN++)); setup
+    cp "$SPLIT_FIXTURE/base" "$T/shim/body"; cp "$SPLIT_FIXTURE/team" "$T/shim/team"
+    run_sync --install
+    if [[ $RC -eq 0 ]] && cmp -s "$T/proj/CLAUDE.md" "$SPLIT_FIXTURE/legacy-install-claude-md"; then pass "$name"
+    else fail "$name" "CLAUDE.md == fixtures/iron-laws-split/legacy-install-claude-md" "rc=$RC err=$ERR diff=$(diff "$SPLIT_FIXTURE/legacy-install-claude-md" "$T/proj/CLAUDE.md" 2>&1 | head -8)"; fi
+    teardown
+}
+
+# check_unverified <label> [install]: the reply/stub are set up; refresh (or --install) must write nothing.
+check_unverified() {
+    local label="$1" mode="${2:-refresh}"
+    local name="R7: $label ($mode) → CLAUDE.md byte-identical, warning, nothing on stdout, 1 h backoff, no fresh stamp"; ((TESTS_RUN++))
+    local before want=0
+    if [[ $mode == install ]]; then printf '# Mine\n' > "$T/proj/CLAUDE.md"; want=4; else block_file "$T/proj/CLAUDE.md"; stale; fi
+    before=$(sum "$T/proj/CLAUDE.md")
+    if [[ $mode == install ]]; then run_sync --install; else run_sync; fi
+    local backoff=n bf="$T/home/.oss/.iron-laws-backoff"; [[ -f "$bf" && -n "$(find "$bf" -newer "$T/shim/body" 2>/dev/null)" ]] && backoff=y
+    if [[ $RC -eq $want && "$(sum "$T/proj/CLAUDE.md")" == "$before" && -n "$ERR" && -z "$OUT" && $backoff == y && "$(lc_fresh)" == n ]]; then pass "$name"
+    else fail "$name" "rc $want, unchanged, stderr, no stdout, backoff, stamp not fresh" \
+        "rc=$RC changed=$([[ "$(sum "$T/proj/CLAUDE.md")" == "$before" ]] && echo n || echo y) out=${OUT:0:80} backoff=$backoff fresh=$(lc_fresh) err=$ERR"; fi
+}
+
+test_split_tampered_base() {
+    local m
+    for m in refresh install; do
+        setup
+        printf 'the signed laws\n' > "$T/signed"; served_hash "$VB" shared/iron-laws "$T/signed"; : > "$T/shim/pin"
+        check_unverified "a base that is not the signed one" $m
+        ((TESTS_RUN++))
+        if [[ "$ERR" == *verif* ]]; then pass "R7: the tamper warning ($m) says the laws did not pass verification"
+        else fail "R7: the tamper warning ($m) names verification" "a warning naming verification" "err=$ERR"; fi
+        teardown
+    done
+}
+
+test_split_verify_exit_codes() {
+    local c
+    for c in 1 4 124 3; do
+        setup; printf '%s' "$c" > "$VB/verify.exit"
+        check_unverified "oss-decrypt exits $c"
+        teardown
+    done
+    setup; rm -f "$T/home/.oss/bin/oss-decrypt"; check_unverified "no oss-decrypt (exit 127)"; teardown
+}
+
+test_split_old_decrypt() {
+    setup; ln -sf "$VB/old/oss-decrypt" "$T/home/.oss/bin/oss-decrypt"
+    check_unverified "oss-decrypt older than 1.2.5 (no --verify-body: help on stdout, exit 1)"
+    teardown
+}
+
+# Verification is part of the fetch, before the write lock: a lock held by another sync cannot turn a failed
+# verification into a silent "lock busy" exit with no backoff, and the lock is never taken for unverified laws.
+test_split_verify_before_lock() {
+    local name="R7: verification runs before the lock: with the lock held, a tampered base still backs off at once, lock untouched"; ((TESTS_RUN++)); setup
+    printf 'the signed laws\n' > "$T/signed"; served_hash "$VB" shared/iron-laws "$T/signed"; : > "$T/shim/pin"
+    mkdir "$T/home/.oss/.iron-laws-sync.lock"; local lock_id; lock_id=$(ls -ldi "$T/home/.oss/.iron-laws-sync.lock" | awk '{print $1}')
+    block_file "$T/proj/CLAUDE.md"; local before; before=$(sum "$T/proj/CLAUDE.md"); stale
+    run_sync
+    local bf="$T/home/.oss/.iron-laws-backoff" same_lock=n
+    [[ "$(ls -ldi "$T/home/.oss/.iron-laws-sync.lock" 2>/dev/null | awk '{print $1}')" == "$lock_id" ]] && same_lock=y
+    if [[ $RC -eq 0 && -f "$bf" && "$ERR" == *verif* && "$ERR" != *"another sync holds"* && $same_lock == y \
+          && "$(sum "$T/proj/CLAUDE.md")" == "$before" ]]; then pass "$name"
+    else fail "$name" "backoff set, verification warning, not a lock wait, the held lock untouched, unchanged" \
+        "rc=$RC backoff=$([[ -f $bf ]] && echo y || echo n) same_lock=$same_lock err=$ERR"; fi
+    teardown
+}
+
+# The reply must be the ?split=1 JSON; anything else is refused with no second, unsplit request.
+test_split_reply_refused() {
+    local label
+    for label in markdown html not-object no-base number-base http-404; do
+        setup
+        case $label in
+            markdown) valid_body > "$T/shim/raw" ;;   # what the unsplit endpoint (and an old API) answers
+            html) printf '<!DOCTYPE html>\n<html><body>portal</body></html>\n' > "$T/shim/raw" ;;
+            not-object) printf '["# IRON LAWS"]' > "$T/shim/raw" ;;
+            no-base) printf '{"team":"x"}' > "$T/shim/raw" ;;
+            number-base) printf '{"base":5}' > "$T/shim/raw" ;;
+            http-404) printf '404' > "$T/shim/code" ;;
+        esac
+        check_unverified "a ?split=1 reply that is $label"
+        local a; a=$(argv_line)
+        ((TESTS_RUN++))
+        if [[ "$(curl_calls)" == 1 && "$a" == *"$LAWS_PATH|" && ( $label == http-404 || ! -s "$VB/verify.calls" ) ]]; then pass "R7: $label reply: one ?split=1 request, never the unsplit endpoint"
+        else fail "R7: $label reply: no fallback request" "1 call ending ?split=1" "calls=$(curl_calls) argv=${a//$FAKE_KEY/<KEY>} verify=$(verify_calls)"; fi
+        teardown
+    done
+}
+
 echo "Running oss-iron-laws-sync.sh safety tests..."
 echo "======================================="
 test_refresh_never_creates
@@ -696,6 +844,14 @@ test_oss_config_dir_key_and_url
 test_refused_api_url_no_request
 test_no_api_url_default_host
 test_api_url_change_refreshes
+test_split_verified_writes
+test_split_bytes_exact
+test_split_team_matches_legacy
+test_split_tampered_base
+test_split_verify_exit_codes
+test_split_old_decrypt
+test_split_reply_refused
+test_split_verify_before_lock
 echo ""
 echo "======================================="
 echo "Results: $TESTS_PASSED/$TESTS_RUN passed, $TESTS_FAILED failed"
