@@ -217,6 +217,19 @@ describe.each(AGENTS.slice(0, 2))('%s, setting a variable on a hook call', (_who
     },
   );
 
+  // R-257 pen test: a hook script run through a shell, from the plugin cache, a --plugin-dir copy or $CLAUDE_PLUGIN_ROOT
+  it.each([
+    'HOME=/tmp/m bash ~/.claude/plugins/cache/my-market/oss/2.3.0/hooks/oss-notify.sh x',
+    'HOME=/tmp/m sh ~/.claude/plugins/cache/my-market/oss/2.3.0/hooks/oss-notify.sh x',
+    'PATH=/tmp/m sh /tmp/oss-dev-copy/hooks/oss-log.sh x',
+    "export HOME=/tmp/m; bash -c '~/.claude/plugins/cache/my-market/oss/2.3.0/hooks/oss-notify.sh'",
+    'HOME=/tmp/m bash "$CLAUDE_PLUGIN_ROOT/hooks/oss-notify.sh"',
+  ])('refuses a hook script run through a shell with a HOME or PATH it chose: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(/^Refused.*OSS hook script/);
+  });
+
   it('still lets a hook call unset a variable', async () => {
     const result = await call(`unset GIT_DIR NODE_OPTIONS; ${LOG_HOOK}`, agent);
     expect(result.stderr).not.toMatch(/OSS hook script/);
