@@ -815,7 +815,7 @@ got=$(jq -r '.command' "$REC" 2>/dev/null)
 [[ $RC -eq 0 && -f "$REC" && -z "$got" ]] && pass "$name" || fail "$name" "rc=$RC command=$got"
 
 # The private ledger (NOTES.md Ledger contract): one row {id, feature, sha256(line)} per written line
-fmode() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1" 2>/dev/null; }
+fmode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1" 2>/dev/null; }
 LKEY=$(cd "$P" && printf '%s\n%s\n' "$(git rev-parse --show-toplevel)" "$(git rev-parse --absolute-git-dir)" | git hash-object --stdin | cut -c1-16)
 LDIR="$HOME/.oss/ledger/$LKEY/decisions"; LED="$LDIR/demo"
 name='should append each written record id to the owner-only ledger ~/.oss/ledger/<key>/decisions/<feature>'

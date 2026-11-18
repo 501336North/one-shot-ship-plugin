@@ -49,7 +49,7 @@ new_project() {
 gate() { (cd "$P" && run_capped 20 "$TLS" gate 1 security pass '' '' full > /dev/null 2> "$T/err"); RC=$?; ERR=$(cat "$T/err"); }
 command_line() { (cd "$P" && run_capped 20 "$TLS" command build start > /dev/null 2> "$T/err"); RC=$?; ERR=$(cat "$T/err"); }
 rows() { local c=0; [[ -f "$1" ]] && c=$(wc -l < "$1" | tr -d ' '); echo "$c"; }
-mode_of() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null; }
+mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null; }
 
 # --- a written gate line's hash lands in the ledger -----------------------------------------------------------------
 new_project feat/demo/build demo

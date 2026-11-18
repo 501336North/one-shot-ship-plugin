@@ -59,7 +59,7 @@ state_field() { jq -r ".$1 // empty" "$T/repo/.oss/workflow-state.json" 2>/dev/n
 run_row() { cat "$T"/home/.oss/ledger/*/run/"$1" 2>/dev/null | tail -1; }
 chain_fired() { [[ -s "$T/chain.calls" ]]; }
 not_done() { [[ "$(jq -r ".chainState.$1 // empty" "$T/repo/.oss/workflow-state.json" 2>/dev/null)" != done ]]; }
-perm() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null; }
+perm() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null; }
 
 # ---------------------------------------------------------------- T10b: start gate (D16, D17) and the run row
 # 1. a pre-R-257 feature (no results/) gets the notice and starts.
