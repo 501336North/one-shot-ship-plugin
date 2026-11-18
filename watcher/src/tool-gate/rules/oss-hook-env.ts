@@ -55,7 +55,13 @@ const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=/;
 /** A variable name. */
 const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** A name the agent's environment may already export, so a plain assignment reaches a child: upper case, or a `*_proxy` name. */
-const MAYBE_EXPORTED = /[A-Z]|_proxy$/;
+const MAYBE_EXPORTED = /[A-Z]|_proxy$|^(?:manpath|fpath|cdpath|module_path|mailpath|psvar|fignore)$/;
+/** zsh's special maps: setting a key redirects a command name, function, builtin or option (hook-env-refs Task 13). */
+const COMMAND_MAPS = /^(?:dis_)?(?:aliases|galiases|saliases|functions|commands|builtins|options)$/;
+/** An option name as the shell matches it: any case, `_` ignored. */
+function optionName(word: string | undefined): string {
+  return (word ?? '').toLowerCase().replace(/_/g, '');
+}
 /** Words that may start a simple command before its assignments. */
 const RESERVED = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '{', '!', 'time']);
 /** A word that sets one of them, or names one for a builtin to set: `HOME=x`, `PATH+=x`, `path[1]=x`, `HOME`. */
@@ -140,7 +146,7 @@ function setsUnlisted(words: string[]): boolean {
   const [name, ...args] = words.slice(p);
   if (name === undefined || name === 'for' || name === 'select') {
     const plain = name === undefined ? assigned : [...assigned, args[0] ?? ''];
-    return plain.some((w) => MAYBE_EXPORTED.test(variableOf(w)) && unlisted(w));
+    return plain.some((w) => (MAYBE_EXPORTED.test(variableOf(w)) || COMMAND_MAPS.test(variableOf(w))) && unlisted(w));
   }
   const names = [...assigned];
   if (OPERAND_SETTERS.has(name)) names.push(...args.filter((a) => !a.startsWith('-')));
@@ -228,7 +234,12 @@ function setsFromElsewhere(words: string[], depth: number, call: Call, raws: Arr
   }
   // hook-env-refs Task 9: `set -a` / `-o allexport` exports every later assignment; a function can stand in for a program the hook runs
   if (name === 'function') return true;
-  if (name === 'set') return args.some((a, i) => /^-[A-Za-z]*[kTa]/.test(a) || (a === '-o' && ['keyword', 'functrace', 'allexport'].includes(args[i + 1])));
+  if (name === 'set') return args.some((a, i) => /^-[A-Za-z]*[kTa]/.test(a) || (a === '-o' && ['keyword', 'functrace', 'allexport'].includes(optionName(args[i + 1]))));
+  // hook-env-refs Task 13: an alias, a hashed path or a switched builtin stands in for a program the hook runs; allexport in any spelling
+  if (name === 'alias' || name === 'enable' || name === 'disable') return true;
+  if (name === 'hash') return args.some((a) => a.includes('=') || /^-[A-Za-z]*p/.test(a));
+  if (name === 'setopt') return args.some((a) => /^[-+][A-Za-z]*a/.test(a) || optionName(a) === 'allexport');
+  if (name === 'shopt') return args.some((a) => optionName(a) === 'allexport');
   if (name === 'trap') return args.some((a) => !a.startsWith('-') && setsRefusedVariable(a, depth + 1, call));
   return false;
 }
