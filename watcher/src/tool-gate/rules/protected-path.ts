@@ -365,7 +365,9 @@ function unknownWrite(part: CommandPart, settings: GateSettings, places: Places[
       };
     }
     if (tail === null) {
-      if (!substituted.includes(target) && !literalHeadReaches(pattern, part.cwd, settings, places, paths)) continue;
+      const after = pattern.slice(pattern.lastIndexOf(UNKNOWN) + UNKNOWN.length);
+      const wildcardsOnly = after.startsWith('/') && endsInGitRef(after.replace(/^\/+/, ''), settings);
+      if (!wildcardsOnly && !substituted.includes(target) && !literalHeadReaches(pattern, part.cwd, settings, places, paths)) continue;
     } else if (!endsInGitRef(tail, settings) && !places.some((at) => tailMayBeProtected(tail, settings.protectedPaths, at, true, false))) {
       continue;
     }
