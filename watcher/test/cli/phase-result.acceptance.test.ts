@@ -22,7 +22,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.resolve(HERE, '../../dist/cli/phase-result.cjs');
 const FEATURE = 'feat-a';
 const OTHER = 'feat-b';
-const GATES = ['code-reviewer', 'performance-engineer', 'security-auditor'];
+// ⚠ changes existing test: REQUIREMENTS AC-003.5 — gates are the timeline gate lines, whose names are ship.md's gate.txt values
+const GATES = ['code-review', 'performance', 'security'];
 
 let tmp: string;
 let repo: string;

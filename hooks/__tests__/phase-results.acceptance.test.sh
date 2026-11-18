@@ -126,5 +126,29 @@ if printf '%s' "$out" | jq -e '.decision == "block" and (.reason | test("plan"))
 else fail "Stop dispatcher blocks while a started phase has no valid result" "out=$out"; fi
 cleanup
 
+# 8. R-257 T27 (AC-003.5): ship as the served prompt runs it. Round-1 gate lines are written through
+#    `oss-value.sh timeline gate` with the six value files, under ship.md's gate.txt names (code-review, performance,
+#    security). Assemble with the default required gates (no override) succeeds, ready to merge.
+# shellcheck source=lib/phase-result-fixture.sh
+source "$ROOT/hooks/__tests__/lib/phase-result-fixture.sh"   # prf_build: a valid build result, so ship can start
+sandbox
+PRF_REPO="$T/repo" prf_build
+notify ship start '{}' >/dev/null 2>&1
+(cd "$T/repo" && echo change > change.txt && git add change.txt && git commit -q -m change)
+gate_err=""
+for g in code-review performance security; do
+    vd=$(value_dir)
+    printf '1\n' > "$vd/round.txt"; printf '%s\n' "$g" > "$vd/gate.txt"; printf 'pass\n' > "$vd/verdict.txt"
+    printf 'critical=0\n' > "$vd/findings.txt"; printf 'critical=0\n' > "$vd/fixed.txt"; printf 'full\n' > "$vd/mode.txt"
+    envrun "$SH" "$ROOT/hooks/oss-value.sh" timeline gate >/dev/null 2>&1 || gate_err="$gate_err $g"
+done
+out=$(phase_result assemble ship 2>&1); rc=$?
+ship_json="$T/repo/.oss/dev/active/$FEATURE/results/ship.json"
+if [[ -z "$gate_err" && $rc -eq 0 ]] \
+    && jq -e '.verdict == "ready_to_merge" and ([.gates[].gate] | sort) == ["code-review","performance","security"]' "$ship_json" >/dev/null 2>&1; then
+    pass "ship assemble with ship.md's gate.txt names and the default required gates is ready_to_merge"
+else fail "ship assemble with ship.md's gate.txt names and the default required gates is ready_to_merge" "gate_err=$gate_err rc=$rc out=$out"; fi
+cleanup
+
 echo; echo "Ran $RUN, failed $FAILED"
 [[ $FAILED -eq 0 ]]

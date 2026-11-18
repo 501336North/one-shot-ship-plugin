@@ -29,11 +29,12 @@ prf_build() {
 }
 
 # ship: one commit against main, and a passing round-1 line for each default gate, written through oss-value.sh
+# ⚠ changes existing test: REQUIREMENTS AC-003.5 — gates are the timeline gate lines, whose names are ship.md's gate.txt values
 prf_ship() {
     local vd g
     prf_notify ship start '{}' >/dev/null 2>&1
     (cd "$PRF_REPO" && echo change > change.txt && git add change.txt && git commit -q -m change) || return 1
-    for g in code-reviewer performance-engineer security-auditor; do
+    for g in code-review performance security; do
         vd=$(prf_value_dir) && [[ -n "$vd" ]] || return 1
         printf '1\n' > "$vd/round.txt"; printf '%s\n' "$g" > "$vd/gate.txt"; printf 'pass\n' > "$vd/verdict.txt"
         : > "$vd/findings.txt"; : > "$vd/fixed.txt"; printf 'full\n' > "$vd/mode.txt"

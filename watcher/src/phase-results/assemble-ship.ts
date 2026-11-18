@@ -20,8 +20,12 @@ import { openLedger, LedgerError } from './ledger.js';
 import { readValueFile } from './store.js';
 import { baseFields, parseJsonObject, redactModelText, type AssembleContext, type AssembleOutcome } from './assemble-common.js';
 
-/** The default `quality_gates.agents` of /oss:ship (commands/ship.md); gate lines name an agent without its prefix. */
-export const DEFAULT_REQUIRED_GATES: readonly string[] = ['code-reviewer', 'performance-engineer', 'security-auditor'];
+/**
+ * The gates ship requires (AC-003.5): the timeline gate line names, i.e. the `gate.txt` values of the served ship.md
+ * (code-reviewer -> code-review, performance-auditor -> performance, security-auditor -> security). The same set as
+ * healthchecks/quality-gates.ts; pen-test stays optional (R-257 T27).
+ */
+export const DEFAULT_REQUIRED_GATES: readonly string[] = ['code-review', 'performance', 'security'];
 
 export interface AssembleShipOptions {
   base: string;

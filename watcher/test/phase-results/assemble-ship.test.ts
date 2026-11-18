@@ -18,6 +18,7 @@ import { fileURLToPath } from 'url';
 import { assembleShip, DEFAULT_REQUIRED_GATES } from '../../src/phase-results/assemble-ship.js';
 import type { AssembleContext, AssembleOutcome } from '../../src/phase-results/assemble-common.js';
 import { openLedger } from '../../src/phase-results/ledger.js';
+import { captureVerdict } from '../../src/phase-results/verdict-capture.js';
 import { loadPhaseSchema } from '../../src/phase-results/schemas.js';
 import { validate } from '../../src/phase-results/validate.js';
 
@@ -25,7 +26,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(HERE, '../../..');
 const FEATURE = 'phase-results';
 const FAKE_KEY = 'sk-ant-api03-' + 'Ab1'.repeat(30);
-const GATES = ['code-reviewer', 'performance-engineer', 'security-auditor'];
+// ⚠ changes existing test: REQUIREMENTS AC-003.5 — gates are the timeline gate lines, whose names are ship.md's gate.txt values
+const GATES = ['code-review', 'performance', 'security'];
 
 let repo: string;
 let home: string;
@@ -236,15 +238,17 @@ describe('assembleShip: gates and verdict', () => {
   // Behaviour: the gates the person saw run are listed in the result, marked as model-reported.
   // Rule: AC-003.5, latest-round ledger-backed gate lines become gates[] with source model.
   it('ledger-backed gate lines of the latest round become gates with source model', () => {
-    gateLine({ round: 1, gate: 'security-auditor', verdict: 'fail', findings: { high: 1 } });
-    gateLine({ round: 2, gate: 'code-reviewer', verdict: 'pass', findings: { low: 2 }, fixed: { low: 1 } });
-    gateLine({ round: 2, gate: 'performance-engineer', verdict: 'pass' });
-    gateLine({ round: 2, gate: 'security-auditor', verdict: 'pass' });
+    // ⚠ changes existing test: REQUIREMENTS AC-003.5 — gates are the timeline gate lines, whose names are ship.md's gate.txt values
+    gateLine({ round: 1, gate: 'security', verdict: 'fail', findings: { high: 1 } });
+    gateLine({ round: 2, gate: 'code-review', verdict: 'pass', findings: { low: 2 }, fixed: { low: 1 } });
+    gateLine({ round: 2, gate: 'performance', verdict: 'pass' });
+    gateLine({ round: 2, gate: 'security', verdict: 'pass' });
     const r = result(ship());
     const gates = r.gates as Array<Record<string, unknown>>;
     expect(gates).toHaveLength(3);
     expect(gates[0]).toEqual({
-      gate: 'code-reviewer',
+      // ⚠ changes existing test: REQUIREMENTS AC-003.5 — gates are the timeline gate lines, whose names are ship.md's gate.txt values
+      gate: 'code-review',
       verdict: 'pass',
       findings: { critical: 0, high: 0, medium: 0, low: 2, info: 0 },
       fixed: { critical: 0, high: 0, medium: 0, low: 1, info: 0 },
@@ -256,17 +260,19 @@ describe('assembleShip: gates and verdict', () => {
   // Behaviour: ship cannot finish when a required review never ran.
   // Rule: AC-003.5, a required gate with no line is gate_missing.
   it('a required gate missing gives gate_missing', () => {
-    gateLine({ round: 1, gate: 'code-reviewer', verdict: 'pass' });
-    gateLine({ round: 1, gate: 'performance-engineer', verdict: 'pass' });
+    // ⚠ changes existing test: REQUIREMENTS AC-003.5 — gates are the timeline gate lines, whose names are ship.md's gate.txt values
+    gateLine({ round: 1, gate: 'code-review', verdict: 'pass' });
+    gateLine({ round: 1, gate: 'performance', verdict: 'pass' });
     expect(errorOf(ship())).toBe('gate_missing');
   });
 
   // Behaviour: a gate line typed into the repo file by hand does not count as a review.
   // Rule: S2, only gate lines whose hash is in the private ledger count; a planted line is gate_missing.
   it('a planted gate line gives gate_missing', () => {
-    gateLine({ round: 1, gate: 'code-reviewer', verdict: 'pass' });
-    gateLine({ round: 1, gate: 'performance-engineer', verdict: 'pass' });
-    gateLine({ round: 1, gate: 'security-auditor', verdict: 'pass' }, { ledger: false });
+    // ⚠ changes existing test: REQUIREMENTS AC-003.5 — gates are the timeline gate lines, whose names are ship.md's gate.txt values
+    gateLine({ round: 1, gate: 'code-review', verdict: 'pass' });
+    gateLine({ round: 1, gate: 'performance', verdict: 'pass' });
+    gateLine({ round: 1, gate: 'security', verdict: 'pass' }, { ledger: false });
     expect(errorOf(ship())).toBe('gate_missing');
   });
 
@@ -290,12 +296,14 @@ describe('assembleShip: gates and verdict', () => {
   // Behaviour: a failing review holds the merge and is named.
   // Rule: AC-003.6, a failing gate gives blocked with the gate listed in blockers.
   it('a failing gate gives blocked with the blocker listed', () => {
-    gateLine({ round: 1, gate: 'code-reviewer', verdict: 'pass' });
-    gateLine({ round: 1, gate: 'performance-engineer', verdict: 'pass' });
-    gateLine({ round: 1, gate: 'security-auditor', verdict: 'fail', findings: { high: 1 } });
+    // ⚠ changes existing test: REQUIREMENTS AC-003.5 — gates are the timeline gate lines, whose names are ship.md's gate.txt values
+    gateLine({ round: 1, gate: 'code-review', verdict: 'pass' });
+    gateLine({ round: 1, gate: 'performance', verdict: 'pass' });
+    gateLine({ round: 1, gate: 'security', verdict: 'fail', findings: { high: 1 } });
     const r = result(ship());
     expect(r.verdict).toBe('blocked');
-    expect(r.blockers).toEqual(['gate:security-auditor']);
+    // ⚠ changes existing test: REQUIREMENTS AC-003.5 — gates are the timeline gate lines, whose names are ship.md's gate.txt values
+    expect(r.blockers).toEqual(['gate:security']);
   });
 });
 
@@ -479,6 +487,21 @@ describe('assembleShip: captured agent verdicts (T19)', () => {
     gateLine({ round: 1, gate: 'security', verdict: 'pass' });
     openLedger(repo).appendRow(`verdicts/${FEATURE}`, { gate: 'code-review', verdict: 'fail', findings: 'lots', ts: '2026-11-13T09:10:00.000Z' });
     expect(gatesOf(shipReview())['code-review']).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  // Behaviour: the code-reviewer's own block lands on ship's code-review gate, with the default required gates.
+  // Rule: R-257 T27 + T19, the capture maps code-reviewer to code-review, the gate.txt name the timeline holds.
+  it('a captured code-reviewer block overrides the code-review gate under the default required gates', () => {
+    for (const gate of GATES) gateLine({ round: 1, gate, verdict: 'pass' });
+    const block = '```oss-verdict\n' + JSON.stringify({ verdict: 'fail', findings: { ...ZERO, medium: 4 } }) + '\n```';
+    const out = captureVerdict(
+      { session_id: 's1', agent_id: 'a1', agent_type: 'oss:code-reviewer', cwd: repo, last_assistant_message: block },
+      { now: () => new Date('2026-11-13T09:10:00.000Z') },
+    );
+    expect(out).toEqual({ captured: true, gate: 'code-review', feature: FEATURE });
+    const r = result(ship());
+    expect(gatesOf(ship())['code-review']).toMatchObject({ verdict: 'fail', findings: { ...ZERO, medium: 4 }, source: 'agent' });
+    expect(r.blockers).toEqual(['gate:code-review']);
   });
 
   it('a result with agent gates passes the ship schema', () => {
