@@ -5,8 +5,10 @@
 
 import { VERSION } from './index.js';
 import { setupCommand } from './commands/setup.js';
-import { decryptCommand } from './commands/decrypt.js';
-import { fetchManifest, verifyManifestSignature } from './manifest-verifier.js';
+import { createHash } from 'crypto';
+import { decryptCommand, fetchManifestWithRetry } from './commands/decrypt.js';
+import { fetchManifest, verifyManifestSignature, type SignedManifest } from './manifest-verifier.js';
+import { checkAndRecordManifestVersion } from './manifest-floor.js';
 import { stripControl } from './strip-control.js';
 import { getApiUrl } from './config.js';
 
@@ -22,6 +24,7 @@ export interface CliArgs {
   clearCache?: boolean;
   verifyManifest?: boolean;
   listPrompts?: boolean;
+  verifyBody?: string;
   category?: string;
   type?: 'commands' | 'workflows' | 'skills' | 'agents' | 'hooks' | 'custom';
   name?: string;
@@ -64,6 +67,9 @@ export function parseArgs(args: string[]): CliArgs {
       case '--list-prompts':
         result.listPrompts = true;
         break;
+      case '--verify-body':
+        result.verifyBody = args[++i] ?? '';
+        break;
       case '--category':
         result.category = args[++i];
         break;
@@ -94,6 +100,7 @@ Usage:
   oss-decrypt --verify-manifest    Verify prompt manifest signature
   oss-decrypt --list-prompts       List all prompts in the manifest
   oss-decrypt --list-prompts --category <cat>  List prompts filtered by category
+  oss-decrypt --verify-body <key> < body  Check a fetched body against the signed manifest
 
 Options:
   --setup              Run initial setup (fetch credentials)
@@ -105,6 +112,8 @@ Options:
   --verify-manifest    Fetch and verify the signed prompt manifest
   --list-prompts       List all prompts from the manifest
   --category <cat>     Filter --list-prompts by category
+  --verify-body <key>  Exit 0 only if stdin's sha256 equals the signed servedHash of <key>
+                       (shared/iron-laws or templates/claude-md); needs no credentials
   --help, -h           Show this help
   --version, -v        Show version
 
@@ -195,6 +204,66 @@ async function listPromptsCommand(category?: string): Promise<void> {
   console.log(stripControl(JSON.stringify(entries)));
 }
 
+/** Bodies a hook may verify (R-273 D12): an exact set, so no prototype key can match. */
+const VERIFIABLE_BODIES = new Set(['shared/iron-laws', 'templates/claude-md']);
+
+/** Largest body --verify-body reads: 1 MiB, far above the IRON LAWS and CLAUDE.md template bodies. */
+export const OSS_BODY_MAX = 1024 * 1024;
+
+/** Raw stdin bytes (no decoding, no trimming), or null once more than OSS_BODY_MAX arrive. */
+async function readStdinCapped(): Promise<Buffer | null> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of process.stdin) {
+    total += (chunk as Buffer).length;
+    if (total > OSS_BODY_MAX) return null;
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
+/** Why the body can't be trusted, or null when it is exactly what the signed manifest says was served. */
+async function verifyBodyReason(key: string): Promise<string | null> {
+  if (!VERIFIABLE_BODIES.has(key)) return '[SECURITY] --verify-body: key is not a verifiable body';
+  const body = await readStdinCapped();
+  if (body === null) return `[SECURITY] --verify-body: body is larger than ${OSS_BODY_MAX} bytes`;
+  const apiUrl = getApiUrl();
+  let manifest: SignedManifest;
+  try {
+    manifest = await fetchManifestWithRetry(apiUrl);
+  } catch {
+    return ''; // fetchManifestWithRetry already printed its one line
+  }
+  if (!verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY)) {
+    return '[SECURITY] Manifest signature verification FAILED — body not verified';
+  }
+  const floorVerdict = checkAndRecordManifestVersion(apiUrl, manifest.version);
+  if (floorVerdict !== 'accepted') {
+    return floorVerdict === 'older'
+      ? '[SECURITY] Manifest is older than one already seen — body not verified'
+      : '[SECURITY] Manifest has no valid version — body not verified';
+  }
+  const entry = Object.hasOwn(manifest.prompts, key) ? manifest.prompts[key] : undefined;
+  if (typeof entry?.servedHash !== 'string') {
+    return `[SECURITY] No servedHash in the manifest for ${key} — body not verified`;
+  }
+  if (createHash('sha256').update(body).digest('hex') !== entry.servedHash) {
+    return `[SECURITY] Body hash does not match the signed manifest for ${key} — body not verified`;
+  }
+  return null;
+}
+
+/**
+ * --verify-body <key>: exit 0 only when stdin's sha256 equals the signed manifest's servedHash for
+ * <key>. Any failure: exit 1, one reason line on stderr, nothing on stdout.
+ */
+async function verifyBodyCommand(key: string): Promise<void> {
+  const reason = await verifyBodyReason(key);
+  if (reason === null) return;
+  if (reason !== '') console.error(reason);
+  process.exitCode = 1;
+}
+
 /**
  * Run the CLI with the given arguments
  */
@@ -223,6 +292,11 @@ export async function runCli(args: string[]): Promise<void> {
 
   if (parsed.verifyManifest) {
     await verifyManifestCommand();
+    return;
+  }
+
+  if (parsed.verifyBody !== undefined) {
+    await verifyBodyCommand(parsed.verifyBody);
     return;
   }
 
