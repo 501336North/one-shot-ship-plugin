@@ -434,6 +434,67 @@ describe.each(AGENTS.slice(0, 2))('%s, a hook path reached through cd or a varia
   });
 });
 
+// hook-env-refs Task 15: any zsh option command, any `set -A`/`+A`, any `set -o`/`+o` outside the served options, seen through zsh's precommand modifiers
+describe.each(AGENTS.slice(0, 2))('%s, a hook script run after a shell option or array is changed', (_who, agent) => {
+  it.each([
+    `unsetopt noallexport; foo=1; ${LOG_HOOK}`,
+    `unsetopt NO_ALL_EXPORT; foo=1; ${LOG_HOOK}`,
+    `set +o noallexport; foo=1; ${LOG_HOOK}`,
+    `emulate zsh -o allexport; foo=1; ${LOG_HOOK}`,
+    `emulate sh; ${LOG_HOOK}`,
+    `setopt globsubst; ${LOG_HOOK}`,
+    `set -o monitor; ${LOG_HOOK}`,
+    `set -euo allexport; foo=1; ${LOG_HOOK}`,
+    `set -o errexit -o no_all_export; ${LOG_HOOK}`,
+    `set -A aliases curl /tmp/e; source ${API_HOOK}; oss_api_curl x`,
+    `set -A manpath /x; ${LOG_HOOK}`,
+    `set +A psvar x; ${LOG_HOOK}`,
+    `noglob alias curl=/tmp/e; source ${API_HOOK}; oss_api_curl x`,
+    `nocorrect hash curl=/tmp/e; . ${API_HOOK}`,
+    `- enable -n echo; ${LOG_HOOK}`,
+    `noglob setopt allexport; foo=1; ${LOG_HOOK}`,
+  ])('refuses a hook script run after a shell option, a zsh array or a command name is changed: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(/^Refused.*OSS hook script/);
+  });
+
+  it.each([
+    LOG_HOOK,
+    `set -e; ${LOG_HOOK}`,
+    `set -euo pipefail; ${LOG_HOOK}`,
+    `( set -o pipefail; ${LOG_HOOK} )`,
+    `set -o errexit -o nounset -o xtrace -o noclobber; ${LOG_HOOK}`,
+    `set +o NO_CLOBBER; ${LOG_HOOK}`,
+  ])('runs a hook script after the shell options the served commands use: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.stderr, command).not.toMatch(/OSS hook script/);
+  });
+
+  // after an unknown cd, a `hooks` / `.oss` part counts only in a word that runs: the program, or a shell's or `source`'s script
+  it.each([
+    'cd "$APP_DIR" && CI=1 npx vitest run src/hooks/useAuth.test.ts',
+    'cd "$D" && CI=1 npx eslint src/hooks',
+    'cd "$D" && TZ=UTC git log --oneline -- .oss/dev/active',
+  ])('leaves a hooks or .oss folder that is only an argument, after an unknown cd: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.stderr, command).not.toMatch(/OSS hook script/);
+  });
+
+  it.each([
+    'cd "$D"; X=1 bash hooks/x.sh',
+    'cd "$D"; X=1 ./hooks/x.sh',
+    'cd "$D"; X=1 . .oss/hooks/x.sh',
+    'cd "$D"; X=1 dash hooks/x.sh',
+    'cd "$D"; X=1 noglob ./hooks/x.sh',
+    'cd "$D"; X=1 npm run oss-build',
+  ])('still refuses a hooks or .oss script that runs, or a bare oss- word, after an unknown cd: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(/^Refused.*OSS hook script/);
+  });
+});
+
 describe('the hook-call variable list', () => {
   it('is exactly the variables the served commands set in a block that runs an OSS hook script', () => {
     expect([...HOOK_CALL_VARIABLES].sort()).toEqual([...SERVED_HOOK_VARIABLES].sort());
