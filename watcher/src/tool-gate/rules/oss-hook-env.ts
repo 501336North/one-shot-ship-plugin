@@ -4,9 +4,11 @@
  * NODE_OPTIONS or GIT_DIR, so no agent may run one with a variable it chose. A call that runs a hook
  * script may set only HOOK_CALL_VARIABLES, the names OSS's served commands set there (hook-env-refs
  * Task 2, pinned to the served fixture by a test); HOME, PATH and zsh's `path` are never on it.
- * Hook scripts live in `~/.oss/hooks/*`, the plugin cache (`~/.claude/plugins/cache/<marketplace>/oss/<version>/hooks/*`),
- * a `--plugin-dir` copy or plugin checkout (any `…/hooks/oss-*.sh`), and `$CLAUDE_PLUGIN_ROOT/hooks/*`
- * (or `${CLAUDE_PLUGIN_ROOT}`) as written (hook-env-refs Task 1); a non-OSS `hooks/` script is not one.
+ * Hook scripts live in `~/.oss/hooks/*`, the plugin cache (any `~/.claude/plugins/cache/…/hooks/*`),
+ * a `--plugin-dir` copy (any `…/hooks/oss-*.sh`), a plugin checkout (any `hooks/*` below a folder that holds
+ * `.claude-plugin/plugin.json`, looked up on disk from the call's cwd), and `$CLAUDE_PLUGIN_ROOT/hooks/*`
+ * (or `${CLAUDE_PLUGIN_ROOT}`) as written (hook-env-refs Tasks 1 and 7), in any case; a glob word that
+ * could expand to one counts as one. Another repo's `hooks/` script is not one.
  * Decided from the words the shell reads (round 13, CR L-a), brace expansion included, on the whole
  * command when a part names a hook script: an assignment (`X=…`, `X+=…`, `X[i]=…`, before a program or
  * alone), an operand of `export`, `declare`, `local`, `readonly`, `read`, `let`, `env` and the like, a
@@ -30,7 +32,7 @@ import { expansionSet } from '../expansion-scan.js';
 import { heredocBodyOf, ReadBudget, sourceOf, tokenize, UNKNOWN, type Token } from '../tokenize.js';
 import type { Refusal } from './refusal.js';
 
-/** A word naming a file in OSS's hook folder, as read (`~` and `$HOME` filled in, or a HOME the call set). */
+/** A word naming a hook script, in any case, as read (`~` and `$HOME` filled in, or a HOME the call set). */
 const HOOK_FILE =
   /\/\.oss\/hooks\/[^/]|\/\.claude\/plugins\/cache\/.*\/hooks\/[^/]|(?:^|\/)hooks\/oss-[^/]*\.sh$/i;
 /** A `hooks/<file>` part of a path, in any case. */
