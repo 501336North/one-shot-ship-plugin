@@ -102,8 +102,9 @@ describe('AC-VER-1: oss-decrypt --version reports the released package version',
       encoding: 'utf8',
     });
 
-    // Then it prints exactly that version
+    // Then it prints exactly that version, and that release is 1.2.5 (R-273 P7)
     expect(stdout.trim()).toBe(`oss-decrypt v${pkg.version}`);
+    expect(stdout.trim()).toBe('oss-decrypt v1.2.5');
   });
 });
 

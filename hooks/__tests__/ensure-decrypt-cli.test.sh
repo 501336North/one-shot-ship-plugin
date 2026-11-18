@@ -876,16 +876,24 @@ MKEOF
 }
 
 # @behavior A new install downloads the oss-decrypt build that matches this repo's CLI source:
-#           the hook's pinned tag is cli-decrypt-v<packages/cli-decrypt/package.json version>.
+#           the hook's pinned tag is cli-decrypt-v<packages/cli-decrypt/package.json version>,
+#           or an older release while the next one is in flight (never missing, never ahead).
 # @regression v1.2.3 shipped a binary that reported 1.2.1; the pin must follow the released version.
 test_pinned_tag_matches_cli_package_version() {
-    local test_name="pinned tag matches the CLI package version"
+    local test_name="pinned tag is set and not ahead of the CLI package version"
     ((TESTS_RUN++))
     local pkg; pkg="$(dirname "$HOOK_SCRIPT")/../packages/cli-decrypt/package.json"
     local ver; ver=$(node -p "require(process.argv[1]).version" "$pkg" 2>/dev/null)
     local tag; tag=$(grep -oE 'OSS_DECRYPT_TAG:-cli-decrypt-v[0-9]+\.[0-9]+\.[0-9]+' "$HOOK_SCRIPT" | sed 's/.*:-//')
-    if [[ -n "$ver" && "$tag" == "cli-decrypt-v$ver" ]]; then pass "$test_name"
-    else fail "$test_name" "cli-decrypt-v$ver" "${tag:-<none>}"; fi
+    # The pin may trail the package while a release is in flight (bump PR merged, tag and
+    # assets cut, pin PR not yet merged); it must never be missing or ahead of the package.
+    local ok; ok=$(node -e '
+        const p = s => s.split(".").map(Number);
+        const [a, b] = [p(process.argv[1]), p(process.argv[2])];
+        let c = 0; for (let i = 0; i < 3 && c === 0; i++) c = Math.sign(a[i] - b[i]);
+        process.stdout.write(c <= 0 ? "yes" : "no");' "${tag#cli-decrypt-v}" "$ver" 2>/dev/null)
+    if [[ -n "$ver" && -n "$tag" && "$ok" == "yes" ]]; then pass "$test_name"
+    else fail "$test_name" "pin <= cli-decrypt-v$ver" "${tag:-<none>}"; fi
 }
 
 # @behavior The reviewed checksum manifest names exactly one release: the one the hook pins.
