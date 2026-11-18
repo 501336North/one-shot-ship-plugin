@@ -230,6 +230,43 @@ describe.each(AGENTS.slice(0, 2))('%s, setting a variable on a hook call', (_who
     expect(result.stderr, command).toMatch(/^Refused.*OSS hook script/);
   });
 
+  // hook-env-refs Task 6: variables set from other places (a sourced file, keyword words, a trap, exec -c)
+  it.each([
+    `. /tmp/e; ${LOG_HOOK}`,
+    `source /tmp/e; ${LOG_HOOK}`,
+    `builtin source /tmp/e; ${LOG_HOOK}`,
+    `command . /tmp/e; ${LOG_HOOK}`,
+    `set -a; . /tmp/e; ${LOG_HOOK}`,
+    `${LOG_HOOK}; source /tmp/e`,
+    `bash -c '. /tmp/e; ${LOG_HOOK}'`,
+    `eval 'source /tmp/e'; ${LOG_HOOK}`,
+    `${LOG_HOOK}; bash <<'EOF'\nsource /tmp/e\nEOF`,
+    `bash -c 'set -k; ${LOG_HOOK} BASH_ENV=/tmp/x'`,
+    `set -o keyword; ${LOG_HOOK} BASH_ENV=/tmp/x`,
+    `set -T; ${LOG_HOOK}`,
+    `set -o functrace; ${LOG_HOOK}`,
+    `bash -c 'trap "export BASH_ENV=/tmp/x" DEBUG; ${LOG_HOOK}'`,
+    `trap 'NODE_OPTIONS=--require=/tmp/x.js' DEBUG; ${LOG_HOOK}`,
+    `exec -c ${LOG_HOOK}`,
+  ])('refuses a hook script run with variables from a file, keyword words, a trap or a cleared env: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(/^Refused.*OSS hook script/);
+  });
+
+  it.each([LOG_HOOK, `set -e; ${LOG_HOOK}`, `set -u; ${LOG_HOOK}`, `set -o pipefail; ${LOG_HOOK}`, `set -euo pipefail; ${LOG_HOOK}`])(
+    'runs a hook script after shell options that set no variable: %s',
+    async (command) => {
+      const result = await call(command, agent);
+      expect(result.stderr, command).not.toMatch(/OSS hook script/);
+    },
+  );
+
+  it('leaves `source` alone in a command that runs no hook script', async () => {
+    const result = await call('source /tmp/e; echo hi', agent);
+    expect(result.stderr).not.toMatch(/OSS hook script/);
+  });
+
   it('still lets a hook call unset a variable', async () => {
     const result = await call(`unset GIT_DIR NODE_OPTIONS; ${LOG_HOOK}`, agent);
     expect(result.stderr).not.toMatch(/OSS hook script/);
