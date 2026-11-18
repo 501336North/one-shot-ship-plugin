@@ -282,6 +282,31 @@ describe.each(AGENTS.slice(0, 2))('%s, setting a variable on a hook call', (_who
     const result = await call(`unset GIT_DIR NODE_OPTIONS; ${LOG_HOOK}`, agent);
     expect(result.stderr).not.toMatch(/OSS hook script/);
   });
+
+  // hook-env-refs Task 9: variables exported without `source` (set -a, functions, indirect setters)
+  it.each([
+    `set -a; git() { /tmp/evil; }; ${LOG_HOOK}`,
+    `set -o allexport; x=1; ${LOG_HOOK}`,
+    `set -a; printf -vBASH_ENV /tmp/e; ${LOG_HOOK}`,
+    `printf -v BASH_ENV /tmp/e; export BASH_ENV; ${LOG_HOOK}`,
+    `git() { /tmp/evil; }; ${LOG_HOOK}`,
+    `function git { /tmp/evil; }; ${LOG_HOOK}`,
+    `mapfile BASH_ENV </tmp/e; export BASH_ENV; ${LOG_HOOK}`,
+    `readarray BASH_ENV </tmp/e; export BASH_ENV; ${LOG_HOOK}`,
+    `getopts a BASH_ENV; export BASH_ENV; ${LOG_HOOK}`,
+  ])('refuses a hook script run after variables or functions reach its environment without source: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(/^Refused.*OSS hook script/);
+  });
+
+  it.each([`n=3; ~/.oss/hooks/oss-log.sh checkpoint "$n"`, `for f in *.ts; do ~/.oss/hooks/oss-log.sh x "$f"; done`])(
+    'runs a hook script after a plain variable that is never exported: %s',
+    async (command) => {
+      const result = await call(command, agent);
+      expect(result.stderr, command).not.toMatch(/OSS hook script/);
+    },
+  );
 });
 
 // hook-env-refs Task 7: a hook path written through a glob, in any case, or under any plugin's hooks folder
