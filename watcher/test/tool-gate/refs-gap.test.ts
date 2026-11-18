@@ -2,7 +2,8 @@
  * @behavior The main agent and builders can't write a git ref or a git pointer file through a path
  *   the gate can't read: a write whose target holds an unknown part (a variable or `$(…)`) and whose
  *   readable last part is a protected branch name (from the `protectedBranches` setting), `HEAD`,
- *   `ORIG_HEAD`, `FETCH_HEAD`, `packed-refs`, `commondir` or `gitdir` is refused, whatever its case.
+ *   `ORIG_HEAD`, `FETCH_HEAD`, `packed-refs`, `commondir`, `gitdir`, `grafts`, `alternates` or `shallow`
+ *   is refused, whatever its case (`grafts`, `alternates`, `shallow`: Task 11).
  *   Other names after an unknown part keep their decision.
  * @business-rule hook-env-refs Task 3, user pick "Fix the refs gap now" (2026-11-18): the write-sandbox
  *   acceptance test found `x=${R:-.git/refs/heads}; echo > "$x/main"` allowed.
@@ -115,6 +116,21 @@ const CONTROLS_ALLOWED = [
 ];
 const CONTROLS_REFUSED = ['echo > .git/refs/heads/feature'];
 
+// Task 11: grafts, alternates and shallow change which commits the repo sees
+const GIT = 'x=${R:-.git}; ';
+const REFUSED_MORE_POINTERS = [
+  `${GIT}echo > "$x"/info/grafts`,
+  `${GIT}echo > "$x"/objects/info/alternates`,
+  `${GIT}echo > "$x"/shallow`,
+  `${GIT}tee "$x"/SHALLOW`,
+  `${GIT}cp /tmp/a "$x"/info/graft?`,
+];
+const CONTROLS_MORE_POINTERS = [
+  `${GIT}echo > "$x"/notes.txt`,
+  `${GIT}echo > "$x"/shallow-copy.md`,
+  `${GIT}echo > "$x"/alternatives.txt`,
+];
+
 describe.each(AGENTS)('refs gap: %s', (_label, agent) => {
   it.each(REFUSED)('should refuse a git ref or pointer file after an unknown part: %s', async (command) => {
     await refused(command, agent);
@@ -134,6 +150,14 @@ describe.each(AGENTS)('refs gap: %s', (_label, agent) => {
 
   it.each(CONTROLS_REFUSED)('should still refuse a literal ref path: %s', async (command) => {
     await refused(command, agent);
+  });
+
+  it.each(REFUSED_MORE_POINTERS)('should refuse grafts, alternates or shallow after an unknown part: %s', async (command) => {
+    await refused(command, agent);
+  });
+
+  it.each(CONTROLS_MORE_POINTERS)('should still allow a name that only starts like one of them: %s', async (command) => {
+    await allowed(command, agent);
   });
 });
 
