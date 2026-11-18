@@ -794,17 +794,18 @@ async function decryptCommand(type, name, debug = false, options = {}) {
     console.error(message);
     throw new Error(message);
   }
+  const manifestKey = `${type}/${name}`;
   const integrity = await verifyDecryptedPrompt(plaintext, type, name, manifest);
   if (integrity.verified !== true) {
     if (integrity.reason === "not_in_manifest") {
-      console.error(`[verify] No manifest entry for ${type}/${name} \u2014 prompt blocked`);
+      console.error(`[verify] No manifest entry for ${manifestKey} \u2014 prompt blocked`);
     }
     console.error("[verify] Prompt hash: FAILED \u2014 prompt blocked");
     throw new Error("[SECURITY] Prompt integrity check FAILED. Content may have been tampered with.");
   }
   console.error("[verify] Prompt hash: verified");
-  const manifestKey = `${type}/${name}`;
-  const currentHash = manifest.prompts[manifestKey]?.hash ?? null;
+  const entry = Object.hasOwn(manifest.prompts, manifestKey) ? manifest.prompts[manifestKey] : void 0;
+  const currentHash = entry?.hash ?? null;
   const statePath = (0, import_path8.join)(getConfigDir(), "update-state.json");
   const updateState = readUpdateState(statePath);
   const detection = detectPromptChange(updateState, type, name, currentHash);
