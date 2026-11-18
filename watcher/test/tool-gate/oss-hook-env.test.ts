@@ -248,14 +248,18 @@ describe.each(AGENTS.slice(0, 2))('%s, setting a variable on a hook call', (_who
     `bash -c 'trap "export BASH_ENV=/tmp/x" DEBUG; ${LOG_HOOK}'`,
     `trap 'NODE_OPTIONS=--require=/tmp/x.js' DEBUG; ${LOG_HOOK}`,
     `exec -c ${LOG_HOOK}`,
+    `. ~/.oss/hooks/../x; ${LOG_HOOK}`,
+    `. ~/.oss/hooks/oss-*.sh; ${LOG_HOOK}`,
+    `. "$H/oss-api-curl.sh"; ${LOG_HOOK}`,
+    `. /tmp/oss/hooks/oss-api-curl.sh; ${LOG_HOOK}`,
   ])('refuses a hook script run with variables from a file, keyword words, a trap or a cleared env: %s', async (command) => {
     const result = await call(command, agent);
     expect(result.exitCode, command).toBe(2);
     expect(result.stderr, command).toMatch(/^Refused.*OSS hook script/);
   });
 
-  it.each([LOG_HOOK, `set -e; ${LOG_HOOK}`, `set -u; ${LOG_HOOK}`, `set -o pipefail; ${LOG_HOOK}`, `set -euo pipefail; ${LOG_HOOK}`])(
-    'runs a hook script after shell options that set no variable: %s',
+  it.each([LOG_HOOK, `. ~/.oss/hooks/oss-api-curl.sh; ${LOG_HOOK}`, `set -e; ${LOG_HOOK}`, `set -u; ${LOG_HOOK}`, `set -o pipefail; ${LOG_HOOK}`, `set -euo pipefail; ${LOG_HOOK}`])(
+    'runs a hook script after shell options that set no variable, or after sourcing an OSS hook file: %s',
     async (command) => {
       const result = await call(command, agent);
       expect(result.stderr, command).not.toMatch(/OSS hook script/);
