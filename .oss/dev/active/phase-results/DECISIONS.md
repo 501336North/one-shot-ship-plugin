@@ -65,7 +65,8 @@
   - unfixed > 0 → fail.
   - Otherwise, if the agent reported any critical or high finding, all of them were fixed → pass. The agent's `fail` was about those findings.
   - Otherwise the agent's own verdict counts.
-  - The fix count is model-claimed; the next round's re-review checks it.
+  - The fix count is model-claimed. CORRECTED 2026-11-18 after a heads-up: no later round checks it when every gate passes, because ship then merges. The first picker wrongly said "the next round's re-review checks it".
+  - The user re-picked "Count the round's fixes" with that correction. The gap existed before R-257 too. A re-check of fixed serious findings is a follow-up card in .oss/dev/FOLLOWUPS.md.
   - This replaces T19's first rule, "any critical or high finding fails", which would have forced an extra ship round whenever something serious was found and fixed.
 - D23 T20 owner (user picker 2026-11-18): **Ship R-257 now, T20 later**.
   - R-257 ships slice A plus T18–T28.

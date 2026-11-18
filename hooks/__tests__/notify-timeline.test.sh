@@ -38,13 +38,15 @@ export PATH="$API/bin:$PATH"
 # PATH only for these runs) records every call; get-copy.js prints $FAKE_COPY_OUT.
 BARE="$T/bare"; mkdir -p "$BARE"; cp -R "$ROOT/hooks" "$BARE/hooks"
 WATCHED="$T/watched"; mkdir -p "$WATCHED/watcher/dist/cli" "$T/bin"; cp -R "$ROOT/hooks" "$WATCHED/hooks"
-# R-257 AC-001.3: build complete needs a valid build result; the fake phase-result CLI answers that it is verified.
-for f in update-workflow-state.js chain-trigger.cjs get-copy.js phase-result.cjs; do : > "$WATCHED/watcher/dist/cli/$f"; done
+# R-257 AC-001.3: build complete needs a valid build result, checked by the real phase-result CLI on the node recorded
+# in ~/.oss/node-path (T26/D21: the real one, resolved, never PATH's fake).
+for f in update-workflow-state.js chain-trigger.cjs get-copy.js; do : > "$WATCHED/watcher/dist/cli/$f"; done
+ln -s "$ROOT/watcher/dist/cli/phase-result.cjs" "$WATCHED/watcher/dist/cli/phase-result.cjs"
+node -p 'require("fs").realpathSync(process.execPath)' > "$HOME/.oss/node-path"
 cat > "$T/bin/node" << EOF
 #!/bin/bash
 echo "\$*" >> "$T/node.calls"
 [[ "\$1" == *get-copy.js ]] && printf '%s\n' "\${FAKE_COPY_OUT:-}"
-[[ "\$1" == *phase-result.cjs ]] && echo '{"verification":"verified"}'
 exit 0
 EOF
 chmod +x "$T/bin/node"
@@ -65,7 +67,14 @@ commands() { [[ -f "$TL" ]] || { echo '[]'; return; }; jq -sc '[.[] | select(.ki
 count() { local c=0; [[ -f "$TL" ]] && c=$(wc -l < "$TL" | tr -d ' '); echo "$c"; }
 
 # --- start, complete and failed: one command line each ----------------------------------------------------------
-rm -f "$T/node.calls"
+# Setup: valid plan and build results, assembled with the real plugin (lib/phase-result-fixture.sh), so build start
+# passes its gate and build complete its gate. The fake node writes no state, so the loop's start keeps that run.
+# shellcheck source=lib/phase-result-fixture.sh
+source "$ROOT/hooks/__tests__/lib/phase-result-fixture.sh"
+SH=/bin/bash PRF_REPO="$P"
+envrun() { (cd "$P" && CLAUDE_PROJECT_DIR="$P" CLAUDE_PLUGIN_ROOT="$ROOT" "$@" </dev/null); }
+prf_plan && prf_build || echo "setup: phase results not assembled"
+rm -f "$TL" "$T/node.calls"
 rcs=""
 for e in start complete failed; do notify "$WATCHED" --workflow build "$e" '{}'; rcs="$rcs$RC"; done
 want='[{"command":"build","status":"start","feature":"demo","session":"nt-session-1"},{"command":"build","status":"complete","feature":"demo","session":"nt-session-1"},{"command":"build","status":"failed","feature":"demo","session":"nt-session-1"}]'
@@ -73,6 +82,7 @@ got=$(commands)
 [[ "$rcs" == 000 && "$got" == "$want" ]] && grep -q 'setActiveStep build' "$T/node.calls" 2>/dev/null \
     && pass "should append one command line for start, complete and failed" \
     || fail "should append one command line for start, complete and failed" "rcs=$rcs got=$got err=$(cat "$T/err")"
+rm -rf "$P/.oss/dev/active/demo/results"   # the cases below run on a feature from before R-257 (no results/)
 
 # --- other events add nothing -----------------------------------------------------------------------------------
 before=$(count)

@@ -61,7 +61,7 @@ timers_gone() {   # every fallback-timer sleep recorded in $T/sleep.pids has exi
     return 0
 }
 
-# Sandbox: temp HOME and a fake plugin root. The fake `node` acts as each CLI (phase-result: verified), per $STATE:
+# Sandbox: temp HOME and a fake plugin root. The fake `node` acts as the state and chain CLIs, per $STATE:
 #   STATE unset: the state CLI answers at once and prints status lines on stdout and stderr.
 #   STATE=hang:  the state CLI records that it was called, then blocks until $T/release exists
 #                (or the sandbox is gone, so a stub orphaned by a failing mutant still exits).
@@ -80,7 +80,6 @@ case "\$1" in
         exit 0
     fi
     echo "STATE-STDOUT \$*"; echo "STATE-STDERR \$*" >&2 ;;
-  (*phase-result.cjs) echo '{"verification":"verified"}' ;;
   (*chain-trigger.cjs)
     echo "---CHAIN_COMMANDS---"; echo "CHAIN: /oss:review (always)"; echo "---END_CHAIN_COMMANDS---"
     echo "No API key configured. Run /oss:login" >&2; exit 1 ;;
@@ -90,10 +89,24 @@ EOF
 )" || fail "sandbox" "node stub did not warm"
     : > "$T/plugin/watcher/dist/cli/update-workflow-state.js"
     : > "$T/plugin/watcher/dist/cli/chain-trigger.cjs"
-    # R-257 AC-001.3: complete of a phase needs its valid result, checked in the project's repo. The sandbox is that
-    # repo, and the phase-result CLI (a collaborator here, like the state CLI) answers that the result is verified.
-    : > "$T/plugin/watcher/dist/cli/phase-result.cjs"
+    # R-257 AC-001.3: complete of a phase needs its valid result, checked in the project's repo (the sandbox) by the
+    # real phase-result CLI, on the node recorded in ~/.oss/node-path (T26/D21: the real one, resolved, never the stub).
+    ln -s "$ROOT/watcher/dist/cli/phase-result.cjs" "$T/plugin/watcher/dist/cli/phase-result.cjs"
+    cp "$ROOT/hooks/oss-node.sh" "$T/plugin/hooks/oss-node.sh"
+    printf '%s\n' "$RECORDED_NODE" > "$T/home/.oss/node-path"
     mkdir -p "$T/.oss"; (unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE; git init -q "$T")
+}
+# with_result <build|ship>: the sandbox repo goes on feat/cb-feature/<phase> and gets a valid assembled result for that
+# phase (lib/phase-result-fixture.sh, run through the real plugin and node), so its complete passes the gate.
+RECORDED_NODE="$(node -p 'require("fs").realpathSync(process.execPath)')"
+# shellcheck source=lib/phase-result-fixture.sh
+source "$ROOT/hooks/__tests__/lib/phase-result-fixture.sh"
+envrun() { (cd "$T" && HOME="$T/home" CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$T" "$@" </dev/null); }
+with_result() {
+    PRF_REPO="$T"
+    ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE; cd "$T" && git config user.email t@example.invalid && git config user.name t \
+        && git commit -q --allow-empty -m base && git checkout -q -b "feat/cb-feature/$1" && mkdir -p .oss/dev/active/cb-feature ) \
+        && "prf_$1" || fail "the $1 result is assembled (setup)" "prf_$1 failed"
 }
 # Recording timeout and gtimeout (the hook takes gtimeout first, then timeout): each logs its argv,
 # tells the command which limit it runs under, and execs it. They shadow any real tool on the PATH.
@@ -145,7 +158,7 @@ state_calls() { grep "update-workflow-state.js" "$T/node.calls" 2>/dev/null; }
 
 # 1. F8: finishing /oss:ship makes six workflow-state updates; every one runs under a 2s timeout,
 #    so a stalled state CLI can delay the user's next prompt by at most the bound.
-sandbox
+sandbox; with_result ship
 recording_timeouts
 run_notify --workflow ship complete
 calls=$(state_calls)
@@ -157,7 +170,7 @@ else fail "every workflow-state update on ship complete runs under a 2s timeout"
     "calls=$n_calls bounded=$n_bounded node=$(tr '\n' '|' < "$T/node.calls" 2>/dev/null) timeout=$(tr '\n' '|' < "$T/timeout.calls" 2>/dev/null)"; fi
 
 # 1b. Same rule for a mid-chain command (build sets nextCommand=ship instead of completing the chain).
-cleanup; sandbox
+cleanup; sandbox; with_result build
 recording_timeouts
 run_notify --workflow build complete
 calls=$(state_calls)
@@ -186,7 +199,7 @@ cleanup
 #    lines, then sleeps for real. Calls are sequential and call N starts before timer N, so the kill
 #    for call N can never land before call N has recorded itself: the count below cannot race the
 #    timer, however slow a stub is to start.
-sandbox
+sandbox; with_result ship
 no_timeout_tools
 gated_sleep_stub "$T/bin/sleep"
 (cd "$T" && STATE=hang HOME="$T/home" CLAUDE_PLUGIN_ROOT="$T/plugin" CLAUDE_PROJECT_DIR="" PATH="$T/bin:$T/sys" \

@@ -86,4 +86,18 @@ Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watche
 - T24: stat-order names none of R-257's files. oss-notify-phase-result, timeline-gate-ledger and oss-decision-record pass (bash 3.2).
 - T25: analytics test RED, first on the notice, then on the ledger line. GREEN, along with oss-notify-phase-result, phase-results.acceptance, notify bounds and group, resolve-cli, notify-timeline and session-start-copy.
 
-## Last Updated: 2026-11-18 08:40 CST by /oss:build (T22-T25)
+### T18-T30 and final checks, 2026-11-18
+- T18 Stop wiring: RED 3 vitest + shell check; GREEN hooks-json files and test/stop 19/19, stop-hook-wired 2/2, oss-stop-dispatch 9/9.
+- T18b ledger protection (D22): RED 10 ledger refusals; GREEN phase-results-protected 30/30, tool-gate 739/739, served-commands.acceptance 3/3.
+- T19 verdict capture: API review-verdict-block RED 12/16, GREEN 16/16 (39 files, 1499/1499; manifest 138). Plugin verdict-capture 22/22, assemble-ship 27/27, oss-verdict-capture.test.sh 11/11.
+- T27 gate names: RED phase-results.acceptance case 8 (gate_missing code-reviewer); GREEN 8/8, 227/227.
+- T28 / T30 test setups broken by T10/T26 (setup only, no expectation changes): ship-wrapper-chain 3/3, oss-notify-telegram 3/3, oss-notify-workflow-name 12/12, notify-timeline 9/9, oss-archive-check 18/18, oss-notify-bounded-group 9/9, oss-notify-complete-bounds 9/9.
+- T29 (D24): RED 2 of 4 new cases; GREEN assemble-ship 32/32, 231/231.
+- Simplifier: tsc clean; 520/520 targeted.
+- Final, after the rebase onto d9c65865:
+  - vitest test/phase-results, stop, hooks, tool-gate, gate-run, phase-result acceptance and dist: 153 files, 8343/8343;
+  - served-commands.acceptance (OSS_API_REPO set) 3/3;
+  - bash 3.2 sweep of every hooks/__tests__/*.sh: 113/113 files rc 0;
+  - watcher-dist-fresh pass.
+
+## Last Updated: 2026-11-18 11:05 CST by /oss:build (T18-T30)

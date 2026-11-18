@@ -23,6 +23,11 @@ echo "Running oss-archive-check tests under $("$SH" -c 'echo "$BASH_VERSION"')..
 # shellcheck source=lib/archive-ship-fixture.sh
 source "$ROOT/hooks/__tests__/lib/archive-ship-fixture.sh"
 REAL_NODE=$(command -v node)
+# T26 (D21): the phase-result CLI runs on the node recorded in ~/.oss/node-path (the real one, resolved: outside temp
+# folders), never PATH's, so the PATH shim no longer sees it. The sandbox plugin's phase-result.cjs counts its own
+# start in node.calls and runs the real CLI (as itself, so it finds the real plugin's files).
+RECORDED_NODE="$(node -p 'require("fs").realpathSync(process.execPath)')"
+REAL_CLI="$ROOT/watcher/dist/cli/phase-result.cjs"
 TODAY=$(date +%Y%m%d)
 
 sandbox() {
@@ -31,6 +36,11 @@ sandbox() {
     export HOME="$T/home"
     printf '#!/bin/bash\necho x >> "%s/node.calls"\nexec "%s" "$@"\n' "$T" "$REAL_NODE" > "$T/bin/node"
     chmod +x "$T/bin/node"
+    printf '%s\n' "$RECORDED_NODE" > "$T/home/.oss/node-path"
+    mkdir -p "$T/cplugin/hooks" "$T/cplugin/watcher/dist/cli"
+    cp "$ROOT/hooks/oss-node.sh" "$T/cplugin/hooks/oss-node.sh"
+    printf 'require("fs").appendFileSync(%s, "x\\n"); process.argv[1] = %s; require(%s);\n' \
+        "\"$T/node.calls\"" "\"$REAL_CLI\"" "\"$REAL_CLI\"" > "$T/cplugin/watcher/dist/cli/phase-result.cjs"
     ( cd "$T/repo" && git init -q -b main && git config user.email t@example.invalid && git config user.name t \
         && echo base > base.txt && git add base.txt && git commit -q -m base )
     R="$T/repo"; A="$R/.oss/dev/active"; C="$R/.oss/dev/completed"
@@ -38,7 +48,7 @@ sandbox() {
 }
 feature() { mkdir -p "$A/$1"; printf '# Progress\n\n## Current Phase: %s\n' "${2:-build}" > "$A/$1/PROGRESS.md"; }
 archive() { # runs the hook from the repo; OUT and RC
-    OUT=$(cd "$R" && PATH="$T/bin:$PATH" CLAUDE_PLUGIN_ROOT="${PLUGIN:-$ROOT}" CLAUDE_CODE_SESSION_ID="${SESSION:-s2}" \
+    OUT=$(cd "$R" && PATH="$T/bin:$PATH" CLAUDE_PLUGIN_ROOT="${PLUGIN:-$T/cplugin}" CLAUDE_CODE_SESSION_ID="${SESSION:-s2}" \
         "$SH" "$ROOT/hooks/oss-archive-check.sh" --project-dir="$R" "$@" 2>&1 </dev/null); RC=$?
 }
 archived() { [[ ! -e "$A/$1" && -d "$C/$1-$TODAY" ]]; }
@@ -121,7 +131,8 @@ rm -rf "$T"
 
 # 8. a CLI error archives nothing, even if it printed "ok"
 sandbox; feature e1; archivable_ship "$R" e1
-mkdir -p "$T/plugin/watcher/dist/cli"
+mkdir -p "$T/plugin/watcher/dist/cli" "$T/plugin/hooks"
+cp "$ROOT/hooks/oss-node.sh" "$T/plugin/hooks/oss-node.sh"   # so the failing CLI really runs (not node_missing)
 printf 'process.stdout.write("e1 ok\\n"); process.exit(3);\n' > "$T/plugin/watcher/dist/cli/phase-result.cjs"
 PLUGIN="$T/plugin" archive
 check "a phase-result CLI that fails archives nothing" 'kept e1' "rc=$RC out=$OUT"

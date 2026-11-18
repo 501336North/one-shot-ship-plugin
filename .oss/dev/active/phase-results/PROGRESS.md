@@ -1,6 +1,6 @@
 # Progress: phase-results (R-257)
 
-## Current Phase: build
+## Current Phase: build (complete; ship next)
 
 ## Tasks
 - [x] Provenance survey: plugin, API prompts and oss-lab (completed 2026-11-13)
@@ -43,10 +43,16 @@
 - [x] T24: GNU-first stat in R-257 test files (completed 2026-11-18, 13a0d132)
 - [x] T25: D17 notice only in an OSS project (completed 2026-11-18, af15fe4e)
 - [x] T26: oss_node for the phase-result CLI (completed 2026-11-18; D21 fail closed, user pick)
-- [ ] T18: hooks.json Stop → oss-stop-dispatch.sh + SubagentStop
-- [ ] T18b: protectedPaths for ledger and results/
-- [ ] T19: review-agent verdict block → ship evidence
-- [ ] T20: recorder hash chain (evidenceTrust ledger)
+- [x] T18: hooks.json Stop → oss-stop-dispatch.sh, 15 s (completed 2026-11-18, 7c54ed10)
+- [x] T18b: ledger protected; results/ left to the OS sandbox card (completed 2026-11-18, db2647bd; D22 user pick "Ledger only")
+- [x] T19: review-agent oss-verdict block + SubagentStop capture → ship evidence (completed 2026-11-18, plugin 6d041aa3, API 80953e7a)
+- [x] T27: ship's required gates are ship.md's gate.txt names (completed 2026-11-18, 5efffb7d)
+- [x] T28: setup for three hook tests broken by T10/T26 (completed 2026-11-18, 5580809a)
+- [x] T29: captured-verdict gates count the round's fixes (completed 2026-11-18, 44f15f00; D24 user pick, re-confirmed after the correction)
+- [x] Code-simplifier pass (completed 2026-11-18, e1697270)
+- [x] Rebased onto Sprint D d9c65865 (#234, docs only; FOLLOWUPS kept both sides)
+- [x] T30: setup for four more hook tests broken by T10/T26, found by the final sweep (notify-timeline, oss-archive-check, oss-notify-bounded-group, oss-notify-complete-bounds) (completed 2026-11-18)
+- [-] T20: recorder hash chain, MOVED to an R-266 follow-up card by D23 (user pick); D15's "repo-file" label stays
 
 ### Later
 - [ ] Ship into feat/determinism-sprint/build (SD-1)
@@ -55,4 +61,4 @@
 ## Blockers
 - None. R-266's 4 red base tests are fixed in #233 (4458bddb), and R-257 is rebased onto it.
 
-## Last Updated: 2026-11-18 09:00 CST by /oss:build (T26 done)
+## Last Updated: 2026-11-18 11:05 CST by /oss:build (T30, final sweep)
