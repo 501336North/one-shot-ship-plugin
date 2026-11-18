@@ -14,7 +14,7 @@ import path from 'node:path';
 import { HOME_UNKNOWN, plainWriterName, type CommandPart } from '../command-reader.js';
 import type { EditCall } from '../edit-call.js';
 import type { PathResolver } from '../path-resolver.js';
-import { escapeGlob, floatingNames, matchAnyPath, shellGlobMayHold, shellGlobMayMatch, shellGlobTailMatcher, shellPatternMatchesPath, tailMayBeProtected, tailMayHoldProtected, type PathMatchOptions } from '../patterns.js';
+import { escapeGlob, floatingNames, hasShellWildcard, matchAnyPath, shellGlobMayHold, shellGlobMayMatch, shellGlobTailMatcher, shellPatternMatchesPath, tailMayBeProtected, tailMayHoldProtected, type PathMatchOptions } from '../patterns.js';
 import { createTreeFinder, type TreeFinder } from '../tree-finder.js';
 import { withoutFirmlink } from '../review-places.js';
 import { UNKNOWN } from '../tokenize.js';
@@ -386,9 +386,12 @@ const GIT_POINTER_FILES = ['head', 'orig_head', 'fetch_head', 'packed-refs', 'co
  * (hook-env-refs Task 3). A branch named with slashes (`release/x`) counts by its last part only.
  */
 function endsInGitRef(tail: string, settings: GateSettings): boolean {
-  const last = unescapeGlob(tail.slice(tail.lastIndexOf('/') + 1)).toLowerCase();
+  const trimmed = tail.replace(/\/+$/, '');
+  const pattern = trimmed.slice(trimmed.lastIndexOf('/') + 1).replace(/\.lock$/i, '');
   const branches = settings.protectedBranches.map((b) => b.slice(b.lastIndexOf('/') + 1).toLowerCase());
-  return GIT_POINTER_FILES.includes(last) || branches.includes(last);
+  const names = [...GIT_POINTER_FILES, ...branches];
+  if (hasShellWildcard(pattern)) return names.some((name) => shellPatternMatchesPath(pattern, name, { caseInsensitive: true }, true));
+  return names.includes(unescapeGlob(pattern).toLowerCase());
 }
 
 /**
