@@ -334,24 +334,38 @@ function inPluginCheckout(word: string, cwd: string): boolean {
  */
 function partNamesHook(part: CommandPart): boolean {
   const lost = part.lostDir !== null && part.lostDir.plainKnown !== true;
-  return [...part.words, ...part.assignmentValues].some((w, i) => {
+  if (lost && lostWordsCouldBeHook(part.words)) return true;
+  return [...part.words, ...part.assignmentValues].some((w) => {
     if (namesHook(w, part.cwd)) return true;
-    if (/^[/~-]/.test(w)) return false;
-    return lost ? i === 0 && part.words.length > 0 && w.includes('/') && couldBeOssHook(w) : namesHook(path.resolve(part.cwd, w), part.cwd);
+    if (lost || /^[/~-]/.test(w)) return false;
+    return namesHook(path.resolve(part.cwd, w), part.cwd);
   });
 }
 
+/** Programs whose first operand is a script they run. */
+const SCRIPT_RUNNERS = new Set(['bash', 'sh', 'zsh', '.', 'source']);
+
 /**
- * True when a relative program, run from a folder known only at run time, could be an OSS hook (hook-env-refs
- * Task 10b): its last part starts `oss-`, or a part is `hooks` or `.oss`, in any case or through a glob.
+ * True when a word of a part run from a folder known only at run time could be an OSS hook (hook-env-refs
+ * Tasks 10b and 14): any word, or the program or the script a shell or `source` runs when its last part is unknown.
  */
-function couldBeOssHook(word: string): boolean {
+function lostWordsCouldBeHook(words: string[]): boolean {
+  const script = SCRIPT_RUNNERS.has(words[0]) ? words.findIndex((w, i) => i > 0 && !w.startsWith('-')) : -1;
+  return words.some((w, i) => couldBeOssHook(w, i === 0 || i === script));
+}
+
+/**
+ * True when a word could be an OSS hook (hook-env-refs Tasks 10b and 14): a bare `oss-` name (with or without
+ * `./`), a part that is `hooks` or `.oss`, in any case or through a glob, or, for a word that runs, an unknown last part.
+ */
+function couldBeOssHook(word: string, runs: boolean): boolean {
   const parts = word.split('/');
   const last = parts[parts.length - 1].toLowerCase();
+  const bare = parts.length === 1 || (parts.length === 2 && parts[0] === '.');
   // the part before its first glob character: `oss-` must start it, or it must start `oss-`
   const literal = last.split(GLOB)[0];
   const ossName = GLOB.test(last) ? literal.startsWith('oss-') || 'oss-'.startsWith(literal) : last.startsWith('oss-');
-  return ossName || parts.some((p) => ['hooks', '.oss'].some((name) => (GLOB.test(p) ? globMatches(p, name) : p.toLowerCase() === name)));
+  return (bare && ossName) || (runs && parts[parts.length - 1].includes(UNKNOWN)) || parts.some((p) => ['hooks', '.oss'].some((name) => (GLOB.test(p) ? globMatches(p, name) : p.toLowerCase() === name)));
 }
 
 export function checkOssHookEnv(part: CommandPart, command: string, home: string, sources: TrustedSources): Refusal | null {
