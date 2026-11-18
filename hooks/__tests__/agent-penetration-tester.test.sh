@@ -5,8 +5,9 @@
 #           under review in a sandbox, separate from the security audit. Its wrapper fetches the
 #           penetration-tester prompt and otherwise behaves exactly like security-auditor's wrapper: the same
 #           model, the same model routing, the same steps.
-# @business-rule The wrapper is security-auditor.md with only its own identity changed: the frontmatter name and
-#           description, the route marker, AGENT_ID, the heading and the decrypt name. Any other difference is drift
+# @business-rule The wrapper is security-auditor.md with only its own identity changed: the frontmatter name,
+#           description and tools (it keeps WebFetch/WebSearch, R-266 PLAN Task 4), the route marker, AGENT_ID, the
+#           heading and the decrypt name. Any other difference is drift
 #           between two wrappers that must stay alike, and fails here.
 # @business-rule Claude Code finds a plugin's agents in agents/*.md (plugin.json lists none); the prompt the wrapper
 #           fetches must be one the API serves (commands/__tests__/served-prompt-names.txt).
@@ -36,7 +37,7 @@ if [[ -f "$PEN" ]]; then
     ids=$(grep -E '^[[:space:]]*AGENT_ID=' "$PEN" | sed 's/^[[:space:]]*//' | sort -u)
     [[ "$ids" == 'AGENT_ID="oss:penetration-tester"' && $(grep -cE '^[[:space:]]*AGENT_ID=' "$PEN") -eq $(grep -cE '^[[:space:]]*AGENT_ID=' "$SEC") ]] \
         || bad="$bad agent-id=[$ids]"
-    desc=$(sed -n '3p' "$PEN")
+    desc=$(grep -m1 '^description: ' "$PEN")
     [[ "$desc" == 'description: '*'authorized penetration tester'*'sandbox'*'security audit'* ]] || bad="$bad description=[$desc]"
     grep -q 'security-auditor' "$PEN" && bad="$bad mentions-security-auditor"
 fi
@@ -46,20 +47,20 @@ fi
 # same <file> <agent>: the wrapper with its own identity lines replaced by one fixed text, so two wrappers that differ
 # only there come out byte-identical
 same() {
-    sed -e "s/^name: $2\$/name: {{id}}/" -e 's/^description: .*/description: {{id}}/' \
+    sed -e "s/^name: $2\$/name: {{id}}/" -e 's/^description: .*/description: {{id}}/' -e 's/^tools: .*/tools: {{id}}/' \
         -e "s/^<!-- OSS-ROUTE-AGENT: oss:$2 -->\$/<!-- OSS-ROUTE-AGENT: {{id}} -->/" \
         -e "s/^\\([[:space:]]*\\)AGENT_ID=\"oss:$2\"\$/\\1AGENT_ID={{id}}/" \
         -e "s/^# $2 Agent\$/# {{id}} Agent/" \
         -e "s|^~/.oss/bin/oss-decrypt --type agents --name $2\$|~/.oss/bin/oss-decrypt --type agents --name {{id}}|" "$1"
 }
-name='should be byte-identical to security-auditor.md apart from its name, description, route marker, AGENT_ID, heading and decrypt name'
+name='should be byte-identical to security-auditor.md apart from its name, description, tools, route marker, AGENT_ID, heading and decrypt name'
 if [[ -f "$PEN" ]] && same "$SEC" security-auditor > "$T/sec" && same "$PEN" penetration-tester > "$T/pen" && cmp -s "$T/sec" "$T/pen"; then
     pass "$name"
 else
     fail "$name" "$( [[ -f "$PEN" ]] && diff "$T/sec" "$T/pen" | head -20 | tr '\n' '|' || echo 'no agents/penetration-tester.md')"
 fi
 # control: the normalising is not vacuous, security-auditor's own identity lines are what it replaced
-[[ $(same "$SEC" security-auditor | grep -c '{{id}}') -eq $(grep -cE '^name: |^description: |OSS-ROUTE-AGENT|AGENT_ID=|^# security-auditor Agent$|--name security-auditor$' "$SEC") ]] \
+[[ $(same "$SEC" security-auditor | grep -c '{{id}}') -eq $(grep -cE '^name: |^description: |^tools: |OSS-ROUTE-AGENT|AGENT_ID=|^# security-auditor Agent$|--name security-auditor$' "$SEC") ]] \
     && pass "control: the comparison replaces exactly security-auditor's identity lines" \
     || fail "control: the comparison replaces exactly security-auditor's identity lines" "replaced=$(same "$SEC" security-auditor | grep -c '{{id}}')"
 

@@ -7,12 +7,11 @@ export interface CommandFile {
 export type Blocks = Record<string, string[]>;
 
 export declare const PLUGIN_ROOT: string;
-export declare const DEFAULT_API_REPO: string;
 export declare const API_FILES: string[];
 export declare const FIXTURE: string;
 export declare function bashBlocks(text: string): string[];
 export declare function pluginCommandFiles(): CommandFile[];
-export declare function apiCommandsDir(env?: Readonly<Record<string, string | undefined>>): string;
+export declare function apiCommandsDir(env?: Readonly<Record<string, string | undefined>>): string | null;
 export declare function apiCommandFiles(env?: Readonly<Record<string, string | undefined>>): CommandFile[];
 export declare function fixtureFiles(oldFiles: Blocks, pluginBlocks: Blocks, apiBlocks: Blocks | null): Blocks;
 export declare function apiStatus(apiFiles: readonly CommandFile[], fixtureFilesNow: Blocks): string | null;

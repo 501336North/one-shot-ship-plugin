@@ -15,6 +15,7 @@
 #
 # Usage: ./hooks/__tests__/oss-node-path.test.sh   (needs jq)
 set -uo pipefail
+unset OSS_CONFIG_DIR OSS_MANIFEST_URL
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HOOK="$ROOT/hooks/oss-node-path.sh"
 RUN=0; FAILED=0
@@ -49,7 +50,7 @@ H="$TMP/home"; mkdir -p "$H"
 out="$(HOME="$H" PATH="$FIX/bin:/usr/bin:/bin" "$HOOK" </dev/null 2>&1)"; rc=$?
 if [[ $rc == 0 && -z "$out" && "$(record "$H")" == "$FIX/bin/node" ]]; then pass "no record: PATH's node is recorded by its stable link path (not the Cellar path), silently"
 else fail "no record: PATH's node is recorded by its stable link path (not the Cellar path), silently" "rc=$rc out=$out file=$(cat "$H/.oss/node-path" 2>&1)"; fi
-mode="$(stat -f %Lp "$H/.oss/node-path" 2>/dev/null || stat -c %a "$H/.oss/node-path" 2>/dev/null)"
+mode="$(stat -c %a "$H/.oss/node-path" 2>/dev/null || stat -f %Lp "$H/.oss/node-path" 2>/dev/null)"
 if [[ "$mode" == 600 ]]; then pass "the record is private (mode 600)"
 else fail "the record is private (mode 600)" "mode=$mode"; fi
 if [[ -z "$(ls -A "$H/.oss" | grep -v '^node-path$')" ]]; then pass "the record is written atomically (no temp file left beside it)"
