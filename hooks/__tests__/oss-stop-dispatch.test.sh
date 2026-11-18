@@ -26,7 +26,29 @@ RECORDED_NODE="$(node -p 'require("fs").realpathSync(process.execPath)')"
 RUN=0; FAILED=0
 pass() { echo "✓ PASS: $1"; RUN=$((RUN + 1)); }
 fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
+# shellcheck source=hooks/__tests__/lib/warm-stub.sh
+source "$ROOT/hooks/__tests__/lib/warm-stub.sh"
 echo "Running oss-stop-dispatch tests under $("$SH" -c 'echo "$BASH_VERSION"')..."
+
+# D38 (round 4): no run may reach a real notifier (terminal-notifier, osascript, say, afplay). Builder B's runs did:
+# the notification runs in the background, cleanup deleted $T while it still ran, and with $T/bin and the scratch HOME
+# gone it fell through to the caller's PATH (/opt/homebrew/bin/terminal-notifier) with the default style, visual.
+# - The hook's PATH is the sandbox's bin and the system folders, never the caller's PATH or a homebrew folder.
+# - Each sandbox's settings.json says style "none"; a case that checks the notification turns it on (notify_on).
+# - Every hook run holds fd 9 open on a pipe (held_by), and cleanup deletes $T only once every process that
+#   inherited it, the background notifier included, has exited.
+SAFE_PATH=/usr/bin:/bin:/usr/sbin:/sbin
+T=""
+RUNDIR=$(cd "$(mktemp -d)" && pwd -P)
+mkdir "$RUNDIR/node-only"; ln -s "$REAL_NODE" "$RUNDIR/node-only/node"
+# The notifier stubs, written and warmed once per run (lib/warm-stub.sh). Each sandbox links to them: macOS scans a new
+# executable on its first run (1-2 s idle, past 5 s under load), and a fresh stub per sandbox made that first run the
+# background notifier's, past wait_file's 5 s (D38: the four "no marker, no node" fails and "slow notifier"). A link
+# to a warmed file is not scanned again. The trace goes to the sandbox through the hook's HOME ($T/home).
+warm_stub "$RUNDIR/terminal-notifier" 'echo notified >> "$HOME/../notified"' || { echo "setup: stub warm-up failed"; exit 1; }
+warm_stub "$RUNDIR/terminal-notifier-slow" 'echo notified >> "$HOME/../notified"; exec sleep 3' \
+    || { echo "setup: stub warm-up failed"; exit 1; }
+trap 'cleanup; rm -rf "$RUNDIR"' EXIT
 
 FEATURE=stop-feat
 sandbox() {
@@ -38,15 +60,29 @@ sandbox() {
     # ~/.oss/hooks/oss-node.sh, never through an untrusted CLAUDE_PLUGIN_ROOT or the plugin's own copy.
     plugin_root "$ROOT"
     mkdir -p "$T/home/.oss/hooks"; cp "$ROOT/hooks/oss-node.sh" "$T/home/.oss/hooks/oss-node.sh"
-    # The notification: terminal-notifier only records that it ran.
-    printf '#!/bin/bash\necho notified >> "%s"\n' "$T/notified" > "$T/bin/terminal-notifier"
-    chmod +x "$T/bin/terminal-notifier"
+    # The notification: terminal-notifier only records that it ran (a link to the warmed stub), and is off unless the
+    # case turns it on.
+    ln -s "$RUNDIR/terminal-notifier" "$T/bin/terminal-notifier"
+    notify_style none
     ( cd "$T/repo" && git init -q -b main && git config user.email t@example.invalid && git config user.name t \
         && echo base > base.txt && git add base.txt && git commit -q -m base \
         && git checkout -q -b "feat/$FEATURE/build" && mkdir -p ".oss/dev/active/$FEATURE" \
         && echo '{}' > .oss/workflow-state.json )
 }
-cleanup() { rm -rf "$T"; }
+notify_style() { printf '{"notifications":{"style":"%s"}}\n' "$1" > "$T/home/.oss/settings.json"; }
+notify_on() { notify_style visual; }
+# held_by <marker>: the reader end of a hook run's fd 9. It deletes <marker> once every process holding the write end
+# (the hook and all it started, the background notifier included) has exited.
+held_by() { exec >/dev/null 2>&1; /bin/cat; /bin/rm -f "$1"; }
+# cleanup: waits up to 30 s for every hook run's processes to exit, then deletes $T. One still running fails the case
+# and keeps $T, so it never runs on with its stub and settings gone.
+cleanup() {
+    [[ -n "$T" && -d "$T" ]] || return 0
+    local held=""
+    for _ in $(seq 300); do held=$(cd "$T" && ls -d held.* 2>/dev/null); [[ -z "$held" ]] && break; sleep 0.1; done
+    if [[ -n "$held" ]]; then fail "every process a hook run started has exited" "still held after 30 s: $held (kept $T)"; return; fi
+    rm -rf "$T"
+}
 plugin_root() { (umask 077; printf '%s\n' "$1" > "$T/home/.oss/plugin-root"); chmod 600 "$T/home/.oss/plugin-root"; }
 ledger_dir() { # -> the ledger key dir (NOTES "Ledger (D14, T3b)")
     local top gd key
@@ -78,8 +114,9 @@ now_ms() { /usr/bin/perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000'; }
 # stop <stop_hook_active> [extra env...]: runs the hook as Claude Code does (JSON on stdin, cwd = repo)
 stop() {
     local active="$1"; shift
-    (cd "$T/repo" && printf '{"session_id":"s1","stop_hook_active":%s,"cwd":"%s"}' "$active" "$T/repo" \
-        | env HOME="$T/home" PATH="$T/bin:$PATH" "$@" "$SH" "$HOOK" 2>"$T/stderr")
+    (cd "$T/repo" && h=$(/usr/bin/mktemp "$T/held.XXXXXX") \
+        && printf '{"session_id":"s1","stop_hook_active":%s,"cwd":"%s"}' "$active" "$T/repo" \
+        | env HOME="$T/home" PATH="$T/bin:$SAFE_PATH" "$@" "$SH" "$HOOK" 2>"$T/stderr" 9> >(held_by "$h"))
 }
 check_plan() { (cd "$T/repo" && HOME="$T/home" "$SH" "$ROOT/hooks/oss-phase-result.sh" check plan </dev/null >/dev/null 2>&1); }
 node_shim_recorder() {
@@ -97,7 +134,7 @@ sandbox_plugin() {
 CLI_RECORDER='require("fs").appendFileSync(process.env.HOME + "/../cli.calls", "ran\n")'
 
 # 1. No phase started: node is never called and the notification still runs.
-sandbox; node_shim_recorder; sandbox_plugin "$CLI_RECORDER"
+sandbox; notify_on; node_shim_recorder; sandbox_plugin "$CLI_RECORDER"
 out=$(stop false CLAUDE_PLUGIN_ROOT="$T/plugin"); rc=$?
 if [[ $rc -eq 0 && -z "$out" && ! -e "$T/node.calls" && ! -e "$T/cli.calls" ]] && wait_file "$T/notified"; then
     pass "no phase started: fast path, no node, notification runs"
@@ -105,7 +142,7 @@ else fail "no phase started: fast path, no node, notification runs" "rc=$rc out=
 cleanup
 
 # 1b. Not an OSS repo at all: same, no node.
-sandbox; node_shim_recorder; sandbox_plugin "$CLI_RECORDER"; rm -rf "$T/repo/.oss"
+sandbox; notify_on; node_shim_recorder; sandbox_plugin "$CLI_RECORDER"; rm -rf "$T/repo/.oss"
 out=$(stop false CLAUDE_PLUGIN_ROOT="$T/plugin"); rc=$?
 if [[ $rc -eq 0 && -z "$out" && ! -e "$T/node.calls" && ! -e "$T/cli.calls" ]] && wait_file "$T/notified"; then
     pass "no .oss: fast path, no node, notification runs"
@@ -113,7 +150,7 @@ else fail "no .oss: fast path, no node, notification runs" "rc=$rc out=$out"; fi
 cleanup
 
 # 2. A started phase with no result: block JSON naming the phase; no notification.
-sandbox; start_phase plan
+sandbox; notify_on; start_phase plan
 out=$(stop false); rc=$?
 if [[ $rc -eq 0 ]] && printf '%s' "$out" | jq -e '.decision == "block" and (.reason | test("plan")) and (.reason | test("oss-phase-result.sh assemble plan"))' >/dev/null 2>&1 \
     && [[ ! -e "$T/notified" ]]; then
@@ -187,8 +224,9 @@ cleanup
 #    a silent pass, and PATH's temp node is not run.
 sandbox; start_phase plan; node_shim_recorder
 : > "$T/home/.oss/node-path"
-out=$(cd "$T/repo" && printf '{"session_id":"s1","stop_hook_active":false,"cwd":"%s"}' "$T/repo" \
-    | env HOME="$T/home" PATH="$T/bin:/usr/bin:/bin:/usr/sbin:/sbin:${REAL_NODE%/*}" "$SH" "$HOOK" 2>"$T/stderr"); rc=$?
+out=$(cd "$T/repo" && h=$(/usr/bin/mktemp "$T/held.XXXXXX") \
+    && printf '{"session_id":"s1","stop_hook_active":false,"cwd":"%s"}' "$T/repo" \
+    | env HOME="$T/home" PATH="$T/bin:$SAFE_PATH:$RUNDIR/node-only" "$SH" "$HOOK" 2>"$T/stderr" 9> >(held_by "$h")); rc=$?
 if [[ $rc -eq 0 && ! -e "$T/node.calls" && -f "$(ledger_dir)/unverified/$FEATURE/plan" ]] \
     && printf '%s' "$out" | jq -e '.systemMessage | test("node_missing")' >/dev/null 2>&1; then
     pass "no usable node recorded: phase marked unverified (node_missing), PATH's temp node not run"
@@ -200,7 +238,7 @@ cleanup
 # ledger marker is written, and the notification runs.
 no_node_allow() {
     local name="$1"; shift
-    sandbox_plugin "$CLI_RECORDER"
+    notify_on; sandbox_plugin "$CLI_RECORDER"
     out=$(stop false CLAUDE_PLUGIN_ROOT="$T/plugin" "$@"); rc=$?
     if [[ $rc -eq 0 && -z "$out" && ! -e "$T/cli.calls" && ! -e "$(ledger_dir)/pending" && ! -e "$(ledger_dir)/unverified" ]] \
         && wait_file "$T/notified"; then pass "$name"
@@ -238,8 +276,9 @@ cleanup
 # 12. Finding 3: cd into a nested repo (git init in a subfolder): the project's own run still blocks.
 sandbox; start_phase plan
 ( cd "$T/repo" && mkdir sub && cd sub && git init -q -b main )
-out=$(cd "$T/repo/sub" && printf '{"session_id":"s1","stop_hook_active":false,"cwd":"%s"}' "$T/repo/sub" \
-    | env HOME="$T/home" PATH="$T/bin:$PATH" CLAUDE_PROJECT_DIR="$T/repo" "$SH" "$HOOK" 2>"$T/stderr"); rc=$?
+out=$(cd "$T/repo/sub" && h=$(/usr/bin/mktemp "$T/held.XXXXXX") \
+    && printf '{"session_id":"s1","stop_hook_active":false,"cwd":"%s"}' "$T/repo/sub" \
+    | env HOME="$T/home" PATH="$T/bin:$SAFE_PATH" CLAUDE_PROJECT_DIR="$T/repo" "$SH" "$HOOK" 2>"$T/stderr" 9> >(held_by "$h")); rc=$?
 if [[ $rc -eq 0 ]] && printf '%s' "$out" | jq -e '.decision == "block" and (.reason | test("plan"))' >/dev/null 2>&1; then
     pass "nested repo cwd: the project dir's unfinished run still blocks"
 else fail "nested repo cwd: the project dir's unfinished run still blocks" "rc=$rc out=$out err=$(cat "$T/stderr")"; fi
@@ -283,8 +322,8 @@ else fail "hung git: the stop returns within the bound" "took ${el} ms"; fi
 cleanup
 
 # 16. Finding 7: a slow notification never holds the stop (it runs in the background).
-sandbox
-printf '#!/bin/bash\necho notified >> "%s"\nexec sleep 3\n' "$T/notified" > "$T/bin/terminal-notifier"
+sandbox; notify_on
+ln -sf "$RUNDIR/terminal-notifier-slow" "$T/bin/terminal-notifier"
 t0=$(now_ms); out=$(stop false); rc=$?; el=$(( $(now_ms) - t0 ))
 if [[ $rc -eq 0 && -z "$out" && $el -lt 2000 ]] && wait_file "$T/notified"; then pass "slow notifier: the stop returns at once (${el} ms), the notification still runs"
 else fail "slow notifier: the stop returns at once, the notification still runs" "rc=$rc el=${el} ms"; fi
@@ -302,7 +341,7 @@ sandbox; start_phase ideate s1 ""; bind_result ideate
 no_node_allow "D30: same session's empty-feature run with a bound result: fast path allows, no node"
 cleanup
 
-sandbox; start_phase ideate s1 ""
+sandbox; notify_on; start_phase ideate s1 ""
 ( cd "$T/repo" && git checkout -q main && rm -rf ".oss/dev/active/$FEATURE" && mkdir -p .oss/dev/active/a .oss/dev/active/b )
 out=$(stop false); rc=$?
 # ⚠ changes existing test: round 3 INFO. The no-feature marker is unfiled/<phase>, outside unverified/<feature>/
@@ -351,7 +390,7 @@ sandbox; start_phase build
 ( cd "$T/repo" && mkdir -p .oss/dev/completed && mv ".oss/dev/active/$FEATURE" .oss/dev/completed/ )
 mkdir -m 700 -p "$(ledger_dir)/unverified/$FEATURE"; chmod 700 "$(ledger_dir)/unverified"
 (umask 077; printf '{"check":"stop-dispatch","errorClass":"feature_gone","session":"s1","startedAt":"%s"}\n' "$(run_at build)" > "$(ledger_dir)/unverified/$FEATURE/build")
-sandbox_plugin "$CLI_RECORDER"
+notify_on; sandbox_plugin "$CLI_RECORDER"
 out=$(stop false CLAUDE_PLUGIN_ROOT="$T/plugin"); rc=$?
 if [[ $rc -eq 0 && -z "$out" && ! -e "$T/cli.calls" ]] && wait_file "$T/notified"; then pass "folder moved away, already said for this run: no node, nothing said"
 else fail "folder moved away, already said for this run: no node, nothing said" "rc=$rc out=$out cli=$(cat "$T/cli.calls" 2>/dev/null)"; fi

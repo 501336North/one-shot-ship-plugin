@@ -130,3 +130,12 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 - **The deadlineMs 0 seam:** with no time left, a capture records no headSha, so a no-snapshot pass from it can't clear a fail (D36).
 - **Fresh executables on macOS:** the first run of a newly written script can take 1.5-4 s (system scan). Tests that write shims and then check for leftover processes must run each shim once first.
 - **Unchanged:** the SessionStart pointer helpers in oss-safe-path.sh still use PATH's find, which is off the gate path. session-routing R2-6 counts those calls through a PATH shim.
+
+## Ship round 4 notes (2026-11-18, after the Sprint D merge)
+- **Merge clash (D37):** R-266 #236 pins HOOK_CALL_VARIABLES to the served fixture. R-257's new plan archive block runs a hook and sets 11 variables, so the list gained those names. No hook reads any of them before setting it.
+- **Hook tests leaked real notifications:** `rm -rf $T` ran while the detached notifier was still alive, and PATH fell through to /opt/homebrew/bin/terminal-notifier. Four R-257 tests now:
+  - run hooks with $T/bin plus system dirs only;
+  - write style "none" unless the case checks a stub;
+  - drain fd 9 before cleanup.
+  Check any run of these tests through a tripwire PATH. Pre-existing non-R-257 tests with the inherited PATH were left as they are and raised with the user.
+- **Sprint D re-scope (R-266 coordinator, 2026-11-18):** later bundles plug into phase results (claims[], chain[]) and the Stop dispatcher: R-271/R-275 gate discipline, the R-254 workflow guard (`requires`, a pending-chain Stop check) and R-264 code checks. Keep watcher/src/stop/dispatch.ts and the result schemas easy to extend. Build none of it in R-257.

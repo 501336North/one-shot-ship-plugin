@@ -20,19 +20,39 @@ fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
 echo "Running notify-timeline tests..."
 # shellcheck source=hooks/__tests__/lib/run-capped.sh
 source "$ROOT/hooks/__tests__/lib/run-capped.sh"   # the one time cap a test may use (T49)
+# shellcheck source=hooks/__tests__/lib/warm-stub.sh
+source "$ROOT/hooks/__tests__/lib/warm-stub.sh"
 # shellcheck source=hooks/__tests__/lib/session-start-alias.sh
 source "$ROOT/hooks/__tests__/lib/session-start-alias.sh"
 
+REAL_NODE="$(command -v node)"
 T=$(cd "$(mktemp -d /tmp/oss-notify-timeline.XXXXXX)" && pwd -P)
-trap 'rm -rf "$T"' EXIT
+# D38 (round 4): no run may reach a real notifier (say, afplay, osascript, terminal-notifier), even once $T is gone.
+# - The hooks' PATH is the fake API's bin (and $T/bin) plus the system folders, never the caller's PATH or homebrew.
+# - The scratch HOME's settings.json says style "none" (no case here checks a notification).
+# - fd 9 stays open in this shell and every hook it starts (held_by); on exit, $T is deleted only once every process
+#   holding it has exited, so no background job runs on with its fakes and settings gone. One still running after
+#   30 s fails the run and keeps $T.
+held_by() { exec >/dev/null 2>&1; /bin/cat; /bin/rm -f "$1"; }
+: > "$T/held"; exec 9> >(held_by "$T/held")
+on_exit() {
+    local rc=$?
+    exec 9>&-
+    for _ in $(seq 300); do [[ -e "$T/held" ]] || break; sleep 0.1; done
+    if [[ -e "$T/held" ]]; then echo "✗ FAIL: a process a hook started still runs after 30 s (kept $T)"; exit 1; fi
+    rm -rf "$T"; exit "$rc"
+}
+trap on_exit EXIT
 export HOME="$T/home"; mkdir -p "$HOME/.oss"
+printf '{"notifications":{"style":"none"}}\n' > "$HOME/.oss/settings.json"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR CLAUDE_PROJECT_DIR OSS_TL_SESSION CLAUDE_PLUGIN_ROOT
 export CLAUDE_CODE_SESSION_ID=nt-session-1
 # shellcheck source=hooks/__tests__/fake-oss-api.sh
 source "$ROOT/hooks/__tests__/fake-oss-api.sh"
 API="$T/api-fake"; fake_api_install "$API"   # no config.json: nothing is sent, and any curl reaches only the fake
-export PATH="$API/bin:$PATH"
+mkdir -p "$T/node-only"; ln -s "$REAL_NODE" "$T/node-only/node"   # node alone, for the setup helpers (oss-value.sh)
+export PATH="$API/bin:/usr/bin:/bin:/usr/sbin:/sbin:$T/node-only"
 
 # BARE: the plugin's hooks with no watcher/dist. WATCHED: the same plus a built watcher, whose node (a fake on
 # PATH only for these runs) records every call; get-copy.js prints $FAKE_COPY_OUT.
@@ -42,7 +62,7 @@ WATCHED="$T/watched"; mkdir -p "$WATCHED/watcher/dist/cli" "$T/bin"; cp -R "$ROO
 # in ~/.oss/node-path (T26/D21: the real one, resolved, never PATH's fake).
 for f in update-workflow-state.js chain-trigger.cjs get-copy.js; do : > "$WATCHED/watcher/dist/cli/$f"; done
 ln -s "$ROOT/watcher/dist/cli/phase-result.cjs" "$WATCHED/watcher/dist/cli/phase-result.cjs"
-node -p 'require("fs").realpathSync(process.execPath)' > "$HOME/.oss/node-path"
+"$REAL_NODE" -p 'require("fs").realpathSync(process.execPath)' > "$HOME/.oss/node-path"
 # D25: the gate's CLI comes from the plugin ~/.oss/plugin-root names (mode 600, as session-start writes it; here the
 # checkout, whose CLI WATCHED links) and oss-node.sh only from ~/.oss/hooks
 printf '%s\n' "$ROOT" > "$HOME/.oss/plugin-root"; chmod 600 "$HOME/.oss/plugin-root"
@@ -134,7 +154,11 @@ got=$(commands)
 ms() { /usr/bin/perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000'; }
 timed() { local t0; t0=$(ms); (cd "$P" && CLAUDE_PROJECT_DIR="$P" CLAUDE_PLUGIN_ROOT="$BARE" OSS_ALLOW_HTTP_LOOPBACK=1 FAKE_DELAY_TIMELINE=10 \
     FAKE_ON_CALL="$T/on-call" run_capped 3 /bin/bash "$BARE/hooks/oss-notify.sh" --workflow build start '{}' </dev/null >/dev/null 2>&1); RC=$?; TOOK=$(($(ms) - t0)); }
-printf '#!/bin/bash\nps -o pgid= -p $$ | tr -d " " > "%s"\n' "$T/push.pgid" > "$T/on-call"; chmod +x "$T/on-call"
+# The push's first runs of the fake curl and of on-call are their first runs at all; macOS scans a freshly written
+# executable then (2-3 s idle, 6-9 s while other new files are being scanned), which ran past the 5 s wait below
+# (D38, round 4). Run both once first (lib/warm-stub.sh), then clear what the curl run recorded.
+warm_stub "$T/on-call" "ps -o pgid= -p \$\$ | tr -d ' ' > \"$T/push.pgid\""
+"$API/bin/curl" </dev/null >/dev/null 2>&1
 rm -rf "$API/api"; mkdir -p "$API/api"
 timed; base_rc=$RC base=$TOOK
 printf '{"apiKey":"fake-oss-key-notify-0000","apiUrl":"http://127.0.0.1:9"}\n' > "$HOME/.oss/config.json"

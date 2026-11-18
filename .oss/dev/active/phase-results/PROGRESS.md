@@ -114,6 +114,12 @@
     - fixed tools in oss-verdict-capture.sh.
   - Flaky stop-hook-wired (3/10) fixed at the root: macOS scans a new executable on first run (1.5-4 s), longer than run_capped's 2 s grace. The test now runs its shims once first (15/15).
 
+### Ship round 4 fixes, after the Sprint D merge (2026-11-18)
+- [x] Merged origin/feat/determinism-sprint/build 5424a129 (R-266 #236) as 9b338a0a. The dev-docs guard passes.
+- [x] D37: added the 11 variables set by R-257's plan archive block to HOOK_CALL_VARIABLES. No hook reads them before setting them. The provenance false positive is reworded.
+- [x] D38: fixed R-257's two flaky hook tests, oss-stop-dispatch and notify-timeline. The cause was the macOS first-exec scan of fresh stubs; the stubs are now warmed once per run. R-266's round20b flake was already fixed by #236.
+- [x] The notifier leak: four R-257 hook tests could reach the real terminal-notifier after `rm -rf $T`. They now use a safe PATH, a settings.json with style "none" and an fd-9 drain, and are proven with a tripwire.
+
 ### Later
 - [ ] Ship into feat/determinism-sprint/build (SD-1)
 - [ ] T21 oss-lab (after the plugin ships)
@@ -121,4 +127,4 @@
 ## Blockers
 - None. R-266's 4 red base tests are fixed in #233 (4458bddb), and R-257 is rebased onto it.
 
-## Last Updated: 2026-11-18 18:16 CST by /oss:ship (round 3 fixes)
+## Last Updated: 2026-11-18 23:29 CST by /oss:ship (round 4 fixes)

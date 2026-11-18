@@ -109,4 +109,20 @@ Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watche
 - Load note: one earlier run, at load average 8 (Backblaze using a full core), failed 3 R-266 round20b trap tests plus
   notify-timeline and oss-stop-dispatch timing cases. Each passed alone and in a full rerun at lower load.
 
-## Last Updated: 2026-11-18 20:08 CST by /oss:ship (round 3 fixes)
+### Ship round 4 (Sprint D merge, D37, D38, notifier leak), 2026-11-18
+- After merging Sprint D, these failed:
+  - served-commands.acceptance: plan.md #7 refused, 2 failures;
+  - oss-hook-env: 22 tests plus the exact-set test;
+  - provenance: 1, a false positive on a comment.
+- D37 GREEN: oss-hook-env 478/478, served-commands 3/3, provenance 5/5.
+- D38: oss-stop-dispatch 10/10 idle and 10/10 under load; notify-timeline 10/10 and 10/10.
+- Notifier tripwire (fake terminal-notifier, osascript, say and afplay first on PATH):
+  - RED: 10 "OSS Done" lines from one oss-stop-dispatch run, and 1 from a forced-allow copy of acceptance case 7;
+  - GREEN: 0 lines on every run.
+- Final: build and tsc clean.
+  - Targeted vitest: 195 files, 10701/10701.
+  - served-commands (OSS_API_REPO set): 3/3.
+  - Bash 3.2 sweep under the tripwire: 112/112, with 0 tripwire lines.
+- protected-path-equivalence (R-266): 4 cases timed out once at load average 12 while a builder was loading the machine on purpose; they pass alone and in the final run. Passed to R-266.
+
+## Last Updated: 2026-11-18 23:29 CST by /oss:ship (round 4 fixes)

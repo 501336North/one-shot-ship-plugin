@@ -24,6 +24,19 @@ pass() { echo "✓ PASS: $1"; RUN=$((RUN + 1)); }
 fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
 echo "Running phase-results acceptance tests under $("$SH" -c 'echo "$BASH_VERSION"')..."
 
+# D38 (round 4): no run may reach a real notifier (terminal-notifier, osascript, say, afplay). The Stop dispatcher
+# starts its notification in the background; with the caller's PATH and no settings it fell through to
+# /opt/homebrew/bin/terminal-notifier once cleanup had deleted $T. So, as in oss-stop-dispatch.test.sh:
+# - the hook's PATH is the system folders plus a folder holding only a node link, never the caller's PATH;
+# - each sandbox's settings.json says style "none";
+# - the hook run holds fd 9 open on a pipe (held_by), and cleanup deletes $T only once every process that inherited
+#   it, a background notifier included, has exited.
+SAFE_PATH=/usr/bin:/bin:/usr/sbin:/sbin
+T=""
+RUNDIR=$(cd "$(mktemp -d)" && pwd -P)
+mkdir "$RUNDIR/node-only"; ln -s "$(node -p 'require("fs").realpathSync(process.execPath)')" "$RUNDIR/node-only/node"
+trap 'cleanup; rm -rf "$RUNDIR"' EXIT
+
 FEATURE=accept-feature
 # ⚠ changes existing test: D34 — a ship base must be an ancestor of origin's default branch, so the sandbox repo has
 #   refs/remotes/origin/main at main's tip.
@@ -36,6 +49,7 @@ sandbox() {
     # D25: CLAUDE_PLUGIN_ROOT counts only as the plugin ~/.oss/plugin-root names (mode 600, as session-start writes
     # it), and oss-node.sh comes only from ~/.oss/hooks.
     printf '%s\n' "$T/plugin" > "$T/home/.oss/plugin-root"; chmod 600 "$T/home/.oss/plugin-root"
+    printf '{"notifications":{"style":"none"}}\n' > "$T/home/.oss/settings.json"
     cp "$ROOT/hooks/oss-node.sh" "$T/home/.oss/hooks/oss-node.sh"
     [[ -d "$ROOT/schemas" ]] && ln -s "$ROOT/schemas" "$T/plugin/schemas"
     for f in "$ROOT"/watcher/dist/cli/*; do ln -s "$f" "$T/plugin/watcher/dist/cli/"; done
@@ -58,7 +72,18 @@ notify() { envrun "$SH" "$ROOT/hooks/oss-notify.sh" --workflow "$@"; }
 phase_result() { envrun "$SH" "$ROOT/hooks/oss-phase-result.sh" "$@"; }
 value_dir() { envrun "$SH" "$ROOT/hooks/oss-value.sh" dir 2>/dev/null; }
 chain_fired() { [[ -s "$T/chain.calls" ]]; }
-cleanup() { rm -rf "$T"; }
+# held_by <marker>: the reader end of a hook run's fd 9. It deletes <marker> once every process holding the write end
+# (the hook and all it started, the background notifier included) has exited.
+held_by() { exec >/dev/null 2>&1; /bin/cat; /bin/rm -f "$1"; }
+# cleanup: waits up to 30 s for every hook run's processes to exit, then deletes $T. One still running fails the case
+# and keeps $T, so it never runs on with its settings gone.
+cleanup() {
+    [[ -n "$T" && -d "$T" ]] || return 0
+    local held=""
+    for _ in $(seq 300); do held=$(cd "$T" && ls -d held.* 2>/dev/null); [[ -z "$held" ]] && break; sleep 0.1; done
+    if [[ -n "$held" ]]; then fail "every process a hook run started has exited" "still held after 30 s: $held (kept $T)"; return; fi
+    rm -rf "$T"
+}
 
 # 1. complete with no result: refused, no chain, reason names the phase and the assemble command.
 sandbox
@@ -128,8 +153,10 @@ cleanup
 # 7. Stop dispatcher: a started phase with no valid result blocks, naming the phase.
 sandbox
 notify plan start '{}' >/dev/null 2>&1
-out=$(cd "$T/repo" && printf '{"session_id":"accept-session-1","stop_hook_active":false,"cwd":"%s"}' "$T/repo" \
-    | HOME="$T/home" CLAUDE_PLUGIN_ROOT="$T/plugin" CLAUDE_PROJECT_DIR="$T/repo" "$SH" "$ROOT/hooks/oss-stop-dispatch.sh" 2>/dev/null)
+out=$(cd "$T/repo" && h=$(/usr/bin/mktemp "$T/held.XXXXXX") \
+    && printf '{"session_id":"accept-session-1","stop_hook_active":false,"cwd":"%s"}' "$T/repo" \
+    | env HOME="$T/home" PATH="$SAFE_PATH:$RUNDIR/node-only" CLAUDE_PLUGIN_ROOT="$T/plugin" CLAUDE_PROJECT_DIR="$T/repo" \
+        "$SH" "$ROOT/hooks/oss-stop-dispatch.sh" 2>/dev/null 9> >(held_by "$h"))
 if printf '%s' "$out" | jq -e '.decision == "block" and (.reason | test("plan"))' >/dev/null 2>&1; then
     pass "Stop dispatcher blocks while a started phase has no valid result"
 else fail "Stop dispatcher blocks while a started phase has no valid result" "out=$out"; fi

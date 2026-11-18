@@ -77,6 +77,12 @@
 - D36 (user picker, 2026-11-18, round 3 build, "Clear on a new commit"): a pass with no snapshot.
   - A verdict row's snapshot comes out empty when a changed file is over 50 MB or the capture runs past its 4 s deadline. Under D32 as built, such a pass never counts, so one captured fail blocked ship forever with no override.
   - Now a pass with no snapshot clears an earlier fail of the same reviewer only when its headSha differs from the fail's (a commit landed between them). The gate then keeps the model's timeline line with the "model" label (D26). A same-commit re-roll still never erases a fail.
+- D37 (user picker, 2026-11-18, after merging Sprint D 5424a129, "Widen R-266's list"): R-266 #236 limits the variables a command that runs an OSS hook may set to HOOK_CALL_VARIABLES, pinned to the served-blocks fixture. R-257's new plan archive step (served plan.md block #7, T22) runs `oss-phase-result.sh check ship --all` and sets l, candidates, verdicts, rc, IFS, found, none, F, verdict, src, dest, so the merge refused it.
+  - Add the 11 names to the list, as an R-257-then-R-266 order would have. IFS is harmless there (bash resets IFS at start).
+  - Each hook that uses l, rc, found or verdict must set it before reading it, so a `name=x` prefix cannot steer it.
+  - The provenance test's false positive on the `aliases[x]` comment in oss-hook-env.ts is fixed in the same change. The R-266 coordinator is told, since R-266 owns the list.
+- D38 (user picker, 2026-11-18, "Fix ours, hand off R-266's"): five tests failed once at load average 8 and passed on rerun. R-257's two (oss-stop-dispatch, notify-timeline) get a root-cause fix this round. R-266's three round20b trap tests go to the R-266 coordinator with logs.
+  - R-266 reply: #236 Task 12 already root-caused and fixed that flake. The gate's mktemp-template walk of the real /tmp fails closed after 1000 ms, and the test row now uses a scratch root. The Sprint D merge brings the fix in (line 105 reads `ROOT/x.XXXXXX`). Refusing a real `mktemp -d /tmp/...` on a busy machine is a filed R-266 follow-up.
 - D25-D29: ship round 1 decisions (user pickers, 2026-11-18), from four failing gates.
   - **D25 Gate code location: lock it down.**
     - `~/.oss/plugin-root` and `~/.oss/watcher/**` join the tool gate's protectedPaths. This changes R-266's exact-list test, as the user's pick allows.

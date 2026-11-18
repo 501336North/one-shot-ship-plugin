@@ -22,7 +22,20 @@ fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
 echo "Running stop-hook-wired tests under $("$SH" -c 'echo "$BASH_VERSION"')..."
 
 T=$(mktemp -d); T=$(cd "$T" && pwd -P)
-trap 'rm -rf "$T"' EXIT
+# D38 (round 4): no run may reach a real notifier (terminal-notifier, osascript, say, afplay). The dispatcher starts the
+# notification in the background; with the caller's PATH it fell through to /opt/homebrew/bin/terminal-notifier once
+# $T (and its stub) was gone. So the hook's PATH is $T/bin and the system folders only, the run holds fd 9 open on a
+# pipe (held_by), and the EXIT trap deletes $T only once every process that inherited it has exited. The style stays
+# visual (no settings.json): this case asserts the stub notifier ran once.
+SAFE_PATH=/usr/bin:/bin:/usr/sbin:/sbin
+held_by() { exec >/dev/null 2>&1; /bin/cat; /bin/rm -f "$1"; }
+cleanup() {
+    local held=""
+    for _ in $(seq 300); do held=$(cd "$T" && ls -d held.* 2>/dev/null); [[ -z "$held" ]] && break; sleep 0.1; done
+    if [[ -n "$held" ]]; then echo "✗ FAIL: a process the hook run started still runs after 30 s (kept $T)"; return 1; fi
+    rm -rf "$T"
+}
+trap cleanup EXIT
 mkdir -p "$T/home" "$T/bin" "$T/not-oss"
 printf '#!/bin/bash\necho called >> "%s"\n' "$T/node.calls" > "$T/bin/node"
 printf '#!/bin/bash\necho notified >> "%s"\n' "$T/notified" > "$T/bin/terminal-notifier"
@@ -43,8 +56,9 @@ name='(2) the registered Stop command, outside an OSS project, allows the stop, 
 cmd=$(jq -r '.hooks.Stop[0].hooks[0].command // ""' "$ROOT/hooks.json" 2>/dev/null)
 cmd=${cmd//'${CLAUDE_PLUGIN_ROOT}'/$ROOT}
 printf '{"session_id":"s1","stop_hook_active":false,"cwd":"%s"}' "$T/not-oss" > "$T/stdin.json"
-out=$(cd "$T/not-oss" && run_capped 30 env HOME="$T/home" PATH="$T/bin:$PATH" CLAUDE_PLUGIN_ROOT="$ROOT" \
-    "$SH" -c "$cmd" < "$T/stdin.json" 2>"$T/stderr")
+out=$(cd "$T/not-oss" && h=$(/usr/bin/mktemp "$T/held.XXXXXX") \
+    && run_capped 30 env HOME="$T/home" PATH="$T/bin:$SAFE_PATH" CLAUDE_PLUGIN_ROOT="$ROOT" \
+    "$SH" -c "$cmd" < "$T/stdin.json" 2>"$T/stderr" 9> >(held_by "$h"))
 rc=$?
 notified=0; [[ -f "$T/notified" ]] && notified=$(wc -l < "$T/notified" | tr -d ' ')
 if [[ "$cmd" == */hooks/oss-stop-dispatch.sh && $rc -eq 0 && -z "$out" && "$notified" == 1 && ! -e "$T/node.calls" ]]; then
