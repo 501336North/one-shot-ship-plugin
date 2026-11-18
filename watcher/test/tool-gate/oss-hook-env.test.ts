@@ -79,6 +79,29 @@ describe.each(AGENTS)('%s', (_who, agent) => {
     expect(result.stderr, command).toMatch(agent === 'oss:code-reviewer' ? /^Refused/ : /^Refused.*HOME or PATH/);
   });
 
+  // hook-env-refs Task 1: OSS hook scripts in the plugin cache, a --plugin-dir copy or checkout, and $CLAUDE_PLUGIN_ROOT
+  it.each([
+    'HOME=/tmp/elsewhere ~/.claude/plugins/cache/one-shot-ship-plugin/oss/2.2.2/hooks/oss-log.sh phase build RED start',
+    'HOME=/tmp/elsewhere /Users/someone/.claude/plugins/cache/my-market/oss/2.1.3/hooks/check-updates.sh',
+    'HOME=/tmp/elsewhere /tmp/oss-dev-copy/hooks/oss-log.sh phase build RED start',
+    'HOME=/tmp/elsewhere ./hooks/oss-heads-up.sh',
+    'HOME=/tmp/elsewhere "$CLAUDE_PLUGIN_ROOT/hooks/check-updates.sh"',
+    'HOME=/tmp/elsewhere "${CLAUDE_PLUGIN_ROOT}/hooks/check-updates.sh"',
+  ])('refuses an OSS hook script wherever it lives, run with a HOME it chose: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(agent === 'oss:code-reviewer' ? /^Refused/ : /^Refused.*HOME or PATH/);
+  });
+
+  it.each([
+    'HOME=/tmp/elsewhere ./hooks/pre-commit.sh',
+    'HOME=/tmp/elsewhere scripts/hooks/lint.sh',
+    'HOME=/tmp/elsewhere /tmp/other-plugin/hooks/check.sh',
+  ])('leaves a script that is not an OSS hook to the other rules: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.stderr, command).not.toMatch(/OSS hook script/);
+  });
+
   it('runs the hook script as it is', async () => {
     const result = await call(HOOK, agent);
     expect(result.stderr).toBe('');
