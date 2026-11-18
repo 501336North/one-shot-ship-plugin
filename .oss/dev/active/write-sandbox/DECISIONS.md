@@ -114,3 +114,9 @@ A call made only of `~/.oss/hooks/*` and `~/.oss/bin/*` scripts (plus `cd`, `uns
 
 ## Related
 ADR-048, ADR-066, ADR-067, ADR-068, ADR-069 (least-privilege-tools), and R-257 D22 (results/ protection).
+
+## ADR-074: Plan pre-gate decisions (supersedes the unwrapped shapes of ADR-071 and ADR-073)
+**Status:** Accepted (user picks D1-D6, 2026-11-18) · **Source:** PLAN_GATE.md
+**Context:** one round of the four ship gates over the plan found that unwrapped git-only and OSS-only calls, renames of parent folders, files run later outside the wrap, out-of-sandbox helper processes and a writable toolchain each defeat the OS layer.
+**Decision:** wrap every main-agent and builder call (git-only and OSS-only get small, named write allowances); widen the deny set (D2, D6); deny launchd/LaunchServices/mount/tmux escapes (D5); keep Claude Code's permission checks (D3); count only managed Claude Code sandbox settings, with no loosening under it (D4); plan fixes F1-F14.
+**Consequences:** more customer calls run inside the sandbox; Task 9's BEFORE/AFTER now runs blocks, and any new failure STOPs for the user. Ship gates read PLAN_GATE.md.

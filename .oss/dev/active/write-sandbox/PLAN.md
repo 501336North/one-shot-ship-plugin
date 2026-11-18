@@ -14,6 +14,19 @@ On macOS, the tool gate wraps each main-agent and builder Bash call in an inline
 - Branch for the build: `feat/write-sandbox/build`, from `origin/feat/determinism-sprint/build`. The PR goes into that branch, never `main`.
 - **Test rules:** never run the full watcher suite. Run targeted `npx vitest run <files>` from `watcher/`. macOS-only rows follow the existing `sandbox*.integration.test.ts` pattern for platform guards; no `.skip`, `.only` or `.todo`.
 
+## Pre-gate revision (2026-11-18, PLAN_GATE.md, ADR-074) — overrides the tasks below where they differ
+- **Task 1** renders letter classes, not `(?i)` (F2); unanchored patterns, size < 32 KB, compile < 15 ms (F14); denies write/unlink/rename on denied folders and every parent in repo/HOME (F1), the `.git` entry, `commondir`, `gitdir` (F4), git config/hooks only in session repos and HOME (F3), the widened set (D2) and the toolchain real paths (D6); denies launchd submit, LaunchServices, mounts, tmux/screen sockets (D5). Every rendered profile is compiled with real sandbox-exec. Golden byte-identical test of today's review profile and wrap first (F5).
+- **Task 2** adds rows: renames (F1), `.git` file swap (F4), `git init` in TMPDIR and an npm git dependency as controls (F3), each D5 escape, each D2 path, a toolchain binary (D6); results and ledger rows after the R-257 rebase (F12).
+- **Task 3** probes in a fresh mkdtemp, caches only `ok` in `~/.oss/gate-state/<session>/` keyed by session, profile hash, OS build; never caches failure; timeout = text rules for that call plus retry, no notice (F6).
+- **Task 4** (router): every main-agent/builder call is wrapped (D1). Git-only profile adds the project repo's `.git/config`; OSS-only adds only the OSS state files. A separate builder wrapper: user's shell and env, cwd carries, background jobs live, no `oss-review` label (F5). Starts with a live probe of `updatedInput` without `allow` (D3). A loosened allow without a buildable wrap is refused (F8).
+- **Task 5**: only managed settings count; `excludedCommands` empty; no loosening under it (D4).
+- **Task 7** (loosening): single-file redirect targets only; never recursive or folder destinations; case-insensitive; refuse readable parts under `.git`/`.oss` or UNKNOWN in the last part (F7).
+- **Task 8**: the hint is a fixed note added before the call runs (F13).
+- **Task 9** runs the 16 git-write and 17 OSS-mixed blocks wrapped in a scratch repo, plus live commit, push -u, remote add, worktree add (F9, F13). It also runs an **everyday-commands set** (heads-up, 2026-11-18), unwrapped vs wrapped, in a scratch HOME and repo: `npm install` (with a git dependency and a husky prepare), `npm i -g <pkg>` into a scratch prefix, `npx tsc`, `cargo build`, `pip install --user`, `brew --version`, `open http://localhost:3000`, `tmux new -d` / `tmux send-keys` to its own server, `echo x >> ~/.zshrc`, `code .`, `docker ps`, `make`, `python3 -m http.server &`, `git clone` of a local repo, `gh pr view`. A table in TESTING.md lists each with BEFORE/AFTER. STOP on any new failure (served or everyday) and ask the user before going on (no silent tightening).
+- **Task 10**: warm-up, interleaved pairs, median of paired differences < 50 ms; p95 reported only; hook work timed in-process (F10).
+- **All tests**: only real sandbox-exec rows use `runIf(ON_MAC)`; others inject platform and runner (F11). A test asserts every OS-denied entry is in `protectedPaths` or a listed exception (F12).
+- **Acceptance test**: the US-003 rows flip to "git-only and OSS-only calls ARE wrapped, with their allowance" (D1).
+
 ## TDD Implementation Tasks
 
 ### Phase A: The profile (no gate changes)
