@@ -309,6 +309,37 @@ describe.each(AGENTS.slice(0, 2))('%s, setting a variable on a hook call', (_who
   );
 });
 
+// hook-env-refs Task 13: aliases, command hashes, zsh's special maps, enable/disable, allexport spellings, tied arrays
+const API_HOOK = '~/.oss/hooks/oss-api-curl.sh';
+describe.each(AGENTS.slice(0, 2))('%s, a hook script run after a command name or option is redirected', (_who, agent) => {
+  it.each([
+    `alias curl=/tmp/e; source ${API_HOOK}; oss_api_curl x`,
+    `hash curl=/tmp/e; . ${API_HOOK}`,
+    `hash -p /tmp/e curl; . ${API_HOOK}`,
+    ...['aliases', 'galiases', 'saliases', 'functions', 'commands', 'builtins', 'options', 'dis_aliases', 'dis_galiases', 'dis_saliases', 'dis_functions', 'dis_builtins'].map(
+      (map) => `${map}[curl]=/tmp/e; . ${API_HOOK}`,
+    ),
+    `enable -n echo; ${LOG_HOOK}`,
+    `disable echo; ${LOG_HOOK}`,
+    ...['setopt allexport', 'setopt ALL_EXPORT', 'setopt -a', 'set -o all_export', 'set -o ALLEXPORT', 'shopt -os allexport', 'options[allexport]=on'].map(
+      (spelling) => `${spelling}; foo=1; ${LOG_HOOK}`,
+    ),
+    ...['manpath', 'fpath', 'cdpath', 'module_path', 'mailpath', 'psvar', 'fignore'].map((tied) => `${tied}=(/x); ${LOG_HOOK}`),
+  ])('refuses a hook script run after a command name, option or tied array is redirected: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(/^Refused.*OSS hook script/);
+  });
+
+  it.each([LOG_HOOK, `foo=1; ${LOG_HOOK}`, `source ${API_HOOK}; oss_api_curl x`])(
+    'runs a hook script when no command name, option or tied array is redirected: %s',
+    async (command) => {
+      const result = await call(command, agent);
+      expect(result.stderr, command).not.toMatch(/OSS hook script/);
+    },
+  );
+});
+
 // hook-env-refs Task 7: a hook path written through a glob, in any case, or under any plugin's hooks folder
 describe.each(AGENTS.slice(0, 2))('%s, a hook path through a glob, in any case, or of any plugin', (_who, agent) => {
   it.each([
