@@ -343,6 +343,34 @@ describe.each(AGENTS.slice(0, 2))('%s, a hook path through a glob, in any case, 
   );
 });
 
+// hook-env-refs Task 10: a hook path reached through `cd` or a variable
+describe.each(AGENTS.slice(0, 2))('%s, a hook path reached through cd or a variable', (_who, agent) => {
+  it.each([
+    'cd ~; BASH_ENV=/tmp/e .oss/hooks/x.sh',
+    'cd ~ && BASH_ENV=/tmp/e bash .oss/hooks/x.sh',
+    'cd ~/.oss && BASH_ENV=/tmp/e hooks/oss-log.sh',
+    'h=~/.oss/hooks/x.sh; BASH_ENV=/tmp/e $h',
+    'h=~/.oss/hooks/x.sh; BASH_ENV=/tmp/e bash "$h"',
+    'h=$HOME/.oss/hooks/oss-log.sh; X_Y=1 $h',
+    'cd "$D"; BASH_ENV=/tmp/e ./x.sh',
+  ])('refuses a hook script reached through cd or a variable, run with a variable it chose: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(/^Refused.*OSS hook script/);
+  });
+
+  it.each([
+    'cd ~/proj && ./hooks/pre-commit.sh',
+    'cd ~/proj && BASH_ENV=/tmp/e ./hooks/pre-commit.sh',
+    'h=~/.oss/hooks/oss-log.sh; $h write build x',
+    'n=3; ~/.oss/hooks/oss-log.sh checkpoint "$n"',
+    'cd "$D"; ./x.sh',
+  ])('leaves a call that sets no refused variable, or runs no hook script, as it was: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.stderr, command).not.toMatch(/OSS hook script/);
+  });
+});
+
 describe('the hook-call variable list', () => {
   it('is exactly the variables the served commands set in a block that runs an OSS hook script', () => {
     expect([...HOOK_CALL_VARIABLES].sort()).toEqual([...SERVED_HOOK_VARIABLES].sort());
