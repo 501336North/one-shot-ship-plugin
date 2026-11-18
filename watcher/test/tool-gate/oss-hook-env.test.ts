@@ -388,6 +388,13 @@ describe.each(AGENTS.slice(0, 2))('%s, a hook path reached through cd or a varia
     'cd "$D"; X=1 hooks/x.sh',
     'cd "$D"; X=1 ./OSS-l?g.sh',
     'cd "$D"; X=1 .oss/hooks/x.sh',
+    // Task 14: every word of a command that sets a variable, the script of bash, sh, zsh, `.` and `source` included
+    'cd "$D"; X=1 bash oss-log.sh',
+    'cd "$D"; X=1 bash ./OSS-log.sh',
+    'cd "$D"; X=1 . ./oss-log.sh',
+    'cd "$D"; X=1 source oss-log.sh',
+    'cd "$D"; X=1 ./$(echo oss-log.sh)',
+    'cd "$D"; X=1 ./$F',
   ])('refuses a hook script reached through cd or a variable, run with a variable it chose: %s', async (command) => {
     const result = await call(command, agent);
     expect(result.exitCode, command).toBe(2);
@@ -403,6 +410,11 @@ describe.each(AGENTS.slice(0, 2))('%s, a hook path reached through cd or a varia
     // Task 10b: in a folder known only at run time, a program that can't be an OSS hook by its name or folders
     'cd "$D" && NODE_ENV=test ./scripts/test.sh',
     'cd "$D" && FOO=1 ./run.sh',
+    // Task 14: an `oss-` name inside an ordinary folder is not a hook; an unknown word outside the program or script position is not either
+    'cd "$W" && FOO=1 ./scripts/oss-release.sh',
+    'cd "$D"; X=1 ./run.sh "$F"',
+    'cd "$D" && npm test',
+    'cd "$D" && NODE_ENV=test npm test',
   ])('leaves a call that sets no refused variable, or runs no hook script, as it was: %s', async (command) => {
     const result = await call(command, agent);
     expect(result.stderr, command).not.toMatch(/OSS hook script/);
@@ -412,6 +424,13 @@ describe.each(AGENTS.slice(0, 2))('%s, a hook path reached through cd or a varia
   it('accepted residual (user pick 2026-11-18): cd "$D"; X=1 ./checkpoint.sh', async () => {
     const result = await call('cd "$D"; X=1 ./checkpoint.sh', agent);
     expect(result.stderr).not.toMatch(/OSS hook script/);
+  });
+
+  // Task 14: a `Hooks` folder is refused, though it may be a repo's own: it could be `hooks`
+  it('accepted over-refusal: macOS folders ignore case (user pick 2026-11-18): cd "$W"; LOG=1 ./Hooks/x', async () => {
+    const result = await call('cd "$W"; LOG=1 ./Hooks/x', agent);
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/^Refused.*OSS hook script/);
   });
 });
 
