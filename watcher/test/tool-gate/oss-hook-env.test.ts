@@ -27,6 +27,7 @@ const AGENTS: Array<[string, string | null]> = [
 let root: string;
 let repo: string;
 let home: string;
+let plugin: string;
 
 beforeAll(() => {
   root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-r12-hookenv-')));
@@ -35,19 +36,24 @@ beforeAll(() => {
   fs.mkdirSync(path.join(home, '.oss', 'hooks'), { recursive: true });
   fs.mkdirSync(repo);
   execFileSync('git', ['init', '-q', '-b', 'feat/x'], { cwd: repo });
+  // a plugin checkout: a folder with .claude-plugin/plugin.json (hook-env-refs Task 7)
+  plugin = path.join(root, 'some-plugin');
+  fs.mkdirSync(path.join(plugin, '.claude-plugin'), { recursive: true });
+  fs.mkdirSync(path.join(plugin, 'hooks'));
+  fs.writeFileSync(path.join(plugin, '.claude-plugin', 'plugin.json'), '{"name":"some-plugin"}');
 });
 
 afterAll(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-function call(command: string, agent: string | null): Promise<GateResult> {
+function call(command: string, agent: string | null, cwd: string = repo): Promise<GateResult> {
   return runToolGate(
     {
       mode: 'pre',
       input: JSON.stringify({
         session_id: 'r12-hook-env',
-        cwd: repo,
+        cwd,
         hook_event_name: 'PreToolUse',
         tool_name: 'Bash',
         tool_input: { command },
@@ -276,6 +282,40 @@ describe.each(AGENTS.slice(0, 2))('%s, setting a variable on a hook call', (_who
     const result = await call(`unset GIT_DIR NODE_OPTIONS; ${LOG_HOOK}`, agent);
     expect(result.stderr).not.toMatch(/OSS hook script/);
   });
+});
+
+// hook-env-refs Task 7: a hook path written through a glob, in any case, or under any plugin's hooks folder
+describe.each(AGENTS.slice(0, 2))('%s, a hook path through a glob, in any case, or of any plugin', (_who, agent) => {
+  it.each([
+    'BASH_ENV=/tmp/x bash ~/.oss/hook?/oss-log.sh',
+    'BASH_ENV=/tmp/x ~/.oss/hoo*/oss-log.sh',
+    'BASH_ENV=/tmp/x ~/.oss/hook[s]/oss-log.sh',
+    'BASH_ENV=/tmp/x hooks/OSS-log.sh',
+    'BASH_ENV=/tmp/x ~/.OSS/hooks/x',
+    'BASH_ENV=/tmp/x ~/.claude/plugins/cache/my-market/other-plugin/1.0.0/hooks/check.sh',
+  ])('refuses a hook script run with a variable the served commands never set: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(/^Refused.*OSS hook script/);
+  });
+
+  it.each(['<checkout>/hooks/checkpoint.sh', './hooks/checkpoint.sh'])(
+    'refuses any hook script of a plugin checkout run with a variable it chose: %s',
+    async (hook) => {
+      const command = `BASH_ENV=/tmp/x ${hook.replace('<checkout>', plugin)}`;
+      const result = await call(command, agent, plugin);
+      expect(result.exitCode, command).toBe(2);
+      expect(result.stderr, command).toMatch(/^Refused.*OSS hook script/);
+    },
+  );
+
+  it.each(['BASH_ENV=/tmp/x ./hooks/pre-commit.sh', 'BASH_ENV=/tmp/x scripts/hooks/lint.sh'])(
+    'leaves a hooks script of a repo that is not a plugin to the other rules: %s',
+    async (command) => {
+      const result = await call(command, agent);
+      expect(result.stderr, command).not.toMatch(/OSS hook script/);
+    },
+  );
 });
 
 describe('the hook-call variable list', () => {
