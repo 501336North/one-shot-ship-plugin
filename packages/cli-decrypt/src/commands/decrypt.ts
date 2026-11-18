@@ -92,6 +92,8 @@ export async function decryptCommand(
     const startFetch = Date.now();
     const customPrompt = await fetchCustomPrompt(credentials.apiKey, apiUrl, name);
     logger.log('FETCH', `Custom command fetched in ${Date.now() - startFetch}ms`);
+    // R-273 D6: team custom prompts are out of the manifest's scope; say so, never claim verified.
+    console.error('[verify] Team custom prompt — not covered by the OSS manifest');
     console.log(customPrompt.prompt);
     return;
   }
