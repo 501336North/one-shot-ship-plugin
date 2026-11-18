@@ -323,8 +323,21 @@ function partNamesHook(part: CommandPart): boolean {
   return [...part.words, ...part.assignmentValues].some((w, i) => {
     if (namesHook(w, part.cwd)) return true;
     if (/^[/~-]/.test(w)) return false;
-    return lost ? i === 0 && part.words.length > 0 && w.includes('/') : namesHook(path.resolve(part.cwd, w), part.cwd);
+    return lost ? i === 0 && part.words.length > 0 && w.includes('/') && couldBeOssHook(w) : namesHook(path.resolve(part.cwd, w), part.cwd);
   });
+}
+
+/**
+ * True when a relative program, run from a folder known only at run time, could be an OSS hook (hook-env-refs
+ * Task 10b): its last part starts `oss-`, or a part is `hooks` or `.oss`, in any case or through a glob.
+ */
+function couldBeOssHook(word: string): boolean {
+  const parts = word.split('/');
+  const last = parts[parts.length - 1].toLowerCase();
+  // the part before its first glob character: `oss-` must start it, or it must start `oss-`
+  const literal = last.split(GLOB)[0];
+  const ossName = GLOB.test(last) ? literal.startsWith('oss-') || 'oss-'.startsWith(literal) : last.startsWith('oss-');
+  return ossName || parts.some((p) => ['hooks', '.oss'].some((name) => (GLOB.test(p) ? globMatches(p, name) : p.toLowerCase() === name)));
 }
 
 export function checkOssHookEnv(part: CommandPart, command: string, home: string, sources: TrustedSources): Refusal | null {
