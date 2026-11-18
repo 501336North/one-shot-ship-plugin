@@ -8116,13 +8116,14 @@ var COMMAND_MAPS = /^(?:dis_)?(?:aliases|galiases|saliases|functions|commands|bu
 function optionName2(word) {
   return (word ?? "").toLowerCase().replace(/_/g, "");
 }
+var SERVED_OPTIONS = /* @__PURE__ */ new Set(["pipefail", "errexit", "unset", "xtrace", "clobber"]);
 var RESERVED = /* @__PURE__ */ new Set(["if", "then", "else", "elif", "do", "while", "until", "{", "!", "time"]);
 var SETTING_WORD = /^(?:HOME|PATH|path)(?:$|\[[^\]]*\])?(?:\+?=|$)/;
 var SCRIPT_FLAG = /^-[A-Za-z]*c$/;
 var NAME_SETTERS2 = /* @__PURE__ */ new Set(["declare", "typeset", "export", "local", "readonly", "read", "integer", "float"]);
 var NAMEREF_SETTERS = /* @__PURE__ */ new Set(["declare", "typeset", "local"]);
 var OPERAND_SETTERS = /* @__PURE__ */ new Set([...NAME_SETTERS2, "let", "env"]);
-var PREFIXES = /* @__PURE__ */ new Set(["builtin", "command"]);
+var PREFIXES = /* @__PURE__ */ new Set(["builtin", "command", "noglob", "nocorrect", "-"]);
 var MAX_DEPTH = 5;
 function setsRefusedVariable(text, depth, call) {
   if (depth > MAX_DEPTH || expansionSet(text, (name) => !HOOK_CALL_VARIABLES.has(name)) !== null || arithmeticReadsVariable(text)) return true;
@@ -8236,10 +8237,12 @@ function setsFromElsewhere(words, depth, call, raws) {
     return !sourcesOssHook(args[0], call.home) && !(args[0] !== void 0 && trustedSourceWord(args[0], raws[p + 1], call.home, call.sources));
   }
   if (name === "function") return true;
-  if (name === "set") return args.some((a, i) => /^-[A-Za-z]*[kTa]/.test(a) || a === "-o" && ["keyword", "functrace", "allexport"].includes(optionName2(args[i + 1])));
+  if (name === "set") {
+    return args.some((a, i) => /^-[A-Za-z]*[kTa]/.test(a) || /^[-+][A-Za-z]*A/.test(a) || /^[-+][A-Za-z]*o/.test(a) && !SERVED_OPTIONS.has(optionName2(args[i + 1]).replace(/^no/, "")));
+  }
   if (name === "alias" || name === "enable" || name === "disable") return true;
   if (name === "hash") return args.some((a) => a.includes("=") || /^-[A-Za-z]*p/.test(a));
-  if (name === "setopt") return args.some((a) => /^[-+][A-Za-z]*a/.test(a) || optionName2(a) === "allexport");
+  if (name === "setopt" || name === "unsetopt" || name === "emulate") return true;
   if (name === "shopt") return args.some((a) => optionName2(a) === "allexport");
   if (name === "trap") return args.some((a) => !a.startsWith("-") && setsRefusedVariable(a, depth + 1, call));
   return false;
@@ -8316,7 +8319,7 @@ function partNamesHook(part) {
     return namesHook(import_node_path21.default.resolve(part.cwd, w), part.cwd);
   });
 }
-var SCRIPT_RUNNERS = /* @__PURE__ */ new Set(["bash", "sh", "zsh", ".", "source"]);
+var SCRIPT_RUNNERS = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", ".", "source"]);
 function lostWordsCouldBeHook(words) {
   const script = SCRIPT_RUNNERS.has(words[0]) ? words.findIndex((w, i) => i > 0 && !w.startsWith("-")) : -1;
   return words.some((w, i) => couldBeOssHook(w, i === 0 || i === script));
@@ -8327,7 +8330,10 @@ function couldBeOssHook(word, runs) {
   const bare = parts.length === 1 || parts.length === 2 && parts[0] === ".";
   const literal2 = last.split(GLOB)[0];
   const ossName = GLOB.test(last) ? literal2.startsWith("oss-") || "oss-".startsWith(literal2) : last.startsWith("oss-");
-  return bare && ossName || runs && parts[parts.length - 1].includes(UNKNOWN) || parts.some((p) => ["hooks", ".oss"].some((name) => GLOB.test(p) ? globMatches(p, name) : p.toLowerCase() === name));
+  if (bare && ossName) return true;
+  if (!runs) return false;
+  const hookFolder = parts.some((p) => ["hooks", ".oss"].some((name) => GLOB.test(p) ? globMatches(p, name) : p.toLowerCase() === name));
+  return hookFolder || parts[parts.length - 1].includes(UNKNOWN);
 }
 function checkOssHookEnv(part, command, home, sources) {
   if (!partNamesHook(part) && !PLUGIN_HOOK.test(command)) return null;
