@@ -21,7 +21,9 @@
  * one (round 14, CR LOW-1). Variables set from elsewhere count too (hook-env-refs Task 6): a `source` /
  * `.` (so `set -a` too), unless its file is written out in full directly in `~/.oss/hooks` or is one the
  * reader already trusts (`trustedSourceWord`); `set -k` / `-o keyword` and `set -T` / `-o functrace`; a
- * trap body, read like an eval script; and `exec -c`, read like `env -i`. Reported under the
+ * trap body, read like an eval script; and `exec -c`, read like `env -i`. `set -a` / `-o allexport` and
+ * any function definition are refused too (Task 9); a lower-case plain variable, never exported, is not.
+ * Reported under the
  * protected-path rule: the hook folder is protected.
  */
 
@@ -117,27 +119,40 @@ function setsIndirectly(words: string[]): boolean {
   return args.some((a) => !a.startsWith('-') && a.split('=')[0].includes(UNKNOWN));
 }
 
-/** True when a simple command sets a variable it names that is not on the hook-call list: an assignment, a setter's operand, a `for` variable. */
+/** The variable a setting word names: `X` in `X=1`, `X+=1`, `X[0]=1`. */
+function variableOf(word: string): string {
+  return word.split(/[=[+]/)[0];
+}
+
+/**
+ * True when a simple command sets a variable it names that is not on the hook-call list: a prefix
+ * assignment, a setter's operand (`printf -v`, `mapfile`, `getopts` included). A plain assignment or
+ * loop variable is not exported (hook-env-refs Task 9), so it reaches the hook only when the agent's
+ * environment may already export the name: an upper-case or `*_proxy` name.
+ */
 function setsUnlisted(words: string[]): boolean {
   let p = 0;
   while (RESERVED.has(words[p])) p++;
-  const names: string[] = [];
-  while (p < words.length && ASSIGNMENT.test(words[p])) names.push(words[p++]);
+  const assigned: string[] = [];
+  while (p < words.length && ASSIGNMENT.test(words[p])) assigned.push(words[p++]);
   while (PREFIXES.has(words[p])) p++;
   const [name, ...args] = words.slice(p);
-  // hook-env-refs Task 9: a plain assignment or loop variable is not exported, so it reaches the hook
-  // only when the agent's environment already exports the name: an upper-case or `*_proxy` name may be
   if (name === undefined || name === 'for' || name === 'select') {
-    const plain = name === undefined ? names : [...names, args[0] ?? ''];
-    names.splice(0, names.length, ...plain.filter((n) => MAYBE_EXPORTED.test(n.split(/[=[+]/)[0])));
-  } else if (OPERAND_SETTERS.has(name)) names.push(...args.filter((a) => !a.startsWith('-')));
+    const plain = name === undefined ? assigned : [...assigned, args[0] ?? ''];
+    return plain.some((w) => MAYBE_EXPORTED.test(variableOf(w)) && unlisted(w));
+  }
+  const names = [...assigned];
+  if (OPERAND_SETTERS.has(name)) names.push(...args.filter((a) => !a.startsWith('-')));
   else if (name === 'printf' || name === 'print') args.forEach((a, i) => (a === '-v' ? names.push(args[i + 1] ?? '') : /^-v./.test(a) && names.push(a.slice(2))));
   else if (name === 'mapfile' || name === 'readarray') names.push(...arrayOperands(args));
   else if (name === 'getopts') names.push(args[1] ?? '');
-  return names.some((word) => {
-    const variable = word.split(/[=[+]/)[0];
-    return VARIABLE_NAME.test(variable) && !HOOK_CALL_VARIABLES.has(variable);
-  });
+  return names.some(unlisted);
+}
+
+/** True when a setting word names a variable not on the hook-call list. */
+function unlisted(word: string): boolean {
+  const variable = variableOf(word);
+  return VARIABLE_NAME.test(variable) && !HOOK_CALL_VARIABLES.has(variable);
 }
 
 /** mapfile / readarray options that take a value (bash syntax): the array name is the operand left. */
