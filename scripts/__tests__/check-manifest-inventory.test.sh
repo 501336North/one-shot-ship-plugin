@@ -93,19 +93,19 @@ run_check() { # $1 = manifest, $2 = tree; sets OUT and RC
 # 1. Every literal fetch has a key → passes.
 T1="$SB/t1"; mk_tree "$T1"
 run_check "$FULL" "$T1"
-if [[ -f "$CHECK" && $RC -eq 0 ]] && ! grep -qi 'missing' <<<"$OUT"; then
+if [[ -f "$CHECK" && $RC -eq 0 ]] && ! grep -q '^MISSING ' <<<"$OUT"; then
   pass "passes when every literal oss-decrypt --type/--name in the shipped dirs has a manifest key"
 else fail "all keys present" "rc=$RC out=$OUT"; fi
 
 # 2. Missing keys → fails and names each missing <t>/<n>.
 run_check "$NO_WF" "$T1"
-if [[ $RC -ne 0 ]] && grep -q 'workflows/plan' <<<"$OUT" && grep -q 'workflows/build' <<<"$OUT"; then
+if [[ $RC -ne 0 ]] && grep -q '^MISSING workflows/plan ' <<<"$OUT" && grep -q '^MISSING workflows/build ' <<<"$OUT"; then
   pass "fails and names each missing <t>/<n> (workflows/plan, workflows/build)"
 else fail "missing keys named" "rc=$RC out=$OUT"; fi
 
 # 2b. A present key is not reported as missing alongside the missing ones.
-if [[ $RC -ne 0 ]] && grep -q 'workflows/plan' <<<"$OUT" \
-   && ! grep -iE 'missing' <<<"$OUT" | grep -qE 'agents/typescript-pro|commands/plan|skills/ui-ux'; then
+if [[ $RC -ne 0 ]] && grep -q '^MISSING workflows/plan ' <<<"$OUT" \
+   && ! grep -qE '^MISSING (agents/typescript-pro|commands/plan|skills/ui-ux) ' <<<"$OUT"; then
   pass "a key the manifest has is not reported as missing"
 else fail "present key not reported" "rc=$RC out=$OUT"; fi
 
@@ -114,7 +114,7 @@ T3="$SB/t3"; mk_tree "$T3"
 echo '~/.oss/bin/oss-decrypt --type skills --name not-in-manifest' > "$T3/skills/ui/extra.md"
 echo '~/.oss/bin/oss-decrypt --type agents --name ghost-agent' >> "$T3/hooks/fetch.sh"
 run_check "$FULL" "$T3"
-if [[ $RC -ne 0 ]] && grep -q 'skills/not-in-manifest' <<<"$OUT" && grep -q 'agents/ghost-agent' <<<"$OUT"; then
+if [[ $RC -ne 0 ]] && grep -q '^MISSING skills/not-in-manifest ' <<<"$OUT" && grep -q '^MISSING agents/ghost-agent ' <<<"$OUT"; then
   pass "checks literal fetches in skill subdirs and hooks"
 else fail "skills subdir + hooks scanned" "rc=$RC out=$OUT"; fi
 
@@ -133,7 +133,7 @@ echo '~/.oss/bin/oss-decrypt --type workflows --name docs-only' > "$T4/docs/guid
 echo '~/.oss/bin/oss-decrypt --type workflows --name script-only' > "$T4/scripts/x.sh"
 echo '~/.oss/bin/oss-decrypt --type workflows --name root-only' > "$T4/README.md"
 run_check "$FULL" "$T4"
-if [[ -f "$CHECK" && $RC -eq 0 ]] && ! grep -qiE 'missing.*(custom|docs-only|script-only|root-only|\{\{|<name|\$)' <<<"$OUT"; then
+if [[ -f "$CHECK" && $RC -eq 0 ]] && ! grep -qE '^MISSING .*(custom|docs-only|script-only|root-only|\{\{|<name|\$)' <<<"$OUT"; then
   pass "ignores custom, non-literal names (\"\$n\", {{id}}, <name>) and files outside the shipped dirs"
 else fail "ignored shapes" "rc=$RC out=$OUT"; fi
 
