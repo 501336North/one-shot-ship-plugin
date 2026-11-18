@@ -537,6 +537,8 @@ function transcriptMessage(file) {
     fs4.closeSync(fd);
   }
   const lines = text.split("\n");
+  let lastId;
+  const parts = [];
   for (let i = lines.length - 1; i >= 0; i--) {
     let entry;
     try {
@@ -544,12 +546,20 @@ function transcriptMessage(file) {
     } catch {
       continue;
     }
-    const msg = entry?.message;
-    if (entry.type !== "assistant" || !Array.isArray(msg?.content)) continue;
-    const parts = msg.content.filter((c) => c?.type === "text" && typeof c.text === "string").map((c) => c.text);
-    if (parts.length > 0) return parts.join("\n");
+    if (typeof entry !== "object" || entry === null) continue;
+    const { type, message } = entry;
+    if (type !== "assistant") {
+      if (lastId !== void 0 && type === "user") break;
+      continue;
+    }
+    const id = message?.id;
+    if (lastId === void 0) lastId = id ?? null;
+    else if (lastId === null || id !== lastId) break;
+    const content = Array.isArray(message?.content) ? message.content : [];
+    const texts = content.filter((c) => c?.type === "text" && typeof c.text === "string").map((c) => c.text);
+    parts.unshift(...texts);
   }
-  return null;
+  return parts.length > 0 ? parts.join("\n") : null;
 }
 function finalMessage(input) {
   const last = input.last_assistant_message;

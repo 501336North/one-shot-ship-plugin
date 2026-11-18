@@ -113,3 +113,7 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 - Follow-up (T26 report, not in R-257 scope): oss-notify.sh still runs the workflow-state CLI (`wf_state`) and the copy and chain-trigger CLIs on PATH's node. Only the phase-result CLI moved to the recorded node (D21).
 
 ## Last Updated: 2026-11-18 09:00 CST by /oss:build (T26, D21)
+
+### T31 real-transcript note (2026-11-18)
+- Where a harness ends subagents with a handback tool (this machine: SubagentHandback), the review agent's final message has no text, so its oss-verdict block is never captured and its gate stays `source: model`, as before T19. That's fail-safe: no gate gets stricter or looser. Plain Claude Code subagents end with a text message, so the capture works there. The served agent prompts already say to write the block as plain text in the reply.
+- Unchecked: what `last_assistant_message` holds when the final message is a tool_use.

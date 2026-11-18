@@ -133,6 +133,60 @@ describe('captureVerdict: what gets recorded', () => {
     expect(rows()[0]).toMatchObject({ gate: 'code-review', verdict: 'fail', findings: COUNTS });
   });
 
+  // T31 (real transcripts): the final message is the last assistant entry, with the entries before it that share its
+  // message.id (Claude Code writes one API message as one entry per content block: thinking, text, tool_use).
+  function rawTranscript(entries: Array<{ id: string; content: Array<Record<string, unknown>> }>): string {
+    const file = path.join(home, `raw-${Math.random().toString(36).slice(2)}.jsonl`);
+    const lines = [JSON.stringify({ type: 'user', message: { role: 'user', content: 'review this' } })];
+    for (const e of entries) {
+      lines.push(JSON.stringify({ type: 'assistant', message: { id: e.id, role: 'assistant', content: e.content } }));
+      lines.push(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: 'ok' }] } }));
+    }
+    lines.pop();
+    fs.writeFileSync(file, lines.join('\n') + '\n');
+    return file;
+  }
+  const VALID = block({ verdict: 'pass', findings: COUNTS });
+
+  it('T31: a final entry holding only a tool_use records nothing, even when an earlier entry holds a block', () => {
+    const file = rawTranscript([
+      { id: 'msg_1', content: [{ type: 'text', text: message(VALID) }] },
+      { id: 'msg_2', content: [{ type: 'tool_use', name: 'SubagentHandback', input: { message: VALID } }] },
+    ]);
+    expect(capture({ agent_transcript_path: file })).toEqual({ captured: false, reason: 'no_message' });
+    expect(rows()).toEqual([]);
+  });
+
+  it('T31: a final message split into a thinking entry and a text entry with the same message.id is captured', () => {
+    const file = path.join(home, 'split.jsonl');
+    const entry = (content: Array<Record<string, unknown>>): string =>
+      JSON.stringify({ type: 'assistant', message: { id: 'msg_9', role: 'assistant', content } });
+    fs.writeFileSync(file, [
+      JSON.stringify({ type: 'assistant', message: { id: 'msg_8', role: 'assistant', content: [{ type: 'text', text: 'working' }] } }),
+      JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: 'ok' }] } }),
+      entry([{ type: 'thinking', thinking: 'done' }]),
+      entry([{ type: 'text', text: message(VALID) }]),
+    ].join('\n') + '\n');
+    expect(capture({ agent_transcript_path: file }).captured).toBe(true);
+    expect(rows()[0]).toMatchObject({ verdict: 'pass', findings: COUNTS });
+  });
+
+  it('T31: the text of the final message counts when its last entry is a tool_use with the same message.id', () => {
+    const file = path.join(home, 'text-then-tool.jsonl');
+    const entry = (content: Array<Record<string, unknown>>): string =>
+      JSON.stringify({ type: 'assistant', message: { id: 'msg_9', role: 'assistant', content } });
+    fs.writeFileSync(file, [entry([{ type: 'text', text: message(VALID) }]), entry([{ type: 'tool_use', name: 'X', input: {} }])].join('\n') + '\n');
+    expect(capture({ agent_transcript_path: file }).captured).toBe(true);
+  });
+
+  it('T31: a block in an earlier message with another message.id is never the final message', () => {
+    const file = rawTranscript([
+      { id: 'msg_1', content: [{ type: 'text', text: message(VALID) }] },
+      { id: 'msg_2', content: [{ type: 'text', text: 'All done, no verdict block here.' }] },
+    ]);
+    expect(capture({ agent_transcript_path: file })).toEqual({ captured: false, reason: 'no_block' });
+  });
+
   it('prefers last_assistant_message over the transcript when both are present', () => {
     const file = transcript(block({ verdict: 'fail', findings: COUNTS }));
     capture({ agent_transcript_path: file, last_assistant_message: block({ verdict: 'pass', findings: COUNTS }) });

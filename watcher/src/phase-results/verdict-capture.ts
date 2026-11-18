@@ -8,9 +8,10 @@
  * hook input's agent_type (REVIEW_AGENT_GATES), never from the block. One row goes to the owner-only ledger
  * `verdicts/<feature>`; the model never writes it. assemble-ship.ts reads it.
  *
- * The final message: the input's last_assistant_message when it is a string, else the last assistant entry with text
- * in agent_transcript_path (JSONL; opened with O_NOFOLLOW, a regular file only, and only its last
- * TRANSCRIPT_TAIL_BYTES read). Either one over that cap records nothing.
+ * The final message: the input's last_assistant_message when it is a string, else the text of the last assistant
+ * message in agent_transcript_path: its trailing entries that share one message.id, and nothing when they hold no text
+ * (T31). The transcript is JSONL, opened with O_NOFOLLOW, a regular file only, and only its last TRANSCRIPT_TAIL_BYTES
+ * are read. Either one over that cap records nothing.
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -88,7 +89,12 @@ function transcriptMessage(file: unknown): string | null {
     fs.closeSync(fd);
   }
   const lines = text.split('\n');
-  // A tail that starts mid-file starts mid-line: that first piece is not a whole entry.
+  // The final message is the last assistant entry plus the assistant entries before it that share its message.id
+  // (one entry per content block: thinking, text, tool_use). Only their text blocks count; a final message with no
+  // text (e.g. only a tool_use) gives null, never an earlier message's text (T31). A tail that starts mid-file starts
+  // mid-line: that first piece is not a whole entry, and does not parse.
+  let lastId: unknown;
+  const parts: string[] = [];
   for (let i = lines.length - 1; i >= 0; i--) {
     let entry: unknown;
     try {
@@ -96,14 +102,20 @@ function transcriptMessage(file: unknown): string | null {
     } catch {
       continue;
     }
-    const msg = (entry as { type?: unknown; message?: { content?: unknown } } | null)?.message;
-    if ((entry as { type?: unknown }).type !== 'assistant' || !Array.isArray(msg?.content)) continue;
-    const parts = (msg.content as Array<{ type?: unknown; text?: unknown }>)
-      .filter((c) => c?.type === 'text' && typeof c.text === 'string')
-      .map((c) => c.text as string);
-    if (parts.length > 0) return parts.join('\n');
+    if (typeof entry !== 'object' || entry === null) continue;
+    const { type, message } = entry as { type?: unknown; message?: { id?: unknown; content?: unknown } };
+    if (type !== 'assistant') {
+      if (lastId !== undefined && type === 'user') break;
+      continue;
+    }
+    const id = message?.id;
+    if (lastId === undefined) lastId = id ?? null;
+    else if (lastId === null || id !== lastId) break;
+    const content = Array.isArray(message?.content) ? (message.content as Array<{ type?: unknown; text?: unknown }>) : [];
+    const texts = content.filter((c) => c?.type === 'text' && typeof c.text === 'string').map((c) => c.text as string);
+    parts.unshift(...texts);
   }
-  return null;
+  return parts.length > 0 ? parts.join('\n') : null;
 }
 
 function finalMessage(input: Record<string, unknown>): string | null {
