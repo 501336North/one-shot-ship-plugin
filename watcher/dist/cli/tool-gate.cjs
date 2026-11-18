@@ -5964,7 +5964,7 @@ function unknownWrite(part, settings, places, paths) {
     }
     if (tail === null) {
       if (!substituted.includes(target) && !literalHeadReaches(pattern, part.cwd, settings, places, paths)) continue;
-    } else if (!places.some((at) => tailMayBeProtected(tail, settings.protectedPaths, at, true, false))) {
+    } else if (!endsInGitRef(tail, settings) && !places.some((at) => tailMayBeProtected(tail, settings.protectedPaths, at, true, false))) {
       continue;
     }
     return {
@@ -5973,6 +5973,12 @@ function unknownWrite(part, settings, places, paths) {
     };
   }
   return null;
+}
+var GIT_POINTER_FILES = ["head", "orig_head", "fetch_head", "packed-refs", "commondir", "gitdir"];
+function endsInGitRef(tail, settings) {
+  const last = unescapeGlob(tail.slice(tail.lastIndexOf("/") + 1)).toLowerCase();
+  const branches = settings.protectedBranches.map((b) => b.slice(b.lastIndexOf("/") + 1).toLowerCase());
+  return GIT_POINTER_FILES.includes(last) || branches.includes(last);
 }
 function unknownTailOf(pattern) {
   const after = pattern.slice(pattern.lastIndexOf(UNKNOWN) + UNKNOWN.length);
@@ -8066,16 +8072,46 @@ function checkProductionHost(part, settings) {
 }
 
 // src/tool-gate/rules/oss-hook-env.ts
-var HOOK_FILE = /\/\.oss\/hooks\/[^/]/;
-var MOVERS = /* @__PURE__ */ new Set(["HOME", "PATH", "path"]);
+var HOOK_FILE = /\/\.oss\/hooks\/[^/]|\/\.claude\/plugins\/cache\/[^/]+\/oss\/[^/]+\/hooks\/[^/]|(?:^|\/)hooks\/oss-[^/]*\.sh$/;
+var PLUGIN_HOOK = /\$\{?CLAUDE_PLUGIN_ROOT\}?\/hooks\/[^/]/;
+var HOOK_CALL_VARIABLES = /* @__PURE__ */ new Set([
+  "CLAUDE_PROJECT_DIR",
+  "CREDS",
+  "HAS_PLAYWRIGHT",
+  "OSS_DIR",
+  "OSS_ICON_PNG",
+  "PLAYWRIGHT_RESULT",
+  "PLIST_PATH",
+  "PLUGIN_ROOT",
+  "SCRIPT_DIR",
+  "SETTINGS_FILE",
+  "SOUND",
+  "STATUSLINE_SCRIPT",
+  "STYLE",
+  "V",
+  "VERBOSITY",
+  "VERIFY",
+  "VOICE",
+  "WHY",
+  "d",
+  "encoding",
+  "o",
+  "top",
+  "version",
+  "w"
+]);
+var ASSIGNMENT3 = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=/;
+var VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+var RESERVED = /* @__PURE__ */ new Set(["if", "then", "else", "elif", "do", "while", "until", "{", "!", "time"]);
 var SETTING_WORD = /^(?:HOME|PATH|path)(?:$|\[[^\]]*\])?(?:\+?=|$)/;
 var SCRIPT_FLAG = /^-[A-Za-z]*c$/;
 var NAME_SETTERS2 = /* @__PURE__ */ new Set(["declare", "typeset", "export", "local", "readonly", "read", "integer", "float"]);
 var NAMEREF_SETTERS = /* @__PURE__ */ new Set(["declare", "typeset", "local"]);
+var OPERAND_SETTERS = /* @__PURE__ */ new Set([...NAME_SETTERS2, "let", "env"]);
 var PREFIXES = /* @__PURE__ */ new Set(["builtin", "command"]);
 var MAX_DEPTH = 5;
-function setsMover(text, depth) {
-  if (depth > MAX_DEPTH || expansionSet(text, (name) => MOVERS.has(name)) !== null || arithmeticReadsVariable(text)) return true;
+function setsRefusedVariable(text, depth) {
+  if (depth > MAX_DEPTH || expansionSet(text, (name) => !HOOK_CALL_VARIABLES.has(name)) !== null || arithmeticReadsVariable(text)) return true;
   const result = tokenize(text, void 0, new ReadBudget());
   if ("unreadable" in result && result.limit) return true;
   return tokensSet(result.tokens, depth);
@@ -8098,6 +8134,20 @@ function setsIndirectly(words) {
   if (name === void 0 || !NAME_SETTERS2.has(name)) return false;
   if (NAMEREF_SETTERS.has(name) && args.some((a) => /^-[A-Za-z]*n/.test(a))) return true;
   return args.some((a) => !a.startsWith("-") && a.split("=")[0].includes(UNKNOWN));
+}
+function setsUnlisted(words) {
+  let p = 0;
+  while (RESERVED.has(words[p])) p++;
+  const names = [];
+  while (p < words.length && ASSIGNMENT3.test(words[p])) names.push(words[p++]);
+  while (PREFIXES.has(words[p])) p++;
+  const [name, ...args] = words.slice(p);
+  if (name === "for" || name === "select") names.push(args[0] ?? "");
+  else if (name !== void 0 && OPERAND_SETTERS.has(name)) names.push(...args.filter((a) => !a.startsWith("-")));
+  return names.some((word) => {
+    const variable = word.split(/[=[+]/)[0];
+    return VARIABLE_NAME.test(variable) && !HOOK_CALL_VARIABLES.has(variable);
+  });
 }
 var ARRAY_VALUE_OPTIONS = /* @__PURE__ */ new Set(["-d", "-n", "-O", "-s", "-u", "-C", "-c"]);
 function arrayOperands(args) {
@@ -8151,7 +8201,7 @@ function tokensSet(tokens, depth) {
   let words = [];
   for (const token of tokens) {
     if (token.kind === "op") {
-      if (setsIndirectly(words)) return true;
+      if (setsIndirectly(words) || setsUnlisted(words)) return true;
       words = [];
     } else if (token.kind === "word") {
       words.push(token.value);
@@ -8159,23 +8209,23 @@ function tokensSet(tokens, depth) {
     if (token.kind !== "op" && token.scripts?.some((script) => tokensSet(script, depth))) return true;
     if (token.kind === "redirect") {
       const body = heredocBodyOf(token);
-      if (body !== void 0 && setsMover(body, depth + 1)) return true;
+      if (body !== void 0 && setsRefusedVariable(body, depth + 1)) return true;
     } else if (token.kind === "word") {
       if (SETTING_WORD.test(token.value)) return true;
-      if (previous !== null && (previous === "eval" || SCRIPT_FLAG.test(previous)) && setsMover(token.value, depth + 1)) return true;
+      if (previous !== null && (previous === "eval" || SCRIPT_FLAG.test(previous)) && setsRefusedVariable(token.value, depth + 1)) return true;
       previous = token.value;
     } else {
       previous = null;
     }
   }
-  return setsIndirectly(words);
+  return setsIndirectly(words) || setsUnlisted(words);
 }
 function checkOssHookEnv(part, command) {
-  if (!part.words.some((w) => HOOK_FILE.test(w))) return null;
-  if (!part.wrappers.includes("env") && !setsMover(command, 0)) return null;
+  if (!part.words.some((w) => HOOK_FILE.test(w)) && !PLUGIN_HOOK.test(command)) return null;
+  if (!part.wrappers.includes("env") && !setsRefusedVariable(command, 0)) return null;
   return {
     rule: "protected-path",
-    reason: "Refused: runs an OSS hook script (`~/.oss/hooks/\u2026`) with a HOME or PATH this command sets or changes (`HOME=`, `PATH=`, `export`, `env`). Run the hook script as it is, in a command that leaves HOME and PATH alone."
+    reason: "Refused: runs an OSS hook script (`~/.oss/hooks/\u2026`) with a HOME or PATH, or another variable, this command sets or changes (`X=`, `export`, `env`) that is not on the list of variables OSS's own commands set on a hook call. Run the hook script as it is, in a command that sets no other variable."
   };
 }
 
