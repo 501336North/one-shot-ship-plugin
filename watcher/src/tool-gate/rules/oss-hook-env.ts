@@ -1,7 +1,9 @@
 /**
- * OSS hook environment rule (R-266 round 12, SEC LOW-A, gate side): OSS's own hook scripts
- * (`~/.oss/hooks/*`) find their files and tools through HOME and PATH, so no agent may run one with a
- * HOME or PATH it chose. Decided from the words the shell reads (round 13, CR L-a), brace expansion
+ * OSS hook environment rule (R-266 round 12, SEC LOW-A, gate side): OSS's own hook scripts find their
+ * files and tools through HOME and PATH, so no agent may run one with a HOME or PATH it chose. They live
+ * in `~/.oss/hooks/*`, the plugin cache (`~/.claude/plugins/cache/<marketplace>/oss/<version>/hooks/*`),
+ * a `--plugin-dir` copy or plugin checkout (any `…/hooks/oss-*.sh`), and `$CLAUDE_PLUGIN_ROOT/hooks/*`
+ * (or `${CLAUDE_PLUGIN_ROOT}`) as written (hook-env-refs Task 1); a non-OSS `hooks/` script is not one. Decided from the words the shell reads (round 13, CR L-a), brace expansion
  * included: a word that sets HOME, PATH or zsh's `path` (`HOME=…`, `export {PATH,ZZ}=…`, `path=(…)`), a
  * word that is exactly one of those names (`export HOME`, `read HOME`, `for PATH in`), a `${HOME:=…}`
  * or arithmetic that sets one, the same in a `-c` / `eval` script or a heredoc, or an `env` wrapper
