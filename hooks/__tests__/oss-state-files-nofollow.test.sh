@@ -42,7 +42,7 @@ cat > /dev/null
 last=""; for a in "$@"; do last="$a"; done
 case "$last" in
     (*/iron-laws/*) printf '{"law1_tdd":{"enabled":true,"locked":true},"from":"stub"}\n' ;;
-    (*) cat "$LAWS_REPLY" ;;   # the sync's ?split=1 answer, {base: laws} (R-273 D12)
+    (*) cat "$LAWS_REPLY" ;;   # the ?split=1 answer of the sync, {base: laws} (R-273 D12)
 esac
 printf '%s' "$(cat "$SHIM/code" 2>/dev/null || echo 200)"
 EOF
