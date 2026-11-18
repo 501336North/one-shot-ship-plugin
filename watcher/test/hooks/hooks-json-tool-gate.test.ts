@@ -57,7 +57,9 @@ const EXISTING: HookMap = {
   PreCompact: [command('oss-session-end.sh')],
   SessionEnd: [command('oss-session-end.sh')],
   Notification: [command('oss-notification.sh')],
-  Stop: [command('oss-stop.sh')],
+  // R-257 T18 (DESIGN D9): the Stop dispatcher replaces oss-stop.sh and runs the notification itself.
+  // Its timeout is explained in hooks-json-stop-dispatch.test.ts.
+  Stop: [{ hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/hooks/oss-stop-dispatch.sh', timeout: 15 }] }],
   WorktreeCreate: [command('oss-worktree-create.sh')],
   WorktreeRemove: [command('oss-worktree-remove.sh')],
   ConfigChange: [command('oss-config-change.sh')],

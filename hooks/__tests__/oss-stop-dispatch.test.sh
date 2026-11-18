@@ -1,5 +1,5 @@
 #!/bin/bash
-# hooks/oss-stop-dispatch.sh: the Stop hook entry (R-257 T11, ADR-1; not wired in hooks.json until T18).
+# hooks/oss-stop-dispatch.sh: the Stop hook entry (R-257 T11, ADR-1; wired in hooks.json by T18).
 #
 # @behavior When Claude tries to end a turn:
 #           - outside a started phase, the "Done" notification runs and node is never started (bash fast path);

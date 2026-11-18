@@ -234,7 +234,7 @@ cd packages/api && DOTENV_CONFIG_PATH=/Users/ysl/dev/AgenticDevWorkflow/packages
 ---
 
 ## Phase 6: After R-266 merges (tracked; not in slice A's build)
-- **Task 18:** add the hooks.json entries on a rebase, additively: Stop points to `oss-stop-dispatch.sh` (it replaces the `oss-stop.sh` entry; the notification runs inside the dispatcher), plus a SubagentStop entry. Tests: `hooks-json` tests for the new entries; R-266's entries are untouched.
+- **Task 18 ⚠ changes existing test** (watcher/test/hooks/hooks-json-tool-gate.test.ts, `EXISTING.Stop: [command('oss-stop.sh')]` becomes the dispatcher). DESIGN.md D9: "The `hooks.json` entries (Stop to the dispatcher, SubagentStop capture) are added on a rebase after R-266 merges, as a tracked task." Add the hooks.json entries on a rebase, additively: Stop points to `oss-stop-dispatch.sh` (it replaces the `oss-stop.sh` entry; the notification runs inside the dispatcher), plus a SubagentStop entry. Tests: `hooks-json` tests for the new entries; R-266's entries are untouched.
 - **Task 19:** each review agent ends with a fenced JSON verdict block; a SubagentStop capture puts it into ship evidence (`source: agent`). The API agent-prompt change also regenerates the manifest.
 - **Task 20 (slice B):** R-253's recorder is tracked per task, so a task is valid only with a green after its last production edit. Branched from the Sprint D branch after R-266 merges.
 

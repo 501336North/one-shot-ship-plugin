@@ -1,5 +1,5 @@
 #!/bin/bash
-# oss-stop-dispatch.sh - the one Stop hook entry (R-257 T11, ADR-1). Not wired in hooks.json until T18.
+# oss-stop-dispatch.sh - the one Stop hook entry (R-257 T11, ADR-1). Wired as the Stop entry in hooks.json by T18.
 #
 # Reads Claude Code's Stop input ({"session_id","stop_hook_active","cwd"}) on stdin.
 # - Bash fast path: node runs only when the cwd's git toplevel has .oss, .oss/workflow-state.json is a regular file and
