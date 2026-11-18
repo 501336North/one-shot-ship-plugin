@@ -364,7 +364,7 @@ function unknownWrite(part: CommandPart, settings: GateSettings, places: Places[
     }
     if (tail === null) {
       if (!substituted.includes(target) && !literalHeadReaches(pattern, part.cwd, settings, places, paths)) continue;
-    } else if (!places.some((at) => tailMayBeProtected(tail, settings.protectedPaths, at, true, false))) {
+    } else if (!endsInGitRef(tail, settings) && !places.some((at) => tailMayBeProtected(tail, settings.protectedPaths, at, true, false))) {
       continue;
     }
     return {
@@ -373,6 +373,20 @@ function unknownWrite(part: CommandPart, settings: GateSettings, places: Places[
     };
   }
   return null;
+}
+
+/** Git's pointer files: a write to one moves a branch or the repo's HEAD (hook-env-refs Task 3). */
+const GIT_POINTER_FILES = ['head', 'orig_head', 'fetch_head', 'packed-refs', 'commondir', 'gitdir'];
+
+/**
+ * True when the readable last part after an unknown part (`"$x/main"`, `"$d/HEAD"`) is, in any case, a
+ * protected branch's name or a git pointer file: the unknown part could be `.git/refs/heads` or `.git`
+ * (hook-env-refs Task 3). A branch named with slashes (`release/x`) counts by its last part only.
+ */
+function endsInGitRef(tail: string, settings: GateSettings): boolean {
+  const last = unescapeGlob(tail.slice(tail.lastIndexOf('/') + 1)).toLowerCase();
+  const branches = settings.protectedBranches.map((b) => b.slice(b.lastIndexOf('/') + 1).toLowerCase());
+  return GIT_POINTER_FILES.includes(last) || branches.includes(last);
 }
 
 /**

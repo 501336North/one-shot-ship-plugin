@@ -110,7 +110,7 @@ describe('refs gap: the branch names come from the protectedBranches setting', (
   const settings: GateSettings = { ...base, protectedBranches: ['main', 'release'] };
 
   it('should refuse a configured branch name after an unknown part', () => {
-    const facts = readCommand(`${REFS}echo > "$x/release"`, '/work/repo', '/home/dev');
+    const facts = readCommand(`${REFS}echo > "$x/release"`, '/work/repo', '/home/dev', false, undefined, undefined, undefined, true);
     if ('unreadable' in facts) throw new Error('expected a readable command');
     const refusal = facts.parts
       .map((part) => checkProtectedPathBash(part, settings, '/work/repo', '/home/dev', { realpath: (p: string) => p }))
