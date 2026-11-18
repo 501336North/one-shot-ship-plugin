@@ -26,7 +26,9 @@
  * any function definition are refused too (Task 9); a lower-case plain variable, never exported, is not.
  * So are `alias`, `enable`, `disable`, a `hash` that sets a path, a key set in a zsh command map
  * (`aliases[x]=…`, `options[…]`), allexport in any spelling (`setopt ALL_EXPORT`, `shopt -os allexport`),
- * and a zsh array tied to an exported variable (`manpath`, `fpath`, …) (Task 13).
+ * and a zsh array tied to an exported variable (`manpath`, `fpath`, …) (Task 13). Any `setopt`, `unsetopt`,
+ * `emulate`, `set -A` / `+A`, or `set -o` / `+o` with an option the served commands don't use is refused,
+ * and zsh's `noglob`, `nocorrect` and `-` are seen through (Task 15).
  * Reported under the
  * protected-path rule: the hook folder is protected.
  */
@@ -79,7 +81,7 @@ const NAME_SETTERS = new Set(['declare', 'typeset', 'export', 'local', 'readonly
 const NAMEREF_SETTERS = new Set(['declare', 'typeset', 'local']);
 /** Programs that set the variables their operands name (`let X=1`, `env X=1 …`), the name setters included. */
 const OPERAND_SETTERS = new Set([...NAME_SETTERS, 'let', 'env']);
-/** Words before a builtin that still run it. */
+/** Words before a builtin that still run it, zsh's precommand modifiers included (hook-env-refs Task 15). */
 const PREFIXES = new Set(['builtin', 'command', 'noglob', 'nocorrect', '-']);
 /** How deep scripts in scripts are read; deeper counts as setting (fail closed). */
 const MAX_DEPTH = 5;
@@ -352,7 +354,8 @@ const SCRIPT_RUNNERS = new Set(['bash', 'sh', 'zsh', 'dash', '.', 'source']);
 
 /**
  * True when a word of a part run from a folder known only at run time could be an OSS hook (hook-env-refs
- * Tasks 10b and 14): any word, or the program or the script a shell or `source` runs when its last part is unknown.
+ * Tasks 10b, 14 and 15): a bare `oss-` word anywhere; the program or the script a shell or `source` runs when a
+ * part is `hooks` or `.oss` or its last part is unknown.
  */
 function lostWordsCouldBeHook(words: string[]): boolean {
   const script = SCRIPT_RUNNERS.has(words[0]) ? words.findIndex((w, i) => i > 0 && !w.startsWith('-')) : -1;
@@ -360,8 +363,8 @@ function lostWordsCouldBeHook(words: string[]): boolean {
 }
 
 /**
- * True when a word could be an OSS hook (hook-env-refs Tasks 10b and 14): a bare `oss-` name (with or without
- * `./`), a part that is `hooks` or `.oss`, in any case or through a glob, or, for a word that runs, an unknown last part.
+ * True when a word could be an OSS hook (hook-env-refs Tasks 10b, 14 and 15): a bare `oss-` name (with or without
+ * `./`), or, for a word that runs, a part that is `hooks` or `.oss` (in any case or through a glob) or an unknown last part.
  */
 function couldBeOssHook(word: string, runs: boolean): boolean {
   const parts = word.split('/');
@@ -370,7 +373,10 @@ function couldBeOssHook(word: string, runs: boolean): boolean {
   // the part before its first glob character: `oss-` must start it, or it must start `oss-`
   const literal = last.split(GLOB)[0];
   const ossName = GLOB.test(last) ? literal.startsWith('oss-') || 'oss-'.startsWith(literal) : last.startsWith('oss-');
-  return (bare && ossName) || (runs && (parts[parts.length - 1].includes(UNKNOWN) || parts.some((p) => ['hooks', '.oss'].some((name) => (GLOB.test(p) ? globMatches(p, name) : p.toLowerCase() === name)))));
+  if (bare && ossName) return true;
+  if (!runs) return false;
+  const hookFolder = parts.some((p) => ['hooks', '.oss'].some((name) => (GLOB.test(p) ? globMatches(p, name) : p.toLowerCase() === name)));
+  return hookFolder || parts[parts.length - 1].includes(UNKNOWN);
 }
 
 export function checkOssHookEnv(part: CommandPart, command: string, home: string, sources: TrustedSources): Refusal | null {
