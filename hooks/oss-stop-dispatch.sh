@@ -85,7 +85,9 @@ if [[ -n "$FEATURE" ]] && [[ "$(_osd_started_at "$LEDGER/results/$FEATURE/$PHASE
 
 # --- The dispatcher, bounded ------------------------------------------------------------------------------------
 if ! _osd_cli; then _osd_fail_open cli_missing; _osd_notify; fi
-oss_run_bounded_rc "$_OSD_BOUND" node "$_OSD_CLI" --cwd "$TOP" --session "$SESSION" --stop-hook-active "$ACTIVE"
+# node from ~/.oss/node-path, never PATH's (T26, security C1): a fake node could print an allow.
+if ! oss_plugin_node "$_OSD_CLI" "$_OSD_SUB" 2>/dev/null; then _osd_fail_open node_missing; _osd_notify; fi
+oss_run_bounded_rc "$_OSD_BOUND" "$OSS_NODE" "$_OSD_CLI" --cwd "$TOP" --session "$SESSION" --stop-hook-active "$ACTIVE"
 rc=$?
 OUT="$OSS_BOUNDED_OUT"
 if [[ $rc -ne 0 || -n "$OUT" ]] && ! printf '%s' "$OUT" | jq -e 'type == "object"' >/dev/null 2>&1; then

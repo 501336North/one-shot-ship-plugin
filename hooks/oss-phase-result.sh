@@ -81,6 +81,22 @@ oss_phase_result_cli() {
     _OSS_PR_CLI="$_OSS_PLUGIN_CLI"
 }
 
+# oss_plugin_node <cli> <sub> -> OSS_NODE: the node recorded in ~/.oss/node-path, through hooks/oss-node.sh of the
+#   plugin the CLI came from (<cli> minus <sub>), never PATH's: a fake node early on PATH could forge a verdict
+#   (R-257 T26, security C1). That oss-node.sh must be a regular file, not a link. With none, or no usable node: one
+#   node_missing line on stderr and 127 (what cli_missing returns, so callers treat it as "no check").
+oss_plugin_node() {
+    local f="${1%"$2"}hooks/oss-node.sh"
+    OSS_NODE_PROBLEM=""
+    if [[ -f "$f" && ! -L "$f" ]] && source "$f" && oss_node; then return 0; fi
+    if [[ "$OSS_NODE_PROBLEM" == changed ]]; then
+        echo "oss-phase-result: node_missing: the node recorded in ~/.oss/node-path changed (${OSS_NODE_OLD:-unreadable} is not usable, PATH has $OSS_NODE_NEW); delete ~/.oss/node-path if you changed node yourself" >&2
+    else
+        echo "oss-phase-result: node_missing: no usable node recorded in ~/.oss/node-path (start a new Claude session to record it)" >&2
+    fi
+    return 127
+}
+
 _oss_phase_result_usage() {
     echo "usage: oss-phase-result.sh assemble <ideate|plan|build|ship>" >&2
     echo "       oss-phase-result.sh check <ideate|plan|build|ship> [--repo <path>] [--all]" >&2
@@ -105,7 +121,8 @@ oss_phase_result_main() {
         echo "oss-phase-result: cli_missing: $_OSS_PR_SUB not found (CLAUDE_PLUGIN_ROOT, ~/.oss/plugin-root, plugin cache)" >&2
         return 127
     fi
-    oss_run_bounded_rc "$secs" node "$_OSS_PR_CLI" "$verb" "$phase" ${rest[@]+"${rest[@]}"}
+    oss_plugin_node "$_OSS_PR_CLI" "$_OSS_PR_SUB" || return 127
+    oss_run_bounded_rc "$secs" "$OSS_NODE" "$_OSS_PR_CLI" "$verb" "$phase" ${rest[@]+"${rest[@]}"}
     rc=$?
     [[ -n "$OSS_BOUNDED_OUT" ]] && printf '%s\n' "$OSS_BOUNDED_OUT"
     [[ "$rc" == 124 ]] && echo "oss-phase-result: timeout: $verb $phase passed ${secs}s" >&2

@@ -55,6 +55,11 @@
   - Follow-on pick (2026-11-14): US-004's plan prompt size base moves to 36,416 bytes for T17 and D20, keeping the +1,000 growth budget.
   - Built in API 0af2d521.
   - Narrowed 2026-11-14 after a heads-up, to keep D20's intent. The new hook also exits 127 (`cli_missing`) when its CLI is missing. So the fallback now runs only when `~/.oss/hooks/oss-phase-result.sh` is not installed. An installed hook that exits non-zero, 127 included, archives nothing. API cf01dc28.
+- D21 Phase checks when the recorded node is gone (user picker 2026-11-18, T26): **Fail closed**.
+  - The phase-result CLI runs on the node in `~/.oss/node-path`, through the plugin's `hooks/oss-node.sh`, never PATH's. This covers oss-phase-result.sh (assemble, the notify gates and plan's archive check), checkpoint.sh and oss-stop-dispatch.sh.
+  - If the recorded node was removed and PATH has a different one, the check exits 127 with one `node_missing` line telling the user to delete `~/.oss/node-path`. The complete gate refuses, Stop marks the phase unverified, and checkpoint counts 0.
+  - Why: a verdict must never come from an unrecorded node. The cost is rare, since nvm switches and brew upgrades keep the recorded path usable.
+  - Not chosen: re-recording PATH's node (a fake node could become the recorded one), and falling back with an unverified label.
 
 ---
 
@@ -115,4 +120,4 @@ Evidence: the provenance survey (only one Stop hook exists, and it never blocks)
 - D4 (complete refuses and Stop blocks), D9 (R-266 gap: wire on rebase).
 - R-265 (c) extends this dispatcher. R-254's oss-lab state machine may later read the same result files.
 
-## Last Updated: 2026-11-14 08:24 CST by /oss:build (D20 narrowed)
+## Last Updated: 2026-11-18 09:00 CST by /oss:build (D21)

@@ -175,8 +175,11 @@ check "complete for project A from repo B (which has a valid result) is refused:
 rm -rf "$T"
 
 # 13. no node on PATH: refused, no CHAIN (the state CLI cannot run either).
+#     T26: the check runs on the node recorded in ~/.oss/node-path, not PATH's, so "no node" also empties that record
+#     (prf_plan's first check recorded PATH's node there); with neither, the check cannot run (node_missing).
 sandbox
 PRF_REPO="$T/repo" prf_plan
+: > "$T/home/.oss/node-path"
 out=$(PATH=/usr/bin:/bin:/usr/sbin:/sbin notify plan complete '{}' 2>&1); rc=$?
 check "with no node on PATH a valid result is still refused: exit 1, no CHAIN" \
     '[[ -f "$(results_dir)/plan.json" && $rc -eq 1 && "$out" != *"CHAIN:"* ]] && ! chain_fired' "rc=$rc out=$out"

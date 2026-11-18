@@ -38,11 +38,11 @@
 - [x] Rebased onto R-266's merge: plugin onto 829748a, API onto a80487c4; the manifest was regenerated, not hand-merged (completed 2026-11-18)
 - [x] After-rebase gate check of plan Phase 0: refused (dq `((`…`$`). Fix is T22; with it, the whole block passes for main and builder, including the `"$top/..."` moves (completed 2026-11-18)
 - [x] cd-then-write audit: R-257's four assemble steps pass the gate, and none has a cd before a write (completed 2026-11-18)
-- [ ] T22: plan.md greps single-quoted + served-command fixture
-- [ ] T23: plan-archive-step local date
-- [ ] T24: GNU-first stat in R-257 test files
-- [ ] T25: D17 notice only in an OSS project
-- [ ] T26: oss_node for the phase-result CLI
+- [x] T22: plan.md greps single-quoted + served-command fixture (completed 2026-11-18, API a637039d, plugin 441305ed)
+- [x] T23: plan-archive-step local date (completed 2026-11-18, API fc45237a)
+- [x] T24: GNU-first stat in R-257 test files (completed 2026-11-18, 13a0d132)
+- [x] T25: D17 notice only in an OSS project (completed 2026-11-18, af15fe4e)
+- [x] T26: oss_node for the phase-result CLI (completed 2026-11-18; D21 fail closed, user pick)
 - [ ] T18: hooks.json Stop → oss-stop-dispatch.sh + SubagentStop
 - [ ] T18b: protectedPaths for ledger and results/
 - [ ] T19: review-agent verdict block → ship evidence
@@ -53,6 +53,6 @@
 - [ ] T21 oss-lab (after the plugin ships)
 
 ## Blockers
-- R-266's 4 red hook tests on the base (pen-tester identity, run_capped, stat order, unset line): R-266 is fixing them in its own PR, and R-257 rebases once it merges.
+- None. R-266's 4 red base tests are fixed in #233 (4458bddb), and R-257 is rebased onto it.
 
-## Last Updated: 2026-11-18 08:15 CST by /oss:build (post-R-266 tasks added)
+## Last Updated: 2026-11-18 09:00 CST by /oss:build (T26 done)

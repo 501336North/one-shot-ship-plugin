@@ -71,4 +71,19 @@ Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watche
   - installed with no CLI: `NOT ARCHIVED: the ship result check failed (exit 127)`, nothing moved;
   - current: `no phase result, move by hand: prose`.
 
-## Last Updated: 2026-11-14 08:24 CST by /oss:build (D20 narrowed)
+### After the R-266 rebase, 2026-11-18
+- Rebase checks, plugin onto 829748a then 4458bddb (#233):
+  - watcher-dist-fresh passes (126 files);
+  - targeted vitest 16 files, 308/308 (phase-results, stop, phase-result CLI and dist, gate-run and tool-gate CLI, archive, provenance);
+  - bash 3.2 hook sweep: 106/111. The 4 failures that were R-266's are fixed in #233; the 1 caused by R-257 is fixed in T25.
+- API after rebasing onto a80487c4: manifest regenerated and verified (138); US-004 conflict resolved with both bases (plan 36,416, build 31,469).
+- Gate check: plan Phase 0's archive step fed to the real hooks/oss-tool-gate.sh pre:
+  - before T22, refused for main and builder (`((`…`$` in double quotes);
+  - after T22, it passes for both, including the `"$top/..."` moves.
+  - The four `assemble` steps pass too.
+- T22: plan-archive-step RED 1 failing, GREEN 28/28. served-commands.acceptance: RED (stale fixture), GREEN 3/3 with OSS_API_REPO set to the R-257 API checkout, and 3/3 without it after #233.
+- T23: RED 2 failing under TZ=Pacific/Pago_Pago. GREEN 27/27 under Pago_Pago, Kiritimati, Shanghai and UTC.
+- T24: stat-order names none of R-257's files. oss-notify-phase-result, timeline-gate-ledger and oss-decision-record pass (bash 3.2).
+- T25: analytics test RED, first on the notice, then on the ledger line. GREEN, along with oss-notify-phase-result, phase-results.acceptance, notify bounds and group, resolve-cli, notify-timeline and session-start-copy.
+
+## Last Updated: 2026-11-18 08:40 CST by /oss:build (T22-T25)

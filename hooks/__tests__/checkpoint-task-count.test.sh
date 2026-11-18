@@ -18,9 +18,12 @@ fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
 echo "Running checkpoint task-count tests under $("$SH" -c 'echo "$BASH_VERSION"')..."
 
 FEATURE=count-feature
+# T26: the plan check runs on the node recorded in ~/.oss/node-path (the real one, resolved: outside temp folders).
+RECORDED_NODE=$(node -p 'require("fs").realpathSync(process.execPath)')
 sandbox() {
     T=$(mktemp -d); T=$(cd "$T" && pwd -P)
-    mkdir -p "$T/home/.oss" "$T/plugin/watcher/dist/cli" "$T/repo"
+    mkdir -p "$T/home/.oss" "$T/plugin/watcher/dist/cli" "$T/repo" "$T/bin"
+    printf '%s\n' "$RECORDED_NODE" > "$T/home/.oss/node-path"
     ln -s "$ROOT/hooks" "$T/plugin/hooks"
     [[ -d "$ROOT/schemas" ]] && ln -s "$ROOT/schemas" "$T/plugin/schemas"
     for f in "$ROOT"/watcher/dist/cli/*; do ln -s "$f" "$T/plugin/watcher/dist/cli/"; done
@@ -113,6 +116,19 @@ f=$(ls "$T/repo/.oss/dev/active/$OTHER/checkpoints/"*.json 2>/dev/null | head -1
 n=$([[ -n "$f" ]] && jq -r '.tasks_completed' "$f" 2>/dev/null || echo "no-checkpoint")
 [[ "$n" == 0 ]] && pass "another feature's unchecked plan result counts 0" \
     || fail "another feature's unchecked plan result counts 0" "got $n"
+cleanup
+
+# 7. T26 (security C1): a fake node first on PATH that forges a verified check never starts; an unbound plan.json
+#    is still checked by the real CLI on the recorded node and counts 0.
+sandbox
+hand_plan
+printf '#!/bin/sh\necho x >> "%s"\necho %s\nexit 0\n' "$T/fake.calls" "'{\"verification\":\"verified\"}'" > "$T/bin/node"
+chmod +x "$T/bin/node"
+envrun env PATH="$T/bin:$PATH" OSS_DEV_ROOT="$T/repo" "$SH" "$ROOT/hooks/checkpoint.sh" create "$FEATURE" cp >/dev/null 2>&1
+f=$(ls "$T/repo/.oss/dev/active/$FEATURE/checkpoints/"*.json 2>/dev/null | head -1)
+n=$([[ -n "$f" ]] && jq -r '.tasks_completed' "$f" 2>/dev/null || echo "no-checkpoint")
+if [[ "$n" == 0 && ! -e "$T/fake.calls" ]]; then pass "a fake node first on PATH never runs the plan check (recorded node used, counts 0)"
+else fail "a fake node first on PATH never runs the plan check (recorded node used, counts 0)" "got $n fake=$(cat "$T/fake.calls" 2>/dev/null)"; fi
 cleanup
 
 echo; echo "Ran $RUN, failed $FAILED"

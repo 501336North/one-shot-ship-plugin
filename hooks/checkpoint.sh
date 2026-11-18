@@ -133,7 +133,8 @@ count_completed_tasks() {
     source "$hooks/oss-safe-path.sh"
     oss_resolve_feature "$repo"
     [[ -n "$_OSS_FEATURE" && "$_OSS_FEATURE" == "$feature" ]] && oss_phase_result_cli || { echo 0; return; }
-    oss_run_bounded_rc 10 node "$_OSS_PR_CLI" check plan --repo "$repo" 2>/dev/null || rc=$?
+    oss_plugin_node "$_OSS_PR_CLI" "$_OSS_PR_SUB" 2>/dev/null || { echo 0; return; }
+    oss_run_bounded_rc 10 "$OSS_NODE" "$_OSS_PR_CLI" check plan --repo "$repo" 2>/dev/null || rc=$?
     f="$repo/.oss/dev/active/$feature/results/plan.json"
     if oss_phase_gate_ok "$rc" "$OSS_BOUNDED_OUT" 2>/dev/null && [[ -f "$f" && ! -L "$f" ]]; then
         n=$(jq '.tasks | length' "$f" 2>/dev/null) || n=0

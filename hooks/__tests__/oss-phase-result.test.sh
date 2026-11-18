@@ -20,13 +20,18 @@ pass() { echo "✓ PASS: $1"; RUN=$((RUN + 1)); }
 fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
 echo "Running oss-phase-result tests under $("$SH" -c 'echo "$BASH_VERSION"')..."
 REAL_NODE=$(command -v node)
+# The node the CLI must run on: the real one by its resolved path (outside temp folders), recorded in ~/.oss/node-path.
+RECORDED_NODE=$(node -p 'require("fs").realpathSync(process.execPath)')
 
 # Sandbox: the entry script copied alone into a hooks dir (so "its own plugin" has no CLI), a temp HOME with no
-# plugin cache, a plugin dir whose CLI only records its argv, and a node shim that counts starts.
+# plugin cache, a plugin dir whose CLI only records its argv, and a node shim that counts starts. The plugin dir
+# holds the real hooks/oss-node.sh and ~/.oss/node-path records the real node (T26: the CLI runs on that node only).
 sandbox() {
     T=$(mktemp -d); T=$(cd "$T" && pwd -P)
-    mkdir -p "$T/home/.oss" "$T/hooks" "$T/plugin/watcher/dist/cli" "$T/bin"
+    mkdir -p "$T/home/.oss" "$T/hooks" "$T/plugin/watcher/dist/cli" "$T/plugin/hooks" "$T/bin"
     cp "$SCRIPT" "$T/hooks/oss-phase-result.sh"
+    cp "$ROOT/hooks/oss-node.sh" "$T/plugin/hooks/oss-node.sh"
+    printf '%s\n' "$RECORDED_NODE" > "$T/home/.oss/node-path"
     printf 'require("fs").appendFileSync(%s, process.argv.slice(2).join(" ") + "\\n"); console.log(JSON.stringify({verification: "verified"}))\n' \
         "\"$T/cli.calls\"" > "$T/plugin/watcher/dist/cli/phase-result.cjs"
     printf '#!/bin/sh\necho x >> "%s"\nexec "%s" "$@"\n' "$T/node.calls" "$REAL_NODE" > "$T/bin/node"
@@ -71,7 +76,9 @@ for args in "check deploy" "assemble ../plan" "frob plan" "check" ""; do
     entry $args >/dev/null 2>"$T/err"; rc=$?
     [[ $rc -eq 2 ]] || bad="$bad [$args rc=$rc]"
 done
-if [[ -z "$bad" && "$(node_starts)" == 0 ]]; then
+# T26: the CLI runs on the recorded node, not PATH's shim, so node_starts alone would pass vacuously; the CLI's own
+# calls file staying absent is what shows nothing ran.
+if [[ -z "$bad" && "$(node_starts)" == 0 && ! -e "$T/cli.calls" ]]; then
     pass "a bad phase or verb exits 2 before node runs"
 else fail "a bad phase or verb exits 2 before node runs" "bad=$bad node_starts=$(node_starts)"; fi
 rm -rf "$T"
@@ -84,6 +91,57 @@ out=$(entry check ship --repo "$T" --all 2>"$T/err"); rc=$?
 if [[ $rc -eq 1 ]] && grep -q stale_result "$T/err"; then
     pass "the CLI's exit code and stderr are forwarded"
 else fail "the CLI's exit code and stderr are forwarded" "rc=$rc err=$(cat "$T/err")"; fi
+rm -rf "$T"
+
+# 7. T26 (security C1): a fake node first on PATH that forges a verdict is never started; the recorded node runs the CLI.
+sandbox
+printf '%s\n' "$T/plugin" > "$T/home/.oss/plugin-root"
+printf '#!/bin/sh\necho x >> "%s"\necho %s\nexit 0\n' "$T/fake.calls" "'{\"verification\":\"verified\"}'" > "$T/bin/node"
+chmod +x "$T/bin/node"
+out=$(entry check plan 2>"$T/err"); rc=$?
+if [[ $rc -eq 0 && ! -e "$T/fake.calls" && "$(cat "$T/cli.calls" 2>/dev/null)" == "check plan" ]]; then
+    pass "a fake node first on PATH is never started; the CLI runs on the node in ~/.oss/node-path"
+else fail "a fake node first on PATH is never started; the CLI runs on the node in ~/.oss/node-path" "rc=$rc out=$out fake=$(cat "$T/fake.calls" 2>/dev/null) calls=$(cat "$T/cli.calls" 2>/dev/null) err=$(cat "$T/err")"; fi
+rm -rf "$T"
+
+# 8. T26: a plugin root with no hooks/oss-node.sh: exit 127 with node_missing, the CLI never runs.
+sandbox
+printf '%s\n' "$T/plugin" > "$T/home/.oss/plugin-root"
+rm -f "$T/plugin/hooks/oss-node.sh"
+out=$(entry check plan 2>"$T/err"); rc=$?
+if [[ $rc -eq 127 && ! -e "$T/cli.calls" ]] && grep -q 'node_missing' "$T/err"; then
+    pass "a plugin root without hooks/oss-node.sh exits 127 with node_missing"
+else fail "a plugin root without hooks/oss-node.sh exits 127 with node_missing" "rc=$rc out=$out err=$(cat "$T/err")"; fi
+rm -rf "$T"
+
+# 8b. T26: a linked hooks/oss-node.sh is refused the same way.
+sandbox
+printf '%s\n' "$T/plugin" > "$T/home/.oss/plugin-root"
+mv "$T/plugin/hooks/oss-node.sh" "$T/real-oss-node.sh"; ln -s "$T/real-oss-node.sh" "$T/plugin/hooks/oss-node.sh"
+out=$(entry check plan 2>"$T/err"); rc=$?
+if [[ $rc -eq 127 && ! -e "$T/cli.calls" ]] && grep -q 'node_missing' "$T/err"; then
+    pass "a symlinked hooks/oss-node.sh is refused: 127 with node_missing"
+else fail "a symlinked hooks/oss-node.sh is refused: 127 with node_missing" "rc=$rc out=$out err=$(cat "$T/err")"; fi
+rm -rf "$T"
+
+# 9. T26: an empty ~/.oss/node-path and no usable node (PATH's only node is in a temp folder): 127, node_missing.
+sandbox
+printf '%s\n' "$T/plugin" > "$T/home/.oss/plugin-root"
+: > "$T/home/.oss/node-path"
+out=$(cd "$T" && HOME="$T/home" PATH="$T/bin:/usr/bin:/bin" CLAUDE_PLUGIN_ROOT="$T/home/.oss" "$SH" "$T/hooks/oss-phase-result.sh" check plan </dev/null 2>"$T/err"); rc=$?
+if [[ $rc -eq 127 && ! -e "$T/cli.calls" && "$(node_starts)" == 0 ]] && grep -q 'node_missing: no usable node recorded in ~/.oss/node-path' "$T/err"; then
+    pass "no usable node recorded: exit 127 with node_missing, PATH's temp node is not run"
+else fail "no usable node recorded: exit 127 with node_missing, PATH's temp node is not run" "rc=$rc out=$out err=$(cat "$T/err") node_starts=$(node_starts)"; fi
+rm -rf "$T"
+
+# 10. T26: a recorded node that is gone while PATH has another one: 127, and the line says the recorded node changed.
+sandbox
+printf '%s\n' "$T/plugin" > "$T/home/.oss/plugin-root"
+printf '%s\n' "/nonexistent/old/node" > "$T/home/.oss/node-path"
+out=$(cd "$T" && HOME="$T/home" PATH="${RECORDED_NODE%/*}:/usr/bin:/bin" CLAUDE_PLUGIN_ROOT="$T/home/.oss" "$SH" "$T/hooks/oss-phase-result.sh" check plan </dev/null 2>"$T/err"); rc=$?
+if [[ $rc -eq 127 && ! -e "$T/cli.calls" ]] && grep -q 'node_missing' "$T/err" && grep -q 'changed' "$T/err"; then
+    pass "a recorded node that changed: exit 127, node_missing says it changed"
+else fail "a recorded node that changed: exit 127, node_missing says it changed" "rc=$rc out=$out err=$(cat "$T/err")"; fi
 rm -rf "$T"
 
 # 6. provenance: the script reads no value file and passes no file content as an argument. The one file it reads

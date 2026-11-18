@@ -106,4 +106,10 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
     - Confirm the `"$top/..."` mkdir and mv are allowed.
     - If they are refused, report to the coordinator to choose a form the gate can follow. Do not loosen the gate.
 
-## Last Updated: 2026-11-14 08:10 CST by /oss:build (rebase check)
+## After the R-266 rebase (2026-11-18)
+- R-266's gate (oss-hook-env `arithmeticReadsVariable`) reads `((` followed by `$` inside double quotes as arithmetic, and refuses any command that also calls `~/.oss/hooks/…`. Keep regexes like that in single quotes in served prompts (T22). The over-refusal is on R-266's OS write-sandbox card.
+- served-commands.acceptance: run it with `OSS_API_REPO=/Users/ysl/dev/AgenticDevWorkflow-r257` to also check the fixture against the API. Without it, it uses the committed fixture (R-266 #233 removed DEFAULT_API_REPO).
+- Running the real gate by hand (`hooks/oss-tool-gate.sh pre` with hook JSON on stdin) writes `.oss/tool-gates/events.ndjson` in the project. It is untracked, so never commit it.
+- Follow-up (T26 report, not in R-257 scope): oss-notify.sh still runs the workflow-state CLI (`wf_state`) and the copy and chain-trigger CLIs on PATH's node. Only the phase-result CLI moved to the recorded node (D21).
+
+## Last Updated: 2026-11-18 09:00 CST by /oss:build (T26, D21)
