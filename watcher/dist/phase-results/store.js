@@ -11,20 +11,28 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { execFileSync } from 'child_process';
+import { gitBin } from './git-bin.js';
 import { PHASES } from './schemas.js';
 const FEATURE_RE = /^[A-Za-z0-9._-]+$/;
 const RESULT_CAP = 256 * 1024;
 const VALUE_CAP = 64 * 1024;
 const VALUE_MAX_AGE_MS = 10 * 60 * 1000;
 const { O_RDONLY, O_WRONLY, O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK } = fs.constants;
-/** Physical git toplevel of cwd (GIT_* env removed, CLAUDE_PROJECT_DIR ignored), or null outside a repo. */
+/**
+ * Physical git toplevel of cwd (GIT_* env removed, CLAUDE_PROJECT_DIR ignored), or null outside a repo. git is the
+ * fixed-path binary (gitBin, never PATH; pen N3) run with PATH=/usr/bin:/bin; no git binary gives null.
+ */
 export function resolveRepo(cwd) {
     const env = {};
     for (const [k, v] of Object.entries(process.env))
         if (!k.startsWith('GIT_'))
             env[k] = v;
+    env.PATH = '/usr/bin:/bin';
+    const git = gitBin();
+    if (git === '')
+        return null;
     try {
-        const top = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+        const top = execFileSync(git, ['rev-parse', '--show-toplevel'], {
             cwd,
             env,
             encoding: 'utf-8',
@@ -155,6 +163,21 @@ export function writeResult(repo, feature, phase, obj, hooks = {}) {
             fs.unlinkSync(realTarget);
         throw new Error('unsafe_path: results/ moved during write');
     }
+    return { dev: ours.dev, ino: ours.ino, bytes: Buffer.from(data) };
+}
+/**
+ * Reads results/<phase>.json back after writeResult (round 2 race): ok only when it is still the very file written
+ * (same device and inode) and holds exactly the written bytes; `result_changed` otherwise. The caller binds
+ * `written.bytes`, never what a reader saw.
+ */
+export function readBack(repo, feature, phase, written) {
+    const read = readResult(repo, feature, phase);
+    if (!read.ok)
+        return read;
+    if (read.dev !== written.dev || read.ino !== written.ino || !read.bytes.equals(written.bytes)) {
+        return { ok: false, error: 'result_changed' };
+    }
+    return { ...read, bytes: written.bytes };
 }
 /** Removes results/<phase>.unverified.json (the Stop hook's repo marker) under the checked results/ dir; no-op if absent. */
 export function clearUnverifiedMarker(repo, feature, phase) {
@@ -196,7 +219,7 @@ export function readResult(repo, feature, phase) {
         if (bytes.length > RESULT_CAP)
             return { ok: false, error: 'too_large' };
         try {
-            return { ok: true, bytes, value: JSON.parse(bytes.toString('utf-8')) };
+            return { ok: true, bytes, value: JSON.parse(bytes.toString('utf-8')), dev: st.dev, ino: st.ino };
         }
         catch {
             return { ok: false, error: 'invalid_json' };

@@ -32,13 +32,29 @@ const SEGMENT = /^[A-Za-z0-9._-]+$/;
 /** lastRow reads this much of the file's end: rows are under MAX_ROW_BYTES, so the last row is always inside it. */
 const TAIL_BYTES = 4096;
 const GIT_TIMEOUT_MS = 2000;
+/** git-bin.ts's gitBin, copied (this file imports builtins only): a fixed git, never PATH's (D33); '' when none. */
+function gitBin() {
+    for (const p of ['/usr/bin/git', '/opt/homebrew/bin/git', '/usr/local/bin/git', '/bin/git']) {
+        try {
+            if (!fs.statSync(p).isFile())
+                continue;
+            fs.accessSync(p, fs.constants.X_OK);
+            return p;
+        }
+        catch {
+            /* missing or not executable: try the next one */
+        }
+    }
+    return '';
+}
 function gitOut(cwd, args) {
     const env = { ...process.env };
     for (const k of Object.keys(env))
         if (k.startsWith('GIT_'))
             delete env[k];
+    env.PATH = '/usr/bin:/bin'; // git's helpers (ssh, pager, hooks) never from the caller's PATH (D33)
     try {
-        const out = execFileSync('git', args, {
+        const out = execFileSync(gitBin(), args, {
             cwd,
             env,
             encoding: 'utf8',
@@ -233,6 +249,44 @@ export function openLedger(cwd, opts = {}) {
                         return row;
                 }
                 return null;
+            }
+            finally {
+                fs.closeSync(fd);
+            }
+        },
+        scanBack(relPath, visit) {
+            const parts = splitRel(relPath);
+            if (!ensureDirs(parts.slice(0, -1), false))
+                return;
+            const fd = openChecked(parts, fs.constants.O_RDONLY);
+            if (fd === null)
+                return;
+            try {
+                const size = fs.fstatSync(fd).size;
+                const floor = Math.max(0, size - capFor(parts));
+                let end = size;
+                let rest = Buffer.alloc(0);
+                while (end > floor) {
+                    const start = Math.max(floor, end - TAIL_BYTES);
+                    const buf = Buffer.alloc(end - start);
+                    fs.readSync(fd, buf, 0, buf.length, start);
+                    const all = Buffer.concat([buf, rest]);
+                    end = start;
+                    // Mid-file, every line after the first newline is whole; the bytes before it join the next (older) chunk.
+                    // At the cap they are dropped, as lastRow drops a tail's first line.
+                    const cut = start > 0 ? all.indexOf(10) : -1;
+                    if (start > 0 && cut < 0) {
+                        rest = all;
+                        continue;
+                    }
+                    rest = cut < 0 ? Buffer.alloc(0) : all.subarray(0, cut);
+                    const lines = all.subarray(cut + 1).toString('utf8').split('\n');
+                    for (let i = lines.length - 1; i >= 0; i--) {
+                        const row = parseObject(lines[i]);
+                        if (row !== null && !visit(row))
+                            return;
+                    }
+                }
             }
             finally {
                 fs.closeSync(fd);

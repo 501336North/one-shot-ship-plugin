@@ -49,13 +49,13 @@
       "required": [],
       "properties": {
         "decisions": {
-          "$ref": "common.schema.json#/$defs/source"
+          "$ref": "common.schema.json#/$defs/codeSource"
         },
         "decisionsRecorded": {
-          "$ref": "common.schema.json#/$defs/source"
+          "$ref": "common.schema.json#/$defs/codeSource"
         },
         "designCommitted": {
-          "$ref": "common.schema.json#/$defs/source"
+          "$ref": "common.schema.json#/$defs/codeSource"
         },
         "openQuestions": {
           "$ref": "common.schema.json#/$defs/source"

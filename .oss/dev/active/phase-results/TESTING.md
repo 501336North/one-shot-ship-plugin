@@ -100,4 +100,13 @@ Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watche
   - bash 3.2 sweep of every hooks/__tests__/*.sh: 113/113 files rc 0;
   - watcher-dist-fresh pass.
 
-## Last Updated: 2026-11-18 11:05 CST by /oss:build (T18-T30)
+### Ship round 3 fixes (D31-D36), 2026-11-18
+- Builders A/B/C each ran RED then GREEN per fix; C's D34-corrected and D36 work: 348/348 across 15 files.
+- stop-hook-wired: failed 3/10 before the shim warm-up (macOS first-exec scan); 15/15 after.
+- Final, after the rebuild: build and tsc clean.
+  - Targeted vitest (test/phase-results, stop, cli, hooks, tool-gate, healthchecks/archive): 194 files, 10211/10211.
+  - Bash 3.2 sweep of every hooks/__tests__/*.test.sh: 112/112 rc 0.
+- Load note: one earlier run, at load average 8 (Backblaze using a full core), failed 3 R-266 round20b trap tests plus
+  notify-timeline and oss-stop-dispatch timing cases. Each passed alone and in a full rerun at lower load.
+
+## Last Updated: 2026-11-18 20:08 CST by /oss:ship (round 3 fixes)

@@ -24,11 +24,11 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/cli/verdict-capture.ts
-var fs5 = __toESM(require("node:fs"), 1);
+var fs6 = __toESM(require("node:fs"), 1);
 
 // src/phase-results/verdict-capture.ts
 var import_node_child_process3 = require("node:child_process");
-var fs4 = __toESM(require("node:fs"), 1);
+var fs5 = __toESM(require("node:fs"), 1);
 var os2 = __toESM(require("node:os"), 1);
 var path3 = __toESM(require("node:path"), 1);
 
@@ -52,11 +52,23 @@ var LARGE_CAP = 4 * 1024 * 1024;
 var SEGMENT = /^[A-Za-z0-9._-]+$/;
 var TAIL_BYTES = 4096;
 var GIT_TIMEOUT_MS = 2e3;
+function gitBin() {
+  for (const p of ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git", "/bin/git"]) {
+    try {
+      if (!fs.statSync(p).isFile()) continue;
+      fs.accessSync(p, fs.constants.X_OK);
+      return p;
+    } catch {
+    }
+  }
+  return "";
+}
 function gitOut(cwd, args) {
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith("GIT_")) delete env[k];
+  env.PATH = "/usr/bin:/bin";
   try {
-    const out = (0, import_node_child_process.execFileSync)("git", args, {
+    const out = (0, import_node_child_process.execFileSync)(gitBin(), args, {
       cwd,
       env,
       encoding: "utf8",
@@ -223,6 +235,38 @@ function openLedger(cwd, opts = {}) {
         fs.closeSync(fd);
       }
     },
+    scanBack(relPath, visit) {
+      const parts = splitRel(relPath);
+      if (!ensureDirs(parts.slice(0, -1), false)) return;
+      const fd = openChecked(parts, fs.constants.O_RDONLY);
+      if (fd === null) return;
+      try {
+        const size = fs.fstatSync(fd).size;
+        const floor = Math.max(0, size - capFor(parts));
+        let end = size;
+        let rest = Buffer.alloc(0);
+        while (end > floor) {
+          const start = Math.max(floor, end - TAIL_BYTES);
+          const buf = Buffer.alloc(end - start);
+          fs.readSync(fd, buf, 0, buf.length, start);
+          const all = Buffer.concat([buf, rest]);
+          end = start;
+          const cut = start > 0 ? all.indexOf(10) : -1;
+          if (start > 0 && cut < 0) {
+            rest = all;
+            continue;
+          }
+          rest = cut < 0 ? Buffer.alloc(0) : all.subarray(0, cut);
+          const lines = all.subarray(cut + 1).toString("utf8").split("\n");
+          for (let i = lines.length - 1; i >= 0; i--) {
+            const row = parseObject(lines[i]);
+            if (row !== null && !visit(row)) return;
+          }
+        }
+      } finally {
+        fs.closeSync(fd);
+      }
+    },
     writeMarker(relPath, obj) {
       writeFile(splitRel(relPath), `${JSON.stringify(obj)}
 `, fs.constants.O_TRUNC);
@@ -252,11 +296,28 @@ function openLedger(cwd, opts = {}) {
 }
 
 // src/phase-results/feature.ts
-var fs2 = __toESM(require("node:fs"), 1);
+var fs3 = __toESM(require("node:fs"), 1);
 var path2 = __toESM(require("node:path"), 1);
 
 // src/phase-results/git.ts
 var import_node_child_process2 = require("node:child_process");
+
+// src/phase-results/git-bin.ts
+var fs2 = __toESM(require("node:fs"), 1);
+var CANDIDATES = ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git", "/bin/git"];
+function gitBin2() {
+  for (const p of CANDIDATES) {
+    try {
+      if (!fs2.statSync(p).isFile()) continue;
+      fs2.accessSync(p, fs2.constants.X_OK);
+      return p;
+    } catch {
+    }
+  }
+  return "";
+}
+
+// src/phase-results/git.ts
 function gitEnv() {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
@@ -264,9 +325,10 @@ function gitEnv() {
 }
 function gitOut2(cwd, args) {
   try {
-    const out = (0, import_node_child_process2.execFileSync)("git", args, {
+    const out = (0, import_node_child_process2.execFileSync)(gitBin2(), args, {
       cwd,
-      env: gitEnv(),
+      // git runs helpers (ssh, pager, credential and fsmonitor hooks) from PATH: never the caller's (D33).
+      env: { ...gitEnv(), PATH: "/usr/bin:/bin" },
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 2e3
@@ -284,11 +346,11 @@ function activeFeatures(repo) {
   const dir = path2.join(repo, ".oss", "dev", "active");
   let names;
   try {
-    names = fs2.readdirSync(dir);
+    names = fs3.readdirSync(dir);
   } catch {
     return [];
   }
-  return names.filter((n) => FEATURE_RE.test(n) && fs2.lstatSync(path2.join(dir, n), { throwIfNoEntry: false })?.isDirectory()).sort();
+  return names.filter((n) => FEATURE_RE.test(n) && fs3.lstatSync(path2.join(dir, n), { throwIfNoEntry: false })?.isDirectory()).sort();
 }
 function resolveFeature(repo) {
   const ref = gitOut2(repo, ["symbolic-ref", "-q", "HEAD"]);
@@ -296,7 +358,7 @@ function resolveFeature(repo) {
   const m = BRANCH_RE.exec(branch);
   if (m !== null) {
     const f = m[1];
-    const st = fs2.lstatSync(path2.join(repo, ".oss", "dev", "active", f), { throwIfNoEntry: false });
+    const st = fs3.lstatSync(path2.join(repo, ".oss", "dev", "active", f), { throwIfNoEntry: false });
     return FEATURE_RE.test(f) && st?.isDirectory() ? f : null;
   }
   const active = activeFeatures(repo);
@@ -304,7 +366,7 @@ function resolveFeature(repo) {
 }
 
 // src/phase-results/store.ts
-var fs3 = __toESM(require("fs"), 1);
+var fs4 = __toESM(require("fs"), 1);
 var import_child_process = require("child_process");
 
 // src/phase-results/validate.ts
@@ -499,19 +561,22 @@ function validate(schema, value) {
 var RESULT_CAP = 256 * 1024;
 var VALUE_CAP = 64 * 1024;
 var VALUE_MAX_AGE_MS = 10 * 60 * 1e3;
-var { O_RDONLY, O_WRONLY, O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK } = fs3.constants;
+var { O_RDONLY, O_WRONLY, O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK } = fs4.constants;
 function resolveRepo(cwd) {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
+  env.PATH = "/usr/bin:/bin";
+  const git = gitBin2();
+  if (git === "") return null;
   try {
-    const top = (0, import_child_process.execFileSync)("git", ["rev-parse", "--show-toplevel"], {
+    const top = (0, import_child_process.execFileSync)(git, ["rev-parse", "--show-toplevel"], {
       cwd,
       env,
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 2e3
     }).trim();
-    return top === "" ? null : fs3.realpathSync(top);
+    return top === "" ? null : fs4.realpathSync(top);
   } catch {
     return null;
   }
@@ -525,6 +590,9 @@ var REVIEW_AGENT_GATES = {
   "oss:penetration-tester": "pen-test"
 };
 var TRANSCRIPT_TAIL_BYTES = 256 * 1024;
+var DEADLINE_MS = 4e3;
+var BIG_FILE_BYTES = 50 * 1024 * 1024;
+var STALE_TMP_MS = 10 * 60 * 1e3;
 var COUNT = { type: "integer", minimum: 0 };
 var VERDICT_SCHEMA = loadSchema({
   type: "object",
@@ -553,20 +621,20 @@ function transcriptMessage(file) {
   if (typeof file !== "string" || !path3.isAbsolute(file)) return null;
   let fd;
   try {
-    fd = fs4.openSync(file, fs4.constants.O_RDONLY | fs4.constants.O_NOFOLLOW | fs4.constants.O_NONBLOCK);
+    fd = fs5.openSync(file, fs5.constants.O_RDONLY | fs5.constants.O_NOFOLLOW | fs5.constants.O_NONBLOCK);
   } catch {
     return null;
   }
   let text;
   try {
-    const st = fs4.fstatSync(fd);
+    const st = fs5.fstatSync(fd);
     if (!st.isFile()) return null;
     const len = Math.min(st.size, TRANSCRIPT_TAIL_BYTES);
     const buf = Buffer.alloc(len);
-    const got = fs4.readSync(fd, buf, 0, len, st.size - len);
+    const got = fs5.readSync(fd, buf, 0, len, st.size - len);
     text = buf.subarray(0, got).toString("utf8");
   } finally {
-    fs4.closeSync(fd);
+    fs5.closeSync(fd);
   }
   const lines = text.split("\n");
   let lastId;
@@ -616,39 +684,103 @@ function lastVerdictBlock(text) {
   return value;
 }
 var TREE_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
-function boundedGit(repo, args, extra, timeout) {
-  const env = { ...gitEnv(), GIT_CONFIG_NOSYSTEM: "1", ...extra };
-  const r = (0, import_node_child_process3.spawnSync)("git", ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", ...args], {
+function deadlineOf(opts) {
+  const end = Date.now() + (opts.deadlineMs ?? DEADLINE_MS);
+  return () => end - Date.now();
+}
+function boundedGit(repo, args, extra, left, input) {
+  const git = gitBin2();
+  const timeout = left();
+  if (git === "" || timeout <= 0) return null;
+  const env = { ...gitEnv(), GIT_CONFIG_NOSYSTEM: "1", PATH: "/usr/bin:/bin", ...extra };
+  const r = (0, import_node_child_process3.spawnSync)(git, ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", ...args], {
     cwd: repo,
     env,
-    encoding: "utf-8",
-    stdio: ["ignore", "pipe", "ignore"],
+    input,
+    stdio: [input === void 0 ? "ignore" : "pipe", "pipe", "ignore"],
     timeout,
-    maxBuffer: 64 * 1024
+    maxBuffer: 64 * 1024 * 1024
   });
-  return r.error === void 0 && r.status === 0 ? r.stdout.trim() : null;
+  return r.error === void 0 && r.status === 0 ? r.stdout : null;
 }
-function reviewedTree(repo, index, which) {
-  const dir = fs4.mkdtempSync(path3.join(os2.tmpdir(), "oss-verdict-tree-"));
+function gitText(repo, args, left) {
+  return boundedGit(repo, args, {}, left)?.toString("utf-8").trim() ?? null;
+}
+function verdictTreeTmpRoot() {
+  return path3.join(os2.tmpdir(), `oss-verdict-trees-${process.getuid?.() ?? 0}`);
+}
+function treeTmpDir() {
+  const root = verdictTreeTmpRoot();
   try {
-    const tmpIndex = path3.join(dir, "index");
-    try {
-      fs4.copyFileSync(index, tmpIndex);
-    } catch {
-    }
-    const env = { GIT_INDEX_FILE: tmpIndex };
-    const args = which === "all" ? ["add", "-A", "--", ".", ":(exclude).oss"] : ["add", "-u"];
-    if (boundedGit(repo, args, env, 3e3) === null) return "";
-    const tree = boundedGit(repo, ["write-tree"], env, 2e3);
-    return tree !== null && TREE_RE.test(tree) ? tree : "";
+    fs5.mkdirSync(root, { mode: 448 });
+  } catch (e) {
+    if (e.code !== "EEXIST") return null;
+  }
+  const st = fs5.lstatSync(root);
+  if (st.isSymbolicLink() || !st.isDirectory() || st.uid !== process.getuid?.() || (st.mode & 63) !== 0) return null;
+  for (const name of fs5.readdirSync(root)) {
+    const p = path3.join(root, name);
+    const e = fs5.lstatSync(p, { throwIfNoEntry: false });
+    if (e !== void 0 && Date.now() - e.mtimeMs > STALE_TMP_MS) fs5.rmSync(p, { recursive: true, force: true });
+  }
+  return fs5.mkdtempSync(path3.join(root, "tree-"));
+}
+function reviewedTree(repo, index, which, dir, left) {
+  const tmpIndex = path3.join(dir, `index-${which}`);
+  try {
+    fs5.copyFileSync(index, tmpIndex);
+  } catch {
+  }
+  const env = { GIT_INDEX_FILE: tmpIndex };
+  const list = which === "all" ? ["ls-files", "-z", "-m", "-o", "-d", "--exclude-standard", "--", ".", ":(exclude).oss"] : ["ls-files", "-z", "-m", "-d"];
+  const changed = boundedGit(repo, list, env, left);
+  if (changed === null) return "";
+  for (const p of new Set(changed.toString("utf-8").split("\0"))) {
+    if (p !== "" && (fs5.lstatSync(path3.join(repo, p), { throwIfNoEntry: false })?.size ?? 0) > BIG_FILE_BYTES) return "";
+  }
+  if (changed.length > 0) {
+    const args = ["update-index", "--add", "--remove", "--info-only", "-z", "--stdin"];
+    if (boundedGit(repo, args, env, left, changed) === null) return "";
+  }
+  const tree = boundedGit(repo, ["write-tree", "--missing-ok"], env, left)?.toString("utf-8").trim() ?? null;
+  return tree !== null && TREE_RE.test(tree) ? tree : "";
+}
+function reviewedTrees(repo, left) {
+  const none = { tree: "", trackedTree: "" };
+  const index = gitText(repo, ["rev-parse", "--path-format=absolute", "--git-path", "index"], left);
+  if (index === null || left() <= 0) return none;
+  const dir = treeTmpDir();
+  if (dir === null) return none;
+  try {
+    return { tree: reviewedTree(repo, index, "all", dir, left), trackedTree: reviewedTree(repo, index, "tracked", dir, left) };
   } finally {
-    fs4.rmSync(dir, { recursive: true, force: true });
+    fs5.rmSync(dir, { recursive: true, force: true });
   }
 }
-function reviewedTrees(repo) {
-  const index = boundedGit(repo, ["rev-parse", "--path-format=absolute", "--git-path", "index"], {}, 2e3);
-  if (index === null) return { tree: "", trackedTree: "" };
-  return { tree: reviewedTree(repo, index, "all"), trackedTree: reviewedTree(repo, index, "tracked") };
+function startMarker(agent) {
+  return `verdict-start/${agent}`;
+}
+function captureStart(input, opts = {}) {
+  try {
+    if (typeof input !== "object" || input === null || Array.isArray(input)) return { recorded: false, reason: "bad_input" };
+    const hook = input;
+    if (gateForAgent(hook.agent_type) === null) return { recorded: false, reason: "not_review_agent" };
+    const agent = plainId(hook.agent_id);
+    if (agent === "") return { recorded: false, reason: "no_agent_id" };
+    const left = deadlineOf(opts);
+    const cwd = typeof hook.cwd === "string" && path3.isAbsolute(hook.cwd) ? hook.cwd : process.cwd();
+    const repo = resolveRepo(cwd);
+    if (repo === null) return { recorded: false, reason: "no_repo" };
+    const trees = reviewedTrees(repo, left);
+    openLedger(repo).writeMarker(startMarker(agent), { ...trees, ts: (opts.now ?? (() => /* @__PURE__ */ new Date()))().toISOString() });
+    return { recorded: true };
+  } catch {
+    return { recorded: false, reason: "error" };
+  }
+}
+function startState(snap, trees) {
+  if (snap === null) return "missing";
+  return snap.tree === trees.tree && snap.trackedTree === trees.trackedTree ? "match" : "changed";
 }
 function captureVerdict(input, opts = {}) {
   try {
@@ -666,18 +798,29 @@ function captureVerdict(input, opts = {}) {
     const repo = resolveRepo(cwd);
     const feature = repo === null ? null : resolveFeature(repo);
     if (repo === null || feature === null) return { captured: false, reason: "no_feature" };
-    openLedger(repo).appendRow(`verdicts/${feature}`, {
+    const left = deadlineOf(opts);
+    const agent = plainId(hook.agent_id);
+    const ledger = openLedger(repo);
+    const headSha = gitText(repo, ["rev-parse", "--verify", "HEAD^{commit}"], left) ?? "";
+    const trees = reviewedTrees(repo, left);
+    const snap = agent === "" ? null : ledger.readMarker(startMarker(agent));
+    if (agent !== "") ledger.clearMarker(startMarker(agent));
+    ledger.appendRow(`verdicts/${feature}`, {
       gate,
       verdict: block.verdict,
       findings: block.findings,
-      agent: plainId(hook.agent_id),
+      agent,
       session: plainId(hook.session_id),
       ts: (opts.now ?? (() => /* @__PURE__ */ new Date()))().toISOString(),
       // For information only: the HEAD at capture (ship commits after its reviews, so HEAD never decides).
-      headSha: gitOut2(repo, ["rev-parse", "--verify", "HEAD^{commit}"]) ?? "",
-      // The trees the agent reviewed (all files / tracked only); assemble-ship counts the row only when the shipped tree
-      // outside .oss differs from `tree` by nothing but files that were untracked at review and left out (finding 4).
-      ...reviewedTrees(repo)
+      // The HEAD at capture: ship commits after its reviews, so HEAD never decides alone; assemble-ship allows a
+      // deletion only for a path absent from this commit's tree too (pen N4).
+      headSha,
+      // The trees the agent reviewed (all files / tracked only); assemble-ship counts a pass only when the shipped tree
+      // outside .oss differs from `tree` by nothing but files that were untracked at review and left out (finding 4),
+      // and only when `start` is match (security L4).
+      ...trees,
+      start: startState(snap, trees)
     });
     return { captured: true, gate, feature };
   } catch {
@@ -689,17 +832,18 @@ function captureVerdict(input, opts = {}) {
 var INPUT_CAP = 1024 * 1024;
 function readInput(file) {
   if (file === void 0) return null;
-  const fd = fs5.openSync(file, fs5.constants.O_RDONLY | fs5.constants.O_NOFOLLOW | fs5.constants.O_NONBLOCK);
+  const fd = fs6.openSync(file, fs6.constants.O_RDONLY | fs6.constants.O_NOFOLLOW | fs6.constants.O_NONBLOCK);
   try {
-    const st = fs5.fstatSync(fd);
+    const st = fs6.fstatSync(fd);
     if (!st.isFile() || st.size > INPUT_CAP) return null;
-    return JSON.parse(fs5.readFileSync(fd, "utf8"));
+    return JSON.parse(fs6.readFileSync(fd, "utf8"));
   } finally {
-    fs5.closeSync(fd);
+    fs6.closeSync(fd);
   }
 }
 try {
-  captureVerdict(readInput(process.argv[2]));
+  if (process.argv[2] === "start") captureStart(readInput(process.argv[3]));
+  else captureVerdict(readInput(process.argv[2]));
 } catch {
 }
 process.exitCode = 0;

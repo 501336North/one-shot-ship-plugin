@@ -270,7 +270,8 @@ for ev in model agent; do
     notify ship start '{}' >/dev/null 2>&1
     rm -f "$T/plugin/watcher/dist/cli/phase-result.cjs"
     if [[ $ev == model ]]; then unc='["code-review","performance","security"]'; else unc='[]'; fi
-    printf 'console.log(JSON.stringify({verification: "verified", gateEvidence: "%s", uncapturedGates: %s}))\n' "$ev" "$unc" \
+    # ⚠ changes existing test: D35 (ship complete requires ready_to_merge) — the stub now says verdict ready_to_merge
+    printf 'console.log(JSON.stringify({verification: "verified", verdict: "ready_to_merge", gateEvidence: "%s", uncapturedGates: %s}))\n' "$ev" "$unc" \
         > "$T/plugin/watcher/dist/cli/phase-result.cjs"
     out=$(notify ship complete '{}' 2>&1); rc=$?
     line="ship gates without a captured reviewer verdict: code-review, performance, security (model-reported)"
@@ -283,6 +284,92 @@ for ev in model agent; do
     fi
     rm -rf "$T"
 done
+
+# ---------------------------------------------------------------- R-257 ship round 3
+# 22. D35: a verified but blocked ship result refuses complete (rc 1, no CHAIN); a missing
+#     verdict refuses too (fail closed); verified and ready_to_merge completes. Other phases are unchanged (test 16).
+ship_stub() { # <json>
+    rm -f "$T/plugin/watcher/dist/cli/phase-result.cjs"
+    printf 'console.log(JSON.stringify(%s))\n' "$1" > "$T/plugin/watcher/dist/cli/phase-result.cjs"
+}
+sandbox
+notify ship start '{}' >/dev/null 2>&1
+# ⚠ changes existing test: D35 field (builder C) — `check ship` prints verdict but no blockers, so the refusal names no gate
+ship_stub '{verification: "verified", gateEvidence: "agent", uncapturedGates: [], verdict: "blocked"}'
+out=$(notify ship complete '{}' 2>&1); rc=$?
+check "D35: a verified but blocked ship result refuses complete, not_ready_to_merge, no CHAIN" \
+    '[[ $rc -ne 0 && "$out" == *"ship complete refused"* && "$out" == *"not ready_to_merge"* && "$out" != *"CHAIN:"* ]] && ! chain_fired && not_done ship' \
+    "rc=$rc out=$out"
+rm -rf "$T"
+sandbox
+notify ship start '{}' >/dev/null 2>&1
+ship_stub '{verification: "verified", gateEvidence: "agent", uncapturedGates: []}'
+out=$(notify ship complete '{}' 2>&1); rc=$?
+check "D35: a ship result with no verdict refuses complete (fail closed), no CHAIN" \
+    '[[ $rc -ne 0 && "$out" == *"ship complete refused"* && "$out" != *"CHAIN:"* ]] && ! chain_fired && not_done ship' "rc=$rc out=$out"
+rm -rf "$T"
+sandbox
+notify ship start '{}' >/dev/null 2>&1
+ship_stub '{verification: "verified", verdict: "ready_to_merge", gateEvidence: "agent", uncapturedGates: []}'
+out=$(notify ship complete '{}' 2>&1); rc=$?
+check "D35: a verified, ready_to_merge ship result completes" '[[ $rc -eq 0 && "$out" == *"CHAIN:"* ]] && chain_fired' "rc=$rc out=$out"
+rm -rf "$T"
+
+# 23. (round 3, pen MEDIUM N3) the D17 legacy check reads the ledger key with a fixed cut: a fake cut first on PATH
+#     that names another key does not make a feature with ledger rows (results/ deleted) skip the start gate.
+sandbox
+PRF_REPO="$T/repo" prf_plan
+rm -rf "$(results_dir)"
+mkdir -p "$T/fakebin"; printf '#!/bin/sh\necho 0000000000000000\n' > "$T/fakebin/cut"; chmod +x "$T/fakebin/cut"
+before=$(state)
+out=$(PATH="$T/fakebin:$PATH" notify build start '{}' 2>&1); rc=$?
+check "a fake cut first on PATH does not skip the start gate" \
+    '[[ $rc -eq 1 && "$out" != *"start gate skipped"* && "$(state)" == "$before" ]]' "rc=$rc out=$out"
+rm -rf "$T"
+
+# 24. (round 3, pen MEDIUM N3) the ledger run row's folders come from a fixed mkdir: a fake mkdir first on PATH that
+#     ignores the mode does not leave the ledger readable by others (still 700).
+sandbox
+mkdir -p "$T/fakebin"; printf '#!/bin/sh\nfor a; do d="$a"; done\n/bin/mkdir -m 777 "$d"\n' > "$T/fakebin/mkdir"; chmod +x "$T/fakebin/mkdir"
+PATH="$T/fakebin:$PATH" notify ideate start '{}' >/dev/null 2>&1
+f=$(ls "$T"/home/.oss/ledger/*/run/ideate 2>/dev/null | head -1)
+check "a fake mkdir first on PATH does not weaken the ledger folders (700)" \
+    '[[ -n "$f" && "$(perm "$T/home/.oss/ledger")" == 700 && "$(perm "${f%/*}")" == 700 ]]' "f=$f ledger=$(perm "$T/home/.oss/ledger")"
+rm -rf "$T"
+
+# 25. (round 3, pen MEDIUM N3) the hook finds its own folder with a fixed dirname: a fake dirname first on PATH naming
+#     a copy of the hooks whose oss-phase-result.sh passes everything does not complete a phase with no result.
+sandbox
+notify plan start '{}' >/dev/null 2>&1
+mkdir -p "$T/forged" "$T/fakebin"; cp "$ROOT"/hooks/*.sh "$T/forged/"
+printf 'oss_run_bounded_rc() { OSS_BOUNDED_OUT="{\\"verification\\":\\"verified\\"}"; return 0; }\noss_phase_gate_ok() { return 0; }\n' \
+    >> "$T/forged/oss-phase-result.sh"
+printf '#!/bin/sh\necho "%s"\n' "$T/forged" > "$T/fakebin/dirname"; chmod +x "$T/fakebin/dirname"
+out=$(PATH="$T/fakebin:$PATH" notify plan complete '{}' 2>&1); rc=$?
+check "a fake dirname first on PATH does not swap in forged gate scripts (refused, no CHAIN)" \
+    '[[ $rc -eq 1 && "$out" != *"CHAIN:"* ]] && ! chain_fired && not_done plan' "rc=$rc out=$out"
+rm -rf "$T"
+
+# 26. (round 3, pen MEDIUM N3) the gates resolve the feature with a fixed git (oss-safe-path.sh): a fake git first on
+#     PATH that names another active feature's branch does not move the start gate to that feature (no D17 skip), and
+#     the ledger run row still names the branch's real feature.
+fake_branch_git() { # -> $T/fakebin/git: says HEAD is feat/other-feature/build, else the real git
+    local real; real=$(command -v git); mkdir -p "$T/fakebin"
+    printf '#!/bin/sh\nif [ "$1 $2 $3" = "symbolic-ref -q HEAD" ]; then echo refs/heads/feat/other-feature/build; exit 0; fi\nexec "%s" "$@"\n' \
+        "$real" > "$T/fakebin/git"; chmod +x "$T/fakebin/git"
+}
+sandbox
+notify ideate start '{}' >/dev/null 2>&1
+mkdir -p "$(results_dir)" "$T/repo/.oss/dev/active/other-feature"; printf '{}\n' > "$(results_dir)/ideate.json"
+fake_branch_git
+before=$(state)
+out=$(PATH="$T/fakebin:$PATH" notify build start '{}' 2>&1); rc=$?
+check "a fake git naming another feature's branch does not skip the start gate" \
+    '[[ $rc -eq 1 && "$out" == *"/oss:plan"* && "$out" != *"start gate skipped"* && "$(state)" == "$before" ]]' "rc=$rc out=$out"
+PATH="$T/fakebin:$PATH" notify ideate start '{}' >/dev/null 2>&1
+check "a fake git naming another feature's branch does not change the ledger run row's feature" \
+    '[[ "$(run_row ideate | jq -r .feature)" == "$FEATURE" ]]' "row=$(run_row ideate)"
+rm -rf "$T"
 
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"

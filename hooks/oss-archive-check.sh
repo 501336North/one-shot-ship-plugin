@@ -16,7 +16,9 @@
 
 set -euo pipefail
 
-_AC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# dirname and basename from fixed paths, never PATH: a fake dirname could name a folder of forged gate scripts
+# (R-257 ship round 3, pen MEDIUM N3); the node CLI itself runs with a fixed PATH (oss-phase-result.sh).
+_AC_DIR="$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$_AC_DIR/oss-safe-path.sh" ]]; then source "$_AC_DIR/oss-safe-path.sh"; else oss_safe_mkdir() { return 1; }; oss_safe_target() { return 1; }; oss_valid_workflow_name() { return 1; }; oss_refuse_unsafe() { echo "oss: refusing unsafe .oss path ${1:-} (oss-safe-path.sh missing)" >&2; }; fi  # ADR-1 write guard
 
 DRY_RUN=false
@@ -81,9 +83,9 @@ for feature_dir in "$DEV_ACTIVE"/*/; do
     feature_dir="${feature_dir%/}"
     [[ -L "$feature_dir" || ! -d "$feature_dir" ]] && continue
     if [[ -e "$feature_dir/results/ship.json" || -L "$feature_dir/results/ship.json" ]]; then
-        SHIP_CANDIDATES+=("$(basename "$feature_dir")")
+        SHIP_CANDIDATES+=("$(/usr/bin/basename "$feature_dir")")
     else
-        NO_RESULT+=("$(basename "$feature_dir")")
+        NO_RESULT+=("$(/usr/bin/basename "$feature_dir")")
     fi
 done
 
@@ -109,7 +111,7 @@ verdict_of() {
 archive_feature() {
     local feature_dir="$1"
     local feature_name
-    feature_name=$(basename "$feature_dir")
+    feature_name=$(/usr/bin/basename "$feature_dir")
     local timestamp
     timestamp=$(date +%Y%m%d)
     local archive_dir="$DEV_COMPLETED/${feature_name}-${timestamp}"
@@ -143,7 +145,7 @@ archive_feature() {
 
     # Move to completed
     mv "$feature_dir" "$archive_dir"
-    echo "  ✓ Archived: $feature_name → $(basename "$archive_dir")"
+    echo "  ✓ Archived: $feature_name → $(/usr/bin/basename "$archive_dir")"
 }
 
 # Main logic

@@ -157,5 +157,29 @@ if [[ $RC -eq 0 && -z "$OUT" && -e "$T/cli.calls" ]]; then pass "agent_type oss:
 else fail "agent_type oss:penetration-tester: the CLI starts" "rc=$RC out=$OUT"; fi
 cleanup
 
+# 10. Round 2 security L4: at SubagentStart (`oss-verdict-capture.sh start`) a review agent's input reaches the CLI
+#     as `start <input-file>`, so the CLI records the start snapshot; still exit 0, nothing printed.
+sandbox
+sandbox_plugin 'require("fs").writeFileSync(process.env.HOME + "/../cli.calls", process.argv.slice(2, 3).join(" ") + "\n")'
+OUT=$(cd "$T/repo" && run_capped 30 env HOME="$T/home" CLAUDE_PLUGIN_ROOT="$T/plugin" "$SH" "$HOOK" start 2>/dev/null \
+    < <(input "oss:code-reviewer" "")); RC=$?
+if [[ $RC -eq 0 && -z "$OUT" && "$(cat "$T/cli.calls" 2>/dev/null)" == "start" ]]; then pass "start: the CLI runs in start mode"
+else fail "start: the CLI runs in start mode" "rc=$RC out=$OUT calls=$(cat "$T/cli.calls" 2>/dev/null)"; fi
+cleanup
+
+# 11. R-266 style (hooks/oss-tool-gate.sh): mktemp, head and grep come from fixed paths, never PATH, and node runs with
+#     PATH=/usr/bin:/bin, so a planted program early on PATH decides nothing.
+sandbox
+sandbox_plugin 'require("fs").writeFileSync(process.env.HOME + "/../cli.path", String(process.env.PATH) + "\n")'
+mkdir -p "$T/shims"
+for b in mktemp head grep; do
+    printf '#!/bin/sh\necho %s >> "%s/shim.calls"\nexit 1\n' "$b" "$T" > "$T/shims/$b"; chmod 755 "$T/shims/$b"
+done
+capture CLAUDE_PLUGIN_ROOT="$T/plugin" PATH="$T/shims:$PATH" < <(input "oss:code-reviewer" "$BLOCK")
+if [[ $RC -eq 0 && -z "$OUT" && ! -e "$T/shim.calls" && "$(cat "$T/cli.path" 2>/dev/null)" == "/usr/bin:/bin" ]]; then
+    pass "fixed mktemp/head/grep, node on PATH=/usr/bin:/bin"
+else fail "fixed mktemp/head/grep, node on PATH=/usr/bin:/bin" "rc=$RC shims=$(cat "$T/shim.calls" 2>/dev/null) path=$(cat "$T/cli.path" 2>/dev/null)"; fi
+cleanup
+
 echo "Results: $((RUN-FAILED))/$RUN passed, $FAILED failed"
 [[ $FAILED -eq 0 ]]

@@ -24,6 +24,12 @@ export interface Ledger {
     appendRow(relPath: string, row: LedgerRow): void;
     readRows(relPath: string): LedgerRow[];
     lastRow(relPath: string): LedgerRow | null;
+    /**
+     * Visits the rows newest to oldest, reading the file backwards in chunks; stops when visit returns false or at the
+     * file's start. Torn lines are skipped. Reads at most the file's cap from its end (older rows are not visited), so
+     * an oversized file never throws here, as with lastRow.
+     */
+    scanBack(relPath: string, visit: (row: LedgerRow) => boolean): void;
     writeMarker(relPath: string, obj: LedgerRow): void;
     readMarker(relPath: string): LedgerRow | null;
     clearMarker(relPath: string): void;

@@ -60,6 +60,23 @@
   - If the recorded node was removed and PATH has a different one, the check exits 127 with one `node_missing` line telling the user to delete `~/.oss/node-path`. The complete gate refuses, Stop marks the phase unverified, and checkpoint counts 0.
   - Why: a verdict must never come from an unrecorded node. The cost is rare, since nvm switches and brew upgrades keep the recorded path usable.
   - Not chosen: re-recording PATH's node (a fake node could become the recorded one), and falling back with an unverified label.
+- D31-D35: ship round 2 decisions (user pickers, 2026-11-18). Security and pen-test failed (MEDIUM/LOW only); code review and performance passed.
+  - **D31 Fix everything in round 3:** every MEDIUM and LOW from round 2, through /oss:build TDD.
+  - **D32 A captured FAIL blocks until re-review.**
+    - A captured fail row from this run keeps its gate failed until the same reviewer passes on a DIFFERENT reviewed tree.
+    - A pass on the unchanged tree never erases it (closes the re-roll after a round line).
+    - D24's fix counts still apply to model-only timeline lines.
+  - **D33 Homebrew git or jq fallback = the recorded node's trust level (D21).**
+    - The general fix goes to R-266's OS write-sandbox card.
+    - R-257 still makes the node CLIs and hooks use the fixed paths, never PATH.
+  - **D34 (corrected, user re-pick 2026-11-18, "Real remote branch, made before the run"): the ship base must be a real remote branch.**
+    - A base is accepted when it is an ancestor of, or equal to, origin's default branch tip, OR it is an existing refs/remotes/origin/<name> whose reflog shows it was created before this ship run started.
+    - A ref made during the run (by update-ref or fetch), or with an oss.shipBase-named ref made during the run, is refused.
+    - The first picker said "ancestor of origin's default only". That would refuse every PR into an integration branch, R-257's PR into Sprint D included.
+  - **D35 ship complete requires ready_to_merge.** A verified but blocked ship result refuses complete, so the chain never runs on a blocked ship.
+- D36 (user picker, 2026-11-18, round 3 build, "Clear on a new commit"): a pass with no snapshot.
+  - A verdict row's snapshot comes out empty when a changed file is over 50 MB or the capture runs past its 4 s deadline. Under D32 as built, such a pass never counts, so one captured fail blocked ship forever with no override.
+  - Now a pass with no snapshot clears an earlier fail of the same reviewer only when its headSha differs from the fail's (a commit landed between them). The gate then keeps the model's timeline line with the "model" label (D26). A same-commit re-roll still never erases a fail.
 - D25-D29: ship round 1 decisions (user pickers, 2026-11-18), from four failing gates.
   - **D25 Gate code location: lock it down.**
     - `~/.oss/plugin-root` and `~/.oss/watcher/**` join the tool gate's protectedPaths. This changes R-266's exact-list test, as the user's pick allows.

@@ -25,6 +25,8 @@ fail() { echo "✗ FAIL: $1 — $2"; RUN=$((RUN + 1)); FAILED=$((FAILED + 1)); }
 echo "Running phase-results acceptance tests under $("$SH" -c 'echo "$BASH_VERSION"')..."
 
 FEATURE=accept-feature
+# ⚠ changes existing test: D34 — a ship base must be an ancestor of origin's default branch, so the sandbox repo has
+#   refs/remotes/origin/main at main's tip.
 # Sandbox: temp HOME with .oss, a git repo with one active feature, and a plugin root that links the real
 # hooks, schemas and watcher CLIs except chain-trigger, which only records that it was called.
 sandbox() {
@@ -38,10 +40,13 @@ sandbox() {
     [[ -d "$ROOT/schemas" ]] && ln -s "$ROOT/schemas" "$T/plugin/schemas"
     for f in "$ROOT"/watcher/dist/cli/*; do ln -s "$f" "$T/plugin/watcher/dist/cli/"; done
     rm -f "$T/plugin/watcher/dist/cli/chain-trigger.cjs" "$T/plugin/watcher/dist/cli/chain-trigger.js"
+    # OSS_TEST_PHASE_RESULT_CLI: a phase-result bundle built from src outside dist (fix rounds build dist once, at the end).
+    [[ -n "${OSS_TEST_PHASE_RESULT_CLI:-}" ]] && ln -sf "$OSS_TEST_PHASE_RESULT_CLI" "$T/plugin/watcher/dist/cli/phase-result.cjs"
     printf 'require("fs").appendFileSync(%s, process.argv.slice(2).join(" ") + "\\n"); console.log("---CHAIN_COMMANDS---")\n' \
         "\"$T/chain.calls\"" > "$T/plugin/watcher/dist/cli/chain-trigger.cjs"
     ( cd "$T/repo" && git init -q -b main && git config user.email t@example.invalid && git config user.name t \
         && echo base > base.txt && git add base.txt && git commit -q -m base \
+        && git update-ref refs/remotes/origin/main main \
         && git checkout -q -b "feat/$FEATURE/build" && mkdir -p ".oss/dev/active/$FEATURE" \
         && printf '# Design\n\nStatus: COMMITTED\n' > ".oss/dev/active/$FEATURE/DESIGN.md" )
 }

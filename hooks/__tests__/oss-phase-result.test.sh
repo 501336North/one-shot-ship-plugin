@@ -223,6 +223,31 @@ if [[ "$res" == REFUSED ]]; then
 else fail "a fake jq first on PATH does not change the gate verdict" "res=$res"; fi
 rm -rf "$T"
 
+# 17. (round 3, pen MEDIUM N3) the CLI's node runs with a fixed PATH, never the caller's: a fake git or jq first on
+#     the caller's PATH is out of the CLI's reach.
+sandbox
+set_root "$T/plugin"
+printf 'require("fs").writeFileSync(%s, process.env.PATH || ""); console.log(JSON.stringify({verification: "verified"}))\n' \
+    "\"$T/cli.path\"" > "$T/plugin/watcher/dist/cli/phase-result.cjs"
+out=$(entry check plan 2>"$T/err"); rc=$?
+if [[ $rc -eq 0 && "$(cat "$T/cli.path" 2>/dev/null)" == /usr/bin:/bin ]]; then
+    pass "the CLI's node runs with PATH=/usr/bin:/bin"
+else fail "the CLI's node runs with PATH=/usr/bin:/bin" "rc=$rc path=$(cat "$T/cli.path" 2>/dev/null) err=$(cat "$T/err")"; fi
+rm -rf "$T"
+
+# 18. (round 3, pen MEDIUM N3) the plugin-cache lookup uses a fixed find, sort and tail: a fake find first on PATH
+#     naming a forged checker (no plugin-root, no cache) does not run it; the CLI is missing (127).
+sandbox
+mkdir -p "$T/forged"
+printf 'require("fs").writeFileSync(%s, "ran"); console.log(JSON.stringify({verification: "verified"}))\n' \
+    "\"$T/forged.ran\"" > "$T/forged/phase-result.cjs"
+printf '#!/bin/sh\necho "%s"\n' "$T/forged/phase-result.cjs" > "$T/bin/find"; chmod +x "$T/bin/find"
+out=$(entry check plan 2>"$T/err"); rc=$?
+if [[ $rc -eq 127 && ! -e "$T/forged.ran" ]]; then
+    pass "a fake find first on PATH does not pick the checker"
+else fail "a fake find first on PATH does not pick the checker" "rc=$rc out=$out err=$(cat "$T/err")"; fi
+rm -rf "$T"
+
 # 6. provenance: the script reads no value file and passes no file content as an argument. The one file it reads
 #    back is the bounded runner's own capture of the CLI's stdout ("$dir/out"), which is not a model value.
 PROV_RE='\$\(cat|\$\(<|oss-value|\.oss/run|readValue|\.txt|\.json"'

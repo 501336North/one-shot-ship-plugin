@@ -1,11 +1,13 @@
 /**
  * The one Stop dispatcher (R-257 T11, ADR-1; wired in hooks.json by T18).
  *
- * The subject is the run THIS session started for the feature this checkout resolves to (repo and branch): the latest
- * ledger `run/<phase>` row whose `feature` and `session` match. A row with feature "" (started before its folder
- * existed) counts for the feature resolved now; with none resolved the stop fails open (`no_feature`, D30). Any other run (another session's, another feature's, an
- * archived feature's) allows and writes nothing. The cwd's repo and the CLAUDE_PROJECT_DIR repo are both checked; a
- * block from either wins.
+ * The subjects are EVERY phase THIS session started (round 3, finding 1): per phase, this session's latest ledger
+ * `run/<phase>` row, scanned back past other sessions' newer rows. A row naming feature F is checked for F whatever the
+ * branch resolves to now (round 3, finding 2); if F's folder left .oss/dev/active with no bound result, the stop is
+ * allowed with the `unverified/F/<phase>` marker and a systemMessage, said once per run. A row with feature "" (started
+ * before its folder existed) counts for the feature resolved now; with none resolved the stop is allowed with the
+ * `unfiled/<phase>` marker and a systemMessage, said once per run (`no_feature`, D30). Other sessions' runs allow and
+ * write nothing. The cwd's repo and the CLAUDE_PROJECT_DIR repo are both checked; a block from either wins.
  *
  * Runs the ordered CHECKS list: the first block wins, later checks run only when earlier ones allow. Before any check,
  * the subject without a bound result gets the ledger `pending/<feature>/<phase>` marker (only a successful assemble
@@ -16,8 +18,8 @@
  * systemMessage. A second fail-open for the same phase in the same session blocks.
  */
 import * as path from 'node:path';
-import { resolveFeature } from '../phase-results/feature.js';
-import { LedgerError, openLedger, parseRunRow, type Ledger } from '../phase-results/ledger.js';
+import { activeFeatures, resolveFeature } from '../phase-results/feature.js';
+import { LedgerError, openLedger, parseRunRow, type Ledger, type RunRow } from '../phase-results/ledger.js';
 import { PHASES, type Phase } from '../phase-results/schemas.js';
 import { resolveRepo } from '../phase-results/store.js';
 import { WorkflowLogger } from '../logger/workflow-logger.js';
@@ -57,48 +59,98 @@ function errorClass(e: unknown): string {
   return e instanceof Error && CLASS_RE.test(e.name) ? e.name : 'unknown';
 }
 
-/** Where the unverified marker of a run with no feature to check against goes (D30). */
-const NO_FEATURE_DIR = '_no_feature';
-
-/** This session's latest run for the repo, or none; `unfiled` when it matches but no feature resolves (D30). */
-type Resolved = { kind: 'none' } | { kind: 'subject'; subject: StopSubject } | { kind: 'unfiled'; ledger: Ledger; phase: Phase };
-
 /**
- * This session's latest run whose feature is the one the repo resolves to now, or "" (D30: a run started before its
- * feature folder existed, such as an ideate on main, is checked against the feature resolved now).
+ * Where the marker of a run with no feature to check against goes (D30). Its own top folder: the ledger's segment
+ * rule and the feature-name rule accept the same names, so no name under unverified/ could be kept from a feature.
  */
-function resolveSubject(repo: string, sessionId: string): Resolved {
-  const feature = resolveFeature(repo);
-  const ledger = openLedger(repo);
-  let latest: { phase: Phase; startedAt: string } | null = null;
-  for (const phase of PHASES) {
-    const run = parseRunRow(ledger.lastRow(`run/${phase}`));
-    if (run === null || run.session !== sessionId || (run.feature !== '' && run.feature !== feature)) continue;
-    if (latest === null || run.startedAt > latest.startedAt) latest = { phase, startedAt: run.startedAt };
-  }
-  if (latest === null) return { kind: 'none' };
-  if (feature === null) return { kind: 'unfiled', ledger, phase: latest.phase };
-  const bound = ledger.lastRow(`results/${feature}/${latest.phase}`)?.startedAt === latest.startedAt;
-  return { kind: 'subject', subject: { repo, feature, ledger, bound, ...latest } };
+const UNFILED_DIR = 'unfiled';
+
+/** One of this session's runs in the repo: a subject to check, a run with no feature (D30), or a feature moved away. */
+type Item =
+  | { kind: 'subject'; subject: StopSubject }
+  | { kind: 'unfiled'; phase: Phase; startedAt: string }
+  | { kind: 'gone'; feature: string; phase: Phase; startedAt: string };
+
+/** This session's latest run row of <phase>, scanning back past other sessions' newer rows; null when none. */
+function sessionRun(ledger: Ledger, phase: Phase, sessionId: string): RunRow | null {
+  const found: { run: RunRow | null } = { run: null };
+  ledger.scanBack(`run/${phase}`, (row) => {
+    if (row.session !== sessionId) return true;
+    found.run = parseRunRow(row);
+    return false;
+  });
+  return found.run;
 }
 
-/** D30: no feature to build the result for, so a block could not be followed: allow, marked unverified, and say so. */
-function unfiled(ledger: Ledger, phase: Phase, sessionId: string): StopOutput {
+/**
+ * Every phase whose latest run row of THIS session names a feature: that feature, whatever the branch resolves to now
+ * (round 3, finding 2), or for a "" row the feature resolved now (D30). Newest first.
+ */
+function resolveItems(repo: string, sessionId: string): { ledger: Ledger; items: Item[] } {
+  const resolved = resolveFeature(repo);
+  const active = activeFeatures(repo);
+  const ledger = openLedger(repo);
+  const items: Item[] = [];
+  for (const phase of PHASES) {
+    const run = sessionRun(ledger, phase, sessionId);
+    if (run === null) continue;
+    const { startedAt } = run;
+    const feature = run.feature !== '' ? run.feature : resolved;
+    if (feature === null) {
+      items.push({ kind: 'unfiled', phase, startedAt });
+      continue;
+    }
+    const bound = ledger.lastRow(`results/${feature}/${phase}`)?.startedAt === startedAt;
+    if (active.includes(feature)) {
+      items.push({ kind: 'subject', subject: { repo, feature, phase, startedAt, bound, ledger, offBranch: feature !== resolved } });
+    } else if (!bound) {
+      items.push({ kind: 'gone', feature, phase, startedAt });
+    }
+  }
+  const at = (i: Item): string => (i.kind === 'subject' ? i.subject.startedAt : i.startedAt);
+  return { ledger, items: items.sort((a, b) => (at(a) < at(b) ? 1 : at(a) > at(b) ? -1 : 0)) };
+}
+
+/** Writes the marker and returns <message>, unless the marker already holds this session's run: then null (once per run). */
+function noteOnce(ledger: Ledger, rel: string, cls: string, sessionId: string, startedAt: string, message: string): string | null {
   try {
-    ledger.writeMarker(`unverified/${NO_FEATURE_DIR}/${phase}`, {
-      check: 'stop-dispatch',
-      errorClass: 'no_feature',
-      at: new Date().toISOString(),
-      session: sessionId,
-    });
+    const m = ledger.readMarker(rel);
+    if (m?.session === sessionId && m.startedAt === startedAt) return null;
+  } catch {
+    /* unreadable: say it again */
+  }
+  try {
+    ledger.writeMarker(rel, { check: 'stop-dispatch', errorClass: cls, at: new Date().toISOString(), session: sessionId, startedAt });
   } catch {
     /* the systemMessage still goes out */
   }
-  return {
-    systemMessage:
-      `OSS: the ${phase} phase started in this session has no feature folder to check its result against ` +
+  return message;
+}
+
+/** D30: no feature to build the result for, so a block could not be followed: allow, marked unverified, said once. */
+function unfiled(ledger: Ledger, phase: Phase, startedAt: string, sessionId: string): string | null {
+  return noteOnce(
+    ledger,
+    `${UNFILED_DIR}/${phase}`,
+    'no_feature',
+    sessionId,
+    startedAt,
+    `OSS: the ${phase} phase started in this session has no feature folder to check its result against ` +
       `(no_feature). ${phase} is marked unverified; once its feature folder exists, run oss-phase-result.sh assemble ${phase}.`,
-  };
+  );
+}
+
+/** Round 3, finding 2: the run's feature folder left .oss/dev/active with no result: no assemble can reach it. */
+function gone(ledger: Ledger, feature: string, phase: Phase, startedAt: string, sessionId: string): string | null {
+  return noteOnce(
+    ledger,
+    `unverified/${feature}/${phase}`,
+    'feature_gone',
+    sessionId,
+    startedAt,
+    `OSS: the ${phase} phase of feature ${feature}, started in this session, has no result and its folder is no ` +
+      `longer under .oss/dev/active (feature_gone). ${phase} of ${feature} is marked unverified.`,
+  );
 }
 
 /** A path problem met before the phase is known: the reason names the ledger, never a phase. */
@@ -201,26 +253,18 @@ function blockOrGuard(ctx: StopContext, check: string, outcome: CheckOutcome): S
   return ctx.input.stopHookActive ? loopGuard(ctx, check) : toOutput(outcome);
 }
 
-/** The checks for one repo; null allows. */
-async function dispatchRepo(repo: string, input: StopInput, opts: DispatchOptions): Promise<StopOutput | null> {
+/** The checks for one subject; null allows. */
+async function checkSubject(subject: StopSubject, input: StopInput, opts: DispatchOptions): Promise<StopOutput | null> {
   const checks = opts.checks ?? CHECKS;
   const budget = opts.checkBudgetMs ?? DEFAULT_BUDGET_MS;
-  const ctx: StopContext = { input, subject: null, phaseResultCli: opts.phaseResultCli };
-  let allowed: StopOutput | null = null;
+  const ctx: StopContext = { input, subject, phaseResultCli: opts.phaseResultCli };
   try {
-    const r = resolveSubject(repo, input.sessionId);
-    if (r.kind === 'unfiled') allowed = unfiled(r.ledger, r.phase, input.sessionId);
-    if (r.kind === 'subject') ctx.subject = r.subject;
-    if (ctx.subject !== null && !ctx.subject.bound) {
-      ctx.subject.ledger.writeMarker(`pending/${ctx.subject.feature}/${ctx.subject.phase}`, {
-        check: 'stop-dispatch',
-        at: new Date().toISOString(),
-      });
+    if (!subject.bound) {
+      subject.ledger.writeMarker(`pending/${subject.feature}/${subject.phase}`, { check: 'stop-dispatch', at: new Date().toISOString() });
     }
   } catch (e) {
     if (!isPathProblem(e)) return failOpen(ctx, 'stop-dispatch', errorClass(e));
-    const s = ctx.subject;
-    return blockOrGuard(ctx, 'stop-dispatch', s === null ? ledgerBlock(pathCode(e)) : blockFor(s.phase, pathCode(e), true));
+    return blockOrGuard(ctx, 'stop-dispatch', blockFor(subject.phase, pathCode(e), true));
   }
   for (const check of checks) {
     const t0 = Date.now();
@@ -229,12 +273,37 @@ async function dispatchRepo(repo: string, input: StopInput, opts: DispatchOption
       outcome = check.run(ctx);
     } catch (e) {
       if (!isPathProblem(e)) return failOpen(ctx, check.id, errorClass(e));
-      outcome = ctx.subject === null ? ledgerBlock(pathCode(e)) : blockFor(ctx.subject.phase, pathCode(e), true);
+      outcome = blockFor(subject.phase, pathCode(e), true);
     }
     if (Date.now() - t0 > budget) return failOpen(ctx, check.id, 'timeout');
     if (outcome.kind === 'block') return blockOrGuard(ctx, check.id, outcome);
   }
-  return allowed;
+  return null;
+}
+
+/** Every subject of one repo (round 3, finding 1): the first block wins; allow notes are joined. null allows. */
+async function dispatchRepo(repo: string, input: StopInput, opts: DispatchOptions): Promise<StopOutput | null> {
+  let resolved: { ledger: Ledger; items: Item[] };
+  try {
+    resolved = resolveItems(repo, input.sessionId);
+  } catch (e) {
+    const ctx: StopContext = { input, subject: null, phaseResultCli: opts.phaseResultCli };
+    if (!isPathProblem(e)) return failOpen(ctx, 'stop-dispatch', errorClass(e));
+    return blockOrGuard(ctx, 'stop-dispatch', ledgerBlock(pathCode(e)));
+  }
+  const notes: string[] = [];
+  for (const item of resolved.items) {
+    let note: string | null | undefined;
+    if (item.kind === 'unfiled') note = unfiled(resolved.ledger, item.phase, item.startedAt, input.sessionId);
+    else if (item.kind === 'gone') note = gone(resolved.ledger, item.feature, item.phase, item.startedAt, input.sessionId);
+    else {
+      const out = await checkSubject(item.subject, input, opts);
+      if (out?.decision === 'block') return out;
+      note = out?.systemMessage;
+    }
+    if (typeof note === 'string') notes.push(note);
+  }
+  return notes.length === 0 ? null : { systemMessage: notes.join(' ') };
 }
 
 export async function dispatch(input: StopInput, opts: DispatchOptions): Promise<StopOutput | null> {

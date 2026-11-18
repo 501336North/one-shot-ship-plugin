@@ -63,6 +63,9 @@ describe('lastRow reads the tail only (finding 8)', () => {
   });
 });
 
+// ⚠ changes existing test: D33 (round 3). The hanging git sits first on PATH, which the fixed git (git-bin.ts) never
+// runs, so these now check that a hung PATH git neither slows the stop nor stops it from answering. The 2 s execFile
+// timeout stays in git.ts and ledger.ts for the fixed git itself.
 describe('git children are bounded (finding 6)', () => {
   function hangingGit(): void {
     const bin = path.join(repo, '.hang-bin');
@@ -75,21 +78,60 @@ describe('git children are bounded (finding 6)', () => {
   it('ledgerKey gives up on a hung git', () => {
     hangingGit();
     const t0 = Date.now();
-    expect(ledgerKey(repo)).toBeNull();
+    expect(ledgerKey(repo)).toMatch(/^[0-9a-f]{16}$/);
     expect(Date.now() - t0).toBeLessThan(8000);
   }, 20_000);
 
   it('gitOut gives up on a hung git', () => {
     hangingGit();
     const t0 = Date.now();
-    expect(gitOut(repo, ['rev-parse', '--show-toplevel'])).toBeNull();
+    expect(gitOut(repo, ['rev-parse', '--show-toplevel'])).toBe(repo);
     expect(Date.now() - t0).toBeLessThan(8000);
   }, 20_000);
 
   it('resolveFeature gives up on a hung git', () => {
     hangingGit();
     const t0 = Date.now();
-    resolveFeature(repo);
+    expect(resolveFeature(repo)).toBe('f');
     expect(Date.now() - t0).toBeLessThan(8000);
   }, 20_000);
+});
+
+describe('scanBack reads rows newest first (round 3, finding 1 and perf L3)', () => {
+  // User behaviour: the Stop hook finds THIS session's latest run even when another session started a newer one, and
+  // the archive check stops at the first old row, without reading a long file whole.
+  // Rule: rows come newest to oldest, a torn line is skipped, and the scan stops as soon as visit returns false.
+  it('visits rows newest to oldest across chunk borders and stops on false', () => {
+    const l = openLedger(repo);
+    for (let i = 0; i < 300; i++) l.appendRow('run/plan', { n: i, pad: 'x'.repeat(100) });
+    fs.appendFileSync(path.join(l.dir, 'run', 'plan'), '{"n":"tor');
+    const seen: unknown[] = [];
+    l.scanBack('run/plan', (row) => {
+      seen.push(row.n);
+      return row.n !== 150;
+    });
+    expect(seen).toEqual(Array.from({ length: 150 }, (_, i) => 299 - i));
+  });
+
+  it('reaches the first row when visit never stops it, and a missing file visits nothing', () => {
+    const l = openLedger(repo);
+    l.appendRow('run/plan', { n: 0 });
+    l.appendRow('run/plan', { n: 1 });
+    const seen: unknown[] = [];
+    l.scanBack('run/plan', (row) => (seen.push(row.n), true));
+    expect(seen).toEqual([1, 0]);
+    l.scanBack('run/ship', () => {
+      throw new Error('visited a missing file');
+    });
+  });
+
+  // Rule: the same link check as every other read.
+  it('refuses a linked row file', () => {
+    const l = openLedger(repo);
+    l.appendRow('run/plan', { n: 0 });
+    const f = path.join(l.dir, 'run', 'plan');
+    fs.renameSync(f, `${f}.real`);
+    fs.symlinkSync(`${f}.real`, f);
+    expect(() => l.scanBack('run/plan', () => true)).toThrow(/unsafe_path/);
+  });
 });

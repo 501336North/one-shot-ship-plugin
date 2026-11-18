@@ -15,6 +15,7 @@
     "token": { "type": "string", "maxLength": 64, "pattern": "[A-Za-z0-9_.:-]{1,64}" },
     "id": { "type": "string", "maxLength": 128, "pattern": "[A-Za-z0-9_.:-]{1,128}" },
     "source": { "type": "string", "enum": ["code", "model", "agent"] },
+    "codeSource": { "type": "string", "enum": ["code"] },
     "modelText": { "type": "string", "maxLength": 4000, "pattern": "[^\\u0000-\\u0008\\u000b-\\u001f\\u007f]*" },
     "shortText": { "type": "string", "maxLength": 400, "pattern": "[^\\u0000-\\u0008\\u000b-\\u001f\\u007f]*" },
     "count": { "type": "integer", "minimum": 0 },

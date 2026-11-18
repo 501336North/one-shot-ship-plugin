@@ -108,6 +108,25 @@ else
     fail "the timed-out CLI's own child is killed too" "child pid '${child}' still alive or not recorded"
 fi
 
+# Round 3 (security LOW, pen MEDIUM N3): the runner's own tools come from fixed paths, never PATH. A fake cat, mktemp,
+# rm and git first on PATH must not turn a refusal into a pass, or drop a Stop block the command printed.
+# fake: a cat that always prints a verified result, with a do-nothing rm and git; fake2 adds a mktemp that fails.
+mkdir -p "$T/fake" "$T/fake2"
+printf '#!/bin/sh\nprintf "%%s" "{\\"verification\\":\\"verified\\"}"\n' > "$T/fake/cat"
+printf '#!/bin/sh\nexit 0\n' > "$T/fake/rm"
+printf '#!/bin/sh\nexit 0\n' > "$T/fake/git"
+printf '#!/bin/sh\nexit 1\n' > "$T/fake2/mktemp"
+chmod +x "$T/fake/cat" "$T/fake/rm" "$T/fake/git" "$T/fake2/mktemp"
+if (PATH="$T/fake:$PATH"
+    oss_run_bounded_rc 5 /bin/sh -c 'printf "%s" "{\"verification\":\"unverified\"}"'; rc=$?
+    oss_phase_gate_ok "$rc" "$OSS_BOUNDED_OUT") 2>/dev/null; then
+    fail "fake cat, rm and git first on PATH do not turn a refusal into a pass" "passed"
+else pass "fake cat, rm and git first on PATH do not turn a refusal into a pass"; fi
+BLOCK='{"decision":"block","reason":"finish the phase"}'
+got=$(PATH="$T/fake2:$T/fake:$PATH"; oss_run_bounded_rc 5 /bin/sh -c "printf '%s' '$BLOCK'"; echo "rc=$? out=$OSS_BOUNDED_OUT")
+[[ "$got" == "rc=0 out=$BLOCK" ]] && pass "fake cat, mktemp, rm and git first on PATH do not drop a Stop block" \
+    || fail "fake cat, mktemp, rm and git first on PATH do not drop a Stop block" "$got"
+
 # Running the script directly prints usage and exits 2.
 "$BASH" "$HOOKS/oss-phase-result.sh" >"$T/main.out" 2>&1; rc=$?
 [[ $rc -eq 2 ]] && grep -qi usage "$T/main.out" && pass "running the script with no verb prints usage and exits 2" \

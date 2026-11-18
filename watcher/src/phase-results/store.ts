@@ -11,9 +11,16 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { execFileSync } from 'child_process';
+import { gitBin } from './git-bin.js';
 import { PHASES, type Phase } from './schemas.js';
 
-export type ReadResult = { ok: true; bytes: Buffer; value: unknown } | { ok: false; error: string };
+export type ReadResult = { ok: true; bytes: Buffer; value: unknown; dev: number; ino: number } | { ok: false; error: string };
+/** What writeResult created: the file's device and inode, and the exact bytes written. */
+export interface Written {
+  dev: number;
+  ino: number;
+  bytes: Buffer;
+}
 export interface WriteHooks {
   /** Test seam: runs after the temp file is complete and before it is renamed over the target. */
   beforeRename?: (tmp: string) => void;
@@ -25,12 +32,18 @@ const VALUE_CAP = 64 * 1024;
 const VALUE_MAX_AGE_MS = 10 * 60 * 1000;
 const { O_RDONLY, O_WRONLY, O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK } = fs.constants;
 
-/** Physical git toplevel of cwd (GIT_* env removed, CLAUDE_PROJECT_DIR ignored), or null outside a repo. */
+/**
+ * Physical git toplevel of cwd (GIT_* env removed, CLAUDE_PROJECT_DIR ignored), or null outside a repo. git is the
+ * fixed-path binary (gitBin, never PATH; pen N3) run with PATH=/usr/bin:/bin; no git binary gives null.
+ */
 export function resolveRepo(cwd: string): string | null {
   const env: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('GIT_')) env[k] = v;
+  env.PATH = '/usr/bin:/bin';
+  const git = gitBin();
+  if (git === '') return null;
   try {
-    const top = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+    const top = execFileSync(git, ['rev-parse', '--show-toplevel'], {
       cwd,
       env,
       encoding: 'utf-8',
@@ -102,7 +115,7 @@ function isOurFile(p: string, ours: fs.Stats): boolean {
   }
 }
 
-export function writeResult(repo: string, feature: string, phase: Phase, obj: unknown, hooks: WriteHooks = {}): void {
+export function writeResult(repo: string, feature: string, phase: Phase, obj: unknown, hooks: WriteHooks = {}): Written {
   checkNames(feature, phase);
   const data = JSON.stringify(obj);
   if (Buffer.byteLength(data) > RESULT_CAP) throw new Error('too_large: result over 256 KB');
@@ -147,6 +160,21 @@ export function writeResult(repo: string, feature: string, phase: Phase, obj: un
     if (isOurFile(realTarget, ours)) fs.unlinkSync(realTarget);
     throw new Error('unsafe_path: results/ moved during write');
   }
+  return { dev: ours.dev, ino: ours.ino, bytes: Buffer.from(data) };
+}
+
+/**
+ * Reads results/<phase>.json back after writeResult (round 2 race): ok only when it is still the very file written
+ * (same device and inode) and holds exactly the written bytes; `result_changed` otherwise. The caller binds
+ * `written.bytes`, never what a reader saw.
+ */
+export function readBack(repo: string, feature: string, phase: Phase, written: Written): ReadResult {
+  const read = readResult(repo, feature, phase);
+  if (!read.ok) return read;
+  if (read.dev !== written.dev || read.ino !== written.ino || !read.bytes.equals(written.bytes)) {
+    return { ok: false, error: 'result_changed' };
+  }
+  return { ...read, bytes: written.bytes };
 }
 
 /** Removes results/<phase>.unverified.json (the Stop hook's repo marker) under the checked results/ dir; no-op if absent. */
@@ -182,7 +210,7 @@ export function readResult(repo: string, feature: string, phase: Phase): ReadRes
     const bytes = readCapped(fd, RESULT_CAP);
     if (bytes.length > RESULT_CAP) return { ok: false, error: 'too_large' };
     try {
-      return { ok: true, bytes, value: JSON.parse(bytes.toString('utf-8')) };
+      return { ok: true, bytes, value: JSON.parse(bytes.toString('utf-8')), dev: st.dev, ino: st.ino };
     } catch {
       return { ok: false, error: 'invalid_json' };
     }

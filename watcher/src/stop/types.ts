@@ -14,8 +14,8 @@ export interface StopInput {
 }
 
 /**
- * The phase this session started for this checkout's feature: the latest ledger `run/<phase>` whose feature and
- * session match, and whether a result row is bound to it.
+ * A phase this session started: its latest ledger `run/<phase>` row of this session names <feature> (or "" with
+ * <feature> resolved now, D30), whose folder is still active; and whether a result row is bound to it.
  */
 export interface StopSubject {
   repo: string;
@@ -24,6 +24,8 @@ export interface StopSubject {
   startedAt: string;
   bound: boolean;
   ledger: Ledger;
+  /** The branch resolves to another feature, or none (round 3, finding 2): the CLI check would not reach this one. */
+  offBranch: boolean;
 }
 
 export interface StopContext {

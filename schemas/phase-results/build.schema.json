@@ -47,10 +47,10 @@
       "required": [],
       "properties": {
         "testRuns": {
-          "$ref": "common.schema.json#/$defs/source"
+          "$ref": "common.schema.json#/$defs/codeSource"
         },
         "evidenceTrust": {
-          "$ref": "common.schema.json#/$defs/source"
+          "$ref": "common.schema.json#/$defs/codeSource"
         },
         "notes": {
           "$ref": "common.schema.json#/$defs/source"

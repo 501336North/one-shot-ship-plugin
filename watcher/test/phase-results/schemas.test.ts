@@ -179,6 +179,23 @@ describe('common fields', () => {
     expect(rejected(check('build', v))).toEqual({ path: '$.sources.verdict', rule: 'additionalProperties' });
   });
 
+  // Behaviour: a field the plugin's code derives cannot be relabelled as the model's (or an agent's).
+  // Rule: round 2 security: each code-owned sources entry is pinned to "code" in the schema.
+  it('should reject a code-owned sources entry relabelled model or agent', () => {
+    const cases: Array<[Phase, string]> = [
+      ['ship', 'verdict'], ['ship', 'diff'], ['ship', 'blockers'], ['ship', 'overrides'], ['ship', 'gateEvidence'],
+      ['ship', 'uncapturedGates'], ['build', 'testRuns'], ['build', 'evidenceTrust'], ['ideate', 'decisions'],
+      ['ideate', 'decisionsRecorded'], ['ideate', 'designCommitted'],
+    ];
+    for (const [phase, field] of cases) {
+      for (const source of ['model', 'agent']) {
+        const v = fixture(phase);
+        v.sources = { [field]: source };
+        expect(rejected(check(phase, v)), `${phase}.${field}=${source}`).toEqual({ path: `$.sources.${field}`, rule: 'enum' });
+      }
+    }
+  });
+
   // Behaviour: terminal escapes in model text cannot reach the user's screen. Rule: control characters except tab/newline are refused.
   it('should reject an ANSI escape in a model text field', () => {
     const v = fixture('build');

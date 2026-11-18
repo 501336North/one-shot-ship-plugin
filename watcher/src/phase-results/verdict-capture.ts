@@ -8,7 +8,9 @@
  * records nothing (round 1 finding 6); nothing else in the message is read. The gate name comes from the
  * hook input's agent_type (REVIEW_AGENT_GATES), never from the block. One row goes to the owner-only ledger
  * `verdicts/<feature>`; the model never writes it. assemble-ship.ts reads it. The row records the tree the agent
- * reviewed (working tree minus .oss, from a temp index copy; the real index is never touched), which binds it.
+ * reviewed (working tree minus .oss, from a temp index copy with no blob writes; the real index is never touched),
+ * which binds it, and `start`: whether the agent's SubagentStart snapshot (captureStart, ledger marker
+ * `verdict-start/<agent_id>`) exists and equals it (security L4). Every git call shares one deadline (DEADLINE_MS).
  *
  * The final message: the input's last_assistant_message when it is a string, else the text of the last assistant
  * message in agent_transcript_path: its trailing entries that share one message.id, and nothing when they hold no text
@@ -19,9 +21,10 @@ import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { openLedger } from './ledger.js';
+import { openLedger, type LedgerRow } from './ledger.js';
 import { resolveFeature } from './feature.js';
-import { gitEnv, gitOut } from './git.js';
+import { gitBin } from './git-bin.js';
+import { gitEnv } from './git.js';
 import { resolveRepo } from './store.js';
 import { loadSchema, validate } from './validate.js';
 
@@ -45,7 +48,18 @@ export type CaptureOutcome =
 
 export interface CaptureOptions {
   now?: () => Date;
+  /** The one deadline every git call of this capture shares (performance L1); DEADLINE_MS by default. */
+  deadlineMs?: number;
 }
+
+export type StartOutcome = { recorded: true } | { recorded: false; reason: string };
+
+/** Under the hook's own 5 s bound (oss-verdict-capture.sh), so a slow repo records '' trees instead of no row. */
+const DEADLINE_MS = 4000;
+/** A changed file over this is not hashed: the tree is '' and the row never counts (D26 label). */
+const BIG_FILE_BYTES = 50 * 1024 * 1024;
+/** Temp index folders older than this in the known folder are left over from a killed capture, and removed. */
+const STALE_TMP_MS = 10 * 60 * 1000;
 
 const COUNT = { type: 'integer', minimum: 0 };
 const VERDICT_SCHEMA = loadSchema({
@@ -159,52 +173,139 @@ export function lastVerdictBlock(
 
 const TREE_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
-/** `git <args>` in repo with GIT_* removed plus `extra`, no fsmonitor or hooks, bounded; trimmed stdout or null. */
-function boundedGit(repo: string, args: string[], extra: NodeJS.ProcessEnv, timeout: number): string | null {
-  const env = { ...gitEnv(), GIT_CONFIG_NOSYSTEM: '1', ...extra };
-  const r = spawnSync('git', ['-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', ...args], {
-    cwd: repo,
-    env,
-    encoding: 'utf-8',
-    stdio: ['ignore', 'pipe', 'ignore'],
-    timeout,
-    maxBuffer: 64 * 1024,
-  });
-  return r.error === undefined && r.status === 0 ? r.stdout.trim() : null;
+/** Milliseconds left of the capture's one shared deadline. */
+type Deadline = () => number;
+
+function deadlineOf(opts: CaptureOptions): Deadline {
+  const end = Date.now() + (opts.deadlineMs ?? DEADLINE_MS);
+  return () => end - Date.now();
 }
 
 /**
- * The tree the agent reviewed, written from a temp copy of the real index so the real index is never
- * touched: `all` stages tracked and untracked (not ignored) files (`add -A`, .oss excluded), `tracked` only tracked
- * ones (`add -u`, .oss included but never consulted).
- * '' when git cannot build it (that row never counts).
+ * `git <args>` in repo: the fixed-path git (gitBin, never PATH; pen N3) with PATH=/usr/bin:/bin, GIT_* removed plus
+ * `extra`, no fsmonitor or hooks, bounded by the time left; raw stdout, or null on any failure or when time is up.
  */
-function reviewedTree(repo: string, index: string, which: 'all' | 'tracked'): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-verdict-tree-'));
+function boundedGit(repo: string, args: string[], extra: NodeJS.ProcessEnv, left: Deadline, input?: Buffer): Buffer | null {
+  const git = gitBin();
+  const timeout = left();
+  if (git === '' || timeout <= 0) return null;
+  const env = { ...gitEnv(), GIT_CONFIG_NOSYSTEM: '1', PATH: '/usr/bin:/bin', ...extra };
+  const r = spawnSync(git, ['-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', ...args], {
+    cwd: repo,
+    env,
+    input,
+    stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'],
+    timeout,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  return r.error === undefined && r.status === 0 ? r.stdout : null;
+}
+
+function gitText(repo: string, args: string[], left: Deadline): string | null {
+  return boundedGit(repo, args, {}, left)?.toString('utf-8').trim() ?? null;
+}
+
+/** The known folder for temp index copies (performance L1): one per user under the OS temp folder. */
+export function verdictTreeTmpRoot(): string {
+  return path.join(os.tmpdir(), `oss-verdict-trees-${process.getuid?.() ?? 0}`);
+}
+
+/** A fresh temp folder in the known folder, after removing its stale entries; null when the folder is not ours. */
+function treeTmpDir(): string | null {
+  const root = verdictTreeTmpRoot();
   try {
-    const tmpIndex = path.join(dir, 'index');
-    try {
-      fs.copyFileSync(index, tmpIndex);
-    } catch {
-      // no index yet (a repo with nothing staged): start from an empty one
-    }
-    const env = { GIT_INDEX_FILE: tmpIndex };
-    // `add -u` takes no pathspec: with nothing tracked yet any pathspec errors. Its .oss entries are harmless, since
-    // trackedTree is only asked about paths outside .oss.
-    const args = which === 'all' ? ['add', '-A', '--', '.', ':(exclude).oss'] : ['add', '-u'];
-    if (boundedGit(repo, args, env, 3000) === null) return '';
-    const tree = boundedGit(repo, ['write-tree'], env, 2000);
-    return tree !== null && TREE_RE.test(tree) ? tree : '';
+    fs.mkdirSync(root, { mode: 0o700 });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') return null;
+  }
+  const st = fs.lstatSync(root);
+  if (st.isSymbolicLink() || !st.isDirectory() || st.uid !== process.getuid?.() || (st.mode & 0o077) !== 0) return null;
+  for (const name of fs.readdirSync(root)) {
+    const p = path.join(root, name);
+    const e = fs.lstatSync(p, { throwIfNoEntry: false });
+    if (e !== undefined && Date.now() - e.mtimeMs > STALE_TMP_MS) fs.rmSync(p, { recursive: true, force: true });
+  }
+  return fs.mkdtempSync(path.join(root, 'tree-'));
+}
+
+/**
+ * The tree the agent reviewed, from a temp copy of the real index (the real index is never touched), written WITHOUT
+ * blobs (performance M1): the changed paths (`all`: modified, deleted and untracked not ignored, .oss excluded;
+ * `tracked`: modified and deleted, .oss included but never consulted) go to `update-index --info-only` (hashes, no
+ * object writes), then `write-tree --missing-ok`. Only tree objects are written. '' when git cannot build it in time,
+ * or a changed file is over BIG_FILE_BYTES (that row never counts).
+ */
+function reviewedTree(repo: string, index: string, which: 'all' | 'tracked', dir: string, left: Deadline): string {
+  const tmpIndex = path.join(dir, `index-${which}`);
+  try {
+    fs.copyFileSync(index, tmpIndex);
+  } catch {
+    // no index yet (a repo with nothing staged): start from an empty one
+  }
+  const env = { GIT_INDEX_FILE: tmpIndex };
+  const list = which === 'all'
+    ? ['ls-files', '-z', '-m', '-o', '-d', '--exclude-standard', '--', '.', ':(exclude).oss']
+    : ['ls-files', '-z', '-m', '-d'];
+  const changed = boundedGit(repo, list, env, left);
+  if (changed === null) return '';
+  for (const p of new Set(changed.toString('utf-8').split('\0'))) {
+    if (p !== '' && (fs.lstatSync(path.join(repo, p), { throwIfNoEntry: false })?.size ?? 0) > BIG_FILE_BYTES) return '';
+  }
+  if (changed.length > 0) {
+    const args = ['update-index', '--add', '--remove', '--info-only', '-z', '--stdin'];
+    if (boundedGit(repo, args, env, left, changed) === null) return '';
+  }
+  const tree = boundedGit(repo, ['write-tree', '--missing-ok'], env, left)?.toString('utf-8').trim() ?? null;
+  return tree !== null && TREE_RE.test(tree) ? tree : '';
+}
+
+/** Both reviewed trees (see reviewedTree); both '' when the index path cannot be read or time is up. */
+function reviewedTrees(repo: string, left: Deadline): { tree: string; trackedTree: string } {
+  const none = { tree: '', trackedTree: '' };
+  const index = gitText(repo, ['rev-parse', '--path-format=absolute', '--git-path', 'index'], left);
+  if (index === null || left() <= 0) return none;
+  const dir = treeTmpDir();
+  if (dir === null) return none;
+  try {
+    return { tree: reviewedTree(repo, index, 'all', dir, left), trackedTree: reviewedTree(repo, index, 'tracked', dir, left) };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
 
-/** Both reviewed trees (see reviewedTree); both '' when the index path cannot be read. */
-function reviewedTrees(repo: string): { tree: string; trackedTree: string } {
-  const index = boundedGit(repo, ['rev-parse', '--path-format=absolute', '--git-path', 'index'], {}, 2000);
-  if (index === null) return { tree: '', trackedTree: '' };
-  return { tree: reviewedTree(repo, index, 'all'), trackedTree: reviewedTree(repo, index, 'tracked') };
+/** The ledger marker holding a review agent's start snapshot (security L4), keyed by its agent_id. */
+function startMarker(agent: string): string {
+  return `verdict-start/${agent}`;
+}
+
+/**
+ * Records a review agent's start snapshot from a SubagentStart hook input (security L4): its reviewed trees, in the
+ * owner-only ledger marker `verdict-start/<agent_id>`. The stop row then says whether the agent's code changed while it
+ * ran. Never throws.
+ */
+export function captureStart(input: unknown, opts: CaptureOptions = {}): StartOutcome {
+  try {
+    if (typeof input !== 'object' || input === null || Array.isArray(input)) return { recorded: false, reason: 'bad_input' };
+    const hook = input as Record<string, unknown>;
+    if (gateForAgent(hook.agent_type) === null) return { recorded: false, reason: 'not_review_agent' };
+    const agent = plainId(hook.agent_id);
+    if (agent === '') return { recorded: false, reason: 'no_agent_id' };
+    const left = deadlineOf(opts);
+    const cwd = typeof hook.cwd === 'string' && path.isAbsolute(hook.cwd) ? hook.cwd : process.cwd();
+    const repo = resolveRepo(cwd);
+    if (repo === null) return { recorded: false, reason: 'no_repo' };
+    const trees = reviewedTrees(repo, left);
+    openLedger(repo).writeMarker(startMarker(agent), { ...trees, ts: (opts.now ?? (() => new Date()))().toISOString() });
+    return { recorded: true };
+  } catch {
+    return { recorded: false, reason: 'error' };
+  }
+}
+
+/** match: a start snapshot exists and equals the stop trees; changed: it differs; missing: there is none. */
+function startState(snap: LedgerRow | null, trees: { tree: string; trackedTree: string }): 'match' | 'changed' | 'missing' {
+  if (snap === null) return 'missing';
+  return snap.tree === trees.tree && snap.trackedTree === trees.trackedTree ? 'match' : 'changed';
 }
 
 /** Records the review agent's verdict block from a SubagentStop hook input. Never throws. */
@@ -225,18 +326,30 @@ export function captureVerdict(input: unknown, opts: CaptureOptions = {}): Captu
     const repo = resolveRepo(cwd);
     const feature = repo === null ? null : resolveFeature(repo);
     if (repo === null || feature === null) return { captured: false, reason: 'no_feature' };
-    openLedger(repo).appendRow(`verdicts/${feature}`, {
+    const left = deadlineOf(opts);
+    const agent = plainId(hook.agent_id);
+    const ledger = openLedger(repo);
+    // Before the trees: a tree build that runs out of time still leaves the row its headSha (D36).
+    const headSha = gitText(repo, ['rev-parse', '--verify', 'HEAD^{commit}'], left) ?? '';
+    const trees = reviewedTrees(repo, left);
+    const snap = agent === '' ? null : ledger.readMarker(startMarker(agent));
+    if (agent !== '') ledger.clearMarker(startMarker(agent));
+    ledger.appendRow(`verdicts/${feature}`, {
       gate,
       verdict: block.verdict,
       findings: block.findings,
-      agent: plainId(hook.agent_id),
+      agent,
       session: plainId(hook.session_id),
       ts: (opts.now ?? (() => new Date()))().toISOString(),
       // For information only: the HEAD at capture (ship commits after its reviews, so HEAD never decides).
-      headSha: gitOut(repo, ['rev-parse', '--verify', 'HEAD^{commit}']) ?? '',
-      // The trees the agent reviewed (all files / tracked only); assemble-ship counts the row only when the shipped tree
-      // outside .oss differs from `tree` by nothing but files that were untracked at review and left out (finding 4).
-      ...reviewedTrees(repo),
+      // The HEAD at capture: ship commits after its reviews, so HEAD never decides alone; assemble-ship allows a
+      // deletion only for a path absent from this commit's tree too (pen N4).
+      headSha,
+      // The trees the agent reviewed (all files / tracked only); assemble-ship counts a pass only when the shipped tree
+      // outside .oss differs from `tree` by nothing but files that were untracked at review and left out (finding 4),
+      // and only when `start` is match (security L4).
+      ...trees,
+      start: startState(snap, trees),
     });
     return { captured: true, gate, feature };
   } catch {

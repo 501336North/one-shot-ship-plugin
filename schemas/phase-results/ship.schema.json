@@ -81,25 +81,25 @@
       "required": [],
       "properties": {
         "diff": {
-          "$ref": "common.schema.json#/$defs/source"
+          "$ref": "common.schema.json#/$defs/codeSource"
         },
         "gates": {
           "$ref": "common.schema.json#/$defs/source"
         },
         "gateEvidence": {
-          "$ref": "common.schema.json#/$defs/source"
+          "$ref": "common.schema.json#/$defs/codeSource"
         },
         "uncapturedGates": {
-          "$ref": "common.schema.json#/$defs/source"
+          "$ref": "common.schema.json#/$defs/codeSource"
         },
         "overrides": {
-          "$ref": "common.schema.json#/$defs/source"
+          "$ref": "common.schema.json#/$defs/codeSource"
         },
         "blockers": {
-          "$ref": "common.schema.json#/$defs/source"
+          "$ref": "common.schema.json#/$defs/codeSource"
         },
         "verdict": {
-          "$ref": "common.schema.json#/$defs/source"
+          "$ref": "common.schema.json#/$defs/codeSource"
         },
         "summary": {
           "$ref": "common.schema.json#/$defs/source"

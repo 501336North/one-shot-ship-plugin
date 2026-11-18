@@ -27,6 +27,11 @@ mkdir -p "$T/home" "$T/bin" "$T/not-oss"
 printf '#!/bin/bash\necho called >> "%s"\n' "$T/node.calls" > "$T/bin/node"
 printf '#!/bin/bash\necho notified >> "%s"\n' "$T/notified" > "$T/bin/terminal-notifier"
 chmod +x "$T/bin/node" "$T/bin/terminal-notifier"
+# macOS scans a freshly written executable on its first run (1.5-4 s measured on 2026-11-18), longer than
+# run_capped's 2 s leftover-process grace: the background notifier's first terminal-notifier call then outlives the
+# hook and the test failed about 7 runs in 10. Run each shim once now, then drop what that run recorded.
+"$T/bin/node" >/dev/null 2>&1; "$T/bin/terminal-notifier" >/dev/null 2>&1
+rm -f "$T/node.calls" "$T/notified"
 
 # 1. hooks.json has one Stop entry with one command.
 name='(1) hooks.json registers exactly one Stop command'

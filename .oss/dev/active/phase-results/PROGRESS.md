@@ -85,6 +85,35 @@
     - writeResult re-checks before the rename.
   - D, API: D29 archives nothing on old plugins; verdict-block wording for D27; manifest at 138.
 
+- [x] Ship round 2: code review and performance passed; security and pen-test failed (MEDIUM/LOW only). User picks D31-D35 (2026-11-18)
+- [x] Ship round 3 fixes (D31 fix all; D32-D36) (completed 2026-11-18)
+  - A, shell tools:
+    - cat, mktemp, rm, mkdir, cut, find, sort, tail and env come from fixed paths; node runs with PATH=/usr/bin:/bin;
+    - dirname is fixed in oss-notify, the archive check and checkpoint (a fake dirname loaded forged gate scripts);
+    - oss-safe-path.sh resolves the feature with a fixed git (a fake git changed the feature);
+    - D33 comment;
+    - D35: ship complete needs ready_to_merge.
+  - B, Stop:
+    - every phase this session started is checked;
+    - a run naming F is checked for F off-branch, and fails open with a marker if F's folder is gone;
+    - the unfiled/<phase> marker;
+    - gitBin(), git with PATH=/usr/bin:/bin;
+    - PATH is fixed after the pre-check;
+    - one git check (about 145 -> 80 ms).
+  - C, ship evidence:
+    - the race fix (readBack, written-bytes hash, code-pinned sources);
+    - the no-feature start gate;
+    - D32 fail until re-review;
+    - the N4 deletion check;
+    - SubagentStart snapshot with start match;
+    - blob-free trees, 50 MB cap, one 4 s deadline;
+    - D34 (corrected) real remote base made before the run;
+    - archive reads no-feature ship runs, with a tail scan;
+    - D35 verdict in check ship;
+    - D36 a no-snapshot pass clears a fail on a new commit;
+    - fixed tools in oss-verdict-capture.sh.
+  - Flaky stop-hook-wired (3/10) fixed at the root: macOS scans a new executable on first run (1.5-4 s), longer than run_capped's 2 s grace. The test now runs its shims once first (15/15).
+
 ### Later
 - [ ] Ship into feat/determinism-sprint/build (SD-1)
 - [ ] T21 oss-lab (after the plugin ships)
@@ -92,4 +121,4 @@
 ## Blockers
 - None. R-266's 4 red base tests are fixed in #233 (4458bddb), and R-257 is rebased onto it.
 
-## Last Updated: 2026-11-18 14:33 CST by /oss:ship (round 1 fixes)
+## Last Updated: 2026-11-18 18:16 CST by /oss:ship (round 3 fixes)

@@ -24,18 +24,35 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/cli/stop-dispatch.ts
-var fs5 = __toESM(require("node:fs"), 1);
-var path7 = __toESM(require("node:path"), 1);
+var fs7 = __toESM(require("node:fs"), 1);
+var path8 = __toESM(require("node:path"), 1);
 
 // src/stop/dispatch.ts
-var path6 = __toESM(require("node:path"), 1);
+var path7 = __toESM(require("node:path"), 1);
 
 // src/phase-results/feature.ts
-var fs = __toESM(require("node:fs"), 1);
+var fs2 = __toESM(require("node:fs"), 1);
 var path = __toESM(require("node:path"), 1);
 
 // src/phase-results/git.ts
 var import_node_child_process = require("node:child_process");
+
+// src/phase-results/git-bin.ts
+var fs = __toESM(require("node:fs"), 1);
+var CANDIDATES = ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git", "/bin/git"];
+function gitBin() {
+  for (const p of CANDIDATES) {
+    try {
+      if (!fs.statSync(p).isFile()) continue;
+      fs.accessSync(p, fs.constants.X_OK);
+      return p;
+    } catch {
+    }
+  }
+  return "";
+}
+
+// src/phase-results/git.ts
 function gitEnv() {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
@@ -43,9 +60,10 @@ function gitEnv() {
 }
 function gitOut(cwd, args) {
   try {
-    const out = (0, import_node_child_process.execFileSync)("git", args, {
+    const out = (0, import_node_child_process.execFileSync)(gitBin(), args, {
       cwd,
-      env: gitEnv(),
+      // git runs helpers (ssh, pager, credential and fsmonitor hooks) from PATH: never the caller's (D33).
+      env: { ...gitEnv(), PATH: "/usr/bin:/bin" },
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 2e3
@@ -63,11 +81,11 @@ function activeFeatures(repo) {
   const dir = path.join(repo, ".oss", "dev", "active");
   let names;
   try {
-    names = fs.readdirSync(dir);
+    names = fs2.readdirSync(dir);
   } catch {
     return [];
   }
-  return names.filter((n) => FEATURE_RE.test(n) && fs.lstatSync(path.join(dir, n), { throwIfNoEntry: false })?.isDirectory()).sort();
+  return names.filter((n) => FEATURE_RE.test(n) && fs2.lstatSync(path.join(dir, n), { throwIfNoEntry: false })?.isDirectory()).sort();
 }
 function resolveFeature(repo) {
   const ref = gitOut(repo, ["symbolic-ref", "-q", "HEAD"]);
@@ -75,7 +93,7 @@ function resolveFeature(repo) {
   const m = BRANCH_RE.exec(branch);
   if (m !== null) {
     const f = m[1];
-    const st = fs.lstatSync(path.join(repo, ".oss", "dev", "active", f), { throwIfNoEntry: false });
+    const st = fs2.lstatSync(path.join(repo, ".oss", "dev", "active", f), { throwIfNoEntry: false });
     return FEATURE_RE.test(f) && st?.isDirectory() ? f : null;
   }
   const active = activeFeatures(repo);
@@ -85,7 +103,7 @@ function resolveFeature(repo) {
 // src/phase-results/ledger.ts
 var import_node_child_process2 = require("node:child_process");
 var import_node_crypto = require("node:crypto");
-var fs2 = __toESM(require("node:fs"), 1);
+var fs3 = __toESM(require("node:fs"), 1);
 var os = __toESM(require("node:os"), 1);
 var path2 = __toESM(require("node:path"), 1);
 var LedgerError = class extends Error {
@@ -108,11 +126,23 @@ var LARGE_CAP = 4 * 1024 * 1024;
 var SEGMENT = /^[A-Za-z0-9._-]+$/;
 var TAIL_BYTES = 4096;
 var GIT_TIMEOUT_MS = 2e3;
+function gitBin2() {
+  for (const p of ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git", "/bin/git"]) {
+    try {
+      if (!fs3.statSync(p).isFile()) continue;
+      fs3.accessSync(p, fs3.constants.X_OK);
+      return p;
+    } catch {
+    }
+  }
+  return "";
+}
 function gitOut2(cwd, args) {
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith("GIT_")) delete env[k];
+  env.PATH = "/usr/bin:/bin";
   try {
-    const out = (0, import_node_child_process2.execFileSync)("git", args, {
+    const out = (0, import_node_child_process2.execFileSync)(gitBin2(), args, {
       cwd,
       env,
       encoding: "utf8",
@@ -128,7 +158,7 @@ function gitOut2(cwd, args) {
 function ledgerKey(cwd) {
   let physical;
   try {
-    physical = fs2.realpathSync(cwd);
+    physical = fs3.realpathSync(cwd);
   } catch {
     return null;
   }
@@ -175,22 +205,22 @@ function openLedger(cwd, opts = {}) {
   const root = path2.join(os.homedir(), ".oss", "ledger");
   const keyDir = path2.join(root, key);
   function ensureDirs(dirParts, create) {
-    if (create) fs2.mkdirSync(path2.dirname(root), { recursive: true, mode: 448 });
+    if (create) fs3.mkdirSync(path2.dirname(root), { recursive: true, mode: 448 });
     let cur = root;
     for (const seg of [null, key, ...dirParts]) {
       if (seg !== null) cur = path2.join(cur, seg);
       let st;
       try {
-        st = fs2.lstatSync(cur);
+        st = fs3.lstatSync(cur);
       } catch (e) {
         if (!isErrno(e, "ENOENT")) throw e;
         if (!create) return false;
         try {
-          fs2.mkdirSync(cur, { mode: 448 });
+          fs3.mkdirSync(cur, { mode: 448 });
         } catch (me) {
           if (!isErrno(me, "EEXIST")) throw me;
         }
-        st = fs2.lstatSync(cur);
+        st = fs3.lstatSync(cur);
       }
       checkStat(st, uid, true, cur);
     }
@@ -203,40 +233,40 @@ function openLedger(cwd, opts = {}) {
     const p = filePath(parts);
     let fd;
     try {
-      fd = fs2.openSync(p, flags | fs2.constants.O_NOFOLLOW, 384);
+      fd = fs3.openSync(p, flags | fs3.constants.O_NOFOLLOW, 384);
     } catch (e) {
       if (isErrno(e, "ENOENT")) return null;
       if (isErrno(e, "ELOOP") || isErrno(e, "EMLINK")) throw new LedgerError("unsafe_path", p);
       throw e;
     }
     try {
-      checkStat(fs2.fstatSync(fd), uid, false, p);
+      checkStat(fs3.fstatSync(fd), uid, false, p);
     } catch (e) {
-      fs2.closeSync(fd);
+      fs3.closeSync(fd);
       throw e;
     }
     return fd;
   }
   function readText(parts) {
     if (!ensureDirs(parts.slice(0, -1), false)) return null;
-    const fd = openChecked(parts, fs2.constants.O_RDONLY);
+    const fd = openChecked(parts, fs3.constants.O_RDONLY);
     if (fd === null) return null;
     try {
-      const size = fs2.fstatSync(fd).size;
+      const size = fs3.fstatSync(fd).size;
       if (size > capFor(parts)) throw new LedgerError("ledger_too_large", filePath(parts));
-      return fs2.readFileSync(fd, "utf8");
+      return fs3.readFileSync(fd, "utf8");
     } finally {
-      fs2.closeSync(fd);
+      fs3.closeSync(fd);
     }
   }
   function writeFile(parts, data, flags) {
     ensureDirs(parts.slice(0, -1), true);
-    const fd = openChecked(parts, fs2.constants.O_WRONLY | fs2.constants.O_CREAT | flags);
+    const fd = openChecked(parts, fs3.constants.O_WRONLY | fs3.constants.O_CREAT | flags);
     if (fd === null) throw new LedgerError("unsafe_path", filePath(parts));
     try {
-      fs2.writeSync(fd, data);
+      fs3.writeSync(fd, data);
     } finally {
-      fs2.closeSync(fd);
+      fs3.closeSync(fd);
     }
   }
   const readRows = (relPath) => {
@@ -256,19 +286,19 @@ function openLedger(cwd, opts = {}) {
       const line = `${JSON.stringify(row)}
 `;
       if (Buffer.byteLength(line) >= MAX_ROW_BYTES) throw new LedgerError("too_large", relPath);
-      writeFile(parts, line, fs2.constants.O_APPEND);
+      writeFile(parts, line, fs3.constants.O_APPEND);
     },
     readRows,
     lastRow(relPath) {
       const parts = splitRel(relPath);
       if (!ensureDirs(parts.slice(0, -1), false)) return null;
-      const fd = openChecked(parts, fs2.constants.O_RDONLY);
+      const fd = openChecked(parts, fs3.constants.O_RDONLY);
       if (fd === null) return null;
       try {
-        const size = fs2.fstatSync(fd).size;
+        const size = fs3.fstatSync(fd).size;
         const len = Math.min(size, TAIL_BYTES);
         const buf = Buffer.alloc(len);
-        fs2.readSync(fd, buf, 0, len, size - len);
+        fs3.readSync(fd, buf, 0, len, size - len);
         const lines = buf.toString("utf8").split("\n");
         for (let i = lines.length - 1; i >= (len < size ? 1 : 0); i--) {
           const row = parseObject(lines[i]);
@@ -276,12 +306,44 @@ function openLedger(cwd, opts = {}) {
         }
         return null;
       } finally {
-        fs2.closeSync(fd);
+        fs3.closeSync(fd);
+      }
+    },
+    scanBack(relPath, visit) {
+      const parts = splitRel(relPath);
+      if (!ensureDirs(parts.slice(0, -1), false)) return;
+      const fd = openChecked(parts, fs3.constants.O_RDONLY);
+      if (fd === null) return;
+      try {
+        const size = fs3.fstatSync(fd).size;
+        const floor = Math.max(0, size - capFor(parts));
+        let end = size;
+        let rest = Buffer.alloc(0);
+        while (end > floor) {
+          const start = Math.max(floor, end - TAIL_BYTES);
+          const buf = Buffer.alloc(end - start);
+          fs3.readSync(fd, buf, 0, buf.length, start);
+          const all = Buffer.concat([buf, rest]);
+          end = start;
+          const cut = start > 0 ? all.indexOf(10) : -1;
+          if (start > 0 && cut < 0) {
+            rest = all;
+            continue;
+          }
+          rest = cut < 0 ? Buffer.alloc(0) : all.subarray(0, cut);
+          const lines = all.subarray(cut + 1).toString("utf8").split("\n");
+          for (let i = lines.length - 1; i >= 0; i--) {
+            const row = parseObject(lines[i]);
+            if (row !== null && !visit(row)) return;
+          }
+        }
+      } finally {
+        fs3.closeSync(fd);
       }
     },
     writeMarker(relPath, obj) {
       writeFile(splitRel(relPath), `${JSON.stringify(obj)}
-`, fs2.constants.O_TRUNC);
+`, fs3.constants.O_TRUNC);
     },
     readMarker(relPath) {
       const text = readText(splitRel(relPath));
@@ -291,7 +353,7 @@ function openLedger(cwd, opts = {}) {
       const parts = splitRel(relPath);
       if (!ensureDirs(parts.slice(0, -1), false)) return;
       try {
-        fs2.unlinkSync(filePath(parts));
+        fs3.unlinkSync(filePath(parts));
       } catch (e) {
         if (!isErrno(e, "ENOENT")) throw e;
       }
@@ -299,9 +361,9 @@ function openLedger(cwd, opts = {}) {
     hasMarker(relPath) {
       const parts = splitRel(relPath);
       if (!ensureDirs(parts.slice(0, -1), false)) return false;
-      const fd = openChecked(parts, fs2.constants.O_RDONLY);
+      const fd = openChecked(parts, fs3.constants.O_RDONLY);
       if (fd === null) return false;
-      fs2.closeSync(fd);
+      fs3.closeSync(fd);
       return true;
     }
   };
@@ -311,26 +373,29 @@ function openLedger(cwd, opts = {}) {
 var PHASES = ["ideate", "plan", "build", "ship"];
 
 // src/phase-results/store.ts
-var fs3 = __toESM(require("fs"), 1);
+var fs4 = __toESM(require("fs"), 1);
 var path3 = __toESM(require("path"), 1);
 var import_child_process = require("child_process");
 var FEATURE_RE2 = /^[A-Za-z0-9._-]+$/;
 var RESULT_CAP = 256 * 1024;
 var VALUE_CAP = 64 * 1024;
 var VALUE_MAX_AGE_MS = 10 * 60 * 1e3;
-var { O_RDONLY, O_WRONLY, O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK } = fs3.constants;
+var { O_RDONLY, O_WRONLY, O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK } = fs4.constants;
 function resolveRepo(cwd) {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
+  env.PATH = "/usr/bin:/bin";
+  const git = gitBin();
+  if (git === "") return null;
   try {
-    const top = (0, import_child_process.execFileSync)("git", ["rev-parse", "--show-toplevel"], {
+    const top = (0, import_child_process.execFileSync)(git, ["rev-parse", "--show-toplevel"], {
       cwd,
       env,
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 2e3
     }).trim();
-    return top === "" ? null : fs3.realpathSync(top);
+    return top === "" ? null : fs4.realpathSync(top);
   } catch {
     return null;
   }
@@ -345,12 +410,12 @@ function resultsDir(repo, feature, create) {
     cur = path3.join(cur, comp);
     let st;
     try {
-      st = fs3.lstatSync(cur);
+      st = fs4.lstatSync(cur);
     } catch (e) {
       if (e.code !== "ENOENT") throw e;
       if (!create) return null;
-      fs3.mkdirSync(cur, { mode: 448 });
-      st = fs3.lstatSync(cur);
+      fs4.mkdirSync(cur, { mode: 448 });
+      st = fs4.lstatSync(cur);
     }
     if (st.isSymbolicLink() || !st.isDirectory()) throw new Error(`unsafe_path: ${comp}`);
   }
@@ -360,7 +425,7 @@ function readCapped(fd, cap) {
   const buf = Buffer.alloc(cap + 1);
   let n = 0;
   while (n < buf.length) {
-    const got = fs3.readSync(fd, buf, n, buf.length - n, null);
+    const got = fs4.readSync(fd, buf, n, buf.length - n, null);
     if (got === 0) break;
     n += got;
   }
@@ -377,22 +442,22 @@ function readResult(repo, feature, phase) {
   if (dir === null) return { ok: false, error: "missing" };
   let fd;
   try {
-    fd = fs3.openSync(path3.join(dir, `${phase}.json`), O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+    fd = fs4.openSync(path3.join(dir, `${phase}.json`), O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
   } catch (e) {
     return { ok: false, error: e.code === "ENOENT" ? "missing" : "unsafe_path" };
   }
   try {
-    const st = fs3.fstatSync(fd);
+    const st = fs4.fstatSync(fd);
     if (!st.isFile() || st.nlink !== 1 || st.uid !== process.getuid?.()) return { ok: false, error: "unsafe_path" };
     const bytes = readCapped(fd, RESULT_CAP);
     if (bytes.length > RESULT_CAP) return { ok: false, error: "too_large" };
     try {
-      return { ok: true, bytes, value: JSON.parse(bytes.toString("utf-8")) };
+      return { ok: true, bytes, value: JSON.parse(bytes.toString("utf-8")), dev: st.dev, ino: st.ino };
     } catch {
       return { ok: false, error: "invalid_json" };
     }
   } finally {
-    fs3.closeSync(fd);
+    fs4.closeSync(fd);
   }
 }
 
@@ -400,12 +465,12 @@ function readResult(repo, feature, phase) {
 var path5 = __toESM(require("path"), 1);
 
 // src/utils/safe-project-write.ts
-var fs4 = __toESM(require("fs"), 1);
+var fs5 = __toESM(require("fs"), 1);
 var path4 = __toESM(require("path"), 1);
 var crypto = __toESM(require("crypto"), 1);
 var homeCache = null;
 function realHome(home) {
-  if (homeCache === null || homeCache.home !== home) homeCache = { home, real: fs4.realpathSync(home) };
+  if (homeCache === null || homeCache.home !== home) homeCache = { home, real: fs5.realpathSync(home) };
   return homeCache.real;
 }
 function isUserOssDir(ossDir) {
@@ -413,7 +478,7 @@ function isUserOssDir(ossDir) {
   if (!home) return false;
   if (path4.resolve(ossDir) === path4.resolve(home, ".oss")) return true;
   try {
-    return path4.basename(ossDir) === ".oss" && fs4.realpathSync(path4.dirname(ossDir)) === realHome(home);
+    return path4.basename(ossDir) === ".oss" && fs5.realpathSync(path4.dirname(ossDir)) === realHome(home);
   } catch {
     return false;
   }
@@ -428,29 +493,29 @@ function ownedOk(st, rootUid) {
   return rootUid === 0 && (st.mode & 18) === 0;
 }
 function safeDir(ossDir, relDir, createDirs) {
-  const projectReal = fs4.realpathSync(path4.dirname(path4.resolve(ossDir)));
+  const projectReal = fs5.realpathSync(path4.dirname(path4.resolve(ossDir)));
   const parts = [path4.basename(path4.resolve(ossDir)), ...relDir.split(/[\\/]/)].filter((c) => c !== "" && c !== ".");
-  const rootUid = fs4.lstatSync(projectReal).uid;
+  const rootUid = fs5.lstatSync(projectReal).uid;
   let cur = projectReal;
   for (const comp of parts) {
     if (comp === "..") return null;
     cur = path4.join(cur, comp);
     let st;
     try {
-      st = fs4.lstatSync(cur);
+      st = fs5.lstatSync(cur);
     } catch (e) {
       if (e.code !== "ENOENT") throw e;
       if (!createDirs) throw e;
       try {
-        fs4.mkdirSync(cur);
+        fs5.mkdirSync(cur);
       } catch (m) {
         if (m.code !== "EEXIST") throw m;
       }
-      st = fs4.lstatSync(cur);
+      st = fs5.lstatSync(cur);
     }
     if (st.isSymbolicLink() || !st.isDirectory() || !ownedOk(st, rootUid)) return null;
   }
-  const phys = fs4.realpathSync(cur);
+  const phys = fs5.realpathSync(cur);
   const inside = projectReal.endsWith(path4.sep) ? projectReal : projectReal + path4.sep;
   return phys === projectReal || phys.startsWith(inside) ? phys : null;
 }
@@ -461,7 +526,7 @@ function checkTarget(ossDir, rel, createDirs) {
   if (base === "" || base === "." || base === "..") return null;
   const target = path4.join(dir, base);
   try {
-    const st = fs4.lstatSync(target);
+    const st = fs5.lstatSync(target);
     if (st.isSymbolicLink() || !st.isFile() || st.nlink !== 1) return null;
     return { path: target, mode: st.mode & 511 };
   } catch (e) {
@@ -478,9 +543,9 @@ function safeWriteFileAtomic(ossDir, rel, data, options = {}) {
   let keepMode;
   if (isUserOssDir(ossDir)) {
     target = path4.join(ossDir, rel);
-    fs4.mkdirSync(path4.dirname(target), { recursive: true });
+    fs5.mkdirSync(path4.dirname(target), { recursive: true });
     try {
-      keepMode = fs4.statSync(target).mode & 511;
+      keepMode = fs5.statSync(target).mode & 511;
     } catch {
       keepMode = null;
     }
@@ -491,36 +556,36 @@ function safeWriteFileAtomic(ossDir, rel, data, options = {}) {
     keepMode = checked.mode;
   }
   const tmp = path4.join(path4.dirname(target), `.${path4.basename(target)}.${process.pid}.${crypto.randomBytes(6).toString("hex")}.tmp`);
-  const fd = fs4.openSync(tmp, "wx", options.newFileMode ?? 438);
+  const fd = fs5.openSync(tmp, "wx", options.newFileMode ?? 438);
   try {
     try {
-      if (keepMode !== null) fs4.fchmodSync(fd, keepMode);
-      fs4.writeSync(fd, data);
+      if (keepMode !== null) fs5.fchmodSync(fd, keepMode);
+      fs5.writeSync(fd, data);
     } finally {
-      fs4.closeSync(fd);
+      fs5.closeSync(fd);
     }
-    fs4.renameSync(tmp, target);
+    fs5.renameSync(tmp, target);
   } catch (e) {
-    fs4.rmSync(tmp, { force: true });
+    fs5.rmSync(tmp, { force: true });
     throw e;
   }
   return true;
 }
 function safeAppendFile(ossDir, rel, data, options = {}) {
   if (isUserOssDir(ossDir)) {
-    fs4.appendFileSync(path4.join(ossDir, rel), data);
+    fs5.appendFileSync(path4.join(ossDir, rel), data);
     return true;
   }
   const target = safeTarget(ossDir, rel, options.createDirs ?? true);
   if (target === null) return refuse(ossDir, rel);
-  const c = fs4.constants;
-  const fd = fs4.openSync(target, c.O_WRONLY | c.O_APPEND | c.O_CREAT | (c.O_NOFOLLOW ?? 0), 420);
+  const c = fs5.constants;
+  const fd = fs5.openSync(target, c.O_WRONLY | c.O_APPEND | c.O_CREAT | (c.O_NOFOLLOW ?? 0), 420);
   try {
-    const st = fs4.fstatSync(fd);
+    const st = fs5.fstatSync(fd);
     if (!st.isFile() || st.nlink !== 1) return refuse(ossDir, rel);
-    fs4.writeSync(fd, data);
+    fs5.writeSync(fd, data);
   } finally {
-    fs4.closeSync(fd);
+    fs5.closeSync(fd);
   }
   return true;
 }
@@ -648,6 +713,9 @@ ${humanLine}
 
 // src/stop/checks/phase-result-missing.ts
 var import_node_child_process3 = require("node:child_process");
+var import_node_crypto2 = require("node:crypto");
+var fs6 = __toESM(require("node:fs"), 1);
+var path6 = __toESM(require("node:path"), 1);
 var CLI_TIMEOUT_MS = 4e3;
 var PATH_PROBLEMS = ["unsafe_path", "too_large"];
 function namedError(name) {
@@ -655,9 +723,17 @@ function namedError(name) {
   e.name = name;
   return e;
 }
-function blockFor(phase, id, pathProblem) {
-  const reason = `OSS: the ${phase} phase has no valid result for this run (${id}). Run ~/.oss/hooks/oss-phase-result.sh assemble ${phase} before stopping.`;
+function blockFor(phase, id, pathProblem, offFeature) {
+  const reason = offFeature === void 0 ? `OSS: the ${phase} phase has no valid result for this run (${id}). Run ~/.oss/hooks/oss-phase-result.sh assemble ${phase} before stopping.` : `OSS: the ${phase} phase of feature ${offFeature} has no valid result for this run (${id}). Check out ${offFeature}'s branch and run ~/.oss/hooks/oss-phase-result.sh assemble ${phase} before stopping.`;
   return pathProblem ? { kind: "block", reason, systemMessage: `OSS: ${phase} result refused (${id}): a linked, special or oversized file` } : { kind: "block", reason };
+}
+function offBranchProblem(s, bytes) {
+  if (bytes === null) return "missing";
+  const marker = path6.join(s.repo, ".oss", "dev", "active", s.feature, "results", `${s.phase}.unverified.json`);
+  if (fs6.lstatSync(marker, { throwIfNoEntry: false }) !== void 0) return "unverified";
+  for (const kind of ["pending", "unverified"]) if (s.ledger.hasMarker(`${kind}/${s.feature}/${s.phase}`)) return "unverified";
+  const sha = (0, import_node_crypto2.createHash)("sha256").update(bytes).digest("hex");
+  return s.ledger.lastRow(`results/${s.feature}/${s.phase}`)?.sha256 === sha ? null : "unbound_result";
 }
 var phaseResultMissing = {
   id: "phase-result-missing",
@@ -665,8 +741,13 @@ var phaseResultMissing = {
     const s = ctx.subject;
     if (s === null) return { kind: "allow" };
     const read = readResult(s.repo, s.feature, s.phase);
-    if (!read.ok && PATH_PROBLEMS.includes(read.error)) return blockFor(s.phase, read.error, true);
-    if (!s.bound) return blockFor(s.phase, read.ok ? "unbound_result" : read.error, false);
+    const off = s.offBranch ? s.feature : void 0;
+    if (!read.ok && PATH_PROBLEMS.includes(read.error)) return blockFor(s.phase, read.error, true, off);
+    if (!s.bound) return blockFor(s.phase, read.ok ? "unbound_result" : read.error, false, off);
+    if (s.offBranch) {
+      const id = offBranchProblem(s, read.ok ? read.bytes : null);
+      return id === null ? { kind: "allow" } : blockFor(s.phase, id, false, off);
+    }
     const r = (0, import_node_child_process3.spawnSync)(process.execPath, [ctx.phaseResultCli, "check", s.phase, "--repo", s.repo], {
       cwd: s.repo,
       encoding: "utf-8",
@@ -701,34 +782,71 @@ function errorClass(e) {
   if (e instanceof LedgerError) return e.code;
   return e instanceof Error && CLASS_RE.test(e.name) ? e.name : "unknown";
 }
-var NO_FEATURE_DIR = "_no_feature";
-function resolveSubject(repo, sessionId) {
-  const feature = resolveFeature(repo);
-  const ledger = openLedger(repo);
-  let latest = null;
-  for (const phase of PHASES) {
-    const run = parseRunRow(ledger.lastRow(`run/${phase}`));
-    if (run === null || run.session !== sessionId || run.feature !== "" && run.feature !== feature) continue;
-    if (latest === null || run.startedAt > latest.startedAt) latest = { phase, startedAt: run.startedAt };
-  }
-  if (latest === null) return { kind: "none" };
-  if (feature === null) return { kind: "unfiled", ledger, phase: latest.phase };
-  const bound = ledger.lastRow(`results/${feature}/${latest.phase}`)?.startedAt === latest.startedAt;
-  return { kind: "subject", subject: { repo, feature, ledger, bound, ...latest } };
+var UNFILED_DIR = "unfiled";
+function sessionRun(ledger, phase, sessionId) {
+  const found = { run: null };
+  ledger.scanBack(`run/${phase}`, (row) => {
+    if (row.session !== sessionId) return true;
+    found.run = parseRunRow(row);
+    return false;
+  });
+  return found.run;
 }
-function unfiled(ledger, phase, sessionId) {
+function resolveItems(repo, sessionId) {
+  const resolved = resolveFeature(repo);
+  const active = activeFeatures(repo);
+  const ledger = openLedger(repo);
+  const items = [];
+  for (const phase of PHASES) {
+    const run = sessionRun(ledger, phase, sessionId);
+    if (run === null) continue;
+    const { startedAt } = run;
+    const feature = run.feature !== "" ? run.feature : resolved;
+    if (feature === null) {
+      items.push({ kind: "unfiled", phase, startedAt });
+      continue;
+    }
+    const bound = ledger.lastRow(`results/${feature}/${phase}`)?.startedAt === startedAt;
+    if (active.includes(feature)) {
+      items.push({ kind: "subject", subject: { repo, feature, phase, startedAt, bound, ledger, offBranch: feature !== resolved } });
+    } else if (!bound) {
+      items.push({ kind: "gone", feature, phase, startedAt });
+    }
+  }
+  const at = (i) => i.kind === "subject" ? i.subject.startedAt : i.startedAt;
+  return { ledger, items: items.sort((a, b) => at(a) < at(b) ? 1 : at(a) > at(b) ? -1 : 0) };
+}
+function noteOnce(ledger, rel, cls, sessionId, startedAt, message) {
   try {
-    ledger.writeMarker(`unverified/${NO_FEATURE_DIR}/${phase}`, {
-      check: "stop-dispatch",
-      errorClass: "no_feature",
-      at: (/* @__PURE__ */ new Date()).toISOString(),
-      session: sessionId
-    });
+    const m = ledger.readMarker(rel);
+    if (m?.session === sessionId && m.startedAt === startedAt) return null;
   } catch {
   }
-  return {
-    systemMessage: `OSS: the ${phase} phase started in this session has no feature folder to check its result against (no_feature). ${phase} is marked unverified; once its feature folder exists, run oss-phase-result.sh assemble ${phase}.`
-  };
+  try {
+    ledger.writeMarker(rel, { check: "stop-dispatch", errorClass: cls, at: (/* @__PURE__ */ new Date()).toISOString(), session: sessionId, startedAt });
+  } catch {
+  }
+  return message;
+}
+function unfiled(ledger, phase, startedAt, sessionId) {
+  return noteOnce(
+    ledger,
+    `${UNFILED_DIR}/${phase}`,
+    "no_feature",
+    sessionId,
+    startedAt,
+    `OSS: the ${phase} phase started in this session has no feature folder to check its result against (no_feature). ${phase} is marked unverified; once its feature folder exists, run oss-phase-result.sh assemble ${phase}.`
+  );
+}
+function gone(ledger, feature, phase, startedAt, sessionId) {
+  return noteOnce(
+    ledger,
+    `unverified/${feature}/${phase}`,
+    "feature_gone",
+    sessionId,
+    startedAt,
+    `OSS: the ${phase} phase of feature ${feature}, started in this session, has no result and its folder is no longer under .oss/dev/active (feature_gone). ${phase} of ${feature} is marked unverified.`
+  );
 }
 function ledgerBlock(code) {
   return {
@@ -759,7 +877,7 @@ function recordUnverified(ctx, check, cls) {
   try {
     const marker = { verification: "unverified", verificationError: { check, errorClass: cls }, phase: s.phase, at };
     safeWriteFileAtomic(
-      path6.join(s.repo, ".oss"),
+      path7.join(s.repo, ".oss"),
       `dev/active/${s.feature}/results/${s.phase}.unverified.json`,
       `${JSON.stringify(marker)}
 `,
@@ -788,7 +906,7 @@ async function failOpen(ctx, check, cls) {
   recordUnverified(ctx, check, cls);
   if (s !== null) {
     try {
-      await new WorkflowLogger(path6.join(s.repo, ".oss")).log({
+      await new WorkflowLogger(path7.join(s.repo, ".oss")).log({
         cmd: "stop",
         phase: s.phase,
         event: "STOP_CHECK_ERROR",
@@ -810,25 +928,17 @@ function loopGuard(ctx, check) {
 function blockOrGuard(ctx, check, outcome) {
   return ctx.input.stopHookActive ? loopGuard(ctx, check) : toOutput(outcome);
 }
-async function dispatchRepo(repo, input, opts) {
+async function checkSubject(subject, input, opts) {
   const checks = opts.checks ?? CHECKS;
   const budget = opts.checkBudgetMs ?? DEFAULT_BUDGET_MS;
-  const ctx = { input, subject: null, phaseResultCli: opts.phaseResultCli };
-  let allowed = null;
+  const ctx = { input, subject, phaseResultCli: opts.phaseResultCli };
   try {
-    const r = resolveSubject(repo, input.sessionId);
-    if (r.kind === "unfiled") allowed = unfiled(r.ledger, r.phase, input.sessionId);
-    if (r.kind === "subject") ctx.subject = r.subject;
-    if (ctx.subject !== null && !ctx.subject.bound) {
-      ctx.subject.ledger.writeMarker(`pending/${ctx.subject.feature}/${ctx.subject.phase}`, {
-        check: "stop-dispatch",
-        at: (/* @__PURE__ */ new Date()).toISOString()
-      });
+    if (!subject.bound) {
+      subject.ledger.writeMarker(`pending/${subject.feature}/${subject.phase}`, { check: "stop-dispatch", at: (/* @__PURE__ */ new Date()).toISOString() });
     }
   } catch (e) {
     if (!isPathProblem(e)) return failOpen(ctx, "stop-dispatch", errorClass(e));
-    const s = ctx.subject;
-    return blockOrGuard(ctx, "stop-dispatch", s === null ? ledgerBlock(pathCode(e)) : blockFor(s.phase, pathCode(e), true));
+    return blockOrGuard(ctx, "stop-dispatch", blockFor(subject.phase, pathCode(e), true));
   }
   for (const check of checks) {
     const t0 = Date.now();
@@ -837,12 +947,35 @@ async function dispatchRepo(repo, input, opts) {
       outcome = check.run(ctx);
     } catch (e) {
       if (!isPathProblem(e)) return failOpen(ctx, check.id, errorClass(e));
-      outcome = ctx.subject === null ? ledgerBlock(pathCode(e)) : blockFor(ctx.subject.phase, pathCode(e), true);
+      outcome = blockFor(subject.phase, pathCode(e), true);
     }
     if (Date.now() - t0 > budget) return failOpen(ctx, check.id, "timeout");
     if (outcome.kind === "block") return blockOrGuard(ctx, check.id, outcome);
   }
-  return allowed;
+  return null;
+}
+async function dispatchRepo(repo, input, opts) {
+  let resolved;
+  try {
+    resolved = resolveItems(repo, input.sessionId);
+  } catch (e) {
+    const ctx = { input, subject: null, phaseResultCli: opts.phaseResultCli };
+    if (!isPathProblem(e)) return failOpen(ctx, "stop-dispatch", errorClass(e));
+    return blockOrGuard(ctx, "stop-dispatch", ledgerBlock(pathCode(e)));
+  }
+  const notes = [];
+  for (const item of resolved.items) {
+    let note;
+    if (item.kind === "unfiled") note = unfiled(resolved.ledger, item.phase, item.startedAt, input.sessionId);
+    else if (item.kind === "gone") note = gone(resolved.ledger, item.feature, item.phase, item.startedAt, input.sessionId);
+    else {
+      const out = await checkSubject(item.subject, input, opts);
+      if (out?.decision === "block") return out;
+      note = out?.systemMessage;
+    }
+    if (typeof note === "string") notes.push(note);
+  }
+  return notes.length === 0 ? null : { systemMessage: notes.join(" ") };
 }
 async function dispatch(input, opts) {
   const repos = [];
@@ -874,7 +1007,7 @@ async function main(argv) {
     process.stderr.write("usage: stop-dispatch --cwd <dir> [--project-dir <dir>] --session <id> --stop-hook-active <true|false>\n");
     return 2;
   }
-  const phaseResultCli = path7.join(path7.dirname(fs5.realpathSync(process.argv[1] ?? "")), "phase-result.cjs");
+  const phaseResultCli = path8.join(path8.dirname(fs7.realpathSync(process.argv[1] ?? "")), "phase-result.cjs");
   const out = await dispatch({ cwd: a.cwd, projectDir: a.projectDir, sessionId: a.session, stopHookActive: a.active }, { phaseResultCli });
   if (out !== null) process.stdout.write(`${JSON.stringify(out)}
 `);

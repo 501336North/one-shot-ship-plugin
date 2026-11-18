@@ -15,8 +15,10 @@ import * as os from 'os';
 import * as path from 'path';
 import { openLedger } from '../../src/phase-results/ledger.js';
 import {
+  captureStart,
   captureVerdict,
   lastVerdictBlock,
+  verdictTreeTmpRoot,
   TRANSCRIPT_TAIL_BYTES,
   type CaptureOutcome,
 } from '../../src/phase-results/verdict-capture.js';
@@ -114,6 +116,9 @@ describe('captureVerdict: what gets recorded', () => {
         headSha: headNow(),
         tree: git('rev-parse', 'HEAD^{tree}'),
         trackedTree: git('rev-parse', 'HEAD^{tree}'),
+        // ⚠ changes existing test: round 2 security L4 — the row says whether the agent's start snapshot exists and
+        //   matches (no SubagentStart ran here, so missing)
+        start: 'missing',
       },
     ]);
   });
@@ -293,6 +298,124 @@ describe('captureVerdict: the reviewed tree', () => {
     expect(ms).toBeLessThan(1500);
     expect(rows()[0].tree).toMatch(/^[0-9a-f]{40}$/);
     expect(rows()[0].trackedTree).toMatch(/^[0-9a-f]{40}$/);
+  });
+});
+
+/**
+ * Round 2 security L4: the verdict was bound to the tree at SubagentStop, not to what the agent reviewed. A SubagentStart
+ * hook now records a start snapshot (tree and trackedTree) keyed by agent_id in the ledger; the stop row says whether
+ * it exists and equals the stop snapshot (`start`: match, changed or missing), and only `match` lets a pass count.
+ */
+describe('captureVerdict: the start snapshot (security L4)', () => {
+  const VALID_BLOCK = block({ verdict: 'pass', findings: COUNTS });
+  const start = (extra: Record<string, unknown> = {}): ReturnType<typeof captureStart> =>
+    captureStart({ ...input({ hook_event_name: 'SubagentStart' }), ...extra }, { now: () => NOW });
+
+  // Behaviour: a review whose code did not change while the agent worked is bound to that code.
+  it('start, then a stop on the unchanged tree, records start: match', () => {
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'reviewed\n');
+    expect(start()).toEqual({ recorded: true });
+    expect(capture({ last_assistant_message: VALID_BLOCK }).captured).toBe(true);
+    expect(rows()[0].start).toBe('match');
+    // the snapshot is used once: the stop removes it
+    expect(openLedger(repo).hasMarker('verdict-start/agent-7')).toBe(false);
+  });
+
+  // Behaviour: code edited while the reviewer ran is not what it reviewed.
+  it('start, an edit while the agent runs, then a stop records start: changed', () => {
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'reviewed\n');
+    start();
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'edited during the review\n');
+    capture({ last_assistant_message: VALID_BLOCK });
+    expect(rows()[0].start).toBe('changed');
+  });
+
+  it('a stop with no start snapshot records start: missing', () => {
+    capture({ last_assistant_message: VALID_BLOCK });
+    expect(rows()[0].start).toBe('missing');
+  });
+
+  it("another agent's start snapshot does not count", () => {
+    start({ agent_id: 'agent-other' });
+    capture({ last_assistant_message: VALID_BLOCK });
+    expect(rows()[0].start).toBe('missing');
+  });
+
+  it('a start for an agent that is not a review agent records nothing', () => {
+    expect(start({ agent_type: 'oss:typescript-pro' })).toEqual({ recorded: false, reason: 'not_review_agent' });
+  });
+});
+
+/**
+ * Round 2 performance M1 and L1: the trees are built without writing blobs into .git/objects (ls-files, update-index
+ * --info-only, write-tree --missing-ok), a file over 50 MB gives tree '' at once, the whole capture shares one
+ * deadline, and its temp index folders live in one known folder whose stale entries (over 10 min) are removed.
+ */
+describe('captureVerdict: trees without blob writes (performance M1, L1)', () => {
+  const VALID_BLOCK = block({ verdict: 'pass', findings: COUNTS });
+
+  function blobId(content: string): string {
+    return execFileSync('git', ['hash-object', '--stdin'], { cwd: repo, input: content, encoding: 'utf-8' }).trim();
+  }
+  function hasObject(id: string): boolean {
+    try {
+      execFileSync('git', ['cat-file', '-e', id], { cwd: repo, stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Behaviour: reviewing never fills the repo with junk objects.
+  it('writes no blob for a modified or an untracked file', () => {
+    fs.writeFileSync(path.join(repo, 'tracked.txt'), 'one\n');
+    git('add', 'tracked.txt');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'tracked');
+    fs.writeFileSync(path.join(repo, 'tracked.txt'), `modified ${Math.random()}\n`);
+    fs.writeFileSync(path.join(repo, 'untracked.txt'), `untracked ${Math.random()}\n`);
+    expect(capture({ last_assistant_message: VALID_BLOCK }).captured).toBe(true);
+    expect(rows()[0].tree).toMatch(/^[0-9a-f]{40}$/);
+    expect(hasObject(blobId(fs.readFileSync(path.join(repo, 'tracked.txt'), 'utf-8')))).toBe(false);
+    expect(hasObject(blobId(fs.readFileSync(path.join(repo, 'untracked.txt'), 'utf-8')))).toBe(false);
+  });
+
+  // Rule: a changed file over 50 MB is not hashed; the row records tree '' (it never counts, D26 label).
+  it('a changed file over 50 MB gives tree \'\' fast', () => {
+    const fd = fs.openSync(path.join(repo, 'big.bin'), 'w');
+    fs.ftruncateSync(fd, 51 * 1024 * 1024);
+    fs.closeSync(fd);
+    const t0 = performance.now();
+    expect(capture({ last_assistant_message: VALID_BLOCK }).captured).toBe(true);
+    expect(performance.now() - t0).toBeLessThan(1500);
+    expect(rows()[0].tree).toBe('');
+  });
+
+  // D36: a no-tree pass can clear an earlier fail only on a new commit, so the big-file row must carry headSha.
+  it('the big-file row (tree \'\') still records headSha', () => {
+    const fd = fs.openSync(path.join(repo, 'big.bin'), 'w');
+    fs.ftruncateSync(fd, 51 * 1024 * 1024);
+    fs.closeSync(fd);
+    capture({ last_assistant_message: VALID_BLOCK });
+    expect(rows()[0]).toMatchObject({ tree: '', headSha: headNow() });
+  });
+
+  it('a capture past its shared deadline records empty trees', () => {
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'x\n');
+    expect(captureVerdict(input({ last_assistant_message: VALID_BLOCK }), { now: () => NOW, deadlineMs: 0 }).captured).toBe(true);
+    expect(rows()[0]).toMatchObject({ tree: '', trackedTree: '' });
+  });
+
+  it('removes temp index folders older than 10 minutes from the known folder, and keeps fresh ones', () => {
+    const root = verdictTreeTmpRoot();
+    fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+    const stale = fs.mkdtempSync(path.join(root, 'tree-'));
+    const fresh = fs.mkdtempSync(path.join(root, 'tree-'));
+    const old = new Date(Date.now() - 11 * 60 * 1000);
+    fs.utimesSync(stale, old, old);
+    capture({ last_assistant_message: VALID_BLOCK });
+    expect(fs.existsSync(stale)).toBe(false);
+    expect(fs.existsSync(fresh)).toBe(true);
+    fs.rmSync(fresh, { recursive: true, force: true });
   });
 });
 

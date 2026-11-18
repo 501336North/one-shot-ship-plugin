@@ -215,13 +215,17 @@ node_runs() {
 }
 
 # 9. Finding 1, repro 1: a ship run of a feature since archived, back on main: allowed, no marker, no node.
-sandbox; start_phase ship
+# ⚠ changes existing test: round 3 finding 2 (pen N2). The ship is a clean one (bound result): an archived run with
+# no result now goes to the dispatcher, which marks it unverified and says so once (test 24).
+sandbox; start_phase ship; bind_result ship
 ( cd "$T/repo" && git checkout -q main && rm -rf ".oss/dev/active/$FEATURE" )
 no_node_allow "archived feature's ship run, back on main: allowed, no marker, no node"
 cleanup
 
 # 10. Finding 1, repro 2: a new feature branch with no run of its own is not blocked by the last feature's run.
-sandbox; start_phase ship
+# ⚠ changes existing test: round 3 finding 2 (pen N2). The last feature's ship is finished (bound result); an
+# unfinished one is still checked on the new branch (test 23).
+sandbox; start_phase ship; bind_result ship
 ( cd "$T/repo" && git checkout -q -b feat/next/ideate && mkdir -p .oss/dev/active/next )
 no_node_allow "another feature's run on a new branch: allowed, no marker, no node"
 cleanup
@@ -301,7 +305,9 @@ cleanup
 sandbox; start_phase ideate s1 ""
 ( cd "$T/repo" && git checkout -q main && rm -rf ".oss/dev/active/$FEATURE" && mkdir -p .oss/dev/active/a .oss/dev/active/b )
 out=$(stop false); rc=$?
-if [[ $rc -eq 0 && -f "$(ledger_dir)/unverified/_no_feature/ideate" ]] \
+# ⚠ changes existing test: round 3 INFO. The no-feature marker is unfiled/<phase>, outside unverified/<feature>/
+# (needs the rebuilt dist/cli/stop-dispatch.cjs).
+if [[ $rc -eq 0 && -f "$(ledger_dir)/unfiled/ideate" ]] \
     && printf '%s' "$out" | jq -e '(.decision // "") != "block" and (.systemMessage | test("no_feature")) and (.systemMessage | test("ideate")) and (tostring | test("current") | not)' >/dev/null 2>&1 \
     && wait_file "$T/notified"; then
     pass "D30: empty-feature run and no feature resolves: allowed, unverified marker, systemMessage"
@@ -310,6 +316,75 @@ cleanup
 
 sandbox; start_phase ideate other-session ""
 no_node_allow "D30: another session's empty-feature run: allowed, no marker, no node"
+cleanup
+
+# --- R-257 ship fix round 3 ------------------------------------------------------------------------------------
+run_at() { tail -n 1 "$(ledger_dir)/run/$1" | sed -n 's/.*"startedAt":"\([^"]*\)".*/\1/p'; }
+
+# 21. Finding 1 (pen #8): plan started, then ideate started and assembled: the fast path does not let plan through.
+sandbox; start_phase plan; sleep 0.01; start_phase ideate; bind_result ideate
+node_runs "a finished later phase does not hide an unfinished earlier one: the dispatcher runs"
+cleanup
+
+# 22. Finding 1 (code-review LOW): another session's newer run of plan does not hide this session's run.
+sandbox; start_phase plan; start_phase plan other-session
+node_runs "another session's newer run does not hide this session's run: the dispatcher runs"
+cleanup
+
+# 23. Finding 2 (pen N2): build started on feat/<f>/build, then a new branch: the fast path keeps the run's feature.
+sandbox; start_phase build
+( cd "$T/repo" && git checkout -q -b feat/zzz/build )
+node_runs "a new branch after build started: the dispatcher runs for the run's feature"
+cleanup
+sandbox; start_phase build
+( cd "$T/repo" && mkdir -p .oss/dev/active/other && git checkout -q --detach )
+node_runs "a detached HEAD with two active folders: the dispatcher runs"
+cleanup
+
+# 24. Finding 2: the folder moved to completed/ with no result: the dispatcher runs once; once its marker holds this
+#     session's run, the fast path allows with no node (said once).
+sandbox; start_phase build
+( cd "$T/repo" && mkdir -p .oss/dev/completed && mv ".oss/dev/active/$FEATURE" .oss/dev/completed/ )
+node_runs "folder moved away with no result: the dispatcher runs"
+cleanup
+sandbox; start_phase build
+( cd "$T/repo" && mkdir -p .oss/dev/completed && mv ".oss/dev/active/$FEATURE" .oss/dev/completed/ )
+mkdir -m 700 -p "$(ledger_dir)/unverified/$FEATURE"; chmod 700 "$(ledger_dir)/unverified"
+(umask 077; printf '{"check":"stop-dispatch","errorClass":"feature_gone","session":"s1","startedAt":"%s"}\n' "$(run_at build)" > "$(ledger_dir)/unverified/$FEATURE/build")
+sandbox_plugin "$CLI_RECORDER"
+out=$(stop false CLAUDE_PLUGIN_ROOT="$T/plugin"); rc=$?
+if [[ $rc -eq 0 && -z "$out" && ! -e "$T/cli.calls" ]] && wait_file "$T/notified"; then pass "folder moved away, already said for this run: no node, nothing said"
+else fail "folder moved away, already said for this run: no node, nothing said" "rc=$rc out=$out cli=$(cat "$T/cli.calls" 2>/dev/null)"; fi
+cleanup
+
+# 25. INFO: the D30 notice is said once per run: with its unfiled marker holding this session's run, no node.
+sandbox; start_phase ideate s1 ""
+( cd "$T/repo" && git checkout -q main && rm -rf ".oss/dev/active/$FEATURE" && mkdir -p .oss/dev/active/a .oss/dev/active/b )
+mkdir -m 700 -p "$(ledger_dir)/unfiled"
+(umask 077; printf '{"check":"stop-dispatch","errorClass":"no_feature","session":"s1","startedAt":"%s"}\n' "$(run_at ideate)" > "$(ledger_dir)/unfiled/ideate")
+no_node_allow "D30 notice already said for this run: no node, nothing said"
+cleanup
+
+# 26. INFO: the shell's own fail-open for a run with no feature writes no marker, so it never says "marked unverified".
+sandbox; start_phase ideate s1 ""
+( cd "$T/repo" && git checkout -q main && rm -rf ".oss/dev/active/$FEATURE" && mkdir -p .oss/dev/active/a .oss/dev/active/b )
+sandbox_plugin 'setInterval(() => {}, 1000)'
+out=$(stop false OSS_STOP_DISPATCH_TEST_BOUND=1 CLAUDE_PLUGIN_ROOT="$T/plugin"); rc=$?
+if [[ $rc -eq 0 ]] && printf '%s' "$out" | jq -e '(.systemMessage | test("ideate")) and (.systemMessage | test("marked unverified") | not)' >/dev/null 2>&1; then
+    pass "no-feature fail-open: the message does not claim a marker"
+else fail "no-feature fail-open: the message does not claim a marker" "rc=$rc out=$out"; fi
+cleanup
+
+# 27. Security L2 / pen N3: fake, empty tools first on PATH never turn a block into an allow. Every external tool the
+#     hook and its bounded runner start comes from a fixed path, and node runs with a fixed PATH.
+sandbox; start_phase plan
+for tool in cat tail cut grep git mktemp rm dirname sort find date mkdir head tr sed; do
+    printf '#!/bin/sh\necho %s >> "%s"\nexit 0\n' "$tool" "$T/fake.calls" > "$T/bin/$tool"; chmod +x "$T/bin/$tool"
+done
+out=$(stop false); rc=$?
+if [[ $rc -eq 0 ]] && printf '%s' "$out" | jq -e '.decision == "block" and (.reason | test("plan"))' >/dev/null 2>&1; then
+    pass "fake empty tools first on PATH: the stop is still blocked (fake calls: $(tr '\n' ' ' < "$T/fake.calls" 2>/dev/null))"
+else fail "fake empty tools first on PATH: the stop is still blocked" "rc=$rc out=$out fake=$(tr '\n' ' ' < "$T/fake.calls" 2>/dev/null) err=$(cat "$T/stderr")"; fi
 cleanup
 
 echo; echo "Ran $RUN, failed $FAILED"

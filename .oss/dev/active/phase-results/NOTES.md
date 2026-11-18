@@ -123,3 +123,10 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 - The row is written from `$CLAUDE_CODE_SESSION_ID`, which equals the transcript UUID here. Claude Code documents the hook's `session_id` as the same transcript ID.
 - No local log has captured a real Stop stdin, so this is not proven. Verify it in round 2 integration against a real stop.
 - If they differ, Stop never blocks (fail-open). The complete and start gates still refuse a missing result.
+
+## Ship round 3 notes (2026-11-18)
+- **Off-branch Stop check:** when the run's feature differs from the branch's feature, Stop checks the result's hash and markers in-process but not its schema. Follow-up: `check --feature F` in the phase-result CLI.
+- **D24 rarely applies to captured rows:** D32 keeps a captured fail open until a pass on a changed tree, so D24's "fixed in the final round" rule only applies to model timeline lines (code review, info 6).
+- **The deadlineMs 0 seam:** with no time left, a capture records no headSha, so a no-snapshot pass from it can't clear a fail (D36).
+- **Fresh executables on macOS:** the first run of a newly written script can take 1.5-4 s (system scan). Tests that write shims and then check for leftover processes must run each shim once first.
+- **Unchanged:** the SessionStart pointer helpers in oss-safe-path.sh still use PATH's find, which is off the gate path. session-routing R2-6 counts those calls through a PATH shim.

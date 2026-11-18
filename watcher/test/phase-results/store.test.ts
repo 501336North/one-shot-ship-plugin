@@ -9,7 +9,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
-import { resolveRepo, writeResult, readResult, readValueFile } from '../../src/phase-results/store.js';
+import { resolveRepo, writeResult, readResult, readValueFile, readBack } from '../../src/phase-results/store.js';
 
 let root: string;
 let repo: string;
@@ -189,22 +189,54 @@ describe('writeResult: results/ swapped between check and rename (finding 9)', (
   });
 });
 
-describe('resolveRepo: bounded git (finding 9)', () => {
-  it('gives null within the 2 s bound when git hangs', () => {
+// ⚠ changes existing test: pen N3 (round 2, MEDIUM) — git runs from a fixed path, never PATH, so a hanging `git`
+//   planted on PATH is never run at all (it used to be run and bounded at 2 s).
+describe('resolveRepo: git from a fixed path, never PATH (pen N3)', () => {
+  // Behaviour: a program named git that the model planted early on PATH cannot decide which repo a result belongs to.
+  it('never runs a fake git planted on PATH', () => {
     const shims = path.join(root, 'shims');
+    const ran = path.join(root, 'fake-git-ran');
     fs.mkdirSync(shims);
-    fs.writeFileSync(path.join(shims, 'git'), '#!/bin/sh\nexec sleep 10\n');
+    fs.writeFileSync(path.join(shims, 'git'), `#!/bin/sh\ntouch '${ran}'\nexec sleep 10\n`);
     fs.chmodSync(path.join(shims, 'git'), 0o755);
     const saved = process.env.PATH;
     process.env.PATH = `${shims}:${saved ?? ''}`;
-    const t0 = Date.now();
     try {
-      expect(resolveRepo(repo)).toBeNull();
+      expect(resolveRepo(repo)).toBe(repo);
     } finally {
       process.env.PATH = saved;
     }
-    expect(Date.now() - t0).toBeLessThan(5000);
+    expect(fs.existsSync(ran)).toBe(false);
   }, 15_000);
+});
+
+/**
+ * Pen round 2 (MEDIUM): assemble hashed the bytes it read back, so a loop swapping files into results/ could get forged
+ * bytes bound. readBack accepts the read only when it is the very file writeResult created (same device and inode)
+ * holding exactly the bytes it wrote.
+ */
+describe('readBack: the bound bytes are the written bytes (round 2 race)', () => {
+  // Behaviour: a result swapped in between write and read-back is refused, never bound.
+  it('refuses a different file renamed over the written result', () => {
+    const written = writeResult(repo, 'feat-a', 'plan', { a: 1 });
+    const forged = path.join(resultsDir(), 'forged.tmp');
+    fs.writeFileSync(forged, JSON.stringify({ a: 1 }));
+    fs.renameSync(forged, path.join(resultsDir(), 'plan.json'));
+    expect(readBack(repo, 'feat-a', 'plan', written)).toEqual({ ok: false, error: 'result_changed' });
+  });
+
+  it('refuses the same file rewritten in place', () => {
+    const written = writeResult(repo, 'feat-a', 'plan', { a: 1 });
+    fs.writeFileSync(path.join(resultsDir(), 'plan.json'), JSON.stringify({ a: 2 }));
+    expect(readBack(repo, 'feat-a', 'plan', written)).toEqual({ ok: false, error: 'result_changed' });
+  });
+
+  it('accepts the untouched file and gives the written bytes', () => {
+    const written = writeResult(repo, 'feat-a', 'plan', { a: 1 });
+    const r = readBack(repo, 'feat-a', 'plan', written);
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.bytes.toString('utf-8')).toBe(JSON.stringify({ a: 1 }));
+  });
 });
 
 describe('readResult', () => {

@@ -148,5 +148,31 @@ n=$([[ -n "$f" ]] && jq -r '.tasks_completed' "$f" 2>/dev/null || echo "no-check
     || fail "a fake jq first on PATH does not change the task count (3)" "got $n"
 cleanup
 
+# 9. (round 3, pen MEDIUM N3) the count finds its hooks without PATH's tools: a fake dirname first on PATH that names
+#    a folder of forged gate scripts does not make a hand-written plan.json count (still 0).
+sandbox
+hand_plan
+mkdir -p "$T/evil"
+printf '#!/bin/sh\necho 42\n' > "$T/evil/jq"; chmod +x "$T/evil/jq"
+printf 'oss_phase_result_cli() { _OSS_PR_CLI=x; }; oss_plugin_node() { OSS_NODE=/usr/bin/true; }\noss_run_bounded_rc() { OSS_BOUNDED_OUT=x; return 0; }; oss_phase_gate_ok() { return 0; }; OSS_JQ_BIN="%s"; _OSS_PR_SUB=x\n' \
+    "$T/evil/jq" > "$T/evil/oss-phase-result.sh"
+printf 'oss_resolve_feature() { _OSS_FEATURE="%s"; }\n' "$FEATURE" > "$T/evil/oss-safe-path.sh"
+printf '#!/bin/sh\necho "%s"\n' "$T/evil" > "$T/bin/dirname"; chmod +x "$T/bin/dirname"
+envrun env PATH="$T/bin:$PATH" OSS_DEV_ROOT="$T/repo" "$SH" "$ROOT/hooks/checkpoint.sh" create "$FEATURE" cp >/dev/null 2>&1
+f=$(ls "$T/repo/.oss/dev/active/$FEATURE/checkpoints/"*.json 2>/dev/null | head -1)
+n=$([[ -n "$f" ]] && jq -r '.tasks_completed' "$f" 2>/dev/null || echo "no-checkpoint")
+[[ "$n" == 0 ]] && pass "a fake dirname first on PATH does not swap in forged gate scripts (0)" \
+    || fail "a fake dirname first on PATH does not swap in forged gate scripts (0)" "got $n"
+cleanup
+
+# 10. (round 3, pen MEDIUM N3) the plan check's node runs with PATH=/usr/bin:/bin, never the caller's.
+sandbox
+rm -f "$T/plugin/watcher/dist/cli/phase-result.cjs"
+printf 'require("fs").writeFileSync(%s, process.env.PATH || "")\n' "\"$T/cli.path\"" > "$T/plugin/watcher/dist/cli/phase-result.cjs"
+envrun env PATH="$T/bin:$PATH" OSS_DEV_ROOT="$T/repo" "$SH" "$ROOT/hooks/checkpoint.sh" create "$FEATURE" cp >/dev/null 2>&1
+[[ "$(cat "$T/cli.path" 2>/dev/null)" == /usr/bin:/bin ]] && pass "the plan check's node runs with PATH=/usr/bin:/bin" \
+    || fail "the plan check's node runs with PATH=/usr/bin:/bin" "got $(cat "$T/cli.path" 2>/dev/null)"
+cleanup
+
 echo; echo "Ran $RUN, failed $FAILED"
 [[ $FAILED -eq 0 ]]

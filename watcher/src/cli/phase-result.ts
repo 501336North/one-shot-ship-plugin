@@ -26,13 +26,23 @@ import { assembleBuild } from '../phase-results/assemble-build.js';
 import { sha256, type AssembleContext, type AssembleOutcome } from '../phase-results/assemble-common.js';
 import { assembleIdeate } from '../phase-results/assemble-ideate.js';
 import { assemblePlan } from '../phase-results/assemble-plan.js';
-import { assembleShip, hasOriginBranch, isLocalBranch } from '../phase-results/assemble-ship.js';
-import { LedgerError, ledgerKey, openLedger, type Ledger } from '../phase-results/ledger.js';
+import {
+  assembleShip,
+  branchTip,
+  hasOriginBranch,
+  isAncestor,
+  isLocalBranch,
+  originBranchTip,
+  originDefaultTip,
+  reflogCreatedAt,
+} from '../phase-results/assemble-ship.js';
+import { LedgerError, ledgerKey, openLedger, parseRunRow, type Ledger } from '../phase-results/ledger.js';
 import { loadPhaseSchema, PHASES, type Phase } from '../phase-results/schemas.js';
 import { shipArchivable } from '../phase-results/archivable.js';
 import { activeFeatures, resolveFeature } from '../phase-results/feature.js';
+import { gitBin } from '../phase-results/git-bin.js';
 import { gitEnv, gitOut } from '../phase-results/git.js';
-import { clearUnverifiedMarker, readResult, readValueFile, resolveRepo, writeResult } from '../phase-results/store.js';
+import { clearUnverifiedMarker, readBack, readResult, readValueFile, resolveRepo, writeResult } from '../phase-results/store.js';
 import { validate } from '../phase-results/validate.js';
 
 const USAGE =
@@ -97,7 +107,11 @@ function shipBase(repo: string, dir: string | null): string {
 function shipBaseConfig(repo: string): string {
   const env = gitEnv();
   env.GIT_CONFIG_NOSYSTEM = '1';
-  const r = spawnSync('git', ['config', '--local', '--get', 'oss.shipBase'], {
+  env.PATH = '/usr/bin:/bin';
+  // pen N3: the fixed-path git, never PATH; with none, '' (refused by assembleShip, never a silent main).
+  const git = gitBin();
+  if (git === '') return '';
+  const r = spawnSync(git, ['config', '--local', '--get', 'oss.shipBase'], {
     cwd: repo,
     env,
     encoding: 'utf-8',
@@ -108,6 +122,32 @@ function shipBaseConfig(repo: string): string {
   if (r.error === undefined && r.status === 1) return 'main';
   if (r.error === undefined && r.status === 0) return r.stdout.replace(/\n$/, '');
   return '';
+}
+
+/**
+ * D34 corrected (pen F9; user re-pick, ship round 3): a ship base is accepted when its tip is (a) an ancestor of, or
+ * equal to, origin's default branch tip (origin/HEAD, else origin/main), or (b) an ancestor of, or equal to,
+ * refs/remotes/origin/<base>, whose oldest reflog entry is at or before this ship run's start (no reflog: refused).
+ * Either way, neither the base nor the oss.shipBase-named ref may have been created (oldest reflog entry) after the
+ * run started; with no reflog, that check passes. Refuses `unsafe_base`. A name that is not a local branch is left to
+ * assembleShip's ref checks (diff_unavailable).
+ */
+function checkShipBase(repo: string, base: string, configured: string, startedAt: string): void {
+  if (!isLocalBranch(repo, base)) return;
+  const start = Date.parse(startedAt);
+  const before = (created: number | null): boolean => created !== null && created <= start;
+  const tip = branchTip(repo, base);
+  if (tip === null) throw new Refusal('unsafe_base', 'base');
+  const origin = originDefaultTip(repo);
+  const onDefault = origin !== null && isAncestor(repo, tip, origin);
+  const remote = onDefault ? null : originBranchTip(repo, base);
+  const onRemote = remote !== null && isAncestor(repo, tip, remote) && before(reflogCreatedAt(repo, `refs/remotes/origin/${base}`));
+  if (!onDefault && !onRemote) throw new Refusal('unsafe_base', 'base');
+  for (const name of new Set([base, configured])) {
+    if (!isLocalBranch(repo, name)) continue;
+    const created = reflogCreatedAt(repo, `refs/heads/${name}`);
+    if (created !== null && !before(created)) throw new Refusal('unsafe_base', 'base');
+  }
 }
 
 /** The plugin root this bundle sits in: <root>/watcher/dist/cli/phase-result.cjs. */
@@ -144,8 +184,12 @@ function runAssembler(phase: Phase, ctx: AssembleContext, base?: string): Assemb
       return assemblePlan(ctx);
     case 'build':
       return assembleBuild(ctx);
-    case 'ship':
-      return assembleShip(ctx, { base: base ?? shipBase(ctx.repo, ctx.valueDir) });
+    case 'ship': {
+      if (base !== undefined) return assembleShip(ctx, { base });
+      const chosen = shipBase(ctx.repo, ctx.valueDir);
+      checkShipBase(ctx.repo, chosen, shipBaseConfig(ctx.repo), ctx.startedAt);
+      return assembleShip(ctx, { base: chosen });
+    }
   }
 }
 
@@ -154,9 +198,31 @@ function checkSchema(phase: Phase, value: unknown): void {
   if (!v.ok) throw new Refusal(`invalid_result (${v.rule})`, v.path);
 }
 
+const PREVIOUS: Readonly<Partial<Record<Phase, Phase>>> = { plan: 'ideate', build: 'plan', ship: 'build' };
+
+/**
+ * Pen N1: oss-notify's start gate (D16/D17) is skipped for a run started where no feature resolved, so assemble re-applies
+ * it when the run row's feature is "": the resolved feature needs a valid previous-phase result (check), unless it is
+ * legacy (D17: no results/ entry in the repo and no ledger results/<feature> entry). Refuses `no_prev_result`.
+ */
+function startGate(repo: string, feature: string, phase: Phase, ledger: Ledger): void {
+  const prev = PREVIOUS[phase];
+  if (prev === undefined || parseRunRow(ledger.lastRow(`run/${phase}`))?.feature !== '') return;
+  const exists = (p: string): boolean => fs.lstatSync(p, { throwIfNoEntry: false }) !== undefined;
+  const legacy = !exists(path.join(repo, '.oss', 'dev', 'active', feature, 'results'))
+    && !exists(path.join(ledger.dir, 'results', feature));
+  if (legacy) return;
+  try {
+    check(repo, feature, prev);
+  } catch {
+    throw new Refusal('no_prev_result', prev);
+  }
+}
+
 function assemble(repo: string, feature: string, phase: Phase): Record<string, unknown> {
   const ledger = openLedger(repo);
   const startedAt = runStartedAt(ledger, phase);
+  startGate(repo, feature, phase, ledger);
   const ctx: AssembleContext = {
     repo,
     feature,
@@ -168,11 +234,12 @@ function assemble(repo: string, feature: string, phase: Phase): Record<string, u
   const outcome = runAssembler(phase, ctx);
   if (!outcome.ok) throw new Refusal(outcome.error, outcome.detail ?? phase);
   checkSchema(phase, outcome.result);
-  writeResult(repo, feature, phase, outcome.result);
-  const read = readResult(repo, feature, phase);
+  // Round 2 race: bind the bytes written, and only when the file read back is that very file holding those bytes.
+  const written = writeResult(repo, feature, phase, outcome.result);
+  const read = readBack(repo, feature, phase, written);
   if (!read.ok) throw new Refusal(read.error, `results/${phase}.json`);
   ledger.appendRow(`results/${feature}/${phase}`, {
-    sha256: sha256(read.bytes),
+    sha256: sha256(written.bytes),
     feature,
     phase,
     startedAt,
@@ -218,6 +285,17 @@ function reassemble(repo: string, feature: string, phase: Phase, stored: Record<
   }
 }
 
+/**
+ * The code-owned evidence fields check re-derives, per phase (round 2 security): a fixed list, never the stored
+ * `sources`, so a result whose `sources` was emptied or relabelled is still compared.
+ */
+const CODE_FIELDS: Readonly<Record<Phase, readonly string[]>> = {
+  ideate: ['decisions', 'decisionsRecorded', 'designCommitted'],
+  plan: [],
+  build: ['testRuns', 'evidenceTrust'],
+  ship: ['diff', 'gateEvidence', 'uncapturedGates', 'overrides', 'blockers', 'verdict'],
+};
+
 function check(repo: string, feature: string, phase: Phase): Record<string, unknown> {
   const ledger = openLedger(repo);
   const marker = path.join(repo, '.oss', 'dev', 'active', feature, 'results', `${phase}.unverified.json`);
@@ -245,9 +323,7 @@ function check(repo: string, feature: string, phase: Phase): Record<string, unkn
 
   const fresh = reassemble(repo, feature, phase, stored);
   if (!fresh.ok) throw new Refusal('evidence_mismatch', fresh.error);
-  const sources = (stored.sources ?? {}) as Record<string, unknown>;
-  for (const [field, source] of Object.entries(sources)) {
-    if (source !== 'code') continue;
+  for (const field of CODE_FIELDS[phase]) {
     if (JSON.stringify(stored[field]) !== JSON.stringify(fresh.result[field])) {
       throw new Refusal('evidence_mismatch', field);
     }
@@ -320,7 +396,9 @@ export function main(argv: string[]): number {
     stored = check(repo, feature, args.phase);
   });
   if (!v.ok) return refuse(args, v.id, v.field);
-  process.stdout.write(`${JSON.stringify({ verification: 'verified', ...gateLabel(args.phase, stored) })}\n`);
+  // D35: check ship also prints the verdict, so complete refuses a verified but blocked ship.
+  const verdict = args.phase === 'ship' ? { verdict: stored.verdict } : {};
+  process.stdout.write(`${JSON.stringify({ verification: 'verified', ...gateLabel(args.phase, stored), ...verdict })}\n`);
   return 0;
 }
 

@@ -35,7 +35,7 @@ __export(phase_result_exports, {
 });
 module.exports = __toCommonJS(phase_result_exports);
 var import_node_child_process4 = require("node:child_process");
-var fs9 = __toESM(require("node:fs"), 1);
+var fs10 = __toESM(require("node:fs"), 1);
 var os2 = __toESM(require("node:os"), 1);
 var path9 = __toESM(require("node:path"), 1);
 
@@ -169,13 +169,28 @@ var NUL = String.fromCharCode(0);
 var NUL_RUN = new RegExp(`${NUL}+`, "g");
 
 // src/phase-results/store.ts
-var fs2 = __toESM(require("fs"), 1);
+var fs3 = __toESM(require("fs"), 1);
 var path2 = __toESM(require("path"), 1);
 var crypto = __toESM(require("crypto"), 1);
 var import_child_process = require("child_process");
 
+// src/phase-results/git-bin.ts
+var fs = __toESM(require("node:fs"), 1);
+var CANDIDATES = ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git", "/bin/git"];
+function gitBin() {
+  for (const p of CANDIDATES) {
+    try {
+      if (!fs.statSync(p).isFile()) continue;
+      fs.accessSync(p, fs.constants.X_OK);
+      return p;
+    } catch {
+    }
+  }
+  return "";
+}
+
 // src/phase-results/schemas.ts
-var fs = __toESM(require("fs"), 1);
+var fs2 = __toESM(require("fs"), 1);
 var path = __toESM(require("path"), 1);
 
 // src/phase-results/validate.ts
@@ -369,13 +384,13 @@ function validate(schema, value) {
 // src/phase-results/schemas.ts
 var PHASES = ["ideate", "plan", "build", "ship"];
 function readSchemaFile(dir, name) {
-  const file = fs.realpathSync(path.join(dir, `${name}.schema.json`));
+  const file = fs2.realpathSync(path.join(dir, `${name}.schema.json`));
   if (path.dirname(file) !== dir) throw new Error(`unsafe_path: ${name}.schema.json`);
-  return JSON.parse(fs.readFileSync(file, "utf8"));
+  return JSON.parse(fs2.readFileSync(file, "utf8"));
 }
 function loadPhaseSchema(phase, pluginRoot2) {
   if (!PHASES.includes(phase)) throw new Error(`unsafe_path: phase ${String(phase)}`);
-  const dir = fs.realpathSync(path.join(pluginRoot2, "schemas", "phase-results"));
+  const dir = fs2.realpathSync(path.join(pluginRoot2, "schemas", "phase-results"));
   const common = loadSchema(readSchemaFile(dir, "common"));
   return loadSchema(readSchemaFile(dir, phase), { "common.schema.json": common });
 }
@@ -385,19 +400,22 @@ var FEATURE_RE = /^[A-Za-z0-9._-]+$/;
 var RESULT_CAP = 256 * 1024;
 var VALUE_CAP = 64 * 1024;
 var VALUE_MAX_AGE_MS = 10 * 60 * 1e3;
-var { O_RDONLY, O_WRONLY, O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK } = fs2.constants;
+var { O_RDONLY, O_WRONLY, O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK } = fs3.constants;
 function resolveRepo(cwd) {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
+  env.PATH = "/usr/bin:/bin";
+  const git = gitBin();
+  if (git === "") return null;
   try {
-    const top = (0, import_child_process.execFileSync)("git", ["rev-parse", "--show-toplevel"], {
+    const top = (0, import_child_process.execFileSync)(git, ["rev-parse", "--show-toplevel"], {
       cwd,
       env,
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 2e3
     }).trim();
-    return top === "" ? null : fs2.realpathSync(top);
+    return top === "" ? null : fs3.realpathSync(top);
   } catch {
     return null;
   }
@@ -412,12 +430,12 @@ function resultsDir(repo, feature, create) {
     cur = path2.join(cur, comp);
     let st;
     try {
-      st = fs2.lstatSync(cur);
+      st = fs3.lstatSync(cur);
     } catch (e) {
       if (e.code !== "ENOENT") throw e;
       if (!create) return null;
-      fs2.mkdirSync(cur, { mode: 448 });
-      st = fs2.lstatSync(cur);
+      fs3.mkdirSync(cur, { mode: 448 });
+      st = fs3.lstatSync(cur);
     }
     if (st.isSymbolicLink() || !st.isDirectory()) throw new Error(`unsafe_path: ${comp}`);
   }
@@ -427,7 +445,7 @@ function readCapped(fd, cap) {
   const buf = Buffer.alloc(cap + 1);
   let n = 0;
   while (n < buf.length) {
-    const got = fs2.readSync(fd, buf, n, buf.length - n, null);
+    const got = fs3.readSync(fd, buf, n, buf.length - n, null);
     if (got === 0) break;
     n += got;
   }
@@ -435,15 +453,15 @@ function readCapped(fd, cap) {
 }
 function sameDir(p, realDir, dirStat) {
   try {
-    const st = fs2.lstatSync(p);
-    return !st.isSymbolicLink() && st.isDirectory() && st.dev === dirStat.dev && st.ino === dirStat.ino && fs2.realpathSync(p) === realDir;
+    const st = fs3.lstatSync(p);
+    return !st.isSymbolicLink() && st.isDirectory() && st.dev === dirStat.dev && st.ino === dirStat.ino && fs3.realpathSync(p) === realDir;
   } catch {
     return false;
   }
 }
 function isOurFile(p, ours) {
   try {
-    const st = fs2.lstatSync(p);
+    const st = fs3.lstatSync(p);
     return st.isFile() && st.dev === ours.dev && st.ino === ours.ino;
   } catch {
     return false;
@@ -454,51 +472,60 @@ function writeResult(repo, feature, phase, obj, hooks = {}) {
   const data = JSON.stringify(obj);
   if (Buffer.byteLength(data) > RESULT_CAP) throw new Error("too_large: result over 256 KB");
   const dir = resultsDir(repo, feature, true);
-  const realDir = fs2.realpathSync(dir);
-  const dirStat = fs2.lstatSync(dir);
+  const realDir = fs3.realpathSync(dir);
+  const dirStat = fs3.lstatSync(dir);
   const target = path2.join(dir, `${phase}.json`);
   try {
-    if (fs2.lstatSync(target).isSymbolicLink()) throw new Error(`unsafe_path: ${phase}.json`);
+    if (fs3.lstatSync(target).isSymbolicLink()) throw new Error(`unsafe_path: ${phase}.json`);
   } catch (e) {
     if (e.code !== "ENOENT") throw e;
   }
   const tmp = path2.join(dir, `.${phase}.${crypto.randomBytes(8).toString("hex")}.tmp`);
-  const fd = fs2.openSync(tmp, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, 384);
+  const fd = fs3.openSync(tmp, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, 384);
   let ours;
   try {
-    fs2.writeSync(fd, data);
-    fs2.fsyncSync(fd);
-    ours = fs2.fstatSync(fd);
+    fs3.writeSync(fd, data);
+    fs3.fsyncSync(fd);
+    ours = fs3.fstatSync(fd);
   } finally {
-    fs2.closeSync(fd);
+    fs3.closeSync(fd);
   }
   try {
     hooks.beforeRename?.(tmp);
   } catch (e) {
-    if (isOurFile(tmp, ours)) fs2.unlinkSync(tmp);
+    if (isOurFile(tmp, ours)) fs3.unlinkSync(tmp);
     throw e;
   }
   if (!sameDir(path2.dirname(tmp), realDir, dirStat) || !sameDir(path2.dirname(target), realDir, dirStat) || !isOurFile(tmp, ours)) {
     throw new Error("unsafe_path: results/ moved during write");
   }
   try {
-    fs2.renameSync(tmp, target);
+    fs3.renameSync(tmp, target);
   } catch (e) {
-    if (isOurFile(tmp, ours)) fs2.unlinkSync(tmp);
+    if (isOurFile(tmp, ours)) fs3.unlinkSync(tmp);
     throw e;
   }
-  const realTarget = fs2.realpathSync(target);
+  const realTarget = fs3.realpathSync(target);
   if (path2.dirname(realTarget) !== realDir) {
-    if (isOurFile(realTarget, ours)) fs2.unlinkSync(realTarget);
+    if (isOurFile(realTarget, ours)) fs3.unlinkSync(realTarget);
     throw new Error("unsafe_path: results/ moved during write");
   }
+  return { dev: ours.dev, ino: ours.ino, bytes: Buffer.from(data) };
+}
+function readBack(repo, feature, phase, written) {
+  const read = readResult(repo, feature, phase);
+  if (!read.ok) return read;
+  if (read.dev !== written.dev || read.ino !== written.ino || !read.bytes.equals(written.bytes)) {
+    return { ok: false, error: "result_changed" };
+  }
+  return { ...read, bytes: written.bytes };
 }
 function clearUnverifiedMarker(repo, feature, phase) {
   checkNames(feature, phase);
   const dir = resultsDir(repo, feature, false);
   if (dir === null) return;
   try {
-    fs2.unlinkSync(path2.join(dir, `${phase}.unverified.json`));
+    fs3.unlinkSync(path2.join(dir, `${phase}.unverified.json`));
   } catch (e) {
     if (e.code !== "ENOENT") throw e;
   }
@@ -514,38 +541,38 @@ function readResult(repo, feature, phase) {
   if (dir === null) return { ok: false, error: "missing" };
   let fd;
   try {
-    fd = fs2.openSync(path2.join(dir, `${phase}.json`), O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+    fd = fs3.openSync(path2.join(dir, `${phase}.json`), O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
   } catch (e) {
     return { ok: false, error: e.code === "ENOENT" ? "missing" : "unsafe_path" };
   }
   try {
-    const st = fs2.fstatSync(fd);
+    const st = fs3.fstatSync(fd);
     if (!st.isFile() || st.nlink !== 1 || st.uid !== process.getuid?.()) return { ok: false, error: "unsafe_path" };
     const bytes = readCapped(fd, RESULT_CAP);
     if (bytes.length > RESULT_CAP) return { ok: false, error: "too_large" };
     try {
-      return { ok: true, bytes, value: JSON.parse(bytes.toString("utf-8")) };
+      return { ok: true, bytes, value: JSON.parse(bytes.toString("utf-8")), dev: st.dev, ino: st.ino };
     } catch {
       return { ok: false, error: "invalid_json" };
     }
   } finally {
-    fs2.closeSync(fd);
+    fs3.closeSync(fd);
   }
 }
 function readValueFile(dir, name) {
   let fd;
   try {
-    fd = fs2.openSync(path2.join(dir, name), O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+    fd = fs3.openSync(path2.join(dir, name), O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
   } catch {
     return null;
   }
   try {
-    const st = fs2.fstatSync(fd);
+    const st = fs3.fstatSync(fd);
     if (!st.isFile() || Date.now() - st.mtimeMs > VALUE_MAX_AGE_MS) return null;
     const bytes = readCapped(fd, VALUE_CAP);
     return bytes.length > VALUE_CAP ? null : bytes.toString("utf-8");
   } finally {
-    fs2.closeSync(fd);
+    fs3.closeSync(fd);
   }
 }
 
@@ -676,13 +703,13 @@ function assembleBuild(ctx, opts = {}) {
 }
 
 // src/phase-results/assemble-ideate.ts
-var fs5 = __toESM(require("node:fs"), 1);
+var fs6 = __toESM(require("node:fs"), 1);
 var path5 = __toESM(require("node:path"), 1);
 
 // src/phase-results/ledger.ts
 var import_node_child_process = require("node:child_process");
 var import_node_crypto2 = require("node:crypto");
-var fs4 = __toESM(require("node:fs"), 1);
+var fs5 = __toESM(require("node:fs"), 1);
 var os = __toESM(require("node:os"), 1);
 var path4 = __toESM(require("node:path"), 1);
 var LedgerError = class extends Error {
@@ -693,17 +720,35 @@ var LedgerError = class extends Error {
     this.code = code;
   }
 };
+function parseRunRow(row) {
+  if (row === null) return null;
+  const { startedAt, session, headSha: headSha2, feature } = row;
+  if (typeof startedAt !== "string" || typeof session !== "string" || typeof feature !== "string") return null;
+  return { startedAt, session, headSha: typeof headSha2 === "string" ? headSha2 : "", feature };
+}
 var MAX_ROW_BYTES = 512;
 var SMALL_CAP = 1024 * 1024;
 var LARGE_CAP = 4 * 1024 * 1024;
 var SEGMENT = /^[A-Za-z0-9._-]+$/;
 var TAIL_BYTES = 4096;
 var GIT_TIMEOUT_MS = 2e3;
+function gitBin2() {
+  for (const p of ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git", "/bin/git"]) {
+    try {
+      if (!fs5.statSync(p).isFile()) continue;
+      fs5.accessSync(p, fs5.constants.X_OK);
+      return p;
+    } catch {
+    }
+  }
+  return "";
+}
 function gitOut(cwd, args) {
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith("GIT_")) delete env[k];
+  env.PATH = "/usr/bin:/bin";
   try {
-    const out = (0, import_node_child_process.execFileSync)("git", args, {
+    const out = (0, import_node_child_process.execFileSync)(gitBin2(), args, {
       cwd,
       env,
       encoding: "utf8",
@@ -719,7 +764,7 @@ function gitOut(cwd, args) {
 function ledgerKey(cwd) {
   let physical;
   try {
-    physical = fs4.realpathSync(cwd);
+    physical = fs5.realpathSync(cwd);
   } catch {
     return null;
   }
@@ -766,22 +811,22 @@ function openLedger(cwd, opts = {}) {
   const root = path4.join(os.homedir(), ".oss", "ledger");
   const keyDir = path4.join(root, key2);
   function ensureDirs(dirParts, create) {
-    if (create) fs4.mkdirSync(path4.dirname(root), { recursive: true, mode: 448 });
+    if (create) fs5.mkdirSync(path4.dirname(root), { recursive: true, mode: 448 });
     let cur = root;
     for (const seg of [null, key2, ...dirParts]) {
       if (seg !== null) cur = path4.join(cur, seg);
       let st;
       try {
-        st = fs4.lstatSync(cur);
+        st = fs5.lstatSync(cur);
       } catch (e) {
         if (!isErrno(e, "ENOENT")) throw e;
         if (!create) return false;
         try {
-          fs4.mkdirSync(cur, { mode: 448 });
+          fs5.mkdirSync(cur, { mode: 448 });
         } catch (me) {
           if (!isErrno(me, "EEXIST")) throw me;
         }
-        st = fs4.lstatSync(cur);
+        st = fs5.lstatSync(cur);
       }
       checkStat(st, uid, true, cur);
     }
@@ -794,40 +839,40 @@ function openLedger(cwd, opts = {}) {
     const p = filePath(parts);
     let fd;
     try {
-      fd = fs4.openSync(p, flags | fs4.constants.O_NOFOLLOW, 384);
+      fd = fs5.openSync(p, flags | fs5.constants.O_NOFOLLOW, 384);
     } catch (e) {
       if (isErrno(e, "ENOENT")) return null;
       if (isErrno(e, "ELOOP") || isErrno(e, "EMLINK")) throw new LedgerError("unsafe_path", p);
       throw e;
     }
     try {
-      checkStat(fs4.fstatSync(fd), uid, false, p);
+      checkStat(fs5.fstatSync(fd), uid, false, p);
     } catch (e) {
-      fs4.closeSync(fd);
+      fs5.closeSync(fd);
       throw e;
     }
     return fd;
   }
   function readText(parts) {
     if (!ensureDirs(parts.slice(0, -1), false)) return null;
-    const fd = openChecked(parts, fs4.constants.O_RDONLY);
+    const fd = openChecked(parts, fs5.constants.O_RDONLY);
     if (fd === null) return null;
     try {
-      const size = fs4.fstatSync(fd).size;
+      const size = fs5.fstatSync(fd).size;
       if (size > capFor(parts)) throw new LedgerError("ledger_too_large", filePath(parts));
-      return fs4.readFileSync(fd, "utf8");
+      return fs5.readFileSync(fd, "utf8");
     } finally {
-      fs4.closeSync(fd);
+      fs5.closeSync(fd);
     }
   }
   function writeFile(parts, data, flags) {
     ensureDirs(parts.slice(0, -1), true);
-    const fd = openChecked(parts, fs4.constants.O_WRONLY | fs4.constants.O_CREAT | flags);
+    const fd = openChecked(parts, fs5.constants.O_WRONLY | fs5.constants.O_CREAT | flags);
     if (fd === null) throw new LedgerError("unsafe_path", filePath(parts));
     try {
-      fs4.writeSync(fd, data);
+      fs5.writeSync(fd, data);
     } finally {
-      fs4.closeSync(fd);
+      fs5.closeSync(fd);
     }
   }
   const readRows = (relPath) => {
@@ -847,19 +892,19 @@ function openLedger(cwd, opts = {}) {
       const line = `${JSON.stringify(row)}
 `;
       if (Buffer.byteLength(line) >= MAX_ROW_BYTES) throw new LedgerError("too_large", relPath);
-      writeFile(parts, line, fs4.constants.O_APPEND);
+      writeFile(parts, line, fs5.constants.O_APPEND);
     },
     readRows,
     lastRow(relPath) {
       const parts = splitRel(relPath);
       if (!ensureDirs(parts.slice(0, -1), false)) return null;
-      const fd = openChecked(parts, fs4.constants.O_RDONLY);
+      const fd = openChecked(parts, fs5.constants.O_RDONLY);
       if (fd === null) return null;
       try {
-        const size = fs4.fstatSync(fd).size;
+        const size = fs5.fstatSync(fd).size;
         const len = Math.min(size, TAIL_BYTES);
         const buf = Buffer.alloc(len);
-        fs4.readSync(fd, buf, 0, len, size - len);
+        fs5.readSync(fd, buf, 0, len, size - len);
         const lines = buf.toString("utf8").split("\n");
         for (let i = lines.length - 1; i >= (len < size ? 1 : 0); i--) {
           const row = parseObject(lines[i]);
@@ -867,12 +912,44 @@ function openLedger(cwd, opts = {}) {
         }
         return null;
       } finally {
-        fs4.closeSync(fd);
+        fs5.closeSync(fd);
+      }
+    },
+    scanBack(relPath, visit) {
+      const parts = splitRel(relPath);
+      if (!ensureDirs(parts.slice(0, -1), false)) return;
+      const fd = openChecked(parts, fs5.constants.O_RDONLY);
+      if (fd === null) return;
+      try {
+        const size = fs5.fstatSync(fd).size;
+        const floor = Math.max(0, size - capFor(parts));
+        let end = size;
+        let rest = Buffer.alloc(0);
+        while (end > floor) {
+          const start = Math.max(floor, end - TAIL_BYTES);
+          const buf = Buffer.alloc(end - start);
+          fs5.readSync(fd, buf, 0, buf.length, start);
+          const all = Buffer.concat([buf, rest]);
+          end = start;
+          const cut = start > 0 ? all.indexOf(10) : -1;
+          if (start > 0 && cut < 0) {
+            rest = all;
+            continue;
+          }
+          rest = cut < 0 ? Buffer.alloc(0) : all.subarray(0, cut);
+          const lines = all.subarray(cut + 1).toString("utf8").split("\n");
+          for (let i = lines.length - 1; i >= 0; i--) {
+            const row = parseObject(lines[i]);
+            if (row !== null && !visit(row)) return;
+          }
+        }
+      } finally {
+        fs5.closeSync(fd);
       }
     },
     writeMarker(relPath, obj) {
       writeFile(splitRel(relPath), `${JSON.stringify(obj)}
-`, fs4.constants.O_TRUNC);
+`, fs5.constants.O_TRUNC);
     },
     readMarker(relPath) {
       const text = readText(splitRel(relPath));
@@ -882,7 +959,7 @@ function openLedger(cwd, opts = {}) {
       const parts = splitRel(relPath);
       if (!ensureDirs(parts.slice(0, -1), false)) return;
       try {
-        fs4.unlinkSync(filePath(parts));
+        fs5.unlinkSync(filePath(parts));
       } catch (e) {
         if (!isErrno(e, "ENOENT")) throw e;
       }
@@ -890,9 +967,9 @@ function openLedger(cwd, opts = {}) {
     hasMarker(relPath) {
       const parts = splitRel(relPath);
       if (!ensureDirs(parts.slice(0, -1), false)) return false;
-      const fd = openChecked(parts, fs4.constants.O_RDONLY);
+      const fd = openChecked(parts, fs5.constants.O_RDONLY);
       if (fd === null) return false;
-      fs4.closeSync(fd);
+      fs5.closeSync(fd);
       return true;
     }
   };
@@ -906,19 +983,19 @@ var KIND_CAP = 64;
 function readRepoFile(p) {
   let fd;
   try {
-    fd = fs5.openSync(p, fs5.constants.O_RDONLY | fs5.constants.O_NOFOLLOW | fs5.constants.O_NONBLOCK);
+    fd = fs6.openSync(p, fs6.constants.O_RDONLY | fs6.constants.O_NOFOLLOW | fs6.constants.O_NONBLOCK);
   } catch (e) {
     const code = e.code;
     if (code === "ENOENT") return { ok: true, text: null };
     return { ok: false, error: "unsafe_path" };
   }
   try {
-    const st = fs5.fstatSync(fd);
+    const st = fs6.fstatSync(fd);
     if (!st.isFile()) return { ok: false, error: "unsafe_path" };
     if (st.size > FILE_CAP) return { ok: false, error: "too_large" };
-    return { ok: true, text: fs5.readFileSync(fd, "utf8") };
+    return { ok: true, text: fs6.readFileSync(fd, "utf8") };
   } finally {
-    fs5.closeSync(fd);
+    fs6.closeSync(fd);
   }
 }
 function clipText(v, cap) {
@@ -1013,7 +1090,7 @@ function assemblePlan(ctx) {
 
 // src/phase-results/assemble-ship.ts
 var import_node_child_process3 = require("node:child_process");
-var fs6 = __toESM(require("node:fs"), 1);
+var fs7 = __toESM(require("node:fs"), 1);
 var path6 = __toESM(require("node:path"), 1);
 
 // src/phase-results/git.ts
@@ -1025,9 +1102,10 @@ function gitEnv() {
 }
 function gitOut2(cwd, args) {
   try {
-    const out = (0, import_node_child_process2.execFileSync)("git", args, {
+    const out = (0, import_node_child_process2.execFileSync)(gitBin(), args, {
       cwd,
-      env: gitEnv(),
+      // git runs helpers (ssh, pager, credential and fsmonitor hooks) from PATH: never the caller's (D33).
+      env: { ...gitEnv(), PATH: "/usr/bin:/bin" },
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 2e3
@@ -1047,7 +1125,10 @@ var GitError = class extends Error {
 function runGit(repo, args, okCodes = [0], raw = false) {
   const env = gitEnv();
   env.GIT_CONFIG_NOSYSTEM = "1";
-  const r = (0, import_node_child_process3.spawnSync)("git", ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", ...args], {
+  env.PATH = "/usr/bin:/bin";
+  const git = gitBin();
+  if (git === "") throw new GitError("no git");
+  const r = (0, import_node_child_process3.spawnSync)(git, ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", ...args], {
     cwd: repo,
     env,
     encoding: "utf-8",
@@ -1068,12 +1149,55 @@ function isLocalBranch(repo, name) {
     return false;
   }
 }
+function originBranchTip(repo, name) {
+  try {
+    return runGit(repo, ["rev-parse", "--verify", "--quiet", "--end-of-options", `refs/remotes/origin/${name}^{commit}`]).out;
+  } catch {
+    return null;
+  }
+}
 function hasOriginBranch(repo, name) {
   try {
     runGit(repo, ["rev-parse", "--verify", "--quiet", "--end-of-options", `refs/remotes/origin/${name}^{commit}`]);
     return true;
   } catch {
     return false;
+  }
+}
+function branchTip(repo, name) {
+  try {
+    return runGit(repo, ["rev-parse", "--verify", "--quiet", "--end-of-options", `refs/heads/${name}^{commit}`]).out;
+  } catch {
+    return null;
+  }
+}
+function originDefaultTip(repo) {
+  let ref = "refs/remotes/origin/main";
+  try {
+    const sym = runGit(repo, ["symbolic-ref", "-q", "refs/remotes/origin/HEAD"]).out;
+    if (sym.startsWith("refs/remotes/origin/") && sym !== "refs/remotes/origin/HEAD") ref = sym;
+  } catch {
+  }
+  try {
+    return runGit(repo, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`]).out;
+  } catch {
+    return null;
+  }
+}
+function isAncestor(repo, a, b) {
+  try {
+    return runGit(repo, ["merge-base", "--is-ancestor", "--end-of-options", a, b], [0, 1]).status === 0;
+  } catch {
+    return false;
+  }
+}
+function reflogCreatedAt(repo, ref) {
+  try {
+    const lines = runGit(repo, ["reflog", "show", "--date=unix", "--format=%gd", ref]).out.split("\n");
+    const m = /@\{(\d+)\}$/.exec(lines[lines.length - 1] ?? "");
+    return m === null ? null : Number(m[1]) * 1e3;
+  } catch {
+    return null;
   }
 }
 function readDiff(repo, base) {
@@ -1099,16 +1223,16 @@ function readDiff(repo, base) {
 function repoLines(file) {
   let fd;
   try {
-    fd = fs6.openSync(file, fs6.constants.O_RDONLY | fs6.constants.O_NOFOLLOW | fs6.constants.O_NONBLOCK);
+    fd = fs7.openSync(file, fs7.constants.O_RDONLY | fs7.constants.O_NOFOLLOW | fs7.constants.O_NONBLOCK);
   } catch {
     return [];
   }
   try {
-    const st = fs6.fstatSync(fd);
+    const st = fs7.fstatSync(fd);
     if (!st.isFile() || st.size > REPO_FILE_CAP) return [];
-    return fs6.readFileSync(fd, "utf-8").split("\n").filter((l) => l !== "");
+    return fs7.readFileSync(fd, "utf-8").split("\n").filter((l) => l !== "");
   } finally {
-    fs6.closeSync(fd);
+    fs7.closeSync(fd);
   }
 }
 function counts(v) {
@@ -1129,10 +1253,19 @@ function agentRow(row) {
     findings[s] = n;
   }
   const hex = (v) => typeof v === "string" && TREE_RE.test(v) ? v : null;
-  return { gate: row.gate, verdict: row.verdict, findings, at, tree: hex(row.tree), trackedTree: hex(row.trackedTree) };
+  return {
+    gate: row.gate,
+    verdict: row.verdict,
+    findings,
+    at,
+    tree: hex(row.tree),
+    trackedTree: hex(row.trackedTree),
+    headSha: hex(row.headSha),
+    startMatch: row.start === "match"
+  };
 }
 var TREE_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
-function reviewedIsShipped(repo, tree, trackedTree) {
+function reviewedIsShipped(repo, tree, trackedTree, reviewHead) {
   try {
     const status = runGit(
       repo,
@@ -1148,13 +1281,9 @@ function reviewedIsShipped(repo, tree, trackedTree) {
     }
     if (status.length % 2 !== 0) return false;
     if (deleted.length === 0) return true;
-    const tracked = runGit(
-      repo,
-      ["--literal-pathspecs", "ls-tree", "-r", "--name-only", "-z", "--end-of-options", trackedTree, "--", ...deleted],
-      [0],
-      true
-    ).out;
-    return tracked === "";
+    if (reviewHead === null) return false;
+    const listed = (treeish) => runGit(repo, ["--literal-pathspecs", "ls-tree", "-r", "--name-only", "-z", "--end-of-options", treeish, "--", ...deleted], [0], true).out;
+    return listed(trackedTree) === "" && listed(reviewHead) === "";
   } catch {
     return false;
   }
@@ -1195,33 +1324,41 @@ function ruleVerdict(gate, row, fixed) {
   if (counted.some((s) => row.findings[s] > 0)) return "pass";
   return row.verdict;
 }
-function roundAt(lines, at) {
-  return Math.max(0, ...lines.filter((l) => l.at <= at).map((l) => l.round));
-}
+var NOT_RE_REVIEWED = "captured fail, not re-reviewed";
 function applyAgentVerdicts(tl, verdictRows, runStart, repo) {
   const byGate = /* @__PURE__ */ new Map();
   const shipped = /* @__PURE__ */ new Map();
   for (const raw of verdictRows) {
     const row = agentRow(raw);
-    if (row === null || !(row.at >= runStart) || row.tree === null || row.trackedTree === null) continue;
-    const key2 = `${row.tree} ${row.trackedTree}`;
-    if (!shipped.has(key2)) shipped.set(key2, reviewedIsShipped(repo, row.tree, row.trackedTree));
-    if (shipped.get(key2) !== true) continue;
-    byGate.set(row.gate, [...byGate.get(row.gate) ?? [], row]);
+    if (row === null || !(row.at >= runStart)) continue;
+    let counts2 = false;
+    if (row.verdict === "pass" && row.startMatch && row.tree !== null && row.trackedTree !== null) {
+      const key2 = `${row.tree} ${row.trackedTree} ${row.headSha ?? ""}`;
+      if (!shipped.has(key2)) shipped.set(key2, reviewedIsShipped(repo, row.tree, row.trackedTree, row.headSha));
+      counts2 = shipped.get(key2) === true;
+    }
+    const blind = row.verdict === "pass" && row.startMatch && row.tree === null && row.headSha !== null;
+    if (row.verdict === "fail" || counts2 || blind) byGate.set(row.gate, [...byGate.get(row.gate) ?? [], { row, counts: counts2, blind }]);
   }
+  const stale = /* @__PURE__ */ new Set();
   for (const [name, rows] of byGate) {
     const zero = counts({});
     const gate = tl.byName.get(name) ?? (name === CAPTURE_ADDS_GATE ? { gate: name, verdict: "pass", findings: zero, fixed: zero, source: "agent" } : void 0);
     if (gate === void 0) continue;
-    const lines = tl.rounds.get(name) ?? [];
-    const judged = rows.sort((a, b) => a.at - b.at).map((row) => ({ row, verdict: ruleVerdict(name, row, gate.fixed), round: roundAt(lines, row.at) }));
-    let pick = judged[judged.length - 1];
-    if (pick.verdict === "pass") {
-      const kept = judged.filter((j) => j.verdict === "fail" && j.round >= pick.round);
-      if (kept.length > 0) pick = kept[kept.length - 1];
+    rows.sort((a, b) => a.row.at - b.row.at);
+    const passes = rows.filter((r) => r.counts).map((r) => r.row);
+    const blinds = rows.filter((r) => r.blind).map((r) => r.row);
+    const open = rows.filter((r) => r.row.verdict === "fail").map((r) => r.row).filter((f) => !passes.some((p) => p.at > f.at && p.tree !== f.tree)).filter((f) => !blinds.some((b) => b.at > f.at && b.headSha !== f.headSha));
+    if (open.length > 0) {
+      tl.byName.set(name, { ...gate, verdict: "fail", findings: open[open.length - 1].findings, source: "agent" });
+      stale.add(name);
+      continue;
     }
-    tl.byName.set(name, { ...gate, verdict: pick.verdict, findings: pick.row.findings, source: "agent" });
+    if (passes.length === 0) continue;
+    const pick = passes[passes.length - 1];
+    tl.byName.set(name, { ...gate, verdict: ruleVerdict(name, pick, gate.fixed), findings: pick.findings, source: "agent" });
   }
+  return stale;
 }
 function readOverrides(ctx, featureDir, decisionRows) {
   const recorded = /* @__PURE__ */ new Map();
@@ -1269,7 +1406,7 @@ function assembleShip(ctx, opts) {
     return { ok: false, error: e instanceof LedgerError ? e.code : "unsafe_path" };
   }
   const timeline = timelineGates(ctx, featureDir, gateHashes);
-  applyAgentVerdicts(timeline, verdictRows, Date.parse(ctx.startedAt), ctx.repo);
+  const notReReviewed = applyAgentVerdicts(timeline, verdictRows, Date.parse(ctx.startedAt), ctx.repo);
   const byName = timeline.byName;
   for (const required of opts.requiredGates ?? DEFAULT_REQUIRED_GATES) {
     if (!byName.has(required)) return { ok: false, error: "gate_missing", detail: required };
@@ -1277,7 +1414,7 @@ function assembleShip(ctx, opts) {
   const gates = [...byName.values()];
   const read = readOverrides(ctx, featureDir, decisionRows);
   if (!read.ok) return read;
-  const blockers = gates.filter((g) => g.verdict !== "pass").map((g) => `gate:${g.gate}`);
+  const blockers = gates.filter((g) => g.verdict !== "pass").map((g) => notReReviewed.has(g.gate) ? `gate:${g.gate} (${NOT_RE_REVIEWED})` : `gate:${g.gate}`);
   const uncapturedGates = gates.filter((g) => g.source !== "agent").map((g) => g.gate);
   const gateEvidence = uncapturedGates.length === 0 ? "agent" : uncapturedGates.length === gates.length ? "model" : "partial";
   const summary = readValue(ctx, "summary.txt");
@@ -1310,11 +1447,27 @@ function assembleShip(ctx, opts) {
 
 // src/phase-results/archivable.ts
 var import_node_crypto3 = require("node:crypto");
-var fs7 = __toESM(require("node:fs"), 1);
+var fs8 = __toESM(require("node:fs"), 1);
 var path7 = __toESM(require("node:path"), 1);
+function laterShipRun(ledger, feature, resultStart) {
+  const start = typeof resultStart === "string" ? Date.parse(resultStart) : NaN;
+  let stale = false;
+  ledger.scanBack("run/ship", (row) => {
+    if (row.feature === feature) {
+      stale = row.startedAt !== resultStart;
+      return false;
+    }
+    if (row.feature !== "" && row.feature !== void 0) return true;
+    if (row.startedAt === resultStart) return false;
+    const rowStart = typeof row.startedAt === "string" ? Date.parse(row.startedAt) : NaN;
+    stale = !(rowStart <= start);
+    return !stale;
+  });
+  return stale;
+}
 function shipArchivable(repo, feature, pluginRoot2) {
   const marker = path7.join(repo, ".oss", "dev", "active", feature, "results", "ship.unverified.json");
-  if (fs7.lstatSync(marker, { throwIfNoEntry: false }) !== void 0) return { ok: false, reason: "unverified" };
+  if (fs8.lstatSync(marker, { throwIfNoEntry: false }) !== void 0) return { ok: false, reason: "unverified" };
   const read = readResult(repo, feature, "ship");
   if (!read.ok) return { ok: false, reason: read.error };
   const ledger = openLedger(repo);
@@ -1327,14 +1480,13 @@ function shipArchivable(repo, feature, pluginRoot2) {
   if (!v.ok) return { ok: false, reason: "invalid_result" };
   const stored = read.value;
   if (stored.verification !== "verified") return { ok: false, reason: "unverified" };
-  const runs = ledger.readRows("run/ship").filter((r) => r.feature === feature);
-  if (runs.length > 0 && stored.startedAt !== runs[runs.length - 1].startedAt) return { ok: false, reason: "stale_result" };
+  if (laterShipRun(ledger, feature, stored.startedAt)) return { ok: false, reason: "stale_result" };
   if (stored.verdict !== "ready_to_merge") return { ok: false, reason: "not_ready_to_merge" };
   return { ok: true };
 }
 
 // src/phase-results/feature.ts
-var fs8 = __toESM(require("node:fs"), 1);
+var fs9 = __toESM(require("node:fs"), 1);
 var path8 = __toESM(require("node:path"), 1);
 var FEATURE_RE2 = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 var BRANCH_RE = /^[^/]+\/([^/]+)\/[^/]/;
@@ -1342,11 +1494,11 @@ function activeFeatures(repo) {
   const dir = path8.join(repo, ".oss", "dev", "active");
   let names;
   try {
-    names = fs8.readdirSync(dir);
+    names = fs9.readdirSync(dir);
   } catch {
     return [];
   }
-  return names.filter((n) => FEATURE_RE2.test(n) && fs8.lstatSync(path8.join(dir, n), { throwIfNoEntry: false })?.isDirectory()).sort();
+  return names.filter((n) => FEATURE_RE2.test(n) && fs9.lstatSync(path8.join(dir, n), { throwIfNoEntry: false })?.isDirectory()).sort();
 }
 function resolveFeature(repo) {
   const ref = gitOut2(repo, ["symbolic-ref", "-q", "HEAD"]);
@@ -1354,7 +1506,7 @@ function resolveFeature(repo) {
   const m = BRANCH_RE.exec(branch);
   if (m !== null) {
     const f = m[1];
-    const st = fs8.lstatSync(path8.join(repo, ".oss", "dev", "active", f), { throwIfNoEntry: false });
+    const st = fs9.lstatSync(path8.join(repo, ".oss", "dev", "active", f), { throwIfNoEntry: false });
     return FEATURE_RE2.test(f) && st?.isDirectory() ? f : null;
   }
   const active = activeFeatures(repo);
@@ -1398,7 +1550,10 @@ function shipBase(repo, dir) {
 function shipBaseConfig(repo) {
   const env = gitEnv();
   env.GIT_CONFIG_NOSYSTEM = "1";
-  const r = (0, import_node_child_process4.spawnSync)("git", ["config", "--local", "--get", "oss.shipBase"], {
+  env.PATH = "/usr/bin:/bin";
+  const git = gitBin();
+  if (git === "") return "";
+  const r = (0, import_node_child_process4.spawnSync)(git, ["config", "--local", "--get", "oss.shipBase"], {
     cwd: repo,
     env,
     encoding: "utf-8",
@@ -1410,11 +1565,28 @@ function shipBaseConfig(repo) {
   if (r.error === void 0 && r.status === 0) return r.stdout.replace(/\n$/, "");
   return "";
 }
+function checkShipBase(repo, base, configured, startedAt) {
+  if (!isLocalBranch(repo, base)) return;
+  const start = Date.parse(startedAt);
+  const before = (created) => created !== null && created <= start;
+  const tip = branchTip(repo, base);
+  if (tip === null) throw new Refusal("unsafe_base", "base");
+  const origin = originDefaultTip(repo);
+  const onDefault = origin !== null && isAncestor(repo, tip, origin);
+  const remote = onDefault ? null : originBranchTip(repo, base);
+  const onRemote = remote !== null && isAncestor(repo, tip, remote) && before(reflogCreatedAt(repo, `refs/remotes/origin/${base}`));
+  if (!onDefault && !onRemote) throw new Refusal("unsafe_base", "base");
+  for (const name of /* @__PURE__ */ new Set([base, configured])) {
+    if (!isLocalBranch(repo, name)) continue;
+    const created = reflogCreatedAt(repo, `refs/heads/${name}`);
+    if (created !== null && !before(created)) throw new Refusal("unsafe_base", "base");
+  }
+}
 function pluginRoot() {
-  return path9.resolve(path9.dirname(fs9.realpathSync(process.argv[1] ?? "")), "..", "..", "..");
+  return path9.resolve(path9.dirname(fs10.realpathSync(process.argv[1] ?? "")), "..", "..", "..");
 }
 function isDirOf(p, uid) {
-  const st = fs9.lstatSync(p, { throwIfNoEntry: false });
+  const st = fs10.lstatSync(p, { throwIfNoEntry: false });
   return st !== void 0 && !st.isSymbolicLink() && st.isDirectory() && st.uid === uid;
 }
 function valueDir(repo) {
@@ -1423,7 +1595,7 @@ function valueDir(repo) {
   const uid = process.getuid?.();
   const run = path9.join(os2.homedir(), ".oss", "run");
   const dir = path9.join(run, key2);
-  return isDirOf(run, uid) && isDirOf(dir, uid) ? fs9.realpathSync(dir) : null;
+  return isDirOf(run, uid) && isDirOf(dir, uid) ? fs10.realpathSync(dir) : null;
 }
 function runStartedAt(ledger, phase) {
   const startedAt = ledger.lastRow(`run/${phase}`)?.startedAt;
@@ -1438,17 +1610,35 @@ function runAssembler(phase, ctx, base) {
       return assemblePlan(ctx);
     case "build":
       return assembleBuild(ctx);
-    case "ship":
-      return assembleShip(ctx, { base: base ?? shipBase(ctx.repo, ctx.valueDir) });
+    case "ship": {
+      if (base !== void 0) return assembleShip(ctx, { base });
+      const chosen = shipBase(ctx.repo, ctx.valueDir);
+      checkShipBase(ctx.repo, chosen, shipBaseConfig(ctx.repo), ctx.startedAt);
+      return assembleShip(ctx, { base: chosen });
+    }
   }
 }
 function checkSchema(phase, value) {
   const v = validate(loadPhaseSchema(phase, pluginRoot()), value);
   if (!v.ok) throw new Refusal(`invalid_result (${v.rule})`, v.path);
 }
+var PREVIOUS = { plan: "ideate", build: "plan", ship: "build" };
+function startGate(repo, feature, phase, ledger) {
+  const prev = PREVIOUS[phase];
+  if (prev === void 0 || parseRunRow(ledger.lastRow(`run/${phase}`))?.feature !== "") return;
+  const exists = (p) => fs10.lstatSync(p, { throwIfNoEntry: false }) !== void 0;
+  const legacy = !exists(path9.join(repo, ".oss", "dev", "active", feature, "results")) && !exists(path9.join(ledger.dir, "results", feature));
+  if (legacy) return;
+  try {
+    check(repo, feature, prev);
+  } catch {
+    throw new Refusal("no_prev_result", prev);
+  }
+}
 function assemble(repo, feature, phase) {
   const ledger = openLedger(repo);
   const startedAt = runStartedAt(ledger, phase);
+  startGate(repo, feature, phase, ledger);
   const ctx = {
     repo,
     feature,
@@ -1460,11 +1650,11 @@ function assemble(repo, feature, phase) {
   const outcome = runAssembler(phase, ctx);
   if (!outcome.ok) throw new Refusal(outcome.error, outcome.detail ?? phase);
   checkSchema(phase, outcome.result);
-  writeResult(repo, feature, phase, outcome.result);
-  const read = readResult(repo, feature, phase);
+  const written = writeResult(repo, feature, phase, outcome.result);
+  const read = readBack(repo, feature, phase, written);
   if (!read.ok) throw new Refusal(read.error, `results/${phase}.json`);
   ledger.appendRow(`results/${feature}/${phase}`, {
-    sha256: sha256(read.bytes),
+    sha256: sha256(written.bytes),
     feature,
     phase,
     startedAt,
@@ -1483,10 +1673,10 @@ function reassemble(repo, feature, phase, stored) {
   if (phase === "ship") {
     const recorded = stored.diff?.baseRef;
     base = typeof recorded === "string" ? recorded : "";
-    tmp = fs9.mkdtempSync(path9.join(os2.tmpdir(), "oss-phase-result-"));
+    tmp = fs10.mkdtempSync(path9.join(os2.tmpdir(), "oss-phase-result-"));
     const requested = Array.isArray(stored.overrides) ? stored.overrides : [];
     const overrides = requested.map((o) => ({ finding: o.finding, decisionId: o.decisionId }));
-    fs9.writeFileSync(path9.join(tmp, "overrides.json"), JSON.stringify(overrides), { mode: 384 });
+    fs10.writeFileSync(path9.join(tmp, "overrides.json"), JSON.stringify(overrides), { mode: 384 });
     dir = tmp;
   }
   try {
@@ -1499,13 +1689,19 @@ function reassemble(repo, feature, phase, stored) {
       now: () => /* @__PURE__ */ new Date()
     }, base);
   } finally {
-    if (tmp !== null) fs9.rmSync(tmp, { recursive: true, force: true });
+    if (tmp !== null) fs10.rmSync(tmp, { recursive: true, force: true });
   }
 }
+var CODE_FIELDS = {
+  ideate: ["decisions", "decisionsRecorded", "designCommitted"],
+  plan: [],
+  build: ["testRuns", "evidenceTrust"],
+  ship: ["diff", "gateEvidence", "uncapturedGates", "overrides", "blockers", "verdict"]
+};
 function check(repo, feature, phase) {
   const ledger = openLedger(repo);
   const marker = path9.join(repo, ".oss", "dev", "active", feature, "results", `${phase}.unverified.json`);
-  if (fs9.lstatSync(marker, { throwIfNoEntry: false }) !== void 0) throw new Refusal("unverified", "marker");
+  if (fs10.lstatSync(marker, { throwIfNoEntry: false }) !== void 0) throw new Refusal("unverified", "marker");
   for (const kind of ["pending", "unverified"]) {
     if (ledger.hasMarker(`${kind}/${feature}/${phase}`)) throw new Refusal("unverified", `${kind} marker`);
   }
@@ -1527,9 +1723,7 @@ function check(repo, feature, phase) {
   if (stored.verification !== "verified") throw new Refusal("unverified", "verification");
   const fresh = reassemble(repo, feature, phase, stored);
   if (!fresh.ok) throw new Refusal("evidence_mismatch", fresh.error);
-  const sources = stored.sources ?? {};
-  for (const [field, source] of Object.entries(sources)) {
-    if (source !== "code") continue;
+  for (const field of CODE_FIELDS[phase]) {
     if (JSON.stringify(stored[field]) !== JSON.stringify(fresh.result[field])) {
       throw new Refusal("evidence_mismatch", field);
     }
@@ -1598,7 +1792,8 @@ function main(argv) {
     stored = check(repo, feature, args.phase);
   });
   if (!v.ok) return refuse(args, v.id, v.field);
-  process.stdout.write(`${JSON.stringify({ verification: "verified", ...gateLabel(args.phase, stored) })}
+  const verdict = args.phase === "ship" ? { verdict: stored.verdict } : {};
+  process.stdout.write(`${JSON.stringify({ verification: "verified", ...gateLabel(args.phase, stored), ...verdict })}
 `);
   return 0;
 }

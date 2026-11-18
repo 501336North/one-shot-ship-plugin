@@ -15,6 +15,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import { createHash } from 'crypto';
 import { openLedger } from '../../src/phase-results/ledger.js';
 import { dispatch, type StopInput } from '../../src/stop/dispatch.js';
 
@@ -82,10 +83,12 @@ afterEach(() => {
 describe('the stop subject is this session and this feature (findings 1, 2)', () => {
   // Repro 1. User behaviour: after a clean ship the feature is archived and the user is back on main; every later
   // stop goes through, with no marker and no loop-guard message about a phase called "current".
+  // ⚠ changes existing test: round 3 finding 2 (pen N2). A ship run with NO result whose folder moved away now allows
+  // with an unverified marker and a systemMessage; a clean ship (the case this test is about) has a bound result.
   it('a ship run of an archived feature, back on main, never blocks', async () => {
     git(repo, 'checkout', '-q', '-b', 'feat/demo/ship');
     activate(repo, 'demo');
-    startRun(repo, 'ship', 'demo');
+    openLedger(repo).appendRow('results/demo/ship', { sha256: 'a', feature: 'demo', phase: 'ship', startedAt: startRun(repo, 'ship', 'demo') });
     git(repo, 'checkout', '-q', 'main');
     fs.rmSync(path.join(repo, '.oss', 'dev', 'active', 'demo'), { recursive: true });
     expect(await dispatch(input(), { phaseResultCli: PHASE_RESULT_CLI })).toBeNull();
@@ -94,10 +97,12 @@ describe('the stop subject is this session and this feature (findings 1, 2)', ()
   });
 
   // Repro 2. User behaviour: a new feature branch with no run of its own is not blocked by the last feature's ship.
+  // ⚠ changes existing test: round 3 finding 2 (pen N2). This session's run of demo is checked whatever the branch,
+  // so an UNFINISHED demo ship now blocks (see "switching branches" below); a finished one, as here, does not.
   it("a new feature branch is not blocked by another feature's run", async () => {
     git(repo, 'checkout', '-q', '-b', 'feat/demo/ship');
     activate(repo, 'demo');
-    startRun(repo, 'ship', 'demo');
+    bindResult(repo, 'demo', 'ship', startRun(repo, 'ship', 'demo'));
     git(repo, 'checkout', '-q', '-b', 'feat/next/ideate');
     activate(repo, 'next');
     expect(await dispatch(input(), { phaseResultCli: PHASE_RESULT_CLI })).toBeNull();
@@ -214,16 +219,17 @@ describe('a run with no feature still binds its own session (D30)', () => {
 
   // User behaviour: no feature can be resolved (on main with no or several feature folders), so no result can be
   // built: the stop goes through, marked unverified, and the user is told. Never "current", never a block.
+  // ⚠ changes existing test: round 3 INFO. The notice is said once per run (the second stop, loop guard or not, says
+  // nothing), and its marker is unfiled/<phase>, outside unverified/<feature>/.
   it('fails open when no feature resolves: allow, unverified marker, systemMessage', async () => {
     startRun(repo, 'ideate', '');
-    for (const active of [false, true]) {
-      const out = await dispatch(input({ stopHookActive: active }), { phaseResultCli: PHASE_RESULT_CLI });
-      expect(out?.decision).toBeUndefined();
-      expect(out?.systemMessage).toContain('ideate');
-      expect(out?.systemMessage).toContain('no_feature');
-      expect(JSON.stringify(out)).not.toContain('current');
-    }
-    expect(markers(repo).some((m) => m.startsWith('unverified/') && m.endsWith('ideate'))).toBe(true);
+    const out = await dispatch(input({ stopHookActive: true }), { phaseResultCli: PHASE_RESULT_CLI });
+    expect(out?.decision).toBeUndefined();
+    expect(out?.systemMessage).toContain('ideate');
+    expect(out?.systemMessage).toContain('no_feature');
+    expect(JSON.stringify(out)).not.toContain('current');
+    expect(await dispatch(input(), { phaseResultCli: PHASE_RESULT_CLI })).toBeNull();
+    expect(openLedger(repo).readMarker('unfiled/ideate')?.errorClass).toBe('no_feature');
   });
 
   // Rule: another session's empty-feature run never blocks and leaves nothing behind.
@@ -233,6 +239,127 @@ describe('a run with no feature still binds its own session (D30)', () => {
     git(repo, 'checkout', '-q', '-b', 'feat/demo/ideate');
     activate(repo, 'demo');
     expect(await dispatch(input(), { phaseResultCli: PHASE_RESULT_CLI })).toBeNull();
+    expect(markers(repo)).toEqual([]);
+  });
+});
+
+// --- R-257 ship fix round 3 ------------------------------------------------------------------------------------
+/** What assemble leaves: the results file and the ledger results row bound to <startedAt>, hashing the file. */
+function bindResult(dir: string, feature: string, phase: string, startedAt: string): void {
+  const f = path.join(dir, '.oss', 'dev', 'active', feature, 'results', `${phase}.json`);
+  fs.mkdirSync(path.dirname(f), { recursive: true });
+  fs.writeFileSync(f, `${JSON.stringify({ feature, phase })}\n`);
+  const sha256 = createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+  openLedger(dir).appendRow(`results/${feature}/${phase}`, { sha256, feature, phase, startedAt, headSha: 'x', session: 'sess-1' });
+}
+
+/** A stand-in phase-result CLI (an external process) that passes every check. */
+function passingCheck(): string {
+  const cli = path.join(tmp, 'check-pass.cjs');
+  fs.writeFileSync(cli, 'process.exit(0);\n');
+  return cli;
+}
+
+describe('every phase this session started is checked, not only the latest (round 3, finding 1)', () => {
+  // Pen #8 repro. User behaviour: plan was started and never finished; starting ideate and assembling it in the same
+  // session does not let the session end with plan still missing its result.
+  it('a finished later phase does not hide an unfinished earlier one', async () => {
+    git(repo, 'checkout', '-q', '-b', 'feat/demo/plan');
+    activate(repo, 'demo');
+    startRun(repo, 'plan', 'demo');
+    await new Promise((r) => setTimeout(r, 5));
+    const ideateAt = startRun(repo, 'ideate', 'demo');
+    bindResult(repo, 'demo', 'ideate', ideateAt);
+    const out = await dispatch(input(), { phaseResultCli: passingCheck() });
+    expect(out?.decision).toBe('block');
+    expect(out?.reason).toContain('assemble plan');
+  });
+
+  // Code-review LOW. Rule: another session's newer run of the same phase does not hide this session's own run.
+  it("another session's newer run of the phase does not hide this session's run", async () => {
+    git(repo, 'checkout', '-q', '-b', 'feat/demo/plan');
+    activate(repo, 'demo');
+    startRun(repo, 'plan', 'demo');
+    startRun(repo, 'plan', 'demo', 'other-session');
+    const out = await dispatch(input(), { phaseResultCli: PHASE_RESULT_CLI });
+    expect(out?.decision).toBe('block');
+    expect(out?.reason).toContain('assemble plan');
+  });
+});
+
+describe('switching branches never ends the session silently (round 3, finding 2)', () => {
+  function startBuild(): string {
+    git(repo, 'checkout', '-q', '-b', 'feat/fx/build');
+    activate(repo, 'fx');
+    return startRun(repo, 'build', 'fx');
+  }
+
+  // Pen N2 repro 1. User behaviour: build was started on feat/fx/build; checking out a new branch does not let the
+  // session end while fx's build has no result. The message names fx, since assemble on this branch would not reach it.
+  it('a new branch with no folder of its own: the started feature still blocks', async () => {
+    startBuild();
+    git(repo, 'checkout', '-q', '-b', 'feat/zzz/build');
+    const out = await dispatch(input(), { phaseResultCli: PHASE_RESULT_CLI });
+    expect(out?.decision).toBe('block');
+    expect(out?.reason).toContain('build');
+    expect(out?.reason).toContain('fx');
+  });
+
+  // Pen N2 repro 2. Rule: a detached HEAD with two or more active folders resolves no feature; the run's own feature
+  // is still checked.
+  it('a detached HEAD with two active folders: the started feature still blocks', async () => {
+    startBuild();
+    activate(repo, 'other');
+    git(repo, 'checkout', '-q', '--detach');
+    const out = await dispatch(input(), { phaseResultCli: PHASE_RESULT_CLI });
+    expect(out?.decision).toBe('block');
+    expect(out?.reason).toContain('fx');
+  });
+
+  // Pen N2 repro 3. User behaviour: the feature folder moved to completed/ with no result: the stop goes through (no
+  // assemble can reach a moved folder), but marked unverified and said once, never silently.
+  it('the folder moved away with no result: allow, unverified marker, systemMessage once', async () => {
+    const startedAt = startBuild();
+    fs.mkdirSync(path.join(repo, '.oss', 'dev', 'completed'), { recursive: true });
+    fs.renameSync(path.join(repo, '.oss', 'dev', 'active', 'fx'), path.join(repo, '.oss', 'dev', 'completed', 'fx'));
+    const out = await dispatch(input(), { phaseResultCli: PHASE_RESULT_CLI });
+    expect(out?.decision).toBeUndefined();
+    expect(out?.systemMessage).toContain('build');
+    expect(out?.systemMessage).toContain('fx');
+    const m = openLedger(repo).readMarker('unverified/fx/build');
+    expect(m?.session).toBe('sess-1');
+    expect(m?.startedAt).toBe(startedAt);
+    expect(await dispatch(input(), { phaseResultCli: PHASE_RESULT_CLI })).toBeNull();
+  });
+
+  // Rule: a result bound to the run and matching its hash lets the stop through from any branch.
+  it('a valid bound result of the started feature allows from another branch', async () => {
+    bindResult(repo, 'fx', 'build', startBuild());
+    git(repo, 'checkout', '-q', '-b', 'feat/zzz/build');
+    expect(await dispatch(input(), { phaseResultCli: PHASE_RESULT_CLI })).toBeNull();
+    expect(markers(repo)).toEqual([]);
+  });
+
+  // Rule: a bound result edited by hand (hash differs) still blocks from another branch.
+  it('an edited bound result of the started feature blocks from another branch', async () => {
+    bindResult(repo, 'fx', 'build', startBuild());
+    fs.writeFileSync(path.join(repo, '.oss', 'dev', 'active', 'fx', 'results', 'build.json'), '{"edited":true}\n');
+    git(repo, 'checkout', '-q', '-b', 'feat/zzz/build');
+    const out = await dispatch(input(), { phaseResultCli: PHASE_RESULT_CLI });
+    expect(out?.decision).toBe('block');
+    expect(out?.reason).toContain('fx');
+  });
+});
+
+describe('the no-feature notice (round 3, INFO)', () => {
+  // User behaviour: the "no feature folder" notice is said once per run, not on every stop.
+  // Rule: its marker lives outside unverified/<feature>/, where any name it used could be a real feature's.
+  it('is said once per run, and its marker cannot collide with a feature', async () => {
+    const startedAt = startRun(repo, 'ideate', '');
+    const first = await dispatch(input(), { phaseResultCli: PHASE_RESULT_CLI });
+    expect(first?.systemMessage).toContain('no_feature');
+    expect(await dispatch(input(), { phaseResultCli: PHASE_RESULT_CLI })).toBeNull();
+    expect(openLedger(repo).readMarker('unfiled/ideate')?.startedAt).toBe(startedAt);
     expect(markers(repo)).toEqual([]);
   });
 });

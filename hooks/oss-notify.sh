@@ -13,13 +13,14 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# a fixed dirname, never PATH's: a fake one could name a folder of forged gate scripts (R-257 ship round 3, pen N3)
+SCRIPT_DIR="$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$SCRIPT_DIR/oss-api-curl.sh" ]]; then source "$SCRIPT_DIR/oss-api-curl.sh"; fi  # oss_api_curl: API key via stdin, never argv
 if [[ -f "$SCRIPT_DIR/oss-safe-path.sh" ]]; then source "$SCRIPT_DIR/oss-safe-path.sh"; else oss_safe_mkdir() { return 1; }; oss_safe_target() { return 1; }; oss_valid_workflow_name() { return 1; }; oss_refuse_unsafe() { echo "oss: refusing unsafe .oss path ${1:-} (oss-safe-path.sh missing)" >&2; }; fi  # oss_valid_workflow_name (fail closed if absent)
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}"
 # R-257: oss_run_bounded_rc, oss_phase_gate_ok, oss_plugin_root_file and the fixed git and jq (OSS_GIT_BIN,
 # OSS_JQ_BIN); absent, every gate fails closed.
-if [[ -f "$SCRIPT_DIR/oss-phase-result.sh" ]]; then source "$SCRIPT_DIR/oss-phase-result.sh"; else oss_run_bounded_rc() { OSS_BOUNDED_OUT=""; return 127; }; oss_phase_gate_ok() { echo "cli_missing" >&2; return 1; }; oss_plugin_root_file() { return 1; }; OSS_GIT_BIN=/usr/bin/git; OSS_JQ_BIN=/usr/bin/jq; fi
+if [[ -f "$SCRIPT_DIR/oss-phase-result.sh" ]]; then source "$SCRIPT_DIR/oss-phase-result.sh"; else oss_run_bounded_rc() { OSS_BOUNDED_OUT=""; return 127; }; oss_phase_gate_ok() { echo "cli_missing" >&2; return 1; }; oss_plugin_root_file() { return 1; }; OSS_GIT_BIN=/usr/bin/git; OSS_JQ_BIN=/usr/bin/jq; OSS_CUT=/usr/bin/cut; OSS_MKDIR=/bin/mkdir; fi
 
 # =============================================================================
 # TIMEOUT WRAPPER - Prevents blocking on slow/hanging node calls
@@ -157,7 +158,7 @@ _oss_ledger_key() (
     local top g k
     cd -P -- "$1" 2>/dev/null && top=$("$OSS_GIT_BIN" rev-parse --show-toplevel 2>/dev/null) && cd -- "$top" 2>/dev/null \
         && g=$("$OSS_GIT_BIN" rev-parse --absolute-git-dir 2>/dev/null) || return 1
-    k=$(printf '%s\n%s\n' "$top" "$g" | "$OSS_GIT_BIN" hash-object --stdin | cut -c1-16) && [[ ${#k} == 16 ]] || return 1
+    k=$(printf '%s\n%s\n' "$top" "$g" | "$OSS_GIT_BIN" hash-object --stdin | "$OSS_CUT" -c1-16) && [[ ${#k} == 16 ]] || return 1
     printf '%s\n' "$k"
 )
 
@@ -182,7 +183,7 @@ _oss_ledger_run() (
     d="$HOME/.oss"
     for c in ledger "$k" run; do
         d="$d/$c"
-        [[ -e "$d" || -L "$d" ]] || mkdir -m 700 "$d" 2>/dev/null
+        [[ -e "$d" || -L "$d" ]] || "$OSS_MKDIR" -m 700 "$d" 2>/dev/null
         [[ -d "$d" && ! -L "$d" ]] && test -O "$d" || return 1
     done
     f="$d/$1"
@@ -343,10 +344,10 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
 
     # Complete gate (US-001), before any log line, completeStep, setNextCommand, the checklist and the chain: the phase's
     # result must be valid, verified and bound to this run, in the project this command is for, which must be the
-    # physical cwd's repo (repo_mismatch). A refusal takes the failed path (supervisor intervening), prints no CHAIN
-    # and exits 1.
+    # physical cwd's repo (repo_mismatch). D35: a ship result must also say ready_to_merge (a missing verdict refuses).
+    # A refusal takes the failed path (supervisor intervening), prints no CHAIN and exits 1.
     if [[ "$WORKFLOW_EVENT" == complete && -n "$_OSS_PHASE" ]]; then
-        _OSS_GATE_WHY=""
+        _OSS_GATE_WHY=""; _OSS_MSG=""
         oss_phys_cwd
         _OSS_TOP_CWD=$(unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR; cd "$_OSS_CWD" 2>/dev/null && "$OSS_GIT_BIN" rev-parse --show-toplevel 2>/dev/null) || _OSS_TOP_CWD=""
         _OSS_TOP_PROJ=$(unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR; cd "$_OSS_PROJECT_DIR" 2>/dev/null && "$OSS_GIT_BIN" rev-parse --show-toplevel 2>/dev/null) || _OSS_TOP_PROJ=""
@@ -356,6 +357,13 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
         if [[ -n "$_OSS_GATE_WHY" ]] || ! _oss_phase_check "$_OSS_PHASE" "$_OSS_PROJECT_DIR"; then
             _OSS_MSG="oss-notify: $WORKFLOW_CMD complete refused: no valid $_OSS_PHASE result ($_OSS_GATE_WHY); build it with oss-phase-result.sh assemble $_OSS_PHASE, then complete again"
             [[ "$_OSS_PHASE" == build ]] && _OSS_MSG="$_OSS_MSG; build evidence is from repo files (not ledger-checked)"
+        elif [[ "$_OSS_PHASE" == ship ]] \
+            && ! printf '%s' "$OSS_BOUNDED_OUT" | "$OSS_JQ_BIN" -e '.verdict == "ready_to_merge"' >/dev/null 2>&1; then
+            # `check ship` prints the verdict but no blockers (those live only in the result file): no gate name here
+            _OSS_GATE_WHY="not_ready_to_merge"
+            _OSS_MSG="oss-notify: $WORKFLOW_CMD complete refused: the ship result is not ready_to_merge; fix the blocking gates, assemble ship again, then complete again"
+        fi
+        if [[ -n "$_OSS_MSG" ]]; then
             echo "$_OSS_MSG" >&2
             if [[ -x "$LOG_SCRIPT" ]]; then "$LOG_SCRIPT" write "$WORKFLOW_CMD" "[failed] phase result refused ($_OSS_GATE_WHY)" 2>/dev/null || true; fi
             "$SCRIPT_DIR/oss-timeline.sh" command "$WORKFLOW_CMD" failed </dev/null >/dev/null 2>&1 || true

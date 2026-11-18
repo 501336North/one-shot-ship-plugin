@@ -6,13 +6,17 @@
  * `check-ref-format --branch` and passed after `--end-of-options`. Empty when the tree equals the base tip (covers a
  * squash-merged branch) or nothing changed since the merge-base. Totals come from `--shortstat` against the merge-base.
  * Gates: the feature's timeline gate lines whose sha256 is in the ledger `gates/<feature>`, latest round only
- * (`source: model`). T19: a review agent's captured verdict (ledger `verdicts/<feature>`, verdict-capture.ts) written
- * at or after this run's start, on the tree being shipped (outside .oss), replaces that gate's verdict and findings (`source: agent`);
- * `fixed` stays from the line. A captured fail is erased only by a pass from a later review round (finding 4). D24
- * (ship.md: "fail whenever critical or high findings ... are left unfixed at the end of the round"): any unfixed
- * critical or high finding fails the gate; all of them fixed passes it; with none, the block's verdict counts. D27:
- * security and pen-test count medium and low too, and a captured pen-test row adds that optional gate. D26: the result
- * labels how many gates an agent row backs (`gateEvidence`) and names the rest (`uncapturedGates`).
+ * (`source: model`). Captured review-agent rows (ledger `verdicts/<feature>`, verdict-capture.ts) from this run (at or
+ * after its start) then apply, per gate (`source: agent`; `fixed` stays from the line):
+ * - D32: a captured FAIL row, on any tree, keeps its gate failed until a later PASS row of that gate counts with a tree
+ *   different from the fail row's. A pass on the unchanged tree never erases it, whatever round lines exist, and no
+ *   fix count overrides it. Its blocker reads `gate:<name> (captured fail, not re-reviewed)`.
+ * - A PASS row counts only when its agent's start snapshot matched its stop trees (`start: match`, security L4) and
+ *   its reviewed trees are what ships outside .oss (reviewedIsShipped; finding 4, pen N4). The newest counting pass
+ *   decides through D24/D27: unfixed critical or high (plus medium and low for security and pen-test) fails the gate;
+ *   all of them fixed passes it; with none, the agent's own verdict counts.
+ * - A captured pen-test row adds that optional gate. D26: the result labels how many gates an agent row backs
+ *   (`gateEvidence`) and names the rest (`uncapturedGates`).
  * Overrides: each decisionId must be a decisions.ndjson record whose line hash, id and feature match a ledger row;
  * `person` is copied from that record, never from the model.
  */
@@ -20,6 +24,7 @@ import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { openLedger, LedgerError, type LedgerRow } from './ledger.js';
+import { gitBin } from './git-bin.js';
 import { gitEnv } from './git.js';
 import {
   baseFields,
@@ -49,11 +54,17 @@ const REPO_FILE_CAP = 4 * 1024 * 1024;
 
 class GitError extends Error {}
 
-/** `raw` keeps stdout as git printed it (for `-z` output, whose paths may end in spaces). */
+/**
+ * `raw` keeps stdout as git printed it (for `-z` output, whose paths may end in spaces). git is the fixed-path binary
+ * (gitBin, never PATH; pen N3) run with PATH=/usr/bin:/bin; with none, every call fails (closed).
+ */
 function runGit(repo: string, args: string[], okCodes: number[] = [0], raw = false): { status: number; out: string } {
   const env = gitEnv();
   env.GIT_CONFIG_NOSYSTEM = '1';
-  const r = spawnSync('git', ['-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', ...args], {
+  env.PATH = '/usr/bin:/bin';
+  const git = gitBin();
+  if (git === '') throw new GitError('no git');
+  const r = spawnSync(git, ['-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', ...args], {
     cwd: repo,
     env,
     encoding: 'utf-8',
@@ -77,6 +88,15 @@ export function isLocalBranch(repo: string, name: string): boolean {
   }
 }
 
+/** The commit `refs/remotes/origin/<name>` points at (call after isLocalBranch accepted the name); null when none. */
+export function originBranchTip(repo: string, name: string): string | null {
+  try {
+    return runGit(repo, ['rev-parse', '--verify', '--quiet', '--end-of-options', `refs/remotes/origin/${name}^{commit}`]).out;
+  } catch {
+    return null;
+  }
+}
+
 /** True when `refs/remotes/origin/<name>` exists (call after isLocalBranch accepted the name; never an option). */
 export function hasOriginBranch(repo: string, name: string): boolean {
   try {
@@ -84,6 +104,57 @@ export function hasOriginBranch(repo: string, name: string): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+/** The commit `refs/heads/<name>` points at (call after isLocalBranch accepted the name); null when git fails. */
+export function branchTip(repo: string, name: string): string | null {
+  try {
+    return runGit(repo, ['rev-parse', '--verify', '--quiet', '--end-of-options', `refs/heads/${name}^{commit}`]).out;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * D34: the tip of origin's default branch: the branch refs/remotes/origin/HEAD names (when it names one under
+ * refs/remotes/origin/), else refs/remotes/origin/main; null when neither resolves.
+ */
+export function originDefaultTip(repo: string): string | null {
+  let ref = 'refs/remotes/origin/main';
+  try {
+    const sym = runGit(repo, ['symbolic-ref', '-q', 'refs/remotes/origin/HEAD']).out;
+    if (sym.startsWith('refs/remotes/origin/') && sym !== 'refs/remotes/origin/HEAD') ref = sym;
+  } catch {
+    // no origin/HEAD: origin/main
+  }
+  try {
+    return runGit(repo, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`]).out;
+  } catch {
+    return null;
+  }
+}
+
+/** True when commit `a` is an ancestor of, or equal to, commit `b` (both hex ids from rev-parse); false on any error. */
+export function isAncestor(repo: string, a: string, b: string): boolean {
+  try {
+    return runGit(repo, ['merge-base', '--is-ancestor', '--end-of-options', a, b], [0, 1]).status === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * D34: when `ref` (a full ref name, from a name isLocalBranch accepted) was created, in epoch ms, from its oldest
+ * reflog entry; null when it has no reflog (or git cannot read it).
+ */
+export function reflogCreatedAt(repo: string, ref: string): number | null {
+  try {
+    const lines = runGit(repo, ['reflog', 'show', '--date=unix', '--format=%gd', ref]).out.split('\n');
+    const m = /@\{(\d+)\}$/.exec(lines[lines.length - 1] ?? '');
+    return m === null ? null : Number(m[1]) * 1000;
+  } catch {
+    return null;
   }
 }
 
@@ -157,6 +228,10 @@ interface AgentRow {
   at: number;
   tree: string | null;
   trackedTree: string | null;
+  /** HEAD at review (pen N4): a deletion is allowed only for a path absent from this commit's tree too. */
+  headSha: string | null;
+  /** Security L4: true when the agent's start snapshot existed and equalled its stop trees (`start: "match"`). */
+  startMatch: boolean;
 }
 
 /** A captured agent verdict row (T19, verdict-capture.ts): null when the row's shape is not one. */
@@ -172,7 +247,16 @@ function agentRow(row: Record<string, unknown>): AgentRow | null {
     findings[s] = n;
   }
   const hex = (v: unknown): string | null => (typeof v === 'string' && TREE_RE.test(v) ? v : null);
-  return { gate: row.gate, verdict: row.verdict, findings, at, tree: hex(row.tree), trackedTree: hex(row.trackedTree) };
+  return {
+    gate: row.gate,
+    verdict: row.verdict,
+    findings,
+    at,
+    tree: hex(row.tree),
+    trackedTree: hex(row.trackedTree),
+    headSha: hex(row.headSha),
+    startMatch: row.start === 'match',
+  };
 }
 
 const TREE_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
@@ -181,10 +265,12 @@ const TREE_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
  * True when what the agent reviewed is what ships, outside .oss. Ship's reviews run on the uncommitted tree and ship
  * commits afterwards (only the files it picks), so trees, never HEAD, tie a row to what ships (finding 4):
  * (a) `<tree>` vs HEAD differs only by paths deleted in HEAD, and (b) none of those paths was tracked at review
- * (`<trackedTree>`): an untracked file the reviewer saw and ship left out is fine; a tracked file deleted after the
- * review, or any added or modified file, voids the row. Both trees are strict hex ids (checked by the caller).
+ * (`<trackedTree>`) nor in the commit HEAD was at review (`<reviewHead>`, pen N4: `git rm --cached` before the review
+ * cannot hide a committed file's deletion): an untracked file the reviewer saw and ship left out is fine; a tracked or
+ * committed file deleted after the review, or any added or modified file, voids the row. All three are strict hex ids
+ * (checked by the caller); with deletions and no reviewHead the row does not count.
  */
-function reviewedIsShipped(repo: string, tree: string, trackedTree: string): boolean {
+function reviewedIsShipped(repo: string, tree: string, trackedTree: string, reviewHead: string | null): boolean {
   try {
     const status = runGit(
       repo,
@@ -200,13 +286,10 @@ function reviewedIsShipped(repo: string, tree: string, trackedTree: string): boo
     }
     if (status.length % 2 !== 0) return false;
     if (deleted.length === 0) return true;
-    const tracked = runGit(
-      repo,
-      ['--literal-pathspecs', 'ls-tree', '-r', '--name-only', '-z', '--end-of-options', trackedTree, '--', ...deleted],
-      [0],
-      true,
-    ).out;
-    return tracked === '';
+    if (reviewHead === null) return false;
+    const listed = (treeish: string): string =>
+      runGit(repo, ['--literal-pathspecs', 'ls-tree', '-r', '--name-only', '-z', '--end-of-options', treeish, '--', ...deleted], [0], true).out;
+    return listed(trackedTree) === '' && listed(reviewHead) === '';
   } catch {
     return false;
   }
@@ -272,46 +355,63 @@ function ruleVerdict(gate: string, row: AgentRow, fixed: Record<string, number>)
   return row.verdict;
 }
 
-/** The highest round of the gate's lines written at or before `at` (0 when none): the review round a row belongs to. */
-function roundAt(lines: RoundLine[], at: number): number {
-  return Math.max(0, ...lines.filter((l) => l.at <= at).map((l) => l.round));
-}
+/** D32: the blocker label of a gate held failed by a captured fail row nobody re-reviewed on a changed tree. */
+const NOT_RE_REVIEWED = 'captured fail, not re-reviewed';
 
 /**
- * T19: an agent's captured verdict supplies a gate's verdict and findings (`source: agent`); `fixed` stays from the
- * line. Only rows from this ship run (at or after its start) whose reviewed trees match what ships count
- * (reviewedIsShipped, finding 4).
- * The newest counted row wins, except that a failing row is erased only by a passing row from a later review round,
- * i.e. one captured after a newer timeline line of that gate: re-running the agent inside one round never erases a fail.
+ * T19 + D32: an agent's captured verdict supplies a gate's verdict and findings (`source: agent`); `fixed` stays from the
+ * line. Rows from before this ship run's start are ignored.
+ * - A FAIL row, on any tree (or none), keeps its gate failed until a later PASS row of that gate that counts (its
+ *   reviewed trees are what ships, reviewedIsShipped) has a tree different from the fail row's. A pass on the unchanged
+ *   tree never erases it, whatever round lines exist, and D24's fix counts never override it. Such a gate is returned
+ *   in the set, so its blocker says "captured fail, not re-reviewed".
+ * - D36: a PASS row with no tree (a changed file over 50 MB, or the capture deadline) but `start: match` (L4) and a
+ *   headSha also clears an earlier fail row of its gate, only when its headSha differs from the fail row's (a fail with
+ *   no headSha differs from any). It proves nothing about what it reviewed, so it never becomes the gate's verdict.
+ * - Otherwise the newest counting PASS row decides, through D24/D27's rule (ruleVerdict).
+ * - With neither (no counting pass, no open fail), the timeline line stays (`source: model`, so the gate is listed in
+ *   uncapturedGates, D26).
  */
-function applyAgentVerdicts(tl: Timeline, verdictRows: LedgerRow[], runStart: number, repo: string): void {
-  const byGate = new Map<string, AgentRow[]>();
+function applyAgentVerdicts(tl: Timeline, verdictRows: LedgerRow[], runStart: number, repo: string): Set<string> {
+  const byGate = new Map<string, Array<{ row: AgentRow; counts: boolean; blind: boolean }>>();
   const shipped = new Map<string, boolean>();
   for (const raw of verdictRows) {
     const row = agentRow(raw);
-    if (row === null || !(row.at >= runStart) || row.tree === null || row.trackedTree === null) continue;
-    const key = `${row.tree} ${row.trackedTree}`;
-    if (!shipped.has(key)) shipped.set(key, reviewedIsShipped(repo, row.tree, row.trackedTree));
-    if (shipped.get(key) !== true) continue;
-    byGate.set(row.gate, [...(byGate.get(row.gate) ?? []), row]);
+    if (row === null || !(row.at >= runStart)) continue;
+    let counts = false;
+    if (row.verdict === 'pass' && row.startMatch && row.tree !== null && row.trackedTree !== null) {
+      const key = `${row.tree} ${row.trackedTree} ${row.headSha ?? ''}`;
+      if (!shipped.has(key)) shipped.set(key, reviewedIsShipped(repo, row.tree, row.trackedTree, row.headSha));
+      counts = shipped.get(key) === true;
+    }
+    const blind = row.verdict === 'pass' && row.startMatch && row.tree === null && row.headSha !== null;
+    if (row.verdict === 'fail' || counts || blind) byGate.set(row.gate, [...(byGate.get(row.gate) ?? []), { row, counts, blind }]);
   }
+  const stale = new Set<string>();
   for (const [name, rows] of byGate) {
     const zero = counts({});
     const gate = tl.byName.get(name) ?? (name === CAPTURE_ADDS_GATE
       ? { gate: name, verdict: 'pass' as const, findings: zero, fixed: zero, source: 'agent' as const }
       : undefined);
     if (gate === undefined) continue;
-    const lines = tl.rounds.get(name) ?? [];
-    const judged = rows
-      .sort((a, b) => a.at - b.at)
-      .map((row) => ({ row, verdict: ruleVerdict(name, row, gate.fixed), round: roundAt(lines, row.at) }));
-    let pick = judged[judged.length - 1];
-    if (pick.verdict === 'pass') {
-      const kept = judged.filter((j) => j.verdict === 'fail' && j.round >= pick.round);
-      if (kept.length > 0) pick = kept[kept.length - 1];
+    rows.sort((a, b) => a.row.at - b.row.at);
+    const passes = rows.filter((r) => r.counts).map((r) => r.row);
+    const blinds = rows.filter((r) => r.blind).map((r) => r.row);
+    const open = rows
+      .filter((r) => r.row.verdict === 'fail')
+      .map((r) => r.row)
+      .filter((f) => !passes.some((p) => p.at > f.at && p.tree !== f.tree))
+      .filter((f) => !blinds.some((b) => b.at > f.at && b.headSha !== f.headSha));
+    if (open.length > 0) {
+      tl.byName.set(name, { ...gate, verdict: 'fail', findings: open[open.length - 1].findings, source: 'agent' });
+      stale.add(name);
+      continue;
     }
-    tl.byName.set(name, { ...gate, verdict: pick.verdict, findings: pick.row.findings, source: 'agent' });
+    if (passes.length === 0) continue;
+    const pick = passes[passes.length - 1];
+    tl.byName.set(name, { ...gate, verdict: ruleVerdict(name, pick, gate.fixed), findings: pick.findings, source: 'agent' });
   }
+  return stale;
 }
 
 type OverridesOutcome = { ok: true; overrides: Array<Record<string, string>> } | Extract<AssembleOutcome, { ok: false }>;
@@ -366,7 +466,7 @@ export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): A
   }
 
   const timeline = timelineGates(ctx, featureDir, gateHashes);
-  applyAgentVerdicts(timeline, verdictRows, Date.parse(ctx.startedAt), ctx.repo);
+  const notReReviewed = applyAgentVerdicts(timeline, verdictRows, Date.parse(ctx.startedAt), ctx.repo);
   const byName = timeline.byName;
   for (const required of opts.requiredGates ?? DEFAULT_REQUIRED_GATES) {
     if (!byName.has(required)) return { ok: false, error: 'gate_missing', detail: required };
@@ -376,7 +476,9 @@ export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): A
   const read = readOverrides(ctx, featureDir, decisionRows);
   if (!read.ok) return read;
 
-  const blockers = gates.filter((g) => g.verdict !== 'pass').map((g) => `gate:${g.gate}`);
+  const blockers = gates
+    .filter((g) => g.verdict !== 'pass')
+    .map((g) => (notReReviewed.has(g.gate) ? `gate:${g.gate} (${NOT_RE_REVIEWED})` : `gate:${g.gate}`));
   const uncapturedGates = gates.filter((g) => g.source !== 'agent').map((g) => g.gate);
   const gateEvidence = uncapturedGates.length === 0 ? 'agent' : uncapturedGates.length === gates.length ? 'model' : 'partial';
   const summary = readValue(ctx, 'summary.txt');

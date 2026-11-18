@@ -27,7 +27,8 @@ REAL_NODE=$(command -v node)
 # folders), never PATH's, so the PATH shim no longer sees it. The sandbox plugin's phase-result.cjs counts its own
 # start in node.calls and runs the real CLI (as itself, so it finds the real plugin's files).
 RECORDED_NODE="$(node -p 'require("fs").realpathSync(process.execPath)')"
-REAL_CLI="$ROOT/watcher/dist/cli/phase-result.cjs"
+# OSS_TEST_PHASE_RESULT_CLI: a bundle built from src outside dist (fix rounds build dist once, at the end).
+REAL_CLI="${OSS_TEST_PHASE_RESULT_CLI:-$ROOT/watcher/dist/cli/phase-result.cjs}"
 TODAY=$(date +%Y%m%d)
 
 sandbox() {
@@ -128,10 +129,22 @@ rm -rf "$T"
 # 7. a result assembled in session 1 archives in session 2, after HEAD and the ship run moved on
 sandbox; feature s1feat; archivable_ship "$R" s1feat
 ( cd "$R" && echo merged > merged.txt && git add merged.txt && git commit -q -m merge )
-ledger_append "$R" run/ship '{"startedAt":"2026-11-14T09:00:00Z","session":"s2","headSha":"x"}'
+# ⚠ changes existing test: pen N5 (round 2) — a later run/ship row with no feature field now counts as this feature's
+#   re-ship (stale), so the later run here is another feature's.
+ledger_append "$R" run/ship '{"startedAt":"2026-11-14T09:00:00Z","session":"s2","headSha":"x","feature":"other"}'
 SESSION=s2 archive
 check "a result bound in session 1 archives in session 2 (HEAD and run start moved on)" 'archived s1feat' "rc=$RC out=$OUT"
 rm -rf "$T"
+
+# 7b. pen N5 (round 2): a later ship run started where no feature resolved (feature "" or none) may be this feature's
+#     re-ship, so the old result is kept, never archived.
+for row in '"feature":""' '"note":"no feature field"'; do
+    sandbox; feature n5feat; archivable_ship "$R" n5feat
+    ledger_append "$R" run/ship "{\"startedAt\":\"2099-01-01T00:00:00Z\",\"session\":\"s3\",\"headSha\":\"x\",$row}"
+    archive
+    check "a later no-feature ship run ($row) keeps the result" 'kept n5feat' "rc=$RC out=$OUT"
+    rm -rf "$T"
+done
 
 # 8. a CLI error archives nothing, even if it printed "ok"
 sandbox; feature e1; archivable_ship "$R" e1
@@ -147,6 +160,18 @@ sandbox; feature d1; archivable_ship "$R" d1
 archive --dry-run
 check "--dry-run names the archivable feature and moves nothing" \
     '[[ -d "$A/d1" && "$OUT" == *"Would archive: d1"* ]]' "rc=$RC out=$OUT"
+rm -rf "$T"
+
+# 10. (round 3, pen MEDIUM N3) the hook finds its own folder with a fixed dirname: a fake dirname first on PATH naming
+#     a folder whose oss-phase-result.sh says "ok" for everything does not archive a hand-written ship result.
+sandbox; feature victim
+mkdir -p "$A/victim/results" "$T/forged"
+printf '{"v":1,"phase":"ship","verification":"verified","verdict":"ready_to_merge"}\n' > "$A/victim/results/ship.json"
+cp "$ROOT/hooks/oss-safe-path.sh" "$T/forged/oss-safe-path.sh"
+printf 'oss_phase_result_main() { echo "victim ok"; }\n' > "$T/forged/oss-phase-result.sh"
+printf '#!/bin/sh\necho "%s"\n' "$T/forged" > "$T/bin/dirname"; chmod +x "$T/bin/dirname"
+archive
+check "a fake dirname first on PATH does not archive a hand-written ship result" 'kept victim' "rc=$RC out=$OUT"
 rm -rf "$T"
 
 echo ""
