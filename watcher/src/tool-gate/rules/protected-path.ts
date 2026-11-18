@@ -384,6 +384,8 @@ const GIT_POINTER_FILES = ['head', 'orig_head', 'fetch_head', 'packed-refs', 'co
  * True when the readable last part after an unknown part (`"$x/main"`, `"$d/HEAD"`) is, in any case, a
  * protected branch's name or a git pointer file: the unknown part could be `.git/refs/heads` or `.git`
  * (hook-env-refs Task 3). A branch named with slashes (`release/x`) counts by its last part only.
+ * Trailing slashes and one `.lock` are dropped first, and a last part with wildcards (`mai?`, `m[a]in`)
+ * counts when it matches one of those names (Task 8).
  */
 function endsInGitRef(tail: string, settings: GateSettings): boolean {
   const trimmed = tail.replace(/\/+$/, '');
