@@ -329,8 +329,8 @@ function inPluginCheckout(word: string, cwd: string): boolean {
 
 /**
  * True when a word or assignment value of the part names a hook script from the part's cwd (hook-env-refs
- * Task 10): a relative path is read from the cwd; in a cwd the reader lost, a relative program it runs from
- * a folder counts when its name or folders could be an OSS hook's (`couldBeOssHook`, Task 10b).
+ * Task 10): a relative path is read from the cwd; in a cwd the reader lost, any word counts when its name
+ * or folders could be an OSS hook's (`lostWordsCouldBeHook`, Tasks 10b and 14).
  */
 function partNamesHook(part: CommandPart): boolean {
   const lost = part.lostDir !== null && part.lostDir.plainKnown !== true;
