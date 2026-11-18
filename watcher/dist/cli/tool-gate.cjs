@@ -5977,7 +5977,7 @@ function unknownWrite(part, settings, places, paths) {
   }
   return null;
 }
-var GIT_POINTER_FILES = ["head", "orig_head", "fetch_head", "packed-refs", "commondir", "gitdir"];
+var GIT_POINTER_FILES = ["head", "orig_head", "fetch_head", "packed-refs", "commondir", "gitdir", "grafts", "alternates", "shallow"];
 function endsInGitRef(tail, settings) {
   const trimmed = tail.replace(/\/+$/, "");
   const pattern = trimmed.slice(trimmed.lastIndexOf("/") + 1).replace(/\.lock$/i, "");
@@ -8111,6 +8111,7 @@ var HOOK_CALL_VARIABLES = /* @__PURE__ */ new Set([
 ]);
 var ASSIGNMENT3 = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=/;
 var VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+var MAYBE_EXPORTED = /[A-Z]|_proxy$/;
 var RESERVED = /* @__PURE__ */ new Set(["if", "then", "else", "elif", "do", "while", "until", "{", "!", "time"]);
 var SETTING_WORD = /^(?:HOME|PATH|path)(?:$|\[[^\]]*\])?(?:\+?=|$)/;
 var SCRIPT_FLAG = /^-[A-Za-z]*c$/;
@@ -8149,19 +8150,30 @@ function setsIndirectly(words) {
   if (NAMEREF_SETTERS.has(name) && args.some((a) => /^-[A-Za-z]*n/.test(a))) return true;
   return args.some((a) => !a.startsWith("-") && a.split("=")[0].includes(UNKNOWN));
 }
+function variableOf(word) {
+  return word.split(/[=[+]/)[0];
+}
 function setsUnlisted(words) {
   let p = 0;
   while (RESERVED.has(words[p])) p++;
-  const names = [];
-  while (p < words.length && ASSIGNMENT3.test(words[p])) names.push(words[p++]);
+  const assigned = [];
+  while (p < words.length && ASSIGNMENT3.test(words[p])) assigned.push(words[p++]);
   while (PREFIXES.has(words[p])) p++;
   const [name, ...args] = words.slice(p);
-  if (name === "for" || name === "select") names.push(args[0] ?? "");
-  else if (name !== void 0 && OPERAND_SETTERS.has(name)) names.push(...args.filter((a) => !a.startsWith("-")));
-  return names.some((word) => {
-    const variable = word.split(/[=[+]/)[0];
-    return VARIABLE_NAME.test(variable) && !HOOK_CALL_VARIABLES.has(variable);
-  });
+  if (name === void 0 || name === "for" || name === "select") {
+    const plain = name === void 0 ? assigned : [...assigned, args[0] ?? ""];
+    return plain.some((w) => MAYBE_EXPORTED.test(variableOf(w)) && unlisted(w));
+  }
+  const names = [...assigned];
+  if (OPERAND_SETTERS.has(name)) names.push(...args.filter((a) => !a.startsWith("-")));
+  else if (name === "printf" || name === "print") args.forEach((a, i) => a === "-v" ? names.push(args[i + 1] ?? "") : /^-v./.test(a) && names.push(a.slice(2)));
+  else if (name === "mapfile" || name === "readarray") names.push(...arrayOperands(args));
+  else if (name === "getopts") names.push(args[1] ?? "");
+  return names.some(unlisted);
+}
+function unlisted(word) {
+  const variable = variableOf(word);
+  return VARIABLE_NAME.test(variable) && !HOOK_CALL_VARIABLES.has(variable);
 }
 var ARRAY_VALUE_OPTIONS = /* @__PURE__ */ new Set(["-d", "-n", "-O", "-s", "-u", "-C", "-c"]);
 function arrayOperands(args) {
@@ -8219,7 +8231,8 @@ function setsFromElsewhere(words, depth, call, raws) {
   if (name === "source" || name === ".") {
     return !sourcesOssHook(args[0], call.home) && !(args[0] !== void 0 && trustedSourceWord(args[0], raws[p + 1], call.home, call.sources));
   }
-  if (name === "set") return args.some((a, i) => /^-[A-Za-z]*[kT]/.test(a) || a === "-o" && (args[i + 1] === "keyword" || args[i + 1] === "functrace"));
+  if (name === "function") return true;
+  if (name === "set") return args.some((a, i) => /^-[A-Za-z]*[kTa]/.test(a) || a === "-o" && ["keyword", "functrace", "allexport"].includes(args[i + 1]));
   if (name === "trap") return args.some((a) => !a.startsWith("-") && setsRefusedVariable(a, depth + 1, call));
   return false;
 }
@@ -8227,7 +8240,10 @@ function tokensSet(tokens, depth, call, text) {
   let previous = null;
   let words = [];
   let raws = [];
+  let afterNameParen = false;
   for (const token of tokens) {
+    if (afterNameParen && token.kind === "op" && token.value === ")") return true;
+    afterNameParen = token.kind === "op" && token.value === "(" && words.length > 0;
     if (token.kind === "op") {
       if (setsIndirectly(words) || setsUnlisted(words) || setsFromElsewhere(words, depth, call, raws)) return true;
       words = [];
@@ -8283,8 +8299,23 @@ function inPluginCheckout(word, cwd) {
     dir = up;
   }
 }
+function partNamesHook(part) {
+  const lost = part.lostDir !== null && part.lostDir.plainKnown !== true;
+  return [...part.words, ...part.assignmentValues].some((w, i) => {
+    if (namesHook(w, part.cwd)) return true;
+    if (/^[/~-]/.test(w)) return false;
+    return lost ? i === 0 && part.words.length > 0 && w.includes("/") && couldBeOssHook(w) : namesHook(import_node_path21.default.resolve(part.cwd, w), part.cwd);
+  });
+}
+function couldBeOssHook(word) {
+  const parts = word.split("/");
+  const last = parts[parts.length - 1].toLowerCase();
+  const literal2 = last.split(GLOB)[0];
+  const ossName = GLOB.test(last) ? literal2.startsWith("oss-") || "oss-".startsWith(literal2) : last.startsWith("oss-");
+  return ossName || parts.some((p) => ["hooks", ".oss"].some((name) => GLOB.test(p) ? globMatches(p, name) : p.toLowerCase() === name));
+}
 function checkOssHookEnv(part, command, home, sources) {
-  if (!part.words.some((w) => namesHook(w, part.cwd)) && !PLUGIN_HOOK.test(command)) return null;
+  if (!partNamesHook(part) && !PLUGIN_HOOK.test(command)) return null;
   const clears = part.wrappers.some((w, i) => w === "env" || w === "exec" && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o)));
   if (!clears && !setsRefusedVariable(command, 0, { home, sources: sourcesFor(command, sources) })) return null;
   return {
