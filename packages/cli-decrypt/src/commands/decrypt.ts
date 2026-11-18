@@ -12,6 +12,7 @@ import { DebugLogger } from '../debug.js';
 import { CacheService } from '../cache.js';
 import { fetchManifest, verifyManifestSignature, type SignedManifest } from '../manifest-verifier.js';
 import { verifyDecryptedPrompt } from '../integrity-pipeline.js';
+import { checkAndRecordManifestVersion } from '../manifest-floor.js';
 import { readUpdateState, writeUpdateState } from '../update-state.js';
 import { detectPromptChange } from '../change-detection.js';
 
@@ -177,6 +178,17 @@ export async function decryptCommand(
     throw new Error('[SECURITY] Manifest signature verification FAILED. Prompt delivery blocked.');
   }
   console.error('[verify] Manifest signature: valid');
+
+  // R-273 D11: refuse a signed manifest older than the newest one accepted from this API.
+  const floorVerdict = checkAndRecordManifestVersion(apiUrl, manifest.version);
+  if (floorVerdict !== 'accepted') {
+    const message =
+      floorVerdict === 'older'
+        ? '[SECURITY] Manifest is older than one already seen — prompt blocked'
+        : '[SECURITY] Manifest has no valid version — prompt blocked';
+    console.error(message);
+    throw new Error(message);
+  }
 
   const integrity = await verifyDecryptedPrompt(plaintext, type, name, manifest);
   if (integrity.verified !== true) {
