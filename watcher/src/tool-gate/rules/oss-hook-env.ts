@@ -8,7 +8,8 @@
  * a `--plugin-dir` copy (any `…/hooks/oss-*.sh`), a plugin checkout (any `hooks/*` below a folder that holds
  * `.claude-plugin/plugin.json`, looked up on disk from the call's cwd), and `$CLAUDE_PLUGIN_ROOT/hooks/*`
  * (or `${CLAUDE_PLUGIN_ROOT}`) as written (hook-env-refs Tasks 1 and 7), in any case; a glob word that
- * could expand to one counts as one. Another repo's `hooks/` script is not one.
+ * could expand to one counts as one. Another repo's `hooks/` script is not one. A relative word is read
+ * from the part's cwd, and a variable's value that names one counts too (Task 10).
  * Decided from the words the shell reads (round 13, CR L-a), brace expansion included, on the whole
  * command when a part names a hook script: an assignment (`X=…`, `X+=…`, `X[i]=…`, before a program or
  * alone), an operand of `export`, `declare`, `local`, `readonly`, `read`, `let`, `env` and the like, a
