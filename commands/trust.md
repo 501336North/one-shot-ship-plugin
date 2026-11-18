@@ -180,11 +180,13 @@ Only audit the prompt matching the given name. Search the manifest for prompts w
 
 Parse the JSON output into a list of prompts to audit. Each entry has `name`, `category`, `hash`, `size`.
 
+**Workflow aliases:** the manifest also lists each command under its workflow names, as the same file with the same hash. Apply this before any other filter. Skip every entry in category `workflows` whose `hash` equals the `hash` of an entry in category `commands`: that command is audited once, under its own name. A `workflows` entry whose hash matches no `commands` entry is its own file: audit it like the others.
+
 **Non-decryptable categories:** The following categories are **not encrypted** — they are injected in clear text into the user's `CLAUDE.md` by `/oss:login` and are directly readable at any time: `CLAUDE`, `_base`, `shared`, `templates`. Filter these OUT of the automated audit list since `oss-decrypt --type/--name` cannot serve them. Report them separately in the final report with this clarification:
 
 > These prompts are already transparent — they are visible in plain text in your CLAUDE.md file. No decryption-based audit is needed because there is nothing hidden. The encrypted prompts (below) are the ones that require this audit.
 
-The decryptable (encrypted) categories are: `commands`, `agents`, `hooks`, `skills`, `workflows`.
+The decryptable (encrypted) categories are: `commands`, `agents`, `hooks`, `skills`, plus the `workflows` entries left after the workflow-alias skip above.
 
 ## Step 5: Audit Each Prompt
 

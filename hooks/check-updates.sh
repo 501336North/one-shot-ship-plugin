@@ -102,7 +102,10 @@ if [[ "$skip_manifest" != "1" ]]; then
         prompts_changed=$(printf '%s' "$manifest_json" | jq -r --slurpfile old <(printf '%s' "$cached_hashes") '
             def h: if type == "string" then . else tojson end;
             (($old[0] // {}) | if type == "object" then . else {} end) as $o
-            | [.prompts | objects | keys[] as $k
+            | ((.prompts | objects | . as $p | reduce (keys[] | select(startswith("workflows/") | not)
+                | (try $p[.].hash catch null) // "" | h | select(. != "")) as $x ({}; .[$x] = true)) // {}) as $cmd
+            | [.prompts | objects | . as $p
+               | (keys[] | select((startswith("workflows/") | not) or ($cmd[(try $p[.].hash catch null) // "" | h] == null))) as $k
                | select(((try .[$k].hash catch null) // "" | h) as $new | (($o[$k] // "") | h) as $was
                         | $was != "" and $new != "" and $was != $new)] | length' 2>/dev/null)
         [[ "$prompts_changed" =~ ^[0-9]+$ ]] || prompts_changed=0

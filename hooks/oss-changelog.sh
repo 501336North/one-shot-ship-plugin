@@ -77,7 +77,10 @@ if [[ "$skip_manifest" != "1" ]]; then
             def h: if type == "string" then . else tojson end;
             def show: gsub("[\u0000-\u001f" + oss_invisible + "]"; "");
             (($old[0] // {}) | if type == "object" then . else {} end) as $o
-            | [.prompts | objects | keys[] as $k
+            | ((.prompts | objects | . as $p | reduce (keys[] | select(startswith("workflows/") | not)
+                | (try $p[.].hash catch null) // "" | h | select(. != "")) as $x ({}; .[$x] = true)) // {}) as $cmd
+            | [.prompts | objects | . as $p
+               | (keys[] | select((startswith("workflows/") | not) or ($cmd[(try $p[.].hash catch null) // "" | h] == null))) as $k
                | ((try .[$k].hash catch null) // "" | h) as $new | (($o[$k] // "") | h) as $was
                | if $was == "" or $was == "null" then {n: $k} elif $was != $new then {c: $k} else empty end] as $d
             | [$d[] | .c // empty] as $c | [$d[] | .n // empty] as $n
