@@ -601,6 +601,7 @@ async function checkBash(ctx: Context, command: string): Promise<Refused | null>
   const { paths } = ctx;
   const places = placesOf(root, home, paths, ctx.caseInsensitive);
   const trustOf = trustForCall(repoTrust);
+  const sources = trustedSourcesOf(ctx);
   const repos = reviewedRepos(ctx);
   for (const [index, part] of facts.parts.entries()) {
     const refusal =
@@ -614,7 +615,7 @@ async function checkBash(ctx: Context, command: string): Promise<Refused | null>
       checkForcePush(part, settings) ??
       checkTags(part, settings) ??
       checkProductionHost(part, settings) ??
-      checkOssHookEnv(part, command, home, trustedSourcesOf(ctx)) ??
+      checkOssHookEnv(part, command, home, sources) ??
       checkProtectedPathBash(part, settings, root, home, paths, ctx.caseInsensitive, places, ctx.tree) ??
       (ownStep ? null : checkGateAgentBash(part, hook.agent, settings, { repos, home, exists: fs.existsSync, temp: tempRoots(ctx), fallback: ctx.containment?.kind === 'fallback', darwin: ctx.platform === 'darwin', sandboxed: ctx.containment?.kind === 'sandbox' }, paths, ctx.caseInsensitive, { earlier: facts.parts.slice(0, index), background: hook.background })) ??
       (await checkGitClean(part, settings, root, home, paths, ctx.git, ctx.caseInsensitive, places, { earlier: facts.parts, count: index, tree: ctx.tree })) ??

@@ -16,7 +16,11 @@
  * it. A comment, or a word that merely holds a name (`"see HOME docs"`), is not; `unset X` is allowed. A
  * name only known when it runs, given to `printf -v`, `declare` and the like, a nameref (`declare -n`),
  * or zsh's `${(P)…}` (which the tokenizer never reads) may be any name, so it counts as setting a refused
- * one (round 14, CR LOW-1). Reported under the protected-path rule: the hook folder is protected.
+ * one (round 14, CR LOW-1). Variables set from elsewhere count too (hook-env-refs Task 6): a `source` /
+ * `.` (so `set -a` too), unless its file is written out in full directly in `~/.oss/hooks` or is one the
+ * reader already trusts (`trustedSourceWord`); `set -k` / `-o keyword` and `set -T` / `-o functrace`; a
+ * trap body, read like an eval script; and `exec -c`, read like `env -i`. Reported under the
+ * protected-path rule: the hook folder is protected.
  */
 
 import { sourcesFor, trustedSourceWord, type CommandPart, type TrustedSources } from '../command-reader.js';
