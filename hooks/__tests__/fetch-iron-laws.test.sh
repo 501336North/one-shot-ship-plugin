@@ -151,8 +151,7 @@ verify_body_stub "$KS/vb/bin/oss-decrypt" "$KS/vb" || KS_WARM=n
 old_decrypt_stub "$KS/vb/old/oss-decrypt" "$KS/vb" || KS_WARM=n
 # serve <base file> [team file]: the reply {base[, team]}, and the fixture manifest signs exactly base.
 serve() {
-    if [[ -n "${2:-}" ]]; then jq -n --rawfile b "$1" --rawfile t "$2" '{base: $b, team: $t}' > "$KS/reply"
-    else jq -n --rawfile b "$1" '{base: $b}' > "$KS/reply"; fi
+    split_reply "$@" > "$KS/reply"
     rm -f "$KS/vb/served-hashes"; served_hash "$KS/vb" shared/iron-laws "$1"
 }
 printf '# IRON LAWS\n' > "$KS/laws"

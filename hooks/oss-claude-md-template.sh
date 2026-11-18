@@ -39,9 +39,8 @@ if printf '%s' "$body" | grep -qiE '<!doctype html|<html[[:space:]>]'; then
     warn "the API at $url sent an HTML page (a captive portal or proxy?), not the template."; exit 1
 fi
 # R-273 D12: the raw bytes, before any cleaning, must be the template the signed manifest names (servedHash of
-# templates/claude-md). Only exit 0 from oss-decrypt prints; a mismatch, any other code, no oss-decrypt (127) or one
-# older than 1.2.5 (no --verify-body) prints nothing. oss-decrypt's own [SECURITY] line goes to stderr.
-printf '%s' "$body" | "$HOME/.oss/bin/oss-decrypt" --verify-body templates/claude-md >/dev/null
+# templates/claude-md). Only exit 0 from oss_verify_body (oss-api-curl.sh) prints; any other code prints nothing.
+printf '%s' "$body" | oss_verify_body templates/claude-md
 vrc=$?
 (( vrc == 0 )) || { warn "the template from $url did not pass verification (oss-decrypt --verify-body exit $vrc: not the signed template, or oss-decrypt is older than 1.2.5 and the next /oss command updates it); no template."; exit 1; }
 # Terminal control codes and invisible text never reach stdout: C0 except tab and newline, plus the set oss_json_field

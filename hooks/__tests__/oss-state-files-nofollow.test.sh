@@ -54,7 +54,7 @@ source "$SCRIPT_DIR/lib/verify-body-stub.sh"
 { printf '# IRON LAWS from stub\n'
   for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo "IRON LAW padding line $i: a real laws body is several KB, the sync rejects anything under 500 bytes."; done
 } > "$KS/laws"
-export LAWS_REPLY="$KS/laws.json"; jq -n --rawfile b "$KS/laws" '{base: $b}' > "$LAWS_REPLY"
+export LAWS_REPLY="$KS/laws.json"; split_reply "$KS/laws" > "$LAWS_REPLY"
 verify_body_stub "$KS/vb/bin/oss-decrypt" "$KS/vb" || fail "oss-decrypt stub warms up" "warm_stub returned non-zero"
 served_hash "$KS/vb" shared/iron-laws "$KS/laws"
 

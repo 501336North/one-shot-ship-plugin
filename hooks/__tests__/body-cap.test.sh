@@ -193,7 +193,7 @@ verify_body_stub "$T/vb/bin/oss-decrypt" "$T/vb" || abort "the oss-decrypt stub 
 # vb_laws <laws>: fresh, answering {base: laws}, with the stub in the sandbox HOME and laws signed.
 vb_laws() {
     printf '%s' "$1" > "$T/vb/laws"; served_hash "$T/vb" shared/iron-laws "$T/vb/laws"
-    fresh "$(jq -n --rawfile b "$T/vb/laws" '{base: $b}')"; mkdir -p "$H/.oss/bin"; ln -s "$T/vb/bin/oss-decrypt" "$H/.oss/bin/oss-decrypt"
+    fresh "$(split_reply "$T/vb/laws")"; mkdir -p "$H/.oss/bin"; ln -s "$T/vb/bin/oss-decrypt" "$H/.oss/bin/oss-decrypt"
 }
 vb_laws "$LAWS"; : > "$T/nolen"; : > "$T/oldcurl"; hook /bin/bash "$P/hooks/fetch-iron-laws.sh"
 [[ "$RC" == 0 && "$OUT" == "$LAWS" ]] && pass "fetch-iron-laws: small laws with no Content-Length still print (control)" \

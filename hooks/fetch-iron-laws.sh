@@ -128,10 +128,9 @@ if ! oss_split_field base < "$WORK/reply" > "$WORK/base" || ! oss_split_field te
   echo "Error: the OSS API answer is not the ?split=1 JSON {base, team}; no laws printed" >&2
   exit 1
 fi
-# Only exit 0 prints: a mismatch, any other code, no oss-decrypt (127) or one older than 1.2.5 (no --verify-body)
-# prints nothing.
+# Only exit 0 from oss_verify_body (oss-api-curl.sh) prints; any other code prints nothing.
 VERIFY_STATUS=0
-"$HOME/.oss/bin/oss-decrypt" --verify-body shared/iron-laws < "$WORK/base" > /dev/null || VERIFY_STATUS=$?
+oss_verify_body shared/iron-laws < "$WORK/base" || VERIFY_STATUS=$?
 if [[ "$VERIFY_STATUS" -ne 0 ]]; then
   echo "Error: the laws did not pass verification (oss-decrypt --verify-body exit $VERIFY_STATUS: not the signed laws, or oss-decrypt is older than 1.2.5 and the next /oss command updates it); no laws printed" >&2
   exit 1

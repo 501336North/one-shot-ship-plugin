@@ -133,9 +133,9 @@ fetch_body() {
     if ! oss_split_field base < "$reply" > "$base" || ! oss_split_field team < "$reply" > "$team"; then
         warn "rejected: the API reply is not the ?split=1 JSON {base, team}; CLAUDE.md left unchanged"; return 1
     fi
-    # The raw base bytes, before any filtering, must be the signed file. Only exit 0 writes: a mismatch, any other
-    # code, no oss-decrypt (127) or one older than 1.2.5 (no --verify-body) writes nothing.
-    "$STATE_DIR/bin/oss-decrypt" --verify-body shared/iron-laws < "$base" > /dev/null
+    # The raw base bytes, before any filtering, must be the signed file. Only exit 0 from oss_verify_body
+    # (oss-api-curl.sh) writes; any other code writes nothing.
+    oss_verify_body shared/iron-laws < "$base"
     rc=$?
     if (( rc != 0 )); then
         warn "the IRON LAWS did not pass verification (oss-decrypt --verify-body exit $rc: not the signed laws, or oss-decrypt is older than 1.2.5 and the next /oss command updates it); CLAUDE.md left unchanged"

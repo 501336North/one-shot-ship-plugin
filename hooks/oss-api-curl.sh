@@ -222,6 +222,24 @@ oss_split_field() {
     fi
 }
 
+# oss_verify_body KEY - feeds stdin to `~/.oss/bin/oss-decrypt --verify-body KEY` (R-273 D12) and returns its exit
+# code; its stdout is dropped, its one [SECURITY] line goes to stderr. Only 0 means the bytes are the ones the signed
+# manifest names for KEY. Callers treat every other code as a refusal: a mismatch, no oss-decrypt (127) or one older
+# than 1.2.5 (no --verify-body: it prints its help and exits 1). Used by oss-iron-laws-sync.sh (shared/iron-laws),
+# fetch-iron-laws.sh (shared/iron-laws) and oss-claude-md-template.sh (templates/claude-md).
+oss_verify_body() {
+    "$HOME/.oss/bin/oss-decrypt" --verify-body "$1" > /dev/null
+}
+
+# OSS_JQ_PROMPT_KEYS - a jq definition, oss_prompt_keys: given a manifest's .prompts object, emits its keys, minus
+# each workflows/ key whose hash is also the hash of a key outside workflows/ (the manifest lists a command again
+# under its workflow names, as the same file), so that file counts once (R-273 P6). A workflows/ key with a hash of
+# its own is kept. Used by check-updates.sh and oss-changelog.sh; commands/trust.md states the same rule in prose.
+OSS_JQ_PROMPT_KEYS='def oss_prompt_keys: def h: if type == "string" then . else tojson end;
+    . as $p | ((reduce (keys[] | select(startswith("workflows/") | not)
+        | (try $p[.].hash catch null) // "" | h | select(. != "")) as $x ({}; .[$x] = true)) // {}) as $cmd
+    | keys[] | select((startswith("workflows/") | not) or ($cmd[(try $p[.].hash catch null) // "" | h] == null)); '
+
 # oss_private_dir DIR - makes DIR, a folder in the user's own ~/.oss, owner-only (700). Returns 1 when DIR is
 # a symlink or not the user's (what is put in it could land anywhere, or in someone else's hands) and 2 when
 # it could not be made. The one check for a private folder under ~/.oss.

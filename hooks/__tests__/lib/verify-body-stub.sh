@@ -17,12 +17,19 @@
 # served_hash <dir> <key> <file>
 #   Records sha256 of <file>'s bytes as <key>'s servedHash in <dir>/served-hashes (replacing an earlier one).
 # sha256_of <file>  - prints the hex sha256 of <file>'s bytes.
+# split_reply <base file> [team file]
+#   Prints the /shared/iron-laws?split=1 reply {base[, team]}, each field the file's bytes as is.
 
 source "$(dirname "${BASH_SOURCE[0]}")/warm-stub.sh"
 
 sha256_of() {
     if command -v sha256sum >/dev/null 2>&1; then sha256sum < "$1" | cut -d' ' -f1
     else shasum -a 256 < "$1" | cut -d' ' -f1; fi
+}
+
+split_reply() {
+    if [[ -n "${2:-}" ]]; then jq -n --rawfile b "$1" --rawfile t "$2" '{base: $b, team: $t}'
+    else jq -n --rawfile b "$1" '{base: $b}'; fi
 }
 
 served_hash() {

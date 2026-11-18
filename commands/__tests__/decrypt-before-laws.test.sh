@@ -70,7 +70,7 @@ first_login() {
     { echo '# IRON LAWS'; echo; echo '## LAW 1: TDD'
       for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo "IRON LAW padding line $i: a real laws body is several KB, the sync rejects anything under 500 bytes."; done
     } > "$M/laws"
-    jq -n --rawfile b "$M/laws" '{base: $b}' > "$M/reply.json"
+    split_reply "$M/laws" > "$M/reply.json"
     served_hash "$M" shared/iron-laws "$M/laws"
     printf '#!/bin/bash\ncat %q\nprintf %q\n' "$M/reply.json" '\n200\n' > "$M/curl"; chmod +x "$M/curl"
     # The verifying oss-decrypt the stub installer puts in place (the pinned one has --verify-body).

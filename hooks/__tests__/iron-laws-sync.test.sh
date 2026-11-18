@@ -51,7 +51,7 @@ source "$SCRIPT_DIR/lib/verify-body-stub.sh"
 
 # serve_laws <mock_dir> <laws file>: the mock's JSON reply, the fixture servedHash, and the stub in $TEST_HOME.
 serve_laws() {
-    jq -n --rawfile b "$2" '{base: $b}' > "$1/reply.json"
+    split_reply "$2" > "$1/reply.json"
     served_hash "$1" shared/iron-laws "$2"
     verify_body_stub "$TEST_HOME/.oss/bin/oss-decrypt" "$1"
 }

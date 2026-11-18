@@ -90,8 +90,8 @@ teardown() { rm -rf "$T"; }
 prep_reply() {
     local S="$T/shim"
     if [[ -f "$S/raw" ]]; then cp "$S/raw" "$S/reply"
-    elif [[ -f "$S/team" ]]; then jq -n --rawfile b "$S/body" --rawfile t "$S/team" '{base: $b, team: $t}' > "$S/reply"
-    else jq -n --rawfile b "$S/body" '{base: $b}' > "$S/reply"; fi
+    elif [[ -f "$S/team" ]]; then split_reply "$S/body" "$S/team" > "$S/reply"
+    else split_reply "$S/body" > "$S/reply"; fi
     [[ -f "$S/pin" ]] || served_hash "$VB" shared/iron-laws "$S/body"
 }
 

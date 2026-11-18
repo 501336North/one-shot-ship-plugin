@@ -145,7 +145,7 @@ source "$SCRIPT_DIR/lib/verify-body-stub.sh"
 verify_body_stub "$T/vb/bin/oss-decrypt" "$T/vb" || abort "the oss-decrypt stub warms up" "warm-up did not run"
 stub_in() { mkdir -p "$1/.oss/bin"; ln -sf "$T/vb/bin/oss-decrypt" "$1/.oss/bin/oss-decrypt"; }
 # serve <laws file>: the API's ?split=1 reply {base: laws}; the fixture manifest signs exactly those laws.
-serve() { jq -n --rawfile b "$1" '{base: $b}' > "$T/body"; served_hash "$T/vb" shared/iron-laws "$1"; }
+serve() { split_reply "$1" > "$T/body"; served_hash "$T/vb" shared/iron-laws "$1"; }
 
 # laws <tag>: a realistic laws body (heading, "IRON LAW", well over 500 bytes), with a final newline.
 laws() {
