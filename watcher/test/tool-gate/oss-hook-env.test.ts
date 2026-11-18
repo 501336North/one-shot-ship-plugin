@@ -352,7 +352,11 @@ describe.each(AGENTS.slice(0, 2))('%s, a hook path reached through cd or a varia
     'h=~/.oss/hooks/x.sh; BASH_ENV=/tmp/e $h',
     'h=~/.oss/hooks/x.sh; BASH_ENV=/tmp/e bash "$h"',
     'h=$HOME/.oss/hooks/oss-log.sh; X_Y=1 $h',
-    'cd "$D"; BASH_ENV=/tmp/e ./x.sh',
+    // Task 10b: in a folder known only at run time, a program that could be an OSS hook
+    'cd "$D"; X=1 ./oss-log.sh',
+    'cd "$D"; X=1 hooks/x.sh',
+    'cd "$D"; X=1 ./OSS-l?g.sh',
+    'cd "$D"; X=1 .oss/hooks/x.sh',
   ])('refuses a hook script reached through cd or a variable, run with a variable it chose: %s', async (command) => {
     const result = await call(command, agent);
     expect(result.exitCode, command).toBe(2);
@@ -365,9 +369,18 @@ describe.each(AGENTS.slice(0, 2))('%s, a hook path reached through cd or a varia
     'h=~/.oss/hooks/oss-log.sh; $h write build x',
     'n=3; ~/.oss/hooks/oss-log.sh checkpoint "$n"',
     'cd "$D"; ./x.sh',
+    // Task 10b: in a folder known only at run time, a program that can't be an OSS hook by its name or folders
+    'cd "$D" && NODE_ENV=test ./scripts/test.sh',
+    'cd "$D" && FOO=1 ./run.sh',
   ])('leaves a call that sets no refused variable, or runs no hook script, as it was: %s', async (command) => {
     const result = await call(command, agent);
     expect(result.stderr, command).not.toMatch(/OSS hook script/);
+  });
+
+  // a plugin hook not named oss-* run from a folder known only at run time is not caught
+  it('accepted residual (user pick 2026-11-18): cd "$D"; X=1 ./checkpoint.sh', async () => {
+    const result = await call('cd "$D"; X=1 ./checkpoint.sh', agent);
+    expect(result.stderr).not.toMatch(/OSS hook script/);
   });
 });
 
