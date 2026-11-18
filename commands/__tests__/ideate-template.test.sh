@@ -77,7 +77,7 @@ test_commands_has_api_fetch() {
         return
     fi
 
-    if grep -q 'prompts/claude-md\|prompts/templates/claude-md\|template.*API\|fetch.*template' "$COMMANDS_IDEATE"; then
+    if grep -q 'prompts/claude-md\|prompts/templates/claude-md\|template.*API\|fetch.*template\|oss-iron-laws-sync' "$COMMANDS_IDEATE"; then
         pass "$test_name"
     else
         fail "$test_name" "API template fetch instruction" "no API template fetch found"

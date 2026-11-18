@@ -17,8 +17,8 @@ check() {  # $1 = description, $2 = offending lines (empty = pass)
 
 check "there is no /oss:telegram command (commands/telegram.md)" \
     "$([[ -e "$C/telegram.md" ]] && echo "$C/telegram.md exists")"
-check "/oss:settings never mentions Telegram" \
-    "$(grep -ni 'telegram' "$C/settings.md")"
+check "/oss:settings never offers Telegram (it only removes the retired keys)" \
+    "$(grep -ni 'telegram' "$C/settings.md" | grep -viE 'retired telegram|del\(\.telegram')"
 check "/oss:settings never calls /api/v1/telegram" \
     "$(grep -n '/api/v1/telegram' "$C/settings.md")"
 for f in login.md webhook.md oss-audio.md; do
