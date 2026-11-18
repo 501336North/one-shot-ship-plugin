@@ -481,6 +481,15 @@ A result counts only if this machine's assembler wrote it for this run, and it s
   - Open security item (user decision D15, 2026-11-13): it is logged, not silently deferred.
 - **T21 (oss-lab), amended (S7):** `verdict_gate` recomputes the merge-base, the diff stat and HEAD itself and compares them with the result; a mismatch or empty diff fails. Test: a forged ship.json claiming a non-empty diff on an empty branch fails.
 
+### After the R-266 rebase (2026-11-18): fixes found by the rebase checks, built before T18
+- **T22 (API + plugin): plan Phase 0's grep regexes go in single quotes.** R-266's gate reads `((` followed by `$` inside double quotes as arithmetic, and refuses the whole archive step for every agent. Single quotes keep the same regex and behavior. The coordinator confirmed this fix on 2026-11-18; the gate is not loosened.
+  - Test (API, plan-archive-step): neither PROGRESS.md grep has its regex in double quotes.
+  - Then, in the plugin: regenerate `watcher/test/fixtures/served-command-blocks.json` with `node scripts/served-command-blocks.mjs` from the API checkout, and run `watcher/test/cli/served-commands.acceptance.test.ts`. That test feeds every served block to the gate, as the main agent and as builders. Commit the fixture with the plugin PR.
+- **T23 (API): plan-archive-step's today() uses the local date,** as `date +%Y-%m-%d` in the archive step does. RED: run it under a TZ whose local date differs from the UTC date.
+- **T24 (plugin): R-257's own test files use GNU-first `stat`.** The files are oss-notify-phase-result, timeline-gate-ledger and oss-decision-record. The test is `stat-order.test.sh`. R-266's three offenders are R-266's own fix.
+- **T25 (plugin): the D17 start notice prints only in an OSS project,** that is, one whose project folder has `.oss`. The existing test, `oss-notify-analytics.real.integration` ("the start event writes nothing", from a non-OSS folder), keeps its expectation, and the code changes to fit it. The test suite has no `⚠ changes existing test` mark.
+- **T26 (plugin): `oss-phase-result.sh` and the phase gate in `oss-notify.sh` run the CLI through `oss_node` (`hooks/oss-node.sh`),** not PATH's node. This is the NOTES rebase item. If there is no usable node, the call fails as cli_missing does today, with one clear line.
+
 ## Estimated Tasks: 21 in slice A (T1-T17, plus new T3b, T8a, T9a, T10b), plus 5 tracked (T18, T18b, T19, T20, T21)
 ## Estimated Test Cases: about 160
 

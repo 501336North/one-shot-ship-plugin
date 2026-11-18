@@ -34,12 +34,25 @@
 - [x] T17: API plan archive step reads results; dead schemas removed (completed 2026-11-13, AgenticDevWorkflow-r257 2e3bc57e, local only)
 - [x] D20: older plugins keep the old PROGRESS.md archive rule when the check is missing or exits 127 (completed 2026-11-14, API 0af2d521; trigger narrowed to 'hook not installed' in cf01dc28; user pick)
 
+### After the R-266 rebase (2026-11-18)
+- [x] Rebased onto R-266's merge: plugin onto 829748a, API onto a80487c4; the manifest was regenerated, not hand-merged (completed 2026-11-18)
+- [x] After-rebase gate check of plan Phase 0: refused (dq `((`…`$`). Fix is T22; with it, the whole block passes for main and builder, including the `"$top/..."` moves (completed 2026-11-18)
+- [x] cd-then-write audit: R-257's four assemble steps pass the gate, and none has a cd before a write (completed 2026-11-18)
+- [ ] T22: plan.md greps single-quoted + served-command fixture
+- [ ] T23: plan-archive-step local date
+- [ ] T24: GNU-first stat in R-257 test files
+- [ ] T25: D17 notice only in an OSS project
+- [ ] T26: oss_node for the phase-result CLI
+- [ ] T18: hooks.json Stop → oss-stop-dispatch.sh + SubagentStop
+- [ ] T18b: protectedPaths for ledger and results/
+- [ ] T19: review-agent verdict block → ship evidence
+- [ ] T20: recorder hash chain (evidenceTrust ledger)
+
 ### Later
-- [ ] Ship slice A into feat/determinism-sprint/build (SD-1)
-- [ ] T18/T18b/T19/T20 after R-266 merges (blocked on R-266)
-- [ ] T21 oss-lab (after plugin slice A)
+- [ ] Ship into feat/determinism-sprint/build (SD-1)
+- [ ] T21 oss-lab (after the plugin ships)
 
 ## Blockers
-- T18-T20 wait for R-266 to merge.
+- R-266's 4 red hook tests on the base (pen-tester identity, run_capped, stat order, unset line): R-266 is fixing them in its own PR, and R-257 rebases once it merges.
 
-## Last Updated: 2026-11-14 08:24 CST by /oss:build (D20 narrowed)
+## Last Updated: 2026-11-18 08:15 CST by /oss:build (post-R-266 tasks added)
