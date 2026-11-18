@@ -201,6 +201,27 @@ oss_json_field() {
         | gsub("[\u0000-\u001f" + oss_invisible + "]"; "") else "" end'
 }
 
+# oss_split_field FIELD - reads the /shared/iron-laws?split=1 reply on stdin and prints its string .FIELD (base or
+# team) byte for byte, "" for an absent team (R-273 D12: oss-iron-laws-sync.sh, fetch-iron-laws.sh). Returns
+# non-zero, printing nothing, unless stdin is exactly one JSON object whose base is a string and whose team is
+# absent, null or a string. jq, else node (a plugin requirement; FIELD goes in argv after --); neither: refused.
+oss_split_field() {
+    if command -v jq >/dev/null 2>&1; then
+        jq -sj --arg f "$1" 'if length == 1 and (.[0] | type) == "object" and (.[0].base | type) == "string"
+            and ((.[0].team // "") | type) == "string" then .[0][$f] // "" else error("refused") end' 2>/dev/null
+    elif command -v node >/dev/null 2>&1; then
+        node -e '
+            let c;
+            try { c = JSON.parse(require("fs").readFileSync(0, "utf8")); } catch (e) { process.exit(1); }
+            if (c === null || typeof c !== "object" || Array.isArray(c) || typeof c.base !== "string"
+                || (c.team != null && typeof c.team !== "string")) process.exit(1);
+            const v = Object.prototype.hasOwnProperty.call(c, process.argv[1]) ? c[process.argv[1]] : null;
+            process.stdout.write(v == null ? "" : v);' -- "$1" 2>/dev/null
+    else
+        return 1
+    fi
+}
+
 # oss_private_dir DIR - makes DIR, a folder in the user's own ~/.oss, owner-only (700). Returns 1 when DIR is
 # a symlink or not the user's (what is put in it could land anywhere, or in someone else's hands) and 2 when
 # it could not be made. The one check for a private folder under ~/.oss.
