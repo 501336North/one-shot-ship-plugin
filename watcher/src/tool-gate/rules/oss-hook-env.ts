@@ -24,6 +24,9 @@
  * reader already trusts (`trustedSourceWord`); `set -k` / `-o keyword` and `set -T` / `-o functrace`; a
  * trap body, read like an eval script; and `exec -c`, read like `env -i`. `set -a` / `-o allexport` and
  * any function definition are refused too (Task 9); a lower-case plain variable, never exported, is not.
+ * So are `alias`, `enable`, `disable`, a `hash` that sets a path, a key set in a zsh command map
+ * (`aliases[x]=…`, `options[…]`), allexport in any spelling (`setopt ALL_EXPORT`, `shopt -os allexport`),
+ * and a zsh array tied to an exported variable (`manpath`, `fpath`, …) (Task 13).
  * Reported under the
  * protected-path rule: the hook folder is protected.
  */
