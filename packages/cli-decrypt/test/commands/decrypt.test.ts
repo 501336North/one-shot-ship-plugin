@@ -5,7 +5,7 @@
  * @boundary CLI Commands
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import crypto from 'crypto';
@@ -337,7 +337,9 @@ describe('Decrypt Command', () => {
         .mockRejectedValueOnce(new Error('fetch failed'))
         .mockResolvedValueOnce(manifest);
 
-      await decryptCommand('commands', 'plan');
+      const run = decryptCommand('commands', 'plan');
+      await vi.advanceTimersByTimeAsync(3000);
+      await run;
 
       expect(manifestVerifier.fetchManifest).toHaveBeenCalledTimes(2);
       expect(consoleErrorSpy).toHaveBeenCalledWith('[verify] Prompt hash: verified');
@@ -361,6 +363,32 @@ describe('Decrypt Command', () => {
       expect(manifestVerifier.fetchManifest).toHaveBeenCalledTimes(2);
       expect(consoleErrorSpy).toHaveBeenCalledWith(MANIFEST_UNREACHABLE);
       expect(consoleSpy).not.toHaveBeenCalled();
+    });
+
+    /**
+     * @behavior A server that fails fast (HTTP 503 while it restarts) is given until 3 s before the retry
+     * @business-rule R-273 ship round 2 (perf F1): the retry starts no earlier than 3 s after the first attempt
+     *   started; the 3 s / 10 s budgets themselves are unchanged (ADR-002)
+     */
+    it('a server answering 503 for its first second: the retry waits until 3 s, then the prompt is verified', async () => {
+      vi.useFakeTimers();
+      const t0 = Date.now();
+      const started: number[] = [];
+      vi.mocked(manifestVerifier.fetchManifest).mockImplementation(async () => {
+        started.push(Date.now());
+        return Date.now() - t0 < 1000 ? null : manifest;
+      });
+
+      const run = decryptCommand('commands', 'plan');
+      await vi.advanceTimersByTimeAsync(2999);
+      expect(started).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await run;
+
+      expect(started).toHaveLength(2);
+      expect(started[1] - started[0]).toBeGreaterThanOrEqual(3000);
+      expect(consoleSpy).toHaveBeenCalledWith('Decrypted prompt content!');
+      expect(vi.getTimerCount()).toBe(0);
     });
 
     it('the first attempt aborts at 3 s and the retry at 10 s', async () => {
@@ -395,8 +423,107 @@ describe('Decrypt Command', () => {
     });
   });
   /**
+   * @behavior A prompt arrives sooner: the manifest is requested together with the prompt, not after it
+   * @business-rule R-273 ship round 1: same verify-before-output order; only the manifest request starts earlier
+   * @boundary CLI Commands (prompt and manifest fetches stubbed)
+   */
+  describe('manifest requested alongside the prompt', () => {
+    it('the manifest request has started by the time the prompt request starts', async () => {
+      let manifestRequestedFirst = false;
+      vi.mocked(apiClient.fetchEncryptedPrompt).mockImplementation(async () => {
+        manifestRequestedFirst = vi.mocked(manifestVerifier.fetchManifest).mock.calls.length > 0;
+        return { encrypted: 'enc_data', iv: 'iv_data', authTag: 'tag_data' };
+      });
+
+      await decryptCommand('commands', 'plan');
+
+      expect(manifestRequestedFirst).toBe(true);
+      expect(consoleSpy).toHaveBeenCalledWith('Decrypted prompt content!');
+    });
+
+    it('a failed prompt fetch is the error reported, and the early manifest failure is not an unhandled rejection', async () => {
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown): void => {
+        unhandled.push(reason);
+      };
+      process.on('unhandledRejection', onUnhandled);
+      try {
+        vi.mocked(manifestVerifier.fetchManifest).mockRejectedValue(new Error('fetch failed'));
+        vi.mocked(apiClient.fetchEncryptedPrompt).mockRejectedValue(new Error('Unauthorized'));
+
+        await expect(decryptCommand('commands', 'plan')).rejects.toThrow('Unauthorized');
+        await new Promise(done => setTimeout(done, 50));
+
+        expect(unhandled).toEqual([]);
+        expect(consoleSpy).not.toHaveBeenCalled();
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
+    });
+
+    it('a failed prompt fetch stops the manifest request: no retry is sent after the command has failed', async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(null);
+        vi.mocked(apiClient.fetchEncryptedPrompt).mockRejectedValue(new Error('Unauthorized'));
+
+        await expect(decryptCommand('commands', 'plan')).rejects.toThrow('Unauthorized');
+        await vi.advanceTimersByTimeAsync(20_000);
+
+        expect(manifestVerifier.fetchManifest).toHaveBeenCalledTimes(1);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('nothing reaches stdout until the manifest has been checked', async () => {
+      let releaseManifest: (m: manifestVerifier.SignedManifest) => void = () => undefined;
+      vi.mocked(manifestVerifier.fetchManifest).mockReturnValue(
+        new Promise(done => {
+          releaseManifest = done;
+        })
+      );
+
+      const run = decryptCommand('commands', 'plan');
+      await new Promise(done => setTimeout(done, 20));
+      expect(consoleSpy).not.toHaveBeenCalled();
+
+      releaseManifest({
+        version: 1794940034,
+        generatedAt: new Date().toISOString(),
+        algorithm: 'sha256',
+        signing: 'ed25519',
+        prompts: {},
+        signature: 'valid-sig',
+      });
+      await run;
+      expect(consoleSpy).toHaveBeenCalledWith('Decrypted prompt content!');
+    });
+  });
+
+  /**
+   * @behavior A prompt name cannot drive the terminal through the "No manifest entry" line
+   * @business-rule R-273 ship round 1: text shown on stderr goes through stripControl
+   */
+  it('strips control characters from the name in the "No manifest entry" line', async () => {
+    vi.mocked(integrityPipeline.verifyDecryptedPrompt).mockResolvedValue({
+      verified: false,
+      skipped: false,
+      reason: 'not_in_manifest',
+    });
+
+    await expect(decryptCommand('commands', 'pl\u001b[2Jan\u202e')).rejects.toThrow('[SECURITY]');
+
+    const lines = consoleErrorSpy.mock.calls.map(c => String(c[0]));
+    expect(lines).toContain('[verify] No manifest entry for commands/pl[2Jan — prompt blocked');
+    expect(lines.join('\n')).not.toMatch(/[\u001b\u202e]/);
+  });
+
+  /**
    * @behavior A signed manifest older than the newest one already accepted from the same API is refused
-   * @business-rule R-273 D11 / ADR-007: anti-rollback floor in ~/.oss/manifest-floor.json, keyed by apiUrl,
+   * @business-rule R-273 D11 / ADR-007: anti-rollback floor in ~/.oss/manifest-floor.d/ (one folder per apiUrl,
+   *   one empty file per recorded version),
    *   starting at the compiled live version, recorded only after the signature verifies
    * @boundary CLI Commands (manifest fetch and signature stubbed; the floor file is real, in a temp config dir)
    */
@@ -404,9 +531,15 @@ describe('Decrypt Command', () => {
     const LIVE = 1794940034;
     const API = 'https://one-shot-ship-api.onrender.com';
     const OLDER = '[SECURITY] Manifest is older than one already seen — prompt blocked';
-    const floorPath = (): string => join(testDir, 'manifest-floor.json');
-    const floorOf = (api: string): number | undefined =>
-      existsSync(floorPath()) ? (JSON.parse(readFileSync(floorPath(), 'utf8')) as Record<string, number>)[api] : undefined;
+    const storePath = (): string => join(testDir, 'manifest-floor.d');
+    const keyDir = (configDir: string, api: string): string =>
+      join(configDir, 'manifest-floor.d', crypto.createHash('sha256').update(api).digest('hex'));
+    const seedFloor = (api: string, version: number): void => {
+      mkdirSync(keyDir(testDir, api), { recursive: true, mode: 0o700 });
+      writeFileSync(join(keyDir(testDir, api), String(version)), '');
+    };
+    const floorOf = (api: string, configDir = testDir): number | undefined =>
+      existsSync(keyDir(configDir, api)) ? Math.max(...readdirSync(keyDir(configDir, api)).filter(n => /^[0-9]+$/.test(n)).map(Number)) : undefined;
 
     function serve(version: unknown, prompts: manifestVerifier.SignedManifest['prompts'] = {}): void {
       vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue({
@@ -422,7 +555,7 @@ describe('Decrypt Command', () => {
     const stderr = (): string[] => consoleErrorSpy.mock.calls.map(c => String(c[0]));
 
     it('blocks a manifest below the floor with the older-manifest message and prints no prompt', async () => {
-      writeFileSync(floorPath(), JSON.stringify({ [API]: LIVE + 10 }));
+      seedFloor(API, LIVE + 10);
       serve(LIVE + 5);
 
       await expect(decryptCommand('commands', 'plan')).rejects.toThrow('[SECURITY]');
@@ -439,20 +572,18 @@ describe('Decrypt Command', () => {
       expect(floorOf(API)).toBe(LIVE + 10);
     });
 
-    it('accepts an equal manifest without rewriting the floor file', async () => {
-      writeFileSync(floorPath(), JSON.stringify({ [API]: LIVE + 10 }));
-      const past = new Date('2020-01-01T00:00:00Z');
-      utimesSync(floorPath(), past, past);
+    it('accepts an equal manifest without recording anything new', async () => {
+      seedFloor(API, LIVE + 10);
       serve(LIVE + 10);
 
       await decryptCommand('commands', 'plan');
 
       expect(consoleSpy).toHaveBeenCalledWith('Decrypted prompt content!');
-      expect(statSync(floorPath()).mtimeMs).toBe(past.getTime());
+      expect(readdirSync(keyDir(testDir, API))).toEqual([String(LIVE + 10)]);
     });
 
     it('blocks a bad signature with a higher version and leaves the floor unchanged', async () => {
-      writeFileSync(floorPath(), JSON.stringify({ [API]: LIVE + 10 }));
+      seedFloor(API, LIVE + 10);
       serve(LIVE + 1000);
       vi.mocked(manifestVerifier.verifyManifestSignature).mockReturnValue(false);
 
@@ -476,8 +607,9 @@ describe('Decrypt Command', () => {
       expect(consoleSpy).not.toHaveBeenCalled();
     });
 
-    it('a torn floor file falls back to the compiled floor: below it is refused', async () => {
-      writeFileSync(floorPath(), `{"${API}": 17949`);
+    it('names in the floor folder that are not a version fall back to the compiled floor: below it is refused', async () => {
+      mkdirSync(keyDir(testDir, API), { recursive: true, mode: 0o700 });
+      for (const junk of ['abc', `${LIVE + 99}.tmp`]) writeFileSync(join(keyDir(testDir, API), junk), '');
       serve(LIVE - 1);
 
       await expect(decryptCommand('commands', 'plan')).rejects.toThrow('[SECURITY]');
@@ -485,8 +617,9 @@ describe('Decrypt Command', () => {
       expect(consoleSpy).not.toHaveBeenCalled();
     });
 
-    it('a torn floor file falls back to the compiled floor: above it is accepted', async () => {
-      writeFileSync(floorPath(), `{"${API}": 17949`);
+    it('names in the floor folder that are not a version fall back to the compiled floor: above it is accepted', async () => {
+      mkdirSync(keyDir(testDir, API), { recursive: true, mode: 0o700 });
+      for (const junk of ['abc', `${LIVE + 99}.tmp`]) writeFileSync(join(keyDir(testDir, API), junk), '');
       serve(LIVE + 1);
 
       await decryptCommand('commands', 'plan');
@@ -521,8 +654,19 @@ describe('Decrypt Command', () => {
       expect(versions[firstAccepted]).toBeGreaterThanOrEqual(LIVE);
     });
 
+    it('delivers the prompt when the config dir does not exist yet and records the floor there', async () => {
+      const absent = join(testDir, 'absent', '.oss');
+      process.env.OSS_CONFIG_DIR = absent;
+      serve(LIVE + 10);
+
+      await decryptCommand('commands', 'plan');
+
+      expect(consoleSpy).toHaveBeenCalledWith('Decrypted prompt content!');
+      expect(floorOf(API, absent)).toBe(LIVE + 10);
+    });
+
     it('switching apiUrl does not block: another API has its own floor starting at the compiled value', async () => {
-      writeFileSync(floorPath(), JSON.stringify({ [API]: LIVE + 1000 }));
+      seedFloor(API, LIVE + 1000);
       writeFileSync(join(testDir, 'config.json'), JSON.stringify({ apiUrl: 'https://sprint-d.example.com' }));
       serve(LIVE);
 
@@ -540,7 +684,7 @@ describe('Decrypt Command', () => {
       await expect(decryptCommand('commands', 'plan')).rejects.toThrow('[SECURITY]');
       expect(stderr()).toContain(OLDER);
       expect(consoleSpy).not.toHaveBeenCalled();
-      expect(existsSync(floorPath())).toBe(false);
+      expect(existsSync(storePath())).toBe(false);
     });
 
     it.each([
@@ -553,7 +697,30 @@ describe('Decrypt Command', () => {
 
       await expect(decryptCommand('commands', 'plan')).rejects.toThrow('[SECURITY]');
       expect(consoleSpy).not.toHaveBeenCalled();
-      expect(existsSync(floorPath())).toBe(false);
+      expect(existsSync(storePath())).toBe(false);
     });
+  });
+
+  /**
+   * @behavior --debug output cannot drive the terminal either: the type and name it echoes are stripped
+   * @business-rule R-273 ship round 2 (pen F8): every stderr line built from user or server text goes through stripControl
+   * @boundary CLI Commands (stderr)
+   */
+  it.each([
+    ['an encrypted prompt', 'commands', 'pl\u001b[2Jan‮'],
+    ['a custom prompt', 'custom', 'de\u001b]8;;http://x\u0007ploy'],
+  ])('--debug lines for %s carry no control characters', async (_label, type, name) => {
+    vi.mocked(apiClient.fetchCustomPrompt).mockResolvedValue({
+      prompt: 'custom text',
+      name: 'deploy',
+      displayName: 'Deploy',
+      isBlocking: false,
+    });
+
+    await decryptCommand(type as 'commands' | 'custom', name, true).catch(() => undefined);
+
+    const lines = consoleErrorSpy.mock.calls.map(c => String(c[0]));
+    expect(lines.filter(line => line.includes('[FETCH]')).join(' ')).toMatch(/pl\[2Jan|ploy/);
+    for (const line of lines) expect(line).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u202e]/);
   });
 });

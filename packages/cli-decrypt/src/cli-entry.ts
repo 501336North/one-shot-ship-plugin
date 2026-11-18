@@ -6,9 +6,9 @@
 import { VERSION } from './index.js';
 import { setupCommand } from './commands/setup.js';
 import { createHash } from 'crypto';
-import { decryptCommand, fetchManifestWithRetry } from './commands/decrypt.js';
-import { fetchManifest, verifyManifestSignature, type SignedManifest } from './manifest-verifier.js';
-import { checkAndRecordManifestVersion } from './manifest-floor.js';
+import { decryptCommand, fetchManifestQuietly } from './commands/decrypt.js';
+import { verifyManifestSignature, type SignedManifest } from './manifest-verifier.js';
+import { checkAndRecordManifestVersion, type FloorVerdict } from './manifest-floor.js';
 import { stripControl } from './strip-control.js';
 import { getApiUrl } from './config.js';
 
@@ -139,19 +139,48 @@ function showVersion(): void {
 
 const MANIFEST_PUBLIC_KEY = 'MCowBQYDK2VwAyEAAwFG32b8TuiVTxrDnXzNrb2v68YN5U9epLnZ3O7pQaI=';
 
+/** Why a command that verifies no prompt stops when the manifest can't be fetched (decrypt has its own). */
+const MANIFEST_UNREACHABLE = '[SECURITY] Manifest unreachable — check your connection and run the command again';
+
+/** The manifest (3 s attempt, one 10 s retry), or null once the unreachable line is printed. */
+async function fetchManifestBounded(apiUrl: string): Promise<SignedManifest | null> {
+  const manifest = await fetchManifestQuietly(apiUrl);
+  if (manifest === null) console.error(MANIFEST_UNREACHABLE);
+  return manifest;
+}
+
+/** The anti-rollback refusal for a signature-verified manifest, or null when the floor accepts it. */
+function floorRefusal(verdict: FloorVerdict): string | null {
+  if (verdict === 'accepted') return null;
+  return verdict === 'older'
+    ? 'Manifest is older than one already seen'
+    : 'Manifest has no valid version';
+}
+
 /**
  * Verify the signed prompt manifest and output a JSON report
  */
 async function verifyManifestCommand(): Promise<void> {
-  const manifest = await fetchManifest(getApiUrl());
+  const apiUrl = getApiUrl();
+  const manifest = await fetchManifestBounded(apiUrl);
 
   if (manifest === null) {
-    console.log(JSON.stringify({ signatureValid: false, error: 'Failed to fetch manifest' }));
+    console.log(JSON.stringify({ signatureValid: false, trusted: false, error: 'Failed to fetch manifest' }));
     process.exitCode = 1;
     return;
   }
 
-  const signatureValid = verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY);
+  // Nothing in a manifest whose signature fails is walked (it may not even have a prompts object).
+  const prompts: unknown = manifest.prompts;
+  const signatureValid =
+    prompts !== null && typeof prompts === 'object' && !Array.isArray(prompts)
+    && verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY);
+  if (!signatureValid) {
+    console.log(JSON.stringify({ signatureValid: false, trusted: false, error: 'Manifest signature does not verify' }));
+    process.exitCode = 1;
+    return;
+  }
+  const refusal = floorRefusal(checkAndRecordManifestVersion(apiUrl, manifest.version));
 
   const categories: Record<string, number> = {};
   for (const key of Object.keys(manifest.prompts)) {
@@ -159,16 +188,20 @@ async function verifyManifestCommand(): Promise<void> {
     categories[category] = (categories[category] ?? 0) + 1;
   }
 
+  // trusted: the signature verifies AND the anti-rollback floor accepts the version (/oss:trust shows only this as VALID)
   const report = {
     signatureValid,
+    trusted: refusal === null,
     promptCount: Object.keys(manifest.prompts).length,
     generatedAt: manifest.generatedAt,
     categories,
+    ...(refusal === null ? {} : { error: refusal }),
   };
 
   console.log(stripControl(JSON.stringify(report)));
+  if (refusal !== null) console.error(`[SECURITY] ${refusal} — manifest not trusted`);
 
-  if (!signatureValid) {
+  if (refusal !== null) {
     process.exitCode = 1;
   }
 }
@@ -177,14 +210,18 @@ async function verifyManifestCommand(): Promise<void> {
  * List prompts from the manifest, optionally filtered by category
  */
 async function listPromptsCommand(category?: string): Promise<void> {
-  const manifest = await fetchManifest(getApiUrl());
+  const apiUrl = getApiUrl();
+  const manifest = await fetchManifestBounded(apiUrl);
 
-  if (manifest === null) {
+  if (manifest === null || !verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY)) {
     console.log(JSON.stringify([]));
+    process.exitCode = 1;
     return;
   }
 
-  if (!verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY)) {
+  const refusal = floorRefusal(checkAndRecordManifestVersion(apiUrl, manifest.version));
+  if (refusal !== null) {
+    console.error(`[SECURITY] ${refusal} — manifest not trusted`);
     console.log(JSON.stringify([]));
     process.exitCode = 1;
     return;
@@ -210,30 +247,55 @@ const VERIFIABLE_BODIES = new Set(['shared/iron-laws', 'templates/claude-md']);
 /** Largest body --verify-body reads: 1 MiB, far above the IRON LAWS and CLAUDE.md template bodies. */
 export const OSS_BODY_MAX = 1024 * 1024;
 
-/** Raw stdin bytes (no decoding, no trimming), or null once more than OSS_BODY_MAX arrive. */
-async function readStdinCapped(): Promise<Buffer | null> {
-  const chunks: Buffer[] = [];
-  let total = 0;
-  for await (const chunk of process.stdin) {
-    total += (chunk as Buffer).length;
-    if (total > OSS_BODY_MAX) return null;
-    chunks.push(chunk as Buffer);
+/** How long --verify-body waits for its piped body to end. */
+export const VERIFY_BODY_STDIN_TIMEOUT_MS = 30_000;
+
+/** Raw stdin bytes (no decoding, no trimming), or why they were not read in full. */
+async function readStdinCapped(): Promise<Buffer | 'too-large' | 'timed-out'> {
+  const stdin = process.stdin;
+  const readAll = async (): Promise<Buffer | 'too-large'> => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    for await (const chunk of stdin) {
+      total += (chunk as Buffer).length;
+      if (total > OSS_BODY_MAX) return 'too-large';
+      chunks.push(chunk as Buffer);
+    }
+    return Buffer.concat(chunks);
+  };
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<'timed-out'>((done) => {
+    timer = setTimeout(() => done('timed-out'), VERIFY_BODY_STDIN_TIMEOUT_MS);
+  });
+  const reading = readAll();
+  reading.catch(() => undefined);
+  try {
+    const result = await Promise.race([reading, deadline]);
+    if (result === 'timed-out') stdin.destroy();
+    return result;
+  } finally {
+    clearTimeout(timer);
   }
-  return Buffer.concat(chunks);
 }
 
 /** Why the body can't be trusted, or null when it is exactly what the signed manifest says was served. */
 async function verifyBodyReason(key: string): Promise<string | null> {
   if (!VERIFIABLE_BODIES.has(key)) return '[SECURITY] --verify-body: key is not a verifiable body';
-  const body = await readStdinCapped();
-  if (body === null) return `[SECURITY] --verify-body: body is larger than ${OSS_BODY_MAX} bytes`;
+  if (process.stdin.isTTY) return '[SECURITY] --verify-body: the body must be piped on stdin, not typed at a terminal';
   const apiUrl = getApiUrl();
-  let manifest: SignedManifest;
-  try {
-    manifest = await fetchManifestWithRetry(apiUrl);
-  } catch {
-    return ''; // fetchManifestWithRetry already printed its one line
+  // Request the manifest while stdin is read (it prints nothing itself); a body refused on its own cancels
+  // it, so that reason is the one line printed.
+  const cancel = new AbortController();
+  const manifestRequest = fetchManifestQuietly(apiUrl, cancel.signal);
+  const body = await readStdinCapped();
+  if (body === 'too-large' || body === 'timed-out') {
+    cancel.abort();
+    return body === 'too-large'
+      ? `[SECURITY] --verify-body: body is larger than ${OSS_BODY_MAX} bytes`
+      : `[SECURITY] --verify-body: stdin did not end within ${VERIFY_BODY_STDIN_TIMEOUT_MS / 1000} s`;
   }
+  const manifest = await manifestRequest;
+  if (manifest === null) return MANIFEST_UNREACHABLE;
   if (!verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY)) {
     return '[SECURITY] Manifest signature verification FAILED — body not verified';
   }
@@ -260,7 +322,7 @@ async function verifyBodyReason(key: string): Promise<string | null> {
 async function verifyBodyCommand(key: string): Promise<void> {
   const reason = await verifyBodyReason(key);
   if (reason === null) return;
-  if (reason !== '') console.error(reason);
+  console.error(reason);
   process.exitCode = 1;
 }
 

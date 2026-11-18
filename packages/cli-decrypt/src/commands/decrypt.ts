@@ -6,7 +6,7 @@
 import { join } from 'path';
 import { getConfigDir, getApiUrl } from '../config.js';
 import { fetchEncryptedPrompt, fetchCustomPrompt } from '../api-client.js';
-import { retrieveCredentials } from '../storage.js';
+import { retrieveCredentials, type Credentials } from '../storage.js';
 import { deriveKey, decrypt, userIdToLicenseId } from '../encryption.js';
 import { DebugLogger } from '../debug.js';
 import { CacheService } from '../cache.js';
@@ -15,6 +15,7 @@ import { verifyDecryptedPrompt } from '../integrity-pipeline.js';
 import { checkAndRecordManifestVersion } from '../manifest-floor.js';
 import { readUpdateState, writeUpdateState } from '../update-state.js';
 import { detectPromptChange } from '../change-detection.js';
+import { stripControl } from '../strip-control.js';
 
 /**
  * Ed25519 public key for manifest signature verification (base64 SPKI DER).
@@ -41,33 +42,102 @@ function getCacheDir(): string {
   return join(getConfigDir(), 'prompt-cache');
 }
 
-const MANIFEST_UNREACHABLE =
+export const MANIFEST_UNREACHABLE =
   '[SECURITY] Could not verify prompt: manifest unreachable — check your connection and run the command again';
 
-/** One manifest fetch that aborts after `ms`; a rejection or a null result is a failed attempt. */
-async function fetchManifestOnce(apiUrl: string, ms: number): Promise<SignedManifest | null> {
+/**
+ * One manifest fetch that aborts after `ms`, or when `cancel` aborts; a rejection or a null result is a
+ * failed attempt.
+ */
+async function fetchManifestOnce(apiUrl: string, ms: number, cancel?: AbortSignal): Promise<SignedManifest | null> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ms);
+  const abort = (): void => controller.abort();
+  const timer = setTimeout(abort, ms);
+  cancel?.addEventListener('abort', abort, { once: true });
   try {
     return await fetchManifest(apiUrl, controller.signal);
   } catch {
     return null;
   } finally {
     clearTimeout(timer);
+    cancel?.removeEventListener('abort', abort);
   }
 }
 
+/** Wait `ms` (nothing when it is not positive), or less when `cancel` aborts. */
+function pause(ms: number, cancel?: AbortSignal): Promise<void> {
+  if (ms <= 0 || cancel?.aborted) return Promise.resolve();
+  return new Promise((done) => {
+    const finish = (): void => {
+      clearTimeout(timer);
+      cancel?.removeEventListener('abort', finish);
+      done();
+    };
+    const timer = setTimeout(finish, ms);
+    cancel?.addEventListener('abort', finish, { once: true });
+  });
+}
+
+const FIRST_ATTEMPT_MS = 3000;
+const RETRY_MS = 10000;
+
 /**
- * Fetch the signed manifest: a 3 s attempt, then one 10 s retry (R-273 D7).
- * Both failing prints the unreachable message on stderr and rejects — never fail-open.
+ * Fetch the signed manifest: a 3 s attempt, then one 10 s retry (R-273 D7). A first attempt that fails
+ * sooner (a 503 or a refused connection) still waits out its 3 s before the retry, so a restarting server
+ * gets that time. Prints nothing: null when both attempts failed, or as soon as `cancel` aborts.
  */
-export async function fetchManifestWithRetry(apiUrl: string): Promise<SignedManifest> {
-  const manifest = (await fetchManifestOnce(apiUrl, 3000)) ?? (await fetchManifestOnce(apiUrl, 10000));
-  if (!manifest) {
-    console.error(MANIFEST_UNREACHABLE);
-    throw new Error(MANIFEST_UNREACHABLE);
-  }
-  return manifest;
+export async function fetchManifestQuietly(apiUrl: string, cancel?: AbortSignal): Promise<SignedManifest | null> {
+  const started = Date.now();
+  const first = await fetchManifestOnce(apiUrl, FIRST_ATTEMPT_MS, cancel);
+  if (first !== null || cancel?.aborted) return first;
+  await pause(started + FIRST_ATTEMPT_MS - Date.now(), cancel);
+  return cancel?.aborted ? null : fetchManifestOnce(apiUrl, RETRY_MS, cancel);
+}
+
+/** Fetch the encrypted prompt and decrypt it with the stored credentials. */
+async function fetchAndDecrypt(
+  credentials: Credentials,
+  apiUrl: string,
+  type: 'commands' | 'workflows' | 'skills' | 'agents' | 'hooks' | 'custom',
+  name: string,
+  logger: DebugLogger
+): Promise<string> {
+  // Fetch encrypted prompt from API
+  logger.log('FETCH', `Fetching prompt: ${type}/${name}`);
+  const startFetch = Date.now();
+  const encryptedPrompt = await fetchEncryptedPrompt(
+    credentials.apiKey,
+    apiUrl,
+    type,
+    name
+  );
+  logger.log('FETCH', `Fetch completed in ${Date.now() - startFetch}ms`);
+
+  // Transform userId to licenseId (must match server-side format)
+  const licenseId = userIdToLicenseId(credentials.userId);
+
+  // Derive decryption key using licenseId (not raw userId)
+  logger.log('DERIVE', 'Deriving decryption key');
+  const startDerive = Date.now();
+  const key = deriveKey(
+    credentials.apiKey,
+    licenseId,
+    credentials.hardwareId,
+    credentials.salt
+  );
+  logger.log('DERIVE', `Key derivation completed in ${Date.now() - startDerive}ms`);
+
+  // Decrypt the prompt
+  logger.log('DECRYPT', 'Decrypting prompt content');
+  const startDecrypt = Date.now();
+  const plaintext = decrypt(
+    encryptedPrompt.encrypted,
+    encryptedPrompt.iv,
+    encryptedPrompt.authTag,
+    key
+  );
+  logger.log('DECRYPT', `Decryption completed in ${Date.now() - startDecrypt}ms`);
+  return plaintext;
 }
 
 /**
@@ -128,41 +198,17 @@ export async function decryptCommand(
     return;
   }
 
-  // Fetch encrypted prompt from API
-  logger.log('FETCH', `Fetching prompt: ${type}/${name}`);
-  const startFetch = Date.now();
-  const encryptedPrompt = await fetchEncryptedPrompt(
-    credentials.apiKey,
-    apiUrl,
-    type,
-    name
-  );
-  logger.log('FETCH', `Fetch completed in ${Date.now() - startFetch}ms`);
-
-  // Transform userId to licenseId (must match server-side format)
-  const licenseId = userIdToLicenseId(credentials.userId);
-
-  // Derive decryption key using licenseId (not raw userId)
-  logger.log('DERIVE', 'Deriving decryption key');
-  const startDerive = Date.now();
-  const key = deriveKey(
-    credentials.apiKey,
-    licenseId,
-    credentials.hardwareId,
-    credentials.salt
-  );
-  logger.log('DERIVE', `Key derivation completed in ${Date.now() - startDerive}ms`);
-
-  // Decrypt the prompt
-  logger.log('DECRYPT', 'Decrypting prompt content');
-  const startDecrypt = Date.now();
-  const plaintext = decrypt(
-    encryptedPrompt.encrypted,
-    encryptedPrompt.iv,
-    encryptedPrompt.authTag,
-    key
-  );
-  logger.log('DECRYPT', `Decryption completed in ${Date.now() - startDecrypt}ms`);
+  // Request the signed manifest now, alongside the prompt; it is awaited only where it is checked below.
+  // If anything before that check fails, the request is cancelled so no retry outlives the command.
+  const cancelManifest = new AbortController();
+  const manifestRequest = fetchManifestQuietly(apiUrl, cancelManifest.signal);
+  let plaintext: string;
+  try {
+    plaintext = await fetchAndDecrypt(credentials, apiUrl, type, name, logger);
+  } catch (err) {
+    cancelManifest.abort();
+    throw err;
+  }
 
   // SECURITY: Do NOT cache decrypted prompts to disk.
   // This prevents prompt extraction even after API key revocation.
@@ -171,7 +217,11 @@ export async function decryptCommand(
   // Verification runs BEFORE output — tampered prompts are never delivered.
   console.error('[verify] Checking prompt integrity...');
 
-  const manifest = await fetchManifestWithRetry(apiUrl);
+  const manifest = await manifestRequest;
+  if (manifest === null) {
+    console.error(MANIFEST_UNREACHABLE);
+    throw new Error(MANIFEST_UNREACHABLE);
+  }
 
   if (!verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY)) {
     console.error('[verify] Manifest signature: FAILED — prompt blocked');
@@ -194,7 +244,7 @@ export async function decryptCommand(
   const integrity = await verifyDecryptedPrompt(plaintext, type, name, manifest);
   if (integrity.verified !== true) {
     if (integrity.reason === 'not_in_manifest') {
-      console.error(`[verify] No manifest entry for ${manifestKey} — prompt blocked`);
+      console.error(`[verify] No manifest entry for ${stripControl(manifestKey)} — prompt blocked`);
     }
     console.error('[verify] Prompt hash: FAILED — prompt blocked');
     throw new Error('[SECURITY] Prompt integrity check FAILED. Content may have been tampered with.');

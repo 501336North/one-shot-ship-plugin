@@ -7,9 +7,13 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import crypto from 'crypto';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 import { parseArgs, runCli } from '../src/cli-entry.js';
 import * as manifestVerifier from '../src/manifest-verifier.js';
+import { MIN_MANIFEST_VERSION } from '../src/manifest-floor.js';
 
 // Mock manifest verifier (collaborator)
 vi.mock('../src/manifest-verifier.js');
@@ -39,8 +43,9 @@ function createTestManifest(privateKey: string): manifestVerifier.SignedManifest
   for (const key of sortedKeys) {
     sortedPrompts[key] = prompts[key];
   }
+  // R-273: at the compiled anti-rollback floor, so the floor accepts it.
   const data = JSON.stringify({
-    version: 1,
+    version: MIN_MANIFEST_VERSION,
     algorithm: 'sha256',
     signing: 'ed25519',
     prompts: sortedPrompts,
@@ -51,7 +56,7 @@ function createTestManifest(privateKey: string): manifestVerifier.SignedManifest
     crypto.createPrivateKey({ key: Buffer.from(privateKey, 'base64'), format: 'der', type: 'pkcs8' })
   );
   return {
-    version: 1,
+    version: MIN_MANIFEST_VERSION,
     generatedAt: '2026-02-14T00:00:00Z',
     algorithm: 'sha256',
     signing: 'ed25519',
@@ -64,9 +69,13 @@ describe('/oss:trust - Acceptance Tests', () => {
   let consoleSpy: ReturnType<typeof vi.spyOn>;
   let keypair: { publicKey: string; privateKey: string };
   let validManifest: manifestVerifier.SignedManifest;
+  let configDir: string;
 
   beforeEach(() => {
     vi.resetAllMocks();
+    // R-273: these commands now read and record the manifest floor; keep it in a temp config dir.
+    configDir = mkdtempSync(join(tmpdir(), 'oss-trust-'));
+    process.env.OSS_CONFIG_DIR = configDir;
     consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     keypair = generateTestKeypair();
     validManifest = createTestManifest(keypair.privateKey);
@@ -75,6 +84,8 @@ describe('/oss:trust - Acceptance Tests', () => {
   afterEach(() => {
     consoleSpy.mockRestore();
     vi.restoreAllMocks();
+    delete process.env.OSS_CONFIG_DIR;
+    rmSync(configDir, { recursive: true, force: true });
   });
 
   // =========================================================================
@@ -283,6 +294,155 @@ describe('/oss:trust - Acceptance Tests', () => {
 
       expect(manifestVerifier.fetchManifest).toHaveBeenCalled();
       // No auth-related calls should happen
+    });
+  });
+
+  /**
+   * @behavior --verify-manifest and --list-prompts judge the manifest like decrypt does: a bounded retry
+   *   when it is unreachable, and the anti-rollback floor
+   * @business-rule R-273 ship round 1: an unreachable manifest is a failure (exit 1 with the unreachable
+   *   reason), never an empty list; a signed manifest older than the floor is refused
+   * @boundary CLI Entry Point (manifest fetch stubbed; the floor file is real, in a temp config dir)
+   */
+  describe('unreachable and replayed manifests (R-273)', () => {
+    // these commands verify no prompt, so the line says only what failed (decrypt keeps its own message)
+    const UNREACHABLE = '[SECURITY] Manifest unreachable — check your connection and run the command again';
+    let stderr: string[];
+
+    beforeEach(() => {
+      process.exitCode = undefined;
+      stderr = [];
+      vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+        stderr.push(args.map(String).join(' '));
+      });
+      vi.mocked(manifestVerifier.verifyManifestSignature).mockReturnValue(true);
+    });
+
+    afterEach(() => {
+      process.exitCode = undefined;
+    });
+
+    const exitCode = (): number => Number(process.exitCode ?? 0);
+
+    it.each([['--list-prompts'], ['--verify-manifest']])(
+      '%s retries once, then exits 1 with the unreachable reason',
+      async (flag) => {
+        vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(null);
+
+        await runCli([flag]);
+
+        expect(manifestVerifier.fetchManifest).toHaveBeenCalledTimes(2);
+        expect(exitCode()).toBe(1);
+        expect(stderr).toEqual([UNREACHABLE]);
+      }
+    );
+
+    it.each([['--list-prompts'], ['--verify-manifest']])(
+      '%s refuses a signed manifest older than the floor: exit 1, no prompts listed',
+      async (flag) => {
+        vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue({ ...validManifest, version: MIN_MANIFEST_VERSION - 1 });
+
+        await runCli([flag]);
+
+        expect(exitCode()).toBe(1);
+        expect(stderr.join('\n')).toMatch(/older than one already seen/);
+        expect(consoleSpy.mock.calls.map(c => String(c[0])).join('\n')).not.toContain('commands/build');
+      }
+    );
+
+    it('--list-prompts lists a manifest at the floor', async () => {
+      vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue({ ...validManifest, version: MIN_MANIFEST_VERSION });
+
+      await runCli(['--list-prompts']);
+
+      expect(exitCode()).toBe(0);
+      expect(JSON.parse(String(consoleSpy.mock.calls[0][0]))).toHaveLength(6);
+    });
+  });
+
+  /**
+   * @behavior --verify-manifest reports a junk, unsigned manifest as not valid instead of crashing on it
+   * @business-rule R-273 ship round 2 (pen F7): a failed signature (or prompts that are not an object) is a
+   *   signatureValid:false JSON report with exit 1; nothing in an unverified manifest is walked
+   * @boundary CLI Entry Point (manifest fetch stubbed)
+   */
+  describe('--verify-manifest on a junk manifest', () => {
+    it.each([
+      ['{}', {}],
+      ['prompts: null', { version: MIN_MANIFEST_VERSION, generatedAt: 'x', algorithm: 'sha256', signing: 'ed25519', prompts: null, signature: 'x' }],
+      ['prompts: a string', { version: MIN_MANIFEST_VERSION, generatedAt: 'x', algorithm: 'sha256', signing: 'ed25519', prompts: 'x', signature: 'x' }],
+    ])('%s: signatureValid false, exit 1, no crash', async (_label, junk) => {
+      process.exitCode = undefined;
+      vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(junk as unknown as manifestVerifier.SignedManifest);
+      vi.mocked(manifestVerifier.verifyManifestSignature).mockReturnValue(false);
+
+      await runCli(['--verify-manifest']);
+
+      const report = JSON.parse(consoleSpy.mock.calls.map(c => String(c[0])).join('\n')) as { signatureValid: boolean };
+      expect(report.signatureValid).toBe(false);
+      expect(process.exitCode).toBe(1);
+      process.exitCode = undefined;
+    });
+  });
+
+  /**
+   * @behavior --verify-manifest says in its JSON whether the manifest is trusted, so /oss:trust never shows a
+   *   refused (rolled-back) manifest as VALID just because its signature checks out
+   * @business-rule R-273 ship step 2: `trusted` is true only when the signature verifies AND the anti-rollback
+   *   floor accepts the version; `signatureValid` stays truthful about the signature alone
+   * @boundary CLI Entry Point (manifest fetch stubbed; the floor file is real, in a temp config dir)
+   */
+  describe('--verify-manifest trusted verdict (R-273)', () => {
+    type Report = { signatureValid: boolean; trusted?: boolean; error?: string };
+    const report = (): Report => JSON.parse(consoleSpy.mock.calls.map(c => String(c[0])).join('\n')) as Report;
+
+    beforeEach(() => {
+      process.exitCode = undefined;
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      process.exitCode = undefined;
+    });
+
+    it('a signed manifest older than the floor: trusted false, error kept, exit 1', async () => {
+      vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue({ ...validManifest, version: MIN_MANIFEST_VERSION - 1 });
+      vi.mocked(manifestVerifier.verifyManifestSignature).mockReturnValue(true);
+
+      await runCli(['--verify-manifest']);
+
+      expect(report()).toMatchObject({ signatureValid: true, trusted: false, error: 'Manifest is older than one already seen' });
+      expect(process.exitCode).toBe(1);
+    });
+
+    it('a signed manifest at the floor: trusted true, no error, exit 0', async () => {
+      vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(validManifest);
+      vi.mocked(manifestVerifier.verifyManifestSignature).mockReturnValue(true);
+
+      await runCli(['--verify-manifest']);
+
+      expect(report()).toMatchObject({ signatureValid: true, trusted: true });
+      expect(report().error).toBeUndefined();
+      expect(Number(process.exitCode ?? 0)).toBe(0);
+    });
+
+    it('an unsigned manifest: signatureValid false, trusted false, exit 1', async () => {
+      vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(validManifest);
+      vi.mocked(manifestVerifier.verifyManifestSignature).mockReturnValue(false);
+
+      await runCli(['--verify-manifest']);
+
+      expect(report()).toMatchObject({ signatureValid: false, trusted: false });
+      expect(process.exitCode).toBe(1);
+    });
+
+    it('an unreachable manifest: trusted false, exit 1', async () => {
+      vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(null);
+
+      await runCli(['--verify-manifest']);
+
+      expect(report()).toMatchObject({ signatureValid: false, trusted: false, error: 'Failed to fetch manifest' });
+      expect(process.exitCode).toBe(1);
     });
   });
 });

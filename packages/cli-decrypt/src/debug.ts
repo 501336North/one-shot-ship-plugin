@@ -3,6 +3,8 @@
  * Provides formatted debug output with timestamps and redaction
  */
 
+import { stripControl } from './strip-control.js';
+
 export type DebugStep = 'FETCH' | 'DERIVE' | 'DECRYPT' | 'CACHE' | 'SECURITY' | 'VERIFY';
 
 /**
@@ -63,7 +65,8 @@ export class DebugLogger {
     if (!this.enabled) {
       return;
     }
-    console.error(formatDebugOutput(step, message));
+    // The message can echo a prompt type or name from the command line: never let it drive the terminal.
+    console.error(formatDebugOutput(step, stripControl(message)));
   }
 
   logObject(step: DebugStep, label: string, obj: Record<string, unknown>): void {

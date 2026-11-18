@@ -220,6 +220,30 @@ function stripControl(text) {
   return text.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\u2028\u2029\p{Cf}\ufe00-\ufe0f\u{e0000}-\u{e0fff}\u034f\u115f\u1160\u3164\uffa0\u2800\u17b4\u17b5\u180b-\u180d\u180f\u2065\ufff0-\ufff8\p{Default_Ignorable_Code_Point}]/gu, "");
 }
 
+// src/capped-body.ts
+async function readCapped(response, maxBytes) {
+  if (Number(response.headers.get("content-length") ?? 0) > maxBytes) {
+    await response.body?.cancel().catch(() => void 0);
+    return null;
+  }
+  if (response.body === null) return "";
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    for (; ; ) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) return null;
+      chunks.push(value);
+    }
+  } finally {
+    await reader.cancel().catch(() => void 0);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 // src/api-client.ts
 function getCacheDir() {
   return (0, import_path3.join)(getConfigDir(), "prompt-cache");
@@ -251,23 +275,52 @@ async function fetchNoRedirect(url, init) {
     throw err;
   }
 }
-async function fetchCredentials(apiKey, apiUrl, hardwareId) {
-  const url = `${apiUrl}/api/v1/auth/credentials?hardwareId=${encodeURIComponent(hardwareId)}`;
-  const response = await fetchNoRedirect(url, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    }
-  });
-  if (!response.ok) {
-    await handleCacheClearDirective(response);
-    const error = await response.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(stripControl(error.error || "Request failed"));
+var PROMPT_FETCH_TIMEOUT_MS = 3e4;
+var PROMPT_MAX_BYTES = 2 * 1024 * 1024;
+async function readJsonCapped(response) {
+  if (!response.body) return response.json();
+  const text = await readCapped(response, PROMPT_MAX_BYTES);
+  if (text === null) {
+    throw new Error(`The API answer was larger than ${PROMPT_MAX_BYTES / (1024 * 1024)} MiB; refusing it.`);
   }
-  return response.json();
+  return JSON.parse(text);
 }
-async function fetchEncryptedPrompt(apiKey, apiUrl, type, name) {
+async function withinTimeout(timeoutMs, call) {
+  const signal = AbortSignal.timeout(timeoutMs);
+  try {
+    return await call(signal);
+  } catch (err) {
+    if (signal.aborted) {
+      throw new Error(
+        `The API did not answer within ${Math.round(timeoutMs / 1e3)} s; check your connection and run the command again.`
+      );
+    }
+    throw err;
+  }
+}
+async function fetchCredentials(apiKey, apiUrl, hardwareId, timeoutMs = PROMPT_FETCH_TIMEOUT_MS) {
+  const url = `${apiUrl}/api/v1/auth/credentials?hardwareId=${encodeURIComponent(hardwareId)}`;
+  return withinTimeout(timeoutMs, async (signal) => {
+    const response = await fetchNoRedirect(url, {
+      method: "GET",
+      signal,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      }
+    });
+    if (!response.ok) {
+      await handleCacheClearDirective(response);
+      const error = await readJsonCapped(response).catch(() => ({ error: "Request failed" }));
+      throw new Error(stripControl(error.error || "Request failed"));
+    }
+    return await readJsonCapped(response);
+  });
+}
+async function fetchEncryptedPrompt(apiKey, apiUrl, type, name, timeoutMs = PROMPT_FETCH_TIMEOUT_MS) {
+  return withinTimeout(timeoutMs, (signal) => fetchEncryptedPromptWithin(apiKey, apiUrl, type, name, signal));
+}
+async function fetchEncryptedPromptWithin(apiKey, apiUrl, type, name, signal) {
   validateType(type);
   validateName(name);
   const encodedName = encodeURIComponent(name);
@@ -281,6 +334,7 @@ async function fetchEncryptedPrompt(apiKey, apiUrl, type, name) {
   }
   const response = await fetchNoRedirect(endpoint, {
     method: "GET",
+    signal,
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json"
@@ -294,33 +348,36 @@ async function fetchEncryptedPrompt(apiKey, apiUrl, type, name) {
     if (response.status === 401) {
       throw new Error("Unauthorized");
     }
-    const error = await response.json().catch(() => ({ error: "Request failed" }));
+    const error = await readJsonCapped(response).catch(() => ({ error: "Request failed" }));
     throw new Error(stripControl(error.error || "Request failed"));
   }
-  return response.json();
+  return await readJsonCapped(response);
 }
-async function fetchCustomPrompt(apiKey, apiUrl, name) {
+async function fetchCustomPrompt(apiKey, apiUrl, name, timeoutMs = PROMPT_FETCH_TIMEOUT_MS) {
   validateName(name);
   const endpoint = `${apiUrl}/api/v1/prompts/custom/${encodeURIComponent(name)}`;
-  const response = await fetchNoRedirect(endpoint, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
+  return withinTimeout(timeoutMs, async (signal) => {
+    const response = await fetchNoRedirect(endpoint, {
+      method: "GET",
+      signal,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      }
+    });
+    if (!response.ok) {
+      await handleCacheClearDirective(response);
+      if (response.status === 404) {
+        throw new Error("Prompt not found");
+      }
+      if (response.status === 401) {
+        throw new Error("Unauthorized");
+      }
+      const error = await readJsonCapped(response).catch(() => ({ error: "Request failed" }));
+      throw new Error(stripControl(error.error || "Request failed"));
     }
+    return await readJsonCapped(response);
   });
-  if (!response.ok) {
-    await handleCacheClearDirective(response);
-    if (response.status === 404) {
-      throw new Error("Prompt not found");
-    }
-    if (response.status === 401) {
-      throw new Error("Unauthorized");
-    }
-    const error = await response.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(stripControl(error.error || "Request failed"));
-  }
-  return response.json();
 }
 
 // src/storage.ts
@@ -529,7 +586,7 @@ var DebugLogger = class {
     if (!this.enabled) {
       return;
     }
-    console.error(formatDebugOutput(step, message));
+    console.error(formatDebugOutput(step, stripControl(message)));
   }
   logObject(step, label, obj) {
     if (!this.enabled) {
@@ -573,16 +630,20 @@ function verifyManifestSignature(manifest, publicKey) {
     return false;
   }
 }
+var MANIFEST_MAX_BYTES = 2 * 1024 * 1024;
 async function fetchManifest(apiUrl, signal) {
   try {
     const response = await fetch(`${apiUrl}/api/v1/prompts/manifest`, {
       method: "GET",
+      redirect: "error",
       signal
     });
     if (!response.ok) {
+      await response.body?.cancel().catch(() => void 0);
       return null;
     }
-    return await response.json();
+    const text = await readCapped(response, MANIFEST_MAX_BYTES);
+    return text === null ? null : JSON.parse(text);
   } catch {
     return null;
   }
@@ -615,34 +676,121 @@ var import_fs5 = require("fs");
 var import_path6 = require("path");
 var import_crypto7 = require("crypto");
 var MIN_MANIFEST_VERSION = 1794940034;
-function floorPath() {
-  return (0, import_path6.join)(getConfigDir(), "manifest-floor.json");
-}
-function readFloors() {
+var NOT_RECORDED = "[verify] Could not record the manifest version floor; this run is not affected";
+var REPAIRED = "[verify] Your config folder was writable by other users; it is now owner-only (0700) so the manifest floor can be kept there";
+var UNTRUSTED = "[verify] The manifest floor folder or your config folder is not a private folder of yours \u2014 using the built-in floor, not updating it";
+var VERSION_NAME = /^[0-9]{1,15}$/;
+function floorKey(apiUrl) {
   try {
-    const parsed = JSON.parse((0, import_fs5.readFileSync)(floorPath(), "utf8"));
-    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed;
+    const url = new URL(apiUrl);
+    return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return apiUrl;
+  }
+}
+function floorDirs(apiUrl) {
+  const config = (0, import_path6.resolve)(getConfigDir());
+  const store = (0, import_path6.join)(config, "manifest-floor.d");
+  return [config, store, (0, import_path6.join)(store, (0, import_crypto7.createHash)("sha256").update(floorKey(apiUrl)).digest("hex"))];
+}
+function errCode(err) {
+  return err?.code;
+}
+function isPrivate(stats) {
+  const uid = process.getuid?.();
+  return (uid === void 0 || stats.uid === uid) && (stats.mode & 18) === 0;
+}
+var DIR_FLAGS = import_fs5.constants.O_RDONLY | import_fs5.constants.O_NOFOLLOW | import_fs5.constants.O_DIRECTORY | (import_fs5.constants.O_NONBLOCK ?? 0);
+function openPrivateDirs(dirs, write) {
+  const seen = [];
+  for (const [i, dir] of dirs.entries()) {
+    if (write) {
+      try {
+        (0, import_fs5.mkdirSync)(dir, { recursive: i === 0, mode: 448 });
+      } catch (err) {
+        if (errCode(err) !== "EEXIST") throw err;
+      }
+    }
+    const fd = (0, import_fs5.openSync)(dir, DIR_FLAGS);
+    let keep = false;
+    try {
+      const stats = (0, import_fs5.fstatSync)(fd);
+      if (!write && i === 0 && stats.isDirectory() && stats.uid === process.getuid?.() && (stats.mode & 18) !== 0) {
+        (0, import_fs5.fchmodSync)(fd, 448);
+        console.error(REPAIRED);
+        return null;
+      }
+      if (!stats.isDirectory() || !isPrivate(stats)) return null;
+      seen.push(stats);
+      keep = i === dirs.length - 1;
+      if (keep) return { seen, fd };
+    } finally {
+      if (!keep) (0, import_fs5.closeSync)(fd);
+    }
+  }
+  return null;
+}
+function sameDirs(dirs, seen) {
+  return dirs.every((dir, i) => {
+    const now = (0, import_fs5.lstatSync)(dir);
+    return now.dev === seen[i].dev && now.ino === seen[i].ino;
+  });
+}
+function readRecorded(apiUrl) {
+  const dirs = floorDirs(apiUrl);
+  let checked = false;
+  try {
+    const opened = openPrivateDirs(dirs, false);
+    if (opened === null) return null;
+    checked = true;
+    (0, import_fs5.closeSync)(opened.fd);
+    const names = (0, import_fs5.readdirSync)(dirs[2]);
+    if (!sameDirs(dirs, opened.seen)) return null;
+    let max = 0;
+    for (const name of names) if (VERSION_NAME.test(name)) max = Math.max(max, Number(name));
+    return max;
+  } catch (err) {
+    return !checked && errCode(err) === "ENOENT" ? 0 : null;
+  }
+}
+function recordVersion(apiUrl, v) {
+  try {
+    const dirs = floorDirs(apiUrl);
+    const opened = openPrivateDirs(dirs, true);
+    if (opened === null) {
+      console.error(UNTRUSTED);
+      return;
+    }
+    try {
+      if (!sameDirs(dirs, opened.seen)) {
+        console.error(UNTRUSTED);
+        return;
+      }
+      try {
+        (0, import_fs5.closeSync)((0, import_fs5.openSync)((0, import_path6.join)(dirs[2], String(v)), import_fs5.constants.O_WRONLY | import_fs5.constants.O_CREAT | import_fs5.constants.O_EXCL | import_fs5.constants.O_NOFOLLOW, 384));
+      } catch (err) {
+        if (errCode(err) !== "EEXIST") throw err;
+      }
+      try {
+        (0, import_fs5.fsyncSync)(opened.fd);
+      } catch {
+      }
+      if (!sameDirs(dirs, opened.seen)) console.error(UNTRUSTED);
+    } finally {
+      (0, import_fs5.closeSync)(opened.fd);
     }
   } catch {
+    console.error(NOT_RECORDED);
   }
-  return {};
-}
-function floorFrom(floors, apiUrl) {
-  const stored = Object.hasOwn(floors, apiUrl) ? floors[apiUrl] : void 0;
-  return Number.isSafeInteger(stored) ? Math.max(MIN_MANIFEST_VERSION, stored) : MIN_MANIFEST_VERSION;
 }
 function checkAndRecordManifestVersion(apiUrl, version) {
-  if (!Number.isSafeInteger(version)) return "invalid";
+  if (typeof version !== "number" || !VERSION_NAME.test(String(version))) return "invalid";
   const v = version;
-  const floors = readFloors();
-  const floor = floorFrom(floors, apiUrl);
+  const recorded = readRecorded(apiUrl);
+  if (recorded === null) console.error(UNTRUSTED);
+  const floor = Math.max(MIN_MANIFEST_VERSION, recorded ?? 0);
   if (v < floor) return "older";
-  if (v > floor) {
-    const tmp = `${floorPath()}.${process.pid}.${(0, import_crypto7.randomUUID)()}.tmp`;
-    (0, import_fs5.writeFileSync)(tmp, JSON.stringify({ ...floors, [apiUrl]: v }), { mode: 384 });
-    (0, import_fs5.renameSync)(tmp, floorPath());
-  }
+  if (v > floor && recorded !== null) recordVersion(apiUrl, v);
   return "accepted";
 }
 
@@ -707,52 +855,42 @@ function getCacheDir3() {
   return (0, import_path8.join)(getConfigDir(), "prompt-cache");
 }
 var MANIFEST_UNREACHABLE = "[SECURITY] Could not verify prompt: manifest unreachable \u2014 check your connection and run the command again";
-async function fetchManifestOnce(apiUrl, ms) {
+async function fetchManifestOnce(apiUrl, ms, cancel) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ms);
+  const abort = () => controller.abort();
+  const timer = setTimeout(abort, ms);
+  cancel?.addEventListener("abort", abort, { once: true });
   try {
     return await fetchManifest(apiUrl, controller.signal);
   } catch {
     return null;
   } finally {
     clearTimeout(timer);
+    cancel?.removeEventListener("abort", abort);
   }
 }
-async function fetchManifestWithRetry(apiUrl) {
-  const manifest = await fetchManifestOnce(apiUrl, 3e3) ?? await fetchManifestOnce(apiUrl, 1e4);
-  if (!manifest) {
-    console.error(MANIFEST_UNREACHABLE);
-    throw new Error(MANIFEST_UNREACHABLE);
-  }
-  return manifest;
+function pause(ms, cancel) {
+  if (ms <= 0 || cancel?.aborted) return Promise.resolve();
+  return new Promise((done) => {
+    const finish = () => {
+      clearTimeout(timer);
+      cancel?.removeEventListener("abort", finish);
+      done();
+    };
+    const timer = setTimeout(finish, ms);
+    cancel?.addEventListener("abort", finish, { once: true });
+  });
 }
-async function decryptCommand(type, name, debug = false, options = {}) {
-  const logger = new DebugLogger(debug);
-  if (options.clearCache) {
-    logger.log("CACHE", "Clearing all cached prompts");
-    const cache = new CacheService(getCacheDir3());
-    await cache.clearAll();
-    console.log("Cache cleared. All locally cached prompts have been removed.");
-    console.log("Note: Disk caching is now disabled by default for security.");
-    return;
-  }
-  logger.log("FETCH", "Loading credentials from storage");
-  const credentials = await retrieveCredentials();
-  if (!credentials) {
-    throw new Error("Credentials not found. Run setup first.");
-  }
-  logger.log("SECURITY", "Disk caching disabled - fetching fresh from API");
-  const apiUrl = getApiUrl();
-  logger.log("FETCH", `API URL: ${apiUrl}`);
-  if (type === "custom") {
-    logger.log("FETCH", `Fetching custom command: ${name}`);
-    const startFetch2 = Date.now();
-    const customPrompt = await fetchCustomPrompt(credentials.apiKey, apiUrl, name);
-    logger.log("FETCH", `Custom command fetched in ${Date.now() - startFetch2}ms`);
-    console.error("[verify] Team custom prompt \u2014 not covered by the OSS manifest");
-    console.log(customPrompt.prompt);
-    return;
-  }
+var FIRST_ATTEMPT_MS = 3e3;
+var RETRY_MS = 1e4;
+async function fetchManifestQuietly(apiUrl, cancel) {
+  const started = Date.now();
+  const first = await fetchManifestOnce(apiUrl, FIRST_ATTEMPT_MS, cancel);
+  if (first !== null || cancel?.aborted) return first;
+  await pause(started + FIRST_ATTEMPT_MS - Date.now(), cancel);
+  return cancel?.aborted ? null : fetchManifestOnce(apiUrl, RETRY_MS, cancel);
+}
+async function fetchAndDecrypt(credentials, apiUrl, type, name, logger) {
   logger.log("FETCH", `Fetching prompt: ${type}/${name}`);
   const startFetch = Date.now();
   const encryptedPrompt = await fetchEncryptedPrompt(
@@ -781,8 +919,50 @@ async function decryptCommand(type, name, debug = false, options = {}) {
     key
   );
   logger.log("DECRYPT", `Decryption completed in ${Date.now() - startDecrypt}ms`);
+  return plaintext;
+}
+async function decryptCommand(type, name, debug = false, options = {}) {
+  const logger = new DebugLogger(debug);
+  if (options.clearCache) {
+    logger.log("CACHE", "Clearing all cached prompts");
+    const cache = new CacheService(getCacheDir3());
+    await cache.clearAll();
+    console.log("Cache cleared. All locally cached prompts have been removed.");
+    console.log("Note: Disk caching is now disabled by default for security.");
+    return;
+  }
+  logger.log("FETCH", "Loading credentials from storage");
+  const credentials = await retrieveCredentials();
+  if (!credentials) {
+    throw new Error("Credentials not found. Run setup first.");
+  }
+  logger.log("SECURITY", "Disk caching disabled - fetching fresh from API");
+  const apiUrl = getApiUrl();
+  logger.log("FETCH", `API URL: ${apiUrl}`);
+  if (type === "custom") {
+    logger.log("FETCH", `Fetching custom command: ${name}`);
+    const startFetch = Date.now();
+    const customPrompt = await fetchCustomPrompt(credentials.apiKey, apiUrl, name);
+    logger.log("FETCH", `Custom command fetched in ${Date.now() - startFetch}ms`);
+    console.error("[verify] Team custom prompt \u2014 not covered by the OSS manifest");
+    console.log(customPrompt.prompt);
+    return;
+  }
+  const cancelManifest = new AbortController();
+  const manifestRequest = fetchManifestQuietly(apiUrl, cancelManifest.signal);
+  let plaintext;
+  try {
+    plaintext = await fetchAndDecrypt(credentials, apiUrl, type, name, logger);
+  } catch (err) {
+    cancelManifest.abort();
+    throw err;
+  }
   console.error("[verify] Checking prompt integrity...");
-  const manifest = await fetchManifestWithRetry(apiUrl);
+  const manifest = await manifestRequest;
+  if (manifest === null) {
+    console.error(MANIFEST_UNREACHABLE);
+    throw new Error(MANIFEST_UNREACHABLE);
+  }
   if (!verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY)) {
     console.error("[verify] Manifest signature: FAILED \u2014 prompt blocked");
     throw new Error("[SECURITY] Manifest signature verification FAILED. Prompt delivery blocked.");
@@ -798,7 +978,7 @@ async function decryptCommand(type, name, debug = false, options = {}) {
   const integrity = await verifyDecryptedPrompt(plaintext, type, name, manifest);
   if (integrity.verified !== true) {
     if (integrity.reason === "not_in_manifest") {
-      console.error(`[verify] No manifest entry for ${manifestKey} \u2014 prompt blocked`);
+      console.error(`[verify] No manifest entry for ${stripControl(manifestKey)} \u2014 prompt blocked`);
     }
     console.error("[verify] Prompt hash: FAILED \u2014 prompt blocked");
     throw new Error("[SECURITY] Prompt integrity check FAILED. Content may have been tampered with.");
@@ -918,14 +1098,32 @@ function showVersion() {
   console.log(`oss-decrypt v${VERSION}`);
 }
 var MANIFEST_PUBLIC_KEY2 = "MCowBQYDK2VwAyEAAwFG32b8TuiVTxrDnXzNrb2v68YN5U9epLnZ3O7pQaI=";
+var MANIFEST_UNREACHABLE2 = "[SECURITY] Manifest unreachable \u2014 check your connection and run the command again";
+async function fetchManifestBounded(apiUrl) {
+  const manifest = await fetchManifestQuietly(apiUrl);
+  if (manifest === null) console.error(MANIFEST_UNREACHABLE2);
+  return manifest;
+}
+function floorRefusal(verdict) {
+  if (verdict === "accepted") return null;
+  return verdict === "older" ? "Manifest is older than one already seen" : "Manifest has no valid version";
+}
 async function verifyManifestCommand() {
-  const manifest = await fetchManifest(getApiUrl());
+  const apiUrl = getApiUrl();
+  const manifest = await fetchManifestBounded(apiUrl);
   if (manifest === null) {
-    console.log(JSON.stringify({ signatureValid: false, error: "Failed to fetch manifest" }));
+    console.log(JSON.stringify({ signatureValid: false, trusted: false, error: "Failed to fetch manifest" }));
     process.exitCode = 1;
     return;
   }
-  const signatureValid = verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY2);
+  const prompts = manifest.prompts;
+  const signatureValid = prompts !== null && typeof prompts === "object" && !Array.isArray(prompts) && verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY2);
+  if (!signatureValid) {
+    console.log(JSON.stringify({ signatureValid: false, trusted: false, error: "Manifest signature does not verify" }));
+    process.exitCode = 1;
+    return;
+  }
+  const refusal = floorRefusal(checkAndRecordManifestVersion(apiUrl, manifest.version));
   const categories = {};
   for (const key of Object.keys(manifest.prompts)) {
     const category = key.split("/")[0];
@@ -933,22 +1131,29 @@ async function verifyManifestCommand() {
   }
   const report = {
     signatureValid,
+    trusted: refusal === null,
     promptCount: Object.keys(manifest.prompts).length,
     generatedAt: manifest.generatedAt,
-    categories
+    categories,
+    ...refusal === null ? {} : { error: refusal }
   };
   console.log(stripControl(JSON.stringify(report)));
-  if (!signatureValid) {
+  if (refusal !== null) console.error(`[SECURITY] ${refusal} \u2014 manifest not trusted`);
+  if (refusal !== null) {
     process.exitCode = 1;
   }
 }
 async function listPromptsCommand(category) {
-  const manifest = await fetchManifest(getApiUrl());
-  if (manifest === null) {
+  const apiUrl = getApiUrl();
+  const manifest = await fetchManifestBounded(apiUrl);
+  if (manifest === null || !verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY2)) {
     console.log(JSON.stringify([]));
+    process.exitCode = 1;
     return;
   }
-  if (!verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY2)) {
+  const refusal = floorRefusal(checkAndRecordManifestVersion(apiUrl, manifest.version));
+  if (refusal !== null) {
+    console.error(`[SECURITY] ${refusal} \u2014 manifest not trusted`);
     console.log(JSON.stringify([]));
     process.exitCode = 1;
     return;
@@ -966,27 +1171,46 @@ async function listPromptsCommand(category) {
 }
 var VERIFIABLE_BODIES = /* @__PURE__ */ new Set(["shared/iron-laws", "templates/claude-md"]);
 var OSS_BODY_MAX = 1024 * 1024;
+var VERIFY_BODY_STDIN_TIMEOUT_MS = 3e4;
 async function readStdinCapped() {
-  const chunks = [];
-  let total = 0;
-  for await (const chunk of process.stdin) {
-    total += chunk.length;
-    if (total > OSS_BODY_MAX) return null;
-    chunks.push(chunk);
+  const stdin = process.stdin;
+  const readAll = async () => {
+    const chunks = [];
+    let total = 0;
+    for await (const chunk of stdin) {
+      total += chunk.length;
+      if (total > OSS_BODY_MAX) return "too-large";
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
+  };
+  let timer;
+  const deadline = new Promise((done) => {
+    timer = setTimeout(() => done("timed-out"), VERIFY_BODY_STDIN_TIMEOUT_MS);
+  });
+  const reading = readAll();
+  reading.catch(() => void 0);
+  try {
+    const result = await Promise.race([reading, deadline]);
+    if (result === "timed-out") stdin.destroy();
+    return result;
+  } finally {
+    clearTimeout(timer);
   }
-  return Buffer.concat(chunks);
 }
 async function verifyBodyReason(key) {
   if (!VERIFIABLE_BODIES.has(key)) return "[SECURITY] --verify-body: key is not a verifiable body";
-  const body = await readStdinCapped();
-  if (body === null) return `[SECURITY] --verify-body: body is larger than ${OSS_BODY_MAX} bytes`;
+  if (process.stdin.isTTY) return "[SECURITY] --verify-body: the body must be piped on stdin, not typed at a terminal";
   const apiUrl = getApiUrl();
-  let manifest;
-  try {
-    manifest = await fetchManifestWithRetry(apiUrl);
-  } catch {
-    return "";
+  const cancel = new AbortController();
+  const manifestRequest = fetchManifestQuietly(apiUrl, cancel.signal);
+  const body = await readStdinCapped();
+  if (body === "too-large" || body === "timed-out") {
+    cancel.abort();
+    return body === "too-large" ? `[SECURITY] --verify-body: body is larger than ${OSS_BODY_MAX} bytes` : `[SECURITY] --verify-body: stdin did not end within ${VERIFY_BODY_STDIN_TIMEOUT_MS / 1e3} s`;
   }
+  const manifest = await manifestRequest;
+  if (manifest === null) return MANIFEST_UNREACHABLE2;
   if (!verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY2)) {
     return "[SECURITY] Manifest signature verification FAILED \u2014 body not verified";
   }
@@ -1006,7 +1230,7 @@ async function verifyBodyReason(key) {
 async function verifyBodyCommand(key) {
   const reason = await verifyBodyReason(key);
   if (reason === null) return;
-  if (reason !== "") console.error(reason);
+  console.error(reason);
   process.exitCode = 1;
 }
 async function runCli(args) {

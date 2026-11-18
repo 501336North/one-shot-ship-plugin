@@ -7,6 +7,7 @@
  */
 
 import crypto from 'crypto';
+import { readCapped } from './capped-body.js';
 
 export interface ManifestPromptEntry {
   hash: string;
@@ -66,8 +67,11 @@ export function verifyManifestSignature(
   }
 }
 
+/** Largest manifest body read: 2 MiB, far above the live manifest. A larger one is a failed fetch. */
+export const MANIFEST_MAX_BYTES = 2 * 1024 * 1024;
+
 /**
- * Fetch the signed manifest from the API.
+ * Fetch the signed manifest from the API: redirects refused, body capped at MANIFEST_MAX_BYTES.
  *
  * @param apiUrl - Base API URL
  * @param signal - Optional AbortSignal for timeout control
@@ -80,12 +84,15 @@ export async function fetchManifest(
   try {
     const response = await fetch(`${apiUrl}/api/v1/prompts/manifest`, {
       method: 'GET',
+      redirect: 'error',
       signal,
     });
     if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
       return null;
     }
-    return (await response.json()) as SignedManifest;
+    const text = await readCapped(response, MANIFEST_MAX_BYTES);
+    return text === null ? null : (JSON.parse(text) as SignedManifest);
   } catch {
     return null;
   }

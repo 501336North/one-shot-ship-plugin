@@ -16,7 +16,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { Readable } from 'stream';
 
-import { runCli } from '../src/cli-entry.js';
+import { VERIFY_BODY_STDIN_TIMEOUT_MS, runCli } from '../src/cli-entry.js';
 import * as manifestVerifier from '../src/manifest-verifier.js';
 import { MIN_MANIFEST_VERSION } from '../src/manifest-floor.js';
 import type { ManifestPromptEntry, SignedManifest } from '../src/manifest-verifier.js';
@@ -144,6 +144,13 @@ describe('oss-decrypt --verify-body <key>', () => {
     expect(await verifyBody('shared/iron-laws', IRON_LAWS)).toBe(0);
   });
 
+  it('works on a machine with no ~/.oss at all (the config dir does not exist)', async () => {
+    process.env.OSS_CONFIG_DIR = join(configDir, 'absent', '.oss');
+
+    expect(await verifyBody('shared/iron-laws', IRON_LAWS)).toBe(0);
+    expect(stderr).toEqual([]);
+  });
+
   it('refuses a body with one byte changed', async () => {
     const tampered = Buffer.from(IRON_LAWS);
     tampered[tampered.length - 2] ^= 0x01;
@@ -176,6 +183,8 @@ describe('oss-decrypt --verify-body <key>', () => {
 
     expectRefusedWithReason(await verifyBody('shared/iron-laws', IRON_LAWS));
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    // no prompt is being verified here: the line says only that the manifest was unreachable
+    expect(stderr).toEqual(['[SECURITY] Manifest unreachable — check your connection and run the command again']);
   });
 
   it('refuses a manifest whose signature does not verify', async () => {
@@ -224,5 +233,107 @@ describe('oss-decrypt --verify-body <key>', () => {
     serveManifest(signedManifest({ 'shared/iron-laws': entry(huge) }));
 
     expectRefusedWithReason(await verifyBody('shared/iron-laws', huge));
+  });
+});
+
+/**
+ * @behavior --verify-body never waits forever for a body: a terminal on stdin, or a pipe that never closes, is refused
+ * @business-rule R-273 ship round 1: the body must be piped in; the read has a 30 s deadline (VERIFY_BODY_STDIN_TIMEOUT_MS)
+ * @boundary CLI Entry Point (stdin)
+ */
+describe('oss-decrypt --verify-body stdin', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('the stdin deadline is 30 seconds', () => {
+    expect(VERIFY_BODY_STDIN_TIMEOUT_MS).toBe(30_000);
+  });
+
+  it('refuses a terminal on stdin (the body must be piped) without reading or fetching', async () => {
+    const tty = Object.assign(Readable.from([IRON_LAWS]), { isTTY: true });
+    vi.spyOn(process, 'stdin', 'get').mockReturnValue(tty as unknown as typeof process.stdin);
+
+    await runCli(['--verify-body', 'shared/iron-laws']);
+
+    expectRefusedWithReason(Number(process.exitCode ?? 0));
+    expect(stderr[0]).toMatch(/piped/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses a body that has not ended by the deadline', async () => {
+    vi.useFakeTimers();
+    const endless = new Readable({ read() {} });
+    endless.push(IRON_LAWS);
+    vi.spyOn(process, 'stdin', 'get').mockReturnValue(endless as unknown as typeof process.stdin);
+
+    const run = runCli(['--verify-body', 'shared/iron-laws']);
+    await vi.advanceTimersByTimeAsync(VERIFY_BODY_STDIN_TIMEOUT_MS + 10);
+    await run;
+
+    expectRefusedWithReason(Number(process.exitCode ?? 0));
+    expect(stderr[0]).toMatch(/30 s/);
+    endless.destroy();
+  });
+});
+
+/**
+ * @behavior --verify-body answers sooner: the manifest is requested while the body is still being read
+ * @business-rule R-273 ship round 2 (perf F2): same checks and the same single reason line; a body refused
+ *   on its own (too large, never ended) prints only that reason, even if the manifest is unreachable
+ * @boundary CLI Entry Point (stdin, network fetch)
+ */
+describe('oss-decrypt --verify-body reads stdin and fetches the manifest at the same time', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('the manifest request is in flight before stdin has ended, and the body still verifies', async () => {
+    const pending = new Readable({ read() {} });
+    vi.spyOn(process, 'stdin', 'get').mockReturnValue(pending as unknown as typeof process.stdin);
+
+    const run = runCli(['--verify-body', 'shared/iron-laws']);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    pending.push(IRON_LAWS);
+    pending.push(null);
+    await run;
+
+    expect(Number(process.exitCode ?? 0)).toBe(0);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual([]);
+  });
+
+  it('a body over 1 MiB with the manifest unreachable: only the size reason is printed', async () => {
+    vi.useFakeTimers();
+    fetchMock.mockRejectedValue(new Error('fetch failed'));
+    giveStdin(Buffer.alloc(1024 * 1024 + 1, 0x61));
+
+    await runCli(['--verify-body', 'shared/iron-laws']);
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expectRefusedWithReason(Number(process.exitCode ?? 0));
+    expect(stderr[0]).toMatch(/larger than/);
+    // the manifest request was cancelled: no retry went out after the body was refused
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a body that never ends with the manifest unreachable: only the deadline reason is printed', async () => {
+    vi.useFakeTimers();
+    fetchMock.mockRejectedValue(new Error('fetch failed'));
+    const endless = new Readable({ read() {} });
+    endless.push(IRON_LAWS);
+    vi.spyOn(process, 'stdin', 'get').mockReturnValue(endless as unknown as typeof process.stdin);
+
+    const run = runCli(['--verify-body', 'shared/iron-laws']);
+    await vi.advanceTimersByTimeAsync(VERIFY_BODY_STDIN_TIMEOUT_MS + 10);
+    await run;
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expectRefusedWithReason(Number(process.exitCode ?? 0));
+    expect(stderr[0]).toMatch(/30 s/);
+    // both manifest attempts ended long before the 30 s deadline; nothing more went out after the refusal
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    endless.destroy();
   });
 });
