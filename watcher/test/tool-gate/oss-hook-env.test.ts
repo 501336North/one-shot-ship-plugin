@@ -14,6 +14,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runToolGate, type GateResult } from '../../src/tool-gate/gate.js';
+import { HOOK_CALL_VARIABLES } from '../../src/tool-gate/rules/oss-hook-env.js';
+import { heredocBodyOf, tokenize, type Token } from '../../src/tool-gate/tokenize.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const AGENTS: Array<[string, string | null]> = [
@@ -132,5 +134,102 @@ describe.each(AGENTS)('%s', (_who, agent) => {
     expect(result.stderr, command).not.toMatch(/HOME or PATH/);
     // a review agent may run only its listed hook scripts (gate-agent-write), so only the others run it
     if (agent !== 'oss:code-reviewer') expect(result.exitCode, command).toBe(0);
+  });
+});
+
+// hook-env-refs Task 2: a hook call may set only the variables OSS's served commands set on one
+/** Builtins that set the variables their operands name. */
+const SETTERS = new Set(['declare', 'typeset', 'export', 'local', 'readonly', 'read', 'integer', 'float', 'let', 'env']);
+/** Words that may start a simple command before its assignments. */
+const RESERVED = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '{', '!', 'time']);
+const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=/;
+const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const SERVED_HOOK = /\/\.oss\/hooks\/[^/\s"']|\/\.claude\/plugins\/cache\/[^/]+\/oss\/[^/]+\/hooks\/|hooks\/oss-[^/\s"']*\.sh|\$\{?CLAUDE_PLUGIN_ROOT\}?\/hooks\//;
+
+/** The variable names one simple command sets: its assignments, and the operands of a setter, `for` or `printf -v`. */
+function namesSetBy(words: string[]): string[] {
+  let at = 0;
+  while (RESERVED.has(words[at])) at++;
+  const names: string[] = [];
+  while (at < words.length && ASSIGNMENT.test(words[at])) names.push(words[at++]);
+  while (words[at] === 'builtin' || words[at] === 'command') at++;
+  const [program, ...args] = words.slice(at);
+  if (program === 'for' || program === 'select') names.push(args[0] ?? '');
+  else if (program === 'printf' || program === 'print') args.forEach((a, i) => a === '-v' && names.push(args[i + 1] ?? ''));
+  else if (program !== undefined && SETTERS.has(program)) names.push(...args.filter((a) => !a.startsWith('-')));
+  return names.map((n) => n.split(/[=[+]/)[0]).filter((n) => NAME.test(n));
+}
+
+function collectNames(tokens: Token[], into: Set<string>): void {
+  let words: string[] = [];
+  const end = (): void => {
+    for (const name of namesSetBy(words)) into.add(name);
+    words = [];
+  };
+  for (const token of tokens) {
+    if (token.kind === 'op') end();
+    else if (token.kind === 'word') words.push(token.value);
+    if (token.kind !== 'op') token.scripts?.forEach((script) => collectNames(script, into));
+    const body = token.kind === 'redirect' ? heredocBodyOf(token) : undefined;
+    if (body !== undefined) collectNames(tokenize(body).tokens, into);
+  }
+  end();
+}
+
+/** Every variable a served block sets when the block runs an OSS hook script. */
+function servedHookVariables(): Set<string> {
+  const fixture = JSON.parse(
+    fs.readFileSync(path.join(PLUGIN_ROOT, 'watcher/test/fixtures/served-command-blocks.json'), 'utf8'),
+  ) as { files: Record<string, string[]> };
+  const served = new Set<string>();
+  for (const block of Object.values(fixture.files).flat()) {
+    if (SERVED_HOOK.test(block)) collectNames(tokenize(block).tokens, served);
+  }
+  return served;
+}
+
+const SERVED_HOOK_VARIABLES = servedHookVariables();
+
+const LOG_HOOK = '~/.oss/hooks/oss-log.sh write build x';
+
+describe.each(AGENTS.slice(0, 2))('%s, setting a variable on a hook call', (_who, agent) => {
+  it.each([
+    `CLAUDE_PLUGIN_ROOT=/tmp/x ${LOG_HOOK}`,
+    `BASH_ENV=./x.sh ${LOG_HOOK}`,
+    `ENV=./x ${LOG_HOOK}`,
+    `NODE_OPTIONS=--require=./x.js ${LOG_HOOK}`,
+    `SHELLOPTS=xtrace PS4='$(id)' ${LOG_HOOK}`,
+    `GIT_DIR=x ${LOG_HOOK}`,
+    `DYLD_INSERT_LIBRARIES=x ${LOG_HOOK}`,
+    `export NODE_OPTIONS=--require=./x.js; ${LOG_HOOK}`,
+    `env BASH_ENV=x ${LOG_HOOK}`,
+  ])('refuses a hook script run with a variable the served commands never set: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(/^Refused.*OSS hook script.*variable.*not on the list/);
+  });
+
+  it.each([...SERVED_HOOK_VARIABLES].map((name) => `${name}=x ${LOG_HOOK}`))(
+    'runs a hook script with a variable a served command sets on one: %s',
+    async (command) => {
+      const result = await call(command, agent);
+      expect(result.stderr, command).not.toMatch(/OSS hook script/);
+    },
+  );
+
+  it('still lets a hook call unset a variable', async () => {
+    const result = await call(`unset GIT_DIR NODE_OPTIONS; ${LOG_HOOK}`, agent);
+    expect(result.stderr).not.toMatch(/OSS hook script/);
+  });
+});
+
+describe('the hook-call variable list', () => {
+  it('is exactly the variables the served commands set in a block that runs an OSS hook script', () => {
+    expect([...HOOK_CALL_VARIABLES].sort()).toEqual([...SERVED_HOOK_VARIABLES].sort());
+  });
+
+  it('never holds a variable that moves where a hook looks or what its shell and tools run', () => {
+    const refused = /^(?:HOME|PATH|path|CLAUDE_PLUGIN_ROOT|BASH_ENV|ENV|NODE_OPTIONS|SHELLOPTS|BASHOPTS|PS4|GIT_.*|LD_.*|DYLD_.*)$/;
+    expect([...HOOK_CALL_VARIABLES].filter((name) => refused.test(name))).toEqual([]);
   });
 });
