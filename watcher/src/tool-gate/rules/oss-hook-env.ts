@@ -27,6 +27,16 @@ const HOOK_FILE =
 const PLUGIN_HOOK = /\$\{?CLAUDE_PLUGIN_ROOT\}?\/hooks\/[^/]/;
 /** The names that move where a hook looks: HOME, PATH, and zsh's `path` array tied to PATH. */
 const MOVERS = new Set(['HOME', 'PATH', 'path']);
+/** The variables a command may set on a hook call: exactly those OSS's served commands set there (a test pins them to the served fixture). */
+export const HOOK_CALL_VARIABLES: ReadonlySet<string> = new Set([
+  'CLAUDE_PROJECT_DIR', 'CREDS', 'HAS_PLAYWRIGHT', 'OSS_DIR', 'OSS_ICON_PNG', 'PLAYWRIGHT_RESULT', 'PLIST_PATH',
+  'PLUGIN_ROOT', 'SCRIPT_DIR', 'SETTINGS_FILE', 'SOUND', 'STATUSLINE_SCRIPT', 'STYLE', 'V', 'VERBOSITY', 'VERIFY',
+  'VOICE', 'WHY', 'd', 'encoding', 'o', 'top', 'version', 'w',
+]);
+/** A word that assigns a variable: `X=…`, `X+=…`, `X[i]=…`. */
+const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=/;
+/** Words that may start a simple command before its assignments. */
+const RESERVED = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '{', '!', 'time']);
 /** A word that sets one of them, or names one for a builtin to set: `HOME=x`, `PATH+=x`, `path[1]=x`, `HOME`. */
 const SETTING_WORD = /^(?:HOME|PATH|path)(?:$|\[[^\]]*\])?(?:\+?=|$)/;
 /** A word that is a script the shell runs: the value after a `-c` flag or `eval`. */
@@ -40,9 +50,9 @@ const PREFIXES = new Set(['builtin', 'command']);
 /** How deep scripts in scripts are read; deeper counts as setting (fail closed). */
 const MAX_DEPTH = 5;
 
-/** True when the text, as the shell reads it, may set HOME or PATH. */
+/** True when the text, as the shell reads it, may set HOME or PATH or a variable not on the hook-call list. */
 function setsMover(text: string, depth: number): boolean {
-  if (depth > MAX_DEPTH || expansionSet(text, (name) => MOVERS.has(name)) !== null || arithmeticReadsVariable(text)) return true;
+  if (depth > MAX_DEPTH || expansionSet(text, (name) => !HOOK_CALL_VARIABLES.has(name)) !== null || arithmeticReadsVariable(text)) return true;
   const result = tokenize(text, undefined, new ReadBudget());
   if ('unreadable' in result && result.limit) return true;
   return tokensSet(result.tokens, depth);
@@ -72,6 +82,22 @@ function setsIndirectly(words: string[]): boolean {
   if (name === undefined || !NAME_SETTERS.has(name)) return false;
   if (NAMEREF_SETTERS.has(name) && args.some((a) => /^-[A-Za-z]*n/.test(a))) return true;
   return args.some((a) => !a.startsWith('-') && a.split('=')[0].includes(UNKNOWN));
+}
+
+/** True when a simple command sets a variable it names that is not on the hook-call list: an assignment, a setter's operand, a `for` variable. */
+function setsUnlisted(words: string[]): boolean {
+  let p = 0;
+  while (RESERVED.has(words[p])) p++;
+  const names: string[] = [];
+  while (p < words.length && ASSIGNMENT.test(words[p])) names.push(words[p++]);
+  while (PREFIXES.has(words[p])) p++;
+  const [name, ...args] = words.slice(p);
+  if (name === 'for' || name === 'select') names.push(args[0] ?? '');
+  else if (name !== undefined && (NAME_SETTERS.has(name) || name === 'let' || name === 'env')) names.push(...args.filter((a) => !a.startsWith('-')));
+  return names.some((word) => {
+    const variable = word.split(/[=[+]/)[0];
+    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(variable) && !HOOK_CALL_VARIABLES.has(variable);
+  });
 }
 
 /** mapfile / readarray options that take a value (bash syntax): the array name is the operand left. */
@@ -139,7 +165,7 @@ function tokensSet(tokens: Token[], depth: number): boolean {
   let words: string[] = [];
   for (const token of tokens) {
     if (token.kind === 'op') {
-      if (setsIndirectly(words)) return true;
+      if (setsIndirectly(words) || setsUnlisted(words)) return true;
       words = [];
     } else if (token.kind === 'word') {
       words.push(token.value);
@@ -156,7 +182,7 @@ function tokensSet(tokens: Token[], depth: number): boolean {
       previous = null;
     }
   }
-  return setsIndirectly(words);
+  return setsIndirectly(words) || setsUnlisted(words);
 }
 
 export function checkOssHookEnv(part: CommandPart, command: string): Refusal | null {
@@ -164,6 +190,6 @@ export function checkOssHookEnv(part: CommandPart, command: string): Refusal | n
   if (!part.wrappers.includes('env') && !setsMover(command, 0)) return null;
   return {
     rule: 'protected-path',
-    reason: 'Refused: runs an OSS hook script (`~/.oss/hooks/…`) with a HOME or PATH this command sets or changes (`HOME=`, `PATH=`, `export`, `env`). Run the hook script as it is, in a command that leaves HOME and PATH alone.',
+    reason: 'Refused: runs an OSS hook script (`~/.oss/hooks/…`) with a HOME or PATH, or another variable, this command sets or changes (`X=`, `export`, `env`) that is not on the list of variables OSS\'s own commands set on a hook call. Run the hook script as it is, in a command that sets no other variable.',
   };
 }

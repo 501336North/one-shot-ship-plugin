@@ -176,6 +176,8 @@ describe.each(AGENTS)('%s', (_who, agent) => {
     'x=HOME; echo "$x"',
     'cp /tmp/a.txt src',
     'mv /tmp/a.txt sr?',
-    `export HOME_X=1; ${HOOK}`,
   ])('still allows: %s', (command) => allowed(command, agent));
+
+  // hook-env allowlist (2026-11-18): a hook call may set only the variables OSS's served commands set on one
+  it('refuses a hook call that exports a variable outside the hook-call list', () => refused(`export HOME_X=1; ${HOOK}`, agent));
 });
