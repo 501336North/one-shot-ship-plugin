@@ -1,18 +1,22 @@
 /**
  * OSS hook environment rule (R-266 round 12, SEC LOW-A, gate side): OSS's own hook scripts find their
- * files and tools through HOME and PATH, so no agent may run one with a HOME or PATH it chose. They live
- * in `~/.oss/hooks/*`, the plugin cache (`~/.claude/plugins/cache/<marketplace>/oss/<version>/hooks/*`),
+ * files and tools through HOME and PATH, and their shell and tools read variables such as BASH_ENV,
+ * NODE_OPTIONS or GIT_DIR, so no agent may run one with a variable it chose. A call that runs a hook
+ * script may set only HOOK_CALL_VARIABLES, the names OSS's served commands set there (hook-env-refs
+ * Task 2, pinned to the served fixture by a test); HOME, PATH and zsh's `path` are never on it.
+ * Hook scripts live in `~/.oss/hooks/*`, the plugin cache (`~/.claude/plugins/cache/<marketplace>/oss/<version>/hooks/*`),
  * a `--plugin-dir` copy or plugin checkout (any `…/hooks/oss-*.sh`), and `$CLAUDE_PLUGIN_ROOT/hooks/*`
- * (or `${CLAUDE_PLUGIN_ROOT}`) as written (hook-env-refs Task 1); a non-OSS `hooks/` script is not one. Decided from the words the shell reads (round 13, CR L-a), brace expansion
- * included: a word that sets HOME, PATH or zsh's `path` (`HOME=…`, `export {PATH,ZZ}=…`, `path=(…)`), a
- * word that is exactly one of those names (`export HOME`, `read HOME`, `for PATH in`), a `${HOME:=…}`
- * or arithmetic that sets one, the same in a `-c` / `eval` script or a heredoc, or an `env` wrapper
- * (which can also clear them: `env -i`) is refused on a part that names a hook script. A comment, or a
- * word that merely holds the name (`"see HOME docs"`), is not. A name only known when it runs, given
- * to `printf -v`, `declare` and the like, a nameref (`declare -n`), or zsh's `${(P)…}` (which the
- * tokenizer never reads) may be HOME or PATH, so it counts as setting one (round 14, CR LOW-1).
- * Reported under the protected-path rule:
- * the hook folder is protected.
+ * (or `${CLAUDE_PLUGIN_ROOT}`) as written (hook-env-refs Task 1); a non-OSS `hooks/` script is not one.
+ * Decided from the words the shell reads (round 13, CR L-a), brace expansion included, on the whole
+ * command when a part names a hook script: an assignment (`X=…`, `X+=…`, `X[i]=…`, before a program or
+ * alone), an operand of `export`, `declare`, `local`, `readonly`, `read`, `let`, `env` and the like, a
+ * `for` / `select` variable, a `${X:=…}` or arithmetic that sets one, the same in a `-c` / `eval` script
+ * or a heredoc, or an `env` wrapper (which can also clear them: `env -i`) is refused when the name is not
+ * on the list. A word that is exactly HOME, PATH or `path` anywhere (`printf -v HOME`) counts as setting
+ * it. A comment, or a word that merely holds a name (`"see HOME docs"`), is not; `unset X` is allowed. A
+ * name only known when it runs, given to `printf -v`, `declare` and the like, a nameref (`declare -n`),
+ * or zsh's `${(P)…}` (which the tokenizer never reads) may be any name, so it counts as setting a refused
+ * one (round 14, CR LOW-1). Reported under the protected-path rule: the hook folder is protected.
  */
 
 import type { CommandPart } from '../command-reader.js';
@@ -35,6 +39,8 @@ export const HOOK_CALL_VARIABLES: ReadonlySet<string> = new Set([
 ]);
 /** A word that assigns a variable: `X=…`, `X+=…`, `X[i]=…`. */
 const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=/;
+/** A variable name. */
+const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** Words that may start a simple command before its assignments. */
 const RESERVED = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '{', '!', 'time']);
 /** A word that sets one of them, or names one for a builtin to set: `HOME=x`, `PATH+=x`, `path[1]=x`, `HOME`. */
@@ -45,13 +51,15 @@ const SCRIPT_FLAG = /^-[A-Za-z]*c$/;
 const NAME_SETTERS = new Set(['declare', 'typeset', 'export', 'local', 'readonly', 'read', 'integer', 'float']);
 /** Builtins whose `-n` makes a name refer to another variable (a nameref), which may be HOME or PATH. */
 const NAMEREF_SETTERS = new Set(['declare', 'typeset', 'local']);
+/** Programs that set the variables their operands name (`let X=1`, `env X=1 …`), the name setters included. */
+const OPERAND_SETTERS = new Set([...NAME_SETTERS, 'let', 'env']);
 /** Words before a builtin that still run it. */
 const PREFIXES = new Set(['builtin', 'command']);
 /** How deep scripts in scripts are read; deeper counts as setting (fail closed). */
 const MAX_DEPTH = 5;
 
 /** True when the text, as the shell reads it, may set HOME or PATH or a variable not on the hook-call list. */
-function setsMover(text: string, depth: number): boolean {
+function setsRefusedVariable(text: string, depth: number): boolean {
   if (depth > MAX_DEPTH || expansionSet(text, (name) => !HOOK_CALL_VARIABLES.has(name)) !== null || arithmeticReadsVariable(text)) return true;
   const result = tokenize(text, undefined, new ReadBudget());
   if ('unreadable' in result && result.limit) return true;
@@ -93,10 +101,10 @@ function setsUnlisted(words: string[]): boolean {
   while (PREFIXES.has(words[p])) p++;
   const [name, ...args] = words.slice(p);
   if (name === 'for' || name === 'select') names.push(args[0] ?? '');
-  else if (name !== undefined && (NAME_SETTERS.has(name) || name === 'let' || name === 'env')) names.push(...args.filter((a) => !a.startsWith('-')));
+  else if (name !== undefined && OPERAND_SETTERS.has(name)) names.push(...args.filter((a) => !a.startsWith('-')));
   return names.some((word) => {
     const variable = word.split(/[=[+]/)[0];
-    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(variable) && !HOOK_CALL_VARIABLES.has(variable);
+    return VARIABLE_NAME.test(variable) && !HOOK_CALL_VARIABLES.has(variable);
   });
 }
 
@@ -173,10 +181,10 @@ function tokensSet(tokens: Token[], depth: number): boolean {
     if (token.kind !== 'op' && token.scripts?.some((script) => tokensSet(script, depth))) return true;
     if (token.kind === 'redirect') {
       const body = heredocBodyOf(token);
-      if (body !== undefined && setsMover(body, depth + 1)) return true;
+      if (body !== undefined && setsRefusedVariable(body, depth + 1)) return true;
     } else if (token.kind === 'word') {
       if (SETTING_WORD.test(token.value)) return true;
-      if (previous !== null && (previous === 'eval' || SCRIPT_FLAG.test(previous)) && setsMover(token.value, depth + 1)) return true;
+      if (previous !== null && (previous === 'eval' || SCRIPT_FLAG.test(previous)) && setsRefusedVariable(token.value, depth + 1)) return true;
       previous = token.value;
     } else {
       previous = null;
@@ -187,7 +195,7 @@ function tokensSet(tokens: Token[], depth: number): boolean {
 
 export function checkOssHookEnv(part: CommandPart, command: string): Refusal | null {
   if (!part.words.some((w) => HOOK_FILE.test(w)) && !PLUGIN_HOOK.test(command)) return null;
-  if (!part.wrappers.includes('env') && !setsMover(command, 0)) return null;
+  if (!part.wrappers.includes('env') && !setsRefusedVariable(command, 0)) return null;
   return {
     rule: 'protected-path',
     reason: 'Refused: runs an OSS hook script (`~/.oss/hooks/…`) with a HOME or PATH, or another variable, this command sets or changes (`X=`, `export`, `env`) that is not on the list of variables OSS\'s own commands set on a hook call. Run the hook script as it is, in a command that sets no other variable.',
