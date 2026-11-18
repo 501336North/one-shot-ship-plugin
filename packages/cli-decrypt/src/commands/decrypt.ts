@@ -40,6 +40,35 @@ function getCacheDir(): string {
   return join(getConfigDir(), 'prompt-cache');
 }
 
+const MANIFEST_UNREACHABLE =
+  '[SECURITY] Could not verify prompt: manifest unreachable — check your connection and run the command again';
+
+/** One manifest fetch that aborts after `ms`; a rejection or a null result is a failed attempt. */
+async function fetchManifestOnce(apiUrl: string, ms: number): Promise<SignedManifest | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetchManifest(apiUrl, controller.signal);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Fetch the signed manifest: a 3 s attempt, then one 10 s retry (R-273 D7).
+ * Both failing prints the unreachable message on stderr and rejects — never fail-open.
+ */
+export async function fetchManifestWithRetry(apiUrl: string): Promise<SignedManifest> {
+  const manifest = (await fetchManifestOnce(apiUrl, 3000)) ?? (await fetchManifestOnce(apiUrl, 10000));
+  if (!manifest) {
+    console.error(MANIFEST_UNREACHABLE);
+    throw new Error(MANIFEST_UNREACHABLE);
+  }
+  return manifest;
+}
+
 /**
  * Decrypt a prompt and output to stdout
  *
@@ -141,21 +170,7 @@ export async function decryptCommand(
   // Verification runs BEFORE output — tampered prompts are never delivered.
   console.error('[verify] Checking prompt integrity...');
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 3000);
-  let manifest: SignedManifest | null = null;
-  try {
-    manifest = await fetchManifest(apiUrl, controller.signal);
-  } catch {
-    // Network failure — degrade gracefully
-  } finally {
-    clearTimeout(timeout);
-  }
-
-  if (!manifest) {
-    console.error('[verify] Manifest unavailable — prompt blocked');
-    throw new Error('[SECURITY] Could not verify prompt: manifest unavailable. Prompt delivery blocked.');
-  }
+  const manifest = await fetchManifestWithRetry(apiUrl);
 
   if (!verifyManifestSignature(manifest, MANIFEST_PUBLIC_KEY)) {
     console.error('[verify] Manifest signature: FAILED — prompt blocked');
