@@ -183,6 +183,7 @@ describe('/oss:trust - Acceptance Tests', () => {
 
     it('--list-prompts prints no DEL or C1 characters', async () => {
       vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(hostile());
+      vi.mocked(manifestVerifier.verifyManifestSignature).mockReturnValue(true);
       await runCli(['--list-prompts']);
       const output = consoleSpy.mock.calls.map(c => c[0]).join('\n');
       expect(output).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
@@ -215,6 +216,7 @@ describe('/oss:trust - Acceptance Tests', () => {
      */
     it('should output JSON array with name, category, hash, size', async () => {
       vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(validManifest);
+      vi.mocked(manifestVerifier.verifyManifestSignature).mockReturnValue(true);
 
       await runCli(['--list-prompts']);
 
@@ -240,6 +242,7 @@ describe('/oss:trust - Acceptance Tests', () => {
 
     it('should output only matching category prompts', async () => {
       vi.mocked(manifestVerifier.fetchManifest).mockResolvedValue(validManifest);
+      vi.mocked(manifestVerifier.verifyManifestSignature).mockReturnValue(true);
 
       await runCli(['--list-prompts', '--category', 'commands']);
 
