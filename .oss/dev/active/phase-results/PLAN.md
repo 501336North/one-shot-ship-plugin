@@ -236,6 +236,16 @@ cd packages/api && DOTENV_CONFIG_PATH=/Users/ysl/dev/AgenticDevWorkflow/packages
 ## Phase 6: After R-266 merges (tracked; not in slice A's build)
 - **Task 18 ⚠ changes existing test** (watcher/test/hooks/hooks-json-tool-gate.test.ts, `EXISTING.Stop: [command('oss-stop.sh')]` becomes the dispatcher). DESIGN.md D9: "The `hooks.json` entries (Stop to the dispatcher, SubagentStop capture) are added on a rebase after R-266 merges, as a tracked task." Add the hooks.json entries on a rebase, additively: Stop points to `oss-stop-dispatch.sh` (it replaces the `oss-stop.sh` entry; the notification runs inside the dispatcher), plus a SubagentStop entry. Tests: `hooks-json` tests for the new entries; R-266's entries are untouched.
 - **Task 19:** each review agent ends with a fenced JSON verdict block; a SubagentStop capture puts it into ship evidence (`source: agent`). The API agent-prompt change also regenerates the manifest.
+  - **Contract, fixed 2026-11-18:** the agent's final message ends with exactly one fenced block whose info string is `oss-verdict`, holding `{"verdict":"pass"|"fail","findings":{"critical":N,"high":N,"medium":N,"low":N,"info":N}}`. The last `oss-verdict` block of the final message counts. Nothing else in it is read.
+  - **Capture (plugin):**
+    - A SubagentStop hook entry, additive to R-266's gate-run entry, runs a capture for the review agents only (code-reviewer, security-auditor, penetration-tester, performance-auditor).
+    - The gate name comes from the hook input's `agent_type`, mapped to the gate names ship's timeline uses, never from the block.
+    - The capture validates the block against a schema and writes one ledger row, through code on the recorded node (D21). The model never writes the row.
+  - **Ship assembly:**
+    - For each gate of the latest round, a captured agent row written after the ship run started supplies `verdict` and `findings` (`source: agent`). `fixed` stays from the timeline line. A missing block falls back to the timeline line (`source: model`), as today; no stricter flow.
+    - The agent's verdict is the final word: a later round's re-review reports the state after the fixes.
+  - **API:** the four review-agent prompts (packages/api/src/prompts/agents/) end with the block. They are never told to run oss-phase-result.sh (coordinator ruling). The manifest is regenerated.
+  - ⚠ changes existing test: R-266's hooks.json EXISTING map gains the SubagentStop capture entry. DESIGN.md D9: "The `hooks.json` entries (Stop to the dispatcher, SubagentStop capture) are added on a rebase after R-266 merges, as a tracked task."
 - **Task 20 (slice B):** R-253's recorder is tracked per task, so a task is valid only with a green after its last production edit. Branched from the Sprint D branch after R-266 merges.
 
 ## Phase 7: oss-lab (after plugin slice A; D3)

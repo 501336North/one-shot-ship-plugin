@@ -60,6 +60,12 @@
   - If the recorded node was removed and PATH has a different one, the check exits 127 with one `node_missing` line telling the user to delete `~/.oss/node-path`. The complete gate refuses, Stop marks the phase unverified, and checkpoint counts 0.
   - Why: a verdict must never come from an unrecorded node. The cost is rare, since nvm switches and brew upgrades keep the recorded path usable.
   - Not chosen: re-recording PATH's node (a fake node could become the recorded one), and falling back with an unverified label.
+- D22 T18b scope (user picker 2026-11-18): **Ledger only**.
+  - `~/.oss/ledger/**` joins R-266's `protectedPaths`. `.oss/dev/active/*/results/**` does not.
+  - Why results/ is left out: R-266's gate refuses a write to any folder that holds protected files. So the archive `mv` of a feature folder, and ship's dev-docs guard `pwd` in `.oss/dev`, would be refused.
+  - A results file edited by hand still fails its ledger binding (D14).
+  - Results/ protection goes on R-266's OS write-sandbox card.
+  - This changes R-266's provenance test, which pins the exact protected list, to add the ledger entry (user pick, quoted in the T18b commit).
 
 ---
 
