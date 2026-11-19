@@ -257,6 +257,9 @@ export async function checkBranchRefs(
   if (subcommand === 'update-ref') {
     return { rule: 'protected-branch', reason: 'Refused: `git update-ref` writes a ref directly, without the history git keeps for it. Ask the user to run it with `!`.' };
   }
+  if (subcommand === 'replace' && !replaceLists(args)) {
+    return { rule: 'protected-branch', reason: 'Refused: `git replace` changes which commits git shows, without a ref change. Ask the user to run it with `!`.' };
+  }
   if (subcommand === 'reflog' && REFLOG_CHANGES.has(args[0])) {
     return { rule: 'protected-branch', reason: `Refused: \`git reflog ${args[0]}\` changes or erases the ref history a lost commit is found by. Ask the user to run it with \`!\`.` };
   }
@@ -290,6 +293,18 @@ export async function checkBranchRefs(
   if (mode === undefined) return null;
   const named = positionalsOf(args, BRANCH_VALUES).find((w) => namesProtected(w, branches));
   return named === undefined ? null : refChange(`git branch ${mode} … ${named}`, named);
+}
+
+/**
+ * True when a `git replace` only lists replacements (git syntax): no arguments, or only `-l` / `--list`
+ * and `--format=…`, with at most one pattern after `-l` / `--list` (gate-gaps-r3 Task 11). Anything
+ * else, an abbreviated long option included, is read as a write.
+ */
+function replaceLists(args: readonly string[]): boolean {
+  const listing = args.includes('-l') || args.includes('--list');
+  const options = args.filter((a) => a.startsWith('-'));
+  const patterns = args.length - options.length;
+  return options.every((a) => a === '-l' || a === '--list' || a.startsWith('--format=')) && (patterns === 0 || (listing && patterns === 1));
 }
 
 /**

@@ -80,6 +80,8 @@ describe('base settings file', () => {
         // Task 9, owner pick 2026-11-19: transcripts and their folders
         '~/.claude/projects/*/*.jsonl', '~/.claude/projects/*/*/subagents/**', '~/.claude/projects/*/*/tool-results/**',
         '~/.claude/projects/*/*/subagents', '~/.claude/projects/*/*/tool-results',
+        // Task 11, owner pick 2026-11-19 (R-257 round 5): replace refs and grafts
+        '**/.git/info/grafts', '**/.git/refs/replace/**',
       ],
       productionHosts: [],
       // R-266 DESIGN item 3 (AC-004.6): the review agents whose runs the gate tracks
