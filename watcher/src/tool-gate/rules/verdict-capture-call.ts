@@ -8,6 +8,9 @@
  * `~`, `$HOME`, a variable the reader filled in, a relative path, and a word after `node`, `bash`, `env`, `command`
  * or `exec` count), in any case. A glob counts when it could match any name and either writes part of the
  * capture's own name (`oss-v*`, `*capture*`) or sits in a `hooks/` or `cli/` folder (`~/.oss/hooks/*`).
+ * A `find` that runs the files it finds (`-exec`, `-execdir`, `-ok`, `-okdir`, `{}` as the program or as an
+ * interpreter's script, `env` included) is refused when a name or path test's glob could match the capture or
+ * an OSS hook (`oss-*.sh`), in any case (gate-gaps-r3 Task 10); with no such test it is decided as before.
  * Reported under the protected-path rule: the hook folder is protected.
  */
 
@@ -185,7 +188,94 @@ export function namesVerdictCapture(text: string): boolean {
   return false;
 }
 
+/** find's actions that run a command, ended by `;` or `+`. */
+const FIND_RUNNERS = new Set(['-exec', '-execdir', '-ok', '-okdir']);
+/** find's tests that take a name or path glob. */
+const FIND_GLOBS = new Set(['-name', '-iname', '-path', '-ipath', '-wholename', '-iwholename']);
+/** Interpreters whose first non-option word is the script they run. */
+const INTERPRETERS = /^(?:node|sh|bash|zsh|dash|python3?|perl|ruby|deno|bun|tsx|ts-node)$/;
+/** A variable assignment word, as `env` takes it. */
+const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+/**
+ * True when some text made of the pieces, in order with any text between them (and before the first,
+ * unless anchored), is matched by the glob's tokens: one pass over the pieces with the set of token positions.
+ */
+function couldMatch(tokens: Token[], pieces: string[], anchored: boolean): boolean {
+  const closure = (at: Set<number>): Set<number> => {
+    for (const t of at) if (tokens[t] === '*') at.add(t + 1);
+    return at;
+  };
+  const gap = (at: Set<number>): Set<number> => {
+    const from = Math.min(...at);
+    const all = new Set<number>();
+    for (let t = from; t <= tokens.length; t += 1) all.add(t);
+    return all;
+  };
+  let at = closure(new Set([0]));
+  if (!anchored) at = gap(at);
+  for (const [k, piece] of pieces.entries()) {
+    if (k > 0) at = gap(at);
+    for (const c of piece) {
+      const next = new Set<number>();
+      for (const t of at) {
+        const token = tokens[t];
+        if (token === '*') next.add(t);
+        else if (token !== undefined && token(c)) next.add(t + 1);
+      }
+      at = closure(next);
+      if (at.size === 0) return false;
+    }
+  }
+  return at.has(tokens.length);
+}
+
+/** True when a find name or path glob could pick the capture or an OSS hook (`oss-*.sh`), in any case. */
+function globCouldPickProtected(test: string, glob: string): boolean {
+  const tokens = globTokens(glob.toLowerCase());
+  const whole = test === '-name' || test === '-iname';
+  return [...NAMES.map((name) => [name]), ['oss-', '.sh']].some((pieces) =>
+    couldMatch(tokens, whole ? pieces : [`/${pieces[0]}`, ...pieces.slice(1)], whole),
+  );
+}
+
+/** True when a find action's command runs `{}` as its program or as an interpreter's script, through `env` too. */
+function runsFound(words: string[]): boolean {
+  let i = 0;
+  if (words[0] === 'env') {
+    i = 1;
+    while (i < words.length && (words[i].startsWith('-') || ENV_ASSIGNMENT.test(words[i]))) i += 1;
+  }
+  const program = words[i];
+  if (program === undefined) return false;
+  if (program.includes('{}')) return true;
+  if (!INTERPRETERS.test(program.split('/').pop() ?? '')) return false;
+  const script = words.slice(i + 1).find((w) => !w.startsWith('-') && w !== 'run');
+  return script?.includes('{}') ?? false;
+}
+
+/** True when a find runs a file it found by a glob that could pick a protected script (gate-gaps-r3 Task 10). */
+function findRunsProtected(part: CommandPart): boolean {
+  if (part.name !== 'find') return false;
+  const words = part.words;
+  if (!words.some((word, i) => FIND_GLOBS.has(words[i - 1] ?? '') && globCouldPickProtected(words[i - 1], word))) return false;
+  for (let i = 1; i < words.length; i += 1) {
+    if (!FIND_RUNNERS.has(words[i])) continue;
+    const end = words.findIndex((w, k) => k > i && (w === ';' || w === '+'));
+    if (runsFound(words.slice(i + 1, end === -1 ? words.length : end))) return true;
+    if (end === -1) break;
+    i = end;
+  }
+  return false;
+}
+
 export function checkVerdictCaptureCall(part: CommandPart, command: string): Refusal | null {
+  if (findRunsProtected(part)) {
+    return {
+      rule: 'protected-path',
+      reason: 'Refused: this `find` runs the files it finds, and its name or path test could pick a protected OSS script (the verdict capture or an OSS hook). Run a file you name in full, or ask the user to run it with `!`.',
+    };
+  }
   const texts = [command, ...part.words, ...part.assignmentValues, ...part.stdinScripts];
   if (!texts.some(namesVerdictCapture)) return null;
   return {
