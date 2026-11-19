@@ -29,7 +29,7 @@ import { assemblePlan } from '../phase-results/assemble-plan.js';
 import {
   assembleShip,
   isLocalBranch,
-  shipBaseAllowed,
+  shipBaseCheck,
 } from '../phase-results/assemble-ship.js';
 import { LedgerError, ledgerKey, openLedger, parseRunRow, type Ledger } from '../phase-results/ledger.js';
 import { loadPhaseSchema, PHASES, type Phase } from '../phase-results/schemas.js';
@@ -44,17 +44,26 @@ const USAGE =
   'usage: oss-phase-result.sh assemble <ideate|plan|build|ship>\n' +
   '       oss-phase-result.sh check <ideate|plan|build|ship> [--repo <path>] [--all]\n';
 
-type Verdict = { ok: true } | { ok: false; id: string; field: string };
+type Verdict = { ok: true } | { ok: false; id: string; field: string; detail?: string };
 
+/** `field` names the field or input at fault; `detail`, when set, is a fixed hint printed as its own clause (pen info 1). */
 class Refusal extends Error {
   readonly id: string;
   readonly field: string;
-  constructor(id: string, field: string) {
+  readonly detail: string | undefined;
+  constructor(id: string, field: string, detail?: string) {
     super(id);
     this.id = id;
     this.field = field;
+    this.detail = detail;
   }
 }
+
+/** Assembler errors whose `detail` is a fixed hint, not a field name (pen info 1). */
+const HINT_ERRORS: ReadonlySet<string> = new Set(['diff_unavailable']);
+
+/** Pen low 4 (gate round 7): the unsafe_base hint when only the snapshot containment failed. Fixed text, no values. */
+const NOT_IN_SNAPSHOT = 'the base tip is not in the ship-start remote snapshot: update or push the base, then run ship start again';
 
 interface Args {
   verb: 'assemble' | 'check';
@@ -148,7 +157,8 @@ function originSnapshot(ledger: Ledger, startedAt: string): Map<string, string> 
  */
 function checkShipBase(repo: string, base: string, feature: string, snapshot: ReadonlyMap<string, string>): void {
   if (!isLocalBranch(repo, base)) return;
-  if (!shipBaseAllowed(repo, base, feature, snapshot)) throw new Refusal('unsafe_base', 'base');
+  const verdict = shipBaseCheck(repo, base, feature, snapshot);
+  if (verdict !== 'ok') throw new Refusal('unsafe_base', 'base', verdict === 'not_in_snapshot' ? NOT_IN_SNAPSHOT : undefined);
 }
 
 /** The plugin root this bundle sits in: <root>/watcher/dist/cli/phase-result.cjs. */
@@ -235,7 +245,10 @@ function assemble(repo: string, feature: string, phase: Phase): Record<string, u
     now: () => new Date(),
   };
   const outcome = runAssembler(phase, ctx);
-  if (!outcome.ok) throw new Refusal(outcome.error, outcome.detail ?? phase);
+  if (!outcome.ok) {
+    if (outcome.detail !== undefined && HINT_ERRORS.has(outcome.error)) throw new Refusal(outcome.error, '', outcome.detail);
+    throw new Refusal(outcome.error, outcome.detail ?? phase);
+  }
   checkSchema(phase, outcome.result);
   // Round 2 race: bind the bytes written, and only when the file read back is that very file holding those bytes.
   const written = writeResult(repo, feature, phase, outcome.result);
@@ -349,7 +362,7 @@ function verdictOf(fn: () => void): Verdict {
     fn();
     return { ok: true };
   } catch (e) {
-    if (e instanceof Refusal) return { ok: false, id: e.id, field: e.field };
+    if (e instanceof Refusal) return { ok: false, id: e.id, field: e.field, detail: e.detail };
     if (e instanceof LedgerError) return { ok: false, id: e.code, field: 'ledger' };
     const msg = e instanceof Error ? e.message : String(e);
     const id = /^([a-z_]+):/.exec(msg)?.[1] ?? 'internal_error';
@@ -357,10 +370,13 @@ function verdictOf(fn: () => void): Verdict {
   }
 }
 
-function refuse(args: Args, id: string, field: string): number {
-  process.stderr.write(
-    `phase-result: ${args.verb} ${args.phase}: ${id} (field ${field}); rebuild: oss-phase-result.sh assemble ${args.phase}\n`,
-  );
+/**
+ * `<id>[: <detail>][ (field <field>)]`: pen info 1 — a hint is its own clause, and "field" names only a real field.
+ * Nothing parses this line (hooks read the exit code and stdout).
+ */
+function refuse(args: Args, id: string, field: string, detail?: string): number {
+  const reason = `${id}${detail === undefined ? '' : `: ${detail}`}${field === '' ? '' : ` (field ${field})`}`;
+  process.stderr.write(`phase-result: ${args.verb} ${args.phase}: ${reason}; rebuild: oss-phase-result.sh assemble ${args.phase}\n`);
   return 1;
 }
 
@@ -400,7 +416,7 @@ export function main(argv: string[]): number {
     const v = verdictOf(() => {
       result = assemble(repo, feature, args.phase);
     });
-    if (!v.ok) return refuse(args, v.id, v.field);
+    if (!v.ok) return refuse(args, v.id, v.field, v.detail);
     process.stdout.write(`${JSON.stringify({ verification: result.verification, phase: args.phase, ...gateLabel(args.phase, result) })}\n`);
     return 0;
   }
@@ -408,7 +424,7 @@ export function main(argv: string[]): number {
   const v = verdictOf(() => {
     stored = check(repo, feature, args.phase);
   });
-  if (!v.ok) return refuse(args, v.id, v.field);
+  if (!v.ok) return refuse(args, v.id, v.field, v.detail);
   // D35: check ship also prints the verdict, so complete refuses a verified but blocked ship.
   const verdict = args.phase === 'ship' ? { verdict: stored.verdict } : {};
   process.stdout.write(`${JSON.stringify({ verification: 'verified', ...gateLabel(args.phase, stored), ...verdict })}\n`);

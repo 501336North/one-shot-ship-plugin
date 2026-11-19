@@ -93,6 +93,10 @@ const REFUSED: Array<[string, () => string]> = [
   ['a split class opening in node -e', () => `node -e "require('child_process').execSync('[[:a'+' cat x/oss-verdict-capture.sh :]]')"`],
   ['a split class opening in python3 -c', () => `python3 -c "import os; os.system('[[:a'+' bash x/oss-verdict-capture.sh :]]')"`],
   ['a split class opening through eval', () => 'X="[[:a bash x/oss-verdict-capture.sh :]]"; eval "$X"'],
+  // Security INFO-1 (gate round 7): a class opening in one `${X+…}` and its close in a later one; X unset drops both.
+  ['a class form split across two ${X+…} around a . call', () => '. ${X+[[:}~/.oss/hooks/oss-verdict-capture.sh${X+:]]} < in.json'],
+  ['a class form split across two ${X+…} around a source call', () => 'source ${X+[[:}~/.oss/hooks/oss-verdict-capture.sh${X+:]]} < in.json'],
+  ['a class form split across two ${X+…} around a $HOME . call', () => '. ${X+[[:}$HOME/.oss/hooks/oss-verdict-capture.sh${X+:]]} < in.json'],
 ];
 
 describe.each(AGENTS)('D41: %s cannot run the verdict capture itself', (_who, agent) => {
@@ -139,6 +143,8 @@ describe('D47: the wildcard matcher is linear', () => {
     ['backslashes in an open set', `[${'\\'.repeat(5000)}`],
     // Round 8: each class opening ends at a word end, its close only at the very end (100k+ characters).
     ['class openings each cut by a word end', `${'[[:a '.repeat(25000)}:]]`],
+    // Security INFO-1 (gate round 7): many `${` and many `[[:` openings, the close only at the very end (100k+ characters).
+    ['class openings each inside a ${ opening', `${'${X+[[:a'.repeat(15000)}:]]}`],
   ])('%s are decided in well under 100 ms', (_what, glob) => {
     const start = performance.now();
     const named = namesVerdictCapture(`bash ~/.oss/hooks/${glob}`);

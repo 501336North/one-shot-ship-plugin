@@ -1375,3 +1375,72 @@ describe('phase-result CLI: usage, --all, budgets', () => {
     expect(fs.existsSync(netCalls)).toBe(false);
   });
 });
+
+/**
+ * Gate round 7 ship-base fixes: pen low 4 (a base pulled mid-ship or diverged gave unsafe_base with no hint), pen info 1
+ * (a hint was printed as the field) and pen low 1 (several remotes: the diff base is the most advanced same-name ref).
+ */
+describe('phase-result CLI: ship base edge cases (gate round 7)', () => {
+  const HINT = 'the base tip is not in the ship-start remote snapshot: update or push the base, then run ship start again';
+
+  // User behaviour: the developer pulls main while ship runs; assemble says how to recover.
+  // Business rule: pen low 4 — fixed text, no values.
+  it('a base pulled after ship start refuses unsafe_base with the snapshot hint', () => {
+    commitFile('f.txt', 'f\n');
+    passGates(FEATURE);
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    git('checkout', '-q', 'main');
+    commitFile('mate.txt', 'mate\n');
+    git('update-ref', 'refs/remotes/origin/main', 'main');
+    git('checkout', '-q', `feat/${FEATURE}/build`);
+    const r = cli('assemble', 'ship');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(`unsafe_base: ${HINT}`);
+  });
+
+  // Rule: other unsafe_base refusals (the base is the feature's own branch, say) carry no snapshot hint.
+  it('a refusal that is not about the snapshot carries no hint', () => {
+    commitFile('f.txt', 'f\n');
+    passGates(FEATURE);
+    git('config', '--local', 'oss.shipBase', `feat/${FEATURE}/build`);
+    git('update-ref', `refs/remotes/origin/feat/${FEATURE}/build`, 'HEAD');
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    const r = cli('assemble', 'ship');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('unsafe_base (field base)');
+    expect(r.stderr).not.toContain(HINT);
+  });
+
+  // Business rule: pen info 1 — a hint is its own clause, never printed as the field.
+  it('the no-local-base hint is printed as a clause, not as the field', () => {
+    commitFile('f.txt', 'f\n');
+    passGates(FEATURE);
+    git('branch', '-q', '-D', 'main');
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    const r = cli('assemble', 'ship');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('diff_unavailable: create the local branch from its remote (git branch <base> <remote>/<base>)');
+    expect(r.stderr).not.toContain('(field create');
+  });
+
+  // User behaviour: a fork workflow (origin is the user's stale fork, upstream the canonical repo) ships the feature's
+  //   own change only, and check agrees.
+  it('a fork behind upstream: the diff is the feature\'s 1 file, and check passes', () => {
+    git('checkout', '-q', '--detach', 'main');
+    commitFile('a1.txt', 'a\n'.repeat(100));
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+    commitFile('b1.txt', 'b\n'.repeat(100));
+    const upstream = git('rev-parse', 'HEAD');
+    git('update-ref', 'refs/remotes/upstream/main', upstream);
+    git('checkout', '-q', '-B', `feat/${FEATURE}/build`, upstream);
+    commitFile('f.txt', 'f\n');
+    passGates(FEATURE);
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    const a = cli('assemble', 'ship');
+    expect(a.status, a.stderr).toBe(0);
+    const diff = (JSON.parse(fs.readFileSync(resultFile(FEATURE, 'ship'), 'utf-8')) as Record<string, unknown>).diff;
+    expect(diff).toEqual({ base: upstream, baseRef: 'main', files: 1, insertions: 1, deletions: 0 });
+    const c = cli('check', 'ship');
+    expect(c.status, c.stderr).toBe(0);
+  });
+});

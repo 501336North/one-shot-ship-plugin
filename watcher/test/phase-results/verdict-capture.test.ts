@@ -508,6 +508,29 @@ describe('captureVerdict: the reviewed tree is what is on disk (D51)', () => {
     expect(trackedTree).toBe(tree);
   });
 
+  // Round 9 pen LOW 3: a sparse checkout leaves folder a/ off disk, and an untracked (ignored) file named a sits where
+  // it was; looking for a/b on disk fails with ENOTDIR, which counts as "not on disk", so a row is still written.
+  it('a sparse checkout whose off-disk folder shares its name with a file on disk records the reviewed tree', () => {
+    fs.mkdirSync(path.join(repo, 'a', 'b'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'a', 'b', 'f.txt'), 'off disk\n');
+    fs.writeFileSync(path.join(repo, 'code.txt'), 'reviewed-good\n');
+    git('add', '-A', '--', '.', ':(exclude).oss');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'sparse');
+    fs.writeFileSync(path.join(repo, '.gitignore'), '/a\n');
+    git('add', '.gitignore');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'ignore the build log');
+    git('update-index', '--skip-worktree', 'a/b/f.txt');
+    fs.rmSync(path.join(repo, 'a'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'a'), 'build log\n');
+    fs.writeFileSync(path.join(repo, 'code.txt'), 'reviewed-bad\n');
+    expect(capture({ last_assistant_message: FAIL_BLOCK }).captured).toBe(true);
+    const { tree, trackedTree } = rows()[0];
+    git('add', 'code.txt');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'ship the reviewed code');
+    expect(tree).toBe(git('rev-parse', 'HEAD^{tree}'));
+    expect(trackedTree).toBe(tree);
+  });
+
   // Round 8 performance low 2: the index's hidden-bit list is read once per capture, not once per temp index.
   it('reads the index bits (ls-files -v) once per capture', () => {
     commitTracked();
@@ -574,6 +597,51 @@ describe('captureVerdict: the PATH capture gives git (D56)', () => {
     expect(gitCalls).not.toHaveLength(0);
     expect(spawned.filter((c) => c.file !== gitBin())).toEqual([]);
     for (const c of gitCalls) expect(c.env?.PATH).toBe(FILTER_PATH);
+  });
+
+  // Round 9 performance LOW F2: `ls-files -m` compares each stat-dirty file's content, which runs its clean filter (LFS
+  // hashes the whole file); capture lists modified files once, for both trees, not once per temp index.
+  it('lists modified files (ls-files -m) once per capture, and both trees stay right', () => {
+    fs.writeFileSync(path.join(repo, 'tracked.txt'), 'reviewed-good\n');
+    git('add', 'tracked.txt');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'tracked');
+    fs.writeFileSync(path.join(repo, 'tracked.txt'), 'reviewed-bad\n');
+    fs.writeFileSync(path.join(repo, 'new.txt'), 'untracked\n');
+    expect(capture({ last_assistant_message: FAIL_BLOCK }).captured).toBe(true);
+    expect(spawned.filter((c) => c.args.includes('ls-files') && c.args.includes('-m'))).toHaveLength(1);
+    const { tree, trackedTree } = rows()[0];
+    git('add', 'tracked.txt');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'tracked edit');
+    expect(trackedTree).toBe(git('rev-parse', 'HEAD^{tree}'));
+    git('add', 'new.txt');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'untracked file');
+    expect(tree).toBe(git('rev-parse', 'HEAD^{tree}'));
+  });
+
+  it('an LFS repo whose files are all stat-dirty runs them through the filter once and records the right tree', () => {
+    // Integration with the real git-lfs, as in the case below: without it there is no clean filter, so the case
+    // returns early (the count case above still pins one `ls-files -m` per capture).
+    const lfs = ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'].find((d) => fs.existsSync(path.join(d, 'git-lfs')));
+    if (lfs === undefined) {
+      console.log('git-lfs is not installed in a fixed folder: LFS stat-dirty case not exercised');
+      return;
+    }
+    git('lfs', 'install', '--local');
+    fs.writeFileSync(path.join(repo, '.gitattributes'), '*.bin filter=lfs diff=lfs merge=lfs -text\n');
+    for (let i = 0; i < 10; i++) fs.writeFileSync(path.join(repo, `asset-${i}.bin`), Buffer.alloc(4096, i));
+    git('add', '-A', '--', '.', ':(exclude).oss');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'lfs assets');
+    // every asset touched (mtime changed), its content the same: stat-dirty, not modified
+    const later = new Date(Date.now() + 60_000);
+    for (let i = 0; i < 10; i++) fs.utimesSync(path.join(repo, `asset-${i}.bin`), later, later);
+    fs.writeFileSync(path.join(repo, 'feature.txt'), 'vuln\n');
+    expect(capture({ last_assistant_message: FAIL_BLOCK }).captured).toBe(true);
+    expect(spawned.filter((c) => c.args.includes('ls-files') && c.args.includes('-m'))).toHaveLength(1);
+    const { tree, trackedTree } = rows()[0];
+    expect(trackedTree).toBe(git('rev-parse', 'HEAD^{tree}'));
+    git('add', 'feature.txt');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'ship the reviewed code');
+    expect(tree).toBe(git('rev-parse', 'HEAD^{tree}'));
   });
 
   it('a Git LFS repo records its fail, and the reviewed tree is the commit of the reviewed code', () => {

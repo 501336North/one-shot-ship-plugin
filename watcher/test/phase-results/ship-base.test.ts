@@ -175,3 +175,26 @@ describe('shipBaseAllowed refuses a symref base', () => {
     expect(shipBaseAllowed(repo, 'alias', FEATURE, refs({ main, alias: main }))).toBe(false);
   });
 });
+
+/** Security info 2 (gate round 7): a branch ref file that is a filesystem symlink passed the symref refusal. */
+describe('shipBaseAllowed refuses a symlinked branch ref', () => {
+  it('refs/heads/<base> as a symlink to main\'s ref file is refused, though main itself passes', () => {
+    const main = git('rev-parse', 'main');
+    commit('feature.txt');
+    const heads = path.join(repo, '.git', 'refs', 'heads');
+    expect(fs.existsSync(path.join(heads, 'main'))).toBe(true);
+    fs.symlinkSync(path.join(heads, 'main'), path.join(heads, 'alias'));
+    expect(shipBaseAllowed(repo, 'main', FEATURE, refs({ main, alias: main }))).toBe(true);
+    expect(shipBaseAllowed(repo, 'alias', FEATURE, refs({ main, alias: main }))).toBe(false);
+  });
+
+  it('a base under a symlinked refs/heads folder is refused', () => {
+    const main = git('rev-parse', 'main');
+    commit('feature.txt');
+    const heads = path.join(repo, '.git', 'refs', 'heads');
+    fs.mkdirSync(path.join(repo, '.git', 'elsewhere'));
+    fs.copyFileSync(path.join(heads, 'main'), path.join(repo, '.git', 'elsewhere', 'main'));
+    fs.symlinkSync(path.join(repo, '.git', 'elsewhere'), path.join(heads, 'team'));
+    expect(shipBaseAllowed(repo, 'team/main', FEATURE, refs({ 'team/main': main }))).toBe(false);
+  });
+});

@@ -24,6 +24,8 @@ const GLOB = /[*?[]/;
 const SET = /\[[!^]?\]?[^\]]*\]?/;
 /** Characters that end a shell word, so a `[..]` set never spans them. */
 const WORD_END = /[\s;|&()<>'"`]/;
+/** Characters that end the search for a form's close: word ends plus `$`, `{` and `}`, so a form never spans two expansions (security INFO-1, gate round 7). */
+const FORM_END = /[\s;|&()<>'"`${}]/;
 
 /**
  * The text with each closed set that holds a class, equivalence or collating form (`[:alpha:]`, `[=e=]`, `[.e.]`)
@@ -44,7 +46,7 @@ function specialSetsAsAny(text: string): string {
   const wordEndOf = (from: number): number => {
     if (wordEnd >= from) return wordEnd;
     wordEnd = from;
-    while (wordEnd < text.length && !WORD_END.test(text[wordEnd])) wordEnd += 1;
+    while (wordEnd < text.length && !FORM_END.test(text[wordEnd])) wordEnd += 1;
     return wordEnd;
   };
   let out = '';
@@ -161,9 +163,19 @@ function writesStem(literal: string): boolean {
   });
 }
 
-/** True when the text names the capture: a path segment equal to a name, or a glob segment that could be one. */
+/** True when a path segment of the text, as written, is one of the names. */
+function hasLiteralName(text: string): boolean {
+  return text.split(SEPARATORS).some((word) => word.split('/').some((segment) => NAMES.includes(segment)));
+}
+
+/**
+ * True when the text names the capture: a path segment equal to a name, or a glob segment that could be one.
+ * A literal name is checked on the raw text first, so turning a set into `?` never hides it (security INFO-1, gate round 7).
+ */
 export function namesVerdictCapture(text: string): boolean {
-  for (const word of specialSetsAsAny(text.toLowerCase()).split(SEPARATORS)) {
+  const lower = text.toLowerCase();
+  if (hasLiteralName(lower)) return true;
+  for (const word of specialSetsAsAny(lower).split(SEPARATORS)) {
     const segments = word.split('/');
     for (const [i, segment] of segments.entries()) {
       if (NAMES.includes(segment)) return true;

@@ -179,6 +179,19 @@
   - duplicate env removed.
 - [x] Builder N (gate rule): the class-form close is bounded to its word.
 
+### Ship round 9 fixes, after gate round 7 (2026-11-19)
+- [x] Gate round 7: security and code review passed; performance and pen test failed (1 medium, 7 lows). The user picked D58-D60.
+- [x] Builder P (assemble-ship, CLI):
+  - D58: fails are compared on the feature's own paths only;
+  - object checks run only after a git error (606 to 208 spawns at 200 rows);
+  - a headSha-only row with a pruned commit is ignored;
+  - the most advanced remote is used for the stale-base diff;
+  - a hint for a base missing from the snapshot;
+  - hint format `id: detail`, and the hint only for valid names;
+  - a symlinked ref is refused.
+- [x] Builder Q (capture): modified files are listed once per capture (LFS stat-dirty); the sparse ENOTDIR crash is fixed; the LFS docblock is updated.
+- [x] Builder R (gate rule): a raw literal-name check, and `$ { }` end the form-close search.
+
 ### Later
 - [ ] Ship into feat/determinism-sprint/build (SD-1)
 - [ ] T21 oss-lab (after the plugin ships)
@@ -186,4 +199,4 @@
 ## Blockers
 - None. R-266's 4 red base tests are fixed in #233 (4458bddb), and R-257 is rebased onto it.
 
-## Last Updated: 2026-11-19 15:25 CST by /oss:ship (round 8 fixes)
+## Last Updated: 2026-11-19 18:15 CST by /oss:ship (round 9 fixes)

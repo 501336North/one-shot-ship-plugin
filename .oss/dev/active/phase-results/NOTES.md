@@ -173,3 +173,10 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 - D57 limit: deleting a flagged untracked file is not a change, so its fail clears only with a tracked edit (D49). The blocker text says so.
 - Only the global core.excludesFile (with includes) is honoured; repo-local excludes and info/exclude never hide files from the reviewed tree.
 - A stale local base: the diff starts from merge-base(snapshot remote SHA, HEAD) when that remote is ahead of the local tip and contains it. Blockers and verdicts are unchanged.
+
+## Ship round 9 notes (2026-11-19)
+- D58: a captured fail clears only when one of the feature's own paths differs between the reviewed tree and HEAD. These are the paths in its diff from the merge base, plus what the reviewed tree changed from the review-time merge base. Upstream-only changes from a rebase or merge never clear it.
+- D55 limit: if a fail is captured, the feature is rebased, and gc then prunes the row's trees and its headSha (gc --prune=now, or routine gc about two weeks later), nothing is left to compare and the row is ignored. Keeping such rows open would change D55.
+- D52 limit: with a sparse checkout, an untracked file hidden only via .git/info/exclude (ignored under D53) that shares its name with an off-disk folder can't be staged by git, so no row is written.
+- D60 limit: clean filters outside the fixed capture PATH mean no captured fail.
+- The CLI prints refusals as `<id>[: <detail>][ (field <f>)]`; only diff_unavailable details are hints.

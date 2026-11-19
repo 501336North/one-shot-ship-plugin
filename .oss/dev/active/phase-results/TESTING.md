@@ -174,4 +174,18 @@ Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watche
 - Sparse 302k capture went from about 1.8 s to about 0.9 s.
 - Full run: build and tsc clean; targeted vitest 10909/10909; served-commands 3/3; bash 114/114 behind the tripwire, with 0 tripwire lines. The Mac slept for part of the run; nothing failed.
 
-## Last Updated: 2026-11-19 15:25 CST by /oss:ship (round 8 fixes)
+### Ship round 9 (D58-D60), 2026-11-19
+- Each builder showed RED before GREEN. The round-7 repros became tests:
+  - a rebase or merge with the flagged file unchanged;
+  - 200 distinct cleared rows, counted in spawns;
+  - a pruned headSha-only row;
+  - fork plus upstream;
+  - a base missing from the snapshot;
+  - a symlinked ref and a symlinked refs/heads;
+  - ls-files -m once per capture, and an LFS stat-dirty capture;
+  - a sparse file-over-folder;
+  - the ${...} split around the capture name.
+- LFS 300x2 MB stat-dirty capture went from 2.1-3.1 s to about 1.2 s.
+- Full run: build and tsc clean; targeted vitest 10936/10936; served-commands 3/3; bash 114/114 behind the tripwire, with 0 tripwire lines.
+
+## Last Updated: 2026-11-19 18:15 CST by /oss:ship (round 9 fixes)

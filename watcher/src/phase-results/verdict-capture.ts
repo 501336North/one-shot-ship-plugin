@@ -294,12 +294,21 @@ interface HidingBits {
 function hidingBits(repo: string, index: string, left: Deadline): HidingBits | null {
   const listed = boundedGit(repo, ['ls-files', '-z', '-v'], { GIT_INDEX_FILE: index }, left);
   if (listed === null) return null;
+  // Pen LOW 3 (round 9): lstat throws ENOTDIR, despite throwIfNoEntry, when a file sits where a parent folder was (a
+  // sparse checkout's off-disk folder named like an untracked file); any error counts as not on disk.
+  const onDisk = (p: string): boolean => {
+    try {
+      return fs.lstatSync(path.join(repo, p), { throwIfNoEntry: false }) !== undefined;
+    } catch {
+      return false;
+    }
+  };
   const dirOnDisk = new Map<string, boolean>();
   const present = (dir: string): boolean => {
     if (dir === '.') return true;
     let known = dirOnDisk.get(dir);
     if (known === undefined) {
-      known = present(path.dirname(dir)) && fs.lstatSync(path.join(repo, dir), { throwIfNoEntry: false }) !== undefined;
+      known = present(path.dirname(dir)) && onDisk(dir);
       dirOnDisk.set(dir, known);
     }
     return known;
@@ -309,7 +318,7 @@ function hidingBits(repo: string, index: string, left: Deadline): HidingBits | n
     if (e.length < 3) continue;
     const p = e.slice(2);
     if (e[0] !== e[0].toUpperCase()) bits.assumed.push(p);
-    if ((e[0] === 'S' || e[0] === 's') && present(path.dirname(p)) && fs.lstatSync(path.join(repo, p), { throwIfNoEntry: false }) !== undefined) {
+    if ((e[0] === 'S' || e[0] === 's') && present(path.dirname(p)) && onDisk(p)) {
       bits.skipped.push(p);
     }
   }
@@ -324,51 +333,46 @@ function clearHidingBits(repo: string, env: NodeJS.ProcessEnv, bits: HidingBits,
   return clear('--no-assume-unchanged', bits.assumed) && clear('--no-skip-worktree', bits.skipped);
 }
 
-/**
- * The tree the agent reviewed, from a temp copy of the real index (the real index is never touched), written WITHOUT
- * blobs (performance M1): the changed paths (`all`: modified, deleted and untracked not ignored, .oss excluded;
- * `tracked`: modified and deleted, .oss included but never consulted) go to `update-index --info-only` (hashes, no
- * object writes), then `write-tree --missing-ok`. Only tree objects are written. '' when git cannot build it in time,
- * a changed file is over BIG_FILE_BYTES, or the changed list is over MAX_CHANGED_PATHS paths or MAX_CHANGED_BYTES in
- * all (performance LOW 2: checked before update-index hashes anything); then no row is written (D52).
- */
-function reviewedTree(repo: string, index: string, bits: HidingBits, which: 'all' | 'tracked', dir: string, left: Deadline): string {
-  const tmpIndex = path.join(dir, `index-${which}`);
-  try {
-    fs.copyFileSync(index, tmpIndex);
-  } catch {
-    // no index yet (a repo with nothing staged): start from an empty one
-  }
-  const env = { GIT_INDEX_FILE: tmpIndex };
-  if (!clearHidingBits(repo, env, bits, left)) return '';
-  // D51, D53: untracked files are left out by the repo's .gitignore files and the user's global ignore file, never by
-  // the repo-local .git/info/exclude.
-  let list = ['ls-files', '-z', '-m', '-d'];
-  if (which === 'all') {
-    const global = globalIgnoreFile(repo, left);
-    list = ['-c', 'core.excludesFile=/dev/null', 'ls-files', '-z', '-m', '-o', '-d', '--exclude-per-directory=.gitignore',
-      ...(global === null ? [] : [`--exclude-from=${global}`]), '--', '.', ':(exclude).oss'];
-  }
-  const changed = boundedGit(repo, list, env, left);
-  if (changed === null) return '';
-  const paths = new Set(changed.toString('utf-8').split('\0'));
+/** The NUL-separated paths of a git `-z` listing, without duplicates. */
+function pathList(listed: Buffer): string[] {
+  const paths = new Set(listed.toString('utf-8').split('\0'));
   paths.delete('');
-  if (paths.size > MAX_CHANGED_PATHS) return '';
+  return [...paths];
+}
+
+/**
+ * The tree of temp index `tmpIndex` with `paths` updated from disk, written WITHOUT blobs (performance M1): the paths go
+ * to `update-index --info-only` (hashes, no object writes into .git/objects), then `write-tree --missing-ok`. Only tree
+ * objects are written to .git/objects; with git-lfs on PATH (D56) hashing an LFS-tracked file through its clean filter
+ * also writes that file's LFS object into .git/lfs/objects (perf I1, accepted under D56). '' when git cannot build it
+ * in time, a path is over BIG_FILE_BYTES, or the list is over MAX_CHANGED_PATHS paths or MAX_CHANGED_BYTES in all
+ * (performance LOW 2: checked before update-index hashes anything); then no row is written (D52).
+ */
+function treeWith(repo: string, tmpIndex: string, paths: string[], left: Deadline): string {
+  if (paths.length > MAX_CHANGED_PATHS) return '';
   let total = 0;
   for (const p of paths) {
     const size = fs.lstatSync(path.join(repo, p), { throwIfNoEntry: false })?.size ?? 0;
     total += size;
     if (size > BIG_FILE_BYTES || total > MAX_CHANGED_BYTES) return '';
   }
-  if (changed.length > 0) {
+  const env = { GIT_INDEX_FILE: tmpIndex };
+  if (paths.length > 0) {
     const args = ['update-index', '--add', '--remove', '--info-only', '-z', '--stdin'];
-    if (boundedGit(repo, args, env, left, changed) === null) return '';
+    if (boundedGit(repo, args, env, left, Buffer.from(paths.join('\0') + '\0')) === null) return '';
   }
   const tree = boundedGit(repo, ['write-tree', '--missing-ok'], env, left)?.toString('utf-8').trim() ?? null;
   return tree !== null && TREE_RE.test(tree) ? tree : '';
 }
 
-/** Both reviewed trees (see reviewedTree); both '' when the index path cannot be read or time is up. */
+/**
+ * Both trees the agent reviewed, from temp copies of the real index (the real index is never touched): `trackedTree`
+ * with the modified and deleted paths (.oss included but never consulted), `tree` with those outside .oss plus the
+ * untracked files not ignored. Performance LOW F2 (round 9): `ls-files -m` compares every stat-dirty file's content,
+ * which runs its clean filter (an LFS repo hashes each touched file), so it runs once, on the first temp index after
+ * its hiding bits are cleared, and the second temp index is seeded from that one. Both '' when the index path cannot
+ * be read, either tree cannot be built (D52), or time is up.
+ */
 function reviewedTrees(repo: string, left: Deadline): { tree: string; trackedTree: string } {
   const none = { tree: '', trackedTree: '' };
   const index = gitText(repo, ['rev-parse', '--path-format=absolute', '--git-path', 'index'], left);
@@ -378,9 +382,33 @@ function reviewedTrees(repo: string, left: Deadline): { tree: string; trackedTre
   try {
     const bits = hidingBits(repo, index, left);
     if (bits === null) return none;
+    const trackedIndex = path.join(dir, 'index-tracked');
+    const allIndex = path.join(dir, 'index-all');
+    try {
+      fs.copyFileSync(index, trackedIndex);
+    } catch {
+      // no index yet (a repo with nothing staged): start from an empty one
+    }
+    if (!clearHidingBits(repo, { GIT_INDEX_FILE: trackedIndex }, bits, left)) return none;
+    try {
+      fs.copyFileSync(trackedIndex, allIndex);
+    } catch {
+      // still no index: the second tree starts from an empty one too
+    }
+    const changed = boundedGit(repo, ['ls-files', '-z', '-m', '-d'], { GIT_INDEX_FILE: trackedIndex }, left);
+    if (changed === null) return none;
+    const changedPaths = pathList(changed);
     // D52: both trees are needed, so the second is skipped when the first cannot be built.
-    const trackedTree = reviewedTree(repo, index, bits, 'tracked', dir, left);
-    return trackedTree === '' ? none : { tree: reviewedTree(repo, index, bits, 'all', dir, left), trackedTree };
+    const trackedTree = treeWith(repo, trackedIndex, changedPaths, left);
+    if (trackedTree === '') return none;
+    // D51, D53: untracked files are left out by the repo's .gitignore files and the user's global ignore file, never by
+    // the repo-local .git/info/exclude.
+    const global = globalIgnoreFile(repo, left);
+    const untracked = boundedGit(repo, ['-c', 'core.excludesFile=/dev/null', 'ls-files', '-z', '-o', '--exclude-per-directory=.gitignore',
+      ...(global === null ? [] : [`--exclude-from=${global}`]), '--', '.', ':(exclude).oss'], { GIT_INDEX_FILE: allIndex }, left);
+    if (untracked === null) return none;
+    const outsideOss = changedPaths.filter((p) => p !== '.oss' && !p.startsWith('.oss/'));
+    return { tree: treeWith(repo, allIndex, [...outsideOss, ...pathList(untracked)], left), trackedTree };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -1772,3 +1772,188 @@ describe('assembleShip: a missing local base branch names the fix', () => {
     });
   });
 });
+
+/**
+ * D58 (user pick, ship round 9, "Feature paths only"; pen MEDIUM, gate round 7): a captured fail is compared with HEAD
+ * only on the feature's own paths (its diff from the merge base, plus what the reviewed tree changed against the
+ * review-time merge base), so a teammate's commits brought in by a rebase or a merge never clear an unfixed fail.
+ */
+describe('assembleShip: only the feature\'s own paths clear a captured fail (D58)', () => {
+  const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  const BRANCH = `feat/${FEATURE}/ship`;
+  beforeEach(() => {
+    commitFile('feature.txt', 'vuln\n', 'feature');
+    commitFile('other.txt', 'other\n', 'feature 2');
+  });
+
+  /** The security agent fails the committed feature (tree, tracked tree and HEAD as capture records them). */
+  function failOnHead(): void {
+    const tree = git('rev-parse', 'HEAD^{tree}');
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+      gate: 'security', verdict: 'fail', findings: { ...ZERO, medium: 1 }, agent: 'a', session: 's',
+      ts: '2026-11-13T09:10:00.000Z', tree, trackedTree: tree, headSha: git('rev-parse', 'HEAD'),
+    });
+  }
+
+  /** A teammate's commit lands on main. */
+  function teammateCommit(): void {
+    git('checkout', '-q', 'main');
+    commitFile('mate.txt', 'mate\n', 'mate');
+    git('checkout', '-q', BRANCH);
+  }
+
+  const security = (o: AssembleOutcome): Record<string, unknown> | undefined =>
+    (result(o).gates as Array<Record<string, unknown>>).find((g) => g.gate === 'security');
+
+  // Behaviour: an honest model updates main and rebases; the flagged code is unchanged, so the fail stays open.
+  it('a rebase onto a teammate\'s commit, with the flagged file unchanged, keeps the fail open', () => {
+    failOnHead();
+    teammateCommit();
+    git('rebase', '-q', 'main');
+    allPass(1);
+    expect(security(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
+  });
+
+  it('a merge of main into the feature, with the flagged file unchanged, keeps the fail open', () => {
+    failOnHead();
+    teammateCommit();
+    git('merge', '-q', '--no-edit', 'main');
+    allPass(1);
+    expect(security(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
+  });
+
+  it('a rebase, then a real fix to the flagged file, clears the fail', () => {
+    failOnHead();
+    teammateCommit();
+    git('rebase', '-q', 'main');
+    commitFile('feature.txt', 'fixed\n', 'fix');
+    allPass(1);
+    expect(security(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  // D49 within the feature: any tracked change to the feature's own code clears.
+  it('a rebase, then a change to another feature file, clears the fail', () => {
+    failOnHead();
+    teammateCommit();
+    git('rebase', '-q', 'main');
+    commitFile('other.txt', 'changed\n', 'other change');
+    allPass(1);
+    expect(security(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  // Rule: a flagged change the feature has since reverted to the base content still counts as a change.
+  it('a reviewed edit to a base file that the feature then drops clears the fail', () => {
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'flagged edit\n');
+    git('add', 'a.txt');
+    const tree = git('write-tree');
+    git('reset', '-q');
+    git('checkout', '-q', '--', 'a.txt');
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+      gate: 'security', verdict: 'fail', findings: { ...ZERO, medium: 1 }, agent: 'a', session: 's',
+      ts: '2026-11-13T09:10:00.000Z', tree, trackedTree: tree, headSha: git('rev-parse', 'HEAD'),
+    });
+    allPass(1);
+    expect(security(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+});
+
+/**
+ * Perf low F1 (gate round 7): D55's object checks ran before every comparison, so a cleared row cost about 3 git
+ * processes. The comparison runs first, and a row is checked for pruned objects only when git could not compare it.
+ */
+describe('assembleShip: a cleared fail row costs about one git process (perf F1)', { timeout: 120_000 }, () => {
+  const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  const ROWS = 200;
+  beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
+
+  /** ROWS fails, each on its own reviewed tree (b.txt edited differently), written through a scratch index. */
+  function distinctFails(): void {
+    const idx = path.join(repo, '.git', 'scratch-index');
+    const headSha = git('rev-parse', 'HEAD');
+    const ledger = openLedger(repo);
+    const env: NodeJS.ProcessEnv = {};
+    for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('GIT_')) env[k] = v;
+    for (let i = 0; i < ROWS; i++) {
+      fs.copyFileSync(path.join(repo, '.git', 'index'), idx);
+      const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd: repo, env, input: `v${i}\n`, encoding: 'utf-8' }).trim();
+      execFileSync('git', ['update-index', '--cacheinfo', `100644,${blob},b.txt`], { cwd: repo, env: { ...env, GIT_INDEX_FILE: idx } });
+      const tree = execFileSync('git', ['write-tree'], { cwd: repo, env: { ...env, GIT_INDEX_FILE: idx }, encoding: 'utf-8' }).trim();
+      const ts = new Date(Date.parse('2026-11-13T09:00:00.000Z') + i * 1000).toISOString();
+      ledger.appendRow(`verdicts/${FEATURE}`, {
+        gate: GATES[i % 3], verdict: 'fail', findings: { ...ZERO, high: 1 }, agent: `a${i}`, session: 's', ts, tree, trackedTree: tree, headSha,
+      });
+    }
+  }
+
+  it(`${ROWS} fails on ${ROWS} distinct reviewed trees, all cleared: passes, with at most 2.5 git processes per row`, () => {
+    distinctFails();
+    allPass(1);
+    spawns.n = 0;
+    const r = result(ship());
+    expect(r.verdict).toBe('ready_to_merge');
+    expect(spawns.n).toBeLessThanOrEqual(ROWS * 2.5);
+  });
+});
+
+/** Code-review low (gate round 7): a fail row with only a headSha whose commit was pruned no longer blocks for good. */
+describe('assembleShip: a headSha-only fail whose commit was pruned is ignored (D55)', { timeout: 60_000 }, () => {
+  const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+
+  it('the commit was amended away and pruned with gc --prune=now: ignored, the gate keeps its model line', () => {
+    commitFile('b.txt', 'vuln\n', 'feature');
+    const lost = git('rev-parse', 'HEAD');
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+      gate: 'code-review', verdict: 'fail', findings: { ...ZERO, high: 1 }, agent: 'a', session: 's',
+      ts: '2026-11-13T09:10:00.000Z', headSha: lost,
+    });
+    fs.writeFileSync(path.join(repo, 'b.txt'), 'vuln, reworded\n');
+    git('commit', '-q', '-a', '--amend', '-m', 'feature, amended');
+    git('reflog', 'expire', '--expire-unreachable=now', '--all');
+    git('gc', '-q', '--prune=now');
+    expect(() => git('cat-file', '-e', lost)).toThrow();
+    allPass(1);
+    const g = (result(ship()).gates as Array<Record<string, unknown>>).find((x) => x.gate === 'code-review');
+    expect(g).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+});
+
+/**
+ * Pen low 1, security info 3, code-review info (gate round 7): with several remotes, the diff base was the first
+ * same-name ref in name order. It is now the most advanced candidate that contains the local tip and not HEAD.
+ */
+describe('assembleShip: the diff base is the most advanced same-name remote ref (pen L1)', () => {
+  /** Upstream moved twice; the fork (origin) synced only the first move; the feature is cut from upstream's tip. */
+  function forkAndUpstream(): { fork: string; upstream: string } {
+    git('checkout', '-q', '--detach', 'main');
+    commitFile('a1.txt', Array.from({ length: 100 }, (_, i) => `${i}\n`).join(''), 'a1');
+    const fork = git('rev-parse', 'HEAD');
+    commitFile('b1.txt', Array.from({ length: 100 }, (_, i) => `${i}\n`).join(''), 'b1');
+    const upstream = git('rev-parse', 'HEAD');
+    git('checkout', '-q', '-B', `feat/${FEATURE}/ship`, upstream);
+    commitFile('f.txt', 'f\n', 'feature');
+    return { fork, upstream };
+  }
+
+  it('a fork behind upstream: the diff is the feature\'s 1 file and 1 insertion', () => {
+    const { fork, upstream } = forkAndUpstream();
+    allPass(1);
+    const refs = new Map([['refs/remotes/origin/main', fork], ['refs/remotes/upstream/main', upstream]]);
+    expect(result(ship({ remoteRefs: refs })).diff).toEqual({ base: upstream, baseRef: 'main', files: 1, insertions: 1, deletions: 0 });
+  });
+
+  // Rule: a same-name ref that already contains HEAD (the feature pushed there) is never the base.
+  it('a same-name ref that already contains HEAD is skipped', () => {
+    const { upstream } = forkAndUpstream();
+    allPass(1);
+    const refs = new Map([['refs/remotes/aaa/main', git('rev-parse', 'HEAD')], ['refs/remotes/upstream/main', upstream]]);
+    expect(result(ship({ remoteRefs: refs })).diff).toMatchObject({ base: upstream, files: 1 });
+  });
+});
+
+/** Code-review info (gate round 7): the create-the-branch hint is shown only for a name git accepts as a branch. */
+describe('assembleShip: no branch hint for a name that is not a valid branch name', () => {
+  it('a base name check-ref-format refuses gives diff_unavailable with no hint', () => {
+    commitFile('f.txt', 'f\n', 'feature');
+    expect(ship({ base: 'bad..name' })).toEqual({ ok: false, error: 'diff_unavailable' });
+  });
+});

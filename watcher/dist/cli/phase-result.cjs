@@ -1153,10 +1153,19 @@ function runGit(repo, args, okCodes = [0], raw = false, maxBuffer = 1024 * 1024)
   if (r.error !== void 0 || r.status === null || !okCodes.includes(r.status)) throw new GitError(args[0]);
   return { status: r.status, out: raw ? r.stdout : r.stdout.trim() };
 }
-function isLocalBranch(repo, name) {
+var NO_LOCAL_BASE = "create the local branch from its remote (git branch <base> <remote>/<base>)";
+function validBranchName(repo, name) {
   if (name === "" || name.startsWith("-")) return false;
   try {
     runGit(repo, ["check-ref-format", "--branch", name]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function isLocalBranch(repo, name) {
+  if (!validBranchName(repo, name)) return false;
+  try {
     runGit(repo, ["rev-parse", "--verify", "--quiet", "--end-of-options", `refs/heads/${name}^{commit}`]);
     return true;
   } catch {
@@ -1177,47 +1186,75 @@ function containedIn(repo, tip, sha) {
     return false;
   }
 }
-function shipBaseAllowed(repo, base, feature, refs) {
-  if (base === feature || base.includes(`/${feature}/`)) return false;
+function refPathLinked(repo, base) {
+  try {
+    let p = path6.resolve(repo, runGit(repo, ["rev-parse", "--git-common-dir"]).out, "refs", "heads");
+    for (const seg of base.split("/")) {
+      p = path6.join(p, seg);
+      const st = fs7.lstatSync(p, { throwIfNoEntry: false });
+      if (st === void 0) return false;
+      if (st.isSymbolicLink()) return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+function shipBaseCheck(repo, base, feature, refs) {
+  if (base === feature || base.includes(`/${feature}/`)) return "refused";
   let current;
   try {
     current = runGit(repo, ["symbolic-ref", "-q", "HEAD"], [0, 1]).out;
   } catch {
-    return false;
+    return "refused";
   }
-  if (current === `refs/heads/${base}`) return false;
+  if (current === `refs/heads/${base}`) return "refused";
   try {
-    if (runGit(repo, ["symbolic-ref", "-q", `refs/heads/${base}`], [0, 1]).status === 0) return false;
+    if (runGit(repo, ["symbolic-ref", "-q", `refs/heads/${base}`], [0, 1]).status === 0) return "refused";
   } catch {
-    return false;
+    return "refused";
   }
+  if (refPathLinked(repo, base)) return "refused";
   const tip = branchTip(repo, base);
-  if (tip === null) return false;
+  if (tip === null) return "refused";
   for (const [name, sha] of refs) {
     const m = /^refs\/remotes\/[^/]+\/(.+)$/.exec(name);
-    if (m?.[1] === base && containedIn(repo, tip, sha)) return true;
+    if (m?.[1] === base && containedIn(repo, tip, sha)) return "ok";
   }
-  return false;
+  return "not_in_snapshot";
 }
-function diffFrom(repo, branch, tip, remoteRefs) {
-  for (const name of [...remoteRefs.keys()].sort()) {
-    const sha = remoteRefs.get(name);
-    if (/^refs\/remotes\/[^/]+\/(.+)$/.exec(name)?.[1] === branch && sha !== tip && containedIn(repo, tip, sha)) return sha;
+function diffFrom(repo, branch, tip, head, remoteRefs) {
+  const same = [...remoteRefs.keys()].sort().filter((name) => /^refs\/remotes\/[^/]+\/(.+)$/.exec(name)?.[1] === branch).map((name) => remoteRefs.get(name));
+  const candidates = [...new Set(same)].filter((sha) => sha !== tip && containedIn(repo, tip, sha) && !containedIn(repo, head, sha));
+  if (candidates.length <= 1) return candidates[0] ?? tip;
+  const top = candidates.find((c) => candidates.every((o) => o === c || containedIn(repo, o, c)));
+  if (top !== void 0) return top;
+  let best = tip;
+  let bestAt = -Infinity;
+  for (const c of candidates) {
+    try {
+      const mb = runGit(repo, ["merge-base", "--end-of-options", c, head]).out;
+      const at = Number(runGit(repo, ["log", "-1", "--format=%ct", "--end-of-options", mb]).out);
+      if (at > bestAt) [best, bestAt] = [c, at];
+    } catch {
+    }
   }
-  return tip;
+  return best;
 }
 function readDiff(repo, base, remoteRefs) {
   if (base.startsWith("-")) throw new GitError("base");
   const branch = runGit(repo, ["check-ref-format", "--branch", base]).out;
   const tip = runGit(repo, ["rev-parse", "--verify", "--end-of-options", `refs/heads/${branch}^{commit}`]).out;
   const headSha2 = runGit(repo, ["rev-parse", "--verify", "HEAD^{commit}"]).out;
-  const mergeBase = runGit(repo, ["merge-base", diffFrom(repo, branch, tip, remoteRefs), headSha2]).out;
+  const from = diffFrom(repo, branch, tip, headSha2, remoteRefs);
+  const mergeBase = runGit(repo, ["merge-base", from, headSha2]).out;
   const sameTree = runGit(repo, ["diff", "--quiet", "--no-ext-diff", "--no-textconv", tip, headSha2], [0, 1]).status === 0;
   const stat = runGit(repo, ["diff", "--shortstat", "--no-renames", "--no-ext-diff", "--no-textconv", mergeBase, headSha2]).out;
   const num2 = (re) => Number(re.exec(stat)?.[1] ?? 0);
   const files = num2(/(\d+) files? changed/);
   return {
     base: mergeBase,
+    from,
     baseRef: branch,
     files,
     insertions: num2(/(\d+) insertions?\(\+\)/),
@@ -1265,40 +1302,122 @@ function failRow(row) {
 var TREE_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 var PATH_LIST_BUFFER = 64 * 1024 * 1024;
 var SHIPPED_CODE = ["--", ".", ":(exclude).oss"];
-function shippedVsReviewed(repo, tree, trackedTree, reviewHead) {
-  const diff = ["diff", "--no-renames", "--no-ext-diff", "--no-textconv"];
-  const paths = (filter, from, to) => runGit(repo, [...diff, "--name-only", "-z", `--diff-filter=${filter}`, "--end-of-options", from, to, ...SHIPPED_CODE], [0], true, PATH_LIST_BUFFER).out.split("\0").filter((p) => p !== "");
-  try {
-    if (runGit(repo, [...diff, "--quiet", "--diff-filter=d", "--end-of-options", tree, "HEAD", ...SHIPPED_CODE], [0, 1]).status === 1) {
-      return "differs";
+var DIFF = ["diff", "--no-renames", "--no-ext-diff", "--no-textconv"];
+var ABSENT = /^0{6} /;
+var FailComparer = class {
+  constructor(repo, from, mergeBase) {
+    this.repo = repo;
+    this.from = from;
+    this.mergeBase = mergeBase;
+  }
+  repo;
+  from;
+  mergeBase;
+  missing = /* @__PURE__ */ new Map();
+  toHead = /* @__PURE__ */ new Map();
+  reviewBases = /* @__PURE__ */ new Map();
+  /**
+   * D45: a fail is cleared only when the shipped code differs from the code that failed: its reviewed trees, else its
+   * headSha's tree. A fail that cannot be compared (a malformed or partial row, or a git error) stays open; one with
+   * neither is dropped (D48). D55: trees git no longer has (gc) fall back to the headSha's tree; when that commit is
+   * gone too, or a headSha-only row's commit is gone, 'ignored' (neither opens nor clears).
+   */
+  cleared(f) {
+    const hasTrees = f.tree !== null && f.trackedTree !== null;
+    if (f.tree !== null && f.trackedTree !== null) {
+      const r2 = this.compare(f.tree, f.trackedTree, f.headSha, f.headSha);
+      if (r2 !== "unknown") return r2 === "differs";
+      if (!this.gone(f.tree) && !this.gone(f.trackedTree)) return false;
     }
-    const deleted = paths("D", tree, "HEAD");
-    if (deleted.length === 0) return "same";
-    const wasTracked = new Set(paths("A", "HEAD", trackedTree));
-    if (reviewHead !== null) for (const p of paths("A", "HEAD", reviewHead)) wasTracked.add(p);
-    return deleted.some((p) => wasTracked.has(p)) ? "differs" : "same";
-  } catch {
-    return "unknown";
+    if (f.headSha === null) return hasTrees ? "ignored" : false;
+    const headTree = `${f.headSha}^{tree}`;
+    const r = this.compare(headTree, headTree, null, f.headSha);
+    if (r !== "unknown") return r === "differs";
+    return this.gone(f.headSha) ? "ignored" : false;
   }
-}
-function failCleared(repo, f) {
-  const gone = (sha) => objectMissing(repo, sha);
-  if (f.tree !== null && f.trackedTree !== null && !gone(f.tree) && !gone(f.trackedTree)) {
-    return shippedVsReviewed(repo, f.tree, f.trackedTree, f.headSha) === "differs";
+  /**
+   * D45 + D58: whether the shipped code differs from what the agent reviewed, on the feature's own paths only: those
+   * the feature changed since the merge base (`git diff <merge-base> HEAD`), plus those the reviewed tree changed
+   * against the review-time merge base (merge-base(from, review headSha)), so a flagged edit the feature has since
+   * dropped still counts. A teammate's upstream change brought in by a rebase or merge is on neither list. Ship's
+   * reviews run on the uncommitted tree and ship commits afterwards (only the files it picks), so `tree` (the reviewed
+   * working tree, untracked files included) is compared with HEAD: an added or modified path differs; a deleted path
+   * differs only when it was tracked at review (`trackedTree`) or in the commit HEAD was at review (`reviewHead`, pen
+   * N4); an untracked file the reviewer saw and ship left out does not (pen M3a). All are strict hex tree-ishes,
+   * checked by the caller. 'unknown' on any git error (an object git does not have included).
+   */
+  compare(tree, trackedTree, reviewHead, at) {
+    try {
+      const changes = this.raw(tree);
+      if (changes.size === 0) return "same";
+      const own = this.raw(this.mergeBase);
+      const deleted = (c) => ABSENT.test(c.to);
+      for (const [p, c] of changes) if (!deleted(c) && own.has(p)) return "differs";
+      const sinceReview = this.raw(this.reviewBase(at));
+      const reviewed = (p, c) => own.has(p) || c.from !== (sinceReview.get(p)?.from ?? c.to);
+      const gone = [];
+      for (const [p, c] of changes) {
+        if (!reviewed(p, c)) continue;
+        if (!deleted(c)) return "differs";
+        gone.push(p);
+      }
+      if (gone.length === 0) return "same";
+      const wasTracked = new Set(this.paths("A", "HEAD", trackedTree));
+      if (reviewHead !== null) for (const p of this.paths("A", "HEAD", reviewHead)) wasTracked.add(p);
+      return gone.some((p) => wasTracked.has(p)) ? "differs" : "same";
+    } catch {
+      return "unknown";
+    }
   }
-  const treesGone = f.tree !== null && f.trackedTree !== null;
-  if (f.headSha === null) return treesGone ? "ignored" : false;
-  if (treesGone && gone(f.headSha)) return "ignored";
-  const headTree = `${f.headSha}^{tree}`;
-  return shippedVsReviewed(repo, headTree, headTree, null) === "differs";
-}
-function objectMissing(repo, sha) {
-  try {
-    return runGit(repo, ["cat-file", "-e", sha], [0, 1]).status === 1;
-  } catch {
-    return false;
+  /** `diff --raw` from a tree-ish to HEAD outside .oss, by path; cached per tree-ish. */
+  raw(treeish) {
+    const hit = this.toHead.get(treeish);
+    if (hit !== void 0) return hit;
+    const parts = runGit(this.repo, [...DIFF, "--raw", "-z", "--no-abbrev", "--end-of-options", treeish, "HEAD", ...SHIPPED_CODE], [0], true, PATH_LIST_BUFFER).out.split("\0");
+    const out = /* @__PURE__ */ new Map();
+    for (let i = 0; i + 1 < parts.length; i += 2) {
+      const m = /^:([0-7]{6}) ([0-7]{6}) ([0-9a-f]+) ([0-9a-f]+) [A-Z]/.exec(parts[i]);
+      if (m === null) throw new GitError("raw");
+      out.set(parts[i + 1], { from: `${m[1]} ${m[3]}`, to: `${m[2]} ${m[4]}` });
+    }
+    this.toHead.set(treeish, out);
+    return out;
   }
-}
+  paths(filter, from, to) {
+    return runGit(this.repo, [...DIFF, "--name-only", "-z", `--diff-filter=${filter}`, "--end-of-options", from, to, ...SHIPPED_CODE], [0], true, PATH_LIST_BUFFER).out.split("\0").filter((p) => p !== "");
+  }
+  /** The merge base at review: merge-base(from, the review's HEAD); the current merge base with no headSha or once git pruned it. */
+  reviewBase(at) {
+    if (at === null) return this.mergeBase;
+    const hit = this.reviewBases.get(at);
+    if (hit !== void 0) return hit;
+    let base;
+    try {
+      base = runGit(this.repo, ["merge-base", "--end-of-options", this.from, at]).out;
+    } catch (e) {
+      if (!this.gone(at)) throw e;
+      base = this.mergeBase;
+    }
+    this.reviewBases.set(at, base);
+    return base;
+  }
+  /**
+   * D55: true only when git says the object is not in the repo (`cat-file -e` exits 1); any other git error is not a
+   * missing object, so the caller keeps the fail open. Once per SHA.
+   */
+  gone(sha) {
+    const hit = this.missing.get(sha);
+    if (hit !== void 0) return hit;
+    let r;
+    try {
+      r = runGit(this.repo, ["cat-file", "-e", sha], [0, 1]).status === 1;
+    } catch {
+      r = false;
+    }
+    this.missing.set(sha, r);
+    return r;
+  }
+};
 function timelineGates(ctx, featureDir, gateHashes) {
   const backed = [];
   const runStart = Math.floor(Date.parse(ctx.startedAt) / 1e3) * 1e3;
@@ -1330,14 +1449,14 @@ function timelineGates(ctx, featureDir, gateHashes) {
 }
 var CAPTURE_ADDS_GATE = "pen-test";
 var NOT_RE_REVIEWED = "captured fail, not re-reviewed: a tracked code change is needed to clear it";
-function applyAgentVerdicts(tl, verdictRows, repo) {
+function applyAgentVerdicts(tl, verdictRows, comparer) {
   const rows = verdictRows.map(failRow).filter((f) => f !== null).reverse().sort((a, b) => b.at - a.at);
   const cleared = /* @__PURE__ */ new Map();
   const newestOpen = /* @__PURE__ */ new Map();
   for (const f of rows) {
     if (newestOpen.has(f.gate)) continue;
     const key2 = `${f.tree}|${f.trackedTree}|${f.headSha}`;
-    if (!cleared.has(key2)) cleared.set(key2, failCleared(repo, f));
+    if (!cleared.has(key2)) cleared.set(key2, comparer.cleared(f));
     if (cleared.get(key2) === false) newestOpen.set(f.gate, f);
   }
   const open = /* @__PURE__ */ new Set();
@@ -1380,7 +1499,7 @@ function assembleShip(ctx, opts) {
   try {
     diff = readDiff(ctx.repo, opts.base, opts.remoteRefs ?? /* @__PURE__ */ new Map());
   } catch {
-    return isLocalBranch(ctx.repo, opts.base) ? { ok: false, error: "diff_unavailable" } : { ok: false, error: "diff_unavailable", detail: "create the local branch from its remote (git branch <base> <remote>/<base>)" };
+    return isLocalBranch(ctx.repo, opts.base) || !validBranchName(ctx.repo, opts.base) ? { ok: false, error: "diff_unavailable" } : { ok: false, error: "diff_unavailable", detail: NO_LOCAL_BASE };
   }
   if (diff.empty) return { ok: false, error: "empty_diff" };
   const featureDir = path6.join(ctx.repo, ".oss", "dev", "active", ctx.feature);
@@ -1396,7 +1515,7 @@ function assembleShip(ctx, opts) {
     return { ok: false, error: e instanceof LedgerError ? e.code : "unsafe_path" };
   }
   const timeline = timelineGates(ctx, featureDir, gateHashes);
-  const notReReviewed = applyAgentVerdicts(timeline, verdictRows, ctx.repo);
+  const notReReviewed = applyAgentVerdicts(timeline, verdictRows, new FailComparer(ctx.repo, diff.from, diff.base));
   const byName = timeline.byName;
   for (const required of opts.requiredGates ?? DEFAULT_REQUIRED_GATES) {
     if (!byName.has(required)) return { ok: false, error: "gate_missing", detail: required };
@@ -1508,12 +1627,16 @@ var USAGE = "usage: oss-phase-result.sh assemble <ideate|plan|build|ship>\n     
 var Refusal = class extends Error {
   id;
   field;
-  constructor(id, field) {
+  detail;
+  constructor(id, field, detail) {
     super(id);
     this.id = id;
     this.field = field;
+    this.detail = detail;
   }
 };
+var HINT_ERRORS = /* @__PURE__ */ new Set(["diff_unavailable"]);
+var NOT_IN_SNAPSHOT = "the base tip is not in the ship-start remote snapshot: update or push the base, then run ship start again";
 function parseArgs(argv) {
   const [verb, phase, ...rest] = argv;
   if (verb !== "assemble" && verb !== "check" || !PHASES.includes(phase ?? "")) return null;
@@ -1568,7 +1691,8 @@ function originSnapshot(ledger, startedAt) {
 }
 function checkShipBase(repo, base, feature, snapshot) {
   if (!isLocalBranch(repo, base)) return;
-  if (!shipBaseAllowed(repo, base, feature, snapshot)) throw new Refusal("unsafe_base", "base");
+  const verdict = shipBaseCheck(repo, base, feature, snapshot);
+  if (verdict !== "ok") throw new Refusal("unsafe_base", "base", verdict === "not_in_snapshot" ? NOT_IN_SNAPSHOT : void 0);
 }
 function pluginRoot() {
   return path9.resolve(path9.dirname(fs10.realpathSync(process.argv[1] ?? "")), "..", "..", "..");
@@ -1637,7 +1761,10 @@ function assemble(repo, feature, phase) {
     now: () => /* @__PURE__ */ new Date()
   };
   const outcome = runAssembler(phase, ctx);
-  if (!outcome.ok) throw new Refusal(outcome.error, outcome.detail ?? phase);
+  if (!outcome.ok) {
+    if (outcome.detail !== void 0 && HINT_ERRORS.has(outcome.error)) throw new Refusal(outcome.error, "", outcome.detail);
+    throw new Refusal(outcome.error, outcome.detail ?? phase);
+  }
   checkSchema(phase, outcome.result);
   const written = writeResult(repo, feature, phase, outcome.result);
   const read = readBack(repo, feature, phase, written);
@@ -1732,18 +1859,17 @@ function verdictOf(fn) {
     fn();
     return { ok: true };
   } catch (e) {
-    if (e instanceof Refusal) return { ok: false, id: e.id, field: e.field };
+    if (e instanceof Refusal) return { ok: false, id: e.id, field: e.field, detail: e.detail };
     if (e instanceof LedgerError) return { ok: false, id: e.code, field: "ledger" };
     const msg = e instanceof Error ? e.message : String(e);
     const id = /^([a-z_]+):/.exec(msg)?.[1] ?? "internal_error";
     return { ok: false, id, field: "store" };
   }
 }
-function refuse(args, id, field) {
-  process.stderr.write(
-    `phase-result: ${args.verb} ${args.phase}: ${id} (field ${field}); rebuild: oss-phase-result.sh assemble ${args.phase}
-`
-  );
+function refuse(args, id, field, detail) {
+  const reason = `${id}${detail === void 0 ? "" : `: ${detail}`}${field === "" ? "" : ` (field ${field})`}`;
+  process.stderr.write(`phase-result: ${args.verb} ${args.phase}: ${reason}; rebuild: oss-phase-result.sh assemble ${args.phase}
+`);
   return 1;
 }
 function gateLabel(phase, result) {
@@ -1779,7 +1905,7 @@ function main(argv) {
     const v2 = verdictOf(() => {
       result = assemble(repo, feature, args.phase);
     });
-    if (!v2.ok) return refuse(args, v2.id, v2.field);
+    if (!v2.ok) return refuse(args, v2.id, v2.field, v2.detail);
     process.stdout.write(`${JSON.stringify({ verification: result.verification, phase: args.phase, ...gateLabel(args.phase, result) })}
 `);
     return 0;
@@ -1788,7 +1914,7 @@ function main(argv) {
   const v = verdictOf(() => {
     stored = check(repo, feature, args.phase);
   });
-  if (!v.ok) return refuse(args, v.id, v.field);
+  if (!v.ok) return refuse(args, v.id, v.field, v.detail);
   const verdict = args.phase === "ship" ? { verdict: stored.verdict } : {};
   process.stdout.write(`${JSON.stringify({ verification: "verified", ...gateLabel(args.phase, stored), ...verdict })}
 `);

@@ -750,12 +750,19 @@ function globalIgnoreFile(repo, left) {
 function hidingBits(repo, index, left) {
   const listed = boundedGit(repo, ["ls-files", "-z", "-v"], { GIT_INDEX_FILE: index }, left);
   if (listed === null) return null;
+  const onDisk = (p) => {
+    try {
+      return fs5.lstatSync(path3.join(repo, p), { throwIfNoEntry: false }) !== void 0;
+    } catch {
+      return false;
+    }
+  };
   const dirOnDisk = /* @__PURE__ */ new Map();
   const present = (dir) => {
     if (dir === ".") return true;
     let known = dirOnDisk.get(dir);
     if (known === void 0) {
-      known = present(path3.dirname(dir)) && fs5.lstatSync(path3.join(repo, dir), { throwIfNoEntry: false }) !== void 0;
+      known = present(path3.dirname(dir)) && onDisk(dir);
       dirOnDisk.set(dir, known);
     }
     return known;
@@ -765,7 +772,7 @@ function hidingBits(repo, index, left) {
     if (e.length < 3) continue;
     const p = e.slice(2);
     if (e[0] !== e[0].toUpperCase()) bits.assumed.push(p);
-    if ((e[0] === "S" || e[0] === "s") && present(path3.dirname(p)) && fs5.lstatSync(path3.join(repo, p), { throwIfNoEntry: false }) !== void 0) {
+    if ((e[0] === "S" || e[0] === "s") && present(path3.dirname(p)) && onDisk(p)) {
       bits.skipped.push(p);
     }
   }
@@ -775,46 +782,23 @@ function clearHidingBits(repo, env, bits, left) {
   const clear = (flag, paths) => paths.length === 0 || boundedGit(repo, ["update-index", flag, "-z", "--stdin"], env, left, Buffer.from(paths.join("\0") + "\0")) !== null;
   return clear("--no-assume-unchanged", bits.assumed) && clear("--no-skip-worktree", bits.skipped);
 }
-function reviewedTree(repo, index, bits, which, dir, left) {
-  const tmpIndex = path3.join(dir, `index-${which}`);
-  try {
-    fs5.copyFileSync(index, tmpIndex);
-  } catch {
-  }
-  const env = { GIT_INDEX_FILE: tmpIndex };
-  if (!clearHidingBits(repo, env, bits, left)) return "";
-  let list = ["ls-files", "-z", "-m", "-d"];
-  if (which === "all") {
-    const global = globalIgnoreFile(repo, left);
-    list = [
-      "-c",
-      "core.excludesFile=/dev/null",
-      "ls-files",
-      "-z",
-      "-m",
-      "-o",
-      "-d",
-      "--exclude-per-directory=.gitignore",
-      ...global === null ? [] : [`--exclude-from=${global}`],
-      "--",
-      ".",
-      ":(exclude).oss"
-    ];
-  }
-  const changed = boundedGit(repo, list, env, left);
-  if (changed === null) return "";
-  const paths = new Set(changed.toString("utf-8").split("\0"));
+function pathList(listed) {
+  const paths = new Set(listed.toString("utf-8").split("\0"));
   paths.delete("");
-  if (paths.size > MAX_CHANGED_PATHS) return "";
+  return [...paths];
+}
+function treeWith(repo, tmpIndex, paths, left) {
+  if (paths.length > MAX_CHANGED_PATHS) return "";
   let total = 0;
   for (const p of paths) {
     const size = fs5.lstatSync(path3.join(repo, p), { throwIfNoEntry: false })?.size ?? 0;
     total += size;
     if (size > BIG_FILE_BYTES || total > MAX_CHANGED_BYTES) return "";
   }
-  if (changed.length > 0) {
+  const env = { GIT_INDEX_FILE: tmpIndex };
+  if (paths.length > 0) {
     const args = ["update-index", "--add", "--remove", "--info-only", "-z", "--stdin"];
-    if (boundedGit(repo, args, env, left, changed) === null) return "";
+    if (boundedGit(repo, args, env, left, Buffer.from(paths.join("\0") + "\0")) === null) return "";
   }
   const tree = boundedGit(repo, ["write-tree", "--missing-ok"], env, left)?.toString("utf-8").trim() ?? null;
   return tree !== null && TREE_RE.test(tree) ? tree : "";
@@ -828,8 +812,38 @@ function reviewedTrees(repo, left) {
   try {
     const bits = hidingBits(repo, index, left);
     if (bits === null) return none;
-    const trackedTree = reviewedTree(repo, index, bits, "tracked", dir, left);
-    return trackedTree === "" ? none : { tree: reviewedTree(repo, index, bits, "all", dir, left), trackedTree };
+    const trackedIndex = path3.join(dir, "index-tracked");
+    const allIndex = path3.join(dir, "index-all");
+    try {
+      fs5.copyFileSync(index, trackedIndex);
+    } catch {
+    }
+    if (!clearHidingBits(repo, { GIT_INDEX_FILE: trackedIndex }, bits, left)) return none;
+    try {
+      fs5.copyFileSync(trackedIndex, allIndex);
+    } catch {
+    }
+    const changed = boundedGit(repo, ["ls-files", "-z", "-m", "-d"], { GIT_INDEX_FILE: trackedIndex }, left);
+    if (changed === null) return none;
+    const changedPaths = pathList(changed);
+    const trackedTree = treeWith(repo, trackedIndex, changedPaths, left);
+    if (trackedTree === "") return none;
+    const global = globalIgnoreFile(repo, left);
+    const untracked = boundedGit(repo, [
+      "-c",
+      "core.excludesFile=/dev/null",
+      "ls-files",
+      "-z",
+      "-o",
+      "--exclude-per-directory=.gitignore",
+      ...global === null ? [] : [`--exclude-from=${global}`],
+      "--",
+      ".",
+      ":(exclude).oss"
+    ], { GIT_INDEX_FILE: allIndex }, left);
+    if (untracked === null) return none;
+    const outsideOss = changedPaths.filter((p) => p !== ".oss" && !p.startsWith(".oss/"));
+    return { tree: treeWith(repo, allIndex, [...outsideOss, ...pathList(untracked)], left), trackedTree };
   } finally {
     fs5.rmSync(dir, { recursive: true, force: true });
   }

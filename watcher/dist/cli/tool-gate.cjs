@@ -10032,6 +10032,7 @@ var SEPARATORS = /[\s'"`;|&()<>=${}\\,]+/;
 var GLOB2 = /[*?[]/;
 var SET = /\[[!^]?\]?[^\]]*\]?/;
 var WORD_END2 = /[\s;|&()<>'"`]/;
+var FORM_END = /[\s;|&()<>'"`${}]/;
 function specialSetsAsAny(text) {
   const closing = /* @__PURE__ */ new Map();
   const closeOf = (delim, from) => {
@@ -10045,7 +10046,7 @@ function specialSetsAsAny(text) {
   const wordEndOf = (from) => {
     if (wordEnd >= from) return wordEnd;
     wordEnd = from;
-    while (wordEnd < text.length && !WORD_END2.test(text[wordEnd])) wordEnd += 1;
+    while (wordEnd < text.length && !FORM_END.test(text[wordEnd])) wordEnd += 1;
     return wordEnd;
   };
   let out = "";
@@ -10147,8 +10148,13 @@ function writesStem(literal2) {
     return false;
   });
 }
+function hasLiteralName(text) {
+  return text.split(SEPARATORS).some((word) => word.split("/").some((segment) => NAMES.includes(segment)));
+}
 function namesVerdictCapture(text) {
-  for (const word of specialSetsAsAny(text.toLowerCase()).split(SEPARATORS)) {
+  const lower = text.toLowerCase();
+  if (hasLiteralName(lower)) return true;
+  for (const word of specialSetsAsAny(lower).split(SEPARATORS)) {
     const segments = word.split("/");
     for (const [i, segment] of segments.entries()) {
       if (NAMES.includes(segment)) return true;

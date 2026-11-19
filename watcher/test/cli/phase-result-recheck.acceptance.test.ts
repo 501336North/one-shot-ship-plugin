@@ -189,3 +189,23 @@ describe('phase-result CLI: the ship verdict is stable across re-checks (D47, D5
     expect(checked()).toEqual({ verification: 'verified', ...label(a) });
   });
 });
+
+/**
+ * D58 (user pick, ship round 9, "Feature paths only"): a teammate's commit brought in by a rebase does not clear an
+ * unfixed fail, and check (which re-assembles) agrees with assemble on the blocked verdict.
+ */
+describe('phase-result CLI: a rebase does not clear an unfixed fail, and check agrees (D58)', () => {
+  it('assemble after a rebase onto a teammate\'s commit stays blocked, and check verifies it', () => {
+    capturedFail('2026-11-13T09:10:00.000Z');
+    git('checkout', '-q', 'main');
+    commitFile('mate.txt', 'mate\n');
+    git('update-ref', 'refs/remotes/origin/main', 'main');
+    git('checkout', '-q', `feat/${FEATURE}/build`);
+    git('rebase', '-q', 'main');
+    startShip(RUN_1);
+    gateLines('2026-11-13T09:30:00Z');
+    const a = assembled();
+    expect(a).toMatchObject({ verdict: 'blocked' });
+    expect(checked()).toEqual({ verification: 'verified', ...label(a) });
+  });
+});

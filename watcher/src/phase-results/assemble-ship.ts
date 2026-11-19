@@ -16,8 +16,10 @@
  *   already failed stays blocked. An open fail keeps its gate failed, and no fix count overrides it; its blocker reads
  *   `gate:<name> (captured fail, not re-reviewed: a tracked code change is needed to clear it)` (D57). A fail with
  *   neither trees nor headSha does not count (D48). D55: a fail whose trees git pruned is compared through its
- *   headSha's tree, and ignored when that commit is gone too. Rows are walked newest first and each reviewed state is
- *   compared once per assemble (perf low 1).
+ *   headSha's tree, and ignored when that commit is gone too (also for a headSha-only row). Rows are walked newest
+ *   first and each reviewed state is compared once per assemble (perf low 1). D58: only the feature's own paths count
+ *   (its diff from the merge base, plus the reviewed tree's changes against the review-time merge base), so upstream
+ *   commits brought in by a rebase or merge never clear a fail (FailComparer).
  * - An open captured pen-test fail adds that optional gate. D26: the result labels how many gates an agent row backs
  *   (`gateEvidence`) and names the rest (`uncapturedGates`).
  * Overrides: each decisionId must be a decisions.ndjson record whose line hash, id and feature match a ledger row;
@@ -81,11 +83,24 @@ function runGit(repo: string, args: string[], okCodes: number[] = [0], raw = fal
   return { status: r.status, out: raw ? r.stdout : r.stdout.trim() };
 }
 
-/** True when `name` passes `check-ref-format --branch` and `refs/heads/<name>` exists (fixed argv, never an option). */
-export function isLocalBranch(repo: string, name: string): boolean {
+/** The diff_unavailable hint when the base is a valid branch name with no local branch (pen info 2: fixed text). */
+export const NO_LOCAL_BASE = 'create the local branch from its remote (git branch <base> <remote>/<base>)';
+
+/** True when `name` passes `check-ref-format --branch` (fixed argv, never an option). */
+function validBranchName(repo: string, name: string): boolean {
   if (name === '' || name.startsWith('-')) return false;
   try {
     runGit(repo, ['check-ref-format', '--branch', name]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** True when `name` passes `check-ref-format --branch` and `refs/heads/<name>` exists (fixed argv, never an option). */
+export function isLocalBranch(repo: string, name: string): boolean {
+  if (!validBranchName(repo, name)) return false;
+  try {
     runGit(repo, ['rev-parse', '--verify', '--quiet', '--end-of-options', `refs/heads/${name}^{commit}`]);
     return true;
   } catch {
@@ -114,39 +129,70 @@ function containedIn(repo: string, tip: string, sha: string): boolean {
   }
 }
 
+/** Why shipBaseCheck refused a base: `not_in_snapshot` when only the snapshot containment failed. */
+export type ShipBaseCheck = 'ok' | 'refused' | 'not_in_snapshot';
+
+/**
+ * Security info 2 (gate round 7): true when `<git-common-dir>/refs/heads/<base>`, or a folder on the way to it, is a
+ * filesystem symlink (lstat), which `symbolic-ref` does not see. Any error counts as a link (fail closed).
+ */
+function refPathLinked(repo: string, base: string): boolean {
+  try {
+    let p = path.resolve(repo, runGit(repo, ['rev-parse', '--git-common-dir']).out, 'refs', 'heads');
+    for (const seg of base.split('/')) {
+      p = path.join(p, seg);
+      const st = fs.lstatSync(p, { throwIfNoEntry: false });
+      if (st === undefined) return false;
+      if (st.isSymbolicLink()) return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 /**
  * D46/D50 (pen M2a, security 2a): local branch `base` is a safe ship base only when `refs` (the ship-start snapshot,
  * remote ref name to SHA) holds refs/remotes/<remote>/<base> for some one-segment remote name and the base tip is inside
  * that ref's SHA, and the base is neither the current branch nor the feature's own branch or one of its phase branches
- * (`<feature>`, `*\/<feature>/*`). A remote whose name has a slash never matches (fail closed), so `build` never
- * matches origin/feat/<f>/build.
+ * (`<feature>`, `*\/<feature>/*`), nor a symbolic ref or a symlinked ref file. A remote whose name has a slash never
+ * matches (fail closed), so `build` never matches origin/feat/<f>/build. `not_in_snapshot` when only the containment
+ * failed (pen low 4: a base pulled mid-ship or diverged), so the refusal can say what to do.
  */
-export function shipBaseAllowed(repo: string, base: string, feature: string, refs: ReadonlyMap<string, string>): boolean {
-  if (base === feature || base.includes(`/${feature}/`)) return false;
+export function shipBaseCheck(repo: string, base: string, feature: string, refs: ReadonlyMap<string, string>): ShipBaseCheck {
+  if (base === feature || base.includes(`/${feature}/`)) return 'refused';
   let current: string | null;
   try {
     current = runGit(repo, ['symbolic-ref', '-q', 'HEAD'], [0, 1]).out;
   } catch {
-    return false;
+    return 'refused';
   }
-  if (current === `refs/heads/${base}`) return false;
+  if (current === `refs/heads/${base}`) return 'refused';
   // Security info 4: a local base that is a symbolic ref (refs/heads/x -> another branch) is refused.
   try {
-    if (runGit(repo, ['symbolic-ref', '-q', `refs/heads/${base}`], [0, 1]).status === 0) return false;
+    if (runGit(repo, ['symbolic-ref', '-q', `refs/heads/${base}`], [0, 1]).status === 0) return 'refused';
   } catch {
-    return false;
+    return 'refused';
   }
+  if (refPathLinked(repo, base)) return 'refused';
   const tip = branchTip(repo, base);
-  if (tip === null) return false;
+  if (tip === null) return 'refused';
   for (const [name, sha] of refs) {
     const m = /^refs\/remotes\/[^/]+\/(.+)$/.exec(name);
-    if (m?.[1] === base && containedIn(repo, tip, sha)) return true;
+    if (m?.[1] === base && containedIn(repo, tip, sha)) return 'ok';
   }
-  return false;
+  return 'not_in_snapshot';
+}
+
+/** shipBaseCheck accepted the base. */
+export function shipBaseAllowed(repo: string, base: string, feature: string, refs: ReadonlyMap<string, string>): boolean {
+  return shipBaseCheck(repo, base, feature, refs) === 'ok';
 }
 
 interface Diff {
   base: string;
+  /** The commit the merge-base was taken from (diffFrom): the local tip or a snapshot SHA. */
+  from: string;
   baseRef: string;
   files: number;
   insertions: number;
@@ -156,16 +202,32 @@ interface Diff {
 }
 
 /**
- * Pen L2: the snapshot SHA of a same-name remote ref (`refs/remotes/<remote>/<branch>`, in name order) that is ahead of
- * the local tip and contains it, so a stale local base (a teammate pushed since it was last pulled) does not count their
- * commits as the feature's; else the local tip.
+ * Pen L2 + pen L1 (gate round 7): a stale local base (a teammate pushed since it was last pulled) must not count their
+ * commits as the feature's. The candidates are the snapshot SHAs of same-name remote refs (`refs/remotes/<remote>/
+ * <branch>`) that contain the local tip and do not already contain HEAD. The diff starts from the most advanced one
+ * (it contains all the others); when none does, from the one whose merge-base with HEAD is newest; with none, the
+ * local tip.
  */
-function diffFrom(repo: string, branch: string, tip: string, remoteRefs: ReadonlyMap<string, string>): string {
-  for (const name of [...remoteRefs.keys()].sort()) {
-    const sha = remoteRefs.get(name) as string;
-    if (/^refs\/remotes\/[^/]+\/(.+)$/.exec(name)?.[1] === branch && sha !== tip && containedIn(repo, tip, sha)) return sha;
+function diffFrom(repo: string, branch: string, tip: string, head: string, remoteRefs: ReadonlyMap<string, string>): string {
+  const same = [...remoteRefs.keys()].sort()
+    .filter((name) => /^refs\/remotes\/[^/]+\/(.+)$/.exec(name)?.[1] === branch)
+    .map((name) => remoteRefs.get(name) as string);
+  const candidates = [...new Set(same)].filter((sha) => sha !== tip && containedIn(repo, tip, sha) && !containedIn(repo, head, sha));
+  if (candidates.length <= 1) return candidates[0] ?? tip;
+  const top = candidates.find((c) => candidates.every((o) => o === c || containedIn(repo, o, c)));
+  if (top !== undefined) return top;
+  let best = tip;
+  let bestAt = -Infinity;
+  for (const c of candidates) {
+    try {
+      const mb = runGit(repo, ['merge-base', '--end-of-options', c, head]).out;
+      const at = Number(runGit(repo, ['log', '-1', '--format=%ct', '--end-of-options', mb]).out);
+      if (at > bestAt) [best, bestAt] = [c, at];
+    } catch {
+      // a candidate git cannot compare is skipped
+    }
   }
-  return tip;
+  return best;
 }
 
 function readDiff(repo: string, base: string, remoteRefs: ReadonlyMap<string, string>): Diff {
@@ -173,13 +235,15 @@ function readDiff(repo: string, base: string, remoteRefs: ReadonlyMap<string, st
   const branch = runGit(repo, ['check-ref-format', '--branch', base]).out;
   const tip = runGit(repo, ['rev-parse', '--verify', '--end-of-options', `refs/heads/${branch}^{commit}`]).out;
   const headSha = runGit(repo, ['rev-parse', '--verify', 'HEAD^{commit}']).out;
-  const mergeBase = runGit(repo, ['merge-base', diffFrom(repo, branch, tip, remoteRefs), headSha]).out;
+  const from = diffFrom(repo, branch, tip, headSha, remoteRefs);
+  const mergeBase = runGit(repo, ['merge-base', from, headSha]).out;
   const sameTree = runGit(repo, ['diff', '--quiet', '--no-ext-diff', '--no-textconv', tip, headSha], [0, 1]).status === 0;
   const stat = runGit(repo, ['diff', '--shortstat', '--no-renames', '--no-ext-diff', '--no-textconv', mergeBase, headSha]).out;
   const num = (re: RegExp): number => Number(re.exec(stat)?.[1] ?? 0);
   const files = num(/(\d+) files? changed/);
   return {
     base: mergeBase,
+    from,
     baseRef: branch,
     files,
     insertions: num(/(\d+) insertions?\(\+\)/),
@@ -257,69 +321,141 @@ function failRow(row: Record<string, unknown>): FailRow | null {
 
 const TREE_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
-/** Buffer for a -z list of deleted paths (perf L2: about 17,000 paths overflowed 1 MB). */
+/** Buffer for a -z path list (perf L2: about 17,000 paths overflowed 1 MB). */
 const PATH_LIST_BUFFER = 64 * 1024 * 1024;
 const SHIPPED_CODE = ['--', '.', ':(exclude).oss'];
+const DIFF = ['diff', '--no-renames', '--no-ext-diff', '--no-textconv'];
+
+/** One path of a `diff --raw` between two tree-ishes: each side's `<mode> <object>` (mode 000000 when it has none). */
+interface RawChange {
+  from: string;
+  to: string;
+}
+
+const ABSENT = /^0{6} /;
 
 /**
- * D45: whether the shipped code (HEAD outside .oss) differs from what the agent reviewed. Ship's reviews run on the
- * uncommitted tree and ship commits afterwards (only the files it picks), so `tree` (the reviewed working tree, untracked
- * files included) is compared with HEAD: an added or modified path differs; a deleted path differs only when it was
- * tracked at review (`trackedTree`) or in the commit HEAD was at review (`reviewHead`, pen N4); an untracked file the
- * reviewer saw and ship left out does not (pen M3a). All are strict hex tree-ishes, checked by the caller. 'unknown' on
- * any git error (an object git does not have included).
- * Perf L2: `diff --quiet --diff-filter=d` answers "any added or modified path" with no output at all; only when there is
- * none are the deleted paths listed (-z, a large buffer) and matched against the paths `trackedTree` and `reviewHead`
- * have that HEAD lacks (two more diffs, so no path list ever goes on a command line).
+ * D45 + D58: decides whether a captured fail row is cleared by the shipped code (HEAD outside .oss), for one assemble.
+ * The diff base (`from`, the commit the ship diff's merge-base was taken from) and that merge-base come from readDiff,
+ * so check (reassemble) compares on the same paths. Every list is read from git output (-z, a large buffer) and
+ * intersected here, so no path list ever goes on a command line. Objects git may have pruned are checked only after
+ * a comparison failed (perf F1), and once per SHA.
  */
-function shippedVsReviewed(repo: string, tree: string, trackedTree: string, reviewHead: string | null): 'same' | 'differs' | 'unknown' {
-  const diff = ['diff', '--no-renames', '--no-ext-diff', '--no-textconv'];
-  const paths = (filter: string, from: string, to: string): string[] =>
-    runGit(repo, [...diff, '--name-only', '-z', `--diff-filter=${filter}`, '--end-of-options', from, to, ...SHIPPED_CODE], [0], true, PATH_LIST_BUFFER)
-      .out.split('\0').filter((p) => p !== '');
-  try {
-    if (runGit(repo, [...diff, '--quiet', '--diff-filter=d', '--end-of-options', tree, 'HEAD', ...SHIPPED_CODE], [0, 1]).status === 1) {
-      return 'differs';
+class FailComparer {
+  private readonly missing = new Map<string, boolean>();
+  private readonly toHead = new Map<string, Map<string, RawChange>>();
+  private readonly reviewBases = new Map<string, string>();
+
+  constructor(private readonly repo: string, private readonly from: string, private readonly mergeBase: string) {}
+
+  /**
+   * D45: a fail is cleared only when the shipped code differs from the code that failed: its reviewed trees, else its
+   * headSha's tree. A fail that cannot be compared (a malformed or partial row, or a git error) stays open; one with
+   * neither is dropped (D48). D55: trees git no longer has (gc) fall back to the headSha's tree; when that commit is
+   * gone too, or a headSha-only row's commit is gone, 'ignored' (neither opens nor clears).
+   */
+  cleared(f: FailRow): boolean | 'ignored' {
+    const hasTrees = f.tree !== null && f.trackedTree !== null;
+    if (f.tree !== null && f.trackedTree !== null) {
+      const r = this.compare(f.tree, f.trackedTree, f.headSha, f.headSha);
+      if (r !== 'unknown') return r === 'differs';
+      if (!this.gone(f.tree) && !this.gone(f.trackedTree)) return false;
     }
-    const deleted = paths('D', tree, 'HEAD');
-    if (deleted.length === 0) return 'same';
-    const wasTracked = new Set(paths('A', 'HEAD', trackedTree));
-    if (reviewHead !== null) for (const p of paths('A', 'HEAD', reviewHead)) wasTracked.add(p);
-    return deleted.some((p) => wasTracked.has(p)) ? 'differs' : 'same';
-  } catch {
-    return 'unknown';
+    if (f.headSha === null) return hasTrees ? 'ignored' : false;
+    const headTree = `${f.headSha}^{tree}`;
+    const r = this.compare(headTree, headTree, null, f.headSha);
+    if (r !== 'unknown') return r === 'differs';
+    return this.gone(f.headSha) ? 'ignored' : false;
   }
-}
 
-/**
- * D45: a fail is cleared only when the shipped code differs from the code that failed (shippedVsReviewed): its reviewed
- * trees, else its headSha's tree. Untracked scratch files and empty or .oss-only commits change nothing (pen M3). A fail
- * that cannot be compared (a malformed or partial row, or a git error) stays open; one with neither is dropped (D48).
- * D55: trees git no longer has (gc) fall back to the headSha's tree; with that commit gone too, 'ignored' (neither opens
- * nor clears).
- */
-function failCleared(repo: string, f: FailRow): boolean | 'ignored' {
-  const gone = (sha: string): boolean => objectMissing(repo, sha);
-  if (f.tree !== null && f.trackedTree !== null && !gone(f.tree) && !gone(f.trackedTree)) {
-    return shippedVsReviewed(repo, f.tree, f.trackedTree, f.headSha) === 'differs';
+  /**
+   * D45 + D58: whether the shipped code differs from what the agent reviewed, on the feature's own paths only: those
+   * the feature changed since the merge base (`git diff <merge-base> HEAD`), plus those the reviewed tree changed
+   * against the review-time merge base (merge-base(from, review headSha)), so a flagged edit the feature has since
+   * dropped still counts. A teammate's upstream change brought in by a rebase or merge is on neither list. Ship's
+   * reviews run on the uncommitted tree and ship commits afterwards (only the files it picks), so `tree` (the reviewed
+   * working tree, untracked files included) is compared with HEAD: an added or modified path differs; a deleted path
+   * differs only when it was tracked at review (`trackedTree`) or in the commit HEAD was at review (`reviewHead`, pen
+   * N4); an untracked file the reviewer saw and ship left out does not (pen M3a). All are strict hex tree-ishes,
+   * checked by the caller. 'unknown' on any git error (an object git does not have included).
+   */
+  private compare(tree: string, trackedTree: string, reviewHead: string | null, at: string | null): 'same' | 'differs' | 'unknown' {
+    try {
+      const changes = this.raw(tree);
+      if (changes.size === 0) return 'same';
+      const own = this.raw(this.mergeBase);
+      const deleted = (c: RawChange): boolean => ABSENT.test(c.to);
+      for (const [p, c] of changes) if (!deleted(c) && own.has(p)) return 'differs';
+      const sinceReview = this.raw(this.reviewBase(at));
+      // A path's state at the review-time merge base: from that diff, else the same as HEAD's.
+      const reviewed = (p: string, c: RawChange): boolean => own.has(p) || c.from !== (sinceReview.get(p)?.from ?? c.to);
+      const gone: string[] = [];
+      for (const [p, c] of changes) {
+        if (!reviewed(p, c)) continue;
+        if (!deleted(c)) return 'differs';
+        gone.push(p);
+      }
+      if (gone.length === 0) return 'same';
+      const wasTracked = new Set(this.paths('A', 'HEAD', trackedTree));
+      if (reviewHead !== null) for (const p of this.paths('A', 'HEAD', reviewHead)) wasTracked.add(p);
+      return gone.some((p) => wasTracked.has(p)) ? 'differs' : 'same';
+    } catch {
+      return 'unknown';
+    }
   }
-  const treesGone = f.tree !== null && f.trackedTree !== null;
-  if (f.headSha === null) return treesGone ? 'ignored' : false;
-  // D55: the reviewed trees were pruned (gc): compare the headSha's tree; with that commit gone too, ignore the row.
-  if (treesGone && gone(f.headSha)) return 'ignored';
-  const headTree = `${f.headSha}^{tree}`;
-  return shippedVsReviewed(repo, headTree, headTree, null) === 'differs';
-}
 
-/**
- * D55: true only when git says the object is not in the repo (`cat-file -e` exits 1); any other git error is not a
- * missing object, so the caller keeps the fail open.
- */
-function objectMissing(repo: string, sha: string): boolean {
-  try {
-    return runGit(repo, ['cat-file', '-e', sha], [0, 1]).status === 1;
-  } catch {
-    return false;
+  /** `diff --raw` from a tree-ish to HEAD outside .oss, by path; cached per tree-ish. */
+  private raw(treeish: string): Map<string, RawChange> {
+    const hit = this.toHead.get(treeish);
+    if (hit !== undefined) return hit;
+    const parts = runGit(this.repo, [...DIFF, '--raw', '-z', '--no-abbrev', '--end-of-options', treeish, 'HEAD', ...SHIPPED_CODE], [0], true, PATH_LIST_BUFFER)
+      .out.split('\0');
+    const out = new Map<string, RawChange>();
+    for (let i = 0; i + 1 < parts.length; i += 2) {
+      const m = /^:([0-7]{6}) ([0-7]{6}) ([0-9a-f]+) ([0-9a-f]+) [A-Z]/.exec(parts[i] as string);
+      if (m === null) throw new GitError('raw');
+      out.set(parts[i + 1] as string, { from: `${m[1]} ${m[3]}`, to: `${m[2]} ${m[4]}` });
+    }
+    this.toHead.set(treeish, out);
+    return out;
+  }
+
+  private paths(filter: string, from: string, to: string): string[] {
+    return runGit(this.repo, [...DIFF, '--name-only', '-z', `--diff-filter=${filter}`, '--end-of-options', from, to, ...SHIPPED_CODE], [0], true, PATH_LIST_BUFFER)
+      .out.split('\0').filter((p) => p !== '');
+  }
+
+  /** The merge base at review: merge-base(from, the review's HEAD); the current merge base with no headSha or once git pruned it. */
+  private reviewBase(at: string | null): string {
+    if (at === null) return this.mergeBase;
+    const hit = this.reviewBases.get(at);
+    if (hit !== undefined) return hit;
+    let base: string;
+    try {
+      base = runGit(this.repo, ['merge-base', '--end-of-options', this.from, at]).out;
+    } catch (e) {
+      if (!this.gone(at)) throw e;
+      base = this.mergeBase;
+    }
+    this.reviewBases.set(at, base);
+    return base;
+  }
+
+  /**
+   * D55: true only when git says the object is not in the repo (`cat-file -e` exits 1); any other git error is not a
+   * missing object, so the caller keeps the fail open. Once per SHA.
+   */
+  private gone(sha: string): boolean {
+    const hit = this.missing.get(sha);
+    if (hit !== undefined) return hit;
+    let r: boolean;
+    try {
+      r = runGit(this.repo, ['cat-file', '-e', sha], [0, 1]).status === 1;
+    } catch {
+      r = false;
+    }
+    this.missing.set(sha, r);
+    return r;
   }
 }
 
@@ -382,7 +518,7 @@ const NOT_RE_REVIEWED = 'captured fail, not re-reviewed: a tracked code change i
  * PASS rows decide and clear nothing (D45: a pass can be minted). With no open fail the timeline line stays (`source:
  * model`, listed in uncapturedGates, D26).
  */
-function applyAgentVerdicts(tl: Timeline, verdictRows: LedgerRow[], repo: string): Set<string> {
+function applyAgentVerdicts(tl: Timeline, verdictRows: LedgerRow[], comparer: FailComparer): Set<string> {
   // Perf low 1: newest first (a later ledger row wins a tie), stopping at a gate's first open row; rows sharing one
   // reviewed state are compared once.
   const rows = verdictRows.map(failRow).filter((f): f is FailRow => f !== null).reverse().sort((a, b) => b.at - a.at);
@@ -391,7 +527,7 @@ function applyAgentVerdicts(tl: Timeline, verdictRows: LedgerRow[], repo: string
   for (const f of rows) {
     if (newestOpen.has(f.gate)) continue;
     const key = `${f.tree}|${f.trackedTree}|${f.headSha}`;
-    if (!cleared.has(key)) cleared.set(key, failCleared(repo, f));
+    if (!cleared.has(key)) cleared.set(key, comparer.cleared(f));
     if (cleared.get(key) === false) newestOpen.set(f.gate, f);
   }
   const open = new Set<string>();
@@ -441,10 +577,10 @@ export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): A
   try {
     diff = readDiff(ctx.repo, opts.base, opts.remoteRefs ?? new Map());
   } catch {
-    // Pen info 2: fixed text, never the base name.
-    return isLocalBranch(ctx.repo, opts.base)
+    // Pen info 2: fixed text, never the base name; code-review info (round 7): only for a name git accepts as a branch.
+    return isLocalBranch(ctx.repo, opts.base) || !validBranchName(ctx.repo, opts.base)
       ? { ok: false, error: 'diff_unavailable' }
-      : { ok: false, error: 'diff_unavailable', detail: 'create the local branch from its remote (git branch <base> <remote>/<base>)' };
+      : { ok: false, error: 'diff_unavailable', detail: NO_LOCAL_BASE };
   }
   if (diff.empty) return { ok: false, error: 'empty_diff' };
 
@@ -462,7 +598,7 @@ export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): A
   }
 
   const timeline = timelineGates(ctx, featureDir, gateHashes);
-  const notReReviewed = applyAgentVerdicts(timeline, verdictRows, ctx.repo);
+  const notReReviewed = applyAgentVerdicts(timeline, verdictRows, new FailComparer(ctx.repo, diff.from, diff.base));
   const byName = timeline.byName;
   for (const required of opts.requiredGates ?? DEFAULT_REQUIRED_GATES) {
     if (!byName.has(required)) return { ok: false, error: 'gate_missing', detail: required };
