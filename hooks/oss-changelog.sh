@@ -19,8 +19,9 @@ STATE_FILE="$CONFIG_DIR/update-state.json"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_JSON="${OSS_PLUGIN_JSON:-$SCRIPT_DIR/../.claude-plugin/plugin.json}"
 # oss_is_regular: the state is read only as a regular file; a link or FIFO counts as no state (T53b). Without the
-# helper, no state is trusted.
-source "$SCRIPT_DIR/oss-api-curl.sh" 2>/dev/null || oss_is_regular() { return 1; }
+# helpers (they also define the jq filters below), stop quietly, as check-updates.sh does: never a filter from the
+# environment (ship gate finding D).
+source "$SCRIPT_DIR/oss-api-curl.sh" 2>/dev/null || exit 0
 
 # Read current plugin version
 current_version=""

@@ -782,6 +782,68 @@ test_split_verify_before_lock() {
     teardown
 }
 
+# =============================================================================================
+# R8 (R-273 ship gate, finding A) The unverified team part is cleaned before it is written
+# @behavior The team laws (unverified, DR-3) reach CLAUDE.md and the screen without terminal control codes or
+#           invisible characters (C0 except tab and newline, and the oss_invisible set: zero-width, tag characters,
+#           ...); the verified base laws are written byte for byte, invisible characters included.
+# @business-rule Text no signature covers never puts escape sequences or hidden text into a committed CLAUDE.md
+#           or the terminal; the signed laws are never altered.
+# =============================================================================================
+TEAM_DIRTY_LINE=$'Team rule \033]0;pwned\007red\033[0m hidden\342\200\213\363\240\201\201\363\240\201\202 tab\there'
+TEAM_CLEAN_LINE=$'Team rule ]0;pwnedred[0m hidden tab\there'
+BASE_ODD_LINE=$'Base keeps\342\200\213 this\tline'
+# no_raw_controls FILE: no ESC, BEL or tag-character bytes in FILE
+no_raw_controls() { ! LC_ALL=C grep -q -e $'\033' -e $'\007' -e $'\363\240\201' "$1"; }
+
+test_team_cleaned_base_kept() {
+    local name="R8: --install writes and prints the team part without control or invisible characters; base kept byte for byte"; ((TESTS_RUN++)); setup
+    { valid_body; printf '%s\n' "$BASE_ODD_LINE"; } > "$T/shim/body"
+    printf '\n## Team\n\n%s\n' "$TEAM_DIRTY_LINE" > "$T/shim/team"
+    run_sync --install
+    printf '%s' "$OUT" > "$T/stdout"
+    local zw; zw=$(LC_ALL=C grep -c $'\342\200\213' "$T/proj/CLAUDE.md" 2>/dev/null)
+    if [[ $RC -eq 0 ]] && grep -qxF "$TEAM_CLEAN_LINE" "$T/proj/CLAUDE.md" && grep -qxF "$BASE_ODD_LINE" "$T/proj/CLAUDE.md" \
+        && [[ "$zw" == 1 ]] && no_raw_controls "$T/proj/CLAUDE.md" && no_raw_controls "$T/stdout" \
+        && grep -qxF "$TEAM_CLEAN_LINE" "$T/stdout"; then pass "$name"
+    else fail "$name" "the cleaned team line in CLAUDE.md and on stdout, the base line as served, no ESC/BEL/tag bytes" \
+        "rc=$RC zw=$zw team=$(grep -a 'Team rule' "$T/proj/CLAUDE.md" 2>/dev/null | od -c | head -3 | tr -s ' ') err=$ERR"; fi
+    teardown
+}
+
+test_team_cleaned_on_refresh() {
+    local name="R8: a session-start refresh writes the team part cleaned, the base unchanged"; ((TESTS_RUN++)); setup
+    { valid_body; printf '%s\n' "$BASE_ODD_LINE"; } > "$T/shim/body"
+    printf '\n## Team\n\n%s\n' "$TEAM_DIRTY_LINE" > "$T/shim/team"
+    block_file "$T/proj/CLAUDE.md"; stale; run_sync
+    if [[ $RC -eq 0 ]] && grep -qxF "$TEAM_CLEAN_LINE" "$T/proj/CLAUDE.md" && grep -qxF "$BASE_ODD_LINE" "$T/proj/CLAUDE.md" \
+        && no_raw_controls "$T/proj/CLAUDE.md"; then pass "$name"
+    else fail "$name" "cleaned team line, base line as served, no ESC/BEL/tag bytes" "rc=$RC err=$ERR"; fi
+    teardown
+}
+
+# R8 (R-273 ship gate round 2, finding 1) A team part at the body cap made only of characters the cleaning removes
+# (raw DEL, one byte each: the most removals the cap allows) is cleaned and written in seconds. The cleaning used to
+# take time that grew with the square of the removals (a 259 KB reply: 256 s), so one hostile reply stalled
+# /oss:login and every session start for minutes.
+# @behavior --install with such a reply writes the laws, no DEL byte in CLAUDE.md, well inside the bound.
+# @business-rule Text no signature covers can never make session start or /oss:login hang.
+test_team_clean_at_body_cap_is_fast() {
+    local name="R8: a body-cap team part of DEL characters is cleaned and written within 25 s"; ((TESTS_RUN++)); setup
+    local head tail n
+    head=$(printf '{"base":%s,"team":"\\n## Team\\n\\n' "$(jq -Rs . < "$T/shim/body")")
+    tail='\n"}'
+    n=$(( OSS_BODY_CAP_TEST - ${#head} - ${#tail} - 64 ))
+    { printf '%s' "$head"; /usr/bin/perl -e 'binmode STDOUT; print "\x7f" x $ARGV[0]' "$n"; printf '%s' "$tail"; } > "$T/shim/raw"
+    local t0=$SECONDS el
+    run_sync --install
+    el=$(( SECONDS - t0 ))
+    if [[ $RC -eq 0 && $el -le 25 ]] && grep -qxF '## Team' "$T/proj/CLAUDE.md" && ! LC_ALL=C grep -q $'\177' "$T/proj/CLAUDE.md"; then pass "$name"
+    else fail "$name" "rc 0 within 25 s, the laws written, no DEL byte" "rc=$RC secs=$el bytes=$(wc -c < "$T/shim/raw") err=${ERR:0:200}"; fi
+    teardown
+}
+OSS_BODY_CAP_TEST=262144   # OSS_BODY_MAX in hooks/oss-api-curl.sh
+
 # The reply must be the ?split=1 JSON; anything else is refused with no second, unsplit request.
 test_split_reply_refused() {
     local label
@@ -852,6 +914,9 @@ test_split_verify_exit_codes
 test_split_old_decrypt
 test_split_reply_refused
 test_split_verify_before_lock
+test_team_cleaned_base_kept
+test_team_cleaned_on_refresh
+test_team_clean_at_body_cap_is_fast
 echo ""
 echo "======================================="
 echo "Results: $TESTS_PASSED/$TESTS_RUN passed, $TESTS_FAILED failed"

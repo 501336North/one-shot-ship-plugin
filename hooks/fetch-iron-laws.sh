@@ -5,12 +5,12 @@
 #   fetch-iron-laws.sh [--raw]
 #
 # Options:
-#   --raw    Output the verified ?split=1 JSON reply (default: the laws, base + team)
+#   --raw    Output the JSON {base, team}: the verified base, the team part cleaned (default: the laws, base + team)
 #
 # Returns the IRON LAWS content from the API endpoint: GET .../shared/iron-laws?split=1 answers {base, team?}.
 # The raw base bytes must pass `~/.oss/bin/oss-decrypt --verify-body shared/iron-laws` (R-273 D12); only its
 # exit 0 prints anything. A reply that is not that JSON is refused (exit 1), never retried unsplit. Team laws are
-# printed as served, under the server's advisory note (unverified, DR-3).
+# printed under the server's advisory note, unverified (DR-3), without control or invisible characters.
 # Uses apiKey and apiUrl from the OSS config ($OSS_CONFIG_DIR/config.json, else ~/.oss/config.json)
 
 set -euo pipefail
@@ -113,7 +113,9 @@ if [[ "$HTTP_CODE" != "200" ]]; then
       echo "IRON LAWS endpoint not found" >&2
       ;;
     *)
-      echo "Response: $BODY" >&2
+      # At most 300 characters of the reply, cleaned (oss_clean_text): no signature covers it (round 2, finding 2)
+      SNIPPET=$(printf '%s' "${BODY:0:300}" | oss_clean_text 2>/dev/null) || SNIPPET=""
+      echo "Response (first 300 characters, cleaned): $SNIPPET" >&2
       ;;
   esac
   exit 1
@@ -136,9 +138,17 @@ if [[ "$VERIFY_STATUS" -ne 0 ]]; then
   exit 1
 fi
 
+# The team part (unverified, DR-3) loses control and invisible characters (oss_clean_text); the base is printed as
+# served. An empty team needs no jq.
+: > "$WORK/team.clean"
+if [[ -s "$WORK/team" ]] && ! oss_clean_text < "$WORK/team" > "$WORK/team.clean"; then
+  echo "Error: could not clean the team laws (jq missing?); no laws printed" >&2
+  exit 1
+fi
+
 # Output result
 if [[ "$RAW_OUTPUT" == "true" ]]; then
-  cat "$WORK/reply"
+  jq -n --rawfile b "$WORK/base" --rawfile t "$WORK/team.clean" '{base: $b, team: $t}'
 else
-  cat "$WORK/base" "$WORK/team"
+  cat "$WORK/base" "$WORK/team.clean"
 fi

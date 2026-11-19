@@ -180,6 +180,38 @@ if [[ -f "$CHECK" && $RC -ne 0 ]]; then
   pass "a tree with no literal fetch fails (an empty scan proves nothing)"
 else fail "empty scan" "rc=$RC out=$OUT"; fi
 
+# 10. (ship gate finding G) A key holding a line break is one key: "x<newline>workflows/plan" never makes
+#     workflows/plan present.
+jq '.prompts["x\nworkflows/plan"] = .prompts["workflows/plan"] | del(.prompts["workflows/plan"])' "$FULL" > "$SB/nl-key.json"
+run_check "$SB/nl-key.json" "$T1"
+if [[ $RC -eq 1 ]] && grep -q '^MISSING workflows/plan ' <<<"$OUT"; then
+  pass "a key with a line break is one key: workflows/plan is still reported missing (exit 1)"
+else fail "newline key" "rc=$RC out=$OUT"; fi
+
+# 11. (ship gate finding G) A file with more than one JSON document is refused: a key in a second document never
+#     counts as present for the first.
+{ cat "$NO_WF"; jq '{prompts: {"workflows/plan": .prompts["commands/plan"], "workflows/build": .prompts["commands/build"]}}' "$FULL"; } > "$SB/two-docs.json"
+run_check "$SB/two-docs.json" "$T1"
+if [[ $RC -eq 2 ]] && ! grep -q '0 missing' <<<"$OUT"; then
+  pass "a manifest file with two JSON documents is refused (exit 2), never '0 missing'"
+else fail "two documents refused" "rc=$RC out=$OUT"; fi
+
+# 12. A manifest given by a relative path is still read after the check enters the tree.
+OUT="$(cd "$SB" && bash "$CHECK" manifest-full.json "$T1" 2>&1)"; RC=$?
+if [[ $RC -eq 0 ]] && ! grep -q '^MISSING ' <<<"$OUT"; then
+  pass "a manifest named by a relative path passes when every key is present"
+else fail "relative manifest path" "rc=$RC out=$OUT"; fi
+
+# 13. (ship gate round 2, finding 5) A key whose entry is null, or has no string servedHash, is missing: oss-decrypt
+#     v1.2.5 refuses to deliver it (default-deny), so it must not count as present.
+jq '.prompts["workflows/plan"] = null | .prompts["workflows/build"] = {"hash": .prompts["workflows/build"].hash}
+    | .prompts["skills/ui-ux"].servedHash = 5' "$FULL" > "$SB/no-served.json"
+run_check "$SB/no-served.json" "$T1"
+if [[ $RC -eq 1 ]] && grep -q '^MISSING workflows/plan ' <<<"$OUT" && grep -q '^MISSING workflows/build ' <<<"$OUT" \
+   && grep -q '^MISSING skills/ui-ux ' <<<"$OUT" && grep -q '3 missing' <<<"$OUT"; then
+  pass "a null entry, an entry without servedHash and a non-string servedHash are each reported missing (exit 1)"
+else fail "no string servedHash = missing" "rc=$RC out=$OUT"; fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

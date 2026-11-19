@@ -14,14 +14,15 @@ manifest="${1:-}"
 [[ -n "$manifest" ]] || { echo "usage: $0 <manifest.json> [tree]" >&2; exit 2; }
 tree="${2:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
-if ! jq -e '.prompts | type == "object"' "$manifest" >/dev/null 2>&1; then
-  echo "error: $manifest is not a readable JSON manifest with a prompts object" >&2
+# Exactly one JSON document (jq reads every document in a file: a key in a second one must never count).
+if [[ "$(jq -s 'length == 1 and (.[0].prompts | type == "object")' "$manifest" 2>/dev/null)" != true ]]; then
+  echo "error: $manifest is not a readable JSON manifest (exactly one document) with a prompts object" >&2
   exit 2
 fi
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-jq -r '.prompts | keys[]' "$manifest" > "$work/keys"
+cp -- "$manifest" "$work/manifest.json"   # read below from inside the tree: a relative path would not resolve
 
 cd "$tree" || { echo "error: cannot enter $tree" >&2; exit 2; }
 dirs=""
@@ -43,7 +44,9 @@ if [[ -n "$dirs" ]]; then
     [[ $t =~ $literal && $n =~ $literal ]] || continue
     [[ "$t" == "custom" ]] && continue
     checked=$((checked + 1))
-    grep -Fxq "$t/$n" "$work/keys" || printf '%s\t%s:%s\n' "$t/$n" "$file" "$line" >> "$work/missing"
+    # Membership inside jq: a key holding a line break is one key, never split into lines. Present only with a string
+    # servedHash: oss-decrypt v1.2.5 refuses to deliver any other entry (round 2, finding 5).
+    [[ "$(jq --arg k "$t/$n" '(.prompts[$k].servedHash | type) == "string"' "$work/manifest.json" 2>/dev/null)" == true ]] || printf '%s\t%s:%s\n' "$t/$n" "$file" "$line" >> "$work/missing"
   done < "$work/calls"
 
   # shellcheck disable=SC2086

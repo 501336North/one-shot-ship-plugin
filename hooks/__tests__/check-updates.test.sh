@@ -721,11 +721,12 @@ test_count_and_saved_unchanged() {
 
 # =============================================================================
 # R-273 P6: the signed manifest also lists each command under its workflow aliases (`workflows/<name>`), the same
-# file with the same hash. A `workflows/*` key whose hash equals a non-workflow key's hash is that file again.
+# file with the same hash and servedHash. A `workflows/*` key whose hash AND servedHash equal a non-workflow key's
+# is that file again (ship gate finding B: delivery is checked against servedHash, so a copied hash alone is not).
 #
 # @behavior When one command changes, session start says 1 prompt improved, not once per alias of that command.
 # @business-rule A prompt is counted once, whatever names the manifest serves it under; a workflow that is its own
-#                file (its hash matches no other key) is still counted.
+#                file (its hash or servedHash matches no other key, or it has no servedHash) is still counted.
 # =============================================================================
 
 test_workflow_alias_counted_once() {
@@ -733,7 +734,7 @@ test_workflow_alias_counted_once() {
     ((TESTS_RUN++))
     local d; d=$(setup_test_env)
     run_keys "$d" '{"commands/deploy":"old","workflows/deploy":"old","workflows/deploy-x":"old"}' \
-        '{"prompts":{"commands/deploy":{"hash":"new"},"workflows/deploy":{"hash":"new"},"workflows/deploy-x":{"hash":"new"}}}'
+        '{"prompts":{"commands/deploy":{"hash":"new","servedHash":"s"},"workflows/deploy":{"hash":"new","servedHash":"s"},"workflows/deploy-x":{"hash":"new","servedHash":"s"}}}'
     if [[ $RC == 0 && "$OUT" == "📡 OSS update: 1 prompts improved → /oss:changelog" && -z "$ERR" ]]; then
         pass "$test_name"
     else
@@ -752,6 +753,37 @@ test_workflow_own_file_counted() {
         pass "$test_name"
     else
         fail "$test_name" "'1 prompts improved'" "rc=$RC out='$OUT' err='$ERR'"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_workflow_served_differs_counted() {
+    local test_name="A changed workflow with a command's hash but its own servedHash (or none) is counted (finding B)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    # workflows/deploy: same hash, other servedHash; workflows/other: no servedHash; workflows/legacy: same hash as
+    # commands/legacy, and neither has a servedHash. All five are counted.
+    run_keys "$d" '{"commands/deploy":"old","workflows/deploy":"old","workflows/other":"old","commands/legacy":"old","workflows/legacy":"old"}' \
+        '{"prompts":{"commands/deploy":{"hash":"new","servedHash":"s"},"workflows/deploy":{"hash":"new","servedHash":"evil"},"workflows/other":{"hash":"new"},"commands/legacy":{"hash":"new2"},"workflows/legacy":{"hash":"new2"}}}'
+    if [[ $RC == 0 && "$OUT" == "📡 OSS update: 5 prompts improved → /oss:changelog" && -z "$ERR" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "'5 prompts improved'" "rc=$RC out='$OUT' err='$ERR'"
+    fi
+    cleanup_test_env "$d"
+}
+
+# Round 2, finding 4: only a string hash or servedHash names a file; ["x"] is not the string "[\"x\"]", 1 is not "1".
+test_workflow_nonstring_hash_counted() {
+    local test_name="A changed workflow whose hash/servedHash are not strings is counted, never matched to a command's string form (round 2, finding 4)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"commands/deploy":"old","workflows/deploy":"old"}' \
+        '{"prompts":{"commands/deploy":{"hash":"[\"x\"]","servedHash":"1"},"workflows/deploy":{"hash":["x"],"servedHash":1}}}'
+    if [[ $RC == 0 && "$OUT" == "📡 OSS update: 2 prompts improved → /oss:changelog" && -z "$ERR" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "'2 prompts improved'" "rc=$RC out='$OUT' err='$ERR'"
     fi
     cleanup_test_env "$d"
 }
@@ -782,6 +814,8 @@ test_newline_key_counted_once
 test_count_and_saved_unchanged
 test_workflow_alias_counted_once
 test_workflow_own_file_counted
+test_workflow_served_differs_counted
+test_workflow_nonstring_hash_counted
 
 echo ""
 echo "======================================="

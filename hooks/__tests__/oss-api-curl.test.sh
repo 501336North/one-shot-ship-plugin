@@ -338,6 +338,62 @@ test_unparsable_sites() {
     # oss-push-metrics.sh is no longer a site: plugin-main-fixes D2 deleted it (no-metrics-push.test.sh).
 }
 
+# R-273 ship gate round 2, finding 1: oss_clean_text removes exactly what the jq gsub over the same class removed
+# (C0 except tab and newline, the oss_invisible set, invalid UTF-8 as U+FFFD), now in time linear in the input.
+# @behavior The team laws are cleaned of the same characters as before, no fewer and no more.
+# @business-rule Making the cleaning fast never lets an invisible or control character through.
+# The reference is the one-gsub filter over OSS_JQ_INVISIBLE, run line by line (each line is short, so its cost
+# stays small); the sample is every code point from U+0000 to U+2FFFF (no surrogates, no newline), U+E0000-E0FFF,
+# U+10FFF0-10FFFF, 256 per line, then invalid UTF-8. Run once per jq found (PATH, /usr/bin/jq): jq 1.7 and 1.8 parse
+# some filters differently, and the hooks run whichever jq the user has.
+test_clean_text_same_set() {
+    local d; d=$(mktemp -d)
+    /usr/bin/perl -e 'binmode STDOUT; my $n = 0;
+        for my $r ([0, 0xD7FF], [0xE000, 0x2FFFF], [0xE0000, 0xE0FFF], [0x10FFF0, 0x10FFFF]) {
+            for my $c ($r->[0] .. $r->[1]) { next if $c == 10; my $s = chr($c); utf8::encode($s); print $s; print "\n" unless ++$n % 256 } }
+        print "\xff|\xc0\x80|\xed\xa0\x80|\xe2\x80\n"' > "$d/sample"
+    local j seen=" "
+    for j in $(type -ap jq) /usr/bin/jq; do
+        [[ -x "$j" ]] || continue
+        j=$(cd "$(dirname "$j")" && pwd -P)/$(basename "$j")
+        [[ "$seen" == *" $j "* ]] && continue; seen="$seen$j "
+        local name="oss_clean_text removes exactly what the one-gsub jq filter removes, every code point sampled ($j: $("$j" --version 2>&1))"; ((TESTS_RUN++))
+        rm -rf "$d/jqbin"; mkdir -p "$d/jqbin"; ln -s "$j" "$d/jqbin/jq"
+        (PATH="$d/jqbin:$PATH"; source "$HELPER"; jq -Rr "$OSS_JQ_INVISIBLE"'gsub("[\u0000-\u0008\u000b-\u001f" + oss_invisible + "]"; "")' < "$d/sample" > "$d/ref")
+        PATH="$d/jqbin:$PATH" run_capped 30 bash -c 'source "$1"; oss_clean_text' _ "$HELPER" < "$d/sample" > "$d/got" 2>/dev/null
+        local rc=$? ref got
+        ref=$(wc -c < "$d/ref" | tr -d ' '); got=$(wc -c < "$d/got" | tr -d ' ')
+        if [[ $rc -eq 0 && $ref -gt 600000 ]] && cmp -s "$d/ref" "$d/got"; then pass "$name"
+        else fail "$name" "same bytes as the reference (> 600000 bytes)" "rc=$rc ref=$ref got=$got first diff: $(cmp "$d/ref" "$d/got" 2>&1 | head -1)"; fi
+    done
+    rm -rf "$d"
+}
+
+# R-273 ship gate round 3, finding 5: jq -R reads stdin in 64 KiB blocks and turned a multibyte character that
+# straddles a block edge into U+FFFD, so team laws written in emoji or CJK came out with replacement characters.
+# @behavior 256 KB of 4-byte emoji, 3-byte CJK and 2-byte accented text, out of step with every block edge, comes back
+#           byte for byte from oss_clean_text, with no U+FFFD. Run once per jq found.
+# @business-rule Cleaning removes only the listed invisible and control characters, never a visible one.
+test_clean_text_keeps_multibyte_across_reads() {
+    local d; d=$(mktemp -d)
+    /usr/bin/perl -e 'binmode STDOUT; my $s = "a\x{1F600}\x{4E2D}\x{E9}\x{1F680}\x{6587}"; utf8::encode($s);
+        print $s x int(262144 / length($s)), "\n"' > "$d/sample"
+    local j seen=" "
+    for j in $(type -ap jq) /usr/bin/jq; do
+        [[ -x "$j" ]] || continue
+        j=$(cd "$(dirname "$j")" && pwd -P)/$(basename "$j")
+        [[ "$seen" == *" $j "* ]] && continue; seen="$seen$j "
+        local name="oss_clean_text keeps 256 KB of emoji and CJK byte for byte, no U+FFFD ($j: $("$j" --version 2>&1))"; ((TESTS_RUN++))
+        rm -rf "$d/jqbin"; mkdir -p "$d/jqbin"; ln -s "$j" "$d/jqbin/jq"
+        PATH="$d/jqbin:$PATH" run_capped 30 bash -c 'source "$1"; oss_clean_text' _ "$HELPER" < "$d/sample" > "$d/got" 2>/dev/null
+        local rc=$? fffd
+        fffd=$(LC_ALL=C grep -o $'\xef\xbf\xbd' "$d/got" | wc -l | tr -d ' ')
+        if [[ $rc -eq 0 && $fffd -eq 0 ]] && cmp -s "$d/sample" "$d/got"; then pass "$name"
+        else fail "$name" "the same bytes, 0 U+FFFD" "rc=$rc U+FFFD=$fffd bytes=$(wc -c < "$d/got" | tr -d ' ')/$(wc -c < "$d/sample" | tr -d ' ')"; fi
+    done
+    rm -rf "$d"
+}
+
 echo "Running oss-api-curl.sh tests..."
 echo "======================================="
 test_helper_key_on_stdin
@@ -359,6 +415,8 @@ test_settings_update_follows_link
 test_settings_update_refuses_bad_link
 test_sites
 test_unparsable_sites
+test_clean_text_same_set
+test_clean_text_keeps_multibyte_across_reads
 echo ""
 echo "======================================="
 echo "Results: $TESTS_PASSED/$TESTS_RUN passed, $TESTS_FAILED failed"

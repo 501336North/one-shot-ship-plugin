@@ -19,7 +19,8 @@
 #   - the markers are not exactly one START line before exactly one END line
 #   - the ?split=1 reply is not the JSON {base, team}, or its base is not the signed one: the raw base bytes go to
 #     `~/.oss/bin/oss-decrypt --verify-body shared/iron-laws`, and only its exit 0 lets base + team be written
-#     (R-273 D12; team laws stay unverified, DR-3). Never a second, unsplit request.
+#     (R-273 D12; team laws stay unverified, DR-3, and are written without control or invisible characters).
+#     Never a second, unsplit request.
 #   - the laws are empty, < 500 bytes, > 256KB, HTML, or have no "IRON LAW"
 # A failed fetch or verification sets a 1h backoff; only a validated write marks the cache fresh (24h), for the
 # apiUrl it came from (a new apiUrl refreshes on the next run).
@@ -141,9 +142,14 @@ fetch_body() {
         warn "the IRON LAWS did not pass verification (oss-decrypt --verify-body exit $rc: not the signed laws, or oss-decrypt is older than 1.2.5 and the next /oss command updates it); CLAUDE.md left unchanged"
         return 1
     fi
-    # base + team (team: the server's advisory section, unverified, DR-3). Drop any marker-like lines; trim
-    # leading/trailing blank lines.
-    cat "$base" "$team" | awk '
+    # The team part (the server's advisory section, unverified, DR-3) loses control and invisible characters
+    # (oss_clean_text); the verified base is written as served. An empty team needs no jq.
+    : > "$team.clean"
+    if [[ -s "$team" ]] && ! oss_clean_text < "$team" > "$team.clean"; then
+        warn "rejected: could not clean the team laws (jq missing?); CLAUDE.md left unchanged"; return 1
+    fi
+    # base + team. Drop any marker-like lines; trim leading/trailing blank lines.
+    cat "$base" "$team.clean" | awk '
         /^[[:space:]]*<!--[[:space:]]*IRON LAWS (START|END)/ { next }
         /^[[:space:]]*$/ { if (started) blanks++; next }
         { while (blanks > 0) { print ""; blanks-- } started = 1; print }' > "$out"
