@@ -6,7 +6,10 @@
  *   counting lines through `xargs wc`) stays allowed, and the refusal never repeats the command's values.
  * @business-rule gate-gaps-r3 Task 10 (R-266, R-257 gate round 4, user pick D47): a `find` that runs `{}`
  *   as a program, or as an interpreter's script, under a -name / -iname / -path / -ipath / -wholename /
- *   -iwholename glob that could match a protected script name is refused.
+ *   -iwholename glob that could match a protected script name is refused. Task 10b (owner pick "Also require
+ *   a start path that can reach them"): only when the find could reach those scripts: a start at or above
+ *   the plugin folder or ~/.oss (`~`, `$HOME`, `/`, a `..` that climbs there), a start inside them, a start
+ *   only known when it runs, `-L` / `-follow` / `-H`, or the default start when the cwd is inside them.
  * @boundary runToolGate (the gate as the hook calls it), with the plugin's real config/tool-gates.json,
  *   a scratch home and a scratch repo, on darwin and linux. Nothing is run for real.
  */
@@ -30,7 +33,7 @@ const repo = path.join(root, 'repo');
 
 beforeAll(() => {
   fs.mkdirSync(path.join(home, '.oss', 'hooks'), { recursive: true });
-  fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+  for (const folder of ['src', 'scripts', 'dist']) fs.mkdirSync(path.join(repo, folder), { recursive: true });
   execFileSync('git', ['init', '-q', '-b', 'feat/x'], { cwd: repo });
 });
 
@@ -69,6 +72,12 @@ const REFUSED: Array<[string, string[]]> = [
   [`find "$CLAUDE_PLUGIN_ROOT" -name '*-l?g.sh' -ok sh {} \\;`, ['*-l?g.sh']],
   [`find ${DIST} -name 'v*e.cjs' | xargs node`, ['v*e.cjs']],
   [`find ${DIST} -name 'v*e.cjs' -print0 | xargs -0 node`, ['v*e.cjs']],
+  // Task 10b: a start that can reach the protected scripts
+  ["find -L scripts -name '*.sh' -exec bash {} \\;", []],
+  ["find ~ -name 'v*e.cjs' -exec node {} \\;", ['v*e.cjs']],
+  ['find "$DIR" -name \'v*e.cjs\' -exec node {} \\;', ['v*e.cjs']],
+  ["find / -name '*.sh' -exec bash {} \\;", []],
+  [`find '${PLUGIN_ROOT}/watcher/dist' -name 'v*e.cjs' -exec node {} \\;`, ['v*e.cjs']],
 ];
 
 const ALLOWED: string[] = [
@@ -76,6 +85,10 @@ const ALLOWED: string[] = [
   "find src -name '*.log' -delete",
   "find src -name '*.test.ts' -exec npx vitest run {} +",
   "find . -type f -name '*.md' | xargs wc -l",
+  // Task 10b: a glob that could match, but from a start in the project that can't reach the protected scripts
+  "find scripts -name '*.sh' -exec bash {} \\;",
+  "find dist -name '*.js' -exec node --check {} \\;",
+  "find src -name '*.sh' -exec sh {} \\;",
 ];
 
 describe('gate-gaps-r3 Task 10: find -exec / xargs cannot run a protected script picked by a short glob', () => {

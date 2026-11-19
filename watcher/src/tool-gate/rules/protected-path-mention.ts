@@ -191,7 +191,7 @@ function safeInProtectedFolder(part: CommandPart, name: string): boolean {
   return SAFE_IN_PROTECTED_FOLDER.has(name) || (name === 'git' && part.git !== null && GIT_INDEX_ONLY.has(part.git.subcommand) && !carriesGitSettings(part));
 }
 
-function expandTilde(p: string, home: string): string {
+export function expandTilde(p: string, home: string): string {
   if (p === '~') return home;
   return p.startsWith('~/') ? home + p.slice(1) : p;
 }

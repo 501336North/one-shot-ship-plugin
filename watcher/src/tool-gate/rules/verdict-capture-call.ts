@@ -11,11 +11,28 @@
  * A `find` that runs the files it finds (`-exec`, `-execdir`, `-ok`, `-okdir`, `{}` as the program or as an
  * interpreter's script, `env` included) is refused when a name or path test's glob could match the capture or
  * an OSS hook (`oss-*.sh`), in any case (gate-gaps-r3 Task 10); with no such test it is decided as before.
+ * Only when the find could reach them (Task 10b): a start at, above or inside the plugin folder or ~/.oss, read
+ * as the protected-path rule reads paths; a start or cwd only known when it runs; or `-L` / `-H` / `-follow`.
  * Reported under the protected-path rule: the hook folder is protected.
  */
 
-import type { CommandPart } from '../command-reader.js';
+import path from 'node:path';
+import { findStarts, type CommandPart } from '../command-reader.js';
+import type { PathResolver } from '../path-resolver.js';
+import { joinRaw } from '../raw-path.js';
+import { UNKNOWN } from '../tokenize.js';
+import { formsOf, isSameOrAncestor } from './protected-path.js';
+import { expandTilde } from './protected-path-mention.js';
 import type { Refusal } from './refusal.js';
+
+/** Where the call runs, for reading a find's start folders as the protected-path rule does. */
+export interface FindPlaces {
+  home: string;
+  /** The plugin folder Claude Code names (CLAUDE_PLUGIN_ROOT). */
+  pluginRoot: string;
+  paths: PathResolver;
+  caseInsensitive: boolean;
+}
 
 /** The capture's entry points, lower case: the hook, the bundle and its tsc output (D44). */
 const NAMES = ['oss-verdict-capture.sh', 'verdict-capture.cjs', 'verdict-capture.js'];
@@ -254,10 +271,30 @@ function runsFound(words: string[]): boolean {
   return script?.includes('{}') ?? false;
 }
 
-/** True when a find runs a file it found by a glob that could pick a protected script (gate-gaps-r3 Task 10). */
-function findRunsProtected(part: CommandPart): boolean {
+/** find's leading options that follow links: `-L`, `-H` in any cluster, or `-follow` anywhere. */
+const FOLLOWS_LINKS = /^(?:-[HLPEXdsx]*[HL][HLPEXdsx]*|-follow)$/;
+
+/**
+ * True when the find could reach the plugin folder or ~/.oss, where the protected scripts are (Task 10b): a start
+ * at, above or inside one of them (`..` read as on disk), a start or cwd only known when it runs, or links followed.
+ */
+function findReachesProtected(part: CommandPart, at: FindPlaces): boolean {
+  const args = part.words.slice(1);
+  if (args.some((w) => FOLLOWS_LINKS.test(w))) return true;
+  const folders = [at.pluginRoot, path.join(at.home, '.oss')].filter((f) => path.isAbsolute(f)).flatMap((f) => formsOf(f, at.paths));
+  return findStarts(args).some((start) => {
+    if (start.includes(UNKNOWN) || part.cwd.includes(UNKNOWN) || (part.lostDir !== null && !start.startsWith('/'))) return true;
+    return formsOf(joinRaw(part.cwd, expandTilde(start, at.home)), at.paths).some((form) =>
+      folders.some((f) => isSameOrAncestor(form, f, at.caseInsensitive) || isSameOrAncestor(f, form, at.caseInsensitive)),
+    );
+  });
+}
+
+/** True when a find runs a file it found by a glob that could pick a protected script it can reach (gate-gaps-r3 Tasks 10, 10b). */
+function findRunsProtected(part: CommandPart, at: FindPlaces): boolean {
   if (part.name !== 'find') return false;
   const words = part.words;
+  if (!findReachesProtected(part, at)) return false;
   if (!words.some((word, i) => FIND_GLOBS.has(words[i - 1] ?? '') && globCouldPickProtected(words[i - 1], word))) return false;
   for (let i = 1; i < words.length; i += 1) {
     if (!FIND_RUNNERS.has(words[i])) continue;
@@ -269,8 +306,8 @@ function findRunsProtected(part: CommandPart): boolean {
   return false;
 }
 
-export function checkVerdictCaptureCall(part: CommandPart, command: string): Refusal | null {
-  if (findRunsProtected(part)) {
+export function checkVerdictCaptureCall(part: CommandPart, command: string, at: FindPlaces): Refusal | null {
+  if (findRunsProtected(part, at)) {
     return {
       rule: 'protected-path',
       reason: 'Refused: this `find` runs the files it finds, and its name or path test could pick a protected OSS script (the verdict capture or an OSS hook). Run a file you name in full, or ask the user to run it with `!`.',
