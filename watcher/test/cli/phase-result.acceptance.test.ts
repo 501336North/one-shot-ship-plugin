@@ -1040,6 +1040,62 @@ describe('phase-result CLI: the ship base must be inside origin/<its own name> (
   });
 });
 
+/**
+ * Gate round 6 ship-base fixes: pen L2 (a stale local base inflated the diff), security info 4 (a symref base) and
+ * pen info 2 (no local base branch: the refusal says how to make one).
+ */
+describe('phase-result CLI: ship base edge cases (gate round 6)', () => {
+  function shipResult(): Record<string, unknown> {
+    return JSON.parse(fs.readFileSync(resultFile(FEATURE, 'ship'), 'utf-8')) as Record<string, unknown>;
+  }
+
+  // User behaviour: a developer cuts the feature from origin/main (CLAUDE.md branch strategy) while local main still
+  //   lags a teammate's push; the ship diff shows only the feature's own change, and check agrees.
+  // Business rule: pen L2 — a same-name snapshot SHA ahead of the local base moves the diff base to its merge-base.
+  it('a stale local main: the diff counts only the feature, and check passes', () => {
+    git('checkout', '-q', '--detach', 'main');
+    commitFile('mate.txt', 'teammate\n'.repeat(300));
+    const mate = git('rev-parse', 'HEAD');
+    git('update-ref', 'refs/remotes/origin/main', mate);
+    git('checkout', '-q', '-B', `feat/${FEATURE}/build`, mate);
+    commitFile('f.txt', 'f\n');
+    passGates(FEATURE);
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    const a = cli('assemble', 'ship');
+    expect(a.status, a.stderr).toBe(0);
+    expect(shipResult().diff).toEqual({ base: mate, baseRef: 'main', files: 1, insertions: 1, deletions: 0 });
+    expect(shipResult().verdict).toBe('ready_to_merge');
+    const c = cli('check', 'ship');
+    expect(c.status, c.stderr).toBe(0);
+  });
+
+  // Business rule: security info 4 — a local base branch that is a symbolic ref is refused with unsafe_base.
+  it('a base branch that is a symref to main is refused with unsafe_base', () => {
+    commitFile('f.txt', 'f\n');
+    passGates(FEATURE);
+    git('symbolic-ref', 'refs/heads/alias', 'refs/heads/main');
+    git('update-ref', 'refs/remotes/origin/alias', 'main');
+    git('config', '--local', 'oss.shipBase', 'alias');
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    const r = cli('assemble', 'ship');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('unsafe_base');
+  });
+
+  // User behaviour: a clone with only origin/main (no local main) is told how to create the local branch.
+  // Business rule: pen info 2 — fixed hint text, never a value echoed into a command.
+  it('no local base branch: diff_unavailable names the git branch fix', () => {
+    commitFile('f.txt', 'f\n');
+    passGates(FEATURE);
+    git('branch', '-q', '-D', 'main');
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    const r = cli('assemble', 'ship');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('diff_unavailable');
+    expect(r.stderr).toContain('create the local branch from its remote (git branch <base> <remote>/<base>)');
+  });
+});
+
 /** Pen N3 (round 2, MEDIUM): every git the phase-result CLI runs is the fixed-path one, never a `git` on PATH. */
 describe('phase-result CLI: git from a fixed path (pen N3)', () => {
   it('a fake git planted on PATH is never run by assemble or check ship', () => {

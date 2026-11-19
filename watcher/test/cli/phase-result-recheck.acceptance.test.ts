@@ -1,7 +1,7 @@
 /**
  * @behavior A ship result's verdict must not change between assemble and the check that complete, start and archive
- *           run, nor flip when the ship is assembled again after a restarted run: the window of captured review-agent
- *           verdicts the result was built from is frozen in the result.
+ *           run, nor flip when the ship is assembled again after a restarted run: every captured review-agent fail
+ *           row is read each time and checked against the shipped code, so assemble and check see the same verdict.
  * @business-rule D47 (code review MEDIUM, gate round 4), amended by D51 (gate round 5): every captured fail row of
  *           the feature is checked against the shipped code, so the result is a pure function of the rows and HEAD and
  *           needs no stored cutoff. Assemble no longer writes `verdictsFrom`; a result stored with one (rounds 6-7)

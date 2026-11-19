@@ -209,7 +209,14 @@ function deadlineOf(opts: CaptureOptions): Deadline {
 }
 
 /**
- * `git <args>` in repo: the fixed-path git (gitBin, never PATH; pen N3) with PATH=/usr/bin:/bin, GIT_* removed plus
+ * D56: the fixed PATH capture's git runs its helpers from, nothing taken from the caller. The Homebrew folders let a
+ * clean filter such as `git-lfs filter-process` run, so an LFS repo records its fails; the git binary itself is still
+ * gitBin (D33).
+ */
+const CAPTURE_GIT_PATH = '/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin';
+
+/**
+ * `git <args>` in repo: the fixed-path git (gitBin, never PATH; pen N3) with PATH=CAPTURE_GIT_PATH, GIT_* removed plus
  * `extra`, no fsmonitor or hooks, bounded by the time left; raw stdout, or null on any failure or when time is up.
  */
 function boundedGit(repo: string, args: string[], extra: NodeJS.ProcessEnv, left: Deadline, input?: Buffer): Buffer | null {
@@ -217,8 +224,8 @@ function boundedGit(repo: string, args: string[], extra: NodeJS.ProcessEnv, left
   // spawnSync needs a whole number; the CLI's process-start time (performance.timeOrigin) is fractional.
   const timeout = Math.floor(left());
   if (git === '' || timeout <= 0) return null;
-  // D51: replace refs and grafts never change what the row records.
-  const env = { ...gitEnv(), GIT_CONFIG_NOSYSTEM: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_GRAFT_FILE: '/dev/null', PATH: '/usr/bin:/bin', ...extra };
+  // gitEnv drops every caller GIT_* and sets D51's GIT_NO_REPLACE_OBJECTS and GIT_GRAFT_FILE.
+  const env = { ...gitEnv(), GIT_CONFIG_NOSYSTEM: '1', PATH: CAPTURE_GIT_PATH, ...extra };
   const r = spawnSync(git, ['-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', ...args], {
     cwd: repo,
     env,
@@ -258,38 +265,63 @@ function treeTmpDir(): string | null {
 }
 
 /**
- * D53: the user's global ignore file when it exists: core.excludesFile (git expands a leading ~), else git's default,
- * $XDG_CONFIG_HOME/git/ignore or ~/.config/git/ignore; null otherwise.
+ * D53: the user's global ignore file when it exists: core.excludesFile from the global config only (~/.gitconfig and
+ * $XDG_CONFIG_HOME/git/config, with their includes; gitEnv drops GIT_CONFIG_GLOBAL; git expands a leading ~), else
+ * git's default, $XDG_CONFIG_HOME/git/ignore or ~/.config/git/ignore; null otherwise. Security LOW-1 (round 8): the
+ * repo's own .git/config is never read for it, so a repo-local setting hides nothing, as with info/exclude.
  */
 function globalIgnoreFile(repo: string, left: Deadline): string | null {
   const xdg = process.env.XDG_CONFIG_HOME;
   const fallback = path.join(xdg !== undefined && xdg !== '' ? xdg : path.join(os.homedir(), '.config'), 'git', 'ignore');
-  const set = gitText(repo, ['config', '--type=path', '--get', 'core.excludesFile'], left);
+  const set = gitText(repo, ['config', '--global', '--includes', '--type=path', '--get', 'core.excludesFile'], left);
   const file = path.resolve(repo, set !== null && set !== '' ? set : fallback);
   return fs.statSync(file, { throwIfNoEntry: false })?.isFile() === true ? file : null;
 }
 
+/** The index entries whose bits hide an edit (D51): assume-unchanged, and skip-worktree ones that are on disk. */
+interface HidingBits {
+  assumed: string[];
+  skipped: string[];
+}
+
 /**
- * D51 (security M1b): clears the assume-unchanged and skip-worktree bits in the temp index, so `ls-files -m` sees an
- * edit they would hide. `ls-files -v` tags an assume-unchanged entry in lowercase and a skip-worktree one as S or s.
- * A skip-worktree file that is not on disk is left as it is: a sparse checkout leaves it off, it is not a deletion.
- * False when git fails or time is up.
+ * D51 (security M1b): the entries of `index` whose assume-unchanged or skip-worktree bit would hide an edit from
+ * `ls-files -m`. `ls-files -v` tags an assume-unchanged entry in lowercase and a skip-worktree one as S or s. A
+ * skip-worktree file that is not on disk is left out: a sparse checkout leaves it off, it is not a deletion.
+ * Performance low 2 (round 8): read once per capture, for both temp indexes, and a folder found missing answers for
+ * every path under it with no lstat. Null when git fails or time is up.
  */
-function clearHidingBits(repo: string, env: NodeJS.ProcessEnv, left: Deadline): boolean {
-  const listed = boundedGit(repo, ['ls-files', '-z', '-v'], env, left);
-  if (listed === null) return false;
-  const assumed: string[] = [];
-  const skipped: string[] = [];
+function hidingBits(repo: string, index: string, left: Deadline): HidingBits | null {
+  const listed = boundedGit(repo, ['ls-files', '-z', '-v'], { GIT_INDEX_FILE: index }, left);
+  if (listed === null) return null;
+  const dirOnDisk = new Map<string, boolean>();
+  const present = (dir: string): boolean => {
+    if (dir === '.') return true;
+    let known = dirOnDisk.get(dir);
+    if (known === undefined) {
+      known = present(path.dirname(dir)) && fs.lstatSync(path.join(repo, dir), { throwIfNoEntry: false }) !== undefined;
+      dirOnDisk.set(dir, known);
+    }
+    return known;
+  };
+  const bits: HidingBits = { assumed: [], skipped: [] };
   for (const e of listed.toString('utf-8').split('\0')) {
     if (e.length < 3) continue;
     const p = e.slice(2);
-    if (e[0] !== e[0].toUpperCase()) assumed.push(p);
-    if ((e[0] === 'S' || e[0] === 's') && fs.lstatSync(path.join(repo, p), { throwIfNoEntry: false }) !== undefined) skipped.push(p);
+    if (e[0] !== e[0].toUpperCase()) bits.assumed.push(p);
+    if ((e[0] === 'S' || e[0] === 's') && present(path.dirname(p)) && fs.lstatSync(path.join(repo, p), { throwIfNoEntry: false }) !== undefined) {
+      bits.skipped.push(p);
+    }
   }
+  return bits;
+}
+
+/** Clears `bits` in the temp index `env` names, so `ls-files -m` sees the edits they would hide; false on failure. */
+function clearHidingBits(repo: string, env: NodeJS.ProcessEnv, bits: HidingBits, left: Deadline): boolean {
   // One flag per call: update-index applies only the last of --no-assume-unchanged and --no-skip-worktree.
   const clear = (flag: string, paths: string[]): boolean =>
     paths.length === 0 || boundedGit(repo, ['update-index', flag, '-z', '--stdin'], env, left, Buffer.from(paths.join('\0') + '\0')) !== null;
-  return clear('--no-assume-unchanged', assumed) && clear('--no-skip-worktree', skipped);
+  return clear('--no-assume-unchanged', bits.assumed) && clear('--no-skip-worktree', bits.skipped);
 }
 
 /**
@@ -300,7 +332,7 @@ function clearHidingBits(repo: string, env: NodeJS.ProcessEnv, left: Deadline): 
  * a changed file is over BIG_FILE_BYTES, or the changed list is over MAX_CHANGED_PATHS paths or MAX_CHANGED_BYTES in
  * all (performance LOW 2: checked before update-index hashes anything); then no row is written (D52).
  */
-function reviewedTree(repo: string, index: string, which: 'all' | 'tracked', dir: string, left: Deadline): string {
+function reviewedTree(repo: string, index: string, bits: HidingBits, which: 'all' | 'tracked', dir: string, left: Deadline): string {
   const tmpIndex = path.join(dir, `index-${which}`);
   try {
     fs.copyFileSync(index, tmpIndex);
@@ -308,7 +340,7 @@ function reviewedTree(repo: string, index: string, which: 'all' | 'tracked', dir
     // no index yet (a repo with nothing staged): start from an empty one
   }
   const env = { GIT_INDEX_FILE: tmpIndex };
-  if (!clearHidingBits(repo, env, left)) return '';
+  if (!clearHidingBits(repo, env, bits, left)) return '';
   // D51, D53: untracked files are left out by the repo's .gitignore files and the user's global ignore file, never by
   // the repo-local .git/info/exclude.
   let list = ['ls-files', '-z', '-m', '-d'];
@@ -344,9 +376,11 @@ function reviewedTrees(repo: string, left: Deadline): { tree: string; trackedTre
   const dir = treeTmpDir();
   if (dir === null) return none;
   try {
+    const bits = hidingBits(repo, index, left);
+    if (bits === null) return none;
     // D52: both trees are needed, so the second is skipped when the first cannot be built.
-    const trackedTree = reviewedTree(repo, index, 'tracked', dir, left);
-    return trackedTree === '' ? none : { tree: reviewedTree(repo, index, 'all', dir, left), trackedTree };
+    const trackedTree = reviewedTree(repo, index, bits, 'tracked', dir, left);
+    return trackedTree === '' ? none : { tree: reviewedTree(repo, index, bits, 'all', dir, left), trackedTree };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -10041,6 +10041,13 @@ function specialSetsAsAny(text) {
     closing.set(delim, at);
     return at;
   };
+  let wordEnd = -1;
+  const wordEndOf = (from) => {
+    if (wordEnd >= from) return wordEnd;
+    wordEnd = from;
+    while (wordEnd < text.length && !WORD_END2.test(text[wordEnd])) wordEnd += 1;
+    return wordEnd;
+  };
   let out = "";
   let i = 0;
   while (i < text.length) {
@@ -10059,7 +10066,7 @@ function specialSetsAsAny(text) {
         j += 1;
       } else if (text[j] === "[" && ":=.".includes(text[j + 1] ?? "x")) {
         const at = closeOf(text[j + 1], j + 2);
-        if (at >= 0) {
+        if (at >= 0 && at < wordEndOf(j + 2)) {
           special = true;
           j = at + 1;
         }

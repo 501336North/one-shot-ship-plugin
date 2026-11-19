@@ -702,11 +702,12 @@ function deadlineOf(opts) {
   const end = (opts.startMs ?? Date.now()) + (opts.deadlineMs ?? DEADLINE_MS);
   return () => end - Date.now();
 }
+var CAPTURE_GIT_PATH = "/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin";
 function boundedGit(repo, args, extra, left, input) {
   const git = gitBin2();
   const timeout = Math.floor(left());
   if (git === "" || timeout <= 0) return null;
-  const env = { ...gitEnv(), GIT_CONFIG_NOSYSTEM: "1", GIT_NO_REPLACE_OBJECTS: "1", GIT_GRAFT_FILE: "/dev/null", PATH: "/usr/bin:/bin", ...extra };
+  const env = { ...gitEnv(), GIT_CONFIG_NOSYSTEM: "1", PATH: CAPTURE_GIT_PATH, ...extra };
   const r = (0, import_node_child_process3.spawnSync)(git, ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", ...args], {
     cwd: repo,
     env,
@@ -742,32 +743,46 @@ function treeTmpDir() {
 function globalIgnoreFile(repo, left) {
   const xdg = process.env.XDG_CONFIG_HOME;
   const fallback = path3.join(xdg !== void 0 && xdg !== "" ? xdg : path3.join(os2.homedir(), ".config"), "git", "ignore");
-  const set = gitText(repo, ["config", "--type=path", "--get", "core.excludesFile"], left);
+  const set = gitText(repo, ["config", "--global", "--includes", "--type=path", "--get", "core.excludesFile"], left);
   const file = path3.resolve(repo, set !== null && set !== "" ? set : fallback);
   return fs5.statSync(file, { throwIfNoEntry: false })?.isFile() === true ? file : null;
 }
-function clearHidingBits(repo, env, left) {
-  const listed = boundedGit(repo, ["ls-files", "-z", "-v"], env, left);
-  if (listed === null) return false;
-  const assumed = [];
-  const skipped = [];
+function hidingBits(repo, index, left) {
+  const listed = boundedGit(repo, ["ls-files", "-z", "-v"], { GIT_INDEX_FILE: index }, left);
+  if (listed === null) return null;
+  const dirOnDisk = /* @__PURE__ */ new Map();
+  const present = (dir) => {
+    if (dir === ".") return true;
+    let known = dirOnDisk.get(dir);
+    if (known === void 0) {
+      known = present(path3.dirname(dir)) && fs5.lstatSync(path3.join(repo, dir), { throwIfNoEntry: false }) !== void 0;
+      dirOnDisk.set(dir, known);
+    }
+    return known;
+  };
+  const bits = { assumed: [], skipped: [] };
   for (const e of listed.toString("utf-8").split("\0")) {
     if (e.length < 3) continue;
     const p = e.slice(2);
-    if (e[0] !== e[0].toUpperCase()) assumed.push(p);
-    if ((e[0] === "S" || e[0] === "s") && fs5.lstatSync(path3.join(repo, p), { throwIfNoEntry: false }) !== void 0) skipped.push(p);
+    if (e[0] !== e[0].toUpperCase()) bits.assumed.push(p);
+    if ((e[0] === "S" || e[0] === "s") && present(path3.dirname(p)) && fs5.lstatSync(path3.join(repo, p), { throwIfNoEntry: false }) !== void 0) {
+      bits.skipped.push(p);
+    }
   }
-  const clear = (flag, paths) => paths.length === 0 || boundedGit(repo, ["update-index", flag, "-z", "--stdin"], env, left, Buffer.from(paths.join("\0") + "\0")) !== null;
-  return clear("--no-assume-unchanged", assumed) && clear("--no-skip-worktree", skipped);
+  return bits;
 }
-function reviewedTree(repo, index, which, dir, left) {
+function clearHidingBits(repo, env, bits, left) {
+  const clear = (flag, paths) => paths.length === 0 || boundedGit(repo, ["update-index", flag, "-z", "--stdin"], env, left, Buffer.from(paths.join("\0") + "\0")) !== null;
+  return clear("--no-assume-unchanged", bits.assumed) && clear("--no-skip-worktree", bits.skipped);
+}
+function reviewedTree(repo, index, bits, which, dir, left) {
   const tmpIndex = path3.join(dir, `index-${which}`);
   try {
     fs5.copyFileSync(index, tmpIndex);
   } catch {
   }
   const env = { GIT_INDEX_FILE: tmpIndex };
-  if (!clearHidingBits(repo, env, left)) return "";
+  if (!clearHidingBits(repo, env, bits, left)) return "";
   let list = ["ls-files", "-z", "-m", "-d"];
   if (which === "all") {
     const global = globalIgnoreFile(repo, left);
@@ -811,8 +826,10 @@ function reviewedTrees(repo, left) {
   const dir = treeTmpDir();
   if (dir === null) return none;
   try {
-    const trackedTree = reviewedTree(repo, index, "tracked", dir, left);
-    return trackedTree === "" ? none : { tree: reviewedTree(repo, index, "all", dir, left), trackedTree };
+    const bits = hidingBits(repo, index, left);
+    if (bits === null) return none;
+    const trackedTree = reviewedTree(repo, index, bits, "tracked", dir, left);
+    return trackedTree === "" ? none : { tree: reviewedTree(repo, index, bits, "all", dir, left), trackedTree };
   } finally {
     fs5.rmSync(dir, { recursive: true, force: true });
   }

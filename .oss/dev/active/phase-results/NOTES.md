@@ -166,3 +166,10 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 - D52: a capture with no reviewed tree writes no row. In repos over 20,000 untracked paths or with a file over 50 MB, fails fall back to the model line.
 - An unreadable global ignore file makes ls-files fail, so no row is written (D52).
 - verdictsFrom is no longer written; the schema keeps it optional for results stored in rounds 6-7.
+
+## Ship round 8 notes (2026-11-19)
+- D55: a fail row whose reviewed trees were pruned by gc is compared using its headSha tree. If that is gone too, the row is ignored and the gate keeps its model line. Only a missing object (cat-file -e exit 1) counts; any other git error keeps the fail open.
+- D56: capture's git PATH is fixed at /usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin, so LFS and other clean filters run. A filter planted there is accepted under D51.
+- D57 limit: deleting a flagged untracked file is not a change, so its fail clears only with a tracked edit (D49). The blocker text says so.
+- Only the global core.excludesFile (with includes) is honoured; repo-local excludes and info/exclude never hide files from the reviewed tree.
+- A stale local base: the diff starts from merge-base(snapshot remote SHA, HEAD) when that remote is ahead of the local tip and contains it. Blockers and verdicts are unchanged.

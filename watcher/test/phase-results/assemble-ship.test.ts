@@ -8,7 +8,7 @@
  *                copied from that record. Git runs hardened (no shell, GIT_* unset, no fsmonitor, local base only).
  * @boundary watcher/src/phase-results/assemble-ship.ts
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { execFileSync } from 'child_process';
 import { createHash, randomUUID } from 'crypto';
 import * as fs from 'fs';
@@ -21,6 +21,20 @@ import { openLedger } from '../../src/phase-results/ledger.js';
 import { captureVerdict } from '../../src/phase-results/verdict-capture.js';
 import { loadPhaseSchema } from '../../src/phase-results/schemas.js';
 import { validate } from '../../src/phase-results/validate.js';
+
+/**
+ * Perf low 1 (gate round 6): counts the git processes assemble starts. A pass-through spy on the process boundary
+ * (git is the collaborator), so every call still runs the real git.
+ */
+const spawns = vi.hoisted(() => ({ n: 0 }));
+vi.mock('node:child_process', async (importOriginal) => {
+  const real = await importOriginal<typeof import('node:child_process')>();
+  const spawnSync: typeof real.spawnSync = ((...args: Parameters<typeof real.spawnSync>) => {
+    spawns.n += 1;
+    return real.spawnSync(...args);
+  }) as typeof real.spawnSync;
+  return { ...real, spawnSync };
+});
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(HERE, '../../..');
@@ -155,7 +169,7 @@ function errorOf(o: AssembleOutcome): string {
   return o.error;
 }
 
-function ship(extra: { base?: string; requiredGates?: readonly string[] } = {}): AssembleOutcome {
+function ship(extra: { base?: string; requiredGates?: readonly string[]; remoteRefs?: ReadonlyMap<string, string> } = {}): AssembleOutcome {
   return assembleShip(ctx(), { base: 'main', ...extra });
 }
 
@@ -549,7 +563,8 @@ describe('assembleShip: captured agent verdicts (T19)', () => {
     const r = result(ship());
     expect(gatesOf(ship())['code-review']).toMatchObject({ verdict: 'fail', findings: { ...ZERO, medium: 4 }, source: 'agent' });
     // ⚠ changes existing test: D32 (user pick, ship round 2) — a gate held by a captured fail carries the "not re-reviewed" label.
-    expect(r.blockers).toEqual(['gate:code-review (captured fail, not re-reviewed)']);
+    // ⚠ changes existing test: D57 — the label also says a tracked code change is needed to clear it.
+    expect(r.blockers).toEqual(['gate:code-review (captured fail, not re-reviewed: a tracked code change is needed to clear it)']);
   });
 
   // ⚠ changes existing test: D45 (fails only) — only an open captured fail makes an agent gate, so the row is a fail (it was a pass).
@@ -658,7 +673,8 @@ describe('assembleShip: security and pen-test gates fail on LOW or above (D27)',
       gate: 'pen-test', verdict: 'fail', findings: { ...ZERO, low: 1 }, fixed: ZERO, source: 'agent',
     });
     expect(r.verdict).toBe('blocked');
-    expect(r.blockers).toEqual(['gate:pen-test (captured fail, not re-reviewed)']);
+    // ⚠ changes existing test: D57 — the label also says a tracked code change is needed to clear it.
+    expect(r.blockers).toEqual(['gate:pen-test (captured fail, not re-reviewed: a tracked code change is needed to clear it)']);
   });
 
   // ⚠ changes existing test: D45 (fails only) — a captured pass adds nothing (it was "a captured clean pass adds a passing pen-test gate").
@@ -1096,7 +1112,9 @@ describe('assembleShip: an open fail survives a restarted run (pen F1)', () => {
     expect(codeReview(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
   });
 
-  it('a blocked last result, or a stored result the ledger does not bind, sets no cutoff', () => {
+  // ⚠ changes existing test: code-review info 2 (gate round 6) — renamed: D51 left no cutoff to set, so the case is that
+  //   no stored result, blocked or unbound, hides an open fail (it was "... sets no cutoff").
+  it('D51: an open fail stays open whatever ship result is stored, blocked or not bound by the ledger', () => {
     failAt('2026-11-13T07:00:00.000Z');
     storedShip('blocked', '2026-11-13T08:00:00.000Z');
     allPass(1);
@@ -1281,9 +1299,19 @@ describe('assembleShip: a captured fail is bound to the reviewed tracked tree', 
     expect(fs.existsSync(path.join(repo, 'planted'))).toBe(false);
   });
 
-  // ⚠ changes existing test: D45 — git cannot compare an unknown object, so the fail stays open (was: a pass).
-  it('a fail whose trackedTree is a hex id git does not have stays open', () => {
+  // ⚠ changes existing test: D55 — trees git no longer has, and no headSha to fall back to: the row is ignored and the
+  //   gate keeps its model line (it was "stays open", D45).
+  it('a fail whose trees are hex ids git does not have, with no headSha, is ignored', () => {
     failRow(() => ({ tree: 'a'.repeat(40), trackedTree: 'a'.repeat(40) }));
+    expect(codeReview()).toMatchObject(CLEARED);
+  });
+
+  // Rule: only a missing object is dropped (D55); any other git error still keeps the fail open.
+  it('a fail whose tree is an object git has but not a tree (a blob) stays open', () => {
+    failRow(() => {
+      const blob = git('rev-parse', 'HEAD:b.txt');
+      return { tree: blob, trackedTree: blob, headSha: git('rev-parse', 'HEAD') };
+    });
     expect(codeReview()).toMatchObject(OPEN);
   });
 });
@@ -1323,7 +1351,8 @@ describe('assembleShip: only a change to the shipped code clears a captured fail
 
   function expectOpen(o: AssembleOutcome): void {
     expect(codeReview(o)).toMatchObject({ verdict: 'fail', source: 'agent' });
-    expect(result(o).blockers).toEqual(['gate:code-review (captured fail, not re-reviewed)']);
+    // ⚠ changes existing test: D57 — the label also says a tracked code change is needed to clear it.
+    expect(result(o).blockers).toEqual(['gate:code-review (captured fail, not re-reviewed: a tracked code change is needed to clear it)']);
   }
 
   function expectCleared(o: AssembleOutcome): void {
@@ -1467,10 +1496,12 @@ describe('assembleShip: only a change to the shipped code clears a captured fail
     expectOpen(ship());
   });
 
-  it('a fail whose tree git does not have stays open', () => {
+  // ⚠ changes existing test: D55 (user pick, "Fall back, then drop") — a fail whose trees git no longer has and that
+  //   has no headSha is ignored, as D48 does, so the gate falls back to its model line (it was "stays open").
+  it('D55: a fail whose tree git does not have, with no headSha, is ignored: the gate keeps its model line', () => {
     row('fail', '2026-11-13T09:10:00.000Z', { tree: 'a'.repeat(40), trackedTree: 'a'.repeat(40), headSha: '' });
     allPass(1);
-    expectOpen(ship());
+    expectCleared(ship());
   });
 });
 
@@ -1536,4 +1567,208 @@ describe('assembleShip: a fail clears on a fix that touches about 20,000 paths (
     allPass(1);
     expect(codeReview(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
   }, 60_000);
+});
+
+/**
+ * D55 (user pick, gate round 6 pen M1, "Fall back, then drop"): capture writes its reviewed trees with no ref, so
+ * git gc (two weeks later, or --prune=now) deletes them. A fail whose trees are gone is compared through its headSha's
+ * tree; when that commit is gone too the row is ignored and the gate keeps its model line (as D48 does).
+ */
+describe('assembleShip: a fail whose reviewed trees git pruned (D55)', { timeout: 60_000 }, () => {
+  const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
+
+  /** The working tree the reviewer saw (b.txt edited, uncommitted), written as loose objects no ref keeps. */
+  function reviewedTree(content: string): string {
+    fs.writeFileSync(path.join(repo, 'b.txt'), content);
+    git('add', 'b.txt');
+    const tree = git('write-tree');
+    git('reset', '-q');
+    git('checkout', '-q', '--', 'b.txt');
+    return tree;
+  }
+
+  function failRow(tree: string, headSha: string): void {
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+      gate: 'code-review', verdict: 'fail', findings: { ...ZERO, high: 1 }, agent: 'a', session: 's',
+      ts: '2026-11-13T09:10:00.000Z', tree, trackedTree: tree, headSha,
+    });
+  }
+
+  function gcNow(): void {
+    git('gc', '-q', '--prune=now');
+  }
+
+  const codeReview = (o: AssembleOutcome): Record<string, unknown> | undefined =>
+    (result(o).gates as Array<Record<string, unknown>>).find((g) => g.gate === 'code-review');
+
+  // Behaviour: a team fixes a flagged change and ships after git gc ran; the fix is a tracked change, so the fail clears.
+  it('a fix commit clears a fail whose trees were pruned, through its headSha', () => {
+    const tree = reviewedTree('vuln\n');
+    failRow(tree, git('rev-parse', 'HEAD'));
+    commitFile('b.txt', 'fixed\n', 'ship with fix');
+    gcNow();
+    expect(() => git('cat-file', '-e', tree)).toThrow();
+    allPass(1);
+    expect(codeReview(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  // Behaviour: gc alone is not a fix; HEAD is still the commit reviewed, so the fail stays open.
+  it('with no commit since review, a fail whose trees were pruned stays open', () => {
+    const tree = reviewedTree('vuln\n');
+    failRow(tree, git('rev-parse', 'HEAD'));
+    gcNow();
+    allPass(1);
+    expect(codeReview(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
+  });
+
+  // Behaviour: trees and the review's commit both pruned (an amended commit, say): the row can no longer be compared,
+  //   so it is ignored and the gate falls back to its model line.
+  it('a fail whose trees and headSha commit were both pruned is ignored: the gate keeps its model line', () => {
+    const tree = reviewedTree('vuln\n');
+    const lost = git('commit-tree', tree, '-p', git('rev-parse', 'HEAD'), '-m', 'amended away');
+    failRow(tree, lost);
+    gcNow();
+    expect(() => git('cat-file', '-e', lost)).toThrow();
+    allPass(1);
+    expect(codeReview(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  // Rule: an ignored row does not hide an older fail that is still open.
+  it('an ignored pruned row does not hide an older open fail', () => {
+    const t = git('rev-parse', 'HEAD^{tree}');
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+      gate: 'code-review', verdict: 'fail', findings: { ...ZERO, medium: 2 }, agent: 'a', session: 's',
+      ts: '2026-11-13T09:05:00.000Z', tree: t, trackedTree: t, headSha: git('rev-parse', 'HEAD'),
+    });
+    const tree = reviewedTree('vuln\n');
+    failRow(tree, git('commit-tree', tree, '-p', git('rev-parse', 'HEAD'), '-m', 'amended away'));
+    gcNow();
+    allPass(1);
+    expect(codeReview(ship())).toMatchObject({ verdict: 'fail', findings: { ...ZERO, medium: 2 }, source: 'agent' });
+  });
+});
+
+/**
+ * Perf low 1 and code-review info 4 (gate round 6): every fail row cost 1-4 git processes, and Stop re-runs assemble
+ * inside a 4 s budget. Rows sharing one reviewed state are compared once per assemble, and a gate's rows are walked
+ * newest first, stopping at the first open one (its findings are the ones shown). The result is unchanged.
+ */
+describe('assembleShip: fail rows cost git processes per distinct reviewed state, not per row', { timeout: 60_000 }, () => {
+  const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  const ROWS = 200;
+  beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
+
+  function manyFails(): void {
+    const tree = git('rev-parse', 'HEAD^{tree}');
+    const headSha = git('rev-parse', 'HEAD');
+    const ledger = openLedger(repo);
+    for (let i = 0; i < ROWS; i++) {
+      const ts = new Date(Date.parse('2026-11-13T09:00:00.000Z') + i * 1000).toISOString();
+      ledger.appendRow(`verdicts/${FEATURE}`, {
+        gate: 'code-review', verdict: 'fail', findings: { ...ZERO, high: 1 }, agent: `a${i}`, session: 's', ts, tree, trackedTree: tree, headSha,
+      });
+    }
+  }
+
+  function gitSpawnsOf(run: () => AssembleOutcome): { outcome: AssembleOutcome; n: number } {
+    spawns.n = 0;
+    const outcome = run();
+    return { outcome, n: spawns.n };
+  }
+
+  const codeReview = (o: AssembleOutcome): Record<string, unknown> | undefined =>
+    (result(o).gates as Array<Record<string, unknown>>).find((g) => g.gate === 'code-review');
+
+  // A generous bound: the diff and the ledger take a handful; one git process per row (the old cost) is 200 or more.
+  const BOUND = 40;
+
+  it(`${ROWS} open fails on the shipped code: still blocked, with far fewer git processes than rows`, () => {
+    manyFails();
+    allPass(1);
+    const { outcome, n } = gitSpawnsOf(() => ship());
+    expect(codeReview(outcome)).toMatchObject({ verdict: 'fail', source: 'agent' });
+    expect(n).toBeLessThan(BOUND);
+  });
+
+  it(`${ROWS} fails on one tree, all cleared by a fix: passes, with far fewer git processes than rows`, () => {
+    manyFails();
+    commitFile('b.txt', 'fixed\n', 'fix');
+    allPass(1);
+    const { outcome, n } = gitSpawnsOf(() => ship());
+    expect(codeReview(outcome)).toMatchObject({ verdict: 'pass', source: 'model' });
+    expect(n).toBeLessThan(BOUND);
+  });
+
+  // Rule: the newest open row's findings are shown, also when rows share one timestamp (the later ledger row wins).
+  it('same-time open fails show the later ledger row\'s findings', () => {
+    const tree = git('rev-parse', 'HEAD^{tree}');
+    for (const medium of [1, 3]) {
+      openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+        gate: 'code-review', verdict: 'fail', findings: { ...ZERO, medium }, agent: 'a', session: 's',
+        ts: '2026-11-13T09:10:00.000Z', tree, trackedTree: tree, headSha: git('rev-parse', 'HEAD'),
+      });
+    }
+    allPass(1);
+    expect(codeReview(ship())).toMatchObject({ verdict: 'fail', findings: { ...ZERO, medium: 3 } });
+  });
+});
+
+/**
+ * Pen L2 (gate round 6): the CLAUDE.md branch strategy cuts features from origin/main while local main may lag behind
+ * teammates' pushes, and a stale local base inflated the ship diff with their commits. When the ship-start snapshot's
+ * same-name remote SHA contains the local tip and is ahead of it, the diff is taken from merge-base(that SHA, HEAD).
+ * Blockers and verdicts do not change.
+ */
+describe('assembleShip: a stale local base does not inflate the diff (pen L2)', () => {
+  /** A teammate's commit pushed to origin/main; the feature is cut from it while local main stays behind. */
+  function staleMain(): string {
+    git('checkout', '-q', '--detach', 'main');
+    commitFile('mate.txt', Array.from({ length: 300 }, (_, i) => `${i}\n`).join(''), 'mate');
+    const mate = git('rev-parse', 'HEAD');
+    git('checkout', '-q', '-B', `feat/${FEATURE}/ship`, mate);
+    commitFile('f.txt', 'f\n', 'feature');
+    return mate;
+  }
+
+  it('diffs against the snapshot SHA when it is ahead of the local base', () => {
+    const mate = staleMain();
+    allPass(1);
+    const r = result(ship({ remoteRefs: new Map([['refs/remotes/origin/main', mate]]) }));
+    expect(r.diff).toEqual({ base: mate, baseRef: 'main', files: 1, insertions: 1, deletions: 0 });
+    expect(r.verdict).toBe('ready_to_merge');
+    expect(r.blockers).toEqual([]);
+  });
+
+  // Rule: a snapshot behind the local base (local main has unpushed commits) never moves the base.
+  it('keeps the local base when the snapshot SHA does not contain it', () => {
+    const behind = git('rev-parse', 'main');
+    const mate = staleMain();
+    git('branch', '-f', 'main', mate);
+    allPass(1);
+    const r = result(ship({ remoteRefs: new Map([['refs/remotes/origin/main', behind]]) }));
+    expect(r.diff).toEqual(result(ship()).diff);
+    expect(r.diff).toMatchObject({ base: mate, files: 1 });
+  });
+
+  it('a snapshot ref of another name does not move the base', () => {
+    const mate = staleMain();
+    allPass(1);
+    const r = result(ship({ remoteRefs: new Map([['refs/remotes/origin/release', mate]]) }));
+    expect(r.diff).toMatchObject({ base: git('rev-parse', 'main'), files: 2 });
+  });
+});
+
+/** Pen info 2 (gate round 6): with no local base branch, the refusal says how to create one (fixed text, no values). */
+describe('assembleShip: a missing local base branch names the fix', () => {
+  it('diff_unavailable carries a hint to create the local branch from its remote', () => {
+    commitFile('f.txt', 'f\n', 'feature');
+    git('update-ref', 'refs/remotes/origin/trunk', 'main');
+    const o = ship({ base: 'trunk' });
+    expect(o).toEqual({
+      ok: false,
+      error: 'diff_unavailable',
+      detail: 'create the local branch from its remote (git branch <base> <remote>/<base>)',
+    });
+  });
 });

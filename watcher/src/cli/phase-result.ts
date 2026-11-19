@@ -177,7 +177,7 @@ function runStartedAt(ledger: Ledger, phase: Phase): string {
   return startedAt;
 }
 
-function runAssembler(phase: Phase, ctx: AssembleContext, base?: string): AssembleOutcome {
+function runAssembler(phase: Phase, ctx: AssembleContext, base?: string, remoteRefs?: ReadonlyMap<string, string>): AssembleOutcome {
   switch (phase) {
     case 'ideate':
       return assembleIdeate(ctx);
@@ -186,10 +186,12 @@ function runAssembler(phase: Phase, ctx: AssembleContext, base?: string): Assemb
     case 'build':
       return assembleBuild(ctx);
     case 'ship': {
-      if (base !== undefined) return assembleShip(ctx, { base });
+      if (base !== undefined) return assembleShip(ctx, { base, remoteRefs });
       const chosen = shipBase(ctx.repo, ctx.valueDir);
-      checkShipBase(ctx.repo, chosen, ctx.feature, originSnapshot(openLedger(ctx.repo), ctx.startedAt));
-      return assembleShip(ctx, { base: chosen });
+      const snapshot = originSnapshot(openLedger(ctx.repo), ctx.startedAt);
+      checkShipBase(ctx.repo, chosen, ctx.feature, snapshot);
+      // Pen L2: the snapshot also moves the diff base past a stale local base.
+      return assembleShip(ctx, { base: chosen, remoteRefs: snapshot });
     }
   }
 }
@@ -261,7 +263,15 @@ function reassemble(repo: string, feature: string, phase: Phase, stored: Record<
   let tmp: string | null = null;
   let dir = valueDir(repo);
   let base: string | undefined;
+  let remoteRefs: ReadonlyMap<string, string> | undefined;
   if (phase === 'ship') {
+    // Pen L2: the same ship-start snapshot assemble used (check runs for this run only, so its startedAt matches); none
+    // left means the local base, as before.
+    try {
+      remoteRefs = originSnapshot(openLedger(repo), String(stored.startedAt));
+    } catch {
+      remoteRefs = undefined;
+    }
     // Re-derive from the recorded base (never base.txt, which ages out); assembleShip's ref checks refuse a gone or
     // malformed one, which check reports as evidence_mismatch.
     const recorded = (stored.diff as Record<string, unknown> | undefined)?.baseRef;
@@ -282,7 +292,7 @@ function reassemble(repo: string, feature: string, phase: Phase, stored: Record<
       evidenceCutoff: typeof stored.evidenceCutoff === 'string' ? stored.evidenceCutoff : null,
       // D51: ship reads every fail row, so a stored verdictsFrom (D47, results from rounds 6-7) is ignored.
       now: () => new Date(),
-    }, base);
+    }, base, remoteRefs);
   } finally {
     if (tmp !== null) fs.rmSync(tmp, { recursive: true, force: true });
   }

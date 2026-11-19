@@ -8,13 +8,14 @@
  *           (no block, bad JSON, extra keys, another agent, a linked or oversized transcript) records nothing.
  * @boundary watcher/src/phase-results/verdict-capture.ts (captureVerdict), with a real temp git repo and ledger.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { openLedger } from '../../src/phase-results/ledger.js';
+import { gitBin } from '../../src/phase-results/git-bin.js';
 import {
   captureVerdict,
   lastVerdictBlock,
@@ -23,6 +24,20 @@ import {
   TRANSCRIPT_TAIL_BYTES,
   type CaptureOutcome,
 } from '../../src/phase-results/verdict-capture.js';
+
+/**
+ * spawnSync (node:child_process) is the external-process collaborator capture runs git through: wrapped to record each
+ * call's binary, arguments and env, and it still runs the real git against the real temp repo.
+ */
+const spawned: Array<{ file: string; args: readonly string[]; env: NodeJS.ProcessEnv | undefined }> = [];
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  const wrapped = ((file: string, args: readonly string[], opts: { env?: NodeJS.ProcessEnv }) => {
+    spawned.push({ file, args, env: opts?.env });
+    return actual.spawnSync(file, args, opts);
+  }) as typeof actual.spawnSync;
+  return { ...actual, spawnSync: wrapped };
+});
 
 const FEATURE = 'verdict-feat';
 const NOW = new Date('2026-11-18T10:00:00.000Z');
@@ -42,6 +57,7 @@ function headNow(): string {
 }
 
 beforeEach(() => {
+  spawned.length = 0;
   savedHome = process.env.HOME;
   home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'verdict-capture-home-')));
   process.env.HOME = home;
@@ -416,9 +432,11 @@ describe('captureVerdict: the reviewed tree is what is on disk (D51)', () => {
 
   // ⚠ changes existing test: D53 ("Honour the global file") — the user's global ignore file leaves a file out again (it
   //   was "an untracked file named only in core.excludesFile is in the reviewed tree"); only info/exclude is ignored.
+  // ⚠ changes existing test: round 8 security LOW-1 — core.excludesFile is set in the user's global config (~/.gitconfig),
+  //   not the repo's .git/config: only the global setting counts now (it was set with a plain `git config`).
   it('a file named in core.excludesFile (a ~ path) is left out of the reviewed tree, as is one in .gitignore', () => {
     fs.writeFileSync(path.join(home, 'global-ignore'), 'venv-file.txt\n');
-    git('config', 'core.excludesFile', '~/global-ignore');
+    git('config', '--global', 'core.excludesFile', '~/global-ignore');
     fs.writeFileSync(path.join(repo, 'venv-file.txt'), 'local tooling\n');
     fs.writeFileSync(path.join(repo, '.gitignore'), 'build.log\n');
     fs.writeFileSync(path.join(repo, 'build.log'), 'noise\n');
@@ -429,6 +447,73 @@ describe('captureVerdict: the reviewed tree is what is on disk (D51)', () => {
     expect(names).toContain('.gitignore');
     expect(names).not.toContain('venv-file.txt');
     expect(names).not.toContain('build.log');
+  });
+
+  // Round 8 security LOW-1: a core.excludesFile set in the repo's own .git/config (or a file it includes) is the repo's
+  // choice, like info/exclude, so it hides nothing; only the user's global setting counts (D53).
+  it('a file named only in a repo-local core.excludesFile is in the reviewed tree', () => {
+    fs.writeFileSync(path.join(home, 'local-ignore'), 'hidden.txt\n');
+    git('config', 'core.excludesFile', path.join(home, 'local-ignore'));
+    fs.writeFileSync(path.join(repo, 'hidden.txt'), 'reviewed-bad\n');
+    expect(capture({ last_assistant_message: FAIL_BLOCK }).captured).toBe(true);
+    const { tree } = rows()[0];
+    git('config', '--unset', 'core.excludesFile');
+    expect(tree).toBe(committedTree());
+  });
+
+  for (const form of ['an [include] of ~/.gitconfig', '~/.config/git/config']) {
+    it(`a global core.excludesFile set through ${form} is still honoured`, () => {
+      const saved = process.env.XDG_CONFIG_HOME;
+      delete process.env.XDG_CONFIG_HOME;
+      try {
+        fs.writeFileSync(path.join(home, 'global-ignore'), 'venv-file.txt\n');
+        const setting = '[core]\n\texcludesFile = ~/global-ignore\n';
+        if (form === '~/.config/git/config') {
+          fs.mkdirSync(path.join(home, '.config', 'git'), { recursive: true });
+          fs.writeFileSync(path.join(home, '.config', 'git', 'config'), setting);
+        } else {
+          fs.writeFileSync(path.join(home, 'included.gitconfig'), setting);
+          fs.writeFileSync(path.join(home, '.gitconfig'), '[include]\n\tpath = ~/included.gitconfig\n');
+        }
+        fs.writeFileSync(path.join(repo, 'venv-file.txt'), 'local tooling\n');
+        fs.writeFileSync(path.join(repo, 'code.txt'), 'reviewed\n');
+        expect(capture({ last_assistant_message: FAIL_BLOCK }).captured).toBe(true);
+      } finally {
+        if (saved !== undefined) process.env.XDG_CONFIG_HOME = saved;
+      }
+      const names = git('ls-tree', '--name-only', rows()[0].tree as string).split('\n');
+      expect(names).toContain('code.txt');
+      expect(names).not.toContain('venv-file.txt');
+    });
+  }
+
+  // Round 8 performance low 2: a sparse checkout that leaves a whole folder off disk records the same tree as before.
+  it('a sparse checkout with a whole folder off disk is not recorded as deleted, and an edit beside it is', () => {
+    fs.mkdirSync(path.join(repo, 'sparse', 'deep'), { recursive: true });
+    for (const f of ['a.txt', 'b.txt', 'deep/c.txt']) fs.writeFileSync(path.join(repo, 'sparse', f), `${f}\n`);
+    fs.mkdirSync(path.join(repo, 'kept'));
+    fs.writeFileSync(path.join(repo, 'kept', 'on-disk.txt'), 'reviewed-good\n');
+    git('add', '-A', '--', '.', ':(exclude).oss');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'sparse');
+    git('update-index', '--skip-worktree', 'sparse/a.txt', 'sparse/b.txt', 'sparse/deep/c.txt', 'kept/on-disk.txt');
+    fs.rmSync(path.join(repo, 'sparse'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'kept', 'on-disk.txt'), 'reviewed-bad\n');
+    expect(capture({ last_assistant_message: FAIL_BLOCK }).captured).toBe(true);
+    const { tree, trackedTree } = rows()[0];
+    // what the shipped commit holds: the off-disk folder as committed, and the edit beside it
+    git('update-index', '--no-skip-worktree', 'kept/on-disk.txt');
+    git('add', 'kept/on-disk.txt');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'edit');
+    expect(tree).toBe(git('rev-parse', 'HEAD^{tree}'));
+    expect(trackedTree).toBe(tree);
+  });
+
+  // Round 8 performance low 2: the index's hidden-bit list is read once per capture, not once per temp index.
+  it('reads the index bits (ls-files -v) once per capture', () => {
+    commitTracked();
+    git('update-index', '--skip-worktree', 'tracked.txt');
+    expect(capture({ last_assistant_message: FAIL_BLOCK }).captured).toBe(true);
+    expect(spawned.filter((c) => c.args.includes('-v') && c.args.includes('ls-files'))).toHaveLength(1);
   });
 
   // D53: with no core.excludesFile, git's default global file ($XDG_CONFIG_HOME/git/ignore, else ~/.config/git/ignore).
@@ -464,6 +549,52 @@ describe('captureVerdict: the reviewed tree is what is on disk (D51)', () => {
     git('replace', '-d', head);
     expect(rows()[0].headSha).toBe(head);
     expect(git('rev-parse', `${rows()[0].headSha as string}^{tree}`)).toBe(realTree);
+  });
+});
+
+/**
+ * D56 ("Allow fixed filter dirs"): capture's git runs clean filters (Git LFS's `git-lfs filter-process`, found through
+ * PATH) from a fixed folder list, never the caller's PATH, so an LFS repo records its fails. The git binary itself is
+ * still the fixed one (D33).
+ */
+describe('captureVerdict: the PATH capture gives git (D56)', () => {
+  const FAIL_BLOCK = block({ verdict: 'fail', findings: COUNTS });
+  const FILTER_PATH = '/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin';
+
+  it('every git call runs the fixed git binary with PATH=/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin, never the caller\'s', () => {
+    const savedPath = process.env.PATH;
+    process.env.PATH = `${path.join(repo, 'planted-bin')}:${savedPath ?? ''}`;
+    try {
+      fs.writeFileSync(path.join(repo, 'code.txt'), 'reviewed\n');
+      expect(capture({ last_assistant_message: FAIL_BLOCK }).captured).toBe(true);
+    } finally {
+      process.env.PATH = savedPath;
+    }
+    const gitCalls = spawned.filter((c) => c.file === gitBin());
+    expect(gitCalls).not.toHaveLength(0);
+    expect(spawned.filter((c) => c.file !== gitBin())).toEqual([]);
+    for (const c of gitCalls) expect(c.env?.PATH).toBe(FILTER_PATH);
+  });
+
+  it('a Git LFS repo records its fail, and the reviewed tree is the commit of the reviewed code', () => {
+    // Integration with the real git-lfs: it can only be found in one of the fixed folders. Without it there is nothing
+    // to integrate with, so the case returns early here (the PATH case above still pins the fixed list).
+    const lfs = ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'].find((d) => fs.existsSync(path.join(d, 'git-lfs')));
+    if (lfs === undefined) {
+      console.log('git-lfs is not installed in a fixed folder: LFS integration case not exercised');
+      return;
+    }
+    git('lfs', 'install', '--local');
+    fs.writeFileSync(path.join(repo, '.gitattributes'), '*.bin filter=lfs diff=lfs merge=lfs -text\n');
+    git('add', '.gitattributes');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'lfs');
+    fs.writeFileSync(path.join(repo, 'feature.txt'), 'vuln\n');
+    fs.writeFileSync(path.join(repo, 'asset.bin'), Buffer.alloc(2000, 7));
+    expect(capture({ last_assistant_message: FAIL_BLOCK }).captured).toBe(true);
+    const { tree } = rows()[0];
+    git('add', 'feature.txt', 'asset.bin');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'ship the reviewed code');
+    expect(tree).toBe(git('rev-parse', 'HEAD^{tree}'));
   });
 });
 

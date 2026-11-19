@@ -162,6 +162,23 @@
   - git env set.
 - [x] Builder K: the snapshot drops symrefs and its loop is linear; the gate rule handles brackets and extensions.
 
+### Ship round 8 fixes, after gate round 6 (2026-11-19)
+- [x] Gate round 6: performance passed; code review, security and pen test failed (1 medium, 6 low). The user picked D54-D57.
+- [x] Builder L (assemble-ship):
+  - D55: gc'd trees fall back to the headSha tree, else the row is ignored;
+  - cached, newest-first verdict walk;
+  - merge-base diff for a stale local base;
+  - a symref base is refused;
+  - a hint when there is no local base;
+  - D57 blocker text;
+  - stale test names fixed.
+- [x] Builder M (capture):
+  - global-only core.excludesFile;
+  - D56 fixed filter PATH for LFS;
+  - hidden-bit lists read once per capture, with a per-folder existence cache;
+  - duplicate env removed.
+- [x] Builder N (gate rule): the class-form close is bounded to its word.
+
 ### Later
 - [ ] Ship into feat/determinism-sprint/build (SD-1)
 - [ ] T21 oss-lab (after the plugin ships)
@@ -169,4 +186,4 @@
 ## Blockers
 - None. R-266's 4 red base tests are fixed in #233 (4458bddb), and R-257 is rebased onto it.
 
-## Last Updated: 2026-11-19 13:30 CST by /oss:ship (round 7 fixes)
+## Last Updated: 2026-11-19 15:25 CST by /oss:ship (round 8 fixes)

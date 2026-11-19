@@ -4,7 +4,8 @@
  * Diff: hardened git (fixed argv, no shell, GIT_* unset, GIT_CONFIG_NOSYSTEM=1, fsmonitor and hooks off, no external
  * diff or textconv, 10 s timeout). The base is a local branch only (never gh or fetch), checked with
  * `check-ref-format --branch` and passed after `--end-of-options`. Empty when the tree equals the base tip (covers a
- * squash-merged branch) or nothing changed since the merge-base. Totals come from `--shortstat` against the merge-base.
+ * squash-merged branch) or nothing changed since the merge-base. Totals come from `--shortstat` against the merge-base,
+ * taken from the ship-start snapshot's same-name remote SHA when that is ahead of a stale local base (pen L2).
  * Gates: the feature's timeline gate lines of this run whose sha256 is in the ledger `gates/<feature>`, latest round only
  * (`source: model`). Every captured review-agent row of the feature (ledger `verdicts/<feature>`, verdict-capture.ts; D51:
  * no cutoff, pen F1/L7) then applies, per gate (`source: agent`; `fixed` stays from the line):
@@ -13,7 +14,10 @@
  *   (its reviewed trees, else its headSha's tree; untracked scratch files and empty or .oss-only commits are no change).
  *   D51: the gate is open when any of its fail rows is, with the newest open row's findings, so a revert to code that
  *   already failed stays blocked. An open fail keeps its gate failed, and no fix count overrides it; its blocker reads
- *   `gate:<name> (captured fail, not re-reviewed)`. A fail with neither trees nor headSha does not count (D48).
+ *   `gate:<name> (captured fail, not re-reviewed: a tracked code change is needed to clear it)` (D57). A fail with
+ *   neither trees nor headSha does not count (D48). D55: a fail whose trees git pruned is compared through its
+ *   headSha's tree, and ignored when that commit is gone too. Rows are walked newest first and each reviewed state is
+ *   compared once per assemble (perf low 1).
  * - An open captured pen-test fail adds that optional gate. D26: the result labels how many gates an agent row backs
  *   (`gateEvidence`) and names the rest (`uncapturedGates`).
  * Overrides: each decisionId must be a decisions.ndjson record whose line hash, id and feature match a ledger row;
@@ -46,6 +50,8 @@ export const DEFAULT_REQUIRED_GATES: readonly string[] = ['code-review', 'perfor
 export interface AssembleShipOptions {
   base: string;
   requiredGates?: readonly string[];
+  /** Pen L2: the ship-start snapshot (remote ref name to SHA); a same-name SHA ahead of the local base moves the diff base. */
+  remoteRefs?: ReadonlyMap<string, string>;
 }
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'] as const;
@@ -124,6 +130,12 @@ export function shipBaseAllowed(repo: string, base: string, feature: string, ref
     return false;
   }
   if (current === `refs/heads/${base}`) return false;
+  // Security info 4: a local base that is a symbolic ref (refs/heads/x -> another branch) is refused.
+  try {
+    if (runGit(repo, ['symbolic-ref', '-q', `refs/heads/${base}`], [0, 1]).status === 0) return false;
+  } catch {
+    return false;
+  }
   const tip = branchTip(repo, base);
   if (tip === null) return false;
   for (const [name, sha] of refs) {
@@ -143,12 +155,25 @@ interface Diff {
   empty: boolean;
 }
 
-function readDiff(repo: string, base: string): Diff {
+/**
+ * Pen L2: the snapshot SHA of a same-name remote ref (`refs/remotes/<remote>/<branch>`, in name order) that is ahead of
+ * the local tip and contains it, so a stale local base (a teammate pushed since it was last pulled) does not count their
+ * commits as the feature's; else the local tip.
+ */
+function diffFrom(repo: string, branch: string, tip: string, remoteRefs: ReadonlyMap<string, string>): string {
+  for (const name of [...remoteRefs.keys()].sort()) {
+    const sha = remoteRefs.get(name) as string;
+    if (/^refs\/remotes\/[^/]+\/(.+)$/.exec(name)?.[1] === branch && sha !== tip && containedIn(repo, tip, sha)) return sha;
+  }
+  return tip;
+}
+
+function readDiff(repo: string, base: string, remoteRefs: ReadonlyMap<string, string>): Diff {
   if (base.startsWith('-')) throw new GitError('base');
   const branch = runGit(repo, ['check-ref-format', '--branch', base]).out;
   const tip = runGit(repo, ['rev-parse', '--verify', '--end-of-options', `refs/heads/${branch}^{commit}`]).out;
   const headSha = runGit(repo, ['rev-parse', '--verify', 'HEAD^{commit}']).out;
-  const mergeBase = runGit(repo, ['merge-base', tip, headSha]).out;
+  const mergeBase = runGit(repo, ['merge-base', diffFrom(repo, branch, tip, remoteRefs), headSha]).out;
   const sameTree = runGit(repo, ['diff', '--quiet', '--no-ext-diff', '--no-textconv', tip, headSha], [0, 1]).status === 0;
   const stat = runGit(repo, ['diff', '--shortstat', '--no-renames', '--no-ext-diff', '--no-textconv', mergeBase, headSha]).out;
   const num = (re: RegExp): number => Number(re.exec(stat)?.[1] ?? 0);
@@ -270,12 +295,32 @@ function shippedVsReviewed(repo: string, tree: string, trackedTree: string, revi
  * D45: a fail is cleared only when the shipped code differs from the code that failed (shippedVsReviewed): its reviewed
  * trees, else its headSha's tree. Untracked scratch files and empty or .oss-only commits change nothing (pen M3). A fail
  * that cannot be compared (a malformed or partial row, or a git error) stays open; one with neither is dropped (D48).
+ * D55: trees git no longer has (gc) fall back to the headSha's tree; with that commit gone too, 'ignored' (neither opens
+ * nor clears).
  */
-function failCleared(repo: string, f: FailRow): boolean {
-  if (f.tree !== null && f.trackedTree !== null) return shippedVsReviewed(repo, f.tree, f.trackedTree, f.headSha) === 'differs';
-  if (f.headSha === null) return false;
+function failCleared(repo: string, f: FailRow): boolean | 'ignored' {
+  const gone = (sha: string): boolean => objectMissing(repo, sha);
+  if (f.tree !== null && f.trackedTree !== null && !gone(f.tree) && !gone(f.trackedTree)) {
+    return shippedVsReviewed(repo, f.tree, f.trackedTree, f.headSha) === 'differs';
+  }
+  const treesGone = f.tree !== null && f.trackedTree !== null;
+  if (f.headSha === null) return treesGone ? 'ignored' : false;
+  // D55: the reviewed trees were pruned (gc): compare the headSha's tree; with that commit gone too, ignore the row.
+  if (treesGone && gone(f.headSha)) return 'ignored';
   const headTree = `${f.headSha}^{tree}`;
   return shippedVsReviewed(repo, headTree, headTree, null) === 'differs';
+}
+
+/**
+ * D55: true only when git says the object is not in the repo (`cat-file -e` exits 1); any other git error is not a
+ * missing object, so the caller keeps the fail open.
+ */
+function objectMissing(repo: string, sha: string): boolean {
+  try {
+    return runGit(repo, ['cat-file', '-e', sha], [0, 1]).status === 1;
+  } catch {
+    return false;
+  }
 }
 
 /** A ledger-backed timeline line's round and time, for telling a re-review round from a re-roll (finding 4). */
@@ -327,7 +372,7 @@ function timelineGates(ctx: AssembleContext, featureDir: string, gateHashes: Set
 const CAPTURE_ADDS_GATE = 'pen-test';
 
 /** The blocker label of a gate held failed by an open captured fail (D32, D45). */
-const NOT_RE_REVIEWED = 'captured fail, not re-reviewed';
+const NOT_RE_REVIEWED = 'captured fail, not re-reviewed: a tracked code change is needed to clear it';
 
 /**
  * T19 + D45 + D51: every captured FAIL row of the feature (no cutoff: pen F1, pen L7) is checked against the shipped
@@ -338,13 +383,16 @@ const NOT_RE_REVIEWED = 'captured fail, not re-reviewed';
  * model`, listed in uncapturedGates, D26).
  */
 function applyAgentVerdicts(tl: Timeline, verdictRows: LedgerRow[], repo: string): Set<string> {
+  // Perf low 1: newest first (a later ledger row wins a tie), stopping at a gate's first open row; rows sharing one
+  // reviewed state are compared once.
+  const rows = verdictRows.map(failRow).filter((f): f is FailRow => f !== null).reverse().sort((a, b) => b.at - a.at);
+  const cleared = new Map<string, boolean | 'ignored'>();
   const newestOpen = new Map<string, FailRow>();
-  for (const raw of verdictRows) {
-    const f = failRow(raw);
-    if (f === null) continue;
-    const prev = newestOpen.get(f.gate);
-    if (prev !== undefined && prev.at > f.at) continue;
-    if (!failCleared(repo, f)) newestOpen.set(f.gate, f);
+  for (const f of rows) {
+    if (newestOpen.has(f.gate)) continue;
+    const key = `${f.tree}|${f.trackedTree}|${f.headSha}`;
+    if (!cleared.has(key)) cleared.set(key, failCleared(repo, f));
+    if (cleared.get(key) === false) newestOpen.set(f.gate, f);
   }
   const open = new Set<string>();
   for (const [name, f] of newestOpen) {
@@ -391,9 +439,12 @@ function readOverrides(ctx: AssembleContext, featureDir: string, decisionRows: L
 export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): AssembleOutcome {
   let diff: Diff;
   try {
-    diff = readDiff(ctx.repo, opts.base);
+    diff = readDiff(ctx.repo, opts.base, opts.remoteRefs ?? new Map());
   } catch {
-    return { ok: false, error: 'diff_unavailable' };
+    // Pen info 2: fixed text, never the base name.
+    return isLocalBranch(ctx.repo, opts.base)
+      ? { ok: false, error: 'diff_unavailable' }
+      : { ok: false, error: 'diff_unavailable', detail: 'create the local branch from its remote (git branch <base> <remote>/<base>)' };
   }
   if (diff.empty) return { ok: false, error: 'empty_diff' };
 

@@ -164,3 +164,14 @@ describe('shipBaseAllowed ignores replace refs and grafts (D51, security M2)', (
     expect(shipBaseAllowed(repo, 'release', FEATURE, snap)).toBe(false);
   });
 });
+
+/** Security info 4 (gate round 6): a local base branch that is a symbolic ref is refused (unsafe_base). */
+describe('shipBaseAllowed refuses a symref base', () => {
+  it('a local branch made a symref to main is refused, though main itself passes', () => {
+    const main = git('rev-parse', 'main');
+    commit('feature.txt');
+    git('symbolic-ref', 'refs/heads/alias', 'refs/heads/main');
+    expect(shipBaseAllowed(repo, 'main', FEATURE, refs({ main, alias: main }))).toBe(true);
+    expect(shipBaseAllowed(repo, 'alias', FEATURE, refs({ main, alias: main }))).toBe(false);
+  });
+});

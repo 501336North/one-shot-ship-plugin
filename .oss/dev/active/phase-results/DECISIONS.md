@@ -138,6 +138,10 @@
   - Gate briefs from round 6 on state this threat model.
 - D52 (user picker, 2026-11-19, "Record no row"): a capture that cannot build the reviewed tree (more than 20,000 paths, a file over 50 MB, or the deadline) writes no row, and the gate keeps its model line (D26). This extends D48 and replaces the D45 build note's headSha fallback for captures that have trees.
 - D53 (user picker, 2026-11-19, "Honour the global file"): capture lists untracked files using the repo's .gitignore files plus the user's global ignore file (core.excludesFile, or its default location). It ignores only the repo-local .git/info/exclude. Honest repos that keep .venv or build output in a global ignore keep their fails captured. Hiding a file through the global ignore file under ~ is an accepted limit under D51.
+- D54 (user picker, 2026-11-19, "Fix all lows + medium"): ship round 8 fixes gate round 6's medium and every low, plus the cheap infos. This is fix round 8, past the 3-round cap, by the owner's pick.
+- D55 (user picker, 2026-11-19, "Fall back, then drop"): a fail row whose reviewed tree git can no longer read (pruned by gc) is compared using the row's headSha tree. If that is gone too, the row is ignored, as D48 does for unreadable captures, and the gate falls back to its model line.
+- D56 (user picker, 2026-11-19, "Allow fixed filter dirs"): capture's git calls run with PATH=/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin, so Git LFS and other clean filters work and their repos record fails. A filter planted in those folders is an accepted route under D51.
+- D57 (user picker, 2026-11-19, "Note as a limit"): D45 stands; passes never clear. Deleting a flagged untracked file is not a change, so its fail clears only with a tracked edit (D49). The blocker text says so, and NOTES records it.
 - D25-D29: ship round 1 decisions (user pickers, 2026-11-18), from four failing gates.
   - **D25 Gate code location: lock it down.**
     - `~/.oss/plugin-root` and `~/.oss/watcher/**` join the tool gate's protectedPaths. This changes R-266's exact-list test, as the user's pick allows.

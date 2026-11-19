@@ -28,7 +28,8 @@ const WORD_END = /[\s;|&()<>'"`]/;
 /**
  * The text with each closed set that holds a class, equivalence or collating form (`[:alpha:]`, `[=e=]`, `[.e.]`)
  * or a backslash turned into `?` (any one character), before the text is split: it fails closed (code-review L1).
- * One pass: the search for a form's closing `:]`, `=]` or `.]` is cached, and an unclosed set is skipped whole.
+ * One pass: the search for a form's closing `:]`, `=]` or `.]` and for the next word end are cached, and an
+ * unclosed set is skipped whole. A close past the current word's end does not close the form (code-review round 8).
  */
 function specialSetsAsAny(text: string): string {
   const closing = new Map<string, number>();
@@ -38,6 +39,13 @@ function specialSetsAsAny(text: string): string {
     const at = text.indexOf(`${delim}]`, from);
     closing.set(delim, at);
     return at;
+  };
+  let wordEnd = -1;
+  const wordEndOf = (from: number): number => {
+    if (wordEnd >= from) return wordEnd;
+    wordEnd = from;
+    while (wordEnd < text.length && !WORD_END.test(text[wordEnd])) wordEnd += 1;
+    return wordEnd;
   };
   let out = '';
   let i = 0;
@@ -57,7 +65,7 @@ function specialSetsAsAny(text: string): string {
         j += 1;
       } else if (text[j] === '[' && ':=.'.includes(text[j + 1] ?? 'x')) {
         const at = closeOf(text[j + 1], j + 2);
-        if (at >= 0) {
+        if (at >= 0 && at < wordEndOf(j + 2)) {
           special = true;
           j = at + 1;
         }

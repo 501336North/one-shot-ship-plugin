@@ -1186,6 +1186,11 @@ function shipBaseAllowed(repo, base, feature, refs) {
     return false;
   }
   if (current === `refs/heads/${base}`) return false;
+  try {
+    if (runGit(repo, ["symbolic-ref", "-q", `refs/heads/${base}`], [0, 1]).status === 0) return false;
+  } catch {
+    return false;
+  }
   const tip = branchTip(repo, base);
   if (tip === null) return false;
   for (const [name, sha] of refs) {
@@ -1194,12 +1199,19 @@ function shipBaseAllowed(repo, base, feature, refs) {
   }
   return false;
 }
-function readDiff(repo, base) {
+function diffFrom(repo, branch, tip, remoteRefs) {
+  for (const name of [...remoteRefs.keys()].sort()) {
+    const sha = remoteRefs.get(name);
+    if (/^refs\/remotes\/[^/]+\/(.+)$/.exec(name)?.[1] === branch && sha !== tip && containedIn(repo, tip, sha)) return sha;
+  }
+  return tip;
+}
+function readDiff(repo, base, remoteRefs) {
   if (base.startsWith("-")) throw new GitError("base");
   const branch = runGit(repo, ["check-ref-format", "--branch", base]).out;
   const tip = runGit(repo, ["rev-parse", "--verify", "--end-of-options", `refs/heads/${branch}^{commit}`]).out;
   const headSha2 = runGit(repo, ["rev-parse", "--verify", "HEAD^{commit}"]).out;
-  const mergeBase = runGit(repo, ["merge-base", tip, headSha2]).out;
+  const mergeBase = runGit(repo, ["merge-base", diffFrom(repo, branch, tip, remoteRefs), headSha2]).out;
   const sameTree = runGit(repo, ["diff", "--quiet", "--no-ext-diff", "--no-textconv", tip, headSha2], [0, 1]).status === 0;
   const stat = runGit(repo, ["diff", "--shortstat", "--no-renames", "--no-ext-diff", "--no-textconv", mergeBase, headSha2]).out;
   const num2 = (re) => Number(re.exec(stat)?.[1] ?? 0);
@@ -1270,10 +1282,22 @@ function shippedVsReviewed(repo, tree, trackedTree, reviewHead) {
   }
 }
 function failCleared(repo, f) {
-  if (f.tree !== null && f.trackedTree !== null) return shippedVsReviewed(repo, f.tree, f.trackedTree, f.headSha) === "differs";
-  if (f.headSha === null) return false;
+  const gone = (sha) => objectMissing(repo, sha);
+  if (f.tree !== null && f.trackedTree !== null && !gone(f.tree) && !gone(f.trackedTree)) {
+    return shippedVsReviewed(repo, f.tree, f.trackedTree, f.headSha) === "differs";
+  }
+  const treesGone = f.tree !== null && f.trackedTree !== null;
+  if (f.headSha === null) return treesGone ? "ignored" : false;
+  if (treesGone && gone(f.headSha)) return "ignored";
   const headTree = `${f.headSha}^{tree}`;
   return shippedVsReviewed(repo, headTree, headTree, null) === "differs";
+}
+function objectMissing(repo, sha) {
+  try {
+    return runGit(repo, ["cat-file", "-e", sha], [0, 1]).status === 1;
+  } catch {
+    return false;
+  }
 }
 function timelineGates(ctx, featureDir, gateHashes) {
   const backed = [];
@@ -1305,15 +1329,16 @@ function timelineGates(ctx, featureDir, gateHashes) {
   return { byName, rounds };
 }
 var CAPTURE_ADDS_GATE = "pen-test";
-var NOT_RE_REVIEWED = "captured fail, not re-reviewed";
+var NOT_RE_REVIEWED = "captured fail, not re-reviewed: a tracked code change is needed to clear it";
 function applyAgentVerdicts(tl, verdictRows, repo) {
+  const rows = verdictRows.map(failRow).filter((f) => f !== null).reverse().sort((a, b) => b.at - a.at);
+  const cleared = /* @__PURE__ */ new Map();
   const newestOpen = /* @__PURE__ */ new Map();
-  for (const raw of verdictRows) {
-    const f = failRow(raw);
-    if (f === null) continue;
-    const prev = newestOpen.get(f.gate);
-    if (prev !== void 0 && prev.at > f.at) continue;
-    if (!failCleared(repo, f)) newestOpen.set(f.gate, f);
+  for (const f of rows) {
+    if (newestOpen.has(f.gate)) continue;
+    const key2 = `${f.tree}|${f.trackedTree}|${f.headSha}`;
+    if (!cleared.has(key2)) cleared.set(key2, failCleared(repo, f));
+    if (cleared.get(key2) === false) newestOpen.set(f.gate, f);
   }
   const open = /* @__PURE__ */ new Set();
   for (const [name, f] of newestOpen) {
@@ -1353,9 +1378,9 @@ function readOverrides(ctx, featureDir, decisionRows) {
 function assembleShip(ctx, opts) {
   let diff;
   try {
-    diff = readDiff(ctx.repo, opts.base);
+    diff = readDiff(ctx.repo, opts.base, opts.remoteRefs ?? /* @__PURE__ */ new Map());
   } catch {
-    return { ok: false, error: "diff_unavailable" };
+    return isLocalBranch(ctx.repo, opts.base) ? { ok: false, error: "diff_unavailable" } : { ok: false, error: "diff_unavailable", detail: "create the local branch from its remote (git branch <base> <remote>/<base>)" };
   }
   if (diff.empty) return { ok: false, error: "empty_diff" };
   const featureDir = path6.join(ctx.repo, ".oss", "dev", "active", ctx.feature);
@@ -1565,7 +1590,7 @@ function runStartedAt(ledger, phase) {
   if (typeof startedAt !== "string") throw new Refusal("no_run_started", `run/${phase}`);
   return startedAt;
 }
-function runAssembler(phase, ctx, base) {
+function runAssembler(phase, ctx, base, remoteRefs) {
   switch (phase) {
     case "ideate":
       return assembleIdeate(ctx);
@@ -1574,10 +1599,11 @@ function runAssembler(phase, ctx, base) {
     case "build":
       return assembleBuild(ctx);
     case "ship": {
-      if (base !== void 0) return assembleShip(ctx, { base });
+      if (base !== void 0) return assembleShip(ctx, { base, remoteRefs });
       const chosen = shipBase(ctx.repo, ctx.valueDir);
-      checkShipBase(ctx.repo, chosen, ctx.feature, originSnapshot(openLedger(ctx.repo), ctx.startedAt));
-      return assembleShip(ctx, { base: chosen });
+      const snapshot = originSnapshot(openLedger(ctx.repo), ctx.startedAt);
+      checkShipBase(ctx.repo, chosen, ctx.feature, snapshot);
+      return assembleShip(ctx, { base: chosen, remoteRefs: snapshot });
     }
   }
 }
@@ -1633,7 +1659,13 @@ function reassemble(repo, feature, phase, stored) {
   let tmp = null;
   let dir = valueDir(repo);
   let base;
+  let remoteRefs;
   if (phase === "ship") {
+    try {
+      remoteRefs = originSnapshot(openLedger(repo), String(stored.startedAt));
+    } catch {
+      remoteRefs = void 0;
+    }
     const recorded = stored.diff?.baseRef;
     base = typeof recorded === "string" ? recorded : "";
     tmp = fs10.mkdtempSync(path9.join(os2.tmpdir(), "oss-phase-result-"));
@@ -1652,7 +1684,7 @@ function reassemble(repo, feature, phase, stored) {
       evidenceCutoff: typeof stored.evidenceCutoff === "string" ? stored.evidenceCutoff : null,
       // D51: ship reads every fail row, so a stored verdictsFrom (D47, results from rounds 6-7) is ignored.
       now: () => /* @__PURE__ */ new Date()
-    }, base);
+    }, base, remoteRefs);
   } finally {
     if (tmp !== null) fs10.rmSync(tmp, { recursive: true, force: true });
   }

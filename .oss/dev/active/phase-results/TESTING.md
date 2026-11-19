@@ -162,4 +162,16 @@ Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watche
   - bracket glob forms.
 - Full run: build and tsc clean; targeted vitest 10877 of 10878. The one failure was git-path.test.ts, whose old "no GIT_*" expectation the D51 git env broke; it was updated and test/phase-results reran 348/348. served-commands 3/3; bash 114/114 behind the tripwire, with 0 tripwire lines.
 
-## Last Updated: 2026-11-19 13:30 CST by /oss:ship (round 7 fixes)
+### Ship round 8 (D54-D57), 2026-11-19
+- Each builder showed RED before GREEN. The round-6 repros became tests:
+  - gc --prune=now and aged gc;
+  - a repo-local excludesFile;
+  - the LFS filter;
+  - a stale local main;
+  - a symref base;
+  - [[: across word ends;
+  - 200 rows on one tree, counted in git spawns (406 before, under 40 after).
+- Sparse 302k capture went from about 1.8 s to about 0.9 s.
+- Full run: build and tsc clean; targeted vitest 10909/10909; served-commands 3/3; bash 114/114 behind the tripwire, with 0 tripwire lines. The Mac slept for part of the run; nothing failed.
+
+## Last Updated: 2026-11-19 15:25 CST by /oss:ship (round 8 fixes)

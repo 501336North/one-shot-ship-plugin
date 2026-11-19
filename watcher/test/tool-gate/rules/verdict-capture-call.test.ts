@@ -89,6 +89,10 @@ const REFUSED: Array<[string, () => string]> = [
   ['a set before the extension letters', () => 'node ./verdict-capture.[c]js in.json'],
   ['a set inside the extension', () => 'node ./verdict-capture.c[j]s in.json'],
   ['a set inside the .sh extension', () => 'bash ./oss-verdict-capture.[s]h < in.json'],
+  // Code-review LOW / security INFO-1 (round 8): a class opening whose close lies past a word end never hides the name.
+  ['a split class opening in node -e', () => `node -e "require('child_process').execSync('[[:a'+' cat x/oss-verdict-capture.sh :]]')"`],
+  ['a split class opening in python3 -c', () => `python3 -c "import os; os.system('[[:a'+' bash x/oss-verdict-capture.sh :]]')"`],
+  ['a split class opening through eval', () => 'X="[[:a bash x/oss-verdict-capture.sh :]]"; eval "$X"'],
 ];
 
 describe.each(AGENTS)('D41: %s cannot run the verdict capture itself', (_who, agent) => {
@@ -133,6 +137,8 @@ describe('D47: the wildcard matcher is linear', () => {
     ['open equivalence forms', `[${'[='.repeat(3000)}`],
     ['open sets', '['.repeat(5000)],
     ['backslashes in an open set', `[${'\\'.repeat(5000)}`],
+    // Round 8: each class opening ends at a word end, its close only at the very end (100k+ characters).
+    ['class openings each cut by a word end', `${'[[:a '.repeat(25000)}:]]`],
   ])('%s are decided in well under 100 ms', (_what, glob) => {
     const start = performance.now();
     const named = namesVerdictCapture(`bash ~/.oss/hooks/${glob}`);
@@ -157,6 +163,8 @@ describe('D47: the wildcard matcher is linear', () => {
     ['a set in the extension outside a hooks or cli folder', 'node ./verdict-capture.c[j]s', true],
     ['a bare extension glob outside a hooks or cli folder', 'node ./*.js', false],
     ['a set in a bare extension outside a hooks or cli folder', 'node ./*.[c]js', false],
+    // Code-review LOW / security INFO-1 (round 8): the close of a class form is searched only within its word.
+    ['a name between a class opening and a later close', 'echo [[:a; bash ~/.oss/hooks/oss-verdict-capture.sh; echo :]]', true],
   ])('%s: named is %s', (_what, command, named) => {
     expect(namesVerdictCapture(command)).toBe(named);
   });
