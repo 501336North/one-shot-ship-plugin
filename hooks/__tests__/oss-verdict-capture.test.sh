@@ -165,14 +165,14 @@ if [[ $RC -eq 0 && -z "$OUT" && -e "$T/cli.calls" ]]; then pass "agent_type oss:
 else fail "agent_type oss:penetration-tester: the CLI starts" "rc=$RC out=$OUT"; fi
 cleanup
 
-# 10. Round 2 security L4: at SubagentStart (`oss-verdict-capture.sh start`) a review agent's input reaches the CLI
-#     as `start <input-file>`, so the CLI records the start snapshot; still exit 0, nothing printed.
+# 10. ⚠ changes existing test: D45 dead code — the start mode is gone (it was "start: the CLI runs in start mode"): an
+#     argument `start` changes nothing, the CLI gets only the input file; still exit 0, nothing printed.
 sandbox
-sandbox_plugin 'require("fs").writeFileSync(process.env.HOME + "/../cli.calls", process.argv.slice(2, 3).join(" ") + "\n")'
+sandbox_plugin 'require("fs").writeFileSync(process.env.HOME + "/../cli.calls", String(process.argv.length - 2) + "\n")'
 OUT=$(cd "$T/repo" && run_capped 30 env HOME="$T/home" CLAUDE_PLUGIN_ROOT="$T/plugin" "$SH" "$HOOK" start 2>/dev/null \
     < <(input "oss:code-reviewer" "")); RC=$?
-if [[ $RC -eq 0 && -z "$OUT" && "$(cat "$T/cli.calls" 2>/dev/null)" == "start" ]]; then pass "start: the CLI runs in start mode"
-else fail "start: the CLI runs in start mode" "rc=$RC out=$OUT calls=$(cat "$T/cli.calls" 2>/dev/null)"; fi
+if [[ $RC -eq 0 && -z "$OUT" && "$(cat "$T/cli.calls" 2>/dev/null)" == "1" ]]; then pass "no start mode: the CLI gets only the input file"
+else fail "no start mode: the CLI gets only the input file" "rc=$RC out=$OUT calls=$(cat "$T/cli.calls" 2>/dev/null)"; fi
 cleanup
 
 # 11. R-266 style (hooks/oss-tool-gate.sh): mktemp, head and grep come from fixed paths, never PATH, and node runs with

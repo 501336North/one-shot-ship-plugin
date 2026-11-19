@@ -57,9 +57,29 @@ function count(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
 }
 
+/**
+ * OSS_TEST_PHASE_RESULT_CLI: a phase-result bundle built from src outside dist (fix rounds build dist once, at the end).
+ * When set, the hooks run with a sandbox plugin root under `tmp` that links the real hooks, schemas and watcher CLIs,
+ * with phase-result.cjs replaced by that bundle (as hooks/__tests__/phase-results.acceptance.test.sh does).
+ */
+function hookPluginRoot(tmp: string): string {
+  const bundle = process.env.OSS_TEST_PHASE_RESULT_CLI;
+  if (bundle === undefined || bundle === '') return pluginRoot;
+  const root = path.join(tmp, 'plugin');
+  const cli = path.join(root, 'watcher', 'dist', 'cli');
+  fs.mkdirSync(cli, { recursive: true });
+  fs.symlinkSync(path.join(pluginRoot, 'hooks'), path.join(root, 'hooks'));
+  fs.symlinkSync(path.join(pluginRoot, 'schemas'), path.join(root, 'schemas'));
+  const dist = path.join(pluginRoot, 'watcher', 'dist', 'cli');
+  for (const f of fs.readdirSync(dist)) if (f !== 'phase-result.cjs') fs.symlinkSync(path.join(dist, f), path.join(cli, f));
+  fs.symlinkSync(bundle, path.join(cli, 'phase-result.cjs'));
+  return root;
+}
+
 describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
   let tmp: string;
   let home: string;
+  let hookRoot: string;
   let server: https.Server | undefined;
   let port: number;
   const workflowRequests: string[] = [];
@@ -69,6 +89,7 @@ describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
     home = path.join(tmp, 'home');
     fs.mkdirSync(path.join(home, '.oss'), { recursive: true });
     recordNodePath(home);
+    hookRoot = hookPluginRoot(tmp);
 
     // Self-signed cert for the local API stand-in (chain-trigger only accepts https).
     const key = path.join(tmp, 'key.pem');
@@ -149,7 +170,7 @@ describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
       USER: process.env.USER,
       TMPDIR: process.env.TMPDIR,
       HOME: home,
-      CLAUDE_PLUGIN_ROOT: pluginRoot,
+      CLAUDE_PLUGIN_ROOT: hookRoot,
       CLAUDE_PROJECT_DIR: project,
       NODE_TLS_REJECT_UNAUTHORIZED: '0',
       NODE_NO_WARNINGS: '1',

@@ -58,14 +58,13 @@ cat "$d/reply"
 exit "$(cat "$d/rc")"
 GH
 chmod +x "$T/gh/bin/gh"
-# The fake date: "today" is the fixture's archive day, 2026-11-01, for the `+%Y-%m-%d` form the archive lookup asks
-# for, so the today-only rule (TA-3) never depends on the clock or on midnight; every other form is the real date.
-cat > "$T/gh/bin/date" << 'DATE'
-#!/bin/bash
-[[ "$*" == "+%Y-%m-%d" ]] && { echo 2026-11-01; exit 0; }
-exec /bin/date "$@"
-DATE
-chmod +x "$T/gh/bin/date"
+# "today": the writer reads the date from the fixed /bin/date, never PATH's (D47, round 6), so a fake date on PATH no
+# longer reaches it. ⚠ changes existing test: D47 (fixed tool paths in oss-timeline). The fixture's archive day is
+# the real local day instead, under a TZ whose local time is about noon now, so the today-only rule (TA-3) never
+# meets midnight during a run (it would need a run of 11 hours). Every older fixture day (2026-10-25) stays older.
+_off=$((10#$(/bin/date -u +%H) - 12))
+if ((_off < 0)); then export TZ="OSS-$((-_off))"; else export TZ="OSS+$_off"; fi
+DAY=$(/bin/date +%Y-%m-%d)
 SHA=0123456789abcdef0123456789abcdef01234567
 MERGED='{"number":4242,"state":"MERGED","mergeCommit":{"oid":"'$SHA'"},"mergedAt":"2026-11-06T09:30:00Z","mergedBy":{"login":"octo-dev"}}'
 # reply <json> [rc]: what the fake gh answers next
@@ -73,11 +72,11 @@ reply() { printf '%s\n' "$1" > "$T/gh/reply"; printf '%s\n' "${2:-0}" > "$T/gh/r
 reply "$MERGED"
 export PATH="$T/gh/bin:$API/bin:$PATH"
 
-# a product repo on feat/demo/ship whose demo folder was already archived: completed/demo-2026-11-01, no active/demo
-P="$T/product"; mkdir -p "$P/.oss/dev/active" "$P/.oss/dev/completed/demo-2026-11-01"
+# a product repo on feat/demo/ship whose demo folder was already archived: completed/demo-$DAY, no active/demo
+P="$T/product"; mkdir -p "$P/.oss/dev/active" "$P/.oss/dev/completed/demo-$DAY"
 (cd "$P" && git init -q && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && git checkout -q -B feat/demo/ship)
 on_branch "$P" feat/demo/ship
-CTL="$P/.oss/dev/completed/demo-2026-11-01/timeline.ndjson"
+CTL="$P/.oss/dev/completed/demo-$DAY/timeline.ndjson"
 UNF="$P/.oss/dev/timeline-unfiled.ndjson"
 OB_DIR="$HOME/.oss/timeline-outbox"
 # one earlier gate line, written before the move
@@ -143,7 +142,7 @@ udiag() { echo "rc=$RC unfiled=[$(cat "$UNF" 2>/dev/null)] completed=[$(timeline
 # --- every kind follows the archive move: ship archives the docs inside the feature PR, before its own later lines
 # (the `command ship complete` line from oss-notify, a gate run after the move), so those lines are filed in the
 # archived folder and queued for push like the merge, never dropped into unfiled (API ADR-017) -----------------------
-ARC1=.oss/dev/completed/demo-2026-11-01
+ARC1=.oss/dev/completed/demo-$DAY
 # archived_filed <kind>: rc 0, one <kind> line for demo in the archived folder, no unfiled file, and that line's id
 # pending in the outbox (pushed like any filed line)
 archived_filed() {
@@ -239,16 +238,16 @@ else
 fi
 
 name='should leave oss_resolve_feature returning no feature when only the archived folder exists'
-fresh feat/demo/ship .oss/dev/completed/demo-2026-11-01
+fresh feat/demo/ship .oss/dev/completed/demo-$DAY
 got=$(cd "$P" && run_capped 10 /bin/bash -c 'source "$1" || exit 99; oss_resolve_feature "$2"; printf "[%s]" "$_OSS_FEATURE"' _ \
     "$ROOT/hooks/oss-safe-path.sh" "$P" 2>&1)
 [[ "$got" == "[]" ]] && pass "$name" || fail "$name" "got=$got"
 
 # --- B7: which archived folder the merge line goes to -------------------------------------------------------------
 name='should use the newest dated folder when the feature was archived twice'
-fresh feat/demo/ship .oss/dev/completed/demo-2026-10-25 .oss/dev/completed/demo-2026-11-01
+fresh feat/demo/ship .oss/dev/completed/demo-2026-10-25 .oss/dev/completed/demo-$DAY
 approve merge-flag; merge
-NEW="$P/.oss/dev/completed/demo-2026-11-01/timeline.ndjson"
+NEW="$P/.oss/dev/completed/demo-$DAY/timeline.ndjson"
 last=$(tail -n 1 "$NEW" 2>/dev/null)
 nid=$(jq -r '.id' <<< "$last" 2>/dev/null)
 if [[ $RC -eq 0 && $(lines "$NEW") -eq 1 && "$(jq -r '.kind + " " + .feature' <<< "$last" 2>/dev/null)" == "merge demo" \
@@ -260,8 +259,8 @@ else
 fi
 
 name="should ignore folders that only look like the feature's"
-fresh feat/demo/ship .oss/dev/completed/demo-extra-2026-11-01 .oss/dev/completed/demo-2026-1-7 \
-    .oss/dev/completed/demo-2026-11-01-x .oss/dev/completed/demox-2026-11-01
+fresh feat/demo/ship .oss/dev/completed/demo-extra-$DAY .oss/dev/completed/demo-2026-1-7 \
+    .oss/dev/completed/demo-$DAY-x .oss/dev/completed/demox-$DAY
 approve merge-flag; merge
 unfiled_only merge && pass "$name" || fail "$name" "$(udiag)"
 
@@ -271,7 +270,7 @@ approve merge-flag; merge
 [[ ! -e "$P/.oss/dev/completed" ]] && unfiled_only merge && pass "$name" || fail "$name" "$(udiag)"
 
 name='should keep filing in the active folder when it still exists'
-fresh feat/demo/ship .oss/dev/active/demo .oss/dev/completed/demo-2026-11-01
+fresh feat/demo/ship .oss/dev/active/demo .oss/dev/completed/demo-$DAY
 approve merge-flag; merge
 ATL="$P/.oss/dev/active/demo/timeline.ndjson"
 if [[ $RC -eq 0 && $(lines "$ATL") -eq 1 && "$(tail -n 1 "$ATL" | jq -r '.kind + " " + .feature' 2>/dev/null)" == "merge demo" \
@@ -295,7 +294,7 @@ refused_unfiled() {
 
 name='should refuse a symlinked archived folder, and never fall back to an older real one'
 fresh feat/demo/ship .oss/dev/completed/demo-2026-10-25
-OUT="$T/out-link-folder"; mkdir -p "$OUT"; ln -s "$OUT" "$P/.oss/dev/completed/demo-2026-11-01"
+OUT="$T/out-link-folder"; mkdir -p "$OUT"; ln -s "$OUT" "$P/.oss/dev/completed/demo-$DAY"
 CMP="$P/.oss/dev/completed"; before=$(snap "$CMP" "$OUT")
 approve merge-flag; merge
 refused_unfiled "$before" "$CMP" "$OUT" && [[ ! -e "$CMP/demo-2026-10-25/timeline.ndjson" && -z "$(ls -A "$OUT")" ]] \
@@ -303,34 +302,34 @@ refused_unfiled "$before" "$CMP" "$OUT" && [[ ! -e "$CMP/demo-2026-10-25/timelin
 
 name='should refuse a linked .oss/dev/completed'
 fresh feat/demo/ship
-OUT="$T/out-link-completed"; mkdir -p "$OUT/demo-2026-11-01"; ln -s "$OUT" "$P/.oss/dev/completed"
+OUT="$T/out-link-completed"; mkdir -p "$OUT/demo-$DAY"; ln -s "$OUT" "$P/.oss/dev/completed"
 before=$(snap "$OUT")
 approve merge-flag; merge
 refused_unfiled "$before" "$OUT" && pass "$name" || fail "$name" "outside=[$(snap "$OUT")] $(udiag)"
 
 name='should refuse an archived timeline file with another hard link'
-fresh feat/demo/ship .oss/dev/completed/demo-2026-11-01
+fresh feat/demo/ship .oss/dev/completed/demo-$DAY
 OUT="$T/out-hard-link"; mkdir -p "$OUT"; printf '%s\n' '{"elsewhere":1}' > "$OUT/tl"
-ln "$OUT/tl" "$P/.oss/dev/completed/demo-2026-11-01/timeline.ndjson"
+ln "$OUT/tl" "$P/.oss/dev/completed/demo-$DAY/timeline.ndjson"
 CMP="$P/.oss/dev/completed"; before=$(snap "$CMP" "$OUT")
 approve merge-flag; merge
 refused_unfiled "$before" "$CMP" "$OUT" && pass "$name" || fail "$name" "outside=[$(cat "$OUT/tl")] $(udiag)"
 
 name='should refuse an archived timeline file that is a symlink'
-fresh feat/demo/ship .oss/dev/completed/demo-2026-11-01
+fresh feat/demo/ship .oss/dev/completed/demo-$DAY
 OUT="$T/out-link-file"; mkdir -p "$OUT"; printf '%s\n' '{"elsewhere":1}' > "$OUT/tl"
-ln -s "$OUT/tl" "$P/.oss/dev/completed/demo-2026-11-01/timeline.ndjson"
+ln -s "$OUT/tl" "$P/.oss/dev/completed/demo-$DAY/timeline.ndjson"
 CMP="$P/.oss/dev/completed"; before=$(snap "$CMP" "$OUT")
 approve merge-flag; merge
 refused_unfiled "$before" "$CMP" "$OUT" && pass "$name" || fail "$name" "outside=[$(cat "$OUT/tl")] $(udiag)"
 
 name='should refuse an archived folder owned by someone else'
-fresh feat/demo/ship .oss/dev/completed/demo-2026-11-01
+fresh feat/demo/ship .oss/dev/completed/demo-$DAY
 CMP="$P/.oss/dev/completed"; before=$(snap "$CMP")
 approve merge-flag
 # someone else's folder, through `test -O` (the repo's other-user seam): exported, so the verb's own bash sees it
 # shellcheck disable=SC2030 # the seam is set in this subshell only, on purpose
-(export OSS_T_FOREIGN="/.oss/dev/completed/demo-2026-11-01"
+(export OSS_T_FOREIGN="/.oss/dev/completed/demo-$DAY"
     # shellcheck disable=SC2329 # run by the verb's bash, through export -f
     test() { if [[ "${1:-}" == -O && "${2%/}" == *"$OSS_T_FOREIGN" ]]; then return 1; fi; builtin test "$@"; }
     export -f test
@@ -340,13 +339,13 @@ refused_unfiled "$before" "$CMP" && pass "$name" || fail "$name" "$(udiag)"
 name='should refuse a branch whose feature fails the name rule'
 # git itself refuses a branch part that starts with "." (feat/.demo/ship cannot be made or read), so the name rule is
 # shown with a name git allows and the rule does not: "+" is outside [A-Za-z0-9._-]
-fresh feat/de+mo/ship .oss/dev/completed/de+mo-2026-11-01
+fresh feat/de+mo/ship .oss/dev/completed/de+mo-$DAY
 CMP="$P/.oss/dev/completed"; before=$(snap "$CMP")
 approve merge-flag; merge
 refused_unfiled "$before" "$CMP" && pass "$name" || fail "$name" "$(udiag)"
 
 name='should refuse a branch that is not <type>/<feature>/<phase>'
-fresh main .oss/dev/completed/demo-2026-11-01
+fresh main .oss/dev/completed/demo-$DAY
 CMP="$P/.oss/dev/completed"; before=$(snap "$CMP")
 approve merge-flag; merge
 refused_unfiled "$before" "$CMP" && pass "$name" || fail "$name" "$(udiag)"
@@ -356,7 +355,7 @@ UUID=3f2b8c1e-9a4d-4c7b-8e21-5d6f7a8b9c0d
 UNKNOWN=9d8c7b6a-5f4e-4d3c-a2b1-0f9e8d7c6b5a
 # record <file>: G1's decision record holding the one decision $UUID, as oss-decision-record.sh writes it
 record() { printf '%s\n' '{"v":1,"id":"'$UUID'","feature":"demo","question":"Ship it?","answer":"Yes"}' > "$1"; }
-ARC=.oss/dev/completed/demo-2026-11-01
+ARC=.oss/dev/completed/demo-$DAY
 # archived_unknown: rc 1, one merge-unknown line for demo in the archived folder (B2-3), nothing in unfiled, no
 # outbox entry (P-2)
 archived_unknown() {
@@ -417,8 +416,8 @@ linked_refused "$before" && pass "$name" || fail "$name" "$(ldiag)"
 
 name='should refuse a decision when .oss/dev is a link (archived case)'
 fresh feat/demo/ship; rm -rf "$P/.oss/dev"
-OUT="$T/out-dev"; mkdir -p "$OUT/active" "$OUT/completed/demo-2026-11-01"
-record "$OUT/completed/demo-2026-11-01/decisions.ndjson"; ln -s "$OUT" "$P/.oss/dev"
+OUT="$T/out-dev"; mkdir -p "$OUT/active" "$OUT/completed/demo-$DAY"
+record "$OUT/completed/demo-$DAY/decisions.ndjson"; ln -s "$OUT" "$P/.oss/dev"
 before=$(snap "$OUT"); approve "decision:$UUID"; merge
 linked_refused "$before" && pass "$name" || fail "$name" "$(ldiag)"
 
@@ -426,7 +425,7 @@ linked_refused "$before" && pass "$name" || fail "$name" "$(ldiag)"
 # The merge verb's decision check runs in the session's locale (oss-value.sh sets none); a UTF-8 locale must not let
 # a non-ASCII feature name through there when the writer, under LC_ALL=C, would refuse it.
 name='should judge the archived feature name by byte rules on the decision path too'
-fresh feat/démo/ship .oss/dev/completed/démo-2026-11-01; record "$P/.oss/dev/completed/démo-2026-11-01/decisions.ndjson"
+fresh feat/démo/ship .oss/dev/completed/démo-$DAY; record "$P/.oss/dev/completed/démo-$DAY/decisions.ndjson"
 approve "decision:$UUID"
 (export LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8; cd "$P" && run_capped 40 "$OV" timeline merge > /dev/null 2> "$T/err"); RC=$?
 ERR=$(cat "$T/err")
@@ -437,15 +436,15 @@ ERR=$(cat "$T/err")
 # With a tag of the same name, `git symbolic-ref --short HEAD` prints heads/<branch>, whose first part is the type:
 # the feature must still come from refs/heads/<type>/<feature>/<phase>.
 name='should file the archived merge line under the branch feature when a tag shadows the branch'
-fresh feat/demo/ship "$ARC" .oss/dev/completed/feat-2026-11-01
+fresh feat/demo/ship "$ARC" .oss/dev/completed/feat-$DAY
 (cd "$P" && git tag feat/demo/ship)
 approve merge-flag; merge
 ATL="$P/$ARC/timeline.ndjson"
 if [[ $RC -eq 0 && $(lines "$ATL") -eq 1 && "$(tail -n 1 "$ATL" | jq -r '.kind + " " + .feature' 2>/dev/null)" == "merge demo" \
-    && ! -e "$P/.oss/dev/completed/feat-2026-11-01/timeline.ndjson" && ! -e "$UNF" ]]; then
+    && ! -e "$P/.oss/dev/completed/feat-$DAY/timeline.ndjson" && ! -e "$UNF" ]]; then
     pass "$name"
 else
-    fail "$name" "feat=[$(cat "$P/.oss/dev/completed/feat-2026-11-01/timeline.ndjson" 2>/dev/null)] $(adiag)"
+    fail "$name" "feat=[$(cat "$P/.oss/dev/completed/feat-$DAY/timeline.ndjson" 2>/dev/null)] $(adiag)"
 fi
 
 name='should file the merge line in the active feature folder when a tag shadows the branch'
@@ -467,14 +466,14 @@ fi
 MF='{"pr":4242,"sha":"'$SHA'","mergedAt":"2026-11-06T09:30:00Z","mergedBy":"octo-dev","approval":{"type":"merge-flag"}}'
 for opt in nullglob failglob; do
     name="should file the merge line as unfiled when no archived folder matches and $opt is on"
-    fresh feat/demo/ship .oss/dev/completed/other-2026-11-01
+    fresh feat/demo/ship .oss/dev/completed/other-$DAY
     (cd "$P" && run_capped 30 /bin/bash -c 'shopt -s "$1"; source "$2" || exit 99; oss_timeline_append merge "$3"' _ \
         "$opt" "$ROOT/hooks/oss-timeline.sh" "$MF" 2> "$T/err"); RC=$?; ERR=$(cat "$T/err")
     unfiled_only merge && [[ ! -e "$P/.oss/dev/completed/timeline.ndjson" ]] && pass "$name" \
         || fail "$name" "completed_root=[$(cat "$P/.oss/dev/completed/timeline.ndjson" 2>/dev/null)] $(udiag)"
 done
 
-# real_wins <name> <other folder>: the line goes to demo-2026-11-01, never to the other folder
+# real_wins <name> <other folder>: the line goes to demo-$DAY, never to the other folder
 real_wins() {
     fresh feat/demo/ship "$ARC" ".oss/dev/completed/$2"
     approve merge-flag; merge
@@ -517,9 +516,9 @@ unfiled_only merge && pass "$name" || fail "$name" "$(adiag)"
 
 # --- many unrelated archived entries: only the feature's own names are looked at (ship gate round 2, pen-test) ----
 # completed/ grows by one folder per shipped feature; entries of other features, however many, never change the pick,
-# and an entry that starts like the feature's but is no date (demo-2026-11-01x) is never chosen.
+# and an entry that starts like the feature's but is no date (demo-${DAY}x) is never chosen.
 name='should still file to the newest dated folder among many unrelated entries'
-fresh feat/demo/ship "$ARC" .oss/dev/completed/demo-2026-10-25 .oss/dev/completed/demo-2026-11-01x
+fresh feat/demo/ship "$ARC" .oss/dev/completed/demo-2026-10-25 .oss/dev/completed/demo-${DAY}x
 (cd "$P/.oss/dev/completed" && seq 1 2000 | sed 's/^/other-/' | xargs touch)
 [[ $(find "$P/.oss/dev/completed" -mindepth 1 -maxdepth 1 -name 'other-*' | wc -l) -eq 2000 ]] || SETUP_BAD="2000 other-* entries not made"
 approve merge-flag; merge

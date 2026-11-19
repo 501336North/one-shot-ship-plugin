@@ -68,11 +68,16 @@ function ledgerKeys(ctx: AssembleContext): Set<string> {
 }
 
 /**
- * D42: the hook stamps answeredAt in whole seconds, so a pick made after the cutoff in the cutoff's own second reads as
- * that second. A pick counts only when its whole second ends by the cutoff, so every later pick is excluded on re-check.
+ * D42: the hook stamps answeredAt in whole seconds. D47: the cutoff is stored floored to the whole second, with no
+ * fraction, and a pick counts when its stamp is at or before it, so a pick in the assemble's own second counts at
+ * assemble and on re-check alike. A stored cutoff with a fraction comes from a result assembled under the old rule
+ * (a pick counts only when its whole second ends by the cutoff), which it keeps so that result re-checks equal.
+ * An answeredAt that is missing or not a time never counts (pen I2: fail closed), at assemble and on re-check.
  */
 function answeredAfter(answeredAt: unknown, cutoff: string): boolean {
-  return typeof answeredAt === 'string' && Date.parse(answeredAt) + 1000 > Date.parse(cutoff);
+  const at = typeof answeredAt === 'string' ? Date.parse(answeredAt) : Number.NaN;
+  if (Number.isNaN(at)) return true;
+  return /\.\d+Z$/.test(cutoff) ? at + 1000 > Date.parse(cutoff) : at > Date.parse(cutoff);
 }
 
 function readOpenQuestions(ctx: AssembleContext): string[] {
@@ -83,7 +88,7 @@ function readOpenQuestions(ctx: AssembleContext): string[] {
 }
 
 export function assembleIdeate(ctx: IdeateContext): AssembleOutcome {
-  const cutoff = ctx.evidenceCutoff === undefined ? ctx.now().toISOString() : ctx.evidenceCutoff;
+  const cutoff = ctx.evidenceCutoff === undefined ? ctx.now().toISOString().replace(/\.\d+Z$/, 'Z') : ctx.evidenceCutoff;
   const dir = path.join(ctx.repo, '.oss', 'dev', 'active', ctx.feature);
 
   const design = readRepoFile(path.join(dir, 'DESIGN.md'));

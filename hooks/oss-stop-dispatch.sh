@@ -47,16 +47,21 @@ _osd_oss_proj() { oss_project_walk "$1"; [[ -n "$_OSS_PROJ" ]]; }
 # Only asked when no .oss was found. No ledger run file: builtins only. Else ONE fixed-path grep: run files grow by a
 # row per phase start for good, and grep reads them faster than any builtin loop, at a bounded cost. -D skip: a FIFO
 # is never opened. Computed at most once (_OSD_RAN: "", true or false).
+# D47 (round 6, perf INFO): only the phase files (ideate, plan, build, ship), never the large run/ship.origin snapshot.
+# Only the names that exist are passed (nullglob on or off: a pattern that matches nothing is dropped either way), and
+# with none left no grep runs.
 _OSD_RAN=""
 _osd_ran() {
-    local re='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9._-]{1,128})"' fg="" files=()
+    local re='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9._-]{1,128})"' fg="" f files=() have=()
     if [[ -z "$_OSD_RAN" ]]; then
         _OSD_RAN=false
         if [[ "$INPUT" =~ $re ]]; then
             shopt -q failglob && fg=1; shopt -u failglob
-            files=("$HOME"/.oss/ledger/*/run/*)
+            files=("$HOME"/.oss/ledger/*/run/ideate "$HOME"/.oss/ledger/*/run/plan "$HOME"/.oss/ledger/*/run/build \
+                "$HOME"/.oss/ledger/*/run/ship)
             [[ -z "$fg" ]] || shopt -s failglob
-            [[ -e "${files[0]}" ]] && /usr/bin/grep -q -s -F -D skip -e "\"session\":\"${BASH_REMATCH[1]}\"" -- "${files[@]}" \
+            for f in ${files[@]+"${files[@]}"}; do [[ -e "$f" ]] && have+=("$f"); done
+            [[ ${#have[@]} -gt 0 ]] && /usr/bin/grep -q -s -F -D skip -e "\"session\":\"${BASH_REMATCH[1]}\"" -- "${have[@]}" \
                 && _OSD_RAN=true
         fi
     fi

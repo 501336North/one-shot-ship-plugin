@@ -23,16 +23,67 @@ const SEPARATORS = /[\s'"`;|&()<>=${}\\,]+/;
 /** A shell glob character. */
 const GLOB = /[*?[]/;
 
-/** The regular expression a glob piece stands for, whole-piece. */
-function globRegex(piece: string): RegExp {
-  const source = piece.replace(/\[[^\]]*\]?|[*?]|[^*?[]/g, (c) =>
-    c === '*' ? '.*' : c === '?' ? '.' : c.startsWith('[') ? '.' : c.replace(/[.*+?^${}()|\\]/g, '\\$&'));
-  return new RegExp(`^${source}$`);
+/** One glob token: `*` (any run), or a test for one character (`?`, a `[..]` set, or a literal). */
+type Token = '*' | ((c: string) => boolean);
+
+/** The tokens a glob piece stands for. An unclosed `[` matches any one character, as before (fails closed). */
+function globTokens(piece: string): Token[] {
+  const tokens: Token[] = [];
+  for (const m of piece.matchAll(/\[[^\]]*\]?|[*?]|[^*?[]/g)) {
+    const c = m[0];
+    if (c === '*') tokens.push('*');
+    else if (c === '?' || (c.startsWith('[') && !c.endsWith(']'))) tokens.push(() => true);
+    else if (c.startsWith('[')) tokens.push(bracketTest(c.slice(1, -1)));
+    else tokens.push((x) => x === c);
+  }
+  return tokens;
+}
+
+/** The test for a `[..]` set body: ranges, and `!` or `^` first to negate. */
+function bracketTest(body: string): (c: string) => boolean {
+  const negate = body.startsWith('!') || body.startsWith('^');
+  const set = negate ? body.slice(1) : body;
+  return (c) => {
+    let hit = false;
+    for (let i = 0; i < set.length; i += 1) {
+      if (set[i + 1] === '-' && i + 2 < set.length) {
+        if (c >= set[i] && c <= set[i + 2]) hit = true;
+        i += 2;
+      } else if (set[i] === c) hit = true;
+    }
+    return hit !== negate;
+  };
+}
+
+/** Whole-piece glob match with two pointers, backtracking only to the last `*` (no exponential blow-up). */
+function globMatch(tokens: Token[], name: string): boolean {
+  let t = 0;
+  let s = 0;
+  let star = -1;
+  let starS = 0;
+  while (s < name.length) {
+    const token = tokens[t];
+    if (token === '*') {
+      star = t;
+      starS = s;
+      t += 1;
+    } else if (token !== undefined && token(name[s])) {
+      t += 1;
+      s += 1;
+    } else if (star >= 0) {
+      t = star + 1;
+      starS += 1;
+      s = starS;
+    } else return false;
+  }
+  while (tokens[t] === '*') t += 1;
+  return t === tokens.length;
 }
 
 /** True when a glob piece could be one of the names and writes part of it, or its folder is a hooks or cli folder. */
 function globNames(piece: string, folder: string | undefined): boolean {
-  if (!NAMES.some((name) => globRegex(piece).test(name))) return false;
+  const tokens = globTokens(piece);
+  if (!NAMES.some((name) => globMatch(tokens, name))) return false;
   const literals = piece.split(/\[[^\]]*\]?|[*?]/).map((l) => l.replace(/\.(?:sh|c?js)$/, ''));
   return literals.some((l) => l.length >= 3 && STEM.includes(l)) || (folder !== undefined && /^(?:hooks|cli)$/.test(folder));
 }

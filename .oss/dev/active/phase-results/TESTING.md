@@ -136,4 +136,17 @@ Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watche
   - served-commands (OSS_API_REPO set): 3/3.
   - Bash 3.2 sweep under the tripwire: 113/113, with 0 tripwire lines.
 
-## Last Updated: 2026-11-19 08:13 CST by /oss:ship (round 5 fixes)
+### Ship round 6 (D45-D49), 2026-11-19
+- Every builder showed RED before GREEN. The round-4 gate repros became tests:
+  - pen M2a, M3a and M3b;
+  - security M1 (minted pass), finding 2a, and the hard-linked transcript;
+  - the code-review recheck flip;
+  - the perf backtracking case.
+- First full run: 10826 of 10833 passed. The 7 failures are in two R-266 tool-gate files, and both pass alone (240/240, twice):
+  - protected-path-equivalence: the known load flake, owned by R-266;
+  - round21b PERF MEDIUM-1: a 1.5 s wall-clock bound that breaks only under parallel load (427-464 ms alone).
+  - R-257's matcher is not the cause: 1.16 ms per call, against 1.25 ms before.
+  - Both were reported to R-266.
+- After D50, final run: build and tsc clean; targeted vitest 10838 of 10838; served-commands 3/3; bash 114/114 behind the tripwire, with 0 tripwire lines.
+
+## Last Updated: 2026-11-19 10:20 CST by /oss:ship (round 6 fixes)

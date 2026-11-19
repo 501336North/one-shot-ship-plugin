@@ -1016,7 +1016,9 @@ ${row.sha256}`);
   return keys;
 }
 function answeredAfter(answeredAt, cutoff) {
-  return typeof answeredAt === "string" && Date.parse(answeredAt) + 1e3 > Date.parse(cutoff);
+  const at = typeof answeredAt === "string" ? Date.parse(answeredAt) : Number.NaN;
+  if (Number.isNaN(at)) return true;
+  return /\.\d+Z$/.test(cutoff) ? at + 1e3 > Date.parse(cutoff) : at > Date.parse(cutoff);
 }
 function readOpenQuestions(ctx) {
   const raw = readValue(ctx, "open-questions.json");
@@ -1025,7 +1027,7 @@ function readOpenQuestions(ctx) {
   return parsed.filter((q) => typeof q === "string").map((q) => clipText(q, TEXT_CAP) ?? "");
 }
 function assembleIdeate(ctx) {
-  const cutoff = ctx.evidenceCutoff === void 0 ? ctx.now().toISOString() : ctx.evidenceCutoff;
+  const cutoff = ctx.evidenceCutoff === void 0 ? ctx.now().toISOString().replace(/\.\d+Z$/, "Z") : ctx.evidenceCutoff;
   const dir = path5.join(ctx.repo, ".oss", "dev", "active", ctx.feature);
   const design = readRepoFile(path5.join(dir, "DESIGN.md"));
   if (!design.ok) return { ok: false, error: design.error };
@@ -1174,13 +1176,29 @@ function branchTip(repo, name) {
     return null;
   }
 }
-function containedInAny(repo, tip, shas) {
-  if (shas.length === 0) return false;
+function containedIn(repo, tip, sha) {
   try {
-    return runGit(repo, ["rev-list", "-n", "1", "--end-of-options", tip, ...shas.map((s) => `^${s}`)]).out === "";
+    return runGit(repo, ["rev-list", "-n", "1", "--end-of-options", tip, `^${sha}`]).out === "";
   } catch {
     return false;
   }
+}
+function shipBaseAllowed(repo, base, feature, refs) {
+  if (base === feature || base.includes(`/${feature}/`)) return false;
+  let current;
+  try {
+    current = runGit(repo, ["symbolic-ref", "-q", "HEAD"], [0, 1]).out;
+  } catch {
+    return false;
+  }
+  if (current === `refs/heads/${base}`) return false;
+  const tip = branchTip(repo, base);
+  if (tip === null) return false;
+  for (const [name, sha] of refs) {
+    const m = /^refs\/remotes\/[^/]+\/(.+)$/.exec(name);
+    if (m?.[1] === base && containedIn(repo, tip, sha)) return true;
+  }
+  return false;
 }
 function readDiff(repo, base) {
   if (base.startsWith("-")) throw new GitError("base");
@@ -1223,10 +1241,10 @@ function counts(v) {
   for (const s of SEVERITIES) out[s] = typeof src[s] === "number" ? src[s] : 0;
   return out;
 }
-function agentRow(row) {
+function failRow(row) {
   const f = row.findings;
   const at = typeof row.ts === "string" ? Date.parse(row.ts) : NaN;
-  if (typeof row.gate !== "string" || row.verdict !== "pass" && row.verdict !== "fail" || Number.isNaN(at)) return null;
+  if (typeof row.gate !== "string" || row.verdict !== "fail" || Number.isNaN(at)) return null;
   if (typeof f !== "object" || f === null || Array.isArray(f)) return null;
   const findings = {};
   for (const s of SEVERITIES) {
@@ -1234,20 +1252,12 @@ function agentRow(row) {
     if (typeof n !== "number" || !Number.isInteger(n) || n < 0) return null;
     findings[s] = n;
   }
+  if ([row.tree, row.trackedTree, row.headSha].every((v) => v === void 0 || v === "")) return null;
   const hex = (v) => typeof v === "string" && TREE_RE.test(v) ? v : null;
-  return {
-    gate: row.gate,
-    verdict: row.verdict,
-    findings,
-    at,
-    tree: hex(row.tree),
-    trackedTree: hex(row.trackedTree),
-    headSha: hex(row.headSha),
-    startMatch: row.start === "match"
-  };
+  return { gate: row.gate, findings, at, tree: hex(row.tree), trackedTree: hex(row.trackedTree), headSha: hex(row.headSha) };
 }
 var TREE_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
-function reviewedIsShipped(repo, tree, trackedTree, reviewHead) {
+function shippedVsReviewed(repo, tree, trackedTree, reviewHead) {
   try {
     const status = runGit(
       repo,
@@ -1256,19 +1266,24 @@ function reviewedIsShipped(repo, tree, trackedTree, reviewHead) {
       true
     ).out.split("\0");
     if (status[status.length - 1] === "") status.pop();
+    if (status.length % 2 !== 0) return "unknown";
     const deleted = [];
     for (let k = 0; k + 1 < status.length; k += 2) {
-      if (status[k] !== "D") return false;
+      if (status[k] !== "D") return "differs";
       deleted.push(status[k + 1]);
     }
-    if (status.length % 2 !== 0) return false;
-    if (deleted.length === 0) return true;
-    if (reviewHead === null) return false;
-    const listed = (treeish) => runGit(repo, ["--literal-pathspecs", "ls-tree", "-r", "--name-only", "-z", "--end-of-options", treeish, "--", ...deleted], [0], true).out;
-    return listed(trackedTree) === "" && listed(reviewHead) === "";
+    if (deleted.length === 0) return "same";
+    const listed = (treeish) => runGit(repo, ["--literal-pathspecs", "ls-tree", "-r", "--name-only", "-z", "--end-of-options", treeish, "--", ...deleted], [0], true).out !== "";
+    return listed(trackedTree) || reviewHead !== null && listed(reviewHead) ? "differs" : "same";
   } catch {
-    return false;
+    return "unknown";
   }
+}
+function failCleared(repo, f) {
+  if (f.tree !== null && f.trackedTree !== null) return shippedVsReviewed(repo, f.tree, f.trackedTree, f.headSha) === "differs";
+  if (f.headSha === null) return false;
+  const headTree = `${f.headSha}^{tree}`;
+  return shippedVsReviewed(repo, headTree, headTree, null) === "differs";
 }
 function timelineGates(ctx, featureDir, gateHashes) {
   const backed = [];
@@ -1299,24 +1314,9 @@ function timelineGates(ctx, featureDir, gateHashes) {
   }
   return { byName, rounds };
 }
-var LOW_PLUS_GATES = /* @__PURE__ */ new Set(["security", "pen-test"]);
 var CAPTURE_ADDS_GATE = "pen-test";
-function ruleVerdict(gate, row, fixed) {
-  const counted = LOW_PLUS_GATES.has(gate) ? ["critical", "high", "medium", "low"] : ["critical", "high"];
-  const unfixed = counted.reduce((n, s) => n + Math.max(0, row.findings[s] - fixed[s]), 0);
-  if (unfixed > 0) return "fail";
-  if (counted.some((s) => row.findings[s] > 0)) return "pass";
-  return row.verdict;
-}
-function onNewCommit(f, p) {
-  return f.headSha !== null && p.headSha !== null && p.headSha !== f.headSha;
-}
-function passClears(f, p) {
-  if (f.tree !== null) return p.tree !== f.tree;
-  return f.headSha === null || onNewCommit(f, p);
-}
 var NOT_RE_REVIEWED = "captured fail, not re-reviewed";
-function verdictCutoff(ledger, repo, feature) {
+function verdictCutoff(ledger, repo, feature, startedAt) {
   const last = ledger.lastRow(`results/${feature}/ship`);
   let stored;
   try {
@@ -1326,46 +1326,33 @@ function verdictCutoff(ledger, repo, feature) {
   }
   if (last === null || !stored.ok || last.sha256 !== sha256(stored.bytes)) return -Infinity;
   const v = stored.value;
-  if (typeof v !== "object" || v === null || v.verdict !== "ready_to_merge") return -Infinity;
+  if (typeof v !== "object" || v === null) return -Infinity;
+  const r = v;
+  if (r.startedAt === startedAt && (typeof r.verdictsFrom === "string" || r.verdictsFrom === null)) {
+    const from = r.verdictsFrom === null ? NaN : Date.parse(r.verdictsFrom);
+    return Number.isNaN(from) ? -Infinity : from;
+  }
+  if (r.verdict !== "ready_to_merge") return -Infinity;
   const at = typeof last.startedAt === "string" ? Date.parse(last.startedAt) : NaN;
   return Number.isNaN(at) ? -Infinity : at;
 }
 function applyAgentVerdicts(tl, verdictRows, cutoff, repo) {
-  const byGate = /* @__PURE__ */ new Map();
-  const shipped = /* @__PURE__ */ new Map();
+  const newest = /* @__PURE__ */ new Map();
   for (const raw of verdictRows) {
-    const row = agentRow(raw);
-    if (row === null || !(row.at >= cutoff)) continue;
-    let counts2 = false;
-    if (row.verdict === "pass" && row.startMatch && row.tree !== null && row.trackedTree !== null) {
-      const key2 = `${row.tree} ${row.trackedTree} ${row.headSha ?? ""}`;
-      if (!shipped.has(key2)) shipped.set(key2, reviewedIsShipped(repo, row.tree, row.trackedTree, row.headSha));
-      counts2 = shipped.get(key2) === true;
-    }
-    const blind = row.verdict === "pass" && row.startMatch && row.tree === null && row.headSha !== null;
-    if (row.verdict === "fail" || counts2 || blind) byGate.set(row.gate, [...byGate.get(row.gate) ?? [], { row, counts: counts2, blind }]);
+    const f = failRow(raw);
+    if (f === null || !(f.at >= cutoff)) continue;
+    const prev = newest.get(f.gate);
+    if (prev === void 0 || f.at >= prev.at) newest.set(f.gate, f);
   }
-  const stale = /* @__PURE__ */ new Set();
-  for (const [name, rows] of byGate) {
+  const open = /* @__PURE__ */ new Set();
+  for (const [name, f] of newest) {
     const zero = counts({});
-    const gate = tl.byName.get(name) ?? (name === CAPTURE_ADDS_GATE ? { gate: name, verdict: "pass", findings: zero, fixed: zero, source: "agent" } : void 0);
-    if (gate === void 0) continue;
-    rows.sort((a, b) => a.row.at - b.row.at);
-    const passes = rows.filter((r) => r.counts).map((r) => r.row);
-    const blinds = rows.filter((r) => r.blind).map((r) => r.row);
-    const open = rows.filter((r) => r.row.verdict === "fail").map((r) => r.row).filter((f) => !passes.some((p) => p.at > f.at && passClears(f, p))).filter((f) => !blinds.some((b) => b.at > f.at && onNewCommit(f, b)));
-    if (open.length > 0) {
-      tl.byName.set(name, { ...gate, verdict: "fail", findings: open[open.length - 1].findings, source: "agent" });
-      stale.add(name);
-      continue;
-    }
-    const lastFail = Math.max(-Infinity, ...rows.filter((r) => r.row.verdict === "fail").map((r) => r.row.at));
-    const deciding = passes.filter((p) => p.at > lastFail);
-    if (deciding.length === 0) continue;
-    const pick = deciding[deciding.length - 1];
-    tl.byName.set(name, { ...gate, verdict: ruleVerdict(name, pick, gate.fixed), findings: pick.findings, source: "agent" });
+    const gate = tl.byName.get(name) ?? (name === CAPTURE_ADDS_GATE ? { gate: name, verdict: "fail", findings: zero, fixed: zero, source: "agent" } : void 0);
+    if (gate === void 0 || failCleared(repo, f)) continue;
+    tl.byName.set(name, { ...gate, verdict: "fail", findings: f.findings, source: "agent" });
+    open.add(name);
   }
-  return stale;
+  return open;
 }
 function readOverrides(ctx, featureDir, decisionRows) {
   const recorded = /* @__PURE__ */ new Map();
@@ -1410,7 +1397,8 @@ function assembleShip(ctx, opts) {
     gateHashes = new Set(ledger.readRows(`gates/${ctx.feature}`).map((r) => r.sha256));
     decisionRows = ledger.readRows(`decisions/${ctx.feature}`);
     verdictRows = ledger.readRows(`verdicts/${ctx.feature}`);
-    cutoff = verdictCutoff(ledger, ctx.repo, ctx.feature);
+    cutoff = ctx.verdictsFrom === void 0 ? verdictCutoff(ledger, ctx.repo, ctx.feature, ctx.startedAt) : Date.parse(ctx.verdictsFrom ?? "");
+    if (Number.isNaN(cutoff)) cutoff = -Infinity;
   } catch (e) {
     return { ok: false, error: e instanceof LedgerError ? e.code : "unsafe_path" };
   }
@@ -1432,6 +1420,7 @@ function assembleShip(ctx, opts) {
     result: {
       ...baseFields(ctx, "ship"),
       headSha: diff.headSha,
+      verdictsFrom: cutoff === -Infinity ? null : new Date(cutoff).toISOString(),
       sources: {
         diff: "code",
         gates: "model",
@@ -1574,21 +1563,24 @@ function shipBaseConfig(repo) {
   if (r.error === void 0 && r.status === 0) return r.stdout.replace(/\n$/, "");
   return "";
 }
-var MAX_ORIGIN_SHAS = 1e3;
+var MAX_ORIGIN_REFS = 1e3;
 var SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+var REMOTE_REF = "refs/remotes/";
 function originSnapshot(ledger, startedAt) {
   const m = ledger.readMarker("run/ship.origin");
-  const shas = m?.shas;
-  if (m?.startedAt !== startedAt || !Array.isArray(shas) || shas.length > MAX_ORIGIN_SHAS) {
+  const refs = m?.refs;
+  if (m?.startedAt !== startedAt || typeof refs !== "object" || refs === null || Array.isArray(refs)) {
     throw new Refusal("no_base_snapshot", "run/ship.origin");
   }
-  if (!shas.every((s) => typeof s === "string" && SHA.test(s))) throw new Refusal("no_base_snapshot", "run/ship.origin");
-  return shas;
+  const entries = Object.entries(refs);
+  if (entries.length > MAX_ORIGIN_REFS || !entries.every(([name, sha]) => name.startsWith(REMOTE_REF) && typeof sha === "string" && SHA.test(sha))) {
+    throw new Refusal("no_base_snapshot", "run/ship.origin");
+  }
+  return new Map(entries);
 }
-function checkShipBase(repo, base, snapshot) {
+function checkShipBase(repo, base, feature, snapshot) {
   if (!isLocalBranch(repo, base)) return;
-  const tip = branchTip(repo, base);
-  if (tip === null || !containedInAny(repo, tip, snapshot)) throw new Refusal("unsafe_base", "base");
+  if (!shipBaseAllowed(repo, base, feature, snapshot)) throw new Refusal("unsafe_base", "base");
 }
 function pluginRoot() {
   return path9.resolve(path9.dirname(fs10.realpathSync(process.argv[1] ?? "")), "..", "..", "..");
@@ -1621,7 +1613,7 @@ function runAssembler(phase, ctx, base) {
     case "ship": {
       if (base !== void 0) return assembleShip(ctx, { base });
       const chosen = shipBase(ctx.repo, ctx.valueDir);
-      checkShipBase(ctx.repo, chosen, originSnapshot(openLedger(ctx.repo), ctx.startedAt));
+      checkShipBase(ctx.repo, chosen, ctx.feature, originSnapshot(openLedger(ctx.repo), ctx.startedAt));
       return assembleShip(ctx, { base: chosen });
     }
   }
@@ -1695,6 +1687,9 @@ function reassemble(repo, feature, phase, stored) {
       headSha: String(stored.headSha),
       valueDir: dir,
       evidenceCutoff: typeof stored.evidenceCutoff === "string" ? stored.evidenceCutoff : null,
+      // D47: ship re-checks with the verdict cutoff frozen at assemble; a result from before D47 (no field) keeps the
+      // old rule (undefined: recomputed from the stored ship result).
+      ..."verdictsFrom" in stored ? { verdictsFrom: typeof stored.verdictsFrom === "string" ? stored.verdictsFrom : null } : {},
       now: () => /* @__PURE__ */ new Date()
     }, base);
   } finally {

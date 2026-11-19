@@ -72,10 +72,13 @@ interface Rec {
   question: string;
   answer: string;
   kind: string;
+  answeredAt: string;
 }
 
+// ⚠ changes existing test fixture: D47 (pen I2): a record with no answeredAt never counts, so every fixture record
+//   carries the whole-second stamp the decision hook always writes (oss-decision-record.sh).
 function rec(id: string, feature = FEATURE): Rec {
-  return { id, feature, question: `Question ${id}?`, answer: `Answer ${id}`, kind: 'design' };
+  return { id, feature, question: `Question ${id}?`, answer: `Answer ${id}`, kind: 'design', answeredAt: '2026-11-13T09:30:00Z' };
 }
 
 function line(r: Rec): string {
@@ -216,7 +219,9 @@ describe('the evidence cutoff (D42)', () => {
   it('stores the assemble time as its evidence cutoff', () => {
     writeRecords([pickAt('d-1', '2026-11-13T09:30:00Z')]);
     const r = result(assembleIdeate(ctx()));
-    expect(r.evidenceCutoff).toBe('2026-11-13T10:00:00.000Z');
+    // ⚠ changes existing test: D47 (ideate same-second pick): the cutoff is stored floored to the whole second, with
+    //   no fraction, so a stored cutoff with a fraction marks a result assembled under the old rule.
+    expect(r.evidenceCutoff).toBe('2026-11-13T10:00:00Z');
     expect(validate(loadPhaseSchema('ideate', PLUGIN_ROOT), r)).toEqual({ ok: true });
   });
 
@@ -230,10 +235,34 @@ describe('the evidence cutoff (D42)', () => {
 
   // Rule: D42, answeredAt is stamped in whole seconds, so a pick stamped with the cutoff's own second may have come
   //       after it: it is not counted, so a pick made just after assemble never shows up on re-check.
+  //       D47: this old rule still applies to a stored cutoff with a fraction (a result assembled before round 6).
   it("leaves out a pick stamped with the cutoff's own second", () => {
     writeRecords([pickAt('d-1', '2026-11-13T09:59:59Z'), pickAt('d-2', '2026-11-13T10:00:00Z')]);
     const r = result(assembleIdeate({ ...ctx(), evidenceCutoff: '2026-11-13T10:00:00.500Z' }));
     expect(r.decisions).toEqual([expect.objectContaining({ id: 'd-1' })]);
+  });
+
+  // User who answered a pick in the very second ideate finished still has that pick on the ideate result.
+  // Rule: D47, the cutoff is the assemble time floored to the whole second, and a pick stamped at or before it counts,
+  //       both at assemble and on re-check with the stored cutoff, so the two agree.
+  it("counts a pick stamped with the assemble's own second, at assemble and on re-check", () => {
+    writeRecords([pickAt('d-1', '2026-11-13T09:59:59Z'), pickAt('d-2', '2026-11-13T10:00:00Z')]);
+    const late = { ...ctx(), now: () => new Date('2026-11-13T10:00:00.750Z') };
+    const assembled = result(assembleIdeate(late));
+    expect(assembled.evidenceCutoff).toBe('2026-11-13T10:00:00Z');
+    expect(assembled.decisions).toEqual([expect.objectContaining({ id: 'd-1' }), expect.objectContaining({ id: 'd-2' })]);
+    const rechecked = result(assembleIdeate({ ...late, evidenceCutoff: String(assembled.evidenceCutoff) }));
+    expect(rechecked.decisions).toEqual(assembled.decisions);
+  });
+
+  // Rule: D47 (pen I2), a pick whose answeredAt is missing or cannot be read as a time is never counted as before the
+  //       cutoff (fails closed), at assemble and on re-check alike.
+  it('leaves out a pick whose answer time cannot be read', () => {
+    writeRecords([pickAt('d-1', '2026-11-13T09:30:00Z'), pickAt('d-2', 'not a time')]);
+    const assembled = result(assembleIdeate(ctx()));
+    expect(assembled.decisions).toEqual([expect.objectContaining({ id: 'd-1' })]);
+    const rechecked = result(assembleIdeate({ ...ctx(), evidenceCutoff: String(assembled.evidenceCutoff) }));
+    expect(rechecked.decisions).toEqual(assembled.decisions);
   });
 
   // Rule: D42, a result written before the cutoff existed (re-checked with a null cutoff) keeps counting every pick.

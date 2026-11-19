@@ -1,8 +1,8 @@
 /**
- * @behavior The verdict-capture CLI that hooks/oss-verdict-capture.sh runs records a review agent's start snapshot at
- *           SubagentStart (`verdict-capture start <input-file>`) and its verdict at SubagentStop (`<input-file>`).
- * @business-rule Round 2 security L4: a stop row counts only when its agent's start snapshot exists and equals it, so
- *           the start mode must reach captureStart; the CLI always exits 0 and prints nothing.
+ * @behavior The verdict-capture CLI that hooks/oss-verdict-capture.sh runs records a review agent's verdict at
+ *           SubagentStop (`verdict-capture <input-file>`).
+ * @business-rule D45: captured fails alone decide, so there is no start mode (D45 dead code); the CLI always exits 0
+ *           and prints nothing.
  * @boundary the bundle dist/cli/verdict-capture.cjs (OSS_TEST_VERDICT_CAPTURE_CLI: one built from src outside dist).
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -62,19 +62,24 @@ function run(...args: string[]): { status: number | null; stdout: string } {
   return { status: r.status, stdout: r.stdout };
 }
 
-describe('verdict-capture CLI: start mode (security L4)', () => {
-  it('`start <input>` records the start snapshot that the stop row then matches', () => {
+// ⚠ changes existing test: D45 dead code — the start mode is gone: `start <input>` records nothing (it was "records the
+//   start snapshot that the stop row then matches"), and the stop row has no `start` field.
+describe('verdict-capture CLI: the stop records the verdict, and there is no start mode', () => {
+  it('`start <input>` records nothing; a stop records the row with no start field', () => {
     const input = path.join(tmp, 'in.json');
     const hook = { session_id: 's1', agent_id: 'agent-9', agent_type: 'oss:security-auditor', cwd: repo };
-    fs.writeFileSync(input, JSON.stringify({ ...hook, hook_event_name: 'SubagentStart' }));
+    fs.writeFileSync(input, JSON.stringify({ ...hook, hook_event_name: 'SubagentStart', agent_transcript_path: agentTranscript(BLOCK) }));
     expect(run('start', input)).toEqual({ status: 0, stdout: '' });
-    expect(openLedger(repo).hasMarker('verdict-start/agent-9')).toBe(true);
+    expect(openLedger(repo).hasMarker('verdict-start/agent-9')).toBe(false);
+    expect(openLedger(repo).readRows(`verdicts/${FEATURE}`)).toEqual([]);
 
     // ⚠ changes existing test: D41 (security M2) — the stop reads its verdict only from agent_transcript_path under
     //   ~/.claude/projects (it was last_assistant_message).
     fs.writeFileSync(input, JSON.stringify({ ...hook, hook_event_name: 'SubagentStop', agent_transcript_path: agentTranscript(BLOCK) }));
     expect(run(input)).toEqual({ status: 0, stdout: '' });
-    expect(openLedger(repo).readRows(`verdicts/${FEATURE}`)).toMatchObject([{ gate: 'security', start: 'match' }]);
+    const rows = openLedger(repo).readRows(`verdicts/${FEATURE}`);
+    expect(rows).toMatchObject([{ gate: 'security' }]);
+    expect(rows[0]).not.toHaveProperty('start');
   });
 });
 

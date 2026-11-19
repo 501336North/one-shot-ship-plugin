@@ -1,10 +1,8 @@
 #!/bin/bash
 # oss-verdict-capture.sh - SubagentStop: records a review agent's own verdict block for ship (R-257 T19, D6, D14).
-# oss-verdict-capture.sh start - SubagentStart: records that agent's start snapshot (round 2 security L4), so a verdict
-# counts only for code that did not change while the agent ran.
 #
-# Registered in hooks.json under SubagentStop as its own entry, after R-266's `oss-gate-run.sh subagent-stop`, and
-# with `start` under SubagentStart, after R-266's `oss-gate-run.sh subagent-start`.
+# Registered in hooks.json under SubagentStop as its own entry, after R-266's `oss-gate-run.sh subagent-stop`. It takes
+# no arguments (the SubagentStart start mode was removed in round 6, D45: nothing read its snapshot).
 # Reads Claude Code's SubagentStop input on stdin (session_id, cwd, agent_id, agent_type, agent_transcript_path; the
 # CLI takes the verdict only from that transcript under ~/.claude/projects, never from last_assistant_message, D41);
 # at most 1 MB is read, into a private temp folder (0700) that is removed
@@ -21,8 +19,7 @@
 # ALWAYS exits 0 and prints nothing on stdout or stderr: a capture failure never blocks or changes a subagent's stop.
 
 _ovc_main() {
-    local here sub="watcher/dist/cli/verdict-capture.cjs" dir in re mode=()
-    [[ "${1:-}" == start ]] && mode=(start)
+    local here sub="watcher/dist/cli/verdict-capture.cjs" dir in re
     # Security L5: the hook's own folder with builtins only, never PATH's dirname (as oss-stop-dispatch.sh does).
     here="${BASH_SOURCE[0]%/*}"; [[ "$here" == "${BASH_SOURCE[0]}" ]] && here=.
     here="$(cd "$here" 2>/dev/null && pwd)" || return 0
@@ -34,12 +31,12 @@ _ovc_main() {
         # shellcheck source=oss-phase-result.sh
         source "$here/oss-phase-result.sh"
         if oss_plugin_cli "$sub" && oss_plugin_node "$_OSS_PLUGIN_CLI" "$sub"; then
-            oss_run_bounded_rc 7 /usr/bin/env PATH=/usr/bin:/bin "$OSS_NODE" "$_OSS_PLUGIN_CLI" ${mode[@]+"${mode[@]}"} "$in"
+            oss_run_bounded_rc 7 /usr/bin/env PATH=/usr/bin:/bin "$OSS_NODE" "$_OSS_PLUGIN_CLI" "$in"
         fi
     fi
     /bin/rm -rf "$dir"
     return 0
 }
 
-_ovc_main "$@" >/dev/null 2>&1
+_ovc_main >/dev/null 2>&1
 exit 0

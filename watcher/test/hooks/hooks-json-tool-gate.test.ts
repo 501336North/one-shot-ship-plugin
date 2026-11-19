@@ -76,9 +76,7 @@ const EXISTING: HookMap = {
   // R-257 T19 (DESIGN D9): the SubagentStop verdict capture, additive to the gate-run entry above.
   // Its timeout is explained in hooks-json-verdict-capture.test.ts.
   SubagentStop: [{ hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/hooks/oss-verdict-capture.sh', timeout: 10 }] }],
-  // ⚠ changes existing test: R-257 round 2 security L4 — the capture's SubagentStart start snapshot, additive to the
-  //   gate-run entry above (its timeout is explained in hooks-json-verdict-capture.test.ts).
-  SubagentStart: [{ hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/hooks/oss-verdict-capture.sh start', timeout: 10 }] }],
+  // ⚠ changes existing test: D45 dead code — the capture's SubagentStart start snapshot entry is gone (nothing reads it).
 };
 
 describe('hooks.json tool-gate entries', () => {

@@ -18,7 +18,7 @@ import { fileURLToPath } from 'url';
 import { assembleShip, DEFAULT_REQUIRED_GATES } from '../../src/phase-results/assemble-ship.js';
 import type { AssembleContext, AssembleOutcome } from '../../src/phase-results/assemble-common.js';
 import { openLedger } from '../../src/phase-results/ledger.js';
-import { captureStart, captureVerdict } from '../../src/phase-results/verdict-capture.js';
+import { captureVerdict } from '../../src/phase-results/verdict-capture.js';
 import { loadPhaseSchema } from '../../src/phase-results/schemas.js';
 import { validate } from '../../src/phase-results/validate.js';
 
@@ -406,10 +406,10 @@ describe('assembleShip: captured agent verdicts (T19)', () => {
   // ⚠ changes existing test: finding 4 (round 1 security, coordinator fix) — a captured row counts only when its
   //   reviewed tree is the shipped tree, so the helper records the current (clean) tree, as both `tree` and
 //   `trackedTree`, as the capture CLI does.
-  // ⚠ changes existing test: round 2 security L4 — a pass row counts only with a matching start snapshot (start: match).
+  // ⚠ changes existing test: D45 dead code — rows no longer carry `start` (it was a pass row with start: match).
   function captured(row: { gate: string; verdict: 'pass' | 'fail'; findings: Record<string, number>; ts: string }): void {
     const tree = git('rev-parse', 'HEAD^{tree}');
-    openLedger(repo).appendRow(`verdicts/${FEATURE}`, { tree, trackedTree: tree, start: 'match', ...row, agent: 'agent-1', session: 'sess-1' });
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, { tree, trackedTree: tree, ...row, agent: 'agent-1', session: 'sess-1' });
   }
 
   function gatesOf(o: AssembleOutcome): Record<string, Record<string, unknown>> {
@@ -463,31 +463,30 @@ describe('assembleShip: captured agent verdicts (T19)', () => {
     });
   });
 
-  // Behaviour: a later re-review reports the state after the fixes, so the newest captured row counts.
-  // ⚠ changes existing test: D32 (user pick, ship round 2) — a fail is cleared only by a pass on a changed tree, so the fix is committed
-  //   between the two rows.
-  it('the latest captured row of a gate wins', () => {
-    gateLine({ round: 2, gate: 'code-review', verdict: 'fail' });
+  // Behaviour: once the failed code is fixed, the gate falls back to its timeline line.
+  // ⚠ changes existing test: D45 (fails only) — the fix commit clears the fail, not the later pass, so the gate keeps its line
+  //   (`source: model`); it was "the latest captured row of a gate wins" (the pass became the verdict).
+  it('a fail cleared by a fix commit leaves the gate to its timeline line', () => {
+    gateLine({ round: 2, gate: 'code-review', verdict: 'pass' });
     gateLine({ round: 2, gate: 'security', verdict: 'pass' });
     captured({ gate: 'code-review', verdict: 'fail', findings: { ...ZERO, medium: 1 }, ts: '2026-11-13T09:10:00.000Z' });
     commitFile('b.txt', 'fixed\n', 'fix the finding');
     captured({ gate: 'code-review', verdict: 'pass', findings: ZERO, ts: '2026-11-13T09:40:00.000Z' });
     const r = result(shipReview());
-    expect(gatesOf(shipReview())['code-review']).toMatchObject({ verdict: 'pass', findings: ZERO, source: 'agent' });
+    expect(gatesOf(shipReview())['code-review']).toMatchObject({ verdict: 'pass', findings: ZERO, source: 'model' });
     expect(r.verdict).toBe('ready_to_merge');
   });
 
-  // Behaviour: ship's rule holds for the agent too: unfixed critical or high findings fail the gate.
-  // Rule: ship.md "Write fail whenever critical or high findings of that agent are left unfixed ... whatever the
-  //       agent said" (coordinator correction 2026-11-18).
-  it('a captured pass with high findings gives a failing gate, source agent, and blocks the ship', () => {
+  // Behaviour: a captured pass is not evidence (it can be minted), whatever findings it reports; the line decides.
+  // ⚠ changes existing test: D45 (fails only) — it was "a captured pass with high findings gives a failing gate, source agent, and
+  //   blocks the ship"; D24/D27's rule on a captured pass is gone with the pass.
+  it('a captured pass with high findings changes nothing: the timeline line decides', () => {
     gateLine({ round: 1, gate: 'code-review', verdict: 'pass' });
     gateLine({ round: 1, gate: 'security', verdict: 'pass' });
     captured({ gate: 'security', verdict: 'pass', findings: { ...ZERO, high: 2 }, ts: '2026-11-13T09:10:00.000Z' });
     const r = result(shipReview());
-    expect(gatesOf(shipReview()).security).toMatchObject({ verdict: 'fail', findings: { ...ZERO, high: 2 }, source: 'agent' });
-    expect(r.verdict).toBe('blocked');
-    expect(r.blockers).toEqual(['gate:security']);
+    expect(gatesOf(shipReview()).security).toMatchObject({ verdict: 'pass', findings: ZERO, source: 'model' });
+    expect(r.verdict).toBe('ready_to_merge');
   });
 
   // D24 (user pick 2026-11-18): ship's rule counts the round's fixes ("left unfixed at the end of the round");
@@ -499,26 +498,18 @@ describe('assembleShip: captured agent verdicts (T19)', () => {
     return result(shipReview());
   }
 
-  it('D24: captured high=2 all fixed on the timeline line gives pass, source agent, no blocker', () => {
-    const r = fixedCase('pass', { high: 2 }, { high: 2 });
-    expect(gatesOf(shipReview()).security).toMatchObject({ verdict: 'pass', source: 'agent', fixed: { ...ZERO, high: 2 } });
-    expect(r.blockers).toEqual([]);
-  });
-
-  it('D24: captured high=2 with one fixed gives fail', () => {
+  // ⚠ changes existing test: D45 (fails only) — replaces "D24: captured high=2 all fixed ... gives pass, source agent", "D24: captured
+  //   high=2 with one fixed gives fail" and "D24: a fix counted under the wrong severity does not clear a critical
+  //   finding": D24's rule read the fix counts against a captured pass, which no longer counts.
+  it('D24: a captured pass, its findings fixed or not, leaves the gate to its line', () => {
     const r = fixedCase('pass', { high: 2 }, { high: 1 });
-    expect(gatesOf(shipReview()).security).toMatchObject({ verdict: 'fail', source: 'agent' });
-    expect(r.blockers).toEqual(['gate:security']);
+    expect(gatesOf(shipReview()).security).toMatchObject({ verdict: 'pass', source: 'model', fixed: { ...ZERO, high: 1 } });
+    expect(r.blockers).toEqual([]);
   });
 
   // ⚠ changes existing test: D32 (user pick, ship round 2) — D24's fix counts never override a captured fail row; it now blocks until re-review.
   it("D24: the agent's fail about a high finding that was fixed still fails (D32)", () => {
     fixedCase('fail', { high: 1 }, { high: 1 });
-    expect(gatesOf(shipReview()).security).toMatchObject({ verdict: 'fail', source: 'agent' });
-  });
-
-  it('D24: a fix counted under the wrong severity does not clear a critical finding', () => {
-    fixedCase('pass', { critical: 1 }, { high: 1 });
     expect(gatesOf(shipReview()).security).toMatchObject({ verdict: 'fail', source: 'agent' });
   });
 
@@ -561,10 +552,11 @@ describe('assembleShip: captured agent verdicts (T19)', () => {
     expect(r.blockers).toEqual(['gate:code-review (captured fail, not re-reviewed)']);
   });
 
+  // ⚠ changes existing test: D45 (fails only) — only an open captured fail makes an agent gate, so the row is a fail (it was a pass).
   it('a result with agent gates passes the ship schema', () => {
     gateLine({ round: 1, gate: 'code-review', verdict: 'pass' });
     gateLine({ round: 1, gate: 'security', verdict: 'pass' });
-    captured({ gate: 'code-review', verdict: 'pass', findings: ZERO, ts: '2026-11-13T09:10:00.000Z' });
+    captured({ gate: 'code-review', verdict: 'fail', findings: ZERO, ts: '2026-11-13T09:10:00.000Z' });
     expect(validate(loadPhaseSchema('ship', PLUGIN_ROOT), result(shipReview()))).toEqual({ ok: true });
   });
 });
@@ -579,12 +571,13 @@ describe('assembleShip: gate evidence label (D26)', () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
 
-  // ⚠ changes existing test: round 2 security L4 — a pass row counts only with a matching start snapshot (start: match).
+  // ⚠ changes existing test: D45 dead code — rows no longer carry `start` (it was a pass row with start: match).
+  // ⚠ changes existing test: D45 (fails only) — only an open captured fail backs a gate now, so the helper records a fail (it was a pass).
   function captured(gate: string): void {
     openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
-      gate, verdict: 'pass', findings: ZERO, agent: 'a', session: 's', ts: '2026-11-13T09:10:00.000Z',
+      gate, verdict: 'fail', findings: ZERO, agent: 'a', session: 's', ts: '2026-11-13T09:10:00.000Z',
       tree: git('rev-parse', 'HEAD^{tree}'),
-      trackedTree: git('rev-parse', 'HEAD^{tree}'), start: 'match',
+      trackedTree: git('rev-parse', 'HEAD^{tree}'),
     });
   }
 
@@ -624,12 +617,12 @@ describe('assembleShip: security and pen-test gates fail on LOW or above (D27)',
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
 
-  // ⚠ changes existing test: round 2 security L4 — a pass row counts only with a matching start snapshot (start: match).
+  // ⚠ changes existing test: D45 dead code — rows no longer carry `start` (it was a pass row with start: match).
   function captured(gate: string, verdict: 'pass' | 'fail', findings: Record<string, number>): void {
     openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
       gate, verdict, findings: { ...ZERO, ...findings }, agent: 'a', session: 's', ts: '2026-11-13T09:40:00.000Z',
       tree: git('rev-parse', 'HEAD^{tree}'),
-      trackedTree: git('rev-parse', 'HEAD^{tree}'), start: 'match',
+      trackedTree: git('rev-parse', 'HEAD^{tree}'),
     });
   }
 
@@ -639,16 +632,10 @@ describe('assembleShip: security and pen-test gates fail on LOW or above (D27)',
     return (r.gates as Array<Record<string, unknown>>).find((g) => g.gate === name);
   }
 
-  // Rule: D27, ship.md "security findings at LOW or above" block; unfixed = sum of max(0, found - fixed) over LOW+.
-  it('security: an unfixed LOW finding fails, even when the agent said pass', () => {
-    captured('security', 'pass', { low: 1 });
-    expect(gateOf('security')).toMatchObject({ verdict: 'fail', source: 'agent' });
-  });
-
-  it('security: MEDIUM and LOW findings all fixed in the round pass', () => {
-    captured('security', 'pass', { medium: 1, low: 2 });
-    expect(gateOf('security', { medium: 1, low: 2 })).toMatchObject({ verdict: 'pass' });
-  });
+  // ⚠ changes existing test: D45 (fails only) — removed "security: an unfixed LOW finding fails, even when the agent said pass",
+  //   "security: MEDIUM and LOW findings all fixed in the round pass", "security: a fix under the wrong severity does
+  //   not clear a MEDIUM finding" and "code-review: an unfixed LOW finding with the agent passing still passes (D24)":
+  //   each read D24/D27's counts from a captured pass, which no longer decides anything (see the D45 block).
 
   // ⚠ changes existing test: D32 (user pick, ship round 2) — D24/D27 fix counts never override a captured fail row.
   it("security: the agent's fail about a LOW finding that was fixed still fails (D32)", () => {
@@ -661,34 +648,25 @@ describe('assembleShip: security and pen-test gates fail on LOW or above (D27)',
     expect(gateOf('security')).toMatchObject({ verdict: 'fail' });
   });
 
-  it('security: a fix under the wrong severity does not clear a MEDIUM finding', () => {
-    captured('security', 'pass', { medium: 1 });
-    expect(gateOf('security', { low: 1 })).toMatchObject({ verdict: 'fail' });
-  });
-
-  // Rule: D24 is unchanged for code-review and performance: only critical and high are counted.
-  it('code-review: an unfixed LOW finding with the agent passing still passes (D24)', () => {
-    captured('code-review', 'pass', { low: 3, medium: 1 });
-    expect(gateOf('code-review')).toMatchObject({ verdict: 'pass', source: 'agent' });
-  });
-
   // Rule: D27, a captured pen-test fail blocks even though pen-test is optional and has no timeline line.
-  it('pen-test: a captured row with an unfixed LOW finding adds a failing pen-test gate and blocks', () => {
+  // ⚠ changes existing test: D45 (fails only) — the row is a fail (it was a pass with an unfixed LOW finding, failed by D27's rule).
+  it('pen-test: a captured fail with a LOW finding adds a failing pen-test gate and blocks', () => {
     allPass();
-    captured('pen-test', 'pass', { low: 1 });
+    captured('pen-test', 'fail', { low: 1 });
     const r = result(ship());
     expect((r.gates as Array<Record<string, unknown>>).find((g) => g.gate === 'pen-test')).toEqual({
       gate: 'pen-test', verdict: 'fail', findings: { ...ZERO, low: 1 }, fixed: ZERO, source: 'agent',
     });
     expect(r.verdict).toBe('blocked');
-    expect(r.blockers).toEqual(['gate:pen-test']);
+    expect(r.blockers).toEqual(['gate:pen-test (captured fail, not re-reviewed)']);
   });
 
-  it('pen-test: a captured clean pass adds a passing pen-test gate', () => {
+  // ⚠ changes existing test: D45 (fails only) — a captured pass adds nothing (it was "a captured clean pass adds a passing pen-test gate").
+  it('pen-test: a captured clean pass adds no pen-test gate', () => {
     allPass();
     captured('pen-test', 'pass', {});
     const r = result(ship());
-    expect((r.gates as Array<Record<string, unknown>>).find((g) => g.gate === 'pen-test')).toMatchObject({ verdict: 'pass', source: 'agent' });
+    expect((r.gates as Array<Record<string, unknown>>).map((g) => g.gate)).toEqual(GATES);
     expect(r.verdict).toBe('ready_to_merge');
   });
 
@@ -723,10 +701,10 @@ describe('assembleShip: captured rows cannot be replayed or re-rolled (finding 4
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
 
-  // ⚠ changes existing test: round 2 security L4 — a pass row counts only with a matching start snapshot (start: match).
+  // ⚠ changes existing test: D45 dead code — rows no longer carry `start` (it was a pass row with start: match).
   function captured(verdict: 'pass' | 'fail', ts: string, tree = git('rev-parse', 'HEAD^{tree}')): void {
     openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
-      gate: 'code-review', verdict, findings: ZERO, agent: 'a', session: 's', ts, tree, trackedTree: tree, start: 'match',
+      gate: 'code-review', verdict, findings: ZERO, agent: 'a', session: 's', ts, tree, trackedTree: tree,
     });
   }
 
@@ -755,7 +733,8 @@ describe('assembleShip: captured rows cannot be replayed or re-rolled (finding 4
     captured('pass', '2026-11-13T09:30:00.000Z');
     gateLine({ round: 2, gate: 'code-review', verdict: 'pass', ts: '2026-11-13T09:40:00Z' });
     otherGates(2, '2026-11-13T09:40:00Z');
-    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'agent' });
+    // ⚠ changes existing test: D45 (fails only) — the fix clears the fail and the round 2 line decides (`source: model`, was agent).
+    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'model' });
   });
 
   it("another gate's newer line is not a re-review of this gate: the fail stays", () => {
@@ -767,12 +746,14 @@ describe('assembleShip: captured rows cannot be replayed or re-rolled (finding 4
   });
 
   // ⚠ changes existing test: D32 (user pick, ship round 2) — a captured fail on any tree blocks until re-review.
-  it('a fail captured on an older tree still blocks (D32)', () => {
+  // ⚠ changes existing test: D45 (fails only) — the shipped code now differs from the failed code, so the fail is cleared and the line
+  //   decides (it was "a fail captured on an older tree still blocks (D32)").
+  it('a fail captured on an older tree is cleared once different code ships', () => {
     const old = git('rev-parse', 'HEAD^{tree}');
     captured('fail', '2026-11-13T09:10:00.000Z', old);
     commitFile('c.txt', 'y\n', 'more');
     for (const gate of GATES) gateLine({ round: 1, gate, verdict: 'pass' });
-    expect(codeReview()).toMatchObject({ verdict: 'fail', source: 'agent' });
+    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'model' });
   });
 
   it('a pass captured on an older tree is ignored', () => {
@@ -815,7 +796,7 @@ describe('assembleShip: a captured fail blocks until re-review on a changed tree
   function captured(verdict: 'pass' | 'fail', ts: string, tree = git('rev-parse', 'HEAD^{tree}')): void {
     openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
       gate: 'code-review', verdict, findings: ZERO, agent: 'a', session: 's', ts, tree, trackedTree: tree,
-      headSha: git('rev-parse', 'HEAD'), start: 'match',
+      headSha: git('rev-parse', 'HEAD'),
     });
   }
 
@@ -823,15 +804,16 @@ describe('assembleShip: a captured fail blocks until re-review on a changed tree
     return (result(o).gates as Array<Record<string, unknown>>).find((g) => g.gate === 'code-review');
   }
 
-  // Behaviour: editing the code after a failed review does not drop the fail; the reviewer must look again.
-  it('fail, then an edit, then a model pass line: still blocked, labelled not re-reviewed', () => {
+  // ⚠ changes existing test: D45 (fails only) — a tracked edit is a change to the shipped code, so it clears the fail and the model
+  //   line decides (it was "fail, then an edit, then a model pass line: still blocked, labelled not re-reviewed").
+  //   With no edit the fail stays open, labelled not re-reviewed (the D45 block).
+  it('fail, then a tracked edit, then a model pass line: cleared, the line decides', () => {
     captured('fail', '2026-11-13T09:10:00.000Z');
     commitFile('b.txt', 'edited\n', 'edit after the review');
     allPass(1);
     const o = ship();
-    expect(codeReview(o)).toMatchObject({ verdict: 'fail', source: 'agent' });
-    expect(result(o).verdict).toBe('blocked');
-    expect(result(o).blockers).toEqual(['gate:code-review (captured fail, not re-reviewed)']);
+    expect(codeReview(o)).toMatchObject({ verdict: 'pass', source: 'model' });
+    expect(result(o).verdict).toBe('ready_to_merge');
   });
 
   // Behaviour: re-running the reviewer on unchanged code cannot re-roll a fail away, even after a new round line.
@@ -843,14 +825,15 @@ describe('assembleShip: a captured fail blocks until re-review on a changed tree
     expect(codeReview(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
   });
 
-  // Behaviour: fixing the code and having the reviewer pass what ships clears the fail.
+  // Behaviour: fixing the code clears the fail.
+  // ⚠ changes existing test: D45 (fails only) — the gate keeps its line (`source: model`, was agent): the reviewer's pass decides nothing.
   it('fail, a fixed tree, then a reviewer pass on the shipped tree: passes', () => {
     captured('fail', '2026-11-13T09:10:00.000Z');
     commitFile('b.txt', 'fixed\n', 'fix the finding');
     captured('pass', '2026-11-13T09:30:00.000Z');
     allPass(1);
     const o = ship();
-    expect(codeReview(o)).toMatchObject({ verdict: 'pass', source: 'agent' });
+    expect(codeReview(o)).toMatchObject({ verdict: 'pass', source: 'model' });
     expect(result(o).verdict).toBe('ready_to_merge');
   });
 
@@ -868,12 +851,12 @@ describe('assembleShip: a captured fail blocks until re-review on a changed tree
 });
 
 /**
- * D36 (user pick, ship round 3): a pass captured with no tree (a changed file over 50 MB, or the capture deadline) proves
- * nothing about what it reviewed, so it never becomes the gate's verdict. It clears an earlier fail of its gate only when
- * its headSha is set and differs from the fail's (a fail with no headSha is never cleared, pen F2), and only with
- * start: match (L4). The gate then falls back to its timeline line, `source: model`, listed in uncapturedGates (D26).
+ * D36 (user pick, ship round 3), replaced by D45: a pass captured with no tree (a changed file over 50 MB, or the capture
+ * deadline) used to clear an earlier fail on a new commit. Under D45 no pass clears anything: the fail clears only when
+ * the shipped code differs from the failed code, and the gate then falls back to its line, `source: model` (D26).
+ * ⚠ changes existing test: D45 (fails only) — the cases below now follow the code change, never the no-tree pass.
  */
-describe('assembleShip: a pass with no tree clears a fail only on a new commit (D36)', () => {
+describe('assembleShip: a pass with no tree clears nothing; the code change does (D36, D45)', () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
 
@@ -882,8 +865,9 @@ describe('assembleShip: a pass with no tree clears a fail only on a new commit (
       gate: 'code-review', verdict, findings: ZERO, agent: 'a', session: 's', ts, headSha: git('rev-parse', 'HEAD'), ...extra,
     });
   }
-  const failHere = (ts: string): void => row('fail', ts, { tree: git('rev-parse', 'HEAD^{tree}'), trackedTree: git('rev-parse', 'HEAD^{tree}'), start: 'match' });
-  const blindPass = (ts: string, start = 'match'): void => row('pass', ts, { tree: '', trackedTree: '', start });
+  const failHere = (ts: string): void => row('fail', ts, { tree: git('rev-parse', 'HEAD^{tree}'), trackedTree: git('rev-parse', 'HEAD^{tree}') });
+  // ⚠ changes existing test: D45 dead code — the fixture row has no `start` field any more.
+  const blindPass = (ts: string): void => row('pass', ts, { tree: '', trackedTree: '' });
 
   function codeReview(o: AssembleOutcome): Record<string, unknown> | undefined {
     return (result(o).gates as Array<Record<string, unknown>>).find((g) => g.gate === 'code-review');
@@ -910,10 +894,11 @@ describe('assembleShip: a pass with no tree clears a fail only on a new commit (
   });
 
   /**
-   * A real no-tree pass: a tracked file grown over 50 MB (both trees come out ''), SubagentStart (past its deadline when
-   * `startDeadlineMs` is 0), then the stop, its verdict read from a transcript under ~/.claude/projects (D41).
+   * A real no-tree pass: a tracked file grown over 50 MB (both trees come out ''), then the stop, its verdict read from
+   * a transcript under ~/.claude/projects (D41).
+   * ⚠ changes existing test: D45 dead code — no SubagentStart capture runs first any more (captureStart is removed).
    */
-  function realBlindPass(startDeadlineMs?: number): void {
+  function realBlindPass(): void {
     featureDir();
     commitFile('big.bin', 'small\n', 'add a data file');
     const big = path.join(repo, 'big.bin');
@@ -921,27 +906,21 @@ describe('assembleShip: a pass with no tree clears a fail only on a new commit (
     fs.ftruncateSync(fd, 51 * 1024 * 1024);
     fs.closeSync(fd);
     const hook = { session_id: 's1', agent_id: 'a-blind', agent_type: 'oss:code-reviewer', cwd: repo };
-    expect(captureStart(hook, startDeadlineMs === undefined ? {} : { deadlineMs: startDeadlineMs }).recorded).toBe(true);
     const text = '```oss-verdict\n' + JSON.stringify({ verdict: 'pass', findings: ZERO }) + '\n```';
     const out = captureVerdict({ ...hook, agent_transcript_path: agentTranscript(text) }, { now: () => new Date('2026-11-13T09:30:00.000Z') });
     expect(out.captured).toBe(true);
     git('checkout', '-q', '--', 'big.bin');
   }
 
-  // Rule: L4 holds: a no-tree pass with no start snapshot clears nothing.
   // ⚠ changes existing test: code review M1 (round 3) — the row was fabricated (`start: 'missing'` on a no-tree pass);
   //   it now comes from a real capture whose start snapshot ran past its deadline too, which used to record a false
   //   match ('' === '').
-  it('a no-tree pass on a new commit whose start snapshot is empty too: still blocked', () => {
-    failHere('2026-11-13T09:10:00.000Z');
-    commitFile('b.txt', 'fixed\n', 'fix');
-    realBlindPass(0);
-    allPass(1);
-    expect(codeReview(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
-  });
-
-  // Behaviour: a real no-tree pass whose start saw the same new commit clears the fail (D36 end to end).
-  it('a real no-tree pass on a new commit, started on that commit: not blocked', () => {
+  // ⚠ changes existing test: D45 (fails only) — the fix commit changed the shipped code, so the fail is cleared whatever the pass's start
+  //   (it was "a no-tree pass on a new commit whose start snapshot is empty too: still blocked").
+  // ⚠ changes existing test: D45 dead code — there is no start snapshot any more: it was "... even when the no-tree pass
+  //   after it had an empty start snapshot", and the twin test "a real no-tree pass on a new commit, started on that
+  //   commit: not blocked" (now the same test) is removed.
+  it('a fix commit clears the fail, whatever real no-tree pass follows', () => {
     failHere('2026-11-13T09:10:00.000Z');
     commitFile('b.txt', 'fixed\n', 'fix');
     realBlindPass();
@@ -949,12 +928,13 @@ describe('assembleShip: a pass with no tree clears a fail only on a new commit (
     expect(codeReview(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
   });
 
-  // Code review H1 (round 3): a pass captured BEFORE the fail never decides the gate once a no-tree pass clears that
-  //   fail; D36 says the gate falls back to its model line, so the model line's fail still blocks.
-  it('a counting pass, then a fail on the same tree, a .oss-only commit and a no-tree pass: the model line decides', () => {
+  // Code review H1 (round 3): a pass captured BEFORE the fail never decides the gate.
+  // ⚠ changes existing test: D45 (fails only) — a .oss-only commit is no code change, so the fail stays open, `source: agent` (it was
+  //   cleared by the no-tree pass and "the model line decides").
+  it('a counting pass, then a fail on the same tree, a .oss-only commit and a no-tree pass: the fail stays open', () => {
     const t = git('rev-parse', 'HEAD^{tree}');
-    row('pass', '2026-11-13T09:05:00.000Z', { tree: t, trackedTree: t, start: 'match' });
-    row('fail', '2026-11-13T09:10:00.000Z', { tree: t, trackedTree: t, start: 'match' });
+    row('pass', '2026-11-13T09:05:00.000Z', { tree: t, trackedTree: t });
+    row('fail', '2026-11-13T09:10:00.000Z', { tree: t, trackedTree: t });
     fs.writeFileSync(path.join(featureDir(), 'PROGRESS.md'), 'x\n');
     git('add', '-f', '.oss');
     git('commit', '-q', '-m', 'dev docs only');
@@ -963,20 +943,22 @@ describe('assembleShip: a pass with no tree clears a fail only on a new commit (
     gateLine({ round: 1, gate: 'performance', verdict: 'pass' });
     gateLine({ round: 1, gate: 'security', verdict: 'pass' });
     const o = ship();
-    expect(codeReview(o)).toMatchObject({ verdict: 'fail', source: 'model' });
+    expect(codeReview(o)).toMatchObject({ verdict: 'fail', source: 'agent' });
     expect(result(o).verdict).toBe('blocked');
-    expect(result(o).uncapturedGates).toContain('code-review');
+    expect(result(o).uncapturedGates).not.toContain('code-review');
   });
 
   // ⚠ changes existing test: pen test F2 (round 3) — with no headSha nobody can tell a commit landed after the fail, so
   //   no no-tree pass clears it (it was "a fail with no headSha is cleared by a no-tree pass that has one").
   // ⚠ D43: still holds; such a fail is cleared only by a later counting pass with a real tree (see the pen F2 block).
-  it('a fail with no headSha is not cleared by a no-tree pass', () => {
+  // ⚠ changes existing test: D48 (replaces D43) — a fail with neither tree nor headSha does not count, so the gate keeps
+  //   its model line (it was "... is not cleared by a no-tree pass", verdict fail, source agent).
+  it('a fail with neither tree nor headSha does not count, whatever pass follows', () => {
     row('fail', '2026-11-13T09:10:00.000Z', { headSha: '', tree: '', trackedTree: '' });
     commitFile('b.txt', 'fixed\n', 'fix');
     blindPass('2026-11-13T09:30:00.000Z');
     allPass(1);
-    expect(codeReview(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
+    expect(codeReview(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
   });
 });
 
@@ -996,9 +978,9 @@ describe('assembleShip: a fail with no tree clears only on a new commit (pen F2)
     });
   }
   const blindFail = (ts: string, extra: Record<string, unknown> = {}): void =>
-    row('fail', ts, { tree: '', trackedTree: '', start: 'match', ...extra });
+    row('fail', ts, { tree: '', trackedTree: '', ...extra });
   const passHere = (ts: string): void =>
-    row('pass', ts, { tree: git('rev-parse', 'HEAD^{tree}'), trackedTree: git('rev-parse', 'HEAD^{tree}'), start: 'match' });
+    row('pass', ts, { tree: git('rev-parse', 'HEAD^{tree}'), trackedTree: git('rev-parse', 'HEAD^{tree}') });
 
   const security = (o: AssembleOutcome): Record<string, unknown> | undefined =>
     (result(o).gates as Array<Record<string, unknown>>).find((g) => g.gate === 'security');
@@ -1013,40 +995,31 @@ describe('assembleShip: a fail with no tree clears only on a new commit (pen F2)
     expect(result(o).verdict).toBe('blocked');
   });
 
+  // ⚠ changes existing test: D45 (fails only) — the fix commit clears the fail through its headSha's tree; the line decides (was agent).
   it('a no-tree fail, a fix commit, then a counting pass on the new commit: passes', () => {
     blindFail('2026-11-13T09:10:00.000Z');
     commitFile('b.txt', 'fixed\n', 'fix');
     passHere('2026-11-13T09:30:00.000Z');
     allPass(1);
-    expect(security(ship())).toMatchObject({ verdict: 'pass', source: 'agent' });
+    expect(security(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
   });
 
-  // ⚠ changes existing test: D43 (user pick, round 5, "Clear on a pass with a tree") — a fail with no headSha (git
-  //   rev-parse failed at capture) is cleared by a later counting pass with a real tree; "never cleared" blocked the
-  //   feature for good (it was "a fail with neither tree nor headSha is never cleared by a counting pass").
-  it('D43: a fail with neither tree nor headSha, a fix commit, then a counting pass with a tree: passes', () => {
+  // ⚠ changes existing test: D48 ("Record nothing", replaces D43 and D45's "stays open" for this case) — the capture no
+  //   longer writes a row with neither tree nor headSha; such a row left from before (no released version wrote one)
+  //   does not count, so the gate keeps its model line (D26). It replaces three tests that said "still blocked": "...
+  //   a fix commit, then a counting pass with a tree", "... then a counting pass with a tree" and "... then a no-tree pass".
+  it('D48: a fail with neither tree nor headSha does not count: the gate keeps its model line', () => {
     blindFail('2026-11-13T09:10:00.000Z', { headSha: '' });
-    commitFile('b.txt', 'fixed\n', 'fix');
-    passHere('2026-11-13T09:30:00.000Z');
-    allPass(1);
-    expect(security(ship())).toMatchObject({ verdict: 'pass', source: 'agent' });
-  });
-
-  // Behaviour (D43): with no headSha nobody can tell whether a commit landed, so a counting pass with a real tree clears.
-  it('D43: a fail with neither tree nor headSha, then a counting pass with a tree: cleared', () => {
-    blindFail('2026-11-13T09:10:00.000Z', { headSha: '' });
-    passHere('2026-11-13T09:30:00.000Z');
     allPass(1);
     const o = ship();
-    expect(security(o)).toMatchObject({ verdict: 'pass', source: 'agent' });
-    expect(result(o).verdict).toBe('ready_to_merge');
+    expect(security(o)).toMatchObject({ verdict: 'pass', source: 'model' });
+    expect(result(o).verdict).not.toBe('blocked');
   });
 
-  // Behaviour (D43): a pass with no tree proves nothing about what it reviewed, so it never clears such a fail.
-  it('D43: a fail with neither tree nor headSha, then a no-tree pass: still blocked', () => {
+  // D48: a row with neither is skipped, so it does not hide an earlier captured fail that is still open.
+  it('D48: a fail with neither tree nor headSha does not hide an earlier open fail', () => {
+    row('fail', '2026-11-13T09:05:00.000Z', { tree: git('rev-parse', 'HEAD^{tree}'), trackedTree: git('rev-parse', 'HEAD^{tree}') });
     blindFail('2026-11-13T09:10:00.000Z', { headSha: '' });
-    commitFile('b.txt', 'fixed\n', 'fix');
-    row('pass', '2026-11-13T09:30:00.000Z', { tree: '', trackedTree: '', start: 'match' });
     allPass(1);
     const o = ship();
     expect(security(o)).toMatchObject({ verdict: 'fail', source: 'agent' });
@@ -1068,7 +1041,7 @@ describe('assembleShip: an open fail survives a restarted run (pen F1)', () => {
     const tree = git('rev-parse', 'HEAD^{tree}');
     openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
       gate: 'code-review', verdict: 'fail', findings: { ...ZERO, high: 1 }, agent: 'a', session: 's', ts, tree,
-      trackedTree: tree, headSha: git('rev-parse', 'HEAD'), start: 'match',
+      trackedTree: tree, headSha: git('rev-parse', 'HEAD'),
     });
   }
 
@@ -1116,6 +1089,27 @@ describe('assembleShip: an open fail survives a restarted run (pen F1)', () => {
     expect(codeReview(ship())).toMatchObject({ verdict: 'fail' });
   });
 
+  // Rule: D47 (code review MEDIUM) — the cutoff is frozen in the result at assemble, as D42's evidenceCutoff, so a check
+  //       (re-assemble with the stored value) reads the same rows whatever ship result is stored by then.
+  it('assemble stores the cutoff it used as verdictsFrom: the last ready_to_merge run start, or null for all rows', () => {
+    allPass(1);
+    expect(result(ship()).verdictsFrom).toBeNull();
+    storedShip('ready_to_merge', '2026-11-13T08:00:00.000Z');
+    expect(result(ship()).verdictsFrom).toBe('2026-11-13T08:00:00.000Z');
+  });
+
+  it('a given verdictsFrom is used instead of the stored result: a string cuts there, null reads every row', () => {
+    failAt('2026-11-13T07:00:00.000Z');
+    allPass(1);
+    const at = (verdictsFrom: string | null): AssembleOutcome =>
+      assembleShip({ ...ctx(), verdictsFrom }, { base: 'main' });
+    expect(codeReview(at('2026-11-13T07:30:00.000Z'))).toMatchObject({ verdict: 'pass', source: 'model' });
+    expect(result(at('2026-11-13T07:30:00.000Z')).verdictsFrom).toBe('2026-11-13T07:30:00.000Z');
+    storedShip('ready_to_merge', '2026-11-13T08:00:00.000Z');
+    expect(codeReview(at(null))).toMatchObject({ verdict: 'fail', source: 'agent' });
+    expect(result(at(null)).verdictsFrom).toBeNull();
+  });
+
   // Rule: gate lines carry whole-second times, so a line from the run start's own second belongs to this run.
   it('a timeline gate line from the same second as the run start is read', () => {
     for (const gate of GATES) gateLine({ round: 1, gate, verdict: 'pass', ts: '2026-11-13T09:00:00Z' });
@@ -1134,28 +1128,25 @@ describe('assembleShip: an open fail survives a restarted run (pen F1)', () => {
 
 /**
  * Coordinator fix to finding 4 (2026-11-18): review agents run on the uncommitted working tree in ship Step 1, and ship
- * commits afterwards, so a captured row is bound to the reviewed TREE (working tree minus .oss), never HEAD. A row
- * counts only when that tree equals the shipped HEAD's tree outside .oss; otherwise it is ignored and the gate keeps
- * its timeline line (D26 label).
+ * commits afterwards, so a captured row is bound to the reviewed TREE (working tree minus .oss), never HEAD.
+ * ⚠ changes existing test: D45 (fails only) — this block recorded passes and checked whether each counted (`source:
+ *   agent`) or not (`model`). Passes no longer count at all, so each case now records a real captured FAIL and checks
+ *   whether it stays open (`fail`, `source: agent`: the shipped code is the failed code) or is cleared (`pass`, `source:
+ *   model`: the shipped tracked code outside .oss differs). Each test's expectation is marked below.
  */
-describe('assembleShip: captured rows are bound to the reviewed tree', () => {
+describe('assembleShip: a captured fail is bound to the reviewed tracked tree', () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   const FAIL_BLOCK = '```oss-verdict\n' + JSON.stringify({ verdict: 'fail', findings: { ...ZERO, medium: 1 } }) + '\n```';
-  // ⚠ changes existing test: D32 — a captured fail now blocks on any tree, so the "does not count" cases record a PASS
-  //   (whose binding still decides whether it counts: `source: agent` when it does, `model` when it does not), and the
-  //   "counts" cases too, since a fail would block whether or not it was bound.
-  const PASS_BLOCK = '```oss-verdict\n' + JSON.stringify({ verdict: 'pass', findings: ZERO }) + '\n```';
+  const OPEN = { verdict: 'fail', source: 'agent' };
+  const CLEARED = { verdict: 'pass', source: 'model' };
 
-  // ⚠ changes existing test: round 2 security L4 — a pass counts only with a matching start snapshot, so review() runs
-  //   the SubagentStart capture first, as hooks.json does (`start: false` skips it).
-  function review(block = FAIL_BLOCK, opts: { start?: boolean; duringReview?: () => void } = {}): void {
+  // ⚠ changes existing test: D45 dead code — review() no longer runs a SubagentStart capture first (it is removed).
+  function review(opts: { duringReview?: () => void } = {}): void {
     featureDir();
-    const hook = { session_id: 's1', agent_id: 'a1', agent_type: 'oss:code-reviewer', cwd: repo };
-    if (opts.start !== false) expect(captureStart(hook).recorded).toBe(true);
     opts.duringReview?.();
     const out = captureVerdict(
       // ⚠ changes existing test: D41 — the verdict is read only from the agent transcript, never last_assistant_message.
-      { session_id: 's1', agent_id: 'a1', agent_type: 'oss:code-reviewer', cwd: repo, agent_transcript_path: agentTranscript(block) },
+      { session_id: 's1', agent_id: 'a1', agent_type: 'oss:code-reviewer', cwd: repo, agent_transcript_path: agentTranscript(FAIL_BLOCK) },
       { now: () => new Date('2026-11-13T09:10:00.000Z') },
     );
     expect(out.captured).toBe(true);
@@ -1166,129 +1157,275 @@ describe('assembleShip: captured rows are bound to the reviewed tree', () => {
     return (result(ship()).gates as Array<Record<string, unknown>>).find((g) => g.gate === 'code-review');
   }
 
-  it('a row captured on an uncommitted tree that is then committed unchanged counts', () => {
+  // ⚠ changes existing test: D45 — a fail on code committed unchanged stays open (was: a pass that counts).
+  it('a fail captured on an uncommitted tree that is then committed unchanged stays open', () => {
     fs.writeFileSync(path.join(repo, 'b.txt'), 'reviewed\n');
-    review(PASS_BLOCK);
+    review();
     git('add', 'b.txt');
     git('commit', '-q', '-m', 'ship commit');
-    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'agent' });
+    expect(codeReview()).toMatchObject(OPEN);
   });
 
-  // Behaviour: a pass counts only for the code the reviewer saw from start to end.
-  // Rule: round 2 security L4: a stop row counts only when its agent's start snapshot exists and equals the stop one.
-  it('a pass with no start snapshot does not count', () => {
-    fs.writeFileSync(path.join(repo, 'b.txt'), 'reviewed\n');
-    review(PASS_BLOCK, { start: false });
-    git('add', 'b.txt');
-    git('commit', '-q', '-m', 'ship commit');
-    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'model' });
-  });
+  // ⚠ changes existing test: D45 dead code — "a fail with no start snapshot still blocks" is removed: there is no start
+  //   snapshot any more, and the test above already covers that blocking case.
 
-  it('a pass whose code changed while the agent ran does not count, even when the stop tree ships', () => {
+  // ⚠ changes existing test: D45 — the fail is bound to its stop tree, which ships, so it stays open (was: a pass
+  //   whose code changed while the agent ran does not count).
+  it('a fail whose code changed while the agent ran stays open when its stop tree ships', () => {
     fs.writeFileSync(path.join(repo, 'b.txt'), 'seen at start\n');
-    review(PASS_BLOCK, { duringReview: () => fs.writeFileSync(path.join(repo, 'b.txt'), 'swapped in before stop\n') });
+    review({ duringReview: () => fs.writeFileSync(path.join(repo, 'b.txt'), 'swapped in before stop\n') });
     git('add', 'b.txt');
     git('commit', '-q', '-m', 'ship commit');
-    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'model' });
+    expect(codeReview()).toMatchObject(OPEN);
   });
 
-  it('a row whose tree differs by a later code change does not count', () => {
+  // ⚠ changes existing test: D45 — a later code change clears the fail (was: a pass row that does not count).
+  it('a later code change clears the fail', () => {
     fs.writeFileSync(path.join(repo, 'b.txt'), 'reviewed\n');
-    review(PASS_BLOCK);
+    review();
     fs.writeFileSync(path.join(repo, 'b.txt'), 'changed after review\n');
     git('add', 'b.txt');
     git('commit', '-q', '-m', 'ship commit');
-    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'model' });
+    expect(codeReview()).toMatchObject(CLEARED);
   });
 
-  it('a change only under .oss after the review still counts', () => {
+  // ⚠ changes existing test: D45 — a .oss-only change keeps the fail open (was: a pass that still counts).
+  it('a change only under .oss after the review keeps the fail open', () => {
     fs.writeFileSync(path.join(repo, 'b.txt'), 'reviewed\n');
-    review(PASS_BLOCK);
+    review();
     fs.writeFileSync(path.join(featureDir(), 'PROGRESS.md'), '# done\n');
     git('add', '-A');
     git('commit', '-q', '-m', 'ship commit with dev docs');
-    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'agent' });
+    expect(codeReview()).toMatchObject(OPEN);
   });
 
-  // Coordinator gap fix: ship commits only the files it picks, so an untracked file the reviewer saw but ship left out
-  // must not void the row; anything else that differs still does.
-  it('an untracked scratch file present at review, then left out of the commit, still counts', () => {
+  // ⚠ changes existing test: D45 — untracked files are not shipped code, so leaving one out keeps the fail open (was:
+  //   a pass that still counts).
+  it('an untracked scratch file present at review, then left out of the commit, keeps the fail open', () => {
     fs.writeFileSync(path.join(repo, 'b.txt'), 'reviewed\n');
     fs.mkdirSync(path.join(repo, 'dist'));
     fs.writeFileSync(path.join(repo, 'dist', 'out.js'), 'build output\n');
     fs.writeFileSync(path.join(repo, 'scratch.txt'), 'notes\n');
-    review(PASS_BLOCK);
+    review();
     git('add', 'b.txt');
     git('commit', '-q', '-m', 'ship commit');
-    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'agent' });
+    expect(codeReview()).toMatchObject(OPEN);
   });
 
-  it('a tracked file deleted after the review does not count', () => {
+  // ⚠ changes existing test: D45 — deleting a tracked file changes the shipped code, so it clears the fail (was: a
+  //   pass that does not count).
+  it('a tracked file deleted after the review clears the fail', () => {
     commitFile('keep.txt', 'tracked\n', 'tracked file');
     fs.writeFileSync(path.join(repo, 'b.txt'), 'reviewed\n');
-    review(PASS_BLOCK);
+    review();
     git('rm', '-q', 'keep.txt');
     git('add', 'b.txt');
     git('commit', '-q', '-m', 'ship commit');
-    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'model' });
+    expect(codeReview()).toMatchObject(CLEARED);
   });
 
-  // Behaviour: untracking a committed file before the review cannot hide its deletion from the reviewer.
-  // Rule: pen N4 (round 2, LOW): a path deleted in HEAD vs the reviewed tree is allowed only when it was absent from
-  //       trackedTree AND from the tree of the row's headSha (the commit at review time).
-  it('a committed file untracked with git rm --cached before the review, then deleted by ship, does not count', () => {
+  // ⚠ changes existing test: D45 — the file was in the commit HEAD was at review (pen N4), so ship deleting it changes
+  //   the shipped code and clears the fail (was: a pass that does not count).
+  it('a committed file untracked with git rm --cached before the review, then deleted by ship, clears the fail', () => {
     commitFile('keep.txt', 'tracked\n', 'tracked file');
     git('rm', '-q', '--cached', 'keep.txt');
     fs.writeFileSync(path.join(repo, 'b.txt'), 'reviewed\n');
-    review(PASS_BLOCK);
+    review();
     git('add', 'b.txt');
     git('commit', '-q', '-m', 'ship commit deletes keep.txt');
-    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'model' });
+    expect(codeReview()).toMatchObject(CLEARED);
   });
 
-  it('a new file added to the commit that was not in the reviewed tree does not count', () => {
+  // ⚠ changes existing test: D45 — a new file in the commit changes the shipped code (was: a pass that does not count).
+  it('a new file added to the commit that was not in the reviewed tree clears the fail', () => {
     fs.writeFileSync(path.join(repo, 'b.txt'), 'reviewed\n');
-    review(PASS_BLOCK);
+    review();
     fs.writeFileSync(path.join(repo, 'unreviewed.ts'), 'export const x = 1;\n');
     git('add', 'b.txt', 'unreviewed.ts');
     git('commit', '-q', '-m', 'ship commit');
-    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'model' });
+    expect(codeReview()).toMatchObject(CLEARED);
   });
 
-  it('a row with tree but no trackedTree does not count', () => {
+  /** Commits b.txt, then writes a fail row with `extra()`'s fields, read after that commit. */
+  function failRow(extra: () => Record<string, unknown>): void {
     commitFile('b.txt', 'x\n', 'add');
     openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
-      gate: 'code-review', verdict: 'pass', findings: ZERO, agent: 'a', session: 's', ts: '2026-11-13T09:10:00.000Z',
-      tree: git('rev-parse', 'HEAD^{tree}'),
+      gate: 'code-review', verdict: 'fail', findings: ZERO, agent: 'a', session: 's', ts: '2026-11-13T09:10:00.000Z', ...extra(),
     });
-    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'model' });
+  }
+
+  // ⚠ changes existing test: D45 — with no trackedTree and no headSha the fail cannot be compared, so it stays open
+  //   (was: a pass with tree but no trackedTree does not count).
+  it('a fail with tree but no trackedTree and no headSha stays open', () => {
+    failRow(() => ({ tree: git('rev-parse', 'HEAD^{tree}') }));
+    expect(codeReview()).toMatchObject(OPEN);
   });
 
-  it('a row without tree does not count', () => {
-    commitFile('b.txt', 'x\n', 'add');
-    openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
-      gate: 'code-review', verdict: 'pass', findings: ZERO, agent: 'a', session: 's', ts: '2026-11-13T09:10:00.000Z',
-      headSha: git('rev-parse', 'HEAD'),
-    });
-    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'model' });
+  // ⚠ changes existing test: D45 — a fail with no tree is compared through its headSha, here the shipped commit (was:
+  //   a pass without tree does not count).
+  it('a fail without tree, on the shipped commit, stays open', () => {
+    failRow(() => ({ headSha: git('rev-parse', 'HEAD') }));
+    expect(codeReview()).toMatchObject(OPEN);
   });
 
-  it('a row whose tree is not a hex object id (an option, say) does not count and never reaches git', () => {
-    commitFile('b.txt', 'x\n', 'add');
-    openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
-      gate: 'code-review', verdict: 'pass', findings: ZERO, agent: 'a', session: 's', ts: '2026-11-13T09:10:00.000Z',
-      tree: '--output=planted',
-    });
-    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'model' });
+  // ⚠ changes existing test: D45 — a malformed tree is never passed to git and the fail stays open (was: a pass).
+  it('a fail whose trackedTree is not a hex object id (an option, say) stays open and never reaches git', () => {
+    failRow(() => ({ tree: '--output=planted', trackedTree: '--output=planted' }));
+    expect(codeReview()).toMatchObject(OPEN);
     expect(fs.existsSync(path.join(repo, 'planted'))).toBe(false);
   });
 
-  it('a row whose tree is a hex id git does not have does not count', () => {
-    commitFile('b.txt', 'x\n', 'add');
+  // ⚠ changes existing test: D45 — git cannot compare an unknown object, so the fail stays open (was: a pass).
+  it('a fail whose trackedTree is a hex id git does not have stays open', () => {
+    failRow(() => ({ tree: 'a'.repeat(40), trackedTree: 'a'.repeat(40) }));
+    expect(codeReview()).toMatchObject(OPEN);
+  });
+});
+
+/**
+ * D45 (user pick, gate round 4, "Fails only"): captured passes no longer decide or clear anything, since a pass can be
+ * minted. Per gate, the newest captured fail (within the verdict cutoff) stays open until the shipped code, the tracked
+ * tree outside .oss at HEAD, differs from the code that failed: its trackedTree, else its headSha's tree. A fail with
+ * neither stays open. An open fail blocks (`source: agent`); with none, the gate keeps its timeline line (D26).
+ */
+describe('assembleShip: only a change to the shipped code clears a captured fail (D45)', () => {
+  const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  const block = (verdict: 'pass' | 'fail'): string =>
+    '```oss-verdict\n' + JSON.stringify({ verdict, findings: { ...ZERO, high: verdict === 'fail' ? 1 : 0 } }) + '\n```';
+  beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
+
+  /** A real review: the stop, its verdict read from the agent transcript (D41). */
+  // ⚠ changes existing test: D45 dead code — no SubagentStart capture runs first any more (captureStart is removed).
+  function review(verdict: 'pass' | 'fail', at: string): void {
+    featureDir();
+    const hook = { session_id: 's1', agent_id: `a-${randomUUID()}`, agent_type: 'oss:code-reviewer', cwd: repo };
+    const out = captureVerdict({ ...hook, agent_transcript_path: agentTranscript(block(verdict)) }, { now: () => new Date(at) });
+    expect(out.captured).toBe(true);
+  }
+
+  /** A row written straight into the ledger, as a forger with ledger access could (security M1). */
+  function row(verdict: 'pass' | 'fail', ts: string, extra: Record<string, unknown> = {}): void {
+    const tree = git('rev-parse', 'HEAD^{tree}');
     openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
-      gate: 'code-review', verdict: 'pass', findings: ZERO, agent: 'a', session: 's', ts: '2026-11-13T09:10:00.000Z',
-      tree: 'a'.repeat(40),
+      gate: 'code-review', verdict, findings: { ...ZERO, high: verdict === 'fail' ? 1 : 0 }, agent: 'a', session: 's', ts,
+      tree, trackedTree: tree, headSha: git('rev-parse', 'HEAD'), ...extra,
     });
-    expect(codeReview()).toMatchObject({ verdict: 'pass', source: 'model' });
+  }
+
+  const codeReview = (o: AssembleOutcome): Record<string, unknown> | undefined =>
+    (result(o).gates as Array<Record<string, unknown>>).find((g) => g.gate === 'code-review');
+
+  function expectOpen(o: AssembleOutcome): void {
+    expect(codeReview(o)).toMatchObject({ verdict: 'fail', source: 'agent' });
+    expect(result(o).blockers).toEqual(['gate:code-review (captured fail, not re-reviewed)']);
+  }
+
+  function expectCleared(o: AssembleOutcome): void {
+    expect(codeReview(o)).toMatchObject({ verdict: 'pass', source: 'model' });
+    expect(result(o).verdict).toBe('ready_to_merge');
+  }
+
+  // Pen M3a: a scratch file nobody ships made the re-roll's tree "different"; the code that ships is the failed code.
+  it('pen M3a: an untracked scratch file, a re-roll that passes, then the file deleted: the fail stays open', () => {
+    review('fail', '2026-11-13T09:10:00.000Z');
+    fs.writeFileSync(path.join(repo, 'scratch.txt'), 'nothing\n');
+    review('pass', '2026-11-13T09:20:00.000Z');
+    fs.rmSync(path.join(repo, 'scratch.txt'));
+    allPass(1);
+    expectOpen(ship());
+  });
+
+  // Pen M3b: an empty commit is a new commit, not new code.
+  it('pen M3b: an empty commit and a re-roll that passes do not clear a fail with a tree', () => {
+    review('fail', '2026-11-13T09:10:00.000Z');
+    git('commit', '-q', '--allow-empty', '-m', 'nothing');
+    review('pass', '2026-11-13T09:20:00.000Z');
+    allPass(1);
+    expectOpen(ship());
+  });
+
+  it('pen M3b: an empty commit and a re-roll that passes do not clear a fail with no tree (only a headSha)', () => {
+    row('fail', '2026-11-13T09:10:00.000Z', { tree: '', trackedTree: '' });
+    git('commit', '-q', '--allow-empty', '-m', 'nothing');
+    row('pass', '2026-11-13T09:20:00.000Z');
+    row('pass', '2026-11-13T09:21:00.000Z', { tree: '', trackedTree: '' });
+    allPass(1);
+    expectOpen(ship());
+  });
+
+  // Security M1: a pass row written straight to the ledger, however well formed, changes nothing.
+  it('security M1: a minted pass row does not clear an open fail', () => {
+    row('fail', '2026-11-13T09:10:00.000Z');
+    row('pass', '2026-11-13T09:20:00.000Z');
+    allPass(1);
+    expectOpen(ship());
+  });
+
+  it('security M1: a minted pass row neither overrides the model line nor labels the gate agent-backed', () => {
+    gateLine({ round: 1, gate: 'code-review', verdict: 'fail', findings: { high: 1 } });
+    gateLine({ round: 1, gate: 'performance', verdict: 'pass' });
+    gateLine({ round: 1, gate: 'security', verdict: 'pass' });
+    row('pass', '2026-11-13T09:20:00.000Z');
+    const o = ship();
+    expect(codeReview(o)).toMatchObject({ verdict: 'fail', source: 'model' });
+    expect(result(o).uncapturedGates).toEqual(GATES);
+    expect(result(o).blockers).toEqual(['gate:code-review']);
+  });
+
+  it('security M1: a minted pen-test pass adds no gate', () => {
+    allPass(1);
+    row('pass', '2026-11-13T09:20:00.000Z', { gate: 'pen-test' });
+    expect((result(ship()).gates as Array<Record<string, unknown>>).map((g) => g.gate)).toEqual(GATES);
+  });
+
+  // Behaviour: fixing the code the reviewer failed clears its fail; the gate falls back to its timeline line.
+  it('a real tracked fix commit clears the fail (the gate keeps its line)', () => {
+    review('fail', '2026-11-13T09:10:00.000Z');
+    commitFile('b.txt', 'fixed\n', 'fix the finding');
+    allPass(1);
+    expectCleared(ship());
+  });
+
+  it('a real tracked fix commit clears a fail with no tree, through its headSha', () => {
+    row('fail', '2026-11-13T09:10:00.000Z', { tree: '', trackedTree: '' });
+    commitFile('b.txt', 'fixed\n', 'fix the finding');
+    allPass(1);
+    expectCleared(ship());
+  });
+
+  it('a change only under .oss does not clear the fail, with or without a tree, even with a re-roll', () => {
+    row('fail', '2026-11-13T09:10:00.000Z');
+    row('fail', '2026-11-13T09:11:00.000Z', { tree: '', trackedTree: '' });
+    fs.writeFileSync(path.join(featureDir(), 'PROGRESS.md'), 'x\n');
+    git('add', '-f', '.oss');
+    git('commit', '-q', '-m', 'dev docs only');
+    row('pass', '2026-11-13T09:20:00.000Z');
+    allPass(1);
+    expectOpen(ship());
+  });
+
+  // The newest fail decides: a re-review that fails the fixed code keeps the gate failed, with its findings.
+  it('a newer fail on the fixed code keeps the gate failed with that fail\'s findings', () => {
+    row('fail', '2026-11-13T09:10:00.000Z');
+    commitFile('b.txt', 'fixed\n', 'fix');
+    row('fail', '2026-11-13T09:20:00.000Z', { findings: { ...ZERO, critical: 2 } });
+    allPass(1);
+    const o = ship();
+    expectOpen(o);
+    expect(codeReview(o)).toMatchObject({ findings: { ...ZERO, critical: 2 } });
+  });
+
+  // ⚠ changes existing test: D48 ("Record nothing") — the edge reported to the coordinator is decided: a fail with
+  //   neither tree nor headSha cannot be compared and does not count (it was "stays open, even after a fix commit").
+  it('a fail with neither tree nor headSha does not count, even with no fix commit', () => {
+    row('fail', '2026-11-13T09:10:00.000Z', { tree: '', trackedTree: '', headSha: '' });
+    allPass(1);
+    expectCleared(ship());
+  });
+
+  it('a fail whose tree git does not have stays open', () => {
+    row('fail', '2026-11-13T09:10:00.000Z', { tree: 'a'.repeat(40), trackedTree: 'a'.repeat(40), headSha: '' });
+    allPass(1);
+    expectOpen(ship());
   });
 });

@@ -190,15 +190,22 @@ cleanup
 #    the run by startedAt). A base whose origin ref was written after the start (here with no reflog) is refused.
 sandbox
 PRF_REPO="$T/repo" prf_build
-(cd "$T/repo" && git update-ref refs/remotes/origin/feat/pre/build main)
+# ⚠ changes existing test: D46 — the snapshot maps each origin ref name to its SHA ({startedAt, refs}), and
+#   refs/remotes/origin/HEAD (a symref) is skipped.
+# ⚠ changes existing test: D50 — every remote's refs are recorded (here also upstream/main); each */HEAD is skipped.
+(cd "$T/repo" && git update-ref refs/remotes/origin/feat/pre/build main \
+    && git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main \
+    && git update-ref refs/remotes/upstream/main main \
+    && git symbolic-ref refs/remotes/upstream/HEAD refs/remotes/upstream/main)
 notify ship start '{}' >/dev/null 2>&1
 snap=$(ls "$T"/home/.oss/ledger/*/run/ship.origin 2>/dev/null | head -1)
-want=$(cd "$T/repo" && git for-each-ref --format='%(objectname)' refs/remotes/origin/ | sort -u | jq -R . | jq -cs .)
+m=$(cd "$T/repo" && git rev-parse main)
+want=$(jq -cn --arg m "$m" '{"refs/remotes/origin/feat/pre/build": $m, "refs/remotes/origin/main": $m, "refs/remotes/upstream/main": $m}')
 started=$(jq -r '.currentCommandStartedAt // empty' "$T/repo/.oss/workflow-state.json" 2>/dev/null)
 mode=$(stat -c '%a' "$snap" 2>/dev/null || stat -f '%Lp' "$snap" 2>/dev/null)
-if [[ -n "$snap" && "$mode" == 600 && "$(jq -c .shas "$snap" 2>/dev/null)" == "$want" && "$(jq -r .startedAt "$snap" 2>/dev/null)" == "$started" ]]; then
-    pass "ship start records the origin SHAs in the ledger (run/ship.origin, 600, this run's startedAt)"
-else fail "ship start records the origin SHAs in the ledger (run/ship.origin, 600, this run's startedAt)" "snap=$snap mode=$mode want=$want got=$(cat "$snap" 2>/dev/null) started=$started"; fi
+if [[ -n "$snap" && "$mode" == 600 && "$(jq -cS .refs "$snap" 2>/dev/null)" == "$want" && "$(jq -r .startedAt "$snap" 2>/dev/null)" == "$started" ]]; then
+    pass "ship start records every remote's ref names and SHAs in the ledger (run/ship.origin, 600, this run's startedAt, no */HEAD)"
+else fail "ship start records every remote's ref names and SHAs in the ledger (run/ship.origin, 600, this run's startedAt, no */HEAD)" "snap=$snap mode=$mode want=$want got=$(cat "$snap" 2>/dev/null) started=$started"; fi
 (cd "$T/repo" && echo one > one.txt && git add one.txt && git commit -q -m one && echo two > two.txt && git add two.txt \
     && git commit -q -m two && git -c core.logAllRefUpdates=false update-ref refs/remotes/origin/wip HEAD~1 \
     && git -c core.logAllRefUpdates=false branch wip HEAD~1)
@@ -219,6 +226,21 @@ out=$(phase_result assemble ship 2>&1); rc=$?
 if [[ $rc -ne 0 && "$out" == *no_base_snapshot* ]]; then
     pass "over 1,000 origin refs at ship start: assemble ship refuses no_base_snapshot"
 else fail "over 1,000 origin refs at ship start: assemble ship refuses no_base_snapshot" "rc=$rc out=$out"; fi
+cleanup
+
+# 11. D46 (pen M2a, r4-pen/a6b-pushed.sh): the feature branch is pushed (origin/feat/<f>/build at HEAD) before ship
+#     start, and `wip` at HEAD~1 is named as base. Its tip is inside origin/feat/<f>/build, but origin has no `wip`, so
+#     assemble ship refuses it. (A forged refs/remotes/origin/wip written BEFORE ship start is R-266's tool gate's job.)
+sandbox
+PRF_REPO="$T/repo" prf_build
+(cd "$T/repo" && echo one > one.txt && git add one.txt && git commit -q -m one && echo two > two.txt && git add two.txt \
+    && git commit -q -m two && git update-ref "refs/remotes/origin/feat/$FEATURE/build" HEAD \
+    && git branch wip HEAD~1 && git config oss.shipBase wip)
+notify ship start '{}' >/dev/null 2>&1
+out=$(phase_result assemble ship 2>&1); rc=$?
+if [[ $rc -ne 0 && "$out" == *unsafe_base* ]]; then
+    pass "a base inside the pushed feature branch, with no origin ref of its own name, is refused (unsafe_base)"
+else fail "a base inside the pushed feature branch, with no origin ref of its own name, is refused (unsafe_base)" "rc=$rc out=$out"; fi
 cleanup
 
 echo; echo "Ran $RUN, failed $FAILED"

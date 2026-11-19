@@ -464,5 +464,23 @@ if [[ $rc -eq 0 && -z "$out" && ! -e "$T/tools.calls" && ! -e "$T/cli.calls" ]];
 else fail "no .oss, another session's run only: no jq, no git, no dispatcher" "rc=$rc out=$out calls=$(tr '\n' ' ' < "$T/tools.calls" 2>/dev/null) cli=$(cat "$T/cli.calls" 2>/dev/null)"; fi
 cleanup
 
+# 32. D47 (round 6, perf INFO): the fast path reads only the phase run files (ideate, plan, build, ship), never the
+# large run/ship.origin snapshot: this session's id found only inside ship.origin does not count as a run of its own,
+# so the stop ends at the fast path: no git (GIT_TRACE shows whether the fixed git ran at all) and no dispatcher.
+sandbox; start_phase plan other-session; rm -rf "$T/repo/.oss"; sandbox_plugin "$CLI_RECORDER"
+(umask 077; printf '{"startedAt":"x","shas":[],"session":"s1"}\n' > "$(ledger_dir)/run/ship.origin")
+out=$(stop false CLAUDE_PLUGIN_ROOT="$T/plugin" GIT_TRACE="$T/git.trace"); rc=$?
+if [[ $rc -eq 0 && -z "$out" && ! -e "$T/git.trace" && ! -e "$T/cli.calls" ]]; then
+    pass "no .oss, this session only inside ship.origin: the fast path ends it, no git, no dispatcher"
+else fail "no .oss, this session only inside ship.origin: the fast path ends it, no git, no dispatcher" "rc=$rc out=$out git=$(head -c 200 "$T/git.trace" 2>/dev/null) cli=$(cat "$T/cli.calls" 2>/dev/null)"; fi
+cleanup
+# 33. Control for 32: the same session's row in a phase run file still reaches git (so 32's "no git" is meaningful).
+sandbox; start_phase plan; rm -rf "$T/repo/.oss"; sandbox_plugin "$CLI_RECORDER"
+out=$(stop false CLAUDE_PLUGIN_ROOT="$T/plugin" GIT_TRACE="$T/git.trace"); rc=$?
+if [[ $rc -eq 0 && -s "$T/git.trace" ]]; then
+    pass "no .oss, this session's own plan row: the fast path goes on to git"
+else fail "no .oss, this session's own plan row: the fast path goes on to git" "rc=$rc out=$out err=$(cat "$T/stderr")"; fi
+cleanup
+
 echo; echo "Ran $RUN, failed $FAILED"
 [[ $FAILED -eq 0 ]]

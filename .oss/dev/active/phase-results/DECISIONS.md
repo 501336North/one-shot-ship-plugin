@@ -96,8 +96,34 @@
   - It is cleared by a later counting pass that has a real tree, but never by a no-tree pass.
   - This closes pen F2 without the permanent block that "never clear" would cause: a blocked feature can't reach a ready_to_merge cutoff.
 - D44 (user picker, 2026-11-19, "Add verdict-capture.js"): D41's gate rule also refuses calls naming watcher/dist/cli/verdict-capture.js, the tsc output of the same CLI. Stage that file by folder.
+- D45 (user picker, 2026-11-19, gate round 4, "Fails only"): captured passes no longer decide or clear anything.
+  - Gate round 4 minted forged reviewer passes again, through find -exec, copies, the main agent's own transcript, old transcripts and an unprotected ~/.claude/projects.
+  - A captured fail still blocks. It clears only when the shipped code (the tracked tree outside .oss) differs from the code that failed. Untracked scratch files and empty commits no longer clear one (pen M3).
+  - Gates with no open captured fail keep their model line (D26).
+  - This replaces the pass-based clearing in D32, D36 and D43, and H1's "newer pass decides".
+    - Build note (round 6, builder E): a fail with trees is compared using the reviewedIsShipped rule, not trackedTree against HEAD.
+      - The reviewed tree, with untracked files included and .oss excluded, is compared with HEAD outside .oss.
+      - An added or modified path counts as a change.
+      - A deleted path counts only if it was tracked, or was in HEAD at review time.
+      - Reason: reviews run on the uncommitted tree, so comparing trackedTree would clear every fail as soon as the ship commit adds the new files.
+      - A fail with only a headSha compares headSha^{tree} with HEAD.
+      - Any git error keeps the fail open.
+- D46 (user picker, 2026-11-19, "Same-name origin ref"): the ship-start snapshot maps each origin ref name to its SHA. A base is accepted only if its tip is contained in origin/<the same name>, and never if it is the feature's own branch or one of its phase branches. Writing refs/remotes through fetch or push into the repo itself goes to R-266.
+- D47 (user picker, 2026-11-19, "All of ours"): round 6 also covers:
+  - the code-review medium: the ship verdict cutoff is frozen in the result, as in D42;
+  - the gate rule's linear wildcard matcher;
+  - the ideate same-second pick;
+  - rejecting hard-linked transcripts;
+  - fixed tool paths in oss-timeline;
+  - the Stop grep reading only phase files;
+  - for-each-ref --count;
+  - a NOTES line on CLAUDE_CONFIG_DIR.
+  Gate-wide items go to R-266: protecting ~/.claude/projects, find -exec, fetch or push into refs/remotes, and git config on .git/config.
   - **D41 Capture lockdown: gate refusal plus transcript.** The tool gate refuses any Bash call that names oss-verdict-capture.sh or verdict-capture.cjs. The CLI reads the verdict text only from agent_transcript_path under the gate-protected ~/.claude/projects, never from stdin's last_assistant_message.
   - **D42 Finished phases: cap evidence at assemble.** A build or ideate result stores its evidence cutoff time, and test runs and decisions count only up to it. Later activity in the session no longer makes a finished phase look mismatched at Stop.
+- D48 (user picker, 2026-11-19, "Record nothing"): a capture that can read neither the tree nor HEAD writes no row, the same as a capture past its deadline. The gate keeps its model line (D26). This replaces D43.
+- D49 (user picker, 2026-11-19, "Code change only"): D45 stays as built. Any tracked change to the shipped code clears a captured fail with no second review. Follow-up card: bind reviewer rows to R-266's SubagentStart record, then require a fresh bound review to clear a fail.
+- D50 (user picker, 2026-11-19, "Any remote, same name"): the ship-start snapshot records every remote's refs (refs/remotes/*/*). A base is accepted when its tip is inside <any remote>/<same name>. The current-branch and phase-branch refusals still apply. This keeps repos whose remote isn't named origin able to ship. R-266 Task 7 refuses forged refs/remotes writes.
 - D25-D29: ship round 1 decisions (user pickers, 2026-11-18), from four failing gates.
   - **D25 Gate code location: lock it down.**
     - `~/.oss/plugin-root` and `~/.oss/watcher/**` join the tool gate's protectedPaths. This changes R-266's exact-list test, as the user's pick allows.

@@ -99,14 +99,24 @@ function startRun(phase: string, startedAt: string, feature?: string): void {
   if (phase === 'ship') snapshotOrigin(startedAt);
 }
 
-/** D40: the origin snapshot oss-notify's ship start writes: every refs/remotes/origin/* SHA, sorted and unique. */
-function snapshotOrigin(startedAt: string, shas: string[] = originShas()): void {
-  openLedger(repo).writeMarker('run/ship.origin', { startedAt, shas });
+/**
+ * D40: the origin snapshot oss-notify's ship start writes.
+ * ⚠ changes existing test: D46 — the snapshot maps each refs/remotes/origin/<name> (origin/HEAD skipped) to its SHA,
+ *   `{startedAt, refs}`, so a base is checked against the origin ref of its own name.
+ */
+function snapshotOrigin(startedAt: string, refs: Record<string, string> = originRefs()): void {
+  openLedger(repo).writeMarker('run/ship.origin', { startedAt, refs });
 }
 
-function originShas(): string[] {
-  const out = git('for-each-ref', '--format=%(objectname)', 'refs/remotes/origin/');
-  return [...new Set(out.split('\n').filter((l) => l !== ''))].sort();
+// ⚠ changes existing test: D50 — the snapshot records every remote's refs (refs/remotes/*/*), each */HEAD skipped.
+function originRefs(): Record<string, string> {
+  const out = git('for-each-ref', '--format=%(refname) %(objectname)', 'refs/remotes/');
+  const refs: Record<string, string> = {};
+  for (const l of out.split('\n')) {
+    const [name, sha] = l.split(' ');
+    if (name !== undefined && sha !== undefined && !/^refs\/remotes\/[^/]+\/HEAD$/.test(name)) refs[name] = sha;
+  }
+  return refs;
 }
 
 /** The model's value folder ($HOME/.oss/run/<key>), created as `oss-value.sh dir` does. */
@@ -677,19 +687,24 @@ describe('phase-result CLI: the ship base must be an ancestor of origin\'s defau
   });
 
   // ⚠ changes existing test: D40 — the reflog-time rule is gone: a local base made after the run started is judged
-  //   by its tip alone, and this one's tip is origin/main's, recorded at ship start, so it is accepted.
-  it('a local base ref created after the ship run started, at a recorded origin tip, is accepted', () => {
+  //   by its tip alone.
+  // ⚠ changes existing test: D46 — origin had no `late-base` at ship start, so being at origin/main's tip no longer
+  //   counts: the base must be inside origin/<its own name>.
+  it('a local base ref created after the ship run started, with no same-name origin ref, is refused', () => {
     shipFeature();
     startRun('ship', '2026-11-13T09:00:00.000Z');
     gitNow('branch', 'late-base', 'main');
     git('config', '--local', 'oss.shipBase', 'late-base');
-    const a = cli('assemble', 'ship');
-    expect(a.status, a.stderr).toBe(0);
+    const r = cli('assemble', 'ship');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('unsafe_base');
   });
 
-  it('a base ref with no reflog is judged by ancestry alone', () => {
+  // ⚠ changes existing test: D46 — reflogs still do not count, but `quiet-base` has no origin ref of its own name.
+  it('a base ref with no reflog is judged by its same-name origin ref', () => {
     shipFeature();
     git('branch', 'quiet-base', 'main');
+    git('update-ref', 'refs/remotes/origin/quiet-base', 'main');
     fs.rmSync(path.join(repo, '.git', 'logs', 'refs', 'heads', 'quiet-base'), { force: true });
     git('config', '--local', 'oss.shipBase', 'quiet-base');
     startRun('ship', '2026-11-13T09:00:00.000Z');
@@ -875,11 +890,128 @@ describe('phase-result CLI: the ship base must be contained in the origin snapsh
   });
 
   // Rule: the snapshot is capped at 1,000 refs; past it the run fails closed.
-  it('a snapshot over 1,000 SHAs refuses no_base_snapshot', () => {
+  // ⚠ changes existing test: D46 — the snapshot is a ref-name map, so the oversized one is 1,001 refs.
+  it('a snapshot over 1,000 refs refuses no_base_snapshot', () => {
     shipFeature();
     startRun('ship', '2026-11-13T09:00:00.000Z');
-    const many = Array.from({ length: 1001 }, (_, i) => i.toString(16).padStart(40, '0'));
+    const many: Record<string, string> = { ...originRefs() };
+    for (let i = 0; i < 1001; i++) many[`refs/remotes/origin/r${i}`] = i.toString(16).padStart(40, '0');
     snapshotOrigin('2026-11-13T09:00:00.000Z', many);
+    const r = cli('assemble', 'ship');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('no_base_snapshot');
+  });
+});
+
+/**
+ * D46 (user pick, ship round 6, "Same-name origin ref"; pen M2a, security 2a): a base counts only when the ship-start
+ * snapshot holds refs/remotes/origin/<the base's own name> and the base tip is inside THAT ref's SHA, and the base is
+ * neither the branch being shipped nor one of the feature's own phase branches. An old-format snapshot fails closed.
+ *
+ * Known R-266 dependency (not tested here): a model that writes a forged refs/remotes/origin/<x> BEFORE ship start
+ * (update-ref, or fetch/push into the repo itself) would get it into the snapshot. R-266's tool gate refuses those
+ * writes; D46 hands that case to R-266.
+ */
+describe('phase-result CLI: the ship base must be inside origin/<its own name> (D46)', () => {
+  /** Two feature commits, the feature branch pushed (origin/feat/<f>/build at HEAD), gates passed. */
+  function pushedFeature(): void {
+    commitFile('feature-1.txt', 'one\n');
+    commitFile('feature-2.txt', 'two\n');
+    git('update-ref', `refs/remotes/origin/feat/${FEATURE}/build`, 'HEAD');
+    passGates(FEATURE);
+  }
+
+  function refused(): void {
+    const r = cli('assemble', 'ship');
+    expect(r.status, r.stdout).toBe(1);
+    expect(r.stderr).toContain('unsafe_base');
+    expect(fs.existsSync(resultFile(FEATURE, 'ship'))).toBe(false);
+  }
+
+  // Repro (pen M2a, r4-pen/a6b-pushed.sh): `wip` at HEAD~1 is inside the pushed origin/feat/<f>/build, but origin has
+  // no `wip`, so it cannot hide the last commit from the diff.
+  it('a base inside the pushed feature branch, with no origin ref of its own name, is refused', () => {
+    pushedFeature();
+    git('branch', 'wip', 'HEAD~1');
+    git('config', '--local', 'oss.shipBase', 'wip');
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    refused();
+  });
+
+  // Rule: the feature's own phase branches are never a base, even when origin has them.
+  it('naming the feature\'s pushed plan branch (origin/feat/<f>/plan) as base is refused', () => {
+    pushedFeature();
+    git('branch', `feat/${FEATURE}/plan`, 'HEAD~1');
+    git('update-ref', `refs/remotes/origin/feat/${FEATURE}/plan`, 'HEAD~1');
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    fs.writeFileSync(path.join(valueDir(), 'base.txt'), `feat/${FEATURE}/plan\n`);
+    refused();
+  });
+
+  // Rule: the branch being shipped is never its own base.
+  it('naming the current branch as base is refused', () => {
+    pushedFeature();
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    fs.writeFileSync(path.join(valueDir(), 'base.txt'), `feat/${FEATURE}/build\n`);
+    refused();
+  });
+
+  // Repro (security 2a): an old phase branch moved with `branch -f` into the feature is refused.
+  it('an old phase branch moved with branch -f is refused', () => {
+    git('branch', `feat/${FEATURE}/ideate`, 'main');
+    git('update-ref', `refs/remotes/origin/feat/${FEATURE}/ideate`, 'main');
+    pushedFeature();
+    git('branch', '-f', `feat/${FEATURE}/ideate`, 'HEAD~1');
+    git('update-ref', `refs/remotes/origin/feat/${FEATURE}/ideate`, 'HEAD~1');
+    git('config', '--local', 'oss.shipBase', `feat/${FEATURE}/ideate`);
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    refused();
+  });
+
+  // Behaviour: an honest feature ships against main, which origin had at ship start.
+  it('an honest main base passes', () => {
+    pushedFeature();
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    const a = cli('assemble', 'ship');
+    expect(a.status, a.stderr).toBe(0);
+  });
+
+  // Behaviour: a PR into an integration branch that origin has under the same name ships against it.
+  it('an integration branch with origin/<same name> passes', () => {
+    const INTEGRATION = 'sprint-d';
+    git('checkout', '-q', 'main');
+    git('checkout', '-q', '-b', INTEGRATION);
+    commitFile('sprint.txt', 'sprint\n');
+    git('update-ref', `refs/remotes/origin/${INTEGRATION}`, INTEGRATION);
+    git('branch', '-q', '-D', `feat/${FEATURE}/build`);
+    git('checkout', '-q', '-b', `feat/${FEATURE}/build`);
+    pushedFeature();
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    fs.writeFileSync(path.join(valueDir(), 'base.txt'), `${INTEGRATION}\n`);
+    const a = cli('assemble', 'ship');
+    expect(a.status, a.stderr).toBe(0);
+    const r = JSON.parse(fs.readFileSync(resultFile(FEATURE, 'ship'), 'utf-8')) as Record<string, unknown>;
+    expect((r.diff as Record<string, unknown>).baseRef).toBe(INTEGRATION);
+  });
+
+  // D50 (user pick, "Any remote, same name"): a repo whose only remote is `upstream` ships against upstream/main.
+  it('a repo whose only remote is upstream, with base main on upstream/main, passes', () => {
+    git('update-ref', '-d', 'refs/remotes/origin/main');
+    git('update-ref', 'refs/remotes/upstream/main', 'main');
+    commitFile('feature-1.txt', 'one\n');
+    passGates(FEATURE);
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    const a = cli('assemble', 'ship');
+    expect(a.status, a.stderr).toBe(0);
+  });
+
+  // Rule: a snapshot in the D40 format (`shas`, no ref names) cannot say which ref holds the base: fail closed.
+  it('an old-format snapshot ({startedAt, shas}) refuses no_base_snapshot', () => {
+    pushedFeature();
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    openLedger(repo).writeMarker('run/ship.origin', {
+      startedAt: '2026-11-13T09:00:00.000Z', shas: Object.values(originRefs()).sort(),
+    });
     const r = cli('assemble', 'ship');
     expect(r.status).toBe(1);
     expect(r.stderr).toContain('no_base_snapshot');

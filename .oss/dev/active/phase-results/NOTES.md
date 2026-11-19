@@ -150,3 +150,11 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 - **Capture timeouts:** resolveRepo, resolveFeature and ledgerKey keep their own 2 s git timeouts. The 3.5 s deadline is created before them, but they cannot be capped inside it. The 7 s shell bound still covers the worst case.
 - **F1 limit:** results rows hold no verdict, so only the latest stored ship result can set the cutoff. If ready_to_merge is followed by a blocked ship, every row counts, which is stricter.
 - **Staging:** the D41/D44 gate rule refuses any Bash call naming verdict-capture.cjs or verdict-capture.js, so stage watcher/dist by folder (`git add -u watcher/dist`).
+
+## Ship round 6 notes (2026-11-19)
+- Verdicts are fails only (D45). A tracked code change clears a captured fail with no second review (D49). Follow-up card: bind reviewer rows to R-266's SubagentStart record, then require a fresh bound review.
+- CLAUDE_CONFIG_DIR: capture only reads transcripts under os.homedir()/.claude/projects. With CLAUDE_CONFIG_DIR set, nothing is captured and every gate keeps its model line (D26). Under D45 that only loses fails, never adds passes.
+- D46 phase-branch rule: it refuses a base named exactly `<feature>` or one containing `/<feature>/`. A feature called `main` would therefore refuse main.
+- oss-timeline.sh: the detached push section, the merge verb and hook mode still find some tools through PATH (outside the gate lines' path).
+- Ideate: a pick written in the assemble's own second, but after assemble finished, counts at check and not at assemble.
+- D50: the base may be on any remote with the same name. A remote whose name contains a slash never matches, so such a repo fails closed.

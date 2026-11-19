@@ -16,7 +16,6 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { openLedger } from '../../src/phase-results/ledger.js';
 import {
-  captureStart,
   captureVerdict,
   lastVerdictBlock,
   verdictTreeTmpRoot,
@@ -128,9 +127,8 @@ describe('captureVerdict: what gets recorded', () => {
         headSha: headNow(),
         tree: git('rev-parse', 'HEAD^{tree}'),
         trackedTree: git('rev-parse', 'HEAD^{tree}'),
-        // ⚠ changes existing test: round 2 security L4 — the row says whether the agent's start snapshot exists and
-        //   matches (no SubagentStart ran here, so missing)
-        start: 'missing',
+        // ⚠ changes existing test: D45 dead code — the row no longer carries `start` (it was 'missing'): since D45 the
+        //   assembler never reads it, and the SubagentStart snapshot is gone.
       },
     ]);
   });
@@ -360,93 +358,8 @@ describe('captureVerdict: the reviewed tree', () => {
   });
 });
 
-/**
- * Round 2 security L4: the verdict was bound to the tree at SubagentStop, not to what the agent reviewed. A SubagentStart
- * hook now records a start snapshot (tree and trackedTree) keyed by agent_id in the ledger; the stop row says whether
- * it exists and equals the stop snapshot (`start`: match, changed or missing), and only `match` lets a pass count.
- */
-describe('captureVerdict: the start snapshot (security L4)', () => {
-  const VALID_BLOCK = block({ verdict: 'pass', findings: COUNTS });
-  const start = (extra: Record<string, unknown> = {}): ReturnType<typeof captureStart> =>
-    captureStart({ ...input({ hook_event_name: 'SubagentStart' }), ...extra }, { now: () => NOW });
-
-  // Behaviour: a review whose code did not change while the agent worked is bound to that code.
-  it('start, then a stop on the unchanged tree, records start: match', () => {
-    fs.writeFileSync(path.join(repo, 'a.txt'), 'reviewed\n');
-    expect(start()).toEqual({ recorded: true });
-    expect(capture({ last_assistant_message: VALID_BLOCK }).captured).toBe(true);
-    expect(rows()[0].start).toBe('match');
-    // the snapshot is used once: the stop removes it
-    expect(openLedger(repo).hasMarker('verdict-start/agent-7')).toBe(false);
-  });
-
-  // Behaviour: code edited while the reviewer ran is not what it reviewed.
-  it('start, an edit while the agent runs, then a stop records start: changed', () => {
-    fs.writeFileSync(path.join(repo, 'a.txt'), 'reviewed\n');
-    start();
-    fs.writeFileSync(path.join(repo, 'a.txt'), 'edited during the review\n');
-    capture({ last_assistant_message: VALID_BLOCK });
-    expect(rows()[0].start).toBe('changed');
-  });
-
-  it('a stop with no start snapshot records start: missing', () => {
-    capture({ last_assistant_message: VALID_BLOCK });
-    expect(rows()[0].start).toBe('missing');
-  });
-
-  it("another agent's start snapshot does not count", () => {
-    start({ agent_id: 'agent-other' });
-    capture({ last_assistant_message: VALID_BLOCK });
-    expect(rows()[0].start).toBe('missing');
-  });
-
-  // Code review M1 (round 3): two empty snapshots ('' === '') proved nothing, yet recorded match.
-  it('a start and a stop that both ran past their deadline never record match', () => {
-    fs.writeFileSync(path.join(repo, 'a.txt'), 'reviewed\n');
-    expect(captureStart(input({ hook_event_name: 'SubagentStart' }), { now: () => NOW, deadlineMs: 0 })).toEqual({ recorded: true });
-    fs.writeFileSync(path.join(repo, 'a.txt'), 'edited during the review\n');
-    expect(captureVerdict(input({ agent_transcript_path: transcript(VALID_BLOCK) }), { now: () => NOW, deadlineMs: 0 }).captured).toBe(true);
-    expect(rows()[0].start).not.toBe('match');
-  });
-
-  // D36 needs a real no-tree pass to carry start: match: with no stop tree, the start snapshot's HEAD must equal the
-  // stop's (no commit landed while the agent ran).
-  function bigFile(): void {
-    const fd = fs.openSync(path.join(repo, 'big.bin'), 'w');
-    fs.ftruncateSync(fd, 51 * 1024 * 1024);
-    fs.closeSync(fd);
-  }
-
-  it('a no-tree stop on the commit its start snapshot saw records match', () => {
-    start();
-    bigFile();
-    capture({ last_assistant_message: VALID_BLOCK });
-    expect(rows()[0]).toMatchObject({ tree: '', headSha: headNow(), start: 'match' });
-  });
-
-  it('a no-tree stop after a commit landed while the agent ran records changed', () => {
-    start();
-    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'during');
-    bigFile();
-    capture({ last_assistant_message: VALID_BLOCK });
-    expect(rows()[0]).toMatchObject({ tree: '', start: 'changed' });
-  });
-
-  // Performance INFO 7 (round 3): a start whose agent never stopped left its marker behind for good.
-  it('a start removes start snapshots older than a day, and keeps newer ones', () => {
-    const ledger = openLedger(repo);
-    ledger.writeMarker('verdict-start/agent-old', { tree: '', trackedTree: '', headSha: '', ts: new Date(NOW.getTime() - 25 * 3600 * 1000).toISOString() });
-    ledger.writeMarker('verdict-start/agent-fresh', { tree: '', trackedTree: '', headSha: '', ts: new Date(NOW.getTime() - 3600 * 1000).toISOString() });
-    expect(start()).toEqual({ recorded: true });
-    expect(ledger.hasMarker('verdict-start/agent-old')).toBe(false);
-    expect(ledger.hasMarker('verdict-start/agent-fresh')).toBe(true);
-    expect(ledger.hasMarker('verdict-start/agent-7')).toBe(true);
-  });
-
-  it('a start for an agent that is not a review agent records nothing', () => {
-    expect(start({ agent_type: 'oss:typescript-pro' })).toEqual({ recorded: false, reason: 'not_review_agent' });
-  });
-});
+// ⚠ changes existing test: D45 dead code — the "start snapshot (security L4)" block is removed with captureStart: since
+//   D45 the assembler reads neither the start snapshot nor the row's `start`. A stop past its deadline is covered by the D48 cases below.
 
 /**
  * Round 2 performance M1 and L1: the trees are built without writing blobs into .git/objects (ls-files, update-index
@@ -501,19 +414,31 @@ describe('captureVerdict: trees without blob writes (performance M1, L1)', () =>
     expect(rows()[0]).toMatchObject({ tree: '', headSha: headNow() });
   });
 
-  it('a capture past its shared deadline records empty trees', () => {
+  // ⚠ changes existing test: D48 ("Record nothing", replaces D43) — a capture past its deadline reads neither the tree
+  //   nor HEAD, so it records no row (it was "records empty trees").
+  it('a capture past its shared deadline records no row', () => {
     fs.writeFileSync(path.join(repo, 'a.txt'), 'x\n');
-    expect(captureVerdict(input({ agent_transcript_path: transcript(VALID_BLOCK) }), { now: () => NOW, deadlineMs: 0 }).captured).toBe(true);
-    expect(rows()[0]).toMatchObject({ tree: '', trackedTree: '' });
+    expect(captureVerdict(input({ agent_transcript_path: transcript(VALID_BLOCK) }), { now: () => NOW, deadlineMs: 0 })).toEqual({ captured: false, reason: 'no_tree_or_head' });
+    expect(rows()).toEqual([]);
   });
 
   // Performance LOW 1 (round 3): the deadline ran from the git calls, after node start, resolveRepo, resolveFeature and
   //   the ledger key had spent theirs. It now runs from the process start the CLI passes (startMs).
-  it('a capture whose process started longer ago than the deadline records empty trees and no headSha', () => {
+  // ⚠ changes existing test: D48 — it was "... records empty trees and no headSha"; such a row is no longer written.
+  it('a capture whose process started longer ago than the deadline records no row', () => {
     fs.writeFileSync(path.join(repo, 'a.txt'), 'x\n');
     const file = transcript(VALID_BLOCK);
-    expect(captureVerdict(input({ agent_transcript_path: file }), { now: () => NOW, startMs: Date.now() - DEADLINE_MS - 100 }).captured).toBe(true);
-    expect(rows()[0]).toMatchObject({ tree: '', trackedTree: '', headSha: '' });
+    expect(captureVerdict(input({ agent_transcript_path: file }), { now: () => NOW, startMs: Date.now() - DEADLINE_MS - 100 })).toEqual({ captured: false, reason: 'no_tree_or_head' });
+    expect(rows()).toEqual([]);
+  });
+
+  // D48: when git rev-parse fails (here an unborn HEAD) and no tree can be built (an unreadable index), the fail could
+  //   never be compared with the shipped code, so it would block the feature for good: no row is written.
+  it('a capture that can read neither the tree nor HEAD records no row', () => {
+    git('checkout', '-q', '--orphan', `feat/${FEATURE}/unborn`);
+    fs.writeFileSync(path.join(repo, '.git', 'index'), 'not an index');
+    expect(capture({ last_assistant_message: block({ verdict: 'fail', findings: COUNTS }) })).toEqual({ captured: false, reason: 'no_tree_or_head' });
+    expect(rows()).toEqual([]);
   });
 
   // The CLI passes performance.timeOrigin, a fractional time: git's timeout must still be a whole number (it threw).
@@ -634,6 +559,17 @@ describe('captureVerdict: what records nothing', () => {
     const real = transcript(block({ verdict: 'pass', findings: COUNTS }));
     const link = path.join(projectsDir(), 'link.jsonl');
     fs.symlinkSync(real, link);
+    expect(capture({ agent_transcript_path: link })).toEqual({ captured: false, reason: 'no_message' });
+    expect(rows()).toEqual([]);
+  });
+
+  // D47 (security LOW): a hard link under ~/.claude/projects to a transcript written elsewhere (or to another agent's)
+  // would let any file the model can write pass as an agent transcript; a transcript with more than one link is refused.
+  it('refuses a hard-linked transcript', () => {
+    const outside = path.join(home, 'forged.jsonl');
+    fs.writeFileSync(outside, JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: block({ verdict: 'pass', findings: COUNTS }) }] } }) + '\n');
+    const link = path.join(projectsDir(), 'hardlink.jsonl');
+    fs.linkSync(outside, link);
     expect(capture({ agent_transcript_path: link })).toEqual({ captured: false, reason: 'no_message' });
     expect(rows()).toEqual([]);
   });

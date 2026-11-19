@@ -9,14 +9,12 @@
  * (`source: model`). Captured review-agent rows (ledger `verdicts/<feature>`, verdict-capture.ts) since the run start of
  * the feature's last ready_to_merge ship result, or all of them (pen F1: never cut at this run's start), then apply, per
  * gate (`source: agent`; `fixed` stays from the line):
- * - D32: a captured FAIL row, on any tree, keeps its gate failed until a later PASS row of that gate counts with a tree
- *   different from the fail row's. A pass on the unchanged tree never erases it, whatever round lines exist, and no
- *   fix count overrides it. Its blocker reads `gate:<name> (captured fail, not re-reviewed)`.
- * - A PASS row counts only when its agent's start snapshot matched its stop trees (`start: match`, security L4) and
- *   its reviewed trees are what ships outside .oss (reviewedIsShipped; finding 4, pen N4). The newest counting pass
- *   decides through D24/D27: unfixed critical or high (plus medium and low for security and pen-test) fails the gate;
- *   all of them fixed passes it; with none, the agent's own verdict counts.
- * - A captured pen-test row adds that optional gate. D26: the result labels how many gates an agent row backs
+ * - D45 (replaces D32's, D36's and D43's pass-based clearing): captured PASS rows decide and clear nothing. The newest
+ *   captured FAIL row of a gate is open unless the shipped code (HEAD outside .oss) differs from the code that failed
+ *   (its reviewed trees, else its headSha's tree; untracked scratch files and empty or .oss-only commits are no change).
+ *   An open fail keeps its gate failed, and no fix count overrides it; its blocker reads
+ *   `gate:<name> (captured fail, not re-reviewed)`. A fail with neither trees nor headSha does not count (D48).
+ * - An open captured pen-test fail adds that optional gate. D26: the result labels how many gates an agent row backs
  *   (`gateEvidence`) and names the rest (`uncapturedGates`).
  * Overrides: each decisionId must be a decisions.ndjson record whose line hash, id and feature match a ledger row;
  * `person` is copied from that record, never from the model.
@@ -45,6 +43,12 @@ import {
  * healthchecks/quality-gates.ts; pen-test stays optional (R-257 T27).
  */
 export const DEFAULT_REQUIRED_GATES: readonly string[] = ['code-review', 'performance', 'security'];
+
+/**
+ * D47: the verdict cutoff frozen in a ship result (`verdictsFrom`), as D42 freezes a build's evidenceCutoff. Undefined:
+ * assemble now (verdictCutoff) and store it; an ISO string: re-check from that time; null: every row.
+ */
+export type ShipContext = AssembleContext & { verdictsFrom?: string | null };
 
 export interface AssembleShipOptions {
   base: string;
@@ -110,17 +114,40 @@ export function branchTip(repo: string, name: string): string | null {
 }
 
 /**
- * D40: true when commit `tip` is an ancestor of, or equal to, at least one of `shas` (hex ids from the origin snapshot
- * ship start recorded), in one git call: `rev-list` lists `tip` unless some sha reaches it. False on any error (a sha
- * missing from the repo included) and for an empty list.
+ * D40: true when commit `tip` is an ancestor of, or equal to, `sha` (a hex id from the origin snapshot ship start
+ * recorded): `rev-list` lists `tip` unless `sha` reaches it. False on any error (a sha missing from the repo included).
  */
-export function containedInAny(repo: string, tip: string, shas: readonly string[]): boolean {
-  if (shas.length === 0) return false;
+function containedIn(repo: string, tip: string, sha: string): boolean {
   try {
-    return runGit(repo, ['rev-list', '-n', '1', '--end-of-options', tip, ...shas.map((s) => `^${s}`)]).out === '';
+    return runGit(repo, ['rev-list', '-n', '1', '--end-of-options', tip, `^${sha}`]).out === '';
   } catch {
     return false;
   }
+}
+
+/**
+ * D46/D50 (pen M2a, security 2a): local branch `base` is a safe ship base only when `refs` (the ship-start snapshot,
+ * remote ref name to SHA) holds refs/remotes/<remote>/<base> for some one-segment remote name and the base tip is inside
+ * that ref's SHA, and the base is neither the current branch nor the feature's own branch or one of its phase branches
+ * (`<feature>`, `*\/<feature>/*`). A remote whose name has a slash never matches (fail closed), so `build` never
+ * matches origin/feat/<f>/build.
+ */
+export function shipBaseAllowed(repo: string, base: string, feature: string, refs: ReadonlyMap<string, string>): boolean {
+  if (base === feature || base.includes(`/${feature}/`)) return false;
+  let current: string | null;
+  try {
+    current = runGit(repo, ['symbolic-ref', '-q', 'HEAD'], [0, 1]).out;
+  } catch {
+    return false;
+  }
+  if (current === `refs/heads/${base}`) return false;
+  const tip = branchTip(repo, base);
+  if (tip === null) return false;
+  for (const [name, sha] of refs) {
+    const m = /^refs\/remotes\/[^/]+\/(.+)$/.exec(name);
+    if (m?.[1] === base && containedIn(repo, tip, sha)) return true;
+  }
+  return false;
 }
 
 interface Diff {
@@ -186,24 +213,24 @@ interface Gate {
   source: 'model' | 'agent';
 }
 
-interface AgentRow {
+/** A captured agent FAIL row (T19, verdict-capture.ts); D45: pass rows decide nothing, so they are not read. */
+interface FailRow {
   gate: string;
-  verdict: 'pass' | 'fail';
   findings: Record<string, number>;
   at: number;
+  /** The working tree the agent reviewed, outside .oss (untracked files included); null when the capture could not build it. */
   tree: string | null;
+  /** The tracked tree at review (.oss included, never consulted); null when the capture could not build it. */
   trackedTree: string | null;
-  /** HEAD at review (pen N4): a deletion is allowed only for a path absent from this commit's tree too. */
+  /** HEAD at review; null when git rev-parse failed at capture. */
   headSha: string | null;
-  /** Security L4: true when the agent's start snapshot existed and equalled its stop trees (`start: "match"`). */
-  startMatch: boolean;
 }
 
-/** A captured agent verdict row (T19, verdict-capture.ts): null when the row's shape is not one. */
-function agentRow(row: Record<string, unknown>): AgentRow | null {
+/** A captured fail row (T19, verdict-capture.ts): null for a pass row or when the row's shape is not one. */
+function failRow(row: Record<string, unknown>): FailRow | null {
   const f = row.findings;
   const at = typeof row.ts === 'string' ? Date.parse(row.ts) : NaN;
-  if (typeof row.gate !== 'string' || (row.verdict !== 'pass' && row.verdict !== 'fail') || Number.isNaN(at)) return null;
+  if (typeof row.gate !== 'string' || row.verdict !== 'fail' || Number.isNaN(at)) return null;
   if (typeof f !== 'object' || f === null || Array.isArray(f)) return null;
   const findings: Record<string, number> = {};
   for (const s of SEVERITIES) {
@@ -211,31 +238,23 @@ function agentRow(row: Record<string, unknown>): AgentRow | null {
     if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) return null;
     findings[s] = n;
   }
+  // D48: a row with neither tree nor headSha (no longer written by the capture) does not count.
+  if ([row.tree, row.trackedTree, row.headSha].every((v) => v === undefined || v === '')) return null;
   const hex = (v: unknown): string | null => (typeof v === 'string' && TREE_RE.test(v) ? v : null);
-  return {
-    gate: row.gate,
-    verdict: row.verdict,
-    findings,
-    at,
-    tree: hex(row.tree),
-    trackedTree: hex(row.trackedTree),
-    headSha: hex(row.headSha),
-    startMatch: row.start === 'match',
-  };
+  return { gate: row.gate, findings, at, tree: hex(row.tree), trackedTree: hex(row.trackedTree), headSha: hex(row.headSha) };
 }
 
 const TREE_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
 /**
- * True when what the agent reviewed is what ships, outside .oss. Ship's reviews run on the uncommitted tree and ship
- * commits afterwards (only the files it picks), so trees, never HEAD, tie a row to what ships (finding 4):
- * (a) `<tree>` vs HEAD differs only by paths deleted in HEAD, and (b) none of those paths was tracked at review
- * (`<trackedTree>`) nor in the commit HEAD was at review (`<reviewHead>`, pen N4: `git rm --cached` before the review
- * cannot hide a committed file's deletion): an untracked file the reviewer saw and ship left out is fine; a tracked or
- * committed file deleted after the review, or any added or modified file, voids the row. All three are strict hex ids
- * (checked by the caller); with deletions and no reviewHead the row does not count.
+ * D45: whether the shipped code (HEAD outside .oss) differs from what the agent reviewed. Ship's reviews run on the
+ * uncommitted tree and ship commits afterwards (only the files it picks), so `tree` (the reviewed working tree, untracked
+ * files included) is compared with HEAD: an added or modified path differs; a deleted path differs only when it was
+ * tracked at review (`trackedTree`) or in the commit HEAD was at review (`reviewHead`, pen N4); an untracked file the
+ * reviewer saw and ship left out does not (pen M3a). All are strict hex tree-ishes, checked by the caller. 'unknown' on
+ * any git error (an object git does not have included).
  */
-function reviewedIsShipped(repo: string, tree: string, trackedTree: string, reviewHead: string | null): boolean {
+function shippedVsReviewed(repo: string, tree: string, trackedTree: string, reviewHead: string | null): 'same' | 'differs' | 'unknown' {
   try {
     const status = runGit(
       repo,
@@ -244,20 +263,31 @@ function reviewedIsShipped(repo: string, tree: string, trackedTree: string, revi
       true,
     ).out.split('\0');
     if (status[status.length - 1] === '') status.pop();
+    if (status.length % 2 !== 0) return 'unknown';
     const deleted: string[] = [];
     for (let k = 0; k + 1 < status.length; k += 2) {
-      if (status[k] !== 'D') return false;
+      if (status[k] !== 'D') return 'differs';
       deleted.push(status[k + 1]);
     }
-    if (status.length % 2 !== 0) return false;
-    if (deleted.length === 0) return true;
-    if (reviewHead === null) return false;
-    const listed = (treeish: string): string =>
-      runGit(repo, ['--literal-pathspecs', 'ls-tree', '-r', '--name-only', '-z', '--end-of-options', treeish, '--', ...deleted], [0], true).out;
-    return listed(trackedTree) === '' && listed(reviewHead) === '';
+    if (deleted.length === 0) return 'same';
+    const listed = (treeish: string): boolean =>
+      runGit(repo, ['--literal-pathspecs', 'ls-tree', '-r', '--name-only', '-z', '--end-of-options', treeish, '--', ...deleted], [0], true).out !== '';
+    return listed(trackedTree) || (reviewHead !== null && listed(reviewHead)) ? 'differs' : 'same';
   } catch {
-    return false;
+    return 'unknown';
   }
+}
+
+/**
+ * D45: a fail is cleared only when the shipped code differs from the code that failed (shippedVsReviewed): its reviewed
+ * trees, else its headSha's tree. Untracked scratch files and empty or .oss-only commits change nothing (pen M3). A fail
+ * that cannot be compared (a malformed or partial row, or a git error) stays open; one with neither is dropped (D48).
+ */
+function failCleared(repo: string, f: FailRow): boolean {
+  if (f.tree !== null && f.trackedTree !== null) return shippedVsReviewed(repo, f.tree, f.trackedTree, f.headSha) === 'differs';
+  if (f.headSha === null) return false;
+  const headTree = `${f.headSha}^{tree}`;
+  return shippedVsReviewed(repo, headTree, headTree, null) === 'differs';
 }
 
 /** A ledger-backed timeline line's round and time, for telling a re-review round from a re-roll (finding 4). */
@@ -305,49 +335,20 @@ function timelineGates(ctx: AssembleContext, featureDir: string, gateHashes: Set
   return { byName, rounds };
 }
 
-/** D27: gates whose findings block at LOW or above (ship.md: "security findings at LOW or above"). */
-const LOW_PLUS_GATES = new Set(['security', 'pen-test']);
-/** D27: a captured pen-test row adds that optional gate, so its fail blocks even without a timeline line. */
+/** D27: a captured pen-test fail adds that optional gate, so it blocks even without a timeline line. */
 const CAPTURE_ADDS_GATE = 'pen-test';
 
-/**
- * D24/D27: unfixed = per counted severity max(0, found - fixed), summed; over 0 fails. Counted: critical and high (D24),
- * plus medium and low for security and pen-test (D27). Otherwise, when any counted finding was reported (so all were
- * fixed) the gate passes; with none, the agent's own verdict counts.
- */
-function ruleVerdict(gate: string, row: AgentRow, fixed: Record<string, number>): 'pass' | 'fail' {
-  const counted = LOW_PLUS_GATES.has(gate) ? ['critical', 'high', 'medium', 'low'] : ['critical', 'high'];
-  const unfixed = counted.reduce((n, s) => n + Math.max(0, row.findings[s] - fixed[s]), 0);
-  if (unfixed > 0) return 'fail';
-  if (counted.some((s) => row.findings[s] > 0)) return 'pass';
-  return row.verdict;
-}
-
-/** D36 + pen F2: true when pass `p` was captured on a known commit other than fail `f`'s (a fail with no headSha: never). */
-function onNewCommit(f: AgentRow, p: AgentRow): boolean {
-  return f.headSha !== null && p.headSha !== null && p.headSha !== f.headSha;
-}
-
-/**
- * D32 + pen F2 + D43: true when counting pass `p` (it always has a tree) clears fail `f`. A fail with a tree: the pass's
- * tree differs. A fail with no tree: a new commit (onNewCommit), or, when the fail has no headSha either (git rev-parse
- * failed at capture), any counting pass (D43).
- */
-function passClears(f: AgentRow, p: AgentRow): boolean {
-  if (f.tree !== null) return p.tree !== f.tree;
-  return f.headSha === null || onNewCommit(f, p);
-}
-
-/** D32: the blocker label of a gate held failed by a captured fail row nobody re-reviewed on a changed tree. */
+/** The blocker label of a gate held failed by an open captured fail (D32, D45). */
 const NOT_RE_REVIEWED = 'captured fail, not re-reviewed';
 
 /**
  * Pen F1: where the feature's verdict rows are read from, in epoch ms: the run start of its last ready_to_merge ship
  * result (the stored results/ship.json whose bytes the ledger's last `results/<feature>/ship` row binds), else the
  * first row (-Infinity). It never depends on this run's start, so restarting the run cannot drop an open fail; any
- * doubt (no row, unbound or unreadable file, another verdict) reads every row.
+ * doubt (no row, unbound or unreadable file, another verdict) reads every row. D47: when that bound result is from this
+ * very run (`startedAt`, a re-assemble), its frozen `verdictsFrom` is kept, so re-assembling never moves the window.
  */
-function verdictCutoff(ledger: Ledger, repo: string, feature: string): number {
+function verdictCutoff(ledger: Ledger, repo: string, feature: string, startedAt: string): number {
   const last = ledger.lastRow(`results/${feature}/ship`);
   let stored: ReturnType<typeof readResult>;
   try {
@@ -357,71 +358,43 @@ function verdictCutoff(ledger: Ledger, repo: string, feature: string): number {
   }
   if (last === null || !stored.ok || last.sha256 !== sha256(stored.bytes)) return -Infinity;
   const v = stored.value;
-  if (typeof v !== 'object' || v === null || (v as Record<string, unknown>).verdict !== 'ready_to_merge') return -Infinity;
+  if (typeof v !== 'object' || v === null) return -Infinity;
+  const r = v as Record<string, unknown>;
+  if (r.startedAt === startedAt && (typeof r.verdictsFrom === 'string' || r.verdictsFrom === null)) {
+    const from = r.verdictsFrom === null ? NaN : Date.parse(r.verdictsFrom);
+    return Number.isNaN(from) ? -Infinity : from;
+  }
+  if (r.verdict !== 'ready_to_merge') return -Infinity;
   const at = typeof last.startedAt === 'string' ? Date.parse(last.startedAt) : NaN;
   return Number.isNaN(at) ? -Infinity : at;
 }
 
 /**
- * T19 + D32: an agent's captured verdict supplies a gate's verdict and findings (`source: agent`); `fixed` stays from the
- * line. Rows from before `cutoff` (verdictCutoff, pen F1) are ignored.
- * - A FAIL row, on any tree (or none), keeps its gate failed until a later PASS row of that gate that counts (its
- *   reviewed trees are what ships, reviewedIsShipped) has a tree different from the fail row's. A pass on the unchanged
- *   tree never erases it, whatever round lines exist, and D24's fix counts never override it. Such a gate is returned
- *   in the set, so its blocker says "captured fail, not re-reviewed". Pen F2: a fail with no tree is cleared by a
- *   counting pass only on a different commit (onNewCommit); D43: one with no headSha either by any later counting pass
- *   (it has a real tree), never by a no-tree pass.
- * - D36: a PASS row with no tree (a changed file over 50 MB, or the capture deadline) but `start: match` (L4) and a
- *   headSha also clears an earlier fail row of its gate, only when its headSha differs from the fail row's (a fail with
- *   no headSha is never cleared, pen F2). It proves nothing about what it reviewed, so it never becomes the verdict.
- * - Otherwise the newest counting PASS row newer than the newest fail decides (code review H1), through D24/D27's rule
- *   (ruleVerdict).
- * - With neither (no counting pass, no open fail), the timeline line stays (`source: model`, so the gate is listed in
- *   uncapturedGates, D26).
+ * T19 + D45: per gate, the newest captured FAIL row from `cutoff` on (verdictCutoff, pen F1) is open unless the shipped
+ * code differs from the code that failed (failCleared). An open fail sets its gate to fail with that row's findings
+ * (`source: agent`, `fixed` stays from the line; D24's fix counts never override it), and the gate is returned in the
+ * set, so its blocker says "captured fail, not re-reviewed". Captured PASS rows decide and clear nothing (D45: a pass
+ * can be minted). With no open fail the timeline line stays (`source: model`, listed in uncapturedGates, D26).
  */
 function applyAgentVerdicts(tl: Timeline, verdictRows: LedgerRow[], cutoff: number, repo: string): Set<string> {
-  const byGate = new Map<string, Array<{ row: AgentRow; counts: boolean; blind: boolean }>>();
-  const shipped = new Map<string, boolean>();
+  const newest = new Map<string, FailRow>();
   for (const raw of verdictRows) {
-    const row = agentRow(raw);
-    if (row === null || !(row.at >= cutoff)) continue;
-    let counts = false;
-    if (row.verdict === 'pass' && row.startMatch && row.tree !== null && row.trackedTree !== null) {
-      const key = `${row.tree} ${row.trackedTree} ${row.headSha ?? ''}`;
-      if (!shipped.has(key)) shipped.set(key, reviewedIsShipped(repo, row.tree, row.trackedTree, row.headSha));
-      counts = shipped.get(key) === true;
-    }
-    const blind = row.verdict === 'pass' && row.startMatch && row.tree === null && row.headSha !== null;
-    if (row.verdict === 'fail' || counts || blind) byGate.set(row.gate, [...(byGate.get(row.gate) ?? []), { row, counts, blind }]);
+    const f = failRow(raw);
+    if (f === null || !(f.at >= cutoff)) continue;
+    const prev = newest.get(f.gate);
+    if (prev === undefined || f.at >= prev.at) newest.set(f.gate, f);
   }
-  const stale = new Set<string>();
-  for (const [name, rows] of byGate) {
+  const open = new Set<string>();
+  for (const [name, f] of newest) {
     const zero = counts({});
     const gate = tl.byName.get(name) ?? (name === CAPTURE_ADDS_GATE
-      ? { gate: name, verdict: 'pass' as const, findings: zero, fixed: zero, source: 'agent' as const }
+      ? { gate: name, verdict: 'fail' as const, findings: zero, fixed: zero, source: 'agent' as const }
       : undefined);
-    if (gate === undefined) continue;
-    rows.sort((a, b) => a.row.at - b.row.at);
-    const passes = rows.filter((r) => r.counts).map((r) => r.row);
-    const blinds = rows.filter((r) => r.blind).map((r) => r.row);
-    const open = rows
-      .filter((r) => r.row.verdict === 'fail')
-      .map((r) => r.row)
-      .filter((f) => !passes.some((p) => p.at > f.at && passClears(f, p)))
-      .filter((f) => !blinds.some((b) => b.at > f.at && onNewCommit(f, b)));
-    if (open.length > 0) {
-      tl.byName.set(name, { ...gate, verdict: 'fail', findings: open[open.length - 1].findings, source: 'agent' });
-      stale.add(name);
-      continue;
-    }
-    // H1: only a pass newer than the newest fail may decide; an older one was overruled by that fail.
-    const lastFail = Math.max(-Infinity, ...rows.filter((r) => r.row.verdict === 'fail').map((r) => r.row.at));
-    const deciding = passes.filter((p) => p.at > lastFail);
-    if (deciding.length === 0) continue;
-    const pick = deciding[deciding.length - 1];
-    tl.byName.set(name, { ...gate, verdict: ruleVerdict(name, pick, gate.fixed), findings: pick.findings, source: 'agent' });
+    if (gate === undefined || failCleared(repo, f)) continue;
+    tl.byName.set(name, { ...gate, verdict: 'fail', findings: f.findings, source: 'agent' });
+    open.add(name);
   }
-  return stale;
+  return open;
 }
 
 type OverridesOutcome = { ok: true; overrides: Array<Record<string, string>> } | Extract<AssembleOutcome, { ok: false }>;
@@ -453,7 +426,7 @@ function readOverrides(ctx: AssembleContext, featureDir: string, decisionRows: L
   return { ok: true, overrides };
 }
 
-export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): AssembleOutcome {
+export function assembleShip(ctx: ShipContext, opts: AssembleShipOptions): AssembleOutcome {
   let diff: Diff;
   try {
     diff = readDiff(ctx.repo, opts.base);
@@ -472,7 +445,9 @@ export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): A
     gateHashes = new Set(ledger.readRows(`gates/${ctx.feature}`).map((r) => r.sha256));
     decisionRows = ledger.readRows(`decisions/${ctx.feature}`);
     verdictRows = ledger.readRows(`verdicts/${ctx.feature}`);
-    cutoff = verdictCutoff(ledger, ctx.repo, ctx.feature);
+    // D47: a re-check uses the stored cutoff; an unparsable one reads every row (never drops an open fail).
+    cutoff = ctx.verdictsFrom === undefined ? verdictCutoff(ledger, ctx.repo, ctx.feature, ctx.startedAt) : Date.parse(ctx.verdictsFrom ?? '');
+    if (Number.isNaN(cutoff)) cutoff = -Infinity;
   } catch (e) {
     return { ok: false, error: e instanceof LedgerError ? e.code : 'unsafe_path' };
   }
@@ -499,6 +474,7 @@ export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): A
     result: {
       ...baseFields(ctx, 'ship'),
       headSha: diff.headSha,
+      verdictsFrom: cutoff === -Infinity ? null : new Date(cutoff).toISOString(),
       sources: {
         diff: 'code',
         gates: 'model',

@@ -1,16 +1,15 @@
 #!/usr/bin/env node
 /**
- * verdict-capture CLI (R-257 T19): run by hooks/oss-verdict-capture.sh at SubagentStart and SubagentStop as the bundle
+ * verdict-capture CLI (R-257 T19): run by hooks/oss-verdict-capture.sh at SubagentStop as the bundle
  * dist/cli/verdict-capture.cjs, on the recorded node (D21).
  *
- * Usage: verdict-capture <input-file>          (SubagentStop: captureVerdict records the verdict block)
- *        verdict-capture start <input-file>    (SubagentStart: captureStart records the start snapshot, security L4)
+ * Usage: verdict-capture <input-file>   (SubagentStop: captureVerdict records the verdict block)
  *   <input-file> holds Claude Code's hook input (the hook writes it to a private temp folder). At most INPUT_CAP bytes
  *   are read (phase-results/verdict-capture.ts). Always exits 0 and prints nothing: a capture failure never changes a
- *   subagent's start or stop.
+ *   subagent's stop.
  */
 import * as fs from 'node:fs';
-import { captureStart, captureVerdict } from '../phase-results/verdict-capture.js';
+import { captureVerdict } from '../phase-results/verdict-capture.js';
 
 const INPUT_CAP = 1024 * 1024;
 
@@ -29,8 +28,7 @@ function readInput(file: string | undefined): unknown {
 try {
   // Performance LOW 1: the capture's deadline runs from this process's start, not from its first git call.
   const startMs = performance.timeOrigin;
-  if (process.argv[2] === 'start') captureStart(readInput(process.argv[3]), { startMs });
-  else captureVerdict(readInput(process.argv[2]), { startMs });
+  captureVerdict(readInput(process.argv[2]), { startMs });
 } catch {
   // Unreadable or malformed input records nothing.
 }

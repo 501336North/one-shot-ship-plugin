@@ -16,6 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runToolGate, type GateResult } from '../../../src/tool-gate/gate.js';
+import { namesVerdictCapture } from '../../../src/tool-gate/rules/verdict-capture-call.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const AGENTS: Array<[string, string | null]> = [['the main agent', null], ['a builder', 'oss:typescript-pro']];
@@ -98,5 +99,34 @@ describe.each(AGENTS)('D41: %s cannot run the verdict capture itself', (_who, ag
     const result = await call(command, agent);
     expect(result.stderr, command).toBe('');
     expect(result.exitCode, command).toBe(0);
+  });
+});
+
+/**
+ * @behavior A glob with many `*` is decided at once, so the gate never stalls (and fails closed) on a long glob.
+ *   Bracket sets match one character, with `!`/`^` negation and ranges, as the shell reads them.
+ * @business-rule R-257 D47 (round 6, "the gate rule's linear wildcard matcher"; perf LOW): globRegex turned each `*`
+ *   into `.*`, so twelve `*` and then `x` took seconds.
+ */
+describe('D47: the wildcard matcher is linear', () => {
+  it.each([30, 200])('a segment of %i `*` then x is decided in well under 100 ms', (stars) => {
+    const command = `bash ~/.oss/hooks/${'*'.repeat(stars)}x`;
+    const start = performance.now();
+    const named = namesVerdictCapture(command);
+    const elapsed = performance.now() - start;
+    expect(named).toBe(false);
+    expect(elapsed).toBeLessThan(100);
+  });
+
+  it.each([
+    ['many stars before the name', `bash ~/.oss/hooks/${'*'.repeat(200)}oss-verdict-capture.sh`, true],
+    ['a range set', 'bash ~/.oss/hooks/oss-verdict-captur[a-z].sh', true],
+    ['a negated set that excludes the letter', 'bash ~/.oss/hooks/oss-verdict-captur[!e].sh', false],
+    ['a caret-negated set that excludes the letter', 'bash ~/.oss/hooks/oss-verdict-captur[^e].sh', false],
+    ['a negated set that allows the letter', 'bash ~/.oss/hooks/oss-verdict-captur[!x].sh', true],
+    ['a set without the letter', 'bash ~/.oss/hooks/oss-verdict-captur[xyz].sh', false],
+    ['a ? for one character', 'bash ~/.oss/hooks/oss-verdict-captur?.sh', true],
+  ])('%s: named is %s', (_what, command, named) => {
+    expect(namesVerdictCapture(command)).toBe(named);
   });
 });

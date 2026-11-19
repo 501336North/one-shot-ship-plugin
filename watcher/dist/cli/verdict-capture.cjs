@@ -624,7 +624,8 @@ function projectsTranscript(file) {
   try {
     const root = fs5.realpathSync(path3.join(os2.homedir(), ".claude", "projects"));
     const real = fs5.realpathSync(file);
-    return real.startsWith(root + path3.sep) && !fs5.lstatSync(file).isSymbolicLink() ? real : null;
+    const st = fs5.lstatSync(file);
+    return real.startsWith(root + path3.sep) && !st.isSymbolicLink() && st.nlink <= 1 ? real : null;
   } catch {
     return null;
   }
@@ -775,50 +776,6 @@ function reviewedTrees(repo, left) {
     fs5.rmSync(dir, { recursive: true, force: true });
   }
 }
-var STALE_START_MS = 24 * 60 * 60 * 1e3;
-function clearStaleStarts(ledger, now) {
-  const dir = path3.join(ledger.dir, "verdict-start");
-  const st = fs5.lstatSync(dir, { throwIfNoEntry: false });
-  if (st === void 0 || st.isSymbolicLink() || !st.isDirectory()) return;
-  for (const name of fs5.readdirSync(dir)) {
-    if (!ID_RE.test(name)) continue;
-    const ts = ledger.readMarker(startMarker(name))?.ts;
-    const at = typeof ts === "string" ? Date.parse(ts) : NaN;
-    if (Number.isNaN(at) || now.getTime() - at > STALE_START_MS) ledger.clearMarker(startMarker(name));
-  }
-}
-function startMarker(agent) {
-  return `verdict-start/${agent}`;
-}
-function captureStart(input, opts = {}) {
-  try {
-    if (typeof input !== "object" || input === null || Array.isArray(input)) return { recorded: false, reason: "bad_input" };
-    const hook = input;
-    if (gateForAgent(hook.agent_type) === null) return { recorded: false, reason: "not_review_agent" };
-    const agent = plainId(hook.agent_id);
-    if (agent === "") return { recorded: false, reason: "no_agent_id" };
-    const left = deadlineOf(opts);
-    const cwd = typeof hook.cwd === "string" && path3.isAbsolute(hook.cwd) ? hook.cwd : process.cwd();
-    const repo = resolveRepo(cwd);
-    if (repo === null) return { recorded: false, reason: "no_repo" };
-    const headSha = gitText(repo, ["rev-parse", "--verify", "HEAD^{commit}"], left) ?? "";
-    const trees = reviewedTrees(repo, left);
-    const ledger = openLedger(repo);
-    const now = (opts.now ?? (() => /* @__PURE__ */ new Date()))();
-    clearStaleStarts(ledger, now);
-    ledger.writeMarker(startMarker(agent), { ...trees, headSha, ts: now.toISOString() });
-    return { recorded: true };
-  } catch {
-    return { recorded: false, reason: "error" };
-  }
-}
-function startState(snap, trees, headSha) {
-  if (snap === null) return "missing";
-  if (trees.tree !== "" && trees.trackedTree !== "") {
-    return snap.tree === trees.tree && snap.trackedTree === trees.trackedTree ? "match" : "changed";
-  }
-  return headSha !== "" && snap.headSha === headSha ? "match" : "changed";
-}
 function captureVerdict(input, opts = {}) {
   try {
     if (typeof input !== "object" || input === null || Array.isArray(input)) return { captured: false, reason: "bad_input" };
@@ -836,17 +793,15 @@ function captureVerdict(input, opts = {}) {
     const repo = resolveRepo(cwd);
     const feature = repo === null ? null : resolveFeature(repo);
     if (repo === null || feature === null) return { captured: false, reason: "no_feature" };
-    const agent = plainId(hook.agent_id);
     const ledger = openLedger(repo);
     const headSha = gitText(repo, ["rev-parse", "--verify", "HEAD^{commit}"], left) ?? "";
     const trees = reviewedTrees(repo, left);
-    const snap = agent === "" ? null : ledger.readMarker(startMarker(agent));
-    if (agent !== "") ledger.clearMarker(startMarker(agent));
+    if (headSha === "" && (trees.tree === "" || trees.trackedTree === "")) return { captured: false, reason: "no_tree_or_head" };
     ledger.appendRow(`verdicts/${feature}`, {
       gate,
       verdict: block.verdict,
       findings: block.findings,
-      agent,
+      agent: plainId(hook.agent_id),
       session: plainId(hook.session_id),
       ts: (opts.now ?? (() => /* @__PURE__ */ new Date()))().toISOString(),
       // For information only: the HEAD at capture (ship commits after its reviews, so HEAD never decides).
@@ -854,10 +809,8 @@ function captureVerdict(input, opts = {}) {
       // deletion only for a path absent from this commit's tree too (pen N4).
       headSha,
       // The trees the agent reviewed (all files / tracked only); assemble-ship counts a pass only when the shipped tree
-      // outside .oss differs from `tree` by nothing but files that were untracked at review and left out (finding 4),
-      // and only when `start` is match (security L4).
-      ...trees,
-      start: startState(snap, trees, headSha)
+      // outside .oss differs from `tree` by nothing but files that were untracked at review and left out (finding 4).
+      ...trees
     });
     return { captured: true, gate, feature };
   } catch {
@@ -880,8 +833,7 @@ function readInput(file) {
 }
 try {
   const startMs = performance.timeOrigin;
-  if (process.argv[2] === "start") captureStart(readInput(process.argv[3]), { startMs });
-  else captureVerdict(readInput(process.argv[2]), { startMs });
+  captureVerdict(readInput(process.argv[2]), { startMs });
 } catch {
 }
 process.exitCode = 0;

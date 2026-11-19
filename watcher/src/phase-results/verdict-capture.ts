@@ -9,8 +9,8 @@
  * hook input's agent_type (REVIEW_AGENT_GATES), never from the block. One row goes to the owner-only ledger
  * `verdicts/<feature>`; the model never writes it. assemble-ship.ts reads it. The row records the tree the agent
  * reviewed (working tree minus .oss, from a temp index copy with no blob writes; the real index is never touched),
- * which binds it, and `start`: whether the agent's SubagentStart snapshot (captureStart, ledger marker
- * `verdict-start/<agent_id>`) exists and equals it (security L4). Every git call shares one deadline (DEADLINE_MS).
+ * which binds it. Every git call shares one deadline (DEADLINE_MS). D48: a capture that reads neither HEAD nor both
+ * trees writes no row.
  *
  * The final message (D41): only the text of the last assistant message in agent_transcript_path, never stdin's
  * last_assistant_message (whoever runs the hook writes stdin): its trailing entries that share one message.id, and
@@ -22,7 +22,7 @@ import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { openLedger, type Ledger, type LedgerRow } from './ledger.js';
+import { openLedger } from './ledger.js';
 import { resolveFeature } from './feature.js';
 import { gitBin } from './git-bin.js';
 import { gitEnv } from './git.js';
@@ -57,8 +57,6 @@ export interface CaptureOptions {
    */
   startMs?: number;
 }
-
-export type StartOutcome = { recorded: true } | { recorded: false; reason: string };
 
 /**
  * Well under the hook's own 7 s bound (oss-verdict-capture.sh; hooks.json allows 10 s), counted from the process start,
@@ -105,13 +103,15 @@ export function gateForAgent(agentType: unknown): string | null {
 /**
  * D41: the transcript's real path when `file` is an absolute path, not itself a link, that resolves (realpath) under
  * the real ~/.claude/projects, which the tool gate protects; null otherwise (a symlinked folder cannot lead out).
+ * D47: a hard link (nlink over 1) is refused too, so a file written outside the protected folder cannot pass as one.
  */
 function projectsTranscript(file: unknown): string | null {
   if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
   try {
     const root = fs.realpathSync(path.join(os.homedir(), '.claude', 'projects'));
     const real = fs.realpathSync(file);
-    return real.startsWith(root + path.sep) && !fs.lstatSync(file).isSymbolicLink() ? real : null;
+    const st = fs.lstatSync(file);
+    return real.startsWith(root + path.sep) && !st.isSymbolicLink() && st.nlink <= 1 ? real : null;
   } catch {
     return null;
   }
@@ -310,72 +310,6 @@ function reviewedTrees(repo: string, left: Deadline): { tree: string; trackedTre
   }
 }
 
-/** A start snapshot older than this belongs to an agent that never stopped (performance INFO 7), and is removed. */
-const STALE_START_MS = 24 * 60 * 60 * 1000;
-
-/** Removes the ledger's verdict-start markers whose `ts` is over STALE_START_MS before `now` (or unreadable). */
-function clearStaleStarts(ledger: Ledger, now: Date): void {
-  const dir = path.join(ledger.dir, 'verdict-start');
-  const st = fs.lstatSync(dir, { throwIfNoEntry: false });
-  if (st === undefined || st.isSymbolicLink() || !st.isDirectory()) return;
-  for (const name of fs.readdirSync(dir)) {
-    if (!ID_RE.test(name)) continue;
-    const ts = ledger.readMarker(startMarker(name))?.ts;
-    const at = typeof ts === 'string' ? Date.parse(ts) : NaN;
-    if (Number.isNaN(at) || now.getTime() - at > STALE_START_MS) ledger.clearMarker(startMarker(name));
-  }
-}
-
-/** The ledger marker holding a review agent's start snapshot (security L4), keyed by its agent_id. */
-function startMarker(agent: string): string {
-  return `verdict-start/${agent}`;
-}
-
-/**
- * Records a review agent's start snapshot from a SubagentStart hook input (security L4): its reviewed trees and HEAD (M1), in the
- * owner-only ledger marker `verdict-start/<agent_id>`. The stop row then says whether the agent's code changed while it
- * ran. Never throws.
- */
-export function captureStart(input: unknown, opts: CaptureOptions = {}): StartOutcome {
-  try {
-    if (typeof input !== 'object' || input === null || Array.isArray(input)) return { recorded: false, reason: 'bad_input' };
-    const hook = input as Record<string, unknown>;
-    if (gateForAgent(hook.agent_type) === null) return { recorded: false, reason: 'not_review_agent' };
-    const agent = plainId(hook.agent_id);
-    if (agent === '') return { recorded: false, reason: 'no_agent_id' };
-    const left = deadlineOf(opts);
-    const cwd = typeof hook.cwd === 'string' && path.isAbsolute(hook.cwd) ? hook.cwd : process.cwd();
-    const repo = resolveRepo(cwd);
-    if (repo === null) return { recorded: false, reason: 'no_repo' };
-    const headSha = gitText(repo, ['rev-parse', '--verify', 'HEAD^{commit}'], left) ?? '';
-    const trees = reviewedTrees(repo, left);
-    const ledger = openLedger(repo);
-    const now = (opts.now ?? (() => new Date()))();
-    clearStaleStarts(ledger, now);
-    ledger.writeMarker(startMarker(agent), { ...trees, headSha, ts: now.toISOString() });
-    return { recorded: true };
-  } catch {
-    return { recorded: false, reason: 'error' };
-  }
-}
-
-/**
- * missing: there is no start snapshot. With both stop trees built, match when the snapshot's trees equal them. With a
- * stop tree missing ('', a no-tree row for D36), two empty snapshots prove nothing (code review M1), so match only when
- * the snapshot's HEAD is known and equals the stop's (no commit landed while the agent ran). Otherwise changed.
- */
-function startState(
-  snap: LedgerRow | null,
-  trees: { tree: string; trackedTree: string },
-  headSha: string,
-): 'match' | 'changed' | 'missing' {
-  if (snap === null) return 'missing';
-  if (trees.tree !== '' && trees.trackedTree !== '') {
-    return snap.tree === trees.tree && snap.trackedTree === trees.trackedTree ? 'match' : 'changed';
-  }
-  return headSha !== '' && snap.headSha === headSha ? 'match' : 'changed';
-}
-
 /** Records the review agent's verdict block from a SubagentStop hook input. Never throws. */
 export function captureVerdict(input: unknown, opts: CaptureOptions = {}): CaptureOutcome {
   try {
@@ -395,18 +329,18 @@ export function captureVerdict(input: unknown, opts: CaptureOptions = {}): Captu
     const repo = resolveRepo(cwd);
     const feature = repo === null ? null : resolveFeature(repo);
     if (repo === null || feature === null) return { captured: false, reason: 'no_feature' };
-    const agent = plainId(hook.agent_id);
     const ledger = openLedger(repo);
     // Before the trees: a tree build that runs out of time still leaves the row its headSha (D36).
     const headSha = gitText(repo, ['rev-parse', '--verify', 'HEAD^{commit}'], left) ?? '';
     const trees = reviewedTrees(repo, left);
-    const snap = agent === '' ? null : ledger.readMarker(startMarker(agent));
-    if (agent !== '') ledger.clearMarker(startMarker(agent));
+    // D48: with neither HEAD nor both trees (rev-parse failed, or the deadline ran out first), a row could never be
+    // compared with the shipped code; no row is written, so the gate keeps its model line (D26).
+    if (headSha === '' && (trees.tree === '' || trees.trackedTree === '')) return { captured: false, reason: 'no_tree_or_head' };
     ledger.appendRow(`verdicts/${feature}`, {
       gate,
       verdict: block.verdict,
       findings: block.findings,
-      agent,
+      agent: plainId(hook.agent_id),
       session: plainId(hook.session_id),
       ts: (opts.now ?? (() => new Date()))().toISOString(),
       // For information only: the HEAD at capture (ship commits after its reviews, so HEAD never decides).
@@ -414,10 +348,8 @@ export function captureVerdict(input: unknown, opts: CaptureOptions = {}): Captu
       // deletion only for a path absent from this commit's tree too (pen N4).
       headSha,
       // The trees the agent reviewed (all files / tracked only); assemble-ship counts a pass only when the shipped tree
-      // outside .oss differs from `tree` by nothing but files that were untracked at review and left out (finding 4),
-      // and only when `start` is match (security L4).
+      // outside .oss differs from `tree` by nothing but files that were untracked at review and left out (finding 4).
       ...trees,
-      start: startState(snap, trees, headSha),
     });
     return { captured: true, gate, feature };
   } catch {

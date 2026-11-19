@@ -75,6 +75,15 @@
     "headSha": {
       "$ref": "common.schema.json#/$defs/sha"
     },
+    "verdictsFrom": {
+      "description": "D47: where the captured review-agent verdict rows were read from, frozen at assemble: the run start of the feature's last ready_to_merge ship result, or null for every row. check re-derives the result from it. Absent in results from before D47.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?Z"
+    },
     "sources": {
       "type": "object",
       "additionalProperties": false,

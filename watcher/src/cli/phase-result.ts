@@ -28,10 +28,10 @@ import { assembleIdeate } from '../phase-results/assemble-ideate.js';
 import { assemblePlan } from '../phase-results/assemble-plan.js';
 import {
   assembleShip,
-  branchTip,
-  containedInAny,
   hasOriginBranch,
   isLocalBranch,
+  shipBaseAllowed,
+  type ShipContext,
 } from '../phase-results/assemble-ship.js';
 import { LedgerError, ledgerKey, openLedger, parseRunRow, type Ledger } from '../phase-results/ledger.js';
 import { loadPhaseSchema, PHASES, type Phase } from '../phase-results/schemas.js';
@@ -121,35 +121,40 @@ function shipBaseConfig(repo: string): string {
   return '';
 }
 
-/** D40: at most this many origin SHAs in a ship start snapshot; a bigger one is refused (fail closed). */
-const MAX_ORIGIN_SHAS = 1000;
+/** D40: at most this many remote refs in a ship start snapshot; a bigger one is refused (fail closed). */
+const MAX_ORIGIN_REFS = 1000;
 const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+const REMOTE_REF = 'refs/remotes/';
 
 /**
- * D40 (security M1, pen F4): the SHAs of refs/remotes/origin/* that oss-notify's ship start recorded in the ledger
- * (`run/ship.origin`, `{startedAt, shas}`), for this run only (its startedAt). Refuses `no_base_snapshot` when there is
- * none for this run (a run started before D40, or git failed or found over MAX_ORIGIN_SHAS refs at start), or it is
- * malformed or over the cap.
+ * D40/D46/D50 (security M1, pen F4, pen M2a): the refs/remotes/<remote>/* names and SHAs that oss-notify's ship start
+ * recorded in the ledger (`run/ship.origin`, `{startedAt, refs: {<ref name>: <sha>}}`), for this run only (its
+ * startedAt). Refuses `no_base_snapshot` when there is none for this run (a run started before D40, or git failed or
+ * found over MAX_ORIGIN_REFS refs at start), or it is malformed, over the cap, or in the D40 `{startedAt, shas}` format.
  */
-function originSnapshot(ledger: Ledger, startedAt: string): string[] {
+function originSnapshot(ledger: Ledger, startedAt: string): Map<string, string> {
   const m = ledger.readMarker('run/ship.origin');
-  const shas = m?.shas;
-  if (m?.startedAt !== startedAt || !Array.isArray(shas) || shas.length > MAX_ORIGIN_SHAS) {
+  const refs = m?.refs;
+  if (m?.startedAt !== startedAt || typeof refs !== 'object' || refs === null || Array.isArray(refs)) {
     throw new Refusal('no_base_snapshot', 'run/ship.origin');
   }
-  if (!shas.every((s): s is string => typeof s === 'string' && SHA.test(s))) throw new Refusal('no_base_snapshot', 'run/ship.origin');
-  return shas;
+  const entries = Object.entries(refs);
+  if (entries.length > MAX_ORIGIN_REFS
+    || !entries.every(([name, sha]) => name.startsWith(REMOTE_REF) && typeof sha === 'string' && SHA.test(sha))) {
+    throw new Refusal('no_base_snapshot', 'run/ship.origin');
+  }
+  return new Map(entries as Array<[string, string]>);
 }
 
 /**
- * D40 (replaces D34's reflog rules): a ship base is accepted only when its tip is an ancestor of, or equal to, a SHA in
- * the origin snapshot ship start recorded. Local refs and reflogs, which the model can write, never count. Refuses
- * `unsafe_base`. A name that is not a local branch is left to assembleShip's ref checks (diff_unavailable).
+ * D46 (replaces D40's "any origin SHA" rule): a ship base is accepted only when the snapshot holds <a remote>/<its
+ * own name> (D50: any remote) and its tip is inside that SHA, and it is neither the current branch nor one of the feature's phase branches
+ * (shipBaseAllowed). Local refs and reflogs, which the model can write, never count. Refuses `unsafe_base`. A name that
+ * is not a local branch is left to assembleShip's ref checks (diff_unavailable).
  */
-function checkShipBase(repo: string, base: string, snapshot: readonly string[]): void {
+function checkShipBase(repo: string, base: string, feature: string, snapshot: ReadonlyMap<string, string>): void {
   if (!isLocalBranch(repo, base)) return;
-  const tip = branchTip(repo, base);
-  if (tip === null || !containedInAny(repo, tip, snapshot)) throw new Refusal('unsafe_base', 'base');
+  if (!shipBaseAllowed(repo, base, feature, snapshot)) throw new Refusal('unsafe_base', 'base');
 }
 
 /** The plugin root this bundle sits in: <root>/watcher/dist/cli/phase-result.cjs. */
@@ -178,7 +183,7 @@ function runStartedAt(ledger: Ledger, phase: Phase): string {
   return startedAt;
 }
 
-function runAssembler(phase: Phase, ctx: AssembleContext, base?: string): AssembleOutcome {
+function runAssembler(phase: Phase, ctx: ShipContext, base?: string): AssembleOutcome {
   switch (phase) {
     case 'ideate':
       return assembleIdeate(ctx);
@@ -189,7 +194,7 @@ function runAssembler(phase: Phase, ctx: AssembleContext, base?: string): Assemb
     case 'ship': {
       if (base !== undefined) return assembleShip(ctx, { base });
       const chosen = shipBase(ctx.repo, ctx.valueDir);
-      checkShipBase(ctx.repo, chosen, originSnapshot(openLedger(ctx.repo), ctx.startedAt));
+      checkShipBase(ctx.repo, chosen, ctx.feature, originSnapshot(openLedger(ctx.repo), ctx.startedAt));
       return assembleShip(ctx, { base: chosen });
     }
   }
@@ -281,6 +286,9 @@ function reassemble(repo: string, feature: string, phase: Phase, stored: Record<
       headSha: String(stored.headSha),
       valueDir: dir,
       evidenceCutoff: typeof stored.evidenceCutoff === 'string' ? stored.evidenceCutoff : null,
+      // D47: ship re-checks with the verdict cutoff frozen at assemble; a result from before D47 (no field) keeps the
+      // old rule (undefined: recomputed from the stored ship result).
+      ...('verdictsFrom' in stored ? { verdictsFrom: typeof stored.verdictsFrom === 'string' ? stored.verdictsFrom : null } : {}),
       now: () => new Date(),
     }, base);
   } finally {

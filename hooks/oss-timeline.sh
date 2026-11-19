@@ -26,6 +26,19 @@ SCRIPT_DIR="$(cd "$SCRIPT_DIR" && pwd)"
 source "$SCRIPT_DIR/oss-api-curl.sh" || return 1 2>/dev/null || exit 1
 # shellcheck source=hooks/oss-safe-path.sh
 source "$SCRIPT_DIR/oss-safe-path.sh" || return 1 2>/dev/null || exit 1
+# D47 (round 6, security INFO): the writer's tools come from fixed paths, never PATH's, as in oss-stop-dispatch.sh:
+# OSS_GIT_BIN, OSS_JQ_BIN, OSS_FIND, OSS_TAIL and the rest from oss-phase-result.sh (sourcing it only defines them),
+# and its _oss_fixed_bin for the few it does not name.
+# shellcheck source=hooks/oss-phase-result.sh
+source "$SCRIPT_DIR/oss-phase-result.sh" || return 1 2>/dev/null || exit 1
+_oss_fixed_bin _OSS_TL_DATE /bin/date /usr/bin/date
+_oss_fixed_bin _OSS_TL_UUIDGEN /usr/bin/uuidgen /bin/uuidgen
+_oss_fixed_bin _OSS_TL_SHASUM /usr/bin/shasum /bin/shasum
+_oss_fixed_bin _OSS_TL_SHA256SUM /usr/bin/sha256sum /bin/sha256sum
+# The PATH the writer's own subshells run with (the sourced helpers' tools included): the system folders, then the
+# fixed jq's folder when it is not one of them (D33: a Homebrew jq is trusted at the recorded node's level).
+_OSS_TL_PATH=/usr/bin:/bin
+[[ "$OSS_JQ_BIN" == /* && "${OSS_JQ_BIN%/*}" != /usr/bin && "${OSS_JQ_BIN%/*}" != /bin ]] && _OSS_TL_PATH="$_OSS_TL_PATH:${OSS_JQ_BIN%/*}"
 
 # oss_tl_bounded <secs> <cmd...>: run a command, killed after <secs>; keeps its output and exit status (ended by the
 # bound: non-zero). The merge verb bounds `gh pr view` with it (P-9). The supervisor is inline, the same program as
@@ -127,7 +140,7 @@ def base_ok: .v == 1 and (.id | uuid4) and (.ts | stamp) and (.session | free("[
 '
 
 # _oss_tl_sha256: sha-256 of stdin, with shasum (macOS) or sha256sum (Linux)
-_oss_tl_sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256; else sha256sum; fi; }
+_oss_tl_sha256() { if [[ "$_OSS_TL_SHASUM" == /* ]]; then "$_OSS_TL_SHASUM" -a 256; else "$_OSS_TL_SHA256SUM"; fi; }
 
 # _oss_tl_archived <proj>: B7, the feature's archived folder after the ship archive move. The feature comes only from
 # the project's own branch (<type>/<feature>/<phase>, read as oss_resolve_feature reads it), never from a value
@@ -144,7 +157,7 @@ _oss_tl_archived() {
     local name_re='^[A-Za-z0-9_-][A-Za-z0-9._-]*$' branch_re='^[^/]+/([^/]+)/[^/]'
     local date_re='^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$'
     _OSS_TL_FEATURE="" _OSS_TL_DIR=""
-    branch=$(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; cd "$proj" 2>/dev/null && git symbolic-ref -q HEAD 2>/dev/null)
+    branch=$(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; cd "$proj" 2>/dev/null && "$OSS_GIT_BIN" symbolic-ref -q HEAD 2>/dev/null)
     # the full ref, never --short: a tag of the same name makes --short print heads/<branch> (ship gate S1)
     if [[ "$branch" == refs/heads/* ]]; then branch=${branch#refs/heads/}; else branch=""; fi
     [[ "$branch" =~ $branch_re ]] && f=${BASH_REMATCH[1]}
@@ -154,11 +167,11 @@ _oss_tl_archived() {
     # no pattern character), so other features' entries cost nothing however many there are (round 2). Of those,
     # only <f>-YYYY-MM-DD, date-shaped (month 01-12, day 01-31) and dated no later than today by the archive step's
     # clock (local `date`), counts (S3, S4), and the greatest name (LC_ALL=C, set above) is the newest
-    today=$(date +%Y-%m-%d) newest=""
+    today=$("$_OSS_TL_DATE" +%Y-%m-%d) newest=""
     while IFS= read -r -d '' e; do
         n=${e##*/}; d=${n#"$f"-}
         [[ "$n" == "$f-$d" && "$d" =~ $date_re && ! "$d" > "$today" && "$n" > "$newest" ]] && newest=$n
-    done < <(find "$proj/.oss/dev/completed" -mindepth 1 -maxdepth 1 -name "$f-*" -print0 2>/dev/null)
+    done < <("$OSS_FIND" "$proj/.oss/dev/completed" -mindepth 1 -maxdepth 1 -name "$f-*" -print0 2>/dev/null)
     [[ -n "$newest" ]] || return 0
     rel=".oss/dev/completed/$newest"
     # the newest is checked and never swapped for an older one (B2-2): a link anywhere on the way, someone else's
@@ -180,6 +193,7 @@ _oss_tl_real_dirs() {
 
 oss_timeline_append() (
     export LC_ALL=C   # the bash patterns below are byte ranges, whatever the locale
+    PATH=$_OSS_TL_PATH   # D47: the sourced helpers too, never the caller's PATH
     kind="${1:-}" fields="${2:-}"
     refuse() { echo "oss: timeline line refused, $1" >&2; exit 1; }
     oss_resolve_project
@@ -188,8 +202,8 @@ oss_timeline_append() (
     [[ -n "$proj" && -d "$proj/.oss" ]] || exit 0
     # no repo: the project resolved to $HOME, whose ~/.oss is the person's own settings, never a timeline
     _oss_phys_dir "$proj" && p="$_OSS_PD" && _oss_phys_dir "$HOME" && [[ "$p" != "$_OSS_PD" ]] || exit 0
-    command -v jq >/dev/null 2>&1 || refuse "jq not found"
-    command -v shasum >/dev/null 2>&1 || command -v sha256sum >/dev/null 2>&1 || refuse "no sha-256 tool"
+    [[ "$OSS_JQ_BIN" == /* ]] || refuse "jq not found"
+    [[ "$_OSS_TL_SHASUM" == /* || "$_OSS_TL_SHA256SUM" == /* ]] || refuse "no sha-256 tool"
     case "$kind" in command | agent | gate | merge | merge-unknown) ;; *) refuse "unknown kind" ;; esac
 
     # P-8: the hook input's session_id (OSS_TL_SESSION), else CLAUDE_CODE_SESSION_ID, else "unknown"
@@ -211,19 +225,19 @@ oss_timeline_append() (
         # TA-3: only the merge (and merge-unknown) follows an archive older than today; a command, agent or gate line
         # goes only into a folder archived today, so a branch kept after its PR merged, or a new branch reusing the
         # feature name, never files its lines into (and pushes them under) an old archive
-        case "$kind" in merge | merge-unknown) ;; *) [[ "${dir: -10}" == "$(date +%Y-%m-%d)" ]] || feature="" dir="" ;; esac
+        case "$kind" in merge | merge-unknown) ;; *) [[ "${dir: -10}" == "$("$_OSS_TL_DATE" +%Y-%m-%d)" ]] || feature="" dir="" ;; esac
     fi
     rec=".oss/dev/timeline-unfiled.ndjson"
     [[ -n "$feature" ]] && rec="$dir/timeline.ndjson"
     # the uuid and time as G1's decision record makes them
-    id=$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]')
+    id=$("$_OSS_TL_UUIDGEN" 2>/dev/null | tr '[:upper:]' '[:lower:]')
     if [[ -z "$id" ]]; then # no uuidgen (Linux): a v4 uuid from 16 random bytes
         h=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
         id=${h:0:8}-${h:8:4}-4${h:13:3}-$(printf '%x' $(((0x${h:16:1} & 3) | 8)))${h:17:3}-${h:20:12}
     fi
-    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    ts=$("$_OSS_TL_DATE" -u +%Y-%m-%dT%H:%M:%SZ)
     # checked before any path is touched, so a refused line makes no folder either
-    line=$(jq -nc --arg kind "$kind" --arg id "$id" --arg ts "$ts" --arg feature "$feature" --arg session "$session" \
+    line=$("$OSS_JQ_BIN" -nc --arg kind "$kind" --arg id "$id" --arg ts "$ts" --arg feature "$feature" --arg session "$session" \
         --argjson f "$fields" "$_OSS_TL_RULES"'
         select($f | fields_ok($kind))
         | ({v: 1, id: $id, ts: $ts, kind: $kind} + (if $feature == "" then {} else {feature: $feature} end)
@@ -256,13 +270,13 @@ oss_timeline_append() (
     # another person's file is never appended to (`test -O`: the tests' other-user seam)
     [[ ! -e "$file" ]] || test -O "$file" || refuse "$rec is not yours"
     # the unfiled file stops growing at 1 MB (it is never pushed or trimmed)
-    [[ -n "$feature" || -z "$(find "$file" -prune -size +1048575c 2>/dev/null)" ]] || exit 0
+    [[ -n "$feature" || -z "$("$OSS_FIND" "$file" -prune -size +1048575c 2>/dev/null)" ]] || exit 0
     # the outbox entry (B5), made from the line this machine writes: the push never reads the committed file
-    entry=$(jq -c --arg fp "$(k=$(oss_api_key) && printf '%s' "$k" | _oss_tl_sha256 | cut -c1-16)" \
+    entry=$("$OSS_JQ_BIN" -c --arg fp "$(k=$(oss_api_key) && printf '%s' "$k" | _oss_tl_sha256 | cut -c1-16)" \
         '{id, state: "pending", fp: $fp, body: .}' <<< "$line")
     gate_hash=$(printf '%s' "$line" | _oss_tl_sha256 | cut -d' ' -f1)
     # a file whose last line has no newline gets one first, so the new line never glues onto it
-    [[ -s "$file" && -n "$(tail -c 1 "$file")" ]] && line=$'\n'"$line"
+    [[ -s "$file" && -n "$("$OSS_TAIL" -c 1 "$file")" ]] && line=$'\n'"$line"
     printf '%s\n' "$line" >> "$file" || exit 1
     # R-257 S2/P4: a filed gate line's hash goes to the ledger, so a gate line planted by hand has none. Never
     # changes the timeline write or the exit code; a failure is one stderr line.
@@ -285,9 +299,10 @@ oss_timeline_append() (
 _oss_tl_ledger_gate() (
     unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
     cd "$1" 2>/dev/null || exit 1
-    top=$(git rev-parse --show-toplevel 2>/dev/null) && test -n "$top" || exit 1
-    g=$(git rev-parse --absolute-git-dir 2>/dev/null) && test -n "$g" || exit 1
-    k=$(printf '%s\n%s\n' "$top" "$g" | git hash-object --stdin | cut -c1-16) && test "${#k}" = 16 || exit 1
+    PATH=$_OSS_TL_PATH
+    top=$("$OSS_GIT_BIN" rev-parse --show-toplevel 2>/dev/null) && test -n "$top" || exit 1
+    g=$("$OSS_GIT_BIN" rev-parse --absolute-git-dir 2>/dev/null) && test -n "$g" || exit 1
+    k=$(printf '%s\n%s\n' "$top" "$g" | "$OSS_GIT_BIN" hash-object --stdin | cut -c1-16) && test "${#k}" = 16 || exit 1
     d="$HOME/.oss"
     for c in ledger "$k" gates; do
         d="$d/$c"
@@ -471,13 +486,13 @@ case "${1:-}" in
     push) if [[ "${2:-}" == --detach ]]; then _oss_tl_push_bg; else _oss_tl_push; fi; exit 0 ;;
     # oss-timeline.sh command NAME STATUS: oss-notify's --workflow NAME start|complete|failed (B2); both values
     # are checked by the line's own rules
-    command) oss_timeline_append command "$(jq -nc --arg c "${2:-}" --arg s "${3:-}" '{command: $c, status: $s}' 2>/dev/null)"; exit ;;
+    command) oss_timeline_append command "$("$OSS_JQ_BIN" -nc --arg c "${2:-}" --arg s "${3:-}" '{command: $c, status: $s}' 2>/dev/null)"; exit ;;
     # oss-timeline.sh gate ROUND GATE VERDICT FINDINGS FIXED MODE: only from oss-value.sh timeline gate (B4a), which
     # read the values from value files and checked them; FINDINGS and FIXED in the form "critical=0 high=2" (or
     # empty). The line's own rules check every field again.
     gate)
         # shellcheck disable=SC2016 # jq's $ variables, not the shell's
-        oss_timeline_append gate "$(jq -nc --argjson r "${2:-}" --arg g "${3:-}" --arg v "${4:-}" --arg f "${5:-}" \
+        oss_timeline_append gate "$("$OSS_JQ_BIN" -nc --argjson r "${2:-}" --arg g "${3:-}" --arg v "${4:-}" --arg f "${5:-}" \
             --arg x "${6:-}" --arg m "${7:-}" 'def counts: [splits(" ") | select(. != "") | split("=")
                 | {(.[0]): (.[1] | tonumber)}] | add // {};
             {round: $r, gate: $g, verdict: $v, findings: ($f | counts), fixed: ($x | counts), mode: $m}' 2>/dev/null)"

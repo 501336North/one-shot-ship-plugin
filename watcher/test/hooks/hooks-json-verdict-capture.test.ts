@@ -13,7 +13,6 @@ import * as path from 'path';
 const HOOKS_JSON = path.join(__dirname, '../../../hooks.json');
 const CAPTURE = '${CLAUDE_PLUGIN_ROOT}/hooks/oss-verdict-capture.sh';
 const GATE_RUN_STOP = '${CLAUDE_PLUGIN_ROOT}/hooks/oss-gate-run.sh subagent-stop';
-const CAPTURE_START = '${CLAUDE_PLUGIN_ROOT}/hooks/oss-verdict-capture.sh start';
 const GATE_RUN_START = '${CLAUDE_PLUGIN_ROOT}/hooks/oss-gate-run.sh subagent-start';
 
 interface HookCommand {
@@ -41,20 +40,16 @@ describe('hooks.json SubagentStop verdict capture (R-257 T19)', () => {
     expect(readHooks().SubagentStop?.[0]).toEqual({ hooks: [{ type: 'command', command: GATE_RUN_STOP, timeout: 10 }] });
   });
 
-  // Round 2 security L4: the start snapshot binds a verdict to the code the agent saw from start to stop.
-  it('should register the start snapshot under SubagentStart as its own entry, synchronous, with a 10 s timeout', () => {
-    const entries = (readHooks().SubagentStart ?? []).filter((e) => e.hooks.some((h) => h.command === CAPTURE_START));
-    expect(entries).toEqual([{ hooks: [{ type: 'command', command: CAPTURE_START, timeout: 10 }] }]);
+  // ⚠ changes existing test: D45 dead code — nothing reads the start snapshot since D45, so SubagentStart keeps only
+  //   R-266's gate-run entry (it was "should keep R-266's gate-run SubagentStart entry first and unchanged").
+  it("should leave SubagentStart to R-266's gate-run entry alone", () => {
+    expect(readHooks().SubagentStart).toEqual([{ hooks: [{ type: 'command', command: GATE_RUN_START, timeout: 10 }] }]);
   });
 
-  it("should keep R-266's gate-run SubagentStart entry first and unchanged", () => {
-    expect(readHooks().SubagentStart?.[0]).toEqual({ hooks: [{ type: 'command', command: GATE_RUN_START, timeout: 10 }] });
-  });
-
-  // ⚠ changes existing test: round 2 security L4 — the capture now also runs at SubagentStart (start mode).
+  // ⚠ changes existing test: D45 dead code — the capture no longer runs at SubagentStart (start mode removed).
   it('should register the capture under no other event', () => {
     const elsewhere = Object.entries(readHooks())
-      .filter(([event]) => event !== 'SubagentStop' && event !== 'SubagentStart')
+      .filter(([event]) => event !== 'SubagentStop')
       .filter(([, entries]) => entries.some((e) => e.hooks.some((h) => h.command.includes('oss-verdict-capture'))))
       .map(([event]) => event);
     expect(elsewhere).toEqual([]);

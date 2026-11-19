@@ -10031,12 +10031,57 @@ var NAMES = ["oss-verdict-capture.sh", "verdict-capture.cjs", "verdict-capture.j
 var STEM = "oss-verdict-capture";
 var SEPARATORS = /[\s'"`;|&()<>=${}\\,]+/;
 var GLOB2 = /[*?[]/;
-function globRegex(piece) {
-  const source = piece.replace(/\[[^\]]*\]?|[*?]|[^*?[]/g, (c) => c === "*" ? ".*" : c === "?" ? "." : c.startsWith("[") ? "." : c.replace(/[.*+?^${}()|\\]/g, "\\$&"));
-  return new RegExp(`^${source}$`);
+function globTokens(piece) {
+  const tokens = [];
+  for (const m of piece.matchAll(/\[[^\]]*\]?|[*?]|[^*?[]/g)) {
+    const c = m[0];
+    if (c === "*") tokens.push("*");
+    else if (c === "?" || c.startsWith("[") && !c.endsWith("]")) tokens.push(() => true);
+    else if (c.startsWith("[")) tokens.push(bracketTest(c.slice(1, -1)));
+    else tokens.push((x) => x === c);
+  }
+  return tokens;
+}
+function bracketTest(body) {
+  const negate = body.startsWith("!") || body.startsWith("^");
+  const set = negate ? body.slice(1) : body;
+  return (c) => {
+    let hit = false;
+    for (let i = 0; i < set.length; i += 1) {
+      if (set[i + 1] === "-" && i + 2 < set.length) {
+        if (c >= set[i] && c <= set[i + 2]) hit = true;
+        i += 2;
+      } else if (set[i] === c) hit = true;
+    }
+    return hit !== negate;
+  };
+}
+function globMatch(tokens, name) {
+  let t = 0;
+  let s = 0;
+  let star = -1;
+  let starS = 0;
+  while (s < name.length) {
+    const token = tokens[t];
+    if (token === "*") {
+      star = t;
+      starS = s;
+      t += 1;
+    } else if (token !== void 0 && token(name[s])) {
+      t += 1;
+      s += 1;
+    } else if (star >= 0) {
+      t = star + 1;
+      starS += 1;
+      s = starS;
+    } else return false;
+  }
+  while (tokens[t] === "*") t += 1;
+  return t === tokens.length;
 }
 function globNames(piece, folder) {
-  if (!NAMES.some((name) => globRegex(piece).test(name))) return false;
+  const tokens = globTokens(piece);
+  if (!NAMES.some((name) => globMatch(tokens, name))) return false;
   const literals = piece.split(/\[[^\]]*\]?|[*?]/).map((l) => l.replace(/\.(?:sh|c?js)$/, ""));
   return literals.some((l) => l.length >= 3 && STEM.includes(l)) || folder !== void 0 && /^(?:hooks|cli)$/.test(folder);
 }

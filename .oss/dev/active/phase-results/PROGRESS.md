@@ -105,7 +105,7 @@
     - the no-feature start gate;
     - D32 fail until re-review;
     - the N4 deletion check;
-    - SubagentStart snapshot with start match;
+    - SubagentStart snapshot with start match (removed in round 6, D45);
     - blob-free trees, 50 MB cap, one 4 s deadline;
     - D34 (corrected) real remote base made before the run;
     - archive reads no-feature ship runs, with a tail scan;
@@ -139,6 +139,13 @@
   - IFS allowed only as a prefix to read.
 - [x] Builder D: D43, D44 (refuse verdict-capture.js), and the ship-wrapper-chain setup (an origin ref for D40).
 
+### Ship round 6 fixes, after gate round 4 (2026-11-19)
+- [x] Gate round 4: performance passed; code review, security and pen test failed. The user picked D45-D49.
+- [x] Builder E: D45 fails only; the verdictsFrom cutoff is frozen; hard-linked transcripts are refused.
+- [x] Builder F: D46 same-name origin base, with ref-to-SHA snapshots.
+- [x] Builder G: linear glob matcher, ideate same-second picks, oss-timeline fixed tool paths, Stop grep reads only phase files.
+- [x] Builder H: D48 (a capture with no tree and no HEAD writes no row); the dead start-snapshot code is removed.
+
 ### Later
 - [ ] Ship into feat/determinism-sprint/build (SD-1)
 - [ ] T21 oss-lab (after the plugin ships)
@@ -146,4 +153,4 @@
 ## Blockers
 - None. R-266's 4 red base tests are fixed in #233 (4458bddb), and R-257 is rebased onto it.
 
-## Last Updated: 2026-11-19 08:13 CST by /oss:ship (round 5 fixes)
+## Last Updated: 2026-11-19 10:20 CST by /oss:ship (round 6 fixes)
