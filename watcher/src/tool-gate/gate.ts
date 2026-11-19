@@ -37,7 +37,7 @@ import { checkGateAgentBash, checkGateAgentCommand, checkGateAgentEdit, checkGat
 import { checkReviewRead, READ_TOOLS } from './rules/review-read.js';
 import { checkFocusedTests } from './rules/focused-tests.js';
 import { checkForcePush } from './rules/force-push.js';
-import { checkGitClean } from './rules/git-clean.js';
+import { checkGitClean, checkGitStash } from './rules/git-clean.js';
 import { checkProductionHost } from './rules/production-host.js';
 import { checkOssHookEnv } from './rules/oss-hook-env.js';
 import { checkBranchRefs, checkBranchSwitch, checkHistoryMove, checkProtectedBranch, checkRepoTrust, trustForCall } from './rules/protected-branch.js';
@@ -621,6 +621,7 @@ async function checkBash(ctx: Context, command: string): Promise<Refused | null>
       checkProtectedPathBash(part, settings, root, home, paths, ctx.caseInsensitive, places, ctx.tree) ??
       (ownStep ? null : checkGateAgentBash(part, hook.agent, settings, { repos, home, exists: fs.existsSync, temp: tempRoots(ctx), fallback: ctx.containment?.kind === 'fallback', darwin: ctx.platform === 'darwin', sandboxed: ctx.containment?.kind === 'sandbox' }, paths, ctx.caseInsensitive, { earlier: facts.parts.slice(0, index), background: hook.background })) ??
       (await checkGitClean(part, settings, root, home, paths, ctx.git, ctx.caseInsensitive, places, { earlier: facts.parts, count: index, tree: ctx.tree })) ??
+      (await checkGitStash(part, settings, root, home, paths, ctx.git, places, { earlier: facts.parts, count: index })) ??
       checkProtectedPathMention(part, settings, root, home, paths, ctx.caseInsensitive, places);
     if (refusal !== null) return { refusal, program: part.program };
   }

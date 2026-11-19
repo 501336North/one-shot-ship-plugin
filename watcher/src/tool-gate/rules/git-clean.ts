@@ -8,6 +8,8 @@
  * When the gate can't ask (an option it doesn't know, git settings or variables that could change
  * the repository, a folder it can't follow) or git gives no answer, it falls back to refusing any
  * clean whose pathspecs (or folder) can reach a protected folder, the repo root included.
+ *
+ * `git stash` (gate-gaps-r3 Task 3, ADR-2) reuses the same dry run: see STASH_SWEEPS_AS_CLEAN.
  */
 
 import fs from 'node:fs';
@@ -174,6 +176,128 @@ function carriesSetup(part: CommandPart, git: NonNullable<CommandPart['git']>): 
   const globals = part.words.slice(1, part.words.length - git.args.length - 1);
   const other = globals.filter((w, n) => w !== '-C' && globals[n - 1] !== '-C');
   return other.length > 0 || part.assignments.some((name) => name.startsWith('GIT_'));
+}
+
+/** `git stash push` / `save` letters that don't change what is stashed beyond tracked files (git syntax). */
+const STASH_LETTERS = new Set(['p', 'S', 'k', 'q']);
+const STASH_ALL_LONG = { full: '--all', shortest: 3 };
+const STASH_NO_ALL_LONG = { full: '--no-all', shortest: 6 };
+const STASH_UNTRACKED_LONG = { full: '--include-untracked', shortest: 3 };
+const STASH_NO_UNTRACKED_LONG = { full: '--no-include-untracked', shortest: 6 };
+const STASH_MESSAGE_LONG = { full: '--message', shortest: 3 };
+const STASH_FROM_FILE_LONG = { full: '--pathspec-from-file', shortest: 13 };
+const STASH_OTHER_LONG = [
+  { full: '--patch', shortest: 6 }, { full: '--staged', shortest: 3 }, { full: '--keep-index', shortest: 3 },
+  { full: '--no-keep-index', shortest: 6 }, { full: '--quiet', shortest: 3 }, { full: '--pathspec-file-nul', shortest: 13 },
+];
+
+/**
+ * How a `git stash` was read: not a push or save (`null`), an option the gate doesn't know, or what
+ * it takes besides tracked files (`untracked`: 0 none, 1 `-u`, 2 `-a`; the last given wins, as in git).
+ */
+type StashWords = null | 'unknown' | { untracked: 0 | 1 | 2; pathspecs: string[]; fromFile: boolean };
+
+function readStashWords(args: string[]): StashWords {
+  const sub = args[0];
+  const save = sub === 'save';
+  if (sub !== undefined && sub !== 'push' && !save && !sub.startsWith('-')) return null;
+  const rest = sub === 'push' || save ? args.slice(1) : args;
+  const pathspecs: string[] = [];
+  let untracked: 0 | 1 | 2 = 0;
+  let fromFile = false;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === '--') {
+      pathspecs.push(...rest.slice(i + 1));
+      break;
+    }
+    if (!a.startsWith('-') || a === '-') pathspecs.push(a);
+    else if (a.startsWith('--')) {
+      if (isLong(a, STASH_ALL_LONG)) untracked = 2;
+      else if (isLong(a, STASH_UNTRACKED_LONG)) untracked = 1;
+      else if (isLong(a, STASH_NO_ALL_LONG) || isLong(a, STASH_NO_UNTRACKED_LONG)) untracked = 0;
+      else if (isLong(a, STASH_MESSAGE_LONG) || isLong(a, STASH_FROM_FILE_LONG)) {
+        fromFile ||= isLong(a, STASH_FROM_FILE_LONG);
+        if (!a.includes('=')) i++;
+      } else if (!STASH_OTHER_LONG.some((o) => isLong(a, o))) return 'unknown';
+    } else {
+      for (let j = 1; j < a.length; j++) {
+        const letter = a[j];
+        if (letter === 'a') untracked = 2;
+        else if (letter === 'u') untracked = 1;
+        else if (letter === 'm') {
+          // `-m` takes the rest of the word, or the next word
+          if (j + 1 === a.length) i++;
+          break;
+        } else if (!STASH_LETTERS.has(letter)) return 'unknown';
+      }
+    }
+  }
+  // `save` takes a message, not pathspecs: it stashes the whole worktree
+  return { untracked, pathspecs: save ? [] : pathspecs, fromFile };
+}
+
+/**
+ * What a stash takes out of the worktree besides tracked changes, as the `git clean` options that
+ * would remove the same files: `-u` sweeps what `git clean -d` would; `-a` sweeps what `git clean -dx`
+ * would, and is refused outright (owner pick), so only `-u` is asked about.
+ */
+const STASH_SWEEPS_AS_CLEAN = { untracked: ['-d'], all: ['-d', '-x'] } as const;
+
+/**
+ * The protected paths inside a repo, as pathspecs from its top (`:/`): the dry run for a stash with no
+ * pathspecs asks only about these, so its cost doesn't grow with the repo.
+ */
+function inRepoPathspecs(settings: GateSettings): string[] {
+  return settings.protectedPaths
+    .filter((p) => !p.startsWith('~') && !p.startsWith('*') && !p.startsWith('/'))
+    .map((p) => `:/${p.replace(/\/\*\*$/, '')}`);
+}
+
+/**
+ * Git-stash rule (gate-gaps-r3 Task 3): `git stash -a` is refused outright (it also takes ignored
+ * files); `git stash -u` is refused when git-clean's dry run (`-d`, which is what `-u` sweeps) says it
+ * would take a protected path, or when the gate can't ask git.
+ */
+export async function checkGitStash(
+  part: CommandPart,
+  settings: GateSettings,
+  root: string,
+  home: string,
+  paths: PathResolver,
+  gitReader: GitReader,
+  places: Places[],
+  context: CleanContext = {},
+): Promise<Refusal | null> {
+  const git = part.git;
+  if (git === null || git.subcommand !== 'stash') return null;
+  const words = readStashWords(git.args);
+  if (words === null || (words !== 'unknown' && words.untracked === 0)) return null;
+  if (words !== 'unknown' && words.untracked === 2) {
+    return {
+      rule: 'protected-path',
+      reason: 'Refused: `git stash -a` / `--all` also takes ignored files out of the worktree, protected OSS files among them. Stash without it, or ask the user to run it with `!`.',
+    };
+  }
+  const cantTell: Refusal = {
+    rule: 'protected-path',
+    reason: "Refused: the gate can't check what this `git stash -u` would take out of the worktree, so it may sweep protected OSS files away. Run a plain `git stash -u` without extra settings, or ask the user to run it with `!`.",
+  };
+  const stale = staleningPart(context.earlier ?? [], context.count ?? 0) !== null;
+  if (words === 'unknown' || words.fromFile || stale || part.lostDir !== null || words.pathspecs.some((w) => w.includes(UNKNOWN)) || carriesSetup(part, git)) {
+    return cantTell;
+  }
+  const specs = words.pathspecs.length > 0 ? words.pathspecs : inRepoPathspecs(settings);
+  const removed = await gitReader.wouldClean(git.dir, [...STASH_SWEEPS_AS_CLEAN.untracked], specs);
+  if (removed === null) return cantTell;
+  const hit = removed
+    .map((p) => joinRaw(git.dir, p))
+    .find((p) => isProtected(p, settings, places, paths) || holdsProtected(p, settings, places, paths));
+  if (hit === undefined) return null;
+  return {
+    rule: 'protected-path',
+    reason: `Refused: \`git stash -u\` would take \`${displayPath(hit, root, home)}\`, a protected path or a folder holding one, out of the worktree. Ask the user to run it with \`!\`.`,
+  };
 }
 
 function expandTilde(p: string, home: string): string {
