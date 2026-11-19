@@ -13,7 +13,7 @@ import { runsItsArguments, SAFE_GIT_VARIABLE, type CommandPart } from '../comman
 import { matchCommand } from '../patterns.js';
 import { longOption, scriptFactsOf } from '../sed-awk.js';
 import { UNKNOWN } from '../tokenize.js';
-import { rawDestination } from './protected-branch.js';
+import { isLocalUrl, positionalsOf, rawDestination, remoteTracking } from './protected-branch.js';
 import { readPushWords } from './push-words.js';
 import type { Refusal } from './refusal.js';
 
@@ -348,9 +348,16 @@ function cantCheck(why: string, subcommand = 'push'): Refusal {
   };
 }
 
-/** `git remote add --mirror`: every later push to that remote sends all refs, protected branches too. */
+/** The `git remote` subcommand and the words after it: git takes options (`-v`) before it. */
+function remoteVerb(args: readonly string[]): { verb: string | undefined; rest: readonly string[] } {
+  const at = args.findIndex((a) => !a.startsWith('-'));
+  return at === -1 ? { verb: undefined, rest: [] } : { verb: args[at], rest: args.slice(at + 1) };
+}
+
+/** `git remote add --mirror`, wherever the options sit: every later push to that remote sends all refs, protected branches too. */
 function addsMirror(git: NonNullable<CommandPart['git']>): boolean {
-  return git.subcommand === 'remote' && git.args[0] === 'add' && git.args.some((a) => a === '--mirror' || a.startsWith('--mirror='));
+  if (git.subcommand !== 'remote' || remoteVerb(git.args).verb !== 'add') return false;
+  return git.args.some((a) => a === '--mirror' || a.startsWith('--mirror='));
 }
 
 /** The reason a push or commit runs in a folder the gate can't follow, or null. */
@@ -451,6 +458,69 @@ export function checkPushSetup(part: CommandPart, earlier: readonly CommandPart[
   }
   const program = uploadProgram(part);
   return program === null ? programVariableRefusal(part, earlier, count) : runsRefusal(program, '`git push`');
+}
+
+/** Config keys that set where a remote fetches from or pushes to (git syntax, lowercased). */
+const REMOTE_URL_KEYS = ['remote.*.url', 'remote.*.pushurl'];
+/** `url.<base>.insteadOf` / `pushInsteadOf` (git syntax): URLs are rewritten to start with `<base>`. */
+const INSTEAD_OF = /^url\.(.*)\.(?:push)?insteadof$/i;
+/** `remote.<name>.fetch` (git syntax): the refspec a plain fetch of that remote maps refs with. */
+const REMOTE_FETCH = /^remote\.(.*)\.fetch$/i;
+
+/**
+ * True when one config setting (`value` undefined: only known when git runs) can point a remote at
+ * this machine or forge its remote-tracking refs (gate-gaps-r3 Task 7 and its picks): a remote URL
+ * that is local, an insteadOf whose base is local, or a fetch mapping into refs/remotes/ other than
+ * the remote's own default (`[+]refs/heads/*:refs/remotes/<name>/*`).
+ */
+function forgesRemote(key: string, value: string | undefined): boolean {
+  if (keyMatches(REMOTE_URL_KEYS, key)) return value === undefined || isLocalUrl(value);
+  const base = INSTEAD_OF.exec(key);
+  if (base !== null) return isLocalUrl(base[1]);
+  const name = REMOTE_FETCH.exec(key);
+  if (name === null) return false;
+  if (value === undefined) return true;
+  const spec = value.startsWith('+') ? value.slice(1) : value;
+  return spec.includes(':') && remoteTracking(rawDestination(spec), true) && spec !== `refs/heads/*:refs/remotes/${name[1]}/*`;
+}
+/** `git remote add` options that take the next word as their value (git syntax). */
+const REMOTE_ADD_VALUES = new Set(['-t', '--track', '-m', '--master']);
+
+const LOCAL_REMOTE_REFUSAL: Refusal = {
+  rule: 'protected-branch',
+  reason: 'Refused: this git call points a remote at a path on this machine or a `file://` URL, which can be the repository itself and forge its remote-tracking refs. Ask the user to add it with `!`.',
+};
+
+/**
+ * Refuses a git part that points a remote at a local path or `file://` URL (isLocalUrl; gate-gaps-r3
+ * Task 7) with `git remote add` / `set-url` (`--add`, `--push`; not `--delete`), or that carries a
+ * setting forgesRemote judges, through `-c`, `--config-env` (its value is only known when it runs)
+ * or a `GIT_CONFIG_KEY_n` set for it or earlier in the call. A push refuses any config it carries
+ * already (checkPushSetup), and `git config` writes of these keys are push keys.
+ */
+export function checkLocalRemote(part: CommandPart, earlier: readonly CommandPart[], count = earlier.length): Refusal | null {
+  return part.git !== null && part.git.subcommand !== 'push' && localRemote(part.git, part, earlier, count) ? LOCAL_REMOTE_REFUSAL : null;
+}
+
+function localRemote(git: NonNullable<CommandPart['git']>, part: CommandPart, earlier: readonly CommandPart[], count: number): boolean {
+  if (git.subcommand === 'remote') {
+    const { verb, rest } = remoteVerb(git.args);
+    if ((verb === 'add' || (verb === 'set-url' && !rest.includes('--delete'))) && isLocalUrl(positionalsOf(rest, REMOTE_ADD_VALUES)[1] ?? '')) return true;
+  }
+  const globals = part.words.slice(1, part.words.length - git.args.length - 1);
+  for (let i = 0; i < globals.length; i++) {
+    const w = globals[i];
+    const env = w === '--config-env' ? globals[i + 1] : w.startsWith('--config-env=') ? w.slice('--config-env='.length) : undefined;
+    if (env !== undefined && forgesRemote(keyOf(env), undefined)) return true;
+    const setting = w === '-c' ? globals[i + 1] : undefined;
+    if (setting !== undefined && forgesRemote(keyOf(setting), setting.includes('=') ? setting.slice(setting.indexOf('=') + 1) : undefined)) return true;
+  }
+  const settings = callSettings(part, earlier, count);
+  return settings.some(([name, value]) => {
+    if (!CONFIG_KEY_VARIABLE.test(name)) return false;
+    const paired = settings.find(([other]) => other === name.replace('_KEY_', '_VALUE_'));
+    return forgesRemote(value, paired?.[1]);
+  });
 }
 
 /** The refusal for a ref-history key, set any way: fixed text, so no key or value is repeated. */

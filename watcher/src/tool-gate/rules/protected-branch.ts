@@ -17,6 +17,7 @@ import { UNKNOWN } from '../tokenize.js';
 import { OverBudget } from '../budget.js';
 import { isTooLong } from './protected-path.js';
 import { longOption } from '../sed-awk.js';
+import { findRepo } from '../repo-finder.js';
 
 /** Ways git spells a branch ref in a refspec (git syntax, not a rule value): `refs/heads/main`, `heads/main`. */
 const BRANCH_REF_PREFIXES = ['refs/heads/', 'heads/'];
@@ -203,7 +204,7 @@ export function checkBranchSwitch(
 const SYMBOLIC_REF_VALUES = new Set(['-m']);
 
 /** The words of a git subcommand that are not options or option values. */
-function positionalsOf(args: readonly string[], values: ReadonlySet<string>): string[] {
+export function positionalsOf(args: readonly string[], values: ReadonlySet<string>): string[] {
   const words: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -260,6 +261,9 @@ export async function checkBranchRefs(
     return { rule: 'protected-branch', reason: `Refused: \`git reflog ${args[0]}\` changes or erases the ref history a lost commit is found by. Ask the user to run it with \`!\`.` };
   }
   if (subcommand === 'symbolic-ref') {
+    const [name, pointed] = positionalsOf(args, SYMBOLIC_REF_VALUES);
+    const writes = pointed !== undefined || args.some((a) => a === '-d' || a === '--delete');
+    if (writes && name !== undefined && remoteTracking(name, false)) return REMOTE_TRACKING_REFUSAL;
     const target = symbolicTarget(args, branches);
     return target === null ? null : refChange(`git symbolic-ref … ${target}`, target);
   }
@@ -275,6 +279,8 @@ export async function checkBranchRefs(
     const created = worktreeBranch(args, branches);
     return created === undefined ? null : refChange(`git worktree ${args.join(' ')}`, created);
   }
+  const forged = remoteRefForge(facts);
+  if (forged !== null) return forged;
   if (subcommand === 'fetch') {
     const target = positionalsOf(args, FETCH_VALUES).slice(1).filter((spec) => spec.includes(':')).map((spec) => protectedTarget(spec, branches)).find((dst) => dst !== undefined);
     return target === undefined ? null : refChange(`git fetch ${args.join(' ')}`, target);
@@ -391,6 +397,121 @@ const FETCH_VALUES = new Set([
   '--depth', '--deepen', '--shallow-since', '--shallow-exclude', '-j', '--jobs', '--upload-pack', '-o', '--server-option',
   '--negotiation-tip', '--refmap', '--filter',
 ]);
+
+/** git fetch's `--refmap` (git syntax; `--refm` is its shortest unambiguous prefix): its refspec maps fetched refs like a destination. */
+const FETCH_REFMAP: OptionSpec = { valueLetters: new Set(), valueLongs: [{ full: '--refmap', shortest: 6 }] };
+/** A remote-tracking ref as a ref name or refspec destination (git syntax): `refs/remotes/…`, or `remotes/…`, which fetch puts under `refs/`. */
+const REMOTE_TRACKING = /^(?:refs\/)?remotes\//;
+/** A remote-tracking ref a wildcard destination is tested against. */
+const SAMPLE_REMOTE_TRACKING_REF = 'refs/remotes/r/b';
+
+/**
+ * True when a ref name or refspec destination is a remote-tracking ref, in any letter case (on macOS
+ * `REFS/REMOTES/x` is the same file), judged by the part written before anything only known when it
+ * runs (`HEAD:$(…)` names a branch, as the protected-branch check reads it). With `wildcards`, a
+ * wildcard that can name one counts too (`refs/*`); a push's wildcards are the protected-branch check's.
+ */
+export function remoteTracking(ref: string, wildcards: boolean): boolean {
+  const lower = ref.split(UNKNOWN)[0].toLowerCase();
+  return REMOTE_TRACKING.test(lower) || (wildcards && lower.includes(REFSPEC_WILDCARD) && matchCommand(lower, [SAMPLE_REMOTE_TRACKING_REF]));
+}
+
+/** git's `file://` URL prefix (git syntax): the rest is a path on this machine. */
+const FILE_URL = /^file:\/\//i;
+/** A URL scheme (git syntax): `https://`, `ssh://` … */
+const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
+
+/**
+ * True when a remote URL is a path on this machine (git's connect.c rule) or a `file://` URL: no
+ * `scheme://` and no scp-like `host:path` (a `:` with no `/` before it), so `.`, `..`, `~/x`, `/x`,
+ * `x/y` and a bare `x` all count. A URL whose scheme or host is only known when it runs counts too;
+ * one with a written scheme or host and later parts only known when it runs does not.
+ */
+export function isLocalUrl(url: string): boolean {
+  if (FILE_URL.test(url)) return true;
+  if (URL_SCHEME.test(url)) return false;
+  const colon = url.indexOf(':');
+  const unknown = url.indexOf(UNKNOWN);
+  if (unknown !== -1 && (colon === -1 || unknown < colon)) return true;
+  return colon === -1 || url.slice(0, colon).includes('/');
+}
+
+function realOrNull(p: string): string | null {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when a fetch or push repository is the repo `dir` is in (its top, `.git` or common git
+ * folder) or one of its worktrees. git reads a path as `<path>`, `<path>/.git` or `<path>.git`
+ * (enter_repo), from the folder it runs in or the repo's top. A remote only known when it runs is
+ * not judged here (owner pick "Allow unreadable remotes"); its refspecs still are.
+ */
+function selfRemote(word: string, dir: string): boolean {
+  if (word.includes(UNKNOWN) || !isLocalUrl(word)) return false;
+  const here = findRepo(dir);
+  if (here.kind !== 'repo') return false;
+  const common = realOrNull(here.commonDir);
+  const own = new Set([here.top, here.gitDir, here.commonDir].map(realOrNull));
+  const spelled = word.replace(FILE_URL, '');
+  for (const base of [dir, here.top]) {
+    const target = path.resolve(base, spelled);
+    for (const candidate of [target, path.join(target, '.git'), `${target}.git`]) {
+      const real = realOrNull(candidate);
+      if (real === null) continue;
+      if (own.has(real)) return true;
+      const there = findRepo(candidate);
+      if (there.kind === 'repo' && there.top === real && realOrNull(there.commonDir) === common) return true;
+    }
+  }
+  return false;
+}
+
+/** Fixed refusals for a forged remote-tracking ref: no ref, path or URL is repeated. */
+const SELF_REMOTE_REFUSAL: Refusal = {
+  rule: 'protected-branch',
+  reason: 'Refused: this `git fetch` / `git push` names the repository itself (or one of its worktrees) as the remote, which can write any of its refs, remote-tracking ones included. Ask the user to run it with `!`.',
+};
+const REMOTE_TRACKING_REFUSAL: Refusal = {
+  rule: 'protected-branch',
+  reason: 'Refused: this git call writes a remote-tracking ref (under refs/remotes/), which the ship base is read from. Let a plain `git fetch` update those refs.',
+};
+
+/**
+ * The refusal for a fetch, pull or push that can forge a remote-tracking ref (gate-gaps-r3 Task 7),
+ * or null: a fetch or push whose remote is the repo itself, or an explicit refspec (fetch's
+ * `--refmap` too) whose destination is under refs/remotes/, for any remote (D50), except a fetch or
+ * pull refspec that is the remote's own default mapping (owner pick "Allow the exact default
+ * mapping"). A push refspec without `:` writes the same name on the remote.
+ */
+function remoteRefForge(facts: NonNullable<CommandPart['git']>): Refusal | null {
+  const { subcommand, args, dir } = facts;
+  if (subcommand !== 'fetch' && subcommand !== 'push' && subcommand !== 'pull') return null;
+  const words = subcommand === 'push' ? readPushWords(args).positional : positionalsOf(args, subcommand === 'fetch' ? FETCH_VALUES : PULL_VALUES);
+  const [repo, ...specs] = words;
+  if (subcommand !== 'pull' && repo !== undefined && selfRemote(repo, dir)) return SELF_REMOTE_REFUSAL;
+  const maps = subcommand === 'fetch' ? readOptions(args, FETCH_REFMAP).values.map(([, map]) => map) : [];
+  const explicit = specs.filter((spec) => subcommand === 'push' || (spec.includes(':') && !defaultMapping(repo, spec, dir)));
+  const destinations = [...explicit, ...maps.filter((map) => map.includes(':'))];
+  return destinations.some((spec) => remoteTracking(rawDestination(spec), subcommand !== 'push')) ? REMOTE_TRACKING_REFUSAL : null;
+}
+
+/**
+ * True when a fetch refspec is `[+]<b>:refs/remotes/<remote>/<b>` (also `refs/heads/<b>` or `heads/<b>`
+ * on the left) for a remote named by its configured name (not `.`, a path, a URL or a value only
+ * known when it runs): what git's default fetch mapping writes anyway. No wildcards.
+ */
+function defaultMapping(remote: string | undefined, spec: string, dir: string): boolean {
+  if (remote === undefined || !REMOTE_NAME.test(remote) || existsOnDisk(path.resolve(dir, remote))) return false;
+  const plain = spec.startsWith('+') ? spec.slice(1) : spec;
+  if (plain.includes(REFSPEC_WILDCARD) || plain.includes(UNKNOWN)) return false;
+  const colon = plain.indexOf(':');
+  const branch = plain.slice(0, colon).replace(/^(?:refs\/heads\/|heads\/)/, '');
+  return branch !== '' && plain.slice(colon + 1) === `refs/remotes/${remote}/${branch}`;
+}
 
 /** What the gate knows about the repository git uses in a folder (see repo-finder.ts). */
 export type RepoTrustOf = (dir: string) => 'trusted' | 'none' | { untrusted: string };
