@@ -178,3 +178,106 @@ describe('refs gap: the branch names come from the protectedBranches setting', (
     expect(refusal?.rule).toBe('protected-path');
   });
 });
+
+/**
+ * gate-gaps-r3 Task 4 (narrow #4, owner pick "Keep all three", 2026-11-19): git's ref history (the
+ * reflogs a lost commit is found by) and raw ref writes can't be rewritten or erased. Every
+ * `git update-ref`, every `git reflog expire|delete`, a setting that stops or expires reflogs
+ * (`core.logAllRefUpdates`, `core.bare`, `gc.reflogExpire*`) through any config path, and writes
+ * under a reflog folder are refused. Everyday fetch, push, pull, gc and reflog reads stay allowed.
+ */
+const REF_HISTORY_REFUSED = [
+  // every update-ref, whatever the ref
+  'git update-ref refs/remotes/origin/x HEAD',
+  'git update-ref refs/heads/feature HEAD',
+  'git update-ref -d refs/tags/v1',
+  'git update-ref HEAD HEAD~1',
+  'git update-ref --stdin',
+  // reflog settings, whatever the value, through every config path
+  'git -c core.logAllRefUpdates=false commit -m x',
+  'git -c core.logAllRefUpdates=0 commit -m x',
+  'git -c core.logAllRefUpdates=no commit -m x',
+  'git -c core.logAllRefUpdates=off commit -m x',
+  'git -c core.logAllRefUpdates= commit -m x',
+  'git -c CORE.LOGALLREFUPDATES=true commit -m x',
+  'git --config-env=core.logAllRefUpdates=V commit -m x',
+  'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.logAllRefUpdates GIT_CONFIG_VALUE_0=false git commit -m x',
+  'git config core.logAllRefUpdates false',
+  'git config set core.logAllRefUpdates false',
+  'git -c core.bare=true status',
+  'git config core.bare true',
+  'git -c gc.reflogExpire=now gc',
+  'git -c gc.reflogExpireUnreachable=now gc',
+  'git -c GC.ReflogExpire=0 gc',
+  'git -c gc.refs/heads/*.reflogExpire=now gc',
+  'git config gc.reflogExpire now',
+  'git config --global gc.reflogExpireUnreachable now',
+  // every reflog expire or delete
+  'git reflog expire --expire=now HEAD',
+  'git reflog expire --expire=now refs/heads/feat/x',
+  'git reflog delete HEAD@{1}',
+  // owner pick 2026-11-19 ("Refuse them in Task 4"): drop erases a whole reflog, write forges an entry
+  'git reflog drop HEAD',
+  'git reflog drop --all',
+  'git reflog write refs/heads/feat/x 0000000000000000000000000000000000000000 1111111111111111111111111111111111111111 msg',
+  // writes under a reflog folder
+  'echo x > .git/logs/HEAD',
+  'rm -rf .git/logs',
+  'cp f .git/logs/refs/heads/main',
+  'echo x > .git/worktrees/w/logs/HEAD',
+  'echo x > .git/modules/sub/logs/HEAD',
+  'echo x > .git/reftable/tables.list',
+  // a link made in the same call to a reflog folder
+  'ln -s .git/logs L && rm -rf L/',
+];
+
+const REF_HISTORY_ALLOWED = [
+  'git fetch origin',
+  'git push -u origin feat/x',
+  'git pull',
+  'git log -g',
+  'git reflog',
+  'git reflog show HEAD',
+  'git gc',
+  'cat .git/logs/HEAD',
+  'git config --get core.logAllRefUpdates',
+  'git config core.logAllRefUpdates',
+];
+
+describe.each(AGENTS)('ref history (gate-gaps-r3 Task 4): %s', (_label, agent) => {
+  it.each(REF_HISTORY_REFUSED)('should refuse a raw ref write or a change to ref history: %s', async (command) => {
+    await refused(command, agent);
+  });
+
+  it.each(REF_HISTORY_ALLOWED)('should still allow everyday git and reflog reads: %s', async (command) => {
+    await allowed(command, agent);
+  });
+});
+
+describe('ref history (gate-gaps-r3 Task 4): the refusal does not repeat the value it was given', () => {
+  it.each([
+    'git update-ref refs/heads/VALUE-7f3 HEAD',
+    'git -c core.logAllRefUpdates=VALUE-7f3 commit -m x',
+    'git config gc.reflogExpire VALUE-7f3',
+    'git reflog expire --expire=VALUE-7f3 HEAD',
+    'git reflog write refs/heads/x 0000000000000000000000000000000000000000 1111111111111111111111111111111111111111 VALUE-7f3',
+  ])('should refuse without echoing the value: %s', async (command) => {
+    const result = await call(command, null);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).not.toContain('VALUE-7f3');
+  });
+
+  it.each([
+    'git -c core.logAllRefUpdates=VALUE-7f3 commit -m x',
+    'git -c gc.reflogExpire=VALUE-7f3 gc',
+    'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.bare GIT_CONFIG_VALUE_0=VALUE-7f3 git status',
+    'git config core.logAllRefUpdates VALUE-7f3',
+    'git config --global gc.reflogExpireUnreachable VALUE-7f3',
+  ])('should say a ref-history setting changes or erases ref history, not that it runs a program or moves pushes: %s', async (command) => {
+    const result = await call(command, null);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(/ref history/);
+    expect(result.stderr, command).not.toMatch(/run a hook|changes where pushes go/);
+    expect(result.stderr, command).not.toContain('VALUE-7f3');
+  });
+});

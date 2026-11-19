@@ -266,7 +266,8 @@ function readConfigWords(args: readonly string[]): { verb: string | null; action
  * writes others; `unreadable` (the option word) when its options can't be read as git reads them.
  * A credential helper (`credential[.<url>].helper`) counts when its value runs a program the agent
  * may have written (helperRuns), in any write form: plain, `--add`, `--replace-all`, `set`, with
- * `--global` / `--system` / `--local` / `--worktree` / `--file`.
+ * `--global` / `--system` / `--local` / `--worktree` / `--file`. A ref-history key (REF_HISTORY_KEYS)
+ * counts whatever its value.
  */
 function pushKeyWritten(args: string[]): string | { unreadable: string } | null {
   const words = readConfigWords(args);
@@ -282,7 +283,7 @@ function pushKeyWritten(args: string[]): string | { unreadable: string } | null 
   if (section) return PUSH_SECTIONS.has(lower.split('.')[0]) ? key : null;
   // a credential helper git runs: the same value checks as `git -c` (K5, K8, K9, K10), in every write form (K11)
   if (keyMatches(CREDENTIAL_KEYS, lower)) return positional[1] !== undefined && helperRuns(positional[1]) ? key : null;
-  return PUSH_KEYS.some((pattern) => matchCommand(pattern, [lower])) ? key : null;
+  return keyMatches(PUSH_KEYS, lower) || keyMatches(REF_HISTORY_KEYS, lower) ? key : null;
 }
 
 /**
@@ -407,6 +408,8 @@ export function checkPushSetup(part: CommandPart, earlier: readonly CommandPart[
       reason: `Refused: \`git ${part.git?.subcommand}\` with \`${planted}\` plants config or hooks in the new repository, which can change where pushes go or what git runs. Ask the user to run it with \`!\`.`,
     };
   }
+  const history = refHistorySetting(part, earlier, count);
+  if (history !== null) return REF_HISTORY_REFUSAL;
   const tty = fakeTtyPager(part, earlier, count);
   if (tty !== null) return runsRefusal(tty, `\`git ${part.git?.subcommand}\` (it has a terminal, so git starts its pager)`);
   const runs = runConfig(part, earlier, count) ?? uploadProgram(part);
@@ -414,6 +417,7 @@ export function checkPushSetup(part: CommandPart, earlier: readonly CommandPart[
   if (part.git?.subcommand === 'config') {
     const key = pushKeyWritten(part.git.args);
     if (key === null) return null;
+    if (typeof key === 'string' && keyMatches(REF_HISTORY_KEYS, key)) return REF_HISTORY_REFUSAL;
     if (typeof key !== 'string') {
       return {
         rule: 'protected-branch',
@@ -447,6 +451,29 @@ export function checkPushSetup(part: CommandPart, earlier: readonly CommandPart[
   }
   const program = uploadProgram(part);
   return program === null ? programVariableRefusal(part, earlier, count) : runsRefusal(program, '`git push`');
+}
+
+/** The refusal for a ref-history key, set any way: fixed text, so no key or value is repeated. */
+const REF_HISTORY_REFUSAL: Refusal = {
+  rule: 'protected-branch',
+  reason: 'Refused: this git setting changes or erases ref history (reflogs), which a lost commit is found by. Ask the user to change it with `!`.',
+};
+
+/**
+ * The ref-history key (REF_HISTORY_KEYS) a git part sets through `-c`, `--config-env` or a
+ * `GIT_CONFIG_KEY_n` set for it or earlier in the call, or null.
+ */
+function refHistorySetting(part: CommandPart, earlier: readonly CommandPart[], count: number): string | null {
+  const git = part.git;
+  if (git === null) return null;
+  const globals = part.words.slice(1, part.words.length - git.args.length - 1);
+  for (let i = 0; i < globals.length; i++) {
+    const w = globals[i];
+    const setting = w === '-c' || w === '--config-env' ? globals[i + 1] : w.startsWith('--config-env=') ? w.slice('--config-env='.length) : undefined;
+    if (setting !== undefined && keyMatches(REF_HISTORY_KEYS, keyOf(setting))) return keyOf(setting);
+  }
+  const variable = callSettings(part, earlier, count).find(([name, value]) => CONFIG_KEY_VARIABLE.test(name) && keyMatches(REF_HISTORY_KEYS, value));
+  return variable?.[1] ?? null;
 }
 
 function runsRefusal(what: string, where: string): Refusal {
@@ -529,12 +556,18 @@ function plantedConfig(part: CommandPart, earlier: readonly CommandPart[], count
 }
 
 /**
+ * Config keys (git syntax, lowercased, `*` is any text) that stop or expire the ref history a lost
+ * commit is found by, whatever their value (gate-gaps-r3 Task 4): no reflogs, a bare repository
+ * (which keeps none by default), or reflog entries expired early.
+ */
+const REF_HISTORY_KEYS = ['core.logallrefupdates', 'core.bare', 'gc.reflogexpire*', 'gc.*.reflogexpire*'];
+/**
  * Config keys (git syntax, lowercased, `*` is any text) that make ordinary git subcommands run a
  * hook folder, a program, or config the agent may have written, whatever their value (fix round 4,
  * K4). `alias.*` hides the real subcommand from every rule; `include.path` pulls in any key;
  * `protocol.allow` / `protocol.ext.allow` let an `ext::` URL run a command.
  */
-const RUN_ANY_KEYS = ['core.hookspath', 'alias.*', 'include.path', 'includeif.*.path', 'protocol.allow', 'protocol.ext.allow'];
+const RUN_ANY_KEYS = ['core.hookspath', 'alias.*', 'include.path', 'includeif.*.path', 'protocol.allow', 'protocol.ext.allow', ...REF_HISTORY_KEYS];
 /**
  * Config keys whose value is a command git runs (git syntax, lowercased). The pager keys are left
  * out: git starts a pager only when its output is a terminal, which the agent's never is.

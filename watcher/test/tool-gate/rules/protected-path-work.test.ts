@@ -58,7 +58,8 @@ describe('the work to check a long command\'s paths', () => {
       expect(exitCode).toBe(0);
       // before round 10: about 24,000 clock reads (6 million steps); round 11 (CR LOW-C) counts only
       // the work, not how it is done (path.relative calls were an implementation detail)
-      expect(clockReads).toBeLessThan(2000);
+      // work grows with the protected list; owner picked this bound on 2026-11-19 (gate-gaps-r3 Task 4)
+      expect(clockReads).toBeLessThan(3000);
     });
   }
 });

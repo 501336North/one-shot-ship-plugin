@@ -222,8 +222,6 @@ function symbolicTarget(args: readonly string[], branches: Branches): string | n
   return deletes && name !== undefined && namesProtected(name, branches) ? name : null;
 }
 
-/** `git update-ref` options that take a value (git syntax). */
-const UPDATE_REF_VALUES = new Set(['-m']);
 /** `git branch` modes that move, copy, delete or force a branch (git syntax): short letters and long options. */
 const BRANCH_MODE_LETTERS = /^-[A-Za-z]*[dDmMcCf]/;
 const BRANCH_MODE_LONG = new Set(['--delete', '--move', '--copy', '--force']);
@@ -239,11 +237,11 @@ function refChange(command: string, branch: string): Refusal {
 
 /**
  * Refuses a git call that moves, renames, copies onto, deletes or points a ref at a protected
- * branch without a commit or push: `git update-ref refs/heads/main …`, `git branch -f|-m|-M|-c|-C|-d|-D`
- * naming one, `git symbolic-ref HEAD refs/heads/main`, and (from any branch, fix part K11) `git rebase
- * <upstream> <protected>` and `git worktree add -b|-B <protected>`. `git update-ref HEAD …` moves the current
- * branch, so it is checked like a commit. `git update-ref --stdin` takes its refs from stdin, which
- * the gate can't read.
+ * branch without a commit or push: `git branch -f|-m|-M|-c|-C|-d|-D` naming one, `git symbolic-ref
+ * HEAD refs/heads/main`, and (from any branch, fix part K11) `git rebase <upstream> <protected>` and
+ * `git worktree add -b|-B <protected>`. Every `git update-ref` (any ref, `-d` and `--stdin` included)
+ * and every `git reflog expire|delete|drop|write` is refused, whatever it names (gate-gaps-r3 Task 4): they
+ * write or drop ref history the other rules and the ship-start snapshot rely on.
  */
 export async function checkBranchRefs(
   part: CommandPart,
@@ -256,17 +254,10 @@ export async function checkBranchRefs(
   const branches = branchesOf(settings, caseInsensitive);
   const { subcommand, args } = facts;
   if (subcommand === 'update-ref') {
-    if (args.includes('--stdin')) {
-      return { rule: 'protected-branch', reason: 'Refused: `git update-ref --stdin` reads the refs it changes from stdin, which the gate can\'t check. Change one ref per call instead.' };
-    }
-    const [ref] = positionalsOf(args, UPDATE_REF_VALUES);
-    if (ref === undefined) return null;
-    if (ref === 'HEAD') {
-      if (args.includes('--no-deref')) return null;
-      const current = await git.currentBranch(facts.dir);
-      return current !== null && isProtected(current, branches) ? refChange('git update-ref HEAD', current) : null;
-    }
-    return namesProtected(ref, branches) ? refChange(`git update-ref ${ref}`, ref) : null;
+    return { rule: 'protected-branch', reason: 'Refused: `git update-ref` writes a ref directly, without the history git keeps for it. Ask the user to run it with `!`.' };
+  }
+  if (subcommand === 'reflog' && REFLOG_CHANGES.has(args[0])) {
+    return { rule: 'protected-branch', reason: `Refused: \`git reflog ${args[0]}\` changes or erases the ref history a lost commit is found by. Ask the user to run it with \`!\`.` };
   }
   if (subcommand === 'symbolic-ref') {
     const target = symbolicTarget(args, branches);
@@ -510,6 +501,8 @@ function historyMove(git: NonNullable<CommandPart['git']>, exists: Exists): stri
  */
 const REWRITERS = new Set(['filter-branch', 'filter-repo', 'fast-import', 'replace']);
 const REFLOG_DROPS = new Set(['delete', 'expire']);
+/** `git reflog` subcommands that drop or forge entries (git syntax, git 2.54; gate-gaps-r3 Task 4, owner pick 2026-11-19). */
+const REFLOG_CHANGES = new Set([...REFLOG_DROPS, 'drop', 'write']);
 const SUBTREE_MOVES = new Set(['merge', 'pull']);
 /** Options that name every branch (git syntax). */
 const EVERY_BRANCH = new Set(['--all', '--branches']);

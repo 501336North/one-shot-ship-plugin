@@ -283,6 +283,9 @@ describe('protected-branch rule: moving, renaming or deleting a protected branch
     'git branch -D "$B"',
     'git symbolic-ref HEAD refs/heads/main',
     'git symbolic-ref refs/heads/feat/x refs/heads/main',
+    // gate-gaps-r3 Task 4: every update-ref is refused, whatever the ref
+    'git update-ref refs/heads/feat/y HEAD',
+    'git update-ref refs/tags/main HEAD',
   ])('should refuse %s', async (cmd) => {
     expect((await refs(cmd))?.rule).toBe('protected-branch');
   });
@@ -296,8 +299,6 @@ describe('protected-branch rule: moving, renaming or deleting a protected branch
     'git branch -a',
     'git branch',
     'git branch -m feat/y',
-    'git update-ref refs/heads/feat/y HEAD',
-    'git update-ref refs/tags/main HEAD',
     'git symbolic-ref HEAD',
     'git symbolic-ref --short HEAD',
     'git symbolic-ref HEAD refs/heads/feat/y',
@@ -305,10 +306,10 @@ describe('protected-branch rule: moving, renaming or deleting a protected branch
     expect(await refs(cmd)).toBeNull();
   });
 
-  it('should refuse git update-ref HEAD while on a protected branch, and allow it on a feature branch', async () => {
-    expect((await refs('git update-ref HEAD HEAD~1', 'main'))?.reason).toContain('main');
-    expect(await refs('git update-ref HEAD HEAD~1', 'feat/x')).toBeNull();
-    expect(await refs('git update-ref --no-deref HEAD HEAD~1', 'main')).toBeNull();
+  it('should refuse git update-ref HEAD on any branch (gate-gaps-r3 Task 4)', async () => {
+    expect((await refs('git update-ref HEAD HEAD~1', 'main'))?.rule).toBe('protected-branch');
+    expect((await refs('git update-ref HEAD HEAD~1', 'feat/x'))?.rule).toBe('protected-branch');
+    expect((await refs('git update-ref --no-deref HEAD HEAD~1', 'main'))?.rule).toBe('protected-branch');
   });
 });
 
@@ -461,7 +462,7 @@ describe('protected-branch rule: vouching for repositories within one call (fix 
 describe('protected-branch rule: protected names in another letter case (fix round 4, K8, item 5)', () => {
   const lastPart = (cmd: string) => partsOf(cmd).at(-1)!;
 
-  it.each(['git update-ref refs/heads/MAIN HEAD', 'git branch -f MAIN feat', 'git symbolic-ref HEAD refs/heads/Main'])(
+  it.each(['git branch -f MAIN feat', 'git symbolic-ref HEAD refs/heads/Main'])(
     'should refuse %s where letter case does not matter',
     async (cmd) => {
       expect(await checkBranchRefs(lastPart(cmd), SETTINGS, gitOn({}), true)).not.toBeNull();
