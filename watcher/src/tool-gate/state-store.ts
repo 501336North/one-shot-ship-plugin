@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readRegularFile } from './regular-file.js';
 import { appendPrivateFile } from '../gate-run/run-store.js';
+import { excludeOssState } from './local-exclude.js';
 import type { RuleId } from './rules/refusal.js';
 
 export type TestResult = 'red' | 'green';
@@ -100,6 +101,11 @@ export function fileStateStore(repoRoot: string): StateStore {
     const real = fs.realpathSync(stateDir);
     if (!real.startsWith(fs.realpathSync(repoRoot) + path.sep)) {
       throw new Error(`tool-gate state: ${stateDir} resolves outside the repo`);
+    }
+    try {
+      excludeOssState(repoRoot);
+    } catch {
+      // best effort: the state is written and the decision stands either way
     }
   }
 

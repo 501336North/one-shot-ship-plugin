@@ -13,7 +13,7 @@
  */
 
 import { gitBinary } from '../gate-run/git-bin.js';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -194,3 +194,16 @@ export function gitReaderFor(projectRoot: string | null, gitBin?: string): GitRe
 
 /** A reader with no project root. */
 export const realGitReader: GitReader = gitReaderFor(null);
+
+/**
+ * Which of `paths` (relative to the repo top `top`) git already ignores, from `git check-ignore`; null
+ * when git can't tell. Synchronous and short, for the gate's best-effort local exclude (Task 3b).
+ */
+export function ignoredPaths(top: string, paths: string[], timeoutMs: number): string[] | null {
+  const bin = checkedGit();
+  if (bin === null) return null;
+  const run = spawnSync(bin, [...HARDENING, 'check-ignore', '--', ...paths], { cwd: top, env: gitEnv(), encoding: 'utf8', timeout: timeoutMs, stdio: ['ignore', 'pipe', 'ignore'] });
+  // check-ignore exits 0 when some path is ignored, 1 when none is
+  if (run.status !== 0 && run.status !== 1) return null;
+  return run.stdout.split('\n').filter((line) => line !== '');
+}

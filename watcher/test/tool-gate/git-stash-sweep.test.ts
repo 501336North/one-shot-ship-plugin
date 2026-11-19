@@ -82,7 +82,22 @@ afterAll(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+/** Each repo's info/exclude as git made it, keyed by repo. */
+const freshExcludes = new Map<string, string>();
+
+/**
+ * Puts the repo's info/exclude back as git made it: the gate's own exclude (Task 3b), written when it
+ * logs a refusal here, would otherwise hide the workflow state, and these rows are about a repo where
+ * it is untracked and not ignored ("removed by hand before the command").
+ */
+function unexcluded(dir: string): void {
+  const file = path.join(dir, '.git', 'info', 'exclude');
+  if (!freshExcludes.has(dir)) freshExcludes.set(dir, fs.readFileSync(file, 'utf8'));
+  fs.writeFileSync(file, freshExcludes.get(dir) ?? '');
+}
+
 function call(command: string, agent: string | null, platform: NodeJS.Platform, cwd: string, deps: GateDeps = {}): Promise<GateResult> {
+  unexcluded(cwd);
   return runToolGate(
     {
       mode: 'pre',
