@@ -194,8 +194,37 @@ _oss_ledger_run() (
     feat=""; top=$("$OSS_GIT_BIN" rev-parse --show-toplevel 2>/dev/null) && { oss_resolve_feature "$top" || true; feat="${_OSS_FEATURE:-}"; }
     row=$("$OSS_JQ_BIN" -cn --arg a "$s" --arg b "$sid" --arg c "$head" --arg d "$feat" \
         '{startedAt: $a, session: $b, headSha: $c, feature: $d}') || return 1
-    (umask 077; printf '%s\n' "$row" >> "$f")
+    (umask 077; printf '%s\n' "$row" >> "$f") || return 1
+    # D40: ship start also records origin's branch tips, the only bases assemble ship accepts
+    [[ "$1" != ship ]] || _oss_ledger_origin "$d" "$s" \
+        || echo "oss-notify: origin snapshot not recorded for ship ($_OSS_ORIGIN_WHY): assemble ship will refuse no_base_snapshot" >&2
+    return 0
 )
+
+# _oss_ledger_origin <run dir> <startedAt>: D40 (security M1, pen F4). Writes <run dir>/ship.origin, one JSON line
+# {"startedAt","shas"}: this ship run's start and the sorted unique SHAs of refs/remotes/origin/* now. Assemble ship
+# accepts a base only when its tip is inside one of them; local refs and reflogs, which a model can write, never count.
+# git is the fixed binary with PATH=/usr/bin:/bin, capped at 10 s. Any earlier snapshot is removed first, so on a git
+# failure or over 1000 refs no snapshot is left for this run (assemble refuses: fail closed); the reason is in
+# _OSS_ORIGIN_WHY. Called from _oss_ledger_run's subshell, in the repo, after its folder checks.
+_oss_ledger_origin() {
+    local d="$1" s="$2" line n=0 json
+    _OSS_ORIGIN_WHY=""
+    "${OSS_RM:-/bin/rm}" -f "$d/ship.origin" 2>/dev/null
+    [[ ! -e "$d/ship.origin" && ! -L "$d/ship.origin" ]] || { _OSS_ORIGIN_WHY=stale_snapshot; return 1; }
+    oss_run_bounded_rc 10 "${OSS_ENV:-/usr/bin/env}" PATH=/usr/bin:/bin GIT_CONFIG_NOSYSTEM=1 "$OSS_GIT_BIN" \
+        -c core.fsmonitor= for-each-ref --format='%(objectname)' refs/remotes/origin/ \
+        || { _OSS_ORIGIN_WHY=git_failed; return 1; }
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        [[ "$line" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || { _OSS_ORIGIN_WHY=bad_git_output; return 1; }
+        n=$((n + 1))
+        [[ $n -le 1000 ]] || { _OSS_ORIGIN_WHY=over_1000_refs; return 1; }
+    done <<< "$OSS_BOUNDED_OUT"
+    json=$("$OSS_JQ_BIN" -cn --arg s "$s" --arg o "$OSS_BOUNDED_OUT" \
+        '{startedAt: $s, shas: ($o | split("\n") | map(select(. != "")) | unique)}') || { _OSS_ORIGIN_WHY=jq_failed; return 1; }
+    (umask 077; set -C; printf '%s\n' "$json" > "$d/ship.origin") 2>/dev/null || { _OSS_ORIGIN_WHY=write_failed; return 1; }
+}
 
 LOG_SCRIPT="$PLUGIN_ROOT/hooks/oss-log.sh"
 # LOG_SCRIPT fallback: check plugin cache if not found at PLUGIN_ROOT

@@ -590,8 +590,10 @@ var REVIEW_AGENT_GATES = {
   "oss:penetration-tester": "pen-test"
 };
 var TRANSCRIPT_TAIL_BYTES = 256 * 1024;
-var DEADLINE_MS = 4e3;
+var DEADLINE_MS = 3500;
 var BIG_FILE_BYTES = 50 * 1024 * 1024;
+var MAX_CHANGED_PATHS = 2e4;
+var MAX_CHANGED_BYTES = 500 * 1024 * 1024;
 var STALE_TMP_MS = 10 * 60 * 1e3;
 var COUNT = { type: "integer", minimum: 0 };
 var VERDICT_SCHEMA = loadSchema({
@@ -617,8 +619,19 @@ function gateForAgent(agentType) {
   if (typeof agentType !== "string") return null;
   return Object.prototype.hasOwnProperty.call(REVIEW_AGENT_GATES, agentType) ? REVIEW_AGENT_GATES[agentType] : null;
 }
-function transcriptMessage(file) {
+function projectsTranscript(file) {
   if (typeof file !== "string" || !path3.isAbsolute(file)) return null;
+  try {
+    const root = fs5.realpathSync(path3.join(os2.homedir(), ".claude", "projects"));
+    const real = fs5.realpathSync(file);
+    return real.startsWith(root + path3.sep) && !fs5.lstatSync(file).isSymbolicLink() ? real : null;
+  } catch {
+    return null;
+  }
+}
+function transcriptMessage(input) {
+  const file = projectsTranscript(input);
+  if (file === null) return null;
   let fd;
   try {
     fd = fs5.openSync(file, fs5.constants.O_RDONLY | fs5.constants.O_NOFOLLOW | fs5.constants.O_NONBLOCK);
@@ -662,8 +675,6 @@ function transcriptMessage(file) {
   return parts.length > 0 ? parts.join("\n") : null;
 }
 function finalMessage(input) {
-  const last = input.last_assistant_message;
-  if (typeof last === "string") return Buffer.byteLength(last) > TRANSCRIPT_TAIL_BYTES ? null : last;
   return transcriptMessage(input.agent_transcript_path);
 }
 function lastVerdictBlock(text) {
@@ -685,12 +696,12 @@ function lastVerdictBlock(text) {
 }
 var TREE_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 function deadlineOf(opts) {
-  const end = Date.now() + (opts.deadlineMs ?? DEADLINE_MS);
+  const end = (opts.startMs ?? Date.now()) + (opts.deadlineMs ?? DEADLINE_MS);
   return () => end - Date.now();
 }
 function boundedGit(repo, args, extra, left, input) {
   const git = gitBin2();
-  const timeout = left();
+  const timeout = Math.floor(left());
   if (git === "" || timeout <= 0) return null;
   const env = { ...gitEnv(), GIT_CONFIG_NOSYSTEM: "1", PATH: "/usr/bin:/bin", ...extra };
   const r = (0, import_node_child_process3.spawnSync)(git, ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", ...args], {
@@ -735,8 +746,14 @@ function reviewedTree(repo, index, which, dir, left) {
   const list = which === "all" ? ["ls-files", "-z", "-m", "-o", "-d", "--exclude-standard", "--", ".", ":(exclude).oss"] : ["ls-files", "-z", "-m", "-d"];
   const changed = boundedGit(repo, list, env, left);
   if (changed === null) return "";
-  for (const p of new Set(changed.toString("utf-8").split("\0"))) {
-    if (p !== "" && (fs5.lstatSync(path3.join(repo, p), { throwIfNoEntry: false })?.size ?? 0) > BIG_FILE_BYTES) return "";
+  const paths = new Set(changed.toString("utf-8").split("\0"));
+  paths.delete("");
+  if (paths.size > MAX_CHANGED_PATHS) return "";
+  let total = 0;
+  for (const p of paths) {
+    const size = fs5.lstatSync(path3.join(repo, p), { throwIfNoEntry: false })?.size ?? 0;
+    total += size;
+    if (size > BIG_FILE_BYTES || total > MAX_CHANGED_BYTES) return "";
   }
   if (changed.length > 0) {
     const args = ["update-index", "--add", "--remove", "--info-only", "-z", "--stdin"];
@@ -752,9 +769,22 @@ function reviewedTrees(repo, left) {
   const dir = treeTmpDir();
   if (dir === null) return none;
   try {
-    return { tree: reviewedTree(repo, index, "all", dir, left), trackedTree: reviewedTree(repo, index, "tracked", dir, left) };
+    const trackedTree = reviewedTree(repo, index, "tracked", dir, left);
+    return { tree: reviewedTree(repo, index, "all", dir, left), trackedTree };
   } finally {
     fs5.rmSync(dir, { recursive: true, force: true });
+  }
+}
+var STALE_START_MS = 24 * 60 * 60 * 1e3;
+function clearStaleStarts(ledger, now) {
+  const dir = path3.join(ledger.dir, "verdict-start");
+  const st = fs5.lstatSync(dir, { throwIfNoEntry: false });
+  if (st === void 0 || st.isSymbolicLink() || !st.isDirectory()) return;
+  for (const name of fs5.readdirSync(dir)) {
+    if (!ID_RE.test(name)) continue;
+    const ts = ledger.readMarker(startMarker(name))?.ts;
+    const at = typeof ts === "string" ? Date.parse(ts) : NaN;
+    if (Number.isNaN(at) || now.getTime() - at > STALE_START_MS) ledger.clearMarker(startMarker(name));
   }
 }
 function startMarker(agent) {
@@ -771,16 +801,23 @@ function captureStart(input, opts = {}) {
     const cwd = typeof hook.cwd === "string" && path3.isAbsolute(hook.cwd) ? hook.cwd : process.cwd();
     const repo = resolveRepo(cwd);
     if (repo === null) return { recorded: false, reason: "no_repo" };
+    const headSha = gitText(repo, ["rev-parse", "--verify", "HEAD^{commit}"], left) ?? "";
     const trees = reviewedTrees(repo, left);
-    openLedger(repo).writeMarker(startMarker(agent), { ...trees, ts: (opts.now ?? (() => /* @__PURE__ */ new Date()))().toISOString() });
+    const ledger = openLedger(repo);
+    const now = (opts.now ?? (() => /* @__PURE__ */ new Date()))();
+    clearStaleStarts(ledger, now);
+    ledger.writeMarker(startMarker(agent), { ...trees, headSha, ts: now.toISOString() });
     return { recorded: true };
   } catch {
     return { recorded: false, reason: "error" };
   }
 }
-function startState(snap, trees) {
+function startState(snap, trees, headSha) {
   if (snap === null) return "missing";
-  return snap.tree === trees.tree && snap.trackedTree === trees.trackedTree ? "match" : "changed";
+  if (trees.tree !== "" && trees.trackedTree !== "") {
+    return snap.tree === trees.tree && snap.trackedTree === trees.trackedTree ? "match" : "changed";
+  }
+  return headSha !== "" && snap.headSha === headSha ? "match" : "changed";
 }
 function captureVerdict(input, opts = {}) {
   try {
@@ -794,11 +831,11 @@ function captureVerdict(input, opts = {}) {
     if (block === "none") return { captured: false, reason: "no_block" };
     if (block === "multiple") return { captured: false, reason: "multiple_blocks" };
     if (block === "invalid") return { captured: false, reason: "invalid_block" };
+    const left = deadlineOf(opts);
     const cwd = typeof hook.cwd === "string" && path3.isAbsolute(hook.cwd) ? hook.cwd : process.cwd();
     const repo = resolveRepo(cwd);
     const feature = repo === null ? null : resolveFeature(repo);
     if (repo === null || feature === null) return { captured: false, reason: "no_feature" };
-    const left = deadlineOf(opts);
     const agent = plainId(hook.agent_id);
     const ledger = openLedger(repo);
     const headSha = gitText(repo, ["rev-parse", "--verify", "HEAD^{commit}"], left) ?? "";
@@ -820,7 +857,7 @@ function captureVerdict(input, opts = {}) {
       // outside .oss differs from `tree` by nothing but files that were untracked at review and left out (finding 4),
       // and only when `start` is match (security L4).
       ...trees,
-      start: startState(snap, trees)
+      start: startState(snap, trees, headSha)
     });
     return { captured: true, gate, feature };
   } catch {
@@ -842,8 +879,9 @@ function readInput(file) {
   }
 }
 try {
-  if (process.argv[2] === "start") captureStart(readInput(process.argv[3]));
-  else captureVerdict(readInput(process.argv[2]));
+  const startMs = performance.timeOrigin;
+  if (process.argv[2] === "start") captureStart(readInput(process.argv[3]), { startMs });
+  else captureVerdict(readInput(process.argv[2]), { startMs });
 } catch {
 }
 process.exitCode = 0;

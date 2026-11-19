@@ -86,11 +86,27 @@ function cli(...args: string[]): Run {
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, ms: Date.now() - t0 };
 }
 
-/** The start gate's ledger row (T10b writes it in production). */
+/**
+ * The start gate's ledger row (T10b writes it in production).
+ * ⚠ changes existing test: D40 — ship start also records the SHAs of refs/remotes/origin/* (the ledger file
+ *   `run/ship.origin`, bound to the run by its startedAt), as oss-notify start does; a ship base must be contained in
+ *   one of them.
+ */
 function startRun(phase: string, startedAt: string, feature?: string): void {
   openLedger(repo).appendRow(`run/${phase}`, {
     startedAt, session: 'sess-accept-1', headSha: git('rev-parse', 'HEAD'), ...(feature === undefined ? {} : { feature }),
   });
+  if (phase === 'ship') snapshotOrigin(startedAt);
+}
+
+/** D40: the origin snapshot oss-notify's ship start writes: every refs/remotes/origin/* SHA, sorted and unique. */
+function snapshotOrigin(startedAt: string, shas: string[] = originShas()): void {
+  openLedger(repo).writeMarker('run/ship.origin', { startedAt, shas });
+}
+
+function originShas(): string[] {
+  const out = git('for-each-ref', '--format=%(objectname)', 'refs/remotes/origin/');
+  return [...new Set(out.split('\n').filter((l) => l !== ''))].sort();
 }
 
 /** The model's value folder ($HOME/.oss/run/<key>), created as `oss-value.sh dir` does. */
@@ -405,6 +421,37 @@ describe('phase-result CLI: check refuses anything not bound to this run', () =>
     expect(r.stderr).toContain('testRuns');
   });
 
+  // Behaviour: ship's final test run, after the build result was assembled, does not undo the finished build.
+  // Rule: D42 (round 5, finding 1): a build result stores its evidence cutoff, and check counts test runs only up to it.
+  it('a test run recorded after the build was assembled still passes check', () => {
+    startRun('build', '2026-11-13T09:00:00.000Z');
+    writeEvents([event('2026-11-13T09:01:00.000Z', 'red'), event('2026-11-13T09:02:00.000Z', 'green')]);
+    const a = cli('assemble', 'build');
+    expect(a.status, a.stderr).toBe(0);
+    writeEvents([event(new Date().toISOString(), 'green')]);
+    const r = cli('check', 'build');
+    expect(r.status, r.stderr).toBe(0);
+  });
+
+  // Behaviour: a build result written before the cutoff existed keeps the old rule rather than failing outright.
+  // Rule: D42: with no evidenceCutoff, every test run since startedAt counts, so a later run still gives a mismatch.
+  it('a build result with no evidence cutoff keeps counting every later test run', () => {
+    startRun('build', '2026-11-13T09:00:00.000Z');
+    writeEvents([event('2026-11-13T09:01:00.000Z', 'red'), event('2026-11-13T09:02:00.000Z', 'green')]);
+    expect(cli('assemble', 'build').status).toBe(0);
+    const stored = JSON.parse(fs.readFileSync(resultFile(FEATURE, 'build'), 'utf-8')) as Record<string, unknown>;
+    delete stored.evidenceCutoff;
+    const bytes = `${JSON.stringify(stored)}\n`;
+    fs.writeFileSync(resultFile(FEATURE, 'build'), bytes);
+    const row = openLedger(repo).lastRow(`results/${FEATURE}/build`) ?? {};
+    openLedger(repo).appendRow(`results/${FEATURE}/build`, { ...row, sha256: sha256(bytes) });
+    expect(cli('check', 'build').status).toBe(0);
+    writeEvents([event(new Date().toISOString(), 'green')]);
+    const r = cli('check', 'build');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('evidence_mismatch');
+  });
+
   // Behaviour: a ship result whose code-owned fields were forged cannot pass, even with its sources map emptied.
   // Rule: round 2 security (MEDIUM): check compares a fixed per-phase list of code-owned evidence fields, never the
   //       stored `sources`, so `"sources":{}` does not skip the comparison.
@@ -588,6 +635,8 @@ describe('phase-result CLI: the ship base comes from repo config oss.shipBase, e
  * D34 (user pick, ship round 2; pen F9): a ship base is accepted only when it is an ancestor of, or equal to, origin's
  * default branch tip (refs/remotes/origin/HEAD, else origin/main), and a base ref (or the oss.shipBase-named ref)
  * whose reflog says it was created after the ship run started is refused. Both refuse with unsafe_base.
+ * ⚠ changes existing test: D40 — the base must now be contained in an origin SHA recorded at ship start; reflog times
+ *   no longer count (see the D40 block below). The cases here keep their outcome except the late local base.
  */
 describe('phase-result CLI: the ship base must be an ancestor of origin\'s default branch (D34)', () => {
   function shipFeature(): void {
@@ -627,15 +676,15 @@ describe('phase-result CLI: the ship base must be an ancestor of origin\'s defau
     expect(r.stderr).toContain('unsafe_base');
   });
 
-  // Rule: a base ref created after the ship run started is refused, even when origin's default contains it.
-  it('a base ref created after the ship run started refuses unsafe_base', () => {
+  // ⚠ changes existing test: D40 — the reflog-time rule is gone: a local base made after the run started is judged
+  //   by its tip alone, and this one's tip is origin/main's, recorded at ship start, so it is accepted.
+  it('a local base ref created after the ship run started, at a recorded origin tip, is accepted', () => {
     shipFeature();
     startRun('ship', '2026-11-13T09:00:00.000Z');
     gitNow('branch', 'late-base', 'main');
     git('config', '--local', 'oss.shipBase', 'late-base');
-    const r = cli('assemble', 'ship');
-    expect(r.status).toBe(1);
-    expect(r.stderr).toContain('unsafe_base');
+    const a = cli('assemble', 'ship');
+    expect(a.status, a.stderr).toBe(0);
   });
 
   it('a base ref with no reflog is judged by ancestry alone', () => {
@@ -662,6 +711,8 @@ describe('phase-result CLI: the ship base must be an ancestor of origin\'s defau
  * D34 corrected (user re-pick, ship round 3): a base is also accepted when it is contained in an existing
  * refs/remotes/origin/<name> whose reflog shows it was created BEFORE this ship run started (an integration branch PRs
  * target). That remote ref with no reflog is refused; one created during the run (update-ref, fetch-to-self) is refused.
+ * ⚠ changes existing test: D40 — "before the run" now means "recorded in the origin snapshot at ship start", so a
+ *   pre-run remote ref with no reflog is accepted; refs made during the run stay refused.
  */
 describe('phase-result CLI: an integration-branch base on origin (D34 corrected)', () => {
   const INTEGRATION = 'feat/x/build';
@@ -712,13 +763,14 @@ describe('phase-result CLI: an integration-branch base on origin (D34 corrected)
     expect(r.stderr).toContain('unsafe_base');
   });
 
-  it('the remote ref with no reflog is refused', () => {
+  // ⚠ changes existing test: D40 — the "no reflog" rule is gone: a remote ref that existed at ship start is in the
+  //   snapshot, reflog or not, so it is accepted.
+  it('a remote ref with no reflog that existed when the run started is accepted', () => {
     integration();
     fs.rmSync(path.join(repo, '.git', 'logs', 'refs', 'remotes', 'origin', ...INTEGRATION.split('/')), { force: true });
     startRun('ship', '2026-11-13T09:00:00.000Z');
-    const r = cli('assemble', 'ship');
-    expect(r.status).toBe(1);
-    expect(r.stderr).toContain('unsafe_base');
+    const a = cli('assemble', 'ship');
+    expect(a.status, a.stderr).toBe(0);
   });
 
   it('a local base moved past its origin ref is refused', () => {
@@ -728,6 +780,109 @@ describe('phase-result CLI: an integration-branch base on origin (D34 corrected)
     const r = cli('assemble', 'ship');
     expect(r.status).toBe(1);
     expect(r.stderr).toContain('unsafe_base');
+  });
+});
+
+/**
+ * D40 (user pick, ship gate round 3; security M1, pen F4, code review L1): ship start records the SHAs of
+ * refs/remotes/origin/* in the protected ledger, and a ship base is accepted only if its tip is an ancestor of, or
+ * equal to, one of them. Local refs and their reflogs (which the model can write) no longer count. A ship run with no
+ * snapshot for it, or an oversized one, is refused (fail closed).
+ */
+describe('phase-result CLI: the ship base must be contained in the origin snapshot taken at ship start (D40)', () => {
+  function shipFeature(): void {
+    commitFile('feature-1.txt', 'one\n');
+    commitFile('feature-2.txt', 'two\n');
+    commitFile('feature-3.txt', 'three\n');
+    passGates(FEATURE);
+  }
+
+  // Repro (security r3 case A): after the run starts, origin/main is moved into the feature and a reflog-less branch
+  // with a forged origin ref is named in base.txt, to hide two commits from the diff.
+  it('a forged local origin/main and a reflog-less base made after the run started are refused', () => {
+    shipFeature();
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    gitNow('update-ref', 'refs/remotes/origin/main', 'HEAD~1');
+    gitNow('-c', 'core.logAllRefUpdates=false', 'update-ref', 'refs/heads/hide', 'HEAD~1');
+    gitNow('update-ref', 'refs/remotes/origin/hide', 'HEAD~1');
+    fs.writeFileSync(path.join(valueDir(), 'base.txt'), 'hide\n');
+    const r = cli('assemble', 'ship');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('unsafe_base');
+    expect(fs.existsSync(resultFile(FEATURE, 'ship'))).toBe(false);
+  });
+
+  // Repro (security r3 case B): the base and its origin ref are made after the start with a backdated reflog.
+  it('a base whose origin ref has a backdated reflog is refused', () => {
+    shipFeature();
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    const old = { ...cleanEnv(), GIT_COMMITTER_DATE: '@1700000000 +0000' };
+    execFileSync('git', ['update-ref', 'refs/remotes/origin/hide', 'HEAD~1'], { cwd: repo, env: old });
+    execFileSync('git', ['branch', 'hide', 'HEAD~1'], { cwd: repo, env: old });
+    fs.writeFileSync(path.join(valueDir(), 'base.txt'), 'hide\n');
+    const r = cli('assemble', 'ship');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('unsafe_base');
+  });
+
+  // Repro (pen r3 a6): a remote ref and its local branch written after the start with no reflog at all.
+  it('a base whose origin ref was made after the start with no reflog is refused', () => {
+    shipFeature();
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    gitNow('-c', 'core.logAllRefUpdates=false', 'update-ref', 'refs/remotes/origin/wip', 'HEAD~1');
+    gitNow('-c', 'core.logAllRefUpdates=false', 'branch', 'wip', 'HEAD~1');
+    fs.writeFileSync(path.join(valueDir(), 'base.txt'), 'wip\n');
+    const r = cli('assemble', 'ship');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('unsafe_base');
+  });
+
+  // Behaviour: a PR into an integration branch that origin had before ship started ships against it.
+  it('a genuine integration branch on origin before the run (feat/determinism-sprint/build) is accepted', () => {
+    const INTEGRATION = 'feat/determinism-sprint/build';
+    git('checkout', '-q', 'main');
+    git('checkout', '-q', '-b', INTEGRATION);
+    commitFile('sprint.txt', 'sprint\n');
+    git('update-ref', `refs/remotes/origin/${INTEGRATION}`, INTEGRATION);
+    git('branch', '-q', '-D', `feat/${FEATURE}/build`);
+    git('checkout', '-q', '-b', `feat/${FEATURE}/build`);
+    shipFeature();
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    fs.writeFileSync(path.join(valueDir(), 'base.txt'), `${INTEGRATION}\n`);
+    const a = cli('assemble', 'ship');
+    expect(a.status, a.stderr).toBe(0);
+    const r = JSON.parse(fs.readFileSync(resultFile(FEATURE, 'ship'), 'utf-8')) as Record<string, unknown>;
+    expect((r.diff as Record<string, unknown>).baseRef).toBe(INTEGRATION);
+  });
+
+  // Rule: a ship run with no snapshot (a row written before D40, or git failed at start) is refused, not trusted.
+  it('a ship run with no origin snapshot refuses no_base_snapshot', () => {
+    shipFeature();
+    openLedger(repo).appendRow('run/ship', { startedAt: '2026-11-13T09:00:00.000Z', session: 'sess-accept-1', headSha: '' });
+    const r = cli('assemble', 'ship');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('no_base_snapshot');
+  });
+
+  // Rule: a snapshot left by an earlier ship start does not count for this run.
+  it('a snapshot from an earlier ship run refuses no_base_snapshot', () => {
+    shipFeature();
+    startRun('ship', '2026-11-13T08:00:00.000Z');
+    openLedger(repo).appendRow('run/ship', { startedAt: '2026-11-13T09:00:00.000Z', session: 'sess-accept-1', headSha: '' });
+    const r = cli('assemble', 'ship');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('no_base_snapshot');
+  });
+
+  // Rule: the snapshot is capped at 1,000 refs; past it the run fails closed.
+  it('a snapshot over 1,000 SHAs refuses no_base_snapshot', () => {
+    shipFeature();
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    const many = Array.from({ length: 1001 }, (_, i) => i.toString(16).padStart(40, '0'));
+    snapshotOrigin('2026-11-13T09:00:00.000Z', many);
+    const r = cli('assemble', 'ship');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('no_base_snapshot');
   });
 });
 
@@ -912,6 +1067,8 @@ describe('phase-result CLI: usage, --all, budgets', () => {
   //   per repo, so another feature's later ship run never blocks this one's archive.
   function shipRunOf(feature: string, startedAt: string): void {
     openLedger(repo).appendRow('run/ship', { startedAt, session: 'sess-accept-1', headSha: git('rev-parse', 'HEAD'), feature });
+    // ⚠ changes existing test: D40 — ship start also records the origin snapshot, which assemble ship needs.
+    snapshotOrigin(startedAt);
   }
 
   it('check ship --all refuses an older ship result once a later ship run of that feature started', () => {

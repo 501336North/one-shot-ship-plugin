@@ -202,3 +202,45 @@ describe('assembleIdeate', () => {
     expect(assembleIdeate(ctx())).toMatchObject({ ok: false, error: 'unsafe_path' });
   });
 });
+
+describe('the evidence cutoff (D42)', () => {
+  /** A hook-recorded pick answered at <answeredAt> (the hook stamps answeredAt in whole seconds). */
+  function pickAt(id: string, answeredAt: string): string {
+    const l = JSON.stringify({ v: 1, ...rec(id), command: 'ideate', answeredAt });
+    recordViaHook(l, FEATURE, id);
+    return l;
+  }
+
+  // User who finished ideate and then answered a plan picker still has a valid ideate result.
+  // Rule: D42, an ideate result stores its evidence cutoff (the assemble time) and counts decisions only up to it.
+  it('stores the assemble time as its evidence cutoff', () => {
+    writeRecords([pickAt('d-1', '2026-11-13T09:30:00Z')]);
+    const r = result(assembleIdeate(ctx()));
+    expect(r.evidenceCutoff).toBe('2026-11-13T10:00:00.000Z');
+    expect(validate(loadPhaseSchema('ideate', PLUGIN_ROOT), r)).toEqual({ ok: true });
+  });
+
+  // Rule: D42, a re-check given the stored cutoff ignores picks answered after it, so it re-derives the same decisions.
+  it('counts only the decisions answered up to the given cutoff', () => {
+    writeRecords([pickAt('d-1', '2026-11-13T09:30:00Z'), pickAt('d-2', '2026-11-13T10:30:00Z')]);
+    const r = result(assembleIdeate({ ...ctx(), evidenceCutoff: '2026-11-13T10:00:00.000Z' }));
+    expect(r.decisionsRecorded).toBe(1);
+    expect(r.decisions).toEqual([expect.objectContaining({ id: 'd-1' })]);
+  });
+
+  // Rule: D42, answeredAt is stamped in whole seconds, so a pick stamped with the cutoff's own second may have come
+  //       after it: it is not counted, so a pick made just after assemble never shows up on re-check.
+  it("leaves out a pick stamped with the cutoff's own second", () => {
+    writeRecords([pickAt('d-1', '2026-11-13T09:59:59Z'), pickAt('d-2', '2026-11-13T10:00:00Z')]);
+    const r = result(assembleIdeate({ ...ctx(), evidenceCutoff: '2026-11-13T10:00:00.500Z' }));
+    expect(r.decisions).toEqual([expect.objectContaining({ id: 'd-1' })]);
+  });
+
+  // Rule: D42, a result written before the cutoff existed (re-checked with a null cutoff) keeps counting every pick.
+  it('counts every decision when re-checking a result with no cutoff', () => {
+    writeRecords([pickAt('d-1', '2026-11-13T09:30:00Z'), pickAt('d-2', '2026-11-13T10:30:00Z')]);
+    const r = result(assembleIdeate({ ...ctx(), evidenceCutoff: null }));
+    expect(r.decisionsRecorded).toBe(2);
+    expect(r).not.toHaveProperty('evidenceCutoff');
+  });
+});

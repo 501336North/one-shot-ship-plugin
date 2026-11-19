@@ -40,6 +40,9 @@
     "assembledAt": {
       "$ref": "common.schema.json#/$defs/timestamp"
     },
+    "evidenceCutoff": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
     "headSha": {
       "$ref": "common.schema.json#/$defs/sha"
     },

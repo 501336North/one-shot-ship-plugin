@@ -186,5 +186,40 @@ if [[ -z "$gate_err" && $rc -eq 0 ]] \
 else fail "ship assemble with ship.md's gate.txt names and the default required gates is ready_to_merge" "gate_err=$gate_err rc=$rc out=$out"; fi
 cleanup
 
+# 9. D40: ship start records the SHAs of refs/remotes/origin/* in the owner-only ledger (run/ship.origin, 600, bound to
+#    the run by startedAt). A base whose origin ref was written after the start (here with no reflog) is refused.
+sandbox
+PRF_REPO="$T/repo" prf_build
+(cd "$T/repo" && git update-ref refs/remotes/origin/feat/pre/build main)
+notify ship start '{}' >/dev/null 2>&1
+snap=$(ls "$T"/home/.oss/ledger/*/run/ship.origin 2>/dev/null | head -1)
+want=$(cd "$T/repo" && git for-each-ref --format='%(objectname)' refs/remotes/origin/ | sort -u | jq -R . | jq -cs .)
+started=$(jq -r '.currentCommandStartedAt // empty' "$T/repo/.oss/workflow-state.json" 2>/dev/null)
+mode=$(stat -c '%a' "$snap" 2>/dev/null || stat -f '%Lp' "$snap" 2>/dev/null)
+if [[ -n "$snap" && "$mode" == 600 && "$(jq -c .shas "$snap" 2>/dev/null)" == "$want" && "$(jq -r .startedAt "$snap" 2>/dev/null)" == "$started" ]]; then
+    pass "ship start records the origin SHAs in the ledger (run/ship.origin, 600, this run's startedAt)"
+else fail "ship start records the origin SHAs in the ledger (run/ship.origin, 600, this run's startedAt)" "snap=$snap mode=$mode want=$want got=$(cat "$snap" 2>/dev/null) started=$started"; fi
+(cd "$T/repo" && echo one > one.txt && git add one.txt && git commit -q -m one && echo two > two.txt && git add two.txt \
+    && git commit -q -m two && git -c core.logAllRefUpdates=false update-ref refs/remotes/origin/wip HEAD~1 \
+    && git -c core.logAllRefUpdates=false branch wip HEAD~1)
+printf 'wip\n' > "$(value_dir)/base.txt"
+out=$(phase_result assemble ship 2>&1); rc=$?
+if [[ $rc -ne 0 && "$out" == *unsafe_base* ]]; then
+    pass "a base whose origin ref was written after ship start is refused (unsafe_base)"
+else fail "a base whose origin ref was written after ship start is refused (unsafe_base)" "rc=$rc out=$out"; fi
+cleanup
+
+# 10. D40: over 1,000 origin refs at ship start, no snapshot is recorded and assemble ship fails closed.
+sandbox
+PRF_REPO="$T/repo" prf_build
+(cd "$T/repo" && for i in $(seq 1001); do echo "create refs/remotes/origin/r$i main"; done | git update-ref --stdin)
+notify ship start '{}' >/dev/null 2>&1
+(cd "$T/repo" && echo change > change.txt && git add change.txt && git commit -q -m change)
+out=$(phase_result assemble ship 2>&1); rc=$?
+if [[ $rc -ne 0 && "$out" == *no_base_snapshot* ]]; then
+    pass "over 1,000 origin refs at ship start: assemble ship refuses no_base_snapshot"
+else fail "over 1,000 origin refs at ship start: assemble ship refuses no_base_snapshot" "rc=$rc out=$out"; fi
+cleanup
+
 echo; echo "Ran $RUN, failed $FAILED"
 [[ $FAILED -eq 0 ]]

@@ -5,6 +5,10 @@
  * only its `ts`, so an event belongs to this build when its `ts` is at or after the build's `startedAt`. The log is
  * read backwards in 64 KB chunks and stops at the first event older than `startedAt`, or at an 8 MB cap; a capped
  * read gives an `unverified` result with `events_truncated`, never a wrong `no_red`.
+ *
+ * D42 (round 5, finding 1): the result stores its evidence cutoff, the assemble time, and only test runs at or before
+ * it count, so a later run (ship's final tests) never makes a finished build look mismatched. A re-check passes the
+ * stored cutoff; `null` re-checks a result written before the cutoff existed, with no cutoff (the old rule).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,6 +19,9 @@ const CHUNK = 64 * 1024;
 const CAP = 8 * 1024 * 1024;
 
 export type ReadChunk = (fd: number, buf: Buffer, offset: number, length: number, position: number) => number;
+
+/** D42: undefined assembles now (cutoff = now); a string re-checks with that cutoff; null re-checks with none. */
+export type BuildContext = AssembleContext & { evidenceCutoff?: string | null };
 
 export interface AssembleBuildOptions {
   readChunk?: ReadChunk;
@@ -27,7 +34,7 @@ interface Scan {
 }
 
 /** Records a test result of this build; returns false at an event older than `start` (the scan stops). */
-function take(line: string, start: number, results: TestResult[]): boolean {
+function take(line: string, start: number, cutoff: number, results: TestResult[]): boolean {
   let event: Partial<GateEvent>;
   try {
     event = JSON.parse(line) as Partial<GateEvent>;
@@ -36,11 +43,12 @@ function take(line: string, start: number, results: TestResult[]): boolean {
   }
   const ts = typeof event.ts === 'string' ? Date.parse(event.ts) : NaN;
   if (ts < start) return false;
+  if (ts > cutoff) return true;
   if (event.kind === 'test-run' && (event.result === 'red' || event.result === 'green')) results.push(event.result);
   return true;
 }
 
-function scanBackwards(fd: number, size: number, start: number, readChunk: ReadChunk): Scan {
+function scanBackwards(fd: number, size: number, start: number, cutoff: number, readChunk: ReadChunk): Scan {
   const results: TestResult[] = [];
   let position = size;
   let carry = Buffer.alloc(0);
@@ -65,13 +73,14 @@ function scanBackwards(fd: number, size: number, start: number, readChunk: ReadC
     const lines = buf.toString('utf-8').split('\n');
     for (let i = lines.length - 1; i >= 0; i--) {
       if (lines[i] === '') continue;
-      if (!take(lines[i], start, results)) return { results, truncated: false };
+      if (!take(lines[i], start, cutoff, results)) return { results, truncated: false };
     }
   }
   return { results, truncated: false };
 }
 
-export function assembleBuild(ctx: AssembleContext, opts: AssembleBuildOptions = {}): AssembleOutcome {
+export function assembleBuild(ctx: BuildContext, opts: AssembleBuildOptions = {}): AssembleOutcome {
+  const cutoff = ctx.evidenceCutoff === undefined ? ctx.now().toISOString() : ctx.evidenceCutoff;
   for (const dir of [path.join(ctx.repo, '.oss'), path.join(ctx.repo, '.oss', 'tool-gates')]) {
     const st = fs.lstatSync(dir, { throwIfNoEntry: false });
     if (st === undefined) return { ok: false, error: 'no_test_runs' };
@@ -90,7 +99,8 @@ export function assembleBuild(ctx: AssembleContext, opts: AssembleBuildOptions =
   try {
     const st = fs.fstatSync(fd);
     if (!st.isFile()) return { ok: false, error: 'unsafe_path' };
-    scan = scanBackwards(fd, st.size, Date.parse(ctx.startedAt), opts.readChunk ?? fs.readSync);
+    const end = cutoff === null ? Infinity : Date.parse(cutoff);
+    scan = scanBackwards(fd, st.size, Date.parse(ctx.startedAt), end, opts.readChunk ?? fs.readSync);
   } finally {
     fs.closeSync(fd);
   }
@@ -110,6 +120,7 @@ export function assembleBuild(ctx: AssembleContext, opts: AssembleBuildOptions =
     sources: { testRuns: 'code', evidenceTrust: 'code', ...(notes === null ? {} : { notes: 'model' }) },
     testRuns: { sawRed, lastResult, count: results.length },
     evidenceTrust: 'repo-file',
+    ...(cutoff === null ? {} : { evidenceCutoff: cutoff }),
     ...(notes === null ? {} : { notes: redactModelText(notes) }),
   };
   if (truncated) {

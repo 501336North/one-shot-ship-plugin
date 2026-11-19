@@ -614,7 +614,7 @@ function redactModelText(s) {
 // src/phase-results/assemble-build.ts
 var CHUNK = 64 * 1024;
 var CAP = 8 * 1024 * 1024;
-function take(line, start, results) {
+function take(line, start, cutoff, results) {
   let event;
   try {
     event = JSON.parse(line);
@@ -623,10 +623,11 @@ function take(line, start, results) {
   }
   const ts = typeof event.ts === "string" ? Date.parse(event.ts) : NaN;
   if (ts < start) return false;
+  if (ts > cutoff) return true;
   if (event.kind === "test-run" && (event.result === "red" || event.result === "green")) results.push(event.result);
   return true;
 }
-function scanBackwards(fd, size, start, readChunk) {
+function scanBackwards(fd, size, start, cutoff, readChunk) {
   const results = [];
   let position = size;
   let carry = Buffer.alloc(0);
@@ -651,12 +652,13 @@ function scanBackwards(fd, size, start, readChunk) {
     const lines = buf.toString("utf-8").split("\n");
     for (let i = lines.length - 1; i >= 0; i--) {
       if (lines[i] === "") continue;
-      if (!take(lines[i], start, results)) return { results, truncated: false };
+      if (!take(lines[i], start, cutoff, results)) return { results, truncated: false };
     }
   }
   return { results, truncated: false };
 }
 function assembleBuild(ctx, opts = {}) {
+  const cutoff = ctx.evidenceCutoff === void 0 ? ctx.now().toISOString() : ctx.evidenceCutoff;
   for (const dir of [import_node_path.default.join(ctx.repo, ".oss"), import_node_path.default.join(ctx.repo, ".oss", "tool-gates")]) {
     const st = import_node_fs.default.lstatSync(dir, { throwIfNoEntry: false });
     if (st === void 0) return { ok: false, error: "no_test_runs" };
@@ -675,7 +677,8 @@ function assembleBuild(ctx, opts = {}) {
   try {
     const st = import_node_fs.default.fstatSync(fd);
     if (!st.isFile()) return { ok: false, error: "unsafe_path" };
-    scan = scanBackwards(fd, st.size, Date.parse(ctx.startedAt), opts.readChunk ?? import_node_fs.default.readSync);
+    const end = cutoff === null ? Infinity : Date.parse(cutoff);
+    scan = scanBackwards(fd, st.size, Date.parse(ctx.startedAt), end, opts.readChunk ?? import_node_fs.default.readSync);
   } finally {
     import_node_fs.default.closeSync(fd);
   }
@@ -693,6 +696,7 @@ function assembleBuild(ctx, opts = {}) {
     sources: { testRuns: "code", evidenceTrust: "code", ...notes === null ? {} : { notes: "model" } },
     testRuns: { sawRed, lastResult, count: results.length },
     evidenceTrust: "repo-file",
+    ...cutoff === null ? {} : { evidenceCutoff: cutoff },
     ...notes === null ? {} : { notes: redactModelText(notes) }
   };
   if (truncated) {
@@ -1011,6 +1015,9 @@ ${row.sha256}`);
   }
   return keys;
 }
+function answeredAfter(answeredAt, cutoff) {
+  return typeof answeredAt === "string" && Date.parse(answeredAt) + 1e3 > Date.parse(cutoff);
+}
 function readOpenQuestions(ctx) {
   const raw = readValue(ctx, "open-questions.json");
   const parsed = raw === null ? [] : parseJsonOr(raw, []);
@@ -1018,6 +1025,7 @@ function readOpenQuestions(ctx) {
   return parsed.filter((q) => typeof q === "string").map((q) => clipText(q, TEXT_CAP) ?? "");
 }
 function assembleIdeate(ctx) {
+  const cutoff = ctx.evidenceCutoff === void 0 ? ctx.now().toISOString() : ctx.evidenceCutoff;
   const dir = path5.join(ctx.repo, ".oss", "dev", "active", ctx.feature);
   const design = readRepoFile(path5.join(dir, "DESIGN.md"));
   if (!design.ok) return { ok: false, error: design.error };
@@ -1040,6 +1048,7 @@ function assembleIdeate(ctx) {
       if (rec === null || rec.feature !== ctx.feature || typeof rec.id !== "string") continue;
       if (!keys.has(`${rec.id}
 ${sha256(line)}`)) continue;
+      if (cutoff !== null && answeredAfter(rec.answeredAt, cutoff)) continue;
       const d = { id: rec.id };
       const question = clipText(rec.question, TEXT_CAP);
       const answer = clipText(rec.answer, TEXT_CAP);
@@ -1058,7 +1067,8 @@ ${sha256(line)}`)) continue;
       decisions,
       decisionsRecorded: decisions.length,
       designCommitted: true,
-      openQuestions: readOpenQuestions(ctx)
+      openQuestions: readOpenQuestions(ctx),
+      ...cutoff === null ? {} : { evidenceCutoff: cutoff }
     }
   };
 }
@@ -1149,13 +1159,6 @@ function isLocalBranch(repo, name) {
     return false;
   }
 }
-function originBranchTip(repo, name) {
-  try {
-    return runGit(repo, ["rev-parse", "--verify", "--quiet", "--end-of-options", `refs/remotes/origin/${name}^{commit}`]).out;
-  } catch {
-    return null;
-  }
-}
 function hasOriginBranch(repo, name) {
   try {
     runGit(repo, ["rev-parse", "--verify", "--quiet", "--end-of-options", `refs/remotes/origin/${name}^{commit}`]);
@@ -1171,33 +1174,12 @@ function branchTip(repo, name) {
     return null;
   }
 }
-function originDefaultTip(repo) {
-  let ref = "refs/remotes/origin/main";
+function containedInAny(repo, tip, shas) {
+  if (shas.length === 0) return false;
   try {
-    const sym = runGit(repo, ["symbolic-ref", "-q", "refs/remotes/origin/HEAD"]).out;
-    if (sym.startsWith("refs/remotes/origin/") && sym !== "refs/remotes/origin/HEAD") ref = sym;
-  } catch {
-  }
-  try {
-    return runGit(repo, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`]).out;
-  } catch {
-    return null;
-  }
-}
-function isAncestor(repo, a, b) {
-  try {
-    return runGit(repo, ["merge-base", "--is-ancestor", "--end-of-options", a, b], [0, 1]).status === 0;
+    return runGit(repo, ["rev-list", "-n", "1", "--end-of-options", tip, ...shas.map((s) => `^${s}`)]).out === "";
   } catch {
     return false;
-  }
-}
-function reflogCreatedAt(repo, ref) {
-  try {
-    const lines = runGit(repo, ["reflog", "show", "--date=unix", "--format=%gd", ref]).out.split("\n");
-    const m = /@\{(\d+)\}$/.exec(lines[lines.length - 1] ?? "");
-    return m === null ? null : Number(m[1]) * 1e3;
-  } catch {
-    return null;
   }
 }
 function readDiff(repo, base) {
@@ -1290,10 +1272,12 @@ function reviewedIsShipped(repo, tree, trackedTree, reviewHead) {
 }
 function timelineGates(ctx, featureDir, gateHashes) {
   const backed = [];
+  const runStart = Math.floor(Date.parse(ctx.startedAt) / 1e3) * 1e3;
   for (const line of repoLines(path6.join(featureDir, "timeline.ndjson"))) {
     if (!gateHashes.has(sha256(line))) continue;
     const rec = parseJsonObject(line);
-    if (rec !== null && rec.kind === "gate" && rec.feature === ctx.feature && typeof rec.round === "number") {
+    if (rec === null || typeof rec.ts !== "string" || !(Date.parse(rec.ts) >= runStart)) continue;
+    if (rec.kind === "gate" && rec.feature === ctx.feature && typeof rec.round === "number") {
       backed.push(rec);
     }
   }
@@ -1324,13 +1308,34 @@ function ruleVerdict(gate, row, fixed) {
   if (counted.some((s) => row.findings[s] > 0)) return "pass";
   return row.verdict;
 }
+function onNewCommit(f, p) {
+  return f.headSha !== null && p.headSha !== null && p.headSha !== f.headSha;
+}
+function passClears(f, p) {
+  if (f.tree !== null) return p.tree !== f.tree;
+  return f.headSha === null || onNewCommit(f, p);
+}
 var NOT_RE_REVIEWED = "captured fail, not re-reviewed";
-function applyAgentVerdicts(tl, verdictRows, runStart, repo) {
+function verdictCutoff(ledger, repo, feature) {
+  const last = ledger.lastRow(`results/${feature}/ship`);
+  let stored;
+  try {
+    stored = readResult(repo, feature, "ship");
+  } catch {
+    return -Infinity;
+  }
+  if (last === null || !stored.ok || last.sha256 !== sha256(stored.bytes)) return -Infinity;
+  const v = stored.value;
+  if (typeof v !== "object" || v === null || v.verdict !== "ready_to_merge") return -Infinity;
+  const at = typeof last.startedAt === "string" ? Date.parse(last.startedAt) : NaN;
+  return Number.isNaN(at) ? -Infinity : at;
+}
+function applyAgentVerdicts(tl, verdictRows, cutoff, repo) {
   const byGate = /* @__PURE__ */ new Map();
   const shipped = /* @__PURE__ */ new Map();
   for (const raw of verdictRows) {
     const row = agentRow(raw);
-    if (row === null || !(row.at >= runStart)) continue;
+    if (row === null || !(row.at >= cutoff)) continue;
     let counts2 = false;
     if (row.verdict === "pass" && row.startMatch && row.tree !== null && row.trackedTree !== null) {
       const key2 = `${row.tree} ${row.trackedTree} ${row.headSha ?? ""}`;
@@ -1348,14 +1353,16 @@ function applyAgentVerdicts(tl, verdictRows, runStart, repo) {
     rows.sort((a, b) => a.row.at - b.row.at);
     const passes = rows.filter((r) => r.counts).map((r) => r.row);
     const blinds = rows.filter((r) => r.blind).map((r) => r.row);
-    const open = rows.filter((r) => r.row.verdict === "fail").map((r) => r.row).filter((f) => !passes.some((p) => p.at > f.at && p.tree !== f.tree)).filter((f) => !blinds.some((b) => b.at > f.at && b.headSha !== f.headSha));
+    const open = rows.filter((r) => r.row.verdict === "fail").map((r) => r.row).filter((f) => !passes.some((p) => p.at > f.at && passClears(f, p))).filter((f) => !blinds.some((b) => b.at > f.at && onNewCommit(f, b)));
     if (open.length > 0) {
       tl.byName.set(name, { ...gate, verdict: "fail", findings: open[open.length - 1].findings, source: "agent" });
       stale.add(name);
       continue;
     }
-    if (passes.length === 0) continue;
-    const pick = passes[passes.length - 1];
+    const lastFail = Math.max(-Infinity, ...rows.filter((r) => r.row.verdict === "fail").map((r) => r.row.at));
+    const deciding = passes.filter((p) => p.at > lastFail);
+    if (deciding.length === 0) continue;
+    const pick = deciding[deciding.length - 1];
     tl.byName.set(name, { ...gate, verdict: ruleVerdict(name, pick, gate.fixed), findings: pick.findings, source: "agent" });
   }
   return stale;
@@ -1397,16 +1404,18 @@ function assembleShip(ctx, opts) {
   let gateHashes;
   let decisionRows;
   let verdictRows;
+  let cutoff;
   try {
     const ledger = openLedger(ctx.repo);
     gateHashes = new Set(ledger.readRows(`gates/${ctx.feature}`).map((r) => r.sha256));
     decisionRows = ledger.readRows(`decisions/${ctx.feature}`);
     verdictRows = ledger.readRows(`verdicts/${ctx.feature}`);
+    cutoff = verdictCutoff(ledger, ctx.repo, ctx.feature);
   } catch (e) {
     return { ok: false, error: e instanceof LedgerError ? e.code : "unsafe_path" };
   }
   const timeline = timelineGates(ctx, featureDir, gateHashes);
-  const notReReviewed = applyAgentVerdicts(timeline, verdictRows, Date.parse(ctx.startedAt), ctx.repo);
+  const notReReviewed = applyAgentVerdicts(timeline, verdictRows, cutoff, ctx.repo);
   const byName = timeline.byName;
   for (const required of opts.requiredGates ?? DEFAULT_REQUIRED_GATES) {
     if (!byName.has(required)) return { ok: false, error: "gate_missing", detail: required };
@@ -1565,22 +1574,21 @@ function shipBaseConfig(repo) {
   if (r.error === void 0 && r.status === 0) return r.stdout.replace(/\n$/, "");
   return "";
 }
-function checkShipBase(repo, base, configured, startedAt) {
-  if (!isLocalBranch(repo, base)) return;
-  const start = Date.parse(startedAt);
-  const before = (created) => created !== null && created <= start;
-  const tip = branchTip(repo, base);
-  if (tip === null) throw new Refusal("unsafe_base", "base");
-  const origin = originDefaultTip(repo);
-  const onDefault = origin !== null && isAncestor(repo, tip, origin);
-  const remote = onDefault ? null : originBranchTip(repo, base);
-  const onRemote = remote !== null && isAncestor(repo, tip, remote) && before(reflogCreatedAt(repo, `refs/remotes/origin/${base}`));
-  if (!onDefault && !onRemote) throw new Refusal("unsafe_base", "base");
-  for (const name of /* @__PURE__ */ new Set([base, configured])) {
-    if (!isLocalBranch(repo, name)) continue;
-    const created = reflogCreatedAt(repo, `refs/heads/${name}`);
-    if (created !== null && !before(created)) throw new Refusal("unsafe_base", "base");
+var MAX_ORIGIN_SHAS = 1e3;
+var SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+function originSnapshot(ledger, startedAt) {
+  const m = ledger.readMarker("run/ship.origin");
+  const shas = m?.shas;
+  if (m?.startedAt !== startedAt || !Array.isArray(shas) || shas.length > MAX_ORIGIN_SHAS) {
+    throw new Refusal("no_base_snapshot", "run/ship.origin");
   }
+  if (!shas.every((s) => typeof s === "string" && SHA.test(s))) throw new Refusal("no_base_snapshot", "run/ship.origin");
+  return shas;
+}
+function checkShipBase(repo, base, snapshot) {
+  if (!isLocalBranch(repo, base)) return;
+  const tip = branchTip(repo, base);
+  if (tip === null || !containedInAny(repo, tip, snapshot)) throw new Refusal("unsafe_base", "base");
 }
 function pluginRoot() {
   return path9.resolve(path9.dirname(fs10.realpathSync(process.argv[1] ?? "")), "..", "..", "..");
@@ -1613,7 +1621,7 @@ function runAssembler(phase, ctx, base) {
     case "ship": {
       if (base !== void 0) return assembleShip(ctx, { base });
       const chosen = shipBase(ctx.repo, ctx.valueDir);
-      checkShipBase(ctx.repo, chosen, shipBaseConfig(ctx.repo), ctx.startedAt);
+      checkShipBase(ctx.repo, chosen, originSnapshot(openLedger(ctx.repo), ctx.startedAt));
       return assembleShip(ctx, { base: chosen });
     }
   }
@@ -1686,6 +1694,7 @@ function reassemble(repo, feature, phase, stored) {
       startedAt: String(stored.startedAt),
       headSha: String(stored.headSha),
       valueDir: dir,
+      evidenceCutoff: typeof stored.evidenceCutoff === "string" ? stored.evidenceCutoff : null,
       now: () => /* @__PURE__ */ new Date()
     }, base);
   } finally {

@@ -12,16 +12,17 @@
  * which binds it, and `start`: whether the agent's SubagentStart snapshot (captureStart, ledger marker
  * `verdict-start/<agent_id>`) exists and equals it (security L4). Every git call shares one deadline (DEADLINE_MS).
  *
- * The final message: the input's last_assistant_message when it is a string, else the text of the last assistant
- * message in agent_transcript_path: its trailing entries that share one message.id, and nothing when they hold no text
- * (T31). The transcript is JSONL, opened with O_NOFOLLOW, a regular file only, and only its last TRANSCRIPT_TAIL_BYTES
- * are read. Either one over that cap records nothing.
+ * The final message (D41): only the text of the last assistant message in agent_transcript_path, never stdin's
+ * last_assistant_message (whoever runs the hook writes stdin): its trailing entries that share one message.id, and
+ * nothing when they hold no text (T31). The path must resolve (realpath) under ~/.claude/projects, which the tool gate
+ * protects. The transcript is JSONL, opened with O_NOFOLLOW, a regular file only, and only its last
+ * TRANSCRIPT_TAIL_BYTES are read; a final message over that cap records nothing.
  */
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { openLedger, type LedgerRow } from './ledger.js';
+import { openLedger, type Ledger, type LedgerRow } from './ledger.js';
 import { resolveFeature } from './feature.js';
 import { gitBin } from './git-bin.js';
 import { gitEnv } from './git.js';
@@ -50,14 +51,25 @@ export interface CaptureOptions {
   now?: () => Date;
   /** The one deadline every git call of this capture shares (performance L1); DEADLINE_MS by default. */
   deadlineMs?: number;
+  /**
+   * When the deadline starts, in epoch ms (performance LOW 1): the CLI passes its process start, so node start,
+   * resolveRepo, resolveFeature and the ledger key spend from the same budget; the call's own start by default.
+   */
+  startMs?: number;
 }
 
 export type StartOutcome = { recorded: true } | { recorded: false; reason: string };
 
-/** Under the hook's own 5 s bound (oss-verdict-capture.sh), so a slow repo records '' trees instead of no row. */
-const DEADLINE_MS = 4000;
+/**
+ * Well under the hook's own 7 s bound (oss-verdict-capture.sh; hooks.json allows 10 s), counted from the process start,
+ * so a slow repo records '' trees instead of no row.
+ */
+export const DEADLINE_MS = 3500;
 /** A changed file over this is not hashed: the tree is '' and the row never counts (D26 label). */
 const BIG_FILE_BYTES = 50 * 1024 * 1024;
+/** Performance LOW 2: over this many changed paths, or this many bytes of changed files in all, the tree is '' at once. */
+const MAX_CHANGED_PATHS = 20_000;
+const MAX_CHANGED_BYTES = 500 * 1024 * 1024;
 /** Temp index folders older than this in the known folder are left over from a killed capture, and removed. */
 const STALE_TMP_MS = 10 * 60 * 1000;
 
@@ -90,9 +102,25 @@ export function gateForAgent(agentType: unknown): string | null {
   return Object.prototype.hasOwnProperty.call(REVIEW_AGENT_GATES, agentType) ? REVIEW_AGENT_GATES[agentType] : null;
 }
 
-/** The text of the last assistant entry with text in the tail of a JSONL transcript; null when unsafe or absent. */
-function transcriptMessage(file: unknown): string | null {
+/**
+ * D41: the transcript's real path when `file` is an absolute path, not itself a link, that resolves (realpath) under
+ * the real ~/.claude/projects, which the tool gate protects; null otherwise (a symlinked folder cannot lead out).
+ */
+function projectsTranscript(file: unknown): string | null {
   if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
+  try {
+    const root = fs.realpathSync(path.join(os.homedir(), '.claude', 'projects'));
+    const real = fs.realpathSync(file);
+    return real.startsWith(root + path.sep) && !fs.lstatSync(file).isSymbolicLink() ? real : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The text of the last assistant entry with text in the tail of a JSONL transcript; null when unsafe or absent. */
+function transcriptMessage(input: unknown): string | null {
+  const file = projectsTranscript(input);
+  if (file === null) return null;
   let fd: number;
   try {
     fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
@@ -140,9 +168,8 @@ function transcriptMessage(file: unknown): string | null {
   return parts.length > 0 ? parts.join('\n') : null;
 }
 
+/** D41: the final message comes only from agent_transcript_path, never from stdin's last_assistant_message. */
 function finalMessage(input: Record<string, unknown>): string | null {
-  const last = input.last_assistant_message;
-  if (typeof last === 'string') return Buffer.byteLength(last) > TRANSCRIPT_TAIL_BYTES ? null : last;
   return transcriptMessage(input.agent_transcript_path);
 }
 
@@ -177,7 +204,7 @@ const TREE_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 type Deadline = () => number;
 
 function deadlineOf(opts: CaptureOptions): Deadline {
-  const end = Date.now() + (opts.deadlineMs ?? DEADLINE_MS);
+  const end = (opts.startMs ?? Date.now()) + (opts.deadlineMs ?? DEADLINE_MS);
   return () => end - Date.now();
 }
 
@@ -187,7 +214,8 @@ function deadlineOf(opts: CaptureOptions): Deadline {
  */
 function boundedGit(repo: string, args: string[], extra: NodeJS.ProcessEnv, left: Deadline, input?: Buffer): Buffer | null {
   const git = gitBin();
-  const timeout = left();
+  // spawnSync needs a whole number; the CLI's process-start time (performance.timeOrigin) is fractional.
+  const timeout = Math.floor(left());
   if (git === '' || timeout <= 0) return null;
   const env = { ...gitEnv(), GIT_CONFIG_NOSYSTEM: '1', PATH: '/usr/bin:/bin', ...extra };
   const r = spawnSync(git, ['-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', ...args], {
@@ -233,7 +261,8 @@ function treeTmpDir(): string | null {
  * blobs (performance M1): the changed paths (`all`: modified, deleted and untracked not ignored, .oss excluded;
  * `tracked`: modified and deleted, .oss included but never consulted) go to `update-index --info-only` (hashes, no
  * object writes), then `write-tree --missing-ok`. Only tree objects are written. '' when git cannot build it in time,
- * or a changed file is over BIG_FILE_BYTES (that row never counts).
+ * a changed file is over BIG_FILE_BYTES, or the changed list is over MAX_CHANGED_PATHS paths or MAX_CHANGED_BYTES in
+ * all (performance LOW 2: checked before update-index hashes anything); that row never counts.
  */
 function reviewedTree(repo: string, index: string, which: 'all' | 'tracked', dir: string, left: Deadline): string {
   const tmpIndex = path.join(dir, `index-${which}`);
@@ -248,8 +277,14 @@ function reviewedTree(repo: string, index: string, which: 'all' | 'tracked', dir
     : ['ls-files', '-z', '-m', '-d'];
   const changed = boundedGit(repo, list, env, left);
   if (changed === null) return '';
-  for (const p of new Set(changed.toString('utf-8').split('\0'))) {
-    if (p !== '' && (fs.lstatSync(path.join(repo, p), { throwIfNoEntry: false })?.size ?? 0) > BIG_FILE_BYTES) return '';
+  const paths = new Set(changed.toString('utf-8').split('\0'));
+  paths.delete('');
+  if (paths.size > MAX_CHANGED_PATHS) return '';
+  let total = 0;
+  for (const p of paths) {
+    const size = fs.lstatSync(path.join(repo, p), { throwIfNoEntry: false })?.size ?? 0;
+    total += size;
+    if (size > BIG_FILE_BYTES || total > MAX_CHANGED_BYTES) return '';
   }
   if (changed.length > 0) {
     const args = ['update-index', '--add', '--remove', '--info-only', '-z', '--stdin'];
@@ -267,9 +302,27 @@ function reviewedTrees(repo: string, left: Deadline): { tree: string; trackedTre
   const dir = treeTmpDir();
   if (dir === null) return none;
   try {
-    return { tree: reviewedTree(repo, index, 'all', dir, left), trackedTree: reviewedTree(repo, index, 'tracked', dir, left) };
+    // The tracked tree first: its list is short and cheap, so a huge untracked set cannot spend its share (LOW 2).
+    const trackedTree = reviewedTree(repo, index, 'tracked', dir, left);
+    return { tree: reviewedTree(repo, index, 'all', dir, left), trackedTree };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** A start snapshot older than this belongs to an agent that never stopped (performance INFO 7), and is removed. */
+const STALE_START_MS = 24 * 60 * 60 * 1000;
+
+/** Removes the ledger's verdict-start markers whose `ts` is over STALE_START_MS before `now` (or unreadable). */
+function clearStaleStarts(ledger: Ledger, now: Date): void {
+  const dir = path.join(ledger.dir, 'verdict-start');
+  const st = fs.lstatSync(dir, { throwIfNoEntry: false });
+  if (st === undefined || st.isSymbolicLink() || !st.isDirectory()) return;
+  for (const name of fs.readdirSync(dir)) {
+    if (!ID_RE.test(name)) continue;
+    const ts = ledger.readMarker(startMarker(name))?.ts;
+    const at = typeof ts === 'string' ? Date.parse(ts) : NaN;
+    if (Number.isNaN(at) || now.getTime() - at > STALE_START_MS) ledger.clearMarker(startMarker(name));
   }
 }
 
@@ -279,7 +332,7 @@ function startMarker(agent: string): string {
 }
 
 /**
- * Records a review agent's start snapshot from a SubagentStart hook input (security L4): its reviewed trees, in the
+ * Records a review agent's start snapshot from a SubagentStart hook input (security L4): its reviewed trees and HEAD (M1), in the
  * owner-only ledger marker `verdict-start/<agent_id>`. The stop row then says whether the agent's code changed while it
  * ran. Never throws.
  */
@@ -294,18 +347,33 @@ export function captureStart(input: unknown, opts: CaptureOptions = {}): StartOu
     const cwd = typeof hook.cwd === 'string' && path.isAbsolute(hook.cwd) ? hook.cwd : process.cwd();
     const repo = resolveRepo(cwd);
     if (repo === null) return { recorded: false, reason: 'no_repo' };
+    const headSha = gitText(repo, ['rev-parse', '--verify', 'HEAD^{commit}'], left) ?? '';
     const trees = reviewedTrees(repo, left);
-    openLedger(repo).writeMarker(startMarker(agent), { ...trees, ts: (opts.now ?? (() => new Date()))().toISOString() });
+    const ledger = openLedger(repo);
+    const now = (opts.now ?? (() => new Date()))();
+    clearStaleStarts(ledger, now);
+    ledger.writeMarker(startMarker(agent), { ...trees, headSha, ts: now.toISOString() });
     return { recorded: true };
   } catch {
     return { recorded: false, reason: 'error' };
   }
 }
 
-/** match: a start snapshot exists and equals the stop trees; changed: it differs; missing: there is none. */
-function startState(snap: LedgerRow | null, trees: { tree: string; trackedTree: string }): 'match' | 'changed' | 'missing' {
+/**
+ * missing: there is no start snapshot. With both stop trees built, match when the snapshot's trees equal them. With a
+ * stop tree missing ('', a no-tree row for D36), two empty snapshots prove nothing (code review M1), so match only when
+ * the snapshot's HEAD is known and equals the stop's (no commit landed while the agent ran). Otherwise changed.
+ */
+function startState(
+  snap: LedgerRow | null,
+  trees: { tree: string; trackedTree: string },
+  headSha: string,
+): 'match' | 'changed' | 'missing' {
   if (snap === null) return 'missing';
-  return snap.tree === trees.tree && snap.trackedTree === trees.trackedTree ? 'match' : 'changed';
+  if (trees.tree !== '' && trees.trackedTree !== '') {
+    return snap.tree === trees.tree && snap.trackedTree === trees.trackedTree ? 'match' : 'changed';
+  }
+  return headSha !== '' && snap.headSha === headSha ? 'match' : 'changed';
 }
 
 /** Records the review agent's verdict block from a SubagentStop hook input. Never throws. */
@@ -322,11 +390,11 @@ export function captureVerdict(input: unknown, opts: CaptureOptions = {}): Captu
     if (block === 'multiple') return { captured: false, reason: 'multiple_blocks' };
     if (block === 'invalid') return { captured: false, reason: 'invalid_block' };
 
+    const left = deadlineOf(opts);
     const cwd = typeof hook.cwd === 'string' && path.isAbsolute(hook.cwd) ? hook.cwd : process.cwd();
     const repo = resolveRepo(cwd);
     const feature = repo === null ? null : resolveFeature(repo);
     if (repo === null || feature === null) return { captured: false, reason: 'no_feature' };
-    const left = deadlineOf(opts);
     const agent = plainId(hook.agent_id);
     const ledger = openLedger(repo);
     // Before the trees: a tree build that runs out of time still leaves the row its headSha (D36).
@@ -349,7 +417,7 @@ export function captureVerdict(input: unknown, opts: CaptureOptions = {}): Captu
       // outside .oss differs from `tree` by nothing but files that were untracked at review and left out (finding 4),
       // and only when `start` is match (security L4).
       ...trees,
-      start: startState(snap, trees),
+      start: startState(snap, trees, headSha),
     });
     return { captured: true, gate, feature };
   } catch {

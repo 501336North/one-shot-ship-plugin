@@ -32,11 +32,13 @@ prf_build() {
 # ⚠ changes existing test: REQUIREMENTS AC-003.5 — gates are the timeline gate lines, whose names are ship.md's gate.txt values
 prf_ship() {
     local vd g
-    prf_notify ship start '{}' >/dev/null 2>&1
     # ⚠ changes existing test: D34 — a ship base must be an ancestor of origin's default branch, so origin/main is set
     #   at main's tip when the repo has none.
+    # ⚠ changes existing test: D40 — the base must be in the origin snapshot ship start records, so origin/main is set
+    #   before the start.
     (cd "$PRF_REPO" && { git rev-parse -q --verify refs/remotes/origin/main >/dev/null \
         || git update-ref refs/remotes/origin/main main; }) || return 1
+    prf_notify ship start '{}' >/dev/null 2>&1
     (cd "$PRF_REPO" && echo change > change.txt && git add change.txt && git commit -q -m change) || return 1
     for g in code-review performance security; do
         vd=$(prf_value_dir) && [[ -n "$vd" ]] || return 1

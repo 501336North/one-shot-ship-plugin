@@ -18,7 +18,10 @@
 # the hook then start the push detached (oss-notify starts it after its command line). `push` copies the
 # feature's waiting lines to the API (B5).
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Security L5: the hook's own folder with builtins only, never PATH's dirname (as oss-stop-dispatch.sh does), so a
+# planted dirname cannot point the sources below at planted copies.
+SCRIPT_DIR="${BASH_SOURCE[0]%/*}"; [[ "$SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]] && SCRIPT_DIR=.
+SCRIPT_DIR="$(cd "$SCRIPT_DIR" && pwd)"
 # shellcheck source=hooks/oss-api-curl.sh
 source "$SCRIPT_DIR/oss-api-curl.sh" || return 1 2>/dev/null || exit 1
 # shellcheck source=hooks/oss-safe-path.sh

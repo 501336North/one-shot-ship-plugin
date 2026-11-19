@@ -29,12 +29,9 @@ import { assemblePlan } from '../phase-results/assemble-plan.js';
 import {
   assembleShip,
   branchTip,
+  containedInAny,
   hasOriginBranch,
-  isAncestor,
   isLocalBranch,
-  originBranchTip,
-  originDefaultTip,
-  reflogCreatedAt,
 } from '../phase-results/assemble-ship.js';
 import { LedgerError, ledgerKey, openLedger, parseRunRow, type Ledger } from '../phase-results/ledger.js';
 import { loadPhaseSchema, PHASES, type Phase } from '../phase-results/schemas.js';
@@ -124,30 +121,35 @@ function shipBaseConfig(repo: string): string {
   return '';
 }
 
+/** D40: at most this many origin SHAs in a ship start snapshot; a bigger one is refused (fail closed). */
+const MAX_ORIGIN_SHAS = 1000;
+const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+
 /**
- * D34 corrected (pen F9; user re-pick, ship round 3): a ship base is accepted when its tip is (a) an ancestor of, or
- * equal to, origin's default branch tip (origin/HEAD, else origin/main), or (b) an ancestor of, or equal to,
- * refs/remotes/origin/<base>, whose oldest reflog entry is at or before this ship run's start (no reflog: refused).
- * Either way, neither the base nor the oss.shipBase-named ref may have been created (oldest reflog entry) after the
- * run started; with no reflog, that check passes. Refuses `unsafe_base`. A name that is not a local branch is left to
- * assembleShip's ref checks (diff_unavailable).
+ * D40 (security M1, pen F4): the SHAs of refs/remotes/origin/* that oss-notify's ship start recorded in the ledger
+ * (`run/ship.origin`, `{startedAt, shas}`), for this run only (its startedAt). Refuses `no_base_snapshot` when there is
+ * none for this run (a run started before D40, or git failed or found over MAX_ORIGIN_SHAS refs at start), or it is
+ * malformed or over the cap.
  */
-function checkShipBase(repo: string, base: string, configured: string, startedAt: string): void {
-  if (!isLocalBranch(repo, base)) return;
-  const start = Date.parse(startedAt);
-  const before = (created: number | null): boolean => created !== null && created <= start;
-  const tip = branchTip(repo, base);
-  if (tip === null) throw new Refusal('unsafe_base', 'base');
-  const origin = originDefaultTip(repo);
-  const onDefault = origin !== null && isAncestor(repo, tip, origin);
-  const remote = onDefault ? null : originBranchTip(repo, base);
-  const onRemote = remote !== null && isAncestor(repo, tip, remote) && before(reflogCreatedAt(repo, `refs/remotes/origin/${base}`));
-  if (!onDefault && !onRemote) throw new Refusal('unsafe_base', 'base');
-  for (const name of new Set([base, configured])) {
-    if (!isLocalBranch(repo, name)) continue;
-    const created = reflogCreatedAt(repo, `refs/heads/${name}`);
-    if (created !== null && !before(created)) throw new Refusal('unsafe_base', 'base');
+function originSnapshot(ledger: Ledger, startedAt: string): string[] {
+  const m = ledger.readMarker('run/ship.origin');
+  const shas = m?.shas;
+  if (m?.startedAt !== startedAt || !Array.isArray(shas) || shas.length > MAX_ORIGIN_SHAS) {
+    throw new Refusal('no_base_snapshot', 'run/ship.origin');
   }
+  if (!shas.every((s): s is string => typeof s === 'string' && SHA.test(s))) throw new Refusal('no_base_snapshot', 'run/ship.origin');
+  return shas;
+}
+
+/**
+ * D40 (replaces D34's reflog rules): a ship base is accepted only when its tip is an ancestor of, or equal to, a SHA in
+ * the origin snapshot ship start recorded. Local refs and reflogs, which the model can write, never count. Refuses
+ * `unsafe_base`. A name that is not a local branch is left to assembleShip's ref checks (diff_unavailable).
+ */
+function checkShipBase(repo: string, base: string, snapshot: readonly string[]): void {
+  if (!isLocalBranch(repo, base)) return;
+  const tip = branchTip(repo, base);
+  if (tip === null || !containedInAny(repo, tip, snapshot)) throw new Refusal('unsafe_base', 'base');
 }
 
 /** The plugin root this bundle sits in: <root>/watcher/dist/cli/phase-result.cjs. */
@@ -187,7 +189,7 @@ function runAssembler(phase: Phase, ctx: AssembleContext, base?: string): Assemb
     case 'ship': {
       if (base !== undefined) return assembleShip(ctx, { base });
       const chosen = shipBase(ctx.repo, ctx.valueDir);
-      checkShipBase(ctx.repo, chosen, shipBaseConfig(ctx.repo), ctx.startedAt);
+      checkShipBase(ctx.repo, chosen, originSnapshot(openLedger(ctx.repo), ctx.startedAt));
       return assembleShip(ctx, { base: chosen });
     }
   }
@@ -278,6 +280,7 @@ function reassemble(repo: string, feature: string, phase: Phase, stored: Record<
       startedAt: String(stored.startedAt),
       headSha: String(stored.headSha),
       valueDir: dir,
+      evidenceCutoff: typeof stored.evidenceCutoff === 'string' ? stored.evidenceCutoff : null,
       now: () => new Date(),
     }, base);
   } finally {

@@ -136,6 +136,10 @@ describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
   function newProject(): string {
     const dir = fs.realpathSync(fs.mkdtempSync(path.join(home, 'proj-')));
     makeFeatureRepo(dir, 'chain-feature', 'ship');
+    // ⚠ changes existing test: D40 — ship start snapshots refs/remotes/origin/*, and the ship base must be in that
+    //   snapshot. The wrapper's own `ship start` runs before the fixture, so the project has origin/main (at main, the
+    //   base) from the outset, as a real repo would.
+    execFileSync('git', ['update-ref', 'refs/remotes/origin/main', 'main'], { cwd: dir, stdio: 'ignore' });
     return dir;
   }
 

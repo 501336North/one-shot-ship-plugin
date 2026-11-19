@@ -29,10 +29,13 @@ T=$(mktemp -d); T=$(cd "$T" && pwd -P)
 # visual (no settings.json): this case asserts the stub notifier ran once.
 SAFE_PATH=/usr/bin:/bin:/usr/sbin:/sbin
 held_by() { exec >/dev/null 2>&1; /bin/cat; /bin/rm -f "$1"; }
+# Round 5 (code review L2): cleanup runs before the summary, so a lingering process fails the run; the EXIT trap only
+# covers an early exit (T already gone or kept: nothing to do).
 cleanup() {
+    [[ -n "$T" && -d "$T" ]] || return 0
     local held=""
     for _ in $(seq 300); do held=$(cd "$T" && ls -d held.* 2>/dev/null); [[ -z "$held" ]] && break; sleep 0.1; done
-    if [[ -n "$held" ]]; then echo "✗ FAIL: a process the hook run started still runs after 30 s (kept $T)"; return 1; fi
+    if [[ -n "$held" ]]; then fail "every process the hook run started has exited" "still held after 30 s: $held (kept $T)"; T=""; return 1; fi
     rm -rf "$T"
 }
 trap cleanup EXIT
@@ -67,5 +70,6 @@ else
     fail "$name" "cmd='$cmd' rc=$rc stdout='$out' notified='${notified:-0}' node=$([[ -e "$T/node.calls" ]] && echo started || echo no) stderr=$(head -c 300 "$T/stderr")"
 fi
 
+cleanup
 echo "$RUN run, $FAILED failed"
 [[ $FAILED -eq 0 ]]

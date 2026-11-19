@@ -46,6 +46,17 @@ afterEach(() => {
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
+const BLOCK = '```oss-verdict\n{"verdict":"pass","findings":{"critical":0,"high":0,"medium":0,"low":0,"info":0}}\n```';
+
+/** The agent's transcript under ~/.claude/projects, its final message `text` (D41: the only verdict source). */
+function agentTranscript(text: string): string {
+  const dir = path.join(home, '.claude', 'projects', 'p');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'agent.jsonl');
+  fs.writeFileSync(file, JSON.stringify({ type: 'assistant', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text }] } }) + '\n');
+  return file;
+}
+
 function run(...args: string[]): { status: number | null; stdout: string } {
   const r = spawnSync(process.execPath, [CLI, ...args], { cwd: repo, env: { ...process.env, HOME: home }, encoding: 'utf-8', timeout: 20_000 });
   return { status: r.status, stdout: r.stdout };
@@ -59,9 +70,34 @@ describe('verdict-capture CLI: start mode (security L4)', () => {
     expect(run('start', input)).toEqual({ status: 0, stdout: '' });
     expect(openLedger(repo).hasMarker('verdict-start/agent-9')).toBe(true);
 
-    const block = '```oss-verdict\n{"verdict":"pass","findings":{"critical":0,"high":0,"medium":0,"low":0,"info":0}}\n```';
-    fs.writeFileSync(input, JSON.stringify({ ...hook, hook_event_name: 'SubagentStop', last_assistant_message: block }));
+    // ⚠ changes existing test: D41 (security M2) — the stop reads its verdict only from agent_transcript_path under
+    //   ~/.claude/projects (it was last_assistant_message).
+    fs.writeFileSync(input, JSON.stringify({ ...hook, hook_event_name: 'SubagentStop', agent_transcript_path: agentTranscript(BLOCK) }));
     expect(run(input)).toEqual({ status: 0, stdout: '' });
     expect(openLedger(repo).readRows(`verdicts/${FEATURE}`)).toMatchObject([{ gate: 'security', start: 'match' }]);
+  });
+});
+
+/**
+ * D41 (security M2, CLI part): whoever runs the hook writes its stdin, so the CLI never takes the verdict from stdin's
+ * last_assistant_message, nor from a transcript outside ~/.claude/projects; it records no row then, and still exits 0.
+ */
+describe('verdict-capture CLI: the verdict comes only from the agent transcript (D41)', () => {
+  const hook = { session_id: 's1', agent_id: 'agent-9', agent_type: 'oss:security-auditor', cwd: repo, hook_event_name: 'SubagentStop' };
+
+  it('a stop input carrying only last_assistant_message records no row', () => {
+    const input = path.join(tmp, 'in.json');
+    fs.writeFileSync(input, JSON.stringify({ ...hook, cwd: repo, last_assistant_message: BLOCK }));
+    expect(run(input)).toEqual({ status: 0, stdout: '' });
+    expect(openLedger(repo).readRows(`verdicts/${FEATURE}`)).toEqual([]);
+  });
+
+  it('a transcript outside ~/.claude/projects records no row', () => {
+    const input = path.join(tmp, 'in.json');
+    const file = path.join(tmp, 'forged.jsonl');
+    fs.copyFileSync(agentTranscript(BLOCK), file);
+    fs.writeFileSync(input, JSON.stringify({ ...hook, cwd: repo, agent_transcript_path: file }));
+    expect(run(input)).toEqual({ status: 0, stdout: '' });
+    expect(openLedger(repo).readRows(`verdicts/${FEATURE}`)).toEqual([]);
   });
 });

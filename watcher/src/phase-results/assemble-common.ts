@@ -16,6 +16,11 @@ export interface AssembleContext {
   headSha: string;
   valueDir: string | null;
   now: () => Date;
+  /**
+   * D42: the evidence cutoff. Undefined: assemble now and store the cutoff; a string: re-check with that cutoff;
+   * null: a result from before D42, checked by the old rule (every event since startedAt).
+   */
+  evidenceCutoff?: string | null;
 }
 
 export type AssembleOutcome =

@@ -426,5 +426,43 @@ if [[ $rc -eq 0 ]] && printf '%s' "$out" | jq -e '.decision == "block" and (.rea
 else fail "fake empty tools first on PATH: the stop is still blocked" "rc=$rc out=$out fake=$(tr '\n' ' ' < "$T/fake.calls" 2>/dev/null) err=$(cat "$T/stderr")"; fi
 cleanup
 
+# --- R-257 ship fix round 5 ------------------------------------------------------------------------------------
+# 28-31. Pen F3 (ADR-1, never silent): `git stash -a` (the tool gate allows it) removes the untracked
+#     .oss/workflow-state.json, or all of .oss. The fast path decides from this session's run rows in the protected
+#     ledger, not from those repo files: a started phase still goes to the dispatcher, or the shell fails open loudly.
+sandbox; start_phase plan; rm -f "$T/repo/.oss/workflow-state.json"
+out=$(stop false); rc=$?
+if [[ $rc -eq 0 ]] && printf '%s' "$out" | jq -e '.decision == "block" and (.reason | test("plan"))' >/dev/null 2>&1; then
+    pass "started phase, workflow-state.json gone: the stop is still blocked"
+else fail "started phase, workflow-state.json gone: the stop is still blocked" "rc=$rc out=$out err=$(cat "$T/stderr")"; fi
+cleanup
+
+sandbox; start_phase plan; rm -rf "$T/repo/.oss"
+out=$(stop false); rc=$?
+if [[ $rc -eq 0 && -f "$(ledger_dir)/unverified/$FEATURE/plan" ]] \
+    && printf '%s' "$out" | jq -e '.systemMessage | test("plan")' >/dev/null 2>&1; then
+    pass "started phase, .oss gone: the dispatcher marks it unverified and says so"
+else fail "started phase, .oss gone: the dispatcher marks it unverified and says so" "rc=$rc out=$out err=$(cat "$T/stderr")"; fi
+cleanup
+
+sandbox; start_phase plan; rm -rf "$T/repo/.oss"; : > "$T/home/.oss/node-path"
+out=$(cd "$T/repo" && h=$(/usr/bin/mktemp "$T/held.XXXXXX") \
+    && printf '{"session_id":"s1","stop_hook_active":false,"cwd":"%s"}' "$T/repo" \
+    | env HOME="$T/home" PATH="$T/bin:$SAFE_PATH:$RUNDIR/node-only" "$SH" "$HOOK" 2>"$T/stderr" 9> >(held_by "$h")); rc=$?
+if [[ $rc -eq 0 && -f "$(ledger_dir)/unverified/$FEATURE/plan" ]] \
+    && printf '%s' "$out" | jq -e '.systemMessage | test("node_missing")' >/dev/null 2>&1; then
+    pass "started phase, .oss gone, no node: the shell marks it unverified and says so"
+else fail "started phase, .oss gone, no node: the shell marks it unverified and says so" "rc=$rc out=$out err=$(cat "$T/stderr")"; fi
+cleanup
+
+# 31. Performance: no .oss and only another session's run rows: no jq, no git and no dispatcher (builtins only).
+sandbox; start_phase plan other-session; rm -rf "$T/repo/.oss"; sandbox_plugin "$CLI_RECORDER"
+for tool in jq git; do printf '#!/bin/bash\necho %s >> "%s"\nexit 1\n' "$tool" "$T/tools.calls" > "$T/bin/$tool"; chmod +x "$T/bin/$tool"; done
+out=$(stop false CLAUDE_PLUGIN_ROOT="$T/plugin"); rc=$?
+if [[ $rc -eq 0 && -z "$out" && ! -e "$T/tools.calls" && ! -e "$T/cli.calls" ]]; then
+    pass "no .oss, another session's run only: no jq, no git, no dispatcher"
+else fail "no .oss, another session's run only: no jq, no git, no dispatcher" "rc=$rc out=$out calls=$(tr '\n' ' ' < "$T/tools.calls" 2>/dev/null) cli=$(cat "$T/cli.calls" 2>/dev/null)"; fi
+cleanup
+
 echo; echo "Ran $RUN, failed $FAILED"
 [[ $FAILED -eq 0 ]]

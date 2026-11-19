@@ -120,6 +120,25 @@
 - [x] D38: fixed R-257's two flaky hook tests, oss-stop-dispatch and notify-timeline. The cause was the macOS first-exec scan of fresh stubs; the stubs are now warmed once per run. R-266's round20b flake was already fixed by #236.
 - [x] The notifier leak: four R-257 hook tests could reach the real terminal-notifier after `rm -rf $T`. They now use a safe PATH, a settings.json with style "none" and an fd-9 drain, and are proven with a tripwire.
 
+### Ship round 5 fixes, after gate round 3 (2026-11-19)
+- [x] Gate round 3: code review, security and pen test failed; performance passed. The user picked D39-D44.
+- [x] Builder A (verdicts):
+  - H1: only passes newer than the newest fail decide.
+  - Pen F1: open fails survive a restarted run, and gate lines are compared at whole seconds.
+  - Pen F2 and D43: rules for fails with no tree or no headSha.
+  - M1: a blind start no longer records match.
+  - D41: the capture CLI reads only the agent transcript.
+  - The capture deadline runs from process start; changed-path caps; stale start markers are cleared; the 500 ms bound; no PATH dirname.
+- [x] Builder B (Stop):
+  - D42: evidence cutoff for build and ideate.
+  - Pen F3: the Stop fast path decides from ledger run rows.
+  - stop-hook-wired now fails when a notifier lingers.
+- [x] Builder C:
+  - D40: an origin snapshot in run/ship.origin, and the base must be contained in it.
+  - D41: a new gate rule refuses direct calls to the capture hook or CLI.
+  - IFS allowed only as a prefix to read.
+- [x] Builder D: D43, D44 (refuse verdict-capture.js), and the ship-wrapper-chain setup (an origin ref for D40).
+
 ### Later
 - [ ] Ship into feat/determinism-sprint/build (SD-1)
 - [ ] T21 oss-lab (after the plugin ships)
@@ -127,4 +146,4 @@
 ## Blockers
 - None. R-266's 4 red base tests are fixed in #233 (4458bddb), and R-257 is rebased onto it.
 
-## Last Updated: 2026-11-18 23:29 CST by /oss:ship (round 4 fixes)
+## Last Updated: 2026-11-19 08:13 CST by /oss:ship (round 5 fixes)

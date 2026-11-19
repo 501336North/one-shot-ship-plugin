@@ -139,3 +139,14 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
   - drain fd 9 before cleanup.
   Check any run of these tests through a tripwire PATH. Pre-existing non-R-257 tests with the inherited PATH were left as they are and raised with the user.
 - **Sprint D re-scope (R-266 coordinator, 2026-11-18):** later bundles plug into phase results (claims[], chain[]) and the Stop dispatcher: R-271/R-275 gate discipline, the R-254 workflow guard (`requires`, a pending-chain Stop check) and R-264 code checks. Keep watcher/src/stop/dispatch.ts and the result schemas easy to extend. Build none of it in R-257.
+
+## Ship round 5 notes, builder B (2026-11-19 05:54 CST)
+- **D42 evidence cutoff:** build and ideate results carry an optional `evidenceCutoff` (schema: common timestamp), set to the assemble time. Build counts test-run events with ts <= cutoff; ideate counts a pick only when its whole `answeredAt` second ends by the cutoff (the hook stamps seconds). The assemblers take `evidenceCutoff` in their context: undefined = assemble now, a string = re-check with it, null = an older result with no cutoff (old rule, no field).
+- **Needs builder C's file:** `reassemble` in watcher/src/cli/phase-result.ts must pass `evidenceCutoff: typeof stored.evidenceCutoff === 'string' ? stored.evidenceCutoff : null` for build and ideate. Until then, check re-derives with cutoff = now and the three D42 tests fail.
+- **Stop fast path (pen F3):** the workflow-state.json gate is gone. A folder with no .oss is still checked when this session has a run row anywhere in ~/.oss/ledger/*/run/* (one fixed-path grep, -D skip, only when no .oss was found and run files exist).
+
+## Ship round 5 notes (2026-11-19)
+- **D40 needs an `origin` remote.** Ship start snapshots refs/remotes/origin/*. A repo with no origin, or with its remote under another name, gets an empty snapshot, and every base is refused (unsafe_base or no_base_snapshot). Without a remote no PR can be opened anyway, but a differently named remote is a stricter rule than before. Raise it with the user if it matters.
+- **Capture timeouts:** resolveRepo, resolveFeature and ledgerKey keep their own 2 s git timeouts. The 3.5 s deadline is created before them, but they cannot be capped inside it. The 7 s shell bound still covers the worst case.
+- **F1 limit:** results rows hold no verdict, so only the latest stored ship result can set the cutoff. If ready_to_merge is followed by a blocked ship, every row counts, which is stricter.
+- **Staging:** the D41/D44 gate rule refuses any Bash call naming verdict-capture.cjs or verdict-capture.js, so stage watcher/dist by folder (`git add -u watcher/dist`).

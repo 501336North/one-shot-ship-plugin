@@ -4,6 +4,10 @@
  * Decisions come from the hook's record file, counted only when the sha256 of the exact line matches a private ledger
  * row with the same feature and id, and the record's own feature is this feature. Zero decisions is valid (D18).
  * DESIGN.md needs a whole line `Status: COMMITTED`. Open questions are model text from `open-questions.json`.
+ *
+ * D42 (round 5, finding 1): the result stores its evidence cutoff, the assemble time, and a record answered after it
+ * (its hook-stamped `answeredAt`) is not counted, so a later picker (plan's) never makes a finished ideate look
+ * mismatched. A re-check passes the stored cutoff; `null` re-checks an older result with no cutoff (the old rule).
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -23,6 +27,9 @@ const FILE_CAP = 1024 * 1024;
 const MAX_DECISIONS = 200;
 const TEXT_CAP = 4000;
 const KIND_CAP = 64;
+
+/** D42: undefined assembles now (cutoff = now); a string re-checks with that cutoff; null re-checks with none. */
+export type IdeateContext = AssembleContext & { evidenceCutoff?: string | null };
 
 type FileRead = { ok: true; text: string | null } | { ok: false; error: string };
 
@@ -60,6 +67,14 @@ function ledgerKeys(ctx: AssembleContext): Set<string> {
   return keys;
 }
 
+/**
+ * D42: the hook stamps answeredAt in whole seconds, so a pick made after the cutoff in the cutoff's own second reads as
+ * that second. A pick counts only when its whole second ends by the cutoff, so every later pick is excluded on re-check.
+ */
+function answeredAfter(answeredAt: unknown, cutoff: string): boolean {
+  return typeof answeredAt === 'string' && Date.parse(answeredAt) + 1000 > Date.parse(cutoff);
+}
+
 function readOpenQuestions(ctx: AssembleContext): string[] {
   const raw = readValue(ctx, 'open-questions.json');
   const parsed = raw === null ? [] : parseJsonOr(raw, []);
@@ -67,7 +82,8 @@ function readOpenQuestions(ctx: AssembleContext): string[] {
   return parsed.filter((q): q is string => typeof q === 'string').map((q) => clipText(q, TEXT_CAP) ?? '');
 }
 
-export function assembleIdeate(ctx: AssembleContext): AssembleOutcome {
+export function assembleIdeate(ctx: IdeateContext): AssembleOutcome {
+  const cutoff = ctx.evidenceCutoff === undefined ? ctx.now().toISOString() : ctx.evidenceCutoff;
   const dir = path.join(ctx.repo, '.oss', 'dev', 'active', ctx.feature);
 
   const design = readRepoFile(path.join(dir, 'DESIGN.md'));
@@ -92,6 +108,7 @@ export function assembleIdeate(ctx: AssembleContext): AssembleOutcome {
       const rec = parseJsonObject(line);
       if (rec === null || rec.feature !== ctx.feature || typeof rec.id !== 'string') continue;
       if (!keys.has(`${rec.id}\n${sha256(line)}`)) continue;
+      if (cutoff !== null && answeredAfter(rec.answeredAt, cutoff)) continue;
       const d: Record<string, unknown> = { id: rec.id };
       const question = clipText(rec.question, TEXT_CAP);
       const answer = clipText(rec.answer, TEXT_CAP);
@@ -112,6 +129,7 @@ export function assembleIdeate(ctx: AssembleContext): AssembleOutcome {
       decisionsRecorded: decisions.length,
       designCommitted: true,
       openQuestions: readOpenQuestions(ctx),
+      ...(cutoff === null ? {} : { evidenceCutoff: cutoff }),
     },
   };
 }

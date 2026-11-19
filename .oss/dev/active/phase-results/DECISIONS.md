@@ -83,6 +83,21 @@
   - The provenance test's false positive on the `aliases[x]` comment in oss-hook-env.ts is fixed in the same change. The R-266 coordinator is told, since R-266 owns the list.
 - D38 (user picker, 2026-11-18, "Fix ours, hand off R-266's"): five tests failed once at load average 8 and passed on rerun. R-257's two (oss-stop-dispatch, notify-timeline) get a root-cause fix this round. R-266's three round20b trap tests go to the R-266 coordinator with logs.
   - R-266 reply: #236 Task 12 already root-caused and fixed that flake. The gate's mktemp-template walk of the real /tmp fails closed after 1000 ms, and the test row now uses a scratch root. The Sprint D merge brings the fix in (line 105 reads `ROOT/x.XXXXXX`). Refusing a real `mktemp -d /tmp/...` on a busy machine is a filed R-266 follow-up.
+- D39-D42: ship gate round 3 decisions (user pickers, 2026-11-19). Three of four gates failed: code review, security and pen test; performance passed.
+  - **D39 Round 4 scope: fix all of it.** Every R-257 finding is in scope:
+    - code review H1, M1, M2, L2;
+    - pen test F1, F2, F3;
+    - security M1, M2, L4, L5 and its INFO (oss-timeline.sh dirname);
+    - performance LOW1, LOW2, the start-marker cleanup and the 50 ms assertion.
+    R-266's own gate gaps go to its coordinator (sent 2026-11-19): word-split hook calls, `git stash -a`, and update-ref and reflog writes.
+  - **D40 Ship base: snapshot at ship start.** Ship start records the SHAs of refs/remotes/origin/* in the protected ledger run row. A base is accepted only if its tip is contained in a recorded SHA. This replaces D34's reflog-time rule and its "no reflog passes" rule, and with them the same-second edge.
+    - Build note (round 5): the snapshot sits beside the run row, not inside it. The row is capped at 512 bytes, and lastRow and the Stop shell read only the compact row; 1,000 refs take about 41 KB. Ship start writes `~/.oss/ledger/<key>/run/ship.origin` (mode 600) as `{startedAt, shas[]}`. It sits in the same protected ledger folder and is tied to the run by the row's startedAt. A missing or mismatched snapshot, a malformed one or one with more than 1,000 SHAs is refused with `no_base_snapshot`.
+- D43 (user picker, 2026-11-19, round 5 build, "Clear on a pass with a tree"): a captured fail with no headSha happens only when git rev-parse fails during capture.
+  - It is cleared by a later counting pass that has a real tree, but never by a no-tree pass.
+  - This closes pen F2 without the permanent block that "never clear" would cause: a blocked feature can't reach a ready_to_merge cutoff.
+- D44 (user picker, 2026-11-19, "Add verdict-capture.js"): D41's gate rule also refuses calls naming watcher/dist/cli/verdict-capture.js, the tsc output of the same CLI. Stage that file by folder.
+  - **D41 Capture lockdown: gate refusal plus transcript.** The tool gate refuses any Bash call that names oss-verdict-capture.sh or verdict-capture.cjs. The CLI reads the verdict text only from agent_transcript_path under the gate-protected ~/.claude/projects, never from stdin's last_assistant_message.
+  - **D42 Finished phases: cap evidence at assemble.** A build or ideate result stores its evidence cutoff time, and test runs and decisions count only up to it. Later activity in the session no longer makes a finished phase look mismatched at Stop.
 - D25-D29: ship round 1 decisions (user pickers, 2026-11-18), from four failing gates.
   - **D25 Gate code location: lock it down.**
     - `~/.oss/plugin-root` and `~/.oss/watcher/**` join the tool gate's protectedPaths. This changes R-266's exact-list test, as the user's pick allows.

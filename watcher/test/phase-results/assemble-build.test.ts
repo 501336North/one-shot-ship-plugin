@@ -237,3 +237,42 @@ describe('assembleBuild', () => {
     expect(validate(loadPhaseSchema('build', PLUGIN_ROOT), r)).toEqual({ ok: true });
   });
 });
+
+describe('the evidence cutoff (D42)', () => {
+  // User who finished a build and then ran more tests (ship's final run) still has a valid build result.
+  // Rule: D42, a build result stores its evidence cutoff (the assemble time) and counts test runs only up to it.
+  it('stores the assemble time as its evidence cutoff', () => {
+    record(STARTED_AT, [
+      [10, 'red'],
+      [20, 'green'],
+    ]);
+    const r = result(assembleBuild(ctx()));
+    expect(r.evidenceCutoff).toBe('2026-11-13T10:00:00.000Z');
+    expect(validate(loadPhaseSchema('build', PLUGIN_ROOT), r)).toEqual({ ok: true });
+  });
+
+  // Rule: D42, a re-check given the stored cutoff ignores test runs recorded after it, so it re-derives the same counts.
+  it('counts only the test runs up to the given cutoff', () => {
+    record(STARTED_AT, [
+      [10, 'red'],
+      [20, 'green'],
+      [30, 'green'],
+    ]);
+    const r = result(assembleBuild({ ...ctx(), evidenceCutoff: at(STARTED_AT, 25) }));
+    expect(r.testRuns).toEqual({ sawRed: true, lastResult: 'green', count: 2 });
+    expect(r.evidenceCutoff).toBe(at(STARTED_AT, 25));
+  });
+
+  // Rule: D42, a result written before the cutoff existed (re-checked with a null cutoff) keeps the old rule: every
+  //       test run since startedAt counts, and the re-derived result has no cutoff field.
+  it('counts every test run when re-checking a result with no cutoff', () => {
+    record(STARTED_AT, [
+      [10, 'red'],
+      [20, 'green'],
+      [30, 'green'],
+    ]);
+    const r = result(assembleBuild({ ...ctx(), evidenceCutoff: null }));
+    expect(r.testRuns).toEqual({ sawRed: true, lastResult: 'green', count: 3 });
+    expect(r).not.toHaveProperty('evidenceCutoff');
+  });
+});

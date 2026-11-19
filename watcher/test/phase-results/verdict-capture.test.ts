@@ -13,12 +13,14 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 import { openLedger } from '../../src/phase-results/ledger.js';
 import {
   captureStart,
   captureVerdict,
   lastVerdictBlock,
   verdictTreeTmpRoot,
+  DEADLINE_MS,
   TRANSCRIPT_TAIL_BYTES,
   type CaptureOutcome,
 } from '../../src/phase-results/verdict-capture.js';
@@ -79,8 +81,12 @@ function input(extra: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
+// ⚠ changes existing test: D41 (security M2) — the capture reads the final message only from the agent transcript, so
+//   a case that names its message as last_assistant_message gets it written as a transcript under ~/.claude/projects.
 function capture(extra: Record<string, unknown>): CaptureOutcome {
-  return captureVerdict(input(extra), { now: () => NOW });
+  const { last_assistant_message: said, ...rest } = extra;
+  const viaTranscript = typeof said === 'string' ? { agent_transcript_path: transcript(said) } : {};
+  return captureVerdict(input({ ...rest, ...viaTranscript }), { now: () => NOW });
 }
 
 function rows(): Array<Record<string, unknown>> {
@@ -88,8 +94,14 @@ function rows(): Array<Record<string, unknown>> {
 }
 
 /** A JSONL transcript whose last assistant entry holds `text`, after an optional earlier assistant entry `padding`. */
+function projectsDir(): string {
+  const dir = path.join(home, '.claude', 'projects', 'proj');
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 function transcript(text: string, padding = ''): string {
-  const file = path.join(home, `transcript-${Math.random().toString(36).slice(2)}.jsonl`);
+  const file = path.join(projectsDir(), `transcript-${Math.random().toString(36).slice(2)}.jsonl`);
   const lines = [
     JSON.stringify({ type: 'user', message: { role: 'user', content: 'review this' } }),
     ...(padding === '' ? [] : [JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: padding }] } })]),
@@ -167,11 +179,13 @@ describe('captureVerdict: what gets recorded', () => {
   });
 
   // Finding 6 (LOW, ReDoS): the scan is linear, so a hostile final message cannot stall the SubagentStop hook.
-  it('scans 256 KB of unclosed openers in under 50 ms', () => {
+  // ⚠ changes existing test: performance INFO 8 (round 3) — 50 ms was a wall-time bound a loaded machine could miss;
+  //   500 ms still proves the scan is linear (a quadratic scan of 256 KB takes far longer).
+  it('scans 256 KB of unclosed openers in under 500 ms', () => {
     const hostile = '```oss-verdict\n'.repeat(Math.floor((256 * 1024) / 15));
     const t0 = performance.now();
     lastVerdictBlock(hostile);
-    expect(performance.now() - t0).toBeLessThan(50);
+    expect(performance.now() - t0).toBeLessThan(500);
   });
 
   it('reads the final assistant message from the agent transcript when last_assistant_message is absent', () => {
@@ -183,8 +197,9 @@ describe('captureVerdict: what gets recorded', () => {
 
   // T31 (real transcripts): the final message is the last assistant entry, with the entries before it that share its
   // message.id (Claude Code writes one API message as one entry per content block: thinking, text, tool_use).
+  // ⚠ changes existing test: D41 — transcripts live under ~/.claude/projects.
   function rawTranscript(entries: Array<{ id: string; content: Array<Record<string, unknown>> }>): string {
-    const file = path.join(home, `raw-${Math.random().toString(36).slice(2)}.jsonl`);
+    const file = path.join(projectsDir(), `raw-${Math.random().toString(36).slice(2)}.jsonl`);
     const lines = [JSON.stringify({ type: 'user', message: { role: 'user', content: 'review this' } })];
     for (const e of entries) {
       lines.push(JSON.stringify({ type: 'assistant', message: { id: e.id, role: 'assistant', content: e.content } }));
@@ -206,7 +221,7 @@ describe('captureVerdict: what gets recorded', () => {
   });
 
   it('T31: a final message split into a thinking entry and a text entry with the same message.id is captured', () => {
-    const file = path.join(home, 'split.jsonl');
+    const file = path.join(projectsDir(), 'split.jsonl');
     const entry = (content: Array<Record<string, unknown>>): string =>
       JSON.stringify({ type: 'assistant', message: { id: 'msg_9', role: 'assistant', content } });
     fs.writeFileSync(file, [
@@ -220,7 +235,7 @@ describe('captureVerdict: what gets recorded', () => {
   });
 
   it('T31: the text of the final message counts when its last entry is a tool_use with the same message.id', () => {
-    const file = path.join(home, 'text-then-tool.jsonl');
+    const file = path.join(projectsDir(), 'text-then-tool.jsonl');
     const entry = (content: Array<Record<string, unknown>>): string =>
       JSON.stringify({ type: 'assistant', message: { id: 'msg_9', role: 'assistant', content } });
     fs.writeFileSync(file, [entry([{ type: 'text', text: message(VALID) }]), entry([{ type: 'tool_use', name: 'X', input: {} }])].join('\n') + '\n');
@@ -235,10 +250,54 @@ describe('captureVerdict: what gets recorded', () => {
     expect(capture({ agent_transcript_path: file })).toEqual({ captured: false, reason: 'no_block' });
   });
 
-  it('prefers last_assistant_message over the transcript when both are present', () => {
+  // ⚠ changes existing test: D41 (security M2) — the verdict text comes only from the transcript, never from stdin's
+  //   last_assistant_message (it was "prefers last_assistant_message over the transcript when both are present").
+  it('reads only the transcript, even when last_assistant_message holds another block', () => {
     const file = transcript(block({ verdict: 'fail', findings: COUNTS }));
-    capture({ agent_transcript_path: file, last_assistant_message: block({ verdict: 'pass', findings: COUNTS }) });
-    expect(rows()[0]).toMatchObject({ verdict: 'pass' });
+    captureVerdict(input({ agent_transcript_path: file, last_assistant_message: block({ verdict: 'pass', findings: COUNTS }) }), { now: () => NOW });
+    expect(rows()[0]).toMatchObject({ verdict: 'fail' });
+  });
+});
+
+/**
+ * D41 (security M2, CLI part): the hook input on stdin can be written by whoever runs the hook, so the verdict text is
+ * read only from the agent's own transcript, agent_transcript_path, and only when that path resolves (realpath, so no
+ * symlinked folder can lead out) under ~/.claude/projects, which the tool gate protects. Anything else records nothing.
+ */
+describe('captureVerdict: the verdict comes only from the agent transcript under ~/.claude/projects (D41)', () => {
+  const PASS = block({ verdict: 'pass', findings: COUNTS });
+
+  it('a last_assistant_message alone records nothing', () => {
+    expect(captureVerdict(input({ last_assistant_message: PASS }), { now: () => NOW })).toEqual({ captured: false, reason: 'no_message' });
+    expect(rows()).toEqual([]);
+  });
+
+  it('a transcript outside ~/.claude/projects records nothing', () => {
+    const file = path.join(home, 'elsewhere.jsonl');
+    fs.writeFileSync(file, JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: PASS }] } }) + '\n');
+    expect(captureVerdict(input({ agent_transcript_path: file }), { now: () => NOW })).toEqual({ captured: false, reason: 'no_message' });
+  });
+
+  it('a path under ~/.claude/projects through a symlinked folder that leads out records nothing', () => {
+    const outside = fs.mkdtempSync(path.join(home, 'outside-'));
+    fs.writeFileSync(path.join(outside, 't.jsonl'), JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: PASS }] } }) + '\n');
+    fs.mkdirSync(path.join(home, '.claude', 'projects'), { recursive: true });
+    fs.symlinkSync(outside, path.join(home, '.claude', 'projects', 'escape'));
+    const file = path.join(home, '.claude', 'projects', 'escape', 't.jsonl');
+    expect(captureVerdict(input({ agent_transcript_path: file }), { now: () => NOW })).toEqual({ captured: false, reason: 'no_message' });
+  });
+
+  it('a relative path, or one with .. that leaves ~/.claude/projects, records nothing', () => {
+    const file = transcript(PASS);
+    const rel = path.relative(repo, file);
+    expect(captureVerdict(input({ agent_transcript_path: rel }), { now: () => NOW }).captured).toBe(false);
+    const dotdot = path.join(home, '.claude', 'projects', '..', '..', path.basename(file));
+    fs.copyFileSync(file, path.join(home, path.basename(file)));
+    expect(captureVerdict(input({ agent_transcript_path: dotdot }), { now: () => NOW }).captured).toBe(false);
+  });
+
+  it('a transcript under ~/.claude/projects is read', () => {
+    expect(captureVerdict(input({ agent_transcript_path: transcript(PASS) }), { now: () => NOW }).captured).toBe(true);
   });
 });
 
@@ -341,6 +400,49 @@ describe('captureVerdict: the start snapshot (security L4)', () => {
     expect(rows()[0].start).toBe('missing');
   });
 
+  // Code review M1 (round 3): two empty snapshots ('' === '') proved nothing, yet recorded match.
+  it('a start and a stop that both ran past their deadline never record match', () => {
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'reviewed\n');
+    expect(captureStart(input({ hook_event_name: 'SubagentStart' }), { now: () => NOW, deadlineMs: 0 })).toEqual({ recorded: true });
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'edited during the review\n');
+    expect(captureVerdict(input({ agent_transcript_path: transcript(VALID_BLOCK) }), { now: () => NOW, deadlineMs: 0 }).captured).toBe(true);
+    expect(rows()[0].start).not.toBe('match');
+  });
+
+  // D36 needs a real no-tree pass to carry start: match: with no stop tree, the start snapshot's HEAD must equal the
+  // stop's (no commit landed while the agent ran).
+  function bigFile(): void {
+    const fd = fs.openSync(path.join(repo, 'big.bin'), 'w');
+    fs.ftruncateSync(fd, 51 * 1024 * 1024);
+    fs.closeSync(fd);
+  }
+
+  it('a no-tree stop on the commit its start snapshot saw records match', () => {
+    start();
+    bigFile();
+    capture({ last_assistant_message: VALID_BLOCK });
+    expect(rows()[0]).toMatchObject({ tree: '', headSha: headNow(), start: 'match' });
+  });
+
+  it('a no-tree stop after a commit landed while the agent ran records changed', () => {
+    start();
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'during');
+    bigFile();
+    capture({ last_assistant_message: VALID_BLOCK });
+    expect(rows()[0]).toMatchObject({ tree: '', start: 'changed' });
+  });
+
+  // Performance INFO 7 (round 3): a start whose agent never stopped left its marker behind for good.
+  it('a start removes start snapshots older than a day, and keeps newer ones', () => {
+    const ledger = openLedger(repo);
+    ledger.writeMarker('verdict-start/agent-old', { tree: '', trackedTree: '', headSha: '', ts: new Date(NOW.getTime() - 25 * 3600 * 1000).toISOString() });
+    ledger.writeMarker('verdict-start/agent-fresh', { tree: '', trackedTree: '', headSha: '', ts: new Date(NOW.getTime() - 3600 * 1000).toISOString() });
+    expect(start()).toEqual({ recorded: true });
+    expect(ledger.hasMarker('verdict-start/agent-old')).toBe(false);
+    expect(ledger.hasMarker('verdict-start/agent-fresh')).toBe(true);
+    expect(ledger.hasMarker('verdict-start/agent-7')).toBe(true);
+  });
+
   it('a start for an agent that is not a review agent records nothing', () => {
     expect(start({ agent_type: 'oss:typescript-pro' })).toEqual({ recorded: false, reason: 'not_review_agent' });
   });
@@ -401,8 +503,64 @@ describe('captureVerdict: trees without blob writes (performance M1, L1)', () =>
 
   it('a capture past its shared deadline records empty trees', () => {
     fs.writeFileSync(path.join(repo, 'a.txt'), 'x\n');
-    expect(captureVerdict(input({ last_assistant_message: VALID_BLOCK }), { now: () => NOW, deadlineMs: 0 }).captured).toBe(true);
+    expect(captureVerdict(input({ agent_transcript_path: transcript(VALID_BLOCK) }), { now: () => NOW, deadlineMs: 0 }).captured).toBe(true);
     expect(rows()[0]).toMatchObject({ tree: '', trackedTree: '' });
+  });
+
+  // Performance LOW 1 (round 3): the deadline ran from the git calls, after node start, resolveRepo, resolveFeature and
+  //   the ledger key had spent theirs. It now runs from the process start the CLI passes (startMs).
+  it('a capture whose process started longer ago than the deadline records empty trees and no headSha', () => {
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'x\n');
+    const file = transcript(VALID_BLOCK);
+    expect(captureVerdict(input({ agent_transcript_path: file }), { now: () => NOW, startMs: Date.now() - DEADLINE_MS - 100 }).captured).toBe(true);
+    expect(rows()[0]).toMatchObject({ tree: '', trackedTree: '', headSha: '' });
+  });
+
+  // The CLI passes performance.timeOrigin, a fractional time: git's timeout must still be a whole number (it threw).
+  it('a fractional process start still records the trees', () => {
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'x\n');
+    expect(captureVerdict(input({ agent_transcript_path: transcript(VALID_BLOCK) }), { now: () => NOW, startMs: Date.now() + 0.5 }).captured).toBe(true);
+    expect(rows()[0].tree).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it('the deadline leaves the CLI at least 3 s inside the hook\'s own bound', () => {
+    const hook = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../../hooks/oss-verdict-capture.sh'), 'utf-8');
+    const bound = Number(/oss_run_bounded_rc (\d+) /.exec(hook)?.[1]);
+    expect(DEADLINE_MS).toBeLessThanOrEqual(3500);
+    expect(bound * 1000 - DEADLINE_MS).toBeGreaterThanOrEqual(3000);
+    expect(bound).toBeLessThan(10); // hooks.json gives the hook 10 s
+  });
+
+  // Performance LOW 2 (round 3): a huge changed list was hashed in full by update-index before the deadline could stop
+  //   it. Over 20,000 changed paths, or over 500 MB of changed files in all, the tree is '' at once; the tracked tree
+  //   (built first, from the far shorter tracked list) still records.
+  function trackedEdit(): void {
+    fs.writeFileSync(path.join(repo, 'tracked.txt'), 'one\n');
+    git('add', 'tracked.txt');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'tracked');
+    fs.writeFileSync(path.join(repo, 'tracked.txt'), 'two\n');
+  }
+
+  it('over 500 MB of changed files in all gives tree \'\' but keeps the tracked tree', () => {
+    trackedEdit();
+    for (let i = 0; i < 11; i++) {
+      const fd = fs.openSync(path.join(repo, `part-${i}.bin`), 'w');
+      fs.ftruncateSync(fd, 49 * 1024 * 1024);
+      fs.closeSync(fd);
+    }
+    expect(capture({ last_assistant_message: VALID_BLOCK }).captured).toBe(true);
+    expect(rows()[0].tree).toBe('');
+    expect(rows()[0].trackedTree).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it('over 20,000 changed paths gives tree \'\' but keeps the tracked tree', () => {
+    trackedEdit();
+    const dir = path.join(repo, 'many');
+    fs.mkdirSync(dir);
+    for (let i = 0; i <= 20_000; i++) fs.writeFileSync(path.join(dir, `f${i}`), '');
+    expect(capture({ last_assistant_message: VALID_BLOCK }).captured).toBe(true);
+    expect(rows()[0].tree).toBe('');
+    expect(rows()[0].trackedTree).toMatch(/^[0-9a-f]{40}$/);
   });
 
   it('removes temp index folders older than 10 minutes from the known folder, and keeps fresh ones', () => {
@@ -474,14 +632,14 @@ describe('captureVerdict: what records nothing', () => {
 
   it('refuses a symlinked transcript', () => {
     const real = transcript(block({ verdict: 'pass', findings: COUNTS }));
-    const link = path.join(home, 'link.jsonl');
+    const link = path.join(projectsDir(), 'link.jsonl');
     fs.symlinkSync(real, link);
     expect(capture({ agent_transcript_path: link })).toEqual({ captured: false, reason: 'no_message' });
     expect(rows()).toEqual([]);
   });
 
   it('refuses a transcript that is not a regular file', () => {
-    const dir = path.join(home, 'adir.jsonl');
+    const dir = path.join(projectsDir(), 'adir.jsonl');
     fs.mkdirSync(dir);
     expect(capture({ agent_transcript_path: dir })).toEqual({ captured: false, reason: 'no_message' });
   });
@@ -498,7 +656,8 @@ describe('captureVerdict: what records nothing', () => {
     expect(rows()).toEqual([]);
   });
 
-  it('records nothing when last_assistant_message is larger than the read cap', () => {
+  // ⚠ changes existing test: D41 — last_assistant_message is never read, so this message now arrives as a transcript.
+  it('records nothing when the final message, sent as last_assistant_message, is larger than the read cap', () => {
     const huge = 'y'.repeat(TRANSCRIPT_TAIL_BYTES + 10) + '\n\n' + block({ verdict: 'pass', findings: COUNTS });
     expect(capture({ last_assistant_message: huge })).toEqual({ captured: false, reason: 'no_message' });
   });

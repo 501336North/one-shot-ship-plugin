@@ -14,6 +14,10 @@
 #   per repo gives the toplevel, git dir, HEAD ref and ledger key. A subject whose result is bound to its run, has no
 #   ledger pending/unverified marker and no repo unverified marker, and whose results file hashes to the bound row's
 #   sha256, allows with no node (finding 4).
+# - Round 5 (pen F3, ADR-1 never silent): what needs a check comes from this session's run rows in the protected
+#   ledger, never from the repo's .oss/workflow-state.json (`git stash -a` removes it). A folder with no .oss is still
+#   looked at when this session has a run row anywhere in the ledger (_osd_ran), so a removed .oss goes to the
+#   dispatcher, or to the shell's loud fail-open. With no such row it stays the no-node, no-git path.
 # - Else the dispatcher (watcher/dist/cli/stop-dispatch.cjs) runs under oss_run_bounded_rc with a 5 s bound. It
 #   re-derives everything itself from --cwd and --project-dir. Its JSON is printed as is; a block skips the
 #   notification.
@@ -38,6 +42,27 @@ source "$_OSD_DIR/oss-safe-path.sh"   # functions only: sourcing it starts no pr
 # finds the user's own .oss in the user's own repo at or above <dir>.
 _osd_oss_proj() { oss_project_walk "$1"; [[ -n "$_OSS_PROJ" ]]; }
 
+# _osd_ran: true when THIS session (the Stop input's session_id) has a run row in the protected ledger
+# ~/.oss/ledger/*/run/*, whatever repo it is for (round 5, pen F3: `git stash -a` can remove .oss, never the ledger).
+# Only asked when no .oss was found. No ledger run file: builtins only. Else ONE fixed-path grep: run files grow by a
+# row per phase start for good, and grep reads them faster than any builtin loop, at a bounded cost. -D skip: a FIFO
+# is never opened. Computed at most once (_OSD_RAN: "", true or false).
+_OSD_RAN=""
+_osd_ran() {
+    local re='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9._-]{1,128})"' fg="" files=()
+    if [[ -z "$_OSD_RAN" ]]; then
+        _OSD_RAN=false
+        if [[ "$INPUT" =~ $re ]]; then
+            shopt -q failglob && fg=1; shopt -u failglob
+            files=("$HOME"/.oss/ledger/*/run/*)
+            [[ -z "$fg" ]] || shopt -s failglob
+            [[ -e "${files[0]}" ]] && /usr/bin/grep -q -s -F -D skip -e "\"session\":\"${BASH_REMATCH[1]}\"" -- "${files[@]}" \
+                && _OSD_RAN=true
+        fi
+    fi
+    [[ "$_OSD_RAN" == true ]]
+}
+
 IFS= read -r -d '' -n 65536 INPUT
 # --- Pre-check, before any other helper, jq or git (finding 5) ---------------------------------------------------------
 _osd_cwd_re='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
@@ -46,7 +71,7 @@ if [[ "$INPUT" =~ $_osd_cwd_re ]]; then _osd_oss_proj "${BASH_REMATCH[1]}" && _o
 elif [[ "$INPUT" == *'"cwd"'* ]]; then _osd_maybe=true   # an escaped cwd: let jq read it
 else _osd_oss_proj "$PWD" && _osd_maybe=true; fi
 [[ -n "${CLAUDE_PROJECT_DIR:-}" ]] && _osd_oss_proj "$CLAUDE_PROJECT_DIR" && _osd_maybe=true
-[[ "$_osd_maybe" == true ]] || _osd_notify
+[[ "$_osd_maybe" == true ]] || _osd_ran || _osd_notify
 _OSD_PATH="$PATH"; PATH=/usr/bin:/bin
 
 # shellcheck source=oss-phase-result.sh
@@ -202,7 +227,6 @@ _osd_bound_ok() {
 # marker); else the dispatcher marks it and says so once.
 _osd_needs_node() {
     local ledger p row s f name_re='^[A-Za-z0-9_-][A-Za-z0-9._-]*$'
-    [[ -d "$R_TOP/.oss" && ! -L "$R_TOP/.oss" && -f "$R_TOP/.oss/workflow-state.json" && ! -L "$R_TOP/.oss/workflow-state.json" ]] || return 1
     ledger="$HOME/.oss/ledger/$R_KEY"
     [[ -d "$ledger/run" ]] || return 1
     _osd_feature "$R_TOP" "$R_HEAD"
@@ -241,7 +265,7 @@ if [[ "${CLAUDE_PROJECT_DIR:-}" == /* && -d "$CLAUDE_PROJECT_DIR" ]]; then
     [[ -n "$_osd_b" && "$_osd_a" == "$_osd_b" ]] || _osd_dirs+=("$CLAUDE_PROJECT_DIR")
 fi
 for _osd_d in "${_osd_dirs[@]}"; do
-    _osd_oss_proj "$_osd_d" || continue
+    _osd_oss_proj "$_osd_d" || _osd_ran || continue
     _osd_repo "$_osd_d" || continue
     [[ ${#TOPS[@]} -gt 0 && "${TOPS[0]}" == "$R_TOP" ]] && continue
     TOPS+=("$R_TOP")

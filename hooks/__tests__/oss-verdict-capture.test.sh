@@ -48,10 +48,16 @@ rows_file() { # -> the ledger verdicts file of the feature (NOTES "Ledger (D14, 
     key=$(printf '%s\n%s\n' "$top" "$gd" | git hash-object --stdin | cut -c1-16)
     echo "$T/home/.oss/ledger/$key/verdicts/$FEATURE"
 }
-# input <agent_type> <message JSON string body>: a SubagentStop hook input
+# input <agent_type> <message JSON string body>: a SubagentStop hook input whose agent transcript (under
+#   ~/.claude/projects) ends with that message.
+# ⚠ changes existing test: D41 (security M2) — the CLI reads the verdict only from agent_transcript_path under
+#   ~/.claude/projects, never from last_assistant_message, so the message goes into the agent's transcript.
 input() {
-    printf '{"session_id":"s1","transcript_path":"/nonexistent","cwd":"%s","hook_event_name":"SubagentStop","stop_hook_active":false,"agent_id":"a1","agent_type":"%s","last_assistant_message":"%s"}' \
-        "$T/repo" "$1" "$2"
+    mkdir -p "$T/home/.claude/projects/p"
+    printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"%s"}]}}\n' "$2" \
+        > "$T/home/.claude/projects/p/agent-a1.jsonl"
+    printf '{"session_id":"s1","transcript_path":"/nonexistent","cwd":"%s","hook_event_name":"SubagentStop","stop_hook_active":false,"agent_id":"a1","agent_type":"%s","agent_transcript_path":"%s"}' \
+        "$T/repo" "$1" "$T/home/.claude/projects/p/agent-a1.jsonl"
 }
 # capture [env...] < stdin: runs the hook as Claude Code does (cwd = repo), capped; sets RC and OUT
 capture() {
@@ -79,8 +85,10 @@ cleanup
 #   node, so the cases below that need the CLI to run name "oss:code-reviewer" instead of the bare name.
 # 2. The transcript route: no last_assistant_message, the final assistant entry of agent_transcript_path.
 sandbox
-printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"%s"}]}}\n' "Done.\n\n$BLOCK" > "$T/agent.jsonl"
-capture < <(printf '{"session_id":"s1","cwd":"%s","hook_event_name":"SubagentStop","agent_id":"a2","agent_type":"oss:code-reviewer","agent_transcript_path":"%s"}' "$T/repo" "$T/agent.jsonl")
+# ⚠ changes existing test: D41 — the transcript sits under ~/.claude/projects, where Claude Code writes it.
+mkdir -p "$T/home/.claude/projects/p"
+printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"%s"}]}}\n' "Done.\n\n$BLOCK" > "$T/home/.claude/projects/p/agent.jsonl"
+capture < <(printf '{"session_id":"s1","cwd":"%s","hook_event_name":"SubagentStop","agent_id":"a2","agent_type":"oss:code-reviewer","agent_transcript_path":"%s"}' "$T/repo" "$T/home/.claude/projects/p/agent.jsonl")
 f=$(rows_file)
 if [[ $RC -eq 0 && -z "$OUT" ]] && jq -e -s 'length == 1 and .[0].gate == "code-review"' "$f" >/dev/null 2>&1; then
     pass "transcript route: row written, exit 0, no output"
@@ -179,6 +187,18 @@ capture CLAUDE_PLUGIN_ROOT="$T/plugin" PATH="$T/shims:$PATH" < <(input "oss:code
 if [[ $RC -eq 0 && -z "$OUT" && ! -e "$T/shim.calls" && "$(cat "$T/cli.path" 2>/dev/null)" == "/usr/bin:/bin" ]]; then
     pass "fixed mktemp/head/grep, node on PATH=/usr/bin:/bin"
 else fail "fixed mktemp/head/grep, node on PATH=/usr/bin:/bin" "rc=$RC shims=$(cat "$T/shim.calls" 2>/dev/null) path=$(cat "$T/cli.path" 2>/dev/null)"; fi
+cleanup
+
+# 12. Security L5 (round 3): the hook finds its own folder with bash builtins, never PATH's dirname, so a dirname
+#     planted early on PATH never runs (it could point the hook at a planted oss-phase-result.sh).
+sandbox
+sandbox_plugin 'require("fs").writeFileSync(process.env.HOME + "/../cli.calls", "ran\n")'
+mkdir -p "$T/shims"
+printf '#!/bin/sh\necho dirname >> "%s/shim.calls"\nexit 1\n' "$T" > "$T/shims/dirname"; chmod 755 "$T/shims/dirname"
+capture CLAUDE_PLUGIN_ROOT="$T/plugin" PATH="$T/shims:/usr/bin:/bin:/usr/sbin:/sbin" < <(input "oss:code-reviewer" "$BLOCK")
+if [[ $RC -eq 0 && -z "$OUT" && ! -e "$T/shim.calls" && -e "$T/cli.calls" ]]; then
+    pass "a planted dirname on PATH never runs; the CLI still starts"
+else fail "a planted dirname on PATH never runs; the CLI still starts" "rc=$RC shims=$(cat "$T/shim.calls" 2>/dev/null) cli=$(cat "$T/cli.calls" 2>/dev/null)"; fi
 cleanup
 
 echo "Results: $((RUN-FAILED))/$RUN passed, $FAILED failed"

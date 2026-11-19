@@ -8088,7 +8088,6 @@ var HOOK_CALL_VARIABLES = /* @__PURE__ */ new Set([
   "CREDS",
   "F",
   "HAS_PLAYWRIGHT",
-  "IFS",
   "OSS_DIR",
   "OSS_ICON_PNG",
   "PLAYWRIGHT_RESULT",
@@ -8180,7 +8179,7 @@ function setsUnlisted(words) {
     const plain = name === void 0 ? assigned : [...assigned, args[0] ?? ""];
     return plain.some((w) => (MAYBE_EXPORTED.test(variableOf(w)) || COMMAND_MAPS.test(variableOf(w))) && unlisted(w));
   }
-  const names = [...assigned];
+  const names = name === "read" ? assigned.filter((w) => variableOf(w) !== "IFS") : [...assigned];
   if (OPERAND_SETTERS.has(name)) names.push(...args.filter((a) => !a.startsWith("-")));
   else if (name === "printf" || name === "print") args.forEach((a, i) => a === "-v" ? names.push(args[i + 1] ?? "") : /^-v./.test(a) && names.push(a.slice(2)));
   else if (name === "mapfile" || name === "readarray") names.push(...arrayOperands(args));
@@ -10027,6 +10026,39 @@ function checkUnreadable(reason, parts, settings, root, home, caseInsensitive) {
   return null;
 }
 
+// src/tool-gate/rules/verdict-capture-call.ts
+var NAMES = ["oss-verdict-capture.sh", "verdict-capture.cjs", "verdict-capture.js"];
+var STEM = "oss-verdict-capture";
+var SEPARATORS = /[\s'"`;|&()<>=${}\\,]+/;
+var GLOB2 = /[*?[]/;
+function globRegex(piece) {
+  const source = piece.replace(/\[[^\]]*\]?|[*?]|[^*?[]/g, (c) => c === "*" ? ".*" : c === "?" ? "." : c.startsWith("[") ? "." : c.replace(/[.*+?^${}()|\\]/g, "\\$&"));
+  return new RegExp(`^${source}$`);
+}
+function globNames(piece, folder) {
+  if (!NAMES.some((name) => globRegex(piece).test(name))) return false;
+  const literals = piece.split(/\[[^\]]*\]?|[*?]/).map((l) => l.replace(/\.(?:sh|c?js)$/, ""));
+  return literals.some((l) => l.length >= 3 && STEM.includes(l)) || folder !== void 0 && /^(?:hooks|cli)$/.test(folder);
+}
+function namesVerdictCapture(text) {
+  for (const word of text.toLowerCase().split(SEPARATORS)) {
+    const segments = word.split("/");
+    for (const [i, segment] of segments.entries()) {
+      if (NAMES.includes(segment)) return true;
+      if (GLOB2.test(segment) && globNames(segment, segments[i - 1])) return true;
+    }
+  }
+  return false;
+}
+function checkVerdictCaptureCall(part, command) {
+  const texts = [command, ...part.words, ...part.assignmentValues, ...part.stdinScripts];
+  if (!texts.some(namesVerdictCapture)) return null;
+  return {
+    rule: "protected-path",
+    reason: "Refused: runs or names the OSS verdict capture (`oss-verdict-capture.sh`, `verdict-capture.cjs`, `verdict-capture.js`). Only Claude Code's own subagent hook runs it; a review verdict is captured when the review agent stops."
+  };
+}
+
 // src/tool-gate/gate.ts
 var import_node_os5 = __toESM(require("node:os"), 1);
 
@@ -10775,7 +10807,7 @@ async function checkBash(ctx, command) {
   const sources = trustedSourcesOf(ctx);
   const repos = reviewedRepos(ctx);
   for (const [index, part] of facts.parts.entries()) {
-    const refusal3 = checkUnknownGitOption(part) ?? checkPushSetup(part, facts.parts, index) ?? checkRepoTrust(part, trustOf) ?? checkBranchSwitch(part, facts.parts, index, settings, void 0, ctx.caseInsensitive) ?? await checkBranchRefs(part, settings, ctx.git, ctx.caseInsensitive) ?? await checkProtectedBranch(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), ctx.caseInsensitive) ?? await checkHistoryMove(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), void 0, ctx.caseInsensitive) ?? checkForcePush(part, settings) ?? checkTags(part, settings) ?? checkProductionHost(part, settings) ?? checkOssHookEnv(part, command, home, sources) ?? checkProtectedPathBash(part, settings, root, home, paths, ctx.caseInsensitive, places, ctx.tree) ?? (ownStep ? null : checkGateAgentBash(part, hook.agent, settings, { repos, home, exists: import_node_fs18.default.existsSync, temp: tempRoots(ctx), fallback: ctx.containment?.kind === "fallback", darwin: ctx.platform === "darwin", sandboxed: ctx.containment?.kind === "sandbox" }, paths, ctx.caseInsensitive, { earlier: facts.parts.slice(0, index), background: hook.background })) ?? await checkGitClean(part, settings, root, home, paths, ctx.git, ctx.caseInsensitive, places, { earlier: facts.parts, count: index, tree: ctx.tree }) ?? checkProtectedPathMention(part, settings, root, home, paths, ctx.caseInsensitive, places);
+    const refusal3 = checkUnknownGitOption(part) ?? checkPushSetup(part, facts.parts, index) ?? checkRepoTrust(part, trustOf) ?? checkBranchSwitch(part, facts.parts, index, settings, void 0, ctx.caseInsensitive) ?? await checkBranchRefs(part, settings, ctx.git, ctx.caseInsensitive) ?? await checkProtectedBranch(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), ctx.caseInsensitive) ?? await checkHistoryMove(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), void 0, ctx.caseInsensitive) ?? checkForcePush(part, settings) ?? checkTags(part, settings) ?? checkProductionHost(part, settings) ?? checkOssHookEnv(part, command, home, sources) ?? checkVerdictCaptureCall(part, command) ?? checkProtectedPathBash(part, settings, root, home, paths, ctx.caseInsensitive, places, ctx.tree) ?? (ownStep ? null : checkGateAgentBash(part, hook.agent, settings, { repos, home, exists: import_node_fs18.default.existsSync, temp: tempRoots(ctx), fallback: ctx.containment?.kind === "fallback", darwin: ctx.platform === "darwin", sandboxed: ctx.containment?.kind === "sandbox" }, paths, ctx.caseInsensitive, { earlier: facts.parts.slice(0, index), background: hook.background })) ?? await checkGitClean(part, settings, root, home, paths, ctx.git, ctx.caseInsensitive, places, { earlier: facts.parts, count: index, tree: ctx.tree }) ?? checkProtectedPathMention(part, settings, root, home, paths, ctx.caseInsensitive, places);
     if (refusal3 !== null) return { refusal: refusal3, program: part.program };
   }
   if ("unreadable" in facts && !ownStep) {

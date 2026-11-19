@@ -27,8 +27,10 @@ function readInput(file: string | undefined): unknown {
 }
 
 try {
-  if (process.argv[2] === 'start') captureStart(readInput(process.argv[3]));
-  else captureVerdict(readInput(process.argv[2]));
+  // Performance LOW 1: the capture's deadline runs from this process's start, not from its first git call.
+  const startMs = performance.timeOrigin;
+  if (process.argv[2] === 'start') captureStart(readInput(process.argv[3]), { startMs });
+  else captureVerdict(readInput(process.argv[2]), { startMs });
 } catch {
   // Unreadable or malformed input records nothing.
 }

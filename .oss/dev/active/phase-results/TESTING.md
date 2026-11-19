@@ -125,4 +125,15 @@ Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watche
   - Bash 3.2 sweep under the tripwire: 112/112, with 0 tripwire lines.
 - protected-path-equivalence (R-266): 4 cases timed out once at load average 12 while a builder was loading the machine on purpose; they pass alone and in the final run. Passed to R-266.
 
-## Last Updated: 2026-11-18 23:29 CST by /oss:ship (round 4 fixes)
+### Ship round 5 (D39-D44), 2026-11-19
+- Each builder showed RED, then GREEN. Sandbox repros from the gates became unit and acceptance tests:
+  - pen a1/a3/a5;
+  - security d34 cases A and B;
+  - code review REPRO and REPRO3.
+- Rebuilt-dist catch: ship-wrapper-chain failed 2 of 3. Its test repo had no origin ref, so the D40 snapshot was empty. Fixed in the test setup; 3/3 on 3 runs.
+- Final: build and tsc clean.
+  - Targeted vitest: 197 files, 10807/10807.
+  - served-commands (OSS_API_REPO set): 3/3.
+  - Bash 3.2 sweep under the tripwire: 113/113, with 0 tripwire lines.
+
+## Last Updated: 2026-11-19 08:13 CST by /oss:ship (round 5 fixes)

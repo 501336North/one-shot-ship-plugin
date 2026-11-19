@@ -5,9 +5,10 @@
  * diff or textconv, 10 s timeout). The base is a local branch only (never gh or fetch), checked with
  * `check-ref-format --branch` and passed after `--end-of-options`. Empty when the tree equals the base tip (covers a
  * squash-merged branch) or nothing changed since the merge-base. Totals come from `--shortstat` against the merge-base.
- * Gates: the feature's timeline gate lines whose sha256 is in the ledger `gates/<feature>`, latest round only
- * (`source: model`). Captured review-agent rows (ledger `verdicts/<feature>`, verdict-capture.ts) from this run (at or
- * after its start) then apply, per gate (`source: agent`; `fixed` stays from the line):
+ * Gates: the feature's timeline gate lines of this run whose sha256 is in the ledger `gates/<feature>`, latest round only
+ * (`source: model`). Captured review-agent rows (ledger `verdicts/<feature>`, verdict-capture.ts) since the run start of
+ * the feature's last ready_to_merge ship result, or all of them (pen F1: never cut at this run's start), then apply, per
+ * gate (`source: agent`; `fixed` stays from the line):
  * - D32: a captured FAIL row, on any tree, keeps its gate failed until a later PASS row of that gate counts with a tree
  *   different from the fail row's. A pass on the unchanged tree never erases it, whatever round lines exist, and no
  *   fix count overrides it. Its blocker reads `gate:<name> (captured fail, not re-reviewed)`.
@@ -23,7 +24,8 @@
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { openLedger, LedgerError, type LedgerRow } from './ledger.js';
+import { openLedger, LedgerError, type Ledger, type LedgerRow } from './ledger.js';
+import { readResult } from './store.js';
 import { gitBin } from './git-bin.js';
 import { gitEnv } from './git.js';
 import {
@@ -88,15 +90,6 @@ export function isLocalBranch(repo: string, name: string): boolean {
   }
 }
 
-/** The commit `refs/remotes/origin/<name>` points at (call after isLocalBranch accepted the name); null when none. */
-export function originBranchTip(repo: string, name: string): string | null {
-  try {
-    return runGit(repo, ['rev-parse', '--verify', '--quiet', '--end-of-options', `refs/remotes/origin/${name}^{commit}`]).out;
-  } catch {
-    return null;
-  }
-}
-
 /** True when `refs/remotes/origin/<name>` exists (call after isLocalBranch accepted the name; never an option). */
 export function hasOriginBranch(repo: string, name: string): boolean {
   try {
@@ -117,44 +110,16 @@ export function branchTip(repo: string, name: string): string | null {
 }
 
 /**
- * D34: the tip of origin's default branch: the branch refs/remotes/origin/HEAD names (when it names one under
- * refs/remotes/origin/), else refs/remotes/origin/main; null when neither resolves.
+ * D40: true when commit `tip` is an ancestor of, or equal to, at least one of `shas` (hex ids from the origin snapshot
+ * ship start recorded), in one git call: `rev-list` lists `tip` unless some sha reaches it. False on any error (a sha
+ * missing from the repo included) and for an empty list.
  */
-export function originDefaultTip(repo: string): string | null {
-  let ref = 'refs/remotes/origin/main';
+export function containedInAny(repo: string, tip: string, shas: readonly string[]): boolean {
+  if (shas.length === 0) return false;
   try {
-    const sym = runGit(repo, ['symbolic-ref', '-q', 'refs/remotes/origin/HEAD']).out;
-    if (sym.startsWith('refs/remotes/origin/') && sym !== 'refs/remotes/origin/HEAD') ref = sym;
-  } catch {
-    // no origin/HEAD: origin/main
-  }
-  try {
-    return runGit(repo, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`]).out;
-  } catch {
-    return null;
-  }
-}
-
-/** True when commit `a` is an ancestor of, or equal to, commit `b` (both hex ids from rev-parse); false on any error. */
-export function isAncestor(repo: string, a: string, b: string): boolean {
-  try {
-    return runGit(repo, ['merge-base', '--is-ancestor', '--end-of-options', a, b], [0, 1]).status === 0;
+    return runGit(repo, ['rev-list', '-n', '1', '--end-of-options', tip, ...shas.map((s) => `^${s}`)]).out === '';
   } catch {
     return false;
-  }
-}
-
-/**
- * D34: when `ref` (a full ref name, from a name isLocalBranch accepted) was created, in epoch ms, from its oldest
- * reflog entry; null when it has no reflog (or git cannot read it).
- */
-export function reflogCreatedAt(repo: string, ref: string): number | null {
-  try {
-    const lines = runGit(repo, ['reflog', 'show', '--date=unix', '--format=%gd', ref]).out.split('\n');
-    const m = /@\{(\d+)\}$/.exec(lines[lines.length - 1] ?? '');
-    return m === null ? null : Number(m[1]) * 1000;
-  } catch {
-    return null;
   }
 }
 
@@ -308,13 +273,16 @@ interface Timeline {
   rounds: Map<string, RoundLine[]>;
 }
 
-/** Gates from the feature's ledger-backed timeline lines. */
+/** Gates from the feature's ledger-backed timeline lines written in this run (at or after its start; pen F1). */
 function timelineGates(ctx: AssembleContext, featureDir: string, gateHashes: Set<unknown>): Timeline {
   const backed: Array<Record<string, unknown>> = [];
+  // Gate lines carry whole-second times: floor the run start to its second, so a line from that second counts.
+  const runStart = Math.floor(Date.parse(ctx.startedAt) / 1000) * 1000;
   for (const line of repoLines(path.join(featureDir, 'timeline.ndjson'))) {
     if (!gateHashes.has(sha256(line))) continue;
     const rec = parseJsonObject(line);
-    if (rec !== null && rec.kind === 'gate' && rec.feature === ctx.feature && typeof rec.round === 'number') {
+    if (rec === null || typeof rec.ts !== 'string' || !(Date.parse(rec.ts) >= runStart)) continue;
+    if (rec.kind === 'gate' && rec.feature === ctx.feature && typeof rec.round === 'number') {
       backed.push(rec);
     }
   }
@@ -355,29 +323,68 @@ function ruleVerdict(gate: string, row: AgentRow, fixed: Record<string, number>)
   return row.verdict;
 }
 
+/** D36 + pen F2: true when pass `p` was captured on a known commit other than fail `f`'s (a fail with no headSha: never). */
+function onNewCommit(f: AgentRow, p: AgentRow): boolean {
+  return f.headSha !== null && p.headSha !== null && p.headSha !== f.headSha;
+}
+
+/**
+ * D32 + pen F2 + D43: true when counting pass `p` (it always has a tree) clears fail `f`. A fail with a tree: the pass's
+ * tree differs. A fail with no tree: a new commit (onNewCommit), or, when the fail has no headSha either (git rev-parse
+ * failed at capture), any counting pass (D43).
+ */
+function passClears(f: AgentRow, p: AgentRow): boolean {
+  if (f.tree !== null) return p.tree !== f.tree;
+  return f.headSha === null || onNewCommit(f, p);
+}
+
 /** D32: the blocker label of a gate held failed by a captured fail row nobody re-reviewed on a changed tree. */
 const NOT_RE_REVIEWED = 'captured fail, not re-reviewed';
 
 /**
+ * Pen F1: where the feature's verdict rows are read from, in epoch ms: the run start of its last ready_to_merge ship
+ * result (the stored results/ship.json whose bytes the ledger's last `results/<feature>/ship` row binds), else the
+ * first row (-Infinity). It never depends on this run's start, so restarting the run cannot drop an open fail; any
+ * doubt (no row, unbound or unreadable file, another verdict) reads every row.
+ */
+function verdictCutoff(ledger: Ledger, repo: string, feature: string): number {
+  const last = ledger.lastRow(`results/${feature}/ship`);
+  let stored: ReturnType<typeof readResult>;
+  try {
+    stored = readResult(repo, feature, 'ship');
+  } catch {
+    return -Infinity;
+  }
+  if (last === null || !stored.ok || last.sha256 !== sha256(stored.bytes)) return -Infinity;
+  const v = stored.value;
+  if (typeof v !== 'object' || v === null || (v as Record<string, unknown>).verdict !== 'ready_to_merge') return -Infinity;
+  const at = typeof last.startedAt === 'string' ? Date.parse(last.startedAt) : NaN;
+  return Number.isNaN(at) ? -Infinity : at;
+}
+
+/**
  * T19 + D32: an agent's captured verdict supplies a gate's verdict and findings (`source: agent`); `fixed` stays from the
- * line. Rows from before this ship run's start are ignored.
+ * line. Rows from before `cutoff` (verdictCutoff, pen F1) are ignored.
  * - A FAIL row, on any tree (or none), keeps its gate failed until a later PASS row of that gate that counts (its
  *   reviewed trees are what ships, reviewedIsShipped) has a tree different from the fail row's. A pass on the unchanged
  *   tree never erases it, whatever round lines exist, and D24's fix counts never override it. Such a gate is returned
- *   in the set, so its blocker says "captured fail, not re-reviewed".
+ *   in the set, so its blocker says "captured fail, not re-reviewed". Pen F2: a fail with no tree is cleared by a
+ *   counting pass only on a different commit (onNewCommit); D43: one with no headSha either by any later counting pass
+ *   (it has a real tree), never by a no-tree pass.
  * - D36: a PASS row with no tree (a changed file over 50 MB, or the capture deadline) but `start: match` (L4) and a
  *   headSha also clears an earlier fail row of its gate, only when its headSha differs from the fail row's (a fail with
- *   no headSha differs from any). It proves nothing about what it reviewed, so it never becomes the gate's verdict.
- * - Otherwise the newest counting PASS row decides, through D24/D27's rule (ruleVerdict).
+ *   no headSha is never cleared, pen F2). It proves nothing about what it reviewed, so it never becomes the verdict.
+ * - Otherwise the newest counting PASS row newer than the newest fail decides (code review H1), through D24/D27's rule
+ *   (ruleVerdict).
  * - With neither (no counting pass, no open fail), the timeline line stays (`source: model`, so the gate is listed in
  *   uncapturedGates, D26).
  */
-function applyAgentVerdicts(tl: Timeline, verdictRows: LedgerRow[], runStart: number, repo: string): Set<string> {
+function applyAgentVerdicts(tl: Timeline, verdictRows: LedgerRow[], cutoff: number, repo: string): Set<string> {
   const byGate = new Map<string, Array<{ row: AgentRow; counts: boolean; blind: boolean }>>();
   const shipped = new Map<string, boolean>();
   for (const raw of verdictRows) {
     const row = agentRow(raw);
-    if (row === null || !(row.at >= runStart)) continue;
+    if (row === null || !(row.at >= cutoff)) continue;
     let counts = false;
     if (row.verdict === 'pass' && row.startMatch && row.tree !== null && row.trackedTree !== null) {
       const key = `${row.tree} ${row.trackedTree} ${row.headSha ?? ''}`;
@@ -400,15 +407,18 @@ function applyAgentVerdicts(tl: Timeline, verdictRows: LedgerRow[], runStart: nu
     const open = rows
       .filter((r) => r.row.verdict === 'fail')
       .map((r) => r.row)
-      .filter((f) => !passes.some((p) => p.at > f.at && p.tree !== f.tree))
-      .filter((f) => !blinds.some((b) => b.at > f.at && b.headSha !== f.headSha));
+      .filter((f) => !passes.some((p) => p.at > f.at && passClears(f, p)))
+      .filter((f) => !blinds.some((b) => b.at > f.at && onNewCommit(f, b)));
     if (open.length > 0) {
       tl.byName.set(name, { ...gate, verdict: 'fail', findings: open[open.length - 1].findings, source: 'agent' });
       stale.add(name);
       continue;
     }
-    if (passes.length === 0) continue;
-    const pick = passes[passes.length - 1];
+    // H1: only a pass newer than the newest fail may decide; an older one was overruled by that fail.
+    const lastFail = Math.max(-Infinity, ...rows.filter((r) => r.row.verdict === 'fail').map((r) => r.row.at));
+    const deciding = passes.filter((p) => p.at > lastFail);
+    if (deciding.length === 0) continue;
+    const pick = deciding[deciding.length - 1];
     tl.byName.set(name, { ...gate, verdict: ruleVerdict(name, pick, gate.fixed), findings: pick.findings, source: 'agent' });
   }
   return stale;
@@ -456,17 +466,19 @@ export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): A
   let gateHashes: Set<unknown>;
   let decisionRows: LedgerRow[];
   let verdictRows: LedgerRow[];
+  let cutoff: number;
   try {
     const ledger = openLedger(ctx.repo);
     gateHashes = new Set(ledger.readRows(`gates/${ctx.feature}`).map((r) => r.sha256));
     decisionRows = ledger.readRows(`decisions/${ctx.feature}`);
     verdictRows = ledger.readRows(`verdicts/${ctx.feature}`);
+    cutoff = verdictCutoff(ledger, ctx.repo, ctx.feature);
   } catch (e) {
     return { ok: false, error: e instanceof LedgerError ? e.code : 'unsafe_path' };
   }
 
   const timeline = timelineGates(ctx, featureDir, gateHashes);
-  const notReReviewed = applyAgentVerdicts(timeline, verdictRows, Date.parse(ctx.startedAt), ctx.repo);
+  const notReReviewed = applyAgentVerdicts(timeline, verdictRows, cutoff, ctx.repo);
   const byName = timeline.byName;
   for (const required of opts.requiredGates ?? DEFAULT_REQUIRED_GATES) {
     if (!byName.has(required)) return { ok: false, error: 'gate_missing', detail: required };
