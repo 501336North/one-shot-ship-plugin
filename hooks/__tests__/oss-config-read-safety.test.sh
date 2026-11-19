@@ -140,7 +140,7 @@ for MODE in jq nojq; do
         pass "[$MODE] team-iron-laws: a symlink to a regular config sends its key to its apiUrl"
     else fail "[$MODE] team-iron-laws: a symlink to a regular config sends its key to its apiUrl" "rc=$RC sent=$SENT out=$(printf '%q' "${OUT:0:200}")"; fi
 
-    # --- the template hook (/oss:login Step 4.2): refuses, never hangs ------------------------------------
+    # --- the template hook (/oss:login Step 5.2): refuses, never hangs ------------------------------------
     for KIND in fifo devzero; do
         name="[$MODE] claude-md-template: a config.json that is a $KIND is never opened; exit 1, no request"
         hook "$MODE" "$KIND" claude-md-template

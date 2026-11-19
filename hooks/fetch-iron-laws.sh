@@ -5,16 +5,19 @@
 #   fetch-iron-laws.sh [--raw]
 #
 # Options:
-#   --raw    Output raw JSON response (default: extract content)
+#   --raw    Output the JSON {base, team}: the verified base, the team part cleaned (default: the laws, base + team)
 #
-# Returns the IRON LAWS content from the API endpoint.
+# Returns the IRON LAWS content from the API endpoint: GET .../shared/iron-laws?split=1 answers {base, team?}.
+# The raw base bytes must pass `~/.oss/bin/oss-decrypt --verify-body shared/iron-laws` (R-273 D12); only its
+# exit 0 prints anything. A reply that is not that JSON is refused (exit 1), never retried unsplit. Team laws are
+# printed under the server's advisory note, unverified (DR-3), without control or invisible characters.
 # Uses apiKey and apiUrl from the OSS config ($OSS_CONFIG_DIR/config.json, else ~/.oss/config.json)
 
 set -euo pipefail
 if [[ -f "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh" ]]; then source "$(dirname "${BASH_SOURCE[0]}")/oss-api-curl.sh"; fi  # oss_api_curl: API key via stdin, never argv
 
 CONFIG_FILE=$(oss_config_file)
-ENDPOINT="/api/v1/prompts/shared/iron-laws"
+ENDPOINT="/api/v1/prompts/shared/iron-laws?split=1"   # JSON {base, team?}: base is the signed file
 
 # Standardized error contract: emit a structured OSSError via the oss-error
 # emitter when available (in-band stdout JSON + project workflow.log line).
@@ -110,22 +113,42 @@ if [[ "$HTTP_CODE" != "200" ]]; then
       echo "IRON LAWS endpoint not found" >&2
       ;;
     *)
-      echo "Response: $BODY" >&2
+      # At most 300 characters of the reply, cleaned (oss_clean_text): no signature covers it (round 2, finding 2)
+      SNIPPET=$(printf '%s' "${BODY:0:300}" | oss_clean_text 2>/dev/null) || SNIPPET=""
+      echo "Response (first 300 characters, cleaned): $SNIPPET" >&2
       ;;
   esac
   exit 1
 fi
 
+# Verify the base laws before anything is printed (R-273 D12). The JSON escapes every newline, so BODY holds the
+# reply whole; base and team are taken from it byte for byte into a private work dir.
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/oss-fetch-iron-laws.XXXXXX")
+trap 'rm -rf "$WORK"' EXIT
+printf '%s\n' "$BODY" > "$WORK/reply"
+if ! oss_split_field base < "$WORK/reply" > "$WORK/base" || ! oss_split_field team < "$WORK/reply" > "$WORK/team"; then
+  echo "Error: the OSS API answer is not the ?split=1 JSON {base, team}; no laws printed" >&2
+  exit 1
+fi
+# Only exit 0 from oss_verify_body (oss-api-curl.sh) prints; any other code prints nothing.
+VERIFY_STATUS=0
+oss_verify_body shared/iron-laws < "$WORK/base" || VERIFY_STATUS=$?
+if [[ "$VERIFY_STATUS" -ne 0 ]]; then
+  echo "Error: the laws did not pass verification (oss-decrypt --verify-body exit $VERIFY_STATUS: not the signed laws, or oss-decrypt is older than 1.2.5 and the next /oss command updates it); no laws printed" >&2
+  exit 1
+fi
+
+# The team part (unverified, DR-3) loses control and invisible characters (oss_clean_text); the base is printed as
+# served. An empty team needs no jq.
+: > "$WORK/team.clean"
+if [[ -s "$WORK/team" ]] && ! oss_clean_text < "$WORK/team" > "$WORK/team.clean"; then
+  echo "Error: could not clean the team laws (jq missing?); no laws printed" >&2
+  exit 1
+fi
+
 # Output result
 if [[ "$RAW_OUTPUT" == "true" ]]; then
-  echo "$BODY"
+  jq -n --rawfile b "$WORK/base" --rawfile t "$WORK/team.clean" '{base: $b, team: $t}'
 else
-  # Extract content field if present, otherwise output body
-  CONTENT=$(echo "$BODY" | grep -o '"content"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*: *"\([^"]*\)"/\1/' | head -1 || true)
-  if [[ -n "$CONTENT" ]]; then
-    # Unescape JSON string
-    echo -e "$CONTENT"
-  else
-    echo "$BODY"
-  fi
+  cat "$WORK/base" "$WORK/team.clean"
 fi

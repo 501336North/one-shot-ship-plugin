@@ -8,7 +8,17 @@ model: opus
 
 Transform vague ideas into concrete, actionable designs.
 
-## Step 1: Ensure Project Configuration
+## Step 1: Ensure the Decrypt CLI
+
+Install (or update) the decrypt CLI first: Step 2 writes the CLAUDE.md template and the IRON LAWS only after this CLI (`oss-decrypt --verify-body`) checks them.
+
+Run this step with a Bash timeout of 600000 ms (10 minutes): a first install downloads about 60 MB. Exit 0: continue. Exit 75: the download is still in progress or another session is downloading it, so run the same step again (also when Claude Code stopped the step at its time limit), at most 3 more times; if it still has not exited 0, stop and tell the user to run the command again later. Any other exit: stop and show the user the hook's message (it says what to check).
+
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh --long-step
+```
+
+## Step 2: Ensure Project Configuration
 
 **Check if CLAUDE.md exists in the current directory:**
 
@@ -28,23 +38,15 @@ test -f CLAUDE.md && echo "EXISTS" || echo "MISSING"
 
 **If API fetch fails**, fall back to a minimal CLAUDE.md that directs the user to run `/oss:login`.
 
-## Step 2: Check Authentication
+## Step 3: Check Authentication
 
-Step 3's commands read the key themselves (no separate check, so no extra approval prompt). If they report no API key, `Credentials not found` or `not logged in`, show:
+Step 4's commands read the key themselves (no separate check, so no extra approval prompt). If they report no API key, `Credentials not found` or `not logged in`, show:
 ```
 No API key found. Run: /oss login
 Register at https://www.oneshotship.com
 ```
 
-## Step 3: Fetch and Decrypt Prompt
-
-Ensure the decrypt CLI is installed:
-
-Run this step with a Bash timeout of 600000 ms (10 minutes): a first install downloads about 60 MB. Exit 0: continue. Exit 75: the download is still in progress or another session is downloading it, so run the same step again (also when Claude Code stopped the step at its time limit), at most 3 more times; if it still has not exited 0, stop and tell the user to run the command again later. Any other exit: stop and show the user the hook's message (it says what to check).
-
-```bash
-~/.oss/hooks/ensure-decrypt-cli.sh --long-step
-```
+## Step 4: Fetch and Decrypt Prompt
 
 Fetch and decrypt the prompt:
 
@@ -56,7 +58,7 @@ If this command fails for any reason (it prints an `Error:` line, for example wh
 
 The CLI fetches the encrypted prompt from the API and decrypts it locally using your stored credentials.
 
-## Step 4: Execute the Fetched Prompt
+## Step 5: Execute the Fetched Prompt
 
 Execute the prompt returned by the decrypt CLI.
 
