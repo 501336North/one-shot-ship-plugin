@@ -17,8 +17,12 @@
 #   - CLAUDE.md is a symlink (incl. dangling) or not a regular file
 #   - CLAUDE.md's directory resolves outside the project, or the project resolves to $HOME
 #   - the markers are not exactly one START line before exactly one END line
-#   - the API body is empty, < 500 bytes, > 256KB, HTML, or has no "IRON LAW"
-# A failed fetch sets a 1h backoff; only a validated write marks the cache fresh (24h), for the
+#   - the ?split=1 reply is not the JSON {base, team}, or its base is not the signed one: the raw base bytes go to
+#     `~/.oss/bin/oss-decrypt --verify-body shared/iron-laws`, and only its exit 0 lets base + team be written
+#     (R-273 D12; team laws stay unverified, DR-3, and are written without control or invisible characters).
+#     Never a second, unsplit request.
+#   - the laws are empty, < 500 bytes, > 256KB, HTML, or have no "IRON LAW"
+# A failed fetch or verification sets a 1h backoff; only a validated write marks the cache fresh (24h), for the
 # apiUrl it came from (a new apiUrl refreshes on the next run).
 #
 # Exit codes (refresh mode always exits 0, so session start never fails):
@@ -33,7 +37,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENDPOINT="/api/v1/prompts/shared/iron-laws"
+ENDPOINT="/api/v1/prompts/shared/iron-laws?split=1"   # JSON {base, team?}: base is the signed file
 STATE_DIR="${HOME}/.oss"
 LAST_CHECK_FILE="${STATE_DIR}/.iron-laws-last-check"
 BACKOFF_FILE="${STATE_DIR}/.iron-laws-backoff"
@@ -111,9 +115,9 @@ block_state() {
 }
 
 # --- fetch + validate ------------------------------------------------------------------------
-# Writes the validated, marker-free laws to $1. Returns 1 on any failure.
+# Writes the verified, validated, marker-free laws to $1. Returns 1 on any failure.
 fetch_body() {
-    local out="$1" raw="$WORK/raw" key rc=0 code bytes
+    local out="$1" raw="$WORK/raw" reply="$WORK/reply" base="$WORK/base" team="$WORK/team" key rc=0 code bytes
     key=$OSS_KEY   # set beside API_URL by the one oss_api_creds read in main (T30, T37)
     if [[ -z "$key" ]]; then warn "no API key in $CONFIG_FILE"; return 1; fi
     # The hooks' one body cap, oss_capped (T74c, T81): over OSS_BODY_MAX bytes, whether curl or the byte stop ends
@@ -126,8 +130,26 @@ fetch_body() {
     if (( rc != 0 )); then warn "API unreachable or response too large (curl exit $rc)"; return 1; fi
     code=$(tail -n 1 "$raw")
     if [[ "$code" != "200" ]]; then warn "API returned HTTP $code"; return 1; fi
-    # Drop the status line and any marker-like lines; trim leading/trailing blank lines.
-    sed '$d' "$raw" | awk '
+    sed '$d' "$raw" > "$reply"
+    if ! oss_split_field base < "$reply" > "$base" || ! oss_split_field team < "$reply" > "$team"; then
+        warn "rejected: the API reply is not the ?split=1 JSON {base, team}; CLAUDE.md left unchanged"; return 1
+    fi
+    # The raw base bytes, before any filtering, must be the signed file. Only exit 0 from oss_verify_body
+    # (oss-api-curl.sh) writes; any other code writes nothing.
+    oss_verify_body shared/iron-laws < "$base"
+    rc=$?
+    if (( rc != 0 )); then
+        warn "the IRON LAWS did not pass verification (oss-decrypt --verify-body exit $rc: not the signed laws, or oss-decrypt is older than 1.2.5 and the next /oss command updates it); CLAUDE.md left unchanged"
+        return 1
+    fi
+    # The team part (the server's advisory section, unverified, DR-3) loses control and invisible characters
+    # (oss_clean_text); the verified base is written as served. An empty team needs no jq.
+    : > "$team.clean"
+    if [[ -s "$team" ]] && ! oss_clean_text < "$team" > "$team.clean"; then
+        warn "rejected: could not clean the team laws (jq missing?); CLAUDE.md left unchanged"; return 1
+    fi
+    # base + team. Drop any marker-like lines; trim leading/trailing blank lines.
+    cat "$base" "$team.clean" | awk '
         /^[[:space:]]*<!--[[:space:]]*IRON LAWS (START|END)/ { next }
         /^[[:space:]]*$/ { if (started) blanks++; next }
         { while (blanks > 0) { print ""; blanks-- } started = 1; print }' > "$out"

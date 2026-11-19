@@ -1,52 +1,51 @@
 /**
  * Integrity verification pipeline
  *
- * Orchestrates watermark stripping + hash verification after decryption.
- * This is the main integration point called from the decrypt command.
+ * Checks a decrypted prompt against the signed manifest before delivery.
  *
- * Flow:
- * 1. Strip watermark homoglyphs from decrypted content
- * 2. Hash the stripped content with SHA-256
- * 3. Compare against the signed manifest entry
- * 4. Return verification result (pass/fail/skip)
+ * Default-deny (R-273 D4, D5, D10):
+ * 1. No manifest → blocked
+ * 2. No own manifest entry for `${type}/${name}` → blocked ('not_in_manifest')
+ * 3. Entry without servedHash → blocked
+ * 4. sha256 of the exact served plaintext (watermarked, unstripped) must equal servedHash
  */
 
-import { stripWatermark } from './watermark.js';
-import { verifyPromptHash } from './prompt-integrity.js';
+import { hashContent } from './prompt-integrity.js';
 import type { SignedManifest } from './manifest-verifier.js';
 
 export interface VerificationResult {
   verified: boolean;
   skipped: boolean;
+  reason?: 'not_in_manifest';
 }
 
 /**
  * Verify a decrypted prompt's integrity against the manifest.
  *
- * Gracefully degrades: if manifest is null or prompt isn't in manifest,
- * returns verified=true with skipped=true (warn + continue).
- *
- * @param watermarkedContent - Decrypted prompt (still watermarked)
+ * @param plaintext - Decrypted prompt exactly as served (still watermarked)
  * @param type - Prompt type (commands, workflows, etc.)
  * @param name - Prompt name
  * @param manifest - Signed manifest (or null if unavailable)
  */
 export async function verifyDecryptedPrompt(
-  watermarkedContent: string,
+  plaintext: string,
   type: string,
   name: string,
   manifest: SignedManifest | null
 ): Promise<VerificationResult> {
   if (!manifest) {
-    return { verified: true, skipped: true };
+    return { verified: false, skipped: false };
   }
 
-  const stripped = stripWatermark(watermarkedContent);
-  const result = verifyPromptHash(stripped, type, name, manifest);
-
-  if (result.status === 'not_in_manifest') {
-    return { verified: true, skipped: true };
+  const key = `${type}/${name}`;
+  if (!Object.hasOwn(manifest.prompts, key)) {
+    return { verified: false, skipped: false, reason: 'not_in_manifest' };
   }
 
-  return { verified: result.valid, skipped: false };
+  const servedHash = manifest.prompts[key].servedHash;
+  if (!servedHash) {
+    return { verified: false, skipped: false };
+  }
+
+  return { verified: hashContent(plaintext) === servedHash, skipped: false };
 }
