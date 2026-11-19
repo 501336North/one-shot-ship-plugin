@@ -321,6 +321,8 @@ function gitBin2() {
 function gitEnv() {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
+  env.GIT_NO_REPLACE_OBJECTS = "1";
+  env.GIT_GRAFT_FILE = "/dev/null";
   return env;
 }
 function gitOut2(cwd, args) {
@@ -704,7 +706,7 @@ function boundedGit(repo, args, extra, left, input) {
   const git = gitBin2();
   const timeout = Math.floor(left());
   if (git === "" || timeout <= 0) return null;
-  const env = { ...gitEnv(), GIT_CONFIG_NOSYSTEM: "1", PATH: "/usr/bin:/bin", ...extra };
+  const env = { ...gitEnv(), GIT_CONFIG_NOSYSTEM: "1", GIT_NO_REPLACE_OBJECTS: "1", GIT_GRAFT_FILE: "/dev/null", PATH: "/usr/bin:/bin", ...extra };
   const r = (0, import_node_child_process3.spawnSync)(git, ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", ...args], {
     cwd: repo,
     env,
@@ -737,6 +739,27 @@ function treeTmpDir() {
   }
   return fs5.mkdtempSync(path3.join(root, "tree-"));
 }
+function globalIgnoreFile(repo, left) {
+  const xdg = process.env.XDG_CONFIG_HOME;
+  const fallback = path3.join(xdg !== void 0 && xdg !== "" ? xdg : path3.join(os2.homedir(), ".config"), "git", "ignore");
+  const set = gitText(repo, ["config", "--type=path", "--get", "core.excludesFile"], left);
+  const file = path3.resolve(repo, set !== null && set !== "" ? set : fallback);
+  return fs5.statSync(file, { throwIfNoEntry: false })?.isFile() === true ? file : null;
+}
+function clearHidingBits(repo, env, left) {
+  const listed = boundedGit(repo, ["ls-files", "-z", "-v"], env, left);
+  if (listed === null) return false;
+  const assumed = [];
+  const skipped = [];
+  for (const e of listed.toString("utf-8").split("\0")) {
+    if (e.length < 3) continue;
+    const p = e.slice(2);
+    if (e[0] !== e[0].toUpperCase()) assumed.push(p);
+    if ((e[0] === "S" || e[0] === "s") && fs5.lstatSync(path3.join(repo, p), { throwIfNoEntry: false }) !== void 0) skipped.push(p);
+  }
+  const clear = (flag, paths) => paths.length === 0 || boundedGit(repo, ["update-index", flag, "-z", "--stdin"], env, left, Buffer.from(paths.join("\0") + "\0")) !== null;
+  return clear("--no-assume-unchanged", assumed) && clear("--no-skip-worktree", skipped);
+}
 function reviewedTree(repo, index, which, dir, left) {
   const tmpIndex = path3.join(dir, `index-${which}`);
   try {
@@ -744,7 +767,25 @@ function reviewedTree(repo, index, which, dir, left) {
   } catch {
   }
   const env = { GIT_INDEX_FILE: tmpIndex };
-  const list = which === "all" ? ["ls-files", "-z", "-m", "-o", "-d", "--exclude-standard", "--", ".", ":(exclude).oss"] : ["ls-files", "-z", "-m", "-d"];
+  if (!clearHidingBits(repo, env, left)) return "";
+  let list = ["ls-files", "-z", "-m", "-d"];
+  if (which === "all") {
+    const global = globalIgnoreFile(repo, left);
+    list = [
+      "-c",
+      "core.excludesFile=/dev/null",
+      "ls-files",
+      "-z",
+      "-m",
+      "-o",
+      "-d",
+      "--exclude-per-directory=.gitignore",
+      ...global === null ? [] : [`--exclude-from=${global}`],
+      "--",
+      ".",
+      ":(exclude).oss"
+    ];
+  }
   const changed = boundedGit(repo, list, env, left);
   if (changed === null) return "";
   const paths = new Set(changed.toString("utf-8").split("\0"));
@@ -771,7 +812,7 @@ function reviewedTrees(repo, left) {
   if (dir === null) return none;
   try {
     const trackedTree = reviewedTree(repo, index, "tracked", dir, left);
-    return { tree: reviewedTree(repo, index, "all", dir, left), trackedTree };
+    return trackedTree === "" ? none : { tree: reviewedTree(repo, index, "all", dir, left), trackedTree };
   } finally {
     fs5.rmSync(dir, { recursive: true, force: true });
   }
@@ -796,7 +837,7 @@ function captureVerdict(input, opts = {}) {
     const ledger = openLedger(repo);
     const headSha = gitText(repo, ["rev-parse", "--verify", "HEAD^{commit}"], left) ?? "";
     const trees = reviewedTrees(repo, left);
-    if (headSha === "" && (trees.tree === "" || trees.trackedTree === "")) return { captured: false, reason: "no_tree_or_head" };
+    if (trees.tree === "" || trees.trackedTree === "") return { captured: false, reason: "no_tree_or_head" };
     ledger.appendRow(`verdicts/${feature}`, {
       gate,
       verdict: block.verdict,
@@ -804,12 +845,11 @@ function captureVerdict(input, opts = {}) {
       agent: plainId(hook.agent_id),
       session: plainId(hook.session_id),
       ts: (opts.now ?? (() => /* @__PURE__ */ new Date()))().toISOString(),
-      // For information only: the HEAD at capture (ship commits after its reviews, so HEAD never decides).
-      // The HEAD at capture: ship commits after its reviews, so HEAD never decides alone; assemble-ship allows a
-      // deletion only for a path absent from this commit's tree too (pen N4).
+      // The HEAD at capture: ship commits after its reviews, so HEAD never decides alone; assemble-ship counts a
+      // deletion as a change only for a path that was tracked, or in this commit's tree (pen N4).
       headSha,
-      // The trees the agent reviewed (all files / tracked only); assemble-ship counts a pass only when the shipped tree
-      // outside .oss differs from `tree` by nothing but files that were untracked at review and left out (finding 4).
+      // The trees the agent reviewed (all files / tracked only). Passes never count (D45): a fail stays open until the
+      // shipped code outside .oss differs from `tree` (the D45 build note's reviewedIsShipped rule).
       ...trees
     });
     return { captured: true, gate, feature };

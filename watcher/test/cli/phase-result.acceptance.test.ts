@@ -1005,6 +1005,28 @@ describe('phase-result CLI: the ship base must be inside origin/<its own name> (
     expect(a.status, a.stderr).toBe(0);
   });
 
+  // D50 gap (code review L2, D51): base.txt naming an integration branch that only `upstream` has ships too; the
+  //   same-name remote rule (checkShipBase) is the only remote check.
+  it('a repo whose only remote is upstream, with base.txt naming an integration branch on upstream, passes', () => {
+    const INTEGRATION = 'sprint-d';
+    git('update-ref', '-d', 'refs/remotes/origin/main');
+    git('update-ref', 'refs/remotes/upstream/main', 'main');
+    git('checkout', '-q', 'main');
+    git('checkout', '-q', '-b', INTEGRATION);
+    commitFile('sprint.txt', 'sprint\n');
+    git('update-ref', `refs/remotes/upstream/${INTEGRATION}`, INTEGRATION);
+    git('branch', '-q', '-D', `feat/${FEATURE}/build`);
+    git('checkout', '-q', '-b', `feat/${FEATURE}/build`);
+    commitFile('feature-1.txt', 'one\n');
+    passGates(FEATURE);
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    fs.writeFileSync(path.join(valueDir(), 'base.txt'), `${INTEGRATION}\n`);
+    const a = cli('assemble', 'ship');
+    expect(a.status, a.stderr).toBe(0);
+    const r = JSON.parse(fs.readFileSync(resultFile(FEATURE, 'ship'), 'utf-8')) as Record<string, unknown>;
+    expect((r.diff as Record<string, unknown>).baseRef).toBe(INTEGRATION);
+  });
+
   // Rule: a snapshot in the D40 format (`shas`, no ref names) cannot say which ref holds the base: fail closed.
   it('an old-format snapshot ({startedAt, shas}) refuses no_base_snapshot', () => {
     pushedFeature();

@@ -203,29 +203,31 @@ _oss_ledger_run() (
 
 # _oss_ledger_origin <run dir> <startedAt>: D40/D46/D50 (security M1, pen F4, pen M2a). Writes <run dir>/ship.origin,
 # one JSON line {"startedAt","refs":{"refs/remotes/<remote>/<name>":"<sha>",...}}: this ship run's start and each
-# remote ref's name and SHA now (each refs/remotes/<remote>/HEAD, a symref to another ref, is skipped). Assemble ship
+# remote ref's name and SHA now (every symref, each */HEAD included, is dropped: security M3, D51). Assemble ship
 # accepts a base only when its tip is inside <a remote>/<the same name>; local refs and reflogs, which a model can
 # write, never count. git is the fixed binary with PATH=/usr/bin:/bin, capped at 10 s, and lists at most 1001 refs
-# (--count); the 1000 cap is on all remotes' refs together, */HEAD included. Any
+# (--count); the 1000 cap is on all remotes' refs together, symrefs included. Any
 # earlier snapshot is removed first, so on a git failure or over 1000 refs listed no snapshot is left for this run
 # (assemble refuses: fail closed); the reason is in _OSS_ORIGIN_WHY. Called from _oss_ledger_run's subshell, in the
 # repo, after its folder checks.
 _oss_ledger_origin() {
-    local d="$1" s="$2" line n=0 json kept=""
+    local d="$1" s="$2" line n=0 json kept=()
     _OSS_ORIGIN_WHY=""
     "${OSS_RM:-/bin/rm}" -f "$d/ship.origin" 2>/dev/null
     [[ ! -e "$d/ship.origin" && ! -L "$d/ship.origin" ]] || { _OSS_ORIGIN_WHY=stale_snapshot; return 1; }
     oss_run_bounded_rc 10 "${OSS_ENV:-/usr/bin/env}" PATH=/usr/bin:/bin GIT_CONFIG_NOSYSTEM=1 "$OSS_GIT_BIN" \
-        -c core.fsmonitor= for-each-ref --count=1001 --format='%(refname) %(objectname)' refs/remotes/ \
+        -c core.fsmonitor= for-each-ref --count=1001 --format='%(refname) %(objectname) %(symref)' refs/remotes/ \
         || { _OSS_ORIGIN_WHY=git_failed; return 1; }
     while IFS= read -r line; do
         [[ -n "$line" ]] || continue
-        [[ "$line" =~ ^refs/remotes/[^[:space:]]+\ [0-9a-f]{40}([0-9a-f]{24})?$ ]] || { _OSS_ORIGIN_WHY=bad_git_output; return 1; }
+        [[ "$line" =~ ^refs/remotes/[^[:space:]]+\ [0-9a-f]{40}([0-9a-f]{24})?\ ([^[:space:]]*)$ ]] || { _OSS_ORIGIN_WHY=bad_git_output; return 1; }
         n=$((n + 1))
         [[ $n -le 1000 ]] || { _OSS_ORIGIN_WHY=over_1000_refs; return 1; }
-        [[ "$line" =~ ^refs/remotes/[^/[:space:]]+/HEAD\  ]] || kept="$kept$line"$'\n'
+        [[ -z "${BASH_REMATCH[2]}" && ! "$line" =~ ^refs/remotes/[^/[:space:]]+/HEAD\  ]] || continue
+        kept+=("$line")
     done <<< "$OSS_BOUNDED_OUT"
-    json=$("$OSS_JQ_BIN" -cn --arg s "$s" --arg o "$kept" \
+    # One join after the loop: appending to one string per line was quadratic under bash 3.2 (perf L1).
+    json=$("$OSS_JQ_BIN" -cn --arg s "$s" --arg o "$(printf '%s\n' ${kept[@]+"${kept[@]}"})" \
         '{startedAt: $s, refs: ($o | split("\n") | map(select(. != "") | split(" ") | {key: .[0], value: .[1]}) | from_entries)}') \
         || { _OSS_ORIGIN_WHY=jq_failed; return 1; }
     (umask 077; set -C; printf '%s\n' "$json" > "$d/ship.origin") 2>/dev/null || { _OSS_ORIGIN_WHY=write_failed; return 1; }

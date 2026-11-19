@@ -146,6 +146,22 @@
 - [x] Builder G: linear glob matcher, ideate same-second picks, oss-timeline fixed tool paths, Stop grep reads only phase files.
 - [x] Builder H: D48 (a capture with no tree and no HEAD writes no row); the dead start-snapshot code is removed.
 
+### Ship round 7 fixes, after gate round 5 (2026-11-19)
+- [x] Gate round 5: performance passed; code review, security and pen test failed. The user picked D51 (honest-model scope), D52 and D53.
+- [x] Builder I:
+  - every fail row counts, so a revert to failed code stays blocked;
+  - verdictsFrom is no longer written;
+  - git calls run with no replace objects and no grafts;
+  - large diffs no longer overflow;
+  - the D50 base.txt gap is closed;
+  - the git-path test is updated.
+- [x] Builder J:
+  - D52: no row without a reviewed tree;
+  - assume-unchanged and skip-worktree bits are cleared;
+  - D53: ignore files are .gitignore plus the global file, not info/exclude;
+  - git env set.
+- [x] Builder K: the snapshot drops symrefs and its loop is linear; the gate rule handles brackets and extensions.
+
 ### Later
 - [ ] Ship into feat/determinism-sprint/build (SD-1)
 - [ ] T21 oss-lab (after the plugin ships)
@@ -153,4 +169,4 @@
 ## Blockers
 - None. R-266's 4 red base tests are fixed in #233 (4458bddb), and R-257 is rebased onto it.
 
-## Last Updated: 2026-11-19 10:20 CST by /oss:ship (round 6 fixes)
+## Last Updated: 2026-11-19 13:30 CST by /oss:ship (round 7 fixes)

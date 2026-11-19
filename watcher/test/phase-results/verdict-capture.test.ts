@@ -334,12 +334,13 @@ describe('captureVerdict: the reviewed tree', () => {
     expect(trackedTree).toBe(git('rev-parse', 'HEAD^{tree}'));
   });
 
-  it('a hook git cannot read the repo still records the row, with an empty tree that never counts', () => {
+  // ⚠ changes existing test: D52 ("Record no row") — a capture that cannot build the reviewed tree writes no row (it was
+  //   "still records the row, with an empty tree"): its headSha alone let ship's own commit clear the fail.
+  it('a hook git cannot read the repo records no row', () => {
     fs.rmSync(path.join(repo, '.git', 'index'), { force: true });
     fs.writeFileSync(path.join(repo, '.git', 'index'), 'not an index');
-    expect(capture({ last_assistant_message: VALID_BLOCK }).captured).toBe(true);
-    expect(rows()[0].tree).toBe('');
-    expect(rows()[0].trackedTree).toBe('');
+    expect(capture({ last_assistant_message: VALID_BLOCK }).captured).toBe(false);
+    expect(rows()).toEqual([]);
   });
 
   it('a review-agent stop records its tree within a loose 1.5 s budget on a 2,000-file repo', () => {
@@ -358,12 +359,120 @@ describe('captureVerdict: the reviewed tree', () => {
   });
 });
 
+/**
+ * D51 (round 7, security M1b/M1c, pen 4): the reviewed tree records what is on disk, whatever the index bits or
+ * .git/info/exclude say: an edit hidden by assume-unchanged or skip-worktree, and an untracked file named only in
+ * .git/info/exclude, are in it. D53: the repo's .gitignore files and the user's global ignore file leave a file out.
+ * Git env: replace refs and grafts never change what the row records.
+ */
+describe('captureVerdict: the reviewed tree is what is on disk (D51)', () => {
+  const FAIL_BLOCK = block({ verdict: 'fail', findings: COUNTS });
+
+  function commitTracked(): void {
+    fs.writeFileSync(path.join(repo, 'tracked.txt'), 'reviewed-good\n');
+    git('add', 'tracked.txt');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'tracked');
+  }
+  /** The tree of everything on disk outside .oss, as a commit of it would record. */
+  function committedTree(): string {
+    git('add', '-A', '--', '.', ':(exclude).oss');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'snap');
+    return git('rev-parse', 'HEAD^{tree}');
+  }
+
+  for (const bit of ['assume-unchanged', 'skip-worktree']) {
+    it(`an edit hidden by the ${bit} bit is in the reviewed tree, and the real index keeps its bit`, () => {
+      commitTracked();
+      git('update-index', `--${bit}`, 'tracked.txt');
+      fs.writeFileSync(path.join(repo, 'tracked.txt'), 'reviewed-bad\n');
+      const bitsBefore = git('ls-files', '-v');
+      expect(capture({ last_assistant_message: FAIL_BLOCK }).captured).toBe(true);
+      expect(git('ls-files', '-v')).toBe(bitsBefore);
+      const { tree, trackedTree } = rows()[0];
+      git('update-index', `--no-${bit}`, 'tracked.txt');
+      const shipped = committedTree();
+      expect(tree).toBe(shipped);
+      expect(trackedTree).toBe(shipped);
+    });
+  }
+
+  // Honest use: a sparse checkout marks the files it leaves off disk skip-worktree; they are not deletions.
+  it('a skip-worktree file left off disk (sparse checkout) is not recorded as deleted', () => {
+    commitTracked();
+    git('update-index', '--skip-worktree', 'tracked.txt');
+    fs.rmSync(path.join(repo, 'tracked.txt'));
+    expect(capture({ last_assistant_message: FAIL_BLOCK }).captured).toBe(true);
+    expect(rows()[0]).toMatchObject({ tree: git('rev-parse', 'HEAD^{tree}'), trackedTree: git('rev-parse', 'HEAD^{tree}') });
+  });
+
+  it('an untracked file named only in .git/info/exclude is in the reviewed tree', () => {
+    fs.writeFileSync(path.join(repo, 'hidden.txt'), 'reviewed-bad\n');
+    fs.appendFileSync(path.join(repo, '.git', 'info', 'exclude'), 'hidden.txt\n');
+    expect(capture({ last_assistant_message: FAIL_BLOCK }).captured).toBe(true);
+    const { tree } = rows()[0];
+    fs.writeFileSync(path.join(repo, '.git', 'info', 'exclude'), '');
+    expect(tree).toBe(committedTree());
+  });
+
+  // ⚠ changes existing test: D53 ("Honour the global file") — the user's global ignore file leaves a file out again (it
+  //   was "an untracked file named only in core.excludesFile is in the reviewed tree"); only info/exclude is ignored.
+  it('a file named in core.excludesFile (a ~ path) is left out of the reviewed tree, as is one in .gitignore', () => {
+    fs.writeFileSync(path.join(home, 'global-ignore'), 'venv-file.txt\n');
+    git('config', 'core.excludesFile', '~/global-ignore');
+    fs.writeFileSync(path.join(repo, 'venv-file.txt'), 'local tooling\n');
+    fs.writeFileSync(path.join(repo, '.gitignore'), 'build.log\n');
+    fs.writeFileSync(path.join(repo, 'build.log'), 'noise\n');
+    fs.writeFileSync(path.join(repo, 'code.txt'), 'reviewed\n');
+    expect(capture({ last_assistant_message: FAIL_BLOCK }).captured).toBe(true);
+    const names = git('ls-tree', '--name-only', rows()[0].tree as string).split('\n');
+    expect(names).toContain('code.txt');
+    expect(names).toContain('.gitignore');
+    expect(names).not.toContain('venv-file.txt');
+    expect(names).not.toContain('build.log');
+  });
+
+  // D53: with no core.excludesFile, git's default global file ($XDG_CONFIG_HOME/git/ignore, else ~/.config/git/ignore).
+  for (const where of ['XDG_CONFIG_HOME', '~/.config']) {
+    it(`a file named in the default global ignore file under ${where} is left out of the reviewed tree`, () => {
+      const saved = process.env.XDG_CONFIG_HOME;
+      const base = where === 'XDG_CONFIG_HOME' ? path.join(home, 'xdg') : path.join(home, '.config');
+      if (where === 'XDG_CONFIG_HOME') process.env.XDG_CONFIG_HOME = base;
+      else delete process.env.XDG_CONFIG_HOME;
+      try {
+        fs.mkdirSync(path.join(base, 'git'), { recursive: true });
+        fs.writeFileSync(path.join(base, 'git', 'ignore'), 'venv-file.txt\n');
+        fs.writeFileSync(path.join(repo, 'venv-file.txt'), 'local tooling\n');
+        fs.writeFileSync(path.join(repo, 'code.txt'), 'reviewed\n');
+        expect(capture({ last_assistant_message: FAIL_BLOCK }).captured).toBe(true);
+      } finally {
+        if (saved === undefined) delete process.env.XDG_CONFIG_HOME;
+        else process.env.XDG_CONFIG_HOME = saved;
+      }
+      const names = git('ls-tree', '--name-only', rows()[0].tree as string).split('\n');
+      expect(names).toContain('code.txt');
+      expect(names).not.toContain('venv-file.txt');
+    });
+  }
+
+  it('a replace ref on HEAD does not change the recorded headSha or its tree', () => {
+    commitTracked();
+    const head = headNow();
+    const realTree = git('rev-parse', 'HEAD^{tree}');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'tag', '-a', '-m', 'decoy', 'decoy', 'HEAD~1');
+    git('replace', '-f', head, git('rev-parse', 'decoy'));
+    expect(capture({ last_assistant_message: FAIL_BLOCK }).captured).toBe(true);
+    git('replace', '-d', head);
+    expect(rows()[0].headSha).toBe(head);
+    expect(git('rev-parse', `${rows()[0].headSha as string}^{tree}`)).toBe(realTree);
+  });
+});
+
 // ⚠ changes existing test: D45 dead code — the "start snapshot (security L4)" block is removed with captureStart: since
 //   D45 the assembler reads neither the start snapshot nor the row's `start`. A stop past its deadline is covered by the D48 cases below.
 
 /**
  * Round 2 performance M1 and L1: the trees are built without writing blobs into .git/objects (ls-files, update-index
- * --info-only, write-tree --missing-ok), a file over 50 MB gives tree '' at once, the whole capture shares one
+ * --info-only, write-tree --missing-ok), a file over 50 MB writes no row at once (D52), the whole capture shares one
  * deadline, and its temp index folders live in one known folder whose stale entries (over 10 min) are removed.
  */
 describe('captureVerdict: trees without blob writes (performance M1, L1)', () => {
@@ -394,24 +503,17 @@ describe('captureVerdict: trees without blob writes (performance M1, L1)', () =>
     expect(hasObject(blobId(fs.readFileSync(path.join(repo, 'untracked.txt'), 'utf-8')))).toBe(false);
   });
 
-  // Rule: a changed file over 50 MB is not hashed; the row records tree '' (it never counts, D26 label).
-  it('a changed file over 50 MB gives tree \'\' fast', () => {
+  // Rule: a changed file over 50 MB is not hashed.
+  // ⚠ changes existing test: D52 ("Record no row") — the reviewed tree cannot be built, so no row is written (it was
+  //   "gives tree '' fast", and "the big-file row still records headSha", which let ship's own commit clear the fail).
+  it('an untracked file over 50 MB records no row, fast', () => {
     const fd = fs.openSync(path.join(repo, 'big.bin'), 'w');
     fs.ftruncateSync(fd, 51 * 1024 * 1024);
     fs.closeSync(fd);
     const t0 = performance.now();
-    expect(capture({ last_assistant_message: VALID_BLOCK }).captured).toBe(true);
+    expect(capture({ last_assistant_message: block({ verdict: 'fail', findings: COUNTS }) }).captured).toBe(false);
     expect(performance.now() - t0).toBeLessThan(1500);
-    expect(rows()[0].tree).toBe('');
-  });
-
-  // D36: a no-tree pass can clear an earlier fail only on a new commit, so the big-file row must carry headSha.
-  it('the big-file row (tree \'\') still records headSha', () => {
-    const fd = fs.openSync(path.join(repo, 'big.bin'), 'w');
-    fs.ftruncateSync(fd, 51 * 1024 * 1024);
-    fs.closeSync(fd);
-    capture({ last_assistant_message: VALID_BLOCK });
-    expect(rows()[0]).toMatchObject({ tree: '', headSha: headNow() });
+    expect(rows()).toEqual([]);
   });
 
   // ⚠ changes existing test: D48 ("Record nothing", replaces D43) — a capture past its deadline reads neither the tree
@@ -457,8 +559,7 @@ describe('captureVerdict: trees without blob writes (performance M1, L1)', () =>
   });
 
   // Performance LOW 2 (round 3): a huge changed list was hashed in full by update-index before the deadline could stop
-  //   it. Over 20,000 changed paths, or over 500 MB of changed files in all, the tree is '' at once; the tracked tree
-  //   (built first, from the far shorter tracked list) still records.
+  //   it. Over 20,000 changed paths, or over 500 MB of changed files in all, the tree is '' at once, and D52: no row.
   function trackedEdit(): void {
     fs.writeFileSync(path.join(repo, 'tracked.txt'), 'one\n');
     git('add', 'tracked.txt');
@@ -466,26 +567,27 @@ describe('captureVerdict: trees without blob writes (performance M1, L1)', () =>
     fs.writeFileSync(path.join(repo, 'tracked.txt'), 'two\n');
   }
 
-  it('over 500 MB of changed files in all gives tree \'\' but keeps the tracked tree', () => {
+  // ⚠ changes existing test: D52 ("Record no row") — over the caps the reviewed tree cannot be built, so no row is
+  //   written (it was "gives tree '' but keeps the tracked tree").
+  it('over 500 MB of changed files in all records no row', () => {
     trackedEdit();
     for (let i = 0; i < 11; i++) {
       const fd = fs.openSync(path.join(repo, `part-${i}.bin`), 'w');
       fs.ftruncateSync(fd, 49 * 1024 * 1024);
       fs.closeSync(fd);
     }
-    expect(capture({ last_assistant_message: VALID_BLOCK }).captured).toBe(true);
-    expect(rows()[0].tree).toBe('');
-    expect(rows()[0].trackedTree).toMatch(/^[0-9a-f]{40}$/);
+    expect(capture({ last_assistant_message: VALID_BLOCK }).captured).toBe(false);
+    expect(rows()).toEqual([]);
   });
 
-  it('over 20,000 changed paths gives tree \'\' but keeps the tracked tree', () => {
+  // ⚠ changes existing test: D52 ("Record no row") — it was "gives tree '' but keeps the tracked tree".
+  it('over 20,000 untracked paths records no row', () => {
     trackedEdit();
     const dir = path.join(repo, 'many');
     fs.mkdirSync(dir);
     for (let i = 0; i <= 20_000; i++) fs.writeFileSync(path.join(dir, `f${i}`), '');
-    expect(capture({ last_assistant_message: VALID_BLOCK }).captured).toBe(true);
-    expect(rows()[0].tree).toBe('');
-    expect(rows()[0].trackedTree).toMatch(/^[0-9a-f]{40}$/);
+    expect(capture({ last_assistant_message: block({ verdict: 'fail', findings: COUNTS }) }).captured).toBe(false);
+    expect(rows()).toEqual([]);
   });
 
   it('removes temp index folders older than 10 minutes from the known folder, and keeps fresh ones', () => {

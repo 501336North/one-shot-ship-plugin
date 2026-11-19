@@ -7,10 +7,15 @@
 import { execFileSync } from 'node:child_process';
 import { gitBin } from './git-bin.js';
 
-/** process.env without any GIT_* variable. */
+/**
+ * process.env without any GIT_* variable, plus D51 (security M2): replace refs and grafts (a replace-graft or
+ * .git/info/grafts) are ignored, so no rewritten history can clear a fail or pass a base.
+ */
 export function gitEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('GIT_')) env[k] = v;
+  env.GIT_NO_REPLACE_OBJECTS = '1';
+  env.GIT_GRAFT_FILE = '/dev/null';
   return env;
 }
 

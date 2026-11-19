@@ -1110,6 +1110,8 @@ var import_node_child_process2 = require("node:child_process");
 function gitEnv() {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
+  env.GIT_NO_REPLACE_OBJECTS = "1";
+  env.GIT_GRAFT_FILE = "/dev/null";
   return env;
 }
 function gitOut2(cwd, args) {
@@ -1134,7 +1136,7 @@ var SEVERITIES = ["critical", "high", "medium", "low", "info"];
 var REPO_FILE_CAP = 4 * 1024 * 1024;
 var GitError = class extends Error {
 };
-function runGit(repo, args, okCodes = [0], raw = false) {
+function runGit(repo, args, okCodes = [0], raw = false, maxBuffer = 1024 * 1024) {
   const env = gitEnv();
   env.GIT_CONFIG_NOSYSTEM = "1";
   env.PATH = "/usr/bin:/bin";
@@ -1146,7 +1148,7 @@ function runGit(repo, args, okCodes = [0], raw = false) {
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "ignore"],
     timeout: 1e4,
-    maxBuffer: 1024 * 1024
+    maxBuffer
   });
   if (r.error !== void 0 || r.status === null || !okCodes.includes(r.status)) throw new GitError(args[0]);
   return { status: r.status, out: raw ? r.stdout : r.stdout.trim() };
@@ -1156,14 +1158,6 @@ function isLocalBranch(repo, name) {
   try {
     runGit(repo, ["check-ref-format", "--branch", name]);
     runGit(repo, ["rev-parse", "--verify", "--quiet", "--end-of-options", `refs/heads/${name}^{commit}`]);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function hasOriginBranch(repo, name) {
-  try {
-    runGit(repo, ["rev-parse", "--verify", "--quiet", "--end-of-options", `refs/remotes/origin/${name}^{commit}`]);
     return true;
   } catch {
     return false;
@@ -1257,24 +1251,20 @@ function failRow(row) {
   return { gate: row.gate, findings, at, tree: hex(row.tree), trackedTree: hex(row.trackedTree), headSha: hex(row.headSha) };
 }
 var TREE_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+var PATH_LIST_BUFFER = 64 * 1024 * 1024;
+var SHIPPED_CODE = ["--", ".", ":(exclude).oss"];
 function shippedVsReviewed(repo, tree, trackedTree, reviewHead) {
+  const diff = ["diff", "--no-renames", "--no-ext-diff", "--no-textconv"];
+  const paths = (filter, from, to) => runGit(repo, [...diff, "--name-only", "-z", `--diff-filter=${filter}`, "--end-of-options", from, to, ...SHIPPED_CODE], [0], true, PATH_LIST_BUFFER).out.split("\0").filter((p) => p !== "");
   try {
-    const status = runGit(
-      repo,
-      ["diff", "--name-status", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", "--end-of-options", tree, "HEAD", "--", ".", ":(exclude).oss"],
-      [0],
-      true
-    ).out.split("\0");
-    if (status[status.length - 1] === "") status.pop();
-    if (status.length % 2 !== 0) return "unknown";
-    const deleted = [];
-    for (let k = 0; k + 1 < status.length; k += 2) {
-      if (status[k] !== "D") return "differs";
-      deleted.push(status[k + 1]);
+    if (runGit(repo, [...diff, "--quiet", "--diff-filter=d", "--end-of-options", tree, "HEAD", ...SHIPPED_CODE], [0, 1]).status === 1) {
+      return "differs";
     }
+    const deleted = paths("D", tree, "HEAD");
     if (deleted.length === 0) return "same";
-    const listed = (treeish) => runGit(repo, ["--literal-pathspecs", "ls-tree", "-r", "--name-only", "-z", "--end-of-options", treeish, "--", ...deleted], [0], true).out !== "";
-    return listed(trackedTree) || reviewHead !== null && listed(reviewHead) ? "differs" : "same";
+    const wasTracked = new Set(paths("A", "HEAD", trackedTree));
+    if (reviewHead !== null) for (const p of paths("A", "HEAD", reviewHead)) wasTracked.add(p);
+    return deleted.some((p) => wasTracked.has(p)) ? "differs" : "same";
   } catch {
     return "unknown";
   }
@@ -1316,39 +1306,20 @@ function timelineGates(ctx, featureDir, gateHashes) {
 }
 var CAPTURE_ADDS_GATE = "pen-test";
 var NOT_RE_REVIEWED = "captured fail, not re-reviewed";
-function verdictCutoff(ledger, repo, feature, startedAt) {
-  const last = ledger.lastRow(`results/${feature}/ship`);
-  let stored;
-  try {
-    stored = readResult(repo, feature, "ship");
-  } catch {
-    return -Infinity;
-  }
-  if (last === null || !stored.ok || last.sha256 !== sha256(stored.bytes)) return -Infinity;
-  const v = stored.value;
-  if (typeof v !== "object" || v === null) return -Infinity;
-  const r = v;
-  if (r.startedAt === startedAt && (typeof r.verdictsFrom === "string" || r.verdictsFrom === null)) {
-    const from = r.verdictsFrom === null ? NaN : Date.parse(r.verdictsFrom);
-    return Number.isNaN(from) ? -Infinity : from;
-  }
-  if (r.verdict !== "ready_to_merge") return -Infinity;
-  const at = typeof last.startedAt === "string" ? Date.parse(last.startedAt) : NaN;
-  return Number.isNaN(at) ? -Infinity : at;
-}
-function applyAgentVerdicts(tl, verdictRows, cutoff, repo) {
-  const newest = /* @__PURE__ */ new Map();
+function applyAgentVerdicts(tl, verdictRows, repo) {
+  const newestOpen = /* @__PURE__ */ new Map();
   for (const raw of verdictRows) {
     const f = failRow(raw);
-    if (f === null || !(f.at >= cutoff)) continue;
-    const prev = newest.get(f.gate);
-    if (prev === void 0 || f.at >= prev.at) newest.set(f.gate, f);
+    if (f === null) continue;
+    const prev = newestOpen.get(f.gate);
+    if (prev !== void 0 && prev.at > f.at) continue;
+    if (!failCleared(repo, f)) newestOpen.set(f.gate, f);
   }
   const open = /* @__PURE__ */ new Set();
-  for (const [name, f] of newest) {
+  for (const [name, f] of newestOpen) {
     const zero = counts({});
     const gate = tl.byName.get(name) ?? (name === CAPTURE_ADDS_GATE ? { gate: name, verdict: "fail", findings: zero, fixed: zero, source: "agent" } : void 0);
-    if (gate === void 0 || failCleared(repo, f)) continue;
+    if (gate === void 0) continue;
     tl.byName.set(name, { ...gate, verdict: "fail", findings: f.findings, source: "agent" });
     open.add(name);
   }
@@ -1391,19 +1362,16 @@ function assembleShip(ctx, opts) {
   let gateHashes;
   let decisionRows;
   let verdictRows;
-  let cutoff;
   try {
     const ledger = openLedger(ctx.repo);
     gateHashes = new Set(ledger.readRows(`gates/${ctx.feature}`).map((r) => r.sha256));
     decisionRows = ledger.readRows(`decisions/${ctx.feature}`);
     verdictRows = ledger.readRows(`verdicts/${ctx.feature}`);
-    cutoff = ctx.verdictsFrom === void 0 ? verdictCutoff(ledger, ctx.repo, ctx.feature, ctx.startedAt) : Date.parse(ctx.verdictsFrom ?? "");
-    if (Number.isNaN(cutoff)) cutoff = -Infinity;
   } catch (e) {
     return { ok: false, error: e instanceof LedgerError ? e.code : "unsafe_path" };
   }
   const timeline = timelineGates(ctx, featureDir, gateHashes);
-  const notReReviewed = applyAgentVerdicts(timeline, verdictRows, cutoff, ctx.repo);
+  const notReReviewed = applyAgentVerdicts(timeline, verdictRows, ctx.repo);
   const byName = timeline.byName;
   for (const required of opts.requiredGates ?? DEFAULT_REQUIRED_GATES) {
     if (!byName.has(required)) return { ok: false, error: "gate_missing", detail: required };
@@ -1420,7 +1388,6 @@ function assembleShip(ctx, opts) {
     result: {
       ...baseFields(ctx, "ship"),
       headSha: diff.headSha,
-      verdictsFrom: cutoff === -Infinity ? null : new Date(cutoff).toISOString(),
       sources: {
         diff: "code",
         gates: "model",
@@ -1537,13 +1504,9 @@ function headSha(repo) {
   return gitOut2(repo, ["rev-parse", "--verify", "HEAD^{commit}"]);
 }
 function shipBase(repo, dir) {
-  const configured = shipBaseConfig(repo);
   const named = dir === null ? null : readValueFile(dir, "base.txt")?.replace(/\n$/, "");
-  if (named != null && !named.includes("\n") && isLocalBranch(repo, named)) {
-    if (named === "main" || named === configured || hasOriginBranch(repo, named)) return named;
-    throw new Refusal("unsafe_base", "base.txt");
-  }
-  return configured;
+  if (named != null && !named.includes("\n") && isLocalBranch(repo, named)) return named;
+  return shipBaseConfig(repo);
 }
 function shipBaseConfig(repo) {
   const env = gitEnv();
@@ -1687,9 +1650,7 @@ function reassemble(repo, feature, phase, stored) {
       headSha: String(stored.headSha),
       valueDir: dir,
       evidenceCutoff: typeof stored.evidenceCutoff === "string" ? stored.evidenceCutoff : null,
-      // D47: ship re-checks with the verdict cutoff frozen at assemble; a result from before D47 (no field) keeps the
-      // old rule (undefined: recomputed from the stored ship result).
-      ..."verdictsFrom" in stored ? { verdictsFrom: typeof stored.verdictsFrom === "string" ? stored.verdictsFrom : null } : {},
+      // D51: ship reads every fail row, so a stored verdictsFrom (D47, results from rounds 6-7) is ignored.
       now: () => /* @__PURE__ */ new Date()
     }, base);
   } finally {

@@ -9,8 +9,8 @@
  * hook input's agent_type (REVIEW_AGENT_GATES), never from the block. One row goes to the owner-only ledger
  * `verdicts/<feature>`; the model never writes it. assemble-ship.ts reads it. The row records the tree the agent
  * reviewed (working tree minus .oss, from a temp index copy with no blob writes; the real index is never touched),
- * which binds it. Every git call shares one deadline (DEADLINE_MS). D48: a capture that reads neither HEAD nor both
- * trees writes no row.
+ * which binds it. Every git call shares one deadline (DEADLINE_MS). D48, D52: a capture that cannot build both trees
+ * writes no row.
  *
  * The final message (D41): only the text of the last assistant message in agent_transcript_path, never stdin's
  * last_assistant_message (whoever runs the hook writes stdin): its trailing entries that share one message.id, and
@@ -60,12 +60,12 @@ export interface CaptureOptions {
 
 /**
  * Well under the hook's own 7 s bound (oss-verdict-capture.sh; hooks.json allows 10 s), counted from the process start,
- * so a slow repo records '' trees instead of no row.
+ * so the hook never kills a capture mid-write; a capture that runs out of time writes no row (D48).
  */
 export const DEADLINE_MS = 3500;
-/** A changed file over this is not hashed: the tree is '' and the row never counts (D26 label). */
+/** A changed file over this is not hashed: the tree is '' and no row is written (D52). */
 const BIG_FILE_BYTES = 50 * 1024 * 1024;
-/** Performance LOW 2: over this many changed paths, or this many bytes of changed files in all, the tree is '' at once. */
+/** Performance LOW 2: over this many changed paths, or this many bytes of changed files in all, the tree is '' at once (D52: no row). */
 const MAX_CHANGED_PATHS = 20_000;
 const MAX_CHANGED_BYTES = 500 * 1024 * 1024;
 /** Temp index folders older than this in the known folder are left over from a killed capture, and removed. */
@@ -217,7 +217,8 @@ function boundedGit(repo: string, args: string[], extra: NodeJS.ProcessEnv, left
   // spawnSync needs a whole number; the CLI's process-start time (performance.timeOrigin) is fractional.
   const timeout = Math.floor(left());
   if (git === '' || timeout <= 0) return null;
-  const env = { ...gitEnv(), GIT_CONFIG_NOSYSTEM: '1', PATH: '/usr/bin:/bin', ...extra };
+  // D51: replace refs and grafts never change what the row records.
+  const env = { ...gitEnv(), GIT_CONFIG_NOSYSTEM: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_GRAFT_FILE: '/dev/null', PATH: '/usr/bin:/bin', ...extra };
   const r = spawnSync(git, ['-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', ...args], {
     cwd: repo,
     env,
@@ -257,12 +258,47 @@ function treeTmpDir(): string | null {
 }
 
 /**
+ * D53: the user's global ignore file when it exists: core.excludesFile (git expands a leading ~), else git's default,
+ * $XDG_CONFIG_HOME/git/ignore or ~/.config/git/ignore; null otherwise.
+ */
+function globalIgnoreFile(repo: string, left: Deadline): string | null {
+  const xdg = process.env.XDG_CONFIG_HOME;
+  const fallback = path.join(xdg !== undefined && xdg !== '' ? xdg : path.join(os.homedir(), '.config'), 'git', 'ignore');
+  const set = gitText(repo, ['config', '--type=path', '--get', 'core.excludesFile'], left);
+  const file = path.resolve(repo, set !== null && set !== '' ? set : fallback);
+  return fs.statSync(file, { throwIfNoEntry: false })?.isFile() === true ? file : null;
+}
+
+/**
+ * D51 (security M1b): clears the assume-unchanged and skip-worktree bits in the temp index, so `ls-files -m` sees an
+ * edit they would hide. `ls-files -v` tags an assume-unchanged entry in lowercase and a skip-worktree one as S or s.
+ * A skip-worktree file that is not on disk is left as it is: a sparse checkout leaves it off, it is not a deletion.
+ * False when git fails or time is up.
+ */
+function clearHidingBits(repo: string, env: NodeJS.ProcessEnv, left: Deadline): boolean {
+  const listed = boundedGit(repo, ['ls-files', '-z', '-v'], env, left);
+  if (listed === null) return false;
+  const assumed: string[] = [];
+  const skipped: string[] = [];
+  for (const e of listed.toString('utf-8').split('\0')) {
+    if (e.length < 3) continue;
+    const p = e.slice(2);
+    if (e[0] !== e[0].toUpperCase()) assumed.push(p);
+    if ((e[0] === 'S' || e[0] === 's') && fs.lstatSync(path.join(repo, p), { throwIfNoEntry: false }) !== undefined) skipped.push(p);
+  }
+  // One flag per call: update-index applies only the last of --no-assume-unchanged and --no-skip-worktree.
+  const clear = (flag: string, paths: string[]): boolean =>
+    paths.length === 0 || boundedGit(repo, ['update-index', flag, '-z', '--stdin'], env, left, Buffer.from(paths.join('\0') + '\0')) !== null;
+  return clear('--no-assume-unchanged', assumed) && clear('--no-skip-worktree', skipped);
+}
+
+/**
  * The tree the agent reviewed, from a temp copy of the real index (the real index is never touched), written WITHOUT
  * blobs (performance M1): the changed paths (`all`: modified, deleted and untracked not ignored, .oss excluded;
  * `tracked`: modified and deleted, .oss included but never consulted) go to `update-index --info-only` (hashes, no
  * object writes), then `write-tree --missing-ok`. Only tree objects are written. '' when git cannot build it in time,
  * a changed file is over BIG_FILE_BYTES, or the changed list is over MAX_CHANGED_PATHS paths or MAX_CHANGED_BYTES in
- * all (performance LOW 2: checked before update-index hashes anything); that row never counts.
+ * all (performance LOW 2: checked before update-index hashes anything); then no row is written (D52).
  */
 function reviewedTree(repo: string, index: string, which: 'all' | 'tracked', dir: string, left: Deadline): string {
   const tmpIndex = path.join(dir, `index-${which}`);
@@ -272,9 +308,15 @@ function reviewedTree(repo: string, index: string, which: 'all' | 'tracked', dir
     // no index yet (a repo with nothing staged): start from an empty one
   }
   const env = { GIT_INDEX_FILE: tmpIndex };
-  const list = which === 'all'
-    ? ['ls-files', '-z', '-m', '-o', '-d', '--exclude-standard', '--', '.', ':(exclude).oss']
-    : ['ls-files', '-z', '-m', '-d'];
+  if (!clearHidingBits(repo, env, left)) return '';
+  // D51, D53: untracked files are left out by the repo's .gitignore files and the user's global ignore file, never by
+  // the repo-local .git/info/exclude.
+  let list = ['ls-files', '-z', '-m', '-d'];
+  if (which === 'all') {
+    const global = globalIgnoreFile(repo, left);
+    list = ['-c', 'core.excludesFile=/dev/null', 'ls-files', '-z', '-m', '-o', '-d', '--exclude-per-directory=.gitignore',
+      ...(global === null ? [] : [`--exclude-from=${global}`]), '--', '.', ':(exclude).oss'];
+  }
   const changed = boundedGit(repo, list, env, left);
   if (changed === null) return '';
   const paths = new Set(changed.toString('utf-8').split('\0'));
@@ -302,9 +344,9 @@ function reviewedTrees(repo: string, left: Deadline): { tree: string; trackedTre
   const dir = treeTmpDir();
   if (dir === null) return none;
   try {
-    // The tracked tree first: its list is short and cheap, so a huge untracked set cannot spend its share (LOW 2).
+    // D52: both trees are needed, so the second is skipped when the first cannot be built.
     const trackedTree = reviewedTree(repo, index, 'tracked', dir, left);
-    return { tree: reviewedTree(repo, index, 'all', dir, left), trackedTree };
+    return trackedTree === '' ? none : { tree: reviewedTree(repo, index, 'all', dir, left), trackedTree };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -330,12 +372,11 @@ export function captureVerdict(input: unknown, opts: CaptureOptions = {}): Captu
     const feature = repo === null ? null : resolveFeature(repo);
     if (repo === null || feature === null) return { captured: false, reason: 'no_feature' };
     const ledger = openLedger(repo);
-    // Before the trees: a tree build that runs out of time still leaves the row its headSha (D36).
     const headSha = gitText(repo, ['rev-parse', '--verify', 'HEAD^{commit}'], left) ?? '';
     const trees = reviewedTrees(repo, left);
-    // D48: with neither HEAD nor both trees (rev-parse failed, or the deadline ran out first), a row could never be
+    // D48, D52: without both trees (git failed, a cap was hit, or the deadline ran out first), a row could never be
     // compared with the shipped code; no row is written, so the gate keeps its model line (D26).
-    if (headSha === '' && (trees.tree === '' || trees.trackedTree === '')) return { captured: false, reason: 'no_tree_or_head' };
+    if (trees.tree === '' || trees.trackedTree === '') return { captured: false, reason: 'no_tree_or_head' };
     ledger.appendRow(`verdicts/${feature}`, {
       gate,
       verdict: block.verdict,
@@ -343,12 +384,11 @@ export function captureVerdict(input: unknown, opts: CaptureOptions = {}): Captu
       agent: plainId(hook.agent_id),
       session: plainId(hook.session_id),
       ts: (opts.now ?? (() => new Date()))().toISOString(),
-      // For information only: the HEAD at capture (ship commits after its reviews, so HEAD never decides).
-      // The HEAD at capture: ship commits after its reviews, so HEAD never decides alone; assemble-ship allows a
-      // deletion only for a path absent from this commit's tree too (pen N4).
+      // The HEAD at capture: ship commits after its reviews, so HEAD never decides alone; assemble-ship counts a
+      // deletion as a change only for a path that was tracked, or in this commit's tree (pen N4).
       headSha,
-      // The trees the agent reviewed (all files / tracked only); assemble-ship counts a pass only when the shipped tree
-      // outside .oss differs from `tree` by nothing but files that were untracked at review and left out (finding 4).
+      // The trees the agent reviewed (all files / tracked only). Passes never count (D45): a fail stays open until the
+      // shipped code outside .oss differs from `tree` (the D45 build note's reviewedIsShipped rule).
       ...trees,
     });
     return { captured: true, gate, feature };

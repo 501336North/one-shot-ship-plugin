@@ -80,6 +80,15 @@ const REFUSED: Array<[string, () => string]> = [
   ['the ~ tsc output', () => 'node ~/.oss/watcher/dist/cli/verdict-capture.js in.json'],
   ['the $HOME tsc output', () => 'node "$HOME/.oss/watcher/dist/cli/verdict-capture.js" in.json'],
   ['through a glob on the tsc output', () => 'node ~/.oss/watcher/dist/cli/verdict-*.js in.json'],
+  // Code-review L1 (round 7, D51): a set with `]` first, and class, equivalence and collating forms in a set.
+  ['a set with ] first', () => 'bash ~/.oss/hooks/oss-verdict-captur[]e].sh < in.json'],
+  ['a POSIX class in a set', () => 'bash ~/.oss/hooks/oss-verdict-captur[[:alpha:]].sh < in.json'],
+  ['an equivalence class in a set', () => 'bash ~/.oss/hooks/oss-verdict-captur[[=e=]].sh < in.json'],
+  ['a collating symbol in a set', () => 'bash ~/.oss/hooks/oss-verdict-captur[[.e.]].sh < in.json'],
+  // Perf I3 (round 7, D51): a set in the extension, outside a hooks or cli folder.
+  ['a set before the extension letters', () => 'node ./verdict-capture.[c]js in.json'],
+  ['a set inside the extension', () => 'node ./verdict-capture.c[j]s in.json'],
+  ['a set inside the .sh extension', () => 'bash ./oss-verdict-capture.[s]h < in.json'],
 ];
 
 describe.each(AGENTS)('D41: %s cannot run the verdict capture itself', (_who, agent) => {
@@ -118,6 +127,20 @@ describe('D47: the wildcard matcher is linear', () => {
     expect(elapsed).toBeLessThan(100);
   });
 
+  // Round 7: class and equivalence forms with no closing are read in one pass (a regex took about 30 s here).
+  it.each([
+    ['open class forms', `[${'[:a'.repeat(3000)}`],
+    ['open equivalence forms', `[${'[='.repeat(3000)}`],
+    ['open sets', '['.repeat(5000)],
+    ['backslashes in an open set', `[${'\\'.repeat(5000)}`],
+  ])('%s are decided in well under 100 ms', (_what, glob) => {
+    const start = performance.now();
+    const named = namesVerdictCapture(`bash ~/.oss/hooks/${glob}`);
+    const elapsed = performance.now() - start;
+    expect(named).toBe(false);
+    expect(elapsed).toBeLessThan(100);
+  });
+
   it.each([
     ['many stars before the name', `bash ~/.oss/hooks/${'*'.repeat(200)}oss-verdict-capture.sh`, true],
     ['a range set', 'bash ~/.oss/hooks/oss-verdict-captur[a-z].sh', true],
@@ -126,6 +149,14 @@ describe('D47: the wildcard matcher is linear', () => {
     ['a negated set that allows the letter', 'bash ~/.oss/hooks/oss-verdict-captur[!x].sh', true],
     ['a set without the letter', 'bash ~/.oss/hooks/oss-verdict-captur[xyz].sh', false],
     ['a ? for one character', 'bash ~/.oss/hooks/oss-verdict-captur?.sh', true],
+    // Code-review L1 and perf I3 (round 7, D51).
+    ['a set with ] first that holds the letter', 'bash ~/.oss/hooks/oss-verdict-captur[]e].sh', true],
+    ['a set with ] first, without the letter', 'bash ~/.oss/hooks/oss-verdict-captur[]x].sh', false],
+    ['a negated set with ] first that excludes the letter', 'bash ~/.oss/hooks/oss-verdict-captur[!]e].sh', false],
+    ['a POSIX class, as any one character', 'bash ~/.oss/hooks/oss-verdict-captur[[:digit:]].sh', true],
+    ['a set in the extension outside a hooks or cli folder', 'node ./verdict-capture.c[j]s', true],
+    ['a bare extension glob outside a hooks or cli folder', 'node ./*.js', false],
+    ['a set in a bare extension outside a hooks or cli folder', 'node ./*.[c]js', false],
   ])('%s: named is %s', (_what, command, named) => {
     expect(namesVerdictCapture(command)).toBe(named);
   });

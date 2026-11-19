@@ -2,10 +2,10 @@
  * @behavior A ship result's verdict must not change between assemble and the check that complete, start and archive
  *           run, nor flip when the ship is assembled again after a restarted run: the window of captured review-agent
  *           verdicts the result was built from is frozen in the result.
- * @business-rule D47 (code review MEDIUM, gate round 4): the verdict cutoff (the run start of the feature's last
- *           ready_to_merge ship result, or every row) is stored at assemble as `verdictsFrom`, as D42 stores a build's
- *           evidenceCutoff, and check re-derives the result with that stored value. A result from before D47 (no
- *           field) is still checked by the old rule.
+ * @business-rule D47 (code review MEDIUM, gate round 4), amended by D51 (gate round 5): every captured fail row of
+ *           the feature is checked against the shipped code, so the result is a pure function of the rows and HEAD and
+ *           needs no stored cutoff. Assemble no longer writes `verdictsFrom`; a result stored with one (rounds 6-7)
+ *           still validates and checks, the field ignored.
  * @boundary the phase-result CLI bundle (OSS_TEST_PHASE_RESULT_CLI, else the committed dist), spawned as
  *           hooks/oss-phase-result.sh runs it.
  */
@@ -136,28 +136,30 @@ const label = (r: Record<string, unknown>): Record<string, unknown> => ({
   verdict: r.verdict, gateEvidence: r.gateEvidence, uncapturedGates: r.uncapturedGates,
 });
 
-describe('phase-result CLI: the ship verdict window is frozen at assemble (D47)', () => {
+describe('phase-result CLI: the ship verdict is stable across re-checks (D47, D51)', () => {
   // Reproduces the code-review repro (scratchpad r4-code-review/t/recheck.test.ts): run 1 shipped ready to merge, a
   // reviewer then failed the code, and run 2 (a restart) assembles, checks, re-assembles and checks again.
-  it('assemble, check, re-assemble and check across a restarted run agree, with the cutoff stored', () => {
+  it('assemble, check, re-assemble and check across a restarted run agree', () => {
     startShip(RUN_1);
     gateLines('2026-11-13T09:30:00Z');
-    expect(assembled()).toMatchObject({ verdict: 'ready_to_merge', verdictsFrom: null });
+    // ⚠ changes existing test: D51 — no verdictsFrom is written any more (it was null here, RUN_1 below).
+    const first = assembled();
+    expect(first).toMatchObject({ verdict: 'ready_to_merge' });
+    expect(first).not.toHaveProperty('verdictsFrom');
 
     capturedFail('2026-11-13T09:45:00.000Z');
     startShip(RUN_2);
     gateLines('2026-11-13T10:30:00Z');
     const a1 = assembled();
-    expect(a1).toMatchObject({ verdict: 'blocked', verdictsFrom: RUN_1 });
+    expect(a1).toMatchObject({ verdict: 'blocked' });
     expect(checked()).toEqual({ verification: 'verified', ...label(a1) });
 
     const a2 = assembled();
     expect(label(a2)).toEqual(label(a1));
-    expect(a2.verdictsFrom).toBe(RUN_1);
     expect(checked()).toEqual({ verification: 'verified', ...label(a1) });
   });
 
-  it('a fixed fail: assemble and check agree on ready_to_merge, and the cutoff stays frozen on re-check', () => {
+  it('a fixed fail: assemble and check agree on ready_to_merge, and stay so on re-check', () => {
     startShip(RUN_1);
     gateLines('2026-11-13T09:30:00Z');
     assembled();
@@ -166,18 +168,21 @@ describe('phase-result CLI: the ship verdict window is frozen at assemble (D47)'
     startShip(RUN_2);
     gateLines('2026-11-13T10:30:00Z');
     const a = assembled();
-    expect(a).toMatchObject({ verdict: 'ready_to_merge', verdictsFrom: RUN_1 });
+    expect(a).toMatchObject({ verdict: 'ready_to_merge' });
     expect(checked()).toEqual({ verification: 'verified', ...label(a) });
     expect(checked()).toEqual({ verification: 'verified', ...label(a) });
   });
 
-  // Rule: a result from before D47 has no verdictsFrom; check keeps today's rule for it (it still passes).
-  it('a stored result without verdictsFrom is still checked by the old rule', () => {
+  // ⚠ changes existing test: D51 — the old-results case is now a result stored WITH verdictsFrom (rounds 6-7), which
+  //   must still validate and check, the field ignored (it was "a stored result without verdictsFrom is still checked
+  //   by the old rule"). A cutoff that would have hidden the open fail no longer does.
+  it('a stored result with a verdictsFrom from before round 7 still validates and checks, the field ignored', () => {
     startShip(RUN_1);
     gateLines('2026-11-13T09:30:00Z');
+    capturedFail('2026-11-13T09:10:00.000Z');
     const a = assembled();
-    const { verdictsFrom: _dropped, ...old } = a;
-    const bytes = JSON.stringify(old);
+    expect(a.verdict).toBe('blocked');
+    const bytes = JSON.stringify({ ...a, verdictsFrom: '2026-11-13T09:20:00.000Z' });
     fs.writeFileSync(resultFile(), bytes);
     const row = openLedger(repo).lastRow(`results/${FEATURE}/ship`);
     openLedger(repo).appendRow(`results/${FEATURE}/ship`, { ...row, sha256: sha256(bytes) });

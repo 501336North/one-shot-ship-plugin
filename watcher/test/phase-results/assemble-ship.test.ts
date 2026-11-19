@@ -897,6 +897,8 @@ describe('assembleShip: a pass with no tree clears nothing; the code change does
    * A real no-tree pass: a tracked file grown over 50 MB (both trees come out ''), then the stop, its verdict read from
    * a transcript under ~/.claude/projects (D41).
    * ⚠ changes existing test: D45 dead code — no SubagentStart capture runs first any more (captureStart is removed).
+   * ⚠ changes existing test: D52 ("Record no row") — a capture that cannot build the reviewed tree (a file over 50 MB)
+   *   now writes no row at all, so `captured` is false (it was true, with a no-tree pass row).
    */
   function realBlindPass(): void {
     featureDir();
@@ -908,7 +910,7 @@ describe('assembleShip: a pass with no tree clears nothing; the code change does
     const hook = { session_id: 's1', agent_id: 'a-blind', agent_type: 'oss:code-reviewer', cwd: repo };
     const text = '```oss-verdict\n' + JSON.stringify({ verdict: 'pass', findings: ZERO }) + '\n```';
     const out = captureVerdict({ ...hook, agent_transcript_path: agentTranscript(text) }, { now: () => new Date('2026-11-13T09:30:00.000Z') });
-    expect(out.captured).toBe(true);
+    expect(out.captured).toBe(false);
     git('checkout', '-q', '--', 'big.bin');
   }
 
@@ -1072,12 +1074,26 @@ describe('assembleShip: an open fail survives a restarted run (pen F1)', () => {
     expect(codeReview(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
   });
 
-  // Behaviour: once the feature shipped ready to merge, an older fail does not haunt the next ship of the feature.
-  it('a fail from before the last ready_to_merge result\'s run is not read', () => {
+  // ⚠ changes existing test: D51 (code review M1, pen L7) — every fail row is read, whatever ready_to_merge result came
+  //   after it: a fail on code that still ships stays open (it was "a fail from before the last ready_to_merge
+  //   result's run is not read", gate pass). Once the code changed, the old fail no longer haunts the next ship.
+  it('a fail from before the last ready_to_merge result\'s run stays open on the same code, and clears once it changed', () => {
     failAt('2026-11-13T07:00:00.000Z');
     storedShip('ready_to_merge', '2026-11-13T08:00:00.000Z');
     allPass(1);
+    expect(codeReview(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
+    commitFile('b.txt', 'fixed\n', 'fix');
     expect(codeReview(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  // Rule: D51 (pen L7): a fail from an earlier run that shipped ready_to_merge re-opens when the code goes back to it.
+  it('D51: a fail from an earlier ready_to_merge run re-opens when the code is reverted to the failed tree', () => {
+    failAt('2026-11-13T07:00:00.000Z');
+    commitFile('b.txt', 'fixed\n', 'fix');
+    storedShip('ready_to_merge', '2026-11-13T08:00:00.000Z');
+    git('revert', '--no-edit', 'HEAD');
+    allPass(1);
+    expect(codeReview(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
   });
 
   it('a blocked last result, or a stored result the ledger does not bind, sets no cutoff', () => {
@@ -1089,25 +1105,15 @@ describe('assembleShip: an open fail survives a restarted run (pen F1)', () => {
     expect(codeReview(ship())).toMatchObject({ verdict: 'fail' });
   });
 
-  // Rule: D47 (code review MEDIUM) — the cutoff is frozen in the result at assemble, as D42's evidenceCutoff, so a check
-  //       (re-assemble with the stored value) reads the same rows whatever ship result is stored by then.
-  it('assemble stores the cutoff it used as verdictsFrom: the last ready_to_merge run start, or null for all rows', () => {
+  // ⚠ changes existing test: D51 — every fail row is read, so there is no verdict cutoff left to freeze (D47's
+  //   verdictsFrom): the result is a pure function of the rows and HEAD, and assemble and check agree without it. It was
+  //   "assemble stores the cutoff it used as verdictsFrom" and "a given verdictsFrom is used instead of the stored
+  //   result"; the schema keeps the field optional so results stored before round 7 still validate.
+  it('assemble no longer writes verdictsFrom, with or without a ready_to_merge result stored', () => {
     allPass(1);
-    expect(result(ship()).verdictsFrom).toBeNull();
+    expect(result(ship())).not.toHaveProperty('verdictsFrom');
     storedShip('ready_to_merge', '2026-11-13T08:00:00.000Z');
-    expect(result(ship()).verdictsFrom).toBe('2026-11-13T08:00:00.000Z');
-  });
-
-  it('a given verdictsFrom is used instead of the stored result: a string cuts there, null reads every row', () => {
-    failAt('2026-11-13T07:00:00.000Z');
-    allPass(1);
-    const at = (verdictsFrom: string | null): AssembleOutcome =>
-      assembleShip({ ...ctx(), verdictsFrom }, { base: 'main' });
-    expect(codeReview(at('2026-11-13T07:30:00.000Z'))).toMatchObject({ verdict: 'pass', source: 'model' });
-    expect(result(at('2026-11-13T07:30:00.000Z')).verdictsFrom).toBe('2026-11-13T07:30:00.000Z');
-    storedShip('ready_to_merge', '2026-11-13T08:00:00.000Z');
-    expect(codeReview(at(null))).toMatchObject({ verdict: 'fail', source: 'agent' });
-    expect(result(at(null)).verdictsFrom).toBeNull();
+    expect(result(ship())).not.toHaveProperty('verdictsFrom');
   });
 
   // Rule: gate lines carry whole-second times, so a line from the run start's own second belongs to this run.
@@ -1423,9 +1429,111 @@ describe('assembleShip: only a change to the shipped code clears a captured fail
     expectCleared(ship());
   });
 
+  // Rule: D51 (code review M1, security L1/L2): every captured fail is checked against the shipped code, not only the
+  //       newest, so going back to code a reviewer already failed ships nothing.
+  it('D51: a revert to the first failed tree stays blocked after a second fail on the attempted fix', () => {
+    row('fail', '2026-11-13T09:10:00.000Z');
+    commitFile('b.txt', 'attempted fix\n', 'attempt');
+    row('fail', '2026-11-13T09:20:00.000Z', { findings: { ...ZERO, critical: 2 } });
+    git('revert', '--no-edit', 'HEAD');
+    allPass(1);
+    const o = ship();
+    expectOpen(o);
+    // The findings come from the newest fail still open (the first one: the second reviewed other code).
+    expect(codeReview(o)).toMatchObject({ findings: { ...ZERO, high: 1 } });
+  });
+
+  it('D51: a real fix after two fails on two trees clears both', () => {
+    row('fail', '2026-11-13T09:10:00.000Z');
+    commitFile('b.txt', 'attempted fix\n', 'attempt');
+    row('fail', '2026-11-13T09:20:00.000Z');
+    commitFile('b.txt', 'real fix\n', 'fix');
+    allPass(1);
+    expectCleared(ship());
+  });
+
+  // Rule: D51 (security M2): a replace ref swaps what HEAD's tree reads as without changing the shipped commit, so it
+  //       must not clear a fail: ship's git runs with GIT_NO_REPLACE_OBJECTS=1.
+  it('D51: a git replace of HEAD with a decoy commit does not clear the fail', () => {
+    commitFile('b.txt', 'reviewed bad\n', 'ship commit');
+    row('fail', '2026-11-13T09:10:00.000Z');
+    const shipped = git('rev-parse', 'HEAD');
+    fs.writeFileSync(path.join(repo, 'b.txt'), 'something else\n');
+    git('add', 'b.txt');
+    const decoy = git('commit-tree', git('write-tree'), '-p', git('rev-parse', 'HEAD^'), '-m', 'decoy');
+    git('reset', '-q', '--hard', shipped);
+    git('replace', shipped, decoy);
+    allPass(1);
+    expectOpen(ship());
+  });
+
   it('a fail whose tree git does not have stays open', () => {
     row('fail', '2026-11-13T09:10:00.000Z', { tree: 'a'.repeat(40), trackedTree: 'a'.repeat(40), headSha: '' });
     allPass(1);
     expectOpen(ship());
   });
+});
+
+/**
+ * Perf L2 (gate round 5), D51: a real fix touching about 20,000 paths overflowed the shipped-vs-reviewed diff's 1 MB
+ * buffer, which read as "unknown" and kept the fail open. A large change still clears a fail, and a large deletion of
+ * tracked code is still a change. The trees are built with git plumbing (one blob, an index from stdin), so it stays fast.
+ */
+describe('assembleShip: a fail clears on a fix that touches about 20,000 paths (perf L2)', () => {
+  const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  const N = 20_000;
+  const LONG = 'a-directory-with-a-long-name/another-nested-level';
+
+  /** git with stdin, using a scratch index so neither the real index nor the working tree is touched. */
+  function gitIn(input: string, ...args: string[]): string {
+    const env: NodeJS.ProcessEnv = {};
+    for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('GIT_')) env[k] = v;
+    env.GIT_INDEX_FILE = path.join(valueDir, 'scratch.index');
+    return execFileSync('git', args, { cwd: repo, env, input, encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 }).trim();
+  }
+
+  /** Moves the branch to a new commit on top of HEAD with `tree` (plumbing only: HEAD moves, nothing is checked out). */
+  function commitTree(tree: string): void {
+    const commit = gitIn('', 'commit-tree', tree, '-p', 'HEAD', '-m', 'many files');
+    git('update-ref', `refs/heads/feat/${FEATURE}/ship`, commit);
+  }
+
+  /** Commits HEAD's tree plus N files `<LONG>/<prefix>-<i>.txt` (all one blob). */
+  function commitManyFiles(prefix: string): void {
+    const blob = gitIn(`${prefix}\n`, 'hash-object', '-w', '--stdin');
+    const lines: string[] = [];
+    for (let i = 0; i < N; i++) lines.push(`100644 ${blob}\t${LONG}/${prefix}-${String(i).padStart(6, '0')}.txt`);
+    gitIn('', 'read-tree', 'HEAD');
+    gitIn(`${lines.join('\n')}\n`, 'update-index', '--index-info');
+    commitTree(gitIn('', 'write-tree'));
+  }
+
+  function failHere(): void {
+    const tree = git('rev-parse', 'HEAD^{tree}');
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+      gate: 'code-review', verdict: 'fail', findings: { ...ZERO, high: 1 }, agent: 'a', session: 's',
+      ts: '2026-11-13T09:10:00.000Z', tree, trackedTree: tree, headSha: git('rev-parse', 'HEAD'),
+    });
+  }
+
+  const codeReview = (o: AssembleOutcome): Record<string, unknown> | undefined =>
+    (result(o).gates as Array<Record<string, unknown>>).find((g) => g.gate === 'code-review');
+
+  it('a fix that adds 20,000 files clears the fail', () => {
+    commitFile('b.txt', 'bad\n', 'bad');
+    failHere();
+    commitManyFiles('fix');
+    allPass(1);
+    expect(codeReview(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+  }, 60_000);
+
+  it('a fix that deletes 20,000 tracked files clears the fail', () => {
+    commitFile('b.txt', 'feature\n', 'feature');
+    const before = git('rev-parse', 'HEAD^{tree}');
+    commitManyFiles('old');
+    failHere();
+    commitTree(before);
+    allPass(1);
+    expect(codeReview(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+  }, 60_000);
 });

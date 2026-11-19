@@ -44,17 +44,23 @@ afterEach(() => {
 });
 
 describe("git's helpers never come from the caller's PATH", () => {
-  it('gitOut runs git with PATH=/usr/bin:/bin and no GIT_* variable', () => {
+  // ⚠ changes existing test: D51 (security M2) — git now also gets GIT_NO_REPLACE_OBJECTS=1 and GIT_GRAFT_FILE=/dev/null
+  //   (it was "no GIT_* variable" at all). No GIT_* variable from the caller's environment still reaches git, and a
+  //   caller's own value for one of those two is replaced.
+  it('gitOut runs git with PATH=/usr/bin:/bin and no caller GIT_* variable, only the D51 replace/graft switches', () => {
     process.env.GIT_DIR = '/nonexistent';
+    process.env.GIT_NO_REPLACE_OBJECTS = '0';
     try {
       expect(gitOut(repo, ['rev-parse', '--show-toplevel'])).toBe(repo);
     } finally {
       delete process.env.GIT_DIR;
+      delete process.env.GIT_NO_REPLACE_OBJECTS;
     }
     expect(calls).not.toHaveLength(0);
     for (const c of calls) {
       expect(c.env?.PATH).toBe('/usr/bin:/bin');
-      expect(Object.keys(c.env ?? {}).filter((k) => k.startsWith('GIT_'))).toEqual([]);
+      const gitVars = Object.fromEntries(Object.entries(c.env ?? {}).filter(([k]) => k.startsWith('GIT_')));
+      expect(gitVars).toEqual({ GIT_NO_REPLACE_OBJECTS: '1', GIT_GRAFT_FILE: '/dev/null' });
     }
   });
 

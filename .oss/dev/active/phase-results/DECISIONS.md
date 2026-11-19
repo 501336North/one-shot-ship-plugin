@@ -124,6 +124,20 @@
 - D48 (user picker, 2026-11-19, "Record nothing"): a capture that can read neither the tree nor HEAD writes no row, the same as a capture past its deadline. The gate keeps its model line (D26). This replaces D43.
 - D49 (user picker, 2026-11-19, "Code change only"): D45 stays as built. Any tracked change to the shipped code clears a captured fail with no second review. Follow-up card: bind reviewer rows to R-266's SubagentStart record, then require a fresh bound review to clear a fail.
 - D50 (user picker, 2026-11-19, "Any remote, same name"): the ship-start snapshot records every remote's refs (refs/remotes/*/*). A base is accepted when its tip is inside <any remote>/<same name>. The current-branch and phase-branch refusals still apply. This keeps repos whose remote isn't named origin able to ship. R-266 Task 7 refuses forged refs/remotes writes.
+- D51 (user picker, 2026-11-19, gate round 5, "Honest-model scope"): R-257 catches an honest model's mistakes and makes tampering visible; it does not try to stop a model that is cheating.
+  - Round 7 fixes only what bites honest use, or what is cheap and exact:
+    - every fail row is checked against the shipped code, so a revert to code that already failed stays blocked, and open fails carry across cutoffs;
+    - capture ignores the assume-unchanged and skip-worktree bits, and lists untracked files by .gitignore only;
+    - phase-result and capture git calls run with GIT_NO_REPLACE_OBJECTS=1 and GIT_GRAFT_FILE=/dev/null;
+    - the snapshot drops every symref;
+    - the shipped-vs-reviewed diff does not overflow on large diffs;
+    - base.txt works on any remote (D50 gap);
+    - the snapshot loop is linear;
+    - the capture rule's bracket and extension forms are fixed.
+  - Accepted limits, under the D49 follow-up card: a decoy branch pushed to the remote, `remote set-url` to a local clone, switching branch during review, and a tracked scratch edit reverted before the commit.
+  - Gate briefs from round 6 on state this threat model.
+- D52 (user picker, 2026-11-19, "Record no row"): a capture that cannot build the reviewed tree (more than 20,000 paths, a file over 50 MB, or the deadline) writes no row, and the gate keeps its model line (D26). This extends D48 and replaces the D45 build note's headSha fallback for captures that have trees.
+- D53 (user picker, 2026-11-19, "Honour the global file"): capture lists untracked files using the repo's .gitignore files plus the user's global ignore file (core.excludesFile, or its default location). It ignores only the repo-local .git/info/exclude. Honest repos that keep .venv or build output in a global ignore keep their fails captured. Hiding a file through the global ignore file under ~ is an accepted limit under D51.
 - D25-D29: ship round 1 decisions (user pickers, 2026-11-18), from four failing gates.
   - **D25 Gate code location: lock it down.**
     - `~/.oss/plugin-root` and `~/.oss/watcher/**` join the tool gate's protectedPaths. This changes R-266's exact-list test, as the user's pick allows.

@@ -76,7 +76,7 @@
       "$ref": "common.schema.json#/$defs/sha"
     },
     "verdictsFrom": {
-      "description": "D47: where the captured review-agent verdict rows were read from, frozen at assemble: the run start of the feature's last ready_to_merge ship result, or null for every row. check re-derives the result from it. Absent in results from before D47.",
+      "description": "D47, retired by D51: the verdict cutoff results from gate rounds 6-7 stored. Since D51 every captured fail row is read, so assemble no longer writes it and check ignores it; kept optional so those results still validate.",
       "type": [
         "string",
         "null"

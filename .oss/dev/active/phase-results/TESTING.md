@@ -149,4 +149,17 @@ Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watche
   - Both were reported to R-266.
 - After D50, final run: build and tsc clean; targeted vitest 10838 of 10838; served-commands 3/3; bash 114/114 behind the tripwire, with 0 tripwire lines.
 
-## Last Updated: 2026-11-19 10:20 CST by /oss:ship (round 6 fixes)
+### Ship round 7 (D51-D53), 2026-11-19
+- Each builder showed RED before GREEN. The round-5 repros became tests:
+  - revert to failed code;
+  - cutoff past a fail;
+  - replace and graft;
+  - symref under refs/remotes;
+  - assume-unchanged and info/exclude;
+  - a big file or many paths;
+  - a 20,000-path diff;
+  - an upstream base.txt;
+  - bracket glob forms.
+- Full run: build and tsc clean; targeted vitest 10877 of 10878. The one failure was git-path.test.ts, whose old "no GIT_*" expectation the D51 git env broke; it was updated and test/phase-results reran 348/348. served-commands 3/3; bash 114/114 behind the tripwire, with 0 tripwire lines.
+
+## Last Updated: 2026-11-19 13:30 CST by /oss:ship (round 7 fixes)

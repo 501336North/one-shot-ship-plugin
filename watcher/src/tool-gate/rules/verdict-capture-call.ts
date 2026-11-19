@@ -16,12 +16,63 @@ import type { Refusal } from './refusal.js';
 
 /** The capture's entry points, lower case: the hook, the bundle and its tsc output (D44). */
 const NAMES = ['oss-verdict-capture.sh', 'verdict-capture.cjs', 'verdict-capture.js'];
-/** The capture's own name, which a glob's literal text must be part of to count outside a hooks or cli folder. */
-const STEM = 'oss-verdict-capture';
 /** Characters that end a path word in shell text. */
 const SEPARATORS = /[\s'"`;|&()<>=${}\\,]+/;
 /** A shell glob character. */
 const GLOB = /[*?[]/;
+/** A `[..]` set as the shell reads it: `!`/`^` first, then `]` first as a member, then up to the closing `]`. */
+const SET = /\[[!^]?\]?[^\]]*\]?/;
+/** Characters that end a shell word, so a `[..]` set never spans them. */
+const WORD_END = /[\s;|&()<>'"`]/;
+
+/**
+ * The text with each closed set that holds a class, equivalence or collating form (`[:alpha:]`, `[=e=]`, `[.e.]`)
+ * or a backslash turned into `?` (any one character), before the text is split: it fails closed (code-review L1).
+ * One pass: the search for a form's closing `:]`, `=]` or `.]` is cached, and an unclosed set is skipped whole.
+ */
+function specialSetsAsAny(text: string): string {
+  const closing = new Map<string, number>();
+  const closeOf = (delim: string, from: number): number => {
+    const cached = closing.get(delim);
+    if (cached !== undefined && (cached === -1 || cached >= from)) return cached;
+    const at = text.indexOf(`${delim}]`, from);
+    closing.set(delim, at);
+    return at;
+  };
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] !== '[') {
+      out += text[i];
+      i += 1;
+      continue;
+    }
+    let j = i + 1;
+    if (text[j] === '!' || text[j] === '^') j += 1;
+    if (text[j] === ']') j += 1;
+    let special = false;
+    for (; j < text.length && text[j] !== ']' && !WORD_END.test(text[j]); j += 1) {
+      if (text[j] === '\\') {
+        special = true;
+        j += 1;
+      } else if (text[j] === '[' && ':=.'.includes(text[j + 1] ?? 'x')) {
+        const at = closeOf(text[j + 1], j + 2);
+        if (at >= 0) {
+          special = true;
+          j = at + 1;
+        }
+      }
+    }
+    if (text[j] !== ']') {
+      out += text.slice(i, j);
+      i = j;
+    } else {
+      out += special ? '?' : text.slice(i, j + 1);
+      i = j + 1;
+    }
+  }
+  return out;
+}
 
 /** One glob token: `*` (any run), or a test for one character (`?`, a `[..]` set, or a literal). */
 type Token = '*' | ((c: string) => boolean);
@@ -29,10 +80,12 @@ type Token = '*' | ((c: string) => boolean);
 /** The tokens a glob piece stands for. An unclosed `[` matches any one character, as before (fails closed). */
 function globTokens(piece: string): Token[] {
   const tokens: Token[] = [];
-  for (const m of piece.matchAll(/\[[^\]]*\]?|[*?]|[^*?[]/g)) {
+  for (const m of piece.matchAll(new RegExp(`${SET.source}|[*?]|[^*?[]`, 'g'))) {
     const c = m[0];
     if (c === '*') tokens.push('*');
-    else if (c === '?' || (c.startsWith('[') && !c.endsWith(']'))) tokens.push(() => true);
+    else if (c === '?' || (c.startsWith('[') && (c.length < 2 || !c.endsWith(']') || /^\[[!^]?\]$/.test(c)))) {
+      tokens.push(() => true);
+    }
     else if (c.startsWith('[')) tokens.push(bracketTest(c.slice(1, -1)));
     else tokens.push((x) => x === c);
   }
@@ -84,13 +137,25 @@ function globMatch(tokens: Token[], name: string): boolean {
 function globNames(piece: string, folder: string | undefined): boolean {
   const tokens = globTokens(piece);
   if (!NAMES.some((name) => globMatch(tokens, name))) return false;
-  const literals = piece.split(/\[[^\]]*\]?|[*?]/).map((l) => l.replace(/\.(?:sh|c?js)$/, ''));
-  return literals.some((l) => l.length >= 3 && STEM.includes(l)) || (folder !== undefined && /^(?:hooks|cli)$/.test(folder));
+  const literals = piece.split(new RegExp(`${SET.source}|[*?]`));
+  return literals.some(writesStem) || (folder !== undefined && /^(?:hooks|cli)$/.test(folder));
+}
+
+/** True when a literal sits inside one of the full names with at least 3 of its characters before the extension (perf I3). */
+function writesStem(literal: string): boolean {
+  if (literal.length < 3) return false;
+  return NAMES.some((name) => {
+    const stemEnd = name.lastIndexOf('.');
+    for (let at = name.indexOf(literal); at >= 0; at = name.indexOf(literal, at + 1)) {
+      if (Math.min(at + literal.length, stemEnd) - at >= 3) return true;
+    }
+    return false;
+  });
 }
 
 /** True when the text names the capture: a path segment equal to a name, or a glob segment that could be one. */
 export function namesVerdictCapture(text: string): boolean {
-  for (const word of text.toLowerCase().split(SEPARATORS)) {
+  for (const word of specialSetsAsAny(text.toLowerCase()).split(SEPARATORS)) {
     const segments = word.split('/');
     for (const [i, segment] of segments.entries()) {
       if (NAMES.includes(segment)) return true;

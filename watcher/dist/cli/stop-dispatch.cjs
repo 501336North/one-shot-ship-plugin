@@ -56,6 +56,8 @@ function gitBin() {
 function gitEnv() {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
+  env.GIT_NO_REPLACE_OBJECTS = "1";
+  env.GIT_GRAFT_FILE = "/dev/null";
   return env;
 }
 function gitOut(cwd, args) {

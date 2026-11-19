@@ -158,3 +158,11 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 - oss-timeline.sh: the detached push section, the merge verb and hook mode still find some tools through PATH (outside the gate lines' path).
 - Ideate: a pick written in the assemble's own second, but after assemble finished, counts at check and not at assemble.
 - D50: the base may be on any remote with the same name. A remote whose name contains a slash never matches, so such a repo fails closed.
+
+## Ship round 7 notes (2026-11-19)
+- Threat model (D51): R-257 catches an honest model's mistakes and makes tampering visible.
+  - Accepted limits: a decoy branch pushed to the remote, switching branch during a review, a tracked scratch edit reverted before the commit, and hiding a file through the global ignore file.
+  - R-266 gate-gaps Tasks 7 and 11 will refuse remote set-url to local paths, git replace, grafts and symrefs under refs/remotes.
+- D52: a capture with no reviewed tree writes no row. In repos over 20,000 untracked paths or with a file over 50 MB, fails fall back to the model line.
+- An unreadable global ignore file makes ls-files fail, so no row is written (D52).
+- verdictsFrom is no longer written; the schema keeps it optional for results stored in rounds 6-7.

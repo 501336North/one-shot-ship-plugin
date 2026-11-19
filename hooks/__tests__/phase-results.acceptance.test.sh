@@ -193,10 +193,13 @@ PRF_REPO="$T/repo" prf_build
 # ⚠ changes existing test: D46 — the snapshot maps each origin ref name to its SHA ({startedAt, refs}), and
 #   refs/remotes/origin/HEAD (a symref) is skipped.
 # ⚠ changes existing test: D50 — every remote's refs are recorded (here also upstream/main); each */HEAD is skipped.
+# Security M3 (round 7, D51): every symref is dropped, not only */HEAD: refs/remotes/origin/release, a symref to the
+#   local branch refs/heads/release, would record a local tip under a remote name.
 (cd "$T/repo" && git update-ref refs/remotes/origin/feat/pre/build main \
     && git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main \
     && git update-ref refs/remotes/upstream/main main \
-    && git symbolic-ref refs/remotes/upstream/HEAD refs/remotes/upstream/main)
+    && git symbolic-ref refs/remotes/upstream/HEAD refs/remotes/upstream/main \
+    && git branch release main && git symbolic-ref refs/remotes/origin/release refs/heads/release)
 notify ship start '{}' >/dev/null 2>&1
 snap=$(ls "$T"/home/.oss/ledger/*/run/ship.origin 2>/dev/null | head -1)
 m=$(cd "$T/repo" && git rev-parse main)
@@ -204,8 +207,8 @@ want=$(jq -cn --arg m "$m" '{"refs/remotes/origin/feat/pre/build": $m, "refs/rem
 started=$(jq -r '.currentCommandStartedAt // empty' "$T/repo/.oss/workflow-state.json" 2>/dev/null)
 mode=$(stat -c '%a' "$snap" 2>/dev/null || stat -f '%Lp' "$snap" 2>/dev/null)
 if [[ -n "$snap" && "$mode" == 600 && "$(jq -cS .refs "$snap" 2>/dev/null)" == "$want" && "$(jq -r .startedAt "$snap" 2>/dev/null)" == "$started" ]]; then
-    pass "ship start records every remote's ref names and SHAs in the ledger (run/ship.origin, 600, this run's startedAt, no */HEAD)"
-else fail "ship start records every remote's ref names and SHAs in the ledger (run/ship.origin, 600, this run's startedAt, no */HEAD)" "snap=$snap mode=$mode want=$want got=$(cat "$snap" 2>/dev/null) started=$started"; fi
+    pass "ship start records every remote's ref names and SHAs in the ledger (run/ship.origin, 600, this run's startedAt, no symref)"
+else fail "ship start records every remote's ref names and SHAs in the ledger (run/ship.origin, 600, this run's startedAt, no symref)" "snap=$snap mode=$mode want=$want got=$(cat "$snap" 2>/dev/null) started=$started"; fi
 (cd "$T/repo" && echo one > one.txt && git add one.txt && git commit -q -m one && echo two > two.txt && git add two.txt \
     && git commit -q -m two && git -c core.logAllRefUpdates=false update-ref refs/remotes/origin/wip HEAD~1 \
     && git -c core.logAllRefUpdates=false branch wip HEAD~1)
@@ -241,6 +244,23 @@ out=$(phase_result assemble ship 2>&1); rc=$?
 if [[ $rc -ne 0 && "$out" == *unsafe_base* ]]; then
     pass "a base inside the pushed feature branch, with no origin ref of its own name, is refused (unsafe_base)"
 else fail "a base inside the pushed feature branch, with no origin ref of its own name, is refused (unsafe_base)" "rc=$rc out=$out"; fi
+cleanup
+
+# 12. Perf L1 (round 7, D51): the snapshot is linear in the refs it lists. 1,000 refs with long (~420-byte) names, the
+#     cap, add well under 2 s to ship start (the quadratic string build took about 9 s here under /bin/bash 3.2), and
+#     all 1,000 are recorded. Timed against the same ship start with only origin/main, so node start-up cancels out.
+now_ms() { /usr/bin/perl -MTime::HiRes=time -e 'printf "%d", time * 1000'; }
+sandbox
+PRF_REPO="$T/repo" prf_build
+t0=$(now_ms); notify ship start '{}' >/dev/null 2>&1; base_ms=$(( $(now_ms) - t0 ))
+pad=$(printf '%0200d' 0 | tr 0 x)
+(cd "$T/repo" && for i in $(seq 999); do echo "create refs/remotes/origin/$pad/$pad/r$i main"; done | git update-ref --stdin)
+t0=$(now_ms); notify ship start '{}' >/dev/null 2>&1; long_ms=$(( $(now_ms) - t0 ))
+snap=$(ls "$T"/home/.oss/ledger/*/run/ship.origin 2>/dev/null | head -1)
+count=$(jq '.refs | length' "$snap" 2>/dev/null)
+if [[ "$count" == 1000 && $((long_ms - base_ms)) -lt 2000 ]]; then
+    pass "a 1,000-ref snapshot (the cap) is recorded in well under 2 s"
+else fail "a 1,000-ref snapshot (the cap) is recorded in well under 2 s" "count=$count base=${base_ms}ms with_refs=${long_ms}ms"; fi
 cleanup
 
 echo; echo "Ran $RUN, failed $FAILED"

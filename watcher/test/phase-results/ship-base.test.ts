@@ -138,3 +138,29 @@ describe('shipBaseAllowed (D46)', () => {
     expect(shipBaseAllowed(repo, `feat/${FEATURE}-old/build`, FEATURE, refs({ [`feat/${FEATURE}-old/build`]: main }))).toBe(true);
   });
 });
+
+/**
+ * D51 (security M2): git's replace refs and grafts can rewrite history for every reader without moving a ref. Every git
+ * call ship makes runs with GIT_NO_REPLACE_OBJECTS=1 and GIT_GRAFT_FILE=/dev/null, so a base never pushed stays refused.
+ */
+describe('shipBaseAllowed ignores replace refs and grafts (D51, security M2)', () => {
+  function neverPushedRelease(): ReadonlyMap<string, string> {
+    git('update-ref', 'refs/remotes/origin/release', 'main');
+    commit('feature.txt');
+    git('branch', 'release', 'HEAD');
+    return refs({ release: git('rev-parse', 'main') });
+  }
+
+  it('a git replace --graft that makes the remote commit a child of the base tip does not pass the base', () => {
+    const snap = neverPushedRelease();
+    git('replace', '--graft', git('rev-parse', 'main'), git('rev-parse', 'release'));
+    expect(shipBaseAllowed(repo, 'release', FEATURE, snap)).toBe(false);
+  });
+
+  it('a .git/info/grafts file that does the same does not pass the base', () => {
+    const snap = neverPushedRelease();
+    fs.mkdirSync(path.join(repo, '.git', 'info'), { recursive: true });
+    fs.writeFileSync(path.join(repo, '.git', 'info', 'grafts'), `${git('rev-parse', 'main')} ${git('rev-parse', 'release')}\n`);
+    expect(shipBaseAllowed(repo, 'release', FEATURE, snap)).toBe(false);
+  });
+});

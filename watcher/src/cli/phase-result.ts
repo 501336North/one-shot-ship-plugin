@@ -28,10 +28,8 @@ import { assembleIdeate } from '../phase-results/assemble-ideate.js';
 import { assemblePlan } from '../phase-results/assemble-plan.js';
 import {
   assembleShip,
-  hasOriginBranch,
   isLocalBranch,
   shipBaseAllowed,
-  type ShipContext,
 } from '../phase-results/assemble-ship.js';
 import { LedgerError, ledgerKey, openLedger, parseRunRow, type Ledger } from '../phase-results/ledger.js';
 import { loadPhaseSchema, PHASES, type Phase } from '../phase-results/schemas.js';
@@ -86,18 +84,14 @@ function headSha(repo: string): string | null {
  * The local branch ship diffs against (D19): the model's `base.txt` (the PR's base) when it is one line naming an
  * existing local branch; else repo-local `oss.shipBase`, else `main` (local ref only, never gh or fetch). A bad
  * base.txt falls back; assembleShip's ref checks validate the config value, and a failed read gives '' so it is
- * refused, never silently `main`. Finding 7: a base.txt local branch counts only when it is on origin
- * (`refs/remotes/origin/<name>`), or is oss.shipBase or `main`; a local-only branch is refused (`unsafe_base`), so the
- * model cannot pick a private branch that hides part of the change from the diff.
+ * refused, never silently `main`. Finding 7 / D50 (code review L2, D51): whichever is chosen must then pass
+ * checkShipBase (a same-name ref on any remote at ship start that contains its tip), so a local-only branch is still
+ * refused (`unsafe_base`) and a repo whose remote is not called origin can name its integration branch.
  */
 function shipBase(repo: string, dir: string | null): string {
-  const configured = shipBaseConfig(repo);
   const named = dir === null ? null : readValueFile(dir, 'base.txt')?.replace(/\n$/, '');
-  if (named != null && !named.includes('\n') && isLocalBranch(repo, named)) {
-    if (named === 'main' || named === configured || hasOriginBranch(repo, named)) return named;
-    throw new Refusal('unsafe_base', 'base.txt');
-  }
-  return configured;
+  if (named != null && !named.includes('\n') && isLocalBranch(repo, named)) return named;
+  return shipBaseConfig(repo);
 }
 
 /** Repo-local `oss.shipBase`, `main` when unset, '' when git fails (so assembleShip refuses it). */
@@ -183,7 +177,7 @@ function runStartedAt(ledger: Ledger, phase: Phase): string {
   return startedAt;
 }
 
-function runAssembler(phase: Phase, ctx: ShipContext, base?: string): AssembleOutcome {
+function runAssembler(phase: Phase, ctx: AssembleContext, base?: string): AssembleOutcome {
   switch (phase) {
     case 'ideate':
       return assembleIdeate(ctx);
@@ -286,9 +280,7 @@ function reassemble(repo: string, feature: string, phase: Phase, stored: Record<
       headSha: String(stored.headSha),
       valueDir: dir,
       evidenceCutoff: typeof stored.evidenceCutoff === 'string' ? stored.evidenceCutoff : null,
-      // D47: ship re-checks with the verdict cutoff frozen at assemble; a result from before D47 (no field) keeps the
-      // old rule (undefined: recomputed from the stored ship result).
-      ...('verdictsFrom' in stored ? { verdictsFrom: typeof stored.verdictsFrom === 'string' ? stored.verdictsFrom : null } : {}),
+      // D51: ship reads every fail row, so a stored verdictsFrom (D47, results from rounds 6-7) is ignored.
       now: () => new Date(),
     }, base);
   } finally {

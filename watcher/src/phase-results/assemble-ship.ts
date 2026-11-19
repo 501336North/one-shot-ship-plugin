@@ -6,13 +6,13 @@
  * `check-ref-format --branch` and passed after `--end-of-options`. Empty when the tree equals the base tip (covers a
  * squash-merged branch) or nothing changed since the merge-base. Totals come from `--shortstat` against the merge-base.
  * Gates: the feature's timeline gate lines of this run whose sha256 is in the ledger `gates/<feature>`, latest round only
- * (`source: model`). Captured review-agent rows (ledger `verdicts/<feature>`, verdict-capture.ts) since the run start of
- * the feature's last ready_to_merge ship result, or all of them (pen F1: never cut at this run's start), then apply, per
- * gate (`source: agent`; `fixed` stays from the line):
- * - D45 (replaces D32's, D36's and D43's pass-based clearing): captured PASS rows decide and clear nothing. The newest
+ * (`source: model`). Every captured review-agent row of the feature (ledger `verdicts/<feature>`, verdict-capture.ts; D51:
+ * no cutoff, pen F1/L7) then applies, per gate (`source: agent`; `fixed` stays from the line):
+ * - D45 (replaces D32's, D36's and D43's pass-based clearing): captured PASS rows decide and clear nothing. Each
  *   captured FAIL row of a gate is open unless the shipped code (HEAD outside .oss) differs from the code that failed
  *   (its reviewed trees, else its headSha's tree; untracked scratch files and empty or .oss-only commits are no change).
- *   An open fail keeps its gate failed, and no fix count overrides it; its blocker reads
+ *   D51: the gate is open when any of its fail rows is, with the newest open row's findings, so a revert to code that
+ *   already failed stays blocked. An open fail keeps its gate failed, and no fix count overrides it; its blocker reads
  *   `gate:<name> (captured fail, not re-reviewed)`. A fail with neither trees nor headSha does not count (D48).
  * - An open captured pen-test fail adds that optional gate. D26: the result labels how many gates an agent row backs
  *   (`gateEvidence`) and names the rest (`uncapturedGates`).
@@ -22,8 +22,7 @@
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { openLedger, LedgerError, type Ledger, type LedgerRow } from './ledger.js';
-import { readResult } from './store.js';
+import { openLedger, LedgerError, type LedgerRow } from './ledger.js';
 import { gitBin } from './git-bin.js';
 import { gitEnv } from './git.js';
 import {
@@ -44,12 +43,6 @@ import {
  */
 export const DEFAULT_REQUIRED_GATES: readonly string[] = ['code-review', 'performance', 'security'];
 
-/**
- * D47: the verdict cutoff frozen in a ship result (`verdictsFrom`), as D42 freezes a build's evidenceCutoff. Undefined:
- * assemble now (verdictCutoff) and store it; an ISO string: re-check from that time; null: every row.
- */
-export type ShipContext = AssembleContext & { verdictsFrom?: string | null };
-
 export interface AssembleShipOptions {
   base: string;
   requiredGates?: readonly string[];
@@ -64,7 +57,7 @@ class GitError extends Error {}
  * `raw` keeps stdout as git printed it (for `-z` output, whose paths may end in spaces). git is the fixed-path binary
  * (gitBin, never PATH; pen N3) run with PATH=/usr/bin:/bin; with none, every call fails (closed).
  */
-function runGit(repo: string, args: string[], okCodes: number[] = [0], raw = false): { status: number; out: string } {
+function runGit(repo: string, args: string[], okCodes: number[] = [0], raw = false, maxBuffer = 1024 * 1024): { status: number; out: string } {
   const env = gitEnv();
   env.GIT_CONFIG_NOSYSTEM = '1';
   env.PATH = '/usr/bin:/bin';
@@ -76,7 +69,7 @@ function runGit(repo: string, args: string[], okCodes: number[] = [0], raw = fal
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'ignore'],
     timeout: 10_000,
-    maxBuffer: 1024 * 1024,
+    maxBuffer,
   });
   if (r.error !== undefined || r.status === null || !okCodes.includes(r.status)) throw new GitError(args[0]);
   return { status: r.status, out: raw ? r.stdout : r.stdout.trim() };
@@ -88,16 +81,6 @@ export function isLocalBranch(repo: string, name: string): boolean {
   try {
     runGit(repo, ['check-ref-format', '--branch', name]);
     runGit(repo, ['rev-parse', '--verify', '--quiet', '--end-of-options', `refs/heads/${name}^{commit}`]);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** True when `refs/remotes/origin/<name>` exists (call after isLocalBranch accepted the name; never an option). */
-export function hasOriginBranch(repo: string, name: string): boolean {
-  try {
-    runGit(repo, ['rev-parse', '--verify', '--quiet', '--end-of-options', `refs/remotes/origin/${name}^{commit}`]);
     return true;
   } catch {
     return false;
@@ -220,7 +203,10 @@ interface FailRow {
   at: number;
   /** The working tree the agent reviewed, outside .oss (untracked files included); null when the capture could not build it. */
   tree: string | null;
-  /** The tracked tree at review (.oss included, never consulted); null when the capture could not build it. */
+  /**
+   * The tracked tree at review (.oss included); shippedVsReviewed reads it only to tell whether a path deleted since
+   * review was tracked then. null when the capture could not build it.
+   */
   trackedTree: string | null;
   /** HEAD at review; null when git rev-parse failed at capture. */
   headSha: string | null;
@@ -246,6 +232,10 @@ function failRow(row: Record<string, unknown>): FailRow | null {
 
 const TREE_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
+/** Buffer for a -z list of deleted paths (perf L2: about 17,000 paths overflowed 1 MB). */
+const PATH_LIST_BUFFER = 64 * 1024 * 1024;
+const SHIPPED_CODE = ['--', '.', ':(exclude).oss'];
+
 /**
  * D45: whether the shipped code (HEAD outside .oss) differs from what the agent reviewed. Ship's reviews run on the
  * uncommitted tree and ship commits afterwards (only the files it picks), so `tree` (the reviewed working tree, untracked
@@ -253,26 +243,24 @@ const TREE_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
  * tracked at review (`trackedTree`) or in the commit HEAD was at review (`reviewHead`, pen N4); an untracked file the
  * reviewer saw and ship left out does not (pen M3a). All are strict hex tree-ishes, checked by the caller. 'unknown' on
  * any git error (an object git does not have included).
+ * Perf L2: `diff --quiet --diff-filter=d` answers "any added or modified path" with no output at all; only when there is
+ * none are the deleted paths listed (-z, a large buffer) and matched against the paths `trackedTree` and `reviewHead`
+ * have that HEAD lacks (two more diffs, so no path list ever goes on a command line).
  */
 function shippedVsReviewed(repo: string, tree: string, trackedTree: string, reviewHead: string | null): 'same' | 'differs' | 'unknown' {
+  const diff = ['diff', '--no-renames', '--no-ext-diff', '--no-textconv'];
+  const paths = (filter: string, from: string, to: string): string[] =>
+    runGit(repo, [...diff, '--name-only', '-z', `--diff-filter=${filter}`, '--end-of-options', from, to, ...SHIPPED_CODE], [0], true, PATH_LIST_BUFFER)
+      .out.split('\0').filter((p) => p !== '');
   try {
-    const status = runGit(
-      repo,
-      ['diff', '--name-status', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', '--end-of-options', tree, 'HEAD', '--', '.', ':(exclude).oss'],
-      [0],
-      true,
-    ).out.split('\0');
-    if (status[status.length - 1] === '') status.pop();
-    if (status.length % 2 !== 0) return 'unknown';
-    const deleted: string[] = [];
-    for (let k = 0; k + 1 < status.length; k += 2) {
-      if (status[k] !== 'D') return 'differs';
-      deleted.push(status[k + 1]);
+    if (runGit(repo, [...diff, '--quiet', '--diff-filter=d', '--end-of-options', tree, 'HEAD', ...SHIPPED_CODE], [0, 1]).status === 1) {
+      return 'differs';
     }
+    const deleted = paths('D', tree, 'HEAD');
     if (deleted.length === 0) return 'same';
-    const listed = (treeish: string): boolean =>
-      runGit(repo, ['--literal-pathspecs', 'ls-tree', '-r', '--name-only', '-z', '--end-of-options', treeish, '--', ...deleted], [0], true).out !== '';
-    return listed(trackedTree) || (reviewHead !== null && listed(reviewHead)) ? 'differs' : 'same';
+    const wasTracked = new Set(paths('A', 'HEAD', trackedTree));
+    if (reviewHead !== null) for (const p of paths('A', 'HEAD', reviewHead)) wasTracked.add(p);
+    return deleted.some((p) => wasTracked.has(p)) ? 'differs' : 'same';
   } catch {
     return 'unknown';
   }
@@ -342,55 +330,29 @@ const CAPTURE_ADDS_GATE = 'pen-test';
 const NOT_RE_REVIEWED = 'captured fail, not re-reviewed';
 
 /**
- * Pen F1: where the feature's verdict rows are read from, in epoch ms: the run start of its last ready_to_merge ship
- * result (the stored results/ship.json whose bytes the ledger's last `results/<feature>/ship` row binds), else the
- * first row (-Infinity). It never depends on this run's start, so restarting the run cannot drop an open fail; any
- * doubt (no row, unbound or unreadable file, another verdict) reads every row. D47: when that bound result is from this
- * very run (`startedAt`, a re-assemble), its frozen `verdictsFrom` is kept, so re-assembling never moves the window.
+ * T19 + D45 + D51: every captured FAIL row of the feature (no cutoff: pen F1, pen L7) is checked against the shipped
+ * code (failCleared), so a revert to code that already failed stays blocked. A gate is open when any of its fail rows is
+ * not cleared; it is set to fail with the newest open row's findings (`source: agent`, `fixed` stays from the line; D24's
+ * fix counts never override it), and returned in the set, so its blocker says "captured fail, not re-reviewed". Captured
+ * PASS rows decide and clear nothing (D45: a pass can be minted). With no open fail the timeline line stays (`source:
+ * model`, listed in uncapturedGates, D26).
  */
-function verdictCutoff(ledger: Ledger, repo: string, feature: string, startedAt: string): number {
-  const last = ledger.lastRow(`results/${feature}/ship`);
-  let stored: ReturnType<typeof readResult>;
-  try {
-    stored = readResult(repo, feature, 'ship');
-  } catch {
-    return -Infinity;
-  }
-  if (last === null || !stored.ok || last.sha256 !== sha256(stored.bytes)) return -Infinity;
-  const v = stored.value;
-  if (typeof v !== 'object' || v === null) return -Infinity;
-  const r = v as Record<string, unknown>;
-  if (r.startedAt === startedAt && (typeof r.verdictsFrom === 'string' || r.verdictsFrom === null)) {
-    const from = r.verdictsFrom === null ? NaN : Date.parse(r.verdictsFrom);
-    return Number.isNaN(from) ? -Infinity : from;
-  }
-  if (r.verdict !== 'ready_to_merge') return -Infinity;
-  const at = typeof last.startedAt === 'string' ? Date.parse(last.startedAt) : NaN;
-  return Number.isNaN(at) ? -Infinity : at;
-}
-
-/**
- * T19 + D45: per gate, the newest captured FAIL row from `cutoff` on (verdictCutoff, pen F1) is open unless the shipped
- * code differs from the code that failed (failCleared). An open fail sets its gate to fail with that row's findings
- * (`source: agent`, `fixed` stays from the line; D24's fix counts never override it), and the gate is returned in the
- * set, so its blocker says "captured fail, not re-reviewed". Captured PASS rows decide and clear nothing (D45: a pass
- * can be minted). With no open fail the timeline line stays (`source: model`, listed in uncapturedGates, D26).
- */
-function applyAgentVerdicts(tl: Timeline, verdictRows: LedgerRow[], cutoff: number, repo: string): Set<string> {
-  const newest = new Map<string, FailRow>();
+function applyAgentVerdicts(tl: Timeline, verdictRows: LedgerRow[], repo: string): Set<string> {
+  const newestOpen = new Map<string, FailRow>();
   for (const raw of verdictRows) {
     const f = failRow(raw);
-    if (f === null || !(f.at >= cutoff)) continue;
-    const prev = newest.get(f.gate);
-    if (prev === undefined || f.at >= prev.at) newest.set(f.gate, f);
+    if (f === null) continue;
+    const prev = newestOpen.get(f.gate);
+    if (prev !== undefined && prev.at > f.at) continue;
+    if (!failCleared(repo, f)) newestOpen.set(f.gate, f);
   }
   const open = new Set<string>();
-  for (const [name, f] of newest) {
+  for (const [name, f] of newestOpen) {
     const zero = counts({});
     const gate = tl.byName.get(name) ?? (name === CAPTURE_ADDS_GATE
       ? { gate: name, verdict: 'fail' as const, findings: zero, fixed: zero, source: 'agent' as const }
       : undefined);
-    if (gate === undefined || failCleared(repo, f)) continue;
+    if (gate === undefined) continue;
     tl.byName.set(name, { ...gate, verdict: 'fail', findings: f.findings, source: 'agent' });
     open.add(name);
   }
@@ -426,7 +388,7 @@ function readOverrides(ctx: AssembleContext, featureDir: string, decisionRows: L
   return { ok: true, overrides };
 }
 
-export function assembleShip(ctx: ShipContext, opts: AssembleShipOptions): AssembleOutcome {
+export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): AssembleOutcome {
   let diff: Diff;
   try {
     diff = readDiff(ctx.repo, opts.base);
@@ -439,21 +401,17 @@ export function assembleShip(ctx: ShipContext, opts: AssembleShipOptions): Assem
   let gateHashes: Set<unknown>;
   let decisionRows: LedgerRow[];
   let verdictRows: LedgerRow[];
-  let cutoff: number;
   try {
     const ledger = openLedger(ctx.repo);
     gateHashes = new Set(ledger.readRows(`gates/${ctx.feature}`).map((r) => r.sha256));
     decisionRows = ledger.readRows(`decisions/${ctx.feature}`);
     verdictRows = ledger.readRows(`verdicts/${ctx.feature}`);
-    // D47: a re-check uses the stored cutoff; an unparsable one reads every row (never drops an open fail).
-    cutoff = ctx.verdictsFrom === undefined ? verdictCutoff(ledger, ctx.repo, ctx.feature, ctx.startedAt) : Date.parse(ctx.verdictsFrom ?? '');
-    if (Number.isNaN(cutoff)) cutoff = -Infinity;
   } catch (e) {
     return { ok: false, error: e instanceof LedgerError ? e.code : 'unsafe_path' };
   }
 
   const timeline = timelineGates(ctx, featureDir, gateHashes);
-  const notReReviewed = applyAgentVerdicts(timeline, verdictRows, cutoff, ctx.repo);
+  const notReReviewed = applyAgentVerdicts(timeline, verdictRows, ctx.repo);
   const byName = timeline.byName;
   for (const required of opts.requiredGates ?? DEFAULT_REQUIRED_GATES) {
     if (!byName.has(required)) return { ok: false, error: 'gate_missing', detail: required };
@@ -474,7 +432,6 @@ export function assembleShip(ctx: ShipContext, opts: AssembleShipOptions): Assem
     result: {
       ...baseFields(ctx, 'ship'),
       headSha: diff.headSha,
-      verdictsFrom: cutoff === -Infinity ? null : new Date(cutoff).toISOString(),
       sources: {
         diff: 'code',
         gates: 'model',

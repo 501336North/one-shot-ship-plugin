@@ -10028,16 +10028,61 @@ function checkUnreadable(reason, parts, settings, root, home, caseInsensitive) {
 
 // src/tool-gate/rules/verdict-capture-call.ts
 var NAMES = ["oss-verdict-capture.sh", "verdict-capture.cjs", "verdict-capture.js"];
-var STEM = "oss-verdict-capture";
 var SEPARATORS = /[\s'"`;|&()<>=${}\\,]+/;
 var GLOB2 = /[*?[]/;
+var SET = /\[[!^]?\]?[^\]]*\]?/;
+var WORD_END2 = /[\s;|&()<>'"`]/;
+function specialSetsAsAny(text) {
+  const closing = /* @__PURE__ */ new Map();
+  const closeOf = (delim, from) => {
+    const cached = closing.get(delim);
+    if (cached !== void 0 && (cached === -1 || cached >= from)) return cached;
+    const at = text.indexOf(`${delim}]`, from);
+    closing.set(delim, at);
+    return at;
+  };
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] !== "[") {
+      out += text[i];
+      i += 1;
+      continue;
+    }
+    let j = i + 1;
+    if (text[j] === "!" || text[j] === "^") j += 1;
+    if (text[j] === "]") j += 1;
+    let special = false;
+    for (; j < text.length && text[j] !== "]" && !WORD_END2.test(text[j]); j += 1) {
+      if (text[j] === "\\") {
+        special = true;
+        j += 1;
+      } else if (text[j] === "[" && ":=.".includes(text[j + 1] ?? "x")) {
+        const at = closeOf(text[j + 1], j + 2);
+        if (at >= 0) {
+          special = true;
+          j = at + 1;
+        }
+      }
+    }
+    if (text[j] !== "]") {
+      out += text.slice(i, j);
+      i = j;
+    } else {
+      out += special ? "?" : text.slice(i, j + 1);
+      i = j + 1;
+    }
+  }
+  return out;
+}
 function globTokens(piece) {
   const tokens = [];
-  for (const m of piece.matchAll(/\[[^\]]*\]?|[*?]|[^*?[]/g)) {
+  for (const m of piece.matchAll(new RegExp(`${SET.source}|[*?]|[^*?[]`, "g"))) {
     const c = m[0];
     if (c === "*") tokens.push("*");
-    else if (c === "?" || c.startsWith("[") && !c.endsWith("]")) tokens.push(() => true);
-    else if (c.startsWith("[")) tokens.push(bracketTest(c.slice(1, -1)));
+    else if (c === "?" || c.startsWith("[") && (c.length < 2 || !c.endsWith("]") || /^\[[!^]?\]$/.test(c))) {
+      tokens.push(() => true);
+    } else if (c.startsWith("[")) tokens.push(bracketTest(c.slice(1, -1)));
     else tokens.push((x) => x === c);
   }
   return tokens;
@@ -10082,11 +10127,21 @@ function globMatch(tokens, name) {
 function globNames(piece, folder) {
   const tokens = globTokens(piece);
   if (!NAMES.some((name) => globMatch(tokens, name))) return false;
-  const literals = piece.split(/\[[^\]]*\]?|[*?]/).map((l) => l.replace(/\.(?:sh|c?js)$/, ""));
-  return literals.some((l) => l.length >= 3 && STEM.includes(l)) || folder !== void 0 && /^(?:hooks|cli)$/.test(folder);
+  const literals = piece.split(new RegExp(`${SET.source}|[*?]`));
+  return literals.some(writesStem) || folder !== void 0 && /^(?:hooks|cli)$/.test(folder);
+}
+function writesStem(literal2) {
+  if (literal2.length < 3) return false;
+  return NAMES.some((name) => {
+    const stemEnd = name.lastIndexOf(".");
+    for (let at = name.indexOf(literal2); at >= 0; at = name.indexOf(literal2, at + 1)) {
+      if (Math.min(at + literal2.length, stemEnd) - at >= 3) return true;
+    }
+    return false;
+  });
 }
 function namesVerdictCapture(text) {
-  for (const word of text.toLowerCase().split(SEPARATORS)) {
+  for (const word of specialSetsAsAny(text.toLowerCase()).split(SEPARATORS)) {
     const segments = word.split("/");
     for (const [i, segment] of segments.entries()) {
       if (NAMES.includes(segment)) return true;
