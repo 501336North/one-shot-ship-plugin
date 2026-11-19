@@ -4,9 +4,10 @@
 # iron-laws-sync.test.sh and iron-laws-sync-safety.test.sh put a fake curl on PATH that ignores the URL,
 # prints "<body>\n<code>\n" and (safety) records argv and the `--config -` stdin. This file checks what those
 # fakes assume about the real one: that real curl, run the way the hook runs it, sends exactly one
-# `GET <apiUrl>/api/v1/prompts/shared/iron-laws` with `Authorization: Bearer <key>` (the key decoded from
+# `GET <apiUrl>/api/v1/prompts/shared/iron-laws?split=1` with `Authorization: Bearer <key>` (the key decoded from
 # curl's config syntax, quote and backslash included), keeps the key out of every process command line,
-# and that its `-w '\n%{http_code}'` output is read the way the fake's is: the laws land in CLAUDE.md.
+# and that its `-w '\n%{http_code}'` output is read the way the fake's is: the {base} JSON's laws, verified, land
+# in CLAUDE.md.
 #
 # @behavior /oss:login installs the IRON LAWS block from the API named in the OSS config, with the key read
 #           by the shared reader (jq, or node when jq is missing), never from a nested object; a config file
@@ -15,7 +16,9 @@
 # @business-rule The API key goes only in a header to the configured, allowed API URL, never in argv, and
 #           key and URL always come from one JSON object; state files in ~/.oss are never followed out.
 # @boundary Real curl (behind a shim that records argv and refuses any URL but this run's 127.0.0.1:PORT),
-#           a real python3 http.server on a random 127.0.0.1 port, sandbox HOME, fake keys. Nothing stubbed.
+#           a real python3 http.server on a random 127.0.0.1 port, sandbox HOME, fake keys. Only oss-decrypt is
+#           stubbed (lib/verify-body-stub.sh: it really hashes stdin against the fixture servedHash), because the
+#           real binary pins the production manifest key (R-273 D12).
 #
 # Event-driven: the server's port arrives through a fifo; for the ps check the server writes `received` to a
 # fifo once it has the request and holds the answer until the test creates `release`. Time limits (the
@@ -61,7 +64,7 @@ KEY="sk-test-SYNC-$RND"
 # The JSON text "sk-test-SYNC-q\"uo\\te-RND" decodes to sk-test-SYNC-q"uo\te-RND.
 KEY_ESC_JSON="sk-test-SYNC-q\\\"uo\\\\te-$RND"
 KEY_ESC="sk-test-SYNC-q\"uo\\te-$RND"
-LAWS_PATH=/api/v1/prompts/shared/iron-laws
+LAWS_PATH='/api/v1/prompts/shared/iron-laws?split=1'
 START='<!-- IRON LAWS START - Do not edit manually, updated by /oss:login -->'
 END='<!-- IRON LAWS END -->'
 
@@ -137,6 +140,13 @@ if [[ -z "$(PATH="$PATH_NODE" command -v jq)" && -n "$(PATH="$PATH_NODE" command
     pass "control: the no-jq PATH has node and no jq"
 else abort "control: the no-jq PATH has node and no jq" "jq='$(PATH="$PATH_NODE" command -v jq)' node='$(PATH="$PATH_NODE" command -v node)'"; fi
 
+# oss-decrypt: one warmed verifying stub ($T/vb), linked into each sandbox HOME by cfg_nested.
+source "$SCRIPT_DIR/lib/verify-body-stub.sh"
+verify_body_stub "$T/vb/bin/oss-decrypt" "$T/vb" || abort "the oss-decrypt stub warms up" "warm-up did not run"
+stub_in() { mkdir -p "$1/.oss/bin"; ln -sf "$T/vb/bin/oss-decrypt" "$1/.oss/bin/oss-decrypt"; }
+# serve <laws file>: the API's ?split=1 reply {base: laws}; the fixture manifest signs exactly those laws.
+serve() { split_reply "$1" > "$T/body"; served_hash "$T/vb" shared/iron-laws "$1"; }
+
 # laws <tag>: a realistic laws body (heading, "IRON LAW", well over 500 bytes), with a final newline.
 laws() {
     printf '# IRON LAWS - FROM THE LOCAL API %s\n\n## IRON LAW #1: TDD\n\nNo production code without a failing test first.\n' "$1"
@@ -148,7 +158,7 @@ laws() {
 # cfg_nested <home> <apiKey as JSON text>: nested objects with their own apiKey/apiUrl come BEFORE the
 # top-level fields, so a reader that greps for the first "apiKey" or "apiUrl" gets the wrong one.
 cfg_nested() {
-    mkdir -p "$1/.oss"
+    mkdir -p "$1/.oss"; stub_in "$1"
     printf '{\n  "webhook": {"apiKey": "webhook-secret-%s", "apiUrl": "https://webhook.example.invalid", "enabled": true},\n  "models": {"default": "claude", "apiUrl": "https://models.example.invalid", "agents": {"oss:code-reviewer": "ollama/qwen2.5-coder"}},\n  "apiKey": "%s",\n  "apiUrl": "%s"\n}\n' \
         "$RND" "$2" "$LOCAL" > "$1/.oss/config.json"
 }
@@ -170,7 +180,7 @@ no_key_in_argv() { [[ -s "$T/curl.argv" ]] && ! grep -qF "sk-test-SYNC" "$T/curl
 # ==================== 1. The key goes out from the shared reader (jq, then node) ====================
 # --- 1a: jq on PATH; the request is held while ps is read ---
 H1="$T/h1"; P1="$T/p1"; mkdir -p "$P1"; cfg_nested "$H1" "$KEY"
-fresh; laws jq > "$T/laws-jq"; printf '%s' "$(laws jq)" > "$T/body"   # no final newline: '\n%{http_code}' alone ends the line
+fresh; laws jq > "$T/laws-jq"; serve "$T/laws-jq"   # JSON, no final newline: '\n%{http_code}' alone ends the line
 : > "$T/armed"
 (run_sync "$PATH_JQ" "$H1" "$P1" --install; printf '%s' "$RC" > "$T/1a.rc"; printf '%s' "$OUT" > "$T/1a.out") 4<&- &
 CLIENT=$!
@@ -216,7 +226,7 @@ else fail "3: control: a stale stamp sends one request" "rc=$RC requests=$(reqs)
 
 # --- 1b: node, no jq; the key holds a quote and a backslash (curl config syntax must decode them) ---
 H1B="$T/h1b"; P1B="$T/p1b"; mkdir -p "$P1B"; cfg_nested "$H1B" "$KEY_ESC_JSON"
-fresh; laws node > "$T/laws-node"; cp "$T/laws-node" "$T/body"   # final newline: the stub's shape
+fresh; laws node > "$T/laws-node"; serve "$T/laws-node"
 run_sync "$PATH_NODE" "$H1B" "$P1B" --install
 if [[ "$(cat "$T/requests.log")" == "GET $LAWS_PATH|Bearer $KEY_ESC" ]]; then
     pass "1b (node, no jq): the API got exactly one GET with 'Authorization: Bearer <top-level key>', quote and backslash decoded"
@@ -231,7 +241,7 @@ for reader in jq node; do
     H2="$T/h2-$reader"; P2="$T/p2-$reader"; mkdir -p "$H2/.oss" "$P2"
     printf '{"apiKey":"%s","apiUrl":"%s"}\n{"apiKey":"%s-second","apiUrl":"%s"}\n' "$KEY" "$LOCAL" "$KEY" "$LOCAL" > "$H2/.oss/config.json"
     printf '# My Project\n\nUser rules.\n' > "$P2/CLAUDE.md"; cp "$P2/CLAUDE.md" "$T/p2.before"
-    fresh; cp "$T/laws-jq" "$T/body"
+    fresh; serve "$T/laws-jq"
     if [[ $reader == jq ]]; then run_sync "$PATH_JQ" "$H2" "$P2" --install; else run_sync "$PATH_NODE" "$H2" "$P2" --install; fi
     if [[ "$RC" == 4 && "$(reqs)" == 0 && ! -e "$T/curl.argv" && "$OUT$ERR" != *sk-test-SYNC* ]] && cmp -s "$T/p2.before" "$P2/CLAUDE.md"; then
         pass "2 ($reader): two concatenated documents: exit 4, the server got no request, curl never ran, CLAUDE.md unchanged"
@@ -243,7 +253,7 @@ done
 H4="$T/h4"; P4="$T/p4"; mkdir -p "$P4"; cfg_nested "$H4" "$KEY"
 printf 'victim-original\n' > "$T/victim"; cp "$T/victim" "$T/victim.before"
 ln -s "$T/victim" "$H4/.oss/.iron-laws-last-check"
-fresh; cp "$T/laws-jq" "$T/body"
+fresh; serve "$T/laws-jq"
 run_sync "$PATH_JQ" "$H4" "$P4" --install
 S4="$H4/.oss/.iron-laws-last-check"
 if [[ "$RC" == 0 && "$(reqs)" == 1 ]] && cmp -s "$T/victim.before" "$T/victim" \

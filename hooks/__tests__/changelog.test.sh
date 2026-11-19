@@ -319,18 +319,21 @@ test_state_fifo() {
     cleanup_test_env "$d"
 }
 
+# Ship gate finding D: without its helpers the changelog stops quietly, as check-updates.sh does, so jq filter
+# text from the environment (OSS_JQ_*, which only oss-api-curl.sh may set) is never run.
 test_no_helper() {
-    local test_name="Without oss-api-curl.sh beside it: no error, a regular state counts as none (T53b)"
+    local test_name="Without oss-api-curl.sh beside it: exit 0 quietly, nothing printed, no filter from the environment (T53b, D)"
     ((TESTS_RUN++))
     local d; d=$(setup_test_env); mkdir -p "$d/hooks"
     cp "$CHANGELOG_SCRIPT" "$d/hooks/"
     printf '%s\n' '{"lastPluginVersion":"9.9.9-linked","lastCheckedAt":"LINKED-CHECK-TIME"}' > "$d/config/update-state.json"
     local saved="$CHANGELOG_SCRIPT"; CHANGELOG_SCRIPT="$d/hooks/oss-changelog.sh"
-    run_odd_state "$d"; CHANGELOG_SCRIPT="$saved"
-    if shows_baseline_only; then
+    OSS_JQ_INVISIBLE='def oss_invisible: "ENV-FILTER-RAN"; ' OSS_JQ_PROMPT_KEYS='def oss_prompt_keys: "ENV-FILTER-RAN"; ' \
+        run_odd_state "$d"; CHANGELOG_SCRIPT="$saved"
+    if [[ $RC == 0 && -z "$OUT" && -z "$ERR" ]]; then
         pass "$test_name"
     else
-        fail "$test_name" "rc=0, first-run baseline, no stderr" "rc=$RC err='$ERR' out='$OUT'"
+        fail "$test_name" "rc=0, no stdout, no stderr" "rc=$RC err='$ERR' out='$OUT'"
     fi
     cleanup_test_env "$d"
 }
@@ -478,6 +481,60 @@ test_output_unchanged() {
 }
 
 # =============================================================================
+# R-273 P6: the signed manifest also lists each command under its workflow aliases (`workflows/<name>`), the same
+# file with the same hash and servedHash. A `workflows/*` key whose hash AND servedHash equal a non-workflow key's
+# is that file again (ship gate finding B: delivery is checked against servedHash, so a copied hash alone is not).
+#
+# @behavior /oss:changelog lists a changed command once, by its command name, not once per workflow alias.
+# @business-rule A prompt is listed once, whatever names the manifest serves it under; a workflow that is its own
+#                file (its hash or servedHash matches no other key, or it has no servedHash) is still listed.
+# =============================================================================
+
+test_workflow_alias_listed_once() {
+    local test_name="A changed command served under two workflow aliases with the same hash is listed once, as the command (R-273 P6)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"prompts":{"commands/deploy":{"hash":"new","servedHash":"s"},"workflows/deploy":{"hash":"new","servedHash":"s"},"workflows/deploy-x":{"hash":"new","servedHash":"s"}}}' \
+        '{"commands/deploy":"old","workflows/deploy":"old","workflows/deploy-x":"old"}'
+    if [[ $RC == 0 && "$OUT" == *$'Updated prompts (1):\n  • commands/deploy\n'* && "$OUT" != *workflows/* && -z "$ERR" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "'Updated prompts (1):' then '  • commands/deploy', no workflows/ line" "rc=$RC out=$(printf '%q' "$OUT") err='$ERR'"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_workflow_own_file_listed() {
+    local test_name="A changed workflow whose hash matches no command is still listed (R-273 P6)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    run_keys "$d" '{"prompts":{"commands/deploy":{"hash":"c"},"workflows/x":{"hash":"new"}}}' \
+        '{"commands/deploy":"c","workflows/x":"old"}'
+    if [[ $RC == 0 && "$OUT" == *$'Updated prompts (1):\n  • workflows/x\n'* && -z "$ERR" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "'Updated prompts (1):' then '  • workflows/x'" "rc=$RC out=$(printf '%q' "$OUT") err='$ERR'"
+    fi
+    cleanup_test_env "$d"
+}
+
+test_workflow_served_differs_listed() {
+    local test_name="A changed workflow with a command's hash but its own servedHash (or none) is listed (finding B)"
+    ((TESTS_RUN++))
+    local d; d=$(setup_test_env)
+    # workflows/deploy: same hash, other servedHash; workflows/other: no servedHash; workflows/legacy: same hash as
+    # commands/legacy, and neither has a servedHash. All five are listed.
+    run_keys "$d" '{"prompts":{"commands/deploy":{"hash":"new","servedHash":"s"},"workflows/deploy":{"hash":"new","servedHash":"evil"},"workflows/other":{"hash":"new"},"commands/legacy":{"hash":"new2"},"workflows/legacy":{"hash":"new2"}}}' \
+        '{"commands/deploy":"old","workflows/deploy":"old","workflows/other":"old","commands/legacy":"old","workflows/legacy":"old"}'
+    if [[ $RC == 0 && "$OUT" == *$'Updated prompts (5):\n  • commands/deploy\n  • commands/legacy\n  • workflows/deploy\n  • workflows/legacy\n  • workflows/other\n'* && -z "$ERR" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "'Updated prompts (5):' commands/deploy, commands/legacy, workflows/deploy, workflows/legacy, workflows/other" "rc=$RC out=$(printf '%q' "$OUT") err='$ERR'"
+    fi
+    cleanup_test_env "$d"
+}
+
+# =============================================================================
 # Run all tests
 # =============================================================================
 echo "Running changelog tests..."
@@ -497,6 +554,9 @@ test_changed_keys_stripped
 test_big_manifest_finishes
 test_newline_key_one_entry
 test_output_unchanged
+test_workflow_alias_listed_once
+test_workflow_own_file_listed
+test_workflow_served_differs_listed
 
 echo ""
 echo "======================================="

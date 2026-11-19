@@ -278,11 +278,16 @@ _oss_tl_ob_ok() { oss_single_link "$1" && { [[ ! -e "$1" ]] || test -O "$1"; }; 
 # _oss_tl_push_bg: starts `oss-timeline.sh push` detached, in a process group of its own (so killing the hook's
 # group, or a caller waiting on it, never cuts a POST short or waits for one), stdin, stdout and stderr closed.
 # The push bounds itself: 8 POSTs of 15 s at most, none started after 40 s.
+# The push is in its own group before this returns (R-273 R2-5): a foreground perl forks it, both sides call setpgrp
+# (whichever runs first wins the race the other loses), and the parent exits at once. With no perl, bash's job
+# control (`set -m`, in a subshell) does the same: it calls setpgid in both the parent and the job.
 _oss_tl_push_bg() {
     if [[ -x /usr/bin/perl ]]; then
-        /usr/bin/perl -e 'setpgrp(0, 0); exec { $ARGV[0] } @ARGV' "$SCRIPT_DIR/oss-timeline.sh" push </dev/null >/dev/null 2>&1 &
+        /usr/bin/perl -e 'my $p = fork; exit 1 unless defined $p;
+            if (!$p) { setpgrp(0, 0); exec { $ARGV[0] } @ARGV; exit 127 }
+            setpgrp($p, $p); setpgrp(0, 0)' "$SCRIPT_DIR/oss-timeline.sh" push </dev/null >/dev/null 2>&1
     else
-        "$SCRIPT_DIR/oss-timeline.sh" push </dev/null >/dev/null 2>&1 &
+        (set -m; "$SCRIPT_DIR/oss-timeline.sh" push </dev/null >/dev/null 2>&1 &)
     fi
 }
 

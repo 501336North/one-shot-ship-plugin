@@ -99,10 +99,10 @@ if [[ "$skip_manifest" != "1" ]]; then
         # data, compared in one jq pass over the manifest and the cached hashes (--slurpfile, never filter text), so
         # a key with a line break is one key (T74, T79). A per-key loop ran two jq per key and, at the 256 KB cap,
         # outlasted session start's 3 s bound before the hashes below were saved. Only the count is printed.
-        prompts_changed=$(printf '%s' "$manifest_json" | jq -r --slurpfile old <(printf '%s' "$cached_hashes") '
+        prompts_changed=$(printf '%s' "$manifest_json" | jq -r --slurpfile old <(printf '%s' "$cached_hashes") "$OSS_JQ_PROMPT_KEYS"'
             def h: if type == "string" then . else tojson end;
             (($old[0] // {}) | if type == "object" then . else {} end) as $o
-            | [.prompts | objects | keys[] as $k
+            | [.prompts | objects | oss_prompt_keys as $k
                | select(((try .[$k].hash catch null) // "" | h) as $new | (($o[$k] // "") | h) as $was
                         | $was != "" and $new != "" and $was != $new)] | length' 2>/dev/null)
         [[ "$prompts_changed" =~ ^[0-9]+$ ]] || prompts_changed=0

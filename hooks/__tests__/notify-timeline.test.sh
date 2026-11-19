@@ -118,6 +118,16 @@ timed() { local t0; t0=$(ms); (cd "$P" && CLAUDE_PROJECT_DIR="$P" CLAUDE_PLUGIN_
 printf '#!/bin/bash\nps -o pgid= -p $$ | tr -d " " > "%s"\n' "$T/push.pgid" > "$T/on-call"; chmod +x "$T/on-call"
 rm -rf "$API/api"; mkdir -p "$API/api"
 timed; base_rc=$RC base=$TOOK
+# The base run's detached push must be gone before the key is written (R-273 DESIGN Amendment 4): it is in a group of
+# its own by the time oss-notify returns, so one still starting would read the new key, take the outbox's push lock
+# and leave the next run's push nothing to send. Bounded at 5 s; past that the row fails, it never hangs. awk reads
+# the path from its environment, so it never matches its own command line.
+base_gone=no
+for _ in $(seq 1 50); do
+    ps -A -ww -o command= | NT_PUSH="$BARE/hooks/oss-timeline.sh push" awk 'index($0, ENVIRON["NT_PUSH"]) { f = 1 } END { exit !f }' \
+        || { base_gone=yes; break; }
+    sleep 0.1
+done
 printf '{"apiKey":"fake-oss-key-notify-0000","apiUrl":"http://127.0.0.1:9"}\n' > "$HOME/.oss/config.json"
 timed
 inflight=no
@@ -125,9 +135,9 @@ inflight=no
 for _ in $(seq 1 50); do grep -qs '/api/v1/timeline' "$API"/api/argv.* && { inflight=yes; break; }; sleep 0.1; done
 pg=$(cat "$T/push.pgid" 2>/dev/null)
 [[ "$pg" =~ ^[0-9]+$ ]] && kill -0 -- "-$pg" 2>/dev/null || inflight="no (push gone: pgid=$pg)"
-[[ $base_rc -eq 0 && $RC -eq 0 && $TOOK -le $((base + 1000)) && "$inflight" == yes ]] \
+[[ $base_gone == yes && $base_rc -eq 0 && $RC -eq 0 && $TOOK -le $((base + 1000)) && "$inflight" == yes ]] \
     && pass "should not delay oss-notify by more than 1 s when the API hangs" \
-    || fail "should not delay oss-notify by more than 1 s when the API hangs" "rc=$base_rc/$RC took=${TOOK}ms base=${base}ms post-in-flight=$inflight"
+    || fail "should not delay oss-notify by more than 1 s when the API hangs" "rc=$base_rc/$RC took=${TOOK}ms base=${base}ms post-in-flight=$inflight base-push-gone-within-5s=$base_gone"
 [[ "$pg" =~ ^[0-9]+$ ]] && kill -KILL -- "-$pg" 2>/dev/null
 rm -f "$HOME/.oss/config.json"; rm -rf "$HOME/.oss/timeline-outbox"
 

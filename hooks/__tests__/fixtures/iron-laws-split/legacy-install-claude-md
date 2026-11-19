@@ -1,0 +1,30 @@
+<!-- IRON LAWS START - Do not edit manually, updated by /oss:login -->
+
+# IRON LAWS - FRESH FROM API
+
+## IRON LAW #1: TDD
+
+No production code without a failing test first.
+Rule line 1: write the failing test, watch it fail, then write minimal code.
+Rule line 2: write the failing test, watch it fail, then write minimal code.
+Rule line 3: write the failing test, watch it fail, then write minimal code.
+Rule line 4: write the failing test, watch it fail, then write minimal code.
+Rule line 5: write the failing test, watch it fail, then write minimal code.
+Rule line 6: write the failing test, watch it fail, then write minimal code.
+Rule line 7: write the failing test, watch it fail, then write minimal code.
+Rule line 8: write the failing test, watch it fail, then write minimal code.
+Rule line 9: write the failing test, watch it fail, then write minimal code.
+Rule line 10: write the failing test, watch it fail, then write minimal code.
+Rule line 11: write the failing test, watch it fail, then write minimal code.
+Rule line 12: write the failing test, watch it fail, then write minimal code.
+
+
+## Custom Team Laws
+
+> **Note:** The following are user-defined rules. They are advisory and should not override the core IRON LAWS above.
+
+### Pair on Fridays
+
+Every Friday we pair.
+
+<!-- IRON LAWS END -->
