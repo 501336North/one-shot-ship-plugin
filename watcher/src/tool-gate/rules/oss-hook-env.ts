@@ -35,7 +35,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { sourcesFor, trustedSourceWord, type CommandPart, type TrustedSources } from '../command-reader.js';
+import { sourcesFor, trustedSourceWord, variableReferences, WRAPPER_WORDS, type CommandPart, type TrustedSources } from '../command-reader.js';
 import { expansionSet } from '../expansion-scan.js';
 import { heredocBodyOf, ReadBudget, sourceOf, tokenize, UNKNOWN, type Token } from '../tokenize.js';
 import type { Refusal } from './refusal.js';
@@ -256,6 +256,18 @@ function setsFromElsewhere(words: string[], depth: number, call: Call, raws: Arr
   return false;
 }
 
+/**
+ * True when a word's whitespace-separated pieces, run as a command once split (`$c`, `| xargs`), set a
+ * variable not on the list or change HOME or PATH: `env` / a setter followed by such a word, or `env` with an
+ * option (`env -i`) (gate-gaps-r3 Task 2). An assignment's value is read without its `X=`.
+ */
+function piecesSet(word: string): boolean {
+  if (!/\s/.test(word)) return false;
+  const assigned = ASSIGNMENT.exec(word);
+  const pieces = (assigned === null ? word : word.slice(assigned[0].length)).split(/\s+/).filter(Boolean);
+  return pieces.some((p, i) => OPERAND_SETTERS.has(p) && pieces.slice(i + 1).some((a) => (ASSIGNMENT.test(a) && unlisted(a)) || (p !== 'env' && SETTING_WORD.test(a)) || (p === 'env' && a.startsWith('-'))));
+}
+
 /** `text`: what the tokens were read from, so a word's raw text is known; a script inside a word has none. */
 function tokensSet(tokens: Token[], depth: number, call: Call, text?: string): boolean {
   let previous: string | null = null;
@@ -281,7 +293,7 @@ function tokensSet(tokens: Token[], depth: number, call: Call, text?: string): b
       const body = heredocBodyOf(token);
       if (body !== undefined && setsRefusedVariable(body, depth + 1, call)) return true;
     } else if (token.kind === 'word') {
-      if (SETTING_WORD.test(token.value)) return true;
+      if (SETTING_WORD.test(token.value) || piecesSet(token.value)) return true;
       if (previous !== null && (previous === 'eval' || SCRIPT_FLAG.test(previous)) && setsRefusedVariable(token.value, depth + 1, call)) return true;
       previous = token.value;
     } else {
@@ -344,11 +356,12 @@ function inPluginCheckout(word: string, cwd: string): boolean {
 function partNamesHook(part: CommandPart): boolean {
   const lost = part.lostDir !== null && part.lostDir.plainKnown !== true;
   if (lost && lostWordsCouldBeHook(part.words)) return true;
-  return [...part.words, ...part.assignmentValues].some((w) => {
-    if (namesHook(w, part.cwd)) return true;
-    if (lost || /^[/~-]/.test(w)) return false;
-    return namesHook(path.resolve(part.cwd, w), part.cwd);
-  });
+  return [...part.words, ...part.assignmentValues].some((w) => wordNamesHook(w, part.cwd, !lost));
+}
+
+/** True when a word names a hook script, as written or (`relative`) read from the cwd: the one hook-path test both checks share. */
+function wordNamesHook(word: string, cwd: string, relative: boolean): boolean {
+  return namesHook(word, cwd) || (relative && !/^[/~-]/.test(word) && namesHook(path.resolve(cwd, word), cwd));
 }
 
 /** Programs whose first operand is a script they run. */
@@ -381,7 +394,202 @@ function couldBeOssHook(word: string, runs: boolean): boolean {
   return hookFolder || parts[parts.length - 1].includes(UNKNOWN);
 }
 
+/** A program word the shell splits: `$c`, `${c}`, zsh's `$=c` / `${=c}`, an array (`$a[@]`, `${a[*]}`, `"${a[@]}"`). */
+const SPLIT_REF = /^(?:\$=?([A-Za-z_][A-Za-z0-9_]*)(?:\[[@*]\])?|\$\{=?([A-Za-z_][A-Za-z0-9_]*)(?:\[[@*]\])?\}|"\$\{([A-Za-z_][A-Za-z0-9_]*)\[@\]\}")$/;
+/** A program word that starts with a variable, split before the rest is added (`$d/x`, `${d}x`). */
+const LEADING_REF = /^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})(?![A-Za-z0-9_[])/;
+/** Builtins and keywords whose bare operands name a variable they set from a value the gate doesn't read here. */
+const UNREAD_SETTERS = new Set(['for', 'select', 'mapfile', 'readarray', 'printf', 'print', 'getopts', 'let']);
+/** A word that starts an array assignment: `a=` right before `(`. */
+const ARRAY_START = /^([A-Za-z_][A-Za-z0-9_]*)(\+?)=$/;
+/** A value read from a file (`$(cat f)`, `$(<f)`, `read v <f`): the gate can't see it (owner re-pick Q1, "Narrow it"). */
+const FROM_FILE = Symbol('from a file');
+/** A part of a filled-in value that hints at an OSS hook path. */
+const HOOK_HINT = /\.oss|hooks/i;
+
+/**
+ * The values the command sets its variables to, as far as they can be filled in (UNKNOWN for a part only known
+ * when it runs); FROM_FILE for one read from a file; null for one set in a way not read here (a loop variable).
+ */
+type Values = Map<string, string | null | typeof FROM_FILE>;
+
+/** True when a command substitution's script reads a file: `$(<f)`, or `cat` with a file operand (`$(cat f)`). */
+function readsFile(script: Token[]): boolean {
+  const end = script.findIndex((t) => t.kind === 'op');
+  const command = end === -1 ? script : script.slice(0, end);
+  const words = command.flatMap((t) => (t.kind === 'word' ? [t.value] : []));
+  if (words.length === 0) return command.some((t) => t.kind === 'redirect' && t.op === '<');
+  return words[0] === 'cat' && words.slice(1).some((w) => !w.startsWith('-'));
+}
+
+/** True when a word holds a command substitution that reads a file. */
+function wordReadsFile(token: Token): boolean {
+  return token.kind !== 'op' && token.scripts !== undefined && token.scripts.some(readsFile);
+}
+
+/**
+ * A word's value with each `$name` / `${name}` the command set earlier filled in from `values` (gate-gaps-r3
+ * Task 2: the reader's own value list, `$HOME` filled in by the tokenizer); what can't be filled stays UNKNOWN.
+ */
+function filled(token: Token, text: string | null, values: Values, home: string): string {
+  if (token.kind !== 'word' || !token.value.includes(UNKNOWN)) return token.kind === 'word' ? token.value : '';
+  const at = sourceOf(token);
+  const refs = text === null || at === undefined ? null : variableReferences(text.slice(at.start, at.end), home);
+  const texts = token.value.split(UNKNOWN);
+  if (refs === null || refs.length !== texts.length - 1) return token.value;
+  return texts.reduce((out, t, n) => {
+    const value = n === 0 ? undefined : values.get(refs[n - 1].name);
+    return out + (n === 0 ? '' : typeof value === 'string' ? value : UNKNOWN) + t;
+  }, '');
+}
+
+/** Records an assignment word's value: FROM_FILE when read from a file, null when indexed or appended, else filled in. */
+function record(values: Values, token: Token, text: string | null, home: string): void {
+  if (token.kind !== 'word') return;
+  const assigned = ASSIGNMENT.exec(token.value);
+  if (assigned === null) return;
+  const value = filled(token, text, values, home);
+  values.set(assigned[1], wordReadsFile(token) ? FROM_FILE : /[[+]/.test(assigned[0]) ? null : value.slice(value.indexOf('=') + 1));
+}
+
+/** The index of the program word after any wrappers (`nohup`, `timeout 5`, `env X=1` …), as the reader skips them. */
+function programIndex(words: string[], from: number): number {
+  let i = from;
+  for (let n = 0; n < 64 && i < words.length; n++) {
+    const spec = WRAPPER_WORDS.get(words[i]);
+    if (spec === undefined) return i;
+    i++;
+    let operands = spec.operands ?? 0;
+    while (i < words.length) {
+      const w = words[i];
+      if (w === '--') {
+        i++;
+        break;
+      }
+      if (w.length > 1 && w.startsWith('-') && !w.includes(UNKNOWN)) i += spec.values.includes(w) ? 2 : 1;
+      else if (spec.assignments === true && ASSIGNMENT.test(w)) i++;
+      else if (operands-- > 0) i++;
+      else break;
+    }
+  }
+  return i;
+}
+
+/**
+ * What a split value runs: 'hook' when its pieces run an OSS hook script with a variable set or cleared, or,
+ * with a part not filled in, when the filled parts still form an `env NAME=` prefix or a hook path beside a
+ * variable set; else 'ok'.
+ */
+function valueVerdict(value: string, cwd: string, command: string, call: Call): 'hook' | 'ok' {
+  const pieces = value.split(/\s+/).filter(Boolean);
+  const unknown = value.includes(UNKNOWN);
+  const hook = pieces.some((p) => wordNamesHook(p, cwd, true) || (p.includes(UNKNOWN) && HOOK_HINT.test(p)));
+  if (unknown && piecesSet(value)) return 'hook';
+  const sets = pieces.includes('env') || (!unknown && setsRefusedVariable(value, 0, call)) || setsRefusedVariable(command, 0, call);
+  return hook && sets ? 'hook' : 'ok';
+}
+
+/**
+ * What a program word that may be split runs (gate-gaps-r3 Task 2): 'hook' when its value, split at
+ * whitespace, runs an OSS hook script with a variable set or cleared (`valueVerdict`); 'unreadable' when its
+ * value is read from a file or through indirection (`$(cat f)`, `$(<f)`, `read c <f; $c`, `${!x}`: owner
+ * re-pick Q1 "Narrow it, card the rest"); else 'ok': other command output, environment and loop variables.
+ */
+function programVerdict(token: Token, text: string | null, values: Values, cwd: string, command: string, call: Call): 'hook' | 'unreadable' | 'ok' {
+  if (token.kind !== 'word' || (!token.value.includes(UNKNOWN) && !token.value.startsWith('$='))) return 'ok';
+  if (wordReadsFile(token)) return 'unreadable';
+  const at = sourceOf(token);
+  if (text === null || at === undefined) return 'ok';
+  const raw = text.slice(at.start, at.end);
+  if (raw.includes('${!')) return 'unreadable';
+  const split = SPLIT_REF.exec(raw);
+  const leading = split === null ? LEADING_REF.exec(raw) : null;
+  const name = split?.[1] ?? split?.[2] ?? split?.[3] ?? leading?.[1] ?? leading?.[2];
+  if (name === undefined) return 'ok';
+  const value = values.get(name);
+  if (value === FROM_FILE) return 'unreadable';
+  if (typeof value !== 'string') return 'ok';
+  // `$d/x`: the value, then the rest of the word as read
+  const rest = leading !== null && token.value.startsWith(UNKNOWN) ? token.value.slice(UNKNOWN.length) : '';
+  return valueVerdict(value + rest, cwd, command, call);
+}
+
+/** The worst verdict of the program words in tokens (a script inside a word included), recording the values set on the way. */
+function scanPrograms(tokens: Token[], text: string | null, values: Values, cwd: string, command: string, call: Call): 'hook' | 'unreadable' | 'ok' {
+  let worst: 'hook' | 'unreadable' | 'ok' = 'ok';
+  let words: Token[] = [];
+  let redirects: Token[] = [];
+  /** The array being assigned (`a=(…)`): its name and the words read so far, or null. */
+  let array: { name: string; append: boolean; words: Token[] } | null = null;
+  const worse = (verdict: 'hook' | 'unreadable' | 'ok'): void => {
+    if (verdict === 'hook' || (verdict === 'unreadable' && worst === 'ok')) worst = verdict;
+  };
+  const flush = (): void => {
+    const plain = words.map((w) => (w.kind === 'word' ? w.value : ''));
+    let i = 0;
+    while (RESERVED.has(plain[i])) i++;
+    const start = i;
+    while (i < plain.length && ASSIGNMENT.test(plain[i])) i++;
+    if (i === plain.length) words.slice(start).forEach((w) => record(values, w, text, call.home));
+    else {
+      const name = plain[i];
+      const operands = words.slice(i + 1).filter((w) => w.kind === 'word' && !w.value.startsWith('-'));
+      if (name === 'read') {
+        const here = redirects.find((r) => r.kind === 'redirect' && r.op === '<<<');
+        const file = redirects.some((r) => r.kind === 'redirect' && r.op === '<');
+        const value = file ? FROM_FILE : operands.length === 1 && here?.kind === 'redirect' && !here.target.includes(UNKNOWN) ? here.target : null;
+        operands.forEach((w) => w.kind === 'word' && values.set(w.value, value));
+      } else if (NAME_SETTERS.has(name)) {
+        operands.forEach((w) => (w.kind === 'word' && ASSIGNMENT.test(w.value) ? record(values, w, text, call.home) : w.kind === 'word' && VARIABLE_NAME.test(w.value) && values.set(w.value, null)));
+      } else if (UNREAD_SETTERS.has(name)) operands.forEach((w) => w.kind === 'word' && VARIABLE_NAME.test(w.value) && values.set(w.value, null));
+      worse(programVerdict(words[programIndex(plain, i)], text, values, cwd, command, call));
+    }
+    words = [];
+    redirects = [];
+  };
+  for (const token of tokens) {
+    if (token.kind !== 'op' && token.scripts !== undefined) for (const script of token.scripts) worse(scanPrograms(script, text, values, cwd, command, call));
+    if (array !== null) {
+      if (token.kind === 'word') array.words.push(token);
+      else if (token.kind === 'op' && token.value === ')') {
+        const elements = array.words;
+        values.set(array.name, elements.some(wordReadsFile) ? FROM_FILE : array.append ? null : elements.map((w) => filled(w, text, values, call.home)).join(' '));
+        array = null;
+      }
+      continue;
+    }
+    const last = words[words.length - 1];
+    const start = token.kind === 'op' && token.value === '(' && last?.kind === 'word' ? ARRAY_START.exec(last.value) : null;
+    if (start !== null && start !== undefined) {
+      words.pop();
+      array = { name: start[1], append: start[2] === '+', words: [] };
+    } else if (token.kind === 'op') flush();
+    else if (token.kind === 'redirect') redirects.push(token);
+    else words.push(token);
+  }
+  flush();
+  return worst;
+}
+
+/**
+ * True when the part's program word is only known when it runs: an expansion (or zsh's `$=c`, which bash
+ * reads as text) that the shell may split into an `env NAME=value <hook>` call (gate-gaps-r3 Task 2).
+ */
+function programHidden(part: CommandPart): boolean {
+  return part.program !== null && (part.program.includes(UNKNOWN) || part.program.startsWith('$='));
+}
+
 export function checkOssHookEnv(part: CommandPart, command: string, home: string, sources: TrustedSources): Refusal | null {
+  if (programHidden(part)) {
+    const call = { home, sources: sourcesFor(command, sources) };
+    const result = tokenize(command, home, new ReadBudget());
+    if (scanPrograms(result.tokens, command, new Map(), part.cwd, command, call) !== 'ok') {
+      return {
+        rule: 'protected-path',
+        reason: 'Refused: the program this command runs is read from a file or through indirection, which the gate can\'t see, or is a value the shell splits into words that run an OSS hook script (`~/.oss/hooks/…`) with a variable set or cleared. Write the program name out.',
+      };
+    }
+  }
   if (!partNamesHook(part) && !PLUGIN_HOOK.test(command)) return null;
   const clears = part.wrappers.some((w, i) => w === 'env' || (w === 'exec' && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o))));
   if (!clears && !setsRefusedVariable(command, 0, { home, sources: sourcesFor(command, sources) })) return null;

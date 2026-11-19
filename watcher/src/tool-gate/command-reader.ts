@@ -313,6 +313,9 @@ const WRAPPERS = new Map<string, WrapperSpec>([
   }],
 ]);
 
+/** Each wrapper's option values, operands and assignments, for a rule that finds the program word itself (gate-gaps-r3 Task 2). */
+export const WRAPPER_WORDS: ReadonlyMap<string, { readonly values: readonly string[]; readonly operands?: number; readonly assignments?: boolean }> = WRAPPERS;
+
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh']);
 /** Shell options that take the next word as their value; in a cluster (`-eo`), each such letter takes one. */
 const SHELL_VALUE_OPTIONS = new Set(['-o', '-O', '--rcfile', '--init-file']);
@@ -1288,7 +1291,7 @@ const VARIABLE_REFERENCE = /\{([A-Za-z_][A-Za-z0-9_]*)\}(?![[:{])|([A-Za-z_][A-Z
  * word holds any other expansion (`$(…)`, `$1`, `${X:-…}`, a backtick), a subscript or modifier, or reads
  * HOME in a call that sets it (round 15, SEC MEDIUM-A).
  */
-function variableReferences(raw: string, home: string, specials = false): { name: string; quoted: boolean }[] | null {
+export function variableReferences(raw: string, home: string, specials = false): { name: string; quoted: boolean }[] | null {
   const refs: { name: string; quoted: boolean }[] = [];
   let quote: "'" | '"' | null = null;
   for (let i = 0; i < raw.length; i++) {
