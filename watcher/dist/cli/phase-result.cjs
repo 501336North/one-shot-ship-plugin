@@ -1266,11 +1266,15 @@ function topologicalBest(repo, candidates, head) {
 }
 function liveBase(repo, branch, from, head) {
   const points = /* @__PURE__ */ new Set();
-  const out = runGit(repo, ["for-each-ref", `--contains=${from}`, "--format=%(refname)%00%(objectname)%00%(symref)", "refs/remotes/"], [0], true, PATH_LIST_BUFFER).out;
+  const out = runGit(repo, ["for-each-ref", `--contains=${from}`, "--format=%(refname)%00%(objectname)%00%(symref)", `refs/remotes/*/${branch}`], [0], true, PATH_LIST_BUFFER).out;
+  const tips = /* @__PURE__ */ new Set();
   for (const line of out.split("\n")) {
     const [name, sha, symref] = line.split("\0");
     if (symref !== "" || sha === void 0 || !TREE_RE.test(sha) || sha === from) continue;
     if (/^refs\/remotes\/[^/]+\/(.+)$/.exec(name)?.[1] !== branch) continue;
+    tips.add(sha);
+  }
+  for (const sha of tips) {
     const mb = runGit(repo, ["merge-base", "--end-of-options", sha, head], [0, 1]).out;
     if (mb !== from && TREE_RE.test(mb) && containedIn(repo, from, mb)) points.add(mb);
   }
@@ -1283,8 +1287,8 @@ function readDiff(repo, base, remoteRefs) {
   const headSha2 = runGit(repo, ["rev-parse", "--verify", "HEAD^{commit}"]).out;
   const from = diffFrom(repo, branch, tip, headSha2, remoteRefs);
   const mergeBase = runGit(repo, ["merge-base", from, headSha2]).out;
-  const sameTree = runGit(repo, ["diff", "--quiet", "--no-ext-diff", "--no-textconv", tip, headSha2], [0, 1]).status === 0;
-  const stat = runGit(repo, ["diff", "--shortstat", "--no-renames", "--no-ext-diff", "--no-textconv", mergeBase, headSha2]).out;
+  const sameTree = runGit(repo, [...DIFF, "--quiet", tip, headSha2], [0, 1]).status === 0;
+  const stat = runGit(repo, [...DIFF, "--shortstat", mergeBase, headSha2]).out;
   const num2 = (re) => Number(re.exec(stat)?.[1] ?? 0);
   const files = num2(/(\d+) files? changed/);
   return {
@@ -1335,30 +1339,39 @@ function failRow(row) {
   return { gate: row.gate, findings, at, tree: hex(row.tree), trackedTree: hex(row.trackedTree), headSha: hex(row.headSha) };
 }
 var TREE_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+function rowKey(f) {
+  return `${f.tree}|${f.trackedTree}|${f.headSha}`;
+}
 var PATH_LIST_BUFFER = 64 * 1024 * 1024;
 var SHIPPED_CODE = ["--", ".", ":(exclude).oss"];
-var DIFF = ["diff", "--no-renames", "--no-ext-diff", "--no-textconv"];
+var DIFF_OPTIONS = ["--no-renames", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "--no-color", "--diff-algorithm=myers"];
+var DIFF = ["diff", ...DIFF_OPTIONS];
 var ABSENT = /^0{6} /;
 var BATCH_LOOKUPS = 64;
+var BATCH_ROWS = 16;
 var ARGV_PATH_BYTES = 128 * 1024;
+var NO_CHANGES = /* @__PURE__ */ new Map();
 function argvChunks(paths) {
   const chunks = [];
   let size = Infinity;
   for (const p of paths) {
-    if (size + p.length + 1 > ARGV_PATH_BYTES) {
+    const bytes = Buffer.byteLength(p) + 1;
+    if (size + bytes > ARGV_PATH_BYTES) {
       chunks.push([]);
       size = 0;
     }
     chunks[chunks.length - 1].push(p);
-    size += p.length + 1;
+    size += bytes;
   }
   return chunks;
 }
-var C_ESCAPES = { "\x07": "\\a", "\b": "\\b", "	": "\\t", "\n": "\\n", "\v": "\\v", "\f": "\\f", "\r": "\\r", '"': '\\"', "\\": "\\\\" };
-function cQuote(name) {
-  if (!/[\x00-\x1f"\\\x7f]/.test(name)) return name;
-  const body = name.replace(/[\x00-\x1f"\\\x7f]/g, (c) => C_ESCAPES[c] ?? `\\${c.charCodeAt(0).toString(8).padStart(3, "0")}`);
-  return `"${body}"`;
+function parseRaw(parts, out = /* @__PURE__ */ new Map()) {
+  for (let i = 0; i + 1 < parts.length; i += 2) {
+    const m = /^:([0-7]{6}) ([0-7]{6}) ([0-9a-f]+) ([0-9a-f]+) [A-Z]/.exec(parts[i]);
+    if (m === null) throw new GitError("raw");
+    out.set(parts[i + 1], { from: `${m[1]} ${m[3]}`, to: `${m[2]} ${m[4]}` });
+  }
+  return out;
 }
 var FailComparer = class {
   constructor(repo, from, mergeBase) {
@@ -1370,157 +1383,244 @@ var FailComparer = class {
   from;
   mergeBase;
   missing = /* @__PURE__ */ new Map();
-  /** Perf low 2 (gate round 8): only the merge base's and the review bases' diffs to HEAD are kept, never a row's own. */
-  toHead = /* @__PURE__ */ new Map();
+  /** The merge base's diff to HEAD (the feature's own paths), read once. */
+  own = null;
   reviewBases = /* @__PURE__ */ new Map();
-  ancestry = null;
+  /**
+   * The current batch's diff-tree output, unparsed (each pair parsed when used, so a batch of whole-tree diffs costs
+   * its text, not a map per pair): reviewed trees to HEAD, and D67's review bases to the merge base. Replaced by the
+   * next batch (perf low 2: rows' own diffs are not kept).
+   */
+  rowText = /* @__PURE__ */ new Map();
+  upstreamText = /* @__PURE__ */ new Map();
+  /** D67: the last review base's upstream changes, parsed (rows sharing a review base are usually adjacent). */
+  upstreamHit = null;
+  prefetched = /* @__PURE__ */ new Set();
   added = /* @__PURE__ */ new Map();
   /** Perf low (gate round 9): each `<tree-ish>:<path>` lookup, once per assemble. */
   entries = /* @__PURE__ */ new Map();
-  /** Perf medium (gate round 9): the feature's change signature now (merge base to HEAD), per path, once per assemble. */
-  nowSigs = /* @__PURE__ */ new Map();
+  /** True when prefetch already tried this row. */
+  isPrefetched(f) {
+    return this.prefetched.has(rowKey(f));
+  }
+  /**
+   * Perf L3 (gate round 10): reads, for `rows`, the review bases (one rev-list) and every tree diff not yet read (each
+   * reviewed tree to HEAD and each review base to the merge base, one `diff-tree --stdin`). Best effort: anything a
+   * batch call cannot answer is left for the row's own git calls, which decide it as before.
+   */
+  prefetch(rows) {
+    for (const f of rows) this.prefetched.add(rowKey(f));
+    this.rowText.clear();
+    this.upstreamText.clear();
+    try {
+      this.batchReviewBases(rows.map((f) => f.headSha).filter((h) => h !== null && !this.reviewBases.has(h)));
+    } catch {
+    }
+    try {
+      const bases = [...new Set(rows.map((f) => f.headSha === null ? null : this.reviewBases.get(f.headSha)))].filter((b) => typeof b === "string" && b !== this.mergeBase);
+      const trees = this.treesOf(["HEAD", this.mergeBase, ...bases]);
+      const head = trees.get("HEAD");
+      const mb = trees.get(this.mergeBase);
+      if (head === void 0 || mb === void 0) return;
+      const pairs = /* @__PURE__ */ new Map();
+      for (const f of rows) {
+        const tree = f.tree;
+        if (tree !== null) pairs.set(`${tree} ${head}`, (t) => this.rowText.set(tree, t));
+      }
+      for (const b of bases) {
+        const t = trees.get(b);
+        if (t !== void 0) pairs.set(`${t} ${mb}`, (text) => this.upstreamText.set(b, text));
+      }
+      if (pairs.size > 0) this.diffTrees(pairs);
+    } catch {
+    }
+  }
+  /**
+   * Perf L3: review bases for many review heads from one `rev-list --boundary --parents <heads> ^from`. A head not
+   * listed is reachable from `from`, so it is its own merge base with it. A listed head whose listed history reaches
+   * exactly one boundary commit has that commit as its merge base (every common ancestor lies behind the first commit
+   * of `from`'s history on any path from the head). Heads reaching none or several are left to `merge-base`.
+   */
+  batchReviewBases(heads) {
+    const distinct = [...new Set(heads)];
+    if (distinct.length === 0) return;
+    const out = runGit(
+      this.repo,
+      ["rev-list", "--topo-order", "--boundary", "--parents", "--stdin"],
+      [0],
+      true,
+      PATH_LIST_BUFFER,
+      `${distinct.join("\n")}
+^${this.from}
+`
+    ).out;
+    const parents = /* @__PURE__ */ new Map();
+    const order = [];
+    for (const line of out.split("\n")) {
+      if (line === "" || line.startsWith("-")) continue;
+      const [c, ...ps] = line.split(" ");
+      if (c === void 0 || !TREE_RE.test(c)) throw new GitError("rev-list");
+      parents.set(c, ps);
+      order.push(c);
+    }
+    const reach = /* @__PURE__ */ new Map();
+    for (let i = order.length - 1; i >= 0; i--) {
+      const c = order[i];
+      const set = /* @__PURE__ */ new Set();
+      for (const p of parents.get(c) ?? []) {
+        for (const b of parents.has(p) ? reach.get(p) ?? [] : [p]) if (set.size < 2) set.add(b);
+      }
+      reach.set(c, [...set]);
+    }
+    for (const h of distinct) {
+      if (!parents.has(h)) this.reviewBases.set(h, h);
+      else {
+        const r = reach.get(h) ?? [];
+        if (r.length === 1) this.reviewBases.set(h, r[0]);
+      }
+    }
+  }
+  /** The tree of each commit-ish, from one `cat-file --batch-check`; a missing one is left out. */
+  treesOf(commits) {
+    const out = runGit(
+      this.repo,
+      ["cat-file", "--batch-check=%(objectname)"],
+      [0],
+      true,
+      PATH_LIST_BUFFER,
+      commits.map((c) => `${c}^{tree}`).join("\n") + "\n"
+    ).out.split("\n");
+    const trees = /* @__PURE__ */ new Map();
+    commits.forEach((c, i) => {
+      const t = out[i] ?? "";
+      if (TREE_RE.test(t)) trees.set(c, t);
+    });
+    return trees;
+  }
+  /**
+   * One `diff-tree --stdin -r -z --raw` over tree pairs (`<a> <b>` lines), each pair's record text (`-z` raw records,
+   * parsed when used) handed to its callback. git prints each pair's `<a> <b>` line before its records and nothing for
+   * a pair it cannot read, so a pair with no header line is left unanswered. A record starts with `:` and holds two
+   * NUL-terminated fields, so a path can never be taken for a header.
+   */
+  diffTrees(pairs) {
+    const out = runGit(
+      this.repo,
+      ["diff-tree", "--stdin", "-r", "-z", "--raw", "--no-abbrev", ...DIFF_OPTIONS, ...SHIPPED_CODE],
+      [0],
+      true,
+      PATH_LIST_BUFFER,
+      `${[...pairs.keys()].join("\n")}
+`
+    ).out;
+    const done = /* @__PURE__ */ new Map();
+    let header = null;
+    let start = 0;
+    let i = 0;
+    const close = () => {
+      if (header !== null) done.set(header, out.slice(start, i));
+    };
+    while (i < out.length) {
+      if (out[i] === ":") {
+        const meta = out.indexOf("\0", i);
+        const name = meta === -1 ? -1 : out.indexOf("\0", meta + 1);
+        if (header === null || name === -1) throw new GitError("diff-tree");
+        i = name + 1;
+      } else {
+        close();
+        const nl = out.indexOf("\n", i);
+        header = nl === -1 ? "" : out.slice(i, nl);
+        if (!pairs.has(header) || done.has(header)) throw new GitError("diff-tree header");
+        i = nl + 1;
+        start = i;
+      }
+    }
+    close();
+    for (const [h, text] of done) pairs.get(h)?.(text);
+  }
   /**
    * D45: a fail is cleared only when the shipped code differs from the code that failed: its reviewed trees, else its
    * headSha's tree. A fail that cannot be compared (a malformed or partial row, or a git error) stays open; one with
    * neither is dropped (D48). D55: trees git no longer has (gc) fall back to the headSha's tree; when that commit is
-   * gone too, or a headSha-only row's commit is gone, 'ignored' (neither opens nor clears).
+   * gone too, or a headSha-only row's commit is gone, 'ignored' (neither opens nor clears). D67: 'upstream' is open
+   * because upstream changed a flagged feature path since review.
    */
-  cleared(f) {
+  state(f) {
     const hasTrees = f.tree !== null && f.trackedTree !== null;
     if (f.tree !== null && f.trackedTree !== null) {
       const r2 = this.compare(f.tree, f.trackedTree, f.headSha, f.headSha);
-      if (r2 !== "unknown") return r2 === "differs";
-      if (!this.gone(f.tree) && !this.gone(f.trackedTree)) return false;
+      if (r2 !== "unknown") return r2;
+      if (!this.gone(f.tree) && !this.gone(f.trackedTree)) return "open";
     }
-    if (f.headSha === null) return hasTrees ? "ignored" : false;
+    if (f.headSha === null) return hasTrees ? "ignored" : "open";
     const headTree = `${f.headSha}^{tree}`;
     const r = this.compare(headTree, headTree, null, f.headSha);
-    if (r !== "unknown") return r === "differs";
-    return this.gone(f.headSha) ? "ignored" : false;
+    if (r !== "unknown") return r;
+    return this.gone(f.headSha) ? "ignored" : "open";
   }
   /**
-   * D45 + D58: whether the shipped code differs from what the agent reviewed, on the feature's own paths only: those
-   * the feature changed since the merge base (`git diff <merge-base> HEAD`), plus those the reviewed tree changed
+   * D45 + D58 + D67: whether the shipped code differs from what the agent reviewed, on the feature's own paths only:
+   * those the feature changed since the merge base (`git diff <merge-base> HEAD`), plus those the reviewed tree changed
    * against the review-time merge base (merge-base(from, review headSha)), so a flagged edit the feature has since
    * dropped still counts. A teammate's upstream change brought in by a rebase or merge is on neither list. With no
-   * usable review headSha (null or pruned) only the first list counts (code-review info 1). D62: a feature path that
-   * upstream also changed between the review-time base and the merge base differs only when the feature's own change
-   * to it does (samePatches, D65: its mode and added lines). Ship's reviews run on the uncommitted tree and ship
-   * commits afterwards (only the files it picks), so `tree` (the reviewed working tree, untracked files included) is
-   * compared with HEAD: an added or modified path differs; a deleted path differs only when it was tracked at review (`trackedTree`) or in the commit
-   * HEAD was at review (`reviewHead`, pen N4); an untracked file the reviewer saw and ship left out does not (pen
-   * M3a). All are strict hex tree-ishes, checked by the caller. 'unknown' on any git error (an object git does not
-   * have included).
+   * usable review headSha (null or pruned) only the first list counts (code-review info 1). D67: a path upstream changed
+   * between the review-time base and the merge base (content, mode, deletion, or either side of a rename, which a
+   * no-renames diff lists as a deletion and an addition) never clears, whatever it holds now; when it is a feature path
+   * the row is 'upstream' (its own blocker text) unless another feature path clears it (D49). Ship's reviews run on the
+   * uncommitted tree and ship commits afterwards (only the files it picks), so `tree` (the reviewed working tree,
+   * untracked files included) is compared with HEAD: an added or modified path differs; a deleted path differs only
+   * when it was tracked at review (`trackedTree`) or in the commit HEAD was at review (`reviewHead`, pen N4); an
+   * untracked file the reviewer saw and ship left out does not (pen M3a). All are strict hex tree-ishes, checked by the
+   * caller. 'unknown' on any git error (an object git does not have included).
    */
   compare(tree, trackedTree, reviewHead, at) {
     try {
-      const changes = this.rawToHead(tree);
-      if (changes.size === 0) return "same";
-      const own = this.baseToHead(this.mergeBase);
-      const deleted = (c) => ABSENT.test(c.to);
-      const ownLive = [...changes].filter(([p, c]) => own.has(p) && !deleted(c)).map(([p]) => p);
-      if (ownLive.length > 0) {
-        const base = this.reviewBase(at);
-        if (base === null || base === this.mergeBase) return "differs";
-        const probe = ownLive.slice(0, BATCH_LOOKUPS);
-        const sameState = (state, mb) => state === null ? ABSENT.test(mb) : state === mb;
-        const then = this.tryLookup(base, probe);
-        if (then !== null && probe.some((p, i) => sameState(then[i] ?? null, own.get(p)?.from ?? ""))) return "differs";
-      }
+      const changes = this.rowDiff(tree);
+      const own = this.ownPaths();
       const reviewBase = this.reviewBase(at);
-      const sinceReview = reviewBase === null ? own : this.baseToHead(reviewBase);
-      const reviewed = (p, c) => own.has(p) || reviewBase !== null && c.from !== (sinceReview.get(p)?.from ?? c.to);
-      const upstream = (p, c) => reviewBase !== null && reviewBase !== this.mergeBase && (sinceReview.get(p)?.from ?? c.to) !== (own.get(p)?.from ?? c.to);
-      const gone = [];
-      const patched = [];
-      for (const [p, c] of changes) {
-        if (!reviewed(p, c)) continue;
-        if (deleted(c)) gone.push(p);
-        else if (upstream(p, c)) patched.push(p);
-        else return "differs";
+      const up = reviewBase === null || reviewBase === this.mergeBase ? NO_CHANGES : this.upstreamSince(reviewBase);
+      let upstream = false;
+      for (const [p, u] of up) {
+        if (own.has(p) || (changes.get(p)?.from ?? u.to) !== u.from) {
+          upstream = true;
+          break;
+        }
       }
-      if (patched.length > 0 && !this.samePatches(reviewBase, tree, patched)) return "differs";
-      if (gone.length === 0) return "same";
-      return this.trackedAtReview(gone, trackedTree, reviewHead) ? "differs" : "same";
+      const gone = [];
+      for (const [p, c] of changes) {
+        if (up.has(p)) continue;
+        if (reviewBase === null && !own.has(p)) continue;
+        if (!ABSENT.test(c.to)) return "cleared";
+        gone.push(p);
+      }
+      if (gone.length > 0 && this.trackedAtReview(gone, trackedTree, reviewHead)) return "cleared";
+      return upstream ? "upstream" : "open";
     } catch {
       return "unknown";
     }
   }
-  /** `diff --raw` from a tree-ish to HEAD outside .oss, by path. */
-  rawToHead(treeish) {
-    const parts = runGit(this.repo, [...DIFF, "--raw", "-z", "--no-abbrev", "--end-of-options", treeish, "HEAD", ...SHIPPED_CODE], [0], true, PATH_LIST_BUFFER).out.split("\0");
-    const out = /* @__PURE__ */ new Map();
-    for (let i = 0; i + 1 < parts.length; i += 2) {
-      const m = /^:([0-7]{6}) ([0-7]{6}) ([0-9a-f]+) ([0-9a-f]+) [A-Z]/.exec(parts[i]);
-      if (m === null) throw new GitError("raw");
-      out.set(parts[i + 1], { from: `${m[1]} ${m[3]}`, to: `${m[2]} ${m[4]}` });
-    }
-    return out;
+  /** `diff --raw` from a tree-ish to another outside .oss, by path. */
+  rawDiff(a, b) {
+    return parseRaw(runGit(this.repo, [...DIFF, "--raw", "-z", "--no-abbrev", "--end-of-options", a, b, ...SHIPPED_CODE], [0], true, PATH_LIST_BUFFER).out.split("\0"));
   }
-  /** rawToHead of the merge base or a review base, cached (perf low 2: rows' own trees are not). */
-  baseToHead(base) {
-    const hit = this.toHead.get(base);
-    if (hit !== void 0) return hit;
-    const out = this.rawToHead(base);
-    this.toHead.set(base, out);
-    return out;
+  /** A reviewed tree's diff to HEAD: from the current batch, else its own call. */
+  rowDiff(tree) {
+    const text = this.rowText.get(tree);
+    return text === void 0 ? this.rawDiff(tree, "HEAD") : parseRaw(text.split("\0"));
   }
-  /**
-   * D62 + D65: true when, for every path of `paths`, the feature's own change is the same at review (review base to
-   * reviewed tree) and now (merge base to HEAD): its mode lines and its ordered added lines, compared exactly but for a
-   * trailing CR, so upstream's edits elsewhere in the file (removed or context lines) are not part of it. One diff per
-   * side for all the paths (perf medium, gate round 9); the merge-base side is cached across rows.
-   */
-  samePatches(reviewBase, tree, paths) {
-    const missing = paths.filter((p) => !this.nowSigs.has(p));
-    if (missing.length > 0) {
-      const now = this.signatures(this.mergeBase, "HEAD", missing);
-      for (const p of missing) this.nowSigs.set(p, now.get(p) ?? "");
-    }
-    const then = this.signatures(reviewBase, tree, paths);
-    return paths.every((p) => (then.get(p) ?? "") === this.nowSigs.get(p));
+  /** The merge base's diff to HEAD: the feature's own paths, read once. */
+  ownPaths() {
+    this.own ??= this.rawDiff(this.mergeBase, "HEAD");
+    return this.own;
   }
-  /**
-   * Per path, the mode lines and added lines of a `-U0` diff from `a` to `b`, joined. The diff pins every option config
-   * could change (inter-hunk context, --text over a -diff attribute, prefixes, quoting, submodule format), takes the
-   * paths literally, and is split at each `diff --git ` header. A path with no section has no change ('').
-   */
-  signatures(a, b, paths) {
-    const byHeader = new Map(paths.map((p) => [`${cQuote(`a/${p}`)} ${cQuote(`b/${p}`)}`, p]));
-    const out = /* @__PURE__ */ new Map();
-    for (const chunk of argvChunks(paths)) {
-      const text = runGit(this.repo, [
-        "-c",
-        "core.quotePath=false",
-        "--literal-pathspecs",
-        ...DIFF,
-        "--no-color",
-        "-U0",
-        "--inter-hunk-context=0",
-        "--text",
-        "--submodule=short",
-        "--src-prefix=a/",
-        "--dst-prefix=b/",
-        "--end-of-options",
-        a,
-        b,
-        "--",
-        ...chunk
-      ], [0], true, PATH_LIST_BUFFER).out;
-      for (const section of text.split(/^diff --git /m).slice(1)) {
-        const lines = section.split("\n");
-        const p = byHeader.get(lines[0]);
-        if (p === void 0) throw new GitError("diff header");
-        const hunk = lines.findIndex((l) => l.startsWith("@@"));
-        const head = hunk === -1 ? lines.slice(1) : lines.slice(1, hunk);
-        const sig = head.filter((l) => /^(old mode|new mode|new file mode|deleted file mode) /.test(l));
-        if (hunk !== -1) {
-          for (const l of lines.slice(hunk)) if (l.startsWith("+")) sig.push(l.replace(/\r$/, ""));
-        }
-        out.set(p, sig.join("\n"));
-      }
+  /** D67: what upstream changed from a review base to the merge base: from the current batch, else its own call. */
+  upstreamSince(reviewBase) {
+    if (this.upstreamHit?.base !== reviewBase) {
+      const text = this.upstreamText.get(reviewBase);
+      const diff = text === void 0 ? this.rawDiff(reviewBase, this.mergeBase) : parseRaw(text.split("\0"));
+      this.upstreamHit = { base: reviewBase, diff };
     }
-    return out;
+    return this.upstreamHit.diff;
   }
   /**
    * Whether any deleted path was tracked at review: in `trackedTree` or in the review's HEAD commit. Up to
@@ -1590,26 +1690,19 @@ var FailComparer = class {
     return hit;
   }
   /**
-   * The merge base at review: merge-base(from, the review's HEAD). A review HEAD on the feature's own history since the
-   * merge base needs no call: its merge base is the current one (perf low 1, gate round 8). null when there is no
-   * headSha or git pruned it (the review-time base is unknown).
+   * The merge base at review: merge-base(from, the review's HEAD), from prefetch's batch or its own call. null when
+   * there is no headSha or git pruned it (the review-time base is unknown).
    */
   reviewBase(at) {
     if (at === null) return null;
     const hit = this.reviewBases.get(at);
     if (hit !== void 0) return hit;
-    this.ancestry ??= new Set(
-      runGit(this.repo, ["rev-list", "--ancestry-path", `${this.mergeBase}..HEAD`], [0], true, PATH_LIST_BUFFER).out.split("\n")
-    );
     let base;
-    if (at === this.mergeBase || this.ancestry.has(at)) base = this.mergeBase;
-    else {
-      try {
-        base = runGit(this.repo, ["merge-base", "--end-of-options", this.from, at]).out;
-      } catch (e) {
-        if (!this.gone(at)) throw e;
-        base = null;
-      }
+    try {
+      base = runGit(this.repo, ["merge-base", "--end-of-options", this.from, at]).out;
+    } catch (e) {
+      if (!this.gone(at)) throw e;
+      base = null;
     }
     this.reviewBases.set(at, base);
     return base;
@@ -1662,27 +1755,38 @@ function timelineGates(ctx, featureDir, gateHashes) {
 }
 var CAPTURE_ADDS_GATE = "pen-test";
 var NOT_RE_REVIEWED = "captured fail, not re-reviewed: a tracked code change is needed to clear it";
-function applyAgentVerdicts(tl, verdictRows, comparer) {
+var UPSTREAM_CHANGED = "captured fail, not re-reviewed: upstream changed the flagged file; a recorded override or a fix elsewhere in the feature clears it";
+function applyAgentVerdicts(tl, verdictRows, comparer, overridden) {
   const rows = verdictRows.map(failRow).filter((f) => f !== null).reverse().sort((a, b) => b.at - a.at);
-  const cleared = /* @__PURE__ */ new Map();
+  const states = /* @__PURE__ */ new Map();
   const newestOpen = /* @__PURE__ */ new Map();
-  for (const f of rows) {
-    if (newestOpen.has(f.gate)) continue;
-    const key2 = `${f.tree}|${f.trackedTree}|${f.headSha}`;
-    if (!cleared.has(key2)) cleared.set(key2, comparer.cleared(f));
-    if (cleared.get(key2) === false) newestOpen.set(f.gate, f);
-  }
-  const open = /* @__PURE__ */ new Set();
-  for (const [name, f] of newestOpen) {
+  const decided = (gate) => newestOpen.get(gate)?.why === "open";
+  rows.forEach((f, i) => {
+    if (decided(f.gate)) return;
+    if (!states.has(rowKey(f))) {
+      if (!comparer.isPrefetched(f)) {
+        comparer.prefetch(rows.slice(i).filter((r) => !decided(r.gate) && !states.has(rowKey(r))).slice(0, BATCH_ROWS));
+      }
+      states.set(rowKey(f), comparer.state(f));
+    }
+    const s = states.get(rowKey(f));
+    if (s === "open" || s === "upstream") {
+      const prev = newestOpen.get(f.gate);
+      newestOpen.set(f.gate, { row: prev?.row ?? f, why: s === "open" ? "open" : prev?.why ?? "upstream" });
+    }
+  });
+  const open = /* @__PURE__ */ new Map();
+  for (const [name, { row: f, why }] of newestOpen) {
+    if (why === "upstream" && overridden.has(name)) continue;
     const zero = counts({});
     const gate = tl.byName.get(name) ?? (name === CAPTURE_ADDS_GATE ? { gate: name, verdict: "fail", findings: zero, fixed: zero, source: "agent" } : void 0);
     if (gate === void 0) continue;
     tl.byName.set(name, { ...gate, verdict: "fail", findings: f.findings, source: "agent" });
-    open.add(name);
+    open.set(name, why);
   }
   return open;
 }
-function readOverrides(ctx, featureDir, decisionRows) {
+function readOverrides(ctx, featureDir, decisionRows, gates) {
   const recorded = /* @__PURE__ */ new Map();
   for (const line of repoLines(path6.join(featureDir, "decisions.ndjson"))) {
     const rec = parseJsonObject(line);
@@ -1698,11 +1802,14 @@ function readOverrides(ctx, featureDir, decisionRows) {
   for (const item of requested) {
     const id = item?.decisionId;
     if (typeof id !== "string" || !recorded.has(id)) return { ok: false, error: "override_unrecorded" };
+    const gate = item?.gate;
+    if (gate !== void 0 && (typeof gate !== "string" || !gates.has(gate))) return { ok: false, error: "override_unrecorded", detail: "gate" };
     const person = recorded.get(id);
     overrides.push({
       finding: redactModelText(typeof item?.finding === "string" ? item.finding : ""),
       decisionId: id,
-      person: typeof person === "string" ? person : JSON.stringify(person ?? null)
+      person: typeof person === "string" ? person : JSON.stringify(person ?? null),
+      ...gate === void 0 ? {} : { gate }
     });
   }
   return { ok: true, overrides };
@@ -1727,16 +1834,21 @@ function assembleShip(ctx, opts) {
   } catch (e) {
     return { ok: false, error: e instanceof LedgerError ? e.code : "unsafe_path" };
   }
+  const required = opts.requiredGates ?? DEFAULT_REQUIRED_GATES;
+  const read = readOverrides(ctx, featureDir, decisionRows, /* @__PURE__ */ new Set([...required, CAPTURE_ADDS_GATE]));
+  const overridden = new Set(read.ok ? read.overrides.map((o) => o.gate).filter((g) => g !== void 0) : []);
   const timeline = timelineGates(ctx, featureDir, gateHashes);
-  const notReReviewed = applyAgentVerdicts(timeline, verdictRows, new FailComparer(ctx.repo, diff.from, diff.base));
+  const notReReviewed = applyAgentVerdicts(timeline, verdictRows, new FailComparer(ctx.repo, diff.from, diff.base), overridden);
   const byName = timeline.byName;
-  for (const required of opts.requiredGates ?? DEFAULT_REQUIRED_GATES) {
-    if (!byName.has(required)) return { ok: false, error: "gate_missing", detail: required };
+  for (const name of required) {
+    if (!byName.has(name)) return { ok: false, error: "gate_missing", detail: name };
   }
   const gates = [...byName.values()];
-  const read = readOverrides(ctx, featureDir, decisionRows);
   if (!read.ok) return read;
-  const blockers = gates.filter((g) => g.verdict !== "pass").map((g) => notReReviewed.has(g.gate) ? `gate:${g.gate} (${NOT_RE_REVIEWED})` : `gate:${g.gate}`);
+  const blockers = gates.filter((g) => g.verdict !== "pass").map((g) => {
+    const why = notReReviewed.get(g.gate);
+    return why === void 0 ? `gate:${g.gate}` : `gate:${g.gate} (${why === "upstream" ? UPSTREAM_CHANGED : NOT_RE_REVIEWED})`;
+  });
   const uncapturedGates = gates.filter((g) => g.source !== "agent").map((g) => g.gate);
   const gateEvidence = uncapturedGates.length === 0 ? "agent" : uncapturedGates.length === gates.length ? "model" : "partial";
   const summary = readValue(ctx, "summary.txt");
@@ -2010,7 +2122,7 @@ function reassemble(repo, feature, phase, stored) {
     base = typeof recorded === "string" ? recorded : "";
     tmp = fs10.mkdtempSync(path9.join(os2.tmpdir(), "oss-phase-result-"));
     const requested = Array.isArray(stored.overrides) ? stored.overrides : [];
-    const overrides = requested.map((o) => ({ finding: o.finding, decisionId: o.decisionId }));
+    const overrides = requested.map((o) => ({ finding: o.finding, decisionId: o.decisionId, ...o.gate === void 0 ? {} : { gate: o.gate } }));
     fs10.writeFileSync(path9.join(tmp, "overrides.json"), JSON.stringify(overrides), { mode: 384 });
     dir = tmp;
   }

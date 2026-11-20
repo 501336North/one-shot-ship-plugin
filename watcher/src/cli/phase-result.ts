@@ -291,7 +291,8 @@ function reassemble(repo: string, feature: string, phase: Phase, stored: Record<
     base = typeof recorded === 'string' ? recorded : '';
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-phase-result-'));
     const requested = Array.isArray(stored.overrides) ? (stored.overrides as Array<Record<string, unknown>>) : [];
-    const overrides = requested.map((o) => ({ finding: o.finding, decisionId: o.decisionId }));
+    // D69: the gate an override names goes back too, so check clears the same D67 rows assemble did.
+    const overrides = requested.map((o) => ({ finding: o.finding, decisionId: o.decisionId, ...(o.gate === undefined ? {} : { gate: o.gate }) }));
     fs.writeFileSync(path.join(tmp, 'overrides.json'), JSON.stringify(overrides), { mode: 0o600 });
     dir = tmp;
   }

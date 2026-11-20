@@ -215,6 +215,16 @@
   - D62 diffs are batched per side and the HEAD side is cached (23.5 s to 0.41 s);
   - lookups are cached per tree-ish and path (11.3 s to 8.7 s at 200 off-history rows).
 
+### Ship round 12 fixes, after gate round 10 (2026-11-20)
+- [x] Gate round 10: code review and performance passed; security and pen test failed (3 mediums, all D65 edge cases). The user picked D67-D69.
+- [x] Builder W (assemble-ship, CLI, schema):
+  - D67: the D65 added-line compare is removed; a fail on a path upstream changed (content, mode, deletion or rename) stays open with its own blocker text; other feature paths keep the D58 rule;
+  - D69: an override naming a gate, backed by a recorded decision, clears only that gate's D67 rows; check feeds the gate back; the ship schema allows `gate`;
+  - batched per-row prep (rev-list, cat-file, diff-tree --stdin): 200 off-history rows 9.2-10.8 s to 2.5 s;
+  - liveBase uses refs/remotes/*/<branch> and dedupes by SHA;
+  - argvChunks counts bytes; older-git tests fail loudly instead of skipping; every diff pins its options;
+  - stronger tests: the ls-tree route, check-agrees with a moving remote, quoted-name fixes.
+
 ### Later
 - [ ] Ship into feat/determinism-sprint/build (SD-1)
 - [ ] T21 oss-lab (after the plugin ships)
@@ -222,4 +232,4 @@
 ## Blockers
 - None. R-266's 4 red base tests are fixed in #233 (4458bddb), and R-257 is rebased onto it.
 
-## Last Updated: 2026-11-20 14:47 CST by /oss:ship (round 11 fixes)
+## Last Updated: 2026-11-20 19:57 CST by /oss:ship (round 12 fixes)

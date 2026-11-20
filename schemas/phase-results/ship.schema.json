@@ -237,6 +237,9 @@
           },
           "person": {
             "$ref": "common.schema.json#/$defs/shortText"
+          },
+          "gate": {
+            "$ref": "common.schema.json#/$defs/token"
           }
         }
       }

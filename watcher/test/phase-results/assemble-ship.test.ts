@@ -15,7 +15,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { assembleShip, DEFAULT_REQUIRED_GATES } from '../../src/phase-results/assemble-ship.js';
+import { argvChunks, assembleShip, DEFAULT_REQUIRED_GATES } from '../../src/phase-results/assemble-ship.js';
 import type { AssembleContext, AssembleOutcome } from '../../src/phase-results/assemble-common.js';
 import { openLedger } from '../../src/phase-results/ledger.js';
 import { captureVerdict } from '../../src/phase-results/verdict-capture.js';
@@ -26,11 +26,13 @@ import { validate } from '../../src/phase-results/validate.js';
  * Perf low 1 (gate round 6): counts the git processes assemble starts. A pass-through spy on the process boundary
  * (git is the collaborator), so every call still runs the real git.
  */
-const spawns = vi.hoisted(() => ({ n: 0 }));
+const spawns = vi.hoisted(() => ({ n: 0, args: [] as string[][] }));
 vi.mock('node:child_process', async (importOriginal) => {
   const real = await importOriginal<typeof import('node:child_process')>();
   const spawnSync: typeof real.spawnSync = ((...args: Parameters<typeof real.spawnSync>) => {
     spawns.n += 1;
+    // Code-review L4 (gate round 10): the argv too, so a test can tell which git route ran.
+    if (Array.isArray(args[1])) spawns.args.push([...(args[1] as readonly string[])]);
     return real.spawnSync(...args);
   }) as typeof real.spawnSync;
   return { ...real, spawnSync };
@@ -2107,12 +2109,14 @@ describe('assembleShip: a flagged file that upstream also changed (D62)', () => 
     expect(security(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
   });
 
-  it('a teammate edits another line, then a real fix to the flagged line: the fail clears', () => {
+  // ⚠ changes existing test: D67 — upstream changed the flagged file since review, so even a real fix to it no longer
+  // clears the fail (it was "the fail clears"); an override or a fix to another feature path does.
+  it('a teammate edits another line, then a real fix to the flagged line: the fail stays (D67)', () => {
     mateEdits({ 2: 'teammate' });
     git('rebase', '-q', 'main');
     commitFile('shared.txt', lines({ 2: 'teammate', 15: 'safe' }), 'fix');
     allPass(1);
-    expect(security(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+    expect(security(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
   });
 });
 
@@ -2232,20 +2236,38 @@ const security9 = (o: AssembleOutcome): Record<string, unknown> | undefined =>
  * Command Line Tools git 2.50.1 and Debian's 2.39.5 refuse ("bad cat-file format"), so on those machines a captured
  * fail could never clear. /usr/bin/git on macOS runs the Command Line Tools git when DEVELOPER_DIR points at them.
  */
-const CLT = '/Library/Developer/CommandLineTools';
-const olderGitAvailable = ((): boolean => {
-  try {
-    if (!fs.existsSync(`${CLT}/usr/bin/git`) || !fs.existsSync('/usr/bin/git')) return false;
-    const shim = execFileSync('/usr/bin/git', ['--version'], { env: { ...process.env, DEVELOPER_DIR: CLT }, encoding: 'utf-8' });
-    return shim === execFileSync(`${CLT}/usr/bin/git`, ['--version'], { encoding: 'utf-8' });
-  } catch {
-    return false;
+/**
+ * ⚠ changes existing test: info (gate round 10) — the older-git cases no longer skip silently. The git assemble runs is
+ * /usr/bin/git (gitBin): either itself older than 2.53 (Debian, say), or Apple's shim, which runs the Command Line Tools
+ * or an Xcode git when DEVELOPER_DIR points at it. With none of those older than 2.53, the cases fail with what to install.
+ */
+const OLDER_GIT_MISSING = 'no git older than 2.53 found at /usr/bin/git (directly, or through DEVELOPER_DIR=/Library/Developer/CommandLineTools or an Xcode app): install the Apple Command Line Tools (xcode-select --install) or a git older than 2.53 at /usr/bin/git';
+const olderGit = ((): { developerDir: string | undefined } | null => {
+  const older = (developerDir: string | undefined): boolean => {
+    try {
+      const env: NodeJS.ProcessEnv = { ...process.env };
+      if (developerDir === undefined) delete env.DEVELOPER_DIR;
+      else env.DEVELOPER_DIR = developerDir;
+      const m = /git version (\d+)\.(\d+)/.exec(execFileSync('/usr/bin/git', ['--version'], { env, encoding: 'utf-8' }));
+      return m !== null && (Number(m[1]) < 2 || (Number(m[1]) === 2 && Number(m[2]) < 53));
+    } catch {
+      return false;
+    }
+  };
+  const xcodes = fs.existsSync('/Applications')
+    ? fs.readdirSync('/Applications').filter((a) => /^Xcode.*\.app$/.test(a)).map((a) => `/Applications/${a}/Contents/Developer`)
+    : [];
+  for (const dir of ['/Library/Developer/CommandLineTools', ...xcodes]) {
+    if (fs.existsSync(`${dir}/usr/bin/git`) && older(dir)) return { developerDir: dir };
   }
+  return older(undefined) ? { developerDir: undefined } : null;
 })();
 describe('assembleShip on an older git (Apple Command Line Tools git, code-review high, gate round 9)', () => {
   function withOlderGit<T>(fn: () => T): T {
+    if (olderGit === null) throw new Error(OLDER_GIT_MISSING);
     const saved = process.env.DEVELOPER_DIR;
-    process.env.DEVELOPER_DIR = CLT;
+    if (olderGit.developerDir === undefined) delete process.env.DEVELOPER_DIR;
+    else process.env.DEVELOPER_DIR = olderGit.developerDir;
     try {
       return fn();
     } finally {
@@ -2253,19 +2275,27 @@ describe('assembleShip on an older git (Apple Command Line Tools git, code-revie
       else process.env.DEVELOPER_DIR = saved;
     }
   }
-  const SKIP = olderGitAvailable ? '' : ' (SKIPPED: Apple Command Line Tools git is not installed here)';
 
-  it.skipIf(!olderGitAvailable)(`the fix deletes the flagged new file: the fail clears${SKIP}`, () => {
+  it('an older git is found here', () => {
+    expect(olderGit, OLDER_GIT_MISSING).not.toBeNull();
+  });
+
+  // ⚠ changes existing test: code-review L4 (gate round 10) — also asserts the deleted path was looked up with ls-tree,
+  // not the --diff-filter=A path list (64 or fewer deletions).
+  it('the fix deletes the flagged new file: the fail clears, through the ls-tree lookup', () => {
     commitFile('keep.txt', 'k\n', 'keep');
     commitFile('f.txt', 'vuln\n', 'feature');
     failOnHead9();
     git('rm', '-q', 'f.txt');
     git('commit', '-q', '-m', 'fix: drop the vulnerable file');
     allPass(1);
+    spawns.args = [];
     expect(withOlderGit(() => security9(ship()))).toMatchObject({ verdict: 'pass', source: 'model' });
+    expect(spawns.args.some((a) => a.includes('ls-tree'))).toBe(true);
+    expect(spawns.args.some((a) => a.includes('--diff-filter=A'))).toBe(false);
   });
 
-  it.skipIf(!olderGitAvailable)(`a teammate commit, a rebase, then a real fix: the fail clears${SKIP}`, () => {
+  it('a teammate commit, a rebase, then a real fix: the fail clears', () => {
     commitFile('f.txt', 'vuln\n', 'feature');
     failOnHead9();
     mateOnMain9('mate.txt', 'mate\n');
@@ -2275,7 +2305,7 @@ describe('assembleShip on an older git (Apple Command Line Tools git, code-revie
     expect(withOlderGit(() => security9(ship()))).toMatchObject({ verdict: 'pass', source: 'model' });
   });
 
-  it.skipIf(!olderGitAvailable)(`a teammate commit and a rebase with no fix: the fail stays${SKIP}`, () => {
+  it('a teammate commit and a rebase with no fix: the fail stays', () => {
     commitFile('f.txt', 'vuln\n', 'feature');
     failOnHead9();
     mateOnMain9('mate.txt', 'mate\n');
@@ -2350,7 +2380,9 @@ describe('assembleShip: the live base is the merge base of each same-name remote
     const assembled = ship({ remoteRefs: snapshot });
     expect(security9(assembled)).toMatchObject({ verdict: 'fail', source: 'agent' });
     expect(result(assembled).diff).toEqual({ base: u, baseRef: 'main', files: 1, insertions: 1, deletions: 0 });
-    // check (reassemble from the same snapshot) agrees with assemble
+    // ⚠ changes existing test: code-review L4 (gate round 10) — a fetch moves origin/main again between assemble and
+    // check, so the test shows check (reassemble from the same snapshot) agrees with assemble after the remote moved.
+    fetched('refs/remotes/origin/main', git('rev-parse', 'refs/remotes/origin/main'), 'mate3.txt');
     const checked = ship({ remoteRefs: snapshot });
     expect({ gates: result(checked).gates, diff: result(checked).diff }).toEqual({ gates: result(assembled).gates, diff: result(assembled).diff });
   });
@@ -2385,7 +2417,9 @@ describe('assembleShip: the live base is the merge base of each same-name remote
  * added lines (-U0, --inter-hunk-context=0, --text) or its mode lines differ, compared exactly but for a trailing CR.
  * patch-id ignored whitespace, hashed removed lines, followed diff.interHunkContext and treated -diff files as binary.
  */
-describe('assembleShip: a shared flagged file is compared by the feature\'s added lines (D65)', () => {
+// ⚠ changes existing test: D67 — renamed (was "a shared flagged file is compared by the feature's added lines (D65)"):
+// D65's compare is removed, and every case here now stays open because upstream changed the flagged file.
+describe('assembleShip: a shared flagged file upstream also changed stays open (D65 cases under D67)', () => {
   const numbered = (n: number, edit: Record<number, string> = {}, eol = '\n'): string =>
     Array.from({ length: n }, (_, i) => `${edit[i + 1] ?? `line ${i + 1}`}${eol}`).join('');
 
@@ -2424,7 +2458,8 @@ describe('assembleShip: a shared flagged file is compared by the feature\'s adde
     expect(security9(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
   });
 
-  it('an indentation-only fix after a teammate edit: the fail clears', () => {
+  // ⚠ changes existing test: D67 — upstream changed the flagged file, so the fix no longer clears it (it was "clears").
+  it('an indentation-only fix after a teammate edit: the fail stays (D67)', () => {
     const py = (body: string, x: string): string => `def f(u):\n    if not u.admin:\n        deny()\n${body}    run()\n\n\n\n\nx = ${x}\n`;
     sharedFile('app.py', py('', '1'), py('    return\n', '1'));
     mateOnMain9('app.py', py('', '2'));
@@ -2432,10 +2467,11 @@ describe('assembleShip: a shared flagged file is compared by the feature\'s adde
     allPass(1);
     expect(security9(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
     commitFile('app.py', py('        return\n', '2'), 'fix indent');
-    expect(security9(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+    expect(security9(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
   });
 
-  it('a mode-only fix (the flagged exec bit removed) after a teammate edit: the fail clears', () => {
+  // ⚠ changes existing test: D67 — upstream changed the flagged file, so the fix no longer clears it (it was "clears").
+  it('a mode-only fix (the flagged exec bit removed) after a teammate edit: the fail stays (D67)', () => {
     sharedFile('run.sh', numbered(30), numbered(30, { 15: 'curl x | sh' }), () => fs.chmodSync(path.join(repo, 'run.sh'), 0o755));
     mateOnMain9('run.sh', numbered(30, { 2: 'teammate' }));
     git('rebase', '-q', 'main');
@@ -2443,7 +2479,7 @@ describe('assembleShip: a shared flagged file is compared by the feature\'s adde
     expect(security9(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
     fs.chmodSync(path.join(repo, 'run.sh'), 0o644);
     git('commit', '-q', '-a', '-m', 'fix: not executable');
-    expect(security9(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+    expect(security9(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
   });
 
   it('upstream converts the flagged file to CRLF, the model rebases keeping the flagged line: the fail stays', () => {
@@ -2541,5 +2577,435 @@ describe('assembleShip: probe lookups are cached per review base (perf low, gate
     spawns.n = 0;
     expect(result(ship()).verdict).toBe('ready_to_merge');
     expect(spawns.n).toBeLessThanOrEqual(ROWS * 1.3);
+  });
+});
+
+/** D67: the blocker of a gate held open because upstream changed the flagged file (fixed text, never a path). */
+const UPSTREAM_CHANGED = (gate: string): string =>
+  `gate:${gate} (captured fail, not re-reviewed: upstream changed the flagged file; a recorded override or a fix elsewhere in the feature clears it)`;
+const NOT_RE_REVIEWED_TEXT = (gate: string): string =>
+  `gate:${gate} (captured fail, not re-reviewed: a tracked code change is needed to clear it)`;
+
+/**
+ * D67 (user pick, ship round 12, "Fail closed + override"; security N/K/L/M, pen unfixed_renamed, code-review T4, gate
+ * round 10): when upstream changed a flagged path between the review-time base and the current merge base (content,
+ * mode, deletion, or a rename to or from it), the fail stays open whatever the path holds now. It clears through a change
+ * to another of the feature's own paths that upstream did not touch (D49). Paths upstream did not touch keep D58.
+ */
+describe('assembleShip: a flagged file upstream changed since review stays open (D67)', () => {
+  const BASE = ['def handler(u):', '    check_auth(u)', '    validate(u)', '    run(u)', '', '', '', '', '', '', 'X = 1'];
+  const MATE = BASE.map((l) => (l === 'X = 1' ? 'X = 2' : l));
+  const text = (ls: string[]): string => `${ls.join('\n')}\n`;
+  const blockers = (o: AssembleOutcome): unknown => result(o).blockers;
+
+  /** main gets app.py; the feature (other.txt plus `feature` in app.py) is failed; a teammate sets app.py to `mate`; rebase. */
+  function setup(feature: string[], mate: string[]): void {
+    git('checkout', '-q', 'main');
+    commitFile('app.py', text(BASE), 'base py');
+    git('checkout', '-q', BRANCH9);
+    git('rebase', '-q', 'main');
+    fs.writeFileSync(path.join(repo, 'other.txt'), 'other\n');
+    git('add', 'other.txt');
+    commitFile('app.py', text(feature), 'feature');
+    failOnHead9();
+    mateOnMain9('app.py', text(mate));
+    git('rebase', '-q', 'main');
+    allPass(1);
+  }
+
+  it('K: the feature deletes a check; restoring it after a teammate edit keeps the fail open, saying upstream changed the file', () => {
+    setup(BASE.filter((l) => !l.includes('check_auth')), MATE);
+    expect(blockers(ship())).toEqual([UPSTREAM_CHANGED('security')]);
+    commitFile('app.py', text(MATE), 'restore check');
+    expect(security9(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
+    expect(blockers(ship())).toEqual([UPSTREAM_CHANGED('security')]);
+  });
+
+  it('L: the feature deletes a check and adds a log line; restoring the check keeps the fail open', () => {
+    const f = BASE.filter((l) => !l.includes('check_auth'));
+    f.splice(3, 0, '    log(u)');
+    setup(f, MATE);
+    const fixed = [...MATE];
+    fixed.splice(4, 0, '    log(u)');
+    commitFile('app.py', text(fixed), 'restore check');
+    expect(blockers(ship())).toEqual([UPSTREAM_CHANGED('security')]);
+  });
+
+  it('M: the feature adds a check after run; moving it before run keeps the fail open', () => {
+    const f = [...BASE];
+    f.splice(4, 0, '    require_admin(u)');
+    setup(f, MATE);
+    const fixed = [...MATE];
+    fixed.splice(3, 0, '    require_admin(u)');
+    commitFile('app.py', text(fixed), 'move check before run');
+    expect(blockers(ship())).toEqual([UPSTREAM_CHANGED('security')]);
+  });
+
+  it('N: a same-line conflict resolved by merging the teammate edit with the flagged code keeps the fail open', () => {
+    git('checkout', '-q', 'main');
+    commitFile('app.py', text(BASE), 'base py');
+    git('checkout', '-q', BRANCH9);
+    git('rebase', '-q', 'main');
+    commitFile('app.py', text(BASE.map((l) => (l === '    run(u)' ? '    run(u, verify=False)' : l))), 'feature');
+    failOnHead9();
+    mateOnMain9('app.py', text(MATE.map((l) => (l === '    run(u)' ? '    run(user=u)' : l))));
+    expect(() => git('rebase', '-q', 'main')).toThrow();
+    fs.writeFileSync(path.join(repo, 'app.py'), text(MATE.map((l) => (l === '    run(u)' ? '    run(user=u, verify=False)' : l))));
+    git('add', 'app.py');
+    execFileSync('git', ['-c', 'core.editor=true', 'rebase', '--continue'], { cwd: repo, stdio: 'ignore', env: { ...process.env, GIT_EDITOR: 'true' } });
+    allPass(1);
+    expect(security9(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
+    expect(blockers(ship())).toEqual([UPSTREAM_CHANGED('security')]);
+  });
+
+  it('upstream renames the flagged file, the rebase carries the flagged code along: the fail stays, with or without a fix', () => {
+    const lines = (edit: Record<number, string> = {}): string => Array.from({ length: 30 }, (_, i) => `${edit[i + 1] ?? i + 1}\n`).join('');
+    git('checkout', '-q', 'main');
+    commitFile('shared.txt', lines(), 'shared');
+    git('checkout', '-q', BRANCH9);
+    git('rebase', '-q', 'main');
+    commitFile('shared.txt', lines({ 15: 'VULN' }), 'feature');
+    failOnHead9();
+    git('checkout', '-q', 'main');
+    git('mv', 'shared.txt', 'shared2.txt');
+    git('commit', '-q', '-m', 'mate renames');
+    git('checkout', '-q', BRANCH9);
+    git('rebase', '-q', 'main');
+    allPass(1);
+    expect(fs.readFileSync(path.join(repo, 'shared2.txt'), 'utf-8')).toContain('VULN');
+    expect(blockers(ship())).toEqual([UPSTREAM_CHANGED('security')]);
+    commitFile('shared2.txt', lines({ 15: 'SAFE' }), 'fix');
+    expect(blockers(ship())).toEqual([UPSTREAM_CHANGED('security')]);
+  });
+
+  it('upstream deletes the flagged file and the rebase keeps the feature\'s copy: the fail stays', () => {
+    git('checkout', '-q', 'main');
+    commitFile('shared.txt', 'one\ntwo\n', 'shared');
+    git('checkout', '-q', BRANCH9);
+    git('rebase', '-q', 'main');
+    commitFile('shared.txt', 'one\nVULN\n', 'feature');
+    failOnHead9();
+    git('checkout', '-q', 'main');
+    git('rm', '-q', 'shared.txt');
+    git('commit', '-q', '-m', 'mate deletes');
+    git('checkout', '-q', BRANCH9);
+    expect(() => git('rebase', '-q', 'main')).toThrow();
+    git('add', 'shared.txt');
+    execFileSync('git', ['-c', 'core.editor=true', 'rebase', '--continue'], { cwd: repo, stdio: 'ignore', env: { ...process.env, GIT_EDITOR: 'true' } });
+    allPass(1);
+    expect(blockers(ship())).toEqual([UPSTREAM_CHANGED('security')]);
+  });
+
+  it('upstream only changes the flagged file\'s mode, then a real fix: the fail stays', () => {
+    git('checkout', '-q', 'main');
+    commitFile('run.sh', 'one\ntwo\n', 'shared');
+    git('checkout', '-q', BRANCH9);
+    git('rebase', '-q', 'main');
+    fs.writeFileSync(path.join(repo, 'other.txt'), 'other\n');
+    git('add', 'other.txt');
+    commitFile('run.sh', 'one\ncurl x | sh\n', 'feature');
+    failOnHead9();
+    git('checkout', '-q', 'main');
+    fs.chmodSync(path.join(repo, 'run.sh'), 0o755);
+    git('commit', '-q', '-a', '-m', 'mate: executable');
+    git('checkout', '-q', BRANCH9);
+    git('rebase', '-q', 'main');
+    commitFile('run.sh', 'one\ntwo\n', 'fix');
+    allPass(1);
+    expect(blockers(ship())).toEqual([UPSTREAM_CHANGED('security')]);
+  });
+
+  it('T4: upstream takes one of the feature\'s lines in the flagged file, rebased with no fix: the fail stays', () => {
+    const lines = (edit: Record<number, string> = {}): string => Array.from({ length: 30 }, (_, i) => `${edit[i + 1] ?? i + 1}\n`).join('');
+    git('checkout', '-q', 'main');
+    commitFile('s.txt', lines(), 'shared');
+    git('checkout', '-q', BRANCH9);
+    git('rebase', '-q', 'main');
+    commitFile('s.txt', lines({ 5: 'import helper' }), 'helper');
+    commitFile('s.txt', lines({ 5: 'import helper', 15: 'VULN' }), 'vuln');
+    failOnHead9();
+    mateOnMain9('s.txt', lines({ 2: 'mate2', 5: 'import helper' }));
+    git('rebase', '-q', 'main');
+    allPass(1);
+    expect(security9(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
+  });
+
+  // D49: a change to another of the feature's own paths that upstream did not touch still clears.
+  it('K, then a change to another feature file upstream did not touch: the fail clears', () => {
+    setup(BASE.filter((l) => !l.includes('check_auth')), MATE);
+    commitFile('other.txt', 'changed\n', 'other change');
+    expect(security9(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  // D58 kept: a teammate's commit on another file, no fix: the old blocker text, not the upstream one.
+  it('a teammate commit on another file and no fix: the fail stays with the tracked-change blocker', () => {
+    commitFile('f.txt', 'vuln\n', 'feature');
+    failOnHead9();
+    mateOnMain9('mate.txt', 'mate\n');
+    git('rebase', '-q', 'main');
+    allPass(1);
+    expect(blockers(ship())).toEqual([NOT_RE_REVIEWED_TEXT('security')]);
+    commitFile('f.txt', 'safe\n', 'fix');
+    expect(security9(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  it('a result held open by D67 passes the ship schema', () => {
+    setup(BASE.filter((l) => !l.includes('check_auth')), MATE);
+    expect(validate(loadPhaseSchema('ship', PLUGIN_ROOT), result(ship()))).toEqual({ ok: true });
+  });
+});
+
+/**
+ * Perf L3 (gate round 10): every off-history review head cost a merge-base, a probe lookup and a tree diff, so about 80
+ * or more such rows ran past Stop's check deadline. The review bases come from one rev-list and the tree diffs from one
+ * batched diff-tree process.
+ */
+describe('assembleShip: fail rows on distinct off-history review heads stay cheap (perf L3, gate round 10)', { timeout: 120_000 }, () => {
+  const ROWS = 200;
+
+  function offHistoryRows(): void {
+    const old = git('rev-parse', 'main');
+    commitFile('flagged.txt', 'vuln\n', 'feature');
+    const tree = git('rev-parse', 'HEAD^{tree}');
+    for (let i = 0; i < ROWS; i++) {
+      const head = git('commit-tree', tree, '-p', old, '-m', `pre-rebase review ${i}`);
+      failOnHead9(tree, head, GATES[i % 3], new Date(Date.parse('2026-11-13T09:00:00.000Z') + i * 1000).toISOString());
+    }
+    mateOnMain9('mate.txt', 'mate\n');
+    git('rebase', '-q', 'main');
+    allPass(1);
+  }
+
+  it(`${ROWS} open fails on ${ROWS} distinct off-history heads: still blocked, with a bounded number of git processes`, () => {
+    offHistoryRows();
+    spawns.n = 0;
+    const r = result(ship());
+    expect(r.blockers).toHaveLength(3);
+    expect(spawns.n).toBeLessThanOrEqual(50);
+  });
+
+  it(`${ROWS} fails on ${ROWS} distinct off-history heads, all cleared by a fix: passes, with a bounded number of git processes`, () => {
+    offHistoryRows();
+    commitFile('flagged.txt', 'safe\n', 'fix');
+    spawns.n = 0;
+    expect(result(ship()).verdict).toBe('ready_to_merge');
+    expect(spawns.n).toBeLessThanOrEqual(50);
+  });
+});
+
+/** Code-review L3 and perf I1 (gate round 10): many same-name remote refs at one commit cost one merge-base, not one each. */
+describe('assembleShip: the live base dedupes same-name remote refs by commit (code-review L3, perf I1)', () => {
+  it('50 remotes whose main all point at the rebased-onto commit: one merge-base, the diff is the feature\'s', () => {
+    commitFile('feature.txt', 'vuln\n', 'feature');
+    git('checkout', '-q', '--detach', 'main');
+    commitFile('mate.txt', 'mate\n', 'mate');
+    const u = git('rev-parse', 'HEAD');
+    git('checkout', '-q', BRANCH9);
+    for (let i = 0; i < 50; i++) {
+      git('update-ref', `refs/remotes/r${i}/main`, u);
+      git('update-ref', `refs/remotes/r${i}/other`, u);
+    }
+    git('rebase', '-q', u);
+    allPass(1);
+    spawns.n = 0;
+    spawns.args = [];
+    const r = result(ship());
+    expect(r.diff).toEqual({ base: u, baseRef: 'main', files: 1, insertions: 1, deletions: 0 });
+    expect(spawns.args.filter((a) => a.includes('merge-base') && !a.includes('--independent')).length).toBeLessThanOrEqual(3);
+    expect(spawns.n).toBeLessThanOrEqual(15);
+  });
+});
+
+/**
+ * Perf L1/L2 and code-review L1 (gate round 10) were costs of D65's batched -U0 diff (20,000 shared paths, 32 MB binaries,
+ * a CR or U+2028 split of its text). D67 removed that diff; this keeps the shape fast and the fail open.
+ */
+describe('assembleShip: a large binary and 20,000 shared paths changed on both sides (perf L1/L2, D67)', { timeout: 120_000 }, () => {
+  const PATHS = 20_000;
+
+  /** A commit on `parent` whose tree is the parent's with every shared path, big.bin and `extra` set to `tag` (plumbing only). */
+  function commitAll(parent: string, tag: string, extra: string[] = []): string {
+    const env: NodeJS.ProcessEnv = {};
+    for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('GIT_')) env[k] = v;
+    env.GIT_INDEX_FILE = path.join(repo, '.git', 'scratch-index');
+    const g = (args: string[], input?: string | Buffer): string =>
+      execFileSync('git', args, { cwd: repo, env, input, encoding: 'utf-8', maxBuffer: 1 << 26 }).trim();
+    const blob = g(['hash-object', '-w', '--stdin'], `${tag}\n`);
+    const big = Buffer.alloc(32 * 1024 * 1024, 0);
+    big.write(tag, 0);
+    big.write(tag, big.length - 64);
+    const bigBlob = g(['hash-object', '-w', '--stdin'], big);
+    g(['read-tree', parent]);
+    const info = Array.from({ length: PATHS }, (_, i) => `100644 ${blob}\tsrc/d${i % 100}/f${i}.ts`);
+    for (const p of ['big.bin', ...extra]) info.push(`100644 ${p === 'big.bin' ? bigBlob : blob}\t${p}`);
+    g(['update-index', '--add', '--index-info'], `${info.join('\n')}\n`);
+    return g(['commit-tree', g(['write-tree']), '-p', parent, '-m', tag]);
+  }
+
+  it('rebased with no fix: the fail stays open, quickly', () => {
+    const base = commitAll(git('rev-parse', 'main'), 'base');
+    git('update-ref', 'refs/heads/main', base);
+    git('update-ref', `refs/heads/${BRANCH9}`, commitAll(base, 'feature'));
+    failOnHead9();
+    const mate = commitAll(base, 'mate', ['mate.txt']);
+    git('update-ref', 'refs/heads/main', mate);
+    // the rebase's resolution: upstream's commit with the feature's content on every shared path
+    git('update-ref', `refs/heads/${BRANCH9}`, commitAll(mate, 'feature'));
+    allPass(1);
+    const t0 = Date.now();
+    expect(security9(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
+    expect(Date.now() - t0).toBeLessThan(15_000);
+  });
+});
+
+/** Code-review L4 (gate round 10): a real fix to quoted-name paths upstream did not touch clears the fail. */
+describe('assembleShip: a fix to paths with special names clears the fail (code-review L4, gate round 10)', () => {
+  const NAMES = ['nl\nname.txt', 'q"uote.txt', 'tab\tname.txt', 'sp ace.txt', 'back\\slash.txt', 'ünï.txt'];
+
+  function failOnNames(): void {
+    for (const n of NAMES) fs.writeFileSync(path.join(repo, n), 'vuln\n');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'feature');
+    failOnHead9();
+    mateOnMain9('mate.txt', 'mate\n');
+    git('rebase', '-q', 'main');
+    allPass(1);
+  }
+
+  it('rebased with no fix: the fail stays', () => {
+    failOnNames();
+    expect(security9(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
+  });
+
+  for (const n of NAMES) {
+    it(`a fix to ${JSON.stringify(n)} alone clears the fail`, () => {
+      failOnNames();
+      commitFile(n, 'safe\n', 'fix');
+      expect(security9(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+    });
+  }
+});
+
+/** Info (gate round 10): config cannot hide a submodule fix from the comparison (the diffs pin their options). */
+describe('assembleShip: diff options are pinned against repo config (info, gate round 10)', () => {
+  it('with diff.ignoreSubmodules=all, a flagged submodule bump fixed by another bump clears the fail', () => {
+    commitFile('keep.txt', 'k\n', 'keep');
+    git('update-index', '--add', '--cacheinfo', `160000,${'1'.repeat(40)},sub`);
+    git('commit', '-q', '-m', 'add submodule');
+    failOnHead9();
+    git('update-index', '--cacheinfo', `160000,${'2'.repeat(40)},sub`);
+    git('commit', '-q', '-m', 'fix: bump the submodule');
+    git('config', 'diff.ignoreSubmodules', 'all');
+    allPass(1);
+    expect(security9(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+});
+
+/** Info (gate round 10): paths go on argv in chunks bounded by their UTF-8 bytes, not their UTF-16 length. */
+describe('argvChunks', () => {
+  it('1,000 paths of 100 three-byte characters (300 KB) take three chunks of at most 128 KB', () => {
+    const paths = Array.from({ length: 1000 }, (_, i) => `${'日'.repeat(99)}${i % 10}`);
+    const chunks = argvChunks(paths);
+    expect(chunks.flat()).toEqual(paths);
+    for (const c of chunks) expect(c.reduce((n, p) => n + Buffer.byteLength(p) + 1, 0)).toBeLessThanOrEqual(128 * 1024);
+    expect(chunks.length).toBe(3);
+  });
+});
+
+/**
+ * D69 (user pick, ship round 12, "Let override clear it"): an overrides.json entry may name a gate. With a recorded
+ * decision for this feature, it clears only that gate's open D67 rows (upstream changed the flagged file); never an
+ * ordinary captured fail (D57) or a model gate line. The person still comes from the decision record.
+ */
+describe('assembleShip: a recorded override naming the gate clears a D67 fail (D69)', () => {
+  const BASE = ['def handler(u):', '    check_auth(u)', '    run(u)', '', '', '', '', '', 'X = 1'];
+  const text = (ls: string[]): string => `${ls.join('\n')}\n`;
+
+  /** The feature drops check_auth in app.py and is failed; a teammate edits app.py; the model rebases (a D67 row). */
+  function d67Fail(gate = 'security'): void {
+    git('checkout', '-q', 'main');
+    commitFile('app.py', text(BASE), 'base py');
+    git('checkout', '-q', BRANCH9);
+    git('rebase', '-q', 'main');
+    fs.writeFileSync(path.join(repo, 'other.txt'), 'other\n');
+    git('add', 'other.txt');
+    commitFile('app.py', text(BASE.filter((l) => !l.includes('check_auth'))), 'feature');
+    failOnHead9(undefined, undefined, gate);
+    mateOnMain9('app.py', text(BASE.map((l) => (l === 'X = 1' ? 'X = 2' : l))));
+    git('rebase', '-q', 'main');
+    allPass(1);
+  }
+
+  function override(entry: Record<string, unknown>): void {
+    fs.writeFileSync(path.join(valueDir, 'overrides.json'), JSON.stringify([entry]));
+  }
+
+  it('an override naming the gate clears a gate held only by D67 rows: ready_to_merge, person from the record', () => {
+    d67Fail();
+    const { id } = decision('Pat');
+    override({ finding: 'MEDIUM: auth check, upstream moved it', decisionId: id, gate: 'security' });
+    const r = result(ship());
+    expect(r.verdict).toBe('ready_to_merge');
+    expect(r.blockers).toEqual([]);
+    expect(security9(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+    expect(r.overrides).toEqual([{ finding: 'MEDIUM: auth check, upstream moved it', decisionId: id, person: 'Pat', gate: 'security' }]);
+    expect(validate(loadPhaseSchema('ship', PLUGIN_ROOT), r)).toEqual({ ok: true });
+  });
+
+  it('an override naming another gate does not clear it', () => {
+    d67Fail();
+    override({ finding: 'x', decisionId: decision('Pat').id, gate: 'performance' });
+    expect(result(ship()).blockers).toEqual([UPSTREAM_CHANGED('security')]);
+  });
+
+  it('an override with no gate does not clear it', () => {
+    d67Fail();
+    override({ finding: 'x', decisionId: decision('Pat').id });
+    expect(result(ship()).blockers).toEqual([UPSTREAM_CHANGED('security')]);
+  });
+
+  it('a gate with a D67 row and an ordinary open fail stays blocked, with the tracked-change text', () => {
+    d67Fail();
+    // an older review of the same gate on the rebased code, unchanged since: an ordinary (D57) open fail
+    failOnHead9(undefined, undefined, 'security', '2026-11-13T09:05:00.000Z');
+    override({ finding: 'x', decisionId: decision('Pat').id, gate: 'security' });
+    expect(result(ship()).blockers).toEqual([NOT_RE_REVIEWED_TEXT('security')]);
+  });
+
+  it('an override never clears an ordinary captured fail', () => {
+    commitFile('f.txt', 'vuln\n', 'feature');
+    failOnHead9();
+    allPass(1);
+    override({ finding: 'x', decisionId: decision('Pat').id, gate: 'security' });
+    expect(result(ship()).blockers).toEqual([NOT_RE_REVIEWED_TEXT('security')]);
+  });
+
+  it('an override never clears a failing model gate line', () => {
+    commitFile('f.txt', 'work\n', 'feature');
+    for (const gate of GATES) gateLine({ round: 1, gate, verdict: gate === 'security' ? 'fail' : 'pass' });
+    override({ finding: 'x', decisionId: decision('Pat').id, gate: 'security' });
+    expect(result(ship()).blockers).toEqual(['gate:security']);
+  });
+
+  it('an override for an unrecorded decision id still refuses', () => {
+    d67Fail();
+    override({ finding: 'x', decisionId: randomUUID(), gate: 'security' });
+    expect(errorOf(ship())).toBe('override_unrecorded');
+  });
+
+  it('an override naming an unknown gate refuses, naming the gate field', () => {
+    d67Fail();
+    override({ finding: 'x', decisionId: decision('Pat').id, gate: 'made-up' });
+    const o = ship();
+    expect(o.ok ? null : { error: o.error, detail: o.detail }).toEqual({ error: 'override_unrecorded', detail: 'gate' });
+  });
+
+  it('check (reassembling with the stored overrides, gate included) agrees with assemble', () => {
+    d67Fail();
+    override({ finding: 'x', decisionId: decision('Pat').id, gate: 'security' });
+    const first = result(ship());
+    const stored = first.overrides as Array<Record<string, unknown>>;
+    override(stored[0] as Record<string, unknown>);
+    expect(result(ship())).toEqual(first);
   });
 });

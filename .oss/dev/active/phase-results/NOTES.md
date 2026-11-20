@@ -193,3 +193,8 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 - Older git (Apple CLT 2.50.1, Debian 2.39) refuses cat-file %(objectmode); lookups use ls-tree, and any lookup error falls back to the diff lists.
 - The phase-result bundle must sit at <root>/watcher/dist/cli with <root>/schemas beside it, or it fails with internal_error (field store).
 
+## Ship round 12 notes (2026-11-20)
+- D67 trade (owner pick): an honest fix confined to a file upstream also changed stays blocked; it clears through a D69 override naming the gate, or a change to another feature path upstream did not touch.
+- FOLLOW-UP (API): no served prompt describes overrides.json, so a model won't add `gate` on its own. The ship prompt must say how to write an override entry with `gate` and a recorded decisionId. Cite this in the PR.
+- Batched per-row prep peaks higher in memory (245 MB at 200 off-history rows, was 145 MB) in exchange for 47 git calls instead of 609.
+

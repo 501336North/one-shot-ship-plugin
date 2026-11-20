@@ -539,6 +539,44 @@ describe('phase-result CLI: check refuses anything not bound to this run', () =>
     expect(r.status, r.stderr).toBe(0);
   });
 
+  // Behaviour: D69, an override naming the gate clears a fail upstream's change to the flagged file held open, and
+  // check (which feeds the stored overrides back, the value file having aged out) agrees.
+  it('a D67 fail cleared by a recorded override naming its gate is ready to merge, and check agrees', () => {
+    const lines = (edit: Record<number, string> = {}): string => Array.from({ length: 20 }, (_, i) => `${edit[i + 1] ?? i + 1}\n`).join('');
+    git('checkout', '-q', 'main');
+    commitFile('shared.txt', lines());
+    git('checkout', '-q', `feat/${FEATURE}/build`);
+    git('rebase', '-q', 'main');
+    commitFile('other.txt', 'other\n');
+    commitFile('shared.txt', lines({ 10: 'VULN' }));
+    const tree = git('rev-parse', 'HEAD^{tree}');
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+      gate: 'security', verdict: 'fail', findings: { critical: 0, high: 0, medium: 1, low: 0, info: 0 }, agent: 'a', session: 's',
+      ts: '2026-11-13T09:10:00.000Z', tree, trackedTree: tree, headSha: git('rev-parse', 'HEAD'),
+    });
+    git('checkout', '-q', 'main');
+    commitFile('shared.txt', lines({ 2: 'teammate' }));
+    git('update-ref', 'refs/remotes/origin/main', git('rev-parse', 'main'));
+    git('checkout', '-q', `feat/${FEATURE}/build`);
+    git('rebase', '-q', 'main');
+    passGates(FEATURE);
+    const id = randomUUID();
+    const line = JSON.stringify({ v: 1, id, feature: FEATURE, question: 'Accept the upstream-touched fail?', person: 'Pat' });
+    fs.appendFileSync(path.join(activeDir(FEATURE), 'decisions.ndjson'), `${line}\n`);
+    openLedger(repo).appendRow(`decisions/${FEATURE}`, { id, feature: FEATURE, sha256: sha256(line) });
+    const overrides = path.join(valueDir(), 'overrides.json');
+    fs.writeFileSync(overrides, JSON.stringify([{ finding: 'MEDIUM: VULN', decisionId: id, gate: 'security' }]));
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    const a = cli('assemble', 'ship');
+    expect(a.status, a.stderr).toBe(0);
+    expect(JSON.parse(fs.readFileSync(resultFile(FEATURE, 'ship'), 'utf-8'))).toMatchObject({ verdict: 'ready_to_merge', blockers: [] });
+    const old = new Date(Date.now() - 60 * 60 * 1000);
+    fs.utimesSync(overrides, old, old);
+    const r = cli('check', 'ship');
+    expect(r.status, r.stderr).toBe(0);
+    expect(JSON.parse(r.stdout)).toMatchObject({ verification: 'verified', verdict: 'ready_to_merge' });
+  });
+
   it('a repo unverified marker or a ledger pending marker gives unverified', () => {
     assembledPlan();
     fs.writeFileSync(path.join(activeDir(FEATURE), 'results', 'plan.unverified.json'), '{}');

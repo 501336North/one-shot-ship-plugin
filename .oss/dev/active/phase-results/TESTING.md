@@ -198,4 +198,9 @@ Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watche
 - 15 new tests: older-git (CLT 2.50.1, skipped with a message if absent) deletion and rebase fixes, submodules, fetch after rebase, diverged remotes, conflict kept flagged, interHunkContext, -diff lockfile, indentation-only fix, mode-only fix (guard, not RED), spawn bounds for batched D62 and the lookup cache.
 - Changed test: the D62 conflict test now has the teammate edit two lines (code-review L4), so it fails on 66d0267e.
 
-## Last Updated: 2026-11-20 14:47 CST by /oss:ship (round 11 fixes)
+### Ship round 12 (D67-D69), 2026-11-20
+- Full check: build 0, tsc 0, 199 files / 11026 tests passed, served-commands 3/3, bash 114/114 behind the tripwire (0 trip lines).
+- New tests: D67 overlap rows (sec K/L/M/N, upstream rename, delete and mode, code-review T4), D69 overrides (9 cases plus a CLI acceptance), a 200-row spawn bound, same-name refs on one commit, a 32 MB binary plus 20,000 shared paths, byte-counted chunks, diff.ignoreSubmodules pinned.
+- Changed tests (marked ⚠): three D62/D65 "fix clears after a teammate edit" tests now stay open (D67); the D64 check-agrees test moves the remote; the older-git tests fail loudly.
+
+## Last Updated: 2026-11-20 19:57 CST by /oss:ship (round 12 fixes)
