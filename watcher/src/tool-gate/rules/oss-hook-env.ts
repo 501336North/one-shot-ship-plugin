@@ -266,7 +266,9 @@ function piecesSet(word: string): boolean {
   if (!/\s/.test(word)) return false;
   const assigned = ASSIGNMENT.exec(word);
   const pieces = (assigned === null ? word : word.slice(assigned[0].length)).split(/\s+/).filter(Boolean);
-  return pieces.some((p, i) => OPERAND_SETTERS.has(p) && pieces.slice(i + 1).some((a) => (ASSIGNMENT.test(a) && unlisted(a)) || (p !== 'env' && SETTING_WORD.test(a)) || (p === 'env' && a.startsWith('-'))));
+  const setsAfter = (setter: string, a: string): boolean =>
+    (ASSIGNMENT.test(a) && unlisted(a)) || (setter === 'env' ? a.startsWith('-') : SETTING_WORD.test(a));
+  return pieces.some((p, i) => OPERAND_SETTERS.has(p) && pieces.slice(i + 1).some((a) => setsAfter(p, a)));
 }
 
 /** `text`: what the tokens were read from, so a word's raw text is known; a script inside a word has none. */
@@ -463,7 +465,8 @@ function wordReadsFile(token: Token): boolean {
  * Task 2: the reader's own value list, `$HOME` filled in by the tokenizer); what can't be filled stays UNKNOWN.
  */
 function filled(token: Token, text: string | null, values: Values, home: string): string {
-  if (token.kind !== 'word' || !token.value.includes(UNKNOWN)) return token.kind === 'word' ? token.value : '';
+  if (token.kind !== 'word') return '';
+  if (!token.value.includes(UNKNOWN)) return token.value;
   const at = sourceOf(token);
   const refs = text === null || at === undefined ? null : variableReferences(text.slice(at.start, at.end), home);
   const texts = token.value.split(UNKNOWN);
@@ -591,7 +594,7 @@ function scanPrograms(tokens: Token[], text: string | null, values: Values, cwd:
     }
     const last = words[words.length - 1];
     const start = token.kind === 'op' && token.value === '(' && last?.kind === 'word' ? ARRAY_START.exec(last.value) : null;
-    if (start !== null && start !== undefined) {
+    if (start !== null) {
       words.pop();
       array = { name: start[1], append: start[2] === '+', words: [] };
     } else if (token.kind === 'op') flush();

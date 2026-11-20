@@ -9,7 +9,7 @@
  * the repository, a folder it can't follow) or git gives no answer, it falls back to refusing any
  * clean whose pathspecs (or folder) can reach a protected folder, the repo root included.
  *
- * `git stash` (gate-gaps-r3 Task 3, ADR-2) reuses the same dry run: see STASH_SWEEPS_AS_CLEAN.
+ * `git stash` (gate-gaps-r3 Task 3, ADR-2) reuses the same dry run: see STASH_UNTRACKED_AS_CLEAN.
  */
 
 import fs from 'node:fs';
@@ -238,11 +238,10 @@ function readStashWords(args: string[]): StashWords {
 }
 
 /**
- * What a stash takes out of the worktree besides tracked changes, as the `git clean` options that
- * would remove the same files: `-u` sweeps what `git clean -d` would; `-a` sweeps what `git clean -dx`
- * would, and is refused outright (owner pick), so only `-u` is asked about.
+ * The `git clean` options that would remove what `git stash -u` takes out of the worktree besides
+ * tracked changes. (`-a` sweeps what `git clean -dx` would, but it is refused outright, owner pick.)
  */
-const STASH_SWEEPS_AS_CLEAN = { untracked: ['-d'], all: ['-d', '-x'] } as const;
+const STASH_UNTRACKED_AS_CLEAN = ['-d'];
 
 /**
  * The protected paths inside a repo, as pathspecs from its top (`:/`): the dry run for a stash with no
@@ -288,7 +287,7 @@ export async function checkGitStash(
     return cantTell;
   }
   const specs = words.pathspecs.length > 0 ? words.pathspecs : inRepoPathspecs(settings);
-  const removed = await gitReader.wouldClean(git.dir, [...STASH_SWEEPS_AS_CLEAN.untracked], specs);
+  const removed = await gitReader.wouldClean(git.dir, [...STASH_UNTRACKED_AS_CLEAN], specs);
   if (removed === null) return cantTell;
   const hit = removed
     .map((p) => joinRaw(git.dir, p))

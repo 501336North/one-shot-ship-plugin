@@ -416,9 +416,8 @@ export function checkPushSetup(part: CommandPart, earlier: readonly CommandPart[
       reason: `Refused: \`git ${part.git?.subcommand}\` with \`${planted}\` plants config or hooks in the new repository, which can change where pushes go or what git runs. Ask the user to run it with \`!\`.`,
     };
   }
-  if (carriedKey(OSS_KEYS, part, earlier, count) !== null) return OSS_REFUSAL;
-  const history = carriedKey(REF_HISTORY_KEYS, part, earlier, count);
-  if (history !== null) return REF_HISTORY_REFUSAL;
+  if (carriesKey(OSS_KEYS, part, earlier, count)) return OSS_REFUSAL;
+  if (carriesKey(REF_HISTORY_KEYS, part, earlier, count)) return REF_HISTORY_REFUSAL;
   const tty = fakeTtyPager(part, earlier, count);
   if (tty !== null) return runsRefusal(tty, `\`git ${part.git?.subcommand}\` (it has a terminal, so git starts its pager)`);
   const runs = runConfig(part, earlier, count) ?? uploadProgram(part);
@@ -426,14 +425,14 @@ export function checkPushSetup(part: CommandPart, earlier: readonly CommandPart[
   if (part.git?.subcommand === 'config') {
     const key = pushKeyWritten(part.git.args);
     if (key === null) return null;
-    if (typeof key === 'string' && (keyMatches(OSS_KEYS, key) || key.toLowerCase() === 'oss')) return OSS_REFUSAL;
-    if (typeof key === 'string' && keyMatches(REF_HISTORY_KEYS, key)) return REF_HISTORY_REFUSAL;
     if (typeof key !== 'string') {
       return {
         rule: 'protected-branch',
         reason: `Refused: the gate can't read \`git config\` option \`${key.unreadable}\` (one git doesn't have, or short for several), so it can't tell which key is written. Spell the options in full.`,
       };
     }
+    if (keyMatches(OSS_KEYS, key) || key.toLowerCase() === 'oss') return OSS_REFUSAL;
+    if (keyMatches(REF_HISTORY_KEYS, key)) return REF_HISTORY_REFUSAL;
     return {
       rule: 'protected-branch',
       reason: `Refused: \`git config ${key}\` changes where pushes go or what git runs. Ask the user to change it with \`!\`.`,
@@ -539,20 +538,19 @@ const OSS_REFUSAL: Refusal = {
 };
 
 /**
- * The key of `keys` a git part sets through `-c`, `--config-env` or a `GIT_CONFIG_KEY_n` set for it
- * or earlier in the call, or null.
+ * True when a git part sets a key of `keys` through `-c`, `--config-env` or a `GIT_CONFIG_KEY_n` set
+ * for it or earlier in the call.
  */
-function carriedKey(keys: readonly string[], part: CommandPart, earlier: readonly CommandPart[], count: number): string | null {
+function carriesKey(keys: readonly string[], part: CommandPart, earlier: readonly CommandPart[], count: number): boolean {
   const git = part.git;
-  if (git === null) return null;
+  if (git === null) return false;
   const globals = part.words.slice(1, part.words.length - git.args.length - 1);
   for (let i = 0; i < globals.length; i++) {
     const w = globals[i];
     const setting = w === '-c' || w === '--config-env' ? globals[i + 1] : w.startsWith('--config-env=') ? w.slice('--config-env='.length) : undefined;
-    if (setting !== undefined && keyMatches(keys, keyOf(setting))) return keyOf(setting);
+    if (setting !== undefined && keyMatches(keys, keyOf(setting))) return true;
   }
-  const variable = callSettings(part, earlier, count).find(([name, value]) => CONFIG_KEY_VARIABLE.test(name) && keyMatches(keys, value));
-  return variable?.[1] ?? null;
+  return callSettings(part, earlier, count).some(([name, value]) => CONFIG_KEY_VARIABLE.test(name) && keyMatches(keys, value));
 }
 
 function runsRefusal(what: string, where: string): Refusal {

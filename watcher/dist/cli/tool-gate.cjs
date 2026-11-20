@@ -8104,7 +8104,7 @@ function readStashWords(args) {
   }
   return { untracked, pathspecs: save ? [] : pathspecs, fromFile };
 }
-var STASH_SWEEPS_AS_CLEAN = { untracked: ["-d"], all: ["-d", "-x"] };
+var STASH_UNTRACKED_AS_CLEAN = ["-d"];
 function inRepoPathspecs(settings) {
   return settings.protectedPaths.filter((p) => !p.startsWith("~") && !p.startsWith("*") && !p.startsWith("/")).map((p) => `:/${p.replace(/\/\*\*$/, "")}`);
 }
@@ -8128,7 +8128,7 @@ async function checkGitStash(part, settings, root, home, paths, gitReader, place
     return cantTell;
   }
   const specs = words.pathspecs.length > 0 ? words.pathspecs : inRepoPathspecs(settings);
-  const removed = await gitReader.wouldClean(git.dir, [...STASH_SWEEPS_AS_CLEAN.untracked], specs);
+  const removed = await gitReader.wouldClean(git.dir, [...STASH_UNTRACKED_AS_CLEAN], specs);
   if (removed === null) return cantTell;
   const hit = removed.map((p) => joinRaw(git.dir, p)).find((p) => isProtected(p, settings, places, paths) || holdsProtected(p, settings, places, paths));
   if (hit === void 0) return null;
@@ -8994,7 +8994,8 @@ function piecesSet(word) {
   if (!/\s/.test(word)) return false;
   const assigned = ASSIGNMENT3.exec(word);
   const pieces = (assigned === null ? word : word.slice(assigned[0].length)).split(/\s+/).filter(Boolean);
-  return pieces.some((p, i) => OPERAND_SETTERS.has(p) && pieces.slice(i + 1).some((a) => ASSIGNMENT3.test(a) && unlisted(a) || p !== "env" && SETTING_WORD.test(a) || p === "env" && a.startsWith("-")));
+  const setsAfter = (setter, a) => ASSIGNMENT3.test(a) && unlisted(a) || (setter === "env" ? a.startsWith("-") : SETTING_WORD.test(a));
+  return pieces.some((p, i) => OPERAND_SETTERS.has(p) && pieces.slice(i + 1).some((a) => setsAfter(p, a)));
 }
 function tokensSet(tokens, depth, call, text) {
   let previous = null;
@@ -9115,7 +9116,8 @@ function wordReadsFile(token) {
   return token.kind !== "op" && token.scripts !== void 0 && token.scripts.some(readsFile);
 }
 function filled(token, text, values, home) {
-  if (token.kind !== "word" || !token.value.includes(UNKNOWN)) return token.kind === "word" ? token.value : "";
+  if (token.kind !== "word") return "";
+  if (!token.value.includes(UNKNOWN)) return token.value;
   const at = sourceOf(token);
   const refs = text === null || at === void 0 ? null : variableReferences(text.slice(at.start, at.end), home);
   const texts = token.value.split(UNKNOWN);
@@ -9222,7 +9224,7 @@ function scanPrograms(tokens, text, values, cwd, command, call) {
     }
     const last = words[words.length - 1];
     const start = token.kind === "op" && token.value === "(" && last?.kind === "word" ? ARRAY_START.exec(last.value) : null;
-    if (start !== null && start !== void 0) {
+    if (start !== null) {
       words.pop();
       array = { name: start[1], append: start[2] === "+", words: [] };
     } else if (token.kind === "op") flush();
@@ -10053,9 +10055,8 @@ function checkPushSetup(part, earlier, count = earlier.length) {
       reason: `Refused: \`git ${part.git?.subcommand}\` with \`${planted}\` plants config or hooks in the new repository, which can change where pushes go or what git runs. Ask the user to run it with \`!\`.`
     };
   }
-  if (carriedKey(OSS_KEYS, part, earlier, count) !== null) return OSS_REFUSAL;
-  const history = carriedKey(REF_HISTORY_KEYS, part, earlier, count);
-  if (history !== null) return REF_HISTORY_REFUSAL;
+  if (carriesKey(OSS_KEYS, part, earlier, count)) return OSS_REFUSAL;
+  if (carriesKey(REF_HISTORY_KEYS, part, earlier, count)) return REF_HISTORY_REFUSAL;
   const tty = fakeTtyPager(part, earlier, count);
   if (tty !== null) return runsRefusal(tty, `\`git ${part.git?.subcommand}\` (it has a terminal, so git starts its pager)`);
   const runs = runConfig(part, earlier, count) ?? uploadProgram(part);
@@ -10063,14 +10064,14 @@ function checkPushSetup(part, earlier, count = earlier.length) {
   if (part.git?.subcommand === "config") {
     const key2 = pushKeyWritten(part.git.args);
     if (key2 === null) return null;
-    if (typeof key2 === "string" && (keyMatches(OSS_KEYS, key2) || key2.toLowerCase() === "oss")) return OSS_REFUSAL;
-    if (typeof key2 === "string" && keyMatches(REF_HISTORY_KEYS, key2)) return REF_HISTORY_REFUSAL;
     if (typeof key2 !== "string") {
       return {
         rule: "protected-branch",
         reason: `Refused: the gate can't read \`git config\` option \`${key2.unreadable}\` (one git doesn't have, or short for several), so it can't tell which key is written. Spell the options in full.`
       };
     }
+    if (keyMatches(OSS_KEYS, key2) || key2.toLowerCase() === "oss") return OSS_REFUSAL;
+    if (keyMatches(REF_HISTORY_KEYS, key2)) return REF_HISTORY_REFUSAL;
     return {
       rule: "protected-branch",
       reason: `Refused: \`git config ${key2}\` changes where pushes go or what git runs. Ask the user to change it with \`!\`.`
@@ -10147,17 +10148,16 @@ var OSS_REFUSAL = {
   rule: "protected-branch",
   reason: "Refused: this git call writes an OSS setting (the `oss` config section), which OSS reads to decide what a phase ships. Ask the user to change it with `!`."
 };
-function carriedKey(keys, part, earlier, count) {
+function carriesKey(keys, part, earlier, count) {
   const git = part.git;
-  if (git === null) return null;
+  if (git === null) return false;
   const globals = part.words.slice(1, part.words.length - git.args.length - 1);
   for (let i = 0; i < globals.length; i++) {
     const w = globals[i];
     const setting = w === "-c" || w === "--config-env" ? globals[i + 1] : w.startsWith("--config-env=") ? w.slice("--config-env=".length) : void 0;
-    if (setting !== void 0 && keyMatches(keys, keyOf(setting))) return keyOf(setting);
+    if (setting !== void 0 && keyMatches(keys, keyOf(setting))) return true;
   }
-  const variable = callSettings(part, earlier, count).find(([name, value]) => CONFIG_KEY_VARIABLE.test(name) && keyMatches(keys, value));
-  return variable?.[1] ?? null;
+  return callSettings(part, earlier, count).some(([name, value]) => CONFIG_KEY_VARIABLE.test(name) && keyMatches(keys, value));
 }
 function runsRefusal(what, where) {
   return {
