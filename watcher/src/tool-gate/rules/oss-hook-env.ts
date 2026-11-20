@@ -39,6 +39,7 @@ import { sourcesFor, trustedSourceWord, variableReferences, WRAPPER_WORDS, type 
 import { expansionSet } from '../expansion-scan.js';
 import { heredocBodyOf, ReadBudget, sourceOf, tokenize, UNKNOWN, type Token } from '../tokenize.js';
 import type { Refusal } from './refusal.js';
+import { globMatch, globTokens, specialSetsAsAny } from './verdict-capture-call.js';
 
 /** A word naming a hook script, in any case, as read (`~` and `$HOME` filled in, or a HOME the call set). */
 const HOOK_FILE =
@@ -310,11 +311,13 @@ const GLOB = /[*?[]/;
 /** How many readings of a glob word are checked; more counts as a hook path (fail closed). */
 const MAX_GLOB_READINGS = 256;
 
-/** True when a glob part could match the name, in any case; a leading dot only when the pattern writes one. */
+/**
+ * True when a glob part could match the name, in any case; a leading dot only when the pattern writes one.
+ * R-257's linear matcher (gate-gaps-r3 Task 12): sets read as the shell reads them, a class form as any one character.
+ */
 function globMatches(part: string, name: string): boolean {
   if (name.startsWith('.') && !part.startsWith('.')) return false;
-  const pattern = part.replace(/\[[^\]]*\]?|[*?]|[^*?[]/g, (c) => (c === '*' ? '.*' : c === '?' || c.startsWith('[') ? '.' : c.replace(/[.*+?^${}()|\\]/g, '\\$&')));
-  return new RegExp(`^${pattern}$`, 'i').test(name);
+  return globMatch(globTokens(specialSetsAsAny(part.toLowerCase())), name.toLowerCase());
 }
 
 /** The paths a glob word could stand for: each glob part as itself or a hook-path name it matches (`**` also as several folders); null past the cap. */
