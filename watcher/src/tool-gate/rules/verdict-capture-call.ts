@@ -22,9 +22,10 @@ const SEPARATORS = /[\s'"`;|&()<>=${}\\,]+/;
 const GLOB = /[*?[]/;
 /** A `[..]` set as the shell reads it: `!`/`^` first, then `]` first as a member, then up to the closing `]`. */
 const SET = /\[[!^]?\]?[^\]]*\]?/;
-/** Characters that end a shell word, so a `[..]` set never spans them. */
-const WORD_END = /[\s;|&()<>'"`]/;
-/** Characters that end the search for a form's close: word ends plus `$`, `{` and `}`, so a form never spans two expansions (security INFO-1, gate round 7). */
+/**
+ * Characters that end a `[..]` set and the search for a form's close: shell word ends plus `$`, `{` and `}`, so neither
+ * spans two expansions (security INFO-1, gate round 7; a backslash set, security LOW, gate round 8).
+ */
 const FORM_END = /[\s;|&()<>'"`${}]/;
 
 /**
@@ -33,7 +34,7 @@ const FORM_END = /[\s;|&()<>'"`${}]/;
  * One pass: the search for a form's closing `:]`, `=]` or `.]` and for the next word end are cached, and an
  * unclosed set is skipped whole. A close past the current word's end does not close the form (code-review round 8).
  */
-function specialSetsAsAny(text: string): string {
+export function specialSetsAsAny(text: string): string {
   const closing = new Map<string, number>();
   const closeOf = (delim: string, from: number): number => {
     const cached = closing.get(delim);
@@ -61,10 +62,10 @@ function specialSetsAsAny(text: string): string {
     if (text[j] === '!' || text[j] === '^') j += 1;
     if (text[j] === ']') j += 1;
     let special = false;
-    for (; j < text.length && text[j] !== ']' && !WORD_END.test(text[j]); j += 1) {
+    for (; j < text.length && text[j] !== ']' && !FORM_END.test(text[j]); j += 1) {
       if (text[j] === '\\') {
         special = true;
-        j += 1;
+        if (j + 1 < text.length && !FORM_END.test(text[j + 1])) j += 1;
       } else if (text[j] === '[' && ':=.'.includes(text[j + 1] ?? 'x')) {
         const at = closeOf(text[j + 1], j + 2);
         if (at >= 0 && at < wordEndOf(j + 2)) {
@@ -85,10 +86,10 @@ function specialSetsAsAny(text: string): string {
 }
 
 /** One glob token: `*` (any run), or a test for one character (`?`, a `[..]` set, or a literal). */
-type Token = '*' | ((c: string) => boolean);
+export type Token = '*' | ((c: string) => boolean);
 
 /** The tokens a glob piece stands for. An unclosed `[` matches any one character, as before (fails closed). */
-function globTokens(piece: string): Token[] {
+export function globTokens(piece: string): Token[] {
   const tokens: Token[] = [];
   for (const m of piece.matchAll(new RegExp(`${SET.source}|[*?]|[^*?[]`, 'g'))) {
     const c = m[0];
@@ -119,7 +120,7 @@ function bracketTest(body: string): (c: string) => boolean {
 }
 
 /** Whole-piece glob match with two pointers, backtracking only to the last `*` (no exponential blow-up). */
-function globMatch(tokens: Token[], name: string): boolean {
+export function globMatch(tokens: Token[], name: string): boolean {
   let t = 0;
   let s = 0;
   let star = -1;
@@ -178,7 +179,6 @@ export function namesVerdictCapture(text: string): boolean {
   for (const word of specialSetsAsAny(lower).split(SEPARATORS)) {
     const segments = word.split('/');
     for (const [i, segment] of segments.entries()) {
-      if (NAMES.includes(segment)) return true;
       if (GLOB.test(segment) && globNames(segment, segments[i - 1])) return true;
     }
   }

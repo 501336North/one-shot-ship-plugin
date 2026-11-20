@@ -65,7 +65,14 @@ class GitError extends Error {}
  * `raw` keeps stdout as git printed it (for `-z` output, whose paths may end in spaces). git is the fixed-path binary
  * (gitBin, never PATH; pen N3) run with PATH=/usr/bin:/bin; with none, every call fails (closed).
  */
-function runGit(repo: string, args: string[], okCodes: number[] = [0], raw = false, maxBuffer = 1024 * 1024): { status: number; out: string } {
+function runGit(
+  repo: string,
+  args: string[],
+  okCodes: number[] = [0],
+  raw = false,
+  maxBuffer = 1024 * 1024,
+  input?: string,
+): { status: number; out: string } {
   const env = gitEnv();
   env.GIT_CONFIG_NOSYSTEM = '1';
   env.PATH = '/usr/bin:/bin';
@@ -75,7 +82,8 @@ function runGit(repo: string, args: string[], okCodes: number[] = [0], raw = fal
     cwd: repo,
     env,
     encoding: 'utf-8',
-    stdio: ['ignore', 'pipe', 'ignore'],
+    stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'],
+    input,
     timeout: 10_000,
     maxBuffer,
   });
@@ -133,17 +141,32 @@ function containedIn(repo: string, tip: string, sha: string): boolean {
 export type ShipBaseCheck = 'ok' | 'refused' | 'not_in_snapshot';
 
 /**
- * Security info 2 (gate round 7): true when `<git-common-dir>/refs/heads/<base>`, or a folder on the way to it, is a
- * filesystem symlink (lstat), which `symbolic-ref` does not see. Any error counts as a link (fail closed).
+ * Security info 2 (gate round 7) + security info 4 (gate round 8): true when `refs`, `refs/heads` or `packed-refs`
+ * under the git common dir, or `refs/heads/<base>` or a folder on the way to it, is a filesystem symlink (lstat), which
+ * `symbolic-ref` does not see. The ref format and common dir come from one rev-parse call. A reftable repo keeps no
+ * loose ref files, so only the store links are checked; ENOTDIR counts as no file (security low, gate round 8). Any
+ * other error counts as a link (fail closed).
  */
 function refPathLinked(repo: string, base: string): boolean {
   try {
-    let p = path.resolve(repo, runGit(repo, ['rev-parse', '--git-common-dir']).out, 'refs', 'heads');
+    const [format, ...dir] = runGit(repo, ['rev-parse', '--show-ref-format', '--git-common-dir'], [0], true).out.replace(/\n$/, '').split('\n');
+    const common = path.resolve(repo, dir.join('\n'));
+    const linked = (p: string): boolean | undefined => {
+      try {
+        return fs.lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink();
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'ENOTDIR') return undefined;
+        throw e;
+      }
+    };
+    if (['refs', 'refs/heads', 'packed-refs'].some((p) => linked(path.join(common, p)) === true)) return true;
+    if (format === 'reftable') return false;
+    let p = path.join(common, 'refs', 'heads');
     for (const seg of base.split('/')) {
       p = path.join(p, seg);
-      const st = fs.lstatSync(p, { throwIfNoEntry: false });
+      const st = linked(p);
       if (st === undefined) return false;
-      if (st.isSymbolicLink()) return true;
+      if (st) return true;
     }
     return false;
   } catch {
@@ -201,33 +224,62 @@ interface Diff {
   empty: boolean;
 }
 
+/** The one commit of `shas` that contains all the others (`merge-base --independent`, perf info 1); null when none does. */
+function mostAdvanced(repo: string, shas: string[]): string | null {
+  if (shas.length === 1) return shas[0] as string;
+  try {
+    const top = runGit(repo, ['merge-base', '--independent', '--end-of-options', ...shas]).out.split('\n');
+    return top.length === 1 && shas.includes(top[0] as string) ? (top[0] as string) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Pen L2 + pen L1 (gate round 7): a stale local base (a teammate pushed since it was last pulled) must not count their
  * commits as the feature's. The candidates are the snapshot SHAs of same-name remote refs (`refs/remotes/<remote>/
  * <branch>`) that contain the local tip and do not already contain HEAD. The diff starts from the most advanced one
- * (it contains all the others); when none does, from the one whose merge-base with HEAD is newest; with none, the
- * local tip.
+ * (it contains all the others); when none does (diverged remotes), from the one whose merge-base with HEAD every other
+ * one's merge-base is an ancestor of (topology, never commit time: pen info 1); with none, the local tip.
+ * D61: then from the most advanced live `refs/remotes/<remote>/<branch>` that HEAD already contains and that contains
+ * that choice (a mid-run rebase onto, or merge of, an updated remote while local main is stale). It only narrows.
  */
 function diffFrom(repo: string, branch: string, tip: string, head: string, remoteRefs: ReadonlyMap<string, string>): string {
   const same = [...remoteRefs.keys()].sort()
     .filter((name) => /^refs\/remotes\/[^/]+\/(.+)$/.exec(name)?.[1] === branch)
     .map((name) => remoteRefs.get(name) as string);
   const candidates = [...new Set(same)].filter((sha) => sha !== tip && containedIn(repo, tip, sha) && !containedIn(repo, head, sha));
-  if (candidates.length <= 1) return candidates[0] ?? tip;
-  const top = candidates.find((c) => candidates.every((o) => o === c || containedIn(repo, o, c)));
-  if (top !== undefined) return top;
-  let best = tip;
-  let bestAt = -Infinity;
+  const from = candidates.length === 0 ? tip : mostAdvanced(repo, candidates) ?? topologicalBest(repo, candidates, head);
+  return liveBase(repo, branch, from, head);
+}
+
+/** Pen info 1: the diverged candidate whose merge-base with HEAD is the newest by ancestry; the first one on a tie. */
+function topologicalBest(repo: string, candidates: string[], head: string): string {
+  let best: { sha: string; mb: string } | null = null;
   for (const c of candidates) {
     try {
       const mb = runGit(repo, ['merge-base', '--end-of-options', c, head]).out;
-      const at = Number(runGit(repo, ['log', '-1', '--format=%ct', '--end-of-options', mb]).out);
-      if (at > bestAt) [best, bestAt] = [c, at];
+      if (best === null || (mb !== best.mb && runGit(repo, ['merge-base', '--is-ancestor', '--end-of-options', best.mb, mb], [0, 1]).status === 0)) {
+        best = { sha: c, mb };
+      }
     } catch {
       // a candidate git cannot compare is skipped
     }
   }
-  return best;
+  return best?.sha ?? (candidates[0] as string);
+}
+
+/** D61: the most advanced live same-name remote ref that HEAD contains and that contains `from`; else `from`. */
+function liveBase(repo: string, branch: string, from: string, head: string): string {
+  const live = new Set<string>();
+  const out = runGit(repo, ['for-each-ref', '--format=%(refname)%00%(objectname)%00%(symref)', 'refs/remotes/'], [0], true, PATH_LIST_BUFFER).out;
+  for (const line of out.split('\n')) {
+    const [name, sha, symref] = line.split('\0');
+    if (symref !== '' || sha === undefined || !TREE_RE.test(sha) || sha === from) continue;
+    if (/^refs\/remotes\/[^/]+\/(.+)$/.exec(name as string)?.[1] !== branch) continue;
+    if (containedIn(repo, from, sha) && containedIn(repo, sha, head)) live.add(sha);
+  }
+  return live.size === 0 ? from : mostAdvanced(repo, [...live]) ?? from;
 }
 
 function readDiff(repo: string, base: string, remoteRefs: ReadonlyMap<string, string>): Diff {
@@ -333,6 +385,8 @@ interface RawChange {
 }
 
 const ABSENT = /^0{6} /;
+/** Deleted paths looked up one by one in a batch; more are compared through cached path lists. */
+const BATCH_LOOKUPS = 64;
 
 /**
  * D45 + D58: decides whether a captured fail row is cleared by the shipped code (HEAD outside .oss), for one assemble.
@@ -343,8 +397,11 @@ const ABSENT = /^0{6} /;
  */
 class FailComparer {
   private readonly missing = new Map<string, boolean>();
+  /** Perf low 2 (gate round 8): only the merge base's and the review bases' diffs to HEAD are kept, never a row's own. */
   private readonly toHead = new Map<string, Map<string, RawChange>>();
-  private readonly reviewBases = new Map<string, string>();
+  private readonly reviewBases = new Map<string, string | null>();
+  private ancestry: Set<string> | null = null;
+  private readonly added = new Map<string, Set<string>>();
 
   constructor(private readonly repo: string, private readonly from: string, private readonly mergeBase: string) {}
 
@@ -372,42 +429,59 @@ class FailComparer {
    * D45 + D58: whether the shipped code differs from what the agent reviewed, on the feature's own paths only: those
    * the feature changed since the merge base (`git diff <merge-base> HEAD`), plus those the reviewed tree changed
    * against the review-time merge base (merge-base(from, review headSha)), so a flagged edit the feature has since
-   * dropped still counts. A teammate's upstream change brought in by a rebase or merge is on neither list. Ship's
-   * reviews run on the uncommitted tree and ship commits afterwards (only the files it picks), so `tree` (the reviewed
-   * working tree, untracked files included) is compared with HEAD: an added or modified path differs; a deleted path
-   * differs only when it was tracked at review (`trackedTree`) or in the commit HEAD was at review (`reviewHead`, pen
-   * N4); an untracked file the reviewer saw and ship left out does not (pen M3a). All are strict hex tree-ishes,
-   * checked by the caller. 'unknown' on any git error (an object git does not have included).
+   * dropped still counts. A teammate's upstream change brought in by a rebase or merge is on neither list. With no
+   * usable review headSha (null or pruned) only the first list counts (code-review info 1). D62: a feature path that
+   * upstream also changed between the review-time base and the merge base differs only when the feature's own change
+   * to it does (samePatch). Ship's reviews run on the uncommitted tree and ship commits afterwards (only the files it
+   * picks), so `tree` (the reviewed working tree, untracked files included) is compared with HEAD: an added or
+   * modified path differs; a deleted path differs only when it was tracked at review (`trackedTree`) or in the commit
+   * HEAD was at review (`reviewHead`, pen N4); an untracked file the reviewer saw and ship left out does not (pen
+   * M3a). All are strict hex tree-ishes, checked by the caller. 'unknown' on any git error (an object git does not
+   * have included).
    */
   private compare(tree: string, trackedTree: string, reviewHead: string | null, at: string | null): 'same' | 'differs' | 'unknown' {
     try {
-      const changes = this.raw(tree);
+      const changes = this.rawToHead(tree);
       if (changes.size === 0) return 'same';
-      const own = this.raw(this.mergeBase);
+      const own = this.baseToHead(this.mergeBase);
       const deleted = (c: RawChange): boolean => ABSENT.test(c.to);
-      for (const [p, c] of changes) if (!deleted(c) && own.has(p)) return 'differs';
-      const sinceReview = this.raw(this.reviewBase(at));
+      // The common case first, with no review-base diff (perf, gate round 8): a feature path the shipped code changed
+      // that upstream left alone since review (its state at the review base is its state at the merge base) differs.
+      const ownLive = [...changes].filter(([p, c]) => own.has(p) && !deleted(c)).map(([p]) => p);
+      if (ownLive.length > 0) {
+        const base = this.reviewBase(at);
+        if (base === null || base === this.mergeBase) return 'differs';
+        const probe = ownLive.slice(0, BATCH_LOOKUPS);
+        const then = this.lookup(probe.map((p) => `${base}:${p}`));
+        const sameState = (state: string | null, mb: string): boolean => (state === null ? ABSENT.test(mb) : state === mb);
+        if (probe.some((p, i) => sameState(then[i] ?? null, own.get(p)?.from ?? ''))) return 'differs';
+      }
+      const reviewBase = this.reviewBase(at);
+      const sinceReview = reviewBase === null ? own : this.baseToHead(reviewBase);
       // A path's state at the review-time merge base: from that diff, else the same as HEAD's.
-      const reviewed = (p: string, c: RawChange): boolean => own.has(p) || c.from !== (sinceReview.get(p)?.from ?? c.to);
+      const reviewed = (p: string, c: RawChange): boolean =>
+        own.has(p) || (reviewBase !== null && c.from !== (sinceReview.get(p)?.from ?? c.to));
+      // D62: upstream changed the path between the review-time base and the merge base (each state read as above).
+      const upstream = (p: string, c: RawChange): boolean =>
+        reviewBase !== null && reviewBase !== this.mergeBase && (sinceReview.get(p)?.from ?? c.to) !== (own.get(p)?.from ?? c.to);
       const gone: string[] = [];
+      const patched: string[] = [];
       for (const [p, c] of changes) {
         if (!reviewed(p, c)) continue;
-        if (!deleted(c)) return 'differs';
-        gone.push(p);
+        if (deleted(c)) gone.push(p);
+        else if (upstream(p, c)) patched.push(p);
+        else return 'differs';
       }
+      for (const p of patched) if (!this.samePatch(reviewBase as string, tree, p)) return 'differs';
       if (gone.length === 0) return 'same';
-      const wasTracked = new Set(this.paths('A', 'HEAD', trackedTree));
-      if (reviewHead !== null) for (const p of this.paths('A', 'HEAD', reviewHead)) wasTracked.add(p);
-      return gone.some((p) => wasTracked.has(p)) ? 'differs' : 'same';
+      return this.trackedAtReview(gone, trackedTree, reviewHead) ? 'differs' : 'same';
     } catch {
       return 'unknown';
     }
   }
 
-  /** `diff --raw` from a tree-ish to HEAD outside .oss, by path; cached per tree-ish. */
-  private raw(treeish: string): Map<string, RawChange> {
-    const hit = this.toHead.get(treeish);
-    if (hit !== undefined) return hit;
+  /** `diff --raw` from a tree-ish to HEAD outside .oss, by path. */
+  private rawToHead(treeish: string): Map<string, RawChange> {
     const parts = runGit(this.repo, [...DIFF, '--raw', '-z', '--no-abbrev', '--end-of-options', treeish, 'HEAD', ...SHIPPED_CODE], [0], true, PATH_LIST_BUFFER)
       .out.split('\0');
     const out = new Map<string, RawChange>();
@@ -416,26 +490,107 @@ class FailComparer {
       if (m === null) throw new GitError('raw');
       out.set(parts[i + 1] as string, { from: `${m[1]} ${m[3]}`, to: `${m[2]} ${m[4]}` });
     }
-    this.toHead.set(treeish, out);
     return out;
   }
 
-  private paths(filter: string, from: string, to: string): string[] {
-    return runGit(this.repo, [...DIFF, '--name-only', '-z', `--diff-filter=${filter}`, '--end-of-options', from, to, ...SHIPPED_CODE], [0], true, PATH_LIST_BUFFER)
-      .out.split('\0').filter((p) => p !== '');
+  /** rawToHead of the merge base or a review base, cached (perf low 2: rows' own trees are not). */
+  private baseToHead(base: string): Map<string, RawChange> {
+    const hit = this.toHead.get(base);
+    if (hit !== undefined) return hit;
+    const out = this.rawToHead(base);
+    this.toHead.set(base, out);
+    return out;
   }
 
-  /** The merge base at review: merge-base(from, the review's HEAD); the current merge base with no headSha or once git pruned it. */
-  private reviewBase(at: string | null): string {
-    if (at === null) return this.mergeBase;
+  /**
+   * D62: true when the feature's own change to `p` is the same patch at review (review base to reviewed tree) and now
+   * (merge base to HEAD): `git patch-id --stable` over both zero-context diffs, so upstream's edits elsewhere in the
+   * file are not part of it. One path per diff; a binary diff counts as different (the whole-file rule).
+   */
+  private samePatch(reviewBase: string, tree: string, p: string): boolean {
+    const diff = (a: string, b: string): string =>
+      runGit(this.repo, ['--literal-pathspecs', ...DIFF, '--no-color', '-U0', '--end-of-options', a, b, '--', p], [0], true, PATH_LIST_BUFFER).out;
+    const then = diff(reviewBase, tree);
+    const now = diff(this.mergeBase, 'HEAD');
+    if (/^(GIT binary patch|Binary files )/m.test(then + now)) return false;
+    const [a, b] = ['0', '1'].map((d) => d.repeat(40));
+    const ids = new Map<string, string>();
+    const out = runGit(this.repo, ['patch-id', '--stable'], [0], true, PATH_LIST_BUFFER, `commit ${a}\n${then}commit ${b}\n${now}`).out;
+    for (const line of out.split('\n')) {
+      const [id, commit] = line.split(' ');
+      if (id !== undefined && commit !== undefined) ids.set(commit, id);
+    }
+    return ids.get(a as string) === ids.get(b as string);
+  }
+
+  /**
+   * Whether any deleted path was tracked at review: in `trackedTree` or in the review's HEAD commit. Up to
+   * BATCH_LOOKUPS paths: one `cat-file --batch-check -z` with the `<tree-ish>:<path>` names on stdin (perf low 1, gate
+   * round 8), never argv. More: git's path lookup scans each folder per name (40,000 names in one folder took 47 s),
+   * so the paths each tree-ish adds over HEAD are listed once and cached.
+   */
+  private trackedAtReview(gone: string[], trackedTree: string, reviewHead: string | null): boolean {
+    if (gone.length > BATCH_LOOKUPS) {
+      const sets = [trackedTree, ...(reviewHead === null ? [] : [reviewHead])].map((t) => this.addedOverHead(t));
+      return gone.some((p) => sets.some((set) => set.has(p)));
+    }
+    const names = gone.flatMap((p) => [`${trackedTree}:${p}`, ...(reviewHead === null ? [] : [`${reviewHead}:${p}`])]);
+    return this.lookup(names).some((state) => state !== null);
+  }
+
+  /**
+   * Each `<tree-ish>:<path>` name's `<mode> <object>` (as in diff --raw), null when git has no such entry. One
+   * `cat-file --batch-check -z` with the names on stdin, never argv.
+   */
+  private lookup(names: string[]): Array<string | null> {
+    const out = runGit(this.repo, ['cat-file', '--batch-check=%(objectmode) %(objectname)', '-z'], [0], true, PATH_LIST_BUFFER, names.map((n) => `${n}\0`).join('')).out;
+    let at = 0;
+    return names.map((n) => {
+      if (out.startsWith(`${n} missing\n`, at)) {
+        at += n.length + 9;
+        return null;
+      }
+      const m = /^([0-7]{6} [0-9a-f]{40}(?:[0-9a-f]{24})?)\n/.exec(out.slice(at, at + 73));
+      if (m === null) throw new GitError('cat-file');
+      at += m[0].length;
+      return m[1] as string;
+    });
+  }
+
+  /** Paths `treeish` has that HEAD does not (outside .oss), cached per tree-ish. */
+  private addedOverHead(treeish: string): Set<string> {
+    let hit = this.added.get(treeish);
+    if (hit === undefined) {
+      hit = new Set(
+        runGit(this.repo, [...DIFF, '--name-only', '-z', '--diff-filter=A', '--end-of-options', 'HEAD', treeish, ...SHIPPED_CODE], [0], true, PATH_LIST_BUFFER)
+          .out.split('\0').filter((p) => p !== ''),
+      );
+      this.added.set(treeish, hit);
+    }
+    return hit;
+  }
+
+  /**
+   * The merge base at review: merge-base(from, the review's HEAD). A review HEAD on the feature's own history since the
+   * merge base needs no call: its merge base is the current one (perf low 1, gate round 8). null when there is no
+   * headSha or git pruned it (the review-time base is unknown).
+   */
+  private reviewBase(at: string | null): string | null {
+    if (at === null) return null;
     const hit = this.reviewBases.get(at);
     if (hit !== undefined) return hit;
-    let base: string;
-    try {
-      base = runGit(this.repo, ['merge-base', '--end-of-options', this.from, at]).out;
-    } catch (e) {
-      if (!this.gone(at)) throw e;
-      base = this.mergeBase;
+    this.ancestry ??= new Set(
+      runGit(this.repo, ['rev-list', '--ancestry-path', `${this.mergeBase}..HEAD`], [0], true, PATH_LIST_BUFFER).out.split('\n'),
+    );
+    let base: string | null;
+    if (at === this.mergeBase || this.ancestry.has(at)) base = this.mergeBase;
+    else {
+      try {
+        base = runGit(this.repo, ['merge-base', '--end-of-options', this.from, at]).out;
+      } catch (e) {
+        if (!this.gone(at)) throw e;
+        base = null;
+      }
     }
     this.reviewBases.set(at, base);
     return base;

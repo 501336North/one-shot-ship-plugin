@@ -192,6 +192,19 @@
 - [x] Builder Q (capture): modified files are listed once per capture (LFS stat-dirty); the sparse ENOTDIR crash is fixed; the LFS docblock is updated.
 - [x] Builder R (gate rule): a raw literal-name check, and `$ { }` end the form-close search.
 
+### Ship round 10 fixes, after gate round 8 (2026-11-20)
+- [x] Gate round 8: code review and performance passed; security and pen test failed (1 medium found by three gates, 5 lows). The user picked D61-D63.
+- [x] Builder S (assemble-ship):
+  - D61: the live same-name remote base that HEAD contains and that fast-forwards `from` becomes the start of the diff and the feature's paths;
+  - D62: a feature path upstream also changed is compared by the patch-id of its own -U0 change;
+  - reftable repos skip the loose-ref walk (ENOTDIR counts as no file);
+  - symlinked refs, refs/heads or packed-refs under the common dir are refused;
+  - the D58 walk: one ancestry-path list and one cat-file batch (608 to about 400 spawns at 200 deletion rows); only the merge-base and review-base diffs are cached;
+  - diverged remotes are ordered by topology, with one merge-base --independent first; a fallback test was added;
+  - a null or pruned headSha counts only the feature's own paths.
+- [x] Builder T (capture): each modified file goes through the clean filter once (240 x 2 MB LFS edits: 2.2-2.8 s to 1.5-1.9 s); `tree` is unchanged, .oss entries are written back from the tracked index.
+- [x] Builder U (gate rule): the set scan ends at `$ { }` too (backslash-set split closed); the dead NAMES check is removed; globTokens, globMatch, specialSetsAsAny and Token are exported for R-266.
+
 ### Later
 - [ ] Ship into feat/determinism-sprint/build (SD-1)
 - [ ] T21 oss-lab (after the plugin ships)
@@ -199,4 +212,4 @@
 ## Blockers
 - None. R-266's 4 red base tests are fixed in #233 (4458bddb), and R-257 is rebased onto it.
 
-## Last Updated: 2026-11-19 18:15 CST by /oss:ship (round 9 fixes)
+## Last Updated: 2026-11-20 10:40 CST by /oss:ship (round 10 fixes)

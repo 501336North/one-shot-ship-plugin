@@ -198,3 +198,56 @@ describe('shipBaseAllowed refuses a symlinked branch ref', () => {
     expect(shipBaseAllowed(repo, 'team/main', FEATURE, refs({ 'team/main': main }))).toBe(false);
   });
 });
+
+/**
+ * Security low (gate round 8): a reftable repo keeps no refs/heads folder (`.git/refs/heads` is a file), so the
+ * symlink walk hit ENOTDIR and refused every local base. A reftable repo skips the walk; ENOTDIR counts as no file.
+ */
+describe('shipBaseAllowed on a reftable repo (security low, gate round 8)', () => {
+  it('accepts main contained in origin/main', () => {
+    fs.rmSync(repo, { recursive: true, force: true });
+    repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ship-base-rt-')));
+    git('init', '-q', '--ref-format=reftable', '-b', 'main');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    git('config', 'commit.gpgsign', 'false');
+    const main = commit('base.txt');
+    git('checkout', '-q', '-b', `feat/${FEATURE}/build`);
+    commit('feature.txt');
+    expect(shipBaseAllowed(repo, 'main', FEATURE, refs({ main }))).toBe(true);
+  });
+});
+
+/** Security info 4 / code-review info 4 (gate round 8): a symlinked refs, refs/heads or packed-refs is refused. */
+describe('shipBaseAllowed refuses a symlinked refs store', () => {
+  function moveAndLink(rel: string): void {
+    const p = path.join(repo, '.git', rel);
+    const real = path.join(repo, '.git', `${rel.replace('/', '-')}-real`);
+    fs.renameSync(p, real);
+    fs.symlinkSync(real, p);
+  }
+
+  it('a symlinked refs/heads folder is refused', () => {
+    const main = git('rev-parse', 'main');
+    commit('feature.txt');
+    moveAndLink('refs/heads');
+    expect(git('rev-parse', 'main')).toBe(main);
+    expect(shipBaseAllowed(repo, 'main', FEATURE, refs({ main }))).toBe(false);
+  });
+
+  it('a symlinked refs folder is refused', () => {
+    const main = git('rev-parse', 'main');
+    commit('feature.txt');
+    moveAndLink('refs');
+    expect(shipBaseAllowed(repo, 'main', FEATURE, refs({ main }))).toBe(false);
+  });
+
+  it('a symlinked packed-refs file is refused, though the packed base passes without the link', () => {
+    const main = git('rev-parse', 'main');
+    commit('feature.txt');
+    git('pack-refs', '--all');
+    expect(shipBaseAllowed(repo, 'main', FEATURE, refs({ main }))).toBe(true);
+    moveAndLink('packed-refs');
+    expect(shipBaseAllowed(repo, 'main', FEATURE, refs({ main }))).toBe(false);
+  });
+});

@@ -819,15 +819,27 @@ function reviewedTrees(repo, left) {
     } catch {
     }
     if (!clearHidingBits(repo, { GIT_INDEX_FILE: trackedIndex }, bits, left)) return none;
+    const changed = boundedGit(repo, ["ls-files", "-z", "-m", "-d"], { GIT_INDEX_FILE: trackedIndex }, left);
+    if (changed === null) return none;
+    const changedPaths = pathList(changed);
+    const isOss = (p) => p === ".oss" || p.startsWith(".oss/");
+    const ossChanged = new Set(changedPaths.filter(isOss));
+    let ossEntries = [];
+    if (ossChanged.size > 0) {
+      const staged = boundedGit(repo, ["ls-files", "-z", "-s", "--", ".oss"], { GIT_INDEX_FILE: trackedIndex }, left);
+      if (staged === null) return none;
+      ossEntries = staged.toString("utf-8").split("\0").filter((e) => ossChanged.has(e.slice(e.indexOf("	") + 1)));
+    }
+    const trackedTree = treeWith(repo, trackedIndex, changedPaths, left);
+    if (trackedTree === "") return none;
     try {
       fs5.copyFileSync(trackedIndex, allIndex);
     } catch {
     }
-    const changed = boundedGit(repo, ["ls-files", "-z", "-m", "-d"], { GIT_INDEX_FILE: trackedIndex }, left);
-    if (changed === null) return none;
-    const changedPaths = pathList(changed);
-    const trackedTree = treeWith(repo, trackedIndex, changedPaths, left);
-    if (trackedTree === "") return none;
+    if (ossEntries.length > 0) {
+      const restore = ["update-index", "-z", "--index-info"];
+      if (boundedGit(repo, restore, { GIT_INDEX_FILE: allIndex }, left, Buffer.from(ossEntries.join("\0") + "\0")) === null) return none;
+    }
     const global = globalIgnoreFile(repo, left);
     const untracked = boundedGit(repo, [
       "-c",
@@ -842,8 +854,7 @@ function reviewedTrees(repo, left) {
       ":(exclude).oss"
     ], { GIT_INDEX_FILE: allIndex }, left);
     if (untracked === null) return none;
-    const outsideOss = changedPaths.filter((p) => p !== ".oss" && !p.startsWith(".oss/"));
-    return { tree: treeWith(repo, allIndex, [...outsideOss, ...pathList(untracked)], left), trackedTree };
+    return { tree: treeWith(repo, allIndex, pathList(untracked), left), trackedTree };
   } finally {
     fs5.rmSync(dir, { recursive: true, force: true });
   }

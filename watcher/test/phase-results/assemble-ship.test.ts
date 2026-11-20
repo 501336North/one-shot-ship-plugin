@@ -1957,3 +1957,251 @@ describe('assembleShip: no branch hint for a name that is not a valid branch nam
     expect(ship({ base: 'bad..name' })).toEqual({ ok: false, error: 'diff_unavailable' });
   });
 });
+
+/**
+ * D61 (user pick, ship round 10, "Use live remote base"; security, code review and pen test, gate round 8): an honest
+ * model fetches and rebases onto, or merges, an updated origin/main mid-run while local main stays stale. The live
+ * refs/remotes/<r>/<base> that HEAD already contains and that fast-forwards the chosen base is the diff base, so the
+ * teammate's files neither count in the diff nor clear an unfixed fail. It only narrows the feature's paths.
+ */
+describe('assembleShip: a live remote base that HEAD already contains (D61)', () => {
+  const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  const BRANCH = `feat/${FEATURE}/ship`;
+  beforeEach(() => commitFile('feature.txt', 'vuln\n', 'feature'));
+
+  function failOnHead(): void {
+    const tree = git('rev-parse', 'HEAD^{tree}');
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+      gate: 'security', verdict: 'fail', findings: { ...ZERO, medium: 1 }, agent: 'a', session: 's',
+      ts: '2026-11-13T09:10:00.000Z', tree, trackedTree: tree, headSha: git('rev-parse', 'HEAD'),
+    });
+  }
+
+  /** A teammate's commit reaches origin/main through a fetch; local main stays where it was. */
+  function upstreamMoves(): string {
+    git('checkout', '-q', '--detach', 'main');
+    commitFile('mate.txt', 'mate\n', 'mate');
+    const u = git('rev-parse', 'HEAD');
+    git('update-ref', 'refs/remotes/origin/main', u);
+    git('checkout', '-q', BRANCH);
+    return u;
+  }
+
+  const security = (o: AssembleOutcome): Record<string, unknown> | undefined =>
+    (result(o).gates as Array<Record<string, unknown>>).find((g) => g.gate === 'security');
+
+  it('a rebase onto the updated origin/main, the snapshot holding the old main: the fail stays, the diff is the feature\'s', () => {
+    const s0 = git('rev-parse', 'main');
+    failOnHead();
+    const u = upstreamMoves();
+    git('rebase', '-q', 'origin/main');
+    allPass(1);
+    const r = result(ship({ remoteRefs: new Map([['refs/remotes/origin/main', s0]]) }));
+    expect(security(ship({ remoteRefs: new Map([['refs/remotes/origin/main', s0]]) }))).toMatchObject({ verdict: 'fail', source: 'agent' });
+    expect(r.diff).toEqual({ base: u, baseRef: 'main', files: 1, insertions: 1, deletions: 0 });
+  });
+
+  it('a rebase onto the updated origin/main with an empty snapshot: the fail stays', () => {
+    failOnHead();
+    upstreamMoves();
+    git('rebase', '-q', 'origin/main');
+    allPass(1);
+    expect(security(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
+  });
+
+  it('a merge of the updated origin/main: the fail stays, the diff is the feature\'s', () => {
+    const s0 = git('rev-parse', 'main');
+    failOnHead();
+    const u = upstreamMoves();
+    git('merge', '-q', '--no-edit', 'origin/main');
+    allPass(1);
+    const o = ship({ remoteRefs: new Map([['refs/remotes/origin/main', s0]]) });
+    expect(security(o)).toMatchObject({ verdict: 'fail', source: 'agent' });
+    expect(result(o).diff).toMatchObject({ base: u, files: 1 });
+  });
+
+  it('a snapshot that already holds the new upstream: unchanged, the fail stays', () => {
+    failOnHead();
+    const u = upstreamMoves();
+    git('rebase', '-q', 'origin/main');
+    allPass(1);
+    const o = ship({ remoteRefs: new Map([['refs/remotes/origin/main', u]]) });
+    expect(security(o)).toMatchObject({ verdict: 'fail', source: 'agent' });
+    expect(result(o).diff).toMatchObject({ base: u, files: 1 });
+  });
+
+  it('a rebase onto the updated origin/main, then a real fix: the fail clears', () => {
+    failOnHead();
+    upstreamMoves();
+    git('rebase', '-q', 'origin/main');
+    commitFile('feature.txt', 'fixed\n', 'fix');
+    allPass(1);
+    expect(security(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  // Rule: a live ref HEAD does not contain (upstream moved but the feature was not rebased) never moves the base.
+  it('a fetched origin/main the feature has not taken in leaves the base at local main', () => {
+    upstreamMoves();
+    allPass(1);
+    expect(result(ship()).diff).toMatchObject({ base: git('rev-parse', 'main'), files: 1 });
+  });
+});
+
+/**
+ * D62 (user pick, ship round 10, "Compare the feature's patch"; pen L1, gate round 8): a teammate edits the flagged file
+ * elsewhere and the model rebases with no fix. For a feature path upstream also changed since review, the fail clears
+ * only when the feature's own change to that path differs (patch-id of review base to reviewed tree, against merge
+ * base to HEAD). Paths upstream did not touch keep the whole-file comparison (D58).
+ */
+describe('assembleShip: a flagged file that upstream also changed (D62)', () => {
+  const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  const BRANCH = `feat/${FEATURE}/ship`;
+  const lines = (edit: Record<number, string> = {}): string =>
+    Array.from({ length: 30 }, (_, i) => `${edit[i + 1] ?? i + 1}\n`).join('');
+
+  beforeEach(() => {
+    git('checkout', '-q', 'main');
+    commitFile('shared.txt', lines(), 'shared');
+    git('checkout', '-q', BRANCH);
+    git('rebase', '-q', 'main');
+    commitFile('shared.txt', lines({ 15: 'VULN' }), 'feature');
+    const tree = git('rev-parse', 'HEAD^{tree}');
+    openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+      gate: 'security', verdict: 'fail', findings: { ...ZERO, medium: 1 }, agent: 'a', session: 's',
+      ts: '2026-11-13T09:10:00.000Z', tree, trackedTree: tree, headSha: git('rev-parse', 'HEAD'),
+    });
+  });
+
+  function mateEdits(edit: Record<number, string>): void {
+    git('checkout', '-q', 'main');
+    commitFile('shared.txt', lines(edit), 'mate');
+    git('checkout', '-q', BRANCH);
+  }
+
+  const security = (o: AssembleOutcome): Record<string, unknown> | undefined =>
+    (result(o).gates as Array<Record<string, unknown>>).find((g) => g.gate === 'security');
+
+  it('a teammate edits another line of the flagged file, the model rebases with no fix: the fail stays', () => {
+    mateEdits({ 2: 'teammate' });
+    git('rebase', '-q', 'main');
+    allPass(1);
+    expect(security(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
+  });
+
+  it('a teammate edits a line three above the flagged one (inside its diff context): the fail stays', () => {
+    mateEdits({ 12: 'teammate' });
+    git('rebase', '-q', 'main');
+    allPass(1);
+    expect(security(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
+  });
+
+  it('a conflict on the flagged line, resolved to the flagged code: the fail stays', () => {
+    mateEdits({ 15: 'teammate15' });
+    expect(() => git('rebase', '-q', 'main')).toThrow();
+    fs.writeFileSync(path.join(repo, 'shared.txt'), lines({ 15: 'VULN' }));
+    git('add', 'shared.txt');
+    execFileSync('git', ['-c', 'core.editor=true', 'rebase', '--continue'], { cwd: repo, stdio: 'ignore', env: { ...process.env, GIT_EDITOR: 'true' } });
+    allPass(1);
+    expect(security(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
+  });
+
+  it('a teammate edits another line, then a real fix to the flagged line: the fail clears', () => {
+    mateEdits({ 2: 'teammate' });
+    git('rebase', '-q', 'main');
+    commitFile('shared.txt', lines({ 2: 'teammate', 15: 'safe' }), 'fix');
+    allPass(1);
+    expect(security(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+});
+
+/**
+ * Code-review low 2 and pen info 1 (gate round 8): two same-name remotes that diverged (a fork-only commit), the feature
+ * cut from upstream. The base is upstream's tip, chosen by topology, not commit time (ties and clock skew broke it).
+ */
+describe('assembleShip: diverged same-name remotes (code-review low 2, pen info 1)', () => {
+  function diverged(forkDate: string): { fork: string; upstream: string } {
+    const env = { ...process.env, GIT_COMMITTER_DATE: '2026-11-19T10:00:00+0000', GIT_AUTHOR_DATE: '2026-11-19T10:00:00+0000' };
+    const at = (date: string, name: string, msg: string): string => {
+      fs.writeFileSync(path.join(repo, name), Array.from({ length: 50 }, (_, i) => `${i}\n`).join(''));
+      git('add', name);
+      execFileSync('git', ['commit', '-q', '-m', msg], { cwd: repo, env: { ...env, GIT_COMMITTER_DATE: date, GIT_AUTHOR_DATE: date } });
+      return git('rev-parse', 'HEAD');
+    };
+    git('checkout', '-q', '--detach', 'main');
+    const fork = at(forkDate, 'fork-only.txt', 'C');
+    git('checkout', '-q', '--detach', 'main');
+    for (const i of [1, 2]) at('2026-11-19T10:00:00+0000', `up${i}.txt`, `U${i}`);
+    const upstream = at('2026-11-19T10:00:00+0000', 'up3.txt', 'U3');
+    git('checkout', '-q', '-B', `feat/${FEATURE}/ship`, upstream);
+    commitFile('f.txt', 'f\n', 'feature');
+    return { fork, upstream };
+  }
+
+  for (const [label, date] of [['equal commit times', '2026-11-19T10:00:00+0000'], ['a fork commit dated later', '2026-11-19T12:00:00+0000']]) {
+    it(`${label}: the diff base is upstream's tip, the diff is the feature's 1 file`, () => {
+      const { fork, upstream } = diverged(date);
+      allPass(1);
+      const refs = new Map([['refs/remotes/origin/main', fork], ['refs/remotes/upstream/main', upstream]]);
+      expect(result(ship({ remoteRefs: refs })).diff).toEqual({ base: upstream, baseRef: 'main', files: 1, insertions: 1, deletions: 0 });
+    });
+  }
+});
+
+/**
+ * Code-review info 1 (gate round 8): with the review headSha unknown (null, or pruned), the review-time base is not
+ * known, so only the feature's own paths count; a teammate's file brought in by a rebase no longer clears the fail.
+ */
+describe('assembleShip: a fail with no usable review headSha counts only the feature\'s paths (code-review info 1)', () => {
+  const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+
+  for (const [label, headSha] of [['no headSha', undefined], ['a headSha git does not have', 'deadbeef'.repeat(5)]] as const) {
+    it(`${label}, then a rebase onto a teammate's commit: the fail stays`, () => {
+      commitFile('f.txt', 'vuln\n', 'feature');
+      const tree = git('rev-parse', 'HEAD^{tree}');
+      openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+        gate: 'security', verdict: 'fail', findings: { ...ZERO, medium: 1 }, agent: 'a', session: 's',
+        ts: '2026-11-13T09:10:00.000Z', tree, trackedTree: tree, ...(headSha === undefined ? {} : { headSha }),
+      });
+      git('checkout', '-q', 'main');
+      commitFile('mate.txt', 'mate\n', 'mate');
+      git('checkout', '-q', `feat/${FEATURE}/ship`);
+      git('rebase', '-q', 'main');
+      allPass(1);
+      const g = (result(ship()).gates as Array<Record<string, unknown>>).find((x) => x.gate === 'security');
+      expect(g).toMatchObject({ verdict: 'fail', source: 'agent' });
+    });
+  }
+});
+
+/**
+ * Perf low 1 (gate round 8): rows with distinct review heads whose flagged file was later deleted cost 2-4 git processes
+ * each (a merge-base, then two path lists), 18.9 s at 200 rows on a big repo. A review head on the feature's own
+ * history needs no merge-base, and "was this path tracked at review" is one batched object lookup.
+ */
+describe('assembleShip: distinct review heads with a deleted flagged file stay cheap (perf low 1, gate round 8)', { timeout: 120_000 }, () => {
+  const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  const ROWS = 200;
+
+  it(`${ROWS} fails on ${ROWS} review heads, the flagged file then deleted: all cleared, at most 2.5 git processes per row`, () => {
+    commitFile('other.txt', 'keep\n', 'feature');
+    commitFile('flagged.txt', 'vuln\n', 'feature 2');
+    const tree = git('rev-parse', 'HEAD^{tree}');
+    const ledger = openLedger(repo);
+    let head = git('rev-parse', 'HEAD');
+    for (let i = 0; i < ROWS; i++) {
+      head = git('commit-tree', tree, '-p', head, '-m', `review ${i}`);
+      ledger.appendRow(`verdicts/${FEATURE}`, {
+        gate: GATES[i % 3], verdict: 'fail', findings: { ...ZERO, high: 1 }, agent: `a${i}`, session: 's',
+        ts: new Date(Date.parse('2026-11-13T09:00:00.000Z') + i * 1000).toISOString(), tree, trackedTree: tree, headSha: head,
+      });
+    }
+    git('reset', '-q', '--hard', head);
+    git('rm', '-q', 'flagged.txt');
+    git('commit', '-q', '-m', 'drop the flagged file');
+    allPass(1);
+    spawns.n = 0;
+    const r = result(ship());
+    expect(r.verdict).toBe('ready_to_merge');
+    expect(spawns.n).toBeLessThanOrEqual(ROWS * 2.5);
+  });
+});

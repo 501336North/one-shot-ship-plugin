@@ -180,3 +180,11 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 - D52 limit: with a sparse checkout, an untracked file hidden only via .git/info/exclude (ignored under D53) that shares its name with an off-disk folder can't be staged by git, so no row is written.
 - D60 limit: clean filters outside the fixed capture PATH mean no captured fail.
 - The CLI prints refusals as `<id>[: <detail>][ (field <f>)]`; only diff_unavailable details are hints.
+
+## Ship round 10 notes (2026-11-20)
+- D61 reads live refs/remotes/<one-segment>/<base>; check reads them again, so a ref that moves between assemble and check gives a mismatch (fails closed).
+- D61 needs a ref naming the upstream commit: a rebase onto a bare SHA no ref names (code-review probe P3) still clears. A normal fetch names it.
+- D62 limit cost: a row whose review head is off the feature's history costs a merge-base plus a batched state lookup. 200 such rows on a 100,000-file repo took 15.2 s (was 8.9 s), with peak RSS down from 304 MB to 134 MB.
+- Known limits, not fixed: `git merge --squash main` into the feature makes upstream changes the feature's own and clears a fail (D58); the 64 MB `--raw` buffer holds roughly 420,000-550,000 paths, beyond which the row is unknown and stays open.
+- Above 64 deleted paths the tracked-at-review check uses cached diff lists, since `tree:path` lookups scan a flat folder per name.
+

@@ -370,8 +370,10 @@ function treeWith(repo: string, tmpIndex: string, paths: string[], left: Deadlin
  * with the modified and deleted paths (.oss included but never consulted), `tree` with those outside .oss plus the
  * untracked files not ignored. Performance LOW F2 (round 9): `ls-files -m` compares every stat-dirty file's content,
  * which runs its clean filter (an LFS repo hashes each touched file), so it runs once, on the first temp index after
- * its hiding bits are cleared, and the second temp index is seeded from that one. Both '' when the index path cannot
- * be read, either tree cannot be built (D52), or time is up.
+ * its hiding bits are cleared. Performance info 2 (round 10): the second temp index is a copy of the first after its
+ * update, with its changed .oss entries put back as the index had them, so each modified file is hashed once. Both ''
+ * when any git step fails or time runs out before `tree`'s own build; `tree` alone is '' when only that last build
+ * fails (D52: the caller records no row unless both are set).
  */
 function reviewedTrees(repo: string, left: Deadline): { tree: string; trackedTree: string } {
   const none = { tree: '', trackedTree: '' };
@@ -390,25 +392,39 @@ function reviewedTrees(repo: string, left: Deadline): { tree: string; trackedTre
       // no index yet (a repo with nothing staged): start from an empty one
     }
     if (!clearHidingBits(repo, { GIT_INDEX_FILE: trackedIndex }, bits, left)) return none;
+    const changed = boundedGit(repo, ['ls-files', '-z', '-m', '-d'], { GIT_INDEX_FILE: trackedIndex }, left);
+    if (changed === null) return none;
+    const changedPaths = pathList(changed);
+    const isOss = (p: string): boolean => p === '.oss' || p.startsWith('.oss/');
+    // `tree` keeps .oss as the index has it: the index entries of the changed .oss paths, before they are updated.
+    const ossChanged = new Set(changedPaths.filter(isOss));
+    let ossEntries: string[] = [];
+    if (ossChanged.size > 0) {
+      const staged = boundedGit(repo, ['ls-files', '-z', '-s', '--', '.oss'], { GIT_INDEX_FILE: trackedIndex }, left);
+      if (staged === null) return none;
+      ossEntries = staged.toString('utf-8').split('\0').filter((e) => ossChanged.has(e.slice(e.indexOf('\t') + 1)));
+    }
+    // D52: both trees are needed, so the second is skipped when the first cannot be built.
+    const trackedTree = treeWith(repo, trackedIndex, changedPaths, left);
+    if (trackedTree === '') return none;
+    // Perf info 2 (round 10): `tree` starts from the updated tracked index, so no modified file is hashed (its clean
+    // filter run) a second time; its .oss entries are put back as they were.
     try {
       fs.copyFileSync(trackedIndex, allIndex);
     } catch {
       // still no index: the second tree starts from an empty one too
     }
-    const changed = boundedGit(repo, ['ls-files', '-z', '-m', '-d'], { GIT_INDEX_FILE: trackedIndex }, left);
-    if (changed === null) return none;
-    const changedPaths = pathList(changed);
-    // D52: both trees are needed, so the second is skipped when the first cannot be built.
-    const trackedTree = treeWith(repo, trackedIndex, changedPaths, left);
-    if (trackedTree === '') return none;
+    if (ossEntries.length > 0) {
+      const restore = ['update-index', '-z', '--index-info'];
+      if (boundedGit(repo, restore, { GIT_INDEX_FILE: allIndex }, left, Buffer.from(ossEntries.join('\0') + '\0')) === null) return none;
+    }
     // D51, D53: untracked files are left out by the repo's .gitignore files and the user's global ignore file, never by
     // the repo-local .git/info/exclude.
     const global = globalIgnoreFile(repo, left);
     const untracked = boundedGit(repo, ['-c', 'core.excludesFile=/dev/null', 'ls-files', '-z', '-o', '--exclude-per-directory=.gitignore',
       ...(global === null ? [] : [`--exclude-from=${global}`]), '--', '.', ':(exclude).oss'], { GIT_INDEX_FILE: allIndex }, left);
     if (untracked === null) return none;
-    const outsideOss = changedPaths.filter((p) => p !== '.oss' && !p.startsWith('.oss/'));
-    return { tree: treeWith(repo, allIndex, [...outsideOss, ...pathList(untracked)], left), trackedTree };
+    return { tree: treeWith(repo, allIndex, pathList(untracked), left), trackedTree };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

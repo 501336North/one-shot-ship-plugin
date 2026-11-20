@@ -618,6 +618,57 @@ describe('captureVerdict: the PATH capture gives git (D56)', () => {
     expect(tree).toBe(git('rev-parse', 'HEAD^{tree}'));
   });
 
+  // Round 10 performance info 2: hashing a modified file runs its clean filter (LFS reads the whole file), so capture
+  // hashes it once, for both trees, not once per temp index. A counting clean filter (a collaborator git runs) logs
+  // each run; the edit changes the file's size, so `ls-files -m` sees it as modified without hashing it.
+  it('hashes a modified file through its clean filter once per capture, and both trees stay right', () => {
+    const log = path.join(home, 'clean.log');
+    const filter = path.join(home, 'count-clean.sh');
+    fs.writeFileSync(filter, `#!/bin/sh\necho "$1" >> '${log}'\nexec cat\n`, { mode: 0o755 });
+    git('config', 'filter.count.clean', `${filter} %f`);
+    fs.writeFileSync(path.join(repo, '.gitattributes'), '*.cnt filter=count\n');
+    fs.writeFileSync(path.join(repo, 'asset.cnt'), 'one\n');
+    git('add', '.gitattributes', 'asset.cnt');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'counted');
+    fs.rmSync(log, { force: true });
+    fs.writeFileSync(path.join(repo, 'asset.cnt'), 'one, edited to a new size\n');
+    // an edit made before the review ended, as in real use: a file as new as the index would be re-hashed by git's
+    // racy-entry check on every index write, whatever capture does
+    const earlier = new Date(Date.now() - 60_000);
+    fs.utimesSync(path.join(repo, 'asset.cnt'), earlier, earlier);
+    expect(capture({ last_assistant_message: FAIL_BLOCK }).captured).toBe(true);
+    const runs = fs.readFileSync(log, 'utf-8').split('\n').filter((l) => l === 'asset.cnt');
+    expect(runs).toHaveLength(1);
+    const { tree, trackedTree } = rows()[0];
+    expect(tree).toBe(trackedTree);
+    git('add', 'asset.cnt');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'ship the reviewed code');
+    expect(tree).toBe(git('rev-parse', 'HEAD^{tree}'));
+  });
+
+  // The `tree` pathspec rule: tracked .oss edits and deletions are in trackedTree only; `tree` keeps .oss as the index has it.
+  it('a modified or deleted tracked .oss file is in trackedTree only, never in tree', () => {
+    const docs = path.join(repo, '.oss', 'dev', 'active', FEATURE);
+    fs.writeFileSync(path.join(docs, 'PROGRESS.md'), 'progress\n');
+    fs.writeFileSync(path.join(docs, 'NOTES.md'), 'notes\n');
+    fs.writeFileSync(path.join(repo, 'code.txt'), 'reviewed-good\n');
+    git('add', '-A');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'docs and code');
+    fs.writeFileSync(path.join(docs, 'PROGRESS.md'), 'progress, updated\n');
+    fs.rmSync(path.join(docs, 'NOTES.md'));
+    fs.writeFileSync(path.join(repo, 'code.txt'), 'reviewed-bad\n');
+    fs.writeFileSync(path.join(repo, 'new.txt'), 'untracked\n');
+    expect(capture({ last_assistant_message: FAIL_BLOCK }).captured).toBe(true);
+    const { tree, trackedTree } = rows()[0];
+    git('add', '-u');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'tracked edits');
+    expect(trackedTree).toBe(git('rev-parse', 'HEAD^{tree}'));
+    git('reset', '-q', 'HEAD~1');
+    git('add', 'code.txt', 'new.txt');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'code only');
+    expect(tree).toBe(git('rev-parse', 'HEAD^{tree}'));
+  });
+
   it('an LFS repo whose files are all stat-dirty runs them through the filter once and records the right tree', () => {
     // Integration with the real git-lfs, as in the case below: without it there is no clean filter, so the case
     // returns early (the count case above still pins one `ls-files -m` per capture).

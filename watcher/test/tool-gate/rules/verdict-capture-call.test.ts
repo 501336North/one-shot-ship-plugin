@@ -16,7 +16,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runToolGate, type GateResult } from '../../../src/tool-gate/gate.js';
-import { namesVerdictCapture } from '../../../src/tool-gate/rules/verdict-capture-call.js';
+import {
+  namesVerdictCapture,
+  globTokens,
+  globMatch,
+  specialSetsAsAny,
+  type Token,
+} from '../../../src/tool-gate/rules/verdict-capture-call.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const AGENTS: Array<[string, string | null]> = [['the main agent', null], ['a builder', 'oss:typescript-pro']];
@@ -97,6 +103,15 @@ const REFUSED: Array<[string, () => string]> = [
   ['a class form split across two ${X+…} around a . call', () => '. ${X+[[:}~/.oss/hooks/oss-verdict-capture.sh${X+:]]} < in.json'],
   ['a class form split across two ${X+…} around a source call', () => 'source ${X+[[:}~/.oss/hooks/oss-verdict-capture.sh${X+:]]} < in.json'],
   ['a class form split across two ${X+…} around a $HOME . call', () => '. ${X+[[:}$HOME/.oss/hooks/oss-verdict-capture.sh${X+:]]} < in.json'],
+  // Security LOW (gate round 8): a set opening with a backslash in one `${X+…}` and its close in a later one.
+  ['a backslash set split across two ${X+…} around a . call on a literal path', () => '. ${X+[\\x}~/.oss/hooks/oss-verdict-capture.sh${X+]} < in.json'],
+  ['a backslash set split across two ${X+…} around a . call on a captur? glob', () => '. ${X+[\\x}$HOME/.oss/hooks/oss-verdict-captur?.sh${X+]} < in.json'],
+  ['a backslash set split across two ${X+…} around a . call on a [o]ss- glob', () => '. ${X+[\\x}$HOME/.oss/hooks/[o]ss-verdict-capture.sh${X+]} < in.json'],
+  ['a backslash set split across two ${X+…} around a . call on the dist .cjs path', () => '. ${X+[\\x}$HOME/.oss/watcher/dist/cli/verdict-captur?.cjs${X+]} < in.json'],
+  ['a backslash set split across two ${X+…} around a source call on a literal path', () => 'source ${X+[\\x}~/.oss/hooks/oss-verdict-capture.sh${X+]} < in.json'],
+  ['a backslash set split across two ${X+…} around a source call on a captur? glob', () => 'source ${X+[\\x}$HOME/.oss/hooks/oss-verdict-captur?.sh${X+]} < in.json'],
+  ['a backslash set split across two ${X+…} around a source call on a [o]ss- glob', () => 'source ${X+[\\x}$HOME/.oss/hooks/[o]ss-verdict-capture.sh${X+]} < in.json'],
+  ['a backslash set split across two ${X+…} around a source call on the dist .cjs path', () => 'source ${X+[\\x}$HOME/.oss/watcher/dist/cli/verdict-captur?.cjs${X+]} < in.json'],
 ];
 
 describe.each(AGENTS)('D41: %s cannot run the verdict capture itself', (_who, agent) => {
@@ -145,6 +160,8 @@ describe('D47: the wildcard matcher is linear', () => {
     ['class openings each cut by a word end', `${'[[:a '.repeat(25000)}:]]`],
     // Security INFO-1 (gate round 7): many `${` and many `[[:` openings, the close only at the very end (100k+ characters).
     ['class openings each inside a ${ opening', `${'${X+[[:a'.repeat(15000)}:]]}`],
+    // Security LOW (gate round 8): many `${` openings each with a backslash set, the close only at the very end (100k+ characters).
+    ['backslash sets each inside a ${ opening', `${'${X+[\\x'.repeat(15000)}]}`],
   ])('%s are decided in well under 100 ms', (_what, glob) => {
     const start = performance.now();
     const named = namesVerdictCapture(`bash ~/.oss/hooks/${glob}`);
@@ -173,5 +190,25 @@ describe('D47: the wildcard matcher is linear', () => {
     ['a name between a class opening and a later close', 'echo [[:a; bash ~/.oss/hooks/oss-verdict-capture.sh; echo :]]', true],
   ])('%s: named is %s', (_what, command, named) => {
     expect(namesVerdictCapture(command)).toBe(named);
+  });
+});
+
+/**
+ * @behavior R-266's hook-env rule reuses the same glob reader, so the glob helpers are exported and work on their own:
+ *   a glob is read into tokens and matched whole, and a set holding a class form or a backslash reads as any one character.
+ * @business-rule R-257 round 10 (R-266 request, user pick "Ask R-257 to export them"): one glob reader, not two.
+ */
+describe('R-266: the glob helpers are exported', () => {
+  it('reads and matches a glob whole', () => {
+    const tokens: Token[] = globTokens('a*');
+    expect(globMatch(tokens, 'abc')).toBe(true);
+    expect(globMatch(tokens, 'bac')).toBe(false);
+    expect(globMatch(globTokens('oss-[a-c]?'), 'oss-bx')).toBe(true);
+  });
+
+  it('turns a set with a class form or a backslash into any one character', () => {
+    expect(specialSetsAsAny('[[:a:]]')).toBe('?');
+    expect(specialSetsAsAny('x[\\y]z')).toBe('x?z');
+    expect(specialSetsAsAny('[ab]')).toBe('[ab]');
   });
 });

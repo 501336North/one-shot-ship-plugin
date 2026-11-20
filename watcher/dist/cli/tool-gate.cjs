@@ -10031,7 +10031,6 @@ var NAMES = ["oss-verdict-capture.sh", "verdict-capture.cjs", "verdict-capture.j
 var SEPARATORS = /[\s'"`;|&()<>=${}\\,]+/;
 var GLOB2 = /[*?[]/;
 var SET = /\[[!^]?\]?[^\]]*\]?/;
-var WORD_END2 = /[\s;|&()<>'"`]/;
 var FORM_END = /[\s;|&()<>'"`${}]/;
 function specialSetsAsAny(text) {
   const closing = /* @__PURE__ */ new Map();
@@ -10061,10 +10060,10 @@ function specialSetsAsAny(text) {
     if (text[j] === "!" || text[j] === "^") j += 1;
     if (text[j] === "]") j += 1;
     let special = false;
-    for (; j < text.length && text[j] !== "]" && !WORD_END2.test(text[j]); j += 1) {
+    for (; j < text.length && text[j] !== "]" && !FORM_END.test(text[j]); j += 1) {
       if (text[j] === "\\") {
         special = true;
-        j += 1;
+        if (j + 1 < text.length && !FORM_END.test(text[j + 1])) j += 1;
       } else if (text[j] === "[" && ":=.".includes(text[j + 1] ?? "x")) {
         const at = closeOf(text[j + 1], j + 2);
         if (at >= 0 && at < wordEndOf(j + 2)) {
@@ -10157,7 +10156,6 @@ function namesVerdictCapture(text) {
   for (const word of specialSetsAsAny(lower).split(SEPARATORS)) {
     const segments = word.split("/");
     for (const [i, segment] of segments.entries()) {
-      if (NAMES.includes(segment)) return true;
       if (GLOB2.test(segment) && globNames(segment, segments[i - 1])) return true;
     }
   }
