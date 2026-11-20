@@ -320,11 +320,18 @@ function globMatches(part: string, name: string): boolean {
   return globMatch(globTokens(specialSetsAsAny(part.toLowerCase())), name.toLowerCase());
 }
 
-/** The paths a glob word could stand for: each glob part as itself or a hook-path name it matches (`**` also as several folders); null past the cap. */
-function globReadings(word: string): string[] | null {
+/**
+ * The paths a glob word could stand for: each glob part as itself or a hook-path name it matches (`**` also as several
+ * folders); null past the cap. With `dotUnknown`, a part the reader couldn't fill in reads as `*`, and one that starts
+ * with it may also be a dot folder (`.oss`, `.claude`), as a variable can be (Task 12c).
+ */
+function globReadings(word: string, dotUnknown = false): string[] | null {
   let readings: string[] = [];
-  for (const [i, part] of word.split('/').entries()) {
-    const options = GLOB.test(part) ? [part, ...HOOK_PATH_NAMES.filter((n) => globMatches(part, n)), ...(part === '**' ? ['plugins/cache'] : [])] : [part];
+  for (const [i, raw] of word.split('/').entries()) {
+    const part = dotUnknown ? raw.split(UNKNOWN).join('*') : raw;
+    const dot = dotUnknown && raw.startsWith(UNKNOWN);
+    const matches = (n: string): boolean => globMatches(part, n) || (dot && globMatches(`.${part}`, n));
+    const options = GLOB.test(part) ? [part, ...HOOK_PATH_NAMES.filter(matches), ...(part === '**' ? ['plugins/cache'] : [])] : [part];
     readings = i === 0 ? options : readings.flatMap((r) => options.map((o) => `${r}/${o}`));
     if (readings.length > MAX_GLOB_READINGS) return null;
   }
@@ -332,27 +339,35 @@ function globReadings(word: string): string[] | null {
 }
 
 /** True when the word names a hook script, is a glob that could expand to one, or has a part it can't fill in that could (Task 12b). */
-function namesHook(word: string, cwd: string): boolean {
+function namesHook(word: string, cwd: string, home: string): boolean {
   const readings = GLOB.test(word) ? globReadings(word) : [word];
-  return readings === null || readings.some((w) => HOOK_FILE.test(w) || inPluginCheckout(w, cwd)) || unknownCouldBeHook(word);
+  return readings === null || readings.some((w) => HOOK_FILE.test(w) || inPluginCheckout(w, cwd)) || unknownCouldBeHook(word, home);
 }
 
 /** A hook path under `.oss` or the plugin cache: the only places a part the reader can't fill in is read as anything. */
 const HOOK_UNDER = /\/\.oss\/hooks\/[^/]|\/\.claude\/plugins\/cache\/.*\/hooks\/[^/]/i;
 
+/** A hook path in `~/.oss/hooks/` or the plugin cache under `~`, for a word read from home (Task 12c). */
+const HOOK_AT_HOME = /^~\/\.oss\/hooks\/[^/]|^~\/\.claude\/plugins\/cache\/.*\/hooks\/[^/]/i;
+
 /**
- * True when a word under `.oss` or `.claude` with a part the reader couldn't fill in (`${X+…}`, `${X:-…}`, an unknown
- * `$X`) could be a hook path there (gate-gaps-r3 Task 12b): each such part reads as `*`, and a last one also as more
+ * True when a word with a part the reader couldn't fill in (`${X+…}`, `${X:-…}`, an unknown `$X`) could be a hook path:
+ * under `.oss` or `.claude` as written (gate-gaps-r3 Task 12b), each such part read as `*`; or under `~` (Task 12c), each
+ * such part also as a dot folder, against `~/.oss/hooks/` and the plugin cache. A last such part also reads as more
  * folders, since the reader drops the rest of the word after it.
  */
-function unknownCouldBeHook(word: string): boolean {
-  if (!word.includes(UNKNOWN) || !/\.oss|\.claude/i.test(word.split(UNKNOWN).join(''))) return false;
-  const glob = word.split(UNKNOWN).join('*');
-  const tails = word.split('/').pop()?.includes(UNKNOWN) ? ['', '/*/x'] : [''];
-  return tails.some((tail) => {
-    const readings = globReadings(glob + tail);
-    return readings === null || readings.some((w) => HOOK_UNDER.test(w));
-  });
+function unknownCouldBeHook(word: string, home: string): boolean {
+  if (!word.includes(UNKNOWN)) return false;
+  const couldBe = (w: string, dotUnknown: boolean, hook: RegExp): boolean => {
+    const glob = dotUnknown ? w : w.split(UNKNOWN).join('*');
+    const tails = w.split('/').pop()?.includes(UNKNOWN) ? ['', '/*/x'] : [''];
+    return tails.some((tail) => {
+      const readings = globReadings(glob + tail, dotUnknown);
+      return readings === null || readings.some((r) => hook.test(r));
+    });
+  };
+  const fromHome = word.startsWith(`${home}/`) ? `~${word.slice(home.length)}` : word;
+  return (/\.oss|\.claude/i.test(word.split(UNKNOWN).join('')) && couldBe(word, false, HOOK_UNDER)) || (fromHome.startsWith('~/') && couldBe(fromHome, true, HOOK_AT_HOME));
 }
 
 /** True when the word is a file in the `hooks/` folder of a plugin checkout: a folder above it holds `.claude-plugin/plugin.json`. */
@@ -374,15 +389,15 @@ function inPluginCheckout(word: string, cwd: string): boolean {
  * Task 10): a relative path is read from the cwd; in a cwd the reader lost, any word counts when its name
  * or folders could be an OSS hook's (`lostWordsCouldBeHook`, Tasks 10b and 14).
  */
-function partNamesHook(part: CommandPart): boolean {
+function partNamesHook(part: CommandPart, home: string): boolean {
   const lost = part.lostDir !== null && part.lostDir.plainKnown !== true;
   if (lost && lostWordsCouldBeHook(part.words)) return true;
-  return [...part.words, ...part.assignmentValues].some((w) => wordNamesHook(w, part.cwd, !lost));
+  return [...part.words, ...part.assignmentValues].some((w) => wordNamesHook(w, part.cwd, !lost, home));
 }
 
 /** True when a word names a hook script, as written or (`relative`) read from the cwd: the one hook-path test both checks share. */
-function wordNamesHook(word: string, cwd: string, relative: boolean): boolean {
-  return namesHook(word, cwd) || (relative && !/^[/~-]/.test(word) && namesHook(path.resolve(cwd, word), cwd));
+function wordNamesHook(word: string, cwd: string, relative: boolean, home: string): boolean {
+  return namesHook(word, cwd, home) || (relative && !/^[/~-]/.test(word) && namesHook(path.resolve(cwd, word), cwd, home));
 }
 
 /** Programs whose first operand is a script they run. */
@@ -504,7 +519,7 @@ function programIndex(words: string[], from: number): number {
 function valueVerdict(value: string, cwd: string, command: string, call: Call): 'hook' | 'ok' {
   const pieces = value.split(/\s+/).filter(Boolean);
   const unknown = value.includes(UNKNOWN);
-  const hook = pieces.some((p) => wordNamesHook(p, cwd, true) || (p.includes(UNKNOWN) && HOOK_HINT.test(p)));
+  const hook = pieces.some((p) => wordNamesHook(p, cwd, true, call.home) || (p.includes(UNKNOWN) && HOOK_HINT.test(p)));
   if (unknown && piecesSet(value)) return 'hook';
   const sets = pieces.includes('env') || (!unknown && setsRefusedVariable(value, 0, call)) || setsRefusedVariable(command, 0, call);
   return hook && sets ? 'hook' : 'ok';
@@ -611,7 +626,7 @@ export function checkOssHookEnv(part: CommandPart, command: string, home: string
       };
     }
   }
-  if (!partNamesHook(part) && !PLUGIN_HOOK.test(command)) return null;
+  if (!partNamesHook(part, home) && !PLUGIN_HOOK.test(command)) return null;
   const clears = part.wrappers.some((w, i) => w === 'env' || (w === 'exec' && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o))));
   if (!clears && !setsRefusedVariable(command, 0, { home, sources: sourcesFor(command, sources) })) return null;
   return {
