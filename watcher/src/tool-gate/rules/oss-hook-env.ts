@@ -331,10 +331,28 @@ function globReadings(word: string): string[] | null {
   return readings;
 }
 
-/** True when the word names a hook script, or is a glob that could expand to one. */
+/** True when the word names a hook script, is a glob that could expand to one, or has a part it can't fill in that could (Task 12b). */
 function namesHook(word: string, cwd: string): boolean {
   const readings = GLOB.test(word) ? globReadings(word) : [word];
-  return readings === null || readings.some((w) => HOOK_FILE.test(w) || inPluginCheckout(w, cwd));
+  return readings === null || readings.some((w) => HOOK_FILE.test(w) || inPluginCheckout(w, cwd)) || unknownCouldBeHook(word);
+}
+
+/** A hook path under `.oss` or the plugin cache: the only places a part the reader can't fill in is read as anything. */
+const HOOK_UNDER = /\/\.oss\/hooks\/[^/]|\/\.claude\/plugins\/cache\/.*\/hooks\/[^/]/i;
+
+/**
+ * True when a word under `.oss` or `.claude` with a part the reader couldn't fill in (`${X+…}`, `${X:-…}`, an unknown
+ * `$X`) could be a hook path there (gate-gaps-r3 Task 12b): each such part reads as `*`, and a last one also as more
+ * folders, since the reader drops the rest of the word after it.
+ */
+function unknownCouldBeHook(word: string): boolean {
+  if (!word.includes(UNKNOWN) || !/\.oss|\.claude/i.test(word.split(UNKNOWN).join(''))) return false;
+  const glob = word.split(UNKNOWN).join('*');
+  const tails = word.split('/').pop()?.includes(UNKNOWN) ? ['', '/*/x'] : [''];
+  return tails.some((tail) => {
+    const readings = globReadings(glob + tail);
+    return readings === null || readings.some((w) => HOOK_UNDER.test(w));
+  });
 }
 
 /** True when the word is a file in the `hooks/` folder of a plugin checkout: a folder above it holds `.claude-plugin/plugin.json`. */
