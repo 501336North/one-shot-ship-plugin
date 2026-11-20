@@ -67,6 +67,8 @@ describe.each(PLATFORMS)('on %s', (platform) => {
       'BASH_ENV=/tmp/x $HOME/${X}/hooks/oss-log.sh',
       'BASH_ENV=/tmp/x ~/${X}/plugins/cache/m/oss/1.0.0/hooks/oss-log.sh',
       'BASH_ENV=/tmp/x ~/${X}',
+      // Task 12d follow-up pick (owner, "Accept the refusal"): X could be `.oss/hooks`, so this is a hook path
+      'BASH_ENV=/tmp/x ~/${X}/bin/tool',
     ])('refuses a hook path whose dot folder it can\'t fill in, run with a variable it chose: %s', async (command) => {
       const result = await call(command, agent, platform);
       expect(result.exitCode, command).toBe(2);
@@ -75,7 +77,6 @@ describe.each(PLATFORMS)('on %s', (platform) => {
 
     it.each([
       '~/${X}/hooks/oss-log.sh',
-      'BASH_ENV=/tmp/x ~/${X}/bin/tool',
       'NODE_ENV=test node ~/projects/${APP}/server.js',
       'X=1 bash ~/scripts/${NAME}.sh',
       '~/.oss/hooks/oss-log.sh init build',
