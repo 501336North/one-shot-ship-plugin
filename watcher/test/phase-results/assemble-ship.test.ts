@@ -2095,10 +2095,12 @@ describe('assembleShip: a flagged file that upstream also changed (D62)', () => 
     expect(security(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
   });
 
+  // ⚠ changes existing test: code-review L4 (gate round 9): the teammate also edits a second line, so the feature's
+  // removed lines differ while its added (flagged) line does not.
   it('a conflict on the flagged line, resolved to the flagged code: the fail stays', () => {
-    mateEdits({ 15: 'teammate15' });
+    mateEdits({ 2: 'teammate2', 15: 'teammate15' });
     expect(() => git('rebase', '-q', 'main')).toThrow();
-    fs.writeFileSync(path.join(repo, 'shared.txt'), lines({ 15: 'VULN' }));
+    fs.writeFileSync(path.join(repo, 'shared.txt'), lines({ 2: 'teammate2', 15: 'VULN' }));
     git('add', 'shared.txt');
     execFileSync('git', ['-c', 'core.editor=true', 'rebase', '--continue'], { cwd: repo, stdio: 'ignore', env: { ...process.env, GIT_EDITOR: 'true' } });
     allPass(1);
@@ -2203,5 +2205,341 @@ describe('assembleShip: distinct review heads with a deleted flagged file stay c
     const r = result(ship());
     expect(r.verdict).toBe('ready_to_merge');
     expect(spawns.n).toBeLessThanOrEqual(ROWS * 2.5);
+  });
+});
+
+/** Shared by the gate round 9 blocks below: the security agent fails the committed feature, as capture records it. */
+const ZERO9 = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+const BRANCH9 = `feat/${FEATURE}/ship`;
+function failOnHead9(tree = git('rev-parse', 'HEAD^{tree}'), headSha = git('rev-parse', 'HEAD'), gate = 'security', ts = '2026-11-13T09:10:00.000Z'): void {
+  openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+    gate, verdict: 'fail', findings: { ...ZERO9, medium: 1 }, agent: 'a', session: 's', ts, tree, trackedTree: tree, headSha,
+  });
+}
+/** A teammate's commit on main (`file` set to `content`); the feature branch is checked out again. */
+function mateOnMain9(file: string, content: string): string {
+  git('checkout', '-q', 'main');
+  commitFile(file, content, `mate ${file}`);
+  const s = git('rev-parse', 'HEAD');
+  git('checkout', '-q', BRANCH9);
+  return s;
+}
+const security9 = (o: AssembleOutcome): Record<string, unknown> | undefined =>
+  (result(o).gates as Array<Record<string, unknown>>).find((g) => g.gate === 'security');
+
+/**
+ * Code-review high (gate round 9): the per-path lookup used `cat-file --batch-check=%(objectmode)`, which Apple's
+ * Command Line Tools git 2.50.1 and Debian's 2.39.5 refuse ("bad cat-file format"), so on those machines a captured
+ * fail could never clear. /usr/bin/git on macOS runs the Command Line Tools git when DEVELOPER_DIR points at them.
+ */
+const CLT = '/Library/Developer/CommandLineTools';
+const olderGitAvailable = ((): boolean => {
+  try {
+    if (!fs.existsSync(`${CLT}/usr/bin/git`) || !fs.existsSync('/usr/bin/git')) return false;
+    const shim = execFileSync('/usr/bin/git', ['--version'], { env: { ...process.env, DEVELOPER_DIR: CLT }, encoding: 'utf-8' });
+    return shim === execFileSync(`${CLT}/usr/bin/git`, ['--version'], { encoding: 'utf-8' });
+  } catch {
+    return false;
+  }
+})();
+describe('assembleShip on an older git (Apple Command Line Tools git, code-review high, gate round 9)', () => {
+  function withOlderGit<T>(fn: () => T): T {
+    const saved = process.env.DEVELOPER_DIR;
+    process.env.DEVELOPER_DIR = CLT;
+    try {
+      return fn();
+    } finally {
+      if (saved === undefined) delete process.env.DEVELOPER_DIR;
+      else process.env.DEVELOPER_DIR = saved;
+    }
+  }
+  const SKIP = olderGitAvailable ? '' : ' (SKIPPED: Apple Command Line Tools git is not installed here)';
+
+  it.skipIf(!olderGitAvailable)(`the fix deletes the flagged new file: the fail clears${SKIP}`, () => {
+    commitFile('keep.txt', 'k\n', 'keep');
+    commitFile('f.txt', 'vuln\n', 'feature');
+    failOnHead9();
+    git('rm', '-q', 'f.txt');
+    git('commit', '-q', '-m', 'fix: drop the vulnerable file');
+    allPass(1);
+    expect(withOlderGit(() => security9(ship()))).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  it.skipIf(!olderGitAvailable)(`a teammate commit, a rebase, then a real fix: the fail clears${SKIP}`, () => {
+    commitFile('f.txt', 'vuln\n', 'feature');
+    failOnHead9();
+    mateOnMain9('mate.txt', 'mate\n');
+    git('rebase', '-q', 'main');
+    commitFile('f.txt', 'safe\n', 'fix');
+    allPass(1);
+    expect(withOlderGit(() => security9(ship()))).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  it.skipIf(!olderGitAvailable)(`a teammate commit and a rebase with no fix: the fail stays${SKIP}`, () => {
+    commitFile('f.txt', 'vuln\n', 'feature');
+    failOnHead9();
+    mateOnMain9('mate.txt', 'mate\n');
+    git('rebase', '-q', 'main');
+    allPass(1);
+    expect(withOlderGit(() => security9(ship()))).toMatchObject({ verdict: 'fail', source: 'agent' });
+  });
+});
+
+/** Code-review low (gate round 9): a submodule (gitlink, mode 160000) is a present entry, not a lookup error. */
+describe('assembleShip: submodule entries (code-review low, gate round 9)', () => {
+  const gitlink = (sha: string): void => {
+    git('update-index', '--add', '--cacheinfo', `160000,${sha},sub`);
+  };
+
+  it('the fix deletes a flagged submodule the feature added: the fail clears', () => {
+    commitFile('keep.txt', 'k\n', 'keep');
+    gitlink('1'.repeat(40));
+    git('commit', '-q', '-m', 'add submodule');
+    failOnHead9();
+    git('rm', '-q', '--cached', 'sub');
+    git('commit', '-q', '-m', 'fix: drop the submodule');
+    allPass(1);
+    expect(security9(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  it('a submodule bump on a feature path after a rebase onto a teammate commit: the fail clears', () => {
+    git('checkout', '-q', 'main');
+    gitlink('1'.repeat(40));
+    git('commit', '-q', '-m', 'submodule on main');
+    git('checkout', '-q', BRANCH9);
+    git('rebase', '-q', 'main');
+    gitlink('2'.repeat(40));
+    git('commit', '-q', '-m', 'feature bumps the submodule');
+    failOnHead9();
+    mateOnMain9('mate.txt', 'mate\n');
+    git('rebase', '-q', 'main');
+    gitlink('3'.repeat(40));
+    git('commit', '-q', '-m', 'fix: bump again');
+    allPass(1);
+    expect(security9(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+});
+
+/**
+ * D64 (user pick, ship round 11, "Use merge base with HEAD"; security G, code-review P9, pen fetchafter, gate round 9):
+ * after a rebase onto origin/main, a later fetch moved origin/main past HEAD, the live base dropped it and the fail
+ * cleared. The live base is now merge-base(<remote>/<base>, HEAD) for each same-name remote ref that contains the chosen
+ * base, the most advanced one; it still only narrows the feature's paths.
+ */
+describe('assembleShip: the live base is the merge base of each same-name remote ref with HEAD (D64)', () => {
+  beforeEach(() => commitFile('feature.txt', 'vuln\n', 'feature'));
+
+  /** A teammate commit reaches `ref` through a fetch, on top of `on`; local main stays where it was. */
+  function fetched(ref: string, on: string, file: string): string {
+    git('checkout', '-q', '--detach', on);
+    commitFile(file, `${file}\n`, `mate ${file}`);
+    const u = git('rev-parse', 'HEAD');
+    git('update-ref', ref, u);
+    git('checkout', '-q', BRANCH9);
+    return u;
+  }
+
+  it('a rebase onto origin/main, then a later fetch moves origin/main again: the fail stays, the diff is the feature\'s', () => {
+    const s0 = git('rev-parse', 'main');
+    failOnHead9();
+    const u = fetched('refs/remotes/origin/main', 'main', 'mate.txt');
+    git('rebase', '-q', 'origin/main');
+    fetched('refs/remotes/origin/main', u, 'mate2.txt');
+    allPass(1);
+    const snapshot = new Map([['refs/remotes/origin/main', s0]]);
+    const assembled = ship({ remoteRefs: snapshot });
+    expect(security9(assembled)).toMatchObject({ verdict: 'fail', source: 'agent' });
+    expect(result(assembled).diff).toEqual({ base: u, baseRef: 'main', files: 1, insertions: 1, deletions: 0 });
+    // check (reassemble from the same snapshot) agrees with assemble
+    const checked = ship({ remoteRefs: snapshot });
+    expect({ gates: result(checked).gates, diff: result(checked).diff }).toEqual({ gates: result(assembled).gates, diff: result(assembled).diff });
+  });
+
+  it('two diverged remotes that both contain the rebased-onto commit: the fail stays, the diff is the feature\'s', () => {
+    failOnHead9();
+    const u = fetched('refs/remotes/origin/main', 'main', 'mate.txt');
+    git('update-ref', 'refs/remotes/upstream/main', u);
+    git('rebase', '-q', 'origin/main');
+    fetched('refs/remotes/origin/main', u, 'fork-only.txt');
+    fetched('refs/remotes/upstream/main', u, 'upstream-only.txt');
+    allPass(1);
+    const o = ship();
+    expect(security9(o)).toMatchObject({ verdict: 'fail', source: 'agent' });
+    expect(result(o).diff).toEqual({ base: u, baseRef: 'main', files: 1, insertions: 1, deletions: 0 });
+  });
+
+  it('a rebase onto origin/main, a later fetch, then a real fix: the fail clears', () => {
+    failOnHead9();
+    const u = fetched('refs/remotes/origin/main', 'main', 'mate.txt');
+    git('rebase', '-q', 'origin/main');
+    fetched('refs/remotes/origin/main', u, 'mate2.txt');
+    commitFile('feature.txt', 'fixed\n', 'fix');
+    allPass(1);
+    expect(security9(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+});
+
+/**
+ * D65 (user pick, ship round 11, "Feature's added lines, exact"; security L, code-review M3/I6/I7, pen M2/L1, gate
+ * round 9): for a feature path upstream also changed since review, the fail clears only when the feature's ordered
+ * added lines (-U0, --inter-hunk-context=0, --text) or its mode lines differ, compared exactly but for a trailing CR.
+ * patch-id ignored whitespace, hashed removed lines, followed diff.interHunkContext and treated -diff files as binary.
+ */
+describe('assembleShip: a shared flagged file is compared by the feature\'s added lines (D65)', () => {
+  const numbered = (n: number, edit: Record<number, string> = {}, eol = '\n'): string =>
+    Array.from({ length: n }, (_, i) => `${edit[i + 1] ?? `line ${i + 1}`}${eol}`).join('');
+
+  /** `file` lands on main with `base`; the feature (rebased) sets it to `feature` and is failed. */
+  function sharedFile(file: string, base: string, feature: string, extra: () => void = () => undefined): void {
+    git('checkout', '-q', 'main');
+    commitFile(file, base, `base ${file}`);
+    git('checkout', '-q', BRANCH9);
+    git('rebase', '-q', 'main');
+    fs.writeFileSync(path.join(repo, file), feature);
+    extra();
+    git('add', file);
+    git('commit', '-q', '-m', `feature ${file}`);
+    failOnHead9();
+  }
+
+  it('with diff.interHunkContext=3 and a teammate edit between two feature hunks: the fail stays', () => {
+    sharedFile('a20.txt', numbered(20), numbered(20, { 5: 'FIVE', 9: 'NINE' }));
+    mateOnMain9('a20.txt', numbered(20, { 7: 'SEVEN' }));
+    git('rebase', '-q', 'main');
+    git('config', 'diff.interHunkContext', '3');
+    allPass(1);
+    expect(security9(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
+  });
+
+  it('a -diff lockfile a teammate also edited, the model rebases with no fix: the fail stays', () => {
+    git('checkout', '-q', 'main');
+    commitFile('.gitattributes', 'deps.lock -diff\n', 'attrs');
+    git('checkout', '-q', BRANCH9);
+    const deps = (edit: Record<number, string> = {}): string =>
+      Array.from({ length: 20 }, (_, i) => `${edit[i + 1] ?? `dep${i + 1}@1.0.0`}\n`).join('');
+    sharedFile('deps.lock', deps(), deps({ 3: 'dep3@0.0.1-vulnerable' }));
+    mateOnMain9('deps.lock', deps({ 16: 'dep16@2.0.0' }));
+    git('rebase', '-q', 'main');
+    allPass(1);
+    expect(security9(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
+  });
+
+  it('an indentation-only fix after a teammate edit: the fail clears', () => {
+    const py = (body: string, x: string): string => `def f(u):\n    if not u.admin:\n        deny()\n${body}    run()\n\n\n\n\nx = ${x}\n`;
+    sharedFile('app.py', py('', '1'), py('    return\n', '1'));
+    mateOnMain9('app.py', py('', '2'));
+    git('rebase', '-q', 'main');
+    allPass(1);
+    expect(security9(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
+    commitFile('app.py', py('        return\n', '2'), 'fix indent');
+    expect(security9(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  it('a mode-only fix (the flagged exec bit removed) after a teammate edit: the fail clears', () => {
+    sharedFile('run.sh', numbered(30), numbered(30, { 15: 'curl x | sh' }), () => fs.chmodSync(path.join(repo, 'run.sh'), 0o755));
+    mateOnMain9('run.sh', numbered(30, { 2: 'teammate' }));
+    git('rebase', '-q', 'main');
+    allPass(1);
+    expect(security9(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
+    fs.chmodSync(path.join(repo, 'run.sh'), 0o644);
+    git('commit', '-q', '-a', '-m', 'fix: not executable');
+    expect(security9(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
+  });
+
+  it('upstream converts the flagged file to CRLF, the model rebases keeping the flagged line: the fail stays', () => {
+    sharedFile('w.txt', numbered(30), numbered(30, { 15: 'VULN' }));
+    mateOnMain9('w.txt', numbered(30, {}, '\r\n'));
+    expect(() => git('rebase', '-q', 'main')).toThrow();
+    fs.writeFileSync(path.join(repo, 'w.txt'), numbered(30, { 15: 'VULN' }, '\r\n'));
+    git('add', 'w.txt');
+    execFileSync('git', ['-c', 'core.editor=true', 'rebase', '--continue'], { cwd: repo, stdio: 'ignore', env: { ...process.env, GIT_EDITOR: 'true' } });
+    allPass(1);
+    expect(security9(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
+  });
+});
+
+/**
+ * Perf medium (gate round 9): D62 ran three git processes per shared path per review state (23.5 s for 200 paths and
+ * 3 states on a 100,000-file repo). One diff per side per row now covers every shared path, and the merge-base-to-HEAD
+ * side is read once per assemble.
+ */
+describe('assembleShip: shared flagged paths are diffed once per side (perf medium, gate round 9)', { timeout: 120_000 }, () => {
+  const PATHS = 200;
+  const STATES = 3;
+  const body = (first: string, last: string): string => `${first}\n${Array.from({ length: 18 }, (_, k) => `line ${k + 2}\n`).join('')}${last}\n`;
+
+  /** Writes every shared file with `first`/`last` lines through one index update, then commits. */
+  function writeAll(first: string, last: string, message: string): void {
+    const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd: repo, input: body(first, last), encoding: 'utf-8' }).trim();
+    const info = Array.from({ length: PATHS }, (_, i) => `100644 ${blob}\tsrc/f${i}.ts`).join('\n');
+    execFileSync('git', ['update-index', '--add', '--index-info'], { cwd: repo, input: `${info}\n` });
+    git('commit', '-q', '-m', message);
+    git('checkout', '-q', '-f', 'HEAD');
+  }
+
+  it(`${PATHS} shared paths and ${STATES} review states, rebased with no fix: all stay open, a few git processes per row`, () => {
+    git('checkout', '-q', 'main');
+    writeAll('a', 'z', 'shared files');
+    git('checkout', '-q', BRANCH9);
+    git('rebase', '-q', 'main');
+    writeAll('a', 'FEAT', 'feature');
+    const head = git('rev-parse', 'HEAD');
+    const idx = path.join(repo, '.git', 'scratch-index');
+    const env: NodeJS.ProcessEnv = {};
+    for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('GIT_')) env[k] = v;
+    for (let s = 0; s < STATES; s++) {
+      fs.copyFileSync(path.join(repo, '.git', 'index'), idx);
+      const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd: repo, env, input: `scratch ${s}\n`, encoding: 'utf-8' }).trim();
+      execFileSync('git', ['update-index', '--add', '--cacheinfo', `100644,${blob},scratch-${s}.txt`], { cwd: repo, env: { ...env, GIT_INDEX_FILE: idx } });
+      const tree = execFileSync('git', ['write-tree'], { cwd: repo, env: { ...env, GIT_INDEX_FILE: idx }, encoding: 'utf-8' }).trim();
+      openLedger(repo).appendRow(`verdicts/${FEATURE}`, {
+        gate: GATES[s], verdict: 'fail', findings: { ...ZERO9, medium: 1 }, agent: `a${s}`, session: 's',
+        ts: new Date(Date.parse('2026-11-13T09:10:00.000Z') + s * 1000).toISOString(), tree, trackedTree: git('rev-parse', 'HEAD^{tree}'), headSha: head,
+      });
+    }
+    git('checkout', '-q', 'main');
+    writeAll('UP', 'z', 'mate edits every shared file');
+    git('checkout', '-q', BRANCH9);
+    git('rebase', '-q', 'main');
+    allPass(1);
+    spawns.n = 0;
+    const r = result(ship());
+    expect(r.blockers).toHaveLength(STATES);
+    expect(spawns.n).toBeLessThanOrEqual(15 + STATES * 6);
+  });
+});
+
+/**
+ * Perf low (gate round 9): the probe lookup of the feature's own paths ran once per row; it is cached per
+ * `<review base>:<path>`, so rows on a few off-history review heads cost about one git process each.
+ */
+describe('assembleShip: probe lookups are cached per review base (perf low, gate round 9)', { timeout: 120_000 }, () => {
+  const ROWS = 60;
+  const HEADS = 3;
+
+  it(`${ROWS} cleared fails on ${HEADS} off-history review heads: at most 1.3 git processes per row`, () => {
+    const heads: string[] = [];
+    git('checkout', '-q', 'main');
+    for (let h = 0; h < HEADS; h++) {
+      commitFile(`hist${h}.txt`, `${h}\n`, `history ${h}`);
+      heads.push(git('rev-parse', 'HEAD'));
+    }
+    git('checkout', '-q', BRANCH9);
+    git('rebase', '-q', 'main');
+    commitFile('flagged.txt', 'fixed\n', 'feature');
+    const idx = path.join(repo, '.git', 'scratch-index');
+    const env: NodeJS.ProcessEnv = {};
+    for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('GIT_')) env[k] = v;
+    for (let i = 0; i < ROWS; i++) {
+      fs.copyFileSync(path.join(repo, '.git', 'index'), idx);
+      const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd: repo, env, input: `vuln ${i}\n`, encoding: 'utf-8' }).trim();
+      execFileSync('git', ['update-index', '--cacheinfo', `100644,${blob},flagged.txt`], { cwd: repo, env: { ...env, GIT_INDEX_FILE: idx } });
+      const tree = execFileSync('git', ['write-tree'], { cwd: repo, env: { ...env, GIT_INDEX_FILE: idx }, encoding: 'utf-8' }).trim();
+      failOnHead9(tree, heads[i % HEADS], GATES[i % 3], new Date(Date.parse('2026-11-13T09:00:00.000Z') + i * 1000).toISOString());
+    }
+    allPass(1);
+    spawns.n = 0;
+    expect(result(ship()).verdict).toBe('ready_to_merge');
+    expect(spawns.n).toBeLessThanOrEqual(ROWS * 1.3);
   });
 });

@@ -188,3 +188,8 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 - Known limits, not fixed: `git merge --squash main` into the feature makes upstream changes the feature's own and clears a fail (D58); the 64 MB `--raw` buffer holds roughly 420,000-550,000 paths, beyond which the row is unknown and stays open.
 - Above 64 deleted paths the tracked-at-review check uses cached diff lists, since `tree:path` lookups scan a flat folder per name.
 
+## Ship round 11 notes (2026-11-20)
+- D65 replaces D62's patch-id: only the ordered + lines and mode lines count, so a resolution that keeps the flagged code stays open, and an indentation-only fix clears.
+- Older git (Apple CLT 2.50.1, Debian 2.39) refuses cat-file %(objectmode); lookups use ls-tree, and any lookup error falls back to the diff lists.
+- The phase-result bundle must sit at <root>/watcher/dist/cli with <root>/schemas beside it, or it fails with internal_error (field store).
+

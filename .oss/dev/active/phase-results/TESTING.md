@@ -193,4 +193,9 @@ Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watche
 - New tests: D61 (rebase or merge of a newer origin/main with stale local main, with and without a snapshot), D62 (same-file upstream edit, clean conflict back to the flagged code, real fix after an upstream edit), reftable base, symlinked refs/refs/heads/packed-refs, a spawn bound at 200 deletion rows, diverged remotes (equal and skewed times), null or unknown headSha, one clean-filter run per modified file, .oss kept out of `tree`, the backslash-set split rows plus a 105k-character time bound, and the exported glob helpers.
 - Repro replays: d58 rebaseorigin_nolocal and mergeorigin_nolocal blocked (12 files, not 13); sameFileUpstream blocked; divremotes 1 file / 1 insertion (was 4 / 301).
 
-## Last Updated: 2026-11-20 10:40 CST by /oss:ship (round 10 fixes)
+### Ship round 11 (D64-D66), 2026-11-20
+- Full check: build 0, tsc 0, 199 files / 10991 tests passed, served-commands 3/3, bash 114/114 behind the tripwire (0 trip lines).
+- 15 new tests: older-git (CLT 2.50.1, skipped with a message if absent) deletion and rebase fixes, submodules, fetch after rebase, diverged remotes, conflict kept flagged, interHunkContext, -diff lockfile, indentation-only fix, mode-only fix (guard, not RED), spawn bounds for batched D62 and the lookup cache.
+- Changed test: the D62 conflict test now has the teammate edit two lines (code-review L4), so it fails on 66d0267e.
+
+## Last Updated: 2026-11-20 14:47 CST by /oss:ship (round 11 fixes)

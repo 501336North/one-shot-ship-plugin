@@ -205,6 +205,16 @@
 - [x] Builder T (capture): each modified file goes through the clean filter once (240 x 2 MB LFS edits: 2.2-2.8 s to 1.5-1.9 s); `tree` is unchanged, .oss entries are written back from the tracked index.
 - [x] Builder U (gate rule): the set scan ends at `$ { }` too (backslash-set split closed); the dead NAMES check is removed; globTokens, globMatch, specialSetsAsAny and Token are exported for R-266.
 
+### Ship round 11 fixes, after gate round 9 (2026-11-20)
+- [x] Gate round 9: all four gates failed (1 high, 4 distinct mediums). The user picked D64-D66.
+- [x] Builder V (assemble-ship):
+  - older git: lookups use `ls-tree` (no %(objectmode)), with the diff-list route as a fallback; tested under Apple CLT git 2.50.1;
+  - submodule entries count as present;
+  - D64: the live base is merge-base(ref, HEAD) per same-name remote, so a later fetch doesn't undo it;
+  - D65: the feature's added lines and mode lines are compared exactly (pinned diff options, no patch-id);
+  - D62 diffs are batched per side and the HEAD side is cached (23.5 s to 0.41 s);
+  - lookups are cached per tree-ish and path (11.3 s to 8.7 s at 200 off-history rows).
+
 ### Later
 - [ ] Ship into feat/determinism-sprint/build (SD-1)
 - [ ] T21 oss-lab (after the plugin ships)
@@ -212,4 +222,4 @@
 ## Blockers
 - None. R-266's 4 red base tests are fixed in #233 (4458bddb), and R-257 is rebased onto it.
 
-## Last Updated: 2026-11-20 10:40 CST by /oss:ship (round 10 fixes)
+## Last Updated: 2026-11-20 14:47 CST by /oss:ship (round 11 fixes)
