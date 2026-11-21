@@ -203,4 +203,10 @@ Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watche
 - New tests: D67 overlap rows (sec K/L/M/N, upstream rename, delete and mode, code-review T4), D69 overrides (9 cases plus a CLI acceptance), a 200-row spawn bound, same-name refs on one commit, a 32 MB binary plus 20,000 shared paths, byte-counted chunks, diff.ignoreSubmodules pinned.
 - Changed tests (marked ⚠): three D62/D65 "fix clears after a teammate edit" tests now stay open (D67); the D64 check-agrees test moves the remote; the older-git tests fail loudly.
 
-## Last Updated: 2026-11-20 19:57 CST by /oss:ship (round 12 fixes)
+### Ship round 13 (D70-D74), 2026-11-21
+- Full check: build 0, tsc 0, 199 files / 11047 tests passed, served-commands 3/3, bash 114/114 behind the tripwire (0 trip lines).
+- New tests: D70 binding (unrelated ideate pick, answer outside ship, "Fix it", bare "Override", wrong gate, pick before a newer row, no answeredAt, listed-not-refused with check agreeing), D71 CHANGELOG text, overflow/state-dedupe/one-walk spawn bounds, multi-boundary and own-path guards, oss-value dir and ship-start cleanup (tests 26/27, link refused), assemble prints verdict/blockers, five wrapper Step 8 text tests.
+- Changed tests (marked ⚠): D69 tests use a real ship pick (D70); UPSTREAM_CHANGED text (D71); D26 assemble stdout includes verdict and blockers (D74).
+- r11 probes replayed on git 2.54 and CLT 2.50.1: stale and unrelated cases now blocked.
+
+## Last Updated: 2026-11-21 16:14 CST by /oss:ship (round 13 fixes)

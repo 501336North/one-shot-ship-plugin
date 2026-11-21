@@ -248,3 +248,54 @@ describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
     expect(state.workflowComplete).toBe(true);
   }, 240000);
 });
+
+/**
+ * @behavior When the assembled ship result is blocked only because upstream changed a file the feature changes (D71),
+ *           /oss:ship asks the person, per such gate, `Fix it` or `Override <gate>`, and records an override only when
+ *           the person picks it (D70, D74).
+ * @business-rule An override is the person's call, never the model's: the option is never Recommended, overrides.json is
+ *           written only after that pick with the `{finding, decisionId, gate}` shape the code verifies, and no value the
+ *           model writes ever goes into a shell command.
+ * @boundary commands/ship.md (wrapper text, Step 8 "Assemble the phase result").
+ */
+describe('/oss:ship wrapper offers the D70 override only through the person\'s pick (D74)', () => {
+  const text = fs.readFileSync(shipWrapper, 'utf8');
+  const step = text.split('### Assemble the phase result')[1]?.split('Then send `complete`')[0] ?? '';
+
+  it('asks one picker per gate whose blocker is the D71 text, labelled `Override <gate>`', () => {
+    expect(step).toContain('upstream changed a file this feature changes');
+    expect(step).toMatch(/one AskUserQuestion per such gate/);
+    expect(step).toContain('`Override <gate>`');
+    expect(step).toMatch(/`security`, `performance`, `code-review` or `pen-test`/);
+  });
+
+  it('puts `Fix it` first and never marks the override Recommended', () => {
+    expect(step).toMatch(/`Fix it` first, then exactly `Override <gate>`/);
+    expect(step).not.toMatch(/Override <gate>[^`\n]*\(Recommended\)/);
+    expect(step).toMatch(/never mark `Override <gate>` \(Recommended\)/);
+  });
+
+  it('writes overrides.json only after that pick, with the {finding, decisionId, gate} shape', () => {
+    const shape = '[{"finding": "<one line>", "decisionId": "<id>", "gate": "<gate>"}]';
+    expect(step).toContain(shape);
+    const pick = step.indexOf('Only if the person picks `Override <gate>`');
+    expect(pick).toBeGreaterThan(-1);
+    expect(step.indexOf(shape)).toBeGreaterThan(pick);
+    expect(step).toMatch(/Never write `overrides\.json` for any other blocker or without that pick/);
+    // The decision id is read from the hook's record, never made up.
+    expect(step).toMatch(/newest record in `decisions\.ndjson` whose `command` is `ship` and whose `choice` is exactly `Override <gate>`/);
+  });
+
+  it('puts no value in a shell command: the only commands are the fixed value-dir and assemble calls', () => {
+    const blocks = [...step.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1].trim());
+    expect(blocks).toEqual(['~/.oss/hooks/oss-phase-result.sh assemble ship']);
+    const inline = [...step.matchAll(/`(~\/\.oss\/[^`]*)`/g)].map((m) => m[1]);
+    for (const c of inline) expect(['~/.oss/hooks/oss-value.sh dir', '~/.oss/hooks/oss-phase-result.sh assemble ship']).toContain(c);
+    expect(step).toMatch(/Never put any of this content \(or the decision id\) into a command/);
+  });
+
+  it('documents no stale {finding, decisionId} shape anywhere', () => {
+    expect(text).not.toContain('{"finding", "decisionId"}');
+    for (const m of text.matchAll(/"finding"[^\]\n]*?"decisionId"[^\]\n]*/g)) expect(m[0]).toContain('"gate"');
+  });
+});

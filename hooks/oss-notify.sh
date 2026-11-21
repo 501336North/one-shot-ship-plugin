@@ -198,6 +198,11 @@ _oss_ledger_run() (
     # D40/D50: ship start also records every remote's branch tips, the only bases assemble ship accepts
     [[ "$1" != ship ]] || _oss_ledger_origin "$d" "$s" \
         || echo "oss-notify: origin snapshot not recorded for ship ($_OSS_ORIGIN_WHY): assemble ship will refuse no_base_snapshot" >&2
+    # D70 + security L1: an earlier run's overrides.json, summary.txt and base.txt never carry into this ship run. The
+    # value folder is ~/.oss/run/<the same key> (oss-value.sh dir); a linked or foreign folder is left alone.
+    f="$HOME/.oss/run"
+    [[ "$1" != ship || -L "$f" || -L "$f/$k" || ! -d "$f/$k" ]] || ! test -O "$f/$k" \
+        || "${OSS_RM:-/bin/rm}" -f "$f/$k/overrides.json" "$f/$k/summary.txt" "$f/$k/base.txt" 2>/dev/null
     return 0
 )
 

@@ -225,6 +225,17 @@
   - argvChunks counts bytes; older-git tests fail loudly instead of skipping; every diff pins its options;
   - stronger tests: the ls-tree route, check-agrees with a moving remote, quoted-name fixes.
 
+### Ship round 13 fixes, after gate round 11 (2026-11-21)
+- [x] Gate round 11: code review and performance passed; security and pen test failed (override not bound to a pick; D67 text named the wrong file). The user picked D70-D74.
+- [x] Builder X (assemble-ship, oss-value, oss-notify):
+  - D70: an override counts only for a ship pick answered exactly `Override <gate>`, and clears only that gate's D67 rows captured before the answer;
+  - overrides.json, summary.txt and base.txt are removed by `oss-value.sh dir` and at ship start (links refused);
+  - D71: the blocker says "upstream changed a file this feature changes";
+  - perf: no batched diff after the first overflow, batches by distinct review state, one boundary walk for all batches (40,000-file reformat 18.9 s to about 15 s);
+  - guard tests for multi-boundary merge bases and own-path D67 marking, each checked against its mutation.
+- [x] Builder Y (API): found the served ship prompt never assembles the ship result; no API change (D74).
+- [x] Builder Z (D74): `assemble ship` prints verdict and blockers; wrapper Step 8 asks `Fix it` / `Override <gate>` per D71 gate and writes overrides.json `{finding, decisionId, gate}` only after that pick; stale shape removed.
+
 ### Later
 - [ ] Ship into feat/determinism-sprint/build (SD-1)
 - [ ] T21 oss-lab (after the plugin ships)
@@ -232,4 +243,4 @@
 ## Blockers
 - None. R-266's 4 red base tests are fixed in #233 (4458bddb), and R-257 is rebased onto it.
 
-## Last Updated: 2026-11-20 19:57 CST by /oss:ship (round 12 fixes)
+## Last Updated: 2026-11-21 16:14 CST by /oss:ship (round 13 fixes)

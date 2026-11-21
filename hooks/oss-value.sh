@@ -8,8 +8,8 @@ unset POSIXLY_CORRECT
 # oss-value.sh - the one plugin script that owns the per-repo value folder (G21 cut 1, ADR-001).
 #
 #   oss-value.sh dir                print the physical ~/.oss/run/<key> for the cwd's repo (outside any
-#                                   repo ~/.oss/run/home), cleared of the value files; nothing printed
-#                                   and rc != 0 when unsafe.
+#                                   repo ~/.oss/run/home), cleared of the value files (ship's overrides.json,
+#                                   summary.txt and base.txt too: D70); nothing printed and rc != 0 when unsafe.
 #   oss-value.sh failed <workflow>  send reason.txt from that folder, cleaned, as the workflow's
 #                                   failed notice to the project the cwd is in; then delete it.
 #   oss-value.sh error <cmd:name>   emit message.txt, hint.txt and error.txt (5 fields) through
@@ -136,7 +136,7 @@ _ov_cmd_dir() {
              "$p/agent.txt" "$p/key.txt" "$p/style.txt" "$p/prompt.txt" "$p/model.txt" "$p/workflow.txt" "$p/category.txt" "$p/name.txt" \
              "$p/notify_style.txt" "$p/voice.txt" "$p/sound.txt" "$p/verbosity.txt" "$p/custom.txt" "$p/type.txt" "$p/source.txt" \
              "$p/round.txt" "$p/gate.txt" "$p/verdict.txt" "$p/findings.txt" "$p/fixed.txt" "$p/mode.txt" "$p/approval.txt" \
-             "$p/repo.txt" \
+             "$p/repo.txt" "$p/overrides.json" "$p/summary.txt" "$p/base.txt" \
     && printf '%s\n' "$p"
 }
 

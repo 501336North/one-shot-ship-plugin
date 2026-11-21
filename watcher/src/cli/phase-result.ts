@@ -418,7 +418,9 @@ export function main(argv: string[]): number {
       result = assemble(repo, feature, args.phase);
     });
     if (!v.ok) return refuse(args, v.id, v.field, v.detail);
-    process.stdout.write(`${JSON.stringify({ verification: result.verification, phase: args.phase, ...gateLabel(args.phase, result) })}\n`);
+    // D74: ship also prints its verdict and the code-built blocker lines (fixed text), so the wrapper can offer a D70 override.
+    const outcome = args.phase === 'ship' ? { verdict: result.verdict, blockers: result.blockers } : {};
+    process.stdout.write(`${JSON.stringify({ verification: result.verification, phase: args.phase, ...gateLabel(args.phase, result), ...outcome })}\n`);
     return 0;
   }
   let stored: Record<string, unknown> = {};

@@ -280,11 +280,14 @@ describe('phase-result CLI: assemble', () => {
     startRun('ship', '2026-11-13T09:00:00.000Z');
     const a = cli('assemble', 'ship');
     expect(a.status, a.stderr).toBe(0);
+    // ⚠ changes existing test: D74 — assemble ship also prints the verdict and the code-built blocker lines.
     expect(JSON.parse(a.stdout)).toEqual({
       verification: 'verified',
       phase: 'ship',
       gateEvidence: 'model',
       uncapturedGates: GATES,
+      verdict: 'ready_to_merge',
+      blockers: [],
     });
     // oss-notify's complete gate runs check, so check ship prints the same label from the bound result.
     const c = cli('check', 'ship');
@@ -540,8 +543,9 @@ describe('phase-result CLI: check refuses anything not bound to this run', () =>
   });
 
   // Behaviour: D69, an override naming the gate clears a fail upstream's change to the flagged file held open, and
-  // check (which feeds the stored overrides back, the value file having aged out) agrees.
-  it('a D67 fail cleared by a recorded override naming its gate is ready to merge, and check agrees', () => {
+  // check (which feeds the stored overrides back, the value file having aged out) agrees. D70: only a ship pick answered
+  // exactly `Override <gate>`, after the fail was captured, counts.
+  function d67FailWithOverride(choice: string): void {
     const lines = (edit: Record<number, string> = {}): string => Array.from({ length: 20 }, (_, i) => `${edit[i + 1] ?? i + 1}\n`).join('');
     git('checkout', '-q', 'main');
     commitFile('shared.txt', lines());
@@ -561,20 +565,46 @@ describe('phase-result CLI: check refuses anything not bound to this run', () =>
     git('rebase', '-q', 'main');
     passGates(FEATURE);
     const id = randomUUID();
-    const line = JSON.stringify({ v: 1, id, feature: FEATURE, question: 'Accept the upstream-touched fail?', person: 'Pat' });
+    // ⚠ changes existing test: D70 — the override's decision is a ship pick (the hook's record fields: command, choice,
+    // answeredAt), here answered `choice` after the fail was captured
+    const line = JSON.stringify({
+      v: 1, id, feature: FEATURE, question: 'Accept the upstream-touched fail?', choice, answerText: choice,
+      command: 'ship', answeredAt: '2026-11-13T09:20:00Z', person: 'Pat',
+    });
     fs.appendFileSync(path.join(activeDir(FEATURE), 'decisions.ndjson'), `${line}\n`);
     openLedger(repo).appendRow(`decisions/${FEATURE}`, { id, feature: FEATURE, sha256: sha256(line) });
-    const overrides = path.join(valueDir(), 'overrides.json');
-    fs.writeFileSync(overrides, JSON.stringify([{ finding: 'MEDIUM: VULN', decisionId: id, gate: 'security' }]));
+    fs.writeFileSync(path.join(valueDir(), 'overrides.json'), JSON.stringify([{ finding: 'MEDIUM: VULN', decisionId: id, gate: 'security' }]));
     startRun('ship', '2026-11-13T09:00:00.000Z');
+  }
+
+  it('a D67 fail cleared by a recorded override naming its gate is ready to merge, and check agrees', () => {
+    d67FailWithOverride('Override security');
     const a = cli('assemble', 'ship');
     expect(a.status, a.stderr).toBe(0);
     expect(JSON.parse(fs.readFileSync(resultFile(FEATURE, 'ship'), 'utf-8'))).toMatchObject({ verdict: 'ready_to_merge', blockers: [] });
     const old = new Date(Date.now() - 60 * 60 * 1000);
-    fs.utimesSync(overrides, old, old);
+    fs.utimesSync(path.join(valueDir(), 'overrides.json'), old, old);
     const r = cli('check', 'ship');
     expect(r.status, r.stderr).toBe(0);
     expect(JSON.parse(r.stdout)).toMatchObject({ verification: 'verified', verdict: 'ready_to_merge' });
+  });
+
+  it('D70: a ship pick answered "Keep blocked" clears nothing, and check agrees', () => {
+    d67FailWithOverride('Keep blocked');
+    const a = cli('assemble', 'ship');
+    expect(a.status, a.stderr).toBe(0);
+    // D74: the wrapper reads the verdict and the D71 blocker from assemble's stdout to offer `Override security`.
+    expect(JSON.parse(a.stdout)).toMatchObject({
+      verification: 'verified',
+      verdict: 'blocked',
+      blockers: ['gate:security (captured fail, not re-reviewed: upstream changed a file this feature changes; a recorded override or a fix elsewhere in the feature clears it)'],
+    });
+    expect(JSON.parse(fs.readFileSync(resultFile(FEATURE, 'ship'), 'utf-8'))).toMatchObject({ verdict: 'blocked' });
+    const old = new Date(Date.now() - 60 * 60 * 1000);
+    fs.utimesSync(path.join(valueDir(), 'overrides.json'), old, old);
+    const r = cli('check', 'ship');
+    expect(r.status, r.stderr).toBe(0);
+    expect(JSON.parse(r.stdout)).toMatchObject({ verification: 'verified', verdict: 'blocked' });
   });
 
   it('a repo unverified marker or a ledger pending marker gives unverified', () => {

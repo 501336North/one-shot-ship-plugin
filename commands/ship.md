@@ -239,12 +239,20 @@ With `--merge`, send `merged` then `complete` only if the merge landed in this s
 
 Before sending `complete`:
 1. Run `~/.oss/hooks/oss-value.sh dir` and keep the folder it prints.
-2. Use the Write tool to write the value files in that folder: `summary.txt`: a short plain-text summary of what ships; `overrides.json` (optional): a JSON array of `{"finding", "decisionId"}`, one per finding the user chose to override, where `decisionId` is the `id` of that picker's decision record (`[]` if none); `base.txt`: the name of the branch the PR targets, the same branch you pass to `gh pr create --base` (e.g. `main`). Never put any of this content into a command.
+2. Use the Write tool to write the value files in that folder: `summary.txt`: a short plain-text summary of what ships; `base.txt`: the name of the branch the PR targets, the same branch you pass to `gh pr create --base` (e.g. `main`). Do not write `overrides.json` here (step 5 says when). Never put any of this content (or the decision id) into a command.
 3. Run exactly:
 ```bash
 ~/.oss/hooks/oss-phase-result.sh assemble ship
 ```
-4. If it exits non-zero, read the reason it prints, fix the evidence (e.g. run the missing gate, or ask the user with the picker for an override) and run the same call again. Never write `results/*.json` by hand. If it still fails, tell the user the reason and do not treat the phase as passed: the `complete` call below refuses and reports it.
+4. If it exits non-zero, read the reason it prints, fix the evidence (e.g. run the missing gate) and run the same call again. Never write `results/*.json` by hand. If it still fails, tell the user the reason and do not treat the phase as passed: the `complete` call below refuses and reports it.
+5. If it exits 0, read the JSON it prints. If `verdict` is `blocked` and a line in `blockers` has the form `gate:<gate> (captured fail, not re-reviewed: upstream changed a file this feature changes; ...)`, ask the person one AskUserQuestion per such gate, `<gate>` being `security`, `performance`, `code-review` or `pen-test` as that blocker names it. The options are `Fix it` first, then exactly `Override <gate>` (for example `Override security`). You may mark `Fix it` (Recommended); never mark `Override <gate>` (Recommended). Ask nothing for any other blocker: fix those. Ask all these pickers before acting on any answer.
+   - `Fix it`: fix the finding, re-run that gate, and assemble again from step 1.
+   - Only if the person picks `Override <gate>`:
+     a. For each such gate, get that pick's decision id the way the hook records it: with the Read tool, the `id` of the newest record in `decisions.ndjson` whose `command` is `ship` and whose `choice` is exactly `Override <gate>` (the feature's `.oss/dev/active/<feature>/decisions.ndjson`). Never make one up, and never put it in a command.
+     b. Run `~/.oss/hooks/oss-value.sh dir` again and keep the folder it prints.
+     c. Use the Write tool to write `overrides.json` in that folder: `[{"finding": "<one line>", "decisionId": "<id>", "gate": "<gate>"}]`, one entry per gate the person chose to override, `finding` being a one-line summary of that gate's finding. Then write `summary.txt` and `base.txt` again, as in step 2.
+     d. Run the same assemble call (step 3) again.
+   Never write `overrides.json` for any other blocker or without that pick. A blocked result stays blocked: `complete` below refuses it.
 
 Then send `complete`:
 

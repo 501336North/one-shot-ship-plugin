@@ -1135,6 +1135,12 @@ var DEFAULT_REQUIRED_GATES = ["code-review", "performance", "security"];
 var SEVERITIES = ["critical", "high", "medium", "low", "info"];
 var REPO_FILE_CAP = 4 * 1024 * 1024;
 var GitError = class extends Error {
+  /** Perf L1 (gate round 11): git's output overflowed the call's buffer (spawnSync's ENOBUFS). */
+  constructor(message, overflow = false) {
+    super(message);
+    this.overflow = overflow;
+  }
+  overflow;
 };
 function runGit(repo, args, okCodes = [0], raw = false, maxBuffer = 1024 * 1024, input) {
   const env = gitEnv();
@@ -1151,7 +1157,9 @@ function runGit(repo, args, okCodes = [0], raw = false, maxBuffer = 1024 * 1024,
     timeout: 1e4,
     maxBuffer
   });
-  if (r.error !== void 0 || r.status === null || !okCodes.includes(r.status)) throw new GitError(args[0]);
+  if (r.error !== void 0 || r.status === null || !okCodes.includes(r.status)) {
+    throw new GitError(args[0], r.error?.code === "ENOBUFS");
+  }
   return { status: r.status, out: raw ? r.stdout : r.stdout.trim() };
 }
 var NO_LOCAL_BASE = "create the local branch from its remote (git branch <base> <remote>/<base>)";
@@ -1399,23 +1407,22 @@ var FailComparer = class {
   added = /* @__PURE__ */ new Map();
   /** Perf low (gate round 9): each `<tree-ish>:<path>` lookup, once per assemble. */
   entries = /* @__PURE__ */ new Map();
+  /** Perf L1 (gate round 11): set when a batched tree diff overflowed; later batches leave diffs to each row's calls. */
+  diffOverflowed = false;
   /** True when prefetch already tried this row. */
   isPrefetched(f) {
     return this.prefetched.has(rowKey(f));
   }
   /**
-   * Perf L3 (gate round 10): reads, for `rows`, the review bases (one rev-list) and every tree diff not yet read (each
-   * reviewed tree to HEAD and each review base to the merge base, one `diff-tree --stdin`). Best effort: anything a
-   * batch call cannot answer is left for the row's own git calls, which decide it as before.
+   * Perf L3 (gate round 10): reads, for `rows`, every tree diff not yet read (each reviewed tree to HEAD and each review
+   * base to the merge base, one `diff-tree --stdin`). Best effort: anything a batch call cannot answer is left for the
+   * row's own git calls, which decide it as before. Perf L1 (gate round 11): none once a batched diff overflowed.
    */
   prefetch(rows) {
     for (const f of rows) this.prefetched.add(rowKey(f));
     this.rowText.clear();
     this.upstreamText.clear();
-    try {
-      this.batchReviewBases(rows.map((f) => f.headSha).filter((h) => h !== null && !this.reviewBases.has(h)));
-    } catch {
-    }
+    if (this.diffOverflowed) return;
     try {
       const bases = [...new Set(rows.map((f) => f.headSha === null ? null : this.reviewBases.get(f.headSha)))].filter((b) => typeof b === "string" && b !== this.mergeBase);
       const trees = this.treesOf(["HEAD", this.mergeBase, ...bases]);
@@ -1432,6 +1439,18 @@ var FailComparer = class {
         if (t !== void 0) pairs.set(`${t} ${mb}`, (text) => this.upstreamText.set(b, text));
       }
       if (pairs.size > 0) this.diffTrees(pairs);
+    } catch (e) {
+      if (e instanceof GitError && e.overflow) this.diffOverflowed = true;
+    }
+  }
+  /**
+   * Perf I2 (gate round 11): the review bases of every row's review head, from one history walk before the first batch
+   * (batchReviewBases' answer for a head does not depend on the other heads walked with it). Best effort: a head git
+   * cannot walk (pruned, say) leaves its rows to merge-base each.
+   */
+  walkReviewBases(rows) {
+    try {
+      this.batchReviewBases(rows.map((f) => f.headSha).filter((h) => h !== null && !this.reviewBases.has(h)));
     } catch {
     }
   }
@@ -1755,21 +1774,28 @@ function timelineGates(ctx, featureDir, gateHashes) {
 }
 var CAPTURE_ADDS_GATE = "pen-test";
 var NOT_RE_REVIEWED = "captured fail, not re-reviewed: a tracked code change is needed to clear it";
-var UPSTREAM_CHANGED = "captured fail, not re-reviewed: upstream changed the flagged file; a recorded override or a fix elsewhere in the feature clears it";
-function applyAgentVerdicts(tl, verdictRows, comparer, overridden) {
+var UPSTREAM_CHANGED = "captured fail, not re-reviewed: upstream changed a file this feature changes; a recorded override or a fix elsewhere in the feature clears it";
+function applyAgentVerdicts(tl, verdictRows, comparer, overriddenAt) {
   const rows = verdictRows.map(failRow).filter((f) => f !== null).reverse().sort((a, b) => b.at - a.at);
   const states = /* @__PURE__ */ new Map();
   const newestOpen = /* @__PURE__ */ new Map();
   const decided = (gate) => newestOpen.get(gate)?.why === "open";
+  comparer.walkReviewBases(rows);
   rows.forEach((f, i) => {
     if (decided(f.gate)) return;
     if (!states.has(rowKey(f))) {
       if (!comparer.isPrefetched(f)) {
-        comparer.prefetch(rows.slice(i).filter((r) => !decided(r.gate) && !states.has(rowKey(r))).slice(0, BATCH_ROWS));
+        const batch = /* @__PURE__ */ new Map();
+        for (const r of rows.slice(i)) {
+          if (batch.size === BATCH_ROWS) break;
+          if (!decided(r.gate) && !states.has(rowKey(r)) && !batch.has(rowKey(r))) batch.set(rowKey(r), r);
+        }
+        comparer.prefetch([...batch.values()]);
       }
       states.set(rowKey(f), comparer.state(f));
     }
     const s = states.get(rowKey(f));
+    if (s === "upstream" && f.at < (overriddenAt.get(f.gate) ?? -Infinity)) return;
     if (s === "open" || s === "upstream") {
       const prev = newestOpen.get(f.gate);
       newestOpen.set(f.gate, { row: prev?.row ?? f, why: s === "open" ? "open" : prev?.why ?? "upstream" });
@@ -1777,7 +1803,6 @@ function applyAgentVerdicts(tl, verdictRows, comparer, overridden) {
   });
   const open = /* @__PURE__ */ new Map();
   for (const [name, { row: f, why }] of newestOpen) {
-    if (why === "upstream" && overridden.has(name)) continue;
     const zero = counts({});
     const gate = tl.byName.get(name) ?? (name === CAPTURE_ADDS_GATE ? { gate: name, verdict: "fail", findings: zero, fixed: zero, source: "agent" } : void 0);
     if (gate === void 0) continue;
@@ -1793,18 +1818,24 @@ function readOverrides(ctx, featureDir, decisionRows, gates) {
     if (rec === null || rec.feature !== ctx.feature || typeof rec.id !== "string") continue;
     const h = sha256(line);
     const ok = decisionRows.some((r) => r.id === rec.id && r.feature === ctx.feature && r.sha256 === h);
-    if (ok) recorded.set(rec.id, rec.person);
+    if (ok) recorded.set(rec.id, rec);
   }
   const raw = readValue(ctx, "overrides.json");
   const requested = raw === null ? [] : parseJsonOr(raw, null);
   if (!Array.isArray(requested)) return { ok: false, error: "override_unrecorded", detail: "overrides.json" };
   const overrides = [];
+  const clearsBefore = /* @__PURE__ */ new Map();
   for (const item of requested) {
     const id = item?.decisionId;
     if (typeof id !== "string" || !recorded.has(id)) return { ok: false, error: "override_unrecorded" };
     const gate = item?.gate;
     if (gate !== void 0 && (typeof gate !== "string" || !gates.has(gate))) return { ok: false, error: "override_unrecorded", detail: "gate" };
-    const person = recorded.get(id);
+    const rec = recorded.get(id);
+    const person = rec.person;
+    const at = typeof rec.answeredAt === "string" ? Date.parse(rec.answeredAt) : NaN;
+    if (typeof gate === "string" && rec.command === "ship" && rec.choice === `Override ${gate}` && !Number.isNaN(at)) {
+      clearsBefore.set(gate, Math.max(at, clearsBefore.get(gate) ?? -Infinity));
+    }
     overrides.push({
       finding: redactModelText(typeof item?.finding === "string" ? item.finding : ""),
       decisionId: id,
@@ -1812,7 +1843,7 @@ function readOverrides(ctx, featureDir, decisionRows, gates) {
       ...gate === void 0 ? {} : { gate }
     });
   }
-  return { ok: true, overrides };
+  return { ok: true, overrides, clearsBefore };
 }
 function assembleShip(ctx, opts) {
   let diff;
@@ -1836,9 +1867,13 @@ function assembleShip(ctx, opts) {
   }
   const required = opts.requiredGates ?? DEFAULT_REQUIRED_GATES;
   const read = readOverrides(ctx, featureDir, decisionRows, /* @__PURE__ */ new Set([...required, CAPTURE_ADDS_GATE]));
-  const overridden = new Set(read.ok ? read.overrides.map((o) => o.gate).filter((g) => g !== void 0) : []);
   const timeline = timelineGates(ctx, featureDir, gateHashes);
-  const notReReviewed = applyAgentVerdicts(timeline, verdictRows, new FailComparer(ctx.repo, diff.from, diff.base), overridden);
+  const notReReviewed = applyAgentVerdicts(
+    timeline,
+    verdictRows,
+    new FailComparer(ctx.repo, diff.from, diff.base),
+    read.ok ? read.clearsBefore : /* @__PURE__ */ new Map()
+  );
   const byName = timeline.byName;
   for (const name of required) {
     if (!byName.has(name)) return { ok: false, error: "gate_missing", detail: name };
@@ -2231,7 +2266,8 @@ function main(argv) {
       result = assemble(repo, feature, args.phase);
     });
     if (!v2.ok) return refuse(args, v2.id, v2.field, v2.detail);
-    process.stdout.write(`${JSON.stringify({ verification: result.verification, phase: args.phase, ...gateLabel(args.phase, result) })}
+    const outcome = args.phase === "ship" ? { verdict: result.verdict, blockers: result.blockers } : {};
+    process.stdout.write(`${JSON.stringify({ verification: result.verification, phase: args.phase, ...gateLabel(args.phase, result), ...outcome })}
 `);
     return 0;
   }

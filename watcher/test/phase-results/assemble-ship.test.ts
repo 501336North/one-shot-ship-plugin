@@ -26,13 +26,18 @@ import { validate } from '../../src/phase-results/validate.js';
  * Perf low 1 (gate round 6): counts the git processes assemble starts. A pass-through spy on the process boundary
  * (git is the collaborator), so every call still runs the real git.
  */
-const spawns = vi.hoisted(() => ({ n: 0, args: [] as string[][] }));
+const spawns = vi.hoisted(() => ({ n: 0, args: [] as string[][], overflow: null as ((argv: readonly string[]) => boolean) | null }));
 vi.mock('node:child_process', async (importOriginal) => {
   const real = await importOriginal<typeof import('node:child_process')>();
   const spawnSync: typeof real.spawnSync = ((...args: Parameters<typeof real.spawnSync>) => {
     spawns.n += 1;
     // Code-review L4 (gate round 10): the argv too, so a test can tell which git route ran.
     if (Array.isArray(args[1])) spawns.args.push([...(args[1] as readonly string[])]);
+    // Perf L1 (gate round 11): a call whose output overflows its buffer, as spawnSync reports it (ENOBUFS)
+    if (spawns.overflow !== null && Array.isArray(args[1]) && spawns.overflow(args[1] as readonly string[])) {
+      const error: NodeJS.ErrnoException = Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' });
+      return { pid: 0, output: [null, '', ''], stdout: '', stderr: '', status: null, signal: 'SIGTERM', error };
+    }
     return real.spawnSync(...args);
   }) as typeof real.spawnSync;
   return { ...real, spawnSync };
@@ -81,6 +86,7 @@ beforeEach(() => {
   git('checkout', '-q', '-b', `feat/${FEATURE}/ship`);
 });
 afterEach(() => {
+  spawns.overflow = null;
   process.env.HOME = savedHome;
   process.env.PATH = savedPath;
   for (const d of [repo, home, valueDir]) fs.rmSync(d, { recursive: true, force: true });
@@ -2580,9 +2586,10 @@ describe('assembleShip: probe lookups are cached per review base (perf low, gate
   });
 });
 
-/** D67: the blocker of a gate held open because upstream changed the flagged file (fixed text, never a path). */
+/** D67: the blocker of a gate held open because upstream changed a feature file since review (fixed text, never a path). */
+// ⚠ changes existing test: D71 — rows don't record which file was flagged, so the text says "a file this feature changes"
 const UPSTREAM_CHANGED = (gate: string): string =>
-  `gate:${gate} (captured fail, not re-reviewed: upstream changed the flagged file; a recorded override or a fix elsewhere in the feature clears it)`;
+  `gate:${gate} (captured fail, not re-reviewed: upstream changed a file this feature changes; a recorded override or a fix elsewhere in the feature clears it)`;
 const NOT_RE_REVIEWED_TEXT = (gate: string): string =>
   `gate:${gate} (captured fail, not re-reviewed: a tracked code change is needed to clear it)`;
 
@@ -2917,12 +2924,30 @@ describe('argvChunks', () => {
  * decision for this feature, it clears only that gate's open D67 rows (upstream changed the flagged file); never an
  * ordinary captured fail (D57) or a model gate line. The person still comes from the decision record.
  */
+/**
+ * D70 (user pick, ship round 13, "Ship pick, 'Override <gate>'"): a decision record the hook wrote during ship
+ * (`command: "ship"`) whose chosen answer is exactly `Override <gate>`, answered at `answeredAt`. Only such a pick lets an
+ * override clear that gate's D67 rows, and only rows captured before it was answered.
+ */
+function overridePick(gate: string, extra: Record<string, unknown> = {}): string {
+  const id = randomUUID();
+  const options = [{ label: `Override ${gate} (Recommended)`, description: 'x' }, { label: 'Fix it', description: 'y' }];
+  const line = JSON.stringify({
+    v: 1, id, feature: FEATURE, questionKey: 'override?', answerIndex: 1, question: `Override the ${gate} fail?`, header: 'Override',
+    options, recommended: `Override ${gate}`, choice: `Override ${gate}`, answerText: `Override ${gate}`, notes: null,
+    kind: 'risk', command: 'ship', answeredAt: '2026-11-13T09:20:00Z', person: 'Pat', session: 's', ...extra,
+  });
+  fs.appendFileSync(path.join(featureDir(), 'decisions.ndjson'), `${line}\n`);
+  openLedger(repo).appendRow(`decisions/${FEATURE}`, { id, feature: FEATURE, sha256: sha256(line) });
+  return id;
+}
+
 describe('assembleShip: a recorded override naming the gate clears a D67 fail (D69)', () => {
   const BASE = ['def handler(u):', '    check_auth(u)', '    run(u)', '', '', '', '', '', 'X = 1'];
   const text = (ls: string[]): string => `${ls.join('\n')}\n`;
 
   /** The feature drops check_auth in app.py and is failed; a teammate edits app.py; the model rebases (a D67 row). */
-  function d67Fail(gate = 'security'): void {
+  function d67Fail(gate = 'security', laterRowTs?: string): void {
     git('checkout', '-q', 'main');
     commitFile('app.py', text(BASE), 'base py');
     git('checkout', '-q', BRANCH9);
@@ -2931,6 +2956,8 @@ describe('assembleShip: a recorded override naming the gate clears a D67 fail (D
     git('add', 'other.txt');
     commitFile('app.py', text(BASE.filter((l) => !l.includes('check_auth'))), 'feature');
     failOnHead9(undefined, undefined, gate);
+    // D70: a second review of the same code, captured at laterRowTs (a D67 row too after the rebase)
+    if (laterRowTs !== undefined) failOnHead9(undefined, undefined, gate, laterRowTs);
     mateOnMain9('app.py', text(BASE.map((l) => (l === 'X = 1' ? 'X = 2' : l))));
     git('rebase', '-q', 'main');
     allPass(1);
@@ -2940,9 +2967,10 @@ describe('assembleShip: a recorded override naming the gate clears a D67 fail (D
     fs.writeFileSync(path.join(valueDir, 'overrides.json'), JSON.stringify([entry]));
   }
 
+  // ⚠ changes existing test: D70 — the override's decision must be a ship pick answered `Override security`
   it('an override naming the gate clears a gate held only by D67 rows: ready_to_merge, person from the record', () => {
     d67Fail();
-    const { id } = decision('Pat');
+    const id = overridePick('security');
     override({ finding: 'MEDIUM: auth check, upstream moved it', decisionId: id, gate: 'security' });
     const r = result(ship());
     expect(r.verdict).toBe('ready_to_merge');
@@ -2964,26 +2992,29 @@ describe('assembleShip: a recorded override naming the gate clears a D67 fail (D
     expect(result(ship()).blockers).toEqual([UPSTREAM_CHANGED('security')]);
   });
 
+  // ⚠ changes existing test: D70 — a valid `Override security` pick, so only the ordinary fail can keep it blocked
   it('a gate with a D67 row and an ordinary open fail stays blocked, with the tracked-change text', () => {
     d67Fail();
     // an older review of the same gate on the rebased code, unchanged since: an ordinary (D57) open fail
     failOnHead9(undefined, undefined, 'security', '2026-11-13T09:05:00.000Z');
-    override({ finding: 'x', decisionId: decision('Pat').id, gate: 'security' });
+    override({ finding: 'x', decisionId: overridePick('security'), gate: 'security' });
     expect(result(ship()).blockers).toEqual([NOT_RE_REVIEWED_TEXT('security')]);
   });
 
+  // ⚠ changes existing test: D70 — a valid `Override security` pick, so the test still shows the ordinary fail stays
   it('an override never clears an ordinary captured fail', () => {
     commitFile('f.txt', 'vuln\n', 'feature');
     failOnHead9();
     allPass(1);
-    override({ finding: 'x', decisionId: decision('Pat').id, gate: 'security' });
+    override({ finding: 'x', decisionId: overridePick('security'), gate: 'security' });
     expect(result(ship()).blockers).toEqual([NOT_RE_REVIEWED_TEXT('security')]);
   });
 
+  // ⚠ changes existing test: D70 — a valid `Override security` pick, so the test still shows the model line stays
   it('an override never clears a failing model gate line', () => {
     commitFile('f.txt', 'work\n', 'feature');
     for (const gate of GATES) gateLine({ round: 1, gate, verdict: gate === 'security' ? 'fail' : 'pass' });
-    override({ finding: 'x', decisionId: decision('Pat').id, gate: 'security' });
+    override({ finding: 'x', decisionId: overridePick('security'), gate: 'security' });
     expect(result(ship()).blockers).toEqual(['gate:security']);
   });
 
@@ -3000,12 +3031,195 @@ describe('assembleShip: a recorded override naming the gate clears a D67 fail (D
     expect(o.ok ? null : { error: o.error, detail: o.detail }).toEqual({ error: 'override_unrecorded', detail: 'gate' });
   });
 
+  // ⚠ changes existing test: D70 — a valid `Override security` pick, and the result is asserted to be cleared
   it('check (reassembling with the stored overrides, gate included) agrees with assemble', () => {
     d67Fail();
-    override({ finding: 'x', decisionId: decision('Pat').id, gate: 'security' });
+    override({ finding: 'x', decisionId: overridePick('security'), gate: 'security' });
     const first = result(ship());
+    expect(first.verdict).toBe('ready_to_merge');
     const stored = first.overrides as Array<Record<string, unknown>>;
     override(stored[0] as Record<string, unknown>);
     expect(result(ship())).toEqual(first);
+  });
+
+  describe('D70: only a ship pick answered `Override <gate>` counts, for rows captured before it', () => {
+    it('an unrelated ideate decision does not clear (r11-sec A1)', () => {
+      d67Fail();
+      const id = overridePick('security', { question: 'Which storage format?', choice: 'JSON', answerText: 'JSON', command: 'ideate', kind: 'design' });
+      override({ finding: 'x', decisionId: id, gate: 'security' });
+      expect(result(ship()).blockers).toEqual([UPSTREAM_CHANGED('security')]);
+    });
+
+    it('an `Override security` answer given outside ship does not clear', () => {
+      d67Fail();
+      override({ finding: 'x', decisionId: overridePick('security', { command: 'build' }), gate: 'security' });
+      expect(result(ship()).blockers).toEqual([UPSTREAM_CHANGED('security')]);
+    });
+
+    it('a ship decision answered "Fix it" does not clear (r11-sec A2)', () => {
+      d67Fail();
+      override({ finding: 'x', decisionId: overridePick('security', { choice: 'Fix it', answerText: 'Fix it' }), gate: 'security' });
+      expect(result(ship()).blockers).toEqual([UPSTREAM_CHANGED('security')]);
+    });
+
+    it('a bare "Override" or a multi-select answer does not clear', () => {
+      d67Fail();
+      override({ finding: 'x', decisionId: overridePick('security', { choice: 'Override', answerText: 'Override' }), gate: 'security' });
+      expect(result(ship()).blockers).toEqual([UPSTREAM_CHANGED('security')]);
+      override({ finding: 'x', decisionId: overridePick('security', { choice: ['Override security'] }), gate: 'security' });
+      expect(result(ship()).blockers).toEqual([UPSTREAM_CHANGED('security')]);
+    });
+
+    it('`Override performance` does not clear security', () => {
+      d67Fail();
+      override({ finding: 'x', decisionId: overridePick('performance'), gate: 'security' });
+      expect(result(ship()).blockers).toEqual([UPSTREAM_CHANGED('security')]);
+    });
+
+    it('`Override security` answered before a newer D67 row: that row stays open (r11-sec A3, r11-pen stale)', () => {
+      d67Fail('security', '2026-11-13T09:30:00.000Z');
+      override({ finding: 'x', decisionId: overridePick('security'), gate: 'security' });
+      const r = result(ship());
+      expect(r.verdict).toBe('blocked');
+      expect(r.blockers).toEqual([UPSTREAM_CHANGED('security')]);
+    });
+
+    it('`Override security` answered after every D67 row clears them', () => {
+      d67Fail('security', '2026-11-13T09:15:00.000Z');
+      override({ finding: 'x', decisionId: overridePick('security'), gate: 'security' });
+      const r = result(ship());
+      expect(r.verdict).toBe('ready_to_merge');
+      expect(r.blockers).toEqual([]);
+    });
+
+    it('a pick with no readable answered time does not clear', () => {
+      d67Fail();
+      override({ finding: 'x', decisionId: overridePick('security', { answeredAt: 'soon' }), gate: 'security' });
+      expect(result(ship()).blockers).toEqual([UPSTREAM_CHANGED('security')]);
+    });
+
+    it('a recorded decision that does not count is still listed, not refused, and check agrees', () => {
+      d67Fail('security', '2026-11-13T09:30:00.000Z');
+      const id = overridePick('security');
+      override({ finding: 'x', decisionId: id, gate: 'security' });
+      const first = result(ship());
+      expect(first.verdict).toBe('blocked');
+      expect(first.overrides).toEqual([{ finding: 'x', decisionId: id, person: 'Pat', gate: 'security' }]);
+      override((first.overrides as Array<Record<string, unknown>>)[0] as Record<string, unknown>);
+      expect(result(ship())).toEqual(first);
+    });
+  });
+});
+
+/**
+ * D71 (user pick, ship round 13, "Honest text, override stays"; r11-sec probe C1): upstream touched only a shared feature
+ * file (CHANGELOG.md), not the flagged vuln.py. Rows don't record which file was flagged, so the blocker says upstream
+ * changed a file this feature changes, never "the flagged file". A D70-bound override still clears it.
+ */
+describe('assembleShip: the D67 blocker names a file this feature changes, not the flagged file (D71)', () => {
+  it('upstream edits only the shared CHANGELOG: the new text, and an `Override security` pick clears it', () => {
+    git('checkout', '-q', 'main');
+    commitFile('CHANGELOG.md', 'a\n\n\n\n\n\nz\n', 'cl');
+    git('checkout', '-q', BRANCH9);
+    git('rebase', '-q', 'main');
+    commitFile('vuln.py', 'eval(input())\n', 'feature vuln');
+    commitFile('CHANGELOG.md', 'a feature\n\n\n\n\n\nz\n', 'feature cl');
+    failOnHead9();
+    mateOnMain9('CHANGELOG.md', 'a\n\n\n\n\n\nz mate\n');
+    git('rebase', '-q', 'main');
+    allPass(1);
+    expect(result(ship()).blockers).toEqual([
+      'gate:security (captured fail, not re-reviewed: upstream changed a file this feature changes; a recorded override or a fix elsewhere in the feature clears it)',
+    ]);
+    fs.writeFileSync(path.join(valueDir, 'overrides.json'), JSON.stringify([{ finding: 'x', decisionId: overridePick('security'), gate: 'security' }]));
+    expect(result(ship())).toMatchObject({ verdict: 'ready_to_merge', blockers: [] });
+  });
+});
+
+/**
+ * Gate round 11 perf (D72): perf L1, after the first batched tree diff overflows its buffer no later batch tries one;
+ * perf L2, batches are filled with distinct review states, not rows; perf I2, one history walk finds every review base.
+ */
+describe('assembleShip: batches after an overflow, by review state, one history walk (perf L1, L2, I2, gate round 11)', { timeout: 120_000 }, () => {
+  /** `states` distinct off-history review heads of the feature, each failed by every gate (`gates` rows per state). */
+  function offHistoryStates(states: number, gates: readonly string[]): void {
+    const old = git('rev-parse', 'main');
+    commitFile('flagged.txt', 'vuln\n', 'feature');
+    const tree = git('rev-parse', 'HEAD^{tree}');
+    let i = 0;
+    for (let s = 0; s < states; s++) {
+      const head = git('commit-tree', tree, '-p', old, '-m', `pre-rebase review ${s}`);
+      for (const g of gates) failOnHead9(tree, head, g, new Date(Date.parse('2026-11-13T09:00:00.000Z') + (i++) * 1000).toISOString());
+    }
+    mateOnMain9('mate.txt', 'mate\n');
+    git('rebase', '-q', 'main');
+    allPass(1);
+  }
+  const isBatchDiff = (a: readonly string[]): boolean => a.includes('diff-tree') && a.includes('--stdin');
+
+  it('the batched tree diff overflows once: no later batch tries it, and the result is unchanged', () => {
+    offHistoryStates(40, ['security']);
+    commitFile('flagged.txt', 'safe\n', 'fix');
+    const expected = result(ship());
+    spawns.overflow = isBatchDiff;
+    spawns.args = [];
+    expect(result(ship())).toEqual(expected);
+    expect(spawns.args.filter(isBatchDiff).length).toBe(1);
+  });
+
+  it('201 rows on 67 review states x 3 gates, all cleared by a fix: batches hold distinct states (about 19 git calls, not 33)', () => {
+    offHistoryStates(67, GATES);
+    commitFile('flagged.txt', 'safe\n', 'fix');
+    spawns.n = 0;
+    expect(result(ship()).verdict).toBe('ready_to_merge');
+    expect(spawns.n).toBeLessThanOrEqual(22);
+  });
+
+  it('one history walk finds the review bases of every batch', () => {
+    offHistoryStates(40, ['security']);
+    commitFile('flagged.txt', 'safe\n', 'fix');
+    spawns.args = [];
+    expect(result(ship()).verdict).toBe('ready_to_merge');
+    expect(spawns.args.filter((a) => a.includes('rev-list') && a.includes('--boundary')).length).toBe(1);
+  });
+});
+
+/**
+ * Code-review L1 (gate round 11): two guards no test pinned.
+ * (a) batchReviewBases takes a boundary commit as the review base only when the head reaches exactly one
+ *     (`r.length === 1`); a head that merged main twice reaches several, and its base must be git's merge-base.
+ * (b) D67 counts an upstream change to a path the feature changes now (`own.has(p) ||`), even one the reviewed tree
+ *     did not touch.
+ */
+describe('assembleShip: a review head with several boundary commits, and a fix only in an upstream-changed path (code-review L1, gate round 11)', () => {
+  it('(a) a review head that merged main twice, fixed after review in a path upstream did not touch since: the fail clears', () => {
+    commitFile('flagged.txt', 'vuln\n', 'feature');
+    mateOnMain9('u1.txt', 'one\n');
+    git('merge', '-q', '--no-edit', 'main');
+    // p.txt reaches the feature through its second merge of main, before the review
+    mateOnMain9('p.txt', 'upstream p\n');
+    git('merge', '-q', '--no-edit', 'main');
+    failOnHead9();
+    // the review base is merge-base(main, review head): main's tip, so upstream changed nothing since the review
+    expect(git('merge-base', 'main', 'HEAD')).toBe(git('rev-parse', 'main'));
+    commitFile('p.txt', 'fixed p\n', 'fix in p');
+    allPass(1);
+    expect(result(ship())).toMatchObject({ verdict: 'ready_to_merge', blockers: [] });
+  });
+
+  it('(b) a flagged file the feature did not fix, and a fix after review only in a file upstream changed: D67 text, and an override clears it', () => {
+    commitFile('p.txt', 'base p\n', 'p on main');
+    git('checkout', '-q', 'main');
+    git('merge', '-q', '--ff-only', BRANCH9);
+    git('checkout', '-q', BRANCH9);
+    commitFile('q.txt', 'vuln\n', 'feature');
+    failOnHead9();
+    mateOnMain9('p.txt', 'upstream p\n');
+    git('rebase', '-q', 'main');
+    commitFile('p.txt', 'feature p\n', 'fix only in p');
+    allPass(1);
+    expect(result(ship()).blockers).toEqual([UPSTREAM_CHANGED('security')]);
+    fs.writeFileSync(path.join(valueDir, 'overrides.json'), JSON.stringify([{ finding: 'x', decisionId: overridePick('security'), gate: 'security' }]));
+    expect(result(ship())).toMatchObject({ verdict: 'ready_to_merge', blockers: [] });
   });
 });

@@ -21,11 +21,12 @@
  *   (its diff from the merge base, plus the reviewed tree's changes against the review-time merge base), so upstream
  *   commits brought in by a rebase or merge never clear a fail (FailComparer). D67: a path upstream changed between the
  *   review-time base and the merge base never clears a fail, whatever it holds now; a row held open that way reads
- *   `gate:<name> (captured fail, not re-reviewed: upstream changed the flagged file; ...)`.
+ *   `gate:<name> (captured fail, not re-reviewed: upstream changed a file this feature changes; ...)` (D71).
  * - An open captured pen-test fail adds that optional gate. D26: the result labels how many gates an agent row backs
  *   (`gateEvidence`) and names the rest (`uncapturedGates`).
  * Overrides: each decisionId must be a decisions.ndjson record whose line hash, id and feature match a ledger row;
- * `person` is copied from that record, never from the model.
+ * `person` is copied from that record, never from the model. D69 + D70: an entry naming a gate whose record is a ship
+ * pick answered `Override <gate>` clears that gate's D67 rows captured before the pick was answered.
  */
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -61,7 +62,12 @@ export interface AssembleShipOptions {
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'] as const;
 const REPO_FILE_CAP = 4 * 1024 * 1024;
 
-class GitError extends Error {}
+class GitError extends Error {
+  /** Perf L1 (gate round 11): git's output overflowed the call's buffer (spawnSync's ENOBUFS). */
+  constructor(message: string, readonly overflow = false) {
+    super(message);
+  }
+}
 
 /**
  * `raw` keeps stdout as git printed it (for `-z` output, whose paths may end in spaces). git is the fixed-path binary
@@ -89,7 +95,9 @@ function runGit(
     timeout: 10_000,
     maxBuffer,
   });
-  if (r.error !== undefined || r.status === null || !okCodes.includes(r.status)) throw new GitError(args[0]);
+  if (r.error !== undefined || r.status === null || !okCodes.includes(r.status)) {
+    throw new GitError(args[0], (r.error as NodeJS.ErrnoException | undefined)?.code === 'ENOBUFS');
+  }
   return { status: r.status, out: raw ? r.stdout : r.stdout.trim() };
 }
 
@@ -454,8 +462,10 @@ type RowState = 'cleared' | 'open' | 'upstream' | 'ignored';
  * assemble. The diff base (`from`, the commit the ship diff's merge-base was taken from) and that merge-base come from
  * readDiff, so check (reassemble) compares on the same paths. Every list is read from git output (-z, a large buffer)
  * and intersected here. Objects git may have pruned are checked only after a comparison failed (perf F1), and once per
- * SHA. Perf L3 (gate round 10): rows are prepared in batches (prefetch): their review bases from one rev-list and every
- * tree diff from one `diff-tree --stdin`; a row the batch could not serve falls back to its own git calls.
+ * SHA. Perf L3 (gate round 10): rows are prepared in batches (prefetch): every tree diff from one `diff-tree --stdin`; a
+ * row the batch could not serve falls back to its own git calls. Gate round 11: every row's review base comes from one
+ * rev-list before the first batch (perf I2), a batch holds distinct review states (perf L2), and after a batched diff
+ * overflows its buffer no later batch tries one (perf L1).
  */
 class FailComparer {
   private readonly missing = new Map<string, boolean>();
@@ -475,6 +485,8 @@ class FailComparer {
   private readonly added = new Map<string, Set<string>>();
   /** Perf low (gate round 9): each `<tree-ish>:<path>` lookup, once per assemble. */
   private readonly entries = new Map<string, Map<string, string | null>>();
+  /** Perf L1 (gate round 11): set when a batched tree diff overflowed; later batches leave diffs to each row's calls. */
+  private diffOverflowed = false;
 
   constructor(private readonly repo: string, private readonly from: string, private readonly mergeBase: string) {}
 
@@ -484,19 +496,15 @@ class FailComparer {
   }
 
   /**
-   * Perf L3 (gate round 10): reads, for `rows`, the review bases (one rev-list) and every tree diff not yet read (each
-   * reviewed tree to HEAD and each review base to the merge base, one `diff-tree --stdin`). Best effort: anything a
-   * batch call cannot answer is left for the row's own git calls, which decide it as before.
+   * Perf L3 (gate round 10): reads, for `rows`, every tree diff not yet read (each reviewed tree to HEAD and each review
+   * base to the merge base, one `diff-tree --stdin`). Best effort: anything a batch call cannot answer is left for the
+   * row's own git calls, which decide it as before. Perf L1 (gate round 11): none once a batched diff overflowed.
    */
   prefetch(rows: FailRow[]): void {
     for (const f of rows) this.prefetched.add(rowKey(f));
     this.rowText.clear();
     this.upstreamText.clear();
-    try {
-      this.batchReviewBases(rows.map((f) => f.headSha).filter((h): h is string => h !== null && !this.reviewBases.has(h)));
-    } catch {
-      // a head git cannot walk (pruned, say): those rows take merge-base each
-    }
+    if (this.diffOverflowed) return;
     try {
       const bases = [...new Set(rows.map((f) => (f.headSha === null ? null : this.reviewBases.get(f.headSha))))]
         .filter((b): b is string => typeof b === 'string' && b !== this.mergeBase);
@@ -514,8 +522,22 @@ class FailComparer {
         if (t !== undefined) pairs.set(`${t} ${mb}`, (text) => this.upstreamText.set(b, text));
       }
       if (pairs.size > 0) this.diffTrees(pairs);
+    } catch (e) {
+      // a batch git error: each row's own calls decide it; after an overflow, so do every later batch's (perf L1)
+      if (e instanceof GitError && e.overflow) this.diffOverflowed = true;
+    }
+  }
+
+  /**
+   * Perf I2 (gate round 11): the review bases of every row's review head, from one history walk before the first batch
+   * (batchReviewBases' answer for a head does not depend on the other heads walked with it). Best effort: a head git
+   * cannot walk (pruned, say) leaves its rows to merge-base each.
+   */
+  walkReviewBases(rows: FailRow[]): void {
+    try {
+      this.batchReviewBases(rows.map((f) => f.headSha).filter((h): h is string => h !== null && !this.reviewBases.has(h)));
     } catch {
-      // a batch git error: each row's own calls decide it
+      // each row takes merge-base
     }
   }
 
@@ -857,8 +879,11 @@ const CAPTURE_ADDS_GATE = 'pen-test';
 
 /** The blocker label of a gate held failed by an open captured fail (D32, D45). */
 const NOT_RE_REVIEWED = 'captured fail, not re-reviewed: a tracked code change is needed to clear it';
-/** D67: the blocker label when upstream changed the flagged file since review (fixed text, never a path). */
-const UPSTREAM_CHANGED = 'captured fail, not re-reviewed: upstream changed the flagged file; a recorded override or a fix elsewhere in the feature clears it';
+/**
+ * D67 + D71: the blocker label when upstream changed a feature path since review (fixed text, never a path). Rows don't
+ * record which file was flagged, so it says "a file this feature changes".
+ */
+const UPSTREAM_CHANGED = 'captured fail, not re-reviewed: upstream changed a file this feature changes; a recorded override or a fix elsewhere in the feature clears it';
 
 /**
  * T19 + D45 + D51: every captured FAIL row of the feature (no cutoff: pen F1, pen L7) is checked against the shipped
@@ -872,7 +897,7 @@ function applyAgentVerdicts(
   tl: Timeline,
   verdictRows: LedgerRow[],
   comparer: FailComparer,
-  overridden: ReadonlySet<string>,
+  overriddenAt: ReadonlyMap<string, number>,
 ): Map<string, 'open' | 'upstream'> {
   // Perf low 1: newest first (a later ledger row wins a tie), stopping at a gate's first open row; rows sharing one
   // reviewed state are compared once. Perf L3: the rows still to decide are prepared in batches.
@@ -882,15 +907,24 @@ function applyAgentVerdicts(
   // D69: a gate whose open rows are all D67 rows ('upstream') keeps being walked, since an older ordinary open fail
   // (D57) decides its text and cannot be overridden; a gate with an ordinary open fail is decided.
   const decided = (gate: string): boolean => newestOpen.get(gate)?.why === 'open';
+  comparer.walkReviewBases(rows);
   rows.forEach((f, i) => {
     if (decided(f.gate)) return;
     if (!states.has(rowKey(f))) {
       if (!comparer.isPrefetched(f)) {
-        comparer.prefetch(rows.slice(i).filter((r) => !decided(r.gate) && !states.has(rowKey(r))).slice(0, BATCH_ROWS));
+        // Perf L2 (gate round 11): a batch holds BATCH_ROWS distinct review states, not rows.
+        const batch = new Map<string, FailRow>();
+        for (const r of rows.slice(i)) {
+          if (batch.size === BATCH_ROWS) break;
+          if (!decided(r.gate) && !states.has(rowKey(r)) && !batch.has(rowKey(r))) batch.set(rowKey(r), r);
+        }
+        comparer.prefetch([...batch.values()]);
       }
       states.set(rowKey(f), comparer.state(f));
     }
     const s = states.get(rowKey(f));
+    // D69 + D70: a D67 row captured before a counted `Override <gate>` pick for its gate was answered is cleared.
+    if (s === 'upstream' && f.at < (overriddenAt.get(f.gate) ?? -Infinity)) return;
     if (s === 'open' || s === 'upstream') {
       const prev = newestOpen.get(f.gate);
       newestOpen.set(f.gate, { row: prev?.row ?? f, why: s === 'open' ? 'open' : prev?.why ?? 'upstream' });
@@ -898,8 +932,6 @@ function applyAgentVerdicts(
   });
   const open = new Map<string, 'open' | 'upstream'>();
   for (const [name, { row: f, why }] of newestOpen) {
-    // D69: a recorded override naming the gate clears it when only D67 rows hold it open (it falls back to its line).
-    if (why === 'upstream' && overridden.has(name)) continue;
     const zero = counts({});
     const gate = tl.byName.get(name) ?? (name === CAPTURE_ADDS_GATE
       ? { gate: name, verdict: 'fail' as const, findings: zero, fixed: zero, source: 'agent' as const }
@@ -911,32 +943,44 @@ function applyAgentVerdicts(
   return open;
 }
 
-type OverridesOutcome = { ok: true; overrides: Array<Record<string, string>> } | Extract<AssembleOutcome, { ok: false }>;
+type OverridesOutcome =
+  | { ok: true; overrides: Array<Record<string, string>>; clearsBefore: Map<string, number> }
+  | Extract<AssembleOutcome, { ok: false }>;
 
 /**
  * The model's `overrides.json`, each checked against a ledger-backed decision record; person comes from that record.
- * D69: an entry may name a `gate` (one of `gates`, else override_unrecorded with detail `gate`), which lets it clear
- * that gate's D67 rows.
+ * D69: an entry may name a `gate` (one of `gates`, else override_unrecorded with detail `gate`). D70: it clears that
+ * gate's D67 rows captured before its decision was answered (`clearsBefore`, the latest such time per gate) only when
+ * the record is a ship pick (`command: "ship"`) whose `choice` is exactly `Override <gate>`; any other recorded decision
+ * is still listed and refuses nothing (assemble and check read the same records, so they agree), but clears nothing.
  */
 function readOverrides(ctx: AssembleContext, featureDir: string, decisionRows: LedgerRow[], gates: ReadonlySet<string>): OverridesOutcome {
-  const recorded = new Map<string, unknown>();
+  const recorded = new Map<string, Record<string, unknown>>();
   for (const line of repoLines(path.join(featureDir, 'decisions.ndjson'))) {
     const rec = parseJsonObject(line);
     if (rec === null || rec.feature !== ctx.feature || typeof rec.id !== 'string') continue;
     const h = sha256(line);
     const ok = decisionRows.some((r) => r.id === rec.id && r.feature === ctx.feature && r.sha256 === h);
-    if (ok) recorded.set(rec.id, rec.person);
+    if (ok) recorded.set(rec.id, rec);
   }
   const raw = readValue(ctx, 'overrides.json');
   const requested = raw === null ? [] : parseJsonOr(raw, null);
   if (!Array.isArray(requested)) return { ok: false, error: 'override_unrecorded', detail: 'overrides.json' };
   const overrides: Array<Record<string, string>> = [];
+  const clearsBefore = new Map<string, number>();
   for (const item of requested as Array<Record<string, unknown> | null>) {
     const id = item?.decisionId;
     if (typeof id !== 'string' || !recorded.has(id)) return { ok: false, error: 'override_unrecorded' };
     const gate = item?.gate;
     if (gate !== undefined && (typeof gate !== 'string' || !gates.has(gate))) return { ok: false, error: 'override_unrecorded', detail: 'gate' };
-    const person = recorded.get(id);
+    const rec = recorded.get(id) as Record<string, unknown>;
+    const person = rec.person;
+    // D70: only a ship pick whose chosen answer is exactly `Override <gate>` counts, from the time it was answered;
+    // any other recorded decision is listed but clears nothing.
+    const at = typeof rec.answeredAt === 'string' ? Date.parse(rec.answeredAt) : NaN;
+    if (typeof gate === 'string' && rec.command === 'ship' && rec.choice === `Override ${gate}` && !Number.isNaN(at)) {
+      clearsBefore.set(gate, Math.max(at, clearsBefore.get(gate) ?? -Infinity));
+    }
     overrides.push({
       finding: redactModelText(typeof item?.finding === 'string' ? item.finding : ''),
       decisionId: id,
@@ -944,7 +988,7 @@ function readOverrides(ctx: AssembleContext, featureDir: string, decisionRows: L
       ...(gate === undefined ? {} : { gate }),
     });
   }
-  return { ok: true, overrides };
+  return { ok: true, overrides, clearsBefore };
 }
 
 export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): AssembleOutcome {
@@ -974,9 +1018,9 @@ export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): A
 
   const required = opts.requiredGates ?? DEFAULT_REQUIRED_GATES;
   const read = readOverrides(ctx, featureDir, decisionRows, new Set([...required, CAPTURE_ADDS_GATE]));
-  const overridden = new Set(read.ok ? read.overrides.map((o) => o.gate).filter((g): g is string => g !== undefined) : []);
   const timeline = timelineGates(ctx, featureDir, gateHashes);
-  const notReReviewed = applyAgentVerdicts(timeline, verdictRows, new FailComparer(ctx.repo, diff.from, diff.base), overridden);
+  const notReReviewed = applyAgentVerdicts(timeline, verdictRows, new FailComparer(ctx.repo, diff.from, diff.base),
+    read.ok ? read.clearsBefore : new Map());
   const byName = timeline.byName;
   for (const name of required) {
     if (!byName.has(name)) return { ok: false, error: 'gate_missing', detail: name };

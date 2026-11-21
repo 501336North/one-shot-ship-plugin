@@ -195,6 +195,10 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 
 ## Ship round 12 notes (2026-11-20)
 - D67 trade (owner pick): an honest fix confined to a file upstream also changed stays blocked; it clears through a D69 override naming the gate, or a change to another feature path upstream did not touch.
-- FOLLOW-UP (API): no served prompt describes overrides.json, so a model won't add `gate` on its own. The ship prompt must say how to write an override entry with `gate` and a recorded decisionId. Cite this in the PR.
+- ~~FOLLOW-UP (API)~~: resolved in round 13 by D74 — the plugin wrapper (commands/ship.md Step 8), not the served prompt, assembles the ship result and now asks the override picker.
 - Batched per-row prep peaks higher in memory (245 MB at 200 off-history rows, was 145 MB) in exchange for 47 git calls instead of 609.
 
+## Ship round 13 notes (2026-11-21)
+- D70: the hook writes answeredAt to the whole second, so a row captured in the same second as the override pick stays open (fails closed).
+- Known limits, not fixed (D72): remote-ref cost grows per diverged same-name remote; 1,000 off-history rows take about 21 s.
+- Gate names: gate rounds 3-11 timeline lines used agent names (`code-reviewer`, `performance-auditor`, `security-auditor`, `penetration-tester`) instead of gate names (`code-review`, `performance`, `security`, `pen-test`); rounds 1-2 and round 12 on use gate names. Hook-written lines were left as they are.
