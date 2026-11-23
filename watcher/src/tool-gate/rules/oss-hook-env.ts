@@ -529,8 +529,10 @@ function valueVerdict(value: string, cwd: string, command: string, call: Call): 
   const unknown = value.includes(UNKNOWN);
   const hook = pieces.some((p) => wordNamesHook(p, cwd, true, call.home) || (p.includes(UNKNOWN) && HOOK_HINT.test(p)));
   if (unknown && piecesSet(value)) return 'hook';
+  // S5: the whole command is read for a set variable only when the value names a hook
+  if (!hook) return 'ok';
   const sets = pieces.includes('env') || (!unknown && setsRefusedVariable(value, 0, call)) || setsRefusedVariable(command, 0, call);
-  return hook && sets ? 'hook' : 'ok';
+  return sets ? 'hook' : 'ok';
 }
 
 /**
@@ -646,11 +648,22 @@ function programHidden(part: CommandPart): boolean {
   return part.program !== null && (part.program.includes(UNKNOWN) || part.program.startsWith('$='));
 }
 
+/** The last command's program scan (S5: once per command, not once per part): its inputs and verdict. */
+let lastScan: { command: string; cwd: string; home: string; sources: TrustedSources; verdict: 'hook' | 'unreadable' | 'ok' } | null = null;
+
+/** The worst verdict of the command's program words, read from `cwd`; the same command, cwd, home and sources reuse the last scan. */
+function commandScan(command: string, cwd: string, home: string, sources: TrustedSources): 'hook' | 'unreadable' | 'ok' {
+  if (lastScan !== null && lastScan.command === command && lastScan.cwd === cwd && lastScan.home === home && lastScan.sources === sources) return lastScan.verdict;
+  const call = { home, sources: sourcesFor(command, sources) };
+  const result = tokenize(command, home, new ReadBudget());
+  const verdict = scanPrograms(result.tokens, command, new Map(), cwd, command, call);
+  lastScan = { command, cwd, home, sources, verdict };
+  return verdict;
+}
+
 export function checkOssHookEnv(part: CommandPart, command: string, home: string, sources: TrustedSources): Refusal | null {
   if (programHidden(part)) {
-    const call = { home, sources: sourcesFor(command, sources) };
-    const result = tokenize(command, home, new ReadBudget());
-    if (scanPrograms(result.tokens, command, new Map(), part.cwd, command, call) !== 'ok') {
+    if (commandScan(command, part.cwd, home, sources) !== 'ok') {
       return {
         rule: 'protected-path',
         reason: 'Refused: the program this command runs is read from a file or through indirection, which the gate can\'t see, or is a value the shell splits into words that run an OSS hook script (`~/.oss/hooks/…`) with a variable set or cleared. Write the program name out.',

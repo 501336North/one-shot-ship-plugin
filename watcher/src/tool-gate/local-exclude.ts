@@ -24,6 +24,8 @@ const OSS_STATE = [path.posix.join('.oss', 'tool-gates') + '/', path.posix.join(
 const MAX_EXCLUDE_BYTES = 1024 * 1024;
 /** Most time the `git check-ignore` may take (a time limit: the step must not slow the gate). */
 const CHECK_IGNORE_MS = 300;
+/** Repo tops where git already ignores every OSS state line: asked once per process (ship round 1, S5). */
+const alreadyIgnored = new Set<string>();
 
 /** Appends the OSS state lines the repo of `projectRoot` neither lists in `info/exclude` nor already ignores. */
 export function excludeOssState(projectRoot: string): void {
@@ -39,10 +41,13 @@ export function excludeOssState(projectRoot: string): void {
   const listed = new Set(text.split('\n'));
   const missing = OSS_STATE.filter((line) => !listed.has(line));
   // git is asked only while a line is missing, so a repo already set up costs one small read
-  if (missing.length === 0) return;
+  if (missing.length === 0 || alreadyIgnored.has(repo.top)) return;
   const ignored = ignoredPaths(repo.top, missing, timeLeft(CHECK_IGNORE_MS));
   if (ignored === null) return;
   const added = missing.filter((line) => !ignored.includes(line));
-  if (added.length === 0) return;
+  if (added.length === 0) {
+    alreadyIgnored.add(repo.top);
+    return;
+  }
   appendPrivateFile(file, (text === '' || text.endsWith('\n') ? '' : '\n') + added.map((line) => `${line}\n`).join(''));
 }

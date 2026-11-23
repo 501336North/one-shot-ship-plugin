@@ -246,9 +246,10 @@ describe.each(PLATFORMS)('on %s', (platform) => {
       const timed: GitReader = {
         currentBranch: (dir, timeoutMs) => real.currentBranch(dir, timeoutMs),
         async wouldClean(dir, options, pathspecs, timeoutMs) {
-          const started = performance.now();
+          // CPU time, not wall time (ship round 1, S5, as Task 1b): machine load can't fail the row
+          const started = cpuMs();
           const removed = await real.wouldClean(dir, options, pathspecs, timeoutMs);
-          runs.push({ ms: performance.now() - started, pathspecs });
+          runs.push({ ms: cpuMs() - started, pathspecs });
           return removed;
         },
       };
