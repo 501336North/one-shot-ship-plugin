@@ -200,7 +200,39 @@ const ALLOWED = [
   "git remote add pw 'https://u:p%40x@github.com/a/b.git'",
   // R6-2 (D): an escaped `/` in an https path is not an authority end
   "git remote add sl 'https://github.com/a%2Fb/c.git'",
-  // R6-2 (B): an ssh address keeps reading a bracketed userinfo as the host, as git does (host `x`)
+  // ship fix round 7, R7-1: ssh, git:// and scp hosts without `[`, `%` or a second `@` stay allowed; a `%` in the path is fine
+  "git remote add y 'git@github.com:a/b.git'",
+  "git remote add y 'ssh://git@github.com/a%2Fb'",
+  "git remote add y 'git://github.com/a%2Fb/c'",
+  "git remote add y 'git://github.com/a/my%20repo'",
+  'git remote add y git://github.com/a/[x].git',
+  'git clone git://github.com/a/b.git',
+  "git remote add y 'https://github.com/a/[x].git'",
+];
+
+/**
+ * Ship fix round 7, R7-1 ("Blunt: refuse odd hosts"): for ssh, git+ssh, ssh+git, git:// (any case) and scp-style
+ * addresses, a host part (to the first `/`, or the first `:` for scp) holding `[`, `%` or more than one `@` is refused.
+ */
+const ODD_HOSTS = [
+  "git remote add y 'git://[127.0.0.1]@github.com/x'",
+  "git remote add y 'git://%5B127.0.0.1%5D@github.com/x'",
+  "git remote add y 'git://[localhost]:9418@github.com/x'",
+  "git -c 'url.git://[127.0.0.1]@github.com/.insteadOf=https://github.com/' fetch origin",
+  "git remote set-url origin 'git://[::1]@github.com/x'",
+  "git remote add y 'GIT://[127.0.0.1]@github.com/x'",
+  "git remote set-url origin 'ssh://[github.com%2Fx@127.0.0.1]/repo'",
+  "git remote set-url origin 'git+ssh://[github.com%2Fx@localhost]/repo'",
+  "git -c 'url.ssh://[github.com%2Fx@127.0.0.1]/.insteadOf=https://github.com/' fetch origin",
+  "git remote set-url origin 'ssh://a@[b@127.0.0.1]/repo'",
+  "git remote set-url origin 'ssh://a@[b@127.0.0.1]:22/repo'",
+  "git remote set-url origin 'x@[a@127.0.0.1]:repo'",
+  "git remote set-url origin 'ssh://[github.com/x@127.0.0.1]/repo'",
+  // R7-1 owner-accepted refusals (`ssh://%5Bx%5D@127.0.0.1/x` was allowed under R6-2 B)
+  "git remote add y '[git@github.com]:a/b'",
+  "git remote add y 'ssh://[git@github.com]:22/x'",
+  "git remote add y 'git://[2001:db8::1]/x'",
+  "git remote add y 'ssh://u%40x@github.com/a'",
   "git remote add y 'ssh://%5Bx%5D@127.0.0.1/x'",
 ];
 
@@ -218,6 +250,7 @@ describe.each(PLATFORMS)('remotes the gate can see (ship round 1, S3) on %s', (p
     it.each(LOOPBACK_FORMS)('refuses a remote on this machine in any numeric or localhost spelling: %s', refused);
     it.each(USERINFO_FORMS)('refuses a remote on this machine behind userinfo or brackets: %s', refused);
     it.each(SSH_AUTHORITY)('refuses an ssh remote whose host, read to the first `/`, is this machine: %s', refused);
+    it.each(ODD_HOSTS)('refuses an ssh, git:// or scp remote whose host holds a bracket, an escape or a second @: %s', refused);
     it.each(ENCODED_AUTHORITY)('refuses a remote on this machine behind a percent-encoded authority: %s', refused);
     it.each(REPLACE_DESTINATIONS)('refuses a fetch or pull that writes a replace ref: %s', refused);
 

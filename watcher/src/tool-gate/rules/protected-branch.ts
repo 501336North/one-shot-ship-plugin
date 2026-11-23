@@ -460,12 +460,32 @@ const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
  */
 export function isLocalUrl(url: string): boolean {
   if (FILE_URL.test(url)) return true;
+  if (oddHost(url)) return true;
   if (loopbackHost(urlHost(url))) return true;
   if (URL_SCHEME.test(url)) return false;
   const colon = url.indexOf(':');
   const unknown = url.indexOf(UNKNOWN);
   if (unknown !== -1 && (colon === -1 || unknown < colon)) return true;
   return colon === -1 || url.slice(0, colon).includes('/');
+}
+
+/**
+ * True when an ssh, git+ssh, ssh+git or git:// URL (any case) or an scp-style address has a host part, up to the
+ * first `/` (scp: the first `:`), holding `[`, `%` or more than one `@` (ship fix round 7, R7-1, "Blunt: refuse
+ * odd hosts"): the gate does not try to read such a host the way git does.
+ */
+function oddHost(url: string): boolean {
+  const scheme = /^(?:ssh|git\+ssh|ssh\+git|git):\/\//i.exec(url);
+  let host: string;
+  if (scheme !== null) {
+    const rest = url.slice(scheme[0].length);
+    host = rest.slice(0, rest.search(/\/|$/));
+  } else {
+    const colon = url.indexOf(':');
+    if (URL_SCHEME.test(url) || colon === -1 || url.slice(0, colon).includes('/')) return false;
+    host = url.slice(0, colon);
+  }
+  return /[[%]/.test(host) || host.split('@').length > 2;
 }
 
 /** The host of a `scheme://[user@]host…` URL or an scp-like `[user@]host:path` (git syntax), `[…]` for IPv6. */
