@@ -8922,7 +8922,13 @@ function setsUnlisted(words) {
   else if (name === "printf" || name === "print") args.forEach((a, i) => a === "-v" ? names.push(args[i + 1] ?? "") : /^-v./.test(a) && names.push(a.slice(2)));
   else if (name === "mapfile" || name === "readarray") names.push(...arrayOperands(args));
   else if (name === "getopts") names.push(args[1] ?? "");
-  else if (name === "zparseopts") args.forEach((a, i) => (a === "-A" || a === "-a") && names.push(args[i + 1] ?? ""));
+  else if (name === "zparseopts") {
+    args.forEach((a, i) => {
+      if (a === "-A" || a === "-a") names.push(args[i + 1] ?? "");
+      else if (/^-[aA]./.test(a)) names.push(a.slice(2));
+      else if (!a.startsWith("-") && a.includes("=")) names.push(a.slice(a.indexOf("=") + 1));
+    });
+  }
   return names.some(unlisted);
 }
 function unlisted(word) {
@@ -9106,6 +9112,7 @@ function couldBeOssHook(word, runs) {
   return hookFolder || parts[parts.length - 1].includes(UNKNOWN);
 }
 var SPLIT_REF = /^"?(?:\$=?([A-Za-z_][A-Za-z0-9_]*|[@*])(?:\[[^\]]*\])?|\$\{=?([A-Za-z_][A-Za-z0-9_]*|[@*])(?:\[[^\]]*\])?\})"?$/;
+var OTHER_OPERATOR = /^"?\$\{(?![A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\})/;
 var DEFAULT_REF = /^"?\$\{([A-Za-z_][A-Za-z0-9_]*):?[-=]([\s\S]*)\}"?$/;
 var LEADING_REF = /^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})(?![A-Za-z0-9_[])/;
 var UNREAD_SETTERS = /* @__PURE__ */ new Set(["for", "select", "printf", "print", "getopts", "let"]);
@@ -9183,7 +9190,7 @@ function programVerdict(token, after, text, values, cwd, command, call) {
   const leading = split2 === null ? LEADING_REF.exec(raw) : null;
   const withDefault = split2 === null && leading === null ? DEFAULT_REF.exec(raw) : null;
   const name = split2?.[1] ?? split2?.[2] ?? leading?.[1] ?? leading?.[2] ?? withDefault?.[1];
-  if (name === void 0) return "ok";
+  if (name === void 0) return OTHER_OPERATOR.test(raw) && lineNamesHook(command, cwd, call.home) ? "unreadable" : "ok";
   const value = values.get(name);
   const quoted = raw.startsWith('"');
   if (value === FROM_FILE && !quoted) return "unreadable";
@@ -9586,7 +9593,7 @@ var URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
 function isLocalUrl(url) {
   if (FILE_URL.test(url)) return true;
   const host = URL_HOST.exec(url);
-  if (host !== null && LOOPBACK.test(host[1] ?? host[2])) return true;
+  if (host !== null && loopbackHost(host[1] ?? host[2])) return true;
   if (URL_SCHEME.test(url)) return false;
   const colon = url.indexOf(":");
   const unknown = url.indexOf(UNKNOWN);
@@ -9594,7 +9601,54 @@ function isLocalUrl(url) {
   return colon === -1 || url.slice(0, colon).includes("/");
 }
 var URL_HOST = /^(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/)?(?:[^@/:]*@)?(?:\[([^\]]*)\]|([^/:[\]]+))(?::|\/|$)/;
-var LOOPBACK = /^(?:localhost\.?|127(?:\.\d{1,3}){3}|::1|0*:0*:0*:0*:0*:0*:0*:0*1)$/i;
+function loopbackHost(raw) {
+  let host = raw;
+  try {
+    host = decodeURIComponent(raw);
+  } catch {
+  }
+  host = host.toLowerCase().replace(/\.+$/, "");
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  if (host.includes(":")) return loopbackIpv6(host);
+  const v4 = ipv4Number(host);
+  return v4 !== null && localIpv4(v4);
+}
+function localIpv4(value) {
+  return value >>> 24 === 127 || value === 0;
+}
+function ipv4Number(host) {
+  const parts = host.split(".");
+  if (parts.length > 4) return null;
+  const values = [];
+  for (const part of parts) {
+    const value = /^0x[0-9a-f]*$/.test(part) ? parseInt(part.slice(2) || "0", 16) : /^0[0-7]*$/.test(part) ? parseInt(part, 8) : /^[1-9][0-9]*$/.test(part) ? Number(part) : NaN;
+    if (!Number.isFinite(value)) return null;
+    values.push(value);
+  }
+  const last = values.pop();
+  if (values.some((v) => v > 255) || last >= 2 ** (8 * (4 - values.length))) return null;
+  return values.reduce((sum, v, i) => sum + v * 2 ** (8 * (3 - i)), 0) + last;
+}
+function loopbackIpv6(host) {
+  let text = host.replace(/%.*$/, "");
+  const tail = /(?:^|:)([0-9.]+\.[0-9.]+)$/.exec(text);
+  if (tail !== null) {
+    const v42 = ipv4Number(tail[1]);
+    if (v42 === null) return false;
+    text = `${text.slice(0, text.length - tail[1].length)}${(v42 >>> 16).toString(16)}:${(v42 & 65535).toString(16)}`;
+  }
+  const halves = text.split("::");
+  if (halves.length > 2) return false;
+  const head = halves[0] === "" ? [] : halves[0].split(":");
+  const rest = halves.length === 2 && halves[1] !== "" ? halves[1].split(":") : [];
+  if (halves.length === 1 && head.length !== 8) return false;
+  const groups = [...head, ...Array(8 - head.length - rest.length).fill("0"), ...rest];
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return false;
+  const n = groups.map((g) => parseInt(g, 16));
+  const v4 = n[6] * 65536 + n[7];
+  if (n.slice(0, 7).every((g) => g === 0) && n[7] <= 1) return true;
+  return n.slice(0, 5).every((g) => g === 0) && (n[5] === 65535 || n[5] === 0) && localIpv4(v4);
+}
 function realOrNull2(p) {
   try {
     return import_node_fs15.default.realpathSync(p);
@@ -10108,7 +10162,6 @@ function checkCommitSetup(part, earlier, count) {
   return null;
 }
 function checkPushSetup(part, earlier, count = earlier.length) {
-  if (settingsOf(part).some(([name]) => name === "GIT_ALLOW_PROTOCOL")) return ALLOW_PROTOCOL_REFUSAL;
   const planted = plantedConfig(part, earlier, count);
   if (planted !== null) {
     return {
@@ -10206,6 +10259,9 @@ var ALLOW_PROTOCOL_REFUSAL = {
   rule: "protected-branch",
   reason: "Refused: `GIT_ALLOW_PROTOCOL` lets git use protocols such as `ext::`, which runs a command. Ask the user to run it with `!`."
 };
+function checkAllowProtocolMention(command) {
+  return command.includes("GIT_ALLOW_PROTOCOL") ? ALLOW_PROTOCOL_REFUSAL : null;
+}
 var REF_HISTORY_REFUSAL = {
   rule: "protected-branch",
   reason: "Refused: this git setting changes or erases ref history (reflogs), which a lost commit is found by. Ask the user to change it with `!`."
@@ -11514,7 +11570,7 @@ async function checkBash(ctx, command) {
   const sources = trustedSourcesOf(ctx);
   const repos = reviewedRepos(ctx);
   for (const [index, part] of facts.parts.entries()) {
-    const refusal3 = checkUnknownGitOption(part) ?? checkPushSetup(part, facts.parts, index) ?? checkLocalRemote(part, facts.parts, index) ?? checkRepoTrust(part, trustOf) ?? checkBranchSwitch(part, facts.parts, index, settings, void 0, ctx.caseInsensitive) ?? await checkBranchRefs(part, settings, ctx.git, ctx.caseInsensitive) ?? await checkProtectedBranch(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), ctx.caseInsensitive) ?? await checkHistoryMove(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), void 0, ctx.caseInsensitive) ?? checkForcePush(part, settings) ?? checkTags(part, settings) ?? checkProductionHost(part, settings) ?? checkOssHookEnv(part, command, home, sources) ?? checkVerdictCaptureCall(part, command, { home, pluginRoot: ctx.pluginRoot, paths, caseInsensitive: ctx.caseInsensitive }) ?? checkProtectedPathBash(part, settings, root, home, paths, ctx.caseInsensitive, places, ctx.tree) ?? (ownStep ? null : checkGateAgentBash(part, hook.agent, settings, { repos, home, exists: import_node_fs19.default.existsSync, temp: tempRoots(ctx), fallback: ctx.containment?.kind === "fallback", darwin: ctx.platform === "darwin", sandboxed: ctx.containment?.kind === "sandbox" }, paths, ctx.caseInsensitive, { earlier: facts.parts.slice(0, index), background: hook.background })) ?? await checkGitClean(part, settings, root, home, paths, ctx.git, ctx.caseInsensitive, places, { earlier: facts.parts, count: index, tree: ctx.tree }) ?? await checkGitStash(part, settings, root, home, paths, ctx.git, places, { earlier: facts.parts, count: index }) ?? checkProtectedPathMention(part, settings, root, home, paths, ctx.caseInsensitive, places);
+    const refusal3 = checkUnknownGitOption(part) ?? checkAllowProtocolMention(command) ?? checkPushSetup(part, facts.parts, index) ?? checkLocalRemote(part, facts.parts, index) ?? checkRepoTrust(part, trustOf) ?? checkBranchSwitch(part, facts.parts, index, settings, void 0, ctx.caseInsensitive) ?? await checkBranchRefs(part, settings, ctx.git, ctx.caseInsensitive) ?? await checkProtectedBranch(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), ctx.caseInsensitive) ?? await checkHistoryMove(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), void 0, ctx.caseInsensitive) ?? checkForcePush(part, settings) ?? checkTags(part, settings) ?? checkProductionHost(part, settings) ?? checkOssHookEnv(part, command, home, sources) ?? checkVerdictCaptureCall(part, command, { home, pluginRoot: ctx.pluginRoot, paths, caseInsensitive: ctx.caseInsensitive }) ?? checkProtectedPathBash(part, settings, root, home, paths, ctx.caseInsensitive, places, ctx.tree) ?? (ownStep ? null : checkGateAgentBash(part, hook.agent, settings, { repos, home, exists: import_node_fs19.default.existsSync, temp: tempRoots(ctx), fallback: ctx.containment?.kind === "fallback", darwin: ctx.platform === "darwin", sandboxed: ctx.containment?.kind === "sandbox" }, paths, ctx.caseInsensitive, { earlier: facts.parts.slice(0, index), background: hook.background })) ?? await checkGitClean(part, settings, root, home, paths, ctx.git, ctx.caseInsensitive, places, { earlier: facts.parts, count: index, tree: ctx.tree }) ?? await checkGitStash(part, settings, root, home, paths, ctx.git, places, { earlier: facts.parts, count: index }) ?? checkProtectedPathMention(part, settings, root, home, paths, ctx.caseInsensitive, places);
     if (refusal3 !== null) return { refusal: refusal3, program: part.program };
   }
   if ("unreadable" in facts && !ownStep) {
