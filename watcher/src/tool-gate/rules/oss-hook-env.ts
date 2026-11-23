@@ -442,6 +442,8 @@ function couldBeOssHook(word: string, runs: boolean): boolean {
  * (`$a[@]`, `${a[*]}`, `"${a[@]}"`, `${a[0]}`), the positional parameters (`"$@"`, `$*`) (ship round 1, S2).
  */
 const SPLIT_REF = /^"?(?:\$=?([A-Za-z_][A-Za-z0-9_]*|[@*])(?:\[[^\]]*\])?|\$\{=?([A-Za-z_][A-Za-z0-9_]*|[@*])(?:\[[^\]]*\])?\})"?$/;
+/** A program word that starts with `${` and an operator or flag, not a plain `${name}` / `${name[i]}` (ship fix round 2, R2-4). */
+const OTHER_OPERATOR = /^"?\$\{(?![A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\})/;
 /** A program word that is a variable with a default (`${c:-…}`, `${c-…}`, `${c:=…}`, `${c=…}`): the default counts as the value (S2). */
 const DEFAULT_REF = /^"?\$\{([A-Za-z_][A-Za-z0-9_]*):?[-=]([\s\S]*)\}"?$/;
 /** A program word that starts with a variable, split before the rest is added (`$d/x`, `${d}x`). */
@@ -561,7 +563,8 @@ function programVerdict(token: Token, after: Token[], text: string | null, value
   const leading = split === null ? LEADING_REF.exec(raw) : null;
   const withDefault = split === null && leading === null ? DEFAULT_REF.exec(raw) : null;
   const name = split?.[1] ?? split?.[2] ?? leading?.[1] ?? leading?.[2] ?? withDefault?.[1];
-  if (name === undefined) return 'ok';
+  // ship fix round 2, R2-4: any other `${…}` operator (`:+`, `%`, `#`, `/`, `:0`, `^`, zsh flags …) is not read here
+  if (name === undefined) return OTHER_OPERATOR.test(raw) && lineNamesHook(command, cwd, call.home) ? 'unreadable' : 'ok';
   const value = values.get(name);
   // a quoted program word is one word, not split: read from a file, it is judged like an unread value, with words after it
   const quoted = raw.startsWith('"');

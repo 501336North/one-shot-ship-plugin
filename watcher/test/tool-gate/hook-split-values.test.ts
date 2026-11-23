@@ -83,10 +83,40 @@ const REFUSED = [
   'readarray -t a <<< "env BASH_ENV=/x $HOME/.oss/hooks/oss-log.sh"; ${a[0]} init',
 ];
 
+/** Ship fix round 2, R2-4: any other `${…}` operator on the program word is unreadable, refused on a line naming a hook path. */
+const OTHER_OPERATORS = [
+  'c=1; HOME=/tmp/x ${c:+~/.oss/hooks/oss-log.sh}',
+  'c=1; HOME=/tmp/x ${c:+~/.oss}/hooks/oss-log.sh',
+  'c=env; ${c%%z} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  'x=1; ${x:+env} BASH_ENV=/tmp/x ~/.oss/hooks/oss-log.sh init',
+  'c=env; ${c/q/} BASH_ENV=/tmp/x ~/.oss/hooks/oss-log.sh init',
+  'c=env; ${c+env} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  'c=env; ${c%z} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  'c=env; ${c#} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  'c=env; ${c##z} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  'c=env; ${c//q/} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  'c=env; ${c:0} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  'c=env; ${c:?} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  'c=env; ${c^} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  'c=env; ${c,} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  'c=ENV; ${(L)c} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+];
+
 /** Already refused by the path-mention rule (`set` names a hook path): kept as guards. */
 const REFUSED_ANY = ['set -- env BASH_ENV=/tmp/x ~/.oss/hooks/oss-log.sh; "$@"'];
 
-const ALLOWED = ['c=ls; $c -la', 'cmd=npm; $cmd test', '${EDITOR:-vi} notes.txt', 'a[0]=ls; ${a[0]} -la'];
+const ALLOWED = [
+  'c=ls; $c -la',
+  'cmd=npm; $cmd test',
+  '${EDITOR:-vi} notes.txt',
+  'a[0]=ls; ${a[0]} -la',
+  // R2-4: a default stays a readable value
+  '"${CC:-cc}" -o x x.c',
+  '${PAGER:-less} README.md',
+  // a plain `${name}` is no operator: the plugin's own hook call stays allowed
+  '"${CLAUDE_PLUGIN_ROOT}/hooks/oss-log.sh" init',
+  '${CLAUDE_PLUGIN_ROOT}/hooks/oss-log.sh init',
+];
 
 /** Lines another rule may refuse; the hook-call rule must not. */
 const NOT_HOOK = ['NODE_ENV=test node "$SCRIPT"'];
@@ -97,6 +127,12 @@ describe.each(PLATFORMS)('on %s', (platform) => {
       const result = await call(command, agent, platform);
       expect(result.exitCode, command).toBe(2);
       expect(result.stderr, command).toMatch(/OSS hook script/);
+    });
+
+    it.each(OTHER_OPERATORS)('refuses a hook line whose program word uses an expansion operator the gate does not read: %s', async (command) => {
+      const result = await call(command, agent, platform);
+      expect(result.exitCode, command).toBe(2);
+      expect(result.stderr, command).toMatch(/^Refused/);
     });
 
     it.each(REFUSED_ANY)('refuses a hook call run through the positional parameters: %s', async (command) => {
