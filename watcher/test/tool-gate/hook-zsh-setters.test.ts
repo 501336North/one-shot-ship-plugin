@@ -1,7 +1,7 @@
 /**
  * @behavior The main agent and builders can't run an OSS hook script after setting a variable it reads
  *   (BASH_ENV, NODE_OPTIONS, GIT_DIR, TMPDIR …) with one of zsh's other binding builtins: `private` (its
- *   names, `-x` / `-gx` exports and `-n` namerefs), `vared`, `zparseopts -A/-a <name>` and `getopts`
+ *   names, `-x` / `-gx` exports and `-n` namerefs), `vared`, `getln`, `zparseopts -A/-a <name>` and `getopts`
  *   with a written-out name, on their own, in a `zsh -c` script, or before a plugin-cache hook. The same
  *   builtins on a line that runs no hook stay allowed.
  * @business-rule gate-gaps-r3 ship round 1, S1 (HIGH, pen test finding 1): an exported `BASH_ENV` or
@@ -32,6 +32,11 @@ beforeAll(() => {
   fs.mkdirSync(path.join(home, '.oss', 'hooks'), { recursive: true });
   fs.writeFileSync(path.join(home, '.oss', 'hooks', 'oss-log.sh'), '#!/bin/sh\n');
   fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+  // a plugin checkout: its `hooks/` scripts are OSS hooks
+  fs.mkdirSync(path.join(repo, '.claude-plugin'), { recursive: true });
+  fs.writeFileSync(path.join(repo, '.claude-plugin', 'plugin.json'), '{"name":"oss"}\n');
+  fs.mkdirSync(path.join(repo, 'hooks'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'hooks', 'oss-log.sh'), '#!/bin/sh\n');
   execFileSync('git', ['init', '-q', '-b', 'feat/x'], { cwd: repo });
 });
 
@@ -79,9 +84,13 @@ const REFUSED = [
   `private BASH_ENV; ${H}`,
   `private -n r=BASH_ENV; ${H}`,
   `getopts ab TMPDIR; ${H}`,
+  // after fix round pick "Add getln to S1": `getln` binds a name from the buffer stack (`print -z` fills it)
+  `getln TMPDIR; ${H}`,
+  `getln TMPDIR < /dev/null; ${H}`,
+  'getln BASH_ENV; ./hooks/oss-log.sh',
 ];
 
-const ALLOWED = ['private -x FOO=bar', 'vared x', 'zparseopts -A opts -- -v'];
+const ALLOWED = ['private -x FOO=bar', 'vared x', 'zparseopts -A opts -- -v', 'getln x'];
 
 describe.each(PLATFORMS)('on %s', (platform) => {
   describe.each(AGENTS)('%s', (_who, agent) => {

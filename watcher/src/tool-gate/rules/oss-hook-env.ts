@@ -12,8 +12,8 @@
  * from the part's cwd, and a variable's value that names one counts too (Task 10).
  * Decided from the words the shell reads (round 13, CR L-a), brace expansion included, on the whole
  * command when a part names a hook script: an assignment (`X=…`, `X+=…`, `X[i]=…`, before a program or
- * alone), an operand of `export`, `declare`, `local`, `readonly`, `read`, `let`, `env`, zsh's `private` and
- * `vared` and the like, a `zparseopts -A/-a` or `getopts` name (ship round 1, S1), a
+ * alone), an operand of `export`, `declare`, `local`, `readonly`, `read`, `let`, `env`, zsh's `private`,
+ * `vared` and `getln` and the like, a `zparseopts -A/-a` or `getopts` name (ship round 1, S1), a
  * `for` / `select` variable, a `${X:=…}` or arithmetic that sets one, the same in a `-c` / `eval` script
  * or a heredoc, or an `env` wrapper (which can also clear them: `env -i`) is refused when the name is not
  * on the list. A word that is exactly HOME, PATH or `path` anywhere (`printf -v HOME`) counts as setting
@@ -79,7 +79,7 @@ const SETTING_WORD = /^(?:HOME|PATH|path)(?:$|\[[^\]]*\])?(?:\+?=|$)/;
 /** A word that is a script the shell runs: the value after a `-c` flag or `eval`. */
 const SCRIPT_FLAG = /^-[A-Za-z]*c$/;
 /** Builtins that set the variable a word names (bash and zsh); a name only known when it runs could be HOME or PATH. */
-const NAME_SETTERS = new Set(['declare', 'typeset', 'export', 'local', 'readonly', 'read', 'integer', 'float', 'private', 'vared']);
+const NAME_SETTERS = new Set(['declare', 'typeset', 'export', 'local', 'readonly', 'read', 'integer', 'float', 'private', 'vared', 'getln']);
 /** Builtins whose `-n` makes a name refer to another variable (a nameref), which may be HOME or PATH. */
 const NAMEREF_SETTERS = new Set(['declare', 'typeset', 'local', 'private']);
 /** Programs that set the variables their operands name (`let X=1`, `env X=1 …`), the name setters included. */
