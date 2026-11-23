@@ -12,7 +12,8 @@
  * from the part's cwd, and a variable's value that names one counts too (Task 10).
  * Decided from the words the shell reads (round 13, CR L-a), brace expansion included, on the whole
  * command when a part names a hook script: an assignment (`X=…`, `X+=…`, `X[i]=…`, before a program or
- * alone), an operand of `export`, `declare`, `local`, `readonly`, `read`, `let`, `env` and the like, a
+ * alone), an operand of `export`, `declare`, `local`, `readonly`, `read`, `let`, `env`, zsh's `private` and
+ * `vared` and the like, a `zparseopts -A/-a` or `getopts` name (ship round 1, S1), a
  * `for` / `select` variable, a `${X:=…}` or arithmetic that sets one, the same in a `-c` / `eval` script
  * or a heredoc, or an `env` wrapper (which can also clear them: `env -i`) is refused when the name is not
  * on the list. A word that is exactly HOME, PATH or `path` anywhere (`printf -v HOME`) counts as setting
@@ -78,9 +79,9 @@ const SETTING_WORD = /^(?:HOME|PATH|path)(?:$|\[[^\]]*\])?(?:\+?=|$)/;
 /** A word that is a script the shell runs: the value after a `-c` flag or `eval`. */
 const SCRIPT_FLAG = /^-[A-Za-z]*c$/;
 /** Builtins that set the variable a word names (bash and zsh); a name only known when it runs could be HOME or PATH. */
-const NAME_SETTERS = new Set(['declare', 'typeset', 'export', 'local', 'readonly', 'read', 'integer', 'float']);
+const NAME_SETTERS = new Set(['declare', 'typeset', 'export', 'local', 'readonly', 'read', 'integer', 'float', 'private', 'vared']);
 /** Builtins whose `-n` makes a name refer to another variable (a nameref), which may be HOME or PATH. */
-const NAMEREF_SETTERS = new Set(['declare', 'typeset', 'local']);
+const NAMEREF_SETTERS = new Set(['declare', 'typeset', 'local', 'private']);
 /** Programs that set the variables their operands name (`let X=1`, `env X=1 …`), the name setters included. */
 const OPERAND_SETTERS = new Set([...NAME_SETTERS, 'let', 'env']);
 /** Words before a builtin that still run it, zsh's precommand modifiers included (hook-env-refs Task 15). */
@@ -163,6 +164,8 @@ function setsUnlisted(words: string[]): boolean {
   else if (name === 'printf' || name === 'print') args.forEach((a, i) => (a === '-v' ? names.push(args[i + 1] ?? '') : /^-v./.test(a) && names.push(a.slice(2))));
   else if (name === 'mapfile' || name === 'readarray') names.push(...arrayOperands(args));
   else if (name === 'getopts') names.push(args[1] ?? '');
+  // ship round 1, S1: zsh's `zparseopts -A name` / `-a name` binds a written-out name too
+  else if (name === 'zparseopts') args.forEach((a, i) => (a === '-A' || a === '-a') && names.push(args[i + 1] ?? ''));
   return names.some(unlisted);
 }
 
