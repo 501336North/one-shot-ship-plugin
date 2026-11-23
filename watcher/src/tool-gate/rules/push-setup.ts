@@ -409,6 +409,8 @@ function checkCommitSetup(part: CommandPart, earlier: readonly CommandPart[], co
  * the gate passes the whole call and the part's index, so no list is copied per part.
  */
 export function checkPushSetup(part: CommandPart, earlier: readonly CommandPart[], count = earlier.length): Refusal | null {
+  // ship round 1, S4: the env twin of the protocol keys, set for a call, alone or exported, whatever runs next
+  if (settingsOf(part).some(([name]) => name === 'GIT_ALLOW_PROTOCOL')) return ALLOW_PROTOCOL_REFUSAL;
   const planted = plantedConfig(part, earlier, count);
   if (planted !== null) {
     return {
@@ -525,6 +527,12 @@ function localRemote(git: NonNullable<CommandPart['git']>, part: CommandPart, ea
     return forgesRemote(value, paired?.[1]);
   });
 }
+
+/** The refusal for `GIT_ALLOW_PROTOCOL`: fixed text, so no value is repeated. */
+const ALLOW_PROTOCOL_REFUSAL: Refusal = {
+  rule: 'protected-branch',
+  reason: 'Refused: `GIT_ALLOW_PROTOCOL` lets git use protocols such as `ext::`, which runs a command. Ask the user to run it with `!`.',
+};
 
 /** The refusal for a ref-history key, set any way: fixed text, so no key or value is repeated. */
 const REF_HISTORY_REFUSAL: Refusal = {
@@ -645,9 +653,10 @@ const OSS_KEYS = ['oss.*'];
  * Config keys (git syntax, lowercased, `*` is any text) that make ordinary git subcommands run a
  * hook folder, a program, or config the agent may have written, whatever their value (fix round 4,
  * K4). `alias.*` hides the real subcommand from every rule; `include.path` pulls in any key;
- * `protocol.allow` / `protocol.ext.allow` let an `ext::` URL run a command.
+ * `protocol.allow` / `protocol.<name>.allow` let an `ext::` URL run a command or a `file://` one read this
+ * machine (ship round 1, S4: every protocol key, not only `ext`).
  */
-export const RUN_ANY_KEYS = ['core.hookspath', 'alias.*', 'include.path', 'includeif.*.path', 'protocol.allow', 'protocol.ext.allow', ...REF_HISTORY_KEYS, ...OSS_KEYS];
+export const RUN_ANY_KEYS = ['core.hookspath', 'alias.*', 'include.path', 'includeif.*.path', 'protocol.allow', 'protocol.*.allow', ...REF_HISTORY_KEYS, ...OSS_KEYS];
 /** Sections whose renaming or removal moves keys a `git config` write may not set (PUSH_KEYS, RUN_ANY_KEYS). */
 const WRITE_SECTIONS = new Set([...PUSH_KEYS, ...RUN_ANY_KEYS].map((key) => key.split('.')[0]));
 /**
@@ -918,6 +927,8 @@ function runConfig(part: CommandPart, earlier: readonly CommandPart[], count: nu
     if (w !== '-c' || i + 1 >= globals.length) continue;
     const setting = globals[++i];
     const value = setting.includes('=') ? setting.slice(setting.indexOf('=') + 1) : 'true';
+    // S4 follow-up pick "Allow on submodule only": a local-path submodule needs the file protocol
+    if (git.subcommand === 'submodule' && keyOf(setting).toLowerCase() === 'protocol.file.allow') continue;
     if (runsProgram(keyOf(setting), value)) return keyOf(setting);
   }
   const settings = callSettings(part, earlier, count);

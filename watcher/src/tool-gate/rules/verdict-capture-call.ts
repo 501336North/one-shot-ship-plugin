@@ -218,13 +218,15 @@ const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
  * True when some text made of the pieces, in order with any text between them (and before the first,
  * unless anchored), is matched by the glob's tokens: one pass over the pieces with the set of token positions.
  */
-function couldMatch(tokens: Token[], pieces: string[], anchored: boolean): boolean {
+export function couldMatch(tokens: Token[], pieces: string[], anchored: boolean): boolean {
   const closure = (at: Set<number>): Set<number> => {
     for (const t of at) if (tokens[t] === '*') at.add(t + 1);
     return at;
   };
   const gap = (at: Set<number>): Set<number> => {
-    const from = Math.min(...at);
+    // a plain loop: spreading a very large set as arguments overflows the stack (ship round 1, S4)
+    let from = Infinity;
+    for (const t of at) if (t < from) from = t;
     const all = new Set<number>();
     for (let t = from; t <= tokens.length; t += 1) all.add(t);
     return all;
