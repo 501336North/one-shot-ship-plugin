@@ -38,6 +38,9 @@ beforeAll(() => {
   execFileSync('git', ['init', '-q', '-b', 'feat/x'], { cwd: repo });
   execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: repo });
   execFileSync('git', ['worktree', 'add', '-q', '-b', 'feat/wt', worktree], { cwd: repo });
+  // ship round 1, S3a: the default mapping is allowed only for a remote in the repo's git config
+  execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/example/x.git'], { cwd: repo });
+  execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/example/up.git'], { cwd: repo });
 });
 
 afterAll(() => {

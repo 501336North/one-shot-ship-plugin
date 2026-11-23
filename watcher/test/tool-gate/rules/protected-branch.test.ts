@@ -7,7 +7,11 @@
  *   only from the settings.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { readCommand, type CommandPart } from '../../../src/tool-gate/command-reader.js';
 import type { GateSettings } from '../../../src/tool-gate/rule-file.js';
 import type { GitReader } from '../../../src/tool-gate/git-reader.js';
@@ -34,8 +38,8 @@ function gitOn(branches: Record<string, string | null>): GitReader & { currentBr
   return { currentBranch: vi.fn(async (dir: string) => branches[dir] ?? null), wouldClean: async () => null };
 }
 
-function partsOf(cmd: string): CommandPart[] {
-  const result = readCommand(cmd, CWD, HOME);
+function partsOf(cmd: string, cwd = CWD): CommandPart[] {
+  const result = readCommand(cmd, cwd, HOME);
   if ('unreadable' in result) throw new Error(`expected a readable command: ${result.reason}`);
   return result.parts;
 }
@@ -488,7 +492,30 @@ describe('protected-branch rule: protected names in another letter case (fix rou
 });
 
 describe('protected-branch rule: resetting or rewriting a protected branch (fix round 4, K8, item 6)', () => {
-  const refs = (cmd: string) => checkBranchRefs(partsOf(cmd).at(-1)!, SETTINGS, gitOn({}), true);
+  // ship round 1, S3a: a default fetch mapping is allowed only for a remote in the repo's git config, so the
+  // rows run in a scratch repo whose origin is a real host; `bare` is one with no remote at all
+  let root: string;
+  let repo: string;
+  let bare: string;
+  beforeAll(() => {
+    root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-protected-branch-refs-')));
+    repo = path.join(root, 'repo');
+    bare = path.join(root, 'no-remote');
+    for (const dir of [repo, bare]) {
+      fs.mkdirSync(dir);
+      execFileSync('git', ['init', '-q', '-b', 'feat/x'], { cwd: dir });
+    }
+    execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/example/x.git'], { cwd: repo });
+  });
+  afterAll(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const refs = (cmd: string, cwd = repo) => checkBranchRefs(partsOf(cmd, cwd).at(-1)!, SETTINGS, gitOn({}), true);
+
+  it('should allow the default mapping of a configured origin, and refuse it where origin is not configured', async () => {
+    expect(await refs('git fetch origin main:refs/remotes/origin/main')).toBeNull();
+    expect(await refs('git fetch origin main:refs/remotes/origin/main', bare)).not.toBeNull();
+  });
   const move = (cmd: string, branch: string) => checkHistoryMove(partsOf(cmd).at(-1)!, SETTINGS, gitOn({ [CWD]: branch }), null, () => false, true);
 
   it.each([

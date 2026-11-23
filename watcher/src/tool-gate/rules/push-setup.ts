@@ -13,7 +13,7 @@ import { runsItsArguments, SAFE_GIT_VARIABLE, type CommandPart } from '../comman
 import { matchCommand } from '../patterns.js';
 import { longOption, scriptFactsOf } from '../sed-awk.js';
 import { UNKNOWN } from '../tokenize.js';
-import { isLocalUrl, positionalsOf, rawDestination, remoteTracking } from './protected-branch.js';
+import { isLocalUrl, positionalsOf, rawDestination, remoteTracking, replaceRef } from './protected-branch.js';
 import { readPushWords } from './push-words.js';
 import type { Refusal } from './refusal.js';
 
@@ -483,6 +483,7 @@ function forgesRemote(key: string, value: string | undefined): boolean {
   if (name === null) return false;
   if (value === undefined) return true;
   const spec = value.startsWith('+') ? value.slice(1) : value;
+  if (spec.includes(':') && replaceRef(rawDestination(spec))) return true;
   return spec.includes(':') && remoteTracking(rawDestination(spec), true) && spec !== `refs/heads/*:refs/remotes/${name[1]}/*`;
 }
 /** `git remote add` options that take the next word as their value (git syntax). */

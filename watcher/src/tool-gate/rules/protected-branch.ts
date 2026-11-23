@@ -18,6 +18,7 @@ import { OverBudget } from '../budget.js';
 import { isTooLong } from './protected-path.js';
 import { longOption } from '../sed-awk.js';
 import { findRepo } from '../repo-finder.js';
+import { readRegularFile } from '../regular-file.js';
 
 /** Ways git spells a branch ref in a refspec (git syntax, not a rule value): `refs/heads/main`, `heads/main`. */
 const BRANCH_REF_PREFIXES = ['refs/heads/', 'heads/'];
@@ -282,6 +283,11 @@ export async function checkBranchRefs(
     const created = worktreeBranch(args, branches);
     return created === undefined ? null : refChange(`git worktree ${args.join(' ')}`, created);
   }
+  // ship round 1, S3b: `git remote set-head <remote> <branch>` writes refs/remotes/<remote>/HEAD; `-a` / `-d` let git decide
+  if (subcommand === 'remote') {
+    const at = args.findIndex((a) => !a.startsWith('-'));
+    if (args[at] === 'set-head' && !args.slice(at + 1).some((a) => SET_HEAD_GIT_DECIDES.has(a))) return REMOTE_TRACKING_REFUSAL;
+  }
   const forged = remoteRefForge(facts);
   if (forged !== null) return forged;
   if (subcommand === 'fetch') {
@@ -417,6 +423,15 @@ const FETCH_VALUES = new Set([
 const FETCH_REFMAP: OptionSpec = { valueLetters: new Set(), valueLongs: [{ full: '--refmap', shortest: 6 }] };
 /** A remote-tracking ref as a ref name or refspec destination (git syntax): `refs/remotes/…`, or `remotes/…`, which fetch puts under `refs/`. */
 const REMOTE_TRACKING = /^(?:refs\/)?remotes\//;
+/** A replace ref a wildcard destination is tested against. */
+const SAMPLE_REPLACE_REF = 'refs/replace/0123456789012345678901234567890123456789';
+
+/** True when a refspec destination is under refs/replace/ (ship round 1, S3d), in any letter case, or a wildcard that can name one. */
+export function replaceRef(ref: string): boolean {
+  const lower = ref.split(UNKNOWN)[0].toLowerCase();
+  return lower.startsWith('refs/replace/') || (lower.includes(REFSPEC_WILDCARD) && matchCommand(lower, [SAMPLE_REPLACE_REF]));
+}
+
 /** A remote-tracking ref a wildcard destination is tested against. */
 const SAMPLE_REMOTE_TRACKING_REF = 'refs/remotes/r/b';
 
@@ -440,16 +455,24 @@ const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
  * True when a remote URL is a path on this machine (git's connect.c rule) or a `file://` URL: no
  * `scheme://` and no scp-like `host:path` (a `:` with no `/` before it), so `.`, `..`, `~/x`, `/x`,
  * `x/y` and a bare `x` all count. A URL whose scheme or host is only known when it runs counts too;
- * one with a written scheme or host and later parts only known when it runs does not.
+ * one with a written scheme or host and later parts only known when it runs does not. A URL whose host is this
+ * machine (localhost, 127.x, ::1; ship round 1, S3c) counts too, with any scheme or in scp-like form.
  */
 export function isLocalUrl(url: string): boolean {
   if (FILE_URL.test(url)) return true;
+  const host = URL_HOST.exec(url);
+  if (host !== null && LOOPBACK.test(host[1] ?? host[2])) return true;
   if (URL_SCHEME.test(url)) return false;
   const colon = url.indexOf(':');
   const unknown = url.indexOf(UNKNOWN);
   if (unknown !== -1 && (colon === -1 || unknown < colon)) return true;
   return colon === -1 || url.slice(0, colon).includes('/');
 }
+
+/** The host of a `scheme://[user@]host…` URL or an scp-like `[user@]host:path` (git syntax), `[…]` for IPv6. */
+const URL_HOST = /^(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/)?(?:[^@/:]*@)?(?:\[([^\]]*)\]|([^/:[\]]+))(?::|\/|$)/;
+/** A host on this machine (ship round 1, S3c): localhost, 127.0.0.0/8, ::1. */
+const LOOPBACK = /^(?:localhost\.?|127(?:\.\d{1,3}){3}|::1|0*:0*:0*:0*:0*:0*:0*:0*1)$/i;
 
 function realOrNull(p: string): string | null {
   try {
@@ -485,10 +508,17 @@ function selfRemote(word: string, dir: string): boolean {
   return false;
 }
 
+/** `git remote set-head` options by which git sets or drops the remote HEAD itself (git syntax). */
+const SET_HEAD_GIT_DECIDES = new Set(['-a', '--auto', '-d', '--delete']);
+
 /** Fixed refusals for a forged remote-tracking ref: no ref, path or URL is repeated. */
 const SELF_REMOTE_REFUSAL: Refusal = {
   rule: 'protected-branch',
   reason: 'Refused: this `git fetch` / `git push` names the repository itself (or one of its worktrees) as the remote, which can write any of its refs, remote-tracking ones included. Ask the user to run it with `!`.',
+};
+const REPLACE_REFUSAL: Refusal = {
+  rule: 'protected-branch',
+  reason: 'Refused: this git call writes a replace ref (under refs/replace/), which changes which commits git shows. Ask the user to run it with `!`.',
 };
 const REMOTE_TRACKING_REFUSAL: Refusal = {
   rule: 'protected-branch',
@@ -509,6 +539,7 @@ function remoteRefForge(facts: NonNullable<CommandPart['git']>): Refusal | null 
   const [repo, ...specs] = words;
   if (subcommand !== 'pull' && repo !== undefined && selfRemote(repo, dir)) return SELF_REMOTE_REFUSAL;
   const maps = subcommand === 'fetch' ? readOptions(args, FETCH_REFMAP).values.map(([, map]) => map) : [];
+  if (subcommand !== 'push' && [...specs, ...maps].some((spec) => spec.includes(':') && replaceRef(rawDestination(spec)))) return REPLACE_REFUSAL;
   const explicit = specs.filter((spec) => subcommand === 'push' || (spec.includes(':') && !defaultMapping(repo, spec, dir)));
   const destinations = [...explicit, ...maps.filter((map) => map.includes(':'))];
   return destinations.some((spec) => remoteTracking(rawDestination(spec), subcommand !== 'push')) ? REMOTE_TRACKING_REFUSAL : null;
@@ -517,15 +548,33 @@ function remoteRefForge(facts: NonNullable<CommandPart['git']>): Refusal | null 
 /**
  * True when a fetch refspec is `[+]<b>:refs/remotes/<remote>/<b>` (also `refs/heads/<b>` or `heads/<b>`
  * on the left) for a remote named by its configured name (not `.`, a path, a URL or a value only
- * known when it runs): what git's default fetch mapping writes anyway. No wildcards.
+ * known when it runs), set in the repo's git config (ship round 1, S3a): what git's default fetch mapping
+ * writes anyway. No wildcards.
  */
 function defaultMapping(remote: string | undefined, spec: string, dir: string): boolean {
-  if (remote === undefined || !REMOTE_NAME.test(remote) || existsOnDisk(path.resolve(dir, remote))) return false;
+  if (remote === undefined || !REMOTE_NAME.test(remote) || existsOnDisk(path.resolve(dir, remote)) || !configuredRemote(remote, dir)) return false;
   const plain = spec.startsWith('+') ? spec.slice(1) : spec;
   if (plain.includes(REFSPEC_WILDCARD) || plain.includes(UNKNOWN)) return false;
   const colon = plain.indexOf(':');
   const branch = plain.slice(0, colon).replace(/^(?:refs\/heads\/|heads\/)/, '');
   return branch !== '' && plain.slice(colon + 1) === `refs/remotes/${remote}/${branch}`;
+}
+
+/** Largest repo config file read (a read limit; real ones are a few KB). */
+const MAX_CONFIG_BYTES = 1024 * 1024;
+/** A `[remote "<name>"]` section header (git syntax). */
+const REMOTE_SECTION = /^\s*\[\s*remote\s+"([^"\\]*)"\s*\]/i;
+
+/**
+ * True when `name` is a remote in the git config of the repo `dir` is in (ship round 1, S3a): a `[remote "<name>"]`
+ * section. A config that can't be read, or that includes other files, counts as not configuring it.
+ */
+function configuredRemote(name: string, dir: string): boolean {
+  const here = findRepo(dir);
+  if (here.kind !== 'repo') return false;
+  const read = readRegularFile(path.join(here.commonDir, 'config'), MAX_CONFIG_BYTES, true);
+  if (typeof read === 'string' || /^\s*\[\s*include/im.test(read.text)) return false;
+  return read.text.split('\n').some((line) => REMOTE_SECTION.exec(line)?.[1] === name);
 }
 
 /** What the gate knows about the repository git uses in a folder (see repo-finder.ts). */
