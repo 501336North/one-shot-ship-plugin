@@ -461,7 +461,7 @@ const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
 export function isLocalUrl(url: string): boolean {
   if (FILE_URL.test(url)) return true;
   const host = URL_HOST.exec(url);
-  if (host !== null && LOOPBACK.test(host[1] ?? host[2])) return true;
+  if (host !== null && loopbackHost(host[1] ?? host[2])) return true;
   if (URL_SCHEME.test(url)) return false;
   const colon = url.indexOf(':');
   const unknown = url.indexOf(UNKNOWN);
@@ -471,8 +471,68 @@ export function isLocalUrl(url: string): boolean {
 
 /** The host of a `scheme://[user@]host…` URL or an scp-like `[user@]host:path` (git syntax), `[…]` for IPv6. */
 const URL_HOST = /^(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/)?(?:[^@/:]*@)?(?:\[([^\]]*)\]|([^/:[\]]+))(?::|\/|$)/;
-/** A host on this machine (ship round 1, S3c): localhost, 127.0.0.0/8, ::1. */
-const LOOPBACK = /^(?:localhost\.?|127(?:\.\d{1,3}){3}|::1|0*:0*:0*:0*:0*:0*:0*:0*1)$/i;
+/**
+ * True when a URL host is this machine, read the way the OS reads it (ship round 2, R2-1): `localhost` or
+ * `*.localhost` (any case, trailing dots, `%xx` escapes decoded); an IPv4 number in inet_aton's forms (1 to 4
+ * parts, each decimal, `0` octal or `0x` hex) in 127.0.0.0/8 or 0.0.0.0; an IPv6 address that is `::1`, `::`,
+ * or one of those IPv4 addresses mapped (`::ffff:…`) or compatible (`::…`).
+ */
+function loopbackHost(raw: string): boolean {
+  let host = raw;
+  try {
+    host = decodeURIComponent(raw);
+  } catch {
+    // a broken escape: read the host as written
+  }
+  host = host.toLowerCase().replace(/\.+$/, '');
+  if (host === 'localhost' || host.endsWith('.localhost')) return true;
+  if (host.includes(':')) return loopbackIpv6(host);
+  const v4 = ipv4Number(host);
+  return v4 !== null && localIpv4(v4);
+}
+
+/** True for 127.0.0.0/8 and 0.0.0.0. */
+function localIpv4(value: number): boolean {
+  return value >>> 24 === 127 || value === 0;
+}
+
+/** The 32-bit number of an IPv4 host in inet_aton's forms (`127.1`, `2130706433`, `0x7f.1`, `0177.0.0.1`), or null. */
+function ipv4Number(host: string): number | null {
+  const parts = host.split('.');
+  if (parts.length > 4) return null;
+  const values: number[] = [];
+  for (const part of parts) {
+    const value = /^0x[0-9a-f]*$/.test(part) ? parseInt(part.slice(2) || '0', 16) : /^0[0-7]*$/.test(part) ? parseInt(part, 8) : /^[1-9][0-9]*$/.test(part) ? Number(part) : NaN;
+    if (!Number.isFinite(value)) return null;
+    values.push(value);
+  }
+  const last = values.pop() as number;
+  if (values.some((v) => v > 255) || last >= 2 ** (8 * (4 - values.length))) return null;
+  return values.reduce((sum, v, i) => sum + v * 2 ** (8 * (3 - i)), 0) + last;
+}
+
+/** True when an IPv6 host (`::1`, `0::1`, `::`, `::ffff:127.0.0.1`, `::ffff:7f00:1`) is this machine. */
+function loopbackIpv6(host: string): boolean {
+  let text = host.replace(/%.*$/, '');
+  // a dotted IPv4 tail becomes two groups
+  const tail = /(?:^|:)([0-9.]+\.[0-9.]+)$/.exec(text);
+  if (tail !== null) {
+    const v4 = ipv4Number(tail[1]);
+    if (v4 === null) return false;
+    text = `${text.slice(0, text.length - tail[1].length)}${(v4 >>> 16).toString(16)}:${(v4 & 0xffff).toString(16)}`;
+  }
+  const halves = text.split('::');
+  if (halves.length > 2) return false;
+  const head = halves[0] === '' ? [] : halves[0].split(':');
+  const rest = halves.length === 2 && halves[1] !== '' ? halves[1].split(':') : [];
+  if (halves.length === 1 && head.length !== 8) return false;
+  const groups = [...head, ...Array<string>(8 - head.length - rest.length).fill('0'), ...rest];
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return false;
+  const n = groups.map((g) => parseInt(g, 16));
+  const v4 = n[6] * 0x10000 + n[7];
+  if (n.slice(0, 7).every((g) => g === 0) && n[7] <= 1) return true;
+  return n.slice(0, 5).every((g) => g === 0) && (n[5] === 0xffff || n[5] === 0) && localIpv4(v4);
+}
 
 function realOrNull(p: string): string | null {
   try {

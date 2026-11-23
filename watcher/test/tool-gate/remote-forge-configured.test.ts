@@ -87,6 +87,26 @@ const LOOPBACK_URLS = [
   'git -c url.http://localhost:8000/.insteadOf=https://github.com/ fetch origin',
 ];
 
+/** Ship fix round 2, R2-1: the host read the way the OS reads it (inet_aton / getaddrinfo numeric forms). */
+const LOOPBACK_FORMS = [
+  'git remote set-url origin http://127.1:8000/x.git',
+  'git remote set-url origin http://0x7f.1/x.git',
+  'git remote set-url origin http://2130706433/x.git',
+  'git remote set-url origin http://0177.0.0.1/x.git',
+  'git remote set-url origin http://[::ffff:127.0.0.1]/x.git',
+  'git remote set-url origin http://[::ffff:7f00:1]/x.git',
+  'git remote set-url origin http://0.0.0.0:8000/x.git',
+  'git remote set-url origin http://0/x.git',
+  'git remote set-url origin http://[0::1]/x.git',
+  'git remote set-url origin http://[::]/x.git',
+  'git remote set-url origin http://foo.localhost:8000/x.git',
+  'git remote set-url origin http://FOO.LocalHost./x.git',
+  'git remote set-url origin 127.1:x',
+  'git remote set-url origin http://127.0.0.1%2e/x',
+  'git -c url.http://127.1:8000/.insteadOf=https://github.com/ fetch origin',
+  'git remote add y http://127.1/x && git fetch y',
+];
+
 const REPLACE_DESTINATIONS = [
   'git fetch origin x:refs/replace/abc',
   'git fetch origin feat/x:refs/replace/0123456789012345678901234567890123456789',
@@ -109,6 +129,11 @@ const ALLOWED = [
   'git remote set-head origin -d',
   'git remote set-head origin --delete',
   'git remote add fork git@github.com:a/b.git',
+  // R2-1: hosts that only look numeric, or private ones, are not this machine
+  'git remote add up2 https://github.com/a/b.git',
+  'git remote add up3 git@github.com:a/b.git',
+  'git remote add lan https://10.0.0.5/x.git',
+  'git remote add near https://127host.example/x.git',
 ];
 
 describe.each(PLATFORMS)('remotes the gate can see (ship round 1, S3) on %s', (platform) => {
@@ -122,6 +147,7 @@ describe.each(PLATFORMS)('remotes the gate can see (ship round 1, S3) on %s', (p
     it.each(UNCONFIGURED_DEFAULT)('refuses a default-looking mapping for a name that is not a configured remote: %s', refused);
     it.each(SET_HEAD)('refuses pointing a remote HEAD at a branch: %s', refused);
     it.each(LOOPBACK_URLS)('refuses a remote on localhost, 127.x or ::1: %s', refused);
+    it.each(LOOPBACK_FORMS)('refuses a remote on this machine in any numeric or localhost spelling: %s', refused);
     it.each(REPLACE_DESTINATIONS)('refuses a fetch or pull that writes a replace ref: %s', refused);
 
     it.each(ALLOWED)('allows everyday fetch, pull, push and remotes on real hosts: %s', async (command) => {
