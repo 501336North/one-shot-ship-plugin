@@ -8926,7 +8926,7 @@ function setsUnlisted(words) {
     args.forEach((a, i) => {
       if (a === "-A" || a === "-a") names.push(args[i + 1] ?? "");
       else if (/^-[aA]./.test(a)) names.push(a.slice(2));
-      else if (!a.startsWith("-") && a.includes("=")) names.push(a.slice(a.indexOf("=") + 1));
+      if (a.includes("=")) names.push(a.slice(a.indexOf("=") + 1));
     });
   }
   return names.some(unlisted);
@@ -9114,6 +9114,7 @@ function couldBeOssHook(word, runs) {
 var SPLIT_REF = /^"?(?:\$=?([A-Za-z_][A-Za-z0-9_]*|[@*])(?:\[[^\]]*\])?|\$\{=?([A-Za-z_][A-Za-z0-9_]*|[@*])(?:\[[^\]]*\])?\})"?$/;
 var OTHER_OPERATOR = /^"?\$\{(?![A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\})/;
 var DEFAULT_REF = /^"?\$\{([A-Za-z_][A-Za-z0-9_]*):?[-=]([\s\S]*)\}"?$/;
+var REST_REF = /^"?\$\{([A-Za-z_][A-Za-z0-9_]*)(?::?[-=]([^}]*)|%%?([^}*?[\]\\]*))\}([^"]*)"?$/;
 var LEADING_REF = /^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})(?![A-Za-z0-9_[])/;
 var UNREAD_SETTERS = /* @__PURE__ */ new Set(["for", "select", "printf", "print", "getopts", "let"]);
 var ARRAY_START = /^([A-Za-z_][A-Za-z0-9_]*)(\+?)=$/;
@@ -9189,7 +9190,8 @@ function programVerdict(token, after, text, values, cwd, command, call) {
   const split2 = SPLIT_REF.exec(raw);
   const leading = split2 === null ? LEADING_REF.exec(raw) : null;
   const withDefault = split2 === null && leading === null ? DEFAULT_REF.exec(raw) : null;
-  const name = split2?.[1] ?? split2?.[2] ?? leading?.[1] ?? leading?.[2] ?? withDefault?.[1];
+  const withRest = split2 === null && leading === null && withDefault === null ? REST_REF.exec(raw) : null;
+  const name = split2?.[1] ?? split2?.[2] ?? leading?.[1] ?? leading?.[2] ?? withDefault?.[1] ?? withRest?.[1];
   if (name === void 0) return OTHER_OPERATOR.test(raw) && lineNamesHook(command, cwd, call.home) ? "unreadable" : "ok";
   const value = values.get(name);
   const quoted = raw.startsWith('"');
@@ -9197,8 +9199,11 @@ function programVerdict(token, after, text, values, cwd, command, call) {
   if (value === UNREAD || value === FROM_FILE && after.length > 0) return lineNamesHook(command, cwd, call.home) ? "unreadable" : "ok";
   if (value === FROM_FILE) return "ok";
   const words = " " + after.map((w) => filled(w, text, values, call.home)).join(" ");
-  const readings = [...typeof value === "string" ? [value] : [], ...withDefault !== null ? [withDefault[2]] : []];
-  const rest = leading !== null && token.value.startsWith(UNKNOWN) ? token.value.slice(UNKNOWN.length) : "";
+  const suffix = withRest?.[3];
+  const trimmed = typeof value === "string" && suffix !== void 0 && value.endsWith(suffix) ? value.slice(0, value.length - suffix.length) : value;
+  const fallback = withDefault?.[2] ?? withRest?.[2];
+  const readings = [...typeof trimmed === "string" ? [trimmed] : [], ...fallback !== void 0 ? [fallback] : []];
+  const rest = leading !== null && token.value.startsWith(UNKNOWN) ? token.value.slice(UNKNOWN.length) : withRest?.[4] ?? "";
   return readings.some((r) => valueVerdict(r + rest + words, cwd, command, call) === "hook") ? "hook" : "ok";
 }
 function lineNamesHook(command, cwd, home) {
@@ -9592,15 +9597,21 @@ var FILE_URL = /^file:\/\//i;
 var URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
 function isLocalUrl(url) {
   if (FILE_URL.test(url)) return true;
-  const host = URL_HOST.exec(url);
-  if (host !== null && loopbackHost(host[1] ?? host[2])) return true;
+  if (loopbackHost(urlHost(url))) return true;
   if (URL_SCHEME.test(url)) return false;
   const colon = url.indexOf(":");
   const unknown = url.indexOf(UNKNOWN);
   if (unknown !== -1 && (colon === -1 || unknown < colon)) return true;
   return colon === -1 || url.slice(0, colon).includes("/");
 }
-var URL_HOST = /^(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/)?(?:[^@/:]*@)?(?:\[([^\]]*)\]|([^/:[\]]+))(?::|\/|$)/;
+function urlHost(url) {
+  const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.exec(url);
+  const rest = scheme === null ? url : url.slice(scheme[0].length);
+  const authority = scheme === null ? /^(?:[^@/:[\]]*@)?\[[^\]]*\]|^[^:/]*/.exec(rest)?.[0] ?? "" : rest.slice(0, rest.search(/[/?#]|$/));
+  if (authority.startsWith("[") && authority.includes("]")) return authority.slice(1, authority.indexOf("]")).replace(/^.*@/, "");
+  const host = authority.replace(/^.*@/, "");
+  return host.startsWith("[") ? host.slice(1, host.includes("]") ? host.indexOf("]") : void 0) : host.replace(/:.*$/, "");
+}
 function loopbackHost(raw) {
   let host = raw;
   try {
@@ -10162,6 +10173,7 @@ function checkCommitSetup(part, earlier, count) {
   return null;
 }
 function checkPushSetup(part, earlier, count = earlier.length) {
+  if (settingsOf(part).some(([name]) => name === "GIT_ALLOW_PROTOCOL")) return ALLOW_PROTOCOL_REFUSAL;
   const planted = plantedConfig(part, earlier, count);
   if (planted !== null) {
     return {
