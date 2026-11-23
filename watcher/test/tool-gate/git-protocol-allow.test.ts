@@ -148,6 +148,14 @@ const NAME_LAYER = [
   'read -t "$T" ans; git status',
   'read -u "$fd" line; git status',
   'mapfile -t -u "$fd" lines; git status',
+  // ship fix round 7, R7-3 ("Blunt on git lines"): zsh `print -v`, a `read` name's `?prompt`, and `${!…}` / `${(P)…}` assignments
+  'x=PROTOCO; setopt allexport; read "GIT_ALLOW_${x}L?p" <<< ext; git ls-remote origin',
+  'x=PROTOCO; set -a; read "GIT_ALLOW_${x}L?p" <<< ext; git fetch origin',
+  'x=PROTOCO; setopt allexport; print -v GIT_ALLOW_${x}L ext; git ls-remote origin',
+  'x=PROTOCO; setopt allexport; print -rv GIT_ALLOW_${x}L ext; git ls-remote origin',
+  'x=PROTOCO; n=GIT_ALLOW_${x}L; set -a; : ${!n:=ext}; git ls-remote origin',
+  'x=PROTOCO; n=GIT_ALLOW_${x}L; setopt allexport; : ${(P)n::=ext}; git ls-remote origin',
+  'x=PROTOCO; n=GIT_ALLOW_${x}L; set -a; : ${(P)n=ext}; git fetch origin',
 ];
 
 /** R4-3 (2): an `ext::` or `fd::` transport anywhere on a git line, quotes and escapes removed. */
@@ -195,6 +203,11 @@ const ALLOWED = [
   "read -rp '? ' ans; git status",
   'read -ra arr <<< "a b"; git status',
   "read -rd '' x < /dev/null; git status",
+  // R7-3: `print` without `-v`, a plain prompt name, `printf -v` with a plain name, and a plain `${FOO:=bar}` stay allowed
+  'print -r -- "$x"; git status',
+  "read 'ans?Continue? '; git status",
+  "printf -v msg '%s' x; git status",
+  ': ${FOO:=bar}; git status',
   'echo protocol',
   'git fetch origin',
   'git ls-remote origin',

@@ -544,8 +544,11 @@ const ALLOW_PROTOCOL_REFUSAL: Refusal = {
 export function checkAllowProtocolMention(command: string, parts: readonly CommandPart[] = []): Refusal | null {
   const plain = command.replace(/['"\\]/g, '');
   if (plain.includes('GIT_ALLOW_PROTOCOL')) return ALLOW_PROTOCOL_REFUSAL;
-  return runsGit(parts) && parts.some(setsUnreadableName) ? ALLOW_PROTOCOL_REFUSAL : null;
+  return runsGit(parts) && (INDIRECT_ASSIGNMENT.test(command) || parts.some(setsUnreadableName)) ? ALLOW_PROTOCOL_REFUSAL : null;
 }
+
+/** An assignment through an indirect name (ship fix round 7, R7-3): `${!n:=v}`, `${!n=v}`, zsh `${(P)n::=v}`. */
+const INDIRECT_ASSIGNMENT = /\$\{(?:!|\([^)]*P[^)]*\))[^}]*?=/;
 
 /** True when some part of the call runs git. */
 function runsGit(parts: readonly CommandPart[]): boolean {
@@ -585,14 +588,14 @@ function namesSetBy(program: string, args: readonly string[]): string[] {
       for (let k = 1; k < a.length; k++) {
         const letter = a[k];
         const attached = a.slice(k + 1);
-        const name = (program === 'read' && letter === 'a') || (program === 'printf' && letter === 'v');
+        const name = (program === 'read' && letter === 'a') || ((program === 'printf' || program === 'print') && letter === 'v');
         if (!name && !values.includes(letter)) continue;
         const operand = attached !== '' ? attached : (args[++i] ?? '');
         // R6-1: in zsh most of these letters take no value, so a separate word may be the name (unless a plain number)
         if (name || (attached === '' && !/^[0-9]+$/.test(operand))) names.push(operand);
         break;
       }
-    } else if (program !== 'printf') names.push(a);
+    } else if (program !== 'printf' && program !== 'print') names.push(a);
   }
   return names;
 }
@@ -613,7 +616,8 @@ function setsUnreadableName(part: CommandPart): boolean {
     if (program !== 'export' && program !== 'readonly' && args.some((a) => /^-[A-Za-z]*n/.test(a))) return true;
     return args.some((a) => !a.startsWith('-') && unknownName(a));
   }
-  if (!(program in VALUE_OPTIONS) && program !== 'printf' && program !== 'getopts') return false;
+  // ship fix round 7, R7-3: zsh `print -v name` (any cluster, `-rv`) sets its name as `printf -v` does
+  if (!(program in VALUE_OPTIONS) && program !== 'printf' && program !== 'print' && program !== 'getopts') return false;
   return namesSetBy(program, args).some((name) => name.includes(UNKNOWN) || name.replace(/['"\\]/g, '') === 'GIT_ALLOW_PROTOCOL');
 }
 
