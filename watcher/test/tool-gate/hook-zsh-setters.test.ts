@@ -88,9 +88,17 @@ const REFUSED = [
   `getln TMPDIR; ${H}`,
   `getln TMPDIR < /dev/null; ${H}`,
   'getln BASH_ENV; ./hooks/oss-log.sh',
+  // ship fix round 2, R2-3: a spec word's `=name` and an attached `-a<name>` / `-A<name>` set that name too
+  `zparseopts -D p:=path; ${H}`,
+  'zparseopts -D v:=BASH_ENV; ./hooks/oss-log.sh',
+  'set -- -v /tmp/evil; zparseopts -D v:=path; ./hooks/oss-log.sh',
+  'zparseopts v=PATH; ./hooks/oss-log.sh',
+  `zparseopts -D v+:=BASH_ENV; ${H}`,
+  `zparseopts -apath x; ${H}`,
+  `zparseopts -ABASH_ENV x; ${H}`,
 ];
 
-const ALLOWED = ['private -x FOO=bar', 'vared x', 'zparseopts -A opts -- -v', 'getln x'];
+const ALLOWED = ['private -x FOO=bar', 'vared x', 'zparseopts -A opts -- -v', 'getln x', 'zparseopts -D -E v=verbose'];
 
 describe.each(PLATFORMS)('on %s', (platform) => {
   describe.each(AGENTS)('%s', (_who, agent) => {
