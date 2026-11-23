@@ -409,8 +409,6 @@ function checkCommitSetup(part: CommandPart, earlier: readonly CommandPart[], co
  * the gate passes the whole call and the part's index, so no list is copied per part.
  */
 export function checkPushSetup(part: CommandPart, earlier: readonly CommandPart[], count = earlier.length): Refusal | null {
-  // ship round 1, S4: the env twin of the protocol keys, set for a call, alone or exported, whatever runs next
-  if (settingsOf(part).some(([name]) => name === 'GIT_ALLOW_PROTOCOL')) return ALLOW_PROTOCOL_REFUSAL;
   const planted = plantedConfig(part, earlier, count);
   if (planted !== null) {
     return {
@@ -533,6 +531,11 @@ const ALLOW_PROTOCOL_REFUSAL: Refusal = {
   rule: 'protected-branch',
   reason: 'Refused: `GIT_ALLOW_PROTOCOL` lets git use protocols such as `ext::`, which runs a command. Ask the user to run it with `!`.',
 };
+
+/** Ship fix round 2, R2-2 ("Blunt: refuse any mention"): a command whose text names `GIT_ALLOW_PROTOCOL`, as git reads it (case-sensitive). */
+export function checkAllowProtocolMention(command: string): Refusal | null {
+  return command.includes('GIT_ALLOW_PROTOCOL') ? ALLOW_PROTOCOL_REFUSAL : null;
+}
 
 /** The refusal for a ref-history key, set any way: fixed text, so no key or value is repeated. */
 const REF_HISTORY_REFUSAL: Refusal = {

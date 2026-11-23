@@ -43,7 +43,7 @@ import { checkOssHookEnv } from './rules/oss-hook-env.js';
 import { checkBranchRefs, checkBranchSwitch, checkHistoryMove, checkProtectedBranch, checkRepoTrust, trustForCall } from './rules/protected-branch.js';
 import { checkProtectedPathBash, checkProtectedPathEdit, isProtected, placesOf } from './rules/protected-path.js';
 import { checkCallSize, checkProtectedPathMention } from './rules/protected-path-mention.js';
-import { branchCreatedBefore, checkLocalRemote, checkPushSetup } from './rules/push-setup.js';
+import { branchCreatedBefore, checkAllowProtocolMention, checkLocalRemote, checkPushSetup } from './rules/push-setup.js';
 import { checkRedCycle } from './rules/red-cycle.js';
 import type { Refusal } from './rules/refusal.js';
 import { checkTags } from './rules/tags.js';
@@ -607,6 +607,7 @@ async function checkBash(ctx: Context, command: string): Promise<Refused | null>
   for (const [index, part] of facts.parts.entries()) {
     const refusal =
       checkUnknownGitOption(part) ??
+      checkAllowProtocolMention(command) ??
       checkPushSetup(part, facts.parts, index) ??
       checkLocalRemote(part, facts.parts, index) ??
       checkRepoTrust(part, trustOf) ??

@@ -73,7 +73,18 @@ const REFUSED = [
   'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=protocol.file.allow GIT_CONFIG_VALUE_0=always git fetch origin',
 ];
 
+/** Ship fix round 2, R2-2 ("Blunt: refuse any mention"): any command whose text names GIT_ALLOW_PROTOCOL. */
+const NAMES_ALLOW_PROTOCOL = [
+  'set -a; printf -v GIT_ALLOW_PROTOCOL ext; git submodule update --init',
+  'set -a; read GIT_ALLOW_PROTOCOL <<< ext; git submodule update --init',
+  'private -x GIT_ALLOW_PROTOCOL=ext; git submodule update --init',
+  'set -a; : ${GIT_ALLOW_PROTOCOL:=ext}; git submodule update --init',
+  'printf -v GIT_ALLOW_PROTOCOL ext; export GIT_ALLOW_PROTOCOL; git fetch origin',
+  "env -S 'GIT_ALLOW_PROTOCOL=ext git fetch origin'",
+];
+
 const ALLOWED = [
+  'echo protocol',
   'git fetch origin',
   'git ls-remote origin',
   'git -c protocol.version=2 fetch origin',
@@ -86,6 +97,12 @@ const ALLOWED = [
 describe.each(PLATFORMS)('git protocols that run commands (ship round 1, S4) on %s', (platform) => {
   describe.each(AGENTS)('%s', (_label, agent) => {
     it.each(REFUSED)('refuses allowing a protocol by variable or config key: %s', async (command) => {
+      const result = await call(command, agent, platform);
+      expect(result.exitCode, command).toBe(2);
+      expect(result.stderr, command).toMatch(/^Refused/);
+    });
+
+    it.each(NAMES_ALLOW_PROTOCOL)('refuses any command that names GIT_ALLOW_PROTOCOL: %s', async (command) => {
       const result = await call(command, agent, platform);
       expect(result.exitCode, command).toBe(2);
       expect(result.stderr, command).toMatch(/^Refused/);
