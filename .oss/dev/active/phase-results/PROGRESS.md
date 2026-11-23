@@ -236,6 +236,16 @@
 - [x] Builder Y (API): found the served ship prompt never assembles the ship result; no API change (D74).
 - [x] Builder Z (D74): `assemble ship` prints verdict and blockers; wrapper Step 8 asks `Fix it` / `Override <gate>` per D71 gate and writes overrides.json `{finding, decisionId, gate}` only after that pick; stale shape removed.
 
+### Ship round 14 fixes, after gate round 12 (2026-11-22/23)
+- [x] Gate round 12: code review passed; security, pen test (the same --merge medium) and performance (pruned-head regression, loose-object diff timeout) failed. The user picked D75-D77.
+- [x] D75: with --merge, Step 8's assemble and override picker run before the merge; no merge while blocked; `merged` then `complete` after it.
+- [x] D76: an override entry naming a gate whose decision does not count is refused (override_unrecorded, detail gate).
+- [x] Pruned review head: heads filtered with one cat-file before the single walk (1,000 rows, one pruned: 16.7 s to 1.8 s).
+- [x] Diff calls share a 20 s budget; a timeout says to run git gc (assemble and the check hook).
+- [x] Step 8: Fix it gates first, overrides written last; only a decision answered after the picker counts, re-read up to 5 times.
+- [x] Ship-start cleanup runs before the ledger step, so early exits still clear the value files.
+- [x] Served-command fixture regenerated with watcher/scripts/served-command-blocks.mjs (ship.md block order).
+
 ### Later
 - [ ] Ship into feat/determinism-sprint/build (SD-1)
 - [ ] T21 oss-lab (after the plugin ships)
@@ -243,4 +253,4 @@
 ## Blockers
 - None. R-266's 4 red base tests are fixed in #233 (4458bddb), and R-257 is rebased onto it.
 
-## Last Updated: 2026-11-21 16:14 CST by /oss:ship (round 13 fixes)
+## Last Updated: 2026-11-23 08:08 +07 by /oss:ship (round 14 fixes)

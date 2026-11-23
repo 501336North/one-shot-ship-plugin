@@ -26,13 +26,29 @@ import { validate } from '../../src/phase-results/validate.js';
  * Perf low 1 (gate round 6): counts the git processes assemble starts. A pass-through spy on the process boundary
  * (git is the collaborator), so every call still runs the real git.
  */
-const spawns = vi.hoisted(() => ({ n: 0, args: [] as string[][], overflow: null as ((argv: readonly string[]) => boolean) | null }));
+const spawns = vi.hoisted(() => ({
+  n: 0,
+  args: [] as string[][],
+  overflow: null as ((argv: readonly string[]) => boolean) | null,
+  // Perf F2 (gate round 12): a call that runs past its time limit, as spawnSync reports it (ETIMEDOUT, SIGTERM)
+  timedOut: null as ((argv: readonly string[]) => boolean) | null,
+  // each call's time limit (spawnSync's `timeout` option), with its argv
+  timeouts: [] as Array<{ argv: string[]; timeout: number | undefined }>,
+}));
 vi.mock('node:child_process', async (importOriginal) => {
   const real = await importOriginal<typeof import('node:child_process')>();
   const spawnSync: typeof real.spawnSync = ((...args: Parameters<typeof real.spawnSync>) => {
     spawns.n += 1;
     // Code-review L4 (gate round 10): the argv too, so a test can tell which git route ran.
     if (Array.isArray(args[1])) spawns.args.push([...(args[1] as readonly string[])]);
+    if (Array.isArray(args[1])) {
+      const o = args[2] as { timeout?: number } | undefined;
+      spawns.timeouts.push({ argv: [...(args[1] as readonly string[])], timeout: o?.timeout });
+    }
+    if (spawns.timedOut !== null && Array.isArray(args[1]) && spawns.timedOut(args[1] as readonly string[])) {
+      const error: NodeJS.ErrnoException = Object.assign(new Error('spawnSync git ETIMEDOUT'), { code: 'ETIMEDOUT' });
+      return { pid: 0, output: [null, '', ''], stdout: '', stderr: '', status: null, signal: 'SIGTERM', error };
+    }
     // Perf L1 (gate round 11): a call whose output overflows its buffer, as spawnSync reports it (ENOBUFS)
     if (spawns.overflow !== null && Array.isArray(args[1]) && spawns.overflow(args[1] as readonly string[])) {
       const error: NodeJS.ErrnoException = Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' });
@@ -87,6 +103,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   spawns.overflow = null;
+  spawns.timedOut = null;
+  spawns.timeouts = [];
   process.env.HOME = savedHome;
   process.env.PATH = savedPath;
   for (const d of [repo, home, valueDir]) fs.rmSync(d, { recursive: true, force: true });
@@ -180,6 +198,40 @@ function errorOf(o: AssembleOutcome): string {
 function ship(extra: { base?: string; requiredGates?: readonly string[]; remoteRefs?: ReadonlyMap<string, string> } = {}): AssembleOutcome {
   return assembleShip(ctx(), { base: 'main', ...extra });
 }
+
+/**
+ * Gate round 12 performance F2 (D77): on a repo with many loose objects `diff --shortstat` (and `diff --quiet`, on the
+ * same path) can take longer than runGit's fixed 10 s, which gave a bare diff_unavailable. Both now share the assemble's
+ * diff budget, 20 s in all (the hook gives assemble 30 s), and running past it gives diff_unavailable with its own hint:
+ * run git gc and try again.
+ */
+describe('assembleShip: the diff totals get the diff budget and a git gc hint on timeout (perf F2, gate round 12)', () => {
+  const isTotals = (a: readonly string[]): boolean => a.includes('--shortstat') || a.includes('--quiet');
+
+  it('diff --quiet and diff --shortstat run with more than 10 s, within 20 s together', () => {
+    commitFile('b.txt', 'x\n', 'feature');
+    allPass();
+    expect(result(ship()).verdict).toBe('ready_to_merge');
+    const totals = spawns.timeouts.filter((c) => isTotals(c.argv));
+    expect(totals.length).toBe(2);
+    for (const c of totals) {
+      expect(c.timeout).toBeGreaterThan(10_000);
+      expect(c.timeout).toBeLessThanOrEqual(20_000);
+    }
+  });
+
+  it('a diff --shortstat that runs past its budget gives diff_unavailable with the git gc hint', () => {
+    commitFile('b.txt', 'x\n', 'feature');
+    allPass();
+    spawns.timedOut = (a) => a.includes('--shortstat');
+    const o = ship();
+    expect(o.ok).toBe(false);
+    if (o.ok) return;
+    expect(o.error).toBe('diff_unavailable');
+    expect(o.detail).toMatch(/^diff_timeout: /);
+    expect(o.detail).toContain('run git gc');
+  });
+});
 
 describe('assembleShip: diff', () => {
   // Behaviour: the ship result names the merge-base and the size of the change.
@@ -2980,9 +3032,10 @@ describe('assembleShip: a recorded override naming the gate clears a D67 fail (D
     expect(validate(loadPhaseSchema('ship', PLUGIN_ROOT), r)).toEqual({ ok: true });
   });
 
+  // ⚠ changes existing test: D76 — a valid `Override performance` pick (a decision that does not count is now refused)
   it('an override naming another gate does not clear it', () => {
     d67Fail();
-    override({ finding: 'x', decisionId: decision('Pat').id, gate: 'performance' });
+    override({ finding: 'x', decisionId: overridePick('performance'), gate: 'performance' });
     expect(result(ship()).blockers).toEqual([UPSTREAM_CHANGED('security')]);
   });
 
@@ -3043,37 +3096,56 @@ describe('assembleShip: a recorded override naming the gate clears a D67 fail (D
   });
 
   describe('D70: only a ship pick answered `Override <gate>` counts, for rows captured before it', () => {
-    it('an unrelated ideate decision does not clear (r11-sec A1)', () => {
+    // D76 (user pick, ship round 14, "Refuse it"): an entry naming a gate whose decision does not count under D70 is
+    // refused like an unrecorded id (override_unrecorded, detail gate), never stored as a harmless listing.
+    const refusedGate = (o: AssembleOutcome): unknown => (o.ok ? null : { error: o.error, detail: o.detail });
+    const REFUSED = { error: 'override_unrecorded', detail: 'gate' };
+
+    // ⚠ changes existing test: D76 — refused, no longer listed and ignored
+    it('an unrelated ideate decision is refused (r11-sec A1)', () => {
       d67Fail();
       const id = overridePick('security', { question: 'Which storage format?', choice: 'JSON', answerText: 'JSON', command: 'ideate', kind: 'design' });
       override({ finding: 'x', decisionId: id, gate: 'security' });
-      expect(result(ship()).blockers).toEqual([UPSTREAM_CHANGED('security')]);
+      expect(refusedGate(ship())).toEqual(REFUSED);
     });
 
-    it('an `Override security` answer given outside ship does not clear', () => {
+    // ⚠ changes existing test: D76 — refused, no longer listed and ignored
+    it('an `Override security` answer given outside ship is refused', () => {
       d67Fail();
       override({ finding: 'x', decisionId: overridePick('security', { command: 'build' }), gate: 'security' });
-      expect(result(ship()).blockers).toEqual([UPSTREAM_CHANGED('security')]);
+      expect(refusedGate(ship())).toEqual(REFUSED);
     });
 
-    it('a ship decision answered "Fix it" does not clear (r11-sec A2)', () => {
+    // ⚠ changes existing test: D76 — refused, no longer listed and ignored (r12-sec L1: a "Fix it" id with a gate)
+    it('a ship decision answered "Fix it" is refused, not stored (r11-sec A2, r12-sec L1)', () => {
       d67Fail();
       override({ finding: 'x', decisionId: overridePick('security', { choice: 'Fix it', answerText: 'Fix it' }), gate: 'security' });
-      expect(result(ship()).blockers).toEqual([UPSTREAM_CHANGED('security')]);
+      expect(refusedGate(ship())).toEqual(REFUSED);
     });
 
-    it('a bare "Override" or a multi-select answer does not clear', () => {
+    // ⚠ changes existing test: D76 — refused, no longer listed and ignored
+    it('a bare "Override" or a multi-select answer is refused', () => {
       d67Fail();
       override({ finding: 'x', decisionId: overridePick('security', { choice: 'Override', answerText: 'Override' }), gate: 'security' });
-      expect(result(ship()).blockers).toEqual([UPSTREAM_CHANGED('security')]);
+      expect(refusedGate(ship())).toEqual(REFUSED);
       override({ finding: 'x', decisionId: overridePick('security', { choice: ['Override security'] }), gate: 'security' });
-      expect(result(ship()).blockers).toEqual([UPSTREAM_CHANGED('security')]);
+      expect(refusedGate(ship())).toEqual(REFUSED);
     });
 
-    it('`Override performance` does not clear security', () => {
+    // ⚠ changes existing test: D76 — refused, no longer listed and ignored
+    it('`Override performance` named for security is refused', () => {
       d67Fail();
       override({ finding: 'x', decisionId: overridePick('performance'), gate: 'security' });
-      expect(result(ship()).blockers).toEqual([UPSTREAM_CHANGED('security')]);
+      expect(refusedGate(ship())).toEqual(REFUSED);
+    });
+
+    it('an entry without a gate keeps today\'s behaviour: listed, clears nothing', () => {
+      d67Fail();
+      const id = overridePick('security', { choice: 'Fix it', answerText: 'Fix it' });
+      override({ finding: 'x', decisionId: id });
+      const r = result(ship());
+      expect(r.blockers).toEqual([UPSTREAM_CHANGED('security')]);
+      expect(r.overrides).toEqual([{ finding: 'x', decisionId: id, person: 'Pat' }]);
     });
 
     it('`Override security` answered before a newer D67 row: that row stays open (r11-sec A3, r11-pen stale)', () => {
@@ -3092,13 +3164,14 @@ describe('assembleShip: a recorded override naming the gate clears a D67 fail (D
       expect(r.blockers).toEqual([]);
     });
 
-    it('a pick with no readable answered time does not clear', () => {
+    // ⚠ changes existing test: D76 — refused, no longer listed and ignored
+    it('a pick with no readable answered time is refused', () => {
       d67Fail();
       override({ finding: 'x', decisionId: overridePick('security', { answeredAt: 'soon' }), gate: 'security' });
-      expect(result(ship()).blockers).toEqual([UPSTREAM_CHANGED('security')]);
+      expect(refusedGate(ship())).toEqual(REFUSED);
     });
 
-    it('a recorded decision that does not count is still listed, not refused, and check agrees', () => {
+    it('a counted pick answered before a newer D67 row is listed, not refused, and check agrees', () => {
       d67Fail('security', '2026-11-13T09:30:00.000Z');
       const id = overridePick('security');
       override({ finding: 'x', decisionId: id, gate: 'security' });
@@ -3181,6 +3254,70 @@ describe('assembleShip: batches after an overflow, by review state, one history 
     spawns.args = [];
     expect(result(ship()).verdict).toBe('ready_to_merge');
     expect(spawns.args.filter((a) => a.includes('rev-list') && a.includes('--boundary')).length).toBe(1);
+  });
+});
+
+/**
+ * Gate round 12 performance F1 + code-review L1 (D77): a review head git pruned (reflog expire, gc --prune=now) made the
+ * one history walk fail as a whole, so every row's review base fell back to its own merge-base. Only the heads that
+ * exist are walked (one cat-file --batch-check, never --ignore-missing: an unlisted head would count as its own base);
+ * a missing head takes the per-row fallback (D55, unchanged).
+ */
+describe('assembleShip: one pruned review head does not undo the history walk (perf F1, gate round 12)', { timeout: 180_000 }, () => {
+  /** 100 off-history review heads x 3 gates (300 fail rows), all kept by a ref except `prune` heads, which gc removes. */
+  function offHistoryPruned(prune: number): void {
+    const old = git('rev-parse', 'main');
+    commitFile('flagged.txt', 'vuln\n', 'feature');
+    const tree = git('rev-parse', 'HEAD^{tree}');
+    const heads: string[] = [];
+    let i = 0;
+    for (let s = 0; s < 100; s++) {
+      const head = git('commit-tree', tree, '-p', old, '-m', `pre-rebase review ${s}`);
+      heads.push(head);
+      for (const g of GATES) failOnHead9(tree, head, g, new Date(Date.parse('2026-11-13T09:00:00.000Z') + (i++) * 1000).toISOString());
+    }
+    const env: NodeJS.ProcessEnv = {};
+    for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('GIT_')) env[k] = v;
+    execFileSync('git', ['update-ref', '--stdin'], { cwd: repo, env, input: heads.slice(prune).map((h, n) => `create refs/keep/${n} ${h}\n`).join('') });
+    mateOnMain9('mate.txt', 'mate\n');
+    git('rebase', '-q', 'main');
+    git('reflog', 'expire', '--expire=now', '--all');
+    git('gc', '-q', '--prune=now');
+    for (const h of heads.slice(0, prune)) expect(() => git('cat-file', '-e', h)).toThrow();
+    commitFile('flagged.txt', 'safe\n', 'fix');
+    allPass(1);
+  }
+  const isWalk = (a: readonly string[]): boolean => a.includes('rev-list') && a.includes('--boundary');
+
+  it('300 cleared rows, one head pruned: about as many git calls as none pruned, and the per-row result', () => {
+    offHistoryPruned(0);
+    spawns.n = 0;
+    expect(result(ship()).verdict).toBe('ready_to_merge');
+    const nonePruned = spawns.n;
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.mkdirSync(repo);
+    fs.mkdirSync(home);
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    git('config', 'commit.gpgsign', 'false');
+    git('config', 'gc.auto', '0');
+    git('config', 'maintenance.auto', 'false');
+    commitFile('a.txt', 'one\ntwo\nthree\n', 'base');
+    git('checkout', '-q', '-b', `feat/${FEATURE}/ship`);
+    offHistoryPruned(1);
+    // the per-row path: the history walk fails, so every row takes its own merge-base
+    spawns.overflow = isWalk;
+    const perRow = result(ship());
+    spawns.overflow = null;
+    spawns.n = 0;
+    spawns.args = [];
+    const walked = result(ship());
+    expect(walked).toEqual(perRow);
+    expect(walked.verdict).toBe('ready_to_merge');
+    expect(spawns.args.filter(isWalk).length).toBe(1);
+    expect(spawns.n).toBeLessThanOrEqual(nonePruned + 6);
   });
 });
 

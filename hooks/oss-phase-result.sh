@@ -174,7 +174,8 @@ oss_phase_result_main() {
     oss_run_bounded_rc "$secs" "$OSS_ENV" PATH="$OSS_NODE_PATH" "$OSS_NODE" "$_OSS_PR_CLI" "$verb" "$phase" ${rest[@]+"${rest[@]}"}
     rc=$?
     [[ -n "$OSS_BOUNDED_OUT" ]] && printf '%s\n' "$OSS_BOUNDED_OUT"
-    [[ "$rc" == 124 ]] && echo "oss-phase-result: timeout: $verb $phase passed ${secs}s" >&2
+    # Perf F2 (gate round 12): the slow part is usually git diff on a repo of many loose objects, which git gc packs.
+    [[ "$rc" == 124 ]] && echo "oss-phase-result: timeout: $verb $phase passed ${secs}s (often many loose objects: run git gc, then try again)" >&2
     return "$rc"
 }
 

@@ -208,6 +208,8 @@ The working directory is already set to your project. Using `-C` with full paths
 ### Optional: Merge
 With `--merge` flag, the PR is merged in this session once its required checks pass and any approval branch protection asks for is in. The merge never uses `--auto` or `--admin`, and the feature branch is deleted after it.
 
+Before you merge, even when the fetched prompt reaches its merge step: once the PR is created and `pr_created` is sent, run Step 8's "Assemble the phase result" (items 1-5, the override picker included). Do not merge while the assemble fails or its `verdict` is `blocked`: tell the user why and stop before the merge. Only then merge the PR. After the merge lands, send only `merged` then `complete` (Step 8). Never send `merged` before the override picker: `merged` resets the workflow state, and a pick asked after it is not recorded as a ship pick, so it does not count.
+
 ## Step 7: Update Status Line (Progress)
 
 **You MUST update the workflow status at each stage.**
@@ -222,10 +224,7 @@ After PR is created:
 ~/.oss/hooks/oss-notify.sh --workflow ship pr_created '{}'
 ```
 
-After PR is merged (with `--merge` flag):
-```bash
-~/.oss/hooks/oss-notify.sh --workflow ship merged '{}'
-```
+After PR is merged (with `--merge` flag): send `merged`, as Step 8 shows, after the assemble and override picker.
 
 > Note: IRON LAW compliance checklist is automatically logged on `complete` and `merged` events.
 
@@ -233,11 +232,11 @@ After PR is merged (with `--merge` flag):
 
 **You MUST send `complete` exactly once, as the last event of a successful ship:** right after `pr_created` when there is no `--merge`, or right after `merged` with `--merge` (never before `merged`: `merged` resets the workflow state). Do not send it if shipping failed.
 
-With `--merge`, send `merged` then `complete` only if the merge landed in this session. If the merge step stopped or could not merge (required checks still running, an approval missing, a conflict, the head moved), send neither `merged` nor `complete` yet: `complete` runs your team's chain (a deploy, for example) and the PR has not merged. Tell the user which merge step to run again, and send `merged` then `complete` once that re-run merges.
+With `--merge`, "Assemble the phase result" below runs before the merge (see "Optional: Merge"), so after the merge only `merged` then `complete` remain. Send `merged` then `complete` only if the merge landed in this session. If the merge step stopped or could not merge (required checks still running, an approval missing, a conflict, the head moved), send neither `merged` nor `complete` yet: `complete` runs your team's chain (a deploy, for example) and the PR has not merged. Tell the user which merge step to run again, and send `merged` then `complete` once that re-run merges.
 
 ### Assemble the phase result
 
-Before sending `complete`:
+Before sending `complete` (with `--merge`, before the merge):
 1. Run `~/.oss/hooks/oss-value.sh dir` and keep the folder it prints.
 2. Use the Write tool to write the value files in that folder: `summary.txt`: a short plain-text summary of what ships; `base.txt`: the name of the branch the PR targets, the same branch you pass to `gh pr create --base` (e.g. `main`). Do not write `overrides.json` here (step 5 says when). Never put any of this content (or the decision id) into a command.
 3. Run exactly:
@@ -245,16 +244,20 @@ Before sending `complete`:
 ~/.oss/hooks/oss-phase-result.sh assemble ship
 ```
 4. If it exits non-zero, read the reason it prints, fix the evidence (e.g. run the missing gate) and run the same call again. Never write `results/*.json` by hand. If it still fails, tell the user the reason and do not treat the phase as passed: the `complete` call below refuses and reports it.
-5. If it exits 0, read the JSON it prints. If `verdict` is `blocked` and a line in `blockers` has the form `gate:<gate> (captured fail, not re-reviewed: upstream changed a file this feature changes; ...)`, ask the person one AskUserQuestion per such gate, `<gate>` being `security`, `performance`, `code-review` or `pen-test` as that blocker names it. The options are `Fix it` first, then exactly `Override <gate>` (for example `Override security`). You may mark `Fix it` (Recommended); never mark `Override <gate>` (Recommended). Ask nothing for any other blocker: fix those. Ask all these pickers before acting on any answer.
-   - `Fix it`: fix the finding, re-run that gate, and assemble again from step 1.
-   - Only if the person picks `Override <gate>`:
-     a. For each such gate, get that pick's decision id the way the hook records it: with the Read tool, the `id` of the newest record in `decisions.ndjson` whose `command` is `ship` and whose `choice` is exactly `Override <gate>` (the feature's `.oss/dev/active/<feature>/decisions.ndjson`). Never make one up, and never put it in a command.
+5. If it exits 0, read the JSON it prints. If `verdict` is `blocked` and a line in `blockers` has the form `gate:<gate> (captured fail, not re-reviewed: upstream changed a file this feature changes; ...)`, ask the person one AskUserQuestion per such gate, `<gate>` being `security`, `performance`, `code-review` or `pen-test` as that blocker names it. The options are `Fix it` first, then exactly `Override <gate>` (for example `Override security`). You may mark `Fix it` (Recommended); never mark `Override <gate>` (Recommended). Ask nothing for any other blocker: fix those. Before asking, read the feature's `decisions.ndjson` with the Read tool, so you know which records it already holds. Ask all these pickers before acting on any answer.
+   - Handle every `Fix it` gate first: fix the finding, re-run that gate, and assemble again from step 1. Do this for every gate answered `Fix it` before writing any override.
+   - Only if the person picks `Override <gate>`: once every `Fix it` gate is handled, do a-d for the gates the person chose to override as the final assemble, so a `Fix it` re-run never deletes an override already chosen (step 1's `oss-value.sh dir` clears `overrides.json`).
+     a. For each such gate, get that pick's decision id the way the hook records it: with the Read tool, the `id` of the newest record in `decisions.ndjson` whose `command` is `ship` and whose `choice` is exactly `Override <gate>` (the feature's `.oss/dev/active/<feature>/decisions.ndjson`), and whose `answeredAt` is at or after the time you asked that picker: never a record that was already in the file before you asked. The hook writes the record in the background: if there is none yet, read the file again, up to 5 times. If there is still none, do not write `overrides.json`: tell the person the pick was not recorded, and ask again. Never make one up, and never put it in a command.
      b. Run `~/.oss/hooks/oss-value.sh dir` again and keep the folder it prints.
      c. Use the Write tool to write `overrides.json` in that folder: `[{"finding": "<one line>", "decisionId": "<id>", "gate": "<gate>"}]`, one entry per gate the person chose to override, `finding` being a one-line summary of that gate's finding. Then write `summary.txt` and `base.txt` again, as in step 2.
      d. Run the same assemble call (step 3) again.
    Never write `overrides.json` for any other blocker or without that pick. A blocked result stays blocked: `complete` below refuses it.
 
-Then send `complete`:
+Then send `complete`. With `--merge`, merge first (see "Optional: Merge": never while the result is blocked), and once the merge lands send `merged` right before `complete`:
+
+```bash
+~/.oss/hooks/oss-notify.sh --workflow ship merged '{}'
+```
 
 ```bash
 ~/.oss/hooks/oss-notify.sh --workflow ship complete '{}'

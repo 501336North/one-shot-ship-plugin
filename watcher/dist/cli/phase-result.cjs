@@ -1135,14 +1135,19 @@ var DEFAULT_REQUIRED_GATES = ["code-review", "performance", "security"];
 var SEVERITIES = ["critical", "high", "medium", "low", "info"];
 var REPO_FILE_CAP = 4 * 1024 * 1024;
 var GitError = class extends Error {
-  /** Perf L1 (gate round 11): git's output overflowed the call's buffer (spawnSync's ENOBUFS). */
-  constructor(message, overflow = false) {
+  /**
+   * Perf L1 (gate round 11): git's output overflowed the call's buffer (spawnSync's ENOBUFS). Perf F2 (gate round 12):
+   * git ran past the call's time limit (ETIMEDOUT).
+   */
+  constructor(message, overflow = false, timedOut = false) {
     super(message);
     this.overflow = overflow;
+    this.timedOut = timedOut;
   }
   overflow;
+  timedOut;
 };
-function runGit(repo, args, okCodes = [0], raw = false, maxBuffer = 1024 * 1024, input) {
+function runGit(repo, args, okCodes = [0], raw = false, maxBuffer = 1024 * 1024, input, timeout = 1e4) {
   const env = gitEnv();
   env.GIT_CONFIG_NOSYSTEM = "1";
   env.PATH = "/usr/bin:/bin";
@@ -1154,11 +1159,12 @@ function runGit(repo, args, okCodes = [0], raw = false, maxBuffer = 1024 * 1024,
     encoding: "utf-8",
     stdio: [input === void 0 ? "ignore" : "pipe", "pipe", "ignore"],
     input,
-    timeout: 1e4,
+    timeout,
     maxBuffer
   });
   if (r.error !== void 0 || r.status === null || !okCodes.includes(r.status)) {
-    throw new GitError(args[0], r.error?.code === "ENOBUFS");
+    const code = r.error?.code;
+    throw new GitError(args[0], code === "ENOBUFS", code === "ETIMEDOUT");
   }
   return { status: r.status, out: raw ? r.stdout : r.stdout.trim() };
 }
@@ -1288,6 +1294,8 @@ function liveBase(repo, branch, from, head) {
   }
   return points.size === 0 ? from : mostAdvanced(repo, [...points]) ?? from;
 }
+var DIFF_BUDGET_MS = 2e4;
+var DIFF_TIMEOUT = "diff_timeout: git ran past its time limit (often many loose objects): run git gc, then try again";
 function readDiff(repo, base, remoteRefs) {
   if (base.startsWith("-")) throw new GitError("base");
   const branch = runGit(repo, ["check-ref-format", "--branch", base]).out;
@@ -1295,8 +1303,10 @@ function readDiff(repo, base, remoteRefs) {
   const headSha2 = runGit(repo, ["rev-parse", "--verify", "HEAD^{commit}"]).out;
   const from = diffFrom(repo, branch, tip, headSha2, remoteRefs);
   const mergeBase = runGit(repo, ["merge-base", from, headSha2]).out;
-  const sameTree = runGit(repo, [...DIFF, "--quiet", tip, headSha2], [0, 1]).status === 0;
-  const stat = runGit(repo, [...DIFF, "--shortstat", mergeBase, headSha2]).out;
+  const deadline = Date.now() + DIFF_BUDGET_MS;
+  const left = () => Math.max(1, deadline - Date.now());
+  const sameTree = runGit(repo, [...DIFF, "--quiet", tip, headSha2], [0, 1], false, void 0, void 0, left()).status === 0;
+  const stat = runGit(repo, [...DIFF, "--shortstat", mergeBase, headSha2], [0], false, void 0, void 0, left()).out;
   const num2 = (re) => Number(re.exec(stat)?.[1] ?? 0);
   const files = num2(/(\d+) files? changed/);
   return {
@@ -1446,11 +1456,17 @@ var FailComparer = class {
   /**
    * Perf I2 (gate round 11): the review bases of every row's review head, from one history walk before the first batch
    * (batchReviewBases' answer for a head does not depend on the other heads walked with it). Best effort: a head git
-   * cannot walk (pruned, say) leaves its rows to merge-base each.
+   * cannot walk leaves its rows to merge-base each. Perf F1 (gate round 12): only the heads git has are walked (one
+   * `cat-file --batch-check`), so one pruned head no longer fails the walk for all; never `--ignore-missing`, which
+   * would leave a missing head unlisted, and an unlisted head counts as its own base.
    */
   walkReviewBases(rows) {
     try {
-      this.batchReviewBases(rows.map((f) => f.headSha).filter((h) => h !== null && !this.reviewBases.has(h)));
+      const heads = [...new Set(rows.map((f) => f.headSha).filter((h) => h !== null && !this.reviewBases.has(h)))];
+      if (heads.length === 0) return;
+      const found = runGit(this.repo, ["cat-file", "--batch-check=%(objecttype)"], [0], true, PATH_LIST_BUFFER, `${heads.join("\n")}
+`).out.split("\n");
+      this.batchReviewBases(heads.filter((_, i) => found[i] === "commit"));
     } catch {
     }
   }
@@ -1833,7 +1849,8 @@ function readOverrides(ctx, featureDir, decisionRows, gates) {
     const rec = recorded.get(id);
     const person = rec.person;
     const at = typeof rec.answeredAt === "string" ? Date.parse(rec.answeredAt) : NaN;
-    if (typeof gate === "string" && rec.command === "ship" && rec.choice === `Override ${gate}` && !Number.isNaN(at)) {
+    if (typeof gate === "string") {
+      if (rec.command !== "ship" || rec.choice !== `Override ${gate}` || Number.isNaN(at)) return { ok: false, error: "override_unrecorded", detail: "gate" };
       clearsBefore.set(gate, Math.max(at, clearsBefore.get(gate) ?? -Infinity));
     }
     overrides.push({
@@ -1849,7 +1866,8 @@ function assembleShip(ctx, opts) {
   let diff;
   try {
     diff = readDiff(ctx.repo, opts.base, opts.remoteRefs ?? /* @__PURE__ */ new Map());
-  } catch {
+  } catch (e) {
+    if (e instanceof GitError && e.timedOut) return { ok: false, error: "diff_unavailable", detail: DIFF_TIMEOUT };
     return isLocalBranch(ctx.repo, opts.base) || !validBranchName(ctx.repo, opts.base) ? { ok: false, error: "diff_unavailable" } : { ok: false, error: "diff_unavailable", detail: NO_LOCAL_BASE };
   }
   if (diff.empty) return { ok: false, error: "empty_diff" };

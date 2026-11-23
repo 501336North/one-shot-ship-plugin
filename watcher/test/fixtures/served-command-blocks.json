@@ -578,8 +578,8 @@
       "# ✅ CORRECT - Use plain git (single approval)\ngit status\ngit add .\ngit commit -m \"feat: message\"\ngit push -u origin branch-name\n\n# ❌ AVOID - Using -C flag (requires approval each time)\ngit -C /full/path/to/repo status\ngit -C /full/path/to/repo push",
       "~/.oss/hooks/oss-notify.sh --workflow ship quality_passed '{\"checks\": [\"code-review\", \"performance\", \"security\", \"tests\", \"build\"]}'",
       "~/.oss/hooks/oss-notify.sh --workflow ship pr_created '{}'",
-      "~/.oss/hooks/oss-notify.sh --workflow ship merged '{}'",
       "~/.oss/hooks/oss-phase-result.sh assemble ship",
+      "~/.oss/hooks/oss-notify.sh --workflow ship merged '{}'",
       "~/.oss/hooks/oss-notify.sh --workflow ship complete '{}'",
       "# Ship with manual merge\n/oss:ship\n\n# Ship and merge once the PR's checks pass\n/oss:ship --merge\n\n# Ship with custom commit message\n/oss:ship --message \"feat: add user authentication\""
     ],

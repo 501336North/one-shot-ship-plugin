@@ -63,8 +63,11 @@ const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'] as const;
 const REPO_FILE_CAP = 4 * 1024 * 1024;
 
 class GitError extends Error {
-  /** Perf L1 (gate round 11): git's output overflowed the call's buffer (spawnSync's ENOBUFS). */
-  constructor(message: string, readonly overflow = false) {
+  /**
+   * Perf L1 (gate round 11): git's output overflowed the call's buffer (spawnSync's ENOBUFS). Perf F2 (gate round 12):
+   * git ran past the call's time limit (ETIMEDOUT).
+   */
+  constructor(message: string, readonly overflow = false, readonly timedOut = false) {
     super(message);
   }
 }
@@ -80,6 +83,7 @@ function runGit(
   raw = false,
   maxBuffer = 1024 * 1024,
   input?: string,
+  timeout = 10_000,
 ): { status: number; out: string } {
   const env = gitEnv();
   env.GIT_CONFIG_NOSYSTEM = '1';
@@ -92,11 +96,12 @@ function runGit(
     encoding: 'utf-8',
     stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'],
     input,
-    timeout: 10_000,
+    timeout,
     maxBuffer,
   });
   if (r.error !== undefined || r.status === null || !okCodes.includes(r.status)) {
-    throw new GitError(args[0], (r.error as NodeJS.ErrnoException | undefined)?.code === 'ENOBUFS');
+    const code = (r.error as NodeJS.ErrnoException | undefined)?.code;
+    throw new GitError(args[0], code === 'ENOBUFS', code === 'ETIMEDOUT');
   }
   return { status: r.status, out: raw ? r.stdout : r.stdout.trim() };
 }
@@ -304,6 +309,16 @@ function liveBase(repo: string, branch: string, from: string, head: string): str
   return points.size === 0 ? from : mostAdvanced(repo, [...points]) ?? from;
 }
 
+/**
+ * Perf F2 (gate round 12): `diff --quiet` and `diff --shortstat` read every changed file's content, which on a repo of
+ * many loose objects can take longer than runGit's 10 s. Together they get this budget instead: well under the 30 s the
+ * hook gives assemble (oss-phase-result.sh), leaving time for the rest.
+ */
+const DIFF_BUDGET_MS = 20_000;
+
+/** The diff_unavailable hint when git ran past its time limit, such as DIFF_BUDGET_MS (fixed text, no values). */
+export const DIFF_TIMEOUT = 'diff_timeout: git ran past its time limit (often many loose objects): run git gc, then try again';
+
 function readDiff(repo: string, base: string, remoteRefs: ReadonlyMap<string, string>): Diff {
   if (base.startsWith('-')) throw new GitError('base');
   const branch = runGit(repo, ['check-ref-format', '--branch', base]).out;
@@ -311,8 +326,10 @@ function readDiff(repo: string, base: string, remoteRefs: ReadonlyMap<string, st
   const headSha = runGit(repo, ['rev-parse', '--verify', 'HEAD^{commit}']).out;
   const from = diffFrom(repo, branch, tip, headSha, remoteRefs);
   const mergeBase = runGit(repo, ['merge-base', from, headSha]).out;
-  const sameTree = runGit(repo, [...DIFF, '--quiet', tip, headSha], [0, 1]).status === 0;
-  const stat = runGit(repo, [...DIFF, '--shortstat', mergeBase, headSha]).out;
+  const deadline = Date.now() + DIFF_BUDGET_MS;
+  const left = (): number => Math.max(1, deadline - Date.now());
+  const sameTree = runGit(repo, [...DIFF, '--quiet', tip, headSha], [0, 1], false, undefined, undefined, left()).status === 0;
+  const stat = runGit(repo, [...DIFF, '--shortstat', mergeBase, headSha], [0], false, undefined, undefined, left()).out;
   const num = (re: RegExp): number => Number(re.exec(stat)?.[1] ?? 0);
   const files = num(/(\d+) files? changed/);
   return {
@@ -531,11 +548,17 @@ class FailComparer {
   /**
    * Perf I2 (gate round 11): the review bases of every row's review head, from one history walk before the first batch
    * (batchReviewBases' answer for a head does not depend on the other heads walked with it). Best effort: a head git
-   * cannot walk (pruned, say) leaves its rows to merge-base each.
+   * cannot walk leaves its rows to merge-base each. Perf F1 (gate round 12): only the heads git has are walked (one
+   * `cat-file --batch-check`), so one pruned head no longer fails the walk for all; never `--ignore-missing`, which
+   * would leave a missing head unlisted, and an unlisted head counts as its own base.
    */
   walkReviewBases(rows: FailRow[]): void {
     try {
-      this.batchReviewBases(rows.map((f) => f.headSha).filter((h): h is string => h !== null && !this.reviewBases.has(h)));
+      const heads = [...new Set(rows.map((f) => f.headSha).filter((h): h is string => h !== null && !this.reviewBases.has(h)))];
+      if (heads.length === 0) return;
+      const found = runGit(this.repo, ['cat-file', '--batch-check=%(objecttype)'], [0], true, PATH_LIST_BUFFER, `${heads.join('\n')}\n`)
+        .out.split('\n');
+      this.batchReviewBases(heads.filter((_, i) => found[i] === 'commit'));
     } catch {
       // each row takes merge-base
     }
@@ -951,8 +974,9 @@ type OverridesOutcome =
  * The model's `overrides.json`, each checked against a ledger-backed decision record; person comes from that record.
  * D69: an entry may name a `gate` (one of `gates`, else override_unrecorded with detail `gate`). D70: it clears that
  * gate's D67 rows captured before its decision was answered (`clearsBefore`, the latest such time per gate) only when
- * the record is a ship pick (`command: "ship"`) whose `choice` is exactly `Override <gate>`; any other recorded decision
- * is still listed and refuses nothing (assemble and check read the same records, so they agree), but clears nothing.
+ * the record is a ship pick (`command: "ship"`) whose `choice` is exactly `Override <gate>` with a readable `answeredAt`.
+ * D76: an entry naming a gate whose decision does not count is refused (override_unrecorded, detail `gate`); assemble
+ * and check read the same records, so they agree. An entry without a gate is listed and clears nothing.
  */
 function readOverrides(ctx: AssembleContext, featureDir: string, decisionRows: LedgerRow[], gates: ReadonlySet<string>): OverridesOutcome {
   const recorded = new Map<string, Record<string, unknown>>();
@@ -975,10 +999,11 @@ function readOverrides(ctx: AssembleContext, featureDir: string, decisionRows: L
     if (gate !== undefined && (typeof gate !== 'string' || !gates.has(gate))) return { ok: false, error: 'override_unrecorded', detail: 'gate' };
     const rec = recorded.get(id) as Record<string, unknown>;
     const person = rec.person;
-    // D70: only a ship pick whose chosen answer is exactly `Override <gate>` counts, from the time it was answered;
-    // any other recorded decision is listed but clears nothing.
+    // D70: only a ship pick whose chosen answer is exactly `Override <gate>` counts, from the time it was answered.
+    // D76: an entry naming a gate whose decision does not count is refused, like an unrecorded id.
     const at = typeof rec.answeredAt === 'string' ? Date.parse(rec.answeredAt) : NaN;
-    if (typeof gate === 'string' && rec.command === 'ship' && rec.choice === `Override ${gate}` && !Number.isNaN(at)) {
+    if (typeof gate === 'string') {
+      if (rec.command !== 'ship' || rec.choice !== `Override ${gate}` || Number.isNaN(at)) return { ok: false, error: 'override_unrecorded', detail: 'gate' };
       clearsBefore.set(gate, Math.max(at, clearsBefore.get(gate) ?? -Infinity));
     }
     overrides.push({
@@ -995,7 +1020,9 @@ export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): A
   let diff: Diff;
   try {
     diff = readDiff(ctx.repo, opts.base, opts.remoteRefs ?? new Map());
-  } catch {
+  } catch (e) {
+    // Perf F2 (gate round 12): the totals ran past their budget: its own hint (run git gc).
+    if (e instanceof GitError && e.timedOut) return { ok: false, error: 'diff_unavailable', detail: DIFF_TIMEOUT };
     // Pen info 2: fixed text, never the base name; code-review info (round 7): only for a name git accepts as a branch.
     return isLocalBranch(ctx.repo, opts.base) || !validBranchName(ctx.repo, opts.base)
       ? { ok: false, error: 'diff_unavailable' }

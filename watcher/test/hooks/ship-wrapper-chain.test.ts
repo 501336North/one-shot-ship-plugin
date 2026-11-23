@@ -299,3 +299,63 @@ describe('/oss:ship wrapper offers the D70 override only through the person\'s p
     for (const m of text.matchAll(/"finding"[^\]\n]*?"decisionId"[^\]\n]*/g)) expect(m[0]).toContain('"gate"');
   });
 });
+
+/**
+ * @behavior With `/oss:ship --merge`, the ship result is assembled, and any `Override <gate>` picker asked, before the PR
+ *           is merged; a blocked result stops the merge, and only `merged` then `complete` follow the merge (D75).
+ * @business-rule `merged` resets the workflow state, so a pick asked after it is recorded with command "" and never counts
+ *           as a ship `Override <gate>` pick (D70); the merge must also never land a ship the code holds blocked.
+ * @boundary commands/ship.md (wrapper text: "Optional: Merge" and Step 8).
+ */
+describe('/oss:ship --merge assembles and asks the override picker before merging (D75)', () => {
+  const text = fs.readFileSync(shipWrapper, 'utf8');
+  const mergeSection = text.split('### Optional: Merge')[1]?.split('\n## ')[0] ?? '';
+
+  it('the merge instructions run the assemble (and its override picker) before the merge', () => {
+    const assemble = mergeSection.indexOf('"Assemble the phase result"');
+    expect(assemble).toBeGreaterThan(-1);
+    expect(mergeSection).toMatch(/override picker/);
+    const merge = mergeSection.search(/Only then merge the PR/);
+    expect(merge).toBeGreaterThan(assemble);
+  });
+
+  it('says not to merge while the ship result is blocked or the assemble fails', () => {
+    expect(mergeSection).toMatch(/Do not merge while the assemble fails or its `verdict` is `blocked`/);
+  });
+
+  it('no `merged` comes before the override pick, and only `merged` then `complete` come after the merge', () => {
+    const firstMerged = text.indexOf('~/.oss/hooks/oss-notify.sh --workflow ship merged');
+    const pick = text.indexOf('Only if the person picks `Override <gate>`');
+    expect(pick).toBeGreaterThan(-1);
+    expect(firstMerged).toBeGreaterThan(pick);
+    expect(mergeSection).toMatch(/After the merge lands, send only `merged` then `complete`/);
+  });
+});
+
+/**
+ * @behavior When the person answers `Fix it` for some gates and `Override <gate>` for others, the fixes come first and the
+ *           overrides are written by the final assemble, so a `Fix it` re-run never drops an override already chosen.
+ *           The decision id comes from a record answered at or after the picker was asked, waiting a bounded number of
+ *           re-reads for the hook (pen I1, code-review info, gate round 12).
+ * @business-rule overrides.json lives in the value folder, which `oss-value.sh dir` resets (D70); a decision record from
+ *           an earlier pick must never stand in for the person's new answer.
+ * @boundary commands/ship.md (wrapper text, Step 8 "Assemble the phase result").
+ */
+describe('/oss:ship Step 8 handles mixed answers and waits for the new decision record (gate round 12)', () => {
+  const text = fs.readFileSync(shipWrapper, 'utf8');
+  const step = text.split('### Assemble the phase result')[1]?.split('Then send `complete`')[0] ?? '';
+
+  it('handles every `Fix it` gate first, then writes the overrides as the final assemble', () => {
+    const fixFirst = step.search(/Handle every `Fix it` gate first/);
+    const overrides = step.indexOf('Only if the person picks `Override <gate>`');
+    expect(fixFirst).toBeGreaterThan(-1);
+    expect(overrides).toBeGreaterThan(fixFirst);
+    expect(step).toMatch(/as the final assemble, so a `Fix it` re-run never deletes an override already chosen/);
+  });
+
+  it('uses only a decision record answered at or after the picker was asked, re-reading a bounded number of times', () => {
+    expect(step).toMatch(/`answeredAt` is at or after the time you asked that picker/);
+    expect(step).toMatch(/read the file again, up to 5 times/);
+    expect(step).toMatch(/still none, do not write `overrides\.json`/);
+  });
+});

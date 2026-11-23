@@ -589,8 +589,22 @@ describe('phase-result CLI: check refuses anything not bound to this run', () =>
     expect(JSON.parse(r.stdout)).toMatchObject({ verification: 'verified', verdict: 'ready_to_merge' });
   });
 
-  it('D70: a ship pick answered "Keep blocked" clears nothing, and check agrees', () => {
+  // ⚠ changes existing test: D76 — a gate entry whose decision is not an `Override <gate>` ship pick is refused
+  //   (override_unrecorded, field gate), no longer stored as blocked; check agrees (nothing to verify).
+  it('D76: a ship pick answered "Keep blocked" with a gate is refused, nothing is stored, and check agrees', () => {
     d67FailWithOverride('Keep blocked');
+    const a = cli('assemble', 'ship');
+    expect(a.status).toBe(1);
+    expect(a.stderr).toContain('override_unrecorded (field gate)');
+    expect(fs.existsSync(resultFile(FEATURE, 'ship'))).toBe(false);
+    const r = cli('check', 'ship');
+    expect(r.status).toBe(1);
+  });
+
+  it('D74: a blocked ship prints its verdict and the D71 blocker on stdout', () => {
+    d67FailWithOverride('Override security');
+    // no override this time: the D67 fail stays open
+    fs.writeFileSync(path.join(valueDir(), 'overrides.json'), '[]');
     const a = cli('assemble', 'ship');
     expect(a.status, a.stderr).toBe(0);
     // D74: the wrapper reads the verdict and the D71 blocker from assemble's stdout to offer `Override security`.
@@ -600,8 +614,6 @@ describe('phase-result CLI: check refuses anything not bound to this run', () =>
       blockers: ['gate:security (captured fail, not re-reviewed: upstream changed a file this feature changes; a recorded override or a fix elsewhere in the feature clears it)'],
     });
     expect(JSON.parse(fs.readFileSync(resultFile(FEATURE, 'ship'), 'utf-8'))).toMatchObject({ verdict: 'blocked' });
-    const old = new Date(Date.now() - 60 * 60 * 1000);
-    fs.utimesSync(path.join(valueDir(), 'overrides.json'), old, old);
     const r = cli('check', 'ship');
     expect(r.status, r.stderr).toBe(0);
     expect(JSON.parse(r.stdout)).toMatchObject({ verification: 'verified', verdict: 'blocked' });

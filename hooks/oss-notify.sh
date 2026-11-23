@@ -198,10 +198,17 @@ _oss_ledger_run() (
     # D40/D50: ship start also records every remote's branch tips, the only bases assemble ship accepts
     [[ "$1" != ship ]] || _oss_ledger_origin "$d" "$s" \
         || echo "oss-notify: origin snapshot not recorded for ship ($_OSS_ORIGIN_WHY): assemble ship will refuse no_base_snapshot" >&2
-    # D70 + security L1: an earlier run's overrides.json, summary.txt and base.txt never carry into this ship run. The
-    # value folder is ~/.oss/run/<the same key> (oss-value.sh dir); a linked or foreign folder is left alone.
-    f="$HOME/.oss/run"
-    [[ "$1" != ship || -L "$f" || -L "$f/$k" || ! -d "$f/$k" ]] || ! test -O "$f/$k" \
+    return 0
+)
+
+# _oss_ship_values_reset: D70 + security L1 + pen I2 (gate round 12): an earlier run's overrides.json, summary.txt and
+# base.txt never carry into a new ship run, even when _oss_ledger_run returns early. The value folder is
+# ~/.oss/run/<the ledger key> (oss-value.sh dir); a linked or foreign folder is left alone.
+_oss_ship_values_reset() (
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+    local f="$HOME/.oss/run" k
+    oss_phys_cwd; k=$(_oss_ledger_key "$_OSS_CWD") || return 0
+    [[ -L "$f" || -L "$f/$k" || ! -d "$f/$k" ]] || ! test -O "$f/$k" \
         || "${OSS_RM:-/bin/rm}" -f "$f/$k/overrides.json" "$f/$k/summary.txt" "$f/$k/base.txt" 2>/dev/null
     return 0
 )
@@ -465,6 +472,7 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
                 esac
                 # R-257 D14: this phase's private run start; a ledger failure never blocks the start
                 if [[ -n "$_OSS_PHASE" ]]; then
+                    [[ "$_OSS_PHASE" != ship ]] || _oss_ship_values_reset
                     # The warning, like the D17 notice, is for OSS projects only (a folder with no .oss starts silently).
                     _oss_ledger_run "$_OSS_PHASE" || { [[ -n "$_OSS_PROJECT_DIR" && -d "$_OSS_PROJECT_DIR/.oss" ]] \
                         && echo "oss-notify: ledger run row not written for $_OSS_PHASE" >&2; }

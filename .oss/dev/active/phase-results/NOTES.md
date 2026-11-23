@@ -202,3 +202,7 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 - D70: the hook writes answeredAt to the whole second, so a row captured in the same second as the override pick stays open (fails closed).
 - Known limits, not fixed (D72): remote-ref cost grows per diverged same-name remote; 1,000 off-history rows take about 21 s.
 - Gate names: gate rounds 3-11 timeline lines used agent names (`code-reviewer`, `performance-auditor`, `security-auditor`, `penetration-tester`) instead of gate names (`code-review`, `performance`, `security`, `pen-test`); rounds 1-2 and round 12 on use gate names. Hook-written lines were left as they are.
+
+## Ship round 14 notes (2026-11-23)
+- The check hook keeps its 10 s limit (raising it would also raise oss-notify's 15 s bound); a timeout now says to run git gc. assemble gives the diff calls 20 s.
+- Hook tests with real sleeps (timeline-push, ship-wrapper-chain) time out when the Mac is in maintenance sleep on battery; run the full check on AC power.

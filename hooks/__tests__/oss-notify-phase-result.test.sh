@@ -371,6 +371,18 @@ check "a fake git naming another feature's branch does not change the ledger run
     '[[ "$(run_row ideate | jq -r .feature)" == "$FEATURE" ]]' "row=$(run_row ideate)"
 rm -rf "$T"
 
+# 27. (gate round 12, perf F2) a check that runs past its 10 s bound (git diff on a repo of many loose objects is the
+#     slow part) refuses complete with the timeout, and says to run git gc and try again. The CLI here only sleeps.
+sandbox
+rm -f "$T/plugin/watcher/dist/cli/phase-result.cjs"
+printf 'setTimeout(() => {}, 14000);\n' > "$T/plugin/watcher/dist/cli/phase-result.cjs"
+notify ship start '{}' >/dev/null 2>&1
+out=$(notify ship complete '{}' 2>&1); rc=$?
+check "a check past its bound refuses complete, naming the timeout and the git gc hint" \
+    '[[ $rc -eq 1 && "$out" == *"timeout: check ship passed 10s"* && "$out" == *"run git gc, then try again"* && "$out" != *"CHAIN:"* ]] && ! chain_fired' \
+    "rc=$rc out=$out"
+rm -rf "$T"
+
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
 [[ $FAILED -eq 0 ]]

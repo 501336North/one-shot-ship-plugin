@@ -823,6 +823,19 @@ start_repo; ship_start plan
 start_repo; mkdir -p "$T/elsewhere$N"; mv "$VD"/* "$T/elsewhere$N/"; rmdir "$VD"; ln -s "$T/elsewhere$N" "$VD"; ship_start ship
 [[ -f "$T/elsewhere$N/overrides.json" ]] && pass "27: ship start never follows a linked value folder" || fail "27: ship start never follows a linked value folder" "removed through the link"
 
+# --- 28. pen I2 (gate round 12): the ship-start removal runs even when the ledger run row returns early -------------
+# An unsafe ledger folder (here ~/.oss/ledger is a link) ends the run row before it is written; the stale value files
+# are still removed, and a linked value folder is still never followed.
+start_repo; mkdir -p "$T/ledger-elsewhere$N"; ln -s "$T/ledger-elsewhere$N" "$H/.oss/ledger"; ship_start ship
+left=""; for f in overrides.json summary.txt base.txt; do [[ -e "$VD/$f" ]] && left="$left $f"; done
+[[ -z "$left" && -f "$VD/unrelated.dat" && -z "$(ls -A "$T/ledger-elsewhere$N")" ]] \
+    && pass "28: ship start removes the stale value files even when the ledger run row returns early" \
+    || fail "28: ship start removes the stale value files even when the ledger run row returns early" "left:$left ledger=$(ls -A "$T/ledger-elsewhere$N" 2>&1)"
+start_repo; mkdir -p "$T/ledger-elsewhere$N" "$T/elsewhere$N"; ln -s "$T/ledger-elsewhere$N" "$H/.oss/ledger"
+mv "$VD"/* "$T/elsewhere$N/"; rmdir "$VD"; ln -s "$T/elsewhere$N" "$VD"; ship_start ship
+[[ -f "$T/elsewhere$N/overrides.json" ]] && pass "28: with the early return too, a linked value folder is never followed" \
+    || fail "28: with the early return too, a linked value folder is never followed" "removed through the link"
+
 echo
 echo "Results: $((RUN - FAILED))/$RUN passed, $FAILED failed"
 [[ "$FAILED" == 0 ]]

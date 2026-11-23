@@ -209,4 +209,10 @@ Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watche
 - Changed tests (marked ⚠): D69 tests use a real ship pick (D70); UPSTREAM_CHANGED text (D71); D26 assemble stdout includes verdict and blockers (D74).
 - r11 probes replayed on git 2.54 and CLT 2.50.1: stale and unrelated cases now blocked.
 
-## Last Updated: 2026-11-21 16:14 CST by /oss:ship (round 13 fixes)
+### Ship round 14 (D75-D77), 2026-11-23
+- Full check: build 0, tsc 0, 199 files / 11057 tests passed, served-commands 3/3, bash 114/114 behind the tripwire (0 trip lines).
+- An earlier run on battery had 3 timeouts (timeline-push, two ship-wrapper-chain chain tests at 929-967 s); the power log shows maintenance sleep cycles of about 928 s. timeline-push passed 22/22 alone, and the full re-run on AC power was green.
+- New tests: --merge order (3 wrapper tests), D76 refusals, an entry without gate unchanged, pruned-head call bound and equality with the per-row path, diff budget and DIFF_TIMEOUT detail, check-hook gc hint (case 27), Step 8 mixed answers and record wait, ship-start cleanup on early exit (case 28).
+- Changed tests (marked ⚠): six D70 "listed" tests now refused (D76); the acceptance "Keep blocked" test is now refused, its D74 stdout check moved to a new test.
+
+## Last Updated: 2026-11-23 08:08 +07 by /oss:ship (round 14 fixes)
