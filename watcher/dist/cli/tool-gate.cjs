@@ -8874,15 +8874,10 @@ var OPERAND_SETTERS = /* @__PURE__ */ new Set([...NAME_SETTERS2, "let", "env"]);
 var PREFIXES = /* @__PURE__ */ new Set(["builtin", "command", "noglob", "nocorrect", "-"]);
 function isEnvProgram(word) {
   if (word.includes(UNKNOWN)) return false;
-  const base = word.slice(word.lastIndexOf("/") + 1);
-  if (base === "env") return true;
-  if (!/[*?[]/.test(base)) return false;
-  const pattern = base.replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".").replace(/\[!/g, "[^");
-  try {
-    return new RegExp(`^${pattern}$`).test("env");
-  } catch {
-    return false;
-  }
+  return globMatches(word.slice(word.lastIndexOf("/") + 1), "env");
+}
+function isEnvPiece(piece, index) {
+  return index === 0 ? isEnvProgram(piece) : piece.slice(piece.lastIndexOf("/") + 1).toLowerCase() === "env";
 }
 var MAX_DEPTH = 5;
 function setsRefusedVariable(text, depth, call) {
@@ -9020,7 +9015,7 @@ function piecesSet(word) {
   const assigned = ASSIGNMENT3.exec(word);
   const pieces = (assigned === null ? word : word.slice(assigned[0].length)).split(/\s+/).filter(Boolean);
   const setsAfter = (setter, a) => ASSIGNMENT3.test(a) && unlisted(a) || (setter === "env" ? a.startsWith("-") : SETTING_WORD.test(a));
-  return pieces.some((p, i) => (OPERAND_SETTERS.has(p) || isEnvProgram(p)) && pieces.slice(i + 1).some((a) => setsAfter(isEnvProgram(p) ? "env" : p, a)));
+  return pieces.some((p, i) => (OPERAND_SETTERS.has(p) || isEnvPiece(p, i)) && pieces.slice(i + 1).some((a) => setsAfter(isEnvPiece(p, i) ? "env" : p, a)));
 }
 function tokensSet(tokens, depth, call, text) {
   let previous = null;
@@ -9190,7 +9185,7 @@ function valueVerdict(value, cwd, command, call) {
   const hook = pieces.some((p) => wordNamesHook(p, cwd, true, call.home) || p.includes(UNKNOWN) && HOOK_HINT.test(p));
   if (unknown && piecesSet(value)) return "hook";
   if (!hook) return "ok";
-  const sets = pieces.some(isEnvProgram) || !unknown && setsRefusedVariable(value, 0, call) || setsRefusedVariable(command, 0, call);
+  const sets = pieces.some(isEnvPiece) || !unknown && setsRefusedVariable(value, 0, call) || setsRefusedVariable(command, 0, call);
   return sets ? "hook" : "ok";
 }
 function programVerdict(token, after, text, values, cwd, command, call) {
@@ -9296,6 +9291,11 @@ function commandScan(command, cwd, home, sources) {
   lastScan = { command, cwd, home, sources, verdict };
   return verdict;
 }
+function archSets(part) {
+  const program = part.program;
+  if (program === null || program.slice(program.lastIndexOf("/") + 1) !== "arch") return false;
+  return part.words.some((w, i) => w === "-e" && ASSIGNMENT3.test(part.words[i + 1] ?? ""));
+}
 function checkOssHookEnv(part, command, home, sources) {
   if (programHidden(part)) {
     if (commandScan(command, part.cwd, home, sources) !== "ok") {
@@ -9306,7 +9306,7 @@ function checkOssHookEnv(part, command, home, sources) {
     }
   }
   if (!partNamesHook(part, home) && !PLUGIN_HOOK.test(command)) return null;
-  const clears = part.program !== null && isEnvProgram(part.program) || part.wrappers.some((w, i) => w === "env" || w === "exec" && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o)));
+  const clears = part.program !== null && isEnvProgram(part.program) || archSets(part) || part.wrappers.some((w, i) => w === "env" || w === "exec" && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o)));
   if (!clears && !setsRefusedVariable(command, 0, { home, sources: sourcesFor(command, sources) })) return null;
   return {
     rule: "protected-path",
@@ -9626,11 +9626,14 @@ function percentDecoded(text) {
 }
 function urlHost(url) {
   const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.exec(url);
-  const rest = scheme === null ? url : url.slice(scheme[0].length);
-  const end = scheme !== null && /^(?:ssh|git\+ssh|ssh\+git):\/\/$/i.test(scheme[0]) ? /\/|$/ : /[/?#]|$/;
+  const ssh = scheme !== null && /^(?:ssh|git\+ssh|ssh\+git):\/\/$/i.test(scheme[0]);
+  const decodedFirst = ssh || scheme !== null && /^git:\/\/$/i.test(scheme[0]);
+  const rest = scheme === null ? url : decodedFirst ? percentDecoded(url.slice(scheme[0].length)) : url.slice(scheme[0].length);
+  const end = ssh ? /\/|$/ : /[/?#]|$/;
   const written = scheme === null ? /^(?:[^@/:[\]]*@)?\[[^\]]*\]|^[^:/]*/.exec(rest)?.[0] ?? "" : rest.slice(0, rest.search(end));
-  const authority = percentDecoded(written);
-  if (authority.startsWith("[") && authority.includes("]")) return authority.slice(1, authority.indexOf("]")).replace(/^.*@/, "");
+  const authority = decodedFirst ? written : percentDecoded(written);
+  const bracketFirst = scheme === null || ssh;
+  if (bracketFirst && authority.startsWith("[") && authority.includes("]")) return authority.slice(1, authority.indexOf("]")).replace(/^.*@/, "");
   const host = authority.replace(/^.*@/, "");
   return host.startsWith("[") ? host.slice(1, host.includes("]") ? host.indexOf("]") : void 0) : host.replace(/:.*$/, "");
 }
@@ -10324,7 +10327,7 @@ function namesSetBy(program, args) {
         const name = program === "read" && letter === "a" || program === "printf" && letter === "v";
         if (!name && !values.includes(letter)) continue;
         const operand = attached !== "" ? attached : args[++i] ?? "";
-        if (name) names.push(operand);
+        if (name || attached === "" && !/^[0-9]+$/.test(operand)) names.push(operand);
         break;
       }
     } else if (program !== "printf") names.push(a);
