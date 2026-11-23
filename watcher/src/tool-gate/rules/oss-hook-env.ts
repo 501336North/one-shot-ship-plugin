@@ -448,10 +448,12 @@ const OTHER_OPERATOR = /^"?\$\{(?![A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\})/;
 /** A program word that is a variable with a default (`${c:-…}`, `${c-…}`, `${c:=…}`, `${c=…}`): the default counts as the value (S2). */
 const DEFAULT_REF = /^"?\$\{([A-Za-z_][A-Za-z0-9_]*):?[-=]([\s\S]*)\}"?$/;
 /**
- * A program word that is `${NAME:-default}rest` (also `-`, `:=`, `=`) or `${NAME%suffix}rest` / `%%` with a literal
- * suffix: read as the value or default, trimmed, plus the rest (ship fix round 3, R3-4, owner pick "Allow it again").
+ * The plugin's served hook calls, the only `${…}` operator forms read on a program word (ship fix round 4, R4-1,
+ * "Exact served shapes only"): `${CLAUDE_PLUGIN_ROOT:-<default>}/hooks/<name>` with a plain default (an optional
+ * leading `$HOME`, as the plugin serves it, then no expansion, quote, escape or glob), and
+ * `${CLAUDE_PLUGIN_ROOT%/}/hooks/<name>`. Read as the value (a trailing `/` trimmed) or the default, plus the rest.
  */
-const REST_REF = /^"?\$\{([A-Za-z_][A-Za-z0-9_]*)(?::?[-=]([^}]*)|%%?([^}*?[\]\\]*))\}([^"]*)"?$/;
+const SERVED_ROOT = /^"?\$\{(CLAUDE_PLUGIN_ROOT)(?::-((?:\$HOME|\$\{HOME\})?[A-Za-z0-9._/@:,=+-]*)|(%\/))\}(\/hooks\/[A-Za-z0-9._-]+)"?$/;
 /** A program word that starts with a variable, split before the rest is added (`$d/x`, `${d}x`). */
 const LEADING_REF = /^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})(?![A-Za-z0-9_[])/;
 /** Builtins and keywords whose bare operands name a variable they set from a value the gate doesn't read here. */
@@ -568,8 +570,10 @@ function programVerdict(token: Token, after: Token[], text: string | null, value
   const split = SPLIT_REF.exec(raw);
   const leading = split === null ? LEADING_REF.exec(raw) : null;
   const withDefault = split === null && leading === null ? DEFAULT_REF.exec(raw) : null;
-  const withRest = split === null && leading === null && withDefault === null ? REST_REF.exec(raw) : null;
+  const withRest = split === null && leading === null && withDefault === null ? SERVED_ROOT.exec(raw) : null;
   const name = split?.[1] ?? split?.[2] ?? leading?.[1] ?? leading?.[2] ?? withDefault?.[1] ?? withRest?.[1];
+  // ship fix round 4, R4-1: a default the gate would read as written but the shell expands (`${c:-$d}`) is not read
+  if (withDefault !== null && /[$`"'\\(<]/.test(withDefault[2])) return lineNamesHook(command, cwd, call.home) ? 'unreadable' : 'ok';
   // ship fix round 2, R2-4: any other `${…}` operator (`:+`, `%`, `#`, `/`, `:0`, `^`, zsh flags …) is not read here
   if (name === undefined) return OTHER_OPERATOR.test(raw) && lineNamesHook(command, cwd, call.home) ? 'unreadable' : 'ok';
   const value = values.get(name);
@@ -580,11 +584,10 @@ function programVerdict(token: Token, after: Token[], text: string | null, value
   if (value === FROM_FILE) return 'ok';
   // S2: the value, then the rest of the part's words, each filled in; a default counts as a value
   const words = ' ' + after.map((w) => filled(w, text, values, call.home)).join(' ');
-  const suffix = withRest?.[3];
-  const trimmed = typeof value === 'string' && suffix !== undefined && value.endsWith(suffix) ? value.slice(0, value.length - suffix.length) : value;
+  const trimmed = typeof value === 'string' && withRest?.[3] !== undefined ? value.replace(/\/$/, '') : value;
   const fallback = withDefault?.[2] ?? withRest?.[2];
   const readings = [...(typeof trimmed === 'string' ? [trimmed] : []), ...(fallback !== undefined ? [fallback] : [])];
-  // `$d/x`: the value, then the rest of the word as read; `${d:-x}/y`, `${d%/}/y`: the rest as written
+  // `$d/x`: the value, then the rest of the word as read; a served `${CLAUDE_PLUGIN_ROOT…}/hooks/x`: the rest as written
   const rest = leading !== null && token.value.startsWith(UNKNOWN) ? token.value.slice(UNKNOWN.length) : (withRest?.[4] ?? '');
   return readings.some((r) => valueVerdict(r + rest + words, cwd, command, call) === 'hook') ? 'hook' : 'ok';
 }

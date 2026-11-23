@@ -107,6 +107,17 @@ const OTHER_OPERATORS = [
   'c=~/.oss/; HOME=/tmp/x ${c%/}/hooks/oss-log.sh',
   'c=envz; ${c%z} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
   'c=env; ${c%%*z} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  // ship fix round 4, R4-1 ("Exact served shapes only"): any other default or suffix form is unreadable again
+  '${q%x}env BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  'c=envz; x=z; ${c%$x} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  'c=envz; ${c%"z"} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  'c=envz; ${c%(z)} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  'd=env; ${c:-$d} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  '${c:-}$(echo env) BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  '${c-}/usr/bin/env BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  '${q%x}env BASH_ENV=/tmp/x ~/.oss/hooks/oss-log.sh init',
+  'HOME=/x ${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh',
+  'BASH_ENV=/tmp/x "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}/hooks/oss-log.sh"',
 ];
 
 /** Already refused by the path-mention rule (`set` names a hook path): kept as guards. */
@@ -127,6 +138,7 @@ const ALLOWED = [
   '"${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}/hooks/check-updates.sh"',
   '${CLAUDE_PLUGIN_ROOT%/}/hooks/check-updates.sh',
   '"${CLAUDE_PLUGIN_ROOT%/}/hooks/check-updates.sh"',
+  '${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}/hooks/check-updates.sh',
 ];
 
 /** Lines another rule may refuse; the hook-call rule must not. */
