@@ -535,9 +535,47 @@ const ALLOW_PROTOCOL_REFUSAL: Refusal = {
   reason: 'Refused: `GIT_ALLOW_PROTOCOL` lets git use protocols such as `ext::`, which runs a command. Ask the user to run it with `!`.',
 };
 
-/** Ship fix round 2, R2-2 ("Blunt: refuse any mention"): a command whose text names `GIT_ALLOW_PROTOCOL`, as git reads it (case-sensitive). */
-export function checkAllowProtocolMention(command: string): Refusal | null {
-  return command.includes('GIT_ALLOW_PROTOCOL') ? ALLOW_PROTOCOL_REFUSAL : null;
+/**
+ * Ship fix round 2, R2-2 ("Blunt: refuse any mention"): a command whose text names `GIT_ALLOW_PROTOCOL`, as git
+ * reads it (case-sensitive). Round 4, R4-3 ("Both layers"): the text is read with quotes and backslashes removed
+ * (`GIT_ALLOW_PROT''OCOL`, inside `env -S`, `+=`); on a line that runs git, a setter whose name the gate can't read
+ * is refused, and so is an `ext::` or `fd::` transport anywhere on the line.
+ */
+export function checkAllowProtocolMention(command: string, parts: readonly CommandPart[] = []): Refusal | null {
+  const plain = command.replace(/['"\\]/g, '');
+  if (plain.includes('GIT_ALLOW_PROTOCOL')) return ALLOW_PROTOCOL_REFUSAL;
+  if (!parts.some((p) => p.git !== null || p.words.includes('git'))) return null;
+  if (/(?:^|[^A-Za-z0-9+-])(?:ext|fd)::/i.test(plain)) return TRANSPORT_REFUSAL;
+  return parts.some(setsUnreadableName) ? ALLOW_PROTOCOL_REFUSAL : null;
+}
+
+const TRANSPORT_REFUSAL: Refusal = {
+  rule: 'protected-branch',
+  reason: 'Refused: an `ext::` or `fd::` git transport runs a command or talks over an open file. Ask the user to run it with `!`.',
+};
+
+/** Builtins whose operands (`read`, `mapfile`, `readarray`) or `-v` word (`printf`) name a variable they set (R4-3). */
+const OPERAND_NAME_SETTERS = new Set(['read', 'mapfile', 'readarray']);
+
+/**
+ * True when a part sets a variable whose name the gate can't read (R4-3): `env ${x}L=…`, `export ${x^^}=…`,
+ * `export "$(…)OL=…"`, `read ${x}L`, `printf -v ${x}L`, `mapfile ${x}L`, `getopts o ${x}`, or a nameref
+ * (`declare -n`), whose target is set through another name.
+ */
+function setsUnreadableName(part: CommandPart): boolean {
+  const program = part.program;
+  if (program === null) return false;
+  const unknownName = (w: string): boolean => w.slice(0, w.includes('=') ? w.indexOf('=') : undefined).includes(UNKNOWN);
+  if (part.wrappers.includes('env') && program.includes(UNKNOWN) && program.includes('=')) return true;
+  const args = part.words.slice(1);
+  if (VARIABLE_SETTERS.has(program)) {
+    if (program !== 'export' && program !== 'readonly' && args.some((a) => /^-[A-Za-z]*n/.test(a))) return true;
+    return args.some((a) => !a.startsWith('-') && unknownName(a));
+  }
+  if (OPERAND_NAME_SETTERS.has(program)) return args.some((a) => !a.startsWith('-') && a.includes(UNKNOWN));
+  if (program === 'printf') return args.some((a, i) => (a === '-v' && (args[i + 1] ?? '').includes(UNKNOWN)) || (/^-v./.test(a) && a.includes(UNKNOWN)));
+  if (program === 'getopts') return (args[1] ?? '').includes(UNKNOWN);
+  return false;
 }
 
 /** The refusal for a ref-history key, set any way: fixed text, so no key or value is repeated. */

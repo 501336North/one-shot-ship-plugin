@@ -98,7 +98,62 @@ const SPLIT_ALLOW_PROTOCOL = [
   "x=1 GIT_ALLOW_PROTO''COL=ext git fetch",
 ];
 
+/** Ship fix round 4, R4-3 ("Both layers"), (1): the name check, quotes and escapes removed, and unreadable setter names. */
+const NAME_LAYER = [
+  'x=GIT_ALLOW_PROTOCO; export ${x}L=ext; git fetch origin',
+  'x=GIT_ALLOW_PROTOCO; env ${x}L=ext git fetch origin',
+  'x=GIT_ALLOW_PROTOCO; env ${x}L=ext git submodule update --init',
+  'env "$(echo GIT_ALLOW_PROTOC)OL=ext" git fetch origin',
+  'export "$(printf GIT_ALLOW_PROTOC)OL=ext"; git fetch origin',
+  'x=git_allow_protocol; export ${x:u}=ext; git fetch origin',
+  'x=git_allow_protocol; export ${x^^}=ext; git submodule update --init',
+  'x=PROT; export GIT_ALLOW_${x}OCOL=ext; git fetch origin',
+  "eval GIT_ALLOW_PROT''OCOL=ext git fetch origin",
+  "eval 'export GIT_ALLOW_PROT''OCOL=ext'; git fetch origin",
+  'sh -c "GIT_ALLOW_PROT\'\'OCOL=ext git fetch origin"',
+  "bash -c 'GIT_ALLOW_PROT\"OCOL\"=ext git fetch origin'",
+  'env -S "GIT_ALLOW_PROT\'\'OCOL=ext git fetch origin"',
+  'env --split-string="GIT_ALLOW_PROT\'\'OCOL=ext git fetch origin"',
+  "IFS== read -r n v <<< GIT_ALLOW_PROT''OCOL=ext; export \"$n=$v\"; git fetch origin",
+  "declare -n r=GIT_ALLOW_PROT''OCOL; r=ext; export r; git fetch origin",
+  'x=y; declare -n r=$x; r=ext; export r; git fetch origin',
+  "export GIT_ALLOW_PROT''OCOL+=ext; git submodule update --init",
+  "readonly -x GIT_ALLOW_PROT''OCOL=ext; git fetch origin",
+  "local -x GIT_ALLOW_PROT''OCOL=ext; git fetch origin",
+  "typeset -gx GIT_ALLOW_PROT''OCOL=ext; git fetch origin",
+  "nohup env GIT_ALLOW_PROT''OCOL=ext git fetch origin",
+  "command env GIT_ALLOW_PROT''OCOL=ext git fetch origin",
+  "builtin export GIT_ALLOW_PROT''OCOL=ext; git fetch origin",
+  "xargs -0 printf < /dev/null; set -a; GIT_ALLOW_PROT''OCOL=ext; git fetch origin",
+  "GIT_ALLOW_PROT''OCOL=ext; export GIT_ALLOW_PROT''OCOL; git fetch origin",
+  'x=GIT_ALLOW_PROTOCO; set -a; read ${x}L <<< ext; git fetch origin',
+  'x=GIT_ALLOW_PROTOCO; set -a; printf -v ${x}L ext; git fetch origin',
+  'x=GIT_ALLOW_PROTOCO; set -a; mapfile ${x}L < /dev/null; git fetch origin',
+];
+
+/** R4-3 (2): an `ext::` or `fd::` transport anywhere on a git line, quotes and escapes removed. */
+const TRANSPORT_LAYER = [
+  "git clone 'ext::sh -c touch% /tmp/pwn' x",
+  "git remote add e 'ext::sh -c touch% /tmp/pwn'; git fetch e",
+  "x=GIT_ALLOW_PROTOCO; env ${x}L=ext git clone 'ext::sh -c touch% /tmp/pwn' x",
+  'env -S "GIT_ALLOW_PROT\'\'OCOL=ext git clone \'ext::sh -c touch% /tmp/pwn\' x"',
+  "git fetch 'ext::sh -c touch% /tmp/pwn'",
+  "git ls-remote 'ext::sh -c id'",
+  "git remote set-url origin 'ext::sh -c id'",
+  "git -c 'url.ext::sh -c id #.insteadOf=https://github.com/' fetch origin",
+  "git submodule add 'ext::sh -c id' sub",
+  "git clone e''xt::sh x",
+  'git clone e\\xt::sh x',
+  'git clone fd::3 x',
+  "git clone 'EXT::sh -c id' x",
+];
+
 const ALLOWED = [
+  // R4-3: everyday git lines with variables stay allowed
+  'x=1; export EXTRA=$x; git fetch origin',
+  'read -r line < /dev/null; git status',
+  'git commit -m "ext: handle the case"',
+  'git clone https://github.com/a/b.git x',
   'echo protocol',
   'git fetch origin',
   'git ls-remote origin',
@@ -124,6 +179,18 @@ describe.each(PLATFORMS)('git protocols that run commands (ship round 1, S4) on 
     });
 
     it.each(SPLIT_ALLOW_PROTOCOL)('refuses GIT_ALLOW_PROTOCOL set under a split or built name: %s', async (command) => {
+      const result = await call(command, agent, platform);
+      expect(result.exitCode, command).toBe(2);
+      expect(result.stderr, command).toMatch(/^Refused/);
+    });
+
+    it.each(NAME_LAYER)('refuses GIT_ALLOW_PROTOCOL set under any spelling, or a setter name it cannot read, on a git line: %s', async (command) => {
+      const result = await call(command, agent, platform);
+      expect(result.exitCode, command).toBe(2);
+      expect(result.stderr, command).toMatch(/^Refused/);
+    });
+
+    it.each(TRANSPORT_LAYER)('refuses an ext:: or fd:: transport on a git line: %s', async (command) => {
       const result = await call(command, agent, platform);
       expect(result.exitCode, command).toBe(2);
       expect(result.stderr, command).toMatch(/^Refused/);

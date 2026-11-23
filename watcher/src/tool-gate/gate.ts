@@ -607,7 +607,7 @@ async function checkBash(ctx: Context, command: string): Promise<Refused | null>
   for (const [index, part] of facts.parts.entries()) {
     const refusal =
       checkUnknownGitOption(part) ??
-      checkAllowProtocolMention(command) ??
+      checkAllowProtocolMention(command, facts.parts) ??
       checkPushSetup(part, facts.parts, index) ??
       checkLocalRemote(part, facts.parts, index) ??
       checkRepoTrust(part, trustOf) ??
