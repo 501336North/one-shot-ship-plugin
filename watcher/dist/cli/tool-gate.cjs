@@ -8872,6 +8872,18 @@ var NAME_SETTERS2 = /* @__PURE__ */ new Set(["declare", "typeset", "export", "lo
 var NAMEREF_SETTERS = /* @__PURE__ */ new Set(["declare", "typeset", "local", "private"]);
 var OPERAND_SETTERS = /* @__PURE__ */ new Set([...NAME_SETTERS2, "let", "env"]);
 var PREFIXES = /* @__PURE__ */ new Set(["builtin", "command", "noglob", "nocorrect", "-"]);
+function isEnvProgram(word) {
+  if (word.includes(UNKNOWN)) return false;
+  const base = word.slice(word.lastIndexOf("/") + 1);
+  if (base === "env") return true;
+  if (!/[*?[]/.test(base)) return false;
+  const pattern = base.replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".").replace(/\[!/g, "[^");
+  try {
+    return new RegExp(`^${pattern}$`).test("env");
+  } catch {
+    return false;
+  }
+}
 var MAX_DEPTH = 5;
 function setsRefusedVariable(text, depth, call) {
   if (depth > MAX_DEPTH || expansionSet(text, (name) => !HOOK_CALL_VARIABLES.has(name)) !== null || arithmeticReadsVariable(text)) return true;
@@ -8912,7 +8924,8 @@ function setsUnlisted(words) {
   const assigned = [];
   while (p < words.length && ASSIGNMENT3.test(words[p])) assigned.push(words[p++]);
   while (PREFIXES.has(words[p])) p++;
-  const [name, ...args] = words.slice(p);
+  const [written, ...args] = words.slice(p);
+  const name = written !== void 0 && isEnvProgram(written) ? "env" : written;
   if (name === void 0 || name === "for" || name === "select") {
     const plain = name === void 0 ? assigned : [...assigned, args[0] ?? ""];
     return plain.some((w) => (MAYBE_EXPORTED.test(variableOf(w)) || COMMAND_MAPS.test(variableOf(w))) && unlisted(w));
@@ -9007,7 +9020,7 @@ function piecesSet(word) {
   const assigned = ASSIGNMENT3.exec(word);
   const pieces = (assigned === null ? word : word.slice(assigned[0].length)).split(/\s+/).filter(Boolean);
   const setsAfter = (setter, a) => ASSIGNMENT3.test(a) && unlisted(a) || (setter === "env" ? a.startsWith("-") : SETTING_WORD.test(a));
-  return pieces.some((p, i) => OPERAND_SETTERS.has(p) && pieces.slice(i + 1).some((a) => setsAfter(p, a)));
+  return pieces.some((p, i) => (OPERAND_SETTERS.has(p) || isEnvProgram(p)) && pieces.slice(i + 1).some((a) => setsAfter(isEnvProgram(p) ? "env" : p, a)));
 }
 function tokensSet(tokens, depth, call, text) {
   let previous = null;
@@ -9114,7 +9127,7 @@ function couldBeOssHook(word, runs) {
 var SPLIT_REF = /^"?(?:\$=?([A-Za-z_][A-Za-z0-9_]*|[@*])(?:\[[^\]]*\])?|\$\{=?([A-Za-z_][A-Za-z0-9_]*|[@*])(?:\[[^\]]*\])?\})"?$/;
 var OTHER_OPERATOR = /^"?\$\{(?![A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\})/;
 var DEFAULT_REF = /^"?\$\{([A-Za-z_][A-Za-z0-9_]*):?[-=]([\s\S]*)\}"?$/;
-var SERVED_ROOT = /^"?\$\{(CLAUDE_PLUGIN_ROOT)(?::-((?:\$HOME|\$\{HOME\})?[A-Za-z0-9._/@:,=+-]*)|(%\/))\}(\/hooks\/[A-Za-z0-9._-]+)"?$/;
+var SERVED_ROOT = /^"?\$\{(CLAUDE_PLUGIN_ROOT)(?::-((?:\$HOME(?![A-Za-z0-9_])|\$\{HOME\})?[A-Za-z0-9._/@:,=+-]*)|(%\/))\}(\/hooks\/[A-Za-z0-9._-]+)"?$/;
 var LEADING_REF = /^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})(?![A-Za-z0-9_[])/;
 var UNREAD_SETTERS = /* @__PURE__ */ new Set(["for", "select", "printf", "print", "getopts", "let"]);
 var ARRAY_START = /^([A-Za-z_][A-Za-z0-9_]*)(\+?)=$/;
@@ -9177,7 +9190,7 @@ function valueVerdict(value, cwd, command, call) {
   const hook = pieces.some((p) => wordNamesHook(p, cwd, true, call.home) || p.includes(UNKNOWN) && HOOK_HINT.test(p));
   if (unknown && piecesSet(value)) return "hook";
   if (!hook) return "ok";
-  const sets = pieces.includes("env") || !unknown && setsRefusedVariable(value, 0, call) || setsRefusedVariable(command, 0, call);
+  const sets = pieces.some(isEnvProgram) || !unknown && setsRefusedVariable(value, 0, call) || setsRefusedVariable(command, 0, call);
   return sets ? "hook" : "ok";
 }
 function programVerdict(token, after, text, values, cwd, command, call) {
@@ -9293,7 +9306,7 @@ function checkOssHookEnv(part, command, home, sources) {
     }
   }
   if (!partNamesHook(part, home) && !PLUGIN_HOOK.test(command)) return null;
-  const clears = part.wrappers.some((w, i) => w === "env" || w === "exec" && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o)));
+  const clears = part.program !== null && isEnvProgram(part.program) || part.wrappers.some((w, i) => w === "env" || w === "exec" && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o)));
   if (!clears && !setsRefusedVariable(command, 0, { home, sources: sourcesFor(command, sources) })) return null;
   return {
     rule: "protected-path",
@@ -9604,11 +9617,19 @@ function isLocalUrl(url) {
   if (unknown !== -1 && (colon === -1 || unknown < colon)) return true;
   return colon === -1 || url.slice(0, colon).includes("/");
 }
+function percentDecoded(text) {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text.replace(/%[0-9A-Fa-f]{2}/g, (e) => String.fromCharCode(parseInt(e.slice(1), 16)));
+  }
+}
 function urlHost(url) {
   const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.exec(url);
   const rest = scheme === null ? url : url.slice(scheme[0].length);
   const end = scheme !== null && /^(?:ssh|git\+ssh|ssh\+git):\/\/$/i.test(scheme[0]) ? /\/|$/ : /[/?#]|$/;
-  const authority = scheme === null ? /^(?:[^@/:[\]]*@)?\[[^\]]*\]|^[^:/]*/.exec(rest)?.[0] ?? "" : rest.slice(0, rest.search(end));
+  const written = scheme === null ? /^(?:[^@/:[\]]*@)?\[[^\]]*\]|^[^:/]*/.exec(rest)?.[0] ?? "" : rest.slice(0, rest.search(end));
+  const authority = percentDecoded(written);
   if (authority.startsWith("[") && authority.includes("]")) return authority.slice(1, authority.indexOf("]")).replace(/^.*@/, "");
   const host = authority.replace(/^.*@/, "");
   return host.startsWith("[") ? host.slice(1, host.includes("]") ? host.indexOf("]") : void 0) : host.replace(/:.*$/, "");
@@ -10281,13 +10302,35 @@ function runsGit(parts) {
   return parts.some((p) => p.git !== null || p.words.includes("git"));
 }
 function checkTransportMention(command, parts) {
-  return runsGit(parts) && /(?:^|[^A-Za-z0-9+-])(?:ext|fd)::/i.test(command.replace(/['"\\]/g, "")) ? TRANSPORT_REFUSAL : null;
+  return runsGit(parts) && /(?:^|[^A-Za-z0-9+:-])(?:ext|fd)::/i.test(command.replace(/['"\\]/g, "")) ? TRANSPORT_REFUSAL : null;
 }
 var TRANSPORT_REFUSAL = {
   rule: "protected-branch",
   reason: "Refused: an `ext::` or `fd::` git transport runs a command or talks over an open file. Ask the user to run it with `!`."
 };
-var OPERAND_NAME_SETTERS = /* @__PURE__ */ new Set(["read", "mapfile", "readarray"]);
+var VALUE_OPTIONS2 = { read: "ptudnNi", mapfile: "udnOsCc", readarray: "udnOsCc" };
+function namesSetBy(program, args) {
+  if (program === "getopts") return args[1] === void 0 ? [] : [args[1]];
+  const names = [];
+  const values = VALUE_OPTIONS2[program] ?? "";
+  let options = true;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (options && a === "--") options = false;
+    else if (options && /^-[A-Za-z]/.test(a)) {
+      for (let k = 1; k < a.length; k++) {
+        const letter = a[k];
+        const attached = a.slice(k + 1);
+        const name = program === "read" && letter === "a" || program === "printf" && letter === "v";
+        if (!name && !values.includes(letter)) continue;
+        const operand = attached !== "" ? attached : args[++i] ?? "";
+        if (name) names.push(operand);
+        break;
+      }
+    } else if (program !== "printf") names.push(a);
+  }
+  return names;
+}
 function setsUnreadableName(part) {
   const program = part.program;
   if (program === null) return false;
@@ -10298,10 +10341,8 @@ function setsUnreadableName(part) {
     if (program !== "export" && program !== "readonly" && args.some((a) => /^-[A-Za-z]*n/.test(a))) return true;
     return args.some((a) => !a.startsWith("-") && unknownName(a));
   }
-  if (OPERAND_NAME_SETTERS.has(program)) return args.some((a) => !a.startsWith("-") && a.includes(UNKNOWN));
-  if (program === "printf") return args.some((a, i) => a === "-v" && (args[i + 1] ?? "").includes(UNKNOWN) || /^-v./.test(a) && a.includes(UNKNOWN));
-  if (program === "getopts") return (args[1] ?? "").includes(UNKNOWN);
-  return false;
+  if (!(program in VALUE_OPTIONS2) && program !== "printf" && program !== "getopts") return false;
+  return namesSetBy(program, args).some((name) => name.includes(UNKNOWN) || name.replace(/['"\\]/g, "") === "GIT_ALLOW_PROTOCOL");
 }
 var REF_HISTORY_REFUSAL = {
   rule: "protected-branch",
