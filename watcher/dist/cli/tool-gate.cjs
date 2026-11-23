@@ -9300,7 +9300,7 @@ function commandScan(command, cwd, home, sources) {
   return verdict;
 }
 function archSets(part) {
-  const setsByE = (words) => words.some((w, i) => w === "-e" && ASSIGNMENT3.test(words[i + 1] ?? ""));
+  const setsByE = (words) => words.some((w, i) => w === "-e" && ASSIGNMENT3.test(words[i + 1] ?? "") || w.startsWith("-e") && ASSIGNMENT3.test(w.slice(2)) || /^-d[A-Za-z_]/.test(w));
   if (part.program !== null && isArchProgram(part.program) && setsByE(part.words)) return true;
   return part.wrappers.some((w, i) => w === "arch" && setsByE(part.wrapperOptions[i] ?? []));
 }
@@ -9314,7 +9314,8 @@ function checkOssHookEnv(part, command, home, sources) {
     }
   }
   if (!partNamesHook(part, home) && !PLUGIN_HOOK.test(command)) return null;
-  const clears = part.program !== null && isEnvProgram(part.program) || archSets(part) || part.wrappers.some((w, i) => w === "env" || w === "exec" && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o)));
+  const archRuns = partNamesHook(part, home) && (part.wrappers.includes("arch") || part.program !== null && isArchProgram(part.program));
+  const clears = part.program !== null && isEnvProgram(part.program) || archRuns || archSets(part) || part.wrappers.some((w, i) => w === "env" || w === "exec" && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o)));
   if (!clears && !setsRefusedVariable(command, 0, { home, sources: sourcesFor(command, sources) })) return null;
   return {
     rule: "protected-path",
