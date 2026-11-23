@@ -430,16 +430,23 @@ function couldBeOssHook(word: string, runs: boolean): boolean {
   return hookFolder || parts[parts.length - 1].includes(UNKNOWN);
 }
 
-/** A program word the shell splits: `$c`, `${c}`, zsh's `$=c` / `${=c}`, an array (`$a[@]`, `${a[*]}`, `"${a[@]}"`). */
-const SPLIT_REF = /^(?:\$=?([A-Za-z_][A-Za-z0-9_]*)(?:\[[@*]\])?|\$\{=?([A-Za-z_][A-Za-z0-9_]*)(?:\[[@*]\])?\}|"\$\{([A-Za-z_][A-Za-z0-9_]*)\[@\]\}")$/;
+/**
+ * A program word that is one variable's value: `$c`, `${c}`, `"$c"`, zsh's `$=c` / `${=c}`, an array or an element
+ * (`$a[@]`, `${a[*]}`, `"${a[@]}"`, `${a[0]}`), the positional parameters (`"$@"`, `$*`) (ship round 1, S2).
+ */
+const SPLIT_REF = /^"?(?:\$=?([A-Za-z_][A-Za-z0-9_]*|[@*])(?:\[[^\]]*\])?|\$\{=?([A-Za-z_][A-Za-z0-9_]*|[@*])(?:\[[^\]]*\])?\})"?$/;
+/** A program word that is a variable with a default (`${c:-…}`, `${c-…}`, `${c:=…}`, `${c=…}`): the default counts as the value (S2). */
+const DEFAULT_REF = /^"?\$\{([A-Za-z_][A-Za-z0-9_]*):?[-=]([\s\S]*)\}"?$/;
 /** A program word that starts with a variable, split before the rest is added (`$d/x`, `${d}x`). */
 const LEADING_REF = /^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})(?![A-Za-z0-9_[])/;
 /** Builtins and keywords whose bare operands name a variable they set from a value the gate doesn't read here. */
-const UNREAD_SETTERS = new Set(['for', 'select', 'mapfile', 'readarray', 'printf', 'print', 'getopts', 'let']);
+const UNREAD_SETTERS = new Set(['for', 'select', 'printf', 'print', 'getopts', 'let']);
 /** A word that starts an array assignment: `a=` right before `(`. */
 const ARRAY_START = /^([A-Za-z_][A-Za-z0-9_]*)(\+?)=$/;
 /** A value read from a file (`$(cat f)`, `$(<f)`, `read v <f`): the gate can't see it (owner re-pick Q1, "Narrow it"). */
 const FROM_FILE = Symbol('from a file');
+/** A value set in a way the gate doesn't read (an array element, a heredoc `read`, `mapfile`): refused on a line naming a hook path (S2). */
+const UNREAD = Symbol('not read');
 /** A part of a filled-in value that hints at an OSS hook path. */
 const HOOK_HINT = /\.oss|hooks/i;
 
@@ -447,7 +454,7 @@ const HOOK_HINT = /\.oss|hooks/i;
  * The values the command sets its variables to, as far as they can be filled in (UNKNOWN for a part only known
  * when it runs); FROM_FILE for one read from a file; null for one set in a way not read here (a loop variable).
  */
-type Values = Map<string, string | null | typeof FROM_FILE>;
+type Values = Map<string, string | null | typeof FROM_FILE | typeof UNREAD>;
 
 /** True when a command substitution's script reads a file: `$(<f)`, or `cat` with a file operand (`$(cat f)`). */
 function readsFile(script: Token[]): boolean {
@@ -480,13 +487,13 @@ function filled(token: Token, text: string | null, values: Values, home: string)
   }, '');
 }
 
-/** Records an assignment word's value: FROM_FILE when read from a file, null when indexed or appended, else filled in. */
+/** Records an assignment word's value: FROM_FILE when read from a file, UNREAD when indexed or appended, else filled in. */
 function record(values: Values, token: Token, text: string | null, home: string): void {
   if (token.kind !== 'word') return;
   const assigned = ASSIGNMENT.exec(token.value);
   if (assigned === null) return;
   const value = filled(token, text, values, home);
-  values.set(assigned[1], wordReadsFile(token) ? FROM_FILE : /[[+]/.test(assigned[0]) ? null : value.slice(value.indexOf('=') + 1));
+  values.set(assigned[1], wordReadsFile(token) ? FROM_FILE : /[[+]/.test(assigned[0]) ? UNREAD : value.slice(value.indexOf('=') + 1));
 }
 
 /** The index of the program word after any wrappers (`nohup`, `timeout 5`, `env X=1` …), as the reader skips them. */
@@ -527,12 +534,14 @@ function valueVerdict(value: string, cwd: string, command: string, call: Call): 
 }
 
 /**
- * What a program word that may be split runs (gate-gaps-r3 Task 2): 'hook' when its value, split at
- * whitespace, runs an OSS hook script with a variable set or cleared (`valueVerdict`); 'unreadable' when its
- * value is read from a file or through indirection (`$(cat f)`, `$(<f)`, `read c <f; $c`, `${!x}`: owner
- * re-pick Q1 "Narrow it, card the rest"); else 'ok': other command output, environment and loop variables.
+ * What a program word that may be split runs (gate-gaps-r3 Task 2): 'hook' when its value (or default), with the
+ * part's words after it, split at whitespace, runs an OSS hook script with a variable set or cleared (`valueVerdict`,
+ * ship round 1 S2); 'unreadable' when its value is read from a file or through indirection (`$(cat f)`, `$(<f)`,
+ * `read c <f; $c`, `${!x}`: owner re-pick Q1 "Narrow it, card the rest"), or set where the gate doesn't read it
+ * (an array element, a heredoc `read`, `mapfile`) on a line naming a hook path (S2); else 'ok': other command
+ * output, environment and loop variables.
  */
-function programVerdict(token: Token, text: string | null, values: Values, cwd: string, command: string, call: Call): 'hook' | 'unreadable' | 'ok' {
+function programVerdict(token: Token, after: Token[], text: string | null, values: Values, cwd: string, command: string, call: Call): 'hook' | 'unreadable' | 'ok' {
   if (token.kind !== 'word' || (!token.value.includes(UNKNOWN) && !token.value.startsWith('$='))) return 'ok';
   if (wordReadsFile(token)) return 'unreadable';
   const at = sourceOf(token);
@@ -541,14 +550,26 @@ function programVerdict(token: Token, text: string | null, values: Values, cwd: 
   if (raw.includes('${!')) return 'unreadable';
   const split = SPLIT_REF.exec(raw);
   const leading = split === null ? LEADING_REF.exec(raw) : null;
-  const name = split?.[1] ?? split?.[2] ?? split?.[3] ?? leading?.[1] ?? leading?.[2];
+  const withDefault = split === null && leading === null ? DEFAULT_REF.exec(raw) : null;
+  const name = split?.[1] ?? split?.[2] ?? leading?.[1] ?? leading?.[2] ?? withDefault?.[1];
   if (name === undefined) return 'ok';
   const value = values.get(name);
-  if (value === FROM_FILE) return 'unreadable';
-  if (typeof value !== 'string') return 'ok';
+  // a quoted program word is one word, not split: read from a file, it is judged like an unread value, with words after it
+  const quoted = raw.startsWith('"');
+  if (value === FROM_FILE && !quoted) return 'unreadable';
+  if (value === UNREAD || (value === FROM_FILE && after.length > 0)) return lineNamesHook(command, cwd, call.home) ? 'unreadable' : 'ok';
+  if (value === FROM_FILE) return 'ok';
+  // S2: the value, then the rest of the part's words, each filled in; a default counts as a value
+  const words = ' ' + after.map((w) => filled(w, text, values, call.home)).join(' ');
+  const readings = [...(typeof value === 'string' ? [value] : []), ...(withDefault !== null ? [withDefault[2]] : [])];
   // `$d/x`: the value, then the rest of the word as read
   const rest = leading !== null && token.value.startsWith(UNKNOWN) ? token.value.slice(UNKNOWN.length) : '';
-  return valueVerdict(value + rest, cwd, command, call);
+  return readings.some((r) => valueVerdict(r + rest + words, cwd, command, call) === 'hook') ? 'hook' : 'ok';
+}
+
+/** True when a piece of the command, quotes dropped, names a hook path (S2: the line an unread value runs on). */
+function lineNamesHook(command: string, cwd: string, home: string): boolean {
+  return PLUGIN_HOOK.test(command) || command.replace(/['"]/g, '').split(/[\s;&|()<>]+/).some((p) => p !== '' && wordNamesHook(p, cwd, true, home));
 }
 
 /** The worst verdict of the program words in tokens (a script inside a word included), recording the values set on the way. */
@@ -574,12 +595,21 @@ function scanPrograms(tokens: Token[], text: string | null, values: Values, cwd:
       if (name === 'read') {
         const here = redirects.find((r) => r.kind === 'redirect' && r.op === '<<<');
         const file = redirects.some((r) => r.kind === 'redirect' && r.op === '<');
-        const value = file ? FROM_FILE : operands.length === 1 && here?.kind === 'redirect' && !here.target.includes(UNKNOWN) ? here.target : null;
+        const heredoc = redirects.some((r) => r.kind === 'redirect' && (r.op === '<<' || r.op === '<<-'));
+        const value = file ? FROM_FILE : heredoc ? UNREAD : operands.length === 1 && here?.kind === 'redirect' && !here.target.includes(UNKNOWN) ? here.target : null;
         operands.forEach((w) => w.kind === 'word' && values.set(w.value, value));
       } else if (NAME_SETTERS.has(name)) {
         operands.forEach((w) => (w.kind === 'word' && ASSIGNMENT.test(w.value) ? record(values, w, text, call.home) : w.kind === 'word' && VARIABLE_NAME.test(w.value) && values.set(w.value, null)));
-      } else if (UNREAD_SETTERS.has(name)) operands.forEach((w) => w.kind === 'word' && VARIABLE_NAME.test(w.value) && values.set(w.value, null));
-      worse(programVerdict(words[programIndex(plain, i)], text, values, cwd, command, call));
+      } else if (name === 'mapfile' || name === 'readarray') operands.forEach((w) => w.kind === 'word' && VARIABLE_NAME.test(w.value) && values.set(w.value, UNREAD));
+      else if (UNREAD_SETTERS.has(name)) operands.forEach((w) => w.kind === 'word' && VARIABLE_NAME.test(w.value) && values.set(w.value, null));
+      else if (name === 'set' && plain.includes('--', i)) {
+        // S2: `set -- …` sets the positional parameters `"$@"` / `$*` run
+        const positional = words.slice(plain.indexOf('--', i) + 1).map((w) => filled(w, text, values, call.home)).join(' ');
+        values.set('@', positional);
+        values.set('*', positional);
+      }
+      const program = programIndex(plain, i);
+      worse(programVerdict(words[program], words.slice(program + 1), text, values, cwd, command, call));
     }
     words = [];
     redirects = [];
