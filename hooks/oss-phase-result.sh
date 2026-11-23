@@ -149,6 +149,7 @@ oss_plugin_node() {
 _oss_phase_result_usage() {
     echo "usage: oss-phase-result.sh assemble <ideate|plan|build|ship>" >&2
     echo "       oss-phase-result.sh check <ideate|plan|build|ship> [--repo <path>] [--all]" >&2
+    echo "       oss-phase-result.sh check ship --record-ready" >&2
     return 2
 }
 
@@ -163,6 +164,8 @@ oss_phase_result_main() {
     local -a rest=()
     while [[ $# -gt 0 ]]; do
         if [[ "$verb" == check && "$1" == --all ]]; then rest+=("--all"); shift
+        # D78: check ship --record-ready (the wrapper's Step 8 record call; the CLI takes it alone)
+        elif [[ "$verb" == check && "$phase" == ship && "$1" == --record-ready ]]; then rest+=("--record-ready"); shift
         elif [[ "$verb" == check && "$1" == --repo && $# -ge 2 ]]; then rest+=("--repo" "$2"); shift 2
         else _oss_phase_result_usage; return 2; fi
     done

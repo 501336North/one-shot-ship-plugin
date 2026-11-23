@@ -106,6 +106,14 @@ function runGit(
   return { status: r.status, out: raw ? r.stdout : r.stdout.trim() };
 }
 
+/**
+ * D79 (gate round 13): a git call that ran past its time limit is never read as "no" (an older, wider base): it is
+ * rethrown, so assembleShip refuses diff_unavailable with the timeout hint.
+ */
+function rethrowTimeout(e: unknown): void {
+  if (e instanceof GitError && e.timedOut) throw e;
+}
+
 /** The diff_unavailable hint when the base is a valid branch name with no local branch (pen info 2: fixed text). */
 export const NO_LOCAL_BASE = 'create the local branch from its remote (git branch <base> <remote>/<base>)';
 
@@ -147,7 +155,8 @@ export function branchTip(repo: string, name: string): string | null {
 function containedIn(repo: string, tip: string, sha: string): boolean {
   try {
     return runGit(repo, ['rev-list', '-n', '1', '--end-of-options', tip, `^${sha}`]).out === '';
-  } catch {
+  } catch (e) {
+    rethrowTimeout(e);
     return false;
   }
 }
@@ -245,7 +254,8 @@ function mostAdvanced(repo: string, shas: string[]): string | null {
   try {
     const top = runGit(repo, ['merge-base', '--independent', '--end-of-options', ...shas]).out.split('\n');
     return top.length === 1 && shas.includes(top[0] as string) ? (top[0] as string) : null;
-  } catch {
+  } catch (e) {
+    rethrowTimeout(e);
     return null;
   }
 }
@@ -277,7 +287,8 @@ function topologicalBest(repo: string, candidates: string[], head: string): stri
       if (best === null || (mb !== best.mb && runGit(repo, ['merge-base', '--is-ancestor', '--end-of-options', best.mb, mb], [0, 1]).status === 0)) {
         best = { sha: c, mb };
       }
-    } catch {
+    } catch (e) {
+      rethrowTimeout(e);
       // a candidate git cannot compare is skipped
     }
   }
@@ -558,6 +569,14 @@ class FailComparer {
       if (heads.length === 0) return;
       const found = runGit(this.repo, ['cat-file', '--batch-check=%(objecttype)'], [0], true, PATH_LIST_BUFFER, `${heads.join('\n')}\n`)
         .out.split('\n');
+      // D79 (gate round 13): a head git reports missing goes straight to the D55 path (no review base, gone), with no
+      // per-row merge-base or cat-file -e.
+      heads.forEach((h, i) => {
+        if (found[i]?.endsWith(' missing') === true) {
+          this.reviewBases.set(h, null);
+          this.missing.set(h, true);
+        }
+      });
       this.batchReviewBases(heads.filter((_, i) => found[i] === 'commit'));
     } catch {
       // each row takes merge-base
@@ -976,7 +995,8 @@ type OverridesOutcome =
  * gate's D67 rows captured before its decision was answered (`clearsBefore`, the latest such time per gate) only when
  * the record is a ship pick (`command: "ship"`) whose `choice` is exactly `Override <gate>` with a readable `answeredAt`.
  * D76: an entry naming a gate whose decision does not count is refused (override_unrecorded, detail `gate`); assemble
- * and check read the same records, so they agree. An entry without a gate is listed and clears nothing.
+ * and check read the same records, so they agree. An entry without a gate is listed and clears nothing; D79 (pen L1): its
+ * record must still be a ship pick whose choice starts `Override `, else override_unrecorded (detail `decisionId`).
  */
 function readOverrides(ctx: AssembleContext, featureDir: string, decisionRows: LedgerRow[], gates: ReadonlySet<string>): OverridesOutcome {
   const recorded = new Map<string, Record<string, unknown>>();
@@ -1005,6 +1025,9 @@ function readOverrides(ctx: AssembleContext, featureDir: string, decisionRows: L
     if (typeof gate === 'string') {
       if (rec.command !== 'ship' || rec.choice !== `Override ${gate}` || Number.isNaN(at)) return { ok: false, error: 'override_unrecorded', detail: 'gate' };
       clearsBefore.set(gate, Math.max(at, clearsBefore.get(gate) ?? -Infinity));
+    } else if (rec.command !== 'ship' || typeof rec.choice !== 'string' || !rec.choice.startsWith('Override ')) {
+      // D79 (pen L1, gate round 13): a gate-less entry counts only for a ship pick answered `Override <gate>`.
+      return { ok: false, error: 'override_unrecorded', detail: 'decisionId' };
     }
     overrides.push({
       finding: redactModelText(typeof item?.finding === 'string' ? item.finding : ''),

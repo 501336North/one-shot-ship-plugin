@@ -62,9 +62,23 @@ gdir() { (cd "$R" && git rev-parse --absolute-git-dir); }
 G() { echo "$H/.oss/run/$(gdir | git hash-object --stdin | cut -c1-16)"; }   # the served key (D6)
 rev() { (cd "$R" && git rev-parse "$1"); }
 clones() { ls "$(G)" 2>/dev/null | grep '^t\.' || true; }
+# ready_row: D78 — the ledger rows /oss:ship Step 8 writes before a merge (run/ship and merge/ready, key as ledger.ts
+# ledgerKey: toplevel and git dir), for the head of the repo the hook runs in, so every case below tests what it names.
+# ⚠ changes existing test: D78 — the hook now refuses a head no ready ship result covers; MT_NOREADY=1 skips the rows.
+ready_row() {
+    [[ -n "${MT_NOREADY:-}" ]] && return 0
+    local d="${MT_DIR:-$R}" top gd k L h
+    top=$(cd "$d" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null) && gd=$(cd "$top" && git rev-parse --absolute-git-dir 2>/dev/null) \
+        && h=$(cd "$d" && git rev-parse -q --verify HEAD 2>/dev/null) || return 0
+    k=$(printf '%s\n%s\n' "$top" "$gd" | git hash-object --stdin | cut -c1-16); L="$H/.oss/ledger/$k"
+    (umask 077; mkdir -p "$L/run" "$L/merge" && chmod 700 "$H/.oss" "$H/.oss/ledger" "$L" "$L/run" "$L/merge" \
+        && printf '{"startedAt":"2026-11-23T00:00:00.000Z","session":"","headSha":"%s","feature":"x"}\n' "$h" >> "$L/run/ship" \
+        && printf '{"feature":"x","headSha":"%s","sha256":"%064d","startedAt":"2026-11-23T00:00:00.000Z","at":"2026-11-23T00:00:01.000Z"}\n' "$h" 0 >> "$L/merge/ready")
+}
 # mt [args...]: run the hook in R as the served call does; sets OUT (stdout+stderr) and RC. MT_PRE runs first in the
 # same shell (to export functions); MT_PATH replaces PATH's tail.
 mt() {
+    ready_row
     OUT=$(cd "${MT_DIR:-$R}" && env HOME="$H" PATH="${MT_PATH:-$B:$PATH}" "$SH" -c "${MT_PRE:-:}; \"\$0\" \"\$@\"" "$SH" "$HOOK" ${MT_RAW-"--v2"} "$@" 2>&1 </dev/null); RC=$?
 }
 has() { printf '%s\n' "$OUT" | grep -qF -- "$1"; }
@@ -142,7 +156,7 @@ MT_PATH=":.:$B:$PATH"; mt; MT_PATH=
 # --- 9 (Task 2): the served command `~/.oss/hooks/oss-value.sh merge-test` runs the sibling hook, and only it -------
 # hk: a copy of the hooks the dispatch needs, so the hook can be removed or replaced per case.
 hk() { K="$T/hk$N"; rm -rf "$K"; mkdir -p "$K"; cp "$ROOT/hooks/oss-value.sh" "$ROOT/hooks/oss-safe-path.sh" "$ROOT/hooks/oss-merge-test.sh" "$K/"; }
-ovmt() { OUT=$(cd "$R" && env HOME="$H" PATH="$B:$PATH" "$SH" "$K/oss-value.sh" merge-test "$@" 2>&1 </dev/null); RC=$?; }
+ovmt() { ready_row; OUT=$(cd "$R" && env HOME="$H" PATH="$B:$PATH" "$SH" "$K/oss-value.sh" merge-test "$@" 2>&1 </dev/null); RC=$?; }
 fixture; hk; ovmt
 [[ "$RC" == 0 && "$(cat "$(G)/tested.txt" 2>/dev/null)" == "v2 $(rev feat/x) $(rev main)" ]] && has READY_TO_MERGE && pass "9: oss-value.sh merge-test runs the hook: READY_TO_MERGE and tested.txt" || fail "9: oss-value.sh merge-test runs the hook: READY_TO_MERGE and tested.txt" "rc=$RC out=$OUT"
 fixture; hk; ovmt extra
@@ -158,7 +172,7 @@ fixture; hk; OUT=$("$SH" "$K/oss-value.sh" 2>&1); has 'merge-test' && pass "9: t
 # --- 10 (ship round 1): the served entry point itself cannot be taken over before the hook's guards run -------------
 # Each case runs `oss-value.sh merge-test` as the served command does (by its own first line), on a branch whose tests
 # FAIL, so a READY_TO_MERGE or a tested.txt can only come from a takeover.
-ovx() { OUT=$(cd "$R" && env HOME="$H" PATH="${MT_PATH:-$B:$PATH}" "$SH" -c "${MT_PRE:-:}; \"\$0\" merge-test" "$K/oss-value.sh" 2>&1 </dev/null); RC=$?; }
+ovx() { ready_row; OUT=$(cd "$R" && env HOME="$H" PATH="${MT_PATH:-$B:$PATH}" "$SH" -c "${MT_PRE:-:}; \"\$0\" merge-test" "$K/oss-value.sh" 2>&1 </dev/null); RC=$?; }
 faked() { [[ "$RC" != 0 && ! -e "$(G)/tested.txt" ]] && ! has READY_TO_MERGE; }
 fakebash() { mkdir -p "$1"; printf '#!/bin/sh\necho READY_TO_MERGE\nexit 0\n' > "$1/bash"; chmod +x "$1/bash"; }
 fixture; touch "$B/npm.fail"; hk; fakebash "$R"; MT_PATH=".:$B:$PATH"; ovx; MT_PATH=
@@ -196,7 +210,7 @@ MT_PATH="$R/tools:$B:$PATH"; mt; MT_PATH=
 
 # --- 12 (ship round 1): an interrupted run (Ctrl-C, a timeout) still removes its throwaway clone --------------------
 fixture; touch "$B/npm.sleep"
-( cd "$R" && exec env HOME="$H" PATH="$B:$PATH" perl -e '$SIG{INT}="DEFAULT"; setpgrp(0,0); exec @ARGV or die' "$HOOK" --v2 >/dev/null 2>&1 </dev/null ) & MTP=$!
+ready_row; ( cd "$R" && exec env HOME="$H" PATH="$B:$PATH" perl -e '$SIG{INT}="DEFAULT"; setpgrp(0,0); exec @ARGV or die' "$HOOK" --v2 >/dev/null 2>&1 </dev/null ) & MTP=$!
 for _i in $(seq 1 100); do [[ -s "$B/npm.log" ]] && break; sleep 0.2; done
 had=$(clones); kill -INT -- "-$MTP" 2>/dev/null; wait "$MTP" 2>/dev/null
 after=$(clones); [[ -n "$had" && -z "$after" && ! -e "$(G)/tested.txt" ]] && pass "12: an interrupted run removes its throwaway clone and writes no tested.txt" || fail "12: an interrupted run removes its throwaway clone and writes no tested.txt" "clone during run=$had after(at check)=$after tested=$([[ -e $(G)/tested.txt ]] && echo y || echo n) now=$(clones)"
@@ -274,7 +288,7 @@ MT_PRE="export GIT_SSH_COMMAND='$B/sshspy -i ~/.ssh/k -o BatchMode=yes' GH_CONFI
 e="$T/ssh-env$N"; grep -qx 'GH_CONFIG_DIR=/gh/cfg' "$e" 2>/dev/null && grep -qx 'ALL_PROXY=socks5://proxy.test:1080' "$e" && grep -qx 'GIT_SSL_CAINFO=/ca/bundle.pem' "$e" && grep -qx 'SSL_CERT_FILE=/ca/cert.pem' "$e" \
   && pass "14: a GIT_SSH_COMMAND outside the repo runs, and GH_CONFIG_DIR, ALL_PROXY and the CA settings reach the fetch" || fail "14: a GIT_SSH_COMMAND outside the repo runs, and GH_CONFIG_DIR, ALL_PROXY and the CA settings reach the fetch" "env=$(tr '\n' ' ' < "$e" 2>&1 | cut -c1-300)"
 fixture; touch "$B/npm.sleeptest"; printf 'planted\n' > "$B/npm.plant"; G > "$B/npm.plant.to"; sed -i '' 's|$|/tested.txt|' "$B/npm.plant.to"
-( cd "$R" && exec env HOME="$H" PATH="$B:$PATH" perl -e '$SIG{INT}="DEFAULT"; setpgrp(0,0); exec @ARGV or die' "$HOOK" --v2 >/dev/null 2>&1 </dev/null ) & MTP=$!
+ready_row; ( cd "$R" && exec env HOME="$H" PATH="$B:$PATH" perl -e '$SIG{INT}="DEFAULT"; setpgrp(0,0); exec @ARGV or die' "$HOOK" --v2 >/dev/null 2>&1 </dev/null ) & MTP=$!
 for _i in $(seq 1 100); do [[ -e "$(G)/tested.txt" ]] && break; sleep 0.2; done
 had=$([[ -e "$(G)/tested.txt" ]] && echo y); kill -INT -- "-$MTP" 2>/dev/null; wait "$MTP" 2>/dev/null
 [[ -n "$had" && ! -e "$(G)/tested.txt" ]] && pass "14: an interrupted run leaves no tested.txt, even one the tests wrote" || fail "14: an interrupted run leaves no tested.txt, even one the tests wrote" "planted=$had now=$([[ -e $(G)/tested.txt ]] && echo y || echo n)"
@@ -444,6 +458,23 @@ fixture; spygit; ln -s "$B" "$T/lnk$N"; mv "$B/gh" "$B/gh.real"
 printf '#!/bin/sh\nln -sfn "%s" "%s"\nexec "%s" "$@"\n' "$R/bin" "$T/lnk$N" "$B/gh.real" > "$B/gh"; chmod +x "$B/gh"; cp "$B/npm" "$R/bin/npm"
 MT_PATH="$T/lnk$N:$PATH"; mt; MT_PATH=
 [[ ! -e "$T/repo-git-ran$N" ]] && pass "17: a PATH symlink re-pointed into the repo after the check never runs the repo's git" || fail "17: a PATH symlink re-pointed into the repo after the check never runs the repo's git" "rc=$RC out=$OUT"
+
+# --- 18 (D78): the merge is tested only for a head a ready ship result of this run covers ---------------------------
+fixture; MT_NOREADY=1; mt; MT_NOREADY=
+[[ "$RC" != 0 && ! -e "$(G)/tested.txt" && ! -s "$B/npm.log" ]] && has "STOP: no ready ship result is recorded for this head" && has "check ship --record-ready" && ! has READY_TO_MERGE \
+    && pass "18: with no ready row it STOPs before the tests, naming the record command" || fail "18: with no ready row it STOPs before the tests, naming the record command" "rc=$RC out=$OUT"
+fixture; ready_row; (cd "$R" && mkdir -p .oss/dev/completed/x-2026-11-23 && echo a > .oss/dev/completed/x-2026-11-23/a.md && git add -A .oss && git "${GITID[@]}" commit -qm archive) >/dev/null 2>&1
+MT_NOREADY=1; mt; MT_NOREADY=
+[[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "18: an archive commit (.oss/ only) after the recorded head still passes" || fail "18: an archive commit (.oss/ only) after the recorded head still passes" "rc=$RC out=$OUT"
+fixture; ready_row; (cd "$R" && mkdir -p .oss && echo a > .oss/a.md && echo c > src/f.txt && git add -A && git "${GITID[@]}" commit -qm mixed) >/dev/null 2>&1
+MT_NOREADY=1; mt; MT_NOREADY=
+[[ "$RC" != 0 && ! -s "$B/npm.log" ]] && has "STOP: no ready ship result" && pass "18: a commit changing code after the recorded head STOPs" || fail "18: a commit changing code after the recorded head STOPs" "rc=$RC out=$OUT"
+fixture; ready_row; k=$(ls "$H/.oss/ledger"); printf '{"startedAt":"2026-11-24T00:00:00.000Z","session":"","headSha":"","feature":"x"}\n' >> "$H/.oss/ledger/$k/run/ship"
+MT_NOREADY=1; mt; MT_NOREADY=
+[[ "$RC" != 0 && ! -s "$B/npm.log" ]] && has "STOP: no ready ship result" && pass "18: a ready row from an earlier ship run (another startedAt) STOPs" || fail "18: a ready row from an earlier ship run (another startedAt) STOPs" "rc=$RC out=$OUT"
+fixture; ready_row; k=$(ls "$H/.oss/ledger"); mv "$H/.oss/ledger/$k/merge/ready" "$T/real-ready$N"; ln -s "$T/real-ready$N" "$H/.oss/ledger/$k/merge/ready"
+MT_NOREADY=1; mt; MT_NOREADY=
+[[ "$RC" != 0 && ! -s "$B/npm.log" ]] && has "STOP: no ready ship result" && pass "18: a ready file that is a symlink STOPs" || fail "18: a ready file that is a symlink STOPs" "rc=$RC out=$OUT"
 
 echo ""
 echo "oss-merge-test: $RUN run, $FAILED failed"

@@ -286,11 +286,14 @@ describe('/oss:ship wrapper offers the D70 override only through the person\'s p
     expect(step).toMatch(/newest record in `decisions\.ndjson` whose `command` is `ship` and whose `choice` is exactly `Override <gate>`/);
   });
 
-  it('puts no value in a shell command: the only commands are the fixed value-dir and assemble calls', () => {
+  // ⚠ changes existing test: D79 (Step 8 text: a fixed `sleep 1` between re-reads) and D78 (the fixed record command)
+  it('puts no value in a shell command: the only commands are the fixed value-dir, assemble, sleep and record calls', () => {
     const blocks = [...step.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1].trim());
-    expect(blocks).toEqual(['~/.oss/hooks/oss-phase-result.sh assemble ship']);
+    expect(blocks).toEqual(['~/.oss/hooks/oss-phase-result.sh assemble ship', 'sleep 1', '~/.oss/hooks/oss-phase-result.sh check ship --record-ready']);
     const inline = [...step.matchAll(/`(~\/\.oss\/[^`]*)`/g)].map((m) => m[1]);
-    for (const c of inline) expect(['~/.oss/hooks/oss-value.sh dir', '~/.oss/hooks/oss-phase-result.sh assemble ship']).toContain(c);
+    for (const c of inline) {
+      expect(['~/.oss/hooks/oss-value.sh dir', '~/.oss/hooks/oss-phase-result.sh assemble ship', '~/.oss/hooks/oss-phase-result.sh check ship --record-ready']).toContain(c);
+    }
     expect(step).toMatch(/Never put any of this content \(or the decision id\) into a command/);
   });
 
@@ -353,9 +356,49 @@ describe('/oss:ship Step 8 handles mixed answers and waits for the new decision 
     expect(step).toMatch(/as the final assemble, so a `Fix it` re-run never deletes an override already chosen/);
   });
 
-  it('uses only a decision record answered at or after the picker was asked, re-reading a bounded number of times', () => {
-    expect(step).toMatch(/`answeredAt` is at or after the time you asked that picker/);
-    expect(step).toMatch(/read the file again, up to 5 times/);
+  // ⚠ changes existing test: D79 (gate round 13 infos) — no answeredAt time comparison; a record counts only when it is
+  //   new since the pre-picker read (line offset), with one fixed `sleep 1` between at most 5 re-reads
+  it('uses only a decision record new since the pre-picker read (a line offset), re-reading a bounded number of times', () => {
+    expect(step).not.toMatch(/answeredAt/);
+    expect(step).toMatch(/note the number of its last line/);
+    expect(step).toMatch(/Read it from the line after that number \(the Read tool's `offset`\)/);
+    expect(step).toMatch(/run `sleep 1` once \(the fixed Bash call below\), then read the file again from the same line, at most 5 times/);
     expect(step).toMatch(/still none, do not write `overrides\.json`/);
+  });
+
+  it('does not ask again for a gate already answered `Override <gate>` in this run after a `Fix it` re-run', () => {
+    expect(step).toMatch(/A gate already answered `Override <gate>` in this run is not asked again/);
+  });
+
+  it('a `Fix it` after the PR exists: commit and push the fix, then run /oss:ship again from the start, never on to the merge', () => {
+    expect(step).toMatch(/If the PR already exists, a `Fix it` means: commit and push the fix, then run `\/oss:ship` again from the start; do not go on to the merge/);
+  });
+});
+
+/**
+ * @behavior With `/oss:ship --merge` (or a merge the person asked for in chat), Step 8 records the ready ship result
+ *           for the checked head with one fixed command right after the assemble and override step, so the plugin's
+ *           merge test can refuse a head no ready result covers (D78).
+ * @business-rule A blocked ship can never merge in code, not only in wording; no model value goes into the command.
+ * @boundary commands/ship.md (wrapper text: Step 8 and "Optional: Merge").
+ */
+describe('/oss:ship --merge records the ready result before merging (D78)', () => {
+  const text = fs.readFileSync(shipWrapper, 'utf8');
+  const step = text.split('### Assemble the phase result')[1]?.split('Then send `complete`')[0] ?? '';
+  const mergeSection = text.split('### Optional: Merge')[1]?.split('\n## ')[0] ?? '';
+  const RECORD = '~/.oss/hooks/oss-phase-result.sh check ship --record-ready';
+
+  it('Step 8 runs the fixed record command after the assemble and the override step, only before a merge', () => {
+    const record = step.indexOf(RECORD);
+    expect(record).toBeGreaterThan(step.indexOf('Only if the person picks `Override <gate>`'));
+    expect(step).toMatch(/Before a merge \(`--merge`, or a merge the person asked for in chat\)/);
+    expect(step).toMatch(/prints `READY_RECORDED`/);
+    expect(step).toMatch(/Without a merge in this session, skip it/);
+  });
+
+  it('the merge section runs the record step before the merge and stops when it does not print READY_RECORDED', () => {
+    expect(mergeSection).toContain('READY_RECORDED');
+    expect(mergeSection.indexOf('READY_RECORDED')).toBeLessThan(mergeSection.search(/Only then merge the PR/));
+    expect(mergeSection).toMatch(/the plugin's merge test refuses a head no recorded ready result covers/);
   });
 });

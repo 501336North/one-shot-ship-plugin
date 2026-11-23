@@ -139,11 +139,39 @@ _gc=(-c core.fsmonitor=false -c protocol.allow=never -c protocol.file.allow=alwa
 _gd=
 git() { if [[ -n $_gd ]]; then (cd / && exec /usr/bin/env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" GIT_DIR="$_gd" "${_ga[@]}" git "${_gc[@]}" "$@"); else /usr/bin/env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" "${_ga[@]}" git "${_gc[@]}" "$@"; fi; }
 gitf() { (cd / && exec /usr/bin/env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" GIT_DIR="$_gd" "${_ga[@]}" "${_gt[@]}" git "${_gc[@]}" "$@"); }
+# D78 (user pick 2026-11-23, "Pre-merge check row"): the merge is tested only for a head a ready ship result covers.
+# /oss:ship Step 8 records it (`oss-phase-result.sh check ship --record-ready`): the last row of the run's ledger file
+# merge/ready (~/.oss/ledger/<key>, key as watcher/src/phase-results/ledger.ts ledgerKey: toplevel and git dir), from
+# this ship run (its startedAt is run/ship's last). It covers the head being merged when that is the row's head, or
+# descends from it with only paths under .oss/ changed after it (the archive commit and build report; every commit,
+# merges against each parent). Same rules as watcher/src/phase-results/merge-ready.ts.
+_lr() { # <file>: _l = its last non-empty line; fails when it is missing, not a regular file, a link or not the user's
+    _l=; [[ -f $1 && ! -L $1 && -O $1 ]] || return 1
+    while IFS= read -r _y || [[ -n $_y ]]; do [[ -n $_y ]] && _l=$_y; done < "$1"
+    [[ -n $_l ]]
+}
+_oo() { # <from> <to> <scratch file>: 0 when <to> is <from>, or descends from it with only .oss/ paths changed after it
+    [[ $1 == "$2" ]] && return 0
+    git merge-base --is-ancestor "$1" "$2" && git log --no-renames -m --format= --name-only -z "$1..$2" >| "$3" || return 1
+    while IFS= read -r -d '' _y || [[ -n $_y ]]; do [[ -z $_y || $_y == .oss/* ]] || return 1; done < "$3"
+}
+_mg() { # <toplevel> <head> <run folder>
+    _k=$(printf '%s\n%s\n' "$1" "$_gd" | git hash-object --stdin | cut -c1-16) && [[ ${#_k} == 16 ]] || return 1
+    _lr "$HOME/.oss/ledger/$_k/merge/ready" || return 1; _r=$_l
+    _lr "$HOME/.oss/ledger/$_k/run/ship" || return 1
+    _re='"startedAt":"([^"\\]+)"'
+    [[ $_l =~ $_re ]] || return 1; _a=${BASH_REMATCH[1]}
+    [[ $_r =~ $_re && ${BASH_REMATCH[1]} == "$_a" ]] || return 1
+    _re='"headSha":"([0-9a-f]{40}([0-9a-f]{24})?)"'
+    [[ $_r =~ $_re ]] || return 1
+    _oo "${BASH_REMATCH[1]}" "$2" "$3/oo.$$"; _e=$?; rm -f "$3/oo.$$"; return "$_e"
+}
 G=
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES && top=$(git rev-parse --show-toplevel) && cd "$top" >/dev/null && _gd=$(git rev-parse --absolute-git-dir) && V="$HOME/.oss/run" && mkdir -p -m 700 "$V" && test ! -L "$V" && test -O "$V" && chmod 700 "$V" && { find "$V" -mindepth 2 -maxdepth 2 -type f -name '*.txt' -mtime +7 -delete; find "$V" -mindepth 1 -maxdepth 1 -type d -empty -mtime +1 -delete || true; } 2>/dev/null && G="$HOME/.oss/run/$(git rev-parse --absolute-git-dir | git hash-object --stdin | cut -c1-16)" && mkdir -p -m 700 "$G" && test ! -L "$G" && test -O "$G" && chmod 700 "$G" && touch "$G" && rm -f "$G/branch.txt" "$G/tested.txt" && b=$(git symbolic-ref -q HEAD) && case "$b" in refs/heads/*) b=${b#refs/heads/} ;; *) false ;; esac && lc=$(printf %s "$b" | LC_ALL=C tr A-Z a-z) && case "$lc" in ''|head|main|master) false ;; esac && case "$b" in @|heads/*|refs/*|[-+]*) false ;; esac && test "$(git check-ref-format --branch "$b")" = "$b" && test "$(git for-each-ref --format='%(refname)' "refs/heads/$b")" = "refs/heads/$b" && printf '%s\n' "$b" >| "$G/branch.txt" && echo BRANCH_RECORDED &&
 S() { printf 'STOP: %s\n' "$*" >&2; return 1; } && unset GH_REPO GH_HOST && { find "$G" -mindepth 1 -maxdepth 1 -type d -name 't.[1-9]*' ! -name '*[!A-Za-z0-9.]*' -mmin +240 | while IFS= read -r d; do p=${d#"$G"/t.}; p=${p%%.*}; case "$d" in "$G"/t.*) ;; *) continue ;; esac; case "$p" in ''|*[!0-9]*) continue ;; esac; kill -0 "$p" || rm -rf "$d"; done || true; } 2>/dev/null && g=$(git rev-parse --git-path info/grafts) && { test ! -e "$g" && test ! -L "$g" && test "$(git rev-parse --is-shallow-repository)" = false || { S 'this repo is shallow or has .git/info/grafts; nothing was tested or merged. Fix that, then run this step again from item 2.'; }; } &&
 h=$(git rev-parse --verify "refs/heads/$b") &&
 rm -f "$G/head.txt" && printf '%s\n' "$h" >| "$G/head.txt" &&
+{ _mg "$top" "$h" "$G" || { S 'no ready ship result is recorded for this head: none from this /oss:ship run, or code (outside .oss/) changed after it was checked; nothing was tested or merged. Run /oss:ship Step 8 at the PR head (assemble ship, then ~/.oss/hooks/oss-phase-result.sh check ship --record-ready); if code changed after the check, run /oss:ship again from the start.'; }; } &&
 { o=$(git config --get-all remote.origin.url) && R=${o#*github.com[/:]} && case "$o" in https://github.com/"$R"|git@github.com:"$R"|ssh://git@github.com/"$R") ;; *) false ;; esac && R=${R%.git} && case "$R" in */*/*|[.-]*|*/[.-]*|*[!A-Za-z0-9/._-]*) false ;; ?*/?*) ;; *) false ;; esac || { S 'origin is not one github.com repository URL; nothing was merged. Fix it, then run this step again from item 2.'; }; } &&
 { m=$(cd / && command gh api "repos/$R/git/ref/heads/main" --jq .object.sha 2>/dev/null) && git -c core.hooksPath=/dev/null update-ref --no-deref -d refs/oss/main && gitf -c core.hooksPath=/dev/null fetch -q --no-tags --no-recurse-submodules origin +refs/heads/main:refs/oss/main && test "$(git rev-parse --verify refs/oss/main)" = "$m" || { S 'main on GitHub could not be read, or origin did not fetch it; nothing was tested or merged. Run this step again from item 2.'; }; } &&
 set -- && for v in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy SSH_AUTH_SOCK LANG NODE_EXTRA_CA_CERTS; do if x=$(command printenv "$v"); then set -- "$@" "$v=$x"; fi; done &&

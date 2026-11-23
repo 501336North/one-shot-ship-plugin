@@ -579,6 +579,8 @@
       "~/.oss/hooks/oss-notify.sh --workflow ship quality_passed '{\"checks\": [\"code-review\", \"performance\", \"security\", \"tests\", \"build\"]}'",
       "~/.oss/hooks/oss-notify.sh --workflow ship pr_created '{}'",
       "~/.oss/hooks/oss-phase-result.sh assemble ship",
+      "sleep 1",
+      "~/.oss/hooks/oss-phase-result.sh check ship --record-ready",
       "~/.oss/hooks/oss-notify.sh --workflow ship merged '{}'",
       "~/.oss/hooks/oss-notify.sh --workflow ship complete '{}'",
       "# Ship with manual merge\n/oss:ship\n\n# Ship and merge once the PR's checks pass\n/oss:ship --merge\n\n# Ship with custom commit message\n/oss:ship --message \"feat: add user authentication\""

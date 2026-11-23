@@ -39,10 +39,12 @@ import { gitBin } from '../phase-results/git-bin.js';
 import { gitEnv, gitOut } from '../phase-results/git.js';
 import { clearUnverifiedMarker, readBack, readResult, readValueFile, resolveRepo, writeResult } from '../phase-results/store.js';
 import { validate } from '../phase-results/validate.js';
+import { mergedReady, READY_ROW } from '../phase-results/merge-ready.js';
 
 const USAGE =
   'usage: oss-phase-result.sh assemble <ideate|plan|build|ship>\n' +
-  '       oss-phase-result.sh check <ideate|plan|build|ship> [--repo <path>] [--all]\n';
+  '       oss-phase-result.sh check <ideate|plan|build|ship> [--repo <path>] [--all]\n' +
+  '       oss-phase-result.sh check ship --record-ready\n';
 
 type Verdict = { ok: true } | { ok: false; id: string; field: string; detail?: string };
 
@@ -70,12 +72,18 @@ interface Args {
   phase: Phase;
   repo: string | null;
   all: boolean;
+  /** D78: `check ship --record-ready` records a ready ship result for the merge gate. */
+  recordReady: boolean;
 }
 
 function parseArgs(argv: string[]): Args | null {
   const [verb, phase, ...rest] = argv;
   if ((verb !== 'assemble' && verb !== 'check') || !(PHASES as readonly string[]).includes(phase ?? '')) return null;
-  const args: Args = { verb, phase: phase as Phase, repo: null, all: false };
+  const args: Args = { verb, phase: phase as Phase, repo: null, all: false, recordReady: false };
+  if (verb === 'check' && phase === 'ship' && rest.length === 1 && rest[0] === '--record-ready') {
+    args.recordReady = true;
+    return args;
+  }
   for (let i = 0; i < rest.length; i++) {
     if (verb === 'check' && rest[i] === '--all') args.all = true;
     else if (verb === 'check' && rest[i] === '--repo' && rest[i + 1] !== undefined) args.repo = rest[++i];
@@ -386,6 +394,50 @@ function gateLabel(phase: Phase, result: Record<string, unknown>): Record<string
   return phase === 'ship' ? { gateEvidence: result.gateEvidence, uncapturedGates: result.uncapturedGates } : {};
 }
 
+/**
+ * D78: `check ship --record-ready` (wrapper Step 8, before a merge). Only a ship result that checks and says
+ * ready_to_merge appends the `merge/ready` row (feature, the checked head, the bound result's sha256, the run's
+ * startedAt, now); it prints the fixed line READY_RECORDED. A blocked result refuses `not_ready_to_merge` and writes
+ * nothing.
+ */
+function recordReady(args: Args, repo: string, feature: string | null): number {
+  if (feature === null) return refuse(args, 'no_feature', 'feature');
+  const v = verdictOf(() => {
+    const stored = check(repo, feature, 'ship');
+    if (stored.verdict !== 'ready_to_merge') throw new Refusal('not_ready_to_merge', 'verdict');
+    const ledger = openLedger(repo);
+    ledger.appendRow(READY_ROW, {
+      feature,
+      headSha: stored.headSha,
+      sha256: ledger.lastRow(`results/${feature}/ship`)?.sha256,
+      startedAt: stored.startedAt,
+      at: new Date().toISOString(),
+    });
+  });
+  if (!v.ok) return refuse(args, v.id, v.field, v.detail);
+  process.stdout.write('READY_RECORDED\n');
+  return 0;
+}
+
+/**
+ * D78: `check ship` after `merged`, on main with the feature archived: the run's `merge/ready` row (mergedReady) passes
+ * as the archived ready result. Anything else keeps the original refusal.
+ */
+function mergedOrRefuse(args: Args, repo: string, v: Extract<Verdict, { ok: false }>): number {
+  if (args.phase === 'ship' && args.verb === 'check') {
+    let archived: Record<string, unknown> | null = null;
+    verdictOf(() => {
+      const ledger = openLedger(repo);
+      archived = mergedReady(repo, ledger, runStartedAt(ledger, 'ship'));
+    });
+    if (archived !== null) {
+      process.stdout.write(`${JSON.stringify({ verification: 'verified', ...gateLabel('ship', archived), verdict: 'ready_to_merge', merged: true })}\n`);
+      return 0;
+    }
+  }
+  return refuse(args, v.id, v.field, v.detail);
+}
+
 export function main(argv: string[]): number {
   const args = parseArgs(argv);
   if (args === null) {
@@ -411,7 +463,8 @@ export function main(argv: string[]): number {
   }
 
   const feature = resolveFeature(repo);
-  if (feature === null) return refuse(args, 'no_feature', 'feature');
+  if (args.recordReady) return recordReady(args, repo, feature);
+  if (feature === null) return mergedOrRefuse(args, repo, { ok: false, id: 'no_feature', field: 'feature' });
   if (args.verb === 'assemble') {
     let result: Record<string, unknown> = {};
     const v = verdictOf(() => {
@@ -427,7 +480,7 @@ export function main(argv: string[]): number {
   const v = verdictOf(() => {
     stored = check(repo, feature, args.phase);
   });
-  if (!v.ok) return refuse(args, v.id, v.field, v.detail);
+  if (!v.ok) return mergedOrRefuse(args, repo, v);
   // D35: check ship also prints the verdict, so complete refuses a verified but blocked ship.
   const verdict = args.phase === 'ship' ? { verdict: stored.verdict } : {};
   process.stdout.write(`${JSON.stringify({ verification: 'verified', ...gateLabel(args.phase, stored), ...verdict })}\n`);

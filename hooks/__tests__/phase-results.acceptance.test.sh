@@ -263,5 +263,103 @@ if [[ "$count" == 1000 && $((long_ms - base_ms)) -lt 2000 ]]; then
 else fail "a 1,000-ref snapshot (the cap) is recorded in well under 2 s" "count=$count base=${base_ms}ms with_refs=${long_ms}ms"; fi
 cleanup
 
+# 13. D78 (user pick 2026-11-23, "Pre-merge check row"): the whole /oss:ship --merge path, end to end. Step 8 assembles
+#     a ready ship result and records it (`check ship --record-ready`, a ledger row for the checked head); the served
+#     merge step archives and commits the dev docs (only .oss/ paths move the head), oss-merge-test.sh refuses unless
+#     that row covers the head it merges, the PR is squashed onto main, and `merged` then `complete` pass on main with
+#     the feature archived, printing the chain. GitHub is a bare origin plus gh and npm stubs (no real clone of npm).
+# merge_sandbox: sandbox + a bare origin behind a github.com URL (gh and npm stubs in $T/bin), built, shipped (ready).
+merge_sandbox() {
+    sandbox
+    mkdir -p "$T/bin"; git init -q --bare "$T/origin.git"
+    printf '#!/bin/sh\nif test "$1" = api; then git --git-dir "%s" rev-parse refs/heads/main; fi\nexit 0\n' "$T/origin.git" > "$T/bin/gh"
+    printf '#!/bin/sh\nexit 0\n' > "$T/bin/npm"; chmod +x "$T/bin/gh" "$T/bin/npm"
+    (cd "$T/repo" && git remote add origin https://github.com/o/r.git && git config url."$T/origin.git".insteadOf https://github.com/o/r.git \
+        && git push -q origin main && git fetch -q origin)
+    PRF_REPO="$T/repo" prf_build
+    PRF_REPO="$T/repo" prf_ship
+}
+# merge_test: the served item 4 call, from the repo, with the stubs on PATH (system folders only otherwise).
+merge_test() { (cd "$T/repo" && env HOME="$T/home" PATH="$T/bin:$SAFE_PATH" /bin/bash "$ROOT/hooks/oss-merge-test.sh" --v2 2>&1 </dev/null); }
+# archive_commit: the served items 2-3 (the feature folder moved to completed/, a build report, one commit) and a push.
+archive_commit() {
+    (cd "$T/repo" && mkdir -p .oss/dev/completed .oss/reports/builds && mv ".oss/dev/active/$FEATURE" ".oss/dev/completed/$FEATURE-2026-11-23" \
+        && echo report > ".oss/reports/builds/2026-11-23T00-00-$FEATURE.md" && git add -A .oss && git commit -q -m 'docs: archive' \
+        && git push -q origin "HEAD:refs/heads/feat/$FEATURE/build")
+}
+# squash_to_main: GitHub's squash merge of the branch onto main, then served item 6 (fetch main, switch to it).
+squash_to_main() {
+    (cd "$T/repo" && b=$(git branch --show-current) && git checkout -q main && git merge -q --squash "$b" && git commit -q -m squash \
+        && git push -q origin main && git fetch -q origin)
+}
+
+merge_sandbox
+rec_out=$(phase_result check ship --record-ready 2>&1); rec_rc=$?
+archive_commit
+mt_out=$(merge_test); mt_rc=$?
+squash_to_main
+m_out=$(notify ship merged '{}' 2>&1); m_rc=$?
+out=$(notify ship complete '{}' 2>&1); rc=$?
+if [[ $rec_rc -eq 0 && "$rec_out" == *READY_RECORDED* && $mt_rc -eq 0 && "$mt_out" == *READY_TO_MERGE* && $m_rc -eq 0 && $rc -eq 0 \
+    && "$out" == *---CHAIN_COMMANDS---* ]] && chain_fired; then
+    pass "D78: record ready, archive commit, merge gate, squash onto main, merged, complete: complete passes and prints the chain"
+else fail "D78: record ready, archive commit, merge gate, squash onto main, merged, complete: complete passes and prints the chain" "record rc=$rec_rc ($rec_out) merge-test rc=$mt_rc ($mt_out) merged rc=$m_rc complete rc=$rc ($out)"; fi
+cleanup
+
+# 13b. D78: a blocked ship result records no row, and the merge gate refuses the head.
+merge_sandbox
+for g in code-review performance security; do   # round 2: security fails
+    vd=$(value_dir); printf '2\n' > "$vd/round.txt"; printf '%s\n' "$g" > "$vd/gate.txt"; : > "$vd/fixed.txt"; printf 'full\n' > "$vd/mode.txt"
+    if [[ $g == security ]]; then printf 'fail\n' > "$vd/verdict.txt"; printf 'high=1\n' > "$vd/findings.txt"; else printf 'pass\n' > "$vd/verdict.txt"; : > "$vd/findings.txt"; fi
+    envrun "$SH" "$ROOT/hooks/oss-value.sh" timeline gate >/dev/null 2>&1
+done
+a_out=$(phase_result assemble ship 2>&1)
+rec_out=$(phase_result check ship --record-ready 2>&1); rec_rc=$?
+rows=$(cat "$T"/home/.oss/ledger/*/merge/ready 2>/dev/null)
+archive_commit
+mt_out=$(merge_test); mt_rc=$?
+if [[ "$a_out" == *'"verdict":"blocked"'* && $rec_rc -ne 0 && -z "$rows" && $mt_rc -ne 0 && "$mt_out" == *STOP:* && "$mt_out" != *READY_TO_MERGE* ]]; then
+    pass "D78: a blocked ship result writes no ready row and the merge gate refuses"
+else fail "D78: a blocked ship result writes no ready row and the merge gate refuses" "assemble=$a_out record rc=$rec_rc ($rec_out) rows=$rows merge-test rc=$mt_rc ($mt_out)"; fi
+cleanup
+
+# 13c. D78: a code change committed after the checked head is refused by the merge gate (only .oss/ paths may follow).
+merge_sandbox
+phase_result check ship --record-ready >/dev/null 2>&1
+archive_commit
+(cd "$T/repo" && echo sneaky > change.txt && git commit -q -am 'after the check')
+mt_out=$(merge_test); mt_rc=$?
+if [[ $mt_rc -ne 0 && "$mt_out" == *STOP:* && "$mt_out" != *READY_TO_MERGE* ]]; then
+    pass "D78: a code change after the checked head is refused by the merge gate"
+else fail "D78: a code change after the checked head is refused by the merge gate" "merge-test rc=$mt_rc ($mt_out)"; fi
+cleanup
+
+# 13d. D78: a row from an earlier ship (that run ended, a new ship started since) is refused by the merge gate and by
+#     complete. (A start while ship is still the current command keeps its startedAt: the same run.)
+merge_sandbox
+phase_result check ship --record-ready >/dev/null 2>&1
+notify ship merged '{}' >/dev/null 2>&1
+notify ship start '{}' >/dev/null 2>&1
+archive_commit
+mt_out=$(merge_test); mt_rc=$?
+squash_to_main
+notify ship merged '{}' >/dev/null 2>&1
+out=$(notify ship complete '{}' 2>&1); rc=$?
+if [[ $mt_rc -ne 0 && "$mt_out" == *STOP:* && $rc -ne 0 ]] && ! chain_fired; then
+    pass "D78: a ready row from an earlier ship is refused by the merge gate and by complete"
+else fail "D78: a ready row from an earlier ship is refused by the merge gate and by complete" "merge-test rc=$mt_rc ($mt_out) complete rc=$rc ($out)"; fi
+cleanup
+
+# 13e. D78: on main with the feature archived but no ready row, complete still refuses.
+merge_sandbox
+archive_commit
+squash_to_main
+notify ship merged '{}' >/dev/null 2>&1
+out=$(notify ship complete '{}' 2>&1); rc=$?
+if [[ $rc -ne 0 ]] && ! chain_fired; then
+    pass "D78: complete after merged refuses when no ready row was recorded"
+else fail "D78: complete after merged refuses when no ready row was recorded" "complete rc=$rc ($out)"; fi
+cleanup
+
 echo; echo "Ran $RUN, failed $FAILED"
 [[ $FAILED -eq 0 ]]

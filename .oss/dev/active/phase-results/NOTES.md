@@ -206,3 +206,10 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 ## Ship round 14 notes (2026-11-23)
 - The check hook keeps its 10 s limit (raising it would also raise oss-notify's 15 s bound); a timeout now says to run git gc. assemble gives the diff calls 20 s.
 - Hook tests with real sleeps (timeline-push, ship-wrapper-chain) time out when the Mac is in maintenance sleep on battery; run the full check on AC power.
+
+## Ship round 15 notes (2026-11-23)
+- **Never pipe multi-MB input into a git child through `execFileSync` stdin.** Node's synchronous runner and git deadlock: git blocks reading stdin while node never finishes writing. vitest timeouts can't stop a synchronous call. Write the input to a file and pass its fd or path.
+- **vitest `describe` options take no `hookTimeout`.** It type-fails, which the watcher-tests-typecheck hook test catches. Use `vi.setConfig({ hookTimeout })` before any hook registers.
+- **The API real-hook tests take the plugin from `OSS_REAL_PLUGIN_DIR`, or else the newest plugin cache.** Against an installed plugin without D78 (2.2.4), the new "no ready row is refused" case fails in 3 shells and every other case passes. Point OSS_REAL_PLUGIN_DIR at the R-257 plugin until a release carries D78.
+- **D81 widens D75's "without --merge nothing changes".** A merge asked for in chat also needs the ready row, so Step 8 records it before any merge.
+- **Pre-existing, not from this feature:** `ship-merge-gate.exec.test.ts:1521/1539/1552` type-fails (`onPlugin210(shell: readonly string[])` versus `Shell`). These lines were already at HEAD, and vitest doesn't type-check them.

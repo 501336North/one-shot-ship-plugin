@@ -246,6 +246,14 @@
 - [x] Ship-start cleanup runs before the ledger step, so early exits still clear the value files.
 - [x] Served-command fixture regenerated with watcher/scripts/served-command-blocks.mjs (ship.md block order).
 
+### Ship round 15 fixes, after gate round 13 (2026-11-23)
+- [x] Gate round 13: all four gates failed. Code review, security and pen test hit the same medium: with --merge, complete could never verify after the served Step 6 archived and switched to main. The user picked D78 and D79, then D80 and D81.
+- [x] D78: `check ship --record-ready` writes a ledger row (feature, head, result hash, startedAt). oss-merge-test.sh refuses a merge with no row for this run's head; later commits may touch only `.oss/`. complete after `merged` accepts the row bound to this run, the merged head and the archived ship.json hash.
+- [x] D79: a gate-less non-override entry is refused (detail decisionId); the wall-clock assert became a git-call count; 180 s budgets for tests and hooks (`vi.setConfig` for hooks); Step 8 text (offset reads, pause between re-reads, no re-ask of overridden gates, a Fix it after the PR means commit and re-run); no merge-base for missing heads; diffFrom helpers rethrow timeouts.
+- [x] Test hang fixed: multi-MB fixtures go to git through a file instead of stdin (32 MB hash-object, 2.3 MB and 1.3 MB index-info).
+- [x] D80: the API repo's real-hook tests seed the ready rows (helpers/merge-test-plugin.ts `seedReadyRow`); new acceptance case: a merge with no row is refused (3 shells).
+- [x] D81: every served merge is gated, not only --merge runs.
+
 ### Later
 - [ ] Ship into feat/determinism-sprint/build (SD-1)
 - [ ] T21 oss-lab (after the plugin ships)
@@ -253,4 +261,4 @@
 ## Blockers
 - None. R-266's 4 red base tests are fixed in #233 (4458bddb), and R-257 is rebased onto it.
 
-## Last Updated: 2026-11-23 08:08 +07 by /oss:ship (round 14 fixes)
+## Last Updated: 2026-11-23 13:34 +07 by /oss:ship (round 15 fixes)

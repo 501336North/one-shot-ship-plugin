@@ -528,7 +528,8 @@ describe('phase-result CLI: check refuses anything not bound to this run', () =>
     commitFile('feature.txt', 'work\n');
     passGates(FEATURE);
     const id = randomUUID();
-    const line = JSON.stringify({ v: 1, id, feature: FEATURE, question: 'Defer the LOW finding?', person: 'Pat' });
+    // ⚠ changes existing test: D79 (pen L1) — a gate-less override counts only for a ship pick answered `Override <gate>`
+    const line = JSON.stringify({ v: 1, id, feature: FEATURE, question: 'Defer the LOW finding?', command: 'ship', choice: 'Override security', person: 'Pat' });
     fs.appendFileSync(path.join(activeDir(FEATURE), 'decisions.ndjson'), `${line}\n`);
     openLedger(repo).appendRow(`decisions/${FEATURE}`, { id, feature: FEATURE, sha256: sha256(line) });
     const overrides = path.join(valueDir(), 'overrides.json');
@@ -540,6 +541,23 @@ describe('phase-result CLI: check refuses anything not bound to this run', () =>
     fs.utimesSync(overrides, old, old);
     const r = cli('check', 'ship');
     expect(r.status, r.stderr).toBe(0);
+  });
+
+  // Behaviour: D79 (pen L1), a gate-less override whose decision is a `Fix it` pick is refused by assemble and by check.
+  it('a gate-less override whose decision is a "Fix it" pick is refused (override_unrecorded, decisionId), and check agrees', () => {
+    commitFile('feature.txt', 'work\n');
+    passGates(FEATURE);
+    const id = randomUUID();
+    const line = JSON.stringify({ v: 1, id, feature: FEATURE, question: 'Override?', command: 'ship', choice: 'Fix it', person: 'Pat' });
+    fs.appendFileSync(path.join(activeDir(FEATURE), 'decisions.ndjson'), `${line}\n`);
+    openLedger(repo).appendRow(`decisions/${FEATURE}`, { id, feature: FEATURE, sha256: sha256(line) });
+    fs.writeFileSync(path.join(valueDir(), 'overrides.json'), JSON.stringify([{ finding: 'LOW: naming', decisionId: id }]));
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    const a = cli('assemble', 'ship');
+    expect(a.status).toBe(1);
+    expect(a.stderr).toContain('override_unrecorded (field decisionId)');
+    const r = cli('check', 'ship');
+    expect(r.status).toBe(1);
   });
 
   // Behaviour: D69, an override naming the gate clears a fail upstream's change to the flagged file held open, and

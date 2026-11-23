@@ -215,4 +215,25 @@ Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watche
 - New tests: --merge order (3 wrapper tests), D76 refusals, an entry without gate unchanged, pruned-head call bound and equality with the per-row path, diff budget and DIFF_TIMEOUT detail, check-hook gc hint (case 27), Step 8 mixed answers and record wait, ship-start cleanup on early exit (case 28).
 - Changed tests (marked ⚠): six D70 "listed" tests now refused (D76); the acceptance "Keep blocked" test is now refused, its D74 stdout check moved to a new test.
 
-## Last Updated: 2026-11-23 08:08 +07 by /oss:ship (round 14 fixes)
+### Ship round 15 (D78-D82), 2026-11-23
+- **Full check on AC power:**
+  - build 0, tsc 0;
+  - 199 files / 11,068 tests passed; served-commands 3/3;
+  - bash 114/114 behind the tripwire (0 trip lines);
+  - API real-hook tests with OSS_REAL_PLUGIN_DIR set to the R-257 plugin: 5 files / 628 passed.
+- **First run:** bash 113/114. watcher-tests-typecheck failed because describe blocks had a `hookTimeout` option. Fixed with `vi.setConfig`.
+- **New tests:**
+  - D78 end to end (phase-results.acceptance 13a-13e: record, archive, merge-test, merged, complete; a code change after the check, a stale row and no row are all refused);
+  - D79: gate-less and outside-ship entries are refused, a `Fix it` CLI case, missing heads skip merge-base, and three diffFrom timeout cases;
+  - Step 8 text (6 wrapper tests);
+  - API: a merge with no row is refused (3 shells).
+- **Changed tests (marked ⚠):**
+  - assemble-ship `decision()` writes an `Override security` ship pick; the gate-less entry is refused; the wall-clock bound became a git-call count;
+  - the phase-result.acceptance aged-out fixture is an Override pick;
+  - ship-wrapper-chain uses a line offset instead of answeredAt;
+  - oss-merge-test.test.sh seeds the ready row before every hook run;
+  - the four API real-hook suites seed the rows (D80).
+- **Hardening:** assemble-ship passed 208/208 in about 240 s, back to back and two copies at once. The large-binary test, which had hung on a stdin deadlock, passed 3/3 on git 2.54 and on CLT 2.50.1.
+- **Known (D82):** on the installed 2.2.4 plugin, the API "no row" case fails 3/3 and every other case passes.
+
+## Last Updated: 2026-11-23 14:40 +07 by /oss:ship (round 15 fixes)

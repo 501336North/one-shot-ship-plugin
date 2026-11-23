@@ -9,7 +9,7 @@
  * @boundary watcher/src/phase-results/assemble-ship.ts
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { execFileSync } from 'child_process';
+import { execFileSync, type StdioOptions } from 'child_process';
 import { createHash, randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -18,6 +18,10 @@ import { fileURLToPath } from 'url';
 import { argvChunks, assembleShip, DEFAULT_REQUIRED_GATES } from '../../src/phase-results/assemble-ship.js';
 import type { AssembleContext, AssembleOutcome } from '../../src/phase-results/assemble-common.js';
 import { openLedger } from '../../src/phase-results/ledger.js';
+
+// D79 (gate round 13): every hook in this file (git init, commits, multi-MB fixtures) gets the same 180 s budget as
+// its tests. A describe option cannot carry hookTimeout, so it is set once here, before any hook registers.
+vi.setConfig({ hookTimeout: 180_000 });
 import { captureVerdict } from '../../src/phase-results/verdict-capture.js';
 import { loadPhaseSchema } from '../../src/phase-results/schemas.js';
 import { validate } from '../../src/phase-results/validate.js';
@@ -100,7 +104,7 @@ beforeEach(() => {
   git('config', 'maintenance.auto', 'false');
   commitFile('a.txt', 'one\ntwo\nthree\n', 'base');
   git('checkout', '-q', '-b', `feat/${FEATURE}/ship`);
-});
+}, 180_000); // D79 (security L-2, perf low): git init and a commit outlive the 10 s hook default under load
 afterEach(() => {
   spawns.overflow = null;
   spawns.timedOut = null;
@@ -167,7 +171,9 @@ function allPass(round = 1): void {
 /** Appends a decision record line; `ledger: true` also writes its ledger row, as oss-decision-record.sh does. */
 function decision(person: unknown, opts: { ledger: boolean } = { ledger: true }): { id: string; line: string } {
   const id = randomUUID();
-  const line = JSON.stringify({ v: 1, id, feature: FEATURE, question: 'Defer the LOW finding?', person });
+  // ⚠ changes existing test: D79 (pen L1) — a gate-less override counts only for a ship pick answered `Override <gate>`,
+  //   so the record is one (it was a bare question)
+  const line = JSON.stringify({ v: 1, id, feature: FEATURE, question: 'Defer the LOW finding?', command: 'ship', choice: 'Override security', person });
   fs.appendFileSync(path.join(featureDir(), 'decisions.ndjson'), `${line}\n`);
   if (opts.ledger) openLedger(repo).appendRow(`decisions/${FEATURE}`, { id, feature: FEATURE, sha256: sha256(line) });
   return { id, line };
@@ -205,7 +211,7 @@ function ship(extra: { base?: string; requiredGates?: readonly string[]; remoteR
  * diff budget, 20 s in all (the hook gives assemble 30 s), and running past it gives diff_unavailable with its own hint:
  * run git gc and try again.
  */
-describe('assembleShip: the diff totals get the diff budget and a git gc hint on timeout (perf F2, gate round 12)', () => {
+describe('assembleShip: the diff totals get the diff budget and a git gc hint on timeout (perf F2, gate round 12)', { timeout: 180_000 }, () => {
   const isTotals = (a: readonly string[]): boolean => a.includes('--shortstat') || a.includes('--quiet');
 
   it('diff --quiet and diff --shortstat run with more than 10 s, within 20 s together', () => {
@@ -233,7 +239,7 @@ describe('assembleShip: the diff totals get the diff budget and a git gc hint on
   });
 });
 
-describe('assembleShip: diff', () => {
+describe('assembleShip: diff', { timeout: 180_000 }, () => {
   // Behaviour: the ship result names the merge-base and the size of the change.
   // Rule: AC-003.4, diff.base is the merge-base sha and the totals come from git, not the model.
   it('diff.base equals the merge-base, and the totals match git', () => {
@@ -299,7 +305,7 @@ describe('assembleShip: diff', () => {
     allPass();
     const diff = result(ship()).diff as Record<string, number>;
     expect(diff).toMatchObject({ files: 5000, insertions: 5000, deletions: 0 });
-  }, 60_000); // writing and committing 5k files outlives the 5 s default on a loaded machine
+  }, 180_000); // writing and committing 5k files outlives the 5 s default on a loaded machine
 
   // Behaviour: ship works on a machine with no GitHub CLI.
   // Rule: S9, the base comes from a local ref only, never gh or fetch.
@@ -319,7 +325,7 @@ describe('assembleShip: diff', () => {
   });
 });
 
-describe('assembleShip: gates and verdict', () => {
+describe('assembleShip: gates and verdict', { timeout: 180_000 }, () => {
   beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
 
   // Behaviour: the gates the person saw run are listed in the result, marked as model-reported.
@@ -394,7 +400,7 @@ describe('assembleShip: gates and verdict', () => {
   });
 });
 
-describe('assembleShip: overrides', () => {
+describe('assembleShip: overrides', { timeout: 180_000 }, () => {
   beforeEach(() => {
     commitFile('b.txt', 'x\n', 'add');
     allPass();
@@ -436,7 +442,7 @@ describe('assembleShip: overrides', () => {
   });
 });
 
-describe('assembleShip: summary and schema', () => {
+describe('assembleShip: summary and schema', { timeout: 180_000 }, () => {
   beforeEach(() => {
     commitFile('b.txt', 'x\n', 'add');
     allPass();
@@ -473,7 +479,7 @@ describe('assembleShip: summary and schema', () => {
  * this ship run started, or no row, leaves the timeline line as it is (`source: model`). Ship's rule still holds: a
  * gate with critical or high findings fails, whatever the agent's block said.
  */
-describe('assembleShip: captured agent verdicts (T19)', () => {
+describe('assembleShip: captured agent verdicts (T19)', { timeout: 180_000 }, () => {
   const REVIEW_GATES = ['code-review', 'security'];
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
 
@@ -642,7 +648,7 @@ describe('assembleShip: captured agent verdicts (T19)', () => {
  * whether every gate (agent), some (partial) or none (model) came from a captured agent verdict, and
  * `uncapturedGates` names the gates that did not, so the complete notice can name them (like D15's evidenceTrust).
  */
-describe('assembleShip: gate evidence label (D26)', () => {
+describe('assembleShip: gate evidence label (D26)', { timeout: 180_000 }, () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
 
@@ -688,7 +694,7 @@ describe('assembleShip: gate evidence label (D26)', () => {
   });
 });
 
-describe('assembleShip: security and pen-test gates fail on LOW or above (D27)', () => {
+describe('assembleShip: security and pen-test gates fail on LOW or above (D27)', { timeout: 180_000 }, () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
 
@@ -773,7 +779,7 @@ describe('assembleShip: security and pen-test gates fail on LOW or above (D27)',
  * being shipped (outside .oss), and a captured fail is erased only by a later pass taken after a NEWER timeline round line for that gate
  * (a real re-review), never by re-running the agent inside the same round.
  */
-describe('assembleShip: captured rows cannot be replayed or re-rolled (finding 4)', () => {
+describe('assembleShip: captured rows cannot be replayed or re-rolled (finding 4)', { timeout: 180_000 }, () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
 
@@ -865,7 +871,7 @@ describe('assembleShip: captured rows cannot be replayed or re-rolled (finding 4
  * from the same gate's reviewer on a DIFFERENT reviewed tree (that pass's tree being the shipped one). A pass on the
  * unchanged tree never erases it, whatever round lines exist (pen F3; code-review LOW: an edit dropped a fail).
  */
-describe('assembleShip: a captured fail blocks until re-review on a changed tree (D32)', () => {
+describe('assembleShip: a captured fail blocks until re-review on a changed tree (D32)', { timeout: 180_000 }, () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
 
@@ -932,7 +938,7 @@ describe('assembleShip: a captured fail blocks until re-review on a changed tree
  * the shipped code differs from the failed code, and the gate then falls back to its line, `source: model` (D26).
  * ⚠ changes existing test: D45 (fails only) — the cases below now follow the code change, never the no-tree pass.
  */
-describe('assembleShip: a pass with no tree clears nothing; the code change does (D36, D45)', () => {
+describe('assembleShip: a pass with no tree clears nothing; the code change does (D36, D45)', { timeout: 180_000 }, () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
 
@@ -1046,7 +1052,7 @@ describe('assembleShip: a pass with no tree clears nothing; the code change does
  * only a later counting pass on a different commit (its headSha differs from the fail's) clears it, and a fail with no
  * headSha either is never cleared by a pass.
  */
-describe('assembleShip: a fail with no tree clears only on a new commit (pen F2)', () => {
+describe('assembleShip: a fail with no tree clears only on a new commit (pen F2)', { timeout: 180_000 }, () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
 
@@ -1111,7 +1117,7 @@ describe('assembleShip: a fail with no tree clears only on a new commit (pen F2)
  * start of its last ready_to_merge ship result (the stored result bound to the ledger's last results row), or from the
  * first row when there is none. Timeline gate lines, the model's own, still count only from this run's start.
  */
-describe('assembleShip: an open fail survives a restarted run (pen F1)', () => {
+describe('assembleShip: an open fail survives a restarted run (pen F1)', { timeout: 180_000 }, () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
 
@@ -1218,7 +1224,7 @@ describe('assembleShip: an open fail survives a restarted run (pen F1)', () => {
  *   whether it stays open (`fail`, `source: agent`: the shipped code is the failed code) or is cleared (`pass`, `source:
  *   model`: the shipped tracked code outside .oss differs). Each test's expectation is marked below.
  */
-describe('assembleShip: a captured fail is bound to the reviewed tracked tree', () => {
+describe('assembleShip: a captured fail is bound to the reviewed tracked tree', { timeout: 180_000 }, () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   const FAIL_BLOCK = '```oss-verdict\n' + JSON.stringify({ verdict: 'fail', findings: { ...ZERO, medium: 1 } }) + '\n```';
   const OPEN = { verdict: 'fail', source: 'agent' };
@@ -1382,7 +1388,7 @@ describe('assembleShip: a captured fail is bound to the reviewed tracked tree', 
  * tree outside .oss at HEAD, differs from the code that failed: its trackedTree, else its headSha's tree. A fail with
  * neither stays open. An open fail blocks (`source: agent`); with none, the gate keeps its timeline line (D26).
  */
-describe('assembleShip: only a change to the shipped code clears a captured fail (D45)', () => {
+describe('assembleShip: only a change to the shipped code clears a captured fail (D45)', { timeout: 180_000 }, () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   const block = (verdict: 'pass' | 'fail'): string =>
     '```oss-verdict\n' + JSON.stringify({ verdict, findings: { ...ZERO, high: verdict === 'fail' ? 1 : 0 } }) + '\n```';
@@ -1570,17 +1576,21 @@ describe('assembleShip: only a change to the shipped code clears a captured fail
  * buffer, which read as "unknown" and kept the fail open. A large change still clears a fail, and a large deletion of
  * tracked code is still a change. The trees are built with git plumbing (one blob, an index from stdin), so it stays fast.
  */
-describe('assembleShip: a fail clears on a fix that touches about 20,000 paths (perf L2)', () => {
+describe('assembleShip: a fail clears on a fix that touches about 20,000 paths (perf L2)', { timeout: 180_000 }, () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   const N = 20_000;
   const LONG = 'a-directory-with-a-long-name/another-nested-level';
 
-  /** git with stdin, using a scratch index so neither the real index nor the working tree is touched. */
-  function gitIn(input: string, ...args: string[]): string {
+  /**
+   * git with stdin (a string, or an open file descriptor for multi-MB input), using a scratch index so neither the real
+   * index nor the working tree is touched.
+   */
+  function gitIn(input: string | number, ...args: string[]): string {
     const env: NodeJS.ProcessEnv = {};
     for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('GIT_')) env[k] = v;
     env.GIT_INDEX_FILE = path.join(valueDir, 'scratch.index');
-    return execFileSync('git', args, { cwd: repo, env, input, encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 }).trim();
+    const stdin = typeof input === 'number' ? { stdio: [input, 'pipe', 'pipe'] satisfies StdioOptions } : { input };
+    return execFileSync('git', args, { cwd: repo, env, ...stdin, encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 }).trim();
   }
 
   /** Moves the branch to a new commit on top of HEAD with `tree` (plumbing only: HEAD moves, nothing is checked out). */
@@ -1595,7 +1605,16 @@ describe('assembleShip: a fail clears on a fix that touches about 20,000 paths (
     const lines: string[] = [];
     for (let i = 0; i < N; i++) lines.push(`100644 ${blob}\t${LONG}/${prefix}-${String(i).padStart(6, '0')}.txt`);
     gitIn('', 'read-tree', 'HEAD');
-    gitIn(`${lines.join('\n')}\n`, 'update-index', '--index-info');
+    // D79 (round 15 residual): about 2.2 MB of index lines go to git from a file, never through execFileSync's stdin
+    // pipe, which deadlocked on the 32 MB hash-object case under load
+    const infoFile = path.join(valueDir, `index-info-${prefix}`);
+    fs.writeFileSync(infoFile, `${lines.join('\n')}\n`);
+    const fd = fs.openSync(infoFile, 'r');
+    try {
+      gitIn(fd, 'update-index', '--index-info');
+    } finally {
+      fs.closeSync(fd);
+    }
     commitTree(gitIn('', 'write-tree'));
   }
 
@@ -1616,7 +1635,7 @@ describe('assembleShip: a fail clears on a fix that touches about 20,000 paths (
     commitManyFiles('fix');
     allPass(1);
     expect(codeReview(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
-  }, 60_000);
+  }, 180_000);
 
   it('a fix that deletes 20,000 tracked files clears the fail', () => {
     commitFile('b.txt', 'feature\n', 'feature');
@@ -1626,7 +1645,7 @@ describe('assembleShip: a fail clears on a fix that touches about 20,000 paths (
     commitTree(before);
     allPass(1);
     expect(codeReview(ship())).toMatchObject({ verdict: 'pass', source: 'model' });
-  }, 60_000);
+  }, 180_000);
 });
 
 /**
@@ -1634,7 +1653,7 @@ describe('assembleShip: a fail clears on a fix that touches about 20,000 paths (
  * git gc (two weeks later, or --prune=now) deletes them. A fail whose trees are gone is compared through its headSha's
  * tree; when that commit is gone too the row is ignored and the gate keeps its model line (as D48 does).
  */
-describe('assembleShip: a fail whose reviewed trees git pruned (D55)', { timeout: 60_000 }, () => {
+describe('assembleShip: a fail whose reviewed trees git pruned (D55)', { timeout: 180_000 }, () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
 
@@ -1714,7 +1733,7 @@ describe('assembleShip: a fail whose reviewed trees git pruned (D55)', { timeout
  * inside a 4 s budget. Rows sharing one reviewed state are compared once per assemble, and a gate's rows are walked
  * newest first, stopping at the first open one (its findings are the ones shown). The result is unchanged.
  */
-describe('assembleShip: fail rows cost git processes per distinct reviewed state, not per row', { timeout: 60_000 }, () => {
+describe('assembleShip: fail rows cost git processes per distinct reviewed state, not per row', { timeout: 180_000 }, () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   const ROWS = 200;
   beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
@@ -1780,7 +1799,7 @@ describe('assembleShip: fail rows cost git processes per distinct reviewed state
  * same-name remote SHA contains the local tip and is ahead of it, the diff is taken from merge-base(that SHA, HEAD).
  * Blockers and verdicts do not change.
  */
-describe('assembleShip: a stale local base does not inflate the diff (pen L2)', () => {
+describe('assembleShip: a stale local base does not inflate the diff (pen L2)', { timeout: 180_000 }, () => {
   /** A teammate's commit pushed to origin/main; the feature is cut from it while local main stays behind. */
   function staleMain(): string {
     git('checkout', '-q', '--detach', 'main');
@@ -1820,7 +1839,7 @@ describe('assembleShip: a stale local base does not inflate the diff (pen L2)', 
 });
 
 /** Pen info 2 (gate round 6): with no local base branch, the refusal says how to create one (fixed text, no values). */
-describe('assembleShip: a missing local base branch names the fix', () => {
+describe('assembleShip: a missing local base branch names the fix', { timeout: 180_000 }, () => {
   it('diff_unavailable carries a hint to create the local branch from its remote', () => {
     commitFile('f.txt', 'f\n', 'feature');
     git('update-ref', 'refs/remotes/origin/trunk', 'main');
@@ -1838,7 +1857,7 @@ describe('assembleShip: a missing local base branch names the fix', () => {
  * only on the feature's own paths (its diff from the merge base, plus what the reviewed tree changed against the
  * review-time merge base), so a teammate's commits brought in by a rebase or a merge never clear an unfixed fail.
  */
-describe('assembleShip: only the feature\'s own paths clear a captured fail (D58)', () => {
+describe('assembleShip: only the feature\'s own paths clear a captured fail (D58)', { timeout: 180_000 }, () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   const BRANCH = `feat/${FEATURE}/ship`;
   beforeEach(() => {
@@ -1921,7 +1940,7 @@ describe('assembleShip: only the feature\'s own paths clear a captured fail (D58
  * Perf low F1 (gate round 7): D55's object checks ran before every comparison, so a cleared row cost about 3 git
  * processes. The comparison runs first, and a row is checked for pruned objects only when git could not compare it.
  */
-describe('assembleShip: a cleared fail row costs about one git process (perf F1)', { timeout: 120_000 }, () => {
+describe('assembleShip: a cleared fail row costs about one git process (perf F1)', { timeout: 180_000 }, () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   const ROWS = 200;
   beforeEach(() => commitFile('b.txt', 'x\n', 'add'));
@@ -1956,7 +1975,7 @@ describe('assembleShip: a cleared fail row costs about one git process (perf F1)
 });
 
 /** Code-review low (gate round 7): a fail row with only a headSha whose commit was pruned no longer blocks for good. */
-describe('assembleShip: a headSha-only fail whose commit was pruned is ignored (D55)', { timeout: 60_000 }, () => {
+describe('assembleShip: a headSha-only fail whose commit was pruned is ignored (D55)', { timeout: 180_000 }, () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
 
   it('the commit was amended away and pruned with gc --prune=now: ignored, the gate keeps its model line', () => {
@@ -1981,7 +2000,7 @@ describe('assembleShip: a headSha-only fail whose commit was pruned is ignored (
  * Pen low 1, security info 3, code-review info (gate round 7): with several remotes, the diff base was the first
  * same-name ref in name order. It is now the most advanced candidate that contains the local tip and not HEAD.
  */
-describe('assembleShip: the diff base is the most advanced same-name remote ref (pen L1)', () => {
+describe('assembleShip: the diff base is the most advanced same-name remote ref (pen L1)', { timeout: 180_000 }, () => {
   /** Upstream moved twice; the fork (origin) synced only the first move; the feature is cut from upstream's tip. */
   function forkAndUpstream(): { fork: string; upstream: string } {
     git('checkout', '-q', '--detach', 'main');
@@ -2011,7 +2030,7 @@ describe('assembleShip: the diff base is the most advanced same-name remote ref 
 });
 
 /** Code-review info (gate round 7): the create-the-branch hint is shown only for a name git accepts as a branch. */
-describe('assembleShip: no branch hint for a name that is not a valid branch name', () => {
+describe('assembleShip: no branch hint for a name that is not a valid branch name', { timeout: 180_000 }, () => {
   it('a base name check-ref-format refuses gives diff_unavailable with no hint', () => {
     commitFile('f.txt', 'f\n', 'feature');
     expect(ship({ base: 'bad..name' })).toEqual({ ok: false, error: 'diff_unavailable' });
@@ -2024,7 +2043,7 @@ describe('assembleShip: no branch hint for a name that is not a valid branch nam
  * refs/remotes/<r>/<base> that HEAD already contains and that fast-forwards the chosen base is the diff base, so the
  * teammate's files neither count in the diff nor clear an unfixed fail. It only narrows the feature's paths.
  */
-describe('assembleShip: a live remote base that HEAD already contains (D61)', () => {
+describe('assembleShip: a live remote base that HEAD already contains (D61)', { timeout: 180_000 }, () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   const BRANCH = `feat/${FEATURE}/ship`;
   beforeEach(() => commitFile('feature.txt', 'vuln\n', 'feature'));
@@ -2113,7 +2132,7 @@ describe('assembleShip: a live remote base that HEAD already contains (D61)', ()
  * only when the feature's own change to that path differs (patch-id of review base to reviewed tree, against merge
  * base to HEAD). Paths upstream did not touch keep the whole-file comparison (D58).
  */
-describe('assembleShip: a flagged file that upstream also changed (D62)', () => {
+describe('assembleShip: a flagged file that upstream also changed (D62)', { timeout: 180_000 }, () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   const BRANCH = `feat/${FEATURE}/ship`;
   const lines = (edit: Record<number, string> = {}): string =>
@@ -2182,7 +2201,7 @@ describe('assembleShip: a flagged file that upstream also changed (D62)', () => 
  * Code-review low 2 and pen info 1 (gate round 8): two same-name remotes that diverged (a fork-only commit), the feature
  * cut from upstream. The base is upstream's tip, chosen by topology, not commit time (ties and clock skew broke it).
  */
-describe('assembleShip: diverged same-name remotes (code-review low 2, pen info 1)', () => {
+describe('assembleShip: diverged same-name remotes (code-review low 2, pen info 1)', { timeout: 180_000 }, () => {
   function diverged(forkDate: string): { fork: string; upstream: string } {
     const env = { ...process.env, GIT_COMMITTER_DATE: '2026-11-19T10:00:00+0000', GIT_AUTHOR_DATE: '2026-11-19T10:00:00+0000' };
     const at = (date: string, name: string, msg: string): string => {
@@ -2212,10 +2231,62 @@ describe('assembleShip: diverged same-name remotes (code-review low 2, pen info 
 });
 
 /**
+ * D79 (perf/security, gate round 13): a git call in the diff-base helpers (containedIn, mostAdvanced, topologicalBest)
+ * that runs past its time limit must not fall back to an older base (a wider diff): the result is diff_unavailable with
+ * the timeout hint. The timeout is injected at the process boundary (spawns.timedOut).
+ */
+describe('assembleShip: a timed-out diff-base git call gives diff_unavailable, never an older base (D79)', { timeout: 180_000 }, () => {
+  function timeoutOutcome(o: AssembleOutcome): unknown {
+    return o.ok ? { ok: true, base: (o.result.diff as Record<string, unknown>).base } : { error: o.error, timeout: /^diff_timeout: /.test(o.detail ?? '') };
+  }
+  const TIMED_OUT = { error: 'diff_unavailable', timeout: true };
+
+  it('containedIn (rev-list against a snapshot SHA) timing out', () => {
+    git('checkout', '-q', '--detach', 'main');
+    commitFile('mate.txt', 'm\n', 'mate');
+    const mate = git('rev-parse', 'HEAD');
+    git('checkout', '-q', '-B', `feat/${FEATURE}/ship`, mate);
+    commitFile('f.txt', 'f\n', 'feature');
+    allPass(1);
+    spawns.timedOut = (a) => a.includes('rev-list') && a.some((x) => x === `^${mate}`);
+    expect(timeoutOutcome(ship({ remoteRefs: new Map([['refs/remotes/origin/main', mate]]) }))).toEqual(TIMED_OUT);
+  });
+
+  it('mostAdvanced (merge-base --independent) timing out', () => {
+    git('checkout', '-q', '--detach', 'main');
+    commitFile('a1.txt', 'a\n', 'a1');
+    const fork = git('rev-parse', 'HEAD');
+    commitFile('b1.txt', 'b\n', 'b1');
+    const upstream = git('rev-parse', 'HEAD');
+    git('checkout', '-q', '-B', `feat/${FEATURE}/ship`, upstream);
+    commitFile('f.txt', 'f\n', 'feature');
+    allPass(1);
+    spawns.timedOut = (a) => a.includes('--independent');
+    const refs = new Map([['refs/remotes/origin/main', fork], ['refs/remotes/upstream/main', upstream]]);
+    expect(timeoutOutcome(ship({ remoteRefs: refs }))).toEqual(TIMED_OUT);
+  });
+
+  it('topologicalBest (merge-base of a diverged candidate) timing out', () => {
+    git('checkout', '-q', '--detach', 'main');
+    commitFile('fork-only.txt', 'c\n', 'C');
+    const fork = git('rev-parse', 'HEAD');
+    git('checkout', '-q', '--detach', 'main');
+    commitFile('up1.txt', 'u\n', 'U1');
+    const upstream = git('rev-parse', 'HEAD');
+    git('checkout', '-q', '-B', `feat/${FEATURE}/ship`, upstream);
+    commitFile('f.txt', 'f\n', 'feature');
+    allPass(1);
+    spawns.timedOut = (a) => a.includes('merge-base') && a.includes('--end-of-options') && a.includes(fork);
+    const refs = new Map([['refs/remotes/origin/main', fork], ['refs/remotes/upstream/main', upstream]]);
+    expect(timeoutOutcome(ship({ remoteRefs: refs }))).toEqual(TIMED_OUT);
+  });
+});
+
+/**
  * Code-review info 1 (gate round 8): with the review headSha unknown (null, or pruned), the review-time base is not
  * known, so only the feature's own paths count; a teammate's file brought in by a rebase no longer clears the fail.
  */
-describe('assembleShip: a fail with no usable review headSha counts only the feature\'s paths (code-review info 1)', () => {
+describe('assembleShip: a fail with no usable review headSha counts only the feature\'s paths (code-review info 1)', { timeout: 180_000 }, () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
 
   for (const [label, headSha] of [['no headSha', undefined], ['a headSha git does not have', 'deadbeef'.repeat(5)]] as const) {
@@ -2242,7 +2313,7 @@ describe('assembleShip: a fail with no usable review headSha counts only the fea
  * each (a merge-base, then two path lists), 18.9 s at 200 rows on a big repo. A review head on the feature's own
  * history needs no merge-base, and "was this path tracked at review" is one batched object lookup.
  */
-describe('assembleShip: distinct review heads with a deleted flagged file stay cheap (perf low 1, gate round 8)', { timeout: 120_000 }, () => {
+describe('assembleShip: distinct review heads with a deleted flagged file stay cheap (perf low 1, gate round 8)', { timeout: 180_000 }, () => {
   const ZERO = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   const ROWS = 200;
 
@@ -2320,7 +2391,7 @@ const olderGit = ((): { developerDir: string | undefined } | null => {
   }
   return older(undefined) ? { developerDir: undefined } : null;
 })();
-describe('assembleShip on an older git (Apple Command Line Tools git, code-review high, gate round 9)', () => {
+describe('assembleShip on an older git (Apple Command Line Tools git, code-review high, gate round 9)', { timeout: 180_000 }, () => {
   function withOlderGit<T>(fn: () => T): T {
     if (olderGit === null) throw new Error(OLDER_GIT_MISSING);
     const saved = process.env.DEVELOPER_DIR;
@@ -2374,7 +2445,7 @@ describe('assembleShip on an older git (Apple Command Line Tools git, code-revie
 });
 
 /** Code-review low (gate round 9): a submodule (gitlink, mode 160000) is a present entry, not a lookup error. */
-describe('assembleShip: submodule entries (code-review low, gate round 9)', () => {
+describe('assembleShip: submodule entries (code-review low, gate round 9)', { timeout: 180_000 }, () => {
   const gitlink = (sha: string): void => {
     git('update-index', '--add', '--cacheinfo', `160000,${sha},sub`);
   };
@@ -2414,7 +2485,7 @@ describe('assembleShip: submodule entries (code-review low, gate round 9)', () =
  * cleared. The live base is now merge-base(<remote>/<base>, HEAD) for each same-name remote ref that contains the chosen
  * base, the most advanced one; it still only narrows the feature's paths.
  */
-describe('assembleShip: the live base is the merge base of each same-name remote ref with HEAD (D64)', () => {
+describe('assembleShip: the live base is the merge base of each same-name remote ref with HEAD (D64)', { timeout: 180_000 }, () => {
   beforeEach(() => commitFile('feature.txt', 'vuln\n', 'feature'));
 
   /** A teammate commit reaches `ref` through a fetch, on top of `on`; local main stays where it was. */
@@ -2477,7 +2548,7 @@ describe('assembleShip: the live base is the merge base of each same-name remote
  */
 // ⚠ changes existing test: D67 — renamed (was "a shared flagged file is compared by the feature's added lines (D65)"):
 // D65's compare is removed, and every case here now stays open because upstream changed the flagged file.
-describe('assembleShip: a shared flagged file upstream also changed stays open (D65 cases under D67)', () => {
+describe('assembleShip: a shared flagged file upstream also changed stays open (D65 cases under D67)', { timeout: 180_000 }, () => {
   const numbered = (n: number, edit: Record<number, string> = {}, eol = '\n'): string =>
     Array.from({ length: n }, (_, i) => `${edit[i + 1] ?? `line ${i + 1}`}${eol}`).join('');
 
@@ -2557,7 +2628,7 @@ describe('assembleShip: a shared flagged file upstream also changed stays open (
  * 3 states on a 100,000-file repo). One diff per side per row now covers every shared path, and the merge-base-to-HEAD
  * side is read once per assemble.
  */
-describe('assembleShip: shared flagged paths are diffed once per side (perf medium, gate round 9)', { timeout: 120_000 }, () => {
+describe('assembleShip: shared flagged paths are diffed once per side (perf medium, gate round 9)', { timeout: 180_000 }, () => {
   const PATHS = 200;
   const STATES = 3;
   const body = (first: string, last: string): string => `${first}\n${Array.from({ length: 18 }, (_, k) => `line ${k + 2}\n`).join('')}${last}\n`;
@@ -2607,7 +2678,7 @@ describe('assembleShip: shared flagged paths are diffed once per side (perf medi
  * Perf low (gate round 9): the probe lookup of the feature's own paths ran once per row; it is cached per
  * `<review base>:<path>`, so rows on a few off-history review heads cost about one git process each.
  */
-describe('assembleShip: probe lookups are cached per review base (perf low, gate round 9)', { timeout: 120_000 }, () => {
+describe('assembleShip: probe lookups are cached per review base (perf low, gate round 9)', { timeout: 180_000 }, () => {
   const ROWS = 60;
   const HEADS = 3;
 
@@ -2651,7 +2722,7 @@ const NOT_RE_REVIEWED_TEXT = (gate: string): string =>
  * mode, deletion, or a rename to or from it), the fail stays open whatever the path holds now. It clears through a change
  * to another of the feature's own paths that upstream did not touch (D49). Paths upstream did not touch keep D58.
  */
-describe('assembleShip: a flagged file upstream changed since review stays open (D67)', () => {
+describe('assembleShip: a flagged file upstream changed since review stays open (D67)', { timeout: 180_000 }, () => {
   const BASE = ['def handler(u):', '    check_auth(u)', '    validate(u)', '    run(u)', '', '', '', '', '', '', 'X = 1'];
   const MATE = BASE.map((l) => (l === 'X = 1' ? 'X = 2' : l));
   const text = (ls: string[]): string => `${ls.join('\n')}\n`;
@@ -2819,7 +2890,7 @@ describe('assembleShip: a flagged file upstream changed since review stays open 
  * or more such rows ran past Stop's check deadline. The review bases come from one rev-list and the tree diffs from one
  * batched diff-tree process.
  */
-describe('assembleShip: fail rows on distinct off-history review heads stay cheap (perf L3, gate round 10)', { timeout: 120_000 }, () => {
+describe('assembleShip: fail rows on distinct off-history review heads stay cheap (perf L3, gate round 10)', { timeout: 180_000 }, () => {
   const ROWS = 200;
 
   function offHistoryRows(): void {
@@ -2853,7 +2924,7 @@ describe('assembleShip: fail rows on distinct off-history review heads stay chea
 });
 
 /** Code-review L3 and perf I1 (gate round 10): many same-name remote refs at one commit cost one merge-base, not one each. */
-describe('assembleShip: the live base dedupes same-name remote refs by commit (code-review L3, perf I1)', () => {
+describe('assembleShip: the live base dedupes same-name remote refs by commit (code-review L3, perf I1)', { timeout: 180_000 }, () => {
   it('50 remotes whose main all point at the rebased-onto commit: one merge-base, the diff is the feature\'s', () => {
     commitFile('feature.txt', 'vuln\n', 'feature');
     git('checkout', '-q', '--detach', 'main');
@@ -2879,8 +2950,10 @@ describe('assembleShip: the live base dedupes same-name remote refs by commit (c
  * Perf L1/L2 and code-review L1 (gate round 10) were costs of D65's batched -U0 diff (20,000 shared paths, 32 MB binaries,
  * a CR or U+2028 split of its text). D67 removed that diff; this keeps the shape fast and the fail open.
  */
-describe('assembleShip: a large binary and 20,000 shared paths changed on both sides (perf L1/L2, D67)', { timeout: 120_000 }, () => {
+describe('assembleShip: a large binary and 20,000 shared paths changed on both sides (perf L1/L2, D67)', { timeout: 180_000 }, () => {
   const PATHS = 20_000;
+  /** D79: the git processes one assemble starts here (12 measured on git 2.54); a per-path slow path shows as many more. */
+  const GIT_CALLS_MAX = 15;
 
   /** A commit on `parent` whose tree is the parent's with every shared path, big.bin and `extra` set to `tag` (plumbing only). */
   function commitAll(parent: string, tag: string, extra: string[] = []): string {
@@ -2893,11 +2966,24 @@ describe('assembleShip: a large binary and 20,000 shared paths changed on both s
     const big = Buffer.alloc(32 * 1024 * 1024, 0);
     big.write(tag, 0);
     big.write(tag, big.length - 64);
-    const bigBlob = g(['hash-object', '-w', '--stdin'], big);
+    // D79 (item 3): from a file, never 32 MB through execFileSync's stdin, which hung (git blocked reading stdin, node's
+    // sync runner never finishing the write) for 19 min under load on git 2.54 and again on CLT 2.50.1.
+    const bigFile = path.join(valueDir, `big-${tag}.bin`);
+    fs.writeFileSync(bigFile, big);
+    const bigBlob = g(['hash-object', '-w', '--', bigFile]);
+    fs.rmSync(bigFile);
     g(['read-tree', parent]);
     const info = Array.from({ length: PATHS }, (_, i) => `100644 ${blob}\tsrc/d${i % 100}/f${i}.ts`);
     for (const p of ['big.bin', ...extra]) info.push(`100644 ${p === 'big.bin' ? bigBlob : blob}\t${p}`);
-    g(['update-index', '--add', '--index-info'], `${info.join('\n')}\n`);
+    // D79 (round 15 residual): about 1.3 MB of index lines go to git from a file, never through execFileSync's stdin pipe
+    const infoFile = path.join(valueDir, `index-info-${tag}`);
+    fs.writeFileSync(infoFile, `${info.join('\n')}\n`);
+    const fd = fs.openSync(infoFile, 'r');
+    try {
+      execFileSync('git', ['update-index', '--add', '--index-info'], { cwd: repo, env, stdio: [fd, 'pipe', 'pipe'] });
+    } finally {
+      fs.closeSync(fd);
+    }
     return g(['commit-tree', g(['write-tree']), '-p', parent, '-m', tag]);
   }
 
@@ -2911,14 +2997,15 @@ describe('assembleShip: a large binary and 20,000 shared paths changed on both s
     // the rebase's resolution: upstream's commit with the feature's content on every shared path
     git('update-ref', `refs/heads/${BRANCH9}`, commitAll(mate, 'feature'));
     allPass(1);
-    const t0 = Date.now();
+    // ⚠ changes existing test: D79 (security L-2, perf low) — a git-call count, not a wall-clock bound (flaky under load)
+    spawns.n = 0;
     expect(security9(ship())).toMatchObject({ verdict: 'fail', source: 'agent' });
-    expect(Date.now() - t0).toBeLessThan(15_000);
+    expect(spawns.n).toBeLessThanOrEqual(GIT_CALLS_MAX);
   });
 });
 
 /** Code-review L4 (gate round 10): a real fix to quoted-name paths upstream did not touch clears the fail. */
-describe('assembleShip: a fix to paths with special names clears the fail (code-review L4, gate round 10)', () => {
+describe('assembleShip: a fix to paths with special names clears the fail (code-review L4, gate round 10)', { timeout: 180_000 }, () => {
   const NAMES = ['nl\nname.txt', 'q"uote.txt', 'tab\tname.txt', 'sp ace.txt', 'back\\slash.txt', 'ünï.txt'];
 
   function failOnNames(): void {
@@ -2946,7 +3033,7 @@ describe('assembleShip: a fix to paths with special names clears the fail (code-
 });
 
 /** Info (gate round 10): config cannot hide a submodule fix from the comparison (the diffs pin their options). */
-describe('assembleShip: diff options are pinned against repo config (info, gate round 10)', () => {
+describe('assembleShip: diff options are pinned against repo config (info, gate round 10)', { timeout: 180_000 }, () => {
   it('with diff.ignoreSubmodules=all, a flagged submodule bump fixed by another bump clears the fail', () => {
     commitFile('keep.txt', 'k\n', 'keep');
     git('update-index', '--add', '--cacheinfo', `160000,${'1'.repeat(40)},sub`);
@@ -2961,7 +3048,7 @@ describe('assembleShip: diff options are pinned against repo config (info, gate 
 });
 
 /** Info (gate round 10): paths go on argv in chunks bounded by their UTF-8 bytes, not their UTF-16 length. */
-describe('argvChunks', () => {
+describe('argvChunks', { timeout: 180_000 }, () => {
   it('1,000 paths of 100 three-byte characters (300 KB) take three chunks of at most 128 KB', () => {
     const paths = Array.from({ length: 1000 }, (_, i) => `${'日'.repeat(99)}${i % 10}`);
     const chunks = argvChunks(paths);
@@ -2994,7 +3081,7 @@ function overridePick(gate: string, extra: Record<string, unknown> = {}): string
   return id;
 }
 
-describe('assembleShip: a recorded override naming the gate clears a D67 fail (D69)', () => {
+describe('assembleShip: a recorded override naming the gate clears a D67 fail (D69)', { timeout: 180_000 }, () => {
   const BASE = ['def handler(u):', '    check_auth(u)', '    run(u)', '', '', '', '', '', 'X = 1'];
   const text = (ls: string[]): string => `${ls.join('\n')}\n`;
 
@@ -3139,9 +3226,26 @@ describe('assembleShip: a recorded override naming the gate clears a D67 fail (D
       expect(refusedGate(ship())).toEqual(REFUSED);
     });
 
-    it('an entry without a gate keeps today\'s behaviour: listed, clears nothing', () => {
+    // ⚠ changes existing test: D79 (pen L1, gate round 13) — a gate-less entry whose decision is not an `Override <gate>`
+    //   ship pick is refused (override_unrecorded, detail decisionId), no longer listed
+    it('an entry without a gate whose decision is a "Fix it" pick is refused (pen L1)', () => {
       d67Fail();
       const id = overridePick('security', { choice: 'Fix it', answerText: 'Fix it' });
+      override({ finding: 'x', decisionId: id });
+      const o = ship();
+      expect(o.ok ? null : { error: o.error, detail: o.detail }).toEqual({ error: 'override_unrecorded', detail: 'decisionId' });
+    });
+
+    it('an entry without a gate whose decision is a non-ship `Override` answer is refused (pen L1)', () => {
+      d67Fail();
+      override({ finding: 'x', decisionId: overridePick('security', { command: 'build' }) });
+      const o = ship();
+      expect(o.ok ? null : { error: o.error, detail: o.detail }).toEqual({ error: 'override_unrecorded', detail: 'decisionId' });
+    });
+
+    it('an entry without a gate whose decision is an `Override <gate>` ship pick is listed and clears nothing', () => {
+      d67Fail();
+      const id = overridePick('security');
       override({ finding: 'x', decisionId: id });
       const r = result(ship());
       expect(r.blockers).toEqual([UPSTREAM_CHANGED('security')]);
@@ -3189,7 +3293,7 @@ describe('assembleShip: a recorded override naming the gate clears a D67 fail (D
  * file (CHANGELOG.md), not the flagged vuln.py. Rows don't record which file was flagged, so the blocker says upstream
  * changed a file this feature changes, never "the flagged file". A D70-bound override still clears it.
  */
-describe('assembleShip: the D67 blocker names a file this feature changes, not the flagged file (D71)', () => {
+describe('assembleShip: the D67 blocker names a file this feature changes, not the flagged file (D71)', { timeout: 180_000 }, () => {
   it('upstream edits only the shared CHANGELOG: the new text, and an `Override security` pick clears it', () => {
     git('checkout', '-q', 'main');
     commitFile('CHANGELOG.md', 'a\n\n\n\n\n\nz\n', 'cl');
@@ -3213,7 +3317,7 @@ describe('assembleShip: the D67 blocker names a file this feature changes, not t
  * Gate round 11 perf (D72): perf L1, after the first batched tree diff overflows its buffer no later batch tries one;
  * perf L2, batches are filled with distinct review states, not rows; perf I2, one history walk finds every review base.
  */
-describe('assembleShip: batches after an overflow, by review state, one history walk (perf L1, L2, I2, gate round 11)', { timeout: 120_000 }, () => {
+describe('assembleShip: batches after an overflow, by review state, one history walk (perf L1, L2, I2, gate round 11)', { timeout: 180_000 }, () => {
   /** `states` distinct off-history review heads of the feature, each failed by every gate (`gates` rows per state). */
   function offHistoryStates(states: number, gates: readonly string[]): void {
     const old = git('rev-parse', 'main');
@@ -3265,7 +3369,7 @@ describe('assembleShip: batches after an overflow, by review state, one history 
  */
 describe('assembleShip: one pruned review head does not undo the history walk (perf F1, gate round 12)', { timeout: 180_000 }, () => {
   /** 100 off-history review heads x 3 gates (300 fail rows), all kept by a ref except `prune` heads, which gc removes. */
-  function offHistoryPruned(prune: number): void {
+  function offHistoryPruned(prune: number): string[] {
     const old = git('rev-parse', 'main');
     commitFile('flagged.txt', 'vuln\n', 'feature');
     const tree = git('rev-parse', 'HEAD^{tree}');
@@ -3286,6 +3390,7 @@ describe('assembleShip: one pruned review head does not undo the history walk (p
     for (const h of heads.slice(0, prune)) expect(() => git('cat-file', '-e', h)).toThrow();
     commitFile('flagged.txt', 'safe\n', 'fix');
     allPass(1);
+    return heads.slice(0, prune);
   }
   const isWalk = (a: readonly string[]): boolean => a.includes('rev-list') && a.includes('--boundary');
 
@@ -3319,6 +3424,18 @@ describe('assembleShip: one pruned review head does not undo the history walk (p
     expect(spawns.args.filter(isWalk).length).toBe(1);
     expect(spawns.n).toBeLessThanOrEqual(nonePruned + 6);
   });
+
+  // D79 (gate round 13, item 5): a head the walk's cat-file reported missing goes straight to the D55 path: no per-row
+  // merge-base and no second cat-file -e for it.
+  it('a head cat-file reported missing gets no per-row merge-base or cat-file -e', () => {
+    const [pruned] = offHistoryPruned(1);
+    spawns.n = 0;
+    spawns.args = [];
+    expect(result(ship()).verdict).toBe('ready_to_merge');
+    const naming = spawns.args.filter((a) => a.includes(pruned as string));
+    expect(naming.filter((a) => a.includes('merge-base')).length).toBe(0);
+    expect(naming.filter((a) => a.includes('cat-file') && a.includes('-e')).length).toBe(0);
+  });
 });
 
 /**
@@ -3328,7 +3445,7 @@ describe('assembleShip: one pruned review head does not undo the history walk (p
  * (b) D67 counts an upstream change to a path the feature changes now (`own.has(p) ||`), even one the reviewed tree
  *     did not touch.
  */
-describe('assembleShip: a review head with several boundary commits, and a fix only in an upstream-changed path (code-review L1, gate round 11)', () => {
+describe('assembleShip: a review head with several boundary commits, and a fix only in an upstream-changed path (code-review L1, gate round 11)', { timeout: 180_000 }, () => {
   it('(a) a review head that merged main twice, fixed after review in a path upstream did not touch since: the fail clears', () => {
     commitFile('flagged.txt', 'vuln\n', 'feature');
     mateOnMain9('u1.txt', 'one\n');
