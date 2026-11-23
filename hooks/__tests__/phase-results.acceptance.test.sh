@@ -292,18 +292,23 @@ squash_to_main() {
     (cd "$T/repo" && b=$(git branch --show-current) && git checkout -q main && git merge -q --squash "$b" && git commit -q -m squash \
         && git push -q origin main && git fetch -q origin)
 }
+# step10_cleanup: served Step 10 removes the merge step's run folder files before merged/complete (D83, code review M1).
+step10_cleanup() { rm -f "$T"/home/.oss/run/*/branch.txt "$T"/home/.oss/run/*/head.txt "$T"/home/.oss/run/*/tested.txt; }
 
+# ⚠ changes existing test: D83 (code review M1) — the served Step 10 cleanup runs before merged/complete, so complete
+#   must pass from the merge gate's ledger row, not the run folder.
 merge_sandbox
 rec_out=$(phase_result check ship --record-ready 2>&1); rec_rc=$?
 archive_commit
 mt_out=$(merge_test); mt_rc=$?
 squash_to_main
+step10_cleanup
 m_out=$(notify ship merged '{}' 2>&1); m_rc=$?
 out=$(notify ship complete '{}' 2>&1); rc=$?
 if [[ $rec_rc -eq 0 && "$rec_out" == *READY_RECORDED* && $mt_rc -eq 0 && "$mt_out" == *READY_TO_MERGE* && $m_rc -eq 0 && $rc -eq 0 \
     && "$out" == *---CHAIN_COMMANDS---* ]] && chain_fired; then
-    pass "D78: record ready, archive commit, merge gate, squash onto main, merged, complete: complete passes and prints the chain"
-else fail "D78: record ready, archive commit, merge gate, squash onto main, merged, complete: complete passes and prints the chain" "record rc=$rec_rc ($rec_out) merge-test rc=$mt_rc ($mt_out) merged rc=$m_rc complete rc=$rc ($out)"; fi
+    pass "D78/D83: record ready, archive commit, merge gate, squash onto main, Step 10 cleanup, merged, complete: complete passes and prints the chain"
+else fail "D78/D83: record ready, archive commit, merge gate, squash onto main, Step 10 cleanup, merged, complete: complete passes and prints the chain" "record rc=$rec_rc ($rec_out) merge-test rc=$mt_rc ($mt_out) merged rc=$m_rc complete rc=$rc ($out)"; fi
 cleanup
 
 # 13b. D78: a blocked ship result records no row, and the merge gate refuses the head.
@@ -318,7 +323,9 @@ rec_out=$(phase_result check ship --record-ready 2>&1); rec_rc=$?
 rows=$(cat "$T"/home/.oss/ledger/*/merge/ready 2>/dev/null)
 archive_commit
 mt_out=$(merge_test); mt_rc=$?
-if [[ "$a_out" == *'"verdict":"blocked"'* && $rec_rc -ne 0 && -z "$rows" && $mt_rc -ne 0 && "$mt_out" == *STOP:* && "$mt_out" != *READY_TO_MERGE* ]]; then
+# ⚠ changes existing test: D83 (security low) — a refused --record-ready now appends a revoking row (no headSha), so
+#   "no row" becomes "no row naming a head".
+if [[ "$a_out" == *'"verdict":"blocked"'* && $rec_rc -ne 0 && "$rows" != *headSha* && "$rows" == *revoked* && $mt_rc -ne 0 && "$mt_out" == *STOP:* && "$mt_out" != *READY_TO_MERGE* ]]; then
     pass "D78: a blocked ship result writes no ready row and the merge gate refuses"
 else fail "D78: a blocked ship result writes no ready row and the merge gate refuses" "assemble=$a_out record rc=$rec_rc ($rec_out) rows=$rows merge-test rc=$mt_rc ($mt_out)"; fi
 cleanup
@@ -359,6 +366,100 @@ out=$(notify ship complete '{}' 2>&1); rc=$?
 if [[ $rc -ne 0 ]] && ! chain_fired; then
     pass "D78: complete after merged refuses when no ready row was recorded"
 else fail "D78: complete after merged refuses when no ready row was recorded" "complete rc=$rc ($out)"; fi
+cleanup
+
+# 13f. D83 (pen M1, code review L1): main is checked out in another worktree, so served item 6 (fetch main into main,
+#     switch to it) fails and the session stays on the feature branch. complete still passes there: the ready row covers
+#     the branch tip (only .oss/ paths after it) and the tested main is a strict ancestor of origin/main, which the
+#     served merge step's fetch moved.
+gh_squash_origin() { # GitHub's squash merge on origin only; then the merge step's fetch updates origin/main
+    (w="$T/ghw" && git clone -q "$T/origin.git" "$w" && cd "$w" && git config user.email g@example.invalid && git config user.name g \
+        && git fetch -q origin "feat/$FEATURE/build" && git merge -q --squash FETCH_HEAD && git commit -q -m squash && git push -q origin main) \
+        && (cd "$T/repo" && git fetch -q origin)
+}
+merge_sandbox
+(cd "$T/repo" && git worktree add -q "$T/mainwt" main)
+phase_result check ship --record-ready >/dev/null 2>&1
+archive_commit
+mt_out=$(merge_test); mt_rc=$?
+gh_squash_origin
+i6=$(cd "$T/repo" && { git fetch -q origin refs/heads/main:refs/heads/main && git switch -q main; } 2>&1); i6_rc=$?
+step10_cleanup
+notify ship merged '{}' >/dev/null 2>&1
+out=$(notify ship complete '{}' 2>&1); rc=$?
+br=$(cd "$T/repo" && git branch --show-current)
+if [[ $mt_rc -eq 0 && $i6_rc -ne 0 && "$br" == "feat/$FEATURE/build" && $rc -eq 0 && "$out" == *---CHAIN_COMMANDS---* ]] && chain_fired; then
+    pass "D83 (pen M1): main checked out in another worktree, served item 6 fails, complete on the feature branch passes"
+else fail "D83 (pen M1): main checked out in another worktree, served item 6 fails, complete on the feature branch passes" "merge-test rc=$mt_rc item6 rc=$i6_rc branch=$br complete rc=$rc ($out)"; fi
+cleanup
+
+late_fail() { # a security fail captured at the same head after the ready row (round 2)
+    for g in code-review performance security; do
+        vd=$(value_dir); printf '2\n' > "$vd/round.txt"; printf '%s\n' "$g" > "$vd/gate.txt"; : > "$vd/fixed.txt"; printf 'full\n' > "$vd/mode.txt"
+        if [[ $g == security ]]; then printf 'fail\n' > "$vd/verdict.txt"; printf 'high=1\n' > "$vd/findings.txt"; else printf 'pass\n' > "$vd/verdict.txt"; : > "$vd/findings.txt"; fi
+        envrun "$SH" "$ROOT/hooks/oss-value.sh" timeline gate >/dev/null 2>&1
+    done
+}
+# 13g. D83 (security finding 1, pen L1): ready, then a late fail captured at the same head and a blocked assemble (a new
+#     bound result): the ready row no longer names the bound result, so the merge gate STOPs.
+merge_sandbox
+rec1=$(phase_result check ship --record-ready 2>&1); rec1_rc=$?
+late_fail
+a_out=$(phase_result assemble ship 2>&1)
+rec2=$(phase_result check ship --record-ready 2>&1); rec2_rc=$?
+archive_commit
+mt_out=$(merge_test); mt_rc=$?
+if [[ $rec1_rc -eq 0 && "$a_out" == *'"verdict":"blocked"'* && $rec2_rc -ne 0 && $mt_rc -ne 0 && "$mt_out" == *STOP:* && "$mt_out" != *READY_TO_MERGE* ]]; then
+    pass "D83 (security low): ready, then a late fail and a blocked assemble at the same head: the merge gate refuses"
+else fail "D83 (security low): ready, then a late fail and a blocked assemble at the same head: the merge gate refuses" "record1 rc=$rec1_rc assemble=$a_out record2 rc=$rec2_rc merge-test rc=$mt_rc ($mt_out)"; fi
+cleanup
+# 13h. D83: ready, then a late fail captured and Step 8's record re-run without a new assemble (no new bound result):
+#     the refused --record-ready appends a revoking row, so the merge gate STOPs.
+merge_sandbox
+phase_result check ship --record-ready >/dev/null 2>&1
+late_fail
+rec2=$(phase_result check ship --record-ready 2>&1); rec2_rc=$?
+archive_commit
+mt_out=$(merge_test); mt_rc=$?
+if [[ $rec2_rc -ne 0 && $mt_rc -ne 0 && "$mt_out" == *STOP:* && "$mt_out" != *READY_TO_MERGE* ]]; then
+    pass "D83 (security low): a refused --record-ready revokes the earlier ready row: the merge gate refuses"
+else fail "D83 (security low): a refused --record-ready revokes the earlier ready row: the merge gate refuses" "record2 rc=$rec2_rc ($rec2) merge-test rc=$mt_rc ($mt_out)"; fi
+cleanup
+
+# 13i. D84 (user pick 2026-11-23, "Find archived feature"; code review M2): a code fix committed after the archive
+#     commit. The /oss:ship re-run (ship start, assemble, record) finds the feature in the single completed folder this
+#     branch added and writes its result there; the merge gate passes, the PR merges and complete passes. No active
+#     folder comes back.
+merge_sandbox
+phase_result check ship --record-ready >/dev/null 2>&1
+archive_commit
+(cd "$T/repo" && echo fix > fix.txt && git add fix.txt && git commit -q -m 'fix after the archive commit')
+s_out=$(notify ship start '{}' 2>&1); s_rc=$?
+a_out=$(phase_result assemble ship 2>&1); a_rc=$?
+sleep 1
+rec_out=$(phase_result check ship --record-ready 2>&1); rec_rc=$?
+(cd "$T/repo" && git add -A .oss && git commit -q -m 'docs: ship result' && git push -q origin "HEAD:refs/heads/feat/$FEATURE/build") >/dev/null 2>&1
+mt_out=$(merge_test); mt_rc=$?
+squash_to_main
+step10_cleanup
+notify ship merged '{}' >/dev/null 2>&1
+out=$(notify ship complete '{}' 2>&1); rc=$?
+res=$(ls "$T/repo/.oss/dev/completed/$FEATURE-2026-11-23/results/" 2>&1 | tr '\n' ' '); act=$(ls "$T/repo/.oss/dev/active" 2>&1 | tr '\n' ' ')
+if [[ $s_rc -eq 0 && $a_rc -eq 0 && "$a_out" == *'"verdict":"ready_to_merge"'* && $rec_rc -eq 0 && $mt_rc -eq 0 && "$mt_out" == *READY_TO_MERGE* \
+    && $rc -eq 0 && "$out" == *---CHAIN_COMMANDS---* && -z "$act" ]] && chain_fired; then
+    pass "D84: a code fix after the archive commit: ship re-run finds the archived feature, records ready, merges and completes"
+else fail "D84: a code fix after the archive commit: ship re-run finds the archived feature, records ready, merges and completes" "start rc=$s_rc ($s_out) assemble rc=$a_rc ($a_out) record rc=$rec_rc ($rec_out) merge-test rc=$mt_rc ($mt_out) complete rc=$rc ($out) results=[$res] active=[$act]"; fi
+cleanup
+# 13j. D84: when this branch added two completed folders, the re-run refuses no_feature (it never guesses).
+merge_sandbox
+archive_commit
+(cd "$T/repo" && cp -R ".oss/dev/completed/$FEATURE-2026-11-23" ".oss/dev/completed/other-2026-11-23" && git add -A .oss && git commit -q -m 'docs: second archive' \
+    && echo fix > fix.txt && git add fix.txt && git commit -q -m fix)
+notify ship start '{}' >/dev/null 2>&1
+a_out=$(phase_result assemble ship 2>&1); a_rc=$?
+if [[ $a_rc -ne 0 && "$a_out" == *no_feature* ]]; then
+    pass "D84: two completed folders added by the branch: assemble refuses no_feature"
+else fail "D84: two completed folders added by the branch: assemble refuses no_feature" "assemble rc=$a_rc ($a_out)"; fi
 cleanup
 
 echo; echo "Ran $RUN, failed $FAILED"

@@ -21,6 +21,8 @@ export interface AssembleContext {
    * null: a result from before D42, checked by the old rule (every event since startedAt).
    */
   evidenceCutoff?: string | null;
+  /** D84: the feature folder (absolute) when it is not `.oss/dev/active/<feature>`: the archived one, for ship. */
+  featureDir?: string;
 }
 
 export type AssembleOutcome =

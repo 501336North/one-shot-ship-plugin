@@ -236,4 +236,17 @@ Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watche
 - **Hardening:** assemble-ship passed 208/208 in about 240 s, back to back and two copies at once. The large-binary test, which had hung on a stdin deadlock, passed 3/3 on git 2.54 and on CLT 2.50.1.
 - **Known (D82):** on the installed 2.2.4 plugin, the API "no row" case fails 3/3 and every other case passes.
 
-## Last Updated: 2026-11-23 14:40 +07 by /oss:ship (round 15 fixes)
+### Ship round 16 (D83-D84), 2026-11-23
+- **Full check on AC power:**
+  - build 0, tsc 0;
+  - 200 files / 11,087 tests passed; served-commands 3/3;
+  - bash 114/114 behind the tripwire (0 trip lines);
+  - API real-hook tests with OSS_REAL_PLUGIN_DIR set to the R-257 plugin: 5 files / 628 passed (0 trip lines).
+- **New tests:**
+  - merge-ready.test.ts (new, 15 unit tests): the mergedReady rules, the shared 10 s deadline, a feature-branch finish with main checked out elsewhere, and a tested main that is not an ancestor;
+  - phase-results.acceptance 13f-13j: complete after Step 10 cleanup, complete with main in another worktree, a re-run after the archive commit (D84), a stale ready row revoked by a later refusal, and a result hash mismatch;
+  - oss-merge-test.test.sh (138/138): the sha256 match, the merge/tested row, and pinned `--no-show-signature --diff-merges=separate` under hostile log settings;
+  - assemble-ship and ship-wrapper-chain: archived-folder resolution and Step 8 refusal revokes.
+- **Changed tests (marked ⚠):** the API `seedReadyRow` helper also seeds the bound `results/<feature>/ship` row, because the hook now matches its hash.
+
+## Last Updated: 2026-11-23 16:46 +07 by /oss:ship (round 16 fixes)

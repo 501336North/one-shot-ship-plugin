@@ -28,16 +28,17 @@ import { assembleIdeate } from '../phase-results/assemble-ideate.js';
 import { assemblePlan } from '../phase-results/assemble-plan.js';
 import {
   assembleShip,
+  DIFF_TIMEOUT,
   isLocalBranch,
   shipBaseCheck,
 } from '../phase-results/assemble-ship.js';
 import { LedgerError, ledgerKey, openLedger, parseRunRow, type Ledger } from '../phase-results/ledger.js';
 import { loadPhaseSchema, PHASES, type Phase } from '../phase-results/schemas.js';
 import { shipArchivable } from '../phase-results/archivable.js';
-import { activeFeatures, resolveFeature } from '../phase-results/feature.js';
+import { activeFeatures, archivedFeature, resolveFeature } from '../phase-results/feature.js';
 import { gitBin } from '../phase-results/git-bin.js';
 import { gitEnv, gitOut } from '../phase-results/git.js';
-import { clearUnverifiedMarker, readBack, readResult, readValueFile, resolveRepo, writeResult } from '../phase-results/store.js';
+import { clearUnverifiedMarker, readBack, readResult, readValueFile, resolveRepo, writeResult, type FeatureDir } from '../phase-results/store.js';
 import { validate } from '../phase-results/validate.js';
 import { mergedReady, READY_ROW } from '../phase-results/merge-ready.js';
 
@@ -166,6 +167,8 @@ function originSnapshot(ledger: Ledger, startedAt: string): Map<string, string> 
 function checkShipBase(repo: string, base: string, feature: string, snapshot: ReadonlyMap<string, string>): void {
   if (!isLocalBranch(repo, base)) return;
   const verdict = shipBaseCheck(repo, base, feature, snapshot);
+  // D83 info a: a git timeout is a slow repo (run git gc), not an unsafe base and not an internal error
+  if (verdict === 'timeout') throw new Refusal('diff_unavailable', '', DIFF_TIMEOUT);
   if (verdict !== 'ok') throw new Refusal('unsafe_base', 'base', verdict === 'not_in_snapshot' ? NOT_IN_SNAPSHOT : undefined);
 }
 
@@ -226,24 +229,24 @@ const PREVIOUS: Readonly<Partial<Record<Phase, Phase>>> = { plan: 'ideate', buil
  * it when the run row's feature is "": the resolved feature needs a valid previous-phase result (check), unless it is
  * legacy (D17: no results/ entry in the repo and no ledger results/<feature> entry). Refuses `no_prev_result`.
  */
-function startGate(repo: string, feature: string, phase: Phase, ledger: Ledger): void {
+function startGate(repo: string, feature: string, phase: Phase, ledger: Ledger, where: FeatureDir): void {
   const prev = PREVIOUS[phase];
   if (prev === undefined || parseRunRow(ledger.lastRow(`run/${phase}`))?.feature !== '') return;
   const exists = (p: string): boolean => fs.lstatSync(p, { throwIfNoEntry: false }) !== undefined;
-  const legacy = !exists(path.join(repo, '.oss', 'dev', 'active', feature, 'results'))
+  const legacy = !exists(path.join(repo, '.oss', 'dev', where.kind, where.name, 'results'))
     && !exists(path.join(ledger.dir, 'results', feature));
   if (legacy) return;
   try {
-    check(repo, feature, prev);
+    check(repo, feature, prev, where);
   } catch {
     throw new Refusal('no_prev_result', prev);
   }
 }
 
-function assemble(repo: string, feature: string, phase: Phase): Record<string, unknown> {
+function assemble(repo: string, feature: string, phase: Phase, where: FeatureDir): Record<string, unknown> {
   const ledger = openLedger(repo);
   const startedAt = runStartedAt(ledger, phase);
-  startGate(repo, feature, phase, ledger);
+  startGate(repo, feature, phase, ledger, where);
   const ctx: AssembleContext = {
     repo,
     feature,
@@ -251,6 +254,7 @@ function assemble(repo: string, feature: string, phase: Phase): Record<string, u
     headSha: headSha(repo) ?? '',
     valueDir: valueDir(repo),
     now: () => new Date(),
+    featureDir: path.join(repo, '.oss', 'dev', where.kind, where.name),
   };
   const outcome = runAssembler(phase, ctx);
   if (!outcome.ok) {
@@ -259,8 +263,8 @@ function assemble(repo: string, feature: string, phase: Phase): Record<string, u
   }
   checkSchema(phase, outcome.result);
   // Round 2 race: bind the bytes written, and only when the file read back is that very file holding those bytes.
-  const written = writeResult(repo, feature, phase, outcome.result);
-  const read = readBack(repo, feature, phase, written);
+  const written = writeResult(repo, feature, phase, outcome.result, {}, where);
+  const read = readBack(repo, feature, phase, written, where);
   if (!read.ok) throw new Refusal(read.error, `results/${phase}.json`);
   ledger.appendRow(`results/${feature}/${phase}`, {
     sha256: sha256(written.bytes),
@@ -272,7 +276,7 @@ function assemble(repo: string, feature: string, phase: Phase): Record<string, u
   });
   ledger.clearMarker(`pending/${feature}/${phase}`);
   ledger.clearMarker(`unverified/${feature}/${phase}`);
-  clearUnverifiedMarker(repo, feature, phase);
+  clearUnverifiedMarker(repo, feature, phase, where);
   return outcome.result;
 }
 
@@ -280,7 +284,7 @@ function assemble(repo: string, feature: string, phase: Phase): Record<string, u
  * Re-runs the assembler in memory. For ship, the overrides it asked for are fed back from the stored result (the
  * model's value file ages out), so the assembler re-checks each against the ledger and re-copies its person.
  */
-function reassemble(repo: string, feature: string, phase: Phase, stored: Record<string, unknown>): AssembleOutcome {
+function reassemble(repo: string, feature: string, phase: Phase, stored: Record<string, unknown>, where: FeatureDir): AssembleOutcome {
   let tmp: string | null = null;
   let dir = valueDir(repo);
   let base: string | undefined;
@@ -312,6 +316,7 @@ function reassemble(repo: string, feature: string, phase: Phase, stored: Record<
       headSha: String(stored.headSha),
       valueDir: dir,
       evidenceCutoff: typeof stored.evidenceCutoff === 'string' ? stored.evidenceCutoff : null,
+      featureDir: path.join(repo, '.oss', 'dev', where.kind, where.name),
       // D51: ship reads every fail row, so a stored verdictsFrom (D47, results from rounds 6-7) is ignored.
       now: () => new Date(),
     }, base, remoteRefs);
@@ -331,15 +336,15 @@ const CODE_FIELDS: Readonly<Record<Phase, readonly string[]>> = {
   ship: ['diff', 'gateEvidence', 'uncapturedGates', 'overrides', 'blockers', 'verdict'],
 };
 
-function check(repo: string, feature: string, phase: Phase): Record<string, unknown> {
+function check(repo: string, feature: string, phase: Phase, where: FeatureDir = { kind: 'active', name: feature }): Record<string, unknown> {
   const ledger = openLedger(repo);
-  const marker = path.join(repo, '.oss', 'dev', 'active', feature, 'results', `${phase}.unverified.json`);
+  const marker = path.join(repo, '.oss', 'dev', where.kind, where.name, 'results', `${phase}.unverified.json`);
   if (fs.lstatSync(marker, { throwIfNoEntry: false }) !== undefined) throw new Refusal('unverified', 'marker');
   for (const kind of ['pending', 'unverified']) {
     if (ledger.hasMarker(`${kind}/${feature}/${phase}`)) throw new Refusal('unverified', `${kind} marker`);
   }
 
-  const read = readResult(repo, feature, phase);
+  const read = readResult(repo, feature, phase, where);
   if (!read.ok) throw new Refusal(read.error, `results/${phase}.json`);
   const value = read.value;
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Refusal('invalid_result', '$');
@@ -356,7 +361,7 @@ function check(repo: string, feature: string, phase: Phase): Record<string, unkn
   }
   if (stored.verification !== 'verified') throw new Refusal('unverified', 'verification');
 
-  const fresh = reassemble(repo, feature, phase, stored);
+  const fresh = reassemble(repo, feature, phase, stored, where);
   if (!fresh.ok) throw new Refusal('evidence_mismatch', fresh.error);
   for (const field of CODE_FIELDS[phase]) {
     if (JSON.stringify(stored[field]) !== JSON.stringify(fresh.result[field])) {
@@ -397,24 +402,23 @@ function gateLabel(phase: Phase, result: Record<string, unknown>): Record<string
 /**
  * D78: `check ship --record-ready` (wrapper Step 8, before a merge). Only a ship result that checks and says
  * ready_to_merge appends the `merge/ready` row (feature, the checked head, the bound result's sha256, the run's
- * startedAt, now); it prints the fixed line READY_RECORDED. A blocked result refuses `not_ready_to_merge` and writes
- * nothing.
+ * startedAt, now); it prints the fixed line READY_RECORDED. A blocked result refuses `not_ready_to_merge`. D83 (security
+ * low): any refusal appends a revoking row (`{revoked: <reason id>, at}`, no head), so an earlier ready row of this run
+ * no longer lets the merge gate or complete pass; a bound sha256 that is not 64 hex refuses (info b).
  */
-function recordReady(args: Args, repo: string, feature: string | null): number {
-  if (feature === null) return refuse(args, 'no_feature', 'feature');
-  const v = verdictOf(() => {
-    const stored = check(repo, feature, 'ship');
+function recordReady(args: Args, repo: string, feature: string | null, where: FeatureDir): number {
+  const v: Verdict = feature === null ? { ok: false, id: 'no_feature', field: 'feature' } : verdictOf(() => {
+    const stored = check(repo, feature, 'ship', where);
     if (stored.verdict !== 'ready_to_merge') throw new Refusal('not_ready_to_merge', 'verdict');
     const ledger = openLedger(repo);
-    ledger.appendRow(READY_ROW, {
-      feature,
-      headSha: stored.headSha,
-      sha256: ledger.lastRow(`results/${feature}/ship`)?.sha256,
-      startedAt: stored.startedAt,
-      at: new Date().toISOString(),
-    });
+    const bound = ledger.lastRow(`results/${feature}/ship`)?.sha256;
+    if (typeof bound !== 'string' || !/^[0-9a-f]{64}$/.test(bound)) throw new Refusal('unbound_result', 'sha256');
+    ledger.appendRow(READY_ROW, { feature, headSha: stored.headSha, sha256: bound, startedAt: stored.startedAt, at: new Date().toISOString() });
   });
-  if (!v.ok) return refuse(args, v.id, v.field, v.detail);
+  if (!v.ok) {
+    verdictOf(() => openLedger(repo).appendRow(READY_ROW, { revoked: v.id, at: new Date().toISOString() }));
+    return refuse(args, v.id, v.field, v.detail);
+  }
   process.stdout.write('READY_RECORDED\n');
   return 0;
 }
@@ -462,13 +466,22 @@ export function main(argv: string[]): number {
     return 0;
   }
 
-  const feature = resolveFeature(repo);
-  if (args.recordReady) return recordReady(args, repo, feature);
+  let feature = resolveFeature(repo);
+  let where: FeatureDir = { kind: 'active', name: feature ?? '' };
+  // D84: a ship re-run after the archive commit: the single completed folder this branch's own diff added.
+  if (feature === null && args.phase === 'ship') {
+    const archived = archivedFeature(repo, shipBase(repo, valueDir(repo)));
+    if (archived !== null) {
+      feature = archived.feature;
+      where = { kind: 'completed', name: archived.folder };
+    }
+  }
+  if (args.recordReady) return recordReady(args, repo, feature, where);
   if (feature === null) return mergedOrRefuse(args, repo, { ok: false, id: 'no_feature', field: 'feature' });
   if (args.verb === 'assemble') {
     let result: Record<string, unknown> = {};
     const v = verdictOf(() => {
-      result = assemble(repo, feature, args.phase);
+      result = assemble(repo, feature, args.phase, where);
     });
     if (!v.ok) return refuse(args, v.id, v.field, v.detail);
     // D74: ship also prints its verdict and the code-built blocker lines (fixed text), so the wrapper can offer a D70 override.
@@ -478,7 +491,7 @@ export function main(argv: string[]): number {
   }
   let stored: Record<string, unknown> = {};
   const v = verdictOf(() => {
-    stored = check(repo, feature, args.phase);
+    stored = check(repo, feature, args.phase, where);
   });
   if (!v.ok) return mergedOrRefuse(args, repo, v);
   // D35: check ship also prints the verdict, so complete refuses a verified but blocked ship.

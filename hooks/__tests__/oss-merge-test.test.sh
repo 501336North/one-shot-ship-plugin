@@ -65,6 +65,8 @@ clones() { ls "$(G)" 2>/dev/null | grep '^t\.' || true; }
 # ready_row: D78 — the ledger rows /oss:ship Step 8 writes before a merge (run/ship and merge/ready, key as ledger.ts
 # ledgerKey: toplevel and git dir), for the head of the repo the hook runs in, so every case below tests what it names.
 # ⚠ changes existing test: D78 — the hook now refuses a head no ready ship result covers; MT_NOREADY=1 skips the rows.
+# ⚠ changes existing test: D83 (security low) — the ready row must also name the bound ship result, so the bound
+#   results/x/ship row (same sha256) is seeded too.
 ready_row() {
     [[ -n "${MT_NOREADY:-}" ]] && return 0
     local d="${MT_DIR:-$R}" top gd k L h
@@ -73,7 +75,9 @@ ready_row() {
     k=$(printf '%s\n%s\n' "$top" "$gd" | git hash-object --stdin | cut -c1-16); L="$H/.oss/ledger/$k"
     (umask 077; mkdir -p "$L/run" "$L/merge" && chmod 700 "$H/.oss" "$H/.oss/ledger" "$L" "$L/run" "$L/merge" \
         && printf '{"startedAt":"2026-11-23T00:00:00.000Z","session":"","headSha":"%s","feature":"x"}\n' "$h" >> "$L/run/ship" \
-        && printf '{"feature":"x","headSha":"%s","sha256":"%064d","startedAt":"2026-11-23T00:00:00.000Z","at":"2026-11-23T00:00:01.000Z"}\n' "$h" 0 >> "$L/merge/ready")
+        && printf '{"feature":"x","headSha":"%s","sha256":"%064d","startedAt":"2026-11-23T00:00:00.000Z","at":"2026-11-23T00:00:01.000Z"}\n' "$h" 0 >> "$L/merge/ready" \
+        && mkdir -p "$L/results/x" && chmod 700 "$L/results" "$L/results/x" \
+        && printf '{"sha256":"%064d","feature":"x","phase":"ship","startedAt":"2026-11-23T00:00:00.000Z","headSha":"%s","session":""}\n' 0 "$h" >> "$L/results/x/ship")
 }
 # mt [args...]: run the hook in R as the served call does; sets OUT (stdout+stderr) and RC. MT_PRE runs first in the
 # same shell (to export functions); MT_PATH replaces PATH's tail.
@@ -468,13 +472,52 @@ MT_NOREADY=1; mt; MT_NOREADY=
 [[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "18: an archive commit (.oss/ only) after the recorded head still passes" || fail "18: an archive commit (.oss/ only) after the recorded head still passes" "rc=$RC out=$OUT"
 fixture; ready_row; (cd "$R" && mkdir -p .oss && echo a > .oss/a.md && echo c > src/f.txt && git add -A && git "${GITID[@]}" commit -qm mixed) >/dev/null 2>&1
 MT_NOREADY=1; mt; MT_NOREADY=
-[[ "$RC" != 0 && ! -s "$B/npm.log" ]] && has "STOP: no ready ship result" && pass "18: a commit changing code after the recorded head STOPs" || fail "18: a commit changing code after the recorded head STOPs" "rc=$RC out=$OUT"
+# D83 info d: the STOP also says that updating the branch from main is such a change, and that no new gate reviews are needed
+[[ "$RC" != 0 && ! -s "$B/npm.log" ]] && has "STOP: no ready ship result" && has "updating the branch from main counts too" && has "no new gate reviews" \
+    && pass "18: a commit changing code after the recorded head STOPs, naming a main update and no new gate reviews" || fail "18: a commit changing code after the recorded head STOPs, naming a main update and no new gate reviews" "rc=$RC out=$OUT"
 fixture; ready_row; k=$(ls "$H/.oss/ledger"); printf '{"startedAt":"2026-11-24T00:00:00.000Z","session":"","headSha":"","feature":"x"}\n' >> "$H/.oss/ledger/$k/run/ship"
 MT_NOREADY=1; mt; MT_NOREADY=
 [[ "$RC" != 0 && ! -s "$B/npm.log" ]] && has "STOP: no ready ship result" && pass "18: a ready row from an earlier ship run (another startedAt) STOPs" || fail "18: a ready row from an earlier ship run (another startedAt) STOPs" "rc=$RC out=$OUT"
 fixture; ready_row; k=$(ls "$H/.oss/ledger"); mv "$H/.oss/ledger/$k/merge/ready" "$T/real-ready$N"; ln -s "$T/real-ready$N" "$H/.oss/ledger/$k/merge/ready"
 MT_NOREADY=1; mt; MT_NOREADY=
 [[ "$RC" != 0 && ! -s "$B/npm.log" ]] && has "STOP: no ready ship result" && pass "18: a ready file that is a symlink STOPs" || fail "18: a ready file that is a symlink STOPs" "rc=$RC out=$OUT"
+
+# --- 19 (D83): the tested row, the bound result, the row reader and the .oss/-only log --------------------------------
+L() { echo "$H/.oss/ledger/$(ls "$H/.oss/ledger")"; }
+st_mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
+# code review M1: served Step 10 removes the run folder files, so what was tested is also a ledger row of this run
+fixture; mt; head=$(rev feat/x); main=$(rev main)
+row=$(tail -n 1 "$(L)/merge/tested" 2>/dev/null)
+[[ "$RC" == 0 && "$row" == '{"startedAt":"2026-11-23T00:00:00.000Z","head":"'"$head"'","main":"'"$main"'","at":"'* && "$(st_mode "$(L)/merge/tested")" == 600 ]] \
+    && pass "19: a passing run appends merge/tested {startedAt, head, main, at} (600) to the run's ledger" || fail "19: a passing run appends merge/tested {startedAt, head, main, at} (600) to the run's ledger" "rc=$RC row=$row"
+fixture; touch "$B/npm.fail"; mt
+[[ "$RC" != 0 && ! -e "$(L)/merge/tested" ]] && pass "19: a failing run writes no tested row" || fail "19: a failing run writes no tested row" "rc=$RC $(cat "$(L)/merge/tested" 2>&1)"
+fixture; ready_row; mkdir -p "$(L)/merge/tested"; MT_NOREADY=1; mt; MT_NOREADY=
+[[ "$RC" != 0 && ! -e "$(G)/tested.txt" ]] && has "STOP: the tested head could not be recorded" && ! has READY_TO_MERGE \
+    && pass "19: when the tested row cannot be written it STOPs and leaves no tested.txt" || fail "19: when the tested row cannot be written it STOPs and leaves no tested.txt" "rc=$RC out=$OUT"
+# security low: a ready row whose sha256 is not the last bound ship result's (re-assembled as blocked at the same head)
+fixture; ready_row; printf '{"sha256":"%064d","feature":"x","phase":"ship","startedAt":"2026-11-23T00:00:00.000Z","headSha":"","session":""}\n' 1 >> "$(L)/results/x/ship"
+MT_NOREADY=1; mt; MT_NOREADY=
+[[ "$RC" != 0 && ! -s "$B/npm.log" ]] && has "STOP: no ready ship result" && pass "19: a ready row that no longer names the bound ship result STOPs" || fail "19: a ready row that no longer names the bound ship result STOPs" "rc=$RC out=$OUT"
+fixture; ready_row; printf '{"revoked":"not_ready_to_merge","at":"2026-11-23T00:00:02.000Z"}\n' >> "$(L)/merge/ready"
+MT_NOREADY=1; mt; MT_NOREADY=
+[[ "$RC" != 0 && ! -s "$B/npm.log" ]] && has "STOP: no ready ship result" && pass "19: a revoking row after the ready row STOPs" || fail "19: a revoking row after the ready row STOPs" "rc=$RC out=$OUT"
+# code review L2: a torn last line gives the row before it, as ledger.ts lastRow does
+fixture; ready_row; printf '{"feature":"x","headSha":"' >> "$(L)/merge/ready"
+MT_NOREADY=1; mt; MT_NOREADY=
+[[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "19: a torn last ready line is skipped: the whole row before it still passes" || fail "19: a torn last ready line is skipped: the whole row before it still passes" "rc=$RC out=$OUT"
+# security finding 2: a signed archive commit with log.showSignature=true still passes
+fixture; ready_row; ssh-keygen -q -t ed25519 -N '' -f "$T/sign$N" </dev/null
+(cd "$R" && git config gpg.format ssh && git config user.signingkey "$T/sign$N" && git config log.showSignature true \
+    && mkdir -p .oss/dev/completed/x-2026-11-23 && echo a > .oss/dev/completed/x-2026-11-23/a.md && git add -A .oss && git "${GITID[@]}" commit -q -S -m archive) >/dev/null 2>&1
+MT_NOREADY=1; mt; MT_NOREADY=
+[[ "$RC" == 0 && "$(cd "$R" && git log -1 --format=%G?)" != N ]] && has READY_TO_MERGE && pass "19: a signed archive commit with log.showSignature=true still passes" || fail "19: a signed archive commit with log.showSignature=true still passes" "rc=$RC out=$OUT"
+# pen L3: with log.diffMerges=combined, a merge after the ready head that reverts code (the result matches one parent) is still seen
+fixture; ready_row
+(cd "$R" && git config log.diffMerges combined && git checkout -q -b side main && mkdir -p .oss/x && echo n > .oss/x/n && git add -A .oss && git "${GITID[@]}" commit -qm side \
+    && git checkout -q feat/x && git "${GITID[@]}" merge -q --no-ff --no-commit side; git checkout -q side -- src/f.txt && git "${GITID[@]}" commit -qm 'merge side') >/dev/null 2>&1
+MT_NOREADY=1; mt; MT_NOREADY=
+[[ "$RC" != 0 && ! -s "$B/npm.log" ]] && has "STOP: no ready ship result" && pass "19: with log.diffMerges=combined, a merge after the ready head that reverts code STOPs" || fail "19: with log.diffMerges=combined, a merge after the ready head that reverts code STOPs" "rc=$RC out=$OUT"
 
 echo ""
 echo "oss-merge-test: $RUN run, $FAILED failed"

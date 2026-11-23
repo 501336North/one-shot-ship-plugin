@@ -401,4 +401,10 @@ describe('/oss:ship --merge records the ready result before merging (D78)', () =
     expect(mergeSection.indexOf('READY_RECORDED')).toBeLessThan(mergeSection.search(/Only then merge the PR/));
     expect(mergeSection).toMatch(/the plugin's merge test refuses a head no recorded ready result covers/);
   });
+
+  it('a code change after the check, updating the branch from main included, means /oss:ship again, with no new gate reviews (D83 info d, D58)', () => {
+    expect(step).toMatch(/any other commit needs `\/oss:ship` again from the start/);
+    expect(step).toMatch(/[Uu]pdating the branch from main .*counts too/);
+    expect(step).toMatch(/no new gate reviews/);
+  });
 });

@@ -406,9 +406,10 @@ function checkNames(feature, phase) {
   if (!FEATURE_RE2.test(feature) || feature.startsWith(".")) throw new Error(`bad_feature: ${JSON.stringify(feature)}`);
   if (!PHASES.includes(phase)) throw new Error(`unsafe_path: unknown phase ${JSON.stringify(phase)}`);
 }
-function resultsDir(repo, feature, create) {
+function resultsDir(repo, feature, create, where = { kind: "active", name: feature }) {
+  if (!FEATURE_RE2.test(where.name) || where.name.startsWith(".")) throw new Error(`bad_feature: ${JSON.stringify(where.name)}`);
   let cur = repo;
-  for (const comp of [".oss", "dev", "active", feature, "results"]) {
+  for (const comp of [".oss", "dev", where.kind, where.name, "results"]) {
     cur = path3.join(cur, comp);
     let st;
     try {
@@ -433,11 +434,11 @@ function readCapped(fd, cap) {
   }
   return buf.subarray(0, n);
 }
-function readResult(repo, feature, phase) {
+function readResult(repo, feature, phase, where) {
   checkNames(feature, phase);
   let dir;
   try {
-    dir = resultsDir(repo, feature, false);
+    dir = resultsDir(repo, feature, false, where);
   } catch {
     return { ok: false, error: "unsafe_path" };
   }

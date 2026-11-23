@@ -15,7 +15,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { argvChunks, assembleShip, DEFAULT_REQUIRED_GATES } from '../../src/phase-results/assemble-ship.js';
+import { argvChunks, assembleShip, DEFAULT_REQUIRED_GATES, shipBaseCheck } from '../../src/phase-results/assemble-ship.js';
 import type { AssembleContext, AssembleOutcome } from '../../src/phase-results/assemble-common.js';
 import { openLedger } from '../../src/phase-results/ledger.js';
 
@@ -236,6 +236,26 @@ describe('assembleShip: the diff totals get the diff budget and a git gc hint on
     expect(o.error).toBe('diff_unavailable');
     expect(o.detail).toMatch(/^diff_timeout: /);
     expect(o.detail).toContain('run git gc');
+  });
+});
+
+/**
+ * D83 info a (gate round 14): a git call in the ship base check that runs past its time limit is a slow repo, not an
+ * unsafe base and not an internal error: shipBaseCheck says `timeout`, which the CLI reports as diff_unavailable with
+ * the git gc hint.
+ */
+describe('shipBaseCheck: a git timeout is reported as a timeout (D83 info a)', { timeout: 180_000 }, () => {
+  const snapshot = (): Map<string, string> => new Map([['refs/remotes/origin/main', git('rev-parse', 'main')]]);
+  it('passes a base the snapshot contains', () => {
+    expect(shipBaseCheck(repo, 'main', FEATURE, snapshot())).toBe('ok');
+  });
+  it('a timed-out symbolic-ref gives timeout, not refused', () => {
+    spawns.timedOut = (a) => a.includes('symbolic-ref');
+    expect(shipBaseCheck(repo, 'main', FEATURE, snapshot())).toBe('timeout');
+  });
+  it('a timed-out containment check (rev-list) gives timeout, not a thrown error', () => {
+    spawns.timedOut = (a) => a.includes('rev-list');
+    expect(shipBaseCheck(repo, 'main', FEATURE, snapshot())).toBe('timeout');
   });
 });
 

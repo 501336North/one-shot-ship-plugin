@@ -259,7 +259,7 @@ sleep 1
 ```bash
 ~/.oss/hooks/oss-phase-result.sh check ship --record-ready
 ```
-   It checks the ship result again and, only when it is `ready_to_merge`, records it for this head and prints `READY_RECORDED`. If it prints anything else, do not merge: tell the user the reason it prints. Only the archive commit and build report (paths under `.oss/`) may follow this head before the merge; any other commit needs `/oss:ship` again from the start. Without a merge in this session, skip it.
+   It checks the ship result again and, only when it is `ready_to_merge`, records it for this head and prints `READY_RECORDED`. If it prints anything else, do not merge: tell the user the reason it prints. Only the archive commit and build report (paths under `.oss/`) may follow this head before the merge; any other commit needs `/oss:ship` again from the start. Updating the branch from main (a PR GitHub reports as behind) counts too: run `/oss:ship` again after it; the re-run needs no new gate reviews, since the gates already run still count. Without a merge in this session, skip it.
 
 Then send `complete`. With `--merge`, merge first (see "Optional: Merge": never while the result is blocked), and once the merge lands send `merged` right before `complete`:
 

@@ -254,6 +254,17 @@
 - [x] D80: the API repo's real-hook tests seed the ready rows (helpers/merge-test-plugin.ts `seedReadyRow`); new acceptance case: a merge with no row is refused (3 shells).
 - [x] D81: every served merge is gated, not only --merge runs.
 
+### Ship round 16 fixes, after gate round 14 (2026-11-23)
+- [x] Gate round 14: performance passed; code review, security and pen test failed. The user picked D83 (fix all) and D84 (find the archived feature).
+- [x] `complete` after an honest merge: the merge hook writes a `merge/tested` ledger row and mergedReady reads it, so it works after the served Step 10 cleanup. It also accepts a feature-branch finish when main is checked out in another worktree; the tested main must be a strict ancestor of origin/main.
+- [x] D84: a ship re-run after the archive commit resolves the single completed folder this branch added, and assembles, checks and records the ready row there.
+- [x] Security low: the merge gate requires the ready row's sha256 to match the last bound ship result. A refused `--record-ready` appends a revoking row.
+- [x] Both `.oss/`-only `git log` calls pass `--no-show-signature --diff-merges=separate`.
+- [x] merge-ready.test.ts (15 tests). The bash and TS row readers agree: the last whole JSON line in the last 4 KB.
+- [x] Infos: the base-check timeout maps to diff_unavailable with DIFF_TIMEOUT; a bad sha256 is refused; one 10 s deadline for complete's git calls; the STOP text covers updates from main.
+- [x] API helper seedReadyRow also seeds the bound result row.
+- [x] D81 wording corrected: a merge outside OSS (the GitHub button or a direct `gh pr merge`) is not gated.
+
 ### Later
 - [ ] Ship into feat/determinism-sprint/build (SD-1)
 - [ ] T21 oss-lab (after the plugin ships)
@@ -261,4 +272,4 @@
 ## Blockers
 - None. R-266's 4 red base tests are fixed in #233 (4458bddb), and R-257 is rebased onto it.
 
-## Last Updated: 2026-11-23 13:34 +07 by /oss:ship (round 15 fixes)
+## Last Updated: 2026-11-23 15:50 +07 by /oss:ship (round 16 fixes)

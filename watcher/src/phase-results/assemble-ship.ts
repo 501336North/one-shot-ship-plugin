@@ -161,8 +161,11 @@ function containedIn(repo: string, tip: string, sha: string): boolean {
   }
 }
 
-/** Why shipBaseCheck refused a base: `not_in_snapshot` when only the snapshot containment failed. */
-export type ShipBaseCheck = 'ok' | 'refused' | 'not_in_snapshot';
+/**
+ * Why shipBaseCheck refused a base: `not_in_snapshot` when only the snapshot containment failed; `timeout` when a git call
+ * ran past its time limit (D83 info a: a slow repo, reported as diff_unavailable with the git gc hint).
+ */
+export type ShipBaseCheck = 'ok' | 'refused' | 'not_in_snapshot' | 'timeout';
 
 /**
  * Security info 2 (gate round 7) + security info 4 (gate round 8): true when `refs`, `refs/heads` or `packed-refs`
@@ -193,7 +196,8 @@ function refPathLinked(repo: string, base: string): boolean {
       if (st) return true;
     }
     return false;
-  } catch {
+  } catch (e) {
+    rethrowTimeout(e);
     return true;
   }
 }
@@ -207,18 +211,29 @@ function refPathLinked(repo: string, base: string): boolean {
  * failed (pen low 4: a base pulled mid-ship or diverged), so the refusal can say what to do.
  */
 export function shipBaseCheck(repo: string, base: string, feature: string, refs: ReadonlyMap<string, string>): ShipBaseCheck {
+  try {
+    return checkBase(repo, base, feature, refs);
+  } catch (e) {
+    if (e instanceof GitError && e.timedOut) return 'timeout';
+    throw e;
+  }
+}
+
+function checkBase(repo: string, base: string, feature: string, refs: ReadonlyMap<string, string>): ShipBaseCheck {
   if (base === feature || base.includes(`/${feature}/`)) return 'refused';
   let current: string | null;
   try {
     current = runGit(repo, ['symbolic-ref', '-q', 'HEAD'], [0, 1]).out;
-  } catch {
+  } catch (e) {
+    rethrowTimeout(e);
     return 'refused';
   }
   if (current === `refs/heads/${base}`) return 'refused';
   // Security info 4: a local base that is a symbolic ref (refs/heads/x -> another branch) is refused.
   try {
     if (runGit(repo, ['symbolic-ref', '-q', `refs/heads/${base}`], [0, 1]).status === 0) return 'refused';
-  } catch {
+  } catch (e) {
+    rethrowTimeout(e);
     return 'refused';
   }
   if (refPathLinked(repo, base)) return 'refused';
@@ -1053,7 +1068,7 @@ export function assembleShip(ctx: AssembleContext, opts: AssembleShipOptions): A
   }
   if (diff.empty) return { ok: false, error: 'empty_diff' };
 
-  const featureDir = path.join(ctx.repo, '.oss', 'dev', 'active', ctx.feature);
+  const featureDir = ctx.featureDir ?? path.join(ctx.repo, '.oss', 'dev', 'active', ctx.feature);
   let gateHashes: Set<unknown>;
   let decisionRows: LedgerRow[];
   let verdictRows: LedgerRow[];

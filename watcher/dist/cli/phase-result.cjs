@@ -36,7 +36,7 @@ __export(phase_result_exports, {
 module.exports = __toCommonJS(phase_result_exports);
 var import_node_child_process5 = require("node:child_process");
 var fs11 = __toESM(require("node:fs"), 1);
-var os3 = __toESM(require("node:os"), 1);
+var os2 = __toESM(require("node:os"), 1);
 var path10 = __toESM(require("node:path"), 1);
 
 // src/phase-results/assemble-build.ts
@@ -424,9 +424,10 @@ function checkNames(feature, phase) {
   if (!FEATURE_RE.test(feature) || feature.startsWith(".")) throw new Error(`bad_feature: ${JSON.stringify(feature)}`);
   if (!PHASES.includes(phase)) throw new Error(`unsafe_path: unknown phase ${JSON.stringify(phase)}`);
 }
-function resultsDir(repo, feature, create) {
+function resultsDir(repo, feature, create, where = { kind: "active", name: feature }) {
+  if (!FEATURE_RE.test(where.name) || where.name.startsWith(".")) throw new Error(`bad_feature: ${JSON.stringify(where.name)}`);
   let cur = repo;
-  for (const comp of [".oss", "dev", "active", feature, "results"]) {
+  for (const comp of [".oss", "dev", where.kind, where.name, "results"]) {
     cur = path2.join(cur, comp);
     let st;
     try {
@@ -467,11 +468,11 @@ function isOurFile(p, ours) {
     return false;
   }
 }
-function writeResult(repo, feature, phase, obj, hooks = {}) {
+function writeResult(repo, feature, phase, obj, hooks = {}, where) {
   checkNames(feature, phase);
   const data = JSON.stringify(obj);
   if (Buffer.byteLength(data) > RESULT_CAP) throw new Error("too_large: result over 256 KB");
-  const dir = resultsDir(repo, feature, true);
+  const dir = resultsDir(repo, feature, true, where);
   const realDir = fs3.realpathSync(dir);
   const dirStat = fs3.lstatSync(dir);
   const target = path2.join(dir, `${phase}.json`);
@@ -512,17 +513,17 @@ function writeResult(repo, feature, phase, obj, hooks = {}) {
   }
   return { dev: ours.dev, ino: ours.ino, bytes: Buffer.from(data) };
 }
-function readBack(repo, feature, phase, written) {
-  const read = readResult(repo, feature, phase);
+function readBack(repo, feature, phase, written, where) {
+  const read = readResult(repo, feature, phase, where);
   if (!read.ok) return read;
   if (read.dev !== written.dev || read.ino !== written.ino || !read.bytes.equals(written.bytes)) {
     return { ok: false, error: "result_changed" };
   }
   return { ...read, bytes: written.bytes };
 }
-function clearUnverifiedMarker(repo, feature, phase) {
+function clearUnverifiedMarker(repo, feature, phase, where) {
   checkNames(feature, phase);
-  const dir = resultsDir(repo, feature, false);
+  const dir = resultsDir(repo, feature, false, where);
   if (dir === null) return;
   try {
     fs3.unlinkSync(path2.join(dir, `${phase}.unverified.json`));
@@ -530,11 +531,11 @@ function clearUnverifiedMarker(repo, feature, phase) {
     if (e.code !== "ENOENT") throw e;
   }
 }
-function readResult(repo, feature, phase) {
+function readResult(repo, feature, phase, where) {
   checkNames(feature, phase);
   let dir;
   try {
-    dir = resultsDir(repo, feature, false);
+    dir = resultsDir(repo, feature, false, where);
   } catch {
     return { ok: false, error: "unsafe_path" };
   }
@@ -1227,22 +1228,33 @@ function refPathLinked(repo, base) {
       if (st) return true;
     }
     return false;
-  } catch {
+  } catch (e) {
+    rethrowTimeout(e);
     return true;
   }
 }
 function shipBaseCheck(repo, base, feature, refs) {
+  try {
+    return checkBase(repo, base, feature, refs);
+  } catch (e) {
+    if (e instanceof GitError && e.timedOut) return "timeout";
+    throw e;
+  }
+}
+function checkBase(repo, base, feature, refs) {
   if (base === feature || base.includes(`/${feature}/`)) return "refused";
   let current;
   try {
     current = runGit(repo, ["symbolic-ref", "-q", "HEAD"], [0, 1]).out;
-  } catch {
+  } catch (e) {
+    rethrowTimeout(e);
     return "refused";
   }
   if (current === `refs/heads/${base}`) return "refused";
   try {
     if (runGit(repo, ["symbolic-ref", "-q", `refs/heads/${base}`], [0, 1]).status === 0) return "refused";
-  } catch {
+  } catch (e) {
+    rethrowTimeout(e);
     return "refused";
   }
   if (refPathLinked(repo, base)) return "refused";
@@ -1885,7 +1897,7 @@ function assembleShip(ctx, opts) {
     return isLocalBranch(ctx.repo, opts.base) || !validBranchName(ctx.repo, opts.base) ? { ok: false, error: "diff_unavailable" } : { ok: false, error: "diff_unavailable", detail: NO_LOCAL_BASE };
   }
   if (diff.empty) return { ok: false, error: "empty_diff" };
-  const featureDir = path6.join(ctx.repo, ".oss", "dev", "active", ctx.feature);
+  const featureDir = ctx.featureDir ?? path6.join(ctx.repo, ".oss", "dev", "active", ctx.feature);
   let gateHashes;
   let decisionRows;
   let verdictRows;
@@ -2013,27 +2025,43 @@ function resolveFeature(repo) {
   const active = activeFeatures(repo);
   return active.length === 1 ? active[0] : null;
 }
+var COMPLETED_RE = /^\.oss\/dev\/completed\/([^/]+)\//;
+var ARCHIVED_RE = /^([A-Za-z0-9_-][A-Za-z0-9._-]*)-(\d{4}-\d{2}-\d{2})$/;
+function archivedFeature(repo, base) {
+  const mb = gitOut2(repo, ["merge-base", "--end-of-options", `refs/heads/${base}`, "HEAD"]);
+  if (mb === null || !/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(mb)) return null;
+  const out = gitOut2(repo, ["diff", "--name-only", "--no-renames", "--diff-filter=A", "-z", mb, "HEAD", "--", ".oss/dev/completed/"]);
+  if (out === null) return null;
+  const folders = new Set(out.split("\0").map((p) => COMPLETED_RE.exec(p)?.[1]).filter((n) => n !== void 0));
+  if (folders.size !== 1) return null;
+  const folder = [...folders][0];
+  const m = ARCHIVED_RE.exec(folder);
+  const st = fs9.lstatSync(path8.join(repo, ".oss", "dev", "completed", folder), { throwIfNoEntry: false });
+  return m !== null && st?.isDirectory() === true ? { feature: m[1], folder } : null;
+}
 
 // src/phase-results/merge-ready.ts
 var import_node_child_process4 = require("node:child_process");
 var import_node_crypto4 = require("node:crypto");
 var fs10 = __toESM(require("node:fs"), 1);
-var os2 = __toESM(require("node:os"), 1);
 var path9 = __toESM(require("node:path"), 1);
 var READY_ROW = "merge/ready";
+var TESTED_ROW = "merge/tested";
 var SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 var FEATURE_RE3 = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 var DATE_DIR = /^\d{4}-\d{2}-\d{2}$/;
 var MAX_RESULT_BYTES = 4 * 1024 * 1024;
-function git(repo, args) {
+var MERGED_BUDGET_MS = 1e4;
+function git(repo, args, deadline = Date.now() + MERGED_BUDGET_MS) {
   const bin = gitBin();
-  if (bin === "") return { status: null, out: "" };
+  const left = deadline - Date.now();
+  if (bin === "" || left <= 0) return { status: null, out: "" };
   const r = (0, import_node_child_process4.spawnSync)(bin, ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", ...args], {
     cwd: repo,
     env: { ...gitEnv(), GIT_CONFIG_NOSYSTEM: "1", PATH: "/usr/bin:/bin" },
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "ignore"],
-    timeout: 1e4,
+    timeout: left,
     maxBuffer: 16 * 1024 * 1024
   });
   return { status: r.error === void 0 ? r.status : null, out: r.stdout ?? "" };
@@ -2047,24 +2075,19 @@ function readyRow(ledger) {
   if (typeof startedAt !== "string" || typeof at !== "string") return null;
   return { feature, headSha: headSha2, sha256: sha2562, startedAt, at };
 }
-function onlyOssAfter(repo, from, to) {
+function onlyOssAfter(repo, from, to, deadline) {
   if (!SHA.test(from) || !SHA.test(to)) return false;
   if (from === to) return true;
-  if (git(repo, ["merge-base", "--is-ancestor", "--end-of-options", from, to]).status !== 0) return false;
-  const r = git(repo, ["log", "--no-renames", "-m", "--format=", "--name-only", "-z", "--end-of-options", `${from}..${to}`]);
+  if (git(repo, ["merge-base", "--is-ancestor", "--end-of-options", from, to], deadline).status !== 0) return false;
+  const r = git(repo, ["log", "--no-renames", "--no-show-signature", "--diff-merges=separate", "--format=", "--name-only", "-z", "--end-of-options", `${from}..${to}`], deadline);
   if (r.status !== 0) return false;
   return r.out.split("\0").filter((p) => p !== "").every((p) => p.startsWith(".oss/"));
 }
-function mergeRunValue(repo, name) {
-  const gitDir = git(repo, ["rev-parse", "--absolute-git-dir"]).out.replace(/\n$/, "");
-  if (gitDir === "") return null;
-  const content = Buffer.from(`${gitDir}
-`, "utf8");
-  const key2 = (0, import_node_crypto4.createHash)("sha1").update(`blob ${content.length}\0`).update(content).digest("hex").slice(0, 16);
-  const file = path9.join(os2.homedir(), ".oss", "run", key2, name);
-  const st = fs10.lstatSync(file, { throwIfNoEntry: false });
-  if (st === void 0 || !st.isFile() || st.isSymbolicLink() || st.uid !== process.getuid?.() || st.size > 1024) return null;
-  return fs10.readFileSync(file, "utf8").replace(/\n$/, "");
+function testedRow(ledger, runStartedAt2) {
+  const r = ledger.lastRow(TESTED_ROW);
+  if (r === null || r.startedAt !== runStartedAt2) return null;
+  const { head, main: main2 } = r;
+  return typeof head === "string" && SHA.test(head) && typeof main2 === "string" && SHA.test(main2) ? { head, main: main2 } : null;
 }
 function archivedResult(repo, feature) {
   const done = path9.join(repo, ".oss", "dev", "completed");
@@ -2090,21 +2113,28 @@ function archivedResult(repo, feature) {
   }
 }
 function mergedReady(repo, ledger, runStartedAt2) {
-  if (git(repo, ["symbolic-ref", "-q", "HEAD"]).out.trim() !== "refs/heads/main") return null;
+  const deadline = Date.now() + MERGED_BUDGET_MS;
   const row = readyRow(ledger);
   if (row === null || row.startedAt !== runStartedAt2) return null;
   const at = Date.parse(row.at);
   const started = Date.parse(runStartedAt2);
   if (Number.isNaN(at) || Number.isNaN(started) || at < started) return null;
+  if (ledger.lastRow(`results/${row.feature}/ship`)?.sha256 !== row.sha256) return null;
   if (fs10.lstatSync(path9.join(repo, ".oss", "dev", "active", row.feature), { throwIfNoEntry: false }) !== void 0) return null;
   const bytes = archivedResult(repo, row.feature);
   if (bytes === null || (0, import_node_crypto4.createHash)("sha256").update(bytes).digest("hex") !== row.sha256) return null;
-  const head = mergeRunValue(repo, "head.txt");
-  const tested = /^v2 ([0-9a-f]{40}(?:[0-9a-f]{24})?) ([0-9a-f]{40}(?:[0-9a-f]{24})?)$/.exec(mergeRunValue(repo, "tested.txt") ?? "");
-  if (head === null || tested === null || tested[1] !== head || !onlyOssAfter(repo, row.headSha, head)) return null;
-  const main2 = tested[2];
-  const now = git(repo, ["rev-parse", "--verify", "HEAD^{commit}"]).out.trim();
-  if (now === main2 || git(repo, ["merge-base", "--is-ancestor", "--end-of-options", main2, "HEAD"]).status !== 0) return null;
+  const tested = testedRow(ledger, runStartedAt2);
+  if (tested === null || !onlyOssAfter(repo, row.headSha, tested.head, deadline)) return null;
+  const ancestor = (a, b) => git(repo, ["merge-base", "--is-ancestor", "--end-of-options", a, b], deadline).status === 0;
+  const ref = git(repo, ["symbolic-ref", "-q", "HEAD"], deadline).out.trim();
+  const now = git(repo, ["rev-parse", "--verify", "HEAD^{commit}"], deadline).out.trim();
+  if (ref === "refs/heads/main") {
+    if (now === tested.main || !ancestor(tested.main, "HEAD")) return null;
+  } else {
+    const origin = git(repo, ["rev-parse", "--verify", "--end-of-options", "refs/remotes/origin/main^{commit}"], deadline).out.trim();
+    if (!ref.startsWith("refs/heads/") || !onlyOssAfter(repo, row.headSha, now, deadline)) return null;
+    if (!SHA.test(origin) || origin === tested.main || !ancestor(tested.main, origin)) return null;
+  }
   try {
     const v = JSON.parse(bytes.toString("utf8"));
     return typeof v === "object" && v !== null && !Array.isArray(v) ? v : null;
@@ -2187,6 +2217,7 @@ function originSnapshot(ledger, startedAt) {
 function checkShipBase(repo, base, feature, snapshot) {
   if (!isLocalBranch(repo, base)) return;
   const verdict = shipBaseCheck(repo, base, feature, snapshot);
+  if (verdict === "timeout") throw new Refusal("diff_unavailable", "", DIFF_TIMEOUT);
   if (verdict !== "ok") throw new Refusal("unsafe_base", "base", verdict === "not_in_snapshot" ? NOT_IN_SNAPSHOT : void 0);
 }
 function pluginRoot() {
@@ -2200,7 +2231,7 @@ function valueDir(repo) {
   const key2 = ledgerKey(repo);
   if (key2 === null) return null;
   const uid = process.getuid?.();
-  const run = path10.join(os3.homedir(), ".oss", "run");
+  const run = path10.join(os2.homedir(), ".oss", "run");
   const dir = path10.join(run, key2);
   return isDirOf(run, uid) && isDirOf(dir, uid) ? fs11.realpathSync(dir) : null;
 }
@@ -2231,29 +2262,30 @@ function checkSchema(phase, value) {
   if (!v.ok) throw new Refusal(`invalid_result (${v.rule})`, v.path);
 }
 var PREVIOUS = { plan: "ideate", build: "plan", ship: "build" };
-function startGate(repo, feature, phase, ledger) {
+function startGate(repo, feature, phase, ledger, where) {
   const prev = PREVIOUS[phase];
   if (prev === void 0 || parseRunRow(ledger.lastRow(`run/${phase}`))?.feature !== "") return;
   const exists = (p) => fs11.lstatSync(p, { throwIfNoEntry: false }) !== void 0;
-  const legacy = !exists(path10.join(repo, ".oss", "dev", "active", feature, "results")) && !exists(path10.join(ledger.dir, "results", feature));
+  const legacy = !exists(path10.join(repo, ".oss", "dev", where.kind, where.name, "results")) && !exists(path10.join(ledger.dir, "results", feature));
   if (legacy) return;
   try {
-    check(repo, feature, prev);
+    check(repo, feature, prev, where);
   } catch {
     throw new Refusal("no_prev_result", prev);
   }
 }
-function assemble(repo, feature, phase) {
+function assemble(repo, feature, phase, where) {
   const ledger = openLedger(repo);
   const startedAt = runStartedAt(ledger, phase);
-  startGate(repo, feature, phase, ledger);
+  startGate(repo, feature, phase, ledger, where);
   const ctx = {
     repo,
     feature,
     startedAt,
     headSha: headSha(repo) ?? "",
     valueDir: valueDir(repo),
-    now: () => /* @__PURE__ */ new Date()
+    now: () => /* @__PURE__ */ new Date(),
+    featureDir: path10.join(repo, ".oss", "dev", where.kind, where.name)
   };
   const outcome = runAssembler(phase, ctx);
   if (!outcome.ok) {
@@ -2261,8 +2293,8 @@ function assemble(repo, feature, phase) {
     throw new Refusal(outcome.error, outcome.detail ?? phase);
   }
   checkSchema(phase, outcome.result);
-  const written = writeResult(repo, feature, phase, outcome.result);
-  const read = readBack(repo, feature, phase, written);
+  const written = writeResult(repo, feature, phase, outcome.result, {}, where);
+  const read = readBack(repo, feature, phase, written, where);
   if (!read.ok) throw new Refusal(read.error, `results/${phase}.json`);
   ledger.appendRow(`results/${feature}/${phase}`, {
     sha256: sha256(written.bytes),
@@ -2274,10 +2306,10 @@ function assemble(repo, feature, phase) {
   });
   ledger.clearMarker(`pending/${feature}/${phase}`);
   ledger.clearMarker(`unverified/${feature}/${phase}`);
-  clearUnverifiedMarker(repo, feature, phase);
+  clearUnverifiedMarker(repo, feature, phase, where);
   return outcome.result;
 }
-function reassemble(repo, feature, phase, stored) {
+function reassemble(repo, feature, phase, stored, where) {
   let tmp = null;
   let dir = valueDir(repo);
   let base;
@@ -2290,7 +2322,7 @@ function reassemble(repo, feature, phase, stored) {
     }
     const recorded = stored.diff?.baseRef;
     base = typeof recorded === "string" ? recorded : "";
-    tmp = fs11.mkdtempSync(path10.join(os3.tmpdir(), "oss-phase-result-"));
+    tmp = fs11.mkdtempSync(path10.join(os2.tmpdir(), "oss-phase-result-"));
     const requested = Array.isArray(stored.overrides) ? stored.overrides : [];
     const overrides = requested.map((o) => ({ finding: o.finding, decisionId: o.decisionId, ...o.gate === void 0 ? {} : { gate: o.gate } }));
     fs11.writeFileSync(path10.join(tmp, "overrides.json"), JSON.stringify(overrides), { mode: 384 });
@@ -2304,6 +2336,7 @@ function reassemble(repo, feature, phase, stored) {
       headSha: String(stored.headSha),
       valueDir: dir,
       evidenceCutoff: typeof stored.evidenceCutoff === "string" ? stored.evidenceCutoff : null,
+      featureDir: path10.join(repo, ".oss", "dev", where.kind, where.name),
       // D51: ship reads every fail row, so a stored verdictsFrom (D47, results from rounds 6-7) is ignored.
       now: () => /* @__PURE__ */ new Date()
     }, base, remoteRefs);
@@ -2317,14 +2350,14 @@ var CODE_FIELDS = {
   build: ["testRuns", "evidenceTrust"],
   ship: ["diff", "gateEvidence", "uncapturedGates", "overrides", "blockers", "verdict"]
 };
-function check(repo, feature, phase) {
+function check(repo, feature, phase, where = { kind: "active", name: feature }) {
   const ledger = openLedger(repo);
-  const marker = path10.join(repo, ".oss", "dev", "active", feature, "results", `${phase}.unverified.json`);
+  const marker = path10.join(repo, ".oss", "dev", where.kind, where.name, "results", `${phase}.unverified.json`);
   if (fs11.lstatSync(marker, { throwIfNoEntry: false }) !== void 0) throw new Refusal("unverified", "marker");
   for (const kind of ["pending", "unverified"]) {
     if (ledger.hasMarker(`${kind}/${feature}/${phase}`)) throw new Refusal("unverified", `${kind} marker`);
   }
-  const read = readResult(repo, feature, phase);
+  const read = readResult(repo, feature, phase, where);
   if (!read.ok) throw new Refusal(read.error, `results/${phase}.json`);
   const value = read.value;
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Refusal("invalid_result", "$");
@@ -2340,7 +2373,7 @@ function check(repo, feature, phase) {
     throw new Refusal("stale_result", "headSha");
   }
   if (stored.verification !== "verified") throw new Refusal("unverified", "verification");
-  const fresh = reassemble(repo, feature, phase, stored);
+  const fresh = reassemble(repo, feature, phase, stored, where);
   if (!fresh.ok) throw new Refusal("evidence_mismatch", fresh.error);
   for (const field of CODE_FIELDS[phase]) {
     if (JSON.stringify(stored[field]) !== JSON.stringify(fresh.result[field])) {
@@ -2370,21 +2403,19 @@ function refuse(args, id, field, detail) {
 function gateLabel(phase, result) {
   return phase === "ship" ? { gateEvidence: result.gateEvidence, uncapturedGates: result.uncapturedGates } : {};
 }
-function recordReady(args, repo, feature) {
-  if (feature === null) return refuse(args, "no_feature", "feature");
-  const v = verdictOf(() => {
-    const stored = check(repo, feature, "ship");
+function recordReady(args, repo, feature, where) {
+  const v = feature === null ? { ok: false, id: "no_feature", field: "feature" } : verdictOf(() => {
+    const stored = check(repo, feature, "ship", where);
     if (stored.verdict !== "ready_to_merge") throw new Refusal("not_ready_to_merge", "verdict");
     const ledger = openLedger(repo);
-    ledger.appendRow(READY_ROW, {
-      feature,
-      headSha: stored.headSha,
-      sha256: ledger.lastRow(`results/${feature}/ship`)?.sha256,
-      startedAt: stored.startedAt,
-      at: (/* @__PURE__ */ new Date()).toISOString()
-    });
+    const bound = ledger.lastRow(`results/${feature}/ship`)?.sha256;
+    if (typeof bound !== "string" || !/^[0-9a-f]{64}$/.test(bound)) throw new Refusal("unbound_result", "sha256");
+    ledger.appendRow(READY_ROW, { feature, headSha: stored.headSha, sha256: bound, startedAt: stored.startedAt, at: (/* @__PURE__ */ new Date()).toISOString() });
   });
-  if (!v.ok) return refuse(args, v.id, v.field, v.detail);
+  if (!v.ok) {
+    verdictOf(() => openLedger(repo).appendRow(READY_ROW, { revoked: v.id, at: (/* @__PURE__ */ new Date()).toISOString() }));
+    return refuse(args, v.id, v.field, v.detail);
+  }
   process.stdout.write("READY_RECORDED\n");
   return 0;
 }
@@ -2426,13 +2457,21 @@ function main(argv) {
     }
     return 0;
   }
-  const feature = resolveFeature(repo);
-  if (args.recordReady) return recordReady(args, repo, feature);
+  let feature = resolveFeature(repo);
+  let where = { kind: "active", name: feature ?? "" };
+  if (feature === null && args.phase === "ship") {
+    const archived = archivedFeature(repo, shipBase(repo, valueDir(repo)));
+    if (archived !== null) {
+      feature = archived.feature;
+      where = { kind: "completed", name: archived.folder };
+    }
+  }
+  if (args.recordReady) return recordReady(args, repo, feature, where);
   if (feature === null) return mergedOrRefuse(args, repo, { ok: false, id: "no_feature", field: "feature" });
   if (args.verb === "assemble") {
     let result = {};
     const v2 = verdictOf(() => {
-      result = assemble(repo, feature, args.phase);
+      result = assemble(repo, feature, args.phase, where);
     });
     if (!v2.ok) return refuse(args, v2.id, v2.field, v2.detail);
     const outcome = args.phase === "ship" ? { verdict: result.verdict, blockers: result.blockers } : {};
@@ -2442,7 +2481,7 @@ function main(argv) {
   }
   let stored = {};
   const v = verdictOf(() => {
-    stored = check(repo, feature, args.phase);
+    stored = check(repo, feature, args.phase, where);
   });
   if (!v.ok) return mergedOrRefuse(args, repo, v);
   const verdict = args.phase === "ship" ? { verdict: stored.verdict } : {};

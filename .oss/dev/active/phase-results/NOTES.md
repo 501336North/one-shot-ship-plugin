@@ -212,4 +212,10 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 - **vitest `describe` options take no `hookTimeout`.** It type-fails, which the watcher-tests-typecheck hook test catches. Use `vi.setConfig({ hookTimeout })` before any hook registers.
 - **The API real-hook tests take the plugin from `OSS_REAL_PLUGIN_DIR`, or else the newest plugin cache.** Against an installed plugin without D78 (2.2.4), the new "no ready row is refused" case fails in 3 shells and every other case passes. Point OSS_REAL_PLUGIN_DIR at the R-257 plugin until a release carries D78.
 - **D81 widens D75's "without --merge nothing changes".** A merge asked for in chat also needs the ready row, so Step 8 records it before any merge.
-- **Pre-existing, not from this feature:** `ship-merge-gate.exec.test.ts:1521/1539/1552` type-fails (`onPlugin210(shell: readonly string[])` versus `Shell`). These lines were already at HEAD, and vitest doesn't type-check them.
+- **Pre-existing, not from this feature:** `ship-merge-gate.exec.test.ts:1521/1539/1552`
+
+## Ship round 16 notes (2026-11-23)
+- **Results for an archived re-run (D84)** go into `completed/<F>-<date>/results/ship.json`; no active folder is recreated. The Stop dispatcher and bash `oss_resolve_feature` don't know archived features, so for that re-run the dispatcher reports "unfiled" (allowed, with the D30 notice). `check` at complete and the merge gate still enforce it.
+- **Merges outside OSS are not gated.** A merge from the GitHub button or a direct `gh pr merge` skips oss-merge-test.sh, so only the IRON LAW #4 consent rules cover it.
+- **The served BEHIND STOP text is in the API ship.md** and still has the old wording. Only the plugin hook's STOP and the plugin ship.md say that an update from main needs a re-run. This is a possible API prompt follow-up; D74 keeps prompts unchanged this ship.
+- **Git calls must not read user log settings.** `git log` reads `log.showSignature` and `log.diffMerges` from user config, so every R-257 `git log` that parses paths must pin `--no-show-signature` and `--diff-merges`. type-fails (`onPlugin210(shell: readonly string[])` versus `Shell`). These lines were already at HEAD, and vitest doesn't type-check them.

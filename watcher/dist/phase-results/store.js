@@ -52,12 +52,14 @@ function checkNames(feature, phase) {
         throw new Error(`unsafe_path: unknown phase ${JSON.stringify(phase)}`);
 }
 /**
- * Walk .oss/dev/active/<feature>/results under repo, refusing any symlink or non-directory.
+ * Walk .oss/dev/<where>/results under repo (active/<feature> by default), refusing any symlink or non-directory.
  * Returns the results/ path, or null when a component is missing and create is false.
  */
-function resultsDir(repo, feature, create) {
+function resultsDir(repo, feature, create, where = { kind: 'active', name: feature }) {
+    if (!FEATURE_RE.test(where.name) || where.name.startsWith('.'))
+        throw new Error(`bad_feature: ${JSON.stringify(where.name)}`);
     let cur = repo;
-    for (const comp of ['.oss', 'dev', 'active', feature, 'results']) {
+    for (const comp of ['.oss', 'dev', where.kind, where.name, 'results']) {
         cur = path.join(cur, comp);
         let st;
         try {
@@ -108,12 +110,12 @@ function isOurFile(p, ours) {
         return false;
     }
 }
-export function writeResult(repo, feature, phase, obj, hooks = {}) {
+export function writeResult(repo, feature, phase, obj, hooks = {}, where) {
     checkNames(feature, phase);
     const data = JSON.stringify(obj);
     if (Buffer.byteLength(data) > RESULT_CAP)
         throw new Error('too_large: result over 256 KB');
-    const dir = resultsDir(repo, feature, true);
+    const dir = resultsDir(repo, feature, true, where);
     const realDir = fs.realpathSync(dir);
     const dirStat = fs.lstatSync(dir);
     const target = path.join(dir, `${phase}.json`);
@@ -170,8 +172,8 @@ export function writeResult(repo, feature, phase, obj, hooks = {}) {
  * (same device and inode) and holds exactly the written bytes; `result_changed` otherwise. The caller binds
  * `written.bytes`, never what a reader saw.
  */
-export function readBack(repo, feature, phase, written) {
-    const read = readResult(repo, feature, phase);
+export function readBack(repo, feature, phase, written, where) {
+    const read = readResult(repo, feature, phase, where);
     if (!read.ok)
         return read;
     if (read.dev !== written.dev || read.ino !== written.ino || !read.bytes.equals(written.bytes)) {
@@ -180,9 +182,9 @@ export function readBack(repo, feature, phase, written) {
     return { ...read, bytes: written.bytes };
 }
 /** Removes results/<phase>.unverified.json (the Stop hook's repo marker) under the checked results/ dir; no-op if absent. */
-export function clearUnverifiedMarker(repo, feature, phase) {
+export function clearUnverifiedMarker(repo, feature, phase, where) {
     checkNames(feature, phase);
-    const dir = resultsDir(repo, feature, false);
+    const dir = resultsDir(repo, feature, false, where);
     if (dir === null)
         return;
     try {
@@ -193,11 +195,11 @@ export function clearUnverifiedMarker(repo, feature, phase) {
             throw e;
     }
 }
-export function readResult(repo, feature, phase) {
+export function readResult(repo, feature, phase, where) {
     checkNames(feature, phase);
     let dir;
     try {
-        dir = resultsDir(repo, feature, false);
+        dir = resultsDir(repo, feature, false, where);
     }
     catch {
         return { ok: false, error: 'unsafe_path' };
