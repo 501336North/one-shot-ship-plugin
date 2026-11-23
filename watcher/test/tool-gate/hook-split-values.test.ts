@@ -118,6 +118,10 @@ const OTHER_OPERATORS = [
   '${q%x}env BASH_ENV=/tmp/x ~/.oss/hooks/oss-log.sh init',
   'HOME=/x ${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh',
   'BASH_ENV=/tmp/x "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}/hooks/oss-log.sh"',
+  // ship fix round 5, R5-1 F3: `$HOME` needs a name boundary
+  '"${CLAUDE_PLUGIN_ROOT:-$HOMEX/.claude/plugins/oss}/hooks/oss-log.sh"',
+  'HOMEX=/tmp/x; "${CLAUDE_PLUGIN_ROOT:-$HOMEX/.claude/plugins/oss}/hooks/oss-log.sh"',
+  '"${CLAUDE_PLUGIN_ROOT:-$HOME_X/.claude/plugins/oss}/hooks/oss-log.sh"',
 ];
 
 /** Already refused by the path-mention rule (`set` names a hook path): kept as guards. */
@@ -139,6 +143,8 @@ const ALLOWED = [
   '${CLAUDE_PLUGIN_ROOT%/}/hooks/check-updates.sh',
   '"${CLAUDE_PLUGIN_ROOT%/}/hooks/check-updates.sh"',
   '${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}/hooks/check-updates.sh',
+  // R5-1 F3: the braced `${HOME}` served form stays allowed
+  '"${CLAUDE_PLUGIN_ROOT:-${HOME}/.claude/plugins/oss}/hooks/check-updates.sh"',
 ];
 
 /** Lines another rule may refuse; the hook-call rule must not. */

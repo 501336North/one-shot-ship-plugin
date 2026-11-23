@@ -557,7 +557,8 @@ function runsGit(parts: readonly CommandPart[]): boolean {
  * case. Checked after the push-setup rule, so a config key that runs a program keeps its own reason.
  */
 export function checkTransportMention(command: string, parts: readonly CommandPart[]): Refusal | null {
-  return runsGit(parts) && /(?:^|[^A-Za-z0-9+-])(?:ext|fd)::/i.test(command.replace(/['"\\]/g, '')) ? TRANSPORT_REFUSAL : null;
+  // round 5, R5-1 F1: text right after `::` is a path (`std::os::fd::`, `crate::ext::`), not a transport
+  return runsGit(parts) && /(?:^|[^A-Za-z0-9+:-])(?:ext|fd)::/i.test(command.replace(/['"\\]/g, '')) ? TRANSPORT_REFUSAL : null;
 }
 
 const TRANSPORT_REFUSAL: Refusal = {
@@ -565,13 +566,41 @@ const TRANSPORT_REFUSAL: Refusal = {
   reason: 'Refused: an `ext::` or `fd::` git transport runs a command or talks over an open file. Ask the user to run it with `!`.',
 };
 
-/** Builtins whose operands (`read`, `mapfile`, `readarray`) or `-v` word (`printf`) name a variable they set (R4-3). */
-const OPERAND_NAME_SETTERS = new Set(['read', 'mapfile', 'readarray']);
+/**
+ * The options of `read` and `mapfile`/`readarray` that take a value, which is not a name being set (round 5, R5-1 F2);
+ * `read -a` takes the NAME of an array.
+ */
+const VALUE_OPTIONS: Readonly<Record<string, string>> = { read: 'ptudnNi', mapfile: 'udnOsCc', readarray: 'udnOsCc' };
+
+/** The names a `read`, `mapfile`/`readarray`, `printf -v` or `getopts` part sets, as the gate reads them (R4-3, R5-1 F2). */
+function namesSetBy(program: string, args: readonly string[]): string[] {
+  if (program === 'getopts') return args[1] === undefined ? [] : [args[1]];
+  const names: string[] = [];
+  const values = VALUE_OPTIONS[program] ?? '';
+  let options = true;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (options && a === '--') options = false;
+    else if (options && /^-[A-Za-z]/.test(a)) {
+      for (let k = 1; k < a.length; k++) {
+        const letter = a[k];
+        const attached = a.slice(k + 1);
+        const name = (program === 'read' && letter === 'a') || (program === 'printf' && letter === 'v');
+        if (!name && !values.includes(letter)) continue;
+        const operand = attached !== '' ? attached : (args[++i] ?? '');
+        if (name) names.push(operand);
+        break;
+      }
+    } else if (program !== 'printf') names.push(a);
+  }
+  return names;
+}
 
 /**
  * True when a part sets a variable whose name the gate can't read (R4-3): `env ${x}L=…`, `export ${x^^}=…`,
  * `export "$(…)OL=…"`, `read ${x}L`, `printf -v ${x}L`, `mapfile ${x}L`, `getopts o ${x}`, or a nameref
- * (`declare -n`), whose target is set through another name.
+ * (`declare -n`), whose target is set through another name; or a `read`-family part that sets `GIT_ALLOW_PROTOCOL`
+ * under a name the gate resolved (`x=GIT_ALLOW_PROTOCO; read ${x}L`).
  */
 function setsUnreadableName(part: CommandPart): boolean {
   const program = part.program;
@@ -583,10 +612,8 @@ function setsUnreadableName(part: CommandPart): boolean {
     if (program !== 'export' && program !== 'readonly' && args.some((a) => /^-[A-Za-z]*n/.test(a))) return true;
     return args.some((a) => !a.startsWith('-') && unknownName(a));
   }
-  if (OPERAND_NAME_SETTERS.has(program)) return args.some((a) => !a.startsWith('-') && a.includes(UNKNOWN));
-  if (program === 'printf') return args.some((a, i) => (a === '-v' && (args[i + 1] ?? '').includes(UNKNOWN)) || (/^-v./.test(a) && a.includes(UNKNOWN)));
-  if (program === 'getopts') return (args[1] ?? '').includes(UNKNOWN);
-  return false;
+  if (!(program in VALUE_OPTIONS) && program !== 'printf' && program !== 'getopts') return false;
+  return namesSetBy(program, args).some((name) => name.includes(UNKNOWN) || name.replace(/['"\\]/g, '') === 'GIT_ALLOW_PROTOCOL');
 }
 
 /** The refusal for a ref-history key, set any way: fixed text, so no key or value is repeated. */

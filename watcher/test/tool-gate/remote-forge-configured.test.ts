@@ -171,6 +171,9 @@ const ALLOWED = [
   'git remote set-url origin http://127.0.0.1:8000@github.com/x',
   'git remote add up5 https://github.com/a/b.git?x=1',
   'git remote add up6 ssh://git@github.com/a/b.git',
+  // R5-1 pinning: an ssh URL with a port and a `#` or `?` in the path
+  "git remote add up7 'ssh://git@github.com:22/a/b.git#frag'",
+  "git remote add up8 'ssh://git@github.com:2222/a?b.git'",
 ];
 
 describe.each(PLATFORMS)('remotes the gate can see (ship round 1, S3) on %s', (platform) => {

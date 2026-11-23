@@ -453,7 +453,7 @@ const DEFAULT_REF = /^"?\$\{([A-Za-z_][A-Za-z0-9_]*):?[-=]([\s\S]*)\}"?$/;
  * leading `$HOME`, as the plugin serves it, then no expansion, quote, escape or glob), and
  * `${CLAUDE_PLUGIN_ROOT%/}/hooks/<name>`. Read as the value (a trailing `/` trimmed) or the default, plus the rest.
  */
-const SERVED_ROOT = /^"?\$\{(CLAUDE_PLUGIN_ROOT)(?::-((?:\$HOME|\$\{HOME\})?[A-Za-z0-9._/@:,=+-]*)|(%\/))\}(\/hooks\/[A-Za-z0-9._-]+)"?$/;
+const SERVED_ROOT = /^"?\$\{(CLAUDE_PLUGIN_ROOT)(?::-((?:\$HOME(?![A-Za-z0-9_])|\$\{HOME\})?[A-Za-z0-9._/@:,=+-]*)|(%\/))\}(\/hooks\/[A-Za-z0-9._-]+)"?$/;
 /** A program word that starts with a variable, split before the rest is added (`$d/x`, `${d}x`). */
 const LEADING_REF = /^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})(?![A-Za-z0-9_[])/;
 /** Builtins and keywords whose bare operands name a variable they set from a value the gate doesn't read here. */

@@ -129,6 +129,10 @@ const NAME_LAYER = [
   'x=GIT_ALLOW_PROTOCO; set -a; read ${x}L <<< ext; git fetch origin',
   'x=GIT_ALLOW_PROTOCO; set -a; printf -v ${x}L ext; git fetch origin',
   'x=GIT_ALLOW_PROTOCO; set -a; mapfile ${x}L < /dev/null; git fetch origin',
+  // R5-1 F2: an unreadable NAME after value-taking options stays refused (`-a` takes a name)
+  'x=GIT_ALLOW_PROTOCO; read -a ${x}L <<< ext; git fetch origin',
+  'x=GIT_ALLOW_PROTOCO; read -p "? " ${x}L; git fetch origin',
+  'x=GIT_ALLOW_PROTOCO; mapfile -t -u 3 ${x}L; git fetch origin',
 ];
 
 /** R4-3 (2): an `ext::` or `fd::` transport anywhere on a git line, quotes and escapes removed. */
@@ -146,6 +150,9 @@ const TRANSPORT_LAYER = [
   'git clone e\\xt::sh x',
   'git clone fd::3 x',
   "git clone 'EXT::sh -c id' x",
+  // ship fix round 5, R5-1 F1: a bare `ext::` / `fd::` mention stays refused
+  'git commit -m "fix ext:: handling"',
+  "git log -S 'ext::'",
 ];
 
 const ALLOWED = [
@@ -154,6 +161,21 @@ const ALLOWED = [
   'read -r line < /dev/null; git status',
   'git commit -m "ext: handle the case"',
   'git clone https://github.com/a/b.git x',
+  // ship fix round 5, R5-1 F1: text after `::` is a path, not a transport (Rust `std::os::fd::`, `crate::ext::`)
+  'git commit -m "use std::os::fd::OwnedFd for the pipe"',
+  "git grep -n 'os::fd::'",
+  "git grep -n 'context::ext::'",
+  'git commit -m "wrap crate::ext::str"',
+  "rg 'std::os::fd::' src && git status",
+  "git commit -F - <<'EOF'\nuse std::os::fd::OwnedFd\nEOF",
+  "which git; rg 'os::fd::' src",
+  // R5-1 F2: an option's value is not a name being set
+  'read -p "Push $branch? " ans; git push origin feat/x',
+  'read -n 1 -s -r -p "Delete $f? " a; git status',
+  'read -t "$T" ans; git status',
+  'read -u "$fd" line; git status',
+  'mapfile -t -u "$fd" lines; git status',
+  'read -a parts <<< "$x"; git status',
   'echo protocol',
   'git fetch origin',
   'git ls-remote origin',
