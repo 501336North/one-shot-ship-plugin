@@ -487,12 +487,18 @@ function percentDecoded(text: string): string {
 
 function urlHost(url: string): string {
   const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.exec(url);
-  const rest = scheme === null ? url : url.slice(scheme[0].length);
-  const end = scheme !== null && /^(?:ssh|git\+ssh|ssh\+git):\/\/$/i.test(scheme[0]) ? /\/|$/ : /[/?#]|$/;
+  const ssh = scheme !== null && /^(?:ssh|git\+ssh|ssh\+git):\/\/$/i.test(scheme[0]);
+  // round 6, R6-2 (D): for ssh and git://, git decodes the text after `://` before it finds the host's end (connect.c)
+  const decodedFirst = ssh || (scheme !== null && /^git:\/\/$/i.test(scheme[0]));
+  const rest = scheme === null ? url : decodedFirst ? percentDecoded(url.slice(scheme[0].length)) : url.slice(scheme[0].length);
+  const end = ssh ? /\/|$/ : /[/?#]|$/;
   const written = scheme === null ? (/^(?:[^@/:[\]]*@)?\[[^\]]*\]|^[^:/]*/.exec(rest)?.[0] ?? '') : rest.slice(0, rest.search(end));
   // round 5, R5-2: the authority is percent-decoded before the host is read (`github.com%40127.0.0.1`, `%5b::1%5d`)
-  const authority = percentDecoded(written);
-  if (authority.startsWith('[') && authority.includes(']')) return authority.slice(1, authority.indexOf(']')).replace(/^.*@/, '');
+  const authority = decodedFirst ? written : percentDecoded(written);
+  // R6-2 (B): a bracketed userinfo is read as the host only for ssh and scp-style addresses; http(s) and git:// take
+  // the host after the last `@`
+  const bracketFirst = scheme === null || ssh;
+  if (bracketFirst && authority.startsWith('[') && authority.includes(']')) return authority.slice(1, authority.indexOf(']')).replace(/^.*@/, '');
   const host = authority.replace(/^.*@/, '');
   return host.startsWith('[') ? host.slice(1, host.includes(']') ? host.indexOf(']') : undefined) : host.replace(/:.*$/, '');
 }

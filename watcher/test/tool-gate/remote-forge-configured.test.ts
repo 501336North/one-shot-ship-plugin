@@ -145,6 +145,16 @@ const ENCODED_AUTHORITY = [
   "git remote add y 'https://github.com%40127.0.0.1/x'",
   "git remote set-url origin 'http://github.com%40localhost:8000/x'",
   "git remote add y 'ssh://localhos%74/x'",
+  // ship fix round 6, R6-2 (B): http(s) and git:// take the host after the last `@`; brackets in userinfo are not a host
+  "git remote add y 'https://%5Bx%5D@127.0.0.1/x'",
+  "git remote add y 'http://%5bx%5d@localhost/x'",
+  "git remote add y 'git://%5Bx%5D@127.0.0.1/x'",
+  "git -c 'url.https://%5bx%5d@localhost/.insteadOf=https://github.com/' fetch origin",
+  "git remote add y 'https://[x]@127.0.0.1/x'",
+  // R6-2 (D): for ssh and git://, the text after `://` is decoded before the authority's end is found (git's connect.c)
+  "git remote add y 'ssh://127.0.0.1%2F@github.com/x'",
+  "git remote add y 'git://127.0.0.1%2F@github.com/x'",
+  "git -c 'url.ssh://127.0.0.1%2F@github.com/.insteadOf=https://github.com/' fetch origin",
 ];
 
 const REPLACE_DESTINATIONS = [
@@ -188,6 +198,10 @@ const ALLOWED = [
   // R5-2: an escape in the path, or an escaped `@` inside the userinfo, is not a host
   "git remote add sp 'https://github.com/a/my%20repo.git'",
   "git remote add pw 'https://u:p%40x@github.com/a/b.git'",
+  // R6-2 (D): an escaped `/` in an https path is not an authority end
+  "git remote add sl 'https://github.com/a%2Fb/c.git'",
+  // R6-2 (B): an ssh address keeps reading a bracketed userinfo as the host, as git does (host `x`)
+  "git remote add y 'ssh://%5Bx%5D@127.0.0.1/x'",
 ];
 
 describe.each(PLATFORMS)('remotes the gate can see (ship round 1, S3) on %s', (platform) => {
