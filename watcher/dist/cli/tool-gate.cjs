@@ -5238,6 +5238,7 @@ var import_node_path8 = __toESM(require("node:path"), 1);
 var OSS_STATE = [import_node_path8.default.posix.join(".oss", "tool-gates") + "/", import_node_path8.default.posix.join(".oss", "workflow-state.json")];
 var MAX_EXCLUDE_BYTES = 1024 * 1024;
 var CHECK_IGNORE_MS = 300;
+var alreadyIgnored = /* @__PURE__ */ new Set();
 function excludeOssState(projectRoot) {
   const repo = findRepo(projectRoot);
   if (repo.kind !== "repo") return;
@@ -5249,11 +5250,14 @@ function excludeOssState(projectRoot) {
   const text = read === "missing" ? "" : read.text;
   const listed = new Set(text.split("\n"));
   const missing2 = OSS_STATE.filter((line) => !listed.has(line));
-  if (missing2.length === 0) return;
+  if (missing2.length === 0 || alreadyIgnored.has(repo.top)) return;
   const ignored = ignoredPaths(repo.top, missing2, timeLeft(CHECK_IGNORE_MS));
   if (ignored === null) return;
   const added = missing2.filter((line) => !ignored.includes(line));
-  if (added.length === 0) return;
+  if (added.length === 0) {
+    alreadyIgnored.add(repo.top);
+    return;
+  }
   appendPrivateFile(file, (text === "" || text.endsWith("\n") ? "" : "\n") + added.map((line) => `${line}
 `).join(""));
 }
@@ -8729,7 +8733,8 @@ function couldMatch(tokens, pieces, anchored) {
     return at2;
   };
   const gap = (at2) => {
-    const from = Math.min(...at2);
+    let from = Infinity;
+    for (const t of at2) if (t < from) from = t;
     const all = /* @__PURE__ */ new Set();
     for (let t = from; t <= tokens.length; t += 1) all.add(t);
     return all;
@@ -8863,8 +8868,8 @@ var SERVED_OPTIONS = /* @__PURE__ */ new Set(["pipefail", "errexit", "unset", "x
 var RESERVED = /* @__PURE__ */ new Set(["if", "then", "else", "elif", "do", "while", "until", "{", "!", "time"]);
 var SETTING_WORD = /^(?:HOME|PATH|path)(?:$|\[[^\]]*\])?(?:\+?=|$)/;
 var SCRIPT_FLAG2 = /^-[A-Za-z]*c$/;
-var NAME_SETTERS2 = /* @__PURE__ */ new Set(["declare", "typeset", "export", "local", "readonly", "read", "integer", "float"]);
-var NAMEREF_SETTERS = /* @__PURE__ */ new Set(["declare", "typeset", "local"]);
+var NAME_SETTERS2 = /* @__PURE__ */ new Set(["declare", "typeset", "export", "local", "readonly", "read", "integer", "float", "private", "vared"]);
+var NAMEREF_SETTERS = /* @__PURE__ */ new Set(["declare", "typeset", "local", "private"]);
 var OPERAND_SETTERS = /* @__PURE__ */ new Set([...NAME_SETTERS2, "let", "env"]);
 var PREFIXES = /* @__PURE__ */ new Set(["builtin", "command", "noglob", "nocorrect", "-"]);
 var MAX_DEPTH = 5;
@@ -8917,6 +8922,7 @@ function setsUnlisted(words) {
   else if (name === "printf" || name === "print") args.forEach((a, i) => a === "-v" ? names.push(args[i + 1] ?? "") : /^-v./.test(a) && names.push(a.slice(2)));
   else if (name === "mapfile" || name === "readarray") names.push(...arrayOperands(args));
   else if (name === "getopts") names.push(args[1] ?? "");
+  else if (name === "zparseopts") args.forEach((a, i) => (a === "-A" || a === "-a") && names.push(args[i + 1] ?? ""));
   return names.some(unlisted);
 }
 function unlisted(word) {
@@ -9099,11 +9105,13 @@ function couldBeOssHook(word, runs) {
   const hookFolder = parts.some((p) => ["hooks", ".oss"].some((name) => GLOB2.test(p) ? globMatches(p, name) : p.toLowerCase() === name));
   return hookFolder || parts[parts.length - 1].includes(UNKNOWN);
 }
-var SPLIT_REF = /^(?:\$=?([A-Za-z_][A-Za-z0-9_]*)(?:\[[@*]\])?|\$\{=?([A-Za-z_][A-Za-z0-9_]*)(?:\[[@*]\])?\}|"\$\{([A-Za-z_][A-Za-z0-9_]*)\[@\]\}")$/;
+var SPLIT_REF = /^"?(?:\$=?([A-Za-z_][A-Za-z0-9_]*|[@*])(?:\[[^\]]*\])?|\$\{=?([A-Za-z_][A-Za-z0-9_]*|[@*])(?:\[[^\]]*\])?\})"?$/;
+var DEFAULT_REF = /^"?\$\{([A-Za-z_][A-Za-z0-9_]*):?[-=]([\s\S]*)\}"?$/;
 var LEADING_REF = /^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})(?![A-Za-z0-9_[])/;
-var UNREAD_SETTERS = /* @__PURE__ */ new Set(["for", "select", "mapfile", "readarray", "printf", "print", "getopts", "let"]);
+var UNREAD_SETTERS = /* @__PURE__ */ new Set(["for", "select", "printf", "print", "getopts", "let"]);
 var ARRAY_START = /^([A-Za-z_][A-Za-z0-9_]*)(\+?)=$/;
 var FROM_FILE = /* @__PURE__ */ Symbol("from a file");
+var UNREAD = /* @__PURE__ */ Symbol("not read");
 var HOOK_HINT = /\.oss|hooks/i;
 function readsFile(script) {
   const end = script.findIndex((t) => t.kind === "op");
@@ -9132,7 +9140,7 @@ function record(values, token, text, home) {
   const assigned = ASSIGNMENT3.exec(token.value);
   if (assigned === null) return;
   const value = filled(token, text, values, home);
-  values.set(assigned[1], wordReadsFile(token) ? FROM_FILE : /[[+]/.test(assigned[0]) ? null : value.slice(value.indexOf("=") + 1));
+  values.set(assigned[1], wordReadsFile(token) ? FROM_FILE : /[[+]/.test(assigned[0]) ? UNREAD : value.slice(value.indexOf("=") + 1));
 }
 function programIndex(words, from) {
   let i = from;
@@ -9160,10 +9168,11 @@ function valueVerdict(value, cwd, command, call) {
   const unknown = value.includes(UNKNOWN);
   const hook = pieces.some((p) => wordNamesHook(p, cwd, true, call.home) || p.includes(UNKNOWN) && HOOK_HINT.test(p));
   if (unknown && piecesSet(value)) return "hook";
+  if (!hook) return "ok";
   const sets = pieces.includes("env") || !unknown && setsRefusedVariable(value, 0, call) || setsRefusedVariable(command, 0, call);
-  return hook && sets ? "hook" : "ok";
+  return sets ? "hook" : "ok";
 }
-function programVerdict(token, text, values, cwd, command, call) {
+function programVerdict(token, after, text, values, cwd, command, call) {
   if (token.kind !== "word" || !token.value.includes(UNKNOWN) && !token.value.startsWith("$=")) return "ok";
   if (wordReadsFile(token)) return "unreadable";
   const at = sourceOf(token);
@@ -9172,13 +9181,21 @@ function programVerdict(token, text, values, cwd, command, call) {
   if (raw.includes("${!")) return "unreadable";
   const split2 = SPLIT_REF.exec(raw);
   const leading = split2 === null ? LEADING_REF.exec(raw) : null;
-  const name = split2?.[1] ?? split2?.[2] ?? split2?.[3] ?? leading?.[1] ?? leading?.[2];
+  const withDefault = split2 === null && leading === null ? DEFAULT_REF.exec(raw) : null;
+  const name = split2?.[1] ?? split2?.[2] ?? leading?.[1] ?? leading?.[2] ?? withDefault?.[1];
   if (name === void 0) return "ok";
   const value = values.get(name);
-  if (value === FROM_FILE) return "unreadable";
-  if (typeof value !== "string") return "ok";
+  const quoted = raw.startsWith('"');
+  if (value === FROM_FILE && !quoted) return "unreadable";
+  if (value === UNREAD || value === FROM_FILE && after.length > 0) return lineNamesHook(command, cwd, call.home) ? "unreadable" : "ok";
+  if (value === FROM_FILE) return "ok";
+  const words = " " + after.map((w) => filled(w, text, values, call.home)).join(" ");
+  const readings = [...typeof value === "string" ? [value] : [], ...withDefault !== null ? [withDefault[2]] : []];
   const rest = leading !== null && token.value.startsWith(UNKNOWN) ? token.value.slice(UNKNOWN.length) : "";
-  return valueVerdict(value + rest, cwd, command, call);
+  return readings.some((r) => valueVerdict(r + rest + words, cwd, command, call) === "hook") ? "hook" : "ok";
+}
+function lineNamesHook(command, cwd, home) {
+  return PLUGIN_HOOK.test(command) || command.replace(/['"]/g, "").split(/[\s;&|()<>]+/).some((p) => p !== "" && wordNamesHook(p, cwd, true, home));
 }
 function scanPrograms(tokens, text, values, cwd, command, call) {
   let worst = "ok";
@@ -9201,12 +9218,20 @@ function scanPrograms(tokens, text, values, cwd, command, call) {
       if (name === "read") {
         const here = redirects.find((r) => r.kind === "redirect" && r.op === "<<<");
         const file = redirects.some((r) => r.kind === "redirect" && r.op === "<");
-        const value = file ? FROM_FILE : operands2.length === 1 && here?.kind === "redirect" && !here.target.includes(UNKNOWN) ? here.target : null;
+        const heredoc = redirects.some((r) => r.kind === "redirect" && (r.op === "<<" || r.op === "<<-"));
+        const value = file ? FROM_FILE : heredoc ? UNREAD : operands2.length === 1 && here?.kind === "redirect" && !here.target.includes(UNKNOWN) ? here.target : null;
         operands2.forEach((w) => w.kind === "word" && values.set(w.value, value));
       } else if (NAME_SETTERS2.has(name)) {
         operands2.forEach((w) => w.kind === "word" && ASSIGNMENT3.test(w.value) ? record(values, w, text, call.home) : w.kind === "word" && VARIABLE_NAME.test(w.value) && values.set(w.value, null));
-      } else if (UNREAD_SETTERS.has(name)) operands2.forEach((w) => w.kind === "word" && VARIABLE_NAME.test(w.value) && values.set(w.value, null));
-      worse2(programVerdict(words[programIndex(plain, i)], text, values, cwd, command, call));
+      } else if (name === "mapfile" || name === "readarray") operands2.forEach((w) => w.kind === "word" && VARIABLE_NAME.test(w.value) && values.set(w.value, UNREAD));
+      else if (UNREAD_SETTERS.has(name)) operands2.forEach((w) => w.kind === "word" && VARIABLE_NAME.test(w.value) && values.set(w.value, null));
+      else if (name === "set" && plain.includes("--", i)) {
+        const positional = words.slice(plain.indexOf("--", i) + 1).map((w) => filled(w, text, values, call.home)).join(" ");
+        values.set("@", positional);
+        values.set("*", positional);
+      }
+      const program = programIndex(plain, i);
+      worse2(programVerdict(words[program], words.slice(program + 1), text, values, cwd, command, call));
     }
     words = [];
     redirects = [];
@@ -9237,11 +9262,18 @@ function scanPrograms(tokens, text, values, cwd, command, call) {
 function programHidden(part) {
   return part.program !== null && (part.program.includes(UNKNOWN) || part.program.startsWith("$="));
 }
+var lastScan = null;
+function commandScan(command, cwd, home, sources) {
+  if (lastScan !== null && lastScan.command === command && lastScan.cwd === cwd && lastScan.home === home && lastScan.sources === sources) return lastScan.verdict;
+  const call = { home, sources: sourcesFor(command, sources) };
+  const result = tokenize(command, home, new ReadBudget());
+  const verdict = scanPrograms(result.tokens, command, /* @__PURE__ */ new Map(), cwd, command, call);
+  lastScan = { command, cwd, home, sources, verdict };
+  return verdict;
+}
 function checkOssHookEnv(part, command, home, sources) {
   if (programHidden(part)) {
-    const call = { home, sources: sourcesFor(command, sources) };
-    const result = tokenize(command, home, new ReadBudget());
-    if (scanPrograms(result.tokens, command, /* @__PURE__ */ new Map(), part.cwd, command, call) !== "ok") {
+    if (commandScan(command, part.cwd, home, sources) !== "ok") {
       return {
         rule: "protected-path",
         reason: "Refused: the program this command runs is read from a file or through indirection, which the gate can't see, or is a value the shell splits into words that run an OSS hook script (`~/.oss/hooks/\u2026`) with a variable set or cleared. Write the program name out."
@@ -9438,6 +9470,10 @@ async function checkBranchRefs(part, settings, git, caseInsensitive = false) {
     const created = worktreeBranch(args, branches);
     return created === void 0 ? null : refChange(`git worktree ${args.join(" ")}`, created);
   }
+  if (subcommand === "remote") {
+    const at = args.findIndex((a) => !a.startsWith("-"));
+    if (args[at] === "set-head" && !args.slice(at + 1).some((a) => SET_HEAD_GIT_DECIDES.has(a))) return REMOTE_TRACKING_REFUSAL;
+  }
   const forged = remoteRefForge(facts);
   if (forged !== null) return forged;
   if (subcommand === "fetch") {
@@ -9535,6 +9571,11 @@ var FETCH_VALUES = /* @__PURE__ */ new Set([
 ]);
 var FETCH_REFMAP = { valueLetters: /* @__PURE__ */ new Set(), valueLongs: [{ full: "--refmap", shortest: 6 }] };
 var REMOTE_TRACKING = /^(?:refs\/)?remotes\//;
+var SAMPLE_REPLACE_REF = "refs/replace/0123456789012345678901234567890123456789";
+function replaceRef(ref) {
+  const lower = ref.split(UNKNOWN)[0].toLowerCase();
+  return lower.startsWith("refs/replace/") || lower.includes(REFSPEC_WILDCARD) && matchCommand(lower, [SAMPLE_REPLACE_REF]);
+}
 var SAMPLE_REMOTE_TRACKING_REF = "refs/remotes/r/b";
 function remoteTracking(ref, wildcards) {
   const lower = ref.split(UNKNOWN)[0].toLowerCase();
@@ -9544,12 +9585,16 @@ var FILE_URL = /^file:\/\//i;
 var URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
 function isLocalUrl(url) {
   if (FILE_URL.test(url)) return true;
+  const host = URL_HOST.exec(url);
+  if (host !== null && LOOPBACK.test(host[1] ?? host[2])) return true;
   if (URL_SCHEME.test(url)) return false;
   const colon = url.indexOf(":");
   const unknown = url.indexOf(UNKNOWN);
   if (unknown !== -1 && (colon === -1 || unknown < colon)) return true;
   return colon === -1 || url.slice(0, colon).includes("/");
 }
+var URL_HOST = /^(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/)?(?:[^@/:]*@)?(?:\[([^\]]*)\]|([^/:[\]]+))(?::|\/|$)/;
+var LOOPBACK = /^(?:localhost\.?|127(?:\.\d{1,3}){3}|::1|0*:0*:0*:0*:0*:0*:0*:0*1)$/i;
 function realOrNull2(p) {
   try {
     return import_node_fs15.default.realpathSync(p);
@@ -9576,9 +9621,14 @@ function selfRemote(word, dir) {
   }
   return false;
 }
+var SET_HEAD_GIT_DECIDES = /* @__PURE__ */ new Set(["-a", "--auto", "-d", "--delete"]);
 var SELF_REMOTE_REFUSAL = {
   rule: "protected-branch",
   reason: "Refused: this `git fetch` / `git push` names the repository itself (or one of its worktrees) as the remote, which can write any of its refs, remote-tracking ones included. Ask the user to run it with `!`."
+};
+var REPLACE_REFUSAL = {
+  rule: "protected-branch",
+  reason: "Refused: this git call writes a replace ref (under refs/replace/), which changes which commits git shows. Ask the user to run it with `!`."
 };
 var REMOTE_TRACKING_REFUSAL = {
   rule: "protected-branch",
@@ -9591,17 +9641,27 @@ function remoteRefForge(facts) {
   const [repo, ...specs] = words;
   if (subcommand !== "pull" && repo !== void 0 && selfRemote(repo, dir)) return SELF_REMOTE_REFUSAL;
   const maps = subcommand === "fetch" ? readOptions(args, FETCH_REFMAP).values.map(([, map]) => map) : [];
+  if (subcommand !== "push" && [...specs, ...maps].some((spec) => spec.includes(":") && replaceRef(rawDestination(spec)))) return REPLACE_REFUSAL;
   const explicit = specs.filter((spec) => subcommand === "push" || spec.includes(":") && !defaultMapping(repo, spec, dir));
   const destinations = [...explicit, ...maps.filter((map) => map.includes(":"))];
   return destinations.some((spec) => remoteTracking(rawDestination(spec), subcommand !== "push")) ? REMOTE_TRACKING_REFUSAL : null;
 }
 function defaultMapping(remote, spec, dir) {
-  if (remote === void 0 || !REMOTE_NAME.test(remote) || existsOnDisk(import_node_path25.default.resolve(dir, remote))) return false;
+  if (remote === void 0 || !REMOTE_NAME.test(remote) || existsOnDisk(import_node_path25.default.resolve(dir, remote)) || !configuredRemote(remote, dir)) return false;
   const plain = spec.startsWith("+") ? spec.slice(1) : spec;
   if (plain.includes(REFSPEC_WILDCARD) || plain.includes(UNKNOWN)) return false;
   const colon = plain.indexOf(":");
   const branch = plain.slice(0, colon).replace(/^(?:refs\/heads\/|heads\/)/, "");
   return branch !== "" && plain.slice(colon + 1) === `refs/remotes/${remote}/${branch}`;
+}
+var MAX_CONFIG_BYTES = 1024 * 1024;
+var REMOTE_SECTION = /^\s*\[\s*remote\s+"([^"\\]*)"\s*\]/i;
+function configuredRemote(name, dir) {
+  const here = findRepo(dir);
+  if (here.kind !== "repo") return false;
+  const read = readRegularFile(import_node_path25.default.join(here.commonDir, "config"), MAX_CONFIG_BYTES, true);
+  if (typeof read === "string" || /^\s*\[\s*include/im.test(read.text)) return false;
+  return read.text.split("\n").some((line) => REMOTE_SECTION.exec(line)?.[1] === name);
 }
 function trustForCall(trustOf) {
   const known = /* @__PURE__ */ new Map();
@@ -10048,6 +10108,7 @@ function checkCommitSetup(part, earlier, count) {
   return null;
 }
 function checkPushSetup(part, earlier, count = earlier.length) {
+  if (settingsOf(part).some(([name]) => name === "GIT_ALLOW_PROTOCOL")) return ALLOW_PROTOCOL_REFUSAL;
   const planted = plantedConfig(part, earlier, count);
   if (planted !== null) {
     return {
@@ -10110,6 +10171,7 @@ function forgesRemote(key2, value) {
   if (name === null) return false;
   if (value === void 0) return true;
   const spec = value.startsWith("+") ? value.slice(1) : value;
+  if (spec.includes(":") && replaceRef(rawDestination(spec))) return true;
   return spec.includes(":") && remoteTracking(rawDestination(spec), true) && spec !== `refs/heads/*:refs/remotes/${name[1]}/*`;
 }
 var REMOTE_ADD_VALUES = /* @__PURE__ */ new Set(["-t", "--track", "-m", "--master"]);
@@ -10140,6 +10202,10 @@ function localRemote(git, part, earlier, count) {
     return forgesRemote(value, paired?.[1]);
   });
 }
+var ALLOW_PROTOCOL_REFUSAL = {
+  rule: "protected-branch",
+  reason: "Refused: `GIT_ALLOW_PROTOCOL` lets git use protocols such as `ext::`, which runs a command. Ask the user to run it with `!`."
+};
 var REF_HISTORY_REFUSAL = {
   rule: "protected-branch",
   reason: "Refused: this git setting changes or erases ref history (reflogs), which a lost commit is found by. Ask the user to change it with `!`."
@@ -10218,7 +10284,7 @@ function plantedConfig(part, earlier, count) {
 }
 var REF_HISTORY_KEYS = ["core.logallrefupdates", "core.bare", "gc.reflogexpire*", "gc.*.reflogexpire*"];
 var OSS_KEYS = ["oss.*"];
-var RUN_ANY_KEYS = ["core.hookspath", "alias.*", "include.path", "includeif.*.path", "protocol.allow", "protocol.ext.allow", ...REF_HISTORY_KEYS, ...OSS_KEYS];
+var RUN_ANY_KEYS = ["core.hookspath", "alias.*", "include.path", "includeif.*.path", "protocol.allow", "protocol.*.allow", ...REF_HISTORY_KEYS, ...OSS_KEYS];
 var WRITE_SECTIONS = new Set([...PUSH_KEYS, ...RUN_ANY_KEYS].map((key2) => key2.split(".")[0]));
 var RUN_COMMAND_KEYS = [
   "core.fsmonitor",
@@ -10442,6 +10508,7 @@ function runConfig(part, earlier, count) {
     if (w !== "-c" || i + 1 >= globals.length) continue;
     const setting = globals[++i];
     const value = setting.includes("=") ? setting.slice(setting.indexOf("=") + 1) : "true";
+    if (git.subcommand === "submodule" && keyOf(setting).toLowerCase() === "protocol.file.allow") continue;
     if (runsProgram(keyOf(setting), value)) return keyOf(setting);
   }
   const settings = callSettings(part, earlier, count);
