@@ -31,83 +31,15 @@ var path8 = __toESM(require("node:path"), 1);
 var path7 = __toESM(require("node:path"), 1);
 
 // src/phase-results/feature.ts
-var fs2 = __toESM(require("node:fs"), 1);
-var path = __toESM(require("node:path"), 1);
-
-// src/phase-results/git.ts
-var import_node_child_process = require("node:child_process");
-
-// src/phase-results/git-bin.ts
-var fs = __toESM(require("node:fs"), 1);
-var CANDIDATES = ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git", "/bin/git"];
-function gitBin() {
-  for (const p of CANDIDATES) {
-    try {
-      if (!fs.statSync(p).isFile()) continue;
-      fs.accessSync(p, fs.constants.X_OK);
-      return p;
-    } catch {
-    }
-  }
-  return "";
-}
-
-// src/phase-results/git.ts
-function gitEnv() {
-  const env = {};
-  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
-  env.GIT_NO_REPLACE_OBJECTS = "1";
-  env.GIT_GRAFT_FILE = "/dev/null";
-  return env;
-}
-function gitOut(cwd, args) {
-  try {
-    const out = (0, import_node_child_process.execFileSync)(gitBin(), args, {
-      cwd,
-      // git runs helpers (ssh, pager, credential and fsmonitor hooks) from PATH: never the caller's (D33).
-      env: { ...gitEnv(), PATH: "/usr/bin:/bin" },
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 2e3
-    }).trim();
-    return out === "" ? null : out;
-  } catch {
-    return null;
-  }
-}
-
-// src/phase-results/feature.ts
-var FEATURE_RE = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
-var BRANCH_RE = /^[^/]+\/([^/]+)\/[^/]/;
-function activeFeatures(repo) {
-  const dir = path.join(repo, ".oss", "dev", "active");
-  let names;
-  try {
-    names = fs2.readdirSync(dir);
-  } catch {
-    return [];
-  }
-  return names.filter((n) => FEATURE_RE.test(n) && fs2.lstatSync(path.join(dir, n), { throwIfNoEntry: false })?.isDirectory()).sort();
-}
-function resolveFeature(repo) {
-  const ref = gitOut(repo, ["symbolic-ref", "-q", "HEAD"]);
-  const branch = ref !== null && ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : "";
-  const m = BRANCH_RE.exec(branch);
-  if (m !== null) {
-    const f = m[1];
-    const st = fs2.lstatSync(path.join(repo, ".oss", "dev", "active", f), { throwIfNoEntry: false });
-    return FEATURE_RE.test(f) && st?.isDirectory() ? f : null;
-  }
-  const active = activeFeatures(repo);
-  return active.length === 1 ? active[0] : null;
-}
+var fs4 = __toESM(require("node:fs"), 1);
+var path3 = __toESM(require("node:path"), 1);
 
 // src/phase-results/ledger.ts
-var import_node_child_process2 = require("node:child_process");
+var import_node_child_process = require("node:child_process");
 var import_node_crypto = require("node:crypto");
-var fs3 = __toESM(require("node:fs"), 1);
+var fs = __toESM(require("node:fs"), 1);
 var os = __toESM(require("node:os"), 1);
-var path2 = __toESM(require("node:path"), 1);
+var path = __toESM(require("node:path"), 1);
 var LedgerError = class extends Error {
   code;
   constructor(code, detail) {
@@ -128,23 +60,23 @@ var LARGE_CAP = 4 * 1024 * 1024;
 var SEGMENT = /^[A-Za-z0-9._-]+$/;
 var TAIL_BYTES = 4096;
 var GIT_TIMEOUT_MS = 2e3;
-function gitBin2() {
+function gitBin() {
   for (const p of ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git", "/bin/git"]) {
     try {
-      if (!fs3.statSync(p).isFile()) continue;
-      fs3.accessSync(p, fs3.constants.X_OK);
+      if (!fs.statSync(p).isFile()) continue;
+      fs.accessSync(p, fs.constants.X_OK);
       return p;
     } catch {
     }
   }
   return "";
 }
-function gitOut2(cwd, args) {
+function gitOut(cwd, args) {
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith("GIT_")) delete env[k];
   env.PATH = "/usr/bin:/bin";
   try {
-    const out = (0, import_node_child_process2.execFileSync)(gitBin2(), args, {
+    const out = (0, import_node_child_process.execFileSync)(gitBin(), args, {
       cwd,
       env,
       encoding: "utf8",
@@ -160,13 +92,13 @@ function gitOut2(cwd, args) {
 function ledgerKey(cwd) {
   let physical;
   try {
-    physical = fs3.realpathSync(cwd);
+    physical = fs.realpathSync(cwd);
   } catch {
     return null;
   }
-  const top = gitOut2(physical, ["rev-parse", "--show-toplevel"]);
+  const top = gitOut(physical, ["rev-parse", "--show-toplevel"]);
   if (top === null) return null;
-  const gitDir = gitOut2(top, ["rev-parse", "--absolute-git-dir"]);
+  const gitDir = gitOut(top, ["rev-parse", "--absolute-git-dir"]);
   if (gitDir === null) return null;
   const content = Buffer.from(`${top}
 ${gitDir}
@@ -204,71 +136,71 @@ function openLedger(cwd, opts = {}) {
   const key = ledgerKey(cwd);
   if (key === null) throw new LedgerError("unsafe_path", "not a git repo");
   const uid = (opts.getuid ?? (() => process.getuid ? process.getuid() : -1))();
-  const root = path2.join(os.homedir(), ".oss", "ledger");
-  const keyDir = path2.join(root, key);
+  const root = path.join(os.homedir(), ".oss", "ledger");
+  const keyDir = path.join(root, key);
   function ensureDirs(dirParts, create) {
-    if (create) fs3.mkdirSync(path2.dirname(root), { recursive: true, mode: 448 });
+    if (create) fs.mkdirSync(path.dirname(root), { recursive: true, mode: 448 });
     let cur = root;
     for (const seg of [null, key, ...dirParts]) {
-      if (seg !== null) cur = path2.join(cur, seg);
+      if (seg !== null) cur = path.join(cur, seg);
       let st;
       try {
-        st = fs3.lstatSync(cur);
+        st = fs.lstatSync(cur);
       } catch (e) {
         if (!isErrno(e, "ENOENT")) throw e;
         if (!create) return false;
         try {
-          fs3.mkdirSync(cur, { mode: 448 });
+          fs.mkdirSync(cur, { mode: 448 });
         } catch (me) {
           if (!isErrno(me, "EEXIST")) throw me;
         }
-        st = fs3.lstatSync(cur);
+        st = fs.lstatSync(cur);
       }
       checkStat(st, uid, true, cur);
     }
     return true;
   }
   function filePath(parts) {
-    return path2.join(keyDir, ...parts);
+    return path.join(keyDir, ...parts);
   }
   function openChecked(parts, flags) {
     const p = filePath(parts);
     let fd;
     try {
-      fd = fs3.openSync(p, flags | fs3.constants.O_NOFOLLOW, 384);
+      fd = fs.openSync(p, flags | fs.constants.O_NOFOLLOW, 384);
     } catch (e) {
       if (isErrno(e, "ENOENT")) return null;
       if (isErrno(e, "ELOOP") || isErrno(e, "EMLINK")) throw new LedgerError("unsafe_path", p);
       throw e;
     }
     try {
-      checkStat(fs3.fstatSync(fd), uid, false, p);
+      checkStat(fs.fstatSync(fd), uid, false, p);
     } catch (e) {
-      fs3.closeSync(fd);
+      fs.closeSync(fd);
       throw e;
     }
     return fd;
   }
   function readText(parts) {
     if (!ensureDirs(parts.slice(0, -1), false)) return null;
-    const fd = openChecked(parts, fs3.constants.O_RDONLY);
+    const fd = openChecked(parts, fs.constants.O_RDONLY);
     if (fd === null) return null;
     try {
-      const size = fs3.fstatSync(fd).size;
+      const size = fs.fstatSync(fd).size;
       if (size > capFor(parts)) throw new LedgerError("ledger_too_large", filePath(parts));
-      return fs3.readFileSync(fd, "utf8");
+      return fs.readFileSync(fd, "utf8");
     } finally {
-      fs3.closeSync(fd);
+      fs.closeSync(fd);
     }
   }
   function writeFile(parts, data, flags) {
     ensureDirs(parts.slice(0, -1), true);
-    const fd = openChecked(parts, fs3.constants.O_WRONLY | fs3.constants.O_CREAT | flags);
+    const fd = openChecked(parts, fs.constants.O_WRONLY | fs.constants.O_CREAT | flags);
     if (fd === null) throw new LedgerError("unsafe_path", filePath(parts));
     try {
-      fs3.writeSync(fd, data);
+      fs.writeSync(fd, data);
     } finally {
-      fs3.closeSync(fd);
+      fs.closeSync(fd);
     }
   }
   const readRows = (relPath) => {
@@ -288,19 +220,19 @@ function openLedger(cwd, opts = {}) {
       const line = `${JSON.stringify(row)}
 `;
       if (Buffer.byteLength(line) >= MAX_ROW_BYTES) throw new LedgerError("too_large", relPath);
-      writeFile(parts, line, fs3.constants.O_APPEND);
+      writeFile(parts, line, fs.constants.O_APPEND);
     },
     readRows,
     lastRow(relPath) {
       const parts = splitRel(relPath);
       if (!ensureDirs(parts.slice(0, -1), false)) return null;
-      const fd = openChecked(parts, fs3.constants.O_RDONLY);
+      const fd = openChecked(parts, fs.constants.O_RDONLY);
       if (fd === null) return null;
       try {
-        const size = fs3.fstatSync(fd).size;
+        const size = fs.fstatSync(fd).size;
         const len = Math.min(size, TAIL_BYTES);
         const buf = Buffer.alloc(len);
-        fs3.readSync(fd, buf, 0, len, size - len);
+        fs.readSync(fd, buf, 0, len, size - len);
         const lines = buf.toString("utf8").split("\n");
         for (let i = lines.length - 1; i >= (len < size ? 1 : 0); i--) {
           const row = parseObject(lines[i]);
@@ -308,23 +240,23 @@ function openLedger(cwd, opts = {}) {
         }
         return null;
       } finally {
-        fs3.closeSync(fd);
+        fs.closeSync(fd);
       }
     },
     scanBack(relPath, visit) {
       const parts = splitRel(relPath);
       if (!ensureDirs(parts.slice(0, -1), false)) return;
-      const fd = openChecked(parts, fs3.constants.O_RDONLY);
+      const fd = openChecked(parts, fs.constants.O_RDONLY);
       if (fd === null) return;
       try {
-        const size = fs3.fstatSync(fd).size;
+        const size = fs.fstatSync(fd).size;
         const floor = Math.max(0, size - capFor(parts));
         let end = size;
         let rest = Buffer.alloc(0);
         while (end > floor) {
           const start = Math.max(floor, end - TAIL_BYTES);
           const buf = Buffer.alloc(end - start);
-          fs3.readSync(fd, buf, 0, buf.length, start);
+          fs.readSync(fd, buf, 0, buf.length, start);
           const all = Buffer.concat([buf, rest]);
           end = start;
           const cut = start > 0 ? all.indexOf(10) : -1;
@@ -340,12 +272,12 @@ function openLedger(cwd, opts = {}) {
           }
         }
       } finally {
-        fs3.closeSync(fd);
+        fs.closeSync(fd);
       }
     },
     writeMarker(relPath, obj) {
       writeFile(splitRel(relPath), `${JSON.stringify(obj)}
-`, fs3.constants.O_TRUNC);
+`, fs.constants.O_TRUNC);
     },
     readMarker(relPath) {
       const text = readText(splitRel(relPath));
@@ -355,7 +287,7 @@ function openLedger(cwd, opts = {}) {
       const parts = splitRel(relPath);
       if (!ensureDirs(parts.slice(0, -1), false)) return;
       try {
-        fs3.unlinkSync(filePath(parts));
+        fs.unlinkSync(filePath(parts));
       } catch (e) {
         if (!isErrno(e, "ENOENT")) throw e;
       }
@@ -363,31 +295,172 @@ function openLedger(cwd, opts = {}) {
     hasMarker(relPath) {
       const parts = splitRel(relPath);
       if (!ensureDirs(parts.slice(0, -1), false)) return false;
-      const fd = openChecked(parts, fs3.constants.O_RDONLY);
+      const fd = openChecked(parts, fs.constants.O_RDONLY);
       if (fd === null) return false;
-      fs3.closeSync(fd);
+      fs.closeSync(fd);
       return true;
     }
   };
 }
 
+// src/phase-results/git-bin.ts
+var fs2 = __toESM(require("node:fs"), 1);
+var CANDIDATES = ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git", "/bin/git"];
+function gitBin2() {
+  for (const p of CANDIDATES) {
+    try {
+      if (!fs2.statSync(p).isFile()) continue;
+      fs2.accessSync(p, fs2.constants.X_OK);
+      return p;
+    } catch {
+    }
+  }
+  return "";
+}
+
+// src/phase-results/git.ts
+var import_node_child_process2 = require("node:child_process");
+function gitEnv() {
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
+  env.GIT_NO_REPLACE_OBJECTS = "1";
+  env.GIT_GRAFT_FILE = "/dev/null";
+  return env;
+}
+function gitOut2(cwd, args) {
+  try {
+    const out = (0, import_node_child_process2.execFileSync)(gitBin2(), args, {
+      cwd,
+      // git runs helpers (ssh, pager, credential and fsmonitor hooks) from PATH: never the caller's (D33).
+      env: { ...gitEnv(), PATH: "/usr/bin:/bin" },
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2e3
+    }).trim();
+    return out === "" ? null : out;
+  } catch {
+    return null;
+  }
+}
+
+// src/services/redaction.ts
+var hasDigit = (match) => /[0-9]/.test(match);
+var isAssignedSecret = (value, prefix, atLineEnd, next) => !(/^(?:bearer|basic)$/i.test(value) && /\s/.test(next)) && value.length >= 6 && (/["'=>]\s*$/.test(prefix) || prefix.startsWith("--") || atLineEnd && /:\s*$/.test(prefix) || hasDigit(value));
+var SECRET_KEY_NAME = "(?:PASSWORD|PASSWD|PASSPHRASE|(?<!by|com|over|under|sur|tres)PASS|PWD|SECRET|TOKEN|CREDENTIALS|(?:API|SECRET|PRIVATE|ACCESS|SIGNING|ENCRYPTION|[_-])KEY)(?:[_-][A-Za-z0-9]+){0,2}";
+function hasJwtShape(run) {
+  const segments = run.split(".");
+  for (let i = 0; i + 2 < segments.length; i++) {
+    const header = segments[i];
+    const start = header.indexOf("eyJ");
+    if (start !== -1 && header.length - start >= 13 && segments[i + 1].startsWith("eyJ") && segments[i + 1].length >= 13 && segments[i + 2].length >= 10) {
+      return true;
+    }
+  }
+  return false;
+}
+var SECRET_PATTERNS = [
+  // RSA/EC/OPENSSH/ENCRYPTED/PGP; through END, or to the end of the text when there is no END.
+  {
+    name: "private-key-block",
+    pattern: /----- *BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)? *-----[\s\S]*?(?:----- *END [A-Z ]*PRIVATE KEY(?: BLOCK)? *-----|$)/gi
+  },
+  // The whole dotted run is redacted, so two glued JWTs go together and no fragment survives.
+  { name: "jwt", pattern: /eyJ[A-Za-z0-9_.-]*/g, isSecret: hasJwtShape },
+  { name: "google-api-key", pattern: /AIza[0-9A-Za-z_-]{35}/g },
+  { name: "github-fine-grained-pat", pattern: /github_pat_[A-Za-z0-9_]{20,}/g },
+  { name: "github-token", pattern: /gh[pousr]_(?:(?!gh[pousr]_)[A-Za-z0-9]){20,}/g },
+  { name: "stripe-key", pattern: /[rs]k_(?:live|test)_(?:(?![rs]k_(?:live|test)_)[A-Za-z0-9]){16,}/g },
+  { name: "aws-access-key-id", pattern: /A[KS]IA[0-9A-Z]{16}/g },
+  { name: "npm-token", pattern: /npm_[A-Za-z0-9]{36}/g },
+  { name: "gitlab-pat", pattern: /glpat-[A-Za-z0-9_-]{20,}/g },
+  { name: "slack-app-token", pattern: /xapp-[A-Za-z0-9-]+/g },
+  { name: "slack-token", pattern: /(?:xoxe\.)?xox[abeprs]-[A-Za-z0-9-]+/g },
+  { name: "oss-api-key", pattern: /ak_[0-9a-f]{64}/g },
+  {
+    // The user may be empty (redis://:pw@host) and the password may hold / or @, so it runs to the
+    // LAST @ before the host. The cap keeps a long run of "a://:a://:..." linear. A run of NULs (a token that
+    // cleanAndRedactWithRemoved's mask already covers) counts as one character, as the shorter [REDACTED]
+    // does in redactString, so the cap cannot stop short of the @ and leave the rest of the password readable.
+    name: "connection-string-password",
+    // eslint-disable-next-line no-control-regex -- the NUL is maskOf's placeholder, matched on purpose
+    pattern: /([a-z][a-z0-9+.-]{0,20}:\/\/[^\s:/@]*:)(?:\u0000+(?!\u0000)|[^\s\u0000]){1,256}(?=@)/gi,
+    keepPrefix: true
+  },
+  {
+    // A secret-named key, then :, =, =>, :=, ?= or +=, or a --flag. The value decides, not the key: a
+    // quoted value (taken whole, \" escapes included), a value after = or a --flag, a lone value ending its
+    // line after :, or one holding a digit is a secret; anything else is prose ("Password: see vault").
+    // Group 2 is set when the value ends its line. An unquoted value runs to the next space or quote, & included
+    // (as in the API): a secret may itself hold "&k=", so ?api_key=x&foo=bar loses foo=bar on purpose.
+    name: "secret-assignment",
+    pattern: new RegExp(
+      `((?<![A-Za-z0-9_-])(?:--[A-Za-z0-9_-]*${SECRET_KEY_NAME}\\s+|[A-Za-z0-9_-]*${SECRET_KEY_NAME}["']?\\s*(?:[:?+]?=>?|:)\\s*)["']?)(?:(?<=")(?:[^"\\\\\\n]|\\\\.)+(?=")|(?<=')(?:[^'\\\\\\n]|\\\\.)+(?=')|[^\\s"']+)(?=([ \\t]*(?:\\n|$))|)`,
+      "gi"
+    ),
+    isSecret: isAssignedSecret,
+    keepPrefix: true
+  },
+  { name: "bearer-token", pattern: /(Bearer\s+)[A-Za-z0-9._~+/=-]{20,}/gi, keepPrefix: true },
+  {
+    // After an Authorization (or Proxy-Authorization) key the value is always the credential. Elsewhere,
+    // base64 of user:password nearly always holds a digit, + / or =; "Basic Authentication" does not.
+    name: "basic-auth",
+    pattern: /((?:Authorization["']?[ \t]*[:=][ \t]*["']?)?Basic\s+)[A-Za-z0-9+/]{12,}={0,2}/gi,
+    isSecret: (value, prefix) => /^Authorization/i.test(prefix) || /[0-9+/=]/.test(value),
+    keepPrefix: true
+  },
+  { name: "slack-webhook", pattern: /https:\/\/hooks\.slack\.com\/(?:services|workflows|triggers)\/[A-Za-z0-9/]+/g },
+  { name: "discord-webhook", pattern: /https:\/\/(?:ptb\.|canary\.)?(?:discord|discordapp)\.com\/api\/(?:v[0-9]+\/)?webhooks\/[0-9]+\/[A-Za-z0-9_-]+/g },
+  { name: "google-oauth-token", pattern: /ya29\.(?:(?!ya29\.)[A-Za-z0-9_-]){20,}/g },
+  { name: "sendgrid-key", pattern: /SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}/g },
+  { name: "stripe-webhook-secret", pattern: /whsec_(?:(?!whsec_)[A-Za-z0-9+/=]){32,}/g },
+  { name: "huggingface-token", pattern: /hf_(?:(?!hf_)[A-Za-z0-9]){34,}/g },
+  { name: "telegram-bot-token", pattern: /[0-9]{8,10}:[A-Za-z0-9_-]{35}/g },
+  // sk- refuses only a preceding letter: without it "task-runner-v2-..." would match; "9sk-..." is a glued key.
+  { name: "sk-api-key", pattern: /(?<![A-Za-z])sk-[A-Za-z0-9_-]{20,}/g, isSecret: hasDigit },
+  // --- the plugin's original list ---
+  // Anthropic + generic `sk-` style keys (sk-ant-..., sk-...)
+  { name: "sk-key", pattern: /sk-[A-Za-z0-9_-]{12,}/g },
+  // Authorization header, ANY scheme (Bearer, Basic, Digest, Token, ...)
+  { name: "authorization-header", pattern: /Authorization:\s*[A-Za-z]+\s+[^\s"']+/gi },
+  // Bare bearer token
+  { name: "bare-bearer", pattern: /Bearer\s+[^\s"']+/g },
+  // JWTs: three base64url segments
+  { name: "jwt-segments", pattern: /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g },
+  // Query-string / form secret params (access_token before token to win leftmost)
+  { name: "secret-param", pattern: /(?:api[_-]?key|access[_-]?token|token|secret|password)=[^\s"'&]+/gi },
+  // GitHub personal access tokens
+  { name: "ghp", pattern: /ghp_[A-Za-z0-9]{20,}/g },
+  // AWS access key IDs
+  { name: "akia", pattern: /AKIA[A-Z0-9]{12,}/g },
+  // Slack bot/user tokens
+  { name: "slack-bot-user", pattern: /xox[bp]-[A-Za-z0-9-]+/g },
+  // Google API keys
+  { name: "google-api-key-legacy", pattern: /AIza[A-Za-z0-9_-]{20,}/g }
+];
+var REPLACEMENT_CHAR = String.fromCharCode(65533);
+var NUL = String.fromCharCode(0);
+var NUL_RUN = new RegExp(`${NUL}+`, "g");
+
+// src/phase-results/store.ts
+var fs3 = __toESM(require("fs"), 1);
+var path2 = __toESM(require("path"), 1);
+var import_child_process = require("child_process");
+
 // src/phase-results/schemas.ts
 var PHASES = ["ideate", "plan", "build", "ship"];
 
 // src/phase-results/store.ts
-var fs4 = __toESM(require("fs"), 1);
-var path3 = __toESM(require("path"), 1);
-var import_child_process = require("child_process");
-var FEATURE_RE2 = /^[A-Za-z0-9._-]+$/;
+var FEATURE_RE = /^[A-Za-z0-9._-]+$/;
 var RESULT_CAP = 256 * 1024;
 var VALUE_CAP = 64 * 1024;
 var VALUE_MAX_AGE_MS = 10 * 60 * 1e3;
-var { O_RDONLY, O_WRONLY, O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK } = fs4.constants;
+var { O_RDONLY, O_WRONLY, O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK } = fs3.constants;
 function resolveRepo(cwd) {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
   env.PATH = "/usr/bin:/bin";
-  const git = gitBin();
+  const git = gitBin2();
   if (git === "") return null;
   try {
     const top = (0, import_child_process.execFileSync)(git, ["rev-parse", "--show-toplevel"], {
@@ -397,28 +470,28 @@ function resolveRepo(cwd) {
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 2e3
     }).trim();
-    return top === "" ? null : fs4.realpathSync(top);
+    return top === "" ? null : fs3.realpathSync(top);
   } catch {
     return null;
   }
 }
 function checkNames(feature, phase) {
-  if (!FEATURE_RE2.test(feature) || feature.startsWith(".")) throw new Error(`bad_feature: ${JSON.stringify(feature)}`);
+  if (!FEATURE_RE.test(feature) || feature.startsWith(".")) throw new Error(`bad_feature: ${JSON.stringify(feature)}`);
   if (!PHASES.includes(phase)) throw new Error(`unsafe_path: unknown phase ${JSON.stringify(phase)}`);
 }
 function resultsDir(repo, feature, create, where = { kind: "active", name: feature }) {
-  if (!FEATURE_RE2.test(where.name) || where.name.startsWith(".")) throw new Error(`bad_feature: ${JSON.stringify(where.name)}`);
+  if (!FEATURE_RE.test(where.name) || where.name.startsWith(".")) throw new Error(`bad_feature: ${JSON.stringify(where.name)}`);
   let cur = repo;
   for (const comp of [".oss", "dev", where.kind, where.name, "results"]) {
-    cur = path3.join(cur, comp);
+    cur = path2.join(cur, comp);
     let st;
     try {
-      st = fs4.lstatSync(cur);
+      st = fs3.lstatSync(cur);
     } catch (e) {
       if (e.code !== "ENOENT") throw e;
       if (!create) return null;
-      fs4.mkdirSync(cur, { mode: 448 });
-      st = fs4.lstatSync(cur);
+      fs3.mkdirSync(cur, { mode: 448 });
+      st = fs3.lstatSync(cur);
     }
     if (st.isSymbolicLink() || !st.isDirectory()) throw new Error(`unsafe_path: ${comp}`);
   }
@@ -428,7 +501,7 @@ function readCapped(fd, cap) {
   const buf = Buffer.alloc(cap + 1);
   let n = 0;
   while (n < buf.length) {
-    const got = fs4.readSync(fd, buf, n, buf.length - n, null);
+    const got = fs3.readSync(fd, buf, n, buf.length - n, null);
     if (got === 0) break;
     n += got;
   }
@@ -445,12 +518,12 @@ function readResult(repo, feature, phase, where) {
   if (dir === null) return { ok: false, error: "missing" };
   let fd;
   try {
-    fd = fs4.openSync(path3.join(dir, `${phase}.json`), O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+    fd = fs3.openSync(path2.join(dir, `${phase}.json`), O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
   } catch (e) {
     return { ok: false, error: e.code === "ENOENT" ? "missing" : "unsafe_path" };
   }
   try {
-    const st = fs4.fstatSync(fd);
+    const st = fs3.fstatSync(fd);
     if (!st.isFile() || st.nlink !== 1 || st.uid !== process.getuid?.()) return { ok: false, error: "unsafe_path" };
     const bytes = readCapped(fd, RESULT_CAP);
     if (bytes.length > RESULT_CAP) return { ok: false, error: "too_large" };
@@ -460,8 +533,43 @@ function readResult(repo, feature, phase, where) {
       return { ok: false, error: "invalid_json" };
     }
   } finally {
-    fs4.closeSync(fd);
+    fs3.closeSync(fd);
   }
+}
+
+// src/phase-results/assemble-ship.ts
+var REPO_FILE_CAP = 4 * 1024 * 1024;
+var PATH_LIST_BUFFER = 64 * 1024 * 1024;
+var DIFF_OPTIONS = ["--no-renames", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "--no-color", "--diff-algorithm=myers"];
+var DIFF = ["diff", ...DIFF_OPTIONS];
+var ARGV_PATH_BYTES = 128 * 1024;
+
+// src/phase-results/feature.ts
+var FEATURE_RE2 = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
+var BRANCH_RE = /^[^/]+\/([^/]+)\/[^/]/;
+function activeFeatures(repo) {
+  const dir = path3.join(repo, ".oss", "dev", "active");
+  let names;
+  try {
+    names = fs4.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return names.filter((n) => FEATURE_RE2.test(n) && fs4.lstatSync(path3.join(dir, n), { throwIfNoEntry: false })?.isDirectory()).sort();
+}
+function branchName(repo) {
+  const ref = gitOut2(repo, ["symbolic-ref", "-q", "HEAD"]);
+  return ref !== null && ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : "";
+}
+function resolveFeature(repo) {
+  const m = BRANCH_RE.exec(branchName(repo));
+  if (m !== null) {
+    const f = m[1];
+    const st = fs4.lstatSync(path3.join(repo, ".oss", "dev", "active", f), { throwIfNoEntry: false });
+    return FEATURE_RE2.test(f) && st?.isDirectory() ? f : null;
+  }
+  const active = activeFeatures(repo);
+  return active.length === 1 ? active[0] : null;
 }
 
 // src/logger/workflow-logger.ts

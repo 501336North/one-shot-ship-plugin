@@ -296,11 +296,8 @@ function openLedger(cwd, opts = {}) {
 }
 
 // src/phase-results/feature.ts
-var fs3 = __toESM(require("node:fs"), 1);
+var fs4 = __toESM(require("node:fs"), 1);
 var path2 = __toESM(require("node:path"), 1);
-
-// src/phase-results/git.ts
-var import_node_child_process2 = require("node:child_process");
 
 // src/phase-results/git-bin.ts
 var fs2 = __toESM(require("node:fs"), 1);
@@ -318,6 +315,7 @@ function gitBin2() {
 }
 
 // src/phase-results/git.ts
+var import_node_child_process2 = require("node:child_process");
 function gitEnv() {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
@@ -341,34 +339,107 @@ function gitOut2(cwd, args) {
   }
 }
 
-// src/phase-results/feature.ts
-var FEATURE_RE = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
-var BRANCH_RE = /^[^/]+\/([^/]+)\/[^/]/;
-function activeFeatures(repo) {
-  const dir = path2.join(repo, ".oss", "dev", "active");
-  let names;
-  try {
-    names = fs3.readdirSync(dir);
-  } catch {
-    return [];
+// src/services/redaction.ts
+var hasDigit = (match) => /[0-9]/.test(match);
+var isAssignedSecret = (value, prefix, atLineEnd, next) => !(/^(?:bearer|basic)$/i.test(value) && /\s/.test(next)) && value.length >= 6 && (/["'=>]\s*$/.test(prefix) || prefix.startsWith("--") || atLineEnd && /:\s*$/.test(prefix) || hasDigit(value));
+var SECRET_KEY_NAME = "(?:PASSWORD|PASSWD|PASSPHRASE|(?<!by|com|over|under|sur|tres)PASS|PWD|SECRET|TOKEN|CREDENTIALS|(?:API|SECRET|PRIVATE|ACCESS|SIGNING|ENCRYPTION|[_-])KEY)(?:[_-][A-Za-z0-9]+){0,2}";
+function hasJwtShape(run) {
+  const segments = run.split(".");
+  for (let i = 0; i + 2 < segments.length; i++) {
+    const header = segments[i];
+    const start = header.indexOf("eyJ");
+    if (start !== -1 && header.length - start >= 13 && segments[i + 1].startsWith("eyJ") && segments[i + 1].length >= 13 && segments[i + 2].length >= 10) {
+      return true;
+    }
   }
-  return names.filter((n) => FEATURE_RE.test(n) && fs3.lstatSync(path2.join(dir, n), { throwIfNoEntry: false })?.isDirectory()).sort();
+  return false;
 }
-function resolveFeature(repo) {
-  const ref = gitOut2(repo, ["symbolic-ref", "-q", "HEAD"]);
-  const branch = ref !== null && ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : "";
-  const m = BRANCH_RE.exec(branch);
-  if (m !== null) {
-    const f = m[1];
-    const st = fs3.lstatSync(path2.join(repo, ".oss", "dev", "active", f), { throwIfNoEntry: false });
-    return FEATURE_RE.test(f) && st?.isDirectory() ? f : null;
-  }
-  const active = activeFeatures(repo);
-  return active.length === 1 ? active[0] : null;
-}
+var SECRET_PATTERNS = [
+  // RSA/EC/OPENSSH/ENCRYPTED/PGP; through END, or to the end of the text when there is no END.
+  {
+    name: "private-key-block",
+    pattern: /----- *BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)? *-----[\s\S]*?(?:----- *END [A-Z ]*PRIVATE KEY(?: BLOCK)? *-----|$)/gi
+  },
+  // The whole dotted run is redacted, so two glued JWTs go together and no fragment survives.
+  { name: "jwt", pattern: /eyJ[A-Za-z0-9_.-]*/g, isSecret: hasJwtShape },
+  { name: "google-api-key", pattern: /AIza[0-9A-Za-z_-]{35}/g },
+  { name: "github-fine-grained-pat", pattern: /github_pat_[A-Za-z0-9_]{20,}/g },
+  { name: "github-token", pattern: /gh[pousr]_(?:(?!gh[pousr]_)[A-Za-z0-9]){20,}/g },
+  { name: "stripe-key", pattern: /[rs]k_(?:live|test)_(?:(?![rs]k_(?:live|test)_)[A-Za-z0-9]){16,}/g },
+  { name: "aws-access-key-id", pattern: /A[KS]IA[0-9A-Z]{16}/g },
+  { name: "npm-token", pattern: /npm_[A-Za-z0-9]{36}/g },
+  { name: "gitlab-pat", pattern: /glpat-[A-Za-z0-9_-]{20,}/g },
+  { name: "slack-app-token", pattern: /xapp-[A-Za-z0-9-]+/g },
+  { name: "slack-token", pattern: /(?:xoxe\.)?xox[abeprs]-[A-Za-z0-9-]+/g },
+  { name: "oss-api-key", pattern: /ak_[0-9a-f]{64}/g },
+  {
+    // The user may be empty (redis://:pw@host) and the password may hold / or @, so it runs to the
+    // LAST @ before the host. The cap keeps a long run of "a://:a://:..." linear. A run of NULs (a token that
+    // cleanAndRedactWithRemoved's mask already covers) counts as one character, as the shorter [REDACTED]
+    // does in redactString, so the cap cannot stop short of the @ and leave the rest of the password readable.
+    name: "connection-string-password",
+    // eslint-disable-next-line no-control-regex -- the NUL is maskOf's placeholder, matched on purpose
+    pattern: /([a-z][a-z0-9+.-]{0,20}:\/\/[^\s:/@]*:)(?:\u0000+(?!\u0000)|[^\s\u0000]){1,256}(?=@)/gi,
+    keepPrefix: true
+  },
+  {
+    // A secret-named key, then :, =, =>, :=, ?= or +=, or a --flag. The value decides, not the key: a
+    // quoted value (taken whole, \" escapes included), a value after = or a --flag, a lone value ending its
+    // line after :, or one holding a digit is a secret; anything else is prose ("Password: see vault").
+    // Group 2 is set when the value ends its line. An unquoted value runs to the next space or quote, & included
+    // (as in the API): a secret may itself hold "&k=", so ?api_key=x&foo=bar loses foo=bar on purpose.
+    name: "secret-assignment",
+    pattern: new RegExp(
+      `((?<![A-Za-z0-9_-])(?:--[A-Za-z0-9_-]*${SECRET_KEY_NAME}\\s+|[A-Za-z0-9_-]*${SECRET_KEY_NAME}["']?\\s*(?:[:?+]?=>?|:)\\s*)["']?)(?:(?<=")(?:[^"\\\\\\n]|\\\\.)+(?=")|(?<=')(?:[^'\\\\\\n]|\\\\.)+(?=')|[^\\s"']+)(?=([ \\t]*(?:\\n|$))|)`,
+      "gi"
+    ),
+    isSecret: isAssignedSecret,
+    keepPrefix: true
+  },
+  { name: "bearer-token", pattern: /(Bearer\s+)[A-Za-z0-9._~+/=-]{20,}/gi, keepPrefix: true },
+  {
+    // After an Authorization (or Proxy-Authorization) key the value is always the credential. Elsewhere,
+    // base64 of user:password nearly always holds a digit, + / or =; "Basic Authentication" does not.
+    name: "basic-auth",
+    pattern: /((?:Authorization["']?[ \t]*[:=][ \t]*["']?)?Basic\s+)[A-Za-z0-9+/]{12,}={0,2}/gi,
+    isSecret: (value, prefix) => /^Authorization/i.test(prefix) || /[0-9+/=]/.test(value),
+    keepPrefix: true
+  },
+  { name: "slack-webhook", pattern: /https:\/\/hooks\.slack\.com\/(?:services|workflows|triggers)\/[A-Za-z0-9/]+/g },
+  { name: "discord-webhook", pattern: /https:\/\/(?:ptb\.|canary\.)?(?:discord|discordapp)\.com\/api\/(?:v[0-9]+\/)?webhooks\/[0-9]+\/[A-Za-z0-9_-]+/g },
+  { name: "google-oauth-token", pattern: /ya29\.(?:(?!ya29\.)[A-Za-z0-9_-]){20,}/g },
+  { name: "sendgrid-key", pattern: /SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}/g },
+  { name: "stripe-webhook-secret", pattern: /whsec_(?:(?!whsec_)[A-Za-z0-9+/=]){32,}/g },
+  { name: "huggingface-token", pattern: /hf_(?:(?!hf_)[A-Za-z0-9]){34,}/g },
+  { name: "telegram-bot-token", pattern: /[0-9]{8,10}:[A-Za-z0-9_-]{35}/g },
+  // sk- refuses only a preceding letter: without it "task-runner-v2-..." would match; "9sk-..." is a glued key.
+  { name: "sk-api-key", pattern: /(?<![A-Za-z])sk-[A-Za-z0-9_-]{20,}/g, isSecret: hasDigit },
+  // --- the plugin's original list ---
+  // Anthropic + generic `sk-` style keys (sk-ant-..., sk-...)
+  { name: "sk-key", pattern: /sk-[A-Za-z0-9_-]{12,}/g },
+  // Authorization header, ANY scheme (Bearer, Basic, Digest, Token, ...)
+  { name: "authorization-header", pattern: /Authorization:\s*[A-Za-z]+\s+[^\s"']+/gi },
+  // Bare bearer token
+  { name: "bare-bearer", pattern: /Bearer\s+[^\s"']+/g },
+  // JWTs: three base64url segments
+  { name: "jwt-segments", pattern: /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g },
+  // Query-string / form secret params (access_token before token to win leftmost)
+  { name: "secret-param", pattern: /(?:api[_-]?key|access[_-]?token|token|secret|password)=[^\s"'&]+/gi },
+  // GitHub personal access tokens
+  { name: "ghp", pattern: /ghp_[A-Za-z0-9]{20,}/g },
+  // AWS access key IDs
+  { name: "akia", pattern: /AKIA[A-Z0-9]{12,}/g },
+  // Slack bot/user tokens
+  { name: "slack-bot-user", pattern: /xox[bp]-[A-Za-z0-9-]+/g },
+  // Google API keys
+  { name: "google-api-key-legacy", pattern: /AIza[A-Za-z0-9_-]{20,}/g }
+];
+var REPLACEMENT_CHAR = String.fromCharCode(65533);
+var NUL = String.fromCharCode(0);
+var NUL_RUN = new RegExp(`${NUL}+`, "g");
 
 // src/phase-results/store.ts
-var fs4 = __toESM(require("fs"), 1);
+var fs3 = __toESM(require("fs"), 1);
 var import_child_process = require("child_process");
 
 // src/phase-results/validate.ts
@@ -563,7 +634,7 @@ function validate(schema, value) {
 var RESULT_CAP = 256 * 1024;
 var VALUE_CAP = 64 * 1024;
 var VALUE_MAX_AGE_MS = 10 * 60 * 1e3;
-var { O_RDONLY, O_WRONLY, O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK } = fs4.constants;
+var { O_RDONLY, O_WRONLY, O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK } = fs3.constants;
 function resolveRepo(cwd) {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
@@ -578,10 +649,45 @@ function resolveRepo(cwd) {
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 2e3
     }).trim();
-    return top === "" ? null : fs4.realpathSync(top);
+    return top === "" ? null : fs3.realpathSync(top);
   } catch {
     return null;
   }
+}
+
+// src/phase-results/assemble-ship.ts
+var REPO_FILE_CAP = 4 * 1024 * 1024;
+var PATH_LIST_BUFFER = 64 * 1024 * 1024;
+var DIFF_OPTIONS = ["--no-renames", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "--no-color", "--diff-algorithm=myers"];
+var DIFF = ["diff", ...DIFF_OPTIONS];
+var ARGV_PATH_BYTES = 128 * 1024;
+
+// src/phase-results/feature.ts
+var FEATURE_RE = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
+var BRANCH_RE = /^[^/]+\/([^/]+)\/[^/]/;
+function activeFeatures(repo) {
+  const dir = path2.join(repo, ".oss", "dev", "active");
+  let names;
+  try {
+    names = fs4.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return names.filter((n) => FEATURE_RE.test(n) && fs4.lstatSync(path2.join(dir, n), { throwIfNoEntry: false })?.isDirectory()).sort();
+}
+function branchName(repo) {
+  const ref = gitOut2(repo, ["symbolic-ref", "-q", "HEAD"]);
+  return ref !== null && ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : "";
+}
+function resolveFeature(repo) {
+  const m = BRANCH_RE.exec(branchName(repo));
+  if (m !== null) {
+    const f = m[1];
+    const st = fs4.lstatSync(path2.join(repo, ".oss", "dev", "active", f), { throwIfNoEntry: false });
+    return FEATURE_RE.test(f) && st?.isDirectory() ? f : null;
+  }
+  const active = activeFeatures(repo);
+  return active.length === 1 ? active[0] : null;
 }
 
 // src/phase-results/verdict-capture.ts

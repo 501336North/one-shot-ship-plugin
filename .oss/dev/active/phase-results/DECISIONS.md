@@ -176,6 +176,18 @@
   - Cheap infos: a base-check git timeout maps to diff_unavailable with the DIFF_TIMEOUT hint; recordReady refuses a missing or invalid sha256; one shared deadline for mergedReady's git calls; the BEHIND STOP text says that updating from main means re-running /oss:ship.
   - Fix round 16, past the 3-round cap, by the owner's pick.
 - D84 (user picker, 2026-11-23, "Find archived feature"): after the archive commit, a re-run of /oss:ship for a code fix must still find the feature. When no active folder exists, the CLI resolves the feature to the single `.oss/dev/completed/<F>-<date>/` folder that this branch's own diff created (relative to its base), and assembles and checks it there. It does not use any other completed folder.
+- D85 (user picker, 2026-11-23, "Fix 1-3 + cheap infos"): fix round 17 covers gate round 15, where all four gates failed.
+  - **The D84 lookup uses assemble's base.** The "this branch added" diff takes the same base assemble uses (the most advanced merge base of the local base and the ship-start snapshot's remote base refs), so a stale local main no longer counts other features' archives. When the branch name names a feature, the folder's `<F>` must match it. With zero or two or more folders, the refusal says what to do (update local main, or the branch added several completed folders). This fixes the medium from all four gates, the security medium (a foreign folder picked) and the security low.
+  - **`complete` picks the right folder.** `mergedReady` takes the completed folder whose `results/ship.json` hashes to the ready row's sha256, so a feature archived before does not block it.
+  - **The worktree finish must prove the merge (security low).** On the feature-branch path, the archived result must also be in origin/main's tree, with the same bytes.
+  - **Cheap infos:**
+    - the complete refusal says to run `git fetch origin` and send `complete` again;
+    - a git timeout in the D84 lookup maps to DIFF_TIMEOUT;
+    - a failed revoke append is named in the refusal;
+    - bash `_mg` also requires the ready row's `at` to be at or after startedAt;
+    - one budget from `main()` covers complete.
+    - Parity of the bash and TS readers on hand-edited rows is a D51 known limit (NOTES).
+  - Fix round 17, past the 3-round cap, by the owner's pick.
 - D25-D29: ship round 1 decisions (user pickers, 2026-11-18), from four failing gates.
   - **D25 Gate code location: lock it down.**
     - `~/.oss/plugin-root` and `~/.oss/watcher/**` join the tool gate's protectedPaths. This changes R-266's exact-list test, as the user's pick allows.

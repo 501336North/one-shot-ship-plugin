@@ -9,7 +9,10 @@
  *             log settings say);
  *           - on main, the tested main is an ancestor of HEAD and not HEAD; on the feature branch (main checked out in
  *             another worktree), the tested main is a strict ancestor of origin/main;
- *           - all of mergedReady's git calls share one deadline inside complete's 15 s bound.
+ *           - all of mergedReady's git calls share one deadline inside complete's 15 s bound, from a budget the CLI
+ *             starts in main() (D85 info e);
+ *           D85: the completed folder whose result hashes to the ready row counts (an older archive does not block),
+ *           and the feature-branch finish needs origin/main's tree to hold that archived result with the same bytes.
  * @boundary watcher/src/phase-results/merge-ready.ts (git is real; the process boundary is spied on only for the clock)
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -131,6 +134,16 @@ describe('mergedReady: an honest merge passes', () => {
     }
   });
 
+  it('passes when the feature was archived before: the folder whose result hashes to the ready row counts (D85 code review L1)', () => {
+    write(`.oss/dev/completed/${F}-2026-10-01/results/ship.json`, '{"phase":"ship","verdict":"blocked"}');
+    commitAll('an earlier archive of the feature');
+    git('branch', '-f', 'main', 'HEAD');
+    git('update-ref', 'refs/remotes/origin/main', 'main');
+    shipped();
+    squashToMain();
+    expect(mergedReady(repo, ledger, STARTED)).toMatchObject({ verdict: 'ready_to_merge' });
+  });
+
   it('passes with a signed archive commit and log.showSignature=true (D83 security finding 2)', () => {
     const key = path.join(home, 'sign-key');
     execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', key]);
@@ -176,11 +189,46 @@ describe('mergedReady: each refusal', () => {
     expect(mergedReady(repo, ledger, STARTED)).toBeNull();
   });
 
-  it('refuses two completed folders for the feature', () => {
+  // ⚠ changes existing test: D85 (code review L1, pen L2) — "refuses two completed folders" becomes "refuses when no
+  //   completed folder holds the checked result"; a second folder from an earlier archive now passes (next describe).
+  it('refuses when no completed folder of the feature holds the checked result', () => {
     shipped();
-    fs.cpSync(path.join(repo, `.oss/dev/completed/${F}-2026-11-23`), path.join(repo, `.oss/dev/completed/${F}-2026-11-24`), { recursive: true });
+    fs.cpSync(path.join(repo, `.oss/dev/completed/${F}-2026-11-23`), path.join(repo, `.oss/dev/completed/${F}-2026-10-01`), { recursive: true });
+    for (const d of ['2026-11-23', '2026-10-01']) fs.appendFileSync(path.join(repo, `.oss/dev/completed/${F}-${d}/results/ship.json`), ' ');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'edit');
     squashToMain();
     expect(mergedReady(repo, ledger, STARTED)).toBeNull();
+  });
+
+  it('refuses on the feature branch when the PR did not merge, though another commit moved origin/main (D85 pen L1)', () => {
+    shipped();
+    git('worktree', 'add', '-q', path.join(repo, '..', `${path.basename(repo)}-main`), 'main');
+    const other = git('commit-tree', `${testedMain}^{tree}`, '-p', testedMain, '-m', 'another PR');
+    git('update-ref', 'refs/remotes/origin/main', other);
+    try {
+      expect(mergedReady(repo, ledger, STARTED)).toBeNull();
+    } finally {
+      git('worktree', 'remove', '--force', path.join(repo, '..', `${path.basename(repo)}-main`));
+    }
+  });
+
+  it('refuses on the feature branch when origin/main holds different bytes for the archived result (D85 pen L1)', () => {
+    shipped();
+    git('worktree', 'add', '-q', path.join(repo, '..', `${path.basename(repo)}-main`), 'main');
+    const file = path.join(repo, `.oss/dev/completed/${F}-2026-11-23/results/ship.json`);
+    fs.appendFileSync(file, ' ');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'other bytes');
+    const tree = git('rev-parse', 'HEAD^{tree}');
+    git('reset', '-q', '--hard', 'HEAD~1');
+    const gh = git('commit-tree', tree, '-p', testedMain, '-m', 'squash');
+    git('update-ref', 'refs/remotes/origin/main', gh);
+    try {
+      expect(mergedReady(repo, ledger, STARTED)).toBeNull();
+    } finally {
+      git('worktree', 'remove', '--force', path.join(repo, '..', `${path.basename(repo)}-main`));
+    }
   });
 
   it('refuses when the tested main is HEAD itself (nothing merged)', () => {
@@ -246,5 +294,13 @@ describe('mergedReady: one deadline for every git call (D83 info c)', () => {
     expect(clock.timeouts.length).toBeGreaterThan(0);
     clock.timeouts.forEach((t, i) => expect(t).toBeLessThanOrEqual(10_000 - 4_000 * i));
     expect(clock.timeouts.length).toBeLessThanOrEqual(3);
+  });
+
+  it('takes the deadline of the budget the CLI started in main(), so a spent budget runs no git at all (D85 info e)', () => {
+    shipped();
+    squashToMain();
+    clock.timeouts = [];
+    expect(mergedReady(repo, ledger, STARTED, Date.now() - 1)).toBeNull();
+    expect(clock.timeouts).toEqual([]);
   });
 });

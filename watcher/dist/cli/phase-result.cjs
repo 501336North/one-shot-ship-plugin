@@ -1314,13 +1314,25 @@ function liveBase(repo, branch, from, head) {
 }
 var DIFF_BUDGET_MS = 2e4;
 var DIFF_TIMEOUT = "diff_timeout: git ran past its time limit (often many loose objects): run git gc, then try again";
-function readDiff(repo, base, remoteRefs) {
+function diffBase(repo, base, remoteRefs) {
   if (base.startsWith("-")) throw new GitError("base");
   const branch = runGit(repo, ["check-ref-format", "--branch", base]).out;
   const tip = runGit(repo, ["rev-parse", "--verify", "--end-of-options", `refs/heads/${branch}^{commit}`]).out;
   const headSha2 = runGit(repo, ["rev-parse", "--verify", "HEAD^{commit}"]).out;
   const from = diffFrom(repo, branch, tip, headSha2, remoteRefs);
-  const mergeBase = runGit(repo, ["merge-base", from, headSha2]).out;
+  return { branch, tip, headSha: headSha2, from, mergeBase: runGit(repo, ["merge-base", from, headSha2]).out };
+}
+function branchAddedPaths(repo, base, remoteRefs, dir) {
+  try {
+    const { mergeBase, headSha: headSha2 } = diffBase(repo, base, remoteRefs);
+    const out = runGit(repo, [...DIFF, "--name-only", "--diff-filter=A", "-z", mergeBase, headSha2, "--", dir], [0], true, PATH_LIST_BUFFER).out;
+    return out.split("\0").filter((p) => p !== "");
+  } catch (e) {
+    return e instanceof GitError && e.timedOut ? "timeout" : null;
+  }
+}
+function readDiff(repo, base, remoteRefs) {
+  const { branch, tip, headSha: headSha2, from, mergeBase } = diffBase(repo, base, remoteRefs);
   const deadline = Date.now() + DIFF_BUDGET_MS;
   const left = () => Math.max(1, deadline - Date.now());
   const sameTree = runGit(repo, [...DIFF, "--quiet", tip, headSha2], [0, 1], false, void 0, void 0, left()).status === 0;
@@ -2013,10 +2025,12 @@ function activeFeatures(repo) {
   }
   return names.filter((n) => FEATURE_RE2.test(n) && fs9.lstatSync(path8.join(dir, n), { throwIfNoEntry: false })?.isDirectory()).sort();
 }
-function resolveFeature(repo) {
+function branchName(repo) {
   const ref = gitOut2(repo, ["symbolic-ref", "-q", "HEAD"]);
-  const branch = ref !== null && ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : "";
-  const m = BRANCH_RE.exec(branch);
+  return ref !== null && ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : "";
+}
+function resolveFeature(repo) {
+  const m = BRANCH_RE.exec(branchName(repo));
   if (m !== null) {
     const f = m[1];
     const st = fs9.lstatSync(path8.join(repo, ".oss", "dev", "active", f), { throwIfNoEntry: false });
@@ -2027,17 +2041,19 @@ function resolveFeature(repo) {
 }
 var COMPLETED_RE = /^\.oss\/dev\/completed\/([^/]+)\//;
 var ARCHIVED_RE = /^([A-Za-z0-9_-][A-Za-z0-9._-]*)-(\d{4}-\d{2}-\d{2})$/;
-function archivedFeature(repo, base) {
-  const mb = gitOut2(repo, ["merge-base", "--end-of-options", `refs/heads/${base}`, "HEAD"]);
-  if (mb === null || !/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(mb)) return null;
-  const out = gitOut2(repo, ["diff", "--name-only", "--no-renames", "--diff-filter=A", "-z", mb, "HEAD", "--", ".oss/dev/completed/"]);
-  if (out === null) return null;
-  const folders = new Set(out.split("\0").map((p) => COMPLETED_RE.exec(p)?.[1]).filter((n) => n !== void 0));
-  if (folders.size !== 1) return null;
+function archivedFeature(repo, base, remoteRefs) {
+  const added = branchAddedPaths(repo, base, remoteRefs, ".oss/dev/completed/");
+  if (added === "timeout") return { ok: false, reason: "timeout" };
+  if (added === null) return { ok: false, reason: "none" };
+  const folders = new Set(added.map((p) => COMPLETED_RE.exec(p)?.[1]).filter((n) => n !== void 0));
+  if (folders.size > 1) return { ok: false, reason: "several" };
   const folder = [...folders][0];
-  const m = ARCHIVED_RE.exec(folder);
+  const m = folder === void 0 ? null : ARCHIVED_RE.exec(folder);
+  if (folder === void 0 || m === null) return { ok: false, reason: "none" };
+  const named = BRANCH_RE.exec(branchName(repo))?.[1];
   const st = fs9.lstatSync(path8.join(repo, ".oss", "dev", "completed", folder), { throwIfNoEntry: false });
-  return m !== null && st?.isDirectory() === true ? { feature: m[1], folder } : null;
+  if (st?.isDirectory() !== true || named !== void 0 && named !== m[1]) return { ok: false, reason: "none" };
+  return { ok: true, feature: m[1], folder };
 }
 
 // src/phase-results/merge-ready.ts
@@ -2089,16 +2105,21 @@ function testedRow(ledger, runStartedAt2) {
   const { head, main: main2 } = r;
   return typeof head === "string" && SHA.test(head) && typeof main2 === "string" && SHA.test(main2) ? { head, main: main2 } : null;
 }
-function archivedResult(repo, feature) {
+function archivedResult(repo, feature, sha2562) {
   const done = path9.join(repo, ".oss", "dev", "completed");
   let names;
   try {
-    names = fs10.readdirSync(done).filter((n) => n.startsWith(`${feature}-`) && DATE_DIR.test(n.slice(feature.length + 1)));
+    names = fs10.readdirSync(done).filter((n) => n.startsWith(`${feature}-`) && DATE_DIR.test(n.slice(feature.length + 1))).sort();
   } catch {
     return null;
   }
-  if (names.length !== 1) return null;
-  const file = path9.join(done, names[0], "results", "ship.json");
+  for (const folder of names) {
+    const bytes = resultBytes(path9.join(done, folder, "results", "ship.json"));
+    if (bytes !== null && (0, import_node_crypto4.createHash)("sha256").update(bytes).digest("hex") === sha2562) return { bytes, folder };
+  }
+  return null;
+}
+function resultBytes(file) {
   let fd;
   try {
     fd = fs10.openSync(file, fs10.constants.O_RDONLY | fs10.constants.O_NOFOLLOW);
@@ -2112,8 +2133,7 @@ function archivedResult(repo, feature) {
     fs10.closeSync(fd);
   }
 }
-function mergedReady(repo, ledger, runStartedAt2) {
-  const deadline = Date.now() + MERGED_BUDGET_MS;
+function mergedReady(repo, ledger, runStartedAt2, deadline = Date.now() + MERGED_BUDGET_MS) {
   const row = readyRow(ledger);
   if (row === null || row.startedAt !== runStartedAt2) return null;
   const at = Date.parse(row.at);
@@ -2121,8 +2141,9 @@ function mergedReady(repo, ledger, runStartedAt2) {
   if (Number.isNaN(at) || Number.isNaN(started) || at < started) return null;
   if (ledger.lastRow(`results/${row.feature}/ship`)?.sha256 !== row.sha256) return null;
   if (fs10.lstatSync(path9.join(repo, ".oss", "dev", "active", row.feature), { throwIfNoEntry: false }) !== void 0) return null;
-  const bytes = archivedResult(repo, row.feature);
-  if (bytes === null || (0, import_node_crypto4.createHash)("sha256").update(bytes).digest("hex") !== row.sha256) return null;
+  const archived = archivedResult(repo, row.feature, row.sha256);
+  if (archived === null) return null;
+  const { bytes, folder } = archived;
   const tested = testedRow(ledger, runStartedAt2);
   if (tested === null || !onlyOssAfter(repo, row.headSha, tested.head, deadline)) return null;
   const ancestor = (a, b) => git(repo, ["merge-base", "--is-ancestor", "--end-of-options", a, b], deadline).status === 0;
@@ -2134,6 +2155,8 @@ function mergedReady(repo, ledger, runStartedAt2) {
     const origin = git(repo, ["rev-parse", "--verify", "--end-of-options", "refs/remotes/origin/main^{commit}"], deadline).out.trim();
     if (!ref.startsWith("refs/heads/") || !onlyOssAfter(repo, row.headSha, now, deadline)) return null;
     if (!SHA.test(origin) || origin === tested.main || !ancestor(tested.main, origin)) return null;
+    const merged = git(repo, ["cat-file", "blob", `${origin}:.oss/dev/completed/${folder}/results/ship.json`], deadline);
+    if (merged.status !== 0 || (0, import_node_crypto4.createHash)("sha256").update(merged.out, "utf8").digest("hex") !== row.sha256) return null;
   }
   try {
     const v = JSON.parse(bytes.toString("utf8"));
@@ -2219,6 +2242,16 @@ function checkShipBase(repo, base, feature, snapshot) {
   const verdict = shipBaseCheck(repo, base, feature, snapshot);
   if (verdict === "timeout") throw new Refusal("diff_unavailable", "", DIFF_TIMEOUT);
   if (verdict !== "ok") throw new Refusal("unsafe_base", "base", verdict === "not_in_snapshot" ? NOT_IN_SNAPSHOT : void 0);
+}
+var NOT_ARCHIVED = "no completed folder of this branch's feature was added: update the local <base> branch (git fetch origin <base>, or update it in the worktree that has it checked out)";
+var SEVERAL_ARCHIVED = "this branch added several completed folders";
+function runSnapshot(repo) {
+  try {
+    const ledger = openLedger(repo);
+    return originSnapshot(ledger, runStartedAt(ledger, "ship"));
+  } catch {
+    return /* @__PURE__ */ new Map();
+  }
 }
 function pluginRoot() {
   return path10.resolve(path10.dirname(fs11.realpathSync(process.argv[1] ?? "")), "..", "..", "..");
@@ -2403,8 +2436,8 @@ function refuse(args, id, field, detail) {
 function gateLabel(phase, result) {
   return phase === "ship" ? { gateEvidence: result.gateEvidence, uncapturedGates: result.uncapturedGates } : {};
 }
-function recordReady(args, repo, feature, where) {
-  const v = feature === null ? { ok: false, id: "no_feature", field: "feature" } : verdictOf(() => {
+function recordReady(args, repo, feature, where, missing) {
+  const v = feature === null ? missing : verdictOf(() => {
     const stored = check(repo, feature, "ship", where);
     if (stored.verdict !== "ready_to_merge") throw new Refusal("not_ready_to_merge", "verdict");
     const ledger = openLedger(repo);
@@ -2413,28 +2446,41 @@ function recordReady(args, repo, feature, where) {
     ledger.appendRow(READY_ROW, { feature, headSha: stored.headSha, sha256: bound, startedAt: stored.startedAt, at: (/* @__PURE__ */ new Date()).toISOString() });
   });
   if (!v.ok) {
-    verdictOf(() => openLedger(repo).appendRow(READY_ROW, { revoked: v.id, at: (/* @__PURE__ */ new Date()).toISOString() }));
-    return refuse(args, v.id, v.field, v.detail);
+    const revoked = verdictOf(() => openLedger(repo).appendRow(READY_ROW, { revoked: v.id, at: (/* @__PURE__ */ new Date()).toISOString() }));
+    return refuse(args, v.id, v.field, revoked.ok ? v.detail : `${v.detail === void 0 ? "" : `${v.detail}; `}${NOT_REVOKED}`);
   }
   process.stdout.write("READY_RECORDED\n");
   return 0;
 }
-function mergedOrRefuse(args, repo, v) {
+var NOT_REVOKED = "the earlier ready row could not be revoked (the ledger append failed)";
+var MERGED_HINT = "not yet shown as merged: run `git fetch origin`, then send complete again";
+function mergedPath(repo) {
+  try {
+    const ledger = openLedger(repo);
+    const row = readyRow(ledger);
+    return row !== null && row.startedAt === runStartedAt(ledger, "ship") && fs11.lstatSync(path10.join(repo, ".oss", "dev", "active", row.feature), { throwIfNoEntry: false }) === void 0;
+  } catch {
+    return false;
+  }
+}
+function mergedOrRefuse(args, repo, v, deadline) {
   if (args.phase === "ship" && args.verb === "check") {
     let archived = null;
     verdictOf(() => {
       const ledger = openLedger(repo);
-      archived = mergedReady(repo, ledger, runStartedAt(ledger, "ship"));
+      archived = mergedReady(repo, ledger, runStartedAt(ledger, "ship"), deadline);
     });
     if (archived !== null) {
       process.stdout.write(`${JSON.stringify({ verification: "verified", ...gateLabel("ship", archived), verdict: "ready_to_merge", merged: true })}
 `);
       return 0;
     }
+    if (mergedPath(repo)) return refuse(args, v.id, v.field, MERGED_HINT);
   }
   return refuse(args, v.id, v.field, v.detail);
 }
 function main(argv) {
+  const deadline = Date.now() + MERGED_BUDGET_MS;
   const args = parseArgs(argv);
   if (args === null) {
     process.stderr.write(USAGE);
@@ -2459,15 +2505,18 @@ function main(argv) {
   }
   let feature = resolveFeature(repo);
   let where = { kind: "active", name: feature ?? "" };
+  let missing = { ok: false, id: "no_feature", field: "feature" };
   if (feature === null && args.phase === "ship") {
-    const archived = archivedFeature(repo, shipBase(repo, valueDir(repo)));
-    if (archived !== null) {
+    const archived = archivedFeature(repo, shipBase(repo, valueDir(repo)), runSnapshot(repo));
+    if (archived.ok) {
       feature = archived.feature;
       where = { kind: "completed", name: archived.folder };
+    } else {
+      missing = archived.reason === "timeout" ? { ok: false, id: "diff_unavailable", field: "", detail: DIFF_TIMEOUT } : { ok: false, id: "no_feature", field: "feature", detail: archived.reason === "several" ? SEVERAL_ARCHIVED : NOT_ARCHIVED };
     }
   }
-  if (args.recordReady) return recordReady(args, repo, feature, where);
-  if (feature === null) return mergedOrRefuse(args, repo, { ok: false, id: "no_feature", field: "feature" });
+  if (args.recordReady) return recordReady(args, repo, feature, where, missing);
+  if (feature === null) return mergedOrRefuse(args, repo, missing, deadline);
   if (args.verb === "assemble") {
     let result = {};
     const v2 = verdictOf(() => {
@@ -2483,7 +2532,7 @@ function main(argv) {
   const v = verdictOf(() => {
     stored = check(repo, feature, args.phase, where);
   });
-  if (!v.ok) return mergedOrRefuse(args, repo, v);
+  if (!v.ok) return mergedOrRefuse(args, repo, v, deadline);
   const verdict = args.phase === "ship" ? { verdict: stored.verdict } : {};
   process.stdout.write(`${JSON.stringify({ verification: "verified", ...gateLabel(args.phase, stored), ...verdict })}
 `);

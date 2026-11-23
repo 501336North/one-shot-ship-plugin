@@ -4,6 +4,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { branchAddedPaths } from './assemble-ship.js';
 import { gitOut } from './git.js';
 
 const FEATURE_RE = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
@@ -23,11 +24,15 @@ export function activeFeatures(repo: string): string[] {
     .sort();
 }
 
+/** The current branch's short name; '' when HEAD is detached or git fails. */
+function branchName(repo: string): string {
+  const ref = gitOut(repo, ['symbolic-ref', '-q', 'HEAD']);
+  return ref !== null && ref.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : '';
+}
+
 /** Mirrors oss_resolve_feature (hooks/oss-safe-path.sh): the branch's feature with an active dir, else the single one. */
 export function resolveFeature(repo: string): string | null {
-  const ref = gitOut(repo, ['symbolic-ref', '-q', 'HEAD']);
-  const branch = ref !== null && ref.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : '';
-  const m = BRANCH_RE.exec(branch);
+  const m = BRANCH_RE.exec(branchName(repo));
   if (m !== null) {
     const f = m[1];
     const st = fs.lstatSync(path.join(repo, '.oss', 'dev', 'active', f), { throwIfNoEntry: false });
@@ -40,21 +45,27 @@ export function resolveFeature(repo: string): string | null {
 const COMPLETED_RE = /^\.oss\/dev\/completed\/([^/]+)\//;
 const ARCHIVED_RE = /^([A-Za-z0-9_-][A-Za-z0-9._-]*)-(\d{4}-\d{2}-\d{2})$/;
 
+/** D85: why archivedFeature found no feature: no folder (or another feature's), several folders, or git ran past its time limit. */
+export type ArchivedFeature = { ok: true; feature: string; folder: string } | { ok: false; reason: 'none' | 'several' | 'timeout' };
+
 /**
- * D84: after the archive commit a ship re-run for a code fix still finds its feature. With no active folder, the
- * feature is the single `.oss/dev/completed/<feature>-<date>/` folder that this branch's own diff (from its merge base
- * with `base`, the ship base as the CLI resolves it) added, when that folder is a real directory. None, more than one,
- * or any git failure: null (no_feature, as before). Never any other completed folder.
+ * D84 + D85: after the archive commit a ship re-run for a code fix still finds its feature. With no active folder, the
+ * feature is the single `.oss/dev/completed/<feature>-<date>/` folder that this branch added, from the same merge base
+ * assemble ship diffs from (`base` as the CLI resolves it, moved past by the ship-start snapshot `remoteRefs` and live
+ * remote refs: a stale local base never counts origin's archives as this branch's), when that folder is a real
+ * directory and, if the branch name names a feature (BRANCH_RE), it is that feature's. Never any other completed folder.
  */
-export function archivedFeature(repo: string, base: string): { feature: string; folder: string } | null {
-  const mb = gitOut(repo, ['merge-base', '--end-of-options', `refs/heads/${base}`, 'HEAD']);
-  if (mb === null || !/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(mb)) return null;
-  const out = gitOut(repo, ['diff', '--name-only', '--no-renames', '--diff-filter=A', '-z', mb, 'HEAD', '--', '.oss/dev/completed/']);
-  if (out === null) return null;
-  const folders = new Set(out.split('\0').map((p) => COMPLETED_RE.exec(p)?.[1]).filter((n): n is string => n !== undefined));
-  if (folders.size !== 1) return null;
-  const folder = [...folders][0] as string;
-  const m = ARCHIVED_RE.exec(folder);
+export function archivedFeature(repo: string, base: string, remoteRefs: ReadonlyMap<string, string>): ArchivedFeature {
+  const added = branchAddedPaths(repo, base, remoteRefs, '.oss/dev/completed/');
+  if (added === 'timeout') return { ok: false, reason: 'timeout' };
+  if (added === null) return { ok: false, reason: 'none' };
+  const folders = new Set(added.map((p) => COMPLETED_RE.exec(p)?.[1]).filter((n): n is string => n !== undefined));
+  if (folders.size > 1) return { ok: false, reason: 'several' };
+  const folder = [...folders][0];
+  const m = folder === undefined ? null : ARCHIVED_RE.exec(folder);
+  if (folder === undefined || m === null) return { ok: false, reason: 'none' };
+  const named = BRANCH_RE.exec(branchName(repo))?.[1];
   const st = fs.lstatSync(path.join(repo, '.oss', 'dev', 'completed', folder), { throwIfNoEntry: false });
-  return m !== null && st?.isDirectory() === true ? { feature: m[1] as string, folder } : null;
+  if (st?.isDirectory() !== true || (named !== undefined && named !== m[1])) return { ok: false, reason: 'none' };
+  return { ok: true, feature: m[1] as string, folder };
 }

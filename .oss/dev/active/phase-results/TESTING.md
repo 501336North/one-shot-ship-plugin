@@ -249,4 +249,18 @@ Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watche
   - assemble-ship and ship-wrapper-chain: archived-folder resolution and Step 8 refusal revokes.
 - **Changed tests (marked ⚠):** the API `seedReadyRow` helper also seeds the bound `results/<feature>/ship` row, because the hook now matches its hash.
 
-## Last Updated: 2026-11-23 16:46 +07 by /oss:ship (round 16 fixes)
+### Ship round 17 (D85), 2026-11-23
+- **Full check on AC power:**
+  - build 0, tsc 0;
+  - 201 files / 11,098 tests passed; served-commands 3/3;
+  - bash 114/114 behind the tripwire (0 trip lines);
+  - API real-hook tests with OSS_REAL_PLUGIN_DIR set to the R-257 plugin: 5 files / 628 passed (0 trip lines).
+- **New tests:**
+  - feature.test.ts (new, 6 unit tests): the archived lookup uses assemble's base, the folder must match the branch's feature, and zero, several or timed-out lookups refuse with a hint;
+  - merge-ready.test.ts (19): the folder is picked by sha256, and a feature-branch finish needs origin/main to hold the same ship.json bytes;
+  - phase-results.acceptance 13a2, 13f2, 13f3, 13k, 13l: a re-run with a stale local main, a feature archived before, a worktree finish without the PR merged, and a branch with no folder of its own; `gh_squash_origin` no longer fetches, and Step 10 cleanup does;
+  - oss-merge-test.test.sh case 20 (140/140): the ready row's `at` must be at or after startedAt.
+- **Gap:** the lookup timeout mapping to DIFF_TIMEOUT is tested in the lookup function only, not at the CLI.
+- **Changed tests (marked ⚠):** three expectations changed with the fixes, each marked in the test file.
+
+## Last Updated: 2026-11-23 18:54 +07 by /oss:ship (round 17 fixes)

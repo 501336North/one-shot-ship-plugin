@@ -345,13 +345,33 @@ const DIFF_BUDGET_MS = 20_000;
 /** The diff_unavailable hint when git ran past its time limit, such as DIFF_BUDGET_MS (fixed text, no values). */
 export const DIFF_TIMEOUT = 'diff_timeout: git ran past its time limit (often many loose objects): run git gc, then try again';
 
-function readDiff(repo: string, base: string, remoteRefs: ReadonlyMap<string, string>): Diff {
+/** The base ship diffs from: the local base moved past by the snapshot and live remote refs (diffFrom), and its merge base with HEAD. */
+function diffBase(repo: string, base: string, remoteRefs: ReadonlyMap<string, string>): { branch: string; tip: string; headSha: string; from: string; mergeBase: string } {
   if (base.startsWith('-')) throw new GitError('base');
   const branch = runGit(repo, ['check-ref-format', '--branch', base]).out;
   const tip = runGit(repo, ['rev-parse', '--verify', '--end-of-options', `refs/heads/${branch}^{commit}`]).out;
   const headSha = runGit(repo, ['rev-parse', '--verify', 'HEAD^{commit}']).out;
   const from = diffFrom(repo, branch, tip, headSha, remoteRefs);
-  const mergeBase = runGit(repo, ['merge-base', from, headSha]).out;
+  return { branch, tip, headSha, from, mergeBase: runGit(repo, ['merge-base', from, headSha]).out };
+}
+
+/**
+ * D85 (gate round 15): the paths under `dir` that this branch added, from the same merge base assemble ship diffs from
+ * (diffBase), so a stale local base never counts another feature's commits from origin as this branch's. 'timeout' when
+ * a git call ran past its time limit (D85 info b); null on any other git failure.
+ */
+export function branchAddedPaths(repo: string, base: string, remoteRefs: ReadonlyMap<string, string>, dir: string): string[] | 'timeout' | null {
+  try {
+    const { mergeBase, headSha } = diffBase(repo, base, remoteRefs);
+    const out = runGit(repo, [...DIFF, '--name-only', '--diff-filter=A', '-z', mergeBase, headSha, '--', dir], [0], true, PATH_LIST_BUFFER).out;
+    return out.split('\0').filter((p) => p !== '');
+  } catch (e) {
+    return e instanceof GitError && e.timedOut ? 'timeout' : null;
+  }
+}
+
+function readDiff(repo: string, base: string, remoteRefs: ReadonlyMap<string, string>): Diff {
+  const { branch, tip, headSha, from, mergeBase } = diffBase(repo, base, remoteRefs);
   const deadline = Date.now() + DIFF_BUDGET_MS;
   const left = (): number => Math.max(1, deadline - Date.now());
   const sameTree = runGit(repo, [...DIFF, '--quiet', tip, headSha], [0, 1], false, undefined, undefined, left()).status === 0;

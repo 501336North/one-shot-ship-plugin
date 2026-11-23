@@ -40,7 +40,7 @@ import { gitBin } from '../phase-results/git-bin.js';
 import { gitEnv, gitOut } from '../phase-results/git.js';
 import { clearUnverifiedMarker, readBack, readResult, readValueFile, resolveRepo, writeResult, type FeatureDir } from '../phase-results/store.js';
 import { validate } from '../phase-results/validate.js';
-import { mergedReady, READY_ROW } from '../phase-results/merge-ready.js';
+import { MERGED_BUDGET_MS, mergedReady, READY_ROW, readyRow } from '../phase-results/merge-ready.js';
 
 const USAGE =
   'usage: oss-phase-result.sh assemble <ideate|plan|build|ship>\n' +
@@ -170,6 +170,20 @@ function checkShipBase(repo: string, base: string, feature: string, snapshot: Re
   // D83 info a: a git timeout is a slow repo (run git gc), not an unsafe base and not an internal error
   if (verdict === 'timeout') throw new Refusal('diff_unavailable', '', DIFF_TIMEOUT);
   if (verdict !== 'ok') throw new Refusal('unsafe_base', 'base', verdict === 'not_in_snapshot' ? NOT_IN_SNAPSHOT : undefined);
+}
+
+/** D85: the no_feature hints when no archived folder resolved (fixed text, no values). */
+const NOT_ARCHIVED = 'no completed folder of this branch\'s feature was added: update the local <base> branch (git fetch origin <base>, or update it in the worktree that has it checked out)';
+const SEVERAL_ARCHIVED = 'this branch added several completed folders';
+
+/** D85: this ship run's start snapshot, for the archived-feature lookup; none (an empty map) when there is no run or snapshot. */
+function runSnapshot(repo: string): ReadonlyMap<string, string> {
+  try {
+    const ledger = openLedger(repo);
+    return originSnapshot(ledger, runStartedAt(ledger, 'ship'));
+  } catch {
+    return new Map();
+  }
 }
 
 /** The plugin root this bundle sits in: <root>/watcher/dist/cli/phase-result.cjs. */
@@ -406,8 +420,8 @@ function gateLabel(phase: Phase, result: Record<string, unknown>): Record<string
  * low): any refusal appends a revoking row (`{revoked: <reason id>, at}`, no head), so an earlier ready row of this run
  * no longer lets the merge gate or complete pass; a bound sha256 that is not 64 hex refuses (info b).
  */
-function recordReady(args: Args, repo: string, feature: string | null, where: FeatureDir): number {
-  const v: Verdict = feature === null ? { ok: false, id: 'no_feature', field: 'feature' } : verdictOf(() => {
+function recordReady(args: Args, repo: string, feature: string | null, where: FeatureDir, missing: Verdict): number {
+  const v: Verdict = feature === null ? missing : verdictOf(() => {
     const stored = check(repo, feature, 'ship', where);
     if (stored.verdict !== 'ready_to_merge') throw new Refusal('not_ready_to_merge', 'verdict');
     const ledger = openLedger(repo);
@@ -416,33 +430,56 @@ function recordReady(args: Args, repo: string, feature: string | null, where: Fe
     ledger.appendRow(READY_ROW, { feature, headSha: stored.headSha, sha256: bound, startedAt: stored.startedAt, at: new Date().toISOString() });
   });
   if (!v.ok) {
-    verdictOf(() => openLedger(repo).appendRow(READY_ROW, { revoked: v.id, at: new Date().toISOString() }));
-    return refuse(args, v.id, v.field, v.detail);
+    const revoked = verdictOf(() => openLedger(repo).appendRow(READY_ROW, { revoked: v.id, at: new Date().toISOString() }));
+    // D85 info c: a failed revoke is named, since an earlier ready row of this run may still stand.
+    return refuse(args, v.id, v.field, revoked.ok ? v.detail : `${v.detail === undefined ? '' : `${v.detail}; `}${NOT_REVOKED}`);
   }
   process.stdout.write('READY_RECORDED\n');
   return 0;
+}
+
+/** D85 info c: added to a --record-ready refusal when its revoking row could not be appended (fixed text). */
+const NOT_REVOKED = 'the earlier ready row could not be revoked (the ledger append failed)';
+
+/** D85 info a: the refusal hint on the merged path (fixed text). */
+const MERGED_HINT = 'not yet shown as merged: run `git fetch origin`, then send complete again';
+
+/** D85 info a: this ship run has a ready row and that feature has no active folder (it was archived). */
+function mergedPath(repo: string): boolean {
+  try {
+    const ledger = openLedger(repo);
+    const row = readyRow(ledger);
+    return row !== null && row.startedAt === runStartedAt(ledger, 'ship')
+      && fs.lstatSync(path.join(repo, '.oss', 'dev', 'active', row.feature), { throwIfNoEntry: false }) === undefined;
+  } catch {
+    return false;
+  }
 }
 
 /**
  * D78: `check ship` after `merged`, on main with the feature archived: the run's `merge/ready` row (mergedReady) passes
  * as the archived ready result. Anything else keeps the original refusal.
  */
-function mergedOrRefuse(args: Args, repo: string, v: Extract<Verdict, { ok: false }>): number {
+function mergedOrRefuse(args: Args, repo: string, v: Extract<Verdict, { ok: false }>, deadline: number): number {
   if (args.phase === 'ship' && args.verb === 'check') {
     let archived: Record<string, unknown> | null = null;
     verdictOf(() => {
       const ledger = openLedger(repo);
-      archived = mergedReady(repo, ledger, runStartedAt(ledger, 'ship'));
+      archived = mergedReady(repo, ledger, runStartedAt(ledger, 'ship'), deadline);
     });
     if (archived !== null) {
       process.stdout.write(`${JSON.stringify({ verification: 'verified', ...gateLabel('ship', archived), verdict: 'ready_to_merge', merged: true })}\n`);
       return 0;
     }
+    // D85 info a: this run recorded ready and its feature is archived (the merged path): origin/main may not be fetched yet.
+    if (mergedPath(repo)) return refuse(args, v.id, v.field, MERGED_HINT);
   }
   return refuse(args, v.id, v.field, v.detail);
 }
 
 export function main(argv: string[]): number {
+  // D85 info e: complete's one budget (check, then mergedReady) starts here, inside oss-notify's 15 s bound.
+  const deadline = Date.now() + MERGED_BUDGET_MS;
   const args = parseArgs(argv);
   if (args === null) {
     process.stderr.write(USAGE);
@@ -468,16 +505,21 @@ export function main(argv: string[]): number {
 
   let feature = resolveFeature(repo);
   let where: FeatureDir = { kind: 'active', name: feature ?? '' };
-  // D84: a ship re-run after the archive commit: the single completed folder this branch's own diff added.
+  let missing: Extract<Verdict, { ok: false }> = { ok: false, id: 'no_feature', field: 'feature' };
+  // D84 + D85: a ship re-run after the archive commit: the single completed folder this branch added, from assemble's base.
   if (feature === null && args.phase === 'ship') {
-    const archived = archivedFeature(repo, shipBase(repo, valueDir(repo)));
-    if (archived !== null) {
+    const archived = archivedFeature(repo, shipBase(repo, valueDir(repo)), runSnapshot(repo));
+    if (archived.ok) {
       feature = archived.feature;
       where = { kind: 'completed', name: archived.folder };
+    } else {
+      missing = archived.reason === 'timeout'
+        ? { ok: false, id: 'diff_unavailable', field: '', detail: DIFF_TIMEOUT }
+        : { ok: false, id: 'no_feature', field: 'feature', detail: archived.reason === 'several' ? SEVERAL_ARCHIVED : NOT_ARCHIVED };
     }
   }
-  if (args.recordReady) return recordReady(args, repo, feature, where);
-  if (feature === null) return mergedOrRefuse(args, repo, { ok: false, id: 'no_feature', field: 'feature' });
+  if (args.recordReady) return recordReady(args, repo, feature, where, missing);
+  if (feature === null) return mergedOrRefuse(args, repo, missing, deadline);
   if (args.verb === 'assemble') {
     let result: Record<string, unknown> = {};
     const v = verdictOf(() => {
@@ -493,7 +535,7 @@ export function main(argv: string[]): number {
   const v = verdictOf(() => {
     stored = check(repo, feature, args.phase, where);
   });
-  if (!v.ok) return mergedOrRefuse(args, repo, v);
+  if (!v.ok) return mergedOrRefuse(args, repo, v, deadline);
   // D35: check ship also prints the verdict, so complete refuses a verified but blocked ship.
   const verdict = args.phase === 'ship' ? { verdict: stored.verdict } : {};
   process.stdout.write(`${JSON.stringify({ verification: 'verified', ...gateLabel(args.phase, stored), ...verdict })}\n`);

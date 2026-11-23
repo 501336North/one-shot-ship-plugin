@@ -112,7 +112,7 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 - Running the real gate by hand (`hooks/oss-tool-gate.sh pre` with hook JSON on stdin) writes `.oss/tool-gates/events.ndjson` in the project. It is untracked, so never commit it.
 - Follow-up (T26 report, not in R-257 scope): oss-notify.sh still runs the workflow-state CLI (`wf_state`) and the copy and chain-trigger CLIs on PATH's node. Only the phase-result CLI moved to the recorded node (D21).
 
-## Last Updated: 2026-11-18 09:00 CST by /oss:build (T26, D21)
+## Last Updated: 2026-11-23 17:38 +07 by /oss:build (ship round 17 fixes, D85)
 
 ### T31 real-transcript note (2026-11-18)
 - Where a harness ends subagents with a handback tool (this machine: SubagentHandback), the review agent's final message has no text, so its oss-verdict block is never captured and its gate stays `source: model`, as before T19. That's fail-safe: no gate gets stricter or looser. Plain Claude Code subagents end with a text message, so the capture works there. The served agent prompts already say to write the block as plain text in the reply.
@@ -219,3 +219,9 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 - **Merges outside OSS are not gated.** A merge from the GitHub button or a direct `gh pr merge` skips oss-merge-test.sh, so only the IRON LAW #4 consent rules cover it.
 - **The served BEHIND STOP text is in the API ship.md** and still has the old wording. Only the plugin hook's STOP and the plugin ship.md say that an update from main needs a re-run. This is a possible API prompt follow-up; D74 keeps prompts unchanged this ship.
 - **Git calls must not read user log settings.** `git log` reads `log.showSignature` and `log.diffMerges` from user config, so every R-257 `git log` that parses paths must pin `--no-show-signature` and `--diff-merges`. type-fails (`onPlugin210(shell: readonly string[])` versus `Shell`). These lines were already at HEAD, and vitest doesn't type-check them.
+## Ship round 17 notes (2026-11-23)
+- **Reader parity covers code-written rows only (item 4f).** The bash `_lr`/`_mg` and TS `lastRow`/`mergedReady` readers agree on rows the code writes (flat JSON objects, one per line). Hand-edited rows (CRLF endings, nested values, bad escapes, duplicate keys) may be read differently by the two. That is a D51 known limit: the ledger is owner-only and a person who can edit it can already do anything there.
+- **The D84 lookup now shares assemble's base.** `branchAddedPaths` (assemble-ship.ts) runs the same `diffBase` that `readDiff` uses, so the lookup and the diff cannot drift apart. feature.ts imports assemble-ship.ts for this, and the Stop dispatcher loads it too (it only calls resolveFeature).
+- **The lookup reads the run's ship-start snapshot when there is one, else an empty map.** The live `refs/remotes/*/<base>` step (D61/D64) still moves the base past a stale local main without a snapshot. assemble then refuses `no_base_snapshot` as before.
+- **Times in `_mg` compare as fixed-width strings.** A plain string compare of `...:40.771Z` and `...:40Z` gets the order wrong ('.' sorts before 'Z'), so `_tm` pads both to nine fraction digits first. Any other time form fails closed.
+- **The complete budget starts in `main()`.** `check` (when it fails fast, for example on stale_result headSha) and mergedReady share one 10 s budget, inside oss-notify's 15 s.

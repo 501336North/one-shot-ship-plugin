@@ -38,8 +38,11 @@ export interface ReadyRow {
   at: string;
 }
 
-/** D83 info c: one budget for all of mergedReady's git calls, inside the 15 s oss-notify gives `check` at complete. */
-const MERGED_BUDGET_MS = 10_000;
+/**
+ * D83 info c + D85 info e: one budget for all of mergedReady's git calls, inside the 15 s oss-notify gives `check` at
+ * complete; the CLI starts it in main(), so the check before mergedReady spends from it too.
+ */
+export const MERGED_BUDGET_MS = 10_000;
 
 /** git with what is left of `deadline` (ms since the epoch) as its time limit; status null once it has passed. */
 function git(repo: string, args: string[], deadline = Date.now() + MERGED_BUDGET_MS): { status: number | null; out: string } {
@@ -90,17 +93,27 @@ function testedRow(ledger: Ledger, runStartedAt: string): { head: string; main: 
   return typeof head === 'string' && SHA.test(head) && typeof main === 'string' && SHA.test(main) ? { head, main } : null;
 }
 
-/** The archived copy of the result: exactly one `.oss/dev/completed/<feature>-<date>/results/ship.json`, its bytes. */
-function archivedResult(repo: string, feature: string): Buffer | null {
+/**
+ * The archived copy of the result: D85 (code review L1, pen L2) the `.oss/dev/completed/<feature>-<date>/results/ship.json`
+ * whose bytes hash to `sha256` (a feature archived before keeps its older folder), with its folder; null when none does.
+ */
+function archivedResult(repo: string, feature: string, sha256: string): { bytes: Buffer; folder: string } | null {
   const done = path.join(repo, '.oss', 'dev', 'completed');
   let names: string[];
   try {
-    names = fs.readdirSync(done).filter((n) => n.startsWith(`${feature}-`) && DATE_DIR.test(n.slice(feature.length + 1)));
+    names = fs.readdirSync(done).filter((n) => n.startsWith(`${feature}-`) && DATE_DIR.test(n.slice(feature.length + 1))).sort();
   } catch {
     return null;
   }
-  if (names.length !== 1) return null;
-  const file = path.join(done, names[0] as string, 'results', 'ship.json');
+  for (const folder of names) {
+    const bytes = resultBytes(path.join(done, folder, 'results', 'ship.json'));
+    if (bytes !== null && createHash('sha256').update(bytes).digest('hex') === sha256) return { bytes, folder };
+  }
+  return null;
+}
+
+/** A regular file's bytes (never through a link, at most MAX_RESULT_BYTES); null otherwise. */
+function resultBytes(file: string): Buffer | null {
   let fd: number;
   try {
     fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
@@ -122,11 +135,12 @@ function archivedResult(repo: string, feature: string): Buffer | null {
  * bytes hash to the row's sha256), and the head the merge gate tested (its `merge/tested` row for this run, D83 code
  * review M1) is covered by the row under the merge gate's rule. Then either HEAD is main, with that tested main an
  * ancestor of HEAD and not HEAD itself; or (D83 pen M1: main checked out in another worktree, so served item 6 could
- * not switch) HEAD is another branch whose tip the row covers, with the tested main a strict ancestor of origin/main.
- * Every git call shares one deadline (D83 info c). Returns the archived result, or null.
+ * not switch) HEAD is another branch whose tip the row covers, with the tested main a strict ancestor of origin/main
+ * and (D85 pen L1) origin/main's tree holding the archived result with the same bytes.
+ * Every git call shares one deadline (D83 info c), which the CLI starts in main() (D85 info e). Returns the archived
+ * result, or null.
  */
-export function mergedReady(repo: string, ledger: Ledger, runStartedAt: string): Record<string, unknown> | null {
-  const deadline = Date.now() + MERGED_BUDGET_MS;
+export function mergedReady(repo: string, ledger: Ledger, runStartedAt: string, deadline = Date.now() + MERGED_BUDGET_MS): Record<string, unknown> | null {
   const row = readyRow(ledger);
   if (row === null || row.startedAt !== runStartedAt) return null;
   const at = Date.parse(row.at);
@@ -134,8 +148,9 @@ export function mergedReady(repo: string, ledger: Ledger, runStartedAt: string):
   if (Number.isNaN(at) || Number.isNaN(started) || at < started) return null;
   if (ledger.lastRow(`results/${row.feature}/ship`)?.sha256 !== row.sha256) return null;
   if (fs.lstatSync(path.join(repo, '.oss', 'dev', 'active', row.feature), { throwIfNoEntry: false }) !== undefined) return null;
-  const bytes = archivedResult(repo, row.feature);
-  if (bytes === null || createHash('sha256').update(bytes).digest('hex') !== row.sha256) return null;
+  const archived = archivedResult(repo, row.feature, row.sha256);
+  if (archived === null) return null;
+  const { bytes, folder } = archived;
   const tested = testedRow(ledger, runStartedAt);
   if (tested === null || !onlyOssAfter(repo, row.headSha, tested.head, deadline)) return null;
   const ancestor = (a: string, b: string): boolean => git(repo, ['merge-base', '--is-ancestor', '--end-of-options', a, b], deadline).status === 0;
@@ -147,6 +162,9 @@ export function mergedReady(repo: string, ledger: Ledger, runStartedAt: string):
     const origin = git(repo, ['rev-parse', '--verify', '--end-of-options', 'refs/remotes/origin/main^{commit}'], deadline).out.trim();
     if (!ref.startsWith('refs/heads/') || !onlyOssAfter(repo, row.headSha, now, deadline)) return null;
     if (!SHA.test(origin) || origin === tested.main || !ancestor(tested.main, origin)) return null;
+    // D85 (pen L1): the PR merged, so origin/main's tree holds this archived result with the same bytes.
+    const merged = git(repo, ['cat-file', 'blob', `${origin}:.oss/dev/completed/${folder}/results/ship.json`], deadline);
+    if (merged.status !== 0 || createHash('sha256').update(merged.out, 'utf8').digest('hex') !== row.sha256) return null;
   }
   try {
     const v: unknown = JSON.parse(bytes.toString('utf8'));

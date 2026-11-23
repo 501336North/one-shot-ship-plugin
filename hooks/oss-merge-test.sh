@@ -165,6 +165,11 @@ _oo() { # <from> <to> <scratch file>: 0 when <to> is <from>, or descends from it
     git merge-base --is-ancestor "$1" "$2" && git log --no-renames --no-show-signature --diff-merges=separate --format= --name-only -z "$1..$2" >| "$3" || return 1
     while IFS= read -r -d '' _y || [[ -n $_y ]]; do [[ -z $_y || $_y == .oss/* ]] || return 1; done < "$3"
 }
+_tr='^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\.([0-9]{1,9}))?Z$'
+_tm() { # <UTC ISO time> -> _u: it with nine fraction digits, so two times compare as strings; fails on any other form
+    [[ $1 =~ $_tr ]] || return 1
+    _u=${BASH_REMATCH[3]}000000000; _u=${BASH_REMATCH[1]}.${_u:0:9}
+}
 _mg() { # <toplevel> <head> <run folder>
     _k=$(printf '%s\n%s\n' "$1" "$_gd" | git hash-object --stdin | cut -c1-16) && [[ ${#_k} == 16 ]] || return 1
     _lr "$HOME/.oss/ledger/$_k/merge/ready" || return 1; _r=$_l
@@ -172,6 +177,9 @@ _mg() { # <toplevel> <head> <run folder>
     _re='"startedAt":"([^"\\]+)"'
     [[ $_l =~ $_re ]] || return 1; _a=${BASH_REMATCH[1]}
     [[ $_r =~ $_re && ${BASH_REMATCH[1]} == "$_a" ]] || return 1
+    # D85 info d: as merge-ready.ts, the row was recorded at or after the run's start
+    _re='"at":"([^"\\]+)"'
+    [[ $_r =~ $_re ]] && _tm "${BASH_REMATCH[1]}" && _u1=$_u && _tm "$_a" && [[ ! $_u1 < $_u ]] || return 1
     # D83 (security low): the row still names the bound ship result (the last results/<feature>/ship row's sha256), so
     # a result re-assembled as blocked at the same head no longer passes
     _re='"feature":"([A-Za-z0-9_-][A-Za-z0-9._-]*)"'

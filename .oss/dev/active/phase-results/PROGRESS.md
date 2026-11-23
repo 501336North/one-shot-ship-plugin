@@ -265,6 +265,18 @@
 - [x] API helper seedReadyRow also seeds the bound result row.
 - [x] D81 wording corrected: a merge outside OSS (the GitHub button or a direct `gh pr merge`) is not gated.
 
+### Ship round 17 fixes, after gate round 15 (2026-11-23)
+- [x] Gate round 15: all four gates failed. The user picked D85 (fix 1-3 plus the cheap infos).
+- [x] Item 1 (medium from all four gates, security medium and low): the D84 lookup takes assemble's base (assemble-ship.ts `branchAddedPaths`, the same `diffFrom` merge base, so a stale local main no longer counts origin's archives). When the branch name names a feature, the folder must be that feature's. Zero or several folders refuse `no_feature` with a hint that says what to do. Tests: feature.test.ts (new, 6), acceptance 13k and 13l.
+- [x] Item 2 (code review L1, pen L2): `complete` takes the completed folder whose `results/ship.json` hashes to the ready row's sha256, so an older archive of the feature does not block it. Tests: merge-ready unit tests and acceptance 13a2.
+- [x] Item 3 (security low, pen L1): on the feature-branch finish, origin/main's tree must hold the archived result with the same bytes, so a PR that did not merge cannot pass because another PR moved origin/main. Tests: merge-ready unit tests and acceptance 13f3.
+- [x] Item 4a: on the merged path, the `complete` refusal says to run `git fetch origin`, then send complete again. 13f no longer fetches in its squash helper; served Step 10's `git fetch --prune` runs in step10_cleanup. Test: acceptance 13f2.
+- [x] Item 4b: a git timeout in the D84 lookup maps to `diff_unavailable` with DIFF_TIMEOUT (feature.test.ts).
+- [x] Item 4c: a refused `--record-ready` whose revoking append failed says the earlier ready row could not be revoked (phase-result.acceptance.test.ts).
+- [x] Item 4d: bash `_mg` also requires the ready row's `at` to be at or after startedAt (any precision, UTC). Tests: oss-merge-test.test.sh case 20.
+- [x] Item 4e: mergedReady takes its deadline from one budget that the CLI starts in `main()` (merge-ready unit test).
+- [x] Item 4f: the NOTES record that bash/TS reader parity covers code-written rows only (D51).
+
 ### Later
 - [ ] Ship into feat/determinism-sprint/build (SD-1)
 - [ ] T21 oss-lab (after the plugin ships)
@@ -272,4 +284,4 @@
 ## Blockers
 - None. R-266's 4 red base tests are fixed in #233 (4458bddb), and R-257 is rebased onto it.
 
-## Last Updated: 2026-11-23 15:50 +07 by /oss:ship (round 16 fixes)
+## Last Updated: 2026-11-23 17:38 +07 by /oss:build (ship round 17 fixes, D85)

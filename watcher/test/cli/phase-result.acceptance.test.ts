@@ -1542,3 +1542,17 @@ describe('phase-result CLI: ship base edge cases (gate round 7)', () => {
     expect(c.status, c.stderr).toBe(0);
   });
 });
+
+describe('phase-result CLI: check ship --record-ready names a revoke that failed (D85 info c)', () => {
+  it('says the earlier ready row could not be revoked when the revoking append fails', () => {
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    const ledger = openLedger(repo);
+    ledger.appendRow('merge/ready', { feature: FEATURE, headSha: git('rev-parse', 'HEAD'), sha256: 'a'.repeat(64), startedAt: '2026-11-13T09:00:00.000Z', at: '2026-11-13T09:05:00.000Z' });
+    const file = path.join(ledger.dir, 'merge', 'ready');
+    fs.chmodSync(file, 0o400);
+    const r = cli('check', 'ship', '--record-ready');
+    fs.chmodSync(file, 0o600);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('the earlier ready row could not be revoked');
+  });
+});

@@ -519,6 +519,16 @@ fixture; ready_row
 MT_NOREADY=1; mt; MT_NOREADY=
 [[ "$RC" != 0 && ! -s "$B/npm.log" ]] && has "STOP: no ready ship result" && pass "19: with log.diffMerges=combined, a merge after the ready head that reverts code STOPs" || fail "19: with log.diffMerges=combined, a merge after the ready head that reverts code STOPs" "rc=$RC out=$OUT"
 
+# --- 20 (D85 info d): as merge-ready.ts does, the ready row's `at` must be at or after the run's startedAt -------------
+fixture; ready_row; printf '{"feature":"x","headSha":"%s","sha256":"%064d","startedAt":"2026-11-23T00:00:00.000Z","at":"2026-11-22T23:59:59.000Z"}\n' "$(rev feat/x)" 0 >> "$(L)/merge/ready"
+MT_NOREADY=1; mt; MT_NOREADY=
+[[ "$RC" != 0 && ! -s "$B/npm.log" ]] && has "STOP: no ready ship result" && pass "20: a ready row recorded before the run started STOPs" || fail "20: a ready row recorded before the run started STOPs" "rc=$RC out=$OUT"
+# the same instant in two precisions (startedAt without milliseconds, at with them, later in that second) still passes
+fixture; ready_row; printf '{"startedAt":"2026-11-23T00:00:00Z","session":"","headSha":"","feature":"x"}\n' >> "$(L)/run/ship"
+printf '{"feature":"x","headSha":"%s","sha256":"%064d","startedAt":"2026-11-23T00:00:00Z","at":"2026-11-23T00:00:00.500Z"}\n' "$(rev feat/x)" 0 >> "$(L)/merge/ready"
+MT_NOREADY=1; mt; MT_NOREADY=
+[[ "$RC" == 0 ]] && has READY_TO_MERGE && pass "20: an at later in the same second as startedAt (other precision) passes" || fail "20: an at later in the same second as startedAt (other precision) passes" "rc=$RC out=$OUT"
+
 echo ""
 echo "oss-merge-test: $RUN run, $FAILED failed"
 [[ "$FAILED" == 0 ]]
