@@ -9114,7 +9114,7 @@ function couldBeOssHook(word, runs) {
 var SPLIT_REF = /^"?(?:\$=?([A-Za-z_][A-Za-z0-9_]*|[@*])(?:\[[^\]]*\])?|\$\{=?([A-Za-z_][A-Za-z0-9_]*|[@*])(?:\[[^\]]*\])?\})"?$/;
 var OTHER_OPERATOR = /^"?\$\{(?![A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\})/;
 var DEFAULT_REF = /^"?\$\{([A-Za-z_][A-Za-z0-9_]*):?[-=]([\s\S]*)\}"?$/;
-var REST_REF = /^"?\$\{([A-Za-z_][A-Za-z0-9_]*)(?::?[-=]([^}]*)|%%?([^}*?[\]\\]*))\}([^"]*)"?$/;
+var SERVED_ROOT = /^"?\$\{(CLAUDE_PLUGIN_ROOT)(?::-((?:\$HOME|\$\{HOME\})?[A-Za-z0-9._/@:,=+-]*)|(%\/))\}(\/hooks\/[A-Za-z0-9._-]+)"?$/;
 var LEADING_REF = /^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})(?![A-Za-z0-9_[])/;
 var UNREAD_SETTERS = /* @__PURE__ */ new Set(["for", "select", "printf", "print", "getopts", "let"]);
 var ARRAY_START = /^([A-Za-z_][A-Za-z0-9_]*)(\+?)=$/;
@@ -9190,8 +9190,9 @@ function programVerdict(token, after, text, values, cwd, command, call) {
   const split2 = SPLIT_REF.exec(raw);
   const leading = split2 === null ? LEADING_REF.exec(raw) : null;
   const withDefault = split2 === null && leading === null ? DEFAULT_REF.exec(raw) : null;
-  const withRest = split2 === null && leading === null && withDefault === null ? REST_REF.exec(raw) : null;
+  const withRest = split2 === null && leading === null && withDefault === null ? SERVED_ROOT.exec(raw) : null;
   const name = split2?.[1] ?? split2?.[2] ?? leading?.[1] ?? leading?.[2] ?? withDefault?.[1] ?? withRest?.[1];
+  if (withDefault !== null && /[$`"'\\(<]/.test(withDefault[2])) return lineNamesHook(command, cwd, call.home) ? "unreadable" : "ok";
   if (name === void 0) return OTHER_OPERATOR.test(raw) && lineNamesHook(command, cwd, call.home) ? "unreadable" : "ok";
   const value = values.get(name);
   const quoted = raw.startsWith('"');
@@ -9199,8 +9200,7 @@ function programVerdict(token, after, text, values, cwd, command, call) {
   if (value === UNREAD || value === FROM_FILE && after.length > 0) return lineNamesHook(command, cwd, call.home) ? "unreadable" : "ok";
   if (value === FROM_FILE) return "ok";
   const words = " " + after.map((w) => filled(w, text, values, call.home)).join(" ");
-  const suffix = withRest?.[3];
-  const trimmed = typeof value === "string" && suffix !== void 0 && value.endsWith(suffix) ? value.slice(0, value.length - suffix.length) : value;
+  const trimmed = typeof value === "string" && withRest?.[3] !== void 0 ? value.replace(/\/$/, "") : value;
   const fallback = withDefault?.[2] ?? withRest?.[2];
   const readings = [...typeof trimmed === "string" ? [trimmed] : [], ...fallback !== void 0 ? [fallback] : []];
   const rest = leading !== null && token.value.startsWith(UNKNOWN) ? token.value.slice(UNKNOWN.length) : withRest?.[4] ?? "";
@@ -9607,7 +9607,8 @@ function isLocalUrl(url) {
 function urlHost(url) {
   const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.exec(url);
   const rest = scheme === null ? url : url.slice(scheme[0].length);
-  const authority = scheme === null ? /^(?:[^@/:[\]]*@)?\[[^\]]*\]|^[^:/]*/.exec(rest)?.[0] ?? "" : rest.slice(0, rest.search(/[/?#]|$/));
+  const end = scheme !== null && /^(?:ssh|git\+ssh|ssh\+git):\/\/$/i.test(scheme[0]) ? /\/|$/ : /[/?#]|$/;
+  const authority = scheme === null ? /^(?:[^@/:[\]]*@)?\[[^\]]*\]|^[^:/]*/.exec(rest)?.[0] ?? "" : rest.slice(0, rest.search(end));
   if (authority.startsWith("[") && authority.includes("]")) return authority.slice(1, authority.indexOf("]")).replace(/^.*@/, "");
   const host = authority.replace(/^.*@/, "");
   return host.startsWith("[") ? host.slice(1, host.includes("]") ? host.indexOf("]") : void 0) : host.replace(/:.*$/, "");
@@ -10271,8 +10272,36 @@ var ALLOW_PROTOCOL_REFUSAL = {
   rule: "protected-branch",
   reason: "Refused: `GIT_ALLOW_PROTOCOL` lets git use protocols such as `ext::`, which runs a command. Ask the user to run it with `!`."
 };
-function checkAllowProtocolMention(command) {
-  return command.includes("GIT_ALLOW_PROTOCOL") ? ALLOW_PROTOCOL_REFUSAL : null;
+function checkAllowProtocolMention(command, parts = []) {
+  const plain = command.replace(/['"\\]/g, "");
+  if (plain.includes("GIT_ALLOW_PROTOCOL")) return ALLOW_PROTOCOL_REFUSAL;
+  return runsGit(parts) && parts.some(setsUnreadableName) ? ALLOW_PROTOCOL_REFUSAL : null;
+}
+function runsGit(parts) {
+  return parts.some((p) => p.git !== null || p.words.includes("git"));
+}
+function checkTransportMention(command, parts) {
+  return runsGit(parts) && /(?:^|[^A-Za-z0-9+-])(?:ext|fd)::/i.test(command.replace(/['"\\]/g, "")) ? TRANSPORT_REFUSAL : null;
+}
+var TRANSPORT_REFUSAL = {
+  rule: "protected-branch",
+  reason: "Refused: an `ext::` or `fd::` git transport runs a command or talks over an open file. Ask the user to run it with `!`."
+};
+var OPERAND_NAME_SETTERS = /* @__PURE__ */ new Set(["read", "mapfile", "readarray"]);
+function setsUnreadableName(part) {
+  const program = part.program;
+  if (program === null) return false;
+  const unknownName = (w) => w.slice(0, w.includes("=") ? w.indexOf("=") : void 0).includes(UNKNOWN);
+  if (part.wrappers.includes("env") && program.includes(UNKNOWN) && program.includes("=")) return true;
+  const args = part.words.slice(1);
+  if (VARIABLE_SETTERS2.has(program)) {
+    if (program !== "export" && program !== "readonly" && args.some((a) => /^-[A-Za-z]*n/.test(a))) return true;
+    return args.some((a) => !a.startsWith("-") && unknownName(a));
+  }
+  if (OPERAND_NAME_SETTERS.has(program)) return args.some((a) => !a.startsWith("-") && a.includes(UNKNOWN));
+  if (program === "printf") return args.some((a, i) => a === "-v" && (args[i + 1] ?? "").includes(UNKNOWN) || /^-v./.test(a) && a.includes(UNKNOWN));
+  if (program === "getopts") return (args[1] ?? "").includes(UNKNOWN);
+  return false;
 }
 var REF_HISTORY_REFUSAL = {
   rule: "protected-branch",
@@ -11582,7 +11611,7 @@ async function checkBash(ctx, command) {
   const sources = trustedSourcesOf(ctx);
   const repos = reviewedRepos(ctx);
   for (const [index, part] of facts.parts.entries()) {
-    const refusal3 = checkUnknownGitOption(part) ?? checkAllowProtocolMention(command) ?? checkPushSetup(part, facts.parts, index) ?? checkLocalRemote(part, facts.parts, index) ?? checkRepoTrust(part, trustOf) ?? checkBranchSwitch(part, facts.parts, index, settings, void 0, ctx.caseInsensitive) ?? await checkBranchRefs(part, settings, ctx.git, ctx.caseInsensitive) ?? await checkProtectedBranch(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), ctx.caseInsensitive) ?? await checkHistoryMove(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), void 0, ctx.caseInsensitive) ?? checkForcePush(part, settings) ?? checkTags(part, settings) ?? checkProductionHost(part, settings) ?? checkOssHookEnv(part, command, home, sources) ?? checkVerdictCaptureCall(part, command, { home, pluginRoot: ctx.pluginRoot, paths, caseInsensitive: ctx.caseInsensitive }) ?? checkProtectedPathBash(part, settings, root, home, paths, ctx.caseInsensitive, places, ctx.tree) ?? (ownStep ? null : checkGateAgentBash(part, hook.agent, settings, { repos, home, exists: import_node_fs19.default.existsSync, temp: tempRoots(ctx), fallback: ctx.containment?.kind === "fallback", darwin: ctx.platform === "darwin", sandboxed: ctx.containment?.kind === "sandbox" }, paths, ctx.caseInsensitive, { earlier: facts.parts.slice(0, index), background: hook.background })) ?? await checkGitClean(part, settings, root, home, paths, ctx.git, ctx.caseInsensitive, places, { earlier: facts.parts, count: index, tree: ctx.tree }) ?? await checkGitStash(part, settings, root, home, paths, ctx.git, places, { earlier: facts.parts, count: index }) ?? checkProtectedPathMention(part, settings, root, home, paths, ctx.caseInsensitive, places);
+    const refusal3 = checkUnknownGitOption(part) ?? checkAllowProtocolMention(command, facts.parts) ?? checkPushSetup(part, facts.parts, index) ?? checkTransportMention(command, facts.parts) ?? checkLocalRemote(part, facts.parts, index) ?? checkRepoTrust(part, trustOf) ?? checkBranchSwitch(part, facts.parts, index, settings, void 0, ctx.caseInsensitive) ?? await checkBranchRefs(part, settings, ctx.git, ctx.caseInsensitive) ?? await checkProtectedBranch(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), ctx.caseInsensitive) ?? await checkHistoryMove(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), void 0, ctx.caseInsensitive) ?? checkForcePush(part, settings) ?? checkTags(part, settings) ?? checkProductionHost(part, settings) ?? checkOssHookEnv(part, command, home, sources) ?? checkVerdictCaptureCall(part, command, { home, pluginRoot: ctx.pluginRoot, paths, caseInsensitive: ctx.caseInsensitive }) ?? checkProtectedPathBash(part, settings, root, home, paths, ctx.caseInsensitive, places, ctx.tree) ?? (ownStep ? null : checkGateAgentBash(part, hook.agent, settings, { repos, home, exists: import_node_fs19.default.existsSync, temp: tempRoots(ctx), fallback: ctx.containment?.kind === "fallback", darwin: ctx.platform === "darwin", sandboxed: ctx.containment?.kind === "sandbox" }, paths, ctx.caseInsensitive, { earlier: facts.parts.slice(0, index), background: hook.background })) ?? await checkGitClean(part, settings, root, home, paths, ctx.git, ctx.caseInsensitive, places, { earlier: facts.parts, count: index, tree: ctx.tree }) ?? await checkGitStash(part, settings, root, home, paths, ctx.git, places, { earlier: facts.parts, count: index }) ?? checkProtectedPathMention(part, settings, root, home, paths, ctx.caseInsensitive, places);
     if (refusal3 !== null) return { refusal: refusal3, program: part.program };
   }
   if ("unreadable" in facts && !ownStep) {
