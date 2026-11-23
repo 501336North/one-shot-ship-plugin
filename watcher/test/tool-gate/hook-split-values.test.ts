@@ -100,6 +100,13 @@ const OTHER_OPERATORS = [
   'c=env; ${c^} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
   'c=env; ${c,} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
   'c=ENV; ${(L)c} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  // ship fix round 3, R3-4: a default or a suffix removal followed by a rest is read, and judged as a path
+  'HOME=/x "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}/hooks/oss-log.sh"',
+  'BASH_ENV=/tmp/x ${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh',
+  'c=1; HOME=/tmp/x ${c:-~/.oss}/hooks/oss-log.sh',
+  'c=~/.oss/; HOME=/tmp/x ${c%/}/hooks/oss-log.sh',
+  'c=envz; ${c%z} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  'c=env; ${c%%*z} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
 ];
 
 /** Already refused by the path-mention rule (`set` names a hook path): kept as guards. */
@@ -116,6 +123,10 @@ const ALLOWED = [
   // a plain `${name}` is no operator: the plugin's own hook call stays allowed
   '"${CLAUDE_PLUGIN_ROOT}/hooks/oss-log.sh" init',
   '${CLAUDE_PLUGIN_ROOT}/hooks/oss-log.sh init',
+  // R3-4 (owner pick "Allow it again"): the served plugin-root forms with a default or a trailing-slash trim
+  '"${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}/hooks/check-updates.sh"',
+  '${CLAUDE_PLUGIN_ROOT%/}/hooks/check-updates.sh',
+  '"${CLAUDE_PLUGIN_ROOT%/}/hooks/check-updates.sh"',
 ];
 
 /** Lines another rule may refuse; the hook-call rule must not. */
