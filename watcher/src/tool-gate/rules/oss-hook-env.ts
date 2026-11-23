@@ -86,6 +86,24 @@ const NAMEREF_SETTERS = new Set(['declare', 'typeset', 'local', 'private']);
 const OPERAND_SETTERS = new Set([...NAME_SETTERS, 'let', 'env']);
 /** Words before a builtin that still run it, zsh's precommand modifiers included (hook-env-refs Task 15). */
 const PREFIXES = new Set(['builtin', 'command', 'noglob', 'nocorrect', '-']);
+
+/**
+ * True when a program word runs `env` (ship fix round 5, R5-2): its basename is `env` whatever its folder
+ * (`/usr/bin/env`, `/u?r/bin/env`), or a glob that matches `env` (`e?v`, `en[v]`, `e*`).
+ */
+function isEnvProgram(word: string): boolean {
+  if (word.includes(UNKNOWN)) return false;
+  const base = word.slice(word.lastIndexOf('/') + 1);
+  if (base === 'env') return true;
+  if (!/[*?[]/.test(base)) return false;
+  const pattern = base.replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.').replace(/\[!/g, '[^');
+  try {
+    return new RegExp(`^${pattern}$`).test('env');
+  } catch {
+    // an unclosed `[` is a plain character to the shell (`[`, `[[`): it never matches `env`
+    return false;
+  }
+}
 /** How deep scripts in scripts are read; deeper counts as setting (fail closed). */
 const MAX_DEPTH = 5;
 
@@ -153,7 +171,8 @@ function setsUnlisted(words: string[]): boolean {
   const assigned: string[] = [];
   while (p < words.length && ASSIGNMENT.test(words[p])) assigned.push(words[p++]);
   while (PREFIXES.has(words[p])) p++;
-  const [name, ...args] = words.slice(p);
+  const [written, ...args] = words.slice(p);
+  const name = written !== undefined && isEnvProgram(written) ? 'env' : written;
   if (name === undefined || name === 'for' || name === 'select') {
     const plain = name === undefined ? assigned : [...assigned, args[0] ?? ''];
     return plain.some((w) => (MAYBE_EXPORTED.test(variableOf(w)) || COMMAND_MAPS.test(variableOf(w))) && unlisted(w));
@@ -279,7 +298,7 @@ function piecesSet(word: string): boolean {
   const pieces = (assigned === null ? word : word.slice(assigned[0].length)).split(/\s+/).filter(Boolean);
   const setsAfter = (setter: string, a: string): boolean =>
     (ASSIGNMENT.test(a) && unlisted(a)) || (setter === 'env' ? a.startsWith('-') : SETTING_WORD.test(a));
-  return pieces.some((p, i) => OPERAND_SETTERS.has(p) && pieces.slice(i + 1).some((a) => setsAfter(p, a)));
+  return pieces.some((p, i) => (OPERAND_SETTERS.has(p) || isEnvProgram(p)) && pieces.slice(i + 1).some((a) => setsAfter(isEnvProgram(p) ? 'env' : p, a)));
 }
 
 /** `text`: what the tokens were read from, so a word's raw text is known; a script inside a word has none. */
@@ -548,7 +567,7 @@ function valueVerdict(value: string, cwd: string, command: string, call: Call): 
   if (unknown && piecesSet(value)) return 'hook';
   // S5: the whole command is read for a set variable only when the value names a hook
   if (!hook) return 'ok';
-  const sets = pieces.includes('env') || (!unknown && setsRefusedVariable(value, 0, call)) || setsRefusedVariable(command, 0, call);
+  const sets = pieces.some(isEnvProgram) || (!unknown && setsRefusedVariable(value, 0, call)) || setsRefusedVariable(command, 0, call);
   return sets ? 'hook' : 'ok';
 }
 
@@ -694,7 +713,9 @@ export function checkOssHookEnv(part: CommandPart, command: string, home: string
     }
   }
   if (!partNamesHook(part, home) && !PLUGIN_HOOK.test(command)) return null;
-  const clears = part.wrappers.some((w, i) => w === 'env' || (w === 'exec' && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o))));
+  const clears =
+    (part.program !== null && isEnvProgram(part.program)) ||
+    part.wrappers.some((w, i) => w === 'env' || (w === 'exec' && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o))));
   if (!clears && !setsRefusedVariable(command, 0, { home, sources: sourcesFor(command, sources) })) return null;
   return {
     rule: 'protected-path',

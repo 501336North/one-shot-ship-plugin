@@ -124,6 +124,23 @@ const OTHER_OPERATORS = [
   '"${CLAUDE_PLUGIN_ROOT:-$HOME_X/.claude/plugins/oss}/hooks/oss-log.sh"',
 ];
 
+/** Ship fix round 5, R5-2 (HIGH): a program whose basename is `env`, by path, glob or variable value, counts as `env`. */
+const ENV_BY_PATH = [
+  '${c:-/usr/bin/env} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  'c=/usr/bin/env; $c BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  '${c:-/usr/bin/env} BASH_ENV=/tmp/x "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  '${c:-/bin/env} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  'c=/bin/env; $c BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  '${c:-/usr/bin/e?v} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  '${c:-/usr/bin/en[v]} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  '${c:-/u*/bin/env} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  '${c:-/usr/bin/env} -i ./hooks/oss-log.sh init',
+  '${c:-/usr/bin/env} BASH_ENV=/tmp/x ~/.oss/hooks/oss-log.sh init',
+  // the literal path already counts as env: kept refused
+  '/usr/bin/env BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  '/usr/bin/en? BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+];
+
 /** Already refused by the path-mention rule (`set` names a hook path): kept as guards. */
 const REFUSED_ANY = ['set -- env BASH_ENV=/tmp/x ~/.oss/hooks/oss-log.sh; "$@"'];
 
@@ -145,6 +162,9 @@ const ALLOWED = [
   '${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/oss}/hooks/check-updates.sh',
   // R5-1 F3: the braced `${HOME}` served form stays allowed
   '"${CLAUDE_PLUGIN_ROOT:-${HOME}/.claude/plugins/oss}/hooks/check-updates.sh"',
+  // R5-2: the test builtins `[` / `[[` are not `env`, as served login and settings blocks run them on a hook line
+  'PLUGIN_ROOT=$(~/.oss/hooks/oss-value.sh root) || exit 1\nif [ ! -d "dist" ]; then\n    npm run build\nfi',
+  'V=~/.oss/hooks/oss-value.sh\nSTYLE=$("$V" read notify_style) || exit 1\nif [[ "$STYLE" == "audio" ]]; then echo x; fi',
 ];
 
 /** Lines another rule may refuse; the hook-call rule must not. */
@@ -159,6 +179,12 @@ describe.each(PLATFORMS)('on %s', (platform) => {
     });
 
     it.each(OTHER_OPERATORS)('refuses a hook line whose program word uses an expansion operator the gate does not read: %s', async (command) => {
+      const result = await call(command, agent, platform);
+      expect(result.exitCode, command).toBe(2);
+      expect(result.stderr, command).toMatch(/^Refused/);
+    });
+
+    it.each(ENV_BY_PATH)('refuses a hook line run through env by its path, a glob or a variable value: %s', async (command) => {
       const result = await call(command, agent, platform);
       expect(result.exitCode, command).toBe(2);
       expect(result.stderr, command).toMatch(/^Refused/);
