@@ -409,6 +409,9 @@ function checkCommitSetup(part: CommandPart, earlier: readonly CommandPart[], co
  * the gate passes the whole call and the part's index, so no list is copied per part.
  */
 export function checkPushSetup(part: CommandPart, earlier: readonly CommandPart[], count = earlier.length): Refusal | null {
+  // ship round 1, S4 (restored in round 3, R3-1): the env twin of the protocol keys, set for a call, alone or
+  // exported, whatever runs next; read from the part's words, so a quote-split name (`GIT_ALLOW_PROT''OCOL`) counts
+  if (settingsOf(part).some(([name]) => name === 'GIT_ALLOW_PROTOCOL')) return ALLOW_PROTOCOL_REFUSAL;
   const planted = plantedConfig(part, earlier, count);
   if (planted !== null) {
     return {

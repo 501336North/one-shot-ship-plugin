@@ -83,6 +83,21 @@ const NAMES_ALLOW_PROTOCOL = [
   "env -S 'GIT_ALLOW_PROTOCOL=ext git fetch origin'",
 ];
 
+/** Ship fix round 3, R3-1: the name split by quotes or built from an expansion, which the text check can't see. */
+const SPLIT_ALLOW_PROTOCOL = [
+  'export GIT_ALLOW_PROT""OCOL=ext; git fetch origin',
+  "env GIT_ALLOW_PROT''OCOL=ext git fetch origin",
+  'export GIT_ALLOW_PROT\\OCOL=ext; git fetch origin',
+  "export $'GIT_ALLOW_PROTO\\x43OL=ext'; git fetch origin",
+  'x=PROTOCOL; typeset -x "GIT_ALLOW_${x}"=ext; git fetch origin',
+  "export GIT_ALLOW_PROT''OCOL=ext; git clone 'ext::sh -c touch% /tmp/pwn' x",
+  'x=PROTOCOL; export GIT_ALLOW_$x=ext; git fetch origin',
+  'printf -v "GIT_ALLOW_PROT""OCOL" ext; export GIT_ALLOW_PROT""OCOL; git fetch origin',
+  'declare -x GIT_ALLOW_PROT""OCOL=ext; git fetch origin',
+  "export 'GIT_ALLOW_PROTO'COL=ext; git fetch",
+  "x=1 GIT_ALLOW_PROTO''COL=ext git fetch",
+];
+
 const ALLOWED = [
   'echo protocol',
   'git fetch origin',
@@ -103,6 +118,12 @@ describe.each(PLATFORMS)('git protocols that run commands (ship round 1, S4) on 
     });
 
     it.each(NAMES_ALLOW_PROTOCOL)('refuses any command that names GIT_ALLOW_PROTOCOL: %s', async (command) => {
+      const result = await call(command, agent, platform);
+      expect(result.exitCode, command).toBe(2);
+      expect(result.stderr, command).toMatch(/^Refused/);
+    });
+
+    it.each(SPLIT_ALLOW_PROTOCOL)('refuses GIT_ALLOW_PROTOCOL set under a split or built name: %s', async (command) => {
       const result = await call(command, agent, platform);
       expect(result.exitCode, command).toBe(2);
       expect(result.stderr, command).toMatch(/^Refused/);
