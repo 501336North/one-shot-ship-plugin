@@ -306,6 +306,9 @@ const WRAPPERS = new Map<string, WrapperSpec>([
   ['unbuffer', { values: [], terminal: true }],
   ['faketime', { values: ['--date-prog'], operands: 1 }],
   ['caffeinate', { values: ['-t', '-w'] }],
+  // ship fix round 7, R7-2: macOS `arch [-arch name] [-e NAME=VALUE] [-d NAME] cmd` and `launchctl asuser UID cmd`
+  ['arch', { values: ['-e', '-d'] }],
+  ['launchctl', { values: [], operands: 2 }],
   ['ionice', { values: ['-c', '--class', '-n', '--classdata', '-p', '--pid', '-P', '--pgid', '-u', '--uid'] }],
   ['chrt', { values: ['-T', '--sched-runtime', '-P', '--sched-period', '-D', '--sched-deadline'], operands: 1 }],
   ['flock', {

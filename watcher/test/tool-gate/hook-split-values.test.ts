@@ -169,6 +169,41 @@ const ARCH_SETS = [
   'arch -e BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
 ];
 
+/** Ship fix round 7, R7-2 ("Blunt on hook lines"): env and arch read in every place they can start a program. */
+const HOOK_ENV_BLUNT = [
+  // N1: a wrapper before a glob env in a split value (zsh `$=~c`, `$~=c`, `$~c` included)
+  'c="nice /usr/bin/e?v BASH_ENV=/tmp/x"; $c "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  'c="nice /usr/bin/e?v BASH_ENV=/tmp/x"; $c ~/.oss/hooks/oss-log.sh init',
+  'c="nohup /usr/bin/[e]nv -i"; $c "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  'c="command /usr/bin/en* BASH_ENV=/tmp/x"; $c "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  'c="nice /usr/bin/e?v BASH_ENV=/tmp/x"; $~c "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  'c="nice /usr/bin/e?v BASH_ENV=/tmp/x"; $=~c "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  'c="nice /usr/bin/e?v BASH_ENV=/tmp/x"; $~=c "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  'c="nice /usr/bin/e?v BASH_ENV=/tmp/x ${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh"; $c init',
+  // O2: a command substitution as the program word, quoted or not
+  '$(command -v env) BASH_ENV=/tmp/x ~/.oss/hooks/oss-log.sh init',
+  '`command -v env` BASH_ENV=/tmp/x ~/.oss/hooks/oss-log.sh init',
+  '"$(command -v env)" BASH_ENV=/tmp/x ~/.oss/hooks/oss-log.sh init',
+  '"`echo env`" PATH=/tmp/b ~/.oss/hooks/oss-log.sh init',
+  '"$(printf env)" BASH_ENV=/tmp/x "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  '"$(command -v arch)" -arm64 -e BASH_ENV=/tmp/x "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  // N3: arch by glob, any case, through a variable, a default or a split value
+  '/usr/bin/a?ch -arm64 -e BASH_ENV=/tmp/x "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  '/usr/bin/a?ch -arm64 -e BASH_ENV=/tmp/x ~/.oss/hooks/oss-log.sh init',
+  '/usr/bin/ARCH -arm64 -e BASH_ENV=/tmp/x "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  'a=arch; $a -arm64 -e BASH_ENV=/tmp/x "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  'a=/usr/bin/arch; $a -arm64 -e BASH_ENV=/tmp/x ~/.oss/hooks/oss-log.sh init',
+  '${c:-/usr/bin/a?ch} -arm64 -e BASH_ENV=/tmp/x "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  "c='arch -arm64 -e BASH_ENV=/tmp/x'; $c \"${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh\" init",
+  // O3: env after arch or launchctl, which run the program after them
+  'arch -arm64 env BASH_ENV=/tmp/x "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  'arch -arm64 /usr/bin/env BASH_ENV=/tmp/x "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  'arch -arm64 env BASH_ENV=/tmp/x ~/.oss/hooks/oss-log.sh init',
+  'launchctl asuser 501 env BASH_ENV=/tmp/x "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  // R7-2 owner-accepted refusal (allowed again under R6-2 E): a split piece that globs to env
+  'c="$X ~/.oss/hooks/oss-log.sh * -x"; echo ok',
+];
+
 /** Already refused by the path-mention rule (`set` names a hook path): kept as guards. */
 const REFUSED_ANY = ['set -- env BASH_ENV=/tmp/x ~/.oss/hooks/oss-log.sh; "$@"'];
 
@@ -201,8 +236,17 @@ const ALLOWED = [
   'printenv; ~/.oss/hooks/oss-log.sh init',
   './env.sh; ~/.oss/hooks/oss-log.sh init',
   'myenv; ~/.oss/hooks/oss-log.sh init',
-  // R6-2 (E): only the program word is glob-matched, not a value piece such as `*` (allowed as at round 4)
-  'c="$X ~/.oss/hooks/oss-log.sh * -x"; echo ok',
+  // R7-2: arch with no `-e`, env-named tools, test builtins and a substitution that is not the program word stay allowed
+  'arch -x86_64 make',
+  'arch -arm64 npm test; ~/.oss/hooks/oss-log.sh init',
+  'cross-env NODE_ENV=test npm test; ~/.oss/hooks/oss-log.sh init',
+  'dotenv -- npm test; ~/.oss/hooks/oss-log.sh init',
+  'pyenv local 3.12; ~/.oss/hooks/oss-log.sh init',
+  '[ -f x ] && ~/.oss/hooks/oss-log.sh init',
+  '[[ -f x ]] && ~/.oss/hooks/oss-log.sh init',
+  'test -f x && ~/.oss/hooks/oss-log.sh init',
+  'cd "$(git rev-parse --show-toplevel)" && ~/.oss/hooks/oss-log.sh init',
+  '[ -z "$(~/.oss/hooks/oss-value.sh root)" ] && echo none',
 ];
 
 /** Lines another rule may refuse; the hook-call rule must not. */
@@ -229,6 +273,12 @@ describe.each(PLATFORMS)('on %s', (platform) => {
     });
 
     it.each(ARCH_SETS)('refuses a hook line run through arch with a variable set by -e: %s', async (command) => {
+      const result = await call(command, agent, platform);
+      expect(result.exitCode, command).toBe(2);
+      expect(result.stderr, command).toMatch(/^Refused/);
+    });
+
+    it.each(HOOK_ENV_BLUNT)('refuses a hook line where env or arch may run by a glob, a substitution, a split piece or a wrapper: %s', async (command) => {
       const result = await call(command, agent, platform);
       expect(result.exitCode, command).toBe(2);
       expect(result.stderr, command).toMatch(/^Refused/);

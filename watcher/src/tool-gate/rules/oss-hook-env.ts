@@ -97,9 +97,15 @@ function isEnvProgram(word: string): boolean {
   return globMatches(word.slice(word.lastIndexOf('/') + 1), 'env');
 }
 
-/** True when a piece of a split value runs `env`: the first piece is its program word; a later one only when it is `env` as written (R6-2 E). */
-function isEnvPiece(piece: string, index: number): boolean {
-  return index === 0 ? isEnvProgram(piece) : piece.slice(piece.lastIndexOf('/') + 1).toLowerCase() === 'env';
+/** True when a program word runs macOS `arch`, matched like env: any folder, any case, by glob (ship fix round 7, R7-2). */
+function isArchProgram(word: string): boolean {
+  if (word.includes(UNKNOWN)) return false;
+  return globMatches(word.slice(word.lastIndexOf('/') + 1), 'arch');
+}
+
+/** True when any piece of a split value may run `env` or `arch`, by glob (R7-2 "Blunt on hook lines", replacing R6-2 E). */
+function isEnvPiece(piece: string): boolean {
+  return isEnvProgram(piece) || isArchProgram(piece);
 }
 /** How deep scripts in scripts are read; deeper counts as setting (fail closed). */
 const MAX_DEPTH = 5;
@@ -295,7 +301,7 @@ function piecesSet(word: string): boolean {
   const pieces = (assigned === null ? word : word.slice(assigned[0].length)).split(/\s+/).filter(Boolean);
   const setsAfter = (setter: string, a: string): boolean =>
     (ASSIGNMENT.test(a) && unlisted(a)) || (setter === 'env' ? a.startsWith('-') : SETTING_WORD.test(a));
-  return pieces.some((p, i) => (OPERAND_SETTERS.has(p) || isEnvPiece(p, i)) && pieces.slice(i + 1).some((a) => setsAfter(isEnvPiece(p, i) ? 'env' : p, a)));
+  return pieces.some((p, i) => (OPERAND_SETTERS.has(p) || isEnvPiece(p)) && pieces.slice(i + 1).some((a) => setsAfter(isEnvPiece(p) ? 'env' : p, a)));
 }
 
 /** `text`: what the tokens were read from, so a word's raw text is known; a script inside a word has none. */
@@ -582,6 +588,8 @@ function programVerdict(token: Token, after: Token[], text: string | null, value
   const at = sourceOf(token);
   if (text === null || at === undefined) return 'ok';
   const raw = text.slice(at.start, at.end);
+  // ship fix round 7, R7-2: a command substitution as the program word (`$(command -v env)`, backticks, quoted or not)
+  if (/^"?(?:\$\(|`)/.test(raw)) return lineNamesHook(command, cwd, call.home) ? 'unreadable' : 'ok';
   if (raw.includes('${!')) return 'unreadable';
   const split = SPLIT_REF.exec(raw);
   const leading = split === null ? LEADING_REF.exec(raw) : null;
@@ -650,7 +658,9 @@ function scanPrograms(tokens: Token[], text: string | null, values: Values, cwd:
         values.set('*', positional);
       }
       const program = programIndex(plain, i);
-      worse(programVerdict(words[program], words.slice(program + 1), text, values, cwd, command, call));
+      // R7-2: wrappers with no program after them (`$(command -v env)`) run nothing here; reading past the end threw,
+      // and a gate error lets the call through
+      if (program < words.length) worse(programVerdict(words[program], words.slice(program + 1), text, values, cwd, command, call));
     }
     words = [];
     redirects = [];
@@ -700,11 +710,14 @@ function commandScan(command: string, cwd: string, home: string, sources: Truste
   return verdict;
 }
 
-/** True when a part runs macOS `arch` (any folder) with `-e NAME=VALUE`, which sets a variable for the program it runs, as `env` does (ship fix round 6, R6-3). */
+/**
+ * True when a part runs macOS `arch` with `-e NAME=VALUE`, which sets a variable for the program it runs, as `env`
+ * does (ship fix round 6, R6-3): as its program (any folder, any case, by glob: R7-2) or as a wrapper the reader unwrapped.
+ */
 function archSets(part: CommandPart): boolean {
-  const program = part.program;
-  if (program === null || program.slice(program.lastIndexOf('/') + 1) !== 'arch') return false;
-  return part.words.some((w, i) => w === '-e' && ASSIGNMENT.test(part.words[i + 1] ?? ''));
+  const setsByE = (words: readonly string[]): boolean => words.some((w, i) => w === '-e' && ASSIGNMENT.test(words[i + 1] ?? ''));
+  if (part.program !== null && isArchProgram(part.program) && setsByE(part.words)) return true;
+  return part.wrappers.some((w, i) => w === 'arch' && setsByE(part.wrapperOptions[i] ?? []));
 }
 
 export function checkOssHookEnv(part: CommandPart, command: string, home: string, sources: TrustedSources): Refusal | null {
