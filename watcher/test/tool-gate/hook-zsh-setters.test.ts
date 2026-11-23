@@ -96,6 +96,12 @@ const REFUSED = [
   `zparseopts -D v+:=BASH_ENV; ${H}`,
   `zparseopts -apath x; ${H}`,
   `zparseopts -ABASH_ENV x; ${H}`,
+  // ship fix round 3, R3-2: specs after `-` / `--`, specs that start with `-`, and `-=name`
+  `set -- --p /tmp/e; zparseopts -D -- -p:=path; ${H}`,
+  `set -- --p /tmp/e; zparseopts -D -E -- -p:=path; ${H}`,
+  `zparseopts -D -E -- -p:=HOME; ${H}`,
+  `zparseopts -D -- -=path; ${H}`,
+  'zparseopts -D -E - -x=BASH_ENV; ./hooks/oss-log.sh',
 ];
 
 const ALLOWED = ['private -x FOO=bar', 'vared x', 'zparseopts -A opts -- -v', 'getln x', 'zparseopts -D -E v=verbose'];

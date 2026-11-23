@@ -165,12 +165,13 @@ function setsUnlisted(words: string[]): boolean {
   else if (name === 'mapfile' || name === 'readarray') names.push(...arrayOperands(args));
   else if (name === 'getopts') names.push(args[1] ?? '');
   // ship round 1, S1: zsh's `zparseopts -A name` / `-a name` binds a written-out name too; round 2, R2-3: so do an
-  // attached `-Aname` / `-aname` and each spec's `=name` (`v=verbose`, `p:=path`, `v+:=arr`)
+  // attached `-Aname` / `-aname` and each spec's `=name` (`v=verbose`, `p:=path`, `v+:=arr`, `-p:=x`)
   else if (name === 'zparseopts') {
     args.forEach((a, i) => {
       if (a === '-A' || a === '-a') names.push(args[i + 1] ?? '');
       else if (/^-[aA]./.test(a)) names.push(a.slice(2));
-      else if (!a.startsWith('-') && a.includes('=')) names.push(a.slice(a.indexOf('=') + 1));
+      // round 3, R3-2: any spec word with `=name`, also after `-` / `--`, starting with `-`, or `-=name`
+      if (a.includes('=')) names.push(a.slice(a.indexOf('=') + 1));
     });
   }
   return names.some(unlisted);
