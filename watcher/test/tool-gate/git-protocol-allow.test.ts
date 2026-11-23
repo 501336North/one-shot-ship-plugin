@@ -133,6 +133,21 @@ const NAME_LAYER = [
   'x=GIT_ALLOW_PROTOCO; read -a ${x}L <<< ext; git fetch origin',
   'x=GIT_ALLOW_PROTOCO; read -p "? " ${x}L; git fetch origin',
   'x=GIT_ALLOW_PROTOCO; mapfile -t -u 3 ${x}L; git fetch origin',
+  // ship fix round 6, R6-1 ("Fail closed"): a word after a read/mapfile option may be the name (zsh: `-t`, `-n`,
+  // `-p` take no value), so it counts as one unless it is a plain number
+  'x=GIT_ALLOW_PROTOCO; set -a; read -t ${x}L <<< ext; git fetch origin',
+  'x=GIT_ALLOW_PROTOCO; set -a; read -n ${x}L <<< ext; git fetch origin',
+  'x=GIT_ALLOW_PROTOCO; set -a; read -rt ${x}L <<< ext; git fetch origin',
+  'x=GIT_ALLOW_PROTOCO; set -a; read -p ${x}L; git fetch origin',
+  'x=GIT_ALLOW_PROTOCO; set -a; coproc echo ext; read -p ${x}L; git fetch origin',
+  'x=GIT_ALLOW_PROTOCO; set -a; read -t ${x}L <<< ext; u=ex; git clone "${u}t::sh -c id" y',
+  "x=GIT_ALLOW_PROTOCO; set -a; read -t ${x}L <<< ext; git -c url.ext:.insteadOf=foo: clone 'foo::sh -c id' y",
+  // R6-1 owner-accepted flip (was allowed under R5-1 F2): an expansion in the option value may be the name in zsh
+  'read -p "Push $branch? " ans; git push origin feat/x',
+  'read -n 1 -s -r -p "Delete $f? " a; git status',
+  'read -t "$T" ans; git status',
+  'read -u "$fd" line; git status',
+  'mapfile -t -u "$fd" lines; git status',
 ];
 
 /** R4-3 (2): an `ext::` or `fd::` transport anywhere on a git line, quotes and escapes removed. */
@@ -170,12 +185,16 @@ const ALLOWED = [
   "git commit -F - <<'EOF'\nuse std::os::fd::OwnedFd\nEOF",
   "which git; rg 'os::fd::' src",
   // R5-1 F2: an option's value is not a name being set
-  'read -p "Push $branch? " ans; git push origin feat/x',
-  'read -n 1 -s -r -p "Delete $f? " a; git status',
-  'read -t "$T" ans; git status',
-  'read -u "$fd" line; git status',
-  'mapfile -t -u "$fd" lines; git status',
   'read -a parts <<< "$x"; git status',
+  // ship fix round 6, R6-1: a plain-number option value, an attached value, or a value with no expansion stays allowed
+  'read -t 5 ans; git status',
+  'read -u 3 line; git status',
+  'read -n 1 -s -r a; git status',
+  'read -t5 ans; git status',
+  'read -u3 line; git status',
+  "read -rp '? ' ans; git status",
+  'read -ra arr <<< "a b"; git status',
+  "read -rd '' x < /dev/null; git status",
   'echo protocol',
   'git fetch origin',
   'git ls-remote origin',

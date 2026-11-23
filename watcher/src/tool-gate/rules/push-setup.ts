@@ -572,7 +572,7 @@ const TRANSPORT_REFUSAL: Refusal = {
  */
 const VALUE_OPTIONS: Readonly<Record<string, string>> = { read: 'ptudnNi', mapfile: 'udnOsCc', readarray: 'udnOsCc' };
 
-/** The names a `read`, `mapfile`/`readarray`, `printf -v` or `getopts` part sets, as the gate reads them (R4-3, R5-1 F2). */
+/** The names a `read`, `mapfile`/`readarray`, `printf -v` or `getopts` part sets, as the gate reads them (R4-3, R5-1 F2, R6-1 fail closed). */
 function namesSetBy(program: string, args: readonly string[]): string[] {
   if (program === 'getopts') return args[1] === undefined ? [] : [args[1]];
   const names: string[] = [];
@@ -588,7 +588,8 @@ function namesSetBy(program: string, args: readonly string[]): string[] {
         const name = (program === 'read' && letter === 'a') || (program === 'printf' && letter === 'v');
         if (!name && !values.includes(letter)) continue;
         const operand = attached !== '' ? attached : (args[++i] ?? '');
-        if (name) names.push(operand);
+        // R6-1: in zsh most of these letters take no value, so a separate word may be the name (unless a plain number)
+        if (name || (attached === '' && !/^[0-9]+$/.test(operand))) names.push(operand);
         break;
       }
     } else if (program !== 'printf') names.push(a);
