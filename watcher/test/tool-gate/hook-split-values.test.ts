@@ -200,6 +200,13 @@ const HOOK_ENV_BLUNT = [
   'arch -arm64 /usr/bin/env BASH_ENV=/tmp/x "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
   'arch -arm64 env BASH_ENV=/tmp/x ~/.oss/hooks/oss-log.sh init',
   'launchctl asuser 501 env BASH_ENV=/tmp/x "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  // R7-2 restore (refused at ec6ba2df): arch running a hook path stays refused now that arch is unwrapped
+  '/usr/bin/arch -arm64 ~/.oss/hooks/oss-log.sh init',
+  'arch -arm64 ~/.oss/hooks/oss-log.sh init',
+  'arch -arm64 -e FOO ~/.oss/hooks/oss-log.sh init',
+  'arch -arm64 -d BASH_ENV ~/.oss/hooks/oss-log.sh init',
+  'arch -arm64 -eBASH_ENV=/tmp/x ~/.oss/hooks/oss-log.sh init',
+  'arch -arm64 -c ~/.oss/hooks/oss-log.sh init',
   // R7-2 owner-accepted refusal (allowed again under R6-2 E): a split piece that globs to env
   'c="$X ~/.oss/hooks/oss-log.sh * -x"; echo ok',
 ];
@@ -239,6 +246,9 @@ const ALLOWED = [
   // R7-2: arch with no `-e`, env-named tools, test builtins and a substitution that is not the program word stay allowed
   'arch -x86_64 make',
   'arch -arm64 npm test; ~/.oss/hooks/oss-log.sh init',
+  'arch -arm64 npm test',
+  'arch -e LANG=C -arm64 make',
+  "arch -x86_64 /bin/zsh -c 'npm test'",
   'cross-env NODE_ENV=test npm test; ~/.oss/hooks/oss-log.sh init',
   'dotenv -- npm test; ~/.oss/hooks/oss-log.sh init',
   'pyenv local 3.12; ~/.oss/hooks/oss-log.sh init',
