@@ -2986,7 +2986,10 @@ describe('tool-gate acceptance: fix round 4, K8', () => {
       'git filter-branch -- feat/x',
       'git fast-import',
     ])('still allows %s from a feature branch', async (command) => {
-      allowed(await run(featureRepo(), command));
+      // gate-gaps-r3 ship round 1, S3a: the default mapping is allowed only for a remote in the repo's git config
+      const repo = featureRepo();
+      git(repo, ['remote', 'add', 'origin', 'https://github.com/example/x.git']);
+      allowed(await run(repo, command));
     });
   });
 
