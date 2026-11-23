@@ -2032,6 +2032,9 @@ var WRAPPERS = /* @__PURE__ */ new Map([
   ["unbuffer", { values: [], terminal: true }],
   ["faketime", { values: ["--date-prog"], operands: 1 }],
   ["caffeinate", { values: ["-t", "-w"] }],
+  // ship fix round 7, R7-2: macOS `arch [-arch name] [-e NAME=VALUE] [-d NAME] cmd` and `launchctl asuser UID cmd`
+  ["arch", { values: ["-e", "-d"] }],
+  ["launchctl", { values: [], operands: 2 }],
   ["ionice", { values: ["-c", "--class", "-n", "--classdata", "-p", "--pid", "-P", "--pgid", "-u", "--uid"] }],
   ["chrt", { values: ["-T", "--sched-runtime", "-P", "--sched-period", "-D", "--sched-deadline"], operands: 1 }],
   ["flock", {
@@ -8876,8 +8879,12 @@ function isEnvProgram(word) {
   if (word.includes(UNKNOWN)) return false;
   return globMatches(word.slice(word.lastIndexOf("/") + 1), "env");
 }
-function isEnvPiece(piece, index) {
-  return index === 0 ? isEnvProgram(piece) : piece.slice(piece.lastIndexOf("/") + 1).toLowerCase() === "env";
+function isArchProgram(word) {
+  if (word.includes(UNKNOWN)) return false;
+  return globMatches(word.slice(word.lastIndexOf("/") + 1), "arch");
+}
+function isEnvPiece(piece) {
+  return isEnvProgram(piece) || isArchProgram(piece);
 }
 var MAX_DEPTH = 5;
 function setsRefusedVariable(text, depth, call) {
@@ -9015,7 +9022,7 @@ function piecesSet(word) {
   const assigned = ASSIGNMENT3.exec(word);
   const pieces = (assigned === null ? word : word.slice(assigned[0].length)).split(/\s+/).filter(Boolean);
   const setsAfter = (setter, a) => ASSIGNMENT3.test(a) && unlisted(a) || (setter === "env" ? a.startsWith("-") : SETTING_WORD.test(a));
-  return pieces.some((p, i) => (OPERAND_SETTERS.has(p) || isEnvPiece(p, i)) && pieces.slice(i + 1).some((a) => setsAfter(isEnvPiece(p, i) ? "env" : p, a)));
+  return pieces.some((p, i) => (OPERAND_SETTERS.has(p) || isEnvPiece(p)) && pieces.slice(i + 1).some((a) => setsAfter(isEnvPiece(p) ? "env" : p, a)));
 }
 function tokensSet(tokens, depth, call, text) {
   let previous = null;
@@ -9194,6 +9201,7 @@ function programVerdict(token, after, text, values, cwd, command, call) {
   const at = sourceOf(token);
   if (text === null || at === void 0) return "ok";
   const raw = text.slice(at.start, at.end);
+  if (/^"?(?:\$\(|`)/.test(raw)) return lineNamesHook(command, cwd, call.home) ? "unreadable" : "ok";
   if (raw.includes("${!")) return "unreadable";
   const split2 = SPLIT_REF.exec(raw);
   const leading = split2 === null ? LEADING_REF.exec(raw) : null;
@@ -9251,7 +9259,7 @@ function scanPrograms(tokens, text, values, cwd, command, call) {
         values.set("*", positional);
       }
       const program = programIndex(plain, i);
-      worse2(programVerdict(words[program], words.slice(program + 1), text, values, cwd, command, call));
+      if (program < words.length) worse2(programVerdict(words[program], words.slice(program + 1), text, values, cwd, command, call));
     }
     words = [];
     redirects = [];
@@ -9292,9 +9300,9 @@ function commandScan(command, cwd, home, sources) {
   return verdict;
 }
 function archSets(part) {
-  const program = part.program;
-  if (program === null || program.slice(program.lastIndexOf("/") + 1) !== "arch") return false;
-  return part.words.some((w, i) => w === "-e" && ASSIGNMENT3.test(part.words[i + 1] ?? ""));
+  const setsByE = (words) => words.some((w, i) => w === "-e" && ASSIGNMENT3.test(words[i + 1] ?? ""));
+  if (part.program !== null && isArchProgram(part.program) && setsByE(part.words)) return true;
+  return part.wrappers.some((w, i) => w === "arch" && setsByE(part.wrapperOptions[i] ?? []));
 }
 function checkOssHookEnv(part, command, home, sources) {
   if (programHidden(part)) {
@@ -9610,12 +9618,26 @@ var FILE_URL = /^file:\/\//i;
 var URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
 function isLocalUrl(url) {
   if (FILE_URL.test(url)) return true;
+  if (oddHost(url)) return true;
   if (loopbackHost(urlHost(url))) return true;
   if (URL_SCHEME.test(url)) return false;
   const colon = url.indexOf(":");
   const unknown = url.indexOf(UNKNOWN);
   if (unknown !== -1 && (colon === -1 || unknown < colon)) return true;
   return colon === -1 || url.slice(0, colon).includes("/");
+}
+function oddHost(url) {
+  const scheme = /^(?:ssh|git\+ssh|ssh\+git|git):\/\//i.exec(url);
+  let host;
+  if (scheme !== null) {
+    const rest = url.slice(scheme[0].length);
+    host = rest.slice(0, rest.search(/\/|$/));
+  } else {
+    const colon = url.indexOf(":");
+    if (URL_SCHEME.test(url) || colon === -1 || url.slice(0, colon).includes("/")) return false;
+    host = url.slice(0, colon);
+  }
+  return /[[%]/.test(host) || host.split("@").length > 2;
 }
 function percentDecoded(text) {
   try {
@@ -10299,8 +10321,9 @@ var ALLOW_PROTOCOL_REFUSAL = {
 function checkAllowProtocolMention(command, parts = []) {
   const plain = command.replace(/['"\\]/g, "");
   if (plain.includes("GIT_ALLOW_PROTOCOL")) return ALLOW_PROTOCOL_REFUSAL;
-  return runsGit(parts) && parts.some(setsUnreadableName) ? ALLOW_PROTOCOL_REFUSAL : null;
+  return runsGit(parts) && (INDIRECT_ASSIGNMENT.test(command) || parts.some(setsUnreadableName)) ? ALLOW_PROTOCOL_REFUSAL : null;
 }
+var INDIRECT_ASSIGNMENT = /\$\{(?:!|\([^)]*P[^)]*\))[^}]*?=/;
 function runsGit(parts) {
   return parts.some((p) => p.git !== null || p.words.includes("git"));
 }
@@ -10324,13 +10347,13 @@ function namesSetBy(program, args) {
       for (let k = 1; k < a.length; k++) {
         const letter = a[k];
         const attached = a.slice(k + 1);
-        const name = program === "read" && letter === "a" || program === "printf" && letter === "v";
+        const name = program === "read" && letter === "a" || (program === "printf" || program === "print") && letter === "v";
         if (!name && !values.includes(letter)) continue;
         const operand = attached !== "" ? attached : args[++i] ?? "";
         if (name || attached === "" && !/^[0-9]+$/.test(operand)) names.push(operand);
         break;
       }
-    } else if (program !== "printf") names.push(a);
+    } else if (program !== "printf" && program !== "print") names.push(a);
   }
   return names;
 }
@@ -10344,7 +10367,7 @@ function setsUnreadableName(part) {
     if (program !== "export" && program !== "readonly" && args.some((a) => /^-[A-Za-z]*n/.test(a))) return true;
     return args.some((a) => !a.startsWith("-") && unknownName(a));
   }
-  if (!(program in VALUE_OPTIONS2) && program !== "printf" && program !== "getopts") return false;
+  if (!(program in VALUE_OPTIONS2) && program !== "printf" && program !== "print" && program !== "getopts") return false;
   return namesSetBy(program, args).some((name) => name.includes(UNKNOWN) || name.replace(/['"\\]/g, "") === "GIT_ALLOW_PROTOCOL");
 }
 var REF_HISTORY_REFUSAL = {
