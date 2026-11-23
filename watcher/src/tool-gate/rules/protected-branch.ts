@@ -472,12 +472,15 @@ export function isLocalUrl(url: string): boolean {
 /**
  * The host of a URL or scp-like address, read the way git and curl read it (ship fix round 3, R3-3): the
  * authority ends at the first `/`, `?` or `#` (scp: at the first `:` outside brackets); userinfo runs to the
- * last `@` in it; a bracketed part may hold ssh userinfo (`[git@127.0.0.1]:22`, `[git@::1]:x`).
+ * last `@` in it; a bracketed part may hold ssh userinfo (`[git@127.0.0.1]:22`, `[git@::1]:x`). Round 4, R4-2
+ * ("Split by scheme"): git hands an ssh URL's authority to ssh up to the first `/` only, so for ssh, git+ssh and
+ * ssh+git a `?` or `#` is part of the user.
  */
 function urlHost(url: string): string {
   const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.exec(url);
   const rest = scheme === null ? url : url.slice(scheme[0].length);
-  const authority = scheme === null ? (/^(?:[^@/:[\]]*@)?\[[^\]]*\]|^[^:/]*/.exec(rest)?.[0] ?? '') : rest.slice(0, rest.search(/[/?#]|$/));
+  const end = scheme !== null && /^(?:ssh|git\+ssh|ssh\+git):\/\/$/i.test(scheme[0]) ? /\/|$/ : /[/?#]|$/;
+  const authority = scheme === null ? (/^(?:[^@/:[\]]*@)?\[[^\]]*\]|^[^:/]*/.exec(rest)?.[0] ?? '') : rest.slice(0, rest.search(end));
   if (authority.startsWith('[') && authority.includes(']')) return authority.slice(1, authority.indexOf(']')).replace(/^.*@/, '');
   const host = authority.replace(/^.*@/, '');
   return host.startsWith('[') ? host.slice(1, host.includes(']') ? host.indexOf(']') : undefined) : host.replace(/:.*$/, '');

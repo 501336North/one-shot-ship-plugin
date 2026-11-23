@@ -123,6 +123,19 @@ const USERINFO_FORMS = [
   'git remote add y https://evil.com@localhost/x',
 ];
 
+/** Ship fix round 4, R4-2 ("Split by scheme"): ssh and scp-like hosts end at `/` only, so `#` and `?` sit in the user part. */
+const SSH_AUTHORITY = [
+  "git remote set-url origin 'ssh://github.com#@127.0.0.1/x'",
+  "git remote set-url origin 'ssh://github.com?@127.0.0.1/x'",
+  "git remote set-url origin 'git+ssh://github.com#@127.0.0.1/x'",
+  "git remote set-url origin 'ssh+git://github.com#@127.0.0.1/x'",
+  "git remote add y 'ssh://github.com#@localhost:22/x' && git fetch y",
+  "git remote add y 'git+ssh://x#@localhost/x' && git fetch y",
+  "git -c 'url.ssh://github.com#@127.0.0.1/.insteadOf=https://github.com/' fetch origin",
+  "git remote set-url origin 'ssh://[github.com#@127.0.0.1]:22/x'",
+  "git remote set-url origin 'github.com#@127.0.0.1:x'",
+];
+
 const REPLACE_DESTINATIONS = [
   'git fetch origin x:refs/replace/abc',
   'git fetch origin feat/x:refs/replace/0123456789012345678901234567890123456789',
@@ -154,6 +167,10 @@ const ALLOWED = [
   'git remote add up4 https://u:p@github.com/a/b.git',
   'git remote add corp https://git.corp:8443/x.git',
   'git remote add trick https://localhost@evil.com/x',
+  // R4-2: http(s) still ends the host at `?` / `#`; L13's real host is github.com
+  'git remote set-url origin http://127.0.0.1:8000@github.com/x',
+  'git remote add up5 https://github.com/a/b.git?x=1',
+  'git remote add up6 ssh://git@github.com/a/b.git',
 ];
 
 describe.each(PLATFORMS)('remotes the gate can see (ship round 1, S3) on %s', (platform) => {
@@ -169,6 +186,7 @@ describe.each(PLATFORMS)('remotes the gate can see (ship round 1, S3) on %s', (p
     it.each(LOOPBACK_URLS)('refuses a remote on localhost, 127.x or ::1: %s', refused);
     it.each(LOOPBACK_FORMS)('refuses a remote on this machine in any numeric or localhost spelling: %s', refused);
     it.each(USERINFO_FORMS)('refuses a remote on this machine behind userinfo or brackets: %s', refused);
+    it.each(SSH_AUTHORITY)('refuses an ssh remote whose host, read to the first `/`, is this machine: %s', refused);
     it.each(REPLACE_DESTINATIONS)('refuses a fetch or pull that writes a replace ref: %s', refused);
 
     it.each(ALLOWED)('allows everyday fetch, pull, push and remotes on real hosts: %s', async (command) => {
