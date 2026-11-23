@@ -8868,7 +8868,7 @@ var SERVED_OPTIONS = /* @__PURE__ */ new Set(["pipefail", "errexit", "unset", "x
 var RESERVED = /* @__PURE__ */ new Set(["if", "then", "else", "elif", "do", "while", "until", "{", "!", "time"]);
 var SETTING_WORD = /^(?:HOME|PATH|path)(?:$|\[[^\]]*\])?(?:\+?=|$)/;
 var SCRIPT_FLAG2 = /^-[A-Za-z]*c$/;
-var NAME_SETTERS2 = /* @__PURE__ */ new Set(["declare", "typeset", "export", "local", "readonly", "read", "integer", "float", "private", "vared"]);
+var NAME_SETTERS2 = /* @__PURE__ */ new Set(["declare", "typeset", "export", "local", "readonly", "read", "integer", "float", "private", "vared", "getln"]);
 var NAMEREF_SETTERS = /* @__PURE__ */ new Set(["declare", "typeset", "local", "private"]);
 var OPERAND_SETTERS = /* @__PURE__ */ new Set([...NAME_SETTERS2, "let", "env"]);
 var PREFIXES = /* @__PURE__ */ new Set(["builtin", "command", "noglob", "nocorrect", "-"]);
