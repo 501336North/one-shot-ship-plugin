@@ -474,13 +474,24 @@ export function isLocalUrl(url: string): boolean {
  * authority ends at the first `/`, `?` or `#` (scp: at the first `:` outside brackets); userinfo runs to the
  * last `@` in it; a bracketed part may hold ssh userinfo (`[git@127.0.0.1]:22`, `[git@::1]:x`). Round 4, R4-2
  * ("Split by scheme"): git hands an ssh URL's authority to ssh up to the first `/` only, so for ssh, git+ssh and
- * ssh+git a `?` or `#` is part of the user.
+ * ssh+git a `?` or `#` is part of the user. Round 5, R5-2: the authority is percent-decoded first.
  */
+function percentDecoded(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    // a broken escape: decode the escapes that are whole
+    return text.replace(/%[0-9A-Fa-f]{2}/g, (e) => String.fromCharCode(parseInt(e.slice(1), 16)));
+  }
+}
+
 function urlHost(url: string): string {
   const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.exec(url);
   const rest = scheme === null ? url : url.slice(scheme[0].length);
   const end = scheme !== null && /^(?:ssh|git\+ssh|ssh\+git):\/\/$/i.test(scheme[0]) ? /\/|$/ : /[/?#]|$/;
-  const authority = scheme === null ? (/^(?:[^@/:[\]]*@)?\[[^\]]*\]|^[^:/]*/.exec(rest)?.[0] ?? '') : rest.slice(0, rest.search(end));
+  const written = scheme === null ? (/^(?:[^@/:[\]]*@)?\[[^\]]*\]|^[^:/]*/.exec(rest)?.[0] ?? '') : rest.slice(0, rest.search(end));
+  // round 5, R5-2: the authority is percent-decoded before the host is read (`github.com%40127.0.0.1`, `%5b::1%5d`)
+  const authority = percentDecoded(written);
   if (authority.startsWith('[') && authority.includes(']')) return authority.slice(1, authority.indexOf(']')).replace(/^.*@/, '');
   const host = authority.replace(/^.*@/, '');
   return host.startsWith('[') ? host.slice(1, host.includes(']') ? host.indexOf(']') : undefined) : host.replace(/:.*$/, '');

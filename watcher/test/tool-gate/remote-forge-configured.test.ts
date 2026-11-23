@@ -136,6 +136,17 @@ const SSH_AUTHORITY = [
   "git remote set-url origin 'github.com#@127.0.0.1:x'",
 ];
 
+/** Ship fix round 5, R5-2 MEDIUM: the authority is percent-decoded before the host is read (`%40` is `@`, `%5b` is `[`). */
+// owner pick (a) "Drop the 3 rows, card it": a bare `git fetch <url>` / `git ls-remote <url>` is not host-judged
+const ENCODED_AUTHORITY = [
+  "git remote add y 'ssh://%5b::1%5d/x'",
+  "git -c 'url.ssh://github.com%40127.0.0.1/.insteadOf=https://github.com/' fetch origin",
+  "git remote add y 'ssh://github.com%40127.0.0.1/x'",
+  "git remote add y 'https://github.com%40127.0.0.1/x'",
+  "git remote set-url origin 'http://github.com%40localhost:8000/x'",
+  "git remote add y 'ssh://localhos%74/x'",
+];
+
 const REPLACE_DESTINATIONS = [
   'git fetch origin x:refs/replace/abc',
   'git fetch origin feat/x:refs/replace/0123456789012345678901234567890123456789',
@@ -174,6 +185,9 @@ const ALLOWED = [
   // R5-1 pinning: an ssh URL with a port and a `#` or `?` in the path
   "git remote add up7 'ssh://git@github.com:22/a/b.git#frag'",
   "git remote add up8 'ssh://git@github.com:2222/a?b.git'",
+  // R5-2: an escape in the path, or an escaped `@` inside the userinfo, is not a host
+  "git remote add sp 'https://github.com/a/my%20repo.git'",
+  "git remote add pw 'https://u:p%40x@github.com/a/b.git'",
 ];
 
 describe.each(PLATFORMS)('remotes the gate can see (ship round 1, S3) on %s', (platform) => {
@@ -190,6 +204,7 @@ describe.each(PLATFORMS)('remotes the gate can see (ship round 1, S3) on %s', (p
     it.each(LOOPBACK_FORMS)('refuses a remote on this machine in any numeric or localhost spelling: %s', refused);
     it.each(USERINFO_FORMS)('refuses a remote on this machine behind userinfo or brackets: %s', refused);
     it.each(SSH_AUTHORITY)('refuses an ssh remote whose host, read to the first `/`, is this machine: %s', refused);
+    it.each(ENCODED_AUTHORITY)('refuses a remote on this machine behind a percent-encoded authority: %s', refused);
     it.each(REPLACE_DESTINATIONS)('refuses a fetch or pull that writes a replace ref: %s', refused);
 
     it.each(ALLOWED)('allows everyday fetch, pull, push and remotes on real hosts: %s', async (command) => {
