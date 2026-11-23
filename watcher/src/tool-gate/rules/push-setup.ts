@@ -539,14 +539,25 @@ const ALLOW_PROTOCOL_REFUSAL: Refusal = {
  * Ship fix round 2, R2-2 ("Blunt: refuse any mention"): a command whose text names `GIT_ALLOW_PROTOCOL`, as git
  * reads it (case-sensitive). Round 4, R4-3 ("Both layers"): the text is read with quotes and backslashes removed
  * (`GIT_ALLOW_PROT''OCOL`, inside `env -S`, `+=`); on a line that runs git, a setter whose name the gate can't read
- * is refused, and so is an `ext::` or `fd::` transport anywhere on the line.
+ * is refused (the transport layer is `checkTransportMention`).
  */
 export function checkAllowProtocolMention(command: string, parts: readonly CommandPart[] = []): Refusal | null {
   const plain = command.replace(/['"\\]/g, '');
   if (plain.includes('GIT_ALLOW_PROTOCOL')) return ALLOW_PROTOCOL_REFUSAL;
-  if (!parts.some((p) => p.git !== null || p.words.includes('git'))) return null;
-  if (/(?:^|[^A-Za-z0-9+-])(?:ext|fd)::/i.test(plain)) return TRANSPORT_REFUSAL;
-  return parts.some(setsUnreadableName) ? ALLOW_PROTOCOL_REFUSAL : null;
+  return runsGit(parts) && parts.some(setsUnreadableName) ? ALLOW_PROTOCOL_REFUSAL : null;
+}
+
+/** True when some part of the call runs git. */
+function runsGit(parts: readonly CommandPart[]): boolean {
+  return parts.some((p) => p.git !== null || p.words.includes('git'));
+}
+
+/**
+ * R4-3 (2): an `ext::` or `fd::` transport anywhere on a line that runs git, quotes and backslashes removed, in any
+ * case. Checked after the push-setup rule, so a config key that runs a program keeps its own reason.
+ */
+export function checkTransportMention(command: string, parts: readonly CommandPart[]): Refusal | null {
+  return runsGit(parts) && /(?:^|[^A-Za-z0-9+-])(?:ext|fd)::/i.test(command.replace(/['"\\]/g, '')) ? TRANSPORT_REFUSAL : null;
 }
 
 const TRANSPORT_REFUSAL: Refusal = {
