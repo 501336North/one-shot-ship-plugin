@@ -139,6 +139,26 @@ const ENV_BY_PATH = [
   // the literal path already counts as env: kept refused
   '/usr/bin/env BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
   '/usr/bin/en? BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  // ship fix round 6, R6-2 (A/F2): the gate's glob matcher, any case; a bracket form it can't read counts as a match
+  '/usr/bin/[[:alpha:]]nv BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  '/usr/bin/[[:lower:]]nv -i ./hooks/oss-log.sh init',
+  '${c:-/usr/bin/[[:alpha:]]nv} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  '${c:-/usr/bin/[^a]nv} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  '${c:-/usr/bin/[!a]nv} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  '${c:-/usr/bin/[d-f]nv} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  '${c:-/usr/bin/[]e]nv} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  'c=/usr/bin/[^a]nv; $c BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  '/usr/bin/[]e]nv -i "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  '/usr/bin/[[=e=]]nv -i "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  '/usr/bin/[[.e.]]nv -i "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  // on macOS `ENV` and `Env` run env (a case-insensitive file system)
+  '/usr/bin/ENV BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  '/usr/bin/Env -i ./hooks/oss-log.sh init',
+  '/USR/BIN/ENV -i ./hooks/oss-log.sh init',
+  '${c:-/usr/bin/ENV} BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  'c=/usr/bin/ENV; $c BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  '/usr/bin/E?V -i ./hooks/oss-log.sh init',
+  '/usr/bin/[E]NV -i ./hooks/oss-log.sh init',
 ];
 
 /** Already refused by the path-mention rule (`set` names a hook path): kept as guards. */
@@ -165,6 +185,13 @@ const ALLOWED = [
   // R5-2: the test builtins `[` / `[[` are not `env`, as served login and settings blocks run them on a hook line
   'PLUGIN_ROOT=$(~/.oss/hooks/oss-value.sh root) || exit 1\nif [ ! -d "dist" ]; then\n    npm run build\nfi',
   'V=~/.oss/hooks/oss-value.sh\nSTYLE=$("$V" read notify_style) || exit 1\nif [[ "$STYLE" == "audio" ]]; then echo x; fi',
+  // R6-2: programs whose name only contains env are not env
+  'envsubst < a.tmpl > a.txt; ~/.oss/hooks/oss-log.sh init',
+  'printenv; ~/.oss/hooks/oss-log.sh init',
+  './env.sh; ~/.oss/hooks/oss-log.sh init',
+  'myenv; ~/.oss/hooks/oss-log.sh init',
+  // R6-2 (E): only the program word is glob-matched, not a value piece such as `*` (allowed as at round 4)
+  'c="$X ~/.oss/hooks/oss-log.sh * -x"; echo ok',
 ];
 
 /** Lines another rule may refuse; the hook-call rule must not. */
