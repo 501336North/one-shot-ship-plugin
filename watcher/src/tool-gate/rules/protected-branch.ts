@@ -460,8 +460,7 @@ const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
  */
 export function isLocalUrl(url: string): boolean {
   if (FILE_URL.test(url)) return true;
-  const host = URL_HOST.exec(url);
-  if (host !== null && loopbackHost(host[1] ?? host[2])) return true;
+  if (loopbackHost(urlHost(url))) return true;
   if (URL_SCHEME.test(url)) return false;
   const colon = url.indexOf(':');
   const unknown = url.indexOf(UNKNOWN);
@@ -470,7 +469,19 @@ export function isLocalUrl(url: string): boolean {
 }
 
 /** The host of a `scheme://[user@]host…` URL or an scp-like `[user@]host:path` (git syntax), `[…]` for IPv6. */
-const URL_HOST = /^(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/)?(?:[^@/:]*@)?(?:\[([^\]]*)\]|([^/:[\]]+))(?::|\/|$)/;
+/**
+ * The host of a URL or scp-like address, read the way git and curl read it (ship fix round 3, R3-3): the
+ * authority ends at the first `/`, `?` or `#` (scp: at the first `:` outside brackets); userinfo runs to the
+ * last `@` in it; a bracketed part may hold ssh userinfo (`[git@127.0.0.1]:22`, `[git@::1]:x`).
+ */
+function urlHost(url: string): string {
+  const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.exec(url);
+  const rest = scheme === null ? url : url.slice(scheme[0].length);
+  const authority = scheme === null ? (/^(?:[^@/:[\]]*@)?\[[^\]]*\]|^[^:/]*/.exec(rest)?.[0] ?? '') : rest.slice(0, rest.search(/[/?#]|$/));
+  if (authority.startsWith('[') && authority.includes(']')) return authority.slice(1, authority.indexOf(']')).replace(/^.*@/, '');
+  const host = authority.replace(/^.*@/, '');
+  return host.startsWith('[') ? host.slice(1, host.includes(']') ? host.indexOf(']') : undefined) : host.replace(/:.*$/, '');
+}
 /**
  * True when a URL host is this machine, read the way the OS reads it (ship round 2, R2-1): `localhost` or
  * `*.localhost` (any case, trailing dots, `%xx` escapes decoded); an IPv4 number in inet_aton's forms (1 to 4

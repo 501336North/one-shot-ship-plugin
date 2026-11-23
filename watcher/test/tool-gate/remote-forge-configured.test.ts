@@ -107,6 +107,22 @@ const LOOPBACK_FORMS = [
   'git remote add y http://127.1/x && git fetch y',
 ];
 
+/** Ship fix round 3, R3-3: userinfo read the way git and curl read it (authority ends at / ? #, last @ wins, brackets). */
+const USERINFO_FORMS = [
+  'git remote set-url origin http://u:p@127.0.0.1:8000/x.git',
+  'git remote set-url origin http://a@b@127.0.0.1:8000/x.git',
+  "git remote set-url origin 'ssh://[git@127.0.0.1]:22/x'",
+  "git remote set-url origin 'ssh://[git@::1]:22/x'",
+  "git remote set-url origin '[git@127.0.0.1]:x'",
+  "git remote set-url origin '[git@::1]:x'",
+  'git remote set-url origin http://127.0.0.1#@github.com/x',
+  'git remote set-url origin http://127.0.0.1?@github.com/x',
+  'git -c url.http://u:p@127.1:8000/.insteadOf=https://github.com/ fetch origin',
+  'git remote set-url origin http://u:p@localhost/x',
+  'git remote add y https://a@b@localhost/x',
+  'git remote add y https://evil.com@localhost/x',
+];
+
 const REPLACE_DESTINATIONS = [
   'git fetch origin x:refs/replace/abc',
   'git fetch origin feat/x:refs/replace/0123456789012345678901234567890123456789',
@@ -134,6 +150,10 @@ const ALLOWED = [
   'git remote add up3 git@github.com:a/b.git',
   'git remote add lan https://10.0.0.5/x.git',
   'git remote add near https://127host.example/x.git',
+  // R3-3: userinfo and ports on a remote host
+  'git remote add up4 https://u:p@github.com/a/b.git',
+  'git remote add corp https://git.corp:8443/x.git',
+  'git remote add trick https://localhost@evil.com/x',
 ];
 
 describe.each(PLATFORMS)('remotes the gate can see (ship round 1, S3) on %s', (platform) => {
@@ -148,6 +168,7 @@ describe.each(PLATFORMS)('remotes the gate can see (ship round 1, S3) on %s', (p
     it.each(SET_HEAD)('refuses pointing a remote HEAD at a branch: %s', refused);
     it.each(LOOPBACK_URLS)('refuses a remote on localhost, 127.x or ::1: %s', refused);
     it.each(LOOPBACK_FORMS)('refuses a remote on this machine in any numeric or localhost spelling: %s', refused);
+    it.each(USERINFO_FORMS)('refuses a remote on this machine behind userinfo or brackets: %s', refused);
     it.each(REPLACE_DESTINATIONS)('refuses a fetch or pull that writes a replace ref: %s', refused);
 
     it.each(ALLOWED)('allows everyday fetch, pull, push and remotes on real hosts: %s', async (command) => {
