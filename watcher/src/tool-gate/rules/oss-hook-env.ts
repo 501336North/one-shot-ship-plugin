@@ -700,6 +700,13 @@ function commandScan(command: string, cwd: string, home: string, sources: Truste
   return verdict;
 }
 
+/** True when a part runs macOS `arch` (any folder) with `-e NAME=VALUE`, which sets a variable for the program it runs, as `env` does (ship fix round 6, R6-3). */
+function archSets(part: CommandPart): boolean {
+  const program = part.program;
+  if (program === null || program.slice(program.lastIndexOf('/') + 1) !== 'arch') return false;
+  return part.words.some((w, i) => w === '-e' && ASSIGNMENT.test(part.words[i + 1] ?? ''));
+}
+
 export function checkOssHookEnv(part: CommandPart, command: string, home: string, sources: TrustedSources): Refusal | null {
   if (programHidden(part)) {
     if (commandScan(command, part.cwd, home, sources) !== 'ok') {
@@ -712,6 +719,7 @@ export function checkOssHookEnv(part: CommandPart, command: string, home: string
   if (!partNamesHook(part, home) && !PLUGIN_HOOK.test(command)) return null;
   const clears =
     (part.program !== null && isEnvProgram(part.program)) ||
+    archSets(part) ||
     part.wrappers.some((w, i) => w === 'env' || (w === 'exec' && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o))));
   if (!clears && !setsRefusedVariable(command, 0, { home, sources: sourcesFor(command, sources) })) return null;
   return {

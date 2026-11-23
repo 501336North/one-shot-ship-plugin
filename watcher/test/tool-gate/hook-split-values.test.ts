@@ -161,6 +161,14 @@ const ENV_BY_PATH = [
   '/usr/bin/[E]NV -i ./hooks/oss-log.sh init',
 ];
 
+/** Ship fix round 6, R6-3: macOS `arch -e NAME=VALUE` sets a variable for the program it runs, as `env` does. */
+const ARCH_SETS = [
+  'arch -arm64 -e BASH_ENV=/tmp/x "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  'arch -arm64 -e CLAUDE_PLUGIN_ROOT=/tmp/p "${CLAUDE_PLUGIN_ROOT%/}/hooks/oss-log.sh" init',
+  '/usr/bin/arch -arm64 -e BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+  'arch -e BASH_ENV=/tmp/x ./hooks/oss-log.sh init',
+];
+
 /** Already refused by the path-mention rule (`set` names a hook path): kept as guards. */
 const REFUSED_ANY = ['set -- env BASH_ENV=/tmp/x ~/.oss/hooks/oss-log.sh; "$@"'];
 
@@ -185,6 +193,9 @@ const ALLOWED = [
   // R5-2: the test builtins `[` / `[[` are not `env`, as served login and settings blocks run them on a hook line
   'PLUGIN_ROOT=$(~/.oss/hooks/oss-value.sh root) || exit 1\nif [ ! -d "dist" ]; then\n    npm run build\nfi',
   'V=~/.oss/hooks/oss-value.sh\nSTYLE=$("$V" read notify_style) || exit 1\nif [[ "$STYLE" == "audio" ]]; then echo x; fi',
+  // R6-3: `arch` with no `-e` sets nothing
+  'arch -arm64 npm test',
+  'arch',
   // R6-2: programs whose name only contains env are not env
   'envsubst < a.tmpl > a.txt; ~/.oss/hooks/oss-log.sh init',
   'printenv; ~/.oss/hooks/oss-log.sh init',
@@ -212,6 +223,12 @@ describe.each(PLATFORMS)('on %s', (platform) => {
     });
 
     it.each(ENV_BY_PATH)('refuses a hook line run through env by its path, a glob or a variable value: %s', async (command) => {
+      const result = await call(command, agent, platform);
+      expect(result.exitCode, command).toBe(2);
+      expect(result.stderr, command).toMatch(/^Refused/);
+    });
+
+    it.each(ARCH_SETS)('refuses a hook line run through arch with a variable set by -e: %s', async (command) => {
       const result = await call(command, agent, platform);
       expect(result.exitCode, command).toBe(2);
       expect(result.stderr, command).toMatch(/^Refused/);
