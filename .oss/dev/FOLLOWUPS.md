@@ -473,3 +473,61 @@
 - [ ] 2026-11-19 · info · security-auditor · hooks/oss-api-curl.sh:234 · oss_clean_text needs jq 1.6+ (--rawfile); on jq 1.5 team laws are never written and the snippet is empty (fails closed); state jq 1.6 as the documented floor · from: r273-workflow-prompt-integrity PR B (round 4)
 - [ ] 2026-11-19 · info · code-reviewer · hooks/fetch-iron-laws.sh · --raw needs jq to print {base, team}; without jq it prints nothing; say so in the --raw usage text · from: r273-workflow-prompt-integrity PR B (round 2)
 - [ ] 2026-11-19 · info · security-auditor · hooks/oss-api-curl.sh (OSS_JQ_PROMPT_KEYS) · a workflow alias counts as a duplicate only when both hash and servedHash match, so while the API omits servedHash every alias is listed and audited separately; revisit once servedHash is always served · from: r273-workflow-prompt-integrity PR B (round 2)
+
+- [ ] 2026-11-23 · low · over-refusal (older, R-266 round-7 stop rule) · `ROOT="$(git rev-parse --show-toplevel)"; ~/.oss/hooks/oss-log.sh init` is refused (refused at ec6ba2df and before; not a round-7 flip), while `cd "$(git rev-parse --show-toplevel)" && <hook>` is allowed. A command-substitution assignment before a hook call reads as an unread value on a hook line. Loosening it needs its own review · from: gate-gaps-r3 round 7 (rows7 R72ok-347, now info)
+
+- [ ] 2026-11-24 · gate-gaps-r3 round 8 (stop rule: older findings carded, not fixed) · OS write-sandbox card and PR open list:
+  - security · unbracketed IPv6 in ssh:// and git:// (`ssh://::1/x`, `git://::1/x`) is not read as loopback.
+  - security · a glob in the URL host (`ssh://127.0.0.?/x`, `{1}`, `{1,2}`) is not expanded before the host is judged.
+  - security · zsh setters not read as name setters on a git line: `strftime -s`, `zformat -f`, `sysread`, `source <(…)` / `. =(…)`, and `p=print; $p -v`.
+  - security · `g=git; $g …` hides git from git-line rules.
+  - security · `ssh://${H:-127.0.0.1}/x`: a default in the host is not read.
+  - over-refusal · the `${!…=…}` / `${(P)…=…}` refusal (R7-3) also fires on quoted commit text (`git commit -m 'docs: ${!n:=v}'`).
+  - over-refusal · `$(npm bin)/tsc && <hook>` and `"$(command -v node)" x.js; <hook>` are refused (substitution as program word on a hook line, R7-2).
+  - over-refusal (accepted R7-1) · IPv6 ssh/scp hosts (`ssh://git@[2001:db8::1]:22/x`, `git@[2001:db8::1]:x`) are refused.
+  - card correction · `launchctl setenv NAME VALUE` DOES reach a job started later with `launchctl submit` (the earlier card said it did not); with arch/launchctl no longer wrappers, a `launchctl setenv BASH_ENV …; launchctl submit -- <hook>` pair is refused only by the round-8 blunt rule on the submit part.
+
+- [ ] 2026-11-24 · gate-gaps-r3 round 9 (stop rule: older re-check rows, allowed at both 874deba5 and fab500bb) · OS write-sandbox card and PR open list:
+  - security · indirection to arch or launchctl (`a=arch; $a …`, a program word from a variable or file) is not read every way.
+  - security · `xargs` feeding arch/launchctl or the program they run.
+  - security · `launchctl submit -- /bin/sh -c …` forms not yet covered by the R9-1 readings (where a reading is not read in full).
+  - security · `launchctl load` / `bootstrap` of a plist written on the same line (the job's ProgramArguments are not read).
+  - security · a script written on the same line and then run through arch or launchctl.
+  - security · interpreters run through arch/launchctl (`python3 -c`, `node -e`, `perl -e` text) are read only as far as the interpreter rules read them.
+  - security · git-core helpers (`/usr/libexec/git-core/git-*`) outside the arch path.
+  - security · other launchers not read as wrappers: `osascript`, `taskpolicy`, `sandbox-exec`, `xcrun`.
+  - security · `GIT_CONFIG_*` and `GIT_SSH_COMMAND` passed into `npm` (scripts that run git).
+
+- [ ] 2026-11-24 · gate-gaps-r3 round 10 ("Accept, card them" + stop rule) · OS write-sandbox card and PR open list:
+  - over-refusal (accepted) · `arch -arm64 brew install expect` and `… brew install unzip`: a later word read as a command of its own (R9-1) is refused (`expect`, `unzip` rules).
+  - over-refusal (accepted) · `arch … brew|pip|npm install $(cat list)`: a substitution read as a program word on an arch line is refused.
+  - over-refusal (accepted) · the 64-reading cap (R9-1) and the 2048-word cap across long arch lines; three levels of arch nesting refused as too complex.
+  - security (HIGH, older) · `env "$V" git fetch`: an env setting the gate can't read, outside arch.
+  - security · an arch or launchctl program held in a variable (`c=arch; $c …`) is not read every way.
+  - security · `launchctl asuser 501 $(cat cmd)`: the command comes from a substitution.
+  - security · `set -- git push origin main; "$@"`: the positional parameters as the program.
+  - security · `launchctl submit -p /bin/sh -- foo -c '…'` (refused by R10-1 (a) from round 10; kept on the card for the general `-p` program-path form).
+  - security · `arch -e GIT_SSH_COMMAND=x -arm64 sh -c 'git fetch'`: arch `-e` settings do not reach the commands of a `-c` script read under arch.
+
+- [ ] 2026-11-24 · gate-gaps-r3 round 11 (stop rule: older round-10 re-check items) · OS write-sandbox card and PR open list:
+  - security · `arch -arm64 "$A" "$B" env …`: an arch option and its value both from variables (the option the gate reads is not the one that runs).
+  - security · `launchctl submit -l x -- "$P" push …`: the program after `--` comes from a variable.
+
+- [ ] 2026-11-24 · gate-gaps-r3 round 12 ("this fix only" + stop rule) · OS write-sandbox card and PR open list:
+  - security (MEDIUM) · `launchctl debug <svc> --program /bin/sh [--environment …]`: debug's program and environment options are not read.
+  - security (LOW) · `launchctl submit -l -- -p /bin/sh foo -c …` without a second `--`, and `launchctl -- submit -l x -p …`.
+  - security (LOW) · `-? /bin/sh` when a file named `-p` exists (a glob option word).
+  - security (LOW) · `/usr/bin/$X[r]ch` and `[${X:-a}]rch`: a glob class built with a variable.
+  - over-refusal (accepted) · a class-glob script (`./build-[0-9].sh`) with a git, env or `--` argument is refused (R11-1 blunt rule).
+  - over-refusal (accepted) · the submit `-p` scan matches an attached label (`-lmyapp`) or a `--` inside the program's arguments.
+- [ ] 2026-11-25 · medium · security-auditor · watcher/src/tool-gate/rules/oss-hook-env.ts:756 · security: launchctl submit's -p scan reads only literal option words; a -p built by an expansion the gate can't read is not treated as possibly -p (fail open). Suggested blunt fix: an unreadable option word before the last -- counts as possibly -p · from: gate-gaps-r3 (round 13)
+- [ ] 2026-11-25 · low · code-reviewer · watcher/src/tool-gate/rules/oss-hook-env.ts:752 · security: a `--` before the launchctl subcommand is read as the subcommand, so the submit -p check is skipped (unconfirmed whether launchctl accepts it) · from: gate-gaps-r3 (round 13)
+- [ ] 2026-11-25 · low · code-reviewer · watcher/test/tool-gate/hook-split-values.test.ts:517 · missing allowed-row pins: a variable launchctl subcommand without -p, and a variable argument with kickstart -p · from: gate-gaps-r3 (round 13)
+- [ ] 2026-11-25 · medium · security-auditor · watcher/src/tool-gate/rules/verdict-capture-call.ts:133 · security: strayCloseAsStar widens only after the first set in a path part, so an escaped or quoted `]` in a later set hides a hook path (fail open; the Sprint D base also allows it) · from: gate-gaps-r3 (round 16)
+- [ ] 2026-11-25 · medium · code-reviewer · watcher/src/tool-gate/rules/oss-hook-env.ts:375 · security: specialSetsAsAny runs before the stray-`]` widening, so a POSIX class followed by an escaped `]` hides a hook path (fail open; base allows it too) · from: gate-gaps-r3 (round 16)
+- [ ] 2026-11-25 · medium · code-reviewer · watcher/src/tool-gate/rules/oss-hook-env.ts:381 · security: globReadings and the find -path matcher split on `/` before reading sets, so a set holding `/` hides a hook or verdict-capture path (fail open; base allows it too) · from: gate-gaps-r3 (round 16)
+- [ ] 2026-11-25 · low · security-auditor · watcher/src/tool-gate/rules/verdict-capture-call.ts:40 · security: SEPARATORS splits a word on a quote inside a later glob set, so a quote-split verdict-capture name is missed (fail open) · from: gate-gaps-r3 (round 16)
+- [ ] 2026-11-25 · medium · security-auditor · watcher/src/tool-gate/command-reader.ts · security: a glob in git's own program word (a set or range spelling git) is not recognised as git at any version, so git rules do not apply (fail open) · from: gate-gaps-r3 (round 15)
+- [ ] 2026-11-25 · low · code-reviewer · watcher/src/tool-gate/rules/verdict-capture-call.ts:115 · the anySet=false path and bracketTest are dead in production after R14-1; remove the parameter and retarget the tests · from: gate-gaps-r3 (round 16)
+- [ ] 2026-11-25 · low · code-reviewer · watcher/src/tool-gate/rules/verdict-capture-call.ts · over-refusal: everyday listings of the hooks or cli folders with a class glob (ls hooks/[a-z]*, cat ~/.oss/hooks/oss-[a-z]*.sh, arch -arm64 ./build-[0-9].sh) are refused via the hooks/cli folder fallback; the base allows them · from: gate-gaps-r3 (round 16)
+- [ ] 2026-11-25 · info · ship · .claude permissions / ~/.oss/config.json · security review strength: from about round 4 to round 15 several review agents could not fetch their OSS instructions (classifier denied oss-decrypt, then config.json overwritten by an R-257 test run at 2026-11-24 16:35 +07); rounds 16 ran with full instructions · from: gate-gaps-r3 (round 16)
