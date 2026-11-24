@@ -304,4 +304,10 @@ Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watche
   - 13f2 also asserts that no merged-path output contains "assemble".
 - **Changed tests (marked ⚠ D88):** the budget is 10 s → 9 s; two `no_proof` cases are now `ready_stale`.
 
-## Last Updated: 2026-11-24 13:52 +07 by /oss:ship (round 19 fixes)
+### Gate round 18 (D88: pen test and code review only), 2026-11-24
+- Both gates passed: code review low=1 info=4, pen test low=1 info=4. There were no security findings, so the D87 stop rule calls for no further fix round. The findings are in FOLLOWUPS.md.
+- The pen test ran the acceptance suite once, 39/39 in 3 min 37 s, plus targeted vitest 54/54.
+- The code review ran 5 vitest files, 56/56 (including the dist-matches-source test), and verdict-capture-call 118/118 (glob exports unchanged).
+- Re-ran the round-17 repros q2/q3/q4: the rebuild loop is gone. q1 still refuses every case that is not merged at the tested head.
+
+## Last Updated: 2026-11-24 14:07 +07 by /oss:ship (gate round 18)
