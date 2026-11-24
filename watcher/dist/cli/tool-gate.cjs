@@ -3818,7 +3818,7 @@ function runsArchOrLaunchctl(word) {
   const base = import_node_path3.default.posix.basename(word).toLowerCase();
   if (base === "arch" || base === "launchctl") return true;
   if (!/[?*[]/.test(base)) return false;
-  if (/\[[:=.]/.test(base)) return true;
+  if (base.includes("[") && base.lastIndexOf("]") > base.indexOf("[") + 1) return true;
   return globMayMatch(base, "arch") || globMayMatch(base, "launchctl");
 }
 function globMayMatch(glob, name) {
@@ -8953,11 +8953,15 @@ var OPERAND_SETTERS = /* @__PURE__ */ new Set([...NAME_SETTERS2, "let", "env"]);
 var PREFIXES = /* @__PURE__ */ new Set(["builtin", "command", "noglob", "nocorrect", "-"]);
 function isEnvProgram(word) {
   if (word.includes(UNKNOWN)) return false;
-  return globMatches(word.slice(word.lastIndexOf("/") + 1), "env");
+  return hasGlobClass(word) || globMatches(word.slice(word.lastIndexOf("/") + 1), "env");
+}
+function hasGlobClass(word) {
+  const base = word.slice(word.lastIndexOf("/") + 1);
+  return base.lastIndexOf("]") > base.indexOf("[") + 1 && base.includes("[");
 }
 function isArchProgram(word) {
   if (word.includes(UNKNOWN)) return false;
-  return globMatches(word.slice(word.lastIndexOf("/") + 1), "arch");
+  return hasGlobClass(word) || globMatches(word.slice(word.lastIndexOf("/") + 1), "arch");
 }
 function isEnvPiece(piece) {
   return isEnvProgram(piece) || isArchProgram(piece) || isLaunchctlProgram(piece);
@@ -9377,7 +9381,7 @@ function commandScan(command, cwd, home, sources) {
 }
 function isLaunchctlProgram(word) {
   if (word.includes(UNKNOWN)) return false;
-  return globMatches(word.slice(word.lastIndexOf("/") + 1), "launchctl");
+  return hasGlobClass(word) || globMatches(word.slice(word.lastIndexOf("/") + 1), "launchctl");
 }
 function archOrLaunchctlRuns(part, home) {
   if (part.program === null || !(isArchProgram(part.program) || isLaunchctlProgram(part.program))) return false;
@@ -9387,15 +9391,21 @@ function archOrLaunchctlRuns(part, home) {
   const starts = words.filter((w, i) => i === first || words[i - 1] === "--");
   return lineNamesHook(words.join(" "), part.cwd, home) || words.some(isEnvProgram) || starts.some(git) || optionsRefused(part.program, words, git);
 }
+function submitSetsProgram(words) {
+  const sub = words[0];
+  if (sub === void 0 || sub.includes(UNKNOWN) || !(hasGlobClass(sub) || globMatches(sub, "submit"))) return false;
+  const last = words.lastIndexOf("--");
+  return words.slice(1, last === -1 ? words.length : last).some((w) => /^-[A-Za-z]*p/.test(w));
+}
 var ARCH_VALUE_OPTIONS = /* @__PURE__ */ new Set(["-arch", "-e", "-d"]);
 function optionsRefused(program, words, git) {
   const arch = isArchProgram(program);
+  if (isLaunchctlProgram(program) && submitSetsProgram(words)) return true;
   const values = [];
   let i = !arch && words[0] !== void 0 && !words[0].startsWith("-") ? 1 : 0;
   for (; i < words.length; i++) {
     const w = words[i];
     if (w === "--" || !w.startsWith("-") || w === "-") break;
-    if (!arch && w.startsWith("-p")) return true;
     const attached = w.length > 2 && !w.startsWith("--") && (!arch || /^-[ed]/.test(w)) ? w.slice(2) : null;
     const takes = arch ? ARCH_VALUE_OPTIONS.has(w) : words[i + 1] !== void 0 && !words[i + 1].startsWith("-");
     const value = attached ?? (takes ? words[i + 1] : void 0);
