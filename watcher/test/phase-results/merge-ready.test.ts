@@ -263,6 +263,25 @@ describe('mergedReady: gh cannot answer (fails closed, each with its own cause)'
     expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'gh_unreachable' });
   });
 
+  /** D88 (code L3, pen L2, security I3): gh exits 1 and names an HTTP status on stderr, as `gh api` does. */
+  function ghHttpError(status: number): void {
+    ghSays('', 1);
+    const file = path.join(ghDir, 'gh');
+    fs.writeFileSync(file, `#!/bin/sh\nprintf '%s\\n' "$*" >> "${ghDir}/calls"\necho 'gh: Not Found (HTTP ${status})' >&2\nexit 1\n`);
+  }
+
+  it.each([401, 403, 404, 422])('refuses gh_denied, not gh_unreachable, when GitHub answers HTTP %i (D88)', (status) => {
+    shipped();
+    ghHttpError(status);
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'gh_denied' });
+  });
+
+  it('keeps gh_unreachable for a gh failure that names no HTTP access status (D88)', () => {
+    shipped();
+    ghHttpError(502);
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'gh_unreachable' });
+  });
+
   it('refuses gh_unreachable when gh answers something that is not a list of PRs', () => {
     shipped();
     ghSays('{"message":"Server Error"}');
@@ -295,10 +314,20 @@ describe('mergedReady: refused before GitHub is asked (no_proof)', () => {
     expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'no_proof' });
   });
 
-  it('refuses when a later ship result was bound after the ready row (D83 security low: stale ready row)', () => {
+  // ⚠ changes existing test: D88 (pen medium) — a ready row that no longer matches the bound result has its own cause
+  //   (ready_stale), so complete can say to record it again instead of "rebuild", which looped.
+  it('refuses ready_stale when a later ship result was bound after the ready row (D83 security low: stale ready row)', () => {
     shipped();
     ledger.appendRow(`results/${F}/ship`, { sha256: 'b'.repeat(64), feature: F, phase: 'ship', startedAt: STARTED, headSha: readyHead });
     squashToMain();
+    merged();
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'ready_stale' });
+  });
+
+  it('refuses no_proof, not ready_stale, while the feature folder is still active (not the merged path, D88)', () => {
+    shipped();
+    fs.renameSync(path.join(repo, `.oss/dev/completed/${F}-2026-11-23`), path.join(repo, `.oss/dev/active/${F}`));
+    ledger.appendRow(`results/${F}/ship`, { sha256: 'b'.repeat(64), feature: F, phase: 'ship', startedAt: STARTED, headSha: readyHead });
     merged();
     expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'no_proof' });
   });
@@ -351,16 +380,19 @@ describe('mergedReady: refused before GitHub is asked (no_proof)', () => {
     expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'no_proof' });
   });
 
-  it('refuses a ready row from an earlier ship run (stale startedAt)', () => {
+  // ⚠ changes existing test: D88 (pen medium) — a ready row of another run is ready_stale (its own hint), not no_proof.
+  it('refuses ready_stale for a ready row from an earlier ship run (stale startedAt)', () => {
     shipped();
     squashToMain();
     merged();
-    expect(mergedReady(repo, ledger, '2026-11-23T02:00:00.000Z')).toEqual({ ok: false, reason: 'no_proof' });
+    expect(mergedReady(repo, ledger, '2026-11-23T02:00:00.000Z')).toEqual({ ok: false, reason: 'ready_stale' });
   });
 });
 
 describe('mergedReady: one deadline for every git and gh call (D83 info c)', () => {
-  it('gives each call only what is left of one 10 s budget, and stops once it is spent', () => {
+  // ⚠ changes existing test: D88 (code L2, perf F1/F2) — the budget drops from 10 s to 9 s, so the CLI's own hint
+  //   arrives before the hook's 10 s watchdog.
+  it('gives each call only what is left of one 9 s budget, and stops once it is spent', () => {
     shipped();
     squashToMain();
     merged();
@@ -370,7 +402,7 @@ describe('mergedReady: one deadline for every git and gh call (D83 info c)', () 
     vi.spyOn(Date, 'now').mockImplementation(() => clock.t);
     expect(mergedReady(repo, ledger, STARTED)).toMatchObject({ ok: false });
     expect(clock.timeouts.length).toBeGreaterThan(0);
-    clock.timeouts.forEach((t, i) => expect(t).toBeLessThanOrEqual(10_000 - 4_000 * i));
+    clock.timeouts.forEach((t, i) => expect(t).toBeLessThanOrEqual(9_000 - 4_000 * i));
     expect(clock.timeouts.length).toBeLessThanOrEqual(3);
   });
 
@@ -381,5 +413,19 @@ describe('mergedReady: one deadline for every git and gh call (D83 info c)', () 
     clock.timeouts = [];
     expect(mergedReady(repo, ledger, STARTED, Date.now() - 1)).toMatchObject({ ok: false });
     expect(clock.timeouts).toEqual([]);
+  });
+
+  // D88 (code L2, perf F1/F2): a spent budget is a slow repo, never a merge cause the user would chase.
+  it('refuses timeout, not no_proof, when the budget is spent before the ready row\'s cover check (D88)', () => {
+    shipped();
+    merged();
+    expect(mergedReady(repo, ledger, STARTED, Date.now() - 1)).toEqual({ ok: false, reason: 'timeout' });
+  });
+
+  it('refuses timeout, not not_github, when the budget is spent before origin is read (D88)', () => {
+    shipped();
+    ledger.appendRow('merge/tested', { startedAt: STARTED, head: readyHead, main: testedMain, at: '2026-11-23T01:07:00.000Z' });
+    merged(readyHead);
+    expect(mergedReady(repo, ledger, STARTED, Date.now() - 1)).toEqual({ ok: false, reason: 'timeout' });
   });
 });

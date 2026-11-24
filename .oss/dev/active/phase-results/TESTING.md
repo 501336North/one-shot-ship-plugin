@@ -286,4 +286,22 @@ Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watche
   - The CLI acceptance test: an archived re-run finds its feature from the base assemble recorded, after base.txt is gone.
 - **Changed tests (marked ⚠ D86):** merge-ready's return shape; the blob-check tests were removed; "several" now means two folders of the same feature; 13, 13a2, 13f and 13i stub gh as merged; 13f2 was replaced.
 
-## Last Updated: 2026-11-24 11:58 +07 by /oss:ship (round 18 fixes)
+### Ship round 19 (D88), 2026-11-24
+- **Full check on AC power:**
+  - build 0, tsc 0;
+  - 203 files / 11,129 tests passed; served-commands 3/3;
+  - bash 114/114 behind the tripwire (0 trip lines);
+  - API real-hook tests with OSS_REAL_PLUGIN_DIR set to the R-257 plugin: 5 files / 628 passed (0 trip lines).
+- **New tests:**
+  - phase-result-merged-hints.test.ts (new, CLI): no refusal on the merged path says to rebuild with assemble. The cases are gh logged out, HTTP 404 (gh_denied), a ship result bound after the ready row (ready_stale), and main with a revoked ready row (no "name the branch").
+  - merge-ready.test.ts: gh exits 1 with HTTP 403/404 gives gh_denied; a spent deadline gives a timeout, never not_github; a sha256 or startedAt mismatch gives ready_stale.
+  - feature.test.ts: `.oss/dev/*` plus `!.oss/dev/completed/` is not ignored; `.oss/dev/completed/*` and `.oss/` are ignored.
+  - phase-results.acceptance:
+    - 13f9 (q3): logged out, then log in, then complete passes;
+    - 13f10 (q2): not merged yet, the old rebuild advice followed anyway, then complete passes once merged;
+    - 13f11 (q4): on main with the ready row revoked, no "name the branch" hint;
+    - 13f12: a slow gh (about 9 s) gets the GitHub hint, not the "git gc" text.
+  - 13f2 also asserts that no merged-path output contains "assemble".
+- **Changed tests (marked ⚠ D88):** the budget is 10 s → 9 s; two `no_proof` cases are now `ready_stale`.
+
+## Last Updated: 2026-11-24 13:52 +07 by /oss:ship (round 19 fixes)

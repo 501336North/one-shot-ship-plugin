@@ -152,6 +152,22 @@ describe('archivedFeature: refusals say what to do', () => {
     expect(archivedFeature(repo, 'main', snapshot())).toEqual({ ok: false, reason: 'ignored' });
   });
 
+  // D88 (code L1, pen I2): only a rule that really ignores the archive counts; a negated rule does not.
+  it('does not call the archive git-ignored when a negation rule keeps .oss/dev/completed/ (D88)', () => {
+    git(repo, 'checkout', '-q', '-b', 'feat/mine/build');
+    write(repo, '.gitignore', '.oss/dev/*\n!.oss/dev/completed/\n');
+    commitAll(repo, 'ignore dev docs but not the archive');
+    expect(archivedFeature(repo, 'main', snapshot())).toEqual({ ok: false, reason: 'none' });
+  });
+
+  it('calls the archive git-ignored when only its contents are ignored (.oss/dev/completed/*, D88)', () => {
+    git(repo, 'checkout', '-q', '-b', 'feat/mine/build');
+    write(repo, '.gitignore', '.oss/dev/completed/*\n');
+    commitAll(repo, 'ignore the archive contents');
+    write(repo, '.oss/dev/completed/mine-2026-11-23/results/ship.json', '{}\n');
+    expect(archivedFeature(repo, 'main', snapshot())).toEqual({ ok: false, reason: 'ignored' });
+  });
+
   it('a spent deadline refuses as a timeout and runs no diff (D86 info a)', () => {
     git(repo, 'checkout', '-q', '-b', 'feat/mine/build');
     archive(repo, 'mine-2026-11-23');

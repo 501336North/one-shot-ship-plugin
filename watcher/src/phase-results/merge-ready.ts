@@ -39,10 +39,11 @@ export interface ReadyRow {
 }
 
 /**
- * D83 info c + D85 info e: one budget for all of mergedReady's git calls, inside the 15 s oss-notify gives `check` at
- * complete; the CLI starts it in main(), so the check before mergedReady spends from it too.
+ * D83 info c + D85 info e: one budget for all of mergedReady's git and gh calls; the CLI starts it in main(), so the
+ * check before mergedReady spends from it too. D88: 9 s, inside the 10 s watchdog oss-phase-result.sh gives `check`, so
+ * the CLI's own refusal arrives before that watchdog fires.
  */
-export const MERGED_BUDGET_MS = 10_000;
+export const MERGED_BUDGET_MS = 9_000;
 
 /** git with what is left of `deadline` (ms since the epoch) as its time limit; status null once it has passed. */
 function git(repo: string, args: string[], deadline = Date.now() + MERGED_BUDGET_MS): { status: number | null; out: string } {
@@ -147,10 +148,13 @@ function field(o: unknown, key: string): unknown {
  * D86: why `complete` refused the merged path. `no_proof`: refused before GitHub was asked (the rows, the archived
  * result or the tested head); `not_github`: origin is not one github.com repository; `gh_unavailable`: no gh, or gh not logged in; `gh_unreachable`:
  * gh failed, timed out or gave no list of pull requests; `not_merged`: GitHub shows no merged PR at the tested head.
+ * D88: `gh_denied`: gh failed with HTTP 401, 403, 404 or 422 (no access to the repository or the pull request);
+ * `timeout`: the budget ran out before gh was asked; `ready_stale`: the feature is archived but the ready row is another
+ * run's or no longer names the bound result (record it again).
  */
 export type MergedReady =
   | { ok: true; result: Record<string, unknown> }
-  | { ok: false; reason: 'no_proof' | 'not_github' | 'gh_unavailable' | 'gh_unreachable' | 'not_merged' };
+  | { ok: false; reason: 'no_proof' | 'not_github' | 'gh_unavailable' | 'gh_unreachable' | 'gh_denied' | 'timeout' | 'ready_stale' | 'not_merged' };
 
 const GH_NAME = /^[A-Za-z0-9_][A-Za-z0-9_.-]*\/[A-Za-z0-9_][A-Za-z0-9_.-]*$/;
 
@@ -199,7 +203,7 @@ function ghBin(repo: string): { bin: string; dirs: string } | null {
 function prMerged(repo: string, head: string, base: string, deadline: number): 'merged' | Exclude<MergedReady, { ok: true }>['reason'] {
   if (!/^[0-9a-f]{40}$/.test(head)) return 'no_proof';
   const name = githubName(repo, deadline);
-  if (name === null) return 'not_github';
+  if (name === null) return Date.now() >= deadline ? 'timeout' : 'not_github';
   const gh = ghBin(repo);
   if (gh === null) return 'gh_unavailable';
   const left = deadline - Date.now();
@@ -208,11 +212,13 @@ function prMerged(repo: string, head: string, base: string, deadline: number): '
     cwd: '/',
     env: { ...process.env, PATH: gh.dirs, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1' },
     encoding: 'utf-8',
-    stdio: ['ignore', 'pipe', 'ignore'],
+    // D88: stderr is read into memory only, to tell an HTTP access error from a network failure; it is never logged.
+    stdio: ['ignore', 'pipe', 'pipe'],
     timeout: left,
     maxBuffer: 16 * 1024 * 1024,
   });
   if (r.error === undefined && r.status === 4) return 'gh_unavailable';
+  if (r.error === undefined && r.status !== 0 && /\bHTTP (401|403|404|422)\b/.test(r.stderr)) return 'gh_denied';
   if (r.error !== undefined || r.status !== 0) return 'gh_unreachable';
   let prs: unknown;
   try {
@@ -239,17 +245,21 @@ function prMerged(repo: string, head: string, base: string, deadline: number): '
 export function mergedReady(repo: string, ledger: Ledger, runStartedAt: string, deadline = Date.now() + MERGED_BUDGET_MS): MergedReady {
   const no: MergedReady = { ok: false, reason: 'no_proof' };
   const row = readyRow(ledger);
-  if (row === null || row.startedAt !== runStartedAt) return no;
+  if (row === null) return no;
+  if (fs.lstatSync(path.join(repo, '.oss', 'dev', 'active', row.feature), { throwIfNoEntry: false }) !== undefined) return no;
+  // D88 (pen medium): the feature is archived, so a row that no longer matches gets its own cause (record it again).
+  const stale: MergedReady = { ok: false, reason: 'ready_stale' };
+  if (row.startedAt !== runStartedAt) return stale;
   const at = Date.parse(row.at);
   const started = Date.parse(runStartedAt);
-  if (Number.isNaN(at) || Number.isNaN(started) || at < started) return no;
-  if (ledger.lastRow(`results/${row.feature}/ship`)?.sha256 !== row.sha256) return no;
-  if (fs.lstatSync(path.join(repo, '.oss', 'dev', 'active', row.feature), { throwIfNoEntry: false }) !== undefined) return no;
+  if (Number.isNaN(at) || Number.isNaN(started) || at < started) return stale;
+  if (ledger.lastRow(`results/${row.feature}/ship`)?.sha256 !== row.sha256) return stale;
   const bytes = archivedResult(repo, row.feature, row.sha256);
   const result = bytes === null ? null : parseObject(bytes);
   if (result === null) return no;
   const tested = testedRow(ledger, runStartedAt);
-  if (tested === null || !onlyOssAfter(repo, row.headSha, tested.head, deadline)) return no;
+  if (tested === null) return no;
+  if (!onlyOssAfter(repo, row.headSha, tested.head, deadline)) return Date.now() >= deadline ? { ok: false, reason: 'timeout' } : no;
   const base = field(result.diff, 'baseRef');
   if (typeof base !== 'string') return no;
   const proof = prMerged(repo, tested.head, base, deadline);

@@ -202,6 +202,16 @@
     - the LFS and clean-filter limit goes into NOTES.
   - Fix round 18, past the 3-round cap, by the owner's pick.
 - D87 Stop rule for the remaining rounds (user picker, 2026-11-24, "Only medium+ or security"): after gate round 17, only a medium or higher finding, or any security finding, leads to another fix round. Those still go to the owner and are never deferred on the session's own call. Non-security lows and infos go to FOLLOWUPS.md and the PR body, and ship goes on to the owner's merge pick.
+- D88 (user pickers, 2026-11-24): fix round 19 covers gate round 17. Code review, security and performance passed; pen test failed on one medium (not security).
+  - **"Hints + time limit":** messages and one number only, no new checks.
+    - Merged-path refusals and oss-notify no longer advise "rebuild: assemble ship", because rebuilding broke the ready row and looped (pen medium). When the ready row no longer matches the result, the hint says to re-run `check ship --record-ready`.
+    - A GitHub 401, 403, 404 or 422 gets a neutral access hint, not "try again when online".
+    - The merged path never shows the "name the branch" hint.
+    - `git check-ignore -q` replaces `-v`, so a negated ignore rule is not read as ignored.
+    - The CLI budget drops to about 9 s, so the CLI's own hint arrives before the hook's 10 s kill. A spent deadline names GitHub or DIFF_TIMEOUT, never `not_github`.
+    - The other infos go to FOLLOWUPS: paging past 30 PRs, an empty `merged_at`, the wording for merges outside OSS, forks, the leftover `tested.main` field, the stale header comment, URL-form unit tests, the module-level deadline, and `check-ignore` outside the deadline.
+  - **"Accept as D51 limits":** two security infos are accepted as D51 known limits and listed in NOTES and the PR body: complete's rule for which `gh` folders to trust is looser than the merge gate's, and gh runs with the whole environment instead of the merge gate's allowlist. Both need a changed PATH or environment, and an honest run can only be refused. A follow-up card makes complete share the merge gate's gh rules.
+  - **"Full check + 2 gates":** round 19 is checked by the full test run, then pen test (re-running its loop repros) and code review only. Under D87, a medium or any security finding still goes back to the owner.
 - D25-D29: ship round 1 decisions (user pickers, 2026-11-18), from four failing gates.
   - **D25 Gate code location: lock it down.**
     - `~/.oss/plugin-root` and `~/.oss/watcher/**` join the tool gate's protectedPaths. This changes R-266's exact-list test, as the user's pick allows.

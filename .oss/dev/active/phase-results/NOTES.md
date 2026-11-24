@@ -112,7 +112,7 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 - Running the real gate by hand (`hooks/oss-tool-gate.sh pre` with hook JSON on stdin) writes `.oss/tool-gates/events.ndjson` in the project. It is untracked, so never commit it.
 - Follow-up (T26 report, not in R-257 scope): oss-notify.sh still runs the workflow-state CLI (`wf_state`) and the copy and chain-trigger CLIs on PATH's node. Only the phase-result CLI moved to the recorded node (D21).
 
-## Last Updated: 2026-11-24 09:54 +07 by /oss:build (ship round 18 fixes, D86)
+## Last Updated: 2026-11-24 12:36 +07 by /oss:build (ship round 19 fixes, D88)
 
 ### T31 real-transcript note (2026-11-18)
 - Where a harness ends subagents with a handback tool (this machine: SubagentHandback), the review agent's final message has no text, so its oss-verdict block is never captured and its gate stays `source: model`, as before T19. That's fail-safe: no gate gets stricter or looser. Plain Claude Code subagents end with a text message, so the capture works there. The served agent prompts already say to write the block as plain text in the reply.
@@ -235,3 +235,10 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 - **Bash tests that reach `complete` on the merged path must put the gh stub first on PATH** (`complete_ship` in phase-results.acceptance.test.sh); with the caller's PATH, a real gh would be asked.
 - **A non-github.com origin refuses `not_github` with its own hint**, before gh runs; `no_proof` now means only a local refusal (rows, archived result, tested head), which keeps the original check refusal.
 - **The 5a CLI test calls main() in process** (test/cli/phase-result-deadline.test.ts) and mocks only Date.now, so the deadline main() takes is already spent for every later reading. Importing the CLI module runs main() once on vitest's argv (a usage refusal); the test silences it and resets process.exitCode. No production knob was added.
+
+## Ship round 19 notes (2026-11-24)
+- **The merged path is "no active feature folder"**: complete's `check ship` with no resolved feature, or with the feature found in `completed/`. There, no refusal carries the rebuild line, because rebuilding the result breaks the ready row and the next complete refused again (the round-17 pen loop). oss-notify uses the same rule (bash `oss_resolve_feature` finds no active folder) to drop its "build it with assemble" line; with an active folder both keep the rebuild advice.
+- **`ready_stale`** means the feature is archived and the ready row is another run's, was recorded before the run started, or no longer names the bound result. mergedReady now checks the active folder before these, so an active feature never gets the record-again hint.
+- **The budget is 9 s** (MERGED_BUDGET_MS), inside oss-phase-result.sh's 10 s watchdog for `check`. Node's start-up is outside main(), so the margin to the watchdog is under 1 s; a much slower start can still show the "git gc" text. The archived-lookup DIFF_TIMEOUT path keeps its rebuild line (not part of D88's list).
+- **D51 known limits (D88 "Accept as D51 limits"):** (1) complete's rule for which `gh` folders to trust (absolute folders outside the repo, from OSS_GH_PATH) is looser than the merge gate's; (2) complete runs gh with the whole environment instead of the merge gate's allowlist. Both need a changed PATH or environment, and an honest run can only be refused. A follow-up card makes complete share the merge gate's gh rules (FOLLOWUPS.md).
+- **D88 infos went to FOLLOWUPS.md** (one line each): paging past 30 PRs, an empty `merged_at`, the wording for merges outside OSS, forks, the leftover `tested.main` field, the stale merge-ready.ts header comment, URL-form unit tests, the module-level deadline default, and `check-ignore` outside the deadline.

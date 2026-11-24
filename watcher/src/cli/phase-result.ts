@@ -430,9 +430,10 @@ function verdictOf(fn: () => void): Verdict {
  * `<id>[: <detail>][ (field <field>)]`: pen info 1 — a hint is its own clause, and "field" names only a real field.
  * Nothing parses this line (hooks read the exit code and stdout).
  */
-function refuse(args: Args, id: string, field: string, detail?: string): number {
+function refuse(args: Args, id: string, field: string, detail?: string, rebuild = true): number {
   const reason = `${id}${detail === undefined ? '' : `: ${detail}`}${field === '' ? '' : ` (field ${field})`}`;
-  process.stderr.write(`phase-result: ${args.verb} ${args.phase}: ${reason}; rebuild: oss-phase-result.sh assemble ${args.phase}\n`);
+  // D88 (pen medium): a merged-path refusal has no rebuild line; rebuilding breaks the ready row and loops.
+  process.stderr.write(`phase-result: ${args.verb} ${args.phase}: ${reason}${rebuild ? `; rebuild: oss-phase-result.sh assemble ${args.phase}` : ''}\n`);
   return 1;
 }
 
@@ -470,11 +471,13 @@ function recordReady(args: Args, repo: string, feature: string | null, where: Fe
 const NOT_REVOKED = 'the earlier ready row could not be revoked (the ledger append failed)';
 
 /** D86 (item 5b): each merged-path refusal's own hint, by the cause GitHub's merge proof gave (fixed text). */
-const MERGE_HINTS: Readonly<Record<Exclude<Extract<MergedReady, { ok: false }>['reason'], 'no_proof'>, string>> = {
+const MERGE_HINTS: Readonly<Record<Exclude<Extract<MergedReady, { ok: false }>['reason'], 'no_proof' | 'timeout'>, string>> = {
   not_github: 'complete after merged needs a github.com origin to confirm the merge; this repo\'s origin is not on github.com',
   gh_unavailable: 'gh is not installed or not logged in: run gh auth login, then send complete again',
   gh_unreachable: 'GitHub could not be reached: send complete again when online',
+  gh_denied: 'gh could not read this pull request: check gh auth status and access to the origin repository',
   not_merged: 'GitHub does not show this PR as merged yet: merge it, then send complete again',
+  ready_stale: 'the ready row no longer matches the ship result: run oss-phase-result.sh check ship --record-ready, then send complete again',
 };
 
 /** mergedReady for this repo's ship run; no_proof when the ledger or run row cannot be read. */
@@ -490,22 +493,26 @@ function mergeProof(repo: string, deadline: number): MergedReady {
 /**
  * D78: `check ship` after `merged`, with the feature archived: the run's `merge/ready` row passes as the archived ready
  * result once GitHub shows the PR merged (mergedReady, D86). A refusal from GitHub's answer carries that cause's hint
- * (D86 item 5b); a refusal before GitHub was asked keeps the original refusal.
+ * (D86 item 5b); a refusal before GitHub was asked keeps the original refusal. D88: on the merged path (no active
+ * feature folder: `merged`), no refusal carries the rebuild line or the archived-lookup detail, a spent budget refuses
+ * DIFF_TIMEOUT, and a ready row that no longer matches says to record it again.
  */
-function mergedOrRefuse(args: Args, repo: string, v: Extract<Verdict, { ok: false }>, deadline: number): number {
+function mergedOrRefuse(args: Args, repo: string, v: Extract<Verdict, { ok: false }>, deadline: number, merged = false): number {
   if (args.phase === 'ship' && args.verb === 'check') {
     const proof = mergeProof(repo, deadline);
     if (proof.ok) {
       process.stdout.write(`${JSON.stringify({ verification: 'verified', ...gateLabel('ship', proof.result), verdict: 'ready_to_merge', merged: true })}\n`);
       return 0;
     }
-    if (proof.reason !== 'no_proof') return refuse(args, v.id, v.field, MERGE_HINTS[proof.reason]);
+    if (proof.reason === 'timeout') return refuse(args, 'diff_unavailable', '', DIFF_TIMEOUT, false);
+    if (proof.reason !== 'no_proof') return refuse(args, v.id, v.field, MERGE_HINTS[proof.reason], !merged);
+    if (merged) return refuse(args, v.id, v.field, v.id === 'no_feature' ? undefined : v.detail, false);
   }
   return refuse(args, v.id, v.field, v.detail);
 }
 
 export function main(argv: string[]): number {
-  // D85 info e: complete's one budget (check, then mergedReady) starts here, inside oss-notify's 15 s bound.
+  // D85 info e + D88: complete's one 9 s budget (check, then mergedReady) starts here, inside the hook's 10 s watchdog.
   const deadline = Date.now() + MERGED_BUDGET_MS;
   const args = parseArgs(argv);
   if (args === null) {
@@ -549,7 +556,7 @@ export function main(argv: string[]): number {
   }
   if (args.recordReady) return recordReady(args, repo, feature, where, missing);
   // D86 info a: a lookup past the deadline is a slow repo (DIFF_TIMEOUT), never a merge hint.
-  if (feature === null) return missing.id === 'diff_unavailable' ? refuse(args, missing.id, missing.field, missing.detail) : mergedOrRefuse(args, repo, missing, deadline);
+  if (feature === null) return missing.id === 'diff_unavailable' ? refuse(args, missing.id, missing.field, missing.detail) : mergedOrRefuse(args, repo, missing, deadline, true);
   if (args.verb === 'assemble') {
     let result: Record<string, unknown> = {};
     const v = verdictOf(() => {
@@ -565,9 +572,9 @@ export function main(argv: string[]): number {
   const v = verdictOf(() => {
     stored = check(repo, feature, args.phase, where);
   });
-  if (!v.ok) return mergedOrRefuse(args, repo, v, deadline);
+  if (!v.ok) return mergedOrRefuse(args, repo, v, deadline, where.kind === 'completed');
   // D86 item 5c (code review I1): an archived re-run's complete always runs the merge proof, even when check passes.
-  if (args.phase === 'ship' && where.kind === 'completed') return mergedOrRefuse(args, repo, { ok: false, id: 'not_merged', field: '' }, deadline);
+  if (args.phase === 'ship' && where.kind === 'completed') return mergedOrRefuse(args, repo, { ok: false, id: 'not_merged', field: '' }, deadline, true);
   // D35: check ship also prints the verdict, so complete refuses a verified but blocked ship.
   const verdict = args.phase === 'ship' ? { verdict: stored.verdict } : {};
   process.stdout.write(`${JSON.stringify({ verification: 'verified', ...gateLabel(args.phase, stored), ...verdict })}\n`);

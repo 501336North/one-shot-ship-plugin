@@ -289,6 +289,14 @@
 - [x] Follow-up (coordinator): a non-github.com origin on the merged path refuses with its own hint (`not_github`: "complete after merged needs a github.com origin to confirm the merge; this repo's origin is not on github.com"). Tests: merge-ready.test.ts, acceptance 13f8.
 - [x] Follow-up (coordinator): CLI-level test for item 5a, test/cli/phase-result-deadline.test.ts: main() with a spent budget (clock mocked, no production knob) refuses `diff_unavailable` with DIFF_TIMEOUT, no merge or GitHub hint, gh never run.
 
+### Ship round 19 fixes, after gate round 17 (2026-11-24)
+- [x] Item 1 (pen medium; D88 "Hints + time limit"): merged-path refusals (no active feature folder) never carry "rebuild: oss-phase-result.sh assemble ship"; a ready row that no longer matches the ship result (another run's, or a later bound result) refuses `ready_stale` with "the ready row no longer matches the ship result: run oss-phase-result.sh check ship --record-ready, then send complete again"; oss-notify drops its "build it with assemble" line when no active feature exists. Tests: merge-ready.test.ts (ready_stale, active-folder order), test/cli/phase-result-merged-hints.test.ts (new), acceptance 13f2 (no "assemble"), 13f9 (q3), 13f10 (q2), 13f11 (q4).
+- [x] Item 2 (code L3, pen L2, security I3): gh exiting non-zero with HTTP 401/403/404/422 on stderr refuses `gh_denied`: "gh could not read this pull request: check gh auth status and access to the origin repository"; stderr is read in memory only. Tests: merge-ready.test.ts (4 statuses, 502 stays gh_unreachable), merged-hints CLI test.
+- [x] Item 3 (code I3, pen L1): on the merged path `no_proof` keeps the original refusal id without the archived-lookup detail, so "name the branch" never shows there. Tests: merged-hints CLI test (on main, revoked row), acceptance 13f11.
+- [x] Item 4 (code L1, pen I2): `git check-ignore -q` on `.oss/dev/completed/` and `.oss/dev/completed/x`: a negated rule is not ignored, `.oss/dev/completed/*` is. Tests: feature.test.ts (2 new; `.oss/` case already there).
+- [x] Item 5 (code L2, perf F1/F2): MERGED_BUDGET_MS is 9,000; a spent budget refuses `timeout` (CLI: diff_unavailable with DIFF_TIMEOUT, no rebuild line), never not_github or no_proof; the two "15 s oss-notify gives" comments are fixed. Tests: merge-ready.test.ts (2 new, the budget test now pins 9 s), acceptance 13f12 (slow gh through the hook gives the GitHub hint, not "git gc"; about 9 s real wait).
+- [x] Item 6: NOTES (D51 limits) and FOLLOWUPS.md (D88 infos).
+
 ### Later
 - [ ] Ship into feat/determinism-sprint/build (SD-1)
 - [ ] T21 oss-lab (after the plugin ships)
@@ -296,4 +304,4 @@
 ## Blockers
 - None. R-266's 4 red base tests are fixed in #233 (4458bddb), and R-257 is rebased onto it.
 
-## Last Updated: 2026-11-24 09:54 +07 by /oss:build (ship round 18 fixes, D86)
+## Last Updated: 2026-11-24 12:36 +07 by /oss:build (ship round 19 fixes, D88)

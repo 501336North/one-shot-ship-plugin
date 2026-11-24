@@ -465,6 +465,7 @@ if [[ $r_auth -ne 0 && "$o_auth" == *'gh is not installed or not logged in: run 
     && $r_down -ne 0 && "$o_down" == *'GitHub could not be reached: send complete again when online'* \
     && $r_open -ne 0 && "$o_open" == *'GitHub does not show this PR as merged yet: merge it, then send complete again'* \
     && "$o_auth$o_down$o_open" != *'git fetch'* && "$o_auth" != *'could not be reached'* && "$o_down" != *'not logged in'* \
+    && "$o_auth$o_down$o_open" != *assemble* \
     && $rc -eq 0 && "$out" == *---CHAIN_COMMANDS---* ]] && chain_fired; then
     pass "D86: each merged-path refusal names its own cause (logged out, offline, not merged), then complete passes once GitHub shows the merge"
 else fail "D86: each merged-path refusal names its own cause (logged out, offline, not merged), then complete passes once GitHub shows the merge" "auth rc=$r_auth ($o_auth) down rc=$r_down ($o_down) open rc=$r_open ($o_open) merged rc=$rc ($out)"; fi
@@ -575,6 +576,84 @@ out=$(complete_ship 2>&1); rc=$?
 if [[ $rc -ne 0 && "$out" == *'complete after merged needs a github.com origin to confirm the merge; this repo'"'"'s origin is not on github.com'* ]] && ! chain_fired; then
     pass "round 18: a non-github.com origin on the merged path refuses with a hint that says so"
 else fail "round 18: a non-github.com origin on the merged path refuses with a hint that says so" "complete rc=$rc ($out)"; fi
+cleanup
+
+# D88 (pen medium; r17g-pen-test q2-q4): no refusal on the merged path, from the CLI or from oss-notify, says to rebuild
+#     with assemble (rebuilding breaks the ready row, so the next complete refused again: a loop). Following each printed
+#     hint leads to a passing complete.
+D88_READY_HINT='the ready row no longer matches the ship result: run oss-phase-result.sh check ship --record-ready, then send complete again'
+# 13f9. (q3) gh logged out at complete: the hint says to log in and nothing else; once logged in, complete passes.
+merge_sandbox
+(cd "$T/repo" && git worktree add -q "$T/mainwt" main)
+phase_result check ship --record-ready >/dev/null 2>&1
+archive_commit
+merge_test >/dev/null
+gh_squash_origin
+step10_cleanup
+notify ship merged '{}' >/dev/null 2>&1
+gh_says merged
+echo auth > "$T/gh-mode"; o_auth=$(complete_ship 2>&1); r_auth=$?
+rm -f "$T/gh-mode"; out=$(complete_ship 2>&1); rc=$?
+if [[ $r_auth -ne 0 && "$o_auth" == *'gh is not installed or not logged in: run gh auth login, then send complete again'* \
+    && "$o_auth" != *assemble* && $rc -eq 0 && "$out" == *---CHAIN_COMMANDS---* ]] && chain_fired; then
+    pass "D88: logged out at complete: the refusal says only to log in (no assemble), and complete passes once logged in"
+else fail "D88: logged out at complete: the refusal says only to log in (no assemble), and complete passes once logged in" "auth rc=$r_auth ($o_auth) logged-in rc=$rc ($out)"; fi
+cleanup
+# 13f10. (q2) complete before the merge lands says only "not merged yet"; a result rebuilt anyway (the old advice) gets
+#     the ready-row hint; following it (record the ready row again) makes complete pass once GitHub shows the merge.
+merge_sandbox
+(cd "$T/repo" && git worktree add -q "$T/mainwt" main)
+phase_result check ship --record-ready >/dev/null 2>&1
+archive_commit
+merge_test >/dev/null
+step10_cleanup
+notify ship merged '{}' >/dev/null 2>&1
+gh_says open
+o_open=$(complete_ship 2>&1); r_open=$?
+a_out=$(phase_result assemble ship 2>&1); a_rc=$?
+gh_squash_origin; (cd "$T/repo" && git fetch -q --prune)
+gh_says merged
+o_stale=$(complete_ship 2>&1); r_stale=$?
+rec_out=$(phase_result check ship --record-ready 2>&1); rec_rc=$?
+out=$(complete_ship 2>&1); rc=$?
+if [[ $r_open -ne 0 && "$o_open" == *'GitHub does not show this PR as merged yet: merge it, then send complete again'* \
+    && $a_rc -eq 0 && $r_stale -ne 0 && "$o_stale" == *"$D88_READY_HINT"* && "$o_open$o_stale" != *assemble* \
+    && $rec_rc -eq 0 && "$rec_out" == *READY_RECORDED* && $rc -eq 0 && "$out" == *---CHAIN_COMMANDS---* ]] && chain_fired; then
+    pass "D88: not merged yet says only that; after a rebuild the ready-row hint, and following it completes once merged"
+else fail "D88: not merged yet says only that; after a rebuild the ready-row hint, and following it completes once merged" "open rc=$r_open ($o_open) assemble rc=$a_rc stale rc=$r_stale ($o_stale) record rc=$rec_rc ($rec_out) complete rc=$rc ($out)"; fi
+cleanup
+# 13f11. (q4) main finish, after the merge, with the ready row revoked: complete refuses with no "name the branch" hint
+#     and no rebuild line.
+merge_sandbox
+phase_result check ship --record-ready >/dev/null 2>&1
+archive_commit
+merge_test >/dev/null
+gh_squash_origin
+(cd "$T/repo" && git fetch -q origin refs/heads/main:refs/heads/main && git switch -q main)
+step10_cleanup
+notify ship merged '{}' >/dev/null 2>&1
+gh_says merged
+phase_result check ship --record-ready >/dev/null 2>&1
+out=$(complete_ship 2>&1); rc=$?
+if [[ $rc -ne 0 && "$out" == *no_feature* && "$out" != *'name the branch'* && "$out" != *assemble* ]] && ! chain_fired; then
+    pass "D88: on main after the merge, a revoked ready row refuses with no name-the-branch hint and no rebuild line"
+else fail "D88: on main after the merge, a revoked ready row refuses with no name-the-branch hint and no rebuild line" "complete rc=$rc ($out)"; fi
+cleanup
+# 13f12. D88 (code L2, perf F1/F2): GitHub answers slower than complete's budget. The CLI's own refusal (GitHub could
+#     not be reached) arrives inside the 9 s budget, before the hook's 10 s watchdog, so the user never gets the
+#     "run git gc" timeout text. About 9 s of real wait.
+merge_sandbox
+phase_result check ship --record-ready >/dev/null 2>&1
+archive_commit
+merge_test >/dev/null
+squash_to_main
+step10_cleanup
+notify ship merged '{}' >/dev/null 2>&1
+printf '#!/bin/sh\nexec sleep 14\n' > "$T/bin/gh"
+out=$(complete_ship 2>&1); rc=$?
+if [[ $rc -ne 0 && "$out" == *'GitHub could not be reached'* && "$out" != *'git gc'* && "$out" != *assemble* ]] && ! chain_fired; then
+    pass "D88: a GitHub slower than the budget refuses with the GitHub hint, never the git gc timeout text"
+else fail "D88: a GitHub slower than the budget refuses with the GitHub hint, never the git gc timeout text" "complete rc=$rc ($out)"; fi
 cleanup
 
 late_fail() { # a security fail captured at the same head after the ready row (round 2)

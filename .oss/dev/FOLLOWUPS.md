@@ -415,3 +415,16 @@
 
 - [x] 2026-11-13 · MEDIUM · ideate · hooks/oss-decision-record.sh:23 · Picker records are filed under the feature resolved from the session's start folder, not the worktree the work runs in: R-257's 2026-11-13 picks landed in /Users/ysl/dev/.oss/dev/active/plateforme-recrutement-asng/decisions.ndjson (8 lines mention R-257). The resolution fix is in R-257 slice A (D10, user pick); what to do with the misfiled lines is the user's call (hook-written records, never edited by an agent) · from: phase-results (ideate) → pulled into phase-results (2026-11-13)
 - [ ] 2026-11-13 · MEDIUM · plan (R-257 root-cause read) · hooks/oss-safe-path.sh:140 oss_resolve_project · prefers CLAUDE_PROJECT_DIR (the session start folder) over the physical cwd, so in worktree sessions every caller writes to the start folder's repo: oss-timeline.sh, oss-notify.sh, oss-log.sh, oss-precommand.sh, oss-archive-check.sh, oss-value.sh (oss-decision-record.sh is fixed locally in R-257 T6). Out of R-257 scope (coordinator, 2026-11-13) · from: phase-results (plan)
+
+## From phase-results (ship round 19, D88, 2026-11-24)
+
+- [ ] 2026-11-24 · info · phase-results · merge-ready.ts prMerged · `gh api .../commits/<head>/pulls` reads only the first page (30 PRs); a commit in more than 30 PRs could miss the merged one (fails closed) · from: phase-results (gate round 17)
+- [ ] 2026-11-24 · info · phase-results · merge-ready.ts prMerged · an empty-string `merged_at` counts as merged (typeof string); require a parseable time · from: phase-results (gate round 17)
+- [ ] 2026-11-24 · info · phase-results · complete's not_merged hint · wording for a merge done outside OSS (GitHub button, `gh pr merge`), where no merge gate ran · from: phase-results (gate round 17)
+- [ ] 2026-11-24 · info · phase-results · forks · origin is a fork: the PR lives on the upstream repository, so complete's gh call on origin finds none (fails closed) · from: phase-results (gate round 17)
+- [ ] 2026-11-24 · info · phase-results · the merge gate's `merge/tested` row keeps a `main` field nothing reads since D86; drop it or use it · from: phase-results (gate round 17)
+- [ ] 2026-11-24 · info · phase-results · merge-ready.ts header comment still describes the pre-D86 proof; bring it up to date · from: phase-results (gate round 17)
+- [ ] 2026-11-24 · info · phase-results · githubName unit tests for each URL form (https, git@, ssh://, with and without .git) · from: phase-results (gate round 17)
+- [ ] 2026-11-24 · info · phase-results · MERGED_BUDGET_MS defaults (`deadline = Date.now() + ...` at call time) act as a module-level budget; pass the deadline explicitly everywhere · from: phase-results (gate round 17)
+- [ ] 2026-11-24 · info · phase-results · feature.ts ignoredArchive's `git check-ignore` calls run outside complete's deadline (2 s each) · from: phase-results (gate round 17)
+- [ ] 2026-11-24 · low · security · phase-results · complete should share the merge gate's gh rules (which gh folders to trust, the environment allowlist); accepted as D51 limits for now (D88) · from: phase-results (gate round 17)

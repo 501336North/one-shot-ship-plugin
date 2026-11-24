@@ -404,6 +404,12 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
         fi
         if [[ -n "$_OSS_GATE_WHY" ]] || ! _oss_phase_check "$_OSS_PHASE" "$_OSS_PROJECT_DIR"; then
             _OSS_MSG="oss-notify: $WORKFLOW_CMD complete refused: no valid $_OSS_PHASE result ($_OSS_GATE_WHY); build it with oss-phase-result.sh assemble $_OSS_PHASE, then complete again"
+            # D88 (pen medium): with no active feature folder (the merged path), the CLI already printed its cause's own
+            # hint; rebuilding there breaks the ready row and loops, so no assemble advice is added.
+            if [[ "$_OSS_PHASE" == ship && "$_OSS_GATE_WHY" == exit_1 ]]; then
+                oss_resolve_feature "$_OSS_PROJECT_DIR" || true
+                [[ -z "$_OSS_FEATURE" ]] && _OSS_MSG="oss-notify: $WORKFLOW_CMD complete refused ($_OSS_GATE_WHY); do what the phase-result line above says, then complete again"
+            fi
             [[ "$_OSS_PHASE" == build ]] && _OSS_MSG="$_OSS_MSG; build evidence is from repo files (not ledger-checked)"
         elif [[ "$_OSS_PHASE" == ship ]] \
             && ! printf '%s' "$OSS_BOUNDED_OUT" | "$OSS_JQ_BIN" -e '.verdict == "ready_to_merge"' >/dev/null 2>&1; then

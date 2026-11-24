@@ -34,7 +34,7 @@ __export(phase_result_exports, {
   main: () => main
 });
 module.exports = __toCommonJS(phase_result_exports);
-var import_node_child_process5 = require("node:child_process");
+var import_node_child_process6 = require("node:child_process");
 var fs11 = __toESM(require("node:fs"), 1);
 var os2 = __toESM(require("node:os"), 1);
 var path10 = __toESM(require("node:path"), 1);
@@ -2017,6 +2017,7 @@ function shipArchivable(repo, feature, pluginRoot2) {
 }
 
 // src/phase-results/feature.ts
+var import_node_child_process4 = require("node:child_process");
 var fs9 = __toESM(require("node:fs"), 1);
 var path8 = __toESM(require("node:path"), 1);
 var FEATURE_RE2 = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
@@ -2061,11 +2062,16 @@ function archivedFeature(repo, base, remoteRefs, deadline = Infinity) {
   return st?.isDirectory() === true ? { ok: true, feature: named, folder } : { ok: false, reason: "none" };
 }
 function ignoredArchive(repo) {
-  return gitOut2(repo, ["check-ignore", "-v", "--", ".oss/dev/completed"]) !== null;
+  return [".oss/dev/completed/", ".oss/dev/completed/x"].some((p) => (0, import_node_child_process4.spawnSync)(gitBin(), ["check-ignore", "-q", "--", p], {
+    cwd: repo,
+    env: { ...gitEnv(), PATH: "/usr/bin:/bin" },
+    stdio: "ignore",
+    timeout: 2e3
+  }).status === 0);
 }
 
 // src/phase-results/merge-ready.ts
-var import_node_child_process4 = require("node:child_process");
+var import_node_child_process5 = require("node:child_process");
 var import_node_crypto4 = require("node:crypto");
 var fs10 = __toESM(require("node:fs"), 1);
 var path9 = __toESM(require("node:path"), 1);
@@ -2075,12 +2081,12 @@ var SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 var FEATURE_RE3 = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 var DATE_DIR = /^\d{4}-\d{2}-\d{2}$/;
 var MAX_RESULT_BYTES = 4 * 1024 * 1024;
-var MERGED_BUDGET_MS = 1e4;
+var MERGED_BUDGET_MS = 9e3;
 function git(repo, args, deadline = Date.now() + MERGED_BUDGET_MS) {
   const bin = gitBin();
   const left = deadline - Date.now();
   if (bin === "" || left <= 0) return { status: null, out: "" };
-  const r = (0, import_node_child_process4.spawnSync)(bin, ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", ...args], {
+  const r = (0, import_node_child_process5.spawnSync)(bin, ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", ...args], {
     cwd: repo,
     env: { ...gitEnv(), GIT_CONFIG_NOSYSTEM: "1", PATH: "/usr/bin:/bin" },
     encoding: "utf-8",
@@ -2185,20 +2191,22 @@ function ghBin(repo) {
 function prMerged(repo, head, base, deadline) {
   if (!/^[0-9a-f]{40}$/.test(head)) return "no_proof";
   const name = githubName(repo, deadline);
-  if (name === null) return "not_github";
+  if (name === null) return Date.now() >= deadline ? "timeout" : "not_github";
   const gh = ghBin(repo);
   if (gh === null) return "gh_unavailable";
   const left = deadline - Date.now();
   if (left <= 0) return "gh_unreachable";
-  const r = (0, import_node_child_process4.spawnSync)(gh.bin, ["api", "--hostname", "github.com", `repos/${name}/commits/${head}/pulls`], {
+  const r = (0, import_node_child_process5.spawnSync)(gh.bin, ["api", "--hostname", "github.com", `repos/${name}/commits/${head}/pulls`], {
     cwd: "/",
     env: { ...process.env, PATH: gh.dirs, GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1" },
     encoding: "utf-8",
-    stdio: ["ignore", "pipe", "ignore"],
+    // D88: stderr is read into memory only, to tell an HTTP access error from a network failure; it is never logged.
+    stdio: ["ignore", "pipe", "pipe"],
     timeout: left,
     maxBuffer: 16 * 1024 * 1024
   });
   if (r.error === void 0 && r.status === 4) return "gh_unavailable";
+  if (r.error === void 0 && r.status !== 0 && /\bHTTP (401|403|404|422)\b/.test(r.stderr)) return "gh_denied";
   if (r.error !== void 0 || r.status !== 0) return "gh_unreachable";
   let prs;
   try {
@@ -2213,17 +2221,20 @@ function prMerged(repo, head, base, deadline) {
 function mergedReady(repo, ledger, runStartedAt2, deadline = Date.now() + MERGED_BUDGET_MS) {
   const no = { ok: false, reason: "no_proof" };
   const row = readyRow(ledger);
-  if (row === null || row.startedAt !== runStartedAt2) return no;
+  if (row === null) return no;
+  if (fs10.lstatSync(path9.join(repo, ".oss", "dev", "active", row.feature), { throwIfNoEntry: false }) !== void 0) return no;
+  const stale = { ok: false, reason: "ready_stale" };
+  if (row.startedAt !== runStartedAt2) return stale;
   const at = Date.parse(row.at);
   const started = Date.parse(runStartedAt2);
-  if (Number.isNaN(at) || Number.isNaN(started) || at < started) return no;
-  if (ledger.lastRow(`results/${row.feature}/ship`)?.sha256 !== row.sha256) return no;
-  if (fs10.lstatSync(path9.join(repo, ".oss", "dev", "active", row.feature), { throwIfNoEntry: false }) !== void 0) return no;
+  if (Number.isNaN(at) || Number.isNaN(started) || at < started) return stale;
+  if (ledger.lastRow(`results/${row.feature}/ship`)?.sha256 !== row.sha256) return stale;
   const bytes = archivedResult(repo, row.feature, row.sha256);
   const result = bytes === null ? null : parseObject2(bytes);
   if (result === null) return no;
   const tested = testedRow(ledger, runStartedAt2);
-  if (tested === null || !onlyOssAfter(repo, row.headSha, tested.head, deadline)) return no;
+  if (tested === null) return no;
+  if (!onlyOssAfter(repo, row.headSha, tested.head, deadline)) return Date.now() >= deadline ? { ok: false, reason: "timeout" } : no;
   const base = field(result.diff, "baseRef");
   if (typeof base !== "string") return no;
   const proof = prMerged(repo, tested.head, base, deadline);
@@ -2274,7 +2285,7 @@ function shipBaseConfig(repo) {
   env.PATH = "/usr/bin:/bin";
   const git2 = gitBin();
   if (git2 === "") return "";
-  const r = (0, import_node_child_process5.spawnSync)(git2, ["config", "--local", "--get", "oss.shipBase"], {
+  const r = (0, import_node_child_process6.spawnSync)(git2, ["config", "--local", "--get", "oss.shipBase"], {
     cwd: repo,
     env,
     encoding: "utf-8",
@@ -2511,9 +2522,9 @@ function verdictOf(fn) {
     return { ok: false, id, field: "store" };
   }
 }
-function refuse(args, id, field2, detail) {
+function refuse(args, id, field2, detail, rebuild = true) {
   const reason = `${id}${detail === void 0 ? "" : `: ${detail}`}${field2 === "" ? "" : ` (field ${field2})`}`;
-  process.stderr.write(`phase-result: ${args.verb} ${args.phase}: ${reason}; rebuild: oss-phase-result.sh assemble ${args.phase}
+  process.stderr.write(`phase-result: ${args.verb} ${args.phase}: ${reason}${rebuild ? `; rebuild: oss-phase-result.sh assemble ${args.phase}` : ""}
 `);
   return 1;
 }
@@ -2541,7 +2552,9 @@ var MERGE_HINTS = {
   not_github: "complete after merged needs a github.com origin to confirm the merge; this repo's origin is not on github.com",
   gh_unavailable: "gh is not installed or not logged in: run gh auth login, then send complete again",
   gh_unreachable: "GitHub could not be reached: send complete again when online",
-  not_merged: "GitHub does not show this PR as merged yet: merge it, then send complete again"
+  gh_denied: "gh could not read this pull request: check gh auth status and access to the origin repository",
+  not_merged: "GitHub does not show this PR as merged yet: merge it, then send complete again",
+  ready_stale: "the ready row no longer matches the ship result: run oss-phase-result.sh check ship --record-ready, then send complete again"
 };
 function mergeProof(repo, deadline) {
   try {
@@ -2551,7 +2564,7 @@ function mergeProof(repo, deadline) {
     return { ok: false, reason: "no_proof" };
   }
 }
-function mergedOrRefuse(args, repo, v, deadline) {
+function mergedOrRefuse(args, repo, v, deadline, merged = false) {
   if (args.phase === "ship" && args.verb === "check") {
     const proof = mergeProof(repo, deadline);
     if (proof.ok) {
@@ -2559,7 +2572,9 @@ function mergedOrRefuse(args, repo, v, deadline) {
 `);
       return 0;
     }
-    if (proof.reason !== "no_proof") return refuse(args, v.id, v.field, MERGE_HINTS[proof.reason]);
+    if (proof.reason === "timeout") return refuse(args, "diff_unavailable", "", DIFF_TIMEOUT, false);
+    if (proof.reason !== "no_proof") return refuse(args, v.id, v.field, MERGE_HINTS[proof.reason], !merged);
+    if (merged) return refuse(args, v.id, v.field, v.id === "no_feature" ? void 0 : v.detail, false);
   }
   return refuse(args, v.id, v.field, v.detail);
 }
@@ -2600,7 +2615,7 @@ function main(argv) {
     }
   }
   if (args.recordReady) return recordReady(args, repo, feature, where, missing);
-  if (feature === null) return missing.id === "diff_unavailable" ? refuse(args, missing.id, missing.field, missing.detail) : mergedOrRefuse(args, repo, missing, deadline);
+  if (feature === null) return missing.id === "diff_unavailable" ? refuse(args, missing.id, missing.field, missing.detail) : mergedOrRefuse(args, repo, missing, deadline, true);
   if (args.verb === "assemble") {
     let result = {};
     const v2 = verdictOf(() => {
@@ -2616,8 +2631,8 @@ function main(argv) {
   const v = verdictOf(() => {
     stored = check(repo, feature, args.phase, where);
   });
-  if (!v.ok) return mergedOrRefuse(args, repo, v, deadline);
-  if (args.phase === "ship" && where.kind === "completed") return mergedOrRefuse(args, repo, { ok: false, id: "not_merged", field: "" }, deadline);
+  if (!v.ok) return mergedOrRefuse(args, repo, v, deadline, where.kind === "completed");
+  if (args.phase === "ship" && where.kind === "completed") return mergedOrRefuse(args, repo, { ok: false, id: "not_merged", field: "" }, deadline, true);
   const verdict = args.phase === "ship" ? { verdict: stored.verdict } : {};
   process.stdout.write(`${JSON.stringify({ verification: "verified", ...gateLabel(args.phase, stored), ...verdict })}
 `);
