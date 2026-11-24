@@ -5,7 +5,7 @@
  *   Everyday class globs (`ls [A-Z]*.md`, `./build-[0-9].sh`) stay allowed.
  * @business-rule gate-gaps-r3 ship fix round 13, R13-1 (owner pick "Round 13: all three"): the hook-path glob reading
  *   lowercased the pattern before reading ranges, so `[Z-p]` became the empty `[z-p]` and the hook call was allowed.
- *   A set is now tested with each letter in both cases against the pattern as written.
+ *   Since round 14 (R14-1) any set counts as any one character in these matchers, as on the base.
  *   R13-2: the same reading for the verdict capture, so `bash ~/.oss/hooks/oss-verdict-captur[Z-f].sh` and a find
  *   name test that could pick the capture (`-name 'verdict-captur[Z-f].cjs'`) are refused.
  *   R13-3: a hook line whose quoted word holds thousands of `export` or `env` pieces is read in one pass, so the

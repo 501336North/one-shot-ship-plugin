@@ -110,28 +110,43 @@ export type Token = '*' | ((c: string) => boolean);
 
 /**
  * The tokens a glob piece stands for. An unclosed `[` matches any one character, as before (fails closed).
- * `caseless`: a character matches in either letter case, with each set read as written, so `[Z-p]` still holds
- * `o` and `[!h]` still leaves out `h` (ship fix round 13, R13-1).
+ * `anySet`: every `[..]` set matches any one character, of any kind (ship fix round 14, R14-1, as on the base).
  */
-export function globTokens(piece: string, caseless = false): Token[] {
+export function globTokens(piece: string, anySet = false): Token[] {
   const tokens: Token[] = [];
-  for (const m of piece.matchAll(new RegExp(`${SET.source}|[*?]|[^*?[]`, 'g'))) {
+  for (const m of (anySet ? strayCloseAsStar(piece) : piece).matchAll(new RegExp(`${SET.source}|[*?]|[^*?[]`, 'g'))) {
     const c = m[0];
     if (c === '*') tokens.push('*');
-    else if (c === '?' || (c.startsWith('[') && (c.length < 2 || !c.endsWith(']') || /^\[[!^]?\]$/.test(c)))) {
+    else if (c === '?' || (c.startsWith('[') && (anySet || c.length < 2 || !c.endsWith(']') || /^\[[!^]?\]$/.test(c)))) {
       tokens.push(() => true);
     }
-    else if (c.startsWith('[')) tokens.push(bracketTest(c.slice(1, -1), caseless));
-    else tokens.push(caseless ? (x) => x.toLowerCase() === c.toLowerCase() : (x) => x === c);
+    else if (c.startsWith('[')) tokens.push(bracketTest(c.slice(1, -1)));
+    else tokens.push((x) => x === c);
   }
   return tokens;
 }
 
-/** The test for a `[..]` set body: ranges, and `!` or `^` first to negate; `caseless`: a member in either letter case. */
-function bracketTest(body: string, caseless: boolean): (c: string) => boolean {
+/**
+ * A word read without its quoting loses an escaped `]` inside a set (`[h\]]ooks` reads as `[h]]ooks`): when a `]`
+ * follows a closed set, the text from the first `[` to the last `]` counts as `*` (ship fix round 14, R14-1).
+ */
+function strayCloseAsStar(piece: string): string {
+  const open = piece.indexOf('[');
+  if (open < 0) return piece;
+  const set = new RegExp(SET.source, 'y');
+  set.lastIndex = open;
+  const first = set.exec(piece);
+  const afterSet = first === null ? -1 : piece.indexOf(']', open + first[0].length);
+  const nextOpen = first === null ? -1 : piece.indexOf('[', open + first[0].length);
+  if (first === null || !first[0].endsWith(']') || afterSet < 0 || (nextOpen >= 0 && nextOpen < afterSet)) return piece;
+  return `${piece.slice(0, open)}*${piece.slice(piece.lastIndexOf(']') + 1)}`;
+}
+
+/** The test for a `[..]` set body: ranges, and `!` or `^` first to negate. */
+function bracketTest(body: string): (c: string) => boolean {
   const negate = body.startsWith('!') || body.startsWith('^');
   const set = negate ? body.slice(1) : body;
-  const holds = (c: string): boolean => {
+  return (c) => {
     let hit = false;
     for (let i = 0; i < set.length; i += 1) {
       if (set[i + 1] === '-' && i + 2 < set.length) {
@@ -139,9 +154,8 @@ function bracketTest(body: string, caseless: boolean): (c: string) => boolean {
         i += 2;
       } else if (set[i] === c) hit = true;
     }
-    return hit;
+    return hit !== negate;
   };
-  return (c) => (caseless ? holds(c.toLowerCase()) || holds(c.toUpperCase()) : holds(c)) !== negate;
 }
 
 /** Whole-piece glob match with two pointers, backtracking only to the last `*` (no exponential blow-up). */
@@ -173,8 +187,8 @@ export function globMatch(tokens: Token[], name: string): boolean {
 function globNames(piece: string, folder: string | undefined): boolean {
   const tokens = globTokens(piece, true);
   if (!NAMES.some((name) => globMatch(tokens, name))) return false;
-  const literals = piece.toLowerCase().split(new RegExp(`${SET.source}|[*?]`));
-  return literals.some(writesStem) || (folder !== undefined && /^(?:hooks|cli)$/i.test(folder));
+  const literals = piece.split(new RegExp(`${SET.source}|[*?]`));
+  return literals.some(writesStem) || (folder !== undefined && /^(?:hooks|cli)$/.test(folder));
 }
 
 /** True when a literal sits inside one of the full names with at least 3 of its characters before the extension (perf I3). */
@@ -201,8 +215,7 @@ function hasLiteralName(text: string): boolean {
 export function namesVerdictCapture(text: string): boolean {
   const lower = text.toLowerCase();
   if (hasLiteralName(lower)) return true;
-  // sets are read as written, in either case (ship fix round 13, R13-2)
-  for (const word of specialSetsAsAny(text).split(SEPARATORS)) {
+  for (const word of specialSetsAsAny(lower).split(SEPARATORS)) {
     const segments = word.split('/');
     for (const [i, segment] of segments.entries()) {
       if (GLOB.test(segment) && globNames(segment, segments[i - 1])) return true;
@@ -257,7 +270,7 @@ export function couldMatch(tokens: Token[], pieces: string[], anchored: boolean)
 
 /** True when a find name or path glob could pick the capture or an OSS hook (`oss-*.sh`), in any case. */
 function globCouldPickProtected(test: string, glob: string): boolean {
-  const tokens = globTokens(glob, true);
+  const tokens = globTokens(glob.toLowerCase(), true);
   const whole = test === '-name' || test === '-iname';
   return [...NAMES.map((name) => [name]), ['oss-', '.sh']].some((pieces) =>
     couldMatch(tokens, whole ? pieces : [`/${pieces[0]}`, ...pieces.slice(1)], whole),

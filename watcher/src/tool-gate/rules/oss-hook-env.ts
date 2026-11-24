@@ -372,7 +372,7 @@ const MAX_GLOB_READINGS = 256;
  */
 function globMatches(part: string, name: string): boolean {
   if (name.startsWith('.') && !part.startsWith('.')) return false;
-  return globMatch(globTokens(specialSetsAsAny(part), true), name.toLowerCase());
+  return globMatch(globTokens(specialSetsAsAny(part.toLowerCase()), true), name.toLowerCase());
 }
 
 /** The paths a glob word could stand for: each glob part as itself or a hook-path name it matches (`**` also as several folders); null past the cap. */

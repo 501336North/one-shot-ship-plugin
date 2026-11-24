@@ -3,8 +3,8 @@
  *   time, however many stars it has: `~/.oss/` + 25 or 100 adjacent `*` + `z/x.sh` is read as quickly as a plain
  *   path (it took about 220 ms per path part with 25 stars, and 100 stars never finished). Hook folders written
  *   as a glob are read the way the shell expands them, in any case: `[[:alpha:]]ooks` can be `hooks`, so a hook
- *   run with a variable it chose is refused; `[x]ooks` and `[!h]ooks` can't be `hooks`, so they are not treated
- *   as a hook path any more.
+ *   run with a variable it chose is refused. Any set counts as any one character (ship fix round 14, R14-1, as on
+ *   the Sprint D base), so `[x]ooks` and `[!h]ooks` are read as a hooks folder too.
  * @business-rule gate-gaps-r3 Task 12 (R-257 gate round 5 pick "Glob stall, fix in this PR"; Task 12 picks:
  *   reuse R-257's linear matcher, read sets as the shell does, case stays insensitive).
  * @boundary runToolGate (the gate as the hook calls it), with a scratch home and repo, timed on CPU time.
@@ -107,9 +107,10 @@ describe.each(PLATFORMS)('on %s', (platform) => {
       'BASH_ENV=/tmp/x ~/.oss/[!h]ooks/oss-log.sh',
       'cd "$D"; X=1 [x]ooks/x.sh',
       'cd "$D"; X=1 [!h]ooks/x.sh',
-    ])('does not read a set that excludes `h` as the hooks folder: %s', async (command) => {
+    ])('reads any set as possibly the hooks folder, as the base did (R14-1): %s', async (command) => {
       const result = await call(command, agent, platform);
-      expect(result.stderr, command).not.toMatch(HOOK_SCRIPT);
+      expect(result.exitCode, command).toBe(2);
+      expect(result.stderr, command).toMatch(HOOK_SCRIPT);
     });
 
     // a class form split over two expansions: the gate can't read it, so it stays refused (round 8 word bound)
