@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "build.schema.json",
+  "title": "Phase result: build",
+  "description": "Build result: test runs from the R-253 recorder (code), evidence trust (D15), notes (model).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "phase",
+    "feature",
+    "startedAt",
+    "assembledAt",
+    "headSha",
+    "sources",
+    "verification",
+    "claims",
+    "chain",
+    "testRuns",
+    "evidenceTrust"
+  ],
+  "properties": {
+    "v": {
+      "$ref": "common.schema.json#/$defs/v"
+    },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "build"
+      ]
+    },
+    "feature": {
+      "$ref": "common.schema.json#/$defs/feature"
+    },
+    "startedAt": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "assembledAt": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "evidenceCutoff": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "headSha": {
+      "$ref": "common.schema.json#/$defs/sha"
+    },
+    "sources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "testRuns": {
+          "$ref": "common.schema.json#/$defs/codeSource"
+        },
+        "evidenceTrust": {
+          "$ref": "common.schema.json#/$defs/codeSource"
+        },
+        "notes": {
+          "$ref": "common.schema.json#/$defs/source"
+        },
+        "claims": {
+          "$ref": "common.schema.json#/$defs/source"
+        }
+      }
+    },
+    "verification": {
+      "$ref": "common.schema.json#/$defs/verification"
+    },
+    "verificationError": {
+      "$ref": "common.schema.json#/$defs/verificationError"
+    },
+    "claims": {
+      "$ref": "common.schema.json#/$defs/claims"
+    },
+    "chain": {
+      "$ref": "common.schema.json#/$defs/chain"
+    },
+    "testRuns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sawRed",
+        "lastResult",
+        "count"
+      ],
+      "properties": {
+        "sawRed": {
+          "type": "boolean"
+        },
+        "lastResult": {
+          "type": "string",
+          "enum": [
+            "green",
+            "red"
+          ]
+        },
+        "count": {
+          "$ref": "common.schema.json#/$defs/count"
+        }
+      }
+    },
+    "evidenceTrust": {
+      "type": "string",
+      "enum": [
+        "repo-file",
+        "ledger"
+      ]
+    },
+    "notes": {
+      "$ref": "common.schema.json#/$defs/modelText"
+    }
+  }
+}

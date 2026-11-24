@@ -1,5 +1,5 @@
 {
-  "source": "every ```bash block of the plugin commands/*.md and the API prompts/commands/{plan,ship,ship-team,build,ideate}.md; regenerate with `node scripts/served-command-blocks.mjs` (R-266 round 11)",
+  "source": "every ```bash block of the plugin commands/*.md and the API prompts/commands/{plan,ship,ship-team,build,ideate}.md; regenerate with `node scripts/served-command-blocks.mjs` (OSS_API_REPO names the API checkout) (R-266 round 11)",
   "files": {
     "commands/a11y.md": [
       "/oss:a11y [OPTIONS] [PATH]",
@@ -57,11 +57,11 @@
     "commands/auto.md": [
       "/oss:auto [OPTIONS] [IDEA]",
       "# Full pipeline from idea to PR\n/oss:auto \"add user authentication\"\n\n# Full pipeline with auto-merge\n/oss:auto --merge \"redesign the pricing page\"\n\n# Zero-approval mode: answer ideation questions, then walk away\n# Start CC with: claude --permission-mode auto\n# (--dangerously-skip-permissions is for sandboxed machines with no internet access only)\n# Then run: /oss:auto --merge \"your feature\"\n\n# Show help\n/oss:auto --help",
+      "~/.oss/hooks/ensure-decrypt-cli.sh --long-step",
       "~/.oss/hooks/oss-iron-laws-sync.sh",
       "test -f \"$HOME/.oss/config.json\" && grep -qE '\"apiKey\"[[:space:]]*:[[:space:]]*\"[A-Za-z0-9_-]' \"$HOME/.oss/config.json\" && echo \"API key configured\"",
       "~/.oss/hooks/oss-log.sh init auto",
       "~/.oss/hooks/oss-notify.sh --workflow auto start '{}'",
-      "~/.oss/hooks/ensure-decrypt-cli.sh --long-step",
       "~/.oss/bin/oss-decrypt --type workflows --name auto",
       "~/.oss/hooks/oss-notify.sh --workflow auto complete '{}'",
       "# Full pipeline from idea to PR\n/oss:auto \"add user authentication\"\n\n# Full pipeline with auto-merge\n/oss:auto --merge \"redesign the pricing page\""
@@ -94,6 +94,7 @@
       "~/.oss/bin/oss-decrypt --type workflows --name build-team",
       "~/.oss/bin/oss-decrypt --type workflows --name build",
       "~/.oss/hooks/oss-notify.sh --workflow build task_complete '{}'",
+      "~/.oss/hooks/oss-phase-result.sh assemble build",
       "~/.oss/hooks/oss-notify.sh --workflow build complete '{}'",
       "# Execute the current plan\n/oss:build\n\n# Execute a specific phase\n/oss:build --phase 2\n\n# Execute with verbose output\n/oss:build --verbose"
     ],
@@ -235,13 +236,14 @@
     "commands/ideate.md": [
       "/oss:ideate [OPTIONS] [IDEA]",
       "# Start ideation for a new feature\n/oss:ideate \"user authentication system\"\n\n# Ideate with Figma designs\n/oss:ideate --figma \"user dashboard\"\n\n# Ideate with a specific Figma file URL\n/oss:ideate --figma \"https://www.figma.com/file/abc123\" \"user dashboard\"\n\n# Ideate without a specific topic (will ask what you want to build)\n/oss:ideate\n\n# Show help\n/oss:ideate --help",
+      "~/.oss/hooks/ensure-decrypt-cli.sh --long-step",
       "~/.oss/hooks/oss-iron-laws-sync.sh",
       "test -f \"$HOME/.oss/config.json\" && grep -qE '\"apiKey\"[[:space:]]*:[[:space:]]*\"[A-Za-z0-9_-]' \"$HOME/.oss/config.json\" && echo \"API key configured\"",
       "~/.oss/hooks/oss-log.sh init ideate",
       "~/.oss/hooks/oss-notify.sh --workflow ideate start '{}'",
-      "~/.oss/hooks/ensure-decrypt-cli.sh --long-step",
       "~/.oss/bin/oss-decrypt --type workflows --name ideate-figma",
       "~/.oss/bin/oss-decrypt --type workflows --name ideate",
+      "~/.oss/hooks/oss-phase-result.sh assemble ideate",
       "~/.oss/hooks/oss-notify.sh --workflow ideate complete '{}'",
       "# Start ideation for a new feature\n/oss:ideate \"user authentication system\"\n\n# Ideate without a specific topic (will ask what you want to build)\n/oss:ideate"
     ],
@@ -311,11 +313,11 @@
       "if [ -x ~/.oss/bin/oss-decrypt ]; then\n    ~/.oss/bin/oss-decrypt --setup\n    # Confirm setup actually produced working credentials before claiming success.\n    VERIFY=\"$HOME/.oss/hooks/verify-decrypt-setup.sh\"\n    [ -x \"$VERIFY\" ] || VERIFY=\"$(cat ~/.oss/plugin-root 2>/dev/null)/hooks/verify-decrypt-setup.sh\"\n    if [ -x \"$VERIFY\" ] && \"$VERIFY\"; then\n        echo \"Updated encryption credentials for new key\"\n    else\n        echo \"Credential refresh did NOT complete — see the error above. Re-run /oss:login.\"\n    fi\nfi",
       ". ~/.oss/hooks/oss-api-curl.sh\necho \"API key updated successfully!\"\necho \"  Config: $(oss_config_file)\"\necho \"\"\necho \"All existing tools and settings preserved. Ready to use.\"",
       "~/.oss/hooks/oss-login.sh",
-      "~/.oss/hooks/oss-iron-laws-sync.sh --install",
-      "~/.oss/hooks/oss-claude-md-template.sh",
       "~/.oss/hooks/ensure-decrypt-cli.sh --long-step",
       "~/.oss/bin/oss-decrypt --setup",
       "# Resolve the verifier from the deployed copy, falling back to the plugin root\n# (the ~/.oss/hooks/ copy may not exist yet right after a mid-session upgrade).\nVERIFY=\"$HOME/.oss/hooks/verify-decrypt-setup.sh\"\n[ -x \"$VERIFY\" ] || VERIFY=\"$(cat ~/.oss/plugin-root 2>/dev/null)/hooks/verify-decrypt-setup.sh\"\nif [ -x \"$VERIFY\" ] && \"$VERIFY\"; then\n    ~/.oss/bin/oss-decrypt --version\nelse\n    echo \"Setup did NOT complete — see the error above. Prompts will fall back to direct API fetch until resolved.\"\nfi",
+      "~/.oss/hooks/oss-iron-laws-sync.sh --install",
+      "~/.oss/hooks/oss-claude-md-template.sh",
       "if ! command -v terminal-notifier &>/dev/null; then\n    echo \"Installing terminal-notifier for macOS notifications...\"\n    brew install terminal-notifier\nfi",
       "mkdir -p ~/.oss\n# Create a simple blue circle icon for OSS notifications\nOSS_ICON_PNG=\"$HOME/.oss/notification-icon.png\"\nif [ ! -f \"$OSS_ICON_PNG\" ]; then\n    # Download (https only, redirects included; at most 10 s and 1 MiB, head stops an old curl's write; anything else is removed) or create the OSS icon (T78c)\n    PLUGIN_ROOT=$(~/.oss/hooks/oss-value.sh root 2>/dev/null)\n    ( set -o pipefail; curl -sL --proto '=https' --proto-redir '=https' --max-time 10 --max-filesize 1048576 \"https://www.oneshotship.com/icon.png\" 2>/dev/null | head -c 1048577 > \"$OSS_ICON_PNG\" ) && [ \"$(wc -c < \"$OSS_ICON_PNG\")\" -le 1048576 ] || \\\n    { rm -f \"$OSS_ICON_PNG\"; test -n \"$PLUGIN_ROOT\" && sips -s format png \"$PLUGIN_ROOT/assets/icon.png\" --out \"$OSS_ICON_PNG\" 2>/dev/null; } || \\\n    echo \"Note: Could not create notification icon. Notifications will work without branding.\"\nfi",
       "# Copy status line script\ncp \"~/.oss/hooks/oss-statusline.sh\" \"$HOME/.oss/\"\nchmod +x \"$HOME/.oss/oss-statusline.sh\"\n\n# Configure Claude Code to use it (user must do this manually via UI or settings)\necho \"Status line script installed at ~/.oss/oss-statusline.sh\"\necho \"To enable: Claude Code Settings > Status Line > Command: ~/.oss/oss-statusline.sh\"",
@@ -422,6 +424,7 @@
       "~/.oss/hooks/ensure-decrypt-cli.sh --long-step",
       "~/.oss/bin/oss-decrypt --type workflows --name plan-team",
       "~/.oss/bin/oss-decrypt --type workflows --name plan",
+      "~/.oss/hooks/oss-phase-result.sh assemble plan",
       "~/.oss/hooks/oss-notify.sh --workflow plan complete '{}'",
       "~/.oss/hooks/oss-notify.sh --workflow plan failed '{}'",
       "# Plan a specific feature\n/oss:plan \"implement user dashboard\"\n\n# Plan based on previous ideation\n/oss:plan"
@@ -575,6 +578,9 @@
       "# ✅ CORRECT - Use plain git (single approval)\ngit status\ngit add .\ngit commit -m \"feat: message\"\ngit push -u origin branch-name\n\n# ❌ AVOID - Using -C flag (requires approval each time)\ngit -C /full/path/to/repo status\ngit -C /full/path/to/repo push",
       "~/.oss/hooks/oss-notify.sh --workflow ship quality_passed '{\"checks\": [\"code-review\", \"performance\", \"security\", \"tests\", \"build\"]}'",
       "~/.oss/hooks/oss-notify.sh --workflow ship pr_created '{}'",
+      "~/.oss/hooks/oss-phase-result.sh assemble ship",
+      "sleep 1",
+      "~/.oss/hooks/oss-phase-result.sh check ship --record-ready",
       "~/.oss/hooks/oss-notify.sh --workflow ship merged '{}'",
       "~/.oss/hooks/oss-notify.sh --workflow ship complete '{}'",
       "# Ship with manual merge\n/oss:ship\n\n# Ship and merge once the PR's checks pass\n/oss:ship --merge\n\n# Ship with custom commit message\n/oss:ship --message \"feat: add user authentication\""
@@ -648,7 +654,7 @@
     "commands/trust.md": [
       "/oss:trust [OPTIONS]",
       "# Quick signature check (no auth needed)\n/oss:trust --quick\n\n# Standard audit of commands + hooks (default)\n/oss:trust\n\n# Full audit of every prompt\n/oss:trust --full\n\n# Audit a single prompt\n/oss:trust --prompt build\n\n# Audit one category\n/oss:trust --category commands\n\n# Show help\n/oss:trust --help",
-      "~/.oss/bin/oss-decrypt --verify-manifest",
+      "~/.oss/bin/oss-decrypt --verify-manifest 2>/dev/null | jq -cs 'if length == 1 and (.[0] | type) == \"object\" then .[0] | {signatureValid: (.signatureValid | if type == \"boolean\" then . else null end), trusted: (if has(\"trusted\") then (.trusted | if type == \"boolean\" then . else false end) else \"missing\" end), error: (.error | if type == \"string\" then (.[0:2000] | gsub(\"[^A-Za-z0-9 .,:()_-]\"; \"\") | .[0:200]) else null end), promptCount: (.promptCount | if type == \"number\" then . else null end), generatedAt: (.generatedAt | if type == \"string\" and test(\"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\\\.[0-9]{1,3})?Z\\\\z\") then . else null end), categories: (if .signatureValid == true and .trusted == true and (.categories | type) == \"object\" then .categories | to_entries | map(select((.key | test(\"^[A-Za-z0-9_-]{1,40}\\\\z\")) and (.value | type) == \"number\")) | .[0:50] | from_entries else {} end)} else error(\"not one JSON object\") end'",
       "test -f \"$HOME/.oss/config.json\" && grep -qE '\"apiKey\"[[:space:]]*:[[:space:]]*\"[A-Za-z0-9_-]' \"$HOME/.oss/config.json\" && echo \"API key configured\"",
       "~/.oss/bin/oss-decrypt --list-prompts --category commands\n~/.oss/bin/oss-decrypt --list-prompts --category hooks",
       "~/.oss/bin/oss-decrypt --list-prompts",
@@ -759,7 +765,7 @@
       "if ! git remote get-url origin &> /dev/null; then\n  echo \"⚠️  No GitHub remote configured\"\n  REPO_NAME=$(basename \"$(pwd)\")\n\n  if gh repo view \"$REPO_NAME\" &> /dev/null 2>&1; then\n    echo \"✓ Found existing GitHub repo, connecting...\"\n    git remote add origin \"https://github.com/$(gh api user -q .login)/$REPO_NAME.git\"\n  else\n    echo \"Creating new GitHub repository: $REPO_NAME\"\n    gh repo create \"$REPO_NAME\" --private --source=. --push --description \"Created by One Shot Ship workflow\"\n  fi\n  echo \"✓ GitHub repository connected\"\nelse\n  echo \"✓ GitHub remote: $(git remote get-url origin)\"\nfi",
       "if [ ! -f .gitignore ]; then\ncat > .gitignore << 'EOF'\n# Dependencies\nnode_modules/\n.pnp\n.pnp.js\n\n# Testing\ncoverage/\n.nyc_output/\nstryker-tmp/\nreports/\n\n# Build\ndist/\nbuild/\n.next/\nout/\n\n# Environment\n.env\n.env.local\n.env.*.local\n*.local\n\n# IDE\n.idea/\n.vscode/\n*.swp\n*.swo\n\n# OS\n.DS_Store\nThumbs.db\n\n# Logs\nlogs/\n*.log\nnpm-debug.log*\n\n# Cache\n.cache/\n.eslintcache\nEOF\nelse\n  echo \"✓ .gitignore exists, kept\"\nfi",
       "if [ ! -f ecosystem.config.js ]; then\ncat > ecosystem.config.js << 'EOF'\nmodule.exports = {\n  apps: [\n    {\n      name: 'app',\n      script: 'dist/index.js',\n      instances: 'max',\n      exec_mode: 'cluster',\n      watch: false,\n      max_memory_restart: '500M',\n      env: { NODE_ENV: 'development', PORT: 3000 },\n      env_production: { NODE_ENV: 'production', PORT: 3000 },\n      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',\n      error_file: 'logs/error.log',\n      out_file: 'logs/out.log',\n      merge_logs: true,\n      autorestart: true,\n      restart_delay: 4000,\n      max_restarts: 10\n    }\n  ]\n};\nEOF\nelse\n  echo \"✓ ecosystem.config.js exists, kept\"\nfi\nmkdir -p logs",
-      "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES\nif top=$(git rev-parse --show-toplevel) && cd \"$top\" && test -d .oss/dev/active; then\n  if ! { test ! -L .oss && test ! -L .oss/dev && l=$(find .oss/dev -type l -print -quit) && test -z \"$l\" && test ! -L .oss/dev/active; }; then\n    echo \"NOT ARCHIVED: .oss, .oss/dev or something under .oss/dev is a symlink\"\n  else\n    find .oss/dev/active -mindepth 1 -maxdepth 1 -type d | while IFS= read -r found; do\n        F=$(basename \"$found\")\n        case \"$F\" in ''|.*|*[!A-Za-z0-9._-]*) continue ;; esac\n        src=\".oss/dev/active/$F\"\n        test -d \"$src\" && test ! -L \"$src\" || continue\n        progress_file=\"$src/PROGRESS.md\"\n        test -f \"$progress_file\" && test ! -L \"$progress_file\" || continue\n\n        # Completion indicators in PROGRESS.md (case-insensitive):\n        # - phase word ship, shipped, complete or completed\n        # - build (complete), build (completed) or build (ALL ... COMPLETE); not build (Phase 1 COMPLETE)\n        if grep -qiE \"^## Current Phase: *(shipped|ship|completed|complete)([^a-z]|$)\" \"$progress_file\" || \\\n           grep -qiE \"^## Current Phase: *build *\\((all ([a-z0-9]+ )*)?completed?([^a-z]|$)\" \"$progress_file\"; then\n            dest=\".oss/dev/completed/$F-$(date +%Y-%m-%d)\"\n            if mkdir -p .oss/dev/completed && test ! -L .oss/dev/completed && test ! -e \"$dest\" && test ! -L \"$dest\" && mv -n \"$src\" \"$dest\" && test ! -e \"$src\"; then\n                echo \"ARCHIVED $F\"\n            else\n                echo \"NOT ARCHIVED $F (destination exists or is a symlink)\"\n            fi\n        fi\n    done\n  fi\nfi",
+      "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES\nif top=$(git rev-parse --show-toplevel) && cd \"$top\" && test -d .oss/dev/active; then\n  if ! { test ! -L .oss && test ! -L .oss/dev && l=$(find .oss/dev -type l -print -quit) && test -z \"$l\" && test ! -L .oss/dev/active; }; then\n    echo \"NOT ARCHIVED: .oss, .oss/dev or something under .oss/dev is a symlink\"\n  else\n    candidates=\"\"\n    if ! test -e ~/.oss/hooks/oss-phase-result.sh && ! test -L ~/.oss/hooks/oss-phase-result.sh; then\n      echo \"NOT ARCHIVED: update the OSS plugin to archive by ship result, or move finished feature folders by hand\"\n    elif verdicts=$(~/.oss/hooks/oss-phase-result.sh check ship --all 2>/dev/null); rc=$?; [ \"$rc\" -ne 0 ]; then\n      echo \"NOT ARCHIVED: the ship result check failed (exit $rc)\"\n    else\n      none=$(find .oss/dev/active -mindepth 1 -maxdepth 1 -type d | while IFS= read -r found; do\n          test -e \"$found/results/ship.json\" || test -L \"$found/results/ship.json\" || printf ' %s' \"$(basename \"$found\")\"\n      done)\n      test -z \"$none\" || echo \"no phase result, move by hand:$none\"\n      candidates=$verdicts\n    fi\n    printf '%s\\n' \"$candidates\" | while read -r F verdict; do\n      test \"$verdict\" = ok || continue\n      case \"$F\" in ''|.*|*[!A-Za-z0-9._-]*) continue ;; esac\n      src=\"$top/.oss/dev/active/$F\"\n      test -d \"$src\" && test ! -L \"$src\" || continue\n      dest=\"$top/.oss/dev/completed/$F-$(date +%Y-%m-%d)\"\n      if mkdir -p \"$top/.oss/dev/completed\" && test ! -L \"$top/.oss/dev/completed\" && test ! -e \"$dest\" && test ! -L \"$dest\" && mv -n \"$src\" \"$dest\" && test ! -e \"$src\"; then\n          echo \"ARCHIVED $F\"\n      else\n          echo \"NOT ARCHIVED $F (destination exists or is a symlink)\"\n      fi\n    done\n  fi\nfi",
       "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES && top=$(git rev-parse --show-toplevel) && cd \"$top\" >/dev/null && V=\"$HOME/.oss/run\" && mkdir -p -m 700 \"$V\" && test ! -L \"$V\" && test -O \"$V\" && chmod 700 \"$V\" && { find \"$V\" -mindepth 2 -maxdepth 2 -type f -name '*.txt' -mtime +7 -delete; find \"$V\" -mindepth 1 -maxdepth 1 -type d -empty -mtime +1 -delete || true; } 2>/dev/null && G=\"$HOME/.oss/run/$(git rev-parse --absolute-git-dir | git hash-object --stdin | cut -c1-16)\" && mkdir -p -m 700 \"$G\" && test ! -L \"$G\" && test -O \"$G\" && chmod 700 \"$G\" && touch \"$G\" && p=$(CDPATH= cd -P -- \"$G\" >/dev/null && pwd -P) && rm -f \"$p/feature.txt\" \"$p/numbers.txt\" \"$p/date.txt\" \"$p/reason.txt\" \"$p/message.txt\" \"$p/hint.txt\" \"$p/error.txt\" && printf '%s\\n' \"$p\"",
       "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES; top=$(git rev-parse --show-toplevel) && cd \"$top\" && V=\"$HOME/.oss/run\" && test ! -L \"$V\" && test -O \"$V\" && G=\"$HOME/.oss/run/$(git rev-parse --absolute-git-dir | git hash-object --stdin | cut -c1-16)\" && test ! -L \"$G\" && test -O \"$G\" && test ! -L \"$G/feature.txt\" && test -f \"$G/feature.txt\" && F=$(cat \"$G/feature.txt\") && LC_ALL=C && case \"$F\" in ''|.*|*[!A-Za-z0-9._-]*) false ;; esac && d=\".oss/dev/active/$F\" && test ! -L .oss && test ! -L .oss/dev && test ! -L .oss/dev/active && test ! -L \"$d\" && mkdir -p ./.oss/dev/active && l=$(find .oss/dev -type l -print -quit) && test -z \"$l\" && mkdir -p \"$d\" && touch \"$d/PLAN.md\" \"$d/PROGRESS.md\" \"$d/DECISIONS.md\" \"$d/TESTING.md\" \"$d/NOTES.md\"",
       "~/.oss/hooks/oss-value.sh dir",

@@ -25,7 +25,7 @@
  * trap body, read like an eval script; and `exec -c`, read like `env -i`. `set -a` / `-o allexport` and
  * any function definition are refused too (Task 9); a lower-case plain variable, never exported, is not.
  * So are `alias`, `enable`, `disable`, a `hash` that sets a path, a key set in a zsh command map
- * (`aliases[x]=…`, `options[…]`), allexport in any spelling (`setopt ALL_EXPORT`, `shopt -os allexport`),
+ * (`aliases[k]=…`, `options[…]`), allexport in any spelling (`setopt ALL_EXPORT`, `shopt -os allexport`),
  * and a zsh array tied to an exported variable (`manpath`, `fpath`, …) (Task 13). Any `setopt`, `unsetopt`,
  * `emulate`, `set -A` / `+A`, or `set -o` / `+o` with an option the served commands don't use is refused,
  * and zsh's `noglob`, `nocorrect` and `-` are seen through (Task 15).
@@ -51,9 +51,10 @@ const PLUGIN_HOOK = /\$\{?CLAUDE_PLUGIN_ROOT\}?\/hooks\/[^/]/;
 const MOVERS = new Set(['HOME', 'PATH', 'path']);
 /** The variables a command may set on a hook call: exactly those OSS's served commands set there (a test pins them to the served fixture). */
 export const HOOK_CALL_VARIABLES: ReadonlySet<string> = new Set([
-  'CLAUDE_PROJECT_DIR', 'CREDS', 'HAS_PLAYWRIGHT', 'OSS_DIR', 'OSS_ICON_PNG', 'PLAYWRIGHT_RESULT', 'PLIST_PATH',
-  'PLUGIN_ROOT', 'SCRIPT_DIR', 'SETTINGS_FILE', 'SOUND', 'STATUSLINE_SCRIPT', 'STYLE', 'V', 'VERBOSITY', 'VERIFY',
-  'VOICE', 'WHY', 'd', 'encoding', 'o', 'top', 'version', 'w',
+  'CLAUDE_PROJECT_DIR', 'CREDS', 'F', 'HAS_PLAYWRIGHT', 'OSS_DIR', 'OSS_ICON_PNG', 'PLAYWRIGHT_RESULT',
+  'PLIST_PATH', 'PLUGIN_ROOT', 'SCRIPT_DIR', 'SETTINGS_FILE', 'SOUND', 'STATUSLINE_SCRIPT', 'STYLE', 'V', 'VERBOSITY',
+  'VERIFY', 'VOICE', 'WHY', 'candidates', 'd', 'dest', 'encoding', 'found', 'l', 'none', 'o', 'rc', 'src', 'top',
+  'verdict', 'verdicts', 'version', 'w',
 ]);
 /** A word that assigns a variable: `X=…`, `X+=…`, `X[i]=…`. */
 const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=/;
@@ -155,7 +156,8 @@ function setsUnlisted(words: string[]): boolean {
     const plain = name === undefined ? assigned : [...assigned, args[0] ?? ''];
     return plain.some((w) => (MAYBE_EXPORTED.test(variableOf(w)) || COMMAND_MAPS.test(variableOf(w))) && unlisted(w));
   }
-  const names = [...assigned];
+  // R-257 D39 (security L4): IFS only as a prefix to `read` (`while IFS= read -r found`), never on its own or elsewhere
+  const names = name === 'read' ? assigned.filter((w) => variableOf(w) !== 'IFS') : [...assigned];
   if (OPERAND_SETTERS.has(name)) names.push(...args.filter((a) => !a.startsWith('-')));
   else if (name === 'printf' || name === 'print') args.forEach((a, i) => (a === '-v' ? names.push(args[i + 1] ?? '') : /^-v./.test(a) && names.push(a.slice(2))));
   else if (name === 'mapfile' || name === 'readarray') names.push(...arrayOperands(args));

@@ -23,6 +23,7 @@ import * as https from 'https';
 import * as os from 'os';
 import * as path from 'path';
 import type { AddressInfo } from 'net';
+import { assemblePhaseResult, makeFeatureRepo, recordNodePath } from './helpers/phase-result-fixture';
 
 const run = promisify(execFile);
 
@@ -56,9 +57,29 @@ function count(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
 }
 
+/**
+ * OSS_TEST_PHASE_RESULT_CLI: a phase-result bundle built from src outside dist (fix rounds build dist once, at the end).
+ * When set, the hooks run with a sandbox plugin root under `tmp` that links the real hooks, schemas and watcher CLIs,
+ * with phase-result.cjs replaced by that bundle (as hooks/__tests__/phase-results.acceptance.test.sh does).
+ */
+function hookPluginRoot(tmp: string): string {
+  const bundle = process.env.OSS_TEST_PHASE_RESULT_CLI;
+  if (bundle === undefined || bundle === '') return pluginRoot;
+  const root = path.join(tmp, 'plugin');
+  const cli = path.join(root, 'watcher', 'dist', 'cli');
+  fs.mkdirSync(cli, { recursive: true });
+  fs.symlinkSync(path.join(pluginRoot, 'hooks'), path.join(root, 'hooks'));
+  fs.symlinkSync(path.join(pluginRoot, 'schemas'), path.join(root, 'schemas'));
+  const dist = path.join(pluginRoot, 'watcher', 'dist', 'cli');
+  for (const f of fs.readdirSync(dist)) if (f !== 'phase-result.cjs') fs.symlinkSync(path.join(dist, f), path.join(cli, f));
+  fs.symlinkSync(bundle, path.join(cli, 'phase-result.cjs'));
+  return root;
+}
+
 describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
   let tmp: string;
   let home: string;
+  let hookRoot: string;
   let server: https.Server | undefined;
   let port: number;
   const workflowRequests: string[] = [];
@@ -67,6 +88,8 @@ describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-ship-chain-'));
     home = path.join(tmp, 'home');
     fs.mkdirSync(path.join(home, '.oss'), { recursive: true });
+    recordNodePath(home);
+    hookRoot = hookPluginRoot(tmp);
 
     // Self-signed cert for the local API stand-in (chain-trigger only accepts https).
     const key = path.join(tmp, 'key.pem');
@@ -127,25 +150,36 @@ describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
     if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  /** A fresh project dir, so each run's workflow-state is its own. */
+  /**
+   * A fresh project dir, so each run's workflow-state is its own. ship complete needs a git repo on a ship branch
+   * with a valid ship result bound to the run (R-257 AC-001.1), so the project is one.
+   */
   function newProject(): string {
-    const dir = fs.mkdtempSync(path.join(home, 'proj-'));
-    fs.mkdirSync(path.join(dir, '.oss'));
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(home, 'proj-')));
+    makeFeatureRepo(dir, 'chain-feature', 'ship');
+    // ⚠ changes existing test: D40 — ship start snapshots refs/remotes/origin/*, and the ship base must be in that
+    //   snapshot. The wrapper's own `ship start` runs before the fixture, so the project has origin/main (at main, the
+    //   base) from the outset, as a real repo would.
+    execFileSync('git', ['update-ref', 'refs/remotes/origin/main', 'main'], { cwd: dir, stdio: 'ignore' });
     return dir;
   }
 
-  async function notify(project: string, event: string, context: string): Promise<string> {
-    const env: NodeJS.ProcessEnv = {
+  function hookEnv(project: string): NodeJS.ProcessEnv {
+    return {
       PATH: process.env.PATH,
       USER: process.env.USER,
       TMPDIR: process.env.TMPDIR,
       HOME: home,
-      CLAUDE_PLUGIN_ROOT: pluginRoot,
+      CLAUDE_PLUGIN_ROOT: hookRoot,
       CLAUDE_PROJECT_DIR: project,
       NODE_TLS_REJECT_UNAUTHORIZED: '0',
       NODE_NO_WARNINGS: '1',
       OSS_SKIP_WATCHER: '1',
     };
+  }
+
+  async function notify(project: string, event: string, context: string): Promise<string> {
+    const env = hookEnv(project);
     const { stdout } = await run('/bin/bash', [notifyScript, '--workflow', 'ship', event, context], {
       env,
       cwd: project,
@@ -158,6 +192,8 @@ describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
     const project = newProject();
     const outputs: Array<{ event: string; stdout: string }> = [];
     for (const { event, context } of events) {
+      // The ship's work (commit, review gates, assembled result) happens between its start and its complete.
+      if (event === 'complete') assemblePhaseResult('ship', project, hookEnv(project), true);
       outputs.push({ event, stdout: await notify(project, event, context) });
     }
     const state = JSON.parse(fs.readFileSync(path.join(project, '.oss', 'workflow-state.json'), 'utf8'));
@@ -171,6 +207,7 @@ describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
    */
   it('control: oss-notify.sh prints one chain block for ship complete, none for ship merged', async () => {
     const project = newProject();
+    assemblePhaseResult('ship', project, hookEnv(project));
     const completeOut = await notify(project, 'complete', '{}');
     const mergedOut = await notify(project, 'merged', '{}');
 
@@ -210,4 +247,164 @@ describe('/oss:ship wrapper fires the team ship chain exactly once', () => {
     // merged resets the chain state; DONE must survive it, so it has to be set after merged.
     expect(state.workflowComplete).toBe(true);
   }, 240000);
+});
+
+/**
+ * @behavior When the assembled ship result is blocked only because upstream changed a file the feature changes (D71),
+ *           /oss:ship asks the person, per such gate, `Fix it` or `Override <gate>`, and records an override only when
+ *           the person picks it (D70, D74).
+ * @business-rule An override is the person's call, never the model's: the option is never Recommended, overrides.json is
+ *           written only after that pick with the `{finding, decisionId, gate}` shape the code verifies, and no value the
+ *           model writes ever goes into a shell command.
+ * @boundary commands/ship.md (wrapper text, Step 8 "Assemble the phase result").
+ */
+describe('/oss:ship wrapper offers the D70 override only through the person\'s pick (D74)', () => {
+  const text = fs.readFileSync(shipWrapper, 'utf8');
+  const step = text.split('### Assemble the phase result')[1]?.split('Then send `complete`')[0] ?? '';
+
+  it('asks one picker per gate whose blocker is the D71 text, labelled `Override <gate>`', () => {
+    expect(step).toContain('upstream changed a file this feature changes');
+    expect(step).toMatch(/one AskUserQuestion per such gate/);
+    expect(step).toContain('`Override <gate>`');
+    expect(step).toMatch(/`security`, `performance`, `code-review` or `pen-test`/);
+  });
+
+  it('puts `Fix it` first and never marks the override Recommended', () => {
+    expect(step).toMatch(/`Fix it` first, then exactly `Override <gate>`/);
+    expect(step).not.toMatch(/Override <gate>[^`\n]*\(Recommended\)/);
+    expect(step).toMatch(/never mark `Override <gate>` \(Recommended\)/);
+  });
+
+  it('writes overrides.json only after that pick, with the {finding, decisionId, gate} shape', () => {
+    const shape = '[{"finding": "<one line>", "decisionId": "<id>", "gate": "<gate>"}]';
+    expect(step).toContain(shape);
+    const pick = step.indexOf('Only if the person picks `Override <gate>`');
+    expect(pick).toBeGreaterThan(-1);
+    expect(step.indexOf(shape)).toBeGreaterThan(pick);
+    expect(step).toMatch(/Never write `overrides\.json` for any other blocker or without that pick/);
+    // The decision id is read from the hook's record, never made up.
+    expect(step).toMatch(/newest record in `decisions\.ndjson` whose `command` is `ship` and whose `choice` is exactly `Override <gate>`/);
+  });
+
+  // ⚠ changes existing test: D79 (Step 8 text: a fixed `sleep 1` between re-reads) and D78 (the fixed record command)
+  it('puts no value in a shell command: the only commands are the fixed value-dir, assemble, sleep and record calls', () => {
+    const blocks = [...step.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1].trim());
+    expect(blocks).toEqual(['~/.oss/hooks/oss-phase-result.sh assemble ship', 'sleep 1', '~/.oss/hooks/oss-phase-result.sh check ship --record-ready']);
+    const inline = [...step.matchAll(/`(~\/\.oss\/[^`]*)`/g)].map((m) => m[1]);
+    for (const c of inline) {
+      expect(['~/.oss/hooks/oss-value.sh dir', '~/.oss/hooks/oss-phase-result.sh assemble ship', '~/.oss/hooks/oss-phase-result.sh check ship --record-ready']).toContain(c);
+    }
+    expect(step).toMatch(/Never put any of this content \(or the decision id\) into a command/);
+  });
+
+  it('documents no stale {finding, decisionId} shape anywhere', () => {
+    expect(text).not.toContain('{"finding", "decisionId"}');
+    for (const m of text.matchAll(/"finding"[^\]\n]*?"decisionId"[^\]\n]*/g)) expect(m[0]).toContain('"gate"');
+  });
+});
+
+/**
+ * @behavior With `/oss:ship --merge`, the ship result is assembled, and any `Override <gate>` picker asked, before the PR
+ *           is merged; a blocked result stops the merge, and only `merged` then `complete` follow the merge (D75).
+ * @business-rule `merged` resets the workflow state, so a pick asked after it is recorded with command "" and never counts
+ *           as a ship `Override <gate>` pick (D70); the merge must also never land a ship the code holds blocked.
+ * @boundary commands/ship.md (wrapper text: "Optional: Merge" and Step 8).
+ */
+describe('/oss:ship --merge assembles and asks the override picker before merging (D75)', () => {
+  const text = fs.readFileSync(shipWrapper, 'utf8');
+  const mergeSection = text.split('### Optional: Merge')[1]?.split('\n## ')[0] ?? '';
+
+  it('the merge instructions run the assemble (and its override picker) before the merge', () => {
+    const assemble = mergeSection.indexOf('"Assemble the phase result"');
+    expect(assemble).toBeGreaterThan(-1);
+    expect(mergeSection).toMatch(/override picker/);
+    const merge = mergeSection.search(/Only then merge the PR/);
+    expect(merge).toBeGreaterThan(assemble);
+  });
+
+  it('says not to merge while the ship result is blocked or the assemble fails', () => {
+    expect(mergeSection).toMatch(/Do not merge while the assemble fails or its `verdict` is `blocked`/);
+  });
+
+  it('no `merged` comes before the override pick, and only `merged` then `complete` come after the merge', () => {
+    const firstMerged = text.indexOf('~/.oss/hooks/oss-notify.sh --workflow ship merged');
+    const pick = text.indexOf('Only if the person picks `Override <gate>`');
+    expect(pick).toBeGreaterThan(-1);
+    expect(firstMerged).toBeGreaterThan(pick);
+    expect(mergeSection).toMatch(/After the merge lands, send only `merged` then `complete`/);
+  });
+});
+
+/**
+ * @behavior When the person answers `Fix it` for some gates and `Override <gate>` for others, the fixes come first and the
+ *           overrides are written by the final assemble, so a `Fix it` re-run never drops an override already chosen.
+ *           The decision id comes from a record answered at or after the picker was asked, waiting a bounded number of
+ *           re-reads for the hook (pen I1, code-review info, gate round 12).
+ * @business-rule overrides.json lives in the value folder, which `oss-value.sh dir` resets (D70); a decision record from
+ *           an earlier pick must never stand in for the person's new answer.
+ * @boundary commands/ship.md (wrapper text, Step 8 "Assemble the phase result").
+ */
+describe('/oss:ship Step 8 handles mixed answers and waits for the new decision record (gate round 12)', () => {
+  const text = fs.readFileSync(shipWrapper, 'utf8');
+  const step = text.split('### Assemble the phase result')[1]?.split('Then send `complete`')[0] ?? '';
+
+  it('handles every `Fix it` gate first, then writes the overrides as the final assemble', () => {
+    const fixFirst = step.search(/Handle every `Fix it` gate first/);
+    const overrides = step.indexOf('Only if the person picks `Override <gate>`');
+    expect(fixFirst).toBeGreaterThan(-1);
+    expect(overrides).toBeGreaterThan(fixFirst);
+    expect(step).toMatch(/as the final assemble, so a `Fix it` re-run never deletes an override already chosen/);
+  });
+
+  // ⚠ changes existing test: D79 (gate round 13 infos) — no answeredAt time comparison; a record counts only when it is
+  //   new since the pre-picker read (line offset), with one fixed `sleep 1` between at most 5 re-reads
+  it('uses only a decision record new since the pre-picker read (a line offset), re-reading a bounded number of times', () => {
+    expect(step).not.toMatch(/answeredAt/);
+    expect(step).toMatch(/note the number of its last line/);
+    expect(step).toMatch(/Read it from the line after that number \(the Read tool's `offset`\)/);
+    expect(step).toMatch(/run `sleep 1` once \(the fixed Bash call below\), then read the file again from the same line, at most 5 times/);
+    expect(step).toMatch(/still none, do not write `overrides\.json`/);
+  });
+
+  it('does not ask again for a gate already answered `Override <gate>` in this run after a `Fix it` re-run', () => {
+    expect(step).toMatch(/A gate already answered `Override <gate>` in this run is not asked again/);
+  });
+
+  it('a `Fix it` after the PR exists: commit and push the fix, then run /oss:ship again from the start, never on to the merge', () => {
+    expect(step).toMatch(/If the PR already exists, a `Fix it` means: commit and push the fix, then run `\/oss:ship` again from the start; do not go on to the merge/);
+  });
+});
+
+/**
+ * @behavior With `/oss:ship --merge` (or a merge the person asked for in chat), Step 8 records the ready ship result
+ *           for the checked head with one fixed command right after the assemble and override step, so the plugin's
+ *           merge test can refuse a head no ready result covers (D78).
+ * @business-rule A blocked ship can never merge in code, not only in wording; no model value goes into the command.
+ * @boundary commands/ship.md (wrapper text: Step 8 and "Optional: Merge").
+ */
+describe('/oss:ship --merge records the ready result before merging (D78)', () => {
+  const text = fs.readFileSync(shipWrapper, 'utf8');
+  const step = text.split('### Assemble the phase result')[1]?.split('Then send `complete`')[0] ?? '';
+  const mergeSection = text.split('### Optional: Merge')[1]?.split('\n## ')[0] ?? '';
+  const RECORD = '~/.oss/hooks/oss-phase-result.sh check ship --record-ready';
+
+  it('Step 8 runs the fixed record command after the assemble and the override step, only before a merge', () => {
+    const record = step.indexOf(RECORD);
+    expect(record).toBeGreaterThan(step.indexOf('Only if the person picks `Override <gate>`'));
+    expect(step).toMatch(/Before a merge \(`--merge`, or a merge the person asked for in chat\)/);
+    expect(step).toMatch(/prints `READY_RECORDED`/);
+    expect(step).toMatch(/Without a merge in this session, skip it/);
+  });
+
+  it('the merge section runs the record step before the merge and stops when it does not print READY_RECORDED', () => {
+    expect(mergeSection).toContain('READY_RECORDED');
+    expect(mergeSection.indexOf('READY_RECORDED')).toBeLessThan(mergeSection.search(/Only then merge the PR/));
+    expect(mergeSection).toMatch(/the plugin's merge test refuses a head no recorded ready result covers/);
+  });
+
+  it('a code change after the check, updating the branch from main included, means /oss:ship again, with no new gate reviews (D83 info d, D58)', () => {
+    expect(step).toMatch(/any other commit needs `\/oss:ship` again from the start/);
+    expect(step).toMatch(/[Uu]pdating the branch from main .*counts too/);
+    expect(step).toMatch(/no new gate reviews/);
+  });
 });

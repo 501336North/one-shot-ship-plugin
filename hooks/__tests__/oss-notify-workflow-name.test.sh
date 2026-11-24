@@ -52,10 +52,37 @@ for name in 'build/../ship' 'Build' '../x' 'build;ship' '-ship' "$(printf 'a%.0s
     rm -rf "$T"
 done
 
-# 2. Controls: ordinary names still log, update state and fire the chain.
-for name in build ship custom-cmd2; do
+# 2. Controls: ordinary names still log, update state and fire the chain. build and ship complete only with a valid
+#    assembled result (R-257 AC-001.1, AC-001.3): their sandbox runs the real CLIs, assembles the result first, and its
+#    node records every call before running it (chain-trigger is an empty file, so nothing reaches a network).
+# shellcheck source=lib/phase-result-fixture.sh
+source "$ROOT/hooks/__tests__/lib/phase-result-fixture.sh"
+REAL_NODE=$(command -v node)
+# T26 (D21): the phase-result check runs on the node recorded in ~/.oss/node-path (the real one, resolved: outside temp
+# folders), through the plugin's own hooks/oss-node.sh (a regular file, not a link).
+RECORDED_NODE="$(node -p 'require("fs").realpathSync(process.execPath)')"
+sandbox_result() { # <phase>: sandbox plus a git repo on feat/wn-feature/build and the real watcher CLIs
     sandbox
-    run_notify --workflow "$name" complete >/dev/null 2>&1; rc=$?
+    rm -f "$T/plugin/watcher/dist/cli/update-workflow-state.js" "$T/plugin/watcher/dist/cli/chain-trigger.cjs"
+    for f in "$ROOT"/watcher/dist/cli/*; do [[ "${f##*/}" == chain-trigger.* ]] || ln -s "$f" "$T/plugin/watcher/dist/cli/"; done
+    : > "$T/plugin/watcher/dist/cli/chain-trigger.cjs"
+    printf '#!/bin/bash\necho "$*" >> "%s"\nexec "%s" "$@"\n' "$T/node.calls" "$REAL_NODE" > "$T/bin/node"
+    cp "$ROOT/hooks/oss-node.sh" "$T/plugin/hooks/oss-node.sh"
+    printf '%s\n' "$RECORDED_NODE" > "$T/home/.oss/node-path"
+    # D25: CLAUDE_PLUGIN_ROOT counts only as the plugin ~/.oss/plugin-root names (mode 600, as session-start writes it),
+    # and oss-node.sh comes only from ~/.oss/hooks
+    printf '%s\n' "$T/plugin" > "$T/home/.oss/plugin-root"; chmod 600 "$T/home/.oss/plugin-root"
+    mkdir -p "$T/home/.oss/hooks"; cp "$ROOT/hooks/oss-node.sh" "$T/home/.oss/hooks/oss-node.sh"
+    mkdir -p "$T/repo"; PRF_REPO="$T/repo"
+    ( cd "$T/repo" && git init -q -b main && git config user.email t@example.invalid && git config user.name t \
+        && git commit -q --allow-empty -m base && git checkout -q -b feat/wn-feature/build \
+        && mkdir -p .oss/dev/active/wn-feature )
+    "prf_$1" && rm -f "$T/node.calls" "$T/log.calls"
+}
+envrun() { (cd "$T/repo" && HOME="$T/home" CLAUDE_PLUGIN_ROOT="$T/plugin" CLAUDE_PROJECT_DIR="$T/repo" PATH="$T/bin:$PATH" "$@" </dev/null); }
+for name in build ship custom-cmd2; do
+    if [[ "$name" == custom-cmd2 ]]; then sandbox; run_notify --workflow "$name" complete >/dev/null 2>&1; rc=$?
+    else sandbox_result "$name"; envrun "$SH" "$ROOT/hooks/oss-notify.sh" --workflow "$name" complete >/dev/null 2>&1; rc=$?; fi
     if [[ $rc -eq 0 ]] && grep -q "^write $name \[complete\]" "$T/log.calls" 2>/dev/null \
        && grep -q "chain-trigger.cjs --workflow $name\$" "$T/node.calls" 2>/dev/null; then
         pass "valid workflow name '$name' still logs and fires its chain"

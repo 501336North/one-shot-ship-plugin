@@ -33,6 +33,22 @@
 # target for a link between check and write (reproduced in the 2.0.87 pen test). Committed repo
 # content cannot: it needs a live local process. See DECISIONS.md and FOLLOWUPS (G17).
 
+# The programs the gates reach here come from fixed paths, never PATH (R-257 ship round 3, pen MEDIUM N3): a fake git
+# early on PATH could name another feature's branch. This file is sourced on its own, so it sets its own, and always
+# (a caller's exported variable never chooses them). git follows oss-phase-result.sh's list (D33: the Homebrew
+# fallbacks are accepted at the recorded node's trust level). The SessionStart pointer helpers below are not on a
+# gate path and are unchanged. cd and pwd -P are builtins; oss_project_walk runs no process at all.
+_oss_sp_bin() { # <var> <path...>: the first that exists, else the bare name
+    local v="$1" p
+    shift
+    for p in "$@"; do if [[ -f "$p" && -x "$p" ]]; then printf -v "$v" '%s' "$p"; return 0; fi; done
+    printf -v "$v" '%s' "${1##*/}"
+}
+_oss_sp_bin _OSS_SP_GIT /usr/bin/git /opt/homebrew/bin/git /usr/local/bin/git /bin/git
+_oss_sp_bin _OSS_SP_LS /bin/ls /usr/bin/ls
+_oss_sp_bin _OSS_SP_MKDIR /bin/mkdir /usr/bin/mkdir
+_oss_sp_bin _OSS_SP_FIND /usr/bin/find /bin/find
+
 # <dir> -> _OSS_PD, its physical path; a trailing newline is kept ($(pwd -P) alone drops it, R2-5)
 _oss_phys_dir() { _OSS_PD=$(cd -P -- "$1" 2>/dev/null && pwd -P && echo .) || { _OSS_PD=""; return 1; }; _OSS_PD="${_OSS_PD%$'\n.'}"; }
 # G9: the project and $HOME are resolved once per process (each resolution is a subshell).
@@ -43,14 +59,14 @@ _oss_phys_cached() { # <path> -> _OSS_PHYS (no subshell, so the cache survives)
     _oss_phys_dir "$1" && _OSS_PHYS="$_OSS_PD" && [[ -n "$_OSS_PHYS" ]] || return 1
     _OSS_PC_K2="$_OSS_PC_K1"; _OSS_PC_V2="$_OSS_PC_V1"; _OSS_PC_K1="$1"; _OSS_PC_V1="$_OSS_PHYS"
 }
-_oss_uid_of() { local m l o r; read -r m l o r < <(ls -ldn -- "$1" 2>/dev/null) && echo "$o"; }
+_oss_uid_of() { local m l o r; read -r m l o r < <("$_OSS_SP_LS" -ldn -- "$1" 2>/dev/null) && echo "$o"; }
 # N2-2 (narrowed G3): a component is acceptable when owned by the current user, OR when the
 # physical project root is owned by uid 0 (root-in-container / root-owned bind mount) AND the
 # component is neither group- nor other-writable.
 _oss_owned_ok() { # <path> <project-real>
     [[ -O "$1" ]] && return 0
     [[ "$(_oss_uid_of "$2")" == 0 ]] || return 1
-    local m l o r; read -r m l o r < <(ls -ldn -- "$1" 2>/dev/null) || return 1
+    local m l o r; read -r m l o r < <("$_OSS_SP_LS" -ldn -- "$1" 2>/dev/null) || return 1
     [[ "${m:5:1}" != w && "${m:8:1}" != w ]]
 }
 
@@ -64,7 +80,7 @@ oss_safe_mkdir() {
     [[ -n "$real" ]] || return 1
     home=""; _oss_phys_cached "${HOME:-/nonexistent}" && home="$_OSS_PHYS"
     if [[ -n "$home" && "$real" == "$home" ]]; then
-        mkdir -p -- "$real/$rel" 2>/dev/null || return 1
+        "$_OSS_SP_MKDIR" -p -- "$real/$rel" 2>/dev/null || return 1
         _OSS_SAFE_DIR="$real/$rel"; _OSS_SAFE_HOME=1
         return 0
     fi
@@ -75,7 +91,7 @@ oss_safe_mkdir() {
         [[ -z "$comp" || "$comp" == "." ]] && continue
         [[ "$comp" == ".." ]] && return 1
         cur="$cur/$comp"
-        [[ -e "$cur" || -L "$cur" ]] || mkdir -- "$cur" 2>/dev/null || true
+        [[ -e "$cur" || -L "$cur" ]] || "$_OSS_SP_MKDIR" -- "$cur" 2>/dev/null || true
         [[ ! -L "$cur" && -d "$cur" ]] && _oss_owned_ok "$cur" "$real" || return 1
     done
     _oss_phys_dir "$cur" || return 1; phys="$_OSS_PD"
@@ -100,7 +116,7 @@ oss_safe_target() {
 oss_single_link() {
     [[ -L "$1" ]] && return 1
     [[ -e "$1" ]] || return 0
-    [[ -f "$1" && -n "$(find "$1" -prune -type f -links 1 2>/dev/null)" ]]
+    [[ -f "$1" && -n "$("$_OSS_SP_FIND" "$1" -prune -type f -links 1 2>/dev/null)" ]]
 }
 
 oss_refuse_unsafe() { echo "oss: refusing unsafe .oss path ${1:-}" >&2; }
@@ -158,7 +174,7 @@ oss_resolve_feature() { # <project> -> _OSS_FEATURE ("" = unfiled)
     local proj="${1:-}" branch feature="" active fg=""
     local name_re='^[A-Za-z0-9_-][A-Za-z0-9._-]*$' branch_re='^[^/]+/([^/]+)/[^/]'
     # this project's own branch: git variables inherited from the session could point at another repo
-    branch=$(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; cd "$proj" 2>/dev/null && git symbolic-ref -q HEAD 2>/dev/null)
+    branch=$(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; cd "$proj" 2>/dev/null && "$_OSS_SP_GIT" symbolic-ref -q HEAD 2>/dev/null)
     # the full ref, never --short: a tag of the same name makes --short print heads/<branch> (ship gate S1)
     if [[ "$branch" == refs/heads/* ]]; then branch=${branch#refs/heads/}; else branch=""; fi
     [[ "$branch" =~ $branch_re ]] && feature=${BASH_REMATCH[1]}

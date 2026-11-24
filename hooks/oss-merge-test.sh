@@ -139,11 +139,75 @@ _gc=(-c core.fsmonitor=false -c protocol.allow=never -c protocol.file.allow=alwa
 _gd=
 git() { if [[ -n $_gd ]]; then (cd / && exec /usr/bin/env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" GIT_DIR="$_gd" "${_ga[@]}" git "${_gc[@]}" "$@"); else /usr/bin/env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" "${_ga[@]}" git "${_gc[@]}" "$@"; fi; }
 gitf() { (cd / && exec /usr/bin/env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" GIT_DIR="$_gd" "${_ga[@]}" "${_gt[@]}" git "${_gc[@]}" "$@"); }
+# D78 (user pick 2026-11-23, "Pre-merge check row"): the merge is tested only for a head a ready ship result covers.
+# /oss:ship Step 8 records it (`oss-phase-result.sh check ship --record-ready`): the last row of the run's ledger file
+# merge/ready (~/.oss/ledger/<key>, key as watcher/src/phase-results/ledger.ts ledgerKey: toplevel and git dir), from
+# this ship run (its startedAt is run/ship's last). It covers the head being merged when that is the row's head, or
+# descends from it with only paths under .oss/ changed after it (the archive commit and build report; every commit,
+# merges against each parent), and while the row still names the bound ship result (D83). merge-ready.ts mergedReady,
+# which `complete` runs after the merge, reads these rows the same way (ledger.ts lastRow) and applies the same
+# coverage rule.
+# _lr picks a file's last row as ledger.ts lastRow does (D83, code review L2): the last line of its last 4096 bytes
+# that is a whole JSON object (the ledger writes flat objects: string, number, true, false or null values), skipping
+# the first line when the tail starts mid-file, so a torn last line gives the row before it in both readers.
+_js='"([^"\\]|\\.)*"'; _jv="($_js|-?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?|true|false|null)"; _jo="^\{($_js:$_jv(,$_js:$_jv)*)?\}\$"
+_lr() { # <file>: _l = that row; fails when there is none, or the file is missing, not a regular file, a link or not the user's
+    _l=; [[ -f $1 && ! -L $1 && -O $1 ]] || return 1
+    _n=$(/usr/bin/wc -c < "$1") && _t=$(/usr/bin/tail -c 4096 -- "$1") || return 1
+    if [[ ${_n//[[:space:]]/} -gt 4096 ]]; then if [[ $_t == *$'\n'* ]]; then _t=${_t#*$'\n'}; else _t=; fi; fi
+    while IFS= read -r _y || [[ -n $_y ]]; do [[ $_y =~ $_jo ]] && _l=$_y; done <<< "$_t"
+    [[ -n $_l ]]
+}
+_oo() { # <from> <to> <scratch file>: 0 when <to> is <from>, or descends from it with only .oss/ paths changed after it
+    # D83 (security finding 2, pen L2/L3): no signature lines, and merges diffed against each parent, whatever the
+    # user's log.showSignature or log.diffMerges say
+    [[ $1 == "$2" ]] && return 0
+    git merge-base --is-ancestor "$1" "$2" && git log --no-renames --no-show-signature --diff-merges=separate --format= --name-only -z "$1..$2" >| "$3" || return 1
+    while IFS= read -r -d '' _y || [[ -n $_y ]]; do [[ -z $_y || $_y == .oss/* ]] || return 1; done < "$3"
+}
+_tr='^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\.([0-9]{1,9}))?Z$'
+_tm() { # <UTC ISO time> -> _u: it with nine fraction digits, so two times compare as strings; fails on any other form
+    [[ $1 =~ $_tr ]] || return 1
+    _u=${BASH_REMATCH[3]}000000000; _u=${BASH_REMATCH[1]}.${_u:0:9}
+}
+_mg() { # <toplevel> <head> <run folder>
+    _k=$(printf '%s\n%s\n' "$1" "$_gd" | git hash-object --stdin | cut -c1-16) && [[ ${#_k} == 16 ]] || return 1
+    _lr "$HOME/.oss/ledger/$_k/merge/ready" || return 1; _r=$_l
+    _lr "$HOME/.oss/ledger/$_k/run/ship" || return 1
+    _re='"startedAt":"([^"\\]+)"'
+    [[ $_l =~ $_re ]] || return 1; _a=${BASH_REMATCH[1]}
+    [[ $_r =~ $_re && ${BASH_REMATCH[1]} == "$_a" ]] || return 1
+    # D85 info d: as merge-ready.ts, the row was recorded at or after the run's start
+    _re='"at":"([^"\\]+)"'
+    [[ $_r =~ $_re ]] && _tm "${BASH_REMATCH[1]}" && _u1=$_u && _tm "$_a" && [[ ! $_u1 < $_u ]] || return 1
+    # D83 (security low): the row still names the bound ship result (the last results/<feature>/ship row's sha256), so
+    # a result re-assembled as blocked at the same head no longer passes
+    _re='"feature":"([A-Za-z0-9_-][A-Za-z0-9._-]*)"'
+    [[ $_r =~ $_re ]] || return 1
+    _lr "$HOME/.oss/ledger/$_k/results/${BASH_REMATCH[1]}/ship" || return 1
+    _re='"sha256":"([0-9a-f]{64})"'
+    [[ $_l =~ $_re ]] || return 1; _s=${BASH_REMATCH[1]}
+    [[ $_r =~ $_re && ${BASH_REMATCH[1]} == "$_s" ]] || return 1
+    _re='"headSha":"([0-9a-f]{40}([0-9a-f]{24})?)"'
+    [[ $_r =~ $_re ]] || return 1
+    _oo "${BASH_REMATCH[1]}" "$2" "$3/oo.$$"; _e=$?; rm -f "$3/oo.$$"; return "$_e"
+}
+# D83 (code review M1): what this run tested, as a ledger row bound to the ship run (_mg's key and startedAt), since
+# served Step 10 removes the run folder's head.txt and tested.txt before `complete` reads them (merge-ready.ts
+# mergedReady). Appended to merge/tested as oss-notify.sh appends run rows: folders 700 and not links, the file the
+# user's (600) or new, one append.
+_mt() { # <head> <main>
+    _f=$HOME/.oss
+    for _c in ledger "$_k" merge; do _f=$_f/$_c; [[ -e $_f || -L $_f ]] || mkdir -m 700 "$_f" || return 1; [[ -d $_f && ! -L $_f && -O $_f ]] || return 1; done
+    _f=$_f/tested; [[ ! -e $_f && ! -L $_f ]] || [[ -f $_f && ! -L $_f && -O $_f ]] || return 1
+    (umask 077; printf '{"startedAt":"%s","head":"%s","main":"%s","at":"%s"}\n' "$_a" "$1" "$2" "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$_f")
+}
 G=
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES && top=$(git rev-parse --show-toplevel) && cd "$top" >/dev/null && _gd=$(git rev-parse --absolute-git-dir) && V="$HOME/.oss/run" && mkdir -p -m 700 "$V" && test ! -L "$V" && test -O "$V" && chmod 700 "$V" && { find "$V" -mindepth 2 -maxdepth 2 -type f -name '*.txt' -mtime +7 -delete; find "$V" -mindepth 1 -maxdepth 1 -type d -empty -mtime +1 -delete || true; } 2>/dev/null && G="$HOME/.oss/run/$(git rev-parse --absolute-git-dir | git hash-object --stdin | cut -c1-16)" && mkdir -p -m 700 "$G" && test ! -L "$G" && test -O "$G" && chmod 700 "$G" && touch "$G" && rm -f "$G/branch.txt" "$G/tested.txt" && b=$(git symbolic-ref -q HEAD) && case "$b" in refs/heads/*) b=${b#refs/heads/} ;; *) false ;; esac && lc=$(printf %s "$b" | LC_ALL=C tr A-Z a-z) && case "$lc" in ''|head|main|master) false ;; esac && case "$b" in @|heads/*|refs/*|[-+]*) false ;; esac && test "$(git check-ref-format --branch "$b")" = "$b" && test "$(git for-each-ref --format='%(refname)' "refs/heads/$b")" = "refs/heads/$b" && printf '%s\n' "$b" >| "$G/branch.txt" && echo BRANCH_RECORDED &&
 S() { printf 'STOP: %s\n' "$*" >&2; return 1; } && unset GH_REPO GH_HOST && { find "$G" -mindepth 1 -maxdepth 1 -type d -name 't.[1-9]*' ! -name '*[!A-Za-z0-9.]*' -mmin +240 | while IFS= read -r d; do p=${d#"$G"/t.}; p=${p%%.*}; case "$d" in "$G"/t.*) ;; *) continue ;; esac; case "$p" in ''|*[!0-9]*) continue ;; esac; kill -0 "$p" || rm -rf "$d"; done || true; } 2>/dev/null && g=$(git rev-parse --git-path info/grafts) && { test ! -e "$g" && test ! -L "$g" && test "$(git rev-parse --is-shallow-repository)" = false || { S 'this repo is shallow or has .git/info/grafts; nothing was tested or merged. Fix that, then run this step again from item 2.'; }; } &&
 h=$(git rev-parse --verify "refs/heads/$b") &&
 rm -f "$G/head.txt" && printf '%s\n' "$h" >| "$G/head.txt" &&
+{ _mg "$top" "$h" "$G" || { S 'no ready ship result is recorded for this head: none from this /oss:ship run, or code (outside .oss/) changed after it was checked; nothing was tested or merged. Run /oss:ship Step 8 at the PR head (assemble ship, then ~/.oss/hooks/oss-phase-result.sh check ship --record-ready); if code changed after the check, run /oss:ship again from the start (updating the branch from main counts too; the re-run needs no new gate reviews).'; }; } &&
 { o=$(git config --get-all remote.origin.url) && R=${o#*github.com[/:]} && case "$o" in https://github.com/"$R"|git@github.com:"$R"|ssh://git@github.com/"$R") ;; *) false ;; esac && R=${R%.git} && case "$R" in */*/*|[.-]*|*/[.-]*|*[!A-Za-z0-9/._-]*) false ;; ?*/?*) ;; *) false ;; esac || { S 'origin is not one github.com repository URL; nothing was merged. Fix it, then run this step again from item 2.'; }; } &&
 { m=$(cd / && command gh api "repos/$R/git/ref/heads/main" --jq .object.sha 2>/dev/null) && git -c core.hooksPath=/dev/null update-ref --no-deref -d refs/oss/main && gitf -c core.hooksPath=/dev/null fetch -q --no-tags --no-recurse-submodules origin +refs/heads/main:refs/oss/main && test "$(git rev-parse --verify refs/oss/main)" = "$m" || { S 'main on GitHub could not be read, or origin did not fetch it; nothing was tested or merged. Run this step again from item 2.'; }; } &&
 set -- && for v in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy SSH_AUTH_SOCK LANG NODE_EXTRA_CA_CERTS; do if x=$(command printenv "$v"); then set -- "$@" "$v=$x"; fi; done &&
@@ -155,6 +219,7 @@ c=$(git -c user.name=oss -c user.email=oss@localhost commit-tree "$r" -p "$3" -p
 { ss=$(sed -n "s/^[[:space:]]*script-shell[[:space:]]*=[[:space:]]*//p" .npmrc 2>/dev/null | tail -n 1 | tr -d "\r" | sed "s/[[:space:]]*\$//"); case "$ss" in /bin/sh|/bin/bash|/bin/zsh|/usr/bin/bash|/usr/bin/zsh|/usr/local/bin/bash|/opt/homebrew/bin/bash) npm_config_script_shell=$ss ;; esac; :; } &&
 { npm ci && npm run build --if-present && npm test || S "npm ci, the build or the tests failed; nothing was merged. They saw only PATH, HOME, TMPDIR and any set proxy, SSH_AUTH_SOCK, LANG or NODE_EXTRA_CA_CERTS variable; npm ignored any .npmrc node-options and ran scripts with /bin/sh unless .npmrc names a standard shell. If the fix needs new commits, run /oss:ship again from the start."; }' sh "$top" "$t" "$m" "$h"; e=$?; rm -rf "$t"; test "$e" = 0; } &&
 printf 'v2 %s %s\n' "$h" "$m" >| "$G/tested.txt" &&
+{ _mt "$h" "$m" || S 'the tested head could not be recorded in the run ledger (~/.oss/ledger); nothing was merged. Run this step again from item 2.'; } &&
 echo READY_TO_MERGE || {
 # Any failure leaves no tested.txt, not even one the tests or a repo command wrote after the one removed above.
 [[ -n $G ]] && rm -f "$G/tested.txt"; exit 1; }

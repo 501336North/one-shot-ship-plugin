@@ -1,0 +1,431 @@
+/**
+ * @behavior After an honest `/oss:ship --merge`, `complete` passes on the merged repo even though the feature folder is
+ *           archived and the served merge step's run folder was cleaned up: the run's `merge/ready` row (what was
+ *           checked) and `merge/tested` row (what the merge gate tested) stand in for the archived ship result, and
+ *           GitHub (one `gh` call) must show that pull request MERGED at the tested head. Any sign that what merged is not
+ *           what was checked refuses, and a refusal says which cause it was, so the hint fits.
+ * @business-rule D78 (a blocked ship cannot pass complete), D83 (code review M1/L2, security low, info c):
+ *           - the rows belong to this ship run (same startedAt) and the ready row still names the bound result;
+ *           - only `.oss/` paths change after the checked head (every merge against each parent, whatever the user's
+ *             log settings say);
+ *           - all of mergedReady's git and gh calls share one deadline inside complete's 15 s bound, from a budget the
+ *             CLI starts in main() (D85 info e);
+ *           D85: the completed folder whose result hashes to the ready row counts (an older archive does not block).
+ *           D86 (owner pick "Ask GitHub"): on main and on the feature branch alike, the merge is proven only by GitHub
+ *           showing a MERGED pull request whose head is the tested head (and whose base is the recorded base); gh
+ *           missing, not logged in, offline or slow refuses (fails closed), each with its own cause.
+ * @boundary watcher/src/phase-results/merge-ready.ts (git is real; gh is a stub on the caller's PATH, never GitHub; the
+ *           process boundary is spied on only for the clock)
+ */
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { execFileSync } from 'child_process';
+import { createHash } from 'crypto';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { openLedger, type Ledger } from '../../src/phase-results/ledger.js';
+import { mergedReady } from '../../src/phase-results/merge-ready.js';
+
+vi.setConfig({ hookTimeout: 120_000, testTimeout: 120_000 });
+
+/** A fake clock that each child process moves forward (info c): only the deadline test sets `step`. */
+const clock = vi.hoisted(() => ({ step: 0, t: 0, timeouts: [] as Array<number | undefined> }));
+vi.mock('node:child_process', async (importOriginal) => {
+  const real = await importOriginal<typeof import('node:child_process')>();
+  const spawnSync: typeof real.spawnSync = ((...args: Parameters<typeof real.spawnSync>) => {
+    clock.timeouts.push((args[2] as { timeout?: number } | undefined)?.timeout);
+    const r = real.spawnSync(...args);
+    clock.t += clock.step;
+    return r;
+  }) as typeof real.spawnSync;
+  return { ...real, spawnSync };
+});
+
+const F = 'feat-x';
+const STARTED = '2026-11-23T01:00:00.000Z';
+let repo: string;
+let home: string;
+let ghDir: string;
+let savedHome: string | undefined;
+let savedGhPath: string | undefined;
+let ledger: Ledger;
+let readyHead: string;
+let testedHead: string;
+let testedMain: string;
+let bytes: Buffer;
+
+function git(...args: string[]): string {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('GIT_')) env[k] = v;
+  return execFileSync('git', args, { cwd: repo, env, encoding: 'utf-8' }).trim();
+}
+const sha = (b: Buffer): string => createHash('sha256').update(b).digest('hex');
+function write(rel: string, content: string): void {
+  fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+  fs.writeFileSync(path.join(repo, rel), content);
+}
+/** Commits everything; with nothing to commit (`.oss/` git-ignored) HEAD stays where it is. */
+function commitAll(msg: string): string {
+  git('add', '-A');
+  if (git('status', '--porcelain') !== '') git('commit', '-q', '-m', msg);
+  return git('rev-parse', 'HEAD');
+}
+/** served Step 8 + the merge gate: the ready row, the archive commit, the tested row (no run folder files at all). */
+function shipped(): void {
+  bytes = Buffer.from(JSON.stringify({ phase: 'ship', feature: F, verdict: 'ready_to_merge', gateEvidence: 'model', uncapturedGates: [], diff: { baseRef: 'main' } }));
+  write(`.oss/dev/active/${F}/results/ship.json`, bytes.toString());
+  readyHead = commitAll('feature work');
+  ledger.appendRow('run/ship', { startedAt: STARTED, session: 's', headSha: readyHead, feature: F });
+  ledger.appendRow(`results/${F}/ship`, { sha256: sha(bytes), feature: F, phase: 'ship', startedAt: STARTED, headSha: readyHead });
+  ledger.appendRow('merge/ready', { feature: F, headSha: readyHead, sha256: sha(bytes), startedAt: STARTED, at: '2026-11-23T01:05:00.000Z' });
+  fs.mkdirSync(path.join(repo, '.oss/dev/completed'), { recursive: true });
+  fs.renameSync(path.join(repo, `.oss/dev/active/${F}`), path.join(repo, `.oss/dev/completed/${F}-2026-11-23`));
+  write('.oss/reports/builds/r.md', 'report\n');
+  testedHead = commitAll('docs: archive');
+  testedMain = git('rev-parse', 'main');
+  ledger.appendRow('merge/tested', { startedAt: STARTED, head: testedHead, main: testedMain, at: '2026-11-23T01:06:00.000Z' });
+}
+/** GitHub's squash merge, then served item 6 (switch to main). */
+function squashToMain(): void {
+  git('checkout', '-q', 'main');
+  git('merge', '-q', '--squash', `feat/${F}/build`);
+  git('commit', '-q', '-m', 'squash');
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+}
+
+/** A pull request as GitHub's `commits/<sha>/pulls` lists it. */
+function pr(head: string, mergedAt: string | null, state = mergedAt === null ? 'open' : 'closed', base = 'main'): Record<string, unknown> {
+  return { number: 7, state, merged_at: mergedAt, head: { sha: head }, base: { ref: base } };
+}
+/** The gh stub on the caller's PATH: records its argv, prints `out`, exits `rc` (after `sleep` seconds). */
+function ghSays(out: string, rc = 0, sleep = 0): void {
+  fs.mkdirSync(ghDir, { recursive: true });
+  const file = path.join(ghDir, 'gh');
+  fs.writeFileSync(file, `#!/bin/sh\nprintf '%s\\n' "$*" >> "${ghDir}/calls"\n${sleep > 0 ? `exec sleep ${sleep}\n` : ''}cat <<'EOF'\n${out}\nEOF\nexit ${rc}\n`);
+  fs.chmodSync(file, 0o755);
+}
+const merged = (head: string = testedHead, base = 'main'): void => ghSays(JSON.stringify([pr(head, '2026-11-23T02:00:00Z', 'closed', base)]));
+const ghCalls = (): string[] => fs.readFileSync(path.join(ghDir, 'calls'), 'utf-8').split('\n').filter((l) => l !== '');
+
+beforeEach(() => {
+  clock.step = 0;
+  clock.t = 0;
+  clock.timeouts = [];
+  savedHome = process.env.HOME;
+  savedGhPath = process.env.OSS_GH_PATH;
+  home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'merge-ready-home-')));
+  process.env.HOME = home;
+  ghDir = path.join(home, 'bin');
+  process.env.OSS_GH_PATH = `${ghDir}:/usr/bin:/bin`;
+  repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'merge-ready-repo-')));
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.email', 't@example.com');
+  git('config', 'user.name', 't');
+  git('config', 'commit.gpgsign', 'false');
+  git('config', 'gc.auto', '0');
+  git('remote', 'add', 'origin', 'https://github.com/o/r.git');
+  write('base.txt', 'base\n');
+  commitAll('base');
+  git('update-ref', 'refs/remotes/origin/main', 'main');
+  git('checkout', '-q', '-b', `feat/${F}/build`);
+  write('code.txt', 'one\n');
+  ledger = openLedger(repo);
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  process.env.HOME = savedHome;
+  if (savedGhPath === undefined) delete process.env.OSS_GH_PATH;
+  else process.env.OSS_GH_PATH = savedGhPath;
+  for (const d of [repo, home]) fs.rmSync(d, { recursive: true, force: true });
+});
+
+describe('mergedReady: GitHub shows the PR merged at the tested head (D86)', () => {
+  it('passes on main after the run folder is gone, asking GitHub for the PRs of the tested head', () => {
+    shipped();
+    squashToMain();
+    merged();
+    expect(mergedReady(repo, ledger, STARTED)).toMatchObject({ ok: true, result: { verdict: 'ready_to_merge' } });
+    expect(ghCalls()).toEqual([`api --hostname github.com repos/o/r/commits/${testedHead}/pulls`]);
+  });
+
+  it('passes on the feature branch (main checked out in another worktree) with no fetch: only GitHub is asked', () => {
+    shipped();
+    merged();
+    expect(mergedReady(repo, ledger, STARTED)).toMatchObject({ ok: true, result: { verdict: 'ready_to_merge' } });
+  });
+
+  it('passes with .oss/ git-ignored: nothing of the archive is in any commit (pen medium)', () => {
+    write('.gitignore', '.oss/\n');
+    commitAll('ignore .oss');
+    shipped();
+    merged();
+    expect(mergedReady(repo, ledger, STARTED)).toMatchObject({ ok: true });
+  });
+
+  it('passes when main moved after the merge test and GitHub squashed the PR on top', () => {
+    shipped();
+    git('checkout', '-q', 'main');
+    write('other.txt', 'another PR\n');
+    commitAll('another PR');
+    git('merge', '-q', '--squash', `feat/${F}/build`);
+    git('commit', '-q', '-m', 'squash');
+    merged();
+    expect(mergedReady(repo, ledger, STARTED)).toMatchObject({ ok: true });
+  });
+
+  it('passes when the feature was archived before: the folder whose result hashes to the ready row counts (D85 code review L1)', () => {
+    write(`.oss/dev/completed/${F}-2026-10-01/results/ship.json`, '{"phase":"ship","verdict":"blocked"}');
+    commitAll('an earlier archive of the feature');
+    git('branch', '-f', 'main', 'HEAD');
+    git('update-ref', 'refs/remotes/origin/main', 'main');
+    shipped();
+    squashToMain();
+    merged();
+    expect(mergedReady(repo, ledger, STARTED)).toMatchObject({ ok: true, result: { verdict: 'ready_to_merge' } });
+  });
+
+  it('passes with a signed archive commit and log.showSignature=true (D83 security finding 2)', () => {
+    const key = path.join(home, 'sign-key');
+    execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', key]);
+    git('config', 'gpg.format', 'ssh');
+    git('config', 'user.signingkey', key);
+    git('config', 'commit.gpgsign', 'true');
+    git('config', 'log.showSignature', 'true');
+    shipped();
+    squashToMain();
+    merged();
+    expect(mergedReady(repo, ledger, STARTED)).toMatchObject({ ok: true });
+  });
+});
+
+// ⚠ changes existing test: D86 — mergedReady now returns {ok, result} or {ok: false, reason}, so each refusal names its
+//   cause; the local git-state proofs (HEAD past the tested main, origin/main's tree holding the result) are gone.
+describe('mergedReady: GitHub does not show this PR merged (not_merged)', () => {
+  it('refuses when the PR merged at a different head', () => {
+    shipped();
+    squashToMain();
+    merged('c'.repeat(40));
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'not_merged' });
+  });
+
+  it('refuses an open PR at the tested head, on main (the main path no longer passes on a moved HEAD: pen low)', () => {
+    shipped();
+    squashToMain();
+    ghSays(JSON.stringify([pr(testedHead, null)]));
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'not_merged' });
+  });
+
+  it('refuses a PR closed without merging', () => {
+    shipped();
+    ghSays(JSON.stringify([pr(testedHead, null, 'closed')]));
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'not_merged' });
+  });
+
+  it('refuses when no PR has the tested head', () => {
+    shipped();
+    ghSays('[]');
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'not_merged' });
+  });
+
+  it('refuses a PR merged into another base than the recorded one', () => {
+    shipped();
+    merged(testedHead, 'develop');
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'not_merged' });
+  });
+});
+
+describe('mergedReady: gh cannot answer (fails closed, each with its own cause)', () => {
+  // ⚠ changes existing test: round 18 follow-up (coordinator) — a non-github.com origin gets its own cause (not_github),
+  //   so complete can say why, instead of no_proof with no hint.
+  it('refuses not_github when origin is not one github.com repository, and never runs gh', () => {
+    shipped();
+    git('remote', 'set-url', 'origin', 'https://example.com/o/r.git');
+    merged();
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'not_github' });
+    expect(fs.existsSync(path.join(ghDir, 'calls'))).toBe(false);
+  });
+
+  it('refuses gh_unavailable when no gh is on the caller\'s PATH', () => {
+    shipped();
+    squashToMain();
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'gh_unavailable' });
+  });
+
+  it('refuses gh_unavailable when gh is not logged in (gh exits 4)', () => {
+    shipped();
+    ghSays('', 4);
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'gh_unavailable' });
+  });
+
+  it('refuses gh_unreachable when gh fails (offline)', () => {
+    shipped();
+    ghSays('', 1);
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'gh_unreachable' });
+  });
+
+  /** D88 (code L3, pen L2, security I3): gh exits 1 and names an HTTP status on stderr, as `gh api` does. */
+  function ghHttpError(status: number): void {
+    ghSays('', 1);
+    const file = path.join(ghDir, 'gh');
+    fs.writeFileSync(file, `#!/bin/sh\nprintf '%s\\n' "$*" >> "${ghDir}/calls"\necho 'gh: Not Found (HTTP ${status})' >&2\nexit 1\n`);
+  }
+
+  it.each([401, 403, 404, 422])('refuses gh_denied, not gh_unreachable, when GitHub answers HTTP %i (D88)', (status) => {
+    shipped();
+    ghHttpError(status);
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'gh_denied' });
+  });
+
+  it('keeps gh_unreachable for a gh failure that names no HTTP access status (D88)', () => {
+    shipped();
+    ghHttpError(502);
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'gh_unreachable' });
+  });
+
+  it('refuses gh_unreachable when gh answers something that is not a list of PRs', () => {
+    shipped();
+    ghSays('{"message":"Server Error"}');
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'gh_unreachable' });
+  });
+
+  it('refuses gh_unreachable when gh runs past what is left of the budget', () => {
+    shipped();
+    ghSays('[]', 0, 5);
+    expect(mergedReady(repo, ledger, STARTED, Date.now() + 1500)).toEqual({ ok: false, reason: 'gh_unreachable' });
+  });
+
+  it('never runs a gh inside the repo, even when the caller\'s PATH names it', () => {
+    shipped();
+    fs.mkdirSync(path.join(repo, 'bin'));
+    fs.writeFileSync(path.join(repo, 'bin', 'gh'), `#!/bin/sh\necho '${JSON.stringify([pr(testedHead, '2026-11-23T02:00:00Z')])}'\n`, { mode: 0o755 });
+    process.env.OSS_GH_PATH = `${path.join(repo, 'bin')}:bin:/usr/bin:/bin`;
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'gh_unavailable' });
+  });
+});
+
+describe('mergedReady: refused before GitHub is asked (no_proof)', () => {
+
+  it('refuses when the archived result does not hash to the ready row (sha256 mismatch)', () => {
+    shipped();
+    fs.appendFileSync(path.join(repo, `.oss/dev/completed/${F}-2026-11-23/results/ship.json`), ' ');
+    git('commit', '-q', '-am', 'edit');
+    squashToMain();
+    merged();
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'no_proof' });
+  });
+
+  // ⚠ changes existing test: D88 (pen medium) — a ready row that no longer matches the bound result has its own cause
+  //   (ready_stale), so complete can say to record it again instead of "rebuild", which looped.
+  it('refuses ready_stale when a later ship result was bound after the ready row (D83 security low: stale ready row)', () => {
+    shipped();
+    ledger.appendRow(`results/${F}/ship`, { sha256: 'b'.repeat(64), feature: F, phase: 'ship', startedAt: STARTED, headSha: readyHead });
+    squashToMain();
+    merged();
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'ready_stale' });
+  });
+
+  it('refuses no_proof, not ready_stale, while the feature folder is still active (not the merged path, D88)', () => {
+    shipped();
+    fs.renameSync(path.join(repo, `.oss/dev/completed/${F}-2026-11-23`), path.join(repo, `.oss/dev/active/${F}`));
+    ledger.appendRow(`results/${F}/ship`, { sha256: 'b'.repeat(64), feature: F, phase: 'ship', startedAt: STARTED, headSha: readyHead });
+    merged();
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'no_proof' });
+  });
+
+  it('refuses when no tested row was recorded for this run', () => {
+    shipped();
+    ledger.appendRow('merge/tested', { startedAt: '2026-11-22T00:00:00.000Z', head: testedHead, main: testedMain, at: 'x' });
+    squashToMain();
+    merged();
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'no_proof' });
+  });
+
+  it('refuses when the tested head is not covered by the ready row (the heads disagree), even if GitHub merged it', () => {
+    shipped();
+    write('code.txt', 'changed after the check\n');
+    const other = commitAll('code after the check');
+    ledger.appendRow('merge/tested', { startedAt: STARTED, head: other, main: testedMain, at: '2026-11-23T01:07:00.000Z' });
+    squashToMain();
+    merged(other);
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'no_proof' });
+  });
+
+  // ⚠ changes existing test: D85 (code review L1, pen L2) — "refuses two completed folders" becomes "refuses when no
+  //   completed folder holds the checked result"; a second folder from an earlier archive now passes (above).
+  it('refuses when no completed folder of the feature holds the checked result', () => {
+    shipped();
+    fs.cpSync(path.join(repo, `.oss/dev/completed/${F}-2026-11-23`), path.join(repo, `.oss/dev/completed/${F}-2026-10-01`), { recursive: true });
+    for (const d of ['2026-11-23', '2026-10-01']) fs.appendFileSync(path.join(repo, `.oss/dev/completed/${F}-${d}/results/ship.json`), ' ');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'edit');
+    squashToMain();
+    merged();
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'no_proof' });
+  });
+
+  it('refuses a merge commit after the checked head that changes code, even with log.diffMerges=combined (D83 pen L3)', () => {
+    shipped();
+    git('config', 'log.diffMerges', 'combined');
+    git('checkout', '-q', '-b', 'side', 'main');
+    write('.oss/x/n', 'n\n');
+    commitAll('side');
+    git('checkout', '-q', `feat/${F}/build`);
+    git('merge', '-q', '--no-ff', '--no-commit', 'side');
+    git('rm', '-q', 'code.txt');
+    git('commit', '-q', '-m', 'merge side');
+    const h = git('rev-parse', 'HEAD');
+    ledger.appendRow('merge/tested', { startedAt: STARTED, head: h, main: testedMain, at: '2026-11-23T01:07:00.000Z' });
+    squashToMain();
+    merged(h);
+    expect(mergedReady(repo, ledger, STARTED)).toEqual({ ok: false, reason: 'no_proof' });
+  });
+
+  // ⚠ changes existing test: D88 (pen medium) — a ready row of another run is ready_stale (its own hint), not no_proof.
+  it('refuses ready_stale for a ready row from an earlier ship run (stale startedAt)', () => {
+    shipped();
+    squashToMain();
+    merged();
+    expect(mergedReady(repo, ledger, '2026-11-23T02:00:00.000Z')).toEqual({ ok: false, reason: 'ready_stale' });
+  });
+});
+
+describe('mergedReady: one deadline for every git and gh call (D83 info c)', () => {
+  // ⚠ changes existing test: D88 (code L2, perf F1/F2) — the budget drops from 10 s to 9 s, so the CLI's own hint
+  //   arrives before the hook's 10 s watchdog.
+  it('gives each call only what is left of one 9 s budget, and stops once it is spent', () => {
+    shipped();
+    squashToMain();
+    merged();
+    clock.timeouts = [];
+    clock.t = 1_000_000;
+    clock.step = 4_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => clock.t);
+    expect(mergedReady(repo, ledger, STARTED)).toMatchObject({ ok: false });
+    expect(clock.timeouts.length).toBeGreaterThan(0);
+    clock.timeouts.forEach((t, i) => expect(t).toBeLessThanOrEqual(9_000 - 4_000 * i));
+    expect(clock.timeouts.length).toBeLessThanOrEqual(3);
+  });
+
+  it('takes the deadline of the budget the CLI started in main(), so a spent budget runs no git or gh at all (D85 info e)', () => {
+    shipped();
+    squashToMain();
+    merged();
+    clock.timeouts = [];
+    expect(mergedReady(repo, ledger, STARTED, Date.now() - 1)).toMatchObject({ ok: false });
+    expect(clock.timeouts).toEqual([]);
+  });
+
+  // D88 (code L2, perf F1/F2): a spent budget is a slow repo, never a merge cause the user would chase.
+  it('refuses timeout, not no_proof, when the budget is spent before the ready row\'s cover check (D88)', () => {
+    shipped();
+    merged();
+    expect(mergedReady(repo, ledger, STARTED, Date.now() - 1)).toEqual({ ok: false, reason: 'timeout' });
+  });
+
+  it('refuses timeout, not not_github, when the budget is spent before origin is read (D88)', () => {
+    shipped();
+    ledger.appendRow('merge/tested', { startedAt: STARTED, head: readyHead, main: testedMain, at: '2026-11-23T01:07:00.000Z' });
+    merged(readyHead);
+    expect(mergedReady(repo, ledger, STARTED, Date.now() - 1)).toEqual({ ok: false, reason: 'timeout' });
+  });
+});

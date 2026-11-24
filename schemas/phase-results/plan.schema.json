@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "plan.schema.json",
+  "title": "Phase result: plan",
+  "description": "Plan result: the model task list, each task with at least one test id (D11).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "phase",
+    "feature",
+    "startedAt",
+    "assembledAt",
+    "headSha",
+    "sources",
+    "verification",
+    "claims",
+    "chain",
+    "tasks"
+  ],
+  "properties": {
+    "v": {
+      "$ref": "common.schema.json#/$defs/v"
+    },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "plan"
+      ]
+    },
+    "feature": {
+      "$ref": "common.schema.json#/$defs/feature"
+    },
+    "startedAt": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "assembledAt": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "headSha": {
+      "$ref": "common.schema.json#/$defs/sha"
+    },
+    "sources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "tasks": {
+          "$ref": "common.schema.json#/$defs/source"
+        },
+        "claims": {
+          "$ref": "common.schema.json#/$defs/source"
+        }
+      }
+    },
+    "verification": {
+      "$ref": "common.schema.json#/$defs/verification"
+    },
+    "verificationError": {
+      "$ref": "common.schema.json#/$defs/verificationError"
+    },
+    "claims": {
+      "$ref": "common.schema.json#/$defs/claims"
+    },
+    "chain": {
+      "$ref": "common.schema.json#/$defs/chain"
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "testIds"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 40,
+            "pattern": "[A-Za-z0-9._-]{1,40}"
+          },
+          "title": {
+            "$ref": "common.schema.json#/$defs/shortText"
+          },
+          "testIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "items": {
+              "type": "string",
+              "maxLength": 300,
+              "pattern": "[^\\u0000-\\u0008\\u000b-\\u001f\\u007f]*"
+            }
+          }
+        }
+      }
+    }
+  }
+}

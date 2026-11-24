@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ship.schema.json",
+  "title": "Phase result: ship",
+  "description": "Ship result: git diff, gates, overrides and verdict (code), summary (model).",
+  "$defs": {
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "critical",
+        "high",
+        "medium",
+        "low",
+        "info"
+      ],
+      "properties": {
+        "critical": {
+          "$ref": "common.schema.json#/$defs/count"
+        },
+        "high": {
+          "$ref": "common.schema.json#/$defs/count"
+        },
+        "medium": {
+          "$ref": "common.schema.json#/$defs/count"
+        },
+        "low": {
+          "$ref": "common.schema.json#/$defs/count"
+        },
+        "info": {
+          "$ref": "common.schema.json#/$defs/count"
+        }
+      }
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "phase",
+    "feature",
+    "startedAt",
+    "assembledAt",
+    "headSha",
+    "sources",
+    "verification",
+    "claims",
+    "chain",
+    "diff",
+    "gates",
+    "overrides",
+    "blockers",
+    "verdict",
+    "summary"
+  ],
+  "properties": {
+    "v": {
+      "$ref": "common.schema.json#/$defs/v"
+    },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "ship"
+      ]
+    },
+    "feature": {
+      "$ref": "common.schema.json#/$defs/feature"
+    },
+    "startedAt": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "assembledAt": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "headSha": {
+      "$ref": "common.schema.json#/$defs/sha"
+    },
+    "verdictsFrom": {
+      "description": "D47, retired by D51: the verdict cutoff results from gate rounds 6-7 stored. Since D51 every captured fail row is read, so assemble no longer writes it and check ignores it; kept optional so those results still validate.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?Z"
+    },
+    "sources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "diff": {
+          "$ref": "common.schema.json#/$defs/codeSource"
+        },
+        "gates": {
+          "$ref": "common.schema.json#/$defs/source"
+        },
+        "gateEvidence": {
+          "$ref": "common.schema.json#/$defs/codeSource"
+        },
+        "uncapturedGates": {
+          "$ref": "common.schema.json#/$defs/codeSource"
+        },
+        "overrides": {
+          "$ref": "common.schema.json#/$defs/codeSource"
+        },
+        "blockers": {
+          "$ref": "common.schema.json#/$defs/codeSource"
+        },
+        "verdict": {
+          "$ref": "common.schema.json#/$defs/codeSource"
+        },
+        "summary": {
+          "$ref": "common.schema.json#/$defs/source"
+        },
+        "claims": {
+          "$ref": "common.schema.json#/$defs/source"
+        }
+      }
+    },
+    "verification": {
+      "$ref": "common.schema.json#/$defs/verification"
+    },
+    "verificationError": {
+      "$ref": "common.schema.json#/$defs/verificationError"
+    },
+    "claims": {
+      "$ref": "common.schema.json#/$defs/claims"
+    },
+    "chain": {
+      "$ref": "common.schema.json#/$defs/chain"
+    },
+    "diff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "baseRef",
+        "files",
+        "insertions",
+        "deletions"
+      ],
+      "properties": {
+        "base": {
+          "$ref": "common.schema.json#/$defs/sha"
+        },
+        "baseRef": {
+          "type": "string",
+          "maxLength": 200,
+          "pattern": "(?!-)(?!.*\\.\\.)[A-Za-z0-9._/-]{1,200}"
+        },
+        "files": {
+          "$ref": "common.schema.json#/$defs/count"
+        },
+        "insertions": {
+          "$ref": "common.schema.json#/$defs/count"
+        },
+        "deletions": {
+          "$ref": "common.schema.json#/$defs/count"
+        }
+      }
+    },
+    "gates": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "gate",
+          "verdict",
+          "findings",
+          "fixed",
+          "source"
+        ],
+        "properties": {
+          "gate": {
+            "$ref": "common.schema.json#/$defs/token"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "pass",
+              "fail"
+            ]
+          },
+          "findings": {
+            "$ref": "#/$defs/counts"
+          },
+          "fixed": {
+            "$ref": "#/$defs/counts"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "model",
+              "agent"
+            ]
+          }
+        }
+      }
+    },
+    "gateEvidence": {
+      "description": "D26: whether the gates' verdicts came from captured review-agent rows: every gate (agent), some (partial) or none (model). Not agent means the gate verdict is the main model's timeline line.",
+      "type": "string",
+      "enum": [
+        "agent",
+        "partial",
+        "model"
+      ]
+    },
+    "uncapturedGates": {
+      "description": "D26: the gates with no captured agent verdict (source model), named by the complete notice.",
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "$ref": "common.schema.json#/$defs/token"
+      }
+    },
+    "overrides": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "finding",
+          "decisionId",
+          "person"
+        ],
+        "properties": {
+          "finding": {
+            "$ref": "common.schema.json#/$defs/shortText"
+          },
+          "decisionId": {
+            "$ref": "common.schema.json#/$defs/id"
+          },
+          "person": {
+            "$ref": "common.schema.json#/$defs/shortText"
+          },
+          "gate": {
+            "$ref": "common.schema.json#/$defs/token"
+          }
+        }
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "$ref": "common.schema.json#/$defs/shortText"
+      }
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "ready_to_merge",
+        "blocked"
+      ]
+    },
+    "summary": {
+      "$ref": "common.schema.json#/$defs/modelText"
+    }
+  }
+}

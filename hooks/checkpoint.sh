@@ -122,14 +122,27 @@ cleanup_old_checkpoints() {
     fi
 }
 
-# Count completed tasks from PROGRESS.md if it exists
+# Count tasks from the plan phase result (R-257 T15, AC-006.2), never from PROGRESS.md prose.
+# One bounded `check plan`; the count is read only when it passes for this feature (the branch's), and only from a
+# regular, non-link results/plan.json. Anything else counts 0.
 count_completed_tasks() {
-    local feature="$1"
-    local progress_file="${CHECKPOINTS_BASE}/${feature}/PROGRESS.md"
-    if [[ -f "$progress_file" ]]; then
-        grep -c '^\s*-\s*\[x\]' "$progress_file" 2>/dev/null || echo "0"
+    local feature="$1" hooks repo f n rc=0
+    # a fixed dirname, never PATH's: a fake one could name a folder of forged gate scripts (round 3, pen MEDIUM N3)
+    hooks="$(cd -P -- "$(/usr/bin/dirname -- "${BASH_SOURCE[0]}")" && pwd -P)" || { echo 0; return; }
+    repo="$(cd -P -- "$OSS_ROOT" && pwd -P)" || { echo 0; return; }
+    source "$hooks/oss-phase-result.sh"
+    source "$hooks/oss-safe-path.sh"
+    oss_resolve_feature "$repo"
+    [[ -n "$_OSS_FEATURE" && "$_OSS_FEATURE" == "$feature" ]] && oss_phase_result_cli || { echo 0; return; }
+    oss_plugin_node "$_OSS_PR_CLI" "$_OSS_PR_SUB" 2>/dev/null || { echo 0; return; }
+    oss_run_bounded_rc 10 "$OSS_ENV" PATH="$OSS_NODE_PATH" "$OSS_NODE" "$_OSS_PR_CLI" check plan --repo "$repo" 2>/dev/null || rc=$?
+    f="$repo/.oss/dev/active/$feature/results/plan.json"
+    if oss_phase_gate_ok "$rc" "$OSS_BOUNDED_OUT" 2>/dev/null && [[ -f "$f" && ! -L "$f" ]]; then
+        n=$("$OSS_JQ_BIN" '.tasks | length' "$f" 2>/dev/null) || n=0
+        [[ "$n" =~ ^[0-9]+$ ]] || n=0
+        echo "$n"
     else
-        echo "0"
+        echo 0
     fi
 }
 

@@ -92,6 +92,8 @@ HOOKS_TO_COPY=(
     "oss-value.sh"                # served prompts' value files: dir / failed / error (G21); needs the two above
     "oss-merge-test.sh"           # run by oss-value.sh merge-test: the ship merge step's final test (merge-test-hook)
     "oss-timeline.sh"             # run by oss-notify.sh: the feature timeline's command line (G2 B2)
+    "oss-phase-result.sh"         # run by oss-notify.sh's phase gates and the wrappers' assemble step; CLI via ~/.oss/plugin-root (R-257)
+    "oss-node.sh"                 # sourced by oss-phase-result.sh from here only: the recorded node for the phase checks (R-257 D25)
     "oss-login.sh"                # /oss:login saves the key; sources oss-value.sh; NOT allowlisted (R5-8)
     "oss-api-curl.sh"             # sourced by oss-notify.sh, oss-iron-laws-sync.sh and oss-decisions-policy.sh: API key via curl stdin
     "oss-decisions-policy.sh"     # /oss:settings decisions off|on|status; sources oss-api-curl.sh; NOT allowlisted (changes a team setting)

@@ -100,6 +100,14 @@ for h in oss-setup-permissions.sh oss-session-end.sh oss-worktree-create.sh oss-
     rm -rf "$T/g13"
 done
 
+# --- R-257 ship round 3 (pen MEDIUM N3): the link-count check uses a fixed find, never PATH's ----------------
+# A fake find first on PATH that says yes to everything must not let a hardlinked file pass oss_single_link.
+mkdir -p "$T/fbin" "$T/hl"; : > "$T/hl/a"; ln "$T/hl/a" "$T/hl/b"
+printf '#!/bin/sh\necho "$1"\n' > "$T/fbin/find"; chmod +x "$T/fbin/find"
+rc=$(HOME="$T/home" PATH="$T/fbin:$PATH" "$SH" -c 'source "$1"; oss_single_link "$2"; echo $?' _ "$ROOT/hooks/oss-safe-path.sh" "$T/hl/b" 2>/dev/null)
+[[ "$rc" == 1 ]] && pass "a fake find first on PATH does not let a hardlinked file pass the link-count check" \
+    || fail "a fake find first on PATH does not let a hardlinked file pass the link-count check" "rc=$rc"
+
 echo ""
 echo "Results: $((RUN - FAILED))/$RUN passed"
 [[ $FAILED -eq 0 ]]

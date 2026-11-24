@@ -81,7 +81,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-stop.sh"
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-stop-dispatch.sh",
+            "timeout": 15
           }
         ]
       }
@@ -208,6 +209,15 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-gate-run.sh subagent-stop",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/oss-verdict-capture.sh",
             "timeout": 10
           }
         ]

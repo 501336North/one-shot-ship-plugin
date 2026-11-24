@@ -57,7 +57,9 @@ const EXISTING: HookMap = {
   PreCompact: [command('oss-session-end.sh')],
   SessionEnd: [command('oss-session-end.sh')],
   Notification: [command('oss-notification.sh')],
-  Stop: [command('oss-stop.sh')],
+  // R-257 T18 (DESIGN D9): the Stop dispatcher replaces oss-stop.sh and runs the notification itself.
+  // Its timeout is explained in hooks-json-stop-dispatch.test.ts.
+  Stop: [{ hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/hooks/oss-stop-dispatch.sh', timeout: 15 }] }],
   WorktreeCreate: [command('oss-worktree-create.sh')],
   WorktreeRemove: [command('oss-worktree-remove.sh')],
   ConfigChange: [command('oss-config-change.sh')],
@@ -71,6 +73,10 @@ const EXISTING: HookMap = {
       hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/hooks/oss-timeline.sh', async: true }],
     },
   ],
+  // R-257 T19 (DESIGN D9): the SubagentStop verdict capture, additive to the gate-run entry above.
+  // Its timeout is explained in hooks-json-verdict-capture.test.ts.
+  SubagentStop: [{ hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/hooks/oss-verdict-capture.sh', timeout: 10 }] }],
+  // ⚠ changes existing test: D45 dead code — the capture's SubagentStart start snapshot entry is gone (nothing reads it).
 };
 
 describe('hooks.json tool-gate entries', () => {

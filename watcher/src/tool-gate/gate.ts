@@ -48,6 +48,7 @@ import { checkRedCycle } from './rules/red-cycle.js';
 import type { Refusal } from './rules/refusal.js';
 import { checkTags } from './rules/tags.js';
 import { checkUnknownGitOption, checkUnreadable, tooComplex } from './rules/unreadable.js';
+import { checkVerdictCaptureCall } from './rules/verdict-capture-call.js';
 import { appendPrivateFile, isSafeId, mark, readPrivateFile, reviewedReposFor, runRoot, sessionFolder, sessionState } from '../gate-run/run-store.js';
 import os from 'node:os';
 import { OSS_PORT, privateFolder, privateFolderPath, reviewContainment, reviewUserTemp, type Containment, type SandboxRunner } from './sandbox.js';
@@ -616,6 +617,7 @@ async function checkBash(ctx: Context, command: string): Promise<Refused | null>
       checkTags(part, settings) ??
       checkProductionHost(part, settings) ??
       checkOssHookEnv(part, command, home, sources) ??
+      checkVerdictCaptureCall(part, command) ??
       checkProtectedPathBash(part, settings, root, home, paths, ctx.caseInsensitive, places, ctx.tree) ??
       (ownStep ? null : checkGateAgentBash(part, hook.agent, settings, { repos, home, exists: fs.existsSync, temp: tempRoots(ctx), fallback: ctx.containment?.kind === 'fallback', darwin: ctx.platform === 'darwin', sandboxed: ctx.containment?.kind === 'sandbox' }, paths, ctx.caseInsensitive, { earlier: facts.parts.slice(0, index), background: hook.background })) ??
       (await checkGitClean(part, settings, root, home, paths, ctx.git, ctx.caseInsensitive, places, { earlier: facts.parts, count: index, tree: ctx.tree })) ??

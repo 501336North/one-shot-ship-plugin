@@ -8086,6 +8086,7 @@ var PLUGIN_HOOK = /\$\{?CLAUDE_PLUGIN_ROOT\}?\/hooks\/[^/]/;
 var HOOK_CALL_VARIABLES = /* @__PURE__ */ new Set([
   "CLAUDE_PROJECT_DIR",
   "CREDS",
+  "F",
   "HAS_PLAYWRIGHT",
   "OSS_DIR",
   "OSS_ICON_PNG",
@@ -8102,10 +8103,19 @@ var HOOK_CALL_VARIABLES = /* @__PURE__ */ new Set([
   "VERIFY",
   "VOICE",
   "WHY",
+  "candidates",
   "d",
+  "dest",
   "encoding",
+  "found",
+  "l",
+  "none",
   "o",
+  "rc",
+  "src",
   "top",
+  "verdict",
+  "verdicts",
   "version",
   "w"
 ]);
@@ -8169,7 +8179,7 @@ function setsUnlisted(words) {
     const plain = name === void 0 ? assigned : [...assigned, args[0] ?? ""];
     return plain.some((w) => (MAYBE_EXPORTED.test(variableOf(w)) || COMMAND_MAPS.test(variableOf(w))) && unlisted(w));
   }
-  const names = [...assigned];
+  const names = name === "read" ? assigned.filter((w) => variableOf(w) !== "IFS") : [...assigned];
   if (OPERAND_SETTERS.has(name)) names.push(...args.filter((a) => !a.startsWith("-")));
   else if (name === "printf" || name === "print") args.forEach((a, i) => a === "-v" ? names.push(args[i + 1] ?? "") : /^-v./.test(a) && names.push(a.slice(2)));
   else if (name === "mapfile" || name === "readarray") names.push(...arrayOperands(args));
@@ -10016,6 +10026,150 @@ function checkUnreadable(reason, parts, settings, root, home, caseInsensitive) {
   return null;
 }
 
+// src/tool-gate/rules/verdict-capture-call.ts
+var NAMES = ["oss-verdict-capture.sh", "verdict-capture.cjs", "verdict-capture.js"];
+var SEPARATORS = /[\s'"`;|&()<>=${}\\,]+/;
+var GLOB2 = /[*?[]/;
+var SET = /\[[!^]?\]?[^\]]*\]?/;
+var FORM_END = /[\s;|&()<>'"`${}]/;
+function specialSetsAsAny(text) {
+  const closing = /* @__PURE__ */ new Map();
+  const closeOf = (delim, from) => {
+    const cached = closing.get(delim);
+    if (cached !== void 0 && (cached === -1 || cached >= from)) return cached;
+    const at = text.indexOf(`${delim}]`, from);
+    closing.set(delim, at);
+    return at;
+  };
+  let wordEnd = -1;
+  const wordEndOf = (from) => {
+    if (wordEnd >= from) return wordEnd;
+    wordEnd = from;
+    while (wordEnd < text.length && !FORM_END.test(text[wordEnd])) wordEnd += 1;
+    return wordEnd;
+  };
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] !== "[") {
+      out += text[i];
+      i += 1;
+      continue;
+    }
+    let j = i + 1;
+    if (text[j] === "!" || text[j] === "^") j += 1;
+    if (text[j] === "]") j += 1;
+    let special = false;
+    for (; j < text.length && text[j] !== "]" && !FORM_END.test(text[j]); j += 1) {
+      if (text[j] === "\\") {
+        special = true;
+        if (j + 1 < text.length && !FORM_END.test(text[j + 1])) j += 1;
+      } else if (text[j] === "[" && ":=.".includes(text[j + 1] ?? "x")) {
+        const at = closeOf(text[j + 1], j + 2);
+        if (at >= 0 && at < wordEndOf(j + 2)) {
+          special = true;
+          j = at + 1;
+        }
+      }
+    }
+    if (text[j] !== "]") {
+      out += text.slice(i, j);
+      i = j;
+    } else {
+      out += special ? "?" : text.slice(i, j + 1);
+      i = j + 1;
+    }
+  }
+  return out;
+}
+function globTokens(piece) {
+  const tokens = [];
+  for (const m of piece.matchAll(new RegExp(`${SET.source}|[*?]|[^*?[]`, "g"))) {
+    const c = m[0];
+    if (c === "*") tokens.push("*");
+    else if (c === "?" || c.startsWith("[") && (c.length < 2 || !c.endsWith("]") || /^\[[!^]?\]$/.test(c))) {
+      tokens.push(() => true);
+    } else if (c.startsWith("[")) tokens.push(bracketTest(c.slice(1, -1)));
+    else tokens.push((x) => x === c);
+  }
+  return tokens;
+}
+function bracketTest(body) {
+  const negate = body.startsWith("!") || body.startsWith("^");
+  const set = negate ? body.slice(1) : body;
+  return (c) => {
+    let hit = false;
+    for (let i = 0; i < set.length; i += 1) {
+      if (set[i + 1] === "-" && i + 2 < set.length) {
+        if (c >= set[i] && c <= set[i + 2]) hit = true;
+        i += 2;
+      } else if (set[i] === c) hit = true;
+    }
+    return hit !== negate;
+  };
+}
+function globMatch(tokens, name) {
+  let t = 0;
+  let s = 0;
+  let star = -1;
+  let starS = 0;
+  while (s < name.length) {
+    const token = tokens[t];
+    if (token === "*") {
+      star = t;
+      starS = s;
+      t += 1;
+    } else if (token !== void 0 && token(name[s])) {
+      t += 1;
+      s += 1;
+    } else if (star >= 0) {
+      t = star + 1;
+      starS += 1;
+      s = starS;
+    } else return false;
+  }
+  while (tokens[t] === "*") t += 1;
+  return t === tokens.length;
+}
+function globNames(piece, folder) {
+  const tokens = globTokens(piece);
+  if (!NAMES.some((name) => globMatch(tokens, name))) return false;
+  const literals = piece.split(new RegExp(`${SET.source}|[*?]`));
+  return literals.some(writesStem) || folder !== void 0 && /^(?:hooks|cli)$/.test(folder);
+}
+function writesStem(literal2) {
+  if (literal2.length < 3) return false;
+  return NAMES.some((name) => {
+    const stemEnd = name.lastIndexOf(".");
+    for (let at = name.indexOf(literal2); at >= 0; at = name.indexOf(literal2, at + 1)) {
+      if (Math.min(at + literal2.length, stemEnd) - at >= 3) return true;
+    }
+    return false;
+  });
+}
+function hasLiteralName(text) {
+  return text.split(SEPARATORS).some((word) => word.split("/").some((segment) => NAMES.includes(segment)));
+}
+function namesVerdictCapture(text) {
+  const lower = text.toLowerCase();
+  if (hasLiteralName(lower)) return true;
+  for (const word of specialSetsAsAny(lower).split(SEPARATORS)) {
+    const segments = word.split("/");
+    for (const [i, segment] of segments.entries()) {
+      if (GLOB2.test(segment) && globNames(segment, segments[i - 1])) return true;
+    }
+  }
+  return false;
+}
+function checkVerdictCaptureCall(part, command) {
+  const texts = [command, ...part.words, ...part.assignmentValues, ...part.stdinScripts];
+  if (!texts.some(namesVerdictCapture)) return null;
+  return {
+    rule: "protected-path",
+    reason: "Refused: runs or names the OSS verdict capture (`oss-verdict-capture.sh`, `verdict-capture.cjs`, `verdict-capture.js`). Only Claude Code's own subagent hook runs it; a review verdict is captured when the review agent stops."
+  };
+}
+
 // src/tool-gate/gate.ts
 var import_node_os5 = __toESM(require("node:os"), 1);
 
@@ -10764,7 +10918,7 @@ async function checkBash(ctx, command) {
   const sources = trustedSourcesOf(ctx);
   const repos = reviewedRepos(ctx);
   for (const [index, part] of facts.parts.entries()) {
-    const refusal3 = checkUnknownGitOption(part) ?? checkPushSetup(part, facts.parts, index) ?? checkRepoTrust(part, trustOf) ?? checkBranchSwitch(part, facts.parts, index, settings, void 0, ctx.caseInsensitive) ?? await checkBranchRefs(part, settings, ctx.git, ctx.caseInsensitive) ?? await checkProtectedBranch(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), ctx.caseInsensitive) ?? await checkHistoryMove(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), void 0, ctx.caseInsensitive) ?? checkForcePush(part, settings) ?? checkTags(part, settings) ?? checkProductionHost(part, settings) ?? checkOssHookEnv(part, command, home, sources) ?? checkProtectedPathBash(part, settings, root, home, paths, ctx.caseInsensitive, places, ctx.tree) ?? (ownStep ? null : checkGateAgentBash(part, hook.agent, settings, { repos, home, exists: import_node_fs18.default.existsSync, temp: tempRoots(ctx), fallback: ctx.containment?.kind === "fallback", darwin: ctx.platform === "darwin", sandboxed: ctx.containment?.kind === "sandbox" }, paths, ctx.caseInsensitive, { earlier: facts.parts.slice(0, index), background: hook.background })) ?? await checkGitClean(part, settings, root, home, paths, ctx.git, ctx.caseInsensitive, places, { earlier: facts.parts, count: index, tree: ctx.tree }) ?? checkProtectedPathMention(part, settings, root, home, paths, ctx.caseInsensitive, places);
+    const refusal3 = checkUnknownGitOption(part) ?? checkPushSetup(part, facts.parts, index) ?? checkRepoTrust(part, trustOf) ?? checkBranchSwitch(part, facts.parts, index, settings, void 0, ctx.caseInsensitive) ?? await checkBranchRefs(part, settings, ctx.git, ctx.caseInsensitive) ?? await checkProtectedBranch(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), ctx.caseInsensitive) ?? await checkHistoryMove(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), void 0, ctx.caseInsensitive) ?? checkForcePush(part, settings) ?? checkTags(part, settings) ?? checkProductionHost(part, settings) ?? checkOssHookEnv(part, command, home, sources) ?? checkVerdictCaptureCall(part, command) ?? checkProtectedPathBash(part, settings, root, home, paths, ctx.caseInsensitive, places, ctx.tree) ?? (ownStep ? null : checkGateAgentBash(part, hook.agent, settings, { repos, home, exists: import_node_fs18.default.existsSync, temp: tempRoots(ctx), fallback: ctx.containment?.kind === "fallback", darwin: ctx.platform === "darwin", sandboxed: ctx.containment?.kind === "sandbox" }, paths, ctx.caseInsensitive, { earlier: facts.parts.slice(0, index), background: hook.background })) ?? await checkGitClean(part, settings, root, home, paths, ctx.git, ctx.caseInsensitive, places, { earlier: facts.parts, count: index, tree: ctx.tree }) ?? checkProtectedPathMention(part, settings, root, home, paths, ctx.caseInsensitive, places);
     if (refusal3 !== null) return { refusal: refusal3, program: part.program };
   }
   if ("unreadable" in facts && !ownStep) {

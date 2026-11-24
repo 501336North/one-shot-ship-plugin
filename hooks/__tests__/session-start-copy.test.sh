@@ -67,6 +67,33 @@ HOME="$T" CLAUDE_PLUGIN_ROOT="$ROOT" bash "$SS_HOOK" >/dev/null 2>&1 </dev/null
 SL="$T/.oss/hooks/oss-statusline-settings.sh"
 if [[ -f "$SL" && ! -L "$SL" && -x "$SL" ]]; then pass "oss-statusline-settings.sh copied, a plain executable file"
 else fail "oss-statusline-settings.sh copied, a plain executable file" "exists=$([[ -f $SL ]] && echo y || echo n) exec=$([[ -x $SL ]] && echo y || echo n)"; fi
+
+# R-257: served prompts run ~/.oss/hooks/oss-notify.sh plan complete (its phase gate runs the sibling
+#         oss-phase-result.sh) and ~/.oss/hooks/oss-phase-result.sh assemble, with no CLAUDE_PLUGIN_ROOT. So
+#         session start installs oss-phase-result.sh, and a valid plan result completes from the copy: the
+#         CLI is found through ~/.oss/plugin-root. Sandbox plugin: the real hooks and watcher CLIs, chain-trigger stubbed.
+SH="${BASH_UNDER_TEST:-/bin/bash}"
+T=$(mktemp -d); T=$(cd "$T" && pwd -P)
+mkdir -p "$T/home/.oss" "$T/plugin/watcher/dist/cli" "$T/repo"
+ln -s "$ROOT/hooks" "$T/plugin/hooks"; [[ -d "$ROOT/schemas" ]] && ln -s "$ROOT/schemas" "$T/plugin/schemas"
+for f in "$ROOT"/watcher/dist/cli/*; do ln -s "$f" "$T/plugin/watcher/dist/cli/"; done
+rm -f "$T/plugin/watcher/dist/cli/chain-trigger.cjs" "$T/plugin/watcher/dist/cli/chain-trigger.js"
+printf 'console.log("---CHAIN_COMMANDS---"); console.log("CHAIN: /oss:next (always)")\n' > "$T/plugin/watcher/dist/cli/chain-trigger.cjs"
+( cd "$T/repo" && git init -q -b main && git config user.email t@example.invalid && git config user.name t \
+    && echo base > base.txt && git add base.txt && git commit -q -m base && git checkout -q -b feat/copy-feature/build \
+    && mkdir -p .oss/dev/active/copy-feature && printf '# Design\n\nStatus: COMMITTED\n' > .oss/dev/active/copy-feature/DESIGN.md )
+HOME="$T/home" CLAUDE_PLUGIN_ROOT="$T/plugin" OSS_SKIP_HEALTH_CHECK=1 "$SH" "$SS_HOOK" >/dev/null 2>&1 </dev/null
+envrun() { (cd "$T/repo" && HOME="$T/home" CLAUDE_PLUGIN_ROOT="$T/plugin" CLAUDE_PROJECT_DIR="$T/repo" CLAUDE_CODE_SESSION_ID=copy-session "$@" </dev/null); }
+# shellcheck source=lib/phase-result-fixture.sh
+source "$ROOT/hooks/__tests__/lib/phase-result-fixture.sh"
+PRF_REPO="$T/repo" prf_plan
+P="$T/home/.oss/hooks/oss-phase-result.sh"
+out=$(cd "$T/repo" && env -u CLAUDE_PLUGIN_ROOT HOME="$T/home" CLAUDE_PROJECT_DIR="$T/repo" CLAUDE_CODE_SESSION_ID=copy-session \
+    "$SH" "$T/home/.oss/hooks/oss-notify.sh" --workflow plan complete '{}' 2>&1 </dev/null); rc=$?
+if [[ -f "$P" && ! -L "$P" && -x "$P" && $rc -eq 0 && "$out" != *cli_missing* ]]; then
+    pass "oss-phase-result.sh copied; ~/.oss/hooks/oss-notify.sh plan complete passes on a valid result (CLI via plugin-root)"
+else fail "oss-phase-result.sh copied; ~/.oss/hooks/oss-notify.sh plan complete passes on a valid result (CLI via plugin-root)" \
+    "exists=$([[ -f $P ]] && echo y || echo n) rc=$rc out='$out'"; fi
 rm -rf "$T"
 
 # F11: every session-start variant that copies the installer also copies its manifest

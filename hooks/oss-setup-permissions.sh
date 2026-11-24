@@ -21,6 +21,8 @@ OSS_PERMISSIONS=(
     'Bash(~/.oss/hooks/oss-log.sh:*)'
     'Bash(~/.oss/hooks/oss-notify.sh:*)'
     'Bash(~/.oss/hooks/oss-value.sh:*)'
+    # R-257: assemble/check a phase result; takes only a fixed verb and phase, reads model text from value files only
+    'Bash(~/.oss/hooks/oss-phase-result.sh:*)'
     'Edit(~/.oss/run/**)'
     'Bash(~/.oss/hooks/oss-notification.sh:*)'
     'Bash(~/.oss/hooks/oss-stop.sh:*)'

@@ -781,6 +781,61 @@ rr_refused "25: review-repo with no ~/.oss/node-path is refused"
 setup_rr; printf '%s\n' "$TGT" > "$VD/repo.txt"; VD2=$(cd "$R" && HOME="$H" "$SH" "$SCRIPT" dir)
 [[ ! -e "$VD2/repo.txt" ]] && pass "25: dir clears a stale repo.txt" || fail "25: dir clears a stale repo.txt" "kept"
 
+# --- 26. D70 + security L1 (ship round 13): ship's value files never carry over into a new run -----------------------
+# overrides.json (a D69/D70 override), summary.txt and base.txt are written right before `assemble ship`, after the
+# last dir call, so an older run's copies are removed when the folder is reset.
+newhome; newrepo; key=$(key_of "$R"); mkdir -p "$H/.oss/run/$key"
+for f in overrides.json summary.txt base.txt; do echo stale > "$H/.oss/run/$key/$f"; done
+ov "$R" dir
+left=""; for f in overrides.json summary.txt base.txt; do [[ -e "$H/.oss/run/$key/$f" ]] && left="$left $f"; done
+[[ "$RC" == 0 && -z "$left" ]] && pass "26: dir clears a stale overrides.json, summary.txt and base.txt (D70)" \
+    || fail "26: dir clears a stale overrides.json, summary.txt and base.txt (D70)" "rc=$RC left:$left"
+
+# --- 27. D70: ship start (oss-notify.sh --workflow ship start) removes the same three files from the value folder ----
+# Notifier safety (as oss-stop-dispatch.test.sh): PATH is an empty $T/bin, the system folders and a node-only folder;
+# settings.json says style "none"; the hook run holds fd 9 on a pipe (held_by) and the case waits for it to close.
+SAFE_PATH=/usr/bin:/bin:/usr/sbin:/sbin
+mkdir -p "$T/bin" "$T/node-only"; ln -sf "$(node -p 'require("fs").realpathSync(process.execPath)')" "$T/node-only/node"
+held_by() { exec >/dev/null 2>&1; /bin/cat; /bin/rm -f "$1"; }
+# ship_start <phase>: `oss-notify.sh --workflow <phase> start` in $R as the user's session runs it; waits (up to 30 s)
+# until every process it started has exited
+ship_start() {
+    local h="$T/held.$N"; : > "$h"
+    (cd "$R" && env -u CLAUDE_PLUGIN_ROOT HOME="$H" PATH="$T/bin:$SAFE_PATH:$T/node-only" CLAUDE_PROJECT_DIR="$R" \
+        CLAUDE_CODE_SESSION_ID=value-test-1 "$SH" "$ROOT/hooks/oss-notify.sh" --workflow "$1" start '{}' </dev/null >/dev/null 2>&1 9> >(held_by "$h"))
+    for _ in $(seq 300); do [[ -e "$h" ]] || break; sleep 0.1; done
+}
+start_repo() { # -> H, R, key, VD: a repo with one commit and an .oss folder, settings style none, a value folder
+    newhome; newrepo; mkdir -p "$H/.oss" "$R/.oss"
+    printf '{"notifications":{"style":"none"}}\n' > "$H/.oss/settings.json"
+    (cd "$R" && git -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m base) >/dev/null 2>&1
+    key=$(key_of "$R"); VD="$H/.oss/run/$key"; mkdir -p "$VD"; chmod 700 "$H/.oss/run" "$VD"
+    for f in overrides.json summary.txt base.txt; do echo stale > "$VD/$f"; done
+    echo keep > "$VD/unrelated.dat"
+}
+start_repo; ship_start ship
+left=""; for f in overrides.json summary.txt base.txt; do [[ -e "$VD/$f" ]] && left="$left $f"; done
+[[ -z "$left" && -f "$VD/unrelated.dat" ]] && pass "27: ship start removes a stale overrides.json, summary.txt and base.txt, and keeps other files (D70)" \
+    || fail "27: ship start removes a stale overrides.json, summary.txt and base.txt, and keeps other files (D70)" "left:$left unrelated=$(ls "$VD" 2>&1)"
+start_repo; ship_start plan
+[[ -f "$VD/overrides.json" ]] && pass "27: another phase's start leaves them" || fail "27: another phase's start leaves them" "removed"
+# a linked value folder is never followed: the files it points at stay
+start_repo; mkdir -p "$T/elsewhere$N"; mv "$VD"/* "$T/elsewhere$N/"; rmdir "$VD"; ln -s "$T/elsewhere$N" "$VD"; ship_start ship
+[[ -f "$T/elsewhere$N/overrides.json" ]] && pass "27: ship start never follows a linked value folder" || fail "27: ship start never follows a linked value folder" "removed through the link"
+
+# --- 28. pen I2 (gate round 12): the ship-start removal runs even when the ledger run row returns early -------------
+# An unsafe ledger folder (here ~/.oss/ledger is a link) ends the run row before it is written; the stale value files
+# are still removed, and a linked value folder is still never followed.
+start_repo; mkdir -p "$T/ledger-elsewhere$N"; ln -s "$T/ledger-elsewhere$N" "$H/.oss/ledger"; ship_start ship
+left=""; for f in overrides.json summary.txt base.txt; do [[ -e "$VD/$f" ]] && left="$left $f"; done
+[[ -z "$left" && -f "$VD/unrelated.dat" && -z "$(ls -A "$T/ledger-elsewhere$N")" ]] \
+    && pass "28: ship start removes the stale value files even when the ledger run row returns early" \
+    || fail "28: ship start removes the stale value files even when the ledger run row returns early" "left:$left ledger=$(ls -A "$T/ledger-elsewhere$N" 2>&1)"
+start_repo; mkdir -p "$T/ledger-elsewhere$N" "$T/elsewhere$N"; ln -s "$T/ledger-elsewhere$N" "$H/.oss/ledger"
+mv "$VD"/* "$T/elsewhere$N/"; rmdir "$VD"; ln -s "$T/elsewhere$N" "$VD"; ship_start ship
+[[ -f "$T/elsewhere$N/overrides.json" ]] && pass "28: with the early return too, a linked value folder is never followed" \
+    || fail "28: with the early return too, a linked value folder is never followed" "removed through the link"
+
 echo
 echo "Results: $((RUN - FAILED))/$RUN passed, $FAILED failed"
 [[ "$FAILED" == 0 ]]

@@ -1,0 +1,1 @@
+{"version":3,"file":"schemas.d.ts","sourceRoot":"","sources":["../../src/phase-results/schemas.ts"],"names":[],"mappings":"AASA,OAAO,EAAc,KAAK,MAAM,EAAE,MAAM,eAAe,CAAC;AAExD,eAAO,MAAM,MAAM,8CAA+C,CAAC;AACnE,MAAM,MAAM,KAAK,GAAG,CAAC,OAAO,MAAM,CAAC,CAAC,MAAM,CAAC,CAAC;AAQ5C,wBAAgB,eAAe,CAAC,KAAK,EAAE,KAAK,EAAE,UAAU,EAAE,MAAM,GAAG,MAAM,CAKxE"}

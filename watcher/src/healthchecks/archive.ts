@@ -1,7 +1,11 @@
 import { promises as fs } from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
+import { shipArchivable } from '../phase-results/archivable.js';
 import type { CheckResult } from '../types.js';
-import { readRegularFile } from '../utils/regular-file.js';
+
+/** The plugin root this module sits in (<root>/watcher/{src,dist}/healthchecks/): the ship schema's home. */
+const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 export interface ArchiveCheckOptions {
   devActivePath: string;
@@ -9,7 +13,9 @@ export interface ArchiveCheckOptions {
 
 /**
  * @behavior Verify shipped features are being archived properly
- * @acceptance-criteria Features in "ship" or "complete" phase should be moved to dev/completed/
+ * @acceptance-criteria A feature whose ship phase result passes the archive rule (phase-results/archivable.ts:
+ *   valid, bound, verified, ready_to_merge) should be moved to dev/completed/. PROGRESS.md prose never decides
+ *   (R-257 AC-006.1).
  * @boundary Healthcheck
  */
 export async function checkArchive(
@@ -26,25 +32,13 @@ export async function checkArchive(
 
     const completedFeatures: string[] = [];
 
-    // Check each feature's PROGRESS.md for completion status
+    // The repo that holds dev/active (<repo>/.oss/dev/active): results and the ledger are keyed on it
+    const repo = path.resolve(devActivePath, '..', '..', '..');
     for (const dir of featureDirs) {
-      const featureName = dir.name;
-      const progressPath = path.join(devActivePath, featureName, 'PROGRESS.md');
-
       try {
-        const content = await readRegularFile(progressPath);
-
-        // Check for completion patterns (case-insensitive)
-        const isCompleted =
-          /## Current Phase:\s*(ship|complete)/i.test(content) ||
-          /\(complete\)/i.test(content);
-
-        if (isCompleted) {
-          completedFeatures.push(featureName);
-        }
-      } catch (error) {
-        // Skip features without PROGRESS.md (treat as not completed)
-        continue;
+        if (shipArchivable(repo, dir.name, PLUGIN_ROOT).ok) completedFeatures.push(dir.name);
+      } catch {
+        // unreadable ledger or a bad name: not completed
       }
     }
 

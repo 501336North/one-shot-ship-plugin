@@ -20,7 +20,8 @@ export type WorkflowEvent =
   | 'FAILED'
   | 'IRON_LAW_CHECK'
   | 'OSS_ERROR'
-  | 'RECOVERY';
+  | 'RECOVERY'
+  | 'STOP_CHECK_ERROR';
 
 export interface AgentInfo {
   type: string;

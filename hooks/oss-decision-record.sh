@@ -8,16 +8,37 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=hooks/oss-safe-path.sh
 source "$SCRIPT_DIR/oss-safe-path.sh" 2>/dev/null || exit 0
 
-oss_resolve_project
-proj="$_OSS_PROJ"
+in=""
+[[ -t 0 ]] || IFS= read -r -d '' -t 2 in || true
+# repo_of <dir>: its physical git toplevel and absolute git dir (one rev-parse, GIT_* unset) -> top, gd
+top="" gd=""
+repo_of() {
+    local o
+    o=$(unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+        cd -P -- "$1" 2>/dev/null && git rev-parse --show-toplevel --absolute-git-dir 2>/dev/null) || o=""
+    top=${o%%$'\n'*} gd=${o#*$'\n'}
+    [[ "$o" == *$'\n'* && "$top" == /* && "$gd" == /* ]] || { top="" gd=""; }
+}
+# R-257 Task 6 (D10): the repo the answer was given in is the hook input's cwd, resolved to its git toplevel
+# when that has the person's own .oss; CLAUDE_PROJECT_DIR is only the folder the session started in (a
+# worktree session would file its picks under the start folder's feature). Else the shared rule, unchanged.
+proj=""
+cwd=$(printf '%s' "$in" | jq -r '.cwd | strings' 2>/dev/null)
+if [[ "$cwd" == /* && -d "$cwd" ]]; then
+    repo_of "$cwd"
+    [[ -n "$top" && -d "$top/.oss" ]] && test -O "$top/.oss" && proj="$top"
+fi
+if [[ -z "$proj" ]]; then
+    oss_resolve_project
+    proj="$_OSS_PROJ"
+    top="" gd=""
+fi
 # plugin hooks run in every repo: one that never used OSS (no .oss folder) gains nothing, not even the jq
 # warning below. A linked .oss passes here and is refused, with its one stderr line, by oss_safe_target.
 [[ -n "$proj" && -d "$proj/.oss" ]] || exit 0
 
 skip() { echo "oss: decision record skipped, $1" >&2; exit 0; }
 command -v jq >/dev/null 2>&1 || skip "jq not found"
-in=""
-[[ -t 0 ]] || IFS= read -r -d '' -t 2 in || true
 [[ $(printf '%s' "$in" | jq -r '.tool_name' 2>/dev/null) == AskUserQuestion ]] || exit 0
 
 oss_resolve_feature "$proj"
@@ -28,7 +49,8 @@ rec=".oss/dev/decisions-unfiled.ndjson"
 # only a plain command name: anything else is no command
 ws="$proj/.oss/workflow-state.json"
 command=""
-[[ -L "$ws" ]] || command=$(jq -r '.currentCommand | strings' "$ws" 2>/dev/null)
+# a regular file only: a FIFO would hang the read (FOLLOWUPS 184)
+[[ -f "$ws" && ! -L "$ws" ]] && command=$(jq -r '.currentCommand | strings' "$ws" 2>/dev/null)
 # (at most 64 characters: the API's rule for the field)
 [[ "$command" =~ ^[a-z][a-z-]{0,63}$ ]] || command=""
 # kind follows the command the answer was given in (radical-observability Task 11): shipping commands make
@@ -205,6 +227,35 @@ if [[ -n "$ob" ]]; then
     ob_ok && (umask 077; printf "%s" "$entries" >> "$ob") || ob=""
 fi
 release_lock
+# R-257 Task 6 (NOTES.md Ledger contract): each line this machine wrote gets a row {id, feature, sha256 of the
+# exact line} in the private ledger ~/.oss/ledger/<key>/decisions/<feature> (dirs 700, file 600, the person's
+# own, never a link), so a line planted in the repo file is never counted. One O_APPEND write per row, outside
+# the record lock. An unfiled answer gets no row. A failure says so once and never blocks.
+ledger() {
+    local d="$HOME/.oss/ledger" k f p l s row
+    [[ -n "$feature" ]] || return 0
+    [[ -n "$top" ]] || repo_of "$proj"
+    # an OSS folder outside any git repo has no ledger key (and the hook prints nothing from git there)
+    [[ -n "$top" ]] || return 0
+    k=$(printf '%s\n%s\n' "$top" "$gd" | git hash-object --stdin 2>/dev/null | cut -c1-16)
+    [[ "$k" =~ ^[0-9a-f]{16}$ ]] || { echo "oss: decision ledger skipped, no ledger key for $rec" >&2; return 0; }
+    for p in "$d" "$d/$k" "$d/$k/decisions"; do
+        [[ -e "$p" || -L "$p" ]] || mkdir -m 700 "$p" 2>/dev/null
+        # shellcheck disable=SC2088 # the ~ is text for the person, never expanded
+        [[ -d "$p" && ! -L "$p" ]] && test -O "$p" || { echo "oss: decision ledger skipped, ~/${p#"$HOME"/} is a symlink or not yours" >&2; return 0; }
+    done
+    f="$d/$k/decisions/$feature"
+    while IFS= read -r l; do
+        [[ -n "$l" ]] || continue
+        s=$(printf '%s' "$l" | sha256 | cut -c1-64)
+        row=$(printf '%s' "$l" | jq -c --arg f "$feature" --arg s "$s" '{id, feature: $f, sha256: $s}' 2>/dev/null) || continue
+        # shellcheck disable=SC2088 # the ~ is text for the person, never expanded
+        oss_single_link "$f" && { [[ ! -e "$f" ]] || test -O "$f"; } \
+            || { echo "oss: decision ledger skipped, ~/${f#"$HOME"/} is a link or not yours" >&2; return 0; }
+        (umask 077; printf '%s\n' "$row" >> "$f") 2>/dev/null || { echo "oss: decision ledger skipped, could not append to it" >&2; return 0; }
+    done <<< "$lines"
+}
+ledger
 # Task 13 / 15b: each outbox answer goes to the OSS API after the repo line is written and the lock released
 # (the body --push-body made when the answer was written, the key on curl's stdin through oss_api_curl).
 # The API's answer is written to the outbox, never to the committed record (no account email in git, no

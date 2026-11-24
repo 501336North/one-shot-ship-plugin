@@ -11,6 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { writeWarmStub, WARMUP_TIMEOUT_MS } from './helpers/warm-stub';
+import { assemblePhaseResult, makeFeatureRepo, recordNodePath } from './helpers/phase-result-fixture';
 
 describe('oss-notify.sh sends nothing to Telegram', () => {
   const PLUGIN_ROOT = path.resolve(__dirname, '../../..');
@@ -19,11 +20,26 @@ describe('oss-notify.sh sends nothing to Telegram', () => {
   // Sandbox, built once per file: temp HOME and a fake plugin root; a fake `node` on PATH records
   // every call. The stubs are created and warmed in beforeAll so the macOS first-exec scan never
   // lands inside a test; no executable is created after it.
+  // build and ship complete only with a valid result bound to the run (R-257 AC-001.1): each workflow has its own
+  // git repo on its feat/<feature>/<phase> branch, where beforeAll assembles that result with the real hooks and CLIs
+  // (the plugin root links them, except chain-trigger and the old Telegram CLI) and the recorded node (T26/D21).
   let sandbox: string;
   let callsFile: string;
+  const repoFor = (workflow: string) => path.join(sandbox, `repo-${workflow}`);
+  function hookEnv(nodeCalls: string, pathDirs: string): Record<string, string | undefined> {
+    return {
+      ...process.env,
+      HOME: path.join(sandbox, 'home'),
+      CLAUDE_PLUGIN_ROOT: path.join(sandbox, 'plugin'),
+      CLAUDE_PROJECT_DIR: '',
+      OSS_SKIP_WATCHER: '1',
+      NODE_CALLS: nodeCalls,
+      PATH: pathDirs,
+    };
+  }
 
   beforeAll(() => {
-    sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'oss-notify-no-telegram-'));
+    sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oss-notify-no-telegram-')));
     const cliDir = path.join(sandbox, 'plugin/watcher/dist/cli');
     fs.mkdirSync(path.join(sandbox, 'home/.oss'), { recursive: true });
     fs.mkdirSync(cliDir, { recursive: true });
@@ -32,15 +48,28 @@ describe('oss-notify.sh sends nothing to Telegram', () => {
     // Env contract: NODE_CALLS = the calls file of the test that runs the hook.
     writeWarmStub(path.join(sandbox, 'bin/node'), 'echo "$*" >> "$NODE_CALLS"\nexit 0\n');
     // An old install may still have the Telegram CLI on disk.
-    for (const cli of ['update-workflow-state.js', 'chain-trigger.cjs', 'telegram-notify.js']) {
+    for (const cli of ['chain-trigger.cjs', 'telegram-notify.js']) {
       fs.writeFileSync(path.join(cliDir, cli), '');
     }
+    const realCliDir = path.join(PLUGIN_ROOT, 'watcher/dist/cli');
+    for (const cli of fs.readdirSync(realCliDir)) {
+      if (!fs.existsSync(path.join(cliDir, cli))) fs.symlinkSync(path.join(realCliDir, cli), path.join(cliDir, cli));
+    }
+    fs.copyFileSync(path.join(PLUGIN_ROOT, 'hooks/oss-node.sh'), path.join(sandbox, 'plugin/hooks/oss-node.sh'));
+    recordNodePath(path.join(sandbox, 'home'));
     fs.writeFileSync(
       path.join(sandbox, 'home/.oss/settings.json'),
       JSON.stringify({
         notifications: { style: 'telegram', verbosity: 'all', telegram: { linked: true, enabled: true } },
       })
     );
+
+    for (const workflow of ['build', 'ship'] as const) {
+      fs.mkdirSync(repoFor(workflow));
+      makeFeatureRepo(repoFor(workflow), 'tg-feature', workflow);
+      const setupEnv = hookEnv(path.join(sandbox, 'setup.calls'), process.env.PATH ?? '');
+      assemblePhaseResult(workflow, repoFor(workflow), { ...setupEnv, CLAUDE_PROJECT_DIR: repoFor(workflow) });
+    }
   }, WARMUP_TIMEOUT_MS);
 
   let testIndex = 0;
@@ -61,19 +90,11 @@ describe('oss-notify.sh sends nothing to Telegram', () => {
   it.each(['build', 'ship'])(
     'never runs telegram-notify.js when /oss:%s completes with Telegram enabled in settings',
     (workflow) => {
-      const env: Record<string, string | undefined> = {
-        ...process.env,
-        HOME: path.join(sandbox, 'home'),
-        CLAUDE_PLUGIN_ROOT: path.join(sandbox, 'plugin'),
-        CLAUDE_PROJECT_DIR: '',
-        OSS_SKIP_WATCHER: '1',
-        NODE_CALLS: callsFile,
-        PATH: `${path.join(sandbox, 'bin')}:${process.env.PATH ?? ''}`,
-      };
+      const env = hookEnv(callsFile, `${path.join(sandbox, 'bin')}:${process.env.PATH ?? ''}`);
 
       try {
         execFileSync('bash', [OSS_NOTIFY, '--workflow', workflow, 'complete', '{"testsPass": 47}'], {
-          cwd: sandbox,
+          cwd: repoFor(workflow),
           env,
           encoding: 'utf-8',
           timeout: 30000,

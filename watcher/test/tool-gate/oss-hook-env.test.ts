@@ -152,6 +152,9 @@ const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=/;
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SERVED_HOOK = /\/\.oss\/hooks\/[^/\s"']|\/\.claude\/plugins\/cache\/[^/]+\/oss\/[^/]+\/hooks\/|hooks\/oss-[^/\s"']*\.sh|\$\{?CLAUDE_PLUGIN_ROOT\}?\/hooks\//;
 
+/** The `IFS=` prefixes to `read` the served hook blocks use, collected apart from the hook-call variables (D39). */
+const READ_PREFIX_VARIABLES: string[] = [];
+
 /** The variable names one simple command sets: its assignments, and the operands of a setter, `for` or `printf -v`. */
 function namesSetBy(words: string[]): string[] {
   let at = 0;
@@ -160,6 +163,11 @@ function namesSetBy(words: string[]): string[] {
   while (at < words.length && ASSIGNMENT.test(words[at])) names.push(words[at++]);
   while (words[at] === 'builtin' || words[at] === 'command') at++;
   const [program, ...args] = words.slice(at);
+  // ⚠ changes existing test: D39 (security L4) — IFS as a prefix assignment to `read` is allowed on its own rule, not
+  //   through the hook-call list, so it is counted apart (READ_PREFIX_VARIABLES).
+  if (program === 'read') {
+    for (const w of names.splice(0)) (w.split(/[=[+]/)[0] === 'IFS' ? READ_PREFIX_VARIABLES : names).push(w);
+  }
   if (program === 'for' || program === 'select') names.push(args[0] ?? '');
   else if (program === 'printf' || program === 'print') args.forEach((a, i) => a === '-v' && names.push(args[i + 1] ?? ''));
   else if (program !== undefined && SETTERS.has(program)) names.push(...args.filter((a) => !a.startsWith('-')));
@@ -500,8 +508,38 @@ describe('the hook-call variable list', () => {
     expect([...HOOK_CALL_VARIABLES].sort()).toEqual([...SERVED_HOOK_VARIABLES].sort());
   });
 
+  // ⚠ changes existing test: D39 (security L4) — the served archive block's `while IFS= read -r found` sets IFS only as a
+  //   read prefix, which the gate allows on its own rule; IFS is not on the hook-call list.
+  it('collects IFS only as a prefix to read in the served hook blocks, and IFS is not on the list', () => {
+    expect([...new Set(READ_PREFIX_VARIABLES.map((w) => w.split('=')[0]))]).toEqual(['IFS']);
+    expect(HOOK_CALL_VARIABLES.has('IFS')).toBe(false);
+  });
+
   it('never holds a variable that moves where a hook looks or what its shell and tools run', () => {
     const refused = /^(?:HOME|PATH|path|CLAUDE_PLUGIN_ROOT|BASH_ENV|ENV|NODE_OPTIONS|SHELLOPTS|BASHOPTS|PS4|GIT_.*|LD_.*|DYLD_.*)$/;
     expect([...HOOK_CALL_VARIABLES].filter((name) => refused.test(name))).toEqual([]);
+  });
+});
+
+// R-257 security L4 (D39): D37 put IFS on the hook-call list for the served archive block's `while IFS= read -r found`,
+// which let a standalone `IFS=…` word-split an unquoted value in a command that runs a hook. IFS is now allowed only as a
+// prefix assignment to `read`.
+describe.each(AGENTS.slice(0, 2))('%s, IFS on a hook call', (_who, agent) => {
+  it.each([
+    `IFS=:; v=a:b; ${LOG_HOOK} $v`,
+    `IFS=: ${LOG_HOOK} $v`,
+    `export IFS=:; ${LOG_HOOK} $v`,
+  ])('refuses an IFS set outside a read prefix in a command that runs a hook: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode, command).toBe(2);
+    expect(result.stderr, command).toMatch(/^Refused.*OSS hook script/);
+  });
+
+  it.each([
+    `l=$(${LOG_HOOK}); printf '%s\\n' "$l" | while IFS= read -r l; do echo "$l"; done`,
+    `${LOG_HOOK} | while IFS= read -r found; do echo "$found"; done`,
+  ])('runs a hook script in a command that sets IFS only as a read prefix: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.stderr, command).not.toMatch(/OSS hook script/);
   });
 });

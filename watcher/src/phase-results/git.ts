@@ -1,0 +1,37 @@
+/**
+ * Git helpers shared by the phase result modules (R-257). Every git child gets the caller's env minus GIT_*, so a
+ * planted GIT_DIR or GIT_WORK_TREE cannot point git at another repo. ledger.ts keeps its own copy (child processes
+ * import that file directly, so it uses node builtins only, git-bin.ts's list included), and so does store.ts (its dist output is committed for the
+ * archive healthcheck, and this file's is not).
+ */
+import { execFileSync } from 'node:child_process';
+import { gitBin } from './git-bin.js';
+
+/**
+ * process.env without any GIT_* variable, plus D51 (security M2): replace refs and grafts (a replace-graft or
+ * .git/info/grafts) are ignored, so no rewritten history can clear a fail or pass a base.
+ */
+export function gitEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('GIT_')) env[k] = v;
+  env.GIT_NO_REPLACE_OBJECTS = '1';
+  env.GIT_GRAFT_FILE = '/dev/null';
+  return env;
+}
+
+/** Trimmed stdout of `git <args>` in cwd; null when git fails or prints nothing. */
+export function gitOut(cwd: string, args: string[]): string | null {
+  try {
+    const out = execFileSync(gitBin(), args, {
+      cwd,
+      // git runs helpers (ssh, pager, credential and fsmonitor hooks) from PATH: never the caller's (D33).
+      env: { ...gitEnv(), PATH: '/usr/bin:/bin' },
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 2000,
+    }).trim();
+    return out === '' ? null : out;
+  } catch {
+    return null;
+  }
+}
