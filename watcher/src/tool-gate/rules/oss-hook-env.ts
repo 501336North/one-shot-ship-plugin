@@ -726,7 +726,10 @@ function archOrLaunchctlRuns(part: CommandPart, home: string): boolean {
   if (part.program === null || !(isArchProgram(part.program) || isLaunchctlProgram(part.program))) return false;
   const words = part.words.slice(1);
   const git = (w: string): boolean => !w.includes(UNKNOWN) && globMatches(w.slice(w.lastIndexOf('/') + 1), 'git');
-  return lineNamesHook(words.join(' '), part.cwd, home) || words.some((w) => isEnvProgram(w) || git(w));
+  // R9-2 ("Yes, first command word only"): git counts as the first word that is not an option, or the word after `--`
+  const first = words.findIndex((w) => !w.startsWith('-'));
+  const starts = words.filter((w, i) => i === first || words[i - 1] === '--');
+  return lineNamesHook(words.join(' '), part.cwd, home) || words.some(isEnvProgram) || starts.some(git);
 }
 
 /** The refusal for arch or launchctl running a hook, env or git. */

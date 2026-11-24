@@ -241,6 +241,7 @@ const ARCH_LAUNCHCTL_BLUNT = [
   'launchctl submit -l x -- git push origin HEAD:main',
   // owner-accepted refusal
   'arch -x86_64 git status',
+  'arch -arm64 git tag -d v1',
   // the gate's git spellings count
   "arch -arm64 g''it push origin HEAD:main",
   'arch -arm64 /usr/bin/git push origin HEAD:main',
@@ -355,6 +356,14 @@ const ARCH_READINGS_ALLOWED = [
   "launchctl print gui/$UID",
   "launchctl print system/com.apple.git",
   "arch -x86_64 /bin/zsh -c 'npm test'",
+  // R9-2 ("Yes, first command word only"): git as a later word, or read-only git behind a launchctl subcommand or an `arch -e` value
+  "arch -x86_64 brew install git",
+  "arch -arm64 brew upgrade git gh",
+  "launchctl asuser 501 git status",
+  "arch -e FOO=1 -arm64 git log",
+  // R9-2 git-writes pick "Accept them": the same verdict as the command without the launcher
+  "arch -e FOO=1 git push origin feat/x",
+  "launchctl asuser 501 git checkout main",
 ];
 
 /** R8-1: everyday arch and launchctl calls, and the served login.md daemon blocks, stay allowed. */
