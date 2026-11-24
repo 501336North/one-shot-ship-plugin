@@ -8723,22 +8723,22 @@ function specialSetsAsAny(text) {
   }
   return out;
 }
-function globTokens(piece) {
+function globTokens(piece, caseless = false) {
   const tokens = [];
   for (const m of piece.matchAll(new RegExp(`${SET.source}|[*?]|[^*?[]`, "g"))) {
     const c = m[0];
     if (c === "*") tokens.push("*");
     else if (c === "?" || c.startsWith("[") && (c.length < 2 || !c.endsWith("]") || /^\[[!^]?\]$/.test(c))) {
       tokens.push(() => true);
-    } else if (c.startsWith("[")) tokens.push(bracketTest(c.slice(1, -1)));
-    else tokens.push((x) => x === c);
+    } else if (c.startsWith("[")) tokens.push(bracketTest(c.slice(1, -1), caseless));
+    else tokens.push(caseless ? (x) => x.toLowerCase() === c.toLowerCase() : (x) => x === c);
   }
   return tokens;
 }
-function bracketTest(body) {
+function bracketTest(body, caseless) {
   const negate = body.startsWith("!") || body.startsWith("^");
   const set = negate ? body.slice(1) : body;
-  return (c) => {
+  const holds = (c) => {
     let hit = false;
     for (let i = 0; i < set.length; i += 1) {
       if (set[i + 1] === "-" && i + 2 < set.length) {
@@ -8746,8 +8746,9 @@ function bracketTest(body) {
         i += 2;
       } else if (set[i] === c) hit = true;
     }
-    return hit !== negate;
+    return hit;
   };
+  return (c) => (caseless ? holds(c.toLowerCase()) || holds(c.toUpperCase()) : holds(c)) !== negate;
 }
 function globMatch(tokens, name) {
   let t = 0;
@@ -8773,10 +8774,10 @@ function globMatch(tokens, name) {
   return t === tokens.length;
 }
 function globNames(piece, folder) {
-  const tokens = globTokens(piece);
+  const tokens = globTokens(piece, true);
   if (!NAMES.some((name) => globMatch(tokens, name))) return false;
-  const literals = piece.split(new RegExp(`${SET.source}|[*?]`));
-  return literals.some(writesStem) || folder !== void 0 && /^(?:hooks|cli)$/.test(folder);
+  const literals = piece.toLowerCase().split(new RegExp(`${SET.source}|[*?]`));
+  return literals.some(writesStem) || folder !== void 0 && /^(?:hooks|cli)$/i.test(folder);
 }
 function writesStem(literal2) {
   if (literal2.length < 3) return false;
@@ -8794,7 +8795,7 @@ function hasLiteralName(text) {
 function namesVerdictCapture(text) {
   const lower = text.toLowerCase();
   if (hasLiteralName(lower)) return true;
-  for (const word of specialSetsAsAny(lower).split(SEPARATORS)) {
+  for (const word of specialSetsAsAny(text).split(SEPARATORS)) {
     const segments = word.split("/");
     for (const [i, segment] of segments.entries()) {
       if (GLOB.test(segment) && globNames(segment, segments[i - 1])) return true;
@@ -8836,7 +8837,7 @@ function couldMatch(tokens, pieces, anchored) {
   return at.has(tokens.length);
 }
 function globCouldPickProtected(test, glob) {
-  const tokens = globTokens(glob.toLowerCase());
+  const tokens = globTokens(glob, true);
   const whole = test === "-name" || test === "-iname";
   return [...NAMES.map((name) => [name]), ["oss-", ".sh"]].some(
     (pieces) => couldMatch(tokens, whole ? pieces : [`/${pieces[0]}`, ...pieces.slice(1)], whole)
@@ -9101,8 +9102,16 @@ function piecesSet(word) {
   if (!/\s/.test(word)) return false;
   const assigned = ASSIGNMENT3.exec(word);
   const pieces = (assigned === null ? word : word.slice(assigned[0].length)).split(/\s+/).filter(Boolean);
-  const setsAfter = (setter, a) => ASSIGNMENT3.test(a) && unlisted(a) || (setter === "env" ? a.startsWith("-") : SETTING_WORD.test(a));
-  return pieces.some((p, i) => (OPERAND_SETTERS.has(p) || isEnvPiece(p)) && pieces.slice(i + 1).some((a) => setsAfter(isEnvPiece(p) ? "env" : p, a)));
+  let laterSetsForEnv = false;
+  let laterSetsForSetter = false;
+  for (let i = pieces.length - 1; i >= 0; i -= 1) {
+    const p = pieces[i];
+    if (isEnvPiece(p) ? laterSetsForEnv : OPERAND_SETTERS.has(p) && laterSetsForSetter) return true;
+    const assigns = ASSIGNMENT3.test(p) && unlisted(p);
+    laterSetsForEnv ||= assigns || p.startsWith("-");
+    laterSetsForSetter ||= assigns || SETTING_WORD.test(p);
+  }
+  return false;
 }
 function tokensSet(tokens, depth, call, text) {
   let previous = null;
@@ -9140,7 +9149,7 @@ var GLOB2 = /[*?[]/;
 var MAX_GLOB_READINGS = 256;
 function globMatches(part, name) {
   if (name.startsWith(".") && !part.startsWith(".")) return false;
-  return globMatch(globTokens(specialSetsAsAny(part.toLowerCase())), name.toLowerCase());
+  return globMatch(globTokens(specialSetsAsAny(part), true), name.toLowerCase());
 }
 function globReadings(word) {
   let readings = [];
