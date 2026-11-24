@@ -9393,7 +9393,7 @@ function archOrLaunchctlRuns(part, home) {
 }
 function submitSetsProgram(words) {
   const sub = words[0];
-  if (sub === void 0 || sub.includes(UNKNOWN) || !(hasGlobClass(sub) || globMatches(sub, "submit"))) return false;
+  if (sub === void 0 || !(sub.includes(UNKNOWN) || hasGlobClass(sub) || globMatches(sub, "submit"))) return false;
   const last = words.lastIndexOf("--");
   return words.slice(1, last === -1 ? words.length : last).some((w) => /^-[A-Za-z]*p/.test(w));
 }
