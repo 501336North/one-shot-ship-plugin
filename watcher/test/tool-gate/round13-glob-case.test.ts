@@ -8,6 +8,8 @@
  *   A set is now tested with each letter in both cases against the pattern as written.
  *   R13-2: the same reading for the verdict capture, so `bash ~/.oss/hooks/oss-verdict-captur[Z-f].sh` and a find
  *   name test that could pick the capture (`-name 'verdict-captur[Z-f].cjs'`) are refused.
+ *   R13-3: a hook line whose quoted word holds thousands of `export` or `env` pieces is read in one pass, so the
+ *   gate answers in well under a second with the same verdict (the piece check was quadratic: 2000 pieces took 3 s).
  * @boundary runToolGate (the gate as the hook calls it), in a scratch plugin checkout with a scratch home.
  */
 
@@ -110,5 +112,25 @@ describe.each(AGENTS)('%s', (_name, agent) => {
   it.each(EVERYDAY_CLASS_GLOBS)('allows an everyday class glob: %s', async (command) => {
     const result = await call(command, agent);
     expect(result.exitCode).toBe(0);
+  });
+});
+
+/** Hook lines with one quoted word of many `export` or `env` pieces, and the verdict each keeps. */
+const MANY_PIECES: Array<[string, string, number]> = [
+  ['2,000 export pieces on a hook line', `~/.oss/hooks/oss-log.sh "${Array(2000).fill('export').join(' ')}"`, 2],
+  ['14,000 export pieces on a hook line', `~/.oss/hooks/oss-log.sh "${Array(14_000).fill('export').join(' ')}"`, 2],
+  ['2,000 env pieces on a hook line', `~/.oss/hooks/oss-log.sh "${Array(2000).fill('env').join(' ')}"`, 2],
+  ['14,000 env pieces on a hook line', `~/.oss/hooks/oss-log.sh "${Array(14_000).fill('env').join(' ')}"`, 2],
+  ['2,000 export pieces before a hook path', `echo "${Array(2000).fill('export').join(' ')}" ~/.oss/hooks/oss-log.sh`, 0],
+  ['14,000 export pieces before a hook path', `echo "${Array(14_000).fill('export').join(' ')}" ~/.oss/hooks/oss-log.sh`, 2],
+];
+
+describe('a hook line with many export or env pieces', () => {
+  it.each(MANY_PIECES)('answers %s in under 1 s with the same verdict', async (_name, command, exitCode) => {
+    await call('true', null);
+    const started = performance.now();
+    const result = await call(command, null);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(result.exitCode).toBe(exitCode);
   });
 });

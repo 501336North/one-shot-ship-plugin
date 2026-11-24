@@ -311,9 +311,17 @@ function piecesSet(word: string): boolean {
   if (!/\s/.test(word)) return false;
   const assigned = ASSIGNMENT.exec(word);
   const pieces = (assigned === null ? word : word.slice(assigned[0].length)).split(/\s+/).filter(Boolean);
-  const setsAfter = (setter: string, a: string): boolean =>
-    (ASSIGNMENT.test(a) && unlisted(a)) || (setter === 'env' ? a.startsWith('-') : SETTING_WORD.test(a));
-  return pieces.some((p, i) => (OPERAND_SETTERS.has(p) || isEnvPiece(p)) && pieces.slice(i + 1).some((a) => setsAfter(isEnvPiece(p) ? 'env' : p, a)));
+  // one right-to-left pass (ship fix round 13, R13-3): whether a later piece sets for `env` (an option) or for a setter
+  let laterSetsForEnv = false;
+  let laterSetsForSetter = false;
+  for (let i = pieces.length - 1; i >= 0; i -= 1) {
+    const p = pieces[i];
+    if (isEnvPiece(p) ? laterSetsForEnv : OPERAND_SETTERS.has(p) && laterSetsForSetter) return true;
+    const assigns = ASSIGNMENT.test(p) && unlisted(p);
+    laterSetsForEnv ||= assigns || p.startsWith('-');
+    laterSetsForSetter ||= assigns || SETTING_WORD.test(p);
+  }
+  return false;
 }
 
 /** `text`: what the tokens were read from, so a word's raw text is known; a script inside a word has none. */
