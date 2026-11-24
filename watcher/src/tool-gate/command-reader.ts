@@ -2781,16 +2781,21 @@ function shiftedMarks(marked: Marked, offset: number): Marked {
  * The parts of the commands an `arch` or `launchctl` part may run (R9-1), read as the segment's own
  * command from that word on: its redirects, stdin and the marks of its substituted or unknown words kept.
  */
-function startParts(starts: string[][], segment: Segment, segments: Segment[], part: CommandPart, reading: Reading, depth: number): CommandPart[] {
+function startParts(starts: StartReading[], segment: Segment, segments: Segment[], part: CommandPart, reading: Reading, depth: number): CommandPart[] {
   if (starts.length === 0) return [];
   if (depth >= MAX_NESTED_DEPTH) throw new ReadingLimit(`scripts nested deeper than ${MAX_NESTED_DEPTH}`);
-  return starts.flatMap((words) => {
+  return starts.flatMap((start) => {
+    // R9-3: leading `NAME=VALUE` words set the environment of the command read, as arch's `-e` values do
+    const leading = start.words.findIndex((w) => !ASSIGNMENT.test(w));
+    if (leading === -1) return [];
+    const words = start.words.slice(leading);
+    const settings = [...start.settings, ...start.words.slice(0, leading)];
     const offset = segment.words.length - words.length;
     const suffix = offset >= 0 && words.every((w, n) => segment.words[offset + n] === w);
     const marks = suffix
       ? { substituted: shiftedMarks(segment.substituted, offset), unknown: shiftedMarks(segment.unknown, offset), wordTokens: segment.wordTokens.slice(offset) }
       : { wordTokens: [] };
-    return ownParts({ ...segment, ...marks, words, assignments: [], assignmentValues: [], scripts: [] }, segments, reading, depth + 1).map((p) => ({
+    return ownParts({ ...segment, ...marks, words, assignments: assignedNames(settings), assignmentValues: assignedValues(settings), scripts: [] }, segments, reading, depth + 1).map((p) => ({
       ...p,
       assignments: [...part.assignments, ...p.assignments],
       runBy: part.program ?? undefined,
@@ -2827,17 +2832,27 @@ function runsArchOrLaunchctl(word: string): boolean {
   }
 }
 
+/** A command an `arch` or `launchctl` part may run: its words, and the `NAME=VALUE` settings it runs with (R9-3). */
+interface StartReading {
+  words: string[];
+  settings: string[];
+}
+
 /**
  * The commands an `arch` or `launchctl` part may run, read from each word they could start at (ship fix
  * round 9, R9-1 "read every way"): every word after the program that is not an option, and the word after
  * a `--`. Each is read as a command of its own, so every rule sees it. Past MAX_START_READINGS a call
  * is too complex to check (`arch arch arch …`).
  */
-function startReadings(words: string[], reading: Reading): string[][] {
+function startReadings(words: string[], reading: Reading): StartReading[] {
   if (words.length === 0 || !runsArchOrLaunchctl(words[0])) return [];
-  const starts: string[][] = [];
+  const starts: StartReading[] = [];
+  // R9-3: arch's `-e NAME=VALUE` / `-eNAME=VALUE` values before a start set the environment of the command read there
+  const settings: string[] = [];
   for (let i = 1; i < words.length; i++) {
-    if (!words[i].startsWith('-') || words[i - 1] === '--') starts.push(words.slice(i));
+    if (!words[i].startsWith('-') || words[i - 1] === '--') starts.push({ words: words.slice(i), settings: [...settings] });
+    const value = words[i] === '-e' ? words[i + 1] : words[i].startsWith('-e') ? words[i].slice(2) : undefined;
+    if (value !== undefined && ASSIGNMENT.test(value)) settings.push(value);
   }
   reading.startReadings += starts.length;
   if (reading.startReadings > MAX_START_READINGS) throw new ReadingLimit(`more than ${MAX_START_READINGS} commands read after arch or launchctl`);

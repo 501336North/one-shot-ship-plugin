@@ -349,6 +349,23 @@ const ARCH_EVERY_READING = [
   "arch -e BASH_ENV=/tmp/x -arm64 \"$(printf %s ~/.oss/hooks/oss-log.sh)\" init",
 ];
 
+/**
+ * Ship fix round 9, R9-3: in each reading of an arch or launchctl part, arch's `-e NAME=VALUE` / `-eNAME=VALUE` values and
+ * leading `NAME=VALUE` words are environment settings for the command read, so git's env rules see them.
+ */
+const ARCH_ENV_READINGS = [
+  "arch -e GIT_SSH_COMMAND=x -arm64 git fetch origin",
+  "arch -arm64e -e GIT_SSH_COMMAND=x git fetch origin",
+  "arch -eGIT_SSH_COMMAND=x -arm64 git fetch origin",
+  "arch -arm64 GIT_SSH_COMMAND=x git fetch origin",
+  "arch -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=protocol.ext.allow -e GIT_CONFIG_VALUE_0=always -arm64 git fetch",
+  "launchctl submit -l x -- env GIT_SSH_COMMAND=x git fetch",
+  // the same commands without the launcher (controls)
+  "GIT_SSH_COMMAND=x git fetch origin",
+  "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=protocol.ext.allow GIT_CONFIG_VALUE_0=always git fetch",
+  "env GIT_SSH_COMMAND=x git fetch",
+];
+
 /** R9-1: everyday arch and launchctl calls whose later words read as commands of their own stay allowed. */
 const ARCH_READINGS_ALLOWED = [
   "arch -arm64 python3 -m pip install requests",
@@ -476,6 +493,12 @@ describe.each(PLATFORMS)('on %s', (platform) => {
     });
 
     it.each(ARCH_EVERY_READING)('refuses what arch or launchctl runs, read from every start: %s', async (command) => {
+      const result = await call(command, agent, platform);
+      expect(result.exitCode, command).toBe(2);
+      expect(result.stderr, command).toMatch(/^Refused/);
+    });
+
+    it.each(ARCH_ENV_READINGS)('refuses git with an environment set through arch -e or a leading assignment: %s', async (command) => {
       const result = await call(command, agent, platform);
       expect(result.exitCode, command).toBe(2);
       expect(result.stderr, command).toMatch(/^Refused/);
