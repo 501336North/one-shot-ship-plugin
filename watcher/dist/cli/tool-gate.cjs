@@ -3818,28 +3818,45 @@ function runsArchOrLaunchctl(word) {
   const base = import_node_path3.default.posix.basename(word).toLowerCase();
   if (base === "arch" || base === "launchctl") return true;
   if (!/[?*[]/.test(base)) return false;
-  let source = "";
-  for (let i = 0; i < base.length; i++) {
-    const c = base[i];
-    if (c === "?") source += ".";
-    else if (c === "*") source += ".*";
-    else if (c === "[") {
-      const end = base.indexOf("]", i + 2);
-      if (end === -1) {
-        source += "\\[";
-        continue;
+  if (/\[[:=.]/.test(base)) return true;
+  return globMayMatch(base, "arch") || globMayMatch(base, "launchctl");
+}
+function globMayMatch(glob, name) {
+  let at = name.split("").map(() => false).concat(false);
+  at[0] = true;
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    const next = at.map(() => false);
+    if (c === "*") {
+      let seen = false;
+      for (let k = 0; k <= name.length; k++) next[k] = seen ||= at[k];
+    } else {
+      let test = (letter) => letter === c;
+      if (c === "?") test = () => true;
+      else if (c === "[") {
+        const close = glob.indexOf("]", i + 2);
+        if (close !== -1) {
+          const inner = glob.slice(i + 1, close);
+          const negate = inner.startsWith("!") || inner.startsWith("^");
+          const set = negate ? inner.slice(1) : inner;
+          test = (letter) => inClass(set, letter) !== negate;
+          i = close;
+        }
       }
-      const inner = base.slice(i + 1, end);
-      source += `[${inner.startsWith("!") ? `^${inner.slice(1)}` : inner}]`;
-      i = end;
-    } else source += c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      for (let k = 0; k < name.length; k++) if (at[k] && test(name[k])) next[k + 1] = true;
+    }
+    at = next;
   }
-  try {
-    const glob = new RegExp(`^${source}$`);
-    return glob.test("arch") || glob.test("launchctl");
-  } catch {
-    return true;
+  return at[name.length];
+}
+function inClass(set, letter) {
+  for (let i = 0; i < set.length; i++) {
+    if (set[i + 1] === "-" && i + 2 < set.length) {
+      if (letter >= set[i] && letter <= set[i + 2]) return true;
+      i += 2;
+    } else if (set[i] === letter) return true;
   }
+  return false;
 }
 function startReadings(words, reading) {
   if (words.length === 0 || !runsArchOrLaunchctl(words[0])) return [];
@@ -9368,7 +9385,27 @@ function archOrLaunchctlRuns(part, home) {
   const git = (w) => !w.includes(UNKNOWN) && globMatches(w.slice(w.lastIndexOf("/") + 1), "git");
   const first = words.findIndex((w) => !w.startsWith("-"));
   const starts = words.filter((w, i) => i === first || words[i - 1] === "--");
-  return lineNamesHook(words.join(" "), part.cwd, home) || words.some(isEnvProgram) || starts.some(git);
+  return lineNamesHook(words.join(" "), part.cwd, home) || words.some(isEnvProgram) || starts.some(git) || optionsRefused(part.program, words, git);
+}
+var ARCH_VALUE_OPTIONS = /* @__PURE__ */ new Set(["-arch", "-e", "-d"]);
+function optionsRefused(program, words, git) {
+  const arch = isArchProgram(program);
+  const values = [];
+  let i = !arch && words[0] !== void 0 && !words[0].startsWith("-") ? 1 : 0;
+  for (; i < words.length; i++) {
+    const w = words[i];
+    if (w === "--" || !w.startsWith("-") || w === "-") break;
+    if (!arch && w.startsWith("-p")) return true;
+    const attached = w.length > 2 && !w.startsWith("--") && (!arch || /^-[ed]/.test(w)) ? w.slice(2) : null;
+    const takes = arch ? ARCH_VALUE_OPTIONS.has(w) : words[i + 1] !== void 0 && !words[i + 1].startsWith("-");
+    const value = attached ?? (takes ? words[i + 1] : void 0);
+    if (value !== void 0) {
+      if (arch && /^-[ed]/.test(w) && value.includes(UNKNOWN)) return true;
+      values.push(value);
+    }
+    if (attached === null && takes) i++;
+  }
+  return values.some(git);
 }
 var ARCH_LAUNCHCTL_REFUSAL = {
   rule: "protected-path",
