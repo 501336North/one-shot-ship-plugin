@@ -95,13 +95,22 @@ const PREFIXES = new Set(['builtin', 'command', 'noglob', 'nocorrect', '-']);
  */
 function isEnvProgram(word: string): boolean {
   if (word.includes(UNKNOWN)) return false;
-  return globMatches(word.slice(word.lastIndexOf('/') + 1), 'env');
+  return hasGlobClass(word) || globMatches(word.slice(word.lastIndexOf('/') + 1), 'env');
+}
+
+/**
+ * True when a program word's base name holds a glob class (`[…]` with something inside): it may name env,
+ * arch or launchctl, whatever the class says (ship fix round 11, R11-1 "Round 11, blunt, include older").
+ * A lone `[` or `[[` (the test builtins) is no class.
+ */
+function hasGlobClass(word: string): boolean {
+  return /\[.+\]/.test(word.slice(word.lastIndexOf('/') + 1));
 }
 
 /** True when a program word runs macOS `arch`, matched like env: any folder, any case, by glob (ship fix round 7, R7-2). */
 function isArchProgram(word: string): boolean {
   if (word.includes(UNKNOWN)) return false;
-  return globMatches(word.slice(word.lastIndexOf('/') + 1), 'arch');
+  return hasGlobClass(word) || globMatches(word.slice(word.lastIndexOf('/') + 1), 'arch');
 }
 
 /** True when any piece of a split value may run `env`, `arch` or `launchctl` (R8-1), by glob (R7-2 "Blunt on hook lines", replacing R6-2 E). */
@@ -714,7 +723,7 @@ function commandScan(command: string, cwd: string, home: string, sources: Truste
 /** True when a program word runs macOS `launchctl`, matched like env and arch (ship fix round 8, R8-1). */
 function isLaunchctlProgram(word: string): boolean {
   if (word.includes(UNKNOWN)) return false;
-  return globMatches(word.slice(word.lastIndexOf('/') + 1), 'launchctl');
+  return hasGlobClass(word) || globMatches(word.slice(word.lastIndexOf('/') + 1), 'launchctl');
 }
 
 /**
@@ -732,6 +741,17 @@ function archOrLaunchctlRuns(part: CommandPart, home: string): boolean {
   return lineNamesHook(words.join(' '), part.cwd, home) || words.some(isEnvProgram) || starts.some(git) || optionsRefused(part.program, words, git);
 }
 
+/**
+ * True for `launchctl submit` with `-p` (attached, separate or in a cluster) anywhere before its last `--`
+ * (R11-1 (b)); only submit, so `launchctl kickstart -p` stays allowed (R11-2 "Allow kickstart -p").
+ */
+function submitSetsProgram(words: readonly string[]): boolean {
+  const sub = words[0];
+  if (sub === undefined || sub.includes(UNKNOWN) || !(hasGlobClass(sub) || globMatches(sub, 'submit'))) return false;
+  const last = words.lastIndexOf('--');
+  return words.slice(1, last === -1 ? words.length : last).some((w) => /^-[A-Za-z]*p/.test(w));
+}
+
 /** arch options that take a value (`-arch name`, `-e NAME=VALUE`, `-d NAME`). */
 const ARCH_VALUE_OPTIONS = new Set(['-arch', '-e', '-d']);
 
@@ -742,12 +762,12 @@ const ARCH_VALUE_OPTIONS = new Set(['-arch', '-e', '-d']);
  */
 function optionsRefused(program: string, words: readonly string[], git: (w: string) => boolean): boolean {
   const arch = isArchProgram(program);
+  if (isLaunchctlProgram(program) && submitSetsProgram(words)) return true;
   const values: string[] = [];
   let i = !arch && words[0] !== undefined && !words[0].startsWith('-') ? 1 : 0;
   for (; i < words.length; i++) {
     const w = words[i];
     if (w === '--' || !w.startsWith('-') || w === '-') break;
-    if (!arch && w.startsWith('-p')) return true;
     const attached = w.length > 2 && !w.startsWith('--') && (!arch || /^-[ed]/.test(w)) ? w.slice(2) : null;
     const takes = arch ? ARCH_VALUE_OPTIONS.has(w) : words[i + 1] !== undefined && !words[i + 1].startsWith('-');
     const value = attached ?? (takes ? words[i + 1] : undefined);

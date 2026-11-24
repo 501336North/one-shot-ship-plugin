@@ -444,6 +444,55 @@ const ARCH_LAUNCHCTL_R10_ALLOWED = [
   "arch -arm64 make \"$TARGET\"",
 ];
 
+/**
+ * Ship fix round 11, R11-1 ("Round 11, blunt, include older") and R11-2 ("Allow kickstart -p").
+ */
+const ARCH_LAUNCHCTL_R11_REFUSED = [
+  // (a) a glob class in the program word: possibly arch, launchctl or env
+  "/usr/bin/[B-a]rch git push origin main",
+  "/usr/bin/[Z-b]rch git push origin main",
+  "/usr/bin/[Z-b]rch -e GIT_SSH_COMMAND=x git fetch origin",
+  "/usr/bin/[B-a]rch -arm64 git config protocol.ext.allow always",
+  "/usr/bin/[B-a]rch -arm64 git remote add o http://127.0.0.1/x",
+  "/usr/bin/[B-a]rch -arm64 sh -c 'git push origin main'",
+  "/usr/bin/[B-a]rch -arm64 ./hooks/oss-log.sh init",
+  "/bin/[M-l]aunchctl asuser 501 git push origin main",
+  "/bin/[M-l]aunchctl bsexec 1 git push origin main",
+  "/bin/[M-l]aunchctl submit -l x -- /usr/bin/git push origin main",
+  "/bin/[M-l]aunchctl submit -l x -p /usr/bin/git -- foo push origin main",
+  "/usr/bin/[!A]rch git push origin main",
+  "/usr/bin/[^A]rch git push origin main",
+  "/usr/bin/[!A]rch -x86_64 /bin/sh -c 'git -c protocol.ext.allow=always fetch origin'",
+  "/usr/bin/l[!A]unchctl -x86_64 /bin/sh -c 'git push origin main'",
+  "/usr/bin/[!E]nv BASH_ENV=/tmp/x ./hooks/oss-log.sh init",
+  "/usr/bin/[!]x]rch -x86_64 /bin/sh -c 'git push origin main'",
+  "/usr/bin/[!]]rch -x86_64 /bin/sh -c 'git push origin main'",
+  "/usr/bin/a[!]]rch -x86_64 /bin/sh -c 'git push origin main'",
+  "/usr/bin/[[]rch git push origin main",
+  "/usr/bin/[!a-z]rch git push origin main",
+  // (b) launchctl submit -p anywhere before the last --
+  "launchctl submit -l -- -p /bin/sh -- foo -c 'git push origin main'",
+  "launchctl submit -l x -o - -p /bin/sh -- foo -c 'git push origin main'",
+  "launchctl submit -l - -p /bin/sh -- foo -c 'git push origin main'",
+  "launchctl submit -l -- -p/bin/sh -- foo -c 'git push origin main'",
+  "launchctl submit -l -- -xp /bin/sh -- foo -c 'git push origin main'",
+  // R11-2: git in an option value stays refused (owner-accepted)
+  "launchctl submit -l x -o /tmp/git -- /usr/local/bin/node x.js",
+  "launchctl kickstart -k gui/501/git",
+];
+
+/** R11: everyday calls the round-11 rules leave alone, and kickstart -p allowed again. */
+const ARCH_LAUNCHCTL_R11_ALLOWED = [
+  // R11-2: -p is refused only for launchctl submit
+  "launchctl kickstart -p gui/501/com.oneshotship.daemon",
+  "launchctl kickstart -k -p gui/501/com.oneshotship.daemon",
+  // R11-1 (a): everyday class-glob programs and the test builtins
+  "./build-[0-9].sh",
+  "./build-[0-9].sh --release",
+  "[ -f x ] && echo yes",
+  "[[ -n $x ]] && echo yes",
+];
+
 /** R8-1: everyday arch and launchctl calls, and the served login.md daemon blocks, stay allowed. */
 const ARCH_LAUNCHCTL_ALLOWED = [
   "arch -x86_64 /bin/zsh -c 'npm test'",
@@ -575,6 +624,18 @@ describe.each(PLATFORMS)('on %s', (platform) => {
       const result = await call(command, agent, platform);
       expect(result.exitCode, command).toBe(2);
       expect(result.stderr, command).toMatch(/^Refused/);
+    });
+
+    it.each(ARCH_LAUNCHCTL_R11_REFUSED)('refuses a class-glob arch/launchctl/env program or launchctl submit -p: %s', async (command) => {
+      const result = await call(command, agent, platform);
+      expect(result.exitCode, command).toBe(2);
+      expect(result.stderr, command).toMatch(/^Refused/);
+    });
+
+    it.each(ARCH_LAUNCHCTL_R11_ALLOWED)('allows everyday calls the round-11 rules leave alone: %s', async (command) => {
+      const result = await call(command, agent, platform);
+      expect(result.stderr, command).toBe('');
+      expect(result.exitCode, command).toBe(0);
     });
 
     it.each(ARCH_LAUNCHCTL_R10_ALLOWED)('allows everyday arch and launchctl calls the round-10 rules leave alone: %s', async (command) => {

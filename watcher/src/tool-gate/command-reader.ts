@@ -2808,8 +2808,8 @@ function runsArchOrLaunchctl(word: string): boolean {
   const base = path.posix.basename(word).toLowerCase();
   if (base === 'arch' || base === 'launchctl') return true;
   if (!/[?*[]/.test(base)) return false;
-  // a character class (`[[:alpha:]]`, `[[=a=]]`, `[[.a.]]`) is not read: it may match
-  if (/\[[:=.]/.test(base)) return true;
+  // any glob class (`[…]` with something inside) may match, whatever it says (R11-1); a lone `[` is the test builtin
+  if (/\[.+\]/.test(base)) return true;
   return globMayMatch(base, 'arch') || globMayMatch(base, 'launchctl');
 }
 
