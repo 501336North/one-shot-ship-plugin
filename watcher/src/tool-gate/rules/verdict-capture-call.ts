@@ -108,8 +108,12 @@ export function specialSetsAsAny(text: string): string {
 /** One glob token: `*` (any run), or a test for one character (`?`, a `[..]` set, or a literal). */
 export type Token = '*' | ((c: string) => boolean);
 
-/** The tokens a glob piece stands for. An unclosed `[` matches any one character, as before (fails closed). */
-export function globTokens(piece: string): Token[] {
+/**
+ * The tokens a glob piece stands for. An unclosed `[` matches any one character, as before (fails closed).
+ * `caseless`: a character matches in either letter case, with each set read as written, so `[Z-p]` still holds
+ * `o` and `[!h]` still leaves out `h` (ship fix round 13, R13-1).
+ */
+export function globTokens(piece: string, caseless = false): Token[] {
   const tokens: Token[] = [];
   for (const m of piece.matchAll(new RegExp(`${SET.source}|[*?]|[^*?[]`, 'g'))) {
     const c = m[0];
@@ -117,17 +121,17 @@ export function globTokens(piece: string): Token[] {
     else if (c === '?' || (c.startsWith('[') && (c.length < 2 || !c.endsWith(']') || /^\[[!^]?\]$/.test(c)))) {
       tokens.push(() => true);
     }
-    else if (c.startsWith('[')) tokens.push(bracketTest(c.slice(1, -1)));
-    else tokens.push((x) => x === c);
+    else if (c.startsWith('[')) tokens.push(bracketTest(c.slice(1, -1), caseless));
+    else tokens.push(caseless ? (x) => x.toLowerCase() === c.toLowerCase() : (x) => x === c);
   }
   return tokens;
 }
 
-/** The test for a `[..]` set body: ranges, and `!` or `^` first to negate. */
-function bracketTest(body: string): (c: string) => boolean {
+/** The test for a `[..]` set body: ranges, and `!` or `^` first to negate; `caseless`: a member in either letter case. */
+function bracketTest(body: string, caseless: boolean): (c: string) => boolean {
   const negate = body.startsWith('!') || body.startsWith('^');
   const set = negate ? body.slice(1) : body;
-  return (c) => {
+  const holds = (c: string): boolean => {
     let hit = false;
     for (let i = 0; i < set.length; i += 1) {
       if (set[i + 1] === '-' && i + 2 < set.length) {
@@ -135,8 +139,9 @@ function bracketTest(body: string): (c: string) => boolean {
         i += 2;
       } else if (set[i] === c) hit = true;
     }
-    return hit !== negate;
+    return hit;
   };
+  return (c) => (caseless ? holds(c.toLowerCase()) || holds(c.toUpperCase()) : holds(c)) !== negate;
 }
 
 /** Whole-piece glob match with two pointers, backtracking only to the last `*` (no exponential blow-up). */
