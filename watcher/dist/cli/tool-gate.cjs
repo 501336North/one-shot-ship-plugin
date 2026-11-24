@@ -2051,6 +2051,7 @@ var DYNAMIC_SCRIPT = /\$\(|`|\$[A-Za-z_{0-9@*#?!$-]/;
 var MAX_NESTED_DEPTH = 5;
 var MAX_GROUP_DEPTH = 64;
 var MAX_WRAPPERS = 64;
+var MAX_START_READINGS = 64;
 var PIPES = ["|", "|&"];
 var KEYWORDS = /* @__PURE__ */ new Set(["if", "then", "elif", "else", "fi", "do", "done", "while", "until", "!"]);
 var CD_PREFIXES = /* @__PURE__ */ new Set(["command", "builtin", "time", "noglob", "nocorrect", "-"]);
@@ -2125,6 +2126,7 @@ function readCommand(cmd, cwd, home, caseInsensitive = false, toplevel, readFile
     files: /* @__PURE__ */ new Map(),
     scriptCommands: /* @__PURE__ */ new Map(),
     scanned: 0,
+    startReadings: 0,
     cdpath: cdpath === void 0 ? null : compactCdpath(cdpath.split(":")),
     cdpathSetUnseen: cdpathSetUnseen(cmd),
     tmpdirSet: /(^|[^$\w{])TMPDIR\b/.test(cmd),
@@ -3700,7 +3702,8 @@ function ownParts(segment, segments, reading, depth) {
     ...functionParts(bodies, part, reading, depth),
     ...settingParts(part, reading, depth),
     ...scriptCommandParts(scriptFacts, part, reading, depth),
-    ...alternateParts(alternates, segment, segments, part, reading, depth)
+    ...alternateParts(alternates, segment, segments, part, reading, depth),
+    ...startParts(startReadings(words, reading), segment, segments, part, reading, depth)
   ];
   for (const target of part.writeTargets) reading.written.add(import_node_path3.default.resolve(target));
   const script = scriptOf(name, program === null ? null : import_node_path3.default.posix.basename(program), args) ?? stdinShellScript(name, args, part.stdinScripts) ?? expectSpawns(name, args, cwd, reading, stdinFed(segment));
@@ -3789,6 +3792,67 @@ function alternateParts(alternates, segment, segments, part, reading, depth) {
       terminal: true
     }))
   );
+}
+function shiftedMarks(marked, offset) {
+  return { words: new Set([...marked.words].flatMap((n) => n >= offset ? [n - offset] : [])), redirects: marked.redirects };
+}
+function startParts(starts, segment, segments, part, reading, depth) {
+  if (starts.length === 0) return [];
+  if (depth >= MAX_NESTED_DEPTH) throw new ReadingLimit2(`scripts nested deeper than ${MAX_NESTED_DEPTH}`);
+  return starts.flatMap((start) => {
+    const leading = start.words.findIndex((w) => !ASSIGNMENT2.test(w));
+    if (leading === -1) return [];
+    const words = start.words.slice(leading);
+    const settings = [...start.settings, ...start.words.slice(0, leading)];
+    const offset = segment.words.length - words.length;
+    const suffix = offset >= 0 && words.every((w, n) => segment.words[offset + n] === w);
+    const marks = suffix ? { substituted: shiftedMarks(segment.substituted, offset), unknown: shiftedMarks(segment.unknown, offset), wordTokens: segment.wordTokens.slice(offset) } : { wordTokens: [] };
+    return ownParts({ ...segment, ...marks, words, assignments: assignedNames(settings), assignmentValues: assignedValues(settings), scripts: [] }, segments, reading, depth + 1).map((p) => ({
+      ...p,
+      assignments: [...part.assignments, ...p.assignments],
+      runBy: part.program ?? void 0
+    }));
+  });
+}
+function runsArchOrLaunchctl(word) {
+  const base = import_node_path3.default.posix.basename(word).toLowerCase();
+  if (base === "arch" || base === "launchctl") return true;
+  if (!/[?*[]/.test(base)) return false;
+  let source = "";
+  for (let i = 0; i < base.length; i++) {
+    const c = base[i];
+    if (c === "?") source += ".";
+    else if (c === "*") source += ".*";
+    else if (c === "[") {
+      const end = base.indexOf("]", i + 2);
+      if (end === -1) {
+        source += "\\[";
+        continue;
+      }
+      const inner = base.slice(i + 1, end);
+      source += `[${inner.startsWith("!") ? `^${inner.slice(1)}` : inner}]`;
+      i = end;
+    } else source += c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  try {
+    const glob = new RegExp(`^${source}$`);
+    return glob.test("arch") || glob.test("launchctl");
+  } catch {
+    return true;
+  }
+}
+function startReadings(words, reading) {
+  if (words.length === 0 || !runsArchOrLaunchctl(words[0])) return [];
+  const starts = [];
+  const settings = [];
+  for (let i = 1; i < words.length; i++) {
+    if (!words[i].startsWith("-") || words[i - 1] === "--") starts.push({ words: words.slice(i), settings: [...settings] });
+    const value = words[i] === "-e" ? words[i + 1] : words[i].startsWith("-e") ? words[i].slice(2) : void 0;
+    if (value !== void 0 && ASSIGNMENT2.test(value)) settings.push(value);
+  }
+  reading.startReadings += starts.length;
+  if (reading.startReadings > MAX_START_READINGS) throw new ReadingLimit2(`more than ${MAX_START_READINGS} commands read after arch or launchctl`);
+  return starts;
 }
 var EXPECT_WAITS = /* @__PURE__ */ new Map([["expect", 1], ["send", 1], ["exit", 1], ["interact", 0], ["wait", 0], ["close", 0]]);
 function expectSpawns(name, args, cwd, reading, stdinFed2) {
@@ -9302,7 +9366,9 @@ function archOrLaunchctlRuns(part, home) {
   if (part.program === null || !(isArchProgram(part.program) || isLaunchctlProgram(part.program))) return false;
   const words = part.words.slice(1);
   const git = (w) => !w.includes(UNKNOWN) && globMatches(w.slice(w.lastIndexOf("/") + 1), "git");
-  return lineNamesHook(words.join(" "), part.cwd, home) || words.some((w) => isEnvProgram(w) || git(w));
+  const first = words.findIndex((w) => !w.startsWith("-"));
+  const starts = words.filter((w, i) => i === first || words[i - 1] === "--");
+  return lineNamesHook(words.join(" "), part.cwd, home) || words.some(isEnvProgram) || starts.some(git);
 }
 var ARCH_LAUNCHCTL_REFUSAL = {
   rule: "protected-path",
@@ -9324,6 +9390,7 @@ function checkOssHookEnv(part, command, home, sources) {
     }
   }
   if (archOrLaunchctlRuns(part, home)) return ARCH_LAUNCHCTL_REFUSAL;
+  if (part.runBy !== void 0 && programHidden(part) && lineNamesHook(command, part.cwd, home)) return ARCH_LAUNCHCTL_REFUSAL;
   if (!partNamesHook(part, home) && !PLUGIN_HOOK.test(command)) return null;
   const clears = part.program !== null && isEnvProgram(part.program) || part.wrappers.some((w, i) => w === "env" || w === "exec" && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o)));
   if (!clears && !setsRefusedVariable(command, 0, { home, sources: sourcesFor(command, sources) })) return null;
