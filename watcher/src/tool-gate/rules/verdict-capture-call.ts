@@ -171,10 +171,10 @@ export function globMatch(tokens: Token[], name: string): boolean {
 
 /** True when a glob piece could be one of the names and writes part of it, or its folder is a hooks or cli folder. */
 function globNames(piece: string, folder: string | undefined): boolean {
-  const tokens = globTokens(piece);
+  const tokens = globTokens(piece, true);
   if (!NAMES.some((name) => globMatch(tokens, name))) return false;
-  const literals = piece.split(new RegExp(`${SET.source}|[*?]`));
-  return literals.some(writesStem) || (folder !== undefined && /^(?:hooks|cli)$/.test(folder));
+  const literals = piece.toLowerCase().split(new RegExp(`${SET.source}|[*?]`));
+  return literals.some(writesStem) || (folder !== undefined && /^(?:hooks|cli)$/i.test(folder));
 }
 
 /** True when a literal sits inside one of the full names with at least 3 of its characters before the extension (perf I3). */
@@ -201,7 +201,8 @@ function hasLiteralName(text: string): boolean {
 export function namesVerdictCapture(text: string): boolean {
   const lower = text.toLowerCase();
   if (hasLiteralName(lower)) return true;
-  for (const word of specialSetsAsAny(lower).split(SEPARATORS)) {
+  // sets are read as written, in either case (ship fix round 13, R13-2)
+  for (const word of specialSetsAsAny(text).split(SEPARATORS)) {
     const segments = word.split('/');
     for (const [i, segment] of segments.entries()) {
       if (GLOB.test(segment) && globNames(segment, segments[i - 1])) return true;
@@ -256,7 +257,7 @@ export function couldMatch(tokens: Token[], pieces: string[], anchored: boolean)
 
 /** True when a find name or path glob could pick the capture or an OSS hook (`oss-*.sh`), in any case. */
 function globCouldPickProtected(test: string, glob: string): boolean {
-  const tokens = globTokens(glob.toLowerCase());
+  const tokens = globTokens(glob, true);
   const whole = test === '-name' || test === '-iname';
   return [...NAMES.map((name) => [name]), ['oss-', '.sh']].some((pieces) =>
     couldMatch(tokens, whole ? pieces : [`/${pieces[0]}`, ...pieces.slice(1)], whole),

@@ -6,6 +6,8 @@
  * @business-rule gate-gaps-r3 ship fix round 13, R13-1 (owner pick "Round 13: all three"): the hook-path glob reading
  *   lowercased the pattern before reading ranges, so `[Z-p]` became the empty `[z-p]` and the hook call was allowed.
  *   A set is now tested with each letter in both cases against the pattern as written.
+ *   R13-2: the same reading for the verdict capture, so `bash ~/.oss/hooks/oss-verdict-captur[Z-f].sh` and a find
+ *   name test that could pick the capture (`-name 'verdict-captur[Z-f].cjs'`) are refused.
  * @boundary runToolGate (the gate as the hook calls it), in a scratch plugin checkout with a scratch home.
  */
 
@@ -80,11 +82,26 @@ const HOOK_CASE_RANGE_REFUSED = [
   'FOO=1 ./h[Z-o]oks/oss-log.sh x',
 ];
 
+/** The verdict capture named through a set whose range spans both letter cases. */
+const CAPTURE_CASE_RANGE_REFUSED = [
+  'bash ~/.oss/hooks/oss-verdict-captur[Z-f].sh',
+  'node watcher/dist/cli/verdict-captur[Z-f].cjs',
+  'node watcher/dist/cli/verdict-c[Z-b]pture.cjs',
+  "find watcher/dist/cli -name 'verdict-captur[Z-f].cjs' -exec node {} \\;",
+  "find . -path '*/cli/verdict-captur[Z-f].cjs' -exec node {} \\;",
+];
+
 /** Everyday class globs: no hook path. */
 const EVERYDAY_CLASS_GLOBS = ['ls [A-Z]*.md', './build-[0-9].sh', 'cat src/[A-Z]*.ts', 'ls docs/[a-z]*.md'];
 
 describe.each(AGENTS)('%s', (_name, agent) => {
   it.each(HOOK_CASE_RANGE_REFUSED)('refuses a hook call whose folder is a set spanning both letter cases: %s', async (command) => {
+    const result = await call(command, agent);
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/^Refused/);
+  });
+
+  it.each(CAPTURE_CASE_RANGE_REFUSED)('refuses a verdict capture call named through a set spanning both letter cases: %s', async (command) => {
     const result = await call(command, agent);
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toMatch(/^Refused/);
