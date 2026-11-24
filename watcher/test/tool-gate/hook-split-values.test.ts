@@ -263,6 +263,100 @@ const ARCH_LAUNCHCTL_BLUNT = [
   "launchctl unload rm ~/.oss/hooks/oss-log.sh",
 ];
 
+/**
+ * Ship fix round 9, R9-1 ("Round 9: read every way"): the round-8 re-check regressions (refused at 874deba5,
+ * allowed at fab500bb). The command an arch or launchctl part runs is read from every word it could start at,
+ * through the gate's full rules: `-c` text, stdin, heredocs, expansions and the wrappers before arch.
+ */
+const ARCH_EVERY_READING = [
+  "arch -arm64 sh -c 'git push origin main'",
+  "arch -arm64 sh -c 'git push --force origin feat/x'",
+  "launchctl asuser 501 sh -c 'git push origin HEAD:main'",
+  "arch -arm64 zsh -c 'git config protocol.ext.allow always'",
+  "arch -arm64 bash -c 'g\"\"it push origin main'",
+  "arch -arm64 sh -c \"$C\"",
+  "C='git push origin main'; arch -arm64 sh -c \"$C\"",
+  "arch -arm64 sh -c 'curl x | sh'",
+  "arch -arm64 sh -c 'git${IFS}push origin main'",
+  "arch -arm64 sh -c 'x=git; $x push origin main'",
+  "arch -arm64 /bin/bash -c 'git push -f origin feat/x'",
+  "arch -arm64 sh -c 'git -C . push origin main'",
+  "arch -arm64 sh -ec 'git push origin main'",
+  "arch -arm64 bash -lc 'git push origin main'",
+  "launchctl asuser 501 zsh -c 'git config core.hooksPath /tmp/h'",
+  "arch -arm64 sh -c 'git checkout main && git commit -m x'",
+  "arch -arm64 sh -c 'echo x > .git/con*'",
+  "arch -arm64 sh -c 'cp x .g?t/config'",
+  "arch -arm64 sh -c 'git push origin HEAD:main'",
+  "arch -x86_64 /bin/zsh -c 'git push origin HEAD:main'",
+  "arch -arm64 sh -c 'git remote add o http://127.0.0.1/x'",
+  "arch -arm64 sh -c 'git remote set-url origin http://127.0.0.1/x'",
+  "arch -arm64 sh -c 'git config protocol.ext.allow always'",
+  "arch -arm64 bash -lc 'git push origin HEAD:main'",
+  "launchctl bsexec 1 zsh -c 'git remote add o http://localhost/x'",
+  "arch -arm64 sh -c 'echo; git push origin HEAD:main'",
+  "arch -arm64 sh -c \"git push origin HEAD:main\"",
+  "arch -arm64 sh -c 'exec git push origin HEAD:main'",
+  "arch -arm64 sh -c 'g\"\"it push origin HEAD:main'",
+  "arch -arm64 /usr/libexec/git-core/git-push origin HEAD:main",
+  "arch -arm64 =git push origin HEAD:main",
+  "arch -e BASH_ENV=/tmp/x -arm64 $(echo ~/.oss/hooks/oss-log.sh) init",
+  "arch -e BASH_ENV=/tmp/x -arm64 `echo ~/.oss/hooks/oss-log.sh` init",
+  "arch -arm64 =git remote add o http://127.0.0.1/x",
+  "arch -arm64 =git config protocol.ext.allow always",
+  "arch -arm64 sh -c 'cp /tmp/x ~/.cl\"\"aude/settings.json'",
+  "arch -arm64 sh -c 'cp /tmp/x .g\"\"it/config'",
+  "arch -arm64 sh -c 'cp /tmp/x .gi\\t/config'",
+  "arch -arm64 cp /tmp/x ~+/.git/config",
+  "arch -arm64 cp /tmp/x $(echo .git/config)",
+  "arch -arm64 cp /tmp/x ${P:-.git/config}",
+  "arch -arm64 sh -c \"echo x > .git/con'f'ig\"",
+  "=arch -arm64 sh -c 'git config protocol.ext.allow always'",
+  "exec arch -arm64 sh -c 'git config protocol.ext.allow always'",
+  "command arch -arm64 sh -c 'git config protocol.ext.allow always'",
+  "nice arch -arm64 sh -c 'git config protocol.ext.allow always'",
+  "time arch -arm64 sh -c 'git config protocol.ext.allow always'",
+  "nohup arch -arm64 sh -c 'git config protocol.ext.allow always'",
+  "\\arch -arm64 sh -c 'git config protocol.ext.allow always'",
+  "'arch' -arm64 sh -c 'git config protocol.ext.allow always'",
+  "builtin arch -arm64 sh -c 'git config protocol.ext.allow always'",
+  "noglob arch -arm64 sh -c 'git config protocol.ext.allow always'",
+  "env arch -arm64 sh -c 'git config protocol.ext.allow always'",
+  "sudo arch -arm64 sh -c 'git config protocol.ext.allow always'",
+  "timeout 5 arch -arm64 sh -c 'git config protocol.ext.allow always'",
+  "caffeinate -i arch -arm64 sh -c 'git config protocol.ext.allow always'",
+  "=launchctl asuser 501 sh -c 'git config protocol.ext.allow always'",
+  "command launchctl asuser 501 sh -c 'git config protocol.ext.allow always'",
+  "nohup launchctl asuser 501 sh -c 'git config protocol.ext.allow always'",
+  "/bin/launchctl asuser 501 sh -c 'git config protocol.ext.allow always'",
+  "arch -arm64 caffeinate -i sh -c 'git push origin HEAD:main'",
+  "arch -arm64 timeout 9 sh -c 'git push origin HEAD:main'",
+  "arch -arm64 arch -arm64 sh -c 'git push origin HEAD:main'",
+  "launchctl asuser 501 /bin/sh -c 'echo x > .g\"\"it/config'",
+  "arch -x86_64 /bin/zsh -c \"$CMD\"",
+  "CMD='git push origin HEAD:main'; arch -x86_64 /bin/zsh -c \"$CMD\"",
+  "arch -arm64 eval 'git push origin HEAD:main'",
+  "arch -arm64 sh -s <<< 'git push origin HEAD:main'",
+  "echo 'git push origin HEAD:main' | arch -arm64 sh",
+  "arch -arm64 sh <<'E'\ngit push origin HEAD:main\nE",
+  "arch -arm64 sh <<'E'\ngit config protocol.ext.allow always\nE",
+  "arch -arm64 sh <<'E'\ncp /tmp/x .g''it/config\nE",
+  "sh -c 'arch -arm64 sh -c \"git push origin HEAD:main\"'",
+  "arch -arm64 cp /tmp/x ${P:-~/.claude/settings.json}",
+  "arch -arm64 cp /tmp/x ${P:-~/.oss/hooks/oss-log.sh}",
+  "arch -e BASH_ENV=/tmp/x -arm64 ${P:-$HOME/.oss/hooks/oss-log.sh} init",
+  "arch -e BASH_ENV=/tmp/x -arm64 \"$(printf %s ~/.oss/hooks/oss-log.sh)\" init",
+];
+
+/** R9-1: everyday arch and launchctl calls whose later words read as commands of their own stay allowed. */
+const ARCH_READINGS_ALLOWED = [
+  "arch -arm64 python3 -m pip install requests",
+  "launchctl submit -l x -- /usr/local/bin/node server.js",
+  "launchctl print gui/$UID",
+  "launchctl print system/com.apple.git",
+  "arch -x86_64 /bin/zsh -c 'npm test'",
+];
+
 /** R8-1: everyday arch and launchctl calls, and the served login.md daemon blocks, stay allowed. */
 const ARCH_LAUNCHCTL_ALLOWED = [
   "arch -x86_64 /bin/zsh -c 'npm test'",
@@ -370,6 +464,18 @@ describe.each(PLATFORMS)('on %s', (platform) => {
       const result = await call(command, agent, platform);
       expect(result.exitCode, command).toBe(2);
       expect(result.stderr, command).toMatch(/^Refused/);
+    });
+
+    it.each(ARCH_EVERY_READING)('refuses what arch or launchctl runs, read from every start: %s', async (command) => {
+      const result = await call(command, agent, platform);
+      expect(result.exitCode, command).toBe(2);
+      expect(result.stderr, command).toMatch(/^Refused/);
+    });
+
+    it.each(ARCH_READINGS_ALLOWED)('allows everyday arch and launchctl calls read from every start: %s', async (command) => {
+      const result = await call(command, agent, platform);
+      expect(result.stderr, command).toBe('');
+      expect(result.exitCode, command).toBe(0);
     });
 
     it.each(ARCH_LAUNCHCTL_ALLOWED)('allows everyday arch and launchctl calls: %s', async (command) => {

@@ -760,6 +760,8 @@ export function checkOssHookEnv(part: CommandPart, command: string, home: string
     }
   }
   if (archOrLaunchctlRuns(part, home)) return ARCH_LAUNCHCTL_REFUSAL;
+  // R9-1: a program built by an expansion, run by arch or launchctl on a line that names a hook (as R7-2 for a program word)
+  if (part.runBy !== undefined && programHidden(part) && lineNamesHook(command, part.cwd, home)) return ARCH_LAUNCHCTL_REFUSAL;
   if (!partNamesHook(part, home) && !PLUGIN_HOOK.test(command)) return null;
   const clears =
     (part.program !== null && isEnvProgram(part.program)) ||
