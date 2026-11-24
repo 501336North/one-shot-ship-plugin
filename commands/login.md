@@ -103,7 +103,7 @@ Configure your API key for OSS Dev Workflow access.
    echo "All existing tools and settings preserved. Ready to use."
    ```
 
-**Then STOP. Do NOT proceed to Steps 4-9 (CLAUDE.md sync, decrypt CLI install, notifications, daemon, status line, notification config).** These are only needed on first login, not key rotation.
+**Then STOP. Do NOT proceed to Steps 4-9 (decrypt CLI install, CLAUDE.md sync, notifications, daemon, status line, notification config).** These are only needed on first login, not key rotation.
 
 ---
 
@@ -140,66 +140,9 @@ The key reaches the shell through the value folder, never typed into a command (
 
 Show the user the plan the call printed (trial, active, expired).
 
-## Step 4: Sync CLAUDE.md with IRON LAWS (Automatic)
+## Step 4: Install Decryption CLI
 
-After successful authentication, the command installs the IRON LAWS block and then syncs the project guidelines around it.
-
-### 4.1: Install the IRON LAWS block (single writer)
-
-```bash
-~/.oss/hooks/oss-iron-laws-sync.sh --install
-```
-
-This script is the **only** writer of the IRON LAWS block. Do not write, copy or edit that block yourself. It:
-- creates CLAUDE.md with one block if the project has none, appends one block to a CLAUDE.md that has none, or refreshes the existing block in place;
-- prints the laws to stdout only when it has just added them, so this session sees them;
-- writes nothing and prints its reason on stderr when it exits non-zero.
-
-**If it exits non-zero, Step 4 ends here: skip 4.2 and 4.3 entirely** (do not fetch the template, do not create or edit CLAUDE.md), show the user the stderr reason, and go on to Step 5.
-- **Exit 3 (refused):** CLAUDE.md is a symlink or not a regular file, resolves outside the project, the project directory is your home directory, or the IRON LAWS markers are malformed (not exactly one START line before one END line). Tell the user: "CLAUDE.md was not updated: {stderr reason}. Fix it and run /oss:login again."
-- **Exit 4 (no laws to write):** not logged in, no API key, the API was unreachable or returned an error, or its response was not a valid laws document. Tell the user: "CLAUDE.md was not updated: could not fetch the IRON LAWS ({stderr reason}). Run /oss:login again when the API is reachable."
-- **Any other non-zero exit:** tell the user "CLAUDE.md was not updated: {stderr reason}."
-
-### 4.2: Fetch the CLAUDE.md template
-
-```bash
-~/.oss/hooks/oss-claude-md-template.sh
-```
-
-It takes no arguments. It sends the key from the OSS config only to the API that config's `apiUrl` names (the API the key was just checked against), and prints the template to stdout. Do not fetch the template any other way.
-
-If it prints `No such file or directory` (any case: zsh prints `no such file or directory`), the plugin was updated after this session started and `~/.oss/hooks` does not have this hook yet: skip 4.3, show only this line: `Your OSS hooks are older than the plugin; restart Claude Code (or start a new session) to update them.` (not the message below), and go on to Step 5.
-
-**If it exits non-zero, skip 4.3** (do not create or edit CLAUDE.md beyond what 4.1 wrote), tell the user "The CLAUDE.md project guidelines were not updated: {stderr reason}. Run /oss:login again to retry.", and go on to Step 5.
-
-Remove the placeholder line `<!-- IRON LAWS will be injected here by /oss:login -->` from the template. The block from 4.1 replaces it; never inject the laws into the template.
-
-### 4.3: Merge the template into CLAUDE.md
-
-1. 4.1 succeeded, so CLAUDE.md exists and holds exactly one IRON LAWS block.
-2. If it has no `# OSS Dev Workflow` section: append the template with a separator.
-3. If it has one: replace that section with the fresh template. The section ends at the next top-level `# ` heading or at the IRON LAWS block, whichever comes first.
-4. In every case, leave the IRON LAWS block exactly as 4.1 wrote it: never edit, move or duplicate the lines between its markers.
-
-### 4.4: What Gets Synced
-
-**From IRON LAWS (`/api/v1/prompts/shared/iron-laws`):** the block that
-`oss-iron-laws-sync.sh --install` writes: every numbered IRON LAW, the
-dev-docs symlink guard, the Decisions rules and the Enforcement pre-check. Session start refreshes
-this block in projects that already have one; never edit it by hand.
-
-**From the template (`/api/v1/prompts/claude-md`):** the `# OSS Dev Workflow - Project Guidelines`
-section: workflow command boundaries and the `/oss:` command reference. Put
-project-specific guidance under its own top-level `# ` heading, since login replaces only this
-section and the laws block.
-
-This list names where each part comes from, not what it says: the served text is the reference.
-
-**Note:** IRON LAWS are the single source of truth. Every `/oss:login` pulls the latest version from the API.
-
-## Step 5: Install Decryption CLI (First Login Only)
-
-After successful authentication, install the decryption CLI for secure prompt delivery:
+After successful authentication, install the decryption CLI for secure prompt delivery. This step comes before Step 5: Step 5 writes the IRON LAWS and the CLAUDE.md template only after this CLI (`oss-decrypt --verify-body`) checks them, so without it a first login ends with no IRON LAWS in CLAUDE.md.
 
 1. **Install (or update) the CLI through the verified installer hook:**
 
@@ -255,7 +198,64 @@ After successful authentication, install the decryption CLI for secure prompt de
 - **~/.oss/bin/oss-decrypt** - CLI binary for decrypting prompts locally
 - **~/.oss/credentials.enc** - Encrypted credential storage
 
-**Skip this step** if CLI is already installed and working.
+**Run this step on every full login**, even when a CLI is already installed: the hook replaces an older CLI with the pinned one, and Step 5 needs that version.
+
+## Step 5: Sync CLAUDE.md with IRON LAWS (Automatic)
+
+With the CLI from Step 4 in place, the command installs the IRON LAWS block and then syncs the project guidelines around it.
+
+### 5.1: Install the IRON LAWS block (single writer)
+
+```bash
+~/.oss/hooks/oss-iron-laws-sync.sh --install
+```
+
+This script is the **only** writer of the IRON LAWS block. Do not write, copy or edit that block yourself. It:
+- creates CLAUDE.md with one block if the project has none, appends one block to a CLAUDE.md that has none, or refreshes the existing block in place;
+- prints the laws to stdout only when it has just added them, so this session sees them;
+- writes nothing and prints its reason on stderr when it exits non-zero.
+
+**If it exits non-zero, Step 5 ends here: skip 5.2 and 5.3 entirely** (do not fetch the template, do not create or edit CLAUDE.md), show the user the stderr reason, and go on to Step 6.
+- **Exit 3 (refused):** CLAUDE.md is a symlink or not a regular file, resolves outside the project, the project directory is your home directory, or the IRON LAWS markers are malformed (not exactly one START line before one END line). Tell the user: "CLAUDE.md was not updated: {stderr reason}. Fix it and run /oss:login again."
+- **Exit 4 (no laws to write):** not logged in, no API key, the API was unreachable or returned an error, or its response was not a valid laws document. Tell the user: "CLAUDE.md was not updated: could not fetch the IRON LAWS ({stderr reason}). Run /oss:login again when the API is reachable."
+- **Any other non-zero exit:** tell the user "CLAUDE.md was not updated: {stderr reason}."
+
+### 5.2: Fetch the CLAUDE.md template
+
+```bash
+~/.oss/hooks/oss-claude-md-template.sh
+```
+
+It takes no arguments. It sends the key from the OSS config only to the API that config's `apiUrl` names (the API the key was just checked against), and prints the template to stdout. Do not fetch the template any other way.
+
+If it prints `No such file or directory` (any case: zsh prints `no such file or directory`), the plugin was updated after this session started and `~/.oss/hooks` does not have this hook yet: skip 5.3, show only this line: `Your OSS hooks are older than the plugin; restart Claude Code (or start a new session) to update them.` (not the message below), and go on to Step 6.
+
+**If it exits non-zero, skip 5.3** (do not create or edit CLAUDE.md beyond what 5.1 wrote), tell the user "The CLAUDE.md project guidelines were not updated: {stderr reason}. Run /oss:login again to retry.", and go on to Step 6.
+
+Remove the placeholder line `<!-- IRON LAWS will be injected here by /oss:login -->` from the template. The block from 5.1 replaces it; never inject the laws into the template.
+
+### 5.3: Merge the template into CLAUDE.md
+
+1. 5.1 succeeded, so CLAUDE.md exists and holds exactly one IRON LAWS block.
+2. If it has no `# OSS Dev Workflow` section: append the template with a separator.
+3. If it has one: replace that section with the fresh template. The section ends at the next top-level `# ` heading or at the IRON LAWS block, whichever comes first.
+4. In every case, leave the IRON LAWS block exactly as 5.1 wrote it: never edit, move or duplicate the lines between its markers.
+
+### 5.4: What Gets Synced
+
+**From IRON LAWS (`/api/v1/prompts/shared/iron-laws`):** the block that
+`oss-iron-laws-sync.sh --install` writes: every numbered IRON LAW, the
+dev-docs symlink guard, the Decisions rules and the Enforcement pre-check. Session start refreshes
+this block in projects that already have one; never edit it by hand.
+
+**From the template (`/api/v1/prompts/claude-md`):** the `# OSS Dev Workflow - Project Guidelines`
+section: workflow command boundaries and the `/oss:` command reference. Put
+project-specific guidance under its own top-level `# ` heading, since login replaces only this
+section and the laws block.
+
+This list names where each part comes from, not what it says: the served text is the reference.
+
+**Note:** IRON LAWS are the single source of truth. Every `/oss:login` pulls the latest version from the API.
 
 ## Step 6: Install Notification Tools (First Login Only)
 

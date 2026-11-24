@@ -122,7 +122,9 @@ describe('apiUrl has one source and is checked before the key is sent', () => {
   it('with OSS_CONFIG_DIR set, --list-prompts uses the same apiUrl', async () => {
     writeConfig({ apiUrl: 'https://custom-api.example.com' });
     await runCli(['--list-prompts']);
-    expect(fetchedUrls()).toEqual(['https://custom-api.example.com/api/v1/prompts/manifest']);
+    process.exitCode = undefined;
+    // R-273 ship round 1: --list-prompts retries an unreachable manifest once, at the same URL.
+    expect([...new Set(fetchedUrls())]).toEqual(['https://custom-api.example.com/api/v1/prompts/manifest']);
   });
 
   it('no apiUrl in config means the default API for every command', async () => {

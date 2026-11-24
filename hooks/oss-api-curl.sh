@@ -201,6 +201,62 @@ oss_json_field() {
         | gsub("[\u0000-\u001f" + oss_invisible + "]"; "") else "" end'
 }
 
+# oss_split_field FIELD - reads the /shared/iron-laws?split=1 reply on stdin and prints its string .FIELD (base or
+# team) byte for byte, "" for an absent team (R-273 D12: oss-iron-laws-sync.sh, fetch-iron-laws.sh). Returns
+# non-zero, printing nothing, unless stdin is exactly one JSON object whose base is a string and whose team is
+# absent, null or a string. jq, else node (a plugin requirement; FIELD goes in argv after --); neither: refused.
+oss_split_field() {
+    if command -v jq >/dev/null 2>&1; then
+        jq -sj --arg f "$1" 'if length == 1 and (.[0] | type) == "object" and (.[0].base | type) == "string"
+            and ((.[0].team // "") | type) == "string" then .[0][$f] // "" else error("refused") end' 2>/dev/null
+    elif command -v node >/dev/null 2>&1; then
+        node -e '
+            let c;
+            try { c = JSON.parse(require("fs").readFileSync(0, "utf8")); } catch (e) { process.exit(1); }
+            if (c === null || typeof c !== "object" || Array.isArray(c) || typeof c.base !== "string"
+                || (c.team != null && typeof c.team !== "string")) process.exit(1);
+            const v = Object.prototype.hasOwnProperty.call(c, process.argv[1]) ? c[process.argv[1]] : null;
+            process.stdout.write(v == null ? "" : v);' -- "$1" 2>/dev/null
+    else
+        return 1
+    fi
+}
+
+# oss_clean_text - prints stdin without C0 (except tab and newline) and the oss_invisible set (OSS_JQ_INVISIBLE), the
+# cleaning oss-claude-md-template.sh gives the template (T45). For the team part of the ?split=1 reply, which no
+# signature covers (DR-3), before oss-iron-laws-sync.sh writes it or fetch-iron-laws.sh prints it; the verified base
+# is never cleaned. Needs jq: without it, returns non-zero (callers write nothing). One gsub over the whole text costs
+# the square of the removals (a 256 KB team part of DEL: minutes), so the text is cut into runs of 256 code points
+# (a removed character is one code point, so no cut splits one) and each run gets the same gsub: linear time, the
+# same result (ship gate round 2, finding 1). stdin is read whole with --rawfile: jq -R reads in 64 KiB blocks and
+# turned a multibyte character split by a block edge into U+FFFD (ship gate round 3, finding 5).
+oss_clean_text() {
+    jq -nrj --rawfile t /dev/stdin "$OSS_JQ_INVISIBLE"'("[\u0000-\u0008\u000b-\u001f" + oss_invisible + "]") as $re
+        | $t | explode | [range(0; length; 256) as $i | .[$i:$i + 256] | implode | gsub($re; "")] | add // ""'
+}
+
+# oss_verify_body KEY - feeds stdin to `~/.oss/bin/oss-decrypt --verify-body KEY` (R-273 D12) and returns its exit
+# code; its stdout is dropped, its one [SECURITY] line goes to stderr. Only 0 means the bytes are the ones the signed
+# manifest names for KEY. Callers treat every other code as a refusal: a mismatch, no oss-decrypt (127) or one older
+# than 1.2.5 (no --verify-body: it prints its help and exits 1). Used by oss-iron-laws-sync.sh (shared/iron-laws),
+# fetch-iron-laws.sh (shared/iron-laws) and oss-claude-md-template.sh (templates/claude-md).
+oss_verify_body() {
+    "$HOME/.oss/bin/oss-decrypt" --verify-body "$1" > /dev/null
+}
+
+# OSS_JQ_PROMPT_KEYS - a jq definition, oss_prompt_keys: given a manifest's .prompts object, emits its keys, minus
+# each workflows/ key whose hash AND servedHash are both those of one key outside workflows/ (the manifest lists a
+# command again under its workflow names, as the same file), so that file counts once (R-273 P6). Delivery is
+# checked against servedHash, so a workflows/ key that only copies a hash, or has no hash or no servedHash, is kept
+# and counted (ship gate finding B). Only a string hash or servedHash counts as present: ["x"] is not "[\"x\"]"
+# (round 2, finding 4). Used by check-updates.sh and oss-changelog.sh for their notices.
+OSS_JQ_PROMPT_KEYS='def oss_prompt_keys: def h: if type == "string" then . else "" end;
+    def pair($e): ((try $e.hash catch null) // "" | h) as $a | ((try $e.servedHash catch null) // "" | h) as $b
+        | if $a == "" or $b == "" then "" else [$a, $b] | tojson end;
+    . as $p | ((reduce (keys[] | select(startswith("workflows/") | not)
+        | pair($p[.]) | select(. != "")) as $x ({}; .[$x] = true)) // {}) as $cmd
+    | keys[] | select((startswith("workflows/") | not) or (pair($p[.]) as $k | $k == "" or $cmd[$k] == null)); '
+
 # oss_private_dir DIR - makes DIR, a folder in the user's own ~/.oss, owner-only (700). Returns 1 when DIR is
 # a symlink or not the user's (what is put in it could land anywhere, or in someone else's hands) and 2 when
 # it could not be made. The one check for a private folder under ~/.oss.

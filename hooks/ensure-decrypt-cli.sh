@@ -28,7 +28,7 @@ OSS_DECRYPT="${OSS_BIN_DIR}/oss-decrypt"
 UPGRADE_STAMP="${OSS_BIN_DIR}/.decrypt-upgrade-failed"
 # Pinned release, never "latest": an unrelated release (oss-launch-v2.0.78, 2026-06-28) took GitHub's
 # "Latest" without oss-decrypt assets and every new install 404'd. See .oss/dev/active/decrypt-download-pin/.
-OSS_DECRYPT_TAG="${OSS_DECRYPT_TAG:-cli-decrypt-v1.2.4}"
+OSS_DECRYPT_TAG="${OSS_DECRYPT_TAG:-cli-decrypt-v1.2.5}"
 if [[ ! "$OSS_DECRYPT_TAG" =~ ^cli-decrypt-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "Error: invalid OSS_DECRYPT_TAG '$OSS_DECRYPT_TAG' (expected cli-decrypt-vX.Y.Z)"
     exit 1
@@ -57,11 +57,11 @@ emit_oss_error() {
     node "$cli" --source "hooks/ensure-decrypt-cli.sh" "$@" 2>/dev/null || true
 }
 
-# Minimum version required. The floor EQUALS the pinned release (cli-decrypt-v1.2.4) so its security
+# Minimum version required. The floor EQUALS the pinned release (cli-decrypt-v1.2.5) so its security
 # fixes reach existing installs: v1.2.1-v1.2.3 all report "1.2.1" and are replaced by the verified
 # pinned asset on the next /oss:* command (D5). It must NEVER exceed what the pinned binary reports
-# about itself ("1.2.4"), or every /oss:* command would re-download the binary forever.
-MINIMUM_VERSION="1.2.4"
+# about itself ("1.2.5"), or every /oss:* command would re-download the binary forever.
+MINIMUM_VERSION="1.2.5"
 
 # =============================================================================
 # SECURITY: One-time cleanup of legacy prompt caches (v2.0.19+)
@@ -432,6 +432,10 @@ if ! version_gte "$DOWNLOADED_VERSION" "$MINIMUM_VERSION"; then
 fi
 mv -f "$TMP_BIN" "$OSS_DECRYPT"
 rm -f "$UPGRADE_STAMP"
+# The IRON LAWS sync's 1 h backoff (oss-iron-laws-sync.sh) was set while the old binary could not verify the laws:
+# the new one can, so the next sync runs now. rm -f removes a link, never its target; a folder there (rm cannot
+# remove it) never stops the install (round 2, finding 3).
+rm -f -- "$OSS_DIR/.iron-laws-backoff" 2>/dev/null || true
 
 # Run setup to configure credentials
 echo "Running initial setup..."

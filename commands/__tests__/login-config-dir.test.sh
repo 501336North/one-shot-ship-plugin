@@ -63,12 +63,12 @@ sandbox; run_block 'API key updated successfully'
 [[ "$RC" == 0 && "$OUT" == *"Config: $H/.oss/config.json"* ]] \
     && pass "without OSS_CONFIG_DIR: the success message names ~/.oss/config.json" || fail "without OSS_CONFIG_DIR: the success message names ~/.oss/config.json" "rc=$RC out=$OUT"
 
-# --- Step 4.2: the template comes through the hook, never from a hardcoded host -----------------
-STEP42=$(awk '/^### 4\.2/ { f = 1; next } /^### / && f { exit } f' "$C/login.md")
-[[ "$(fence_with 'oss-claude-md-template.sh')" == '~/.oss/hooks/oss-claude-md-template.sh' && "$STEP42" == *'~/.oss/hooks/oss-claude-md-template.sh'* ]] \
-    && pass "Step 4.2 fetches the template with the one fixed command ~/.oss/hooks/oss-claude-md-template.sh" || fail "Step 4.2 runs ~/.oss/hooks/oss-claude-md-template.sh" "step=$STEP42"
-[[ "$STEP42" == *'non-zero'* && "$STEP42" == *'skip 4.3'* ]] \
-    && pass "Step 4.2 says: on a non-zero exit, skip 4.3 and tell the user" || fail "Step 4.2 says what to do on a non-zero exit" "step=$STEP42"
+# --- Step 5.2 (after the oss-decrypt install that verifies it, R-273 P5): the template comes through the hook, never from a hardcoded host -----------------
+STEP52=$(awk '/^### 5\.2/ { f = 1; next } /^### / && f { exit } f' "$C/login.md")
+[[ "$(fence_with 'oss-claude-md-template.sh')" == '~/.oss/hooks/oss-claude-md-template.sh' && "$STEP52" == *'~/.oss/hooks/oss-claude-md-template.sh'* ]] \
+    && pass "Step 5.2 fetches the template with the one fixed command ~/.oss/hooks/oss-claude-md-template.sh" || fail "Step 5.2 runs ~/.oss/hooks/oss-claude-md-template.sh" "step=$STEP52"
+[[ "$STEP52" == *'non-zero'* && "$STEP52" == *'skip 5.3'* ]] \
+    && pass "Step 5.2 says: on a non-zero exit, skip 5.3 and tell the user" || fail "Step 5.2 says what to do on a non-zero exit" "step=$STEP52"
 H_REQ=$(grep -nE '(GET|POST)[[:space:]]+https?://|Authorization: Bearer' "$C/login.md")
 [[ -z "$H_REQ" ]] && pass "login.md tells the model to send no request (and no key) to any host itself" || fail "login.md sends no request to a host itself" "$H_REQ"
 

@@ -19,8 +19,9 @@ STATE_FILE="$CONFIG_DIR/update-state.json"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_JSON="${OSS_PLUGIN_JSON:-$SCRIPT_DIR/../.claude-plugin/plugin.json}"
 # oss_is_regular: the state is read only as a regular file; a link or FIFO counts as no state (T53b). Without the
-# helper, no state is trusted.
-source "$SCRIPT_DIR/oss-api-curl.sh" 2>/dev/null || oss_is_regular() { return 1; }
+# helpers (they also define the jq filters below), stop quietly, as check-updates.sh does: never a filter from the
+# environment (ship gate finding D).
+source "$SCRIPT_DIR/oss-api-curl.sh" 2>/dev/null || exit 0
 
 # Read current plugin version
 current_version=""
@@ -73,12 +74,12 @@ if [[ "$skip_manifest" != "1" ]]; then
         # cached hashes (--slurpfile, never filter text) lists the updated and the new prompts in key order, each
         # name one line without C0 (so a line break too) or oss_invisible (T74, T79). A per-key loop ran two jq
         # per key: minutes at the 256 KB cap. Hashes compare as the text the loop compared.
-        diff_text=$(printf '%s' "$manifest_json" | jq -r --slurpfile old <(printf '%s' "$cached_hashes") "$OSS_JQ_INVISIBLE"'
+        diff_text=$(printf '%s' "$manifest_json" | jq -r --slurpfile old <(printf '%s' "$cached_hashes") "$OSS_JQ_INVISIBLE$OSS_JQ_PROMPT_KEYS"'
             def h: if type == "string" then . else tojson end;
             def show: gsub("[\u0000-\u001f" + oss_invisible + "]"; "");
             (($old[0] // {}) | if type == "object" then . else {} end) as $o
-            | [.prompts | objects | keys[] as $k
-               | ((try .[$k].hash catch null) // "" | h) as $new | (($o[$k] // "") | h) as $was
+            | [.prompts | objects | oss_prompt_keys as $k
+               |((try .[$k].hash catch null) // "" | h) as $new | (($o[$k] // "") | h) as $was
                | if $was == "" or $was == "null" then {n: $k} elif $was != $new then {c: $k} else empty end] as $d
             | [$d[] | .c // empty] as $c | [$d[] | .n // empty] as $n
             | (if ($c | length) > 0 then "Updated prompts (\($c | length)):", ($c[] | "  • " + show), "" else empty end),

@@ -65,7 +65,17 @@ Run the complete ideate→plan→build→ship pipeline in one command.
 3. **Builds autonomously** - Executes plan with RED-GREEN-REFACTOR
 4. **Ships autonomously** - Quality gates, commit, PR, optional merge
 
-## Step 1: Ensure Project Configuration
+## Step 1: Ensure Decrypt CLI Installed
+
+Install (or update) the decrypt CLI first: Step 2 refreshes the IRON LAWS only after this CLI (`oss-decrypt --verify-body`) checks them.
+
+Run this step with a Bash timeout of 600000 ms (10 minutes): a first install downloads about 60 MB. Exit 0: continue. Exit 75: the download is still in progress or another session is downloading it, so run the same step again (also when Claude Code stopped the step at its time limit), at most 3 more times; if it still has not exited 0, stop and tell the user to run the command again later. Any other exit: stop and show the user the hook's message (it says what to check).
+
+```bash
+~/.oss/hooks/ensure-decrypt-cli.sh --long-step
+```
+
+## Step 2: Ensure Project Configuration
 
 ```bash
 ~/.oss/hooks/oss-iron-laws-sync.sh
@@ -73,7 +83,7 @@ Run the complete ideate→plan→build→ship pipeline in one command.
 
 > Iron Laws are loaded from CLAUDE.md at session start; this sync only refreshes them if stale.
 
-## Step 2: Check Authentication
+## Step 3: Check Authentication
 
 ```bash
 test -f "$HOME/.oss/config.json" && grep -qE '"apiKey"[[:space:]]*:[[:space:]]*"[A-Za-z0-9_-]' "$HOME/.oss/config.json" && echo "API key configured"
@@ -85,7 +95,7 @@ No API key found. Run: /oss:login
 Register at https://www.oneshotship.com
 ```
 
-## Step 3: Initialize Logging
+## Step 4: Initialize Logging
 
 **You MUST initialize logging for supervisor visibility.**
 
@@ -93,20 +103,12 @@ Register at https://www.oneshotship.com
 ~/.oss/hooks/oss-log.sh init auto
 ```
 
-## Step 4: Update Status Line (Start)
+## Step 5: Update Status Line (Start)
 
 **You MUST update the workflow status before proceeding.**
 
 ```bash
 ~/.oss/hooks/oss-notify.sh --workflow auto start '{}'
-```
-
-## Step 5: Ensure Decrypt CLI Installed
-
-Run this step with a Bash timeout of 600000 ms (10 minutes): a first install downloads about 60 MB. Exit 0: continue. Exit 75: the download is still in progress or another session is downloading it, so run the same step again (also when Claude Code stopped the step at its time limit), at most 3 more times; if it still has not exited 0, stop and tell the user to run the command again later. Any other exit: stop and show the user the hook's message (it says what to check).
-
-```bash
-~/.oss/hooks/ensure-decrypt-cli.sh --long-step
 ```
 
 ## Step 6: Fetch and Decrypt Prompt

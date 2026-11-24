@@ -1,5 +1,5 @@
 #!/bin/bash
-# oss-claude-md-template.sh - prints the CLAUDE.md template (/oss:login Step 4.2). Takes no arguments.
+# oss-claude-md-template.sh - prints the CLAUDE.md template (/oss:login Step 5.2). Takes no arguments.
 #
 # The key and the API it goes to come from one file, the OSS config (oss_config_file: $OSS_CONFIG_DIR/config.json,
 # else ~/.oss/config.json): GET <oss_api_url>/api/v1/prompts/claude-md, the key fed to curl on stdin
@@ -7,7 +7,7 @@
 #
 # Exit 0: the template, control characters removed, on stdout. Exit 1: nothing on stdout, the reason on stderr
 # (not logged in, a refused apiUrl, the API unreachable or timed out mid-body, a non-200 answer, a body over
-# 256 KB, an HTML page, or an empty body).
+# 256 KB, an HTML page, a body that fails `oss-decrypt --verify-body templates/claude-md`, or an empty body).
 set -uo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/oss-api-curl.sh" \
     || { echo "oss-claude-md-template: oss-api-curl.sh not found beside this script" >&2; exit 1; }
@@ -38,6 +38,11 @@ body=${r%$'\n'*}
 if printf '%s' "$body" | grep -qiE '<!doctype html|<html[[:space:]>]'; then
     warn "the API at $url sent an HTML page (a captive portal or proxy?), not the template."; exit 1
 fi
+# R-273 D12: the raw bytes, before any cleaning, must be the template the signed manifest names (servedHash of
+# templates/claude-md). Only exit 0 from oss_verify_body (oss-api-curl.sh) prints; any other code prints nothing.
+printf '%s' "$body" | oss_verify_body templates/claude-md
+vrc=$?
+(( vrc == 0 )) || { warn "the template from $url did not pass verification (oss-decrypt --verify-body exit $vrc: not the signed template, or oss-decrypt is older than 1.2.5 and the next /oss command updates it); no template."; exit 1; }
 # Terminal control codes and invisible text never reach stdout: C0 except tab and newline, plus the set oss_json_field
 # strips (oss_invisible in oss-api-curl.sh: DEL, C1, U+2028/U+2029, every format character incl. tag characters, T45;
 # variation selectors and blank fillers, T52).
