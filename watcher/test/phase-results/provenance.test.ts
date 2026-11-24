@@ -13,7 +13,20 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-const DESIGN = path.join(ROOT, '.oss', 'dev', 'active', 'phase-results', 'DESIGN.md');
+
+/** DESIGN.md in the active dev docs, else in the one archived `phase-results-YYYY-MM-DD` folder. */
+function designPath(): string {
+  const active = path.join(ROOT, '.oss', 'dev', 'active', 'phase-results', 'DESIGN.md');
+  if (fs.existsSync(active)) return active;
+  const completed = path.join(ROOT, '.oss', 'dev', 'completed');
+  const archived = fs.existsSync(completed)
+    ? fs.readdirSync(completed).filter((d) => /^phase-results-\d{4}-\d{2}-\d{2}$/.test(d))
+    : [];
+  if (archived.length !== 1) {
+    throw new Error(`expected one archived phase-results-YYYY-MM-DD folder, found ${archived.length}: ${archived.join(', ')}`);
+  }
+  return path.join(completed, archived[0], 'DESIGN.md');
+}
 
 const DECISION_SITES: readonly string[] = [
   'hooks/oss-archive-check.sh',
@@ -69,7 +82,7 @@ function proseDecisionMatches(): string[] {
 }
 
 function designDecisionSites(): string[] {
-  const text = fs.readFileSync(DESIGN, 'utf8');
+  const text = fs.readFileSync(designPath(), 'utf8');
   const section = /<!-- provenance-decision-sites:start -->([\s\S]*?)<!-- provenance-decision-sites:end -->/.exec(text);
   if (!section) return [];
   return [...section[1].matchAll(/^- `([^`]+)`/gm)].map((m) => m[1]);

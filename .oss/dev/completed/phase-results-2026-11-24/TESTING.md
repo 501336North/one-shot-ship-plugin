@@ -310,4 +310,9 @@ Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watche
 - The code review ran 5 vitest files, 56/56 (including the dist-matches-source test), and verdict-capture-call 118/118 (glob exports unchanged).
 - Re-ran the round-17 repros q2/q3/q4: the rebuild loop is gone. q1 still refuses every case that is not merged at the tested head.
 
-## Last Updated: 2026-11-24 14:07 +07 by /oss:ship (gate round 18)
+### Ship merge test (clean copy), 2026-11-24/25
+- Fresh clones of both PR heads (plugin b56632c5, API 6b7335c3), npm ci, build 0, tsc 0. Then targeted vitest 202/203 files, 11,128/11,129 tests. Served-commands 3/3. Bash hooks 118/118 behind the tripwire (0 trips). The API's 10 files passed 1,195/1,195. The manifest verified (204 prompts).
+- One failure: provenance.test.ts read `.oss/dev/active/phase-results/DESIGN.md`, and the archive commit had moved that file. Fixed through /oss:build: the test now uses the active DESIGN.md, or else the one archived `phase-results-YYYY-MM-DD` folder, and fails if there are zero or several. 5/5.
+- Incident: the first clean-copy run used `setupFiles: []` with the real HOME. As a result, test/hooks/oss-session-logging.test.ts overwrote the real `~/.oss/config.json` with a fake key and a dead apiUrl. The user logged in again. Later runs use a throwaway HOME.
+
+## Last Updated: 2026-11-25 06:05 +07 by /oss:build (ship merge-test fix)
