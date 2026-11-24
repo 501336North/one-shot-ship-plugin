@@ -2803,33 +2803,59 @@ function startParts(starts: StartReading[], segment: Segment, segments: Segment[
   });
 }
 
-/** True when a program word runs `arch` or `launchctl`: its base name, or a glob that may match one (fails closed on an unreadable glob). */
+/** True when a program word runs `arch` or `launchctl`: its base name, or a glob that may match one. */
 function runsArchOrLaunchctl(word: string): boolean {
   const base = path.posix.basename(word).toLowerCase();
   if (base === 'arch' || base === 'launchctl') return true;
   if (!/[?*[]/.test(base)) return false;
-  let source = '';
-  for (let i = 0; i < base.length; i++) {
-    const c = base[i];
-    if (c === '?') source += '.';
-    else if (c === '*') source += '.*';
-    else if (c === '[') {
-      const end = base.indexOf(']', i + 2);
-      if (end === -1) {
-        source += "\\[";
-        continue;
+  // a character class (`[[:alpha:]]`, `[[=a=]]`, `[[.a.]]`) is not read: it may match
+  if (/\[[:=.]/.test(base)) return true;
+  return globMayMatch(base, 'arch') || globMayMatch(base, 'launchctl');
+}
+
+/**
+ * True when a glob may match `name` (`?`, `*`, `[…]`, `[!…]`; a `[` with no `]` is itself), read in one
+ * pass over the glob for each place in the name, so no glob makes it slow (ship fix round 10, R10-1 (d)).
+ */
+function globMayMatch(glob: string, name: string): boolean {
+  // at[k]: the glob read so far may match the first k letters of the name
+  let at = name.split('').map(() => false).concat(false);
+  at[0] = true;
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    const next = at.map(() => false);
+    if (c === '*') {
+      let seen = false;
+      for (let k = 0; k <= name.length; k++) next[k] = seen ||= at[k];
+    } else {
+      let test = (letter: string): boolean => letter === c;
+      if (c === '?') test = () => true;
+      else if (c === '[') {
+        const close = glob.indexOf(']', i + 2);
+        if (close !== -1) {
+          const inner = glob.slice(i + 1, close);
+          const negate = inner.startsWith('!') || inner.startsWith('^');
+          const set = negate ? inner.slice(1) : inner;
+          test = (letter) => inClass(set, letter) !== negate;
+          i = close;
+        }
       }
-      const inner = base.slice(i + 1, end);
-      source += `[${inner.startsWith('!') ? `^${inner.slice(1)}` : inner}]`;
-      i = end;
-    } else source += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      for (let k = 0; k < name.length; k++) if (at[k] && test(name[k])) next[k + 1] = true;
+    }
+    at = next;
   }
-  try {
-    const glob = new RegExp(`^${source}$`);
-    return glob.test('arch') || glob.test('launchctl');
-  } catch {
-    return true;
+  return at[name.length];
+}
+
+/** True when a letter is in a glob class's set (`a-z` ranges read). */
+function inClass(set: string, letter: string): boolean {
+  for (let i = 0; i < set.length; i++) {
+    if (set[i + 1] === '-' && i + 2 < set.length) {
+      if (letter >= set[i] && letter <= set[i + 2]) return true;
+      i += 2;
+    } else if (set[i] === letter) return true;
   }
+  return false;
 }
 
 /** A command an `arch` or `launchctl` part may run: its words, and the `NAME=VALUE` settings it runs with (R9-3). */

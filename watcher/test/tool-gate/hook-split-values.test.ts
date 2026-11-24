@@ -383,6 +383,67 @@ const ARCH_READINGS_ALLOWED = [
   "launchctl asuser 501 git checkout main",
 ];
 
+/**
+ * Ship fix round 10, R10-1 ("Round 10, blunt"): small fail-closed rules on arch and launchctl parts.
+ */
+const ARCH_LAUNCHCTL_R10_REFUSED = [
+  // (a) launchctl -p, attached or separate, whatever the value
+  "launchctl submit -l x -p /bin/sh -- foo -c 'git push origin main'",
+  "launchctl submit -p /usr/bin/git -l x -- foo push origin main",
+  "launchctl submit -p /usr/bin/git -l x -- foo config protocol.ext.allow always",
+  "launchctl submit -p /usr/bin/git -l x -- foo remote add o http://127.0.0.1/x",
+  "launchctl submit -p /usr/bin/git -l x -- foo push --force origin feat/x",
+  "launchctl submit -p /usr/bin/git -l x -- foo commit -m x",
+  "launchctl submit -p /bin/sh -l x -- foo -c 'git push origin main'",
+  "launchctl submit -p /usr/bin/git -o /tmp/o -l x -- foo push origin main",
+  "launchctl submit -l x -p /usr/bin/git -o /tmp/o -- foo push origin main",
+  "launchctl submit -p /usr/bin/git -l x -- foo -C /Users/ysl/dev/oss-plugin-gate-gaps push origin HEAD:main",
+  "launchctl submit -p /usr/bin/git -l x -- foo -C /Users/ysl/dev/oss-plugin-gate-gaps config protocol.ext.allow always",
+  "launchctl submit -p /usr/bin/git -l x -- foo config --global protocol.ext.allow always",
+  "launchctl submit -p /usr/bin/g?t -l x -- foo push origin main",
+  "launchctl submit -p /Library/Developer/CommandLineTools/usr/bin/git -l x -- foo push origin main",
+  "launchctl submit -l x -p /usr/bin/git -o /dev/null -e /dev/null -- foo push origin main",
+  "launchctl submit -l x -p/usr/bin/git -- foo push origin main",
+  "launchctl submit -p /bin/sh -l x -- foo",
+  // (b) an arch -e / -d value the gate cannot read
+  "arch -e \"$V\" git fetch origin",
+  "arch -e $V git fetch origin",
+  "arch -e \"$V\" -arm64 git fetch origin",
+  "arch -arm64 -e \"$V\" git fetch origin",
+  "arch -e \"$(cat /tmp/v)\" git fetch origin",
+  "arch -e \"$V\" git push origin feat/x",
+  "arch -e \"$V\" git commit -m x",
+  "arch -e \"$V\" git status",
+  "arch -e \"$V\" nice git fetch origin",
+  "V=$(printf 'GIT_SSH_COMMAND=touch /tmp/p'); arch -e \"$V\" git fetch origin",
+  "V=$(printf 'GIT_SSH_COMMAND=touch /tmp/p'); arch -e \"$V\" git push origin feat/x",
+  "V=$(printf 'GIT_SSH_COMMAND=touch /tmp/p'); arch -arm64 -e \"$V\" git fetch origin",
+  "read V <<< 'GIT_SSH_COMMAND=touch /tmp/p'; arch -e \"$V\" git fetch origin",
+  "arch -e \"$(printf GIT_SSH_COMMAND=x)\" git fetch origin",
+  "arch -e \"${V}\" git fetch origin",
+  "arch -e \"GIT_SSH_COMMAND=$X\" -arm64 git fetch",
+  "arch -e\"$V\" git fetch origin",
+  "arch -d \"$V\" git fetch origin",
+  // (c) git as an option value of arch or launchctl
+  "arch -arch git push origin main",
+  "launchctl submit -l git -- push origin main",
+  // accepted refusals (owner pick "Accept, card them")
+  "arch -arm64 brew install expect",
+  "arch -arm64 brew install unzip",
+  "arch -arm64 brew install $(cat Brewfile.list)",
+  "arch -arm64 pip install $(cat req.txt)",
+];
+
+/** R10-1: everyday arch and launchctl calls the round-10 rules leave alone. */
+const ARCH_LAUNCHCTL_R10_ALLOWED = [
+  "arch -e LANG=C -arm64 make",
+  "arch -e FOO=1 -arm64 git log",
+  "arch -x86_64 cargo build --bin git",
+  "arch -x86_64 grep -e \"$PAT\" README.md",
+  "launchctl load -w ~/Library/LaunchAgents/com.oneshotship.daemon.plist",
+  "arch -arm64 make \"$TARGET\"",
+];
+
 /** R8-1: everyday arch and launchctl calls, and the served login.md daemon blocks, stay allowed. */
 const ARCH_LAUNCHCTL_ALLOWED = [
   "arch -x86_64 /bin/zsh -c 'npm test'",
@@ -508,6 +569,25 @@ describe.each(PLATFORMS)('on %s', (platform) => {
       const result = await call(command, agent, platform);
       expect(result.stderr, command).toBe('');
       expect(result.exitCode, command).toBe(0);
+    });
+
+    it.each(ARCH_LAUNCHCTL_R10_REFUSED)('refuses launchctl -p, an unreadable arch -e/-d value or git as an option value: %s', async (command) => {
+      const result = await call(command, agent, platform);
+      expect(result.exitCode, command).toBe(2);
+      expect(result.stderr, command).toMatch(/^Refused/);
+    });
+
+    it.each(ARCH_LAUNCHCTL_R10_ALLOWED)('allows everyday arch and launchctl calls the round-10 rules leave alone: %s', async (command) => {
+      const result = await call(command, agent, platform);
+      expect(result.stderr, command).toBe('');
+      expect(result.exitCode, command).toBe(0);
+    });
+
+    it('reads a program word of 40 stars quickly (R10-1 (d))', async () => {
+      const command = `/usr/bin/${'*'.repeat(40)}x -arm64 make`;
+      const started = Date.now();
+      await call(command, agent, platform);
+      expect(Date.now() - started).toBeLessThan(4000);
     });
 
     it.each(ARCH_LAUNCHCTL_ALLOWED)('allows everyday arch and launchctl calls: %s', async (command) => {

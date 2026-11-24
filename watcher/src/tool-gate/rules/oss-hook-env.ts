@@ -729,7 +729,35 @@ function archOrLaunchctlRuns(part: CommandPart, home: string): boolean {
   // R9-2 ("Yes, first command word only"): git counts as the first word that is not an option, or the word after `--`
   const first = words.findIndex((w) => !w.startsWith('-'));
   const starts = words.filter((w, i) => i === first || words[i - 1] === '--');
-  return lineNamesHook(words.join(' '), part.cwd, home) || words.some(isEnvProgram) || starts.some(git);
+  return lineNamesHook(words.join(' '), part.cwd, home) || words.some(isEnvProgram) || starts.some(git) || optionsRefused(part.program, words, git);
+}
+
+/** arch options that take a value (`-arch name`, `-e NAME=VALUE`, `-d NAME`). */
+const ARCH_VALUE_OPTIONS = new Set(['-arch', '-e', '-d']);
+
+/**
+ * Ship fix round 10, R10-1 ("Round 10, blunt"), on the options of an arch or launchctl part (its words after the
+ * program; launchctl's subcommand skipped): (a) launchctl `-p`, attached or separate, whatever the value;
+ * (b) an arch `-e` / `-d` value holding a part the gate can't read; (c) git as any option's value.
+ */
+function optionsRefused(program: string, words: readonly string[], git: (w: string) => boolean): boolean {
+  const arch = isArchProgram(program);
+  const values: string[] = [];
+  let i = !arch && words[0] !== undefined && !words[0].startsWith('-') ? 1 : 0;
+  for (; i < words.length; i++) {
+    const w = words[i];
+    if (w === '--' || !w.startsWith('-') || w === '-') break;
+    if (!arch && w.startsWith('-p')) return true;
+    const attached = w.length > 2 && !w.startsWith('--') && (!arch || /^-[ed]/.test(w)) ? w.slice(2) : null;
+    const takes = arch ? ARCH_VALUE_OPTIONS.has(w) : words[i + 1] !== undefined && !words[i + 1].startsWith('-');
+    const value = attached ?? (takes ? words[i + 1] : undefined);
+    if (value !== undefined) {
+      if (arch && /^-[ed]/.test(w) && value.includes(UNKNOWN)) return true;
+      values.push(value);
+    }
+    if (attached === null && takes) i++;
+  }
+  return values.some(git);
 }
 
 /** The refusal for arch or launchctl running a hook, env or git. */
