@@ -277,6 +277,18 @@
 - [x] Item 4e: mergedReady takes its deadline from one budget that the CLI starts in `main()` (merge-ready unit test).
 - [x] Item 4f: the NOTES record that bash/TS reader parity covers code-written rows only (D51).
 
+### Ship round 18 fixes, after gate round 16 (2026-11-24)
+- [x] Item 1 (pen medium, pen low SECURITY, security info; D86 "Ask GitHub"): `complete` proves the merge with one `gh api --hostname github.com repos/<owner>/<name>/commits/<tested head>/pulls` call on both the main and the feature-branch path; the origin/main blob check and the "HEAD past tested main" proof are gone. gh missing, logged out, offline, slow or not merged refuses with its own hint. Tests: merge-ready.test.ts (27, gh stub on PATH), acceptance 13, 13a2, 13f, 13f2 (hints), 13f3, 13f4 (p2), 13f5 (p3), 13f6, 13i.
+- [x] Item 2 (security low, pen info): a branch name with no feature gets no archived lookup (`no_feature`, branch-name hint). Tests: feature.test.ts (hotfix-b, feat/b, b/build refused; feat/a/build resolves), acceptance 13m (p4 case 1).
+- [x] Item 3 (code review low): folders are filtered by the named feature before counting, and the lookup takes the base assemble recorded for the run (`run/ship.base` ledger marker), falling back to base.txt/oss.shipBase/main only when none was recorded. Tests: feature.test.ts, acceptance 13j, phase-result.acceptance.test.ts (integration base, base.txt gone).
+- [x] Item 4 (pen low): with `.oss/dev/completed` git-ignored, the zero-folder refusal says so and what to do; the advice (move back to active/, ship again) is tested. Test: acceptance 13n (p4 case 2).
+- [x] Item 5a: the lookup spends from complete's shared deadline; a timeout refuses `diff_unavailable` with DIFF_TIMEOUT, never a merge hint (feature.test.ts spent-deadline case).
+- [x] Item 5b: each merged-path refusal shows only its own cause's hint; the `git fetch origin` hint is gone (acceptance 13f2).
+- [x] Item 5c: `complete` after an archived re-run always runs the merge proof (acceptance 13f7).
+- [x] Item 5d: NOTES line on the LFS and clean-filter limit.
+- [x] Follow-up (coordinator): a non-github.com origin on the merged path refuses with its own hint (`not_github`: "complete after merged needs a github.com origin to confirm the merge; this repo's origin is not on github.com"). Tests: merge-ready.test.ts, acceptance 13f8.
+- [x] Follow-up (coordinator): CLI-level test for item 5a, test/cli/phase-result-deadline.test.ts: main() with a spent budget (clock mocked, no production knob) refuses `diff_unavailable` with DIFF_TIMEOUT, no merge or GitHub hint, gh never run.
+
 ### Later
 - [ ] Ship into feat/determinism-sprint/build (SD-1)
 - [ ] T21 oss-lab (after the plugin ships)
@@ -284,4 +296,4 @@
 ## Blockers
 - None. R-266's 4 red base tests are fixed in #233 (4458bddb), and R-257 is rebased onto it.
 
-## Last Updated: 2026-11-23 17:38 +07 by /oss:build (ship round 17 fixes, D85)
+## Last Updated: 2026-11-24 09:54 +07 by /oss:build (ship round 18 fixes, D86)

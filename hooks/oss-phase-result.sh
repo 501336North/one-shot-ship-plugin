@@ -174,7 +174,8 @@ oss_phase_result_main() {
         return 127
     fi
     oss_plugin_node "$_OSS_PR_CLI" "$_OSS_PR_SUB" || return 127
-    oss_run_bounded_rc "$secs" "$OSS_ENV" PATH="$OSS_NODE_PATH" "$OSS_NODE" "$_OSS_PR_CLI" "$verb" "$phase" ${rest[@]+"${rest[@]}"}
+    # D86: the caller's PATH goes along as OSS_GH_PATH, only for complete's `gh` merge proof (node itself keeps the fixed PATH).
+    oss_run_bounded_rc "$secs" "$OSS_ENV" PATH="$OSS_NODE_PATH" OSS_GH_PATH="$PATH" "$OSS_NODE" "$_OSS_PR_CLI" "$verb" "$phase" ${rest[@]+"${rest[@]}"}
     rc=$?
     [[ -n "$OSS_BOUNDED_OUT" ]] && printf '%s\n' "$OSS_BOUNDED_OUT"
     # Perf F2 (gate round 12): the slow part is usually git diff on a repo of many loose objects, which git gc packs.

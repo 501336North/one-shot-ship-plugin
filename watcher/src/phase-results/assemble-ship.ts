@@ -73,6 +73,12 @@ class GitError extends Error {
 }
 
 /**
+ * D86 info a: while branchAddedPaths runs, the caller's deadline (ms since the epoch): each git call gets at most what is
+ * left of it, and none starts once it has passed (a timeout). Infinity otherwise.
+ */
+let callerDeadline = Infinity;
+
+/**
  * `raw` keeps stdout as git printed it (for `-z` output, whose paths may end in spaces). git is the fixed-path binary
  * (gitBin, never PATH; pen N3) run with PATH=/usr/bin:/bin; with none, every call fails (closed).
  */
@@ -90,13 +96,15 @@ function runGit(
   env.PATH = '/usr/bin:/bin';
   const git = gitBin();
   if (git === '') throw new GitError('no git');
+  const left = callerDeadline - Date.now();
+  if (left <= 0) throw new GitError(args[0] ?? 'git', false, true);
   const r = spawnSync(git, ['-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', ...args], {
     cwd: repo,
     env,
     encoding: 'utf-8',
     stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'],
     input,
-    timeout,
+    timeout: Math.min(timeout, left),
     maxBuffer,
   });
   if (r.error !== undefined || r.status === null || !okCodes.includes(r.status)) {
@@ -358,15 +366,19 @@ function diffBase(repo: string, base: string, remoteRefs: ReadonlyMap<string, st
 /**
  * D85 (gate round 15): the paths under `dir` that this branch added, from the same merge base assemble ship diffs from
  * (diffBase), so a stale local base never counts another feature's commits from origin as this branch's. 'timeout' when
- * a git call ran past its time limit (D85 info b); null on any other git failure.
+ * a git call ran past its time limit (D85 info b) or past `deadline` (D86 info a: the CLI's shared budget); null on any
+ * other git failure.
  */
-export function branchAddedPaths(repo: string, base: string, remoteRefs: ReadonlyMap<string, string>, dir: string): string[] | 'timeout' | null {
+export function branchAddedPaths(repo: string, base: string, remoteRefs: ReadonlyMap<string, string>, dir: string, deadline = Infinity): string[] | 'timeout' | null {
+  callerDeadline = deadline;
   try {
     const { mergeBase, headSha } = diffBase(repo, base, remoteRefs);
     const out = runGit(repo, [...DIFF, '--name-only', '--diff-filter=A', '-z', mergeBase, headSha, '--', dir], [0], true, PATH_LIST_BUFFER).out;
     return out.split('\0').filter((p) => p !== '');
   } catch (e) {
     return e instanceof GitError && e.timedOut ? 'timeout' : null;
+  } finally {
+    callerDeadline = Infinity;
   }
 }
 

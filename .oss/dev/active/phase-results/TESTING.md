@@ -263,4 +263,27 @@ Refinement (code-simplifier, c9d2632): vitest 224/224, the hook sweep and watche
 - **Gap:** the lookup timeout mapping to DIFF_TIMEOUT is tested in the lookup function only, not at the CLI.
 - **Changed tests (marked ⚠):** three expectations changed with the fixes, each marked in the test file.
 
-## Last Updated: 2026-11-23 18:54 +07 by /oss:ship (round 17 fixes)
+### Ship round 18 (D86-D87), 2026-11-24
+- **Full check on AC power:**
+  - build 0, tsc 0;
+  - 202 files / 11,115 tests passed; served-commands 3/3;
+  - bash 114/114 behind the tripwire (0 trip lines);
+  - API real-hook tests with OSS_REAL_PLUGIN_DIR set to the R-257 plugin: 5 files / 628 passed (0 trip lines).
+- **New tests:**
+  - merge-ready.test.ts: the GitHub merge proof against a stubbed `gh`. Merged at the tested head passes. These refuse, each with its own hint: merged at another head, open or closed and unmerged, gh missing or logged out, offline, a non-github.com origin.
+  - phase-result-deadline.test.ts (new): a spent deadline refuses `diff_unavailable` with DIFF_TIMEOUT, never a merge hint, and never calls gh.
+  - feature.test.ts: a branch name with no feature refuses the archived lookup; folders are filtered by feature before counting; a git-ignored archive gets its own reason; the lookup honours the deadline.
+  - phase-results.acceptance 13f2-13f8, 13m, 13n:
+    - ignored `.oss/` on main with the PR unmerged refuses;
+    - ignored `.oss/` on a worktree passes once merged;
+    - main moved after the merge test, then a GitHub squash, passes;
+    - the per-cause hints;
+    - an archived re-run always runs the merge proof;
+    - a non-github.com origin;
+    - an unnamed branch;
+    - the ignored-archive advice followed end to end.
+  - Every `complete` runs with the gh stub first on PATH.
+  - The CLI acceptance test: an archived re-run finds its feature from the base assemble recorded, after base.txt is gone.
+- **Changed tests (marked ⚠ D86):** merge-ready's return shape; the blob-check tests were removed; "several" now means two folders of the same feature; 13, 13a2, 13f and 13i stub gh as merged; 13f2 was replaced.
+
+## Last Updated: 2026-11-24 11:58 +07 by /oss:ship (round 18 fixes)

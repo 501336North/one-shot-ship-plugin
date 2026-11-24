@@ -1336,6 +1336,36 @@ describe('phase-result CLI: the ship base comes from the PR base value file base
     expect(c.status, c.stderr).toBe(0);
   });
 
+  // User behaviour: an archived re-run of a feature whose PR targets an integration branch still finds its feature after
+  // the short-lived base.txt is gone (Step 8's record and complete run later in the same ship run).
+  // Business rule: D86 (code review low) — the archived lookup takes the base assemble recorded for this run (the
+  // ledger's run/ship.base), not base.txt; from main it would see two folders of the feature (an older archive is on the
+  // integration branch) and refuse.
+  it('an archived re-run finds its feature from the base assemble recorded, after base.txt is gone', () => {
+    git('checkout', '-q', 'main');
+    git('checkout', '-q', '-b', INTEGRATION);
+    fs.mkdirSync(path.join(repo, '.oss/dev/completed', `${FEATURE}-2026-10-01`, 'results'), { recursive: true });
+    fs.writeFileSync(path.join(repo, '.oss/dev/completed', `${FEATURE}-2026-10-01`, 'results', 'ship.json'), '{}\n');
+    git('add', '.oss/dev/completed');
+    git('commit', '-q', '-m', 'an older archive of the feature on the integration branch');
+    git('update-ref', `refs/remotes/origin/${INTEGRATION}`, git('rev-parse', 'HEAD'));
+    git('branch', '-q', '-D', `feat/${FEATURE}/build`);
+    git('checkout', '-q', '-b', `feat/${FEATURE}/build`);
+    commitFile('feature.txt', 'work\n');
+    passGates(FEATURE);
+    fs.renameSync(activeDir(FEATURE), path.join(repo, '.oss/dev/completed', `${FEATURE}-2026-11-23`));
+    git('add', '.oss/dev/completed');
+    git('commit', '-q', '-m', 'docs: archive');
+    startRun('ship', '2026-11-13T09:00:00.000Z');
+    const f = writeBase(`${INTEGRATION}\n`);
+    const a = cli('assemble', 'ship');
+    expect(a.status, a.stderr).toBe(0);
+    fs.rmSync(f);
+    const r = cli('check', 'ship', '--record-ready');
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain('READY_RECORDED');
+  });
+
   // User behaviour: a result whose base branch has gone can no longer be trusted.
   // Business rule: the recorded baseRef must still be an existing local branch, else evidence_mismatch.
   it('check gives evidence_mismatch when the recorded baseRef branch is deleted', () => {

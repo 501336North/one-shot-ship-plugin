@@ -5,7 +5,9 @@
  *           folder that belongs to another feature, and a slow git is reported as a slow repo, not as "no feature".
  * @business-rule D84 (find the archived feature), D85 (gate round 15: the lookup takes assemble's base; a branch that
  *           names a feature only matches that feature's folder; zero or several folders say what to do; a git timeout
- *           maps to DIFF_TIMEOUT).
+ *           maps to DIFF_TIMEOUT). D86 (gate round 16): a branch whose name names no feature gets no archived lookup at
+ *           all; folders are filtered by the named feature before they are counted; a git-ignored archive is named as
+ *           the reason; the lookup spends from the caller's deadline.
  * @boundary watcher/src/phase-results/feature.ts (git is real; the process boundary is replaced only to force a timeout)
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -126,11 +128,34 @@ describe('archivedFeature: refusals say what to do', () => {
     expect(archivedFeature(repo, 'main', NO_SNAPSHOT)).toEqual({ ok: false, reason: 'none' });
   });
 
-  it('refuses when this branch added several completed folders (it never guesses)', () => {
+  // ⚠ changes existing test: D86 (code review low) — folders are filtered by the named feature before counting, so
+  //   "several" now means several folders of this feature; another feature's folder no longer makes it refuse.
+  it('refuses when this branch added several completed folders of its feature (it never guesses)', () => {
+    git(repo, 'checkout', '-q', '-b', 'feat/mine/build');
+    archive(repo, 'mine-2026-11-23');
+    archive(repo, 'mine-2026-11-24');
+    expect(archivedFeature(repo, 'main', snapshot())).toEqual({ ok: false, reason: 'several' });
+  });
+
+  it('resolves its own folder when the branch also added another feature\'s folder (D86: filter, then count)', () => {
     git(repo, 'checkout', '-q', '-b', 'feat/mine/build');
     archive(repo, 'mine-2026-11-23');
     archive(repo, 'other-2026-11-23');
-    expect(archivedFeature(repo, 'main', snapshot())).toEqual({ ok: false, reason: 'several' });
+    expect(archivedFeature(repo, 'main', snapshot())).toEqual({ ok: true, feature: 'mine', folder: 'mine-2026-11-23' });
+  });
+
+  it('says the archive is git-ignored when no folder shows and .oss/ is ignored (D86 pen low)', () => {
+    git(repo, 'checkout', '-q', '-b', 'feat/mine/build');
+    write(repo, '.gitignore', '.oss/\n');
+    commitAll(repo, 'ignore .oss');
+    write(repo, '.oss/dev/completed/mine-2026-11-23/results/ship.json', '{}\n');
+    expect(archivedFeature(repo, 'main', snapshot())).toEqual({ ok: false, reason: 'ignored' });
+  });
+
+  it('a spent deadline refuses as a timeout and runs no diff (D86 info a)', () => {
+    git(repo, 'checkout', '-q', '-b', 'feat/mine/build');
+    archive(repo, 'mine-2026-11-23');
+    expect(archivedFeature(repo, 'main', snapshot(), Date.now() - 1)).toEqual({ ok: false, reason: 'timeout' });
   });
 
   it('reports a git timeout as a timeout, not as no feature (D85 info b)', () => {
@@ -138,5 +163,31 @@ describe('archivedFeature: refusals say what to do', () => {
     archive(repo, 'mine-2026-11-23');
     slow.on = true;
     expect(archivedFeature(repo, 'main', snapshot())).toEqual({ ok: false, reason: 'timeout' });
+  });
+});
+
+describe('archivedFeature: no feature in the branch name, no archived lookup (D86 security low, pen info)', () => {
+  /** Feature a archived on feat/a/build (not merged); then `branch` is cut from it with code of its own. */
+  function stackedOnArchive(branch: string): void {
+    git(repo, 'checkout', '-q', '-b', 'feat/a/build');
+    write(repo, 'a.js', '1\n');
+    commitAll(repo, 'a');
+    archive(repo, 'a-2026-11-20');
+    git(repo, 'checkout', '-q', '-b', branch);
+    write(repo, 'b.js', '2\n');
+    commitAll(repo, 'b work');
+  }
+
+  for (const branch of ['hotfix-b', 'feat/b', 'b/build']) {
+    it(`refuses ${branch}, stacked on another feature's archive (no_feature, never feature a)`, () => {
+      stackedOnArchive(branch);
+      expect(archivedFeature(repo, 'main', snapshot())).toEqual({ ok: false, reason: 'unnamed' });
+    });
+  }
+
+  it('resolves feat/a/build, which names its own archived feature', () => {
+    stackedOnArchive('feat/a/build-fix');
+    git(repo, 'checkout', '-q', 'feat/a/build');
+    expect(archivedFeature(repo, 'main', snapshot())).toEqual({ ok: true, feature: 'a', folder: 'a-2026-11-20' });
   });
 });

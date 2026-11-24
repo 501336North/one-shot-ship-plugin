@@ -112,7 +112,7 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 - Running the real gate by hand (`hooks/oss-tool-gate.sh pre` with hook JSON on stdin) writes `.oss/tool-gates/events.ndjson` in the project. It is untracked, so never commit it.
 - Follow-up (T26 report, not in R-257 scope): oss-notify.sh still runs the workflow-state CLI (`wf_state`) and the copy and chain-trigger CLIs on PATH's node. Only the phase-result CLI moved to the recorded node (D21).
 
-## Last Updated: 2026-11-23 17:38 +07 by /oss:build (ship round 17 fixes, D85)
+## Last Updated: 2026-11-24 09:54 +07 by /oss:build (ship round 18 fixes, D86)
 
 ### T31 real-transcript note (2026-11-18)
 - Where a harness ends subagents with a handback tool (this machine: SubagentHandback), the review agent's final message has no text, so its oss-verdict block is never captured and its gate stays `source: model`, as before T19. That's fail-safe: no gate gets stricter or looser. Plain Claude Code subagents end with a text message, so the capture works there. The served agent prompts already say to write the block as plain text in the reply.
@@ -225,3 +225,13 @@ CLI stderr shape: `phase-result: <verb> <phase>: <id> (field <f>); rebuild: oss-
 - **The lookup reads the run's ship-start snapshot when there is one, else an empty map.** The live `refs/remotes/*/<base>` step (D61/D64) still moves the base past a stale local main without a snapshot. assemble then refuses `no_base_snapshot` as before.
 - **Times in `_mg` compare as fixed-width strings.** A plain string compare of `...:40.771Z` and `...:40Z` gets the order wrong ('.' sorts before 'Z'), so `_tm` pads both to nine fraction digits first. Any other time form fails closed.
 - **The complete budget starts in `main()`.** `check` (when it fails fast, for example on stale_result headSha) and mergedReady share one 10 s budget, inside oss-notify's 15 s.
+
+## Ship round 18 notes (2026-11-24)
+- **The gh form is `gh api --hostname github.com repos/<owner>/<name>/commits/<tested head>/pulls`.** It finds the PR from the commit itself, with no model-chosen value: `<owner>/<name>` comes from origin's one github.com URL by the merge gate's rule, and the head is the ledger's tested head (40 hex). It is the REST list of PRs associated with a commit, so it answers at once after a merge; `gh pr list --search <sha>` uses the search index, which can lag. `--hostname` keeps GH_HOST from pointing gh elsewhere. A PR counts when `merged_at` is set, `head.sha` is the tested head and `base.ref` is the result's `diff.baseRef`.
+- **The PR head is compared with the merge gate's tested head, not the ready row's head.** The archive commit (only `.oss/` paths, covered by the ready row) is pushed before the merge gate, so GitHub's PR head is the tested head. With `.oss/` ignored there is no archive commit and the two are the same.
+- **gh comes from the caller's PATH.** The CLI runs with PATH=/usr/bin:/bin, so oss-phase-result.sh passes the caller's PATH as `OSS_GH_PATH`. Only absolute folders outside the repo count (as in the merge gate). gh runs from `/` with that PATH, prompts off; exit 4 means not logged in. This is the same trust as the merge gate's own `gh`.
+- **The archived lookup's base is recorded at assemble** (ledger marker `run/ship.base`, `{startedAt, base}`), next to the ship-start snapshot `run/ship.origin`. The first assemble of an archived re-run still uses base.txt (nothing recorded yet).
+- **Item 5d:** the LFS and clean-filter limit of D85's blob check no longer applies: nothing on the merged path reads a git blob any more.
+- **Bash tests that reach `complete` on the merged path must put the gh stub first on PATH** (`complete_ship` in phase-results.acceptance.test.sh); with the caller's PATH, a real gh would be asked.
+- **A non-github.com origin refuses `not_github` with its own hint**, before gh runs; `no_proof` now means only a local refusal (rows, archived result, tested head), which keeps the original check refusal.
+- **The 5a CLI test calls main() in process** (test/cli/phase-result-deadline.test.ts) and mocks only Date.now, so the deadline main() takes is already spent for every later reading. Importing the CLI module runs main() once on vitest's argv (a usage refusal); the test silences it and resets process.exitCode. No production knob was added.

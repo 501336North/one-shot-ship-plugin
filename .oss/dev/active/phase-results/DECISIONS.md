@@ -188,6 +188,20 @@
     - one budget from `main()` covers complete.
     - Parity of the bash and TS readers on hand-edited rows is a D51 known limit (NOTES).
   - Fix round 17, past the 3-round cap, by the owner's pick.
+- D86 (user picker, 2026-11-24, "Fix all + cheap infos"): fix round 18 covers gate round 16. Code review, security and pen test failed; performance passed.
+  - **`complete` asks GitHub whether the PR merged** (second picker, 2026-11-24, "Ask GitHub", replacing the first pick's git-history match). On both the worktree path and the main path, one `gh` call must show a MERGED pull request whose head commit equals the merge gate's tested head, with the PR's base equal to the recorded base. The tested head is used rather than the ready row's headSha because the served archive commit (`.oss/` only, which the ready row covers) is pushed before the merge gate, so GitHub's PR head is the tested head. With `.oss/` ignored the two are the same commit. When `gh` is missing, offline or not logged in, `complete` refuses with a hint that says so (fails closed).
+    - This replaces D85's origin/main blob check, which never passed when `.oss/` is git-ignored, because the served archive commands skip ignored paths (pen medium). It also closes the main-path gap where `complete` passed with the PR unmerged (pen low, security info).
+    - Why not git history: a heads-up showed that a patch or tree match refuses an honest merge when main moved after the merge test, when a conflict was settled on GitHub, or when main was merged into the branch. Rounds 14-17 each guessed the merge from local git state, and each guess broke another honest setup.
+  - **No feature in the branch name, no archived lookup.** When the branch name does not match `<type>/<feature>/<phase>`, the D84 lookup refuses `no_feature` with a hint to use that name (security low, pen info).
+  - **The lookup uses the base assemble recorded**, not the short-lived base.txt, and it filters folders by the named feature before counting them (code review low).
+  - **When `.oss/` is ignored, the re-run hint says so**, instead of telling the user to update the base branch (pen low).
+  - **Cheap infos:**
+    - the lookup is charged to the shared deadline, and a timeout refuses with DIFF_TIMEOUT;
+    - the fetch hint shows only when a fetch can help;
+    - `complete` after an archived re-run always runs the merge proof;
+    - the LFS and clean-filter limit goes into NOTES.
+  - Fix round 18, past the 3-round cap, by the owner's pick.
+- D87 Stop rule for the remaining rounds (user picker, 2026-11-24, "Only medium+ or security"): after gate round 17, only a medium or higher finding, or any security finding, leads to another fix round. Those still go to the owner and are never deferred on the session's own call. Non-security lows and infos go to FOLLOWUPS.md and the PR body, and ship goes on to the owner's merge pick.
 - D25-D29: ship round 1 decisions (user pickers, 2026-11-18), from four failing gates.
   - **D25 Gate code location: lock it down.**
     - `~/.oss/plugin-root` and `~/.oss/watcher/**` join the tool gate's protectedPaths. This changes R-266's exact-list test, as the user's pick allows.

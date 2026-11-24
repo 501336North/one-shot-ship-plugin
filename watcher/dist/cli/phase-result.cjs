@@ -1148,19 +1148,22 @@ var GitError = class extends Error {
   overflow;
   timedOut;
 };
+var callerDeadline = Infinity;
 function runGit(repo, args, okCodes = [0], raw = false, maxBuffer = 1024 * 1024, input, timeout = 1e4) {
   const env = gitEnv();
   env.GIT_CONFIG_NOSYSTEM = "1";
   env.PATH = "/usr/bin:/bin";
   const git2 = gitBin();
   if (git2 === "") throw new GitError("no git");
+  const left = callerDeadline - Date.now();
+  if (left <= 0) throw new GitError(args[0] ?? "git", false, true);
   const r = (0, import_node_child_process3.spawnSync)(git2, ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", ...args], {
     cwd: repo,
     env,
     encoding: "utf-8",
     stdio: [input === void 0 ? "ignore" : "pipe", "pipe", "ignore"],
     input,
-    timeout,
+    timeout: Math.min(timeout, left),
     maxBuffer
   });
   if (r.error !== void 0 || r.status === null || !okCodes.includes(r.status)) {
@@ -1322,13 +1325,16 @@ function diffBase(repo, base, remoteRefs) {
   const from = diffFrom(repo, branch, tip, headSha2, remoteRefs);
   return { branch, tip, headSha: headSha2, from, mergeBase: runGit(repo, ["merge-base", from, headSha2]).out };
 }
-function branchAddedPaths(repo, base, remoteRefs, dir) {
+function branchAddedPaths(repo, base, remoteRefs, dir, deadline = Infinity) {
+  callerDeadline = deadline;
   try {
     const { mergeBase, headSha: headSha2 } = diffBase(repo, base, remoteRefs);
     const out = runGit(repo, [...DIFF, "--name-only", "--diff-filter=A", "-z", mergeBase, headSha2, "--", dir], [0], true, PATH_LIST_BUFFER).out;
     return out.split("\0").filter((p) => p !== "");
   } catch (e) {
     return e instanceof GitError && e.timedOut ? "timeout" : null;
+  } finally {
+    callerDeadline = Infinity;
   }
 }
 function readDiff(repo, base, remoteRefs) {
@@ -2041,19 +2047,21 @@ function resolveFeature(repo) {
 }
 var COMPLETED_RE = /^\.oss\/dev\/completed\/([^/]+)\//;
 var ARCHIVED_RE = /^([A-Za-z0-9_-][A-Za-z0-9._-]*)-(\d{4}-\d{2}-\d{2})$/;
-function archivedFeature(repo, base, remoteRefs) {
-  const added = branchAddedPaths(repo, base, remoteRefs, ".oss/dev/completed/");
+function archivedFeature(repo, base, remoteRefs, deadline = Infinity) {
+  const named = BRANCH_RE.exec(branchName(repo))?.[1];
+  if (named === void 0) return { ok: false, reason: "unnamed" };
+  const added = branchAddedPaths(repo, base, remoteRefs, ".oss/dev/completed/", deadline);
   if (added === "timeout") return { ok: false, reason: "timeout" };
   if (added === null) return { ok: false, reason: "none" };
-  const folders = new Set(added.map((p) => COMPLETED_RE.exec(p)?.[1]).filter((n) => n !== void 0));
-  if (folders.size > 1) return { ok: false, reason: "several" };
-  const folder = [...folders][0];
-  const m = folder === void 0 ? null : ARCHIVED_RE.exec(folder);
-  if (folder === void 0 || m === null) return { ok: false, reason: "none" };
-  const named = BRANCH_RE.exec(branchName(repo))?.[1];
+  const folders = [...new Set(added.map((p) => COMPLETED_RE.exec(p)?.[1]))].filter((n) => n !== void 0 && ARCHIVED_RE.exec(n)?.[1] === named);
+  if (folders.length > 1) return { ok: false, reason: "several" };
+  const folder = folders[0];
+  if (folder === void 0) return { ok: false, reason: ignoredArchive(repo) ? "ignored" : "none" };
   const st = fs9.lstatSync(path8.join(repo, ".oss", "dev", "completed", folder), { throwIfNoEntry: false });
-  if (st?.isDirectory() !== true || named !== void 0 && named !== m[1]) return { ok: false, reason: "none" };
-  return { ok: true, feature: m[1], folder };
+  return st?.isDirectory() === true ? { ok: true, feature: named, folder } : { ok: false, reason: "none" };
+}
+function ignoredArchive(repo) {
+  return gitOut2(repo, ["check-ignore", "-v", "--", ".oss/dev/completed"]) !== null;
 }
 
 // src/phase-results/merge-ready.ts
@@ -2115,7 +2123,7 @@ function archivedResult(repo, feature, sha2562) {
   }
   for (const folder of names) {
     const bytes = resultBytes(path9.join(done, folder, "results", "ship.json"));
-    if (bytes !== null && (0, import_node_crypto4.createHash)("sha256").update(bytes).digest("hex") === sha2562) return { bytes, folder };
+    if (bytes !== null && (0, import_node_crypto4.createHash)("sha256").update(bytes).digest("hex") === sha2562) return bytes;
   }
   return null;
 }
@@ -2133,37 +2141,93 @@ function resultBytes(file) {
     fs10.closeSync(fd);
   }
 }
-function mergedReady(repo, ledger, runStartedAt2, deadline = Date.now() + MERGED_BUDGET_MS) {
-  const row = readyRow(ledger);
-  if (row === null || row.startedAt !== runStartedAt2) return null;
-  const at = Date.parse(row.at);
-  const started = Date.parse(runStartedAt2);
-  if (Number.isNaN(at) || Number.isNaN(started) || at < started) return null;
-  if (ledger.lastRow(`results/${row.feature}/ship`)?.sha256 !== row.sha256) return null;
-  if (fs10.lstatSync(path9.join(repo, ".oss", "dev", "active", row.feature), { throwIfNoEntry: false }) !== void 0) return null;
-  const archived = archivedResult(repo, row.feature, row.sha256);
-  if (archived === null) return null;
-  const { bytes, folder } = archived;
-  const tested = testedRow(ledger, runStartedAt2);
-  if (tested === null || !onlyOssAfter(repo, row.headSha, tested.head, deadline)) return null;
-  const ancestor = (a, b) => git(repo, ["merge-base", "--is-ancestor", "--end-of-options", a, b], deadline).status === 0;
-  const ref = git(repo, ["symbolic-ref", "-q", "HEAD"], deadline).out.trim();
-  const now = git(repo, ["rev-parse", "--verify", "HEAD^{commit}"], deadline).out.trim();
-  if (ref === "refs/heads/main") {
-    if (now === tested.main || !ancestor(tested.main, "HEAD")) return null;
-  } else {
-    const origin = git(repo, ["rev-parse", "--verify", "--end-of-options", "refs/remotes/origin/main^{commit}"], deadline).out.trim();
-    if (!ref.startsWith("refs/heads/") || !onlyOssAfter(repo, row.headSha, now, deadline)) return null;
-    if (!SHA.test(origin) || origin === tested.main || !ancestor(tested.main, origin)) return null;
-    const merged = git(repo, ["cat-file", "blob", `${origin}:.oss/dev/completed/${folder}/results/ship.json`], deadline);
-    if (merged.status !== 0 || (0, import_node_crypto4.createHash)("sha256").update(merged.out, "utf8").digest("hex") !== row.sha256) return null;
-  }
+function parseObject2(bytes) {
   try {
     const v = JSON.parse(bytes.toString("utf8"));
     return typeof v === "object" && v !== null && !Array.isArray(v) ? v : null;
   } catch {
     return null;
   }
+}
+function field(o, key2) {
+  return typeof o === "object" && o !== null ? o[key2] : void 0;
+}
+var GH_NAME = /^[A-Za-z0-9_][A-Za-z0-9_.-]*\/[A-Za-z0-9_][A-Za-z0-9_.-]*$/;
+function githubName(repo, deadline) {
+  const r = git(repo, ["config", "--get-all", "remote.origin.url"], deadline);
+  const urls = r.out.split("\n").filter((l) => l !== "");
+  if (r.status !== 0 || urls.length !== 1) return null;
+  const m = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)(.+?)(?:\.git)?$/.exec(urls[0]);
+  return m !== null && GH_NAME.test(m[1]) ? m[1] : null;
+}
+function ghBin(repo) {
+  const top = fs10.realpathSync(repo);
+  const dirs = (process.env.OSS_GH_PATH ?? "").split(":").filter((d) => {
+    if (!path9.isAbsolute(d)) return false;
+    try {
+      const real = fs10.realpathSync(d);
+      return real !== top && !real.startsWith(`${top}/`);
+    } catch {
+      return false;
+    }
+  });
+  for (const d of dirs) {
+    const bin = path9.join(d, "gh");
+    try {
+      if (!fs10.statSync(bin).isFile()) continue;
+      fs10.accessSync(bin, fs10.constants.X_OK);
+      return { bin, dirs: dirs.join(":") };
+    } catch {
+    }
+  }
+  return null;
+}
+function prMerged(repo, head, base, deadline) {
+  if (!/^[0-9a-f]{40}$/.test(head)) return "no_proof";
+  const name = githubName(repo, deadline);
+  if (name === null) return "not_github";
+  const gh = ghBin(repo);
+  if (gh === null) return "gh_unavailable";
+  const left = deadline - Date.now();
+  if (left <= 0) return "gh_unreachable";
+  const r = (0, import_node_child_process4.spawnSync)(gh.bin, ["api", "--hostname", "github.com", `repos/${name}/commits/${head}/pulls`], {
+    cwd: "/",
+    env: { ...process.env, PATH: gh.dirs, GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1" },
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: left,
+    maxBuffer: 16 * 1024 * 1024
+  });
+  if (r.error === void 0 && r.status === 4) return "gh_unavailable";
+  if (r.error !== void 0 || r.status !== 0) return "gh_unreachable";
+  let prs;
+  try {
+    prs = JSON.parse(r.stdout);
+  } catch {
+    return "gh_unreachable";
+  }
+  if (!Array.isArray(prs)) return "gh_unreachable";
+  const merged = prs.some((p) => typeof field(p, "merged_at") === "string" && field(field(p, "head"), "sha") === head && field(field(p, "base"), "ref") === base);
+  return merged ? "merged" : "not_merged";
+}
+function mergedReady(repo, ledger, runStartedAt2, deadline = Date.now() + MERGED_BUDGET_MS) {
+  const no = { ok: false, reason: "no_proof" };
+  const row = readyRow(ledger);
+  if (row === null || row.startedAt !== runStartedAt2) return no;
+  const at = Date.parse(row.at);
+  const started = Date.parse(runStartedAt2);
+  if (Number.isNaN(at) || Number.isNaN(started) || at < started) return no;
+  if (ledger.lastRow(`results/${row.feature}/ship`)?.sha256 !== row.sha256) return no;
+  if (fs10.lstatSync(path9.join(repo, ".oss", "dev", "active", row.feature), { throwIfNoEntry: false }) !== void 0) return no;
+  const bytes = archivedResult(repo, row.feature, row.sha256);
+  const result = bytes === null ? null : parseObject2(bytes);
+  if (result === null) return no;
+  const tested = testedRow(ledger, runStartedAt2);
+  if (tested === null || !onlyOssAfter(repo, row.headSha, tested.head, deadline)) return no;
+  const base = field(result.diff, "baseRef");
+  if (typeof base !== "string") return no;
+  const proof = prMerged(repo, tested.head, base, deadline);
+  return proof === "merged" ? { ok: true, result } : { ok: false, reason: proof };
 }
 
 // src/cli/phase-result.ts
@@ -2172,10 +2236,10 @@ var Refusal = class extends Error {
   id;
   field;
   detail;
-  constructor(id, field, detail) {
+  constructor(id, field2, detail) {
     super(id);
     this.id = id;
-    this.field = field;
+    this.field = field2;
     this.detail = detail;
   }
 };
@@ -2245,12 +2309,30 @@ function checkShipBase(repo, base, feature, snapshot) {
 }
 var NOT_ARCHIVED = "no completed folder of this branch's feature was added: update the local <base> branch (git fetch origin <base>, or update it in the worktree that has it checked out)";
 var SEVERAL_ARCHIVED = "this branch added several completed folders";
+var UNNAMED_BRANCH = "name the branch <type>/<feature>/<phase> (for example feat/<feature>/build) to re-run an archived feature";
+var IGNORED_ARCHIVE = ".oss/dev/completed is git-ignored, so the branch diff cannot show this feature's archive: move .oss/dev/completed/<feature>-<date> back to .oss/dev/active/<feature>, then run /oss:ship again";
+var ARCHIVED_HINTS = {
+  none: NOT_ARCHIVED,
+  several: SEVERAL_ARCHIVED,
+  unnamed: UNNAMED_BRANCH,
+  ignored: IGNORED_ARCHIVE
+};
 function runSnapshot(repo) {
   try {
     const ledger = openLedger(repo);
     return originSnapshot(ledger, runStartedAt(ledger, "ship"));
   } catch {
     return /* @__PURE__ */ new Map();
+  }
+}
+var BASE_MARKER = "run/ship.base";
+function recordedBase(repo) {
+  try {
+    const ledger = openLedger(repo);
+    const m = ledger.readMarker(BASE_MARKER);
+    return m?.startedAt === runStartedAt(ledger, "ship") && typeof m.base === "string" ? m.base : null;
+  } catch {
+    return null;
   }
 }
 function pluginRoot() {
@@ -2337,6 +2419,8 @@ function assemble(repo, feature, phase, where) {
     headSha: outcome.result.headSha,
     session: process.env.CLAUDE_CODE_SESSION_ID ?? ""
   });
+  const baseRef = outcome.result.diff?.baseRef;
+  if (phase === "ship" && typeof baseRef === "string") ledger.writeMarker(BASE_MARKER, { startedAt, base: baseRef });
   ledger.clearMarker(`pending/${feature}/${phase}`);
   ledger.clearMarker(`unverified/${feature}/${phase}`);
   clearUnverifiedMarker(repo, feature, phase, where);
@@ -2408,9 +2492,9 @@ function check(repo, feature, phase, where = { kind: "active", name: feature }) 
   if (stored.verification !== "verified") throw new Refusal("unverified", "verification");
   const fresh = reassemble(repo, feature, phase, stored, where);
   if (!fresh.ok) throw new Refusal("evidence_mismatch", fresh.error);
-  for (const field of CODE_FIELDS[phase]) {
-    if (JSON.stringify(stored[field]) !== JSON.stringify(fresh.result[field])) {
-      throw new Refusal("evidence_mismatch", field);
+  for (const field2 of CODE_FIELDS[phase]) {
+    if (JSON.stringify(stored[field2]) !== JSON.stringify(fresh.result[field2])) {
+      throw new Refusal("evidence_mismatch", field2);
     }
   }
   return stored;
@@ -2427,8 +2511,8 @@ function verdictOf(fn) {
     return { ok: false, id, field: "store" };
   }
 }
-function refuse(args, id, field, detail) {
-  const reason = `${id}${detail === void 0 ? "" : `: ${detail}`}${field === "" ? "" : ` (field ${field})`}`;
+function refuse(args, id, field2, detail) {
+  const reason = `${id}${detail === void 0 ? "" : `: ${detail}`}${field2 === "" ? "" : ` (field ${field2})`}`;
   process.stderr.write(`phase-result: ${args.verb} ${args.phase}: ${reason}; rebuild: oss-phase-result.sh assemble ${args.phase}
 `);
   return 1;
@@ -2453,29 +2537,29 @@ function recordReady(args, repo, feature, where, missing) {
   return 0;
 }
 var NOT_REVOKED = "the earlier ready row could not be revoked (the ledger append failed)";
-var MERGED_HINT = "not yet shown as merged: run `git fetch origin`, then send complete again";
-function mergedPath(repo) {
+var MERGE_HINTS = {
+  not_github: "complete after merged needs a github.com origin to confirm the merge; this repo's origin is not on github.com",
+  gh_unavailable: "gh is not installed or not logged in: run gh auth login, then send complete again",
+  gh_unreachable: "GitHub could not be reached: send complete again when online",
+  not_merged: "GitHub does not show this PR as merged yet: merge it, then send complete again"
+};
+function mergeProof(repo, deadline) {
   try {
     const ledger = openLedger(repo);
-    const row = readyRow(ledger);
-    return row !== null && row.startedAt === runStartedAt(ledger, "ship") && fs11.lstatSync(path10.join(repo, ".oss", "dev", "active", row.feature), { throwIfNoEntry: false }) === void 0;
+    return mergedReady(repo, ledger, runStartedAt(ledger, "ship"), deadline);
   } catch {
-    return false;
+    return { ok: false, reason: "no_proof" };
   }
 }
 function mergedOrRefuse(args, repo, v, deadline) {
   if (args.phase === "ship" && args.verb === "check") {
-    let archived = null;
-    verdictOf(() => {
-      const ledger = openLedger(repo);
-      archived = mergedReady(repo, ledger, runStartedAt(ledger, "ship"), deadline);
-    });
-    if (archived !== null) {
-      process.stdout.write(`${JSON.stringify({ verification: "verified", ...gateLabel("ship", archived), verdict: "ready_to_merge", merged: true })}
+    const proof = mergeProof(repo, deadline);
+    if (proof.ok) {
+      process.stdout.write(`${JSON.stringify({ verification: "verified", ...gateLabel("ship", proof.result), verdict: "ready_to_merge", merged: true })}
 `);
       return 0;
     }
-    if (mergedPath(repo)) return refuse(args, v.id, v.field, MERGED_HINT);
+    if (proof.reason !== "no_proof") return refuse(args, v.id, v.field, MERGE_HINTS[proof.reason]);
   }
   return refuse(args, v.id, v.field, v.detail);
 }
@@ -2507,16 +2591,16 @@ function main(argv) {
   let where = { kind: "active", name: feature ?? "" };
   let missing = { ok: false, id: "no_feature", field: "feature" };
   if (feature === null && args.phase === "ship") {
-    const archived = archivedFeature(repo, shipBase(repo, valueDir(repo)), runSnapshot(repo));
+    const archived = archivedFeature(repo, recordedBase(repo) ?? shipBase(repo, valueDir(repo)), runSnapshot(repo), deadline);
     if (archived.ok) {
       feature = archived.feature;
       where = { kind: "completed", name: archived.folder };
     } else {
-      missing = archived.reason === "timeout" ? { ok: false, id: "diff_unavailable", field: "", detail: DIFF_TIMEOUT } : { ok: false, id: "no_feature", field: "feature", detail: archived.reason === "several" ? SEVERAL_ARCHIVED : NOT_ARCHIVED };
+      missing = archived.reason === "timeout" ? { ok: false, id: "diff_unavailable", field: "", detail: DIFF_TIMEOUT } : { ok: false, id: "no_feature", field: "feature", detail: ARCHIVED_HINTS[archived.reason] };
     }
   }
   if (args.recordReady) return recordReady(args, repo, feature, where, missing);
-  if (feature === null) return mergedOrRefuse(args, repo, missing, deadline);
+  if (feature === null) return missing.id === "diff_unavailable" ? refuse(args, missing.id, missing.field, missing.detail) : mergedOrRefuse(args, repo, missing, deadline);
   if (args.verb === "assemble") {
     let result = {};
     const v2 = verdictOf(() => {
@@ -2533,6 +2617,7 @@ function main(argv) {
     stored = check(repo, feature, args.phase, where);
   });
   if (!v.ok) return mergedOrRefuse(args, repo, v, deadline);
+  if (args.phase === "ship" && where.kind === "completed") return mergedOrRefuse(args, repo, { ok: false, id: "not_merged", field: "" }, deadline);
   const verdict = args.phase === "ship" ? { verdict: stored.verdict } : {};
   process.stdout.write(`${JSON.stringify({ verification: "verified", ...gateLabel(args.phase, stored), ...verdict })}
 `);

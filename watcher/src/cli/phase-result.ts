@@ -16,7 +16,8 @@
  * names the reason id, the field and the rebuild command), 2 on wrong usage.
  *
  * Repo: the physical cwd's git toplevel, or --repo; never CLAUDE_PROJECT_DIR. Schemas: the plugin root this bundle sits
- * in (<root>/watcher/dist/cli/phase-result.cjs), never the repo. No network; the only child process is git.
+ * in (<root>/watcher/dist/cli/phase-result.cjs), never the repo. The child processes are git and, only for complete's
+ * merge proof after `merged` (D86), one `gh api` call; nothing else touches the network.
  */
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -40,7 +41,7 @@ import { gitBin } from '../phase-results/git-bin.js';
 import { gitEnv, gitOut } from '../phase-results/git.js';
 import { clearUnverifiedMarker, readBack, readResult, readValueFile, resolveRepo, writeResult, type FeatureDir } from '../phase-results/store.js';
 import { validate } from '../phase-results/validate.js';
-import { MERGED_BUDGET_MS, mergedReady, READY_ROW, readyRow } from '../phase-results/merge-ready.js';
+import { MERGED_BUDGET_MS, mergedReady, READY_ROW, type MergedReady } from '../phase-results/merge-ready.js';
 
 const USAGE =
   'usage: oss-phase-result.sh assemble <ideate|plan|build|ship>\n' +
@@ -175,6 +176,16 @@ function checkShipBase(repo: string, base: string, feature: string, snapshot: Re
 /** D85: the no_feature hints when no archived folder resolved (fixed text, no values). */
 const NOT_ARCHIVED = 'no completed folder of this branch\'s feature was added: update the local <base> branch (git fetch origin <base>, or update it in the worktree that has it checked out)';
 const SEVERAL_ARCHIVED = 'this branch added several completed folders';
+/** D86 (security low, pen info): the branch name names no feature, so no archived lookup ran (fixed text). */
+const UNNAMED_BRANCH = 'name the branch <type>/<feature>/<phase> (for example feat/<feature>/build) to re-run an archived feature';
+/** D86 (pen low): no folder showed because the archive is git-ignored; what to do instead (fixed text). */
+const IGNORED_ARCHIVE = '.oss/dev/completed is git-ignored, so the branch diff cannot show this feature\'s archive: move .oss/dev/completed/<feature>-<date> back to .oss/dev/active/<feature>, then run /oss:ship again';
+const ARCHIVED_HINTS: Readonly<Record<'none' | 'several' | 'unnamed' | 'ignored', string>> = {
+  none: NOT_ARCHIVED,
+  several: SEVERAL_ARCHIVED,
+  unnamed: UNNAMED_BRANCH,
+  ignored: IGNORED_ARCHIVE,
+};
 
 /** D85: this ship run's start snapshot, for the archived-feature lookup; none (an empty map) when there is no run or snapshot. */
 function runSnapshot(repo: string): ReadonlyMap<string, string> {
@@ -183,6 +194,20 @@ function runSnapshot(repo: string): ReadonlyMap<string, string> {
     return originSnapshot(ledger, runStartedAt(ledger, 'ship'));
   } catch {
     return new Map();
+  }
+}
+
+/** D86 (code review low): where assemble ship records the base it chose for this run (`{startedAt, base}`). */
+const BASE_MARKER = 'run/ship.base';
+
+/** D86: the base assemble ship recorded for this ship run; null when none was (then the lookup falls back to shipBase). */
+function recordedBase(repo: string): string | null {
+  try {
+    const ledger = openLedger(repo);
+    const m = ledger.readMarker(BASE_MARKER);
+    return m?.startedAt === runStartedAt(ledger, 'ship') && typeof m.base === 'string' ? m.base : null;
+  } catch {
+    return null;
   }
 }
 
@@ -288,6 +313,9 @@ function assemble(repo: string, feature: string, phase: Phase, where: FeatureDir
     headSha: outcome.result.headSha,
     session: process.env.CLAUDE_CODE_SESSION_ID ?? '',
   });
+  // D86: the base this ship run diffed from, for the archived lookup of check, --record-ready and complete.
+  const baseRef = (outcome.result.diff as Record<string, unknown> | undefined)?.baseRef;
+  if (phase === 'ship' && typeof baseRef === 'string') ledger.writeMarker(BASE_MARKER, { startedAt, base: baseRef });
   ledger.clearMarker(`pending/${feature}/${phase}`);
   ledger.clearMarker(`unverified/${feature}/${phase}`);
   clearUnverifiedMarker(repo, feature, phase, where);
@@ -441,38 +469,37 @@ function recordReady(args: Args, repo: string, feature: string | null, where: Fe
 /** D85 info c: added to a --record-ready refusal when its revoking row could not be appended (fixed text). */
 const NOT_REVOKED = 'the earlier ready row could not be revoked (the ledger append failed)';
 
-/** D85 info a: the refusal hint on the merged path (fixed text). */
-const MERGED_HINT = 'not yet shown as merged: run `git fetch origin`, then send complete again';
+/** D86 (item 5b): each merged-path refusal's own hint, by the cause GitHub's merge proof gave (fixed text). */
+const MERGE_HINTS: Readonly<Record<Exclude<Extract<MergedReady, { ok: false }>['reason'], 'no_proof'>, string>> = {
+  not_github: 'complete after merged needs a github.com origin to confirm the merge; this repo\'s origin is not on github.com',
+  gh_unavailable: 'gh is not installed or not logged in: run gh auth login, then send complete again',
+  gh_unreachable: 'GitHub could not be reached: send complete again when online',
+  not_merged: 'GitHub does not show this PR as merged yet: merge it, then send complete again',
+};
 
-/** D85 info a: this ship run has a ready row and that feature has no active folder (it was archived). */
-function mergedPath(repo: string): boolean {
+/** mergedReady for this repo's ship run; no_proof when the ledger or run row cannot be read. */
+function mergeProof(repo: string, deadline: number): MergedReady {
   try {
     const ledger = openLedger(repo);
-    const row = readyRow(ledger);
-    return row !== null && row.startedAt === runStartedAt(ledger, 'ship')
-      && fs.lstatSync(path.join(repo, '.oss', 'dev', 'active', row.feature), { throwIfNoEntry: false }) === undefined;
+    return mergedReady(repo, ledger, runStartedAt(ledger, 'ship'), deadline);
   } catch {
-    return false;
+    return { ok: false, reason: 'no_proof' };
   }
 }
 
 /**
- * D78: `check ship` after `merged`, on main with the feature archived: the run's `merge/ready` row (mergedReady) passes
- * as the archived ready result. Anything else keeps the original refusal.
+ * D78: `check ship` after `merged`, with the feature archived: the run's `merge/ready` row passes as the archived ready
+ * result once GitHub shows the PR merged (mergedReady, D86). A refusal from GitHub's answer carries that cause's hint
+ * (D86 item 5b); a refusal before GitHub was asked keeps the original refusal.
  */
 function mergedOrRefuse(args: Args, repo: string, v: Extract<Verdict, { ok: false }>, deadline: number): number {
   if (args.phase === 'ship' && args.verb === 'check') {
-    let archived: Record<string, unknown> | null = null;
-    verdictOf(() => {
-      const ledger = openLedger(repo);
-      archived = mergedReady(repo, ledger, runStartedAt(ledger, 'ship'), deadline);
-    });
-    if (archived !== null) {
-      process.stdout.write(`${JSON.stringify({ verification: 'verified', ...gateLabel('ship', archived), verdict: 'ready_to_merge', merged: true })}\n`);
+    const proof = mergeProof(repo, deadline);
+    if (proof.ok) {
+      process.stdout.write(`${JSON.stringify({ verification: 'verified', ...gateLabel('ship', proof.result), verdict: 'ready_to_merge', merged: true })}\n`);
       return 0;
     }
-    // D85 info a: this run recorded ready and its feature is archived (the merged path): origin/main may not be fetched yet.
-    if (mergedPath(repo)) return refuse(args, v.id, v.field, MERGED_HINT);
+    if (proof.reason !== 'no_proof') return refuse(args, v.id, v.field, MERGE_HINTS[proof.reason]);
   }
   return refuse(args, v.id, v.field, v.detail);
 }
@@ -508,18 +535,21 @@ export function main(argv: string[]): number {
   let missing: Extract<Verdict, { ok: false }> = { ok: false, id: 'no_feature', field: 'feature' };
   // D84 + D85: a ship re-run after the archive commit: the single completed folder this branch added, from assemble's base.
   if (feature === null && args.phase === 'ship') {
-    const archived = archivedFeature(repo, shipBase(repo, valueDir(repo)), runSnapshot(repo));
+    // D86: the base assemble recorded for this run, else (nothing recorded yet) the one it would choose now.
+    // D86 info a: the lookup spends from complete's one budget.
+    const archived = archivedFeature(repo, recordedBase(repo) ?? shipBase(repo, valueDir(repo)), runSnapshot(repo), deadline);
     if (archived.ok) {
       feature = archived.feature;
       where = { kind: 'completed', name: archived.folder };
     } else {
       missing = archived.reason === 'timeout'
         ? { ok: false, id: 'diff_unavailable', field: '', detail: DIFF_TIMEOUT }
-        : { ok: false, id: 'no_feature', field: 'feature', detail: archived.reason === 'several' ? SEVERAL_ARCHIVED : NOT_ARCHIVED };
+        : { ok: false, id: 'no_feature', field: 'feature', detail: ARCHIVED_HINTS[archived.reason] };
     }
   }
   if (args.recordReady) return recordReady(args, repo, feature, where, missing);
-  if (feature === null) return mergedOrRefuse(args, repo, missing, deadline);
+  // D86 info a: a lookup past the deadline is a slow repo (DIFF_TIMEOUT), never a merge hint.
+  if (feature === null) return missing.id === 'diff_unavailable' ? refuse(args, missing.id, missing.field, missing.detail) : mergedOrRefuse(args, repo, missing, deadline);
   if (args.verb === 'assemble') {
     let result: Record<string, unknown> = {};
     const v = verdictOf(() => {
@@ -536,6 +566,8 @@ export function main(argv: string[]): number {
     stored = check(repo, feature, args.phase, where);
   });
   if (!v.ok) return mergedOrRefuse(args, repo, v, deadline);
+  // D86 item 5c (code review I1): an archived re-run's complete always runs the merge proof, even when check passes.
+  if (args.phase === 'ship' && where.kind === 'completed') return mergedOrRefuse(args, repo, { ok: false, id: 'not_merged', field: '' }, deadline);
   // D35: check ship also prints the verdict, so complete refuses a verified but blocked ship.
   const verdict = args.phase === 'ship' ? { verdict: stored.verdict } : {};
   process.stdout.write(`${JSON.stringify({ verification: 'verified', ...gateLabel(args.phase, stored), ...verdict })}\n`);

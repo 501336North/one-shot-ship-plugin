@@ -272,7 +272,10 @@ cleanup
 merge_sandbox() {
     sandbox
     mkdir -p "$T/bin"; git init -q --bare "$T/origin.git"
-    printf '#!/bin/sh\nif test "$1" = api; then git --git-dir "%s" rev-parse refs/heads/main; fi\nexit 0\n' "$T/origin.git" > "$T/bin/gh"
+    # ⚠ changes existing test: D86 — the gh stub also answers complete's merge proof (`gh api ... commits/<sha>/pulls`)
+    #   from $T/gh-pulls.json (gh_says), and $T/gh-mode makes it act logged out (auth: exit 4) or offline (down: exit 1).
+    printf '#!/bin/sh\ncase "$(cat "%s/gh-mode" 2>/dev/null)" in auth) exit 4 ;; down) exit 1 ;; esac\ncase "$*" in\n*/commits/*/pulls*) cat "%s/gh-pulls.json" 2>/dev/null || echo "[]" ;;\napi*) git --git-dir "%s" rev-parse refs/heads/main ;;\nesac\nexit 0\n' \
+        "$T" "$T" "$T/origin.git" > "$T/bin/gh"
     printf '#!/bin/sh\nexit 0\n' > "$T/bin/npm"; chmod +x "$T/bin/gh" "$T/bin/npm"
     # OLD_ARCHIVE=1 (D85): main already holds an older archive of this feature, under .oss/dev/completed/.
     [[ -n "${OLD_ARCHIVE:-}" ]] && (cd "$T/repo" && git checkout -q main && mkdir -p ".oss/dev/completed/$FEATURE-2026-10-01/results" \
@@ -304,6 +307,17 @@ step10_cleanup() {
     rm -f "$T"/home/.oss/run/*/branch.txt "$T"/home/.oss/run/*/head.txt "$T"/home/.oss/run/*/tested.txt
     [[ "${1:-}" == --no-fetch ]] || (cd "$T/repo" && git fetch -q --prune)
 }
+# gh_says <merged|open>: what GitHub lists for the PR whose head is the feature branch's tip on origin (the head the merge
+# gate tested and pushed): D86's merge proof asks only GitHub.
+gh_says() {
+    local h m=null
+    h=$(git --git-dir "$T/origin.git" rev-parse "refs/heads/feat/$FEATURE/build")
+    [[ $1 == merged ]] && m='"2026-11-23T02:00:00Z"'
+    printf '[{"number":1,"state":"%s","merged_at":%s,"head":{"sha":"%s"},"base":{"ref":"main"}}]\n' \
+        "$([[ $1 == merged ]] && echo closed || echo open)" "$m" "$h" > "$T/gh-pulls.json"
+}
+# complete_ship: `complete` with the gh stub first on PATH (system folders and node otherwise), so no run reaches GitHub.
+complete_ship() { envrun env PATH="$T/bin:$RUNDIR/node-only:$SAFE_PATH" "$SH" "$ROOT/hooks/oss-notify.sh" --workflow ship complete '{}'; }
 
 # ⚠ changes existing test: D83 (code review M1) — the served Step 10 cleanup runs before merged/complete, so complete
 #   must pass from the merge gate's ledger row, not the run folder.
@@ -313,8 +327,9 @@ archive_commit
 mt_out=$(merge_test); mt_rc=$?
 squash_to_main
 step10_cleanup
+gh_says merged   # ⚠ changes existing test: D86 — complete asks GitHub whether the PR merged
 m_out=$(notify ship merged '{}' 2>&1); m_rc=$?
-out=$(notify ship complete '{}' 2>&1); rc=$?
+out=$(complete_ship 2>&1); rc=$?
 if [[ $rec_rc -eq 0 && "$rec_out" == *READY_RECORDED* && $mt_rc -eq 0 && "$mt_out" == *READY_TO_MERGE* && $m_rc -eq 0 && $rc -eq 0 \
     && "$out" == *---CHAIN_COMMANDS---* ]] && chain_fired; then
     pass "D78/D83: record ready, archive commit, merge gate, squash onto main, Step 10 cleanup, merged, complete: complete passes and prints the chain"
@@ -329,8 +344,9 @@ archive_commit
 mt_out=$(merge_test); mt_rc=$?
 squash_to_main
 step10_cleanup
+gh_says merged   # ⚠ changes existing test: D86
 notify ship merged '{}' >/dev/null 2>&1
-out=$(notify ship complete '{}' 2>&1); rc=$?
+out=$(complete_ship 2>&1); rc=$?
 olds=$(ls -d "$T/repo/.oss/dev/completed/$FEATURE-2026-10-01" 2>&1)
 if [[ $rec_rc -eq 0 && $mt_rc -eq 0 && $rc -eq 0 && "$out" == *---CHAIN_COMMANDS---* && -d "$olds" ]] && chain_fired; then
     pass "D85: an older archive of the feature on main: the merge path still completes"
@@ -377,7 +393,7 @@ archive_commit
 mt_out=$(merge_test); mt_rc=$?
 squash_to_main
 notify ship merged '{}' >/dev/null 2>&1
-out=$(notify ship complete '{}' 2>&1); rc=$?
+out=$(complete_ship 2>&1); rc=$?
 if [[ $mt_rc -ne 0 && "$mt_out" == *STOP:* && $rc -ne 0 ]] && ! chain_fired; then
     pass "D78: a ready row from an earlier ship is refused by the merge gate and by complete"
 else fail "D78: a ready row from an earlier ship is refused by the merge gate and by complete" "merge-test rc=$mt_rc ($mt_out) complete rc=$rc ($out)"; fi
@@ -388,7 +404,7 @@ merge_sandbox
 archive_commit
 squash_to_main
 notify ship merged '{}' >/dev/null 2>&1
-out=$(notify ship complete '{}' 2>&1); rc=$?
+out=$(complete_ship 2>&1); rc=$?
 if [[ $rc -ne 0 ]] && ! chain_fired; then
     pass "D78: complete after merged refuses when no ready row was recorded"
 else fail "D78: complete after merged refuses when no ready row was recorded" "complete rc=$rc ($out)"; fi
@@ -403,9 +419,8 @@ other_lands_on_origin() {
         && (cd "$T/repo" && git fetch -q origin)
 }
 # 13f. D83 (pen M1, code review L1): main is checked out in another worktree, so served item 6 (fetch main into main,
-#     switch to it) fails and the session stays on the feature branch. complete still passes there: the ready row covers
-#     the branch tip (only .oss/ paths after it) and the tested main is a strict ancestor of origin/main, which the
-#     served merge step's fetch moved.
+#     switch to it) fails and the session stays on the feature branch. complete still passes there: GitHub shows the PR
+#     merged at the tested head (D86).
 # ⚠ changes existing test: D85 info a — gh_squash_origin no longer fetches; served Step 10's fetch (step10_cleanup) moves
 #   origin/main, so the real order is tested.
 gh_squash_origin() { # GitHub's squash merge on origin only (this clone has not fetched it)
@@ -420,15 +435,18 @@ mt_out=$(merge_test); mt_rc=$?
 gh_squash_origin
 i6=$(cd "$T/repo" && { git fetch -q origin refs/heads/main:refs/heads/main && git switch -q main; } 2>&1); i6_rc=$?
 step10_cleanup
+gh_says merged   # ⚠ changes existing test: D86 — GitHub, not origin/main, proves the merge
 notify ship merged '{}' >/dev/null 2>&1
-out=$(notify ship complete '{}' 2>&1); rc=$?
+out=$(complete_ship 2>&1); rc=$?
 br=$(cd "$T/repo" && git branch --show-current)
 if [[ $mt_rc -eq 0 && $i6_rc -ne 0 && "$br" == "feat/$FEATURE/build" && $rc -eq 0 && "$out" == *---CHAIN_COMMANDS---* ]] && chain_fired; then
     pass "D83 (pen M1): main checked out in another worktree, served item 6 fails, complete on the feature branch passes"
 else fail "D83 (pen M1): main checked out in another worktree, served item 6 fails, complete on the feature branch passes" "merge-test rc=$mt_rc item6 rc=$i6_rc branch=$br complete rc=$rc ($out)"; fi
 cleanup
-# 13f2. D85 info a: the same finish, but complete is sent before any fetch moved origin/main: it refuses and says to run
-#     `git fetch origin`, then send complete again; after that fetch, complete passes.
+# 13f2. D86 (items 1 and 5b): each complete refusal on the merged path says its own cause, and a fetch is never asked
+#     for: gh logged out, then GitHub unreachable, then the PR not merged yet; once GitHub shows it merged, complete passes
+#     with no fetch at all.
+# ⚠ changes existing test: D86 — replaces D85 info a's "run git fetch origin" case: a fetch no longer helps anything.
 merge_sandbox
 (cd "$T/repo" && git worktree add -q "$T/mainwt" main)
 phase_result check ship --record-ready >/dev/null 2>&1
@@ -437,15 +455,22 @@ merge_test >/dev/null
 gh_squash_origin
 step10_cleanup --no-fetch
 notify ship merged '{}' >/dev/null 2>&1
-out1=$(notify ship complete '{}' 2>&1); rc1=$?
-(cd "$T/repo" && git fetch -q origin)
-out=$(notify ship complete '{}' 2>&1); rc=$?
-if [[ $rc1 -ne 0 && "$out1" == *'git fetch origin'*'send complete again'* && $rc -eq 0 && "$out" == *---CHAIN_COMMANDS---* ]] && chain_fired; then
-    pass "D85 info a: complete before the fetch refuses and says to run git fetch origin; after it, complete passes"
-else fail "D85 info a: complete before the fetch refuses and says to run git fetch origin; after it, complete passes" "first rc=$rc1 ($out1) second rc=$rc ($out)"; fi
+gh_says open
+echo auth > "$T/gh-mode"; o_auth=$(complete_ship 2>&1); r_auth=$?
+echo down > "$T/gh-mode"; o_down=$(complete_ship 2>&1); r_down=$?
+rm -f "$T/gh-mode"; o_open=$(complete_ship 2>&1); r_open=$?
+gh_says merged
+out=$(complete_ship 2>&1); rc=$?
+if [[ $r_auth -ne 0 && "$o_auth" == *'gh is not installed or not logged in: run gh auth login, then send complete again'* \
+    && $r_down -ne 0 && "$o_down" == *'GitHub could not be reached: send complete again when online'* \
+    && $r_open -ne 0 && "$o_open" == *'GitHub does not show this PR as merged yet: merge it, then send complete again'* \
+    && "$o_auth$o_down$o_open" != *'git fetch'* && "$o_auth" != *'could not be reached'* && "$o_down" != *'not logged in'* \
+    && $rc -eq 0 && "$out" == *---CHAIN_COMMANDS---* ]] && chain_fired; then
+    pass "D86: each merged-path refusal names its own cause (logged out, offline, not merged), then complete passes once GitHub shows the merge"
+else fail "D86: each merged-path refusal names its own cause (logged out, offline, not merged), then complete passes once GitHub shows the merge" "auth rc=$r_auth ($o_auth) down rc=$r_down ($o_down) open rc=$r_open ($o_open) merged rc=$rc ($out)"; fi
 cleanup
 # 13f3. D85 (pen L1, security low): main checked out in another worktree and the PR NOT merged, while another PR moved
-#     origin/main. complete on the feature branch refuses: origin/main does not hold this archived result.
+#     origin/main. complete on the feature branch refuses: GitHub shows the PR still open (D86), and says so.
 merge_sandbox
 (cd "$T/repo" && git worktree add -q "$T/mainwt" main)
 phase_result check ship --record-ready >/dev/null 2>&1
@@ -453,11 +478,103 @@ archive_commit
 merge_test >/dev/null
 other_lands_on_origin
 step10_cleanup
+gh_says open   # ⚠ changes existing test: D86 — GitHub says the PR is still open
 notify ship merged '{}' >/dev/null 2>&1
-out=$(notify ship complete '{}' 2>&1); rc=$?
-if [[ $rc -ne 0 ]] && ! chain_fired; then
+out=$(complete_ship 2>&1); rc=$?
+if [[ $rc -ne 0 && "$out" == *'does not show this PR as merged yet'* ]] && ! chain_fired; then
     pass "D85 (pen L1): the PR did not merge (another PR moved origin/main): complete on the feature branch refuses"
 else fail "D85 (pen L1): the PR did not merge (another PR moved origin/main): complete on the feature branch refuses" "complete rc=$rc ($out)"; fi
+cleanup
+
+# 13f4. D86 (pen low, security info; r16g-pen-test p2): `.oss/` git-ignored, the PR NOT merged, another PR moved main,
+#     and served item 6 switched to main. complete on main refuses: GitHub shows the PR still open (HEAD moving past the
+#     tested main no longer counts as the merge).
+merge_sandbox
+(cd "$T/repo" && echo '.oss/' >> .git/info/exclude)
+phase_result check ship --record-ready >/dev/null 2>&1
+(cd "$T/repo" && mkdir -p .oss/dev/completed && mv ".oss/dev/active/$FEATURE" ".oss/dev/completed/$FEATURE-2026-11-23")
+merge_test >/dev/null
+other_lands_on_origin
+i6=$(cd "$T/repo" && { git fetch -q origin refs/heads/main:refs/heads/main && git switch -q main; } 2>&1); i6_rc=$?
+step10_cleanup
+gh_says open
+notify ship merged '{}' >/dev/null 2>&1
+out=$(complete_ship 2>&1); rc=$?
+if [[ $i6_rc -eq 0 && $rc -ne 0 && "$out" == *'does not show this PR as merged yet'* ]] && ! chain_fired; then
+    pass "D86 (pen low): .oss/ ignored, on main, the PR not merged: complete refuses"
+else fail "D86 (pen low): .oss/ ignored, on main, the PR not merged: complete refuses" "item6 rc=$i6_rc ($i6) complete rc=$rc ($out)"; fi
+cleanup
+# 13f5. D86 (pen medium; r16g-pen-test p3): `.oss/` git-ignored (.gitignore), main checked out in another worktree, the PR
+#     squashed on GitHub. Nothing of the archive is in any commit, and complete on the feature branch passes once GitHub
+#     shows the PR merged (it never passed before: origin/main's tree could not hold an ignored file).
+merge_sandbox
+(cd "$T/repo" && printf '.oss/\n' > .gitignore && git add .gitignore && git commit -q -m 'ignore oss' && git push -q origin "HEAD:refs/heads/feat/$FEATURE/build")
+(cd "$T/repo" && git worktree add -q "$T/mainwt" main)
+notify ship start '{}' >/dev/null 2>&1
+a_out=$(phase_result assemble ship 2>&1); a_rc=$?
+sleep 1
+rec_out=$(phase_result check ship --record-ready 2>&1); rec_rc=$?
+(cd "$T/repo" && mkdir -p .oss/dev/completed && mv ".oss/dev/active/$FEATURE" ".oss/dev/completed/$FEATURE-2026-11-23")
+mt_out=$(merge_test); mt_rc=$?
+gh_squash_origin
+step10_cleanup
+gh_says merged
+notify ship merged '{}' >/dev/null 2>&1
+out=$(complete_ship 2>&1); rc=$?
+if [[ $a_rc -eq 0 && $rec_rc -eq 0 && $mt_rc -eq 0 && $rc -eq 0 && "$out" == *---CHAIN_COMMANDS---* ]] && chain_fired; then
+    pass "D86 (pen medium): .oss/ ignored, finish on the feature branch: complete passes once GitHub shows the PR merged"
+else fail "D86 (pen medium): .oss/ ignored, finish on the feature branch: complete passes once GitHub shows the PR merged" "assemble rc=$a_rc ($a_out) record rc=$rec_rc ($rec_out) merge-test rc=$mt_rc ($mt_out) complete rc=$rc ($out)"; fi
+cleanup
+# 13f6. D86: main moved after the merge test (another PR landed), then GitHub squashed this PR on top; served item 6
+#     switched to main. complete passes: only GitHub's answer counts, not how main's history looks.
+merge_sandbox
+phase_result check ship --record-ready >/dev/null 2>&1
+archive_commit
+merge_test >/dev/null
+other_lands_on_origin
+gh_squash_origin
+i6=$(cd "$T/repo" && { git fetch -q origin refs/heads/main:refs/heads/main && git switch -q main; } 2>&1); i6_rc=$?
+step10_cleanup
+gh_says merged
+notify ship merged '{}' >/dev/null 2>&1
+out=$(complete_ship 2>&1); rc=$?
+if [[ $i6_rc -eq 0 && $rc -eq 0 && "$out" == *---CHAIN_COMMANDS---* ]] && chain_fired; then
+    pass "D86: main moved after the merge test, then GitHub squashed the PR: complete on main passes"
+else fail "D86: main moved after the merge test, then GitHub squashed the PR: complete on main passes" "item6 rc=$i6_rc ($i6) complete rc=$rc ($out)"; fi
+cleanup
+# 13f7. D86 item 5c (code review I1): an archived re-run whose result is not committed (the head is unchanged, so check
+#     passes on its own). complete still runs the merge proof: GitHub shows the PR open, so it refuses.
+merge_sandbox
+phase_result check ship --record-ready >/dev/null 2>&1
+archive_commit
+(cd "$T/repo" && echo fix > fix.txt && git add fix.txt && git commit -q -m 'fix after the archive commit' && git push -q origin "HEAD:refs/heads/feat/$FEATURE/build")
+notify ship start '{}' >/dev/null 2>&1
+a_out=$(phase_result assemble ship 2>&1); a_rc=$?
+sleep 1
+rec_out=$(phase_result check ship --record-ready 2>&1); rec_rc=$?
+merge_test >/dev/null
+gh_says open
+out=$(complete_ship 2>&1); rc=$?
+if [[ $a_rc -eq 0 && $rec_rc -eq 0 && $rc -ne 0 && "$out" == *'does not show this PR as merged yet'* ]] && ! chain_fired; then
+    pass "D86 (code review I1): an uncommitted archived re-run: complete still asks GitHub and refuses an open PR"
+else fail "D86 (code review I1): an uncommitted archived re-run: complete still asks GitHub and refuses an open PR" "assemble rc=$a_rc ($a_out) record rc=$rec_rc ($rec_out) complete rc=$rc ($out)"; fi
+cleanup
+
+# 13f8. Round 18 follow-up: origin is not a github.com repository when complete runs (the merge gate saw GitHub; origin
+#     was changed after). complete refuses and says it needs a github.com origin to confirm the merge; gh is never asked.
+merge_sandbox
+phase_result check ship --record-ready >/dev/null 2>&1
+archive_commit
+merge_test >/dev/null
+squash_to_main
+step10_cleanup
+gh_says merged
+(cd "$T/repo" && git remote set-url origin https://example.com/o/r.git)
+notify ship merged '{}' >/dev/null 2>&1
+out=$(complete_ship 2>&1); rc=$?
+if [[ $rc -ne 0 && "$out" == *'complete after merged needs a github.com origin to confirm the merge; this repo'"'"'s origin is not on github.com'* ]] && ! chain_fired; then
+    pass "round 18: a non-github.com origin on the merged path refuses with a hint that says so"
+else fail "round 18: a non-github.com origin on the merged path refuses with a hint that says so" "complete rc=$rc ($out)"; fi
 cleanup
 
 late_fail() { # a security fail captured at the same head after the ready row (round 2)
@@ -509,18 +626,21 @@ rec_out=$(phase_result check ship --record-ready 2>&1); rec_rc=$?
 mt_out=$(merge_test); mt_rc=$?
 squash_to_main
 step10_cleanup
+gh_says merged   # ⚠ changes existing test: D86
 notify ship merged '{}' >/dev/null 2>&1
-out=$(notify ship complete '{}' 2>&1); rc=$?
+out=$(complete_ship 2>&1); rc=$?
 res=$(ls "$T/repo/.oss/dev/completed/$FEATURE-2026-11-23/results/" 2>&1 | tr '\n' ' '); act=$(ls "$T/repo/.oss/dev/active" 2>&1 | tr '\n' ' ')
 if [[ $s_rc -eq 0 && $a_rc -eq 0 && "$a_out" == *'"verdict":"ready_to_merge"'* && $rec_rc -eq 0 && $mt_rc -eq 0 && "$mt_out" == *READY_TO_MERGE* \
     && $rc -eq 0 && "$out" == *---CHAIN_COMMANDS---* && -z "$act" ]] && chain_fired; then
     pass "D84: a code fix after the archive commit: ship re-run finds the archived feature, records ready, merges and completes"
 else fail "D84: a code fix after the archive commit: ship re-run finds the archived feature, records ready, merges and completes" "start rc=$s_rc ($s_out) assemble rc=$a_rc ($a_out) record rc=$rec_rc ($rec_out) merge-test rc=$mt_rc ($mt_out) complete rc=$rc ($out) results=[$res] active=[$act]"; fi
 cleanup
-# 13j. D84: when this branch added two completed folders, the re-run refuses no_feature (it never guesses).
+# 13j. D84: when this branch added two completed folders of its feature, the re-run refuses no_feature (it never guesses).
+# ⚠ changes existing test: D86 (code review low) — folders are filtered by the branch's feature before counting, so the
+#   second folder is now another archive of the same feature (another feature's folder would no longer count).
 merge_sandbox
 archive_commit
-(cd "$T/repo" && cp -R ".oss/dev/completed/$FEATURE-2026-11-23" ".oss/dev/completed/other-2026-11-23" && git add -A .oss && git commit -q -m 'docs: second archive' \
+(cd "$T/repo" && cp -R ".oss/dev/completed/$FEATURE-2026-11-23" ".oss/dev/completed/$FEATURE-2026-11-24" && git add -A .oss && git commit -q -m 'docs: second archive' \
     && echo fix > fix.txt && git add fix.txt && git commit -q -m fix)
 notify ship start '{}' >/dev/null 2>&1
 a_out=$(phase_result assemble ship 2>&1); a_rc=$?
@@ -561,6 +681,41 @@ other=$(cat "$T/repo/.oss/dev/completed/other-2026-11-20/results/ship.json" 2>&1
 if [[ $a_rc -ne 0 && "$a_out" == *no_feature* && $rec_rc -ne 0 && "$rec_out" == *no_feature* && "$other" == '{}' ]]; then
     pass "D85 (security medium): a branch with no folder of its own never picks another feature's archive"
 else fail "D85 (security medium): a branch with no folder of its own never picks another feature's archive" "assemble rc=$a_rc ($a_out) record rc=$rec_rc ($rec_out) other=$other"; fi
+cleanup
+
+# 13m. D86 item 2 (security low, pen info; r16g-pen-test p4 case 1): an honest branch whose name names no feature
+#     (hotfix-login), stacked on this feature's archived, unmerged branch. The re-run gets no archived lookup: assemble
+#     refuses no_feature and says how to name the branch; it never assembles the other branch's feature.
+merge_sandbox
+phase_result check ship --record-ready >/dev/null 2>&1
+archive_commit
+(cd "$T/repo" && git checkout -q -b hotfix-login && echo fix > fix.txt && git add fix.txt && git commit -q -m fix)
+before=$(cksum < "$T/repo/.oss/dev/completed/$FEATURE-2026-11-23/results/ship.json")
+notify ship start '{}' >/dev/null 2>&1
+a_out=$(phase_result assemble ship 2>&1); a_rc=$?
+after=$(cksum < "$T/repo/.oss/dev/completed/$FEATURE-2026-11-23/results/ship.json")
+if [[ $a_rc -ne 0 && "$a_out" == *no_feature*'name the branch <type>/<feature>/<phase> (for example feat/<feature>/build) to re-run an archived feature'* \
+    && "$before" == "$after" ]]; then
+    pass "D86: a branch name with no feature gets no archived lookup: assemble refuses no_feature and says how to name the branch"
+else fail "D86: a branch name with no feature gets no archived lookup: assemble refuses no_feature and says how to name the branch" "assemble rc=$a_rc ($a_out) result changed: [$before] -> [$after]"; fi
+cleanup
+# 13n. D86 item 4 (pen low; r16g-pen-test p4 case 2): `.oss/` git-ignored, a code fix after the archive. The re-run's
+#     refusal says the archive is git-ignored and what to do; following that advice (move the folder back to active/,
+#     then ship again) assembles a ready result.
+merge_sandbox
+(cd "$T/repo" && echo '.oss/' >> .git/info/exclude)
+phase_result check ship --record-ready >/dev/null 2>&1
+(cd "$T/repo" && mkdir -p .oss/dev/completed && mv ".oss/dev/active/$FEATURE" ".oss/dev/completed/$FEATURE-2026-11-23" \
+    && echo fix > fix.txt && git add fix.txt && git commit -q -m fix)
+notify ship start '{}' >/dev/null 2>&1
+a1=$(phase_result assemble ship 2>&1); a1_rc=$?
+(cd "$T/repo" && mv ".oss/dev/completed/$FEATURE-2026-11-23" ".oss/dev/active/$FEATURE")
+notify ship start '{}' >/dev/null 2>&1
+a2=$(phase_result assemble ship 2>&1); a2_rc=$?
+if [[ $a1_rc -ne 0 && "$a1" == *no_feature*'.oss/dev/completed is git-ignored'*'move .oss/dev/completed/<feature>-<date> back to .oss/dev/active/<feature>, then run /oss:ship again'* \
+    && "$a1" != *'git fetch origin <base>'* && $a2_rc -eq 0 && "$a2" == *'"verdict":"ready_to_merge"'* ]]; then
+    pass "D86: .oss/ ignored: the re-run hint says the archive is git-ignored, and its advice (move back to active/, ship again) works"
+else fail "D86: .oss/ ignored: the re-run hint says the archive is git-ignored, and its advice (move back to active/, ship again) works" "first assemble rc=$a1_rc ($a1) after the advice rc=$a2_rc ($a2)"; fi
 cleanup
 
 echo; echo "Ran $RUN, failed $FAILED"
