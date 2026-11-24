@@ -749,7 +749,8 @@ function archOrLaunchctlRuns(part: CommandPart, home: string): boolean {
  */
 function submitSetsProgram(words: readonly string[]): boolean {
   const sub = words[0];
-  if (sub === undefined || sub.includes(UNKNOWN) || !(hasGlobClass(sub) || globMatches(sub, 'submit'))) return false;
+  // R12-1: a subcommand the gate can't read (a substitution, a variable, an unknown part) may be submit
+  if (sub === undefined || !(sub.includes(UNKNOWN) || hasGlobClass(sub) || globMatches(sub, 'submit'))) return false;
   const last = words.lastIndexOf('--');
   return words.slice(1, last === -1 ? words.length : last).some((w) => /^-[A-Za-z]*p/.test(w));
 }

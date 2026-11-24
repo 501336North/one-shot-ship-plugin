@@ -493,6 +493,35 @@ const ARCH_LAUNCHCTL_R11_ALLOWED = [
   "[[ -n $x ]] && echo yes",
 ];
 
+/**
+ * Ship fix round 12, R12-1 ("Round 12, this fix only"): a launchctl subcommand the gate can't read (a substitution,
+ * a variable or an unknown part) counts as possibly submit, so its `-p` is refused.
+ */
+const LAUNCHCTL_R12_REFUSED = [
+  "launchctl submit$(:) -l x -p /bin/sh -- foo -c 'git push origin main'",
+  "launchctl sub$(:)mit -l x -p /bin/sh -- foo -c 'git push origin main'",
+  "launchctl $(printf submit) -l x -p /bin/sh -- foo -c 'git push origin main'",
+  "launchctl \"$(printf submit)\" -l x -p /bin/sh -- foo -c 'git push origin main'",
+  "launchctl `printf submit` -l x -p /bin/sh -- foo -c 'git push origin main'",
+  "launchctl ${S:-submit} -l x -p /bin/sh -- foo -c 'git config protocol.ext.allow always'",
+  "launchctl \"$S\" -l x -p /bin/sh -- foo -c 'git push origin main'",
+  "launchctl $S -l x -p /bin/sh -- foo -c 'git push origin main'",
+  "launchctl $X$Y -l x -p /bin/sh -- foo -c 'git push origin main'",
+  "launchctl s$X -l x -p /bin/sh -- foo -c 'git push origin main'",
+  "launchctl sub${X} -l x -p /bin/sh -- foo -c 'git push origin main'",
+  "launchctl $S -l x -p/bin/sh -- foo -c 'git push origin main'",
+  "/bin/launchctl $(printf submit) -l x -p /bin/sh -- foo -c 'git push origin main'",
+  "command launchctl $(printf submit) -l x -p /bin/sh -- foo -c 'git push origin main'",
+];
+
+/** R12-1: `-p` on a subcommand the gate reads as other than submit stays allowed. */
+const LAUNCHCTL_R12_ALLOWED = [
+  "launchctl kickstart -p gui/501/com.oneshotship.daemon",
+  "launchctl print -p gui/501",
+  "launchctl load -p /bin/sh",
+  "launchctl bootstrap -p gui/501 x.plist",
+];
+
 /** R8-1: everyday arch and launchctl calls, and the served login.md daemon blocks, stay allowed. */
 const ARCH_LAUNCHCTL_ALLOWED = [
   "arch -x86_64 /bin/zsh -c 'npm test'",
@@ -624,6 +653,18 @@ describe.each(PLATFORMS)('on %s', (platform) => {
       const result = await call(command, agent, platform);
       expect(result.exitCode, command).toBe(2);
       expect(result.stderr, command).toMatch(/^Refused/);
+    });
+
+    it.each(LAUNCHCTL_R12_REFUSED)('refuses -p on a launchctl subcommand the gate cannot read: %s', async (command) => {
+      const result = await call(command, agent, platform);
+      expect(result.exitCode, command).toBe(2);
+      expect(result.stderr, command).toMatch(/^Refused/);
+    });
+
+    it.each(LAUNCHCTL_R12_ALLOWED)('allows -p on a launchctl subcommand other than submit: %s', async (command) => {
+      const result = await call(command, agent, platform);
+      expect(result.stderr, command).toBe('');
+      expect(result.exitCode, command).toBe(0);
     });
 
     it.each(ARCH_LAUNCHCTL_R11_REFUSED)('refuses a class-glob arch/launchctl/env program or launchctl submit -p: %s', async (command) => {
