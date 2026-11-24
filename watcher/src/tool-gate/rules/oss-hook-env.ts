@@ -104,7 +104,9 @@ function isEnvProgram(word: string): boolean {
  * A lone `[` or `[[` (the test builtins) is no class.
  */
 function hasGlobClass(word: string): boolean {
-  return /\[.+\]/.test(word.slice(word.lastIndexOf('/') + 1));
+  const base = word.slice(word.lastIndexOf('/') + 1);
+  // the first `[` and the last `]`, with something between: one pass, no backtracking regex
+  return base.lastIndexOf(']') > base.indexOf('[') + 1 && base.includes('[');
 }
 
 /** True when a program word runs macOS `arch`, matched like env: any folder, any case, by glob (ship fix round 7, R7-2). */

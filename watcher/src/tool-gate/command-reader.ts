@@ -2809,7 +2809,7 @@ function runsArchOrLaunchctl(word: string): boolean {
   if (base === 'arch' || base === 'launchctl') return true;
   if (!/[?*[]/.test(base)) return false;
   // any glob class (`[…]` with something inside) may match, whatever it says (R11-1); a lone `[` is the test builtin
-  if (/\[.+\]/.test(base)) return true;
+  if (base.includes('[') && base.lastIndexOf(']') > base.indexOf('[') + 1) return true;
   return globMayMatch(base, 'arch') || globMayMatch(base, 'launchctl');
 }
 
