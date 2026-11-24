@@ -1,6 +1,6 @@
 # Progress: phase-results (R-257)
 
-## Current Phase: build (complete; ship next)
+## Current Phase: ship (merged into feat/determinism-sprint/build)
 
 ## Tasks
 - [x] Provenance survey: plugin, API prompts and oss-lab (completed 2026-11-13)
@@ -298,10 +298,12 @@
 - [x] Item 6: NOTES (D51 limits) and FOLLOWUPS.md (D88 infos).
 
 ### Later
-- [ ] Ship into feat/determinism-sprint/build (SD-1)
+- [x] Gate round 18 (D88: pen test + code review) passed; lows and infos in FOLLOWUPS (2026-11-24)
+- [x] Sprint D (R-273 #239/#444) merged in; API manifest re-signed; post-merge full check green (2026-11-24)
+- [x] Ship into feat/determinism-sprint/build (SD-1): plugin PR #241, API PR #445, owner merge pick 2026-11-24
 - [ ] T21 oss-lab (after the plugin ships)
 
 ## Blockers
 - None. R-266's 4 red base tests are fixed in #233 (4458bddb), and R-257 is rebased onto it.
 
-## Last Updated: 2026-11-24 12:36 +07 by /oss:build (ship round 19 fixes, D88)
+## Last Updated: 2026-11-24 16:33 +07 by /oss:ship (merge into Sprint D)
