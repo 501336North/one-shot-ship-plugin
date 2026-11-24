@@ -39,7 +39,7 @@ import { checkFocusedTests } from './rules/focused-tests.js';
 import { checkForcePush } from './rules/force-push.js';
 import { checkGitClean, checkGitStash } from './rules/git-clean.js';
 import { checkProductionHost } from './rules/production-host.js';
-import { checkOssHookEnv } from './rules/oss-hook-env.js';
+import { checkArchLaunchctlMention, checkOssHookEnv } from './rules/oss-hook-env.js';
 import { checkBranchRefs, checkBranchSwitch, checkHistoryMove, checkProtectedBranch, checkRepoTrust, trustForCall } from './rules/protected-branch.js';
 import { checkProtectedPathBash, checkProtectedPathEdit, isProtected, placesOf } from './rules/protected-path.js';
 import { checkCallSize, checkProtectedPathMention } from './rules/protected-path-mention.js';
@@ -620,6 +620,7 @@ async function checkBash(ctx: Context, command: string): Promise<Refused | null>
       checkTags(part, settings) ??
       checkProductionHost(part, settings) ??
       checkOssHookEnv(part, command, home, sources) ??
+      checkArchLaunchctlMention(part, settings, places, paths, home) ??
       checkVerdictCaptureCall(part, command, { home, pluginRoot: ctx.pluginRoot, paths, caseInsensitive: ctx.caseInsensitive }) ??
       checkProtectedPathBash(part, settings, root, home, paths, ctx.caseInsensitive, places, ctx.tree) ??
       (ownStep ? null : checkGateAgentBash(part, hook.agent, settings, { repos, home, exists: fs.existsSync, temp: tempRoots(ctx), fallback: ctx.containment?.kind === 'fallback', darwin: ctx.platform === 'darwin', sandboxed: ctx.containment?.kind === 'sandbox' }, paths, ctx.caseInsensitive, { earlier: facts.parts.slice(0, index), background: hook.background })) ??

@@ -211,6 +211,78 @@ const HOOK_ENV_BLUNT = [
   'c="$X ~/.oss/hooks/oss-log.sh * -x"; echo ok',
 ];
 
+/**
+ * Ship fix round 8, R8-1 ("stop unwrapping, refuse blunt"): arch and launchctl are plain programs again, and a part
+ * run by either (any spelling) whose words name a hook path, the plugin hook form or env is refused. These are the
+ * round-7 regressions (refused at ec6ba2df, allowed once arch and launchctl were read as wrappers).
+ */
+const ARCH_LAUNCHCTL_BLUNT = [
+  "arch -e BASH_ENV=/tmp/x -arm64e ~/.oss/hooks/oss-log.sh init",
+  "arch -eBASH_ENV=/tmp/x -arm64e ~/.oss/hooks/oss-log.sh init",
+  "arch -e PATH=/tmp/b -arm64e ~/.oss/hooks/oss-log.sh init",
+  "arch -e HOME=/tmp/h -arm64e ~/.oss/hooks/oss-log.sh init",
+  "arch -e CLAUDE_PLUGIN_ROOT=/tmp/p -arm64e ~/.oss/hooks/oss-log.sh init",
+  "arch -d HOME -arm64e ~/.oss/hooks/oss-log.sh init",
+  "arch -c -arm64e ~/.oss/hooks/oss-log.sh init",
+  "/usr/bin/arch -c -arm64e ~/.oss/hooks/oss-log.sh init",
+  "arch -c -arm64e \"$HOME/.oss/hooks/oss-log.sh\" init",
+  "arch -arm64e ~/.oss/hooks/oss-log.sh init",
+  "printf x | arch -arm64e tee cat .git/config",
+  "arch -arm64e cp cat .claude/settings.json",
+  "arch -arm64e cp cat ~/.gitconfig",
+  // R8-1 follow-up pick "Also refuse git under them": git under arch or launchctl stays refused, as in round 7
+  'arch -arm64 git push origin HEAD:main',
+  'arch -x86_64 git push origin main',
+  'arch git config protocol.ext.allow always',
+  'arch -arm64e git git push origin HEAD:main',
+  'arch -arm64e cat git push origin HEAD:main',
+  'launchctl asuser 501 git push origin main',
+  'launchctl bsexec 1 git config core.hooksPath /tmp/x',
+  'launchctl submit -l x -- git push origin HEAD:main',
+  // owner-accepted refusal
+  'arch -x86_64 git status',
+  // the gate's git spellings count
+  "arch -arm64 g''it push origin HEAD:main",
+  'arch -arm64 /usr/bin/git push origin HEAD:main',
+  'arch -arm64 \\git push origin HEAD:main',
+  'arch -arm64 command git push origin HEAD:main',
+  // R8-1 second follow-up pick "Refuse protected-path mentions": a protected path anywhere in its words, -c text included
+  'arch -arm64e cat sh -c "cp cat ~/.claude/settings.json"',
+  "arch -x86_64 /bin/zsh -c 'cp /tmp/x .git/config'",
+  "launchctl asuser 501 sh -c 'echo x > .oss/tool-gates.json'",
+  "launchctl submit -l cat -- ~/.oss/hooks/oss-log.sh init",
+  "launchctl setenv BASH_ENV /tmp/x; launchctl submit -l cat -- ~/.oss/hooks/oss-log.sh init",
+  "launchctl submit -l cat -- /bin/bash ~/.oss/hooks/oss-log.sh init",
+  "launchctl submit -l cat -- cp /tmp/c ~/.gitconfig",
+  "launchctl submit -l cat -- tee .git/config",
+  "launchctl submit -l ls -- rm ~/.oss/hooks/oss-log.sh",
+  "launchctl asuser 501 ~/.oss/hooks/oss-log.sh init",
+  "launchctl asuser 501 /bin/sh -c '~/.oss/hooks/oss-log.sh init'",
+  "launchctl bsexec 1 ~/.oss/hooks/oss-log.sh init",
+  "launchctl list rm ~/.oss/hooks/oss-log.sh",
+  "launchctl unload rm ~/.oss/hooks/oss-log.sh",
+];
+
+/** R8-1: everyday arch and launchctl calls, and the served login.md daemon blocks, stay allowed. */
+const ARCH_LAUNCHCTL_ALLOWED = [
+  "arch -x86_64 /bin/zsh -c 'npm test'",
+  "arch -x86_64 /bin/zsh -c 'cat README.md'",
+  "arch -x86_64 brew install foo",
+  "launchctl list",
+  "launchctl list | grep oss",
+  "launchctl load ~/Library/LaunchAgents/com.x.plist",
+  "launchctl unload ~/Library/LaunchAgents/com.x.plist",
+  "launchctl kickstart -k gui/501/com.x",
+  "launchctl print gui/501/com.x",
+  "launchctl bootout gui/501/com.x",
+  "launchctl bootstrap gui/501 x.plist",
+  "launchctl setenv FOO bar",
+  "launchctl getenv PATH",
+  "launchctl list && ~/.oss/hooks/oss-log.sh init",
+  "PLIST_PATH=\"${HOME}/Library/LaunchAgents/com.oneshotship.daemon.plist\"\nif ! launchctl list | grep -q \"com.oneshotship.daemon\"; then\n    launchctl load \"$PLIST_PATH\"\n    echo \"OSS Daemon started\"\nfi",
+  "PLIST_PATH=\"${HOME}/Library/LaunchAgents/com.oneshotship.daemon.plist\"\nif launchctl list | grep -q \"com.oneshotship.daemon\"; then\n    echo \"Supervisor daemon is running\"\nelse\n    echo \"Note: Daemon didn't start. You can start it manually with: launchctl load $PLIST_PATH\"\nfi",
+];
+
 /** Already refused by the path-mention rule (`set` names a hook path): kept as guards. */
 const REFUSED_ANY = ['set -- env BASH_ENV=/tmp/x ~/.oss/hooks/oss-log.sh; "$@"'];
 
@@ -292,6 +364,18 @@ describe.each(PLATFORMS)('on %s', (platform) => {
       const result = await call(command, agent, platform);
       expect(result.exitCode, command).toBe(2);
       expect(result.stderr, command).toMatch(/^Refused/);
+    });
+
+    it.each(ARCH_LAUNCHCTL_BLUNT)('refuses arch or launchctl running a hook, env or a protected write: %s', async (command) => {
+      const result = await call(command, agent, platform);
+      expect(result.exitCode, command).toBe(2);
+      expect(result.stderr, command).toMatch(/^Refused/);
+    });
+
+    it.each(ARCH_LAUNCHCTL_ALLOWED)('allows everyday arch and launchctl calls: %s', async (command) => {
+      const result = await call(command, agent, platform);
+      expect(result.stderr, command).toBe('');
+      expect(result.exitCode, command).toBe(0);
     });
 
     it.each(REFUSED_ANY)('refuses a hook call run through the positional parameters: %s', async (command) => {

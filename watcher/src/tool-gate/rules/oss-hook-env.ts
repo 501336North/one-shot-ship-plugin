@@ -39,6 +39,7 @@ import path from 'node:path';
 import { sourcesFor, trustedSourceWord, variableReferences, WRAPPER_WORDS, type CommandPart, type TrustedSources } from '../command-reader.js';
 import { expansionSet } from '../expansion-scan.js';
 import { heredocBodyOf, ReadBudget, sourceOf, tokenize, UNKNOWN, type Token } from '../tokenize.js';
+import { protectedPathNamed } from './protected-path-mention.js';
 import type { Refusal } from './refusal.js';
 import { globMatch, globTokens, specialSetsAsAny } from './verdict-capture-call.js';
 
@@ -103,9 +104,9 @@ function isArchProgram(word: string): boolean {
   return globMatches(word.slice(word.lastIndexOf('/') + 1), 'arch');
 }
 
-/** True when any piece of a split value may run `env` or `arch`, by glob (R7-2 "Blunt on hook lines", replacing R6-2 E). */
+/** True when any piece of a split value may run `env`, `arch` or `launchctl` (R8-1), by glob (R7-2 "Blunt on hook lines", replacing R6-2 E). */
 function isEnvPiece(piece: string): boolean {
-  return isEnvProgram(piece) || isArchProgram(piece);
+  return isEnvProgram(piece) || isArchProgram(piece) || isLaunchctlProgram(piece);
 }
 /** How deep scripts in scripts are read; deeper counts as setting (fail closed). */
 const MAX_DEPTH = 5;
@@ -710,16 +711,43 @@ function commandScan(command: string, cwd: string, home: string, sources: Truste
   return verdict;
 }
 
+/** True when a program word runs macOS `launchctl`, matched like env and arch (ship fix round 8, R8-1). */
+function isLaunchctlProgram(word: string): boolean {
+  if (word.includes(UNKNOWN)) return false;
+  return globMatches(word.slice(word.lastIndexOf('/') + 1), 'launchctl');
+}
+
 /**
- * True when a part runs macOS `arch` with `-e NAME=VALUE`, which sets a variable for the program it runs, as `env`
- * does (ship fix round 6, R6-3): as its program (any folder, any case, by glob: R7-2) or as a wrapper the reader unwrapped.
+ * True when a part runs `arch` or `launchctl` (any spelling) and its words name a hook path or the plugin hook form,
+ * or include env or git (ship fix round 8, R8-1 "stop unwrapping, refuse blunt", and its follow-up pick "Also refuse
+ * git under them"): neither is read as a wrapper, so the program it runs is refused rather than read.
  */
-function archSets(part: CommandPart): boolean {
-  // R7-2 restore: attached `-eNAME=VALUE` and `-dNAME` count too
-  const setsByE = (words: readonly string[]): boolean =>
-    words.some((w, i) => (w === '-e' && ASSIGNMENT.test(words[i + 1] ?? '')) || (w.startsWith('-e') && ASSIGNMENT.test(w.slice(2))) || /^-d[A-Za-z_]/.test(w));
-  if (part.program !== null && isArchProgram(part.program) && setsByE(part.words)) return true;
-  return part.wrappers.some((w, i) => w === 'arch' && setsByE(part.wrapperOptions[i] ?? []));
+function archOrLaunchctlRuns(part: CommandPart, home: string): boolean {
+  if (part.program === null || !(isArchProgram(part.program) || isLaunchctlProgram(part.program))) return false;
+  const words = part.words.slice(1);
+  const git = (w: string): boolean => !w.includes(UNKNOWN) && globMatches(w.slice(w.lastIndexOf('/') + 1), 'git');
+  return lineNamesHook(words.join(' '), part.cwd, home) || words.some((w) => isEnvProgram(w) || git(w));
+}
+
+/** The refusal for arch or launchctl running a hook, env or git. */
+const ARCH_LAUNCHCTL_REFUSAL: Refusal = {
+  rule: 'protected-path',
+  reason: 'Refused: `arch` or `launchctl` runs another program here (an OSS hook script, env, git or a protected path) that the gate does not check through it. Run that program directly.',
+};
+
+/** The arguments after the word and folder of `protectedPathNamed`. */
+type Tail<T extends unknown[]> = T extends [unknown, unknown, ...infer R] ? R : never;
+
+/**
+ * Refuses an `arch` or `launchctl` part when any of its words, or any piece of one (the text of a `-c`
+ * string), mentions a protected path, by the mention rule's own matcher (ship fix round 8, R8-1 second
+ * follow-up pick "Refuse protected-path mentions"): the program it runs is not read.
+ */
+export function checkArchLaunchctlMention(part: CommandPart, ...rest: Tail<Parameters<typeof protectedPathNamed>>): Refusal | null {
+  if (part.program === null || !(isArchProgram(part.program) || isLaunchctlProgram(part.program))) return null;
+  const pieces = part.words.slice(1).flatMap((w) => [w, ...w.split(/[\s'"`;|&()<>]+/)]).filter((w) => w !== '');
+  if (!pieces.some((w) => protectedPathNamed(w, part.cwd, ...rest) !== null)) return null;
+  return ARCH_LAUNCHCTL_REFUSAL;
 }
 
 export function checkOssHookEnv(part: CommandPart, command: string, home: string, sources: TrustedSources): Refusal | null {
@@ -731,13 +759,10 @@ export function checkOssHookEnv(part: CommandPart, command: string, home: string
       };
     }
   }
+  if (archOrLaunchctlRuns(part, home)) return ARCH_LAUNCHCTL_REFUSAL;
   if (!partNamesHook(part, home) && !PLUGIN_HOOK.test(command)) return null;
-  // R7-2 restore (refused at ec6ba2df): `arch` running a hook path is refused, whatever its options, now that it is unwrapped
-  const archRuns = partNamesHook(part, home) && (part.wrappers.includes('arch') || (part.program !== null && isArchProgram(part.program)));
   const clears =
     (part.program !== null && isEnvProgram(part.program)) ||
-    archRuns ||
-    archSets(part) ||
     part.wrappers.some((w, i) => w === 'env' || (w === 'exec' && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o))));
   if (!clears && !setsRefusedVariable(command, 0, { home, sources: sourcesFor(command, sources) })) return null;
   return {
