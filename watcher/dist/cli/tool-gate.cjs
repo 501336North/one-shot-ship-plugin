@@ -2032,9 +2032,6 @@ var WRAPPERS = /* @__PURE__ */ new Map([
   ["unbuffer", { values: [], terminal: true }],
   ["faketime", { values: ["--date-prog"], operands: 1 }],
   ["caffeinate", { values: ["-t", "-w"] }],
-  // ship fix round 7, R7-2: macOS `arch [-arch name] [-e NAME=VALUE] [-d NAME] cmd` and `launchctl asuser UID cmd`
-  ["arch", { values: ["-e", "-d"] }],
-  ["launchctl", { values: [], operands: 2 }],
   ["ionice", { values: ["-c", "--class", "-n", "--classdata", "-p", "--pid", "-P", "--pgid", "-u", "--uid"] }],
   ["chrt", { values: ["-T", "--sched-runtime", "-P", "--sched-period", "-D", "--sched-deadline"], operands: 1 }],
   ["flock", {
@@ -8211,9 +8208,6 @@ function checkProductionHost(part, settings) {
 var import_node_fs14 = __toESM(require("node:fs"), 1);
 var import_node_path24 = __toESM(require("node:path"), 1);
 
-// src/tool-gate/rules/verdict-capture-call.ts
-var import_node_path23 = __toESM(require("node:path"), 1);
-
 // src/tool-gate/rules/protected-path-mention.ts
 var import_node_path22 = __toESM(require("node:path"), 1);
 var SCRIPT_LAUNCHERS = /* @__PURE__ */ new Set(["trap", "emulate", "sched"]);
@@ -8592,6 +8586,7 @@ function checkProtectedPathMention(part, settings, root, home, paths, caseInsens
 }
 
 // src/tool-gate/rules/verdict-capture-call.ts
+var import_node_path23 = __toESM(require("node:path"), 1);
 var NAMES = ["oss-verdict-capture.sh", "verdict-capture.cjs", "verdict-capture.js"];
 var SEPARATORS = /[\s'"`;|&()<>=${}\\,]+/;
 var GLOB = /[*?[]/;
@@ -8884,7 +8879,7 @@ function isArchProgram(word) {
   return globMatches(word.slice(word.lastIndexOf("/") + 1), "arch");
 }
 function isEnvPiece(piece) {
-  return isEnvProgram(piece) || isArchProgram(piece);
+  return isEnvProgram(piece) || isArchProgram(piece) || isLaunchctlProgram(piece);
 }
 var MAX_DEPTH = 5;
 function setsRefusedVariable(text, depth, call) {
@@ -9299,10 +9294,25 @@ function commandScan(command, cwd, home, sources) {
   lastScan = { command, cwd, home, sources, verdict };
   return verdict;
 }
-function archSets(part) {
-  const setsByE = (words) => words.some((w, i) => w === "-e" && ASSIGNMENT3.test(words[i + 1] ?? "") || w.startsWith("-e") && ASSIGNMENT3.test(w.slice(2)) || /^-d[A-Za-z_]/.test(w));
-  if (part.program !== null && isArchProgram(part.program) && setsByE(part.words)) return true;
-  return part.wrappers.some((w, i) => w === "arch" && setsByE(part.wrapperOptions[i] ?? []));
+function isLaunchctlProgram(word) {
+  if (word.includes(UNKNOWN)) return false;
+  return globMatches(word.slice(word.lastIndexOf("/") + 1), "launchctl");
+}
+function archOrLaunchctlRuns(part, home) {
+  if (part.program === null || !(isArchProgram(part.program) || isLaunchctlProgram(part.program))) return false;
+  const words = part.words.slice(1);
+  const git = (w) => !w.includes(UNKNOWN) && globMatches(w.slice(w.lastIndexOf("/") + 1), "git");
+  return lineNamesHook(words.join(" "), part.cwd, home) || words.some((w) => isEnvProgram(w) || git(w));
+}
+var ARCH_LAUNCHCTL_REFUSAL = {
+  rule: "protected-path",
+  reason: "Refused: `arch` or `launchctl` runs another program here (an OSS hook script, env, git or a protected path) that the gate does not check through it. Run that program directly."
+};
+function checkArchLaunchctlMention(part, ...rest) {
+  if (part.program === null || !(isArchProgram(part.program) || isLaunchctlProgram(part.program))) return null;
+  const pieces = part.words.slice(1).flatMap((w) => [w, ...w.split(/[\s'"`;|&()<>]+/)]).filter((w) => w !== "");
+  if (!pieces.some((w) => protectedPathNamed(w, part.cwd, ...rest) !== null)) return null;
+  return ARCH_LAUNCHCTL_REFUSAL;
 }
 function checkOssHookEnv(part, command, home, sources) {
   if (programHidden(part)) {
@@ -9313,9 +9323,9 @@ function checkOssHookEnv(part, command, home, sources) {
       };
     }
   }
+  if (archOrLaunchctlRuns(part, home)) return ARCH_LAUNCHCTL_REFUSAL;
   if (!partNamesHook(part, home) && !PLUGIN_HOOK.test(command)) return null;
-  const archRuns = partNamesHook(part, home) && (part.wrappers.includes("arch") || part.program !== null && isArchProgram(part.program));
-  const clears = part.program !== null && isEnvProgram(part.program) || archRuns || archSets(part) || part.wrappers.some((w, i) => w === "env" || w === "exec" && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o)));
+  const clears = part.program !== null && isEnvProgram(part.program) || part.wrappers.some((w, i) => w === "env" || w === "exec" && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o)));
   if (!clears && !setsRefusedVariable(command, 0, { home, sources: sourcesFor(command, sources) })) return null;
   return {
     rule: "protected-path",
@@ -11679,7 +11689,7 @@ async function checkBash(ctx, command) {
   const sources = trustedSourcesOf(ctx);
   const repos = reviewedRepos(ctx);
   for (const [index, part] of facts.parts.entries()) {
-    const refusal3 = checkUnknownGitOption(part) ?? checkAllowProtocolMention(command, facts.parts) ?? checkPushSetup(part, facts.parts, index) ?? checkTransportMention(command, facts.parts) ?? checkLocalRemote(part, facts.parts, index) ?? checkRepoTrust(part, trustOf) ?? checkBranchSwitch(part, facts.parts, index, settings, void 0, ctx.caseInsensitive) ?? await checkBranchRefs(part, settings, ctx.git, ctx.caseInsensitive) ?? await checkProtectedBranch(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), ctx.caseInsensitive) ?? await checkHistoryMove(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), void 0, ctx.caseInsensitive) ?? checkForcePush(part, settings) ?? checkTags(part, settings) ?? checkProductionHost(part, settings) ?? checkOssHookEnv(part, command, home, sources) ?? checkVerdictCaptureCall(part, command, { home, pluginRoot: ctx.pluginRoot, paths, caseInsensitive: ctx.caseInsensitive }) ?? checkProtectedPathBash(part, settings, root, home, paths, ctx.caseInsensitive, places, ctx.tree) ?? (ownStep ? null : checkGateAgentBash(part, hook.agent, settings, { repos, home, exists: import_node_fs19.default.existsSync, temp: tempRoots(ctx), fallback: ctx.containment?.kind === "fallback", darwin: ctx.platform === "darwin", sandboxed: ctx.containment?.kind === "sandbox" }, paths, ctx.caseInsensitive, { earlier: facts.parts.slice(0, index), background: hook.background })) ?? await checkGitClean(part, settings, root, home, paths, ctx.git, ctx.caseInsensitive, places, { earlier: facts.parts, count: index, tree: ctx.tree }) ?? await checkGitStash(part, settings, root, home, paths, ctx.git, places, { earlier: facts.parts, count: index }) ?? checkProtectedPathMention(part, settings, root, home, paths, ctx.caseInsensitive, places);
+    const refusal3 = checkUnknownGitOption(part) ?? checkAllowProtocolMention(command, facts.parts) ?? checkPushSetup(part, facts.parts, index) ?? checkTransportMention(command, facts.parts) ?? checkLocalRemote(part, facts.parts, index) ?? checkRepoTrust(part, trustOf) ?? checkBranchSwitch(part, facts.parts, index, settings, void 0, ctx.caseInsensitive) ?? await checkBranchRefs(part, settings, ctx.git, ctx.caseInsensitive) ?? await checkProtectedBranch(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), ctx.caseInsensitive) ?? await checkHistoryMove(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), void 0, ctx.caseInsensitive) ?? checkForcePush(part, settings) ?? checkTags(part, settings) ?? checkProductionHost(part, settings) ?? checkOssHookEnv(part, command, home, sources) ?? checkArchLaunchctlMention(part, settings, places, paths, home) ?? checkVerdictCaptureCall(part, command, { home, pluginRoot: ctx.pluginRoot, paths, caseInsensitive: ctx.caseInsensitive }) ?? checkProtectedPathBash(part, settings, root, home, paths, ctx.caseInsensitive, places, ctx.tree) ?? (ownStep ? null : checkGateAgentBash(part, hook.agent, settings, { repos, home, exists: import_node_fs19.default.existsSync, temp: tempRoots(ctx), fallback: ctx.containment?.kind === "fallback", darwin: ctx.platform === "darwin", sandboxed: ctx.containment?.kind === "sandbox" }, paths, ctx.caseInsensitive, { earlier: facts.parts.slice(0, index), background: hook.background })) ?? await checkGitClean(part, settings, root, home, paths, ctx.git, ctx.caseInsensitive, places, { earlier: facts.parts, count: index, tree: ctx.tree }) ?? await checkGitStash(part, settings, root, home, paths, ctx.git, places, { earlier: facts.parts, count: index }) ?? checkProtectedPathMention(part, settings, root, home, paths, ctx.caseInsensitive, places);
     if (refusal3 !== null) return { refusal: refusal3, program: part.program };
   }
   if ("unreadable" in facts && !ownStep) {
